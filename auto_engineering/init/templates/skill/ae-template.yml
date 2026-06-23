@@ -1,0 +1,17 @@
+_min_ae_version: "0.1.0"
+skill_name:
+  type: str
+  help: Skill 名称 (kebab-case)
+  default: my-skill
+skill_description:
+  type: str
+  help: Skill 描述（用于 AI 触发匹配）
+  default: ""
+author_name:
+  type: str
+  help: 作者名
+  default: ""
+use_typescript:
+  type: bool
+  help: 使用 TypeScript
+  default: true

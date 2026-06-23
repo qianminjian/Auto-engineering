@@ -1,0 +1,19 @@
+"""{{ project_name }} — CLI 入口."""
+
+import click
+
+
+@click.group()
+def main():
+    """{{ project_description }}"""
+    pass
+
+
+@main.command()
+def hello():
+    """示例命令."""
+    click.echo("Hello from {{ project_name }}!")
+
+
+if __name__ == "__main__":
+    main()

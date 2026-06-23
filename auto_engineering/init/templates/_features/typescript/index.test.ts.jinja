@@ -1,0 +1,7 @@
+import { describe, it, expect } from "{{ test_runner == 'vitest' and 'vitest' or '@jest/globals' }}";
+
+describe("{{ project_name }}", () => {
+  it("should work", () => {
+    expect(true).toBe(true);
+  });
+});

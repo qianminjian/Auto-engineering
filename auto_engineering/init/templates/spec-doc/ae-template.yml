@@ -1,0 +1,13 @@
+_min_ae_version: "0.1.0"
+doc_name:
+  type: str
+  help: 文档项目名称
+  default: my-spec
+doc_description:
+  type: str
+  help: 文档描述
+  default: ""
+author_name:
+  type: str
+  help: 作者
+  default: ""
