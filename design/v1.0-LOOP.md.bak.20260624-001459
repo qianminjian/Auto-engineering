@@ -1,0 +1,545 @@
+# Auto-Engineering v1.0 — dev-loop 子系统设计
+
+> 共享基础见 `@ design/v1.0-SHARED.md`（架构决策、目录结构、CLI 设计、共享契约）
+> init 初始化见 `@ design/v1.0-INIT.md`
+
+---
+
+## 一、dev-loop 执行流程 — 单需求开发循环
+
+```
+$ ae dev-loop "实现用户登录功能，含前端页面和后端 API"
+
+  ┌─────────────────────────────────────────┐
+  │ Stage 1: ARCHITECT                      │
+  │   Agent: ArchitectAgent                 │
+  │   LLM 调用: Claude API + 读文件工具      │
+  │   Gate: plan 文件存在 → Gate 通过        │
+  │   Checkpoint: save to SQLite            │
+  └────────────┬────────────────────────────┘
+               │  Python if Gate.PASS → 下一 Stage
+               │  Python if Gate.FAIL → 重试或退出
+               ▼
+  ┌─────────────────────────────────────────┐
+  │ Stage 2: DEVELOPER                      │
+  │   Agent: DeveloperAgent                 │
+  │   Batch 模式: if files > 20 → 分批       │
+  │   每批: RED→GREEN→REFACTOR              │
+  │   Gate: git status 干净 → Gate 通过      │
+  │   Checkpoint: 每批结束后 save            │
+  └────────────┬────────────────────────────┘
+               │
+               ▼
+  ┌─────────────────────────────────────────┐
+  │ Stage 3: CRITIC                         │
+  │   Agent: CriticAgent                    │
+  │   审查: git diff + 验收标准              │
+  │   APPROVE → END                         │
+  │   MAJOR → Python 条件边 → 回到 Stage 2   │
+  │   Checkpoint: save review result        │
+  └─────────────────────────────────────────┘
+```
+
+### 1.1 Python 控制流保证
+
+```python
+# engine/loop.py — 参考 LangGraph _loop.py:592-674
+
+class DevLoop:
+    def run(self, requirement: str, max_steps: int = 3) -> DevLoopResult:
+        """主执行循环。Python 保证 while True 执行。"""
+
+        self.checkpoint.initialize(requirement)
+
+        while True:
+            # ── tick: 决定下一步 ──
+            should_continue = self.tick(max_steps)
+            if not should_continue:
+                break
+
+            # ── 执行当前 Stage ──
+            task = self.current_task
+            agent = self.runtime.get_agent(task.agent_type)
+            result = agent.execute(task)  # LLM 调用在 agent 内部
+
+            # ── 闸门检查（Python 代码，不是 Agent 自觉）──
+            gate_result = self.gates.check(task.stage, result)
+            if not gate_result.passed:
+                if task.retry_count >= 3:
+                    raise GateExceededError(...)
+                task.retry_count += 1
+                continue  # 回到同一 Stage 重试
+
+            # ── after_tick: 保存状态 ──
+            self.after_tick(task, result)
+
+        return DevLoopResult.from_checkpoint(self.checkpoint)
+
+    def tick(self, max_steps: int) -> bool:
+        """参考 LangGraph _loop.py:592"""
+        if self.step > max_steps:
+            self.status = "out_of_steps"
+            return False
+
+        self.current_task = self.graph.prepare_next_stage(
+            self.checkpoint.state
+        )
+
+        if not self.current_task:
+            self.status = "done"
+            return False
+
+        return True
+
+    def after_tick(self, task, result) -> None:
+        """参考 LangGraph _loop.py:676"""
+        self.checkpoint.apply_result(task, result)
+        self.checkpoint.save()
+        self.step += 1
+```
+
+**这个 `while True` 循环是 Python 代码**——不是 SKILL.md 文本。Python 解释器保证 `tick()` → execute → `after_tick()` 的循环结构必定执行。Agent 无法跳过 commit 闸门，因为闸门是 `gates.check()` 函数调用——代码级的，不是 prompt 级的。
+
+
+---
+
+## 二、从三个框架的具体代码映射
+
+### 2.1 LangGraph → engine/
+
+| LangGraph 源码 | Auto-engineering |
+|---------------|-----------------|
+| `StateGraph.add_node("architect", architect_fn)` | `DevLoopGraph.add_stage(ArchitectStage(...))` |
+| `StateGraph.add_edge("developer", "critic")` | `DevLoopGraph.add_edge("developer", "critic")` |
+| `StateGraph.add_conditional_edges("critic", check_approval, ...)` | `add_conditional_edge("critic", critic_approval_check)` |
+| `StateGraph.compile()` → `CompiledStateGraph` | `DevLoopGraph.compile()` → `CompiledGraph` |
+| `PregelLoop.tick()` | `DevLoop.tick()` |
+| `PregelLoop.after_tick()` | `DevLoop.after_tick()` |
+| `prepare_next_tasks()` | `CompiledGraph.prepare_next_stage()` |
+| `apply_writes()` | `Checkpoint.apply_result()` |
+| `_put_checkpoint()` | `Checkpoint.save()` |
+
+### 2.2 AutoGen → runtime/
+
+| AutoGen 源码 | Auto-engineering |
+|-------------|-----------------|
+| `SingleThreadedAgentRuntime` | `AgentRuntime` |
+| `_message_queue: asyncio.Queue` | `_task_queue: asyncio.Queue[TaskEnvelope]` |
+| `_process_send(message_envelope)` | `_dispatch_task(envelope)` |
+| `_process_next()` — 主循环 | `run_loop(initial_task)` — 主循环 |
+| `agent.on_message(message, ctx)` | `agent.execute(task, context)` |
+| `AgentId(type, key)` | `AgentId(name, role)` |
+| `MessageContext(sender, topic_id, ...)` | `TaskContext(sender, contract, ...)` |
+| `Subscription(topic_id)` | `TopicSubscription` — 未来多 Agent 用 |
+| `_intervention_handlers` | `GateChain` — 闸门链 |
+
+### 2.3 CrewAI → crew/
+
+| CrewAI 源码 | Auto-engineering |
+|------------|-----------------|
+| `Task(description, expected_output, agent, context)` | `Task(description, expected_output, agent, context)` |
+| `Crew(tasks, agents, process)` | `Crew(tasks, process)` |
+| `Crew.kickoff()` | `Crew.kickoff()` |
+| `_run_sequential_process()` | `SequentialProcess.execute()` |
+| `_execute_tasks(tasks)` | `SequentialProcess._execute(tasks)` |
+| `_get_execution_start_index()` (checkpoint) | `SequentialProcess._get_resume_index()` |
+| `TaskOutput` | `TaskResult` |
+| `CrewOutput` | `CrewResult` |
+| `Process.sequential` | `ProcessType.SEQUENTIAL` |
+
+---
+
+## 三、Agent 设计
+
+### 3.1 BaseAgent（参考 AutoGen Agent + CrewAI Agent）
+
+```python
+# agents/base.py
+class BaseAgent:
+    """Agent 基类。参考 AutoGen _agent.py + CrewAI agent.py。"""
+
+    id: AgentId
+    role: str
+    system_prompt: str            # 角色 prompt
+    tools: list[BaseTool]        # 可用工具
+    llm_client: Anthropic        # Claude API 客户端
+
+    def execute(self, task: Task, context: TaskContext) -> TaskResult:
+        """执行任务。内部 while True: LLM调用 → 工具执行 → 观察结果。"""
+        messages = [
+            {"role": "system", "content": self.system_prompt},
+            {"role": "user", "content": self._build_task_prompt(task, context)},
+        ]
+
+        while True:
+            response = self.llm_client.messages.create(
+                model="claude-sonnet-4-6",
+                max_tokens=4096,
+                tools=self._get_tool_schemas(),
+                messages=messages,
+            )
+
+            if response.stop_reason != "tool_use":
+                break
+
+            for tool_call in response.content:
+                if tool_call.type == "tool_use":
+                    result = self._execute_tool(tool_call)
+                    messages.append({
+                        "role": "user",
+                        "content": [{
+                            "type": "tool_result",
+                            "tool_use_id": tool_call.id,
+                            "content": str(result),
+                        }]
+                    })
+
+        return TaskResult(
+            agent_id=self.id,
+            output=response.content[0].text,
+            tool_calls=self._tool_call_log,
+        )
+```
+
+### 3.2 三个 Agent 具体配置
+
+```python
+# agents/architect.py
+ArchitectAgent(BaseAgent):
+    role = "architect"
+    system_prompt = "你是技术架构师。分析需求，输出实现计划..."
+    tools = [ReadFileTool(), SearchCodeTool(), ListDirTool()]
+    output_schema = ArchitectOutput  # plan, batch_plan, file_list, contracts
+
+# agents/developer.py
+DeveloperAgent(BaseAgent):
+    role = "developer"
+    system_prompt = "你是软件开发者。按 TDD 三步循环实现..."
+    tools = [ReadFileTool(), WriteFileTool(), EditFileTool(), RunBashTool(), GitCommitTool()]
+    output_schema = DeveloperOutput  # files_changed, test_results, commit_hash
+
+# agents/critic.py
+CriticAgent(BaseAgent):
+    role = "critic"
+    system_prompt = "你是代码审查者。只读，不给实现方案..."
+    tools = [ReadFileTool(), GitDiffTool(), RunTestTool()]
+    output_schema = CriticOutput  # verdict: APPROVE|MAJOR, findings: [...]
+```
+
+---
+
+## 四、工具系统
+
+采用 Anthropic SDK 的 `tools` 参数（JSON Schema 格式，与 OpenAI 兼容），所有工具继承 `BaseTool` 基类。
+
+### 4.1 工具基类
+
+```python
+# tools/base.py
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
+
+@dataclass
+class ToolResult:
+    success: bool
+    content: str
+    error: str | None = None
+
+class BaseTool(ABC):
+    name: str
+    description: str
+    parameters: dict  # JSON Schema
+
+    @abstractmethod
+    def execute(self, **kwargs) -> ToolResult:
+        ...
+
+    def to_schema(self) -> dict:
+        """生成 Anthropic/OpenAI 兼容的 tool schema"""
+        return {
+            "name": self.name,
+            "description": self.description,
+            "input_schema": {
+                "type": "object",
+                "properties": self.parameters,
+                "required": list(self.parameters.keys()),
+            }
+        }
+```
+
+### 4.2 工具数量估算
+
+| 工具 | 复杂度 | 估算行数 | 风险 |
+|------|:---:|:---:|------|
+| ReadFileTool | 低 | ~30 | 无 |
+| WriteFileTool | 低 | ~40 | 需路径安全检查 |
+| EditFileTool | **高** | ~120 | 需精确字符串匹配 + 唯一性保证 |
+| SearchCodeTool | 低 | ~40 | 调用 grep |
+| ListDirTool | 低 | ~25 | 无 |
+| RunBashTool | 高 | ~100 | 需命令沙箱 + 超时 |
+| GitStatusTool | 低 | ~25 | 无 |
+| GitCommitTool | 中 | ~60 | 需处理 Lefthook 超时 |
+| GitDiffTool | 低 | ~25 | 无 |
+| RunTestsTool | 低 | ~30 | 调用项目测试命令 |
+| **合计** | | **~500** | |
+
+---
+
+## 五、Agent 可移植层设计（换 LLM 的关键）
+
+### 5.1 LLM 抽象接口
+
+```python
+# agents/llm.py
+from abc import ABC, abstractmethod
+
+class LLMProvider(ABC):
+    """LLM 抽象层。换 Agent 只需实现此接口。"""
+
+    @abstractmethod
+    def create_message(
+        self,
+        model: str,
+        system: str,
+        messages: list[dict],
+        tools: list[dict],
+        max_tokens: int = 4096,
+    ) -> LLMResponse:
+        ...
+
+@dataclass
+class LLMResponse:
+    stop_reason: str          # "tool_use" | "end_turn" | "stop"
+    text: str                 # 文本输出
+    tool_calls: list[ToolCall]  # 工具调用列表
+
+@dataclass
+class ToolCall:
+    id: str
+    name: str
+    input: dict
+```
+
+### 5.2 当前实现 + 未来扩展
+
+```python
+# agents/llm.py
+
+class AnthropicProvider(LLMProvider):
+    """Claude API 实现。"""
+    def __init__(self, api_key: str):
+        self.client = anthropic.Anthropic(api_key=api_key)
+
+    def create_message(self, model, system, messages, tools, max_tokens=4096):
+        response = self.client.messages.create(
+            model=model,
+            system=system,
+            messages=messages,
+            tools=self._format_tools(tools),
+            max_tokens=max_tokens,
+        )
+        return self._parse_response(response)
+
+
+class OpenAIProvider(LLMProvider):
+    """OpenAI API 实现——未来切换。只需实现此接口。"""
+    def __init__(self, api_key: str):
+        self.client = openai.OpenAI(api_key=api_key)
+
+    def create_message(self, model, system, messages, tools, max_tokens=4096):
+        response = self.client.chat.completions.create(
+            model=model,
+            messages=[{"role": "system", "content": system}] + messages,
+            tools=self._format_tools(tools),
+            max_tokens=max_tokens,
+        )
+        return self._parse_response(response)
+
+
+class LocalProvider(LLMProvider):
+    """本地开源模型（Ollama/vLLM）实现——未来切换。"""
+    def __init__(self, endpoint: str):
+        self.endpoint = endpoint
+
+    def create_message(self, model, system, messages, tools, max_tokens=4096):
+        response = requests.post(
+            f"{self.endpoint}/v1/chat/completions",
+            json={"model": model, "messages": [...], "tools": tools},
+        )
+        return self._parse_response(response)
+```
+
+**换 Agent 的影响范围**：只需实现一个 `LLMProvider` 子类（~100 行），其他所有代码不变。
+
+---
+
+## 六、闸门系统（Python 代码级，非 Prompt 级）
+
+```python
+# gates/gates.py
+
+class Gate(ABC):
+    """参考 LangGraph interrupt_before/after 模式"""
+    @abstractmethod
+    def check(self, stage: Stage, context: GateContext) -> GateResult:
+        ...
+
+class PlanExistsGate(Gate):
+    """Architect 完成后：plan 文件存在？"""
+    def check(self, stage, context):
+        if stage == Stage.ARCHITECT:
+            if not Path("design/dev-loop-plan.md").exists():
+                return GateResult.fail("plan 文件不存在")
+        return GateResult.pass_()
+
+class GitCleanGate(Gate):
+    """Developer 完成后：git status 干净？"""
+    def check(self, stage, context):
+        if stage == Stage.DEVELOPER:
+            result = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True)
+            if result.stdout.strip():
+                return GateResult.fail(f"存在未提交变更:\n{result.stdout}")
+        return GateResult.pass_()
+
+class TestsPassGate(Gate):
+    """Developer 每批完成后：测试全绿？"""
+    def check(self, stage, context):
+        if stage == Stage.DEVELOPER:
+            result = subprocess.run(["npm", "test"], capture_output=True)
+            if result.returncode != 0:
+                return GateResult.fail("测试未通过")
+        return GateResult.pass_()
+
+class GitDiffExistsGate(Gate):
+    """Critic 入口：有 git diff 可审查？"""
+    def check(self, stage, context):
+        if stage == Stage.CRITIC:
+            if not context.git_commits:
+                return GateResult.fail("无 git commit，请 Developer 先提交")
+        return GateResult.pass_()
+```
+
+---
+
+
+---
+
+## 七、Checkpoint 设计
+
+```sql
+-- engine/checkpoint.py 管理的 SQLite 表
+
+CREATE TABLE checkpoints (
+    id TEXT PRIMARY KEY,
+    stage TEXT NOT NULL,         -- architect | developer | critic | complete
+    state JSON NOT NULL,         -- 完整状态快照
+    created_at TIMESTAMP,
+    parent_id TEXT REFERENCES checkpoints(id)
+);
+
+CREATE TABLE task_results (
+    id TEXT PRIMARY KEY,
+    checkpoint_id TEXT REFERENCES checkpoints(id),
+    agent_type TEXT NOT NULL,    -- architect | developer | critic
+    batch_num INTEGER,
+    output JSON NOT NULL,        -- Agent 输出
+    gate_results JSON,           -- 闸门检查结果
+    commit_hash TEXT,            -- git commit
+    test_summary JSON,           -- 测试结果摘要
+    created_at TIMESTAMP
+);
+```
+
+**中断恢复流程**：
+
+```python
+def resume(checkpoint_id: str) -> DevLoopResult:
+    checkpoint = Checkpoint.load(checkpoint_id)
+    loop = DevLoop(graph=..., gates=..., runtime=...)
+    loop.checkpoint = checkpoint     # 注入恢复状态
+    loop.step = checkpoint.step + 1
+    return loop.continue_from(checkpoint)
+```
+
+---
+
+## 八、多 Agent 扩展预留
+
+当前 v1.0 实现单 Agent 串行模式，但架构已预留多 Agent 扩展点：
+
+```python
+# crew/process.py — 当前
+class SequentialProcess:
+    def execute(self, tasks, checkpoint): ...
+
+# crew/process.py — 未来
+class ParallelProcess:
+    """借鉴 CrewAI hierarchical + LangGraph fan-out"""
+    def execute(self, tasks, checkpoint):
+        dispatch_table = self._build_dispatch_table(tasks)
+        results = asyncio.gather(*[
+            agent.execute(task, ctx)
+            for task, agent, ctx in dispatch_table
+        ])
+
+# runtime/runtime.py — 当前
+class AgentRuntime:
+    """单线程 Agent 运行时"""
+    _task_queue: asyncio.Queue[TaskEnvelope]
+
+# runtime/runtime.py — 未来
+class MultiAgentRuntime(AgentRuntime):
+    """多 Agent 并行运行时"""
+    _agent_pool: dict[str, asyncio.Task]
+    _contract_registry: ContractRegistry
+
+# contracts/contract.py — 未来
+class Contract:
+    """借鉴 AutoGen Topic + CrewAI context passing"""
+    name: str
+    schema: dict   # OpenAPI fragment
+    producer: AgentId
+    consumers: list[AgentId]
+```
+
+---
+
+
+---
+
+## 实施计划
+
+### Phase 1：核心引擎（P0）
+1. `engine/checkpoint.py` — SQLite checkpoint
+2. `engine/state.py` — DevLoopState schema
+3. `engine/graph.py` — Stage + edges
+4. `engine/loop.py` — tick/after_tick
+5. `gates/` — 4 个基础闸门
+
+**验证**：`python -c "from auto_engineering.engine import DevLoop; ..."` import 通过
+
+### Phase 2：Agent + 工具（P0）
+6. `tools/` — 文件/Bash/Git/测试工具
+7. `agents/base.py` — BaseAgent + Claude API
+8. `agents/architect.py` — 需求分析 Agent
+9. `agents/developer.py` — TDD 开发 Agent
+10. `agents/critic.py` — 代码审查 Agent
+
+**验证**：单元测试中 mock LLM 调用，验证每个 Agent 的工具调用序列正确
+
+### Phase 3：编排 + CLI（P0）
+11. `crew/task.py` + `crew/process.py` + `crew/crew.py`
+12. `runtime/runtime.py` + `runtime/messages.py`
+13. `cli.py` — Click 命令
+
+**验证**：`ae dev-loop "简单需求"` 端到端通过
+
+
+---
+
+## 引用文档
+
+| 文档 | 内容 | 读取条件 |
+|------|------|---------|
+| `@ design/v1.0-SHARED.md` | 共享架构、CLI 设计、共享契约、关键决策 | 设计讨论时 |
+| `@ design/v1.0-INIT.md` | init 子系统（项目脚手架） | 需要理解项目初始化时 |
