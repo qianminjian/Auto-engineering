@@ -1,4 +1,7 @@
-"""AnswersMap — 5 层优先级答案解析."""
+"""AnswersMap — 6 层优先级答案解析（含 external_data 懒加载）.
+
+来源：Copier _user_data.py:70-133 AnswersMap + _external_data + LazyDict
+"""
 
 from collections import ChainMap
 from dataclasses import dataclass, field
@@ -8,35 +11,120 @@ from typing import Any
 
 import yaml
 
-BUILTIN_VARS = {"_ae_version": "1.0.0"}
+BUILTIN_VARS: dict[str, Any] = {
+    "_ae_version": "1.0.0",
+}
+
+
+class _LazyExternalDict:
+    """Lazy-loading dictionary for external data files.
+
+    Only loads a file when its key is first accessed. 来源：Copier _external_data + LazyDict 模式。
+    Supports YAML (.yml/.yaml) and JSON (.json) files.
+    """
+
+    def __init__(self, external_map: dict[str, str]) -> None:
+        self._external_map = external_map  # {var_name: file_path}
+        self._cache: dict[str, Any] = {}
+
+    def __getitem__(self, key: str) -> Any:
+        if key not in self._cache:
+            file_path = Path(self._external_map[key])
+            if file_path.exists():
+                if file_path.suffix in (".yml", ".yaml"):
+                    data = yaml.safe_load(file_path.read_text())
+                elif file_path.suffix == ".json":
+                    import json
+                    data = json.loads(file_path.read_text())
+                else:
+                    data = yaml.safe_load(file_path.read_text())
+                self._cache[key] = data
+            else:
+                self._cache[key] = None
+        return self._cache[key]
+
+    def __contains__(self, key: str) -> bool:
+        return key in self._external_map
+
+    def __iter__(self):
+        return iter(self._external_map)
+
+    def __len__(self) -> int:
+        return len(self._external_map)
+
+    def keys(self):
+        return self._external_map.keys()
+
+    def items(self):
+        for k in self._external_map:
+            yield (k, self[k])
+
+    def __repr__(self) -> str:
+        return f"_LazyExternalDict(keys={list(self._external_map.keys())})"
 
 
 @dataclass
 class AnswersMap:
+    """6 层优先级 ChainMap（简化自 Copier 的 8 层）。
+
+    优先级（从高到低）：
+    1. cli_overrides  — 命令行 --flag 参数（最高优先级）
+    2. interactive    — 交互式问答输入
+    3. previous       — 从 .ae-answers.yml 加载的历史答案
+    4. defaults       — ae-template.yml 中定义的默认值
+    5. builtins       — 内置变量（_ae_version 等，最低优先级）
+    6. external       — 外部数据懒加载（来源：Copier _external_data + LazyDict）
+    """
+
     cli_overrides: dict = field(default_factory=dict)
     interactive: dict = field(default_factory=dict)
     previous: dict = field(default_factory=dict)
     defaults: dict = field(default_factory=dict)
     builtins: dict = field(default_factory=lambda: BUILTIN_VARS.copy())
+    external: dict[str, str] = field(default_factory=dict)
     hidden: set = field(default_factory=set)
+    _external_cache: dict[str, Any] = field(default_factory=dict, init=False)
 
     def get(self, key: str) -> Any:
-        for layer in [self.cli_overrides, self.interactive, self.previous, self.defaults, self.builtins]:
+        for layer in [self.cli_overrides, self.interactive, self.previous,
+                      self.defaults, self.builtins]:
             val = layer.get(key)
             if val is not None:
                 return val
+        if key in self.external:
+            return self._load_external(key)
         raise KeyError(key)
 
     def combined(self) -> dict:
-        return dict(ChainMap(
-            self.cli_overrides, self.interactive, self.previous,
-            self.defaults, self.builtins,
+        """全量合并。用于 Jinja2 渲染上下文。外挂 _external_data 键（懒加载）。"""
+        result = dict(ChainMap(
+            self.cli_overrides,
+            self.interactive,
+            self.previous,
+            self.defaults,
+            self.builtins,
         ))
+        if self.external:
+            result["_external_data"] = _LazyExternalDict(self.external)
+        return result
+
+    def _load_external(self, key: str) -> Any:
+        """懒加载外部数据文件。来源：Copier _external_data()。"""
+        if key not in self._external_cache:
+            file_path = Path(self.external[key])
+            if file_path.exists():
+                data = yaml.safe_load(file_path.read_text())
+                self._external_cache[key] = data
+            else:
+                self._external_cache[key] = None
+        return self._external_cache[key]
 
     def hide(self, key: str) -> None:
+        """标记字段不写入 .ae-answers.yml。来源：Copier AnswersMap.hide()"""
         self.hidden.add(key)
 
     def save_partial(self, path: Path | None = None) -> Path:
+        """保存已收集的部分答案。Ctrl-C 时调用。"""
         if path is None:
             path = Path.home() / ".ae-partial-answers.yml"
         path.write_text(yaml.dump({
@@ -47,15 +135,20 @@ class AnswersMap:
 
     @classmethod
     def from_answers_file(cls, path: Path) -> "AnswersMap":
+        """从 .ae-answers.yml 加载 previous 层。"""
         data = yaml.safe_load(path.read_text()) or {}
-        meta = data.pop("_meta", {})
+        _meta = data.pop("_meta", {})
         return cls(previous=data)
 
     def to_answers_file(self) -> dict:
-        result = {
-            "_meta": {"ae_version": "1.0.0", "created_at": datetime.now().isoformat()},
+        """生成要写入 .ae-answers.yml 的数据。过滤 hidden 和 _ 前缀内部字段。"""
+        result = {}
+        result["_meta"] = {
+            "ae_version": self.builtins.get("_ae_version", "1.0.0"),
+            "created_at": datetime.now().isoformat(),
         }
-        for key, value in self.combined().items():
+        combined = self.combined()
+        for key, value in combined.items():
             if key.startswith("_") or key in self.hidden:
                 continue
             if isinstance(value, (str, int, float, bool, list, dict, type(None))):
@@ -63,11 +156,15 @@ class AnswersMap:
         return result
 
     def write_to(self, dst: Path) -> None:
+        """写入 .ae-answers.yml 到目标路径。"""
         with open(dst, "w") as f:
             yaml.dump(self.to_answers_file(), f, allow_unicode=True)
 
     def __getitem__(self, key: str) -> Any:
-        return self.get(key)
+        try:
+            return self.get(key)
+        except KeyError:
+            raise KeyError(key)
 
     def __contains__(self, key: str) -> bool:
         try:
