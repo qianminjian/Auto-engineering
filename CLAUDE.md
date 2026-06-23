@@ -29,28 +29,27 @@ Python 控制流（确定性）        LLM 调用（智能）
 
 ## 参考源码
 
-`references/` 目录包含三个业界框架的完整源码：
+`references/` 目录包含六个业界框架/工具的完整源码：
 
-| 框架 | 路径 | 核心文件 |
-|------|------|---------|
-| LangGraph | `references/langgraph/` | `libs/langgraph/langgraph/graph/state.py`, `pregel/_loop.py`, `pregel/_algo.py` |
-| AutoGen | `references/autogen/` | `python/packages/autogen-core/src/autogen_core/_single_threaded_agent_runtime.py` |
-| CrewAI | `references/crewai/` | `lib/crewai/src/crewai/crew.py`, `lib/crewai/src/crewai/task.py` |
-
-## 核心命令（设计目标）
-
-| 命令 | 用途 |
-|------|------|
-| `ae init <project>` | 项目环境初始化 |
-| `ae dev-loop <requirement>` | 单需求开发循环 |
-| `ae dev-loop --multi <requirement>` | 多 Agent 并行开发（未来） |
-| `ae status` | 查看当前进度 |
-| `ae checkpoint resume <id>` | 从 checkpoint 恢复 |
+| 框架 | 路径 | 核心文件 | 用途 |
+|------|------|---------|------|
+| LangGraph | `references/langgraph/` | `pregel/_loop.py`, `pregel/_algo.py`, `graph/state.py` | Loop 引擎参考 |
+| AutoGen | `references/autogen/` | `_single_threaded_agent_runtime.py` | Agent 运行时参考 |
+| CrewAI | `references/crewai/` | `crew.py`, `task.py` | 任务编排参考 |
+| Copier | `references/copier/` | `_main.py`(Worker), `_user_data.py`(Question/AnswersMap) | init 脚手架参考 |
+| Cookiecutter | `references/cookiecutter/` | `generate.py`, `prompt.py`, `main.py` | init 模板渲染参考 |
+| Yeoman | `references/yeoman/` | `lib/routes/` | init 组合模式参考 |
 
 ## 设计文档
 
-- `design/v1.0-DESIGN.md` — 完整架构设计方案
-- `design/` — 后续设计产出目录
+| 文档 | 内容 | 读取条件 |
+|------|------|---------|
+| `design/v1.0-SHARED.md` | 共享架构、CLI 设计、共享契约、关键决策 | 任何设计讨论时先读 |
+| `design/v1.0-INIT.md` | init 子系统完整设计（~1800 行） | 开发 `ae init` 时 |
+| `design/v1.0-LOOP.md` | dev-loop 子系统完整设计（~550 行） | 开发 `ae dev-loop` 时 |
+| `design/v1.0-TEMPLATES.md` | 43 个模板文件 + 8 个 ae-template.yml | 实现 `init/templates/` 时 |
+
+## 核心命令（设计目标）
 
 ## 管理约束
 
