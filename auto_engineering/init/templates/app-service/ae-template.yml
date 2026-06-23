@@ -1,0 +1,10 @@
+_min_ae_version: "0.1.0"
+project_name:
+  type: str
+  help: 项目名称
+  default: test-project
+package_manager:
+  type: choice
+  help: 包管理器
+  choices: [npm, pnpm, yarn, bun]
+  default: npm

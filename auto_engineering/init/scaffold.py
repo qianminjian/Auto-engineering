@@ -42,10 +42,15 @@ class InitWorker:
     defaults: bool = False
     overwrite: bool = False
     quiet: bool = False
+    pretend: bool = False
+    skip_tasks: bool = False
+    cleanup_on_error: bool = True
 
+    _current_phase: str = field(init=False, default="")
     _template: TemplateConfig = field(init=False, default=None)
     _answers: AnswersMap = field(init=False, default_factory=AnswersMap)
     _cleanup_hooks: list = field(default_factory=list, init=False)
+    _previous_answers: AnswersMap | None = field(init=False, default=None)
 
     def __enter__(self):
         return self
@@ -63,18 +68,37 @@ class InitWorker:
                 pass
 
     def execute(self) -> InitResult:
+        if self.pretend and not self.quiet:
+            print("[DRY RUN] 模拟执行，不产生文件")
+
+        self._current_phase = "detect"
         self._phase_detect()
+
+        self._current_phase = "prompt"
         self._phase_prompt()
+        self._check_template_version()
+
+        if self.pretend:
+            return InitResult(
+                dst_path=self.dst_path,
+                project_type=self.project_type or "",
+            )
 
         tmpdir = Path(tempfile.mkdtemp(prefix="ae-init-"))
         self._cleanup_hooks.append(lambda: shutil.rmtree(tmpdir, ignore_errors=True))
         did_create_dst = False
 
         try:
+            self._current_phase = "render"
             generated = self._phase_render(tmpdir)
-            self._phase_tasks(tmpdir)
+
+            self._current_phase = "tasks"
+            if not self.skip_tasks:
+                self._phase_tasks(tmpdir)
+
             self._answers.write_to(tmpdir / ".ae-answers.yml")
 
+            self._current_phase = "finalize"
             did_create_dst = not self.dst_path.exists()
             if did_create_dst:
                 self.dst_path.mkdir(parents=True)
@@ -83,6 +107,7 @@ class InitWorker:
             if not self.quiet:
                 print(f"\n✓ 项目已生成: {self.dst_path}")
                 print(f"  文件数: {len(generated)}")
+                print(f"  下一步: cd {self.dst_path.name} && git log")
 
         except InitInterruptedError:
             partial_path = self._answers.save_partial()
@@ -92,7 +117,7 @@ class InitWorker:
             raise
 
         except Exception:
-            if did_create_dst and self.dst_path.exists():
+            if self.cleanup_on_error and did_create_dst and self.dst_path.exists():
                 shutil.rmtree(self.dst_path)
             raise
 
@@ -102,6 +127,20 @@ class InitWorker:
             answers=self._answers.to_answers_file(),
             project_type=self.project_type or "",
         )
+
+    def _check_template_version(self) -> None:
+        """检查 ae 版本是否满足模板要求的最小版本。"""
+        from auto_engineering import __version__
+        from packaging.version import Version, parse
+
+        installed = parse(__version__)
+        if self._template.min_ae_version:
+            required = parse(self._template.min_ae_version)
+            if installed < required:
+                raise ConfigFileError(
+                    f"模板要求 ae >= {self._template.min_ae_version}，"
+                    f"当前版本 {__version__}"
+                )
 
     def _phase_detect(self) -> None:
         if self.dst_path.exists() and not self.force:
