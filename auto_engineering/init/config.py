@@ -113,6 +113,9 @@ class Question:
         if type_name == "str":
             return raw
         if type_name == "bool":
+            # click.confirm 返回 bool 值，click.prompt 返回字符串
+            if isinstance(raw, bool):
+                return raw
             return raw.strip().lower() in ("yes", "y", "true", "t", "1")
         if type_name == "int":
             return int(raw)
