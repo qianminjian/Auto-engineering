@@ -1,0 +1,283 @@
+{
+  "version": "2.0",
+  "projectRoot": "/Users/minjianq/Documents/06-Mi-Model-Rule/Auto-engineering",
+  "createdAt": "2026-06-23T16:02:43.017Z",
+  "updatedAt": "2026-06-23T16:16:05.000Z",
+  "phases": [
+    {
+      "number": "01",
+      "name": "Phase 0/9: 环境准备",
+      "goal": "确保依赖和目录结构就绪。确认 pyproject.toml 包含 packaging、binaryornot 依赖，uv sync 安装，模板目录存在。",
+      "tasks": [
+        "确认 pyproject.toml 包含全部依赖（packaging、binaryornot 新增）",
+        "uv sync 安装全部依赖",
+        "确认 auto_engineering/init/templates/ 目录结构存在"
+      ],
+      "successCriteria": [],
+      "dependsOn": [],
+      "isGate": false,
+      "gateType": "auto",
+      "phaseType": "verification",
+      "gateNoiseExpected": [],
+      "status": "completed",
+      "commits": [
+        "104c87ce863a9e611315e5618161281186e4857a"
+      ],
+      "commitHash": "104c87ce863a9e611315e5618161281186e4857a",
+      "startedAt": "2026-06-23T16:02:50.209Z",
+      "completedAt": "2026-06-23T16:03:34.317Z",
+      "statusSince": "2026-06-23T16:03:34.317Z",
+      "updatedAt": "2026-06-23T16:03:34.317Z"
+    },
+    {
+      "number": "02",
+      "name": "Phase 1/9: 错误体系 + 模板配置解析",
+      "goal": "实现 errors.py (50行) + config.py (200行)。Question/Task/TemplateConfig 完整实现，含 YAML 解析、!include 支持。",
+      "tasks": [
+        "重写 auto_engineering/init/errors.py — InitError 基类 + 7 个子类",
+        "重写 auto_engineering/init/config.py — Question/Task/TemplateConfig + TemplateConfig.load() + YAML !include 支持",
+        "验证：Question.cast_answer() 对 6 种类型正确转换",
+        "验证：TemplateConfig.load() 可被调用"
+      ],
+      "successCriteria": [],
+      "dependsOn": [
+        "01"
+      ],
+      "isGate": false,
+      "gateType": "auto",
+      "phaseType": "implementation",
+      "gateNoiseExpected": [],
+      "status": "completed",
+      "commits": [
+        "b6d3fb9",
+        "f3adccf"
+      ],
+      "commitHash": "f3adccf",
+      "startedAt": "2026-06-23T16:03:39.162Z",
+      "completedAt": "2026-06-23T16:08:05.000Z",
+      "statusSince": "2026-06-23T16:08:05.000Z",
+      "updatedAt": "2026-06-23T16:08:05.000Z"
+    },
+    {
+      "number": "03",
+      "name": "Phase 2/9: 答案管理层",
+      "goal": "实现 answers.py (120行)。AnswersMap 6 层 ChainMap + external_data 懒加载 + save_partial/from_answers_file。",
+      "tasks": [
+        "重写 auto_engineering/init/answers.py — AnswersMap dataclass + ChainMap + external_data",
+        "验证：优先级栈 cli > interactive > previous > defaults > builtins 正确",
+        "验证：save_partial/from_answers_file 往返正确"
+      ],
+      "successCriteria": [],
+      "dependsOn": [
+        "02"
+      ],
+      "isGate": false,
+      "gateType": "auto",
+      "phaseType": "implementation",
+      "gateNoiseExpected": [],
+      "status": "completed",
+      "commits": [
+        "d4e5b46",
+        "1c3c41a"
+      ],
+      "commitHash": "1c3c41a",
+      "startedAt": "2026-06-23T16:09:44.523Z",
+      "completedAt": "2026-06-23T16:16:05.000Z",
+      "statusSince": "2026-06-23T16:16:05.000Z",
+      "updatedAt": "2026-06-23T16:16:05.000Z"
+    },
+    {
+      "number": "04",
+      "name": "Phase 3/9: 交互式问答",
+      "goal": "实现 prompts.py (150行)。InteractivePrompt 两遍循环 + 8 种类型 Click 方法映射。",
+      "tasks": [
+        "重写 auto_engineering/init/prompts.py — InteractivePrompt + _PROMPT_DISPATCH + prompt_for_project_type",
+        "验证：InteractivePrompt 可实例化，run() 方法可调用",
+        "验证：when 条件渲染逻辑正确"
+      ],
+      "successCriteria": [],
+      "dependsOn": [
+        "02",
+        "03"
+      ],
+      "isGate": false,
+      "gateType": "auto",
+      "phaseType": "implementation",
+      "gateNoiseExpected": [],
+      "status": "pending",
+      "commits": [],
+      "commitHash": null,
+      "startedAt": null,
+      "completedAt": null,
+      "statusSince": null
+    },
+    {
+      "number": "05",
+      "name": "Phase 4/9: 渲染引擎 [GATE]",
+      "goal": "实现 renderer.py (180行)。SandboxedEnvironment + 双层渲染 + 二进制检测 + 换行符保持 + 文件权限保持。",
+      "tasks": [
+        "重写 auto_engineering/init/renderer.py — TemplateRenderer + SandboxedEnvironment + binaryornot",
+        "验证：Jinja2 模板内容正确渲染",
+        "验证：二进制文件原样复制",
+        "验证：no_render 模式生效，exclude 过滤生效"
+      ],
+      "successCriteria": [],
+      "dependsOn": [
+        "02",
+        "03"
+      ],
+      "isGate": true,
+      "gateType": "auto",
+      "phaseType": "implementation",
+      "gateNoiseExpected": [],
+      "status": "pending",
+      "commits": [],
+      "commitHash": null,
+      "startedAt": null,
+      "completedAt": null,
+      "statusSince": null
+    },
+    {
+      "number": "06",
+      "name": "Phase 5/9: 钩子执行器 + 项目检测器",
+      "goal": "实现 hooks.py (100行) + detector.py (80行)。TaskRunner + ProjectDetector。",
+      "tasks": [
+        "重写 auto_engineering/init/hooks.py — TaskRunner + when/working_directory/extra_vars",
+        "重写 auto_engineering/init/detector.py — FRAMEWORK_SIGNATURES + ADVANCED_CHECKS",
+        "验证：ProjectDetector.detect() 返回合理结果",
+        "验证：TaskRunner 能执行简单任务"
+      ],
+      "successCriteria": [],
+      "dependsOn": [
+        "02"
+      ],
+      "isGate": false,
+      "gateType": "auto",
+      "phaseType": "implementation",
+      "gateNoiseExpected": [],
+      "status": "pending",
+      "commits": [],
+      "commitHash": null,
+      "startedAt": null,
+      "completedAt": null,
+      "statusSince": null
+    },
+    {
+      "number": "07",
+      "name": "Phase 6/9: 中心编排器",
+      "goal": "实现 scaffold.py (300行)。InitWorker context manager + 5 阶段流水线 + pretend/skip_tasks/cleanup_on_error。",
+      "tasks": [
+        "重写 auto_engineering/init/scaffold.py — InitWorker + InitResult + init_project",
+        "验证：InitWorker 5 个 Phase 按顺序执行",
+        "验证：pretend=True 时不产生文件",
+        "验证：_check_template_version 在 prompt 之后调用"
+      ],
+      "successCriteria": [],
+      "dependsOn": [
+        "02",
+        "03",
+        "04",
+        "05",
+        "06"
+      ],
+      "isGate": true,
+      "gateType": "auto",
+      "phaseType": "implementation",
+      "gateNoiseExpected": [],
+      "status": "pending",
+      "commits": [],
+      "commitHash": null,
+      "startedAt": null,
+      "completedAt": null,
+      "statusSince": null
+    },
+    {
+      "number": "08",
+      "name": "Phase 7/9: 共享契约 + 环境解析",
+      "goal": "审查确认 config/environment.py (120行) 完整可用。ProjectEnvironment.resolve/sync/save。",
+      "tasks": [
+        "审查 auto_engineering/config/environment.py — 确认 ProjectEnvironment 实现完整",
+        "验证：ae status 正确显示当前项目环境",
+        "验证：.ae-answers.yml 读写往返正确"
+      ],
+      "successCriteria": [],
+      "dependsOn": [
+        "01"
+      ],
+      "isGate": false,
+      "gateType": "auto",
+      "phaseType": "verification",
+      "gateNoiseExpected": [],
+      "status": "pending",
+      "commits": [],
+      "commitHash": null,
+      "startedAt": null,
+      "completedAt": null,
+      "statusSince": null
+    },
+    {
+      "number": "09",
+      "name": "Phase 8/9: 模板资产创建 [GATE]",
+      "goal": "创建 43 个 Jinja2 模板文件 + 8 个 ae-template.yml。按 design/v1.0-TEMPLATES.md 实现。",
+      "tasks": [
+        "创建 _shared/ 5 个模板文件",
+        "创建 _features/ 约30个语言生态模板",
+        "创建 8 个项目类型的 ae-template.yml",
+        "验证：全部 8 个 ae-template.yml 可解析",
+        "验证：模板文件 >= 40 个"
+      ],
+      "successCriteria": [],
+      "dependsOn": [
+        "07"
+      ],
+      "isGate": true,
+      "gateType": "auto",
+      "phaseType": "implementation",
+      "gateNoiseExpected": [],
+      "status": "pending",
+      "commits": [],
+      "commitHash": null,
+      "startedAt": null,
+      "completedAt": null,
+      "statusSince": null
+    },
+    {
+      "number": "10",
+      "name": "Phase 9/9: CLI 集成 + 端到端测试 [FINAL GATE]",
+      "goal": "完善 CLI init 命令，编写 E2E 测试。ae init --help + ae init E2E 通过。",
+      "tasks": [
+        "审查完善 auto_engineering/cli.py init 命令",
+        "新增 tests/test_init.py E2E 测试",
+        "验证：ae init --help 输出所有 11 个 flag",
+        "验证：ae init E2E 通过"
+      ],
+      "successCriteria": [],
+      "dependsOn": [
+        "02",
+        "03",
+        "04",
+        "05",
+        "06",
+        "07",
+        "08"
+      ],
+      "isGate": true,
+      "gateType": "auto",
+      "phaseType": "implementation",
+      "gateNoiseExpected": [],
+      "status": "pending",
+      "commits": [],
+      "commitHash": null,
+      "startedAt": null,
+      "completedAt": null,
+      "statusSince": null
+    }
+  ],
+  "currentPhaseIndex": 3,
+  "strikes": {
+    "phaseRetry": {},
+    "regression": 0,
+    "sameCategory": {}
+  },
+  "securityEvents": []
+}
