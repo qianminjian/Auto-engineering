@@ -735,6 +735,40 @@ class TestScaffoldCleanupOnError:
         # did_create_dst=True 时应清理
         assert not dst.exists()
 
+    def test_no_cleanup_when_dst_existed_before(self, tmp_path, monkeypatch):
+        """C2: dst 预先存在时,异常不会清理它（保护用户已有内容）.
+
+        设计: did_create_dst = not self.dst_path.exists() → 预先存在 → False
+        即使 cleanup_on_error=True,也不会清理已有目录。
+        """
+        from auto_engineering.init.scaffold import InitWorker
+
+        dst = tmp_path / "pre-existing"
+        dst.mkdir()
+        user_file = dst / "user-data.txt"
+        user_file.write_text("user content — must survive")
+
+        worker = InitWorker(
+            dst_path=dst,
+            project_type="library",
+            defaults=True,
+            skip_tasks=True,
+            quiet=True,
+            cleanup_on_error=True,
+            incremental=True,  # 允许非空目录
+        )
+
+        def boom(*args, **kwargs):
+            raise RuntimeError("simulated render failure")
+
+        monkeypatch.setattr(worker, "_phase_render", boom)
+        with pytest.raises(RuntimeError):
+            worker.execute()
+        # 预先存在的目录 + 用户文件必须保留
+        assert dst.exists()
+        assert user_file.exists()
+        assert user_file.read_text() == "user content — must survive"
+
 
 class TestHooksTaskRunner:
     """覆盖 hooks.py:33-77 TaskRunner 分支（when 条件 + shell/list 双模式）."""
