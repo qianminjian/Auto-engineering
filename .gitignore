@@ -6,6 +6,7 @@ uv.lock
 .DS_Store
 *.bak
 _scratch/
+_proc-use/
 .coverage
 htmlcov/
 .phase-execution/
