@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 @dataclass
 class ToolResult:
-    """工具执行结果。"""
+    """工具执行结果."""
 
     success: bool
     content: str
@@ -14,14 +14,14 @@ class ToolResult:
 
 
 class BaseTool(ABC):
-    """工具基类。"""
+    """工具基类. execute() 是 async — BaseAgent 通过 await 调用."""
 
     name: str = ""
     description: str = ""
     parameters: dict = {}
 
     @abstractmethod
-    def execute(self, **kwargs) -> ToolResult: ...
+    async def execute(self, **kwargs) -> ToolResult: ...
 
     def to_schema(self) -> dict:
         return {

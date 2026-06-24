@@ -1,30 +1,118 @@
-"""Git 工具."""
+"""Git 工具 — Phase 0.2 真接.
+
+3 个工具: GitStatus / GitCommit / GitDiff.
+"""
+from __future__ import annotations
+
+import subprocess
+from pathlib import Path
 
 from .base import BaseTool, ToolResult
 
 
-class GitStatusTool(BaseTool):
-    name = "git_status"
-    description = "查看 git 工作区和暂存区状态。"
-    parameters = {}
+def _run_git(args: list[str], cwd: str | None, timeout: int = 30) -> subprocess.CompletedProcess:
+    """Helper: 跑 git 命令 + timeout + 异常处理."""
+    return subprocess.run(
+        ["git", *args],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
 
-    def execute(self, **kwargs) -> ToolResult:
-        return ToolResult(success=True, content="")
+
+class GitStatusTool(BaseTool):
+    """Show git working tree status."""
+
+    name = "git_status"
+    description = "Show git status. Returns porcelain-format output."
+    parameters = {
+        "cwd": {"type": "string", "description": "Repository path (optional)"},
+    }
+
+    async def execute(self, **kwargs) -> ToolResult:
+        cwd = kwargs.get("cwd")
+        try:
+            result = _run_git(["status", "--porcelain"], cwd=cwd)
+            if result.returncode != 0:
+                return ToolResult(success=False, content="", error=result.stderr.strip())
+            return ToolResult(
+                success=True,
+                content=result.stdout.strip() or "(clean)",
+            )
+        except subprocess.TimeoutExpired:
+            return ToolResult(success=False, content="", error="git status timeout")
+        except Exception as exc:
+            return ToolResult(success=False, content="", error=str(exc))
 
 
 class GitCommitTool(BaseTool):
-    name = "git_commit"
-    description = "提交所有变更。"
-    parameters = {"message": {"type": "string", "description": "commit 信息"}}
+    """Commit all staged changes with a message."""
 
-    def execute(self, **kwargs) -> ToolResult:
-        return ToolResult(success=True, content="")
+    name = "git_commit"
+    description = "Stage all changes and commit with message."
+    parameters = {
+        "message": {"type": "string", "description": "Commit message"},
+        "cwd": {"type": "string", "description": "Repository path (optional)"},
+    }
+
+    async def execute(self, **kwargs) -> ToolResult:
+        cwd = kwargs.get("cwd")
+        message = kwargs.get("message", "")
+        try:
+            if not message:
+                return ToolResult(success=False, content="", error="commit message is empty")
+            add_result = _run_git(["add", "-A"], cwd=cwd)
+            if add_result.returncode != 0:
+                return ToolResult(
+                    success=False, content="",
+                    error=f"git add failed: {add_result.stderr.strip()}",
+                )
+            commit_result = _run_git(["commit", "-m", message], cwd=cwd)
+            if commit_result.returncode != 0:
+                return ToolResult(
+                    success=False, content="",
+                    error=f"git commit failed: {commit_result.stderr.strip()}",
+                )
+            return ToolResult(
+                success=True,
+                content=commit_result.stdout.strip() or "(commit created)",
+            )
+        except subprocess.TimeoutExpired:
+            return ToolResult(success=False, content="", error="git commit timeout")
+        except Exception as exc:
+            return ToolResult(success=False, content="", error=str(exc))
 
 
 class GitDiffTool(BaseTool):
-    name = "git_diff"
-    description = "查看当前变更的 diff。"
-    parameters = {"target": {"type": "string", "description": "比较目标"}}
+    """Show git diff for staged or unstaged changes."""
 
-    def execute(self, **kwargs) -> ToolResult:
-        return ToolResult(success=True, content="")
+    name = "git_diff"
+    description = "Show git diff. Default shows unstaged. Set staged=true for staged."
+    parameters = {
+        "staged": {"type": "boolean", "description": "Show staged diff (default false)"},
+        "target": {"type": "string", "description": "Compare against ref/branch (e.g. HEAD~1)"},
+        "cwd": {"type": "string", "description": "Repository path (optional)"},
+    }
+
+    async def execute(self, **kwargs) -> ToolResult:
+        cwd = kwargs.get("cwd")
+        staged = kwargs.get("staged", False)
+        target = kwargs.get("target")
+        try:
+            args = ["diff", "--stat", "-p"]
+            if staged:
+                args.append("--cached")
+            if target:
+                args.append(target)
+            result = _run_git(args, cwd=cwd)
+            if result.returncode != 0:
+                return ToolResult(success=False, content="", error=result.stderr.strip())
+            return ToolResult(
+                success=True,
+                content=result.stdout.strip() or "(no changes)",
+            )
+        except subprocess.TimeoutExpired:
+            return ToolResult(success=False, content="", error="git diff timeout")
+        except Exception as exc:
+            return ToolResult(success=False, content="", error=str(exc))
