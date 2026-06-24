@@ -1,0 +1,877 @@
+# Auto-Engineering init 子系统 — 培训材料
+
+> v1.0.0 | 2026-06-24
+
+---
+
+## 前言：init 子系统解决什么问题
+
+`ae init <project>` 是整个 Auto-Engineering 工具链的入口命令。AI 编码进入生产后，**新项目启动**和**存量项目接入**是高频动作，init 子系统专门解决这个场景的四类问题：
+
+| 问题 | 现象 | 解决方式 |
+|------|------|---------|
+| **骨架不一致** | 不同项目目录结构、配置千差万别，新人 onboarding 成本高 | 8 种项目类型模板（app-service/library/cli-tool/skill/hook/mcp-server/spec-doc/monorepo） |
+| **重复劳动** | 每次都要手写 `.gitignore`/`lefthook.yml`/`.github/workflows/ci.yml` | 一次交互生成完整骨架（含 Lefthook 6 道门 + CI 7 道门 + 测试分层） |
+| **存量项目接入** | 已存在文件不敢覆盖，怕破坏现有代码 | **增量模式**——只补充缺失文件，不动已有 |
+| **模板升级失控** | 团队内部模板各自分发，没有版本约束 | ae-template.yml 携带 `min_ae_version`，模板代码互相引用用 `!include`，replay 文件支持回放 |
+
+来源参考：Copier（Worker 模式 + answers）+ Cookiecutter（hooks + replay）+ Yeoman（composition）+ LangGraph（状态机）。
+
+---
+
+## 第一板块：`ae init` — 5 分钟搭建项目骨架
+
+### 解决的问题
+
+"每次开新项目都要手动创建目录、配置测试框架、写 CI、配 Lefthook。"
+
+### 使用方式
+
+```bash
+# 在目标目录的父目录执行
+$ ae init my-project
+# → 检测项目类型 → 加载 ae-template.yml → 交互问答 → 生成
+
+# 指定类型，跳过自动检测
+$ ae init my-project --type app-service
+
+# 非交互模式（CI/CD 场景）
+$ ae init my-project --type app-service --defaults
+
+# 存量项目接入（增量模式，只增不改）
+$ ae init . --incremental
+```
+
+### 8 种项目类型
+
+| 代号 | 类型 | 典型场景 | 默认技术栈 |
+|:----:|------|---------|-----------|
+| A | **Application/Service** | REST API、前端、后端、全栈 | TypeScript + pnpm + vitest |
+| B | **Library/SDK** | 可发布的库/包 | TypeScript / Python（双轨） |
+| C | **CLI Tool** | 命令行工具 | TypeScript + pnpm + commander |
+| D | **Skill** | Claude Code Skill（`/init 工程化` 这种） | Markdown + scripts/ |
+| E | **Hook** | Claude Code Hook（Lefthook/git hooks） | Python / Shell |
+| F | **MCP Server** | MCP 服务端 | TypeScript + @modelcontextprotocol/sdk |
+| G | **Spec/Doc** | 规范文档仓库（BEACON.md 体系） | Markdown + _scratch/ |
+| H | **Monorepo** | 多子项目 | pnpm workspaces + turbo |
+
+### 一次交互生成的内容
+
+```
+my-project/
+├── src/                      业务代码（与 tests/unit/ 镜像）
+├── tests/
+│   ├── unit/                 单元测试（≥75% 覆盖率）
+│   ├── integration/          集成测试
+│   └── __support__/          fixtures/mocks/conftest
+├── docs/                     项目文档
+├── design/
+│   ├── BEACON.md             项目明灯（设计基线）
+│   └── decisions/            ADR 架构决策记录
+├── _proc-use/                过程文件（gitignored）
+├── _scratch/                 临时调试产物（gitignored）
+├── .claude/
+│   ├── rules/                项目级规则
+│   └── settings.local.json   Claude Code 配置
+├── lefthook.yml              本地门禁（pre-commit + pre-push）
+├── justfile                  命令别名入口
+├── .github/workflows/
+│   └── ci.yml                GitHub Actions 7 道门
+├── .gitlab-ci.yml            可选（按 ci_platform 选择）
+├── package.json              统一命令入口（test/lint/build/coverage）
+├── pyproject.toml            Python 项目（uv + ruff + pytest）
+├── Cargo.toml / go.mod       Rust / Go 项目（按 language 选择）
+├── .gitignore
+├── .editorconfig
+├── .ae-answers.yml           init 答案记录（dev-loop 消费）
+├── CLAUDE.md                 项目信息 + AI 引导
+├── LICENSE
+└── README.md
+```
+
+### 存量项目：增量模式
+
+```
+$ ae init . --incremental
+检测到非空目录，包含 15 个已有文件。
+使用增量模式（只补充缺失文件，不修改已有文件）。继续？[Y/n]: Y
+
+扫描现有项目类型...
+已有: src/、package.json
+缺失: tests/、docs/、lefthook.yml、.claude/
+
+✓ 已补充 12 个文件
+⊘ 已跳过 15 个已有文件（含 .git/）
+```
+
+**关键安全约束**：
+- `.git/` 目录**永远跳过**（已有仓库的 git 历史不可覆盖）
+- `.ae-answers.yml` 如已存在则合并写入（保留旧字段，新增新字段）
+- `cleanup_on_error` 在增量模式下只删除本次新建的文件列表，**禁止**删除目标目录本身
+
+### CLI 标志全表
+
+| 标志 | 作用 | 默认 |
+|------|------|------|
+| `--type <A-H>` | 指定项目类型 | 自动检测 |
+| `--defaults` | 非交互模式（用 ae-template.yml 默认值） | 交互 |
+| `--force` | 允许覆盖非空目录 | 拒绝 |
+| `--incremental` | 增量模式（只增不改） | 关闭（新建模式） |
+| `--pretend` | 干跑模式（只输出不写盘） | 关闭 |
+| `--skip-tasks` | 跳过钩子任务（git init/install） | 关闭 |
+| `--no-cleanup` | 失败时不清理（保留产物用于调试） | 失败清理 |
+| `--from-answers <yml>` | 从已有答案文件恢复 | — |
+| `--quiet` | 静默输出 | 正常 |
+| `--overwrite` | 覆盖已存在文件（默认跳过） | 跳过 |
+
+---
+
+## 第二板块：5 阶段流水线
+
+init 命令背后是 InitWorker 的 5 阶段流水线。理解这 5 个阶段是理解 init 子系统设计的关键。
+
+```
+Phase 1     Phase 2     Phase 3       Phase 4       Phase 5
+DETECT  →   PROMPT  →   RENDER    →   TASKS     →   FINALIZE
+  │           │           │              │              │
+  ↓           ↓           ↓              ↓              ↓
+类型检测   加载模板     渲染到          钩子执行        原子移动
++ 前置检查  + 交互问答   临时目录       (git/init)      + 清理
+```
+
+### Phase 1: DETECT（类型检测 + 前置检查）
+
+**输入**：`dst_path`（用户提供的目标路径）
+
+**做什么**：
+1. 目标目录检查：存在且非空 → 抛 `TargetDirectoryError`（除非 `--force` 或 `--incremental`）
+2. 项目类型解析：优先级 `--type` > `ProjectDetector.detect()` > 交互选择
+3. 前置条件检查：`git`/`python3` 是否在 PATH（用 `shutil.which`，跨平台）
+
+**关键类**：
+- `ProjectDetector(target_dir)` — SST 扫描模式，按签名匹配项目类型
+- `FRAMEWORK_SIGNATURES` — 8 种类型的签名清单（monorepo > app-service 顺序很重要）
+- `ADVANCED_CHECKS` — 高级检查（如 `package.json` 含 `@modelcontextprotocol/sdk` 才是 mcp-server）
+
+**来源**：Copier Worker.detect() + Cookiecutter repo 校验。
+
+### Phase 2: PROMPT（加载模板 + 交互问答）
+
+**输入**：`project_type`
+
+**做什么**：
+1. `TemplateConfig.load(project_type)` — 解析 `ae-template.yml`
+2. 构建 `AnswersMap`：cli_overrides + previous（from-answers 注入）+ defaults
+3. `InteractivePrompt.run()` — 启动交互问答（两遍循环：简单类型优先 / 复杂类型后置）
+
+**关键类**：
+- `TemplateConfig` — 完整模板配置（envops / exclude / no_render / tasks / nested_templates）
+- `Question` — 单个问题（var_name / type / when / validator / default）
+- `AnswersMap` — 6 层优先级 ChainMap
+- `InteractivePrompt` — 交互编排（click 库）
+
+**来源**：Copier AnswersMap（ChainMap 6 层）+ Cookiecutter prompt_for_config（两遍循环）。
+
+### Phase 3: RENDER（多层模板渲染到临时目录）
+
+**输入**：`template_dirs`（多层目录）+ `context`（合并后的答案）
+
+**做什么**：
+1. 构建模板源目录列表：`_shared` + `_features/<lang>` + `_features/<feature>` + `<type_dir>`
+2. `TemplateRenderer.render_to(tmpdir)` — 遍历所有源目录，渲染到临时目录
+3. 文件名条件：如 `{% if use_typescript %}index.ts{% endif %}.jinja` 渲染后空字符串 → 跳过
+4. 文件冲突：`skip_if_exists` 列表 → 不覆盖 / `overwrite` → 强制覆盖 / `conflict_handler` → 回调
+5. 二进制文件直接复制（用 `binaryornot.check.is_binary` 检测）
+6. 文本文件渲染后保持原换行符风格（`\n` / `\r\n` 智能检测）
+
+**关键类**：
+- `TemplateRenderer(template_dirs, context, ...)` — 多层渲染引擎
+- `SandboxedEnvironment(undefined=StrictUndefined)` — 模板沙箱（防恶意 Python）
+- `_path_matcher` — pathspec GitWildMatchPattern（`.gitignore` 语义）
+
+**来源**：Copier `_render_folder()` + Cookiecutter `generate_files()`。
+
+### Phase 4: TASKS（钩子任务执行）
+
+**输入**：渲染好的 `tmpdir` + `tasks_before` + 内置钩子 + `tasks_after`
+
+**做什么**：
+1. `TaskRunner.run(tasks_before)` — 用户自定义前置钩子
+2. `_run_builtin_hooks(tmpdir)` — 内置初始化步骤：
+   - `git init -b main`（git < 2.28 自动回退）
+   - `git add -A`
+   - `<package_manager> install`（npm/pnpm/poetry/uv/cargo/go）
+   - `lefthook install`（如启用）
+   - `git commit -m "chore(init): scaffolded by ae init"`
+3. `TaskRunner.run(tasks_after)` — 用户自定义后置钩子
+
+**关键类**：
+- `TaskRunner(project_dir, current_phase="")` — 通用任务执行器
+- `Task` — 命令字符串（shell 模式）或列表（list 模式，无注入）
+- `_current_phase` — 阶段上下文（额外注入 `AE_PHASE` 环境变量）
+
+**错误传播**：每步检查 `returncode != 0` → raise `TaskExecutionError(command, returncode, stderr)`，用户能看到具体失败命令和 stderr。
+
+**来源**：Copier `_execute_tasks()` + Cookiecutter `hooks.py`。
+
+### Phase 5: FINALIZE（原子移动 + 清理）
+
+**输入**：临时目录 `tmpdir` + 目标 `dst_path`
+
+**做什么**：
+1. 把 `.ae-answers.yml` 写入 `tmpdir`
+2. replay 文件保存到 `~/.ae-replays/<project_type>/<timestamp>.yml`（用于 `--from-answers` 恢复）
+3. `shutil.copytree(tmpdir, dst_path, dirs_exist_ok=True)` — 整树复制
+4. context manager `__exit__` 清理临时目录（即使成功也清理）
+
+**错误处理**：
+- `InitInterruptedError`（Ctrl-C）→ `save_partial()` 保存到 `~/.ae-partial-answers.yml`，打印恢复命令
+- 其他 Exception → `cleanup_on_error=True` 时删除 dst_path（增量模式只删新建列表）
+- `__exit__` **始终清理**（移除早期 `if exc_val is not None` 条件，来源 Copier Worker）
+
+**来源**：Copier Worker._cleanup + Cookiecutter replay dump。
+
+---
+
+## 第三板块：模板资产体系
+
+### 三层目录结构
+
+```
+auto_engineering/init/templates/
+├── _shared/                          # 所有类型共享
+│   ├── .gitignore.jinja
+│   ├── .editorconfig.jinja
+│   ├── CLAUDE.md.jinja
+│   ├── LICENSE.jinja
+│   └── README.md.jinja
+│
+├── _features/                        # 可组合功能模块（Yeoman composition 借鉴）
+│   ├── typescript/                   # 语言特性
+│   │   ├── ae-feature.yml            # 声明式配置
+│   │   ├── package.json.jinja
+│   │   ├── tsconfig.json.jinja
+│   │   ├── eslint.config.js.jinja
+│   │   ├── prettier.config.js.jinja
+│   │   └── vitest.config.ts.jinja
+│   ├── python/                       # Python 特性
+│   │   ├── ae-feature.yml
+│   │   ├── pyproject.toml.jinja      # uv + ruff + pytest 合一
+│   │   └── ...
+│   ├── go/ rust/ bash/               # 其他语言
+│   ├── lefthook/                     # 跨语言 Lefthook 自适应
+│   ├── github-actions/               # CI 模板（GitHub Actions 7 道门）
+│   └── gitlab-ci/                    # CI 模板（GitLab）
+│
+└── <type>/                           # 8 种项目类型（A-H）
+    ├── ae-template.yml               # 问题 + 钩子定义
+    └── *.jinja                       # 类型特定模板
+```
+
+### 模板优先级与覆盖规则
+
+`_shared → _features → <type>` 三层按**优先级**叠加，**后面的覆盖前面的同名文件**：
+
+```
+_shared/.gitignore.jinja
+  ↓ (基础 gitignore)
+_features/typescript/.gitignore.jinja   # 如有
+  ↓ (补充 TS 相关)
+app-service/.gitignore.jinja             # 如有
+  ↓ (类型相关)
+最终输出 → .gitignore
+```
+
+新增 feature 只需在 `_features/<feature>/` 加目录 + `ae-feature.yml`，**不需要修改 scaffold.py**。
+
+### ae-template.yml 配置格式
+
+```yaml
+# templates/app-service/ae-template.yml
+
+# 内部配置字段（下划线前缀映射到 TemplateConfig 属性）
+_min_ae_version: "1.0.0"
+_exclude:
+  - "*.local"
+  - "coverage/"
+_skip_if_exists:
+  - ".env"
+_envops:
+  trim_blocks: true
+  lstrip_blocks: true
+_no_render:
+  - "*.png"
+  - "*.ico"
+_subdirectory: ""                  # 模板子目录（v1.0.0+，v1.0.0）
+
+_tasks:
+  - cmd: "echo 'custom before'"
+    stage: before
+  - cmd: ["npx", "eslint", "--init"]
+    stage: after
+
+_message_before: "🎬 生成 app-service 项目..."
+_message_after: "✨ 完成。运行 cd <name> && pnpm dev"
+
+_secret_questions:
+  - api_key
+
+# 问题字段（其他键作为 Question）
+project_name:
+  type: str
+  help: "项目名"
+  default: "my-app"
+
+use_typescript:
+  type: bool
+  help: "使用 TypeScript？"
+  default: true
+
+ci_platform:
+  type: choice
+  choices: ["github", "gitlab", "none"]
+  default: "github"
+  when: "{{ project_name != '' }}"   # Jinja2 条件
+```
+
+### `!include` 标签（配置复用）
+
+```yaml
+# templates/app-service/ae-template.yml
+_include_questions: !include "../_shared/common-questions.yml"
+
+project_name:
+  default: "my-app"
+```
+
+被 include 的文件与当前文件**字段合并**（不是覆盖），可分块组织大型配置。
+
+### ae-feature.yml 声明式
+
+```yaml
+# templates/_features/typescript/ae-feature.yml
+feature:
+  name: typescript
+  description: "TypeScript 语言支持（tsconfig + eslint + prettier + vitest）"
+  activates_when:
+    language: typescript
+    OR:
+      use_typescript: true
+
+questions:
+  ts_target:
+    type: choice
+    choices: ["ES2022", "ES2023"]
+    default: "ES2022"
+
+hooks:
+  pre_render:
+    - check_typescript_available
+```
+
+---
+
+## 第四板块：交互式问答与答案管理
+
+### Question dataclass
+
+```python
+@dataclass
+class Question:
+    var_name: str                     # 变量名（ae-template.yml 的 key）
+    type: str = ""                    # str|bool|int|float|json|yaml|choice
+    help: str = ""                    # 提示文本
+    default: Any = None               # 默认值
+    choices: list | dict | None       # choice 类型选项
+    when: str | bool = True           # Jinja2 条件
+    validator: str = ""               # Jinja2 校验模板
+    secret: bool = False              # 输入时隐藏
+    multiselect: bool = False
+    placeholder: str = ""
+```
+
+**类型推导**：当 `type=""` 时，从 `default` 自动推导：
+
+| default | 推导类型 |
+|---------|---------|
+| `True` / `False` | `bool` |
+| `42` | `int` |
+| `3.14` | `float` |
+| `"text"` | `str` |
+| `[...]` + `multiselect=True` | `json` |
+| `[...]` + `multiselect=False` | `yaml` |
+| `{...}` | `json` |
+
+### when 条件渲染
+
+`when` 是 Jinja2 模板字符串，渲染后字符串 `"false"/"no"/"0"/""` → 跳过，其他 → 显示。
+
+```yaml
+ci_platform:
+  type: choice
+  choices: ["github", "gitlab"]
+  when: "{{ project_type != 'spec-doc' }}"   # spec-doc 不问 CI
+```
+
+### validator 校验
+
+`validator` 是 Jinja2 模板，渲染返回错误信息字符串，非空 → 重试：
+
+```yaml
+project_name:
+  validator: "{% if not (value | match('^[a-z0-9-]+$')) %}项目名只能含小写字母、数字、横线{% endif %}"
+```
+
+### 6 层优先级 ChainMap
+
+`AnswersMap.combined()` 按以下优先级合并（高优先级覆盖低）：
+
+```
+1. cli_overrides     ─ 命令行 --flag 参数（最高）
+2. interactive       ─ 交互式问答输入
+3. previous          ─ .ae-answers.yml 加载的历史答案
+4. defaults          ─ ae-template.yml 默认值
+5. builtins          ─ 内置变量（_ae_version / _folder_name / sep / os）
+6. external          ─ 外部数据懒加载（--data-file 引用）
+```
+
+实际查找时（`get()`）按 1→6 顺序遍历，**首个非 None 值命中**。
+
+### from-answers 恢复
+
+```bash
+# 第一次生成时，replay 自动保存到 ~/.ae-replays/app-service/20260624-120000.yml
+# 第二次可用 --from-answers 恢复：
+$ ae init new-project --type app-service --from-answers ~/.ae-replays/app-service/20260624-120000.yml
+# → 跳过交互问答，直接用上次答案
+```
+
+**partial 恢复**（Ctrl-C 中断）：
+```bash
+# Ctrl-C 后答案保存到 ~/.ae-partial-answers.yml
+$ ae init my-project --from-answers ~/.ae-partial-answers.yml
+```
+
+### `ae-template.yml` 字段速查表
+
+| 字段（`_` 前缀） | TemplateConfig 属性 | 说明 |
+|----------------|---------------------|------|
+| `_min_ae_version` | `min_ae_version` | 模板要求的最小 ae 版本 |
+| `_exclude` | `exclude` | 排除文件列表（pathspec gitignore 语义） |
+| `_skip_if_exists` | `skip_if_exists` | 已存在则跳过 |
+| `_envops` | `envops` | Jinja2 环境参数（trim_blocks 等） |
+| `_no_render` | `no_render` | 标记文件只复制不渲染 |
+| `_subdirectory` | `subdirectory` | 模板子目录 |
+| `_tasks` | `tasks_before` / `tasks_after` | 钩子任务（按 stage 字段分流） |
+| `_secret_questions` | `secret_questions` | 标记为密码字段 |
+| `_message_before` | `message_before` | 渲染前提示 |
+| `_message_after` | `message_after` | 渲染后提示 |
+| `_nested_templates` | `nested_templates` | 嵌套模板变体（cookiecutter 模式） |
+| `_external_data` | `external_data` | 外部数据文件声明 |
+
+---
+
+## 第五板块：TDD 编码纪律
+
+> 来源：engineering-practices.md §1，与 TRAINING.md 公共。
+
+### 三步循环
+
+```
+RED:       写测试 → 运行确认 FAIL（不红=测试写错）
+GREEN:     最小实现 → 运行确认 PASS（不做推测功能）
+REFACTOR:  改结构不改行为 → 测试保持绿
+```
+
+### 合规保障
+
+```
+Agent prompt（软约束）: "先写测试，确认失败"
+  → Lefthook（硬约束）: commit 前 lint + test-unit
+    → CI Gate 5（最终防线）: 覆盖率 < 80% → 🛑 阻断合并
+```
+
+### 测试分层
+
+| 层 | 路径 | 覆盖率 | 范围 |
+|----|------|--------|------|
+| 单元 | `tests/unit/` | ≥75% | 单个函数 / 类 |
+| 集成 | `tests/integration/` | — | API 端到端 |
+| E2E | `tests/e2e/` | — | CLI 命令完整流程 |
+
+### 外部 API Mock
+
+调用第三方 API 必须用 mock 隔离（`pytest-mock` / `unittest.mock`），**禁止测试时真实调用付费 API**。
+
+### init 工程特有的 TDD 建议
+
+| 模块 | 测试策略 |
+|------|---------|
+| `errors.py` | 每个子类的 `exit_code` 验证 |
+| `config.py` | YAML 解析 + `!include` + 嵌套模板 |
+| `answers.py` | 6 层 ChainMap 优先级 + lazy external |
+| `prompts.py` | Click prompt 调用（用 click.testing.CliRunner mock） |
+| `renderer.py` | 路径穿越防护 + pathspec + 换行符保持 |
+| `hooks.py` | shell/list 模式 + extra_vars 双注入 |
+| `detector.py` | 8 种签名 + 高级检查 |
+| `scaffold.py` | 5 阶段流水线 E2E + 增量模式 + 失败清理 |
+
+---
+
+## 第六板块：Lefthook 本地门禁
+
+> 来源：engineering-practices.md §1.3，与 TRAINING.md 公共。
+
+### 预生成配置
+
+`ae init` 默认生成 `lefthook.yml`，包含 **6 道门**（按语言自适应）：
+
+```yaml
+# lefthook.yml（由 init 自动生成，按 language 自适应）
+pre-commit:
+  parallel: true
+  commands:
+    lint:
+      glob: "*.{ts,tsx,js,jsx}"
+      run: npx eslint {staged_files}
+      stage_fixed: true
+    format:
+      glob: "*.{ts,tsx,js,jsx,json,md}"
+      run: npx prettier --write {staged_files}
+      stage_fixed: true
+    test-unit:
+      run: pnpm vitest run --changed
+
+pre-push:
+  commands:
+    type-check:
+      run: npx tsc --noEmit
+    test:
+      run: pnpm test
+    coverage:
+      run: pnpm test:coverage
+```
+
+### 激活命令
+
+```bash
+# ae init 生成 lefthook.yml 后，需要手动激活（一次性）
+$ lefthook install
+```
+
+### Python 项目变体
+
+```yaml
+pre-commit:
+  parallel: true
+  commands:
+    lint:
+      glob: "*.py"
+      run: uv run ruff check --fix {staged_files}
+      stage_fixed: true
+    format:
+      glob: "*.py"
+      run: uv run ruff format {staged_files}
+      stage_fixed: true
+    test-unit:
+      run: uv run pytest tests/unit -q
+
+pre-push:
+  commands:
+    type-check:
+      run: uv run mypy src/
+    test:
+      run: uv run pytest
+    coverage:
+      run: uv run pytest --cov=src --cov-fail-under=80
+```
+
+---
+
+## 第七板块：CI 云端门禁（7 道门）
+
+> 来源：engineering-practices.md §1 + TRAINING.md 公共。
+
+### 7 道门流水线
+
+```
+Gate 0: semgrep ci          安全红线 🛑
+Gate 1: lint                代码规范 🤖
+Gate 2: type-check          类型检查 🤖
+Gate 3: contract-diff       契约一致性 🤖
+Gate 4: test                全量测试 🤖
+Gate 5: coverage ≥80%       覆盖率 🛑
+Gate 6: build               构建验证 🤖
+```
+
+Gate 0-4 和 Gate 6 由确定性工具自动判定，不消耗 LLM Token。
+
+### GitHub Actions 模板
+
+`ae init` 默认生成 `.github/workflows/ci.yml`，包含 7 道门：
+
+```yaml
+name: CI
+on: [push, pull_request]
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npm ci
+
+      # Gate 0: semgrep
+      - uses: returntocorp/semgrep-action@v1
+
+      # Gate 1: lint
+      - run: npm run lint
+
+      # Gate 2: type-check
+      - run: npm run type-check
+
+      # Gate 4: test
+      - run: npm test
+
+      # Gate 5: coverage
+      - run: npm run test:coverage
+
+      # Gate 6: build
+      - run: npm run build
+```
+
+### 防御纵深
+
+```
+Agent prompt（软约束）
+  → Lefthook（硬约束，本地）
+    → CI 7 道门（最终防线，云端，不可绕过）
+```
+
+---
+
+## 第八板块：多 Agent 并行（init 工程的视角）
+
+> 来源：TRAINING.md 第五板块 + engineering-practices.md §5。init 子系统本身**不涉及**多 Agent 编排（这是 dev-loop 子系统的职责），但 init 生成的**项目**会在后续 dev-loop 中使用多 Agent。
+
+### init 生成项目时的多 Agent 准备
+
+`ae init` 默认生成的 `.claude/rules/` 包含三个角色的 prompt 模板（在 spec-doc 项目类型下不生成）：
+
+```
+.claude/rules/
+├── architect.md      # 需求分析 + 模式分流
+├── developer.md      # TDD 实现 + 自我审查请求
+└── critic.md         # 独立审查 + Fresh Context
+```
+
+### 多 Agent 启动流程（dev-loop 视角，非 init）
+
+```
+Architect 分析需求
+  → 创建契约文件 design/contracts/{module}-api.yaml
+  → 派生 Developer-Agent（FE，worktree 隔离）
+  → 派生 Developer-Agent（BE，worktree 隔离）
+  → 两者并行开发，按契约实现
+  → 完成后 Architect 收集结果 → 集成测试 → 验证契约一致性
+  → 发现问题 → 派生 Critic 审查 → 修复 → 重验
+  → 全部通过 → 完成
+```
+
+### Architect 启动判据
+
+**满足以下全部条件**才派生并行 Agent：
+
+| 条件 | 阈值 |
+|------|------|
+| 涉及独立模块数 | ≥2 |
+| 共享文件 | 无 |
+| 工作量 | >30 分钟 |
+
+否则直接单 Agent 开发。
+
+---
+
+## 第九板块：安全红线（init 工程特有视角）
+
+> 来源：engineering-practices.md §4.5 + TRAINING.md 第六板块。init 工程额外关注**模板渲染层**的安全。
+
+### 通用 6 条红线
+
+| 红线 | 检测 |
+|------|------|
+| R1: 密钥不进代码 | gitleaks |
+| R2: SQL 拼接 | semgrep |
+| R3: XSS（innerHTML） | semgrep |
+| R4: 命令注入（exec 拼接） | semgrep |
+| R5: 路径穿越 | semgrep |
+| R6: 硬编码凭据 | gitleaks |
+
+### init 特有的安全关注
+
+#### 1. 路径穿越防护（renderer.py）
+
+```python
+# auto_engineering/init/renderer.py
+dst_dir_real = dst_dir.resolve()
+if not dst_file.resolve().is_relative_to(dst_dir_real):
+    raise TemplateRenderError(str(src_file), ValueError("路径穿越"))
+```
+
+**为什么必须**：`{% if true %}../../../etc/passwd{% endif %}.jinja` 渲染后可能写出目标目录。
+
+**macOS 陷阱**：`path.resolve()` 不展开符号链接（`/var` → `/private/var` 软链），所以用 `dst_file.resolve()` 而非 `path.resolve()`。
+
+#### 2. StrictUndefined（未定义变量）
+
+```python
+# 启用 StrictUndefined，避免模板静默渲染空字符串
+self.env = SandboxedEnvironment(
+    undefined=StrictUndefined,
+    **(envops or {"keep_trailing_newline": True}),
+)
+```
+
+**为什么必须**：默认 `Undefined` 会把 `{{ undefined_var }}` 渲染成空字符串，导致 `{% if undefined_var %}` 误判。
+
+#### 3. SandboxedEnvironment（模板沙箱）
+
+```python
+from jinja2.sandbox import SandboxedEnvironment
+```
+
+**为什么必须**：默认 Jinja2 Environment 允许模板访问 `__class__`、`__init__`、`__globals__` 等敏感属性，可执行任意 Python。
+
+#### 4. Task list 模式（无 shell 注入）
+
+```yaml
+# 推荐：用 list 模式避免 shell 注入
+_tasks:
+  - cmd: ["npm", "install", "--save-dev", "{{ package }}"]
+
+# 谨慎：用 str 模式（shell 解析）
+_tasks:
+  - cmd: "npm install --save-dev {{ package }}"   # package 含特殊字符可能被注入
+```
+
+**判定**：list 模式逐元素渲染，**无 shell 解析**；str 模式走 shell，需确保变量值可信。
+
+#### 5. hook 命令失败必报错
+
+```python
+# 内置钩子每步检查 returncode
+result = subprocess.run(["git", "init", "-b", "main"], cwd=tmpdir, ...)
+if result.returncode != 0:
+    raise TaskExecutionError("git init", result.returncode, result.stderr)
+```
+
+**为什么不静默**：git init 失败但假装成功会让用户在错误状态下继续编码，发现问题时已晚。
+
+#### 6. .env 文件永远跳过
+
+```yaml
+# ae-template.yml 默认 exclude
+_exclude:
+  - ".env"
+  - ".env.*"
+```
+
+**为什么必须**：避免把包含真实凭据的 `.env` 文件渲染进新项目。
+
+---
+
+## 三类项目使用示例
+
+### 简单项目：单人 CLI 小工具
+
+```bash
+# 1. 初始化
+$ mkdir my-cli && cd my-cli
+$ ae init . --type cli-tool --defaults
+# → 生成 Node.js CLI 项目（package.json + commander + vitest）
+
+# 2. 启用 TDD
+$ /project:tdd    # 选择 Strict 模式
+
+# 3. 激活 Lefthook
+$ lefthook install
+
+# 4. 编码（TDD）
+$ code src/commands/hello.ts
+$ pnpm vitest     # RED → GREEN → REFACTOR
+$ git add -A
+$ git commit -m "feat: add hello command"
+# → Lefthook 自动跑 lint + test-unit → 通过 → 提交
+
+# 5. 推送
+$ git push
+# → CI 7 道门 → 通过 → 可合并
+```
+
+**使用功能**：init 工程、TDD、lefthook、CI。
+**不使用**：多 Agent 并行（单人项目不需要）。
+
+### 中等项目：前后端分离
+
+```bash
+# 1. 初始化前后端两个项目
+$ mkdir my-app/{frontend,backend}
+$ ae init my-app/frontend --type app-service --defaults --language typescript
+$ ae init my-app/backend  --type app-service --defaults --language python
+
+# 2. 在 frontend/ 启用 TDD
+$ cd my-app/frontend && /project:tdd    # Strict
+$ cd ../backend      && /project:tdd    # Strict
+
+# 3. 激活 Lefthook（两个项目都激活）
+$ cd my-app/frontend && lefthook install
+$ cd ../backend      && lefthook install
+
+# 4. 启动多 Agent 并行开发
+# （详见 dev-loop 培训材料）
+```
+
+**使用功能**：init 工程（两个子项目）、TDD、lefthook、CI、多 Agent 并行。
+
+### 复杂项目：Monorepo + 多 Agent
+
+```bash
+# 1. Monorepo 初始化
+$ mkdir my-platform && cd my-platform
+$ ae init . --type monorepo --defaults
+
+# 自动生成结构：
+# my-platform/
+# ├── packages/
+# │   ├── core/        # Python 引擎
+# │   ├── dashboard/   # React 前端
+# │   └── cli/         # Node.js CLI
+# ├── pnpm-workspace.yaml
+# ├── turbo.json
+# └── lefthook.yml
+
+# 2. 启用多 Agent 并行
+# （Architect 分析 → 派生 Developer-Agent-core + Developer-Agent-dashboard + Developer-Agent-cli → worktree 隔离 → 并行 TDD → Critic 审查 → 集成验证）
+
+# 3. CI 配置（Monorepo 自动用 turbo 增量构建）
+$ git push
+# → CI 7 道门 → turbo run lint test build（只构建受影响包）
+```
+
+**使用功能**：init 工程（monorepo）、TDD、lefthook、CI、多 Agent 并行、Contract 一致性。
+
+---
+
+## 附：init 工程与其他子系统的边界
+
+| 子系统 | 职责 | 与 init 的边界 |
+|--------|------|--------------|
+| **init** | 项目骨架生成（一次性） | init 输出 `.ae-answers.yml` 给 dev-loop 消费 |
+| **dev-loop** | 单需求开发循环（Architect → Developer → Critic） | dev-loop 读 init 的 `.ae-answers.yml` 知道项目环境 |
+| **gates** | 质量门禁（lefthook + CI 配置） | init 生成 gates 配置（lefthook.yml + ci.yml） |
+| **agents** | Agent 角色 prompt 模板 | init 在 `.claude/rules/` 复制 agent prompt |
+| **runtime** | Agent 运行时 | dev-loop 启动 runtime；init 不涉及 |
+| **templates** | Jinja2 模板资产 | init 拥有 templates/，其他子系统不修改 |
+
+**关键交接**：init 完成 → dev-loop 启动。dev-loop 通过 `.ae-answers.yml`（由 init 生成）了解项目环境（package_manager / test_runner / use_typescript 等），无需重新检测。
