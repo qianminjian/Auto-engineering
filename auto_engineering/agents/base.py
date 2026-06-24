@@ -50,6 +50,7 @@ class BaseAgent:
         task: Task,
         ctx: TaskContext,
         cancellation: Any = None,
+        token_tracker: Any = None,
     ) -> TaskResult:
         """执行 task: LLM 调用循环 + 工具循环 + 输出解析.
 
@@ -67,9 +68,10 @@ class BaseAgent:
             3. 超 max_tool_calls → 抛 MAX_TOOL_CALLS_EXCEEDED
 
         Args:
-            task         — Task dataclass(description/expected_output/output_channels/...)
-            ctx          — TaskContext(state/inputs/outputs)
-            cancellation — 可选 CancellationToken(协作式取消)
+            task         — Task dataclass
+            ctx          — TaskContext
+            cancellation — CancellationToken(可选)
+            token_tracker — TokenTracker(可选). 调用后累加 LLMUsage.超 max_tokens 抛 BUDGET_EXCEEDED.
 
         Returns:
             TaskResult(values/raw_response/tool_calls/task_id/agent_type)
@@ -77,6 +79,7 @@ class BaseAgent:
         Raises:
             AEError(INVALID_AGENT_OUTPUT)    — LLM 输出无 JSON
             AEError(MAX_TOOL_CALLS_EXCEEDED) — 工具循环超限
+            AEError(BUDGET_EXCEEDED)          — token 超限
             Exception via cancellation.check() — 用户取消
         """
         messages: list[dict] = [
@@ -96,6 +99,10 @@ class BaseAgent:
                 messages=messages,
                 tools=[t.to_schema() for t in self.tools] if self.tools else None,
             )
+
+            # Phase 1.3: TokenTracker 累加 + 超阈值抛错
+            if token_tracker is not None:
+                token_tracker.add(response)  # 超 max_tokens 抛 BUDGET_EXCEEDED
 
             if response.stop_reason == "tool_use" and response.tool_use_blocks:
                 tool_results: list[dict] = []
