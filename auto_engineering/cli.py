@@ -169,11 +169,8 @@ def _install_sigint_handler(token: CancellationToken) -> None:
     def _handler(sig, frame):
         token.cancel()
 
-    try:
+    with contextlib.suppress(ValueError, OSError):
         signal.signal(signal.SIGINT, _handler)
-    except (ValueError, OSError):
-        # 非主线程调用 signal.signal() 会抛 ValueError,静默忽略
-        pass
 
 
 # ============================================================
@@ -330,7 +327,7 @@ def _run_loop_engine(
             cancellation,
             progress,
             max_tokens,
-            token_tracker=None,  # Phase 1.3 token_tracker 由 dev_loop 命令创建后传入;此处留 None 简化
+            token_tracker=None,  # Phase 1.3: dev_loop 创建后传入,此处 None 简化
         )
     except AEError as e:
         if e.code == ErrorCode.TASK_CANCELLED:
@@ -488,7 +485,7 @@ def init(
             click.echo(f"✓ 项目已生成: {result.dst_path}")
     except Exception as e:
         click.echo(f"✗ 初始化失败: {e}", err=True)
-        raise SystemExit(1)
+        raise SystemExit(1) from e
 
 
 @main.command()
@@ -563,7 +560,7 @@ def dev_loop(
             f"{_CATEGORY_FRIENDLY_PREFIX[category]} {e.message}",
             err=True,
         )
-        raise SystemExit(exit_code)
+        raise SystemExit(exit_code) from None
 
     # 多 Agent (未来)
     if multi:
@@ -598,7 +595,7 @@ def dev_loop(
                 "Loop drained. Resume with: ae checkpoint resume <id>",
                 err=True,
             )
-        raise SystemExit(exit_code)
+        raise SystemExit(exit_code) from None
 
     # 总结输出
     click.echo(
