@@ -214,6 +214,54 @@ def _emit_stage_done(stage: str, elapsed: float, tokens: int = 0) -> None:
 # ============================================================
 
 
+def _build_runtime(requirement: str) -> Any:
+    """根据 ANTHROPIC_API_KEY 构建 runtime.
+
+    - 有 API key → AgentRuntime + 注册 architect/developer/critic
+    - 无 API key → ScriptedMockRuntime(fallback,测试友好)
+    """
+    import os
+
+    from auto_engineering.agents.architect import ArchitectAgent
+    from auto_engineering.agents.critic import CriticAgent
+    from auto_engineering.agents.developer import DeveloperAgent
+    from auto_engineering.llm.anthropic_provider import AnthropicProvider
+    from auto_engineering.runtime.mock import ScriptedMockRuntime
+    from auto_engineering.runtime.runtime import AgentRuntime
+
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        # Fallback: 测试/无 key 环境
+        return ScriptedMockRuntime(
+            {
+                "architect": {
+                    "plan": f"[MOCK PLAN for: {requirement}]",
+                    "file_list": ["mock_file.py"],
+                    "batch_plan": [],
+                    "contracts": {},
+                },
+                "developer": {
+                    "files_changed": ["mock_file.py"],
+                    "commit_hash": "mock-commit-001",
+                    "test_results": {"passed": 1, "failed": 0},
+                },
+                "critic": {
+                    "verdict": "APPROVE",
+                    "findings": [],
+                    "critic_feedback": "",
+                },
+            }
+        )
+
+    # 真实 LLM 模式
+    llm = AnthropicProvider(api_key=api_key)
+    runtime = AgentRuntime()
+    runtime.register("architect", lambda: ArchitectAgent(llm=llm))
+    runtime.register("developer", lambda: DeveloperAgent(llm=llm))
+    runtime.register("critic", lambda: CriticAgent(llm=llm))
+    return runtime
+
+
 @dataclass
 class LoopRunResult:
     """_run_loop_engine 返回值."""
@@ -237,34 +285,12 @@ def _run_loop_engine(
 ) -> LoopRunResult:
     """真实驱动 LoopEngine.run().
 
-    v1.0 实现: 调真实的 LoopEngine + ScriptedMockRuntime(替代 LLM 调用).
+    P1.2: 根据 ANTHROPIC_API_KEY 自动选择 AgentRuntime(真 LLM) 或 ScriptedMockRuntime.
     dry-run 模式: 只跑 architect stage 后立即返回.
     """
     from auto_engineering.engine import LoopEngine, build_dev_loop_graph
 
-    # 注: dev-loop 阶段默认 MockRuntime — 真实 LLM 调用在 Phase 3+ 接 AgentRuntime
-    from auto_engineering.runtime.mock import ScriptedMockRuntime
-
-    runtime = ScriptedMockRuntime(
-        {
-            "architect": {
-                "plan": f"[MOCK PLAN for: {requirement}]",
-                "file_list": ["mock_file.py"],
-                "batch_plan": [],
-                "contracts": {},
-            },
-            "developer": {
-                "files_changed": ["mock_file.py"],
-                "commit_hash": "mock-commit-001",
-                "test_results": {"passed": 1, "failed": 0},
-            },
-            "critic": {
-                "verdict": "APPROVE",
-                "findings": [],
-                "critic_feedback": "",
-            },
-        }
-    )
+    runtime = _build_runtime(requirement)
 
     engine = LoopEngine(
         build_dev_loop_graph(),
@@ -276,16 +302,7 @@ def _run_loop_engine(
     if dry_run:
         # dry-run: 只跑 architect → 输出 plan → 退出
         click.echo("[DRY RUN] only architect stage will execute")
-        runtime_dry = ScriptedMockRuntime(
-            {
-                "architect": {
-                    "plan": f"[DRY PLAN] {requirement}",
-                    "file_list": [],
-                    "batch_plan": [],
-                    "contracts": {},
-                }
-            }
-        )
+        runtime_dry = _build_runtime(requirement)
         engine_dry = LoopEngine(
             build_dev_loop_graph(),
             runtime=runtime_dry,
