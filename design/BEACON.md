@@ -1,4 +1,4 @@
-> 创建：2026-06-24 | 更新：2026-06-24 | 阶段：init 完成 + dev-loop Phase 1 编码完成
+> 创建：2026-06-24 | 更新：2026-06-24 | 阶段：Phase 1 编码完成 → Plan A bug 修复完成
 
 ## 目标与成功标准
 
@@ -38,18 +38,21 @@
 
 ## 当前状态
 
-**阶段：** dev-loop Phase 1 编码完成 → 待 Phase 2 (Runtime + Guardrail)
+**阶段：** Phase 1 编码完成 → Plan A bug 修复完成 → 待 Phase 2 (Runtime + Guardrail)
 
 **Phase 1 产出：**
 - `auto_engineering/errors.py` — ErrorCode Enum + AEError 族（50 行）
 - `auto_engineering/engine/{state,checkpoint,graph,messages,loop}.py` — 5 文件 (~600 行)
-- `tests/{conftest,test_loop_state,test_checkpoint,test_graph,test_loop}.py` — 5 文件，33 测试全绿
+- `tests/{conftest,test_loop_state,test_checkpoint,test_graph,test_loop}.py` — 5 文件，34 测试全绿
 - 自身覆盖率：state 100% / messages 100% / checkpoint 89% / graph 95% / loop 82% / errors 87%
 
-**v3.0 → v3.1 修复：**
-- §3.1 render_description 空值整行删除
-- §2.1 run() 退出前同步 checkpoint.status
-- §三 build_dev_loop_graph 补 developer→critic 边
+**v3.0 → v3.1 修复（D1-D6 全部完成）：**
+- D1 §3.1 build_dev_loop_graph 补 developer→critic 边（f4f9b9c 修复）
+- D2 §3.1 render_description 空值整行删除（f4f9b9c 修复）
+- D3 §2.1 run() 退出前同步 checkpoint.status（f4f9b9c 修复）
+- D4 §2.1 run() while 循环 status.startswith('interrupt') 时 break（v1.1 Plan A.01 TDD 修复，test_interrupt_after_breaks_loop）
+- D5 §7.4 → §7.4.1 增量差异小节，消除 §2.1 与 §7.4 run() 互指（v1.1 Plan A.01）
+- D6 §八 8.1 parse_agent_output 注释说明 partial JSON 处理（v1.1 Plan A.01，Phase 3 实现）
 
 **清理（决策 1C）：**
 - 删 `crew/`, `contracts/`, `tasks/`, `runtime/registry.py`, `runtime/messages.py`, 旧 `engine/*.py`
@@ -59,7 +62,7 @@
 **审计报告：**
 - `design/v1.0-LOOP-AUDIT.md` — dev-loop 初版（17 优化点）
 - `design/v1.0-AUDIT-SUPPLEMENT.md` — dev-loop 补充（10 优化点）
-- `design/v1.0-LOOP.md §十一` — dev-loop 第三轮 bug 修复记录
+- `design/v1.0-LOOP.md §十一` — dev-loop 第三轮 + 第四轮 bug 修复记录
 - `design/v1.0-INIT.md §1.7` — init 实现偏差审计（21 偏差项）
 - `design/v1.0-INIT.md §二` — init 修复实施计划
 
@@ -71,6 +74,7 @@
 
 | 日期 | 变更 | 原因 |
 |------|------|------|
+| 2026-06-24 | Plan A bug 修复完成（D1-D6 v3.0 → v3.1） | 第四轮审计发现 6 处设计/代码不一致；D4 interrupt_after TDD 修复，新增 test_interrupt_after_breaks_loop |
 | 2026-06-24 | dev-loop Phase 1 编码完成 | 33 测试全绿；v3.0 → v3.1 三处 bug 修复 |
 | 2026-06-24 | 现状清理：删 crew/contracts/tasks/runtime/registry+messages；同步 SHARED.md v3.0 | 占位符命名与 v3.0 冲突 + 文档间不一致 |
 | 2026-06-24 | init 深度审计：21 个偏差项，设计文档更新 + 修复计划 | 对照设计+实现+Copier/Cookiecutter/Yeoman 源码逐模块检查 |

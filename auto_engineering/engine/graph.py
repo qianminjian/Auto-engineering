@@ -163,6 +163,10 @@ def build_dev_loop_graph() -> StageGraph:
     """开发循环图: architect → developer → critic → (APPROVE→END | MAJOR→developer).
 
     三个 Stage 的 input/output channels 与 v3.0 §2.2 LoopState 字段对齐.
+
+    v3.1 D1 修复(f4f9b9c): 显式注册 add_edge('developer', 'critic').
+    原 v3.0 设计漏此边,导致 next_stage() 在 developer 后查不到固定边 → 返回 None
+    → 循环在 developer 后立即 done,critic 永远不被调度.
     """
     g = StageGraph()
 

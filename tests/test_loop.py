@@ -116,3 +116,31 @@ def test_resume_无_store_抛_CHECKPOINT_LOAD_FAILED(checkpoint_dir):
     with pytest.raises(AEError) as exc_info:
         run_async(engine.resume("some-uuid"))
     assert exc_info.value.code == ErrorCode.CHECKPOINT_LOAD_FAILED
+
+
+# ----- interrupt_after (D4 修复) -----
+
+def test_interrupt_after_breaks_loop(checkpoint_dir):
+    """D4: while 循环在 status=='interrupt_after' 时必须 break,不再进入下一轮.
+
+    旧 v3.0 设计: tick() 不检查 status,while 继续 → interrupt_after 后还会再调度一次 Stage,
+    违反中断语义.修复后:after_tick 设置 status='interrupt_after',run() 退出循环.
+    """
+    runtime = ScriptedMockRuntime({
+        "architect": {"plan": "p", "file_list": ["x.py"], "batch_plan": [], "contracts": {}},
+        "developer": {"files_changed": ["x.py"], "commit_hash": "abc", "test_results": {}},
+        "critic": {"verdict": "APPROVE", "findings": [], "critic_feedback": ""},
+    })
+    engine = LoopEngine(
+        build_dev_loop_graph(),
+        runtime=runtime,
+        checkpoint_dir=checkpoint_dir,
+        interrupt_after={"developer"},
+    )
+    result: LoopResult = run_async(engine.run("build x", max_steps=10))
+
+    assert result.status == "interrupt_after"
+    # architect + developer 后中断,critic 不应该被调度
+    assert runtime.call_log == ["architect", "developer"]
+    assert result.total_steps == 2
+    assert result.state.verdict == ""  # critic 未执行

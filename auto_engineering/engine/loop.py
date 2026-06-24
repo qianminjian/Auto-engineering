@@ -173,6 +173,10 @@ class LoopEngine:
 
                 if self.status == "done":
                     break
+                # v3.1 D4 修复: interrupt_after 命中后必须 break,
+                # 否则 while 会再次进入 tick() 调度下一 Stage,违反中断语义.
+                if self.status.startswith("interrupt"):
+                    break
 
             # 同步最终 status 到 checkpoint(确保 LoopResult 准确反映终止原因)
             self.checkpoint.status = self.status
@@ -227,9 +231,8 @@ class LoopEngine:
 
         if self.interrupt_after and self.current_task.name in self.interrupt_after:
             self.status = "interrupt_after"
-            # 注意: interrupt_after 在 while 循环中下次 tick() 会读到 status='interrupt_after',
-            # 但 tick() 不检查 status. 需 LoopEngine.run() 在 after_tick 后 break.
-            # 当前实现: tick() 不检查,while 继续. 这是 v3.0 设计选择,保持原样.
+            # v3.1 D4 修复: run() 的 while 循环在 after_tick 之后检测到 status='interrupt_after' 立即 break,
+            # 不再进入下一轮 tick(). 中断语义由 run() 统一处理.
 
     async def resume(self, checkpoint_id: str) -> LoopResult:
         """从 checkpoint 恢复. 加载 → 设置 self.checkpoint → run().
