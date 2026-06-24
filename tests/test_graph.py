@@ -142,3 +142,43 @@ def test_builder_链式返回_self_支持链式调用():
     s = Stage(name="a", agent_type="a", description_template="x", expected_output="y")
     result = g.add_stage(s).add_edge("a", "b").set_start("a")
     assert result is g
+
+
+# ----- v3.1 B5 修复: Stage name collision 防御 -----
+
+def test_name_collision_raises():
+    """B5: StageGraph.add_stage 拒绝保留名 (__start__/__end__) 作为 Stage name.
+
+    Why: 这些名是 LangGraph 风格 sentinel,被 next_stage() 特殊处理.
+    如果 Stage 用同名,会在首 Stage 判定或 END 判定时与 sentinel 冲突,导致调度混乱.
+    """
+    for reserved in (StageGraph.START, StageGraph.END):
+        g = StageGraph()
+        s = Stage(
+            name=reserved,
+            agent_type="x",
+            description_template="x",
+            expected_output="y",
+        )
+        with pytest.raises(ValueError) as exc_info:
+            g.add_stage(s)
+        assert reserved in str(exc_info.value)
+
+
+def test_add_edge_引用_END_sentinel_不报错():
+    """B5: add_edge 用 END sentinel 作为目标是合法的(表示终止)."""
+    g = StageGraph()
+    s = Stage(name="a", agent_type="a", description_template="x", expected_output="y")
+    g.add_stage(s)
+    # END 作为 to_stage 应被允许(语义:终止)
+    g.add_edge("a", StageGraph.END)
+    assert g.edges["a"] == StageGraph.END
+
+
+def test_add_edge_引用_START_sentinel_报错():
+    """B5: add_edge 不应允许 START sentinel 作为目标(语义上没有入口固定边)."""
+    g = StageGraph()
+    s = Stage(name="a", agent_type="a", description_template="x", expected_output="y")
+    g.add_stage(s)
+    with pytest.raises(ValueError):
+        g.add_edge("a", StageGraph.START)

@@ -144,3 +144,42 @@ def test_interrupt_after_breaks_loop(checkpoint_dir):
     assert runtime.call_log == ["architect", "developer"]
     assert result.total_steps == 2
     assert result.state.verdict == ""  # critic 未执行
+
+
+# ----- v3.1 B6 修复: resume() 校验 checkpoint.status -----
+
+def test_resume_with_done_checkpoint_raises(checkpoint_dir):
+    """B6: resume() 拒绝从 status='done' 的 checkpoint 恢复.
+
+    Why: done 表示循环已正常结束,resume 只会触发空跑或重复终止.
+    应抛 AEError 让用户明确知道无需 resume.
+    """
+    runtime = ScriptedMockRuntime({
+        "architect": {"plan": "p", "file_list": ["x.py"], "batch_plan": [], "contracts": {}},
+        "developer": {"files_changed": ["x.py"], "commit_hash": "abc", "test_results": {}},
+        "critic": {"verdict": "APPROVE", "findings": [], "critic_feedback": ""},
+    })
+    engine = LoopEngine(build_dev_loop_graph(), runtime=runtime, checkpoint_dir=checkpoint_dir)
+
+    # 第一次 run 完成(状态变成 done)
+    result = run_async(engine.run("build x", max_steps=10))
+    assert result.status == "done"
+
+    # 第二次 resume 应抛错(checkpoint.status='done')
+    with pytest.raises(AEError) as exc_info:
+        run_async(engine.resume(result.checkpoint_id))
+    assert "done" in str(exc_info.value.message).lower() or "cannot resume" in str(exc_info.value.message).lower()
+
+
+def test_resume_with_pending_checkpoint_works(checkpoint_dir):
+    """B6 反向: pending checkpoint 可正常 resume(不阻塞正常路径)."""
+    runtime = StepLimitedMockRuntime(major_count=1)
+    engine1 = LoopEngine(build_dev_loop_graph(), runtime=runtime, checkpoint_dir=checkpoint_dir)
+    result1 = run_async(engine1.run("build x", max_steps=2))
+
+    # out_of_steps 状态 → 应可 resume
+    assert result1.status == "out_of_steps"
+
+    # pending/interrupted/drained/out_of_steps 都允许 resume
+    result2 = run_async(engine1.resume(result1.checkpoint_id))
+    assert result2.status == "done"

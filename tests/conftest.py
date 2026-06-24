@@ -2,6 +2,8 @@
 
 Phase 1 不调 LLM,所有 Agent 行为用 MockRuntime 替代.
 Phase 2+ 接真实 AgentRuntime 后,本文件可能缩减为仅保留 checkpoint_dir fixture.
+
+v3.1 B3: CheckpointStore 实现 __enter__/__exit__,测试中可用 with 模式消除 ResourceWarning.
 """
 
 import asyncio

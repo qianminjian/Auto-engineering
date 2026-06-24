@@ -7,6 +7,16 @@
 
 v3.0 §3.1 bug 修复: render_description 遇空字符串值时整行删除,
     避免 developer 模板 "上一轮审查反馈: {critic_feedback}" 首轮渲染产生空行.
+
+v3.1 B 类修复 (Plan A Phase 2):
+    B5 (P2): add_stage 拒绝保留名 (__start__/__end__) 作为 Stage name.
+        Why: 这些名是 LangGraph 风格 sentinel,被 next_stage() 特殊处理.
+        add_edge 拒绝 START 作为目标(START 是入口 sentinel,不应作为边的终点).
+        END 作为目标合法(语义:终止).
+
+v3.1 P3 设计选择(不修):
+    B7 design choice: build_dev_loop_graph 硬编码 architect→developer→critic
+        Why: v1.0 范围,Phase 2+ 引入 builder 配置化.
 """
 
 from dataclasses import dataclass, field
@@ -97,11 +107,27 @@ class StageGraph:
         return self
 
     def add_stage(self, stage: Stage) -> "StageGraph":
+        """注册 Stage. v3.1 B5 修复: 拒绝保留名 (__start__/__end__) 作为 Stage name.
+
+        Why: 这些名是 LangGraph 风格 sentinel,被 next_stage() 特殊处理.
+        如果 Stage 用同名,会在首 Stage 判定或 END 判定时与 sentinel 冲突,导致调度混乱.
+        """
+        if stage.name in (self.START, self.END):
+            raise ValueError(
+                f"Stage name '{stage.name}' is reserved (sentinel: {self.START}/{self.END})"
+            )
         self.stages[stage.name] = stage
         return self
 
     def add_edge(self, from_stage: str, to_stage: str) -> "StageGraph":
-        """固定边: from → to. to 可为 END."""
+        """固定边: from → to. to 可为 END(语义:终止).
+
+        v3.1 B5 修复: 拒绝 START 作为目标(START 是入口 sentinel,不应作为边的终点).
+        """
+        if to_stage == self.START:
+            raise ValueError(
+                f"Edge target '{self.START}' is reserved (use set_start() for entry point)"
+            )
         self.edges[from_stage] = to_stage
         return self
 

@@ -84,3 +84,23 @@ def test_checkpoint_store_WAL_模式启用(checkpoint_dir):
     conn = store._get_conn()
     mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
     assert mode.lower() == "wal"
+
+
+# ----- v3.1 B3 修复: CheckpointStore 实现 context manager -----
+
+def test_context_manager_yields_store(checkpoint_dir):
+    """B3: CheckpointStore 应实现 __enter__/__exit__,with 语句可正常 yield store.
+
+    Why: 用户用 `with CheckpointStore(path) as store:` 时,__exit__ 应自动 close,
+    避免 sqlite3 fd 泄漏(ResourceWarning).
+    """
+    db_path = f"{checkpoint_dir}/ctx.db"
+    with CheckpointStore(db_path) as store:
+        assert store is not None
+        # __enter__ 后应能正常使用
+        cp = Checkpoint.create("t", LoopState())
+        store.save_checkpoint(cp)
+        loaded = store.load_checkpoint(cp.id)
+        assert loaded.id == cp.id
+    # 退出 with 后,_conn 已被关闭(防止 ResourceWarning)
+    assert store._conn is None

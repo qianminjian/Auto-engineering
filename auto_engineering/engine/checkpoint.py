@@ -6,6 +6,11 @@
     - checkpoints 表存状态快照;writes 表存 channel 级写入日志
     - P0 修复: state_json 用 LoopState.to_dict() 序列化(dataclass asdict)
     - 状态隔离: thread_id 是 dev-loop 运行实例的唯一标识
+
+v3.1 B 类修复 (Plan A Phase 2):
+    B3 (P2): CheckpointStore 实现 __enter__/__exit__ context manager.
+        Why: 允许 `with CheckpointStore(path) as store:` 自动 close,
+        避免 sqlite3 fd 泄漏(ResourceWarning).
 """
 
 import json
@@ -127,6 +132,14 @@ class CheckpointStore:
         if self._conn:
             self._conn.close()
             self._conn = None
+
+    def __enter__(self) -> "CheckpointStore":
+        """v3.1 B3: Context manager 入口. 允许 `with CheckpointStore(path) as store:`."""
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        """v3.1 B3: Context manager 出口. 自动 close,避免 sqlite3 fd 泄漏."""
+        self.close()
 
 
 @dataclass

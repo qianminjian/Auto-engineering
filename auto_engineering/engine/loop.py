@@ -9,6 +9,20 @@
 v3.0 修复:
     §2.1 interrupt_after 处理补 return False(与 interrupt_before 对齐)
     §4.1 length 校验从 §7.4 前置到 §4.1 主代码
+
+v3.1 B 类修复 (Plan A Phase 2):
+    B1 (P0): run() while 循环检查 status.startswith('interrupt') → break
+        (与 D4 同源,已在 d128ba2 commit 修复)
+    B6 (P2): resume() 拒绝从 status='done' 的 checkpoint 恢复
+        Why: done 表示循环已正常结束,resume 只会触发空跑或重复终止.
+
+v3.1 P3 设计选择(不修):
+    B2 design choice: GuardrailRetrySignal 不继承 AEError(详见 errors.py)
+        Why: RetryPolicy 期望捕获后处理,不混入 fatal 流.
+    B4 design choice: 运行时 runtime 类型签名 (AgentRuntime | None)
+        Why: Phase 1 MockRuntime 简化签名,Phase 2+ 接真实 Runtime 时再收紧.
+    B7-B9 design choice: dev_loop 边硬编码 architect→developer→critic
+        Why: v1.0 范围,Phase 2+ 引入 builder 配置化.
 """
 
 import asyncio
@@ -180,6 +194,9 @@ class LoopEngine:
 
             # 同步最终 status 到 checkpoint(确保 LoopResult 准确反映终止原因)
             self.checkpoint.status = self.status
+            # v3.1 B6: 持久化最终 status 到 DB,resume() 才能正确校验
+            if self.store:
+                self.store.save_checkpoint(self.checkpoint)
             return LoopResult.from_checkpoint(self.checkpoint)
         except AEError as e:
             if e.code == ErrorCode.TASK_CANCELLED and self.store and self.checkpoint:
@@ -238,6 +255,10 @@ class LoopEngine:
         """从 checkpoint 恢复. 加载 → 设置 self.checkpoint → run().
 
         run() 检测到 self.checkpoint 已设置,跳过 _init_checkpoint().
+
+        v3.1 B6 修复: 拒绝从 status='done' 的 checkpoint 恢复.
+        Why: done 表示循环已正常结束,resume 只会触发空跑或重复终止.
+        应抛 AEError 让用户明确知道无需 resume.
         """
         if self.store is None:
             raise AEError(
@@ -245,6 +266,11 @@ class LoopEngine:
                 "Cannot resume: no checkpoint store. Run the loop first.",
             )
         self.checkpoint = self.store.load_checkpoint(checkpoint_id)
+        if self.checkpoint.status == "done":
+            raise AEError(
+                ErrorCode.CHECKPOINT_LOAD_FAILED,
+                f"Cannot resume checkpoint {checkpoint_id}: status='done' (loop already completed)",
+            )
         self.step = self.checkpoint.step + 1
         self.status = "pending"
         return await self.run()
