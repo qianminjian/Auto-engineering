@@ -19,12 +19,12 @@ Plan B Phase 02 新增 (T01-T11 团队级能力):
 
 from __future__ import annotations
 
+import contextlib
 import enum
 import json
-import os
 import signal
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -32,7 +32,6 @@ import click
 
 from auto_engineering import __version__
 from auto_engineering.errors import AEError, ErrorCode
-
 
 # ============================================================
 # Plan B Phase 02: 错误归类 + Cancellation + Token Tracker
@@ -42,8 +41,8 @@ from auto_engineering.errors import AEError, ErrorCode
 class ErrorCategory(enum.Enum):
     """AEError 归类 — 按 code 前缀分 4 类."""
 
-    USER_ERROR = "user_error"        # 用户输入/配置错 (CONFIG_*, TASK_NOT_FOUND)
-    API_ERROR = "api_error"          # API/LLM 错 (LLM_*)
+    USER_ERROR = "user_error"  # 用户输入/配置错 (CONFIG_*, TASK_NOT_FOUND)
+    API_ERROR = "api_error"  # API/LLM 错 (LLM_*)
     NETWORK_ERROR = "network_error"  # 网络/IO 错 (CHECKPOINT_*)
     BUSINESS_ERROR = "business_error"  # 业务规则错 (GUARDRAIL_*, STAGE_RETRY_*)
 
@@ -247,7 +246,7 @@ def _run_loop_engine(
     from auto_engineering.engine import LoopEngine, build_dev_loop_graph
 
     # 注: dev-loop 阶段默认 MockRuntime — 真实 LLM 调用在 Phase 3+ 接 AgentRuntime
-    from tests.conftest import ScriptedMockRuntime
+    from auto_engineering.runtime.mock import ScriptedMockRuntime
 
     runtime = ScriptedMockRuntime(
         {
@@ -345,8 +344,6 @@ def _execute_with_progress(
 ) -> Any:
     """包装 LoopEngine.run() 加入 stage 进度 + cancellation 检测."""
 
-    from tests.conftest import ScriptedMockRuntime
-
     # 由于原 LoopEngine.run() 不接受 cancellation token,我们用 monkey-patch:
     # 在每次 runtime.execute 后检查 cancellation.这里简化:不阻断循环,
     # 但通过 status 决定是否中断.
@@ -391,18 +388,30 @@ def main():
 
 @main.command()
 @click.argument("project", required=False)
-@click.option("--type", "project_type", help="项目类型 (app-service/library/cli-tool/skill/hook/mcp-server/spec-doc/monorepo)")
+@click.option(
+    "--type",
+    "project_type",
+    help="项目类型 (app-service/library/cli-tool/skill/hook/mcp-server/spec-doc/monorepo)",
+)
 @click.option("--defaults", is_flag=True, help="非交互模式，全部使用默认值")
 @click.option("--force", is_flag=True, help="允许覆盖非空目录")
-@click.option("--from-answers", "answers_file", type=click.Path(exists=True), help="从 .ae-answers.yml 重放")
+@click.option(
+    "--from-answers", "answers_file", type=click.Path(exists=True), help="从 .ae-answers.yml 重放"
+)
 @click.option("--package-manager", help="包管理器 (npm/pnpm/yarn/bun/uv/poetry)")
 @click.option("--ci", "ci_platform", help="CI 平台 (github/gitlab/none)")
 @click.option("--test-runner", help="测试框架")
-@click.option("--no-typescript", "use_typescript", flag_value=False, default=None, help="不使用 TypeScript")
-@click.option("--no-lefthook", "use_lefthook", flag_value=False, default=None, help="不安装 Lefthook")
+@click.option(
+    "--no-typescript", "use_typescript", flag_value=False, default=None, help="不使用 TypeScript"
+)
+@click.option(
+    "--no-lefthook", "use_lefthook", flag_value=False, default=None, help="不安装 Lefthook"
+)
 @click.option("--pretend", is_flag=True, help="模拟执行，不产生文件")
 @click.option("--skip-tasks", is_flag=True, help="跳过钩子任务执行")
-@click.option("--no-cleanup", "cleanup_on_error", flag_value=False, default=True, help="出错时不清理目标目录")
+@click.option(
+    "--no-cleanup", "cleanup_on_error", flag_value=False, default=True, help="出错时不清理目标目录"
+)
 @click.option("--quiet", is_flag=True, help="静默模式")
 @click.option("--incremental", is_flag=True, help="增量模式：只补充缺失文件，不覆盖已有文件")
 def init(
@@ -429,13 +438,12 @@ def init(
 
     if answers_file:
         from auto_engineering.init import AnswersMap
+
         answers = AnswersMap.from_answers_file(Path(answers_file))
         click.echo(f"从 {answers_file} 恢复答案")
         if not project_type:
-            try:
+            with contextlib.suppress(KeyError):
                 project_type = answers.get("project_type") or ""
-            except KeyError:
-                pass
     else:
         answers = None
 
@@ -477,7 +485,12 @@ def init(
 @click.option("--multi", is_flag=True, help="多 Agent 并行模式（未来）")
 @click.option("--dry-run", is_flag=True, help="只跑 architect 输出 plan")
 @click.option("--log-format", type=click.Choice(["text", "json"]), default="text", help="日志格式")
-@click.option("--llm-provider", type=click.Choice(["anthropic", "ollama", "openai"]), default="anthropic", help="LLM 提供方")
+@click.option(
+    "--llm-provider",
+    type=click.Choice(["anthropic", "ollama", "openai"]),
+    default="anthropic",
+    help="LLM 提供方",
+)
 @click.option("--project-root", type=click.Path(exists=True), help="项目根目录 (默认 cwd)")
 def dev_loop(
     requirement: str,
@@ -545,7 +558,7 @@ def dev_loop(
 
     # T03: TokenTracker
     # 注: 实际累加发生在 _run_loop_engine 内部 (Phase 2 接 LLM 后)
-    token_tracker = TokenTracker(max_tokens=max_tokens)
+    TokenTracker(max_tokens=max_tokens)
 
     # 调用驱动器
     try:
