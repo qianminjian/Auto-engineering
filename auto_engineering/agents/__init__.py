@@ -1,15 +1,18 @@
 """Agent 实现 — Claude API 驱动的智能角色.
 
-核心类:
-    BaseAgent       — LLM 调用 + 工具绑定
-    ArchitectAgent  — 需求分析 → 实现计划
-    DeveloperAgent  — TDD 三步循环实现
-    CriticAgent     — 代码审查
+Phase 0.3 真接: 3 Agent(BaseAgent 子类)各带 system_prompt.
 """
-
-from .architect import ArchitectAgent
+from .architect import ARCHITECT_SYSTEM_PROMPT, ArchitectAgent
 from .base import BaseAgent
-from .critic import CriticAgent
-from .developer import DeveloperAgent
+from .critic import CRITIC_SYSTEM_PROMPT, CriticAgent
+from .developer import DEVELOPER_SYSTEM_PROMPT, DeveloperAgent
 
-__all__ = ["ArchitectAgent", "BaseAgent", "CriticAgent", "DeveloperAgent"]
+__all__ = [
+    "ARCHITECT_SYSTEM_PROMPT",
+    "ArchitectAgent",
+    "BaseAgent",
+    "CRITIC_SYSTEM_PROMPT",
+    "CriticAgent",
+    "DEVELOPER_SYSTEM_PROMPT",
+    "DeveloperAgent",
+]
