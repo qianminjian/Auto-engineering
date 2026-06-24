@@ -312,7 +312,8 @@ class InitWorker:
     def _phase_tasks(self, tmpdir: Path) -> None:
         jinja_env = jinja2.Environment()
         context = self._answers.combined()
-        runner = TaskRunner(tmpdir)
+        # A2: 把 current_phase 传给 TaskRunner (TaskRunner 内部用于 AE_PHASE)
+        runner = TaskRunner(tmpdir, current_phase=self._current_phase)
         runner.run(self._template.tasks_before, context, jinja_env)
         self._run_builtin_hooks(tmpdir)
         runner.run(self._template.tasks_after, context, jinja_env)

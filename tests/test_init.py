@@ -214,6 +214,47 @@ class TestGitBranchFallback:
         assert result.returncode == 0 or "unknown option" in result.stderr.lower()
 
 
+class TestInitPhaseTasksCurrentPhase:
+    """A2: _phase_tasks 必须把 current_phase 传给 TaskRunner."""
+
+    def test_phase_tasks_passes_current_phase(self):
+        """RED: TaskRunner 必须收到 current_phase='tasks'."""
+        from unittest.mock import patch, MagicMock
+        from auto_engineering.init.scaffold import InitWorker
+
+        worker = InitWorker(
+            dst_path=Path("/tmp/test-phase"),
+            project_type="app-service",
+            defaults=True,
+            skip_tasks=False,
+        )
+        # 设置 current_phase = "tasks"
+        worker._current_phase = "tasks"
+        # _answers 留空但 mock context() 返回空 dict
+        worker._answers = MagicMock()
+        worker._answers.combined.return_value = {}
+
+        # mock _template.tasks_before/tasks_after 为空列表,避免真正执行
+        worker._template = MagicMock()
+        worker._template.tasks_before = []
+        worker._template.tasks_after = []
+
+        # mock TaskRunner 类 + 子任务 _run_builtin_hooks
+        with patch("auto_engineering.init.scaffold.TaskRunner") as MockRunner:
+            with patch.object(worker, "_run_builtin_hooks"):
+                import tempfile
+                tmpdir = Path(tempfile.mkdtemp())
+                try:
+                    worker._phase_tasks(tmpdir)
+                    assert MockRunner.called
+                    call_kwargs = MockRunner.call_args.kwargs
+                    assert call_kwargs.get("current_phase") == "tasks", \
+                        f"current_phase not passed: {call_kwargs}"
+                finally:
+                    import shutil
+                    shutil.rmtree(tmpdir, ignore_errors=True)
+
+
 class TestInitIncrementalMode:
     """A1: --incremental 增量模式完整实现 (§1.3.10).
 
