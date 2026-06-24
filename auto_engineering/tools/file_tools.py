@@ -2,6 +2,7 @@
 
 5 个工具: ReadFile / WriteFile / EditFile / SearchCode / ListDir.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -30,7 +31,7 @@ class ReadFileTool(BaseTool):
             if not path.is_file():
                 return ToolResult(success=False, content="", error=f"Not a file: {path}")
             lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-            selected = lines[offset - 1:offset - 1 + limit]
+            selected = lines[offset - 1 : offset - 1 + limit]
             return ToolResult(success=True, content="\n".join(selected))
         except Exception as exc:
             return ToolResult(success=False, content="", error=str(exc))
@@ -78,7 +79,8 @@ class EditFileTool(BaseTool):
             content = path.read_text(encoding="utf-8")
             if old not in content:
                 return ToolResult(
-                    success=False, content="",
+                    success=False,
+                    content="",
                     error=f"old_string not found in {path}",
                 )
             new_content = content.replace(old, new, 1)  # 只替换第一个
@@ -101,6 +103,7 @@ class SearchCodeTool(BaseTool):
 
     async def execute(self, **kwargs) -> ToolResult:
         import re
+
         pattern = kwargs.get("pattern", "")
         path = Path(kwargs.get("path", "."))
         file_pattern = kwargs.get("file_pattern")

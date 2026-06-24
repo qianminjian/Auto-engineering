@@ -2,6 +2,7 @@
 
 Phase 0.3 真接: 3 Agent(BaseAgent 子类)各带 system_prompt.
 """
+
 from .architect import ARCHITECT_SYSTEM_PROMPT, ArchitectAgent
 from .base import BaseAgent
 from .critic import CRITIC_SYSTEM_PROMPT, CriticAgent

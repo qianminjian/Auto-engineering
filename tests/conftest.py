@@ -3,6 +3,7 @@
 Phase 2 之后 conftest.py 只 re-export(避免 cli.py 反向依赖 conftest).
 Phase 0.3 增强: 跨 session 失败计数 + 自动 skip(检测阻塞测试).
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -27,9 +28,7 @@ from auto_engineering.runtime.mock import (  # noqa: F401
 # 状态: /tmp/_ae_test_failures.json(可手动清理重置)
 
 
-_FAILURE_CACHE = Path(
-    os.environ.get("AE_TEST_STATE_DIR", "/tmp")
-) / "_ae_test_failures.json"
+_FAILURE_CACHE = Path(os.environ.get("AE_TEST_STATE_DIR", "/tmp")) / "_ae_test_failures.json"
 _BLOCK_THRESHOLD = 3
 
 

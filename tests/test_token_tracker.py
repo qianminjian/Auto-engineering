@@ -2,6 +2,7 @@
 
 覆盖: BaseAgent.execute 接受 token_tracker,累加 LLMUsage,超 max_tokens 抛 BUDGET_EXCEEDED.
 """
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
@@ -49,11 +50,14 @@ class TestTokenTrackerIntegration:
     def test_execute_without_token_tracker_runs_normally(self):
         """不传 token_tracker → 正常运行,无累加."""
         llm = MagicMock(spec=AnthropicProvider)
-        llm.create_message = AsyncMock(return_value=LLMResponse(
-            content='{"x": 1}', model="m",
-            usage=LLMUsage(input_tokens=100, output_tokens=50),
-            stop_reason="end_turn",
-        ))
+        llm.create_message = AsyncMock(
+            return_value=LLMResponse(
+                content='{"x": 1}',
+                model="m",
+                usage=LLMUsage(input_tokens=100, output_tokens=50),
+                stop_reason="end_turn",
+            )
+        )
         agent = BaseAgent(llm=llm, system_prompt="test")
         task = Task(id="t", description="x", expected_output="y", output_channels=["x"])
         ctx = TaskContext(state=LoopState(), requirement="r")
@@ -65,11 +69,14 @@ class TestTokenTrackerIntegration:
     def test_execute_with_token_tracker_accumulates(self):
         """传 token_tracker → 累加 LLMUsage."""
         llm = MagicMock(spec=AnthropicProvider)
-        llm.create_message = AsyncMock(return_value=LLMResponse(
-            content='{"x": 1}', model="m",
-            usage=LLMUsage(input_tokens=100, output_tokens=50),
-            stop_reason="end_turn",
-        ))
+        llm.create_message = AsyncMock(
+            return_value=LLMResponse(
+                content='{"x": 1}',
+                model="m",
+                usage=LLMUsage(input_tokens=100, output_tokens=50),
+                stop_reason="end_turn",
+            )
+        )
         agent = BaseAgent(llm=llm, system_prompt="test")
         task = Task(id="t", description="x", expected_output="y", output_channels=["x"])
         ctx = TaskContext(state=LoopState(), requirement="r")
@@ -86,22 +93,32 @@ class TestTokenTrackerIntegration:
         llm = MagicMock(spec=AnthropicProvider)
         # 第一次 tool_use,第二次 final
         tool_use = {"id": "t1", "name": "x", "input": {}}
-        llm.create_message = AsyncMock(side_effect=[
-            LLMResponse(content="", model="m",
-                usage=LLMUsage(input_tokens=100, output_tokens=10),
-                stop_reason="tool_use",
-                tool_use_blocks=[tool_use]),
-            LLMResponse(content='{"plan": "p"}', model="m",
-                usage=LLMUsage(input_tokens=200, output_tokens=20),
-                stop_reason="end_turn"),
-        ])
+        llm.create_message = AsyncMock(
+            side_effect=[
+                LLMResponse(
+                    content="",
+                    model="m",
+                    usage=LLMUsage(input_tokens=100, output_tokens=10),
+                    stop_reason="tool_use",
+                    tool_use_blocks=[tool_use],
+                ),
+                LLMResponse(
+                    content='{"plan": "p"}',
+                    model="m",
+                    usage=LLMUsage(input_tokens=200, output_tokens=20),
+                    stop_reason="end_turn",
+                ),
+            ]
+        )
 
         from auto_engineering.tools.base import BaseTool, ToolResult
+
         tool = MagicMock(spec=BaseTool)
         tool.name = "x"
 
         async def mock_execute(**kwargs):
             return ToolResult(success=True, content="ok")
+
         tool.execute = mock_execute
 
         agent = BaseAgent(llm=llm, system_prompt="test", tools=[tool])
@@ -118,11 +135,14 @@ class TestTokenTrackerIntegration:
     def test_token_tracker_exceeds_budget_raises(self):
         """超 max_tokens → 抛 BUDGET_EXCEEDED."""
         llm = MagicMock(spec=AnthropicProvider)
-        llm.create_message = AsyncMock(return_value=LLMResponse(
-            content='{"x": 1}', model="m",
-            usage=LLMUsage(input_tokens=200, output_tokens=0),
-            stop_reason="end_turn",
-        ))
+        llm.create_message = AsyncMock(
+            return_value=LLMResponse(
+                content='{"x": 1}',
+                model="m",
+                usage=LLMUsage(input_tokens=200, output_tokens=0),
+                stop_reason="end_turn",
+            )
+        )
         agent = BaseAgent(llm=llm, system_prompt="test")
         task = Task(id="t", description="x", expected_output="y", output_channels=["x"])
         ctx = TaskContext(state=LoopState(), requirement="r")
@@ -136,11 +156,14 @@ class TestTokenTrackerIntegration:
     def test_token_tracker_unlimited_no_raise(self):
         """max_tokens=0 (无限制) → 不抛."""
         llm = MagicMock(spec=AnthropicProvider)
-        llm.create_message = AsyncMock(return_value=LLMResponse(
-            content='{"x": 1}', model="m",
-            usage=LLMUsage(input_tokens=10000, output_tokens=10000),
-            stop_reason="end_turn",
-        ))
+        llm.create_message = AsyncMock(
+            return_value=LLMResponse(
+                content='{"x": 1}',
+                model="m",
+                usage=LLMUsage(input_tokens=10000, output_tokens=10000),
+                stop_reason="end_turn",
+            )
+        )
         agent = BaseAgent(llm=llm, system_prompt="test")
         task = Task(id="t", description="x", expected_output="y", output_channels=["x"])
         ctx = TaskContext(state=LoopState(), requirement="r")

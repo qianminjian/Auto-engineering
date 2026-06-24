@@ -6,6 +6,7 @@
     - 捕获 stdout + stderr + returncode
     - 返回 ToolResult(success, content)
 """
+
 from __future__ import annotations
 
 import subprocess
@@ -47,7 +48,8 @@ class RunBashTool(BaseTool):
             )
         except subprocess.TimeoutExpired:
             return ToolResult(
-                success=False, content="",
+                success=False,
+                content="",
                 error=f"Command timed out after {timeout}s",
             )
         except Exception as exc:

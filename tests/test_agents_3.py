@@ -2,6 +2,7 @@
 
 Architect / Developer / Critic 各 2 测试(实例化 + execute mock LLM).
 """
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
@@ -17,6 +18,7 @@ from tests.conftest import run_async
 def _make_ok_response(values: dict) -> LLMResponse:
     """Helper: 模拟 LLM 返回 JSON dict."""
     import json
+
     return LLMResponse(
         content=json.dumps(values),
         model="claude-test",
@@ -45,10 +47,14 @@ class TestArchitectAgent:
         from auto_engineering.runtime.task import Task
 
         llm = MagicMock(spec=AnthropicProvider)
-        llm.create_message = AsyncMock(return_value=_make_ok_response({
-            "plan": "1. Add auth middleware\n2. Add login endpoint",
-            "file_list": ["src/auth.py", "src/middleware.py"],
-        }))
+        llm.create_message = AsyncMock(
+            return_value=_make_ok_response(
+                {
+                    "plan": "1. Add auth middleware\n2. Add login endpoint",
+                    "file_list": ["src/auth.py", "src/middleware.py"],
+                }
+            )
+        )
         agent = ArchitectAgent(llm=llm)
         task = Task(
             id="architect",
@@ -84,11 +90,15 @@ class TestDeveloperAgent:
         from auto_engineering.runtime.task import Task
 
         llm = MagicMock(spec=AnthropicProvider)
-        llm.create_message = AsyncMock(return_value=_make_ok_response({
-            "files_changed": ["src/auth.py", "tests/test_auth.py"],
-            "commit_hash": "abc123",
-            "test_results": {"passed": 5, "failed": 0},
-        }))
+        llm.create_message = AsyncMock(
+            return_value=_make_ok_response(
+                {
+                    "files_changed": ["src/auth.py", "tests/test_auth.py"],
+                    "commit_hash": "abc123",
+                    "test_results": {"passed": 5, "failed": 0},
+                }
+            )
+        )
         agent = DeveloperAgent(llm=llm)
         task = Task(
             id="developer",
@@ -125,11 +135,15 @@ class TestCriticAgent:
         from auto_engineering.runtime.task import Task
 
         llm = MagicMock(spec=AnthropicProvider)
-        llm.create_message = AsyncMock(return_value=_make_ok_response({
-            "verdict": "APPROVE",
-            "findings": [],
-            "critic_feedback": "Looks good.",
-        }))
+        llm.create_message = AsyncMock(
+            return_value=_make_ok_response(
+                {
+                    "verdict": "APPROVE",
+                    "findings": [],
+                    "critic_feedback": "Looks good.",
+                }
+            )
+        )
         agent = CriticAgent(llm=llm)
         task = Task(
             id="critic",

@@ -2,6 +2,7 @@
 
 3 个工具: GitStatus / GitCommit / GitDiff.
 """
+
 from __future__ import annotations
 
 import subprocess
@@ -64,13 +65,15 @@ class GitCommitTool(BaseTool):
             add_result = _run_git(["add", "-A"], cwd=cwd)
             if add_result.returncode != 0:
                 return ToolResult(
-                    success=False, content="",
+                    success=False,
+                    content="",
                     error=f"git add failed: {add_result.stderr.strip()}",
                 )
             commit_result = _run_git(["commit", "-m", message], cwd=cwd)
             if commit_result.returncode != 0:
                 return ToolResult(
-                    success=False, content="",
+                    success=False,
+                    content="",
                     error=f"git commit failed: {commit_result.stderr.strip()}",
                 )
             return ToolResult(

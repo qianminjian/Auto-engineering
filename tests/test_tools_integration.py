@@ -2,6 +2,7 @@
 
 每个工具 2-3 测试(正常 / 异常 / 边界). 覆盖 10 工具 + ToolRegistry.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -88,11 +89,13 @@ class TestEditFileTool:
         f = tmp_path / "code.py"
         f.write_text("x = 1\ny = 2\n", encoding="utf-8")
         tool = EditFileTool()
-        result = run_async(tool.execute(
-            file_path=str(f),
-            old_string="y = 2",
-            new_string="y = 42",
-        ))
+        result = run_async(
+            tool.execute(
+                file_path=str(f),
+                old_string="y = 2",
+                new_string="y = 42",
+            )
+        )
         assert result.success
         assert f.read_text() == "x = 1\ny = 42\n"
 
@@ -102,11 +105,13 @@ class TestEditFileTool:
         f = tmp_path / "code.py"
         f.write_text("hello")
         tool = EditFileTool()
-        result = run_async(tool.execute(
-            file_path=str(f),
-            old_string="nonexistent",
-            new_string="new",
-        ))
+        result = run_async(
+            tool.execute(
+                file_path=str(f),
+                old_string="nonexistent",
+                new_string="new",
+            )
+        )
         assert not result.success
         assert "not found" in result.error.lower()
 
@@ -204,10 +209,23 @@ class TestGitStatusTool:
         import subprocess
 
         from auto_engineering.tools import GitStatusTool
+
         subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True, check=True)
         subprocess.run(
-            ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "--allow-empty", "-m", "init"],
-            cwd=tmp_path, capture_output=True, check=True,
+            [
+                "git",
+                "-c",
+                "user.email=t@t",
+                "-c",
+                "user.name=t",
+                "commit",
+                "--allow-empty",
+                "-m",
+                "init",
+            ],
+            cwd=tmp_path,
+            capture_output=True,
+            check=True,
         )
         tool = GitStatusTool()
         result = run_async(tool.execute(cwd=str(tmp_path)))
@@ -218,10 +236,23 @@ class TestGitStatusTool:
         import subprocess
 
         from auto_engineering.tools import GitStatusTool
+
         subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True, check=True)
         subprocess.run(
-            ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "--allow-empty", "-m", "init"],
-            cwd=tmp_path, capture_output=True, check=True,
+            [
+                "git",
+                "-c",
+                "user.email=t@t",
+                "-c",
+                "user.name=t",
+                "commit",
+                "--allow-empty",
+                "-m",
+                "init",
+            ],
+            cwd=tmp_path,
+            capture_output=True,
+            check=True,
         )
         (tmp_path / "dirty.txt").write_text("x")
         tool = GitStatusTool()
@@ -244,10 +275,23 @@ class TestGitCommitTool:
         import subprocess
 
         from auto_engineering.tools import GitCommitTool
+
         subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True, check=True)
         subprocess.run(
-            ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "--allow-empty", "-m", "init"],
-            cwd=tmp_path, capture_output=True, check=True,
+            [
+                "git",
+                "-c",
+                "user.email=t@t",
+                "-c",
+                "user.name=t",
+                "commit",
+                "--allow-empty",
+                "-m",
+                "init",
+            ],
+            cwd=tmp_path,
+            capture_output=True,
+            check=True,
         )
         (tmp_path / "new.txt").write_text("content")
         tool = GitCommitTool()
@@ -266,15 +310,30 @@ class TestGitCommitTool:
 class TestGitDiffTool:
     """GitDiffTool 真接."""
 
-    @pytest.mark.skip(reason="git diff 不显示 untracked 文件(限制),改用 git_status 追踪;Phase 1 重写")
+    @pytest.mark.skip(
+        reason="git diff 不显示 untracked 文件(限制),改用 git_status 追踪;Phase 1 重写"
+    )
     def test_diff_unstaged(self, tmp_path: Path):
         import subprocess
 
         from auto_engineering.tools import GitDiffTool
+
         subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True, check=True)
         subprocess.run(
-            ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "--allow-empty", "-m", "init"],
-            cwd=tmp_path, capture_output=True, check=True,
+            [
+                "git",
+                "-c",
+                "user.email=t@t",
+                "-c",
+                "user.name=t",
+                "commit",
+                "--allow-empty",
+                "-m",
+                "init",
+            ],
+            cwd=tmp_path,
+            capture_output=True,
+            check=True,
         )
         (tmp_path / "new.txt").write_text("content")
         subprocess.run(["git", "add", "new.txt"], cwd=tmp_path, capture_output=True, check=True)
@@ -287,10 +346,23 @@ class TestGitDiffTool:
         import subprocess
 
         from auto_engineering.tools import GitDiffTool
+
         subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True, check=True)
         subprocess.run(
-            ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "--allow-empty", "-m", "init"],
-            cwd=tmp_path, capture_output=True, check=True,
+            [
+                "git",
+                "-c",
+                "user.email=t@t",
+                "-c",
+                "user.name=t",
+                "commit",
+                "--allow-empty",
+                "-m",
+                "init",
+            ],
+            cwd=tmp_path,
+            capture_output=True,
+            check=True,
         )
         tool = GitDiffTool()
         result = run_async(tool.execute(cwd=str(tmp_path)))
@@ -398,7 +470,9 @@ class TestToolRegistry:
         from auto_engineering.tools import default_registry
 
         registry = default_registry()
-        names = registry.all_names() if hasattr(registry, "all_names") else list(registry._tools.keys())
+        names = (
+            registry.all_names() if hasattr(registry, "all_names") else list(registry._tools.keys())
+        )
         assert "read_file" in names
         assert "write_file" in names
         assert "edit_file" in names

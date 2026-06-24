@@ -3,6 +3,7 @@
 1 个工具: RunTestsTool — 按测试 runner 跑测试.
 支持: pytest / npm test / (可扩展)
 """
+
 from __future__ import annotations
 
 import subprocess
@@ -24,7 +25,9 @@ class RunTestsTool(BaseTool):
     """Run project tests with appropriate test runner."""
 
     name = "run_tests"
-    description = "Run project tests. Detects runner (pytest/npm/pnpm/yarn/uv) or uses runner parameter."
+    description = (
+        "Run project tests. Detects runner (pytest/npm/pnpm/yarn/uv) or uses runner parameter."
+    )
     parameters = {
         "scope": {"type": "string", "description": "Test scope: all/unit/integration/coverage"},
         "runner": {"type": "string", "description": "Force runner (pytest/npm/pnpm/yarn/uv)"},
@@ -42,7 +45,8 @@ class RunTestsTool(BaseTool):
             cmd = _RUNNER_CMDS.get(runner)
             if not cmd:
                 return ToolResult(
-                    success=False, content="",
+                    success=False,
+                    content="",
                     error=f"Unknown runner '{runner}'. Supported: {list(_RUNNER_CMDS)}",
                 )
             result = subprocess.run(
@@ -61,7 +65,8 @@ class RunTestsTool(BaseTool):
             )
         except subprocess.TimeoutExpired:
             return ToolResult(
-                success=False, content="",
+                success=False,
+                content="",
                 error=f"Tests timed out after {timeout}s",
             )
         except Exception as exc:

@@ -2,6 +2,7 @@
 
 覆盖: cancellation 已取消 → LoopEngine.run() 抛 TASK_CANCELLED + 保存 drained.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -16,11 +17,13 @@ class TestCancellationTokenInLoop:
 
     def test_run_without_cancellation_runs_normally(self, checkpoint_dir):
         """不传 cancellation → 正常运行."""
-        runtime = ScriptedMockRuntime({
-            "architect": {"plan": "p", "file_list": ["x.py"]},
-            "developer": {"files_changed": ["x.py"], "commit_hash": "abc", "test_results": {}},
-            "critic": {"verdict": "APPROVE", "findings": [], "critic_feedback": ""},
-        })
+        runtime = ScriptedMockRuntime(
+            {
+                "architect": {"plan": "p", "file_list": ["x.py"]},
+                "developer": {"files_changed": ["x.py"], "commit_hash": "abc", "test_results": {}},
+                "critic": {"verdict": "APPROVE", "findings": [], "critic_feedback": ""},
+            }
+        )
         engine = LoopEngine(build_dev_loop_graph(), runtime=runtime, checkpoint_dir=checkpoint_dir)
         result = run_async(engine.run("build x", max_steps=10))
         assert result.status == "done"
@@ -29,11 +32,13 @@ class TestCancellationTokenInLoop:
         """传 cancellation 但未取消 → 正常运行."""
         from auto_engineering.cli import CancellationToken
 
-        runtime = ScriptedMockRuntime({
-            "architect": {"plan": "p", "file_list": ["x.py"]},
-            "developer": {"files_changed": ["x.py"], "commit_hash": "abc", "test_results": {}},
-            "critic": {"verdict": "APPROVE", "findings": [], "critic_feedback": ""},
-        })
+        runtime = ScriptedMockRuntime(
+            {
+                "architect": {"plan": "p", "file_list": ["x.py"]},
+                "developer": {"files_changed": ["x.py"], "commit_hash": "abc", "test_results": {}},
+                "critic": {"verdict": "APPROVE", "findings": [], "critic_feedback": ""},
+            }
+        )
         token = CancellationToken()  # 未取消
         engine = LoopEngine(build_dev_loop_graph(), runtime=runtime, checkpoint_dir=checkpoint_dir)
         result = run_async(engine.run("build x", max_steps=10, cancellation=token))
@@ -91,7 +96,9 @@ class TestCancellationTokenInLoop:
                 )
 
         token = CancellationToken()
-        engine = LoopEngine(build_dev_loop_graph(), runtime=CapturingRuntime(), checkpoint_dir=checkpoint_dir)
+        engine = LoopEngine(
+            build_dev_loop_graph(), runtime=CapturingRuntime(), checkpoint_dir=checkpoint_dir
+        )
         run_async(engine.run("build x", max_steps=10, cancellation=token))
 
         # cancellation 应至少传给 runtime 一次

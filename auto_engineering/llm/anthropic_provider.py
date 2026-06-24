@@ -95,11 +95,13 @@ class AnthropicProvider:
             if block.type == "text":
                 content_text += block.text
             elif block.type == "tool_use":
-                tool_use_blocks.append({
-                    "id": block.id,
-                    "name": block.name,
-                    "input": block.input,
-                })
+                tool_use_blocks.append(
+                    {
+                        "id": block.id,
+                        "name": block.name,
+                        "input": block.input,
+                    }
+                )
 
         return LLMResponse(
             content=content_text,

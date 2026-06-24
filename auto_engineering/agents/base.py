@@ -12,6 +12,7 @@
     - AutoGen _base_agent.py:60-254 (BaseAgent lifecycle)
     - CrewAI Task.handle_partial_json (output 解析)
 """
+
 from __future__ import annotations
 
 import json
@@ -82,9 +83,7 @@ class BaseAgent:
             AEError(BUDGET_EXCEEDED)          — token 超限
             Exception via cancellation.check() — 用户取消
         """
-        messages: list[dict] = [
-            {"role": "user", "content": task.description}
-        ]
+        messages: list[dict] = [{"role": "user", "content": task.description}]
         tool_map = {t.name: t for t in self.tools}
         tool_calls_log: list[dict] = []
 
@@ -113,29 +112,35 @@ class BaseAgent:
                     tool_calls_log.append({"name": tool_name, "input": tool_input})
 
                     if tool_name not in tool_map:
-                        tool_results.append({
-                            "type": "tool_result",
-                            "tool_use_id": tool_id,
-                            "content": f"Error: tool '{tool_name}' not found",
-                            "is_error": True,
-                        })
+                        tool_results.append(
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": tool_id,
+                                "content": f"Error: tool '{tool_name}' not found",
+                                "is_error": True,
+                            }
+                        )
                         continue
 
                     try:
                         result = await tool_map[tool_name].execute(**tool_input)
-                        tool_results.append({
-                            "type": "tool_result",
-                            "tool_use_id": tool_id,
-                            "content": result.content,
-                            "is_error": not result.success,
-                        })
+                        tool_results.append(
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": tool_id,
+                                "content": result.content,
+                                "is_error": not result.success,
+                            }
+                        )
                     except Exception as exc:
-                        tool_results.append({
-                            "type": "tool_result",
-                            "tool_use_id": tool_id,
-                            "content": f"Error: {exc}",
-                            "is_error": True,
-                        })
+                        tool_results.append(
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": tool_id,
+                                "content": f"Error: {exc}",
+                                "is_error": True,
+                            }
+                        )
 
                 messages.append({"role": "assistant", "content": response.tool_use_blocks})
                 messages.append({"role": "user", "content": tool_results})

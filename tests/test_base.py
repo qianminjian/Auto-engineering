@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import pytest
 
+from auto_engineering.tools.base import BaseTool, ToolResult
+
 
 class TestToolResult:
     """ToolResult 数据类 — 工具调用的结构化结果."""
@@ -41,14 +43,13 @@ class TestBaseTool:
     """BaseTool 抽象基类 + to_schema 方法."""
 
     def test_tool_metadata_attributes(self):
-        from auto_engineering.tools.base import BaseTool
 
         class Echo(BaseTool):
             name = "echo"
             description = "Echo input"
             parameters = {"text": "string"}
 
-            def execute(self, text: str) -> ToolResult:
+            async def execute(self, text: str) -> ToolResult:
                 return ToolResult(success=True, content=text)
 
         tool = Echo()
@@ -57,31 +58,30 @@ class TestBaseTool:
         assert tool.parameters == {"text": "string"}
 
     def test_tool_execute_returns_tool_result(self):
-        from auto_engineering.tools.base import BaseTool, ToolResult
+        from auto_engineering.tools.base import ToolResult
 
         class Echo(BaseTool):
             name = "echo"
             description = "Echo input"
             parameters = {"text": "string"}
 
-            def execute(self, text: str) -> ToolResult:
+            async def execute(self, text: str) -> ToolResult:
                 return ToolResult(success=True, content=text)
 
         tool = Echo()
-        result = tool.execute(text="hello")
+        result = run_async(tool.execute(text="hello"))
         assert isinstance(result, ToolResult)
         assert result.success is True
         assert result.content == "hello"
 
     def test_to_schema_returns_anthropic_format(self):
-        from auto_engineering.tools.base import BaseTool
 
         class Calc(BaseTool):
             name = "calc"
             description = "Calculate"
             parameters = {"a": "integer", "b": "integer"}
 
-            def execute(self, a: int, b: int) -> ToolResult:
+            async def execute(self, a: int, b: int) -> ToolResult:
                 return ToolResult(success=True, content=str(a + b))
 
         tool = Calc()
@@ -93,7 +93,6 @@ class TestBaseTool:
         assert set(schema["input_schema"]["required"]) == {"a", "b"}
 
     def test_abstract_subclass_cannot_be_instantiated(self):
-        from auto_engineering.tools.base import BaseTool
 
         class Incomplete(BaseTool):
             name = "incomplete"
@@ -101,3 +100,10 @@ class TestBaseTool:
 
         with pytest.raises(TypeError):
             Incomplete()
+
+
+def run_async(coro):
+    """同步上下文跑 async coroutine."""
+    import asyncio
+
+    return asyncio.run(coro)

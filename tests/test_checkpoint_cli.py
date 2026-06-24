@@ -2,6 +2,7 @@
 
 覆盖: ae checkpoint list / show / resume
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -45,6 +46,7 @@ class TestCheckpointList:
         monkeypatch.chdir(tmp_path)
 
         from auto_engineering.cli import main
+
         runner = CliRunner()
         result = runner.invoke(main, ["checkpoint", "list"])
         assert result.exit_code == 0
@@ -54,6 +56,7 @@ class TestCheckpointList:
 
     def test_list_with_checkpoints(self, valid_project_with_checkpoint):
         from auto_engineering.cli import main
+
         runner = CliRunner()
         result = runner.invoke(main, ["checkpoint", "list"])
         assert result.exit_code == 0

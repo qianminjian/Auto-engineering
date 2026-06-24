@@ -19,6 +19,7 @@ class _Echo:
 
     def __init__(self, name="echo", description="Echo input"):
         from auto_engineering.tools.base import BaseTool, ToolResult
+
         self.name = name
         self.description = description
         self.parameters = {"text": "string"}
@@ -32,7 +33,11 @@ class _Echo:
         return {
             "name": self.name,
             "description": self.description,
-            "input_schema": {"type": "object", "properties": {"text": "string"}, "required": ["text"]},
+            "input_schema": {
+                "type": "object",
+                "properties": {"text": "string"},
+                "required": ["text"],
+            },
         }
 
 

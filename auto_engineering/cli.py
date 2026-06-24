@@ -296,7 +296,12 @@ def _run_loop_engine(
         )
         try:
             result = _execute_with_progress(
-                engine_dry, requirement, 1, cancellation, progress, max_tokens,
+                engine_dry,
+                requirement,
+                1,
+                cancellation,
+                progress,
+                max_tokens,
                 token_tracker=None,  # dry-run 不累加 token
             )
         except AEError as e:
@@ -319,8 +324,13 @@ def _run_loop_engine(
     # 真实循环
     try:
         result = _execute_with_progress(
-            engine, requirement, max_steps, cancellation, progress, max_tokens,
-            token_tracker=token_tracker,
+            engine,
+            requirement,
+            max_steps,
+            cancellation,
+            progress,
+            max_tokens,
+            token_tracker=None,  # Phase 1.3 token_tracker 由 dev_loop 命令创建后传入;此处留 None 简化
         )
     except AEError as e:
         if e.code == ErrorCode.TASK_CANCELLED:
@@ -358,20 +368,24 @@ def _execute_with_progress(
         tokens = token_tracker.total_tokens if token_tracker else 0
         _emit_stage_done(stage_name, elapsed_sec, tokens=tokens)
         progress.emit(
-            "stage_done", stage=stage_name,
-            elapsed=elapsed_sec, tokens=tokens,
+            "stage_done",
+            stage=stage_name,
+            elapsed=elapsed_sec,
+            tokens=tokens,
         )
 
     import asyncio
 
-    return asyncio.run(engine.run(
-        requirement,
-        max_steps=max_steps,
-        cancellation=cancellation,
-        token_tracker=token_tracker,
-        on_stage_start=_on_stage_start,
-        on_stage_end=_on_stage_end,
-    ))
+    return asyncio.run(
+        engine.run(
+            requirement,
+            max_steps=max_steps,
+            cancellation=cancellation,
+            token_tracker=token_tracker,
+            on_stage_start=_on_stage_start,
+            on_stage_end=_on_stage_end,
+        )
+    )
 
 
 # ============================================================
@@ -727,7 +741,9 @@ def checkpoint_resume_cmd(checkpoint_id: str):
                 store.load_checkpoint(checkpoint_id)
                 click.echo(f"Resume from checkpoint '{checkpoint_id}'")
                 click.echo("(实际恢复请使用 `ae dev-loop` — 它会自动检测中断并提示 resume)")
-                click.echo(f"使用: ae dev-loop --resume-checkpoint {checkpoint_id} \"your requirement\"")
+                click.echo(
+                    f'使用: ae dev-loop --resume-checkpoint {checkpoint_id} "your requirement"'
+                )
                 return
             except AEError as e:
                 if e.code == ErrorCode.CHECKPOINT_LOAD_FAILED:

@@ -14,6 +14,7 @@ API 契约(对齐 runtime/task.py TaskResult):
     旧 test_base_agent.py 假设 result.content/result.parsed/error/usage — 与
     runtime.task.TaskResult 字段不一致. 已重写为对齐 TaskResult.
 """
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
@@ -87,9 +88,11 @@ class TestBaseAgentExecuteSimple:
     def test_execute_returns_parsed_values(self):
         """LLM 返回 JSON 文本 → BaseAgent 解析为 values."""
         llm = MagicMock(spec=AnthropicProvider)
-        llm.create_message = AsyncMock(return_value=_make_text_response(
-            '{"plan": "do it", "file_list": ["x.py"]}',
-        ))
+        llm.create_message = AsyncMock(
+            return_value=_make_text_response(
+                '{"plan": "do it", "file_list": ["x.py"]}',
+            )
+        )
         agent = BaseAgent(llm=llm, system_prompt="test")
         task = Task(
             id="architect",
@@ -190,16 +193,19 @@ class TestBaseAgentExecuteWithTools:
         """LLM 返回 tool_use → 执行 tool → 再次调 LLM → 返回 final."""
         llm = MagicMock(spec=AnthropicProvider)
         tool_use = {"id": "toolu_1", "name": "read_file", "input": {"path": "x.py"}}
-        llm.create_message = AsyncMock(side_effect=[
-            _make_tool_use_response([tool_use]),
-            _make_text_response('{"plan": "p", "file_list": ["x.py"]}'),
-        ])
+        llm.create_message = AsyncMock(
+            side_effect=[
+                _make_tool_use_response([tool_use]),
+                _make_text_response('{"plan": "p", "file_list": ["x.py"]}'),
+            ]
+        )
 
         tool = MagicMock(spec=BaseTool)
         tool.name = "read_file"
 
         async def mock_execute(**kwargs):
             return ToolResult(success=True, content="file content here")
+
         tool.execute = mock_execute
 
         agent = BaseAgent(llm=llm, system_prompt="test", tools=[tool])
@@ -227,9 +233,11 @@ class TestBaseAgentExecuteErrors:
         from auto_engineering.errors import AEError, ErrorCode
 
         llm = MagicMock(spec=AnthropicProvider)
-        llm.create_message = AsyncMock(return_value=_make_text_response(
-            "I cannot answer this question in JSON format.",
-        ))
+        llm.create_message = AsyncMock(
+            return_value=_make_text_response(
+                "I cannot answer this question in JSON format.",
+            )
+        )
         agent = BaseAgent(llm=llm, system_prompt="test")
         task = Task(
             id="t",
@@ -256,6 +264,7 @@ class TestBaseAgentExecuteErrors:
 
         async def mock_execute(**kwargs):
             return ToolResult(success=True, content="ok")
+
         tool.execute = mock_execute
 
         agent = BaseAgent(llm=llm, system_prompt="test", tools=[tool], max_tool_calls=2)
@@ -271,10 +280,12 @@ class TestBaseAgentExecuteErrors:
         """LLM 调不存在的 tool → 工具结果含 error,继续循环到 final."""
         llm = MagicMock(spec=AnthropicProvider)
         tool_use = {"id": "t1", "name": "nonexistent_tool", "input": {}}
-        llm.create_message = AsyncMock(side_effect=[
-            _make_tool_use_response([tool_use]),
-            _make_text_response('{"plan": "fallback"}'),
-        ])
+        llm.create_message = AsyncMock(
+            side_effect=[
+                _make_tool_use_response([tool_use]),
+                _make_text_response('{"plan": "fallback"}'),
+            ]
+        )
 
         agent = BaseAgent(llm=llm, system_prompt="test")
         task = Task(id="t", description="x", expected_output="y", output_channels=["plan"])
