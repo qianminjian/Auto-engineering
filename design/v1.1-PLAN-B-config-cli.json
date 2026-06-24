@@ -1,0 +1,46 @@
+{
+  "version": "1.0",
+  "goal": "实现完整 Settings、加载 .ae-answers.yml、ae dev-loop CLI 真正接 LoopEngine，补 11 项团队级 P0 能力 (T01-T11)。",
+  "phases": [
+    {
+      "name": "B.01: Settings 完整实现 + .ae-answers.yml 加载 + 环境前置校验",
+      "goal": "实现 v3.0 §八 8.1 完整 Settings 50 行；ProjectEnvironment 加载 .ae-answers.yml 共享契约；启动前校验 git 状态/API key/磁盘。",
+      "tasks": [
+        "T01: 实现 config/settings.py 完整 Settings dataclass（anthropic_api_key/anthropic_model/checkpoint_dir/max_steps/max_tool_calls/retry_max_attempts/retry_timeout），从环境变量加载，缺 API key 抛 CONFIG_MISSING_API_KEY",
+        "T02: 扩展 config/environment.py 实现 load_ae_answers(project_root) — 读 .ae-answers.yml，按 SHARED.md 共享契约合并可判定项 + 提示不可判定项冲突",
+        "T06-1: 实现 scripts/ae_preflight.py 入口前置校验：git status / API key 连通（最小 Anthropic API call）/ 磁盘 ≥100MB / Python ≥3.12",
+        "T06-2: 校验失败抛 SystemExit + 友好错误消息（不是 traceback）",
+        "更新 cli.py dev_loop 入口：启动前调 preflight 校验",
+        "加 tests/test_settings.py（10+ 测试：环境变量加载/缺 key/默认值）",
+        "加 tests/test_environment.py（5+ 测试：.ae-answers.yml 存在/缺失/字段冲突）",
+        "git commit feat(config): 完整 Settings + .ae-answers.yml 加载 + 环境前置校验 (Plan B)"
+      ],
+      "depends_on": [],
+      "is_gate": false,
+      "gate_type": "auto",
+      "phase_type": "implementation"
+    },
+    {
+      "name": "B.02: ae dev-loop CLI 真正接 LoopEngine + 11 项 T01-T11 验证 Gate",
+      "goal": "cli.py dev_loop 真正驱动 LoopEngine.run()，补 11 项团队级 P0 能力（进度/成本/错误归类/Ctrl-C/dry-run/JSON 日志/.ae-answers 加载等）。",
+      "tasks": [
+        "T02-2: ae dev-loop 启动读 .ae-answers.yml → 注入 ProjectEnvironment 到 runtime 配置",
+        "T03: --max-tokens / --max-cost CLI flag，累加 token，超阈值抛 BudgetExceeded",
+        "T04: 进度输出 — 每 stage 开始输出 'Stage X/3: architect'，结束输出 elapsed + token 消耗",
+        "T05: 错误归类 — AEError 按 code 分 4 类（用户错/API 错/网络错/业务错），每类友好提示",
+        "T07: Ctrl-C (SIGINT) handler 触发 CancellationToken.cancel() + 保存 checkpoint + 提示 ae checkpoint resume <id>",
+        "T08: --dry-run 模式只跑 architect → 输出 plan 后退出，不写文件/git/checkpoint",
+        "T09: --log-format json 输出结构化日志（含 stage/elapsed/tokens/cost）",
+        "T10: --llm-provider 接受 anthropic/ollama（v1.0 只实装 anthropic，其他提示'未实现'）",
+        "T11: --project-root 显式指定，缺省 cwd",
+        "加 tests/test_cli.py（mock LoopEngine 验证 CLI 行为）",
+        "Gate 验证：端到端 ae dev-loop --dry-run '...' 在测试项目跑通 + 11 项 T01-T11 各有测试覆盖",
+        "git commit feat(cli): ae dev-loop 端到端 + 11 项团队能力 (Plan B)"
+      ],
+      "depends_on": ["01"],
+      "is_gate": true,
+      "gate_type": "hybrid",
+      "phase_type": "implementation"
+    }
+  ]
+}

@@ -1,0 +1,42 @@
+{
+  "version": "1.0",
+  "goal": "修复 v3.0-LOOP.md 文档设计缺陷 (D1-D6) 与 Phase 1 隐藏 bug (B1-B9)，保证 33 测试全绿。",
+  "phases": [
+    {
+      "name": "A.01: 修复 v3.0 设计缺陷 (D1-D6) + 文档同步",
+      "goal": "对照审计报告 §五 D1-D6 修 6 处 v3.0 设计缺陷，并将 v1.0-LOOP.md 同步到 v3.1。",
+      "tasks": [
+        "D1: build_dev_loop_graph 补 add_edge('developer','critic') — 文档 v1.0-LOOP.md §三 3.3 与代码 engine/graph.py 同步",
+        "D4: run() while 循环在 status=='interrupt_after' 时 break — 文档 v1.0-LOOP.md §2.1 主代码段补 break",
+        "D5: 重构 v3.0 §2.1 与 §7.4 run() 互指问题 — 在 §2.1 留完整版，§7.4 改为'增量差异'小节",
+        "D2 + D3 + D6: 验证 render_description 空值处理、checkpoint.status 同步、parse_agent_output 缺失 partial JSON 已在代码层修复 — 文档加注释说明",
+        "同步 v1.0-LOOP.md 章节 §十一 bug 修复记录新增 D1-D6 行（参考 f4f9b9c 实际修复内容）",
+        "更新 BEACON.md 当前状态：'Phase 1 编码完成 → Plan A bug 修复完成'",
+        "跑全测试 pytest tests/test_loop*.py tests/test_state.py tests/test_checkpoint.py tests/test_graph.py -q 确认仍 33 全绿",
+        "git add design/v1.0-LOOP.md design/BEACON.md auto_engineering/engine/graph.py auto_engineering/engine/loop.py + commit fix(loop): D1-D6 v3.0 设计缺陷修复 (Plan A)"
+      ],
+      "depends_on": [],
+      "is_gate": false,
+      "gate_type": "auto",
+      "phase_type": "implementation"
+    },
+    {
+      "name": "A.02: 修复 Phase 1 隐藏 bug (B1-B9) + Gate 验证",
+      "goal": "对照审计报告 §六 B1-B9 修 9 处 Phase 1 隐藏 bug，重点是 B1 interrupt_after 循环、CheckpointStore context manager、Stage name 冲突防御。",
+      "tasks": [
+        "B1 (P0): LoopEngine.run() after_tick 后立即检查 status.startswith('interrupt') 则 break — 补 test_interrupt_after_breaks_loop",
+        "B3 (P2): CheckpointStore 实现 __enter__/__exit__ context manager — 修 conftest.py 用 with 模式消除 ResourceWarning",
+        "B5 (P2): StageGraph.add_stage 断言 stage.name not in (START, END) — 加 test_name_collision_raises",
+        "B6 (P2): LoopEngine.resume() 校验 checkpoint.status in ('pending','interrupted','drained')",
+        "B2/B4/B7/B8/B9 (审计中评 P3 不阻塞): 加注释说明设计选择 — GuardrailRetrySignal 不继承 AEError 是 by design / dev_loop 边硬编码是 v1.0 范围",
+        "跑全测试确认 B1 修后 interrupt_after 测试通过 + 33 旧测试不回归",
+        "Gate: 跑 33+ 测试 + 4 个新测试 (interrupt_after, context manager, name collision, resume validation)",
+        "git add tests/ auto_engineering/engine/ + commit fix(loop): B1-B6 Phase 1 隐藏 bug 修复 (Plan A)"
+      ],
+      "depends_on": ["01"],
+      "is_gate": true,
+      "gate_type": "auto",
+      "phase_type": "implementation"
+    }
+  ]
+}
