@@ -1,0 +1,10 @@
+{
+  "exclude": [
+    "references",
+    "_scratch",
+    ".serena",
+    ".venv",
+    "__pycache__",
+    ".phase-execution"
+  ]
+}
