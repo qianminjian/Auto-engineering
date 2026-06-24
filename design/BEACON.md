@@ -1,4 +1,4 @@
-> 创建：2026-06-24 | 更新：2026-06-24 | 阶段：设计审计 v3 → init 断路修复
+> 创建：2026-06-24 | 更新：2026-06-24 | 阶段：init 完成 + dev-loop Phase 1 编码完成
 
 ## 目标与成功标准
 
@@ -31,19 +31,30 @@
 | 4 | GuardrailChain 替代 Gate | 参考 CrewAI GuardrailResult + AutoGen DropMessage | 2026-06-24 |
 | 5 | init 审计后优先断路修复 | 3 个断路点使当前 init 代码在真实场景基本不可用 | 2026-06-24 |
 | 6 | AnthropicProvider 封装在 llm/ | 不混入 agent 代码，方便测试 mock | 2026-06-24 |
+| 7 | Phase 1 编码前先清理现状 | 占位符命名 `DevLoop*` 与 v3.0 `LoopEngine*` 冲突；`crew/contracts/tasks/runtime/registry.py/runtime/messages.py` 应删；SHARED.md 目录结构未同步 v3.0 | 2026-06-24 |
+| 8 | render_description 空值整行删除 | v3.0 §3.1 注释承诺"条件逻辑在 render_description 中处理"但未实现；developer 模板 "上一轮审查反馈：{critic_feedback}" 首轮产生空行干扰 LLM | 2026-06-24 |
+| 9 | run() 退出前同步 checkpoint.status | v3.0 §2.1 tick() 改 self.status 但不写 checkpoint，LoopResult.status 错位 | 2026-06-24 |
+| 10 | developer→critic 边显式注册 | v3.0 §三 build_dev_loop_graph 漏 add_edge，critic 永不调度 | 2026-06-24 |
 
 ## 当前状态
 
-**阶段：** dev-loop 设计审计 v3 完成 + init 深度审计完成 → init 断路修复（Phase 4.1）
+**阶段：** dev-loop Phase 1 编码完成 → 待 Phase 2 (Runtime + Guardrail)
 
-**审计结论（汇总）：**
+**Phase 1 产出：**
+- `auto_engineering/errors.py` — ErrorCode Enum + AEError 族（50 行）
+- `auto_engineering/engine/{state,checkpoint,graph,messages,loop}.py` — 5 文件 (~600 行)
+- `tests/{conftest,test_loop_state,test_checkpoint,test_graph,test_loop}.py` — 5 文件，33 测试全绿
+- 自身覆盖率：state 100% / messages 100% / checkpoint 89% / graph 95% / loop 82% / errors 87%
 
-| 子系统 | 审计轮次 | 优化点 | 状态 |
-|--------|---------|--------|------|
-| dev-loop | 三轮 | 37 个（17+10+10） | 设计文档已更新，待编码 |
-| init | 一轮深度 | 21 个偏差项（3 P0 / 8 P1 / 7 P2 / 3 P3） | 设计文档已更新，待修复 |
+**v3.0 → v3.1 修复：**
+- §3.1 render_description 空值整行删除
+- §2.1 run() 退出前同步 checkpoint.status
+- §三 build_dev_loop_graph 补 developer→critic 边
 
-**init 关键发现：** 设计骨架正确（B+），但编排器 `scaffold.py` 只实现了设计意图的 ~60%。3 个断路点：多层模板目录缺失（共享模板永不生成）、from-answers 失效、路径穿越无防护。
+**清理（决策 1C）：**
+- 删 `crew/`, `contracts/`, `tasks/`, `runtime/registry.py`, `runtime/messages.py`, 旧 `engine/*.py`
+- 重写 `runtime/__init__.py`（仅 AgentRuntime）
+- 同步 `SHARED.md §三/§七` 对齐 v3.0
 
 **审计报告：**
 - `design/v1.0-LOOP-AUDIT.md` — dev-loop 初版（17 优化点）
@@ -52,7 +63,7 @@
 - `design/v1.0-INIT.md §1.7` — init 实现偏差审计（21 偏差项）
 - `design/v1.0-INIT.md §二` — init 修复实施计划
 
-**下一步：** Phase 4.1 init 断路修复（R1-R3，~1h）→ Phase 4.2 行为纠正（R4-R11，~2h）→ dev-loop Phase 1 编码
+**下一步：** Phase 2 编码（Runtime + Guardrail，~430 行）→ Phase 3 (Agent + 工具 ~1100 行) → Phase 4 (CLI + 可观测性 ~400 行)
 
 **阻塞项：** 无
 
@@ -60,6 +71,8 @@
 
 | 日期 | 变更 | 原因 |
 |------|------|------|
+| 2026-06-24 | dev-loop Phase 1 编码完成 | 33 测试全绿；v3.0 → v3.1 三处 bug 修复 |
+| 2026-06-24 | 现状清理：删 crew/contracts/tasks/runtime/registry+messages；同步 SHARED.md v3.0 | 占位符命名与 v3.0 冲突 + 文档间不一致 |
 | 2026-06-24 | init 深度审计：21 个偏差项，设计文档更新 + 修复计划 | 对照设计+实现+Copier/Cookiecutter/Yeoman 源码逐模块检查 |
 | 2026-06-24 | dev-loop 第三轮审计：6 设计 bug + 4 缺失维度 | 挑剔的独立审计角度验证可落地性 |
 | 2026-06-24 | dev-loop 补充审计：10 个优化点 | 对照 CrewAI/AutoGen/LangGraph 源码补充维度 |
@@ -73,9 +86,12 @@
 
 ## 引用文件
 
-@design/v1.0-SHARED.md — 共享架构基线
+@design/v1.0-SHARED.md — 共享架构基线（v3.0 对齐）
 @design/v1.0-LOOP.md — dev-loop 子系统设计（v3.0，§十一 含 bug 修复记录）
 @design/v1.0-LOOP-AUDIT.md — dev-loop 初版审计（17 优化点）
 @design/v1.0-AUDIT-SUPPLEMENT.md — dev-loop 补充审计（10 优化点）
 @design/v1.0-INIT.md — init 子系统设计 + 实现偏差审计（§1.7）+ 修复计划（§二）
 @design/v1.0-TEMPLATES.md — 模板资产定义
+@design/LOOP-DEVELOPMENT-PLAN.md — dev-loop 4 阶段开发计划
+@tests/conftest.py — MockRuntime + checkpoint_dir fixture
+

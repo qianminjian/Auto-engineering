@@ -1,15 +1,44 @@
-"""Loop 引擎 — 借鉴 LangGraph pregel/_loop.py.
+"""Loop 引擎 — Layer 1 (LoopEngine) + Layer 2 (StageGraph) + 共享类型.
 
-核心类:
-    DevLoop      — while True 执行循环 (tick → execute → after_tick)
-    DevLoopGraph — StateGraph 定义开发流程节点和边
-    DevLoopState — 共享状态 schema
-    Checkpoint   — SQLite 持久化
+借鉴 LangGraph pregel/_loop.py + graph/state.py.
+Phase 1 提供: 核心循环 + Checkpoint 持久化 + Stage 调度.
+Phase 2+ 在此基础上加 Runtime + Guardrail 中间件.
 """
 
-from .loop import DevLoop
-from .graph import DevLoopGraph
-from .state import DevLoopState
-from .checkpoint import Checkpoint
+from .checkpoint import Checkpoint, CheckpointStore
+from .graph import (
+    ConditionSpec,
+    Stage,
+    StageGraph,
+    build_dev_loop_graph,
+)
+from .loop import (
+    LoopDrained,
+    LoopEngine,
+    LoopInterrupted,
+    LoopResult,
+    StageResult,
+)
+from .messages import Send
+from .state import LoopState
 
-__all__ = ["DevLoop", "DevLoopGraph", "DevLoopState", "Checkpoint"]
+__all__ = [
+    # 核心引擎
+    "LoopEngine",
+    "LoopResult",
+    "StageResult",
+    "LoopInterrupted",
+    "LoopDrained",
+    # 状态
+    "LoopState",
+    # Checkpoint
+    "Checkpoint",
+    "CheckpointStore",
+    # Stage 图
+    "Stage",
+    "StageGraph",
+    "ConditionSpec",
+    "build_dev_loop_graph",
+    # 多 Agent 预留
+    "Send",
+]
