@@ -65,8 +65,12 @@ class TestAnthropicProvider:
         # Mock anthropic.Anthropic client
         mock_client = MagicMock()
         mock_response = MagicMock()
-        mock_response.content = [MagicMock(text="hi there")]
+        text_block = MagicMock()
+        text_block.type = "text"
+        text_block.text = "hi there"
+        mock_response.content = [text_block]
         mock_response.model = "claude-test-model"
+        mock_response.stop_reason = "end_turn"
         mock_response.usage.input_tokens = 5
         mock_response.usage.output_tokens = 3
         mock_client.messages.create.return_value = mock_response
@@ -91,8 +95,12 @@ class TestAnthropicProvider:
 
         mock_client = MagicMock()
         mock_response = MagicMock()
-        mock_response.content = [MagicMock(text="x")]
+        text_block = MagicMock()
+        text_block.type = "text"
+        text_block.text = "x"
+        mock_response.content = [text_block]
         mock_response.model = "m"
+        mock_response.stop_reason = "end_turn"
         mock_response.usage.input_tokens = 0
         mock_response.usage.output_tokens = 0
         mock_client.messages.create.return_value = mock_response
@@ -125,3 +133,157 @@ class TestAnthropicProvider:
             # 不实际调用 create_message,只验证 client 构造路径
             mock_anthropic_class.assert_called_once_with(api_key="sk-test-123")
             assert provider is not None
+
+
+class TestLLMResponseToolFields:
+    """LLMResponse 扩展字段 — 工具调用支持."""
+
+    def test_response_default_stop_reason(self):
+        """LLMResponse.stop_reason 默认 'end_turn'."""
+        from auto_engineering.llm.anthropic_provider import LLMResponse, LLMUsage
+
+        r = LLMResponse(content="x", model="m", usage=LLMUsage())
+        assert r.stop_reason == "end_turn"
+        assert r.tool_use_blocks == []
+
+    def test_response_with_tool_use_blocks(self):
+        """LLMResponse 可带 tool_use_blocks."""
+        from auto_engineering.llm.anthropic_provider import LLMResponse, LLMUsage
+
+        blocks = [{"id": "toolu_1", "name": "read_file", "input": {"path": "x.py"}}]
+        r = LLMResponse(
+            content="",
+            model="m",
+            usage=LLMUsage(),
+            stop_reason="tool_use",
+            tool_use_blocks=blocks,
+        )
+        assert r.stop_reason == "tool_use"
+        assert len(r.tool_use_blocks) == 1
+        assert r.tool_use_blocks[0]["name"] == "read_file"
+
+
+class TestAnthropicProviderToolsSupport:
+    """AnthropicProvider 支持 tools 参数 + tool_use_blocks 解析."""
+
+    def test_create_message_accepts_tools_kwarg(self):
+        """create_message 接受 tools 参数并传给 SDK."""
+        from auto_engineering.llm.anthropic_provider import AnthropicProvider
+
+        mock_client = MagicMock()
+        mock_response = MagicMock()
+        mock_response.content = [MagicMock(text="x")]
+        mock_response.model = "m"
+        mock_response.usage.input_tokens = 0
+        mock_response.usage.output_tokens = 0
+        mock_client.messages.create.return_value = mock_response
+
+        provider = AnthropicProvider(client=mock_client)
+        tools = [{"name": "read_file", "description": "Read a file"}]
+        provider.create_message(
+            model="m",
+            max_tokens=100,
+            system="sys",
+            messages=[{"role": "user", "content": "q"}],
+            tools=tools,
+        )
+        call_kwargs = mock_client.messages.create.call_args.kwargs
+        assert "tools" in call_kwargs
+        assert call_kwargs["tools"] == tools
+
+    def test_create_message_parses_tool_use_blocks(self):
+        """SDK 返回 tool_use block 时, LLMResponse.tool_use_blocks 包含解析结果."""
+        from auto_engineering.llm.anthropic_provider import AnthropicProvider
+
+        mock_client = MagicMock()
+        mock_response = MagicMock()
+        # mock SDK response: 包含 text block + tool_use block
+        text_block = MagicMock()
+        text_block.type = "text"
+        text_block.text = "I'll read the file"
+        tool_use_block = MagicMock()
+        tool_use_block.type = "tool_use"
+        tool_use_block.id = "toolu_abc123"
+        tool_use_block.name = "read_file"
+        tool_use_block.input = {"path": "x.py"}
+        mock_response.content = [text_block, tool_use_block]
+        mock_response.model = "m"
+        mock_response.stop_reason = "tool_use"
+        mock_response.usage.input_tokens = 10
+        mock_response.usage.output_tokens = 5
+        mock_client.messages.create.return_value = mock_response
+
+        provider = AnthropicProvider(client=mock_client)
+        result = provider.create_message(
+            model="m",
+            max_tokens=100,
+            system="sys",
+            messages=[{"role": "user", "content": "q"}],
+        )
+        assert result.stop_reason == "tool_use"
+        assert result.content == "I'll read the file"
+        assert len(result.tool_use_blocks) == 1
+        assert result.tool_use_blocks[0]["id"] == "toolu_abc123"
+        assert result.tool_use_blocks[0]["name"] == "read_file"
+        assert result.tool_use_blocks[0]["input"] == {"path": "x.py"}
+
+    def test_create_message_text_only_response(self):
+        """SDK 返回纯 text block (无 tool_use) 时, tool_use_blocks 为空."""
+        from auto_engineering.llm.anthropic_provider import AnthropicProvider
+
+        mock_client = MagicMock()
+        mock_response = MagicMock()
+        text_block = MagicMock()
+        text_block.type = "text"
+        text_block.text = "Final answer"
+        mock_response.content = [text_block]
+        mock_response.model = "m"
+        mock_response.stop_reason = "end_turn"
+        mock_response.usage.input_tokens = 5
+        mock_response.usage.output_tokens = 3
+        mock_client.messages.create.return_value = mock_response
+
+        provider = AnthropicProvider(client=mock_client)
+        result = provider.create_message(
+            model="m",
+            max_tokens=100,
+            system="sys",
+            messages=[],
+        )
+        assert result.stop_reason == "end_turn"
+        assert result.content == "Final answer"
+        assert result.tool_use_blocks == []
+
+
+class TestAnthropicProviderKwargs:
+    """AnthropicProvider.create_message 参数扩展 - kwargs (model/max_tokens/system/messages/tools)."""
+
+    def test_create_message_passes_all_kwargs(self):
+        """验证 model/max_tokens/system/messages/tools 都传给 SDK."""
+        from auto_engineering.llm.anthropic_provider import AnthropicProvider
+
+        mock_client = MagicMock()
+        mock_response = MagicMock()
+        mock_response.content = [MagicMock(text="x")]
+        mock_response.model = "m"
+        mock_response.stop_reason = "end_turn"
+        mock_response.usage.input_tokens = 0
+        mock_response.usage.output_tokens = 0
+        mock_client.messages.create.return_value = mock_response
+
+        provider = AnthropicProvider(client=mock_client)
+        tools = [{"name": "x"}]
+        provider.create_message(
+            model="claude-x",
+            max_tokens=2048,
+            system="sys-prompt",
+            messages=[{"role": "user", "content": "q"}],
+            tools=tools,
+        )
+        mock_client.messages.create.assert_called_once_with(
+            model="claude-x",
+            max_tokens=2048,
+            system="sys-prompt",
+            messages=[{"role": "user", "content": "q"}],
+            tools=tools,
+        )
