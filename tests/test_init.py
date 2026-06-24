@@ -4,6 +4,8 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+import pytest
+
 
 def run_ae(args: list[str]) -> subprocess.CompletedProcess:
     return subprocess.run(
@@ -590,3 +592,192 @@ class TestAeStatus:
         result = run_ae(["status"])
         assert result.returncode == 0
         assert "当前目录" in result.stdout
+
+
+# ---------------------------------------------------------------------------
+# Phase 03 C1: scaffold.py / hooks.py 覆盖率补充（聚焦目标 70%）
+# ---------------------------------------------------------------------------
+
+
+class TestScaffoldPrerequisites:
+    """覆盖 scaffold.py:220-223 _check_prerequisites."""
+
+    def test_missing_git_raises(self, monkeypatch, tmp_path):
+        from auto_engineering.init.scaffold import InitWorker
+        from auto_engineering.init.errors import UnsatisfiedPrerequisiteError
+
+        # 模拟 git 不存在
+        monkeypatch.setattr("shutil.which", lambda cmd: None if cmd == "git" else "/usr/bin/" + cmd)
+
+        worker = InitWorker(
+            dst_path=tmp_path / "p",
+            project_type="library",
+            defaults=True,
+        )
+        with pytest.raises(UnsatisfiedPrerequisiteError):
+            worker._check_prerequisites()
+
+    def test_prerequisites_ok_when_git_and_python_present(self, tmp_path):
+        from auto_engineering.init.scaffold import InitWorker
+
+        worker = InitWorker(
+            dst_path=tmp_path / "p",
+            project_type="library",
+            defaults=True,
+        )
+        worker._check_prerequisites()  # 不抛
+
+
+class TestScaffoldNonEmptyDir:
+    """覆盖 scaffold.py:195-208 _phase_detect 目录存在性分支."""
+
+    def test_non_empty_dir_without_force_or_incremental_raises(self, tmp_path):
+        from auto_engineering.init.scaffold import InitWorker
+        from auto_engineering.init.errors import TargetDirectoryError
+
+        existing = tmp_path / "existing"
+        existing.mkdir()
+        (existing / "file.txt").write_text("data")
+
+        worker = InitWorker(
+            dst_path=existing,
+            project_type="library",
+            defaults=True,
+        )
+        with pytest.raises(TargetDirectoryError):
+            worker._phase_detect()
+
+    def test_non_empty_dir_with_incremental_sets_mode(self, tmp_path):
+        from auto_engineering.init.scaffold import InitWorker
+
+        existing = tmp_path / "existing"
+        existing.mkdir()
+        (existing / "file.txt").write_text("data")
+
+        worker = InitWorker(
+            dst_path=existing,
+            project_type="library",
+            defaults=True,
+            incremental=True,
+        )
+        worker._phase_detect()
+        assert worker._mode == "incremental"
+
+    def test_empty_dir_sets_fresh_mode(self, tmp_path):
+        from auto_engineering.init.scaffold import InitWorker
+
+        empty = tmp_path / "empty"
+        empty.mkdir()
+
+        worker = InitWorker(
+            dst_path=empty,
+            project_type="library",
+            defaults=True,
+        )
+        worker._phase_detect()
+        assert worker._mode == "fresh"
+
+    def test_nonexistent_dir_sets_fresh_mode(self, tmp_path):
+        from auto_engineering.init.scaffold import InitWorker
+
+        worker = InitWorker(
+            dst_path=tmp_path / "nonexistent",
+            project_type="library",
+            defaults=True,
+        )
+        worker._phase_detect()
+        assert worker._mode == "fresh"
+
+
+class TestScaffoldPretendMode:
+    """覆盖 scaffold.py:75-90 pretend 模式返回空 InitResult."""
+
+    def test_pretend_returns_empty_files_list(self, tmp_path):
+        from auto_engineering.init.scaffold import InitWorker
+
+        dst = tmp_path / "pretend-project"
+        worker = InitWorker(
+            dst_path=dst,
+            project_type="library",
+            defaults=True,
+            pretend=True,
+            quiet=True,
+        )
+        result = worker.execute()
+        assert result.files == []
+        assert result.project_type == "library"
+        assert not dst.exists()  # pretend 不创建文件
+
+
+class TestScaffoldCleanupOnError:
+    """覆盖 scaffold.py:139-142 异常处理 cleanup_on_error 行为."""
+
+    def test_cleanup_removes_created_dst_on_exception(self, tmp_path, monkeypatch):
+        from auto_engineering.init import scaffold as scaffold_mod
+        from auto_engineering.init.scaffold import InitWorker
+
+        dst = tmp_path / "cleanup-test"
+        worker = InitWorker(
+            dst_path=dst,
+            project_type="library",
+            defaults=True,
+            skip_tasks=True,
+            quiet=True,
+        )
+
+        # 模拟 render 阶段抛错
+        def boom(*args, **kwargs):
+            raise RuntimeError("simulated render failure")
+
+        monkeypatch.setattr(worker, "_phase_render", boom)
+        with pytest.raises(RuntimeError):
+            worker.execute()
+        # did_create_dst=True 时应清理
+        assert not dst.exists()
+
+
+class TestHooksTaskRunner:
+    """覆盖 hooks.py:33-77 TaskRunner 分支（when 条件 + shell/list 双模式）."""
+
+    def test_empty_tasks_no_op(self, tmp_path):
+        from auto_engineering.init.hooks import TaskRunner
+
+        runner = TaskRunner(tmp_path)
+        runner.run([], context={})  # 不抛
+
+    def test_when_false_skips_task(self, tmp_path, monkeypatch):
+        from auto_engineering.init.hooks import TaskRunner
+        from auto_engineering.init.config import Task
+
+        called = []
+        def fake_run(*args, **kwargs):
+            called.append(args[0])
+
+        monkeypatch.setattr("subprocess.run", fake_run)
+
+        task = Task(cmd="echo hi", when="false")
+        runner = TaskRunner(tmp_path)
+        runner.run([task], context={})
+        assert called == []  # 跳过了
+
+    def test_list_cmd_renders_without_shell(self, tmp_path, monkeypatch):
+        from auto_engineering.init.hooks import TaskRunner
+        from auto_engineering.init.config import Task
+
+        captured = {}
+        def fake_run(cmd, **kwargs):
+            captured["cmd"] = cmd
+            captured["shell"] = kwargs.get("shell", False)
+            from unittest.mock import MagicMock
+            m = MagicMock()
+            m.returncode = 0
+            m.stderr = ""
+            return m
+
+        monkeypatch.setattr("subprocess.run", fake_run)
+
+        task = Task(cmd=["echo", "hello"], when=True)
+        runner = TaskRunner(tmp_path)
+        runner.run([task], context={"name": "world"})
+        assert captured["shell"] is False
+        assert captured["cmd"] == ["echo", "hello"]
