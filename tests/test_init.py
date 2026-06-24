@@ -218,6 +218,38 @@ class TestGitBranchFallback:
         assert result.returncode == 0 or "unknown option" in result.stderr.lower()
 
 
+class TestDetectorSpecDocGlob:
+    """A6: FRAMEWORK_SIGNATURES spec-doc 支持 design/*.md glob."""
+
+    def test_spec_doc_detected_with_arbitrary_design_md(self):
+        """RED: 任何 design/*.md 文件存在时,项目被识别为 spec-doc."""
+        import tempfile
+        from auto_engineering.init.detector import ProjectDetector
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            # 创建 design/v2.0.md 而不是 BEACON.md
+            (tmp_path / "design").mkdir()
+            (tmp_path / "design" / "v2.0.md").write_text("# v2.0 design")
+            detector = ProjectDetector(tmp_path)
+            candidates = detector.list_candidates()
+            assert "spec-doc" in candidates, \
+                f"spec-doc not detected with design/v2.0.md. Got: {candidates}"
+
+    def test_spec_doc_still_detected_with_beacon_md(self):
+        """REGRESSION: design/BEACON.md 仍应识别为 spec-doc."""
+        import tempfile
+        from auto_engineering.init.detector import ProjectDetector
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            (tmp_path / "design").mkdir()
+            (tmp_path / "design" / "BEACON.md").write_text("# BEACON")
+            detector = ProjectDetector(tmp_path)
+            candidates = detector.list_candidates()
+            assert "spec-doc" in candidates
+
+
 class TestProjectEnvironmentWarnUndetectable:
     """A5: ProjectEnvironment._warn_undetectable 列出无法自动判定的字段."""
 
