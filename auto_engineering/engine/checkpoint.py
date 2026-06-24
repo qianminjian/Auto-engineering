@@ -140,6 +140,47 @@ class CheckpointStore:
         """v3.1 B3: Context manager 出口. 自动 close,避免 sqlite3 fd 泄漏."""
         self.close()
 
+    def list_all(self) -> list[dict]:
+        """列出所有 checkpoints. 返回 [{id, thread_id, step, status, created_at, updated_at}, ...]."""
+        conn = self._get_conn()
+        rows = conn.execute(
+            """SELECT id, thread_id, step, status, created_at, updated_at
+               FROM checkpoints
+               ORDER BY updated_at DESC"""
+        ).fetchall()
+        return [
+            {
+                "id": r[0],
+                "thread_id": r[1],
+                "step": r[2],
+                "status": r[3],
+                "created_at": r[4],
+                "updated_at": r[5],
+            }
+            for r in rows
+        ]
+
+    def get_latest_for_thread(self, thread_id: str) -> "Checkpoint | None":
+        """按 thread_id 取最新 Checkpoint. 不存在返回 None."""
+        conn = self._get_conn()
+        row = conn.execute(
+            """SELECT id, parent_id, thread_id, step, state_json, status
+               FROM checkpoints
+               WHERE thread_id = ?
+               ORDER BY step DESC LIMIT 1""",
+            (thread_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return Checkpoint(
+            id=row[0],
+            parent_id=row[1],
+            thread_id=row[2],
+            step=row[3],
+            state=LoopState.from_dict(json.loads(row[4])),
+            status=row[5],
+        )
+
 
 @dataclass
 class Checkpoint:

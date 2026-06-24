@@ -622,5 +622,123 @@ def status():
         click.echo(f"  读取项目环境失败: {e}")
 
 
+# ============================================================
+# Phase 1.1: ae checkpoint list / show / resume
+# ============================================================
+
+
+@main.group()
+def checkpoint():
+    """Checkpoint 管理(list / show / resume)."""
+
+
+@checkpoint.command("list")
+def checkpoint_list_cmd():
+    """列出所有 checkpoint."""
+    from auto_engineering.engine.checkpoint import CheckpointStore
+
+    cwd = Path.cwd()
+    cp_dir = cwd / ".ae-checkpoints"
+    if not cp_dir.exists():
+        click.echo("(no checkpoint directory)")
+        return
+
+    # 扫描 .ae-checkpoints/ 下所有 .db 文件
+    all_checkpoints: list[dict] = []
+    for db_file in sorted(cp_dir.glob("*.db")):
+        store = CheckpointStore(str(db_file))
+        try:
+            for cp in store.list_all():
+                cp["db_file"] = db_file.name
+                all_checkpoints.append(cp)
+        finally:
+            store.close()
+
+    if not all_checkpoints:
+        click.echo("(no checkpoints)")
+        return
+
+    click.echo(f"{'ID':<36} {'THREAD':<18} {'STEP':>4}  {'STATUS':<10} {'DB':<20} UPDATED")
+    click.echo("-" * 110)
+    for cp in all_checkpoints:
+        click.echo(
+            f"{cp['id'][:34]:<36} {cp['thread_id'][:16]:<18} {cp['step']:>4}  "
+            f"{cp['status']:<10} {cp['db_file'][:18]:<20} {cp['updated_at']}"
+        )
+
+
+@checkpoint.command("show")
+@click.argument("checkpoint_id")
+def checkpoint_show_cmd(checkpoint_id: str):
+    """查看 checkpoint 详情(state + writes + pending)."""
+    from auto_engineering.engine.checkpoint import CheckpointStore
+
+    cwd = Path.cwd()
+    cp_dir = cwd / ".ae-checkpoints"
+
+    # 搜索所有 .db 文件找匹配的 checkpoint
+    for db_file in sorted(cp_dir.glob("*.db")):
+        store = CheckpointStore(str(db_file))
+        try:
+            cp = store.get_latest_for_thread("") if False else None
+            # 直接用 load_checkpoint 查
+            from auto_engineering.errors import AEError, ErrorCode
+
+            try:
+                cp = store.load_checkpoint(checkpoint_id)
+                click.echo(f"ID:        {cp.id}")
+                click.echo(f"Thread:    {cp.thread_id}")
+                click.echo(f"Step:      {cp.step}")
+                click.echo(f"Status:    {cp.status}")
+                click.echo(f"Parent:    {cp.parent_id or '(none)'}")
+                click.echo(f"State:")
+                # 状态详情
+                state_dict = cp.state.to_dict()
+                for k, v in state_dict.items():
+                    val_str = str(v)[:80] if v else "(empty)"
+                    click.echo(f"  {k}: {val_str}")
+                return
+            except AEError as e:
+                if e.code == ErrorCode.CHECKPOINT_LOAD_FAILED:
+                    continue  # 试下一个 db
+                raise
+        finally:
+            store.close()
+
+    click.echo(f"Checkpoint '{checkpoint_id}' not found", err=True)
+    raise SystemExit(1)
+
+
+@checkpoint.command("resume")
+@click.argument("checkpoint_id")
+def checkpoint_resume_cmd(checkpoint_id: str):
+    """从 checkpoint 恢复(暂为占位 — 实际恢复需要 dev-loop 命令)."""
+    from auto_engineering.engine.checkpoint import CheckpointStore
+    from auto_engineering.errors import AEError, ErrorCode
+
+    cwd = Path.cwd()
+    cp_dir = cwd / ".ae-checkpoints"
+
+    # 验证 checkpoint 存在
+    for db_file in sorted(cp_dir.glob("*.db")):
+        store = CheckpointStore(str(db_file))
+        try:
+            try:
+                store.load_checkpoint(checkpoint_id)
+                click.echo(f"Resume from checkpoint '{checkpoint_id}'")
+                click.echo("(实际恢复请使用 `ae dev-loop` — 它会自动检测中断并提示 resume)")
+                click.echo(f"使用: ae dev-loop --resume-checkpoint {checkpoint_id} \"your requirement\"")
+                return
+            except AEError as e:
+                if e.code == ErrorCode.CHECKPOINT_LOAD_FAILED:
+                    continue
+                raise
+        finally:
+            store.close()
+
+    click.echo(f"Checkpoint '{checkpoint_id}' not found", err=True)
+    raise SystemExit(1)
+
+
 if __name__ == "__main__":
     main()
