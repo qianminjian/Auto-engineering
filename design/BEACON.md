@@ -1,4 +1,4 @@
-> 创建：2026-06-24 | 更新：2026-06-24 | 阶段：Phase 1 编码完成 → Plan A bug 修复完成
+> 创建：2026-06-24 | 更新：2026-06-24 | 阶段：Plan A bugfixes 完成 (D1-D6 + B1-B6) → Plan B 准备启动
 
 ## 目标与成功标准
 
@@ -38,21 +38,29 @@
 
 ## 当前状态
 
-**阶段：** Phase 1 编码完成 → Plan A bug 修复完成 → 待 Phase 2 (Runtime + Guardrail)
+**阶段：** Plan A bugfixes 完成 (D1-D6 + B1-B6) → Plan B 准备启动
 
-**Phase 1 产出：**
-- `auto_engineering/errors.py` — ErrorCode Enum + AEError 族（50 行）
-- `auto_engineering/engine/{state,checkpoint,graph,messages,loop}.py` — 5 文件 (~600 行)
-- `tests/{conftest,test_loop_state,test_checkpoint,test_graph,test_loop}.py` — 5 文件，34 测试全绿
-- 自身覆盖率：state 100% / messages 100% / checkpoint 89% / graph 95% / loop 82% / errors 87%
+**Plan A 产出：**
+- `d128ba2` fix(loop): D1-D6 v3.0 设计缺陷修复 — design/v1.0-LOOP.md / BEACON.md / engine/loop.py / engine/graph.py / tests/test_loop.py (5 files, +125/-35)
+- `901dfb4` fix(loop): B1-B6 Phase 1 隐藏 bug 修复 — engine/checkpoint.py / engine/graph.py / engine/loop.py / tests/test_checkpoint.py / tests/test_graph.py / tests/test_loop.py / tests/conftest.py (7 files, +167/-1)
 
-**v3.0 → v3.1 修复（D1-D6 全部完成）：**
+**Plan A 测试**：40 passed (33 原 + 7 新) in 0.12s
+- 新增：B1 interrupt_after_breaks_loop / B3 context_manager_yields_store / B5 name_collision_raises + 2 add_edge tests / B6 resume_with_done_checkpoint_raises + resume_with_pending_checkpoint_works
+- 覆盖率：state 100% / messages 100% / checkpoint 89% / graph 95% / loop 82% / errors 87%
+
+**Plan A 审计**：0 blockers, 2 P3 warnings (add_conditional_edge 未做 START/END 守卫 / docstring 命名一致性)。Gate Integration: 0 errors
+
+**v3.0 → v3.1 修复（D1-D6 + B1-B6 全部完成）：**
 - D1 §3.1 build_dev_loop_graph 补 developer→critic 边（f4f9b9c 修复）
 - D2 §3.1 render_description 空值整行删除（f4f9b9c 修复）
 - D3 §2.1 run() 退出前同步 checkpoint.status（f4f9b9c 修复）
 - D4 §2.1 run() while 循环 status.startswith('interrupt') 时 break（v1.1 Plan A.01 TDD 修复，test_interrupt_after_breaks_loop）
 - D5 §7.4 → §7.4.1 增量差异小节，消除 §2.1 与 §7.4 run() 互指（v1.1 Plan A.01）
 - D6 §八 8.1 parse_agent_output 注释说明 partial JSON 处理（v1.1 Plan A.01，Phase 3 实现）
+- B1 interrupt_after break（同 D4，复测 PASS）
+- B3 CheckpointStore 实现 __enter__/__exit__ context manager（Plan A.02 TDD）
+- B5 Stage name collision 防御（add_stage 拒绝 __start__/__end__ / add_edge 拒绝 START sentinel，END sentinel 允许）（Plan A.02 TDD）
+- B6 resume() 状态校验（拒绝 done checkpoint；要求 run() 持久化最终 status 到 DB）（Plan A.02 TDD）
 
 **清理（决策 1C）：**
 - 删 `crew/`, `contracts/`, `tasks/`, `runtime/registry.py`, `runtime/messages.py`, 旧 `engine/*.py`
