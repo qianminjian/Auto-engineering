@@ -1,11 +1,14 @@
 """文件操作工具 — Phase 0.2 真接.
 
 5 个工具: ReadFile / WriteFile / EditFile / SearchCode / ListDir.
+
+P1.5: WriteFileTool/EditFileTool 支持 project_root 白名单验证.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from .base import BaseTool, ToolResult
 
@@ -38,7 +41,10 @@ class ReadFileTool(BaseTool):
 
 
 class WriteFileTool(BaseTool):
-    """Create or overwrite file. 自动创建父目录."""
+    """Create or overwrite file with optional project_root whitelist.
+
+    P1.5: project_root 限制写操作必须在目录内.
+    """
 
     name = "write_file"
     description = "Create or overwrite a file. Auto-creates parent directories."
@@ -47,9 +53,20 @@ class WriteFileTool(BaseTool):
         "content": {"type": "string", "description": "Full file content"},
     }
 
+    def __init__(self, project_root: Path | None = None, **kwargs: Any):
+        super().__init__(**kwargs)
+        self.project_root = project_root
+
     async def execute(self, **kwargs) -> ToolResult:
-        path = Path(kwargs.get("file_path", ""))
+        file_path = kwargs.get("file_path", "")
         content = kwargs.get("content", "")
+
+        # P1.5: 白名单验证
+        safe, err = self._is_path_safe(file_path)
+        if not safe:
+            return ToolResult(success=False, content="", error=err)
+
+        path = Path(file_path)
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(content, encoding="utf-8")
@@ -59,7 +76,10 @@ class WriteFileTool(BaseTool):
 
 
 class EditFileTool(BaseTool):
-    """Replace exact string in file. 旧串不存在 → error."""
+    """Replace exact string in file with optional project_root whitelist.
+
+    P1.5: project_root 限制写操作必须在目录内.
+    """
 
     name = "edit_file"
     description = "Replace exact string in file. Returns error if old_string not found."
@@ -69,10 +89,21 @@ class EditFileTool(BaseTool):
         "new_string": {"type": "string", "description": "Replacement string"},
     }
 
+    def __init__(self, project_root: Path | None = None, **kwargs: Any):
+        super().__init__(**kwargs)
+        self.project_root = project_root
+
     async def execute(self, **kwargs) -> ToolResult:
-        path = Path(kwargs.get("file_path", ""))
+        file_path = kwargs.get("file_path", "")
         old = kwargs.get("old_string", "")
         new = kwargs.get("new_string", "")
+
+        # P1.5: 白名单验证
+        safe, err = self._is_path_safe(file_path)
+        if not safe:
+            return ToolResult(success=False, content="", error=err)
+
+        path = Path(file_path)
         try:
             if not path.exists():
                 return ToolResult(success=False, content="", error=f"File not found: {path}")
