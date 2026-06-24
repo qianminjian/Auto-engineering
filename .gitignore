@@ -6,3 +6,9 @@ uv.lock
 .DS_Store
 *.bak
 _scratch/
+.coverage
+htmlcov/
+.phase-execution/
+.serena/
+.claude/scheduled_tasks.json
+.claude/scheduled_tasks.lock
