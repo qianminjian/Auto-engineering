@@ -102,6 +102,15 @@ def init(
 @click.option("--multi", is_flag=True, help="多 Agent 并行模式（未来）")
 def dev_loop(requirement: str, max_steps: int, multi: bool):
     """单需求开发循环 (Architect → Developer → Critic)."""
+    from pathlib import Path
+    from auto_engineering.config.environment import preflight
+
+    # 入口前置校验 — 缺 API key/非 git 仓库/磁盘不足/Python 版本低 直接退出
+    try:
+        preflight(Path.cwd())
+    except SystemExit:
+        raise
+
     if multi:
         click.echo("多 Agent 并行模式尚未实现。")
         return
