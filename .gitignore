@@ -12,3 +12,6 @@ htmlcov/
 .serena/
 .claude/scheduled_tasks.json
 .claude/scheduled_tasks.lock
+
+# 参考源码（CLAUDE.md 硬禁令：禁止全量加载到内存）
+references/

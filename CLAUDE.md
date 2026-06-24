@@ -1,5 +1,20 @@
 # CLAUDE.md
 
+## ⚠️ 硬禁令（违反即停 — 2026-06-24 96GB 内存爆炸事故后确立）
+
+**`references/` 严禁加载到内存：**
+- ❌ 禁止 Read/Bash/Glob 任一文件到 context
+- ❌ 禁止 `cat references/**` / `find references/` / `ls -R references/` / `wc -l references/**`
+- ❌ 禁止把 references/ 内容粘贴到 prompt / commit message / 设计文档
+- ✅ 需要参考时按 `memory/loop-dev-code-reference-rule`：Grep 定位关键符号 → Read 50-200 行片段 → 立即丢弃
+- ✅ 已加入 `.gitignore`，claude code / pyright / serena 均不扫描
+
+**Why：** 2026-06-24 16:10 atdo Phase 02 spawn 3 个 subagent，每个 claude code 进程启动时扫描项目根建立 file tree index（含 references/），3 个进程叠加吃掉 96 GB 物理内存，触发 macOS `vm-compressor-space-shortage` → 系统强制重启。
+
+**How to apply：** 任何需要参考实现的场景，必须先 Grep 定位 50-200 行片段，绝不批量 Read。
+
+---
+
 ## 项目信息
 
 - 名称：Auto-Engineering
