@@ -233,6 +233,7 @@ def _run_loop_engine(
     dry_run: bool,
     cancellation: CancellationToken,
     progress: ProgressLogger,
+    token_tracker: TokenTracker | None = None,
 ) -> LoopRunResult:
     """真实驱动 LoopEngine.run().
 
@@ -327,7 +328,7 @@ def _run_loop_engine(
             cancellation,
             progress,
             max_tokens,
-            token_tracker=None,  # Phase 1.3: dev_loop 创建后传入,此处 None 简化
+            token_tracker=token_tracker,
         )
     except AEError as e:
         if e.code == ErrorCode.TASK_CANCELLED:
@@ -567,9 +568,8 @@ def dev_loop(
         click.echo("多 Agent 并行模式尚未实现。")
         return
 
-    # T03: TokenTracker
-    # 注: 实际累加发生在 _run_loop_engine 内部 (Phase 2 接 LLM 后)
-    TokenTracker(max_tokens=max_tokens)
+    # T03: TokenTracker — P1.1 真接
+    tracker = TokenTracker(max_tokens=max_tokens)
 
     # 调用驱动器
     try:
@@ -583,6 +583,7 @@ def dev_loop(
             dry_run=dry_run,
             cancellation=cancellation,
             progress=progress,
+            token_tracker=tracker,
         )
     except AEError as e:
         # T05: 错误归类 + 友好提示
