@@ -355,16 +355,16 @@ class InitWorker:
             capture_output=True, text=True,
         )
         if result.returncode != 0:
-            raise TaskExecutionError("git add", result.returncode, result.stderr)
+            # A3: git add 失败非阻塞 (warning to stderr)
+            print(f"warning: git add failed: {result.stderr.strip()}", file=__import__("sys").stderr)
 
         result = subprocess.run(
             ["git", "commit", "-m", "chore(init): scaffolded by ae init"],
             cwd=tmpdir, capture_output=True, text=True,
         )
         if result.returncode != 0:
-            raise TaskExecutionError(
-                "git commit", result.returncode, result.stderr,
-            )
+            # A3: git commit 失败非阻塞 (warning to stderr),不中断后续任务
+            print(f"warning: git commit failed: {result.stderr.strip()}", file=__import__("sys").stderr)
 
 
 def init_project(dst_path: str | Path, project_type: str | None = None, **kwargs) -> InitResult:

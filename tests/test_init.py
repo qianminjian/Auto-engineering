@@ -182,7 +182,11 @@ class TestPathTraversalProtection:
 
 
 class TestBuiltinHooksErrorPropagation:
-    """T4: Verify builtin hooks raise TaskExecutionError on failure."""
+    """T4: Verify builtin hooks raise TaskExecutionError on git init failure.
+
+    A3 区分: git init 失败仍抛 TaskExecutionError (它是 init 起点的基础)
+             git add/commit 失败仅 warning (用户已有仓库/空仓库时常见)
+    """
 
     def test_git_init_failure_raises(self):
         """git init in a non-existent writable location should raise."""
@@ -212,6 +216,50 @@ class TestGitBranchFallback:
         )
         # Just verify the command syntax is valid on this system
         assert result.returncode == 0 or "unknown option" in result.stderr.lower()
+
+
+class TestBuiltinHooksGitCommitNonBlocking:
+    """A3: git commit 失败非阻塞 — 仅 warning,继续后续任务."""
+
+    def test_git_commit_failure_does_not_raise(self):
+        """RED: _run_builtin_hooks 中 git commit 失败不应抛 TaskExecutionError."""
+        from unittest.mock import patch, MagicMock
+        from auto_engineering.init.scaffold import InitWorker
+
+        worker = InitWorker(
+            dst_path=Path("/tmp/test-a3"),
+            project_type="app-service",
+            defaults=True,
+        )
+        # mock _answers 让 pm/use_lefthook 取不到 → 跳过 pm install / lefthook install
+        worker._answers = MagicMock()
+        worker._answers.get.return_value = None
+
+        # 模拟所有 git 子命令都成功,但 git commit 失败 (returncode=1)
+        success_result = MagicMock()
+        success_result.returncode = 0
+        success_result.stderr = ""
+
+        failed_commit = MagicMock()
+        failed_commit.returncode = 1
+        failed_commit.stderr = "nothing to commit"
+
+        # 顺序: git init → git add → git commit (fail)
+        side_effects = [
+            success_result,  # git init
+            success_result,  # git add
+            failed_commit,   # git commit (FAIL — 应非阻塞)
+        ]
+
+        with patch("subprocess.run", side_effect=side_effects) as mock_run:
+            # 不应抛 TaskExecutionError — git commit 失败仅 warning
+            try:
+                worker._run_builtin_hooks(Path("/tmp/test-a3-dst"))
+            except Exception as e:
+                pytest.fail(f"_run_builtin_hooks 不应抛异常，但收到: {e}")
+
+            # 验证: 至少调了 3 次 subprocess.run (git init/add/commit)
+            assert mock_run.call_count >= 3
 
 
 class TestInitPhaseTasksCurrentPhase:
