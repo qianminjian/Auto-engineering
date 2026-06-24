@@ -6,7 +6,6 @@ from __future__ import annotations
 
 from .base import BaseAgent
 
-
 CRITIC_SYSTEM_PROMPT = """你是 Auto-Engineering 的代码审查者.
 
 你的职责: 审查 Developer 的 commit,判定是否可以接受,提供具体改进建议.

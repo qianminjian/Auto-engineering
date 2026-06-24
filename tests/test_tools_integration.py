@@ -7,8 +7,8 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from tests.conftest import run_async
 
+from tests.conftest import run_async
 
 # ============================================================
 # File Tools (5 tools)
@@ -200,10 +200,10 @@ class TestGitStatusTool:
     """GitStatusTool 真接(需要 git repo)."""
 
     def test_status_clean_repo(self, tmp_path: Path):
-        from auto_engineering.tools import GitStatusTool
-
         # 初始化 git + initial commit
         import subprocess
+
+        from auto_engineering.tools import GitStatusTool
         subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True, check=True)
         subprocess.run(
             ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "--allow-empty", "-m", "init"],
@@ -215,9 +215,9 @@ class TestGitStatusTool:
         assert "clean" in result.content.lower()
 
     def test_status_dirty_repo(self, tmp_path: Path):
-        from auto_engineering.tools import GitStatusTool
-
         import subprocess
+
+        from auto_engineering.tools import GitStatusTool
         subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True, check=True)
         subprocess.run(
             ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "--allow-empty", "-m", "init"],
@@ -241,9 +241,9 @@ class TestGitCommitTool:
     """GitCommitTool 真接."""
 
     def test_commit_changes(self, tmp_path: Path):
-        from auto_engineering.tools import GitCommitTool
-
         import subprocess
+
+        from auto_engineering.tools import GitCommitTool
         subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True, check=True)
         subprocess.run(
             ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "--allow-empty", "-m", "init"],
@@ -268,9 +268,9 @@ class TestGitDiffTool:
 
     @pytest.mark.skip(reason="git diff 不显示 untracked 文件(限制),改用 git_status 追踪;Phase 1 重写")
     def test_diff_unstaged(self, tmp_path: Path):
-        from auto_engineering.tools import GitDiffTool
-
         import subprocess
+
+        from auto_engineering.tools import GitDiffTool
         subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True, check=True)
         subprocess.run(
             ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "--allow-empty", "-m", "init"],
@@ -284,9 +284,9 @@ class TestGitDiffTool:
         assert "new.txt" in result.content
 
     def test_diff_no_changes(self, tmp_path: Path):
-        from auto_engineering.tools import GitDiffTool
-
         import subprocess
+
+        from auto_engineering.tools import GitDiffTool
         subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True, check=True)
         subprocess.run(
             ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "--allow-empty", "-m", "init"],
@@ -345,7 +345,7 @@ class TestToolRegistry:
     """ToolRegistry 真接."""
 
     def test_register_and_get(self):
-        from auto_engineering.tools import ToolRegistry, ReadFileTool
+        from auto_engineering.tools import ReadFileTool, ToolRegistry
 
         registry = ToolRegistry()
         tool = ReadFileTool()
@@ -353,7 +353,7 @@ class TestToolRegistry:
         assert registry.get("read_file") is tool
 
     def test_register_duplicate_raises(self):
-        from auto_engineering.tools import ToolRegistry, ReadFileTool
+        from auto_engineering.tools import ReadFileTool, ToolRegistry
 
         registry = ToolRegistry()
         registry.register(ReadFileTool())
@@ -367,7 +367,7 @@ class TestToolRegistry:
         assert registry.get("nonexistent") is None
 
     def test_resolve_existing(self):
-        from auto_engineering.tools import ToolRegistry, ReadFileTool, WriteFileTool
+        from auto_engineering.tools import ReadFileTool, ToolRegistry, WriteFileTool
 
         registry = ToolRegistry()
         registry.register(ReadFileTool())
@@ -384,7 +384,7 @@ class TestToolRegistry:
             registry.resolve(["nonexistent_tool"])
 
     def test_to_schemas_returns_anthropic_format(self):
-        from auto_engineering.tools import ToolRegistry, ReadFileTool
+        from auto_engineering.tools import ReadFileTool, ToolRegistry
 
         registry = ToolRegistry()
         registry.register(ReadFileTool())

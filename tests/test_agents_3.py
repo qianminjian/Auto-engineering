@@ -6,8 +6,6 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
 
-import pytest
-
 from auto_engineering.llm.anthropic_provider import (
     AnthropicProvider,
     LLMResponse,
@@ -32,7 +30,7 @@ class TestArchitectAgent:
     """ArchitectAgent 真接."""
 
     def test_instantiation_uses_architect_prompt(self):
-        from auto_engineering.agents import ArchitectAgent, ARCHITECT_SYSTEM_PROMPT
+        from auto_engineering.agents import ARCHITECT_SYSTEM_PROMPT, ArchitectAgent
 
         llm = MagicMock(spec=AnthropicProvider)
         agent = ArchitectAgent(llm=llm)
@@ -71,7 +69,7 @@ class TestDeveloperAgent:
     """DeveloperAgent 真接."""
 
     def test_instantiation_uses_developer_prompt(self):
-        from auto_engineering.agents import DeveloperAgent, DEVELOPER_SYSTEM_PROMPT
+        from auto_engineering.agents import DEVELOPER_SYSTEM_PROMPT, DeveloperAgent
 
         llm = MagicMock(spec=AnthropicProvider)
         agent = DeveloperAgent(llm=llm)
@@ -112,7 +110,7 @@ class TestCriticAgent:
     """CriticAgent 真接."""
 
     def test_instantiation_uses_critic_prompt(self):
-        from auto_engineering.agents import CriticAgent, CRITIC_SYSTEM_PROMPT
+        from auto_engineering.agents import CRITIC_SYSTEM_PROMPT, CriticAgent
 
         llm = MagicMock(spec=AnthropicProvider)
         agent = CriticAgent(llm=llm)
@@ -170,7 +168,7 @@ class TestStageGraphIntegrationWithAgents:
         from auto_engineering.agents import ArchitectAgent
         from auto_engineering.engine.graph import build_dev_loop_graph
 
-        llm = MagicMock(spec=AnthropicProvider)
+        MagicMock(spec=AnthropicProvider)
         graph = build_dev_loop_graph()
         # Stage.agent_type 与 Agent class name 对齐
         assert "architect" in {s.agent_type for s in graph.stages.values()}
@@ -180,7 +178,7 @@ class TestStageGraphIntegrationWithAgents:
         from auto_engineering.agents import DeveloperAgent
         from auto_engineering.engine.graph import build_dev_loop_graph
 
-        llm = MagicMock(spec=AnthropicProvider)
+        MagicMock(spec=AnthropicProvider)
         graph = build_dev_loop_graph()
         assert "developer" in {s.agent_type for s in graph.stages.values()}
         assert DeveloperAgent.__name__ == "DeveloperAgent"
@@ -189,7 +187,7 @@ class TestStageGraphIntegrationWithAgents:
         from auto_engineering.agents import CriticAgent
         from auto_engineering.engine.graph import build_dev_loop_graph
 
-        llm = MagicMock(spec=AnthropicProvider)
+        MagicMock(spec=AnthropicProvider)
         graph = build_dev_loop_graph()
         assert "critic" in {s.agent_type for s in graph.stages.values()}
         assert CriticAgent.__name__ == "CriticAgent"

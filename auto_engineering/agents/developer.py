@@ -6,7 +6,6 @@ from __future__ import annotations
 
 from .base import BaseAgent
 
-
 DEVELOPER_SYSTEM_PROMPT = """你是 Auto-Engineering 的开发者.
 
 你的职责: 按 Architect 的 plan 实施代码变更,严格遵循 TDD 三步循环.

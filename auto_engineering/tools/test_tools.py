@@ -10,7 +10,6 @@ import sys
 
 from .base import BaseTool, ToolResult
 
-
 _RUNNER_CMDS = {
     # 用 sys.executable -m pytest 避免 PATH 找不到 pytest
     "pytest": [sys.executable, "-m", "pytest", "-x", "--tb=short"],

@@ -14,15 +14,14 @@
 
 from __future__ import annotations
 
-import pytest
-
 
 class TestParseAgentOutputSchema:
     """Pydantic schema 路径."""
 
     def test_parse_pure_json(self):
-        from auto_engineering.agents.parser import parse_agent_output
         from pydantic import BaseModel
+
+        from auto_engineering.agents.parser import parse_agent_output
 
         class S(BaseModel):
             name: str
@@ -35,8 +34,9 @@ class TestParseAgentOutputSchema:
 
     def test_parse_json_in_markdown_fence(self):
         """```json\\n{...}\\n``` 格式."""
-        from auto_engineering.agents.parser import parse_agent_output
         from pydantic import BaseModel
+
+        from auto_engineering.agents.parser import parse_agent_output
 
         class S(BaseModel):
             value: str
@@ -48,8 +48,9 @@ class TestParseAgentOutputSchema:
 
     def test_parse_json_with_extra_text(self):
         """LLM 输出混杂解释文字 + JSON."""
-        from auto_engineering.agents.parser import parse_agent_output
         from pydantic import BaseModel
+
+        from auto_engineering.agents.parser import parse_agent_output
 
         class S(BaseModel):
             ok: bool
@@ -61,8 +62,9 @@ class TestParseAgentOutputSchema:
 
     def test_parse_nested_json(self):
         """嵌套结构."""
-        from auto_engineering.agents.parser import parse_agent_output
         from pydantic import BaseModel
+
+        from auto_engineering.agents.parser import parse_agent_output
 
         class Inner(BaseModel):
             x: int
@@ -90,8 +92,9 @@ class TestParseAgentOutputFallback:
 
     def test_parse_invalid_json_with_schema_returns_none(self):
         """schema 模式下,损坏 JSON 返回 None (调用方处理 fallback)."""
-        from auto_engineering.agents.parser import parse_agent_output
         from pydantic import BaseModel
+
+        from auto_engineering.agents.parser import parse_agent_output
 
         class S(BaseModel):
             name: str
@@ -101,8 +104,9 @@ class TestParseAgentOutputFallback:
 
     def test_parse_missing_required_field_returns_none(self):
         """schema 必填字段缺失 → None."""
-        from auto_engineering.agents.parser import parse_agent_output
         from pydantic import BaseModel
+
+        from auto_engineering.agents.parser import parse_agent_output
 
         class S(BaseModel):
             name: str

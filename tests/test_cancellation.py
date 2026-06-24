@@ -4,12 +4,9 @@
 """
 from __future__ import annotations
 
-from unittest.mock import MagicMock
-
 import pytest
 
 from auto_engineering.engine import LoopEngine, build_dev_loop_graph
-from auto_engineering.engine.state import LoopState
 from auto_engineering.errors import AEError, ErrorCode
 from tests.conftest import ScriptedMockRuntime, run_async
 

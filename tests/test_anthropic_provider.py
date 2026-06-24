@@ -13,8 +13,6 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 
 class TestLLMUsageDataclass:
     """LLMUsage 数据类 — 记录 token 用量."""
@@ -59,7 +57,8 @@ class TestAnthropicProvider:
     def test_create_message_returns_llm_response(self):
         """RED: provider.create_message 必须返回 LLMResponse (含 content/usage/model)."""
         from auto_engineering.llm.anthropic_provider import (
-            AnthropicProvider, LLMResponse,
+            AnthropicProvider,
+            LLMResponse,
         )
 
         # Mock anthropic.Anthropic client

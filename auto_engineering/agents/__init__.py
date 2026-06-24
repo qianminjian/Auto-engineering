@@ -9,10 +9,10 @@ from .developer import DEVELOPER_SYSTEM_PROMPT, DeveloperAgent
 
 __all__ = [
     "ARCHITECT_SYSTEM_PROMPT",
+    "CRITIC_SYSTEM_PROMPT",
+    "DEVELOPER_SYSTEM_PROMPT",
     "ArchitectAgent",
     "BaseAgent",
-    "CRITIC_SYSTEM_PROMPT",
     "CriticAgent",
-    "DEVELOPER_SYSTEM_PROMPT",
     "DeveloperAgent",
 ]

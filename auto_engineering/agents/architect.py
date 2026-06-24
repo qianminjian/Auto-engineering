@@ -6,7 +6,6 @@ from __future__ import annotations
 
 from .base import BaseAgent
 
-
 ARCHITECT_SYSTEM_PROMPT = """你是 Auto-Engineering 的技术架构师.
 
 你的职责: 分析用户需求,产出可执行的实现计划.

@@ -23,7 +23,6 @@ import contextlib
 import enum
 import json
 import signal
-import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -692,7 +691,7 @@ def checkpoint_show_cmd(checkpoint_id: str):
                 click.echo(f"Step:      {cp.step}")
                 click.echo(f"Status:    {cp.status}")
                 click.echo(f"Parent:    {cp.parent_id or '(none)'}")
-                click.echo(f"State:")
+                click.echo("State:")
                 # 状态详情
                 state_dict = cp.state.to_dict()
                 for k, v in state_dict.items():

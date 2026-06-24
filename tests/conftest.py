@@ -6,6 +6,7 @@ Phase 0.3 增强: 跨 session 失败计数 + 自动 skip(检测阻塞测试).
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
 from pathlib import Path
@@ -17,7 +18,6 @@ from auto_engineering.runtime.mock import (  # noqa: F401
     ScriptedMockRuntime,
     StepLimitedMockRuntime,
 )
-
 
 # ============================================================
 # Phase 0.3 阻塞检测 hook
@@ -45,10 +45,8 @@ def _read_failures() -> dict[str, int]:
 
 def _write_failures(data: dict[str, int]) -> None:
     """写入跨 session 失败计数."""
-    try:
+    with contextlib.suppress(OSError):
         _FAILURE_CACHE.write_text(json.dumps(data, indent=2, ensure_ascii=False))
-    except OSError:
-        pass
 
 
 def pytest_runtest_logreport(report):
@@ -74,11 +72,11 @@ def pytest_collection_modifyitems(config, items):
             f"\n[block_detector] Auto-skipping {len(blocked)} tests "
             f"(failed >= {_BLOCK_THRESHOLD} times across sessions):"
         )
-        print(msg, file=sys.stderr)  # noqa: F821
+        print(msg, file=sys.stderr)
         for tid in blocked[:5]:
-            print(f"  - {tid}", file=sys.stderr)  # noqa: F821
+            print(f"  - {tid}", file=sys.stderr)
         if len(blocked) > 5:
-            print(f"  ... and {len(blocked) - 5} more", file=sys.stderr)  # noqa: F821
+            print(f"  ... and {len(blocked) - 5} more", file=sys.stderr)
 
     skip_marker = pytest.mark.skip(
         reason=f"Auto-skip: failed >= {_BLOCK_THRESHOLD} times (blocked across sessions)"
