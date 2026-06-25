@@ -19,12 +19,11 @@
 from __future__ import annotations
 
 import subprocess
-from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 import pytest
 
-from auto_engineering.loop.convergence import ConvergenceConfig, LEVEL_QUALITY
+from auto_engineering.loop.convergence import LEVEL_QUALITY, ConvergenceConfig
 from auto_engineering.loop.orchestrator import Orchestrator, OrchestratorConfig
 from auto_engineering.loop.plan import Task
 from auto_engineering.loop.round import TaskOutcome
