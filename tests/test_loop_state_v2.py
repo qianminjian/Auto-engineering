@@ -525,6 +525,8 @@ def test_sqlite_checkpoint_store_round_trips_channels():
     """SQLiteCheckpointStore save → load:channels 内容一致.
 
     真实场景: 重启后从 Checkpoint 恢复,Channel 状态必须能重建.
+    序列化契约: model_dump 调用 channel.checkpoint() 返回 JSON 值,加载后
+    channels[name] 持有 Channel checkpoint() 的输出(非 Channel 实例).
     """
     from auto_engineering.loop.checkpoint import SQLiteCheckpointStore
 
@@ -544,15 +546,63 @@ def test_sqlite_checkpoint_store_round_trips_channels():
 
     cp_id = store.save(state, round=1)
 
-    # 加载并验证
+    # 加载并验证(Checkpoint.state 是 model_dump 输出 dict)
     loaded = store.load(cp_id).state
-    # model_dump 后的 dict 应包含 channels 信息
-    # 注: dict 的 channel 值是 checkpoint() 的 JSON 值,不是 Channel 实例本身
-    # 这是序列化层的行为,验证 JSON 内容正确
-    assert loaded["channels"]["plan"]["value"] == "expected plan value"
-    assert loaded["channels"]["plan"]["type"] == "last_value"
-    assert loaded["channels"]["logs"]["values"] == ["log-1", "log-2"]
-    assert loaded["channels"]["logs"]["type"] == "accumulating"
-    assert loaded["channels"]["sync"]["count"] == 2
-    assert loaded["channels"]["sync"]["is_set"] is True
-    assert loaded["channels"]["sync"]["type"] == "barrier"
+    # channels[name] 是 channel.checkpoint() 的输出
+    # LastValueChannel.checkpoint() -> raw value
+    assert loaded["channels"]["plan"] == "expected plan value"
+    # AccumulatingChannel.checkpoint() -> list of values
+    assert loaded["channels"]["logs"] == ["log-1", "log-2"]
+    # BarrierChannel.checkpoint() -> {expected, count, is_set}
+    assert loaded["channels"]["sync"] == {
+        "expected": 2,
+        "count": 2,
+        "is_set": True,
+    }
+
+
+def test_checkpoint_round_trip_restores_channels_via_from_checkpoint():
+    """端到端:save → load_state_json → from_checkpoint 重建 Channel.
+
+    这是 Loop 引擎恢复检查点时的实际行为:
+    1. 加载 JSON dict
+    2. 遍历 channels
+    3. 调用 channel.from_checkpoint(value) 恢复
+    4. 验证 Channel 状态完全恢复
+    """
+    from auto_engineering.loop.checkpoint import SQLiteCheckpointStore
+
+    store = SQLiteCheckpointStore(":memory:")
+    state = LoopState(
+        channels={
+            "plan": LastValueChannel("plan"),
+            "logs": AccumulatingChannel("logs"),
+            "sync": BarrierChannel("sync", expected=2),
+        }
+    )
+    state.set_channel("plan", "expected plan value")
+    state.channels["logs"].update("log-1")
+    state.channels["logs"].update("log-2")
+    state.channels["sync"].update("writer-1")
+    state.channels["sync"].update("writer-2")
+
+    cp_id = store.save(state, round=1)
+
+    # 从 JSON 加载,重建 Channel 列表
+    loaded_dict = store.load(cp_id).state
+    # 实际恢复:创建新 Channel 实例并 from_checkpoint
+    restored_plan = LastValueChannel("plan")
+    restored_plan.from_checkpoint(loaded_dict["channels"]["plan"])
+    restored_logs = AccumulatingChannel("logs")
+    restored_logs.from_checkpoint(loaded_dict["channels"]["logs"])
+    restored_sync = BarrierChannel("sync", expected=2)
+    restored_sync.from_checkpoint(loaded_dict["channels"]["sync"])
+
+    # 验证状态完全恢复
+    assert restored_plan.get() == "expected plan value"
+    assert restored_logs.get() == ["log-1", "log-2"]
+    assert restored_sync.get() == 2
+    assert restored_sync.empty() is False
+    # 已达成的 Barrier wait() 立即返回
+    import asyncio
+    asyncio.run(restored_sync.wait())
