@@ -1,0 +1,50 @@
+{# Claude Code worktree include 规则 — v2.0 多 Agent 并行 (Phase 06 Task 5.3) #}
+{# 设计: design/his_bak/v1.1-UNIFIED-DEV-PLAN.md §5.3 + multi-agent §3.5 #}
+{# 用途: `claude --worktree` 多 Agent 并行运行时,worktree 只同步下列文件 #}
+{#      避免每个 worktree 复制整个项目(~100MB+),节省磁盘 + 加快启动 #}
+{# 格式: 每行一条 include 规则,支持 gitignore-style glob (#开头的行为注释) #}
+{# 参考: https://docs.claude.com/en/docs/claude-code/iam/worktrees #}
+
+# === 核心交付物 (必同步) ===
+README.md
+CLAUDE.md
+Makefile
+pyproject.toml
+package.json
+go.mod
+Cargo.toml
+
+# === 源码根 ===
+src/**
+lib/**
+app/**
+{% if language == 'python' %}auto_engineering/**{% endif %}
+{% if language == 'typescript' %}packages/**
+
+# === 配置 ===
+config/**
+*.yml
+*.yaml
+*.toml
+.env.example
+
+# === 测试 ===
+tests/**
+
+# === 文档 ===
+docs/**
+design/BEACON.md
+design/INDEX.md
+
+# === 工作流产物 (worktree 可写) ===
+_scratch/**
+
+# === 显式排除 (即使 gitignore 允许也不同步) ===
+.git/**
+node_modules/**
+.venv/**
+dist/**
+build/**
+__pycache__/**
+.pytest_cache/**
+.coverage
