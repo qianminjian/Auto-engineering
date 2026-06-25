@@ -31,10 +31,18 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Generic, TypeVar
 
 # Schema 版本号 (变更时 +1, 用于未来兼容)
 SCHEMA_VERSION = 1
+
+# Phase 2.2-G: 用 Protocol 替代 Any, 打破循环引用并提供类型安全
+# - LoopStateProtocol 在 loop/types.py 定义 (不引用 loop/state)
+# - TypeVar T bound Protocol 让 Checkpoint/SQLiteCheckpointStore 接受具体类型
+# - mypy 看到 state 字段是 LoopStateProtocol (或其子类型), 不是 Any
+from auto_engineering.loop.types import LoopStateProtocol
+
+T = TypeVar("T", bound=LoopStateProtocol)
 
 
 # ============================================================
@@ -56,13 +64,19 @@ class CheckpointMeta:
 
 
 @dataclass
-class Checkpoint:
-    """完整 Checkpoint (含 state + history)."""
+class Checkpoint(Generic[T]):
+    """完整 Checkpoint (含 state + history).
+
+    Phase 2.2-G: 用 Generic[T] bound LoopStateProtocol 替代 Any.
+    - 类型安全: mypy 看到 state 字段是 LoopStateProtocol, 访问 .round/.step 不报 Any
+    - 打破循环: checkpoint.py 不再 import LoopState, 只用 Protocol 接口
+    - 使用: Checkpoint[LoopState](...) — caller 显式指定 T
+    """
 
     id: str
     round: int
     step: int
-    state: Any  # LoopState (避免循环引用, 类型宽泛)
+    state: T  # LoopStateProtocol (caller 决定具体类型, 典型 LoopState)
     history: list[dict[str, Any]]  # RoundHistory 序列化列表
     created_at: datetime
     schema_version: int
@@ -111,8 +125,11 @@ class CheckpointSchemaMismatchError(CheckpointError):
 # ============================================================
 
 
-class SQLiteCheckpointStore:
+class SQLiteCheckpointStore(Generic[T]):
     """SQLite Checkpoint 持久化.
+
+    Phase 2.2-G: Generic[T] bound LoopStateProtocol — save/load 接受具体类型.
+    使用: SQLiteCheckpointStore[LoopState](db_path) — 类型安全.
 
     线程安全策略:
         - ":memory:" 模式: 单 connection + threading.Lock
@@ -213,10 +230,11 @@ class SQLiteCheckpointStore:
     # ============================================================
 
     @staticmethod
-    def _serialize_state(state: Any) -> str:
+    def _serialize_state(state: LoopStateProtocol) -> str:
         """序列化 LoopState → JSON string.
 
-        支持 Pydantic model (优先) 和 dataclass/dict.
+        Phase 2.2-G: 接受 LoopStateProtocol (替代 Any).
+        优先 Pydantic v2 model_dump, 降级到 __dict__/dict.
         """
         if hasattr(state, "model_dump"):
             # Pydantic v2
@@ -231,11 +249,11 @@ class SQLiteCheckpointStore:
 
     @staticmethod
     def _deserialize_state(state_json: str) -> Any:
-        """反序列化 JSON → LoopState 实例 (Phase 2.1-D 修复).
+        """反序列化 JSON → LoopState 实例 (Phase 2.1-D 修复 + Phase 2.2-G 类型契约).
 
-        Phase A 缺陷: 返回 dict, channels 是 dict, 集成代码需手动重建.
-        本实现: 返回 LoopState 实例, channels 是 Channel 实例 (LastValue/
-        Accumulating/Barrier 自动识别).
+        Phase 2.1-D: 返回 LoopState 实例, channels 是 Channel 实例.
+        Phase 2.2-G: 输入是 LoopStateProtocol 序列化结果 (model_dump JSON),
+                      返回 LoopState 实例 (调用 deserialize_loop_state 重建 Channel).
 
         Fallback: 若反序列化失败, 返回原始 dict (向后兼容, 不抛异常中断 load).
         """
@@ -263,7 +281,7 @@ class SQLiteCheckpointStore:
 
     def save(
         self,
-        state: Any,
+        state: T,
         round: int,
         step: int = 0,
         history: list[Any] | None = None,
@@ -273,8 +291,10 @@ class SQLiteCheckpointStore:
     ) -> str:
         """保存 Checkpoint.
 
+        Phase 2.2-G: state 参数类型是 T (bound LoopStateProtocol), 替代 Any.
+
         Args:
-            state: LoopState (或 dict/任何可 JSON 序列化的对象)
+            state: 满足 LoopStateProtocol 的对象 (典型: LoopState 实例)
             round: 当前轮次
             step: 当前 step (L1 Inner Loop 内 iteration 计数)
             history: RoundHistory 列表 (可为空)
@@ -367,8 +387,10 @@ class SQLiteCheckpointStore:
 
         return cp_id
 
-    def load(self, checkpoint_id: str) -> Checkpoint:
+    def load(self, checkpoint_id: str) -> Checkpoint[T]:
         """按 ID 加载 Checkpoint.
+
+        Phase 2.2-G: 返回 Checkpoint[T] (Generic), state 字段是 LoopStateProtocol.
 
         Args:
             checkpoint_id: Checkpoint ID
@@ -391,8 +413,10 @@ class SQLiteCheckpointStore:
             finally:
                 conn.close()
 
-    def load_latest(self) -> Checkpoint | None:
+    def load_latest(self) -> Checkpoint[T] | None:
         """加载最新 Checkpoint (按 round DESC, created_at DESC).
+
+        Phase 2.2-G: 返回 Checkpoint[T] | None (Generic).
 
         Returns:
             最新 Checkpoint 或 None (库为空)
@@ -423,8 +447,10 @@ class SQLiteCheckpointStore:
             finally:
                 conn.close()
 
-    def load_by_round(self, round: int) -> Checkpoint | None:
+    def load_by_round(self, round: int) -> Checkpoint[T] | None:
         """加载指定轮次的 Checkpoint (返回该轮最近一条).
+
+        Phase 2.2-G: 返回 Checkpoint[T] | None (Generic).
 
         Args:
             round: 轮次编号
@@ -598,7 +624,7 @@ class SQLiteCheckpointStore:
     # ============================================================
 
     @staticmethod
-    def _load_from_conn(conn: sqlite3.Connection, checkpoint_id: str) -> Checkpoint:
+    def _load_from_conn(conn: sqlite3.Connection, checkpoint_id: str) -> Checkpoint[T]:
         """从指定 connection 按 ID 加载 (内部辅助)."""
         row = conn.execute(
             "SELECT * FROM checkpoints WHERE id = ?", (checkpoint_id,)
@@ -608,8 +634,11 @@ class SQLiteCheckpointStore:
         return SQLiteCheckpointStore._row_to_checkpoint(row)  # type: ignore[return-value]
 
     @staticmethod
-    def _row_to_checkpoint(row: Any) -> Checkpoint:
-        """将 sqlite Row 转 Checkpoint (校验 schema_version)."""
+    def _row_to_checkpoint(row: Any) -> Checkpoint[T]:
+        """将 sqlite Row 转 Checkpoint (校验 schema_version).
+
+        Phase 2.2-G: 返回 Checkpoint[T] — T 由 caller 推断.
+        """
         schema_version = row["schema_version"]
         if schema_version != SCHEMA_VERSION:
             raise CheckpointSchemaMismatchError(
