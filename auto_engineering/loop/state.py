@@ -219,8 +219,18 @@ class BarrierChannel(Channel[Any]):
         self._state = BarrierState(expected=expected, count=0, is_set=(expected == 0))
         # 事件: 从 _state.is_set 重建, 仅用于 wait() 唤醒
         self._event = asyncio.Event()
+        self._sync_event()
+
+    def _sync_event(self) -> None:
+        """根据当前 _state.is_set 同步 asyncio.Event 状态.
+
+        BarrierChannel 的核心不变量: _event.is_set() == _state.is_set.
+        __init__ / update / copy / from_checkpoint 修改 state 后必须调用本方法.
+        """
         if self._state.is_set:
             self._event.set()
+        else:
+            self._event.clear()
 
     def get(self) -> int:
         """返回当前已写入数量(用于监控)."""
@@ -231,7 +241,7 @@ class BarrierChannel(Channel[Any]):
         self._state.count += 1
         if self._state.count >= self._state.expected and not self._state.is_set:
             self._state.is_set = True
-            self._event.set()
+            self._sync_event()
         return self._state.count
 
     def empty(self) -> bool:
@@ -251,9 +261,7 @@ class BarrierChannel(Channel[Any]):
             count=self._state.count,
             is_set=self._state.is_set,
         )
-        # 重建 Event 状态(从 is_set 同步)
-        if new._state.is_set:
-            new._event.set()
+        new._sync_event()
         return new  # type: ignore[return-value]
 
     def checkpoint(self) -> dict[str, Any]:
@@ -294,11 +302,7 @@ class BarrierChannel(Channel[Any]):
             )
         # 重建 BarrierState
         self._state = BarrierState(expected=expected, count=count, is_set=is_set)
-        # 同步 Event 状态
-        if is_set:
-            self._event.set()
-        else:
-            self._event.clear()
+        self._sync_event()
 
 
 class LoopState(BaseModel):
