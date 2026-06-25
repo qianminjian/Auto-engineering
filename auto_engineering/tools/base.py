@@ -6,14 +6,24 @@ from abc import ABC
 from dataclasses import dataclass
 from pathlib import Path
 
+from auto_engineering.errors import ErrorCode
+
 
 @dataclass
 class ToolResult:
-    """工具执行结果."""
+    """工具执行结果.
+
+    Attributes:
+        success   — 工具是否成功执行
+        content   — 工具输出内容
+        error     — 错误描述(success=False 时)
+        error_code — 错误分类码(P1.4),BaseAgent 据此抛 AEError
+    """
 
     success: bool
     content: str
     error: str | None = None
+    error_code: ErrorCode | None = None
 
 
 class BaseTool(ABC):

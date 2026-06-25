@@ -128,6 +128,12 @@ class BaseAgent:
 
                     try:
                         result = await tool_map[tool_name].execute(**tool_input)
+                        # P1.4: error_code 存在 → 工具认定的业务错误,抛 AEError
+                        if result.error_code is not None:
+                            raise AEError(
+                                ErrorCode.INVALID_AGENT_OUTPUT,
+                                f"Tool '{tool_name}' error: {result.error}",
+                            )
                         tool_results.append(
                             {
                                 "type": "tool_result",
@@ -136,6 +142,8 @@ class BaseAgent:
                                 "is_error": not result.success,
                             }
                         )
+                    except AEError:
+                        raise  # 已分类的 AEError 透传
                     except Exception as exc:
                         tool_results.append(
                             {
