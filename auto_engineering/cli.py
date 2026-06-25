@@ -628,8 +628,11 @@ def _run_v2_orchestrator(
     # 2. 构造单 task (Phase C 简化: 1 个 task, developer agent)
     task = Task(
         id="t1",
-        agent_type="developer",
+        title=requirement[:50] or "Implement requirement",  # Phase 2.1-D: 非空 title
         description=requirement,
+        expected_output="实现需求对应的代码变更",  # Phase 2.1-D: contract
+        role="developer",
+        agent_type="developer",
         target_files=frozenset(),  # 单 Agent 模式不强制隔离
         depends_on=[],
     )

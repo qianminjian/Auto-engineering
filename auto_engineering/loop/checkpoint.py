@@ -230,9 +230,32 @@ class SQLiteCheckpointStore:
         return json.dumps(state, default=str)
 
     @staticmethod
-    def _deserialize_state(state_json: str) -> dict[str, Any]:
-        """反序列化 JSON → dict (供 LoopState 重建)."""
-        return json.loads(state_json)
+    def _deserialize_state(state_json: str) -> Any:
+        """反序列化 JSON → LoopState 实例 (Phase 2.1-D 修复).
+
+        Phase A 缺陷: 返回 dict, channels 是 dict, 集成代码需手动重建.
+        本实现: 返回 LoopState 实例, channels 是 Channel 实例 (LastValue/
+        Accumulating/Barrier 自动识别).
+
+        Fallback: 若反序列化失败, 返回原始 dict (向后兼容, 不抛异常中断 load).
+        """
+        try:
+            data = json.loads(state_json)
+        except (json.JSONDecodeError, TypeError):
+            return state_json  # 原始字符串 (无法解析)
+
+        if not isinstance(data, dict):
+            return data
+
+        # 延迟导入避免循环依赖
+        from auto_engineering.loop.state import deserialize_loop_state
+
+        try:
+            return deserialize_loop_state(data)
+        except Exception:
+            # 反序列化失败 (例如旧版 schema), 返回原始 dict
+            # 集成代码可识别 type 决定如何处理
+            return data
 
     # ============================================================
     # Save / Load / List / Delete
@@ -592,7 +615,8 @@ class SQLiteCheckpointStore:
             raise CheckpointSchemaMismatchError(
                 found=schema_version, expected=SCHEMA_VERSION
             )
-        state = json.loads(row["state_json"])
+        # 反序列化 (Phase 2.1-D: 返回 LoopState 实例, channels 是 Channel 实例)
+        state = SQLiteCheckpointStore._deserialize_state(row["state_json"])
         history = json.loads(row["history_json"])
         created_at = datetime.fromisoformat(row["created_at"])
         return Checkpoint(

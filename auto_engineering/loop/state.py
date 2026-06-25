@@ -5,6 +5,7 @@
 
 设计来源: design/v2.0-Analysis-Loop.md §4.4 状态管理
 Phase 2.1-A 增强: LangGraph 对齐的 copy/checkpoint/from_checkpoint 序列化三件套.
+Phase 2.1-D 增强: LoopState 8 字段 + Task 字段补全 + load() 重建 Channel 实例.
 """
 
 from __future__ import annotations
@@ -305,16 +306,125 @@ class BarrierChannel(Channel[Any]):
         self._sync_event()
 
 
-class LoopState(BaseModel):
-    """v2.0 多 Agent 共享状态容器.
+# ============================================================
+# LoopState 辅助类型 (Phase 2.1-D)
+# 设计文档: design/v2.0-Design-Loop.md §3.1
+# ============================================================
 
-    持有 channels: dict[str, Channel], 各 Agent 通过 name 读写.
-    类型: Pydantic BaseModel, 支持序列化 (未来 checkpoint 用).
+
+@dataclass
+class Signal:
+    """跨 Agent 信号 (Signal 流).
+
+    Attributes:
+        type: 信号类型 (e.g. "metric.update", "task.done", "round.complete")
+        payload: 信号数据 (任意 JSON 可序列化值)
+        source: 信号源 (可选, agent/task id)
+    """
+
+    type: str
+    payload: Any
+    source: str | None = None
+
+
+@dataclass
+class GateVerdict:
+    """Gate 验证结果 (LoopState.gate_results value).
+
+    Attributes:
+        passed: Gate 是否通过
+        reason: 通过/失败原因
+        details: 详细结果 (任意 JSON 可序列化值)
+    """
+
+    passed: bool
+    reason: str = ""
+    details: Any = None
+
+
+class MetricsSnapshot(BaseModel):
+    """指标快照 (LoopState.metrics).
+
+    Attributes:
+        values: 指标名 → 值
     """
 
     model_config = {"arbitrary_types_allowed": True}
 
+    values: dict[str, float | int] = Field(default_factory=dict)
+
+    def __getitem__(self, key: str) -> float | int | None:
+        return self.values.get(key)
+
+    def __setitem__(self, key: str, value: float | int) -> None:
+        self.values[key] = value
+
+    def get(self, key: str, default: float | int | None = None) -> float | int | None:
+        return self.values.get(key, default)
+
+
+class LoopState(BaseModel):
+    """v2.0 多 Agent 共享状态容器 (Phase 2.1-D 补全字段).
+
+    设计文档 §3.1: 8 个核心字段 + 底层 channels 存储.
+
+    Attributes:
+        round: 当前 Round 编号 (0 = 未开始)
+        step: 当前 Step 编号 (L1 Inner Loop iteration)
+        status: 运行状态 (running / converged / failed / interrupted)
+        tasks: 任务字典 (LastValue 语义, 最后写入的 Task 是权威)
+        task_results: 任务结果字典 (Accumulating 语义, 历史保留)
+        gate_results: Gate 验证结果 (LastValue 语义)
+        signals: 信号流列表 (Topic 语义, 按时间顺序)
+        metrics: 指标快照 (BinaryOperatorAggregate 语义)
+        channels: 底层 Channel 存储 (保留, 用于 Channel 系统 API)
+    """
+
+    model_config = {"arbitrary_types_allowed": True}
+
+    # 基础控制字段
+    round: int = 0
+    step: int = 0
+    status: str = "running"
+
+    # 任务追踪
+    tasks: dict[str, Any] = Field(default_factory=dict)
+    task_results: dict[str, Any] = Field(default_factory=dict)
+
+    # 质量验证
+    gate_results: dict[str, Any] = Field(default_factory=dict)
+
+    # 信号流 (跨 Agent)
+    signals: list[Signal] = Field(default_factory=list)
+
+    # 指标
+    metrics: MetricsSnapshot = Field(default_factory=MetricsSnapshot)
+
+    # 底层 channel 存储 (保留, 用于 Channel 系统 API)
     channels: dict[str, Channel[Any]] = Field(default_factory=dict)
+
+    # ============================================================
+    # 便捷属性 (Phase 2.1-D 新增)
+    # ============================================================
+
+    def get_task(self, task_id: str) -> Any | None:
+        """按 ID 读取 Task. 不存在返回 None."""
+        return self.tasks.get(task_id)
+
+    def get_signal(self, signal_type: str) -> Signal | None:
+        """返回第一个匹配 type 的 Signal. 不存在返回 None."""
+        for sig in self.signals:
+            if sig.type == signal_type:
+                return sig
+        return None
+
+    def get_metric(self, name: str, default: float | int | None = None) -> float | int | None:
+        """按名读取指标值. 不存在返回 default."""
+        return self.metrics.get(name, default)
+
+    # ============================================================
+    # Channel 系统 API (Phase 2.1-A 已有, 保留)
+    # ============================================================
 
     def get_channel(self, name: str) -> Any:
         """读取指定 channel 的当前值. 缺失返回 None."""
@@ -338,15 +448,179 @@ class LoopState(BaseModel):
         这是 Phase 1 审计 PydanticSerializationError 的修复点:
         - 父类 model_dump 会尝试序列化 Channel 对象 → 失败
         - 覆盖后先用 checkpoint() 转 dict, 再 dict-to-dict 序列化
+
+        Phase 2.1-D: 输出包含全部 8 业务字段 + channels (含 checkpoint 值).
         """
+        # 排除 channels 字段从父类 dump (Channel 不可被 pydantic 序列化)
+        kwargs.setdefault("mode", "json")
+        kwargs.setdefault("exclude", {"channels"})
+        base = super().model_dump(**kwargs)
+        # 手动序列化 channels 为 checkpoint 值
         channels_data: dict[str, Any] = {}
         for name, ch in self.channels.items():
             channels_data[name] = ch.checkpoint()
+        base["channels"] = channels_data
+        return base
 
-        # 调用父类 model_dump 时临时用 channels_data 替换
-        # 注: Pydantic v2 model_dump 用 __pydantic_serializer__, 我们通过
-        # 自己构造 dict 返回 (因为 channels 字段是 dict[str, Channel],
-        # 父类无法直接处理)
-        return {
-            "channels": channels_data,
+
+# ============================================================
+# 反序列化: checkpoint dict → LoopState (Phase 2.1-D 修复 Phase A)
+# ============================================================
+
+
+def deserialize_loop_state(data: dict[str, Any]) -> LoopState:
+    """从 checkpoint dict 重建 LoopState (channels 重建为 Channel 实例).
+
+    这是 SQLiteCheckpointStore.load() 的核心辅助:
+    - data 是 JSON 反序列化后的 dict (含 8 业务字段 + channels)
+    - 业务字段直接传入 LoopState 构造
+    - channels[name] (raw checkpoint 值) → 对应类型 Channel 实例 (调 from_checkpoint)
+    - tasks/task_results: 重建 dataclass (Phase 2.1-D: 优先重建为 Task/TaskOutcome,
+      无法识别时回退 dict — 兼容旧 schema)
+
+    Channel 类型识别:
+    - dict 含 "expected" 字段 → BarrierChannel
+    - list → AccumulatingChannel
+    - 其他 → LastValueChannel (含 None / dict / str / int)
+
+    Args:
+        data: checkpoint dict (含 round/step/status/tasks/channels 等)
+
+    Returns:
+        LoopState 实例 (channels 是 Channel 实例, 非 dict)
+
+    Raises:
+        ValueError: data 缺关键字段 / channels 结构异常
+    """
+    # 1. 提取 channels 并重建
+    raw_channels = data.get("channels", {})
+    if not isinstance(raw_channels, dict):
+        raise ValueError(
+            f"deserialize_loop_state: 'channels' must be dict, got {type(raw_channels).__name__}"
+        )
+
+    rebuilt_channels: dict[str, Channel[Any]] = {}
+    for name, value in raw_channels.items():
+        ch = _rebuild_channel(name, value)
+        rebuilt_channels[name] = ch
+
+    # 2. 重建 tasks (dict → Task 实例)
+    rebuilt_tasks: dict[str, Any] = {}
+    raw_tasks = data.get("tasks", {})
+    if isinstance(raw_tasks, dict):
+        for tid, tval in raw_tasks.items():
+            rebuilt_tasks[tid] = _rebuild_task(tval)
+
+    # 3. 重建 task_results (dict → TaskOutcome 实例)
+    rebuilt_results: dict[str, Any] = {}
+    raw_results = data.get("task_results", {})
+    if isinstance(raw_results, dict):
+        for tid, rval in raw_results.items():
+            rebuilt_results[tid] = _rebuild_task_outcome(rval)
+
+    # 4. 构造 LoopState (复制业务字段, 不包括 channels/tasks/task_results)
+    business_fields = {
+        k: v
+        for k, v in data.items()
+        if k not in ("channels", "tasks", "task_results")
+    }
+    business_fields["tasks"] = rebuilt_tasks
+    business_fields["task_results"] = rebuilt_results
+
+    return LoopState(channels=rebuilt_channels, **business_fields)
+
+
+def _rebuild_channel(name: str, value: Any) -> Channel[Any]:
+    """从 checkpoint value 重建 Channel 实例.
+
+    类型识别:
+    - dict 含 "expected" 字段 → BarrierChannel (构造需 expected)
+    - list → AccumulatingChannel
+    - 其他 → LastValueChannel (None / str / int / dict 都合法)
+    """
+    if isinstance(value, dict) and "expected" in value:
+        # BarrierChannel: 必须从 value 拿 expected (构造需)
+        ch = BarrierChannel(name, expected=value["expected"])
+        ch.from_checkpoint(value)
+        return ch
+    elif isinstance(value, list):
+        ch: AccumulatingChannel[Any] = AccumulatingChannel(name)
+        ch.from_checkpoint(value)
+        return ch
+    else:
+        ch = LastValueChannel(name)
+        ch.from_checkpoint(value)
+        return ch
+
+
+def _rebuild_task(value: Any) -> Any:
+    """从 dict 重建 Task 实例 (若可识别).
+
+    Args:
+        value: dict 含 task 字段, 或非 dict (回退直接返回)
+
+    Returns:
+        Task 实例 (识别成功) 或原始 value (回退)
+    """
+    if not isinstance(value, dict):
+        return value
+    # 避免循环依赖: 延迟导入
+    from auto_engineering.loop.plan import Task, TaskValidation
+
+    # 过滤: 只保留 Task 字段 (避免 Pydantic 报警)
+    field_names = set(Task.__dataclass_fields__)
+    kwargs = {k: v for k, v in value.items() if k in field_names}
+
+    # 重建 validation (TaskValidation 是 dataclass)
+    if "validation" in kwargs and isinstance(kwargs["validation"], dict):
+        val_field_names = set(TaskValidation.__dataclass_fields__)
+        val_kwargs = {
+            k: v for k, v in kwargs["validation"].items() if k in val_field_names
         }
+        kwargs["validation"] = TaskValidation(**val_kwargs)
+
+    # target_files 需要 frozenset
+    if "target_files" in kwargs and isinstance(kwargs["target_files"], list):
+        kwargs["target_files"] = frozenset(kwargs["target_files"])
+
+    try:
+        return Task(**kwargs)
+    except Exception:
+        # 字段不兼容 (旧 schema) → 回退 dict
+        return value
+
+
+def _rebuild_task_outcome(value: Any) -> Any:
+    """从 dict 重建 TaskOutcome 实例 (若可识别).
+
+    Args:
+        value: dict 含 outcome 字段, 或非 dict (回退直接返回)
+
+    Returns:
+        TaskOutcome 实例 (识别成功) 或原始 value (回退)
+    """
+    if not isinstance(value, dict):
+        return value
+    # 避免循环依赖: 延迟导入
+    from auto_engineering.loop.round import TaskOutcome
+
+    field_names = set(TaskOutcome.__dataclass_fields__)
+    kwargs = {k: v for k, v in value.items() if k in field_names}
+    try:
+        return TaskOutcome(**kwargs)
+    except Exception:
+        return value
+
+
+__all__ = [
+    "AccumulatingChannel",
+    "BarrierChannel",
+    "BarrierState",
+    "Channel",
+    "GateVerdict",
+    "LastValueChannel",
+    "LoopState",
+    "MetricsSnapshot",
+    "Signal",
+    "deserialize_loop_state",
+]

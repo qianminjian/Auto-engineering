@@ -525,8 +525,8 @@ def test_sqlite_checkpoint_store_round_trips_channels():
     """SQLiteCheckpointStore save → load:channels 内容一致.
 
     真实场景: 重启后从 Checkpoint 恢复,Channel 状态必须能重建.
-    序列化契约: model_dump 调用 channel.checkpoint() 返回 JSON 值,加载后
-    channels[name] 持有 Channel checkpoint() 的输出(非 Channel 实例).
+    Phase 2.1-D 修复: load() 返回 LoopState 实例 (channels 是 Channel 实例),
+    通过 .get() 读取真实值.
     """
     from auto_engineering.loop.checkpoint import SQLiteCheckpointStore
 
@@ -546,19 +546,16 @@ def test_sqlite_checkpoint_store_round_trips_channels():
 
     cp_id = store.save(state, round=1)
 
-    # 加载并验证(Checkpoint.state 是 model_dump 输出 dict)
+    # 加载并验证(Phase 2.1-D: state 是 LoopState 实例, channels 是 Channel 实例)
     loaded = store.load(cp_id).state
-    # channels[name] 是 channel.checkpoint() 的输出
-    # LastValueChannel.checkpoint() -> raw value
-    assert loaded["channels"]["plan"] == "expected plan value"
-    # AccumulatingChannel.checkpoint() -> list of values
-    assert loaded["channels"]["logs"] == ["log-1", "log-2"]
-    # BarrierChannel.checkpoint() -> {expected, count, is_set}
-    assert loaded["channels"]["sync"] == {
-        "expected": 2,
-        "count": 2,
-        "is_set": True,
-    }
+    assert isinstance(loaded, LoopState)
+    # LastValueChannel.get() -> raw value
+    assert loaded.channels["plan"].get() == "expected plan value"
+    # AccumulatingChannel.get() -> list of values
+    assert loaded.channels["logs"].get() == ["log-1", "log-2"]
+    # BarrierChannel.get() -> count (int)
+    assert loaded.channels["sync"].get() == 2
+    assert loaded.channels["sync"].empty() is False
 
 
 def test_checkpoint_round_trip_restores_channels_via_from_checkpoint():
@@ -569,6 +566,9 @@ def test_checkpoint_round_trip_restores_channels_via_from_checkpoint():
     2. 遍历 channels
     3. 调用 channel.from_checkpoint(value) 恢复
     4. 验证 Channel 状态完全恢复
+
+    Phase 2.1-D: load() 直接返回 LoopState 实例 (channels 已是 Channel 实例),
+    无需手动 from_checkpoint.
     """
     from auto_engineering.loop.checkpoint import SQLiteCheckpointStore
 
@@ -588,15 +588,17 @@ def test_checkpoint_round_trip_restores_channels_via_from_checkpoint():
 
     cp_id = store.save(state, round=1)
 
-    # 从 JSON 加载,重建 Channel 列表
-    loaded_dict = store.load(cp_id).state
-    # 实际恢复:创建新 Channel 实例并 from_checkpoint
-    restored_plan = LastValueChannel("plan")
-    restored_plan.from_checkpoint(loaded_dict["channels"]["plan"])
-    restored_logs = AccumulatingChannel("logs")
-    restored_logs.from_checkpoint(loaded_dict["channels"]["logs"])
-    restored_sync = BarrierChannel("sync", expected=2)
-    restored_sync.from_checkpoint(loaded_dict["channels"]["sync"])
+    # Phase 2.1-D: load() 直接返回 LoopState, channels 已是 Channel 实例
+    loaded = store.load(cp_id).state
+    assert isinstance(loaded, LoopState)
+    restored_plan = loaded.channels["plan"]
+    restored_logs = loaded.channels["logs"]
+    restored_sync = loaded.channels["sync"]
+
+    # 验证类型
+    assert isinstance(restored_plan, LastValueChannel)
+    assert isinstance(restored_logs, AccumulatingChannel)
+    assert isinstance(restored_sync, BarrierChannel)
 
     # 验证状态完全恢复
     assert restored_plan.get() == "expected plan value"

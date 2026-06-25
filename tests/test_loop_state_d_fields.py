@@ -25,12 +25,9 @@ from auto_engineering.loop.plan import (
 )
 from auto_engineering.loop.round import TaskOutcome
 from auto_engineering.loop.state import (
-    AccumulatingChannel,
-    BarrierChannel,
     LastValueChannel,
     LoopState,
 )
-
 
 # ============================================================
 # D.1 LoopState 8 字段测试

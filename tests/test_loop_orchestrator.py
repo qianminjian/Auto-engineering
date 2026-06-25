@@ -50,13 +50,19 @@ def make_task(
     deps: list[str] | None = None,
     agent_type: str = "developer",
 ) -> Task:
-    """构造测试 Task (target_files 用字符串列表, 内部转 frozenset)."""
+    """构造测试 Task (target_files 用字符串列表, 内部转 frozenset).
+
+    Phase 2.1-D: 补 title/expected_output 字段满足 Plan.validate contract.
+    """
     return Task(
         id=task_id,
-        agent_type=agent_type,
+        title=f"Task {task_id}",
         description=f"task {task_id}",
+        expected_output=f"output for {task_id}",
+        role=agent_type,
         target_files=frozenset(target_files or []),
         depends_on=list(deps or []),
+        agent_type=agent_type,
     )
 
 

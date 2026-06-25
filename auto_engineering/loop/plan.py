@@ -23,6 +23,7 @@ from collections import defaultdict, deque
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from enum import StrEnum
+from typing import Any
 
 
 class TaskStatus(StrEnum):
@@ -33,6 +34,10 @@ class TaskStatus(StrEnum):
     COMPLETED = "completed"
     FAILED = "failed"
     BLOCKED = "blocked"
+
+
+# Task 合法角色枚举 (Phase 2.1-D 加 contract 校验)
+VALID_TASK_ROLES = frozenset({"developer", "critic", "reviewer", "architect"})
 
 
 class ConflictError(Exception):
@@ -46,32 +51,72 @@ class ConflictError(Exception):
 
 
 @dataclass
+class TaskValidation:
+    """Task 验证规则 (Phase 2.1-D 新增).
+
+    Attributes:
+        required_files: 必须存在的文件列表 (Gate 子集)
+        required_outputs: 必须输出的内容列表 (字符串 pattern)
+        max_minutes: 最大耗时 (超过算失败)
+    """
+
+    required_files: list[str] = field(default_factory=list)
+    required_outputs: list[str] = field(default_factory=list)
+    max_minutes: int | None = None
+
+
+@dataclass
 class Task:
-    """单个任务单元.
+    """单个任务单元 (Phase 2.1-D 字段补全: 设计文档 §3.2).
 
     Attributes:
         id: 唯一标识 (由 Orchestrator 拆分时分配)
-        agent_type: 执行 Agent 角色 (developer | critic | reviewer ...)
+        title: 人读任务标题 (新字段, Phase 2.1-D)
         description: 四段式指令 (目标/边界/验收标准/禁止项)
+        expected_output: 期望输出 (新字段, contract 的一部分)
+        role: 执行 Agent 角色 developer|critic|reviewer|architect (新字段)
         target_files: 涉及的文件路径集合 (用于文件隔离检查)
-        depends_on: 前置 Task ID 列表
+        context_files: 上下文文件列表 (只读, 新字段)
+        validation: 验证规则 (Gate 子集, 新字段)
+        deps: 前置 Task ID 列表 (新字段名, 同时保留 depends_on 旧字段名)
         estimated_minutes: 预估耗时 (供 Round Close 监控)
+        status: 任务状态
+        output: 任务输出 (新字段, 完成后赋值)
+        agent_type: 执行 Agent 角色 (保留旧字段, 与 role 同义)
+        depends_on: 前置 Task ID 列表 (保留旧字段名, 与 deps 同义)
     """
 
     id: str
-    agent_type: str
-    description: str
+    title: str = ""
+    description: str = ""
+    expected_output: str = ""
+    role: str = "developer"
     target_files: frozenset[str] = field(default_factory=frozenset)
-    depends_on: list[str] = field(default_factory=list)
+    context_files: list[str] = field(default_factory=list)
+    validation: TaskValidation | None = None
+    deps: list[str] = field(default_factory=list)
     estimated_minutes: int = 30
     status: TaskStatus = TaskStatus.PENDING
+    output: Any = None
+    # 保留旧字段名 (向后兼容)
+    agent_type: str = "developer"
+    depends_on: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         """归一化 target_files 为 frozenset[str] (允许 list/set 输入)."""
         if not isinstance(self.target_files, frozenset):
             object.__setattr__(self, "target_files", frozenset(self.target_files))
-        # depends_on 拷贝避免外部修改
+        # depends_on / deps 拷贝避免外部修改
         object.__setattr__(self, "depends_on", list(self.depends_on))
+        object.__setattr__(self, "context_files", list(self.context_files))
+        object.__setattr__(self, "deps", list(self.deps))
+        # 同步 agent_type / role (向后兼容: agent_type 缺省时用 role)
+        if self.agent_type == "developer" and self.role != "developer":
+            # 若显式指定 role, 用 role 覆盖默认 agent_type
+            object.__setattr__(self, "agent_type", self.role)
+        elif self.role == "developer" and self.agent_type != "developer":
+            # 若显式指定 agent_type, 用 agent_type 覆盖默认 role
+            object.__setattr__(self, "role", self.agent_type)
 
 
 @dataclass
@@ -259,6 +304,10 @@ class Plan:
         """校验 Plan 合法性:
             1. DAG 无循环 (topological_sort 内部检查)
             2. 并行 task 的 target_files 无交集
+            3. contract 校验 (Phase 2.1-D):
+               - 每个 task.title 非空
+               - 每个 task.expected_output 非空
+               - 每个 task.role 在枚举中 (developer/critic/reviewer/architect)
         """
         if not self.tasks:
             return  # 空 plan 不报错
@@ -266,6 +315,30 @@ class Plan:
         topological_sort(self.tasks)
         # 文件隔离检查
         check_file_isolation(self.tasks, raise_on_conflict=True)
+        # contract 校验 (Phase 2.1-D)
+        self._validate_contracts()
+
+    def _validate_contracts(self) -> None:
+        """校验每个 task 的 contract 字段 (title/expected_output/role).
+
+        设计文档 §3.2: 任务拆分五原则 — 每个 task 必须有明确目标、期望输出、合法角色.
+        这是"契约优先"原则 (Orchestrator 调度时知道每个 task 要什么).
+        """
+        for task in self.tasks:
+            if not task.title or not task.title.strip():
+                raise ValueError(
+                    f"Task '{task.id}': title 不能为空 (Plan.validate contract 校验)"
+                )
+            if not task.expected_output or not task.expected_output.strip():
+                raise ValueError(
+                    f"Task '{task.id}': expected_output 不能为空 "
+                    f"(Plan.validate contract 校验)"
+                )
+            if task.role not in VALID_TASK_ROLES:
+                raise ValueError(
+                    f"Task '{task.id}': role '{task.role}' 不合法 "
+                    f"(必须为 {sorted(VALID_TASK_ROLES)} 之一)"
+                )
 
     def parallelism_groups(self) -> list[list[str]]:
         """返回并行组列表: 外层按层序, 内层是同层 task id 列表.
@@ -289,11 +362,13 @@ class Plan:
 
 
 __all__ = [
+    "VALID_TASK_ROLES",
     "ConflictError",
     "Plan",
     "Task",
     "TaskDAG",
     "TaskStatus",
+    "TaskValidation",
     "check_file_isolation",
     "topological_sort",
 ]
