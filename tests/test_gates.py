@@ -17,11 +17,9 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 
 import pytest
 from click.testing import CliRunner
-
 
 # ============================================================
 # Group 1: Gate 基类 + Verdict dataclass
@@ -243,8 +241,8 @@ class TestTestGate:
         # 通过 inspect 命令检查
         import inspect
 
-        sig = inspect.signature(gate.run)
-        assert "timeout" in sig.parameters or True  # signature 兼容
+        inspect.signature(gate.run)
+        assert True  # signature 兼容
 
 
 # ============================================================

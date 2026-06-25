@@ -934,7 +934,6 @@ def checkpoint_v2_show_cmd(checkpoint_id: str) -> None:
 def checkpoint_v2_delete_cmd(checkpoint_id: str) -> None:
     """删除 v2.0 Checkpoint."""
     from auto_engineering.loop.checkpoint import (
-        CheckpointNotFoundError,
         SQLiteCheckpointStore,
     )
 

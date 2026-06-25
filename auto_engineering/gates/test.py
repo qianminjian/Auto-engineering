@@ -85,7 +85,7 @@ class TestGate(Gate):
             for name in ("pyproject.toml", "pytest.ini", "setup.cfg", "tox.ini")
         )
         if has_inifile and not any(a.startswith("--timeout") for a in args):
-            args = args + ["--timeout=60"]
+            args = [*args, "--timeout=60"]
 
         cmd.extend(args)
         cmd.extend(self.test_paths)

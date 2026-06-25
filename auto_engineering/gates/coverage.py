@@ -89,18 +89,7 @@ class CoverageGate(Gate):
                 gate_name=self.name,
             )
 
-        cmd = cmd_base + [
-            f"--cov={self.cov_target}",
-            "--cov-report=term",
-            "--no-cov",  # 兼容占位, pytest-cov 会接管
-            "tests",
-        ]
-        # 实际上 --cov 与 --no-cov 冲突, 这里简化为只用 --cov-report=term
-        cmd = cmd_base + [
-            f"--cov={self.cov_target}",
-            "--cov-report=term",
-            "tests",
-        ]
+        cmd = [*cmd_base, f"--cov={self.cov_target}", "--cov-report=term", "tests"]
 
         try:
             result = subprocess.run(

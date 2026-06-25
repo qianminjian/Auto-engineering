@@ -69,7 +69,7 @@ class LintGate(Gate):
                 gate_name=self.name,
             )
 
-        cmd = self._resolve_ruff_cmd() + [str(project_root)] + self.extra_args
+        cmd = [*self._resolve_ruff_cmd(), str(project_root), *self.extra_args]
 
         try:
             result = subprocess.run(

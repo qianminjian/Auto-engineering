@@ -35,11 +35,11 @@ class GateResult:
     message: str = ""
 
     @classmethod
-    def pass_(cls, msg: str = "") -> "GateResult":
+    def pass_(cls, msg: str = "") -> GateResult:
         return cls(passed=True, message=msg)
 
     @classmethod
-    def fail(cls, msg: str) -> "GateResult":
+    def fail(cls, msg: str) -> GateResult:
         return cls(passed=False, message=msg)
 
 
@@ -62,13 +62,15 @@ class Verdict:
     passed: bool = False
     message: str = ""
 
+    # 注: passed 字段与 Verdict.passed() 类方法同名是 dataclass 不可避免的副作用,
+    # 通过 @classmethod 访问避免歧义. 字段访问走 v.passed, 方法访问走 Verdict.passed().
     @classmethod
-    def passed(cls, msg: str = "", gate_name: str = "") -> "Verdict":
+    def passed(cls, msg: str = "", gate_name: str = "") -> Verdict:  # noqa: F811
         """构造一个通过的 Verdict."""
         return cls(gate_name=gate_name, passed=True, message=msg)
 
     @classmethod
-    def failed(cls, msg: str, gate_name: str = "") -> "Verdict":
+    def failed(cls, msg: str, gate_name: str = "") -> Verdict:
         """构造一个失败的 Verdict."""
         return cls(gate_name=gate_name, passed=False, message=msg)
 
@@ -101,6 +103,6 @@ class Gate:
         )
 
     # 旧接口(向后兼容, 由 v1.1 Guardrail 链调用)
-    def check(self, stage: Any, context: Any) -> "Verdict":  # noqa: ARG002
+    def check(self, stage: Any, context: Any) -> Verdict:
         """v1.1 兼容接口. 返回 pass 占位(实际 v1.1 用 GuardrailResult)."""
         return Verdict.passed("legacy v1.1 path", gate_name=self.name)

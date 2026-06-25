@@ -16,31 +16,31 @@ Phase 04 新增:
 from __future__ import annotations
 
 # v1.1 Guardrail 体系(向后兼容)
-from .base import Gate, GateResult, Verdict  # noqa: F401
-from .builtin import (  # noqa: F401
+from .base import Gate, GateResult, Verdict
+
+# v2.0 Phase 04 — 7 道 Gate
+from .build import BuildGate
+from .builtin import (
     GitCleanGuardrail,
     GitDiffExistsGuardrail,
     PlanExistsGuardrail,
     RequirementGuardrail,
     TestsPassGuardrail,
 )
-
-# v2.0 Phase 04 — 7 道 Gate
-from .build import BuildGate  # noqa: F401
-from .contract import ContractGate  # noqa: F401
-from .coverage import CoverageGate  # noqa: F401
-from .lint import LintGate  # noqa: F401
-from .safety import SafetyGate  # noqa: F401
-from .test import TestGate  # noqa: F401
-from .type_check import TypeCheckGate  # noqa: F401
+from .contract import ContractGate
+from .coverage import CoverageGate
 
 # Guardrail 体系(向后兼容)
-from .guardrail import (  # noqa: F401
+from .guardrail import (
     DropOutput,
     GuardrailChain,
     GuardrailHandler,
     GuardrailResult,
 )
+from .lint import LintGate
+from .safety import SafetyGate
+from .test import TestGate
+from .type_check import TypeCheckGate
 
 # v2.0 7 道 Gate 的注册表(便于 Orchestrator 调度)
 V2_GATES: list[type[Gate]] = [
@@ -55,17 +55,10 @@ V2_GATES: list[type[Gate]] = [
 
 
 __all__ = [
-    # v2.0 新接口
-    "Verdict",
-    # v2.0 7 道 Gate
-    "SafetyGate",
-    "LintGate",
-    "TypeCheckGate",
-    "ContractGate",
-    "TestGate",
-    "CoverageGate",
-    "BuildGate",
     "V2_GATES",
+    "BuildGate",
+    "ContractGate",
+    "CoverageGate",
     # 向后兼容
     "DropOutput",
     "Gate",
@@ -75,7 +68,14 @@ __all__ = [
     "GuardrailChain",
     "GuardrailHandler",
     "GuardrailResult",
+    "LintGate",
     "PlanExistsGuardrail",
     "RequirementGuardrail",
+    # v2.0 7 道 Gate
+    "SafetyGate",
+    "TestGate",
     "TestsPassGuardrail",
+    "TypeCheckGate",
+    # v2.0 新接口
+    "Verdict",
 ]

@@ -111,7 +111,7 @@ class TypeCheckGate(Gate):
                 gate_name=self.name,
             )
 
-        cmd = cmd_base + [str(project_root)]
+        cmd = [*cmd_base, str(project_root)]
         if self.strict:
             cmd.append("--strict")
 
