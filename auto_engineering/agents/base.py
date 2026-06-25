@@ -72,7 +72,7 @@ class BaseAgent:
             task         — Task dataclass
             ctx          — TaskContext
             cancellation — CancellationToken(可选)
-            token_tracker — TokenTracker(可选). 调用后累加 LLMUsage.超 max_tokens 抛 BUDGET_EXCEEDED.
+            token_tracker — TokenTracker(可选). 超 max_tokens 抛 BUDGET_EXCEEDED.
 
         Returns:
             TaskResult(values/raw_response/tool_calls/task_id/agent_type)
@@ -91,13 +91,17 @@ class BaseAgent:
             if cancellation is not None:
                 cancellation.check()
 
-            response = await self.llm.create_message(
-                model=self.model,
-                max_tokens=self.max_tokens,
-                system=self._build_system_prompt(task),
-                messages=messages,
-                tools=[t.to_schema() for t in self.tools] if self.tools else None,
-            )
+            # P1.3: LLM 异常分类
+            try:
+                response = await self.llm.create_message(
+                    model=self.model,
+                    max_tokens=self.max_tokens,
+                    system=self._build_system_prompt(task),
+                    messages=messages,
+                    tools=[t.to_schema() for t in self.tools] if self.tools else None,
+                )
+            except Exception as exc:  # 详见下面特定异常映射
+                raise self._map_llm_exception(exc) from exc
 
             # Phase 1.3: TokenTracker 累加 + 超阈值抛错
             if token_tracker is not None:
@@ -172,6 +176,31 @@ class BaseAgent:
                 f"```json\n{schema_str}\n```"
             )
         return system
+
+    def _map_llm_exception(self, exc: Exception) -> AEError:
+        """将 LLM SDK 异常映射为 AEError.
+
+        P1.3: LLM 调用错误分类。使用 type(exc).__name__ 而非 isinstance
+        (避免 mock 对象无法通过 isinstance 校验)。
+            - APITimeoutError      → LLM_TIMEOUT
+            - APIConnectionError   → LLM_NETWORK_ERROR
+            - APIStatusError      → LLM_INVALID_RESPONSE
+            - AuthenticationError → LLM_AUTH_ERROR
+            - RateLimitError      → LLM_RATE_LIMIT
+            - 其他                → LLM_UNKNOWN_ERROR
+        """
+        exc_name = type(exc).__name__
+        if exc_name == "APITimeoutError":
+            return AEError(ErrorCode.LLM_TIMEOUT, f"LLM timeout: {exc}")
+        if exc_name == "APIConnectionError":
+            return AEError(ErrorCode.LLM_NETWORK_ERROR, f"LLM connection error: {exc}")
+        if exc_name == "APIStatusError":
+            return AEError(ErrorCode.LLM_INVALID_RESPONSE, f"LLM API error: {exc}")
+        if exc_name == "AuthenticationError":
+            return AEError(ErrorCode.LLM_AUTH_ERROR, f"LLM auth error: {exc}")
+        if exc_name == "RateLimitError":
+            return AEError(ErrorCode.LLM_RATE_LIMIT, f"LLM rate limit: {exc}")
+        return AEError(ErrorCode.LLM_UNKNOWN_ERROR, f"LLM error: {exc}")
 
     def _parse_final_response(self, content: str) -> dict:
         """解析 LLM 最终响应为 dict. 双层防御(直接 JSON / fence / 内联块).
