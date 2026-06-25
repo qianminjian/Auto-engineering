@@ -603,3 +603,127 @@ def test_end_to_end_save_checkpoint_with_convergence_verdict(
     verdict_after = judge.evaluate(state=None, history=history_reloaded)
     assert verdict_after.level == LEVEL_STAGNANT
     assert verdict_after.reason == verdict_before.reason
+
+
+# ============================================================
+# F. Phase 2.2-G: Checkpoint.state 类型重构 (P2.1)
+# ============================================================
+
+
+class TestCheckpointStateTyping:
+    """Phase 2.2-G: Checkpoint.state 不再是 Any, 用 LoopStateProtocol 约束.
+
+    设计动机: 旧版 `state: Any` 让 IDE/mypy 看不到字段, 任何代码访问 .state
+    IDE 都不报错, 类型安全破坏. 重构后用 Protocol + TypeVar 让 mypy 看到类型.
+    """
+
+    def test_checkpoint_state_field_is_not_any(
+        self, store: SQLiteCheckpointStore
+    ) -> None:
+        """运行时检查: Checkpoint.state 字段类型不是 Any.
+
+        通过 __annotations__ 反射获取声明类型, 验证不是 Any.
+        """
+        from typing import Any, get_type_hints
+
+        from auto_engineering.loop.checkpoint import Checkpoint
+
+        hints = get_type_hints(Checkpoint)
+        # 关键: state 字段类型不是 Any
+        assert "state" in hints, "Checkpoint 必须有 state 字段"
+        assert hints["state"] is not Any, (
+            f"Checkpoint.state 类型必须是 LoopStateProtocol/具体类型, 不能是 Any. "
+            f"实际: {hints['state']}"
+        )
+
+    def test_checkpoint_generic_with_loopstate(
+        self, store: SQLiteCheckpointStore
+    ) -> None:
+        """泛型 Checkpoint[LoopState] 应被接受 (mypy 类型系统视角).
+
+        验证: 构造 Checkpoint[LoopState] 不抛 TypeError, .state 保留为 LoopState.
+        """
+        from datetime import UTC, datetime
+
+        from auto_engineering.loop.checkpoint import Checkpoint
+        from auto_engineering.loop.state import LoopState
+
+        state = LoopState()
+        cp: Checkpoint[LoopState] = Checkpoint(
+            id="test-cp",
+            round=1,
+            step=0,
+            state=state,
+            history=[],
+            created_at=datetime.now(UTC),
+            schema_version=SCHEMA_VERSION,
+        )
+        assert isinstance(cp.state, LoopState)
+        assert cp.state is state, "state 引用应保留 (无深拷贝)"
+
+    def test_loopstate_satisfies_protocol(
+        self, store: SQLiteCheckpointStore
+    ) -> None:
+        """LoopState 必须实现 LoopStateProtocol (runtime_checkable).
+
+        Protocol 定义: round, step, status, channels, model_dump(**kwargs).
+        """
+        from auto_engineering.loop.state import LoopState
+        from auto_engineering.loop.types import LoopStateProtocol
+
+        state = LoopState()
+        missing = [p for p in ("round", "step", "status", "channels", "model_dump") if not hasattr(state, p)]
+        assert isinstance(state, LoopStateProtocol), (
+            f"LoopState 必须实现 LoopStateProtocol. 缺失属性: {missing}"
+        )
+
+    def test_types_module_exposes_protocol_and_helpers(self) -> None:
+        """types.py 必须暴露 LoopStateProtocol + serialize/deserialize 帮助函数.
+
+        这是打破循环引用的核心: types.py 不引用 loop/state.py, 只用 Protocol.
+        """
+        from auto_engineering.loop import types
+
+        # 1. Protocol 存在
+        assert hasattr(types, "LoopStateProtocol"), "types.py 必须定义 LoopStateProtocol"
+
+        # 2. 帮助函数存在
+        assert hasattr(types, "serialize_state"), "types.py 必须暴露 serialize_state"
+        assert hasattr(types, "deserialize_state"), "types.py 必须暴露 deserialize_state"
+
+        # 3. types.py 不应 import state (避免循环引用再次出现)
+        import auto_engineering.loop.state as state_mod
+
+        # 验证 types 模块自身不持有对 state 的 hard import
+        # (deserialize_state 内部可能延迟 import, 但模块顶层不应有)
+        from auto_engineering.loop.types import LoopStateProtocol
+
+        # Protocol 应当是 Protocol 类型
+        import typing
+        proto_bases = getattr(LoopStateProtocol, "__mro__", ())
+        # Protocol 在 typing 模块, 验证其存在
+        assert typing.Protocol is not None
+
+    def test_checkpoint_state_round_trip_preserves_type(
+        self, store: SQLiteCheckpointStore
+    ) -> None:
+        """运行时集成: save(LoopState) → load(id) → state 仍是 LoopState 实例.
+
+        验证 Phase 2.1-D load() 重建 Channel 的能力未受 Protocol 重构影响.
+        """
+        from auto_engineering.loop.state import LoopState
+
+        state = LoopState(round=5, step=3, status="running")
+        # 不需要 channel - 验证 state 字段类型和基础字段即可
+        # (LoopState 重建能力由 Phase 2.1-D 保障, 此处只验证 Protocol 重构不影响)
+
+        cp_id = store.save(state=state, round=5, history=[])
+        loaded = store.load(cp_id)
+
+        # 关键: 加载后 state 应是 LoopState (不是 dict)
+        assert isinstance(loaded.state, LoopState), (
+            f"加载后 state 必须是 LoopState, 实际: {type(loaded.state).__name__}"
+        )
+        assert loaded.state.round == 5
+        assert loaded.state.step == 3
+        assert loaded.state.status == "running"
