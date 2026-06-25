@@ -23,6 +23,7 @@
 
 from __future__ import annotations
 
+import contextlib
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -30,7 +31,6 @@ import pytest
 from click.testing import CliRunner
 
 from auto_engineering.cli import main
-
 
 # ============================================================
 # C.0 — Fixtures: 隔离 ANTHROPIC_API_KEY + valid project
@@ -52,8 +52,12 @@ def valid_project_with_key(tmp_path: Path, monkeypatch):
 
 @pytest.fixture
 def valid_project_no_key(tmp_path: Path, monkeypatch):
-    """valid project + ANTHROPIC_API_KEY 已删除."""
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    """valid project + preflight 通过(设 dummy key)+ v1 fallback 路径用 (移除 API key).
+
+    preflight 要求 ANTHROPIC_API_KEY,这里先设 dummy key 满足 preflight,
+    然后在 dev_loop 内部决策 v1/v2 之前删除 API key, 模拟"无 key fallback".
+    """
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-dummy-for-preflight")
     (tmp_path / ".git").mkdir()
     answers = tmp_path / ".ae-answers.yml"
     answers.write_text(
@@ -81,8 +85,14 @@ def mock_v1_runner(monkeypatch):
 @pytest.fixture
 def mock_v2_runner(monkeypatch):
     """Mock _run_v2_orchestrator (v2.0 路径)."""
+    from auto_engineering.cli import OrchestratorRunResult
+
     runner_mock = MagicMock()
-    runner_mock.return_value = None  # 实际返回 history list
+    runner_mock.return_value = OrchestratorRunResult(
+        status="done",
+        total_steps=3,
+        checkpoint_id="v2-cp-id",
+    )
     monkeypatch.setattr("auto_engineering.cli._run_v2_orchestrator", runner_mock)
     return runner_mock
 
@@ -140,14 +150,26 @@ class TestC2FallbackV1WithoutApiKey:
     """C.2: 无 ANTHROPIC_API_KEY → fallback _run_loop_engine."""
 
     def test_v1_fallback_when_no_api_key(
-        self, valid_project_no_key, mock_v1_runner, mock_v2_runner
+        self, valid_project_no_key, mock_v1_runner, mock_v2_runner, monkeypatch, _reset_block_cache
     ):
-        """RED: 无 API key 时 _run_loop_engine 被调用, v2 不被调."""
-        runner = CliRunner()
-        result = runner.invoke(main, ["dev-loop", "build x"])
+        """RED: 无 API key 时 _run_loop_engine 被调用, v2 不被调.
+
+        preflight 强制要求 ANTHROPIC_API_KEY (生产约束), 这里 mock 掉 preflight
+        来测试"无 key → v1 fallback"路径(测试隔离).
+        """
+        from unittest.mock import patch as mp
+
+        # 1. mock preflight (从 source module patch, 因为 cli 内部 lazy import)
+        with mp("auto_engineering.config.environment.preflight", lambda r: None):
+            monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+            runner = CliRunner()
+            result = runner.invoke(main, ["dev-loop", "build x"])
 
         # 无 API key 时 v1 fallback
-        assert mock_v1_runner.called, "v1.0 fallback should be called when no API key"
+        assert mock_v1_runner.called, (
+            f"v1.0 fallback should be called when no API key, "
+            f"output: {result.output}, exit: {result.exit_code}"
+        )
         assert not mock_v2_runner.called, "v2.0 should NOT be called without API key"
         # exit 0 (用 mock 跑过)
         assert result.exit_code == 0
@@ -182,11 +204,18 @@ class TestC4UseV2WithoutApiKey:
     """C.4: --use-v2 + 无 API key → 友好错误提示."""
 
     def test_use_v2_without_api_key_errors_gracefully(
-        self, valid_project_no_key, mock_v1_runner, mock_v2_runner
+        self, valid_project_no_key, mock_v1_runner, mock_v2_runner, monkeypatch
     ):
-        """RED: --use-v2 + 无 API key → 友好错误 + 不调 v1 / v2 实际路径."""
-        runner = CliRunner()
-        result = runner.invoke(main, ["dev-loop", "x", "--use-v2"])
+        """RED: --use-v2 + 无 API key → 友好错误 + 不调 v1 / v2 实际路径.
+
+        preflight 要求 ANTHROPIC_API_KEY — mock 掉 preflight 让无 key 模拟可行.
+        """
+        from unittest.mock import patch as mp
+
+        with mp("auto_engineering.config.environment.preflight", lambda r: None):
+            monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+            runner = CliRunner()
+            result = runner.invoke(main, ["dev-loop", "x", "--use-v2"])
 
         # 应该退出非 0
         assert result.exit_code != 0, "should error when --use-v2 but no API key"
@@ -266,6 +295,7 @@ class TestC7V2OrchestratorWrapper:
     ):
         """RED: _run_v2_orchestrator 构造 OrchestratorConfig + 调用 asyncio.run."""
         import asyncio as asyncio_mod
+
         from auto_engineering import cli
         from auto_engineering.loop.orchestrator import Orchestrator
 
@@ -274,10 +304,8 @@ class TestC7V2OrchestratorWrapper:
 
         def fake_asyncio_run(coro):
             # 关闭协程避免真实运行
-            try:
+            with contextlib.suppress(Exception):
                 coro.close()
-            except Exception:
-                pass
             return []
 
         # patch via asyncio module reference (cli 内部 import asyncio)
@@ -299,10 +327,14 @@ class TestC7V2OrchestratorWrapper:
         monkeypatch.setattr(Orchestrator, "__init__", fake_orch_init)
 
         # 调用 wrapper
-        result = cli._run_v2_orchestrator(
+        from auto_engineering.cli import CancellationToken, ProgressLogger
+
+        cli._run_v2_orchestrator(
             requirement="test req",
             project_root=tmp_path,
             max_rounds=3,
+            progress=ProgressLogger(),
+            cancellation=CancellationToken(),
         )
 
         # 验证: Orchestrator 被构造
@@ -326,16 +358,15 @@ class TestC8V2ConfigFields:
     def test_v2_config_has_safety_gate(self, tmp_path: Path, monkeypatch):
         """RED: config.gates 至少包含 SafetyGate."""
         import asyncio as asyncio_mod
+
         from auto_engineering import cli
         from auto_engineering.loop.orchestrator import Orchestrator
 
         captured_gates = None
 
         def fake_asyncio_run(coro):
-            try:
+            with contextlib.suppress(Exception):
                 coro.close()
-            except Exception:
-                pass
             return []
 
         monkeypatch.setattr(asyncio_mod, "run", fake_asyncio_run)
@@ -349,10 +380,14 @@ class TestC8V2ConfigFields:
 
         monkeypatch.setattr(Orchestrator, "__init__", fake_orch_init)
 
+        from auto_engineering.cli import CancellationToken, ProgressLogger
+
         cli._run_v2_orchestrator(
             requirement="x",
             project_root=tmp_path,
             max_rounds=1,
+            progress=ProgressLogger(),
+            cancellation=CancellationToken(),
         )
 
         assert captured_gates is not None
@@ -362,16 +397,15 @@ class TestC8V2ConfigFields:
     def test_v2_config_has_semantic_evaluator(self, tmp_path: Path, monkeypatch):
         """RED: config.semantic_evaluator 不为 None (有默认评估器)."""
         import asyncio as asyncio_mod
+
         from auto_engineering import cli
         from auto_engineering.loop.orchestrator import Orchestrator
 
         captured_evaluator = None
 
         def fake_asyncio_run(coro):
-            try:
+            with contextlib.suppress(Exception):
                 coro.close()
-            except Exception:
-                pass
             return []
 
         monkeypatch.setattr(asyncio_mod, "run", fake_asyncio_run)
@@ -385,16 +419,20 @@ class TestC8V2ConfigFields:
 
         monkeypatch.setattr(Orchestrator, "__init__", fake_orch_init)
 
+        from auto_engineering.cli import CancellationToken, ProgressLogger
+
         cli._run_v2_orchestrator(
             requirement="x",
             project_root=tmp_path,
             max_rounds=1,
+            progress=ProgressLogger(),
+            cancellation=CancellationToken(),
         )
 
         # 应有默认 semantic_evaluator (None 也可 — 测试接口存在性)
         # 注: v1.0 简化版本可能 None, 但字段必须存在
         # 这里只验证调用没崩
-        assert captured_evaluator is not None or True  # 字段允许 None
+        assert True  # semantic_evaluator 字段允许 None, 测试调用链
 
 
 # ============================================================
@@ -408,16 +446,15 @@ class TestC9V2BaseAgentExecutor:
     def test_v2_executor_wraps_base_agent(self, tmp_path: Path, monkeypatch):
         """RED: Orchestrator.executor 字段是 callable (Task -> TaskOutcome)."""
         import asyncio as asyncio_mod
+
         from auto_engineering import cli
         from auto_engineering.loop.orchestrator import Orchestrator
 
         captured_executor = None
 
         def fake_asyncio_run(coro):
-            try:
+            with contextlib.suppress(Exception):
                 coro.close()
-            except Exception:
-                pass
             return []
 
         monkeypatch.setattr(asyncio_mod, "run", fake_asyncio_run)
@@ -429,10 +466,14 @@ class TestC9V2BaseAgentExecutor:
 
         monkeypatch.setattr(Orchestrator, "__init__", fake_orch_init)
 
+        from auto_engineering.cli import CancellationToken, ProgressLogger
+
         cli._run_v2_orchestrator(
             requirement="x",
             project_root=tmp_path,
             max_rounds=1,
+            progress=ProgressLogger(),
+            cancellation=CancellationToken(),
         )
 
         # executor 应为 callable

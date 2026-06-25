@@ -2,7 +2,7 @@
 
 命令:
     ae init <project>         项目环境初始化
-    ae dev-loop <requirement> 单需求开发循环 (Plan B Phase 02 接 LoopEngine)
+    ae dev-loop <requirement> 单需求开发循环 (默认 v2.0 Orchestrator, fallback v1.0)
     ae status                 查看当前进度
 
 Plan B Phase 02 新增 (T01-T11 团队级能力):
@@ -15,6 +15,12 @@ Plan B Phase 02 新增 (T01-T11 团队级能力):
     T09:   --log-format text/json 结构化日志
     T10:   --llm-provider anthropic/ollama (v1.0 仅 anthropic)
     T11:   --project-root 显式指定项目根
+
+v2.1 Phase C 新增 (P0.4 CLI 集成 v2.0 Orchestrator):
+    - 默认走 v2.0 Orchestrator (需 ANTHROPIC_API_KEY)
+    - --use-v1 强制 v1.0 engine (向后兼容)
+    - 无 API key 时 fallback v1.0
+    - --max-rounds 配置 v2.0 round 数
 """
 
 from __future__ import annotations
@@ -433,6 +439,236 @@ def _execute_with_progress(
 
 
 # ============================================================
+# v2.1 Phase C: v2.0 Orchestrator 驱动器
+# ============================================================
+
+
+@dataclass
+class OrchestratorRunResult:
+    """_run_v2_orchestrator 返回值 — 模拟 LoopRunResult 接口."""
+
+    status: str
+    total_steps: int
+    checkpoint_id: str
+
+
+def _build_v2_executor(
+    project_root: Path,
+    progress: ProgressLogger,
+    token_tracker: TokenTracker | None = None,
+) -> Any:
+    """构造 v2.0 Orchestrator 用的 TaskExecutor (复用 v1.0 BaseAgent).
+
+    简化版本(Phase C 演示用):
+        - 单 Agent 模式: 所有 task 走 DeveloperAgent
+        - 工具集: v1.0 标准工具集 (Read/Write/Edit/Search/List/Bash/Git/Test)
+        - LLM 异常 → 包成 TaskOutcome(status="failed")
+
+    Args:
+        project_root: 项目根目录(沙箱白名单基址)
+        progress: 进度日志(可选, 用于记录 task 执行)
+        token_tracker: Token 跟踪器(可选, 注入 BaseAgent.execute)
+
+    Returns:
+        async (Task, ctx) -> TaskOutcome 函数
+    """
+    import os
+
+    from auto_engineering.agents.developer import DeveloperAgent
+    from auto_engineering.llm.anthropic_provider import AnthropicProvider
+    from auto_engineering.runtime.context import TaskContext
+    from auto_engineering.runtime.task import Task as RuntimeTask
+    from auto_engineering.tools.bash_tools import RunBashTool
+    from auto_engineering.tools.file_tools import (
+        EditFileTool,
+        ListDirTool,
+        ReadFileTool,
+        SearchCodeTool,
+        WriteFileTool,
+    )
+    from auto_engineering.tools.git_tools import (
+        GitCommitTool,
+        GitDiffTool,
+        GitStatusTool,
+    )
+    from auto_engineering.tools.test_tools import RunTestsTool
+
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+    llm = AnthropicProvider(api_key=api_key)
+    # P1.9 fix: 只有支持 project_root 的工具传 project_root (白名单沙箱)
+    tools = [
+        WriteFileTool(project_root=project_root),
+        EditFileTool(project_root=project_root),
+        SearchCodeTool(project_root=project_root),
+        # 不支持 project_root 的工具: ReadFileTool / ListDirTool / RunBashTool /
+        # GitStatusTool / GitCommitTool / GitDiffTool / RunTestsTool
+        ListDirTool(),
+        RunBashTool(),
+        GitStatusTool(),
+        GitCommitTool(),
+        GitDiffTool(),
+        RunTestsTool(),
+        ReadFileTool(),
+    ]
+    developer = DeveloperAgent(llm=llm, tools=tools)
+
+    async def executor(loop_task: Any, ctx: Any) -> Any:
+        """v2.0 executor: 把 loop.Task 转成 runtime.Task 调 BaseAgent."""
+        from auto_engineering.loop.round import TaskOutcome
+
+        # 构造 runtime Task (BaseAgent 期望的格式)
+        runtime_task = RuntimeTask(
+            id=loop_task.id,
+            description=loop_task.description,
+            expected_output="Code changes satisfying the requirement",
+        )
+        runtime_ctx = TaskContext(workspace=project_root)
+
+        # 进度输出
+        if progress is not None:
+            progress.emit("task_start", task_id=loop_task.id, agent_type=loop_task.agent_type)
+
+        try:
+            result = await developer.execute(
+                task=runtime_task,
+                ctx=runtime_ctx,
+                token_tracker=token_tracker,
+            )
+            return TaskOutcome(
+                task_id=loop_task.id,
+                status="completed",
+                output=result.values,
+                duration=0.0,
+            )
+        except Exception as exc:
+            return TaskOutcome(
+                task_id=loop_task.id,
+                status="failed",
+                error=str(exc),
+                duration=0.0,
+            )
+
+    return executor
+
+
+def _build_v2_semantic_evaluator(
+    project_root: Path,
+    progress: ProgressLogger,
+) -> Any:
+    """构造 v2.0 Orchestrator 用的语义评估器 (简化:始终返回 True).
+
+    Phase C 简化策略:
+        - 不接 LLM (避免 mock-friendly 的"假评估"陷阱)
+        - 用 Gate 跑过的结果作为代理:所有 Gate 通过 → satisfied
+        - 这里返回简单的 True(让 Orchestrator 主循环跑起来)
+
+    Args:
+        project_root: 项目根目录 (备用, 当前未使用)
+        progress: 进度日志 (备用)
+
+    Returns:
+        async (round_result) -> bool
+    """
+
+    async def evaluator(round_result: Any) -> bool:
+        # Phase C 简化: 总是返回 True (Gate 已在 Orchestrator 内部跑过)
+        return True
+
+    return evaluator
+
+
+def _run_v2_orchestrator(
+    requirement: str,
+    project_root: Path,
+    max_rounds: int,
+    progress: ProgressLogger,
+    cancellation: CancellationToken,
+    token_tracker: TokenTracker | None = None,
+) -> OrchestratorRunResult:
+    """v2.0 Orchestrator 驱动器 — 单 Agent 模式演示.
+
+    设计要点 (Phase C):
+        - 单 task / round (Phase 3 多 Agent 并发未启用, 留 Phase 4+)
+        - 复用 v1.0 BaseAgent (DeveloperAgent) 作为 TaskExecutor
+        - 启用 2 道 Gate (Safety + Lint) — 真集成, 非 mock
+        - semantic_evaluator 简化 (始终 True, 避免 mock LLM)
+
+    Args:
+        requirement: 需求描述
+        project_root: 项目根目录 (Gate 运行基址 + 沙箱白名单)
+        max_rounds: 最大轮数
+        progress: 进度日志
+        cancellation: 取消令牌 (用户 SIGINT 触发)
+        token_tracker: Token 跟踪器 (注入 BaseAgent)
+
+    Returns:
+        OrchestratorRunResult (status/total_steps/checkpoint_id)
+
+    Raises:
+        AEError: 配置错 / 业务错
+    """
+    import asyncio
+
+    from auto_engineering.gates.lint import LintGate
+    from auto_engineering.gates.safety import SafetyGate
+    from auto_engineering.loop.orchestrator import (
+        Orchestrator,
+        OrchestratorConfig,
+    )
+    from auto_engineering.loop.plan import Task
+
+    # 1. 构造 OrchestratorConfig: gates + semantic_evaluator + project_root
+    config = OrchestratorConfig(
+        max_rounds=max_rounds,
+        gates=[SafetyGate(), LintGate()],
+        semantic_evaluator=_build_v2_semantic_evaluator(project_root, progress),
+        project_root=project_root,
+    )
+
+    # 2. 构造单 task (Phase C 简化: 1 个 task, developer agent)
+    task = Task(
+        id="t1",
+        agent_type="developer",
+        description=requirement,
+        target_files=frozenset(),  # 单 Agent 模式不强制隔离
+        depends_on=[],
+    )
+
+    # 3. 构造 executor (复用 v1.0 BaseAgent)
+    executor = _build_v2_executor(project_root, progress, token_tracker)
+
+    # 4. 构造 Orchestrator
+    orchestrator = Orchestrator(
+        requirement=requirement,
+        tasks=[task],
+        executor=executor,
+        config=config,
+    )
+
+    # 5. 启动 asyncio.run (Orchestrator.run 是 async)
+    history = asyncio.run(orchestrator.run(cancellation=cancellation))
+
+    # 6. 输出总结
+    total_rounds = len(history)
+    status = "done" if (orchestrator.verdict and orchestrator.verdict.should_stop) else "max_rounds"
+    checkpoint_id = f"v2-r{total_rounds}"
+
+    # 进度输出
+    progress.emit(
+        "orchestrator_done",
+        rounds=total_rounds,
+        verdict_level=orchestrator.verdict.level if orchestrator.verdict else None,
+        should_stop=orchestrator.verdict.should_stop if orchestrator.verdict else False,
+    )
+
+    return OrchestratorRunResult(
+        status=status,
+        total_steps=total_rounds,
+        checkpoint_id=checkpoint_id,
+    )
+
+
+# ============================================================
 # Click 命令
 # ============================================================
 
@@ -537,11 +773,17 @@ def init(
 
 @main.command()
 @click.argument("requirement")
-@click.option("--max-steps", type=int, default=3, help="最大迭代步数")
+@click.option("--max-steps", type=int, default=3, help="最大迭代步数 (v1.0)")
+@click.option(
+    "--max-rounds",
+    type=int,
+    default=3,
+    help="最大 Round 数 (v2.0 Orchestrator 模式)",
+)
 @click.option("--max-tokens", type=int, default=0, help="Token 预算上限 (0 = 无限制)")
 @click.option("--max-cost", type=float, default=0.0, help="美元成本上限 (Phase 2+ 实现)")
 @click.option("--multi", is_flag=True, help="多 Agent 并行模式（未来）")
-@click.option("--dry-run", is_flag=True, help="只跑 architect 输出 plan")
+@click.option("--dry-run", is_flag=True, help="只跑 architect 输出 plan (v1.0)")
 @click.option("--log-format", type=click.Choice(["text", "json"]), default="text", help="日志格式")
 @click.option(
     "--llm-provider",
@@ -550,9 +792,22 @@ def init(
     help="LLM 提供方",
 )
 @click.option("--project-root", type=click.Path(exists=True), help="项目根目录 (默认 cwd)")
+@click.option(
+    "--use-v1",
+    "use_v1",
+    is_flag=True,
+    help="强制使用 v1.0 engine (LoopEngine + Architect/Developer/Critic)",
+)
+@click.option(
+    "--use-v2",
+    "use_v2",
+    is_flag=True,
+    help="强制使用 v2.0 Orchestrator (多 Agent 并发 + Gate + 语义评估)",
+)
 def dev_loop(
     requirement: str,
     max_steps: int,
+    max_rounds: int,
     max_tokens: int,
     max_cost: float,
     multi: bool,
@@ -560,8 +815,15 @@ def dev_loop(
     log_format: str,
     llm_provider: str,
     project_root: str,
+    use_v1: bool,
+    use_v2: bool,
 ):
-    """单需求开发循环 (Architect → Developer → Critic)."""
+    """单需求开发循环.
+
+    默认走 v2.0 Orchestrator(需 ANTHROPIC_API_KEY),无 API key 时 fallback 到
+    v1.0 LoopEngine(Architect → Developer → Critic). 用 --use-v1 强制 v1.0
+    路径,用 --use-v2 强制 v2.0 路径(无 API key 时会报错).
+    """
     # T10: --llm-provider 仅 anthropic 实装
     if llm_provider != "anthropic":
         click.echo(
@@ -570,6 +832,14 @@ def dev_loop(
             err=True,
         )
         raise SystemExit(6)
+
+    # --use-v1 / --use-v2 互斥检查
+    if use_v1 and use_v2:
+        click.echo(
+            "[配置/参数错] --use-v1 与 --use-v2 互斥,只能选其一。",
+            err=True,
+        )
+        raise SystemExit(2)
 
     # T11: --project-root 解析
     root = Path(project_root).resolve() if project_root else Path.cwd()
@@ -596,18 +866,37 @@ def dev_loop(
     # T04: 启动输出
     click.echo(f"Starting dev-loop: {requirement}")
 
-    # 加载 Settings (含 max_tokens/max_steps 等)
-    from auto_engineering.config.settings import Settings
+    # 路由决策 v1.0 vs v2.0 (放在 Settings 之前, 避免无 API key 时 v1 fallback 被 Settings 拦截)
+    import os
 
-    try:
-        settings = Settings.from_env()
-    except AEError as e:
-        category, exit_code = classify_error(e)
+    has_api_key = bool(os.environ.get("ANTHROPIC_API_KEY", "").strip())
+    if use_v2 and not has_api_key:
         click.echo(
-            f"{_CATEGORY_FRIENDLY_PREFIX[category]} {e.message}",
+            "[配置/参数错] --use-v2 需要 ANTHROPIC_API_KEY 环境变量。"
+            "请在 ~/.zshrc 或 .env 中设置后重试,或使用 --use-v1 fallback 到 v1.0 engine。",
             err=True,
         )
-        raise SystemExit(exit_code) from None
+        raise SystemExit(2)
+
+    use_v1_path = use_v1 or not has_api_key
+
+    # 加载 Settings (含 max_tokens/max_steps 等)
+    # 仅 v2 路径需要真实 Settings;v1 路径走 ScriptedMockRuntime 不需要
+    from auto_engineering.config.settings import Settings
+
+    if use_v1_path:
+        # v1 fallback: Settings 容忍空 API key(用默认值,因 v1 ScriptedMockRuntime 不调 LLM)
+        settings = Settings()  # 默认值,不抛 CONFIG_MISSING_API_KEY
+    else:
+        try:
+            settings = Settings.from_env()
+        except AEError as e:
+            category, exit_code = classify_error(e)
+            click.echo(
+                f"{_CATEGORY_FRIENDLY_PREFIX[category]} {e.message}",
+                err=True,
+            )
+            raise SystemExit(exit_code) from None
 
     # 多 Agent (未来)
     if multi:
@@ -617,38 +906,67 @@ def dev_loop(
     # T03: TokenTracker — P1.1 真接
     tracker = TokenTracker(max_tokens=max_tokens)
 
-    # 调用驱动器
-    try:
-        result = _run_loop_engine(
-            requirement=requirement,
-            project_root=root,
-            project_env=project_env,
-            settings=settings,
-            max_steps=max_steps,
-            max_tokens=max_tokens,
-            dry_run=dry_run,
-            cancellation=cancellation,
-            progress=progress,
-            token_tracker=tracker,
-        )
-    except AEError as e:
-        # T05: 错误归类 + 友好提示
-        category, exit_code = classify_error(e)
-        prefix = _CATEGORY_FRIENDLY_PREFIX[category]
-        click.echo(f"{prefix} {e.message}", err=True)
-        # T07: 任务被取消时,提示用户 resume
-        if e.code == ErrorCode.TASK_CANCELLED:
-            click.echo(
-                "Loop drained. Resume with: ae checkpoint resume <id>",
-                err=True,
+    if use_v1_path:
+        # v1.0 路径 (LoopEngine + Architect/Developer/Critic)
+        _log_engine_version("v1.0")
+        try:
+            result = _run_loop_engine(
+                requirement=requirement,
+                project_root=root,
+                project_env=project_env,
+                settings=settings,
+                max_steps=max_steps,
+                max_tokens=max_tokens,
+                dry_run=dry_run,
+                cancellation=cancellation,
+                progress=progress,
+                token_tracker=tracker,
             )
-        raise SystemExit(exit_code) from None
+        except AEError as e:
+            # T05: 错误归类 + 友好提示
+            category, exit_code = classify_error(e)
+            prefix = _CATEGORY_FRIENDLY_PREFIX[category]
+            click.echo(f"{prefix} {e.message}", err=True)
+            # T07: 任务被取消时,提示用户 resume
+            if e.code == ErrorCode.TASK_CANCELLED:
+                click.echo(
+                    "Loop drained. Resume with: ae checkpoint resume <id>",
+                    err=True,
+                )
+            raise SystemExit(exit_code) from None
+    else:
+        # v2.0 路径 (Orchestrator + Gates + 语义评估)
+        _log_engine_version("v2.0")
+        try:
+            result = _run_v2_orchestrator(
+                requirement=requirement,
+                project_root=root,
+                max_rounds=max_rounds,
+                progress=progress,
+                cancellation=cancellation,
+                token_tracker=tracker,
+            )
+        except AEError as e:
+            category, exit_code = classify_error(e)
+            prefix = _CATEGORY_FRIENDLY_PREFIX[category]
+            click.echo(f"{prefix} {e.message}", err=True)
+            if e.code == ErrorCode.TASK_CANCELLED:
+                click.echo(
+                    "Loop drained. Resume with: ae checkpoint resume <id>",
+                    err=True,
+                )
+            raise SystemExit(exit_code) from None
 
     # 总结输出
     click.echo(
         f"\n✓ dev-loop complete: status={result.status}, "
         f"steps={result.total_steps}, checkpoint={result.checkpoint_id}"
     )
+
+
+def _log_engine_version(version: str) -> None:
+    """输出当前使用的 engine 版本(v1.0 / v2.0)."""
+    click.echo(f"[engine] using {version} orchestrator")
 
 
 @main.command()

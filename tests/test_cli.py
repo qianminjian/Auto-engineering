@@ -63,7 +63,7 @@ class TestT02_2LoadsAeAnswers:
     def test_devloop_loads_ae_answers(self, valid_project, mock_loop_engine):
         """RED: ae dev-loop 必须调 load_ae_answers(project_root)."""
         runner = CliRunner()
-        result = runner.invoke(main, ["dev-loop", "build x"])
+        result = runner.invoke(main, ["dev-loop", "build x", "--use-v1"])
 
         assert result.exit_code == 0
         # 验证: mock 被调用,且传入了 valid_project 作为参数
@@ -109,7 +109,7 @@ class TestT03MaxTokensBudget:
     def test_max_tokens_cli_flag_accepted(self, valid_project, mock_loop_engine):
         """RED: --max-tokens 100 被 CLI 接受并传给 LoopEngine."""
         runner = CliRunner()
-        result = runner.invoke(main, ["dev-loop", "build x", "--max-tokens", "100"])
+        result = runner.invoke(main, ["dev-loop", "build x", "--use-v1", "--max-tokens", "100"])
 
         assert result.exit_code == 0
         call_kwargs = mock_loop_engine.call_args.kwargs
@@ -239,7 +239,7 @@ class TestT08DryRun:
     def test_dry_run_flag_accepted(self, valid_project, mock_loop_engine):
         """RED: --dry-run flag 被接受并传给 runner."""
         runner = CliRunner()
-        result = runner.invoke(main, ["dev-loop", "build x", "--dry-run"])
+        result = runner.invoke(main, ["dev-loop", "build x", "--use-v1", "--dry-run"])
 
         assert result.exit_code == 0
         call_kwargs = mock_loop_engine.call_args.kwargs
@@ -256,7 +256,7 @@ class TestT08DryRun:
             checkpoint_id="dry-cp",
         )
         runner = CliRunner()
-        result = runner.invoke(main, ["dev-loop", "x", "--dry-run"])
+        result = runner.invoke(main, ["dev-loop", "x", "--use-v1", "--dry-run"])
 
         assert "dry" in result.output.lower() or "plan" in result.output.lower()
 
@@ -346,7 +346,7 @@ class TestT11ProjectRoot:
         monkeypatch.setattr("auto_engineering.cli._run_loop_engine", runner_mock)
 
         runner = CliRunner()
-        runner.invoke(main, ["dev-loop", "x", "--project-root", str(project_dir)])
+        runner.invoke(main, ["dev-loop", "x", "--use-v1", "--project-root", str(project_dir)])
 
         # 传入的 project_root 应被传给 runner
         assert runner_mock.called
