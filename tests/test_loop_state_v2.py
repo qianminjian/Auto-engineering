@@ -20,7 +20,6 @@ from auto_engineering.loop.state import (
     LoopState,
 )
 
-
 # ============================================================
 # LastValueChannel — 单写覆盖语义
 # ============================================================
@@ -99,6 +98,7 @@ def test_accumulating_channel_empty():
 # ============================================================
 
 
+@pytest.mark.asyncio
 async def test_barrier_channel_starts_unset():
     """BarrierChannel 创建后 wait() 阻塞直到达到 expected."""
     ch: BarrierChannel = BarrierChannel("gate", expected=3)
@@ -108,6 +108,7 @@ async def test_barrier_channel_starts_unset():
         await asyncio.wait_for(ch.wait(), timeout=0.1)
 
 
+@pytest.mark.asyncio
 async def test_barrier_channel_complete_unblocks_waiters():
     """达到 expected 数量后 wait() 返回."""
     ch: BarrierChannel = BarrierChannel("gate", expected=3)
@@ -122,6 +123,7 @@ async def test_barrier_channel_complete_unblocks_waiters():
     assert ch.empty() is False
 
 
+@pytest.mark.asyncio
 async def test_barrier_channel_expected_zero_already_complete():
     """expected=0 时 wait() 立即返回(已完成的特殊语义)."""
     ch: BarrierChannel = BarrierChannel("instant", expected=0)
@@ -225,6 +227,7 @@ def test_loop_state_mixed_channel_types():
 # ============================================================
 
 
+@pytest.mark.asyncio
 async def test_accumulating_channel_concurrent_writes():
     """5 个 asyncio task 并发 update AccumulatingChannel,顺序可能不同但全部保留."""
     ch: AccumulatingChannel[int] = AccumulatingChannel("concurrent")
@@ -240,6 +243,7 @@ async def test_accumulating_channel_concurrent_writes():
     assert len(result) == 5
 
 
+@pytest.mark.asyncio
 async def test_barrier_channel_concurrent_waiters():
     """3 个 writer 并发 update BarrierChannel,所有 waiter 同步解除阻塞."""
     barrier: BarrierChannel = BarrierChannel("sync", expected=3)
