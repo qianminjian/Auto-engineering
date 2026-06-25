@@ -908,3 +908,53 @@ class TestHooksTaskRunner:
         runner.run([task], context={"name": "world"})
         assert captured["shell"] is False
         assert captured["cmd"] == ["echo", "hello"]
+
+
+# ─── v2.2 Phase I: 模块拆分导入路径测试 (TDD RED) ─────────────────────────────
+class TestV22PhaseIModuleSplit:
+    """验证 P2.5 模块拆分后公共 API 兼容性。
+
+    Phase I 拆分目标：
+    - init/config.py  → init/config_types.py + init/config.py (≤200 行)
+    - init/scaffold.py → init/scaffold_phases.py + init/scaffold_hooks.py + init/scaffold.py (≤200 行)
+    - 旧导入路径 (init.config, init.scaffold) 保留兼容
+    """
+
+    def test_new_config_types_module_exports_question(self):
+        """新拆出的 config_types 模块应导出 Question dataclass。"""
+        from auto_engineering.init.config_types import Question
+
+        q = Question(var_name="x", default="y")
+        assert q.var_name == "x"
+        assert q.default == "y"
+
+    def test_new_config_types_module_exports_task(self):
+        """新拆出的 config_types 模块应导出 Task dataclass。"""
+        from auto_engineering.init.config_types import Task
+
+        t = Task(cmd=["echo", "hi"])
+        assert t.cmd == ["echo", "hi"]
+        assert t.when is True
+
+    def test_new_scaffold_phases_module_exports_init_worker(self):
+        """新拆出的 scaffold_phases 模块应导出 InitWorker。"""
+        from auto_engineering.init.scaffold_phases import InitWorker
+
+        worker = InitWorker(dst_path=Path("/tmp/nonexistent-p2-5"))
+        assert worker is not None
+
+    def test_legacy_config_path_still_works(self):
+        """旧路径 init.config 仍可导入 Question/Task/TemplateConfig (兼容)。"""
+        from auto_engineering.init.config import Question, Task, TemplateConfig
+
+        assert Question is not None
+        assert Task is not None
+        assert TemplateConfig is not None
+
+    def test_legacy_scaffold_path_still_works(self):
+        """旧路径 init.scaffold 仍可导入 InitResult/InitWorker/init_project (兼容)。"""
+        from auto_engineering.init.scaffold import InitResult, InitWorker, init_project
+
+        assert InitResult is not None
+        assert InitWorker is not None
+        assert init_project is not None
