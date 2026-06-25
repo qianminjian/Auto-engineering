@@ -9,6 +9,8 @@
 
 from __future__ import annotations
 
+from typing import ClassVar
+
 import pytest
 
 from auto_engineering.tools.base import BaseTool, ToolResult
@@ -47,7 +49,7 @@ class TestBaseTool:
         class Echo(BaseTool):
             name = "echo"
             description = "Echo input"
-            parameters = {"text": "string"}
+            parameters: ClassVar[dict] = {"text": "string"}
 
             async def execute(self, text: str) -> ToolResult:
                 return ToolResult(success=True, content=text)
@@ -63,7 +65,7 @@ class TestBaseTool:
         class Echo(BaseTool):
             name = "echo"
             description = "Echo input"
-            parameters = {"text": "string"}
+            parameters: ClassVar[dict] = {"text": "string"}
 
             async def execute(self, text: str) -> ToolResult:
                 return ToolResult(success=True, content=text)
@@ -79,7 +81,7 @@ class TestBaseTool:
         class Calc(BaseTool):
             name = "calc"
             description = "Calculate"
-            parameters = {"a": "integer", "b": "integer"}
+            parameters: ClassVar[dict] = {"a": "integer", "b": "integer"}
 
             async def execute(self, a: int, b: int) -> ToolResult:
                 return ToolResult(success=True, content=str(a + b))

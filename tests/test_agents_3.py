@@ -172,11 +172,8 @@ class TestBaseAgentToolLoop:
         from unittest.mock import MagicMock
 
         from auto_engineering.agents.base import BaseAgent
-        from auto_engineering.llm.anthropic_provider import LLMResponse, LLMUsage
-        from auto_engineering.runtime.context import TaskContext
         from auto_engineering.runtime.task import Task
         from auto_engineering.tools import WriteFileTool
-        from auto_engineering.engine.state import LoopState
 
         # 不传 tools 给 agent(self.tools=[])
         agent = BaseAgent(llm=MagicMock(), system_prompt="test", tools=[])
@@ -189,40 +186,6 @@ class TestBaseAgentToolLoop:
             expected_output="ok",
             tools=[write_tool],  # task.tools 有实例!
         )
-        ctx = TaskContext(state=LoopState(), requirement="test")
-
-        # Spy: capture 第二次 create_message call 的 response
-        llm = MagicMock()
-        call_count = [0]
-
-        async def mock_create_message(**kwargs):
-            call_count[0] += 1
-            if call_count[0] == 1:
-                # 第一次: 返回 tool_use → 触发工具循环
-                return LLMResponse(
-                    content="",
-                    model="claude-test",
-                    usage=LLMUsage(input_tokens=10, output_tokens=5),
-                    stop_reason="tool_use",
-                    tool_use_blocks=[
-                        {
-                            "name": "write_file",
-                            "input": {"file_path": "/tmp/test.txt", "content": "hello"},
-                            "id": "c1",
-                        }
-                    ],
-                )
-            else:
-                # 第二次+: 返回 end_turn → 正常结束
-                return LLMResponse(
-                    content='{"result": "ok"}',
-                    model="claude-test",
-                    usage=LLMUsage(input_tokens=10, output_tokens=5),
-                    stop_reason="end_turn",
-                    tool_use_blocks=[],
-                )
-
-        llm.create_message = mock_create_message
 
         # 手动跑 execute 的关键逻辑,验证 tool_map 正确
         effective_tools = task.tools if task.tools else agent.tools

@@ -522,22 +522,24 @@ class TestInitPhaseTasksCurrentPhase:
         worker._template.tasks_after = []
 
         # mock TaskRunner 类 + 子任务 _run_builtin_hooks
-        with patch("auto_engineering.init.scaffold.TaskRunner") as MockRunner:
-            with patch.object(worker, "_run_builtin_hooks"):
-                import tempfile
+        with (
+            patch("auto_engineering.init.scaffold.TaskRunner") as MockRunner,
+            patch.object(worker, "_run_builtin_hooks"),
+        ):
+            import tempfile
 
-                tmpdir = Path(tempfile.mkdtemp())
-                try:
-                    worker._phase_tasks(tmpdir)
-                    assert MockRunner.called
-                    call_kwargs = MockRunner.call_args.kwargs
-                    assert call_kwargs.get("current_phase") == "tasks", (
-                        f"current_phase not passed: {call_kwargs}"
-                    )
-                finally:
-                    import shutil
+            tmpdir = Path(tempfile.mkdtemp())
+            try:
+                worker._phase_tasks(tmpdir)
+                assert MockRunner.called
+                call_kwargs = MockRunner.call_args.kwargs
+                assert call_kwargs.get("current_phase") == "tasks", (
+                    f"current_phase not passed: {call_kwargs}"
+                )
+            finally:
+                import shutil
 
-                    shutil.rmtree(tmpdir, ignore_errors=True)
+                shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 class TestInitIncrementalMode:

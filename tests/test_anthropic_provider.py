@@ -255,7 +255,7 @@ class TestAnthropicProviderToolsSupport:
 
 
 class TestAnthropicProviderKwargs:
-    """AnthropicProvider.create_message 参数扩展 - kwargs (model/max_tokens/system/messages/tools)."""
+    """AnthropicProvider.create_message 参数扩展 (model/max_tokens/system/messages/tools)."""
 
     def test_create_message_passes_all_kwargs(self):
         """验证 model/max_tokens/system/messages/tools 都传给 SDK."""

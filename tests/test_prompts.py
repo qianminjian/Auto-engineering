@@ -278,9 +278,11 @@ class TestAskOne:
         """类型转换失败时应重试."""
         prompt = InteractivePrompt(basic_questions, answers)
         q = Question(var_name="port", type="int", default=8000)
-        with patch("click.prompt", side_effect=["not-a-number", "3000"]):
-            with patch("click.echo"):
-                prompt._ask_one(q, {})
+        with (
+            patch("click.prompt", side_effect=["not-a-number", "3000"]),
+            patch("click.echo"),
+        ):
+            prompt._ask_one(q, {})
         assert answers.interactive["port"] == 3000
 
     def test_retry_on_validator_failure(self, basic_questions, answers):
@@ -309,9 +311,11 @@ class TestAskOne:
         """有 progress 参数时应输出前缀."""
         prompt = InteractivePrompt(basic_questions, answers)
         q = Question(var_name="name", type="str", default="test", help="项目名称")
-        with patch("click.prompt", return_value="my-name"):
-            with patch("click.echo") as mock_echo:
-                prompt._ask_one(q, {}, progress="[1/3]")
+        with (
+            patch("click.prompt", return_value="my-name"),
+            patch("click.echo") as mock_echo,
+        ):
+            prompt._ask_one(q, {}, progress="[1/3]")
         # 验证 click.echo 被调用（前缀 + help）
         assert mock_echo.called
 
@@ -341,9 +345,11 @@ class TestAskOne:
     def test_yaml_type_parsed(self, basic_questions, answers):
         prompt = InteractivePrompt(basic_questions, answers)
         q = Question(var_name="spec", type="yaml", default="version: '1.0'")
-        with patch("click.prompt", return_value="name: app\nversion: '2.0'"):
-            with patch("click.echo"):
-                prompt._ask_one(q, {})
+        with (
+            patch("click.prompt", return_value="name: app\nversion: '2.0'"),
+            patch("click.echo"),
+        ):
+            prompt._ask_one(q, {})
         assert answers.interactive["spec"] == {"name": "app", "version": "2.0"}
 
 
@@ -362,10 +368,12 @@ class TestRun:
             # str → "my-app", json → '{"k":"v"}', yaml → "key: val"
             return "mock-value"
 
-        with patch("click.prompt", side_effect=mock_prompt_side_effect):
-            with patch("click.confirm", return_value=True):
-                with patch("click.echo"):
-                    result = prompt.run()
+        with (
+            patch("click.prompt", side_effect=mock_prompt_side_effect),
+            patch("click.confirm", return_value=True),
+            patch("click.echo"),
+        ):
+            result = prompt.run()
 
         assert result is answers
         # simple pass 应收集 name
@@ -382,10 +390,12 @@ class TestRun:
         ]
         prompt = InteractivePrompt(questions, answers)
 
-        with patch("click.confirm", return_value=True):
-            with patch("click.prompt", return_value="relaxed"):
-                with patch("click.echo"):
-                    prompt.run()
+        with (
+            patch("click.confirm", return_value=True),
+            patch("click.prompt", return_value="relaxed"),
+            patch("click.echo"),
+        ):
+            prompt.run()
 
         # use_ts=True → ts_mode 的 when 变为 True → 应被追问
         assert "use_ts" in answers.interactive
@@ -394,10 +404,12 @@ class TestRun:
     def test_skips_cli_overridden_questions(self, basic_questions, answers):
         answers.cli_overrides["name"] = "cli-project"
         prompt = InteractivePrompt(basic_questions, answers)
-        with patch("click.prompt", return_value="ignored"):
-            with patch("click.confirm", return_value=True):
-                with patch("click.echo"):
-                    prompt.run()
+        with (
+            patch("click.prompt", return_value="ignored"),
+            patch("click.confirm", return_value=True),
+            patch("click.echo"),
+        ):
+            prompt.run()
         # name 由 CLI 提供，不应出现在 interactive 中
         assert "name" not in answers.interactive
         # 但其他问题应该被追问
@@ -414,9 +426,12 @@ class TestRun:
         for q in basic_questions:
             answers.cli_overrides[q.var_name] = f"cli-{q.var_name}"
         prompt = InteractivePrompt(basic_questions, answers)
-        with patch("click.prompt") as mock_prompt, patch("click.confirm") as mock_confirm:
-            with patch("click.echo"):
-                prompt.run()
+        with (
+            patch("click.prompt") as mock_prompt,
+            patch("click.confirm") as mock_confirm,
+            patch("click.echo"),
+        ):
+            prompt.run()
         # 不应调用任何 prompt
         mock_prompt.assert_not_called()
         mock_confirm.assert_not_called()

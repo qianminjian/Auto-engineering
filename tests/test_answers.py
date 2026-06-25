@@ -295,11 +295,13 @@ class TestSavePartial:
 
     def test_default_path_is_home_partial(self):
         am = AnswersMap(interactive={"key": "value"})
-        with patch.object(Path, "home", return_value=Path("/tmp")):
-            with patch.object(Path, "write_text") as mock_write:
-                result = am.save_partial()
-                assert result == Path("/tmp/.ae-partial-answers.yml")
-                mock_write.assert_called_once()
+        with (
+            patch.object(Path, "home", return_value=Path("/tmp")),
+            patch.object(Path, "write_text") as mock_write,
+        ):
+            result = am.save_partial()
+            assert result == Path("/tmp/.ae-partial-answers.yml")
+            mock_write.assert_called_once()
 
 
 class TestFromAnswersFile:

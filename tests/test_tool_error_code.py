@@ -13,6 +13,7 @@ P1.7 — 工具参数校验测试.
 
 from __future__ import annotations
 
+from typing import ClassVar
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -55,7 +56,7 @@ class TestToolErrorAEError:
 
         class FakeTool(BaseTool):
             name = "fake_tool"
-            parameters = {}
+            parameters: ClassVar[dict] = {}
             async def execute(self, **kwargs):
                 return ToolResult(
                     success=False,
@@ -74,7 +75,7 @@ class TestToolErrorAEError:
 
         class OkTool(BaseTool):
             name = "ok_tool"
-            parameters = {}
+            parameters: ClassVar[dict] = {}
             async def execute(self, **kwargs):
                 return ToolResult(success=True, content="ok")
 
@@ -143,7 +144,7 @@ class TestToolInputValidation:
 
         class StrictTool(BaseTool):
             name = "strict_tool"
-            parameters = {
+            parameters: ClassVar[dict] = {
                 "file_path": {"type": "string", "description": "Required path"},
             }
 
@@ -160,7 +161,7 @@ class TestToolInputValidation:
 
         class StrictTool(BaseTool):
             name = "strict_tool"
-            parameters = {
+            parameters: ClassVar[dict] = {
                 "count": {"type": "integer", "description": "Required count"},
             }
 
@@ -177,7 +178,7 @@ class TestToolInputValidation:
 
         class StrictTool(BaseTool):
             name = "strict_tool"
-            parameters = {
+            parameters: ClassVar[dict] = {
                 "file_path": {"type": "string", "description": "Required path"},
             }
 
