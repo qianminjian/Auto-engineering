@@ -264,3 +264,295 @@ async def test_barrier_channel_concurrent_waiters():
         return_exceptions=False,
     )
     assert barrier.empty() is False
+
+
+# ============================================================
+# Channel 序列化 (Phase 2.1-A)
+# LangGraph 对齐 API: copy / checkpoint / from_checkpoint
+# 设计: auto_engineering/loop/state.py Channel 三件套
+# 关键: Channel 子类必须可 JSON 序列化(替换 asyncio.Event 等不可序列化状态)
+# ============================================================
+
+
+# --- LastValueChannel 序列化 ---
+
+
+def test_last_value_channel_checkpoint_default_none():
+    """LastValueChannel.checkpoint() 在未写入时返回 None(JSON 可序列化)."""
+    ch: LastValueChannel[str] = LastValueChannel("plan")
+    assert ch.checkpoint() is None
+    # None 必须可 JSON 序列化 (核心: 不能抛异常)
+    import json
+    assert json.dumps(ch.checkpoint()) == "null"
+
+
+def test_last_value_channel_checkpoint_after_set():
+    """LastValueChannel.checkpoint() 写入后返回当前值."""
+    ch: LastValueChannel[dict] = LastValueChannel("plan")
+    ch.set({"phase": "design", "step": 2})
+    cp = ch.checkpoint()
+    assert cp == {"phase": "design", "step": 2}
+    # 必须可 JSON 序列化(这是序列化 API 的核心约束)
+    import json
+    json.dumps(cp)
+
+
+def test_last_value_channel_from_checkpoint_restores():
+    """LastValueChannel.from_checkpoint(value) 恢复 _value."""
+    ch: LastValueChannel[str] = LastValueChannel("plan")
+    ch.from_checkpoint("restored-value")
+    assert ch.get() == "restored-value"
+    # 再覆盖一次,验证 from_checkpoint 写入后正常 update 仍生效
+    ch.set("new-value")
+    assert ch.get() == "new-value"
+
+
+def test_last_value_channel_from_checkpoint_none():
+    """LastValueChannel.from_checkpoint(None) 重置为未写入状态."""
+    ch: LastValueChannel[str] = LastValueChannel("plan")
+    ch.set("original")
+    ch.from_checkpoint(None)
+    assert ch.get() is None
+    assert ch.empty() is True
+
+
+def test_last_value_channel_copy_independent_state():
+    """LastValueChannel.copy() 返回新实例,修改副本不影响原对象."""
+    original: LastValueChannel[str] = LastValueChannel("plan")
+    original.set("original-value")
+    copy = original.copy()
+    # 副本必须有相同状态
+    assert copy.get() == "original-value"
+    assert copy.name == "plan"
+    # 但修改副本不影响原对象
+    copy.set("modified-in-copy")
+    assert original.get() == "original-value"
+    assert copy.get() == "modified-in-copy"
+
+
+# --- AccumulatingChannel 序列化 ---
+
+
+def test_accumulating_channel_checkpoint_empty():
+    """AccumulatingChannel.checkpoint() 空列表时返回 []."""
+    ch: AccumulatingChannel[str] = AccumulatingChannel("logs")
+    cp = ch.checkpoint()
+    assert cp == []
+    import json
+    assert json.dumps(cp) == "[]"
+
+
+def test_accumulating_channel_checkpoint_after_appends():
+    """AccumulatingChannel.checkpoint() 返回 values 列表的拷贝."""
+    ch: AccumulatingChannel[str] = AccumulatingChannel("logs")
+    ch.update("a")
+    ch.update("b")
+    ch.update("c")
+    cp = ch.checkpoint()
+    assert cp == ["a", "b", "c"]
+    # 副本修改不影响原 Channel
+    cp.append("hacked")
+    assert ch.get() == ["a", "b", "c"]
+
+
+def test_accumulating_channel_from_checkpoint_restores():
+    """AccumulatingChannel.from_checkpoint(values) 恢复 _values 列表."""
+    ch: AccumulatingChannel[str] = AccumulatingChannel("logs")
+    ch.from_checkpoint(["x", "y", "z"])
+    assert ch.get() == ["x", "y", "z"]
+    # from_checkpoint 后 update 应追加
+    ch.update("w")
+    assert ch.get() == ["x", "y", "z", "w"]
+
+
+def test_accumulating_channel_from_checkpoint_empty():
+    """AccumulatingChannel.from_checkpoint([]) 等同于清空."""
+    ch: AccumulatingChannel[str] = AccumulatingChannel("logs")
+    ch.update("original")
+    ch.from_checkpoint([])
+    assert ch.get() == []
+    assert ch.empty() is True
+
+
+def test_accumulating_channel_copy_independent_state():
+    """AccumulatingChannel.copy() 深拷贝 values,修改副本不影响原对象."""
+    original: AccumulatingChannel[str] = AccumulatingChannel("logs")
+    original.update("a")
+    original.update("b")
+    copy = original.copy()
+    # 副本有相同内容
+    assert copy.get() == ["a", "b"]
+    assert copy.name == "logs"
+    # 修改副本(append)不影响原对象
+    copy.update("c")
+    assert original.get() == ["a", "b"]
+    assert copy.get() == ["a", "b", "c"]
+
+
+# --- BarrierChannel 序列化 (重构: 内部状态 JSON 友好) ---
+
+
+def test_barrier_channel_checkpoint_unmet():
+    """BarrierChannel.checkpoint() 未达 expected 时返回 state JSON."""
+    ch: BarrierChannel = BarrierChannel("sync", expected=3)
+    cp = ch.checkpoint()
+    # cp 必须是 dict-like 包含必要字段,JSON 可序列化
+    import json
+    serialized = json.dumps(cp)
+    restored = json.loads(serialized)
+    assert restored["expected"] == 3
+    assert restored["count"] == 0
+    assert restored["is_set"] is False
+
+
+def test_barrier_channel_checkpoint_met():
+    """BarrierChannel.checkpoint() 达到 expected 时 is_set=True."""
+    ch: BarrierChannel = BarrierChannel("sync", expected=2)
+    ch.update("writer-1")
+    ch.update("writer-2")
+    cp = ch.checkpoint()
+    import json
+    serialized = json.dumps(cp)
+    restored = json.loads(serialized)
+    assert restored["expected"] == 2
+    assert restored["count"] == 2
+    assert restored["is_set"] is True
+
+
+def test_barrier_channel_from_checkpoint_restores_unmet():
+    """BarrierChannel.from_checkpoint(state) 恢复未达 expected 状态."""
+    ch: BarrierChannel = BarrierChannel("sync", expected=3)
+    ch.from_checkpoint({"expected": 3, "count": 1, "is_set": False})
+    assert ch.get() == 1
+    assert ch.empty() is True
+
+
+@pytest.mark.asyncio
+async def test_barrier_channel_from_checkpoint_restores_met():
+    """BarrierChannel.from_checkpoint(state) 恢复已达成状态,wait() 立即返回."""
+    ch: BarrierChannel = BarrierChannel("sync", expected=2)
+    ch.from_checkpoint({"expected": 2, "count": 2, "is_set": True})
+    assert ch.get() == 2
+    assert ch.empty() is False
+    # wait() 立即返回,不阻塞
+    await asyncio.wait_for(ch.wait(), timeout=0.1)
+
+
+@pytest.mark.asyncio
+async def test_barrier_channel_from_checkpoint_resumes_waiters():
+    """BarrierChannel.from_checkpoint(is_set=True) 唤醒所有 waiter."""
+    ch: BarrierChannel = BarrierChannel("sync", expected=2)
+
+    # 启动 waiter(在事件循环里阻塞)
+    async def waiter() -> None:
+        await ch.wait()
+
+    task = asyncio.create_task(waiter())
+    await asyncio.sleep(0.01)  # 让 waiter 进入 await
+    # 模拟 checkpoint 恢复(同步达成)
+    ch.from_checkpoint({"expected": 2, "count": 2, "is_set": True})
+    # waiter 应被唤醒
+    await asyncio.wait_for(task, timeout=0.5)
+
+
+def test_barrier_channel_copy_independent_state():
+    """BarrierChannel.copy() 返回新实例,内部状态独立."""
+    original: BarrierChannel = BarrierChannel("sync", expected=3)
+    original.update("writer-1")
+    copy = original.copy()
+    # 副本 state 一致
+    assert copy.get() == 1
+    assert copy.name == "sync"
+    # 修改副本不影响原对象
+    copy.update("writer-2")
+    assert original.get() == 1
+    assert copy.get() == 2
+
+
+# --- Channel 基类: copy/checkpoint/from_checkpoint 是抽象方法 ---
+
+
+def test_channel_base_has_serialization_abstract_methods():
+    """Channel 基类必须有 copy/checkpoint/from_checkpoint 三个抽象方法."""
+    # 不实现新抽象方法的子类不能实例化
+    class IncompleteChannel(Channel[int]):
+        def get(self):  # type: ignore[override]
+            return None
+
+        def update(self, value):  # type: ignore[override]
+            return value
+
+        def empty(self):  # type: ignore[override]
+            return True
+
+    with pytest.raises(TypeError):
+        IncompleteChannel("x")  # type: ignore[abstract]
+
+
+# --- 集成: SQLiteCheckpointStore 序列化所有 Channel 类型 ---
+
+
+def test_sqlite_checkpoint_store_saves_loopstate_with_channels():
+    """SQLiteCheckpointStore.save(state_with_channels) 不再抛 PydanticSerializationError.
+
+    Phase 1 审计发现的核心 bug:state.channels 含 Channel 实例时 save 抛
+    PydanticSerializationError. 修复后 Channel 必须可序列化.
+    """
+    from auto_engineering.loop.checkpoint import SQLiteCheckpointStore
+
+    store = SQLiteCheckpointStore(":memory:")
+    state = LoopState(
+        channels={
+            "plan": LastValueChannel("plan"),
+            "logs": AccumulatingChannel("logs"),
+            "sync": BarrierChannel("sync", expected=2),
+        }
+    )
+    # 写入各类型数据
+    state.set_channel("plan", {"phase": "design", "step": 1})
+    state.channels["logs"].update("log-entry-1")
+    state.channels["logs"].update("log-entry-2")
+    state.channels["sync"].update("writer-1")
+    state.channels["sync"].update("writer-2")
+
+    # 关键断言: 不抛异常
+    cp_id = store.save(state, round=1)
+    assert cp_id is not None
+    assert store.count() == 1
+
+
+def test_sqlite_checkpoint_store_round_trips_channels():
+    """SQLiteCheckpointStore save → load:channels 内容一致.
+
+    真实场景: 重启后从 Checkpoint 恢复,Channel 状态必须能重建.
+    """
+    from auto_engineering.loop.checkpoint import SQLiteCheckpointStore
+
+    store = SQLiteCheckpointStore(":memory:")
+    state = LoopState(
+        channels={
+            "plan": LastValueChannel("plan"),
+            "logs": AccumulatingChannel("logs"),
+            "sync": BarrierChannel("sync", expected=2),
+        }
+    )
+    state.set_channel("plan", "expected plan value")
+    state.channels["logs"].update("log-1")
+    state.channels["logs"].update("log-2")
+    state.channels["sync"].update("writer-1")
+    state.channels["sync"].update("writer-2")
+
+    cp_id = store.save(state, round=1)
+
+    # 加载并验证
+    loaded = store.load(cp_id).state
+    # model_dump 后的 dict 应包含 channels 信息
+    # 注: dict 的 channel 值是 checkpoint() 的 JSON 值,不是 Channel 实例本身
+    # 这是序列化层的行为,验证 JSON 内容正确
+    assert loaded["channels"]["plan"]["value"] == "expected plan value"
+    assert loaded["channels"]["plan"]["type"] == "last_value"
+    assert loaded["channels"]["logs"]["values"] == ["log-1", "log-2"]
+    assert loaded["channels"]["logs"]["type"] == "accumulating"
+    assert loaded["channels"]["sync"]["count"] == 2
+    assert loaded["channels"]["sync"]["is_set"] is True
+    assert loaded["channels"]["sync"]["type"] == "barrier"
