@@ -1,4 +1,4 @@
-> 创建：2026-06-24 | 更新：2026-06-24 | 阶段：Plan A bugfixes 完成 (D1-D6 + B1-B6) → Plan B 准备启动
+> 来源：@design/INDEX.md | 创建：2026-06-24 | 更新：2026-06-25 | 阶段：P1 全部完成（8/8），准备 Phase 2
 
 ## 目标与成功标准
 
@@ -105,12 +105,15 @@
 
 ## 引用文件
 
+@design/INDEX.md — 文档索引（含合并日志/归档清单）
 @design/v1.0-SHARED.md — 共享架构基线（v3.0 对齐）
-@design/v1.0-LOOP.md — dev-loop 子系统设计（v3.0，§十一 含 bug 修复记录）
-@design/v1.0-LOOP-AUDIT.md — dev-loop 初版审计（17 优化点）
-@design/v1.0-AUDIT-SUPPLEMENT.md — dev-loop 补充审计（10 优化点）
+@design/v1.0-LOOP.md — dev-loop 子系统设计（v3.0）
 @design/v1.0-INIT.md — init 子系统设计 + 实现偏差审计（§1.7）+ 修复计划（§二）
 @design/v1.0-TEMPLATES.md — 模板资产定义
-@design/LOOP-DEVELOPMENT-PLAN.md — dev-loop 4 阶段开发计划
+@design/v1.1-AUDIT-REPORT.md — 架构审计报告（P0-P2 + 3个附录）
+@design/v1.1-UNIFIED-DEV-PLAN.md — 统一开发计划
+@design/v1.1-TODO-LIST.md — 当前 TODO 清单
+@design/v2.0-LOOP-ANALYSIS.md — v2.0 多 Agent 并发架构
+@design/his_bak/ — 历史归档（审计报告/执行计划/设计文档）
 @tests/conftest.py — MockRuntime + checkpoint_dir fixture
 
