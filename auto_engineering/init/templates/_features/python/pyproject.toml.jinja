@@ -15,3 +15,7 @@ dev = [
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = ["--timeout=60", "-p no:cacheprovider"]

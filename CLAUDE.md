@@ -91,5 +91,6 @@ Python 控制流（确定性）        LLM 调用（智能）
 ## 管理约束
 
 - tests/ 下测试，覆盖率 ≥ 80%
+- 测试运行遵守 `@.claude/rules/pytest-memory-management.md`（16G 内存约束）
 - 参考源码（`$AE_REFS_DIR/`）为只读，不修改
 - 模板从 project-engineering-init 迁移，保持模板变量兼容
