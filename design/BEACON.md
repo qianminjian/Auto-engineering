@@ -106,14 +106,14 @@
 ## 引用文件
 
 @design/INDEX.md — 文档索引（含合并日志/归档清单）
-@design/v1.0-SHARED.md — 共享架构基线（v3.0 对齐）
-@design/v1.0-LOOP.md — dev-loop 子系统设计（v3.0）
-@design/v1.0-INIT.md — init 子系统设计 + 实现偏差审计（§1.7）+ 修复计划（§二）
-@design/v1.0-TEMPLATES.md — 模板资产定义
-@design/v1.1-AUDIT-REPORT.md — 架构审计报告（P0-P2 + 3个附录）
-@design/v1.1-UNIFIED-DEV-PLAN.md — 统一开发计划
-@design/v1.1-TODO-LIST.md — 当前 TODO 清单
-@design/v2.0-LOOP-ANALYSIS.md — v2.0 多 Agent 并发架构
+@design/v1.0-Design-Shared.md — 共享架构基线（v3.0 对齐）
+@design/v1.0-Design-Loop.md — dev-loop 子系统设计（v3.0）
+@design/v1.0-Design-Init.md — init 子系统设计 + 实现偏差审计（§1.7）+ 修复计划（§二）
+@design/v1.0-Design-Templates.md — 模板资产定义
+@design/v1.1-Audit-Report.md — 架构审计报告（P0-P2 + 3个附录）
+@design/v1.1-Plan-Dev.md — 整合开发计划（问题清单 + Phase 0-5）
+@design/his_bak/v1.1-TODO-LIST.md — 当前 TODO 清单（已归档）
+@design/v2.0-Analysis-Loop.md — v2.0 多 Agent 并发架构
 @design/his_bak/ — 历史归档（审计报告/执行计划/设计文档）
 @tests/conftest.py — MockRuntime + checkpoint_dir fixture
 
