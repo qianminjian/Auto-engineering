@@ -687,7 +687,6 @@ def test_round_history_gate_results_serialization_roundtrip() -> None:
     否则 checkpoint 重启后 quality gate 失败原因丢失.
     """
     from auto_engineering.gates.base import Verdict
-
     from auto_engineering.loop.checkpoint import SQLiteCheckpointStore
 
     history = [

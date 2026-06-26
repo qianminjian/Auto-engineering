@@ -138,8 +138,6 @@ def _normalize_history_item(item: dict[str, Any]) -> dict[str, Any]:
     Returns:
         可 JSON 序列化的纯 dict (嵌套 dataclass 全部展开)
     """
-    from dataclasses import asdict, is_dataclass
-
     result: dict[str, Any] = {}
     for k, v in item.items():
         result[k] = _normalize_value(v)
