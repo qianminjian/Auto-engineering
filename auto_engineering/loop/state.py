@@ -451,7 +451,7 @@ class LoopState(BaseModel):
 
     # Phase 2.3-B: channel_versions 跟踪每个 channel 的版本号
     # 借鉴 LangGraph Pregel.channel_versions (pregel/main.py:1140, 1736-1740)
-    # 用途: 增量触发 (get_new_channel_versions diff)
+    # 用途: 增量触发 (_get_new_channel_versions diff)
     channel_versions: dict[str, int] = Field(default_factory=dict)
 
     # ============================================================

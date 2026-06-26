@@ -751,7 +751,7 @@ def test_barrier_channel_update_empty_sequence_no_change():
 # Phase v2.3-B: channel_versions 触发机制 (P0.2)
 # 设计: LoopState.channel_versions: dict[str, int], 借鉴 LangGraph Pregel.channel_versions
 # 参考: langgraph/libs/langgraph/langgraph/pregel/main.py:1140, 1736-1740
-# 用途: 跟踪每个 channel 的版本号, 实现增量触发 (get_new_channel_versions diff)
+# 用途: 跟踪每个 channel 的版本号, 实现增量触发 (_get_new_channel_versions diff)
 # ============================================================
 
 
@@ -842,57 +842,57 @@ def test_channel_copy_preserves_internal_state_independently():
 
 
 # ============================================================
-# version_utils: get_new_channel_versions 增量触发算法
-# 借鉴 LangGraph pregel/main.py:1736-1740 get_new_channel_versions()
+# convergence: _get_new_channel_versions 增量触发算法
+# 借鉴 LangGraph pregel/main.py:1736-1740 _get_new_channel_versions()
 # 简化: 比较 old vs new versions dict, 返回本轮被修改的 channel 名 set
 # ============================================================
 
 
 def test_get_new_channel_versions_returns_empty_when_unchanged():
     """新旧 versions 相同时返回空 set (无 channel 被修改)."""
-    from auto_engineering.loop.version_utils import get_new_channel_versions
+    from auto_engineering.loop.convergence import _get_new_channel_versions
 
     old = {"plan": 1, "logs": 2}
     new = {"plan": 1, "logs": 2}
-    modified = get_new_channel_versions(old, new)
+    modified = _get_new_channel_versions(old, new)
     assert modified == set()
 
 
 def test_get_new_channel_versions_returns_modified_channels():
     """versions 不同的 channel 名被加入 modified set."""
-    from auto_engineering.loop.version_utils import get_new_channel_versions
+    from auto_engineering.loop.convergence import _get_new_channel_versions
 
     old = {}
     new = {"plan": 2, "logs": 1}
-    modified = get_new_channel_versions(old, new)
+    modified = _get_new_channel_versions(old, new)
     assert modified == {"plan", "logs"}
 
 
 def test_get_new_channel_versions_detects_added_channels():
     """new 中新增的 channel (old 中不存在) 视为修改."""
-    from auto_engineering.loop.version_utils import get_new_channel_versions
+    from auto_engineering.loop.convergence import _get_new_channel_versions
 
     old = {"plan": 1}
     new = {"plan": 1, "logs": 1}
-    modified = get_new_channel_versions(old, new)
+    modified = _get_new_channel_versions(old, new)
     assert modified == {"logs"}
 
 
 def test_get_new_channel_versions_detects_removed_channels():
     """new 中消失的 channel (old 中存在) 视为修改."""
-    from auto_engineering.loop.version_utils import get_new_channel_versions
+    from auto_engineering.loop.convergence import _get_new_channel_versions
 
     old = {"plan": 1, "logs": 1}
     new = {"plan": 1}
-    modified = get_new_channel_versions(old, new)
+    modified = _get_new_channel_versions(old, new)
     assert modified == {"logs"}
 
 
 def test_get_new_channel_versions_detects_version_increment():
     """version 数值增加的 channel 视为修改 (即使 name 已存在)."""
-    from auto_engineering.loop.version_utils import get_new_channel_versions
+    from auto_engineering.loop.convergence import _get_new_channel_versions
 
     old = {"plan": 1}
     new = {"plan": 2}
-    modified = get_new_channel_versions(old, new)
+    modified = _get_new_channel_versions(old, new)
     assert modified == {"plan"}
