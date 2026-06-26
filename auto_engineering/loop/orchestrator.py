@@ -5,7 +5,7 @@
     - design/v2.0-Analysis-Loop.md §4.7 收敛判定 (4 级)
 
 核心组件:
-    OrchestratorConfig — 配置 (gates / semantic_evaluator / project_root)
+    OrchestratorConfig — 配置 (gates / semantic_evaluator / project_root / agent_runtime)
     Orchestrator       — 主循环: 启动 → run_round → 收敛判定 → 继续 / 停止
 
 主循环流程:
@@ -34,6 +34,10 @@
       (run_round 末尾直接构造), Orchestrator 直接累加. 借鉴 LangGraph Pregel.tick()
       Packet 模式: 数据在生产方 (run_round) 直接打包, 调用方 (Orchestrator) 不再
       重复构造.
+    - v2.3 Phase H (P1.4): OrchestratorConfig.agent_runtime 字段, Orchestrator
+      按 task.role 查 Runtime.get(role).execute (替代单一 executor callback).
+      借鉴 AutoGen GroupChat agent_selector: 用 task.role 路由到对应 agent.
+      向后兼容: agent_runtime=None → 用构造参数 executor (旧行为).
 """
 
 from __future__ import annotations
@@ -41,6 +45,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 from auto_engineering.gates.base import Gate, Verdict
 from auto_engineering.loop.convergence import (
@@ -59,6 +64,11 @@ from auto_engineering.loop.round import (
     run_round,
 )
 from auto_engineering.runtime.cancellation import CancellationToken
+from auto_engineering.runtime.context import TaskContext
+
+if TYPE_CHECKING:
+    from auto_engineering.engine.state import LoopState
+    from auto_engineering.runtime.runtime import AgentRuntime
 
 # Type alias: semantic_evaluator = async (round_result) -> bool
 SemanticEvaluator = Callable[[RoundResult], Awaitable[bool]]
@@ -75,12 +85,16 @@ class OrchestratorConfig:
         gates: v2.1 Phase B — 验证 Gate 列表 (None = 跳过)
         semantic_evaluator: v2.1 Phase B — LLM 语义评估 (None = 跳过)
         project_root: v2.1 Phase B — Gate 运行的项目根目录 (None = 当前 cwd)
+        agent_runtime: v2.3 Phase H (P1.4) — AgentRuntime 实例 (None = 用 self.executor).
+            借鉴 AutoGen GroupChat agent_selector: 按 task.role 查 Runtime.get(role)
+            调度到对应 Agent. 解决 P1.4 多 Agent 集成问题.
     """
 
     convergence_config: ConvergenceConfig | None = None
     gates: list[Gate] | None = None
     semantic_evaluator: SemanticEvaluator | None = None
     project_root: Path | None = None
+    agent_runtime: AgentRuntime | None = None  # P1.4 — None = 旧行为 (用 executor)
 
 
 @dataclass
@@ -110,13 +124,81 @@ class Orchestrator:
     verdict: ConvVerdict | None = None
 
     def __post_init__(self) -> None:
-        """初始化 Plan + Judge.
+        """初始化 Plan + Judge + 选 executor (agent_runtime 优先).
 
         v2.3 Phase E (P1.1): 不再在 Orchestrator 自身存 max_rounds 字段,
         主循环从 self.judge.config.max_iterations 读 (单一来源).
+
+        v2.3 Phase H (P1.4): 若 config.agent_runtime 提供, 用 _build_runtime_executor
+        覆盖 self.executor. 借鉴 AutoGen GroupChat agent_selector 路由模式.
+        向后兼容: agent_runtime=None → 保留构造参数 executor (旧行为).
         """
         self.plan = Plan(tasks=self.tasks, requirement=self.requirement)
         self.judge = ConvergenceJudge(config=self.config.convergence_config)
+        # v2.3 Phase H (P1.4): agent_runtime 优先, 替代单一 executor callback
+        if self.config.agent_runtime is not None:
+            self.executor = self._build_runtime_executor(self.config.agent_runtime)
+
+    def _build_runtime_executor(self, runtime: AgentRuntime) -> TaskExecutor:
+        """构建从 AgentRuntime 调度的 executor.
+
+        v2.3 Phase H (P1.4): 借鉴 AutoGen GroupChat agent_selector, 按 task.role
+        查 Runtime.get(role).execute (懒实例化). task.role 在 Runtime 中未注册
+        → 返回 failed TaskOutcome (graceful degradation, 不抛异常, 避免 round
+        因单 task 错误完全失败).
+
+        协议转换:
+            loop.Task  →  runtime.Task (BaseAgent 期望的格式)
+            ctx        →  TaskContext(state=LoopState(requirement=self.requirement))
+            result.values → output=str(values)
+
+        Args:
+            runtime: AgentRuntime 实例 (已注册 architect/developer/critic 等)
+
+        Returns:
+            async (Task, ctx) -> TaskOutcome 函数 — 可被 run_round 直接调用
+        """
+        from auto_engineering.engine.state import LoopState
+        from auto_engineering.runtime.task import Task as RuntimeTask
+
+        async def runtime_executor(
+            loop_task: Task, ctx: Any
+        ) -> TaskOutcome:
+            # 1. 按 role 查 Agent (懒实例化)
+            agent = runtime.get(loop_task.role)
+            if agent is None:
+                # 未注册 → 失败 outcome (graceful degradation, 不抛)
+                return TaskOutcome(
+                    task_id=loop_task.id,
+                    status="failed",
+                    error=f"No agent registered for role: {loop_task.role}",
+                )
+
+            # 2. 构造 runtime.Task (BaseAgent 期望的格式)
+            runtime_task = RuntimeTask(
+                id=loop_task.id,
+                description=loop_task.description,
+                expected_output=loop_task.expected_output,
+            )
+            # 3. 构造 TaskContext (state 必填, 用 LoopState 默认值即可)
+            state: LoopState = ctx if isinstance(ctx, LoopState) else LoopState(
+                requirement=self.requirement
+            )
+            task_ctx = TaskContext(
+                state=state,
+                requirement=self.requirement,
+            )
+
+            # 4. 调 agent.execute (BaseAgent 协议)
+            result = await agent.execute(runtime_task, task_ctx)
+            # 5. 转 TaskOutcome (result.values -> output)
+            return TaskOutcome(
+                task_id=loop_task.id,
+                status="completed",
+                output=str(getattr(result, "values", result)),
+            )
+
+        return runtime_executor
 
     async def run(
         self,

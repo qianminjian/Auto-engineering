@@ -133,6 +133,35 @@ class AgentRuntime:
         self._instances[agent_type] = instance
         return instance
 
+    def get(self, agent_type: str) -> Agent | None:
+        """按 agent_type 查 Agent 实例 (懒实例化).
+
+        v2.3 Phase H (P1.4): Orchestrator 需要按 task.role 调度 Agent, 不走
+        Stage 抽象. 提供 public get(role) API (替代 _get_or_create_agent 私有调用).
+
+        区别于 _get_or_create_agent:
+            - 未注册 → 返回 None (不抛 LookupError, 让 caller 优雅降级)
+            - 已有实例 → 复用 (懒实例化缓存)
+
+        Args:
+            agent_type: Agent 类型名 (architect/developer/critic/...)
+
+        Returns:
+            Agent 实例 (懒实例化) 或 None (未注册)
+
+        Examples:
+            >>> rt = AgentRuntime()
+            >>> rt.register("developer", lambda: DeveloperAgent(...))
+            >>> agent = rt.get("developer")
+            >>> agent is not None
+            True
+            >>> rt.get("unknown")
+        """
+        if agent_type not in self._factories:
+            return None
+        # 复用 _get_or_create_agent 的懒实例化逻辑 (无 expected_class 时不抛 TypeError)
+        return self._get_or_create_agent(agent_type)
+
     async def execute(
         self,
         stage: Stage,

@@ -833,23 +833,26 @@ class _TrackingMockAgent:
 
     AgentRuntime 通过 Protocol 接受任何 Agent-like 对象(duck typing),
     所以 _TrackingMockAgent 不需要继承 BaseAgent.
+
+    Note: runtime.Task 没有 role 字段 (只 id/description/expected_output),
+    MockAgent 记录自己的 role (构造时确定) 而非 task.role.
     """
 
     def __init__(self, role: str) -> None:
         self.role = role
-        self.execute_calls: list[tuple[str, str]] = []  # (task_id, current_stage)
+        self.execute_calls: list[tuple[str, str]] = []  # (task_id, agent_role)
 
     async def execute(self, task, ctx, cancellation=None):  # type: ignore[no-untyped-def]
         """模拟 BaseAgent.execute 签名 (task, ctx, cancellation)."""
-        self.execute_calls.append((task.id, task.role))
+        self.execute_calls.append((task.id, self.role))
         # 返回与 runtime.TaskResult 兼容的对象(duck typing)
         # Orchestrator 的 _build_runtime_executor 只读 .values
         return SimpleNamespace(
             task_id=task.id,
-            values={"role": task.role, "task_id": task.id},
-            raw_response=f"mock-{task.role}",
+            values={"role": self.role, "task_id": task.id},
+            raw_response=f"mock-{self.role}",
             tool_calls=[],
-            agent_type=task.role,
+            agent_type=self.role,
         )
 
 
@@ -903,9 +906,9 @@ async def test_orchestrator_with_agent_runtime_routes_by_role():
         f"critic agent 应收到 t2+t4, 实际: {critic_task_ids}"
     )
     # 验证: 每个 call 的 role 字段正确(模拟 BaseAgent 行为)
-    for tid, role in dev_agent.execute_calls:
+    for _tid, role in dev_agent.execute_calls:
         assert role == "developer"
-    for tid, role in critic_agent.execute_calls:
+    for _tid, role in critic_agent.execute_calls:
         assert role == "critic"
     # 历史非空
     assert len(history) >= 1
@@ -915,19 +918,20 @@ async def test_orchestrator_with_agent_runtime_routes_by_role():
 async def test_orchestrator_agent_runtime_missing_role_returns_failed():
     """task.role 在 Runtime 未注册 → TaskOutcome.status='failed' (不抛异常).
 
-    严禁虚化: 注册 developer/critic 但 task.role='unknown_role' → 真 Orchestrator
-    调 AgentRuntime.get('unknown_role') → None → 返回 failed TaskOutcome
-    (Graceful degradation, 不允许抛 KeyError/LookupError).
+    严禁虚化: 注册 developer/critic 但 task.role='reviewer' (合法角色但 Runtime
+    未注册) → 真 Orchestrator 调 AgentRuntime.get('reviewer') → None → 返回
+    failed TaskOutcome (Graceful degradation, 不允许抛 KeyError/LookupError).
     """
     from auto_engineering.runtime.runtime import AgentRuntime
 
     runtime = AgentRuntime()
     runtime.register("developer", lambda: _TrackingMockAgent("developer"))
     runtime.register("critic", lambda: _TrackingMockAgent("critic"))
+    # 注意: 'reviewer' 是合法 role (Plan.validate 通过) 但 Runtime 未注册
 
     tasks = [
         make_task("t1", agent_type="developer"),
-        make_task("t2", agent_type="unknown_role"),  # 未注册
+        make_task("t2", agent_type="reviewer"),  # 合法 role 但 Runtime 未注册
         make_task("t3", agent_type="critic"),
     ]
 
@@ -946,20 +950,20 @@ async def test_orchestrator_agent_runtime_missing_role_returns_failed():
     )
 
     # 不应抛异常 — 优雅降级
-    history = await orch.run()
+    await orch.run()
 
-    # 验证: round_result.outcomes 含 unknown_role 的 failed status
+    # 验证: round_result.outcomes 含 reviewer 的 failed status
     assert len(orch.round_results) >= 1
     rr = orch.round_results[0]
     failed_outcomes = [o for o in rr.outcomes if o.status == "failed"]
     assert len(failed_outcomes) == 1, (
-        f"unknown_role 应 1 个 failed outcome, 实际: "
+        f"reviewer (未注册) 应 1 个 failed outcome, 实际: "
         f"{[(o.task_id, o.status) for o in rr.outcomes]}"
     )
     assert failed_outcomes[0].task_id == "t2"
     # 验证: error 字段含角色名 (便于调试)
-    assert "unknown_role" in (failed_outcomes[0].error or ""), (
-        f"failed outcome error 应含 'unknown_role', 实际: {failed_outcomes[0].error}"
+    assert "reviewer" in (failed_outcomes[0].error or ""), (
+        f"failed outcome error 应含 'reviewer', 实际: {failed_outcomes[0].error}"
     )
 
 
