@@ -364,3 +364,56 @@ class _ScriptedAgent:
             tool_calls=[],
             agent_type=self.agent_type,
         )
+
+
+# ============================================================
+# v2.3 Phase H — AgentRuntime.get(role) API (P1.4)
+# 设计: Orchestrator 需要按 role 查 Agent 实例 — 当前 Runtime 用
+#       _get_or_create_agent (private) + execute (高层). 需暴露 get(role)
+#       公共 API, 返回 Agent 实例 (懒实例化).
+# ============================================================
+
+
+class TestAgentRuntimeGet:
+    """AgentRuntime.get(role) 公共 API (Phase H 新增)."""
+
+    def test_get_returns_registered_agent(self):
+        """get(role) 返回已注册的 agent (懒实例化)."""
+        rt = AgentRuntime()
+        agent = MockAgent("developer", {"x": 1})
+        rt.register("developer", lambda: agent)
+        got = rt.get("developer")
+        assert got is agent, f"get('developer') 应返回 MockAgent 实例, 实际: {got}"
+
+    def test_get_unregistered_returns_none(self):
+        """get(unknown_role) 返回 None (不抛 LookupError, 让 caller 优雅降级)."""
+        rt = AgentRuntime()
+        rt.register("developer", lambda: MockAgent("developer", {}))
+        assert rt.get("unknown") is None
+        assert rt.get("critic") is None
+
+    def test_get_lazy_instantiation_caches(self):
+        """get(role) 多次调用返回同一实例 (延迟实例化缓存)."""
+        rt = AgentRuntime()
+        call_count = 0
+
+        def factory():
+            nonlocal call_count
+            call_count += 1
+            return MockAgent("developer", {})
+
+        rt.register("developer", factory)
+        # 第一次调用: 触发 factory
+        a1 = rt.get("developer")
+        assert a1 is not None
+        assert call_count == 1
+        # 第二次调用: 缓存复用, 不再触发 factory
+        a2 = rt.get("developer")
+        assert a2 is a1, "get 多次应返回同一实例"
+        assert call_count == 1, f"factory 应只调 1 次, 实际: {call_count}"
+
+    def test_get_empty_runtime_returns_none(self):
+        """空 Runtime (无注册) → get(any) 返回 None."""
+        rt = AgentRuntime()
+        assert rt.get("anything") is None
+        assert rt.get("developer") is None
