@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import copy as _copy
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Self, TypeVar
 
@@ -37,8 +38,17 @@ class Channel[T](ABC):
         ...
 
     @abstractmethod
-    def update(self, value: T) -> T:
-        """写入 channel, 返回写入后的当前值(便于链式调用)."""
+    def update(self, values: Sequence[T]) -> bool:
+        """批量更新 Channel, 返回 True 表示有变化 (可触发下游), False 表示无变化.
+
+        对齐 LangGraph BaseChannel.update(values: Sequence[Update]) -> bool
+        参考: langgraph/libs/langgraph/langgraph/channels/base.py:90
+
+        设计要点:
+        - 接 Sequence[T] 而非单值 T, 支持一次调用批量写入
+        - 返回 bool 替代旧版的 T, 用于驱动下游触发逻辑
+        - 空序列是合法调用, 表示无更新 (Pregel 在每步结束会调用一次)
+        """
         ...
 
     @abstractmethod
@@ -72,9 +82,9 @@ class Channel[T](ABC):
         """
         ...
 
-    def set(self, value: T) -> None:
-        """便捷方法: 写入不关心返回值. 子类按需覆盖."""
-        self.update(value)
+    def set(self, value: T) -> bool:
+        """便捷方法: 单值写入. 内部包装为 [value] 序列调用 update()."""
+        return self.update([value])
 
 
 class LastValueChannel(Channel[T]):
@@ -91,9 +101,21 @@ class LastValueChannel(Channel[T]):
     def get(self) -> T | None:
         return self._value
 
-    def update(self, value: T) -> T:
-        self._value = value
-        return self._value
+    def update(self, values: Sequence[T]) -> bool:
+        """批量写入: 取序列最后值覆盖 _value, 有变化返回 True.
+
+        对齐 LangGraph LastValue.update(values: Sequence[Value]) -> bool.
+        空序列不改变状态, 返回 False (无变化).
+
+        Returns:
+            bool: 是否有变化 (用于驱动下游触发).
+        """
+        if not values:
+            return False
+        new_value = values[-1]
+        changed = new_value != self._value
+        self._value = new_value
+        return changed
 
     def empty(self) -> bool:
         return self._value is None
@@ -136,9 +158,23 @@ class AccumulatingChannel(Channel[T]):
     def get(self) -> list[T]:
         return list(self._values)  # 防御性拷贝, 防止外部修改内部状态
 
-    def update(self, value: T) -> list[T]:
-        self._values.append(value)
-        return list(self._values)
+    def update(self, values: Sequence[T | list[T]]) -> bool:
+        """批量写入: 扩展 _values, 序列中每个元素若是 list 则展平后追加.
+
+        对齐 LangGraph Topic.update(values: Sequence[Value | list[Value]]) -> bool.
+        参考: langgraph/libs/langgraph/langgraph/channels/topic.py:77
+
+        Returns:
+            bool: 非空序列返回 True (有新增), 空序列返回 False.
+        """
+        if not values:
+            return False
+        for v in values:
+            if isinstance(v, list):
+                self._values.extend(v)
+            else:
+                self._values.append(v)  # type: ignore[arg-type]
+        return True
 
     def empty(self) -> bool:
         return len(self._values) == 0
@@ -237,13 +273,23 @@ class BarrierChannel(Channel[Any]):
         """返回当前已写入数量(用于监控)."""
         return self._state.count
 
-    def update(self, value: Any = None) -> int:
-        """写入一次, 达到 expected 时解除所有 waiter 阻塞."""
-        self._state.count += 1
+    def update(self, values: Sequence[Any]) -> bool:
+        """批量写入: 每次调用按序列长度 +count, 达到 expected 时唤醒所有 waiter.
+
+        对齐 LangGraph BaseChannel.update 签名: 接 Sequence + 返回 bool.
+        单值语义: BarrierChannel.update([None]) 等价旧 update(None) (+1).
+
+        Returns:
+            bool: 达到 expected 返回 True (触发下游), 否则 False.
+        """
+        if not values:
+            return False
+        self._state.count += len(values)
         if self._state.count >= self._state.expected and not self._state.is_set:
             self._state.is_set = True
             self._sync_event()
-        return self._state.count
+            return True
+        return False
 
     def empty(self) -> bool:
         """未达到 expected 时为空."""
@@ -433,14 +479,18 @@ class LoopState(BaseModel):
             return None
         return ch.get()
 
-    def set_channel(self, name: str, value: Any) -> None:
-        """写入指定 channel. 未知 channel 抛 KeyError(显式错误优于静默失败)."""
+    def set_channel(self, name: str, value: Any) -> bool:
+        """写入指定 channel. 未知 channel 抛 KeyError(显式错误优于静默失败).
+
+        Returns:
+            bool: Channel 是否报告有变化 (对齐 update() 新签名).
+        """
         if name not in self.channels:
             raise KeyError(
                 f"Channel '{name}' not registered in LoopState. "
                 f"Available: {list(self.channels.keys())}"
             )
-        self.channels[name].update(value)
+        return self.channels[name].update([value])
 
     def model_dump(self, **kwargs: Any) -> dict[str, Any]:
         """Pydantic v2 序列化: 自动用 Channel.checkpoint() 替换 Channel 实例.

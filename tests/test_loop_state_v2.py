@@ -632,8 +632,8 @@ def test_channel_update_signature_matches_langgraph():
     params = list(sig.parameters.keys())
     # 必须有 'self' 和 'values' 两个参数
     assert "values" in params, f"Channel.update must have 'values' param, got {params}"
-    # 返回注解必须声明为 bool (或 bool 的等价物)
-    assert sig.return_annotation is bool, (
+    # 返回注解必须声明为 bool (Python 3.12+ 会把注解字符串化为 'bool', 比较 value)
+    assert sig.return_annotation in (bool, "bool"), (
         f"Channel.update must return bool, got {sig.return_annotation}"
     )
 
