@@ -501,7 +501,7 @@ async def test_round_result_handles_gate_exceptions(tmp_path):
     严禁虚化: 用一个真会抛异常的 Gate (run() 抛 RuntimeError),
     验证 RoundResult 吞掉异常 + 写入 failed Verdict.
     """
-    from auto_engineering.gates.base import Gate, Verdict
+    from auto_engineering.gates.base import Gate
 
     class BoomGate(Gate):
         name = "boom"
