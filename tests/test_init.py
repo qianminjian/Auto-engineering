@@ -959,3 +959,101 @@ class TestV22PhaseIModuleSplit:
         assert InitResult is not None
         assert InitWorker is not None
         assert init_project is not None
+
+
+# ─── v2.3 Phase F: Copier match_exclude 回调机制 (P1.2) ─────────────────────────
+class TestExcludeCallback:
+    """P1.2: init/ 缺 Copier match_exclude 回调机制.
+
+    借鉴 Copier _main.py:753 match_exclude(self) -> Callable[[Path], bool].
+    目标: ae-template.yml 支持 exclude_callback 配置, 调用 user-defined 回调动态排除路径.
+    """
+
+    def test_default_match_exclude_git_dir(self):
+        """`.git/` 下任何文件都应被排除."""
+        from auto_engineering.init._shared.exclude import default_match_exclude
+
+        assert default_match_exclude(Path(".git/config")) is True
+        assert default_match_exclude(Path(".git/HEAD")) is True
+        assert default_match_exclude(Path("src/.git/refs")) is True
+
+    def test_default_match_exclude_pycache(self):
+        """`__pycache__/` 目录 + `.pyc` 文件应被排除."""
+        from auto_engineering.init._shared.exclude import default_match_exclude
+
+        assert default_match_exclude(Path("__pycache__/foo.pyc")) is True
+        assert default_match_exclude(Path("src/__pycache__/x.pyc")) is True
+        assert default_match_exclude(Path("module.pyc")) is True
+
+    def test_default_match_exclude_venv(self):
+        """`.venv/` 与 `node_modules/` 应被排除."""
+        from auto_engineering.init._shared.exclude import default_match_exclude
+
+        assert default_match_exclude(Path(".venv/lib/python3.12/site.py")) is True
+        assert default_match_exclude(Path("node_modules/react/index.js")) is True
+
+    def test_default_match_exclude_keeps_source(self):
+        """普通源码文件应保留, 不被排除."""
+        from auto_engineering.init._shared.exclude import default_match_exclude
+
+        assert default_match_exclude(Path("src/main.py")) is False
+        assert default_match_exclude(Path("README.md")) is False
+        assert default_match_exclude(Path("pyproject.toml")) is False
+
+    def test_default_match_exclude_dotfile(self):
+        """以 `.` 开头的隐藏文件 (如 `.env`) 应被排除 (但 src/main.py 不)."""
+        from auto_engineering.init._shared.exclude import default_match_exclude
+
+        assert default_match_exclude(Path(".env")) is True
+        assert default_match_exclude(Path(".DS_Store")) is True
+
+    def test_parse_exclude_callback_resolves_default(self):
+        """'module:function' 格式 spec 可解析为可调用对象."""
+        from auto_engineering.init._shared.exclude import (
+            default_match_exclude,
+            parse_exclude_callback,
+        )
+
+        callback = parse_exclude_callback(
+            "auto_engineering.init._shared.exclude:default_match_exclude"
+        )
+        assert callback is default_match_exclude
+
+    def test_parse_exclude_callback_raises_on_missing_module(self):
+        """解析不存在的模块应抛 ImportError."""
+        from auto_engineering.init._shared.exclude import parse_exclude_callback
+
+        with pytest.raises(ImportError):
+            parse_exclude_callback("nonexistent.module:fn")
+
+    def test_parse_exclude_callback_raises_on_missing_attr(self):
+        """解析模块中不存在的函数应抛 AttributeError."""
+        from auto_engineering.init._shared.exclude import parse_exclude_callback
+
+        with pytest.raises(AttributeError):
+            parse_exclude_callback(
+                "auto_engineering.init._shared.exclude:no_such_function"
+            )
+
+    def test_parse_exclude_callback_invalid_format(self):
+        """非 'module:function' 格式应抛 ValueError."""
+        from auto_engineering.init._shared.exclude import parse_exclude_callback
+
+        with pytest.raises(ValueError):
+            parse_exclude_callback("invalid_format_no_colon")
+
+    def test_template_config_exclude_callback_field_default(self):
+        """TemplateConfig 暴露 exclude_callback 字段, 默认指向 default_match_exclude."""
+        from auto_engineering.init._shared.exclude import default_match_exclude
+        from auto_engineering.init.config import TemplateConfig
+
+        cfg = TemplateConfig(template_dir=Path("/tmp/none"))
+        assert hasattr(cfg, "exclude_callback")
+        # 默认值是字符串 (解析在 init 时完成)
+        assert cfg.exclude_callback == (
+            "auto_engineering.init._shared.exclude:default_match_exclude"
+        )
+        # 解析后应等于 default_match_exclude
+        from auto_engineering.init._shared.exclude import parse_exclude_callback
+
+        assert parse_exclude_callback(cfg.exclude_callback) is default_match_exclude
