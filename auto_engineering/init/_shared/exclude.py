@@ -59,9 +59,7 @@ def default_match_exclude(path: Path) -> bool:
         return True
     if any(p in _EXCLUDED_NAMES for p in parts):
         return True
-    if path.suffix in _EXCLUDED_SUFFIXES:
-        return True
-    return False
+    return path.suffix in _EXCLUDED_SUFFIXES
 
 
 def parse_exclude_callback(spec: str) -> Callable[[Path], bool]:

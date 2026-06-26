@@ -1103,22 +1103,12 @@ class TestExcludeCallback:
     def test_scaffold_render_resolves_exclude_callback_spec(self):
         """scaffold_render 解析 exclude_callback spec 失败时, 回退到 default.
 
-        验证集成路径: 传入无效 spec 不应崩溃, 应回退到 default_match_exclude.
+        验证集成路径: render_to 签名含 exclude_callback 参数且默认值为
+        default_match_exclude spec.
         """
-        from auto_engineering.init.scaffold_render import render_to
-
-        # 模拟传入无效 spec, 验证优雅降级 (不会抛 ImportError/ValueError)
-        # 用 mock TemplateConfig + answers
-        class FakeAnswers:
-            builtins = {}
-            defaults = {}
-
-            def combined(self):
-                return {}
-
-        # 这里只验证 render_to 的 exclude_callback 参数被正确处理
-        # 不实际渲染 (需要完整 template_dir)
         import inspect
+
+        from auto_engineering.init.scaffold_render import render_to
 
         sig = inspect.signature(render_to)
         assert "exclude_callback" in sig.parameters

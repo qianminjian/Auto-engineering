@@ -179,9 +179,7 @@ class TemplateRenderer:
         rel = str(file_path.relative_to(src_dir))
         if matcher(rel):
             return True
-        if self.match_exclude is not None and self.match_exclude(file_path):
-            return True
-        return False
+        return self.match_exclude is not None and self.match_exclude(file_path)
 
     def _is_no_render(self, rel_path: str) -> bool:
         """检查文件是否应原样复制不渲染。"""

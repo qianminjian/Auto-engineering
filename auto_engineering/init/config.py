@@ -63,7 +63,7 @@ class TemplateConfig:
 
     # P1.2: exclude_callback — module:function 格式 spec, 渲染阶段动态排除路径
     # （来源: Copier _main.py:753 match_exclude Callable[[Path], bool]）
-    # 默认指向 _shared.exclude.default_match_exclude, 排除 .git/ / __pycache__/ / .venv/ / node_modules/
+    # 默认指向 _shared.exclude.default_match_exclude
     exclude_callback: str = (
         "auto_engineering.init._shared.exclude:default_match_exclude"
     )
