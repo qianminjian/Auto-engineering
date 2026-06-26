@@ -452,31 +452,38 @@ class OrchestratorRunResult:
     checkpoint_id: str
 
 
-def _build_v2_executor(
+def _build_v2_agent_runtime(
     project_root: Path,
     progress: ProgressLogger,
     token_tracker: TokenTracker | None = None,
 ) -> Any:
-    """构造 v2.0 Orchestrator 用的 TaskExecutor (复用 v1.0 BaseAgent).
+    """构造 v2.0 Orchestrator 用的 AgentRuntime (替代 _build_v2_executor).
 
-    简化版本(Phase C 演示用):
-        - 单 Agent 模式: 所有 task 走 DeveloperAgent
+    v2.3 Phase H (P1.4): Orchestrator 集成 AgentRuntime, 按 task.role 路由
+    调 agent.execute — 替代单一 executor callback wrapper.
+
+    设计:
+        - 复用 v1.0 BaseAgent (DeveloperAgent) 作为 developer agent
         - 工具集: v1.0 标准工具集 (Read/Write/Edit/Search/List/Bash/Git/Test)
-        - LLM 异常 → 包成 TaskOutcome(status="failed")
+        - architect/critic: 注册 Mock Agent (ScriptedMockAgentByRole) —
+          避免在 v2 Orchestrator demo 中也跑真实 LLM architect/critic
+        - LLM 异常 → 包成 TaskOutcome(status='failed') (在 Orchestrator._build_runtime_executor
+          内处理, 借鉴 AutoGen GroupChat agent_selector)
 
     Args:
-        project_root: 项目根目录(沙箱白名单基址)
-        progress: 进度日志(可选, 用于记录 task 执行)
-        token_tracker: Token 跟踪器(可选, 注入 BaseAgent.execute)
+        project_root: 项目根目录 (沙箱白名单基址)
+        progress: 进度日志 (用于记录 task 执行)
+        token_tracker: Token 跟踪器 (注入 BaseAgent.execute)
 
     Returns:
-        async (Task, ctx) -> TaskOutcome 函数
+        AgentRuntime 实例 (已注册 architect/developer/critic)
     """
     import os
+    from types import SimpleNamespace
 
     from auto_engineering.agents.developer import DeveloperAgent
     from auto_engineering.llm.anthropic_provider import AnthropicProvider
-    from auto_engineering.runtime.context import TaskContext
+    from auto_engineering.runtime.runtime import AgentRuntime
     from auto_engineering.runtime.task import Task as RuntimeTask
     from auto_engineering.tools.bash_tools import RunBashTool
     from auto_engineering.tools.file_tools import (
@@ -512,43 +519,66 @@ def _build_v2_executor(
     ]
     developer = DeveloperAgent(llm=llm, tools=tools)
 
-    async def executor(loop_task: Any, ctx: Any) -> Any:
-        """v2.0 executor: 把 loop.Task 转成 runtime.Task 调 BaseAgent."""
-        from auto_engineering.loop.round import TaskOutcome
+    class _DeveloperAgentAdapter:
+        """Adapter: DeveloperAgent 接受 runtime.Task, 但 v2 path 期望简易 execute.
 
-        # 构造 runtime Task (BaseAgent 期望的格式)
-        runtime_task = RuntimeTask(
-            id=loop_task.id,
-            description=loop_task.description,
-            expected_output="Code changes satisfying the requirement",
-        )
-        runtime_ctx = TaskContext(workspace=project_root)
+        v2 Orchestrator._build_runtime_executor 构造 runtime.Task 并传入,
+        DeveloperAgent.execute 直接接受. 此 Adapter 仅记录调用日志.
+        """
 
-        # 进度输出
-        if progress is not None:
-            progress.emit("task_start", task_id=loop_task.id, agent_type=loop_task.agent_type)
+        def __init__(self) -> None:
+            self.role = "developer"
+            self.execute_calls: list[str] = []
 
-        try:
+        async def execute(
+            self,
+            task: RuntimeTask,
+            ctx: Any,
+            cancellation: Any = None,
+            token_tracker: Any = None,
+        ) -> Any:
+            self.execute_calls.append(task.id)
+            if progress is not None:
+                progress.emit("task_start", task_id=task.id, agent_type="developer")
             result = await developer.execute(
-                task=runtime_task,
-                ctx=runtime_ctx,
-                token_tracker=token_tracker,
+                task=task, ctx=ctx, cancellation=cancellation, token_tracker=token_tracker
             )
-            return TaskOutcome(
-                task_id=loop_task.id,
-                status="completed",
-                output=result.values,
-                duration=0.0,
-            )
-        except Exception as exc:
-            return TaskOutcome(
-                task_id=loop_task.id,
-                status="failed",
-                error=str(exc),
-                duration=0.0,
+            return result
+
+    class _MockRoleAgent:
+        """architect/critic 的 Mock Agent — Phase C 简化, 避免 v2 demo 跑真 LLM.
+
+        返回 TaskResult-like SimpleNamespace, Orchestrator._build_runtime_executor
+        会读 .values 字段.
+        """
+
+        def __init__(self, role: str) -> None:
+            self.role = role
+
+        async def execute(
+            self,
+            task: RuntimeTask,
+            ctx: Any,
+            cancellation: Any = None,
+            token_tracker: Any = None,
+        ) -> Any:
+            if progress is not None:
+                progress.emit("task_start", task_id=task.id, agent_type=self.role)
+            # Mock: 返回 role 标识, 让 Orchestrator 走完 round
+            return SimpleNamespace(
+                task_id=task.id,
+                values={"role": self.role, "task_id": task.id, "status": "approved"},
+                raw_response=f"mock-{self.role}",
+                tool_calls=[],
+                agent_type=self.role,
             )
 
-    return executor
+    runtime = AgentRuntime()
+    runtime.register("architect", lambda: _MockRoleAgent("architect"))
+    runtime.register("developer", lambda: _DeveloperAgentAdapter())
+    runtime.register("critic", lambda: _MockRoleAgent("critic"))
+    runtime.register("reviewer", lambda: _MockRoleAgent("reviewer"))
+    return runtime
 
 
 def _build_v2_semantic_evaluator(
@@ -618,13 +648,16 @@ def _run_v2_orchestrator(
     )
     from auto_engineering.loop.plan import Task
 
-    # 1. 构造 OrchestratorConfig: gates + semantic_evaluator + project_root
-    #    v2.3 Phase E (P1.1): max_rounds 通过 ConvergenceConfig.max_iterations 传入 (单一来源)
+    # 1. 构造 OrchestratorConfig: gates + semantic_evaluator + project_root + agent_runtime
+    #    v2.3 Phase E (P1.1): max_rounds → ConvergenceConfig.max_iterations (单一来源)
+    #    v2.3 Phase H (P1.4): agent_runtime 传入, 按 task.role 调度 (替代 _build_v2_executor)
+    agent_runtime = _build_v2_agent_runtime(project_root, progress, token_tracker)
     config = OrchestratorConfig(
         convergence_config=ConvergenceConfig(max_iterations=max_rounds),
         gates=[SafetyGate(), LintGate()],
         semantic_evaluator=_build_v2_semantic_evaluator(project_root, progress),
         project_root=project_root,
+        agent_runtime=agent_runtime,
     )
 
     # 2. 构造单 task (Phase C 简化: 1 个 task, developer agent)
@@ -639,14 +672,11 @@ def _run_v2_orchestrator(
         depends_on=[],
     )
 
-    # 3. 构造 executor (复用 v1.0 BaseAgent)
-    executor = _build_v2_executor(project_root, progress, token_tracker)
-
-    # 4. 构造 Orchestrator
+    # 3. 构造 Orchestrator (v2.3 Phase H P1.4: 不再传 executor, agent_runtime 自动调度)
     orchestrator = Orchestrator(
         requirement=requirement,
         tasks=[task],
-        executor=executor,
+        executor=None,  # type: ignore[arg-type]  # agent_runtime 优先
         config=config,
     )
 

@@ -441,21 +441,24 @@ class TestC8V2ConfigFields:
 
 
 # ============================================================
-# C.9 — _run_v2_orchestrator 复用 BaseAgent 作为 executor
+# C.9 — _run_v2_orchestrator 复用 AgentRuntime (P1.4 v2.3 Phase H)
+# 设计: Orchestrator 不再用单一 executor callback, 改用 config.agent_runtime
+#       按 task.role 路由到对应 Agent (AutoGen GroupChat 模式).
 # ============================================================
 
 
-class TestC9V2BaseAgentExecutor:
-    """C.9: _run_v2_orchestrator 用 BaseAgent (v1.0) 构造 TaskExecutor."""
+class TestC9V2AgentRuntimeIntegration:
+    """C.9 (Phase H P1.4): _run_v2_orchestrator 用 AgentRuntime 替代 executor."""
 
-    def test_v2_executor_wraps_base_agent(self, tmp_path: Path, monkeypatch):
-        """RED: Orchestrator.executor 字段是 callable (Task -> TaskOutcome)."""
+    def test_v2_config_has_agent_runtime(self, tmp_path: Path, monkeypatch):
+        """RED→GREEN: OrchestratorConfig.agent_runtime 非 None + 含 3 agent 注册."""
         import asyncio as asyncio_mod
 
         from auto_engineering import cli
         from auto_engineering.loop.orchestrator import Orchestrator
+        from auto_engineering.runtime.runtime import AgentRuntime
 
-        captured_executor = None
+        captured_config = None
 
         def fake_asyncio_run(coro):
             with contextlib.suppress(Exception):
@@ -465,8 +468,8 @@ class TestC9V2BaseAgentExecutor:
         monkeypatch.setattr(asyncio_mod, "run", fake_asyncio_run)
 
         def fake_orch_init(self, *args, **kwargs):
-            nonlocal captured_executor
-            captured_executor = kwargs.get("executor", args[2] if len(args) > 2 else None)
+            nonlocal captured_config
+            captured_config = kwargs.get("config", args[3] if len(args) > 3 else None)
             return None
 
         monkeypatch.setattr(Orchestrator, "__init__", fake_orch_init)
@@ -481,6 +484,16 @@ class TestC9V2BaseAgentExecutor:
             cancellation=CancellationToken(),
         )
 
-        # executor 应为 callable
-        assert captured_executor is not None
-        assert callable(captured_executor), "executor should be callable"
+        # P1.4 contract: OrchestratorConfig.agent_runtime 必须设置
+        assert captured_config is not None, "config must be passed"
+        assert captured_config.agent_runtime is not None, (
+            "P1.4: agent_runtime must be set in config"
+        )
+        assert isinstance(captured_config.agent_runtime, AgentRuntime), (
+            f"agent_runtime must be AgentRuntime, got {type(captured_config.agent_runtime)}"
+        )
+        # 验证 3 agent 已注册
+        factories = captured_config.agent_runtime._factories  # type: ignore[attr-defined]
+        assert "architect" in factories, f"architect not registered: {list(factories)}"
+        assert "developer" in factories, f"developer not registered: {list(factories)}"
+        assert "critic" in factories, f"critic not registered: {list(factories)}"
