@@ -71,7 +71,10 @@ class RoundHistory:
         files_changed: 本轮修改的文件数
         lines_added: 本轮新增行数
         lines_removed: 本轮删除行数
-        gate_results: 7 道 Gate 的结果 dict[name -> bool], True=pass
+        gate_results: v2.3 Phase D (P0.4) — 保留完整 Verdict 对象 dict[gate_name, Verdict].
+                      之前是 dict[str, bool], 丢失 verdict.message 语义.
+                      用 Any 是为了避免与 gates 模块循环引用 (RoundHistory 在 convergence.py,
+                      Verdict 在 gates/base.py). 实际值始终为 Verdict.
         semantic_satisfied: LLM 语义评估是否通过 (Phase 3+ LLM 调用, Phase 2 可为 None)
         tasks_run: v2.3 Phase C — 本轮实际跑的 task IDs (供 Orchestrator 增量选择参考)
         task_outcomes: v2.3 Phase C — 本轮每个 task 的最终状态
@@ -83,7 +86,7 @@ class RoundHistory:
     files_changed: int = 0
     lines_added: int = 0
     lines_removed: int = 0
-    gate_results: dict[str, bool] = field(default_factory=dict)
+    gate_results: dict[str, Any] = field(default_factory=dict)  # 实际值: Verdict
     semantic_satisfied: bool | None = None  # None = 未评估
     tasks_run: list[str] = field(default_factory=list)
     task_outcomes: dict[str, str] = field(default_factory=dict)
@@ -307,8 +310,9 @@ class ConvergenceJudge:
             Verdict 或 None (None 表示未触发或 Gate 还没全实现)
 
         Note:
-            Phase 2 实现: 7 道 Gate 中 Phase 04 已实现的具体 Gate 才参与判定
-            (Phase 2 暂未实现 Gate, gate_results 为空 → 不触发)
+            v2.3 Phase D (P0.4): gate_results 是 dict[gate_name, Verdict],
+            必须读 verdict.passed (不能 all(values), 否则 dataclass 实例永远 truthy).
+            同时 Verdict 失败时 reason 应包含 gate message, 让 Judge 输出可读.
         """
         if not history:
             return None
@@ -318,14 +322,28 @@ class ConvergenceJudge:
             # 没有 Gate 结果, 不触发
             return None
 
-        all_passed = all(latest.gate_results.values())
-        if all_passed:
-            failed = [name for name, p in latest.gate_results.items() if not p]
+        # v2.3 Phase D: gate_results 是 dict[gate_name, Verdict]
+        # 必须读 .passed (不能 all(values), 否则 Verdict dataclass 实例永远 truthy)
+        gate_verdicts = latest.gate_results
+        failed_gates: list[tuple[str, Any]] = [
+            (name, v) for name, v in gate_verdicts.items() if not v.passed
+        ]
+
+        if not failed_gates:
+            # 全 PASS → 触发停止, reason 含门数量 (借鉴 LangGraph pregel/main.py)
             return Verdict.stop(
                 level=LEVEL_QUALITY,
-                reason=f"所有质量门通过 ({len(latest.gate_results)} 道): "
-                f"原失败门 {failed if failed else '无'}",
+                reason=(
+                    f"所有质量门通过 ({len(gate_verdicts)} 道): "
+                    f"{', '.join(gate_verdicts.keys())}"
+                ),
             )
+
+        # v2.3 Phase D (P0.4): 有 failed gates → 输出 message 让用户知道失败原因
+        # 不触发停止 (因 all_passed=False), 让下层判定 (停滞/语义) 决定
+        # 但仍把 message 信息透传给 Orchestrator (通过 print/log 在 _evaluate 处)
+        # Note: 当前设计 — failed gates 不直接 stop, 但 user 可通过 history[-1].gate_results
+        # 看到完整 Verdict.message
         return None
 
     def _check_stagnation(

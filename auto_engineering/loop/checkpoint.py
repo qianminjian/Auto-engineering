@@ -125,6 +125,40 @@ class CheckpointSchemaMismatchError(CheckpointError):
 # ============================================================
 
 
+def _normalize_history_item(item: dict[str, Any]) -> dict[str, Any]:
+    """递归序列化 history 项, 处理嵌套 Verdict 等 dataclass 实例.
+
+    v2.3 Phase D (P0.4): RoundHistory.gate_results 现在是 dict[gate_name, Verdict],
+    默认 json.dumps + default=str 会把 Verdict 序列化为 "Verdict(gate_name=...)" 字符串
+    (丢失结构, message 无法还原). 此函数递归把 dataclass 实例 → asdict.
+
+    Args:
+        item: RoundHistory.__dict__ (含 gate_results / task_outcomes 等嵌套 dict)
+
+    Returns:
+        可 JSON 序列化的纯 dict (嵌套 dataclass 全部展开)
+    """
+    from dataclasses import asdict, is_dataclass
+
+    result: dict[str, Any] = {}
+    for k, v in item.items():
+        result[k] = _normalize_value(v)
+    return result
+
+
+def _normalize_value(v: Any) -> Any:
+    """递归归一化任意值: dataclass → dict, 嵌套 dict/list 递归处理."""
+    from dataclasses import asdict, is_dataclass
+
+    if is_dataclass(v) and not isinstance(v, type):
+        return _normalize_value(asdict(v))
+    if isinstance(v, dict):
+        return {kk: _normalize_value(vv) for kk, vv in v.items()}
+    if isinstance(v, (list, tuple)):
+        return [_normalize_value(x) for x in v]
+    return v
+
+
 class SQLiteCheckpointStore[T]:
     """SQLite Checkpoint 持久化.
 
@@ -313,12 +347,13 @@ class SQLiteCheckpointStore[T]:
         state_json = self._serialize_state(state)
 
         # history 序列化: 支持 RoundHistory dataclass 或 dict
+        # v2.3 Phase D (P0.4): gate_results 可能含 Verdict 实例, 需要递归 asdict
         history_dicts: list[dict[str, Any]] = []
         for h in history or []:
             if hasattr(h, "__dict__"):
-                history_dicts.append(dict(h.__dict__))
+                history_dicts.append(_normalize_history_item(dict(h.__dict__)))
             elif isinstance(h, dict):
-                history_dicts.append(h)
+                history_dicts.append(_normalize_history_item(h))
             else:
                 history_dicts.append({"value": str(h)})
 

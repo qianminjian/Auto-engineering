@@ -140,8 +140,8 @@ async def test_orchestrator_runs_real_gates_each_round(tmp_path: Path):
     assert len(history) == 1
     assert history[0].gate_results != {}, "gate_results 必须非空"
     assert "safety" in history[0].gate_results
-    # 干净 repo → safety pass
-    assert history[0].gate_results["safety"] is True
+    # 干净 repo → safety pass (v2.3 Phase D: gate_results 是 dict[gate_name, Verdict])
+    assert history[0].gate_results["safety"].passed is True
 
 
 @pytest.mark.asyncio
@@ -169,7 +169,8 @@ async def test_orchestrator_gate_detects_real_secret_in_project(tmp_path: Path):
     )
     history = await orch.run()
 
-    assert history[0].gate_results["safety"] is False
+    # SafetyGate 真扫到 secret 时 gate_results["safety"].passed = False
+    assert history[0].gate_results["safety"].passed is False
 
 
 @pytest.mark.asyncio
@@ -367,9 +368,9 @@ async def test_orchestrator_combined_gates_and_semantic_evaluator(tmp_path: Path
     )
     history = await orch.run()
 
-    # Gate 跑过
+    # Gate 跑过 (v2.3 Phase D: gate_results 是 dict[gate_name, Verdict])
     assert "safety" in history[0].gate_results
-    assert history[0].gate_results["safety"] is True
+    assert history[0].gate_results["safety"].passed is True
     # semantic_evaluator 跑过
     assert call_count["n"] == 1
     assert history[0].semantic_satisfied is True

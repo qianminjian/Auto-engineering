@@ -566,9 +566,9 @@ async def test_orchestrator_reads_gate_results_from_round_result(tmp_path):
     # 含 'safety' + 'lint' (从 RoundResult.gate_results keys 来)
     assert "safety" in history[0].gate_results
     assert "lint" in history[0].gate_results
-    # 都通过
-    assert history[0].gate_results["safety"] is True
-    assert history[0].gate_results["lint"] is True
+    # 都通过 (v2.3 Phase D: gate_results 是 dict[gate_name, Verdict])
+    assert history[0].gate_results["safety"].passed is True
+    assert history[0].gate_results["lint"].passed is True
 
 
 # ============================================================

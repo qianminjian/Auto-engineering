@@ -134,11 +134,16 @@ def test_convergence_hard_limit_triggers_first(
 
 def test_convergence_quality_gate_all_passed() -> None:
     """质量门 (level=3): 7 道 Gate 全 PASS → 停止."""
+    from auto_engineering.gates.base import Verdict
+
     history = [
         RoundHistory(round_id=1),
         RoundHistory(
             round_id=2,
-            gate_results={f"gate_{i}": True for i in range(7)},  # 7 道全过
+            gate_results={
+                f"gate_{i}": Verdict.passed(f"ok-{i}", gate_name=f"gate_{i}")
+                for i in range(7)
+            },  # 7 道全过
         ),
     ]
     judge = ConvergenceJudge(ConvergenceConfig(max_iterations=10))
@@ -149,10 +154,16 @@ def test_convergence_quality_gate_all_passed() -> None:
 
 def test_convergence_quality_gate_partial_does_not_stop() -> None:
     """质量门: 任一 Gate FAIL → 不触发停止."""
+    from auto_engineering.gates.base import Verdict
+
     history = [
         RoundHistory(
             round_id=1,
-            gate_results={"g1": True, "g2": False, "g3": True},  # g2 失败
+            gate_results={
+                "g1": Verdict.passed("ok", gate_name="g1"),
+                "g2": Verdict.failed("boom", gate_name="g2"),  # 失败
+                "g3": Verdict.passed("ok", gate_name="g3"),
+            },
         ),
     ]
     judge = ConvergenceJudge(ConvergenceConfig(max_iterations=10))
@@ -176,10 +187,12 @@ def test_convergence_semantic_satisfied_stops() -> None:
 
 def test_convergence_priority_hard_limit_beats_quality() -> None:
     """优先级: 硬上限 (4) > 质量门 (3). 同时满足时返回硬上限."""
+    from auto_engineering.gates.base import Verdict
+
     history = [
         RoundHistory(
             round_id=10,  # = max_iterations
-            gate_results={"g1": True},
+            gate_results={"g1": Verdict.passed("ok", gate_name="g1")},
             semantic_satisfied=True,
         ),
     ]
@@ -190,6 +203,8 @@ def test_convergence_priority_hard_limit_beats_quality() -> None:
 
 def test_convergence_priority_quality_beats_stagnant() -> None:
     """优先级: 质量门 (3) > 停滞检测 (2). 同时满足时返回质量门."""
+    from auto_engineering.gates.base import Verdict
+
     # 连续 3 轮无变化 (触发停滞), 同时最新一轮所有 gate 通过 (触发质量门)
     history = [
         RoundHistory(round_id=1, files_changed=5),
@@ -198,7 +213,10 @@ def test_convergence_priority_quality_beats_stagnant() -> None:
         RoundHistory(
             round_id=4,
             files_changed=5,  # 无变化
-            gate_results={"g1": True, "g2": True},  # 全过
+            gate_results={
+                "g1": Verdict.passed("ok", gate_name="g1"),
+                "g2": Verdict.passed("ok", gate_name="g2"),
+            },  # 全过
         ),
     ]
     judge = ConvergenceJudge(ConvergenceConfig(max_iterations=10))

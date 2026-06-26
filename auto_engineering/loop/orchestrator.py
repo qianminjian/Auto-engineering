@@ -257,10 +257,8 @@ class Orchestrator:
               (供下一轮 _select_round_tasks 增量选择参考)
         """
         # 1. 从 RoundResult 读 gate_results (Phase H 真集成)
-        gate_results = {
-            name: verdict.passed
-            for name, verdict in round_result.gate_results.items()
-        }
+        #    v2.3 Phase D (P0.4): 直接传 Verdict, 不再降级为 bool (避免丢失 message)
+        gate_results = dict(round_result.gate_results)
 
         # 2. 调 LLM 语义评估
         semantic_satisfied = await self._evaluate_semantic(round_result)
