@@ -733,3 +733,92 @@ def test_round_history_has_tasks_run_field():
         round_id=3, tasks_run=["t1"], task_outcomes={"t1": "completed"}
     )
     assert rh2.task_outcomes == {"t1": "completed"}
+
+
+# ============================================================
+# I. v2.3 Phase E — max_rounds 单一来源 (P1.1)
+# 设计: 删除 OrchestratorConfig.max_rounds 字段, 复用 ConvergenceConfig.max_iterations
+#       作为 Orchestrator 主循环上限的单一来源.
+#       借鉴 LangGraph Pregel.recursion_limit (单一字段多处引用).
+# ============================================================
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_uses_convergence_config_max_iterations():
+    """ConvergenceConfig.max_iterations 是 Orchestrator 主循环的唯一上限.
+
+    严禁虚化: 改 ConvergenceConfig(max_iterations=3) → Orchestrator 跑 3 轮.
+    验证: history 长度 == 3, verdict.level == LEVEL_HARD_LIMIT.
+    """
+    from auto_engineering.loop.convergence import (
+        LEVEL_HARD_LIMIT,
+        ConvergenceConfig,
+    )
+
+    async def executor(t, ctx):
+        return TaskOutcome(task_id=t.id, status="completed", output="x")
+
+    task = make_task("t1")
+    # 仅传 ConvergenceConfig.max_iterations=3, 不传 max_rounds
+    config = OrchestratorConfig(
+        convergence_config=ConvergenceConfig(
+            max_iterations=3,
+            stagnation_threshold=10,  # 防止停滞检测干扰
+        ),
+    )
+    orch = Orchestrator(
+        requirement="single source test",
+        tasks=[task],
+        executor=executor,
+        config=config,
+    )
+    history = await orch.run()
+    # 跑 3 轮
+    assert len(history) == 3, f"应跑 3 轮, 实际 {len(history)}"
+    # 硬上限
+    assert orch.verdict is not None
+    assert orch.verdict.level == LEVEL_HARD_LIMIT
+    assert orch.verdict.should_stop is True
+
+
+def test_orchestrator_max_rounds_field_removed():
+    """OrchestratorConfig 应删除 max_rounds 字段 (vars() 不含).
+
+    严禁虚化: 构造 OrchestratorConfig() 用 vars() 检查所有字段,
+    验证 'max_rounds' 不在字段列表里. 若仍存在则测试 FAIL.
+    """
+    config = OrchestratorConfig()
+    fields = vars(config)
+    assert "max_rounds" not in fields, (
+        f"OrchestratorConfig 仍含 max_rounds 字段, 应删除. 实际 fields: "
+        f"{list(fields.keys())}"
+    )
+    # 同时验证 dataclass 字段声明也不含 max_rounds
+    from dataclasses import fields as dc_fields
+
+    field_names = {f.name for f in dc_fields(OrchestratorConfig)}
+    assert "max_rounds" not in field_names, (
+        f"OrchestratorConfig dataclass 字段声明仍含 max_rounds: {field_names}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_default_max_iterations():
+    """不传 ConvergenceConfig → 默认 max_iterations=10 (单一来源不变).
+
+    严禁虚化: 构造 OrchestratorConfig() (无 convergence_config),
+    验证 ConvergenceJudge.config.max_iterations == 10 (DEFAULT_MAX_ITERATIONS).
+    """
+    config = OrchestratorConfig()
+    orch = Orchestrator(
+        requirement="default test",
+        tasks=[],
+        executor=None,  # type: ignore[arg-type]
+        config=config,
+    )
+    # __post_init__ 已构造 judge, 直接读
+    assert orch.judge is not None
+    assert orch.judge.config is not None
+    assert orch.judge.config.max_iterations == 10, (
+        f"默认 max_iterations 应为 10, 实际: {orch.judge.config.max_iterations}"
+    )
