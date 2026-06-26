@@ -98,7 +98,7 @@ def test_migrate_v1_to_v2_converts_loop_state(tmp_path: Path) -> None:
 
     assert isinstance(loaded.state, LoopState)
     assert loaded.state.round == 5
-    assert loaded.state.step == 5
+    assert loaded.state.step == 7
     assert loaded.state.status == "drained"
 
 

@@ -1305,5 +1305,33 @@ def checkpoint_v2_delete_cmd(checkpoint_id: str) -> None:
     raise SystemExit(1)
 
 
+# ============================================================
+# v2.3 Phase I (P1.5): ae checkpoint v2 migrate
+# 单向迁移 v1.1 JSON Checkpoint (engine/checkpoint.py) → v2.0 SQLite Checkpoint.
+# 借鉴 LangGraph checkpoint migration 思路 (单方向 + 显式触发 + schema 兼容).
+# ============================================================
+
+
+@checkpoint_v2.command("migrate")
+@click.argument("src_json", type=click.Path(exists=True))
+@click.argument("dst_sqlite", type=click.Path())
+def checkpoint_v2_migrate_cmd(src_json: str, dst_sqlite: str) -> None:
+    """迁移 v1.1 JSON checkpoint → v2.0 SQLite.
+
+    用法:
+        ae checkpoint v2 migrate <src.json> <dst.sqlite>
+
+    迁移方向: v1.1 → v2.0 (单向, 不可逆).
+    """
+    from auto_engineering.checkpoint.migrate import migrate_v1_to_v2
+
+    try:
+        cp_id = migrate_v1_to_v2(Path(src_json), Path(dst_sqlite))
+    except Exception as e:
+        click.echo(f"[迁移失败] {e}", err=True)
+        raise SystemExit(1) from e
+    click.echo(f"Migrated v1.1 → v2.0: checkpoint_id={cp_id}")
+
+
 if __name__ == "__main__":
     main()
