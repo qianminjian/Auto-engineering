@@ -131,5 +131,6 @@ ae checkpoint list|show|delete|resume     # 旧 JSON 文件 checkpoint
 
 - tests/ 下测试，覆盖率 ≥ 80%
 - 测试运行遵守 `@.claude/rules/pytest-memory-management.md`（16G 内存约束）
+- **Agent tool spawn 遵守 `@.claude/rules/agent-spawn-timeout.md`（3 层超时防护）**
 - 参考源码（`$AE_REFS_DIR/`）为只读，不修改
 - 模板从 project-engineering-init 迁移，保持模板变量兼容

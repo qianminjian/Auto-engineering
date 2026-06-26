@@ -154,17 +154,19 @@ class Orchestrator:
             #     Phase 4+ 接增量更新: 仅跑失败 / 新增的 task)
             round_tasks = self._select_round_tasks(round_id)
 
-            # 2c. 执行 Round
+            # 2c. 执行 Round (含 Gate 集成, v2.2 Phase H)
             round_result = await run_round(
                 tasks=round_tasks,
                 executor=self.executor,
                 ctx=None,
                 cancellation=cancellation,
                 round_id=round_id,
+                gates=self.config.gates,
+                project_root=self.config.project_root,
             )
             self.round_results.append(round_result)
 
-            # 2d. 构造 RoundHistory (含 Gate + 语义 + git diff)
+            # 2d. 构造 RoundHistory (从 RoundResult 读 gate_results, v2.2 Phase H)
             history = await self._build_history(round_id, round_result)
             self.history.append(history)
 
@@ -204,13 +206,17 @@ class Orchestrator:
     ) -> RoundHistory:
         """构造 RoundHistory (含 Gate + 语义 + git diff).
 
-        v2.1 Phase B 集成:
-            - 真跑所有 Gate → gate_results dict
-            - 调用 LLM 语义评估 → semantic_satisfied
-            - 解析 git diff --numstat → lines_added/removed
+        v2.2 Phase H 重构:
+            - Gate 不再由 Orchestrator 跑 (Phase B 实现绕开 RoundResult),
+              改为从 round_result.gate_results (Run Round 时已跑) 读
+            - 格式转换: dict[gate_name, Verdict] → dict[gate_name, bool]
+            - LLM 语义评估 + git diff 仍在 Orchestrator (因为依赖 ctx / project_root)
         """
-        # 1. 跑所有 Gate (真集成, 非 mock)
-        gate_results = self._run_gates()
+        # 1. 从 RoundResult 读 gate_results (Phase H 真集成)
+        gate_results = {
+            name: verdict.passed
+            for name, verdict in round_result.gate_results.items()
+        }
 
         # 2. 调 LLM 语义评估
         semantic_satisfied = await self._evaluate_semantic(round_result)
