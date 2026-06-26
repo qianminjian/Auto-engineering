@@ -1,7 +1,15 @@
-"""Checkpoint — SQLite 持久化.
+"""⚠️ 冻结 (FROZEN) — 此文件不再主动开发,保留仅为向后兼容.
 
-参考 LangGraph `checkpoint-sqlite/__init__.py:85-120` (SqliteSaver).
-关键设计:
+v1.0 Checkpoint 体系: SQLite 持久化 v1.0 LoopState (engine.state.dataclass).
+v2.0 Checkpoint 体系 (loop/checkpoint.py SQLiteCheckpointStore) 替代后,
+此文件进入冻结状态.
+
+冻结标记: 2026-06-26 (v2.3 P0-B)
+BEACON 决策 24: engine/checkpoint.py 冻结 — 不新增方法, 仅修复 bug.
+v2.3 P0-B: v1.0 CLI (ae checkpoint list/show/resume) 已切到 SQLiteCheckpointStore,
+    此文件仍被 engine.loop.LoopEngine (v1.0 runtime) 使用, 因此保留.
+
+设计要点:
     - 每个 thread 一个 .db 文件 (WAL 模式支持并发读)
     - checkpoints 表存状态快照;writes 表存 channel 级写入日志
     - P0 修复: state_json 用 LoopState.to_dict() 序列化(dataclass asdict)

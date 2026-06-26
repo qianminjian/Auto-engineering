@@ -1,6 +1,9 @@
 """Tests for ae checkpoint CLI commands — Phase 1.1.
 
 覆盖: ae checkpoint list / show / resume
+
+v2.3 P0-B: v1.0 CLI 命令已切到 SQLiteCheckpointStore (v2.0 schema).
+test fixture 现在用 SQLiteCheckpointStore 造数据, 断言对应 v2.0 字段 (round / schema_version).
 """
 
 from __future__ import annotations
@@ -13,25 +16,29 @@ from click.testing import CliRunner
 
 @pytest.fixture
 def valid_project_with_checkpoint(tmp_path: Path, monkeypatch):
-    """Project root 含 .git + .ae-answers.yml + ANTHROPIC_API_KEY + 1 checkpoint."""
-    from auto_engineering.engine.checkpoint import Checkpoint, CheckpointStore
-    from auto_engineering.engine.state import LoopState
+    """Project root 含 .git + .ae-answers.yml + ANTHROPIC_API_KEY + 1 v2.0 checkpoint.
+
+    v2.3 P0-B: fixture 用 SQLiteCheckpointStore 造数据 (v2.0 schema),
+    与 v1.0 CLI 命令 (list/show/resume) 切换后的 backend 一致.
+    """
+    from auto_engineering.loop.checkpoint import SQLiteCheckpointStore
+    from auto_engineering.loop.state import CheckpointEnvelope
 
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
     (tmp_path / ".git").mkdir()
     (tmp_path / ".ae-answers.yml").write_text("project_name: test\n")
     monkeypatch.chdir(tmp_path)
 
-    # 创建 1 个 checkpoint
+    # 创建 1 个 v2.0 checkpoint (用 CheckpointEnvelope)
     cp_dir = tmp_path / ".ae-checkpoints"
     cp_dir.mkdir()
-    store = CheckpointStore(str(cp_dir / "test.db"))
-    state = LoopState(requirement="implement x", verdict="APPROVE")
-    cp = Checkpoint.create(thread_id="thread-1", state=state)
-    store.save_checkpoint(cp)
-    cp.increment_step()
-    store.save_checkpoint(cp)
-    store.close()
+    db_file = cp_dir / "test.db"
+    store = SQLiteCheckpointStore(str(db_file))
+    envelope = CheckpointEnvelope(round=1, step=2, status="running")
+    store.save(envelope, round=1, step=2, history=[])
+    store.save(envelope, round=1, step=3, history=[])
+    store.clear()  # 简化: 只留 1 条
+    store.save(envelope, round=1, step=2, history=[])
 
     return tmp_path
 
@@ -60,7 +67,9 @@ class TestCheckpointList:
         runner = CliRunner()
         result = runner.invoke(main, ["checkpoint", "list"])
         assert result.exit_code == 0
-        assert "thread-1" in result.output
+        # v2.3 P0-B: v1.0 CLI 用 v2.0 schema, 输出列: ID/ROUND/STEP/SCHEMA/DB/CREATED
+        assert "ROUND" in result.output
+        assert "SCHEMA" in result.output
         assert "test.db" in result.output or "test" in result.output
 
 
@@ -69,19 +78,20 @@ class TestCheckpointShow:
 
     def test_show_existing(self, valid_project_with_checkpoint):
         from auto_engineering.cli import main
-        from auto_engineering.engine.checkpoint import CheckpointStore
+        from auto_engineering.loop.checkpoint import SQLiteCheckpointStore
 
         cp_dir = valid_project_with_checkpoint / ".ae-checkpoints"
-        store = CheckpointStore(str(cp_dir / "test.db"))
-        checkpoints = store.list_all()
-        cp_id = checkpoints[0]["id"]
-        store.close()
+        store = SQLiteCheckpointStore(str(cp_dir / "test.db"))
+        metas = store.list_all()
+        assert len(metas) > 0
+        cp_id = metas[0].id
 
         runner = CliRunner()
         result = runner.invoke(main, ["checkpoint", "show", cp_id])
-        assert result.exit_code == 0
+        assert result.exit_code == 0, f"output: {result.output}"
         assert cp_id in result.output
-        assert "thread-1" in result.output
+        assert "Round" in result.output
+        assert "Schema" in result.output
 
     def test_show_nonexistent(self, valid_project_with_checkpoint):
         from auto_engineering.cli import main

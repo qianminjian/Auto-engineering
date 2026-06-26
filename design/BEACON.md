@@ -1,4 +1,4 @@
-> 来源：@design/INDEX.md | 创建：2026-06-24 | 更新：2026-06-26 | 阶段：v2.3 P0-A 完成（Channel 体系归属: checkpoint 专用, LoopState → CheckpointEnvelope 重命名）
+> 来源：@design/INDEX.md | 创建：2026-06-24 | 更新：2026-06-26 | 阶段：v2.3 P0-B 完成（v1.0 CLI list/show/resume 切到 SQLiteCheckpointStore, engine/checkpoint.py 冻结）
 
 ## 目标与成功标准
 
@@ -38,6 +38,7 @@
 | 21 | **version_utils.get_new_channel_versions 标记 ⚠️ 死代码** | 定义存在 + 有测试, 但 0 生产引用; 文件头标记死代码, 从 __all__ 移除 | 2026-06-26 | ✅ |
 | 22 | **gates/builtin.py 冻结 — 不再主动开发, 保留为向后兼容** | v2.3 P1-I: builtin.py 文件头添加 ⚠️ 冻结标记, 不新增 Guardrail, 仅修复 bug | 2026-06-26 | ✅ |
 | 23 | **P0-A: v2.0 Channel 体系归属 = checkpoint 专用; v2.0 Pydantic LoopState 重命名为 CheckpointEnvelope** | 消除 "LoopState" 同名双义 (engine.state.LoopState v1.0 dataclass 运行时 vs loop.state.LoopState v2.0 Pydantic checkpoint 专用). 详见下方决策 23 展开 | 2026-06-26 | ✅ |
+| 24 | **P0-B: engine/checkpoint.py 冻结 — 不再主动开发, 保留仅为向后兼容** | v1.0 CLI (ae checkpoint list/show/resume) 已切到 SQLiteCheckpointStore; engine/checkpoint.py 仍被 engine.loop.LoopEngine (v1.0 runtime) 使用, 因此保留. 文件头加 ⚠️ 冻结标记 (与 builtin.py 决策 22 同模式) | 2026-06-26 | ✅ |
 
 ## 决策 23 展开: Channel 体系归属 = checkpoint 专用
 
@@ -49,11 +50,11 @@
 
 ## 当前状态
 
-**阶段：** v2.3 P0-A 完成（Channel 体系归属: checkpoint 专用, LoopState → CheckpointEnvelope 重命名, 双义消除）。
+**阶段：** v2.3 P0-B 完成（v1.0 CLI list/show/resume 切到 SQLiteCheckpointStore, engine/checkpoint.py 冻结, BEACON 决策 24）。
 
-**最近动作：** 2026-06-26 v2.3 P0-A 完成 — `auto_engineering/loop/state.py` 内 `LoopState` (v2.0 Pydantic) 重命名为 `CheckpointEnvelope` + `loop/__init__.py` 移除 `LoopState` / `Channel` 公共导出 (消除与 `engine.state.LoopState` 同名双义) + 13 个文件 import / 注释同步更新 (checkpoint/migrate.py, loop/checkpoint.py, loop/types.py, loop/convergence.py, loop/round.py, 5 个测试文件, scripts/atdo_smoke.py, tests/_smoke_phase_d.py) + 5 个测试文件 160+ 用例全 PASS 零回归 + BEACON 决策 23 记录 v2.3 P0-A 闭环。
+**最近动作：** 2026-06-26 v2.3 P0-B 完成 — `auto_engineering/cli.py` 三个 v1.0 命令 (list/show/resume) 从 `engine.checkpoint.CheckpointStore` (line 1071/1107/1149) 切到 `loop.checkpoint.SQLiteCheckpointStore` (v2.0 schema, 与 v2 子命令共用 backend); `engine/checkpoint.py` 文件头加 ⚠️ 冻结标记 (与 gates/builtin.py 决策 22 同模式); BEACON 决策 24 记录冻结原因 (v1.0 runtime 仍用, 保留兼容); `tests/test_checkpoint_cli.py` fixture 同步切到 SQLiteCheckpointStore + 断言匹配 v2.0 字段 (ROUND/SCHEMA); `test_checkpoint_cli.py` (5 用例) + `test_checkpoint.py` (8 用例 v1.0 store 直测, 应不受影响) + `test_checkpoint_migrate.py` (7 用例) 全 PASS 零回归。
 
-**下一步：** v2.3 P0-A 完成后, v2.3 Wave 2 全部完成 → 用户 manual gate 决策 v2.3 → 是否启动 v3.0 (production hardening / 真跑验证 / Web UI)？
+**下一步：** v2.3 P0-B 完成后 → 用户 manual gate 决策 v2.3 → 是否启动 v3.0 (production hardening / 真跑验证 / Web UI)？
 
 **阻塞项：** 无
 
@@ -67,6 +68,7 @@
 
 | 日期 | 变更 | 原因 |
 |------|------|------|
+| 2026-06-26 | v2.3 P0-B 完成 (v1.0 CLI list/show/resume 切到 SQLiteCheckpointStore, engine/checkpoint.py 冻结, BEACON 决策 24) | 统一 CLI backend: v1.0 与 v2 命令共用 SQLiteCheckpointStore; 旧 engine.checkpoint 保留兼容 (v1.0 runtime 仍用), 文件头加 ⚠️ 标记 |
 | 2026-06-26 | v2.3 P0-A 完成 (LoopState → CheckpointEnvelope 重命名, Channel 体系归属 = checkpoint 专用, BEACON 决策 23) | 消除 LoopState 同名双义 (engine.state v1.0 vs loop.state v2.0). 13 文件 import 同步, 160+ 测试全 PASS |
 | 2026-06-26 | v2.3 Phase J 完成（ClaudeSemanticEvaluator + OrchestratorConfig 默认 + BEACON 决策 20） | Wave 2 FINAL：内置 LLM 评估器 (P1.6)，第 4 级语义收敛开箱即用 |
 | 2026-06-26 | v2.3 Phase E-I 完成 | max_iterations 单一来源 (P1.1) + exclude_callback (P1.2) + RoundResult.history (P1.3) + AgentRuntime 集成 (P1.4) + init 拆 8 模块 |

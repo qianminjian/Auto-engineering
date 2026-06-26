@@ -1056,7 +1056,10 @@ def status():
 
 
 # ============================================================
-# Phase 1.1: ae checkpoint list / show / resume
+# Phase 1.1 + v2.3 P0-B: ae checkpoint list / show / resume
+# v2.3 P0-B: list/show/resume 已切到 v2.0 SQLiteCheckpointStore
+# (与 ae checkpoint v2 list/show/delete 共用同一 backend).
+# engine/checkpoint.py 冻结 — 不再主动开发.
 # ============================================================
 
 
@@ -1067,8 +1070,12 @@ def checkpoint():
 
 @checkpoint.command("list")
 def checkpoint_list_cmd():
-    """列出所有 checkpoint."""
-    from auto_engineering.engine.checkpoint import CheckpointStore
+    """列出所有 checkpoint (v2.3 P0-B: 切到 SQLiteCheckpointStore).
+
+    历史: v1.0 用 engine.checkpoint.CheckpointStore (冻结).
+    v2.0/v2.3: 用 loop.checkpoint.SQLiteCheckpointStore (与 v2.0 子命令共用).
+    """
+    from auto_engineering.loop.checkpoint import SQLiteCheckpointStore
 
     cwd = Path.cwd()
     cp_dir = cwd / ".ae-checkpoints"
@@ -1076,67 +1083,94 @@ def checkpoint_list_cmd():
         click.echo("(no checkpoint directory)")
         return
 
-    # 扫描 .ae-checkpoints/ 下所有 .db 文件
+    # 扫描 .ae-checkpoints/ 下所有 .db 文件 (默认 .db 都视为 v2)
     all_checkpoints: list[dict] = []
     for db_file in sorted(cp_dir.glob("*.db")):
-        store = CheckpointStore(str(db_file))
         try:
-            for cp in store.list_all():
-                cp["db_file"] = db_file.name
-                all_checkpoints.append(cp)
-        finally:
-            store.close()
+            store = SQLiteCheckpointStore(str(db_file))
+        except Exception as e:
+            click.echo(f"[warn] skip {db_file.name}: {e}", err=True)
+            continue
+        try:
+            for meta in store.list_all():
+                all_checkpoints.append(
+                    {
+                        "id": meta.id,
+                        "round": meta.round,
+                        "step": meta.step,
+                        "schema_version": meta.schema_version,
+                        "created_at": meta.created_at.isoformat(),
+                        "db_file": db_file.name,
+                    }
+                )
+        except Exception as e:
+            click.echo(f"[warn] read {db_file.name} failed: {e}", err=True)
+            continue
 
     if not all_checkpoints:
         click.echo("(no checkpoints)")
         return
 
-    click.echo(f"{'ID':<36} {'THREAD':<18} {'STEP':>4}  {'STATUS':<10} {'DB':<20} UPDATED")
-    click.echo("-" * 110)
+    click.echo(
+        f"{'ID':<36} {'ROUND':>5} {'STEP':>4}  {'SCHEMA':>6}  {'DB':<20} CREATED"
+    )
+    click.echo("-" * 100)
     for cp in all_checkpoints:
         click.echo(
-            f"{cp['id'][:34]:<36} {cp['thread_id'][:16]:<18} {cp['step']:>4}  "
-            f"{cp['status']:<10} {cp['db_file'][:18]:<20} {cp['updated_at']}"
+            f"{cp['id'][:34]:<36} {cp['round']:>5} {cp['step']:>4}  "
+            f"{cp['schema_version']:>6}  {cp['db_file'][:18]:<20} {cp['created_at']}"
         )
 
 
 @checkpoint.command("show")
 @click.argument("checkpoint_id")
 def checkpoint_show_cmd(checkpoint_id: str):
-    """查看 checkpoint 详情(state + writes + pending)."""
-    from auto_engineering.engine.checkpoint import CheckpointStore
+    """查看 checkpoint 详情 (v2.3 P0-B: 切到 SQLiteCheckpointStore).
+
+    历史: v1.0 用 engine.checkpoint.CheckpointStore.load_checkpoint (冻结).
+    v2.0/v2.3: 用 loop.checkpoint.SQLiteCheckpointStore.load.
+    """
+    from auto_engineering.loop.checkpoint import (
+        CheckpointNotFoundError,
+        SQLiteCheckpointStore,
+    )
 
     cwd = Path.cwd()
     cp_dir = cwd / ".ae-checkpoints"
+    if not cp_dir.exists():
+        click.echo(f"(no checkpoint directory: {cp_dir})", err=True)
+        raise SystemExit(1)
 
-    # 搜索所有 .db 文件找匹配的 checkpoint
     for db_file in sorted(cp_dir.glob("*.db")):
-        store = CheckpointStore(str(db_file))
         try:
-            cp = store.get_latest_for_thread("") if False else None
-            # 直接用 load_checkpoint 查
-            from auto_engineering.errors import AEError, ErrorCode
-
-            try:
-                cp = store.load_checkpoint(checkpoint_id)
-                click.echo(f"ID:        {cp.id}")
-                click.echo(f"Thread:    {cp.thread_id}")
-                click.echo(f"Step:      {cp.step}")
-                click.echo(f"Status:    {cp.status}")
-                click.echo(f"Parent:    {cp.parent_id or '(none)'}")
-                click.echo("State:")
-                # 状态详情
-                state_dict = cp.state.to_dict()
-                for k, v in state_dict.items():
-                    val_str = str(v)[:80] if v else "(empty)"
-                    click.echo(f"  {k}: {val_str}")
-                return
-            except AEError as e:
-                if e.code == ErrorCode.CHECKPOINT_LOAD_FAILED:
-                    continue  # 试下一个 db
-                raise
-        finally:
-            store.close()
+            store = SQLiteCheckpointStore(str(db_file))
+            cp = store.load(checkpoint_id)
+        except CheckpointNotFoundError:
+            continue
+        except Exception as e:
+            click.echo(f"[warn] error reading {db_file.name}: {e}", err=True)
+            continue
+        # 找到 → 输出详情
+        click.echo(f"ID:            {cp.id}")
+        click.echo(f"Round:         {cp.round}")
+        click.echo(f"Step:          {cp.step}")
+        click.echo(f"Schema:        {cp.schema_version}")
+        click.echo(f"Parent:        {cp.parent_id or '(none)'}")
+        click.echo(f"Tag:           {cp.tag or '(none)'}")
+        click.echo(f"Created At:    {cp.created_at.isoformat()}")
+        click.echo("State:")
+        if isinstance(cp.state, dict):
+            for k, v in cp.state.items():
+                val_str = str(v)[:120] if v else "(empty)"
+                click.echo(f"  {k}: {val_str}")
+        else:
+            click.echo(f"  {cp.state!r:.200}")
+        click.echo(f"History ({len(cp.history)} entries):")
+        for i, h in enumerate(cp.history[:5]):
+            click.echo(f"  [{i}] {str(h)[:120]}")
+        if len(cp.history) > 5:
+            click.echo(f"  ... ({len(cp.history) - 5} more)")
+        return
 
     click.echo(f"Checkpoint '{checkpoint_id}' not found", err=True)
     raise SystemExit(1)
@@ -1145,31 +1179,38 @@ def checkpoint_show_cmd(checkpoint_id: str):
 @checkpoint.command("resume")
 @click.argument("checkpoint_id")
 def checkpoint_resume_cmd(checkpoint_id: str):
-    """从 checkpoint 恢复(暂为占位 — 实际恢复需要 dev-loop 命令)."""
-    from auto_engineering.engine.checkpoint import CheckpointStore
-    from auto_engineering.errors import AEError, ErrorCode
+    """从 checkpoint 恢复 (v2.3 P0-B: 切到 SQLiteCheckpointStore).
+
+    历史: v1.0 用 engine.checkpoint.CheckpointStore.load_checkpoint (冻结).
+    v2.0/v2.3: 用 loop.checkpoint.SQLiteCheckpointStore.load.
+    (实际恢复请使用 `ae dev-loop` — 它会自动检测中断并提示 resume.)
+    """
+    from auto_engineering.loop.checkpoint import (
+        CheckpointNotFoundError,
+        SQLiteCheckpointStore,
+    )
 
     cwd = Path.cwd()
     cp_dir = cwd / ".ae-checkpoints"
+    if not cp_dir.exists():
+        click.echo(f"(no checkpoint directory: {cp_dir})", err=True)
+        raise SystemExit(1)
 
-    # 验证 checkpoint 存在
     for db_file in sorted(cp_dir.glob("*.db")):
-        store = CheckpointStore(str(db_file))
         try:
-            try:
-                store.load_checkpoint(checkpoint_id)
-                click.echo(f"Resume from checkpoint '{checkpoint_id}'")
-                click.echo("(实际恢复请使用 `ae dev-loop` — 它会自动检测中断并提示 resume)")
-                click.echo(
-                    f'使用: ae dev-loop --resume-checkpoint {checkpoint_id} "your requirement"'
-                )
-                return
-            except AEError as e:
-                if e.code == ErrorCode.CHECKPOINT_LOAD_FAILED:
-                    continue
-                raise
-        finally:
-            store.close()
+            store = SQLiteCheckpointStore(str(db_file))
+            store.load(checkpoint_id)  # 验证存在
+        except CheckpointNotFoundError:
+            continue
+        except Exception as e:
+            click.echo(f"[warn] error reading {db_file.name}: {e}", err=True)
+            continue
+        click.echo(f"Resume from checkpoint '{checkpoint_id}'")
+        click.echo("(实际恢复请使用 `ae dev-loop` — 它会自动检测中断并提示 resume)")
+        click.echo(
+            f'使用: ae dev-loop --resume-checkpoint {checkpoint_id} "your requirement"'
+        )
+        return
 
     click.echo(f"Checkpoint '{checkpoint_id}' not found", err=True)
     raise SystemExit(1)
@@ -1179,8 +1220,8 @@ def checkpoint_resume_cmd(checkpoint_id: str):
 # v2.0 Phase 04: ae checkpoint v2 list/show (SQLite v2.0 store)
 # ============================================================
 # 设计来源: design/v2.0-Analysis-Loop.md §4.4 + §4.11
-# 注: v1.1 的 ae checkpoint list/show/resume (CheckpointStore) 保留不动,
-#     新增 v2 子命令组使用 SQLiteCheckpointStore (loop.checkpoint).
+# v2.3 P0-B: v1.0 的 ae checkpoint list/show/resume 已统一切到 SQLiteCheckpointStore,
+#     与 v2 子命令共用同一 backend (engine.checkpoint.py 冻结).
 
 
 @checkpoint.group("v2")
