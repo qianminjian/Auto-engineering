@@ -4,7 +4,8 @@
 
 设计：
 - default_match_exclude: 默认排除 .git/ / __pycache__/ / .venv/ / node_modules/
-  以及以 . 开头的隐藏文件 / .pyc / .DS_Store.
+  以及 .DS_Store / .env / *.pyc.
+  注意: 保留 .gitignore / .editorconfig 等 dotfile 配置 (与 Copier 一致).
 - parse_exclude_callback: 解析 "module:function" 格式 spec, 返回可调用对象.
   解析失败时分别抛 ImportError / AttributeError / ValueError, 调用方可分别处理.
 """
@@ -25,10 +26,12 @@ _EXCLUDED_DIRS: frozenset[str] = frozenset(
     }
 )
 
-# 默认排除文件名（任一祖先路径或文件名命中即排除）
+# 默认排除文件名（精确匹配, 适用于根级或任何位置）
+# 注意: 故意不包含 .gitignore / .editorconfig 等配置 dotfile
 _EXCLUDED_NAMES: frozenset[str] = frozenset(
     {
         ".DS_Store",
+        ".env",
     }
 )
 
@@ -41,10 +44,9 @@ def default_match_exclude(path: Path) -> bool:
 
     规则（按顺序短路求值）:
     1. 路径中任一段在 _EXCLUDED_DIRS (.git, __pycache__, .venv, node_modules) → True
-    2. 路径中任一段在 _EXCLUDED_NAMES (.DS_Store) → True
-    3. 文件名以 . 开头（隐藏文件）→ True
-    4. 文件名后缀在 _EXCLUDED_SUFFIXES (.pyc) → True
-    5. 其他 → False
+    2. 路径中任一段在 _EXCLUDED_NAMES (.DS_Store, .env) → True
+    3. 文件名后缀在 _EXCLUDED_SUFFIXES (.pyc) → True
+    4. 其他 → False (包括 .gitignore / .editorconfig 等 dotfile)
 
     Args:
         path: 模板中的相对路径 (Jinja2 渲染后)
@@ -56,9 +58,6 @@ def default_match_exclude(path: Path) -> bool:
     if any(p in _EXCLUDED_DIRS for p in parts):
         return True
     if any(p in _EXCLUDED_NAMES for p in parts):
-        return True
-    name = path.name
-    if name.startswith("."):
         return True
     if path.suffix in _EXCLUDED_SUFFIXES:
         return True

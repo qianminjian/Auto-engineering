@@ -1001,11 +1001,17 @@ class TestExcludeCallback:
         assert default_match_exclude(Path("pyproject.toml")) is False
 
     def test_default_match_exclude_dotfile(self):
-        """以 `.` 开头的隐藏文件 (如 `.env`) 应被排除 (但 src/main.py 不)."""
+        """常见隐藏垃圾文件 (如 `.env` / `.DS_Store`) 应被排除.
+
+        注意: 保留 .gitignore / .editorconfig 等配置 dotfile (与 Copier 一致).
+        """
         from auto_engineering.init._shared.exclude import default_match_exclude
 
         assert default_match_exclude(Path(".env")) is True
         assert default_match_exclude(Path(".DS_Store")) is True
+        # 配置 dotfile 不应被排除
+        assert default_match_exclude(Path(".gitignore")) is False
+        assert default_match_exclude(Path(".editorconfig")) is False
 
     def test_parse_exclude_callback_resolves_default(self):
         """'module:function' 格式 spec 可解析为可调用对象."""
