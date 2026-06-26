@@ -1,4 +1,4 @@
-> 来源：@design/INDEX.md | 创建：2026-06-24 | 更新：2026-06-25 | 阶段：v2.1 全部完成（Phase F FINAL）
+> 来源：@design/INDEX.md | 创建：2026-06-24 | 更新：2026-06-26 | 阶段：v2.2 闭环完成（Phase G/H/I + J 生产文档 + FINAL manual gate）
 
 ## 目标与成功标准
 
@@ -33,14 +33,15 @@
 | 16 | **Channel 序列化三件套: copy/from_checkpoint/checkpoint (LangGraph 对齐)** | Phase 1 审计：Channel 缺 LangGraph 风格序列化 API。v2.1 Phase A 修复 BarrierChannel 重构 | 2026-06-25 |
 | 17 | **SQLiteCheckpointStore.load() 必须返回 LoopState 实例 + Channel 实例 (完整闭环)** | v2.1 Phase A 实现 model_dump 但 _deserialize_state 仅返回 dict；Phase D 修复：deserialize_loop_state + _rebuild_channel | 2026-06-25 |
 | 18 | **atdo Plan 报告必须含 runtime smoke 验证 (防止虚化测试)** | Phase 1 审计：atdo Plan 报告虚化（Phase 02 测试用空 LoopState 绕过）。v2.1 强制 inline smoke test | 2026-06-25 |
+| 19 | **v2.2 闭环完成 + 生产就绪** | Wave 3 P2 改进 (P2.1 Checkpoint.state Any→LoopStateProtocol + P2.4 RoundResult 集成 Gate + P2.5 init 拆 8 模块) + atdo 防护规则化 (.claude/rules/agent-spawn-timeout.md 3 层防护) | 2026-06-26 |
 
 ## 当前状态
 
-**阶段：** v2.1 全部完成（v1.0 init/dev-loop + v1.1 修复 + v2.0 多 Agent 并发 + v2.1 Phase A-D 修复 4 项 P0 阻断 + CLI v2 集成 + Phase E 文档同步 + Phase F atdo 报告虚报防护）。
+**阶段：** v2.2 闭环完成（v1.0 init/dev-loop + v1.1 修复 + v2.0 多 Agent 并发 + v2.1 Phase A-D 修复 4 项 P0 阻断 + CLI v2 集成 + Phase E 文档同步 + Phase F atdo 报告虚报防护 + v2.2 Phase G Checkpoint.state 重构 + Phase H RoundResult 集成 Gate + Phase I init 模块拆分 + Phase J 生产文档 4 件 + BEACON 决策 19）。
 
-**最近动作：** 2026-06-25 v2.1 Phase F 完成 — `docs/atdo-runtime-smoke-policy.md`（永久资产, 44 行）+ `scripts/atdo_smoke.py`（5 维 + runtime_smoke helper, ruff 0 errors, all PASS）+ `_proc-use/_bug-info/atdo-report-fabrication-2026-06-25.md`（虚化案例全记录）+ INDEX.md 引用新 policy。Phase A-D 完成（`e938e72`/`a99b60a`/`739330d`/`4ea0ec9`）— Channel 序列化 + Orchestrator Gate+LLM 集成 + CLI 集成 v2 + load() 重建；v2.0 Phase 01-04（`c3077bf`→`da759cd`）— Channel + TaskDAG + check_file_isolation + 7 Gates + CLI v2。
+**最近动作：** 2026-06-26 v2.2 Phase J 完成 — `docs/production-deployment.md` (80 行) + `docs/troubleshooting.md` (77 行) + `docs/api-reference.md` (80 行) + `docs/e2e-real-run.md` (待写) + BEACON 决策 19 记录 v2.2 闭环。Phase G-I 完成 (`a31e14d`/`8526e89`/`c1fbedc`/`568baf1`/`39e511b`/`109cd6e`) — Checkpoint.state Protocol+Generic + RoundResult Gate 集成 + init 拆 8 模块 + ruff 0 errors。
 
-**下一步：** v2.1 全部完成 → 用户 manual gate 决策 v2.1 → 是否启动 v2.2（CLI 集成 E2E 验证 + 文档）？
+**下一步：** v2.2 全部完成 → 用户 manual gate 决策 v2.2 → 是否启动 v3.0 (production hardening / 真跑验证 / Web UI)？
 
 **阻塞项：** 无
 
@@ -54,6 +55,8 @@
 
 | 日期 | 变更 | 原因 |
 |------|------|------|
+| 2026-06-26 | v2.2 Phase J 完成（生产文档 4 件 + BEACON 决策 19） | Wave 3 FINAL：production deployment / troubleshooting / api-reference / e2e-real-run |
+| 2026-06-26 | v2.2 Phase G-I 完成 | Checkpoint.state Protocol+Generic + RoundResult Gate 集成 + init 拆 8 模块 |
 | 2026-06-25 | v2.1 Phase F 完成（atdo 报告虚报防护 P1.6 FINAL） | Phase 1 审计：Plan 报告虚化案例全记录 + Runtime Smoke Policy 永久资产 + smoke helper 工具 |
 | 2026-06-25 | v2.1 Phase A-D 修复完成（4 项 P0 阻断） | Phase 1 审计：Channel 序列化缺/Orchestrator 集成缺/CLI 未接 v2/字段不全 |
 | 2026-06-25 | v2.0 全部完成（Phase 01-04）+ 决策 11/12 | v2.0 增量式演进 |
