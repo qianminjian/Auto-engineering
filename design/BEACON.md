@@ -36,6 +36,7 @@
 | 19 | **v2.2 闭环完成 + 生产就绪** | Wave 3 P2 改进 + atdo 防护规则化 | 2026-06-26 | ✅ |
 | 20 | **v2.3 Wave 2 完成: Orchestrator 集成 LLM SemanticEvaluator (Claude)** | Phase J 实现, 第 4 级语义收敛生效 | 2026-06-26 | ✅ |
 | 21 | **version_utils.get_new_channel_versions 标记 ⚠️ 死代码** | 定义存在 + 有测试, 但 0 生产引用; 文件头标记死代码, 从 __all__ 移除 | 2026-06-26 | ✅ |
+| 22 | **gates/builtin.py 冻结 — 不再主动开发, 保留为向后兼容** | v2.3 P1-I: builtin.py 文件头添加 ⚠️ 冻结标记, 不新增 Guardrail, 仅修复 bug | 2026-06-26 | ✅ |
 
 ## 当前状态
 

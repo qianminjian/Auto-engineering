@@ -1,4 +1,10 @@
-"""5 个内置 Guardrail — 确定性代码级检查.
+"""⚠️ 冻结 (FROZEN) — 此文件不再主动开发,保留仅为向后兼容.
+
+v1.0 Guardrail 体系: 5 个内置 Guardrail, 确定性代码级检查.
+v2.0 Gate 体系替代后,此文件进入冻结状态.
+
+冻结标记: 2026-06-26 (v2.3 P1-I)
+BEACON 决策 21: gates/ 冻结 — 不新增 Guardrail, 仅修复 bug.
 
 设计要点:
     - 每个 Guardrail 构造时接受 project_root(避免全局状态,便于测试)
