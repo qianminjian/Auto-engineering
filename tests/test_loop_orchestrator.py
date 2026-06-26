@@ -23,10 +23,14 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import TYPE_CHECKING
 
 import pytest
 
+from auto_engineering.loop.convergence import (
+    LEVEL_HARD_LIMIT,
+    ConvergenceConfig,
+    RoundHistory,
+)
 from auto_engineering.loop.orchestrator import (
     Orchestrator,
     OrchestratorConfig,
@@ -39,9 +43,6 @@ from auto_engineering.loop.plan import (
     topological_sort,
 )
 from auto_engineering.loop.round import TaskOutcome, run_round
-
-if TYPE_CHECKING:
-    from auto_engineering.loop.convergence import RoundHistory
 
 # ============================================================
 # Fixtures + helpers
@@ -278,8 +279,6 @@ async def test_run_round_collects_failures():
 @pytest.mark.asyncio
 async def test_orchestrator_single_agent_one_round():
     """单 Agent (1 task / round) 流程: 跑一轮 → 触发硬上限."""
-    from auto_engineering.loop.convergence import ConvergenceConfig
-
     task = make_task("only_task", ["src/x.py"])
 
     async def executor(t, ctx):
@@ -309,8 +308,6 @@ async def test_orchestrator_single_agent_one_round():
 @pytest.mark.asyncio
 async def test_orchestrator_multi_agent_three_round():
     """多 Agent (3 tasks / round) 第一轮全完成 → max_rounds 触发."""
-    from auto_engineering.loop.convergence import ConvergenceConfig
-
     tasks = [
         make_task("auth", ["src/auth.py"]),
         make_task("user", ["src/user.py"]),
@@ -342,11 +339,6 @@ async def test_orchestrator_multi_agent_three_round():
 @pytest.mark.asyncio
 async def test_orchestrator_respects_max_rounds():
     """达到 max_rounds → MAX_ROUNDS verdict (硬上限)."""
-    from auto_engineering.loop.convergence import (
-        LEVEL_HARD_LIMIT,
-        ConvergenceConfig,
-    )
-
     # 用永远不收敛的 executor (不触发语义/质量门)
     async def executor(t, ctx):
         return TaskOutcome(task_id=t.id, status="completed", output="still going")
@@ -409,7 +401,6 @@ async def test_orchestrator_cancellation_stops_loop():
         return TaskOutcome(task_id=t.id, status="completed", output="x")
 
     # 导入 cancellation token
-    from auto_engineering.loop.convergence import ConvergenceConfig
     from auto_engineering.runtime.cancellation import CancellationToken
 
     task = make_task("task1")
@@ -546,7 +537,6 @@ async def test_orchestrator_reads_gate_results_from_round_result(tmp_path):
     """
     from auto_engineering.gates.lint import LintGate
     from auto_engineering.gates.safety import SafetyGate
-    from auto_engineering.loop.convergence import ConvergenceConfig
 
     (tmp_path / "ok.py").write_text('print("hello")\n')
 
@@ -604,8 +594,6 @@ def _build_round_history_with_outcomes(
         RoundHistory 含 tasks_run + task_outcomes 两个字段
         (Phase 2.3-C 增量选择依赖).
     """
-    from auto_engineering.loop.convergence import RoundHistory
-
     return RoundHistory(
         round_id=round_id,
         files_changed=len(task_outcomes),
@@ -732,8 +720,6 @@ def test_round_history_has_tasks_run_field():
 
     严禁虚化: 构造 RoundHistory 含 tasks_run, 验证字段存在且为 list[str].
     """
-    from auto_engineering.loop.convergence import RoundHistory
-
     rh = RoundHistory(round_id=1, tasks_run=["t1", "t2", "t3"])
     assert rh.tasks_run == ["t1", "t2", "t3"]
     # 默认空列表 (向后兼容)
@@ -761,11 +747,6 @@ async def test_orchestrator_uses_convergence_config_max_iterations():
     严禁虚化: 改 ConvergenceConfig(max_iterations=3) → Orchestrator 跑 3 轮.
     验证: history 长度 == 3, verdict.level == LEVEL_HARD_LIMIT.
     """
-    from auto_engineering.loop.convergence import (
-        LEVEL_HARD_LIMIT,
-        ConvergenceConfig,
-    )
-
     async def executor(t, ctx):
         return TaskOutcome(task_id=t.id, status="completed", output="x")
 
