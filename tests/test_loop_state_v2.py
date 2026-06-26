@@ -9,6 +9,7 @@ Channel 类型语义(参考 design/v2.0-Analysis-Loop.md §4.4):
 """
 
 import asyncio
+import inspect
 
 import pytest
 
@@ -40,12 +41,17 @@ def test_last_value_channel_set_overwrites():
     assert ch.get() == "second"
 
 
-def test_last_value_channel_update_returns_value():
-    """update() 写入并返回新值(链式调用友好)."""
+def test_last_value_channel_update_returns_bool_on_change():
+    """update() 写入序列并返回 bool (变化检测).
+
+    Phase v2.3-A: update(values: Sequence[T]) -> bool, 取代旧版 update(value: T) -> T.
+    """
     ch: LastValueChannel[int] = LastValueChannel("count")
-    result = ch.update(42)
-    assert result == 42
+    result = ch.update([42])
+    assert result is True
     assert ch.get() == 42
+    # 重复相同值 → 无变化
+    assert ch.update([42]) is False
 
 
 def test_last_value_channel_empty():
@@ -68,11 +74,15 @@ def test_accumulating_channel_default_empty_list():
 
 
 def test_accumulating_channel_append_multiple():
-    """多次 update 应按顺序追加."""
+    """多次 update 应按顺序追加.
+
+    Phase v2.3-A: update(values: Sequence[T | list[T]]) -> bool,
+    单值调用传 [v] 形式 (兼容旧 API 语义).
+    """
     ch: AccumulatingChannel[int] = AccumulatingChannel("results")
-    ch.update(1)
-    ch.update(2)
-    ch.update(3)
+    ch.update([1])
+    ch.update([2])
+    ch.update([3])
     assert ch.get() == [1, 2, 3]
 
 
@@ -81,7 +91,7 @@ def test_accumulating_channel_initial_values():
     initial = ["a", "b"]
     ch: AccumulatingChannel[str] = AccumulatingChannel("logs", initial=initial)
     assert ch.get() == ["a", "b"]
-    ch.update("c")
+    ch.update(["c"])
     assert ch.get() == ["a", "b", "c"]
 
 
@@ -89,7 +99,7 @@ def test_accumulating_channel_empty():
     """AccumulatingChannel.empty() 在列表为空时返回 True."""
     ch: AccumulatingChannel[str] = AccumulatingChannel("x")
     assert ch.empty() is True
-    ch.update("item")
+    ch.update(["item"])
     assert ch.empty() is False
 
 
@@ -112,13 +122,13 @@ async def test_barrier_channel_starts_unset():
 async def test_barrier_channel_complete_unblocks_waiters():
     """达到 expected 数量后 wait() 返回."""
     ch: BarrierChannel = BarrierChannel("gate", expected=3)
-    ch.update("writer-1")
-    ch.update("writer-2")
+    ch.update(["writer-1"])
+    ch.update(["writer-2"])
     # 还差 1,应阻塞
     with pytest.raises(asyncio.TimeoutError):
         await asyncio.wait_for(ch.wait(), timeout=0.1)
     # 第 3 个达到,wait() 应立即返回
-    ch.update("writer-3")
+    ch.update(["writer-3"])
     await asyncio.wait_for(ch.wait(), timeout=0.1)
     assert ch.empty() is False
 
@@ -211,14 +221,14 @@ def test_loop_state_mixed_channel_types():
     assert state.get_channel("plan") == "v2"
 
     # Accumulating 追加
-    state.channels["findings"].update("finding-1")
-    state.channels["findings"].update("finding-2")
+    state.channels["findings"].update(["finding-1"])
+    state.channels["findings"].update(["finding-2"])
     assert state.get_channel("findings") == ["finding-1", "finding-2"]
 
     # Barrier 等待
-    state.channels["gate"].update("agent-1")
+    state.channels["gate"].update(["agent-1"])
     assert state.channels["gate"].empty() is True
-    state.channels["gate"].update("agent-2")
+    state.channels["gate"].update(["agent-2"])
     assert state.channels["gate"].empty() is False
 
 
@@ -234,7 +244,7 @@ async def test_accumulating_channel_concurrent_writes():
 
     async def writer(idx: int) -> None:
         await asyncio.sleep(0.001 * idx)  # 模拟交错
-        ch.update(idx)
+        ch.update([idx])
 
     await asyncio.gather(*[writer(i) for i in range(5)])
 
@@ -250,7 +260,7 @@ async def test_barrier_channel_concurrent_waiters():
 
     async def writer(name: str, delay: float) -> None:
         await asyncio.sleep(delay)
-        barrier.update(name)
+        barrier.update([name])
 
     async def observer() -> None:
         await barrier.wait()
@@ -345,9 +355,9 @@ def test_accumulating_channel_checkpoint_empty():
 def test_accumulating_channel_checkpoint_after_appends():
     """AccumulatingChannel.checkpoint() 返回 values 列表的拷贝."""
     ch: AccumulatingChannel[str] = AccumulatingChannel("logs")
-    ch.update("a")
-    ch.update("b")
-    ch.update("c")
+    ch.update(["a"])
+    ch.update(["b"])
+    ch.update(["c"])
     cp = ch.checkpoint()
     assert cp == ["a", "b", "c"]
     # 副本修改不影响原 Channel
@@ -361,14 +371,14 @@ def test_accumulating_channel_from_checkpoint_restores():
     ch.from_checkpoint(["x", "y", "z"])
     assert ch.get() == ["x", "y", "z"]
     # from_checkpoint 后 update 应追加
-    ch.update("w")
+    ch.update(["w"])
     assert ch.get() == ["x", "y", "z", "w"]
 
 
 def test_accumulating_channel_from_checkpoint_empty():
     """AccumulatingChannel.from_checkpoint([]) 等同于清空."""
     ch: AccumulatingChannel[str] = AccumulatingChannel("logs")
-    ch.update("original")
+    ch.update(["original"])
     ch.from_checkpoint([])
     assert ch.get() == []
     assert ch.empty() is True
@@ -377,14 +387,14 @@ def test_accumulating_channel_from_checkpoint_empty():
 def test_accumulating_channel_copy_independent_state():
     """AccumulatingChannel.copy() 深拷贝 values,修改副本不影响原对象."""
     original: AccumulatingChannel[str] = AccumulatingChannel("logs")
-    original.update("a")
-    original.update("b")
+    original.update(["a"])
+    original.update(["b"])
     copy = original.copy()
     # 副本有相同内容
     assert copy.get() == ["a", "b"]
     assert copy.name == "logs"
     # 修改副本(append)不影响原对象
-    copy.update("c")
+    copy.update(["c"])
     assert original.get() == ["a", "b"]
     assert copy.get() == ["a", "b", "c"]
 
@@ -408,8 +418,8 @@ def test_barrier_channel_checkpoint_unmet():
 def test_barrier_channel_checkpoint_met():
     """BarrierChannel.checkpoint() 达到 expected 时 is_set=True."""
     ch: BarrierChannel = BarrierChannel("sync", expected=2)
-    ch.update("writer-1")
-    ch.update("writer-2")
+    ch.update(["writer-1"])
+    ch.update(["writer-2"])
     cp = ch.checkpoint()
     import json
     serialized = json.dumps(cp)
@@ -458,13 +468,13 @@ async def test_barrier_channel_from_checkpoint_resumes_waiters():
 def test_barrier_channel_copy_independent_state():
     """BarrierChannel.copy() 返回新实例,内部状态独立."""
     original: BarrierChannel = BarrierChannel("sync", expected=3)
-    original.update("writer-1")
+    original.update(["writer-1"])
     copy = original.copy()
     # 副本 state 一致
     assert copy.get() == 1
     assert copy.name == "sync"
     # 修改副本不影响原对象
-    copy.update("writer-2")
+    copy.update(["writer-2"])
     assert original.get() == 1
     assert copy.get() == 2
 
@@ -510,10 +520,10 @@ def test_sqlite_checkpoint_store_saves_loopstate_with_channels():
     )
     # 写入各类型数据
     state.set_channel("plan", {"phase": "design", "step": 1})
-    state.channels["logs"].update("log-entry-1")
-    state.channels["logs"].update("log-entry-2")
-    state.channels["sync"].update("writer-1")
-    state.channels["sync"].update("writer-2")
+    state.channels["logs"].update(["log-entry-1"])
+    state.channels["logs"].update(["log-entry-2"])
+    state.channels["sync"].update(["writer-1"])
+    state.channels["sync"].update(["writer-2"])
 
     # 关键断言: 不抛异常
     cp_id = store.save(state, round=1)
@@ -539,10 +549,10 @@ def test_sqlite_checkpoint_store_round_trips_channels():
         }
     )
     state.set_channel("plan", "expected plan value")
-    state.channels["logs"].update("log-1")
-    state.channels["logs"].update("log-2")
-    state.channels["sync"].update("writer-1")
-    state.channels["sync"].update("writer-2")
+    state.channels["logs"].update(["log-1"])
+    state.channels["logs"].update(["log-2"])
+    state.channels["sync"].update(["writer-1"])
+    state.channels["sync"].update(["writer-2"])
 
     cp_id = store.save(state, round=1)
 
@@ -581,10 +591,10 @@ def test_checkpoint_round_trip_restores_channels_via_from_checkpoint():
         }
     )
     state.set_channel("plan", "expected plan value")
-    state.channels["logs"].update("log-1")
-    state.channels["logs"].update("log-2")
-    state.channels["sync"].update("writer-1")
-    state.channels["sync"].update("writer-2")
+    state.channels["logs"].update(["log-1"])
+    state.channels["logs"].update(["log-2"])
+    state.channels["sync"].update(["writer-1"])
+    state.channels["sync"].update(["writer-2"])
 
     cp_id = store.save(state, round=1)
 
@@ -613,13 +623,10 @@ def test_checkpoint_round_trip_restores_channels_via_from_checkpoint():
 # ============================================================
 # Phase v2.3-A: Channel.update 对齐 LangGraph BaseChannel
 # 设计: update(values: Sequence[T]) -> bool
-# - LangGraph BaseChannel.update(values: Sequence[Update]) -> bool (langgraph/channels/base.py:90)
-# - LangGraph Topic.update(values: Sequence[Value | list[Value]]) -> bool (langgraph/channels/topic.py:77)
+# - LangGraph BaseChannel.update(values: Sequence[Update]) -> bool (base.py:90)
+# - LangGraph Topic.update(values: Sequence[Value | list[Value]]) -> bool (topic.py:77)
 # - 返回 bool 表示是否有变化(用于触发下游)
 # ============================================================
-
-
-import inspect
 
 
 def test_channel_update_signature_matches_langgraph():
@@ -648,7 +655,7 @@ def test_last_value_channel_update_batch_sets_last():
     assert ch.get() == "c"
 
 
-def test_last_value_channel_update_returns_bool_on_change():
+def test_last_value_channel_update_returns_bool_on_change_v2_3():
     """LastValueChannel.update 有变化时返回 True (触发下游)."""
     ch: LastValueChannel[str] = LastValueChannel("plan")
     # 从 None → "x" 视为有变化

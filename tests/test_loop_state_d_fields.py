@@ -154,7 +154,7 @@ def test_loop_state_model_dump_includes_all_8_fields():
         status="running",
         channels={"plan": LastValueChannel("plan")},
     )
-    state.channels["plan"].update("test plan")
+    state.channels["plan"].update(["test plan"])
 
     dumped = state.model_dump(mode="json")
     # 8 个业务字段 + channels (底层存储)

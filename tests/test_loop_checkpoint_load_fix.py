@@ -35,7 +35,7 @@ def test_load_returns_loopstate_instance_not_dict():
         status="running",
         channels={"plan": LastValueChannel("plan")},
     )
-    state.channels["plan"].update("hello")
+    state.channels["plan"].update(["hello"])
 
     cp_id = store.save(state, round=1)
     loaded = store.load(cp_id)
@@ -60,11 +60,11 @@ def test_load_returns_channels_as_channel_instances():
             "sync": BarrierChannel("sync", expected=2),
         },
     )
-    state.channels["plan"].update("v1")
-    state.channels["logs"].update("log-1")
-    state.channels["logs"].update("log-2")
-    state.channels["sync"].update()
-    state.channels["sync"].update()
+    state.channels["plan"].update(["v1"])
+    state.channels["logs"].update(["log-1"])
+    state.channels["logs"].update(["log-2"])
+    state.channels["sync"].update([None])
+    state.channels["sync"].update([None])
 
     cp_id = store.save(state, round=1)
     loaded = store.load(cp_id)
@@ -87,9 +87,9 @@ def test_load_restores_channel_values_via_get():
             "sync": BarrierChannel("sync", expected=2),
         },
     )
-    state.channels["plan"].update("test plan v3")
-    state.channels["logs"].update("event-A")
-    state.channels["sync"].update()
+    state.channels["plan"].update(["test plan v3"])
+    state.channels["logs"].update(["event-A"])
+    state.channels["sync"].update([None])
 
     cp_id = store.save(state, round=1)
     loaded = store.load(cp_id)
@@ -137,13 +137,13 @@ def test_load_then_update_works_correctly():
     """load 后修改 channel 不影响原状态 (独立副本语义)."""
     store = SQLiteCheckpointStore(":memory:")
     state = LoopState(channels={"plan": LastValueChannel("plan")})
-    state.channels["plan"].update("original")
+    state.channels["plan"].update(["original"])
 
     cp_id = store.save(state, round=1)
     loaded = store.load(cp_id)
 
     # 修改 loaded 不影响原 state
-    loaded.state.channels["plan"].update("modified")
+    loaded.state.channels["plan"].update(["modified"])
     assert state.channels["plan"].get() == "original"
     assert loaded.state.channels["plan"].get() == "modified"
 
@@ -154,8 +154,8 @@ def test_load_preserves_barrier_expected_field():
     state = LoopState(
         channels={"sync": BarrierChannel("sync", expected=5)},
     )
-    state.channels["sync"].update()  # count=1, expected=5
-    state.channels["sync"].update()  # count=2
+    state.channels["sync"].update([None])  # count=1, expected=5
+    state.channels["sync"].update([None])  # count=2
 
     cp_id = store.save(state, round=1)
     loaded = store.load(cp_id)
@@ -186,7 +186,7 @@ def test_load_latest_returns_loopstate_instance():
         round=1,
         channels={"plan": LastValueChannel("plan")},
     )
-    state.channels["plan"].update("latest")
+    state.channels["plan"].update(["latest"])
     store.save(state, round=1)
 
     latest = store.load_latest()
