@@ -285,10 +285,12 @@ async def test_orchestrator_single_agent_one_round():
     async def executor(t, ctx):
         return TaskOutcome(task_id=t.id, status="completed", output="done")
 
-    # max_rounds=1 + 高 stagnation_threshold → 第 1 轮跑完触发硬上限
+    # ConvergenceConfig(max_iterations=1) + 高 stagnation_threshold → 第 1 轮跑完触发硬上限
     config = OrchestratorConfig(
-        max_rounds=1,
-        convergence_config=ConvergenceConfig(stagnation_threshold=10),
+        convergence_config=ConvergenceConfig(
+            max_iterations=1,
+            stagnation_threshold=10,
+        ),
     )
     orch = Orchestrator(
         requirement="实现 X",
@@ -318,10 +320,12 @@ async def test_orchestrator_multi_agent_three_round():
     async def executor(t, ctx):
         return TaskOutcome(task_id=t.id, status="completed", output=t.id)
 
-    # max_rounds=1 + 高 stagnation_threshold → 第 1 轮跑完触发硬上限
+    # ConvergenceConfig(max_iterations=1) + 高 stagnation_threshold → 第 1 轮跑完触发硬上限
     config = OrchestratorConfig(
-        max_rounds=1,
-        convergence_config=ConvergenceConfig(stagnation_threshold=10),
+        convergence_config=ConvergenceConfig(
+            max_iterations=1,
+            stagnation_threshold=10,
+        ),
     )
     orch = Orchestrator(
         requirement="实现多模块",
@@ -349,10 +353,12 @@ async def test_orchestrator_respects_max_rounds():
 
     task = make_task("loop_task")
     # 高 stagnation_threshold (10) 防止停滞检测过早触发
-    # max_rounds=2 触发硬上限
+    # ConvergenceConfig(max_iterations=2) 触发硬上限
     config = OrchestratorConfig(
-        max_rounds=2,
-        convergence_config=ConvergenceConfig(stagnation_threshold=10),
+        convergence_config=ConvergenceConfig(
+            max_iterations=2,
+            stagnation_threshold=10,
+        ),
     )
     orch = Orchestrator(
         requirement="loop test",
@@ -403,10 +409,13 @@ async def test_orchestrator_cancellation_stops_loop():
         return TaskOutcome(task_id=t.id, status="completed", output="x")
 
     # 导入 cancellation token
+    from auto_engineering.loop.convergence import ConvergenceConfig
     from auto_engineering.runtime.cancellation import CancellationToken
 
     task = make_task("task1")
-    config = OrchestratorConfig(max_rounds=10)
+    config = OrchestratorConfig(
+        convergence_config=ConvergenceConfig(max_iterations=10),
+    )
     orch = Orchestrator(
         requirement="cancel test",
         tasks=[task],
@@ -427,7 +436,7 @@ async def test_orchestrator_cancellation_stops_loop():
 
     # 至少跑过一轮, 但因为 cancellation 提前停止
     assert len(history) >= 1
-    assert len(history) < 10  # 没跑到 max_rounds
+    assert len(history) < 10  # 没跑到 max_iterations
 
 
 # ============================================================
@@ -546,8 +555,10 @@ async def test_orchestrator_reads_gate_results_from_round_result(tmp_path):
 
     task = make_task("t1")
     config = OrchestratorConfig(
-        max_rounds=1,
-        convergence_config=ConvergenceConfig(stagnation_threshold=10),
+        convergence_config=ConvergenceConfig(
+            max_iterations=1,
+            stagnation_threshold=10,
+        ),
         gates=[SafetyGate(), LintGate()],
         project_root=tmp_path,
     )

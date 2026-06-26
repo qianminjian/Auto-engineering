@@ -5,7 +5,7 @@
     - design/v2.0-Analysis-Loop.md §4.7 收敛判定 (4 级)
 
 核心组件:
-    OrchestratorConfig — 配置 (max_rounds / gates / semantic_evaluator / project_root)
+    OrchestratorConfig — 配置 (gates / semantic_evaluator / project_root)
     Orchestrator       — 主循环: 启动 → run_round → 收敛判定 → 继续 / 停止
 
 主循环流程:
@@ -17,7 +17,7 @@
     6. 否则 → 下一轮 (Phase 4+ 接 plan 更新逻辑)
 
 收敛判定 4 级(复用 Phase 02):
-    1. 硬上限: round >= max_rounds
+    1. 硬上限: round >= max_iterations (单一来源: ConvergenceConfig)
     2. 质量门: 所有 Gate 通过 (v2.1 Phase B 集成)
     3. 停滞检测: 连续 N 轮无变化
     4. 语义收敛: LLM 评估通过 (v2.1 Phase B 集成)
@@ -27,6 +27,9 @@
     - 多 Agent 模式: N tasks / round (asyncio.gather)
     - 统一接口: 不区分模式, 由输入 tasks 数量决定
     - Gate + semantic_evaluator 可选 (默认 None, 向后兼容)
+    - v2.3 Phase E (P1.1): 删 OrchestratorConfig.max_rounds,
+      复用 ConvergenceConfig.max_iterations 作为主循环上限的单一来源.
+      借鉴 LangGraph Pregel.recursion_limit (单一字段多处引用).
 """
 
 from __future__ import annotations
@@ -54,9 +57,6 @@ from auto_engineering.loop.round import (
 )
 from auto_engineering.runtime.cancellation import CancellationToken
 
-# 默认配置
-DEFAULT_MAX_ROUNDS = 10
-
 # Type alias: semantic_evaluator = async (round_result) -> bool
 SemanticEvaluator = Callable[[RoundResult], Awaitable[bool]]
 
@@ -66,14 +66,14 @@ class OrchestratorConfig:
     """Orchestrator 配置.
 
     Attributes:
-        max_rounds: 最大 Round 数 (硬上限)
-        convergence_config: 收敛判定配置 (None = 用默认)
+        convergence_config: 收敛判定配置 (None = 用默认).
+            含 max_iterations 字段, 是主循环硬上限的**单一来源**
+            (v2.3 Phase E P1.1, 借鉴 LangGraph Pregel.recursion_limit).
         gates: v2.1 Phase B — 验证 Gate 列表 (None = 跳过)
         semantic_evaluator: v2.1 Phase B — LLM 语义评估 (None = 跳过)
         project_root: v2.1 Phase B — Gate 运行的项目根目录 (None = 当前 cwd)
     """
 
-    max_rounds: int = DEFAULT_MAX_ROUNDS
     convergence_config: ConvergenceConfig | None = None
     gates: list[Gate] | None = None
     semantic_evaluator: SemanticEvaluator | None = None
@@ -106,7 +106,11 @@ class Orchestrator:
     verdict: ConvVerdict | None = None
 
     def __post_init__(self) -> None:
-        """初始化 Plan + Judge."""
+        """初始化 Plan + Judge.
+
+        v2.3 Phase E (P1.1): 不再在 Orchestrator 自身存 max_rounds 字段,
+        主循环从 self.judge.config.max_iterations 读 (单一来源).
+        """
         self.plan = Plan(tasks=self.tasks, requirement=self.requirement)
         self.judge = ConvergenceJudge(config=self.config.convergence_config)
 
@@ -114,11 +118,11 @@ class Orchestrator:
         self,
         cancellation: CancellationToken | None = None,
     ) -> list[RoundHistory]:
-        """主循环: 跑 Round 直到收敛或达到 max_rounds.
+        """主循环: 跑 Round 直到收敛或达到 max_iterations.
 
         流程:
             1. Plan.validate() — 校验 DAG + 文件隔离
-            2. for round_id in 1..max_rounds:
+            2. for round_id in 1..max_iterations:
                 a. cancellation.check() (用户取消 → 抛 AEError)
                 b. 选择本轮 task (Phase 3 简化: 全部 task 在每轮都跑)
                 c. run_round(tasks, executor) → RoundResult
@@ -128,7 +132,7 @@ class Orchestrator:
                    - git diff --numstat → lines_added/removed
                 e. judge.evaluate(state, history) → verdict
                 f. 若 should_stop → return history
-            3. 达到 max_rounds → 构造硬上限 Verdict → return history
+            3. 达到 max_iterations → 构造硬上限 Verdict → return history
 
         Args:
             cancellation: 可选 CancellationToken
@@ -144,8 +148,12 @@ class Orchestrator:
         assert self.plan is not None  # __post_init__ 保证
         self.plan.validate()
 
+        # v2.3 Phase E (P1.1): 单一来源 — 从 judge.config.max_iterations 读
+        assert self.judge is not None and self.judge.config is not None
+        max_rounds = self.judge.config.max_iterations
+
         # 2. 主循环
-        for round_id in range(1, self.config.max_rounds + 1):
+        for round_id in range(1, max_rounds + 1):
             # 2a. 取消检查 (Round 边界检查, 不在 task 内中断)
             if cancellation is not None and cancellation.is_cancelled():
                 break
@@ -178,10 +186,10 @@ class Orchestrator:
                 self.verdict = verdict
                 return self.history
 
-        # 3. 达到 max_rounds — 构造硬上限 verdict
+        # 3. 达到 max_iterations — 构造硬上限 verdict (P1.1: 单一来源)
         self.verdict = ConvVerdict.stop(
             level=4,  # LEVEL_HARD_LIMIT
-            reason=f"达到最大轮次 {self.config.max_rounds} (硬上限)",
+            reason=f"达到最大轮次 {max_rounds} (硬上限)",
         )
         return self.history
 
@@ -367,7 +375,6 @@ def _parse_git_numstat(project_root: Path | None) -> tuple[int, int]:
 
 
 __all__ = [
-    "DEFAULT_MAX_ROUNDS",
     "Orchestrator",
     "OrchestratorConfig",
     "SemanticEvaluator",

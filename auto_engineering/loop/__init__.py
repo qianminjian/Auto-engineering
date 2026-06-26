@@ -47,7 +47,6 @@ from auto_engineering.loop.convergence import (
     diff_ratio,
 )
 from auto_engineering.loop.orchestrator import (
-    DEFAULT_MAX_ROUNDS,
     Orchestrator,
     OrchestratorConfig,
 )
@@ -78,7 +77,6 @@ from auto_engineering.loop.state import (
 # 字母序排列 (ruff RUF022)
 __all__ = [
     "DEFAULT_MAX_ITERATIONS",
-    "DEFAULT_MAX_ROUNDS",
     "DEFAULT_STAGNATION_DIFF_RATIO",
     "DEFAULT_STAGNATION_THRESHOLD",
     "LEVEL_CONTINUE",

@@ -611,6 +611,7 @@ def _run_v2_orchestrator(
 
     from auto_engineering.gates.lint import LintGate
     from auto_engineering.gates.safety import SafetyGate
+    from auto_engineering.loop.convergence import ConvergenceConfig
     from auto_engineering.loop.orchestrator import (
         Orchestrator,
         OrchestratorConfig,
@@ -618,8 +619,9 @@ def _run_v2_orchestrator(
     from auto_engineering.loop.plan import Task
 
     # 1. 构造 OrchestratorConfig: gates + semantic_evaluator + project_root
+    #    v2.3 Phase E (P1.1): max_rounds 通过 ConvergenceConfig.max_iterations 传入 (单一来源)
     config = OrchestratorConfig(
-        max_rounds=max_rounds,
+        convergence_config=ConvergenceConfig(max_iterations=max_rounds),
         gates=[SafetyGate(), LintGate()],
         semantic_evaluator=_build_v2_semantic_evaluator(project_root, progress),
         project_root=project_root,

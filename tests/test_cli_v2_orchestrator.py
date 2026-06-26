@@ -320,6 +320,10 @@ class TestC7V2OrchestratorWrapper:
             self.requirement = kwargs.get("requirement", args[0] if args else "")
             self.tasks = kwargs.get("tasks", args[1] if len(args) > 1 else [])
             self.executor = kwargs.get("executor", args[2] if len(args) > 2 else None)
+            # v2.3 Phase E (P1.1): mock judge 也需从 config.convergence_config 派生
+            from auto_engineering.loop.convergence import ConvergenceJudge
+
+            self.judge = ConvergenceJudge(config=self.config.convergence_config)
             constructed_orch = self
             # 跳过原 init
             return None
@@ -342,7 +346,8 @@ class TestC7V2OrchestratorWrapper:
         # 验证: config 含 gates (至少 SafetyGate, LintGate) + project_root
         assert constructed_orch.config is not None
         assert constructed_orch.config.project_root == tmp_path
-        assert constructed_orch.config.max_rounds == 3
+        # v2.3 Phase E (P1.1): max_rounds 字段已删, 改读 max_iterations
+        assert constructed_orch.judge.config.max_iterations == 3
         assert constructed_orch.config.gates is not None
         assert len(constructed_orch.config.gates) >= 2, "should have at least Safety + Lint gates"
 

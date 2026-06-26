@@ -124,8 +124,10 @@ async def test_orchestrator_runs_real_gates_each_round(tmp_path: Path):
 
     task = make_task("t1", ["ok.py"])
     config = OrchestratorConfig(
-        max_rounds=1,
-        convergence_config=ConvergenceConfig(stagnation_threshold=10),
+        convergence_config=ConvergenceConfig(
+            max_iterations=1,
+            stagnation_threshold=10,
+        ),
         gates=[SafetyGate()],
         project_root=tmp_path,
     )
@@ -156,8 +158,10 @@ async def test_orchestrator_gate_detects_real_secret_in_project(tmp_path: Path):
 
     task = make_task("t1", ["leak.py"])
     config = OrchestratorConfig(
-        max_rounds=1,
-        convergence_config=ConvergenceConfig(stagnation_threshold=10),
+        convergence_config=ConvergenceConfig(
+            max_iterations=1,
+            stagnation_threshold=10,
+        ),
         gates=[SafetyGate()],
         project_root=tmp_path,
     )
@@ -182,11 +186,14 @@ async def test_orchestrator_gate_results_trigger_quality_convergence(tmp_path: P
     (tmp_path / "clean.py").write_text("y = 2\n")
 
     # 第一轮 1 个 task, 第二轮继续 1 个 task (无变化, 可能触发停滞)
-    # 改用 max_rounds=1 避免停滞检测干扰
+    # max_iterations=10 (默认上限), 防止硬上限先于质量门触发 (P1.1 单一来源后:
+    # 硬上限由 judge.config.max_iterations 决定, 而非 OrchestratorConfig.max_rounds).
     task = make_task("t1", ["clean.py"])
     config = OrchestratorConfig(
-        max_rounds=1,
-        convergence_config=ConvergenceConfig(stagnation_threshold=10),
+        convergence_config=ConvergenceConfig(
+            max_iterations=10,
+            stagnation_threshold=10,
+        ),
         gates=[SafetyGate()],
         project_root=tmp_path,
     )
@@ -241,8 +248,10 @@ async def test_orchestrator_calls_semantic_evaluator_each_round(tmp_path: Path):
 
     task = make_task("t1", ["a.py"])
     config = OrchestratorConfig(
-        max_rounds=1,
-        convergence_config=ConvergenceConfig(stagnation_threshold=10),
+        convergence_config=ConvergenceConfig(
+            max_iterations=1,
+            stagnation_threshold=10,
+        ),
         semantic_evaluator=my_evaluator,
         project_root=tmp_path,
     )
@@ -270,8 +279,10 @@ async def test_orchestrator_semantic_evaluator_returning_false(tmp_path: Path):
 
     task = make_task("t1", ["a.py"])
     config = OrchestratorConfig(
-        max_rounds=1,
-        convergence_config=ConvergenceConfig(stagnation_threshold=10),
+        convergence_config=ConvergenceConfig(
+            max_iterations=1,
+            stagnation_threshold=10,
+        ),
         semantic_evaluator=my_evaluator,
         project_root=tmp_path,
     )
@@ -316,8 +327,10 @@ async def test_orchestrator_git_diff_lines_added_removed(tmp_path: Path):
 
     task = make_task("t1", ["new.py"])
     config = OrchestratorConfig(
-        max_rounds=1,
-        convergence_config=ConvergenceConfig(stagnation_threshold=10),
+        convergence_config=ConvergenceConfig(
+            max_iterations=1,
+            stagnation_threshold=10,
+        ),
         project_root=tmp_path,
     )
     orch = Orchestrator(
@@ -354,8 +367,10 @@ async def test_orchestrator_combined_gates_and_semantic_evaluator(tmp_path: Path
 
     task = make_task("t1", ["ok.py"])
     config = OrchestratorConfig(
-        max_rounds=1,
-        convergence_config=ConvergenceConfig(stagnation_threshold=10),
+        convergence_config=ConvergenceConfig(
+            max_iterations=1,
+            stagnation_threshold=10,
+        ),
         gates=[SafetyGate()],
         semantic_evaluator=my_evaluator,
         project_root=tmp_path,
@@ -381,8 +396,10 @@ async def test_orchestrator_no_gates_no_evaluator_compat(tmp_path: Path):
     """不传 gates / semantic_evaluator → 向后兼容 (gate_results={}, semantic=None)."""
     task = make_task("t1", ["a.py"])
     config = OrchestratorConfig(
-        max_rounds=1,
-        convergence_config=ConvergenceConfig(stagnation_threshold=10),
+        convergence_config=ConvergenceConfig(
+            max_iterations=1,
+            stagnation_threshold=10,
+        ),
         project_root=tmp_path,
     )
     orch = Orchestrator(
