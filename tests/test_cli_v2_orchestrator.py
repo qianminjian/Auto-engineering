@@ -6,7 +6,7 @@
 
 测试覆盖 (Phase C 集成测试):
     C.1 ANTHROPIC_API_KEY 存在 + 默认 → _run_v2_orchestrator 被调用
-    C.2 ANTHROPIC_API_KEY 不存在 → fallback _run_loop_engine
+    C.2 ANTHROPIC_API_KEY 不存在 → fallback _run_v1_engine
     C.3 --use-v1 flag → 强制 v1.0 (即使有 API key)
     C.4 --use-v2 但无 API key → 友好错误提示
     C.5 CLI help 含 v1/v2 切换说明
@@ -69,16 +69,16 @@ def valid_project_no_key(tmp_path: Path, monkeypatch):
 
 @pytest.fixture
 def mock_v1_runner(monkeypatch):
-    """Mock _run_loop_engine (v1.0 路径)."""
-    from auto_engineering.cli import LoopRunResult
+    """Mock _run_v1_engine (v1.0 路径)."""
+    from auto_engineering.cli import V1RunResult
 
     runner_mock = MagicMock()
-    runner_mock.return_value = LoopRunResult(
+    runner_mock.return_value = V1RunResult(
         status="done",
         total_steps=3,
         checkpoint_id="v1-cp-id",
     )
-    monkeypatch.setattr("auto_engineering.cli._run_loop_engine", runner_mock)
+    monkeypatch.setattr("auto_engineering.cli._run_v1_engine", runner_mock)
     return runner_mock
 
 
@@ -108,7 +108,7 @@ class TestC1DefaultV2WithApiKey:
     def test_v2_orchestrator_called_when_api_key_set(
         self, valid_project_with_key, mock_v2_runner, mock_v1_runner
     ):
-        """RED: 有 API key 时 _run_v2_orchestrator 被调用, _run_loop_engine 不被调."""
+        """RED: 有 API key 时 _run_v2_orchestrator 被调用, _run_v1_engine 不被调."""
         runner = CliRunner()
         result = runner.invoke(main, ["dev-loop", "build x"])
 
@@ -147,12 +147,12 @@ class TestC1DefaultV2WithApiKey:
 
 
 class TestC2FallbackV1WithoutApiKey:
-    """C.2: 无 ANTHROPIC_API_KEY → fallback _run_loop_engine."""
+    """C.2: 无 ANTHROPIC_API_KEY → fallback _run_v1_engine."""
 
     def test_v1_fallback_when_no_api_key(
         self, valid_project_no_key, mock_v1_runner, mock_v2_runner, monkeypatch, _reset_block_cache
     ):
-        """RED: 无 API key 时 _run_loop_engine 被调用, v2 不被调.
+        """RED: 无 API key 时 _run_v1_engine 被调用, v2 不被调.
 
         preflight 强制要求 ANTHROPIC_API_KEY (生产约束), 这里 mock 掉 preflight
         来测试"无 key → v1 fallback"路径(测试隔离).

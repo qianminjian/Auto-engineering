@@ -220,7 +220,7 @@ def _emit_stage_done(stage: str, elapsed: float, tokens: int = 0) -> None:
 # ============================================================
 
 
-def _build_runtime(requirement: str, project_root: Any = None) -> Any:
+def _build_v1_runtime(requirement: str, project_root: Any = None) -> Any:
     """根据 ANTHROPIC_API_KEY 构建 runtime.
 
     - 有 API key → AgentRuntime + 注册 architect/developer/critic
@@ -298,15 +298,15 @@ def _build_runtime(requirement: str, project_root: Any = None) -> Any:
 
 
 @dataclass
-class LoopRunResult:
-    """_run_loop_engine 返回值."""
+class V1RunResult:
+    """_run_v1_engine 返回值."""
 
     status: str
     total_steps: int
     checkpoint_id: str
 
 
-def _run_loop_engine(
+def _run_v1_engine(
     requirement: str,
     project_root: Path,
     project_env: Any | None,
@@ -317,7 +317,7 @@ def _run_loop_engine(
     cancellation: CancellationToken,
     progress: ProgressLogger,
     token_tracker: TokenTracker | None = None,
-) -> LoopRunResult:
+) -> V1RunResult:
     """真实驱动 LoopEngine.run().
 
     P1.2: 根据 ANTHROPIC_API_KEY 自动选择 AgentRuntime(真 LLM) 或 ScriptedMockRuntime.
@@ -325,7 +325,7 @@ def _run_loop_engine(
     """
     from auto_engineering.engine import LoopEngine, build_dev_loop_graph
 
-    runtime = _build_runtime(requirement, project_root=project_root)
+    runtime = _build_v1_runtime(requirement, project_root=project_root)
 
     engine = LoopEngine(
         build_dev_loop_graph(),
@@ -337,7 +337,7 @@ def _run_loop_engine(
     if dry_run:
         # dry-run: 只跑 architect → 输出 plan → 退出
         click.echo("[DRY RUN] only architect stage will execute")
-        runtime_dry = _build_runtime(requirement)
+        runtime_dry = _build_v1_runtime(requirement)
         engine_dry = LoopEngine(
             build_dev_loop_graph(),
             runtime=runtime_dry,
@@ -365,7 +365,7 @@ def _run_loop_engine(
             f"  Plan output: plan available (see checkpoint state)\n"
             f"  Steps: {result.total_steps}"
         )
-        return LoopRunResult(
+        return V1RunResult(
             status="dry_run_done",
             total_steps=result.total_steps,
             checkpoint_id=result.checkpoint_id,
@@ -388,7 +388,7 @@ def _run_loop_engine(
             raise
         raise
 
-    return LoopRunResult(
+    return V1RunResult(
         status=result.status,
         total_steps=result.total_steps,
         checkpoint_id=result.checkpoint_id,
@@ -445,7 +445,7 @@ def _execute_with_progress(
 
 @dataclass
 class OrchestratorRunResult:
-    """_run_v2_orchestrator 返回值 — 模拟 LoopRunResult 接口."""
+    """_run_v2_orchestrator 返回值 — 模拟 V1RunResult 接口."""
 
     status: str
     total_steps: int
@@ -952,7 +952,7 @@ def dev_loop(
         # v1.0 路径 (LoopEngine + Architect/Developer/Critic)
         _log_engine_version("v1.0")
         try:
-            result = _run_loop_engine(
+            result = _run_v1_engine(
                 requirement=requirement,
                 project_root=root,
                 project_env=project_env,

@@ -2,9 +2,9 @@
 
 验收:
 - ae dev-loop --max-tokens 100 "x" 超 100 token 后抛 BUDGET_EXCEEDED
-- _run_loop_engine 接受 token_tracker 参数
+- _run_v1_engine 接受 token_tracker 参数
 - _execute_with_progress 收到非 None 的 token_tracker
-- cli.py dev_loop 把 TokenTracker 传给 _run_loop_engine
+- cli.py dev_loop 把 TokenTracker 传给 _run_v1_engine
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from auto_engineering.cli import (
     ProgressLogger,
     TokenTracker,
     _execute_with_progress,
-    _run_loop_engine,
+    _run_v1_engine,
 )
 from auto_engineering.errors import AEError, ErrorCode
 from auto_engineering.llm.anthropic_provider import LLMUsage
@@ -26,10 +26,10 @@ from auto_engineering.llm.anthropic_provider import LLMUsage
 class TestTokenTrackerCLIWiring:
     """TokenTracker 在 CLI 调用链中的真接验证."""
 
-    def test_run_loop_engine_accepts_token_tracker_param(self):
-        """_run_loop_engine 接受 token_tracker 参数(签名验证)."""
+    def test_run_v1_engine_accepts_token_tracker_param(self):
+        """_run_v1_engine 接受 token_tracker 参数(签名验证)."""
         import inspect
-        sig = inspect.signature(_run_loop_engine)
+        sig = inspect.signature(_run_v1_engine)
         assert "token_tracker" in sig.parameters
 
     def test_execute_with_progress_receives_token_tracker(self):

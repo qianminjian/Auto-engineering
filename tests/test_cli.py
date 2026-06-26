@@ -35,20 +35,20 @@ def valid_project(tmp_path: Path, monkeypatch):
 
 @pytest.fixture
 def mock_loop_engine(monkeypatch):
-    """替换 _run_loop_engine 为 mock,使 CLI 测试不调真实 LoopEngine.
+    """替换 _run_v1_engine 为 mock,使 CLI 测试不调真实 LoopEngine.
 
-    返回的 MagicMock 直接当作函数调用 — dev_loop 调 _run_loop_engine(**kwargs).
-    mock 返回 LoopRunResult 实例(dev_loop 调 .status / .total_steps / .checkpoint_id).
+    返回的 MagicMock 直接当作函数调用 — dev_loop 调 _run_v1_engine(**kwargs).
+    mock 返回 V1RunResult 实例(dev_loop 调 .status / .total_steps / .checkpoint_id).
     """
-    from auto_engineering.cli import LoopRunResult
+    from auto_engineering.cli import V1RunResult
 
     runner_mock = MagicMock()
-    runner_mock.return_value = LoopRunResult(
+    runner_mock.return_value = V1RunResult(
         status="done",
         total_steps=3,
         checkpoint_id="test-cp-id",
     )
-    monkeypatch.setattr("auto_engineering.cli._run_loop_engine", runner_mock)
+    monkeypatch.setattr("auto_engineering.cli._run_v1_engine", runner_mock)
     return runner_mock
 
 
@@ -216,7 +216,7 @@ class TestT07SigintCancellation:
             token.cancel()  # 模拟 SIGINT 效果
             raise AEError(ErrorCode.TASK_CANCELLED, "user cancelled")
 
-        monkeypatch.setattr("auto_engineering.cli._run_loop_engine", fake_run_loop)
+        monkeypatch.setattr("auto_engineering.cli._run_v1_engine", fake_run_loop)
         runner = CliRunner()
         result = runner.invoke(main, ["dev-loop", "x"])
 
@@ -247,10 +247,10 @@ class TestT08DryRun:
 
     def test_dry_run_output_says_plan(self, valid_project, mock_loop_engine, capsys):
         """GREEN: --dry-run mock 返回 dry_run_done,验证输出含 'plan'."""
-        from auto_engineering.cli import LoopRunResult
+        from auto_engineering.cli import V1RunResult
 
         # 让 mock 返回 dry_run_done 状态
-        mock_loop_engine.return_value = LoopRunResult(
+        mock_loop_engine.return_value = V1RunResult(
             status="dry_run_done",
             total_steps=1,
             checkpoint_id="dry-cp",
@@ -334,7 +334,7 @@ class TestT11ProjectRoot:
 
     def test_project_root_flag_overrides_cwd(self, tmp_path: Path, monkeypatch):
         """RED: --project-root /tmp/foo 时 preflight 用 /tmp/foo 校验."""
-        from auto_engineering.cli import LoopRunResult
+        from auto_engineering.cli import V1RunResult
 
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
         project_dir = tmp_path / "my-project"
@@ -342,8 +342,8 @@ class TestT11ProjectRoot:
         (project_dir / ".git").mkdir()
 
         runner_mock = MagicMock()
-        runner_mock.return_value = LoopRunResult(status="done", total_steps=0, checkpoint_id="x")
-        monkeypatch.setattr("auto_engineering.cli._run_loop_engine", runner_mock)
+        runner_mock.return_value = V1RunResult(status="done", total_steps=0, checkpoint_id="x")
+        monkeypatch.setattr("auto_engineering.cli._run_v1_engine", runner_mock)
 
         runner = CliRunner()
         runner.invoke(main, ["dev-loop", "x", "--use-v1", "--project-root", str(project_dir)])

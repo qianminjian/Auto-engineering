@@ -2,7 +2,7 @@
 
 为什么在 production code(runtime/mock.py):
     - 早期 dev-loop 默认 runtime(Plan B Phase 02 在 cli.py 用 ScriptedMockRuntime
-      替代真实 LLM 调用,见 cli.py:_run_loop_engine)
+      替代真实 LLM 调用,见 cli.py:_run_v1_engine)
     - 测试代码也用(测试 fixtures re-export from tests/conftest.py)
 
 设计要点:
