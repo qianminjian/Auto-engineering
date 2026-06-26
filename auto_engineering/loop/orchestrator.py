@@ -30,11 +30,14 @@
     - v2.3 Phase E (P1.1): 删 OrchestratorConfig.max_rounds,
       复用 ConvergenceConfig.max_iterations 作为主循环上限的单一来源.
       借鉴 LangGraph Pregel.recursion_limit (单一字段多处引用).
+    - v2.3 Phase G (P1.3): 删 _build_history, RoundResult.history 含 RoundHistory
+      (run_round 末尾直接构造), Orchestrator 直接累加. 借鉴 LangGraph Pregel.tick()
+      Packet 模式: 数据在生产方 (run_round) 直接打包, 调用方 (Orchestrator) 不再
+      重复构造.
 """
 
 from __future__ import annotations
 
-import subprocess
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -91,7 +94,8 @@ class Orchestrator:
         config: Orchestrator 配置
         plan: 构建后的 Plan (run() 时 validate)
         judge: 收敛判定器
-        history: 历史轮次记录
+        history: 历史轮次记录 (v2.3 Phase G P1.3: 累加自 round_result.history)
+        round_results: 每轮的 RoundResult 列表 (v2.3 Phase G P1.3: history 在此内部)
         verdict: 最终判定
     """
 
@@ -125,14 +129,18 @@ class Orchestrator:
             2. for round_id in 1..max_iterations:
                 a. cancellation.check() (用户取消 → 抛 AEError)
                 b. 选择本轮 task (Phase 3 简化: 全部 task 在每轮都跑)
-                c. run_round(tasks, executor) → RoundResult
-                d. _build_history(round_id, round_result) →
-                   - 跑所有 Gate (真集成, 非 mock)
-                   - 调 LLM 语义评估 (若提供)
-                   - git diff --numstat → lines_added/removed
-                e. judge.evaluate(state, history) → verdict
-                f. 若 should_stop → return history
+                c. 调 LLM 语义评估 (若提供) → semantic_satisfied
+                d. run_round(tasks, executor, semantic_satisfied=semantic_satisfied)
+                   → RoundResult (含 history[0]: RoundHistory, v2.3 Phase G P1.3)
+                e. self.round_results.append(round_result)
+                f. self.history.extend(round_result.history)  # 累加 (非 append)
+                g. judge.evaluate(state, history) → verdict
+                h. 若 should_stop → return history
             3. 达到 max_iterations → 构造硬上限 Verdict → return history
+
+        v2.3 Phase G (P1.3): 删 _build_history, 借鉴 LangGraph Pregel.tick() Packet 模式.
+            RoundHistory 在 run_round 末尾直接构造 (RoundResult.history 字段),
+            Orchestrator 直接累加, 不再二次包装.
 
         Args:
             cancellation: 可选 CancellationToken
@@ -162,7 +170,8 @@ class Orchestrator:
             #     Round 1 跑所有 task, Round 2+ 仅跑 failed / 新增 task
             round_tasks = self._select_round_tasks(round_id, self.history)
 
-            # 2c. 执行 Round (含 Gate 集成, v2.2 Phase H)
+            # 2c. 执行 Round (v2.3 Phase G: run_round 末尾构造 RoundHistory,
+            #     此时 semantic_satisfied=None, 2e 后会回填)
             round_result = await run_round(
                 tasks=round_tasks,
                 executor=self.executor,
@@ -172,14 +181,21 @@ class Orchestrator:
                 gates=self.config.gates,
                 project_root=self.config.project_root,
             )
+
+            # 2d. 调 LLM 语义评估 (旧契约: 喂 round_result) → 写回
+            #     round_result.history[0].semantic_satisfied
+            #     借鉴 LangGraph Pregel.tick() Packet 模式: 数据源头 (run_round) 构造
+            #     RoundHistory, 调用方 (Orchestrator) 补充 semantic 后累加 history.
+            semantic_satisfied = await self._evaluate_semantic(round_result)
+            if round_result.history:
+                round_result.history[0].semantic_satisfied = semantic_satisfied
+
             self.round_results.append(round_result)
 
-            # 2d. 构造 RoundHistory (从 RoundResult 读 gate_results, v2.2 Phase H)
-            #     Phase 2.3-C: 传入 round_tasks, 让 RoundHistory.tasks_run 有值
-            history = await self._build_history(round_id, round_result, round_tasks)
-            self.history.append(history)
+            # 2e. 累加 round_result.history (v2.3 Phase G P1.3)
+            self.history.extend(round_result.history)
 
-            # 2e. 收敛判定
+            # 2f. 收敛判定
             assert self.judge is not None
             verdict = self.judge.evaluate(state=None, history=self.history)
             if verdict.should_stop:
@@ -246,49 +262,6 @@ class Orchestrator:
 
         return selected
 
-    async def _build_history(
-        self,
-        round_id: int,
-        round_result: RoundResult,
-        round_tasks: list[Task] | None = None,
-    ) -> RoundHistory:
-        """构造 RoundHistory (含 Gate + 语义 + git diff).
-
-        v2.2 Phase H 重构:
-            - Gate 不再由 Orchestrator 跑 (Phase B 实现绕开 RoundResult),
-              改为从 round_result.gate_results (Run Round 时已跑) 读
-            - 格式转换: dict[gate_name, Verdict] → dict[gate_name, bool]
-            - LLM 语义评估 + git diff 仍在 Orchestrator (因为依赖 ctx / project_root)
-
-        v2.3 Phase C:
-            - 新增 round_tasks 参数, 写入 RoundHistory.tasks_run
-              (供下一轮 _select_round_tasks 增量选择参考)
-        """
-        # 1. 从 RoundResult 读 gate_results (Phase H 真集成)
-        #    v2.3 Phase D (P0.4): 直接传 Verdict, 不再降级为 bool (避免丢失 message)
-        gate_results = dict(round_result.gate_results)
-
-        # 2. 调 LLM 语义评估
-        semantic_satisfied = await self._evaluate_semantic(round_result)
-
-        # 3. git diff --numstat
-        lines_added, lines_removed = _parse_git_numstat(self.config.project_root)
-
-        # 4. Phase 2.3-C: 记录本轮跑的 task IDs + 每个 task 的 outcome
-        tasks_run = [t.id for t in (round_tasks or [])]
-        task_outcomes = {o.task_id: o.status for o in round_result.outcomes}
-
-        return RoundHistory(
-            round_id=round_id,
-            files_changed=round_result.completed_count,
-            lines_added=lines_added,
-            lines_removed=lines_removed,
-            gate_results=gate_results,
-            semantic_satisfied=semantic_satisfied,
-            tasks_run=tasks_run,
-            task_outcomes=task_outcomes,
-        )
-
     def _run_gates(self) -> dict[str, bool]:
         """跑 config.gates 列表中所有 Gate, 返回 {name: passed} dict.
 
@@ -297,6 +270,10 @@ class Orchestrator:
 
         Returns:
             dict[str, bool] — gate name → passed
+
+        Note:
+            v2.3 Phase G (P1.3): 此方法保留用于向后兼容 (可能被外部代码 import),
+            但 Orchestrator 主循环已不调用 (Gate 在 run_round 内部跑).
         """
         if not self.config.gates:
             return {}
@@ -315,7 +292,10 @@ class Orchestrator:
     async def _evaluate_semantic(
         self, round_result: RoundResult
     ) -> bool | None:
-        """调 LLM 语义评估 (若提供).
+        """调 LLM 语义评估 (若提供), 结果由 run() 写回 round_result.history[0].
+
+        v2.3 Phase G (P1.3): 评估结果不直接构造 RoundHistory, 而是作为
+        semantic_satisfied 字段写回 run_round 末尾构造的 RoundHistory.
 
         Returns:
             True/False — 评估器返回
@@ -327,51 +307,6 @@ class Orchestrator:
             return await self.config.semantic_evaluator(round_result)
         except Exception:
             return None
-
-
-def _parse_git_numstat(project_root: Path | None) -> tuple[int, int]:
-    """解析 git diff --numstat HEAD~1 HEAD 输出.
-
-    Args:
-        project_root: 项目根目录 (None = 当前 cwd)
-
-    Returns:
-        (lines_added, lines_removed) 总和
-        仓库无 HEAD / git 不可用 → (0, 0)
-    """
-    cwd = str(project_root) if project_root is not None else "."
-    try:
-        # HEAD~1..HEAD (若只有 1 个 commit, HEAD~1 不存在, 返回空)
-        result = subprocess.run(
-            ["git", "diff", "--numstat", "HEAD~1", "HEAD"],
-            cwd=cwd,
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
-        return (0, 0)
-
-    if result.returncode != 0:
-        return (0, 0)
-
-    total_added = 0
-    total_removed = 0
-    for line in result.stdout.strip().splitlines():
-        # numstat 格式: "<added>\t<removed>\t<file>"
-        # 二进制文件: "-\t-\t<file>"
-        parts = line.split("\t")
-        if len(parts) < 2:
-            continue
-        added_str, removed_str = parts[0], parts[1]
-        if added_str == "-" or removed_str == "-":
-            continue
-        try:
-            total_added += int(added_str)
-            total_removed += int(removed_str)
-        except ValueError:
-            continue
-    return (total_added, total_removed)
 
 
 __all__ = [

@@ -21,11 +21,14 @@ import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from auto_engineering.gates.base import Gate, Verdict
 from auto_engineering.loop.plan import Task
 from auto_engineering.runtime.cancellation import CancellationToken
+
+if TYPE_CHECKING:
+    from auto_engineering.loop.convergence import RoundHistory
 
 
 @dataclass
@@ -56,6 +59,9 @@ class RoundResult:
         outcomes: 每个 task 的执行结果 (顺序与输入无关, gather 不保证)
         gate_results: v2.2 Phase H — 本轮运行的 Gate 结果 dict[gate_name, Verdict].
                       包含 Gate 异常时的 failed Verdict (不传播给上层).
+        history: v2.3 Phase G (P1.3) — 本轮的 RoundHistory 列表 (通常 1 个元素).
+                 借鉴 LangGraph Pregel.tick() Packet 模式: run_round 末尾直接构造
+                 RoundHistory 写入此字段, Orchestrator 不再 _build_history 二次包装.
         started_at: 启动时间戳
         finished_at: 完成时间戳
     """
@@ -63,6 +69,7 @@ class RoundResult:
     round_id: int
     outcomes: list[TaskOutcome] = field(default_factory=list)
     gate_results: dict[str, Verdict] = field(default_factory=dict)
+    history: list[RoundHistory] = field(default_factory=list)
     started_at: float = 0.0
     finished_at: float = 0.0
 
@@ -150,13 +157,18 @@ async def run_round(
         project_root: v2.2 Phase H — Gate 运行的项目根目录 (与 gates 同时提供才生效)
 
     Returns:
-        RoundResult 含每个 task 的 outcome + gate_results (若 gates + project_root 都提供)
+        RoundResult 含每个 task 的 outcome + gate_results + history[0] (RoundHistory).
+        借鉴 LangGraph Pregel.tick() Packet 模式: run_round 末尾直接构造 RoundHistory
+        写入 round_result.history, Orchestrator 不再 _build_history 二次包装.
+        semantic_satisfied 默认 None, 由 Orchestrator 在 run() 中补充.
 
     Note:
         - asyncio.gather 会并行执行所有 task (LLM 调用 I/O bound 天然适配)
         - 若 gather 中一个 task 抛异常, 默认 return_exceptions=False 会传播
           此实现包装 _execute_single 捕获异常, 返回 failed outcome (不传播)
         - Gate 异常不传播, 写入 Verdict(passed=False, message=str(exc))
+        - 末位构造 RoundHistory (含 gate_results + files_changed + task_outcomes +
+          lines_added/removed), semantic_satisfied 由 Orchestrator 写回
     """
     result = RoundResult(round_id=round_id)
     result.started_at = time.monotonic()
@@ -166,6 +178,7 @@ async def run_round(
         # 即使无 task, 也跑 Gate (若提供) — Phase H 行为: Gate 在 task 之后跑
         if gates and project_root is not None:
             result.gate_results = _run_gates(gates, project_root)
+        _attach_round_history(result, tasks, project_root)
         return result
 
     # 创建并发任务
@@ -181,7 +194,86 @@ async def run_round(
     if gates and project_root is not None:
         result.gate_results = _run_gates(gates, project_root)
 
+    # v2.3 Phase G (P1.3): 末尾构造 RoundHistory 写入 round_result.history
+    _attach_round_history(result, tasks, project_root)
     return result
+
+
+def _attach_round_history(
+    result: RoundResult,
+    tasks: list[Task],
+    project_root: Path | None,
+) -> None:
+    """在 run_round 末尾构造 RoundHistory 写入 result.history.
+
+    v2.3 Phase G (P1.3) — 借鉴 LangGraph Pregel.tick() Packet 模式:
+        - 从 RoundResult 读 gate_results (已就绪)
+        - 从 RoundResult.outcomes 提取 task_outcomes
+        - 从 result.completed_count 算 files_changed (兼容旧版估算)
+        - 从 git diff --numstat HEAD~1 HEAD 算 lines_added/removed
+        - 写入 result.history (1 个元素), semantic_satisfied=None
+          (由 Orchestrator._evaluate_semantic 在 run() 中写回)
+
+    Args:
+        result: RoundResult (已含 outcomes + gate_results)
+        tasks: 本轮 task 列表 (供 tasks_run)
+        project_root: git diff 的项目根目录 (None = 跳过 git diff)
+    """
+    from auto_engineering.loop.convergence import RoundHistory
+
+    lines_added, lines_removed = _parse_git_numstat(project_root)
+    history = RoundHistory(
+        round_id=result.round_id,
+        files_changed=result.completed_count,
+        lines_added=lines_added,
+        lines_removed=lines_removed,
+        gate_results=dict(result.gate_results),
+        semantic_satisfied=None,
+        tasks_run=[t.id for t in tasks],
+        task_outcomes={o.task_id: o.status for o in result.outcomes},
+    )
+    result.history = [history]
+
+
+def _parse_git_numstat(project_root: Path | None) -> tuple[int, int]:
+    """解析 git diff --numstat HEAD~1 HEAD 输出 → (lines_added, lines_removed).
+
+    从 auto_engineering.loop.orchestrator 提取 (Phase G P1.3):
+        单一数据源: RoundHistory 构造在 round.py 内完成, 不需 Orchestrator 中转.
+        仓库无 HEAD / git 不可用 → (0, 0)
+    """
+    import subprocess
+
+    cwd = str(project_root) if project_root is not None else "."
+    try:
+        result_run = subprocess.run(
+            ["git", "diff", "--numstat", "HEAD~1", "HEAD"],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        return (0, 0)
+
+    if result_run.returncode != 0:
+        return (0, 0)
+
+    total_added = 0
+    total_removed = 0
+    for line in result_run.stdout.strip().splitlines():
+        parts = line.split("\t")
+        if len(parts) < 2:
+            continue
+        added_str, removed_str = parts[0], parts[1]
+        if added_str == "-" or removed_str == "-":
+            continue
+        try:
+            total_added += int(added_str)
+            total_removed += int(removed_str)
+        except ValueError:
+            continue
+    return (total_added, total_removed)
 
 
 def _run_gates(gates: list[Gate], project_root: Path) -> dict[str, Verdict]:

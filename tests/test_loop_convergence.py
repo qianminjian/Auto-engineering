@@ -1044,7 +1044,7 @@ class TestRoundResultHistory:
         orch = Orchestrator(
             requirement="test", tasks=[task], executor=noop, config=config
         )
-        history = await orch.run()
+        await orch.run()
 
         # 核心断言: round_result.history 含 1 个 RoundHistory
         assert len(orch.round_results) == 1
