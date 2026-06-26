@@ -975,3 +975,224 @@ class TestCheckpointStateTyping:
         assert loaded.state.round == 5
         assert loaded.state.step == 3
         assert loaded.state.status == "running"
+
+
+# ============================================================
+# G. v2.3 Phase G: RoundResult.history 含 RoundHistory (P1.3)
+# ============================================================
+
+
+class TestRoundResultHistory:
+    """Phase 2.3-G: RoundResult.history: list[RoundHistory] 字段.
+
+    设计动机 (P1.3 数据冗余修复):
+        RoundResult (round.py) 与 RoundHistory (convergence.py) 有大量数据冗余:
+        - gate_results: 两边都有
+        - files_changed / lines_added/removed: RoundHistory 跑 git diff 重算
+        - task_outcomes: RoundResult.outcomes 与 RoundHistory.task_outcomes
+
+    修复方案: RoundResult 直接含 history: list[RoundHistory] 字段.
+        run_round 末尾自动构造 1 个 RoundHistory 写入 round_result.history.
+        Orchestrator 不再 _build_history, 直接 round_result.history 累加.
+
+    借鉴 LangGraph Pregel.tick() Packet 模式:
+        Pregel 在 tick() 末尾把数据打包成 Packet 直接传给 channel,
+        不在调用方 (PregelLoop) 重复打包数据.
+    """
+
+    @pytest.mark.asyncio
+    async def test_round_result_contains_history_after_run_round(
+        self, tmp_path
+    ) -> None:
+        """run_round 末尾 RoundResult.history 必须含 1 个 RoundHistory.
+
+        这是 Phase G 核心契约: RoundResult.history 是 RoundHistory 的
+        直接载体, 不需 Orchestrator 二次构造.
+        """
+        from auto_engineering.gates.safety import SafetyGate
+        from auto_engineering.loop.convergence import RoundHistory
+        from auto_engineering.loop.orchestrator import (
+            Orchestrator,
+            OrchestratorConfig,
+        )
+        from auto_engineering.loop.plan import Task
+        from auto_engineering.loop.round import TaskOutcome
+
+        async def noop(task, ctx):
+            return TaskOutcome(
+                task_id=task.id, status="completed", output="ok"
+            )
+
+        # 准备空 git 仓库 (SafetyGate 需要可读目录)
+        (tmp_path / "test.py").write_text("print('hi')\n")
+
+        task = Task(
+            id="t1",
+            title="t",
+            description="d",
+            expected_output="json",
+            role="developer",
+            target_files=frozenset(),
+        )
+        config = OrchestratorConfig(
+            convergence_config=ConvergenceConfig(
+                max_iterations=1, stagnation_threshold=999
+            ),
+            gates=[SafetyGate()],
+            project_root=tmp_path,
+        )
+        orch = Orchestrator(
+            requirement="test", tasks=[task], executor=noop, config=config
+        )
+        history = await orch.run()
+
+        # 核心断言: round_result.history 含 1 个 RoundHistory
+        assert len(orch.round_results) == 1
+        rr = orch.round_results[0]
+        assert hasattr(rr, "history"), "RoundResult 必须有 history 字段"
+        assert len(rr.history) == 1, (
+            f"RoundResult.history 应含 1 个 RoundHistory, 实际: {len(rr.history)}"
+        )
+        assert isinstance(rr.history[0], RoundHistory), (
+            f"rr.history[0] 必须是 RoundHistory, 实际: {type(rr.history[0]).__name__}"
+        )
+        assert rr.history[0].round_id == 1, "RoundHistory.round_id 必须等于轮次"
+
+    @pytest.mark.asyncio
+    async def test_round_history_includes_tasks_run_and_gate_results(
+        self, tmp_path
+    ) -> None:
+        """RoundHistory 必须含 tasks_run + gate_results (非空, 真集成).
+
+        验证 Phase G 修复后, RoundHistory 不再是 Orchestrator 二次包装的空壳,
+        而是 run_round 末尾从 RoundResult 真实数据构造.
+        """
+        from auto_engineering.gates.safety import SafetyGate
+        from auto_engineering.loop.orchestrator import (
+            Orchestrator,
+            OrchestratorConfig,
+        )
+        from auto_engineering.loop.plan import Task
+        from auto_engineering.loop.round import TaskOutcome
+
+        async def noop(task, ctx):
+            return TaskOutcome(
+                task_id=task.id, status="completed", output="ok"
+            )
+
+        (tmp_path / "app.py").write_text("# empty\n")
+
+        tasks = [
+            Task(
+                id="t1",
+                title="t1",
+                description="d1",
+                expected_output="json",
+                role="developer",
+                target_files=frozenset(),
+            ),
+            Task(
+                id="t2",
+                title="t2",
+                description="d2",
+                expected_output="json",
+                role="developer",
+                target_files=frozenset(),
+            ),
+        ]
+        config = OrchestratorConfig(
+            convergence_config=ConvergenceConfig(
+                max_iterations=1, stagnation_threshold=999
+            ),
+            gates=[SafetyGate()],
+            project_root=tmp_path,
+        )
+        orch = Orchestrator(
+            requirement="test", tasks=tasks, executor=noop, config=config
+        )
+        await orch.run()
+
+        # 验证 RoundResult.history[0] 含 tasks_run + gate_results
+        rr = orch.round_results[0]
+        rh = rr.history[0]
+        assert sorted(rh.tasks_run) == ["t1", "t2"], (
+            f"tasks_run 必须含两个 task id, 实际: {rh.tasks_run}"
+        )
+        assert rh.task_outcomes == {"t1": "completed", "t2": "completed"}, (
+            f"task_outcomes 记录 status, 实际: {rh.task_outcomes}"
+        )
+        # gate_results 应非空 (SafetyGate 真跑过)
+        assert "safety" in rh.gate_results, (
+            f"gate_results 必须含 'safety', 实际 keys: {list(rh.gate_results.keys())}"
+        )
+        assert rh.gate_results["safety"].passed is True, (
+            f"SafetyGate 必须 PASS (空仓库无 secret), 实际: {rh.gate_results['safety']}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_round_result_history_persists_via_checkpoint(
+        self, store: SQLiteCheckpointStore, tmp_path
+    ) -> None:
+        """round_result.history 必须能经 Checkpoint save/load 持久化 (round-trip).
+
+        Phase G 的数据契约: round_result.history 通过 orchestrator.history
+        累加 (extend 而非 append), 然后作为 Checkpoint.history 持久化.
+        关键: 加载后 history 列表中每个项的 round_id / gate_results 保持一致.
+        """
+        from auto_engineering.gates.safety import SafetyGate
+        from auto_engineering.loop.orchestrator import (
+            Orchestrator,
+            OrchestratorConfig,
+        )
+        from auto_engineering.loop.plan import Task
+        from auto_engineering.loop.round import TaskOutcome
+        from auto_engineering.loop.state import LoopState
+
+        async def noop(task, ctx):
+            return TaskOutcome(
+                task_id=task.id, status="completed", output="ok"
+            )
+
+        (tmp_path / "app.py").write_text("# ok\n")
+
+        task = Task(
+            id="t1",
+            title="t",
+            description="d",
+            expected_output="json",
+            role="developer",
+            target_files=frozenset(),
+        )
+        config = OrchestratorConfig(
+            convergence_config=ConvergenceConfig(
+                max_iterations=1, stagnation_threshold=999
+            ),
+            gates=[SafetyGate()],
+            project_root=tmp_path,
+        )
+        orch = Orchestrator(
+            requirement="test", tasks=[task], executor=noop, config=config
+        )
+        await orch.run()
+
+        # orchestrator.history 应是 round_result.history 的累加
+        assert len(orch.history) == len(orch.round_results), (
+            f"orch.history 长度必须 == round_results 长度, "
+            f"实际 history={len(orch.history)} vs round_results={len(orch.round_results)}"
+        )
+
+        # 持久化 round-trip
+        state = LoopState(round=1, step=0, status="running")
+        cp_id = store.save(state=state, round=1, history=orch.history)
+        loaded = store.load(cp_id)
+
+        # 关键: 加载后 history 列表保留 gate_results 完整结构
+        assert len(loaded.history) == 1, (
+            f"Checkpoint.history 长度必须 == 1, 实际: {len(loaded.history)}"
+        )
+        loaded_item = loaded.history[0]
+        assert loaded_item["round_id"] == 1
+        assert "safety" in loaded_item["gate_results"], (
+            f"Checkpoint 历史项必须含 'safety' gate, "
+            f"实际 keys: {list(loaded_item['gate_results'].keys())}"
+        )
