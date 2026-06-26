@@ -107,6 +107,7 @@ def render_to(
     envops: dict,
     overwrite: bool,
     tmpdir: Path,
+    exclude_callback: str = "auto_engineering.init._shared.exclude:default_match_exclude",
 ) -> list[Path]:
     """Phase 渲染 — 委托给 TemplateRenderer，渲染到 tmpdir。
 
@@ -117,6 +118,8 @@ def render_to(
         folder_name: 目标目录名 (dst_path.name)
         template_dir: 模板根目录
         subdirectory: 可选子目录
+        exclude_callback: P1.2 — "module:function" 格式 spec, 渲染阶段动态排除
+            来源: Copier _main.py:753 match_exclude
         其他: TemplateRenderer 参数
 
     Returns:
@@ -139,6 +142,15 @@ def render_to(
         subdirectory=subdirectory,
     )
 
+    # P1.2: 解析 exclude_callback spec 为可调用对象
+    # 解析失败时回退到默认 callback, 避免渲染失败 (优雅降级)
+    from ._shared.exclude import default_match_exclude, parse_exclude_callback
+
+    try:
+        match_exclude = parse_exclude_callback(exclude_callback)
+    except (ValueError, ImportError, AttributeError):
+        match_exclude = default_match_exclude
+
     from .renderer import TemplateRenderer
 
     renderer = TemplateRenderer(
@@ -149,5 +161,6 @@ def render_to(
         no_render=no_render,
         envops=envops,
         overwrite=overwrite,
+        match_exclude=match_exclude,
     )
     return renderer.render_to(tmpdir)

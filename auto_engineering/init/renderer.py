@@ -56,6 +56,7 @@ class TemplateRenderer:
         envops: dict | None = None,
         overwrite: bool = False,
         conflict_handler: Callable[[str], bool] | None = None,
+        match_exclude: Callable[[Path], bool] | None = None,
     ):
         self.template_dirs = template_dirs
         self.context = context
@@ -64,6 +65,9 @@ class TemplateRenderer:
         self.no_render = no_render or []
         self.overwrite = overwrite
         self.conflict_handler = conflict_handler
+        # P1.2: Copier match_exclude 回调 — 动态排除路径 (Callable[[Path], bool])
+        # 来源: copier/_main.py:753 match_exclude(self) -> Callable[[Path], bool]
+        self.match_exclude = match_exclude
         self.env = SandboxedEnvironment(
             undefined=StrictUndefined,
             **(envops or {"keep_trailing_newline": True}),
@@ -164,10 +168,20 @@ class TemplateRenderer:
         return spec.match_file
 
     def _is_excluded(self, file_path: Path, src_dir: Path) -> bool:
-        """检查文件是否被排除。"""
+        """检查文件是否被排除。
+
+        两层排除（与 Copier match_exclude + 路径模式一致）:
+        1. self.exclude 路径模式 (gitignore-style) — 来自 _exclude YAML
+        2. self.match_exclude 回调 (Callable[[Path], bool]) — P1.2 动态排除
+           默认指向 _shared.exclude.default_match_exclude, 排除 .git/ 等
+        """
         matcher = self._path_matcher(self.exclude)
         rel = str(file_path.relative_to(src_dir))
-        return matcher(rel)
+        if matcher(rel):
+            return True
+        if self.match_exclude is not None and self.match_exclude(file_path):
+            return True
+        return False
 
     def _is_no_render(self, rel_path: str) -> bool:
         """检查文件是否应原样复制不渲染。"""

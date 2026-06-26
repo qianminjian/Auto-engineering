@@ -269,6 +269,7 @@ class InitWorker:
             envops=self._template.envops,
             overwrite=self.overwrite,
             tmpdir=tmpdir,
+            exclude_callback=self._template.exclude_callback,
         )
 
     def _phase_tasks(self, tmpdir: Path) -> None:
