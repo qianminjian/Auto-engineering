@@ -33,6 +33,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, TypeVar
 
+from auto_engineering.loop.convergence import RoundHistory
 from auto_engineering.loop.types import LoopStateProtocol
 
 # Schema 版本号 (变更时 +1, 用于未来兼容)
@@ -77,7 +78,7 @@ class Checkpoint[T]:
     round: int
     step: int
     state: T  # LoopStateProtocol (caller 决定具体类型, 典型 LoopState)
-    history: list[dict[str, Any]]  # RoundHistory 序列化列表
+    history: list[RoundHistory]  # v2.3 Phase M (P2.3): 强类型, 非 list[dict]
     created_at: datetime
     schema_version: int
     parent_id: str | None = None
