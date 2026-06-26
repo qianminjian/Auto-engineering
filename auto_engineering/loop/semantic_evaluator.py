@@ -24,6 +24,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from collections.abc import Awaitable, Callable
@@ -138,7 +139,7 @@ class ClaudeSemanticEvaluator:
         )
 
     async def _call_claude(self, prompt: str):
-        """调 Claude API.
+        """调 Claude API (异步包装, 不阻塞 event loop).
 
         Args:
             prompt: 评估 prompt
@@ -147,8 +148,9 @@ class ClaudeSemanticEvaluator:
             LLMResponse (AnthropicProvider.create_message 返回)
         """
         provider = AnthropicProvider(api_key=self.api_key)
-        # 同步 API → 包成 async (保持接口一致)
-        return await _run_in_executor(
+        # 同步 API → 用 asyncio.to_thread 跑在 default executor
+        # 保持接口 async (与 OrchestratorConfig.semantic_evaluator 协议一致)
+        return await asyncio.to_thread(
             provider.create_message,
             model=self.model,
             max_tokens=self.max_tokens,
@@ -172,25 +174,6 @@ class ClaudeSemanticEvaluator:
         except (json.JSONDecodeError, KeyError, IndexError, AttributeError, TypeError):
             # 任何解析错误 → False (保守, 不误判停止)
             return False
-
-
-async def _run_in_executor(func, /, **kwargs):
-    """在默认 executor 中跑同步函数 — 保持接口 async.
-
-    Args:
-        func: 同步函数
-        **kwargs: 传给 func 的关键字参数
-
-    Returns:
-        func(**kwargs) 的返回值
-    """
-    import asyncio
-    import functools
-
-    loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(
-        None, functools.partial(func, **kwargs)
-    )
 
 
 # ============================================================

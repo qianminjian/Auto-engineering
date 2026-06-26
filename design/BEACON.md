@@ -1,4 +1,4 @@
-> 来源：@design/INDEX.md | 创建：2026-06-24 | 更新：2026-06-26 | 阶段：v2.2 闭环完成（Phase G/H/I + J 生产文档 + FINAL manual gate）
+> 来源：@design/INDEX.md | 创建：2026-06-24 | 更新：2026-06-26 | 阶段：v2.3 Wave 2 完成（Phase E-J + 内置 LLM SemanticEvaluator + FINAL manual gate）
 
 ## 目标与成功标准
 
@@ -34,14 +34,15 @@
 | 17 | **SQLiteCheckpointStore.load() 必须返回 LoopState 实例 + Channel 实例 (完整闭环)** | v2.1 Phase A 实现 model_dump 但 _deserialize_state 仅返回 dict；Phase D 修复：deserialize_loop_state + _rebuild_channel | 2026-06-25 |
 | 18 | **atdo Plan 报告必须含 runtime smoke 验证 (防止虚化测试)** | Phase 1 审计：atdo Plan 报告虚化（Phase 02 测试用空 LoopState 绕过）。v2.1 强制 inline smoke test | 2026-06-25 |
 | 19 | **v2.2 闭环完成 + 生产就绪** | Wave 3 P2 改进 (P2.1 Checkpoint.state Any→LoopStateProtocol + P2.4 RoundResult 集成 Gate + P2.5 init 拆 8 模块) + atdo 防护规则化 (.claude/rules/agent-spawn-timeout.md 3 层防护) | 2026-06-26 |
+| 20 | **v2.3 Wave 2 完成: Orchestrator 集成 LLM SemanticEvaluator (Claude)** | Phase J 实现 ClaudeSemanticEvaluator (接 AnthropicProvider), OrchestratorConfig 默认启用 (有 API key 时). 第 4 级语义收敛判定生效. 借鉴 LangGraph ConditionalEdge: LLM 评估路由开箱即用. | 2026-06-26 |
 
 ## 当前状态
 
-**阶段：** v2.2 闭环完成（v1.0 init/dev-loop + v1.1 修复 + v2.0 多 Agent 并发 + v2.1 Phase A-D 修复 4 项 P0 阻断 + CLI v2 集成 + Phase E 文档同步 + Phase F atdo 报告虚报防护 + v2.2 Phase G Checkpoint.state 重构 + Phase H RoundResult 集成 Gate + Phase I init 模块拆分 + Phase J 生产文档 4 件 + BEACON 决策 19）。
+**阶段：** v2.3 Wave 2 完成（v2.0 多 Agent + v2.1 P0 修复 + v2.2 P2 改进 + v2.3 Phase E max_iterations 单一来源 + Phase F exclude_callback + Phase G RoundResult.history + Phase H Orchestrator+AgentRuntime 集成 + Phase I init 拆 8 模块 + Phase J 内置 LLM SemanticEvaluator）。
 
-**最近动作：** 2026-06-26 v2.2 Phase J 完成 — `docs/production-deployment.md` (80 行) + `docs/troubleshooting.md` (77 行) + `docs/api-reference.md` (80 行) + `docs/e2e-real-run.md` (待写) + BEACON 决策 19 记录 v2.2 闭环。Phase G-I 完成 (`a31e14d`/`8526e89`/`c1fbedc`/`568baf1`/`39e511b`/`109cd6e`) — Checkpoint.state Protocol+Generic + RoundResult Gate 集成 + init 拆 8 模块 + ruff 0 errors。
+**最近动作：** 2026-06-26 v2.3 Phase J 完成 — `auto_engineering/loop/semantic_evaluator.py` (ClaudeSemanticEvaluator 接 AnthropicProvider) + `OrchestratorConfig.__post_init__` 默认启用 (有 ANTHROPIC_API_KEY 时) + `tests/test_loop_semantic_evaluator.py` (9 用例) + 5 维 runtime smoke PASS + BEACON 决策 20 记录 v2.3 Wave 2 闭环。P1.6 阻断解除: 第 4 级语义收敛触发从"用户自写"变"开箱即用"。
 
-**下一步：** v2.2 全部完成 → 用户 manual gate 决策 v2.2 → 是否启动 v3.0 (production hardening / 真跑验证 / Web UI)？
+**下一步：** v2.3 Wave 2 全部完成 → 用户 manual gate 决策 v2.3 → 是否启动 v3.0 (production hardening / 真跑验证 / Web UI)？
 
 **阻塞项：** 无
 
@@ -55,6 +56,8 @@
 
 | 日期 | 变更 | 原因 |
 |------|------|------|
+| 2026-06-26 | v2.3 Phase J 完成（ClaudeSemanticEvaluator + OrchestratorConfig 默认 + BEACON 决策 20） | Wave 2 FINAL：内置 LLM 评估器 (P1.6)，第 4 级语义收敛开箱即用 |
+| 2026-06-26 | v2.3 Phase E-I 完成 | max_iterations 单一来源 (P1.1) + exclude_callback (P1.2) + RoundResult.history (P1.3) + AgentRuntime 集成 (P1.4) + init 拆 8 模块 |
 | 2026-06-26 | v2.2 Phase J 完成（生产文档 4 件 + BEACON 决策 19） | Wave 3 FINAL：production deployment / troubleshooting / api-reference / e2e-real-run |
 | 2026-06-26 | v2.2 Phase G-I 完成 | Checkpoint.state Protocol+Generic + RoundResult Gate 集成 + init 拆 8 模块 |
 | 2026-06-25 | v2.1 Phase F 完成（atdo 报告虚报防护 P1.6 FINAL） | Phase 1 审计：Plan 报告虚化案例全记录 + Runtime Smoke Policy 永久资产 + smoke helper 工具 |
