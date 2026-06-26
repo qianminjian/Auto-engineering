@@ -608,3 +608,133 @@ def test_checkpoint_round_trip_restores_channels_via_from_checkpoint():
     # 已达成的 Barrier wait() 立即返回
     import asyncio
     asyncio.run(restored_sync.wait())
+
+
+# ============================================================
+# Phase v2.3-A: Channel.update 对齐 LangGraph BaseChannel
+# 设计: update(values: Sequence[T]) -> bool
+# - LangGraph BaseChannel.update(values: Sequence[Update]) -> bool (langgraph/channels/base.py:90)
+# - LangGraph Topic.update(values: Sequence[Value | list[Value]]) -> bool (langgraph/channels/topic.py:77)
+# - 返回 bool 表示是否有变化(用于触发下游)
+# ============================================================
+
+
+import inspect
+
+
+def test_channel_update_signature_matches_langgraph():
+    """Channel.update 签名必须匹配 LangGraph BaseChannel: (values: Sequence[T]) -> bool.
+
+    通过 inspect.signature 验证参数名 'values' 与返回注解 'bool'.
+    这是 Phase 1 审计 P0.1 的核心修复点: 原签名是 update(value: T) -> T, 与 LangGraph 不兼容.
+    """
+    sig = inspect.signature(Channel.update)
+    params = list(sig.parameters.keys())
+    # 必须有 'self' 和 'values' 两个参数
+    assert "values" in params, f"Channel.update must have 'values' param, got {params}"
+    # 返回注解必须声明为 bool (或 bool 的等价物)
+    assert sig.return_annotation is bool, (
+        f"Channel.update must return bool, got {sig.return_annotation}"
+    )
+
+
+def test_last_value_channel_update_batch_sets_last():
+    """LastValueChannel.update([v1, v2, v3]) 后 get() == v3 (最后元素胜出).
+
+    对齐 LangGraph LastValue.update: 序列中最后一个值覆盖.
+    """
+    ch: LastValueChannel[str] = LastValueChannel("plan")
+    ch.update(["a", "b", "c"])
+    assert ch.get() == "c"
+
+
+def test_last_value_channel_update_returns_bool_on_change():
+    """LastValueChannel.update 有变化时返回 True (触发下游)."""
+    ch: LastValueChannel[str] = LastValueChannel("plan")
+    # 从 None → "x" 视为有变化
+    result = ch.update(["x"])
+    assert result is True
+    assert ch.get() == "x"
+
+
+def test_last_value_channel_update_returns_bool_on_no_change():
+    """LastValueChannel.update 重复相同值时返回 False (无变化, 不触发下游).
+
+    对齐 LangGraph LastValue: 仅当序列中最后一个值与当前值不同时返回 True.
+    """
+    ch: LastValueChannel[str] = LastValueChannel("plan")
+    ch.update(["same"])
+    # 第二次传入相同的 "same" → 无变化 → 返回 False
+    result = ch.update(["same"])
+    assert result is False
+    assert ch.get() == "same"
+
+
+def test_last_value_channel_update_empty_sequence():
+    """LastValueChannel.update([]) 空序列应不改变状态, 返回 False (无变化).
+
+    对齐 LangGraph: 'If there are no updates, it is called with an empty sequence.'
+    """
+    ch: LastValueChannel[str] = LastValueChannel("plan")
+    ch.update(["initial"])
+    result = ch.update([])
+    assert result is False
+    assert ch.get() == "initial"
+
+
+def test_accumulating_channel_update_batch_extends():
+    """AccumulatingChannel.update([v1, v2, v3]) 批量扩展列表.
+
+    对齐 LangGraph Topic.update: extend 而不是多次 append 调用.
+    """
+    ch: AccumulatingChannel[str] = AccumulatingChannel("findings")
+    ch.update(["x", "y", "z"])
+    assert ch.get() == ["x", "y", "z"]
+
+
+def test_accumulating_channel_update_supports_nested_list():
+    """AccumulatingChannel.update([[v1, v2], v3]) 支持嵌套 list 输入 (Topic 特性).
+
+    LangGraph Topic.update(values: Sequence[Value | list[Value]]) 允许单值或 list 值混合.
+    参考 langgraph/channels/topic.py:77 + _flatten(values).
+    """
+    ch: AccumulatingChannel[str] = AccumulatingChannel("findings")
+    ch.update([["x", "y"], "z"])
+    assert ch.get() == ["x", "y", "z"]
+
+
+def test_accumulating_channel_update_returns_bool_on_actual_change():
+    """AccumulatingChannel.update 非空序列返回 True (有新增), 空序列返回 False."""
+    ch: AccumulatingChannel[str] = AccumulatingChannel("findings")
+    # 非空 → True
+    assert ch.update(["item"]) is True
+    # 空 → False
+    assert ch.update([]) is False
+
+
+def test_barrier_channel_update_batch_counts_all():
+    """BarrierChannel.update([None, None, None]) 一次调用 +3 (批量计数).
+
+    对齐 LangGraph: 序列长度 = 一次性写入次数 (对齐 Topic 模式).
+    """
+    ch: BarrierChannel = BarrierChannel("gate", expected=5)
+    ch.update([None, None, None])
+    assert ch.get() == 3
+    assert ch.empty() is True  # 未达 expected
+
+
+def test_barrier_channel_update_returns_bool_on_reach_expected():
+    """BarrierChannel.update 达到 expected 时返回 True."""
+    ch: BarrierChannel = BarrierChannel("gate", expected=2)
+    # 未达 → False
+    assert ch.update([None]) is False
+    # 达到 → True
+    assert ch.update([None, None]) is True
+
+
+def test_barrier_channel_update_empty_sequence_no_change():
+    """BarrierChannel.update([]) 空序列不改变状态, 返回 False."""
+    ch: BarrierChannel = BarrierChannel("gate", expected=2)
+    ch.update([None])
+    assert ch.update([]) is False
+    assert ch.get() == 1
