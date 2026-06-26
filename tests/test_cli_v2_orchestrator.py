@@ -174,6 +174,24 @@ class TestC2FallbackV1WithoutApiKey:
         # exit 0 (用 mock 跑过)
         assert result.exit_code == 0
 
+    def test_v1_fallback_shows_friendly_message(
+        self, valid_project_no_key, mock_v1_runner, mock_v2_runner, monkeypatch, _reset_block_cache
+    ):
+        """P0-II: 无 API key fallback 时输出友好提示 '请设置 ANTHROPIC_API_KEY'."""
+        from unittest.mock import patch as mp
+
+        with mp("auto_engineering.config.environment.preflight", lambda r: None):
+            monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+            runner = CliRunner()
+            result = runner.invoke(main, ["dev-loop", "build x"])
+
+        # 验证友好提示出现在输出中
+        all_output = result.output + (result.stderr or "")
+        assert "ANTHROPIC_API_KEY" in all_output, (
+            f"fallback without API key should show friendly hint about setting ANTHROPIC_API_KEY, "
+            f"got: {all_output}"
+        )
+
 
 # ============================================================
 # C.3 — --use-v1 flag → 强制 v1.0
