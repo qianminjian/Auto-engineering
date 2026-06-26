@@ -85,16 +85,28 @@ async def _smoke() -> int:
             f"lint gate_results is not Verdict: {type(lint_verdict)}"
         )
 
-        # 验证 3: ConvergenceJudge 不应触发 LEVEL_QUALITY (有 failed gate)
+        # 验证 3: ConvergenceJudge 必须触发 LEVEL_QUALITY (有 failed gate) — v2.3 D-fix
         judge = ConvergenceJudge()
         verdict = judge.evaluate(state=None, history=history)
 
-        # 由于 fake_failing 失败 → _check_quality_gates 不应触发 stop
-        # 但 hard_limit 也不会触发 (max_rounds=10, only ran 1 round)
-        # 语义也不通过 (无 evaluator) → 应返回 LEVEL_CONTINUE 或硬上限
-        assert verdict.level != 3 or "质量门失败" not in verdict.reason, (
-            f"verdict 错误触发了 QUALITY_PASS 但有失败 gate: level={verdict.level}, "
+        # v2.3 Phase D-fix: 质量门是"门", 不通过应关. fake_failing 失败 →
+        # _check_quality_gates 必须返回 Verdict.stop(level=LEVEL_QUALITY),
+        # reason 含 'fake_failing: intentional failure for test'.
+        # 修复前: 返回 None 让停滞检测触发, 输出 '连续 2 轮产出无实质变化' — 错误.
+        from auto_engineering.loop.convergence import LEVEL_QUALITY
+        assert verdict.should_stop is True, (
+            f"verdict 应触发停止, 但 should_stop=False: level={verdict.level}, "
             f"reason={verdict.reason}"
+        )
+        assert verdict.level == LEVEL_QUALITY, (
+            f"verdict 应为 LEVEL_QUALITY (3), got level={verdict.level}, "
+            f"reason={verdict.reason}"
+        )
+        assert "intentional failure for test" in verdict.reason, (
+            f"verdict.reason 应含 'intentional failure for test': {verdict.reason}"
+        )
+        assert "fake_failing" in verdict.reason, (
+            f"verdict.reason 应含 gate name 'fake_failing': {verdict.reason}"
         )
 
         # 验证 4: 通过 history[-1].gate_results 仍可读到 Verdict.message
