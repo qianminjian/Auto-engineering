@@ -745,3 +745,154 @@ def test_barrier_channel_update_empty_sequence_no_change():
     ch.update([None])
     assert ch.update([]) is False
     assert ch.get() == 1
+
+
+# ============================================================
+# Phase v2.3-B: channel_versions 触发机制 (P0.2)
+# 设计: LoopState.channel_versions: dict[str, int], 借鉴 LangGraph Pregel.channel_versions
+# 参考: langgraph/libs/langgraph/langgraph/pregel/main.py:1140, 1736-1740
+# 用途: 跟踪每个 channel 的版本号, 实现增量触发 (get_new_channel_versions diff)
+# ============================================================
+
+
+def test_loop_state_channel_versions_init_empty():
+    """LoopState() 默认 channel_versions 为空 dict.
+
+    借鉴 LangGraph Pregel: 初始无 channel 被修改, versions 为空.
+    """
+    state = LoopState()
+    assert state.channel_versions == {}
+    assert isinstance(state.channel_versions, dict)
+
+
+def test_loop_state_set_channel_increments_version():
+    """set_channel 首次写入时 channel_versions[name] 累加为 1, 返回 True."""
+    state = LoopState(channels={"plan": LastValueChannel("plan")})
+    assert state.channel_versions == {}  # 初始空
+    result = state.set_channel("plan", "v1")
+    assert result is True
+    assert state.channel_versions == {"plan": 1}
+
+
+def test_loop_state_set_channel_no_change_returns_false():
+    """重复写入相同值不累加 version, 返回 False (无变化信号)."""
+    state = LoopState(channels={"plan": LastValueChannel("plan")})
+    state.set_channel("plan", "v1")  # 1
+    assert state.channel_versions == {"plan": 1}
+
+    # 重复相同值 → 无变化
+    result = state.set_channel("plan", "v1")
+    assert result is False
+    assert state.channel_versions == {"plan": 1}  # 不变
+
+
+def test_loop_state_set_channel_change_returns_true_and_version():
+    """写入新值时累加 version, 返回 True."""
+    state = LoopState(channels={"plan": LastValueChannel("plan")})
+    state.set_channel("plan", "v1")  # version=1
+    state.set_channel("plan", "v1")  # 重复,version 不变
+    result = state.set_channel("plan", "v2")  # 新值,version+1
+    assert result is True
+    assert state.channel_versions == {"plan": 2}
+
+
+def test_loop_state_multiple_channels_track_separately():
+    """多个 channel 各自累加 version, 互不影响."""
+    state = LoopState(
+        channels={
+            "plan": LastValueChannel("plan"),
+            "logs": AccumulatingChannel("logs"),
+        }
+    )
+    state.set_channel("plan", "v1")  # plan=1
+    state.channels["logs"].update(["a"])  # 内部用 set_channel 走
+    state.set_channel("logs", "a")  # log=1 (list 语义)
+    state.set_channel("plan", "v2")  # plan=2
+    assert state.channel_versions["plan"] == 2
+    assert state.channel_versions["logs"] == 1
+
+
+def test_loop_state_channel_versions_serializable():
+    """channel_versions 字段必须可 JSON 序列化 (Pydantic model_dump)."""
+    import json
+
+    state = LoopState(channels={"plan": LastValueChannel("plan")})
+    state.set_channel("plan", "v1")
+    state.set_channel("plan", "v2")
+    dumped = state.model_dump()
+    assert dumped["channel_versions"] == {"plan": 2}
+    # 必须可 JSON 序列化
+    json.dumps(dumped["channel_versions"])
+
+
+def test_channel_copy_preserves_internal_state_independently():
+    """Channel.copy() 返回的副本内部状态独立(包含 checkpoint 行为).
+
+    Phase v2.3-B: copy 用于 checkpoint 重建, 必须独立 (Pydantic model_dump 深拷贝检查).
+    验证已有 copy() 不受 set_channel 累加 version 行为影响(注: version 由 LoopState 持有, 不在 Channel 内).
+    """
+    original: LastValueChannel[str] = LastValueChannel("plan")
+    original.set("original")
+    copy = original.copy()
+    assert copy.get() == "original"
+    # 副本写入不影响原对象
+    copy.set("modified")
+    assert original.get() == "original"
+    assert copy.get() == "modified"
+
+
+# ============================================================
+# version_utils: get_new_channel_versions 增量触发算法
+# 借鉴 LangGraph pregel/main.py:1736-1740 get_new_channel_versions()
+# 简化: 比较 old vs new versions dict, 返回本轮被修改的 channel 名 set
+# ============================================================
+
+
+def test_get_new_channel_versions_returns_empty_when_unchanged():
+    """新旧 versions 相同时返回空 set (无 channel 被修改)."""
+    from auto_engineering.loop.version_utils import get_new_channel_versions
+
+    old = {"plan": 1, "logs": 2}
+    new = {"plan": 1, "logs": 2}
+    modified = get_new_channel_versions(old, new)
+    assert modified == set()
+
+
+def test_get_new_channel_versions_returns_modified_channels():
+    """versions 不同的 channel 名被加入 modified set."""
+    from auto_engineering.loop.version_utils import get_new_channel_versions
+
+    old = {}
+    new = {"plan": 2, "logs": 1}
+    modified = get_new_channel_versions(old, new)
+    assert modified == {"plan", "logs"}
+
+
+def test_get_new_channel_versions_detects_added_channels():
+    """new 中新增的 channel (old 中不存在) 视为修改."""
+    from auto_engineering.loop.version_utils import get_new_channel_versions
+
+    old = {"plan": 1}
+    new = {"plan": 1, "logs": 1}
+    modified = get_new_channel_versions(old, new)
+    assert modified == {"logs"}
+
+
+def test_get_new_channel_versions_detects_removed_channels():
+    """new 中消失的 channel (old 中存在) 视为修改."""
+    from auto_engineering.loop.version_utils import get_new_channel_versions
+
+    old = {"plan": 1, "logs": 1}
+    new = {"plan": 1}
+    modified = get_new_channel_versions(old, new)
+    assert modified == {"logs"}
+
+
+def test_get_new_channel_versions_detects_version_increment():
+    """version 数值增加的 channel 视为修改 (即使 name 已存在)."""
+    from auto_engineering.loop.version_utils import get_new_channel_versions
+
+    old = {"plan": 1}
+    new = {"plan": 2}
+    modified = get_new_channel_versions(old, new)
+    assert modified == {"plan"}
