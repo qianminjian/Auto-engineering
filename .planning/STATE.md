@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed P0-A ContractGate real implementation
-last_updated: "2026-06-27T09:59:32.510Z"
-last_activity: 2026-06-27 — ContractGate real implementation (P0-A)
+stopped_at: Completed P0-B real Agent runtime
+last_updated: "2026-06-27T10:22:00.000Z"
+last_activity: 2026-06-27 — P0-B: _build_v2_agent_runtime real Agent registration
 progress:
   total_phases: 5
   completed_phases: 0
   total_plans: 0
-  completed_plans: 15
+  completed_plans: 17
   percent: 0
 ---
 
@@ -26,9 +26,9 @@ See: .planning/PROJECT.md (not created)
 ## Current Position
 
 Phase: 06-v2-multi-agent-prep
-Plan: N/A
+Plan: 2.4-P0-B (complete)
 Status: In progress
-Last activity: 2026-06-27 — ContractGate real implementation (P0-A)
+Last activity: 2026-06-27 — P0-B: _build_v2_agent_runtime real Agent registration
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -58,6 +58,7 @@ Progress: [░░░░░░░░░░] 0%
 ### Decisions
 
 - [P0-A]: ContractGate 真实实现 — .ae-contracts/ 下 YAML/JSON 文件存在性+格式校验
+- [P0-B]: _build_v2_agent_runtime 使用真实 Agent(BaseAgent) 实例替代 _MockRoleAgent/_DeveloperAgentAdapter; reviewer role 不再注册
 
 ### Pending Todos
 
@@ -75,6 +76,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-06-27 10:20
-Stopped at: Completed P0-A ContractGate real implementation
-Resume file: None
+Last session: 2026-06-27 10:22
+Stopped at: Completed P0-B real Agent runtime
+Resume file: .planning/phases/06-v2-multi-agent-prep/2.4-P0-B-SUMMARY.md
