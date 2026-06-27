@@ -1,30 +1,6 @@
-"""v2.0 SQLite Checkpoint 持久化.
+"""SQLite Checkpoint 持久化 Store.
 
-设计来源: design/v2.0-Analysis-Loop.md §4.4 + §五 Phase 1.2
-
-核心要点:
-    - SQLite 持久化 CheckpointEnvelope (v2.0 Checkpoint 数据信封) + history
-    - Schema 版本号 (兼容未来 schema 变更, 旧版可迁移或拒绝)
-    - 事务保证 (save/load 原子性)
-    - 并发安全: file 模式每线程独立 connection, ":memory:" 模式用单 connection + 锁
-    - JSON 序列化 CheckpointEnvelope (Pydantic model_dump)
-
-API:
-    store = SQLiteCheckpointStore(db_path)
-    store.save(state, round, history=...) -> checkpoint_id
-    store.load_latest() -> Checkpoint | None
-    store.load(checkpoint_id) -> Checkpoint | None
-    store.list_all() -> list[CheckpointMeta]
-    store.delete(checkpoint_id) -> bool
-
-Note: SQLite ":memory:" 数据库是 per-connection 的, 跨 connection 不共享数据.
-    本实现在 ":memory:" 模式下用单 connection + threading.Lock 序列化访问,
-    满足测试场景的并发隔离需求.
-
-v2.3 P0-A: 旧名 LoopState (v2.0 Pydantic) 重命名为 CheckpointEnvelope, 消除与
-    engine.state.LoopState (v1.0 dataclass) 同名双义. 本文件 import 仅用
-    LoopStateProtocol (types.py, 鸭子类型), 不直接 import CheckpointEnvelope.
-    调用方 (e.g. checkpoint/migrate.py) 显式指定 T = CheckpointEnvelope.
+从 loop/checkpoint.py 拆分 (P1-E: checkpoint → checkpoint/ 子模块).
 """
 
 from __future__ import annotations
@@ -36,99 +12,23 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Any
 
-from auto_engineering.loop.convergence import RoundHistory
+from auto_engineering.loop.checkpoint.envelope import (
+    Checkpoint,
+    CheckpointMeta,
+    CheckpointNotFoundError,
+    CheckpointSchemaMismatchError,
+    T,
+)
 from auto_engineering.loop.types import LoopStateProtocol
 
 # Schema 版本号 (变更时 +1, 用于未来兼容)
 SCHEMA_VERSION = 1
 
-# Phase 2.2-G: 用 Protocol 替代 Any, 打破循环引用并提供类型安全
-# - LoopStateProtocol 在 loop/types.py 定义 (不引用 loop/state)
-# - TypeVar T bound Protocol 让 Checkpoint/SQLiteCheckpointStore 接受具体类型
-# - mypy 看到 state 字段是 LoopStateProtocol (或其子类型), 不是 Any
-# - v2.3 P0-A: 典型具体类型是 CheckpointEnvelope (原 LoopState, v2.0 Pydantic)
-T = TypeVar("T", bound=LoopStateProtocol)
-
 
 # ============================================================
-# 数据类: Checkpoint 元数据 + 完整记录
-# ============================================================
-
-
-@dataclass
-class CheckpointMeta:
-    """Checkpoint 元数据 (轻量, 用于 list)."""
-
-    id: str
-    round: int
-    step: int
-    created_at: datetime
-    schema_version: int
-    parent_id: str | None = None
-    tag: str | None = None
-
-
-@dataclass
-class Checkpoint[T]:
-    """完整 Checkpoint (含 state + history).
-
-    Phase 2.2-G: 用 Generic[T] bound LoopStateProtocol 替代 Any.
-    - 类型安全: mypy 看到 state 字段是 LoopStateProtocol, 访问 .round/.step 不报 Any
-    - 打破循环: checkpoint.py 不再 import 具体 LoopState 类, 只用 Protocol 接口
-    - 使用: Checkpoint[CheckpointEnvelope](...) — caller 显式指定 T
-    """
-
-    id: str
-    round: int
-    step: int
-    state: T  # LoopStateProtocol (caller 决定具体类型, 典型 CheckpointEnvelope)
-    history: list[RoundHistory]  # v2.3 Phase M (P2.3): 强类型, 非 list[dict]
-    created_at: datetime
-    schema_version: int
-    parent_id: str | None = None
-    tag: str | None = None
-
-    def meta(self) -> CheckpointMeta:
-        """提取元数据."""
-        return CheckpointMeta(
-            id=self.id,
-            round=self.round,
-            step=self.step,
-            created_at=self.created_at,
-            schema_version=self.schema_version,
-            parent_id=self.parent_id,
-            tag=self.tag,
-        )
-
-
-# ============================================================
-# Checkpoint Store 异常
-# ============================================================
-
-
-class CheckpointError(Exception):
-    """Checkpoint 操作基础异常."""
-
-
-class CheckpointNotFoundError(CheckpointError):
-    """Checkpoint 不存在."""
-
-
-class CheckpointSchemaMismatchError(CheckpointError):
-    """Schema 版本不匹配."""
-
-    def __init__(self, found: int, expected: int) -> None:
-        self.found = found
-        self.expected = expected
-        super().__init__(
-            f"Schema version mismatch: found {found}, expected {expected}"
-        )
-
-
-# ============================================================
-# SQLite Checkpoint Store
+# 序列化辅助: 递归归一化 dataclass 实例
 # ============================================================
 
 
@@ -162,6 +62,11 @@ def _normalize_value(v: Any) -> Any:
     if isinstance(v, (list, tuple)):
         return [_normalize_value(x) for x in v]
     return v
+
+
+# ============================================================
+# SQLite Checkpoint Store
+# ============================================================
 
 
 class SQLiteCheckpointStore[T]:
