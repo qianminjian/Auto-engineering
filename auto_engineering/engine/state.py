@@ -1,4 +1,7 @@
-"""LoopState — Stage 之间通过 channel 共享的状态对象.
+"""EngineState — Stage 之间通过 channel 共享的状态对象 (P1-B 重命名).
+
+原名 LoopState 改为 EngineState 以避免与 v2.0 loop.state.CheckpointEnvelope 同名冲突.
+旧名 LoopState 保留为 type alias, 向后兼容.
 
 参考 LangGraph StateGraph state_schema(简化: 单一 dataclass,无 channel 类型/reducer).
 P0 修复: dataclass 默认 factory 不可 JSON 序列化 → to_dict/from_dict 用 asdict.
@@ -9,7 +12,7 @@ from typing import Any
 
 
 @dataclass
-class LoopState:
+class EngineState:
     """开发循环共享状态. Architect/Developer/Critic 各自写入对应 channel,
     下一 Stage 通过 input_channels 读取.
 
@@ -20,6 +23,9 @@ class LoopState:
         Developer 输出      files_changed, commit_hash, test_results
         Critic 输出         verdict, findings, critic_feedback
         多 Agent 预留       _pending_sends (v2.0+ PUSH 消费)
+
+    Note (P1-B): 旧名 LoopState 是 EngineState 的 alias, 保持向后兼容.
+        新代码推荐 import EngineState.
     """
 
     requirement: str = ""
@@ -28,7 +34,7 @@ class LoopState:
     # Architect 输出
     plan: str = ""
     file_list: list[str] = field(default_factory=list)
-    batch_plan: list[dict] = field(default_factory=list)
+    batch_plan: list[dict] = field(default_factory=dict)
     contracts: dict = field(default_factory=dict)
 
     # Developer 输出
@@ -49,7 +55,7 @@ class LoopState:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "LoopState":
+    def from_dict(cls, data: dict[str, Any]) -> "EngineState":
         """从 dict 重建. 忽略未知字段(防御性,处理 schema 演进)."""
         field_names = {f.name for f in cls.__dataclass_fields__.values()}
         return cls(**{k: v for k, v in data.items() if k in field_names})
@@ -66,3 +72,7 @@ class LoopState:
         for k, v in writes.items():
             if hasattr(self, k):
                 setattr(self, k, v)
+
+
+# P1-B: 向后兼容 alias. 旧代码 `from auto_engineering.engine.state import LoopState` 仍可用.
+LoopState = EngineState

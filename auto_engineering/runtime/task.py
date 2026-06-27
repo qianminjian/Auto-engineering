@@ -56,3 +56,7 @@ class TaskResult:
     raw_response: Any = None
     tool_calls: list[dict] = field(default_factory=list)
     agent_type: str = ""
+
+
+# P1-B: 向后兼容 alias. 旧名 Task 仍可 import, AgentTask 是新推荐名.
+AgentTask = Task
