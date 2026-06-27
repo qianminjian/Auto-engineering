@@ -14,7 +14,10 @@ from .base import BaseTool, ToolResult
 
 
 class ReadFileTool(BaseTool):
-    """Read file content with optional line range. 行号 1-based."""
+    """Read file content with optional line range and project_root whitelist.
+
+    P1-C: project_root 限制读取操作必须在目录内.
+    """
 
     name = "read_file"
     description = "Read file content. Supports line range via offset/limit."
@@ -24,8 +27,19 @@ class ReadFileTool(BaseTool):
         "limit": {"type": "integer", "description": "Lines to read (default 200)"},
     }
 
+    def __init__(self, project_root: Path | None = None, **kwargs: Any):
+        super().__init__(**kwargs)
+        self.project_root = project_root
+
     async def execute(self, **kwargs) -> ToolResult:
-        path = Path(kwargs.get("file_path", ""))
+        file_path = kwargs.get("file_path", "")
+
+        # P1-C: 白名单验证
+        safe, err = self._is_path_safe(file_path)
+        if not safe:
+            return ToolResult(success=False, content="", error=err)
+
+        path = Path(file_path)
         offset = max(1, int(kwargs.get("offset", 1)))
         limit = int(kwargs.get("limit", 200))
         try:
