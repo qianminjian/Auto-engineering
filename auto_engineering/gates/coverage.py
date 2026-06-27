@@ -1,20 +1,35 @@
-"""v2.0 Phase 04 — Gate 5: Coverage (pytest --cov + 阈值检查).
+"""⚠️ 冻结 (FROZEN) — CoverageGate 名存实亡, 保留仅为向后兼容.
 
-设计来源: design/v2.0-Analysis-Loop.md §五 Phase 2 Gate 5.
+冻结标记: 2026-06-27 (v2.4 P0-C)
+BEACON 决策 25: CoverageGate 冻结 — Gate 永远返回 "skip: 未提取到覆盖率数据",
+因为本项目未安装 pytest-cov, pyproject.toml addopts 不含 --cov.
 
-实现方式:
-    - subprocess 调用 `pytest --cov=<module> --cov-report=term --no-cov` 等组合
-    - 解析输出, 提取 TOTAL 覆盖率
-    - 与 threshold 对比
+为什么不激活 CoverageGate (决策 25 选择 b 冻结而非 a 安装):
 
-设计决策:
-    - 默认阈值 80.0% (项目级约定)
-    - 失败 → drop (passed=True with skip), 避免单测覆盖率低阻塞开发
-      (实际项目中 coverage gate 通常在 CI 严格, dev-loop 内宽松)
+    (a) 安装 pytest-cov + pyproject.toml addopts 加 --cov=auto_engineering:
+        - 风险: pytest + cov instrumentation ~2x 内存 (见 .claude/rules/pytest-memory-management.md)
+        - 后果: 全量 pytest 跑可能爆 16G 物理内存, 触发 macOS vm-compressor
+        - 缓解: 加 --no-cov on dev-loop, 但与全局 addopts 冲突, 需要 ci-only 配置
+        - 实际产物: dev-loop 内单进程跑 coverage 收益低 (数据不全, 漏 CLI / 集成路径)
 
-注意:
-    - 真实覆盖率数据需要 `--cov=auto_engineering` 配置
-    - 当前实现优先 threshold 阈值; 无 cov 数据时 pass (with skip note)
+    (b) 冻结 CoverageGate + 引导 CI 负责: 选择本方案
+        - dev-loop 内: Gate 跑 → 永远返回 skip Verdict (保持向后兼容)
+        - CI (.github/workflows/): 配独立 coverage job, 独立环境/独立内存预算
+        - 与 builtin.py 决策 22 / engine/checkpoint.py 决策 24 同模式
+        - 真实覆盖率数据走 CI artifact, 不污染 dev-loop 主循环
+
+设计要点 (保留):
+    - 解析 pytest --cov 输出 TOTAL 行, 计算百分比
+    - threshold 默认 80.0%, strict=False (低于阈值仅 warn, 不阻塞 dev-loop)
+    - 永远返回 passed=True 的 Verdict (drop 语义, 不阻塞开发循环)
+
+历史:
+    - v2.0 Phase 04 (设计来源: design/v2.0-Analysis-Loop.md §五 Phase 2 Gate 5)
+    - v2.4 P0-C 冻结 (2026-06-27): 见 BEACON 决策 25
+
+替代方案:
+    - CI 配置独立 coverage 检查 (推荐路径)
+    - 重构 Gate 为 optional + 用户显式 opt-in (未来 v3.0+ 决策)
 """
 
 from __future__ import annotations
@@ -22,6 +37,7 @@ from __future__ import annotations
 import re
 import shutil
 import subprocess
+import warnings
 from pathlib import Path
 
 from auto_engineering.gates.base import Gate, Verdict
@@ -32,6 +48,29 @@ DEFAULT_COV_TARGET = "auto_engineering"
 
 # pytest-cov output 总覆盖率正则
 _TOTAL_COV_RE = re.compile(r"TOTAL\s+\d+\s+\d+\s+(\d+)%")
+
+# DeprecationWarning: 每 N 次 run 触发 1 次 (避免刷屏, 保留信号)
+_WARN_EVERY_N_RUNS = 5
+_run_counter = 0
+
+
+def _emit_freeze_warning() -> None:
+    """触发一次 DeprecationWarning — 通知调用方 CoverageGate 已冻结.
+
+    策略: 全局计数器, 每 5 次 run 触发 1 次 (避免每次 run 都刷屏).
+    保留信号: 用户 / CI 能看到至少 1 次警告, 知道 Gate 失效.
+    """
+    global _run_counter
+    _run_counter += 1
+    if _run_counter % _WARN_EVERY_N_RUNS == 1:  # 1, 6, 11, ...
+        warnings.warn(
+            "CoverageGate 已冻结 (BEACON 决策 25, 2026-06-27): "
+            "本 Gate 永远返回 'skip: 未提取到覆盖率数据', "
+            "因为本项目未安装 pytest-cov. 真实覆盖率检查应在 CI (.github/workflows/) 独立配置. "
+            "dev-loop 内此 Gate 不阻塞, 但不产生有意义数据.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
 
 
 class CoverageGate(Gate):
@@ -75,6 +114,9 @@ class CoverageGate(Gate):
             Verdict: passed=True (coverage ≥ threshold OR strict=False)
                      passed=False (strict=True AND coverage < threshold)
         """
+        # v2.4 P0-C 冻结 (BEACON 决策 25): 触发 DeprecationWarning 信号
+        _emit_freeze_warning()
+
         project_root = Path(project_root)
         if not project_root.exists():
             return Verdict.failed(

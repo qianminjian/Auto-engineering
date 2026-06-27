@@ -39,6 +39,7 @@
 | 22 | **gates/builtin.py 冻结 — 不再主动开发, 保留为向后兼容** | v2.3 P1-I: builtin.py 文件头添加 ⚠️ 冻结标记, 不新增 Guardrail, 仅修复 bug | 2026-06-26 | ✅ |
 | 23 | **P0-A: v2.0 Channel 体系归属 = checkpoint 专用; v2.0 Pydantic LoopState 重命名为 CheckpointEnvelope** | 消除 "LoopState" 同名双义 (engine.state.LoopState v1.0 dataclass 运行时 vs loop.state.LoopState v2.0 Pydantic checkpoint 专用). 详见下方决策 23 展开 | 2026-06-26 | ✅ |
 | 24 | **P0-B: engine/checkpoint.py 冻结 — 不再主动开发, 保留仅为向后兼容** | v1.0 CLI (ae checkpoint list/show/resume) 已切到 SQLiteCheckpointStore; engine/checkpoint.py 仍被 engine.loop.LoopEngine (v1.0 runtime) 使用, 因此保留. 文件头加 ⚠️ 冻结标记 (与 builtin.py 决策 22 同模式) | 2026-06-26 | ✅ |
+| 25 | **P0-C: CoverageGate (gates/coverage.py) 冻结 — 永远返回 'skip' Verdict, 不阻塞 dev-loop** | 本项目未装 pytest-cov (pyproject.toml addopts 不含 --cov), Gate 永远 'skip: 未提取到覆盖率数据'. 选 (b) 冻结而非 (a) 安装: (a) 装 pytest-cov 会让所有 pytest 跑 ~2x 内存 (CLAUDE.md 16G 内存约束, .claude/rules/pytest-memory-management.md), 真实覆盖率检查应在 CI 独立配置. 文件头加 ⚠️ 冻结标记 + DeprecationWarning 每 5 run 触发 1 次 + 测试保留 verdict.passed 接口 (向后兼容). 与决策 22 (builtin.py) / 24 (engine/checkpoint.py) 同模式 | 2026-06-27 | ✅ |
 
 ## 决策 23 展开: Channel 体系归属 = checkpoint 专用
 
@@ -68,6 +69,7 @@
 
 | 日期 | 变更 | 原因 |
 |------|------|------|
+| 2026-06-27 | v2.4 P0-C 完成 (CoverageGate 冻结 + DeprecationWarning + BEACON 决策 25) | 本项目未装 pytest-cov, Gate 永远 'skip'. 选冻结而非安装 (避免 pytest 内存翻倍爆 16G). 真实覆盖率走 CI 独立 job. |
 | 2026-06-26 | v2.3 P0-B 完成 (v1.0 CLI list/show/resume 切到 SQLiteCheckpointStore, engine/checkpoint.py 冻结, BEACON 决策 24) | 统一 CLI backend: v1.0 与 v2 命令共用 SQLiteCheckpointStore; 旧 engine.checkpoint 保留兼容 (v1.0 runtime 仍用), 文件头加 ⚠️ 标记 |
 | 2026-06-26 | v2.3 P0-A 完成 (LoopState → CheckpointEnvelope 重命名, Channel 体系归属 = checkpoint 专用, BEACON 决策 23) | 消除 LoopState 同名双义 (engine.state v1.0 vs loop.state v2.0). 13 文件 import 同步, 160+ 测试全 PASS |
 | 2026-06-26 | v2.3 Phase J 完成（ClaudeSemanticEvaluator + OrchestratorConfig 默认 + BEACON 决策 20） | Wave 2 FINAL：内置 LLM 评估器 (P1.6)，第 4 级语义收敛开箱即用 |
