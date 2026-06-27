@@ -241,12 +241,10 @@ def _build_v2_agent_runtime(
     调 agent.execute — 替代单一 executor callback wrapper.
 
     设计:
-        - 复用 v1.0 BaseAgent (DeveloperAgent) 作为 developer agent
-        - 工具集: v1.0 标准工具集 (Read/Write/Edit/Search/List/Bash/Git/Test)
-        - architect/critic: 注册 Mock Agent (ScriptedMockAgentByRole) —
-          避免在 v2 Orchestrator demo 中也跑真实 LLM architect/critic
-        - LLM 异常 → 包成 TaskOutcome(status='failed') (在 Orchestrator._build_runtime_executor
-          内处理, 借鉴 AutoGen GroupChat agent_selector)
+        - 3 个 role (architect/developer/critic) 全部使用真实 Agent(BaseAgent) 实例
+        - 共享同一个 AnthropicProvider(llm) 和工具集
+        - 每个 Agent 有不同的 system_prompt (来自 agents/prompts.py)
+        - LLM 异常 → Agent.execute 内 _map_llm_exception 转为 AEError
 
     Args:
         project_root: 项目根目录 (沙箱白名单基址)
@@ -257,12 +255,15 @@ def _build_v2_agent_runtime(
         AgentRuntime 实例 (已注册 architect/developer/critic)
     """
     import os
-    from types import SimpleNamespace
 
-    from auto_engineering.agents.developer import DeveloperAgent
+    from auto_engineering.agents.base import Agent
+    from auto_engineering.agents.prompts import (
+        ARCHITECT_SYSTEM_PROMPT,
+        CRITIC_SYSTEM_PROMPT,
+        DEVELOPER_SYSTEM_PROMPT,
+    )
     from auto_engineering.llm.anthropic_provider import AnthropicProvider
     from auto_engineering.runtime.runtime import AgentRuntime
-    from auto_engineering.runtime.task import Task as RuntimeTask
     from auto_engineering.tools.bash_tools import RunBashTool
     from auto_engineering.tools.file_tools import (
         EditFileTool,
@@ -295,67 +296,35 @@ def _build_v2_agent_runtime(
         RunTestsTool(),
         ReadFileTool(),
     ]
-    developer = DeveloperAgent(llm=llm, tools=tools)
-
-    class _DeveloperAgentAdapter:
-        """Adapter: DeveloperAgent 接受 runtime.Task, 但 v2 path 期望简易 execute.
-
-        v2 Orchestrator._build_runtime_executor 构造 runtime.Task 并传入,
-        DeveloperAgent.execute 直接接受. 此 Adapter 仅记录调用日志.
-        """
-
-        def __init__(self) -> None:
-            self.role = "developer"
-            self.execute_calls: list[str] = []
-
-        async def execute(
-            self,
-            task: RuntimeTask,
-            ctx: Any,
-            cancellation: Any = None,
-            token_tracker: Any = None,
-        ) -> Any:
-            self.execute_calls.append(task.id)
-            if progress is not None:
-                progress.emit("task_start", task_id=task.id, agent_type="developer")
-            result = await developer.execute(
-                task=task, ctx=ctx, cancellation=cancellation, token_tracker=token_tracker
-            )
-            return result
-
-    class _MockRoleAgent:
-        """architect/critic 的 Mock Agent — Phase C 简化, 避免 v2 demo 跑真 LLM.
-
-        返回 TaskResult-like SimpleNamespace, Orchestrator._build_runtime_executor
-        会读 .values 字段.
-        """
-
-        def __init__(self, role: str) -> None:
-            self.role = role
-
-        async def execute(
-            self,
-            task: RuntimeTask,
-            ctx: Any,
-            cancellation: Any = None,
-            token_tracker: Any = None,
-        ) -> Any:
-            if progress is not None:
-                progress.emit("task_start", task_id=task.id, agent_type=self.role)
-            # Mock: 返回 role 标识, 让 Orchestrator 走完 round
-            return SimpleNamespace(
-                task_id=task.id,
-                values={"role": self.role, "task_id": task.id, "status": "approved"},
-                raw_response=f"mock-{self.role}",
-                tool_calls=[],
-                agent_type=self.role,
-            )
 
     runtime = AgentRuntime()
-    runtime.register("architect", lambda: _MockRoleAgent("architect"))
-    runtime.register("developer", lambda: _DeveloperAgentAdapter())
-    runtime.register("critic", lambda: _MockRoleAgent("critic"))
-    runtime.register("reviewer", lambda: _MockRoleAgent("reviewer"))
+    runtime.register(
+        "architect",
+        lambda: Agent(
+            llm=llm,
+            role="architect",
+            system_prompt=ARCHITECT_SYSTEM_PROMPT,
+            tools=tools,
+        ),
+    )
+    runtime.register(
+        "developer",
+        lambda: Agent(
+            llm=llm,
+            role="developer",
+            system_prompt=DEVELOPER_SYSTEM_PROMPT,
+            tools=tools,
+        ),
+    )
+    runtime.register(
+        "critic",
+        lambda: Agent(
+            llm=llm,
+            role="critic",
+            system_prompt=CRITIC_SYSTEM_PROMPT,
+            tools=tools,
+        ),
+    )
     return runtime
 
 
