@@ -3,9 +3,9 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed P1-A state.py split into state/ package
-last_updated: "2026-06-27T10:22:00.000Z"
-last_activity: 2026-06-27 — P1-A: split loop/state.py (702 lines) into state/{channels,checkpoint_envelope,metrics}.py
+stopped_at: Completed P1-B cli.py split into cli/ package
+last_updated: "2026-06-27T18:30:00.000Z"
+last_activity: 2026-06-27 — P1-B: split cli.py (1029 lines) into cli/{helpers,dev_loop,checkpoint,__init__}.py
 progress:
   total_phases: 5
   completed_phases: 0
@@ -26,9 +26,9 @@ See: .planning/PROJECT.md (not created)
 ## Current Position
 
 Phase: 06-v2-multi-agent-prep
-Plan: 2.4-P1-A (complete)
+Plan: 2.4-P1-B (complete)
 Status: In progress
-Last activity: 2026-06-27 — P1-A: split loop/state.py (702 lines) into state/{channels,checkpoint_envelope,metrics}.py
+Last activity: 2026-06-27 — P1-B: split cli.py (1029 lines) into cli/{helpers,dev_loop,checkpoint,__init__}.py
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -60,6 +60,7 @@ Progress: [░░░░░░░░░░] 0%
 - [P0-A]: ContractGate 真实实现 — .ae-contracts/ 下 YAML/JSON 文件存在性+格式校验
 - [P0-B]: _build_v2_agent_runtime 使用真实 Agent(BaseAgent) 实例替代 _MockRoleAgent/_DeveloperAgentAdapter; reviewer role 不再注册
 - [P1-A]: state.py (702 lines) 拆分为 state/ 包 — channels.py (Channel ABC + 3 concrete), checkpoint_envelope.py (CheckpointEnvelope + deserialize), metrics.py (MetricsSnapshot + Signal); __init__.py re-export 保持向后兼容
+- [P1-B]: cli.py (1029 lines) 拆分为 cli/ 包 — helpers.py (ErrorCategory/CancellationToken 等), dev_loop.py (_build_v2_agent_runtime/_run_v2_orchestrator), checkpoint.py (register_checkpoint_commands), __init__.py (Click 命令 + re-exports); 全部 ≤ 400 行
 
 ### Pending Todos
 
@@ -77,6 +78,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-06-27 10:22
-Stopped at: Completed P1-A state.py split into state/ package
-Resume file: .planning/phases/06-v2-multi-agent-prep/2.4-P1-A-SUMMARY.md
+Last session: 2026-06-27 18:30
+Stopped at: Completed P1-B cli.py split into cli/ package
+Resume file: .planning/phases/05-docs-ruff-cleanup/05-P1-B-cli-split-SUMMARY.md
