@@ -6,6 +6,11 @@ v2.0 Gate 体系替代后,此文件进入冻结状态.
 冻结标记: 2026-06-26 (v2.3 P1-I)
 BEACON 决策 21: gates/ 冻结 — 不新增 Guardrail, 仅修复 bug.
 
+运行时 DeprecationWarning: 2026-06-27 (v2.4 P1-C)
+BEACON 决策 26: 每次 import builtin.py 时, 触发 1 次 DeprecationWarning
+引导用户用 v2.0 Gate 体系 (gates/{safety,lint,test,coverage,...} 7 道).
+5 个 Guardrail 的 check() 入口也调用一次 _warn_deprecation_once() (整体守门).
+
 设计要点:
     - 每个 Guardrail 构造时接受 project_root(避免全局状态,便于测试)
     - subprocess 调用带 timeout(避免阻塞 loop 循环)
@@ -29,6 +34,7 @@ BEACON 决策 21: gates/ 冻结 — 不新增 Guardrail, 仅修复 bug.
 from __future__ import annotations
 
 import subprocess
+import warnings
 from pathlib import Path
 
 from auto_engineering.engine.graph import Stage
@@ -37,6 +43,30 @@ from auto_engineering.gates.guardrail import GuardrailResult
 
 # Default subprocess timeout (seconds). 测试可用更短 timeout.
 _DEFAULT_SUBPROCESS_TIMEOUT = 30.0
+
+# Module-level flag: 守门 DeprecationWarning 只触发 1 次 (避免刷屏)
+_WARNED = False
+
+
+def _warn_deprecation_once() -> None:
+    """触发一次 DeprecationWarning — 通知调用方 gates/builtin.py 已冻结 (BEACON 决策 22 + 26).
+
+    策略: module-level _WARNED flag 守门, 第一次调用时触发 1 次,
+    后续调用直接返回 (避免每次 check() 都刷屏).
+    保留信号: 用户 / CI 能看到至少 1 次警告, 知道 builtin.py 已冻结.
+    """
+    global _WARNED
+    if _WARNED:
+        return
+    _WARNED = True
+    warnings.warn(
+        "gates/builtin.py 已冻结 (BEACON 决策 22 + 26, 2026-06-27): "
+        "v1.0 Guardrail 体系 (5 个内置 Guardrail) 不再主动开发, "
+        "请迁移到 v2.0 Gate 体系 (gates/{safety,lint,test,coverage,build,...} 7 道). "
+        "向后兼容保留, 但新代码应直接用 v2.0 Gate.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
 
 
 def _run_subprocess(cmd: list[str], cwd: Path, timeout: float) -> subprocess.CompletedProcess:
@@ -59,6 +89,7 @@ class RequirementGuardrail:
     """检查 LoopState.requirement 非空(防止误调)."""
 
     def check(self, stage: Stage, state: LoopState) -> GuardrailResult:
+        _warn_deprecation_once()
         if not state.requirement or not state.requirement.strip():
             return GuardrailResult(
                 action="block",
@@ -79,6 +110,7 @@ class PlanExistsGuardrail:
         self.plan_path = plan_path or self.project_root / "design" / "dev-loop-plan.md"
 
     def check(self, stage: Stage, state: LoopState) -> GuardrailResult:
+        _warn_deprecation_once()
         if not self.plan_path.exists():
             return GuardrailResult(
                 action="block",
@@ -99,6 +131,7 @@ class GitCleanGuardrail:
         self.timeout = timeout
 
     def check(self, stage: Stage, state: LoopState) -> GuardrailResult:
+        _warn_deprecation_once()
         try:
             result = _run_subprocess(
                 ["git", "status", "--porcelain"],
@@ -138,6 +171,7 @@ class TestsPassGuardrail:
         self.timeout = timeout
 
     def check(self, stage: Stage, state: LoopState) -> GuardrailResult:
+        _warn_deprecation_once()
         try:
             result = _run_subprocess(
                 [self.test_runner],
@@ -175,6 +209,7 @@ class GitDiffExistsGuardrail:
         self.timeout = timeout
 
     def check(self, stage: Stage, state: LoopState) -> GuardrailResult:
+        _warn_deprecation_once()
         try:
             result = _run_subprocess(
                 ["git", "log", "-1", "--format=%H"],
