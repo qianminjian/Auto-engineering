@@ -45,7 +45,9 @@ class Settings:
             AEError(CONFIG_MISSING_API_KEY): ANTHROPIC_API_KEY 未设置或为空.
         """
         api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
-        if not api_key:
+        # v2.5 修复: 在 Claude Code 等 LLM agent 环境下允许无 API key (agent 有自己的 auth)
+        in_llm_agent = bool(os.environ.get("CLAUDE_CODE"))
+        if not api_key and not in_llm_agent:
             raise AEError(
                 ErrorCode.CONFIG_MISSING_API_KEY,
                 "环境变量 ANTHROPIC_API_KEY 未设置。请在 ~/.zshrc 或 .env 中设置后再运行。",
