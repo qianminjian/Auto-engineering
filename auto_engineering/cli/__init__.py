@@ -149,8 +149,6 @@ def init(
 @click.argument("requirement")
 @click.option("--max-rounds", type=int, default=3, help="最大 Round 数")
 @click.option("--max-tokens", type=int, default=0, help="Token 预算上限 (0 = 无限制)")
-@click.option("--max-cost", type=float, default=0.0, help="美元成本上限 (Phase 2+ 实现)")
-@click.option("--multi", is_flag=True, help="多 Agent 并行模式（未来）")
 @click.option("--log-format", type=click.Choice(["text", "json"]), default="text", help="日志格式")
 @click.option(
     "--llm-provider",
@@ -163,8 +161,6 @@ def dev_loop(
     requirement: str,
     max_rounds: int,
     max_tokens: int,
-    max_cost: float,
-    multi: bool,
     log_format: str,
     llm_provider: str,
     project_root: str,
@@ -204,10 +200,6 @@ def dev_loop(
     progress = ProgressLogger(log_format=log_format)
     click.echo(f"Starting dev-loop: {requirement}")
     _log_engine_version("v2.0")
-
-    if multi:
-        click.echo("多 Agent 并行模式尚未实现。")
-        return
 
     tracker = TokenTracker(max_tokens=max_tokens)
     try:
