@@ -181,15 +181,52 @@ class TestContractGate:
         assert verdict.passed is True
         assert "skip" in verdict.message.lower() or "single" in verdict.message.lower()
 
-    def test_multi_agent_runs_check(self, tmp_path: Path):
+    def test_multi_agent_with_valid_contracts_passes(self, tmp_path: Path):
+        """多 Agent + .ae-contracts/ 下有效 YAML 文件 → passed=True."""
         from auto_engineering.gates.contract import ContractGate
 
-        gate = ContractGate()
-        # 多 Agent 模式: agent_count>=2 → 应执行检查
-        verdict = gate.run(tmp_path, agent_count=2)
-        # 没有定义 contracts → 可能 pass / fail,关键是返回 Verdict 不抛异常
-        assert hasattr(verdict, "passed")
-        assert hasattr(verdict, "message")
+        # 创建 .ae-contracts/ 目录 + 有效 YAML
+        contracts_dir = tmp_path / ".ae-contracts"
+        contracts_dir.mkdir()
+        (contracts_dir / "agent-api.yml").write_text(
+            "agents:\n"
+            "  architect:\n"
+            "    provides: [design.md]\n"
+            "  developer:\n"
+            "    provides: [implementation.py]\n"
+        )
+
+        gate = ContractGate(contracts_dir=contracts_dir)
+        verdict = gate.run(tmp_path, agent_count=3)
+        assert verdict.passed is True
+        # 消息应表明契约文件被成功检查(而非 placeholder skip)
+        assert "valid" in verdict.message.lower()
+
+    def test_multi_agent_no_contracts_fails(self, tmp_path: Path):
+        """多 Agent + 无 .ae-contracts/ 目录 → passed=False."""
+        from auto_engineering.gates.contract import ContractGate
+
+        # 不创建 contracts 目录
+        contracts_dir = tmp_path / ".ae-contracts"
+        gate = ContractGate(contracts_dir=contracts_dir)
+        verdict = gate.run(tmp_path, agent_count=3)
+        assert verdict.passed is False
+        assert "contract" in verdict.message.lower() or "no" in verdict.message.lower()
+
+    def test_multi_agent_malformed_contract_fails(self, tmp_path: Path):
+        """多 Agent + .ae-contracts/ 下有格式错误的 YAML → passed=False."""
+        from auto_engineering.gates.contract import ContractGate
+
+        contracts_dir = tmp_path / ".ae-contracts"
+        contracts_dir.mkdir()
+        (contracts_dir / "bad.yml").write_text(
+            "this: is: malformed: yaml: [: broken\n"
+        )
+
+        gate = ContractGate(contracts_dir=contracts_dir)
+        verdict = gate.run(tmp_path, agent_count=3)
+        assert verdict.passed is False
+        assert "parse" in verdict.message.lower() or "yaml" in verdict.message.lower()
 
 
 # ============================================================
