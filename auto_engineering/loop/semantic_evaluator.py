@@ -66,11 +66,17 @@ class ClaudeSemanticEvaluator:
     )
     max_tokens: int = 256
     temperature: float = 0.0
+    _provider: AnthropicProvider | None = None  # P1-E: __post_init__ 中预创建, 复用
 
     def __post_init__(self) -> None:
-        """若 api_key 为空, 从环境变量 ANTHROPIC_API_KEY 读取."""
+        """P1-E: 预创建 AnthropicProvider, 多次 __call__ 复用.
+
+        若 api_key 为空, 从环境变量 ANTHROPIC_API_KEY 读取.
+        """
         if not self.api_key:
             self.api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+        # 预创建 provider (避免每轮 _call_claude new instance + SDK client 重连)
+        self._provider = AnthropicProvider(api_key=self.api_key)
 
     async def __call__(self, round_result: RoundResult) -> bool:
         """评估本轮产出是否满足需求.
@@ -141,6 +147,8 @@ class ClaudeSemanticEvaluator:
     async def _call_claude(self, prompt: str):
         """调 Claude API (异步包装, 不阻塞 event loop).
 
+        P1-E: 复用 self._provider (避免每轮 new instance + SDK client 重连).
+
         Args:
             prompt: 评估 prompt
 
@@ -153,9 +161,8 @@ class ClaudeSemanticEvaluator:
         """
         import asyncio
 
-        provider = AnthropicProvider(api_key=self.api_key)
         response = await asyncio.to_thread(
-            provider.create_message,
+            self._provider.create_message,
             model=self.model,
             max_tokens=self.max_tokens,
             system="你是代码审查员, 判断本轮产出是否满足需求.",
