@@ -146,9 +146,16 @@ class ClaudeSemanticEvaluator:
 
         Returns:
             LLMResponse (AnthropicProvider.create_message 返回)
+
+        Note:
+            AnthropicProvider.create_message 是同步方法. 用 asyncio.to_thread 包
+            后才不阻塞 event loop. 直接 await 同步方法在 Python 3.10+ 抛 TypeError.
         """
+        import asyncio
+
         provider = AnthropicProvider(api_key=self.api_key)
-        response = await provider.create_message(
+        response = await asyncio.to_thread(
+            provider.create_message,
             model=self.model,
             max_tokens=self.max_tokens,
             system="你是代码审查员, 判断本轮产出是否满足需求.",

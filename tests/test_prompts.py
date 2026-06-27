@@ -404,8 +404,10 @@ class TestRun:
     def test_skips_cli_overridden_questions(self, basic_questions, answers):
         answers.cli_overrides["name"] = "cli-project"
         prompt = InteractivePrompt(basic_questions, answers)
+        # side_effect: int 返 8080, float 返 1.0 (避免 cast 失败导致死循环)
+        prompt_side_effect = ["8080", "1.0"]  # port, version
         with (
-            patch("click.prompt", return_value="ignored"),
+            patch("click.prompt", side_effect=prompt_side_effect),
             patch("click.confirm", return_value=True),
             patch("click.echo"),
         ):
