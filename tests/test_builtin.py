@@ -239,6 +239,9 @@ class TestBuiltinDeprecationWarning:
         """
         from auto_engineering.gates import builtin
 
+        # 重置 flag (前序 test 可能已触发过)
+        builtin._WARNED = False
+
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
             builtin._warn_deprecation_once()
