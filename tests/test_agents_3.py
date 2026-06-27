@@ -68,7 +68,7 @@ class TestArchitectAgent:
 
         assert result.values["plan"] == "1. Add auth middleware\n2. Add login endpoint"
         assert result.values["file_list"] == ["src/auth.py", "src/middleware.py"]
-        assert result.agent_type == "ArchitectAgent"
+        assert result.agent_type == "architect"  # P1-A: factory returns Agent(role='architect')
 
 
 class TestDeveloperAgent:
@@ -113,7 +113,7 @@ class TestDeveloperAgent:
         assert result.values["files_changed"] == ["src/auth.py", "tests/test_auth.py"]
         assert result.values["commit_hash"] == "abc123"
         assert result.values["test_results"]["passed"] == 5
-        assert result.agent_type == "DeveloperAgent"
+        assert result.agent_type == "developer"  # P1-A
 
 
 class TestCriticAgent:
@@ -158,7 +158,7 @@ class TestCriticAgent:
         assert result.values["verdict"] == "APPROVE"
         assert result.values["findings"] == []
         assert result.values["critic_feedback"] == "Looks good."
-        assert result.agent_type == "CriticAgent"
+        assert result.agent_type == "critic"  # P1-A
 
 
 class TestBaseAgentToolLoop:

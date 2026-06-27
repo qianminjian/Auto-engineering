@@ -46,6 +46,7 @@ class BaseAgent:
 
     llm: AnthropicProvider
     system_prompt: str
+    role: str = "BaseAgent"  # P1-A: 工厂返回时覆盖 (architect/developer/critic)
     tools: list[BaseTool] = field(default_factory=list)
     max_tool_calls: int = 10
     model: str = "claude-sonnet-4-6"
@@ -186,7 +187,7 @@ class BaseAgent:
                 values=values,
                 raw_response=response,
                 tool_calls=tool_calls_log,
-                agent_type=self.__class__.__name__,
+                agent_type=self.role,  # P1-A: role='architect'|'developer'|'critic'
             )
 
         raise AEError(
@@ -287,3 +288,7 @@ class BaseAgent:
                 f"Failed to parse LLM output as JSON: {content[:200]}",
             )
         return parsed
+
+
+# P1-A: 合并 3 Agent 类为 1 个. Agent 是 BaseAgent 的 alias, 旧名保留向后兼容.
+Agent = BaseAgent
