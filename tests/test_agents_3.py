@@ -208,33 +208,5 @@ class TestAllAgentsImplementAgentProtocol:
             assert isinstance(agent, Agent), f"{AgentClass.__name__} not Agent Protocol"
 
 
-class TestStageGraphIntegrationWithAgents:
-    """3 Agent 适配 StageGraph.build_dev_loop_graph — agent_type 对齐."""
-
-    def test_architect_agent_type_matches_stage(self):
-        from auto_engineering.agents import ArchitectAgent
-        from auto_engineering.engine.graph import build_dev_loop_graph
-
-        MagicMock(spec=AnthropicProvider)
-        graph = build_dev_loop_graph()
-        # Stage.agent_type 与 Agent class name 对齐
-        assert "architect" in {s.agent_type for s in graph.stages.values()}
-        assert ArchitectAgent.__name__ == "ArchitectAgent"
-
-    def test_developer_agent_type_matches_stage(self):
-        from auto_engineering.agents import DeveloperAgent
-        from auto_engineering.engine.graph import build_dev_loop_graph
-
-        MagicMock(spec=AnthropicProvider)
-        graph = build_dev_loop_graph()
-        assert "developer" in {s.agent_type for s in graph.stages.values()}
-        assert DeveloperAgent.__name__ == "DeveloperAgent"
-
-    def test_critic_agent_type_matches_stage(self):
-        from auto_engineering.agents import CriticAgent
-        from auto_engineering.engine.graph import build_dev_loop_graph
-
-        MagicMock(spec=AnthropicProvider)
-        graph = build_dev_loop_graph()
-        assert "critic" in {s.agent_type for s in graph.stages.values()}
-        assert CriticAgent.__name__ == "CriticAgent"
+# v2.4 P0-FINAL: TestStageGraphIntegrationWithAgents 已删除 (engine.graph 已移除)
+# 3 Agent 现在共享 Agent 类, role 字段替代 agent_type 对齐

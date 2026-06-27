@@ -14,11 +14,8 @@ from pathlib import Path
 
 import pytest
 
-# Re-export from production code(避免 cli.py 反向依赖 conftest)
-from auto_engineering.runtime.mock import (  # noqa: F401
-    ScriptedMockRuntime,
-    StepLimitedMockRuntime,
-)
+# v2.0-only: MockRuntime 已删除 (v1.0 移除).
+# 测试需要 mock agent 时直接用 unittest.mock.MagicMock.
 
 # ============================================================
 # Phase 0.3 阻塞检测 hook
