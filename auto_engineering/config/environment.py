@@ -195,6 +195,7 @@ def preflight(project_root: Path) -> None:
     检查项:
         1. Python ≥ 3.12
         2. ANTHROPIC_API_KEY 环境变量已设置
+           (在 Claude Code 等 LLM agent 中跳过, agent 有自己的 auth)
         3. project_root 是 git 仓库(含 .git/)
         4. 磁盘可用空间 ≥ 100 MB
     """
@@ -206,8 +207,10 @@ def preflight(project_root: Path) -> None:
         errors.append(f"Python 版本过低: 当前 {py_version.major}.{py_version.minor}, 需要 ≥ 3.12")
 
     # 2. ANTHROPIC_API_KEY
+    # v2.5 修复: 在 LLM agent (Claude Code) 环境下跳过, agent 有自己的 auth
+    in_llm_agent = bool(os.environ.get("CLAUDE_CODE")) or "claude" in os.environ.get("ANTHROPIC_CLI", "").lower()
     api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
-    if not api_key:
+    if not api_key and not in_llm_agent:
         errors.append(
             "环境变量 ANTHROPIC_API_KEY 未设置。"
             "请在 ~/.zshrc 中 export ANTHROPIC_API_KEY=sk-... 或在 .env 中设置。"
