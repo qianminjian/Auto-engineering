@@ -297,11 +297,17 @@ class TestAnthropicProviderKwargs:
 
 
 class TestAnthropicProviderRetry:
-    """P0-4: 生产 retry 策略 — RateLimitError / APIConnectionError 重试."""
+    """P0-4: 生产 retry 策略 — RateLimitError / APIConnectionError 重试.
 
-    def test_retries_on_rate_limit_error(self) -> None:
+    v2.5: 每个测试都 monkeypatch `_BACKOFF_FACTOR=0` 跳过真实 sleep,
+    避免指数退避拖慢测试 (max_retries=3 走完需要 1+2+4=7 秒).
+    """
+
+    def test_retries_on_rate_limit_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """RateLimitError → 重试 → 成功 → 返回 LLMResponse (RED: 生产 retry)."""
+        from auto_engineering.llm import anthropic_provider
         from auto_engineering.llm.anthropic_provider import AnthropicProvider
+        monkeypatch.setattr(anthropic_provider.AnthropicProvider, "_BACKOFF_FACTOR", 0.0)
 
         mock_client = MagicMock()
         success_response = _make_text_response("OK")
@@ -320,9 +326,11 @@ class TestAnthropicProviderRetry:
         assert response.content == "OK"
         assert mock_client.messages.create.call_count == 2
 
-    def test_retries_on_connection_error(self) -> None:
+    def test_retries_on_connection_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """APIConnectionError → 重试 → 成功."""
+        from auto_engineering.llm import anthropic_provider
         from auto_engineering.llm.anthropic_provider import AnthropicProvider
+        monkeypatch.setattr(anthropic_provider.AnthropicProvider, "_BACKOFF_FACTOR", 0.0)
 
         mock_client = MagicMock()
         success_response = _make_text_response("OK")
@@ -341,9 +349,13 @@ class TestAnthropicProviderRetry:
         assert response.content == "OK"
         assert mock_client.messages.create.call_count == 2
 
-    def test_raises_after_max_retries(self) -> None:
+    def test_raises_after_max_retries(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """连续 N 次 RateLimitError → 抛 RateLimitError (不无限重试)."""
+        from auto_engineering.llm import anthropic_provider
         from auto_engineering.llm.anthropic_provider import AnthropicProvider
+        monkeypatch.setattr(anthropic_provider.AnthropicProvider, "_BACKOFF_FACTOR", 0.0)
 
         mock_client = MagicMock()
         mock_client.messages.create.side_effect = _make_rate_limit_error()

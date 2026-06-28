@@ -51,6 +51,9 @@ class AnthropicProvider:
 
     P0-4: 生产 retry 策略 — RateLimitError / APIConnectionError 重试.
     max_retries=0 表示不重试 (默认 3 次).
+    v2.5 P2-D-4: 真实指数退避 (2^attempt 秒) — 之前 time.sleep(0) 在限流
+    场景下瞬间失败 4 次浪费 budget. 测试环境用 _BACKOFF_FACTOR=0 旁路.
+    v2.5 P2-D-6: close() / __enter__-__exit__ 显式释放 httpx 连接.
     """
 
     # 可重试异常类型 (anthropic SDK)
@@ -59,6 +62,9 @@ class AnthropicProvider:
         anthropic.APIConnectionError,
         anthropic.APITimeoutError,
     )
+
+    # 测试环境可设为 0 跳过真实 sleep, 生产保持 1.0
+    _BACKOFF_FACTOR: float = 1.0
 
     def __init__(
         self,
@@ -71,6 +77,21 @@ class AnthropicProvider:
         else:
             self._client = anthropic.Anthropic(api_key=api_key)
         self._max_retries = max_retries
+
+    def close(self) -> None:
+        """显式关闭底层 httpx 连接 (v2.5 P2-D-6).
+
+        Anthropic SDK 内部维护 httpx.Client, 进程长跑时连接不释放.
+        长 dev-loop 跑完推荐调 close() / async with provider as _.
+        """
+        if hasattr(self._client, "close"):
+            self._client.close()
+
+    def __enter__(self) -> "AnthropicProvider":
+        return self
+
+    def __exit__(self, *exc_info) -> None:
+        self.close()
 
     def create_message(
         self,
@@ -109,6 +130,8 @@ class AnthropicProvider:
 
         # P0-4: retry 策略 — RateLimitError / APIConnectionError / APITimeoutError
         # 总尝试次数 = 1 (原始) + max_retries
+        # v2.5 P2-D-4: 真实指数退避 2^attempt 秒, 测试用 _BACKOFF_FACTOR=0
+        import time
         last_exc: Exception | None = None
         for attempt in range(1, self._max_retries + 2):  # 1..max_retries+1
             try:
@@ -119,10 +142,10 @@ class AnthropicProvider:
                 if attempt > self._max_retries:
                     # 超过 max_retries, 不再重试, 抛出
                     raise
-                # 简单 backoff (生产环境可换指数退避)
-                # 测试环境下 sleep=0, 避免拖慢测试
-                import time
-                time.sleep(0)
+                # 指数退避: 1s, 2s, 4s, ...; 测试用 _BACKOFF_FACTOR=0 旁路
+                backoff = (2 ** (attempt - 1)) * self._BACKOFF_FACTOR
+                if backoff > 0:
+                    time.sleep(backoff)
 
         content_text = ""
         tool_use_blocks: list[dict] = []

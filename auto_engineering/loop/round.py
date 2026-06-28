@@ -185,9 +185,26 @@ async def run_round(
     coros = [
         _execute_single(task, ctx, executor, cancellation) for task in tasks
     ]
-    # gather 并行执行 (return_exceptions=False 因为 _execute_single 已经捕获)
-    outcomes = await asyncio.gather(*coros)
-    result.outcomes = list(outcomes)
+    # gather 并行执行 (D-P2-3: return_exceptions=True 防御性 — 防止未来
+    # refactor 让 _execute_single 重新抛出时一个 task 异常取消整个 round.
+    # 当前 _execute_single 内部捕获所有 Exception 返回 failed outcome,
+    # 所以 return_exceptions=True 不会改变行为, 但提供 belt-and-suspenders.)
+    gathered = await asyncio.gather(*coros, return_exceptions=True)
+    outcomes: list[TaskOutcome] = []
+    for item in gathered:
+        if isinstance(item, BaseException):
+            # 防御路径: _execute_single 重新抛出 (例如未来 asyncio.CancelledError)
+            outcomes.append(
+                TaskOutcome(
+                    task_id="<gathered-exception>",
+                    success=False,
+                    output="",
+                    error=f"gathered exception: {type(item).__name__}: {item}",
+                )
+            )
+        else:
+            outcomes.append(item)
+    result.outcomes = outcomes
     result.finished_at = time.monotonic()
 
     # v2.2 Phase H: 跑 Gate (task 完成后), 写入 gate_results
