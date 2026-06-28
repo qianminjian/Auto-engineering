@@ -132,6 +132,33 @@ class TestFileSandbox:
         assert result.success is False
         assert "traversal" in result.error.lower() or "project_root" in result.error.lower()
 
+    def test_symlink_to_outside_rejected(self, tmp_path):
+        """project_root 内的 symlink 指向外部 (e.g., /etc/passwd) → 拒绝.
+
+        macOS symlink 防御 (per engineering-practices §10): macOS 下
+        /var → /private/var, /tmp → /private/tmp. 攻击者控制的 file_path
+        若经 symlink 可绕过 lexical 解析. _is_path_safe 必须用
+        os.path.realpath 双侧归一化.
+        """
+        from auto_engineering.tools.file_tools import WriteFileTool
+
+        # 构造: project_root/link → /etc/passwd
+        project = tmp_path / "proj"
+        project.mkdir()
+        link = project / "sneaky"
+        # /etc/passwd 在所有 Unix 上存在, 是经典攻击目标
+        try:
+            link.symlink_to("/etc/passwd")
+        except OSError:
+            pytest.skip("无法创建 symlink (sandbox 环境)")
+
+        tool = WriteFileTool(project_root=project)
+        result = run_async(tool.execute(file_path=str(link), content="pwn"))
+        assert result.success is False, (
+            f"symlink 写入 /etc/passwd 应被沙箱拒绝, 实际: {result.error}"
+        )
+        assert "project_root" in result.error.lower() or "outside" in result.error.lower()
+
     def test_edit_inside_project_allowed(self):
         """编辑 project_root 内文件 → 正常."""
         test_file = self.project_root / "test.txt"

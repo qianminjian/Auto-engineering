@@ -98,9 +98,14 @@ class TemplateRenderer:
 
                 dst_file = dst_dir / rendered_rel
 
-                # Path traversal guard (参考 Copier _main.py:800-805)
-                dst_dir_real = dst_dir.resolve()
-                if not dst_file.resolve().is_relative_to(dst_dir_real):
+                # Path traversal guard (参考 Copier _main.py:800-805, 修 macOS symlink)
+                import os
+                dst_dir_real = os.path.realpath(dst_dir)
+                dst_file_real = (
+                    os.path.realpath(dst_file) if os.path.exists(dst_file) else str(dst_file.resolve())
+                )
+                root_prefix = dst_dir_real if dst_dir_real.endswith(os.sep) else dst_dir_real + os.sep
+                if not (dst_file_real == dst_dir_real or dst_file_real.startswith(root_prefix)):
                     raise TemplateRenderError(str(src_file), ValueError("路径穿越"))
 
                 if (

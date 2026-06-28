@@ -50,17 +50,30 @@ class BaseTool(ABC):
     def _is_path_safe(self, file_path: str) -> tuple[bool, str]:
         """检查 file_path 是否在 project_root 内.
 
+        Symlink 防御 (per engineering-practices §10): macOS 下 /var → /private/var
+        /tmp → /private/tmp, 攻击者控制的 file_path 若经 symlink 可绕过 lexical
+        解析. 用 os.path.realpath 双侧归一化; 不存在的中间目录回退到 lexical.
+
         Returns:
             (safe, error_message)
         """
         if self.project_root is None:
             return True, ""
 
+        import os
+
         try:
-            target = Path(file_path).resolve()
-            root = self.project_root.resolve()
-            # path traversal 检测:realpath 后不在 root 内
-            if not target.is_relative_to(root):
+            root_real = os.path.realpath(self.project_root)
+            # 文件存在 → realpath 双侧 (展 symlink); 不存在 → lexical
+            if os.path.exists(file_path):
+                target_real = os.path.realpath(file_path)
+            else:
+                # Path.resolve() 在中间目录不存在时, 仍尽量解析已存在部分
+                target_real = str(Path(file_path).resolve())
+
+            # 防御: realpath 后不在 root_real + sep 内
+            root_prefix = root_real if root_real.endswith(os.sep) else root_real + os.sep
+            if not (target_real == root_real or target_real.startswith(root_prefix)):
                 return False, f"path outside project_root: {file_path}"
             return True, ""
         except Exception as e:
