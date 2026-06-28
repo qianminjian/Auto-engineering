@@ -26,7 +26,7 @@ def register_checkpoint_commands(main: click.Group) -> None:
     def checkpoint_list_cmd():
         """列出所有 checkpoint (v2.3 P0-B: 切到 SQLiteCheckpointStore).
 
-        历史: v2.0 用 engine.checkpoint.CheckpointStore (冻结).
+        历史: v2.0 用 engine.checkpoint.CheckpointStore (v2.5 P0-FINAL 已删除, BEACON 决策 27).
         v2.0/v2.3: 用 loop.checkpoint.SQLiteCheckpointStore (与 v2.0 子命令共用).
         """
         from auto_engineering.loop.checkpoint import SQLiteCheckpointStore
@@ -79,7 +79,8 @@ def register_checkpoint_commands(main: click.Group) -> None:
     def checkpoint_show_cmd(checkpoint_id: str):
         """查看 checkpoint 详情 (v2.3 P0-B: 切到 SQLiteCheckpointStore).
 
-        历史: v2.0 用 engine.checkpoint.CheckpointStore.load_checkpoint (冻结).
+        历史: v2.0 用 engine.checkpoint.CheckpointStore.load_checkpoint
+        (v2.5 P0-FINAL 已删除, BEACON 决策 27).
         v2.0/v2.3: 用 loop.checkpoint.SQLiteCheckpointStore.load.
         """
         from auto_engineering.loop.checkpoint import (
@@ -131,7 +132,8 @@ def register_checkpoint_commands(main: click.Group) -> None:
     def checkpoint_resume_cmd(checkpoint_id: str):
         """从 checkpoint 恢复 (v2.3 P0-B: 切到 SQLiteCheckpointStore).
 
-        历史: v2.0 用 engine.checkpoint.CheckpointStore.load_checkpoint (冻结).
+        历史: v2.0 用 engine.checkpoint.CheckpointStore.load_checkpoint
+        (v2.5 P0-FINAL 已删除, BEACON 决策 27).
         v2.0/v2.3: 用 loop.checkpoint.SQLiteCheckpointStore.load.
         (实际恢复请使用 `ae dev-loop` — 它会自动检测中断并提示 resume.)
         """
