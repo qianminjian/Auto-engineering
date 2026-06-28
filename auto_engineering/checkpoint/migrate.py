@@ -1,9 +1,13 @@
-"""Checkpoint 迁移: v2.0 JSON (engine/checkpoint.py) → v2.0 SQLite (loop/checkpoint.py).
+"""Checkpoint 迁移: v1.1 JSON (engine/checkpoint.py, 已 v2.5 P0-FINAL 删除) → v2.0 SQLite.
 
-设计来源: P1.5 审计 — v2.0 与 v2.0 Checkpoint 双轨独立, 用户无法跨版本恢复.
+设计来源: P1.5 审计 — v1.1 JSON 与 v2.0 SQLite 双轨独立, 用户无法跨版本恢复.
 借鉴 LangGraph checkpoint migration 工具思路 (单方向、显式触发、schema 兼容).
 
-v2.0 JSON 格式 (来自 engine/checkpoint.py + engine/state.py):
+v2.5 状态: 源 `engine/checkpoint.py` 已 v2.5 P0-FINAL 删除 (BEACON 决策 27).
+本模块仍保留作为**遗产数据迁移工具** — 用户磁盘上 v1.1 时代产生的 JSON
+checkpoint 可通过本工具一次性迁到 v2.0 SQLite. 不再产生新 v1.1 JSON.
+
+v1.1 JSON 格式 (来自 engine/checkpoint.py + engine/state.py, 已退役):
     {
         "status": "running" | "drained" | ...,
         "loop_state": {<engine.state.LoopState.to_dict() output>},
@@ -13,17 +17,17 @@ v2.0 JSON 格式 (来自 engine/checkpoint.py + engine/state.py):
                 "files_changed": int,
                 "lines_added": int,
                 "lines_removed": int,
-                "gate_results": dict[str, bool],  # v2.0 格式: bool
+                "gate_results": dict[str, bool],  # v1.1 格式: bool
                 "semantic_satisfied": bool | None,
             }
         ]
     }
 
-v2.0 SQLite Schema (loop/checkpoint.py): SQLiteCheckpointStore 表 checkpoints
+v2.0 SQLite Schema (loop/checkpoint/store.py): SQLiteCheckpointStore 表 checkpoints
 (含 state_json + history_json).
 
 迁移策略:
-    - CheckpointEnvelope: 提取 v2.0 loop_state.round/step/status + 其他字段注入
+    - CheckpointEnvelope: 提取 v1.1 loop_state.round/step/status + 其他字段注入
       metrics/tasks/channels (尽力兼容, 未知字段写入 channels 作为 LastValueChannel 留存)
     - history: 逐项转换为 v2.0 RoundHistory (gate_results 字段保留为 dict[str, bool])
 
@@ -140,17 +144,20 @@ def _v1_history_to_v2(v1_history: list[dict[str, Any]]) -> list[RoundHistory]:
 
 
 def migrate_v1_to_v2(src_json: Path, dst_sqlite: Path) -> str:
-    """迁移 v2.0 JSON Checkpoint → v2.0 SQLite Checkpoint.
+    """迁移 v1.1 JSON Checkpoint → v2.0 SQLite Checkpoint.
+
+    v2.5 P0-FINAL 后仅作遗产数据迁移工具 (源 engine/checkpoint.py 已退役,
+    BEACON 决策 27). 不再产生新 v1.1 JSON.
 
     步骤:
-        1. 读 v2.0 JSON (load_v1_checkpoint)
+        1. 读 v1.1 JSON (load_v1_checkpoint)
         2. 构造 v2.0 CheckpointEnvelope (尽力兼容字段)
         3. 构造 v2.0 RoundHistory 列表
         4. SQLiteCheckpointStore.save(state, round, step, history) 真存到 SQLite
         5. 返回 checkpoint_id
 
     Args:
-        src_json: v2.0 JSON 文件路径
+        src_json: v1.1 JSON 文件路径
         dst_sqlite: v2.0 SQLite 数据库文件路径 (不存在则创建)
 
     Returns:
@@ -176,7 +183,7 @@ def migrate_v1_to_v2(src_json: Path, dst_sqlite: Path) -> str:
         round=state.round,
         step=state.step,
         history=history,
-        tag="migrated-from-v2.0",
+        tag="migrated-from-v1.1",
     )
     return cp_id
 

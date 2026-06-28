@@ -27,6 +27,7 @@
 | | `v2.3-Plan-Dev.md` | v2.3 过度设计治理计划（P0/P1/P2 共10项） |
 | | `v2.4-Plan-Dev.md` | v2.4 整合修复计划（ContractGate/Agent/State/CLI/Checkpoint 拆分等） |
 | | `v2.5-Plan-Dev.md` | v2.5 生产就绪最终修复（11 项优化, v1.0 退役 + P0-FINAL 撤销决策 11/12/22/24/26） |
+| **迁移工具** | `auto_engineering/checkpoint/migrate.py` | v1.1 JSON → v2.0 SQLite 单向迁移 (P1.5 审计, 源 `engine/checkpoint.py` v2.5 P0-FINAL 删除, 仅作遗产数据迁移) |
 | **演进分析** | `v2.0-Analysis-Loop.md` | v2.0 多 Agent 并发架构 |
 | **归档** | `his_bak/` | 历史版本（见 §归档清单） |
 

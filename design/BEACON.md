@@ -41,7 +41,7 @@
 | 24 | **P0-B: engine/checkpoint.py 冻结 — 不再主动开发, 保留仅为向后兼容** | v1.0 CLI (ae checkpoint list/show/resume) 已切到 SQLiteCheckpointStore; engine/checkpoint.py 仍被 engine.loop.LoopEngine (v1.0 runtime) 使用, 因此保留. 文件头加 ⚠️ 冻结标记 (与 builtin.py 决策 22 同模式) | 2026-06-26 | ✅ |
 | 25 | **P0-C: CoverageGate (gates/coverage.py) 冻结 — 永远返回 'skip' Verdict, 不阻塞 dev-loop** | 本项目未装 pytest-cov (pyproject.toml addopts 不含 --cov), Gate 永远 'skip: 未提取到覆盖率数据'. 选 (b) 冻结而非 (a) 安装: (a) 装 pytest-cov 会让所有 pytest 跑 ~2x 内存 (CLAUDE.md 16G 内存约束, .claude/rules/pytest-memory-management.md), 真实覆盖率检查应在 CI 独立配置. 文件头加 ⚠️ 冻结标记 + DeprecationWarning 每 5 run 触发 1 次 + 测试保留 verdict.passed 接口 (向后兼容). 与决策 22 (builtin.py) / 24 (engine/checkpoint.py) 同模式 | 2026-06-27 | ✅ |
 | 26 | **P1-C: gates/builtin.py 加运行时 DeprecationWarning 信号 (每次 import/check 触发 1 次)** | builtin.py 文件头已有 ⚠️ 冻结标记 (决策 22) 但缺运行时信号. 加 module-level _WARNED flag + _warn_deprecation_once(), 5 个 Guardrail.check() 入口各调用 1 次 (整体守门, 避免刷屏). 引导用户迁移到 v2.0 Gate 体系 (gates/{safety,lint,test,coverage,build,...} 7 道). 与决策 25 (CoverageGate) 同模式 — 简单 module-level 守门, 无需 sys.modules 钩子 (过度设计). 测试: TestBuiltinDeprecationWarning 4 个新用例 (20/20 PASS) | 2026-06-27 | ✅ |
-| 27 | **P0-FINAL: v1.0 路径退役 — 撤销决策 11/12/22/24/26** | v2.5 P0-FINAL (commit 2994c7e) 删除 `engine/{loop,graph,checkpoint,messages}.py`、`runtime/mock.py`、`gates/{builtin,guardrail}.py` 及对应测试. 决策 11/12/22/24/26 关于"冻结/兼容"的策略不再适用 — 这些文件不再存在, v2.5 仅有 v2.0 path. CLI flags `--use-v1` / `--use-v2` 同时移除 (docs 已更新, 见 v2.5-Plan-Dev.md P1-B/P1-C). CoverageGate 冻结 (决策 25) 保留 — 该决策不涉及被删文件, 且 pytest-cov 仍不安装. | 2026-06-28 | ✅ |
+| 27 | **P0-FINAL: v1.0 路径退役 — 撤销决策 11/12/22/24/26** | v2.5 P0-FINAL (commit 2994c7e) 删除 `engine/{loop,graph,checkpoint,messages}.py`、`runtime/mock.py`、`gates/{builtin,guardrail}.py` 及对应测试. **例外**: `engine/state.py` 保留 — 决策 23 重命名生效后, 运行时 Orchestrator / Runtime / Gates 仍走 engine.state.EngineState (LoopState 别名) dataclass, engine.state 是 v2.0 运行时状态容器, 不是 v1.0 遗产. 决策 11/12/22/24/26 关于"冻结/兼容"的策略不再适用 — 这些文件不再存在, v2.5 仅有 v2.0 path. CLI flags `--use-v1` / `--use-v2` 同时移除 (docs 已更新, 见 v2.5-Plan-Dev.md P1-B/P1-C). CoverageGate 冻结 (决策 25) 保留 — 该决策不涉及被删文件, 且 pytest-cov 仍不安装. | 2026-06-28 | ✅ |
 
 ## 决策 23 展开: Channel 体系归属 = checkpoint 专用
 
@@ -55,7 +55,7 @@
 
 **阶段：** v2.5 P0-FINAL 完成（v1.0 退役 + BEACON 决策 27）。
 
-**最近动作：** 2026-06-28 v2.5 P0-FINAL 完成 — 删除 `auto_engineering/engine/` 全部 (loop/graph/checkpoint/messages) + `runtime/mock.py` + `gates/{builtin,guardrail}.py` 及其 16 测试, 正式撤销决策 11/12/22/24/26 (v1.0 不再保留, 仅有 v2.0 path); CLI flags `--use-v1` / `--use-v2` 同步移除, 文档 (api-reference/production-deployment/e2e-real-run) 标记 "v2.5 起移除"; BEACON 决策 27 记录撤销依据; `_scratch/` gitignore 保留, `references/` gitignore 保留 (96GB 内存事故防线).
+**最近动作：** 2026-06-28 v2.5 P0-FINAL 完成 — 删除 `auto_engineering/engine/{loop,graph,checkpoint,messages}.py` (engine/state.py 保留作运行时 LoopState/EngineState 容器, 决策 23 命名重构生效) + `runtime/mock.py` + `gates/{builtin,guardrail}.py` 及其 16 测试, 正式撤销决策 11/12/22/24/26 (v1.0 不再保留, 仅有 v2.0 path); CLI flags `--use-v1` / `--use-v2` 同步移除, 文档 (api-reference/production-deployment/e2e-real-run) 标记 "v2.5 起移除"; BEACON 决策 27 记录撤销依据; `_scratch/` gitignore 保留, `references/` gitignore 保留 (96GB 内存事故防线).
 
 **下一步：** v2.5 P0-FINAL 完成后 → 用户 manual gate 决策 v2.5 → 是否启动 v3.0 (production hardening / 真跑验证 / Web UI)？
 
@@ -67,7 +67,7 @@
 
 **v1.1/init 修复：** D1-D6 + B1-B6 全完（Plan A 40 测试全过，覆盖率 state 100% / messages 100% / checkpoint 89% / graph 95% / loop 82%）；init 21 偏差项 + 8 项目类型 E2E + hooks 31%→88%。详见 v1.1-Plan-Dev.md + v1.0-Design-Init.md §1.7-§1.9。
 
-**v2.5 P0-FINAL（决策 27）：** v1.0 engine/* + runtime/mock.py + gates/{builtin,guardrail}.py 全部退役. CLI flags --use-v1/--use-v2 不再支持. v2.5 仅有 v2.0 path, 详见 v2.5-Plan-Dev.md.
+**v2.5 P0-FINAL（决策 27）：** v1.0 engine/{loop,graph,checkpoint,messages}.py + runtime/mock.py + gates/{builtin,guardrail}.py 全部退役. **engine/state.py 保留** — 决策 23 重命名生效, 运行时 Orchestrator / Runtime / Gates 仍走 engine.state.EngineState (LoopState 别名) dataclass; engine.state 仍为 v2.0 path 的运行时状态容器, 不是 v1.0 遗产. CLI flags --use-v1/--use-v2 不再支持. v2.5 仅有 v2.0 path, 详见 v2.5-Plan-Dev.md.
 
 ## 设计演进日志
 
