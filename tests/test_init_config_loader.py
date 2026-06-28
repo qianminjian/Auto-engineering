@@ -334,3 +334,33 @@ class TestErrorPaths:
 
         with pytest.raises(_yaml.YAMLError):
             load_template_config("bad")
+
+
+class TestIncludePathValidation:
+    """v2.5 P2-C-1: !include glob 路径必须在模板目录内 (防越界读取)."""
+
+    def test_include_glob_outside_template_dir_rejected(self, tmp_path: Path) -> None:
+        """恶意模板 `!include ../../../*.yml` → ValueError 拒绝."""
+        # 构造场景: config 在 tmp/inner, !include 用 ../ 跳到 tmp/
+        inner = tmp_path / "inner"
+        inner.mkdir()
+        config = inner / "config.yml"
+        # 关键: 父目录的兄弟文件 (out.yml 在 tmp/ 而非 inner/)
+        (tmp_path / "out.yml").write_text("secret: pwned\n")
+        # 用 ../out.yml 跳到 tmp/ 读 out.yml
+        config.write_text("included: !include ../out.yml\n")
+
+        with pytest.raises(ValueError) as exc_info:
+            _load_yaml_with_includes(config)
+        assert "模板目录外" in str(exc_info.value)
+        assert "out.yml" in str(exc_info.value)
+
+    def test_include_glob_inside_template_dir_allowed(self, tmp_path: Path) -> None:
+        """合法 `!include _partial.yml` (在模板目录内) → 正常加载."""
+        partial = tmp_path / "_partial.yml"
+        partial.write_text("foo: bar\n")
+        config = tmp_path / "config.yml"
+        config.write_text("included: !include _partial.yml\n")
+
+        result = _load_yaml_with_includes(config)
+        assert result["included"]["foo"] == "bar"

@@ -23,6 +23,18 @@ class Channel[T](ABC):
 
     所有 Channel 持有 name(用于在 CheckpointEnvelope 中标识)和内部 value.
     子类必须实现: get / update / empty / copy / checkpoint / from_checkpoint.
+
+    v2.5 P2-C-2 并发不变量:
+        Channel 在 v2.0 架构中**不在并发路径上** —
+        - 构造时通过 Pydantic 设置初始值 (单线程, 一次性)
+        - 运行时读写由单个 agent / 阶段负责
+        - v2.0 multi-agent 走 engine.state.EngineState, 不写 CheckpointEnvelope.channels
+        - asyncio.gather 并行的多个 agent 通过 task_role 隔离 (e.g., "plan" channel
+          只由 architect agent 写, "files_changed" 只由 developer agent 写)
+        Channel 名字 = agent role, 天然 partition, 无共享写.
+    如果未来 CheckpointEnvelope.set_channel / channel.update 在多 agent
+    并发路径被调用, 需要在 Envelope 层加 asyncio.Lock 或
+    重新审视 channel partition 不变量.
     """
 
     def __init__(self, name: str) -> None:

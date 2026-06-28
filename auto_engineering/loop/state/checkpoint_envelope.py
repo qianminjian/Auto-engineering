@@ -139,6 +139,11 @@ class CheckpointEnvelope(BaseModel):
         - 返回值仍来自 Channel.update(): True 表示有变化
         - 仅当 update() 返回 True 时累加 version (重复值不增)
 
+        v2.5 P2-C-2 并发不变量: 当前 envelope.channels 在 v2.0 架构中
+        不在并发路径 (见 channels.py::Channel 文档). 写入由单线程
+        负责. 如果未来需要并发写, 加 asyncio.Lock 守护此方法 + 整个
+        envelope 修改 (channel_versions 也是共享状态).
+
         Returns:
             bool: Channel 是否报告有变化 (对齐 update() 新签名).
         """

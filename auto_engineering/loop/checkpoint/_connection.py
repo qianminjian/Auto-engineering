@@ -35,6 +35,12 @@ def _with_conn(
     Schema 幂等创建: 每次获取 file 模式 connection 时都执行 CREATE TABLE IF NOT EXISTS,
     跨进程/线程安全.
 
+    v2.5 P2-C-4 同步不变量: 本 context manager 是**完全同步**的 — `with`
+    块内不要 `await` 任何东西. threading.Lock 在 sync 上下文获取/释放,
+    安全 (asyncio 单线程事件循环不会释放到另一线程). 如果未来有
+    refactor 在 `with` 块内 await — 必须先换 `asyncio.Lock` 或拆锁,
+    否则事件循环永久 deadlock. 标志: yield 之后无 await.
+
     Yields:
         sqlite3.Connection (row_factory=sqlite3.Row).
     """
@@ -67,6 +73,12 @@ def _atomic(conn: sqlite3.Connection) -> Iterator[sqlite3.Connection]:
     SQLite 也会在 connection close 时自动 rollback 未提交事务, 但显式
     rollback-on-error 给出清晰的失败契约 (P1-D 之前版本有显式 try/except rollback,
     P1-D 拆分时丢失, v2.5 P1-D+1 恢复).
+
+    v2.5 P2-C-4 同步不变量: 与 _with_conn 同样**完全同步** —
+    `with` 块内不要 `await`. commit/rollback 都是 SQLite sync 调用,
+    在 thread pool (asyncio.to_thread) 上下文里也安全. 如果未来要
+    在 `_atomic` 内 await, 必须先确认 conn 操作本身是 async (不是),
+    或重构为 AsyncConnection (Python 3.12+ sqlite3 async API).
     """
     try:
         yield conn

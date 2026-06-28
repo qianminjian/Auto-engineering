@@ -87,6 +87,10 @@ def _load_yaml_with_includes(config_path: Path) -> dict:
     来源：Copier _template.py:92-106 _include() + Loader。
     !include 后接相对路径（相对于当前配置文件），支持 glob 模式。
     被 include 的文件内容与当前文件合并。
+
+    v2.5 P2-C-1: glob 解析后验证每个匹配 path 在 config_path.parent
+    (realpath) 内, 防止恶意模板 `!include ../../../*.yml` 越界读到
+    模板目录外的文件 (例如 ~/.ssh/, /etc/ 等).
     """
 
     class _IncludeLoader(yaml.SafeLoader):
@@ -97,6 +101,24 @@ def _load_yaml_with_includes(config_path: Path) -> dict:
         full_paths = list(config_path.parent.glob(include_spec))
         results: list[dict] = []
         for path_obj in full_paths:
+            # P2-C-1: 验证 path 在 config_path.parent 内 (realpath 防御 symlink)
+            import os
+            config_parent_real = os.path.realpath(config_path.parent)
+            path_real = os.path.realpath(path_obj)
+            root_prefix = (
+                config_parent_real
+                if config_parent_real.endswith(os.sep)
+                else config_parent_real + os.sep
+            )
+            if not (
+                path_real == config_parent_real
+                or path_real.startswith(root_prefix)
+            ):
+                raise ValueError(
+                    f"!include glob '{include_spec}' 匹配到模板目录外的文件: "
+                    f"{path_obj} (resolved: {path_real}). 模板目录: {config_parent_real}. "
+                    f"Refusing to load (potential template injection)."
+                )
             with open(path_obj) as fh:
                 for doc in yaml.safe_load_all(fh):
                     if doc:
