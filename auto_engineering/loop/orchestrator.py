@@ -251,7 +251,7 @@ class Orchestrator:
                    → RoundResult (含 history[0]: RoundHistory, v2.3 Phase G P1.3)
                 e. self.round_results.append(round_result)
                 f. self.history.extend(round_result.history)  # 累加 (非 append)
-                g. judge.evaluate(state, history) → verdict
+                g. judge.evaluate(history) → verdict
                 h. 若 should_stop → return history
             3. 达到 max_iterations → 构造硬上限 Verdict → return history
 
@@ -314,7 +314,7 @@ class Orchestrator:
 
             # 2f. 收敛判定
             assert self.judge is not None
-            verdict = self.judge.evaluate(state=None, history=self.history)
+            verdict = self.judge.evaluate(history=self.history)
             if verdict.should_stop:
                 self.verdict = verdict
                 return self.history

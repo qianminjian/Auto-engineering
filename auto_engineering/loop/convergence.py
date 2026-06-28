@@ -11,7 +11,7 @@
 
 API:
     judge = ConvergenceJudge(config)
-    verdict = judge.evaluate(state, history)
+    verdict = judge.evaluate(history)
     if verdict.should_stop: ...
 """
 
@@ -267,7 +267,7 @@ class ConvergenceJudge:
 
     Usage:
         judge = ConvergenceJudge()
-        verdict = judge.evaluate(state, history)
+        verdict = judge.evaluate(history)
         if verdict.should_stop:
             print(f"停止: {verdict.reason}")
     """
@@ -281,14 +281,16 @@ class ConvergenceJudge:
         self.config = config or ConvergenceConfig()
 
     def evaluate(
-        self, state: Any, history: list[RoundHistory]
+        self, history: list[RoundHistory]
     ) -> Verdict:
         """评估当前是否应该停止循环.
 
+        v2.5 P2-DRIFT-05: 之前签名是 `(self, state, history)`, 但 state
+        参数从 v2.3 至今永远传 None (v2.3 P0-A 决策后, 运行时走
+        engine.state.LoopState dataclass, CheckpointEnvelope 仅供
+        checkpoint 持久化 — judge 不读 runtime state). 移除 vestigial 参数.
+
         Args:
-            state: 当前状态 (v2.3 P0-A: 运行时走 engine.state.LoopState v2.0 dataclass;
-                   CheckpointEnvelope 仅供 checkpoint 持久化. Phase 2 暂不直接读取,
-                   保留接口供 v2.0+ 使用)
             history: 历史轮次列表 (可为空)
 
         Returns:

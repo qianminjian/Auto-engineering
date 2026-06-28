@@ -108,7 +108,7 @@ def test_convergence_empty_history_continues(
 ) -> None:
     """空历史: 默认继续."""
     judge = ConvergenceJudge(default_config)
-    verdict = judge.evaluate(state=None, history=[])
+    verdict = judge.evaluate(history=[])
     assert verdict.should_stop is False
     assert verdict.level == LEVEL_CONTINUE
     assert "继续" in verdict.reason
@@ -126,7 +126,7 @@ def test_convergence_hard_limit_triggers_first(
         ),
     ]
     judge = ConvergenceJudge(default_config)  # max_iterations=10
-    verdict = judge.evaluate(state=None, history=history)
+    verdict = judge.evaluate(history=history)
     assert verdict.should_stop is True
     assert verdict.level == LEVEL_HARD_LIMIT
     assert "10" in verdict.reason  # max_iterations
@@ -147,7 +147,7 @@ def test_convergence_quality_gate_all_passed() -> None:
         ),
     ]
     judge = ConvergenceJudge(ConvergenceConfig(max_iterations=10))
-    verdict = judge.evaluate(state=None, history=history)
+    verdict = judge.evaluate(history=history)
     assert verdict.should_stop is True
     assert verdict.level == LEVEL_QUALITY
 
@@ -172,7 +172,7 @@ def test_convergence_quality_gate_partial_triggers_stop() -> None:
         ),
     ]
     judge = ConvergenceJudge(ConvergenceConfig(max_iterations=10))
-    verdict = judge.evaluate(state=None, history=history)
+    verdict = judge.evaluate(history=history)
     assert verdict.should_stop is True
     assert verdict.level == LEVEL_QUALITY
     assert "boom" in verdict.reason  # reason 含 failed gate message
@@ -198,7 +198,7 @@ def test_convergence_judge_quality_gate_failure_triggers_stop() -> None:
         ),
     ]
     judge = ConvergenceJudge(ConvergenceConfig(max_iterations=10))
-    verdict = judge.evaluate(state=None, history=history)
+    verdict = judge.evaluate(history=history)
     assert verdict.should_stop is True
     assert verdict.level == LEVEL_QUALITY
     assert "intentional failure for test" in verdict.reason
@@ -226,7 +226,7 @@ def test_convergence_judge_quality_gate_failure_priority_over_stagnation() -> No
         ),
     ]
     judge = ConvergenceJudge(ConvergenceConfig(max_iterations=10))
-    verdict = judge.evaluate(state=None, history=history)
+    verdict = judge.evaluate(history=history)
     assert verdict.level == LEVEL_QUALITY  # 不是 STAGNANT (2)
     assert verdict.level != LEVEL_STAGNANT
     assert "not passed" in verdict.reason
@@ -248,7 +248,7 @@ def test_convergence_quality_gate_multiple_failed_includes_all_messages() -> Non
         ),
     ]
     judge = ConvergenceJudge(ConvergenceConfig(max_iterations=10))
-    verdict = judge.evaluate(state=None, history=history)
+    verdict = judge.evaluate(history=history)
     assert verdict.should_stop is True
     assert verdict.level == LEVEL_QUALITY
     # 至少前 3 道 message 应在 reason 中
@@ -264,7 +264,7 @@ def test_convergence_semantic_satisfied_stops() -> None:
         RoundHistory(round_id=2, semantic_satisfied=True),
     ]
     judge = ConvergenceJudge(ConvergenceConfig(max_iterations=10))
-    verdict = judge.evaluate(state=None, history=history)
+    verdict = judge.evaluate(history=history)
     assert verdict.should_stop is True
     assert verdict.level == LEVEL_SEMANTIC
     assert "LLM" in verdict.reason
@@ -282,7 +282,7 @@ def test_convergence_priority_hard_limit_beats_quality() -> None:
         ),
     ]
     judge = ConvergenceJudge(ConvergenceConfig(max_iterations=10))
-    verdict = judge.evaluate(state=None, history=history)
+    verdict = judge.evaluate(history=history)
     assert verdict.level == LEVEL_HARD_LIMIT  # 不是 QUALITY
 
 
@@ -305,7 +305,7 @@ def test_convergence_priority_quality_beats_stagnant() -> None:
         ),
     ]
     judge = ConvergenceJudge(ConvergenceConfig(max_iterations=10))
-    verdict = judge.evaluate(state=None, history=history)
+    verdict = judge.evaluate(history=history)
     assert verdict.level == LEVEL_QUALITY  # 优先级更高
 
 
@@ -407,7 +407,7 @@ def test_stagnation_triggers_via_judge(make_history) -> None:
         removed=[2, 2, 2],
     )
     judge = ConvergenceJudge(ConvergenceConfig(max_iterations=10, stagnation_threshold=2))
-    verdict = judge.evaluate(state=None, history=history)
+    verdict = judge.evaluate(history=history)
     assert verdict.should_stop is True
     assert verdict.level == LEVEL_STAGNANT
 
@@ -690,7 +690,7 @@ def test_end_to_end_save_checkpoint_with_convergence_verdict(
         RoundHistory(round_id=3, files_changed=5, lines_added=10, lines_removed=2),
     ]
     judge = ConvergenceJudge(ConvergenceConfig(max_iterations=10, stagnation_threshold=2))
-    verdict_before = judge.evaluate(state=None, history=history)
+    verdict_before = judge.evaluate(history=history)
     assert verdict_before.should_stop is True
     assert verdict_before.level == LEVEL_STAGNANT
 
@@ -703,7 +703,7 @@ def test_end_to_end_save_checkpoint_with_convergence_verdict(
     history_reloaded = [
         RoundHistory(**h) for h in loaded.history
     ]
-    verdict_after = judge.evaluate(state=None, history=history_reloaded)
+    verdict_after = judge.evaluate(history=history_reloaded)
     assert verdict_after.level == LEVEL_STAGNANT
     assert verdict_after.reason == verdict_before.reason
 
@@ -756,7 +756,7 @@ def test_convergence_judge_quality_failure_includes_message() -> None:
         ),
     ]
     judge = ConvergenceJudge(ConvergenceConfig(max_iterations=10))
-    verdict = judge.evaluate(state=None, history=history)
+    verdict = judge.evaluate(history=history)
     # D-fix: 有 failed gate → 必须触发停止 (质量门是"门", 不通过应关)
     assert verdict.should_stop is True
     assert verdict.level == LEVEL_QUALITY
@@ -820,7 +820,7 @@ def test_convergence_judge_quality_all_passed_uses_verdict_objects() -> None:
         ),
     ]
     judge = ConvergenceJudge(ConvergenceConfig(max_iterations=10))
-    verdict = judge.evaluate(state=None, history=history)
+    verdict = judge.evaluate(history=history)
     assert verdict.should_stop is True
     assert verdict.level == LEVEL_QUALITY
     # reason 应含门数量 (2 道)
@@ -847,7 +847,7 @@ def test_convergence_judge_quality_failure_reason_includes_verdict_message() -> 
         ),
     ]
     judge = ConvergenceJudge(ConvergenceConfig(max_iterations=10))
-    verdict = judge.evaluate(state=None, history=history)
+    verdict = judge.evaluate(history=history)
     # D-fix: 触发 LEVEL_QUALITY (而不是 CONTINUE 或 STAGNANT)
     assert verdict.should_stop is True
     assert verdict.level == LEVEL_QUALITY

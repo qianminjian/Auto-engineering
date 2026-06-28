@@ -87,7 +87,7 @@ async def _smoke() -> int:
 
         # 验证 3: ConvergenceJudge 必须触发 LEVEL_QUALITY (有 failed gate) — v2.3 D-fix
         judge = ConvergenceJudge()
-        verdict = judge.evaluate(state=None, history=history)
+        verdict = judge.evaluate(history=history)
 
         # v2.3 Phase D-fix: 质量门是"门", 不通过应关. fake_failing 失败 →
         # _check_quality_gates 必须返回 Verdict.stop(level=LEVEL_QUALITY),
