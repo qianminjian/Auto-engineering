@@ -80,13 +80,14 @@ def init_file_conn(db_path: str, lock: threading.Lock) -> sqlite3.Connection:
     """初始化 file 模式缓存连接 (v2.5 P2-D-3).
 
     - 设 PRAGMA journal_mode=WAL — 写并发不互斥读
+    - check_same_thread=False + threading.Lock 保护 — 多线程共享同一连接安全
     - 幂等创建 schema
     - 返回连接供 _with_conn 复用 (不关闭)
 
     调用方负责在 store 生命周期结束时 close().
     """
     with lock:
-        conn = sqlite3.connect(db_path)
+        conn = sqlite3.connect(db_path, check_same_thread=False)
         conn.row_factory = sqlite3.Row
         # WAL: 写并发不阻塞读, 提升 dev-loop 期间的多 round 吞吐
         # (round 1 写 checkpoint 时 round 2 还能读)

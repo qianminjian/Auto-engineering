@@ -1125,3 +1125,57 @@ async def test_orchestrator_agent_runtime_task_outcome_status_completed():
     assert "developer" in (out.output or ""), (
         f"output 应含 'developer' (从 values), 实际: {out.output}"
     )
+
+class TestOrchestratorHistoryBounded:
+    """v2.5 P2-D-5: history / round_results 用 deque(maxlen=50) 防止无界增长."""
+
+    def test_history_capped_at_maxlen(self) -> None:
+        """加 > 50 个 RoundHistory 后, self.history 长度 = 50, 最早被丢弃."""
+        from collections import deque
+
+        from auto_engineering.loop.convergence import RoundHistory
+        from auto_engineering.loop.orchestrator import Orchestrator
+        from auto_engineering.loop.plan import Task
+
+        async def _noop(task, ctx):
+            from auto_engineering.loop.round import TaskOutcome
+            return TaskOutcome(task_id=task.id, status="completed", output="ok")
+
+        task = Task(id="t1", description="x")
+        orch = Orchestrator(
+            requirement="test", tasks=[task], executor=_noop,
+        )
+        assert isinstance(orch.history, deque)
+        assert orch.history.maxlen == 50
+        for i in range(60):
+            orch.history.append(RoundHistory(round_id=i))
+        assert len(orch.history) == 50
+        assert orch.history[0].round_id == 10
+        assert orch.history[-1].round_id == 59
+
+    def test_round_results_capped_at_maxlen(self) -> None:
+        """round_results 同理 cap 在 50."""
+        from collections import deque
+
+        from auto_engineering.loop.convergence import RoundHistory
+        from auto_engineering.loop.orchestrator import Orchestrator
+        from auto_engineering.loop.plan import Task
+        from auto_engineering.loop.round import RoundResult
+
+        async def _noop(task, ctx):
+            from auto_engineering.loop.round import TaskOutcome
+            return TaskOutcome(task_id=task.id, status="completed", output="ok")
+
+        task = Task(id="t1", description="x")
+        orch = Orchestrator(
+            requirement="test", tasks=[task], executor=_noop,
+        )
+        assert isinstance(orch.round_results, deque)
+        assert orch.round_results.maxlen == 50
+        for i in range(70):
+            orch.round_results.append(
+                RoundResult(round_id=i, history=[RoundHistory(round_id=i)])
+            )
+        assert len(orch.round_results) == 50
+        assert orch.round_results[-1].round_id == 69
+

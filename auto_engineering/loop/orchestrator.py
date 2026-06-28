@@ -43,6 +43,7 @@
 from __future__ import annotations
 
 import os
+from collections import deque
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -154,8 +155,12 @@ class Orchestrator:
     config: OrchestratorConfig = field(default_factory=OrchestratorConfig)
     plan: Plan | None = None
     judge: ConvergenceJudge | None = None
-    history: list[RoundHistory] = field(default_factory=list)
-    round_results: list[RoundResult] = field(default_factory=list)
+    # v2.5 P2-D-5: 用 deque(maxlen=50) 替换无界 list, 长 dev-loop 不爆内存.
+    # Judge 只需最近 ~10 轮 (stagnation 阈值 2 + 留 buffer), 50 轮足够.
+    history: deque[RoundHistory] = field(default_factory=lambda: deque(maxlen=50))
+    round_results: deque[RoundResult] = field(
+        default_factory=lambda: deque(maxlen=50)
+    )
     verdict: ConvVerdict | None = None
 
     def __post_init__(self) -> None:
