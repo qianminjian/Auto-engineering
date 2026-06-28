@@ -2,7 +2,7 @@
 
 > 创建：2026-06-26 | 阶段：v2.2 FINAL
 > 位置：`docs/` = 永久资产，不 gitignore
-> 决策依据：`design/BEACON.md` 决策 11/12/19
+> 决策依据：`design/BEACON.md` 决策 19/27 (v2.5 P0-FINAL, v1.0 退役)
 
 ## 环境要求
 
@@ -75,5 +75,5 @@ ae --version && ae --help       # 验证
 
 ## 引用
 
-- `design/BEACON.md` 决策 11/12/19 — v2.0 增量式演进 + v2.2 闭环
+- `design/BEACON.md` 决策 19/27 — v2.2 闭环 + v2.5 P0-FINAL v1.0 退役
 - `docs/api-reference.md` · `docs/troubleshooting.md` · `docs/e2e-real-run.md`

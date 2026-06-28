@@ -63,7 +63,7 @@
 
 **v2.0/v2.1 里程碑：** Phase 01（`c3077bf`/`3857366`/`73ee4bc`）Channel + LoopState；Phase 02（`1dd2ff8`/`4038ca2`/`704987d`）ConvergenceJudge + SQLite；Phase 03（`4f3d932`/`3a3edd1`/`23584b6`）TaskDAG + check_file_isolation + Orchestrator；Phase 04（`feb4af8`→`da759cd`）7 Gates + CLI v2；v2.1 Phase A（`71434bc`/`364c7ad`/`e938e72`）Channel 序列化三件套；Phase B（`337fcc1`/`a99b60a`）Orchestrator Gate+LLM 集成；Phase C（`a8ba445`/`eebcfb1`/`739330d`）CLI 集成 v2；Phase D（`7c63a91`/`4ea0ec9`）字段补全 + load() 重建。
 
-**v2.0 删除项取消（决策 11/12）：** 保留 `engine/runtime/tools`（旧路径），v2.0 loop/ 叠加。详见 v2.0-Design-Loop.md §一。
+**v2.0 删除项取消（决策 11/12，2026-06-25 → 2026-06-28 撤销）：** 决策 11/12 已被决策 27 撤销，原始"保留 engine/runtime/tools 作为旧路径兼容"策略不再适用 — engine/* + runtime/mock.py + gates/{builtin,guardrail}.py 全部退役 (commit 2994c7e)。v2.5 纯 v2.0 path。详见 v2.0-Design-Loop.md §一（历史参考）。
 
 **v1.1/init 修复：** D1-D6 + B1-B6 全完（Plan A 40 测试全过，覆盖率 state 100% / messages 100% / checkpoint 89% / graph 95% / loop 82%）；init 21 偏差项 + 8 项目类型 E2E + hooks 31%→88%。详见 v1.1-Plan-Dev.md + v1.0-Design-Init.md §1.7-§1.9。
 

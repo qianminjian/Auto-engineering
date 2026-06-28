@@ -306,6 +306,78 @@ class TestOrchestratorConfigDefaultEvaluator:
         )
 
 
+class TestOrchestratorConfigLLMAgentSkip:
+    """OrchestratorConfig 在 LLM agent 上下文 (CLAUDE_CODE=1) 中跳过自动启用.
+
+    借鉴 settings.py:49-50 + environment.py:211 同模式 (commit 7f12a70/fae3255).
+    目的: 避免 Claude Code 自身运行 dev-loop 时调用 Claude API 自评估
+    (浪费 budget + 产生自循环噪声).
+    """
+
+    def test_claude_code_set_with_api_key_keeps_none(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """CLAUDE_CODE=1 + ANTHROPIC_API_KEY → 不自动启用 (避免自调)."""
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-from-env")
+        monkeypatch.setenv("CLAUDE_CODE", "1")
+
+        from auto_engineering.loop.orchestrator import OrchestratorConfig
+
+        config = OrchestratorConfig()
+        assert config.semantic_evaluator is None, (
+            "CLAUDE_CODE=1 时不应自动启用 ClaudeSemanticEvaluator "
+            "(避免 Claude Code 自调 Claude 评估, 镜像 settings.py:49-50)"
+        )
+
+    def test_claude_code_unset_with_api_key_enables(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """CLAUDE_CODE 未设 + ANTHROPIC_API_KEY → 自动启用 (非 LLM agent)."""
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-from-env")
+        monkeypatch.delenv("CLAUDE_CODE", raising=False)
+
+        from auto_engineering.loop.orchestrator import OrchestratorConfig
+        from auto_engineering.loop.semantic_evaluator import (
+            ClaudeSemanticEvaluator,
+        )
+
+        config = OrchestratorConfig()
+        assert isinstance(config.semantic_evaluator, ClaudeSemanticEvaluator), (
+            "CLAUDE_CODE 未设时仍应自动启用 (镜像 settings.py 默认行为)"
+        )
+
+    def test_claude_code_set_without_api_key_keeps_none(
+        self, clean_env: pytest.MonkeyPatch
+    ) -> None:
+        """CLAUDE_CODE=1 + 无 ANTHROPIC_API_KEY → 仍为 None (graceful)."""
+        monkeypatch = clean_env
+        monkeypatch.setenv("CLAUDE_CODE", "1")
+
+        from auto_engineering.loop.orchestrator import OrchestratorConfig
+
+        config = OrchestratorConfig()
+        assert config.semantic_evaluator is None, (
+            "无 API key + LLM agent → 保持 None (graceful degradation)"
+        )
+
+    def test_explicit_evaluator_in_llm_agent_not_overridden(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """CLAUDE_CODE=1 + 用户显式传 semantic_evaluator → 用户值保留."""
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-from-env")
+        monkeypatch.setenv("CLAUDE_CODE", "1")
+
+        from auto_engineering.loop.orchestrator import OrchestratorConfig
+
+        async def custom_evaluator(round_result):
+            return True
+
+        config = OrchestratorConfig(semantic_evaluator=custom_evaluator)
+        assert config.semantic_evaluator is custom_evaluator, (
+            "用户显式传值在 LLM agent 中也不应被覆盖"
+        )
+
+
 # ============================================================
 # 辅助: 同步跑 async 函数 (pytest-asyncio 风格)
 # ============================================================

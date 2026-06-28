@@ -2,7 +2,7 @@
 
 > 创建：2026-06-26 | 阶段：v2.2 FINAL
 > 位置：`docs/` = 永久资产
-> 决策依据：`design/BEACON.md` 决策 11/12/19
+> 决策依据：`design/BEACON.md` 决策 19/27 (v2.5 P0-FINAL, v1.0 退役)
 
 ## ae init — 项目脚手架
 
@@ -75,5 +75,5 @@ resume 子命令为占位（实际恢复走 `ae dev-loop`）。
 
 ## 引用
 
-- `design/BEACON.md` 决策 11/12/19 · `auto_engineering/cli.py`
+- `design/BEACON.md` 决策 19/27 · `auto_engineering/cli.py`
 - `docs/production-deployment.md` · `docs/troubleshooting.md`
