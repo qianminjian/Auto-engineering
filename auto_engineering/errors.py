@@ -22,18 +22,19 @@ class ErrorCode(Enum):
     LLM_TIMEOUT = "LLM_TIMEOUT"  # AnthropicProvider.create_message → 网络超时
     LLM_MAX_RETRIES = "LLM_MAX_RETRIES"  # AnthropicProvider.create_message → 超过 max_retries
 
-    # ── Guardrail (gates/builtin.py, engine/loop.py) ──
+    # ── Guardrail (gates/builtin.py 已 v2.5 P0-FINAL 删除, 决策 22 → 27 撤销) ──
+    # 保留为 API 兼容 (helper.py 仍做错误分类). 触发场景不再主动产生.
     GUARDRAIL_BLOCKED = "GUARDRAIL_BLOCKED"  # Guardrail.check() action='block' → 中止 Stage
     GUARDRAIL_RETRY = "GUARDRAIL_RETRY"  # Guardrail.check() action='retry' → 重试 Stage
 
-    # ── Stage / Loop (engine/loop.py) ──
-    STAGE_RETRY_EXCEEDED = "STAGE_RETRY_EXCEEDED"  # LoopEngine.run() → Stage 重试超限
+    # ── Stage / Loop (engine/loop.py + engine/graph.py 已 v2.5 P0-FINAL 删除) ──
+    STAGE_RETRY_EXCEEDED = "STAGE_RETRY_EXCEEDED"  # 历史: LoopEngine.run() → Stage 重试超限 (v1.0 路径退役)
     MAX_TOOL_CALLS_EXCEEDED = "MAX_TOOL_CALLS_EXCEEDED"  # BaseAgent.execute() → 工具循环超限
     INVALID_AGENT_OUTPUT = "INVALID_AGENT_OUTPUT"  # BaseAgent._parse_final_response() → JSON 解析失败
-    GRAPH_RECURSION_LIMIT = "GRAPH_RECURSION_LIMIT"  # StageGraph → 递归/无限循环
+    GRAPH_RECURSION_LIMIT = "GRAPH_RECURSION_LIMIT"  # 历史: StageGraph → 递归/无限循环 (v1.0 路径退役)
 
     # ── Task / Cancellation ──
-    TASK_NOT_FOUND = "TASK_NOT_FOUND"  # StageGraph → task 不在 DAG 中
+    TASK_NOT_FOUND = "TASK_NOT_FOUND"  # 历史: StageGraph → task 不在 DAG 中 (v1.0 路径退役, 保留 API)
     TASK_CANCELLED = "TASK_CANCELLED"  # CancellationToken.check() → 用户 Ctrl-C
     AGENT_REGISTRATION_ERROR = "AGENT_REGISTRATION_ERROR"  # AgentRuntime → agent_type 未注册
     OUTPUT_DROPPED = "OUTPUT_DROPPED"  # Guardrail action='drop' → 静默丢弃输出
