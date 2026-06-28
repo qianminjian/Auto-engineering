@@ -72,7 +72,6 @@ def _normalize_value(v: Any) -> Any:
 class SQLiteCheckpointStore[T]:
     """SQLite Checkpoint 持久化.
 
-    Phase 2.2-G: Generic[T] bound LoopStateProtocol — save/load 接受具体类型.
     使用: SQLiteCheckpointStore[CheckpointEnvelope](db_path) — 类型安全.
     (v2.3 P0-A: 原 LoopState 重命名为 CheckpointEnvelope, 详见 BEACON 决策 23.)
 
@@ -178,7 +177,6 @@ class SQLiteCheckpointStore[T]:
     def _serialize_state(state: LoopStateProtocol) -> str:
         """序列化 CheckpointEnvelope → JSON string.
 
-        Phase 2.2-G: 接受 LoopStateProtocol (替代 Any).
         优先 Pydantic v2 model_dump, 降级到 __dict__/dict.
         """
         if hasattr(state, "model_dump"):
@@ -194,11 +192,11 @@ class SQLiteCheckpointStore[T]:
 
     @staticmethod
     def _deserialize_state(state_json: str) -> Any:
-        """反序列化 JSON → CheckpointEnvelope 实例 (v2.0-D 修复 + Phase 2.2-G 类型契约).
+        """反序列化 JSON → CheckpointEnvelope 实例 (v2.0-D 修复).
 
         v2.0-D: 返回 CheckpointEnvelope 实例, channels 是 Channel 实例.
-        Phase 2.2-G: 输入是 LoopStateProtocol 序列化结果 (model_dump JSON),
-                      返回 CheckpointEnvelope 实例 (调用 deserialize_loop_state 重建 Channel).
+        输入是 LoopStateProtocol 序列化结果 (model_dump JSON),
+        返回 CheckpointEnvelope 实例 (调用 deserialize_loop_state 重建 Channel).
         (v2.3 P0-A: 原 LoopState 重命名为 CheckpointEnvelope.)
 
         Fallback: 若反序列化失败, 返回原始 dict (向后兼容, 不抛异常中断 load).
@@ -237,7 +235,6 @@ class SQLiteCheckpointStore[T]:
     ) -> str:
         """保存 Checkpoint.
 
-        Phase 2.2-G: state 参数类型是 T (bound LoopStateProtocol), 替代 Any.
         (v2.3 P0-A: 原 LoopState 重命名为 CheckpointEnvelope.)
 
         Args:
@@ -338,8 +335,6 @@ class SQLiteCheckpointStore[T]:
     def load(self, checkpoint_id: str) -> Checkpoint[T]:
         """按 ID 加载 Checkpoint.
 
-        Phase 2.2-G: 返回 Checkpoint[T] (Generic), state 字段是 LoopStateProtocol.
-
         Args:
             checkpoint_id: Checkpoint ID
 
@@ -363,8 +358,6 @@ class SQLiteCheckpointStore[T]:
 
     def load_latest(self) -> Checkpoint[T] | None:
         """加载最新 Checkpoint (按 round DESC, created_at DESC).
-
-        Phase 2.2-G: 返回 Checkpoint[T] | None (Generic).
 
         Returns:
             最新 Checkpoint 或 None (库为空)
@@ -397,8 +390,6 @@ class SQLiteCheckpointStore[T]:
 
     def load_by_round(self, round: int) -> Checkpoint[T] | None:
         """加载指定轮次的 Checkpoint (返回该轮最近一条).
-
-        Phase 2.2-G: 返回 Checkpoint[T] | None (Generic).
 
         Args:
             round: 轮次编号
@@ -583,10 +574,7 @@ class SQLiteCheckpointStore[T]:
 
     @staticmethod
     def _row_to_checkpoint(row: Any) -> Checkpoint[T]:
-        """将 sqlite Row 转 Checkpoint (校验 schema_version).
-
-        Phase 2.2-G: 返回 Checkpoint[T] — T 由 caller 推断.
-        """
+        """将 sqlite Row 转 Checkpoint (校验 schema_version)."""
         schema_version = row["schema_version"]
         if schema_version != SCHEMA_VERSION:
             raise CheckpointSchemaMismatchError(
