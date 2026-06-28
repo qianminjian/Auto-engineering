@@ -5,6 +5,7 @@
 (save/load/load_latest/load_by_round/list_all/delete/clear/count) 不再各自重复这层样板.
 v2.5 P1-D+1: 加 _atomic 上下文管理器 — 事务包装 + 失败自动 rollback, 让 save/delete/clear
 的 try/except 模板不再重复.
+v2.5 P2-D-3: file 模式连接缓存 + WAL — 每操作 connect/close + 无 WAL 模式, 慢.
 """
 
 from __future__ import annotations
@@ -22,12 +23,14 @@ def _with_conn(
     is_memory: bool,
     lock: threading.Lock,
     shared_conn: sqlite3.Connection | None,
+    file_conn: sqlite3.Connection | None = None,
 ) -> Iterator[sqlite3.Connection]:
     """获取一个 sqlite3.Connection, 用完自动关闭 (除 ":memory:" 模式外).
 
     线程安全策略:
         - ":memory:" 模式: 取 lock, 返回共享 connection, 不关闭
-        - file 模式: 每调用创建独立 connection, 调用方 yield 后自动 close
+        - file 模式: 复用 file_conn (缓存) — v2.5 P2-D-3 性能优化;
+          如果调用方传 None (老调用方) 仍走一次性 connect/close 路径
 
     Schema 幂等创建: 每次获取 file 模式 connection 时都执行 CREATE TABLE IF NOT EXISTS,
     跨进程/线程安全.
@@ -40,6 +43,12 @@ def _with_conn(
         with lock:
             yield shared_conn
         return
+    if file_conn is not None:
+        # v2.5 P2-D-3: 复用缓存的 file connection (WAL 模式 + skip schema 重复创建)
+        with lock:
+            yield file_conn
+        return
+    # 一次性连接 (无缓存, 老调用方或测试)
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     _ensure_schema(conn)
@@ -65,6 +74,25 @@ def _atomic(conn: sqlite3.Connection) -> Iterator[sqlite3.Connection]:
     except sqlite3.Error:
         conn.rollback()
         raise
+
+
+def init_file_conn(db_path: str, lock: threading.Lock) -> sqlite3.Connection:
+    """初始化 file 模式缓存连接 (v2.5 P2-D-3).
+
+    - 设 PRAGMA journal_mode=WAL — 写并发不互斥读
+    - 幂等创建 schema
+    - 返回连接供 _with_conn 复用 (不关闭)
+
+    调用方负责在 store 生命周期结束时 close().
+    """
+    with lock:
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        # WAL: 写并发不阻塞读, 提升 dev-loop 期间的多 round 吞吐
+        # (round 1 写 checkpoint 时 round 2 还能读)
+        conn.execute("PRAGMA journal_mode=WAL")
+        _ensure_schema(conn)
+    return conn
 
 
 def _ensure_schema(conn: sqlite3.Connection) -> None:
@@ -93,4 +121,4 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
-__all__ = ["_with_conn", "_atomic", "_ensure_schema"]
+__all__ = ["_with_conn", "_atomic", "_ensure_schema", "init_file_conn"]

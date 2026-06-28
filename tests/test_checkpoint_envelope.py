@@ -133,3 +133,86 @@ class TestCheckpointExceptions:
         assert isinstance(err, CheckpointError)
         assert "found 2" in str(err)
         assert "expected 1" in str(err)
+
+
+# ============================================================
+# IV. SQLiteCheckpointStore 连接缓存 + WAL (P2-D-3, v2.5)
+# ============================================================
+
+
+class TestStoreFileConnectionCache:
+    """v2.5 P2-D-3: file 模式缓存连接 + WAL 加速.
+
+    之前每操作 connect/close + CREATE TABLE 检查 (~3 DDL) + 默认
+    DELETE journal mode. 改为: 启动时一次 init_file_conn (WAL +
+    schema), 后续操作复用 self._file_conn. close() 显式释放.
+    """
+
+    def test_file_mode_caches_connection(self, tmp_path: Path) -> None:
+        """file 模式启动后 self._file_conn 不为 None (缓存生效)."""
+        from auto_engineering.loop.checkpoint import SQLiteCheckpointStore
+
+        db_path = tmp_path / "test.db"
+        store = SQLiteCheckpointStore(str(db_path))
+        try:
+            assert store._file_conn is not None
+            # 多次操作复用同一 connection (id 相同)
+            cid1 = store._file_conn  # 保存引用
+            store.save(state={"x": 1}, round=1)
+            assert store._file_conn is cid1
+            store.save(state={"x": 2}, round=2)
+            assert store._file_conn is cid1
+        finally:
+            store.close()
+
+    def test_file_mode_uses_wal_journal(self, tmp_path: Path) -> None:
+        """file 模式连接应启用 PRAGMA journal_mode=WAL."""
+        from auto_engineering.loop.checkpoint import SQLiteCheckpointStore
+
+        db_path = tmp_path / "test.db"
+        store = SQLiteCheckpointStore(str(db_path))
+        try:
+            journal_mode = store._file_conn.execute(
+                "PRAGMA journal_mode"
+            ).fetchone()[0]
+            assert journal_mode.lower() == "wal", (
+                f"file 模式应启用 WAL, 实际: {journal_mode!r}"
+            )
+        finally:
+            store.close()
+
+    def test_close_releases_connection(self, tmp_path: Path) -> None:
+        """close() 释放 self._file_conn (置 None)."""
+        from auto_engineering.loop.checkpoint import SQLiteCheckpointStore
+
+        db_path = tmp_path / "test.db"
+        store = SQLiteCheckpointStore(str(db_path))
+        assert store._file_conn is not None
+        store.close()
+        assert store._file_conn is None
+        assert store._shared_conn is None
+
+    def test_context_manager_protocol(self, tmp_path: Path) -> None:
+        """with SQLiteCheckpointStore(...) as store: → 自动 close."""
+        from auto_engineering.loop.checkpoint import SQLiteCheckpointStore
+
+        db_path = tmp_path / "test.db"
+        with SQLiteCheckpointStore(str(db_path)) as store:
+            assert store._file_conn is not None
+        # 退出 with 块 → close 自动调
+        assert store._file_conn is None
+
+    def test_memory_mode_unchanged(self) -> None:
+        """:memory: 模式仍走 _shared_conn + threading.Lock (无 WAL)."""
+        from auto_engineering.loop.checkpoint import SQLiteCheckpointStore
+
+        with SQLiteCheckpointStore(":memory:") as store:
+            assert store._shared_conn is not None
+            assert store._file_conn is None  # file 模式不适用
+            # memory 模式默认 DELETE journal, 不强制 WAL
+            journal_mode = store._shared_conn.execute(
+                "PRAGMA journal_mode"
+            ).fetchone()[0]
+            assert journal_mode.lower() == "memory", (
+                f"memory 模式应报 journal_mode=memory, 实际: {journal_mode!r}"
+            )

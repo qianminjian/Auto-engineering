@@ -17,7 +17,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from auto_engineering.loop.checkpoint._connection import _atomic, _with_conn
+from auto_engineering.loop.checkpoint._connection import _atomic, _with_conn, init_file_conn
 from auto_engineering.loop.checkpoint._serialization import (
     _deserialize_state,
     _normalize_history_item,
@@ -74,6 +74,8 @@ class SQLiteCheckpointStore[T]:
         self._is_memory = self.db_path == ":memory:"
         self._lock = threading.Lock()
         self._shared_conn: sqlite3.Connection | None = None
+        # v2.5 P2-D-3: file 模式缓存连接 + WAL, 避免每操作 connect/close
+        self._file_conn: sqlite3.Connection | None = None
         if self._is_memory:
             # memory 模式: 启动时建共享 connection + schema
             with self._lock:
@@ -98,18 +100,41 @@ class SQLiteCheckpointStore[T]:
                 )
                 self._shared_conn.commit()
         else:
-            # file 模式: 用 _with_conn 触发一次 schema 创建 (临时 connection)
-            with self._conn():
-                pass
+            # v2.5 P2-D-3: file 模式初始化缓存连接 (WAL + schema 一次)
+            self._file_conn = init_file_conn(self.db_path, self._lock)
 
     def _conn(self) -> Any:
-        """获取连接的上下文管理器 (内部辅助, 让 save/load 等方法少 4 行样板)."""
+        """获取连接的上下文管理器 (内部辅助, 让 save/load 等方法少 4 行样板).
+
+        v2.5 P2-D-3: file 模式传 self._file_conn (缓存), memory 模式传
+        self._shared_conn. _with_conn 复用, 不再 connect/close.
+        """
         return _with_conn(
             self.db_path,
             is_memory=self._is_memory,
             lock=self._lock,
             shared_conn=self._shared_conn,
+            file_conn=self._file_conn,
         )
+
+    def close(self) -> None:
+        """v2.5 P2-D-3: 关闭缓存的 file connection.
+
+        长进程 (e.g. dev-loop 跑几十轮) 应该在结束时调 close() 释放
+        SQLite 句柄 + 关闭 WAL 文件. 否则 GC 回收.
+        """
+        if self._file_conn is not None:
+            self._file_conn.close()
+            self._file_conn = None
+        if self._shared_conn is not None:
+            self._shared_conn.close()
+            self._shared_conn = None
+
+    def __enter__(self) -> "SQLiteCheckpointStore[T]":
+        return self
+
+    def __exit__(self, *exc_info) -> None:
+        self.close()
 
     def save(
         self,
