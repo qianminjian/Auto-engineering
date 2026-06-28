@@ -57,6 +57,23 @@ SKIP_DIRS = {
 _MAX_FILE_MB = 5
 
 
+def _redact_gitleaks_output(text: str) -> str:
+    """脱敏 gitleaks 输出 (v2.5 P2-C-5).
+
+    gitleaks 默认 stdout 含 matched secret 值 (e.g., AWS_ACCESS_KEY=AKIA...)
+    直接 echo 到 verdict 会把密钥泄漏到 CI 日志 / 用户终端.
+    用 gitleaks 标准脱敏策略: 把 `=VALUE` / `: VALUE` 后的 secret 值
+    替换为 ***REDACTED***, 保留 key 名 + 文件:行号 (定位信息).
+    """
+    import re as _re
+    # 匹配 key=value 或 key: value, 替换 value 部分
+    return _re.sub(
+        r"(?P<key>[A-Za-z_][A-Za-z0-9_./-]*)\s*[:=]\s*\S+",
+        r"\g<key>=***REDACTED***",
+        text,
+    )
+
+
 def _scan_file(path: Path) -> list[str]:
     """扫描单个文件, 返回匹配到的 secret 描述列表."""
     try:
@@ -175,9 +192,14 @@ class SafetyGate(Gate):
                 #   1 = leaks found
                 #   其他 = 工具错误(配置 / 命令错),忽略
                 if result.returncode == 1:
-                    # gitleaks 检测到 secret(但 regex 未发现,可能 gitleaks 规则更多)
+                    # gitleaks 检测到 secret. v2.5 P2-C-5: gitleaks 默认
+                    # stdout 含 secret 值本身, 直接 echo 到 verdict 反而
+                    # 把密钥泄漏到日志/CI. 用 --no-banner + 截断前 200
+                    # 字符 (而非 500) 减少暴露面. 调用方用 gitleaks
+                    # `--redact` 拿纯 leak 描述 (无 secret 值).
+                    sanitized = _redact_gitleaks_output(result.stdout[:200])
                     return Verdict.failed(
-                        f"gitleaks 检测到 secret:\n{result.stdout[:500]}",
+                        f"gitleaks 检测到 secret (secret 值已脱敏):\n{sanitized}",
                         gate_name=self.name,
                     )
             except (FileNotFoundError, subprocess.TimeoutExpired):

@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import contextlib
+import re
 import shutil
 import tempfile
 from dataclasses import dataclass, field
@@ -147,7 +148,16 @@ class InitWorker:
         """
         self._answers.write_to(tmpdir / ".ae-answers.yml")
 
-        replay_dir = Path.home() / ".ae-replays" / (self.project_type or "unknown")
+        # v2.5 P2-C-3: 验证 project_type 防止路径穿越. 攻击者控制的
+        # project_type 注入 `../../etc` 会让 replay_dir 写到 ~/.ae-replays/../../etc
+        # (mkdir(parents=True) 会创建任意路径).
+        raw_type = self.project_type or "unknown"
+        if not re.match(r"^[A-Za-z0-9_-]+$", raw_type):
+            raise ValueError(
+                f"project_type '{raw_type}' 含非法字符. "
+                f"只允许字母/数字/下划线/连字符 (防路径穿越)."
+            )
+        replay_dir = Path.home() / ".ae-replays" / raw_type
         replay_dir.mkdir(parents=True, exist_ok=True)
         replay_file = replay_dir / f"{datetime.now().strftime('%Y%m%d-%H%M%S')}.yml"
         self._answers.write_to(replay_file)
