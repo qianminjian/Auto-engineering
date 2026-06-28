@@ -85,10 +85,11 @@ class OrchestratorConfig:
             (v2.3 Phase E P1.1, 借鉴 LangGraph Pregel.recursion_limit).
         gates: v2.1 Phase B — 验证 Gate 列表 (None = 跳过)
         semantic_evaluator: v2.1 Phase B — LLM 语义评估.
-            None 时, **有 ANTHROPIC_API_KEY** 自动启用 ClaudeSemanticEvaluator
-            (v2.3 Phase J P1.6 — 内置 LLM evaluator).
+            None 时, **有 ANTHROPIC_API_KEY 且不在 LLM agent** (CLAUDE_CODE 未设置)
+            自动启用 ClaudeSemanticEvaluator (v2.3 Phase J P1.6 — 内置 LLM evaluator).
             用户显式传值时不被覆盖.
-            完全无 API key 时保持 None (graceful degradation).
+            无 API key 或在 LLM agent 中时保持 None (graceful degradation,
+            避免 Claude Code 自调 Claude 评估).
         project_root: v2.1 Phase B — Gate 运行的项目根目录 (None = 当前 cwd)
         agent_runtime: v2.3 Phase H (P1.4) — AgentRuntime 实例 (None = 用 self.executor).
             借鉴 AutoGen GroupChat agent_selector: 按 task.role 查 Runtime.get(role)
