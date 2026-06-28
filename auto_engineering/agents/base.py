@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -111,8 +112,13 @@ class BaseAgent:
                 cancellation.check()
 
             # P1.3: LLM 异常分类
+            # D-P0-1 (deep audit): llm.create_message 是同步函数. 直接 await
+            # 会让 asyncio.gather 假象 — 所有并行 agent 串行化等待 LLM.
+            # 用 asyncio.to_thread 把同步 LLM 调用移到 thread pool, 真正并行.
+            # 同模式: semantic_evaluator.py:164 已正确实现.
             try:
-                response = await self.llm.create_message(
+                response = await asyncio.to_thread(
+                    self.llm.create_message,
                     model=self.model,
                     max_tokens=self.max_tokens,
                     system=self._build_system_prompt(task),
