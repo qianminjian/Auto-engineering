@@ -1,20 +1,27 @@
-"""v2.0 Phase 03 + v2.1 Phase B — Orchestrator 主循环.
+"""v2.0 Phase 03 + v2.1 Phase B + v5.0 M4 — Orchestrator 主循环.
 
 设计来源:
     - design/v2.0-Analysis-Loop.md §4.2 两层 Loop + §4.5 多 Agent 并发
     - design/v2.0-Analysis-Loop.md §4.7 收敛判定 (4 级)
+    - design/v5.0-Design-Loop.md §B7.1 (12 步主循环) + §B7.4 (Checkpoint) + §B7.5 (Resume)
 
 核心组件:
     OrchestratorConfig — 配置 (gates / semantic_evaluator / project_root / agent_runtime)
     Orchestrator       — 主循环: 启动 → run_round → 收敛判定 → 继续 / 停止
 
-主循环流程:
-    1. 构造时接收 requirement + tasks + executor + gates + semantic_evaluator
-    2. run_round 第一轮 (asyncio.gather 并行执行)
-    3. 每轮后跑 Gate (project_root) + LLM 语义评估
-    4. 收集 RoundHistory → ConvergenceJudge.evaluate() → verdict
-    5. 若 verdict.should_stop → 退出
-    6. 否则 → 下一轮 (future 接 plan 更新逻辑)
+v5.0 M4 主循环流程 (12 步):
+    step 1: Plan.validate() + state 初始化 + retry_ctr + router 初始化 + project_root 解析
+    step 2: while round_id <= max_iter:
+        2a cancellation check
+        2b state.stage=="" → router.next 初始化
+        2c 选 round_tasks (plan.get_tasks_by_stage)
+        2d PRE Guardrail → _handle_guardrail_result
+        2e run_round + _apply_outcome_to_state
+        2f POST Guardrail → 同上 handler
+        2g semantic_evaluator 写回 (仅 critic)
+        2h MAJOR 计数更新 (critic)
+        2i StageRouter.next + Judge.evaluate + 退出条件
+    step 3: 退出块 (GOAL_ACHIEVED / max_iter / unexpected)
 
 收敛判定 4 级(复用 Phase 02):
     1. 硬上限: round >= max_iterations (单一来源: ConvergenceConfig)
@@ -38,6 +45,12 @@
       按 task.role 查 Runtime.get(role).execute (替代单一 executor callback).
       借鉴 AutoGen GroupChat agent_selector: 用 task.role 路由到对应 agent.
       向后兼容: agent_runtime=None → 用构造参数 executor (旧行为).
+    - v5.0 M4: Orchestrator.__init__ 扩展 (checkpoint_store / guardrail_chain /
+      stage_router), Orchestrator 内部用 EngineState channel 替代裸 history
+      (v5.0 §B1.1 17 字段), 引入 _apply_outcome_to_state / _save_checkpoint /
+      _derive_status / resume().
+    - v5.0 M4: _select_round_tasks 删除 — 改为 plan.get_tasks_by_stage(stage)
+      按 Stage 过滤 (architect/developer/critic), StageRouter 控制推进.
 """
 
 from __future__ import annotations
@@ -69,7 +82,10 @@ from auto_engineering.runtime.cancellation import CancellationToken
 from auto_engineering.runtime.context import TaskContext
 
 if TYPE_CHECKING:
-    from auto_engineering.engine.state import LoopState
+    from auto_engineering.engine.state import EngineState, LoopState
+    from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
+    from auto_engineering.loop.guardrail import GuardrailChain
+    from auto_engineering.loop.stage_router import StageRouter
     from auto_engineering.runtime.runtime import AgentRuntime
 
 # Type alias: semantic_evaluator = async (round_result) -> bool
@@ -95,6 +111,13 @@ class OrchestratorConfig:
         agent_runtime: v2.3 Phase H (P1.4) — AgentRuntime 实例 (None = 用 self.executor).
             借鉴 AutoGen GroupChat agent_selector: 按 task.role 查 Runtime.get(role)
             调度到对应 Agent. 解决 P1.4 多 Agent 集成问题.
+        checkpoint_store: v5.0 M4 (B2.1) — Checkpoint 持久化 store.
+            None 时, 主循环不调用 _save_checkpoint (向后兼容, 测试场景).
+        guardrail_chain: v5.0 M4 (B2.1) — Guardrail 链.
+            None 时, 等价空链 (全 pass). 主循环 step 2d/2f 检查.
+        stage_router: v5.0 M4 (B2.1) — Stage 状态机路由器.
+            None 时, 主循环用 StageRouter() 默认值 (max_majors_in_a_row=2,
+            max_total_majors=3). 测试可注入 mock router.
     """
 
     convergence_config: ConvergenceConfig | None = None
@@ -102,6 +125,10 @@ class OrchestratorConfig:
     semantic_evaluator: SemanticEvaluator | None = None
     project_root: Path | None = None
     agent_runtime: AgentRuntime | None = None  # P1.4 — None = 旧行为 (用 executor)
+    # v5.0 M4: 3 个新字段 (B2.1)
+    checkpoint_store: "SQLiteCheckpointStore | None" = None
+    guardrail_chain: "GuardrailChain | None" = None
+    stage_router: "StageRouter | None" = None
 
     def __post_init__(self) -> None:
         """v2.3 Phase J (P1.6): 默认启用 ClaudeSemanticEvaluator (有 API key 时).
@@ -162,6 +189,13 @@ class Orchestrator:
         default_factory=lambda: deque(maxlen=50)
     )
     verdict: ConvVerdict | None = None
+    # v5.0 M4 (B2.1): 内部状态 — 由 __post_init__ 初始化, 默认占位.
+    # _state: EngineState 17 字段 Channel 容器 (v5.0 §B1.1)
+    # _retry_counters: Guardrail retry 计数 (per-stage 隔离)
+    # _router: StageRouter 引用 (从 config 拉, 避免每个 step 都访问 config)
+    _state: "EngineState | None" = None
+    _retry_counters: dict[str, int] = field(default_factory=dict)
+    _router: "StageRouter | None" = None
 
     def __post_init__(self) -> None:
         """初始化 Plan + Judge + 选 executor (agent_runtime 优先).
@@ -172,12 +206,27 @@ class Orchestrator:
         v2.3 Phase H (P1.4): 若 config.agent_runtime 提供, 用 _build_runtime_executor
         覆盖 self.executor. 借鉴 AutoGen GroupChat agent_selector 路由模式.
         向后兼容: agent_runtime=None → 保留构造参数 executor (旧行为).
+
+        v5.0 M4 (B2.1): 初始化 _state (EngineState Channel 容器) + _retry_counters
+        + _router (从 config 拉, 简化后续 step 访问).
         """
         self.plan = Plan(tasks=self.tasks, requirement=self.requirement)
         self.judge = ConvergenceJudge(config=self.config.convergence_config)
         # v2.3 Phase H (P1.4): agent_runtime 优先, 替代单一 executor callback
         if self.config.agent_runtime is not None:
             self.executor = self._build_runtime_executor(self.config.agent_runtime)
+        # v5.0 M4: 内部状态初始化
+        from auto_engineering.engine.state import EngineState
+        from auto_engineering.loop.stage_router import StageRouter
+
+        if self._state is None:
+            self._state = EngineState(requirement=self.requirement)
+        if self._router is None:
+            self._router = (
+                self.config.stage_router
+                if self.config.stage_router is not None
+                else StageRouter()
+            )
 
     def _build_runtime_executor(self, runtime: AgentRuntime) -> TaskExecutor:
         """构建从 AgentRuntime 调度的 executor.
