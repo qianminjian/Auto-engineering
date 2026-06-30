@@ -1,20 +1,23 @@
-> 来源：@design/INDEX.md | 创建：2026-06-24 | 更新：2026-06-28 | 阶段：v2.5 P0-FINAL 完成 (v1.0 退役 + BEACON 决策 27)
+> 来源：@design/INDEX.md | 创建：2026-06-24 | 更新：2026-06-30 | 阶段：v5.0 Loop-only (Init Engineering 已拆分独立项目, 见 BEACON 决策 30)
 
 ## 目标与成功标准
 
-1. **ae init 命令**：`ae init my-project --type app-service` 产出完整可运行项目骨架
-2. **ae dev-loop 命令**：需求文本输入后自动完成 Architect → Developer → Critic 循环
+1. **`/dev-loop` slash command**：用户在 Claude Code 会话中触发 Plugin, 调度 Python Engine 运行 Architect → Developer → Critic 三阶段 Agent 循环
+2. **`ae dev-loop` CLI**：Engine 调试入口, stdout JSON 契约
 3. **确定性 Guardrail**：每 Stage 前后自动检查（pass/block/drop/retry 四态）
-4. **Checkpoint 恢复**：中断后从 checkpoint 恢复，不丢失进度
+4. **Checkpoint 恢复**：中断后从 checkpoint 恢复, 不丢失进度（SQLite WAL）
 5. **结构化 Agent 输出**：双层防御解析（schema + regex fallback）
 6. **多 Agent 并发**（v2.0）：Round 内 asyncio.gather + Channel + Task DAG + 文件隔离 + 4 级收敛 + SQLite
 7. **7 道 Gate**（v2.0）：safety/lint/type_check/contract/test/coverage/build
+8. **Init-Loop 接口契约**（IL.1-IL.6）：消费 Init 项目产出的 `.ae-state/init-manifest.json`, 配置对应 Gate
 
 ## 范围边界
 
-**做：** init 多层模板组合 + 路径穿越防护 + 钩子错误传播；LoopEngine/StageGraph/AgentRuntime；单 Agent 串行 + SQLite checkpoint + Claude output_json；GuardrailChain + RetryPolicy + CancellationToken；v2.0/v2.1 Channel + TaskDAG + check_file_isolation + asyncio.gather + 7 Gates + CLI v2 + Channel 序列化三件套 + load() 完整闭环
+**做：** LoopEngine/StageGraph/AgentRuntime；单 Agent 串行 + SQLite checkpoint + Claude output_json；GuardrailChain + RetryPolicy + CancellationToken；v2.0/v2.1 Channel + TaskDAG + check_file_isolation + asyncio.gather + 7 Gates + CLI v2 + Channel 序列化三件套 + load() 完整闭环；Init-Loop 接口契约 (Loop 侧) 定义
 
-**不做：** init 增量/嵌套交互/远程模板（v1.1+）；多 LLM Provider、Web UI；CrewAI Memory/RAG、AutoGen Pub/Sub、Jinja2 用于 Task 描述
+**不做：** Init 工程（项目脚手架初始化 = 独立 Init Engineering 项目）；Init 增量/嵌套交互/远程模板（v1.1+）；多 LLM Provider、Web UI；CrewAI Memory/RAG、AutoGen Pub/Sub、Jinja2 用于 Task 描述
+
+**项目结构变化（2026-06-30）**: Init Engineering 拆分独立, 本项目移除 `auto_engineering/init/`(528K) + `design/v5.0-Design-Init.md` + 7 Init 测试. Init 侧按本项目 §IL.1-IL.6 接口契约实现.
 
 ## 设计决策
 
@@ -43,6 +46,7 @@
 | 26 | **P1-C: gates/builtin.py 加运行时 DeprecationWarning 信号 (每次 import/check 触发 1 次)** | builtin.py 文件头已有 ⚠️ 冻结标记 (决策 22) 但缺运行时信号. 加 module-level _WARNED flag + _warn_deprecation_once(), 5 个 Guardrail.check() 入口各调用 1 次 (整体守门, 避免刷屏). 引导用户迁移到 v2.0 Gate 体系 (gates/{safety,lint,test,coverage,build,...} 7 道). 与决策 25 (CoverageGate) 同模式 — 简单 module-level 守门, 无需 sys.modules 钩子 (过度设计). 测试: TestBuiltinDeprecationWarning 4 个新用例 (20/20 PASS) | 2026-06-27 | ✅ |
 | 27 | **P0-FINAL: v1.0 路径退役 — 撤销决策 11/12/22/24/26** | v2.5 P0-FINAL (commit 2994c7e) 删除 `engine/{loop,graph,checkpoint,messages}.py`、`runtime/mock.py`、`gates/{builtin,guardrail}.py` 及对应测试. **例外**: `engine/state.py` 保留 — 决策 23 重命名生效后, 运行时 Orchestrator / Runtime / Gates 仍走 engine.state.EngineState (LoopState 别名) dataclass, engine.state 是 v2.0 运行时状态容器, 不是 v1.0 遗产. 决策 11/12/22/24/26 关于"冻结/兼容"的策略不再适用 — 这些文件不再存在, v2.5 仅有 v2.0 path. CLI flags `--use-v1` / `--use-v2` 同时移除 (docs 已更新, 见 v2.5-Plan-Dev.md P1-B/P1-C). CoverageGate 冻结 (决策 25) 保留 — 该决策不涉及被删文件, 且 pytest-cov 仍不安装. | 2026-06-28 | ✅ |
 | 28 | **v2.5 深度审计 + 25 项修复 (P0×1 + P1×9 + P2×15)** | v2.5 P0-FINAL 合并后做深度审计 (4 个 Sonnet agent 并行 — 架构漂移/测试覆盖/安全/性能). 发现 36 项问题, 全部修完. 关键: D-P0-1 (asyncio.gather 假象 — LLM sync 调用阻塞 event loop, 用 asyncio.to_thread 修), C-P1-1 (macOS symlink 沙箱绕过 — Path.resolve 不展 symlink, 改 realpath 双侧 + lexical fallback), C-P1-2 (Bash shell=True 弱 deny-list — 扩展 6→13 模式 + 审计日志), C-P1-3 (external_data 路径未沙箱 — opt-in sandbox_roots 校验), D-P1-3 (SQLite 每操作 connect/close — 缓存连接 + WAL), D-P1-5 (history 无界 — deque(maxlen=50)), D-P2-1 (Gate 串行 — asyncio.gather 并行 7 个), C-P2-1/2/4 文档化 invariants. 项目健康 6.5/10 → 8.0/10. 全部 564 测试通过, 无回归. | 2026-06-28 | ✅ |
+| 29 | **v5.0 路线图: Claude Code plugin 集成 + Loop + Init 合订最终方案** | 详见 `@design/v5.0-Design.md`. 借鉴业界 (LangGraph PregelLoop tick/after_tick / AutoGen MessageEnvelope / CrewAI Guardrail 4 态 / Devin plan-act-observe / Copier 5 阶段 + !include / Cookiecutter progress bar + hooks / Yeoman composable features). 在 v2.5 已有 Python 引擎基础上, plugin 形态 = Bash 委托 `uv run ae <subcommand>`, 控制流仍在 Python (LangGraph 借鉴), Claude 在 agent 里提供 UX. 3 Stage (architect/developer/critic) + 5 Guardrail + 7 Gate = 12 层保险, 8 类型 × 4 语言 = 32 模板组合, SQLite checkpoint 跨 session 持久化, critic_feedback channel 显式反馈回路. 不重写 v2.5 已有引擎, 借鉴保留, plugin 是新 UX 层. | 2026-06-29 | ⏳ 设计中 |
 
 ## 决策 23 展开: Channel 体系归属 = checkpoint 专用
 
@@ -54,7 +58,7 @@
 
 ## 当前状态
 
-**阶段：** v2.5 P0-FINAL + 深度审计修复完成 (BEACON 决策 27 + 决策 28)。
+**阶段：** v5.0 plugin 完整最终方案 (BEACON 决策 29, 借鉴保留 v2.5 决策 1-28)。
 
 **最近动作：** 2026-06-28 v2.5 P0-FINAL + 深度审计修复 — 删除 `auto_engineering/engine/{loop,graph,checkpoint,messages}.py` (engine/state.py 保留作运行时 LoopState/EngineState 容器, 决策 23 命名重构生效) + `runtime/mock.py` + `gates/{builtin,guardrail}.py` 及其 16 测试, 正式撤销决策 11/12/22/24/26 (v1.0 不再保留, 仅有 v2.0 path); CLI flags `--use-v1` / `--use-v2` 同步移除, 文档 (api-reference/production-deployment/e2e-real-run) 标记 "v2.5 起移除"; BEACON 决策 27 记录撤销依据. **深度审计 25 项修复**: D-P0-1 asyncio.gather 真并行 (asyncio.to_thread) / C-P1-1 realpath 沙箱 (macOS symlink 防御) / C-P1-2 Bash 黑名单 6→13 + 审计日志 / C-P1-3 external_data opt-in 沙箱 / D-P1-3 SQLite WAL + 连接缓存 / D-P1-5 history deque(maxlen=50) / D-P2-1 Gate 平行 7 个 / 9 个测试文件 (engine_state / parser / git_tools / checkpoint_envelope / config_loader / 22 ErrorCode / init_config_loader / envelope / engine_state 等). 项目健康 6.5/10 → 8.0/10; 564 测试通过. `_scratch/` gitignore 保留, `references/` gitignore 保留 (96GB 内存事故防线).
 
