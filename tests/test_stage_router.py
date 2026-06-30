@@ -1,0 +1,439 @@
+"""M1 Stage 状态机 — StageRouter + StageDecision + 5 helper functions 测试.
+
+设计参考: v5.0-Design-Loop.md §B2.2 (StageRouter 接口契约)
+                   + §B3.1-B3.4 (Stage 状态机 + MAJOR 计数 + clear + derive)
+
+测试原则 (per pytest-memory-management.md):
+- 单文件 pytest --no-cov --timeout=60
+- 参数化覆盖 8 转换 (T1-T6 + 边界)
+- MAJOR 计数耗尽场景
+- StageDecision 数据类字段
+- _clear_stage_fields 3 stage 映射
+- _derive_status 4 边界
+"""
+
+from __future__ import annotations
+
+import re
+
+import pytest
+
+from auto_engineering.engine.state import EngineState
+from auto_engineering.loop.stage_router import (
+    StageDecision,
+    StageRouter,
+    _clear_stage_fields,
+    _derive_status,
+    _update_majors_count,
+)
+
+
+# ---------- StageDecision 数据类字段 ----------
+
+class TestStageDecisionFields:
+    """StageDecision 必须含 next_stage / should_stop / stop_reason 三个字段."""
+
+    def test_default_next_stage_none(self) -> None:
+        """默认 next_stage=None (Stage 终止信号)."""
+        decision = StageDecision(should_stop=False)
+        assert decision.next_stage is None
+
+    def test_default_should_stop_false(self) -> None:
+        """默认 should_stop=False."""
+        decision = StageDecision(next_stage="architect")
+        assert decision.should_stop is False
+
+    def test_default_stop_reason_none(self) -> None:
+        """默认 stop_reason=None (只在 should_stop=True 时填)."""
+        decision = StageDecision(next_stage="developer", should_stop=True)
+        assert decision.stop_reason is None  # 显式 None 仍是 None
+
+    def test_explicit_fields(self) -> None:
+        """3 字段可显式赋值."""
+        decision = StageDecision(
+            next_stage="developer",
+            should_stop=True,
+            stop_reason="MAJOR 超限: 连续2/累计2",
+        )
+        assert decision.next_stage == "developer"
+        assert decision.should_stop is True
+        assert decision.stop_reason == "MAJOR 超限: 连续2/累计2"
+
+
+# ---------- T1-T6 转换表 ----------
+
+class TestStageTransitions:
+    """StageRouter.next() 8 转换测试 (T1-T6 + 边界)."""
+
+    def test_t1_empty_to_architect(self) -> None:
+        """T1: stage='' → next='architect'."""
+        router = StageRouter()
+        decision = router.next(
+            current_stage="",
+            verdict="",
+            majors_in_a_row=0,
+            total_majors=0,
+        )
+        assert decision.next_stage == "architect"
+        assert decision.should_stop is False
+
+    def test_t2_architect_to_developer(self) -> None:
+        """T2: architect → developer."""
+        router = StageRouter()
+        decision = router.next(
+            current_stage="architect",
+            verdict="",
+            majors_in_a_row=0,
+            total_majors=0,
+        )
+        assert decision.next_stage == "developer"
+        assert decision.should_stop is False
+
+    def test_t3_developer_to_critic(self) -> None:
+        """T3: developer → critic."""
+        router = StageRouter()
+        decision = router.next(
+            current_stage="developer",
+            verdict="",
+            majors_in_a_row=0,
+            total_majors=0,
+        )
+        assert decision.next_stage == "critic"
+        assert decision.should_stop is False
+
+    def test_t4_critic_approve_should_stop_false(self) -> None:
+        """T4: critic + APPROVE → next=None, should_stop=False (Judge 触发 GOAL_ACHIEVED)."""
+        router = StageRouter()
+        decision = router.next(
+            current_stage="critic",
+            verdict="APPROVE",
+            majors_in_a_row=0,
+            total_majors=0,
+        )
+        assert decision.next_stage is None
+        assert decision.should_stop is False
+        assert decision.stop_reason is None
+
+    def test_t5_critic_major_below_limit_returns_developer(self) -> None:
+        """T5: critic + MAJOR + 未超限 → developer."""
+        router = StageRouter(max_majors_in_a_row=2, max_total_majors=3)
+        decision = router.next(
+            current_stage="critic",
+            verdict="MAJOR",
+            majors_in_a_row=1,  # < 2
+            total_majors=1,  # < 3
+        )
+        assert decision.next_stage == "developer"
+        assert decision.should_stop is False
+
+    def test_t6_critic_major_in_a_row_exceeds_should_stop(self) -> None:
+        """T6: critic + MAJOR + majors_in_a_row >= max → should_stop=True."""
+        router = StageRouter(max_majors_in_a_row=2, max_total_majors=3)
+        decision = router.next(
+            current_stage="critic",
+            verdict="MAJOR",
+            majors_in_a_row=2,  # >= max
+            total_majors=2,
+        )
+        assert decision.next_stage is None
+        assert decision.should_stop is True
+        assert decision.stop_reason is not None
+        assert "MAJOR 超限" in decision.stop_reason
+
+    def test_t6_critic_total_majors_exceeds_should_stop(self) -> None:
+        """T6 变体: total_majors >= max_total → should_stop=True."""
+        router = StageRouter(max_majors_in_a_row=2, max_total_majors=3)
+        decision = router.next(
+            current_stage="critic",
+            verdict="MAJOR",
+            majors_in_a_row=1,  # < 2 (未超连续)
+            total_majors=3,  # >= 3 (超累计)
+        )
+        assert decision.next_stage is None
+        assert decision.should_stop is True
+        assert decision.stop_reason is not None
+        assert "累计" in decision.stop_reason
+
+    def test_critic_empty_verdict_returns_none(self) -> None:
+        """critic + verdict='' → next=None (异常/未裁决, 应停止)."""
+        router = StageRouter()
+        decision = router.next(
+            current_stage="critic",
+            verdict="",
+            majors_in_a_row=0,
+            total_majors=0,
+        )
+        assert decision.next_stage is None
+        assert decision.should_stop is True  # empty verdict 应触发 stop
+
+
+# ---------- MAJOR 计数耗尽场景 ----------
+
+class TestMajorLimitBoundary:
+    """MAJOR 边界: max-1 vs max."""
+
+    def test_majors_in_a_row_at_max_minus_one(self) -> None:
+        """majors_in_a_row = max-1: 仍返回 developer."""
+        router = StageRouter(max_majors_in_a_row=2)
+        decision = router.next(
+            current_stage="critic",
+            verdict="MAJOR",
+            majors_in_a_row=1,
+            total_majors=2,
+        )
+        assert decision.next_stage == "developer"
+
+    def test_majors_in_a_row_at_max(self) -> None:
+        """majors_in_a_row = max: 触发 stop."""
+        router = StageRouter(max_majors_in_a_row=2)
+        decision = router.next(
+            current_stage="critic",
+            verdict="MAJOR",
+            majors_in_a_row=2,
+            total_majors=2,
+        )
+        assert decision.should_stop is True
+
+    def test_total_majors_at_max_minus_one(self) -> None:
+        """total_majors = max_total-1: 仍返回 developer."""
+        router = StageRouter(max_total_majors=3)
+        decision = router.next(
+            current_stage="critic",
+            verdict="MAJOR",
+            majors_in_a_row=0,  # 连续未超, 但已重置 (APPROVE 后)
+            total_majors=2,
+        )
+        assert decision.next_stage == "developer"
+
+    def test_total_majors_at_max(self) -> None:
+        """total_majors = max_total: 触发 stop."""
+        router = StageRouter(max_total_majors=3)
+        decision = router.next(
+            current_stage="critic",
+            verdict="MAJOR",
+            majors_in_a_row=0,
+            total_majors=3,
+        )
+        assert decision.should_stop is True
+
+    def test_stop_reason_format(self) -> None:
+        """stop_reason 格式: 包含 'MAJOR 超限' + 连续/累计数字."""
+        router = StageRouter(max_majors_in_a_row=2, max_total_majors=3)
+        decision = router.next(
+            current_stage="critic",
+            verdict="MAJOR",
+            majors_in_a_row=2,
+            total_majors=2,
+        )
+        assert decision.stop_reason is not None
+        # 验证格式: "MAJOR 超限: 连续2/累计2" 或类似
+        assert re.search(r"连续\s*2", decision.stop_reason)
+        assert re.search(r"累计\s*2", decision.stop_reason)
+
+
+# ---------- _update_majors_count ----------
+
+class TestUpdateMajorsCount:
+    """MAJOR 计数更新逻辑 (§B3.2)."""
+
+    def test_approve_resets_in_a_row(self) -> None:
+        """verdict=APPROVE → majors_in_a_row 重置为 0."""
+        state = EngineState(majors_in_a_row=2, total_majors=3)
+        _update_majors_count(state, "APPROVE")
+        assert state.majors_in_a_row == 0
+        assert state.total_majors == 3  # total 不重置
+
+    def test_major_increments_both(self) -> None:
+        """verdict=MAJOR → majors_in_a_row += 1, total_majors += 1."""
+        state = EngineState(majors_in_a_row=1, total_majors=2)
+        _update_majors_count(state, "MAJOR")
+        assert state.majors_in_a_row == 2
+        assert state.total_majors == 3
+
+    def test_empty_verdict_no_change(self) -> None:
+        """verdict='' → 不变."""
+        state = EngineState(majors_in_a_row=1, total_majors=2)
+        _update_majors_count(state, "")
+        assert state.majors_in_a_row == 1
+        assert state.total_majors == 2
+
+    def test_initial_zero_increments_to_one(self) -> None:
+        """初始 0 → MAJOR → 1."""
+        state = EngineState()
+        _update_majors_count(state, "MAJOR")
+        assert state.majors_in_a_row == 1
+        assert state.total_majors == 1
+
+
+# ---------- _clear_stage_fields ----------
+
+class TestClearStageFields:
+    """_clear_stage_fields 3 stage 映射 (§B3.3)."""
+
+    def test_clear_architect_fields(self) -> None:
+        """stage='architect' → clear plan / file_list / batch_plan / contracts."""
+        state = EngineState(
+            plan="some plan",
+            file_list=["a.py", "b.py"],
+            batch_plan=[{"id": "1"}],
+            contracts={"k": "v"},
+            verdict="MAJOR",
+            findings=[{"x": 1}],
+            files_changed=["x.py"],
+            commit_hash="abc",
+            test_results={"passed": 1},
+            critic_feedback="fb",
+        )
+        _clear_stage_fields(state, "architect")
+        assert state.plan == ""
+        assert state.file_list == []
+        assert state.batch_plan == []
+        assert state.contracts == {}
+        # 其他字段不应被清空 (Stage 隔离)
+        assert state.verdict == "MAJOR"
+        assert state.findings == [{"x": 1}]
+        assert state.files_changed == ["x.py"]
+
+    def test_clear_developer_fields(self) -> None:
+        """stage='developer' → clear files_changed / commit_hash / test_results."""
+        state = EngineState(
+            plan="kept",
+            files_changed=["x.py", "y.py"],
+            commit_hash="abc123",
+            test_results={"passed": 5, "failed": 0},
+            verdict="APPROVE",
+            findings=[{"x": 1}],
+        )
+        _clear_stage_fields(state, "developer")
+        assert state.files_changed == []
+        assert state.commit_hash == ""
+        assert state.test_results == {}
+        # 其他字段保留
+        assert state.plan == "kept"
+        assert state.verdict == "APPROVE"
+
+    def test_clear_critic_fields(self) -> None:
+        """stage='critic' → clear verdict / findings / critic_feedback."""
+        state = EngineState(
+            verdict="MAJOR",
+            findings=[{"x": 1}],
+            critic_feedback="bad code",
+            plan="kept",
+            files_changed=["kept.py"],
+        )
+        _clear_stage_fields(state, "critic")
+        assert state.verdict == ""
+        assert state.findings == []
+        assert state.critic_feedback == ""
+        # 其他字段保留
+        assert state.plan == "kept"
+        assert state.files_changed == ["kept.py"]
+
+
+# ---------- _derive_status ----------
+
+class TestDeriveStatus:
+    """_derive_status 4 边界 (§B3.4)."""
+
+    def test_approve_verdict_returns_completed(self) -> None:
+        """verdict='APPROVE' → 'completed'."""
+        state = EngineState(verdict="APPROVE")
+        assert _derive_status(state, max_iterations=10) == "completed"
+
+    def test_round_field_used_when_present(self) -> None:
+        """若 EngineState 有 round 字段且 >= max_iterations → 'completed'.
+
+        说明: 当前 EngineState 无 round 字段 (Phase 04 才加), 但 _derive_status
+        用 getattr 防御性读取, 测试覆盖此行为以保证 Phase 04 集成时
+        _derive_status 不需要改签名.
+        """
+        # 用 SimpleNamespace 模拟有 round 字段的 state
+        from types import SimpleNamespace
+
+        state = SimpleNamespace(verdict="MAJOR", round=10, current_stage="developer")
+        assert _derive_status(state, max_iterations=10) == "completed"
+
+    def test_round_above_max_returns_completed(self) -> None:
+        """round > max_iterations → 'completed' (Phase 04 round 字段存在时)."""
+        from types import SimpleNamespace
+
+        state = SimpleNamespace(verdict="MAJOR", round=11, current_stage="developer")
+        assert _derive_status(state, max_iterations=10) == "completed"
+
+    def test_empty_stage_returns_completed(self) -> None:
+        """stage='' → 'completed' (初始或终止状态)."""
+        state = EngineState(current_stage="")
+        assert _derive_status(state, max_iterations=10) == "completed"
+
+    def test_running_state(self) -> None:
+        """verdict=MAJOR + stage≠'' → 'running' (无 round 字段时也 running)."""
+        state = EngineState(
+            current_stage="developer",
+            verdict="MAJOR",
+        )
+        assert _derive_status(state, max_iterations=10) == "running"
+
+    def test_running_with_empty_verdict(self) -> None:
+        """verdict='' + stage≠'' → 'running'."""
+        state = EngineState(
+            current_stage="architect",
+            verdict="",
+        )
+        assert _derive_status(state, max_iterations=10) == "running"
+
+
+# ---------- EngineState 新字段集成 ----------
+
+class TestNewEngineStateFields:
+    """EngineState 17 字段集成 (M1 Task 1)."""
+
+    def test_new_fields_exist(self) -> None:
+        """4 个新字段都存在."""
+        state = EngineState()
+        assert hasattr(state, "batch_plan")
+        assert hasattr(state, "majors_in_a_row")
+        assert hasattr(state, "total_majors")
+        assert hasattr(state, "thread_id")
+
+    def test_thread_id_auto_generated(self) -> None:
+        """thread_id 默认自动生成 UUID v4 格式."""
+        state = EngineState()
+        uuid_pattern = re.compile(
+            r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        )
+        assert uuid_pattern.match(state.thread_id), f"Invalid UUID: {state.thread_id}"
+
+    def test_thread_id_unique_per_instance(self) -> None:
+        """thread_id 每次实例化都不同."""
+        s1 = EngineState()
+        s2 = EngineState()
+        assert s1.thread_id != s2.thread_id
+
+    def test_thread_id_explicit_override(self) -> None:
+        """thread_id 可显式覆盖."""
+        state = EngineState(thread_id="custom-id-1234")
+        assert state.thread_id == "custom-id-1234"
+
+    def test_majors_default_zero(self) -> None:
+        """majors_in_a_row / total_majors 默认 0."""
+        state = EngineState()
+        assert state.majors_in_a_row == 0
+        assert state.total_majors == 0
+
+    def test_batch_plan_default_empty_list(self) -> None:
+        """batch_plan 默认空 list (不是 None)."""
+        state = EngineState()
+        assert state.batch_plan == []
+        assert isinstance(state.batch_plan, list)
+
+    def test_field_count_is_16(self) -> None:
+        """字段总数 = 16 (v2.5 基线 13 + M1 新增 3: thread_id, majors_in_a_row, total_majors).
+
+        说明: 设计 §B1.1 列 17 字段含 round/stage/round_history, 这些在
+        Phase 04 Orchestrator 重构时引入, 不在本 Phase 01 范围. Phase 01 仅
+        新增 3 个字段 (thread_id / majors_in_a_row / total_majors), batch_plan
+        字段已存在仅类型修正 (dict → list[dict]).
+        """
+        state = EngineState()
+        fields = list(state.__dataclass_fields__.keys())
+        assert len(fields) == 16, f"Expected 16 fields, got {len(fields)}: {fields}"
