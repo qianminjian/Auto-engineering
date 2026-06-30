@@ -441,7 +441,10 @@ class Orchestrator:
                 if action == "retry":
                     continue
 
-            # 2g. semantic_evaluator 写回 (仅 critic 阶段)
+            # 2g. semantic_evaluator 写回 (仅 critic 阶段, B2.7)
+            #     semantic_evaluator 由 OrchestratorConfig.__post_init__ 兜底初始化
+            #     (有 ANTHROPIC_API_KEY 且不在 LLM agent → ClaudeSemanticEvaluator).
+            #     写回 round_result.history[0].semantic_satisfied 供 Judge 判定.
             if current_stage == "critic":
                 semantic_satisfied = await self._evaluate_semantic(round_result)
                 if round_result.history:
@@ -450,13 +453,20 @@ class Orchestrator:
             self.round_results.append(round_result)
             self.history.extend(round_result.history)
 
-            # 2h. MAJOR 计数更新 (仅 critic 阶段)
+            # 2h. MAJOR 计数更新 (仅 critic 阶段, B3.2)
+            #     APPROVE → 重置 majors_in_a_row=0; MAJOR → +1/+1
+            #     其他 verdict (含 '') → 不变 (防御性)
             if current_stage == "critic":
                 from auto_engineering.loop.stage_router import _update_majors_count
                 _update_majors_count(self._state, self._state.verdict)
 
-            # 2i. StageRouter.next + Judge.evaluate + 退出条件
-            from auto_engineering.loop.stage_router import StageDecision
+            # 2i. StageRouter.next + Judge.evaluate + 退出条件 (B2.2 + B3.1)
+            #     router 纯函数: (current_stage, verdict, majors_in_a_row, total_majors)
+            #     → StageDecision(next_stage, should_stop, stop_reason)
+            #     退出条件 3 层 (按优先级):
+            #       1. decision.should_stop (T6 MAJOR 超限)
+            #       2. decision.next_stage is None + judge.should_stop (T4 APPROVE → GOAL_ACHIEVED)
+            #       3. decision.next_stage is None + judge 不 stop → unexpected, 兜底走 max_iter
             decision = self._router.next(
                 current_stage=current_stage,
                 verdict=self._state.verdict if current_stage == "critic" else "",
@@ -470,7 +480,7 @@ class Orchestrator:
                     reason=decision.stop_reason or "StageRouter stop",
                 )
                 return list(self.history)
-            # 推进 stage + 清旧字段
+            # 推进 stage + 清旧字段 (B3.3)
             if decision.next_stage is not None:
                 from auto_engineering.loop.stage_router import _clear_stage_fields
                 _clear_stage_fields(self._state, current_stage)
