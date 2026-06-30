@@ -288,9 +288,8 @@ class Orchestrator:
             if cancellation is not None and cancellation.is_cancelled():
                 break
 
-            # 2b. 选择本轮 task (v2.0-C: 增量选择)
-            #     Round 1 跑所有 task, Round 2+ 仅跑 failed / 新增 task
-            round_tasks = self._select_round_tasks(round_id, self.history)
+            # 2b. 选择本轮 task (v5.0 M4: 全部 task, v5.0 增量移到 plan.get_tasks_by_stage)
+            round_tasks = list(self.tasks)
 
             # 2c. 执行 Round (v2.3 Phase G: run_round 末尾构造 RoundHistory,
             #     此时 semantic_satisfied=None, 2e 后会回填)
@@ -330,59 +329,6 @@ class Orchestrator:
             reason=f"达到最大轮次 {max_rounds} (硬上限)",
         )
         return self.history
-
-    def _select_round_tasks(
-        self, round_id: int, history: list[RoundHistory]
-    ) -> list[Task]:
-        """选择本轮要执行的 task 列表.
-
-        v2.3 Phase C: 增量选择 (避免每轮重跑所有 task 浪费 LLM token).
-
-        规则:
-            - Round 1: 跑所有 task (无历史可参考).
-            - Round 2+: 仅跑 failed task (status="failed") 或
-              新加 task (不在任何 history.tasks_run 中).
-
-        Args:
-            round_id: 当前轮次 (1-indexed)
-            history: 历史轮次列表 (Round 2+ 时非空, Round 1 为空)
-
-        Returns:
-            本轮要跑的 task 列表
-
-        Note:
-            借鉴 LangGraph `Pregel._prepare_next_tasks` 用 channel_versions diff 找触发任务,
-            简化版: 不引入 inverted index, 只看"failed + new" 两类 task.
-        """
-        if round_id == 1:
-            return list(self.tasks)
-
-        # 1. 收集历史所有 task ids (判断"新加")
-        all_historical_task_ids: set[str] = set()
-        for h in history:
-            all_historical_task_ids.update(h.tasks_run)
-
-        # 2. 收集历史最近一次"非 completed"的 task ids (判断"failed")
-        #    逻辑: 对每个 task, 找其最近一轮的 outcome — 若非 completed 则重跑.
-        last_outcome_per_task: dict[str, str] = {}
-        for h in history:
-            for tid, status in h.task_outcomes.items():
-                last_outcome_per_task[tid] = status
-
-        # 3. 选择: 新加 task + 最后一轮未 completed 的 task
-        selected: list[Task] = []
-        for t in self.tasks:
-            if t.id not in all_historical_task_ids:
-                # 新加 task — 必须跑
-                selected.append(t)
-            else:
-                # 历史已跑过 — 看最后一轮 outcome
-                last_status = last_outcome_per_task.get(t.id)
-                if last_status != "completed":
-                    # 未 completed (failed / cancelled / missing) → 重跑
-                    selected.append(t)
-
-        return selected
 
     def _run_gates(self) -> dict[str, bool]:
         """跑 config.gates 列表中所有 Gate, 返回 {name: passed} dict.
