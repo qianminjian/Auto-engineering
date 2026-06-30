@@ -108,6 +108,8 @@ def render_to(
     overwrite: bool,
     tmpdir: Path,
     exclude_callback: str = "auto_engineering.init._shared.exclude:default_match_exclude",
+    templates_suffix: str = ".jinja",
+    preserve_symlinks: bool = True,
 ) -> list[Path]:
     """Phase 渲染 — 委托给 TemplateRenderer，渲染到 tmpdir。
 
@@ -162,5 +164,7 @@ def render_to(
         envops=envops,
         overwrite=overwrite,
         match_exclude=match_exclude,
+        templates_suffix=templates_suffix,
+        preserve_symlinks=preserve_symlinks,
     )
     return renderer.render_to(tmpdir)

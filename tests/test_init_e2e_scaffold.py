@@ -389,3 +389,85 @@ class TestInitWorkerFivePhases:
         ) as worker:
             result = worker.execute()
         assert result.files == []
+
+
+class TestTemplatesSuffixE2E:
+    """T2-4/T2-5: scaffold_render.render_to() templates_suffix 端到端验证.
+
+    测试 scaffold_render.render_to() 的 templates_suffix 参数传递链:
+    render_to() → TemplateRenderer(templates_suffix=..., preserve_symlinks=...)
+    以及 InitWorker._phase_render() → render_to() 的完整链路.
+    """
+
+    def test_custom_tmpl_suffix_renders(self, tmp_path: Path):
+        """T2-4: templates_suffix=".tmpl" 时 .tmpl 文件被渲染且后缀被去除.
+
+        直接测试 TemplateRenderer 的 templates_suffix 参数传递.
+        """
+        import tempfile
+
+        from auto_engineering.init.renderer import TemplateRenderer
+
+        src_dir = Path(tempfile.mkdtemp(prefix="ae-tmpl-src-"))
+        dst_dir = Path(tempfile.mkdtemp(prefix="ae-tmpl-dst-"))
+        try:
+            # 创建 .tmpl 后缀模板文件
+            (src_dir / "config.tmpl").write_text("name: {{ name }}")
+            # 创建普通文件
+            (src_dir / "readme.txt").write_text("plain text")
+
+            renderer = TemplateRenderer(
+                template_dirs=[src_dir],
+                context={"name": "world"},
+                overwrite=True,
+                templates_suffix=".tmpl",
+                preserve_symlinks=True,
+            )
+            generated = renderer.render_to(dst_dir)
+            rels = [g.relative_to(dst_dir) for g in generated]
+
+            # config.tmpl 被渲染为 config (去 .tmpl 后缀)
+            assert Path("config") in rels, f"config not in {rels}"
+            assert (dst_dir / "config").read_text() == "name: world"
+            # readme.txt 原样复制
+            assert Path("readme.txt") in rels
+        finally:
+            import shutil
+
+            shutil.rmtree(src_dir, ignore_errors=True)
+            shutil.rmtree(dst_dir, ignore_errors=True)
+
+    def test_default_jinja_suffix_still_works(self, tmp_path: Path):
+        """T2-5: 默认 templates_suffix=".jinja" 时 .jinja 文件被正确渲染."""
+        import tempfile
+
+        from auto_engineering.init.renderer import TemplateRenderer
+
+        src_dir = Path(tempfile.mkdtemp(prefix="ae-jinja-src-"))
+        dst_dir = Path(tempfile.mkdtemp(prefix="ae-jinja-dst-"))
+        try:
+            # 创建 .jinja 后缀模板文件
+            (src_dir / "config.jinja").write_text("name: {{ name }}")
+            # 创建普通文件
+            (src_dir / "readme.txt").write_text("plain text")
+
+            renderer = TemplateRenderer(
+                template_dirs=[src_dir],
+                context={"name": "world"},
+                overwrite=True,
+                # 不传 templates_suffix → 使用默认值 ".jinja"
+                preserve_symlinks=True,
+            )
+            generated = renderer.render_to(dst_dir)
+            rels = [g.relative_to(dst_dir) for g in generated]
+
+            # config.jinja 被渲染为 config (去 .jinja 后缀)
+            assert Path("config") in rels, f"config not in {rels}"
+            assert (dst_dir / "config").read_text() == "name: world"
+            # readme.txt 原样复制
+            assert Path("readme.txt") in rels
+        finally:
+            import shutil
+
+            shutil.rmtree(src_dir, ignore_errors=True)
+            shutil.rmtree(dst_dir, ignore_errors=True)

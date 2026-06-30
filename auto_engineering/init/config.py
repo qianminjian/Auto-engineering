@@ -58,6 +58,9 @@ class TemplateConfig:
     template_dir: Path
     min_ae_version: str = "1.0.0"
     templates_suffix: str = DEFAULT_TEMPLATES_SUFFIX
+    # T2-5: preserve_symlinks 可配置 — True 保留 symlink; False 跳过 dangling 或解析内容
+    # 来源: Copier _main.py + cookiecutter generate.py symlink 处理
+    preserve_symlinks: bool = True
     exclude: list[str] = field(default_factory=lambda: DEFAULT_EXCLUDE.copy())
     skip_if_exists: list[str] = field(default_factory=list)
 

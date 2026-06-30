@@ -283,6 +283,8 @@ class InitWorker:
             overwrite=self.overwrite,
             tmpdir=tmpdir,
             exclude_callback=self._template.exclude_callback,
+            templates_suffix=self._template.templates_suffix,
+            preserve_symlinks=self._template.preserve_symlinks,
         )
 
     def _phase_tasks(self, tmpdir: Path) -> None:
