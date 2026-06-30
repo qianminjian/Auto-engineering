@@ -14,6 +14,8 @@ from typing import Any
 import yaml
 
 BUILTIN_VARS: dict[str, Any] = {
+    # T3-1: _ae_version 是模板引擎版本,用于模板中判断引擎能力 (如 "1.0.0" 支持某些语法)
+    # 与 __version__ (包版本) 不同: __version__ 是 auto_engineering 包本身的版本号
     "_ae_version": "1.0.0",
     "current_year": str(datetime.now().year),
     "_folder_name": "",

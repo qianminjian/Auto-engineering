@@ -372,6 +372,151 @@ class TestProjectEnvironmentWarnUndetectable:
             assert "has_git" in undetectable
 
 
+class TestTemplateSuffixParameter:
+    """T2-1: TemplateRenderer templates_suffix 参数化.
+
+    设计意图: 用实例参数替代类属性 TEMPLATE_SUFFIX,支持不同后缀模板.
+    Copier 参考: _main.py:754 template_suffix 默认 .jinja
+    """
+
+    def test_templates_suffix_parameter_reads_custom_suffix(self):
+        """RED: TemplateRenderer(templates_suffix=".j2") 时读取 .j2 文件作为模板."""
+        import tempfile
+
+        from auto_engineering.init.renderer import TemplateRenderer
+
+        src_dir = Path(tempfile.mkdtemp(prefix="ae-suffix-src-"))
+        dst_dir = Path(tempfile.mkdtemp(prefix="ae-suffix-dst-"))
+        try:
+            # 创建 .j2 后缀模板文件 (不同于默认的 .jinja)
+            (src_dir / "config.j2").write_text("name: {{ name }}")
+            # 创建一个普通文件 (不应被渲染)
+            (src_dir / "readme.txt").write_text("plain text")
+
+            renderer = TemplateRenderer(
+                template_dirs=[src_dir],
+                context={"name": "world"},
+                templates_suffix=".j2",
+                overwrite=True,
+            )
+            generated = renderer.render_to(dst_dir)
+            rels = [g.relative_to(dst_dir) for g in generated]
+
+            # config.j2 被渲染为 config (去掉 .j2 后缀)
+            assert Path("config") in rels
+            # readme.txt 原样复制
+            assert Path("readme.txt") in rels
+            # 渲染后的内容
+            assert (dst_dir / "config").read_text() == "name: world"
+        finally:
+            import shutil
+
+            shutil.rmtree(src_dir, ignore_errors=True)
+            shutil.rmtree(dst_dir, ignore_errors=True)
+
+    def test_templates_suffix_default_preserves_existing_behavior(self):
+        """RED: 不传 templates_suffix 时默认使用 .jinja 后缀 (向后兼容)."""
+        import tempfile
+
+        from auto_engineering.init.renderer import TemplateRenderer
+
+        src_dir = Path(tempfile.mkdtemp(prefix="ae-suffix-default-src-"))
+        dst_dir = Path(tempfile.mkdtemp(prefix="ae-suffix-default-dst-"))
+        try:
+            # 使用默认 .jinja 后缀
+            (src_dir / "config.jinja").write_text("name: {{ name }}")
+
+            renderer = TemplateRenderer(
+                template_dirs=[src_dir],
+                context={"name": "world"},
+                overwrite=True,
+            )
+            generated = renderer.render_to(dst_dir)
+            rels = [g.relative_to(dst_dir) for g in generated]
+
+            assert Path("config") in rels
+            assert (dst_dir / "config").read_text() == "name: world"
+        finally:
+            import shutil
+
+            shutil.rmtree(src_dir, ignore_errors=True)
+            shutil.rmtree(dst_dir, ignore_errors=True)
+
+
+class TestPreserveSymlinksParameter:
+    """T2-2: TemplateRenderer preserve_symlinks 参数化.
+
+    设计意图: 让 symlink 处理可配置 (保留为 symlink 或解析为内容).
+    当前行为: preserve_symlinks=True (默认) → 保留 symlink; False → 跳过 dangling/解析内容.
+    """
+
+    def test_preserve_symlinks_false_skips_dangling_symlink(self):
+        """RED: preserve_symlinks=False 时 dangling symlink 被跳过不报错."""
+        import tempfile
+
+        from auto_engineering.init.renderer import TemplateRenderer
+
+        src_dir = Path(tempfile.mkdtemp(prefix="ae-symlink-cfg-src-"))
+        dst_dir = Path(tempfile.mkdtemp(prefix="ae-symlink-cfg-dst-"))
+        try:
+            # 创建 dangling symlink
+            (src_dir / "broken_link").symlink_to(src_dir / "nonexistent.txt")
+            # 创建一个普通文件
+            (src_dir / "real.txt").write_text("real content")
+
+            renderer = TemplateRenderer(
+                template_dirs=[src_dir],
+                context={},
+                preserve_symlinks=False,
+                overwrite=True,
+            )
+            generated = renderer.render_to(dst_dir)
+            rels = [g.relative_to(dst_dir) for g in generated]
+
+            # dangling symlink 被跳过
+            assert Path("broken_link") not in rels
+            # real.txt 正常复制
+            assert Path("real.txt") in rels
+        finally:
+            import shutil
+
+            shutil.rmtree(src_dir, ignore_errors=True)
+            shutil.rmtree(dst_dir, ignore_errors=True)
+
+    def test_preserve_symlinks_true_preserves_valid_symlink(self):
+        """RED: preserve_symlinks=True 时有效 symlink 被保留为链接."""
+        import tempfile
+
+        from auto_engineering.init.renderer import TemplateRenderer
+
+        src_dir = Path(tempfile.mkdtemp(prefix="ae-symlink-cfg2-src-"))
+        dst_dir = Path(tempfile.mkdtemp(prefix="ae-symlink-cfg2-dst-"))
+        try:
+            real = src_dir / "real.txt"
+            real.write_text("target content")
+            link = src_dir / "link.txt"
+            link.symlink_to(real)
+
+            renderer = TemplateRenderer(
+                template_dirs=[src_dir],
+                context={},
+                preserve_symlinks=True,
+                overwrite=True,
+            )
+            generated = renderer.render_to(dst_dir)
+            rels = [g.relative_to(dst_dir) for g in generated]
+
+            assert Path("link.txt") in rels
+            link_dst = dst_dir / "link.txt"
+            # preserve_symlinks=True → 保留为 symlink
+            assert link_dst.is_symlink()
+        finally:
+            import shutil
+
+            shutil.rmtree(src_dir, ignore_errors=True)
+            shutil.rmtree(dst_dir, ignore_errors=True)
+
+
 class TestRendererSymlinkHandling:
     """A4: TemplateRenderer 处理 symlink 文件 (设计 §1.3.5).
 

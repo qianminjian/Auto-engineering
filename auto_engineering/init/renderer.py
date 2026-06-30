@@ -57,6 +57,8 @@ class TemplateRenderer:
         overwrite: bool = False,
         conflict_handler: Callable[[str], bool] | None = None,
         match_exclude: Callable[[Path], bool] | None = None,
+        templates_suffix: str = ".jinja",
+        preserve_symlinks: bool = True,
     ):
         self.template_dirs = template_dirs
         self.context = context
@@ -68,6 +70,10 @@ class TemplateRenderer:
         # P1.2: Copier match_exclude 回调 — 动态排除路径 (Callable[[Path], bool])
         # 来源: copier/_main.py:753 match_exclude(self) -> Callable[[Path], bool]
         self.match_exclude = match_exclude
+        # T2-1: templates_suffix 参数化 — 支持自定义模板后缀,替代类属性 TEMPLATE_SUFFIX
+        self.templates_suffix = templates_suffix
+        # T2-2: preserve_symlinks 可配置 — True 保留 symlink, False 跳过 dangling 或解析内容
+        self.preserve_symlinks = preserve_symlinks
         self.env = SandboxedEnvironment(
             undefined=StrictUndefined,
             **(envops or {"keep_trailing_newline": True}),
@@ -92,9 +98,9 @@ class TemplateRenderer:
                 if not rendered_rel or rendered_rel.strip() == "":
                     continue
 
-                is_template = rendered_rel.endswith(self.TEMPLATE_SUFFIX)
+                is_template = rendered_rel.endswith(self.templates_suffix)
                 if is_template:
-                    rendered_rel = rendered_rel[: -len(self.TEMPLATE_SUFFIX)]
+                    rendered_rel = rendered_rel[: -len(self.templates_suffix)]
 
                 dst_file = dst_dir / rendered_rel
 
@@ -122,16 +128,30 @@ class TemplateRenderer:
                     generated[rendered_rel] = dst_file
                     continue
 
-                # A4: symlink 处理 — 保留为 symlink (若 target 存在) 或解析为内容
+                # A4: symlink 处理 — preserve_symlinks=True 保留为 symlink; False 解析为内容
                 if src_file.is_symlink():
                     target = src_file.resolve()
-                    if target.exists():
-                        # 复制 symlink 本身 (保留为指向 target 的链接)
-                        dst_file.symlink_to(target)
+                    if self.preserve_symlinks:
+                        if target.exists():
+                            # 复制 symlink 本身 (保留为指向 target 的链接)
+                            dst_file.symlink_to(target)
+                            generated[rendered_rel] = dst_file
+                            continue
+                        # dangling symlink → 跳过 (目标不存在,无法保留)
+                        continue
+                    else:
+                        # preserve_symlinks=False: 跳过 dangling; 有效 symlink 解析为内容复制
+                        if not target.exists():
+                            continue  # dangling symlink → 跳过
+                        # 解析 symlink 为内容,复制到目标
+                        if is_binary(str(target)):
+                            shutil.copy2(target, dst_file)
+                        else:
+                            newline = self._detect_newline(target)
+                            dst_file.write_text(target.read_text(), newline=newline)
+                        shutil.copymode(src_file, dst_file)
                         generated[rendered_rel] = dst_file
                         continue
-                    # dangling symlink → 跳过 (目标不存在,无法保留/解析)
-                    continue
 
                 if is_template:
                     try:
