@@ -384,11 +384,33 @@ class Plan:
             groups = plan.parallelism_groups()
             for group in groups:
                 await asyncio.gather(*[run_task(tid) for tid in group])
+
+        Raises:
+            ConflictError: Plan DAG 含循环依赖时 (_topological_levels ValueError 转换).
         """
         if not self.tasks:
             return []
-        levels = _topological_levels(self.tasks)
+        try:
+            levels = _topological_levels(self.tasks)
+        except ValueError as exc:
+            # DAG 环检测: 转换 ValueError → ConflictError (统一 Plan.validate 异常契约)
+            raise ConflictError([f"DAG 含循环依赖: {exc}"]) from exc
         return [[t.id for t in level] for level in levels]
+
+    def get_tasks_by_stage(self, stage: str) -> list[Task]:
+        """按 stage (= task.role) 过滤本 Plan 中的 Task.
+
+        Args:
+            stage: 目标 stage 名 ("architect" | "developer" | "critic").
+
+        Returns:
+            role == stage 的 Task 子集; 无匹配或空 Plan 返回 [].
+
+        用法 (Orchestrator v5.0 §B7.1 step 2c):
+            tasks = plan.get_tasks_by_stage("architect")
+            await run_round(tasks, ...)
+        """
+        return [t for t in self.tasks if t.role == stage]
 
     def get_task(self, task_id: str) -> Task | None:
         """按 id 查找 Task."""

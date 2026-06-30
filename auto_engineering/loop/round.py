@@ -38,9 +38,12 @@ class TaskOutcome:
     Attributes:
         task_id: 任务 ID
         status: completed | failed | cancelled
-        output: 任务输出 (成功时)
+        output: 任务输出 (成功时, dict 形式承载 stage-specific 字段)
         error: 错误信息 (失败时)
         duration: 耗时 (秒)
+        task_role: v5.0 M3 新增 — 对应 Task.role (architect/developer/critic),
+                   供 _apply_outcome_to_state 分发写入 state 字段.
+                   默认 None 保持向后兼容 (旧调用方无需传入).
     """
 
     task_id: str
@@ -48,6 +51,7 @@ class TaskOutcome:
     output: Any = None
     error: str | None = None
     duration: float = 0.0
+    task_role: str | None = None  # v5.0 M3 新增 (向后兼容: 默认 None)
 
 
 @dataclass
