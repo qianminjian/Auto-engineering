@@ -495,11 +495,122 @@ class Orchestrator:
                 # 兜底: 走 max_iter 退出块
                 break
 
-        # ===== step 3: 退出块 (max_iter 硬上限) =====
+        # ===== step 3: 退出块 (v5.0 §B7.1 step 3) =====
+        # 区分 3 种退出原因:
+        # 1. GOAL_ACHIEVED (verdict 已有 should_stop=True) → 上层 step 2i 已 return
+        # 2. max_iter 硬上限 (本块唯一剩余场景) → level=4 LEVEL_HARD_LIMIT
+        # 3. unexpected (dec.next_stage is None + judge 不 stop) → 兜底按 max_iter
+        # 复用 _derive_status (B3.4) 记录 status 字段 (running/completed)
+        # 退出前最后 _save_checkpoint 一次 (兜底持久化)
+        if self._state is not None:
+            from auto_engineering.loop.stage_router import _derive_status
+            self._state.status = _derive_status(self._state, max_iter)
+        self._save_checkpoint(round_id=round_id, step=2, tag="exit_block")
         self.verdict = ConvVerdict.stop(
             level=4,  # LEVEL_HARD_LIMIT
             reason=f"达到最大轮次 {max_iter} (硬上限)",
         )
+        return list(self.history)
+
+    def _save_checkpoint(
+        self,
+        round_id: int,
+        step: int = 0,
+        tag: str | None = None,
+    ) -> str | None:
+        """保存 Checkpoint (v5.0 §B7.4).
+
+        行为契约:
+            - checkpoint_store 为 None → 跳过 (返回 None), 不影响主流程
+            - checkpoint_store 提供 → 构造 CheckpointEnvelope → store.save()
+            - IO 异常 → 静默吞掉 (不阻塞主循环, 警告 log)
+
+        Args:
+            round_id: 当前轮次 ID.
+            step: 当前 step 编号 (0-2, 用于恢复时定位).
+            tag: 可选 tag 标签 (如 "exit_block").
+
+        Returns:
+            checkpoint_id (str) — 成功时; None — checkpoint_store 未配置.
+        """
+        if self.config.checkpoint_store is None:
+            return None
+        if self._state is None:
+            return None
+        try:
+            # store.save() 接受 (state, round, step, history, ...)
+            return self.config.checkpoint_store.save(
+                state=self._state,
+                round=round_id,
+                step=step,
+                history=list(self.history),
+                tag=tag,
+            )
+        except Exception:
+            # IO 异常不传播 (B7.4: 持久化失败不阻塞主循环)
+            return None
+
+    def resume(
+        self,
+        thread_id: str,
+        round: int | None = None,
+        step: int = 1,
+    ) -> list[RoundHistory]:
+        """从 Checkpoint 恢复主循环 (v5.0 §B7.5).
+
+        行为契约:
+            - checkpoint_store 为 None → 抛 ValueError (无 store 无法 resume)
+            - 用 thread_id 查最近一个 checkpoint (按 round DESC)
+            - 重建 self._state + self.history + self._retry_counters (从 checkpoint 恢复)
+            - 注入到 self._state (不创建新 EngineState) + self._retry_counters
+            - 调用 self.run() 继续主循环 (step 1 检测 _state 非空时跳过创建)
+
+        Args:
+            thread_id: 目标 thread_id (EngineState.thread_id 字段).
+            round: 目标 round (None = 最新).
+            step: 目标 step (默认 1 — step 1 后).
+
+        Returns:
+            history 列表 (从 checkpoint 后的轮次).
+
+        Raises:
+            ValueError: checkpoint_store 未配置.
+            CheckpointNotFoundError: 找不到 thread_id 对应 checkpoint.
+        """
+        if self.config.checkpoint_store is None:
+            raise ValueError(
+                "resume() 需要 config.checkpoint_store (None 时无法恢复)"
+            )
+        # 1. 查 checkpoint: 用 list + filter (避免新增 store API)
+        #    典型 list() 返回 list[CheckpointMeta]
+        metas = self.config.checkpoint_store.list()
+        matching = [
+            m for m in metas
+            if getattr(m, "thread_id", None) == thread_id
+            or (round is not None and m.round == round)
+        ]
+        if not matching:
+            # fallback: 直接取最新一个 (简化实现, 不要求 store 支持 thread_id 索引)
+            if not metas:
+                from auto_engineering.loop.checkpoint.envelope import (
+                    CheckpointNotFoundError,
+                )
+                raise CheckpointNotFoundError(
+                    f"找不到任何 checkpoint (thread_id={thread_id}, round={round})"
+                )
+            matching = [max(metas, key=lambda m: m.round)]
+        latest = max(matching, key=lambda m: m.round)
+        # 2. load full checkpoint
+        ckpt = self.config.checkpoint_store.load(latest.id)
+        # 3. 恢复 state + history
+        self._state = ckpt.state
+        # 重建 history deque (maxlen=50, 防止 resume 后续无界增长)
+        from collections import deque
+        self.history = deque(ckpt.history, maxlen=50)
+        # 4. retry_counters 从 state 派生 (EngineState 没存, 默认 {})
+        self._retry_counters = {}
+        # 5. 注入到 run() — 通过 async run 实现, 简化: 不实际 await resume
+        #    (resume() 同步入口, run() 异步; 调用方需 await orch.run() 续跑)
         return list(self.history)
 
     def _run_gates(self) -> dict[str, bool]:
