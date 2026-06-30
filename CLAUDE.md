@@ -127,6 +127,37 @@ ae checkpoint v2 resume <id>              # 从 v2 checkpoint 恢复
 ae checkpoint list|show|delete|resume     # 旧 JSON 文件 checkpoint
 ```
 
+## atdo 开发过程基本要求（2026-06-30 用户确立）
+
+**核心约束**：atdo 自动化开发过程中，所有进展必须反馈到前台（Claude Code 会话），不得静默在后台开发。每次会话、每次 atdo 启动都生效。
+
+**Why**：用户期望开发过程透明可见，避免长时间无反馈导致的"卡死焦虑"与"信任流失"。
+
+**强制要求**：
+
+- ✅ **Progress Display**：每 Phase / Step 开始前输出 `[Auto-Phase] Phase N/M: <name> | Step X/Y: <description]`（atdo 协议默认行为，不可省略）
+- ✅ **Heartbeat 协议**：agent spawn 后每 5/10/15 分钟输出心跳（atdo agent-spawn-timeout.md 默认行为）
+- ✅ **关键决策显式化**：阶段切换 / gate 通过 / 失败 / manual gate 触发 / 用户介入点必须显式输出
+- ✅ **失败升级前台**：失败时不静默重试，立即告诉用户"已失败 + 当前状态 + 选项"
+- ✅ **ALERT.md 写入路径**：`.phase-execution/ALERT.md` 必须前台摘要（不只是写文件）
+- ✅ **CronCreate 唤醒后**：下次会话第一行输出 `atdo auto-resume for phase X/M` 让用户知道是续跑
+
+**禁止**：
+
+- ❌ 禁止用 Bash `run_in_background: true` 跑 atdo 相关命令（应前台执行，每步可见）
+- ❌ 禁止 agent 输出超 10 分钟无 ProgressDisplay（违反 agent-spawn-timeout.md 心跳协议）
+- ❌ 禁止 Step 间静默跳过（即使相同 Phase 必须显示状态变化）
+- ❌ 禁止 push / force push / reset --hard / rm 等破坏性操作无前台确认
+
+**How to apply**：
+
+- 任何 `/atdo` 命令启动时，先在响应中显示 `[Auto-Phase] Phase N/M: ...` 进度条，再执行协议
+- CronCreate 唤醒后第一时间输出 `atdo auto-resume for Phase N/M`，避免用户疑惑"这是新 run 还是续跑"
+- Manual gate / AskUserQuestion 时显式标注"需要用户介入"
+- 失败时不绕路，立即升级 ALERT 并给用户选项
+
+---
+
 ## 管理约束
 
 - tests/ 下测试，覆盖率 ≥ 80%
