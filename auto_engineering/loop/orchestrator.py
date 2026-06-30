@@ -383,7 +383,10 @@ class Orchestrator:
                     # 完全没有 role 匹配: 全部 task 兜底 (向后兼容旧用例)
                     round_tasks = list(self.tasks)
 
-            # 2d. PRE Guardrail (本子目标 stub — 完整实现见子目标 5)
+            # 2d. PRE Guardrail (B2.3 + B5.2)
+            #     guardrail_chain.check() fail-fast 遍历 timing="pre" + stage 匹配
+            #     _handle_guardrail_result 处理 4 态 (pass/block/drop/retry) →
+            #     "continue"/"stop"/"retry" 3 动作
             if guardrail_chain is not None:
                 pre_result = guardrail_chain.check(
                     "pre", current_stage, self._state, project_root
@@ -402,7 +405,9 @@ class Orchestrator:
                     # 重试不消耗 round_id (v5.0 §B7.1 step 2 注释)
                     continue
 
-            # 2e. Agent 执行 (本子目标 stub — run_round + outcome → state 见子目标 5)
+            # 2e. Agent 执行 (B7.2: _apply_outcome_to_state)
+            #     run_round 调度 task → RoundResult, 遍历 outcomes 按 task_role
+            #     分发写入 state 字段 (architect/developer/critic 各 3-4 字段)
             round_result = await run_round(
                 tasks=round_tasks,
                 executor=self.executor,
@@ -412,12 +417,13 @@ class Orchestrator:
                 gates=self.config.gates,
                 project_root=project_root,
             )
-            # _apply_outcome_to_state: 按 task_role 分发 outcome.output → state
             from auto_engineering.loop.task_factory import _apply_outcome_to_state
             for outcome in round_result.outcomes:
                 _apply_outcome_to_state(self._state, outcome)
 
-            # 2f. POST Guardrail (本子目标 stub — 完整实现见子目标 5)
+            # 2f. POST Guardrail (B2.3 + B5.2)
+            #     同 2d: timing="post", 仍走 _handle_guardrail_result
+            #     block → 立即 stop; retry → 清字段重试
             if guardrail_chain is not None:
                 post_result = guardrail_chain.check(
                     "post", current_stage, self._state, project_root
