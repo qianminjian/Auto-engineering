@@ -2,17 +2,18 @@
 
 从 cli.py 拆分 (Plan P1-B): helpers.py + dev_loop.py + checkpoint.py + __init__.py.
 
-命令:
-    ae init <project>         项目环境初始化
+命令 (Loop-only, Init Engineering 拆分独立项目, 见 design/BEACON.md 决策 30):
     ae dev-loop <requirement> 单需求开发循环 (默认 v2.0 Orchestrator)
     ae status                 查看当前进度
     ae checkpoint list|show|resume    Checkpoint 管理
     ae checkpoint v2 list|show|delete|migrate   v2.0 Checkpoint 操作
+
+    [已移除] ae init <project>  — Init Engineering 是独立项目, 按
+    @design/v5.0-Design-Loop.md §IL.1-IL.6 接口契约实现 Init 侧
 """
 
 from __future__ import annotations
 
-import contextlib
 from pathlib import Path
 
 import click
@@ -50,99 +51,27 @@ from auto_engineering.cli.checkpoint import register_checkpoint_commands  # noqa
 @click.group()
 @click.version_option(version=__version__, prog_name="ae")
 def main():
-    """Auto-Engineering — 团队级 Loop 工程 + 多 Agent 协作."""
+    """Auto-Engineering — 团队级 Loop 工程 + 多 Agent 协作.
+
+    Init 工程 (项目脚手架) 已拆分独立项目, 见 design/BEACON.md.
+    """
     pass
 
 
 @main.command()
-@click.argument("project", required=False)
-@click.option(
-    "--type",
-    "project_type",
-    help="项目类型 (app-service/library/cli-tool/skill/hook/mcp-server/spec-doc/monorepo)",
-)
-@click.option("--defaults", is_flag=True, help="非交互模式，全部使用默认值")
-@click.option("--force", is_flag=True, help="允许覆盖非空目录")
-@click.option(
-    "--from-answers", "answers_file", type=click.Path(exists=True), help="从 .ae-answers.yml 重放"
-)
-@click.option("--package-manager", help="包管理器 (npm/pnpm/yarn/bun/uv/poetry)")
-@click.option("--ci", "ci_platform", help="CI 平台 (github/gitlab/none)")
-@click.option("--test-runner", help="测试框架")
-@click.option(
-    "--no-typescript", "use_typescript", flag_value=False, default=None, help="不使用 TypeScript"
-)
-@click.option(
-    "--no-lefthook", "use_lefthook", flag_value=False, default=None, help="不安装 Lefthook"
-)
-@click.option("--pretend", is_flag=True, help="模拟执行，不产生文件")
-@click.option("--skip-tasks", is_flag=True, help="跳过钩子任务执行")
-@click.option(
-    "--no-cleanup", "cleanup_on_error", flag_value=False, default=True, help="出错时不清理目标目录"
-)
-@click.option("--quiet", is_flag=True, help="静默模式")
-@click.option("--incremental", is_flag=True, help="增量模式：只补充缺失文件，不覆盖已有文件")
-def init(
-    project: str | None,
-    project_type: str | None,
-    defaults: bool,
-    force: bool,
-    answers_file: str | None,
-    package_manager: str | None,
-    ci_platform: str | None,
-    test_runner: str | None,
-    use_typescript: bool | None,
-    use_lefthook: bool | None,
-    pretend: bool,
-    skip_tasks: bool,
-    cleanup_on_error: bool,
-    quiet: bool,
-    incremental: bool,
-):
-    """项目环境初始化."""
-    from auto_engineering.init import InitWorker
+def init() -> None:
+    """[已禁用] 项目脚手架初始化 — Init Engineering 拆分独立项目.
 
-    dst_path = Path(project) if project else Path.cwd()
-
-    if answers_file:
-        from auto_engineering.init import AnswersMap
-
-        answers = AnswersMap.from_answers_file(Path(answers_file))
-        click.echo(f"从 {answers_file} 恢复答案")
-        if not project_type:
-            with contextlib.suppress(KeyError):
-                project_type = answers.get("project_type") or ""
-    else:
-        answers = None
-
-    worker = InitWorker(
-        dst_path=dst_path,
-        project_type=project_type,
-        package_manager=package_manager,
-        ci_platform=ci_platform,
-        test_runner=test_runner,
-        use_typescript=use_typescript,
-        use_lefthook=use_lefthook,
-        defaults=defaults,
-        force=force,
-        pretend=pretend,
-        skip_tasks=skip_tasks,
-        cleanup_on_error=cleanup_on_error,
-        quiet=quiet,
-        incremental=incremental,
+    本项目仅 Loop Engineering. 项目脚手架请使用独立 Init Engineering 项目
+    (按 v5.0-Design-Loop.md §IL.1-IL.6 接口契约实现 Init 侧).
+    """
+    click.echo(
+        "✗ ae init 不可用: Init Engineering 已拆分独立项目.\n"
+        "  本项目仅 Loop Engineering. 项目脚手架请使用独立 Init 项目.\n"
+        "  见 design/v5.0-Design-Loop.md §IL.1-IL.6 接口契约.",
+        err=True,
     )
-    if answers:
-        worker._previous_answers = answers
-
-    try:
-        result = worker.execute()
-        if pretend:
-            click.echo(f"[DRY RUN] 将生成到: {result.dst_path}")
-        else:
-            click.echo(f"✓ 项目已生成: {result.dst_path}")
-    except Exception as e:
-        click.echo(f"✗ 初始化失败: {e}", err=True)
-        raise SystemExit(1) from e
+    raise SystemExit(1)
 
 
 @main.command()
