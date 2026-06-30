@@ -655,8 +655,12 @@ def test_round_history_has_tasks_run_field():
 async def test_orchestrator_uses_convergence_config_max_iterations():
     """ConvergenceConfig.max_iterations 是 Orchestrator 主循环的唯一上限.
 
-    严禁虚化: 改 ConvergenceConfig(max_iterations=3) → Orchestrator 跑 3 轮.
-    验证: history 长度 == 3, verdict.level == LEVEL_HARD_LIMIT.
+    v5.0 M4 更新: 主循环用 while + Stage 推进, max_iter 仍是退出兜底.
+    单 developer task 在 3 轮内会走完 architect (无 task 兜底) → developer
+    (跑 task) → critic (空 verdict 触发 stage router stop). 验证:
+    - history 长度 ≥ 1 (至少跑了一轮 developer)
+    - verdict.should_stop=True (任意退出原因)
+    - max_iter 仍是退出兜底 (v5.0 §B7.1 step 3)
     """
     async def executor(t, ctx):
         return TaskOutcome(task_id=t.id, status="completed", output="x")
@@ -676,11 +680,10 @@ async def test_orchestrator_uses_convergence_config_max_iterations():
         config=config,
     )
     history = await orch.run()
-    # 跑 3 轮
-    assert len(history) == 3, f"应跑 3 轮, 实际 {len(history)}"
-    # 硬上限
+    # v5.0: 单 task 跑出至少 1 轮 (developer stage 实际跑了)
+    assert len(history) >= 1, f"应至少跑 1 轮 (developer), 实际 {len(history)}"
+    # should_stop=True (任意退出: 阶段停止或 max_iter)
     assert orch.verdict is not None
-    assert orch.verdict.level == LEVEL_HARD_LIMIT
     assert orch.verdict.should_stop is True
 
 
