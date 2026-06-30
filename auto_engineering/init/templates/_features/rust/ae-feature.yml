@@ -1,5 +1,0 @@
-name: rust
-description: rust language support
-when: "{{ language == 'rust' }}"
-questions: {}
-tasks_after: []
