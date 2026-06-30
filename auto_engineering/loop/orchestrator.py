@@ -344,7 +344,8 @@ class Orchestrator:
             self._router = StageRouter()
         # _retry_counters 已在 __post_init__ 初始化为 {} (per Orchestrator 实例)
         # 兼容外部注入: guardrail_chain / checkpoint_store 从 config 拉
-        guardrail_chain = self.config.guardrail_chain
+        # 也支持测试场景直接设置 self._guardrail_chain (向后兼容)
+        guardrail_chain = getattr(self, "_guardrail_chain", None) or self.config.guardrail_chain
 
         # ===== step 2: 主循环 =====
         round_id = 0
@@ -382,6 +383,22 @@ class Orchestrator:
                 if not round_tasks and self.tasks:
                     # 完全没有 role 匹配: 全部 task 兜底 (向后兼容旧用例)
                     round_tasks = list(self.tasks)
+                # 如果 round_tasks 仍为空, 说明当前 stage 在 plan 里没匹配,
+                # 跳到下一 stage (避免在无 task stage 上空转)
+                if not round_tasks:
+                    from auto_engineering.loop.stage_router import _clear_stage_fields
+                    advance_decision = self._router.next(
+                        current_stage=current_stage,
+                        verdict="",
+                        majors_in_a_row=self._state.majors_in_a_row,
+                        total_majors=self._state.total_majors,
+                    )
+                    if advance_decision.next_stage is not None:
+                        _clear_stage_fields(self._state, current_stage)
+                        self._state.current_stage = advance_decision.next_stage
+                        continue  # 重试下一 stage
+                    # 到达 stage 流终点 (StageRouter.stop): 跳出走 step 3
+                    break
 
             # 2d. PRE Guardrail (B2.3 + B5.2)
             #     guardrail_chain.check() fail-fast 遍历 timing="pre" + stage 匹配
