@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import subprocess
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -19,10 +20,8 @@ from auto_engineering.tools.base import ToolResult
 
 
 def _run(coro):
-    """简易 async runner (与现有 test_tools_integration.py 一致)."""
-    import asyncio
-
-    return asyncio.get_event_loop().run_until_complete(coro)
+    """异步协程同步执行 — 用 asyncio.run 避免跨测试 event loop 冲突."""
+    return asyncio.run(coro)
 
 
 # ============================================================
