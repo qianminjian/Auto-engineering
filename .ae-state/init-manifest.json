@@ -1,0 +1,20 @@
+{
+  "schema_version": "1.0",
+  "project_type": "app-service",
+  "language": "python",
+  "framework": "click",
+  "created_at": "2026-07-01T00:00:00Z",
+  "init_version": "1.0.0",
+  "structure": {
+    "src_dir": "auto_engineering",
+    "tests_dir": "tests"
+  },
+  "conventions": {
+    "linter": "ruff",
+    "type_checker": "pyright",
+    "test_runner": "pytest",
+    "max_line_length": 100,
+    "indent": "spaces",
+    "indent_size": 4
+  }
+}

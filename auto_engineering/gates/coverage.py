@@ -85,9 +85,14 @@ class CoverageGate(Gate):
         pytest_bin: pytest 命令路径
         timeout: subprocess 超时(秒)
         strict: True = 低于阈值失败; False = 仅 warning(passed=True)
+
+    v5.0 §B6.1: applies_to_stages = ("developer",)
+        覆盖率仅在 developer 阶段跑 (有代码产出才有意义).
+        BEACON 决策 25: 永远 skip, 仅作注册.
     """
 
     name = "coverage"
+    applies_to_stages = ("developer",)
 
     def __init__(
         self,
@@ -110,7 +115,7 @@ class CoverageGate(Gate):
             return ["pytest"]
         return None
 
-    def run(self, project_root: Path) -> Verdict:
+    def run(self, project_root: Path, contracts: dict | None = None) -> Verdict:
         """执行 coverage 检查.
 
         Returns:

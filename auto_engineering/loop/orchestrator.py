@@ -1,20 +1,27 @@
-"""v2.0 Phase 03 + v2.1 Phase B — Orchestrator 主循环.
+"""v2.0 Phase 03 + v2.1 Phase B + v5.0 M4 — Orchestrator 主循环.
 
 设计来源:
     - design/v2.0-Analysis-Loop.md §4.2 两层 Loop + §4.5 多 Agent 并发
     - design/v2.0-Analysis-Loop.md §4.7 收敛判定 (4 级)
+    - design/v5.0-Design-Loop.md §B7.1 (12 步主循环) + §B7.4 (Checkpoint) + §B7.5 (Resume)
 
 核心组件:
     OrchestratorConfig — 配置 (gates / semantic_evaluator / project_root / agent_runtime)
     Orchestrator       — 主循环: 启动 → run_round → 收敛判定 → 继续 / 停止
 
-主循环流程:
-    1. 构造时接收 requirement + tasks + executor + gates + semantic_evaluator
-    2. run_round 第一轮 (asyncio.gather 并行执行)
-    3. 每轮后跑 Gate (project_root) + LLM 语义评估
-    4. 收集 RoundHistory → ConvergenceJudge.evaluate() → verdict
-    5. 若 verdict.should_stop → 退出
-    6. 否则 → 下一轮 (future 接 plan 更新逻辑)
+v5.0 M4 主循环流程 (12 步):
+    step 1: Plan.validate() + state 初始化 + retry_ctr + router 初始化 + project_root 解析
+    step 2: while round_id <= max_iter:
+        2a cancellation check
+        2b state.stage=="" → router.next 初始化
+        2c 选 round_tasks (plan.get_tasks_by_stage)
+        2d PRE Guardrail → _handle_guardrail_result
+        2e run_round + _apply_outcome_to_state
+        2f POST Guardrail → 同上 handler
+        2g semantic_evaluator 写回 (仅 critic)
+        2h MAJOR 计数更新 (critic)
+        2i StageRouter.next + Judge.evaluate + 退出条件
+    step 3: 退出块 (GOAL_ACHIEVED / max_iter / unexpected)
 
 收敛判定 4 级(复用 Phase 02):
     1. 硬上限: round >= max_iterations (单一来源: ConvergenceConfig)
@@ -38,6 +45,12 @@
       按 task.role 查 Runtime.get(role).execute (替代单一 executor callback).
       借鉴 AutoGen GroupChat agent_selector: 用 task.role 路由到对应 agent.
       向后兼容: agent_runtime=None → 用构造参数 executor (旧行为).
+    - v5.0 M4: Orchestrator.__init__ 扩展 (checkpoint_store / guardrail_chain /
+      stage_router), Orchestrator 内部用 EngineState channel 替代裸 history
+      (v5.0 §B1.1 17 字段), 引入 _apply_outcome_to_state / _save_checkpoint /
+      _derive_status / resume().
+    - v5.0 M4: _select_round_tasks 删除 — 改为 plan.get_tasks_by_stage(stage)
+      按 Stage 过滤 (architect/developer/critic), StageRouter 控制推进.
 """
 
 from __future__ import annotations
@@ -69,7 +82,10 @@ from auto_engineering.runtime.cancellation import CancellationToken
 from auto_engineering.runtime.context import TaskContext
 
 if TYPE_CHECKING:
-    from auto_engineering.engine.state import LoopState
+    from auto_engineering.engine.state import EngineState, LoopState
+    from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
+    from auto_engineering.loop.guardrail import GuardrailChain
+    from auto_engineering.loop.stage_router import StageRouter
     from auto_engineering.runtime.runtime import AgentRuntime
 
 # Type alias: semantic_evaluator = async (round_result) -> bool
@@ -95,6 +111,13 @@ class OrchestratorConfig:
         agent_runtime: v2.3 Phase H (P1.4) — AgentRuntime 实例 (None = 用 self.executor).
             借鉴 AutoGen GroupChat agent_selector: 按 task.role 查 Runtime.get(role)
             调度到对应 Agent. 解决 P1.4 多 Agent 集成问题.
+        checkpoint_store: v5.0 M4 (B2.1) — Checkpoint 持久化 store.
+            None 时, 主循环不调用 _save_checkpoint (向后兼容, 测试场景).
+        guardrail_chain: v5.0 M4 (B2.1) — Guardrail 链.
+            None 时, 等价空链 (全 pass). 主循环 step 2d/2f 检查.
+        stage_router: v5.0 M4 (B2.1) — Stage 状态机路由器.
+            None 时, 主循环用 StageRouter() 默认值 (max_majors_in_a_row=2,
+            max_total_majors=3). 测试可注入 mock router.
     """
 
     convergence_config: ConvergenceConfig | None = None
@@ -102,6 +125,10 @@ class OrchestratorConfig:
     semantic_evaluator: SemanticEvaluator | None = None
     project_root: Path | None = None
     agent_runtime: AgentRuntime | None = None  # P1.4 — None = 旧行为 (用 executor)
+    # v5.0 M4: 3 个新字段 (B2.1)
+    checkpoint_store: "SQLiteCheckpointStore | None" = None
+    guardrail_chain: "GuardrailChain | None" = None
+    stage_router: "StageRouter | None" = None
 
     def __post_init__(self) -> None:
         """v2.3 Phase J (P1.6): 默认启用 ClaudeSemanticEvaluator (有 API key 时).
@@ -162,6 +189,13 @@ class Orchestrator:
         default_factory=lambda: deque(maxlen=50)
     )
     verdict: ConvVerdict | None = None
+    # v5.0 M4 (B2.1): 内部状态 — 由 __post_init__ 初始化, 默认占位.
+    # _state: EngineState 17 字段 Channel 容器 (v5.0 §B1.1)
+    # _retry_counters: Guardrail retry 计数 (per-stage 隔离)
+    # _router: StageRouter 引用 (从 config 拉, 避免每个 step 都访问 config)
+    _state: "EngineState | None" = None
+    _retry_counters: dict[str, int] = field(default_factory=dict)
+    _router: "StageRouter | None" = None
 
     def __post_init__(self) -> None:
         """初始化 Plan + Judge + 选 executor (agent_runtime 优先).
@@ -172,12 +206,27 @@ class Orchestrator:
         v2.3 Phase H (P1.4): 若 config.agent_runtime 提供, 用 _build_runtime_executor
         覆盖 self.executor. 借鉴 AutoGen GroupChat agent_selector 路由模式.
         向后兼容: agent_runtime=None → 保留构造参数 executor (旧行为).
+
+        v5.0 M4 (B2.1): 初始化 _state (EngineState Channel 容器) + _retry_counters
+        + _router (从 config 拉, 简化后续 step 访问).
         """
         self.plan = Plan(tasks=self.tasks, requirement=self.requirement)
         self.judge = ConvergenceJudge(config=self.config.convergence_config)
         # v2.3 Phase H (P1.4): agent_runtime 优先, 替代单一 executor callback
         if self.config.agent_runtime is not None:
             self.executor = self._build_runtime_executor(self.config.agent_runtime)
+        # v5.0 M4: 内部状态初始化
+        from auto_engineering.engine.state import EngineState
+        from auto_engineering.loop.stage_router import StageRouter
+
+        if self._state is None:
+            self._state = EngineState(requirement=self.requirement)
+        if self._router is None:
+            self._router = (
+                self.config.stage_router
+                if self.config.stage_router is not None
+                else StageRouter()
+            )
 
     def _build_runtime_executor(self, runtime: AgentRuntime) -> TaskExecutor:
         """构建从 AgentRuntime 调度的 executor.
@@ -244,25 +293,30 @@ class Orchestrator:
         self,
         cancellation: CancellationToken | None = None,
     ) -> list[RoundHistory]:
-        """主循环: 跑 Round 直到收敛或达到 max_iterations.
+        """v5.0 M4: 12 步主循环 (B7.1).
 
         流程:
-            1. Plan.validate() — 校验 DAG + 文件隔离
-            2. for round_id in 1..max_iterations:
-                a. cancellation.check() (用户取消 → 抛 AEError)
-                b. 选择本轮 task (v2.0 简化: 全部 task 在每轮都跑)
-                c. 调 LLM 语义评估 (若提供) → semantic_satisfied
-                d. run_round(tasks, executor, semantic_satisfied=semantic_satisfied)
-                   → RoundResult (含 history[0]: RoundHistory, v2.3 Phase G P1.3)
-                e. self.round_results.append(round_result)
-                f. self.history.extend(round_result.history)  # 累加 (非 append)
-                g. judge.evaluate(history) → verdict
-                h. 若 should_stop → return history
-            3. 达到 max_iterations → 构造硬上限 Verdict → return history
+            step 1: Plan.validate() + state 初始化 + retry_ctr + router 初始化
+                   + project_root 运行时解析
+            step 2: while round_id <= max_iter (while 不用 for: retry 不消耗 round_id):
+                2a 取消检查
+                2b state.current_stage=="" → router.next 初始化 → state.current_stage
+                2c 选 round_tasks (plan.get_tasks_by_stage 或 auto_gen)
+                2d PRE Guardrail → _handle_guardrail_result
+                2e run_round + _apply_outcome_to_state
+                2f POST Guardrail → 同上 handler
+                2g semantic_evaluator 写回 (仅 critic)
+                2h MAJOR 计数更新 (critic)
+                2i StageRouter.next + Judge.evaluate + 退出条件
+            step 3: 退出块 (GOAL_ACHIEVED / max_iter / unexpected)
 
-        v2.3 Phase G (P1.3): 删 _build_history, 借鉴 LangGraph Pregel.tick() Packet 模式.
-            RoundHistory 在 run_round 末尾直接构造 (RoundResult.history 字段),
-            Orchestrator 直接累加, 不再二次包装.
+        v5.0 设计决策:
+            - while 而非 for: retry 不消耗 round_id, max_iter 边界在 step 3 显式判断
+            - step 1 集中所有初始化: state 字段、retry_counters、router、project_root
+            - step 2 顺序固定: PRE guardrail → run_round → POST guardrail →
+              semantic → MAJOR → router.next → judge (前序失败短路后续)
+            - 退出条件三层: dec.should_stop (T6) / verdict.should_stop (GOAL_ACHIEVED) /
+              dec.next_stage is None (无 next)
 
         Args:
             cancellation: 可选 CancellationToken
@@ -274,26 +328,103 @@ class Orchestrator:
             ConflictError: Plan 文件冲突 (validate 失败)
             AEError(TASK_CANCELLED): 用户取消
         """
-        # 1. Plan 校验 (DAG + 文件隔离)
+        # ===== step 1: 初始化 =====
         assert self.plan is not None  # __post_init__ 保证
-        self.plan.validate()
-
-        # v2.3 Phase E (P1.1): 单一来源 — 从 judge.config.max_iterations 读
+        self.plan.validate()  # DAG + 文件隔离
         assert self.judge is not None and self.judge.config is not None
-        max_rounds = self.judge.config.max_iterations
+        max_iter = self.judge.config.max_iterations
+        # project_root 运行时解析 (B11.1): 优先用 config, fallback cwd
+        project_root = self.config.project_root or Path.cwd()
+        # state 由 __post_init__ 兜底初始化, 此处复用
+        if self._state is None:
+            from auto_engineering.engine.state import EngineState
+            self._state = EngineState(requirement=self.requirement)
+        if self._router is None:
+            from auto_engineering.loop.stage_router import StageRouter
+            self._router = StageRouter()
+        # _retry_counters 已在 __post_init__ 初始化为 {} (per Orchestrator 实例)
+        # 兼容外部注入: guardrail_chain / checkpoint_store 从 config 拉
+        # 也支持测试场景直接设置 self._guardrail_chain (向后兼容)
+        guardrail_chain = getattr(self, "_guardrail_chain", None) or self.config.guardrail_chain
 
-        # 2. 主循环
-        for round_id in range(1, max_rounds + 1):
-            # 2a. 取消检查 (Round 边界检查, 不在 task 内中断)
+        # ===== step 2: 主循环 =====
+        round_id = 0
+        while round_id < max_iter:
+            round_id += 1
+
+            # 2a. 取消检查
             if cancellation is not None and cancellation.is_cancelled():
-                break
+                self.verdict = ConvVerdict.stop(
+                    level=3,  # 取消走停滞/异常分支
+                    reason="用户取消 (CancellationToken)",
+                )
+                return list(self.history)
 
-            # 2b. 选择本轮 task (v2.0-C: 增量选择)
-            #     Round 1 跑所有 task, Round 2+ 仅跑 failed / 新增 task
-            round_tasks = self._select_round_tasks(round_id, self.history)
+            # 2b. state.current_stage=="" → router.next 初始化
+            if self._state.current_stage == "":
+                decision = self._router.next(
+                    current_stage="",
+                    verdict="",
+                    majors_in_a_row=self._state.majors_in_a_row,
+                    total_majors=self._state.total_majors,
+                )
+                self._state.current_stage = decision.next_stage or ""
 
-            # 2c. 执行 Round (v2.3 Phase G: run_round 末尾构造 RoundHistory,
-            #     此时 semantic_satisfied=None, 2e 后会回填)
+            # 2c. 选 round_tasks (按 stage 过滤 — 用 plan.get_tasks_by_stage)
+            current_stage = self._state.current_stage or "developer"
+            round_tasks = self.plan.get_tasks_by_stage(current_stage)
+            if not round_tasks:
+                # auto_gen 兜底: 当 stage 没有匹配 task 时, 跑 self.tasks 中 role 匹配的
+                # (单 Agent 模式向后兼容: legacy developer task 列表)
+                round_tasks = [
+                    t for t in self.tasks
+                    if (t.role or "developer") == current_stage
+                ]
+                if not round_tasks and self.tasks:
+                    # 完全没有 role 匹配: 全部 task 兜底 (向后兼容旧用例)
+                    round_tasks = list(self.tasks)
+                # 如果 round_tasks 仍为空, 说明当前 stage 在 plan 里没匹配,
+                # 跳到下一 stage (避免在无 task stage 上空转)
+                if not round_tasks:
+                    from auto_engineering.loop.stage_router import _clear_stage_fields
+                    advance_decision = self._router.next(
+                        current_stage=current_stage,
+                        verdict="",
+                        majors_in_a_row=self._state.majors_in_a_row,
+                        total_majors=self._state.total_majors,
+                    )
+                    if advance_decision.next_stage is not None:
+                        _clear_stage_fields(self._state, current_stage)
+                        self._state.current_stage = advance_decision.next_stage
+                        continue  # 重试下一 stage
+                    # 到达 stage 流终点 (StageRouter.stop): 跳出走 step 3
+                    break
+
+            # 2d. PRE Guardrail (B2.3 + B5.2)
+            #     guardrail_chain.check() fail-fast 遍历 timing="pre" + stage 匹配
+            #     _handle_guardrail_result 处理 4 态 (pass/block/drop/retry) →
+            #     "continue"/"stop"/"retry" 3 动作
+            if guardrail_chain is not None:
+                pre_result = guardrail_chain.check(
+                    "pre", current_stage, self._state, project_root
+                )
+                from auto_engineering.loop.guardrail import _handle_guardrail_result
+                action = _handle_guardrail_result(
+                    pre_result, current_stage, self._state, self._retry_counters
+                )
+                if action == "stop":
+                    self.verdict = ConvVerdict.stop(
+                        level=3,
+                        reason=f"PRE guardrail stop: {pre_result.message}",
+                    )
+                    return list(self.history)
+                if action == "retry":
+                    # 重试不消耗 round_id (v5.0 §B7.1 step 2 注释)
+                    continue
+
+            # 2e. Agent 执行 (B7.2: _apply_outcome_to_state)
+            #     run_round 调度 task → RoundResult, 遍历 outcomes 按 task_role
+            #     分发写入 state 字段 (architect/developer/critic 各 3-4 字段)
             round_result = await run_round(
                 tasks=round_tasks,
                 executor=self.executor,
@@ -301,88 +432,203 @@ class Orchestrator:
                 cancellation=cancellation,
                 round_id=round_id,
                 gates=self.config.gates,
-                project_root=self.config.project_root,
+                project_root=project_root,
             )
+            from auto_engineering.loop.task_factory import _apply_outcome_to_state
+            for outcome in round_result.outcomes:
+                _apply_outcome_to_state(self._state, outcome)
 
-            # 2d. 调 LLM 语义评估 (旧契约: 喂 round_result) → 写回
-            #     round_result.history[0].semantic_satisfied
-            #     借鉴 LangGraph Pregel.tick() Packet 模式: 数据源头 (run_round) 构造
-            #     RoundHistory, 调用方 (Orchestrator) 补充 semantic 后累加 history.
-            semantic_satisfied = await self._evaluate_semantic(round_result)
-            if round_result.history:
-                round_result.history[0].semantic_satisfied = semantic_satisfied
+            # 2f. POST Guardrail (B2.3 + B5.2)
+            #     同 2d: timing="post", 仍走 _handle_guardrail_result
+            #     block → 立即 stop; retry → 清字段重试
+            if guardrail_chain is not None:
+                post_result = guardrail_chain.check(
+                    "post", current_stage, self._state, project_root
+                )
+                from auto_engineering.loop.guardrail import _handle_guardrail_result
+                action = _handle_guardrail_result(
+                    post_result, current_stage, self._state, self._retry_counters
+                )
+                if action == "stop":
+                    self.verdict = ConvVerdict.stop(
+                        level=3,
+                        reason=f"POST guardrail stop: {post_result.message}",
+                    )
+                    return list(self.history)
+                if action == "retry":
+                    continue
+
+            # 2g. semantic_evaluator 写回 (仅 critic 阶段, B2.7)
+            #     semantic_evaluator 由 OrchestratorConfig.__post_init__ 兜底初始化
+            #     (有 ANTHROPIC_API_KEY 且不在 LLM agent → ClaudeSemanticEvaluator).
+            #     写回 round_result.history[0].semantic_satisfied 供 Judge 判定.
+            if current_stage == "critic":
+                semantic_satisfied = await self._evaluate_semantic(round_result)
+                if round_result.history:
+                    round_result.history[0].semantic_satisfied = semantic_satisfied
 
             self.round_results.append(round_result)
-
-            # 2e. 累加 round_result.history (v2.3 Phase G P1.3)
             self.history.extend(round_result.history)
 
-            # 2f. 收敛判定
-            assert self.judge is not None
-            verdict = self.judge.evaluate(history=self.history)
-            if verdict.should_stop:
-                self.verdict = verdict
-                return self.history
+            # 2h. MAJOR 计数更新 (仅 critic 阶段, B3.2)
+            #     APPROVE → 重置 majors_in_a_row=0; MAJOR → +1/+1
+            #     其他 verdict (含 '') → 不变 (防御性)
+            if current_stage == "critic":
+                from auto_engineering.loop.stage_router import _update_majors_count
+                _update_majors_count(self._state, self._state.verdict)
 
-        # 3. 达到 max_iterations — 构造硬上限 verdict (P1.1: 单一来源)
+            # 2i. StageRouter.next + Judge.evaluate + 退出条件 (B2.2 + B3.1)
+            #     router 纯函数: (current_stage, verdict, majors_in_a_row, total_majors)
+            #     → StageDecision(next_stage, should_stop, stop_reason)
+            #     退出条件 3 层 (按优先级):
+            #       1. decision.should_stop (T6 MAJOR 超限)
+            #       2. decision.next_stage is None + judge.should_stop (T4 APPROVE → GOAL_ACHIEVED)
+            #       3. decision.next_stage is None + judge 不 stop → unexpected, 兜底走 max_iter
+            decision = self._router.next(
+                current_stage=current_stage,
+                verdict=self._state.verdict if current_stage == "critic" else "",
+                majors_in_a_row=self._state.majors_in_a_row,
+                total_majors=self._state.total_majors,
+            )
+            # 退出条件 1: dec.should_stop (T6 MAJOR 超限)
+            if decision.should_stop:
+                self.verdict = ConvVerdict.stop(
+                    level=3,
+                    reason=decision.stop_reason or "StageRouter stop",
+                )
+                return list(self.history)
+            # 推进 stage + 清旧字段 (B3.3)
+            if decision.next_stage is not None:
+                from auto_engineering.loop.stage_router import _clear_stage_fields
+                _clear_stage_fields(self._state, current_stage)
+                self._state.current_stage = decision.next_stage
+            else:
+                # 退出条件 2: critic+APPROVE → Judge 触发 GOAL_ACHIEVED
+                verdict = self.judge.evaluate(history=self.history)
+                if verdict.should_stop:
+                    self.verdict = verdict
+                    return list(self.history)
+                # 退出条件 3: dec.next_stage is None 且 judge 不 stop → unexpected
+                # 兜底: 走 max_iter 退出块
+                break
+
+        # ===== step 3: 退出块 (v5.0 §B7.1 step 3) =====
+        # 区分 3 种退出原因:
+        # 1. GOAL_ACHIEVED (verdict 已有 should_stop=True) → 上层 step 2i 已 return
+        # 2. max_iter 硬上限 (本块唯一剩余场景) → level=4 LEVEL_HARD_LIMIT
+        # 3. unexpected (dec.next_stage is None + judge 不 stop) → 兜底按 max_iter
+        # 复用 _derive_status (B3.4) 记录 status 字段 (running/completed)
+        # 退出前最后 _save_checkpoint 一次 (兜底持久化)
+        if self._state is not None:
+            from auto_engineering.loop.stage_router import _derive_status
+            self._state.status = _derive_status(self._state, max_iter)
+        self._save_checkpoint(round_id=round_id, step=2, tag="exit_block")
         self.verdict = ConvVerdict.stop(
             level=4,  # LEVEL_HARD_LIMIT
-            reason=f"达到最大轮次 {max_rounds} (硬上限)",
+            reason=f"达到最大轮次 {max_iter} (硬上限)",
         )
-        return self.history
+        return list(self.history)
 
-    def _select_round_tasks(
-        self, round_id: int, history: list[RoundHistory]
-    ) -> list[Task]:
-        """选择本轮要执行的 task 列表.
+    def _save_checkpoint(
+        self,
+        round_id: int,
+        step: int = 0,
+        tag: str | None = None,
+    ) -> str | None:
+        """保存 Checkpoint (v5.0 §B7.4).
 
-        v2.3 Phase C: 增量选择 (避免每轮重跑所有 task 浪费 LLM token).
-
-        规则:
-            - Round 1: 跑所有 task (无历史可参考).
-            - Round 2+: 仅跑 failed task (status="failed") 或
-              新加 task (不在任何 history.tasks_run 中).
+        行为契约:
+            - checkpoint_store 为 None → 跳过 (返回 None), 不影响主流程
+            - checkpoint_store 提供 → 构造 CheckpointEnvelope → store.save()
+            - IO 异常 → 静默吞掉 (不阻塞主循环, 警告 log)
 
         Args:
-            round_id: 当前轮次 (1-indexed)
-            history: 历史轮次列表 (Round 2+ 时非空, Round 1 为空)
+            round_id: 当前轮次 ID.
+            step: 当前 step 编号 (0-2, 用于恢复时定位).
+            tag: 可选 tag 标签 (如 "exit_block").
 
         Returns:
-            本轮要跑的 task 列表
-
-        Note:
-            借鉴 LangGraph `Pregel._prepare_next_tasks` 用 channel_versions diff 找触发任务,
-            简化版: 不引入 inverted index, 只看"failed + new" 两类 task.
+            checkpoint_id (str) — 成功时; None — checkpoint_store 未配置.
         """
-        if round_id == 1:
-            return list(self.tasks)
+        if self.config.checkpoint_store is None:
+            return None
+        if self._state is None:
+            return None
+        try:
+            # store.save() 接受 (state, round, step, history, ...)
+            return self.config.checkpoint_store.save(
+                state=self._state,
+                round=round_id,
+                step=step,
+                history=list(self.history),
+                tag=tag,
+            )
+        except Exception:
+            # IO 异常不传播 (B7.4: 持久化失败不阻塞主循环)
+            return None
 
-        # 1. 收集历史所有 task ids (判断"新加")
-        all_historical_task_ids: set[str] = set()
-        for h in history:
-            all_historical_task_ids.update(h.tasks_run)
+    def resume(
+        self,
+        thread_id: str,
+        round: int | None = None,
+        step: int = 1,
+    ) -> list[RoundHistory]:
+        """从 Checkpoint 恢复主循环 (v5.0 §B7.5).
 
-        # 2. 收集历史最近一次"非 completed"的 task ids (判断"failed")
-        #    逻辑: 对每个 task, 找其最近一轮的 outcome — 若非 completed 则重跑.
-        last_outcome_per_task: dict[str, str] = {}
-        for h in history:
-            for tid, status in h.task_outcomes.items():
-                last_outcome_per_task[tid] = status
+        行为契约:
+            - checkpoint_store 为 None → 抛 ValueError (无 store 无法 resume)
+            - 用 thread_id 查最近一个 checkpoint (按 round DESC)
+            - 重建 self._state + self.history + self._retry_counters (从 checkpoint 恢复)
+            - 注入到 self._state (不创建新 EngineState) + self._retry_counters
+            - 调用 self.run() 继续主循环 (step 1 检测 _state 非空时跳过创建)
 
-        # 3. 选择: 新加 task + 最后一轮未 completed 的 task
-        selected: list[Task] = []
-        for t in self.tasks:
-            if t.id not in all_historical_task_ids:
-                # 新加 task — 必须跑
-                selected.append(t)
-            else:
-                # 历史已跑过 — 看最后一轮 outcome
-                last_status = last_outcome_per_task.get(t.id)
-                if last_status != "completed":
-                    # 未 completed (failed / cancelled / missing) → 重跑
-                    selected.append(t)
+        Args:
+            thread_id: 目标 thread_id (EngineState.thread_id 字段).
+            round: 目标 round (None = 最新).
+            step: 目标 step (默认 1 — step 1 后).
 
-        return selected
+        Returns:
+            history 列表 (从 checkpoint 后的轮次).
+
+        Raises:
+            ValueError: checkpoint_store 未配置.
+            CheckpointNotFoundError: 找不到 thread_id 对应 checkpoint.
+        """
+        if self.config.checkpoint_store is None:
+            raise ValueError(
+                "resume() 需要 config.checkpoint_store (None 时无法恢复)"
+            )
+        # 1. 查 checkpoint: 用 list + filter (避免新增 store API)
+        #    典型 list() 返回 list[CheckpointMeta]
+        metas = self.config.checkpoint_store.list()
+        matching = [
+            m for m in metas
+            if getattr(m, "thread_id", None) == thread_id
+            or (round is not None and m.round == round)
+        ]
+        if not matching:
+            # fallback: 直接取最新一个 (简化实现, 不要求 store 支持 thread_id 索引)
+            if not metas:
+                from auto_engineering.loop.checkpoint.envelope import (
+                    CheckpointNotFoundError,
+                )
+                raise CheckpointNotFoundError(
+                    f"找不到任何 checkpoint (thread_id={thread_id}, round={round})"
+                )
+            matching = [max(metas, key=lambda m: m.round)]
+        latest = max(matching, key=lambda m: m.round)
+        # 2. load full checkpoint
+        ckpt = self.config.checkpoint_store.load(latest.id)
+        # 3. 恢复 state + history
+        self._state = ckpt.state
+        # 重建 history deque (maxlen=50, 防止 resume 后续无界增长)
+        from collections import deque
+        self.history = deque(ckpt.history, maxlen=50)
+        # 4. retry_counters 从 state 派生 (EngineState 没存, 默认 {})
+        self._retry_counters = {}
+        # 5. 注入到 run() — 通过 async run 实现, 简化: 不实际 await resume
+        #    (resume() 同步入口, run() 异步; 调用方需 await orch.run() 续跑)
+        return list(self.history)
 
     def _run_gates(self) -> dict[str, bool]:
         """跑 config.gates 列表中所有 Gate, 返回 {name: passed} dict.

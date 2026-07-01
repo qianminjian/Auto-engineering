@@ -1,11 +1,21 @@
 """CLI dev_loop 核心 — _build_v2_agent_runtime / _run_v2_orchestrator.
 
 从 cli.py 拆分 (Plan P1-B, 原 cli.py §218-451).
+
+v5.0 §PE.6 + §B13.2 — OrchestratorRunResult 扩展 6 字段 JSON 契约:
+    - status: 终态 (completed / max_rounds / failed)
+    - thread_id: 唯一线程 ID (UUID hex)
+    - rounds: 实际跑了几轮
+    - verdict: 收敛判定 level + reason
+    - duration_sec: 总耗时 (秒)
+    - gate_summary: 各 Gate 的 pass/fail dict
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import time
+import uuid
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -14,11 +24,104 @@ from auto_engineering.cli.helpers import CancellationToken, ProgressLogger, Toke
 
 @dataclass
 class OrchestratorRunResult:
-    """_run_v2_orchestrator 返回值 — 模拟 V1RunResult 接口."""
+    """_run_v2_orchestrator 返回值 — v5.0 §B13.2 6 字段 JSON 契约.
+
+    Attributes:
+        status: 终态字符串 (completed / max_rounds / failed)
+        thread_id: 唯一线程 ID
+        rounds: 实际跑的轮数
+        verdict: 收敛判定 dict (level/level_name/reason)
+        duration_sec: 总耗时 (秒)
+        gate_summary: 各 Gate 状态 dict (gate_name -> {status, passed, message})
+        total_steps: 旧字段, 等同 rounds (向后兼容)
+        checkpoint_id: 旧字段 (向后兼容)
+    """
 
     status: str
-    total_steps: int
-    checkpoint_id: str
+    thread_id: str
+    rounds: int
+    verdict: dict
+    duration_sec: float
+    gate_summary: dict
+    # 旧字段 (向后兼容, 内部填)
+    total_steps: int = 0
+    checkpoint_id: str = ""
+
+    def to_json_dict(self) -> dict:
+        """输出 6 字段 JSON 契约 (v5.0 §B13.2)."""
+        return {
+            "status": self.status,
+            "thread_id": self.thread_id,
+            "rounds": self.rounds,
+            "verdict": self.verdict,
+            "duration_sec": self.duration_sec,
+            "gate_summary": self.gate_summary,
+        }
+
+    @classmethod
+    def from_orchestrator(
+        cls,
+        orchestrator: Any,
+        total_rounds: int,
+        duration_sec: float,
+        gate_results: dict | None = None,
+    ) -> OrchestratorRunResult:
+        """从 Orchestrator 实例构造."""
+        verdict_obj = getattr(orchestrator, "verdict", None)
+        if verdict_obj is not None and getattr(verdict_obj, "should_stop", False):
+            status = "completed"
+            verdict_dict = {
+                "level": getattr(verdict_obj, "level", 0),
+                "level_name": getattr(verdict_obj, "level_name", "UNKNOWN"),
+                "reason": getattr(verdict_obj, "reason", ""),
+            }
+        else:
+            status = "max_rounds"
+            verdict_dict = {
+                "level": 4,
+                "level_name": "HARD_LIMIT",
+                "reason": f"达到 max_iterations 上限 ({total_rounds} 轮)",
+            }
+        return cls(
+            status=status,
+            thread_id=getattr(orchestrator, "_thread_id", uuid.uuid4().hex),
+            rounds=total_rounds,
+            verdict=verdict_dict,
+            duration_sec=duration_sec,
+            gate_summary=_build_gate_summary(gate_results or {}),
+            total_steps=total_rounds,
+            checkpoint_id=f"v2-r{total_rounds}",
+        )
+
+
+def _build_gate_summary(gate_results: dict) -> dict:
+    """把 Orchestrator.history[-1].gate_results 转为 JSON-ready dict.
+
+    兼容两种 Verdict 类型:
+    - auto_engineering.gates.base.GateVerdict (含 .passed / .message)
+    - auto_engineering.loop.convergence.Verdict (含 .should_stop / .level / .reason)
+    """
+    summary: dict[str, dict] = {}
+    for name, v in gate_results.items():
+        if v is None:
+            summary[name] = {"status": "skipped", "passed": None, "message": ""}
+            continue
+        passed = getattr(v, "passed", None)
+        if passed is None:
+            # convergence.Verdict 类型, 用 should_stop 推断
+            should_stop = getattr(v, "should_stop", False)
+            passed = bool(should_stop)
+        message = getattr(v, "message", "") or ""
+        if not message:
+            reason = getattr(v, "reason", "")
+            if reason:
+                message = reason
+        summary[name] = {
+            "status": "pass" if passed else "fail",
+            "passed": passed,
+            "message": message,
+        }
+    return summary
 
 
 def _build_v2_agent_runtime(
@@ -217,14 +320,22 @@ def _run_v2_orchestrator(
         executor=None,  # type: ignore[arg-type]  # agent_runtime 优先
         config=config,
     )
+    # v5.0 §B13.2: 注入 thread_id (用于 stdout JSON 契约)
+    orchestrator._thread_id = uuid.uuid4().hex
 
     # 5. 启动 asyncio.run (Orchestrator.run 是 async)
+    started_at = time.monotonic()
     history = asyncio.run(orchestrator.run(cancellation=cancellation))
+    duration_sec = time.monotonic() - started_at
 
     # 6. 输出总结
     total_rounds = len(history)
-    status = "done" if (orchestrator.verdict and orchestrator.verdict.should_stop) else "max_rounds"
-    checkpoint_id = f"v2-r{total_rounds}"
+    # 提取最后一轮的 gate_results
+    last_gate_results: dict = {}
+    if history:
+        last = history[-1]
+        if hasattr(last, "gate_results"):
+            last_gate_results = last.gate_results or {}
 
     # 进度输出
     progress.emit(
@@ -234,8 +345,9 @@ def _run_v2_orchestrator(
         should_stop=orchestrator.verdict.should_stop if orchestrator.verdict else False,
     )
 
-    return OrchestratorRunResult(
-        status=status,
-        total_steps=total_rounds,
-        checkpoint_id=checkpoint_id,
+    return OrchestratorRunResult.from_orchestrator(
+        orchestrator=orchestrator,
+        total_rounds=total_rounds,
+        duration_sec=duration_sec,
+        gate_results=last_gate_results,
     )

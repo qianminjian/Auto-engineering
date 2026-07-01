@@ -24,8 +24,16 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from auto_engineering.gates.base import Gate, Verdict
-from auto_engineering.loop.plan import Task
+from auto_engineering.loop.plan import ConflictError, Task
 from auto_engineering.runtime.cancellation import CancellationToken
+
+# v5.0 §B2.12a: 错误分类
+try:
+    from auto_engineering.errors import AEError, ErrorCode
+    _TASK_CANCELLED_CODE = ErrorCode.TASK_CANCELLED
+except ImportError:
+    AEError = None  # type: ignore[assignment]
+    _TASK_CANCELLED_CODE = None
 
 if TYPE_CHECKING:
     from auto_engineering.loop.convergence import RoundHistory
@@ -38,9 +46,12 @@ class TaskOutcome:
     Attributes:
         task_id: 任务 ID
         status: completed | failed | cancelled
-        output: 任务输出 (成功时)
+        output: 任务输出 (成功时, dict 形式承载 stage-specific 字段)
         error: 错误信息 (失败时)
         duration: 耗时 (秒)
+        task_role: v5.0 M3 新增 — 对应 Task.role (architect/developer/critic),
+                   供 _apply_outcome_to_state 分发写入 state 字段.
+                   默认 None 保持向后兼容 (旧调用方无需传入).
     """
 
     task_id: str
@@ -48,6 +59,7 @@ class TaskOutcome:
     output: Any = None
     error: str | None = None
     duration: float = 0.0
+    task_role: str | None = None  # v5.0 M3 新增 (向后兼容: 默认 None)
 
 
 @dataclass
@@ -116,17 +128,55 @@ async def _execute_single(
     executor: TaskExecutor,
     cancellation: CancellationToken | None,
 ) -> TaskOutcome:
-    """执行单个 task + 包装错误 + 统计耗时 + 支持取消."""
+    """执行单个 task + 包装错误 + 统计耗时 + 支持取消.
+
+    v5.0 §B2.12a — 错误分类:
+        - AEError(ERR_TASK_CANCELLED) → outcome.status="cancelled"
+        - asyncio.CancelledError       → outcome.status="cancelled"
+        - Exception (其他)              → outcome.status="failed"
+
+    v5.0 §B2.12a — per_task_ctx 独立构造:
+        如果 ctx 是 TaskContext 实例, 为本 task 复制一份 (避免 shared ctx.task 串扰).
+        否则透传原 ctx.
+    """
     start = time.monotonic()
+
+    # v5.0 §B2.12a: 独立 per_task_ctx — 避免并发 task 共享 ctx 字段时串扰
+    task_ctx = _build_per_task_ctx(ctx, task)
+
+    # v5.0 §B2.12a: 错误分类 — 三档 (cancelled AEError / asyncio.CancelledError / 其他)
     try:
         if cancellation is not None:
             cancellation.check()
-        outcome = await executor(task, ctx)
+        outcome = await executor(task, task_ctx)
         duration = time.monotonic() - start
         # 强制覆盖 duration (executor 可能不填)
         outcome.duration = duration
         return outcome
+    except asyncio.CancelledError:
+        # asyncio 取消 → cancelled outcome (不视为 failed)
+        duration = time.monotonic() - start
+        return TaskOutcome(
+            task_id=task.id,
+            status="cancelled",
+            error="asyncio.CancelledError",
+            duration=duration,
+        )
     except Exception as exc:
+        # v5.0 §B2.12a: AEError(TASK_CANCELLED) → cancelled; 其他 → failed
+        if (
+            AEError is not None
+            and _TASK_CANCELLED_CODE is not None
+            and isinstance(exc, AEError)
+            and getattr(exc, "code", None) is _TASK_CANCELLED_CODE
+        ):
+            duration = time.monotonic() - start
+            return TaskOutcome(
+                task_id=task.id,
+                status="cancelled",
+                error=str(exc),
+                duration=duration,
+            )
         duration = time.monotonic() - start
         return TaskOutcome(
             task_id=task.id,
@@ -134,6 +184,42 @@ async def _execute_single(
             error=str(exc),
             duration=duration,
         )
+
+
+def _build_per_task_ctx(ctx: Any, task: Task) -> Any:
+    """v5.0 §B2.12a — 为单个 task 构造独立 ctx, 避免并发共享导致串扰.
+
+    策略:
+        - 若 ctx 是 TaskContext (含 state 字段), 用 dataclasses.replace 复制后
+          显式赋一个 `current_task_id` 标记 (向后兼容, 不影响已有字段)
+        - 否则透传原 ctx (类型不识别时不复制, 保持向后兼容)
+
+    Args:
+        ctx: 共享 ctx (TaskContext 或其他)
+        task: 当前 task
+
+    Returns:
+        独立 ctx (per_task_ctx) 或原 ctx
+    """
+    # 识别 TaskContext 类型 — 不引入硬 import, 用鸭子类型 (含 state + requirement 字段)
+    if ctx is None:
+        return None
+    # 鸭子类型检查: 必须是 dataclass-like (有 state 字段)
+    if hasattr(ctx, "state") and hasattr(ctx, "requirement"):
+        try:
+            from dataclasses import replace, fields
+
+            # 仅当 dataclass 时才 replace
+            if hasattr(ctx, "__dataclass_fields__"):
+                # 复制 + 若 dataclass 有 current_task_id 字段则填入
+                f_names = {f.name for f in fields(ctx)}
+                if "current_task_id" in f_names:
+                    return replace(ctx, current_task_id=task.id)
+                # 没 current_task_id 字段 → 直接复制 (避免共享 state mutation 风险)
+                return replace(ctx)
+        except Exception:
+            pass
+    return ctx
 
 
 async def run_round(
@@ -144,6 +230,8 @@ async def run_round(
     round_id: int = 1,
     gates: list[Gate] | None = None,
     project_root: Path | None = None,
+    stage: str = "",
+    contracts: dict | None = None,
 ) -> RoundResult:
     """执行一个 Round: asyncio.gather 并行调度所有 task + 跑 Gate.
 
@@ -155,6 +243,9 @@ async def run_round(
         round_id: 轮次 ID (用于 RoundResult)
         gates: v2.2 Phase H — 可选 Gate 列表, Round 完成后顺序执行
         project_root: v2.2 Phase H — Gate 运行的项目根目录 (与 gates 同时提供才生效)
+        stage: v5.0 §B2.12 — 当前阶段名 (architect/developer/critic),
+               用于 _run_gates 按 applies_to_stages 过滤
+        contracts: v5.0 §B2.12 — 跨 Agent 契约字典, 透传给 ContractGate
 
     Returns:
         RoundResult 含每个 task 的 outcome + gate_results + history[0] (RoundHistory).
@@ -166,7 +257,7 @@ async def run_round(
         - asyncio.gather 会并行执行所有 task (LLM 调用 I/O bound 天然适配)
         - 若 gather 中一个 task 抛异常, 默认 return_exceptions=False 会传播
           此实现包装 _execute_single 捕获异常, 返回 failed outcome (不传播)
-        - Gate 异常不传播, 写入 Verdict(passed=False, message=str(exc))
+        - Gate 异常不传播, 写入 GateVerdict(passed=False, message=str(exc))
         - 末位构造 RoundHistory (含 gate_results + files_changed + task_outcomes +
           lines_added/removed), semantic_satisfied 由 Orchestrator 写回
     """
@@ -176,8 +267,9 @@ async def run_round(
     if not tasks:
         result.finished_at = time.monotonic()
         # 即使无 task, 也跑 Gate (若提供) — Phase H 行为: Gate 在 task 之后跑
+        # v5.0 §B6.1: 按 stage 过滤 Gate
         if gates and project_root is not None:
-            result.gate_results = await _run_gates(gates, project_root)
+            result.gate_results = await _run_gates(gates, project_root, stage=stage, contracts=contracts)
         await _attach_round_history(result, tasks, project_root)
         return result
 
@@ -197,8 +289,8 @@ async def run_round(
             outcomes.append(
                 TaskOutcome(
                     task_id="<gathered-exception>",
-                    success=False,
-                    output="",
+                    status="failed",
+                    output=None,
                     error=f"gathered exception: {type(item).__name__}: {item}",
                 )
             )
@@ -208,8 +300,9 @@ async def run_round(
     result.finished_at = time.monotonic()
 
     # v2.2 Phase H: 跑 Gate (task 完成后), 写入 gate_results
+    # v5.0 §B6.1: 按 stage 过滤 + 透传 contracts
     if gates and project_root is not None:
-        result.gate_results = await _run_gates(gates, project_root)
+        result.gate_results = await _run_gates(gates, project_root, stage=stage, contracts=contracts)
 
     # v2.3 Phase G (P1.3): 末尾构造 RoundHistory 写入 round_result.history
     await _attach_round_history(result, tasks, project_root)
@@ -300,8 +393,19 @@ def _parse_git_numstat(project_root: Path | None) -> tuple[int, int]:
     return (total_added, total_removed)
 
 
-async def _run_gates(gates: list[Gate], project_root: Path) -> dict[str, Verdict]:
+async def _run_gates(
+    gates: list[Gate],
+    project_root: Path,
+    stage: str = "",
+    contracts: dict | None = None,
+) -> dict[str, Verdict]:
     """跑 Gate 列表, 返回 {gate_name: Verdict} dict.
+
+    v5.0 §B6.1+§B6.2 — 按 stage 过滤 Gate:
+        - 若 stage 非空, 仅跑 g.applies_to_stages 含 stage 的 Gate
+        - 若 stage 为空, 跑所有 Gate (向后兼容, 默认行为)
+
+    v5.0 §B6.1a — contracts 透传: 给每个 Gate.run() 传 contracts 参数 (ContractGate 用).
 
     Gate 异常被吞, 写入 Verdict(passed=False, message=str(exc)).
     与 Orchestrator._run_gates 不同: 这里始终写入 dict (含失败 entry),
@@ -315,9 +419,18 @@ async def _run_gates(gates: list[Gate], project_root: Path) -> dict[str, Verdict
     """
     results: dict[str, Verdict] = {}
 
+    # v5.0 §B6.1+§B6.2: stage 过滤 — 按 applies_to_stages 决定哪些 Gate 跑
+    if stage:
+        gates_to_run = [g for g in gates if stage in g.applies_to_stages]
+    else:
+        gates_to_run = list(gates)
+
     async def _run_one(gate: Gate) -> tuple[str, Verdict]:
         try:
-            verdict = await asyncio.to_thread(gate.run, project_root)
+            # v5.0 §B6.1a: 透传 contracts 给 Gate.run() (用 kwargs 避免子类签名不匹配)
+            verdict = await asyncio.to_thread(
+                gate.run, project_root, contracts=contracts
+            )
         except Exception as exc:
             verdict = Verdict.failed(
                 f"Gate {gate.name} 异常: {exc}",
@@ -326,8 +439,10 @@ async def _run_gates(gates: list[Gate], project_root: Path) -> dict[str, Verdict
         return gate.name, verdict
 
     # 并行跑 (D-P2-3: return_exceptions=True 防御)
+    if not gates_to_run:
+        return results
     gathered = await asyncio.gather(
-        *[_run_one(g) for g in gates], return_exceptions=True
+        *[_run_one(g) for g in gates_to_run], return_exceptions=True
     )
     for item in gathered:
         if isinstance(item, BaseException):
@@ -370,10 +485,94 @@ class Round:
         )
 
 
+# ============================================================
+# v5.0 §B2.12b — DAG 拓扑分层 (Kahn BFS)
+# ============================================================
+
+
+def _topological_layers(tasks: list[Task]) -> list[list[Task]]:
+    """Kahn BFS 分层算法 — 把 task list 拆为可并行的层 (v5.0 §B2.12b).
+
+    每层是入度为 0 的 task 集合, 该层内 task 可同时执行 (asyncio.gather).
+    与 plan.py 中 _topological_levels (DFS 递归 + cache) 并存 —
+    本实现是 Round 内的并行调度入口, 与 Plan 整体拓扑分层用途不同.
+
+    Args:
+        tasks: 任务列表 (每个 Task 含 deps 字段, 引用其他 task.id)
+
+    Returns:
+        list[list[Task]]: 分层结果, 外层顺序 = 拓扑层级, 内层 = 同层并行 task.
+                          空输入 → [].
+
+    Raises:
+        ConflictError: 检测到循环依赖时 (剩余未入层 task = 环内节点).
+                       ConflictError 复用 plan.py 中的文件冲突异常,
+                       携带 cycle 中涉及的 task.id 列表.
+
+    算法 (Kahn BFS):
+        1. 统计每个 task 的入度 (deps 中引用的 task 不在列表中 → 视为 0)
+        2. 反向邻接表: dep → 依赖它的 task (供入度消减时查找)
+        3. 反复找入度 = 0 的 task → 1 层 → 消减其后续 task 入度 → 循环
+        4. 终止: 所有 task 都入层 OR 剩余 task 入度均 > 0 (有环)
+        5. 有环 → 抛 ConflictError(剩余 task.id)
+    """
+    from collections import deque
+
+    if not tasks:
+        return []
+
+    # 索引: id → Task (含本批 task 之外的 dep 视为已满足, 不计入入度)
+    task_map: dict[str, Task] = {t.id: t for t in tasks}
+
+    # 计算入度: 仅统计 deps 中引用本批 task 的部分
+    in_degree: dict[str, int] = {t.id: 0 for t in tasks}
+    # 反向邻接表: dep_id → 依赖 dep_id 的 task.id 列表
+    dependents: dict[str, list[str]] = {t.id: [] for t in tasks}
+    for task in tasks:
+        for dep_id in task.deps:
+            if dep_id in task_map:
+                in_degree[task.id] += 1
+                dependents[dep_id].append(task.id)
+
+    layers: list[list[Task]] = []
+    # 初始: 入度 0 的所有 task
+    current_layer_ids = deque(sorted(tid for tid, deg in in_degree.items() if deg == 0))
+    # 记录已入层的 task id (用于剩余环检测)
+    in_layer: set[str] = set()
+
+    while current_layer_ids:
+        # 当前层: 按 id 排序 (确定性输出, 便于测试)
+        layer = [task_map[tid] for tid in current_layer_ids]
+        layers.append(layer)
+        in_layer.update(current_layer_ids)
+        # 计算下一层: 本层每个 task 的 dependents 中, 消减入度后为 0 的
+        next_layer_ids: deque[str] = deque()
+        for tid in current_layer_ids:
+            for child_id in dependents[tid]:
+                in_degree[child_id] -= 1
+                if in_degree[child_id] == 0:
+                    next_layer_ids.append(child_id)
+        # 排序保持确定性
+        next_layer_ids = deque(sorted(next_layer_ids))
+        current_layer_ids = next_layer_ids
+
+    # 环检测: 若有 task 未入层 → 存在环
+    remaining = [tid for tid in task_map if tid not in in_layer]
+    if remaining:
+        # 排序保证可重复性
+        remaining_sorted = sorted(remaining)
+        raise ConflictError(
+            conflicts=[f"cycle dependency: {tid}" for tid in remaining_sorted]
+        )
+
+    return layers
+
+
 __all__ = [
     "Round",
     "RoundResult",
     "TaskExecutor",
     "TaskOutcome",
+    "_topological_layers",
     "run_round",
 ]

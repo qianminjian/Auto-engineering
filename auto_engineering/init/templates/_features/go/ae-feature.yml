@@ -1,5 +1,0 @@
-name: go
-description: go language support
-when: "{{ language == 'go' }}"
-questions: {}
-tasks_after: []

@@ -1,5 +1,0 @@
-name: bash
-description: bash language support
-when: "{{ language == 'bash' }}"
-questions: {}
-tasks_after: []

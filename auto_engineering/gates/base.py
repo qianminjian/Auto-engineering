@@ -44,13 +44,13 @@ class GateResult:
 
 
 # ============================================================
-# v2.0 新接口: Verdict
+# v2.0 新接口: GateVerdict (v5.0 §B6.1 — Verdict → GateVerdict 重命名)
 # ============================================================
 
 
 @dataclass
-class Verdict:
-    """Gate 检查结果.
+class GateVerdict:
+    """Gate 检查结果 (v5.0 §B6.1 重命名自 Verdict).
 
     Attributes:
         gate_name: Gate 名称(由 Gate 实例填入, 调用方无需传)
@@ -62,17 +62,23 @@ class Verdict:
     passed: bool = False
     message: str = ""
 
-    # 注: passed 字段与 Verdict.passed() 类方法同名是 dataclass 不可避免的副作用,
-    # 通过 @classmethod 访问避免歧义. 字段访问走 v.passed, 方法访问走 Verdict.passed().
+    # 注: passed 字段与 GateVerdict.passed() 类方法同名是 dataclass 不可避免的副作用,
+    # 通过 @classmethod 访问避免歧义. 字段访问走 v.passed, 方法访问走 GateVerdict.passed().
     @classmethod
-    def passed(cls, msg: str = "", gate_name: str = "") -> Verdict:  # noqa: F811
-        """构造一个通过的 Verdict."""
+    def passed(cls, msg: str = "", gate_name: str = "") -> GateVerdict:  # noqa: F811
+        """构造一个通过的 GateVerdict."""
         return cls(gate_name=gate_name, passed=True, message=msg)
 
     @classmethod
-    def failed(cls, msg: str, gate_name: str = "") -> Verdict:
-        """构造一个失败的 Verdict."""
+    def failed(cls, msg: str, gate_name: str = "") -> GateVerdict:
+        """构造一个失败的 GateVerdict."""
         return cls(gate_name=gate_name, passed=False, message=msg)
+
+
+# v5.0 §B6.1 向后兼容: 保留 Verdict 作为 GateVerdict 的别名 (1 版本过渡期)
+# 所有引用 Verdict 的代码继续工作, 等下次大版本可彻底移除
+Verdict = GateVerdict
+__all__ = ["GateVerdict", "Verdict"]  # noqa: F822 (Verdict 通过 module __all__ 暴露)
 
 
 class Gate:
@@ -82,15 +88,28 @@ class Gate:
     默认实现: 检查项目根存在 → 委托子类.
 
     旧接口 Gate.check(stage, context) 保留供 v2.0 Guardrail 体系使用.
+
+    v5.0 §B2.9 扩展:
+        - 类属性 applies_to_stages: tuple[str, ...] — 标识该 Gate 在哪些
+          Stage 阶段运行 (architect/developer/critic). 默认 = 三阶段全跑.
+        - run() 新增 contracts: dict | None = None 参数 — 供 ContractGate
+          等需要契约数据的 Gate 使用 (向后兼容: 默认 None).
     """
 
     name: str = "base"
+    # v5.0 §B2.9: 默认覆盖三阶段, 子类按需覆盖 (如 CoverageGate 仅 developer)
+    applies_to_stages: tuple[str, ...] = ("architect", "developer", "critic")
 
-    def run(self, project_root: Path) -> Verdict:
+    def run(
+        self,
+        project_root: Path,
+        contracts: dict | None = None,
+    ) -> Verdict:
         """执行 Gate 检查.
 
         Args:
             project_root: 项目根目录路径
+            contracts: v5.0 §B2.9 — 可选契约字典 (供 ContractGate 等使用)
 
         Returns:
             Verdict (passed + message)
@@ -106,3 +125,64 @@ class Gate:
     def check(self, stage: Any, context: Any) -> Verdict:
         """v2.0 兼容接口. 返回 pass 占位(实际 v2.0 用 GuardrailResult)."""
         return Verdict.passed("legacy v2.0 path", gate_name=self.name)
+
+
+# v5.0 §B6.1+§B6.2 — DEFAULT_GATES 入口
+# 7 道 Gate 的默认实例列表 (供 Orchestrator/run_gates 直接 import)
+# 顺序: safety → lint → type_check → contract → test → coverage → build
+#
+# 在 base.py 末尾惰性构造 (避免循环 import):
+#   - 直接实例化依赖子模块 (lint/type_check/...), 须放在所有 Gate 类已 import 后
+#   - 测试也直接 from auto_engineering.gates.base import DEFAULT_GATES
+DEFAULT_GATES: list["Gate"] = []
+
+
+def _build_default_gates(manifest: dict | None = None) -> list["Gate"]:
+    """v5.0 §B6.1+§B6.2 — 构造 7 道 Gate 的默认实例列表.
+
+    惰性加载: 在 base.py 末尾调用, 此时子模块 (lint/type_check/...) 已被 import.
+    顺序: safety → lint → type_check → contract → test → coverage → build
+
+    v5.0 §IL-AC-02 扩展:
+        - manifest 不为 None 时, 从 init-manifest.json 读 conventions 替换默认
+          linter / type_checker / test_runner
+        - manifest 为 None 时, 用 python 默认 (ruff/mypy/pytest)
+    """
+    # 局部 import 避免模块加载顺序问题
+    from auto_engineering.gates.build import BuildGate
+    from auto_engineering.gates.contract import ContractGate
+    from auto_engineering.gates.coverage import CoverageGate
+    from auto_engineering.gates.lint import LintGate
+    from auto_engineering.gates.safety import SafetyGate
+    from auto_engineering.gates.test import TestGate
+    from auto_engineering.gates.type_check import TypeCheckGate
+
+    if manifest is not None:
+        # v5.0 §IL-AC-02: 用 manifest 构造 lint/type_check/test
+        lint_gate = LintGate.from_manifest(manifest)
+        type_check_gate = TypeCheckGate.from_manifest(manifest)
+        test_gate = TestGate.from_manifest(manifest)
+    else:
+        # 默认: python 生态
+        lint_gate = LintGate()
+        type_check_gate = TypeCheckGate()
+        test_gate = TestGate()
+
+    return [
+        SafetyGate(use_gitleaks=False),
+        lint_gate,
+        type_check_gate,
+        ContractGate(),
+        test_gate,
+        CoverageGate(),
+        BuildGate(),
+    ]
+
+
+def build_gates_from_manifest(manifest: dict) -> list["Gate"]:
+    """v5.0 §IL-AC-02: 从 init-manifest.json 构造完整 7 道 Gate 列表."""
+    return _build_default_gates(manifest=manifest)
+
+
+# 模块加载时立即构建 (确保 from .base import DEFAULT_GATES 可用)
+DEFAULT_GATES = _build_default_gates()

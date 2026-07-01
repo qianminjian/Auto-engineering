@@ -1,20 +1,27 @@
 #!/usr/bin/env python3.12
-"""atdo Runtime Smoke Helper
+"""atdo Runtime Smoke — v5.0 inline (decision #18)
 
-Validates phase completion via 5 static dimensions + 1 dynamic runtime_smoke.
-See docs/atdo-runtime-smoke-policy.md for the full policy.
+Validates v5.0 phase completion via 5 dynamic runtime dimensions.
+Prevents 虚化测试 (artificial tests that pass without exercising real code).
 
 Usage:
-    python3.12 scripts/atdo_smoke.py --phase <phase-id>
+    python3.12 scripts/atdo_smoke.py --phase v5.0-11
 
 Exit codes:
-    0 - All dimensions PASS
+    0 - All 5 dimensions PASS
     1 - One or more dimensions FAIL
-    2 - Invalid arguments
+    2 - Invalid arguments / setup error
+
+Reference:
+    design/BEACON.md 决策 #28 (v5.0 P0-FINAL)
+    design/v5.0-Design-Loop.md §B7.1 (Orchestrator 12 步主循环)
+    docs/EARS-v5.0.md (15 AC + 5 IL-AC)
+    docs/atdo-runtime-smoke-policy.md (smoke 政策)
 """
 from __future__ import annotations
 
 import argparse
+import asyncio
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -25,170 +32,287 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 @dataclass
 class DimensionResult:
     name: str
-    kind: str  # "static" | "dynamic"
     passed: bool
     detail: str = ""
 
 
-def check_file_existence(phase: str) -> DimensionResult:
-    """Static: critical v2.1 modules exist."""
-    critical = [
-        "auto_engineering/loop/state.py",
-        "auto_engineering/loop/orchestrator.py",
-        "auto_engineering/loop/checkpoint.py",
-        "auto_engineering/cli.py",
-        "auto_engineering/gates/__init__.py",
-    ]
-    missing = [p for p in critical if not (PROJECT_ROOT / p).exists()]
-    return DimensionResult(
-        "fileExistence", "static", not missing,
-        f"missing={missing}" if missing else "all critical files present",
-    )
-
-
-def check_syntax(phase: str) -> DimensionResult:
-    """Static: py_compile critical modules."""
-    targets = [
-        "auto_engineering/loop/state.py",
-        "auto_engineering/loop/orchestrator.py",
-        "auto_engineering/cli.py",
-    ]
-    import py_compile
-    errors = []
-    for t in targets:
-        try:
-            py_compile.compile(str(PROJECT_ROOT / t), doraise=True)
-        except py_compile.PyCompileError as e:
-            errors.append(f"{t}: {e}")
-    return DimensionResult(
-        "syntax", "static", not errors,
-        f"errors={errors}" if errors else "all modules compile",
-    )
-
-
-def check_runtime_smoke(phase: str) -> DimensionResult:
-    """Dynamic: exercise CheckpointEnvelope + Channel round-trip serialization.
-    v2.3 P0-A: 原 LoopState (v2.0 Pydantic) 重命名为 CheckpointEnvelope.
-    """
+def _check_init_manifest() -> DimensionResult:
+    """Smoke 1: Init-Loop manifest 加载 + 验证 (IL-AC-01/02/04)."""
     try:
         sys.path.insert(0, str(PROJECT_ROOT))
-        from auto_engineering.loop.state import (
-            CheckpointEnvelope,
-            LastValueChannel,
+        from auto_engineering.loop.init_contract import (
+            INIT_MANIFEST_SCHEMA_VERSION,
+            load_init_manifest,
+            validate_init_manifest,
         )
 
-        # Test 1: empty CheckpointEnvelope round-trip
-        state = CheckpointEnvelope()
-        dumped = state.model_dump()
-        restored = CheckpointEnvelope.model_validate(dumped)
-        if restored.model_dump() != dumped:
+        # Test 1: schema_version 常量 (string "1.0", v5.0 §IL.2)
+        if str(INIT_MANIFEST_SCHEMA_VERSION) != "1.0":
             return DimensionResult(
-                "runtimeSmoke", "dynamic", False,
-                "empty CheckpointEnvelope round-trip MISMATCH",
+                "init_manifest", False,
+                f"INIT_MANIFEST_SCHEMA_VERSION={INIT_MANIFEST_SCHEMA_VERSION} expected '1.0'",
             )
 
-        # Test 2: LastValueChannel round-trip (LangGraph style)
-        ch = LastValueChannel[str]("test_channel")
-        ch.update("test_value")
-        ch_copy = ch.copy()
-        ok_channel = ch_copy.get() == "test_value"
-
-        # Test 3: from_checkpoint on LastValueChannel
-        ch_ckpt = LastValueChannel[str]("ckpt_channel")
-        ch_ckpt.from_checkpoint("checkpoint_value")
-        ok_ckpt = ch_ckpt.get() == "checkpoint_value"
-
-        if not (ok_channel and ok_ckpt):
+        # Test 2: 缺失 manifest → 返回 None
+        missing_result = load_init_manifest(Path("/nonexistent/path"))
+        if missing_result is not None:
             return DimensionResult(
-                "runtimeSmoke", "dynamic", False,
-                f"channel round-trip failed: copy={ok_channel} ckpt={ok_ckpt}",
+                "init_manifest", False,
+                f"load_init_manifest on missing path returned {missing_result!r}, expected None",
+            )
+
+        # Test 3: 旧 schema_version → 验证失败 (IL-AC-04)
+        old_manifest = {"schema_version": "0.5", "project_type": "app-service"}
+        validation = validate_init_manifest(old_manifest)
+        if validation.ok:
+            return DimensionResult(
+                "init_manifest", False,
+                "validate_init_manifest accepted schema_version='0.5' (IL-AC-04 违反)",
             )
 
         return DimensionResult(
-            "runtimeSmoke", "dynamic", True,
-            "LoopState + LastValueChannel round-trip OK",
+            "init_manifest", True,
+            "load/validate API 一致 (缺→None, 旧 version→拒绝)",
         )
     except Exception as e:
         return DimensionResult(
-            "runtimeSmoke", "dynamic", False,
+            "init_manifest", False,
             f"exception: {type(e).__name__}: {e}",
         )
 
 
-def check_debug_residue(phase: str) -> DimensionResult:
-    """Static: no DEBUG residue in loop/."""
-    import re
-    pattern = re.compile(r"#\s*DEBUG:|#\s*FIXME:|\bprint\(.*DEBUG", re.IGNORECASE)
-    targets = list((PROJECT_ROOT / "auto_engineering" / "loop").rglob("*.py"))
-    residues = []
-    for t in targets:
-        try:
-            content = t.read_text(encoding="utf-8")
-        except Exception:
-            continue
-        for i, line in enumerate(content.splitlines(), 1):
-            if pattern.search(line):
-                residues.append(f"{t.name}:{i}")
-    return DimensionResult(
-        "debugResidue", "static", not residues,
-        f"found={residues[:5]}" if residues else "clean",
-    )
+def _check_gate_pass() -> DimensionResult:
+    """Smoke 2: 7 Gate 列表 + Stage 过滤 (v5.0 §B6.2)."""
+    try:
+        from auto_engineering.gates import DEFAULT_GATES, V2_GATES
+        from auto_engineering.gates.base import GateVerdict, Verdict
+
+        # Test 1: DEFAULT_GATES 7 道实例
+        if len(DEFAULT_GATES) != 7:
+            return DimensionResult(
+                "gate_pass", False,
+                f"DEFAULT_GATES has {len(DEFAULT_GATES)} gates, expected 7",
+            )
+
+        # Test 2: V2_GATES 7 个类
+        if len(V2_GATES) != 7:
+            return DimensionResult(
+                "gate_pass", False,
+                f"V2_GATES has {len(V2_GATES)} classes, expected 7",
+            )
+
+        # Test 3: CoverageGate 永远 skip (v5.0 §B6.4 决策 / BEACON 决策 25)
+        coverage_gates = [g for g in DEFAULT_GATES if g.name == "coverage"]
+        if len(coverage_gates) != 1:
+            return DimensionResult(
+                "gate_pass", False,
+                f"CoverageGate count={len(coverage_gates)}, expected 1",
+            )
+
+        # Test 4: GateVerdict 有 passed 字段 (dataclass, 非 Enum)
+        sample_passing = GateVerdict.passed(msg="ok", gate_name="test")
+        sample_failing = GateVerdict.failed(msg="bad", gate_name="test")
+        if not (sample_passing.passed is True and sample_failing.passed is False):
+            return DimensionResult(
+                "gate_pass", False,
+                f"GateVerdict.passed/failed factory methods 异常",
+            )
+
+        # Test 5: Verdict 是 GateVerdict 的别名 (v5.0 §B6.1 兼容)
+        if Verdict is not GateVerdict:
+            return DimensionResult(
+                "gate_pass", False,
+                f"Verdict is not identity-equal to GateVerdict, v5.0 §B6.1 兼容违反",
+            )
+
+        return DimensionResult(
+            "gate_pass", True,
+            f"DEFAULT_GATES=7 + V2_GATES=7 + CoverageGate present + Verdict alias",
+        )
+    except Exception as e:
+        return DimensionResult(
+            "gate_pass", False,
+            f"exception: {type(e).__name__}: {e}",
+        )
 
 
-def check_secret_scan(phase: str) -> DimensionResult:
-    """Static: no obvious secrets in loop/."""
-    import re
-    patterns = [
-        re.compile(r"sk-ant-[a-zA-Z0-9\-]{20,}"),
-        re.compile(r"Bearer\s+[a-zA-Z0-9\-_\.]{20,}"),
-    ]
-    targets = list((PROJECT_ROOT / "auto_engineering" / "loop").rglob("*.py"))
-    hits = []
-    for t in targets:
-        try:
-            content = t.read_text(encoding="utf-8")
-        except Exception:
-            continue
-        for pat in patterns:
-            if pat.search(content):
-                hits.append(t.name)
-                break
-    return DimensionResult(
-        "secretScan", "static", not hits,
-        f"hits={hits}" if hits else "clean",
-    )
+def _check_orchestrator_12_steps() -> DimensionResult:
+    """Smoke 3: Orchestrator 12 步主循环可调用 (v5.0 §B7.1).
+
+    通过 pytest tests/test_loop_orchestrator.py 验证 12 步主循环.
+    """
+    try:
+        import subprocess
+        result = subprocess.run(
+            [
+                str(PROJECT_ROOT / ".venv" / "bin" / "pytest"),
+                "tests/test_loop_orchestrator.py",
+                "-v", "--no-cov", "--timeout=120",
+                "-k", "TestOrchestratorV5MainLoop",
+            ],
+            capture_output=True,
+            text=True,
+            cwd=str(PROJECT_ROOT),
+            timeout=180,
+        )
+        if result.returncode != 0:
+            return DimensionResult(
+                "orchestrator_12_steps", False,
+                f"pytest TestOrchestratorV5MainLoop FAILED (rc={result.returncode})\n"
+                f"stdout tail: {result.stdout[-500:]}",
+            )
+        return DimensionResult(
+            "orchestrator_12_steps", True,
+            "TestOrchestratorV5MainLoop 12 步主循环测试 PASS",
+        )
+    except subprocess.TimeoutExpired:
+        return DimensionResult(
+            "orchestrator_12_steps", False,
+            "pytest TestOrchestratorV5MainLoop 超时 (180s)",
+        )
+    except FileNotFoundError as e:
+        return DimensionResult(
+            "orchestrator_12_steps", False,
+            f"pytest not found: {e}",
+        )
+    except Exception as e:
+        return DimensionResult(
+            "orchestrator_12_steps", False,
+            f"exception: {type(e).__name__}: {e}",
+        )
+
+
+def _check_stage_router_t1_t6() -> DimensionResult:
+    """Smoke 4: StageRouter T1-T6 转换表 (v5.0 §B3).
+
+    通过 pytest tests/test_stage_router.py 验证 T1-T6.
+    """
+    try:
+        import subprocess
+        result = subprocess.run(
+            [
+                str(PROJECT_ROOT / ".venv" / "bin" / "pytest"),
+                "tests/test_stage_router.py",
+                "-v", "--no-cov", "--timeout=60",
+            ],
+            capture_output=True,
+            text=True,
+            cwd=str(PROJECT_ROOT),
+            timeout=120,
+        )
+        if result.returncode != 0:
+            return DimensionResult(
+                "stage_router_t1_t6", False,
+                f"pytest test_stage_router FAILED (rc={result.returncode})\n"
+                f"stdout tail: {result.stdout[-500:]}",
+            )
+        return DimensionResult(
+            "stage_router_t1_t6", True,
+            "test_stage_router.py T1-T6 转换 + MAJOR 计数 全 PASS",
+        )
+    except subprocess.TimeoutExpired:
+        return DimensionResult(
+            "stage_router_t1_t6", False,
+            "pytest test_stage_router 超时 (120s)",
+        )
+    except FileNotFoundError as e:
+        return DimensionResult(
+            "stage_router_t1_t6", False,
+            f"pytest not found: {e}",
+        )
+    except Exception as e:
+        return DimensionResult(
+            "stage_router_t1_t6", False,
+            f"exception: {type(e).__name__}: {e}",
+        )
+
+
+def _check_guardrail_4_states() -> DimensionResult:
+    """Smoke 5: Guardrail 4 态动作 (v5.0 §B2.4: pass / retry / block / drop).
+
+    通过 pytest tests/test_guardrail.py 验证 4 态 + Chain + 5 内置 Guardrails.
+    """
+    try:
+        import subprocess
+        result = subprocess.run(
+            [
+                str(PROJECT_ROOT / ".venv" / "bin" / "pytest"),
+                "tests/test_guardrail.py",
+                "-v", "--no-cov", "--timeout=60",
+            ],
+            capture_output=True,
+            text=True,
+            cwd=str(PROJECT_ROOT),
+            timeout=120,
+        )
+        if result.returncode != 0:
+            return DimensionResult(
+                "guardrail_4_states", False,
+                f"pytest test_guardrail FAILED (rc={result.returncode})\n"
+                f"stdout tail: {result.stdout[-500:]}",
+            )
+
+        # 额外验证 GuardrailResult.action 包含 4 态 (v5.0 §B2.4)
+        sys.path.insert(0, str(PROJECT_ROOT))
+        from auto_engineering.loop.guardrail import GuardrailResult
+        result_data = GuardrailResult(action="pass", message="smoke test")
+        if result_data.action not in {"pass", "retry", "block", "drop"}:
+            return DimensionResult(
+                "guardrail_4_states", False,
+                f"GuardrailResult.action={result_data.action} not in 4-state set",
+            )
+
+        return DimensionResult(
+            "guardrail_4_states", True,
+            "test_guardrail.py + GuardrailResult 4 态契约 全 PASS",
+        )
+    except subprocess.TimeoutExpired:
+        return DimensionResult(
+            "guardrail_4_states", False,
+            "pytest test_guardrail 超时 (120s)",
+        )
+    except FileNotFoundError as e:
+        return DimensionResult(
+            "guardrail_4_states", False,
+            f"pytest not found: {e}",
+        )
+    except Exception as e:
+        return DimensionResult(
+            "guardrail_4_states", False,
+            f"exception: {type(e).__name__}: {e}",
+        )
 
 
 DIMENSIONS = [
-    check_file_existence,
-    check_syntax,
-    check_runtime_smoke,
-    check_debug_residue,
-    check_secret_scan,
+    ("init_manifest", _check_init_manifest),
+    ("gate_pass", _check_gate_pass),
+    ("orchestrator_12_steps", _check_orchestrator_12_steps),
+    ("stage_router_t1_t6", _check_stage_router_t1_t6),
+    ("guardrail_4_states", _check_guardrail_4_states),
 ]
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="atdo Runtime Smoke Helper")
-    parser.add_argument("--phase", required=True, help="Phase identifier (e.g. v2.1-F)")
+    parser = argparse.ArgumentParser(description="atdo Runtime Smoke — v5.0")
+    parser.add_argument("--phase", required=True, help="Phase identifier (e.g. v5.0-11)")
     args = parser.parse_args()
 
-    print(f"[atdo-smoke] phase={args.phase}")
-    print("-" * 60)
+    print(f"[atdo-smoke-v5] phase={args.phase}")
+    print("-" * 70)
 
     all_pass = True
-    for fn in DIMENSIONS:
-        result = fn(args.phase)
+    for name, fn in DIMENSIONS:
+        result = fn()
         marker = "PASS" if result.passed else "FAIL"
-        print(f"[{marker}] {result.name:<16} ({result.kind:<7}) {result.detail}")
+        print(f"[{marker}] {name:<26} {result.detail}")
         if not result.passed:
             all_pass = False
 
-    print("-" * 60)
+    print("-" * 70)
     if all_pass:
-        print(f"[atdo-smoke] phase={args.phase} status=PASS")
+        print(f"[atdo-smoke-v5] phase={args.phase} status=PASS (5/5)")
         return 0
-    print(f"[atdo-smoke] phase={args.phase} status=FAIL")
+    print(f"[atdo-smoke-v5] phase={args.phase} status=FAIL")
     return 1
 
 

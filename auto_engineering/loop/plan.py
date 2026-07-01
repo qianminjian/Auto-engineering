@@ -360,6 +360,10 @@ class Plan:
 
         设计文档 §3.2: 任务拆分五原则 — 每个 task 必须有明确目标、期望输出、合法角色.
         这是"契约优先"原则 (Orchestrator 调度时知道每个 task 要什么).
+
+        v5.0 §IL.3: tasks.yml 的 init_metadata (template_source / generated_by)
+        和 B1.3 Task 模型未定义的其他字段 (如 future 字段) 静默忽略 — 仅
+        记录在 __dict__ 扩展属性中, 不参与 contract 校验 (forward-compat).
         """
         for task in self.tasks:
             if not task.title or not task.title.strip():
@@ -376,6 +380,10 @@ class Plan:
                     f"Task '{task.id}': role '{task.role}' 不合法 "
                     f"(必须为 {sorted(VALID_TASK_ROLES)} 之一)"
                 )
+            # v5.0 §IL.3: init_metadata / 未知字段静默忽略
+            # 仅 dataclass 定义的字段参与校验, __dict__ 扩展属性 (init_metadata
+            # + future 字段) 不消费, 不阻断, 保持 forward-compat
+            # (无显式 action — dataclass 字段 + B1.3 校验已覆盖)
 
     def parallelism_groups(self) -> list[list[str]]:
         """返回并行组列表: 外层按层序, 内层是同层 task id 列表.
@@ -384,11 +392,33 @@ class Plan:
             groups = plan.parallelism_groups()
             for group in groups:
                 await asyncio.gather(*[run_task(tid) for tid in group])
+
+        Raises:
+            ConflictError: Plan DAG 含循环依赖时 (_topological_levels ValueError 转换).
         """
         if not self.tasks:
             return []
-        levels = _topological_levels(self.tasks)
+        try:
+            levels = _topological_levels(self.tasks)
+        except ValueError as exc:
+            # DAG 环检测: 转换 ValueError → ConflictError (统一 Plan.validate 异常契约)
+            raise ConflictError([f"DAG 含循环依赖: {exc}"]) from exc
         return [[t.id for t in level] for level in levels]
+
+    def get_tasks_by_stage(self, stage: str) -> list[Task]:
+        """按 stage (= task.role) 过滤本 Plan 中的 Task.
+
+        Args:
+            stage: 目标 stage 名 ("architect" | "developer" | "critic").
+
+        Returns:
+            role == stage 的 Task 子集; 无匹配或空 Plan 返回 [].
+
+        用法 (Orchestrator v5.0 §B7.1 step 2c):
+            tasks = plan.get_tasks_by_stage("architect")
+            await run_round(tasks, ...)
+        """
+        return [t for t in self.tasks if t.role == stage]
 
     def get_task(self, task_id: str) -> Task | None:
         """按 id 查找 Task."""

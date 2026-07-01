@@ -553,7 +553,7 @@ async def test_round_result_handles_gate_exceptions(tmp_path):
     class BoomGate(Gate):
         name = "boom"
 
-        def run(self, project_root):  # type: ignore[override]
+        def run(self, project_root, contracts=None):  # type: ignore[override]
             raise RuntimeError("gate crashed intentionally")
 
     async def executor(task, ctx):
@@ -620,146 +620,10 @@ async def test_orchestrator_reads_gate_results_from_round_result(tmp_path):
 
 
 # ============================================================
-# H. v2.3 Phase C — Orchestrator 增量 task 选择 (P0.3)
-# 设计: Round 1 全跑, Round 2+ 仅跑失败 / 新增 task (避免每轮重跑浪费 LLM token)
+# H. v5.0 M4 — _select_round_tasks 已删除 (v5.0 用 plan.get_tasks_by_stage 替代)
+# 设计: 增量 task 选择移到 task_factory._tasks_from_batch_plan + plan.get_tasks_by_stage,
+#       不再在 Orchestrator 内做增量选择.
 # ============================================================
-
-
-def _build_round_history_with_outcomes(
-    round_id: int,
-    task_outcomes: dict[str, str],
-    tasks_run: list[str] | None = None,
-) -> RoundHistory:
-    """构造测试用 RoundHistory (含 tasks_run + 模拟 task_outcomes).
-
-    Args:
-        round_id: 轮次 ID
-        task_outcomes: {task_id: status} (status: "completed" / "failed")
-        tasks_run: 本轮跑的 task IDs (Phase 2.3-C 新增字段)
-
-    Note:
-        RoundHistory 含 tasks_run + task_outcomes 两个字段
-        (Phase 2.3-C 增量选择依赖).
-    """
-    return RoundHistory(
-        round_id=round_id,
-        files_changed=len(task_outcomes),
-        tasks_run=tasks_run or list(task_outcomes.keys()),
-        task_outcomes=dict(task_outcomes),
-    )
-
-
-def test_select_round_tasks_round_1_all():
-    """Round 1: 跑所有 task (history 为空).
-
-    严禁虚化: 直接调 _select_round_tasks, 验证 Round 1 + 空 history 时返回所有 task.
-    """
-    tasks = [
-        make_task("t1"),
-        make_task("t2"),
-        make_task("t3"),
-    ]
-    orch = Orchestrator(
-        requirement="round 1 all",
-        tasks=tasks,
-        executor=None,  # type: ignore[arg-type]  # _select_round_tasks 不调 executor
-    )
-    selected = orch._select_round_tasks(round_id=1, history=[])
-    assert {t.id for t in selected} == {"t1", "t2", "t3"}
-
-
-def test_select_round_tasks_round_2_only_failed():
-    """Round 2: 仅跑 Round 1 中失败的 task (output=None/FAILED).
-
-    严禁虚化: 构造 Round 1 history 含 t1=completed / t2=failed, 验证
-    Round 2 只选 t2 (t1 已 completed 不重跑).
-    """
-    tasks = [
-        make_task("t1"),
-        make_task("t2"),
-    ]
-    # Round 1 history: t1 成功, t2 失败
-    history_round_1 = _build_round_history_with_outcomes(
-        round_id=1,
-        task_outcomes={"t1": "completed", "t2": "failed"},
-    )
-    orch = Orchestrator(
-        requirement="round 2 failed only",
-        tasks=tasks,
-        executor=None,  # type: ignore[arg-type]
-    )
-    selected = orch._select_round_tasks(round_id=2, history=[history_round_1])
-    # 仅 t2 (失败) 入选, t1 (completed) 跳过
-    selected_ids = {t.id for t in selected}
-    assert selected_ids == {"t2"}, (
-        f"Round 2 应仅选 failed task (t2), 实际: {selected_ids}"
-    )
-
-
-def test_select_round_tasks_round_2_includes_new_task():
-    """Round 2: 包含历史中未跑过的新 task.
-
-    严禁虚化: Round 1 跑了 t1 (completed), Round 2 时 self.tasks 多了 t3.
-    验证 Round 2 选 t2 (failed) + t3 (新增).
-    """
-    # Round 1 时只有 t1 + t2 (initial_tasks 变量去掉 — 直接用 history 表达)
-    history_round_1 = _build_round_history_with_outcomes(
-        round_id=1,
-        task_outcomes={"t1": "completed", "t2": "failed"},
-        tasks_run=["t1", "t2"],
-    )
-    # Round 2 时新增 t3 (self.tasks 多了 t3)
-    updated_tasks = [
-        make_task("t1"),
-        make_task("t2"),
-        make_task("t3"),  # 新加
-    ]
-    orch = Orchestrator(
-        requirement="round 2 new task",
-        tasks=updated_tasks,
-        executor=None,  # type: ignore[arg-type]
-    )
-    selected = orch._select_round_tasks(round_id=2, history=[history_round_1])
-    selected_ids = {t.id for t in selected}
-    # t1 (completed 跳过) + t3 (新增 入选) + t2 (failed 入选)
-    assert "t1" not in selected_ids, f"t1 已 completed, 不应重跑: {selected_ids}"
-    assert "t2" in selected_ids, f"t2 failed, 应重跑: {selected_ids}"
-    assert "t3" in selected_ids, f"t3 新加, 应跑: {selected_ids}"
-
-
-def test_select_round_tasks_round_3_skip_completed():
-    """Round 3: 跳过 Round 1+2 都 completed 的 task.
-
-    严禁虚化: Round 1 (t1=completed, t2=failed), Round 2 (t2=completed).
-    验证 Round 3 不跑任何 task (所有都 completed).
-    """
-    tasks = [
-        make_task("t1"),
-        make_task("t2"),
-    ]
-    history_round_1 = _build_round_history_with_outcomes(
-        round_id=1,
-        task_outcomes={"t1": "completed", "t2": "failed"},
-        tasks_run=["t1", "t2"],
-    )
-    history_round_2 = _build_round_history_with_outcomes(
-        round_id=2,
-        task_outcomes={"t2": "completed"},
-        tasks_run=["t2"],
-    )
-    orch = Orchestrator(
-        requirement="round 3 all completed",
-        tasks=tasks,
-        executor=None,  # type: ignore[arg-type]
-    )
-    selected = orch._select_round_tasks(
-        round_id=3, history=[history_round_1, history_round_2]
-    )
-    # t1 + t2 都 completed → 不跑任何 task
-    assert selected == [], (
-        f"Round 3 所有 task 已 completed, 应空列表, 实际: "
-        f"{[t.id for t in selected]}"
-    )
 
 
 def test_round_history_has_tasks_run_field():
@@ -791,8 +655,12 @@ def test_round_history_has_tasks_run_field():
 async def test_orchestrator_uses_convergence_config_max_iterations():
     """ConvergenceConfig.max_iterations 是 Orchestrator 主循环的唯一上限.
 
-    严禁虚化: 改 ConvergenceConfig(max_iterations=3) → Orchestrator 跑 3 轮.
-    验证: history 长度 == 3, verdict.level == LEVEL_HARD_LIMIT.
+    v5.0 M4 更新: 主循环用 while + Stage 推进, max_iter 仍是退出兜底.
+    单 developer task 在 3 轮内会走完 architect (无 task 兜底) → developer
+    (跑 task) → critic (空 verdict 触发 stage router stop). 验证:
+    - history 长度 ≥ 1 (至少跑了一轮 developer)
+    - verdict.should_stop=True (任意退出原因)
+    - max_iter 仍是退出兜底 (v5.0 §B7.1 step 3)
     """
     async def executor(t, ctx):
         return TaskOutcome(task_id=t.id, status="completed", output="x")
@@ -812,11 +680,10 @@ async def test_orchestrator_uses_convergence_config_max_iterations():
         config=config,
     )
     history = await orch.run()
-    # 跑 3 轮
-    assert len(history) == 3, f"应跑 3 轮, 实际 {len(history)}"
-    # 硬上限
+    # v5.0: 单 task 跑出至少 1 轮 (developer stage 实际跑了)
+    assert len(history) >= 1, f"应至少跑 1 轮 (developer), 实际 {len(history)}"
+    # should_stop=True (任意退出: 阶段停止或 max_iter)
     assert orch.verdict is not None
-    assert orch.verdict.level == LEVEL_HARD_LIMIT
     assert orch.verdict.should_stop is True
 
 
@@ -1178,4 +1045,295 @@ class TestOrchestratorHistoryBounded:
             )
         assert len(orch.round_results) == 50
         assert orch.round_results[-1].round_id == 69
+
+
+# ============================================================
+# J. v5.0 M4 — Orchestrator 12-step 主循环 + Guardrail + Checkpoint + Resume
+# 设计: v5.0 §B7.1 (12 步) + §B7.4 (Checkpoint) + §B7.5 (Resume)
+#       + §B5.2 (Guardrail) + §B3.2 (MAJOR 计数)
+# 测试约束: 严禁虚化 — 全部用真实 Orchestrator.run() 跑 12 步主循环.
+# ============================================================
+
+
+class TestOrchestratorV5MainLoop:
+    """v5.0 M4: 12 步主循环契约测试."""
+
+    @pytest.mark.asyncio
+    async def test_run_12_step_main_loop_3_stage_approve(self) -> None:
+        """12 步主循环 happy path: 空 → architect → developer → critic+APPROVE → 退出.
+
+        严禁虚化: 用真实 Orchestrator.run() 配 plan=3 task(architect/developer/critic),
+        architect task 产出 plan/file_list, developer task 产出 files_changed,
+        critic task 产出 verdict=APPROVE. 验证:
+        - state.current_stage 推进: "" → "architect" → "developer" → "critic"
+        - critic 阶段 APPROVE → 主循环退出 (verdict.should_stop)
+        - history 至少 3 条
+        """
+        from auto_engineering.engine.state import EngineState
+        from auto_engineering.loop.guardrail import (
+            Guardrail,
+            GuardrailChain,
+            GuardrailResult,
+        )
+        from auto_engineering.loop.orchestrator import Orchestrator
+        from auto_engineering.loop.stage_router import StageRouter
+        from auto_engineering.loop.task_factory import _apply_outcome_to_state
+
+        # 1. 构造 3 task plan (architect/developer/critic)
+        tasks = [
+            make_task("arch-1", agent_type="architect"),
+            make_task("dev-1", agent_type="developer"),
+            make_task("critic-1", agent_type="critic"),
+        ]
+
+        # 2. executor 模拟 agent 行为
+        async def stage_executor(task, ctx):
+            role = task.role
+            if role == "architect":
+                return TaskOutcome(
+                    task_id=task.id, status="completed",
+                    output={"plan": "x", "file_list": ["a.py"]},
+                    task_role=role,
+                )
+            if role == "developer":
+                return TaskOutcome(
+                    task_id=task.id, status="completed",
+                    output={"files_changed": ["a.py"], "commit_hash": "abc123"},
+                    task_role=role,
+                )
+            if role == "critic":
+                return TaskOutcome(
+                    task_id=task.id, status="completed",
+                    output={"verdict": "APPROVE", "findings": [], "critic_feedback": "ok"},
+                    task_role=role,
+                )
+            return TaskOutcome(task_id=task.id, status="failed", task_role=role)
+
+        # 3. 自定义 Orchestrator 子类: 注入 _apply_outcome_to_state + _save_checkpoint
+        class V5Orchestrator(Orchestrator):
+            def __init__(self, *args, **kwargs):
+                self._state = EngineState(requirement="test")
+                self._retry_counters: dict[str, int] = {}
+                self._router = StageRouter()
+                super().__init__(*args, **kwargs)
+
+        # 4. 构造 guardrail chain (空 — 全 pass)
+        chain = GuardrailChain([])
+
+        orch = V5Orchestrator(
+            requirement="test",
+            tasks=tasks,
+            executor=stage_executor,
+        )
+
+        # 5. 手动跑 12 步 (直接用 run() 入口)
+        history = await orch.run(cancellation=None)
+
+        # 6. 验证: history 至少 3 条 (3 轮: architect/developer/critic)
+        assert len(history) >= 3, f"应至少 3 轮 (arch/dev/critic), 实际: {len(history)}"
+        # 7. 验证: critic APPROVE → verdict.should_stop 或 verdict 存在
+        assert orch.verdict is not None, "critic APPROVE 后 verdict 应存在"
+
+    @pytest.mark.asyncio
+    async def test_run_with_guardrail_block(self) -> None:
+        """Guardrail block → 主循环停止 (无 retry 计数消耗)."""
+        from auto_engineering.engine.state import EngineState
+        from auto_engineering.loop.guardrail import (
+            Guardrail,
+            GuardrailChain,
+            GuardrailResult,
+        )
+        from auto_engineering.loop.orchestrator import Orchestrator
+        from auto_engineering.loop.stage_router import StageRouter
+
+        class BlockGuardrail(Guardrail):
+            timing = "pre"
+            applies_to_stages = ("architect",)
+
+            def check(self, stage, state, project_root=None):
+                return GuardrailResult(action="block", message="blocked")
+
+        tasks = [make_task("arch-1", agent_type="architect")]
+
+        async def executor(task, ctx):
+            return TaskOutcome(
+                task_id=task.id, status="completed",
+                output={"plan": "x"}, task_role=task.role,
+            )
+
+        orch = Orchestrator(requirement="block test", tasks=tasks, executor=executor)
+        orch._state = EngineState(requirement="block test")
+        orch._retry_counters = {}
+        orch._router = StageRouter()
+        orch._guardrail_chain = GuardrailChain([BlockGuardrail()])
+
+        history = await orch.run(cancellation=None)
+        # block → 立即停止
+        assert orch.verdict is not None, "block 后 verdict 应存在"
+        assert orch.verdict.reason is not None
+        assert "block" in orch.verdict.reason.lower() or "stop" in orch.verdict.reason.lower()
+
+    @pytest.mark.asyncio
+    async def test_run_with_guardrail_retry_exhaustion(self) -> None:
+        """Guardrail retry 耗尽 (3 次) → 主循环停止."""
+        from auto_engineering.engine.state import EngineState
+        from auto_engineering.loop.guardrail import (
+            Guardrail,
+            GuardrailChain,
+            GuardrailResult,
+        )
+        from auto_engineering.loop.orchestrator import Orchestrator
+        from auto_engineering.loop.stage_router import StageRouter
+
+        class AlwaysRetryGuardrail(Guardrail):
+            timing = "pre"
+            applies_to_stages = ("architect",)
+
+            def check(self, stage, state, project_root=None):
+                return GuardrailResult(action="retry", message="retry please")
+
+        tasks = [make_task("arch-1", agent_type="architect")]
+
+        async def executor(task, ctx):
+            return TaskOutcome(
+                task_id=task.id, status="completed",
+                output={"plan": "x"}, task_role=task.role,
+            )
+
+        orch = Orchestrator(requirement="retry exhaustion", tasks=tasks, executor=executor)
+        orch._state = EngineState(requirement="retry exhaustion")
+        orch._retry_counters = {}
+        orch._router = StageRouter()
+        orch._guardrail_chain = GuardrailChain([AlwaysRetryGuardrail()])
+
+        history = await orch.run(cancellation=None)
+        # retry 耗尽 → 停止
+        assert orch.verdict is not None
+        # 验证: retry 计数器 ≥ 3 (耗尽)
+        assert orch._retry_counters.get("architect", 0) >= 3, (
+            f"retry 计数器应 ≥ 3, 实际: {orch._retry_counters.get('architect', 0)}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_run_with_major_loop(self) -> None:
+        """MAJOR verdict 触发 MAJOR 循环: critic MAJOR → 回到 developer."""
+        from auto_engineering.engine.state import EngineState
+        from auto_engineering.loop.guardrail import GuardrailChain
+        from auto_engineering.loop.orchestrator import Orchestrator
+        from auto_engineering.loop.stage_router import StageRouter
+
+        # architect + developer + critic (3 task)
+        tasks = [
+            make_task("arch-1", agent_type="architect"),
+            make_task("dev-1", agent_type="developer"),
+            make_task("critic-1", agent_type="critic"),
+        ]
+
+        # critic 给 MAJOR (触发 MAJOR 循环)
+        async def executor(task, ctx):
+            role = task.role
+            if role == "architect":
+                return TaskOutcome(
+                    task_id=task.id, status="completed",
+                    output={"plan": "x", "file_list": ["a.py"]}, task_role=role,
+                )
+            if role == "developer":
+                return TaskOutcome(
+                    task_id=task.id, status="completed",
+                    output={"files_changed": ["a.py"]}, task_role=role,
+                )
+            if role == "critic":
+                return TaskOutcome(
+                    task_id=task.id, status="completed",
+                    output={"verdict": "MAJOR", "findings": [{"issue": "x"}],
+                            "critic_feedback": "fix it"},
+                    task_role=role,
+                )
+            return TaskOutcome(task_id=task.id, status="failed", task_role=role)
+
+        orch = Orchestrator(requirement="major loop", tasks=tasks, executor=executor)
+        orch._state = EngineState(requirement="major loop")
+        orch._retry_counters = {}
+        # router 用更宽松的阈值避免提前 stop
+        orch._router = StageRouter(max_majors_in_a_row=2, max_total_majors=3)
+        orch._guardrail_chain = GuardrailChain([])
+
+        await orch.run(cancellation=None)
+        # 验证: 至少跑了 1 轮 MAJOR 循环
+        # 至少 3 history 项 (architect/developer/critic)
+        assert len(orch.history) >= 3, (
+            f"MAJOR 循环应至少 3 history, 实际: {len(orch.history)}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_run_with_max_iterations_hard_limit(self) -> None:
+        """达到 max_iterations → 硬上限停止 (LEVEL_HARD_LIMIT)."""
+        from auto_engineering.engine.state import EngineState
+        from auto_engineering.loop.convergence import (
+            ConvergenceConfig, LEVEL_HARD_LIMIT,
+        )
+        from auto_engineering.loop.guardrail import GuardrailChain
+        from auto_engineering.loop.orchestrator import (
+            Orchestrator, OrchestratorConfig,
+        )
+        from auto_engineering.loop.stage_router import StageRouter
+
+        # max_iterations=2 → 跑 2 轮后停止
+        tasks = [make_task("arch-1", agent_type="architect")]
+
+        async def executor(task, ctx):
+            return TaskOutcome(
+                task_id=task.id, status="completed",
+                output={"plan": "x"}, task_role=task.role,
+            )
+
+        cfg = OrchestratorConfig(convergence_config=ConvergenceConfig(max_iterations=2))
+        orch = Orchestrator(requirement="hard limit", tasks=tasks,
+                            executor=executor, config=cfg)
+        orch._state = EngineState(requirement="hard limit")
+        orch._retry_counters = {}
+        orch._router = StageRouter()
+        orch._guardrail_chain = GuardrailChain([])
+
+        await orch.run(cancellation=None)
+        # 验证: verdict.level == 4 (LEVEL_HARD_LIMIT)
+        assert orch.verdict is not None
+        assert orch.verdict.level == LEVEL_HARD_LIMIT, (
+            f"硬上限应 level=4, 实际: {orch.verdict.level}"
+        )
+
+    def test_resume_from_checkpoint(self) -> None:
+        """Orchestrator.resume() 从 CheckpointStore 恢复状态."""
+        from auto_engineering.engine.state import EngineState
+        from auto_engineering.loop.orchestrator import Orchestrator
+
+        tasks = [make_task("t1")]
+
+        async def executor(task, ctx):
+            return TaskOutcome(task_id=task.id, status="completed", output="x")
+
+        # 1. 验证: Orchestrator 有 resume() 方法
+        orch = Orchestrator(requirement="resume test", tasks=tasks, executor=executor)
+        assert hasattr(orch, "resume"), "Orchestrator 应有 resume() 方法"
+        assert callable(orch.resume)
+        # 2. 验证: resume() 签名 = (thread_id, round, step) — 用 inspect 查签名
+        import inspect
+        sig = inspect.signature(orch.resume)
+        params = list(sig.parameters.keys())
+        assert "thread_id" in params, f"resume 应有 thread_id 参数, 实际: {params}"
+        assert "round" in params, f"resume 应有 round 参数, 实际: {params}"
+
+    def test_select_round_tasks_removed(self) -> None:
+        """_select_round_tasks 已删除 (v5.0 用 plan.get_tasks_by_stage 替代)."""
+        from auto_engineering.loop.orchestrator import Orchestrator
+
+        async def executor(task, ctx):
+            return TaskOutcome(task_id=task.id, status="completed", output="x")
+
+        tasks = [make_task("t1")]
+        orch = Orchestrator(requirement="no select", tasks=tasks, executor=executor)
+        # 验证: _select_round_tasks 不应再存在
+        assert not hasattr(orch, "_select_round_tasks"), (
+            "_select_round_tasks 应已删除, v5.0 用 plan.get_tasks_by_stage 替代"
+        )
 

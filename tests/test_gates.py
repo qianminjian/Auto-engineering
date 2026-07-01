@@ -140,7 +140,7 @@ class TestLintGate:
         from auto_engineering.gates.lint import LintGate
 
         (tmp_path / "main.py").write_text("x = 1\n")
-        gate = LintGate(ruff_bin="nonexistent-ruff")
+        gate = LintGate(linter_bin="nonexistent-ruff")
         verdict = gate.run(tmp_path)
         # 命令不存在应该 fail
         assert verdict.passed is False

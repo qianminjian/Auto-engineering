@@ -1,5 +1,0 @@
-name: python
-description: python language support
-when: "{{ language == 'python' }}"
-questions: {}
-tasks_after: []

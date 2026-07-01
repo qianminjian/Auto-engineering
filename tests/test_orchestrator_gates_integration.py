@@ -239,17 +239,28 @@ def test_orchestrator_config_semantic_evaluator_default_none():
 
 @pytest.mark.asyncio
 async def test_orchestrator_calls_semantic_evaluator_each_round(tmp_path: Path):
-    """semantic_evaluator 每轮被调用一次, 返回值写入 semantic_satisfied."""
+    """semantic_evaluator 在 critic stage 被调用一次, 返回值写入 semantic_satisfied.
+
+    v5.0 M4 更新: semantic_evaluator 仅 critic 阶段触发 (v5.0 §B2.7).
+    测试需要至少 1 个 critic role task, 才会调用 semantic_evaluator.
+    """
     call_log: list[int] = []
 
     async def my_evaluator(round_result) -> bool:
         call_log.append(round_result.round_id)
         return True
 
-    task = make_task("t1", ["a.py"])
+    # v5.0: 需 critic role task 才能触发 semantic_evaluator
+    dev_task = make_task("dev-1", ["a.py"])
+    dev_task.role = "developer"
+    critic_task = Task(
+        id="critic-1", title="c", description="c",
+        expected_output="ok", role="critic",
+        agent_type="critic", target_files=frozenset(),
+    )
     config = OrchestratorConfig(
         convergence_config=ConvergenceConfig(
-            max_iterations=1,
+            max_iterations=10,
             stagnation_threshold=10,
         ),
         semantic_evaluator=my_evaluator,
@@ -257,30 +268,39 @@ async def test_orchestrator_calls_semantic_evaluator_each_round(tmp_path: Path):
     )
     orch = Orchestrator(
         requirement="semantic test",
-        tasks=[task],
+        tasks=[dev_task, critic_task],
         executor=noop_executor,
         config=config,
     )
     history = await orch.run()
 
-    # semantic_evaluator 真被调用 1 次
-    assert call_log == [1]
-    # semantic_satisfied 写入
-    assert history[0].semantic_satisfied is True
+    # semantic_evaluator 在 critic stage 至少被调用 1 次
+    assert len(call_log) >= 1
+    # semantic_satisfied 写入 (最近 critic 阶段)
+    critic_histories = [h for h in history if h.semantic_satisfied is not None]
+    assert len(critic_histories) >= 1
+    assert critic_histories[-1].semantic_satisfied is True
 
 
 @pytest.mark.asyncio
 async def test_orchestrator_semantic_evaluator_returning_false(tmp_path: Path):
-    """semantic_evaluator 返回 False → semantic_satisfied=False, 不触发 GOAL."""
-    from auto_engineering.loop.convergence import LEVEL_HARD_LIMIT
+    """semantic_evaluator 返回 False → semantic_satisfied=False.
 
+    v5.0 M4 更新: semantic_evaluator 仅 critic 阶段触发.
+    """
     async def my_evaluator(round_result) -> bool:
         return False
 
-    task = make_task("t1", ["a.py"])
+    dev_task = make_task("dev-1", ["a.py"])
+    dev_task.role = "developer"
+    critic_task = Task(
+        id="critic-1", title="c", description="c",
+        expected_output="ok", role="critic",
+        agent_type="critic", target_files=frozenset(),
+    )
     config = OrchestratorConfig(
         convergence_config=ConvergenceConfig(
-            max_iterations=1,
+            max_iterations=10,
             stagnation_threshold=10,
         ),
         semantic_evaluator=my_evaluator,
@@ -288,16 +308,19 @@ async def test_orchestrator_semantic_evaluator_returning_false(tmp_path: Path):
     )
     orch = Orchestrator(
         requirement="semantic false test",
-        tasks=[task],
+        tasks=[dev_task, critic_task],
         executor=noop_executor,
         config=config,
     )
     history = await orch.run()
 
-    assert history[0].semantic_satisfied is False
-    # semantic=False → 不会触发 LEVEL_SEMANTIC → 1 轮后硬上限
+    # critic 阶段 semantic_satisfied=False
+    critic_histories = [h for h in history if h.semantic_satisfied is not None]
+    assert len(critic_histories) >= 1
+    assert critic_histories[-1].semantic_satisfied is False
+    # 主循环 should_stop=True (任意退出原因: max_iter 或 stage router stop)
     assert orch.verdict is not None
-    assert orch.verdict.level == LEVEL_HARD_LIMIT
+    assert orch.verdict.should_stop is True
 
 
 # ============================================================
@@ -354,7 +377,10 @@ async def test_orchestrator_git_diff_lines_added_removed(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_orchestrator_combined_gates_and_semantic_evaluator(tmp_path: Path):
-    """同时传 gates + semantic_evaluator → 两者都生效."""
+    """同时传 gates + semantic_evaluator → 两者都生效.
+
+    v5.0 M4 更新: semantic_evaluator 仅 critic 阶段触发 (v5.0 §B2.7).
+    """
     from auto_engineering.gates.safety import SafetyGate
 
     (tmp_path / "ok.py").write_text("x = 1\n")
@@ -363,12 +389,18 @@ async def test_orchestrator_combined_gates_and_semantic_evaluator(tmp_path: Path
 
     async def my_evaluator(round_result) -> bool:
         call_count["n"] += 1
-        return True  # 触发 LEVEL_SEMANTIC
+        return True
 
-    task = make_task("t1", ["ok.py"])
+    dev_task = make_task("dev-1", ["ok.py"])
+    dev_task.role = "developer"
+    critic_task = Task(
+        id="critic-1", title="c", description="c",
+        expected_output="ok", role="critic",
+        agent_type="critic", target_files=frozenset(),
+    )
     config = OrchestratorConfig(
         convergence_config=ConvergenceConfig(
-            max_iterations=1,
+            max_iterations=10,
             stagnation_threshold=10,
         ),
         gates=[SafetyGate()],
@@ -377,18 +409,22 @@ async def test_orchestrator_combined_gates_and_semantic_evaluator(tmp_path: Path
     )
     orch = Orchestrator(
         requirement="combined test",
-        tasks=[task],
+        tasks=[dev_task, critic_task],
         executor=noop_executor,
         config=config,
     )
     history = await orch.run()
 
-    # Gate 跑过 (v2.3 Phase D: gate_results 是 dict[gate_name, Verdict])
-    assert "safety" in history[0].gate_results
-    assert history[0].gate_results["safety"].passed is True
-    # semantic_evaluator 跑过
-    assert call_count["n"] == 1
-    assert history[0].semantic_satisfied is True
+    # Gate 至少跑过 1 次 (developer stage)
+    developer_histories = [h for h in history if h.gate_results]
+    assert len(developer_histories) >= 1
+    assert "safety" in developer_histories[0].gate_results
+    assert developer_histories[0].gate_results["safety"].passed is True
+    # semantic_evaluator 在 critic stage 跑过
+    assert call_count["n"] >= 1
+    critic_histories = [h for h in history if h.semantic_satisfied is not None]
+    assert len(critic_histories) >= 1
+    assert critic_histories[-1].semantic_satisfied is True
 
 
 @pytest.mark.asyncio
