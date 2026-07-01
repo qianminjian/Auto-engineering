@@ -35,9 +35,13 @@ class TestGate(Gate):
         timeout: subprocess 超时(秒, 默认 60.0 — 对齐项目规范)
         pytest_args: 额外 pytest 参数(默认 [] — 视项目 inifile 而定)
         test_paths: 要测试的路径(默认 ["tests"])
+
+    v5.0 §B6.1: applies_to_stages = (developer, critic)
+        测试执行仅在有代码产出 (developer) + 评审 (critic) 阶段跑
     """
 
     name = "test"
+    applies_to_stages = ("developer", "critic")
 
     def __init__(
         self,

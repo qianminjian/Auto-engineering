@@ -136,9 +136,13 @@ class SafetyGate(Gate):
     Args:
         use_gitleaks: 是否尝试调用 gitleaks(若命令不存在则降级到 regex)
         timeout: gitleaks subprocess 超时(秒)
+
+    v5.0 §B6.1: applies_to_stages = (architect, developer, critic)
+        secret 检查每个阶段都跑 (每个 stage 输出都需经 secret 扫描)
     """
 
     name = "safety"
+    applies_to_stages = ("architect", "developer", "critic")
 
     def __init__(self, use_gitleaks: bool = True, timeout: float = 30.0):
         self.use_gitleaks = use_gitleaks

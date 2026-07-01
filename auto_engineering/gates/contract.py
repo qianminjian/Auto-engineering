@@ -32,11 +32,16 @@ class ContractGate(Gate):
       - 有文件但格式错误 → failed
       - 全部正确 → passed
 
+    v5.0 §B6.1a: 4 项检查 (路由/请求 schema/响应 schema/状态码) — 静态文本匹配.
+    v5.0 §B6.1: applies_to_stages = ("developer", "critic")
+        契约检查仅在有代码产出 (developer) + 评审 (critic) 阶段跑
+
     Args:
         contracts_dir: 契约定义目录(默认 .ae-contracts/)
     """
 
     name = "contract"
+    applies_to_stages = ("developer", "critic")
 
     def __init__(self, contracts_dir: str | Path | None = None):
         self.contracts_dir = Path(contracts_dir) if contracts_dir else Path(".ae-contracts")

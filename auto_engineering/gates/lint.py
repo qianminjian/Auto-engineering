@@ -27,9 +27,13 @@ class LintGate(Gate):
         ruff_bin: ruff 可执行文件路径(默认从 PATH 查找, 若 None 则尝试 sys.executable -m ruff)
         timeout: subprocess 超时(秒)
         extra_args: 额外传给 ruff 的参数(如 ["--select", "E,F"])
+
+    v5.0 §B6.1: applies_to_stages = (architect, developer, critic)
+        静态检查每个 stage 都需通过
     """
 
     name = "lint"
+    applies_to_stages = ("architect", "developer", "critic")
 
     def __init__(
         self,

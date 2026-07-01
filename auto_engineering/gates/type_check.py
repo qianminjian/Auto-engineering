@@ -31,9 +31,13 @@ class TypeCheckGate(Gate):
         timeout: subprocess 超时(秒)
         require_config: 是否必须存在 mypy 配置(默认 False — 缺失则 skip)
         strict: 是否使用 --strict 模式(默认 False)
+
+    v5.0 §B6.1: applies_to_stages = (architect, developer, critic)
+        类型检查每个 stage 都需通过
     """
 
     name = "type_check"
+    applies_to_stages = ("architect", "developer", "critic")
 
     def __init__(
         self,
