@@ -194,19 +194,24 @@ decision: StageDecision = router.next(engine_state)
 @dataclass
 class GuardrailResult:
     guardrail_id: str           # "G1" / "G2" / ...
-    action: str                 # "pass" | "retry" | "block" | "drop"
+    action: str                 # "pass" | "retry" | "block" (v5.1 P0-1, 3 态)
     reason: str                 # 失败原因
     retry_count: int = 0        # 当前 Stage 已重试次数
 ```
 
-### 4.3 4 态动作 (v5.0 §B2.4)
+> **v5.1 P0-1 YAGNI 变更**：`drop` 态已从公开契约删除（CrewAI 实际只 2 态, 4 态是过度设计). 
+> `drop` 与 `retry` 语义重叠（皆为「重新执行当前 Stage」），保留 3 态 pass/block/retry 已覆盖所有场景.
+> 旧 caller 传入 `drop` 时, `_handle_guardrail_result` 仍按 `retry` 处理（计数+1 + clear stage fields）并触发 `DeprecationWarning` 提示迁移. 
+> 类型契约: `Action = Literal["pass", "block", "retry"]`.
+
+### 4.3 3 态动作 (v5.1 §B2.4, P0-1)
 
 | Action | 含义 | Orchestrator 处理 |
 |--------|------|-------------------|
 | `pass` | 通过 | 继续下一步 |
 | `retry` | 重试 | 计数 +1，超限转 block |
 | `block` | 阻塞 | 立即终止 Stage |
-| `drop` | 丢弃 | 静默丢弃 agent 输出 |
+| ~~`drop`~~ | ~~丢弃~~ | **deprecated (v5.1 P0-1)** — 旧输入被 handler 当 retry 处理 + DeprecationWarning |
 
 ### 4.4 默认链
 
@@ -415,7 +420,7 @@ agent = runtime.get_agent("architect")  # → BaseAgent 实例
 | `TASK_NOT_FOUND` | TASK | 历史 (v1.0) | 保留 API |
 | `TASK_CANCELLED` | TASK | `CancellationToken.check()` | Ctrl-C |
 | `AGENT_REGISTRATION_ERROR` | TASK | `AgentRuntime` | agent_type 未注册 |
-| `OUTPUT_DROPPED` | TASK | `Guardrail action='drop'` | 静默丢弃 |
+| `OUTPUT_DROPPED` | TASK | `Guardrail action='drop'` (deprecated v5.1 P0-1) | 静默丢弃 → 现按 retry 处理 |
 | `CONFIG_MISSING_API_KEY` | CFG | `Settings.from_env()` | 缺 ANTHROPIC_API_KEY |
 | `CONFIG_INVALID_VALUE` | CFG | `Settings` 校验 | 非法配置值 |
 | `BUDGET_EXCEEDED` | BUDGET | `TokenTracker.add()` | 超 max_tokens |
