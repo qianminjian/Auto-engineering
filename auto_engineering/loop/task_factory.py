@@ -111,6 +111,14 @@ def _apply_outcome_to_state(state: EngineState, outcome: TaskOutcome) -> None:
     Note:
         state 写入走 getattr + setattr, 不直接 dict.update, 保持 type-checker 友好
         (EngineState 字段静态可见). 未来加新字段 → 此处单点扩展.
+
+    v5.1 候选: packet apply_writes (LangGraph 借鉴)
+        - 当前: 串行 apply,每个 outcome 立即写入 state
+        - v5.1 候选: 收集所有 outcomes 后批量 apply,减少 state lock 冲突
+        - 借鉴: LangGraph pregel/_algo.py apply_writes (pregel/_algo.py:87-110)
+        - 触发条件: 多 Agent 并发场景 N task 并行时
+        - 收益: state lock 冲突降低,apply 耗时从 O(N) 降至 O(1)
+        - 不实施原因: 当前并发度低 (1-3 task), 性能不是瓶颈
     """
     role = outcome.task_role
     if role is None:
