@@ -41,6 +41,7 @@ from auto_engineering.cli.dev_loop import (  # noqa: F401
     _run_v2_orchestrator,
 )
 from auto_engineering.cli.checkpoint import register_checkpoint_commands  # noqa: F401
+from auto_engineering.cli.doctor import register_doctor_command  # noqa: F401
 
 
 # ============================================================
@@ -195,6 +196,8 @@ def status():
 
 # 注册 checkpoint 命令 (从 cli/checkpoint.py 注入)
 register_checkpoint_commands(main)
+# 注册 doctor 命令 (从 cli/doctor.py 注入)
+register_doctor_command(main)
 
 
 if __name__ == "__main__":
