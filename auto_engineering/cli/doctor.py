@@ -115,14 +115,19 @@ def _check_sqlite3() -> tuple[bool, str]:
 
 
 def _check_api_key() -> tuple[bool, str]:
-    """检查 ANTHROPIC_API_KEY (在 Claude Code agent 环境跳过)."""
+    """检查 ANTHROPIC_API_KEY.
+
+    Plugin 模式下 Claude Code Agent 自带 key, 不需要独立配置.
+    仅 CLI 调试模式 (非 Plugin, 直接用 ae dev-loop) 才需要.
+    此检查始终返回 True (非阻塞), 仅提示性差异.
+    """
     in_llm_agent = bool(os.environ.get("CLAUDE_CODE")) or "claude" in os.environ.get("ANTHROPIC_CLI", "").lower()
     api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
-    if api_key or in_llm_agent:
-        if in_llm_agent and not api_key:
-            return True, "ANTHROPIC_API_KEY (LLM agent 模式, 跳过)"
+    if in_llm_agent:
+        return True, "ANTHROPIC_API_KEY (由 Claude Code Agent 提供, null)"
+    if api_key:
         return True, "ANTHROPIC_API_KEY 已设置"
-    return False, "ANTHROPIC_API_KEY 未设置 — 请 export ANTHROPIC_API_KEY=sk-..."
+    return True, "ANTHROPIC_API_KEY 已备份 (Plugin 模式利用 Claude Code Agent 提供, 仅 CLI 调试模式需独立配置)"
 
 
 def _check_ae_state(project_root: Path) -> tuple[bool, str]:
