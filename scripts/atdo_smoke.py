@@ -46,11 +46,11 @@ def _check_init_manifest() -> DimensionResult:
             validate_init_manifest,
         )
 
-        # Test 1: schema_version 常量
-        if INIT_MANIFEST_SCHEMA_VERSION != 1:
+        # Test 1: schema_version 常量 (string "1.0", v5.0 §IL.2)
+        if str(INIT_MANIFEST_SCHEMA_VERSION) != "1.0":
             return DimensionResult(
                 "init_manifest", False,
-                f"INIT_MANIFEST_SCHEMA_VERSION={INIT_MANIFEST_SCHEMA_VERSION} expected 1",
+                f"INIT_MANIFEST_SCHEMA_VERSION={INIT_MANIFEST_SCHEMA_VERSION} expected '1.0'",
             )
 
         # Test 2: 缺失 manifest → 返回 None
@@ -61,13 +61,13 @@ def _check_init_manifest() -> DimensionResult:
                 f"load_init_manifest on missing path returned {missing_result!r}, expected None",
             )
 
-        # Test 3: 旧 schema_version → 验证失败
-        old_manifest = {"schema_version": 0, "project_type": "app-service"}
+        # Test 3: 旧 schema_version → 验证失败 (IL-AC-04)
+        old_manifest = {"schema_version": "0.5", "project_type": "app-service"}
         validation = validate_init_manifest(old_manifest)
-        if validation.is_valid:
+        if validation.ok:
             return DimensionResult(
                 "init_manifest", False,
-                "validate_init_manifest accepted schema_version=0 (IL-AC-04 违反)",
+                "validate_init_manifest accepted schema_version='0.5' (IL-AC-04 违反)",
             )
 
         return DimensionResult(
@@ -84,8 +84,8 @@ def _check_init_manifest() -> DimensionResult:
 def _check_gate_pass() -> DimensionResult:
     """Smoke 2: 7 Gate 列表 + Stage 过滤 (v5.0 §B6.2)."""
     try:
-        from auto_engineering.gates import DEFAULT_GATES, run_gates
-        from auto_engineering.gates.base import GateVerdict
+        from auto_engineering.gates import DEFAULT_GATES, V2_GATES
+        from auto_engineering.gates.base import GateVerdict, Verdict
 
         # Test 1: DEFAULT_GATES 7 道实例
         if len(DEFAULT_GATES) != 7:
@@ -94,7 +94,14 @@ def _check_gate_pass() -> DimensionResult:
                 f"DEFAULT_GATES has {len(DEFAULT_GATES)} gates, expected 7",
             )
 
-        # Test 2: CoverageGate 永远 skip (v5.0 §B6.4 决策)
+        # Test 2: V2_GATES 7 个类
+        if len(V2_GATES) != 7:
+            return DimensionResult(
+                "gate_pass", False,
+                f"V2_GATES has {len(V2_GATES)} classes, expected 7",
+            )
+
+        # Test 3: CoverageGate 永远 skip (v5.0 §B6.4 决策 / BEACON 决策 25)
         coverage_gates = [g for g in DEFAULT_GATES if g.name == "coverage"]
         if len(coverage_gates) != 1:
             return DimensionResult(
@@ -102,17 +109,25 @@ def _check_gate_pass() -> DimensionResult:
                 f"CoverageGate count={len(coverage_gates)}, expected 1",
             )
 
-        # Test 3: GateVerdict 三态 (PASS / FAIL / SKIP)
-        verdicts = {v.name for v in GateVerdict}
-        if verdicts != {"PASS", "FAIL", "SKIP"}:
+        # Test 4: GateVerdict 有 passed 字段 (dataclass, 非 Enum)
+        sample_passing = GateVerdict.passed(msg="ok", gate_name="test")
+        sample_failing = GateVerdict.failed(msg="bad", gate_name="test")
+        if not (sample_passing.passed is True and sample_failing.passed is False):
             return DimensionResult(
                 "gate_pass", False,
-                f"GateVerdict names={verdicts}, expected {{PASS, FAIL, SKIP}}",
+                f"GateVerdict.passed/failed factory methods 异常",
+            )
+
+        # Test 5: Verdict 是 GateVerdict 的别名 (v5.0 §B6.1 兼容)
+        if Verdict is not GateVerdict:
+            return DimensionResult(
+                "gate_pass", False,
+                f"Verdict is not identity-equal to GateVerdict, v5.0 §B6.1 兼容违反",
             )
 
         return DimensionResult(
             "gate_pass", True,
-            f"DEFAULT_GATES=7 + CoverageGate present + GateVerdict=3 态",
+            f"DEFAULT_GATES=7 + V2_GATES=7 + CoverageGate present + Verdict alias",
         )
     except Exception as e:
         return DimensionResult(
@@ -237,14 +252,10 @@ def _check_guardrail_4_states() -> DimensionResult:
                 f"stdout tail: {result.stdout[-500:]}",
             )
 
-        # 额外验证 GuardrailResult.action 包含 4 态
+        # 额外验证 GuardrailResult.action 包含 4 态 (v5.0 §B2.4)
         sys.path.insert(0, str(PROJECT_ROOT))
         from auto_engineering.loop.guardrail import GuardrailResult
-        result_data = GuardrailResult(
-            guardrail_id="TEST",
-            action="pass",
-            reason="smoke test",
-        )
+        result_data = GuardrailResult(action="pass", message="smoke test")
         if result_data.action not in {"pass", "retry", "block", "drop"}:
             return DimensionResult(
                 "guardrail_4_states", False,
