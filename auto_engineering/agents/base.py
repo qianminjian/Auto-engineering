@@ -21,6 +21,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from auto_engineering.agents.authz import authz_check
 from auto_engineering.errors import AEError, ErrorCode
 from auto_engineering.llm.anthropic_provider import AnthropicProvider
 from auto_engineering.runtime.context import TaskContext
@@ -140,12 +141,28 @@ class BaseAgent:
                     tool_id = tool_use.get("id", "")
                     tool_calls_log.append({"name": tool_name, "input": tool_input})
 
+                    # v5.0 §B4.4 step 3b: 未注册工具 → error tool_result JSON
                     if tool_name not in tool_map:
                         tool_results.append(
                             {
                                 "type": "tool_result",
                                 "tool_use_id": tool_id,
-                                "content": f"Error: tool '{tool_name}' not found",
+                                "content": json.dumps({"error": f"unknown tool: {tool_name}"}),
+                                "is_error": True,
+                            }
+                        )
+                        continue
+
+                    # v5.0 §B4.4 step 3b: 未授权工具 → error tool_result JSON
+                    # R-23: 授权失败降级为可观察错误,不抛异常
+                    if not authz_check(self.role, tool_name):
+                        tool_results.append(
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": tool_id,
+                                "content": json.dumps(
+                                    {"error": f"tool {tool_name} not authorized for {self.role}"}
+                                ),
                                 "is_error": True,
                             }
                         )
@@ -174,11 +191,12 @@ class BaseAgent:
                     except AEError:
                         raise  # 已分类的 AEError 透传
                     except Exception as exc:
+                        # v5.0 §B4.4 step 3b: 工具异常 → error tool_result JSON
                         tool_results.append(
                             {
                                 "type": "tool_result",
                                 "tool_use_id": tool_id,
-                                "content": f"Error: {exc}",
+                                "content": json.dumps({"error": str(exc)}),
                                 "is_error": True,
                             }
                         )
