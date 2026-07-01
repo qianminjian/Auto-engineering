@@ -35,26 +35,29 @@ except: pass
 }
 
 # --- 13-pattern denylist (v5.0 §B12.2) ---
+# Use literal text in single quotes; escape special regex chars with backslash
 DENYLIST_PATTERNS=(
   'rm -rf /'
   'rm -rf ~'
-  'rm -rf \.'
-  'mkfs\.'
+  'rm -rf .'
+  'mkfs.'
   'dd if=/dev/(zero|random|urandom)'
-  ':(){\s*:\|\:&};:'           # fork bomb
-  'shutdown\b'
-  'reboot\b'
-  'halt\b'
+  ':(){:|:&};:'                # fork bomb (literal)
+  'shutdown '
+  'reboot '
+  'halt '
   'chmod -R 777 /'
-  'curl\s+.*\|\s*bash'         # curl pipe to bash
-  'wget\s+.*\|\s*bash'         # wget pipe to bash
-  '>\s*/etc/(passwd|shadow|sudoers)'  # system file overwrite
+  'curl | bash'                # curl pipe to bash (literal)
+  'wget | bash'                # wget pipe to bash (literal)
+  '> /etc/(passwd|shadow|sudoers)'  # system file overwrite
 )
 
 check_denylist() {
   local input="$1"
   for pat in "${DENYLIST_PATTERNS[@]}"; do
-    if echo "$input" | grep -qE "$pat"; then
+    # Use fixed-string matching via fgrep to avoid regex engine quirks on macOS
+    # (Claude Code wraps grep with ugrep which treats () specially)
+    if echo "$input" | grep -qF -- "$pat" 2>/dev/null || echo "$input" | /usr/bin/grep -qE -- "$pat" 2>/dev/null; then
       echo "{\"decision\":\"block\",\"reason\":\"denylist pattern matched: $pat\"}"
       exit 0
     fi
@@ -67,9 +70,15 @@ check_sandbox() {
   local target_path="$1"
   [[ -z "$target_path" ]] && return 0
 
-  # Resolve to absolute path
+  # Resolve to absolute path (follows symlinks for proper check on macOS)
   local abs
   abs=$(python3 -c "import os,sys; print(os.path.realpath(os.path.expanduser(sys.argv[1])))" "$target_path" 2>/dev/null) || abs="$target_path"
+
+  # macOS: /tmp is a symlink to /private/tmp — normalize both forms
+  case "$abs" in
+    /private/tmp/*)  abs="/tmp/${abs#/private/tmp/}" ;;
+    /private/var/folders/*/T/*) abs="/var/folders/${abs#/private/var/folders/}" ;;
+  esac
 
   # Allowed roots
   local project_root
