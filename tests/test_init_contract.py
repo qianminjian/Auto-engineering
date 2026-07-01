@@ -365,3 +365,118 @@ def test_init_contract_module_imports() -> None:
     assert hasattr(init_contract, "SUPPORTED_PROJECT_TYPES")
     assert hasattr(init_contract, "SUPPORTED_LANGUAGES")
     assert hasattr(init_contract, "LANGUAGE_TOOLS")
+
+
+# ============================================================
+# 10. Gate from_manifest 集成 (IL-AC-02)
+# ============================================================
+
+
+def test_lint_gate_from_manifest_uses_conventions() -> None:
+    """LintGate.from_manifest: 用 manifest.conventions.linter."""
+    from auto_engineering.gates.lint import LintGate
+
+    manifest = {
+        "schema_version": "1.0",
+        "project_type": "app-service",
+        "language": "python",
+        "structure": {
+            "source_root": "src/",
+            "test_root": "tests/",
+        },
+        "conventions": {
+            "linter": "flake8",  # 用非默认 linter
+            "type_checker": "pyright",
+            "test_runner": "pytest",
+        },
+    }
+    gate = LintGate.from_manifest(manifest)
+    assert gate.linter_bin == "flake8"
+
+
+def test_test_gate_from_manifest_uses_conventions() -> None:
+    """TestGate.from_manifest: 用 manifest.conventions.test_runner."""
+    from auto_engineering.gates.test import TestGate
+
+    manifest = {
+        "schema_version": "1.0",
+        "project_type": "app-service",
+        "language": "typescript",
+        "structure": {
+            "source_root": "src/",
+            "test_root": "tests/",
+        },
+        "conventions": {
+            "linter": "eslint",
+            "type_checker": "tsc",
+            "test_runner": "vitest",  # TypeScript 默认
+        },
+    }
+    gate = TestGate.from_manifest(manifest)
+    assert gate.test_runner_bin == "vitest"
+
+
+def test_type_check_gate_from_manifest_uses_conventions() -> None:
+    """TypeCheckGate.from_manifest: 用 manifest.conventions.type_checker."""
+    from auto_engineering.gates.type_check import TypeCheckGate
+
+    manifest = {
+        "schema_version": "1.0",
+        "project_type": "library",
+        "language": "go",
+        "structure": {
+            "source_root": ".",
+            "test_root": "./...",
+        },
+        "conventions": {
+            "linter": "golangci-lint",
+            "type_checker": "go vet",  # Go 默认
+            "test_runner": "go test",
+        },
+    }
+    gate = TypeCheckGate.from_manifest(manifest)
+    assert gate.type_checker_bin == "go vet"
+
+
+def test_build_gates_from_manifest_returns_7_gates() -> None:
+    """build_gates_from_manifest: 返回 7 道 Gate, 含 manifest 配置的 linter/type_checker/test_runner."""
+    from auto_engineering.gates.base import build_gates_from_manifest
+
+    manifest = {
+        "schema_version": "1.0",
+        "project_type": "app-service",
+        "language": "python",
+        "structure": {
+            "source_root": "src/",
+            "test_root": "tests/",
+        },
+        "conventions": {
+            "linter": "ruff",
+            "type_checker": "mypy",
+            "test_runner": "pytest",
+        },
+    }
+    gates = build_gates_from_manifest(manifest)
+    assert len(gates) == 7
+    # lint / type_check / test 三个 gate 用 manifest 配置
+    names_to_bins = {
+        g.name: getattr(g, "linter_bin", None) or getattr(g, "type_checker_bin", None) or getattr(g, "test_runner_bin", None)
+        for g in gates
+        if g.name in ("lint", "type_check", "test")
+    }
+    assert names_to_bins["lint"] == "ruff"
+    assert names_to_bins["type_check"] == "mypy"
+    assert names_to_bins["test"] == "pytest"
+
+
+def test_default_gates_unchanged_when_no_manifest() -> None:
+    """DEFAULT_GATES: 无 manifest 时, 用默认 (ruff/mypy/pytest)."""
+    from auto_engineering.gates.base import DEFAULT_GATES
+
+    assert len(DEFAULT_GATES) == 7
+    lint_gate = next(g for g in DEFAULT_GATES if g.name == "lint")
+    type_check_gate = next(g for g in DEFAULT_GATES if g.name == "type_check")
+    test_gate = next(g for g in DEFAULT_GATES if g.name == "test")
+    assert lint_gate.linter_bin == "ruff"
+    assert type_check_gate.type_checker_bin == "mypy"
+    assert test_gate.test_runner_bin == "pytest"

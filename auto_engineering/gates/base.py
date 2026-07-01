@@ -137,11 +137,16 @@ class Gate:
 DEFAULT_GATES: list["Gate"] = []
 
 
-def _build_default_gates() -> list["Gate"]:
+def _build_default_gates(manifest: dict | None = None) -> list["Gate"]:
     """v5.0 §B6.1+§B6.2 — 构造 7 道 Gate 的默认实例列表.
 
     惰性加载: 在 base.py 末尾调用, 此时子模块 (lint/type_check/...) 已被 import.
     顺序: safety → lint → type_check → contract → test → coverage → build
+
+    v5.0 §IL-AC-02 扩展:
+        - manifest 不为 None 时, 从 init-manifest.json 读 conventions 替换默认
+          linter / type_checker / test_runner
+        - manifest 为 None 时, 用 python 默认 (ruff/mypy/pytest)
     """
     # 局部 import 避免模块加载顺序问题
     from auto_engineering.gates.build import BuildGate
@@ -152,15 +157,31 @@ def _build_default_gates() -> list["Gate"]:
     from auto_engineering.gates.test import TestGate
     from auto_engineering.gates.type_check import TypeCheckGate
 
+    if manifest is not None:
+        # v5.0 §IL-AC-02: 用 manifest 构造 lint/type_check/test
+        lint_gate = LintGate.from_manifest(manifest)
+        type_check_gate = TypeCheckGate.from_manifest(manifest)
+        test_gate = TestGate.from_manifest(manifest)
+    else:
+        # 默认: python 生态
+        lint_gate = LintGate()
+        type_check_gate = TypeCheckGate()
+        test_gate = TestGate()
+
     return [
         SafetyGate(use_gitleaks=False),
-        LintGate(),
-        TypeCheckGate(),
+        lint_gate,
+        type_check_gate,
         ContractGate(),
-        TestGate(),
+        test_gate,
         CoverageGate(),
         BuildGate(),
     ]
+
+
+def build_gates_from_manifest(manifest: dict) -> list["Gate"]:
+    """v5.0 §IL-AC-02: 从 init-manifest.json 构造完整 7 道 Gate 列表."""
+    return _build_default_gates(manifest=manifest)
 
 
 # 模块加载时立即构建 (确保 from .base import DEFAULT_GATES 可用)

@@ -1,14 +1,14 @@
-"""v2.0 Phase 04 — Gate 2: Type Check (mypy).
+"""v2.0 Phase 04 — Gate 2: Type Check (mypy / pyright, v5.0 §IL-AC-02 可配置).
 
 设计来源: design/v2.0-Analysis-Loop.md §五 Phase 2 Gate 2.
 
 实现方式:
-    - subprocess 调用 `mypy .` (若项目已配置 mypy)
-    - 若 mypy 未安装 → skip (passed=True with skip message)
-    - 若 mypy 配置不存在 → skip (passed=True, 提示用户配置)
+    - subprocess 调用 `{type_checker} .` (默认 mypy, v5.0 §IL-AC-02 可改 pyright/tsc/go vet/cargo check/bash -n)
+    - 若 type_checker 未安装 → skip (passed=True with skip message)
+    - 若配置不存在 → skip (passed=True, 提示用户配置)
 
 设计决策:
-    - Phase 04 不强制要求 mypy 配置存在(尊重项目现状)
+    - Phase 04 不强制要求配置存在(尊重项目现状)
     - 若超时/异常 → drop (passed=True, 不阻塞 dev-loop)
 """
 
@@ -21,16 +21,18 @@ from pathlib import Path
 from auto_engineering.gates.base import Gate, Verdict
 
 _DEFAULT_TIMEOUT = 120.0
+_DEFAULT_TYPE_CHECKER = "mypy"
 
 
 class TypeCheckGate(Gate):
-    """Gate 2: mypy 静态类型检查.
+    """Gate 2: 静态类型检查 (默认 mypy).
 
     Args:
-        mypy_bin: mypy 可执行文件路径(默认 PATH 查找)
+        type_checker_bin: 类型检查工具名(默认 'mypy', v5.0 §IL-AC-02)
+                          可选: mypy / pyright / tsc / go vet / cargo check / bash -n
         timeout: subprocess 超时(秒)
-        require_config: 是否必须存在 mypy 配置(默认 False — 缺失则 skip)
-        strict: 是否使用 --strict 模式(默认 False)
+        require_config: 是否必须存在配置(默认 False — 缺失则 skip)
+        strict: 是否使用 --strict 模式(默认 False, 仅 mypy 适用)
 
     v5.0 §B6.1: applies_to_stages = (architect, developer, critic)
         类型检查每个 stage 都需通过
@@ -41,18 +43,40 @@ class TypeCheckGate(Gate):
 
     def __init__(
         self,
-        mypy_bin: str | None = None,
+        type_checker_bin: str | None = None,
         timeout: float = _DEFAULT_TIMEOUT,
         require_config: bool = False,
         strict: bool = False,
     ):
-        self.mypy_bin = mypy_bin
+        # 向后兼容: 旧参数 mypy_bin 接受为 type_checker_bin
+        self.mypy_bin = type_checker_bin  # 向后兼容 (保留旧字段名)
+        self.type_checker_bin = type_checker_bin or _DEFAULT_TYPE_CHECKER
         self.timeout = timeout
         self.require_config = require_config
         self.strict = strict
 
-    def _has_mypy_config(self, project_root: Path) -> bool:
-        """检查项目是否有 mypy 配置."""
+    @classmethod
+    def from_manifest(
+        cls,
+        manifest: dict,
+        timeout: float = _DEFAULT_TIMEOUT,
+    ) -> "TypeCheckGate":
+        """v5.0 §IL-AC-02: 从 init-manifest.json 构造 TypeCheckGate.
+
+        读 manifest.conventions.type_checker, 缺则用 LANGUAGE_TOOLS 默认.
+        """
+        from auto_engineering.loop.init_contract import get_gate_tools_from_manifest
+
+        tools = get_gate_tools_from_manifest(manifest)
+        return cls(type_checker_bin=tools["type_checker"], timeout=timeout)
+
+    def _has_type_config(self, project_root: Path) -> bool:
+        """检查项目是否有 type checker 配置.
+
+        默认检查 mypy 兼容配置. v5.0 §IL-AC-02 扩展: 简化判定, 只要 type_checker
+        二进制在 PATH 中, 就尝试跑. 真正的 "是否有 config" 留给 type_checker 自身.
+        """
+        # 兼容旧逻辑: 找 mypy 配置
         candidates = [
             project_root / "mypy.ini",
             project_root / ".mypy.ini",
@@ -61,7 +85,6 @@ class TypeCheckGate(Gate):
         ]
         for c in candidates:
             if c.exists():
-                # pyproject.toml 需要含 [tool.mypy] 段,简单判断为存在
                 if c.name == "pyproject.toml":
                     try:
                         content = c.read_text()
@@ -73,13 +96,20 @@ class TypeCheckGate(Gate):
                     return True
         return False
 
-    def _resolve_mypy_cmd(self) -> list[str] | None:
-        """解析 mypy 命令(若不可用返回 None)."""
+    def _resolve_type_check_cmd(self) -> list[str] | None:
+        """解析 type_check 命令(若不可用返回 None).
+
+        注意: 'bash -n' 是带参数的命令, 单独传 'bash' 然后在 cmd 中加 '-n'.
+        """
+        # 'bash -n' 等带 -n 标志的 type_checker 需要特殊处理
+        if self.type_checker_bin == "bash -n":
+            return ["bash", "-n"]
         if self.mypy_bin:
+            # 向后兼容: mypy_bin 显式指定
             return [self.mypy_bin]
-        if shutil.which("mypy"):
-            return ["mypy"]
-        return None  # mypy 未安装
+        if shutil.which(self.type_checker_bin):
+            return [self.type_checker_bin]
+        return None  # type_checker 未安装
 
     def run(self, project_root: Path, contracts: dict | None = None) -> Verdict:
         """执行 type check.
@@ -99,28 +129,28 @@ class TypeCheckGate(Gate):
                 gate_name=self.name,
             )
 
-        # 检查 mypy 配置
-        if not self._has_mypy_config(project_root):
+        # 检查 type_check 配置 (保守: mypy 兼容检测)
+        if not self._has_type_config(project_root):
             if self.require_config:
                 return Verdict.failed(
                     "项目未配置 mypy (无 mypy.ini / pyproject.toml [tool.mypy])",
                     gate_name=self.name,
                 )
             return Verdict.passed(
-                "skip: 项目未配置 mypy,跳过类型检查",
+                f"skip: 项目未配置 {self.type_checker_bin},跳过类型检查",
                 gate_name=self.name,
             )
 
-        # 解析 mypy 命令
-        cmd_base = self._resolve_mypy_cmd()
+        # 解析 type_check 命令
+        cmd_base = self._resolve_type_check_cmd()
         if cmd_base is None:
             return Verdict.passed(
-                "skip: mypy 未安装,跳过类型检查",
+                f"skip: {self.type_checker_bin} 未安装,跳过类型检查",
                 gate_name=self.name,
             )
 
         cmd = [*cmd_base, str(project_root)]
-        if self.strict:
+        if self.strict and self.type_checker_bin == "mypy":
             cmd.append("--strict")
 
         try:
@@ -134,29 +164,32 @@ class TypeCheckGate(Gate):
         except subprocess.TimeoutExpired:
             # 超时 → drop,不阻塞 loop
             return Verdict.passed(
-                f"skip: mypy 超时 (>{self.timeout}s)",
+                f"skip: {self.type_checker_bin} 超时 (>{self.timeout}s)",
                 gate_name=self.name,
             )
         except FileNotFoundError:
             return Verdict.passed(
-                "skip: mypy 命令未找到",
+                f"skip: {self.type_checker_bin} 命令未找到",
                 gate_name=self.name,
             )
 
         if result.returncode == 0:
-            return Verdict.passed("mypy 通过 (0 errors)", gate_name=self.name)
+            return Verdict.passed(
+                f"{self.type_checker_bin} 通过 (0 errors)",
+                gate_name=self.name,
+            )
 
-        # mypy 返回非 0 — 但仅在有 error 输出时算失败
+        # 返回非 0 — 但仅在有 error 输出时算失败
         output = result.stdout or result.stderr or ""
         if "error:" in output.lower():
             snippet = output[:1500] + ("..." if len(output) > 1500 else "")
             return Verdict.failed(
-                f"mypy 失败 (exit={result.returncode}):\n{snippet}",
+                f"{self.type_checker_bin} 失败 (exit={result.returncode}):\n{snippet}",
                 gate_name=self.name,
             )
 
-        # mypy 返回非 0 但无 error → 视为 warning 级别
+        # 返回非 0 但无 error → 视为 warning 级别
         return Verdict.passed(
-            f"mypy 退出 {result.returncode}, 无类型 error",
+            f"{self.type_checker_bin} 退出 {result.returncode}, 无类型 error",
             gate_name=self.name,
         )
