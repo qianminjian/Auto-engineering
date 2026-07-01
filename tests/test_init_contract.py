@@ -480,3 +480,68 @@ def test_default_gates_unchanged_when_no_manifest() -> None:
     assert lint_gate.linter_bin == "ruff"
     assert type_check_gate.type_checker_bin == "mypy"
     assert test_gate.test_runner_bin == "pytest"
+
+
+# ============================================================
+# 11. IL-AC-05 集成测试: ae doctor 不修改 init-manifest.json
+# ============================================================
+
+
+def test_il_ac_05_ae_doctor_does_not_modify_manifest_mtime(
+    tmp_path: Path,
+) -> None:
+    """IL-AC-05 集成: 跑 ae doctor 子命令后, init-manifest.json mtime 不变.
+
+    与 unit test test_il_ac_05_manifest_mtime_unchanged_after_run 的区别:
+        - 本测试走完整 CLI 路径 (`ae doctor`)
+        - 验证 doctor 子命令本身不会 touch init-manifest.json
+    """
+    from click.testing import CliRunner
+
+    from auto_engineering.cli import main as cli_main
+
+    # 准备完整 init-manifest.json
+    manifest_path = tmp_path / ".ae-state" / "init-manifest.json"
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "project_type": "app-service",
+                "language": "python",
+                "structure": {
+                    "source_root": "src/",
+                    "test_root": "tests/",
+                    "config_files": ["pyproject.toml"],
+                    "entry_point": "src/main.py",
+                },
+                "conventions": {
+                    "package_manager": "uv",
+                    "linter": "ruff",
+                    "type_checker": "pyright",
+                    "test_runner": "pytest",
+                },
+            }
+        )
+    )
+    mtime_before_ns = manifest_path.stat().st_mtime_ns
+
+    # 跑 ae doctor (用 CliRunner 走 CLI 路径, 不子进程)
+    import os
+
+    original_cwd = os.getcwd()
+    try:
+        os.chdir(tmp_path)
+        runner = CliRunner()
+        # doctor 缺少 API key 会 ✗, 但这不是我们关心的 (只关心 mtime)
+        result = runner.invoke(cli_main, ["doctor", "--project-root", str(tmp_path)])
+        # 不验证 exit code — 我们只关心 mtime
+        _ = result.output  # 防止未使用警告
+    finally:
+        os.chdir(original_cwd)
+
+    mtime_after_ns = manifest_path.stat().st_mtime_ns
+    assert mtime_before_ns == mtime_after_ns, (
+        f"init-manifest.json mtime changed by ae doctor: "
+        f"{mtime_before_ns} -> {mtime_after_ns}"
+    )
