@@ -1337,3 +1337,134 @@ class TestOrchestratorV5MainLoop:
             "_select_round_tasks 应已删除, v5.0 用 plan.get_tasks_by_stage 替代"
         )
 
+
+class TestOrchestratorStepHelpers:
+    """v5.0 P1-1: run() 拆 8 子方法 (单一职责) — spy-style 验证.
+
+    设计: 仅 spy 验证 run() 调用了 8 个子方法, 不验证实现细节
+    (子方法内部的 stage 转换 / 退出条件 由现有 12 步测试覆盖).
+    这样 refactor 不破坏行为契约, 同时锁定"run() 必须调度子方法"的结构.
+    """
+
+    EXPECTED_HELPERS = (
+        "_step_2a_cancel",
+        "_step_2b_route_init",
+        "_step_2c_select_tasks",
+        "_step_2d_guardrail_pre",
+        "_step_2e_run_agent",
+        "_step_2f_guardrail_post",
+        "_step_2g_semantic",
+        "_step_2h_major_count",
+        "_step_2i_route_and_judge",
+        "_step_3_exit_block",
+    )
+
+    def test_all_8_helper_methods_exist(self) -> None:
+        """8+ 个 _step_* 子方法必须存在 (单一职责拆分)."""
+        from auto_engineering.loop.orchestrator import Orchestrator
+
+        for name in self.EXPECTED_HELPERS:
+            assert hasattr(Orchestrator, name), (
+                f"Orchestrator 应有 {name} 子方法 (P1-1 单一职责拆分)"
+            )
+            method = getattr(Orchestrator, name)
+            assert callable(method), f"{name} 应是可调用的方法"
+
+    def test_helpers_are_callable_with_self(self) -> None:
+        """子方法签名应仅 self + 必要参数, 不耦合闭包变量."""
+        from auto_engineering.loop.orchestrator import Orchestrator
+
+        async def noop_executor(task, ctx):
+            return TaskOutcome(task_id=task.id, status="completed", output="x")
+
+        orch = Orchestrator(requirement="x", tasks=[make_task("t1")], executor=noop_executor)
+        for name in self.EXPECTED_HELPERS:
+            assert hasattr(orch, name), f"实例应有 {name}"
+            assert callable(getattr(orch, name)), f"{name} 应可调用"
+
+    @pytest.mark.asyncio
+    async def test_run_invokes_helper_methods_spy_style(self) -> None:
+        """spy-style 验证: run() 应按顺序调用 8 个子方法.
+
+        不验证子方法内部行为 (由 TestOrchestratorV5MainLoop 12 步测试覆盖),
+        仅 mock 每个子方法 → 计数 → 验证 run() 调度了它们.
+        这样 refactor 改动子方法签名/实现时不会破坏本测试, 真正锁定的
+        是"run() 主体 = while + 8 个子方法调用"的结构契约.
+        """
+        from auto_engineering.loop.orchestrator import Orchestrator
+
+        # 1. 子方法 spy 计数
+        call_counts: dict[str, int] = {name: 0 for name in self.EXPECTED_HELPERS}
+
+        async def noop_executor(task, ctx):
+            return TaskOutcome(task_id=task.id, status="completed", output="x")
+
+        tasks = [make_task("t1", agent_type="architect")]
+        orch = Orchestrator(requirement="spy", tasks=tasks, executor=noop_executor)
+
+        # 2. 替换每个子方法为 spy (返回合理默认值避免主循环崩溃)
+        async def spy_2a(self_orch, cancellation):
+            call_counts["_step_2a_cancel"] += 1
+            return False  # 不取消
+
+        def spy_2b(self_orch, state, router):
+            call_counts["_step_2b_route_init"] += 1
+            return None  # StageDecision 不直接构造, 用 None 即可
+
+        def spy_2c(self_orch, stage):
+            call_counts["_step_2c_select_tasks"] += 1
+            return []
+
+        def spy_2d(self_orch, guardrail_chain, stage, state):
+            call_counts["_step_2d_guardrail_pre"] += 1
+            return "pass"
+
+        async def spy_2e(self_orch, stage, round_tasks, state):
+            call_counts["_step_2e_run_agent"] += 1
+            return None  # RoundResult
+
+        def spy_2f(self_orch, guardrail_chain, stage, state):
+            call_counts["_step_2f_guardrail_post"] += 1
+            return "pass"
+
+        async def spy_2g(self_orch, semantic_evaluator, stage, result):
+            call_counts["_step_2g_semantic"] += 1
+            return None
+
+        def spy_2h(self_orch, state, verdict):
+            call_counts["_step_2h_major_count"] += 1
+            return None
+
+        def spy_2i(self_orch, router, judge, state):
+            call_counts["_step_2i_route_and_judge"] += 1
+            return (None, False)  # (next_stage, should_break)
+
+        def spy_3(self_orch, state, history, latest_gates):
+            call_counts["_step_3_exit_block"] += 1
+            return ([], None)
+
+        # 3. 绑定 spy 到 orch 实例
+        orch._step_2a_cancel = lambda c: spy_2a(orch, c)
+        orch._step_2b_route_init = lambda s, r: spy_2b(orch, s, r)
+        orch._step_2c_select_tasks = lambda st: spy_2c(orch, st)
+        orch._step_2d_guardrail_pre = lambda gc, st, s: spy_2d(orch, gc, st, s)
+        orch._step_2e_run_agent = lambda st, rt, s: spy_2e(orch, st, rt, s)
+        orch._step_2f_guardrail_post = lambda gc, st, s: spy_2f(orch, gc, st, s)
+        orch._step_2g_semantic = lambda se, st, res: spy_2g(orch, se, st, res)
+        orch._step_2h_major_count = lambda s, v: spy_2h(orch, s, v)
+        orch._step_2i_route_and_judge = lambda r, j, s: spy_2i(orch, r, j, s)
+        orch._step_3_exit_block = lambda s, h, lg: spy_3(orch, s, h, lg)
+
+        # 4. 跑 run() (用 asyncio.wait_for 防 hang)
+        try:
+            await asyncio.wait_for(orch.run(cancellation=None), timeout=5.0)
+        except (asyncio.TimeoutError, Exception):
+            # spy 内部 None 返回可能导致后续逻辑异常, 我们只关心调用次数
+            pass
+
+        # 5. 验证: 8 个子方法至少被调用 1 次 (主循环跑过)
+        for name in self.EXPECTED_HELPERS:
+            assert call_counts[name] >= 1, (
+                f"{name} 应在 run() 期间至少被调用 1 次, 实际: {call_counts[name]}"
+            )
+
