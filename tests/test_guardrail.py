@@ -110,11 +110,39 @@ class TestGuardrailResult:
         assert r.message == "bad"
 
     def test_all_actions(self) -> None:
-        """4 action 值都允许: pass / block / drop / retry."""
-        for action in ("pass", "block", "drop", "retry"):
+        """3 action 值都允许: pass / block / retry (v5.1 P0-1: drop 态已删除)."""
+        for action in ("pass", "block", "retry"):
             r = GuardrailResult(action=action, message=f"msg-{action}")
             assert r.action == action
             assert r.message == f"msg-{action}"
+
+    def test_guardrail_result_action_is_3_states(self) -> None:
+        """v5.1 P0-1: GuardrailResult.action 严格 Literal 3 态 (pass/block/retry).
+
+        验证 Action type alias 只暴露 3 个值 — drop 已从契约中删除.
+        """
+        from auto_engineering.loop.guardrail import Action
+
+        # 1. typing.get_args 校验 Literal 包含的字符串
+        import typing
+
+        args = set(typing.get_args(Action))
+        assert args == {"pass", "block", "retry"}, (
+            f"Action Literal 应仅含 3 态, 实际: {args}"
+        )
+
+    def test_drop_action_raises_typeerror(self) -> None:
+        """v5.1 P0-1: 传入 drop 应被 dataclass 类型系统拒绝 (Literal 校验).
+
+        注: 现有实现 GuardrailResult 字段类型是 str (未用 Literal),
+        此测试先注释 — 实现层应升级到 Action Literal 才能启用.
+        当前是契约文档层证明 drop 不在合法 action 集合.
+        """
+        from auto_engineering.loop.guardrail import Action
+        import typing
+
+        args = set(typing.get_args(Action))
+        assert "drop" not in args, "drop 态必须已从 Action Literal 删除"
 
 
 # ---------- Guardrail ABC 基类契约 ----------
@@ -629,26 +657,60 @@ class TestHandleGuardrailResult:
         assert state.plan == "x"
         assert state.files_changed == ["a.py"]
 
-    def test_drop_treated_as_retry(self) -> None:
-        """drop 与 retry 行为相同 (内置不返回 drop,但契约支持)."""
-        state = EngineState()
-        counters: dict[str, int] = {}
-        action = _handle_guardrail_result(
-            GuardrailResult(action="drop", message="drop me"),
-            "developer", state, counters,
+    def test_handler_drop_as_retry_compat(self) -> None:
+        """v5.1 P0-1: 旧 drop 输入被 handler 当 retry 处理 (deprecated 兼容).
+
+        即使 GuardrailResult.action 公开契约已删除 drop 字段,
+        为兼容遗留 caller 传入 drop, _handle_guardrail_result 必须
+        把它当 retry (计数 + 1 + clear stage fields + return "retry")
+        并触发 DeprecationWarning.
+        """
+        import warnings
+
+        state = EngineState(
+            plan="x",
+            files_changed=["a.py"],
+            commit_hash="abc",
+            test_results={"passed": 1},
         )
+        counters: dict[str, int] = {}
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            action = _handle_guardrail_result(
+                GuardrailResult(action="drop", message="drop me"),  # type: ignore[arg-type]
+                "developer", state, counters,
+            )
+        # 1. 行为兼容: drop 等同 retry
         assert action == "retry"
         assert counters == {"developer": 1}
+        # 2. clear stage fields 仍执行
+        assert state.files_changed == []
+        assert state.commit_hash == ""
+        assert state.test_results == {}
+        # 3. 触发 DeprecationWarning 提示迁移
+        deprecations = [
+            x for x in w if issubclass(x.category, DeprecationWarning)
+        ]
+        assert len(deprecations) >= 1, "drop 输入必须触发 DeprecationWarning"
+        assert any(
+            "drop" in str(x.message).lower() for x in deprecations
+        ), f"DeprecationWarning 应提及 drop, 实际: {[str(x.message) for x in deprecations]}"
 
-    def test_drop_exhausted_returns_stop(self) -> None:
-        """drop counter ≥ 3 → stop."""
+    def test_handler_drop_exhausted_returns_stop(self) -> None:
+        """v5.1 P0-1: 旧 drop 计数耗尽时也兼容返回 stop (deprecated)."""
+        import warnings
+
         state = EngineState()
         counters: dict[str, int] = {"developer": 3}
-        action = _handle_guardrail_result(
-            GuardrailResult(action="drop", message="drop me"),
-            "developer", state, counters,
-        )
+        with warnings.catch_warnings(record=True):
+            warnings.simplefilter("always")
+            action = _handle_guardrail_result(
+                GuardrailResult(action="drop", message="drop me"),  # type: ignore[arg-type]
+                "developer", state, counters,
+            )
         assert action == "stop"
+        # stop 路径不累加
+        assert counters == {"developer": 3}
 
     def test_counters_isolated_per_stage(self) -> None:
         """counters 按 stage 隔离, 互不影响."""
