@@ -204,6 +204,46 @@ for KEY in "${EXPECTED_KEYS[@]}"; do
 done
 
 # ============================================================
+# Scenario 4: ae status JSON 7 字段契约 (v5.0 §B13.2)
+# 真实调用 uv run ae status --format json (非 mock)
+# ============================================================
+echo ""
+echo "=== Scenario 4: ae status JSON ==="
+
+# 4a. ae status --format json 必须输出合法 JSON 含 7 字段
+STATUS_RESULT=$(uv run ae status --format json 2>&1)
+if echo "$STATUS_RESULT" | python3 -c "
+import sys, json
+data = json.loads(sys.stdin.read())
+required = {'thread_id', 'round', 'stage', 'verdict', 'majors_in_a_row', 'total_majors', 'recent_history'}
+missing = required - set(data.keys())
+extra = set(data.keys()) - required
+if missing:
+    print(f'MISSING: {missing}', file=sys.stderr); sys.exit(1)
+if extra:
+    print(f'EXTRA: {extra}', file=sys.stderr); sys.exit(1)
+" 2>/dev/null; then
+  pass "ae status JSON has exactly 7 required fields"
+else
+  fail "ae status JSON has exactly 7 required fields" "got: $STATUS_RESULT"
+fi
+
+# 4b. recent_history ≤ 5 (spec: 最近 5 条 RoundHistory)
+if echo "$STATUS_RESULT" | python3 -c "
+import sys, json
+data = json.loads(sys.stdin.read())
+rh = data.get('recent_history', [])
+if not isinstance(rh, list):
+    print(f'NOT LIST: {type(rh).__name__}', file=sys.stderr); sys.exit(1)
+if len(rh) > 5:
+    print(f'TOO MANY: {len(rh)}', file=sys.stderr); sys.exit(1)
+" 2>/dev/null; then
+  pass "ae status recent_history ≤ 5"
+else
+  fail "ae status recent_history ≤ 5" "got: $STATUS_RESULT"
+fi
+
+# ============================================================
 # Summary
 # ============================================================
 echo ""
