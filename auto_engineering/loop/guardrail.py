@@ -3,17 +3,19 @@
 设计参考: v5.0-Design-Loop.md §B2.3 (Guardrail 接口契约)
                    + §B1.8 (GuardrailResult 数据类)
                    + §B5.1 (5 Guardrail 规格 G1-G5)
-                   + §B5.2 (_handle_guardrail_result 4 态)
+                   + §B5.2 (_handle_guardrail_result 3 态, drop deprecated)
                    + 附录 C R-5 (GitDiffExists 新仓库降级)
 
-CrewAI 对标: Guardrail 4 态 (pass/block/drop/retry) +
-pre/post 时机 + applies_to_stages 过滤 — 业界通用接口契约.
+v5.1 P0-1 YAGNI: 删 drop 态 (CrewAI 实际只 2 态, 4 态是过度设计).
+                  drop 与 retry 语义重叠, 保留 3 态 pass/block/retry
+                  即覆盖所有场景. 旧 drop 输入由 _handle_guardrail_result
+                  兼容 (按 retry 处理 + 触发 DeprecationWarning).
 
 模块职责:
-    - GuardrailResult / Guardrail ABC: 契约定义
-    - 5 Guardrail (G1-G5): 内置检查
+    - GuardrailResult / Guardrail ABC: 契约定义 (action 3 态)
+    - 5 Guardrail (G1-G5): 内置检查 (只用 pass/block/retry)
     - GuardrailChain: 编排 (fail-fast + timing/stage 过滤)
-    - _handle_guardrail_result: action 分发 (continue/stop/retry)
+    - _handle_guardrail_result: action 分发 (continue/stop/retry, drop 兼容)
 
 依赖:
     - stage_router._clear_stage_fields (Stage 字段清理复用)
@@ -25,6 +27,7 @@ from __future__ import annotations
 
 import asyncio
 import subprocess
+import warnings
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
@@ -32,8 +35,8 @@ from typing import Any, Literal
 
 from auto_engineering.loop.stage_router import _clear_stage_fields
 
-# Type alias: Guardrail 4 态动作
-Action = Literal["pass", "block", "drop", "retry"]
+# v5.1 P0-1: Guardrail 3 态动作 (drop 已删除, 仅保留 pass/block/retry)
+Action = Literal["pass", "block", "retry"]
 
 # v5.0 §B5.1 + §B5.2 配
 MAX_RETRY_PER_STAGE = 3
@@ -44,12 +47,15 @@ class GuardrailResult:
     """Guardrail 检查结果 (§B1.8).
 
     Fields:
-        action: "pass" | "block" | "drop" | "retry"
+        action: "pass" | "block" | "retry"
                 - pass:  通过,继续
                 - block: 严重错误,终止主循环
-                - drop:  同 retry (用户自定义 Guardrail 可能用)
                 - retry: 可恢复,retry 计数 + 1
         message: 用户可读消息 (失败原因)
+
+    v5.1 P0-1: drop 态已从契约中删除 (YAGNI, 与 retry 语义重叠).
+                _handle_guardrail_result 仍兼容旧 drop 输入
+                (按 retry 处理 + 触发 DeprecationWarning).
 
     注: 默认 action="pass" — 大多数 Guardrail pass path 返回纯 pass。
     """
@@ -353,10 +359,11 @@ def _handle_guardrail_result(
 ) -> str:
     """处理 GuardrailResult, 返回主循环下一步动作 (§B5.2).
 
-    Action 分发:
+    Action 分发 (v5.1 P0-1: 3 态, drop 已 deprecated):
         - "pass"  → "continue" (不动计数器)
         - "block" → "stop"    (不动计数器)
-        - "drop"  / "retry":
+        - "drop"  (deprecated) → 当 retry 处理 + 触发 DeprecationWarning
+        - "retry":
             1. counter += 1
             2. counter >= MAX_RETRY_PER_STAGE (3) → "stop" (不再清字段)
             3. counter  <  MAX_RETRY_PER_STAGE     → "retry"
@@ -381,7 +388,21 @@ def _handle_guardrail_result(
     if action == "block":
         return "stop"
 
-    if action in ("drop", "retry"):
+    if action == "drop":
+        # v5.1 P0-1: drop 已从契约删除, 但仍兼容旧 caller 传入
+        # 行为: 等同 retry (计数 + 1 + clear stage fields) + DeprecationWarning
+        warnings.warn(
+            (
+                f"GuardrailResult.action='drop' 已废弃 (v5.1 P0-1, YAGNI). "
+                f"请改用 'retry' (drop 与 retry 语义重叠). "
+                f"当前 stage={stage!r} 将按 retry 处理."
+            ),
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        # fall through to retry logic
+
+    if action == "retry" or action == "drop":
         current = retry_counters.get(stage, 0)
         # 先判定, 再累加: 已达上限 → stop 且不动 counter/state
         if current >= MAX_RETRY_PER_STAGE:
