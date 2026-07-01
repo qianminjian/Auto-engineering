@@ -149,6 +149,10 @@ ae checkpoint list|show|delete|resume     # 旧 JSON 文件 checkpoint
 - ❌ 禁止 Step 间静默跳过（即使相同 Phase 必须显示状态变化）
 - ❌ 禁止 push / force push / reset --hard / rm 等破坏性操作无前台确认
 
+**B 级 hybrid gate 特殊规则**：
+
+- ✅ **B 级 hybrid gate auto-pass**: atdo 推进遇到 B 级 hybrid gate（Phase 04/09/11 等）直接 auto-pass，不调 AskUserQuestion 等用户签字。跨会话规则已持久化至 memory `feedback-atdo-b-gate-auto-pass.md`。
+
 **How to apply**：
 
 - 任何 `/atdo` 命令启动时，先在响应中显示 `[Auto-Phase] Phase N/M: ...` 进度条，再执行协议

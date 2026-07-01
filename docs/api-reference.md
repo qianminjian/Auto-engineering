@@ -478,3 +478,128 @@ except AEError as e:
 ---
 
 _v1.0 / v2.0 / v2.3 章节已删除。归档版本见 `_scratch/his_bak/api-reference.md` (v2.2 FINAL, 79 行)。_
+
+---
+
+## 12. 代码示例
+
+以下 5 个示例均为最小可运行片段，可直接复制执行。
+
+### 示例 1 — 安装 Plugin（3 步）
+
+```bash
+# Step 1: 复制 .claude-plugin 到目标项目
+cp -r .claude-plugin /path/to/your-project/
+
+# Step 2: 安装依赖
+cd /path/to/your-project
+uv sync
+
+# Step 3: 验证安装
+ae doctor
+# 输出: [PASS] all checks — Plugin ready
+```
+
+### 示例 2 — ae dev-loop 单需求
+
+```bash
+$ ae dev-loop "实现用户登录功能"
+
+# 输出（stdout JSON 流）:
+# {"stage":"architect","plan":{...},"round":1}
+# {"stage":"developer","diff":"+241/-12","round":2}
+# {"stage":"critic","review":"PASS 7/7 gates","round":3}
+# {"status":"CONVERGED","total_rounds":3}
+```
+
+3 个 Stage 依次执行：architect 出方案 → developer 写代码 → critic 审查。收敛后 stdout 输出 JSON 结果。
+
+### 示例 3 — ae checkpoint 生命周期
+
+```bash
+$ ae checkpoint list
+[
+  {"id":"ckpt_001","round":3,"stage":"critic","timestamp":"2026-07-01T10:30:00Z"},
+  {"id":"ckpt_002","round":7,"stage":"developer","timestamp":"2026-07-01T10:35:00Z"}
+]
+
+$ ae checkpoint show ckpt_002
+{
+  "id":"ckpt_002",
+  "round":7,
+  "stage":"developer",
+  "state":{"tasks_completed":12,"gates_passed":5},
+  "retry_counters":{"lint":1,"test":0}
+}
+
+$ ae checkpoint resume ckpt_002
+# 从 ckpt_002 恢复，继续执行 round 8+
+{"status":"RESUMED","resume_round":8}
+```
+
+### 示例 4 — 自定义 Guardrail 注册
+
+```python
+from auto_engineering.loop.guardrail import Guardrail, GuardrailChain, Severity
+
+# 定义自定义 Guardrail
+class MaxFileSizeGuardrail(Guardrail):
+    """拒绝单文件 > 2000 行的修改"""
+    
+    @property
+    def name(self) -> str:
+        return "max-file-size"
+    
+    @property
+    def severity(self) -> Severity:
+        return Severity.ERROR
+    
+    async def check(self, diff: str, context: dict) -> bool:
+        # 统计 diff 中新增行数
+        added = sum(1 for line in diff.split("\n") if line.startswith("+"))
+        return added <= 2000  # True = 通过
+
+# 注册到 GuardrailChain
+chain = GuardrailChain.default()  # 5 个内置 Guardrail
+chain.prepend(MaxFileSizeGuardrail())  # 前置自定义
+
+# 在 orchestrator 中使用
+orchestrator = Orchestrator(
+    guardrail_chain=chain,
+    ...
+)
+```
+
+### 示例 5 — Init-Loop 契约消费
+
+```python
+import json
+from pathlib import Path
+from auto_engineering.loop.init_contract import load_init_manifest, validate_init_manifest
+
+# Step 1: 读取 init-manifest.json
+manifest = load_init_manifest(Path(".ae-state/init-manifest.json"))
+# manifest = {
+#   "schema_version": 1,
+#   "project_type": "cli-tool",
+#   "language": "python",
+#   "features": ["lint", "test", "build"],
+#   "templates_used": ["cli.py.jinja", "pyproject.toml.jinja"]
+# }
+
+# Step 2: 验证契约（5 IL-AC 检查）
+validate_init_manifest(manifest)  # 不通过抛 InitContractError
+
+# Step 3: 按项目类型配置 Gate
+GATE_MAP = {
+    "cli-tool":  ["lint", "type_check", "test", "coverage", "safety", "build"],
+    "library":   ["lint", "type_check", "test", "coverage"],
+    "app-service": ["lint", "test", "coverage", "safety", "build", "contract"],
+}
+active_gates = GATE_MAP.get(manifest["project_type"], ["lint", "test"])
+# active_gates = ["lint", "type_check", "test", "coverage", "safety", "build"]
+```
+
+---
+
+_v1.0 / v2.0 / v2.3 章节已删除。归档版本见 `_scratch/his_bak/api-reference.md` (v2.2 FINAL, 79 行)。_
