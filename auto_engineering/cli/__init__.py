@@ -42,6 +42,8 @@ from auto_engineering.cli.dev_loop import (  # noqa: F401
 )
 from auto_engineering.cli.checkpoint import register_checkpoint_commands  # noqa: F401
 from auto_engineering.cli.doctor import register_doctor_command  # noqa: F401
+from auto_engineering.cli.gate_check import register_gate_check_command  # noqa: F401
+from auto_engineering.cli.agent import register_agent_command  # noqa: F401
 
 
 # ============================================================
@@ -198,6 +200,10 @@ def status():
 register_checkpoint_commands(main)
 # 注册 doctor 命令 (从 cli/doctor.py 注入)
 register_doctor_command(main)
+# 注册 gate-check 命令 (从 cli/gate_check.py 注入)
+register_gate_check_command(main)
+# 注册 agent 命令 (从 cli/agent.py 注入)
+register_agent_command(main)
 
 
 if __name__ == "__main__":
