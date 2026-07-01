@@ -82,15 +82,28 @@ class Gate:
     默认实现: 检查项目根存在 → 委托子类.
 
     旧接口 Gate.check(stage, context) 保留供 v2.0 Guardrail 体系使用.
+
+    v5.0 §B2.9 扩展:
+        - 类属性 applies_to_stages: tuple[str, ...] — 标识该 Gate 在哪些
+          Stage 阶段运行 (architect/developer/critic). 默认 = 三阶段全跑.
+        - run() 新增 contracts: dict | None = None 参数 — 供 ContractGate
+          等需要契约数据的 Gate 使用 (向后兼容: 默认 None).
     """
 
     name: str = "base"
+    # v5.0 §B2.9: 默认覆盖三阶段, 子类按需覆盖 (如 CoverageGate 仅 developer)
+    applies_to_stages: tuple[str, ...] = ("architect", "developer", "critic")
 
-    def run(self, project_root: Path) -> Verdict:
+    def run(
+        self,
+        project_root: Path,
+        contracts: dict | None = None,
+    ) -> Verdict:
         """执行 Gate 检查.
 
         Args:
             project_root: 项目根目录路径
+            contracts: v5.0 §B2.9 — 可选契约字典 (供 ContractGate 等使用)
 
         Returns:
             Verdict (passed + message)
