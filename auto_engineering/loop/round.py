@@ -27,6 +27,14 @@ from auto_engineering.gates.base import Gate, Verdict
 from auto_engineering.loop.plan import ConflictError, Task
 from auto_engineering.runtime.cancellation import CancellationToken
 
+# v5.0 §B2.12a: 错误分类
+try:
+    from auto_engineering.errors import AEError, ErrorCode
+    _TASK_CANCELLED_CODE = ErrorCode.TASK_CANCELLED
+except ImportError:
+    AEError = None  # type: ignore[assignment]
+    _TASK_CANCELLED_CODE = None
+
 if TYPE_CHECKING:
     from auto_engineering.loop.convergence import RoundHistory
 
@@ -120,17 +128,55 @@ async def _execute_single(
     executor: TaskExecutor,
     cancellation: CancellationToken | None,
 ) -> TaskOutcome:
-    """执行单个 task + 包装错误 + 统计耗时 + 支持取消."""
+    """执行单个 task + 包装错误 + 统计耗时 + 支持取消.
+
+    v5.0 §B2.12a — 错误分类:
+        - AEError(ERR_TASK_CANCELLED) → outcome.status="cancelled"
+        - asyncio.CancelledError       → outcome.status="cancelled"
+        - Exception (其他)              → outcome.status="failed"
+
+    v5.0 §B2.12a — per_task_ctx 独立构造:
+        如果 ctx 是 TaskContext 实例, 为本 task 复制一份 (避免 shared ctx.task 串扰).
+        否则透传原 ctx.
+    """
     start = time.monotonic()
+
+    # v5.0 §B2.12a: 独立 per_task_ctx — 避免并发 task 共享 ctx 字段时串扰
+    task_ctx = _build_per_task_ctx(ctx, task)
+
+    # v5.0 §B2.12a: 错误分类 — 三档 (cancelled AEError / asyncio.CancelledError / 其他)
     try:
         if cancellation is not None:
             cancellation.check()
-        outcome = await executor(task, ctx)
+        outcome = await executor(task, task_ctx)
         duration = time.monotonic() - start
         # 强制覆盖 duration (executor 可能不填)
         outcome.duration = duration
         return outcome
+    except asyncio.CancelledError:
+        # asyncio 取消 → cancelled outcome (不视为 failed)
+        duration = time.monotonic() - start
+        return TaskOutcome(
+            task_id=task.id,
+            status="cancelled",
+            error="asyncio.CancelledError",
+            duration=duration,
+        )
     except Exception as exc:
+        # v5.0 §B2.12a: AEError(TASK_CANCELLED) → cancelled; 其他 → failed
+        if (
+            AEError is not None
+            and _TASK_CANCELLED_CODE is not None
+            and isinstance(exc, AEError)
+            and getattr(exc, "code", None) is _TASK_CANCELLED_CODE
+        ):
+            duration = time.monotonic() - start
+            return TaskOutcome(
+                task_id=task.id,
+                status="cancelled",
+                error=str(exc),
+                duration=duration,
+            )
         duration = time.monotonic() - start
         return TaskOutcome(
             task_id=task.id,
@@ -138,6 +184,42 @@ async def _execute_single(
             error=str(exc),
             duration=duration,
         )
+
+
+def _build_per_task_ctx(ctx: Any, task: Task) -> Any:
+    """v5.0 §B2.12a — 为单个 task 构造独立 ctx, 避免并发共享导致串扰.
+
+    策略:
+        - 若 ctx 是 TaskContext (含 state 字段), 用 dataclasses.replace 复制后
+          显式赋一个 `current_task_id` 标记 (向后兼容, 不影响已有字段)
+        - 否则透传原 ctx (类型不识别时不复制, 保持向后兼容)
+
+    Args:
+        ctx: 共享 ctx (TaskContext 或其他)
+        task: 当前 task
+
+    Returns:
+        独立 ctx (per_task_ctx) 或原 ctx
+    """
+    # 识别 TaskContext 类型 — 不引入硬 import, 用鸭子类型 (含 state + requirement 字段)
+    if ctx is None:
+        return None
+    # 鸭子类型检查: 必须是 dataclass-like (有 state 字段)
+    if hasattr(ctx, "state") and hasattr(ctx, "requirement"):
+        try:
+            from dataclasses import replace, fields
+
+            # 仅当 dataclass 时才 replace
+            if hasattr(ctx, "__dataclass_fields__"):
+                # 复制 + 若 dataclass 有 current_task_id 字段则填入
+                f_names = {f.name for f in fields(ctx)}
+                if "current_task_id" in f_names:
+                    return replace(ctx, current_task_id=task.id)
+                # 没 current_task_id 字段 → 直接复制 (避免共享 state mutation 风险)
+                return replace(ctx)
+        except Exception:
+            pass
+    return ctx
 
 
 async def run_round(
