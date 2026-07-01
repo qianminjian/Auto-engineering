@@ -45,15 +45,19 @@ _ERROR_CATEGORY_MAP: dict[str, ErrorCategory] = {
     "GUARDRAIL_": ErrorCategory.BUSINESS_ERROR,
     "STAGE_RETRY_": ErrorCategory.BUSINESS_ERROR,
     "GRAPH_RECURSION_LIMIT": ErrorCategory.BUSINESS_ERROR,
-    "TASK_CANCELLED": ErrorCategory.USER_ERROR,  # 用户主动取消归用户错
     "AGENT_REGISTRATION_ERROR": ErrorCategory.USER_ERROR,
     "OUTPUT_DROPPED": ErrorCategory.BUSINESS_ERROR,
     "BUDGET_EXCEEDED": ErrorCategory.USER_ERROR,  # 预算超出归用户错(用户可调整阈值)
 }
 
-# 错误类别 → 退出码
+# 错误码 → 显式退出码覆盖 (v5.0 §PE.6: 130 = SIGINT)
+_ERROR_EXIT_CODE_OVERRIDE: dict[str, int] = {
+    "TASK_CANCELLED": 130,  # v5.0: 用户 SIGINT 取消 → 130 (Unix 惯例)
+}
+
+# 错误类别 → 默认退出码
 _CATEGORY_EXIT_CODE: dict[ErrorCategory, int] = {
-    ErrorCategory.USER_ERROR: 2,
+    ErrorCategory.USER_ERROR: 2,  # v5.0 §PE.6: 1=config_error 留给 preflight, 2=gate_unrecoverable
     ErrorCategory.API_ERROR: 3,
     ErrorCategory.NETWORK_ERROR: 4,
     ErrorCategory.BUSINESS_ERROR: 5,
@@ -67,6 +71,12 @@ def classify_error(error: AEError) -> tuple[ErrorCategory, int]:
         (ErrorCategory, exit_code) 元组.
     """
     code_str = error.code.value if isinstance(error.code, ErrorCode) else str(error.code)
+
+    # v5.0 §PE.6: 显式退出码覆盖 (优先级最高)
+    if code_str in _ERROR_EXIT_CODE_OVERRIDE:
+        # 用错误类别表 (无 → 默认 USER_ERROR) 仅用于分类
+        category = _ERROR_CATEGORY_MAP.get(code_str, ErrorCategory.USER_ERROR)
+        return category, _ERROR_EXIT_CODE_OVERRIDE[code_str]
 
     # 优先精确匹配(覆盖前缀)
     category = _ERROR_CATEGORY_MAP.get(code_str)

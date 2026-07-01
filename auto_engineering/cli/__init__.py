@@ -146,15 +146,42 @@ def dev_loop(
     except AEError as e:
         category, exit_code = classify_error(e)
         prefix = _CATEGORY_FRIENDLY_PREFIX[category]
-        click.echo(f"{prefix} {e.message}", err=True)
-        if e.code == ErrorCode.TASK_CANCELLED:
-            click.echo("Loop drained. Resume with: ae checkpoint resume <id>", err=True)
+        if log_format == "json":
+            import json
+            import uuid
+
+            error_payload = {
+                "status": "failed",
+                "thread_id": uuid.uuid4().hex,
+                "rounds": 0,
+                "verdict": {"level": -1, "level_name": "ERROR", "reason": str(e.message)},
+                "duration_sec": 0.0,
+                "gate_summary": {},
+                "error": {"code": str(e.code.value), "category": category.value, "message": str(e.message)},
+            }
+            click.echo(json.dumps(error_payload, ensure_ascii=False, indent=2))
+        else:
+            click.echo(f"{prefix} {e.message}", err=True)
+            if e.code == ErrorCode.TASK_CANCELLED:
+                click.echo("Loop drained. Resume with: ae checkpoint resume <id>", err=True)
         raise SystemExit(exit_code) from None
 
-    click.echo(
-        f"\n✓ dev-loop complete: status={result.status}, "
-        f"steps={result.total_steps}, checkpoint={result.checkpoint_id}"
-    )
+    if log_format == "json":
+        # v5.0 §B13.2: 6 字段 JSON 契约
+        import json
+
+        click.echo(json.dumps(result.to_json_dict(), ensure_ascii=False, indent=2))
+    else:
+        click.echo(
+            f"\n✓ dev-loop complete: status={result.status}, "
+            f"steps={result.total_steps}, checkpoint={result.checkpoint_id}"
+        )
+
+    # v5.0 exit codes: 0=completed, 2=gate_unrecoverable (max_rounds 走 0, 失败/取消已 raise 走分类码)
+    if result.status == "completed":
+        return  # exit 0
+    # max_rounds / 其他 → exit 0 (达到上限非异常, v2.0 行为兼容)
+    return
 
 
 @main.command()

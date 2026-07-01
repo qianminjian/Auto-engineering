@@ -31,13 +31,23 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 def _run_cli(*args: str, cwd: Path | None = None, timeout: int = 30) -> subprocess.CompletedProcess:
-    """运行 ae CLI 子进程 — 用 sys.executable 走 .venv.
+    """运行 ae CLI 子进程 — 通过 ae 入口点.
 
     Returns:
         CompletedProcess (capture stdout/stderr, returncode).
     """
+    import shutil
+
+    ae_bin = shutil.which("ae")
+    if ae_bin is None:
+        # 退而求其次: 找 .venv/bin/ae
+        venv_ae = REPO_ROOT / ".venv" / "bin" / "ae"
+        if venv_ae.exists():
+            ae_bin = str(venv_ae)
+        else:
+            ae_bin = sys.executable  # 最后退到 python -c
     return subprocess.run(
-        [sys.executable, "-m", "auto_engineering", *args],
+        [ae_bin, *args],
         cwd=str(cwd) if cwd else str(REPO_ROOT),
         capture_output=True,
         text=True,
@@ -160,27 +170,71 @@ class TestDevLoopJSON:
 
     def test_ae_dev_loop_stdout_json_schema(self) -> None:
         """--log-format json 输出必须含 6 字段: status/thread_id/rounds/verdict/duration_sec/gate_summary."""
-        result = _run_cli(
-            "dev-loop",
-            "noop",
-            "--log-format", "json",
-            "--max-rounds", "1",
-        )
+        import os
+
+        env = os.environ.copy()
+        env["ANTHROPIC_API_KEY"] = "test-key-for-contract"
+        env["CLAUDE_CODE"] = "1"  # 跳过 preflight api_key 检查
+        # 在 tmp_path 中构造最小 git 仓库
+        import subprocess
+
+        subprocess.run(["git", "init"], cwd="/tmp", capture_output=True, timeout=10)
+        with __import__("tempfile").TemporaryDirectory() as tmp:
+            tdir = Path(tmp)
+            subprocess.run(["git", "init"], cwd=tdir, capture_output=True, timeout=10)
+            subprocess.run(
+                ["git", "config", "user.email", "test@ae.dev"], cwd=tdir, capture_output=True
+            )
+            subprocess.run(
+                ["git", "config", "user.name", "Test"], cwd=tdir, capture_output=True
+            )
+            (tdir / "README.md").write_text("test")
+            subprocess.run(["git", "add", "."], cwd=tdir, capture_output=True)
+            subprocess.run(
+                ["git", "commit", "-m", "init"], cwd=tdir, capture_output=True
+            )
+            import shutil
+
+            ae_bin = shutil.which("ae") or str(REPO_ROOT / ".venv" / "bin" / "ae")
+            result = subprocess.run(
+                [ae_bin, "dev-loop", "noop", "--log-format", "json", "--max-rounds", "1"],
+                cwd=str(tdir),
+                capture_output=True,
+                text=True,
+                timeout=60,
+                env=env,
+            )
         # 即使 LLM 不可达, JSON 契约必须被尊重
-        # 尝试解析最后一行 JSON
-        json_lines = [ln for ln in result.stdout.splitlines() if ln.strip().startswith("{")]
-        if not json_lines:
-            pytest.fail(f"no JSON in stdout:\n{result.stdout[:500]}")
-        # 找最后一行 JSON
-        last = json_lines[-1]
-        try:
-            data = json.loads(last)
-        except json.JSONDecodeError as e:
-            pytest.fail(f"final line not valid JSON: {e}\n{last[:200]}")
-        # 6 字段验证
-        required = {"status", "thread_id", "rounds", "verdict", "duration_sec", "gate_summary"}
-        missing = required - set(data.keys())
-        assert not missing, f"missing fields: {missing}, got: {set(data.keys())}"
+        # 找含 "status" 字段的多行 JSON block (6 字段契约对象)
+        # 排除 progress log (单行 {"event": ...})
+        json_blocks: list[str] = []
+        depth = 0
+        current: list[str] = []
+        for ln in result.stdout.splitlines():
+            stripped = ln.strip()
+            if stripped.startswith("{") and depth == 0:
+                current = [ln]
+                depth = 1
+            elif depth > 0:
+                current.append(ln)
+                depth += ln.count("{") - ln.count("}")
+                if depth == 0:
+                    json_blocks.append("\n".join(current))
+        if not json_blocks:
+            pytest.fail(f"no JSON block in stdout:\n{result.stdout[:500]}\nstderr={result.stderr[:300]}")
+        # 找最后含 6 字段契约的 block
+        for block in reversed(json_blocks):
+            try:
+                data = json.loads(block)
+            except json.JSONDecodeError:
+                continue
+            if "thread_id" in data and "gate_summary" in data:
+                # 6 字段验证
+                required = {"status", "thread_id", "rounds", "verdict", "duration_sec", "gate_summary"}
+                missing = required - set(data.keys())
+                assert not missing, f"missing fields: {missing}, got: {set(data.keys())}"
+                return
+        pytest.fail(f"no JSON block with 6-field contract in stdout:\n{result.stdout[:500]}")
 
 
 # ============================================================
@@ -246,7 +300,7 @@ class TestExitCodes:
         from auto_engineering.cli.helpers import classify_error
         from auto_engineering.errors import AEError, ErrorCode
 
-        err = AEError("用户取消", code=ErrorCode.TASK_CANCELLED)
+        err = AEError(ErrorCode.TASK_CANCELLED, "用户取消")
         _category, exit_code = classify_error(err)
         assert exit_code == 130, f"expected 130 (SIGINT), got {exit_code}"
 
