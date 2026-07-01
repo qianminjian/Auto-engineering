@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from auto_engineering.gates.base import Gate, Verdict
-from auto_engineering.loop.plan import Task
+from auto_engineering.loop.plan import ConflictError, Task
 from auto_engineering.runtime.cancellation import CancellationToken
 
 if TYPE_CHECKING:
@@ -381,10 +381,94 @@ class Round:
         )
 
 
+# ============================================================
+# v5.0 §B2.12b — DAG 拓扑分层 (Kahn BFS)
+# ============================================================
+
+
+def _topological_layers(tasks: list[Task]) -> list[list[Task]]:
+    """Kahn BFS 分层算法 — 把 task list 拆为可并行的层 (v5.0 §B2.12b).
+
+    每层是入度为 0 的 task 集合, 该层内 task 可同时执行 (asyncio.gather).
+    与 plan.py 中 _topological_levels (DFS 递归 + cache) 并存 —
+    本实现是 Round 内的并行调度入口, 与 Plan 整体拓扑分层用途不同.
+
+    Args:
+        tasks: 任务列表 (每个 Task 含 deps 字段, 引用其他 task.id)
+
+    Returns:
+        list[list[Task]]: 分层结果, 外层顺序 = 拓扑层级, 内层 = 同层并行 task.
+                          空输入 → [].
+
+    Raises:
+        ConflictError: 检测到循环依赖时 (剩余未入层 task = 环内节点).
+                       ConflictError 复用 plan.py 中的文件冲突异常,
+                       携带 cycle 中涉及的 task.id 列表.
+
+    算法 (Kahn BFS):
+        1. 统计每个 task 的入度 (deps 中引用的 task 不在列表中 → 视为 0)
+        2. 反向邻接表: dep → 依赖它的 task (供入度消减时查找)
+        3. 反复找入度 = 0 的 task → 1 层 → 消减其后续 task 入度 → 循环
+        4. 终止: 所有 task 都入层 OR 剩余 task 入度均 > 0 (有环)
+        5. 有环 → 抛 ConflictError(剩余 task.id)
+    """
+    from collections import deque
+
+    if not tasks:
+        return []
+
+    # 索引: id → Task (含本批 task 之外的 dep 视为已满足, 不计入入度)
+    task_map: dict[str, Task] = {t.id: t for t in tasks}
+
+    # 计算入度: 仅统计 deps 中引用本批 task 的部分
+    in_degree: dict[str, int] = {t.id: 0 for t in tasks}
+    # 反向邻接表: dep_id → 依赖 dep_id 的 task.id 列表
+    dependents: dict[str, list[str]] = {t.id: [] for t in tasks}
+    for task in tasks:
+        for dep_id in task.deps:
+            if dep_id in task_map:
+                in_degree[task.id] += 1
+                dependents[dep_id].append(task.id)
+
+    layers: list[list[Task]] = []
+    # 初始: 入度 0 的所有 task
+    current_layer_ids = deque(sorted(tid for tid, deg in in_degree.items() if deg == 0))
+    # 记录已入层的 task id (用于剩余环检测)
+    in_layer: set[str] = set()
+
+    while current_layer_ids:
+        # 当前层: 按 id 排序 (确定性输出, 便于测试)
+        layer = [task_map[tid] for tid in current_layer_ids]
+        layers.append(layer)
+        in_layer.update(current_layer_ids)
+        # 计算下一层: 本层每个 task 的 dependents 中, 消减入度后为 0 的
+        next_layer_ids: deque[str] = deque()
+        for tid in current_layer_ids:
+            for child_id in dependents[tid]:
+                in_degree[child_id] -= 1
+                if in_degree[child_id] == 0:
+                    next_layer_ids.append(child_id)
+        # 排序保持确定性
+        next_layer_ids = deque(sorted(next_layer_ids))
+        current_layer_ids = next_layer_ids
+
+    # 环检测: 若有 task 未入层 → 存在环
+    remaining = [tid for tid in task_map if tid not in in_layer]
+    if remaining:
+        # 排序保证可重复性
+        remaining_sorted = sorted(remaining)
+        raise ConflictError(
+            conflicts=[f"cycle dependency: {tid}" for tid in remaining_sorted]
+        )
+
+    return layers
+
+
 __all__ = [
     "Round",
     "RoundResult",
     "TaskExecutor",
     "TaskOutcome",
+    "_topological_layers",
     "run_round",
 ]
