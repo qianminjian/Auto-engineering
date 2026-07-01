@@ -393,8 +393,19 @@ def _parse_git_numstat(project_root: Path | None) -> tuple[int, int]:
     return (total_added, total_removed)
 
 
-async def _run_gates(gates: list[Gate], project_root: Path) -> dict[str, Verdict]:
+async def _run_gates(
+    gates: list[Gate],
+    project_root: Path,
+    stage: str = "",
+    contracts: dict | None = None,
+) -> dict[str, Verdict]:
     """跑 Gate 列表, 返回 {gate_name: Verdict} dict.
+
+    v5.0 §B6.1+§B6.2 — 按 stage 过滤 Gate:
+        - 若 stage 非空, 仅跑 g.applies_to_stages 含 stage 的 Gate
+        - 若 stage 为空, 跑所有 Gate (向后兼容, 默认行为)
+
+    v5.0 §B6.1a — contracts 透传: 给每个 Gate.run() 传 contracts 参数 (ContractGate 用).
 
     Gate 异常被吞, 写入 Verdict(passed=False, message=str(exc)).
     与 Orchestrator._run_gates 不同: 这里始终写入 dict (含失败 entry),
@@ -408,9 +419,18 @@ async def _run_gates(gates: list[Gate], project_root: Path) -> dict[str, Verdict
     """
     results: dict[str, Verdict] = {}
 
+    # v5.0 §B6.1+§B6.2: stage 过滤 — 按 applies_to_stages 决定哪些 Gate 跑
+    if stage:
+        gates_to_run = [g for g in gates if stage in g.applies_to_stages]
+    else:
+        gates_to_run = list(gates)
+
     async def _run_one(gate: Gate) -> tuple[str, Verdict]:
         try:
-            verdict = await asyncio.to_thread(gate.run, project_root)
+            # v5.0 §B6.1a: 透传 contracts 给 Gate.run()
+            verdict = await asyncio.to_thread(
+                gate.run, project_root, contracts
+            )
         except Exception as exc:
             verdict = Verdict.failed(
                 f"Gate {gate.name} 异常: {exc}",
@@ -419,8 +439,10 @@ async def _run_gates(gates: list[Gate], project_root: Path) -> dict[str, Verdict
         return gate.name, verdict
 
     # 并行跑 (D-P2-3: return_exceptions=True 防御)
+    if not gates_to_run:
+        return results
     gathered = await asyncio.gather(
-        *[_run_one(g) for g in gates], return_exceptions=True
+        *[_run_one(g) for g in gates_to_run], return_exceptions=True
     )
     for item in gathered:
         if isinstance(item, BaseException):

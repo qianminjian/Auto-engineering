@@ -125,3 +125,43 @@ class Gate:
     def check(self, stage: Any, context: Any) -> Verdict:
         """v2.0 兼容接口. 返回 pass 占位(实际 v2.0 用 GuardrailResult)."""
         return Verdict.passed("legacy v2.0 path", gate_name=self.name)
+
+
+# v5.0 §B6.1+§B6.2 — DEFAULT_GATES 入口
+# 7 道 Gate 的默认实例列表 (供 Orchestrator/run_gates 直接 import)
+# 顺序: safety → lint → type_check → contract → test → coverage → build
+#
+# 在 base.py 末尾惰性构造 (避免循环 import):
+#   - 直接实例化依赖子模块 (lint/type_check/...), 须放在所有 Gate 类已 import 后
+#   - 测试也直接 from auto_engineering.gates.base import DEFAULT_GATES
+DEFAULT_GATES: list["Gate"] = []
+
+
+def _build_default_gates() -> list["Gate"]:
+    """v5.0 §B6.1+§B6.2 — 构造 7 道 Gate 的默认实例列表.
+
+    惰性加载: 在 base.py 末尾调用, 此时子模块 (lint/type_check/...) 已被 import.
+    顺序: safety → lint → type_check → contract → test → coverage → build
+    """
+    # 局部 import 避免模块加载顺序问题
+    from auto_engineering.gates.build import BuildGate
+    from auto_engineering.gates.contract import ContractGate
+    from auto_engineering.gates.coverage import CoverageGate
+    from auto_engineering.gates.lint import LintGate
+    from auto_engineering.gates.safety import SafetyGate
+    from auto_engineering.gates.test import TestGate
+    from auto_engineering.gates.type_check import TypeCheckGate
+
+    return [
+        SafetyGate(use_gitleaks=False),
+        LintGate(),
+        TypeCheckGate(),
+        ContractGate(),
+        TestGate(),
+        CoverageGate(),
+        BuildGate(),
+    ]
+
+
+# 模块加载时立即构建 (确保 from .base import DEFAULT_GATES 可用)
+DEFAULT_GATES = _build_default_gates()
