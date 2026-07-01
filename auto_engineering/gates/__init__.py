@@ -1,11 +1,12 @@
 """v2.0 Phase 04 — 7 道 Gate (v2.0 production path).
 
 v2.4 P0-FINAL: v2.0 builtin/guardrail 已移除.
+v5.0 §B6.1: 新增 GateVerdict (Verdict 别名, 兼容 1 版本).
 """
 
 from __future__ import annotations
 
-from .base import Gate, GateResult, Verdict
+from .base import Gate, GateResult, GateVerdict, Verdict
 from .build import BuildGate
 from .contract import ContractGate
 from .coverage import CoverageGate
@@ -33,6 +34,7 @@ __all__ = [
     "CoverageGate",
     "Gate",
     "GateResult",
+    "GateVerdict",
     "LintGate",
     "SafetyGate",
     "TestGate",

@@ -44,13 +44,13 @@ class GateResult:
 
 
 # ============================================================
-# v2.0 新接口: Verdict
+# v2.0 新接口: GateVerdict (v5.0 §B6.1 — Verdict → GateVerdict 重命名)
 # ============================================================
 
 
 @dataclass
-class Verdict:
-    """Gate 检查结果.
+class GateVerdict:
+    """Gate 检查结果 (v5.0 §B6.1 重命名自 Verdict).
 
     Attributes:
         gate_name: Gate 名称(由 Gate 实例填入, 调用方无需传)
@@ -62,17 +62,23 @@ class Verdict:
     passed: bool = False
     message: str = ""
 
-    # 注: passed 字段与 Verdict.passed() 类方法同名是 dataclass 不可避免的副作用,
-    # 通过 @classmethod 访问避免歧义. 字段访问走 v.passed, 方法访问走 Verdict.passed().
+    # 注: passed 字段与 GateVerdict.passed() 类方法同名是 dataclass 不可避免的副作用,
+    # 通过 @classmethod 访问避免歧义. 字段访问走 v.passed, 方法访问走 GateVerdict.passed().
     @classmethod
-    def passed(cls, msg: str = "", gate_name: str = "") -> Verdict:  # noqa: F811
-        """构造一个通过的 Verdict."""
+    def passed(cls, msg: str = "", gate_name: str = "") -> GateVerdict:  # noqa: F811
+        """构造一个通过的 GateVerdict."""
         return cls(gate_name=gate_name, passed=True, message=msg)
 
     @classmethod
-    def failed(cls, msg: str, gate_name: str = "") -> Verdict:
-        """构造一个失败的 Verdict."""
+    def failed(cls, msg: str, gate_name: str = "") -> GateVerdict:
+        """构造一个失败的 GateVerdict."""
         return cls(gate_name=gate_name, passed=False, message=msg)
+
+
+# v5.0 §B6.1 向后兼容: 保留 Verdict 作为 GateVerdict 的别名 (1 版本过渡期)
+# 所有引用 Verdict 的代码继续工作, 等下次大版本可彻底移除
+Verdict = GateVerdict
+__all__ = ["GateVerdict", "Verdict"]  # noqa: F822 (Verdict 通过 module __all__ 暴露)
 
 
 class Gate:
