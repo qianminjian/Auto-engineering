@@ -360,6 +360,10 @@ class Plan:
 
         设计文档 §3.2: 任务拆分五原则 — 每个 task 必须有明确目标、期望输出、合法角色.
         这是"契约优先"原则 (Orchestrator 调度时知道每个 task 要什么).
+
+        v5.0 §IL.3: tasks.yml 的 init_metadata (template_source / generated_by)
+        和 B1.3 Task 模型未定义的其他字段 (如 future 字段) 静默忽略 — 仅
+        记录在 __dict__ 扩展属性中, 不参与 contract 校验 (forward-compat).
         """
         for task in self.tasks:
             if not task.title or not task.title.strip():
@@ -376,6 +380,10 @@ class Plan:
                     f"Task '{task.id}': role '{task.role}' 不合法 "
                     f"(必须为 {sorted(VALID_TASK_ROLES)} 之一)"
                 )
+            # v5.0 §IL.3: init_metadata / 未知字段静默忽略
+            # 仅 dataclass 定义的字段参与校验, __dict__ 扩展属性 (init_metadata
+            # + future 字段) 不消费, 不阻断, 保持 forward-compat
+            # (无显式 action — dataclass 字段 + B1.3 校验已覆盖)
 
     def parallelism_groups(self) -> list[list[str]]:
         """返回并行组列表: 外层按层序, 内层是同层 task id 列表.
