@@ -1,0 +1,448 @@
+"""Tests for AnthropicProvider — Phase 3 C1.
+
+TDD protocol: 写测试 → 确认 FAIL → 写实现 → 确认 PASS.
+
+设计参考: design/LOOP-DEVELOPMENT-PLAN.md Phase 3 文件 18.
+
+测试策略: mock anthropic.Anthropic 客户端,验证 create_message 返回
+LLMResponse 结构化数据. 不发真实 API 调用（mock-friendly per
+engineering-practices.md §1.2).
+"""
+
+from __future__ import annotations
+
+from unittest.mock import MagicMock, patch
+
+import anthropic
+import pytest
+
+
+class TestLLMUsageDataclass:
+    """LLMUsage 数据类 — 记录 token 用量."""
+
+    def test_usage_default_zeros(self):
+        from auto_engineering.llm.anthropic_provider import LLMUsage
+
+        u = LLMUsage()
+        assert u.input_tokens == 0
+        assert u.output_tokens == 0
+
+    def test_usage_explicit_values(self):
+        from auto_engineering.llm.anthropic_provider import LLMUsage
+
+        u = LLMUsage(input_tokens=100, output_tokens=50)
+        assert u.input_tokens == 100
+        assert u.output_tokens == 50
+
+    def test_total_tokens_sum(self):
+        from auto_engineering.llm.anthropic_provider import LLMUsage
+
+        u = LLMUsage(input_tokens=120, output_tokens=80)
+        assert u.total_tokens == 200
+
+
+class TestLLMResponseDataclass:
+    """LLMResponse 数据类 — API 调用结果."""
+
+    def test_response_required_fields(self):
+        from auto_engineering.llm.anthropic_provider import LLMResponse, LLMUsage
+
+        usage = LLMUsage(input_tokens=10, output_tokens=20)
+        r = LLMResponse(content="hello", model="claude-test", usage=usage)
+        assert r.content == "hello"
+        assert r.model == "claude-test"
+        assert r.usage.input_tokens == 10
+
+
+class TestAnthropicProvider:
+    """AnthropicProvider — 封装 anthropic SDK 的客户端."""
+
+    def test_create_message_returns_llm_response(self):
+        """RED: provider.create_message 必须返回 LLMResponse (含 content/usage/model)."""
+        from auto_engineering.llm.anthropic_provider import (
+            AnthropicProvider,
+            LLMResponse,
+        )
+
+        # Mock anthropic.Anthropic client
+        mock_client = MagicMock()
+        mock_response = MagicMock()
+        text_block = MagicMock()
+        text_block.type = "text"
+        text_block.text = "hi there"
+        mock_response.content = [text_block]
+        mock_response.model = "claude-test-model"
+        mock_response.stop_reason = "end_turn"
+        mock_response.usage.input_tokens = 5
+        mock_response.usage.output_tokens = 3
+        mock_client.messages.create.return_value = mock_response
+
+        provider = AnthropicProvider(client=mock_client)
+        result = provider.create_message(
+            model="claude-test-model",
+            max_tokens=100,
+            system="you are a helper",
+            messages=[{"role": "user", "content": "say hi"}],
+        )
+
+        assert isinstance(result, LLMResponse)
+        assert result.content == "hi there"
+        assert result.model == "claude-test-model"
+        assert result.usage.input_tokens == 5
+        assert result.usage.output_tokens == 3
+
+    def test_create_message_passes_kwargs_to_sdk(self):
+        """验证 model/max_tokens/system/messages 都传给 SDK."""
+        from auto_engineering.llm.anthropic_provider import AnthropicProvider
+
+        mock_client = MagicMock()
+        mock_response = MagicMock()
+        text_block = MagicMock()
+        text_block.type = "text"
+        text_block.text = "x"
+        mock_response.content = [text_block]
+        mock_response.model = "m"
+        mock_response.stop_reason = "end_turn"
+        mock_response.usage.input_tokens = 0
+        mock_response.usage.output_tokens = 0
+        mock_client.messages.create.return_value = mock_response
+
+        provider = AnthropicProvider(client=mock_client)
+        provider.create_message(
+            model="claude-x",
+            max_tokens=2048,
+            system="sys-prompt",
+            messages=[{"role": "user", "content": "q"}],
+        )
+
+        mock_client.messages.create.assert_called_once_with(
+            model="claude-x",
+            max_tokens=2048,
+            system="sys-prompt",
+            messages=[{"role": "user", "content": "q"}],
+        )
+
+    def test_create_message_default_client_uses_api_key(self):
+        """不传 client 时,从环境变量 ANTHROPIC_API_KEY 构造默认 client."""
+        from auto_engineering.llm.anthropic_provider import AnthropicProvider
+
+        mock_anthropic_class = MagicMock()
+        with patch(
+            "auto_engineering.llm.anthropic_provider.anthropic.Anthropic",
+            mock_anthropic_class,
+        ):
+            provider = AnthropicProvider(api_key="sk-test-123")
+            # 不实际调用 create_message,只验证 client 构造路径
+            mock_anthropic_class.assert_called_once_with(api_key="sk-test-123")
+            assert provider is not None
+
+
+class TestLLMResponseToolFields:
+    """LLMResponse 扩展字段 — 工具调用支持."""
+
+    def test_response_default_stop_reason(self):
+        """LLMResponse.stop_reason 默认 'end_turn'."""
+        from auto_engineering.llm.anthropic_provider import LLMResponse, LLMUsage
+
+        r = LLMResponse(content="x", model="m", usage=LLMUsage())
+        assert r.stop_reason == "end_turn"
+        assert r.tool_use_blocks == []
+
+    def test_response_with_tool_use_blocks(self):
+        """LLMResponse 可带 tool_use_blocks."""
+        from auto_engineering.llm.anthropic_provider import LLMResponse, LLMUsage
+
+        blocks = [{"id": "toolu_1", "name": "read_file", "input": {"path": "x.py"}}]
+        r = LLMResponse(
+            content="",
+            model="m",
+            usage=LLMUsage(),
+            stop_reason="tool_use",
+            tool_use_blocks=blocks,
+        )
+        assert r.stop_reason == "tool_use"
+        assert len(r.tool_use_blocks) == 1
+        assert r.tool_use_blocks[0]["name"] == "read_file"
+
+
+class TestAnthropicProviderToolsSupport:
+    """AnthropicProvider 支持 tools 参数 + tool_use_blocks 解析."""
+
+    def test_create_message_accepts_tools_kwarg(self):
+        """create_message 接受 tools 参数并传给 SDK."""
+        from auto_engineering.llm.anthropic_provider import AnthropicProvider
+
+        mock_client = MagicMock()
+        mock_response = MagicMock()
+        mock_response.content = [MagicMock(text="x")]
+        mock_response.model = "m"
+        mock_response.usage.input_tokens = 0
+        mock_response.usage.output_tokens = 0
+        mock_client.messages.create.return_value = mock_response
+
+        provider = AnthropicProvider(client=mock_client)
+        tools = [{"name": "read_file", "description": "Read a file"}]
+        provider.create_message(
+            model="m",
+            max_tokens=100,
+            system="sys",
+            messages=[{"role": "user", "content": "q"}],
+            tools=tools,
+        )
+        call_kwargs = mock_client.messages.create.call_args.kwargs
+        assert "tools" in call_kwargs
+        assert call_kwargs["tools"] == tools
+
+    def test_create_message_parses_tool_use_blocks(self):
+        """SDK 返回 tool_use block 时, LLMResponse.tool_use_blocks 包含解析结果."""
+        from auto_engineering.llm.anthropic_provider import AnthropicProvider
+
+        mock_client = MagicMock()
+        mock_response = MagicMock()
+        # mock SDK response: 包含 text block + tool_use block
+        text_block = MagicMock()
+        text_block.type = "text"
+        text_block.text = "I'll read the file"
+        tool_use_block = MagicMock()
+        tool_use_block.type = "tool_use"
+        tool_use_block.id = "toolu_abc123"
+        tool_use_block.name = "read_file"
+        tool_use_block.input = {"path": "x.py"}
+        mock_response.content = [text_block, tool_use_block]
+        mock_response.model = "m"
+        mock_response.stop_reason = "tool_use"
+        mock_response.usage.input_tokens = 10
+        mock_response.usage.output_tokens = 5
+        mock_client.messages.create.return_value = mock_response
+
+        provider = AnthropicProvider(client=mock_client)
+        result = provider.create_message(
+            model="m",
+            max_tokens=100,
+            system="sys",
+            messages=[{"role": "user", "content": "q"}],
+        )
+        assert result.stop_reason == "tool_use"
+        assert result.content == "I'll read the file"
+        assert len(result.tool_use_blocks) == 1
+        assert result.tool_use_blocks[0]["id"] == "toolu_abc123"
+        assert result.tool_use_blocks[0]["name"] == "read_file"
+        assert result.tool_use_blocks[0]["input"] == {"path": "x.py"}
+
+    def test_create_message_text_only_response(self):
+        """SDK 返回纯 text block (无 tool_use) 时, tool_use_blocks 为空."""
+        from auto_engineering.llm.anthropic_provider import AnthropicProvider
+
+        mock_client = MagicMock()
+        mock_response = MagicMock()
+        text_block = MagicMock()
+        text_block.type = "text"
+        text_block.text = "Final answer"
+        mock_response.content = [text_block]
+        mock_response.model = "m"
+        mock_response.stop_reason = "end_turn"
+        mock_response.usage.input_tokens = 5
+        mock_response.usage.output_tokens = 3
+        mock_client.messages.create.return_value = mock_response
+
+        provider = AnthropicProvider(client=mock_client)
+        result = provider.create_message(
+            model="m",
+            max_tokens=100,
+            system="sys",
+            messages=[],
+        )
+        assert result.stop_reason == "end_turn"
+        assert result.content == "Final answer"
+        assert result.tool_use_blocks == []
+
+
+class TestAnthropicProviderKwargs:
+    """AnthropicProvider.create_message 参数扩展 (model/max_tokens/system/messages/tools)."""
+
+    def test_create_message_passes_all_kwargs(self):
+        """验证 model/max_tokens/system/messages/tools 都传给 SDK."""
+        from auto_engineering.llm.anthropic_provider import AnthropicProvider
+
+        mock_client = MagicMock()
+        mock_response = MagicMock()
+        mock_response.content = [MagicMock(text="x")]
+        mock_response.model = "m"
+        mock_response.stop_reason = "end_turn"
+        mock_response.usage.input_tokens = 0
+        mock_response.usage.output_tokens = 0
+        mock_client.messages.create.return_value = mock_response
+
+        provider = AnthropicProvider(client=mock_client)
+        tools = [{"name": "x"}]
+        provider.create_message(
+            model="claude-x",
+            max_tokens=2048,
+            system="sys-prompt",
+            messages=[{"role": "user", "content": "q"}],
+            tools=tools,
+        )
+        mock_client.messages.create.assert_called_once_with(
+            model="claude-x",
+            max_tokens=2048,
+            system="sys-prompt",
+            messages=[{"role": "user", "content": "q"}],
+            tools=tools,
+        )
+
+
+# ============================================================
+# P0-4: LLM retry + rate limit handling
+# ============================================================
+
+
+class TestAnthropicProviderRetry:
+    """P0-4: 生产 retry 策略 — RateLimitError / APIConnectionError 重试.
+
+    v2.5: 每个测试都 monkeypatch `_BACKOFF_FACTOR=0` 跳过真实 sleep,
+    避免指数退避拖慢测试 (max_retries=3 走完需要 1+2+4=7 秒).
+    """
+
+    def test_retries_on_rate_limit_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """RateLimitError → 重试 → 成功 → 返回 LLMResponse (RED: 生产 retry)."""
+        from auto_engineering.llm import anthropic_provider
+        from auto_engineering.llm.anthropic_provider import AnthropicProvider
+        monkeypatch.setattr(anthropic_provider.AnthropicProvider, "_BACKOFF_FACTOR", 0.0)
+
+        mock_client = MagicMock()
+        success_response = _make_text_response("OK")
+        mock_client.messages.create.side_effect = [
+            _make_rate_limit_error(),
+            success_response,
+        ]
+
+        provider = AnthropicProvider(client=mock_client)
+        response = provider.create_message(
+            model="claude-x",
+            max_tokens=100,
+            system="sys",
+            messages=[{"role": "user", "content": "q"}],
+        )
+        assert response.content == "OK"
+        assert mock_client.messages.create.call_count == 2
+
+    def test_retries_on_connection_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """APIConnectionError → 重试 → 成功."""
+        from auto_engineering.llm import anthropic_provider
+        from auto_engineering.llm.anthropic_provider import AnthropicProvider
+        monkeypatch.setattr(anthropic_provider.AnthropicProvider, "_BACKOFF_FACTOR", 0.0)
+
+        mock_client = MagicMock()
+        success_response = _make_text_response("OK")
+        mock_client.messages.create.side_effect = [
+            _make_connection_error(),
+            success_response,
+        ]
+
+        provider = AnthropicProvider(client=mock_client)
+        response = provider.create_message(
+            model="claude-x",
+            max_tokens=100,
+            system="sys",
+            messages=[{"role": "user", "content": "q"}],
+        )
+        assert response.content == "OK"
+        assert mock_client.messages.create.call_count == 2
+
+    def test_raises_after_max_retries(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """连续 N 次 RateLimitError → 抛 RateLimitError (不无限重试)."""
+        from auto_engineering.llm import anthropic_provider
+        from auto_engineering.llm.anthropic_provider import AnthropicProvider
+        monkeypatch.setattr(anthropic_provider.AnthropicProvider, "_BACKOFF_FACTOR", 0.0)
+
+        mock_client = MagicMock()
+        mock_client.messages.create.side_effect = _make_rate_limit_error()
+
+        provider = AnthropicProvider(client=mock_client, max_retries=3)
+        with pytest.raises(Exception) as exc_info:
+            provider.create_message(
+                model="claude-x",
+                max_tokens=100,
+                system="sys",
+                messages=[{"role": "user", "content": "q"}],
+            )
+        # 应在 ~4 次后失败 (1 原始 + 3 重试)
+        assert mock_client.messages.create.call_count <= 5
+        assert "rate" in str(exc_info.value).lower() or "limit" in str(exc_info.value).lower()
+
+    def test_does_not_retry_on_non_retryable_error(self) -> None:
+        """非重试错误 (如 ValueError) → 立即抛出, 不重试."""
+        from auto_engineering.llm.anthropic_provider import AnthropicProvider
+
+        mock_client = MagicMock()
+        mock_client.messages.create.side_effect = ValueError("bad input")
+
+        provider = AnthropicProvider(client=mock_client)
+        with pytest.raises(ValueError):
+            provider.create_message(
+                model="claude-x",
+                max_tokens=100,
+                system="sys",
+                messages=[{"role": "user", "content": "q"}],
+            )
+        # 只调用 1 次 (不重试)
+        assert mock_client.messages.create.call_count == 1
+
+    def test_retry_respects_max_retries_param(self) -> None:
+        """max_retries=0 → 不重试, 单次失败立即抛."""
+        from auto_engineering.llm.anthropic_provider import AnthropicProvider
+
+        mock_client = MagicMock()
+        mock_client.messages.create.side_effect = _make_rate_limit_error()
+
+        provider = AnthropicProvider(client=mock_client, max_retries=0)
+        with pytest.raises(Exception):
+            provider.create_message(
+                model="claude-x",
+                max_tokens=100,
+                system="sys",
+                messages=[{"role": "user", "content": "q"}],
+            )
+        assert mock_client.messages.create.call_count == 1
+
+
+# ============================================================
+# Helpers for retry tests
+# ============================================================
+
+
+def _make_text_response(text: str = "OK") -> MagicMock:
+    """构造一个 mock 的 Anthropic 响应 (text only)."""
+    response = MagicMock()
+    response.content = [MagicMock(type="text", text=text)]
+    response.model = "claude-x"
+    response.usage = MagicMock(input_tokens=10, output_tokens=5)
+    response.stop_reason = "end_turn"
+    return response
+
+
+def _make_rate_limit_error() -> Exception:
+    """构造一个 anthropic.RateLimitError 异常.
+
+    模拟 SDK 真实行为: RateLimitError 是 APIStatusError 子类,
+    有 status_code=429, response.headers.
+    """
+    import anthropic
+
+    mock_response = MagicMock()
+    mock_response.status_code = 429
+    mock_response.headers = {"retry-after": "1"}
+    return anthropic.RateLimitError(
+        message="Rate limit exceeded",
+        response=mock_response,
+        body=None,
+    )
+
+
+def _make_connection_error() -> Exception:
+    """构造一个 anthropic.APIConnectionError 异常."""
+    import anthropic
+
+    return anthropic.APIConnectionError(request=MagicMock())
