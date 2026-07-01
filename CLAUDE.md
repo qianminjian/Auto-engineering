@@ -26,7 +26,7 @@
 **纪律：**
 
 - 探索 ≠ 批量：可以探索，但限制单次 / 并行量级
-- 优先 Grep 定位 → 50-200 行 Read → 立即丢弃（三步法，见 `memory/loop-dev-code-reference-rule`）
+- 优先 Grep 定位 → 50-200 行 Read → 立即丢弃（三步法）
 - 不并行触发多 subagent 全量扫描 `$AE_REFS_DIR/`（事故根因）
 
 **已迁出项目根**（`.gitignore` 保留防御行 + `pyrightconfig.json` 已移除 exclude）。
@@ -39,57 +39,55 @@
 
 ## 项目信息
 
-- 名称：Auto-Engineering
-- 类型：Python CLI 应用 — 团队级 Loop 工程 + 多 Agent 协作
-- 版本：v2.0（v1.0 init/dev-loop 基线 + v1.1 修复 + v2.0 多 Agent 并发）
+- 名称：Init-Engineering
+- 类型：**Agent Skill** — 在 Claude Code agent 里以 skill 模式运行的项目环境初始化工具
+- 版本：v5.0（聚焦 Init Engineering，Loop 已裁剪）
 - 创建日期：2026-06-23
+- 更新日期：2026-06-30
 
 ## 项目性质
 
-本项目为 **Python 应用**，非 Claude Code Skill。使用 Claude API（Anthropic SDK）调用 LLM，Python 控制执行流。
+本项目为 **Claude Code Skill**，在 agent 里调用，为 agent 工作流提供项目环境初始化能力。
 
-核心依赖：`anthropic`、`click`、`pydantic`、`asyncio`
+两种初始化模式：
+1. **存量项目**：通过代码分析自动识别项目类型、依赖、配置，自动化初始化
+2. **新项目**：向导式询问确认方向，生成定制化项目骨架
+
+核心依赖：`click`、`pydantic`、`asyncio`、`jinja2`、`pathspec`
 
 ## 架构
 
 ```
-v1.0 主路径 (engine + agents + tools)            v2.0 增量 (loop + gates)
-┌──────────────────────────────┐     ┌──────────────────────────────────┐
-│ engine/loop.py                │     │ loop/                             │
-│   while True:                 │     │   orchestrator.py  (主循环)       │
-│     tick()                    │     │   round.py         (asyncio.gather)│
-│     agent.execute() ──────────┼────→│   plan.py          (Task DAG)     │
-│     gates.check()             │     │   state.py         (Channel 系统) │
-│     after_tick()              │     │   checkpoint.py    (SQLite 持久化)│
-└──────────────────────────────┘     │   convergence.py   (4 级判定)     │
-         │                            └──────────────┬───────────────────┘
-         ▼                                            ▼
-┌──────────────────────────────┐     ┌──────────────────────────────────┐
-│ agents/                       │     │ gates/                            │
-│   architect.py                │     │   base.py (Gate 基类)             │
-│   developer.py                │     │   safety.py / lint.py / type_check│
-│   critic.py                   │     │   test.py / coverage.py / build.py │
-└──────────────────────────────┘     │   contract.py (占位, 单 Agent 跳过)│
-         │                            └──────────────────────────────────┘
-         ▼
-┌──────────────────────────────┐
-│ tools/ + runtime/             │
-│   file/bash/git/test_tools   │
-│   AgentRuntime + MockRuntime │
-└──────────────────────────────┘
+Init-Engineering
+├── init/                          # 初始化引擎核心
+│   ├── answers.py                 # AnswersMap（答案持久化）
+│   ├── config_loader.py          # 配置加载器
+│   ├── config_types.py           # 配置类型定义
+│   ├── config.py                 # InitConfig 配置
+│   ├── detector.py               # 项目类型检测器
+│   ├── errors.py                 # init 专用错误
+│   ├── hooks.py                  # 钩子执行器
+│   ├── prompts.py                # 交互式问答 prompts
+│   ├── renderer.py               # 模板渲染器
+│   ├── scaffold_hooks.py         # 脚手架钩子
+│   ├── scaffold_phases.py       # 脚手架阶段
+│   ├── scaffold_render.py        # 脚手架渲染
+│   ├── scaffold.py               # 脚手架生成器
+│   └── templates/                 # 模板文件（43 个）
+├── config/                        # 共享配置
+│   ├── environment.py            # ProjectEnvironment（.ae-answers.yml 解析）
+│   └── settings.py               # Settings（环境变量）
+├── cli/                          # CLI 入口
+│   └── __init__.py              # Click 命令（init/status）
+├── skill.py                     # Agent Skill 入口
+├── errors.py                     # 共享错误定义（AEError/ErrorCode）
+└── __init__.py                   # 包入口
 ```
 
-> **v2.0 关键变化**：在 v1.0 基础上**新增** loop/ + gates/ 子系统（不删除 engine/runtime/tools）— 多 Agent asyncio.gather 并发 + 7 道质量门 + Channel 状态系统 + SQLite Checkpoint 持久化 + 4 级收敛判定。详见 `design/v2.0-Design-Loop.md`。
-
-## 参考源码
-
-参考源码已迁出项目根。完整路径：`~/Documents/06-Mi-Model-Rule/历史项目或资料备份/auto-eng/references/`（下文 `$AE_REFS_DIR/` 即此路径）。
+**参考框架：**
 
 | 框架 | 路径 | 核心文件 | 用途 |
 |------|------|---------|------|
-| LangGraph | `$AE_REFS_DIR/langgraph/` | `pregel/_loop.py`, `pregel/_algo.py`, `graph/state.py` | Loop 引擎参考 |
-| AutoGen | `$AE_REFS_DIR/autogen/` | `_single_threaded_agent_runtime.py` | Agent 运行时参考 |
-| CrewAI | `$AE_REFS_DIR/crewai/` | `crew.py`, `task.py` | 任务编排参考 |
 | Copier | `$AE_REFS_DIR/copier/` | `_main.py`(Worker), `_user_data.py`(Question/AnswersMap) | init 脚手架参考 |
 | Cookiecutter | `$AE_REFS_DIR/cookiecutter/` | `generate.py`, `prompt.py`, `main.py` | init 模板渲染参考 |
 | Yeoman | `$AE_REFS_DIR/yeoman/` | `lib/routes/` | init 组合模式参考 |
@@ -100,31 +98,25 @@ v1.0 主路径 (engine + agents + tools)            v2.0 增量 (loop + gates)
 |------|------|---------|
 | `design/BEACON.md` | 设计基线（目标/范围/决策/当前状态） | 任何设计讨论时先读 |
 | `design/INDEX.md` | 文档索引（含合并日志/归档清单） | 检索文档时 |
-| `design/v1.0-Design-Shared.md` | 共享架构、CLI 设计、共享契约 | v1.0/v1.1 设计讨论时 |
-| `design/v1.0-Design-Init.md` | init 子系统完整设计 + 实现偏差审计（§1.7） | 开发 `ae init` 时 |
-| `design/v1.0-Design-Loop.md` | dev-loop v1.0 设计（v3.0 优化版，~1700 行） | 开发 v1.0 主路径时 |
+| `design/v5.0-Design-Init.md` | v5.0 Init Engineering 完整设计 | 开发 init 子系统时 |
+| `design/v1.0-Design-Init.md` | v1.0 init 子系统设计 + 实现偏差审计 | 开发 `ae init` 时 |
 | `design/v1.0-Design-Templates.md` | 43 个模板文件 + 8 个 ae-template.yml | 实现 `init/templates/` 时 |
-| `design/v1.1-Audit-Report.md` | 架构审计报告（P0-P2 + 3 附录） | 审计/回归时 |
-| `design/v1.1-Plan-Dev.md` | 整合开发计划（问题清单 + Phase 0-5） | v1.1 计划追溯时 |
-| `design/v2.0-Analysis-Loop.md` | v2.0 多 Agent 并发架构分析（**§八 删除项已取消**） | v2.0 设计推理时 |
-| `design/v2.0-Design-Loop.md` | v2.0 dev-loop 设计基线（基于 v2.0 实际落地） | 开发 v2.0 loop/ + gates/ 时 |
+| `design/his_bak/v1.0-Design-Shared.md` | 共享架构、CLI 设计、共享契约 | Init/Loop 共享契约参考 |
 
 ## 核心命令
 
 ```bash
-# v1.0 主路径（保留）
-ae init <project> --type <type>           # 项目环境初始化
-ae dev-loop <requirement>                 # 单需求开发循环（v1.0 engine）
-ae status                                 # 当前进度（v2.0 增强显示 LoopState）
+# Agent Skill 模式
+ae init                              # 新项目：向导式初始化
+ae init --analyze <path>            # 存量项目：代码分析 + 自动初始化
 
-# v2.0 增量
-ae checkpoint v2 list [--round <n>]       # 列 v2 SQLite checkpoints
-ae checkpoint v2 show <id>                # 看 v2 checkpoint 详情
-ae checkpoint v2 delete <id>              # 删 v2 checkpoint
-ae checkpoint v2 resume <id>              # 从 v2 checkpoint 恢复
+# CLI 模式
+ae init <project> --type <type>     # 项目类型：app-service/cli/library/package
+ae init --list-types                # 列出支持的项目类型
+ae init --list-templates            # 列出可用模板
 
-# v1.0 checkpoint（旧路径兼容）
-ae checkpoint list|show|delete|resume     # 旧 JSON 文件 checkpoint
+# 配置
+ae init-config                      # 查看/编辑初始化配置
 ```
 
 ## atdo 开发过程基本要求（2026-06-30 用户确立）
@@ -166,6 +158,5 @@ ae checkpoint list|show|delete|resume     # 旧 JSON 文件 checkpoint
 
 - tests/ 下测试，覆盖率 ≥ 80%
 - 测试运行遵守 `@.claude/rules/pytest-memory-management.md`（16G 内存约束）
-- **Agent tool spawn 遵守 `@.claude/rules/agent-spawn-timeout.md`（3 层超时防护）**
 - 参考源码（`$AE_REFS_DIR/`）为只读，不修改
 - 模板从 project-engineering-init 迁移，保持模板变量兼容

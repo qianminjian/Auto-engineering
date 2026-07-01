@@ -1,5 +1,6 @@
 # design/ — 文档索引
 
+<<<<<<< HEAD
 > 创建：2026-06-25 | 更新：2026-06-29 | 维护规则：每次合并/重命名后更新本文件
 
 ---
@@ -10,6 +11,9 @@
 |------|------|------|
 | `../docs/atdo-runtime-smoke-policy.md` | atdo Plan 报告必须含 runtime smoke 验证（防止虚化测试） | BEACON 决策 18 |
 | `../docs/his_bak/` | 历史文档归档（v1.0/v2.0/v2.5 时期的 docs, v5.0 不再使用） | 主动归档 |
+=======
+> 创建：2026-06-25 | 更新：2026-06-30 | 维护规则：每次合并/重命名后更新本文件
+>>>>>>> 6e8508c2e41dc1e1925c0424bd148ca847783bb1
 
 ---
 
@@ -18,10 +22,15 @@
 | 类别 | 文件 | 描述 |
 |------|------|------|
 | **项目明灯** | `BEACON.md` | 当前阶段/目标/阻塞项/设计决策 |
+<<<<<<< HEAD
 | **设计文档** | `v5.0-Design-Loop.md` | v5.0 Loop Engineering 完整设计（含 3 Stage + 5 Guardrail + 7 Gate + Init-Loop 接口契约 IL.1-IL.6） |
 | ~~`v5.0-Design-Init.md`~~ | **已移出本项目** | Init Engineering 现在是独立项目, Init 侧按 `v5.0-Design-Loop.md` §IL.1-IL.6 实现 |
 | ~~`v5.0-Design.md`~~ | **已拆分** → Init 独立项目 + `v5.0-Design-Loop.md` |
 | **归档** | `his_bak/` | v1.0/v1.1/v2.0/v2.3/v2.4/v2.5 历史设计/计划/审计（见 §归档清单） |
+=======
+| **设计文档** | `v5.0-Design-Init.md` | v5.0 Init Engineering 完整设计 |
+| **归档** | `his_bak/` | v1.0/v1.1 历史设计/计划/审计（见 §归档清单） |
+>>>>>>> 6e8508c2e41dc1e1925c0424bd148ca847783bb1
 
 ---
 
@@ -36,14 +45,14 @@ V<major>.<minor>-<Category>-<Name>.md
 | `Design` | 设计文档 — 架构/子系统设计 |
 | `Audit` | 审计报告 — 问题发现/评估 |
 | `Plan` | 执行计划 — 开发任务/路线图 |
-| `Analysis` | 分析报告 — 深度研究/对比 |
 
 **例外**：`BEACON.md` / `INDEX.md` — 特殊角色文件，保持原名。
 
 ---
 
-## 合并日志
+## 归档清单（his_bak/）
 
+<<<<<<< HEAD
 > 每次合并或重命名后追加一行。格式：`日期 | 主文档 | 来源/操作 | 摘要`
 
 | 日期 | 主文档 | 来源/操作 | 摘要 |
@@ -69,49 +78,40 @@ V<major>.<minor>-<Category>-<Name>.md
 | 2026-06-25 | `his_bak/` | `v1.0-DESIGN.md.archived` | 归档：早期完整设计（已被拆分为 SHARED/INIT/LOOP/TEMPLATES） |
 | 2026-06-25 | `his_bak/` | `v1.0-LOOP-AUDIT.md` | 归档：loop 深度审计（已合并入 Audit-Report） |
 | 2026-06-25 | `his_bak/` | `v1.0-AUDIT-SUPPLEMENT.md` | 归档：第二轮补充审计（已合并入 Audit-Report） |
+=======
+| 原文件名 | 说明 | 日期 |
+|---------|------|------|
+| `v1.0-Design-Init.md` | v1.0 Init 设计 | 2026-06-25 |
+| `v1.0-Design-Templates.md` | Init 模板设计 | 2026-06-25 |
+| `v1.0-Design-Shared.md` | Init/Loop 共享契约（Init 保留参考） | 2026-06-25 |
+| `v1.1-Audit-Report.md` | v1.1 审计报告（含 Init 修复） | 2026-06-25 |
+| `v1.1-Plan-Dev.md` | v1.1 开发计划 | 2026-06-25 |
+| `init-PLAN.md` | Init 开发计划 | 2026-06-25 |
+| `init-TODO.md` | Init 待办 | 2026-06-25 |
+| `v1.0-INIT-PLAN.md` | v1.0 Init 计划 | 2026-06-25 |
+>>>>>>> 6e8508c2e41dc1e1925c0424bd148ca847783bb1
 
 ---
 
-## 归档清单（his_bak/）
+## 合并日志
 
-详见 `his_bak/README.md`
-
-### 快速索引
-
-| 原文件名 | 归档路径 | 合并到 | 日期 |
-|---------|---------|--------|------|
-| `v1.0-DESIGN.md.archived` | `his_bak/v1.0-DESIGN.md.archived` | — | 2026-06-25 |
-| `v1.0-LOOP-AUDIT.md` | `his_bak/v1.0-LOOP-AUDIT.md` | `v1.1-Audit-Report.md` 附录 A | 2026-06-25 |
-| `v1.0-AUDIT-SUPPLEMENT.md` | `his_bak/v1.0-AUDIT-SUPPLEMENT.md` | `v1.1-Audit-Report.md` 附录 B | 2026-06-25 |
-| `v1.1-TODO-LIST.md` | `his_bak/v1.1-TODO-LIST.md` | `v1.1-Plan-Dev.md` §一 | 2026-06-25 |
-| `v1.1-UNIFIED-DEV-PLAN.md` | `his_bak/v1.1-UNIFIED-DEV-PLAN.md` | `v1.1-Plan-Dev.md` §二-九 | 2026-06-25 |
-| `v1.1-DEVELOPMENT-PLANS.md` | `his_bak/v1.1-DEVELOPMENT-PLANS.md` | `v1.1-UNIFIED-DEV-PLAN.md` | 2026-06-25 |
-| `v1.1-LOOP-ROADMAP.md` | `his_bak/v1.1-LOOP-ROADMAP.md` | `v1.1-UNIFIED-DEV-PLAN.md` | 2026-06-25 |
-| `v1.1-DEV-PLAN.md` | `his_bak/v1.1-DEV-PLAN.md` | `v1.1-UNIFIED-DEV-PLAN.md` | 2026-06-25 |
-| `v1.1-PLAN-A-bugfixes.json` | `his_bak/v1.1-PLAN-A-bugfixes.json` | `v1.1-UNIFIED-DEV-PLAN.md` | 2026-06-25 |
-| `v1.1-PLAN-B-config-cli.json` | `his_bak/v1.1-PLAN-B-config-cli.json` | `v1.1-UNIFIED-DEV-PLAN.md` | 2026-06-25 |
-| `v1.1-PLAN-C-templates-borrowing.json` | `his_bak/v1.1-PLAN-C-templates-borrowing.json` | `v1.1-UNIFIED-DEV-PLAN.md` | 2026-06-25 |
-| `v1.1-PLAN-D1-runtime-guardrail.json` | `his_bak/v1.1-PLAN-D1-runtime-guardrail.json` | `v1.1-UNIFIED-DEV-PLAN.md` | 2026-06-25 |
-| `v1.1-PLAN-D2-agent-tools.json` | `his_bak/v1.1-PLAN-D2-agent-tools.json` | `v1.1-UNIFIED-DEV-PLAN.md` | 2026-06-25 |
-| `v1.1-PLAN-D3-cli-observability.json` | `his_bak/v1.1-PLAN-D3-cli-observability.json` | `v1.1-UNIFIED-DEV-PLAN.md` | 2026-06-25 |
-| `init-PLAN.md` | `his_bak/init-PLAN.md` | `v1.1-UNIFIED-DEV-PLAN.md` | 2026-06-25 |
-| `init-TODO.md` | `his_bak/init-TODO.md` | `v1.1-UNIFIED-DEV-PLAN.md` | 2026-06-25 |
-| `init-TODO.md.bak.20260624-1410` | `his_bak/init-TODO.md.bak.20260624-1410` | — | 2026-06-25 |
-| `LOOP-DEVELOPMENT-PLAN.md` | `his_bak/LOOP-DEVELOPMENT-PLAN.md` | `v1.1-UNIFIED-DEV-PLAN.md` | 2026-06-25 |
-| `dev-loop-TODO.md` | `his_bak/dev-loop-TODO.md` | `v1.1-UNIFIED-DEV-PLAN.md` | 2026-06-25 |
-| `v1.0-INIT-PLAN.md` | `his_bak/v1.0-INIT-PLAN.md` | `v1.1-TODO-LIST.md` | 2026-06-25 |
+| 日期 | 主文档 | 来源/操作 | 摘要 |
+|------|--------|---------|------|
+| 2026-06-30 | — | 文档裁剪 | 删除 Loop 相关文档：`design/v5.0-Design-Loop.md`、`docs/`、`design/his_bak/` 下所有 Loop/v2.x 文件，保留 Init 相关设计文档 |
+| 2026-06-25 | `v1.0-Design-*.md` | 重命名 | 设计文档启用新命名规范 |
+| 2026-06-25 | `v1.1-Audit-Report.md` | 重命名 + 合并 | 合并审计报告 |
+| 2026-06-25 | `his_bak/` | 重命名归档 | 12 个历史待办文件归档 |
 
 ---
 
 ## 工作流程规范
 
-### 临时工作文档命名
+### 主文档头部格式
 
-```
-v<VERSION>-<Category>-working-<YYYYMMDD>.md
-v1.2-Audit-working-20260626.md     # 审计工作版
-v1.2-Plan-working-20260626.md     # 计划工作版
-v1.2-Design-featureX-20260626.md   # 设计工作版
+```markdown
+# <文档名>
+
+> 来源：@design/INDEX.md | 创建：YYYY-MM-DD | 更新：YYYY-MM-DD
 ```
 
 ### 合并/重命名流程
@@ -122,14 +122,6 @@ v1.2-Design-featureX-20260626.md   # 设计工作版
    - 将工作文档移动到 `his_bak/`，命名改为 `v<VERSION>-<Category>-<YYYYMMDD>.md`
    - 在本 INDEX.md 的合并日志追加一行
 3. **主文档头部**：必须包含 `来源:` 字段，指向本 INDEX
-
-### 主文档头部格式
-
-```markdown
-# <文档名>
-
-> 来源：@design/INDEX.md | 创建：YYYY-MM-DD | 更新：YYYY-MM-DD
-```
 
 ---
 
