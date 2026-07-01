@@ -148,6 +148,8 @@ async def run_round(
     round_id: int = 1,
     gates: list[Gate] | None = None,
     project_root: Path | None = None,
+    stage: str = "",
+    contracts: dict | None = None,
 ) -> RoundResult:
     """执行一个 Round: asyncio.gather 并行调度所有 task + 跑 Gate.
 
@@ -159,6 +161,9 @@ async def run_round(
         round_id: 轮次 ID (用于 RoundResult)
         gates: v2.2 Phase H — 可选 Gate 列表, Round 完成后顺序执行
         project_root: v2.2 Phase H — Gate 运行的项目根目录 (与 gates 同时提供才生效)
+        stage: v5.0 §B2.12 — 当前阶段名 (architect/developer/critic),
+               用于 _run_gates 按 applies_to_stages 过滤
+        contracts: v5.0 §B2.12 — 跨 Agent 契约字典, 透传给 ContractGate
 
     Returns:
         RoundResult 含每个 task 的 outcome + gate_results + history[0] (RoundHistory).
@@ -170,7 +175,7 @@ async def run_round(
         - asyncio.gather 会并行执行所有 task (LLM 调用 I/O bound 天然适配)
         - 若 gather 中一个 task 抛异常, 默认 return_exceptions=False 会传播
           此实现包装 _execute_single 捕获异常, 返回 failed outcome (不传播)
-        - Gate 异常不传播, 写入 Verdict(passed=False, message=str(exc))
+        - Gate 异常不传播, 写入 GateVerdict(passed=False, message=str(exc))
         - 末位构造 RoundHistory (含 gate_results + files_changed + task_outcomes +
           lines_added/removed), semantic_satisfied 由 Orchestrator 写回
     """
@@ -180,8 +185,9 @@ async def run_round(
     if not tasks:
         result.finished_at = time.monotonic()
         # 即使无 task, 也跑 Gate (若提供) — Phase H 行为: Gate 在 task 之后跑
+        # v5.0 §B6.1: 按 stage 过滤 Gate
         if gates and project_root is not None:
-            result.gate_results = await _run_gates(gates, project_root)
+            result.gate_results = await _run_gates(gates, project_root, stage=stage, contracts=contracts)
         await _attach_round_history(result, tasks, project_root)
         return result
 
@@ -201,8 +207,8 @@ async def run_round(
             outcomes.append(
                 TaskOutcome(
                     task_id="<gathered-exception>",
-                    success=False,
-                    output="",
+                    status="failed",
+                    output=None,
                     error=f"gathered exception: {type(item).__name__}: {item}",
                 )
             )
@@ -212,8 +218,9 @@ async def run_round(
     result.finished_at = time.monotonic()
 
     # v2.2 Phase H: 跑 Gate (task 完成后), 写入 gate_results
+    # v5.0 §B6.1: 按 stage 过滤 + 透传 contracts
     if gates and project_root is not None:
-        result.gate_results = await _run_gates(gates, project_root)
+        result.gate_results = await _run_gates(gates, project_root, stage=stage, contracts=contracts)
 
     # v2.3 Phase G (P1.3): 末尾构造 RoundHistory 写入 round_result.history
     await _attach_round_history(result, tasks, project_root)
