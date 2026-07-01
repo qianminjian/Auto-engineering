@@ -1403,57 +1403,64 @@ class TestOrchestratorStepHelpers:
         orch = Orchestrator(requirement="spy", tasks=tasks, executor=noop_executor)
 
         # 2. 替换每个子方法为 spy (返回合理默认值避免主循环崩溃)
-        async def spy_2a(self_orch, cancellation):
+        # 注: spy 函数名带前缀标识同步/异步 (与子方法签名一致)
+        def sync_spy_2a(self_orch, cancellation):
             call_counts["_step_2a_cancel"] += 1
             return False  # 不取消
 
-        def spy_2b(self_orch, state, router):
+        def sync_spy_2b(self_orch, state, router):
             call_counts["_step_2b_route_init"] += 1
             return None  # StageDecision 不直接构造, 用 None 即可
 
-        def spy_2c(self_orch, stage):
+        def sync_spy_2c(self_orch, stage):
             call_counts["_step_2c_select_tasks"] += 1
-            return []
+            return (tasks, False)  # (round_tasks, advance) — 非空 → 跑下一步
 
-        def spy_2d(self_orch, guardrail_chain, stage, state):
+        def sync_spy_2d(self_orch, guardrail_chain, stage, state):
             call_counts["_step_2d_guardrail_pre"] += 1
             return "pass"
 
-        async def spy_2e(self_orch, stage, round_tasks, state):
+        async def async_spy_2e(self_orch, stage, round_tasks, state, project_root, cancellation, round_id):
             call_counts["_step_2e_run_agent"] += 1
-            return None  # RoundResult
+            from auto_engineering.loop.round import RoundResult
+            return RoundResult(
+                round_id=round_id,
+                outcomes=[TaskOutcome(task_id=t.id, status="completed", output="x", task_role=t.role) for t in round_tasks],
+                gate_results={},
+                history=[],
+            )
 
-        def spy_2f(self_orch, guardrail_chain, stage, state):
+        def sync_spy_2f(self_orch, guardrail_chain, stage, state):
             call_counts["_step_2f_guardrail_post"] += 1
             return "pass"
 
-        async def spy_2g(self_orch, semantic_evaluator, stage, result):
+        async def async_spy_2g(self_orch, semantic_evaluator, stage, result):
             call_counts["_step_2g_semantic"] += 1
             return None
 
-        def spy_2h(self_orch, state, verdict):
+        def sync_spy_2h(self_orch, state, verdict, current_stage):
             call_counts["_step_2h_major_count"] += 1
             return None
 
-        def spy_2i(self_orch, router, judge, state):
+        def sync_spy_2i(self_orch, router, judge, current_stage, state):
             call_counts["_step_2i_route_and_judge"] += 1
-            return (None, False)  # (next_stage, should_break)
+            return True  # should_break=True → 走 step 3
 
-        def spy_3(self_orch, state, history, latest_gates):
+        def sync_spy_3(self_orch, state, history, latest_gates, max_iter, round_id):
             call_counts["_step_3_exit_block"] += 1
             return ([], None)
 
-        # 3. 绑定 spy 到 orch 实例
-        orch._step_2a_cancel = lambda c: spy_2a(orch, c)
-        orch._step_2b_route_init = lambda s, r: spy_2b(orch, s, r)
-        orch._step_2c_select_tasks = lambda st: spy_2c(orch, st)
-        orch._step_2d_guardrail_pre = lambda gc, st, s: spy_2d(orch, gc, st, s)
-        orch._step_2e_run_agent = lambda st, rt, s: spy_2e(orch, st, rt, s)
-        orch._step_2f_guardrail_post = lambda gc, st, s: spy_2f(orch, gc, st, s)
-        orch._step_2g_semantic = lambda se, st, res: spy_2g(orch, se, st, res)
-        orch._step_2h_major_count = lambda s, v: spy_2h(orch, s, v)
-        orch._step_2i_route_and_judge = lambda r, j, s: spy_2i(orch, r, j, s)
-        orch._step_3_exit_block = lambda s, h, lg: spy_3(orch, s, h, lg)
+        # 3. 绑定 spy 到 orch 实例 (按子方法实际签名绑定)
+        orch._step_2a_cancel = lambda c: sync_spy_2a(orch, c)
+        orch._step_2b_route_init = lambda s, r: sync_spy_2b(orch, s, r)
+        orch._step_2c_select_tasks = lambda st: sync_spy_2c(orch, st)
+        orch._step_2d_guardrail_pre = lambda gc, st, s: sync_spy_2d(orch, gc, st, s)
+        orch._step_2e_run_agent = lambda st, rt, s, pr, c, ri: async_spy_2e(orch, st, rt, s, pr, c, ri)
+        orch._step_2f_guardrail_post = lambda gc, st, s: sync_spy_2f(orch, gc, st, s)
+        orch._step_2g_semantic = lambda se, st, res: async_spy_2g(orch, se, st, res)
+        orch._step_2h_major_count = lambda s, v, cs: sync_spy_2h(orch, s, v, cs)
+        orch._step_2i_route_and_judge = lambda r, j, cs, s: sync_spy_2i(orch, r, j, cs, s)
+        orch._step_3_exit_block = lambda s, h, lg, mi, ri: sync_spy_3(orch, s, h, lg, mi, ri)
 
         # 4. 跑 run() (用 asyncio.wait_for 防 hang)
         try:
