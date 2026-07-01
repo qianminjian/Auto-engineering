@@ -60,8 +60,12 @@ class LintGate(Gate):
         # 兜底: 当前 Python 解释器 -m ruff (若 venv 安装)
         return [sys.executable, "-m", "ruff", "check"]
 
-    def run(self, project_root: Path) -> Verdict:
+    def run(self, project_root: Path, contracts: dict | None = None) -> Verdict:
         """执行 lint 检查.
+
+        Args:
+            project_root: 项目根目录
+            contracts: v5.0 §B6.1a — 契约字典 (LintGate 不使用, 仅签名兼容)
 
         Returns:
             Verdict: passed=True 表示 ruff 0 错误; passed=False 表示有错误或命令失败.

@@ -49,11 +49,12 @@ class BuildGate(Gate):
         self.timeout = timeout
         self.cwd = cwd
 
-    def run(self, project_root: Path | None = None) -> Verdict:
+    def run(self, project_root: Path | None = None, contracts: dict | None = None) -> Verdict:
         """执行 build 验证.
 
         Args:
             project_root: 项目根目录(用于设置 cwd); None = 当前目录
+            contracts: v5.0 §B6.1a — 契约字典 (BuildGate 不使用, 仅签名兼容)
 
         Returns:
             Verdict: passed=True 表示模块可导入; passed=False 表示导入失败.

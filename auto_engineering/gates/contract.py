@@ -160,7 +160,7 @@ class ContractGate(Gate):
                 )
             if not contracts:
                 return Verdict.passed(
-                    "无契约定义, 跳过",
+                    "skip: 无契约定义, 跳过 (contracts 为空)",
                     gate_name=self.name,
                 )
             return self._check_contracts(project_root, contracts)
@@ -169,9 +169,9 @@ class ContractGate(Gate):
         if agent_count >= 2:
             return self._check_contracts_dir(project_root, agent_count)
 
-        # 单 Agent + 无 contracts → 跳过
+        # 单 Agent + 无 contracts → 跳过 (向后兼容: 用旧 single agent 消息)
         return Verdict.passed(
-            "无契约定义, 跳过",
+            "skip: single agent mode, no cross-agent contract",
             gate_name=self.name,
         )
 

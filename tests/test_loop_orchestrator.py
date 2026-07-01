@@ -553,7 +553,7 @@ async def test_round_result_handles_gate_exceptions(tmp_path):
     class BoomGate(Gate):
         name = "boom"
 
-        def run(self, project_root):  # type: ignore[override]
+        def run(self, project_root, contracts=None):  # type: ignore[override]
             raise RuntimeError("gate crashed intentionally")
 
     async def executor(task, ctx):

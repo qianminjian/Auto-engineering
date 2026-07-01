@@ -148,8 +148,12 @@ class SafetyGate(Gate):
         self.use_gitleaks = use_gitleaks
         self.timeout = timeout
 
-    def run(self, project_root: Path) -> Verdict:
+    def run(self, project_root: Path, contracts: dict | None = None) -> Verdict:
         """执行 safety 检查.
+
+        Args:
+            project_root: 项目根目录
+            contracts: v5.0 §B6.1a — 契约字典 (SafetyGate 不使用, 仅签名兼容)
 
         Returns:
             Verdict: passed=True 表示无 secret; passed=False 表示检测到 secret.

@@ -427,9 +427,9 @@ async def _run_gates(
 
     async def _run_one(gate: Gate) -> tuple[str, Verdict]:
         try:
-            # v5.0 §B6.1a: 透传 contracts 给 Gate.run()
+            # v5.0 §B6.1a: 透传 contracts 给 Gate.run() (用 kwargs 避免子类签名不匹配)
             verdict = await asyncio.to_thread(
-                gate.run, project_root, contracts
+                gate.run, project_root, contracts=contracts
             )
         except Exception as exc:
             verdict = Verdict.failed(

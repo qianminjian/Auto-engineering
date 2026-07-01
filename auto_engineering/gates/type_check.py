@@ -81,8 +81,12 @@ class TypeCheckGate(Gate):
             return ["mypy"]
         return None  # mypy 未安装
 
-    def run(self, project_root: Path) -> Verdict:
+    def run(self, project_root: Path, contracts: dict | None = None) -> Verdict:
         """执行 type check.
+
+        Args:
+            project_root: 项目根目录
+            contracts: v5.0 §B6.1a — 契约字典 (TypeCheckGate 不使用, 仅签名兼容)
 
         Returns:
             Verdict: passed=True 表示无类型错误 / skip;

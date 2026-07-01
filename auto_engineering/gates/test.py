@@ -95,7 +95,7 @@ class TestGate(Gate):
         cmd.extend(self.test_paths)
         return cmd
 
-    def run(self, project_root: Path) -> Verdict:
+    def run(self, project_root: Path, contracts: dict | None = None) -> Verdict:
         """执行 pytest.
 
         Returns:

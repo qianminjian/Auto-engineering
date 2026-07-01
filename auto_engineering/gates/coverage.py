@@ -115,7 +115,7 @@ class CoverageGate(Gate):
             return ["pytest"]
         return None
 
-    def run(self, project_root: Path) -> Verdict:
+    def run(self, project_root: Path, contracts: dict | None = None) -> Verdict:
         """执行 coverage 检查.
 
         Returns:
