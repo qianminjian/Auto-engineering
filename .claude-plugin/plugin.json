@@ -1,0 +1,52 @@
+{
+  "name": "auto-engineering",
+  "version": "5.0.0",
+  "description": "Auto-Engineering v5.0 — multi-agent AI engineering loop with stage-aware guardrails, Gate quality system, and Init-Loop contract. Drives development from requirement to PR through Architect/Developer/Critic stages.",
+  "author": {
+    "name": "Qian Minjian (钱敏健)",
+    "email": "noreply@anthropic.com"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://example.com/auto-engineering.git"
+  },
+  "homepage": "https://example.com/auto-engineering",
+  "keywords": [
+    "multi-agent",
+    "ai-engineering",
+    "dev-loop",
+    "guardrails",
+    "gate-quality",
+    "claude-code-plugin"
+  ],
+  "commands": "./commands/",
+  "hooks": "./hooks/",
+  "skills": "./skills/",
+  "metadata": {
+    "min_claude_code_version": "1.0.0",
+    "requirements": {
+      "python": ">=3.10",
+      "uv": ">=0.1.0",
+      "git": ">=2.30",
+      "sqlite3": ">=3.35"
+    },
+    "env": {
+      "AE_DB_PATH": {
+        "description": "Path to ae-state SQLite database (default: .ae-state/checkpoints.db)",
+        "required": false,
+        "default": ".ae-state/checkpoints.db"
+      },
+      "AE_LOG_LEVEL": {
+        "description": "Logging level (DEBUG/INFO/WARN/ERROR)",
+        "required": false,
+        "default": "INFO"
+      },
+      "AE_GATE_TIMEOUT": {
+        "description": "Gate execution timeout in seconds (default: 300)",
+        "required": false,
+        "default": "300"
+      }
+    }
+  }
+}
