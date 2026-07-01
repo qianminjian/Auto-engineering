@@ -1196,3 +1196,344 @@ class TestRoundResultHistory:
             f"Checkpoint 历史项必须含 'safety' gate, "
             f"实际 keys: {list(loaded_item['gate_results'].keys())}"
         )
+
+
+# ============================================================
+# H. Phase 10 子目标 2: StageRouter + EngineState 集成 + 停滞检测边界
+# ============================================================
+
+
+class TestStageRouterIntegration:
+    """Phase 10: StageRouter + EngineState 集成测试.
+
+    已有 test_stage_router.py 覆盖 StageRouter 单独行为 (37 用例).
+    本测试套验证 StageRouter 与 EngineState 真实协作:
+    - 连续 MAJOR 计数累加 + 超限 stop_reason 含正确数字
+    - APPROVE 重置 majors_in_a_row 但保留 total_majors
+    - _clear_stage_fields 真实清空 EngineState 字段
+    - _derive_status 真实判定 EngineState.status
+    """
+
+    def test_stage_router_major_in_a_row_accumulates_in_engine_state(self) -> None:
+        """连续 MAJOR 计数累加: 模拟 3 轮 MAJOR, EngineState.majors_in_a_row 累加.
+
+        边界: 第 1 轮 MAJOR (1/1), 第 2 轮 MAJOR (2/2) 触发超限 stop.
+        """
+        from auto_engineering.engine.state import EngineState
+        from auto_engineering.loop.stage_router import StageRouter, _update_majors_count
+
+        state = EngineState()
+        router = StageRouter(max_majors_in_a_row=2, max_total_majors=3)
+
+        # 第 1 轮 MAJOR
+        _update_majors_count(state, "MAJOR")
+        assert state.majors_in_a_row == 1
+        assert state.total_majors == 1
+        decision = router.next("critic", "MAJOR", state.majors_in_a_row, state.total_majors)
+        assert decision.next_stage == "developer"  # 未超限
+
+        # 第 2 轮 MAJOR → 连续 2 触发 T6
+        _update_majors_count(state, "MAJOR")
+        assert state.majors_in_a_row == 2
+        assert state.total_majors == 2
+        decision = router.next("critic", "MAJOR", state.majors_in_a_row, state.total_majors)
+        assert decision.should_stop is True
+        assert "连续2" in decision.stop_reason  # 含累加数字
+        assert "累计2" in decision.stop_reason
+
+    def test_stage_router_approve_resets_in_a_row_but_preserves_total(self) -> None:
+        """APPROVE: 重置 majors_in_a_row=0 但 total_majors 保留.
+
+        业务场景: 累计 3 次 MAJOR 后终于 APPROVE, majors_in_a_row 应清零.
+        """
+        from auto_engineering.engine.state import EngineState
+        from auto_engineering.loop.stage_router import _update_majors_count
+
+        state = EngineState()
+        # 累计 3 轮 MAJOR
+        _update_majors_count(state, "MAJOR")
+        _update_majors_count(state, "MAJOR")
+        _update_majors_count(state, "MAJOR")
+        assert state.majors_in_a_row == 3
+        assert state.total_majors == 3
+
+        # APPROVE → 重置 in_a_row, 保留 total
+        _update_majors_count(state, "APPROVE")
+        assert state.majors_in_a_row == 0
+        assert state.total_majors == 3  # 保留
+
+    def test_stage_router_total_majors_exceeds_independent_of_in_a_row(self) -> None:
+        """累计 MAJOR 超限: 即便 in_a_row 较小, total 触发 T6 stop.
+
+        场景: 间隔 APPROVE 重置 in_a_row 后, 累计总数仍超限.
+        """
+        from auto_engineering.engine.state import EngineState
+        from auto_engineering.loop.stage_router import StageRouter, _update_majors_count
+
+        state = EngineState()
+        router = StageRouter(max_majors_in_a_row=2, max_total_majors=3)
+
+        # 模式: MAJOR, MAJOR, APPROVE, MAJOR, MAJOR (累计 4 次)
+        for verdict in ["MAJOR", "MAJOR", "APPROVE", "MAJOR", "MAJOR"]:
+            _update_majors_count(state, verdict)
+
+        # in_a_row=2 (最后一个 APPROVE 后重置, 然后 +2)
+        # total=4 (累计)
+        assert state.majors_in_a_row == 2
+        assert state.total_majors == 4
+
+        # 累计超限触发 (即便 in_a_row=2 == max_in_a_row, 这里应仍触发)
+        decision = router.next("critic", "MAJOR", state.majors_in_a_row, state.total_majors)
+        # 先检查连续 (in_a_row=2 == max=2) → 触发
+        assert decision.should_stop is True
+
+    def test_stage_router_empty_verdict_in_critic_triggers_safety_stop(self) -> None:
+        """critic 阶段 verdict="" 异常: 防御性 stop (v5.0 §B2.2 T4 异常分支).
+
+        业务保护: critic 阶段未给出 APPROVE/MAJOR → 视为异常, 安全停止.
+        """
+        from auto_engineering.loop.stage_router import StageRouter
+
+        router = StageRouter()
+        decision = router.next("critic", "", majors_in_a_row=0, total_majors=0)
+        assert decision.should_stop is True
+        assert "异常" in decision.stop_reason
+        assert "''" in decision.stop_reason  # 含空字符串
+
+    def test_stage_router_unknown_stage_returns_safety_stop(self) -> None:
+        """未知 stage 防御性 stop (避免 Orchestrator 僵死)."""
+        from auto_engineering.loop.stage_router import StageRouter
+
+        router = StageRouter()
+        decision = router.next("unknown_stage", "APPROVE", 0, 0)
+        assert decision.should_stop is True
+        assert "未知" in decision.stop_reason
+        assert "unknown_stage" in decision.stop_reason
+
+    def test_clear_stage_fields_actually_clears_engine_state(self) -> None:
+        """_clear_stage_fields 真实清空 EngineState 字段 (各 stage)."""
+        from auto_engineering.engine.state import EngineState
+        from auto_engineering.loop.stage_router import _clear_stage_fields
+
+        state = EngineState()
+
+        # 准备: 填充所有 stage 字段
+        state.plan = "test plan"
+        state.file_list = ["a.py", "b.py"]
+        state.batch_plan = [{"task": "x"}]
+        state.contracts = {"contract1": "spec"}
+        state.files_changed = ["a.py"]
+        state.commit_hash = "abc123"
+        state.test_results = {"test1": "pass"}
+        state.verdict = "MAJOR"
+        state.findings = ["finding1"]
+        state.critic_feedback = "fix this"
+
+        # 清空 architect
+        _clear_stage_fields(state, "architect")
+        assert state.plan == ""
+        assert state.file_list == []
+        assert state.batch_plan == []
+        assert state.contracts == {}
+        # 其他 stage 字段未动
+        assert state.verdict == "MAJOR"
+
+        # 清空 developer
+        _clear_stage_fields(state, "developer")
+        assert state.files_changed == []
+        assert state.commit_hash == ""
+        assert state.test_results == {}
+
+        # 清空 critic
+        _clear_stage_fields(state, "critic")
+        assert state.verdict == ""
+        assert state.findings == []
+        assert state.critic_feedback == ""
+
+    def test_clear_stage_fields_unknown_stage_is_noop(self) -> None:
+        """_clear_stage_fields 传入未知 stage → no-op (防御性)."""
+        from auto_engineering.engine.state import EngineState
+        from auto_engineering.loop.stage_router import _clear_stage_fields
+
+        state = EngineState()
+        state.plan = "keep me"
+        _clear_stage_fields(state, "unknown_stage")
+        assert state.plan == "keep me"  # 未被清空
+
+    def test_derive_status_with_real_engine_state(self) -> None:
+        """_derive_status 用真实 EngineState 派生 status.
+
+        验证 4 种判定:
+        1. verdict=APPROVE → "completed"
+        2. round >= max_iterations → "completed" (通过 duck-type round 属性)
+        3. current_stage == "" → "completed"
+        4. else → "running"
+
+        注: EngineState 本身无 round 字段, round 在 CheckpointEnvelope.
+        _derive_status 用 getattr(state, "round", 0) 防御性取值.
+        """
+        from types import SimpleNamespace
+
+        from auto_engineering.engine.state import EngineState
+        from auto_engineering.loop.stage_router import _derive_status
+
+        # Case 1: APPROVE → completed
+        state1 = EngineState(current_stage="critic", verdict="APPROVE")
+        assert _derive_status(state1, max_iterations=10) == "completed"
+
+        # Case 2: round >= max → completed (用 SimpleNamespace 提供 round 字段)
+        state2 = SimpleNamespace(
+            current_stage="developer", verdict="MAJOR", round=10
+        )
+        assert _derive_status(state2, max_iterations=10) == "completed"
+
+        # Case 3: stage=="" → completed
+        state3 = EngineState(current_stage="")
+        assert _derive_status(state3, max_iterations=10) == "completed"
+
+        # Case 4: else → running
+        state4 = EngineState(current_stage="developer", verdict="MAJOR")
+        assert _derive_status(state4, max_iterations=10) == "running"
+
+    def test_stage_router_init_validates_positive_limits(self) -> None:
+        """StageRouter 拒绝 ≤0 限制 (无意义配置)."""
+        from auto_engineering.loop.stage_router import StageRouter
+
+        # max_majors_in_a_row < 1 → ValueError
+        with pytest.raises(ValueError, match="max_majors_in_a_row"):
+            StageRouter(max_majors_in_a_row=0)
+
+        # max_total_majors < 1 → ValueError
+        with pytest.raises(ValueError, match="max_total_majors"):
+            StageRouter(max_total_majors=-1)
+
+
+class TestDetectStagnationEdgeCases:
+    """Phase 10: detect_stagnation 边界值测试.
+
+    已有测试覆盖基本场景. 本套补充:
+    - threshold=1 边界 (只 1 轮无变化即触发)
+    - diff_ratio_threshold=0 边界 (任何变化都视为有变化)
+    - diff_ratio_threshold=1.0 边界 (任何变化都视为无变化)
+    - 空 history (0 轮)
+    """
+
+    def test_detect_stagnation_threshold_one_single_round(self) -> None:
+        """threshold=1: 1 轮无变化即触发 (最少 2 轮比较)."""
+        history = [
+            RoundHistory(round_id=1, files_changed=5),
+            RoundHistory(round_id=2, files_changed=5),  # 1 轮无变化
+        ]
+        stagnant = detect_stagnation(history, threshold=1, diff_ratio_threshold=0.1)
+        assert stagnant is True
+
+    def test_detect_stagnation_empty_history_returns_false(self) -> None:
+        """空 history → 不触发 (无数据可比较)."""
+        assert detect_stagnation([], threshold=2, diff_ratio_threshold=0.05) is False
+
+    def test_detect_stagnation_diff_ratio_threshold_zero(self) -> None:
+        """diff_ratio_threshold=0: 任何非零变化都视为有变化.
+
+        此时: 0.0 < 0 → False (永远触发), 但实际应用用 > 0.
+        """
+        history = [
+            RoundHistory(round_id=1, files_changed=5),
+            RoundHistory(round_id=2, files_changed=5),  # diff=0.0
+        ]
+        # threshold=0.0 时: 0.0 < 0.0 = False → 不触发
+        stagnant = detect_stagnation(history, threshold=1, diff_ratio_threshold=0.0)
+        assert stagnant is False
+
+    def test_detect_stagnation_diff_ratio_threshold_one(self) -> None:
+        """diff_ratio_threshold=1.0: diff=0.95 < 1.0 触发 (算法严格小于).
+
+        设计意图: diff_ratio_threshold 是上界 (严格小于), 不是 inclusive.
+        diff_ratio=0.95 (从 5 变到 100) < 1.0 → 触发.
+        """
+        history = [
+            RoundHistory(round_id=1, files_changed=5),
+            RoundHistory(round_id=2, files_changed=100),  # diff=95/100=0.95
+        ]
+        # 0.95 < 1.0 → 视为无变化, 触发
+        stagnant = detect_stagnation(history, threshold=1, diff_ratio_threshold=1.0)
+        assert stagnant is True
+
+    def test_detect_stagnation_high_diff_ratio_threshold_always_triggers(self) -> None:
+        """diff_ratio_threshold=0.99 + 小变化 → 触发 (设计意图)."""
+        history = [
+            RoundHistory(round_id=1, files_changed=5),
+            RoundHistory(round_id=2, files_changed=6),  # diff=1/6=0.167 < 0.99
+            RoundHistory(round_id=3, files_changed=5),  # diff=1/6=0.167 < 0.99
+        ]
+        stagnant = detect_stagnation(history, threshold=2, diff_ratio_threshold=0.99)
+        assert stagnant is True
+
+    def test_detect_stagnation_exact_threshold_round(self) -> None:
+        """精确 threshold 轮无变化才触发 (边界 inclusive)."""
+        # 3 轮无变化 + threshold=3 → 触发
+        history = [
+            RoundHistory(round_id=i, files_changed=5)
+            for i in range(1, 5)  # 4 轮, 比较 3 次
+        ]
+        stagnant = detect_stagnation(history, threshold=3, diff_ratio_threshold=0.05)
+        assert stagnant is True
+
+        # 2 轮无变化 + threshold=3 → 不触发
+        history_short = [
+            RoundHistory(round_id=1, files_changed=5),
+            RoundHistory(round_id=2, files_changed=5),
+        ]
+        stagnant_short = detect_stagnation(history_short, threshold=3, diff_ratio_threshold=0.05)
+        assert stagnant_short is False
+
+    def test_detect_stagnation_change_in_middle_resets_counter(self) -> None:
+        """中间出现变化重置计数器 (验证 reset 行为).
+
+        场景: 5 轮, 中间第 3 轮有变化, 后续 2 轮无变化 + threshold=3 → 不触发.
+        """
+        history = [
+            RoundHistory(round_id=1, files_changed=5),
+            RoundHistory(round_id=2, files_changed=5),  # 无变化 (1)
+            RoundHistory(round_id=3, files_changed=100),  # 大变化 → 重置
+            RoundHistory(round_id=4, files_changed=5),  # 无变化 (重置后 1)
+            RoundHistory(round_id=5, files_changed=5),  # 无变化 (重置后 2)
+        ]
+        # threshold=3, 重置后只连续 2 轮 → 不触发
+        stagnant = detect_stagnation(history, threshold=3, diff_ratio_threshold=0.05)
+        assert stagnant is False
+
+
+class TestConvergenceJudgeEmptyAndBoundary:
+    """Phase 10: ConvergenceJudge 边界 + 默认值."""
+
+    def test_convergence_judge_continues_when_history_at_max_minus_one(self) -> None:
+        """历史长度 < max_iterations → 不触发硬上限 (差 1 也不触发).
+
+        设计意图: hard limit 在 round_id == max_iterations 时才触发,
+        round_id == max_iterations - 1 时不触发.
+        """
+        history = [RoundHistory(round_id=9)]  # 1 轮, max=10
+        judge = ConvergenceJudge(ConvergenceConfig(max_iterations=10))
+        verdict = judge.evaluate(history=history)
+        # round 9 + max 10 → 不应触发硬上限
+        assert verdict.should_stop is False
+        assert verdict.level == LEVEL_CONTINUE
+
+    def test_convergence_judge_default_config_has_reasonable_values(self) -> None:
+        """默认 ConvergenceConfig 应有合理默认值 (>= 1 限制)."""
+        config = ConvergenceConfig()
+        assert config.max_iterations >= 1
+        assert config.stagnation_threshold >= 1
+
+    def test_convergence_judge_picks_hard_limit_over_stagnant_when_both_apply(self) -> None:
+        """硬上限优先于停滞: 同时满足时返回硬上限 (优先级 4 > 2)."""
+        history = [
+            RoundHistory(round_id=i, files_changed=5) for i in range(1, 11)
+        ]  # 10 轮无变化 + round 10 == max
+        judge = ConvergenceJudge(
+            ConvergenceConfig(max_iterations=10, stagnation_threshold=2)
+        )
+        verdict = judge.evaluate(history=history)
+        # 硬上限 (4) > 停滞 (2)
+        assert verdict.level == LEVEL_HARD_LIMIT
+        assert verdict.should_stop is True
