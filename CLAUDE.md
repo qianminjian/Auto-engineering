@@ -144,6 +144,7 @@ ae init-config                      # 查看/编辑初始化配置
 **B 级 hybrid gate 特殊规则**：
 
 - ✅ **B 级 hybrid gate auto-pass**: atdo 推进遇到 B 级 hybrid gate（Phase 04/09/11 等）直接 auto-pass，不调 AskUserQuestion 等用户签字。跨会话规则已持久化至 memory `feedback-atdo-b-gate-auto-pass.md`。
+- ✅ **Gate Code Review 强制 (atdo Step 7.5, atdo-GCR-01)**：每个 gate phase 完成后必须执行 /code review。auto-pass 仅跳过用户签字，**不跳过自动 code review**。BLOCKER 必须修复，WARNING 仅记录。v5.0 Phase 04/09/11 开发时因曲解 auto-pass 语义而漏执行（已记录到 final report）。
 
 **How to apply**：
 
