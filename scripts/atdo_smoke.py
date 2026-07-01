@@ -1,14 +1,14 @@
 #!/usr/bin/env python3.12
 """atdo Runtime Smoke — v5.0 inline (decision #18)
 
-Validates v5.0 phase completion via 5 dynamic runtime dimensions.
+Validates v5.0 phase completion via 7 dynamic runtime dimensions.
 Prevents 虚化测试 (artificial tests that pass without exercising real code).
 
 Usage:
     python3.12 scripts/atdo_smoke.py --phase v5.0-11
 
 Exit codes:
-    0 - All 5 dimensions PASS
+    0 - All 7 dimensions PASS
     1 - One or more dimensions FAIL
     2 - Invalid arguments / setup error
 
@@ -283,12 +283,143 @@ def _check_guardrail_4_states() -> DimensionResult:
         )
 
 
+def _check_cli_doctor() -> DimensionResult:
+    """Smoke 6: CLI doctor 7 项检查 (P2-1)."""
+    try:
+        import json
+        import os
+        import subprocess
+
+        env = os.environ.copy()
+        env["ANTHROPIC_API_KEY"] = env.get("ANTHROPIC_API_KEY", "sk-smoke-test")
+
+        result = subprocess.run(
+            [
+                "uv", "run", "ae", "doctor",
+            ],
+            capture_output=True,
+            text=True,
+            cwd=str(PROJECT_ROOT),
+            timeout=30,
+            env=env,
+        )
+        if result.returncode != 0:
+            return DimensionResult(
+                "cli_doctor", False,
+                f"ae doctor exit code={result.returncode}, expected 0\n"
+                f"stdout: {result.stdout[-300:]}",
+            )
+
+        check_marks = result.stdout.count("✓")
+        if check_marks != 7:
+            return DimensionResult(
+                "cli_doctor", False,
+                f"ae doctor 输出 {check_marks} ✓, expected 7\n"
+                f"stdout tail: {result.stdout[-300:]}",
+            )
+
+        return DimensionResult(
+            "cli_doctor", True,
+            f"ae doctor 7/7 ✓ ({check_marks} checks PASS)",
+        )
+    except subprocess.TimeoutExpired:
+        return DimensionResult(
+            "cli_doctor", False,
+            "ae doctor 超时 (30s)",
+        )
+    except FileNotFoundError as e:
+        return DimensionResult(
+            "cli_doctor", False,
+            f"uv not found: {e}",
+        )
+    except Exception as e:
+        return DimensionResult(
+            "cli_doctor", False,
+            f"exception: {type(e).__name__}: {e}",
+        )
+
+
+def _check_plugin_load() -> DimensionResult:
+    """Smoke 7: Plugin 加载 — plugin.json + hooks chmod +x (P2-1)."""
+    try:
+        plugin_json = PROJECT_ROOT / ".claude-plugin" / "plugin.json"
+        hooks_dir = PROJECT_ROOT / ".claude-plugin" / "hooks"
+
+        if not plugin_json.exists():
+            return DimensionResult(
+                "plugin_load", False,
+                f"plugin.json 不存在: {plugin_json}",
+            )
+        if not plugin_json.is_file():
+            return DimensionResult(
+                "plugin_load", False,
+                f"plugin.json 不是文件: {plugin_json}",
+            )
+        try:
+            import json
+            with open(plugin_json, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if not isinstance(data, dict) or "name" not in data:
+                return DimensionResult(
+                    "plugin_load", False,
+                    f"plugin.json 无效: 缺少 'name' 字段",
+                )
+        except json.JSONDecodeError as e:
+            return DimensionResult(
+                "plugin_load", False,
+                f"plugin.json JSON 解析失败: {e}",
+            )
+        except OSError as e:
+            return DimensionResult(
+                "plugin_load", False,
+                f"plugin.json 不可读: {e}",
+            )
+
+        if not hooks_dir.exists() or not hooks_dir.is_dir():
+            return DimensionResult(
+                "plugin_load", False,
+                f"hooks 目录不存在: {hooks_dir}",
+            )
+
+        import stat
+        hook_files = sorted(hooks_dir.glob("*.sh"))
+        if not hook_files:
+            return DimensionResult(
+                "plugin_load", False,
+                f"hooks 目录无 .sh 文件: {hooks_dir}",
+            )
+
+        non_exec = []
+        for hf in hook_files:
+            mode = hf.stat().st_mode
+            if not (mode & stat.S_IXUSR):
+                non_exec.append(hf.name)
+
+        if non_exec:
+            return DimensionResult(
+                "plugin_load", False,
+                f"hooks 缺 +x: {', '.join(non_exec)}",
+            )
+
+        return DimensionResult(
+            "plugin_load", True,
+            f"plugin.json valid + {len(hook_files)} hooks all +x ({', '.join(h.name for h in hook_files)})",
+        )
+    except Exception as e:
+        return DimensionResult(
+            "plugin_load", False,
+            f"exception: {type(e).__name__}: {e}",
+        )
+
+
 DIMENSIONS = [
     ("init_manifest", _check_init_manifest),
     ("gate_pass", _check_gate_pass),
     ("orchestrator_12_steps", _check_orchestrator_12_steps),
     ("stage_router_t1_t6", _check_stage_router_t1_t6),
     ("guardrail_4_states", _check_guardrail_4_states),
+    ("cli_doctor", _check_cli_doctor),
+    ("plugin_load", _check_plugin_load),
 ]
 
 
@@ -310,7 +441,7 @@ def main() -> int:
 
     print("-" * 70)
     if all_pass:
-        print(f"[atdo-smoke-v5] phase={args.phase} status=PASS (5/5)")
+        print(f"[atdo-smoke-v5] phase={args.phase} status=PASS (7/7)")
         return 0
     print(f"[atdo-smoke-v5] phase={args.phase} status=FAIL")
     return 1
