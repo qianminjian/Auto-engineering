@@ -84,11 +84,31 @@ class TestDoctor:
         assert result.returncode == 1, f"expected exit 1 (missing init-manifest), got {result.returncode}"
 
     def test_ae_doctor_init_manifest_present(self, tmp_path: Path) -> None:
-        """当 .ae-state/init-manifest.json 存在 → 应报 ✓ (mock)."""
+        """当 .ae-state/init-manifest.json 存在 (完整 schema) → 应报 ✓ (mock)."""
         ae_state = tmp_path / ".ae-state"
         ae_state.mkdir()
         manifest = ae_state / "init-manifest.json"
-        manifest.write_text(json.dumps({"schema_version": "1.0", "project_type": "app-service", "language": "python"}))
+        # v5.0 §IL.2 完整 manifest (含 structure + conventions 必需字段)
+        manifest.write_text(
+            json.dumps(
+                {
+                    "schema_version": "1.0",
+                    "project_type": "app-service",
+                    "language": "python",
+                    "structure": {
+                        "source_root": "src/",
+                        "test_root": "tests/",
+                        "config_files": ["pyproject.toml"],
+                        "entry_point": "src/main.py",
+                    },
+                    "conventions": {
+                        "linter": "ruff",
+                        "type_checker": "pyright",
+                        "test_runner": "pytest",
+                    },
+                }
+            )
+        )
         result = _run_cli("doctor", cwd=tmp_path)
         # 找 init-manifest 行
         manifest_line = [ln for ln in result.stdout.splitlines() if "init-manifest" in ln]
@@ -275,10 +295,29 @@ class TestExitCodes:
 
     def test_exit_code_0_completed(self, tmp_path: Path) -> None:
         """doctor 全 ✓ → exit 0."""
-        # 准备完整环境 (有 manifest, 有 api_key, ...)
+        # 准备完整环境 (有完整 manifest, 有 api_key, ...)
         ae_state = tmp_path / ".ae-state"
         ae_state.mkdir()
-        (ae_state / "init-manifest.json").write_text(json.dumps({"schema_version": "1.0"}))
+        (ae_state / "init-manifest.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": "1.0",
+                    "project_type": "app-service",
+                    "language": "python",
+                    "structure": {
+                        "source_root": "src/",
+                        "test_root": "tests/",
+                        "config_files": [],
+                        "entry_point": "src/main.py",
+                    },
+                    "conventions": {
+                        "linter": "ruff",
+                        "type_checker": "pyright",
+                        "test_runner": "pytest",
+                    },
+                }
+            )
+        )
         # doctor 通常会检查 .ae-state 目录存在, 写一下保证可读写
         result = _run_cli("doctor", cwd=tmp_path, timeout=10)
         # 至少有 ✓ 标记

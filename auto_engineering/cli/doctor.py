@@ -16,7 +16,6 @@ Exit codes:
 
 from __future__ import annotations
 
-import json
 import os
 import shutil
 import sqlite3
@@ -146,29 +145,49 @@ def _check_ae_state(project_root: Path) -> tuple[bool, str]:
 
 
 def _check_init_manifest(project_root: Path) -> tuple[bool, str]:
-    """检查 init-manifest.json (IL-AC-01).
+    """检查 init-manifest.json (IL-AC-01~05, v5.0 §IL.4).
 
-    - 文件不存在 → ✗ + 提示运行 Init Engineering
-    - 文件存在但 schema_version 缺失 → ✗
-    - 文件存在且 schema_version >= 1.0 → ✓
+    校验流程:
+        1. 文件不存在 → ✗ + 提示运行 Init (IL-AC-01)
+        2. 调 init_contract.load_init_manifest 读取
+        3. 调 init_contract.validate_init_manifest 校验
+            - schema_version < 1.0 → ✗ (IL-AC-04)
+            - schema_version > 9.9 → WARN (forward-compat)
+            - 必需字段缺失 → ✗ (列字段名)
+            - language/project_type 不在 enum → ✗ (列支持值)
+            - 未知字段 → WARN (IL-AC-03, 静默忽略)
+        4. 任一 ✗ → 整体 ✗, 拼接 messages
     """
+    # 惰性 import 避免循环 (init_contract → 不依赖 cli, 但保险起见)
+    from auto_engineering.loop.init_contract import (
+        load_init_manifest,
+        validate_init_manifest,
+    )
+
     manifest = project_root / ".ae-state" / "init-manifest.json"
+    # IL-AC-01: 文件缺失
     if not manifest.exists():
         return False, (
             "init-manifest.json 不存在 — 未找到 .ae-state/init-manifest.json, "
             "请先运行 Init Engineering 项目初始化"
         )
-    try:
-        data = json.loads(manifest.read_text())
-    except json.JSONDecodeError as e:
-        return False, f"init-manifest.json JSON 解析失败: {e}"
-    schema_version = data.get("schema_version", "")
-    if not schema_version:
-        return False, "init-manifest.json 缺 schema_version 字段"
-    current = _parse_version(str(schema_version))
-    if current < (1, 0):
-        return False, f"init-manifest.json schema_version {schema_version} 不支持 (最低 1.0, 最高 9.9), 请重新 Init"
-    return True, f"init-manifest.json 存在 (schema_version {schema_version})"
+    # 调 init_contract 读取 (load 失败 → ✗)
+    data = load_init_manifest(project_root)
+    if data is None:
+        return False, f"init-manifest.json 读取/解析失败: {manifest}"
+    # 调 init_contract 校验
+    result = validate_init_manifest(data)
+    if not result.ok:
+        # 拼接 errors
+        joined = "; ".join(result.errors)
+        return False, f"init-manifest.json 校验失败: {joined}"
+    # 通过, 拼接 schema_version + warnings
+    schema_version = data.get("schema_version", "?")
+    if result.warnings:
+        warn_str = " [WARN: " + "; ".join(result.warnings) + "]"
+    else:
+        warn_str = ""
+    return True, f"init-manifest.json 存在 (schema_version {schema_version}){warn_str}"
 
 
 def run_doctor_checks(project_root: Path) -> tuple[int, list[tuple[bool, str]]]:
