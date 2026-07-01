@@ -40,6 +40,39 @@
 
 > **诚实声明**：AC-12 标记 PARTIAL 而非 PASS。代码层 7 commands + init 已交付 (Phase 09 commit `0664343`)，但真实 Claude Code 环境（cp + restart + `/help` 显示 7+1 slash command）需用户手动验证。这是 v5.0 §B14.3 明确划定的 AI/用户职责边界。
 
+### 1.2 AC-12 release-blocking verification (Phase 12.10)
+
+> **release-blocking**: AC-12 是 v5.0 唯一未 PASS 的核心 AC。release 前必须由用户手动验证并标记 PASS，否则不可发布。
+
+**当前已交付（代码层可验证）**：
+- `.claude-plugin/plugin.json` 字段完整（含 commands/hooks/skills 路径）
+- `.claude-plugin/commands/*.md` 共 **7 文件**:
+  - `dev-loop.md` → `/ae:dev-loop`
+  - `status.md` → `/ae:status`
+  - `checkpoint.md` → `/ae:checkpoint`
+  - `project-tdd.md` → `/ae:project-tdd`
+  - `project-worktree.md` → `/ae:project-worktree`
+  - `project-agent.md` → `/ae:project-agent`
+  - `project-ci.md` → `/ae:project-ci`
+
+**真实环境手动验证步骤**（AI 不可代执行）：
+
+```
+AC-12 release-blocking verification 步骤:
+1. 复制 plugin: cp -r .claude-plugin <target-project>/
+2. 重启 Claude Code
+3. 在目标项目运行 /help
+4. 验证 7 slash command 注册: /dev-loop /status /checkpoint /project-tdd /project-worktree /project-agent /project-ci
+5. （注: /init 由独立 Init Engineering 项目提供,不在本项目范围）
+6. 任一 command 缺失 → 检查 plugin.json commands 路径
+```
+
+**FAIL 标准**：
+- `/help` 中任一 7 command 缺失 → AC-12 FAIL → 阻塞 release
+- 全部 7 command 可见 → AC-12 由 PARTIAL 升级为 PASS → release 解锁
+
+**关联 commit**: Phase 09 commit `0664343` (plugin + commands + hooks + skills 交付)
+
 ---
 
 ## 2. v5.0 5 IL-AC 状态表 (v5.0 §IL.6)
