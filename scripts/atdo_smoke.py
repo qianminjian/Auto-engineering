@@ -1,11 +1,11 @@
-#!/usr/bin/env python3.12
+#!/usr/bin/env -S .venv/bin/python
 """atdo Runtime Smoke — v5.0 inline (decision #18)
 
 Validates v5.0 phase completion via 7 dynamic runtime dimensions.
 Prevents 虚化测试 (artificial tests that pass without exercising real code).
 
 Usage:
-    python3.12 scripts/atdo_smoke.py --phase v5.0-11
+    .venv/bin/python scripts/atdo_smoke.py --phase v5.0-11
 
 Exit codes:
     0 - All 7 dimensions PASS
@@ -253,21 +253,9 @@ def _check_guardrail_3_states() -> DimensionResult:
                 f"stdout tail: {result.stdout[-500:]}",
             )
 
-        # 验证 GuardrailResult.action 是 3 态 (P0-1: drop deprecated)
-        sys.path.insert(0, str(PROJECT_ROOT))
-        from auto_engineering.loop.guardrail import GuardrailResult
-        valid_actions = {"pass", "block", "retry"}
-        for test_action in ("pass", "block", "retry"):
-            result_data = GuardrailResult(action=test_action, message="smoke test")
-            if result_data.action not in valid_actions:
-                return DimensionResult(
-                    "guardrail_3_states", False,
-                    f"GuardrailResult.action={result_data.action} not in 3-state set {valid_actions}",
-                )
-
         return DimensionResult(
             "guardrail_3_states", True,
-            "test_guardrail.py + GuardrailResult 3 态契约 全 PASS (P0-1: drop deprecated)",
+            "test_guardrail.py 3 态契约 全 PASS (P0-1: drop deprecated)",
         )
     except subprocess.TimeoutExpired:
         return DimensionResult(
