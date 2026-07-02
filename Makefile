@@ -21,15 +21,19 @@ help:  ## 显示帮助
 install:  ## 用户级全局安装 (uv sync + Claude Code plugin 注册 + 验证)
 	@echo "=== Auto-Engineering v5.0 用户级安装 ==="
 	@echo ""
-	@echo "[1/3] uv sync..."
+	@echo "[1/4] uv sync..."
 	uv sync
 	@echo ""
-	@echo "[2/3] 注册 plugin (用户级, 所有 Claude Code 项目可用)..."
+	@echo "[2/4] 创建 symlink (用户级 plugin 目录)..."
 	mkdir -p ~/.claude/plugins
 	ln -sfn $(PWD) ~/.claude/plugins/auto-engineering
 	@echo "  ~/.claude/plugins/auto-engineering -> $(PWD)"
 	@echo ""
-	@echo "[3/3] ae doctor 验证..."
+	@echo "[3/4] 注册到 installed_plugins.json (claude plugin install 不支持本地路径, 需手动)..."
+	python3 -c "import json; from pathlib import Path; p=Path.home()/'.claude'/'plugins'/'installed_plugins.json'; d=json.loads(p.read_text()); d['plugins']['auto-engineering@local']=[{'scope':'user','installPath':str(Path.home()/'.claude'/'plugins'/'auto-engineering'),'version':'5.0.0','installedAt':'$$(date -u +%Y-%m-%dT%H:%M:%SZ)','lastUpdated':'$$(date -u +%Y-%m-%dT%H:%M:%SZ)','gitCommitSha':'$$(git rev-parse HEAD)'}]; p.write_text(json.dumps(d,indent=2,ensure_ascii=False))"
+	@echo "  auto-engineering@local ✓"
+	@echo ""
+	@echo "[4/4] ae doctor 验证..."
 	uv run ae doctor
 	@echo ""
 	@echo "安装完成。重启 Claude Code 后所有项目可用:"
