@@ -14,17 +14,14 @@ Auto-Engineering 是 **Claude Code Plugin 形态的 Loop Engineering 脚手架**
 
 ---
 
-## 安装（2 条命令）
+## 安装（2 条命令, 无需 make install）
 
 ```bash
-git clone git@github.com:qianminjian/Auto-engineering.git ~/.auto-engineering
-cd ~/.auto-engineering && make install
+git clone git@github.com:qianminjian/Auto-engineering.git ~/.claude/plugins/auto-engineering
+cd ~/.claude/plugins/auto-engineering && uv sync
 ```
 
-`make install` 自动完成：
-1. `uv sync` — 安装 Engine 依赖到 `~/.auto-engineering/.venv/`
-2. `ln -sfn ~/.auto-engineering ~/.claude/plugins/auto-engineering` — 注册用户级 Plugin
-3. `uv run ae doctor` — 验证环境
+参照你本地 superpowers 的安装方式 — Claude Code 启动时扫描 `~/.claude/plugins/<name>/` 自动发现。`uv sync` 安装 Engine 依赖到 `.venv/`。
 
 安装完成后**重启 Claude Code**，`/dev-loop` 在所有项目可用。
 
@@ -50,10 +47,10 @@ cd ~/.auto-engineering && make install
 ### 方式 B: CLI 模式（终端直接调用）
 
 ```bash
-~/.auto-engineering/.venv/bin/ae dev-loop "需求描述"
-~/.auto-engineering/.venv/bin/ae gate-check --all
-~/.auto-engineering/.venv/bin/ae status --format json
-~/.auto-engineering/.venv/bin/ae doctor
+~/.claude/plugins/auto-engineering/.venv/bin/ae dev-loop "需求描述"
+~/.claude/plugins/auto-engineering/.venv/bin/ae gate-check --all
+~/.claude/plugins/auto-engineering/.venv/bin/ae status --format json
+~/.claude/plugins/auto-engineering/.venv/bin/ae doctor
 ```
 
 CLI 模式需要独立的 `ANTHROPIC_API_KEY`（Plugin 模式从 Claude Code Agent 继承 key）。
@@ -135,8 +132,8 @@ uv run ae checkpoint delete <id>
 
 ```bash
 # 1. 团队成员各自安装 (一次性)
-git clone git@github.com:qianminjian/Auto-engineering.git ~/.auto-engineering
-cd ~/.auto-engineering && make install
+git clone git@github.com:qianminjian/Auto-engineering.git ~/.claude/plugins/auto-engineering
+cd ~/.claude/plugins/auto-engineering && uv sync
 
 # 2. 成员 A 在项目 A 中运行
 cd ~/projects/project-a
@@ -208,14 +205,12 @@ Engine 内部用 asyncio.gather 并行执行 N 个 task。慢通常因为：
 - Guardrail 阻塞（连续重试 3 次）
 - 缺少 init-manifest 导致 Gate 配置回退
 
-### `make install` 失败
+### `uv sync` 失败
 
 ```bash
-# 手动调试
-cd ~/.auto-engineering
+cd ~/.claude/plugins/auto-engineering
 uv sync                    # 依赖问题
 uv run ae doctor            # 环境问题
-ls -la ~/.claude/plugins/auto-engineering   # symlink 问题
 ```
 
 ---
@@ -223,7 +218,7 @@ ls -la ~/.claude/plugins/auto-engineering   # symlink 问题
 ## 项目结构
 
 ```
-~/.auto-engineering/                    # 安装根目录
+~/.claude/plugins/auto-engineering/     # 安装根目录 (Claude Code 扫描)
 ├── auto_engineering/                    # Engine 核心代码
 │   ├── loop/                            # Loop 控制流
 │   │   ├── orchestrator.py            # 12 步主循环
@@ -243,7 +238,7 @@ ls -la ~/.claude/plugins/auto-engineering   # symlink 问题
 ├── docs/                               # 用户文档 + API 参考
 ├── design/                             # 设计文档 (v5.0-Design-Loop, BEACON)
 ├── tests/                              # 1253 测试
-├── Makefile                            # make install/test/ci
+├── Makefile                            # make test/ci
 ├── pyproject.toml                      # Python 项目配置
 └── CLAUDE.md                           # Claude Code 项目规则
 ```
@@ -253,9 +248,9 @@ ls -la ~/.claude/plugins/auto-engineering   # symlink 问题
 ## 更新
 
 ```bash
-cd ~/.auto-engineering
+cd ~/.claude/plugins/auto-engineering
 git pull origin main
-make install
+uv sync
 ```
 
 ---
@@ -263,8 +258,7 @@ make install
 ## 卸载
 
 ```bash
-rm ~/.claude/plugins/auto-engineering     # 删除 symlink
-rm -rf ~/.auto-engineering                # 删除代码目录
+rm -rf ~/.claude/plugins/auto-engineering   # 完整删除 (代码+symlink 一起)
 ```
 
 **注意**：不会删除 `~/.claude/settings.json` 中的项目级 settings（如有手动配置）。
