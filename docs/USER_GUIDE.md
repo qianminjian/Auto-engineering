@@ -2,7 +2,11 @@
 
 ## 这是什么
 
-Auto-Engineering 是 **Claude Code Plugin 形态的 Loop Engineering 脚手架**。在 Claude Code 会话中输入 `/dev-loop "需求描述"`，插件会调度 Python Loop Engine 执行 architect → developer → critic 三阶段 Agent 循环，自动产出代码变更、测试、审查结论。
+Auto-Engineering 是 **Claude Code Plugin 形态的 Loop Engineering 脚手架**,**面向团队内部分发**(5-20 用户本地安装)。
+
+不是大规模 SaaS (无服务端架构), 不是个人极简使用。
+
+在 Claude Code 会话中输入 `/dev-loop "需求描述"`，插件会调度 Python Loop Engine 执行 architect → developer → critic 三阶段 Agent 循环，自动产出代码变更、测试、审查结论。
 
 核心特性：
 - **三阶段 Agent 循环**（architect / developer / critic）
