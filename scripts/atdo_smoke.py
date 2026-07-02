@@ -227,10 +227,11 @@ def _check_stage_router_t1_t6() -> DimensionResult:
         )
 
 
-def _check_guardrail_4_states() -> DimensionResult:
-    """Smoke 5: Guardrail 4 态动作 (v5.0 §B2.4: pass / retry / block / drop).
+def _check_guardrail_3_states() -> DimensionResult:
+    """Smoke 5: Guardrail 3 态动作 (v5.0 P0-1: pass / block / retry, drop deprecated).
 
-    通过 pytest tests/test_guardrail.py 验证 4 态 + Chain + 5 内置 Guardrails.
+    通过 pytest tests/test_guardrail.py 验证 3 态 + Chain + 5 内置 Guardrails.
+    P0-1 (2026-07-01): 删 drop 态 (YAGNI, CrewAI 仅 2 态), handler 中 drop-as-retry 兼容.
     """
     try:
         import subprocess
@@ -247,38 +248,40 @@ def _check_guardrail_4_states() -> DimensionResult:
         )
         if result.returncode != 0:
             return DimensionResult(
-                "guardrail_4_states", False,
+                "guardrail_3_states", False,
                 f"pytest test_guardrail FAILED (rc={result.returncode})\n"
                 f"stdout tail: {result.stdout[-500:]}",
             )
 
-        # 额外验证 GuardrailResult.action 包含 4 态 (v5.0 §B2.4)
+        # 验证 GuardrailResult.action 是 3 态 (P0-1: drop deprecated)
         sys.path.insert(0, str(PROJECT_ROOT))
         from auto_engineering.loop.guardrail import GuardrailResult
-        result_data = GuardrailResult(action="pass", message="smoke test")
-        if result_data.action not in {"pass", "retry", "block", "drop"}:
-            return DimensionResult(
-                "guardrail_4_states", False,
-                f"GuardrailResult.action={result_data.action} not in 4-state set",
-            )
+        valid_actions = {"pass", "block", "retry"}
+        for test_action in ("pass", "block", "retry"):
+            result_data = GuardrailResult(action=test_action, message="smoke test")
+            if result_data.action not in valid_actions:
+                return DimensionResult(
+                    "guardrail_3_states", False,
+                    f"GuardrailResult.action={result_data.action} not in 3-state set {valid_actions}",
+                )
 
         return DimensionResult(
-            "guardrail_4_states", True,
-            "test_guardrail.py + GuardrailResult 4 态契约 全 PASS",
+            "guardrail_3_states", True,
+            "test_guardrail.py + GuardrailResult 3 态契约 全 PASS (P0-1: drop deprecated)",
         )
     except subprocess.TimeoutExpired:
         return DimensionResult(
-            "guardrail_4_states", False,
+            "guardrail_3_states", False,
             "pytest test_guardrail 超时 (120s)",
         )
     except FileNotFoundError as e:
         return DimensionResult(
-            "guardrail_4_states", False,
+            "guardrail_3_states", False,
             f"pytest not found: {e}",
         )
     except Exception as e:
         return DimensionResult(
-            "guardrail_4_states", False,
+            "guardrail_3_states", False,
             f"exception: {type(e).__name__}: {e}",
         )
 
@@ -417,7 +420,7 @@ DIMENSIONS = [
     ("gate_pass", _check_gate_pass),
     ("orchestrator_12_steps", _check_orchestrator_12_steps),
     ("stage_router_t1_t6", _check_stage_router_t1_t6),
-    ("guardrail_4_states", _check_guardrail_4_states),
+    ("guardrail_3_states", _check_guardrail_3_states),
     ("cli_doctor", _check_cli_doctor),
     ("plugin_load", _check_plugin_load),
 ]

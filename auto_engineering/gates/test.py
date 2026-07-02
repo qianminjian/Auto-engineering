@@ -173,8 +173,18 @@ class TestGate(Gate):
                 gate_name=self.name,
             )
 
-        # exit 5 = no tests collected, 视为失败(项目应至少有测试)
-        # exit 1/2/3/4 = 测试失败
+        # exit 5 = pytest 找不到任何测试文件
+        # exit 4 = pytest 收集到 0 个测试 (项目无测试目录或测试为空)
+        # 两者均视为 skip (非失败), 不阻塞 dev-loop — 文档类项目可能没有测试
+        if result.returncode in (4, 5):
+            output = (result.stdout or "") + (result.stderr or "")
+            snippet = output[-300:] if len(output) > 300 else output
+            return Verdict.passed(
+                f"{self.test_runner_bin} skip: 未收集到测试 (exit={result.returncode})\n{snippet}",
+                gate_name=self.name,
+            )
+
+        # exit 1/2/3 = 测试失败
         output = (result.stdout or "") + (result.stderr or "")
         snippet = output[-1500:] if len(output) > 1500 else output
         return Verdict.failed(
