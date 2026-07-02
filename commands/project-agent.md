@@ -68,7 +68,7 @@ case "$ROLE" in
     ;;
 esac
 
-CMD=".venv/bin/ae agent $ROLE --task \"$TASK\""
+CMD="ae agent $ROLE --task \"$TASK\""
 if [[ -n "$CONTEXT" ]]; then
   CMD="$CMD --context \"$CONTEXT\""
 fi

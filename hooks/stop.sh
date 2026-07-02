@@ -6,7 +6,7 @@
 set -u
 
 # Skip if ae CLI not available
-[[ ! -x ".venv/bin/ae" ]] && exit 0
+[[ ! -x "ae" ]] && exit 0
 
 # Check for checkpoints.db
 DB_PATH="${AE_DB_PATH:-.ae-state/checkpoints.db}"

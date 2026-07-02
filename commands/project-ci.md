@@ -48,7 +48,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-CMD=".venv/bin/ae gate-check"
+CMD="ae gate-check"
 if [[ "$QUICK" == "true" ]]; then
   CMD="$CMD --quick"
 else

@@ -47,10 +47,10 @@ cd ~/.claude/plugins/auto-engineering && uv sync
 ### 方式 B: CLI 模式（终端直接调用）
 
 ```bash
-~/.claude/plugins/auto-engineering/.venv/bin/ae dev-loop "需求描述"
-~/.claude/plugins/auto-engineering/.venv/bin/ae gate-check --all
-~/.claude/plugins/auto-engineering/.venv/bin/ae status --format json
-~/.claude/plugins/auto-engineering/.venv/bin/ae doctor
+ae dev-loop "需求描述"
+ae gate-check --all
+ae status --format json
+ae doctor
 ```
 
 CLI 模式需要独立的 `ANTHROPIC_API_KEY`（Plugin 模式从 Claude Code Agent 继承 key）。
@@ -77,25 +77,25 @@ CLI 模式需要独立的 `ANTHROPIC_API_KEY`（Plugin 模式从 Claude Code Age
 
 ```bash
 # 环境验证
-uv run ae doctor
+ae doctor
 
 # Gate 检查
-uv run ae gate-check --quick       # 3 道核心 Gate (safety+lint+type_check)
-uv run ae gate-check --all         # 全部 7 道 Gate
+ae gate-check --quick       # 3 道核心 Gate (safety+lint+type_check)
+ae gate-check --all         # 全部 7 道 Gate
 
 # 单 Agent 调用
-uv run ae agent architect "分析 OAuth2 流程"
-uv run ae agent developer "实现用户模型"
-uv run ae agent critic "审查 PR #42"
+ae agent architect "分析 OAuth2 流程"
+ae agent developer "实现用户模型"
+ae agent critic "审查 PR #42"
 
 # Loop 状态
-uv run ae status --format json      # JSON 7 字段输出
+ae status --format json      # JSON 7 字段输出
 
 # Checkpoint 管理
-uv run ae checkpoint list
-uv run ae checkpoint show <id>
-uv run ae checkpoint resume <id>
-uv run ae checkpoint delete <id>
+ae checkpoint list
+ae checkpoint show <id>
+ae checkpoint resume <id>
+ae checkpoint delete <id>
 ```
 
 ---
@@ -210,7 +210,7 @@ Engine 内部用 asyncio.gather 并行执行 N 个 task。慢通常因为：
 ```bash
 cd ~/.claude/plugins/auto-engineering
 uv sync                    # 依赖问题
-uv run ae doctor            # 环境问题
+ae doctor            # 环境问题
 ```
 
 ---

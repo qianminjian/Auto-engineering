@@ -34,10 +34,10 @@ case "$FILE_PATH" in
 esac
 
 # Skip if .venv not present (avoid noise during plugin dev)
-[[ ! -x ".venv/bin/ae" ]] && exit 0
+[[ ! -x "ae" ]] && exit 0
 
 # Run quick gate
-RESULT=$(.venv/bin/ae gate-check --quick --json 2>&1) || true
+RESULT=$(ae gate-check --quick --json 2>&1) || true
 
 # Always allow — just surface results
 if echo "$RESULT" | grep -q '"status":"fail"'; then

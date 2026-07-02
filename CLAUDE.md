@@ -43,7 +43,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 **Loop Engineering 调度脚手架**——提供 Claude Code Plugin 形态的 Stage-sequenced Agent loop。用户在 Claude Code 会话中输入 `/dev-loop "实现登录功能"`，Plugin 调度 Python Loop Engine 在子进程中运行 architect → developer → critic 三阶段 Agent 循环。
 
 **两层架构**：
-- **Plugin 层**（`.claude-plugin/`）：Bash 委托 `uv run ae <subcommand>`，控制流在 Python
+- **Plugin 层**（`.claude-plugin/`）：Bash 委托 `ae <subcommand>`，控制流在 Python
 - **Engine 层**（`auto_engineering/`）：Python 控制流（12 步主循环 + StageRouter + Guardrail + 7 Gates + Checkpoint）
 
 **Init Engineering 是独立项目**——本项目通过 Init-Loop 接口契约消费 Init 产出的 `.ae-state/init-manifest.json`。Init 项目不在本仓库范围。
@@ -54,7 +54,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```
 Plugin 层 (.claude-plugin/)
-  commands/*.md  ──→  Bash 委托 uv run ae <subcommand>
+  commands/*.md  ──→  Bash 委托 ae <subcommand>
   hooks/*.sh     ──→  事件响应 (pre-tool/post-edit/stop/session-start/on-pr)
   skills/SKILL.md ──→  告诉 Agent 何时使用 ae 命令
 
@@ -113,17 +113,17 @@ Engine 层 (auto_engineering/)
 
 ```bash
 # 测试（16G 内存约束 + 虚拟环境）
-.venv/bin/pytest tests/test_xxx.py -v --no-cov --timeout=60   # 单文件
-.venv/bin/pytest tests/ --no-cov --timeout=120 -q              # 全量
-.venv/bin/pytest tests/ --cov=auto_engineering --cov-report=term-missing --timeout=300 -q  # 覆盖率
+uv run pytest tests/test_xxx.py -v --no-cov --timeout=60   # 单文件
+uv run pytest tests/ --no-cov --timeout=120 -q              # 全量
+uv run pytest tests/ --cov=auto_engineering --cov-report=term-missing --timeout=300 -q  # 覆盖率
 
 # CLI
-uv run ae doctor                    # 环境预检 (7 项)
-uv run ae gate-check --quick        # 快速 Gate (safety+lint+type_check)
-uv run ae gate-check --all          # 全量 Gate
-uv run ae status --format json      # 当前进度
-uv run ae agent architect "需求"    # 单 Agent 调用
-uv run ae dev-loop "需求"           # 完整 3 Stage 循环
+ae doctor                    # 环境预检 (7 项)
+ae gate-check --quick        # 快速 Gate (safety+lint+type_check)
+ae gate-check --all          # 全量 Gate
+ae status --format json      # 当前进度
+ae agent architect "需求"    # 单 Agent 调用
+ae dev-loop "需求"           # 完整 3 Stage 循环
 
 # Plugin
 bash ae-plugin-acceptance-test.sh   # Plugin 验收 (20 场景)

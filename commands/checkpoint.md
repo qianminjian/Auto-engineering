@@ -56,22 +56,22 @@ done
 case "$ACTION" in
   list)
     if [[ -n "$ROUND" ]]; then
-      .venv/bin/ae checkpoint v2 list --round "$ROUND"
+      ae checkpoint v2 list --round "$ROUND"
     else
-      .venv/bin/ae checkpoint v2 list
+      ae checkpoint v2 list
     fi
     ;;
   show)
     [[ -z "$ID" ]] && { echo '{"error":"--id required"}'; exit 2; }
-    .venv/bin/ae checkpoint v2 show "$ID"
+    ae checkpoint v2 show "$ID"
     ;;
   resume)
     [[ -z "$ID" ]] && { echo '{"error":"--id required"}'; exit 2; }
-    .venv/bin/ae checkpoint v2 resume "$ID"
+    ae checkpoint v2 resume "$ID"
     ;;
   delete)
     [[ -z "$ID" ]] && { echo '{"error":"--id required"}'; exit 2; }
-    .venv/bin/ae checkpoint v2 delete "$ID"
+    ae checkpoint v2 delete "$ID"
     ;;
   *)
     echo '{"error":"action must be list|show|resume|delete"}'

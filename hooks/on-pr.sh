@@ -14,9 +14,9 @@ if ! echo "$TOOL_INPUT" | grep -q "gh pr create"; then
 fi
 
 # Run quick gate to attach to PR body
-[[ ! -x ".venv/bin/ae" ]] && exit 0
+[[ ! -x "ae" ]] && exit 0
 
-GATE_OUTPUT=$(.venv/bin/ae gate-check --quick --json 2>&1) || true
+GATE_OUTPUT=$(ae gate-check --quick --json 2>&1) || true
 
 # Format as markdown table
 PR_BODY=$(echo "$GATE_OUTPUT" | python3 -c "

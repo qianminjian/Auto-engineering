@@ -6,7 +6,7 @@
 
 ```bash
 uv sync
-uv run ae --help
+ae --help
 ```
 
 ## 命令

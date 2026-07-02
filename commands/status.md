@@ -29,7 +29,7 @@ None.
 ## Execution
 
 ```bash
-CMD=".venv/bin/ae status"
+CMD="ae status"
 if [[ "$1" == "--json" ]]; then
   CMD="$CMD --json"
 fi

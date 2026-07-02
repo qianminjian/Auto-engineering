@@ -67,8 +67,8 @@ else
   CHECKS_JSON="$CHECKS_JSON\"venv\":\"missing\","
 fi
 
-# 8. .venv/bin/ae
-if [[ -x ".venv/bin/ae" ]]; then
+# 8. ae
+if [[ -x "ae" ]]; then
   CHECKS_JSON="$CHECKS_JSON\"ae_cli\":\"ok\","
 else
   CHECKS_JSON="$CHECKS_JSON\"ae_cli\":\"missing\","

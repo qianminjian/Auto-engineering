@@ -52,7 +52,7 @@ if [[ -z "$TASK" ]]; then
   exit 2
 fi
 
-CMD=".venv/bin/ae agent developer --task \"$TASK\" --tdd"
+CMD="ae agent developer --task \"$TASK\" --tdd"
 if [[ -n "$MODULE" ]]; then
   CMD="$CMD --module \"$MODULE\""
 fi

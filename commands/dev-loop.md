@@ -68,7 +68,7 @@ if [[ -z "$REQUIREMENT" ]] && [[ "$RESUME" != "true" ]] && [[ -z "$CHECKPOINT_ID
 fi
 
 # Build command
-CMD=".venv/bin/ae dev-loop"
+CMD="ae dev-loop"
 if [[ -n "$REQUIREMENT" ]]; then
   CMD="$CMD \"$REQUIREMENT\""
 fi

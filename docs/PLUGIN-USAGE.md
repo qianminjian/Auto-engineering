@@ -156,12 +156,12 @@ The plugin installs 5 hooks (all chmod +x):
 
 ### 5.2 `ae_cli: missing`
 
-**Cause**: `.venv/bin/ae` doesn't exist.
+**Cause**: `ae` doesn't exist.
 
 **Fix**:
 ```bash
 uv sync
-.venv/bin/ae doctor    # should pass all checks
+ae doctor    # should pass all checks
 ```
 
 ### 5.3 `ANTHROPIC_API_KEY: missing`
@@ -193,10 +193,10 @@ echo $ANTHROPIC_API_KEY | head -c 8   # verify
 **Fix**:
 ```bash
 # 1. Inspect state
-.venv/bin/ae status
+ae status
 
 # 2. Save interrupted checkpoint
-.venv/bin/ae checkpoint save interrupted
+ae checkpoint save interrupted
 
 # 3. Resume from latest
 /ae:dev-loop --resume
