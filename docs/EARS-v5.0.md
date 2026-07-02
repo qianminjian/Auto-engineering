@@ -46,7 +46,7 @@
 
 **当前已交付（代码层可验证）**：
 - `.claude-plugin/plugin.json` 字段完整（含 commands/hooks/skills 路径）
-- `.claude-plugin/commands/*.md` 共 **7 文件**:
+- `commands/*.md` 共 **7 文件**:
   - `dev-loop.md` → `/ae:dev-loop`
   - `status.md` → `/ae:status`
   - `checkpoint.md` → `/ae:checkpoint`

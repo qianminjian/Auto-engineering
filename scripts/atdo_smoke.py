@@ -334,7 +334,7 @@ def _check_plugin_load() -> DimensionResult:
     """Smoke 7: Plugin 加载 — plugin.json + hooks chmod +x (P2-1)."""
     try:
         plugin_json = PROJECT_ROOT / ".claude-plugin" / "plugin.json"
-        hooks_dir = PROJECT_ROOT / ".claude-plugin" / "hooks"
+        hooks_dir = PROJECT_ROOT / "hooks"
 
         if not plugin_json.exists():
             return DimensionResult(

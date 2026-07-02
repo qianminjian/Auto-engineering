@@ -223,4 +223,4 @@ rm -rf .venv .ae-state/
 - `ae-plugin-acceptance-test.sh` — runs 3 acceptance scenarios
 - `design/v5.0-Design-Loop.md` — Engine design spec
 - `_scratch/v5.0-refactor-plan.md` — refactor plan (模块 10)
-- `.claude-plugin/skills/auto-engineering/SKILL.md` — in-conversation skill reference
+- `skills/auto-engineering/SKILL.md` — in-conversation skill reference

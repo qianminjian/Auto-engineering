@@ -14,7 +14,7 @@ set -u
 # Resolve paths
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_DIR="$SCRIPT_DIR/.claude-plugin"
-HOOKS_DIR="$PLUGIN_DIR/hooks"
+HOOKS_DIR="$SCRIPT_DIR/hooks"
 
 PASS=0
 FAIL=0
