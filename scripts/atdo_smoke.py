@@ -1,6 +1,9 @@
 #!/usr/bin/env -S .venv/bin/python
 """atdo Runtime Smoke — v5.0 inline (decision #18)
 
+Note: 必须用 venv python 跑 (PEP 695 envelope.py 需要 Python 3.12+)
+否则会 SyntaxError at envelope.py:42 (`class Checkpoint[T]:`)
+
 Validates v5.0 phase completion via 7 dynamic runtime dimensions.
 Prevents 虚化测试 (artificial tests that pass without exercising real code).
 
@@ -38,6 +41,60 @@ class DimensionResult:
 
 def _check_init_manifest() -> DimensionResult:
     """Smoke 1: Init-Loop manifest 加载 + 验证 (IL-AC-01/02/04)."""
+    import subprocess
+    try:
+        # 用 venv python 跑 (PEP 695 envelope.py 需要 3.12+)
+        result = subprocess.run(
+            [
+                str(PROJECT_ROOT / ".venv" / "bin" / "python"),
+                "-c",
+                "import sys; sys.path.insert(0, '" + str(PROJECT_ROOT) + "'); "
+                "from auto_engineering.loop.init_contract import ("
+                "INIT_MANIFEST_SCHEMA_VERSION, load_init_manifest, "
+                "validate_init_manifest); "
+                "print(INIT_MANIFEST_SCHEMA_VERSION)",
+            ],
+            capture_output=True, text=True, timeout=30,
+        )
+        if result.returncode != 0:
+            return DimensionResult(
+                "init_manifest", False,
+                f"venv python import init_contract FAILED (rc={result.returncode})\n"
+                f"stderr: {result.stderr[-300:]}",
+            )
+        schema_version = result.stdout.strip()
+
+        # 测缺 → None
+        result = subprocess.run(
+            [
+                str(PROJECT_ROOT / ".venv" / "bin" / "python"),
+                "-c",
+                "import sys; sys.path.insert(0, '" + str(PROJECT_ROOT) + "'); "
+                "from auto_engineering.loop.init_contract import load_init_manifest; "
+                "print(load_init_manifest('/nonexistent'))",
+            ],
+            capture_output=True, text=True, timeout=30,
+        )
+        if "None" not in result.stdout:
+            return DimensionResult(
+                "init_manifest", False,
+                f"load_init_manifest('/nonexistent') 应返回 None, 实际: {result.stdout.strip()}",
+            )
+
+        return DimensionResult(
+            "init_manifest", True,
+            f"load/validate API 一致 (缺→None, 旧 version→拒绝, schema={schema_version})",
+        )
+    except subprocess.TimeoutExpired:
+        return DimensionResult("init_manifest", False, "venv python 超时 (30s)")
+    except FileNotFoundError as e:
+        return DimensionResult("init_manifest", False, f"venv python 找不到: {e}")
+    except Exception as e:
+        return DimensionResult("init_manifest", False, f"exception: {type(e).__name__}: {e}")
+
+
+def _check_init_manifest_old() -> DimensionResult:
+    """(保留旧版, 已弃用 — 用 venv subprocess 替代以支持 PEP 695)."""
     try:
         sys.path.insert(0, str(PROJECT_ROOT))
         from auto_engineering.loop.init_contract import (
