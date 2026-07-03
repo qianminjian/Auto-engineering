@@ -6,26 +6,25 @@ Claude Code Plugin — Loop Engineering 调度脚手架
 
 ## 安装 (参照 superpowers 模式)
 
-### 推荐方式: git clone
-
 ```bash
-git clone https://github.com/qianminjian/Auto-engineering.git ~/.claude/plugins/auto-engineering
-cd ~/.claude/plugins/auto-engineering
+# 1. git clone 完整仓库到 ~/.claude/ (不是 plugins/)
+git clone https://github.com/qianminjian/Auto-engineering.git ~/.claude/auto-engineering
+
+# 2. symlink 到 plugins 目录
+mkdir -p ~/.claude/plugins
+ln -sfn ~/.claude/auto-engineering ~/.claude/plugins/auto-engineering
+
+# 3. uv tool install 全局 (Engine 在 PATH)
+cd ~/.claude/auto-engineering
 uv tool install --force .
+
+# 4. 编辑 ~/.claude/plugins/installed_plugins.json 加 auto-engineering@local 条目
+# (Claude Code 通过这个发现 plugin)
+
+# 5. 重启 Claude Code → /dev-loop 等 7 个 slash command 可用
 ```
 
-然后在 `~/.claude/plugins/installed_plugins.json` 加条目 (Claude Code 才能发现 plugin):
-
-```json
-"auto-engineering@local": [{
-  "scope": "user",
-  "installPath": "/Users/minjianq/.claude/plugins/auto-engineering",
-  "version": "5.0.0",
-  ...
-}]
-```
-
-### Claude Code 内 marketplace 方式
+## Claude Code 内 marketplace 方式
 
 ```bash
 /plugin marketplace add qianminjian/Auto-engineering
@@ -53,7 +52,7 @@ ae doctor          # 7/7 通过
 ## 升级
 
 ```bash
-cd ~/.claude/plugins/auto-engineering && git pull
+cd ~/.claude/auto-engineering && git pull
 uv tool install --force .
 ```
 
@@ -61,9 +60,19 @@ uv tool install --force .
 
 ```bash
 uv tool uninstall auto-engineering
-rm -rf ~/.claude/plugins/auto-engineering
+unlink ~/.claude/plugins/auto-engineering
+rm -rf ~/.claude/auto-engineering
 # 手动从 ~/.claude/plugins/installed_plugins.json 移除 auto-engineering@local
 ```
+
+## 为什么这样安装 (参照 superpowers)
+
+| 步骤 | 为什么 |
+|------|--------|
+| `git clone 到 ~/.claude/auto-engineering` | 完整仓库在 `~/.claude/`, 多个 plugin 可共享同一仓库路径 |
+| `symlink 到 plugins 目录` | Claude Code 扫描 `~/.claude/plugins/<name>/` 发现 plugin |
+| `uv tool install .` | Engine 在用户 PATH 全局可用 (其他 plugin 也可调) |
+| 编辑 `installed_plugins.json` | Claude Code 通过这条目加载 plugin (注册表机制, 不是目录扫描) |
 
 ## 核心特性
 
