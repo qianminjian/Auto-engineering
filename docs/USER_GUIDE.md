@@ -14,16 +14,30 @@ Auto-Engineering 是 **Claude Code Plugin 形态的 Loop Engineering 脚手架**
 
 ---
 
-## 安装（2 条命令, 无需 make install）
+## 安装（用户级一次性, 单条命令）
 
 ```bash
-git clone git@github.com:qianminjian/Auto-engineering.git ~/.claude/plugins/auto-engineering
-cd ~/.claude/plugins/auto-engineering && uv sync
+bash install.sh    # 1 条命令完成全部安装
 ```
 
-参照你本地 superpowers 的安装方式 — Claude Code 启动时扫描 `~/.claude/plugins/<name>/` 自动发现。`uv sync` 安装 Engine 依赖到 `.venv/`。
+`install.sh` 做 3 件事:
+1. `git clone` 源码到 `~/.claude/plugins/auto-engineering/`
+2. `uv tool install .` 全局装 Engine (`~/.local/bin/ae`)
+3. 注册 plugin 到 `~/.claude/plugins/installed_plugins.json` (Claude Code 发现机制)
 
-安装完成后**重启 Claude Code**，`/dev-loop` 在所有项目可用。
+Claude Code 通过 `installed_plugins.json` 识别 plugin (不是目录扫描).
+
+安装完成后**重启 Claude Code**, `/dev-loop` 在所有项目可用.
+
+### 卸载
+```bash
+bash uninstall.sh
+```
+
+### 升级
+```bash
+cd ~/.claude/plugins/auto-engineering && git pull && bash install.sh
+```
 
 ---
 
