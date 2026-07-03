@@ -1,0 +1,33 @@
+name: Release Plugin
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (e.g. 5.0.0)"
+        required: true
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create plugin tarball
+        run: |
+          mkdir -p release
+          tar --exclude='.git' --exclude='release' --exclude='.venv' \
+              --exclude='__pycache__' --exclude='*.pyc' \
+              --exclude='.pytest_cache' --exclude='.ruff_cache' \
+              --exclude='htmlcov' --exclude='.coverage' \
+              --exclude='_proc-use' --exclude='docs/his_bak' \
+              -czf release/auto-engineering-${{ inputs.version || github.ref_name }}.tar.gz \
+              .claude-plugin commands hooks skills auto_engineering \
+              tests pyproject.toml README.md CLAUDE.md LICENSE 2>/dev/null || true
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*.tar.gz
+          generate_release_notes: true
+          draft: false

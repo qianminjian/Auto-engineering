@@ -1,0 +1,20 @@
+{
+  "name": "auto-engineering",
+  "owner": {
+    "name": "qianminjian"
+  },
+  "metadata": {
+    "description": "Claude Code Plugin marketplace for Auto-Engineering v5.0",
+    "version": "5.0.0"
+  },
+  "plugins": [
+    {
+      "name": "auto-engineering",
+      "description": "Loop Engineering 调度脚手架: 3 Stage Agent loop (architect→developer→critic) + 7 Gate 质量门 + Init-Loop 接口契约",
+      "source": "./",
+      "homepage": "https://github.com/qianminjian/Auto-engineering",
+      "version": "5.0.0",
+      "category": "development"
+    }
+  ]
+}
