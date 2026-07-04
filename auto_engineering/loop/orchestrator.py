@@ -524,9 +524,17 @@ class Orchestrator:
         """step 2e: 调 run_round + _apply_outcome_to_state. 返回 RoundResult.
 
         把 outcomes 按 task_role 分发写入 state 字段 (B7.2).
+
+        2026-07-04 修复 (Self-Refine / Reflexion 原则 1+4 集成):
+            developer / critic 重做时注入 critic_feedback + findings +
+            gate_results 到 task.description, 让 LLM 看到:
+            - 具体修复建议 (原则 1: 反馈具体且可操作)
+            - 非 LLM 信号 (原则 4: 每次迭代引入新信息 — lint/test/type_check)
+            否则 developer 只能"重新实现整个 stage", 没有针对性修复, 浪费 LLM 调用.
         """
+        enhanced_tasks = self._inject_self_refine_context(round_tasks, state, current_stage)
         round_result = await run_round(
-            tasks=round_tasks,
+            tasks=enhanced_tasks,
             executor=self.executor,
             ctx=None,
             cancellation=cancellation,
@@ -538,6 +546,85 @@ class Orchestrator:
         for outcome in round_result.outcomes:
             _apply_outcome_to_state(state, outcome)
         return round_result
+
+    def _inject_self_refine_context(
+        self,
+        round_tasks: list[Task],
+        state: "EngineState",
+        current_stage: str,
+    ) -> list[Task]:
+        """Self-Refine 反馈注入: 把 critic_feedback + findings + gate_results 拼接到 task.description.
+
+        触发条件:
+            - state.critic_feedback 非空 (说明上一轮 critic 给 MAJOR 反馈)
+            - state.findings 非空 (P0/P1/P2 findings 列表)
+            - 上一轮 gate_results 存在 (lint/test/type_check)
+            - 当前 stage 是 developer / critic (architect 阶段无反馈意义)
+
+        不修改原 round_tasks (返回新 list, 内部用 dataclasses.replace 复制 Task).
+
+        2026-07-04 修复 (Self-Refine 原则 1+4): 不注入 → developer 重做看不到
+        上轮反馈, 只能从零实现. 注入 → developer 看到"上次哪些 P0 没修 +
+        test 哪些失败 + 怎么改", 针对性修复. critic 收到 gate_results 后,
+        verdict 倾向更准确 (gate fail 时不应 APPROVE).
+
+        原则 4 (每次迭代引入新信息): gate_results 是非 LLM 信号 (lint 真实跑
+        + pytest 真实跑), 必须注入避免"纯 LLM 自我审视"导致 Degeneration-of-Thought.
+        """
+        from dataclasses import replace
+
+        # architect stage 无反馈意义, 跳过
+        if current_stage == "architect":
+            return round_tasks
+
+        has_feedback = bool(getattr(state, "critic_feedback", ""))
+        has_findings = bool(getattr(state, "findings", []))
+        latest_gates = self._collect_latest_gates()
+        has_gates = bool(latest_gates)
+
+        if not (has_feedback or has_findings or has_gates):
+            return round_tasks  # 无任何反馈, 跳过
+
+        context_parts: list[str] = []
+        if has_feedback:
+            context_parts.append(
+                f"\n\n## [Self-Refine 反馈] Critic 上一轮 MAJOR 反馈:\n"
+                f"{state.critic_feedback}\n"
+                f"**重要**: 优先修复 P0, 同 batch ≥ 3 个 P1 视为 MAJOR (与 Critic 判定一致).\n"
+                f"修复后必须 `run_tests` 确认全绿, 不要 mark skip / xfail 绕过."
+            )
+        if has_findings:
+            findings_lines = ["\n\n## [Self-Refine findings] Critic 上一轮具体问题清单:"]
+            for f in state.findings:
+                if isinstance(f, dict):
+                    findings_lines.append(
+                        f"- `{f.get('file', '?')}:{f.get('line', '?')}` "
+                        f"[{f.get('severity', '?')}] {f.get('issue', '?')}"
+                    )
+                else:
+                    findings_lines.append(f"- {f}")
+            context_parts.append("\n".join(findings_lines))
+        if has_gates:
+            gate_lines = ["\n\n## [Self-Refine gate_results] 上一轮 Gate 检查结果 (非 LLM 信号):"]
+            for name, verdict in latest_gates.items():
+                passed = getattr(verdict, "passed", None)
+                message = getattr(verdict, "message", "")
+                status = "✓ pass" if passed else "✗ FAIL"
+                gate_lines.append(f"- `{name}`: {status} — {message}")
+            gate_lines.append(
+                "\n**重要**: 上述 gate 是真实执行结果 (lint/type_check/test), "
+                "非 LLM 自我评估. 若有 FAIL, 必须先修复再 verdict=APPROVE."
+            )
+            context_parts.append("\n".join(gate_lines))
+
+        context_suffix = "".join(context_parts)
+
+        # 用 dataclasses.replace 复制 Task, 避免 mutate 原 round_tasks
+        enhanced: list[Task] = []
+        for task in round_tasks:
+            new_description = task.description + context_suffix
+            enhanced.append(replace(task, description=new_description))
+        return enhanced
 
     def _step_2f_guardrail_post(
         self,
