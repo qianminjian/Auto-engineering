@@ -847,6 +847,62 @@ class Orchestrator:
         """运行时解析 project_root (B11.1). config 优先, fallback cwd."""
         return self.config.project_root or Path.cwd()
 
+    # ========================================================================
+    # v5.1 JSONL Agent-Engine 协议 (BEACON 决策 33, design §C.3)
+    # ========================================================================
+    # architect/critic 两个 LLM 调用点从 Anthropic SDK 改为 JSONL stdin/stdout
+    # 协议 — Claude Code agent 接收 JSON 请求后执行 Plan/code-reviewer 任务.
+    # 解决子进程无法获取 ANTHROPIC_AUTH_TOKEN 问题 (复用 agent 的 LLM).
+    # developer 本身由 agent 执行, 不走 JSONL.
+
+    def _request_architect(self, requirement: str, project_root: str) -> dict:
+        """JSONL architect: 输出计划请求, 读取 agent 响应.
+
+        v5.1: 替代 AnthropicProvider SDK → Plan agent (spawn 在 agent 内).
+        """
+        request = json.dumps(
+            {
+                "request": "architect",
+                "requirement": requirement,
+                "context": {"project_root": project_root},
+            },
+            ensure_ascii=False,
+        )
+        print(request, flush=True)
+        try:
+            return json.loads(input())
+        except (EOFError, json.JSONDecodeError):
+            # agent crash / malformed JSON — 降级
+            return {"plan": "", "batch_plan": [], "file_list": [], "contracts": {}}
+
+    def _request_critic(
+        self,
+        files_changed: list[str],
+        commit_hash: str,
+        test_results: dict,
+        gate_results: dict,
+    ) -> dict:
+        """JSONL critic: 输出审查请求, 读取 agent 响应.
+
+        v5.1: 替代 AnthropicProvider SDK → code-reviewer agent (spawn 在 agent 内).
+        """
+        request = json.dumps(
+            {
+                "request": "critic",
+                "files_changed": files_changed,
+                "commit_hash": commit_hash,
+                "test_results": test_results,
+                "gate_results": gate_results,
+            },
+            ensure_ascii=False,
+        )
+        print(request, flush=True)
+        try:
+            return json.loads(input())
+        except (EOFError, json.JSONDecodeError):
+            # agent crash / malformed JSON — 降级 MAJOR (保守)
+            return {"verdict": "MAJOR", "findings": [], "suggested_fix": ""}
+
     def _save_checkpoint(
         self,
         round_id: int,
