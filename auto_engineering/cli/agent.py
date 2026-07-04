@@ -71,7 +71,7 @@ def _build_runtime_for_role(role: str, project_root: Path) -> object:
     )
     from auto_engineering.tools.git_tools import GitStatusTool
 
-    llm = AnthropicProvider(api_key=api_key)
+    llm = AnthropicProvider()  # SDK 自动从 ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN 读
     tools = [
         WriteFileTool(project_root=project_root),
         EditFileTool(project_root=project_root),
