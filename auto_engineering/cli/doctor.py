@@ -114,6 +114,7 @@ def _check_sqlite3() -> tuple[bool, str]:
     return False, f"sqlite3 {ver_str}    (required: >={SQLITE_MIN[0]}.{SQLITE_MIN[1]}) — 版本过低"
 
 
+def _check_ae_state(project_root: Path) -> tuple[bool, str]:
     """检查 .ae-state/ 可读写."""
     ae_state = project_root / ".ae-state"
     if not ae_state.exists():
