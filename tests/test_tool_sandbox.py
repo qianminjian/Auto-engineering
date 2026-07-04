@@ -208,28 +208,42 @@ class TestFileSandbox:
         )
         assert "project_root" in result.error.lower() or "outside" in result.error.lower()
 
-    def test_project_root_none_warns_and_allows(self, caplog):
-        """v2.5 P2-C-6: project_root=None → 沙箱失效, 记 warning 但 allow.
+    def test_project_root_none_rejects_by_default(self, caplog, monkeypatch):
+        """2026-07-04 修复 (v5.0 深度审计 P1-S-01): project_root=None → 拒绝 (fail-CLOSED).
 
-        这是 fail-OPEN 行为 (向后兼容). 防御: 警告 + 日志, 让调用方
-        知道 sandbox 失效. 生产 CLI dev_loop.py:75-82 显式传 project_root,
-        不会触发.
+        旧 fail-OPEN 行为已废除 (调用方忘传时沙箱彻底失效风险).
+        新行为: 默认拒绝, 仅 ALLOW_NO_SANDBOX=true 旁路 (测试用).
         """
-        import logging
         from auto_engineering.tools.file_tools import WriteFileTool
 
-        # project_root=None (缺省)
+        # 1. 默认行为: project_root=None → 拒绝 (fail-CLOSED)
+        monkeypatch.delenv("ALLOW_NO_SANDBOX", raising=False)
         tool = WriteFileTool()
-        with caplog.at_level(logging.WARNING, logger="ae.tools.sandbox"):
-            safe, err = tool._is_path_safe("/any/path/at/all")
-        # 行为: 沙箱失效, allow all
-        assert safe is True
-        assert err == ""
-        # 警告记录
-        assert any(
-            "project_root=None" in rec.message
-            for rec in caplog.records
-        ), f"应记录 warning, 实际: {[r.message for r in caplog.records]}"
+        safe, err = tool._is_path_safe("/any/path/at/all")
+        assert safe is False, "fail-CLOSED: 应拒绝无 project_root 的路径"
+        assert "project_root=None" in err
+        assert "ALLOW_NO_SANDBOX" in err, "错误消息应提示 opt-in bypass flag"
+
+        # 2. 旁路: ALLOW_NO_SANDBOX=true → allow
+        monkeypatch.setenv("ALLOW_NO_SANDBOX", "true")
+        tool2 = WriteFileTool()
+        safe2, err2 = tool2._is_path_safe("/any/path/at/all")
+        assert safe2 is True, "ALLOW_NO_SANDBOX=true 应旁路 fail-CLOSED"
+        assert err2 == ""
+
+        # 残留 monkeypatch 清理 (防止影响其他测试)
+        monkeypatch.delenv("ALLOW_NO_SANDBOX", raising=False)
+
+    def test_project_root_none_warns_and_allows(self, caplog):
+        """v2.5 P2-C-6 (历史): project_root=None → 沙箱失效, 记 warning 但 allow.
+
+        2026-07-04 修订: 改为 fail-CLOSED (P1-S-01). 保留此测试名但重写为
+        验证新行为 (见 test_project_root_none_rejects_by_default).
+        本方法标记为 deprecated, 仅保留供迁移期参考, 实际是 no-op alias.
+        """
+        # 委托给新测试, 保持向后兼容 (其他调用方仍可引用此方法名)
+        # 实际行为验证见 test_project_root_none_rejects_by_default
+        pass  # 实际验证在新测试中
 
     def test_edit_inside_project_allowed(self):
         """编辑 project_root 内文件 → 正常."""
