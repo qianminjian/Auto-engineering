@@ -19,13 +19,12 @@ classifiers = [
 
 dependencies = [
     "anthropic>=0.39",
-    "binaryornot>=0.4",
     "click>=8.1",
     "packaging>=24",
     "pydantic>=2.9",
     "pyyaml>=6.0",
-    "jinja2>=3.1",
-    "pathspec>=1.1.1",
+    # 2026-07-04 清理 (v5.0 深度审计 P1-T-01): Init 工程拆分独立后,
+    # binaryornot / jinja2 / pathspec 不再使用 (BEACON 决策 30).
 ]
 
 [project.optional-dependencies]
