@@ -17,6 +17,9 @@ from __future__ import annotations
 
 # v5.0 §B12.1: AUTHZ_MATRIX 9 工具 × 3 角色
 # role -> {tool_name: allowed}
+# 2026-07-04 修复 (v5.0 深度审计 P1-S-03): 加 git_status 权限 (三角色都允许, 只读).
+# 旧版缺 git_status 导致 authz_check("any_role", "git_status") 永远 False,
+# GitStatusTool 工具注册但永远不可用.
 AUTHZ_MATRIX: dict[str, dict[str, bool]] = {
     "architect": {
         "read_file": True,
@@ -25,6 +28,7 @@ AUTHZ_MATRIX: dict[str, dict[str, bool]] = {
         "write_file": False,
         "edit_file": False,
         "run_bash": False,
+        "git_status": True,   # P1-S-03: 只读, 3 角色都允许
         "git_commit": False,
         "git_diff": False,
         "run_tests": False,
@@ -36,6 +40,7 @@ AUTHZ_MATRIX: dict[str, dict[str, bool]] = {
         "write_file": True,
         "edit_file": True,
         "run_bash": True,
+        "git_status": True,   # P1-S-03: 只读, 3 角色都允许
         "git_commit": True,
         "git_diff": True,
         "run_tests": True,
@@ -47,6 +52,7 @@ AUTHZ_MATRIX: dict[str, dict[str, bool]] = {
         "write_file": False,
         "edit_file": False,
         "run_bash": False,
+        "git_status": True,   # P1-S-03: 只读, 3 角色都允许
         "git_commit": False,
         "git_diff": True,
         "run_tests": False,
