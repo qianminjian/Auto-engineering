@@ -55,6 +55,7 @@ v5.0 M4 主循环流程 (12 步):
 
 from __future__ import annotations
 
+import logging
 import os
 from collections import deque
 from collections.abc import Awaitable, Callable
@@ -726,7 +727,8 @@ class Orchestrator:
                 self._critic_retry_count += 1
                 # 重置到 critic 阶段, 让主循环重试 (RoundResult 已记录, 不重跑 developer)
                 state.current_stage = "critic"
-                import logging
+                # 2026-07-04 (Issue #15): import logging 提到模块顶部 (PEP 8),
+                # 删 inline 重复 import.
                 logging.getLogger("ae.loop.orchestrator").warning(
                     "Bug 2 方案 A: critic verdict 异常, 重试 (%d/%d): %r",
                     self._critic_retry_count,
@@ -806,8 +808,7 @@ class Orchestrator:
             for name, v in latest_gates.items()
             if getattr(v, "passed", None) is False
         ]
-        import logging
-
+        # 2026-07-04 (Issue #15): import logging 提到模块顶部 (PEP 8).
         logging.getLogger("ae.loop.orchestrator").info(
             "Bug 3 方案 C: judge QUALITY_PASS 但 gate fail, 不停止 → continue. "
             "verdict_level=%d, current_stage=%s, failed_gates=%s",
