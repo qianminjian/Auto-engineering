@@ -49,7 +49,7 @@ This skill encapsulates the Auto-Engineering v5.0 plugin's domain knowledge. Use
 | File | Purpose |
 |------|---------|
 | `plugin.json` | Plugin manifest (name, version, commands, hooks, skills) |
-| `commands/*.md` | 8 slash command definitions |
+| `commands/*.md` | 7 slash command definitions |
 | `hooks/*.sh` | 5 lifecycle hooks (chmod +x) |
 | `SKILL.md` | This file |
 | `docs/PLUGIN-USAGE.md` | User-facing install + usage guide |
