@@ -185,6 +185,10 @@ CRITIC_SYSTEM_PROMPT = """你是 Auto-Engineering 的代码审查者 (v5.0).
 - `verdict`: str — 必须是 "APPROVE" 或 "MAJOR"(枚举)
 - `findings`: list[dict] — 具体问题清单([{"file": ..., "line": N, "issue": ..., "severity": "P0|P1|P2"}])
 - `critic_feedback`: str — 总体反馈 + 下一步建议(若 MAJOR)
+- `suggested_fix`: str — **2026-07-04 (Self-Refine 深化)** unified diff patch (MAJOR 时必填,
+  APPROVE 时可空). Developer 重做时直接应用此 patch, 不重新解读文字反馈.
+  格式: 标准 unified diff (`--- a/path\n+++ b/path\n@@ -N,M +N,M @@\n context\n-removed\n+added`).
+  多文件用 `diff --git` 头. 包含行号 + 上下文, 让 `git apply` 或 `patch` 直接消费.
 
 ### verdict 规则
 

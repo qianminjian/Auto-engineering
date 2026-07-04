@@ -67,6 +67,10 @@ class EngineState:
     verdict: str = ""  # "APPROVE" | "MAJOR"
     findings: list[dict] = field(default_factory=list)
     critic_feedback: str = ""
+    # 2026-07-04 (Self-Refine 原则 1 深化): 结构化修复建议
+    # critic 直接输出 unified diff patch (具体代码片段而非文字), developer
+    # 重做时直接拿到 patch 应用, 不重新解读. Self-Refine 论文表明效果 2-3x.
+    suggested_fix: str = ""
 
     # 多 Agent 预留(v2.0+ Send 动态路由)
     _pending_sends: list = field(default_factory=list)

@@ -120,23 +120,24 @@ class TestEngineStateFieldDefaults:
     +total_majors / +thread_id). 验证所有字段默认值与类型契约.
     """
 
-    def test_all_17_fields_exist(self) -> None:
-        """EngineState 暴露 17 个字段 (v5.0 §B1.1)."""
+    def test_all_18_fields_exist(self) -> None:
+        """EngineState 暴露 18 个字段 (v5.0 §B1.1 + 2026-07-04 suggested_fix)."""
         from dataclasses import fields
 
         state = EngineState()
         field_names = {f.name for f in fields(EngineState)}
-        # 17 字段 (含 _pending_sends 是 v2.0+ 多 Agent 字段)
+        # 18 字段 (含 _pending_sends 是 v2.0+ 多 Agent 字段 + suggested_fix)
         expected = {
             "requirement", "current_stage",
             "thread_id", "majors_in_a_row", "total_majors",
             "plan", "file_list", "batch_plan", "contracts",
             "files_changed", "commit_hash", "test_results",
             "verdict", "findings", "critic_feedback",
+            "suggested_fix",  # 2026-07-04 Self-Refine 深化
             "_pending_sends",
         }
         assert field_names == expected, (
-            f"EngineState 字段不匹配 v5.0 §B1.1. "
+            f"EngineState 字段不匹配 v5.0 §B1.1 + suggested_fix. "
             f"缺失: {expected - field_names}, 多余: {field_names - expected}"
         )
 
@@ -285,17 +286,22 @@ class TestEngineStateBoundary:
         assert state.plan == "ok"
         assert not hasattr(state, "nonexistent")
 
-    def test_to_dict_contains_all_17_fields(self) -> None:
-        """to_dict 输出含全部 17 字段 (含 _pending_sends)."""
+    def test_to_dict_contains_all_18_fields(self) -> None:
+        """to_dict 输出含全部 18 字段 (含 _pending_sends + suggested_fix)."""
         state = EngineState()
         d = state.to_dict()
-        assert len(d) == 16  # 16 dataclass 字段 (排除私有命名)
+        # 2026-07-04 (Self-Refine 深化): 17 → 18 字段 (+suggested_fix)
+        assert len(d) == 17, (
+            f"to_dict 应含 18 字段 (含 _pending_sends), 实际 {len(d)}: "
+            f"{sorted(d.keys())}"
+        )
         # 实际: requirement, current_stage, thread_id, majors_in_a_row, total_majors,
         #       plan, file_list, batch_plan, contracts,
         #       files_changed, commit_hash, test_results,
-        #       verdict, findings, critic_feedback,
+        #       verdict, findings, critic_feedback, suggested_fix,
         #       _pending_sends
         assert "_pending_sends" in d
+        assert "suggested_fix" in d, "to_dict 必须包含 suggested_fix (Self-Refine 深化)"
         assert d["thread_id"] == state.thread_id
 
     def test_from_dict_with_empty_dict_uses_all_defaults(self) -> None:

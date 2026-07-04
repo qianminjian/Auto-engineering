@@ -151,6 +151,9 @@ def _apply_outcome_to_state(state: EngineState, outcome: TaskOutcome) -> None:
             state.findings = values["findings"]
         if "critic_feedback" in values:
             state.critic_feedback = values["critic_feedback"]
+        # 2026-07-04 (Self-Refine 深化): suggested_fix 结构化 patch
+        if "suggested_fix" in values:
+            state.suggested_fix = values["suggested_fix"]
     # 未知 role → no-op (防御性, 不抛避免僵死)
 
 

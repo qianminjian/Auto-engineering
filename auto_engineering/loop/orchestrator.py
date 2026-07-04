@@ -617,6 +617,17 @@ class Orchestrator:
             )
             context_parts.append("\n".join(gate_lines))
 
+        # 2026-07-04 (Self-Refine 原则 1 深化): 结构化 suggested_fix patch
+        # 优先于文字 feedback/findings, developer 直接应用 patch 不重新解读.
+        suggested_fix = getattr(state, "suggested_fix", "")
+        if suggested_fix:
+            context_parts.append(
+                f"\n\n## [Self-Refine suggested_fix] Critic 上一轮结构化 patch "
+                f"(直接应用, 不重新解读):\n```diff\n{suggested_fix}\n```\n"
+                f"**重要**: 这是 unified diff 格式, 可用 `git apply` 直接应用. "
+                f"优先按此 patch 修复, 避免 LLM 自我理解偏差."
+            )
+
         context_suffix = "".join(context_parts)
 
         # 用 dataclasses.replace 复制 Task, 避免 mutate 原 round_tasks
