@@ -132,6 +132,23 @@ def _check_sqlite3() -> tuple[bool, str]:
         return False, f".ae-state/ 不可写: {e}"
 
 
+def _check_plugin_mode() -> tuple[bool, str]:
+    """检查 Plugin mode 是否启用 (Bug 4 修复, 2026-07-04).
+
+    提示用户当前运行模式 (Plugin OAuth 注入 vs CLI 调试模式).
+    Plugin 模式下 ANTHROPIC_API_KEY 不必需, 由 Claude Code OAuth 自动注入.
+    """
+    from auto_engineering.utils.plugin_mode import detect_plugin_mode_detail
+
+    in_plugin, signal = detect_plugin_mode_detail()
+    if in_plugin:
+        return True, f"Plugin mode 已启用 (via {signal}) — ANTHROPIC_API_KEY 不必需"
+    return True, (
+        "CLI 调试模式 — 需手动 export ANTHROPIC_API_KEY 才能调用 LLM "
+        "(Plugin 模式无需此 env, Claude Code Agent 会自动注入)"
+    )
+
+
 def _check_init_manifest(project_root: Path) -> tuple[bool, str]:
     """检查 init-manifest.json (IL-AC-01~05, v5.0 §IL.4).
 
@@ -185,6 +202,7 @@ def run_doctor_checks(project_root: Path) -> tuple[int, list[tuple[bool, str]]]:
     results.append(_check_uv())
     results.append(_check_git())
     results.append(_check_sqlite3())
+    results.append(_check_plugin_mode())
     results.append(_check_ae_state(project_root))
     results.append(_check_init_manifest(project_root))
     failed = sum(1 for ok, _ in results if not ok)

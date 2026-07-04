@@ -136,21 +136,18 @@ class OrchestratorConfig:
         行为契约:
             - semantic_evaluator 已是用户显式传入 (非 None) → 不覆盖
             - semantic_evaluator 为 None + 有 KEY 且不在 LLM agent
-              (CLAUDE_CODE 未设置) → 自动启用 ClaudeSemanticEvaluator (接 Claude API 真评估)
+              (detect_plugin_mode() == False) → 自动启用 ClaudeSemanticEvaluator
             - semantic_evaluator 为 None + 无 API key 或在 LLM agent → 保持 None
-              (Orchestrator.run() 跳过语义评估, 避免 Claude Code 自调 Claude 评估)
 
-        Why: 解决 P1.6 阻断 — 第 4 级语义收敛永远不触发 (生产环境无内置
-        LLM evaluator, 用户需自己写). 默认启用让 LLM 评估开箱即用.
-        借鉴 LangGraph ConditionalEdge: LLM 评估路由开箱即用.
-        与 settings.py:49-50 LLM-agent skip 同模式 — Claude Code 运行时
-        KEY 由 agent 自带, 不应再触发自评估 (commit fae3255/7f12a70).
+        2026-07-04 修复 (Bug 4 prismscan 集成): in_llm_agent 改用
+        detect_plugin_mode() 共用函数 (4 级 fallback), 包含 ANTHROPIC_AUTH_TOKEN
+        OAuth 注入信号 — 解决 plugin 模式下 plugin_mode 检测失败导致 LLM 评估
+        误启用的反向问题.
         """
-        in_llm_agent = bool(os.environ.get("CLAUDE_CODE"))
+        from auto_engineering.utils.plugin_mode import detect_plugin_mode
+        in_llm_agent = detect_plugin_mode()
         # 2026-07-04 修复 (v5.0 深度审计 P0-D-03): 原代码读 "KEY" 环境变量名错误,
         # 应读 ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN (与 anthropic_provider.py:78 对齐).
-        # 旧 KEY 环境变量名永不为 truthy, 导致 ClaudeSemanticEvaluator 永不默认启用,
-        # BEACON 决策 20 "Phase J 完成" 失效, 第 4 级语义收敛永远不触发.
         api_key_present = bool(
             os.environ.get("ANTHROPIC_API_KEY")
             or os.environ.get("ANTHROPIC_AUTH_TOKEN")
