@@ -57,6 +57,10 @@ class AnthropicProvider:
     """
 
     # 可重试异常类型 (anthropic SDK)
+    # 2026-07-04 修复 (Bug 2 prismscan 集成): 不重试 AuthenticationError (401)
+    # 因为 auth 错误是配置问题, 重试只会浪费 budget + 延迟失败.
+    # 异常时显式抛出 (包含 status code + response body 前 200 字符, 供 orchestrator
+    # / critic agent 诊断). 之前会被 RateLimitError 静默捕获, 导致空 verdict.
     _RETRYABLE_EXCEPTIONS: tuple[type[Exception], ...] = (
         anthropic.RateLimitError,
         anthropic.APIConnectionError,
