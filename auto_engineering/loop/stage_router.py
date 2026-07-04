@@ -77,15 +77,19 @@ class StageRouter:
     决定下一步 Stage, 不读写 EngineState 副作用 (副作用由 Orchestrator 处理).
 
     用法:
-        router = StageRouter(max_majors_in_a_row=2, max_total_majors=3)
+        # 2026-07-04 修复 (Self-Refine / Reflexion 原则 3): max_majors 2→3 + 3→4.
+        # Self-Refine (Madaan et al. 2023) 实验: 2-3 轮反馈后质量显著提升,
+        # 4+ 轮开始 Degeneration-of-Thought. 旧值 2/3 过严, MAJOR 后立即停 → 没机会
+        # 看到 Self-Refine 反馈注入 + 改进. 新值 3/4 让 developer 至少 3 次修复机会.
+        router = StageRouter(max_majors_in_a_row=3, max_total_majors=4)
         decision = router.next("critic", "MAJOR", 1, 1)  # → next="developer"
         decision = router.next("critic", "MAJOR", 2, 2)  # → should_stop=True
     """
 
     def __init__(
         self,
-        max_majors_in_a_row: int = 2,
-        max_total_majors: int = 3,
+        max_majors_in_a_row: int = 3,
+        max_total_majors: int = 4,
     ) -> None:
         """初始化 StageRouter.
 
