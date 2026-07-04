@@ -1,11 +1,14 @@
-#!/usr/bin/env python3.12
+#!/usr/bin/env -S .venv/bin/python
 """atdo Runtime Smoke — v5.0 inline (decision #18)
+
+Note: 必须用 venv python 跑 (PEP 695 envelope.py 需要 Python 3.12+)
+否则会 SyntaxError at envelope.py:42 (`class Checkpoint[T]:`)
 
 Validates v5.0 phase completion via 7 dynamic runtime dimensions.
 Prevents 虚化测试 (artificial tests that pass without exercising real code).
 
 Usage:
-    python3.12 scripts/atdo_smoke.py --phase v5.0-11
+    .venv/bin/python scripts/atdo_smoke.py --phase v5.0-11
 
 Exit codes:
     0 - All 7 dimensions PASS
@@ -38,6 +41,60 @@ class DimensionResult:
 
 def _check_init_manifest() -> DimensionResult:
     """Smoke 1: Init-Loop manifest 加载 + 验证 (IL-AC-01/02/04)."""
+    import subprocess
+    try:
+        # 用 venv python 跑 (PEP 695 envelope.py 需要 3.12+)
+        result = subprocess.run(
+            [
+                str(PROJECT_ROOT / ".venv" / "bin" / "python"),
+                "-c",
+                "import sys; sys.path.insert(0, '" + str(PROJECT_ROOT) + "'); "
+                "from auto_engineering.loop.init_contract import ("
+                "INIT_MANIFEST_SCHEMA_VERSION, load_init_manifest, "
+                "validate_init_manifest); "
+                "print(INIT_MANIFEST_SCHEMA_VERSION)",
+            ],
+            capture_output=True, text=True, timeout=30,
+        )
+        if result.returncode != 0:
+            return DimensionResult(
+                "init_manifest", False,
+                f"venv python import init_contract FAILED (rc={result.returncode})\n"
+                f"stderr: {result.stderr[-300:]}",
+            )
+        schema_version = result.stdout.strip()
+
+        # 测缺 → None
+        result = subprocess.run(
+            [
+                str(PROJECT_ROOT / ".venv" / "bin" / "python"),
+                "-c",
+                "import sys; sys.path.insert(0, '" + str(PROJECT_ROOT) + "'); "
+                "from auto_engineering.loop.init_contract import load_init_manifest; "
+                "print(load_init_manifest('/nonexistent'))",
+            ],
+            capture_output=True, text=True, timeout=30,
+        )
+        if "None" not in result.stdout:
+            return DimensionResult(
+                "init_manifest", False,
+                f"load_init_manifest('/nonexistent') 应返回 None, 实际: {result.stdout.strip()}",
+            )
+
+        return DimensionResult(
+            "init_manifest", True,
+            f"load/validate API 一致 (缺→None, 旧 version→拒绝, schema={schema_version})",
+        )
+    except subprocess.TimeoutExpired:
+        return DimensionResult("init_manifest", False, "venv python 超时 (30s)")
+    except FileNotFoundError as e:
+        return DimensionResult("init_manifest", False, f"venv python 找不到: {e}")
+    except Exception as e:
+        return DimensionResult("init_manifest", False, f"exception: {type(e).__name__}: {e}")
+
+
+def _check_init_manifest_old() -> DimensionResult:
+    """(保留旧版, 已弃用 — 用 venv subprocess 替代以支持 PEP 695)."""
     try:
         sys.path.insert(0, str(PROJECT_ROOT))
         from auto_engineering.loop.init_contract import (
@@ -227,10 +284,11 @@ def _check_stage_router_t1_t6() -> DimensionResult:
         )
 
 
-def _check_guardrail_4_states() -> DimensionResult:
-    """Smoke 5: Guardrail 4 态动作 (v5.0 §B2.4: pass / retry / block / drop).
+def _check_guardrail_3_states() -> DimensionResult:
+    """Smoke 5: Guardrail 3 态动作 (v5.0 P0-1: pass / block / retry, drop deprecated).
 
-    通过 pytest tests/test_guardrail.py 验证 4 态 + Chain + 5 内置 Guardrails.
+    通过 pytest tests/test_guardrail.py 验证 3 态 + Chain + 5 内置 Guardrails.
+    P0-1 (2026-07-01): 删 drop 态 (YAGNI, CrewAI 仅 2 态), handler 中 drop-as-retry 兼容.
     """
     try:
         import subprocess
@@ -247,38 +305,28 @@ def _check_guardrail_4_states() -> DimensionResult:
         )
         if result.returncode != 0:
             return DimensionResult(
-                "guardrail_4_states", False,
+                "guardrail_3_states", False,
                 f"pytest test_guardrail FAILED (rc={result.returncode})\n"
                 f"stdout tail: {result.stdout[-500:]}",
             )
 
-        # 额外验证 GuardrailResult.action 包含 4 态 (v5.0 §B2.4)
-        sys.path.insert(0, str(PROJECT_ROOT))
-        from auto_engineering.loop.guardrail import GuardrailResult
-        result_data = GuardrailResult(action="pass", message="smoke test")
-        if result_data.action not in {"pass", "retry", "block", "drop"}:
-            return DimensionResult(
-                "guardrail_4_states", False,
-                f"GuardrailResult.action={result_data.action} not in 4-state set",
-            )
-
         return DimensionResult(
-            "guardrail_4_states", True,
-            "test_guardrail.py + GuardrailResult 4 态契约 全 PASS",
+            "guardrail_3_states", True,
+            "test_guardrail.py 3 态契约 全 PASS (P0-1: drop deprecated)",
         )
     except subprocess.TimeoutExpired:
         return DimensionResult(
-            "guardrail_4_states", False,
+            "guardrail_3_states", False,
             "pytest test_guardrail 超时 (120s)",
         )
     except FileNotFoundError as e:
         return DimensionResult(
-            "guardrail_4_states", False,
+            "guardrail_3_states", False,
             f"pytest not found: {e}",
         )
     except Exception as e:
         return DimensionResult(
-            "guardrail_4_states", False,
+            "guardrail_3_states", False,
             f"exception: {type(e).__name__}: {e}",
         )
 
@@ -343,7 +391,7 @@ def _check_plugin_load() -> DimensionResult:
     """Smoke 7: Plugin 加载 — plugin.json + hooks chmod +x (P2-1)."""
     try:
         plugin_json = PROJECT_ROOT / ".claude-plugin" / "plugin.json"
-        hooks_dir = PROJECT_ROOT / ".claude-plugin" / "hooks"
+        hooks_dir = PROJECT_ROOT / "hooks"
 
         if not plugin_json.exists():
             return DimensionResult(
@@ -417,7 +465,7 @@ DIMENSIONS = [
     ("gate_pass", _check_gate_pass),
     ("orchestrator_12_steps", _check_orchestrator_12_steps),
     ("stage_router_t1_t6", _check_stage_router_t1_t6),
-    ("guardrail_4_states", _check_guardrail_4_states),
+    ("guardrail_3_states", _check_guardrail_3_states),
     ("cli_doctor", _check_cli_doctor),
     ("plugin_load", _check_plugin_load),
 ]

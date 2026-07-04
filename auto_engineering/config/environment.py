@@ -187,16 +187,14 @@ def load_ae_answers(project_root: Path) -> dict | None:
 
 
 def preflight(project_root: Path) -> None:
-    """入口前置校验 — 检查 git/API key/磁盘/Python 版本.
+    """入口前置校验 — 检查 git/磁盘/Python 版本.
 
     任一校验失败抛 SystemExit(1) + 友好 click 错误消息(无 traceback).
     全部通过则静默返回.
 
     检查项:
         1. Python ≥ 3.12
-        2. ANTHROPIC_API_KEY 环境变量已设置
-           (在 Claude Code 等 LLM agent 中跳过, agent 有自己的 auth)
-        3. project_root 是 git 仓库(含 .git/)
+
         4. 磁盘可用空间 ≥ 100 MB
     """
     errors: list[str] = []

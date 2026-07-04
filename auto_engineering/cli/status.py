@@ -116,14 +116,20 @@ def register_status_command(main_group: click.Group) -> None:
         default="text",
         help="输出格式 (默认 text)",
     )
-    def status(output_format: str):
+    @click.option(
+        "--project-root",
+        type=click.Path(exists=True),
+        default=None,
+        help="项目根目录 (默认 cwd)",
+    )
+    def status(output_format: str, project_root: str | None):
         """查看当前项目进度.
 
         --format json: 输出 7 字段 JSON (v5.0 §B13.2):
             thread_id / round / stage / verdict /
             majors_in_a_row / total_majors / recent_history (≤5 条 RoundHistory)
         """
-        cwd = Path.cwd()
+        cwd = Path(project_root).resolve() if project_root else Path.cwd()
 
         if output_format == "json":
             click.echo(json.dumps(_collect_status_json(cwd), ensure_ascii=False, indent=2))

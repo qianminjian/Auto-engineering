@@ -418,11 +418,27 @@ class TestCliArgsParsing:
     def test_dev_loop_missing_api_key_exits_via_preflight(
         self, tmp_project: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """缺 ANTHROPIC_API_KEY → preflight 失败, 非 0 exit."""
+        """缺 ANTHROPIC_API_KEY + 不在 plugin mode → preflight/agent fail-fast.
+
+        2026-07-04 修订: 旧实现预期 preflight 检查 API key (报告 Bug 4 prismscan),
+        实际 preflight 不检查 API key (environment.py:189), API key 检查移到
+        agent.run_agent fail-fast. 测试加检测 agent.run_agent 返回 failed status
+        + exit code 非 0.
+
+        delenv 4 个 plugin signal 确保不在 plugin mode, 触发 fail-fast.
+        """
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        monkeypatch.delenv("ANTHROPIC_AUTH_TOKEN", raising=False)
+        monkeypatch.delenv("CLAUDE_CODE", raising=False)
+        monkeypatch.delenv("CLAUDE_CODE_ENTRYPOINT", raising=False)
+        monkeypatch.delenv("ANTHROPIC_CLI", raising=False)
         runner = CliRunner()
         result = runner.invoke(main, ["dev-loop", "test requirement"])
-        assert result.exit_code != 0
+        # exit code != 0 (agent.run_agent fail-fast 返回 failed status)
+        assert result.exit_code != 0, (
+            f"无 API key + 非 plugin mode 应 fail-fast, exit={result.exit_code}, "
+            f"output: {result.output[:500]}"
+        )
 
     def test_dev_loop_log_format_json_emits_json_contract(
         self, tmp_project: Path

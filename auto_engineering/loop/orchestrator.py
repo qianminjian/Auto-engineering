@@ -55,6 +55,7 @@ v5.0 M4 主循环流程 (12 步):
 
 from __future__ import annotations
 
+import logging
 import os
 from collections import deque
 from collections.abc import Awaitable, Callable
@@ -102,7 +103,7 @@ class OrchestratorConfig:
             (v2.3 Phase E P1.1, 借鉴 LangGraph Pregel.recursion_limit).
         gates: v2.1 Phase B — 验证 Gate 列表 (None = 跳过)
         semantic_evaluator: v2.1 Phase B — LLM 语义评估.
-            None 时, **有 ANTHROPIC_API_KEY 且不在 LLM agent** (CLAUDE_CODE 未设置)
+            None 时, **有 KEY 且不在 LLM agent** (CLAUDE_CODE 未设置)
             自动启用 ClaudeSemanticEvaluator (v2.3 Phase J P1.6 — 内置 LLM evaluator).
             用户显式传值时不被覆盖.
             无 API key 或在 LLM agent 中时保持 None (graceful degradation,
@@ -135,21 +136,26 @@ class OrchestratorConfig:
 
         行为契约:
             - semantic_evaluator 已是用户显式传入 (非 None) → 不覆盖
-            - semantic_evaluator 为 None + 有 ANTHROPIC_API_KEY 且不在 LLM agent
-              (CLAUDE_CODE 未设置) → 自动启用 ClaudeSemanticEvaluator (接 Claude API 真评估)
+            - semantic_evaluator 为 None + 有 KEY 且不在 LLM agent
+              (detect_plugin_mode() == False) → 自动启用 ClaudeSemanticEvaluator
             - semantic_evaluator 为 None + 无 API key 或在 LLM agent → 保持 None
-              (Orchestrator.run() 跳过语义评估, 避免 Claude Code 自调 Claude 评估)
 
-        Why: 解决 P1.6 阻断 — 第 4 级语义收敛永远不触发 (生产环境无内置
-        LLM evaluator, 用户需自己写). 默认启用让 LLM 评估开箱即用.
-        借鉴 LangGraph ConditionalEdge: LLM 评估路由开箱即用.
-        与 settings.py:49-50 LLM-agent skip 同模式 — Claude Code 运行时
-        ANTHROPIC_API_KEY 由 agent 自带, 不应再触发自评估 (commit fae3255/7f12a70).
+        2026-07-04 修复 (Bug 4 prismscan 集成): in_llm_agent 改用
+        detect_plugin_mode() 共用函数 (4 级 fallback), 包含 ANTHROPIC_AUTH_TOKEN
+        OAuth 注入信号 — 解决 plugin 模式下 plugin_mode 检测失败导致 LLM 评估
+        误启用的反向问题.
         """
-        in_llm_agent = bool(os.environ.get("CLAUDE_CODE"))
+        from auto_engineering.utils.plugin_mode import detect_plugin_mode
+        in_llm_agent = detect_plugin_mode()
+        # 2026-07-04 修复 (v5.0 深度审计 P0-D-03): 原代码读 "KEY" 环境变量名错误,
+        # 应读 ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN (与 anthropic_provider.py:78 对齐).
+        api_key_present = bool(
+            os.environ.get("ANTHROPIC_API_KEY")
+            or os.environ.get("ANTHROPIC_AUTH_TOKEN")
+        )
         if (
             self.semantic_evaluator is None
-            and os.environ.get("ANTHROPIC_API_KEY")
+            and api_key_present
             and not in_llm_agent
         ):
             # 延迟 import 避免循环依赖 (semantic_evaluator → orchestrator 反向)
@@ -185,6 +191,8 @@ class Orchestrator:
     # v2.5 P2-D-5: 用 deque(maxlen=50) 替换无界 list, 长 dev-loop 不爆内存.
     # Judge 只需最近 ~10 轮 (stagnation 阈值 2 + 留 buffer), 50 轮足够.
     history: deque[RoundHistory] = field(default_factory=lambda: deque(maxlen=50))
+    # 2026-07-04 /code-review Issue #11 (90 分): 注释 "EngineState channel 替代裸 history" 误导.
+    # 实际 Orchestrator 用 self.history (deque) 存历史, 不通过 EngineState channel.
     round_results: deque[RoundResult] = field(
         default_factory=lambda: deque(maxlen=50)
     )
@@ -196,6 +204,8 @@ class Orchestrator:
     _state: "EngineState | None" = None
     _retry_counters: dict[str, int] = field(default_factory=dict)
     _router: "StageRouter | None" = None
+    # 2026-07-04 (Bug 2 prismscan 方案 A): critic 重试计数 (替代直接升级 HARD_LIMIT)
+    _critic_retry_count: int = 0
 
     def __post_init__(self) -> None:
         """初始化 Plan + Judge + 选 executor (agent_runtime 优先).
@@ -322,7 +332,10 @@ class Orchestrator:
 
             # 2b state.current_stage=="" → router.next 初始化
             self._step_2b_route_init(self._state, self._router)
-            current_stage = self._state.current_stage or "developer"
+            # 2026-07-04 修复 (Issue #12, 70 分): fallback 改 "architect" 而非 "developer"
+            # (按 T1 转换表, 空 current_stage → architect). 之前 "developer" 错,
+            # 可能跳过 architect 阶段直接跑 developer task (违反 stage-sequenced 流程).
+            current_stage = self._state.current_stage or "architect"
 
             # 2c 选 round_tasks (按 stage 过滤 + auto_gen 兜底)
             round_tasks, advance = self._step_2c_select_tasks(current_stage)
@@ -336,7 +349,9 @@ class Orchestrator:
                 guardrail_chain, current_stage, self._state
             )
             if pre_action == "stop":
-                self.verdict = ConvVerdict.stop(level=3, reason="PRE guardrail stop")
+                # 2026-07-04 修复 (Bug 3): guardrail stop 应视为 HARD_LIMIT
+                # (硬阻止, 用户输入或安全违规), 不再默认 level=3 PASS.
+                self.verdict = ConvVerdict.stop(level=4, reason="PRE guardrail stop")
                 return list(self.history)
             if pre_action == "retry":
                 continue
@@ -352,7 +367,8 @@ class Orchestrator:
                 guardrail_chain, current_stage, self._state
             )
             if post_action == "stop":
-                self.verdict = ConvVerdict.stop(level=3, reason="POST guardrail stop")
+                # 2026-07-04 修复 (Bug 3): 同 PRE, POST guardrail stop 用 level=4.
+                self.verdict = ConvVerdict.stop(level=4, reason="POST guardrail stop")
                 return list(self.history)
             if post_action == "retry":
                 continue
@@ -418,9 +434,13 @@ class Orchestrator:
         取消走 level=3 停滞/异常分支, verdict reason 标注 CancellationToken 来源.
         """
         if cancellation is not None and cancellation.is_cancelled():
+            # 2026-07-04 修复 (Issue #13, 100 分): 改用 level=4 (HARD_LIMIT)
+            # 避免与"Gate 全 PASS" (level=3) 混淆. 之前用 level=3 会被
+            # dev_loop.py 映射为 status="completed" (exit 0), 用户取消看起来像成功.
+            # 现在 level=4 → status="failed" → exit 2.
             self.verdict = ConvVerdict.stop(
-                level=3,
-                reason="用户取消 (CancellationToken)",
+                level=4,
+                reason="用户取消 (CancellationToken) → HARD_LIMIT",
             )
             return True
         return False
@@ -514,9 +534,17 @@ class Orchestrator:
         """step 2e: 调 run_round + _apply_outcome_to_state. 返回 RoundResult.
 
         把 outcomes 按 task_role 分发写入 state 字段 (B7.2).
+
+        2026-07-04 修复 (Self-Refine / Reflexion 原则 1+4 集成):
+            developer / critic 重做时注入 critic_feedback + findings +
+            gate_results 到 task.description, 让 LLM 看到:
+            - 具体修复建议 (原则 1: 反馈具体且可操作)
+            - 非 LLM 信号 (原则 4: 每次迭代引入新信息 — lint/test/type_check)
+            否则 developer 只能"重新实现整个 stage", 没有针对性修复, 浪费 LLM 调用.
         """
+        enhanced_tasks = self._inject_self_refine_context(round_tasks, state, current_stage)
         round_result = await run_round(
-            tasks=round_tasks,
+            tasks=enhanced_tasks,
             executor=self.executor,
             ctx=None,
             cancellation=cancellation,
@@ -528,6 +556,96 @@ class Orchestrator:
         for outcome in round_result.outcomes:
             _apply_outcome_to_state(state, outcome)
         return round_result
+
+    def _inject_self_refine_context(
+        self,
+        round_tasks: list[Task],
+        state: "EngineState",
+        current_stage: str,
+    ) -> list[Task]:
+        """Self-Refine 反馈注入: 把 critic_feedback + findings + gate_results 拼接到 task.description.
+
+        触发条件:
+            - state.critic_feedback 非空 (说明上一轮 critic 给 MAJOR 反馈)
+            - state.findings 非空 (P0/P1/P2 findings 列表)
+            - 上一轮 gate_results 存在 (lint/test/type_check)
+            - 当前 stage 是 developer / critic (architect 阶段无反馈意义)
+
+        不修改原 round_tasks (返回新 list, 内部用 dataclasses.replace 复制 Task).
+
+        2026-07-04 修复 (Self-Refine 原则 1+4): 不注入 → developer 重做看不到
+        上轮反馈, 只能从零实现. 注入 → developer 看到"上次哪些 P0 没修 +
+        test 哪些失败 + 怎么改", 针对性修复. critic 收到 gate_results 后,
+        verdict 倾向更准确 (gate fail 时不应 APPROVE).
+
+        原则 4 (每次迭代引入新信息): gate_results 是非 LLM 信号 (lint 真实跑
+        + pytest 真实跑), 必须注入避免"纯 LLM 自我审视"导致 Degeneration-of-Thought.
+        """
+        from dataclasses import replace
+
+        # architect stage 无反馈意义, 跳过
+        if current_stage == "architect":
+            return round_tasks
+
+        has_feedback = bool(getattr(state, "critic_feedback", ""))
+        has_findings = bool(getattr(state, "findings", []))
+        latest_gates = self._collect_latest_gates()
+        has_gates = bool(latest_gates)
+
+        if not (has_feedback or has_findings or has_gates):
+            return round_tasks  # 无任何反馈, 跳过
+
+        context_parts: list[str] = []
+        if has_feedback:
+            context_parts.append(
+                f"\n\n## [Self-Refine 反馈] Critic 上一轮 MAJOR 反馈:\n"
+                f"{state.critic_feedback}\n"
+                f"**重要**: 优先修复 P0, 同 batch ≥ 3 个 P1 视为 MAJOR (与 Critic 判定一致).\n"
+                f"修复后必须 `run_tests` 确认全绿, 不要 mark skip / xfail 绕过."
+            )
+        if has_findings:
+            findings_lines = ["\n\n## [Self-Refine findings] Critic 上一轮具体问题清单:"]
+            for f in state.findings:
+                if isinstance(f, dict):
+                    findings_lines.append(
+                        f"- `{f.get('file', '?')}:{f.get('line', '?')}` "
+                        f"[{f.get('severity', '?')}] {f.get('issue', '?')}"
+                    )
+                else:
+                    findings_lines.append(f"- {f}")
+            context_parts.append("\n".join(findings_lines))
+        if has_gates:
+            gate_lines = ["\n\n## [Self-Refine gate_results] 上一轮 Gate 检查结果 (非 LLM 信号):"]
+            for name, verdict in latest_gates.items():
+                passed = getattr(verdict, "passed", None)
+                message = getattr(verdict, "message", "")
+                status = "✓ pass" if passed else "✗ FAIL"
+                gate_lines.append(f"- `{name}`: {status} — {message}")
+            gate_lines.append(
+                "\n**重要**: 上述 gate 是真实执行结果 (lint/type_check/test), "
+                "非 LLM 自我评估. 若有 FAIL, 必须先修复再 verdict=APPROVE."
+            )
+            context_parts.append("\n".join(gate_lines))
+
+        # 2026-07-04 (Self-Refine 原则 1 深化): 结构化 suggested_fix patch
+        # 优先于文字 feedback/findings, developer 直接应用 patch 不重新解读.
+        suggested_fix = getattr(state, "suggested_fix", "")
+        if suggested_fix:
+            context_parts.append(
+                f"\n\n## [Self-Refine suggested_fix] Critic 上一轮结构化 patch "
+                f"(直接应用, 不重新解读):\n```diff\n{suggested_fix}\n```\n"
+                f"**重要**: 这是 unified diff 格式, 可用 `git apply` 直接应用. "
+                f"优先按此 patch 修复, 避免 LLM 自我理解偏差."
+            )
+
+        context_suffix = "".join(context_parts)
+
+        # 用 dataclasses.replace 复制 Task, 避免 mutate 原 round_tasks
+        enhanced: list[Task] = []
+        for task in round_tasks:
+            new_description = task.description + context_suffix
+            enhanced.append(replace(task, description=new_description))
+        return enhanced
 
     def _step_2f_guardrail_post(
         self,
@@ -581,16 +699,55 @@ class Orchestrator:
         should_break=True → 主循环 break (走 step 3).
         3 层退出条件 (按优先级): dec.should_stop / dec.next_stage=None+judge.stop / unexpected.
         副作用: 推进 state.current_stage + _clear_stage_fields (B3.3).
+
+        2026-07-04 修复 (Bug 3 prismscan 方案 C):
+            即便 critic 给 verdict.level=3 (QUALITY_PASS), gate fail 时不停止.
+            gate_summary 是更可靠的质量信号 — 让 developer 继续修, 而不是 PASS 通过
+            出去留下 0 代码改动退出.
+            这是反向语义的根本防御: 即便 critic LLM 错给 APPROVE, gate 失败也会
+            拦住继续修, 而不是立刻停.
         """
-        decision = router.next(
-            current_stage=current_stage,
-            verdict=state.verdict if current_stage == "critic" else "",
-            majors_in_a_row=state.majors_in_a_row,
-            total_majors=state.total_majors,
-        )
-        if decision.should_stop:
+        # 2026-07-04 修复 (Bug 3 prismscan 集成 + Bug 2 方案 A):
+        # CriticVerdictInvalid 是 stage_router 在 critic 返回非法 verdict 时抛出的
+        # 异常 (替代原 should_stop=True 静默 PASS).
+        # 修复策略 (Bug 2 方案 A 关键): 重试 critic 最多 MAX_CRITIC_RETRIES 次,
+        # 仍失败才升级 HARD_LIMIT. 给 critic agent 机会重新输出 (LLM 调用偶发失败).
+        from auto_engineering.loop.stage_router import CriticVerdictInvalid
+
+        MAX_CRITIC_RETRIES = 2
+        try:
+            decision = router.next(
+                current_stage=current_stage,
+                verdict=state.verdict if current_stage == "critic" else "",
+                majors_in_a_row=state.majors_in_a_row,
+                total_majors=state.total_majors,
+            )
+        except CriticVerdictInvalid as exc:
+            if self._critic_retry_count < MAX_CRITIC_RETRIES:
+                self._critic_retry_count += 1
+                # 重置到 critic 阶段, 让主循环重试 (RoundResult 已记录, 不重跑 developer)
+                state.current_stage = "critic"
+                # 2026-07-04 (Issue #15): import logging 提到模块顶部 (PEP 8),
+                # 删 inline 重复 import.
+                logging.getLogger("ae.loop.orchestrator").warning(
+                    "Bug 2 方案 A: critic verdict 异常, 重试 (%d/%d): %r",
+                    self._critic_retry_count,
+                    MAX_CRITIC_RETRIES,
+                    exc.verdict,
+                )
+                return False  # 不 break, 主循环继续 → 重新跑 critic
+            # 超过最大重试次数, 升级 HARD_LIMIT
             self.verdict = ConvVerdict.stop(
-                level=3, reason=decision.stop_reason or "StageRouter stop"
+                level=4,
+                reason=f"critic verdict 异常 (重试 {MAX_CRITIC_RETRIES} 次仍失败, Bug 3 升级到 HARD_LIMIT): {exc.verdict!r}",
+            )
+            return True
+        if decision.should_stop:
+            # 2026-07-04 修复 (Bug 3): StageRouter stop 默认 level=3 PASS 是反向语义
+            # (实际是 MAJOR 超限等异常停止, 不应 PASS). 改为 level=4 HARD_LIMIT
+            # 让 orchestrator 显式区分"通过停止" vs "异常停止".
+            self.verdict = ConvVerdict.stop(
+                level=4, reason=decision.stop_reason or "StageRouter stop"
             )
             return True
         if decision.next_stage is not None:
@@ -601,9 +758,64 @@ class Orchestrator:
         # next_stage is None: judge 判定
         verdict = judge.evaluate(history=list(self.history))
         if verdict.should_stop:
+            # 2026-07-04 修复 (Bug 3 prismscan 方案 C):
+            # 即便 judge 给 QUALITY_PASS (level=3), 检查最近一轮 gate_summary:
+            # - 任意 gate failed → 不停止, continue (让 developer 修 gate 失败的项)
+            # - 所有 gate passed → 正常停止
+            # 这是反向语义的根本防御: 即便 critic LLM 错给 APPROVE,
+            # gate fail 也会拦住继续修, 而不是立刻停.
+            latest_gates = self._collect_latest_gates()
+            if verdict.level == 3 and latest_gates and not self._gates_all_passed(latest_gates):
+                # gate fail 拦住 — 不升级 verdict, 继续
+                self._step_2i_log_gate_block(verdict, latest_gates, current_stage)
+                return False  # 不 break
             self.verdict = verdict
             return True
         return True  # unexpected → 兜底 break (走 step 3)
+
+    def _collect_latest_gates(self) -> dict:
+        """收集最近一轮 RoundHistory 的 gate_results (dict[str, Verdict]).
+
+        2026-07-04 (Bug 3 方案 C): 用于 step 2i gate_summary 反向防御检查.
+        2026-07-04 P0 修复: 唯一权威实现 (前 c2fd29e commit 误加同方法覆盖
+        返回 dict[str, bool] 破坏 _gates_all_passed + _inject_self_refine_context).
+        消费方期望 dict[str, Verdict] (有 .passed / .message 属性).
+        """
+        if not self.history:
+            return {}
+        last_round = self.history[-1]
+        return last_round.gate_results or {}
+
+    def _gates_all_passed(self, gate_results: dict) -> bool:
+        """所有 gate 都通过 (Bug 3 方案 C 辅助).
+
+        容忍空 dict (无 gate 配置), 返回 True (避免误判).
+        """
+        if not gate_results:
+            return True  # 无 gate 配置 → 不视为失败
+        for verdict in gate_results.values():
+            passed = getattr(verdict, "passed", None)
+            if passed is False:
+                return False
+        return True
+
+    def _step_2i_log_gate_block(
+        self, verdict: Any, latest_gates: dict, current_stage: str
+    ) -> None:
+        """记录 gate fail 拦住 stop 的诊断日志 (Bug 3 方案 C)."""
+        failed = [
+            name
+            for name, v in latest_gates.items()
+            if getattr(v, "passed", None) is False
+        ]
+        # 2026-07-04 (Issue #15): import logging 提到模块顶部 (PEP 8).
+        logging.getLogger("ae.loop.orchestrator").info(
+            "Bug 3 方案 C: judge QUALITY_PASS 但 gate fail, 不停止 → continue. "
+            "verdict_level=%d, current_stage=%s, failed_gates=%s",
+            getattr(verdict, "level", -1),
+            current_stage,
+            failed,
+        )
 
     def _step_3_exit_block(
         self,
@@ -634,14 +846,6 @@ class Orchestrator:
     def _resolve_project_root(self) -> Path:
         """运行时解析 project_root (B11.1). config 优先, fallback cwd."""
         return self.config.project_root or Path.cwd()
-
-    def _collect_latest_gates(self) -> dict[str, bool]:
-        """收集最后一轮 round_result 的 gate 结果 (name → passed)."""
-        if not self.round_results:
-            return {}
-        last = self.round_results[-1]
-        # gate_results 类型: dict[str, Verdict] (round.py:83)
-        return {name: verdict.passed for name, verdict in last.gate_results.items()}
 
     def _save_checkpoint(
         self,

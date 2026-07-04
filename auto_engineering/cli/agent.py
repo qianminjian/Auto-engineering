@@ -18,7 +18,7 @@
 
 Exit codes:
     0 = 成功
-    1 = 调用失败 (无 ANTHROPIC_API_KEY / Agent 异常)
+    1 = 调用失败 (Agent 异常)
 """
 
 from __future__ import annotations
@@ -71,8 +71,7 @@ def _build_runtime_for_role(role: str, project_root: Path) -> object:
     )
     from auto_engineering.tools.git_tools import GitStatusTool
 
-    api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
-    llm = AnthropicProvider(api_key=api_key)
+    llm = AnthropicProvider()  # SDK 自动从 ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN 读
     tools = [
         WriteFileTool(project_root=project_root),
         EditFileTool(project_root=project_root),
@@ -100,12 +99,19 @@ def run_agent(role: str, instruction: str, project_root: Path) -> dict:
 
     Returns:
         dict 形式承载 TaskOutcome 字段: task_id/role/status/output/error/duration/task_role.
+
+    2026-07-04 修复 (Issue #8, 90 分): 失败 error message 已含
+    ANTHROPIC_API_KEY/ANTHROPIC_AUTH_TOKEN (plugin mode OAuth 注入),
+    不再仅 ANTHROPIC_API_KEY.
     """
     task_id = f"agent-{uuid.uuid4().hex[:8]}"
     started = time.monotonic()
     # 无 LLM key → 返回失败结果
     # 2026-07-04 修复 (prismscan 真实 bug): 4 级 fallback plugin_mode 检测
     # (CLAUDE_CODE / CLAUDE_CODE_ENTRYPOINT / ANTHROPIC_CLI / ANTHROPIC_AUTH_TOKEN)
+    # 2026-07-04 修复 (v5.0 深度审计 + Bug 4 prismscan 集成):
+    # - 原 if False bug 已修
+    # - in_llm_agent 用 detect_plugin_mode() 共用函数 (Bug 4)
     from auto_engineering.utils.plugin_mode import detect_plugin_mode, has_llm_credentials
     in_llm_agent = detect_plugin_mode()
     if not has_llm_credentials() and not in_llm_agent:
@@ -115,6 +121,7 @@ def run_agent(role: str, instruction: str, project_root: Path) -> dict:
             "status": "failed",
             "output": None,
             "error": "ANTHROPIC_API_KEY/ANTHROPIC_AUTH_TOKEN 未设置 (Plugin mode 应零配置, Claude Code OAuth 自动注入 ANTHROPIC_AUTH_TOKEN)",
+            "error": "ANTHROPIC_API_KEY/ANTHROPIC_AUTH_TOKEN 未设置 (Claude Code Plugin 模式应通过 ANTHROPIC_AUTH_TOKEN/OAuth 透传; CLI 调试模式需手动 export)",
             "duration": time.monotonic() - started,
             "task_role": role,
         }

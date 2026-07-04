@@ -5,7 +5,7 @@
     2. uv ≥ 0.5 (包管理工具)
     3. git ≥ 2.40
     4. sqlite3 ≥ 3.42 (用于 SQLiteCheckpointStore)
-    5. ANTHROPIC_API_KEY 已设置 (在 LLM agent 环境跳过)
+    5. N/A (SDK 自动从 env 读 key, Plugin 模式无需设置)
     6. .ae-state/ 可读写 (项目状态目录)
     7. init-manifest.json 存在 (IL-AC-01)
 
@@ -148,6 +148,29 @@ def _check_ae_state(project_root: Path) -> tuple[bool, str]:
         return False, f".ae-state/ 不可写: {e}"
 
 
+def _check_plugin_mode() -> tuple[bool, str]:
+    """检查 Plugin mode 是否启用 (Bug 4 修复, 2026-07-04).
+
+    2026-07-04 深度设计 (用户洞察): Plugin mode 用户**零配置**原则.
+    Plugin 在 Claude Code agent 内运行时, ANTHROPIC_AUTH_TOKEN 由 Claude Code
+    通过 OAuth 自动注入, 用户不需要自己 export ANTHROPIC_API_KEY.
+    """
+    from auto_engineering.utils.plugin_mode import detect_plugin_mode_detail
+
+    in_plugin, signal = detect_plugin_mode_detail()
+    if in_plugin:
+        # Plugin mode: 用户零配置, ANTHROPIC_AUTH_TOKEN 由 Claude Code OAuth 注入
+        return True, (
+            f"Plugin mode 已启用 (via {signal}) — 用户零配置, "
+            f"ANTHROPIC_AUTH_TOKEN 由 Claude Code OAuth 自动注入"
+        )
+    # CLI 调试模式: 需要用户手动 export (独立跑 ae 才需要)
+    return True, (
+        "CLI 调试模式 (独立跑 ae) — 需手动 export ANTHROPIC_API_KEY. "
+        "建议在 Claude Code agent 内运行 (Plugin 模式, 零配置)"
+    )
+
+
 def _check_init_manifest(project_root: Path) -> tuple[bool, str]:
     """检查 init-manifest.json (IL-AC-01~05, v5.0 §IL.4).
 
@@ -201,7 +224,7 @@ def run_doctor_checks(project_root: Path) -> tuple[int, list[tuple[bool, str]]]:
     results.append(_check_uv())
     results.append(_check_git())
     results.append(_check_sqlite3())
-    results.append(_check_api_key())
+    results.append(_check_plugin_mode())
     results.append(_check_ae_state(project_root))
     results.append(_check_init_manifest(project_root))
     failed = sum(1 for ok, _ in results if not ok)
@@ -219,7 +242,7 @@ def register_doctor_command(main: click.Group) -> None:
         help="项目根目录 (默认 cwd)",
     )
     def doctor(project_root: str) -> None:
-        """环境预检 — Python/uv/git/sqlite3/API_KEY/.ae-state + init-manifest (IL-AC-01)."""
+        """环境预检 — Python/uv/git/sqlite3/.ae-state + init-manifest (IL-AC-01)."""
         root = Path(project_root).resolve() if project_root else Path.cwd()
         exit_code, results = run_doctor_checks(root)
         for ok, line in results:

@@ -42,7 +42,6 @@ class ClaudeSemanticEvaluator:
     """用 Claude API 评估本轮产出是否满足需求.
 
     Attributes:
-        api_key: Anthropic API key (None = 从环境变量 ANTHROPIC_API_KEY 读)
         model: 调用的模型名 (默认 "claude-haiku-4-5")
         prompt_template: 评估 prompt 模板, 接受 requirement / summary /
             gate_results 三个占位符
@@ -50,12 +49,10 @@ class ClaudeSemanticEvaluator:
         temperature: Claude 采样温度 (默认 0.0, 确定性评估)
 
     Note:
-        - 协议: `async (round_result: RoundResult) -> bool`
-        - 无 API key: 返回 True (不阻止, 让其他 Gate 决定)
+        - 协议: 
         - JSON 解析失败: 返回 False (保守)
     """
 
-    api_key: str = ""
     model: str = "claude-haiku-4-5"
     prompt_template: str = (
         "判断本轮产出是否满足需求.\n"
@@ -66,17 +63,34 @@ class ClaudeSemanticEvaluator:
     )
     max_tokens: int = 256
     temperature: float = 0.0
+    # 2026-07-04 修复 (v5.0 深度审计 P1-T-03): 新增 api_key 字段, 允许测试显式传入
+    # (之前 __init__ 不接受, 导致 test_semantic_evaluator_provider_reuse_p1e 失败).
+    # 默认 None → SDK 自动从 ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN 读 key.
+    api_key: str | None = None
     _provider: AnthropicProvider | None = None  # P1-E: __post_init__ 中预创建, 复用
 
     def __post_init__(self) -> None:
         """P1-E: 预创建 AnthropicProvider, 多次 __call__ 复用.
 
-        若 api_key 为空, 从环境变量 ANTHROPIC_API_KEY 读取.
+        SDK 自动从 env 读 key (ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN).
+        测试可通过 api_key="..." 显式传入覆盖.
         """
-        if not self.api_key:
-            self.api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-        # 预创建 provider (避免每轮 _call_claude new instance + SDK client 重连)
+        # 预创建 provider (api_key=None 时 SDK 自动从 env 读)
         self._provider = AnthropicProvider(api_key=self.api_key)
+
+    def _has_api_key(self) -> bool:
+        """检测是否有 API key (用于 graceful degradation 决策).
+
+        2026-07-04 修复 (v5.0 深度审计 P0-T-02): 之前 __call__ 无条件 return True,
+        导致 test_satisfied_true_returns_true 等 5 个测试失败 (因为 mock Claude
+        API 永远不被调). 现区分"无 key" (graceful True) 与 "有 key" (调 API).
+        """
+        if self.api_key:
+            return True
+        return bool(
+            os.environ.get("ANTHROPIC_API_KEY")
+            or os.environ.get("ANTHROPIC_AUTH_TOKEN")
+        )
 
     async def __call__(self, round_result: RoundResult) -> bool:
         """评估本轮产出是否满足需求.
@@ -85,12 +99,11 @@ class ClaudeSemanticEvaluator:
             round_result: 本轮的 RoundResult (含 outcomes / history / gate_results)
 
         Returns:
-            bool: True = 满足需求 (可停止), False = 未满足 (继续)
-            无 API key 时: True (graceful degradation, 不阻止)
-            JSON 解析失败时: False (保守, 不误判停止)
+            bool: True = 满足需求, False = 未满足
+            JSON 解析失败时: False (保守)
         """
         # Graceful degradation: 无 API key → True (不阻止, 让其他 Gate 决定)
-        if not self.api_key:
+        if not self._has_api_key():
             return True
 
         # 1. 构造评估 prompt

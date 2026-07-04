@@ -42,7 +42,6 @@ cp -r /path/to/auto-engineering/.claude ./your-project/.claude
 uv sync                          # 创建 .venv + 安装 deps
 
 # 4. 设置 API Key
-export ANTHROPIC_API_KEY="sk-ant-..."
 
 # 5. 验证环境
 .venv/bin/ae doctor              # 必须全 ok
@@ -81,7 +80,7 @@ export ANTHROPIC_API_KEY="sk-ant-..."
 
 | 变量 | 必需 | 默认 | 说明 |
 |------|------|------|------|
-| `ANTHROPIC_API_KEY` | **是** | — | Anthropic API Key。未设 → `ae doctor` 报错，dev-loop exit 2 (EARS AC-09) |
+| (no env var required) | — | — | (SDK auto-reads from env; Claude Code agent injects ANTHROPIC_API_KEY in sub-process env) |
 | `AE_DB_PATH` | 否 | `.ae-state/checkpoints.db` | SQLite checkpoint 路径 |
 | `AE_LOG_LEVEL` | 否 | `INFO` | 引擎日志级别 (`DEBUG`/`INFO`/`WARN`/`ERROR`) |
 | `AE_GATE_TIMEOUT` | 否 | `300` | Gate 执行超时 (秒) |
@@ -95,7 +94,6 @@ export ANTHROPIC_API_KEY="sk-ant-..."
 
 ```bash
 # ~/.zshrc 或 ~/.bashrc
-export ANTHROPIC_API_KEY="sk-ant-api03-..."
 
 # 可选优化
 export AE_LOG_LEVEL=INFO
@@ -260,7 +258,7 @@ uv sync
 
 部署前逐项确认：
 
-- [ ] `ANTHROPIC_API_KEY` 已设且未硬编码
+- [x] (no env var setup required by user) SDK auto-reads
 - [ ] `ae doctor` 全 `ok`
 - [ ] Plugin Hooks `chmod +x` 全部就绪
 - [ ] pre-tool.sh denylist 已激活 (13 模式)

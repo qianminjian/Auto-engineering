@@ -1288,17 +1288,18 @@ class TestStageRouterIntegration:
         assert decision.should_stop is True
 
     def test_stage_router_empty_verdict_in_critic_triggers_safety_stop(self) -> None:
-        """critic 阶段 verdict="" 异常: 防御性 stop (v5.0 §B2.2 T4 异常分支).
+        """critic 阶段 verdict="" 异常: 抛 CriticVerdictInvalid (Bug 3 prismscan 修复).
 
-        业务保护: critic 阶段未给出 APPROVE/MAJOR → 视为异常, 安全停止.
+        2026-07-04 行为变更: 旧实现 should_stop=True + reason 含 '异常' / '' 静默归一化为 PASS
+        (反向语义). 新实现 raise CriticVerdictInvalid 让 orchestrator 显式处理.
         """
-        from auto_engineering.loop.stage_router import StageRouter
+        import pytest
+        from auto_engineering.loop.stage_router import CriticVerdictInvalid, StageRouter
 
         router = StageRouter()
-        decision = router.next("critic", "", majors_in_a_row=0, total_majors=0)
-        assert decision.should_stop is True
-        assert "异常" in decision.stop_reason
-        assert "''" in decision.stop_reason  # 含空字符串
+        with pytest.raises(CriticVerdictInvalid) as exc_info:
+            router.next("critic", "", majors_in_a_row=0, total_majors=0)
+        assert exc_info.value.verdict == ""
 
     def test_stage_router_unknown_stage_returns_safety_stop(self) -> None:
         """未知 stage 防御性 stop (避免 Orchestrator 僵死)."""

@@ -154,17 +154,24 @@ class TestStageTransitions:
         assert decision.stop_reason is not None
         assert "累计" in decision.stop_reason
 
-    def test_critic_empty_verdict_returns_none(self) -> None:
-        """critic + verdict='' → next=None (异常/未裁决, 应停止)."""
+    def test_critic_empty_verdict_raises(self) -> None:
+        """critic + verdict='' → 抛 CriticVerdictInvalid (Bug 3 prismscan 修复).
+
+        旧行为: should_stop=True (反向语义: 异常 → PASS → 停止)
+        新行为: 抛 CriticVerdictInvalid 让 orchestrator 显式处理 (重试/升级).
+        """
+        from auto_engineering.loop.stage_router import CriticVerdictInvalid
+
         router = StageRouter()
-        decision = router.next(
-            current_stage="critic",
-            verdict="",
-            majors_in_a_row=0,
-            total_majors=0,
-        )
-        assert decision.next_stage is None
-        assert decision.should_stop is True  # empty verdict 应触发 stop
+        with pytest.raises(CriticVerdictInvalid) as exc_info:
+            router.next(
+                current_stage="critic",
+                verdict="",
+                majors_in_a_row=0,
+                total_majors=0,
+            )
+        assert exc_info.value.verdict == ""
+        assert "critic 返回非法 verdict" in str(exc_info.value)
 
 
 # ---------- MAJOR 计数耗尽场景 ----------
@@ -426,14 +433,15 @@ class TestNewEngineStateFields:
         assert state.batch_plan == []
         assert isinstance(state.batch_plan, list)
 
-    def test_field_count_is_16(self) -> None:
-        """字段总数 = 16 (v2.5 基线 13 + M1 新增 3: thread_id, majors_in_a_row, total_majors).
+    def test_field_count_is_18(self) -> None:
+        """字段总数 = 18 (v2.5 基线 13 + M1 新增 3 + 2026-07-04 suggested_fix +1).
 
         说明: 设计 §B1.1 列 17 字段含 round/stage/round_history, 这些在
         Phase 04 Orchestrator 重构时引入, 不在本 Phase 01 范围. Phase 01 仅
         新增 3 个字段 (thread_id / majors_in_a_row / total_majors), batch_plan
         字段已存在仅类型修正 (dict → list[dict]).
+        2026-07-04: 17 → 18 (+suggested_fix, Self-Refine 原则 1 结构化 patch).
         """
         state = EngineState()
         fields = list(state.__dataclass_fields__.keys())
-        assert len(fields) == 16, f"Expected 16 fields, got {len(fields)}: {fields}"
+        assert len(fields) == 17, f"Expected 17 fields (含 _pending_sends), got {len(fields)}: {fields}"

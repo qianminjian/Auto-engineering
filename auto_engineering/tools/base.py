@@ -48,31 +48,33 @@ class BaseTool(ABC):
         ...
 
     def _is_path_safe(self, file_path: str) -> tuple[bool, str]:
-        """检查 file_path 是否在 project_root 内.
+        """检查 file_path 是否在 project_root 内 (fail-CLOSED).
+
+        2026-07-04 修复 (v5.0 深度审计 P1-S-01): 改为 fail-CLOSED 默认行为.
+        旧实现 project_root=None 时返回 True (fail-OPEN), 调用方忘传时
+        沙箱彻底失效. 现在: project_root=None 时拒绝所有路径, 仅当
+        环境变量 ALLOW_NO_SANDBOX=true 设置时旁路 (仅测试场景使用).
 
         Symlink 防御 (per engineering-practices §10): macOS 下 /var → /private/var
         /tmp → /private/tmp, 攻击者控制的 file_path 若经 symlink 可绕过 lexical
         解析. 用 os.path.realpath 双侧归一化; 不存在的中间目录回退到 lexical.
-
-        v2.5 P2-C-6: project_root is None 时 (调用方忘传) 默认 fail-OPEN
-        (allow all). 这是历史行为. 风险: 调用方忘传时, 沙箱彻底失效.
-        缓解: 记 warning 日志 (audit trail), 不 raise (向后兼容 — 测试 +
-        旧调用方仍能跑). 生产 CLI dev_loop.py:75-82 显式传 project_root
-        给所有 file 类工具, 不会触发 warning.
         """
-        if self.project_root is None:
-            import logging
-            import warnings
-            msg = (
-                f"{type(self).__name__}._is_path_safe called with "
-                f"project_root=None. Sandbox disabled — file_path='{file_path}' "
-                f"allowed unconditionally. 调用方应显式传 project_root."
-            )
-            warnings.warn(msg, stacklevel=2)
-            logging.getLogger("ae.tools.sandbox").warning(msg)
-            return True, ""
-
         import os
+
+        if self.project_root is None:
+            if os.environ.get("ALLOW_NO_SANDBOX") == "true":
+                import warnings
+                warnings.warn(
+                    f"{type(self).__name__}._is_path_safe called with project_root=None. "
+                    "ALLOW_NO_SANDBOX=true bypass active (tests only).",
+                    stacklevel=2,
+                )
+                return True, ""
+            return False, (
+                f"{type(self).__name__}._is_path_safe called with project_root=None. "
+                "Sandbox disabled — call site should pass project_root explicitly. "
+                "Set ALLOW_NO_SANDBOX=true to bypass (tests only)."
+            )
 
         try:
             root_real = os.path.realpath(self.project_root)

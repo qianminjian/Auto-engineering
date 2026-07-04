@@ -42,6 +42,10 @@ class EngineState:
         - majors_in_a_row: int (连续 MAJOR 计数, §B1.1 字段 16)
         - total_majors: int (累计 MAJOR 计数, §B1.1 字段 17)
         - thread_id: str (UUID v4, §B1.1 字段 15)
+    Note (2026-07-04): 17 → 18 字段 (+suggested_fix, Self-Refine 原则 1 结构化 patch).
+    Note (2026-07-04 /code-review Issue #9, 95 分): §B1.1 表历史列含 round/round_history,
+    实际 EngineState 用 current_stage 替代 round + suggested_fix 替代 round_history.
+    设计文档 B1.1 表待下次大版本同步 (字段集已漂移).
     """
 
     requirement: str = ""
@@ -67,6 +71,10 @@ class EngineState:
     verdict: str = ""  # "APPROVE" | "MAJOR"
     findings: list[dict] = field(default_factory=list)
     critic_feedback: str = ""
+    # 2026-07-04 (Self-Refine 原则 1 深化): 结构化修复建议
+    # critic 直接输出 unified diff patch (具体代码片段而非文字), developer
+    # 重做时直接拿到 patch 应用, 不重新解读. Self-Refine 论文表明效果 2-3x.
+    suggested_fix: str = ""
 
     # 多 Agent 预留(v2.0+ Send 动态路由)
     _pending_sends: list = field(default_factory=list)

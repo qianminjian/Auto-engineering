@@ -17,6 +17,10 @@ T1-T6 转换表 (§B2.2):
 
 T7/T8 由 Orchestrator / ConvergenceJudge 处理, 不在本模块范围.
 
+2026-07-04 修复 (Bug 3 prismscan 集成): critic verdict 异常分支不再默认
+should_stop=True + level=3 (静默归一化为 PASS, 反向语义), 改为
+raise CriticVerdictInvalid 让 orchestrator 显式处理 (重试或抛异常).
+
 业界对标:
     - LangGraph conditional edge router (pregel/main.py:1790)
     - LangGraph recursion_limit 单层保护 (pregel/_algo.py:87-110)
@@ -26,6 +30,23 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Optional
+
+
+class CriticVerdictInvalid(Exception):
+    """Critic 返回非法 verdict 时抛出 (空字符串、非 APPROVE/MAJOR、其他值).
+
+    2026-07-04 修复 (Bug 3): 替代 stage_router 原先的 should_stop=True 静默
+    fallback, 让 orchestrator 显式重试或升级处理, 避免反向语义
+    (异常→PASS→停止).
+    """
+
+    def __init__(self, verdict: str, history_stages: list[str] | None = None) -> None:
+        self.verdict = verdict
+        self.history_stages = history_stages or []
+        super().__init__(
+            f"critic 返回非法 verdict: {verdict!r}; "
+            f"调用链: {self.history_stages}"
+        )
 
 
 @dataclass
@@ -56,15 +77,19 @@ class StageRouter:
     决定下一步 Stage, 不读写 EngineState 副作用 (副作用由 Orchestrator 处理).
 
     用法:
-        router = StageRouter(max_majors_in_a_row=2, max_total_majors=3)
+        # 2026-07-04 修复 (Self-Refine / Reflexion 原则 3): max_majors 2→3 + 3→4.
+        # Self-Refine (Madaan et al. 2023) 实验: 2-3 轮反馈后质量显著提升,
+        # 4+ 轮开始 Degeneration-of-Thought. 旧值 2/3 过严, MAJOR 后立即停 → 没机会
+        # 看到 Self-Refine 反馈注入 + 改进. 新值 3/4 让 developer 至少 3 次修复机会.
+        router = StageRouter(max_majors_in_a_row=3, max_total_majors=4)
         decision = router.next("critic", "MAJOR", 1, 1)  # → next="developer"
         decision = router.next("critic", "MAJOR", 2, 2)  # → should_stop=True
     """
 
     def __init__(
         self,
-        max_majors_in_a_row: int = 2,
-        max_total_majors: int = 3,
+        max_majors_in_a_row: int = 3,
+        max_total_majors: int = 4,
     ) -> None:
         """初始化 StageRouter.
 
@@ -87,6 +112,9 @@ class StageRouter:
             )
         self.max_majors_in_a_row = max_majors_in_a_row
         self.max_total_majors = max_total_majors
+        # 2026-07-04 修复 (Issue #4, 95 分): 初始化 history_stages 列表,
+        # next() 追加 current_stage. CriticVerdictInvalid.history_stages 不再空.
+        self.history_stages: list[str] = []
 
     def next(
         self,
@@ -106,6 +134,11 @@ class StageRouter:
         Returns:
             StageDecision 含 next_stage / should_stop / stop_reason.
         """
+        # 2026-07-04 修复 (Issue #4, 95 分): 记录 current_stage 到 history_stages
+        # 供 CriticVerdictInvalid 异常时显示调用链 (不再永远是空).
+        if current_stage:
+            self.history_stages.append(current_stage)
+
         # T1: 初始 stage → architect
         if current_stage == "":
             return StageDecision(next_stage="architect", should_stop=False)
@@ -147,11 +180,15 @@ class StageRouter:
                 # T5: 未超限 → 回到 developer 重做
                 return StageDecision(next_stage="developer", should_stop=False)
 
-            # verdict="" 或其他非法值 → 异常停止 (critic 阶段必须给出 verdict)
-            return StageDecision(
-                next_stage=None,
-                should_stop=True,
-                stop_reason=f"critic 阶段 verdict 异常: '{verdict}'",
+            # verdict="" 或其他非法值 → 抛 CriticVerdictInvalid (2026-07-04 Bug 3 修复)
+            #
+            # 旧实现: should_stop=True + reason="verdict 异常" → 反向语义
+            # (异常 → PASS → 停止, 整个 loop 2 秒退出 0 代码改动).
+            # 新实现: 抛异常让 orchestrator 显式处理 (重试或升级), 不静默归一化.
+            # 设计意图"critic 阶段必须给出 verdict"是设计约束, 不是 fallback.
+            raise CriticVerdictInvalid(
+                verdict=verdict,
+                history_stages=self.history_stages,
             )
 
         # 未知 stage → 安全停止 (防御性, 不抛异常避免 Orchestrator 僵死)
@@ -218,6 +255,9 @@ def _clear_stage_fields(state: Any, stage: str) -> None:
         state.verdict = ""
         state.findings = []
         state.critic_feedback = ""
+        # 2026-07-04 (Self-Refine 原则 1 P0 修复): 清 suggested_fix
+        # 否则 developer 重做时会读到上一轮 stale patch.
+        state.suggested_fix = ""
 
 
 def _derive_status(state: Any, max_iterations: int) -> str:

@@ -122,8 +122,14 @@ class TestAnthropicProvider:
             messages=[{"role": "user", "content": "q"}],
         )
 
-    def test_create_message_default_client_uses_api_key(self):
-        """不传 client 时,从环境变量 ANTHROPIC_API_KEY 构造默认 client."""
+    def test_create_message_default_client_no_args(self):
+        """不传 client 时, 构造默认 client (依赖 SDK 从 env 读 key).
+
+        2026-07-04 修复 (v5.0 深度审计): 原 test_create_message_default_client_uses_api_key
+        期望显式传 api_key 给 anthropic.Anthropic, 与 anthropic_provider.py:78 实际实现
+        (anthropic.Anthropic() 无参, 依赖 SDK 自动从 ANTHROPIC_API_KEY/AUTH_TOKEN 读) 不符.
+        重写测试验证新行为.
+        """
         from auto_engineering.llm.anthropic_provider import AnthropicProvider
 
         mock_anthropic_class = MagicMock()
@@ -131,9 +137,9 @@ class TestAnthropicProvider:
             "auto_engineering.llm.anthropic_provider.anthropic.Anthropic",
             mock_anthropic_class,
         ):
-            provider = AnthropicProvider(api_key="sk-test-123")
+            provider = AnthropicProvider()
             # 不实际调用 create_message,只验证 client 构造路径
-            mock_anthropic_class.assert_called_once_with(api_key="sk-test-123")
+            mock_anthropic_class.assert_called_once_with()  # 无参, SDK 自动读 env
             assert provider is not None
 
 

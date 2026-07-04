@@ -7,11 +7,8 @@
     "email": "noreply@anthropic.com"
   },
   "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "https://example.com/auto-engineering.git"
-  },
-  "homepage": "https://example.com/auto-engineering",
+  "repository": "https://github.com/qianminjian/Auto-engineering",
+  "homepage": "https://github.com/qianminjian/Auto-engineering",
   "keywords": [
     "multi-agent",
     "ai-engineering",

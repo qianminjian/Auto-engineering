@@ -42,6 +42,8 @@ class RunBashTool(BaseTool):
     }
 
     # 黑名单: 匹配则拒绝执行
+    # 2026-07-04 修复 (v5.0 深度审计 P1-D-05): 统一为 13 模式与 hooks/pre-tool.sh 对齐.
+    # 删除 python -c 模式 (原第 14), 避免客户端/服务端黑名单不一致.
     DANGEROUS_PATTERNS: ClassVar[list[str]] = [
         # P1.5 原列表
         r"rm\s+-rf\s+/\s*$",  # rm -rf / 或 rm -rf /...
@@ -58,7 +60,7 @@ class RunBashTool(BaseTool):
         r"\bbash\s+-i\b.*>/dev/tcp/",  # bash interactive + /dev/tcp (反弹 shell)
         r"\beval\s+\$\(",  # eval $(...) 命令替换注入
         r"\bbase64\s+-d\b.*\|\s*(ba)?sh\b",  # base64 -d | sh
-        r"\bpython[23]?\s+-c\b",  # python -c "..." (Python as RCE proxy)
+        # python -c 已删除 (统一为 13 模式, 与 hooks/pre-tool.sh 一致)
     ]
 
     async def execute(self, **kwargs) -> ToolResult:

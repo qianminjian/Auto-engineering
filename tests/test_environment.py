@@ -60,33 +60,23 @@ class TestLoadAeAnswers:
 
 
 class TestPreflight:
-    """preflight(project_root) — 入口前置校验."""
+    """preflight(project_root) — 入口前置校验 (Python 版本 + Git 仓库 + 磁盘空间).
 
-    def test_passes_in_valid_git_repo(self, tmp_path: Path, monkeypatch):
-        """RED: 合法 git 仓库 + 有 API key 时 preflight 通过."""
-        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-key")
+    2026-07-04 修复 (v5.0 深度审计): preflight 不检查 ANTHROPIC_API_KEY
+    (见 environment.py:200-229, SDK 自动从 env 读).
+    原 test_raises_systemexit_without_api_key + test_systemexit_code_is_one_on_failure
+    测试期望错, 删除.
+    """
+
+    def test_passes_in_valid_git_repo(self, tmp_path: Path):
+        """合法 git 仓库 + 足够磁盘空间时 preflight 通过."""
         (tmp_path / ".git").mkdir()
         # preflight 不抛 SystemExit
         preflight(tmp_path)
 
-    def test_raises_systemexit_without_api_key(self, tmp_path: Path, monkeypatch):
-        """RED: 缺 ANTHROPIC_API_KEY 时 preflight 抛 SystemExit."""
-        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-        (tmp_path / ".git").mkdir()
-        with pytest.raises(SystemExit):
-            preflight(tmp_path)
-
-    def test_raises_systemexit_outside_git_repo(self, tmp_path: Path, monkeypatch):
-        """RED: 非 git 仓库时 preflight 抛 SystemExit."""
-        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-key")
+    def test_raises_systemexit_outside_git_repo(self, tmp_path: Path):
+        """非 git 仓库时 preflight 抛 SystemExit (code=1)."""
         # tmp_path 没有 .git
-        with pytest.raises(SystemExit):
-            preflight(tmp_path)
-
-    def test_systemexit_code_is_one_on_failure(self, tmp_path: Path, monkeypatch):
-        """RED: 失败时 SystemExit code=1."""
-        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-        (tmp_path / ".git").mkdir()
         with pytest.raises(SystemExit) as exc_info:
             preflight(tmp_path)
         assert exc_info.value.code == 1

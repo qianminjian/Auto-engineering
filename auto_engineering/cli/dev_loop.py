@@ -66,12 +66,28 @@ class OrchestratorRunResult:
         duration_sec: float,
         gate_results: dict | None = None,
     ) -> OrchestratorRunResult:
-        """从 Orchestrator 实例构造."""
+        """从 Orchestrator 实例构造.
+
+        2026-07-04 修复 (Bug 3 prismscan 集成): verdict.level=4 (HARD_LIMIT)
+        不再映射为 status="completed", 改为 status="failed". 这样 CLI 进程
+        退出码可正确反映异常停止 (Bug 3 + Bug 2 根因 → 0 代码改动退出).
+
+        状态映射:
+            - verdict.level=3 (QUALITY_PASS) → status="completed" (正常停止)
+            - verdict.level=4 (HARD_LIMIT)   → status="failed"    (异常停止)
+            - verdict.level in (0,1,2)       → status="max_rounds" (未达停止条件)
+        """
         verdict_obj = getattr(orchestrator, "verdict", None)
         if verdict_obj is not None and getattr(verdict_obj, "should_stop", False):
-            status = "completed"
+            level = getattr(verdict_obj, "level", 0)
+            if level == 4:
+                # HARD_LIMIT (Bug 3 升级: critic 异常 → 异常停止)
+                status = "failed"
+            else:
+                # QUALITY_PASS 或 MAJOR 超限等 (含 level=2 STAGNANT)
+                status = "completed"
             verdict_dict = {
-                "level": getattr(verdict_obj, "level", 0),
+                "level": level,
                 "level_name": getattr(verdict_obj, "level_name", "UNKNOWN"),
                 "reason": getattr(verdict_obj, "reason", ""),
             }
@@ -173,8 +189,7 @@ def _build_v2_agent_runtime(
     )
     from auto_engineering.tools.test_tools import RunTestsTool
 
-    api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
-    llm = AnthropicProvider(api_key=api_key)
+    llm = AnthropicProvider()  # SDK 自动从 ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN 读
     # P1.9 fix: 只有支持 project_root 的工具传 project_root (白名单沙箱)
     # P1-C: ReadFileTool 现在也支持 project_root
     tools = [
