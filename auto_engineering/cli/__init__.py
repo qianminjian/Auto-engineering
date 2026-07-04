@@ -181,7 +181,17 @@ def dev_loop(
             f"steps={result.total_steps}, checkpoint={result.checkpoint_id}"
         )
 
-    # v5.0 exit codes: 0=completed, 2=gate_unrecoverable (max_rounds 走 0, 失败/取消已 raise 走分类码)
+    # v5.0 exit codes: 0=completed, 1=USER/failed (Bug 3 prismscan), 2=gate_unrecoverable,
+    # 130=SIGINT (AEError raised above)
+    if result.status == "failed":
+        # Bug 3 prismscan 修复: verdict.level=4 (HARD_LIMIT, critic 异常升级) →
+        # status="failed" → CLI exit 非 0. 旧行为 exit 0 是 0 代码改动退出的根因.
+        click.echo(
+            f"✗ dev-loop failed (verdict.level=4 HARD_LIMIT): "
+            f"{result.verdict.get('reason', 'unknown')}",
+            err=True,
+        )
+        raise SystemExit(2)
     if result.status == "completed":
         return  # exit 0
     # max_rounds / 其他 → exit 0 (达到上限非异常, v2.0 行为兼容)
