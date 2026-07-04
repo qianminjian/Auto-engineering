@@ -16,5 +16,34 @@
     "guardrails",
     "gate-quality",
     "claude-code-plugin"
-  ]
+  ],
+  "commands": "./commands/",
+  "hooks": "./hooks/",
+  "skills": "./skills/",
+  "metadata": {
+    "min_claude_code_version": "1.0.0",
+    "requirements": {
+      "python": ">=3.10",
+      "uv": ">=0.1.0",
+      "git": ">=2.30",
+      "sqlite3": ">=3.35"
+    },
+    "env": {
+      "AE_DB_PATH": {
+        "description": "Path to ae-state SQLite database (default: .ae-state/checkpoints.db)",
+        "required": false,
+        "default": ".ae-state/checkpoints.db"
+      },
+      "AE_LOG_LEVEL": {
+        "description": "Logging level (DEBUG/INFO/WARN/ERROR)",
+        "required": false,
+        "default": "INFO"
+      },
+      "AE_GATE_TIMEOUT": {
+        "description": "Gate execution timeout in seconds (default: 300)",
+        "required": false,
+        "default": "300"
+      }
+    }
+  }
 }

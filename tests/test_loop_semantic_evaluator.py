@@ -98,8 +98,14 @@ if TYPE_CHECKING:
 
 @pytest.fixture
 def clean_env(monkeypatch: pytest.MonkeyPatch):
-    """测试前清空 ANTHROPIC_API_KEY, 保证从干净状态开始."""
+    """测试前清空 ANTHROPIC_API_KEY + ANTHROPIC_AUTH_TOKEN, 保证从干净状态开始.
+
+    2026-07-04 修复 (v5.0 深度审计 P0-T-02): 真实测试运行环境可能从
+    .zshrc/.zshenv 继承 ANTHROPIC_AUTH_TOKEN, 仅清 ANTHROPIC_API_KEY
+    不够, 应同时清两者 (与 SDK 行为一致).
+    """
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_AUTH_TOKEN", raising=False)
     return monkeypatch
 
 

@@ -147,9 +147,17 @@ class OrchestratorConfig:
         KEY 由 agent 自带, 不应再触发自评估 (commit fae3255/7f12a70).
         """
         in_llm_agent = bool(os.environ.get("CLAUDE_CODE"))
+        # 2026-07-04 修复 (v5.0 深度审计 P0-D-03): 原代码读 "KEY" 环境变量名错误,
+        # 应读 ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN (与 anthropic_provider.py:78 对齐).
+        # 旧 KEY 环境变量名永不为 truthy, 导致 ClaudeSemanticEvaluator 永不默认启用,
+        # BEACON 决策 20 "Phase J 完成" 失效, 第 4 级语义收敛永远不触发.
+        api_key_present = bool(
+            os.environ.get("ANTHROPIC_API_KEY")
+            or os.environ.get("ANTHROPIC_AUTH_TOKEN")
+        )
         if (
             self.semantic_evaluator is None
-            and os.environ.get("KEY")
+            and api_key_present
             and not in_llm_agent
         ):
             # 延迟 import 避免循环依赖 (semantic_evaluator → orchestrator 反向)

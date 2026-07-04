@@ -226,8 +226,15 @@ def test_orchestrator_config_accepts_semantic_evaluator_field():
     assert config.semantic_evaluator is my_evaluator
 
 
-def test_orchestrator_config_semantic_evaluator_default_none():
-    """OrchestratorConfig.semantic_evaluator 默认 None."""
+def test_orchestrator_config_semantic_evaluator_default_none(monkeypatch):
+    """OrchestratorConfig.semantic_evaluator 默认 None (无 API key 时).
+
+    2026-07-04 修复 (v5.0 深度审计): 加 monkeypatch fixture 同时清
+    ANTHROPIC_API_KEY + ANTHROPIC_AUTH_TOKEN, 避免真实环境 AUTH_TOKEN
+    导致测试失败 (与 test_loop_semantic_evaluator.py::clean_env 同模式).
+    """
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_AUTH_TOKEN", raising=False)
     config = OrchestratorConfig()
     assert config.semantic_evaluator is None
 

@@ -173,7 +173,7 @@ def _build_v2_agent_runtime(
     )
     from auto_engineering.tools.test_tools import RunTestsTool
 
-    llm = AnthropicProvider(api_key=api_key)
+    llm = AnthropicProvider()  # SDK 自动从 ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN 读
     # P1.9 fix: 只有支持 project_root 的工具传 project_root (白名单沙箱)
     # P1-C: ReadFileTool 现在也支持 project_root
     tools = [
