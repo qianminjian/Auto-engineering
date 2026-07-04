@@ -185,14 +185,14 @@ class TestSafetyGateNewPatterns:
         self, tmp_path: Path
     ) -> None:
         """16 位 + dash 分隔 (4-4-4-4) → 检测到."""
-        hits = self._scan("4532-0151-1283-0366", tmp_path)
+        hits = self._scan("card 4532-0151-1283-0366", tmp_path)
         assert "银行卡号" in hits
 
     def test_bank_card_with_spaces_detected(
         self, tmp_path: Path
     ) -> None:
         """16 位 + 空格分隔 (4 4 4 4) → 检测到."""
-        hits = self._scan("4532 0151 1283 0366", tmp_path)
+        hits = self._scan("card 4532 0151 1283 0366", tmp_path)
         assert "银行卡号" in hits
 
     def test_bank_card_13_digits_detected(
