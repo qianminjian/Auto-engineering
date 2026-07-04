@@ -103,14 +103,19 @@ def run_agent(role: str, instruction: str, project_root: Path) -> dict:
     task_id = f"agent-{uuid.uuid4().hex[:8]}"
     started = time.monotonic()
     # 无 LLM key → 返回失败结果
+    # 2026-07-04 修复 (v5.0 深度审计): 原 if False bug (永远不触发), 改为 if not api_key_present
+    # in_llm_agent 时跳过检查 (Claude Code Plugin 自动注入 key, 见 settings.py:49-50 同模式)
     in_llm_agent = bool(os.environ.get("CLAUDE_CODE")) or "claude" in os.environ.get("ANTHROPIC_CLI", "").lower()
-    if False:
+    api_key_present = bool(
+        os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN")
+    )
+    if not api_key_present and not in_llm_agent:
         return {
             "task_id": task_id,
             "role": role,
             "status": "failed",
             "output": None,
-            "error": "Agent 调用失败 (检查 plugin 环境)",
+            "error": "ANTHROPIC_API_KEY/ANTHROPIC_AUTH_TOKEN 未设置 (Claude Code Plugin 应自动注入)",
             "duration": time.monotonic() - started,
             "task_role": role,
         }
