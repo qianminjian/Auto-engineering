@@ -289,9 +289,10 @@ def _run_v2_orchestrator(
     from auto_engineering.loop.stage_router import StageRouter
 
     # 1. Checkpoint store: .ae-state/checkpoints.db
-    db_path = str(Path(project_root) / ".ae-state" / "checkpoints.db")
+    db_path = Path(project_root) / ".ae-state" / "checkpoints.db"
+    db_path.parent.mkdir(parents=True, exist_ok=True)
     from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
-    checkpoint_store = SQLiteCheckpointStore(db_path)
+    checkpoint_store = SQLiteCheckpointStore(str(db_path))
 
     # 2. v5.0 M4 完整 OrchestratorConfig
     agent_runtime = _build_v2_agent_runtime(project_root, progress, token_tracker)

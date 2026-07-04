@@ -319,6 +319,17 @@ class GuardrailChain:
     def __init__(self, guardrails: list[Guardrail]) -> None:
         self.guardrails = list(guardrails)
 
+    @classmethod
+    def default(cls) -> "GuardrailChain":
+        """工厂方法: 创建包含全部 5 个 Guardrail (G1-G5) 的默认链."""
+        return cls([
+            RequirementValid(),
+            PlanExists(),
+            GitDiffExists(),
+            TestsPass(),
+            GitClean(),
+        ])
+
     def check(
         self,
         timing: str,

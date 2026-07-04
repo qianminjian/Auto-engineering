@@ -55,6 +55,7 @@ v5.0 M4 主循环流程 (12 步):
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from collections import deque
@@ -531,17 +532,81 @@ class Orchestrator:
         cancellation: CancellationToken | None,
         round_id: int,
     ) -> RoundResult:
-        """step 2e: 调 run_round + _apply_outcome_to_state. 返回 RoundResult.
+        """step 2e: 调 run_round (developer) 或 JSONL 协议 (architect/critic).
+
+        v5.1 实施 (2026-07-05): architect 和 critic 两个 LLM 调用点
+        从 Anthropic SDK 改为 JSONL stdin/stdout 协议 — 复用 agent 的
+        ANTHROPIC_AUTH_TOKEN, 不需要独立 API key.
+        developer 本身由 CLI agent 直接执行 TDD 循环, 不走 JSONL.
 
         把 outcomes 按 task_role 分发写入 state 字段 (B7.2).
-
-        2026-07-04 修复 (Self-Refine / Reflexion 原则 1+4 集成):
-            developer / critic 重做时注入 critic_feedback + findings +
-            gate_results 到 task.description, 让 LLM 看到:
-            - 具体修复建议 (原则 1: 反馈具体且可操作)
-            - 非 LLM 信号 (原则 4: 每次迭代引入新信息 — lint/test/type_check)
-            否则 developer 只能"重新实现整个 stage", 没有针对性修复, 浪费 LLM 调用.
         """
+        # v5.1 JSONL (BEACON 决策 33, design §C.3):
+        # architect/critic stage → 走 JSONL 协议 (plugin mode 内, 复用 agent LLM)
+        # developer stage / 非 plugin mode → 走 run_round (向后兼容 CLI + 测试)
+        in_jsonl = os.environ.get("AE_JSONL_MODE") == "1"
+
+        if in_jsonl and current_stage == "architect":
+            arch_response = self._request_architect(
+                requirement=state.requirement,
+                project_root=str(project_root),
+            )
+            outcome = TaskOutcome(
+                task_id=f"architect-{round_id}",
+                status="completed",
+                output=arch_response,
+                task_role="architect",
+            )
+            from auto_engineering.loop.task_factory import _apply_outcome_to_state
+            _apply_outcome_to_state(state, outcome)
+            # 把 architect 产出的 batch_plan 转换为 developer tasks (v5.0 §B7.3)
+            batch_plan = arch_response.get("batch_plan", [])
+            if batch_plan:
+                from auto_engineering.loop.task_factory import _tasks_from_batch_plan
+                arch_plan = _tasks_from_batch_plan(batch_plan, state.requirement)
+                self.plan.tasks.extend(arch_plan.tasks)
+                self.tasks = list(self.plan.tasks)
+            return RoundResult(
+                round_id=round_id,
+                outcomes=[outcome],
+                history=[RoundHistory(
+                    round_id=round_id,
+                    files_changed=0,
+                    gate_results={},
+                    tasks_run=[],
+                    task_outcomes={"architect": "completed"},
+                )],
+            )
+
+        if in_jsonl and current_stage == "critic":
+            latest_gates = self._collect_latest_gates()
+            critic_response = self._request_critic(
+                files_changed=state.files_changed,
+                commit_hash=state.commit_hash,
+                test_results=state.test_results,
+                gate_results=latest_gates,
+            )
+            outcome = TaskOutcome(
+                task_id=f"critic-{round_id}",
+                status="completed",
+                output=critic_response,
+                task_role="critic",
+            )
+            from auto_engineering.loop.task_factory import _apply_outcome_to_state
+            _apply_outcome_to_state(state, outcome)
+            return RoundResult(
+                round_id=round_id,
+                outcomes=[outcome],
+                history=[RoundHistory(
+                    round_id=round_id,
+                    files_changed=0,
+                    gate_results=latest_gates,
+                    tasks_run=[],
+                    task_outcomes={"critic": "completed"},
+                )],
+            )
+
+        # fallback: run_round for all stages (CLI mode / tests / non-agent)
         enhanced_tasks = self._inject_self_refine_context(round_tasks, state, current_stage)
         round_result = await run_round(
             tasks=enhanced_tasks,
