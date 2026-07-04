@@ -104,15 +104,17 @@ def run_agent(role: str, instruction: str, project_root: Path) -> dict:
     task_id = f"agent-{uuid.uuid4().hex[:8]}"
     started = time.monotonic()
     # 无 LLM key → 返回失败结果
-    api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
-    in_llm_agent = bool(os.environ.get("CLAUDE_CODE")) or "claude" in os.environ.get("ANTHROPIC_CLI", "").lower()
-    if not api_key and not in_llm_agent:
+    # 2026-07-04 修复 (prismscan 真实 bug): 4 级 fallback plugin_mode 检测
+    # (CLAUDE_CODE / CLAUDE_CODE_ENTRYPOINT / ANTHROPIC_CLI / ANTHROPIC_AUTH_TOKEN)
+    from auto_engineering.utils.plugin_mode import detect_plugin_mode, has_llm_credentials
+    in_llm_agent = detect_plugin_mode()
+    if not has_llm_credentials() and not in_llm_agent:
         return {
             "task_id": task_id,
             "role": role,
             "status": "failed",
             "output": None,
-            "error": "ANTHROPIC_API_KEY 未设置",
+            "error": "ANTHROPIC_API_KEY/ANTHROPIC_AUTH_TOKEN 未设置 (Plugin mode 应零配置, Claude Code OAuth 自动注入 ANTHROPIC_AUTH_TOKEN)",
             "duration": time.monotonic() - started,
             "task_role": role,
         }

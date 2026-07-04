@@ -115,14 +115,18 @@ def _check_sqlite3() -> tuple[bool, str]:
 
 
 def _check_api_key() -> tuple[bool, str]:
-    """检查 ANTHROPIC_API_KEY (在 Claude Code agent 环境跳过)."""
-    in_llm_agent = bool(os.environ.get("CLAUDE_CODE")) or "claude" in os.environ.get("ANTHROPIC_CLI", "").lower()
-    api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
-    if api_key or in_llm_agent:
-        if in_llm_agent and not api_key:
-            return True, "ANTHROPIC_API_KEY (LLM agent 模式, 跳过)"
-        return True, "ANTHROPIC_API_KEY 已设置"
-    return False, "ANTHROPIC_API_KEY 未设置 — 请 export ANTHROPIC_API_KEY=sk-..."
+    """检查 LLM 凭据 (ANTHROPIC_API_KEY 或 ANTHROPIC_AUTH_TOKEN).
+
+    2026-07-04 修复 (prismscan 真实 bug): 用 4 级 fallback detect_plugin_mode
+    而非 2 级, 支持 CLAUDE_CODE_ENTRYPOINT + ANTHROPIC_AUTH_TOKEN (prismscan 实际 env).
+    Plugin mode 用户零配置, 由 Claude Code OAuth 自动注入 ANTHROPIC_AUTH_TOKEN.
+    """
+    from auto_engineering.utils.plugin_mode import detect_plugin_mode, has_llm_credentials
+    if detect_plugin_mode():
+        return True, "LLM 凭据 (Plugin mode 零配置, Claude Code OAuth 自动注入 ANTHROPIC_AUTH_TOKEN)"
+    if has_llm_credentials():
+        return True, "LLM 凭据已设置 (ANTHROPIC_API_KEY 或 ANTHROPIC_AUTH_TOKEN)"
+    return False, "LLM 凭据未设置 — 请 export ANTHROPIC_API_KEY=sk-... 或在 .env 中设置"
 
 
 def _check_ae_state(project_root: Path) -> tuple[bool, str]:

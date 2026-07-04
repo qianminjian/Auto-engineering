@@ -206,14 +206,16 @@ def preflight(project_root: Path) -> None:
     if (py_version.major, py_version.minor) < (3, 12):
         errors.append(f"Python 版本过低: 当前 {py_version.major}.{py_version.minor}, 需要 ≥ 3.12")
 
-    # 2. ANTHROPIC_API_KEY
-    # v2.5 修复: 在 LLM agent (Claude Code) 环境下跳过, agent 有自己的 auth
-    in_llm_agent = bool(os.environ.get("CLAUDE_CODE")) or "claude" in os.environ.get("ANTHROPIC_CLI", "").lower()
-    api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
-    if not api_key and not in_llm_agent:
+    # 2. ANTHROPIC_API_KEY (或 ANTHROPIC_AUTH_TOKEN for plugin OAuth)
+    # 2026-07-04 修复 (prismscan 真实 bug): 用 4 级 fallback detect_plugin_mode
+    # 而非 2 级, 支持 CLAUDE_CODE_ENTRYPOINT + ANTHROPIC_AUTH_TOKEN (prismscan 实际 env)
+    from auto_engineering.utils.plugin_mode import detect_plugin_mode, has_llm_credentials
+    in_llm_agent = detect_plugin_mode()
+    if not has_llm_credentials() and not in_llm_agent:
         errors.append(
-            "环境变量 ANTHROPIC_API_KEY 未设置。"
+            "环境变量 ANTHROPIC_API_KEY/ANTHROPIC_AUTH_TOKEN 未设置。"
             "请在 ~/.zshrc 中 export ANTHROPIC_API_KEY=sk-... 或在 .env 中设置。"
+            "Plugin mode (Claude Code agent 内) 应通过 ANTHROPIC_AUTH_TOKEN OAuth 自动注入, 零配置."
         )
 
     # 3. Git 仓库
