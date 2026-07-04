@@ -158,13 +158,23 @@ class TestLintGate:
         assert verdict.passed is False
 
     def test_custom_ruff_path(self, tmp_path: Path):
+        """linter_bin 指定不存在的命令 → 5 级兜底全失败 → skipped (passed=True).
+
+        2026-07-04 (Bug 1 prismscan 方案 C): 不再 failed 阻塞 dev-loop,
+        改为 skipped (passed=True with message 含 'skipped: linter not found').
+        """
         from auto_engineering.gates.lint import LintGate
 
         (tmp_path / "main.py").write_text("x = 1\n")
         gate = LintGate(linter_bin="nonexistent-ruff")
         verdict = gate.run(tmp_path)
-        # 命令不存在应该 fail
-        assert verdict.passed is False
+        # 2026-07-04 (Bug 1 方案 C): skipped 视为 passed=True
+        assert verdict.passed is True, (
+            f"linter 不存在应 skipped (passed=True), 实际: {verdict.message}"
+        )
+        assert "skipped" in verdict.message.lower(), (
+            f"应明确标记 skipped, 实际: {verdict.message}"
+        )
 
 
 # ============================================================

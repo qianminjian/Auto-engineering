@@ -159,8 +159,14 @@ class LintGate(Gate):
                 gate_name=self.name,
             )
         except FileNotFoundError as e:
-            return Verdict.failed(
-                f"{self.linter_bin} 命令未找到 ({e}): {' '.join(cmd)}",
+            # 2026-07-04 修复 (Bug 1 prismscan 方案 C):
+            # 5 级兜底全部失败 (linter 真的不存在) → 返回 passed (skipped),
+            # 不阻塞 dev-loop. 失败区分:
+            #   - FileNotFoundError → skipped (环境问题, 用户决定是否装 linter)
+            #   - subprocess returncode != 0 → failed (linter 跑了但报错)
+            return Verdict.passed(
+                f"skipped: {self.linter_bin} 未找到 (5 级兜底全失败): {e}. "
+                f"建议 `uv add --dev {self.linter_bin}` 或项目根有 {self.linter_bin} 二进制.",
                 gate_name=self.name,
             )
 
