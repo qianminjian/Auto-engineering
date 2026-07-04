@@ -267,8 +267,15 @@ class TestOrchestratorConfigDefaultEvaluator:
     def test_default_with_api_key_enables_claude_evaluator(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """RED: 设 ANTHROPIC_API_KEY → 启用 ClaudeSemanticEvaluator."""
+        """RED: 设 ANTHROPIC_API_KEY → 启用 ClaudeSemanticEvaluator.
+
+        2026-07-04 (Bug 4): 加 delenv("ANTHROPIC_AUTH_TOKEN") 确保不在 plugin mode.
+        """
         monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-from-env")
+        monkeypatch.delenv("ANTHROPIC_AUTH_TOKEN", raising=False)
+        monkeypatch.delenv("CLAUDE_CODE", raising=False)
+        monkeypatch.delenv("CLAUDE_CODE_ENTRYPOINT", raising=False)
+        monkeypatch.delenv("ANTHROPIC_CLI", raising=False)
 
         from auto_engineering.loop.orchestrator import OrchestratorConfig
         from auto_engineering.loop.semantic_evaluator import (
@@ -323,9 +330,13 @@ class TestOrchestratorConfigLLMAgentSkip:
     def test_claude_code_set_with_api_key_keeps_none(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """CLAUDE_CODE=1 + ANTHROPIC_API_KEY → 不自动启用 (避免自调)."""
+        """CLAUDE_CODE=1 + ANTHROPIC_API_KEY → 不自动启用 (避免自调).
+
+        2026-07-04 (Bug 4): 加 delenv 其他 plugin signal, 确保只在 CLAUDE_CODE 路径.
+        """
         monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-from-env")
         monkeypatch.setenv("CLAUDE_CODE", "1")
+        monkeypatch.delenv("ANTHROPIC_AUTH_TOKEN", raising=False)
 
         from auto_engineering.loop.orchestrator import OrchestratorConfig
 
@@ -338,9 +349,15 @@ class TestOrchestratorConfigLLMAgentSkip:
     def test_claude_code_unset_with_api_key_enables(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """CLAUDE_CODE 未设 + ANTHROPIC_API_KEY → 自动启用 (非 LLM agent)."""
+        """CLAUDE_CODE 未设 + ANTHROPIC_API_KEY → 自动启用 (非 LLM agent).
+
+        2026-07-04 (Bug 4): 加 delenv 其他 plugin signal, 避免误判 plugin mode.
+        """
         monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-from-env")
         monkeypatch.delenv("CLAUDE_CODE", raising=False)
+        monkeypatch.delenv("CLAUDE_CODE_ENTRYPOINT", raising=False)
+        monkeypatch.delenv("ANTHROPIC_AUTH_TOKEN", raising=False)
+        monkeypatch.delenv("ANTHROPIC_CLI", raising=False)
 
         from auto_engineering.loop.orchestrator import OrchestratorConfig
         from auto_engineering.loop.semantic_evaluator import (
