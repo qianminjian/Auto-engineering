@@ -154,17 +154,24 @@ class TestStageTransitions:
         assert decision.stop_reason is not None
         assert "累计" in decision.stop_reason
 
-    def test_critic_empty_verdict_returns_none(self) -> None:
-        """critic + verdict='' → next=None (异常/未裁决, 应停止)."""
+    def test_critic_empty_verdict_raises(self) -> None:
+        """critic + verdict='' → 抛 CriticVerdictInvalid (Bug 3 prismscan 修复).
+
+        旧行为: should_stop=True (反向语义: 异常 → PASS → 停止)
+        新行为: 抛 CriticVerdictInvalid 让 orchestrator 显式处理 (重试/升级).
+        """
+        from auto_engineering.loop.stage_router import CriticVerdictInvalid
+
         router = StageRouter()
-        decision = router.next(
-            current_stage="critic",
-            verdict="",
-            majors_in_a_row=0,
-            total_majors=0,
-        )
-        assert decision.next_stage is None
-        assert decision.should_stop is True  # empty verdict 应触发 stop
+        with pytest.raises(CriticVerdictInvalid) as exc_info:
+            router.next(
+                current_stage="critic",
+                verdict="",
+                majors_in_a_row=0,
+                total_majors=0,
+            )
+        assert exc_info.value.verdict == ""
+        assert "critic 返回非法 verdict" in str(exc_info.value)
 
 
 # ---------- MAJOR 计数耗尽场景 ----------

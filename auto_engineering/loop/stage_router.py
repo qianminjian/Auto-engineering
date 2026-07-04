@@ -17,6 +17,10 @@ T1-T6 转换表 (§B2.2):
 
 T7/T8 由 Orchestrator / ConvergenceJudge 处理, 不在本模块范围.
 
+2026-07-04 修复 (Bug 3 prismscan 集成): critic verdict 异常分支不再默认
+should_stop=True + level=3 (静默归一化为 PASS, 反向语义), 改为
+raise CriticVerdictInvalid 让 orchestrator 显式处理 (重试或抛异常).
+
 业界对标:
     - LangGraph conditional edge router (pregel/main.py:1790)
     - LangGraph recursion_limit 单层保护 (pregel/_algo.py:87-110)
@@ -26,6 +30,23 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Optional
+
+
+class CriticVerdictInvalid(Exception):
+    """Critic 返回非法 verdict 时抛出 (空字符串、非 APPROVE/MAJOR、其他值).
+
+    2026-07-04 修复 (Bug 3): 替代 stage_router 原先的 should_stop=True 静默
+    fallback, 让 orchestrator 显式重试或升级处理, 避免反向语义
+    (异常→PASS→停止).
+    """
+
+    def __init__(self, verdict: str, history_stages: list[str] | None = None) -> None:
+        self.verdict = verdict
+        self.history_stages = history_stages or []
+        super().__init__(
+            f"critic 返回非法 verdict: {verdict!r}; "
+            f"调用链: {self.history_stages}"
+        )
 
 
 @dataclass
@@ -147,11 +168,15 @@ class StageRouter:
                 # T5: 未超限 → 回到 developer 重做
                 return StageDecision(next_stage="developer", should_stop=False)
 
-            # verdict="" 或其他非法值 → 异常停止 (critic 阶段必须给出 verdict)
-            return StageDecision(
-                next_stage=None,
-                should_stop=True,
-                stop_reason=f"critic 阶段 verdict 异常: '{verdict}'",
+            # verdict="" 或其他非法值 → 抛 CriticVerdictInvalid (2026-07-04 Bug 3 修复)
+            #
+            # 旧实现: should_stop=True + reason="verdict 异常" → 反向语义
+            # (异常 → PASS → 停止, 整个 loop 2 秒退出 0 代码改动).
+            # 新实现: 抛异常让 orchestrator 显式处理 (重试或升级), 不静默归一化.
+            # 设计意图"critic 阶段必须给出 verdict"是设计约束, 不是 fallback.
+            raise CriticVerdictInvalid(
+                verdict=verdict,
+                history_stages=getattr(self, "_history_stages", []),
             )
 
         # 未知 stage → 安全停止 (防御性, 不抛异常避免 Orchestrator 僵死)

@@ -341,7 +341,9 @@ class Orchestrator:
                 guardrail_chain, current_stage, self._state
             )
             if pre_action == "stop":
-                self.verdict = ConvVerdict.stop(level=3, reason="PRE guardrail stop")
+                # 2026-07-04 修复 (Bug 3): guardrail stop 应视为 HARD_LIMIT
+                # (硬阻止, 用户输入或安全违规), 不再默认 level=3 PASS.
+                self.verdict = ConvVerdict.stop(level=4, reason="PRE guardrail stop")
                 return list(self.history)
             if pre_action == "retry":
                 continue
@@ -357,7 +359,8 @@ class Orchestrator:
                 guardrail_chain, current_stage, self._state
             )
             if post_action == "stop":
-                self.verdict = ConvVerdict.stop(level=3, reason="POST guardrail stop")
+                # 2026-07-04 修复 (Bug 3): 同 PRE, POST guardrail stop 用 level=4.
+                self.verdict = ConvVerdict.stop(level=4, reason="POST guardrail stop")
                 return list(self.history)
             if post_action == "retry":
                 continue
@@ -587,15 +590,30 @@ class Orchestrator:
         3 层退出条件 (按优先级): dec.should_stop / dec.next_stage=None+judge.stop / unexpected.
         副作用: 推进 state.current_stage + _clear_stage_fields (B3.3).
         """
-        decision = router.next(
-            current_stage=current_stage,
-            verdict=state.verdict if current_stage == "critic" else "",
-            majors_in_a_row=state.majors_in_a_row,
-            total_majors=state.total_majors,
-        )
-        if decision.should_stop:
+        # 2026-07-04 修复 (Bug 3 prismscan 集成): CriticVerdictInvalid 是 stage_router
+        # 在 critic 返回非法 verdict 时抛出的异常 (替代原 should_stop=True 静默 PASS).
+        # orchestrator 显式捕获 → 升级为 HARD_LIMIT (level=4) 让 step 3 exit_block
+        # 显式区分"通过停止" (level=3) vs "异常停止" (level=4).
+        from auto_engineering.loop.stage_router import CriticVerdictInvalid
+        try:
+            decision = router.next(
+                current_stage=current_stage,
+                verdict=state.verdict if current_stage == "critic" else "",
+                majors_in_a_row=state.majors_in_a_row,
+                total_majors=state.total_majors,
+            )
+        except CriticVerdictInvalid as exc:
             self.verdict = ConvVerdict.stop(
-                level=3, reason=decision.stop_reason or "StageRouter stop"
+                level=4,
+                reason=f"critic verdict 异常 (Bug 3 升级到 HARD_LIMIT): {exc.verdict!r}",
+            )
+            return True
+        if decision.should_stop:
+            # 2026-07-04 修复 (Bug 3): StageRouter stop 默认 level=3 PASS 是反向语义
+            # (实际是 MAJOR 超限等异常停止, 不应 PASS). 改为 level=4 HARD_LIMIT
+            # 让 orchestrator 显式区分"通过停止" vs "异常停止".
+            self.verdict = ConvVerdict.stop(
+                level=4, reason=decision.stop_reason or "StageRouter stop"
             )
             return True
         if decision.next_stage is not None:
