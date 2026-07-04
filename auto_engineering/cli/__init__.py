@@ -181,7 +181,8 @@ def dev_loop(
             f"steps={result.total_steps}, checkpoint={result.checkpoint_id}"
         )
 
-    # v5.0 exit codes: 0=completed, 1=USER/failed (Bug 3 prismscan), 2=gate_unrecoverable,
+    # v5.0 exit codes: 0=completed (QUALITY_PASS level=3),
+    # 2=failed (verdict.level=4 HARD_LIMIT, Bug 3 prismscan / Issue #13),
     # 130=SIGINT (AEError raised above)
     if result.status == "failed":
         # Bug 3 prismscan 修复: verdict.level=4 (HARD_LIMIT, critic 异常升级) →

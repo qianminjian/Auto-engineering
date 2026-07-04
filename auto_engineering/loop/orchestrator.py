@@ -190,6 +190,8 @@ class Orchestrator:
     # v2.5 P2-D-5: 用 deque(maxlen=50) 替换无界 list, 长 dev-loop 不爆内存.
     # Judge 只需最近 ~10 轮 (stagnation 阈值 2 + 留 buffer), 50 轮足够.
     history: deque[RoundHistory] = field(default_factory=lambda: deque(maxlen=50))
+    # 2026-07-04 /code-review Issue #11 (90 分): 注释 "EngineState channel 替代裸 history" 误导.
+    # 实际 Orchestrator 用 self.history (deque) 存历史, 不通过 EngineState channel.
     round_results: deque[RoundResult] = field(
         default_factory=lambda: deque(maxlen=50)
     )

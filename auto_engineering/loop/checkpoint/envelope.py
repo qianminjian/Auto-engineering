@@ -12,7 +12,9 @@ from typing import Any, TypeVar
 from auto_engineering.loop.convergence import RoundHistory
 from auto_engineering.loop.types import LoopStateProtocol
 
-# Phase 2.2-G: 用 Protocol 替代 Any, 打破循环引用并提供类型安全
+# v2.2-G: 用 Protocol 替代 Any, 打破循环引用并提供类型安全
+# 2026-07-04 修复 (Issue #7, 85 分): 删 "Phase 2.2-G" 旧 phase 引用, 改为 v2.2-G
+# (历史 phase 名) → v2.2-G (避免新读者困惑旧 phase 编号).
 # - LoopStateProtocol 在 loop/types.py 定义 (不引用 loop/state)
 # - TypeVar T bound Protocol 让 Checkpoint/SQLiteCheckpointStore 接受具体类型
 # - mypy 看到 state 字段是 LoopStateProtocol (或其子类型), 不是 Any
@@ -42,7 +44,7 @@ class CheckpointMeta:
 class Checkpoint[T]:
     """完整 Checkpoint (含 state + history).
 
-    Phase 2.2-G: 用 Generic[T] bound LoopStateProtocol 替代 Any.
+    v2.2-G: 用 Generic[T] bound LoopStateProtocol 替代 Any.
     - 类型安全: mypy 看到 state 字段是 LoopStateProtocol, 访问 .round/.step 不报 Any
     - 打破循环: checkpoint.py 不再 import 具体 LoopState 类, 只用 Protocol 接口
     - 使用: Checkpoint[CheckpointEnvelope](...) — caller 显式指定 T

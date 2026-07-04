@@ -99,6 +99,10 @@ def run_agent(role: str, instruction: str, project_root: Path) -> dict:
 
     Returns:
         dict 形式承载 TaskOutcome 字段: task_id/role/status/output/error/duration/task_role.
+
+    2026-07-04 修复 (Issue #8, 90 分): 失败 error message 已含
+    ANTHROPIC_API_KEY/ANTHROPIC_AUTH_TOKEN (plugin mode OAuth 注入),
+    不再仅 ANTHROPIC_API_KEY.
     """
     task_id = f"agent-{uuid.uuid4().hex[:8]}"
     started = time.monotonic()
