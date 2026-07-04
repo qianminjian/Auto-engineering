@@ -197,6 +197,29 @@ python3 scripts/atdo_smoke.py       # Runtime smoke (7 维度)
 - ✅ 每个 TDD 循环遵守 Red→Green→Refactor 顺序
 - ✅ Gate 必须并行跑（用 `asyncio.gather` 或至少跑 safety/lint/test 3 个）
 - ✅ MAJOR 反馈链（critic → developer → redo）是 Self-Refine 核心，不能被 skip
+- ❌ **静默降级禁令**：当 Command/Skill 的 Bash 块或 Agent tool spawn 失败时，
+  Agent **不得**静默接管并手工模拟三阶段。必须向用户报告失败原因 + 提供替代方案。
+- ❌ **失败不可见禁令**：用户有权知道 dev-loop 是否真的在运行。任何 Bash 块失败、
+  Agent tool 不可用、plan/critic agent spawn 失败——必须**显式告知用户**，
+  不得在后台无声降级为手工编码模式。
+
+### Agent 行为规则（2026-07-04 生产反馈修正）
+
+1. **Bash 块失败处理**：当 `commands/*.md` 中的 Bash 块返回非零退出码时,
+   Agent 必须 read 输出中的错误信息并报告用户。Agent 不得直接跳过 Bash
+   块进入下一步。
+
+2. **Agent tool 不可用处理**：当 Plan agent 或 code-reviewer agent 不可用时,
+   Agent 必须告知用户："dev-loop 需要 Plan agent（architect 阶段）和
+   code-reviewer agent（critic 阶段）。当前不可用，是否继续手工模式？"
+   然后等待用户确认。
+
+3. **进度透明**：每个 dev-loop 阶段开始前，输出 `[Stage N/M] Running <stage>...`
+   让用户明确知道 Agent 在遵循 dev-loop 工作流而非手工编码。
+
+4. **不可恢复失败处理**：当连续 2 次 agent spawn 或 Bash 块失败时,
+   dev-loop 应停止并告知用户："dev-loop 无法继续，请检查 auto-engineering
+   安装状态或手动完成剩余工作。" 不得无限重试或静默切换模式。
 
 ---
 

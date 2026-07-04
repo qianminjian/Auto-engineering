@@ -229,6 +229,32 @@ output**, not LLM-generated estimates.
 - project initialized (`.ae-state/init-manifest.json` from Init Engineering)
 - **Zero configuration needed** — agent's ANTHROPIC_AUTH_TOKEN is reused
 
+## Agent Compliance Rules (MUST follow)
+
+**This is NOT a suggestion. The three-stage workflow below is mandatory.**
+
+1. **Prohibition**: The agent MUST NOT silently skip the Architect and Critic stages and
+   fall back to manual Read→Write→Edit→Commit coding. If you cannot spawn Plan agent
+   or code-reviewer agent, **report the failure to the user immediately** and ask
+   whether to proceed in manual mode or abort.
+
+2. **Stage 1 (Architect) is mandatory**: Spawn a Plan agent via Agent tool. If Plan
+   agent is unavailable, tell the user: "Plan agent unavailable. /ae:dev-loop requires
+   Plan agent for architect stage. Install auto-engineering or proceed manually?"
+
+3. **Stage 3 (Critic) is mandatory**: Spawn a code-reviewer agent via Agent tool.
+   If code-reviewer agent is unavailable, tell the user and offer manual review
+   alternative.
+
+4. **Transparency**: At the start of each stage, output a progress line:
+   `[Stage N/M] Running <stage_name>...`. This lets the user know the agent is
+   following the dev-loop workflow, not doing ad-hoc coding.
+
+5. **Failure visibility**: If any Bash block or Agent tool spawn fails, the error
+   MUST be shown to the user. The agent MUST NOT silently absorb the failure and
+   continue with manual work. The user has the right to know that dev-loop is
+   not running as designed.
+
 ## References
 
 - design/v5.0-Design-Loop.md — complete 12-stage design spec
