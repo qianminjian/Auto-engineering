@@ -136,17 +136,23 @@ def _check_ae_state(project_root: Path) -> tuple[bool, str]:
 def _check_plugin_mode() -> tuple[bool, str]:
     """检查 Plugin mode 是否启用 (Bug 4 修复, 2026-07-04).
 
-    提示用户当前运行模式 (Plugin OAuth 注入 vs CLI 调试模式).
-    Plugin 模式下 ANTHROPIC_API_KEY 不必需, 由 Claude Code OAuth 自动注入.
+    2026-07-04 深度设计 (用户洞察): Plugin mode 用户**零配置**原则.
+    Plugin 在 Claude Code agent 内运行时, ANTHROPIC_AUTH_TOKEN 由 Claude Code
+    通过 OAuth 自动注入, 用户不需要自己 export ANTHROPIC_API_KEY.
     """
     from auto_engineering.utils.plugin_mode import detect_plugin_mode_detail
 
     in_plugin, signal = detect_plugin_mode_detail()
     if in_plugin:
-        return True, f"Plugin mode 已启用 (via {signal}) — ANTHROPIC_API_KEY 不必需"
+        # Plugin mode: 用户零配置, ANTHROPIC_AUTH_TOKEN 由 Claude Code OAuth 注入
+        return True, (
+            f"Plugin mode 已启用 (via {signal}) — 用户零配置, "
+            f"ANTHROPIC_AUTH_TOKEN 由 Claude Code OAuth 自动注入"
+        )
+    # CLI 调试模式: 需要用户手动 export (独立跑 ae 才需要)
     return True, (
-        "CLI 调试模式 — 需手动 export ANTHROPIC_API_KEY 才能调用 LLM "
-        "(Plugin 模式无需此 env, Claude Code Agent 会自动注入)"
+        "CLI 调试模式 (独立跑 ae) — 需手动 export ANTHROPIC_API_KEY. "
+        "建议在 Claude Code agent 内运行 (Plugin 模式, 零配置)"
     )
 
 

@@ -36,10 +36,16 @@ def CriticAgent(llm, **kwargs) -> Agent:
     has_cred = has_llm_credentials()
 
     if not has_cred and not in_plugin:
+        # 2026-07-04 深度设计 (用户洞察): plugin 在 Claude Code agent 内运行,
+        # 应通过 ANTHROPIC_AUTH_TOKEN (OAuth) 自动注入. CLI 调试模式才需
+        # 手动 export ANTHROPIC_API_KEY. 不应提示"plugin 模式应自动注入"
+        # (这是矛盾说法), 改为"plugin mode 应自动工作, 如失败检查 env".
         raise CriticAuthError(
-            "critic agent 无 LLM 凭据: ANTHROPIC_API_KEY/ANTHROPIC_AUTH_TOKEN 未设置, "
-            "且不在 Claude Code plugin mode. plugin 模式应自动注入 OAuth token. "
-            "(Bug 2 prismscan 集成 fail-fast)"
+            "critic agent 无 LLM 凭据. "
+            "Plugin mode (Claude Code agent 内) 应通过 ANTHROPIC_AUTH_TOKEN "
+            "OAuth 自动注入, 用户**零配置**. 如失败检查 env: "
+            "`env | grep ANTHROPIC_AUTH_TOKEN` 确认 token 已设. "
+            "CLI 调试模式 (独立跑) 需手动 export ANTHROPIC_API_KEY."
         )
 
     # Debug log: 记录 critic 实际看到的 env (辅助诊断 401 / 解析失败)
