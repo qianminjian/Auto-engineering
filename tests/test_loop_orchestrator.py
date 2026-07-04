@@ -500,6 +500,13 @@ async def test_round_result_contains_gate_results_after_run_round(tmp_path):
         return TaskOutcome(task_id=task.id, status="completed", output="done")
 
     task = make_task("t1")
+    # 2026-07-04 (Bug 1 prismscan): stub ruff (测试环境可能没 ruff)
+    venv_bin = tmp_path / ".venv" / "bin"
+    venv_bin.mkdir(parents=True)
+    stub = venv_bin / "ruff"
+    stub.write_text("#!/bin/sh\necho 'All checks passed!'\nexit 0\n")
+    stub.chmod(0o755)
+
     result = await run_round(
         tasks=[task],
         executor=executor,
@@ -514,7 +521,9 @@ async def test_round_result_contains_gate_results_after_run_round(tmp_path):
     assert "lint" in result.gate_results
     # SafetyGate/LintGate 通过无 secret + ruff pass 的目录
     assert result.gate_results["safety"].passed
-    assert result.gate_results["lint"].passed
+    assert result.gate_results["lint"].passed, (
+        f"lint 应 PASS (stub ruff), 实际: {result.gate_results['lint'].message}"
+    )
 
 
 @pytest.mark.asyncio
@@ -529,6 +538,13 @@ async def test_round_result_all_gates_passed_property(tmp_path):
         return TaskOutcome(task_id=task.id, status="completed", output="done")
 
     task = make_task("t1")
+    # 2026-07-04 (Bug 1 prismscan): stub ruff
+    venv_bin = tmp_path / ".venv" / "bin"
+    venv_bin.mkdir(parents=True)
+    stub = venv_bin / "ruff"
+    stub.write_text("#!/bin/sh\necho 'All checks passed!'\nexit 0\n")
+    stub.chmod(0o755)
+
     result = await run_round(
         tasks=[task],
         executor=executor,
@@ -591,6 +607,13 @@ async def test_orchestrator_reads_gate_results_from_round_result(tmp_path):
         return TaskOutcome(task_id=task.id, status="completed", output="done")
 
     task = make_task("t1")
+    # 2026-07-04 (Bug 1 prismscan): stub ruff
+    venv_bin = tmp_path / ".venv" / "bin"
+    venv_bin.mkdir(parents=True)
+    stub = venv_bin / "ruff"
+    stub.write_text("#!/bin/sh\necho 'All checks passed!'\nexit 0\n")
+    stub.chmod(0o755)
+
     config = OrchestratorConfig(
         convergence_config=ConvergenceConfig(
             max_iterations=1,

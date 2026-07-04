@@ -37,17 +37,20 @@ def make_task(
     task_id: str,
     target_files: list[str] | None = None,
     deps: list[str] | None = None,
+    role: str = "developer",
 ) -> Task:
     """构造测试 Task (target_files 用字符串列表, 内部转 frozenset).
 
     Phase 2.1-D: 补 title/expected_output 字段满足 Plan.validate contract.
+
+    2026-07-04 (Bug 3 prismscan): 加 role 参数支持 critic task 测试.
     """
     return Task(
         id=task_id,
         title=f"Task {task_id}",
         description=f"task {task_id}",
         expected_output=f"output for {task_id}",
-        role="developer",
+        role=role,
         agent_type="developer",
         target_files=frozenset(target_files or []),
         depends_on=list(deps or []),
@@ -179,16 +182,34 @@ async def test_orchestrator_gate_detects_real_secret_in_project(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_orchestrator_gate_results_trigger_quality_convergence(tmp_path: Path):
-    """全部 Gate PASS 时触发 GOAL_ACHIEVED (level=3 QUALITY)."""
+    """全部 Gate PASS 时触发 GOAL_ACHIEVED (level=3 QUALITY).
+
+    2026-07-04 (Bug 3 prismscan 集成): 测试期望 QUALITY 但实际 critic 空 verdict
+    会升级为 HARD_LIMIT (level=4). 修复: 让 mock executor 提供 APPROVE verdict
+    (模拟 critic agent 正常返回), 让 round 通过 stage_router → Judge.evaluate
+    → QUALITY 路径.
+    """
     from auto_engineering.gates.safety import SafetyGate
 
     # 干净 repo
     (tmp_path / "clean.py").write_text("y = 2\n")
 
+    # 2026-07-04 (Bug 3): 提供 critic 输出 (模拟 critic agent 正常返回 APPROVE)
+    async def critic_aware_executor(task, ctx):
+        return TaskOutcome(
+            task_id=task.id,
+            status="completed",
+            output={"verdict": "APPROVE", "findings": [], "feedback": "ok"},
+            task_role="critic" if task.role == "critic" else "developer",
+        )
+
     # 第一轮 1 个 task, 第二轮继续 1 个 task (无变化, 可能触发停滞)
     # max_iterations=10 (默认上限), 防止硬上限先于质量门触发 (P1.1 单一来源后:
     # 硬上限由 judge.config.max_iterations 决定, 而非 OrchestratorConfig.max_rounds).
-    task = make_task("t1", ["clean.py"])
+    # 2026-07-04 (Bug 3 prismscan): 加 critic task 让 _apply_outcome_to_state 写入 state.verdict="APPROVE".
+    # 否则 stage_router 看到 state.verdict="" → 抛 CriticVerdictInvalid → HARD_LIMIT.
+    dev_task = make_task("dev1", ["clean.py"], role="developer")
+    critic_task = make_task("critic1", role="critic")
     config = OrchestratorConfig(
         convergence_config=ConvergenceConfig(
             max_iterations=10,
@@ -199,13 +220,13 @@ async def test_orchestrator_gate_results_trigger_quality_convergence(tmp_path: P
     )
     orch = Orchestrator(
         requirement="quality test",
-        tasks=[task],
-        executor=noop_executor,
+        tasks=[dev_task, critic_task],
+        executor=critic_aware_executor,
         config=config,
     )
     await orch.run()
 
-    # 仅 1 轮: safety pass + 只有 1 轮无法触发停滞 → 期望 QUALITY
+    # 验证: critic APPROVE + safety pass → QUALITY_PASS (level=3)
     assert orch.verdict is not None
     assert orch.verdict.level == LEVEL_QUALITY
     assert orch.verdict.should_stop is True
