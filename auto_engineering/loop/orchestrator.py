@@ -201,6 +201,8 @@ class Orchestrator:
     _state: "EngineState | None" = None
     _retry_counters: dict[str, int] = field(default_factory=dict)
     _router: "StageRouter | None" = None
+    # 2026-07-04 (Bug 2 prismscan 方案 A): critic 重试计数 (替代直接升级 HARD_LIMIT)
+    _critic_retry_count: int = 0
 
     def __post_init__(self) -> None:
         """初始化 Plan + Judge + 选 executor (agent_runtime 优先).
@@ -597,11 +599,14 @@ class Orchestrator:
             这是反向语义的根本防御: 即便 critic LLM 错给 APPROVE, gate 失败也会
             拦住继续修, 而不是立刻停.
         """
-        # 2026-07-04 修复 (Bug 3 prismscan 集成): CriticVerdictInvalid 是 stage_router
-        # 在 critic 返回非法 verdict 时抛出的异常 (替代原 should_stop=True 静默 PASS).
-        # orchestrator 显式捕获 → 升级为 HARD_LIMIT (level=4) 让 step 3 exit_block
-        # 显式区分"通过停止" (level=3) vs "异常停止" (level=4).
+        # 2026-07-04 修复 (Bug 3 prismscan 集成 + Bug 2 方案 A):
+        # CriticVerdictInvalid 是 stage_router 在 critic 返回非法 verdict 时抛出的
+        # 异常 (替代原 should_stop=True 静默 PASS).
+        # 修复策略 (Bug 2 方案 A 关键): 重试 critic 最多 MAX_CRITIC_RETRIES 次,
+        # 仍失败才升级 HARD_LIMIT. 给 critic agent 机会重新输出 (LLM 调用偶发失败).
         from auto_engineering.loop.stage_router import CriticVerdictInvalid
+
+        MAX_CRITIC_RETRIES = 2
         try:
             decision = router.next(
                 current_stage=current_stage,
@@ -610,9 +615,22 @@ class Orchestrator:
                 total_majors=state.total_majors,
             )
         except CriticVerdictInvalid as exc:
+            if self._critic_retry_count < MAX_CRITIC_RETRIES:
+                self._critic_retry_count += 1
+                # 重置到 critic 阶段, 让主循环重试 (RoundResult 已记录, 不重跑 developer)
+                state.current_stage = "critic"
+                import logging
+                logging.getLogger("ae.loop.orchestrator").warning(
+                    "Bug 2 方案 A: critic verdict 异常, 重试 (%d/%d): %r",
+                    self._critic_retry_count,
+                    MAX_CRITIC_RETRIES,
+                    exc.verdict,
+                )
+                return False  # 不 break, 主循环继续 → 重新跑 critic
+            # 超过最大重试次数, 升级 HARD_LIMIT
             self.verdict = ConvVerdict.stop(
                 level=4,
-                reason=f"critic verdict 异常 (Bug 3 升级到 HARD_LIMIT): {exc.verdict!r}",
+                reason=f"critic verdict 异常 (重试 {MAX_CRITIC_RETRIES} 次仍失败, Bug 3 升级到 HARD_LIMIT): {exc.verdict!r}",
             )
             return True
         if decision.should_stop:
