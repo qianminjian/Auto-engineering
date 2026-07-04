@@ -331,7 +331,10 @@ class Orchestrator:
 
             # 2b state.current_stage=="" → router.next 初始化
             self._step_2b_route_init(self._state, self._router)
-            current_stage = self._state.current_stage or "developer"
+            # 2026-07-04 修复 (Issue #12, 70 分): fallback 改 "architect" 而非 "developer"
+            # (按 T1 转换表, 空 current_stage → architect). 之前 "developer" 错,
+            # 可能跳过 architect 阶段直接跑 developer task (违反 stage-sequenced 流程).
+            current_stage = self._state.current_stage or "architect"
 
             # 2c 选 round_tasks (按 stage 过滤 + auto_gen 兜底)
             round_tasks, advance = self._step_2c_select_tasks(current_stage)

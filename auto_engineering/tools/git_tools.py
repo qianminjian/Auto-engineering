@@ -22,20 +22,23 @@ def _run_git(args: list[str], cwd: str | None, project_root: Path | None, timeou
 
     P1-S-02 (2026-07-04): 加 project_root 沙箱验证, realpath 双侧归一化
     (与 file_tools._is_path_safe 同模式, 防御 macOS symlink).
+
+    2026-07-04 修复 (Issue #16, 60 分): 删 redundant try/except.
+    原代码 raise ValueError 在 try 内, 然后 except ValueError: raise (无操作),
+    接着 except Exception: raise ValueError 转换 OSError. 现简化为:
+    try 包裹 realpath (OSError 会冒泡), 失败统一 except OSError: raise ValueError.
     """
     if project_root is not None and cwd is not None:
         try:
             root_real = os.path.realpath(project_root)
             target_real = os.path.realpath(cwd)
-            root_prefix = root_real if root_real.endswith(os.sep) else root_real + os.sep
-            if not (target_real == root_real or target_real.startswith(root_prefix)):
-                raise ValueError(
-                    f"git cwd outside project_root: {cwd} (resolved={target_real})"
-                )
-        except ValueError:
-            raise
-        except Exception as e:
+        except OSError as e:
             raise ValueError(f"invalid git cwd: {cwd} ({e})") from e
+        root_prefix = root_real if root_real.endswith(os.sep) else root_real + os.sep
+        if not (target_real == root_real or target_real.startswith(root_prefix)):
+            raise ValueError(
+                f"git cwd outside project_root: {cwd} (resolved={target_real})"
+            )
     return subprocess.run(
         ["git", *args],
         cwd=cwd,
