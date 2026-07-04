@@ -18,7 +18,7 @@ This skill encapsulates the Auto-Engineering v5.0 plugin's domain knowledge. Use
 
 ## How to use
 
-1. **Check environment first**: invoke `bash .claude-plugin/hooks/session-start.sh` to confirm `uv`, `.venv/bin/ae`, and `ANTHROPIC_API_KEY` are present.
+1. **Check environment first**: invoke `bash .claude-plugin/hooks/session-start.sh` to confirm `uv` and `.venv/bin/ae` are present.
 2. **Map user intent to a slash command**:
 
    | User intent | Slash command |
@@ -36,11 +36,11 @@ This skill encapsulates the Auto-Engineering v5.0 plugin's domain knowledge. Use
 
 ## Constraints
 
-- **Environment**: requires Python ≥3.10, `uv ≥0.1.0`, `git ≥2.30`, `sqlite3 ≥3.35`, and `ANTHROPIC_API_KEY`.
+- **Environment**: requires Python ≥3.10, `uv ≥0.1.0`, `git ≥2.30`, `sqlite3 ≥3.35`.
 - **Project root**: must be invoked from inside a project with `.venv/bin/ae` provisioned. Otherwise commands fail with `ae_cli: missing`.
 - **Resource budget**: 16G physical memory cap — see `pytest-memory-management` rule. Plugin does NOT run pytest directly; it delegates to `ae gate-check`.
 - **Sandbox**: pre-tool hook blocks writes outside project root + `.ae-state/` + `/tmp/` (see `pre-tool.sh` denylist).
-- **Network**: plugin does NOT make outbound network calls except via the Engine's `anthropic` SDK (controlled by `ANTHROPIC_API_KEY`).
+- **Network**: plugin does NOT make outbound network calls except via the Engine's `anthropic` SDK (Claude Code auto-injects credentials).
 - **State**: v2 SQLite checkpoint DB at `.ae-state/checkpoints.db` (overridable via `AE_DB_PATH`).
 - **Plugin compatibility**: requires Claude Code ≥ `1.0.0` (per `plugin.json` metadata).
 
@@ -61,12 +61,12 @@ This skill encapsulates the Auto-Engineering v5.0 plugin's domain knowledge. Use
 |---------|--------------|-----|
 | `/ae:*` not registered | Plugin not loaded | `cp -r .claude-plugin/ TARGET/.claude-plugin/`, restart Claude Code, `/help` |
 | `ae_cli: missing` | `.venv` not provisioned | `uv sync` |
-| `ANTHROPIC_API_KEY: missing` | API key not set | `export ANTHROPIC_API_KEY=...` |
+| `API credentials missing` | Claude Code not running | Run inside Claude Code session (SDK auto-injects credentials) |
 | `denylist pattern matched` | Bash command refused | Use safer command variant |
 | `path outside sandbox` | File write outside project | Stay within project root |
 
 ## See also
 
 - `docs/PLUGIN-USAGE.md` — full install + usage
-- `_scratch/v5.0-refactor-plan.md` — design spec (模块 10)
+- `_scratch/v5.0-refactor-plan.md` — design spec (模块 10) *(已迁移到 design/v5.0-Design-Loop.md)*
 - `ae-plugin-acceptance-test.sh` — acceptance test

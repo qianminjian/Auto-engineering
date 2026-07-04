@@ -3,7 +3,7 @@
 > **Version**: 5.0.0 | **Status**: Production-ready | **Last updated**: 2026-07-01
 > 决策依据: `design/BEACON.md` 决策 #28 (v5.0 P0-FINAL) · `design/v5.0-Design-Loop.md`
 >
-> v1.0 (`engine/loop.py` 旧 LoopEngine) / v2.0 (`engine/runtime/` + `engine/loop.py` asyncio.gather) / v2.3 (orchestrator) 章节已删除 — 见 `_scratch/his_bak/api-reference.md` 归档版本。
+> v1.0 (`engine/loop.py` 旧 LoopEngine) / v2.0 (`engine/runtime/` + `engine/loop.py` asyncio.gather) / v2.3 (orchestrator) 章节已删除 — 归档版本见 `design/his_bak/api-reference.md`。
 
 Auto-Engineering v5.0 is a **stage-driven multi-agent engineering loop** with:
 - **Orchestrator 12-step main loop** (v5.0 §B7.1)
@@ -51,7 +51,6 @@ ae <subcommand> [options]
     "uv": {"ok": true, "version": "0.4.18"},
     "git": {"ok": true, "version": "2.39.3"},
     "sqlite3": {"ok": true, "version": "3.43.2"},
-    "ANTHROPIC_API_KEY": {"ok": true, "preview": "sk-ant-..."},
     ".ae-state": {"ok": true, "path": "/path/to/.ae-state"},
     "init-manifest": {"ok": true, "schema_version": 1, "path": "init-manifest.json"}
   }
@@ -95,7 +94,7 @@ config = OrchestratorConfig(
     guardrail_chain=GuardrailChain.default(),
     stage_router=StageRouter(),  # max_majors_in_a_row=2, max_total_majors=3
     # 可选: agent_runtime=None (默认 executor), semantic_evaluator=None
-    # (有 ANTHROPIC_API_KEY 时默认启用 ClaudeSemanticEvaluator)
+    # (有 ANTHROPIC_API_KEY/AUTH_TOKEN 时默认启用 ClaudeSemanticEvaluator)
 )
 
 # 2. 构造 Orchestrator (v5.0 多参数签名, 不是 Orchestrator(config))
@@ -445,7 +444,7 @@ agent = runtime.get_agent("architect")  # → BaseAgent 实例
 | `TASK_CANCELLED` | TASK | `CancellationToken.check()` | Ctrl-C |
 | `AGENT_REGISTRATION_ERROR` | TASK | `AgentRuntime` | agent_type 未注册 |
 | `OUTPUT_DROPPED` | TASK | `Guardrail action='drop'` (deprecated v5.1 P0-1) | 静默丢弃 → 现按 retry 处理 |
-| `CONFIG_MISSING_API_KEY` | CFG | `Settings.from_env()` | 缺 ANTHROPIC_API_KEY |
+| `CONFIG_MISSING_API_KEY` | CFG | (deprecated v5.0, Plugin 模式 Claude Code Agent 提供 key) | 保留 API 兼容 |
 | `CONFIG_INVALID_VALUE` | CFG | `Settings` 校验 | 非法配置值 |
 | `BUDGET_EXCEEDED` | BUDGET | `TokenTracker.add()` | 超 max_tokens |
 | `CONTRACT_REJECTED` | BIZ | `BaseAgent.contract_gate` | Gate 拒绝 |
@@ -493,15 +492,14 @@ except AEError as e:
 ## 11. 引用
 
 - `design/v5.0-Design-Loop.md` — v5.0 设计基线
-- `design/BEACON.md` 决策 #28 (v5.0 P0-FINAL)
-- `_scratch/v5.0-refactor-plan.md` 模块 12 — 文档 + EARS
+- `design/BEACON.md` 决策 #28 (v5.0 P0-FINAL) + 决策 #31 (v5.0 深度审计)
 - `docs/PLUGIN-USAGE.md` — Plugin 安装/命令
 - `docs/production-deployment.md` — 部署 + 降级
 - `docs/EARS-v5.0.md` — 15 AC + 5 IL-AC 验收表
 
 ---
 
-_v1.0 / v2.0 / v2.3 章节已删除。归档版本见 `_scratch/his_bak/api-reference.md` (v2.2 FINAL, 79 行)。_
+_v1.0 / v2.0 / v2.3 章节已删除。归档版本见 `design/his_bak/api-reference.md` (v2.2 FINAL, 79 行)。_
 
 ---
 
@@ -626,4 +624,4 @@ active_gates = GATE_MAP.get(manifest["project_type"], ["lint", "test"])
 
 ---
 
-_v1.0 / v2.0 / v2.3 章节已删除。归档版本见 `_scratch/his_bak/api-reference.md` (v2.2 FINAL, 79 行)。_
+_v1.0 / v2.0 / v2.3 章节已删除。归档版本见 `design/his_bak/api-reference.md` (v2.2 FINAL, 79 行)。_
