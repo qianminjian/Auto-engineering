@@ -27,7 +27,46 @@ from pathlib import Path
 from auto_engineering.gates.base import Gate, Verdict
 
 # Secret pattern (常见公开 pattern, 不覆盖 100% 场景但覆盖主要风险)
+# 2026-07-04 P1-1 补 5 种 (设计 §B12.4 声称但实际缺失):
+# - Anthropic-style API Key (sk-...)
+# - Generic long Token (32+ chars + keyword context)
+# - 中国身份证 (18 位)
+# - 中国手机号 (11 位)
+# - 银行卡号 (13-19 位)
 SECRET_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
+    # === P1-1 新增 (5 种, 设计文档 §B12.4 缺失) ===
+    (
+        "Anthropic API Key",
+        # sk-ant-... / sk-... 32+ chars (Anthropic 风格 + OpenAI 风格)
+        re.compile(r"sk-(?:ant-|api-)?[A-Za-z0-9_\-]{32,}"),
+    ),
+    (
+        "Long Token (32+ chars)",
+        # 通用 Token: token/secret/key + 32+ chars (Hex/Base64)
+        # 2026-07-04 P1-1 修复: 加 access[_-]?token (覆盖 OAuth access_token 模式)
+        re.compile(
+            r"(?i)(?:^|[\s\"'=:>])"
+            r"(?:token|secret|api[_-]?key|access[_-]?(?:key|token)|bearer)"
+            r"[\s\"'=:>]+"
+            r"([A-Za-z0-9_\-+/=]{32,})"
+        ),
+    ),
+    (
+        "中国身份证号",
+        # 18 位: 前 17 位数字 + 最后一位数字或 X
+        re.compile(r"(?<![0-9])[1-9]\d{5}(?:18|19|20)\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])\d{3}[\dXx](?![0-9])"),
+    ),
+    (
+        "中国手机号",
+        # 11 位: 1[3-9] 开头
+        re.compile(r"(?<![0-9])1[3-9]\d{9}(?![0-9])"),
+    ),
+    (
+        "银行卡号",
+        # 13-19 位连续数字 (Luhn 算法校验留给 gitleaks)
+        re.compile(r"(?<![0-9])(?:\d[\s-]?){13,19}(?![0-9])"),
+    ),
+    # === 原有 9 种 ===
     ("AWS Access Key", re.compile(r"AKIA[0-9A-Z]{16}")),
     ("AWS Secret Key", re.compile(r"(?i)aws.{0,20}['\"][0-9a-zA-Z/+]{40}['\"]")),
     ("GitHub Token", re.compile(r"gh[pousr]_[A-Za-z0-9]{36}")),
