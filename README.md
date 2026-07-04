@@ -4,6 +4,13 @@ Claude Code Plugin — Loop Engineering 调度脚手架
 
 团队内部分发 (5-20 用户本地安装) — 不是 SaaS, 不是个人工具.
 
+## 环境要求
+
+- Python >= 3.12
+- uv >= 0.5.0 ([安装指南](https://docs.astral.sh/uv/getting-started/installation/))
+- git >= 2.40
+- sqlite3 >= 3.42
+
 ## 安装 (一条命令)
 
 ```bash

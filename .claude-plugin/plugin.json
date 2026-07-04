@@ -23,8 +23,8 @@
   "metadata": {
     "min_claude_code_version": "1.0.0",
     "requirements": {
-      "python": ">=3.10",
-      "uv": ">=0.1.0",
+      "python": ">=3.12",
+      "uv": ">=0.5.0",
       "git": ">=2.30",
       "sqlite3": ">=3.35"
     },
