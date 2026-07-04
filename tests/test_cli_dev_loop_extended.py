@@ -399,7 +399,7 @@ class TestCliArgsParsing:
     def test_dev_loop_help_lists_options(self) -> None:
         """ae dev-loop --help 显示 --max-rounds / --log-format / --project-root."""
         runner = CliRunner()
-        result = runner.invoke(main, ["dev-loop", "--help"])
+        result = runner.invoke(main, ["dev-loop", "--use-cli-subprocess", "--help"])
         assert result.exit_code == 0
         assert "--max-rounds" in result.output
         assert "--log-format" in result.output
@@ -410,7 +410,7 @@ class TestCliArgsParsing:
         """--llm-provider=openai/ollama → exit 6."""
         runner = CliRunner()
         result = runner.invoke(
-            main, ["dev-loop", "--llm-provider", "openai", "test requirement"]
+            main, ["dev-loop", "--use-cli-subprocess", "--llm-provider", "openai", "test requirement"]
         )
         assert result.exit_code == 6
         assert "未实现" in result.output or "未实装" in result.output
@@ -433,7 +433,7 @@ class TestCliArgsParsing:
         monkeypatch.delenv("CLAUDE_CODE_ENTRYPOINT", raising=False)
         monkeypatch.delenv("ANTHROPIC_CLI", raising=False)
         runner = CliRunner()
-        result = runner.invoke(main, ["dev-loop", "test requirement"])
+        result = runner.invoke(main, ["dev-loop", "--use-cli-subprocess", "test requirement"])
         # exit code != 0 (agent.run_agent fail-fast 返回 failed status)
         assert result.exit_code != 0, (
             f"无 API key + 非 plugin mode 应 fail-fast, exit={result.exit_code}, "
@@ -462,6 +462,7 @@ class TestCliArgsParsing:
                 main,
                 [
                     "dev-loop",
+                    "--use-cli-subprocess",
                     "--log-format",
                     "json",
                     "--max-rounds",
@@ -504,7 +505,7 @@ class TestCliArgsParsing:
             "auto_engineering.cli._run_v2_orchestrator",
             return_value=fake_result,
         ):
-            result = runner.invoke(main, ["dev-loop", "req"])
+            result = runner.invoke(main, ["dev-loop", "--use-cli-subprocess", "req"])
         assert result.exit_code == 0
         assert "dev-loop complete" in result.stdout
         assert "completed" in result.stdout
@@ -525,7 +526,7 @@ class TestCliArgsParsing:
             return_value=fake_result,
         ) as mock_run:
             result = runner.invoke(
-                main, ["dev-loop", "--max-rounds", "0", "req"]
+                main, ["dev-loop", "--use-cli-subprocess", "--max-rounds", "0", "req"]
             )
         assert result.exit_code == 0
         assert mock_run.call_args.kwargs["max_rounds"] == 0
@@ -555,7 +556,7 @@ class TestAEErrorExitCodes:
             "auto_engineering.cli._run_v2_orchestrator",
             side_effect=AEError(ErrorCode.CONFIG_INVALID_VALUE, "bad config"),
         ):
-            result = runner.invoke(main, ["dev-loop", "req"])
+            result = runner.invoke(main, ["dev-loop", "--use-cli-subprocess", "req"])
         # exit code 2 = USER_ERROR / config
         assert result.exit_code == 2
         assert "[配置/参数错]" in result.stderr
@@ -569,7 +570,7 @@ class TestAEErrorExitCodes:
             "auto_engineering.cli._run_v2_orchestrator",
             side_effect=AEError(ErrorCode.TASK_CANCELLED, "cancelled"),
         ):
-            result = runner.invoke(main, ["dev-loop", "req"])
+            result = runner.invoke(main, ["dev-loop", "--use-cli-subprocess", "req"])
         assert result.exit_code == 130
         assert "Resume" in result.stderr or "checkpoint" in result.stderr
 
@@ -582,7 +583,7 @@ class TestAEErrorExitCodes:
             "auto_engineering.cli._run_v2_orchestrator",
             side_effect=AEError(ErrorCode.LLM_TIMEOUT, "timeout"),
         ):
-            result = runner.invoke(main, ["dev-loop", "req"])
+            result = runner.invoke(main, ["dev-loop", "--use-cli-subprocess", "req"])
         assert result.exit_code == 3
         assert "[API/LLM 错]" in result.stderr
 
@@ -598,7 +599,7 @@ class TestAEErrorExitCodes:
             side_effect=AEError(ErrorCode.LLM_TIMEOUT, "boom"),
         ):
             result = runner.invoke(
-                main, ["dev-loop", "--log-format", "json", "req"]
+                main, ["dev-loop", "--use-cli-subprocess", "--log-format", "json", "req"]
             )
         assert result.exit_code == 3
         # 提取 stdout 末尾的 JSON 段 (前缀 "Starting dev-loop..." 是普通 stdout)

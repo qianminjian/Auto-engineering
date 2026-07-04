@@ -157,6 +157,49 @@ python3 scripts/atdo_smoke.py       # Runtime smoke (7 维度)
 
 ---
 
+## /ae:dev-loop Agent Tool 执行模式（v5.1, 2026-07-04 生产反馈修正）
+
+**关键修正**：2026-07-04 生产使用报告（`prismscan/_scratch/reports/2026-07-04-dev-loop-execution-analysis.md`）显示 dev-loop 原有的 Python 子进程 (`ae dev-loop "..."`) 模式在 Claude Code agent 内**完全失效**——子进程无法获取 agent 的 ANTHROPIC_AUTH_TOKEN，导致 architect/critic LLM 调用永远失败。
+
+**v5.1 起 `ae dev-loop` CLI 子进程废弃**，改为 **Agent tool 直接执行模式**：
+
+### 执行协议（Agents 必须遵守）
+
+当用户调用 `/ae:dev-loop <requirement>` 时：
+
+1. **Stage 1 — Architect (Plan Agent)**
+   - **Spawn a Plan agent** via Agent tool（给定 `requirement` + `commands/dev-loop.md` 完整 spec 作为 prompt）
+   - Architect 回 output: `batch_plan` (TaskCreate list, ≤5 files/batch), `file_list`, `contracts`
+   - **禁止跳过**：Plan agent 必须产出结构化 JSON，不能只写 3 句标题
+
+2. **Stage 2 — Developer (Claude Code Agent 自己）**
+   - **逐个 TaskCreate 执行 TDD（Red→Green→Refactor）**
+   - 每个 unit: RED (write failing test) → GREEN (minimal impl) → REFACTOR (clean > still green) → git commit
+   - **完成所有 TaskCreate 后**：跑全部 7 Gate **并行** (`safety` + `lint` + `type_check` + `contract` + `test` + `coverage` + `build`)
+   - 记录：files_changed, commit_hash, test_results
+
+3. **Stage 3 — Critic (code-reviewer Agent）**
+   - **Spawn a code-reviewer agent** via Agent tool（给定 `files_changed` + `test_results` + `gate_results`）
+   - Critic 回 output: `verdict` (APPROVE/MAJOR), `findings` (file:line + severity + issue + suggested_fix)
+   - **MAJOR criteria**: ≥1 P0 或 ≥3 P1
+   - **if MAJOR**: agent 回到 Stage 2，根据 `findings` + `suggested_fix` 修复问题
+
+4. **Convergence while loop**（参考 `commands/dev-loop.md` 完整 spec）
+   - max_rounds = 3 (Self-Refine 最优)
+   - consecutive_majors ≥ 3 → HARD_LIMIT stop
+   - APPROVE + 所有 gate PASSED → 成功退出
+
+### 关键原则
+
+- ❌ 禁止只用串行 Read→Write→Edit→Commit 替代三阶段（这是 Interact 模式，不是 dev-loop）
+- ✅ 必须 spawn Plan agent 产出完整 batch_plan（不是"3 行 TaskCreate 标题"）
+- ✅ 必须 spawn code-reviewer agent 产出 structured findings（file:line + severity）
+- ✅ 每个 TDD 循环遵守 Red→Green→Refactor 顺序
+- ✅ Gate 必须并行跑（用 `asyncio.gather` 或至少跑 safety/lint/test 3 个）
+- ✅ MAJOR 反馈链（critic → developer → redo）是 Self-Refine 核心，不能被 skip
+
+---
+
 ## 管理约束
 
 - tests/ 下测试，覆盖率 ≥ 90%（用户硬指标）

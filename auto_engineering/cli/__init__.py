@@ -93,6 +93,11 @@ def init() -> None:
     help="LLM 提供方",
 )
 @click.option("--project-root", type=click.Path(exists=True), help="项目根目录 (默认 cwd)")
+@click.option(
+    "--use-cli-subprocess",
+    is_flag=True,
+    help="使用 Python 子进程模式 (ev5.0-调用 Python Engine, 需要独立 ANTHROPIC_API_KEY)",
+)
 def dev_loop(
     requirement: str,
     max_rounds: int,
@@ -100,11 +105,32 @@ def dev_loop(
     log_format: str,
     llm_provider: str,
     project_root: str,
+    use_cli_subprocess: bool = False,
 ):
-    """单需求开发循环 (v2.0 Orchestrator + Gates + 语义评估).
+    """[v5.1 废弃] 单需求开发循环.
 
-    N/A (Plugin 模式 Claude Code Agent 提供 key, CLI 模式 SDK 自动从 env 读).
+    2026-07-04 生产使用反馈: Python 子进程模式在 Claude Code agent 内失效
+    (子进程无法获取 agent 的 ANTHROPIC_AUTH_TOKEN). v5.1 起推荐 Agent tool 模式
+    (通过 /ae:dev-loop slash command, 见 commands/dev-loop.md).
+
+    Python Engine 子进程模式仍需 `--use-cli-subprocess` 显式启用.
+    仅推荐以下场景使用: (a) 独立 CLI 环境 (非 Claude Code agent 内) 或
+    (b) 有独立 ANTHROPIC_API_KEY 配置, 或 (c) 需要检查 preflight/gate 调试.
     """
+    if not use_cli_subprocess:
+        click.echo(
+            "[v5.1 废弃] ae dev-loop CLI 子进程模式已废弃.\n"
+            "推荐在 Claude Code agent 内使用 Agent tool 模式:\n"
+            "  /ae:dev-loop <requirement>\n"
+            "  详见: commands/dev-loop.md\n\n"
+            "如需继续用 Python Engine 子进程, 请加 --use-cli-subprocess 显式启用.\n"
+            "  ae dev-loop \"<requirement>\" --use-cli-subprocess\n\n"
+            "此模式需独立 ANTHROPIC_API_KEY, 且 architect/critic LLM 调用\n"
+            "可能因子进程隔离失败. 仅推荐非 agent 环境或 gate 调试使用.",
+            err=True,
+        )
+        raise SystemExit(1)
+
     if llm_provider != "anthropic":
         click.echo(f"[未实现] --llm-provider={llm_provider} 暂未实装。", err=True)
         raise SystemExit(6)
