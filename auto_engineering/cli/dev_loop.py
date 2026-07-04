@@ -271,71 +271,47 @@ def _run_v2_orchestrator(
     cancellation: CancellationToken,
     token_tracker: TokenTracker | None = None,
 ) -> OrchestratorRunResult:
-    """v2.0 Orchestrator 驱动器 — 单 Agent 模式演示.
+    """v5.0 M4 12 步主循环 — 生产级完整路径 (2026-07-04 升级).
 
-    设计要点 (Phase C):
-        - 单 task / round (v2.0 多 Agent 并发未启用, 留 future)
-        - 复用 v2.0 BaseAgent (DeveloperAgent) 作为 TaskExecutor
-        - 启用 2 道 Gate (Safety + Lint) — 真集成, 非 mock
-        - semantic_evaluator 简化 (始终 True, 避免 mock LLM)
-
-    Args:
-        requirement: 需求描述
-        project_root: 项目根目录 (Gate 运行基址 + 沙箱白名单)
-        max_rounds: 最大轮数
-        progress: 进度日志
-        cancellation: 取消令牌 (用户 SIGINT 触发)
-        token_tracker: Token 跟踪器 (注入 BaseAgent)
-
-    Returns:
-        OrchestratorRunResult (status/total_steps/checkpoint_id)
-
-    Raises:
-        AEError: 配置错 / 业务错
+    2026-07-04 升级 (从 v2.0 Phase C 演示代码):
+    - gates: [SafetyGate+LintGate] → DEFAULT_GATES (7 道)
+    - guardrail_chain: None → GuardrailChain.default() (5 Guardrail)
+    - stage_router: None → StageRouter() (T1-T6)
+    - checkpoint_store: None → SQLiteCheckpointStore (持久化)
+    - Task: 硬编码 → orchestrator step_1 走 architect 生成
     """
     import asyncio
 
-    from auto_engineering.gates.lint import LintGate
-    from auto_engineering.gates.safety import SafetyGate
+    from auto_engineering.gates.base import DEFAULT_GATES
     from auto_engineering.loop.convergence import ConvergenceConfig
-    from auto_engineering.loop.orchestrator import (
-        Orchestrator,
-        OrchestratorConfig,
-    )
-    from auto_engineering.loop.plan import Task
+    from auto_engineering.loop.guardrail import GuardrailChain
+    from auto_engineering.loop.orchestrator import Orchestrator, OrchestratorConfig
+    from auto_engineering.loop.stage_router import StageRouter
 
-    # 1. 构造 OrchestratorConfig: gates + semantic_evaluator + project_root + agent_runtime
-    #    v2.3 Phase E (P1.1): max_rounds → ConvergenceConfig.max_iterations (单一来源)
-    #    v2.3 Phase H (P1.4): agent_runtime 传入, 按 task.role 调度 (替代 _build_v2_executor)
+    # 1. Checkpoint store: .ae-state/checkpoints.db
+    db_path = str(Path(project_root) / ".ae-state" / "checkpoints.db")
+    from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
+    checkpoint_store = SQLiteCheckpointStore(db_path)
+
+    # 2. v5.0 M4 完整 OrchestratorConfig
     agent_runtime = _build_v2_agent_runtime(project_root, progress, token_tracker)
     config = OrchestratorConfig(
         convergence_config=ConvergenceConfig(max_iterations=max_rounds),
-        gates=[SafetyGate(), LintGate()],
-        semantic_evaluator=_build_v2_semantic_evaluator(project_root, progress),
+        gates=DEFAULT_GATES,             # 7 道 Gate (asyncio.gather)
         project_root=project_root,
         agent_runtime=agent_runtime,
+        guardrail_chain=GuardrailChain.default(),   # 5 Guardrail
+        stage_router=StageRouter(),                  # T1-T6 路由
+        checkpoint_store=checkpoint_store,            # SQLite 持久化
     )
 
-    # 2. 构造单 task (Phase C 简化: 1 个 task, developer agent)
-    task = Task(
-        id="t1",
-        title=requirement[:50] or "Implement requirement",  # v2.0-D: 非空 title
-        description=requirement,
-        expected_output="实现需求对应的代码变更",  # v2.0-D: contract
-        role="developer",
-        agent_type="developer",
-        target_files=frozenset(),  # 单 Agent 模式不强制隔离
-        depends_on=[],
-    )
-
-    # 3. 构造 Orchestrator (v2.3 Phase H P1.4: 不再传 executor, agent_runtime 自动调度)
+    # 3. Orchestrator (空 tasks → step_1 走 architect 自动生成 batch_plan)
     orchestrator = Orchestrator(
         requirement=requirement,
-        tasks=[task],
-        executor=None,  # type: ignore[arg-type]  # agent_runtime 优先
+        tasks=[],
+        executor=None,
         config=config,
     )
-    # v5.0 §B13.2: 注入 thread_id (用于 stdout JSON 契约)
     orchestrator._thread_id = uuid.uuid4().hex
 
     # 5. 启动 asyncio.run (Orchestrator.run 是 async)

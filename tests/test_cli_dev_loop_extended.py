@@ -702,7 +702,17 @@ class TestRunV2OrchestratorUnit:
 
 # Helper: bypass cli/__init__.py preflight + load_ae_answers + 调用 _run_v2_orchestrator 直接
 def _run_v2_orchestrator_passthrough(**kwargs):
-    """直接调用 _run_v2_orchestrator (跳过 cli/__init__.py 包装)."""
+    """直接调用 _run_v2_orchestrator (跳过 cli/__init__.py 包装).
+
+    2026-07-04 v5.0 M4 升级: 加 mock 覆盖 orchestrator 新导入的模块.
+    """
+    from unittest.mock import MagicMock, patch
     from auto_engineering.cli.dev_loop import _run_v2_orchestrator
 
-    return _run_v2_orchestrator(**kwargs)
+    with patch("auto_engineering.loop.checkpoint.store.SQLiteCheckpointStore", MagicMock()), \
+         patch("auto_engineering.loop.guardrail.GuardrailChain") as mc_G, \
+         patch("auto_engineering.loop.stage_router.StageRouter") as mc_S, \
+         patch("auto_engineering.gates.base.DEFAULT_GATES", [MagicMock()]):
+        mc_G.default.return_value = MagicMock()
+        mc_S.return_value = MagicMock()
+        return _run_v2_orchestrator(**kwargs)
