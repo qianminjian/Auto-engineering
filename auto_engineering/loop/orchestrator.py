@@ -589,6 +589,13 @@ class Orchestrator:
         should_break=True → 主循环 break (走 step 3).
         3 层退出条件 (按优先级): dec.should_stop / dec.next_stage=None+judge.stop / unexpected.
         副作用: 推进 state.current_stage + _clear_stage_fields (B3.3).
+
+        2026-07-04 修复 (Bug 3 prismscan 方案 C):
+            即便 critic 给 verdict.level=3 (QUALITY_PASS), gate fail 时不停止.
+            gate_summary 是更可靠的质量信号 — 让 developer 继续修, 而不是 PASS 通过
+            出去留下 0 代码改动退出.
+            这是反向语义的根本防御: 即便 critic LLM 错给 APPROVE, gate 失败也会
+            拦住继续修, 而不是立刻停.
         """
         # 2026-07-04 修复 (Bug 3 prismscan 集成): CriticVerdictInvalid 是 stage_router
         # 在 critic 返回非法 verdict 时抛出的异常 (替代原 should_stop=True 静默 PASS).
@@ -624,9 +631,62 @@ class Orchestrator:
         # next_stage is None: judge 判定
         verdict = judge.evaluate(history=list(self.history))
         if verdict.should_stop:
+            # 2026-07-04 修复 (Bug 3 prismscan 方案 C):
+            # 即便 judge 给 QUALITY_PASS (level=3), 检查最近一轮 gate_summary:
+            # - 任意 gate failed → 不停止, continue (让 developer 修 gate 失败的项)
+            # - 所有 gate passed → 正常停止
+            # 这是反向语义的根本防御: 即便 critic LLM 错给 APPROVE,
+            # gate fail 也会拦住继续修, 而不是立刻停.
+            latest_gates = self._collect_latest_gates()
+            if verdict.level == 3 and latest_gates and not self._gates_all_passed(latest_gates):
+                # gate fail 拦住 — 不升级 verdict, 继续
+                self._step_2i_log_gate_block(verdict, latest_gates, current_stage)
+                return False  # 不 break
             self.verdict = verdict
             return True
         return True  # unexpected → 兜底 break (走 step 3)
+
+    def _collect_latest_gates(self) -> dict:
+        """收集最近一轮 RoundHistory 的 gate_results.
+
+        2026-07-04 (Bug 3 方案 C): 用于 step 2i gate_summary 反向防御检查.
+        """
+        if not self.history:
+            return {}
+        last_round = self.history[-1]
+        return last_round.gate_results or {}
+
+    def _gates_all_passed(self, gate_results: dict) -> bool:
+        """所有 gate 都通过 (Bug 3 方案 C 辅助).
+
+        容忍空 dict (无 gate 配置), 返回 True (避免误判).
+        """
+        if not gate_results:
+            return True  # 无 gate 配置 → 不视为失败
+        for verdict in gate_results.values():
+            passed = getattr(verdict, "passed", None)
+            if passed is False:
+                return False
+        return True
+
+    def _step_2i_log_gate_block(
+        self, verdict: Any, latest_gates: dict, current_stage: str
+    ) -> None:
+        """记录 gate fail 拦住 stop 的诊断日志 (Bug 3 方案 C)."""
+        failed = [
+            name
+            for name, v in latest_gates.items()
+            if getattr(v, "passed", None) is False
+        ]
+        import logging
+
+        logging.getLogger("ae.loop.orchestrator").info(
+            "Bug 3 方案 C: judge QUALITY_PASS 但 gate fail, 不停止 → continue. "
+            "verdict_level=%d, current_stage=%s, failed_gates=%s",
+            getattr(verdict, "level", -1),
+            current_stage,
+            failed,
+        )
 
     def _step_3_exit_block(
         self,
