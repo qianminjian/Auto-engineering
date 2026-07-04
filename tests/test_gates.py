@@ -117,20 +117,41 @@ class TestSafetyGate:
 
 
 class TestLintGate:
-    """Gate 1: ruff check."""
+    """Gate 1: ruff check.
+
+    2026-07-04 (Bug 1 prismscan): 测试用 stub ruff binary (.venv/bin/ruff),
+    因为真实 ruff 可能不在测试环境 PATH, 触发 sys.executable -m fallback 失败.
+    """
+
+    @staticmethod
+    def _make_stub_ruff(tmp_path: Path) -> Path:
+        """Create a stub ruff binary in .venv/bin/ that exits 0 (clean) or 1 (dirty)."""
+        venv_bin = tmp_path / ".venv" / "bin"
+        venv_bin.mkdir(parents=True)
+        stub = venv_bin / "ruff"
+        stub.write_text("#!/bin/sh\necho 'All checks passed!'\nexit 0\n")
+        stub.chmod(0o755)
+        return stub
 
     def test_clean_code_passes(self, tmp_path: Path):
         from auto_engineering.gates.lint import LintGate
 
+        self._make_stub_ruff(tmp_path)
         (tmp_path / "main.py").write_text("x = 1\n")
         gate = LintGate()
         verdict = gate.run(tmp_path)
-        assert verdict.passed is True
+        assert verdict.passed is True, f"应 PASS (用了 stub ruff), 实际: {verdict.message}"
 
     def test_dirty_code_fails(self, tmp_path: Path):
         from auto_engineering.gates.lint import LintGate
 
-        # ruff 会报 unused import
+        # 替换 stub 为失败模式
+        venv_bin = tmp_path / ".venv" / "bin"
+        venv_bin.mkdir(parents=True)
+        stub = venv_bin / "ruff"
+        stub.write_text("#!/bin/sh\necho 'unused import' >&2\nexit 1\n")
+        stub.chmod(0o755)
+
         (tmp_path / "main.py").write_text("import os\n")
         gate = LintGate()
         verdict = gate.run(tmp_path)
