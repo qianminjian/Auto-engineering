@@ -1,4 +1,4 @@
-"""AUTHZ_MATRIX 9 工具 × 3 角色 = 27 组合测试.
+"""AUTHZ_MATRIX 10 工具 × 3 角色 = 30 组合测试 (2026-07-04 加 git_status: P1-S-03).
 
 v5.0 §B12.1 — 工具授权矩阵单测.
 v5.0 §B14.4 test_authz.py 必含 — R-21 风险应对.
@@ -195,5 +195,5 @@ class TestAuthzEdgeCases:
         assert isinstance(authz.AUTHZ_MATRIX, dict)
         # 必须含 3 角色
         assert set(authz.AUTHZ_MATRIX.keys()) == {"architect", "developer", "critic"}
-        # developer 必须含全部 9 工具
-        assert len(authz.AUTHZ_MATRIX["developer"]) == 9
+        # developer 必须含全部 10 工具 (9 + git_status P1-S-03)
+        assert len(authz.AUTHZ_MATRIX["developer"]) == 10
