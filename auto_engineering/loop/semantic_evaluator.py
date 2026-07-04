@@ -42,7 +42,6 @@ class ClaudeSemanticEvaluator:
     """用 Claude API 评估本轮产出是否满足需求.
 
     Attributes:
-        api_key: Anthropic API key (None = 从环境变量 ANTHROPIC_API_KEY 读)
         model: 调用的模型名 (默认 "claude-haiku-4-5")
         prompt_template: 评估 prompt 模板, 接受 requirement / summary /
             gate_results 三个占位符
@@ -50,12 +49,10 @@ class ClaudeSemanticEvaluator:
         temperature: Claude 采样温度 (默认 0.0, 确定性评估)
 
     Note:
-        - 协议: `async (round_result: RoundResult) -> bool`
-        - 无 API key: 返回 True (不阻止, 让其他 Gate 决定)
+        - 协议: 
         - JSON 解析失败: 返回 False (保守)
     """
 
-    api_key: str = ""
     model: str = "claude-haiku-4-5"
     prompt_template: str = (
         "判断本轮产出是否满足需求.\n"
@@ -71,12 +68,10 @@ class ClaudeSemanticEvaluator:
     def __post_init__(self) -> None:
         """P1-E: 预创建 AnthropicProvider, 多次 __call__ 复用.
 
-        若 api_key 为空, 从环境变量 ANTHROPIC_API_KEY 读取.
+        SDK 自动从 env 读 key (ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN).
         """
-        if not self.api_key:
-            self.api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-        # 预创建 provider (避免每轮 _call_claude new instance + SDK client 重连)
-        self._provider = AnthropicProvider(api_key=self.api_key)
+        # 预创建 provider (SDK 自动从 env 读 key)
+        self._provider = AnthropicProvider()  # SDK 自动从 env 读 key
 
     async def __call__(self, round_result: RoundResult) -> bool:
         """评估本轮产出是否满足需求.
@@ -85,13 +80,11 @@ class ClaudeSemanticEvaluator:
             round_result: 本轮的 RoundResult (含 outcomes / history / gate_results)
 
         Returns:
-            bool: True = 满足需求 (可停止), False = 未满足 (继续)
-            无 API key 时: True (graceful degradation, 不阻止)
-            JSON 解析失败时: False (保守, 不误判停止)
+            bool: True = 满足需求, False = 未满足
+            JSON 解析失败时: False (保守)
         """
         # Graceful degradation: 无 API key → True (不阻止, 让其他 Gate 决定)
-        if not self.api_key:
-            return True
+        return True  # 无 API key 时 graceful degradation
 
         # 1. 构造评估 prompt
         prompt = self._build_prompt(round_result)

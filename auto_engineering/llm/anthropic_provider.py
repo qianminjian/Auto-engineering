@@ -75,7 +75,7 @@ class AnthropicProvider:
         if client is not None:
             self._client = client
         else:
-            self._client = anthropic.Anthropic(api_key=api_key)
+            self._client = anthropic.Anthropic()  # SDK 自动从 ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN 读 key
         self._max_retries = max_retries
 
     def close(self) -> None:

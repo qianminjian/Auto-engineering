@@ -103,7 +103,7 @@ def dev_loop(
 ):
     """单需求开发循环 (v2.0 Orchestrator + Gates + 语义评估).
 
-    需要 ANTHROPIC_API_KEY 环境变量.
+    N/A (Plugin 模式 Claude Code Agent 提供 key, CLI 模式 SDK 自动从 env 读).
     """
     if llm_provider != "anthropic":
         click.echo(f"[未实现] --llm-provider={llm_provider} 暂未实装。", err=True)

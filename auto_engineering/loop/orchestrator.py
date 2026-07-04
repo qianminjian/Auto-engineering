@@ -102,7 +102,7 @@ class OrchestratorConfig:
             (v2.3 Phase E P1.1, 借鉴 LangGraph Pregel.recursion_limit).
         gates: v2.1 Phase B — 验证 Gate 列表 (None = 跳过)
         semantic_evaluator: v2.1 Phase B — LLM 语义评估.
-            None 时, **有 ANTHROPIC_API_KEY 且不在 LLM agent** (CLAUDE_CODE 未设置)
+            None 时, **有 KEY 且不在 LLM agent** (CLAUDE_CODE 未设置)
             自动启用 ClaudeSemanticEvaluator (v2.3 Phase J P1.6 — 内置 LLM evaluator).
             用户显式传值时不被覆盖.
             无 API key 或在 LLM agent 中时保持 None (graceful degradation,
@@ -135,7 +135,7 @@ class OrchestratorConfig:
 
         行为契约:
             - semantic_evaluator 已是用户显式传入 (非 None) → 不覆盖
-            - semantic_evaluator 为 None + 有 ANTHROPIC_API_KEY 且不在 LLM agent
+            - semantic_evaluator 为 None + 有 KEY 且不在 LLM agent
               (CLAUDE_CODE 未设置) → 自动启用 ClaudeSemanticEvaluator (接 Claude API 真评估)
             - semantic_evaluator 为 None + 无 API key 或在 LLM agent → 保持 None
               (Orchestrator.run() 跳过语义评估, 避免 Claude Code 自调 Claude 评估)
@@ -144,12 +144,12 @@ class OrchestratorConfig:
         LLM evaluator, 用户需自己写). 默认启用让 LLM 评估开箱即用.
         借鉴 LangGraph ConditionalEdge: LLM 评估路由开箱即用.
         与 settings.py:49-50 LLM-agent skip 同模式 — Claude Code 运行时
-        ANTHROPIC_API_KEY 由 agent 自带, 不应再触发自评估 (commit fae3255/7f12a70).
+        KEY 由 agent 自带, 不应再触发自评估 (commit fae3255/7f12a70).
         """
         in_llm_agent = bool(os.environ.get("CLAUDE_CODE"))
         if (
             self.semantic_evaluator is None
-            and os.environ.get("ANTHROPIC_API_KEY")
+            and os.environ.get("KEY")
             and not in_llm_agent
         ):
             # 延迟 import 避免循环依赖 (semantic_evaluator → orchestrator 反向)

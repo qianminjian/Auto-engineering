@@ -187,16 +187,14 @@ def load_ae_answers(project_root: Path) -> dict | None:
 
 
 def preflight(project_root: Path) -> None:
-    """入口前置校验 — 检查 git/API key/磁盘/Python 版本.
+    """入口前置校验 — 检查 git/磁盘/Python 版本.
 
     任一校验失败抛 SystemExit(1) + 友好 click 错误消息(无 traceback).
     全部通过则静默返回.
 
     检查项:
         1. Python ≥ 3.12
-        2. ANTHROPIC_API_KEY 环境变量已设置
-           (在 Claude Code 等 LLM agent 中跳过, agent 有自己的 auth)
-        3. project_root 是 git 仓库(含 .git/)
+
         4. 磁盘可用空间 ≥ 100 MB
     """
     errors: list[str] = []
@@ -205,16 +203,6 @@ def preflight(project_root: Path) -> None:
     py_version = sys.version_info
     if (py_version.major, py_version.minor) < (3, 12):
         errors.append(f"Python 版本过低: 当前 {py_version.major}.{py_version.minor}, 需要 ≥ 3.12")
-
-    # 2. ANTHROPIC_API_KEY
-    # v2.5 修复: 在 LLM agent (Claude Code) 环境下跳过, agent 有自己的 auth
-    in_llm_agent = bool(os.environ.get("CLAUDE_CODE")) or "claude" in os.environ.get("ANTHROPIC_CLI", "").lower()
-    api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
-    if not api_key and not in_llm_agent:
-        errors.append(
-            "环境变量 ANTHROPIC_API_KEY 未设置。"
-            "请在 ~/.zshrc 中 export ANTHROPIC_API_KEY=sk-... 或在 .env 中设置。"
-        )
 
     # 3. Git 仓库
     if not (project_root / ".git").exists():

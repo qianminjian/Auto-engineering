@@ -5,7 +5,7 @@
     2. uv ≥ 0.5 (包管理工具)
     3. git ≥ 2.40
     4. sqlite3 ≥ 3.42 (用于 SQLiteCheckpointStore)
-    5. ANTHROPIC_API_KEY 已设置 (在 LLM agent 环境跳过)
+    5. N/A (SDK 自动从 env 读 key, Plugin 模式无需设置)
     6. .ae-state/ 可读写 (项目状态目录)
     7. init-manifest.json 存在 (IL-AC-01)
 
@@ -114,23 +114,6 @@ def _check_sqlite3() -> tuple[bool, str]:
     return False, f"sqlite3 {ver_str}    (required: >={SQLITE_MIN[0]}.{SQLITE_MIN[1]}) — 版本过低"
 
 
-def _check_api_key() -> tuple[bool, str]:
-    """检查 ANTHROPIC_API_KEY.
-
-    Plugin 模式下 Claude Code Agent 自带 key, 不需要独立配置.
-    仅 CLI 调试模式 (非 Plugin, 直接用 ae dev-loop) 才需要.
-    此检查始终返回 True (非阻塞), 仅提示性差异.
-    """
-    in_llm_agent = bool(os.environ.get("CLAUDE_CODE")) or "claude" in os.environ.get("ANTHROPIC_CLI", "").lower()
-    api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
-    if in_llm_agent:
-        return True, "ANTHROPIC_API_KEY (由 Claude Code Agent 提供, null)"
-    if api_key:
-        return True, "ANTHROPIC_API_KEY 已设置"
-    return True, "ANTHROPIC_API_KEY 已备份 (Plugin 模式利用 Claude Code Agent 提供, 仅 CLI 调试模式需独立配置)"
-
-
-def _check_ae_state(project_root: Path) -> tuple[bool, str]:
     """检查 .ae-state/ 可读写."""
     ae_state = project_root / ".ae-state"
     if not ae_state.exists():
@@ -202,7 +185,6 @@ def run_doctor_checks(project_root: Path) -> tuple[int, list[tuple[bool, str]]]:
     results.append(_check_uv())
     results.append(_check_git())
     results.append(_check_sqlite3())
-    results.append(_check_api_key())
     results.append(_check_ae_state(project_root))
     results.append(_check_init_manifest(project_root))
     failed = sum(1 for ok, _ in results if not ok)
@@ -220,7 +202,7 @@ def register_doctor_command(main: click.Group) -> None:
         help="项目根目录 (默认 cwd)",
     )
     def doctor(project_root: str) -> None:
-        """环境预检 — Python/uv/git/sqlite3/API_KEY/.ae-state + init-manifest (IL-AC-01)."""
+        """环境预检 — Python/uv/git/sqlite3/.ae-state + init-manifest (IL-AC-01)."""
         root = Path(project_root).resolve() if project_root else Path.cwd()
         exit_code, results = run_doctor_checks(root)
         for ok, line in results:

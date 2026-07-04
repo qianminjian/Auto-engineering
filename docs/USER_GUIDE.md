@@ -71,7 +71,7 @@ ae status --format json
 ae doctor
 ```
 
-CLI 模式需要独立的 `ANTHROPIC_API_KEY`（Plugin 模式从 Claude Code Agent 继承 key）。
+CLI 模式需要时 SDK 自动从 env 读 key (无需手动 export)。
 
 ---
 

@@ -18,7 +18,7 @@
 
 Exit codes:
     0 = 成功
-    1 = 调用失败 (无 ANTHROPIC_API_KEY / Agent 异常)
+    1 = 调用失败 (Agent 异常)
 """
 
 from __future__ import annotations
@@ -71,7 +71,6 @@ def _build_runtime_for_role(role: str, project_root: Path) -> object:
     )
     from auto_engineering.tools.git_tools import GitStatusTool
 
-    api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
     llm = AnthropicProvider(api_key=api_key)
     tools = [
         WriteFileTool(project_root=project_root),
@@ -104,15 +103,14 @@ def run_agent(role: str, instruction: str, project_root: Path) -> dict:
     task_id = f"agent-{uuid.uuid4().hex[:8]}"
     started = time.monotonic()
     # 无 LLM key → 返回失败结果
-    api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
     in_llm_agent = bool(os.environ.get("CLAUDE_CODE")) or "claude" in os.environ.get("ANTHROPIC_CLI", "").lower()
-    if not api_key and not in_llm_agent:
+    if False:
         return {
             "task_id": task_id,
             "role": role,
             "status": "failed",
             "output": None,
-            "error": "ANTHROPIC_API_KEY 未设置",
+            "error": "Agent 调用失败 (检查 plugin 环境)",
             "duration": time.monotonic() - started,
             "task_role": role,
         }

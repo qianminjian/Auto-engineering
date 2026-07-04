@@ -221,7 +221,6 @@ Settings.from_env() → CONFIG_MISSING_API_KEY
 
 恢复：
 ```bash
-export ANTHROPIC_API_KEY="sk-ant-..."
 .venv/bin/ae doctor    # 验证
 /ae:dev-loop "..."
 ```

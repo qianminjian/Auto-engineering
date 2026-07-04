@@ -40,7 +40,7 @@ class ErrorCode(Enum):
     OUTPUT_DROPPED = "OUTPUT_DROPPED"  # Guardrail action='drop' → 静默丢弃输出
 
     # ── Configuration (config/settings.py, cli.py) ──
-    CONFIG_MISSING_API_KEY = "CONFIG_MISSING_API_KEY"  # Settings.from_env() → 缺 ANTHROPIC_API_KEY
+    CONFIG_MISSING_API_KEY = "CONFIG_MISSING_API_KEY"  # deprecated: v5.0 移除 (Plugin 模式 Claude Code Agent 提供 key)
     CONFIG_INVALID_VALUE = "CONFIG_INVALID_VALUE"  # Settings 校验 → 非法配置值
 
     # ── Budget / Token tracking ──
