@@ -63,8 +63,14 @@ SECRET_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ),
     (
         "银行卡号",
-        # 13-19 位连续数字 (Luhn 算法校验留给 gitleaks)
-        re.compile(r"(?<![0-9])(?:\d[\s-]?){13,19}(?![0-9])"),
+        # 13-19 位连续数字 (Luhn 算法校验留给 gitleaks).
+        # 2026-07-04 P1 修复: 加 keyword context (card no / card number / 银行卡 / bank card)
+        # 避免 13-19 位连续数字误报 (如 ISO 时间戳 20260624120000).
+        # card[_\- ]?(?:no|number)? 让 "card " / "card no" / "card number" 都可触发.
+        re.compile(
+            r"(?i)(?:card[_\- ]?(?:no|number)?|银行卡号?|bank[_\- ]?card)[:\s是_-]*"
+            r"(\d[\s-]?){13,19}(?![0-9])"
+        ),
     ),
     # === 原有 9 种 ===
     ("AWS Access Key", re.compile(r"AKIA[0-9A-Z]{16}")),
@@ -114,7 +120,13 @@ def _redact_gitleaks_output(text: str) -> str:
 
 
 def _scan_file(path: Path) -> list[str]:
-    """扫描单个文件, 返回匹配到的 secret 描述列表."""
+    """扫描单个文件, 返回匹配到的 secret 描述列表.
+
+    2026-07-04 修复 (Issue #6, 95 分): 去重 hits. Long Token 模式与
+    Generic API Key / Generic Secret 模式在 `api_key=...` / `secret=...`
+    同时命中, 同一 secret 之前会被报两次 (不同 desc). 现用 dict by desc
+    去重 (保持顺序).
+    """
     try:
         size_mb = path.stat().st_size / (1024 * 1024)
         if size_mb > _MAX_FILE_MB:
@@ -123,11 +135,11 @@ def _scan_file(path: Path) -> list[str]:
     except (OSError, UnicodeDecodeError):
         return []
 
-    hits = []
+    hits: dict[str, None] = {}  # 用 dict 保插入顺序去重
     for desc, pat in SECRET_PATTERNS:
         if pat.search(content):
-            hits.append(desc)
-    return hits
+            hits[desc] = None
+    return list(hits.keys())
 
 
 def _scan_dir(project_root: Path) -> list[tuple[Path, list[str]]]:

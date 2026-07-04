@@ -428,9 +428,13 @@ class Orchestrator:
         取消走 level=3 停滞/异常分支, verdict reason 标注 CancellationToken 来源.
         """
         if cancellation is not None and cancellation.is_cancelled():
+            # 2026-07-04 修复 (Issue #13, 100 分): 改用 level=4 (HARD_LIMIT)
+            # 避免与"Gate 全 PASS" (level=3) 混淆. 之前用 level=3 会被
+            # dev_loop.py 映射为 status="completed" (exit 0), 用户取消看起来像成功.
+            # 现在 level=4 → status="failed" → exit 2.
             self.verdict = ConvVerdict.stop(
-                level=3,
-                reason="用户取消 (CancellationToken)",
+                level=4,
+                reason="用户取消 (CancellationToken) → HARD_LIMIT",
             )
             return True
         return False
@@ -763,9 +767,12 @@ class Orchestrator:
         return True  # unexpected → 兜底 break (走 step 3)
 
     def _collect_latest_gates(self) -> dict:
-        """收集最近一轮 RoundHistory 的 gate_results.
+        """收集最近一轮 RoundHistory 的 gate_results (dict[str, Verdict]).
 
         2026-07-04 (Bug 3 方案 C): 用于 step 2i gate_summary 反向防御检查.
+        2026-07-04 P0 修复: 唯一权威实现 (前 c2fd29e commit 误加同方法覆盖
+        返回 dict[str, bool] 破坏 _gates_all_passed + _inject_self_refine_context).
+        消费方期望 dict[str, Verdict] (有 .passed / .message 属性).
         """
         if not self.history:
             return {}
@@ -833,14 +840,6 @@ class Orchestrator:
     def _resolve_project_root(self) -> Path:
         """运行时解析 project_root (B11.1). config 优先, fallback cwd."""
         return self.config.project_root or Path.cwd()
-
-    def _collect_latest_gates(self) -> dict[str, bool]:
-        """收集最后一轮 round_result 的 gate 结果 (name → passed)."""
-        if not self.round_results:
-            return {}
-        last = self.round_results[-1]
-        # gate_results 类型: dict[str, Verdict] (round.py:83)
-        return {name: verdict.passed for name, verdict in last.gate_results.items()}
 
     def _save_checkpoint(
         self,

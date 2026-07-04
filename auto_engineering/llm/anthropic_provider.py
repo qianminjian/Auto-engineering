@@ -79,7 +79,13 @@ class AnthropicProvider:
         if client is not None:
             self._client = client
         else:
-            self._client = anthropic.Anthropic()  # SDK 自动从 ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN 读 key
+            # 2026-07-04 修复 (Issue #5, 100 分): 显式传 api_key 当显式提供,
+            # 避免 silent-drop. 否则调用方传 api_key="..." 实际没生效.
+            # SDK 默认从 ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN env 读.
+            if api_key is not None:
+                self._client = anthropic.Anthropic(api_key=api_key)
+            else:
+                self._client = anthropic.Anthropic()  # SDK 自动从 env 读 key
         self._max_retries = max_retries
 
     def close(self) -> None:

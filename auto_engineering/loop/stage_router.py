@@ -112,6 +112,9 @@ class StageRouter:
             )
         self.max_majors_in_a_row = max_majors_in_a_row
         self.max_total_majors = max_total_majors
+        # 2026-07-04 修复 (Issue #4, 95 分): 初始化 history_stages 列表,
+        # next() 追加 current_stage. CriticVerdictInvalid.history_stages 不再空.
+        self.history_stages: list[str] = []
 
     def next(
         self,
@@ -131,6 +134,11 @@ class StageRouter:
         Returns:
             StageDecision 含 next_stage / should_stop / stop_reason.
         """
+        # 2026-07-04 修复 (Issue #4, 95 分): 记录 current_stage 到 history_stages
+        # 供 CriticVerdictInvalid 异常时显示调用链 (不再永远是空).
+        if current_stage:
+            self.history_stages.append(current_stage)
+
         # T1: 初始 stage → architect
         if current_stage == "":
             return StageDecision(next_stage="architect", should_stop=False)
@@ -180,7 +188,7 @@ class StageRouter:
             # 设计意图"critic 阶段必须给出 verdict"是设计约束, 不是 fallback.
             raise CriticVerdictInvalid(
                 verdict=verdict,
-                history_stages=getattr(self, "_history_stages", []),
+                history_stages=self.history_stages,
             )
 
         # 未知 stage → 安全停止 (防御性, 不抛异常避免 Orchestrator 僵死)
@@ -247,6 +255,9 @@ def _clear_stage_fields(state: Any, stage: str) -> None:
         state.verdict = ""
         state.findings = []
         state.critic_feedback = ""
+        # 2026-07-04 (Self-Refine 原则 1 P0 修复): 清 suggested_fix
+        # 否则 developer 重做时会读到上一轮 stale patch.
+        state.suggested_fix = ""
 
 
 def _derive_status(state: Any, max_iterations: int) -> str:
