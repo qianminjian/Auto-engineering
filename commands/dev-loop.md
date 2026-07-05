@@ -26,13 +26,39 @@ Architect (JSONL) -> Developer (agent TDD) -> Critic (JSONL)
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--max-rounds N` | 3 | Max loop rounds |
+| `--max-rounds` | 3 | Max loop rounds |
 | `--resume` | false | Resume from checkpoint |
 
 ## Execution
 
 ```bash
-AE_JSONL_MODE=1 ae dev-loop "$ARGUMENTS"
+MAX_ROUNDS=3
+RESUME=""
+REQUIREMENT=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --max-rounds)
+      MAX_ROUNDS="$2"
+      shift 2
+      ;;
+    --resume)
+      RESUME="--resume"
+      shift
+      ;;
+    *)
+      REQUIREMENT="$1"
+      shift
+      ;;
+  esac
+done
+
+if [[ -z "$REQUIREMENT" ]]; then
+  echo "Error: requirement is required"
+  exit 1
+fi
+
+AE_JSONL_MODE=1 ae dev-loop "$REQUIREMENT" --max-rounds "$MAX_ROUNDS" $RESUME
 ```
 
 The Python orchestrator enforces: 5 Guardrails, 7 Gates, StageRouter T1-T6,

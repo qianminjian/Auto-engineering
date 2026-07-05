@@ -340,6 +340,19 @@ class Orchestrator:
 
             # 2c 选 round_tasks (按 stage 过滤 + auto_gen 兜底)
             round_tasks, advance = self._step_2c_select_tasks(current_stage)
+            # v5.1 JSONL: 空 tasks + architect stage → 创建合成 task 触发 JSONL 规划
+            if not round_tasks and current_stage == "architect" and advance:
+                in_jsonl = os.environ.get("AE_JSONL_MODE") == "1"
+                if in_jsonl or self.config.agent_runtime is not None:
+                    from auto_engineering.loop.plan import Task as _Task
+                    round_tasks = [_Task(
+                        id="architect-synthetic",
+                        title="Generate implementation plan",
+                        description=f"Analyze requirement: {self.requirement}",
+                        expected_output="batch_plan with developer tasks",
+                        role="architect",
+                    )]
+                    advance = False
             if not round_tasks and advance:
                 continue
             if not round_tasks:
