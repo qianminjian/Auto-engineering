@@ -382,18 +382,12 @@ class ConvergenceJudge:
                 ),
             )
 
-        # v2.3 Phase D-fix: 任一 Gate FAIL → 触发停止 (质量门是"门", 不通过应关).
-        # 修复前: 返回 None, 让停滞检测/语义评估"误判"失败原因.
-        # 修复后: 直接 Verdict.stop(level=LEVEL_QUALITY), reason 含 gate name + message,
-        # 让 Orchestrator runtime smoke 输出 "质量门失败 (1 道): fake_failing: intentional...".
-        # 取前 3 道失败详情, 避免 reason 过长.
-        failed_details = "; ".join(
-            f"{name}: {verdict.message}" for name, verdict in failed_gates[:3]
-        )
-        return Verdict.stop(
-            level=LEVEL_QUALITY,
-            reason=f"质量门失败 ({len(failed_gates)} 道): {failed_details}",
-        )
+        # 2026-07-05 修复 (对标审计 P0-1): 门失败 ≠ 质量达标, 不应返回 STOP.
+        # 参考 LangGraph: gate 失败是诊断信号, 不是收敛条件.
+        # 全通过 → QUALITY_PASS STOP (收敛); 有失败 → CONTINUE (继续修复).
+        # 之前: 门失败也返回 STOP → orchestrator step 2i 需要反向补丁覆盖 judge 判決.
+        # 现在: 门失败返回 None → judge 继续检查下一级 (停滞/语义), 不误判.
+        return None
 
     def _check_stagnation(
         self, history: list[RoundHistory]

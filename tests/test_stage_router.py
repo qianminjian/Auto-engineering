@@ -347,25 +347,23 @@ class TestDeriveStatus:
         state = EngineState(verdict="APPROVE")
         assert _derive_status(state, max_iterations=10) == "completed"
 
-    def test_round_field_used_when_present(self) -> None:
-        """若 EngineState 有 round 字段且 >= max_iterations → 'completed'.
+    def test_round_not_needed_derive_status(self) -> None:
+        """2026-07-05 对标审计 P0-2: _derive_status 不再读 state.round.
 
-        说明: 当前 EngineState 无 round 字段 (Phase 04 才加), 但 _derive_status
-        用 getattr 防御性读取, 测试覆盖此行为以保证 Phase 04 集成时
-        _derive_status 不需要改签名.
+        EngineState 无 round 字段. round 计数由 orchestrator 管理,
+        硬上限由 ConvergenceJudge._check_hard_limit 检查.
         """
-        # 用 SimpleNamespace 模拟有 round 字段的 state
         from types import SimpleNamespace
 
         state = SimpleNamespace(verdict="MAJOR", round=10, current_stage="developer")
-        assert _derive_status(state, max_iterations=10) == "completed"
+        assert _derive_status(state, max_iterations=10) == "running"
 
-    def test_round_above_max_returns_completed(self) -> None:
-        """round > max_iterations → 'completed' (Phase 04 round 字段存在时)."""
+    def test_round_above_max_not_checked_by_derive_status(self) -> None:
+        """2026-07-05: _derive_status 不管 round, 收敛由 judge 负责."""
         from types import SimpleNamespace
 
         state = SimpleNamespace(verdict="MAJOR", round=11, current_stage="developer")
-        assert _derive_status(state, max_iterations=10) == "completed"
+        assert _derive_status(state, max_iterations=10) == "running"
 
     def test_empty_stage_returns_completed(self) -> None:
         """stage='' → 'completed' (初始或终止状态)."""

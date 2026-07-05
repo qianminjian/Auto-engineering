@@ -63,11 +63,11 @@ class ClaudeSemanticEvaluator:
     )
     max_tokens: int = 256
     temperature: float = 0.0
-    # 2026-07-04 修复 (v5.0 深度审计 P1-T-03): 新增 api_key 字段, 允许测试显式传入
-    # (之前 __init__ 不接受, 导致 test_semantic_evaluator_provider_reuse_p1e 失败).
-    # 默认 None → SDK 自动从 ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN 读 key.
     api_key: str | None = None
-    _provider: AnthropicProvider | None = None  # P1-E: __post_init__ 中预创建, 复用
+    # 2026-07-05 修复 (对标审计 P0-4): 注入 requirement 避免 "(see task outcomes)"
+    # 占位符. 参考 LangGraph conditional edge: 路由决策需要完整状态上下文.
+    requirement: str = ""
+    _provider: AnthropicProvider | None = None
 
     def __post_init__(self) -> None:
         """P1-E: 预创建 AnthropicProvider, 多次 __call__ 复用.
@@ -152,7 +152,7 @@ class ClaudeSemanticEvaluator:
             gate_results_str = str(gate_status)
 
         return self.prompt_template.format(
-            requirement="(see task outcomes)",  # RoundResult 不直接存 requirement
+            requirement=self.requirement or "(no requirement provided)",
             summary=summary,
             gate_results=gate_results_str,
         )

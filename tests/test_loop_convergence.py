@@ -152,12 +152,12 @@ def test_convergence_quality_gate_all_passed() -> None:
     assert verdict.level == LEVEL_QUALITY
 
 
-def test_convergence_quality_gate_partial_triggers_stop() -> None:
-    """v2.3 Phase D-fix: 任一 Gate FAIL → 触发停止 (质量门是"门", 不通过应关).
+def test_convergence_quality_gate_partial_returns_continue() -> None:
+    """2026-07-05 对标审计 P0-1: gate 失败 → CONTINUE, 不 STOP.
 
-    历史背景: 之前 partial fail 返回 None (let stagnant/semantic 决定),
-    这违反了"质量门"的语义 — Orchestrator 会把"门失败"当成"停滞"误报.
-    修复后: 任一 Gate failed → Verdict.stop(level=LEVEL_QUALITY), reason 含 verdict.message.
+    参考 LangGraph: gate 失败是诊断信号, 不是收敛条件.
+    之前错误: gate 失败也返回 STOP(level=3), 将"质量不达标"混同"质量达标".
+    orchestrator step 2i 被迫用反向补丁覆盖 judge 判定.
     """
     from auto_engineering.gates.base import Verdict
 
@@ -166,25 +166,19 @@ def test_convergence_quality_gate_partial_triggers_stop() -> None:
             round_id=1,
             gate_results={
                 "g1": Verdict.passed("ok", gate_name="g1"),
-                "g2": Verdict.failed("boom", gate_name="g2"),  # 失败
+                "g2": Verdict.failed("boom", gate_name="g2"),
                 "g3": Verdict.passed("ok", gate_name="g3"),
             },
         ),
     ]
     judge = ConvergenceJudge(ConvergenceConfig(max_iterations=10))
     verdict = judge.evaluate(history=history)
-    assert verdict.should_stop is True
-    assert verdict.level == LEVEL_QUALITY
-    assert "boom" in verdict.reason  # reason 含 failed gate message
-    assert "g2" in verdict.reason  # reason 含 failed gate name
+    assert verdict.should_stop is False
+    assert verdict.level == LEVEL_CONTINUE
 
 
-def test_convergence_judge_quality_gate_failure_triggers_stop() -> None:
-    """v2.3 Phase D-fix: FailingGate 触发 → judge.stop + reason 含 message.
-
-    这是 Orchestrator runtime smoke 暴露的核心 bug — fake_failing
-    'intentional failure for test' 必须出现在 judge.reason.
-    """
+def test_convergence_judge_quality_gate_failure_continues() -> None:
+    """2026-07-05 对标审计 P0-1: 单 gate 失败 → CONTINUE."""
     from auto_engineering.gates.base import Verdict
 
     history = [
@@ -199,16 +193,15 @@ def test_convergence_judge_quality_gate_failure_triggers_stop() -> None:
     ]
     judge = ConvergenceJudge(ConvergenceConfig(max_iterations=10))
     verdict = judge.evaluate(history=history)
-    assert verdict.should_stop is True
-    assert verdict.level == LEVEL_QUALITY
-    assert "intentional failure for test" in verdict.reason
-    assert "fake_failing" in verdict.reason
+    assert verdict.should_stop is False
+    assert verdict.level == LEVEL_CONTINUE
 
 
-def test_convergence_judge_quality_gate_failure_priority_over_stagnation() -> None:
-    """v2.3 Phase D-fix: 质量门失败时, 不应回退到停滞检测 (level=3 优先于 level=2).
+def test_convergence_judge_quality_gate_failure_falls_through_to_stagnation() -> None:
+    """2026-07-05 对标审计 P0-1: gate 失败 → 继续检查停滞.
 
-    即使同时满足停滞条件, 也必须返回 QUALITY (不是 STAGNANT).
+    之前错误: gate 失败返回 QUALITY STOP, 阻止了停滞检测.
+    参考 LangGraph: gate 失败后, judge 继续检查下一级 (停滞/语义).
     """
     from auto_engineering.gates.base import Verdict
 
@@ -227,13 +220,13 @@ def test_convergence_judge_quality_gate_failure_priority_over_stagnation() -> No
     ]
     judge = ConvergenceJudge(ConvergenceConfig(max_iterations=10))
     verdict = judge.evaluate(history=history)
-    assert verdict.level == LEVEL_QUALITY  # 不是 STAGNANT (2)
-    assert verdict.level != LEVEL_STAGNANT
-    assert "not passed" in verdict.reason
+    # gate 失败 → 回退到停滞检测 → STAGNANT
+    assert verdict.level == LEVEL_STAGNANT
+    assert verdict.should_stop is True
 
 
-def test_convergence_quality_gate_multiple_failed_includes_all_messages() -> None:
-    """v2.3 Phase D-fix: 多道 gate 失败时, reason 至少包含前 3 道 message."""
+def test_convergence_quality_gate_multiple_failed_continues() -> None:
+    """2026-07-05 对标审计 P0-1: 多道 gate 失败 → CONTINUE."""
     from auto_engineering.gates.base import Verdict
 
     history = [
@@ -249,12 +242,8 @@ def test_convergence_quality_gate_multiple_failed_includes_all_messages() -> Non
     ]
     judge = ConvergenceJudge(ConvergenceConfig(max_iterations=10))
     verdict = judge.evaluate(history=history)
-    assert verdict.should_stop is True
-    assert verdict.level == LEVEL_QUALITY
-    # 至少前 3 道 message 应在 reason 中
-    assert "err-1" in verdict.reason
-    assert "err-2" in verdict.reason
-    assert "err-3" in verdict.reason
+    assert verdict.should_stop is False
+    assert verdict.level == LEVEL_CONTINUE
 
 
 def test_convergence_semantic_satisfied_stops() -> None:
@@ -737,13 +726,11 @@ def test_round_history_gate_results_contains_verdict() -> None:
     assert history.gate_results["lint"].message == "syntax error at line 3"
 
 
-def test_convergence_judge_quality_failure_includes_message() -> None:
-    """ConvergenceJudge: Gate 失败时 judge.reason 应含 verdict.message (P0.4 + D-fix).
+def test_convergence_judge_quality_failure_continues_with_message_in_history() -> None:
+    """2026-07-05 对标审计 P0-1: gate 失败 → CONTINUE, gate 信息在 history 中.
 
-    v2.3 Phase D-fix: 修复前 _check_quality_gates 返回 None (不触发停止),
-    让下层判定 (停滞/语义) 接管, 违反了"质量门"的语义.
-    修复后: Gate 失败时 judge.reason 必须含 gate message + gate name,
-    且 should_stop=True (level=LEVEL_QUALITY).
+    judge 不再将 gate 失败混同收敛。gate 结果是 RoundHistory 的一部分,
+    供 orchestrator step 2i 使用 (gate 失败时阻止 judge 误判停止).
     """
     from auto_engineering.gates.base import Verdict
 
@@ -757,12 +744,11 @@ def test_convergence_judge_quality_failure_includes_message() -> None:
     ]
     judge = ConvergenceJudge(ConvergenceConfig(max_iterations=10))
     verdict = judge.evaluate(history=history)
-    # D-fix: 有 failed gate → 必须触发停止 (质量门是"门", 不通过应关)
-    assert verdict.should_stop is True
-    assert verdict.level == LEVEL_QUALITY
-    # 关键: reason 必须含 message + gate name (用户能查到失败原因)
-    assert "syntax error at line 3" in verdict.reason
-    assert "lint" in verdict.reason
+    # gate 失败 → 继续 (不触发 QUALITY STOP)
+    assert verdict.should_stop is False
+    assert verdict.level == LEVEL_CONTINUE
+    # gate 结果仍在 history 中供 orchestrator 使用
+    assert history[-1].gate_results["lint"].message == "syntax error at line 3"
 
 
 def test_round_history_gate_results_serialization_roundtrip() -> None:
@@ -827,16 +813,14 @@ def test_convergence_judge_quality_all_passed_uses_verdict_objects() -> None:
     assert "2" in verdict.reason
 
 
-def test_convergence_judge_quality_failure_reason_includes_verdict_message() -> None:
-    """ConvergenceJudge: 有 failed gate 时, reason 输出 message (P0.4 + D-fix).
+def test_convergence_judge_quality_mixed_continues() -> None:
+    """2026-07-05 对标审计 P0-1: 混合 pass+failed → CONTINUE.
 
-    v2.3 Phase D-fix: 修复前 _check_quality_gates 在 all_passed=False 时返回 None,
-    让 judge 落入停滞检测, 输出 '连续 2 轮产出无实质变化' 等错误信息.
-    修复后: 混合通过 + 失败 → judge.reason 必须含 failed gate 的 message.
+    gate 全部通过 → QUALITY STOP; gate 有失败 → CONTINUE.
+    参考 LangGraph: gate 是诊断, 不是收敛.
     """
     from auto_engineering.gates.base import Verdict
 
-    # 混合通过 + 失败 — D-fix 后 _check_quality_gates 直接触发 stop
     history = [
         RoundHistory(
             round_id=1,
@@ -848,12 +832,8 @@ def test_convergence_judge_quality_failure_reason_includes_verdict_message() -> 
     ]
     judge = ConvergenceJudge(ConvergenceConfig(max_iterations=10))
     verdict = judge.evaluate(history=history)
-    # D-fix: 触发 LEVEL_QUALITY (而不是 CONTINUE 或 STAGNANT)
-    assert verdict.should_stop is True
-    assert verdict.level == LEVEL_QUALITY
-    # reason 必须含 failed gate 的 message (用户能定位失败原因)
-    assert "undefined variable 'x'" in verdict.reason
-    assert "lint" in verdict.reason
+    assert verdict.should_stop is False
+    assert verdict.level == LEVEL_CONTINUE
 
 
 # ============================================================
@@ -1362,19 +1342,16 @@ class TestStageRouterIntegration:
         assert state.plan == "keep me"  # 未被清空
 
     def test_derive_status_with_real_engine_state(self) -> None:
-        """_derive_status 用真实 EngineState 派生 status.
+        """_derive_status 用真实 EngineState 派生 status (2026-07-05 修正).
 
-        验证 4 种判定:
+        验证 3 种判定:
         1. verdict=APPROVE → "completed"
-        2. round >= max_iterations → "completed" (通过 duck-type round 属性)
-        3. current_stage == "" → "completed"
-        4. else → "running"
+        2. current_stage == "" → "completed"
+        3. else → "running"
 
-        注: EngineState 本身无 round 字段, round 在 CheckpointEnvelope.
-        _derive_status 用 getattr(state, "round", 0) 防御性取值.
+        注: round 硬上限检查由 ConvergenceJudge._check_hard_limit 负责,
+        _derive_status 不再读 state.round (EngineState 无此字段).
         """
-        from types import SimpleNamespace
-
         from auto_engineering.engine.state import EngineState
         from auto_engineering.loop.stage_router import _derive_status
 
@@ -1382,15 +1359,13 @@ class TestStageRouterIntegration:
         state1 = EngineState(current_stage="critic", verdict="APPROVE")
         assert _derive_status(state1, max_iterations=10) == "completed"
 
-        # Case 2: round >= max → completed (用 SimpleNamespace 提供 round 字段)
-        state2 = SimpleNamespace(
-            current_stage="developer", verdict="MAJOR", round=10
-        )
+        # Case 2: stage=="" → completed
+        state2 = EngineState(current_stage="")
         assert _derive_status(state2, max_iterations=10) == "completed"
 
-        # Case 3: stage=="" → completed
-        state3 = EngineState(current_stage="")
-        assert _derive_status(state3, max_iterations=10) == "completed"
+        # Case 3: verdict=MAJOR + stage≠"" → running
+        state3 = EngineState(current_stage="developer", verdict="MAJOR")
+        assert _derive_status(state3, max_iterations=10) == "running"
 
         # Case 4: else → running
         state4 = EngineState(current_stage="developer", verdict="MAJOR")

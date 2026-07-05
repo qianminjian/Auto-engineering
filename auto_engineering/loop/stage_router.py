@@ -281,12 +281,10 @@ def _derive_status(state: Any, max_iterations: int) -> str:
     # 1. APPROVE → 完成
     if getattr(state, "verdict", "") == "APPROVE":
         return "completed"
-    # 2. round >= max → 完成
-    current_round = getattr(state, "round", 0)
-    if current_round >= max_iterations:
-        return "completed"
-    # 3. stage == "" → 完成 (未启动)
+    # 2. stage == "" → 完成 (未启动)
     if getattr(state, "current_stage", "") == "":
         return "completed"
-    # 4. else → running
+    # 3. else → running
+    # 注: round 计数由 orchestrator 管理 (非 state.round, EngineState 无此字段)
+    # max_iterations 硬上限由 ConvergenceJudge._check_hard_limit 检查
     return "running"

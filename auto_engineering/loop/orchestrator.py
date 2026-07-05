@@ -238,6 +238,13 @@ class Orchestrator:
                 if self.config.stage_router is not None
                 else StageRouter()
             )
+        # 2026-07-05 修复 (对标审计 P0-4): 注入 requirement 到 semantic_evaluator,
+        # 替代 "(see task outcomes)" 硬编码占位符.
+        if (
+            self.config.semantic_evaluator is not None
+            and hasattr(self.config.semantic_evaluator, "requirement")
+        ):
+            self.config.semantic_evaluator.requirement = self.requirement
 
     def _build_runtime_executor(self, runtime: AgentRuntime) -> TaskExecutor:
         """构建从 AgentRuntime 调度的 executor.
@@ -837,20 +844,17 @@ class Orchestrator:
         # next_stage is None: judge 判定
         verdict = judge.evaluate(history=list(self.history))
         if verdict.should_stop:
-            # 2026-07-04 修复 (Bug 3 prismscan 方案 C):
-            # 即便 judge 给 QUALITY_PASS (level=3), 检查最近一轮 gate_summary:
-            # - 任意 gate failed → 不停止, continue (让 developer 修 gate 失败的项)
-            # - 所有 gate passed → 正常停止
-            # 这是反向语义的根本防御: 即便 critic LLM 错给 APPROVE,
-            # gate fail 也会拦住继续修, 而不是立刻停.
+            # 2026-07-05 修复 (对标审计 P0-1): judge 已修正 — gate 失败返回 None
+            # 而非 STOP. 此处 gate 防御仅处理语义/停滞误判场景 (LLM 错判收敛
+            # 但 gate 实际失败). gate 信号 > LLM 信号 (非 LLM 真实执行输出).
             latest_gates = self._collect_latest_gates()
-            if verdict.level == 3 and latest_gates and not self._gates_all_passed(latest_gates):
-                # gate fail 拦住 — 不升级 verdict, 继续
+            if latest_gates and not self._gates_all_passed(latest_gates):
                 self._step_2i_log_gate_block(verdict, latest_gates, current_stage)
-                return False  # 不 break
+                return False  # gate fail 拦住, 继续循环
             self.verdict = verdict
             return True
-        return True  # unexpected → 兜底 break (走 step 3)
+        # judge 返回 CONTINUE → 循环继续 (下一轮或退出)
+        return False
 
     def _collect_latest_gates(self) -> dict:
         """收集最近一轮 RoundHistory 的 gate_results (dict[str, Verdict]).
@@ -900,7 +904,7 @@ class Orchestrator:
         self,
         state: "EngineState | None",
         history: deque[RoundHistory],
-        latest_gates: dict[str, bool],
+        latest_gates: dict[str, Any],
         max_iter: int,
         round_id: int,
     ) -> tuple[list[RoundHistory], ConvVerdict]:
