@@ -629,6 +629,7 @@ class Orchestrator:
             round_id=round_id,
             gates=self.config.gates,
             project_root=project_root,
+            stage=current_stage,
         )
         from auto_engineering.loop.task_factory import _apply_outcome_to_state
         for outcome in round_result.outcomes:
