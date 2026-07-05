@@ -156,6 +156,7 @@ def _build_default_gates(manifest: dict | None = None) -> list["Gate"]:
     from auto_engineering.gates.safety import SafetyGate
     from auto_engineering.gates.test import TestGate
     from auto_engineering.gates.type_check import TypeCheckGate
+    from auto_engineering.gates.quality_gate import TDDGate, StageTransitionGate
 
     if manifest is not None:
         # v5.0 §IL-AC-02: 用 manifest 构造 lint/type_check/test
@@ -170,10 +171,12 @@ def _build_default_gates(manifest: dict | None = None) -> list["Gate"]:
 
     return [
         SafetyGate(use_gitleaks=False),
+        StageTransitionGate(),
         lint_gate,
         type_check_gate,
         ContractGate(),
         test_gate,
+        TDDGate(),
         CoverageGate(),
         BuildGate(),
     ]

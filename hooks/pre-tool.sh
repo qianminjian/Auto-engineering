@@ -52,6 +52,21 @@ DENYLIST_PATTERNS=(
   '> /etc/(passwd|shadow|sudoers)'  # system file overwrite
 )
 
+# --- Agent Working Agreements (v5.1, 借鉴业界 pre-commit "No Escape" 哲学) ---
+# 来源: Industry pre-commit hook enforcement 2024-2025
+# - "No Escape" 哲学: --no-verify 视为事故
+# - Agent Working Agreements: AI agent 禁止绕过质量门禁
+# - Three-Layer Defense: hook → CI → review
+AGENT_RULES=(
+  'git commit.*--no-verify'       # 禁止跳过 pre-commit hooks
+  'git commit.*-n '               # git commit -n = --no-verify
+  'HUSKY=0'                       # 禁止禁用 husky hooks
+  'SKIP=pre-commit'               # 禁止跳过 pre-commit
+  '--no-gpg-sign'                 # 禁止跳过签名
+  'git push.*--force'             # 禁止 force push (需显式确认)
+  'git push.*-f '                 # git push -f = --force
+)
+
 check_denylist() {
   local input="$1"
   for pat in "${DENYLIST_PATTERNS[@]}"; do
@@ -59,6 +74,16 @@ check_denylist() {
     # (Claude Code wraps grep with ugrep which treats () specially)
     if echo "$input" | grep -qF -- "$pat" 2>/dev/null || echo "$input" | /usr/bin/grep -qE -- "$pat" 2>/dev/null; then
       echo "{\"decision\":\"block\",\"reason\":\"denylist pattern matched: $pat\"}"
+      exit 0
+    fi
+  done
+}
+
+check_agent_rules() {
+  local input="$1"
+  for pat in "${AGENT_RULES[@]}"; do
+    if echo "$input" | /usr/bin/grep -qE -- "$pat" 2>/dev/null; then
+      echo "{\"decision\":\"block\",\"reason\":\"Agent Working Agreement violation (No Escape): $pat. Use safe alternatives.\"}"
       exit 0
     fi
   done
@@ -105,6 +130,7 @@ case "$TOOL_NAME" in
   Bash)
     ARG=$(extract_arg "command")
     check_denylist "$ARG"
+    check_agent_rules "$ARG"
     ;;
   Edit|Write|MultiEdit|Read)
     ARG=$(extract_arg "file_path")

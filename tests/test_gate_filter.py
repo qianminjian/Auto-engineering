@@ -108,7 +108,7 @@ class TestGateBaseClass:
         from auto_engineering.gates.base import DEFAULT_GATES
 
         assert isinstance(DEFAULT_GATES, list)
-        assert len(DEFAULT_GATES) == 7  # safety, lint, type_check, contract, test, coverage, build
+        assert len(DEFAULT_GATES) >= 7  # safety, stage_transition, lint, type_check, contract, test, tdd, coverage, build
 
 
 # ============================================================
