@@ -311,10 +311,19 @@ class Orchestrator:
         self,
         cancellation: CancellationToken | None = None,
     ) -> list[RoundHistory]:
-        """v5.0 M4: 12 步主循环 (B7.1) — 拆 8 子方法 (P1-1 单一职责).
+        """v5.1: 12 步主循环 — tick/after_tick 分离 (借鉴 LangGraph PregelLoop).
 
-        主体仅保留: step 1 初始化 + while 主框架 + 调度 8 个 _step_* 子方法.
-        流程契约不变 (12 步), 仅把各 step 抽到独立方法以降低认知负担.
+        借鉴 LangGraph PregelLoop.tick() / after_tick() 分离模式 (pregel/_loop.py:592-691):
+          - tick():        任务准备 + 前置检查 + Agent 执行 (Steps 2a-2e)
+          - after_tick():  后置检查 + 状态更新 + 收敛判定 + 持久化 (Steps 2f-2i)
+
+        LangGraph 原文: tick() → check limit → prepare tasks → check done →
+          apply writes → execute; after_tick() → collect writes → apply_writes →
+          update channels → checkpoint.
+
+        本实现映射:
+          _tick()        → 2a cancel → 2b route → 2c select → 2d PRE → 2e execute
+          _after_tick()  → 2f POST → 2g semantic → 2h MAJOR → 2i judge + checkpoint
 
         Args:
             cancellation: 可选 CancellationToken
@@ -329,84 +338,22 @@ class Orchestrator:
         # ===== step 1: 初始化 =====
         max_iter, project_root, guardrail_chain = self._step_1_init()
 
-        # ===== step 2: 主循环 — 8 子方法调度 =====
+        # ===== step 2: 主循环 — tick/after_tick =====
         round_id = 0
         while round_id < max_iter:
             round_id += 1
 
-            # 2a 取消检查 → 不取消继续, 取消立即 return
-            if self._step_2a_cancel(cancellation):
-                return list(self.history)
-
-            # 2b state.current_stage=="" → router.next 初始化
-            self._step_2b_route_init(self._state, self._router)
-            # 2026-07-04 修复 (Issue #12, 70 分): fallback 改 "architect" 而非 "developer"
-            # (按 T1 转换表, 空 current_stage → architect). 之前 "developer" 错,
-            # 可能跳过 architect 阶段直接跑 developer task (违反 stage-sequenced 流程).
-            current_stage = self._state.current_stage or "architect"
-
-            # 2c 选 round_tasks (按 stage 过滤 + auto_gen 兜底)
-            round_tasks, advance = self._step_2c_select_tasks(current_stage)
-            # v5.1 JSONL: 空 tasks + architect stage → 创建合成 task 触发 JSONL 规划
-            if not round_tasks and current_stage == "architect" and advance:
-                in_jsonl = os.environ.get("AE_JSONL_MODE") == "1"
-                if in_jsonl or self.config.agent_runtime is not None:
-                    from auto_engineering.loop.plan import Task as _Task
-                    round_tasks = [_Task(
-                        id="architect-synthetic",
-                        title="Generate implementation plan",
-                        description=f"Analyze requirement: {self.requirement}",
-                        expected_output="batch_plan with developer tasks",
-                        role="architect",
-                    )]
-                    advance = False
-            if not round_tasks and advance:
-                continue
-            if not round_tasks:
-                break  # 到达 stage 流终点 → 走 step 3
-
-            # 2d PRE Guardrail
-            pre_action = self._step_2d_guardrail_pre(
-                guardrail_chain, current_stage, self._state
+            round_result, current_stage, action = await self._tick(
+                round_id, max_iter, cancellation, guardrail_chain, project_root,
             )
-            if pre_action == "stop":
-                # 2026-07-04 修复 (Bug 3): guardrail stop 应视为 HARD_LIMIT
-                # (硬阻止, 用户输入或安全违规), 不再默认 level=3 PASS.
-                self.verdict = ConvVerdict.stop(level=4, reason="PRE guardrail stop")
-                return list(self.history)
-            if pre_action == "retry":
-                continue
+            if action == "break":
+                break
+            if action == "advance":
+                continue  # skip after_tick, 下一轮 while
 
-            # 2e Agent 执行
-            round_result = await self._step_2e_run_agent(
-                current_stage, round_tasks, self._state,
-                project_root, cancellation, round_id,
-            )
-
-            # 2f POST Guardrail
-            post_action = self._step_2f_guardrail_post(
-                guardrail_chain, current_stage, self._state
-            )
-            if post_action == "stop":
-                # 2026-07-04 修复 (Bug 3): 同 PRE, POST guardrail stop 用 level=4.
-                self.verdict = ConvVerdict.stop(level=4, reason="POST guardrail stop")
-                return list(self.history)
-            if post_action == "retry":
-                continue
-
-            # 2g semantic 评估 (critic 阶段)
-            await self._step_2g_semantic(
-                self.config.semantic_evaluator, current_stage, round_result,
-            )
-            self.round_results.append(round_result)
-            self.history.extend(round_result.history)
-
-            # 2h MAJOR 计数 (critic 阶段)
-            self._step_2h_major_count(self._state, self._state.verdict, current_stage)
-
-            # 2i StageRouter.next + Judge.evaluate + 退出条件
-            if self._step_2i_route_and_judge(
-                self._router, self.judge, current_stage, self._state,
+            # action == "execute": proceed to after_tick
+            if await self._after_tick(
+                round_result, current_stage, guardrail_chain, round_id,
             ):
                 break
 
@@ -422,7 +369,135 @@ class Orchestrator:
         return list(self.history)
 
     # ========================================================================
-    # v5.0 P1-1: run() 拆 8 子方法 (单一职责) — run() 主体只调度, 细节在子方法
+    # v5.1 tick/after_tick — 借鉴 LangGraph PregelLoop (pregel/_loop.py:592-691)
+    # ========================================================================
+    # tick():      check limit → prepare tasks → check done → execute (Steps 2a-2e)
+    # after_tick(): collect writes → apply_writes → update channels → checkpoint
+    #              (Steps 2f-2i)
+    # ========================================================================
+
+    async def _tick(
+        self,
+        round_id: int,
+        max_iter: int,
+        cancellation: CancellationToken | None,
+        guardrail_chain: "GuardrailChain | None",
+        project_root: Path,
+    ) -> tuple["RoundResult | None", str, str]:
+        """tick 阶段: 准备任务 + 前置检查 + Agent 执行 (Steps 2a-2e).
+
+        借鉴 LangGraph PregelLoop.tick() (pregel/_loop.py:592-691):
+          1. check iteration limit → 2a cancel check
+          2. prepare_next_tasks → 2b route init + 2c select tasks
+          3. if no tasks → done (break/advance)
+          4. apply pending writes → (本实现无 pending writes)
+          5. check interrupt_before → 2d PRE Guardrail
+          6. execute tasks → 2e run agent
+
+        Returns:
+            (round_result, current_stage, action):
+            - "execute": round_result 有效, 进入 after_tick
+            - "advance": 跳过 after_tick, while loop 继续 (空 stage 推送)
+            - "break": 退出 while loop (cancel/guardrail stop/空 tasks)
+        """
+        # 2a 取消检查
+        if self._step_2a_cancel(cancellation):
+            return None, "", "break"
+
+        # 2b 路由初始化
+        self._step_2b_route_init(self._state, self._router)
+        current_stage = self._state.current_stage or "architect"
+
+        # 2c 选任务
+        round_tasks, advance = self._step_2c_select_tasks(current_stage)
+        if not round_tasks and current_stage == "architect" and advance:
+            in_jsonl = os.environ.get("AE_JSONL_MODE") == "1"
+            if in_jsonl or self.config.agent_runtime is not None:
+                from auto_engineering.loop.plan import Task as _Task
+                round_tasks = [_Task(
+                    id="architect-synthetic",
+                    title="Generate implementation plan",
+                    description=f"Analyze requirement: {self.requirement}",
+                    expected_output="batch_plan with developer tasks",
+                    role="architect",
+                )]
+                advance = False
+        if not round_tasks and advance:
+            return None, current_stage, "advance"
+        if not round_tasks:
+            return None, current_stage, "break"
+
+        # 2d PRE Guardrail
+        pre_action = self._step_2d_guardrail_pre(
+            guardrail_chain, current_stage, self._state
+        )
+        if pre_action == "stop":
+            self.verdict = ConvVerdict.stop(level=4, reason="PRE guardrail stop")
+            return None, current_stage, "break"
+        if pre_action == "retry":
+            return None, current_stage, "advance"
+
+        # 2e Agent 执行
+        round_result = await self._step_2e_run_agent(
+            current_stage, round_tasks, self._state,
+            project_root, cancellation, round_id,
+        )
+        return round_result, current_stage, "execute"
+
+    async def _after_tick(
+        self,
+        round_result: "RoundResult | None",
+        current_stage: str,
+        guardrail_chain: "GuardrailChain | None",
+        round_id: int,
+    ) -> bool:
+        """after_tick 阶段: 后置检查 + 状态更新 + 收敛判定 + 持久化 (Steps 2f-2i).
+
+        借鉴 LangGraph PregelLoop.after_tick() (pregel/_loop.py:676-691):
+          1. collect writes from tasks → 2f POST Guardrail + 2g semantic
+          2. apply_writes → _apply_outcome_to_state (in _step_2e)
+          3. update channels → history + round_results
+          4. output values → 2h MAJOR count
+          5. interrupt_after → 2i judge + checkpoint
+          6. _put_checkpoint → _save_checkpoint
+
+        Returns:
+            True → break main loop, False → continue
+        """
+        if round_result is None:
+            return True  # tick was skipped
+
+        assert self._state is not None and self._router is not None
+
+        # 2f POST Guardrail
+        post_action = self._step_2f_guardrail_post(
+            guardrail_chain, current_stage, self._state
+        )
+        if post_action == "stop":
+            self.verdict = ConvVerdict.stop(level=4, reason="POST guardrail stop")
+            return True
+        if post_action == "retry":
+            return False  # continue
+
+        # 2g semantic 评估 (critic 阶段)
+        await self._step_2g_semantic(
+            self.config.semantic_evaluator, current_stage, round_result,
+        )
+        self.round_results.append(round_result)
+        self.history.extend(round_result.history)
+
+        # 2h MAJOR 计数 (critic 阶段)
+        self._step_2h_major_count(self._state, self._state.verdict, current_stage)
+
+        # 2i StageRouter.next + Judge.evaluate + 退出条件 + checkpoint
+        should_break = self._step_2i_route_and_judge(
+            self._router, self.judge, current_stage, self._state,
+        )
+        self._save_checkpoint(round_id=round_id, step=2, tag="after_tick")
+        return should_break
+
+    # ========================================================================
+    # v5.0 P1-1: run() 拆 8 子方法 (单一职责) — 由 tick/after_tick 调度
     # ========================================================================
 
     def _step_1_init(self) -> tuple[int, Path, "GuardrailChain | None"]:

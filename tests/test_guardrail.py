@@ -568,6 +568,55 @@ class TestGuardrailChain:
         # post/developer → G3 + G4 + G5
         assert len([g for g in chain.guardrails if g.timing == "post" and "developer" in g.applies_to_stages]) == 3
 
+    def test_default_factory_returns_5_guardrails(self) -> None:
+        """GuardrailChain.default() 返回 5 Guardrail 链 (v5.1)."""
+        chain = GuardrailChain.default()
+        assert len(chain.guardrails) == 5
+        names = [type(g).__name__ for g in chain.guardrails]
+        assert "RequirementValid" in names
+        assert "PlanExists" in names
+        assert "GitDiffExists" in names
+        assert "TestsPass" in names
+        assert "GitClean" in names
+
+    def test_default_factory_same_structure_as_manual(self) -> None:
+        """GuardrailChain.default() 与手动构造的 chain 行为一致."""
+        default_chain = GuardrailChain.default()
+        manual_chain = GuardrailChain([
+            RequirementValid(),
+            PlanExists(),
+            GitDiffExists(),
+            TestsPass(),
+            GitClean(),
+        ])
+        # 同数量
+        assert len(default_chain.guardrails) == len(manual_chain.guardrails)
+        # 同类型
+        assert [type(g).__name__ for g in default_chain.guardrails] == [
+            type(g).__name__ for g in manual_chain.guardrails
+        ]
+
+    def test_default_chain_pre_check_architect(self) -> None:
+        """default() chain: pre/architect → RequirementValid 检查 requirement."""
+        chain = GuardrailChain.default()
+        # 空 requirement → block
+        result = chain.check("pre", "architect", EngineState(requirement=""))
+        assert result.action == "block"
+        # 有效 requirement → pass
+        result = chain.check("pre", "architect", EngineState(requirement="valid requirement"))
+        assert result.action == "pass"
+
+    def test_default_chain_post_check_architect(self) -> None:
+        """default() chain: post/architect → PlanExists 检查 plan+file_list."""
+        chain = GuardrailChain.default()
+        # 缺 plan + file_list → retry
+        result = chain.check("post", "architect", EngineState(requirement="x"))
+        assert result.action == "retry"
+        # 完整产出 → pass
+        state = EngineState(requirement="x", plan="p", file_list=["a.py"])
+        result = chain.check("post", "architect", state)
+        assert result.action == "pass"
+
 
 # ---------- _handle_guardrail_result 4 态 + retry 计数 ----------
 

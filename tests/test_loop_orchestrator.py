@@ -1498,3 +1498,66 @@ class TestOrchestratorStepHelpers:
                 f"{name} 应在 run() 期间至少被调用 1 次, 实际: {call_counts[name]}"
             )
 
+
+class TestGuardrailIntegration:
+    """v5.1 P1-6: GuardrailChain.default() 在 Orchestrator 中的集成测试.
+
+    参考: 业界 Three-Layer Defense — hook → CI → review.
+    GuardrailChain.default() 是 Layer 1 (pre-tool) 在 Python 侧的对应.
+    """
+
+    @pytest.mark.asyncio
+    async def test_orchestrator_runs_with_default_guardrail_chain(self, tmp_path: Path):
+        """Orchestrator 使用 GuardrailChain.default() 运行, 5 个 guardrail 都注册."""
+        from auto_engineering.loop.convergence import ConvergenceConfig
+        from auto_engineering.loop.guardrail import GuardrailChain
+        from auto_engineering.loop.orchestrator import Orchestrator, OrchestratorConfig
+
+        async def executor(task, ctx):
+            return TaskOutcome(task_id=task.id, status="completed", output={})
+
+        task = make_task("t1")
+        config = OrchestratorConfig(
+            convergence_config=ConvergenceConfig(max_iterations=1, stagnation_threshold=10),
+            guardrail_chain=GuardrailChain.default(),
+        )
+        orch = Orchestrator(
+            requirement="ok requirement",
+            tasks=[task],
+            executor=executor,
+            config=config,
+        )
+        # GuardrailChain.default() 不应抛异常 (5 个 guardrail 正确注册)
+        assert orch.config.guardrail_chain is not None
+        assert len(orch.config.guardrail_chain.guardrails) == 5
+        history = await orch.run()
+        # 可能因为 G3 retry 导致 0 轮, 但不应 crash
+        assert isinstance(history, list)
+
+    @pytest.mark.asyncio
+    async def test_orchestrator_guardrail_stops_on_block(self):
+        """PRE guardrail block 应立即停止 (G1 RequirementValid 拦截空 requirement)."""
+        from auto_engineering.loop.convergence import ConvergenceConfig
+        from auto_engineering.loop.guardrail import GuardrailChain
+        from auto_engineering.loop.orchestrator import Orchestrator, OrchestratorConfig
+
+        async def executor(task, ctx):
+            return TaskOutcome(task_id=task.id, status="completed", output={})
+
+        task = make_task("t1")
+        config = OrchestratorConfig(
+            convergence_config=ConvergenceConfig(max_iterations=1, stagnation_threshold=10),
+            guardrail_chain=GuardrailChain.default(),
+        )
+        orch = Orchestrator(
+            requirement="",  # 空 requirement → 应被 G1 拦截
+            tasks=[task],
+            executor=executor,
+            config=config,
+        )
+        history = await orch.run()
+        # G1 RequirementValid block → 立即 stop
+        assert orch.verdict is not None
+        assert orch.verdict.should_stop
+        assert orch.verdict.level == 4  # HARD_LIMIT (guardrail block)
+
