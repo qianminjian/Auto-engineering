@@ -5,7 +5,7 @@
 
 参考 LangGraph StateGraph state_schema(简化: 单一 dataclass,无 channel 类型/reducer).
 P0 修复: dataclass 默认 factory 不可 JSON 序列化 → to_dict/from_dict 用 asdict.
-v5.0 M1: 扩展到 17 字段(+batch_plan as list[dict] / +majors_in_a_row / +total_majors / +thread_id).
+v5.0 M1: 扩展到 17 字段. v5.1: +suggested_fix → 18 字段.
 """
 
 import uuid
@@ -42,10 +42,9 @@ class EngineState:
         - majors_in_a_row: int (连续 MAJOR 计数, §B1.1 字段 16)
         - total_majors: int (累计 MAJOR 计数, §B1.1 字段 17)
         - thread_id: str (UUID v4, §B1.1 字段 15)
-    Note (2026-07-04): 17 → 18 字段 (+suggested_fix, Self-Refine 原则 1 结构化 patch).
-    Note (2026-07-04 /code-review Issue #9, 95 分): §B1.1 表历史列含 round/round_history,
-    实际 EngineState 用 current_stage 替代 round + suggested_fix 替代 round_history.
-    设计文档 B1.1 表待下次大版本同步 (字段集已漂移).
+    Note (2026-07-05): 18 字段 — 无 round 字段 (round 由 orchestrator 局部变量管理,
+    硬上限由 ConvergenceJudge._check_hard_limit 检查).
+    设计文档 B1.1 表与代码字段已同步.
     """
 
     requirement: str = ""
