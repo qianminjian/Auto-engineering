@@ -98,6 +98,9 @@ class Task:
     estimated_minutes: int = 30
     status: TaskStatus = TaskStatus.PENDING
     output: Any = None
+    # v5.5 Phase 3: batch_plan 扩展字段 (verification + steps)
+    verification: str | None = None
+    steps: list[str] | None = None
     # 保留旧字段名 (向后兼容)
     agent_type: str = "developer"
     depends_on: list[str] = field(default_factory=list)

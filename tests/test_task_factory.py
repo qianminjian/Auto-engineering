@@ -203,8 +203,35 @@ def test_tasks_from_batch_plan_multiple_batches_adds_critic_with_all_deps() -> N
     assert plan.requirement == "multi-batch"
 
 
-# ============================================================
-# apply_outcome_to_state — 3 role × 2 边界 = 6+ 用例
+def test_tasks_from_batch_plan_with_verification_and_steps() -> None:
+    """v5.5: batch_plan 含 verification + steps → Task 对象携带这些字段."""
+    batch_plan = [{
+        "id": "batch-1",
+        "description": "实现登录模块",
+        "files": ["src/login.py"],
+        "depends_on": [],
+        "verification": "pytest tests/test_login.py -v --no-cov",
+        "steps": ["1. 创建 test_login.py", "2. 实现 login.py", "3. 运行测试"],
+    }]
+    plan = tasks_from_batch_plan(batch_plan, requirement="login")
+    dev = plan.tasks[0]
+    assert dev.id == "batch-1"
+    assert dev.verification == "pytest tests/test_login.py -v --no-cov"
+    assert dev.steps == ["1. 创建 test_login.py", "2. 实现 login.py", "3. 运行测试"]
+
+
+def test_tasks_from_batch_plan_without_verification_and_steps_defaults() -> None:
+    """batch_plan 不含 verification/steps → Task 默认空值."""
+    batch_plan = [{
+        "id": "batch-1",
+        "description": "实现简单功能",
+        "files": [],
+        "depends_on": [],
+    }]
+    plan = tasks_from_batch_plan(batch_plan, requirement="simple")
+    dev = plan.tasks[0]
+    assert dev.verification is None
+    assert dev.steps is None
 # ============================================================
 
 

@@ -65,6 +65,9 @@ def tasks_from_batch_plan(
             role="developer",  # 硬编码: batch_plan 仅描述 developer 任务 (v5.0 §B7.3)
             target_files=frozenset(batch.get("files", [])),
             depends_on=list(batch.get("depends_on", [])),
+            # v5.5 Phase 3: 消费 Architect 产出的 verification + steps 字段
+            verification=batch.get("verification"),
+            steps=batch.get("steps"),
         ))
     # 追加 critic task (审查所有 developer 产出)
     tasks.append(Task(
