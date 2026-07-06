@@ -225,6 +225,7 @@ def run_doctor_checks(project_root: Path) -> tuple[int, list[tuple[bool, str]]]:
     results.append(_check_git())
     results.append(_check_sqlite3())
     results.append(_check_plugin_mode())
+    results.append(_check_api_key())
     results.append(_check_ae_state(project_root))
     results.append(_check_init_manifest(project_root))
     failed = sum(1 for ok, _ in results if not ok)

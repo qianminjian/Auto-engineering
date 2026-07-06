@@ -2,16 +2,16 @@
 
 设计参考: v5.0-Design-Loop.md §B1.7 (Plan 方法)
                    + §B2.12b (_topological_layers Kahn 变体)
-                   + §B7.2 (_apply_outcome_to_state)
-                   + §B7.3 (_tasks_from_batch_plan)
+                   + §B7.2 (apply_outcome_to_state)
+                   + §B7.3 (tasks_from_batch_plan)
 
 测试原则 (per pytest-memory-management.md):
 - 单文件 pytest --no-cov --timeout=60
 - Plan.get_tasks_by_stage: 4 用例 (architect / developer / critic / 无匹配)
 - Plan.parallelism_groups: 3 用例 (单 task / 多并行 / 链式依赖)
 - DAG 环检测: 1 用例 (raises ConflictError)
-- _tasks_from_batch_plan: 3 用例 (空 batch / 单 batch / 多 batch + critic 追加)
-- _apply_outcome_to_state: 3 role × 2 边界 (完整字段 / 部分字段)
+- tasks_from_batch_plan: 3 用例 (空 batch / 单 batch / 多 batch + critic 追加)
+- apply_outcome_to_state: 3 role × 2 边界 (完整字段 / 部分字段)
 """
 
 from __future__ import annotations
@@ -26,8 +26,8 @@ from auto_engineering.loop.plan import (
 )
 from auto_engineering.loop.round import TaskOutcome
 from auto_engineering.loop.task_factory import (
-    _apply_outcome_to_state,
-    _tasks_from_batch_plan,
+    apply_outcome_to_state,
+    tasks_from_batch_plan,
 )
 
 
@@ -146,13 +146,13 @@ def test_parallelism_groups_dag_cycle_raises_conflict_error() -> None:
 
 
 # ============================================================
-# _tasks_from_batch_plan — 3 用例
+# tasks_from_batch_plan — 3 用例
 # ============================================================
 
 
 def test_tasks_from_batch_plan_empty_batch_returns_critic_only() -> None:
     """空 batch_plan → 只有 critic-review task."""
-    plan = _tasks_from_batch_plan([], requirement="req-1")
+    plan = tasks_from_batch_plan([], requirement="req-1")
     assert len(plan.tasks) == 1
     assert plan.tasks[0].id == "critic-review"
     assert plan.tasks[0].role == "critic"
@@ -167,7 +167,7 @@ def test_tasks_from_batch_plan_single_batch_returns_dev_plus_critic() -> None:
         "files": ["src/foo.py"],
         "depends_on": [],
     }]
-    plan = _tasks_from_batch_plan(batch_plan, requirement="实现 foo")
+    plan = tasks_from_batch_plan(batch_plan, requirement="实现 foo")
     assert len(plan.tasks) == 2
     # developer task
     dev = plan.tasks[0]
@@ -190,7 +190,7 @@ def test_tasks_from_batch_plan_multiple_batches_adds_critic_with_all_deps() -> N
         {"id": "b2", "description": "d2", "files": [], "depends_on": ["b1"]},
         {"id": "b3", "description": "d3", "files": [], "depends_on": ["b1"]},
     ]
-    plan = _tasks_from_batch_plan(batch_plan, requirement="multi-batch")
+    plan = tasks_from_batch_plan(batch_plan, requirement="multi-batch")
     assert len(plan.tasks) == 4
     # 前 3 个都是 developer
     for i in range(3):
@@ -204,7 +204,7 @@ def test_tasks_from_batch_plan_multiple_batches_adds_critic_with_all_deps() -> N
 
 
 # ============================================================
-# _apply_outcome_to_state — 3 role × 2 边界 = 6+ 用例
+# apply_outcome_to_state — 3 role × 2 边界 = 6+ 用例
 # ============================================================
 
 
@@ -222,7 +222,7 @@ def test_apply_outcome_architect_writes_all_four_fields() -> None:
             "contracts": {"b1": "契约 X"},
         },
     )
-    _apply_outcome_to_state(state, outcome)
+    apply_outcome_to_state(state, outcome)
     assert state.plan == "## 计划\n实现 foo"
     assert state.file_list == ["src/foo.py", "tests/test_foo.py"]
     assert state.batch_plan == [{"id": "b1"}]
@@ -238,7 +238,7 @@ def test_apply_outcome_architect_partial_fields_leaves_other_unchanged() -> None
         task_role="architect",
         output={"plan": "仅 plan"},
     )
-    _apply_outcome_to_state(state, outcome)
+    apply_outcome_to_state(state, outcome)
     assert state.plan == "仅 plan"
     # 其他字段维持 EngineState 默认
     assert state.file_list == []
@@ -255,13 +255,13 @@ def test_apply_outcome_developer_writes_all_three_fields() -> None:
         task_role="developer",
         output={
             "files_changed": ["src/foo.py"],
-            "commit_hash": "abc1234",
+            "commit_hash": "a" * 40,
             "test_results": {"passed": 10, "failed": 0, "errors": 0},
         },
     )
-    _apply_outcome_to_state(state, outcome)
+    apply_outcome_to_state(state, outcome)
     assert state.files_changed == ["src/foo.py"]
-    assert state.commit_hash == "abc1234"
+    assert state.commit_hash == "a" * 40
     assert state.test_results == {"passed": 10, "failed": 0, "errors": 0}
 
 
@@ -277,7 +277,7 @@ def test_apply_outcome_developer_partial_fields_no_keyerror() -> None:
         task_role="developer",
         output={"files_changed": ["src/bar.py"]},
     )
-    _apply_outcome_to_state(state, outcome)
+    apply_outcome_to_state(state, outcome)
     # 只覆盖了 files_changed
     assert state.files_changed == ["src/bar.py"]
     # commit_hash 和 test_results 因 outcome 中无对应 key → 不变
@@ -298,7 +298,7 @@ def test_apply_outcome_critic_writes_all_three_fields() -> None:
             "critic_feedback": "ok",
         },
     )
-    _apply_outcome_to_state(state, outcome)
+    apply_outcome_to_state(state, outcome)
     assert state.verdict == "APPROVE"
     assert state.findings == [{"severity": "minor", "msg": "f1"}]
     assert state.critic_feedback == "ok"
@@ -315,7 +315,7 @@ def test_apply_outcome_critic_partial_fields_leaves_others_unchanged() -> None:
         task_role="critic",
         output={"verdict": "MAJOR"},
     )
-    _apply_outcome_to_state(state, outcome)
+    apply_outcome_to_state(state, outcome)
     assert state.verdict == "MAJOR"
     # 缺失字段不变
     assert state.findings == [{"old": "value"}]

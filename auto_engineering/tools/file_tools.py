@@ -7,10 +7,13 @@ P1.5: WriteFileTool/EditFileTool 支持 project_root 白名单验证.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any, ClassVar
 
 from .base import BaseTool, ToolResult
+
+_logger = logging.getLogger("ae.tools.file_tools")
 
 
 class ReadFileTool(BaseTool):
@@ -34,10 +37,8 @@ class ReadFileTool(BaseTool):
     async def execute(self, **kwargs) -> ToolResult:
         file_path = kwargs.get("file_path", "")
 
-        # P1-C: 白名单验证
-        safe, err = self._is_path_safe(file_path)
-        if not safe:
-            return ToolResult(success=False, content="", error=err)
+        if err_result := self._validate_path(file_path):
+            return err_result
 
         path = Path(file_path)
         offset = max(1, int(kwargs.get("offset", 1)))
@@ -51,6 +52,7 @@ class ReadFileTool(BaseTool):
             selected = lines[offset - 1 : offset - 1 + limit]
             return ToolResult(success=True, content="\n".join(selected))
         except Exception as exc:
+            _logger.warning("ReadFileTool 失败: %s", exc, exc_info=True)
             return ToolResult(success=False, content="", error=str(exc))
 
 
@@ -75,10 +77,8 @@ class WriteFileTool(BaseTool):
         file_path = kwargs.get("file_path", "")
         content = kwargs.get("content", "")
 
-        # P1.5: 白名单验证
-        safe, err = self._is_path_safe(file_path)
-        if not safe:
-            return ToolResult(success=False, content="", error=err)
+        if err_result := self._validate_path(file_path):
+            return err_result
 
         path = Path(file_path)
         try:
@@ -86,6 +86,7 @@ class WriteFileTool(BaseTool):
             path.write_text(content, encoding="utf-8")
             return ToolResult(success=True, content=f"Wrote {len(content)} bytes to {path}")
         except Exception as exc:
+            _logger.warning("WriteFileTool 失败: %s", exc, exc_info=True)
             return ToolResult(success=False, content="", error=str(exc))
 
 
@@ -112,10 +113,8 @@ class EditFileTool(BaseTool):
         old = kwargs.get("old_string", "")
         new = kwargs.get("new_string", "")
 
-        # P1.5: 白名单验证
-        safe, err = self._is_path_safe(file_path)
-        if not safe:
-            return ToolResult(success=False, content="", error=err)
+        if err_result := self._validate_path(file_path):
+            return err_result
 
         path = Path(file_path)
         try:
@@ -132,6 +131,7 @@ class EditFileTool(BaseTool):
             path.write_text(new_content, encoding="utf-8")
             return ToolResult(success=True, content=f"Edited {path}")
         except Exception as exc:
+            _logger.warning("EditFileTool 失败: %s", exc, exc_info=True)
             return ToolResult(success=False, content="", error=str(exc))
 
 
@@ -160,10 +160,8 @@ class SearchCodeTool(BaseTool):
         path_str = kwargs.get("path", ".")
         file_pattern = kwargs.get("file_pattern")
 
-        # P0.2: 白名单验证
-        safe, err = self._is_path_safe(path_str)
-        if not safe:
-            return ToolResult(success=False, content="", error=err)
+        if err_result := self._validate_path(path_str):
+            return err_result
 
         path = Path(path_str)
         try:
@@ -182,11 +180,16 @@ class SearchCodeTool(BaseTool):
                         if regex.search(line):
                             matches.append(f"{file}:{line_no}:{line}")
                 except Exception:
+                    import logging
+                    logging.getLogger("ae.tools.file_tools").warning(
+                        "SearchCode 文件读取失败: %s", file, exc_info=True,
+                    )
                     continue
             if not matches:
                 return ToolResult(success=True, content="(no matches)")
             return ToolResult(success=True, content="\n".join(matches[:100]))
         except Exception as exc:
+            _logger.warning("SearchCodeTool 失败: %s", exc, exc_info=True)
             return ToolResult(success=False, content="", error=str(exc))
 
 
@@ -210,4 +213,5 @@ class ListDirTool(BaseTool):
             lines = [f"{'[D]' if e.is_dir() else '[F]'} {e.name}" for e in entries]
             return ToolResult(success=True, content="\n".join(lines) or "(empty)")
         except Exception as exc:
+            _logger.warning("ListDirTool 失败: %s", exc, exc_info=True)
             return ToolResult(success=False, content="", error=str(exc))

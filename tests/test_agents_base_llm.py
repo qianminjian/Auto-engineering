@@ -86,7 +86,6 @@ def _make_agent(
     llm: Any | None = None,
     max_tool_calls: int = 10,
     role: str = "BaseAgent",
-    contract_gate: Any = None,
 ) -> BaseAgent:
     """BaseAgent 实例, llm 默认 MagicMock."""
     if llm is None:
@@ -97,7 +96,6 @@ def _make_agent(
         tools=[],
         max_tool_calls=max_tool_calls,
         role=role,
-        contract_gate=contract_gate,
     )
 
 
@@ -381,47 +379,6 @@ class TestExecuteMaxToolCalls:
 # =============================================================================
 # 5. contract_gate 拒绝 / 通过
 # =============================================================================
-
-
-class TestContractGate:
-    """contract_gate 钩子."""
-
-    def test_contract_gate_rejects_raises(self):
-        gate = MagicMock(return_value=False)
-        agent = _make_agent(contract_gate=gate)
-        task = _make_task()
-        ctx = _make_ctx()
-        with pytest.raises(AEError) as exc_info:
-            run_async(agent.execute(task, ctx))
-        assert exc_info.value.code == ErrorCode.CONTRACT_REJECTED
-        gate.assert_called_once_with(task, ctx)
-        # LLM 不应被调用
-        agent.llm.create_message.assert_not_called()
-
-    def test_contract_gate_passes_calls_llm(self):
-        gate = MagicMock(return_value=True)
-        llm = MagicMock()
-        llm.create_message.return_value = _make_llm_response(
-            content='{"ok": 1}', stop_reason="end_turn"
-        )
-        agent = _make_agent(llm=llm, contract_gate=gate)
-        task = _make_task()
-        ctx = _make_ctx()
-        result = run_async(agent.execute(task, ctx))
-        assert result.values == {"ok": 1}
-        assert llm.create_message.call_count == 1
-
-    def test_no_contract_gate_default_approve(self):
-        """contract_gate=None → auto-approve,直接调 LLM."""
-        llm = MagicMock()
-        llm.create_message.return_value = _make_llm_response(
-            content='{"x": 1}', stop_reason="end_turn"
-        )
-        agent = _make_agent(llm=llm, contract_gate=None)
-        task = _make_task()
-        ctx = _make_ctx()
-        result = run_async(agent.execute(task, ctx))
-        assert result.values == {"x": 1}
 
 
 # =============================================================================

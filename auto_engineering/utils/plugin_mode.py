@@ -41,3 +41,8 @@ def has_llm_credentials() -> bool:
     api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
     auth_token = os.environ.get("ANTHROPIC_AUTH_TOKEN", "").strip()
     return bool(api_key or auth_token)
+
+
+def is_llm_available() -> bool:
+    """v5.4 审计 P1-9: LLM 是否可用 (agent 模式有 AUTH_TOKEN 或有 API KEY)."""
+    return detect_plugin_mode() or has_llm_credentials()

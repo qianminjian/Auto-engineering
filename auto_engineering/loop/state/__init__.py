@@ -31,7 +31,6 @@ from auto_engineering.loop.state.channels import (
 )
 from auto_engineering.loop.state.checkpoint_envelope import (
     CheckpointEnvelope,
-    GateVerdict,
     deserialize_loop_state,
 )
 from auto_engineering.loop.state.metrics import (
@@ -45,7 +44,6 @@ __all__ = [
     "BarrierState",
     "Channel",
     "CheckpointEnvelope",  # v2.3 P0-A 重命名 (原 LoopState, checkpoint 专用)
-    "GateVerdict",
     "LastValueChannel",
     "MetricsSnapshot",
     "Signal",

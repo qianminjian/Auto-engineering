@@ -59,19 +59,12 @@ class TestGateAppliesToStages:
         assert "architect" not in gate.applies_to_stages
 
     def test_test_gate_runs_developer_critic_only(self):
-        from auto_engineering.gates.test import TestGate
+        from auto_engineering.gates.test_gate import TestGate
 
         gate = TestGate()
         assert "developer" in gate.applies_to_stages
         assert "critic" in gate.applies_to_stages
         assert "architect" not in gate.applies_to_stages
-
-    def test_coverage_gate_developer_only_skip(self):
-        """Coverage 限定 developer 阶段 — BEACON 决策 25 永远 skip 但仍注册."""
-        from auto_engineering.gates.coverage import CoverageGate
-
-        gate = CoverageGate()
-        assert gate.applies_to_stages == ("developer",)
 
     def test_build_gate_developer_only(self):
         from auto_engineering.gates.build import BuildGate
@@ -104,11 +97,11 @@ class TestGateBaseClass:
         assert "contracts" in sig.parameters
 
     def test_default_gates_list(self):
-        """DEFAULT_GATES 应当是 7 道 Gate 的实例列表."""
-        from auto_engineering.gates.base import DEFAULT_GATES
+        """DEFAULT_GATES 应当是 6 道 Gate 的实例列表 (v5.4 Q1: TDDGate/StageTransitionGate 已移出)."""
+        from auto_engineering.gates.registry import DEFAULT_GATES
 
         assert isinstance(DEFAULT_GATES, list)
-        assert len(DEFAULT_GATES) >= 7  # safety, stage_transition, lint, type_check, contract, test, tdd, coverage, build
+        assert len(DEFAULT_GATES) >= 6  # safety, lint, type_check, contract, test, build
 
 
 # ============================================================

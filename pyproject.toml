@@ -34,6 +34,7 @@ dev = [
     "pytest-timeout>=2.4",
     "pytest-asyncio>=1.4",
     "ruff>=0.8",
+    "mypy>=1.18",
     "pre-commit>=4",
 ]
 
@@ -66,6 +67,18 @@ dev = [
     "pytest-timeout>=2.4.0",
     "ruff>=0.15.18",
 ]
+
+[tool.mypy]
+python_version = "3.12"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+exclude = ["tests/", "build/", "dist/"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+ignore_errors = true
 
 [tool.uv]
 package = true

@@ -22,8 +22,8 @@ from auto_engineering import __version__
 from auto_engineering.errors import AEError, ErrorCode
 
 # Re-export 所有 helpers + dev_loop 符号, 保持 from auto_engineering.cli import ... 兼容
+from auto_engineering.runtime.cancellation import CancellationToken  # noqa: F401
 from auto_engineering.cli.helpers import (  # noqa: F401
-    CancellationToken,
     ErrorCategory,
     ProgressLogger,
     TokenTracker,
@@ -37,7 +37,6 @@ from auto_engineering.cli.helpers import (  # noqa: F401
 from auto_engineering.cli.dev_loop import (  # noqa: F401
     OrchestratorRunResult,
     _build_v2_agent_runtime,
-    _build_v2_semantic_evaluator,
     _run_v2_orchestrator,
 )
 from auto_engineering.cli.checkpoint import register_checkpoint_commands  # noqa: F401
@@ -66,26 +65,10 @@ def main():
 
 
 @main.command()
-def init() -> None:
-    """[已禁用] 项目脚手架初始化 — Init Engineering 拆分独立项目.
-
-    本项目仅 Loop Engineering. 项目脚手架请使用独立 Init Engineering 项目
-    (按 v5.0-Design-Loop.md §IL.1-IL.6 接口契约实现 Init 侧).
-    """
-    click.echo(
-        "✗ ae init 不可用: Init Engineering 已拆分独立项目.\n"
-        "  本项目仅 Loop Engineering. 项目脚手架请使用独立 Init 项目.\n"
-        "  见 design/v5.0-Design-Loop.md §IL.1-IL.6 接口契约.",
-        err=True,
-    )
-    raise SystemExit(1)
-
-
-@main.command()
 @click.argument("requirement")
 @click.option("--max-rounds", type=int, default=3, help="最大 Round 数")
 @click.option("--max-tokens", type=int, default=0, help="Token 预算上限 (0 = 无限制)")
-@click.option("--log-format", type=click.Choice(["text", "json"]), default="text", help="日志格式")
+@click.option("--format", "log_format", type=click.Choice(["text", "json"]), default="text", help="输出格式 (与 ae status --format 统一)")
 @click.option(
     "--llm-provider",
     type=click.Choice(["anthropic", "ollama", "openai"]),
@@ -101,15 +84,10 @@ def dev_loop(
     llm_provider: str,
     project_root: str,
 ):
-    """单需求开发循环 (v5.1 JSONL 协议模式).
+    """单需求开发循环 (v5.4 Agent Tool 直接执行模式).
 
-    v5.1: architect/critic 两个 LLM 调用点通过 JSONL stdin/stdout 协议
-    与 Claude Code agent 通信 (不复用 Anthropic SDK). 详见:
-    - design/v5.0-Design-Loop.md §C (Agent-Engine JSONL 通信协议)
-    - design/BEACON.md 决策 33
-
-    子进程在 Claude Code agent 内启动时, 通过 JSONL 获取 agent 的 LLM
-    响应 (计划 / 代码 / 审查), Python 控制流 (while 循环/收敛/Gate/持久化) 不变.
+    v5.4: architect/critic 两个 LLM 调用点统一走 AgentRuntime 路径,
+    不再使用 JSONL 协议.
     """
     if llm_provider != "anthropic":
         click.echo(f"[未实现] --llm-provider={llm_provider} 暂未实装。", err=True)
@@ -141,7 +119,7 @@ def dev_loop(
 
     progress = ProgressLogger(log_format=log_format)
     click.echo(f"Starting dev-loop: {requirement}")
-    _log_engine_version("v2.0")
+    _log_engine_version("v5.4")
 
     tracker = TokenTracker(max_tokens=max_tokens)
     try:

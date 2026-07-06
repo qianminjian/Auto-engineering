@@ -1,50 +1,27 @@
-"""v2.0 Phase 04 — Gate 基类 + Verdict dataclass.
+"""v2.0 Phase 04 — Gate 基类 + GateVerdict dataclass.
 
 设计来源: design/v2.0-Analysis-Loop.md §五 Phase 2 + §4.8 关键数据结构.
 
 核心要点:
-    - Gate 基类: 实现 run() 接口, 入参 project_root, 返回 Verdict
-    - Verdict: 数据类, 携带 passed / message / gate_name
-    - 7 道 Gate: safety / lint / type_check / contract / test / coverage / build
-    - 单 Gate 失败不抛异常, 返回 passed=False + message (上层决定 block / drop / retry)
+    - Gate 基类: 实现 run() 接口, 入参 project_root, 返回 GateVerdict
+    - GateVerdict: 数据类, 携带 passed / message / gate_name
+    - 6 道 Gate: safety / lint / type_check / contract / test / build
+    - 单 Gate 失败不抛异常, 返回 passed=False + message (上层决定 block / retry)
 
 向后兼容:
-    - 旧版 Gate.check(stage, context) 接口保留(由 Phase 1 Guardrail 体系使用)
-    - 新增 Gate.run(project_root) 接口(由 Phase 04 v2.0 7 道 Gate 使用)
+    - GateResult 保留供向后兼容 (v6.0 删除)
 """
 
 from __future__ import annotations
 
+import subprocess
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 # ============================================================
-# v2.0 向后兼容: GateResult(Phase 1 Gate 体系的 2 态结果)
-# ============================================================
-
-
-@dataclass
-class GateResult:
-    """v2.0 Gate 检查结果(2 态: passed / failed).
-
-    保留供 Phase 1 代码使用. v2.0 新代码应使用 Verdict.
-    """
-
-    passed: bool
-    message: str = ""
-
-    @classmethod
-    def pass_(cls, msg: str = "") -> GateResult:
-        return cls(passed=True, message=msg)
-
-    @classmethod
-    def fail(cls, msg: str) -> GateResult:
-        return cls(passed=False, message=msg)
-
-
-# ============================================================
-# v2.0 新接口: GateVerdict (v5.0 §B6.1 — Verdict → GateVerdict 重命名)
+# GateVerdict (v5.0 §B6.1 — Verdict → GateVerdict 重命名)
 # ============================================================
 
 
@@ -75,10 +52,71 @@ class GateVerdict:
         return cls(gate_name=gate_name, passed=False, message=msg)
 
 
-# v5.0 §B6.1 向后兼容: 保留 Verdict 作为 GateVerdict 的别名 (1 版本过渡期)
-# 所有引用 Verdict 的代码继续工作, 等下次大版本可彻底移除
-Verdict = GateVerdict
-__all__ = ["GateVerdict", "Verdict"]  # noqa: F822 (Verdict 通过 module __all__ 暴露)
+# v5.4 P2-2: Verdict 别名保留向后兼容, 通过 __getattr__ 触发 DeprecationWarning.
+# 新代码应使用 GateVerdict. v6.0 将移除 Verdict 别名.
+
+
+def __getattr__(name: str) -> object:
+    if name == "Verdict":
+        warnings.warn(
+            "Verdict 是 GateVerdict 的废弃别名, 将在 v6.0 移除. 请使用 GateVerdict.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return GateVerdict
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+__all__ = ["Gate", "GateVerdict", "SubprocessResult", "run_gate_command"]
+
+
+# ============================================================
+# Subprocess helper (v5.4 P2-18 — 跨 Gate 提取公共 subprocess.run 模式)
+# ============================================================
+
+
+@dataclass
+class SubprocessResult:
+    """subprocess.run 的标准化结果.
+
+    Attributes:
+        returncode: 进程退出码. -1 表示 timed_out 或 not_found.
+        stdout: 标准输出
+        stderr: 标准错误
+        timed_out: 是否超时
+        not_found: 命令是否未找到
+    """
+
+    returncode: int
+    stdout: str = ""
+    stderr: str = ""
+    timed_out: bool = False
+    not_found: bool = False
+
+
+def run_gate_command(cmd: list[str], cwd: Path, timeout: float) -> SubprocessResult:
+    """安全执行 subprocess 命令, 捕获常见错误.
+
+    各 Gate 子类调用此函数替代裸 subprocess.run, 按各自策略处理
+    timed_out / not_found / returncode != 0 等结果.
+    """
+    try:
+        result = subprocess.run(
+            cmd,
+            cwd=str(cwd),
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        return SubprocessResult(
+            returncode=result.returncode,
+            stdout=result.stdout or "",
+            stderr=result.stderr or "",
+        )
+    except subprocess.TimeoutExpired:
+        return SubprocessResult(returncode=-1, stdout="", stderr="", timed_out=True)
+    except FileNotFoundError:
+        return SubprocessResult(returncode=-1, stdout="", stderr="", not_found=True)
 
 
 class Gate:
@@ -104,7 +142,7 @@ class Gate:
         self,
         project_root: Path,
         contracts: dict | None = None,
-    ) -> Verdict:
+    ) -> GateVerdict:
         """执行 Gate 检查.
 
         Args:
@@ -112,7 +150,7 @@ class Gate:
             contracts: v5.0 §B2.9 — 可选契约字典 (供 ContractGate 等使用)
 
         Returns:
-            Verdict (passed + message)
+            GateVerdict (passed + message)
 
         Raises:
             NotImplementedError: 子类未实现时
@@ -121,71 +159,6 @@ class Gate:
             f"{type(self).__name__}.run() must be implemented by subclass"
         )
 
-    # 旧接口(向后兼容, 由 v2.0 Guardrail 链调用)
-    def check(self, stage: Any, context: Any) -> Verdict:
-        """v2.0 兼容接口. 返回 pass 占位(实际 v2.0 用 GuardrailResult)."""
-        return Verdict.passed("legacy v2.0 path", gate_name=self.name)
-
-
-# v5.0 §B6.1+§B6.2 — DEFAULT_GATES 入口
-# 7 道 Gate 的默认实例列表 (供 Orchestrator/run_gates 直接 import)
-# 顺序: safety → lint → type_check → contract → test → coverage → build
-#
-# 在 base.py 末尾惰性构造 (避免循环 import):
-#   - 直接实例化依赖子模块 (lint/type_check/...), 须放在所有 Gate 类已 import 后
-#   - 测试也直接 from auto_engineering.gates.base import DEFAULT_GATES
-DEFAULT_GATES: list["Gate"] = []
-
-
-def _build_default_gates(manifest: dict | None = None) -> list["Gate"]:
-    """v5.0 §B6.1+§B6.2 — 构造 7 道 Gate 的默认实例列表.
-
-    惰性加载: 在 base.py 末尾调用, 此时子模块 (lint/type_check/...) 已被 import.
-    顺序: safety → lint → type_check → contract → test → coverage → build
-
-    v5.0 §IL-AC-02 扩展:
-        - manifest 不为 None 时, 从 init-manifest.json 读 conventions 替换默认
-          linter / type_checker / test_runner
-        - manifest 为 None 时, 用 python 默认 (ruff/mypy/pytest)
-    """
-    # 局部 import 避免模块加载顺序问题
-    from auto_engineering.gates.build import BuildGate
-    from auto_engineering.gates.contract import ContractGate
-    from auto_engineering.gates.coverage import CoverageGate
-    from auto_engineering.gates.lint import LintGate
-    from auto_engineering.gates.safety import SafetyGate
-    from auto_engineering.gates.test import TestGate
-    from auto_engineering.gates.type_check import TypeCheckGate
-    from auto_engineering.gates.quality_gate import TDDGate, StageTransitionGate
-
-    if manifest is not None:
-        # v5.0 §IL-AC-02: 用 manifest 构造 lint/type_check/test
-        lint_gate = LintGate.from_manifest(manifest)
-        type_check_gate = TypeCheckGate.from_manifest(manifest)
-        test_gate = TestGate.from_manifest(manifest)
-    else:
-        # 默认: python 生态
-        lint_gate = LintGate()
-        type_check_gate = TypeCheckGate()
-        test_gate = TestGate()
-
-    return [
-        SafetyGate(use_gitleaks=False),
-        StageTransitionGate(),
-        lint_gate,
-        type_check_gate,
-        ContractGate(),
-        test_gate,
-        TDDGate(),
-        CoverageGate(),
-        BuildGate(),
-    ]
-
-
-def build_gates_from_manifest(manifest: dict) -> list["Gate"]:
-    """v5.0 §IL-AC-02: 从 init-manifest.json 构造完整 7 道 Gate 列表."""
-    return _build_default_gates(manifest=manifest)
-
-
-# 模块加载时立即构建 (确保 from .base import DEFAULT_GATES 可用)
-DEFAULT_GATES = _build_default_gates()
+# v5.4: DEFAULT_GATES / _build_default_gates / build_gates_from_manifest
+# 已提取到 auto_engineering.gates.registry, 消除 base ↔ build 导入循环.
+# 消费者请用: from auto_engineering.gates.registry import DEFAULT_GATES

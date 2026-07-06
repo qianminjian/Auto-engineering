@@ -11,8 +11,8 @@
     - run_round Gate 异常被吞 (写失败 Verdict)
     - _parse_git_numstat 错误路径 (subprocess errors + 非 0 返回)
     - _parse_git_numstat 正常路径 (含 - 占位行 + ValueError)
-    - _topological_layers 自环 (a→a) → ConflictError
-    - _topological_layers 外部 dep (deps 引用 batch 外 task → 视为 0)
+    - _topological_levels 自环 (a→a) → ConflictError
+    - _topological_levels 外部 dep (deps 引用 batch 外 task → 视为 0)
     - Round.execute() 委托 run_round
     - RoundResult.all_succeeded 含 failed 时返回 False
     - gather 防御路径 (注入未捕获 BaseException → 走 fail 包装)
@@ -29,17 +29,16 @@ from pathlib import Path
 
 import pytest
 
-from auto_engineering.gates.base import Gate, Verdict
+from auto_engineering.gates.base import Gate, GateVerdict
 from auto_engineering.loop.plan import ConflictError, Task
 from auto_engineering.loop.round import (
-    Round,
     RoundResult,
     TaskOutcome,
     _build_per_task_ctx,
     _parse_git_numstat,
-    _topological_layers,
     run_round,
 )
+from auto_engineering.loop.plan import _topological_levels
 
 
 # ============================================================
@@ -96,8 +95,8 @@ class _StubGate(Gate):
         if self._raise_exc is not None:
             raise self._raise_exc
         if self._verdict_passed:
-            return Verdict.passed("ok", gate_name=self.name)
-        return Verdict.failed("nope", gate_name=self.name)
+            return GateVerdict.passed("ok", gate_name=self.name)
+        return GateVerdict.failed("nope", gate_name=self.name)
 
 
 # ============================================================
@@ -156,8 +155,8 @@ class TestRoundResultProperties:
         r = RoundResult(
             round_id=1,
             gate_results={
-                "lint": Verdict.passed("ok", gate_name="lint"),
-                "type": Verdict.failed("bad", gate_name="type"),
+                "lint": GateVerdict.passed("ok", gate_name="lint"),
+                "type": GateVerdict.failed("bad", gate_name="type"),
             },
         )
         assert r.all_gates_passed is False
@@ -166,8 +165,8 @@ class TestRoundResultProperties:
         r = RoundResult(
             round_id=1,
             gate_results={
-                "lint": Verdict.passed("ok", gate_name="lint"),
-                "type": Verdict.passed("ok", gate_name="type"),
+                "lint": GateVerdict.passed("ok", gate_name="lint"),
+                "type": GateVerdict.passed("ok", gate_name="type"),
             },
         )
         assert r.all_gates_passed is True
@@ -221,7 +220,7 @@ class TestBuildPerTaskCtx:
 
 
 # ============================================================
-# Group 3: _topological_layers 扩展 (自环 + 外部 dep)
+# Group 3: _topological_levels 扩展 (自环 + 外部 dep)
 # ============================================================
 
 
@@ -232,7 +231,7 @@ class TestTopologicalLayersExtended:
         """自环: t1.deps=[t1] → ConflictError."""
         tasks = [make_task("t1", deps=["t1"])]
         with pytest.raises(ConflictError) as exc_info:
-            _topological_layers(tasks)
+            _topological_levels(tasks)
         # 验证 conflicts 字段含 cycle 描述
         assert any("cycle" in c for c in exc_info.value.conflicts)
 
@@ -243,7 +242,7 @@ class TestTopologicalLayersExtended:
             make_task("t2", deps=["external"]),  # external 不在 batch
             make_task("t3", deps=["t1"]),
         ]
-        layers = _topological_layers(tasks)
+        layers = _topological_levels(tasks)
         # 期望: 第 1 层含 t1 + t2 (两者都入度 0), 第 2 层 t3
         assert len(layers) == 2
         assert {t.id for t in layers[0]} == {"t1", "t2"}
@@ -252,7 +251,7 @@ class TestTopologicalLayersExtended:
     def test_layer_ordering_is_deterministic_sorted(self):
         """同层 task 按 id 排序 (确定性输出, 便于测试)."""
         tasks = [make_task("z"), make_task("a"), make_task("m")]
-        layers = _topological_layers(tasks)
+        layers = _topological_levels(tasks)
         assert len(layers) == 1
         assert [t.id for t in layers[0]] == ["a", "m", "z"]
 
@@ -480,19 +479,22 @@ class TestParseGitNumstat:
 
 
 class TestRoundExecute:
-    """Round.execute() 委托给 run_round(), 透传 round_id."""
+    """run_round() 透传 round_id (原 Round.execute, v5.4 审计 r3 P1-4 删除 Round 类)."""
 
     @pytest.mark.asyncio
     async def test_round_execute_delegates_to_run_round(self):
         async def executor(task, ctx):
             return TaskOutcome(task_id=task.id, status="completed", output="x")
 
-        r = Round(round_id=7, requirement="req", tasks=[make_task("t1")])
-        result = await r.execute(executor=executor)
+        result = await run_round(
+            tasks=[make_task("t1")],
+            executor=executor,
+            round_id=7,
+        )
         assert result.round_id == 7
         assert result.completed_count == 1
         assert len(result.history) == 1
-        # Round.execute 委托给 run_round, 默认无 gates → gate_results 空
+        # run_round 默认无 gates → gate_results 空
         assert result.gate_results == {}
 
 

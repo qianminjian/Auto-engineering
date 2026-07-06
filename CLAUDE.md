@@ -70,7 +70,7 @@ Engine 层 (auto_engineering/)
     init_contract.py   — Init-Loop 接口契约 (IL-AC-01~05)
   agents/
     base.py            — BaseAgent + tool_use loop + double-layer parse
-    authz.py           — AUTHZ_MATRIX 9×3 (role-based tool authorization)
+    authz.py           — AUTHZ_MATRIX 10×3 (role-based tool authorization)
     prompts.py         — v5.0 system prompts (architect/developer/critic)
   gates/
     base.py            — Gate ABC + GateVerdict + DEFAULT_GATES (7 道)
@@ -184,7 +184,14 @@ python3 scripts/atdo_smoke.py       # Runtime smoke (7 维度)
    - **MAJOR criteria**: ≥1 P0 或 ≥3 P1
    - **if MAJOR**: agent 回到 Stage 2，根据 `findings` + `suggested_fix` 修复问题
 
-4. **Convergence while loop**（参考 `commands/dev-loop.md` 完整 spec）
+4. **Stage 4 — Design Doc Sync（Critic APPROVE 后、收敛判定前，强制执行）**
+   - **对照 `design/` 文档检查本轮所有改动**：Agent 已知道本轮改了哪些文件、做了什么决策
+   - **代码与设计文档不一致** → 更新设计文档（`design/v5.0-Design-Loop.md` 或 `design/BEACON.md`）
+   - **新增了设计文档未覆盖的决策** → 补充到 `design/BEACON.md` 决策表
+   - **不接受"延后同步"**：文档未同步视为 Stage 4 未完成，不得进入收敛判定
+   - **判断标准**：下一轮 dev-loop 的 Agent 能从设计文档中准确理解当前代码的真实架构
+
+5. **Convergence while loop**（参考 `commands/dev-loop.md` 完整 spec）
    - max_rounds = 3 (Self-Refine 最优)
    - consecutive_majors ≥ 3 → HARD_LIMIT stop
    - APPROVE + 所有 gate PASSED → 成功退出
@@ -197,6 +204,7 @@ python3 scripts/atdo_smoke.py       # Runtime smoke (7 维度)
 - ✅ 每个 TDD 循环遵守 Red→Green→Refactor 顺序
 - ✅ Gate 必须并行跑（用 `asyncio.gather` 或至少跑 safety/lint/test 3 个）
 - ✅ MAJOR 反馈链（critic → developer → redo）是 Self-Refine 核心，不能被 skip
+- ✅ Stage 4 Design Doc Sync 是强制步骤：文档未同步不得进入收敛判定，不接受"延后同步"
 - ❌ **静默降级禁令**：当 Command/Skill 的 Bash 块或 Agent tool spawn 失败时，
   Agent **不得**静默接管并手工模拟三阶段。必须向用户报告失败原因 + 提供替代方案。
 - ❌ **失败不可见禁令**：用户有权知道 dev-loop 是否真的在运行。任何 Bash 块失败、

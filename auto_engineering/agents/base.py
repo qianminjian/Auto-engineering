@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Callable
+import logging
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -40,10 +40,6 @@ class BaseAgent:
         max_tool_calls  — 工具循环上限(防止 LLM 死循环, 默认 10)
         model           — Claude 模型名
         max_tokens      — 单次响应最大 token
-        contract_gate   — v2.0 multi-agent 契约确认钩子(Phase 06 Task 5.2).
-                          签名: Callable[[Task, TaskContext], bool].
-                          默认 None = auto-approve,不阻塞 execute().
-                          返回 False 时抛 AEError(CONTRACT_REJECTED), LLM 不被调用.
     """
 
     llm: AnthropicProvider
@@ -53,7 +49,11 @@ class BaseAgent:
     max_tool_calls: int = 10
     model: str = "claude-sonnet-4-6"
     max_tokens: int = 4096
-    contract_gate: Callable[[Task, TaskContext], bool] | None = None
+
+    def close(self) -> None:
+        """释放底层 LLM provider 连接."""
+        if hasattr(self.llm, "close"):
+            self.llm.close()
 
     async def execute(
         self,
@@ -97,16 +97,6 @@ class BaseAgent:
         effective_tools = task.tools if task.tools else self.tools
         tool_map = {t.name: t for t in effective_tools}
         tool_calls_log: list[dict] = []
-
-        # Phase 06 Task 5.2: 契约确认 gate（two-green gate 的第一绿）
-        # 默认 None = auto-approve；用户/CI 可注入交互式确认 gate.
-        # 返回 False 时抛 CONTRACT_REJECTED,LLM 不被调用.
-        if self.contract_gate is not None and not self.contract_gate(task, ctx):
-            raise AEError(
-                ErrorCode.CONTRACT_REJECTED,
-                f"Contract gate rejected task '{task.id}' for agent "
-                f"'{self.__class__.__name__}'",
-            )
 
         for _ in range(self.max_tool_calls + 1):
             if cancellation is not None:
@@ -192,6 +182,9 @@ class BaseAgent:
                         raise  # 已分类的 AEError 透传
                     except Exception as exc:
                         # v5.0 §B4.4 step 3b: 工具异常 → error tool_result JSON
+                        logging.getLogger("ae.agents.base").warning(
+                            "工具 '%s' 执行异常: %s", tool_name, exc, exc_info=True,
+                        )
                         tool_results.append(
                             {
                                 "type": "tool_result",
@@ -235,8 +228,8 @@ class BaseAgent:
     def _map_llm_exception(self, exc: Exception) -> AEError:
         """将 LLM SDK 异常映射为 AEError.
 
-        P1.3: LLM 调用错误分类。使用 type(exc).__name__ 而非 isinstance
-        (避免 mock 对象无法通过 isinstance 校验)。
+        优先用 isinstance 精确匹配 (生产环境), 降级到 type().__name__
+        字符串匹配 (mock 对象/测试环境).
             - APITimeoutError      → LLM_TIMEOUT
             - APIConnectionError   → LLM_NETWORK_ERROR
             - APIStatusError      → LLM_INVALID_RESPONSE
@@ -244,18 +237,49 @@ class BaseAgent:
             - RateLimitError      → LLM_RATE_LIMIT
             - 其他                → LLM_UNKNOWN_ERROR
         """
+        # 1. 尝试 isinstance 精确匹配 (生产环境)
+        try:
+            from anthropic import (  # type: ignore[import-untyped]
+                APIConnectionError,
+                APIStatusError,
+                APITimeoutError,
+                AuthenticationError,
+                RateLimitError,
+            )
+            if isinstance(exc, APITimeoutError):
+                return AEError(ErrorCode.LLM_TIMEOUT, f"LLM timeout: {exc}", original_error=exc,
+                               suggestion="检查网络连接或增大 LLM 请求超时")
+            if isinstance(exc, APIConnectionError):
+                return AEError(ErrorCode.LLM_NETWORK_ERROR, f"LLM connection error: {exc}", original_error=exc,
+                               suggestion="检查网络连接和防火墙设置, 确认可访问 Anthropic API")
+            if isinstance(exc, APIStatusError):
+                return AEError(ErrorCode.LLM_INVALID_RESPONSE, f"LLM API error: {exc}", original_error=exc)
+            if isinstance(exc, AuthenticationError):
+                return AEError(ErrorCode.LLM_AUTH_ERROR, f"LLM auth error: {exc}", original_error=exc,
+                               suggestion="检查 ANTHROPIC_API_KEY 或 ANTHROPIC_AUTH_TOKEN 环境变量是否正确设置")
+            if isinstance(exc, RateLimitError):
+                return AEError(ErrorCode.LLM_RATE_LIMIT, f"LLM rate limit: {exc}", original_error=exc,
+                               suggestion="等待片刻后重试, 或升级 API tier 提高限额")
+        except (ImportError, TypeError):
+            pass  # SDK 不可用或 mock 对象 → 降级到 §2 字符串匹配
+
+        # 2. isinstance 未命中 (mock 对象或 SDK 未安装) → 降级为 type().__name__ 匹配
         exc_name = type(exc).__name__
-        if exc_name == "APITimeoutError":
-            return AEError(ErrorCode.LLM_TIMEOUT, f"LLM timeout: {exc}")
-        if exc_name == "APIConnectionError":
-            return AEError(ErrorCode.LLM_NETWORK_ERROR, f"LLM connection error: {exc}")
-        if exc_name == "APIStatusError":
-            return AEError(ErrorCode.LLM_INVALID_RESPONSE, f"LLM API error: {exc}")
-        if exc_name == "AuthenticationError":
-            return AEError(ErrorCode.LLM_AUTH_ERROR, f"LLM auth error: {exc}")
-        if exc_name == "RateLimitError":
-            return AEError(ErrorCode.LLM_RATE_LIMIT, f"LLM rate limit: {exc}")
-        return AEError(ErrorCode.LLM_UNKNOWN_ERROR, f"LLM error: {exc}")
+        if "Timeout" in exc_name:
+            return AEError(ErrorCode.LLM_TIMEOUT, f"LLM timeout: {exc}", original_error=exc,
+                           suggestion="检查网络连接或增大 LLM 请求超时")
+        if "Connection" in exc_name:
+            return AEError(ErrorCode.LLM_NETWORK_ERROR, f"LLM connection error: {exc}", original_error=exc,
+                           suggestion="检查网络连接和防火墙设置, 确认可访问 Anthropic API")
+        if "Status" in exc_name:
+            return AEError(ErrorCode.LLM_INVALID_RESPONSE, f"LLM API error: {exc}", original_error=exc)
+        if "Auth" in exc_name:
+            return AEError(ErrorCode.LLM_AUTH_ERROR, f"LLM auth error: {exc}", original_error=exc,
+                           suggestion="检查 ANTHROPIC_API_KEY 或 ANTHROPIC_AUTH_TOKEN 环境变量是否正确设置")
+        if "RateLimit" in exc_name:
+            return AEError(ErrorCode.LLM_RATE_LIMIT, f"LLM rate limit: {exc}", original_error=exc,
+                           suggestion="等待片刻后重试, 或升级 API tier 提高限额")
+        return AEError(ErrorCode.LLM_UNKNOWN_ERROR, f"LLM error: {exc}", original_error=exc)
 
     def _validate_tool_input(self, tool: BaseTool, tool_input: dict, tool_name: str) -> None:
         """P1.7: 校验 tool_input 符合 tool.parameters schema.
@@ -314,5 +338,5 @@ class BaseAgent:
         return parsed
 
 
-# P1-A: 合并 3 Agent 类为 1 个. Agent 是 BaseAgent 的 alias, 旧名保留向后兼容.
-Agent = BaseAgent
+# P1-A: 合并 3 Agent 类为 1 个. 直接使用 BaseAgent, Agent alias 已删除 (v5.4 P2-16).
+

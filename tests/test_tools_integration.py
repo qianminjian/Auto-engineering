@@ -1,6 +1,6 @@
 """Tools 真接测试 — Phase 0.2.
 
-每个工具 2-3 测试(正常 / 异常 / 边界). 覆盖 10 工具 + ToolRegistry.
+每个工具 2-3 测试(正常 / 异常 / 边界). 覆盖 10 工具.
 """
 
 from __future__ import annotations
@@ -447,79 +447,6 @@ class TestRunTestsTool:
         assert not result.success
         assert "unknown" in result.error.lower()
 
-
-# ============================================================
-# ToolRegistry
-# ============================================================
-
-
-class TestToolRegistry:
-    """ToolRegistry 真接."""
-
-    def test_register_and_get(self):
-        from auto_engineering.tools import ReadFileTool, ToolRegistry
-
-        registry = ToolRegistry()
-        tool = ReadFileTool()
-        registry.register(tool)
-        assert registry.get("read_file") is tool
-
-    def test_register_duplicate_raises(self):
-        from auto_engineering.tools import ReadFileTool, ToolRegistry
-
-        registry = ToolRegistry()
-        registry.register(ReadFileTool())
-        with pytest.raises(ValueError, match="already registered"):
-            registry.register(ReadFileTool())
-
-    def test_get_nonexistent_returns_none(self):
-        from auto_engineering.tools import ToolRegistry
-
-        registry = ToolRegistry()
-        assert registry.get("nonexistent") is None
-
-    def test_resolve_existing(self):
-        from auto_engineering.tools import ReadFileTool, ToolRegistry, WriteFileTool
-
-        registry = ToolRegistry()
-        registry.register(ReadFileTool())
-        registry.register(WriteFileTool())
-        tools = registry.resolve(["read_file", "write_file"])
-        assert len(tools) == 2
-        assert tools[0].name == "read_file"
-
-    def test_resolve_nonexistent_raises_keyerror(self):
-        from auto_engineering.tools import ToolRegistry
-
-        registry = ToolRegistry()
-        with pytest.raises(KeyError, match="not registered"):
-            registry.resolve(["nonexistent_tool"])
-
-    def test_to_schemas_returns_anthropic_format(self):
-        from auto_engineering.tools import ReadFileTool, ToolRegistry
-
-        registry = ToolRegistry()
-        registry.register(ReadFileTool())
-        schemas = registry.to_schemas()
-        assert len(schemas) == 1
-        assert schemas[0]["name"] == "read_file"
-        assert "input_schema" in schemas[0]
-        assert "properties" in schemas[0]["input_schema"]
-
-    def test_default_registry_has_all_tools(self):
-        from auto_engineering.tools import default_registry
-
-        registry = default_registry()
-        names = (
-            registry.all_names() if hasattr(registry, "all_names") else list(registry._tools.keys())
-        )
-        assert "read_file" in names
-        assert "write_file" in names
-        assert "edit_file" in names
-        assert "run_bash" in names
-        assert "git_commit" in names
-        assert "run_tests" in names
-        assert len(names) == 10
 
 
 class TestToolsToSchema:

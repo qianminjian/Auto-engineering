@@ -101,28 +101,9 @@ _CATEGORY_FRIENDLY_PREFIX: dict[ErrorCategory, str] = {
 }
 
 
-@dataclass
-class CancellationToken:
-    """协作式取消令牌. SIGINT handler 调 cancel(),loop 中 check() 检测.
+# v5.4 审计 r3 P1-5: CancellationToken 已统一到 runtime/cancellation.py.
+# cli/__init__.py 直接导入 runtime.cancellation.CancellationToken.
 
-    简化为内存 flag + 抛 AEError(TASK_CANCELLED).
-    """
-
-    _cancelled: bool = False
-
-    def cancel(self) -> None:
-        self._cancelled = True
-
-    def is_cancelled(self) -> bool:
-        return self._cancelled
-
-    def check(self) -> None:
-        """若已 cancel,抛 AEError(TASK_CANCELLED)."""
-        if self._cancelled:
-            raise AEError(
-                ErrorCode.TASK_CANCELLED,
-                "Loop was cancelled by user (SIGINT).",
-            )
 
 
 @dataclass

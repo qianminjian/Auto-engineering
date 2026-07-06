@@ -3,8 +3,7 @@
 设计参考: v5.0-Design-Loop.md §B2.2 (StageRouter 接口契约)
                    + §B3.1 (Stage 转换表 T1-T8)
                    + §B3.2 (MAJOR 计数更新)
-                   + §B3.3 (_clear_stage_fields)
-                   + §B3.4 (_derive_status)
+                   + §B3.3 (clear_stage_fields)
 
 T1-T6 转换表 (§B2.2):
     T1: stage="" → next="architect"
@@ -29,7 +28,10 @@ raise CriticVerdictInvalid 让 orchestrator 显式处理 (重试或抛异常).
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
+
+if TYPE_CHECKING:
+    from auto_engineering.engine.state import EngineState
 
 
 class CriticVerdictInvalid(Exception):
@@ -73,8 +75,10 @@ class StageDecision:
 class StageRouter:
     """Stage 状态机路由器 (§B2.2).
 
-    纯函数式: 仅根据 (current_stage, verdict, majors_in_a_row, total_majors)
-    决定下一步 Stage, 不读写 EngineState 副作用 (副作用由 Orchestrator 处理).
+    纯函数式判定: 仅根据 (current_stage, verdict, majors_in_a_row, total_majors)
+    决定下一步 Stage, 不读写 EngineState 副作用.
+    **副作用**: self.history_stages 会记录每次调用时的 current_stage (供
+    CriticVerdictInvalid 异常显示调用链).
 
     用法:
         # 2026-07-04 修复 (Self-Refine / Reflexion 原则 3): max_majors 2→3 + 3→4.
@@ -83,7 +87,8 @@ class StageRouter:
         # 看到 Self-Refine 反馈注入 + 改进. 新值 3/4 让 developer 至少 3 次修复机会.
         router = StageRouter(max_majors_in_a_row=3, max_total_majors=4)
         decision = router.next("critic", "MAJOR", 1, 1)  # → next="developer"
-        decision = router.next("critic", "MAJOR", 2, 2)  # → should_stop=True
+        decision = router.next("critic", "MAJOR", 2, 2)  # → next="developer"
+        decision = router.next("critic", "MAJOR", 3, 3)  # → should_stop=True
     """
 
     def __init__(
@@ -199,20 +204,13 @@ class StageRouter:
         )
 
 
-def _update_majors_count(state: Any, verdict: str) -> None:
+def update_majors_count(state: "EngineState", verdict: str) -> None:
     """更新 EngineState 的 MAJOR 计数 (§B3.2).
-
-    Args:
-        state: EngineState 实例 (duck-typed, 需有 majors_in_a_row / total_majors 字段).
-        verdict: Critic 产出 ("APPROVE" | "MAJOR" | "").
 
     行为:
         - "APPROVE": 重置 majors_in_a_row = 0, total_majors 保留.
         - "MAJOR":   majors_in_a_row += 1, total_majors += 1.
         - 其他 ("", 异常值): 不变.
-
-    设计: 此函数是 StageRouter 的纯逻辑对应 (Orchestrator 主循环重构后
-    集成到 run() step 2h, 见 v5.0 §B7.1). 本 Phase 仅实现独立函数.
     """
     if verdict == "APPROVE":
         state.majors_in_a_row = 0
@@ -222,69 +220,28 @@ def _update_majors_count(state: Any, verdict: str) -> None:
     # else: verdict="" 或其他 → 不变
 
 
-def _clear_stage_fields(state: Any, stage: str) -> None:
+def clear_stage_fields(state: Any, stage: str) -> None:
     """清空 EngineState 中指定 Stage 产出的 channel (§B3.3).
 
-    用途: Stage 推进前清空旧产出, 避免下一 Stage 读到陈旧数据.
-    调用方: Orchestrator 主循环 step 2 推进 Stage 前 (v5.0 §B7.1).
+    两个使用场景:
+    1. 正常 stage 过渡: Orchestrator._step_2i 推进到下一 stage 前清空旧产出
+    2. Guardrail retry: 重试当前 stage 前清空旧产出, 避免读到脏数据
+    调用方: Orchestrator._step_2i (正常过渡) + guardrail.handle_guardrail_result (retry).
 
     Args:
         state: EngineState 实例 (duck-typed).
         stage: 要清空的 Stage 名 ("architect" | "developer" | "critic").
                其他值: no-op (防御性).
 
-    Stage → 字段映射 (§B3.3):
-        - architect: plan, file_list, batch_plan, contracts
-        - developer: files_changed, commit_hash, test_results
-        - critic:    verdict, findings, critic_feedback
-
-    边界:
-        - verdict 默认 "" (critic 字段), 其他字段默认空 list/dict
-          (与 EngineState 默认值一致, 防止后续读取 None 报错).
+    v5.4 审计 r2 P1-3: 引用 task_factory.ROLE_FIELD_MAP + ROLE_FIELD_DEFAULTS
+    作为单一真相源, 消除重复硬编码.
     """
-    if stage == "architect":
-        state.plan = ""
-        state.file_list = []
-        state.batch_plan = []
-        state.contracts = {}
-    elif stage == "developer":
-        state.files_changed = []
-        state.commit_hash = ""
-        state.test_results = {}
-    elif stage == "critic":
-        state.verdict = ""
-        state.findings = []
-        state.critic_feedback = ""
-        # 2026-07-04 (Self-Refine 原则 1 P0 修复): 清 suggested_fix
-        # 否则 developer 重做时会读到上一轮 stale patch.
-        state.suggested_fix = ""
+    from auto_engineering.loop.task_factory import ROLE_FIELD_DEFAULTS, ROLE_FIELD_MAP
+
+    field_names = ROLE_FIELD_MAP.get(stage, [])
+    for field_name in field_names:
+        default = ROLE_FIELD_DEFAULTS.get(field_name)
+        if default is not None:
+            setattr(state, field_name, default)
 
 
-def _derive_status(state: Any, max_iterations: int) -> str:
-    """从 EngineState 派生循环状态 (§B3.4).
-
-    Args:
-        state: EngineState 实例 (duck-typed).
-        max_iterations: ConvergenceConfig.max_iterations (主循环上限).
-
-    Returns:
-        "completed" | "running"
-
-    判定顺序 (从硬到软):
-        1. verdict == "APPROVE" → "completed" (T4 Judge GOAL_ACHIEVED)
-        2. round >= max_iterations → "completed" (T7 max_iter)
-        3. stage == "" → "completed" (未启动)
-        4. else → "running"
-
-    Note: 兼容 EngineState 没有 round 字段的情况 (默认 0).
-    """
-    # 1. APPROVE → 完成
-    if getattr(state, "verdict", "") == "APPROVE":
-        return "completed"
-    # 2. stage == "" → 完成 (未启动)
-    if getattr(state, "current_stage", "") == "":
-        return "completed"
-    # 3. else → running
-    # 注: round 计数由 orchestrator 管理 (非 state.round, EngineState 无此字段)
-    # max_iterations 硬上限由 ConvergenceJudge._check_hard_limit 检查
-    return "running"

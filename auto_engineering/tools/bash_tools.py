@@ -21,8 +21,8 @@ from typing import ClassVar
 
 from .base import BaseTool, ToolResult
 
-# v2.5 P1-S2: 审计 logger — 单独 logger 名, 便于集中收集/告警
-_audit_logger = logging.getLogger("ae.tools.bash.audit")
+# v5.4 审计 P2-8: logger 命名统一为 _logger (曾用 _audit_logger)
+_logger = logging.getLogger("ae.tools.bash")
 
 
 class RunBashTool(BaseTool):
@@ -74,7 +74,7 @@ class RunBashTool(BaseTool):
         # P1.5: 黑名单检查
         for pattern in self.DANGEROUS_PATTERNS:
             if re.search(pattern, command):
-                _audit_logger.warning(
+                _logger.warning(
                     "bash_blocked: pattern=%s command=%r cwd=%s",
                     pattern, command[:200], cwd,
                 )
@@ -85,7 +85,7 @@ class RunBashTool(BaseTool):
                 )
 
         # v2.5 P1-S2: 审计日志 — 每个执行的命令 INFO 记录
-        _audit_logger.info(
+        _logger.info(
             "bash_exec: command=%r cwd=%s timeout=%ds", command[:500], cwd, timeout
         )
 
@@ -99,7 +99,7 @@ class RunBashTool(BaseTool):
                 timeout=timeout,
             )
             output = (result.stdout or "") + (result.stderr or "")
-            _audit_logger.info(
+            _logger.info(
                 "bash_done: returncode=%d elapsed=ok cmd=%r", result.returncode, command[:200]
             )
             return ToolResult(
@@ -108,12 +108,12 @@ class RunBashTool(BaseTool):
                 error=None if result.returncode == 0 else f"exit code {result.returncode}",
             )
         except subprocess.TimeoutExpired:
-            _audit_logger.warning("bash_timeout: command=%r timeout=%ds", command[:200], timeout)
+            _logger.warning("bash_timeout: command=%r timeout=%ds", command[:200], timeout)
             return ToolResult(
                 success=False,
                 content="",
                 error=f"Command timed out after {timeout}s",
             )
         except Exception as exc:
-            _audit_logger.error("bash_error: command=%r error=%r", command[:200], exc)
+            _logger.error("bash_error: command=%r error=%r", command[:200], exc)
             return ToolResult(success=False, content="", error=str(exc))

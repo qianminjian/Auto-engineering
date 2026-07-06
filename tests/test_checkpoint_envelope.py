@@ -1,6 +1,6 @@
-"""P2-B-4 (deep audit) — loop/checkpoint/envelope.py 直接测试.
+"""P2-B-4 (deep audit) — loop/checkpoint/records.py 直接测试.
 
-95 行 envelope.py (CheckpointMeta + Checkpoint[T] + 3 异常类) 之前
+95 行 records.py (CheckpointMeta + Checkpoint[T] + 3 异常类) 之前
 仅通过 __init__.py re-export + store.py 间接使用, 没有直接测试
 Checkpoint[T] 泛型 + meta() 提取 + 异常类属性. SQLiteCheckpointStore
 依赖这些数据类的字段契约.
@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from auto_engineering.loop.checkpoint.envelope import (
+from auto_engineering.loop.checkpoint.records import (
     Checkpoint,
     CheckpointError,
     CheckpointMeta,

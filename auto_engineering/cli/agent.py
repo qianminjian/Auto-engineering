@@ -25,10 +25,12 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
+import logging
 import time
 import uuid
 from pathlib import Path
+
+_logger = logging.getLogger("ae.cli.agent")
 
 import click
 
@@ -58,7 +60,7 @@ def _build_role_system_prompt(role: str) -> str:
 
 def _build_runtime_for_role(role: str, project_root: Path) -> object:
     """构造单 Agent 用的最小 runtime (含 6 个常用工具)."""
-    from auto_engineering.agents.base import Agent
+    from auto_engineering.agents.base import BaseAgent
     from auto_engineering.llm.anthropic_provider import AnthropicProvider
     from auto_engineering.runtime.runtime import AgentRuntime
     from auto_engineering.tools.bash_tools import RunBashTool
@@ -84,7 +86,7 @@ def _build_runtime_for_role(role: str, project_root: Path) -> object:
     runtime = AgentRuntime()
     runtime.register(
         role,
-        lambda: Agent(
+        lambda: BaseAgent(
             llm=llm,
             role=role,
             system_prompt=_build_role_system_prompt(role),
@@ -112,16 +114,14 @@ def run_agent(role: str, instruction: str, project_root: Path) -> dict:
     # 2026-07-04 修复 (v5.0 深度审计 + Bug 4 prismscan 集成):
     # - 原 if False bug 已修
     # - in_llm_agent 用 detect_plugin_mode() 共用函数 (Bug 4)
-    from auto_engineering.utils.plugin_mode import detect_plugin_mode, has_llm_credentials
-    in_llm_agent = detect_plugin_mode()
-    if not has_llm_credentials() and not in_llm_agent:
+    from auto_engineering.utils.plugin_mode import is_llm_available
+    if not is_llm_available():
         return {
             "task_id": task_id,
             "role": role,
             "status": "failed",
             "output": None,
-            "error": "ANTHROPIC_API_KEY/ANTHROPIC_AUTH_TOKEN 未设置 (Plugin mode 应零配置, Claude Code OAuth 自动注入 ANTHROPIC_AUTH_TOKEN)",
-            "error": "ANTHROPIC_API_KEY/ANTHROPIC_AUTH_TOKEN 未设置 (Claude Code Plugin 模式应通过 ANTHROPIC_AUTH_TOKEN/OAuth 透传; CLI 调试模式需手动 export)",
+            "error": "ANTHROPIC_API_KEY/ANTHROPIC_AUTH_TOKEN 未设置 (Plugin 模式通过 OAuth 自动注入; CLI 调试模式需手动 export)",
             "duration": time.monotonic() - started,
             "task_role": role,
         }
@@ -162,6 +162,7 @@ def run_agent(role: str, instruction: str, project_root: Path) -> dict:
             "task_role": role,
         }
     except Exception as e:  # noqa: BLE001
+        _logger.warning("agent '%s' 执行异常: %s", role, e, exc_info=True)
         return {
             "task_id": task_id,
             "role": role,

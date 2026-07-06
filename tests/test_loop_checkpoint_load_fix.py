@@ -9,7 +9,7 @@ Phase A 已修复 save() 不抛异常, 但 load() 半完成:
     (v2.3 P0-A: 原 LoopState 重命名为 CheckpointEnvelope)
 
 实现路径 (当前):
-    store.load() → _row_to_checkpoint() → _deserialize_state() →
+    store.load() → _row_to_checkpoint() → deserialize_state() →
     → deserialize_loop_state() (in loop/state/checkpoint_envelope.py) →
     → _rebuild_channel() (per channel) → Channel 实例
 

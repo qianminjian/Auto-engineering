@@ -42,7 +42,7 @@ from auto_engineering.loop.convergence import (
     ConvergenceConfig,
     ConvergenceJudge,
     RoundHistory,
-    Verdict,
+    ConvergenceVerdict,
     detect_stagnation,
     diff_ratio,
 )
@@ -134,14 +134,14 @@ def test_convergence_hard_limit_triggers_first(
 
 def test_convergence_quality_gate_all_passed() -> None:
     """质量门 (level=3): 7 道 Gate 全 PASS → 停止."""
-    from auto_engineering.gates.base import Verdict
+    from auto_engineering.gates.base import GateVerdict
 
     history = [
         RoundHistory(round_id=1),
         RoundHistory(
             round_id=2,
             gate_results={
-                f"gate_{i}": Verdict.passed(f"ok-{i}", gate_name=f"gate_{i}")
+                f"gate_{i}": GateVerdict.passed(f"ok-{i}", gate_name=f"gate_{i}")
                 for i in range(7)
             },  # 7 道全过
         ),
@@ -159,15 +159,15 @@ def test_convergence_quality_gate_partial_returns_continue() -> None:
     之前错误: gate 失败也返回 STOP(level=3), 将"质量不达标"混同"质量达标".
     orchestrator step 2i 被迫用反向补丁覆盖 judge 判定.
     """
-    from auto_engineering.gates.base import Verdict
+    from auto_engineering.gates.base import GateVerdict
 
     history = [
         RoundHistory(
             round_id=1,
             gate_results={
-                "g1": Verdict.passed("ok", gate_name="g1"),
-                "g2": Verdict.failed("boom", gate_name="g2"),
-                "g3": Verdict.passed("ok", gate_name="g3"),
+                "g1": GateVerdict.passed("ok", gate_name="g1"),
+                "g2": GateVerdict.failed("boom", gate_name="g2"),
+                "g3": GateVerdict.passed("ok", gate_name="g3"),
             },
         ),
     ]
@@ -179,13 +179,13 @@ def test_convergence_quality_gate_partial_returns_continue() -> None:
 
 def test_convergence_judge_quality_gate_failure_continues() -> None:
     """2026-07-05 对标审计 P0-1: 单 gate 失败 → CONTINUE."""
-    from auto_engineering.gates.base import Verdict
+    from auto_engineering.gates.base import GateVerdict
 
     history = [
         RoundHistory(
             round_id=1,
             gate_results={
-                "fake_failing": Verdict.failed(
+                "fake_failing": GateVerdict.failed(
                     "intentional failure for test", gate_name="fake_failing"
                 ),
             },
@@ -203,7 +203,7 @@ def test_convergence_judge_quality_gate_failure_falls_through_to_stagnation() ->
     之前错误: gate 失败返回 QUALITY STOP, 阻止了停滞检测.
     参考 LangGraph: gate 失败后, judge 继续检查下一级 (停滞/语义).
     """
-    from auto_engineering.gates.base import Verdict
+    from auto_engineering.gates.base import GateVerdict
 
     # 连续 3 轮 files_changed=0 (触发停滞) + 最新一轮 gate 失败
     history = [
@@ -214,7 +214,7 @@ def test_convergence_judge_quality_gate_failure_falls_through_to_stagnation() ->
             round_id=4,
             files_changed=0,
             gate_results={
-                "fail_gate": Verdict.failed("not passed", gate_name="fail_gate"),
+                "fail_gate": GateVerdict.failed("not passed", gate_name="fail_gate"),
             },
         ),
     ]
@@ -227,16 +227,16 @@ def test_convergence_judge_quality_gate_failure_falls_through_to_stagnation() ->
 
 def test_convergence_quality_gate_multiple_failed_continues() -> None:
     """2026-07-05 对标审计 P0-1: 多道 gate 失败 → CONTINUE."""
-    from auto_engineering.gates.base import Verdict
+    from auto_engineering.gates.base import GateVerdict
 
     history = [
         RoundHistory(
             round_id=1,
             gate_results={
-                "g1": Verdict.failed("err-1", gate_name="g1"),
-                "g2": Verdict.failed("err-2", gate_name="g2"),
-                "g3": Verdict.failed("err-3", gate_name="g3"),
-                "g4": Verdict.failed("err-4", gate_name="g4"),
+                "g1": GateVerdict.failed("err-1", gate_name="g1"),
+                "g2": GateVerdict.failed("err-2", gate_name="g2"),
+                "g3": GateVerdict.failed("err-3", gate_name="g3"),
+                "g4": GateVerdict.failed("err-4", gate_name="g4"),
             },
         ),
     ]
@@ -261,12 +261,12 @@ def test_convergence_semantic_satisfied_stops() -> None:
 
 def test_convergence_priority_hard_limit_beats_quality() -> None:
     """优先级: 硬上限 (4) > 质量门 (3). 同时满足时返回硬上限."""
-    from auto_engineering.gates.base import Verdict
+    from auto_engineering.gates.base import GateVerdict
 
     history = [
         RoundHistory(
             round_id=10,  # = max_iterations
-            gate_results={"g1": Verdict.passed("ok", gate_name="g1")},
+            gate_results={"g1": GateVerdict.passed("ok", gate_name="g1")},
             semantic_satisfied=True,
         ),
     ]
@@ -277,7 +277,7 @@ def test_convergence_priority_hard_limit_beats_quality() -> None:
 
 def test_convergence_priority_quality_beats_stagnant() -> None:
     """优先级: 质量门 (3) > 停滞检测 (2). 同时满足时返回质量门."""
-    from auto_engineering.gates.base import Verdict
+    from auto_engineering.gates.base import GateVerdict
 
     # 连续 3 轮无变化 (触发停滞), 同时最新一轮所有 gate 通过 (触发质量门)
     history = [
@@ -288,8 +288,8 @@ def test_convergence_priority_quality_beats_stagnant() -> None:
             round_id=4,
             files_changed=5,  # 无变化
             gate_results={
-                "g1": Verdict.passed("ok", gate_name="g1"),
-                "g2": Verdict.passed("ok", gate_name="g2"),
+                "g1": GateVerdict.passed("ok", gate_name="g1"),
+                "g2": GateVerdict.passed("ok", gate_name="g2"),
             },  # 全过
         ),
     ]
@@ -299,18 +299,18 @@ def test_convergence_priority_quality_beats_stagnant() -> None:
 
 
 def test_verdict_continue_factory() -> None:
-    """Verdict.continue_() 工厂."""
-    v = Verdict.continue_()
+    """ConvergenceVerdict.continue_() 工厂."""
+    v = ConvergenceVerdict.continue_()
     assert v.should_stop is False
     assert v.level == LEVEL_CONTINUE
 
 
 def test_verdict_stop_validates_level() -> None:
-    """Verdict.stop() 拒绝非法 level."""
+    """ConvergenceVerdict.stop() 拒绝非法 level."""
     with pytest.raises(ValueError):
-        Verdict.stop(level=99, reason="invalid")
+        ConvergenceVerdict.stop(level=99, reason="invalid")
     # 合法 level 不报错
-    v = Verdict.stop(level=LEVEL_HARD_LIMIT, reason="test")
+    v = ConvergenceVerdict.stop(level=LEVEL_HARD_LIMIT, reason="test")
     assert v.should_stop is True
     assert v.level_name == "MAX_ITERATIONS"
 
@@ -708,18 +708,18 @@ def test_round_history_gate_results_contains_verdict() -> None:
     之前 gate_results 被降级为 dict[str, bool], 丢失 verdict.message 语义.
     现在应保留完整 Verdict (含 gate_name/passed/message).
     """
-    from auto_engineering.gates.base import Verdict
+    from auto_engineering.gates.base import GateVerdict
 
     history = RoundHistory(
         round_id=1,
         gate_results={
-            "safety": Verdict.passed("ok", gate_name="safety"),
-            "lint": Verdict.failed("syntax error at line 3", gate_name="lint"),
+            "safety": GateVerdict.passed("ok", gate_name="safety"),
+            "lint": GateVerdict.failed("syntax error at line 3", gate_name="lint"),
         },
     )
     # 关键: 每个 value 都是 Verdict, 不是 bool
-    assert isinstance(history.gate_results["safety"], Verdict)
-    assert isinstance(history.gate_results["lint"], Verdict)
+    assert isinstance(history.gate_results["safety"], GateVerdict)
+    assert isinstance(history.gate_results["lint"], GateVerdict)
     assert history.gate_results["safety"].passed is True
     assert history.gate_results["safety"].message == "ok"
     assert history.gate_results["lint"].passed is False
@@ -732,13 +732,13 @@ def test_convergence_judge_quality_failure_continues_with_message_in_history() -
     judge 不再将 gate 失败混同收敛。gate 结果是 RoundHistory 的一部分,
     供 orchestrator step 2i 使用 (gate 失败时阻止 judge 误判停止).
     """
-    from auto_engineering.gates.base import Verdict
+    from auto_engineering.gates.base import GateVerdict
 
     history = [
         RoundHistory(
             round_id=1,
             gate_results={
-                "lint": Verdict.failed("syntax error at line 3", gate_name="lint"),
+                "lint": GateVerdict.failed("syntax error at line 3", gate_name="lint"),
             },
         ),
     ]
@@ -757,15 +757,15 @@ def test_round_history_gate_results_serialization_roundtrip() -> None:
     Verdict 必须可 JSON 序列化 + 反序列化还原 message.
     否则 checkpoint 重启后 quality gate 失败原因丢失.
     """
-    from auto_engineering.gates.base import Verdict
+    from auto_engineering.gates.base import GateVerdict
     from auto_engineering.loop.checkpoint import SQLiteCheckpointStore
 
     history = [
         RoundHistory(
             round_id=1,
             gate_results={
-                "safety": Verdict.passed("no secrets", gate_name="safety"),
-                "lint": Verdict.failed("unused import 'os'", gate_name="lint"),
+                "safety": GateVerdict.passed("no secrets", gate_name="safety"),
+                "lint": GateVerdict.failed("unused import 'os'", gate_name="lint"),
             },
         ),
     ]
@@ -794,14 +794,14 @@ def test_convergence_judge_quality_all_passed_uses_verdict_objects() -> None:
 
     验证 _check_quality_gates 现在从 Verdict.passed 读取 (而不是 bool 直接 all()).
     """
-    from auto_engineering.gates.base import Verdict
+    from auto_engineering.gates.base import GateVerdict
 
     history = [
         RoundHistory(
             round_id=1,
             gate_results={
-                "safety": Verdict.passed("clean", gate_name="safety"),
-                "lint": Verdict.passed("no issues", gate_name="lint"),
+                "safety": GateVerdict.passed("clean", gate_name="safety"),
+                "lint": GateVerdict.passed("no issues", gate_name="lint"),
             },
         ),
     ]
@@ -819,14 +819,14 @@ def test_convergence_judge_quality_mixed_continues() -> None:
     gate 全部通过 → QUALITY STOP; gate 有失败 → CONTINUE.
     参考 LangGraph: gate 是诊断, 不是收敛.
     """
-    from auto_engineering.gates.base import Verdict
+    from auto_engineering.gates.base import GateVerdict
 
     history = [
         RoundHistory(
             round_id=1,
             gate_results={
-                "lint": Verdict.failed("undefined variable 'x'", gate_name="lint"),
-                "type_check": Verdict.passed("ok", gate_name="type_check"),
+                "lint": GateVerdict.failed("undefined variable 'x'", gate_name="lint"),
+                "type_check": GateVerdict.passed("ok", gate_name="type_check"),
             },
         ),
     ]
@@ -1190,7 +1190,7 @@ class TestStageRouterIntegration:
     本测试套验证 StageRouter 与 EngineState 真实协作:
     - 连续 MAJOR 计数累加 + 超限 stop_reason 含正确数字
     - APPROVE 重置 majors_in_a_row 但保留 total_majors
-    - _clear_stage_fields 真实清空 EngineState 字段
+    - clear_stage_fields 真实清空 EngineState 字段
     - _derive_status 真实判定 EngineState.status
     """
 
@@ -1200,20 +1200,20 @@ class TestStageRouterIntegration:
         边界: 第 1 轮 MAJOR (1/1), 第 2 轮 MAJOR (2/2) 触发超限 stop.
         """
         from auto_engineering.engine.state import EngineState
-        from auto_engineering.loop.stage_router import StageRouter, _update_majors_count
+        from auto_engineering.loop.stage_router import StageRouter, update_majors_count
 
         state = EngineState()
         router = StageRouter(max_majors_in_a_row=2, max_total_majors=3)
 
         # 第 1 轮 MAJOR
-        _update_majors_count(state, "MAJOR")
+        update_majors_count(state, "MAJOR")
         assert state.majors_in_a_row == 1
         assert state.total_majors == 1
         decision = router.next("critic", "MAJOR", state.majors_in_a_row, state.total_majors)
         assert decision.next_stage == "developer"  # 未超限
 
         # 第 2 轮 MAJOR → 连续 2 触发 T6
-        _update_majors_count(state, "MAJOR")
+        update_majors_count(state, "MAJOR")
         assert state.majors_in_a_row == 2
         assert state.total_majors == 2
         decision = router.next("critic", "MAJOR", state.majors_in_a_row, state.total_majors)
@@ -1227,18 +1227,18 @@ class TestStageRouterIntegration:
         业务场景: 累计 3 次 MAJOR 后终于 APPROVE, majors_in_a_row 应清零.
         """
         from auto_engineering.engine.state import EngineState
-        from auto_engineering.loop.stage_router import _update_majors_count
+        from auto_engineering.loop.stage_router import update_majors_count
 
         state = EngineState()
         # 累计 3 轮 MAJOR
-        _update_majors_count(state, "MAJOR")
-        _update_majors_count(state, "MAJOR")
-        _update_majors_count(state, "MAJOR")
+        update_majors_count(state, "MAJOR")
+        update_majors_count(state, "MAJOR")
+        update_majors_count(state, "MAJOR")
         assert state.majors_in_a_row == 3
         assert state.total_majors == 3
 
         # APPROVE → 重置 in_a_row, 保留 total
-        _update_majors_count(state, "APPROVE")
+        update_majors_count(state, "APPROVE")
         assert state.majors_in_a_row == 0
         assert state.total_majors == 3  # 保留
 
@@ -1248,14 +1248,14 @@ class TestStageRouterIntegration:
         场景: 间隔 APPROVE 重置 in_a_row 后, 累计总数仍超限.
         """
         from auto_engineering.engine.state import EngineState
-        from auto_engineering.loop.stage_router import StageRouter, _update_majors_count
+        from auto_engineering.loop.stage_router import StageRouter, update_majors_count
 
         state = EngineState()
         router = StageRouter(max_majors_in_a_row=2, max_total_majors=3)
 
         # 模式: MAJOR, MAJOR, APPROVE, MAJOR, MAJOR (累计 4 次)
         for verdict in ["MAJOR", "MAJOR", "APPROVE", "MAJOR", "MAJOR"]:
-            _update_majors_count(state, verdict)
+            update_majors_count(state, verdict)
 
         # in_a_row=2 (最后一个 APPROVE 后重置, 然后 +2)
         # total=4 (累计)
@@ -1291,10 +1291,10 @@ class TestStageRouterIntegration:
         assert "未知" in decision.stop_reason
         assert "unknown_stage" in decision.stop_reason
 
-    def test_clear_stage_fields_actually_clears_engine_state(self) -> None:
-        """_clear_stage_fields 真实清空 EngineState 字段 (各 stage)."""
+    def testclear_stage_fields_actually_clears_engine_state(self) -> None:
+        """clear_stage_fields 真实清空 EngineState 字段 (各 stage)."""
         from auto_engineering.engine.state import EngineState
-        from auto_engineering.loop.stage_router import _clear_stage_fields
+        from auto_engineering.loop.stage_router import clear_stage_fields
 
         state = EngineState()
 
@@ -1311,7 +1311,7 @@ class TestStageRouterIntegration:
         state.critic_feedback = "fix this"
 
         # 清空 architect
-        _clear_stage_fields(state, "architect")
+        clear_stage_fields(state, "architect")
         assert state.plan == ""
         assert state.file_list == []
         assert state.batch_plan == []
@@ -1320,25 +1320,25 @@ class TestStageRouterIntegration:
         assert state.verdict == "MAJOR"
 
         # 清空 developer
-        _clear_stage_fields(state, "developer")
+        clear_stage_fields(state, "developer")
         assert state.files_changed == []
         assert state.commit_hash == ""
         assert state.test_results == {}
 
         # 清空 critic
-        _clear_stage_fields(state, "critic")
+        clear_stage_fields(state, "critic")
         assert state.verdict == ""
         assert state.findings == []
         assert state.critic_feedback == ""
 
-    def test_clear_stage_fields_unknown_stage_is_noop(self) -> None:
-        """_clear_stage_fields 传入未知 stage → no-op (防御性)."""
+    def testclear_stage_fields_unknown_stage_is_noop(self) -> None:
+        """clear_stage_fields 传入未知 stage → no-op (防御性)."""
         from auto_engineering.engine.state import EngineState
-        from auto_engineering.loop.stage_router import _clear_stage_fields
+        from auto_engineering.loop.stage_router import clear_stage_fields
 
         state = EngineState()
         state.plan = "keep me"
-        _clear_stage_fields(state, "unknown_stage")
+        clear_stage_fields(state, "unknown_stage")
         assert state.plan == "keep me"  # 未被清空
 
     def test_derive_status_with_real_engine_state(self) -> None:

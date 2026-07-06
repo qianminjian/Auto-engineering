@@ -20,11 +20,10 @@ v5.0 §IL-AC-02 扩展:
 from __future__ import annotations
 
 import shutil
-import subprocess
 import sys
 from pathlib import Path
 
-from auto_engineering.gates.base import Gate, Verdict
+from auto_engineering.gates.base import Gate, GateVerdict, run_gate_command
 
 _DEFAULT_TIMEOUT = 60.0
 _DEFAULT_LINTER = "ruff"
@@ -77,7 +76,7 @@ class LintGate(Gate):
 
         2026-07-04 (Bug 1): 加 project_root 参数, 让 _resolve_lint_cmd 能找 .venv/bin/linter.
         """
-        from auto_engineering.loop.init_contract import get_gate_tools_from_manifest
+        from auto_engineering.gates.registry import get_gate_tools_from_manifest
 
         tools = get_gate_tools_from_manifest(manifest)
         return cls(
@@ -86,7 +85,7 @@ class LintGate(Gate):
             project_root=project_root,
         )
 
-    def _resolve_lint_cmd(self) -> list[str]:
+    def _resolve_lint_cmd(self, project_root: Path | None = None) -> list[str]:
         """解析 lint 命令.
 
         2026-07-04 修复 (Bug 1 prismscan 集成): 5 级兜底.
@@ -101,8 +100,9 @@ class LintGate(Gate):
             4. sys.executable -m (最后兜底, 仅 Python 生态)
         """
         # 优先级 0: 项目 venv (Bug 1 修复)
-        if self.project_root is not None:
-            venv_linter = Path(self.project_root) / ".venv" / "bin" / self.linter_bin
+        _root = project_root or self.project_root
+        if _root is not None:
+            venv_linter = Path(_root) / ".venv" / "bin" / self.linter_bin
             if venv_linter.exists() and venv_linter.is_file():
                 return [str(venv_linter), self.linter_subcommand]
 
@@ -121,7 +121,7 @@ class LintGate(Gate):
         # 优先级 4: sys.executable -m (最后兜底, 仅 Python 生态)
         return [sys.executable, "-m", self.linter_bin, self.linter_subcommand]
 
-    def run(self, project_root: Path, contracts: dict | None = None) -> Verdict:
+    def run(self, project_root: Path, contracts: dict | None = None) -> GateVerdict:
         """执行 lint 检查.
 
         Args:
@@ -129,58 +129,42 @@ class LintGate(Gate):
             contracts: v5.0 §B6.1a — 契约字典 (LintGate 不使用, 仅签名兼容)
 
         Returns:
-            Verdict: passed=True 表示 lint 0 错误; passed=False 表示有错误或命令失败.
+            GateVerdict: passed=True 表示 lint 0 错误; passed=False 表示有错误或命令失败.
 
         2026-07-04 (Bug 1): run() 把传入的 project_root 存到 self.project_root
         (覆盖构造时的 None 默认), 让 _resolve_lint_cmd 能找 .venv/bin/linter.
         """
         project_root = Path(project_root)
         if not project_root.exists():
-            return Verdict.failed(
+            return GateVerdict.failed(
                 f"project_root 不存在: {project_root}",
                 gate_name=self.name,
             )
-        # Bug 1: 允许 run() 覆盖构造时的 project_root (向后兼容, 不破坏 LintGate())
-        self.project_root = project_root
+        cmd = [*self._resolve_lint_cmd(project_root), str(project_root), *self.extra_args]
 
-        cmd = [*self._resolve_lint_cmd(), str(project_root), *self.extra_args]
+        result = run_gate_command(cmd, project_root, self.timeout)
 
-        try:
-            result = subprocess.run(
-                cmd,
-                cwd=str(project_root),
-                capture_output=True,
-                text=True,
-                timeout=self.timeout,
-            )
-        except subprocess.TimeoutExpired:
-            return Verdict.failed(
+        if result.timed_out:
+            return GateVerdict.failed(
                 f"{self.linter_bin} 超时 (>{self.timeout}s): {' '.join(cmd)}",
                 gate_name=self.name,
             )
-        except FileNotFoundError as e:
-            # 2026-07-04 修复 (Bug 1 prismscan 方案 C):
-            # 5 级兜底全部失败 (linter 真的不存在) → 返回 passed (skipped),
-            # 不阻塞 dev-loop. 失败区分:
-            #   - FileNotFoundError → skipped (环境问题, 用户决定是否装 linter)
-            #   - subprocess returncode != 0 → failed (linter 跑了但报错)
-            return Verdict.passed(
-                f"skipped: {self.linter_bin} 未找到 (5 级兜底全失败): {e}. "
+        if result.not_found:
+            return GateVerdict.passed(
+                f"skipped: {self.linter_bin} 未找到 (5 级兜底全失败). "
                 f"建议 `uv add --dev {self.linter_bin}` 或项目根有 {self.linter_bin} 二进制.",
                 gate_name=self.name,
             )
 
         if result.returncode == 0:
-            return Verdict.passed(
+            return GateVerdict.passed(
                 f"{self.linter_bin} {self.linter_subcommand} 通过 (0 errors)",
                 gate_name=self.name,
             )
 
-        # linter 输出: stdout 或 stderr
         output = result.stdout or result.stderr or ""
-        # 截断到 1500 字符
         snippet = output[:1500] + ("..." if len(output) > 1500 else "")
-        return Verdict.failed(
+        return GateVerdict.failed(
             f"{self.linter_bin} {self.linter_subcommand} 失败 (exit={result.returncode}):\n{snippet}",
             gate_name=self.name,
         )

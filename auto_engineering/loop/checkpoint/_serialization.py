@@ -11,7 +11,7 @@ from dataclasses import asdict, is_dataclass
 from typing import Any
 
 
-def _normalize_history_item(item: dict[str, Any]) -> dict[str, Any]:
+def normalize_history_item(item: dict[str, Any]) -> dict[str, Any]:
     """递归序列化 history 项, 处理嵌套 Verdict 等 dataclass 实例.
 
     v2.3 Phase D (P0.4): RoundHistory.gate_results 现在是 dict[gate_name, Verdict],
@@ -24,38 +24,39 @@ def _normalize_history_item(item: dict[str, Any]) -> dict[str, Any]:
     Returns:
         可 JSON 序列化的纯 dict (嵌套 dataclass 全部展开)
     """
-    return {k: _normalize_value(v) for k, v in item.items()}
+    return {k: normalize_value(v) for k, v in item.items()}
 
 
-def _normalize_value(v: Any) -> Any:
+def normalize_value(v: Any) -> Any:
     """递归归一化任意值: dataclass → dict, 嵌套 dict/list 递归处理."""
     if is_dataclass(v) and not isinstance(v, type):
-        return _normalize_value(asdict(v))
+        return normalize_value(asdict(v))
     if isinstance(v, dict):
-        return {kk: _normalize_value(vv) for kk, vv in v.items()}
+        return {kk: normalize_value(vv) for kk, vv in v.items()}
     if isinstance(v, (list, tuple)):
-        return [_normalize_value(x) for x in v]
+        return [normalize_value(x) for x in v]
     return v
 
 
-def _serialize_state(state: Any) -> str:
-    """序列化 CheckpointEnvelope → JSON string.
+def serialize_state(state: Any) -> str:
+    """序列化 EngineState → JSON string.
 
-    优先 Pydantic v2 model_dump, 降级到 __dict__/dict.
+    优先级: Pydantic model_dump → dataclass asdict → dict → to_dict → str fallback.
     """
     if hasattr(state, "model_dump"):
-        # Pydantic v2
         return json.dumps(state.model_dump(mode="json"))
     if hasattr(state, "dict"):
-        # Pydantic v1
         return json.dumps(state.dict())
+    if is_dataclass(state):
+        return json.dumps(asdict(state))
     if isinstance(state, dict):
         return json.dumps(state)
-    # Fallback: 假设可 JSON 序列化
+    if hasattr(state, "to_dict"):
+        return json.dumps(state.to_dict())
     return json.dumps(state, default=str)
 
 
-def _deserialize_state(state_json: str) -> Any:
+def deserialize_state(state_json: str) -> Any:
     """反序列化 JSON → CheckpointEnvelope 实例 (v2.0-D 修复).
 
     v2.0-D: 返回 CheckpointEnvelope 实例, channels 是 Channel 实例.
@@ -63,7 +64,7 @@ def _deserialize_state(state_json: str) -> Any:
     返回 CheckpointEnvelope 实例 (调用 deserialize_loop_state 重建 Channel).
     (v2.3 P0-A: 原 LoopState 重命名为 CheckpointEnvelope.)
 
-    Fallback: 若反序列化失败, 返回原始 dict (向后兼容, 不抛异常中断 load).
+    反序列化失败时 raise CheckpointSchemaMismatchError (不再静默降级).
     """
     try:
         data = json.loads(state_json)
@@ -74,19 +75,20 @@ def _deserialize_state(state_json: str) -> Any:
         return data
 
     # 延迟导入避免循环依赖
+    from auto_engineering.loop.checkpoint.records import CheckpointError
     from auto_engineering.loop.state import deserialize_loop_state
 
     try:
         return deserialize_loop_state(data)
-    except Exception:
-        # 反序列化失败 (例如旧版 schema), 返回原始 dict
-        # 集成代码可识别 type 决定如何处理
-        return data
+    except Exception as exc:
+        raise CheckpointError(
+            f"反序列化失败 (schema 可能不一致): {exc}"
+        ) from exc
 
 
 __all__ = [
-    "_normalize_history_item",
-    "_normalize_value",
-    "_serialize_state",
-    "_deserialize_state",
+    "normalize_history_item",
+    "normalize_value",
+    "serialize_state",
+    "deserialize_state",
 ]

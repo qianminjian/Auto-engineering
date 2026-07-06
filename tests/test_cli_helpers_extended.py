@@ -20,8 +20,8 @@ from typing import Any
 
 import pytest
 
+from auto_engineering.runtime.cancellation import CancellationToken
 from auto_engineering.cli.helpers import (
-    CancellationToken,
     ErrorCategory,
     ProgressLogger,
     TokenTracker,
@@ -77,12 +77,6 @@ class TestClassifyErrorOverride:
 class TestClassifyErrorExactMatch:
     """L82-84: code_str 精确匹配 → category + 默认 exit code."""
 
-    def test_task_not_found_user_error(self) -> None:
-        err = AEError(ErrorCode.TASK_NOT_FOUND, "no such task")
-        cat, code = classify_error(err)
-        assert cat == ErrorCategory.USER_ERROR
-        assert code == 2
-
     def test_agent_registration_error_user_error(self) -> None:
         err = AEError(ErrorCode.AGENT_REGISTRATION_ERROR, "agent X not registered")
         cat, code = classify_error(err)
@@ -114,7 +108,7 @@ class TestClassifyErrorExactMatch:
 
 
 class TestClassifyErrorPrefixMatch:
-    """L87-89: 前缀匹配 (CONFIG_*, LLM_*, CHECKPOINT_*, GUARDRAIL_*, STAGE_RETRY_*)."""
+    """前缀匹配 (CONFIG_*, LLM_*, GUARDRAIL_*)."""
 
     def test_config_prefix_user_error(self) -> None:
         # CONFIG_MISSING_API_KEY 精确匹配 (L82-84)
@@ -123,8 +117,8 @@ class TestClassifyErrorPrefixMatch:
         assert cat == ErrorCategory.USER_ERROR
         assert code == 2
 
-    def test_config_invalid_value_user_error(self) -> None:
-        err = AEError(ErrorCode.CONFIG_INVALID_VALUE, "bad")
+    def test_config_missing_api_key_prefix_user_error(self) -> None:
+        err = AEError(ErrorCode.CONFIG_MISSING_API_KEY, "bad config")
         cat, code = classify_error(err)
         assert cat == ErrorCategory.USER_ERROR
         assert code == 2
@@ -141,26 +135,14 @@ class TestClassifyErrorPrefixMatch:
         assert cat == ErrorCategory.API_ERROR
         assert code == 3
 
-    def test_checkpoint_save_failed_network_error(self) -> None:
-        err = AEError(ErrorCode.CHECKPOINT_SAVE_FAILED, "sqlite write fail")
-        cat, code = classify_error(err)
-        assert cat == ErrorCategory.NETWORK_ERROR
-        assert code == 4
-
-    def test_checkpoint_load_failed_network_error(self) -> None:
-        err = AEError(ErrorCode.CHECKPOINT_LOAD_FAILED, "sqlite read fail")
-        cat, code = classify_error(err)
-        assert cat == ErrorCategory.NETWORK_ERROR
-        assert code == 4
-
     def test_guardrail_blocked_business_error(self) -> None:
         err = AEError(ErrorCode.GUARDRAIL_BLOCKED, "blocked")
         cat, code = classify_error(err)
         assert cat == ErrorCategory.BUSINESS_ERROR
         assert code == 5
 
-    def test_stage_retry_exceeded_business_error(self) -> None:
-        err = AEError(ErrorCode.STAGE_RETRY_EXCEEDED, "retry over limit")
+    def test_guardrail_retry_business_error(self) -> None:
+        err = AEError(ErrorCode.GUARDRAIL_RETRY, "retry over limit")
         cat, code = classify_error(err)
         assert cat == ErrorCategory.BUSINESS_ERROR
         assert code == 5

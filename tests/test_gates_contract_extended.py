@@ -17,7 +17,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from auto_engineering.gates.base import Verdict
+from auto_engineering.gates.base import GateVerdict
 from auto_engineering.gates.contract import (
     ContractGate,
     _collect_source_files,
@@ -301,7 +301,7 @@ def test_check_contracts_dir_with_json_file(tmp_path: Path) -> None:
     )
 
     gate = ContractGate(contracts_dir=contracts_dir)
-    verdict = gate.run(tmp_path, agent_count=2)
+    verdict = gate._check_contracts_dir(tmp_path, 2)
     assert verdict.passed is True
     assert "valid" in verdict.message.lower()
 
@@ -313,7 +313,7 @@ def test_check_contracts_dir_empty_file(tmp_path: Path) -> None:
     (contracts_dir / "empty.yml").write_text("")
 
     gate = ContractGate(contracts_dir=contracts_dir)
-    verdict = gate.run(tmp_path, agent_count=2)
+    verdict = gate._check_contracts_dir(tmp_path, 2)
     assert verdict.passed is False
     assert "empty" in verdict.message.lower()
 
@@ -325,7 +325,7 @@ def test_check_contracts_dir_no_yaml_or_json_files(tmp_path: Path) -> None:
     (contracts_dir / "readme.txt").write_text("not a contract file")
 
     gate = ContractGate(contracts_dir=contracts_dir)
-    verdict = gate.run(tmp_path, agent_count=2)
+    verdict = gate._check_contracts_dir(tmp_path, 2)
     assert verdict.passed is False
     assert "no contract files" in verdict.message.lower()
 
@@ -337,7 +337,7 @@ def test_check_contracts_dir_with_yaml_file(tmp_path: Path) -> None:
     (contracts_dir / "api.yaml").write_text("agents:\n  developer:\n    provides: [impl.py]\n")
 
     gate = ContractGate(contracts_dir=contracts_dir)
-    verdict = gate.run(tmp_path, agent_count=2)
+    verdict = gate._check_contracts_dir(tmp_path, 2)
     assert verdict.passed is True
     assert "valid" in verdict.message.lower()
 
@@ -350,7 +350,7 @@ def test_check_contracts_dir_relative_path_resolves(tmp_path: Path) -> None:
 
     # Relative path ".ae-contracts"
     gate = ContractGate(contracts_dir=".ae-contracts")
-    verdict = gate.run(tmp_path, agent_count=2)
+    verdict = gate._check_contracts_dir(tmp_path, 2)
     assert verdict.passed is True
 
 
@@ -362,15 +362,15 @@ def test_check_contracts_dir_relative_path_resolves(tmp_path: Path) -> None:
 def test_run_single_agent_no_contracts(tmp_path: Path) -> None:
     """run() with single agent, no contracts → skip (backward compat)."""
     gate = ContractGate()
-    verdict = gate.run(tmp_path, agent_count=1)
+    verdict = gate.run(tmp_path)
     assert verdict.passed is True
     assert "skip" in verdict.message.lower()
 
 
 def test_run_multi_agent_no_contracts_dir(tmp_path: Path) -> None:
-    """run() multi-agent without .ae-contracts dir → failed (old path)."""
+    """_check_contracts_dir without .ae-contracts dir → failed."""
     gate = ContractGate(contracts_dir=".ae-contracts")
-    verdict = gate.run(tmp_path, agent_count=3)
+    verdict = gate._check_contracts_dir(tmp_path, 3)
     assert verdict.passed is False
 
 

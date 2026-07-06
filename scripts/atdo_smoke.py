@@ -139,34 +139,19 @@ def _check_init_manifest_old() -> DimensionResult:
 
 
 def _check_gate_pass() -> DimensionResult:
-    """Smoke 2: 7 Gate 列表 + Stage 过滤 (v5.0 §B6.2)."""
+    """Smoke 2: 6 Gate 列表 + Stage 过滤 (v5.0 §B6.2, v5.4 Q2: coverage 已删除)."""
     try:
-        from auto_engineering.gates import DEFAULT_GATES, V2_GATES
+        from auto_engineering.gates import DEFAULT_GATES
         from auto_engineering.gates.base import GateVerdict, Verdict
 
-        # Test 1: DEFAULT_GATES 7 道实例
-        if len(DEFAULT_GATES) != 7:
+        # Test 1: DEFAULT_GATES 6 道实例 (v5.4 Q2: coverage 已删除)
+        if len(DEFAULT_GATES) != 6:
             return DimensionResult(
                 "gate_pass", False,
-                f"DEFAULT_GATES has {len(DEFAULT_GATES)} gates, expected 7",
+                f"DEFAULT_GATES has {len(DEFAULT_GATES)} gates, expected 6",
             )
 
-        # Test 2: V2_GATES 7 个类
-        if len(V2_GATES) != 7:
-            return DimensionResult(
-                "gate_pass", False,
-                f"V2_GATES has {len(V2_GATES)} classes, expected 7",
-            )
-
-        # Test 3: CoverageGate 永远 skip (v5.0 §B6.4 决策 / BEACON 决策 25)
-        coverage_gates = [g for g in DEFAULT_GATES if g.name == "coverage"]
-        if len(coverage_gates) != 1:
-            return DimensionResult(
-                "gate_pass", False,
-                f"CoverageGate count={len(coverage_gates)}, expected 1",
-            )
-
-        # Test 4: GateVerdict 有 passed 字段 (dataclass, 非 Enum)
+        # Test 2: GateVerdict 有 passed 字段 (dataclass, 非 Enum)
         sample_passing = GateVerdict.passed(msg="ok", gate_name="test")
         sample_failing = GateVerdict.failed(msg="bad", gate_name="test")
         if not (sample_passing.passed is True and sample_failing.passed is False):
@@ -175,7 +160,7 @@ def _check_gate_pass() -> DimensionResult:
                 f"GateVerdict.passed/failed factory methods 异常",
             )
 
-        # Test 5: Verdict 是 GateVerdict 的别名 (v5.0 §B6.1 兼容)
+        # Test 3: Verdict 是 GateVerdict 的别名 (v5.0 §B6.1 兼容)
         if Verdict is not GateVerdict:
             return DimensionResult(
                 "gate_pass", False,
@@ -184,7 +169,7 @@ def _check_gate_pass() -> DimensionResult:
 
         return DimensionResult(
             "gate_pass", True,
-            f"DEFAULT_GATES=7 + V2_GATES=7 + CoverageGate present + Verdict alias",
+            f"DEFAULT_GATES=6 + Verdict alias",
         )
     except Exception as e:
         return DimensionResult(

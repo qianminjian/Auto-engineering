@@ -5,7 +5,7 @@
 
 参考 LangGraph StateGraph state_schema(简化: 单一 dataclass,无 channel 类型/reducer).
 P0 修复: dataclass 默认 factory 不可 JSON 序列化 → to_dict/from_dict 用 asdict.
-v5.0 M1: 扩展到 17 字段. v5.1: +suggested_fix → 18 字段.
+v5.0 M1: 扩展到 17 字段. v5.1: +suggested_fix 替代 round → 保持 17 字段.
 """
 
 import uuid
@@ -42,7 +42,7 @@ class EngineState:
         - majors_in_a_row: int (连续 MAJOR 计数, §B1.1 字段 16)
         - total_majors: int (累计 MAJOR 计数, §B1.1 字段 17)
         - thread_id: str (UUID v4, §B1.1 字段 15)
-    Note (2026-07-05): 18 字段 — 无 round 字段 (round 由 orchestrator 局部变量管理,
+    Note (2026-07-05): 17 字段 — 无 round 字段 (round 由 orchestrator 局部变量管理,
     硬上限由 ConvergenceJudge._check_hard_limit 检查).
     设计文档 B1.1 表与代码字段已同步.
     """
@@ -58,17 +58,17 @@ class EngineState:
     # Architect 输出
     plan: str = ""
     file_list: list[str] = field(default_factory=list)
-    batch_plan: list[dict] = field(default_factory=list)  # M1 修正: v2.5 是 dict (错), 应为 list[dict]
-    contracts: dict = field(default_factory=dict)
+    batch_plan: list[dict[str, Any]] = field(default_factory=list)
+    contracts: dict[str, Any] = field(default_factory=dict)
 
     # Developer 输出
     files_changed: list[str] = field(default_factory=list)
     commit_hash: str = ""
-    test_results: dict = field(default_factory=dict)
+    test_results: dict[str, Any] = field(default_factory=dict)
 
     # Critic 输出
     verdict: str = ""  # "APPROVE" | "MAJOR"
-    findings: list[dict] = field(default_factory=list)
+    findings: list[dict[str, Any]] = field(default_factory=list)
     critic_feedback: str = ""
     # 2026-07-04 (Self-Refine 原则 1 深化): 结构化修复建议
     # critic 直接输出 unified diff patch (具体代码片段而非文字), developer
@@ -78,9 +78,17 @@ class EngineState:
     # 多 Agent 预留(v2.0+ Send 动态路由)
     _pending_sends: list = field(default_factory=list)
 
-    def to_dict(self) -> dict[str, Any]:
-        """序列化为 dict. Checkpoint 用此方法写入 SQLite state_json."""
+    def model_dump(self, **kwargs: Any) -> dict[str, Any]:
+        """v5.4 审计 P1-13: 提供 Pydantic 兼容的序列化 API.
+
+        serialize_state 优先检查 model_dump → 统一序列化入口。
+        内部委托给 asdict (dataclass → dict 递归转换).
+        """
         return asdict(self)
+
+    def to_dict(self) -> dict[str, Any]:
+        """序列化为 dict (向后兼容, 委托给 model_dump)."""
+        return self.model_dump()
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "EngineState":

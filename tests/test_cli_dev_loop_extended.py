@@ -6,10 +6,9 @@ cli/dev_loop.py 扩展覆盖率测试.
 - OrchestratorRunResult dataclass: 7+ 字段 + to_json_dict 6 字段契约
 - from_orchestrator() 工厂方法: completed / max_rounds 两条路径
 - _build_gate_summary(): GateVerdict / Verdict / None 三类
-- _build_v2_semantic_evaluator(): 总是 True
 - _build_v2_agent_runtime(): 已由 test_cli_v2_agent_runtime_real.py 覆盖
 - _run_v2_orchestrator: orchestrator mock 集成
-- 参数解析: --max-rounds / --log-format / --project-root / --llm-provider
+- 参数解析: --max-rounds / --format / --project-root / --llm-provider
 - 缺 ANTHROPIC_API_KEY -> preflight exit 1
 - Exit codes: 0/1/2/130 (SIGINT → 130)
 """
@@ -28,7 +27,6 @@ from auto_engineering.cli import main
 from auto_engineering.cli.dev_loop import (
     OrchestratorRunResult,
     _build_gate_summary,
-    _build_v2_semantic_evaluator,
 )
 
 
@@ -353,34 +351,6 @@ class TestBuildGateSummary:
 
 
 # ============================================================
-# 4. _build_v2_semantic_evaluator
-# ============================================================
-
-
-class TestSemanticEvaluator:
-    """_build_v2_semantic_evaluator() 总是返回 True (Phase C 简化)."""
-
-    def test_returns_callable(self, tmp_path: Path) -> None:
-        from auto_engineering.cli import ProgressLogger
-
-        progress = ProgressLogger(log_format="text")
-        ev = _build_v2_semantic_evaluator(tmp_path, progress)
-        assert callable(ev)
-
-    def test_callable_always_returns_true(self, tmp_path: Path) -> None:
-        import asyncio
-
-        from auto_engineering.cli import ProgressLogger
-
-        progress = ProgressLogger(log_format="text")
-        ev = _build_v2_semantic_evaluator(tmp_path, progress)
-        # 不管传什么 round_result, 都返回 True
-        for _ in range(3):
-            result = asyncio.run(ev(MagicMock()))
-            assert result is True
-
-
-# ============================================================
 # 5. CLI 参数解析 (Click)
 # ============================================================
 
@@ -397,12 +367,12 @@ class TestCliArgsParsing:
         return tmp_path
 
     def test_dev_loop_help_lists_options(self) -> None:
-        """ae dev-loop --help 显示 --max-rounds / --log-format / --project-root."""
+        """ae dev-loop --help 显示 --max-rounds / --format / --project-root."""
         runner = CliRunner()
         result = runner.invoke(main, ["dev-loop", "--help"])
         assert result.exit_code == 0
         assert "--max-rounds" in result.output
-        assert "--log-format" in result.output
+        assert "--format" in result.output
         assert "--project-root" in result.output
         assert "--max-tokens" in result.output
 
@@ -443,7 +413,7 @@ class TestCliArgsParsing:
     def test_dev_loop_log_format_json_emits_json_contract(
         self, tmp_project: Path
     ) -> None:
-        """--log-format=json 输出 JSON 契约 (mock orchestrator)."""
+        """--format=json 输出 JSON 契约 (mock orchestrator)."""
         # mock orchestrator 走 completed 路径
         fake_result = OrchestratorRunResult(
             status="completed",
@@ -462,7 +432,7 @@ class TestCliArgsParsing:
                 main,
                 [
                     "dev-loop",
-                    "--log-format",
+                    "--format",
                     "json",
                     "--max-rounds",
                     "2",
@@ -553,7 +523,7 @@ class TestAEErrorExitCodes:
         runner = CliRunner()
         with patch(
             "auto_engineering.cli._run_v2_orchestrator",
-            side_effect=AEError(ErrorCode.CONFIG_INVALID_VALUE, "bad config"),
+            side_effect=AEError(ErrorCode.CONFIG_MISSING_API_KEY, "bad config"),
         ):
             result = runner.invoke(main, ["dev-loop", "req"])
         # exit code 2 = USER_ERROR / config
@@ -589,7 +559,7 @@ class TestAEErrorExitCodes:
     def test_json_format_error_payload_includes_error_block(
         self, tmp_project: Path
     ) -> None:
-        """--log-format=json 错误输出含 error 块."""
+        """--format=json 错误输出含 error 块."""
         from auto_engineering.errors import AEError, ErrorCode
 
         runner = CliRunner()
@@ -598,7 +568,7 @@ class TestAEErrorExitCodes:
             side_effect=AEError(ErrorCode.LLM_TIMEOUT, "boom"),
         ):
             result = runner.invoke(
-                main, ["dev-loop", "--log-format", "json", "req"]
+                main, ["dev-loop", "--format", "json", "req"]
             )
         assert result.exit_code == 3
         # 提取 stdout 末尾的 JSON 段 (前缀 "Starting dev-loop..." 是普通 stdout)
@@ -712,7 +682,7 @@ def _run_v2_orchestrator_passthrough(**kwargs):
     with patch("auto_engineering.loop.checkpoint.store.SQLiteCheckpointStore", MagicMock()), \
          patch("auto_engineering.loop.guardrail.GuardrailChain") as mc_G, \
          patch("auto_engineering.loop.stage_router.StageRouter") as mc_S, \
-         patch("auto_engineering.gates.base.DEFAULT_GATES", [MagicMock()]):
+         patch("auto_engineering.gates.registry.DEFAULT_GATES", [MagicMock()]):
         mc_G.default.return_value = MagicMock()
         mc_S.return_value = MagicMock()
         return _run_v2_orchestrator(**kwargs)

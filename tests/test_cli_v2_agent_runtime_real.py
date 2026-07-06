@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from auto_engineering.agents.base import Agent
+from auto_engineering.agents.base import BaseAgent
 from auto_engineering.cli import ProgressLogger, _build_v2_agent_runtime
 
 
@@ -25,12 +25,12 @@ class TestBuildV2AgentRuntimeReal:
 
             architect = runtime.get("architect")
             assert architect is not None, "architect agent not registered"
-            assert isinstance(architect, Agent), (
-                f"architect should be Agent (BaseAgent), got {type(architect).__name__}"
+            assert isinstance(architect, BaseAgent), (
+                f"architect should be BaseAgent, got {type(architect).__name__}"
             )
             # Explicitly NOT a local mock class (which would lack llm attribute)
             assert hasattr(architect, "llm"), (
-                f"architect should have 'llm' attribute (real Agent), "
+                f"architect should have 'llm' attribute (real BaseAgent), "
                 f"got {type(architect).__name__} with attrs {dir(architect)}"
             )
             assert architect.role == "architect", (
@@ -45,11 +45,11 @@ class TestBuildV2AgentRuntimeReal:
 
             developer = runtime.get("developer")
             assert developer is not None, "developer agent not registered"
-            assert isinstance(developer, Agent), (
-                f"developer should be Agent (BaseAgent), got {type(developer).__name__}"
+            assert isinstance(developer, BaseAgent), (
+                f"developer should be BaseAgent, got {type(developer).__name__}"
             )
             assert hasattr(developer, "llm"), (
-                f"developer should have 'llm' attribute (real Agent), "
+                f"developer should have 'llm' attribute (real BaseAgent), "
                 f"got {type(developer).__name__}"
             )
             assert developer.role == "developer", (
@@ -64,11 +64,11 @@ class TestBuildV2AgentRuntimeReal:
 
             critic = runtime.get("critic")
             assert critic is not None, "critic agent not registered"
-            assert isinstance(critic, Agent), (
-                f"critic should be Agent (BaseAgent), got {type(critic).__name__}"
+            assert isinstance(critic, BaseAgent), (
+                f"critic should be BaseAgent, got {type(critic).__name__}"
             )
             assert hasattr(critic, "llm"), (
-                f"critic should have 'llm' attribute (real Agent), "
+                f"critic should have 'llm' attribute (real BaseAgent), "
                 f"got {type(critic).__name__}"
             )
             assert critic.role == "critic", (

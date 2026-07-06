@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
 from typing import ClassVar
 
 from auto_engineering.errors import ErrorCode
+
+_logger = logging.getLogger("ae.tools.base")
 
 
 @dataclass
@@ -91,7 +94,24 @@ class BaseTool(ABC):
                 return False, f"path outside project_root: {file_path}"
             return True, ""
         except Exception as e:
+            _logger.debug("路径安全检查异常: %s (%s)", file_path, e, exc_info=True)
             return False, f"invalid path: {file_path} ({e})"
+
+    def _validate_path(self, file_path: str) -> ToolResult | None:
+        """路径白名单校验 + 标准化 (v5.4 审计 P2-9 提取).
+
+        4 个文件工具 (ReadFile/WriteFile/EditFile/SearchCode) 都重复:
+            safe, err = self._is_path_safe(file_path)
+            if not safe:
+                return ToolResult(success=False, content="", error=err)
+
+        Returns:
+            ToolResult — 校验失败时 (直接返回给调用方), None — 校验通过.
+        """
+        safe, err = self._is_path_safe(file_path)
+        if not safe:
+            return ToolResult(success=False, content="", error=err)
+        return None
 
     def to_schema(self) -> dict:
         return {

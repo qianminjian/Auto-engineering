@@ -37,7 +37,6 @@ from auto_engineering.loop.convergence import (
     ConvergenceConfig,
     ConvergenceJudge,
     RoundHistory,
-    Verdict,
 )
 from auto_engineering.loop.orchestrator import (
     Orchestrator,
@@ -49,7 +48,6 @@ from auto_engineering.loop.plan import (
     TaskDAG,
 )
 from auto_engineering.loop.round import (
-    Round,
     RoundResult,
 )
 # v2.3 P0-A (BEACON 决策 23): CheckpointEnvelope / Channel 不再从 __init__ 导出
@@ -65,11 +63,9 @@ __all__ = [
     "Orchestrator",
     "OrchestratorConfig",
     "Plan",
-    "Round",
     "RoundHistory",
     "RoundResult",
     "SQLiteCheckpointStore",
     "Task",
     "TaskDAG",
-    "Verdict",
 ]

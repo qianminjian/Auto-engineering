@@ -23,10 +23,9 @@ v5.0 §IL-AC-02 扩展:
 from __future__ import annotations
 
 import shutil
-import subprocess
 from pathlib import Path
 
-from auto_engineering.gates.base import Gate, Verdict
+from auto_engineering.gates.base import Gate, GateVerdict, run_gate_command
 
 # 默认 timeout 与 .claude/rules/pytest-memory-management.md 对齐
 DEFAULT_TIMEOUT = 60.0
@@ -74,7 +73,7 @@ class TestGate(Gate):
 
         读 manifest.conventions.test_runner, 缺则用 LANGUAGE_TOOLS 默认.
         """
-        from auto_engineering.loop.init_contract import get_gate_tools_from_manifest
+        from auto_engineering.gates.registry import get_gate_tools_from_manifest
 
         tools = get_gate_tools_from_manifest(manifest)
         return cls(test_runner_bin=tools["test_runner"], timeout=timeout)
@@ -125,69 +124,58 @@ class TestGate(Gate):
         cmd.extend(self.test_paths)
         return cmd
 
-    def run(self, project_root: Path, contracts: dict | None = None) -> Verdict:
+    def run(self, project_root: Path, contracts: dict | None = None) -> GateVerdict:
         """执行 test_runner.
 
         Returns:
-            Verdict: passed=True 表示所有测试通过;
+            GateVerdict: passed=True 表示所有测试通过;
                      passed=False 表示有测试失败或 test_runner 错误.
         """
         project_root = Path(project_root)
         if not project_root.exists():
-            return Verdict.failed(
+            return GateVerdict.failed(
                 f"project_root 不存在: {project_root}",
                 gate_name=self.name,
             )
 
         cmd = self._build_cmd(project_root)
         if not cmd:
-            return Verdict.failed(
+            return GateVerdict.failed(
                 f"{self.test_runner_bin} 命令未找到 (PATH 也无 python)",
                 gate_name=self.name,
             )
 
-        try:
-            result = subprocess.run(
-                cmd,
-                cwd=str(project_root),
-                capture_output=True,
-                text=True,
-                timeout=self.timeout,
-            )
-        except subprocess.TimeoutExpired:
-            return Verdict.failed(
+        result = run_gate_command(cmd, project_root, self.timeout)
+
+        if result.timed_out:
+            return GateVerdict.failed(
                 f"{self.test_runner_bin} 超时 (>{self.timeout}s): {' '.join(cmd)}",
                 gate_name=self.name,
             )
-        except FileNotFoundError as e:
-            return Verdict.failed(
-                f"{self.test_runner_bin} 命令未找到 ({e})",
+        if result.not_found:
+            return GateVerdict.failed(
+                f"{self.test_runner_bin} 命令未找到",
                 gate_name=self.name,
             )
 
         if result.returncode == 0:
-            # 提取 passed 数(若有)
-            output = (result.stdout or "") + (result.stderr or "")
-            return Verdict.passed(
+            output = result.stdout + result.stderr
+            return GateVerdict.passed(
                 f"{self.test_runner_bin} 通过: {self._extract_summary(output)}",
                 gate_name=self.name,
             )
 
-        # exit 5 = pytest 找不到任何测试文件
-        # exit 4 = pytest 收集到 0 个测试 (项目无测试目录或测试为空)
-        # 两者均视为 skip (非失败), 不阻塞 dev-loop — 文档类项目可能没有测试
         if result.returncode in (4, 5):
-            output = (result.stdout or "") + (result.stderr or "")
+            output = result.stdout + result.stderr
             snippet = output[-300:] if len(output) > 300 else output
-            return Verdict.passed(
+            return GateVerdict.passed(
                 f"{self.test_runner_bin} skip: 未收集到测试 (exit={result.returncode})\n{snippet}",
                 gate_name=self.name,
             )
 
-        # exit 1/2/3 = 测试失败
-        output = (result.stdout or "") + (result.stderr or "")
+        output = result.stdout + result.stderr
         snippet = output[-1500:] if len(output) > 1500 else output
-        return Verdict.failed(
+        return GateVerdict.failed(
             f"{self.test_runner_bin} 失败 (exit={result.returncode}):\n{snippet}",
             gate_name=self.name,
         )

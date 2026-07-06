@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from auto_engineering.engine.state import LoopState
+from auto_engineering.engine.state import EngineState
 
 
 @dataclass
@@ -17,14 +17,14 @@ class TaskContext:
     """Agent 执行时的上下文. Agent.execute(task, ctx) 接收.
 
     字段:
-        state         — 共享 LoopState(引用,不 copy)
+        state         — 共享 EngineState (引用, 不 copy)
         requirement   — 原始需求文本(冗余于 state.requirement,便于访问)
         current_stage — 当前 Stage.name(冗余于 state.current_stage)
         inputs        — 从 Task.input_channels 提取的 channel 值 dict
         outputs       — 准备写入 state 的 outputs(暂存,execute 返回后 apply)
     """
 
-    state: LoopState
+    state: EngineState
     requirement: str
     current_stage: str = ""
     inputs: dict[str, Any] = field(default_factory=dict)

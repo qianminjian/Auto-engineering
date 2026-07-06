@@ -18,11 +18,14 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 
 import yaml
 
-from auto_engineering.gates.base import Gate, Verdict
+from auto_engineering.gates.base import Gate, GateVerdict
+
+_logger = logging.getLogger("ae.gates.contract")
 
 # v5.0 §B6.1a — 扫描的源文件扩展名 (限静态文本匹配范围, 不扫描 README/配置)
 _SOURCE_EXTENSIONS = {".py", ".ts", ".js", ".go", ".rs"}
@@ -79,6 +82,7 @@ def _check_contract_in_source(
         try:
             source_text_parts.append(path.read_text(encoding="utf-8", errors="ignore"))
         except OSError:
+            _logger.debug("跳过不可读文件: %s", path)
             continue
     source_text = "\n".join(source_text_parts)
 
@@ -137,40 +141,33 @@ class ContractGate(Gate):
     def run(
         self,
         project_root: Path,
-        agent_count: int = 1,
         contracts: dict | None = None,
-    ) -> Verdict:
+    ) -> GateVerdict:
         """执行契约检查.
 
         Args:
             project_root: 项目根目录
-            agent_count: Agent 数量. 1 = 单 Agent (skip); >=2 = 多 Agent 旧路径
             contracts: v5.0 §B6.1a — 契约字典. None/空 → passed(skip).
                        非空 → 走 4 项检查 (path/status_code/request/response).
 
         Returns:
-            Verdict: passed=True 或 passed=False
+            GateVerdict: passed=True 或 passed=False
         """
-        # v5.0 §B6.1a 路径: 显式传入了 contracts → 4 项检查 (单/多 agent 都支持)
+        # v5.0 §B6.1a 路径: 显式传入了 contracts → 4 项检查
         if contracts is not None:
             if not isinstance(contracts, dict):
-                return Verdict.failed(
+                return GateVerdict.failed(
                     f"contracts 必须是 dict, 实际为 {type(contracts).__name__}",
                     gate_name=self.name,
                 )
             if not contracts:
-                return Verdict.passed(
+                return GateVerdict.passed(
                     "skip: 无契约定义, 跳过 (contracts 为空)",
                     gate_name=self.name,
                 )
             return self._check_contracts(project_root, contracts)
 
-        # 旧 multi-agent 路径: agent_count >= 2 且无 contracts dict → 旧版目录检查
-        if agent_count >= 2:
-            return self._check_contracts_dir(project_root, agent_count)
-
-        # 单 Agent + 无 contracts → 跳过 (向后兼容: 用旧 single agent 消息)
-        return Verdict.passed(
+        return GateVerdict.passed(
             "skip: single agent mode, no cross-agent contract",
             gate_name=self.name,
         )
@@ -179,18 +176,18 @@ class ContractGate(Gate):
         self,
         project_root: Path,
         contracts: dict,
-    ) -> Verdict:
+    ) -> GateVerdict:
         """v5.0 §B6.1a — 4 项检查 (path/status_code/request/response)."""
         project_root = Path(project_root)
         if not project_root.is_dir():
-            return Verdict.failed(
+            return GateVerdict.failed(
                 f"project_root 不存在: {project_root}",
                 gate_name=self.name,
             )
 
         source_files = _collect_source_files(project_root)
         if not source_files:
-            return Verdict.failed(
+            return GateVerdict.failed(
                 f"未找到源文件 (扫描 _SOURCE_EXTENSIONS={sorted(_SOURCE_EXTENSIONS)})",
                 gate_name=self.name,
             )
@@ -198,18 +195,18 @@ class ContractGate(Gate):
         # 逐契约检查
         for name, contract in contracts.items():
             if not isinstance(contract, dict):
-                return Verdict.failed(
+                return GateVerdict.failed(
                     f"contract '{name}' 必须是 dict, 实际为 {type(contract).__name__}",
                     gate_name=self.name,
                 )
             passed, msg = _check_contract_in_source(contract, source_files)
             if not passed:
-                return Verdict.failed(
+                return GateVerdict.failed(
                     f"contract '{name}': {msg}",
                     gate_name=self.name,
                 )
 
-        return Verdict.passed(
+        return GateVerdict.passed(
             f"所有 {len(contracts)} 个契约 4 项检查通过",
             gate_name=self.name,
         )
@@ -218,7 +215,7 @@ class ContractGate(Gate):
         self,
         project_root: Path,
         agent_count: int,
-    ) -> Verdict:
+    ) -> GateVerdict:
         """旧 multi-agent 路径: 检查磁盘上 .ae-contracts/ 下的契约文件.
 
         保留 v2.0 P0-18 决策: 多 Agent 场景检查目录存在性 + 文件格式.
@@ -228,7 +225,7 @@ class ContractGate(Gate):
             contracts_path = project_root / self.contracts_dir
 
         if not contracts_path.is_dir():
-            return Verdict.failed(
+            return GateVerdict.failed(
                 f"multi-agent ({agent_count}): contracts directory not found: {contracts_path}",
                 gate_name=self.name,
             )
@@ -241,7 +238,7 @@ class ContractGate(Gate):
         )
 
         if not contract_files:
-            return Verdict.failed(
+            return GateVerdict.failed(
                 f"multi-agent ({agent_count}): no contract files (.yml/.json) in {contracts_path}",
                 gate_name=self.name,
             )
@@ -252,7 +249,7 @@ class ContractGate(Gate):
             try:
                 content = cf.read_text(encoding="utf-8").strip()
                 if not content:
-                    return Verdict.failed(
+                    return GateVerdict.failed(
                         f"multi-agent ({agent_count}): empty contract file: {cf.name}",
                         gate_name=self.name,
                     )
@@ -262,12 +259,12 @@ class ContractGate(Gate):
                     json.loads(content)
                 parsed_count += 1
             except (yaml.YAMLError, json.JSONDecodeError, ValueError) as exc:
-                return Verdict.failed(
+                return GateVerdict.failed(
                     f"multi-agent ({agent_count}): parse error in {cf.name}: {exc}",
                     gate_name=self.name,
                 )
 
-        return Verdict.passed(
+        return GateVerdict.passed(
             f"multi-agent ({agent_count}) contracts valid: {parsed_count} file(s) in {contracts_path}",
             gate_name=self.name,
         )

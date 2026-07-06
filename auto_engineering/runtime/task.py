@@ -6,7 +6,7 @@
     - Task 是 runtime 层抽象,Stage 是 graph 层抽象。两者字段重叠(v2.0),
       v2.0 可能拆分:Stage(graph 层)+ Task(runtime 层)。
     - Task.id 通常 == Stage.name(同一概念在 graph/runtime 两层表达)。
-    - dataclass 而非 Pydantic:与 LoopState/Stage/Checkpoint 风格一致(YAGNI)。
+    - dataclass 而非 Pydantic:与 EngineState/Stage/Checkpoint 风格一致(YAGNI)。
     - Task/TaskResult 都是 mutable:运行时可调整。
 """
 
@@ -25,9 +25,9 @@ class Task:
         description     — 任务描述(给 Agent 看)
         expected_output — 期望产出描述(CrewAI 风格,提升 LLM 输出质量)
         output_schema   — JSON Schema 约束 LLM 输出结构
-        tools           — 工具名列表(运行时由 ToolRegistry 解析)
-        input_channels  — 从 LoopState 读哪些 channel
-        output_channels — 写哪些 channel 到 LoopState
+        tools           — 工具名列表(运行时由 AgentRuntime 解析)
+        input_channels  — 从 EngineState 读哪些 channel
+        output_channels — 写哪些 channel 到 EngineState
     """
 
     id: str

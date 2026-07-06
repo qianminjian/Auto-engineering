@@ -1,7 +1,7 @@
 """ae gate-check CLI 测试 (v5.0 §PE.6).
 
 RED marker 测试 — 验证 gate-check 子命令行为:
-- --all 模式: 跑 7 道 Gate (safety/lint/type_check/contract/test/coverage/build)
+- --all 模式: 跑 6 道 Gate (safety/lint/type_check/contract/test/build)
 - --quick 模式: 跑 3 道 Gate (safety/lint/type_check)
 - JSON 契约: project_root / mode / passed / failed / skipped / gate_summary
 - gate_summary 每 Gate 含 status/passed/message 字段
@@ -73,17 +73,16 @@ def test_quick_gates_is_3_tuple() -> None:
     assert set(QUICK_GATES) == {"safety", "lint", "type_check"}
 
 
-def test_all_gates_is_7_tuple() -> None:
-    """ALL_GATES 是 7 元素 tuple 覆盖 7 道 Gate."""
+def test_all_gates_is_6_tuple() -> None:
+    """ALL_GATES 是 6 元素 tuple 覆盖 6 道 Gate (v5.4 Q2: coverage 已删除)."""
     assert isinstance(ALL_GATES, tuple)
-    assert len(ALL_GATES) == 7
+    assert len(ALL_GATES) == 6
     assert set(ALL_GATES) == {
         "safety",
         "lint",
         "type_check",
         "contract",
         "test",
-        "coverage",
         "build",
     }
 
@@ -134,12 +133,6 @@ def test_instantiate_contract_returns_gate(tmp_path: Path) -> None:
 def test_instantiate_test_returns_gate(tmp_path: Path) -> None:
     """test -> TestGate 实例或异常."""
     result = _instantiate_gate("test", tmp_path)
-    assert result is not None
-
-
-def test_instantiate_coverage_returns_gate(tmp_path: Path) -> None:
-    """coverage -> CoverageGate 实例或异常."""
-    result = _instantiate_gate("coverage", tmp_path)
     assert result is not None
 
 
@@ -252,16 +245,15 @@ def test_run_gates_failure_status(tmp_path: Path, mock_verdict) -> None:
 
 
 def test_run_gates_instantiate_exception_is_skipped(tmp_path: Path) -> None:
-    """_instantiate_gate 返回 Exception 实例 -> gate 标记 skipped."""
+    """_instantiate_gate 返回 None (v5.4 P0-2: 不再返回 Exception) -> gate 标记 skipped."""
     with patch(
         "auto_engineering.cli.gate_check._instantiate_gate",
-        return_value=RuntimeError("boom"),
+        return_value=None,
     ):
         result = run_gates(("safety",), tmp_path)
     entry = result["gate_summary"]["safety"]
     assert entry["status"] == "skipped"
     assert entry["passed"] is None
-    assert "instantiate error" in entry["message"]
 
 
 def test_run_gates_run_exception_is_skipped(tmp_path: Path) -> None:
@@ -336,7 +328,7 @@ def test_run_gates_missing_message_handled(tmp_path: Path, mock_verdict) -> None
 
 
 def test_cli_gate_check_default_is_all(runner: CliRunner, tmp_cwd: Path) -> None:
-    """默认 (无 --quick) = all 模式 = 跑 7 Gate."""
+    """默认 (无 --quick) = all 模式 = 跑 6 Gate (v5.4 Q2: coverage 已删除)."""
     fake_gate = MagicMock()
     v = MagicMock()
     v.passed = True
@@ -351,7 +343,7 @@ def test_cli_gate_check_default_is_all(runner: CliRunner, tmp_cwd: Path) -> None
     data = json.loads(result.output)
     assert data["mode"] == "all"
     assert data["gate_names"] == list(ALL_GATES)
-    assert len(data["gate_names"]) == 7
+    assert len(data["gate_names"]) == 6
 
 
 def test_cli_gate_check_quick_mode(runner: CliRunner, tmp_cwd: Path) -> None:
@@ -376,7 +368,7 @@ def test_cli_gate_check_quick_mode(runner: CliRunner, tmp_cwd: Path) -> None:
 def test_cli_gate_check_quick_excludes_slow_gates(
     runner: CliRunner, tmp_cwd: Path
 ) -> None:
-    """--quick 模式不跑 contract/test/coverage/build."""
+    """--quick 模式不跑 contract/test/build."""
     fake_gate = MagicMock()
     v = MagicMock()
     v.passed = True
@@ -389,7 +381,7 @@ def test_cli_gate_check_quick_excludes_slow_gates(
         result = runner.invoke(main, ["gate-check", "--quick"])
     data = json.loads(result.output)
     # Quick 模式下不应出现慢 Gate
-    for slow in ("contract", "test", "coverage", "build"):
+    for slow in ("contract", "test", "build"):
         assert slow not in data["gate_names"], (
             f"{slow} 误入 --quick 模式 gate_names"
         )
@@ -515,10 +507,10 @@ def test_cli_gate_check_default_project_root_uses_cwd(
     assert captured_roots[0] == Path(tmp_cwd).resolve() or captured_roots[0] == tmp_cwd
 
 
-def test_cli_gate_check_all_includes_full_7(
+def test_cli_gate_check_all_includes_full_6(
     runner: CliRunner, tmp_cwd: Path
 ) -> None:
-    """--all 模式覆盖全部 7 个 Gate 名."""
+    """--all 模式覆盖全部 6 个 Gate 名 (v5.4 Q2: coverage 已删除)."""
     fake_gate = MagicMock()
     v = MagicMock()
     v.passed = True
@@ -536,7 +528,6 @@ def test_cli_gate_check_all_includes_full_7(
         "type_check",
         "contract",
         "test",
-        "coverage",
         "build",
     }
 

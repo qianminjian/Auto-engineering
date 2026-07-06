@@ -30,24 +30,24 @@ class TestGateBase:
     """Gate 基类 + Verdict dataclass."""
 
     def test_verdict_pass_creates_passed_instance(self):
-        from auto_engineering.gates.base import Verdict
+        from auto_engineering.gates.base import GateVerdict
 
-        v = Verdict.passed("lint clean")
+        v = GateVerdict.passed("lint clean")
         assert v.passed is True
         assert v.message == "lint clean"
         assert v.gate_name == ""
 
     def test_verdict_fail_creates_failed_instance(self):
-        from auto_engineering.gates.base import Verdict
+        from auto_engineering.gates.base import GateVerdict
 
-        v = Verdict.failed("test failed")
+        v = GateVerdict.failed("test failed")
         assert v.passed is False
         assert v.message == "test failed"
 
     def test_verdict_constructor(self):
-        from auto_engineering.gates.base import Verdict
+        from auto_engineering.gates.base import GateVerdict
 
-        v = Verdict(gate_name="lint", passed=True, message="ok")
+        v = GateVerdict(gate_name="lint", passed=True, message="ok")
         assert v.gate_name == "lint"
         assert v.passed is True
         assert v.message == "ok"
@@ -207,16 +207,14 @@ class TestContractGate:
         from auto_engineering.gates.contract import ContractGate
 
         gate = ContractGate()
-        # 单 Agent 模式: agent_count=1 → 应 pass(skip)
-        verdict = gate.run(tmp_path, agent_count=1)
+        verdict = gate.run(tmp_path)
         assert verdict.passed is True
         assert "skip" in verdict.message.lower() or "single" in verdict.message.lower()
 
     def test_multi_agent_with_valid_contracts_passes(self, tmp_path: Path):
-        """多 Agent + .ae-contracts/ 下有效 YAML 文件 → passed=True."""
+        """._check_contracts_dir: .ae-contracts/ 下有效 YAML 文件 → passed=True."""
         from auto_engineering.gates.contract import ContractGate
 
-        # 创建 .ae-contracts/ 目录 + 有效 YAML
         contracts_dir = tmp_path / ".ae-contracts"
         contracts_dir.mkdir()
         (contracts_dir / "agent-api.yml").write_text(
@@ -228,24 +226,22 @@ class TestContractGate:
         )
 
         gate = ContractGate(contracts_dir=contracts_dir)
-        verdict = gate.run(tmp_path, agent_count=3)
+        verdict = gate._check_contracts_dir(tmp_path, 3)
         assert verdict.passed is True
-        # 消息应表明契约文件被成功检查(而非 placeholder skip)
         assert "valid" in verdict.message.lower()
 
     def test_multi_agent_no_contracts_fails(self, tmp_path: Path):
-        """多 Agent + 无 .ae-contracts/ 目录 → passed=False."""
+        """._check_contracts_dir: 无 .ae-contracts/ 目录 → passed=False."""
         from auto_engineering.gates.contract import ContractGate
 
-        # 不创建 contracts 目录
         contracts_dir = tmp_path / ".ae-contracts"
         gate = ContractGate(contracts_dir=contracts_dir)
-        verdict = gate.run(tmp_path, agent_count=3)
+        verdict = gate._check_contracts_dir(tmp_path, 3)
         assert verdict.passed is False
         assert "contract" in verdict.message.lower() or "no" in verdict.message.lower()
 
     def test_multi_agent_malformed_contract_fails(self, tmp_path: Path):
-        """多 Agent + .ae-contracts/ 下有格式错误的 YAML → passed=False."""
+        """._check_contracts_dir: .ae-contracts/ 下有格式错误的 YAML → passed=False."""
         from auto_engineering.gates.contract import ContractGate
 
         contracts_dir = tmp_path / ".ae-contracts"
@@ -255,7 +251,7 @@ class TestContractGate:
         )
 
         gate = ContractGate(contracts_dir=contracts_dir)
-        verdict = gate.run(tmp_path, agent_count=3)
+        verdict = gate._check_contracts_dir(tmp_path, 3)
         assert verdict.passed is False
         assert "parse" in verdict.message.lower() or "yaml" in verdict.message.lower()
 
@@ -269,7 +265,7 @@ class TestTestGate:
     """Gate 4: pytest with --timeout=60 + --no-cov."""
 
     def test_no_tests_returns_verdict(self, tmp_path: Path):
-        from auto_engineering.gates.test import TestGate
+        from auto_engineering.gates.test_gate import TestGate
 
         # 空目录: pytest exit 5 (no tests collected) — 应当 fail
         gate = TestGate(timeout=30)
@@ -277,7 +273,7 @@ class TestTestGate:
         assert hasattr(verdict, "passed")
 
     def test_passing_tests_passes(self, tmp_path: Path):
-        from auto_engineering.gates.test import TestGate
+        from auto_engineering.gates.test_gate import TestGate
 
         # 创建 passing test
         tests_dir = tmp_path / "tests"
@@ -290,7 +286,7 @@ class TestTestGate:
         assert verdict.passed is True
 
     def test_failing_tests_fails(self, tmp_path: Path):
-        from auto_engineering.gates.test import TestGate
+        from auto_engineering.gates.test_gate import TestGate
 
         tests_dir = tmp_path / "tests"
         tests_dir.mkdir()
@@ -302,7 +298,7 @@ class TestTestGate:
         assert verdict.passed is False
 
     def test_custom_pytest_args_used(self, tmp_path: Path):
-        from auto_engineering.gates.test import TestGate
+        from auto_engineering.gates.test_gate import TestGate
 
         gate = TestGate(timeout=30, pytest_args=["--maxfail=1"])
         # 验证 pytest_args 被使用 — 调用时构造命令
@@ -311,29 +307,6 @@ class TestTestGate:
 
         inspect.signature(gate.run)
         assert True  # signature 兼容
-
-
-# ============================================================
-# Group 7: Gate 5 — Coverage
-# ============================================================
-
-
-class TestCoverageGate:
-    """Gate 5: pytest --cov + threshold check."""
-
-    def test_returns_verdict(self, tmp_path: Path):
-        from auto_engineering.gates.coverage import CoverageGate
-
-        gate = CoverageGate(threshold=80.0)
-        verdict = gate.run(tmp_path)
-        # 无测试 → 应返回 Verdict(可能 fail)
-        assert hasattr(verdict, "passed")
-
-    def test_threshold_configurable(self):
-        from auto_engineering.gates.coverage import CoverageGate
-
-        gate = CoverageGate(threshold=90.0)
-        assert gate.threshold == 90.0
 
 
 # ============================================================
@@ -348,7 +321,7 @@ class TestBuildGate:
         from auto_engineering.gates.build import BuildGate
 
         gate = BuildGate()
-        verdict = gate.run()
+        verdict = gate.run(project_root=Path.cwd())
         # auto_engineering 应可 import
         assert verdict.passed is True
 
@@ -357,7 +330,7 @@ class TestBuildGate:
 
         # 自定义模块 import(应失败)
         gate = BuildGate(module="nonexistent_module_xyz")
-        verdict = gate.run()
+        verdict = gate.run(project_root=Path.cwd())
         assert verdict.passed is False
 
 

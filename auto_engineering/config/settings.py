@@ -38,7 +38,7 @@ class Settings:
 
         ANTHROPIC_API_KEY 不在 Settings, 由 anthropic SDK 自动从 env 读.
         """
-        from auto_engineering.utils.plugin_mode import detect_plugin_mode, has_llm_credentials
+        from auto_engineering.utils.plugin_mode import is_llm_available
         anthropic_model = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-6").strip()
         checkpoint_dir = os.environ.get("AE_CHECKPOINT_DIR", ".ae-state").strip()
         max_steps = int(os.environ.get("AE_MAX_STEPS", "50").strip())
@@ -46,7 +46,7 @@ class Settings:
         retry_max_attempts = int(os.environ.get("AE_RETRY_MAX_ATTEMPTS", "3").strip())
         retry_timeout = float(os.environ.get("AE_RETRY_TIMEOUT", "120.0").strip())
 
-        if not has_llm_credentials() and not detect_plugin_mode():
+        if not is_llm_available():
             raise AEError(
                 ErrorCode.CONFIG_MISSING_API_KEY,
                 "环境变量 ANTHROPIC_API_KEY/ANTHROPIC_AUTH_TOKEN 未设置。"

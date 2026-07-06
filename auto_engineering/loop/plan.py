@@ -105,18 +105,21 @@ class Task:
     def __post_init__(self) -> None:
         """归一化 target_files 为 frozenset[str] (允许 list/set 输入)."""
         if not isinstance(self.target_files, frozenset):
-            object.__setattr__(self, "target_files", frozenset(self.target_files))
-        # depends_on / deps 拷贝避免外部修改
-        object.__setattr__(self, "depends_on", list(self.depends_on))
-        object.__setattr__(self, "context_files", list(self.context_files))
-        object.__setattr__(self, "deps", list(self.deps))
+            self.target_files = frozenset(self.target_files)
+        # depends_on / deps 拷贝并同步 (deps 优先, depends_on 补充)
+        self.deps = list(self.deps)
+        self.depends_on = list(self.depends_on)
+        # 同步: deps 未设置时从 depends_on 拷贝, depends_on 未设置时从 deps 拷贝
+        if not self.deps and self.depends_on:
+            self.deps = list(self.depends_on)
+        if not self.depends_on and self.deps:
+            self.depends_on = list(self.deps)
+        self.context_files = list(self.context_files)
         # 同步 agent_type / role (向后兼容: agent_type 缺省时用 role)
         if self.agent_type == "developer" and self.role != "developer":
-            # 若显式指定 role, 用 role 覆盖默认 agent_type
-            object.__setattr__(self, "agent_type", self.role)
+            self.agent_type = self.role
         elif self.role == "developer" and self.agent_type != "developer":
-            # 若显式指定 agent_type, 用 agent_type 覆盖默认 role
-            object.__setattr__(self, "role", self.agent_type)
+            self.role = self.agent_type
 
 
 @dataclass
@@ -279,48 +282,49 @@ def check_file_isolation(
 
 
 def _topological_levels(tasks: list[Task]) -> list[list[Task]]:
-    """按拓扑层级分组: 同一层的 task 可并行.
+    """按拓扑层级分组 (Kahn BFS 分层): 同一层的 task 可并行.
 
     Returns:
-        list[list[Task]]: 外层按层序, 内层同层 task
+        list[list[Task]]: 外层按层序, 内层同层 task (按 id 排序)
+
+    Raises:
+        ConflictError: DAG 含循环依赖时
     """
     if not tasks:
         return []
 
     task_map = {t.id: t for t in tasks}
-    # 计算每个 task 的层级 (最长依赖链长度)
-    level_cache: dict[str, int] = {}
 
-    def get_level(task_id: str, visiting: set[str] | None = None) -> int:
-        if task_id in level_cache:
-            return level_cache[task_id]
-        visiting = visiting or set()
-        if task_id in visiting:
-            raise ValueError(f"Cycle detected at {task_id}")
-        visiting.add(task_id)
-        task = task_map[task_id]
-        if not task.depends_on:
-            level_cache[task_id] = 0
-            return 0
-        max_dep_level = max(
-            get_level(dep, visiting) for dep in task.depends_on
-        )
-        level = max_dep_level + 1
-        level_cache[task_id] = level
-        return level
+    # 计算入度 (只统计 batch 内 deps; 外部 dep 不计入)
+    in_degree: dict[str, int] = {}
+    for t in tasks:
+        in_degree[t.id] = sum(1 for d in t.deps if d in task_map)
 
-    # 计算所有 task 的 level
-    for task in tasks:
-        get_level(task.id)
+    # Kahn BFS 分层
+    current: list[Task] = [t for t in tasks if in_degree[t.id] == 0]
+    current.sort(key=lambda t: t.id)
+    layers: list[list[Task]] = []
+    seen: set[str] = set()
 
-    # 按 level 分组
-    grouped: dict[int, list[Task]] = defaultdict(list)
-    for task in tasks:
-        grouped[level_cache[task.id]].append(task)
+    while current:
+        layers.append(current)
+        seen.update(t.id for t in current)
+        next_level: list[Task] = []
+        for task in current:
+            for other in tasks:
+                if other.id not in seen and task.id in other.deps:
+                    in_degree[other.id] -= 1
+                    if in_degree[other.id] == 0:
+                        next_level.append(other)
+        next_level.sort(key=lambda t: t.id)
+        current = next_level
 
-    # 按 level 升序返回
-    max_level = max(level_cache.values())
-    return [grouped[i] for i in range(max_level + 1)]
+    # 环检测: 有 task 未被访问 → 存在循环依赖
+    if len(seen) < len(tasks):
+        remaining = [t.id for t in tasks if t.id not in seen]
+        raise ConflictError([f"cycle detected involving: {', '.join(remaining)}"])
+
+    return layers
 
 
 @dataclass
@@ -385,6 +389,16 @@ class Plan:
             # + future 字段) 不消费, 不阻断, 保持 forward-compat
             # (无显式 action — dataclass 字段 + B1.3 校验已覆盖)
 
+    def add_tasks(self, new_tasks: list[Task]) -> None:
+        """追加 Task 列表并重新校验 (替代直接修改 self.tasks).
+
+        用途: architect 产出 batch_plan 后, 将新 task 动态注入 Plan.
+        与直接 self.tasks.extend() 不同, 此方法会重新校验 Plan 合法性
+        (DAG 循环 / 文件隔离 / contract), 避免非法 task 进入执行流水线.
+        """
+        self.tasks.extend(new_tasks)
+        self.validate()
+
     def parallelism_groups(self) -> list[list[str]]:
         """返回并行组列表: 外层按层序, 内层是同层 task id 列表.
 
@@ -398,11 +412,7 @@ class Plan:
         """
         if not self.tasks:
             return []
-        try:
-            levels = _topological_levels(self.tasks)
-        except ValueError as exc:
-            # DAG 环检测: 转换 ValueError → ConflictError (统一 Plan.validate 异常契约)
-            raise ConflictError([f"DAG 含循环依赖: {exc}"]) from exc
+        levels = _topological_levels(self.tasks)
         return [[t.id for t in level] for level in levels]
 
     def get_tasks_by_stage(self, stage: str) -> list[Task]:

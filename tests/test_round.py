@@ -1,11 +1,11 @@
 """Tests for v5.0 Phase 05 — M5 Round 重构.
 
 设计: v5.0 §B2.12 run_round 签名扩展 + §B2.12a per_task_ctx 独立 +
-      §B2.12b _topological_layers (Kahn BFS 分层).
+      §B2.12b _topological_levels (Kahn BFS 分层).
 
 覆盖:
     - run_round 新增 stage: str / contracts: dict | None 参数
-    - _topological_layers: 单任务/并行/环检测
+    - _topological_levels: 单任务/并行/环检测
     - per_task_ctx 独立 (避免 shared ctx.task 串扰)
     - run_round 错误分类: AEError(ERR_TASK_CANCELLED) / CancelledError / Exception
 """
@@ -18,11 +18,10 @@ import time
 import pytest
 
 from auto_engineering.loop.round import (
-    _topological_layers,
     run_round,
     TaskOutcome,
 )
-from auto_engineering.loop.plan import Task, ConflictError
+from auto_engineering.loop.plan import Task, ConflictError, _topological_levels
 
 
 # ============================================================
@@ -86,46 +85,46 @@ class TestRunRoundSignature:
 
 
 # ============================================================
-# Group 2: _topological_layers (Kahn BFS 分层)
+# Group 2: _topological_levels (Kahn BFS 分层)
 # ============================================================
 
 
 class TestTopologicalLayers:
-    """v5.0 §B2.12b — _topological_layers 分层 (round.py 内部使用).
+    """v5.0 §B2.12b — _topological_levels 分层 (round.py 内部使用).
 
     注意: plan.py 已存在 _topological_levels (DFS 递归 + cache),
-    这里测试的是 round.py 中的 _topological_layers (Kahn BFS 实现).
+    这里测试的是 round.py 中的 _topological_levels (Kahn BFS 实现).
     """
 
-    def test_topological_layers_single_task(self):
+    def test_topological_levels_single_task(self):
         """单个无依赖 task → [[t1]]."""
-        layers = _topological_layers([make_task("t1")])
+        layers = _topological_levels([make_task("t1")])
         assert layers == [[make_task("t1")]]
 
-    def test_topological_layers_parallel(self):
+    def test_topological_levels_parallel(self):
         """多个无依赖 task → [[t1, t2, t3]] (同层并行)."""
         tasks = [make_task("t1"), make_task("t2"), make_task("t3")]
-        layers = _topological_layers(tasks)
+        layers = _topological_levels(tasks)
         assert len(layers) == 1
         assert len(layers[0]) == 3
         # 同层的 task id 应当是输入的 id 集合
         layer_ids = {t.id for t in layers[0]}
         assert layer_ids == {"t1", "t2", "t3"}
 
-    def test_topological_layers_chain(self):
+    def test_topological_levels_chain(self):
         """依赖链 t1 → t2 → t3 → 3 层, 每层 1 个."""
         tasks = [
             make_task("t1"),
             make_task("t2", deps=["t1"]),
             make_task("t3", deps=["t2"]),
         ]
-        layers = _topological_layers(tasks)
+        layers = _topological_levels(tasks)
         assert len(layers) == 3
         assert layers[0][0].id == "t1"
         assert layers[1][0].id == "t2"
         assert layers[2][0].id == "t3"
 
-    def test_topological_layers_diamond(self):
+    def test_topological_levels_diamond(self):
         """菱形依赖: t1 → t2, t1 → t3, t2 → t4, t3 → t4 → 3 层."""
         tasks = [
             make_task("t1"),
@@ -133,25 +132,25 @@ class TestTopologicalLayers:
             make_task("t3", deps=["t1"]),
             make_task("t4", deps=["t2", "t3"]),
         ]
-        layers = _topological_layers(tasks)
+        layers = _topological_levels(tasks)
         assert len(layers) == 3
         assert layers[0][0].id == "t1"
         # t2 和 t3 在同层
         assert {t.id for t in layers[1]} == {"t2", "t3"}
         assert layers[2][0].id == "t4"
 
-    def test_topological_layers_cycle_raises(self):
+    def test_topological_levels_cycle_raises(self):
         """环检测: t1 → t2 → t1 → ConflictError."""
         tasks = [
             make_task("t1", deps=["t2"]),
             make_task("t2", deps=["t1"]),
         ]
         with pytest.raises(ConflictError):
-            _topological_layers(tasks)
+            _topological_levels(tasks)
 
-    def test_topological_layers_empty(self):
+    def test_topological_levels_empty(self):
         """空列表 → []."""
-        assert _topological_layers([]) == []
+        assert _topological_levels([]) == []
 
 
 # ============================================================

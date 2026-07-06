@@ -1,7 +1,7 @@
 """CLI gate-check 命令 — 单次跑 Gate 集合, 输出 JSON gate_summary (v5.0 §PE.6).
 
 支持两种模式:
-    --all   跑 7 道 Gate (safety/lint/type_check/contract/test/coverage/build)
+    --all   跑 6 道 Gate (safety/lint/type_check/contract/test/build)
     --quick 跑 3 道 Gate (safety/lint/type_check) — 不依赖项目编译/测试
 
 输出格式 (单行 JSON):
@@ -27,10 +27,13 @@ Exit codes:
 from __future__ import annotations
 
 import json
+import logging
 import sys
 from pathlib import Path
 
 import click
+
+_logger = logging.getLogger("ae.cli.gate_check")
 
 
 # ============================================================
@@ -38,7 +41,7 @@ import click
 # ============================================================
 
 QUICK_GATES = ("safety", "lint", "type_check")
-ALL_GATES = ("safety", "lint", "type_check", "contract", "test", "coverage", "build")
+ALL_GATES = ("safety", "lint", "type_check", "contract", "test", "build")
 
 
 def _instantiate_gate(name: str, project_root: Path) -> object | None:
@@ -61,19 +64,16 @@ def _instantiate_gate(name: str, project_root: Path) -> object | None:
 
             return ContractGate()
         if name == "test":
-            from auto_engineering.gates.test import TestGate
+            from auto_engineering.gates.test_gate import TestGate
 
             return TestGate()
-        if name == "coverage":
-            from auto_engineering.gates.coverage import CoverageGate
-
-            return CoverageGate()
         if name == "build":
             from auto_engineering.gates.build import BuildGate
 
             return BuildGate()
     except Exception as e:  # noqa: BLE001
-        return e  # 实例化失败 → 视为 skipped
+        _logger.warning("gate '%s' 实例化失败: %s", name, e, exc_info=True)
+        return None  # v5.4 审计 P0-2: 不返回 Exception 冒充 Gate 对象
     return None
 
 
@@ -91,10 +91,6 @@ def run_gates(gate_names: tuple[str, ...], project_root: Path) -> dict:
         gate = _instantiate_gate(name, project_root)
         if gate is None:
             summary[name] = {"status": "skipped", "passed": None, "message": "no such gate"}
-            skipped_count += 1
-            continue
-        if isinstance(gate, Exception):
-            summary[name] = {"status": "skipped", "passed": None, "message": f"instantiate error: {gate}"}
             skipped_count += 1
             continue
         # 跑 Gate
@@ -134,7 +130,7 @@ def register_gate_check_command(main: click.Group) -> None:
     """向 main Click Group 注册 ae gate-check 子命令."""
 
     @main.command("gate-check")
-    @click.option("--all", "run_all", is_flag=True, default=True, help="跑 7 道 Gate (默认)")
+    @click.option("--all", "run_all", is_flag=True, default=True, help="跑 6 道 Gate (默认)")
     @click.option("--quick", is_flag=True, default=False, help="只跑 3 道 (safety/lint/type_check)")
     @click.option(
         "--project-root",

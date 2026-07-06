@@ -1,6 +1,7 @@
-"""Checkpoint 数据信封 — 数据类 + 错误类型.
+"""Checkpoint 数据记录 — 数据类 + 错误类型.
 
 从 loop/checkpoint.py 拆分 (P1-E: checkpoint → checkpoint/ 子模块).
+v5.4 审计 P1-7: 重命名 envelope.py → records.py, 消除与 state/checkpoint_envelope.py 的命名歧义.
 """
 
 from __future__ import annotations
@@ -13,12 +14,12 @@ from auto_engineering.loop.convergence import RoundHistory
 from auto_engineering.loop.types import LoopStateProtocol
 
 # v2.2-G: 用 Protocol 替代 Any, 打破循环引用并提供类型安全
-# 2026-07-04 修复 (Issue #7, 85 分): 删 "Phase 2.2-G" 旧 phase 引用, 改为 v2.2-G
-# (历史 phase 名) → v2.2-G (避免新读者困惑旧 phase 编号).
 # - LoopStateProtocol 在 loop/types.py 定义 (不引用 loop/state)
 # - TypeVar T bound Protocol 让 Checkpoint/SQLiteCheckpointStore 接受具体类型
 # - mypy 看到 state 字段是 LoopStateProtocol (或其子类型), 不是 Any
-# - v2.3 P0-A: 典型具体类型是 CheckpointEnvelope (原 LoopState, v2.0 Pydantic)
+# - v5.4 P2-2: TypeVar bound 仅 mypy 静态检查, 运行时无强制. EngineState 不实现
+#   LoopStateProtocol (缺 round/step/status/channels), 但 save() 入口的
+#   _validate_state_serializable() 做 duck-type 兼容性检查.
 T = TypeVar("T", bound=LoopStateProtocol)
 
 

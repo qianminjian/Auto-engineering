@@ -396,7 +396,7 @@ def test_lint_gate_from_manifest_uses_conventions() -> None:
 
 def test_test_gate_from_manifest_uses_conventions() -> None:
     """TestGate.from_manifest: 用 manifest.conventions.test_runner."""
-    from auto_engineering.gates.test import TestGate
+    from auto_engineering.gates.test_gate import TestGate
 
     manifest = {
         "schema_version": "1.0",
@@ -438,9 +438,9 @@ def test_type_check_gate_from_manifest_uses_conventions() -> None:
     assert gate.type_checker_bin == "go vet"
 
 
-def test_build_gates_from_manifest_returns_7_gates() -> None:
-    """build_gates_from_manifest: 返回 7 道 Gate, 含 manifest 配置的 linter/type_checker/test_runner."""
-    from auto_engineering.gates.base import build_gates_from_manifest
+def test_build_gates_from_manifest_returns_6_gates() -> None:
+    """build_gates_from_manifest: 返回 6 道 Gate, 含 manifest 配置的 linter/type_checker/test_runner."""
+    from auto_engineering.gates.registry import build_gates_from_manifest
 
     manifest = {
         "schema_version": "1.0",
@@ -457,7 +457,7 @@ def test_build_gates_from_manifest_returns_7_gates() -> None:
         },
     }
     gates = build_gates_from_manifest(manifest)
-    assert len(gates) >= 7
+    assert len(gates) >= 6
     # lint / type_check / test 三个 gate 用 manifest 配置
     names_to_bins = {
         g.name: getattr(g, "linter_bin", None) or getattr(g, "type_checker_bin", None) or getattr(g, "test_runner_bin", None)
@@ -471,9 +471,9 @@ def test_build_gates_from_manifest_returns_7_gates() -> None:
 
 def test_default_gates_unchanged_when_no_manifest() -> None:
     """DEFAULT_GATES: 无 manifest 时, 用默认 (ruff/mypy/pytest)."""
-    from auto_engineering.gates.base import DEFAULT_GATES
+    from auto_engineering.gates.registry import DEFAULT_GATES
 
-    assert len(DEFAULT_GATES) >= 7
+    assert len(DEFAULT_GATES) >= 6
     lint_gate = next(g for g in DEFAULT_GATES if g.name == "lint")
     type_check_gate = next(g for g in DEFAULT_GATES if g.name == "type_check")
     test_gate = next(g for g in DEFAULT_GATES if g.name == "test")

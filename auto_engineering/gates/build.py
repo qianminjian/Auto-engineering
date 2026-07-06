@@ -15,11 +15,10 @@
 
 from __future__ import annotations
 
-import subprocess
 import sys
 from pathlib import Path
 
-from auto_engineering.gates.base import Gate, Verdict
+from auto_engineering.gates.base import Gate, GateVerdict, run_gate_command
 
 DEFAULT_TIMEOUT = 30.0
 
@@ -49,43 +48,37 @@ class BuildGate(Gate):
         self.timeout = timeout
         self.cwd = cwd
 
-    def run(self, project_root: Path | None = None, contracts: dict | None = None) -> Verdict:
+    def run(self, project_root: Path, contracts: dict | None = None) -> GateVerdict:
         """执行 build 验证.
 
         Args:
-            project_root: 项目根目录(用于设置 cwd); None = 当前目录
+            project_root: 项目根目录(用于设置 cwd)
             contracts: v5.0 §B6.1a — 契约字典 (BuildGate 不使用, 仅签名兼容)
 
         Returns:
-            Verdict: passed=True 表示模块可导入; passed=False 表示导入失败.
+            GateVerdict: passed=True 表示模块可导入; passed=False 表示导入失败.
         """
-        cwd = Path(project_root) if project_root else (self.cwd or Path.cwd())
+        cwd = Path(project_root)
 
         cmd = [sys.executable, "-c", f"import {self.module}"]
 
-        try:
-            result = subprocess.run(
-                cmd,
-                cwd=str(cwd),
-                capture_output=True,
-                text=True,
-                timeout=self.timeout,
-            )
-        except subprocess.TimeoutExpired:
-            return Verdict.failed(
+        result = run_gate_command(cmd, cwd, self.timeout)
+
+        if result.timed_out:
+            return GateVerdict.failed(
                 f"import 超时 (>{self.timeout}s): {' '.join(cmd)}",
                 gate_name=self.name,
             )
 
         if result.returncode == 0:
-            return Verdict.passed(
+            return GateVerdict.passed(
                 f"import {self.module} 成功",
                 gate_name=self.name,
             )
 
-        output = (result.stdout or "") + (result.stderr or "")
+        output = result.stdout + result.stderr
         snippet = output[-1000:] if len(output) > 1000 else output
-        return Verdict.failed(
+        return GateVerdict.failed(
             f"import {self.module} 失败 (exit={result.returncode}):\n{snippet}",
             gate_name=self.name,
         )

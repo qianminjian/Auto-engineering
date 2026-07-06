@@ -6,10 +6,11 @@
     INIT_MANIFEST_SCHEMA_VERSION  — 当前支持的 init-manifest schema 版本
     SUPPORTED_PROJECT_TYPES        — 8 个 project_type enum 合法值
     SUPPORTED_LANGUAGES            — 5 个 language enum 合法值
-    LANGUAGE_TOOLS                 — 5 语言默认 Gate 工具映射
+    LANGUAGE_TOOLS                 — 5 语言默认 Gate 工具映射 (re-exported from gates.registry)
     ValidationResult               — validate 结果数据类 (ok / errors / warnings)
     load_init_manifest             — 读 .ae-state/init-manifest.json
     validate_init_manifest         — 校验 manifest 内容 (IL-AC-01~05)
+    get_gate_tools_from_manifest   — 从 manifest 提取 Gate 工具配置 (re-exported from gates.registry)
     get_gate_tools_from_manifest   — 从 conventions 提取 linter/type_checker/test_runner
 
 约束:
@@ -58,15 +59,13 @@ SUPPORTED_LANGUAGES: frozenset[str] = frozenset(
     {"python", "typescript", "go", "rust", "bash"}
 )
 
-# 5 语言默认 Gate 工具映射 (v5.0 §IL.2)
-# value: (linter, type_checker, test_runner)
-LANGUAGE_TOOLS: dict[str, tuple[str, str, str]] = {
-    "python": ("ruff", "pyright", "pytest"),
-    "typescript": ("eslint", "tsc", "vitest"),
-    "go": ("golangci-lint", "go vet", "go test"),
-    "rust": ("clippy", "cargo check", "cargo test"),
-    "bash": ("shellcheck", "bash -n", "bats"),
-}
+# v5.4 审计 r3 P1-1: LANGUAGE_TOOLS / get_gate_tools_from_manifest 已迁移到 gates.registry,
+# 此处 re-export 保持向后兼容. 新代码请直接从 gates.registry import.
+from auto_engineering.gates.registry import (  # noqa: E402
+    LANGUAGE_TOOLS,
+    _default_tools_for,
+    get_gate_tools_from_manifest,
+)
 
 # 必需字段 (v5.0 §IL.2 字段表)
 _REQUIRED_FIELDS: frozenset[str] = frozenset(
@@ -266,42 +265,8 @@ def validate_init_manifest(manifest: dict[str, Any]) -> ValidationResult:
     )
 
 
-# ============================================================
-# 3. get_gate_tools_from_manifest
-# ============================================================
-
-
-def get_gate_tools_from_manifest(manifest: dict[str, Any]) -> dict[str, str]:
-    """从 init-manifest conventions 提取 Gate 工具配置 (v5.0 §IL-AC-02).
-
-    Args:
-        manifest: load_init_manifest 返回的 dict.
-
-    Returns:
-        {"linter": str, "type_checker": str, "test_runner": str}
-        - 若 conventions 缺失, 回退到 language 默认工具 (LANGUAGE_TOOLS)
-        - 若 language 也不支持, 用 python 默认 (向后兼容)
-    """
-    conventions = manifest.get("conventions")
-    language = manifest.get("language", "python")
-    # 缺 conventions → 用 language 默认
-    if not isinstance(conventions, dict):
-        return _default_tools_for(language)
-    linter = conventions.get("linter")
-    type_checker = conventions.get("type_checker")
-    test_runner = conventions.get("test_runner")
-    # 任一缺 → 用 language 默认填充
-    default = _default_tools_for(language)
-    return {
-        "linter": linter or default[0],
-        "type_checker": type_checker or default[1],
-        "test_runner": test_runner or default[2],
-    }
-
-
-def _default_tools_for(language: str) -> tuple[str, str, str]:
-    """查 LANGUAGE_TOOLS, 不支持则回退 python."""
-    return LANGUAGE_TOOLS.get(language, LANGUAGE_TOOLS["python"])
+# v5.4 审计 r3 P1-1: get_gate_tools_from_manifest 已迁移到 gates.registry,
+# 此处 re-export (见文件顶部 import). 函数体不再重复定义.
 
 
 __all__ = [

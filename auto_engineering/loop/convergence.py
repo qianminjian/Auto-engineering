@@ -4,7 +4,7 @@
 
 4 级判定(从硬到软):
 1. 硬上限 (level=4): max_iterations 达到 → 立即停止
-2. 质量门 (level=3): 7 道 Gate 全 PASS → 停止
+2. 质量门 (level=3): 6 道 Gate 全 PASS → 停止
 3. 停滞检测 (level=2): N 轮产出无实质变化 → 停止
 4. 语义收敛 (level=1): LLM 评估"本轮产出满足需求" → 停止
 0. 继续 (level=0): 默认, 未触发任何停止条件
@@ -18,7 +18,10 @@ API:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from auto_engineering.gates.base import GateVerdict
 
 # ============================================================
 # 常量: 4 级收敛 + 默认继续
@@ -71,10 +74,9 @@ class RoundHistory:
         files_changed: 本轮修改的文件数
         lines_added: 本轮新增行数
         lines_removed: 本轮删除行数
-        gate_results: v2.3 Phase D (P0.4) — 保留完整 Verdict 对象 dict[gate_name, Verdict].
+        gate_results: v2.3 Phase D (P0.4) — 保留完整 GateVerdict 对象 dict[gate_name, GateVerdict].
                       之前是 dict[str, bool], 丢失 verdict.message 语义.
-                      用 Any 是为了避免与 gates 模块循环引用 (RoundHistory 在 convergence.py,
-                      Verdict 在 gates/base.py). 实际值始终为 Verdict.
+                      v5.4 P2-4: 从 dict[str, Any] 改为强类型 dict[str, GateVerdict].
         semantic_satisfied: LLM 语义评估是否通过 (v2.0+ LLM 调用, Phase 2 可为 None)
         tasks_run: v2.3 Phase C — 本轮实际跑的 task IDs (供 Orchestrator 增量选择参考)
         task_outcomes: v2.3 Phase C — 本轮每个 task 的最终状态
@@ -83,17 +85,20 @@ class RoundHistory:
     """
 
     round_id: int
+    stage: str = ""
     files_changed: int = 0
     lines_added: int = 0
     lines_removed: int = 0
-    gate_results: dict[str, Any] = field(default_factory=dict)  # 实际值: Verdict
+    gate_results: dict[str, "GateVerdict"] = field(default_factory=dict)
+    guardrail_result: str | None = None  # PRE/POST guardrail 判定结果 (pass/block/retry)
     semantic_satisfied: bool | None = None  # None = 未评估
     tasks_run: list[str] = field(default_factory=list)
     task_outcomes: dict[str, str] = field(default_factory=dict)
+    channel_versions: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass
-class Verdict:
+class ConvergenceVerdict:
     """收敛判定结果.
 
     Attributes:
@@ -112,16 +117,17 @@ class Verdict:
         return LEVEL_NAMES.get(self.level, "UNKNOWN")
 
     @classmethod
-    def continue_(cls) -> Verdict:
+    def continue_(cls) -> ConvergenceVerdict:
         """继续执行的便捷构造."""
         return cls(should_stop=False, level=LEVEL_CONTINUE, reason="继续迭代")
 
     @classmethod
-    def stop(cls, level: int, reason: str) -> Verdict:
+    def stop(cls, level: int, reason: str) -> ConvergenceVerdict:
         """停止执行的便捷构造 (level 校验)."""
         if level not in LEVEL_NAMES:
             raise ValueError(
-                f"Invalid level {level}. Must be one of {sorted(LEVEL_NAMES.keys())}"
+                f"Invalid level {level} (from caller: stop({level=}, {reason=})). "
+                f"Must be one of {sorted(LEVEL_NAMES.keys())}"
             )
         return cls(should_stop=True, level=level, reason=reason)
 
@@ -174,10 +180,10 @@ def detect_stagnation(
 ) -> bool:
     """检测是否连续 N 轮产出无实质变化.
 
-    算法:
-        1. 从最新一轮往前回溯, 累计"无变化"轮数
-        2. 连续 N 轮 diff_ratio < diff_ratio_threshold → 停滞
-        3. 任一轮 diff_ratio >= threshold → 重置计数器 (有变化就不算停滞)
+    两信号联合判定 (借鉴 LangGraph channel_versions):
+        1. 数值变化: diff_ratio < diff_ratio_threshold → 数量无变化
+        2. 内容变化: _get_new_channel_versions 非空 → channel 内容有变化
+    两信号都无变化才计为"一轮无变化". 任一信号有变化 → 重置计数器.
 
     Args:
         history: 历史轮次列表, 按时间顺序 (index 0 = 最早, -1 = 最新)
@@ -188,22 +194,26 @@ def detect_stagnation(
         True = 触发停滞, False = 未停滞
     """
     if len(history) < threshold + 1:
-        # 需要至少 threshold + 1 轮才能比较
         return False
 
-    # 从最新一轮往前检查连续 N 轮
     consecutive_no_change = 0
-    # 从倒数第 2 轮开始(因为 diff_ratio 需要两轮比较)
     for i in range(len(history) - 1, 0, -1):
         current = history[i]
         previous = history[i - 1]
         ratio = diff_ratio(current, previous)
-        if ratio < diff_ratio_threshold:
+
+        # 补充 channel_versions 信号: channel 内容变化则不算停滞
+        channels_changed = bool(
+            _get_new_channel_versions(
+                previous.channel_versions, current.channel_versions
+            )
+        )
+
+        if ratio < diff_ratio_threshold and not channels_changed:
             consecutive_no_change += 1
             if consecutive_no_change >= threshold:
                 return True
         else:
-            # 出现变化, 重置计数器
             consecutive_no_change = 0
 
     return False
@@ -258,7 +268,7 @@ class ConvergenceJudge:
 
     判定顺序 (从硬到软):
         1. 硬上限 (level=4): current_round >= max_iterations
-        2. 质量门 (level=3): 所有 7 道 Gate 全 PASS
+        2. 质量门 (level=3): 所有 6 道 Gate 全 PASS
         3. 停滞检测 (level=2): 连续 N 轮无实质变化
         4. 语义收敛 (level=1): LLM 评估通过
 
@@ -269,7 +279,7 @@ class ConvergenceJudge:
         judge = ConvergenceJudge()
         verdict = judge.evaluate(history)
         if verdict.should_stop:
-            print(f"停止: {verdict.reason}")
+            _logger.info("收敛停止: %s", verdict.reason)
     """
 
     def __init__(self, config: ConvergenceConfig | None = None) -> None:
@@ -282,7 +292,7 @@ class ConvergenceJudge:
 
     def evaluate(
         self, history: list[RoundHistory]
-    ) -> Verdict:
+    ) -> ConvergenceVerdict:
         """评估当前是否应该停止循环.
 
         v2.5 P2-DRIFT-05: 之前签名是 `(self, state, history)`, 但 state
@@ -294,7 +304,7 @@ class ConvergenceJudge:
             history: 历史轮次列表 (可为空)
 
         Returns:
-            Verdict: 判定结果, should_stop=True 表示应停止
+            ConvergenceVerdict: 判定结果, should_stop=True 表示应停止
         """
         # 1. 硬上限检查
         verdict = self._check_hard_limit(history)
@@ -317,25 +327,25 @@ class ConvergenceJudge:
             return verdict
 
         # 默认: 继续
-        return Verdict.continue_()
+        return ConvergenceVerdict.continue_()
 
     def _check_hard_limit(
         self, history: list[RoundHistory]
-    ) -> Verdict | None:
+    ) -> ConvergenceVerdict | None:
         """硬上限检查: 当前轮次 >= max_iterations.
 
         Args:
             history: 历史轮次列表
 
         Returns:
-            Verdict 或 None (None 表示未触发)
+            ConvergenceVerdict 或 None (None 表示未触发)
         """
         if not history:
             return None
 
         current_round = history[-1].round_id
         if current_round >= self.config.max_iterations:
-            return Verdict.stop(
+            return ConvergenceVerdict.stop(
                 level=LEVEL_HARD_LIMIT,
                 reason=f"达到最大迭代次数 {self.config.max_iterations} (硬上限)",
             )
@@ -343,19 +353,19 @@ class ConvergenceJudge:
 
     def _check_quality_gates(
         self, history: list[RoundHistory]
-    ) -> Verdict | None:
+    ) -> ConvergenceVerdict | None:
         """质量门检查: 最新一轮所有 Gate 全 PASS.
 
         Args:
             history: 历史轮次列表
 
         Returns:
-            Verdict 或 None (None 表示未触发或 Gate 还没全实现)
+            ConvergenceVerdict 或 None (None 表示未触发或 Gate 还没全实现)
 
         Note:
-            v2.3 Phase D (P0.4): gate_results 是 dict[gate_name, Verdict],
+            v2.3 Phase D (P0.4): gate_results 是 dict[gate_name, GateVerdict],
             必须读 verdict.passed (不能 all(values), 否则 dataclass 实例永远 truthy).
-            同时 Verdict 失败时 reason 应包含 gate message, 让 Judge 输出可读.
+            同时 GateVerdict 失败时 reason 应包含 gate message, 让 Judge 输出可读.
         """
         if not history:
             return None
@@ -365,16 +375,16 @@ class ConvergenceJudge:
             # 没有 Gate 结果, 不触发
             return None
 
-        # v2.3 Phase D: gate_results 是 dict[gate_name, Verdict]
-        # 必须读 .passed (不能 all(values), 否则 Verdict dataclass 实例永远 truthy)
+        # v2.3 Phase D: gate_results 是 dict[gate_name, GateVerdict]
+        # 必须读 .passed (不能 all(values), 否则 GateVerdict dataclass 实例永远 truthy)
         gate_verdicts = latest.gate_results
-        failed_gates: list[tuple[str, Any]] = [
+        failed_gates: list[tuple[str, "GateVerdict"]] = [
             (name, v) for name, v in gate_verdicts.items() if not v.passed
         ]
 
         if not failed_gates:
             # 全 PASS → 触发停止, reason 含门数量 (借鉴 LangGraph pregel/main.py)
-            return Verdict.stop(
+            return ConvergenceVerdict.stop(
                 level=LEVEL_QUALITY,
                 reason=(
                     f"所有质量门通过 ({len(gate_verdicts)} 道): "
@@ -391,14 +401,14 @@ class ConvergenceJudge:
 
     def _check_stagnation(
         self, history: list[RoundHistory]
-    ) -> Verdict | None:
+    ) -> ConvergenceVerdict | None:
         """停滞检测: 连续 N 轮无实质变化.
 
         Args:
             history: 历史轮次列表
 
         Returns:
-            Verdict 或 None (None 表示未触发)
+            ConvergenceVerdict 或 None (None 表示未触发)
         """
         stagnant = detect_stagnation(
             history,
@@ -406,7 +416,7 @@ class ConvergenceJudge:
             diff_ratio_threshold=self.config.stagnation_diff_ratio,
         )
         if stagnant:
-            return Verdict.stop(
+            return ConvergenceVerdict.stop(
                 level=LEVEL_STAGNANT,
                 reason=f"连续 {self.config.stagnation_threshold} 轮产出无实质变化 "
                 f"(diff_ratio < {self.config.stagnation_diff_ratio})",
@@ -415,14 +425,14 @@ class ConvergenceJudge:
 
     def _check_semantic(
         self, history: list[RoundHistory]
-    ) -> Verdict | None:
+    ) -> ConvergenceVerdict | None:
         """语义收敛检查: LLM 评估"本轮产出满足需求".
 
         Args:
             history: 历史轮次列表
 
         Returns:
-            Verdict 或 None (None 表示未评估或未通过)
+            ConvergenceVerdict 或 None (None 表示未评估或未通过)
 
         Note:
             Phase 2 实现: 仅当 semantic_satisfied=True 时触发
@@ -433,7 +443,7 @@ class ConvergenceJudge:
 
         latest = history[-1]
         if latest.semantic_satisfied is True:
-            return Verdict.stop(
+            return ConvergenceVerdict.stop(
                 level=LEVEL_SEMANTIC,
                 reason="LLM 评估: 本轮产出满足需求",
             )

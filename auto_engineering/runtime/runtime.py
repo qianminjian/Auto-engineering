@@ -94,3 +94,9 @@ class AgentRuntime:
         if agent_type not in self._factories:
             return None
         return self._get_or_create_agent(agent_type)
+
+    def close(self) -> None:
+        """释放所有已实例化 Agent 的底层资源 (httpx 连接等)."""
+        for agent in self._instances.values():
+            if hasattr(agent, "close"):
+                agent.close()

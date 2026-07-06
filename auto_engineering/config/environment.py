@@ -21,7 +21,6 @@ class ProjectEnvironment:
     """项目工程环境。由 init 写入，dev-loop 消费。"""
 
     project_name: str = ""
-    project_description: str = ""
     project_type: str = ""
     package_manager: str = ""
     test_runner: str = ""
@@ -69,12 +68,12 @@ class ProjectEnvironment:
     @staticmethod
     def _detect_package_manager(root: Path) -> str | None:
         for fname, pm in [
+            ("uv.lock", "uv"),
+            ("poetry.lock", "poetry"),
             ("pnpm-lock.yaml", "pnpm"),
             ("yarn.lock", "yarn"),
             ("package-lock.json", "npm"),
             ("bun.lock", "bun"),
-            ("poetry.lock", "poetry"),
-            ("uv.lock", "uv"),
         ]:
             if (root / fname).exists():
                 return pm
@@ -83,12 +82,12 @@ class ProjectEnvironment:
     @staticmethod
     def _detect_test_runner(root: Path) -> str | None:
         for cfg, runner in [
+            ("pytest.ini", "pytest"),
+            ("pyproject.toml", "pytest"),
             ("vitest.config.ts", "vitest"),
             ("vitest.config.js", "vitest"),
             ("jest.config.ts", "jest"),
             ("jest.config.js", "jest"),
-            ("pytest.ini", "pytest"),
-            ("pyproject.toml", None),
         ]:
             if cfg == "pyproject.toml" and (root / cfg).exists():
                 return "pytest"
@@ -194,7 +193,8 @@ def preflight(project_root: Path) -> None:
 
     检查项:
         1. Python ≥ 3.12
-
+        2. ANTHROPIC_API_KEY/ANTHROPIC_AUTH_TOKEN (或 Plugin mode OAuth)
+        3. Git 仓库 (.git 目录存在)
         4. 磁盘可用空间 ≥ 100 MB
     """
     errors: list[str] = []
@@ -207,9 +207,8 @@ def preflight(project_root: Path) -> None:
     # 2. ANTHROPIC_API_KEY (或 ANTHROPIC_AUTH_TOKEN for plugin OAuth)
     # 2026-07-04 修复 (prismscan 真实 bug): 用 4 级 fallback detect_plugin_mode
     # 而非 2 级, 支持 CLAUDE_CODE_ENTRYPOINT + ANTHROPIC_AUTH_TOKEN (prismscan 实际 env)
-    from auto_engineering.utils.plugin_mode import detect_plugin_mode, has_llm_credentials
-    in_llm_agent = detect_plugin_mode()
-    if not has_llm_credentials() and not in_llm_agent:
+    from auto_engineering.utils.plugin_mode import is_llm_available
+    if not is_llm_available():
         errors.append(
             "环境变量 ANTHROPIC_API_KEY/ANTHROPIC_AUTH_TOKEN 未设置。"
             "请在 ~/.zshrc 中 export ANTHROPIC_API_KEY=sk-... 或在 .env 中设置。"

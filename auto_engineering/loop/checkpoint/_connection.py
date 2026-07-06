@@ -134,4 +134,4 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
-__all__ = ["_with_conn", "_atomic", "_ensure_schema", "init_file_conn"]
+__all__ = ["init_file_conn", "_with_conn", "_atomic"]

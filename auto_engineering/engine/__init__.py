@@ -1,7 +1,7 @@
-"""engine/ — v2.0 体系已移除 (v2.4 P0-FINAL).
+"""engine/state — EngineState + LoopState 供 Loop-Engine 使用.
 
-保留 engine/state.py (EngineState + LoopState alias) 供 v2.0 runtime 用.
-v2.0 主路径在 loop/ 和 runtime/ 中.
+EngineState 是 18-field Channel-based 共享状态 (v5.0 §B1.1),
+在 architect/developer/critic 三阶段 Agent 循环中传递.
 """
 
 from .state import EngineState, LoopState

@@ -10,9 +10,12 @@ v3.1 扩展 (v2.0 dev-loop 真接):
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 
 import anthropic
+
+_logger = logging.getLogger("ae.llm")
 
 
 @dataclass
@@ -142,18 +145,18 @@ class AnthropicProvider:
         # 总尝试次数 = 1 (原始) + max_retries
         # v2.5 P2-D-4: 真实指数退避 2^attempt 秒, 测试用 _BACKOFF_FACTOR=0
         import time
-        last_exc: Exception | None = None
         for attempt in range(1, self._max_retries + 2):  # 1..max_retries+1
             try:
                 response = self._client.messages.create(**kwargs)
                 break  # 成功, 退出 retry loop
             except self._RETRYABLE_EXCEPTIONS as exc:
-                last_exc = exc
                 if attempt > self._max_retries:
-                    # 超过 max_retries, 不再重试, 抛出
                     raise
-                # 指数退避: 1s, 2s, 4s, ...; 测试用 _BACKOFF_FACTOR=0 旁路
                 backoff = (2 ** (attempt - 1)) * self._BACKOFF_FACTOR
+                _logger.warning(
+                    "LLM 调用重试 %d/%d, 退避 %.1fs: %s",
+                    attempt, self._max_retries, backoff, type(exc).__name__,
+                )
                 if backoff > 0:
                     time.sleep(backoff)
 

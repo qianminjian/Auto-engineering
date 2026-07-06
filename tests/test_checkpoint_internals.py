@@ -14,104 +14,104 @@ from pathlib import Path
 import pytest
 
 from auto_engineering.loop.checkpoint._serialization import (
-    _serialize_state,
-    _deserialize_state,
-    _normalize_history_item,
-    _normalize_value,
+    serialize_state,
+    deserialize_state,
+    normalize_history_item,
+    normalize_value,
 )
 
 
 # ============================================================
-# _serialize_state
+# serialize_state
 # ============================================================
 
 
-def test_serialize_state_pydantic_v1_path() -> None:
-    """_serialize_state with Pydantic v1-style object (has dict() method)."""
+def testserialize_state_pydantic_v1_path() -> None:
+    """serialize_state with Pydantic v1-style object (has dict() method)."""
 
     class PydanticV1Style:
         def dict(self):
             return {"key": "value"}
 
-    result = _serialize_state(PydanticV1Style())
+    result = serialize_state(PydanticV1Style())
     data = json.loads(result)
     assert data == {"key": "value"}
 
 
-def test_serialize_state_fallback_path() -> None:
-    """_serialize_state with non-Pydantic, non-dict object (fallback to default=str)."""
+def testserialize_state_fallback_path() -> None:
+    """serialize_state with non-Pydantic, non-dict object (fallback to default=str)."""
 
     class PlainObject:
         def __repr__(self):
             return "PlainObject()"
 
-    result = _serialize_state(PlainObject())
+    result = serialize_state(PlainObject())
     # Falls through to json.dumps(obj, default=str) — produces a JSON string
     assert isinstance(result, str)
 
 
-def test_serialize_state_with_basic_dict() -> None:
-    """_serialize_state with a plain dict."""
-    result = _serialize_state({"a": 1, "b": 2})
+def testserialize_state_with_basic_dict() -> None:
+    """serialize_state with a plain dict."""
+    result = serialize_state({"a": 1, "b": 2})
     data = json.loads(result)
     assert data == {"a": 1, "b": 2}
 
 
 # ============================================================
-# _deserialize_state
+# deserialize_state
 # ============================================================
 
 
-def test_deserialize_state_invalid_json() -> None:
-    """_deserialize_state with invalid JSON → returns raw string."""
-    result = _deserialize_state("not valid json {{{")
+def testdeserialize_state_invalid_json() -> None:
+    """deserialize_state with invalid JSON → returns raw string."""
+    result = deserialize_state("not valid json {{{")
     # Falls into except (json.JSONDecodeError, TypeError) → returns state_json
     assert result == "not valid json {{{"
 
 
-def test_deserialize_state_non_dict_json() -> None:
-    """_deserialize_state with valid JSON that is not a dict → returns non-dict value."""
-    result = _deserialize_state("[1, 2, 3]")
+def testdeserialize_state_non_dict_json() -> None:
+    """deserialize_state with valid JSON that is not a dict → returns non-dict value."""
+    result = deserialize_state("[1, 2, 3]")
     # data is a list, not a dict → returns data directly
     assert result == [1, 2, 3]
 
 
-def test_deserialize_state_json_typeerror() -> None:
-    """_deserialize_state with non-string input → TypeError → returns raw input."""
-    result = _deserialize_state(12345)  # type: ignore
+def testdeserialize_state_json_typeerror() -> None:
+    """deserialize_state with non-string input → TypeError → returns raw input."""
+    result = deserialize_state(12345)  # type: ignore
     # json.loads fails on int → returns raw input
     assert result == 12345  # type: ignore
 
 
 # ============================================================
-# _normalize_value
+# normalize_value
 # ============================================================
 
 
-def test_normalize_value_with_list() -> None:
-    """_normalize_value recursively normalizes list items."""
+def testnormalize_value_with_list() -> None:
+    """normalize_value recursively normalizes list items."""
     from dataclasses import dataclass
 
     @dataclass
     class Inner:
         x: int = 1
 
-    result = _normalize_value([Inner(x=42), {"key": "val"}])
+    result = normalize_value([Inner(x=42), {"key": "val"}])
     assert result == [{"x": 42}, {"key": "val"}]
 
 
-def test_normalize_value_with_tuple() -> None:
-    """_normalize_value handles tuples like lists."""
-    result = _normalize_value((1, 2))
+def testnormalize_value_with_tuple() -> None:
+    """normalize_value handles tuples like lists."""
+    result = normalize_value((1, 2))
     assert result == [1, 2]
 
 
-def test_normalize_value_primitive() -> None:
-    """_normalize_value passes through primitives."""
-    assert _normalize_value(42) == 42
-    assert _normalize_value("hello") == "hello"
-    assert _normalize_value(None) is None
-    assert _normalize_value(True) is True
+def testnormalize_value_primitive() -> None:
+    """normalize_value passes through primitives."""
+    assert normalize_value(42) == 42
+    assert normalize_value("hello") == "hello"
+    assert normalize_value(None) is None
+    assert normalize_value(True) is True
 
 
 # ============================================================

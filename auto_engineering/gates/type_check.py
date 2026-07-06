@@ -15,10 +15,9 @@
 from __future__ import annotations
 
 import shutil
-import subprocess
 from pathlib import Path
 
-from auto_engineering.gates.base import Gate, Verdict
+from auto_engineering.gates.base import Gate, GateVerdict, run_gate_command
 
 _DEFAULT_TIMEOUT = 120.0
 _DEFAULT_TYPE_CHECKER = "mypy"
@@ -65,7 +64,7 @@ class TypeCheckGate(Gate):
 
         读 manifest.conventions.type_checker, 缺则用 LANGUAGE_TOOLS 默认.
         """
-        from auto_engineering.loop.init_contract import get_gate_tools_from_manifest
+        from auto_engineering.gates.registry import get_gate_tools_from_manifest
 
         tools = get_gate_tools_from_manifest(manifest)
         return cls(type_checker_bin=tools["type_checker"], timeout=timeout)
@@ -111,7 +110,7 @@ class TypeCheckGate(Gate):
             return [self.type_checker_bin]
         return None  # type_checker 未安装
 
-    def run(self, project_root: Path, contracts: dict | None = None) -> Verdict:
+    def run(self, project_root: Path, contracts: dict | None = None) -> GateVerdict:
         """执行 type check.
 
         Args:
@@ -119,12 +118,12 @@ class TypeCheckGate(Gate):
             contracts: v5.0 §B6.1a — 契约字典 (TypeCheckGate 不使用, 仅签名兼容)
 
         Returns:
-            Verdict: passed=True 表示无类型错误 / skip;
+            GateVerdict: passed=True 表示无类型错误 / skip;
                      passed=False 表示有类型错误.
         """
         project_root = Path(project_root)
         if not project_root.exists():
-            return Verdict.failed(
+            return GateVerdict.failed(
                 f"project_root 不存在: {project_root}",
                 gate_name=self.name,
             )
@@ -132,11 +131,11 @@ class TypeCheckGate(Gate):
         # 检查 type_check 配置 (保守: mypy 兼容检测)
         if not self._has_type_config(project_root):
             if self.require_config:
-                return Verdict.failed(
+                return GateVerdict.failed(
                     "项目未配置 mypy (无 mypy.ini / pyproject.toml [tool.mypy])",
                     gate_name=self.name,
                 )
-            return Verdict.passed(
+            return GateVerdict.passed(
                 f"skip: 项目未配置 {self.type_checker_bin},跳过类型检查",
                 gate_name=self.name,
             )
@@ -144,7 +143,7 @@ class TypeCheckGate(Gate):
         # 解析 type_check 命令
         cmd_base = self._resolve_type_check_cmd()
         if cmd_base is None:
-            return Verdict.passed(
+            return GateVerdict.passed(
                 f"skip: {self.type_checker_bin} 未安装,跳过类型检查",
                 gate_name=self.name,
             )
@@ -153,43 +152,34 @@ class TypeCheckGate(Gate):
         if self.strict and self.type_checker_bin == "mypy":
             cmd.append("--strict")
 
-        try:
-            result = subprocess.run(
-                cmd,
-                cwd=str(project_root),
-                capture_output=True,
-                text=True,
-                timeout=self.timeout,
-            )
-        except subprocess.TimeoutExpired:
-            # 超时 → drop,不阻塞 loop
-            return Verdict.passed(
-                f"skip: {self.type_checker_bin} 超时 (>{self.timeout}s)",
+        result = run_gate_command(cmd, project_root, self.timeout)
+
+        if result.timed_out:
+            return GateVerdict.failed(
+                f"{self.type_checker_bin} 超时 (>{self.timeout}s): {' '.join(cmd)}",
                 gate_name=self.name,
             )
-        except FileNotFoundError:
-            return Verdict.passed(
+        if result.not_found:
+            return GateVerdict.passed(
                 f"skip: {self.type_checker_bin} 命令未找到",
                 gate_name=self.name,
             )
 
         if result.returncode == 0:
-            return Verdict.passed(
+            return GateVerdict.passed(
                 f"{self.type_checker_bin} 通过 (0 errors)",
                 gate_name=self.name,
             )
 
-        # 返回非 0 — 但仅在有 error 输出时算失败
         output = result.stdout or result.stderr or ""
         if "error:" in output.lower():
             snippet = output[:1500] + ("..." if len(output) > 1500 else "")
-            return Verdict.failed(
+            return GateVerdict.failed(
                 f"{self.type_checker_bin} 失败 (exit={result.returncode}):\n{snippet}",
                 gate_name=self.name,
             )
 
-        # 返回非 0 但无 error → 视为 warning 级别
-        return Verdict.passed(
+        return GateVerdict.passed(
             f"{self.type_checker_bin} 退出 {result.returncode}, 无类型 error",
             gate_name=self.name,
         )

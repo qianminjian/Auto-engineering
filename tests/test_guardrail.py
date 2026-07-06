@@ -30,7 +30,7 @@ from auto_engineering.loop.guardrail import (
     PlanExists,
     RequirementValid,
     TestsPass,
-    _handle_guardrail_result,
+    handle_guardrail_result,
 )
 
 
@@ -627,7 +627,7 @@ class TestHandleGuardrailResult:
         """pass → continue."""
         state = EngineState()
         counters: dict[str, int] = {}
-        action = _handle_guardrail_result(
+        action = handle_guardrail_result(
             GuardrailResult(action="pass", message=""),
             "developer", state, counters,
         )
@@ -638,7 +638,7 @@ class TestHandleGuardrailResult:
         """block → stop, 不动计数器."""
         state = EngineState(plan="x")
         counters: dict[str, int] = {}
-        action = _handle_guardrail_result(
+        action = handle_guardrail_result(
             GuardrailResult(action="block", message="bad"),
             "developer", state, counters,
         )
@@ -654,13 +654,13 @@ class TestHandleGuardrailResult:
             test_results={"passed": 1},
         )
         counters: dict[str, int] = {}
-        action = _handle_guardrail_result(
+        action = handle_guardrail_result(
             GuardrailResult(action="retry", message="flaky"),
             "developer", state, counters,
         )
         assert action == "retry"
         assert counters == {"developer": 1}
-        # 确认 stage fields 已清空 (reuse stage_router._clear_stage_fields)
+        # 确认 stage fields 已清空 (reuse stage_router.clear_stage_fields)
         assert state.files_changed == []
         assert state.commit_hash == ""
         assert state.test_results == {}
@@ -669,7 +669,7 @@ class TestHandleGuardrailResult:
         """retry 第 2 次 → counter = 2."""
         state = EngineState()
         counters: dict[str, int] = {"developer": 1}
-        action = _handle_guardrail_result(
+        action = handle_guardrail_result(
             GuardrailResult(action="retry", message="flaky"),
             "developer", state, counters,
         )
@@ -684,7 +684,7 @@ class TestHandleGuardrailResult:
         """
         state = EngineState()
         counters: dict[str, int] = {"developer": 2}
-        action = _handle_guardrail_result(
+        action = handle_guardrail_result(
             GuardrailResult(action="retry", message="flaky"),
             "developer", state, counters,
         )
@@ -696,7 +696,7 @@ class TestHandleGuardrailResult:
         """retry counter 已 ≥ 3 → stop (不再累加/不再 clear)."""
         state = EngineState(plan="x", files_changed=["a.py"])
         counters: dict[str, int] = {"developer": 3}
-        action = _handle_guardrail_result(
+        action = handle_guardrail_result(
             GuardrailResult(action="retry", message="flaky"),
             "developer", state, counters,
         )
@@ -706,66 +706,38 @@ class TestHandleGuardrailResult:
         assert state.plan == "x"
         assert state.files_changed == ["a.py"]
 
-    def test_handler_drop_as_retry_compat(self) -> None:
-        """v5.1 P0-1: 旧 drop 输入被 handler 当 retry 处理 (deprecated 兼容).
+    def test_handler_drop_returns_stop_unknown_action(self) -> None:
+        """v5.4 P2-8: drop 已从契约删除, 作为未知 action 走防御性 stop."""
+        state = EngineState()
+        counters: dict[str, int] = {}
+        action = handle_guardrail_result(
+            GuardrailResult(action="drop", message="drop me"),  # type: ignore[arg-type]
+            "developer", state, counters,
+        )
+        assert action == "stop"
+        assert counters == {}
 
-        即使 GuardrailResult.action 公开契约已删除 drop 字段,
-        为兼容遗留 caller 传入 drop, _handle_guardrail_result 必须
-        把它当 retry (计数 + 1 + clear stage fields + return "retry")
-        并触发 DeprecationWarning.
-        """
-        import warnings
-
+    def test_handler_unknown_action_returns_stop(self) -> None:
+        """未知 action 走防御性 stop, 不修改 state/counters."""
         state = EngineState(
             plan="x",
             files_changed=["a.py"],
             commit_hash="abc",
-            test_results={"passed": 1},
         )
-        counters: dict[str, int] = {}
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            action = _handle_guardrail_result(
-                GuardrailResult(action="drop", message="drop me"),  # type: ignore[arg-type]
-                "developer", state, counters,
-            )
-        # 1. 行为兼容: drop 等同 retry
-        assert action == "retry"
-        assert counters == {"developer": 1}
-        # 2. clear stage fields 仍执行
-        assert state.files_changed == []
-        assert state.commit_hash == ""
-        assert state.test_results == {}
-        # 3. 触发 DeprecationWarning 提示迁移
-        deprecations = [
-            x for x in w if issubclass(x.category, DeprecationWarning)
-        ]
-        assert len(deprecations) >= 1, "drop 输入必须触发 DeprecationWarning"
-        assert any(
-            "drop" in str(x.message).lower() for x in deprecations
-        ), f"DeprecationWarning 应提及 drop, 实际: {[str(x.message) for x in deprecations]}"
-
-    def test_handler_drop_exhausted_returns_stop(self) -> None:
-        """v5.1 P0-1: 旧 drop 计数耗尽时也兼容返回 stop (deprecated)."""
-        import warnings
-
-        state = EngineState()
-        counters: dict[str, int] = {"developer": 3}
-        with warnings.catch_warnings(record=True):
-            warnings.simplefilter("always")
-            action = _handle_guardrail_result(
-                GuardrailResult(action="drop", message="drop me"),  # type: ignore[arg-type]
-                "developer", state, counters,
-            )
+        counters: dict[str, int] = {"developer": 1}
+        action = handle_guardrail_result(
+            GuardrailResult(action="unknown_action", message="x"),  # type: ignore[arg-type]
+            "developer", state, counters,
+        )
         assert action == "stop"
-        # stop 路径不累加
-        assert counters == {"developer": 3}
+        assert counters == {"developer": 1}
+        assert state.files_changed == ["a.py"]
 
     def test_counters_isolated_per_stage(self) -> None:
         """counters 按 stage 隔离, 互不影响."""
         state = EngineState()
         counters: dict[str, int] = {"architect": 2}
-        action = _handle_guardrail_result(
+        action = handle_guardrail_result(
             GuardrailResult(action="retry", message="x"),
             "developer", state, counters,
         )
@@ -780,13 +752,13 @@ class TestHandleGuardrailResult:
 
         state = EngineState()
         counters: dict[str, int] = {}
-        action = _handle_guardrail_result(
+        action = handle_guardrail_result(
             GuardrailResult(action=cast(Any, "warp"), message="weird"),
             "developer", state, counters,
         )
         assert action == "stop"
 
-    def test_clear_stage_fields_reused_from_stage_router(self) -> None:
+    def testclear_stage_fields_reused_from_stage_router(self) -> None:
         """_handle_guardrail_result 必须清空对应该 stage 的字段 (验证 stage 隔离).
 
         e.g. retry on architect → clear plan/file_list/batch_plan/contracts
@@ -801,7 +773,7 @@ class TestHandleGuardrailResult:
             contracts={"k": "v"},
         )
         counters: dict[str, int] = {}
-        _handle_guardrail_result(
+        handle_guardrail_result(
             GuardrailResult(action="retry", message="r"),
             "architect", state, counters,
         )
@@ -814,7 +786,7 @@ class TestHandleGuardrailResult:
         state2 = EngineState(
             verdict="MAJOR", findings=[{"x": 1}], critic_feedback="fb",
         )
-        _handle_guardrail_result(
+        handle_guardrail_result(
             GuardrailResult(action="retry", message="r"),
             "critic", state2, {},
         )

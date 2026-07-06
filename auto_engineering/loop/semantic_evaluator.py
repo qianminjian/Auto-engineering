@@ -42,9 +42,9 @@ class ClaudeSemanticEvaluator:
     """用 Claude API 评估本轮产出是否满足需求.
 
     Attributes:
-        model: 调用的模型名 (默认 "claude-haiku-4-5")
-        prompt_template: 评估 prompt 模板, 接受 requirement / summary /
-            gate_results 三个占位符
+        model: 调用的模型名 (默认 "claude-haiku-4-5-20251001")
+        prompt_template: 评估 prompt 模板, 接受 {requirement} / {summary} /
+            {gate_results} 三个格式化字段
         max_tokens: Claude 响应最大 token 数 (默认 256, JSON 响应足够)
         temperature: Claude 采样温度 (默认 0.0, 确定性评估)
 
@@ -53,7 +53,7 @@ class ClaudeSemanticEvaluator:
         - JSON 解析失败: 返回 False (保守)
     """
 
-    model: str = "claude-haiku-4-5"
+    model: str = "claude-haiku-4-5-20251001"
     prompt_template: str = (
         "判断本轮产出是否满足需求.\n"
         "需求: {requirement}\n"
@@ -65,7 +65,7 @@ class ClaudeSemanticEvaluator:
     temperature: float = 0.0
     api_key: str | None = None
     # 2026-07-05 修复 (对标审计 P0-4): 注入 requirement 避免 "(see task outcomes)"
-    # 占位符. 参考 LangGraph conditional edge: 路由决策需要完整状态上下文.
+    # 空值. 参考 LangGraph conditional edge: 路由决策需要完整状态上下文.
     requirement: str = ""
     _provider: AnthropicProvider | None = None
 
@@ -77,6 +77,11 @@ class ClaudeSemanticEvaluator:
         """
         # 预创建 provider (api_key=None 时 SDK 自动从 env 读)
         self._provider = AnthropicProvider(api_key=self.api_key)
+
+    def close(self) -> None:
+        """释放底层 httpx 连接."""
+        if self._provider is not None:
+            self._provider.close()
 
     def _has_api_key(self) -> bool:
         """检测是否有 API key (用于 graceful degradation 决策).
@@ -113,7 +118,10 @@ class ClaudeSemanticEvaluator:
         try:
             response = await self._call_claude(prompt)
         except Exception:
-            # API 调用失败 → 保守返回 False (不阻止停止, 继续运行)
+            import logging
+            logging.getLogger("ae.loop.semantic_evaluator").warning(
+                "Claude API 调用失败, 降级返回 False", exc_info=True,
+            )
             return False
 
         # 3. 解析 JSON 回应
@@ -193,7 +201,8 @@ class ClaudeSemanticEvaluator:
             bool: 解析成功 → 数据值, 解析失败 → False (保守)
         """
         try:
-            content = response.content[0].text if response.content else ""
+            c = response.content if hasattr(response, "content") else ""
+            content = c[0].text if c and not isinstance(c, str) else c
             data = json.loads(content)
             return bool(data.get("satisfied", False))
         except (json.JSONDecodeError, KeyError, IndexError, AttributeError, TypeError):
@@ -207,6 +216,7 @@ class ClaudeSemanticEvaluator:
 
 __all__ = [
     "ClaudeSemanticEvaluator",
+    "SemanticEvaluator",
 ]
 
 

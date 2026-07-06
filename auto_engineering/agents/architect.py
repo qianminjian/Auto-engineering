@@ -8,21 +8,21 @@ P1-A: 原为 BaseAgent 子类, 现改为 factory function 返回 Agent 实例.
 
 from __future__ import annotations
 
-from .base import Agent
+from .base import BaseAgent
 from .prompts import ARCHITECT_SYSTEM_PROMPT
 
 
-def ArchitectAgent(llm, **kwargs) -> Agent:
-    """Factory: 返回配置为 architect role 的 Agent.
+def ArchitectAgent(llm, **kwargs) -> BaseAgent:
+    """Factory: 返回配置为 architect role 的 BaseAgent.
 
     Args:
         llm: AnthropicProvider
-        **kwargs: 传给 Agent (tools, model, max_tokens, ...)
+        **kwargs: 传给 BaseAgent (tools, model, max_tokens, ...)
 
     Returns:
-        Agent 实例 (role='architect', system_prompt=ARCHITECT_SYSTEM_PROMPT)
+        BaseAgent 实例 (role='architect', system_prompt=ARCHITECT_SYSTEM_PROMPT)
     """
     kwargs.setdefault("role", "architect")
     kwargs.setdefault("system_prompt", ARCHITECT_SYSTEM_PROMPT)
     kwargs.setdefault("tools", [])  # Architect 只读 — 工具在 AgentRuntime 层注入
-    return Agent(llm=llm, **kwargs)
+    return BaseAgent(llm=llm, **kwargs)

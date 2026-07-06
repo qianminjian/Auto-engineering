@@ -19,11 +19,11 @@ from typing import Any
 
 from auto_engineering.loop.checkpoint._connection import _atomic, _with_conn, init_file_conn
 from auto_engineering.loop.checkpoint._serialization import (
-    _deserialize_state,
-    _normalize_history_item,
-    _serialize_state,
+    deserialize_state,
+    normalize_history_item,
+    serialize_state,
 )
-from auto_engineering.loop.checkpoint.envelope import (
+from auto_engineering.loop.checkpoint.records import (
     Checkpoint,
     CheckpointMeta,
     CheckpointNotFoundError,
@@ -38,8 +38,8 @@ SCHEMA_VERSION = 1
 class SQLiteCheckpointStore[T]:
     """SQLite Checkpoint 持久化.
 
-    使用: SQLiteCheckpointStore[CheckpointEnvelope](db_path) — 类型安全.
-    (v2.3 P0-A: 原 LoopState 重命名为 CheckpointEnvelope, 详见 BEACON 决策 23.)
+    使用: SQLiteCheckpointStore[EngineState](db_path) — 类型安全.
+    (v5.0: EngineState 替代 CheckpointEnvelope → LoopState 历史路径.)
 
     线程安全策略:
         - ":memory:" 模式: 单 connection + threading.Lock
@@ -136,6 +136,33 @@ class SQLiteCheckpointStore[T]:
     def __exit__(self, *exc_info) -> None:
         self.close()
 
+    @staticmethod
+    def _validate_state_serializable(state: object) -> None:
+        """运行时验证 state 可被 serialize_state 处理 (v5.4 P2-2).
+
+        TypeVar T bound=LoopStateProtocol 仅 mypy 层约束, 运行时无强制.
+        此方法在 save 入口做 duck-type 检查: 必须是 dataclass / dict /
+        或具有 model_dump 方法的对象.
+
+        Raises:
+            TypeError: state 类型无法序列化.
+        """
+        from dataclasses import is_dataclass
+
+        if is_dataclass(state) and not isinstance(state, type):
+            return
+        if isinstance(state, dict):
+            return
+        if hasattr(state, "model_dump") and callable(state.model_dump):
+            return
+        if hasattr(state, "dict") and callable(state.dict):
+            return
+        raise TypeError(
+            f"Cannot serialize state of type {type(state).__name__}: "
+            f"must be a dataclass, dict, or have model_dump/dict method. "
+            f"state={state!r}"
+        )
+
     def save(
         self,
         state: T,
@@ -149,7 +176,7 @@ class SQLiteCheckpointStore[T]:
         """保存 Checkpoint.
 
         Args:
-            state: 满足 LoopStateProtocol 的对象 (典型: CheckpointEnvelope 实例)
+            state: 满足 LoopStateProtocol 的对象 (典型: EngineState 实例)
             round: 当前轮次
             step: 当前 step (L1 Inner Loop 内 iteration 计数)
             history: RoundHistory 列表 (可为空)
@@ -164,14 +191,15 @@ class SQLiteCheckpointStore[T]:
             TypeError: state 无法 JSON 序列化
             sqlite3.IntegrityError: checkpoint_id 重复
         """
+        self._validate_state_serializable(state)
         cp_id = checkpoint_id or str(uuid.uuid4())
-        state_json = _serialize_state(state)
+        state_json = serialize_state(state)
         history_dicts: list[dict[str, Any]] = []
         for h in history or []:
             if hasattr(h, "__dict__"):
-                history_dicts.append(_normalize_history_item(dict(h.__dict__)))
+                history_dicts.append(normalize_history_item(dict(h.__dict__)))
             elif isinstance(h, dict):
-                history_dicts.append(_normalize_history_item(h))
+                history_dicts.append(normalize_history_item(h))
             else:
                 history_dicts.append({"value": str(h)})
         history_json = json.dumps(history_dicts, default=str)
@@ -260,6 +288,30 @@ class SQLiteCheckpointStore[T]:
             for row in rows
         ]
 
+    def list_threads(self) -> list[str]:
+        """列出所有唯一 thread_id (从 state_json 提取).
+
+        Returns:
+            去重排序的 thread_id 列表.
+
+        设计: B2.10 CheckpointStore.list_threads() → JSON 提取而非 schema column,
+        因为 thread_id 已是 EngineState 字段但 checkpoint schema 无独立列.
+        """
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT DISTINCT state_json FROM checkpoints"
+            ).fetchall()
+        thread_ids: set[str] = set()
+        for row in rows:
+            try:
+                state = json.loads(row["state_json"])
+                tid = state.get("thread_id")
+                if tid and isinstance(tid, str):
+                    thread_ids.add(tid)
+            except (json.JSONDecodeError, TypeError):
+                continue
+        return sorted(thread_ids)
+
     def delete(self, checkpoint_id: str) -> bool:
         """删除指定 Checkpoint.
 
@@ -296,7 +348,7 @@ def _row_to_checkpoint(row: Any) -> Checkpoint[T]:
         raise CheckpointSchemaMismatchError(
             found=schema_version, expected=SCHEMA_VERSION
         )
-    state = _deserialize_state(row["state_json"])
+    state = deserialize_state(row["state_json"])
     history = json.loads(row["history_json"])
     created_at = datetime.fromisoformat(row["created_at"])
     return Checkpoint(

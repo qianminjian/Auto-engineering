@@ -17,10 +17,12 @@ CheckpointEnvelope (原名 LoopState, v2.3 P0-A 重命名):
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import logging
 from typing import Any
 
 from pydantic import BaseModel, Field
+
+_logger = logging.getLogger("ae.loop.state.cp")
 
 from auto_engineering.loop.state.channels import (
     AccumulatingChannel,
@@ -29,27 +31,6 @@ from auto_engineering.loop.state.channels import (
     LastValueChannel,
 )
 from auto_engineering.loop.state.metrics import MetricsSnapshot, Signal
-
-
-# ============================================================
-# 辅助类型 (v2.0-D)
-# 设计文档: design/v2.0-Design-Loop.md §3.1
-# ============================================================
-
-
-@dataclass
-class GateVerdict:
-    """Gate 验证结果 (CheckpointEnvelope.gate_results value).
-
-    Attributes:
-        passed: Gate 是否通过
-        reason: 通过/失败原因
-        details: 详细结果 (任意 JSON 可序列化值)
-    """
-
-    passed: bool
-    reason: str = ""
-    details: Any = None
 
 
 class CheckpointEnvelope(BaseModel):
@@ -301,7 +282,7 @@ def _rebuild_task(value: Any) -> Any:
     try:
         return Task(**kwargs)
     except Exception:
-        # 字段不兼容 (旧 schema) -> 回退 dict
+        _logger.debug("Task 重建失败, 回退 dict: %s", exc_info=True)
         return value
 
 
@@ -324,4 +305,5 @@ def _rebuild_task_outcome(value: Any) -> Any:
     try:
         return TaskOutcome(**kwargs)
     except Exception:
+        _logger.debug("TaskOutcome 重建失败, 回退 dict: %s", exc_info=True)
         return value

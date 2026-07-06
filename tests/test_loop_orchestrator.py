@@ -391,6 +391,7 @@ async def test_orchestrator_respects_max_rounds():
         return TaskOutcome(task_id=t.id, status="completed", output="still going")
 
     task = make_task("loop_task")
+    arch_task = make_task("arch_task", agent_type="architect")
     # 高 stagnation_threshold (10) 防止停滞检测过早触发
     # ConvergenceConfig(max_iterations=2) 触发硬上限
     config = OrchestratorConfig(
@@ -401,7 +402,7 @@ async def test_orchestrator_respects_max_rounds():
     )
     orch = Orchestrator(
         requirement="loop test",
-        tasks=[task],
+        tasks=[arch_task, task],
         executor=executor,
         config=config,
     )
@@ -803,12 +804,15 @@ async def test_orchestrator_with_agent_runtime_routes_by_role():
     from auto_engineering.runtime.runtime import AgentRuntime
 
     runtime = AgentRuntime()
+    arch_agent = _TrackingMockAgent("architect")
     dev_agent = _TrackingMockAgent("developer")
     critic_agent = _TrackingMockAgent("critic")
+    runtime.register("architect", lambda: arch_agent)
     runtime.register("developer", lambda: dev_agent)
     runtime.register("critic", lambda: critic_agent)
 
     tasks = [
+        make_task("t0", agent_type="architect"),
         make_task("t1", agent_type="developer"),
         make_task("t2", agent_type="critic"),
         make_task("t3", agent_type="developer"),
@@ -817,7 +821,7 @@ async def test_orchestrator_with_agent_runtime_routes_by_role():
 
     config = OrchestratorConfig(
         convergence_config=ConvergenceConfig(
-            max_iterations=1,
+            max_iterations=3,
             stagnation_threshold=10,
         ),
         agent_runtime=runtime,  # v2.3 Phase H P1.4
@@ -861,19 +865,25 @@ async def test_orchestrator_agent_runtime_missing_role_returns_failed():
     from auto_engineering.runtime.runtime import AgentRuntime
 
     runtime = AgentRuntime()
+    runtime.register("architect", lambda: _TrackingMockAgent("architect"))
     runtime.register("developer", lambda: _TrackingMockAgent("developer"))
     runtime.register("critic", lambda: _TrackingMockAgent("critic"))
-    # 注意: 'reviewer' 是合法 role (Plan.validate 通过) 但 Runtime 未注册
+    # 注意: 'reviewer' 是合法 role 但 Runtime 未注册
+    # t2 role="developer" → developer stage 运行,
+    # agent_type="reviewer" → Runtime 查无 → graceful degradation
 
+    t2 = make_task("t2", agent_type="developer")
+    t2.agent_type = "reviewer"  # override 后 Role/agent_type 分离
     tasks = [
+        make_task("t0", agent_type="architect"),
         make_task("t1", agent_type="developer"),
-        make_task("t2", agent_type="reviewer"),  # 合法 role 但 Runtime 未注册
+        t2,
         make_task("t3", agent_type="critic"),
     ]
 
     config = OrchestratorConfig(
         convergence_config=ConvergenceConfig(
-            max_iterations=1,
+            max_iterations=3,
             stagnation_threshold=10,
         ),
         agent_runtime=runtime,
@@ -888,9 +898,11 @@ async def test_orchestrator_agent_runtime_missing_role_returns_failed():
     # 不应抛异常 — 优雅降级
     await orch.run()
 
-    # 验证: round_result.outcomes 含 reviewer 的 failed status
-    assert len(orch.round_results) >= 1
-    rr = orch.round_results[0]
+    # 验证: developer 阶段 round_result 含 reviewer 的 failed status
+    assert len(orch.round_results) >= 2, (
+        f"应至少 2 轮 (architect+developer), 实际: {len(orch.round_results)}"
+    )
+    rr = orch.round_results[1]
     failed_outcomes = [o for o in rr.outcomes if o.status == "failed"]
     assert len(failed_outcomes) == 1, (
         f"reviewer (未注册) 应 1 个 failed outcome, 实际: "
@@ -982,14 +994,19 @@ async def test_orchestrator_agent_runtime_task_outcome_status_completed():
     from auto_engineering.runtime.runtime import AgentRuntime
 
     runtime = AgentRuntime()
+    arch_agent = _TrackingMockAgent("architect")
     agent = _TrackingMockAgent("developer")
+    runtime.register("architect", lambda: arch_agent)
     runtime.register("developer", lambda: agent)
 
-    tasks = [make_task("t1", agent_type="developer")]
+    tasks = [
+        make_task("t0", agent_type="architect"),
+        make_task("t1", agent_type="developer"),
+    ]
 
     config = OrchestratorConfig(
         convergence_config=ConvergenceConfig(
-            max_iterations=1,
+            max_iterations=3,
             stagnation_threshold=10,
         ),
         agent_runtime=runtime,
@@ -1003,8 +1020,11 @@ async def test_orchestrator_agent_runtime_task_outcome_status_completed():
 
     await orch.run()
 
-    # 验证 TaskOutcome: completed
-    rr = orch.round_results[0]
+    # 验证 TaskOutcome: completed (round 0=architect, round 1=developer)
+    assert len(orch.round_results) >= 2, (
+        f"应至少 2 轮 (architect+developer), 实际: {len(orch.round_results)}"
+    )
+    rr = orch.round_results[1]
     assert len(rr.outcomes) == 1
     out = rr.outcomes[0]
     assert out.task_id == "t1"
@@ -1100,7 +1120,7 @@ class TestOrchestratorV5MainLoop:
         )
         from auto_engineering.loop.orchestrator import Orchestrator
         from auto_engineering.loop.stage_router import StageRouter
-        from auto_engineering.loop.task_factory import _apply_outcome_to_state
+        from auto_engineering.loop.task_factory import apply_outcome_to_state
 
         # 1. 构造 3 task plan (architect/developer/critic)
         tasks = [
@@ -1188,7 +1208,7 @@ class TestOrchestratorV5MainLoop:
         orch._state = EngineState(requirement="block test")
         orch._retry_counters = {}
         orch._router = StageRouter()
-        orch._guardrail_chain = GuardrailChain([BlockGuardrail()])
+        orch.config.guardrail_chain = GuardrailChain([BlockGuardrail()])
 
         history = await orch.run(cancellation=None)
         # block → 立即停止
@@ -1227,7 +1247,7 @@ class TestOrchestratorV5MainLoop:
         orch._state = EngineState(requirement="retry exhaustion")
         orch._retry_counters = {}
         orch._router = StageRouter()
-        orch._guardrail_chain = GuardrailChain([AlwaysRetryGuardrail()])
+        orch.config.guardrail_chain = GuardrailChain([AlwaysRetryGuardrail()])
 
         history = await orch.run(cancellation=None)
         # retry 耗尽 → 停止
@@ -1279,7 +1299,7 @@ class TestOrchestratorV5MainLoop:
         orch._retry_counters = {}
         # router 用更宽松的阈值避免提前 stop
         orch._router = StageRouter(max_majors_in_a_row=2, max_total_majors=3)
-        orch._guardrail_chain = GuardrailChain([])
+        orch.config.guardrail_chain = GuardrailChain([])
 
         await orch.run(cancellation=None)
         # 验证: 至少跑了 1 轮 MAJOR 循环
@@ -1316,7 +1336,7 @@ class TestOrchestratorV5MainLoop:
         orch._state = EngineState(requirement="hard limit")
         orch._retry_counters = {}
         orch._router = StageRouter()
-        orch._guardrail_chain = GuardrailChain([])
+        orch.config.guardrail_chain = GuardrailChain([])
 
         await orch.run(cancellation=None)
         # 验证: verdict.level == 4 (LEVEL_HARD_LIMIT)
@@ -1324,27 +1344,6 @@ class TestOrchestratorV5MainLoop:
         assert orch.verdict.level == LEVEL_HARD_LIMIT, (
             f"硬上限应 level=4, 实际: {orch.verdict.level}"
         )
-
-    def test_resume_from_checkpoint(self) -> None:
-        """Orchestrator.resume() 从 CheckpointStore 恢复状态."""
-        from auto_engineering.engine.state import EngineState
-        from auto_engineering.loop.orchestrator import Orchestrator
-
-        tasks = [make_task("t1")]
-
-        async def executor(task, ctx):
-            return TaskOutcome(task_id=task.id, status="completed", output="x")
-
-        # 1. 验证: Orchestrator 有 resume() 方法
-        orch = Orchestrator(requirement="resume test", tasks=tasks, executor=executor)
-        assert hasattr(orch, "resume"), "Orchestrator 应有 resume() 方法"
-        assert callable(orch.resume)
-        # 2. 验证: resume() 签名 = (thread_id, round, step) — 用 inspect 查签名
-        import inspect
-        sig = inspect.signature(orch.resume)
-        params = list(sig.parameters.keys())
-        assert "thread_id" in params, f"resume 应有 thread_id 参数, 实际: {params}"
-        assert "round" in params, f"resume 应有 round 参数, 实际: {params}"
 
     def test_select_round_tasks_removed(self) -> None:
         """_select_round_tasks 已删除 (v5.0 用 plan.get_tasks_by_stage 替代)."""

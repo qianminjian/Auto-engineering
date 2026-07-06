@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from auto_engineering.gates.base import Gate, Verdict
+from auto_engineering.gates.base import Gate, GateVerdict
 from auto_engineering.loop.plan import ConflictError, Task
 from auto_engineering.runtime.cancellation import CancellationToken
 
@@ -69,8 +69,8 @@ class RoundResult:
     Attributes:
         round_id: 轮次 ID
         outcomes: 每个 task 的执行结果 (顺序与输入无关, gather 不保证)
-        gate_results: v2.2 Phase H — 本轮运行的 Gate 结果 dict[gate_name, Verdict].
-                      包含 Gate 异常时的 failed Verdict (不传播给上层).
+        gate_results: v2.2 Phase H — 本轮运行的 Gate 结果 dict[gate_name, GateVerdict].
+                      包含 Gate 异常时的 failed GateVerdict (不传播给上层).
         history: v2.3 Phase G (P1.3) — 本轮的 RoundHistory 列表 (通常 1 个元素).
                  借鉴 LangGraph Pregel.tick() Packet 模式: run_round 末尾直接构造
                  RoundHistory 写入此字段, Orchestrator 不再 _build_history 二次包装.
@@ -79,8 +79,9 @@ class RoundResult:
     """
 
     round_id: int
+    stage: str = ""
     outcomes: list[TaskOutcome] = field(default_factory=list)
-    gate_results: dict[str, Verdict] = field(default_factory=dict)
+    gate_results: dict[str, GateVerdict] = field(default_factory=dict)
     history: list[RoundHistory] = field(default_factory=list)
     started_at: float = 0.0
     finished_at: float = 0.0
@@ -218,7 +219,10 @@ def _build_per_task_ctx(ctx: Any, task: Task) -> Any:
                 # 没 current_task_id 字段 → 直接复制 (避免共享 state mutation 风险)
                 return replace(ctx)
         except Exception:
-            pass
+            import logging
+            logging.getLogger("ae.loop.round").warning(
+                "_inject_task_id failed for task=%s", task.id, exc_info=True,
+            )
     return ctx
 
 
@@ -232,6 +236,8 @@ async def run_round(
     project_root: Path | None = None,
     stage: str = "",
     contracts: dict | None = None,
+    channel_versions: dict[str, int] | None = None,
+    start_commit: str | None = None,
 ) -> RoundResult:
     """执行一个 Round: asyncio.gather 并行调度所有 task + 跑 Gate.
 
@@ -261,7 +267,7 @@ async def run_round(
         - 末位构造 RoundHistory (含 gate_results + files_changed + task_outcomes +
           lines_added/removed), semantic_satisfied 由 Orchestrator 写回
     """
-    result = RoundResult(round_id=round_id)
+    result = RoundResult(round_id=round_id, stage=stage)
     result.started_at = time.monotonic()
 
     if not tasks:
@@ -269,8 +275,11 @@ async def run_round(
         # 即使无 task, 也跑 Gate (若提供) — Phase H 行为: Gate 在 task 之后跑
         # v5.0 §B6.1: 按 stage 过滤 Gate
         if gates and project_root is not None:
-            result.gate_results = await _run_gates(gates, project_root, stage=stage, contracts=contracts)
-        await _attach_round_history(result, tasks, project_root)
+            merged_contracts = _merge_contracts_with_changed_files(
+                contracts, project_root, start_commit,
+            )
+            result.gate_results = await _run_gates(gates, project_root, stage=stage, contracts=merged_contracts)
+        await _attach_round_history(result, tasks, project_root, channel_versions, start_commit)
         return result
 
     # 创建并发任务
@@ -281,6 +290,10 @@ async def run_round(
     # refactor 让 _execute_single 重新抛出时一个 task 异常取消整个 round.
     # 当前 _execute_single 内部捕获所有 Exception 返回 failed outcome,
     # 所以 return_exceptions=True 不会改变行为, 但提供 belt-and-suspenders.)
+    #
+    # v5.4 审计 P2-21: 防御性断言 — 并行 task 写同一 EngineState channel
+    # 会导致未定义行为. 当前每个 task 独占不同 channel, 此断言作为回归栅栏.
+    assert len({t.id for t in tasks}) == len(tasks), "duplicate task ids in round"
     gathered = await asyncio.gather(*coros, return_exceptions=True)
     outcomes: list[TaskOutcome] = []
     for item in gathered:
@@ -302,10 +315,13 @@ async def run_round(
     # v2.2 Phase H: 跑 Gate (task 完成后), 写入 gate_results
     # v5.0 §B6.1: 按 stage 过滤 + 透传 contracts
     if gates and project_root is not None:
-        result.gate_results = await _run_gates(gates, project_root, stage=stage, contracts=contracts)
+        merged_contracts = _merge_contracts_with_changed_files(
+            contracts, project_root, start_commit,
+        )
+        result.gate_results = await _run_gates(gates, project_root, stage=stage, contracts=merged_contracts)
 
     # v2.3 Phase G (P1.3): 末尾构造 RoundHistory 写入 round_result.history
-    await _attach_round_history(result, tasks, project_root)
+    await _attach_round_history(result, tasks, project_root, stage, channel_versions, start_commit)
     return result
 
 
@@ -313,6 +329,9 @@ async def _attach_round_history(
     result: RoundResult,
     tasks: list[Task],
     project_root: Path | None,
+    stage: str = "",
+    channel_versions: dict[str, int] | None = None,
+    start_commit: str | None = None,
 ) -> None:
     """在 run_round 末尾构造 RoundHistory 写入 result.history.
 
@@ -328,6 +347,7 @@ async def _attach_round_history(
         result: RoundResult (已含 outcomes + gate_results)
         tasks: 本轮 task 列表 (供 tasks_run)
         project_root: git diff 的项目根目录 (None = 跳过 git diff)
+        channel_versions: 当前 state channel 版本号 (供停滞检测)
     """
     from auto_engineering.loop.convergence import RoundHistory
 
@@ -335,45 +355,57 @@ async def _attach_round_history(
     # 上下文会阻塞 event loop. 通过 asyncio.to_thread 移到 thread pool.
     # 同 P0-1 asyncio.to_thread 模式.
     lines_added, lines_removed = await asyncio.to_thread(
-        _parse_git_numstat, project_root
+        _parse_git_numstat, project_root, start_commit
     )
     history = RoundHistory(
         round_id=result.round_id,
+        stage=stage,
         files_changed=result.completed_count,
         lines_added=lines_added,
         lines_removed=lines_removed,
         gate_results=dict(result.gate_results),
+        guardrail_result=None,
         semantic_satisfied=None,
         tasks_run=[t.id for t in tasks],
         task_outcomes={o.task_id: o.status for o in result.outcomes},
+        channel_versions=channel_versions or {},
     )
     result.history = [history]
 
 
-def _parse_git_numstat(project_root: Path | None) -> tuple[int, int]:
-    """解析 git diff --numstat HEAD~1 HEAD 输出 → (lines_added, lines_removed).
+def _parse_git_numstat(
+    project_root: Path | None, start_commit: str | None = None,
+) -> tuple[int, int]:
+    """解析 git diff 输出 → (lines_added, lines_removed).
 
-    从 auto_engineering.loop.orchestrator 提取 (Phase G P1.3):
-        单一数据源: RoundHistory 构造在 round.py 内完成, 不需 Orchestrator 中转.
-        仓库无 HEAD / git 不可用 → (0, 0)
+    优先使用 start_commit (缓存的上轮 HEAD hash), 若 diff 为空则降级到 HEAD~1.
+    start_commit 避免 rebase/squash 后 HEAD~1 指向错误基准.
 
-    v2.5 P2-D-1: 同步函数, 调用方负责包 asyncio.to_thread (见 _attach_round_history).
+    仓库无 HEAD / git 不可用 → (0, 0)
     """
     import subprocess
 
     cwd = str(project_root) if project_root is not None else "."
-    try:
-        result_run = subprocess.run(
-            ["git", "diff", "--numstat", "HEAD~1", "HEAD"],
-            cwd=cwd,
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
-        return (0, 0)
 
-    if result_run.returncode != 0:
+    def _run_diff(args: list[str]) -> subprocess.CompletedProcess | None:
+        try:
+            return subprocess.run(
+                ["git", "diff", "--numstat", *args],
+                cwd=cwd, capture_output=True, text=True, timeout=10,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+            return None
+
+    result_run = None
+    if start_commit:
+        result_run = _run_diff([start_commit, "HEAD"])
+        # 降级: start_commit diff 为空时回退到 HEAD~1 (如 round 中无新 commit)
+        if result_run and result_run.returncode == 0 and not result_run.stdout.strip():
+            result_run = _run_diff(["HEAD~1", "HEAD"])
+    if result_run is None:
+        result_run = _run_diff(["HEAD~1", "HEAD"])
+
+    if result_run is None or result_run.returncode != 0:
         return (0, 0)
 
     total_added = 0
@@ -393,13 +425,56 @@ def _parse_git_numstat(project_root: Path | None) -> tuple[int, int]:
     return (total_added, total_removed)
 
 
+def _parse_git_changed_files(
+    project_root: Path | None, start_commit: str | None = None,
+) -> list[str]:
+    """v5.4: 获取 start_commit..HEAD 之间变更的文件列表 (相对路径).
+
+    供 AuditGate 增量扫描 — 避免每轮扫描全项目文件.
+    git 不可用或无变更 → 返回空列表.
+    """
+    import subprocess
+
+    cwd = str(project_root) if project_root is not None else "."
+    try:
+        result = subprocess.run(
+            ["git", "diff", "--name-only", start_commit or "HEAD~1", "HEAD"],
+            cwd=cwd, capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode == 0:
+            return [f.strip() for f in result.stdout.splitlines() if f.strip()]
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        pass
+    return []
+
+
+def _merge_contracts_with_changed_files(
+    contracts: dict | None,
+    project_root: Path,
+    start_commit: str | None,
+) -> dict | None:
+    """v5.4: 把本轮 git diff 变更文件列表注入 contracts dict.
+
+    若 git 不可用或无变更 → 返回原 contracts (AuditGate 会走全量扫描).
+    若原 contracts 为 None 且无变更 → 返回 None.
+    """
+    changed = _parse_git_changed_files(project_root, start_commit)
+    if not changed:
+        return contracts
+    if contracts is None:
+        return {"files_changed": changed}
+    merged = dict(contracts)
+    merged.setdefault("files_changed", changed)
+    return merged
+
+
 async def _run_gates(
     gates: list[Gate],
     project_root: Path,
     stage: str = "",
     contracts: dict | None = None,
-) -> dict[str, Verdict]:
-    """跑 Gate 列表, 返回 {gate_name: Verdict} dict.
+) -> dict[str, GateVerdict]:
+    """跑 Gate 列表, 返回 {gate_name: GateVerdict} dict.
 
     v5.0 §B6.1+§B6.2 — 按 stage 过滤 Gate:
         - 若 stage 非空, 仅跑 g.applies_to_stages 含 stage 的 Gate
@@ -407,9 +482,8 @@ async def _run_gates(
 
     v5.0 §B6.1a — contracts 透传: 给每个 Gate.run() 传 contracts 参数 (ContractGate 用).
 
-    Gate 异常被吞, 写入 Verdict(passed=False, message=str(exc)).
-    与 Orchestrator._run_gates 不同: 这里始终写入 dict (含失败 entry),
-    让 RoundResult.all_gates_passed 能正确反映"有 Gate 失败".
+    Gate 异常被吞, 写入 GateVerdict(passed=False, message=str(exc)).
+    始终写入 dict (含失败 entry), 让 RoundResult.all_gates_passed 能正确反映"有 Gate 失败".
 
     v2.5 P2-D-2: 之前串行跑 (test 60s + lint 30s + type_check 30s + safety 30s
     + coverage 60s + build 30s = ~4 分钟/round × 10 rounds = 40 分钟).
@@ -417,7 +491,7 @@ async def _run_gates(
     read-only (scan / run linter / type check), 无共享写状态, 适合并行.
     总时长 ≈ max(单个 gate 时长) 而非 sum.
     """
-    results: dict[str, Verdict] = {}
+    results: dict[str, GateVerdict] = {}
 
     # v5.0 §B6.1+§B6.2: stage 过滤 — 按 applies_to_stages 决定哪些 Gate 跑
     if stage:
@@ -425,14 +499,14 @@ async def _run_gates(
     else:
         gates_to_run = list(gates)
 
-    async def _run_one(gate: Gate) -> tuple[str, Verdict]:
+    async def _run_one(gate: Gate) -> tuple[str, GateVerdict]:
         try:
             # v5.0 §B6.1a: 透传 contracts 给 Gate.run() (用 kwargs 避免子类签名不匹配)
             verdict = await asyncio.to_thread(
                 gate.run, project_root, contracts=contracts
             )
         except Exception as exc:
-            verdict = Verdict.failed(
+            verdict = GateVerdict.failed(
                 f"Gate {gate.name} 异常: {exc}",
                 gate_name=gate.name,
             )
@@ -453,126 +527,9 @@ async def _run_gates(
     return results
 
 
-@dataclass
-class Round:
-    """Round 抽象 — 包含元数据 + 触发执行.
-
-    Attributes:
-        round_id: 轮次 ID
-        requirement: 本轮目标 (供 Round Close 报告)
-        tasks: 本轮 task 列表
-        plan_ref: 完整 plan 引用 (可选, 用于后续 round 关联)
-    """
-
-    round_id: int
-    requirement: str
-    tasks: list[Task]
-    plan_ref: Any = None  # 避免循环 import
-
-    async def execute(
-        self,
-        executor: TaskExecutor,
-        ctx: Any = None,
-        cancellation: CancellationToken | None = None,
-    ) -> RoundResult:
-        """执行本轮: 委托 run_round()."""
-        return await run_round(
-            tasks=self.tasks,
-            executor=executor,
-            ctx=ctx,
-            cancellation=cancellation,
-            round_id=self.round_id,
-        )
-
-
-# ============================================================
-# v5.0 §B2.12b — DAG 拓扑分层 (Kahn BFS)
-# ============================================================
-
-
-def _topological_layers(tasks: list[Task]) -> list[list[Task]]:
-    """Kahn BFS 分层算法 — 把 task list 拆为可并行的层 (v5.0 §B2.12b).
-
-    每层是入度为 0 的 task 集合, 该层内 task 可同时执行 (asyncio.gather).
-    与 plan.py 中 _topological_levels (DFS 递归 + cache) 并存 —
-    本实现是 Round 内的并行调度入口, 与 Plan 整体拓扑分层用途不同.
-
-    Args:
-        tasks: 任务列表 (每个 Task 含 deps 字段, 引用其他 task.id)
-
-    Returns:
-        list[list[Task]]: 分层结果, 外层顺序 = 拓扑层级, 内层 = 同层并行 task.
-                          空输入 → [].
-
-    Raises:
-        ConflictError: 检测到循环依赖时 (剩余未入层 task = 环内节点).
-                       ConflictError 复用 plan.py 中的文件冲突异常,
-                       携带 cycle 中涉及的 task.id 列表.
-
-    算法 (Kahn BFS):
-        1. 统计每个 task 的入度 (deps 中引用的 task 不在列表中 → 视为 0)
-        2. 反向邻接表: dep → 依赖它的 task (供入度消减时查找)
-        3. 反复找入度 = 0 的 task → 1 层 → 消减其后续 task 入度 → 循环
-        4. 终止: 所有 task 都入层 OR 剩余 task 入度均 > 0 (有环)
-        5. 有环 → 抛 ConflictError(剩余 task.id)
-    """
-    from collections import deque
-
-    if not tasks:
-        return []
-
-    # 索引: id → Task (含本批 task 之外的 dep 视为已满足, 不计入入度)
-    task_map: dict[str, Task] = {t.id: t for t in tasks}
-
-    # 计算入度: 仅统计 deps 中引用本批 task 的部分
-    in_degree: dict[str, int] = {t.id: 0 for t in tasks}
-    # 反向邻接表: dep_id → 依赖 dep_id 的 task.id 列表
-    dependents: dict[str, list[str]] = {t.id: [] for t in tasks}
-    for task in tasks:
-        for dep_id in task.deps:
-            if dep_id in task_map:
-                in_degree[task.id] += 1
-                dependents[dep_id].append(task.id)
-
-    layers: list[list[Task]] = []
-    # 初始: 入度 0 的所有 task
-    current_layer_ids = deque(sorted(tid for tid, deg in in_degree.items() if deg == 0))
-    # 记录已入层的 task id (用于剩余环检测)
-    in_layer: set[str] = set()
-
-    while current_layer_ids:
-        # 当前层: 按 id 排序 (确定性输出, 便于测试)
-        layer = [task_map[tid] for tid in current_layer_ids]
-        layers.append(layer)
-        in_layer.update(current_layer_ids)
-        # 计算下一层: 本层每个 task 的 dependents 中, 消减入度后为 0 的
-        next_layer_ids: deque[str] = deque()
-        for tid in current_layer_ids:
-            for child_id in dependents[tid]:
-                in_degree[child_id] -= 1
-                if in_degree[child_id] == 0:
-                    next_layer_ids.append(child_id)
-        # 排序保持确定性
-        next_layer_ids = deque(sorted(next_layer_ids))
-        current_layer_ids = next_layer_ids
-
-    # 环检测: 若有 task 未入层 → 存在环
-    remaining = [tid for tid in task_map if tid not in in_layer]
-    if remaining:
-        # 排序保证可重复性
-        remaining_sorted = sorted(remaining)
-        raise ConflictError(
-            conflicts=[f"cycle dependency: {tid}" for tid in remaining_sorted]
-        )
-
-    return layers
-
-
 __all__ = [
-    "Round",
     "RoundResult",
     "TaskExecutor",
     "TaskOutcome",
-    "_topological_layers",
     "run_round",
 ]

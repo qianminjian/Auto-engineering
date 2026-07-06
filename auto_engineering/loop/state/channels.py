@@ -4,6 +4,11 @@
 简化: 三种类型覆盖 LOOP 子系统的核心语义, 不引入 Pregel 的版本触发机制.
 
 设计来源: design/v2.0-Analysis-Loop.md §4.4 状态管理
+
+v5.4 审计 P2-3: 此 Channel 系统 (360 行) 当前仅用于 CheckpointEnvelope 的
+checkpoint 序列化/反序列化. 主循环状态管理走 EngineState dataclass,
+不经过 Channel. 若未来引入多 Agent 并发写同一 Channel 的用例,
+需在 Envelope 层加 asyncio.Lock + 按 Agent role 分区.
 """
 
 from __future__ import annotations

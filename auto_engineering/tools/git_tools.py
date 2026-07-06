@@ -9,12 +9,30 @@ _run_git 跑前 realpath 验证 cwd 在 project_root 内, 否则拒绝.
 
 from __future__ import annotations
 
+import logging
 import os
 import subprocess
 from pathlib import Path
 from typing import Any, ClassVar
 
 from .base import BaseTool, ToolResult
+
+_logger = logging.getLogger("ae.tools.git")
+
+
+def _handle_git_error(exc: Exception, operation: str) -> ToolResult:
+    """v5.4 审计 P1-7: 统一的 git 错误处理 —— 3 个 Git Tool 共享.
+
+    原 3 个 Git Tool (status/commit/diff) 各有完全相同的
+    TimeoutExpired → ValueError → Exception 三段式 (14 行 × 3).
+    提取后消除重复.
+    """
+    if isinstance(exc, subprocess.TimeoutExpired):
+        return ToolResult(success=False, content="", error=f"git {operation} timeout")
+    if isinstance(exc, ValueError):
+        return ToolResult(success=False, content="", error=str(exc))
+    _logger.error("git 工具异常: %s", exc, exc_info=True)
+    return ToolResult(success=False, content="", error=str(exc))
 
 
 def _run_git(args: list[str], cwd: str | None, project_root: Path | None, timeout: int = 30) -> subprocess.CompletedProcess:
@@ -71,12 +89,8 @@ class GitStatusTool(BaseTool):
                 success=True,
                 content=result.stdout.strip() or "(clean)",
             )
-        except subprocess.TimeoutExpired:
-            return ToolResult(success=False, content="", error="git status timeout")
-        except ValueError as exc:
-            return ToolResult(success=False, content="", error=str(exc))
-        except Exception as exc:
-            return ToolResult(success=False, content="", error=str(exc))
+        except (subprocess.TimeoutExpired, ValueError, Exception) as exc:
+            return _handle_git_error(exc, "status")
 
 
 class GitCommitTool(BaseTool):
@@ -117,12 +131,8 @@ class GitCommitTool(BaseTool):
                 success=True,
                 content=commit_result.stdout.strip() or "(commit created)",
             )
-        except subprocess.TimeoutExpired:
-            return ToolResult(success=False, content="", error="git commit timeout")
-        except ValueError as exc:
-            return ToolResult(success=False, content="", error=str(exc))
-        except Exception as exc:
-            return ToolResult(success=False, content="", error=str(exc))
+        except (subprocess.TimeoutExpired, ValueError, Exception) as exc:
+            return _handle_git_error(exc, "commit")
 
 
 class GitDiffTool(BaseTool):
@@ -157,9 +167,5 @@ class GitDiffTool(BaseTool):
                 success=True,
                 content=result.stdout.strip() or "(no changes)",
             )
-        except subprocess.TimeoutExpired:
-            return ToolResult(success=False, content="", error="git diff timeout")
-        except ValueError as exc:
-            return ToolResult(success=False, content="", error=str(exc))
-        except Exception as exc:
-            return ToolResult(success=False, content="", error=str(exc))
+        except (subprocess.TimeoutExpired, ValueError, Exception) as exc:
+            return _handle_git_error(exc, "diff")

@@ -416,8 +416,8 @@ class TestTypeCheckRun:
         assert verdict.passed is True
         assert "退出 2" in verdict.message or "无类型 error" in verdict.message
 
-    def test_run_tool_timeout_skips(self, tmp_path: Path):
-        """subprocess.TimeoutExpired → skip (passed=True)."""
+    def test_run_tool_timeout_fails(self, tmp_path: Path):
+        """subprocess.TimeoutExpired → failed (与 LintGate 策略统一)."""
         from auto_engineering.gates.type_check import TypeCheckGate
 
         self._make_configured_project(tmp_path)
@@ -429,8 +429,8 @@ class TestTypeCheckRun:
                 side_effect=subprocess.TimeoutExpired(cmd=["fake-mypy"], timeout=10.0),
             ):
                 verdict = gate.run(tmp_path)
-        assert verdict.passed is True
-        assert "超时" in verdict.message or "skip" in verdict.message.lower()
+        assert verdict.passed is False
+        assert "超时" in verdict.message
 
     def test_run_tool_filenotfound_skips(self, tmp_path: Path):
         """subprocess.run 抛 FileNotFoundError → skip (passed=True)."""

@@ -8,9 +8,8 @@
 - 参数化覆盖 8 转换 (T1-T6 + 边界)
 - MAJOR 计数耗尽场景
 - StageDecision 数据类字段
-- _clear_stage_fields 3 stage 映射
-- _derive_status 4 边界
-"""
+- clear_stage_fields 3 stage 映射
+- _derive_status 4 边界 (已移除, dead code, v5.4 P0-1)"""
 
 from __future__ import annotations
 
@@ -22,9 +21,8 @@ from auto_engineering.engine.state import EngineState
 from auto_engineering.loop.stage_router import (
     StageDecision,
     StageRouter,
-    _clear_stage_fields,
-    _derive_status,
-    _update_majors_count,
+    clear_stage_fields,
+    update_majors_count,
 )
 
 
@@ -238,7 +236,7 @@ class TestMajorLimitBoundary:
         assert re.search(r"累计\s*2", decision.stop_reason)
 
 
-# ---------- _update_majors_count ----------
+# ---------- update_majors_count ----------
 
 class TestUpdateMajorsCount:
     """MAJOR 计数更新逻辑 (§B3.2)."""
@@ -246,36 +244,36 @@ class TestUpdateMajorsCount:
     def test_approve_resets_in_a_row(self) -> None:
         """verdict=APPROVE → majors_in_a_row 重置为 0."""
         state = EngineState(majors_in_a_row=2, total_majors=3)
-        _update_majors_count(state, "APPROVE")
+        update_majors_count(state, "APPROVE")
         assert state.majors_in_a_row == 0
         assert state.total_majors == 3  # total 不重置
 
     def test_major_increments_both(self) -> None:
         """verdict=MAJOR → majors_in_a_row += 1, total_majors += 1."""
         state = EngineState(majors_in_a_row=1, total_majors=2)
-        _update_majors_count(state, "MAJOR")
+        update_majors_count(state, "MAJOR")
         assert state.majors_in_a_row == 2
         assert state.total_majors == 3
 
     def test_empty_verdict_no_change(self) -> None:
         """verdict='' → 不变."""
         state = EngineState(majors_in_a_row=1, total_majors=2)
-        _update_majors_count(state, "")
+        update_majors_count(state, "")
         assert state.majors_in_a_row == 1
         assert state.total_majors == 2
 
     def test_initial_zero_increments_to_one(self) -> None:
         """初始 0 → MAJOR → 1."""
         state = EngineState()
-        _update_majors_count(state, "MAJOR")
+        update_majors_count(state, "MAJOR")
         assert state.majors_in_a_row == 1
         assert state.total_majors == 1
 
 
-# ---------- _clear_stage_fields ----------
+# ---------- clear_stage_fields ----------
 
 class TestClearStageFields:
-    """_clear_stage_fields 3 stage 映射 (§B3.3)."""
+    """clear_stage_fields 3 stage 映射 (§B3.3)."""
 
     def test_clear_architect_fields(self) -> None:
         """stage='architect' → clear plan / file_list / batch_plan / contracts."""
@@ -291,7 +289,7 @@ class TestClearStageFields:
             test_results={"passed": 1},
             critic_feedback="fb",
         )
-        _clear_stage_fields(state, "architect")
+        clear_stage_fields(state, "architect")
         assert state.plan == ""
         assert state.file_list == []
         assert state.batch_plan == []
@@ -311,7 +309,7 @@ class TestClearStageFields:
             verdict="APPROVE",
             findings=[{"x": 1}],
         )
-        _clear_stage_fields(state, "developer")
+        clear_stage_fields(state, "developer")
         assert state.files_changed == []
         assert state.commit_hash == ""
         assert state.test_results == {}
@@ -328,63 +326,13 @@ class TestClearStageFields:
             plan="kept",
             files_changed=["kept.py"],
         )
-        _clear_stage_fields(state, "critic")
+        clear_stage_fields(state, "critic")
         assert state.verdict == ""
         assert state.findings == []
         assert state.critic_feedback == ""
         # 其他字段保留
         assert state.plan == "kept"
         assert state.files_changed == ["kept.py"]
-
-
-# ---------- _derive_status ----------
-
-class TestDeriveStatus:
-    """_derive_status 4 边界 (§B3.4)."""
-
-    def test_approve_verdict_returns_completed(self) -> None:
-        """verdict='APPROVE' → 'completed'."""
-        state = EngineState(verdict="APPROVE")
-        assert _derive_status(state, max_iterations=10) == "completed"
-
-    def test_round_not_needed_derive_status(self) -> None:
-        """2026-07-05 对标审计 P0-2: _derive_status 不再读 state.round.
-
-        EngineState 无 round 字段. round 计数由 orchestrator 管理,
-        硬上限由 ConvergenceJudge._check_hard_limit 检查.
-        """
-        from types import SimpleNamespace
-
-        state = SimpleNamespace(verdict="MAJOR", round=10, current_stage="developer")
-        assert _derive_status(state, max_iterations=10) == "running"
-
-    def test_round_above_max_not_checked_by_derive_status(self) -> None:
-        """2026-07-05: _derive_status 不管 round, 收敛由 judge 负责."""
-        from types import SimpleNamespace
-
-        state = SimpleNamespace(verdict="MAJOR", round=11, current_stage="developer")
-        assert _derive_status(state, max_iterations=10) == "running"
-
-    def test_empty_stage_returns_completed(self) -> None:
-        """stage='' → 'completed' (初始或终止状态)."""
-        state = EngineState(current_stage="")
-        assert _derive_status(state, max_iterations=10) == "completed"
-
-    def test_running_state(self) -> None:
-        """verdict=MAJOR + stage≠'' → 'running' (无 round 字段时也 running)."""
-        state = EngineState(
-            current_stage="developer",
-            verdict="MAJOR",
-        )
-        assert _derive_status(state, max_iterations=10) == "running"
-
-    def test_running_with_empty_verdict(self) -> None:
-        """verdict='' + stage≠'' → 'running'."""
-        state = EngineState(
-            current_stage="architect",
-            verdict="",
-        )
-        assert _derive_status(state, max_iterations=10) == "running"
 
 
 # ---------- EngineState 新字段集成 ----------

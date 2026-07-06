@@ -25,7 +25,7 @@ from click.testing import CliRunner
 
 def test_load_v1_checkpoint_parses_json(tmp_path: Path) -> None:
     """load_v1_checkpoint 能读 v1.1 JSON 文件并返回 dict."""
-    from auto_engineering.checkpoint.migrate import load_v1_checkpoint
+    from auto_engineering.loop.checkpoint.migration import load_v1_checkpoint
 
     v1_data = {
         "status": "running",
@@ -44,7 +44,7 @@ def test_load_v1_checkpoint_parses_json(tmp_path: Path) -> None:
 
 def test_load_v1_checkpoint_handles_missing_optional_fields(tmp_path: Path) -> None:
     """load_v1_checkpoint 容忍缺失可选字段 (loop_state/history 缺失)."""
-    from auto_engineering.checkpoint.migrate import load_v1_checkpoint
+    from auto_engineering.loop.checkpoint.migration import load_v1_checkpoint
 
     v1_data = {"status": "drained"}
     src = tmp_path / "v1.json"
@@ -64,7 +64,7 @@ def test_load_v1_checkpoint_handles_missing_optional_fields(tmp_path: Path) -> N
 
 def test_migrate_v1_to_v2_converts_loop_state(tmp_path: Path) -> None:
     """migrate_v1_to_v2 把 v1.1 loop_state 转换为 v2.0 CheckpointEnvelope (round/step/status)."""
-    from auto_engineering.checkpoint.migrate import migrate_v1_to_v2
+    from auto_engineering.loop.checkpoint.migration import migrate_v1_to_v2
 
     v1_data = {
         "status": "drained",
@@ -103,7 +103,7 @@ def test_migrate_v1_to_v2_converts_loop_state(tmp_path: Path) -> None:
 
 def test_migrate_v1_to_v2_converts_history(tmp_path: Path) -> None:
     """migrate_v1_to_v2 把 v1.1 history 转换为 v2.0 RoundHistory 列表."""
-    from auto_engineering.checkpoint.migrate import migrate_v1_to_v2
+    from auto_engineering.loop.checkpoint.migration import migrate_v1_to_v2
 
     v1_data = {
         "status": "running",
@@ -157,7 +157,7 @@ def test_migrate_v1_to_v2_converts_history(tmp_path: Path) -> None:
 
 def test_migrate_v1_to_v2_saves_to_sqlite(tmp_path: Path) -> None:
     """migrate_v1_to_v2 真存到 SQLite 文件 (不 mock)."""
-    from auto_engineering.checkpoint.migrate import migrate_v1_to_v2
+    from auto_engineering.loop.checkpoint.migration import migrate_v1_to_v2
 
     v1_data = {"status": "running", "loop_state": {"round": 1, "step": 0}, "history": []}
     src = tmp_path / "v1.json"
@@ -189,7 +189,7 @@ def test_migrate_v1_to_v2_saves_to_sqlite(tmp_path: Path) -> None:
 
 def test_migrate_round_trip_loadable(tmp_path: Path) -> None:
     """迁移后, store.load(cp_id) 能读回原数据 (round-trip OK)."""
-    from auto_engineering.checkpoint.migrate import migrate_v1_to_v2
+    from auto_engineering.loop.checkpoint.migration import migrate_v1_to_v2
     from auto_engineering.loop.checkpoint import SQLiteCheckpointStore
 
     v1_data = {

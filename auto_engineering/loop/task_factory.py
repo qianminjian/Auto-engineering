@@ -25,7 +25,7 @@ from auto_engineering.loop.plan import Plan, Task
 from auto_engineering.loop.round import TaskOutcome
 
 
-def _tasks_from_batch_plan(
+def tasks_from_batch_plan(
     batch_plan: list[dict],
     requirement: str,
 ) -> Plan:
@@ -78,23 +78,33 @@ def _tasks_from_batch_plan(
     return Plan(tasks=tasks, requirement=requirement)
 
 
-def _apply_outcome_to_state(state: EngineState, outcome: TaskOutcome) -> None:
-    """按 task_role 分发 outcome.output 写入 EngineState 字段 (v5.0 §B7.2).
+# role→fields 映射表 (v5.4 审计 P0-2): 替代 12 个重复 if "field" in values 守卫.
+# 新增 role/field 只需在此表追加, 无需修改 apply_outcome_to_state 主体.
+ROLE_FIELD_MAP: dict[str, list[str]] = {
+    "architect": ["plan", "file_list", "batch_plan", "contracts"],
+    "developer": ["files_changed", "commit_hash", "test_results"],
+    "critic": ["verdict", "findings", "critic_feedback", "suggested_fix"],
+}
 
-    字段映射 (v5.0 §B7.2):
-        architect:
-            - plan            → state.plan
-            - file_list       → state.file_list
-            - batch_plan      → state.batch_plan
-            - contracts       → state.contracts
-        developer:
-            - files_changed   → state.files_changed
-            - commit_hash     → state.commit_hash
-            - test_results    → state.test_results
-        critic:
-            - verdict         → state.verdict
-            - findings        → state.findings
-            - critic_feedback → state.critic_feedback
+# 每个 field 的清空默认值 (v5.4 审计 r2 P1-3: clear_stage_fields 引用此表 + ROLE_FIELD_DEFAULTS,
+# 消除 stage_router.py 的重复硬编码).
+ROLE_FIELD_DEFAULTS: dict[str, object] = {
+    "plan": "",
+    "file_list": [],
+    "batch_plan": [],
+    "contracts": {},
+    "files_changed": [],
+    "commit_hash": "",
+    "test_results": {},
+    "verdict": "",
+    "findings": [],
+    "critic_feedback": "",
+    "suggested_fix": "",
+}
+
+
+def apply_outcome_to_state(state: EngineState, outcome: TaskOutcome) -> None:
+    """按 task_role 分发 outcome.output 写入 EngineState 字段 (v5.0 §B7.2).
 
     Args:
         state: EngineState 实例 (会被 mutate).
@@ -103,61 +113,55 @@ def _apply_outcome_to_state(state: EngineState, outcome: TaskOutcome) -> None:
             - output:    dict 形式承载 stage-specific 字段 (None 时 no-op)
 
     行为契约:
-        - 缺字段 (`"field" not in values`) → 静默跳过, 不抛 KeyError
-          (避免 Agent 输出 schema 漂移导致 Orchestrator 僵死).
-        - 未注册的 task_role → no-op (防御性, 未来扩展不破坏现有逻辑).
+        - 缺字段 → 静默跳过, 不抛 KeyError
+        - 未注册的 task_role → no-op (防御性).
         - output 为 None 或非 dict → 视为空 dict, 不写入任何字段.
-
-    Note:
-        state 写入走 getattr + setattr, 不直接 dict.update, 保持 type-checker 友好
-        (EngineState 字段静态可见). 未来加新字段 → 此处单点扩展.
-
-    v5.1 候选: packet apply_writes (LangGraph 借鉴)
-        - 当前: 串行 apply,每个 outcome 立即写入 state
-        - v5.1 候选: 收集所有 outcomes 后批量 apply,减少 state lock 冲突
-        - 借鉴: LangGraph pregel/_algo.py apply_writes (pregel/_algo.py:87-110)
-        - 触发条件: 多 Agent 并发场景 N task 并行时
-        - 收益: state lock 冲突降低,apply 耗时从 O(N) 降至 O(1)
-        - 不实施原因: 当前并发度低 (1-3 task), 性能不是瓶颈
     """
     role = outcome.task_role
     if role is None:
-        # 旧调用方未传 task_role → 不分发, 避免误写
         return
 
-    # 容错: output 非 dict (None / str / 其他) → 视为空, 不写任何字段
     values: dict[str, Any] = outcome.output if isinstance(outcome.output, dict) else {}
+    if values:
+        validated = validate_role_output(role, values)
+        if validated is not None:
+            for k in list(values.keys()):
+                if k in validated:
+                    values[k] = validated[k]
 
-    if role == "architect":
-        if "plan" in values:
-            state.plan = values["plan"]
-        if "file_list" in values:
-            state.file_list = values["file_list"]
-        if "batch_plan" in values:
-            state.batch_plan = values["batch_plan"]
-        if "contracts" in values:
-            state.contracts = values["contracts"]
-    elif role == "developer":
-        if "files_changed" in values:
-            state.files_changed = values["files_changed"]
-        if "commit_hash" in values:
-            state.commit_hash = values["commit_hash"]
-        if "test_results" in values:
-            state.test_results = values["test_results"]
-    elif role == "critic":
-        if "verdict" in values:
-            state.verdict = values["verdict"]
-        if "findings" in values:
-            state.findings = values["findings"]
-        if "critic_feedback" in values:
-            state.critic_feedback = values["critic_feedback"]
-        # 2026-07-04 (Self-Refine 深化): suggested_fix 结构化 patch
-        if "suggested_fix" in values:
-            state.suggested_fix = values["suggested_fix"]
-    # 未知 role → no-op (防御性, 不抛避免僵死)
+    field_names = ROLE_FIELD_MAP.get(role, [])
+    for field_name in field_names:
+        if field_name in values:
+            setattr(state, field_name, values[field_name])
+
+
+def validate_role_output(role: str, values: dict) -> dict | None:
+    """Pydantic 校验 agent 输出, 返回 model_dump 或降级原始 dict."""
+    try:
+        if role == "architect":
+            from auto_engineering.agents.output_models import ArchitectOutput
+            validated = ArchitectOutput.model_validate(values)
+            return validated.model_dump()
+        elif role == "developer":
+            from auto_engineering.agents.output_models import DeveloperOutput
+            validated = DeveloperOutput.model_validate(values)
+            return validated.model_dump()
+        elif role == "critic":
+            from auto_engineering.agents.output_models import CriticOutput
+            validated = CriticOutput.model_validate(values)
+            return validated.model_dump()
+    except Exception:
+        import logging
+        logging.getLogger("ae.loop.task_factory").warning(
+            "Pydantic 校验失败 (role=%s), 降级使用原始 values", role, exc_info=True
+        )
+    return values
 
 
 __all__ = [
-    "_tasks_from_batch_plan",
-    "_apply_outcome_to_state",
+    "ROLE_FIELD_DEFAULTS",
+    "ROLE_FIELD_MAP",
+    "apply_outcome_to_state",
+    "tasks_from_batch_plan",
+    "validate_role_output",
 ]

@@ -15,11 +15,12 @@ from __future__ import annotations
 
 import time
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from auto_engineering.cli.helpers import CancellationToken, ProgressLogger, TokenTracker
+from auto_engineering.cli.helpers import ProgressLogger, TokenTracker
+from auto_engineering.runtime.cancellation import CancellationToken
 
 
 @dataclass
@@ -115,7 +116,7 @@ def _build_gate_summary(gate_results: dict) -> dict:
 
     兼容两种 Verdict 类型:
     - auto_engineering.gates.base.GateVerdict (含 .passed / .message)
-    - auto_engineering.loop.convergence.Verdict (含 .should_stop / .level / .reason)
+    - auto_engineering.loop.convergence.ConvergenceVerdict (含 .should_stop / .level / .reason)
     """
     summary: dict[str, dict] = {}
     for name, v in gate_results.items():
@@ -124,7 +125,7 @@ def _build_gate_summary(gate_results: dict) -> dict:
             continue
         passed = getattr(v, "passed", None)
         if passed is None:
-            # convergence.Verdict 类型, 用 should_stop 推断
+            # ConvergenceVerdict 类型, 用 should_stop 推断
             should_stop = getattr(v, "should_stop", False)
             passed = bool(should_stop)
         message = getattr(v, "message", "") or ""
@@ -166,7 +167,7 @@ def _build_v2_agent_runtime(
     """
     import os
 
-    from auto_engineering.agents.base import Agent
+    from auto_engineering.agents.base import BaseAgent
     from auto_engineering.agents.prompts import (
         ARCHITECT_SYSTEM_PROMPT,
         CRITIC_SYSTEM_PROMPT,
@@ -187,7 +188,7 @@ def _build_v2_agent_runtime(
         GitDiffTool,
         GitStatusTool,
     )
-    from auto_engineering.tools.test_tools import RunTestsTool
+    from auto_engineering.tools.run_tests_tool import RunTestsTool
 
     llm = AnthropicProvider()  # SDK 自动从 ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN 读
     # P1.9 fix: 只有支持 project_root 的工具传 project_root (白名单沙箱)
@@ -209,7 +210,7 @@ def _build_v2_agent_runtime(
     runtime = AgentRuntime()
     runtime.register(
         "architect",
-        lambda: Agent(
+        lambda: BaseAgent(
             llm=llm,
             role="architect",
             system_prompt=ARCHITECT_SYSTEM_PROMPT,
@@ -218,7 +219,7 @@ def _build_v2_agent_runtime(
     )
     runtime.register(
         "developer",
-        lambda: Agent(
+        lambda: BaseAgent(
             llm=llm,
             role="developer",
             system_prompt=DEVELOPER_SYSTEM_PROMPT,
@@ -227,7 +228,7 @@ def _build_v2_agent_runtime(
     )
     runtime.register(
         "critic",
-        lambda: Agent(
+        lambda: BaseAgent(
             llm=llm,
             role="critic",
             system_prompt=CRITIC_SYSTEM_PROMPT,
@@ -235,32 +236,6 @@ def _build_v2_agent_runtime(
         ),
     )
     return runtime
-
-
-def _build_v2_semantic_evaluator(
-    project_root: Path,
-    progress: ProgressLogger,
-) -> Any:
-    """构造 v2.0 Orchestrator 用的语义评估器 (简化:始终返回 True).
-
-    Phase C 简化策略:
-        - 不接 LLM (避免 mock-friendly 的"假评估"陷阱)
-        - 用 Gate 跑过的结果作为代理:所有 Gate 通过 → satisfied
-        - 这里返回简单的 True(让 Orchestrator 主循环跑起来)
-
-    Args:
-        project_root: 项目根目录 (备用, 当前未使用)
-        progress: 进度日志 (备用)
-
-    Returns:
-        async (round_result) -> bool
-    """
-
-    async def evaluator(round_result: Any) -> bool:
-        # Phase C 简化: 总是返回 True (Gate 已在 Orchestrator 内部跑过)
-        return True
-
-    return evaluator
 
 
 def _run_v2_orchestrator(
@@ -282,9 +257,10 @@ def _run_v2_orchestrator(
     """
     import asyncio
 
-    from auto_engineering.gates.base import DEFAULT_GATES
+    from auto_engineering.gates.registry import DEFAULT_GATES, build_gates_from_manifest
     from auto_engineering.loop.convergence import ConvergenceConfig
     from auto_engineering.loop.guardrail import GuardrailChain
+    from auto_engineering.loop.init_contract import load_init_manifest
     from auto_engineering.loop.orchestrator import Orchestrator, OrchestratorConfig
     from auto_engineering.loop.stage_router import StageRouter
 
@@ -294,11 +270,15 @@ def _run_v2_orchestrator(
     from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
     checkpoint_store = SQLiteCheckpointStore(str(db_path))
 
-    # 2. v5.0 M4 完整 OrchestratorConfig
+    # 2. Gate 列表: 优先从 init-manifest 构造 (IL-AC-02), 否则用默认
+    manifest = load_init_manifest(project_root)
+    gates = build_gates_from_manifest(manifest) if manifest else DEFAULT_GATES
+
+    # 3. v5.0 M4 完整 OrchestratorConfig
     agent_runtime = _build_v2_agent_runtime(project_root, progress, token_tracker)
     config = OrchestratorConfig(
         convergence_config=ConvergenceConfig(max_iterations=max_rounds),
-        gates=DEFAULT_GATES,             # 7 道 Gate (asyncio.gather)
+        gates=gates,                      # init-manifest 驱动的 Gate 列表 (IL-AC-02)
         project_root=project_root,
         agent_runtime=agent_runtime,
         guardrail_chain=GuardrailChain.default(),   # 5 Guardrail

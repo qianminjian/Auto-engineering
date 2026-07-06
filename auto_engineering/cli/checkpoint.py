@@ -5,9 +5,28 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import click
+
+_logger = logging.getLogger("ae.cli.checkpoint")
+
+
+def _iter_checkpoint_stores(cp_dir: Path):
+    """遍历 .ae-checkpoints/ 下所有 SQLite DB, yield (store, db_file).
+
+    v5.4 审计 P2-10: 提取 5 处重复的 "for db_file in sorted(cp_dir.glob('*.db'))" 模式.
+    """
+    from auto_engineering.loop.checkpoint import SQLiteCheckpointStore
+
+    for db_file in sorted(cp_dir.glob("*.db")):
+        try:
+            store = SQLiteCheckpointStore(str(db_file))
+            yield store, db_file
+        except Exception as e:
+            _logger.warning("skip %s: %s", db_file.name, e, exc_info=True)
+            click.echo(f"[warn] skip {db_file.name}: {e}", err=True)
 
 
 # ============================================================
@@ -21,6 +40,65 @@ def register_checkpoint_commands(main: click.Group) -> None:
     @main.group()
     def checkpoint():
         """Checkpoint 管理(list / show / resume)."""
+
+    @checkpoint.command("save")
+    @click.option("--round", type=int, required=True, help="当前轮次 (对应 EngineState, 必填)")
+    @click.option("--step", type=int, default=0, help="当前 step (默认 0)")
+    @click.option("--tag", type=str, default=None, help="可选标签 (如 'interrupted')")
+    @click.option("--state-file", type=click.Path(exists=True), default=None, help="JSON 文件路径 (含 EngineState 序列化数据)")
+    @click.option("--checkpoint-id", type=str, default=None, help="显式指定 checkpoint_id (默认自动 UUID)")
+    def checkpoint_save_cmd(round: int, step: int, tag: str | None, state_file: str | None, checkpoint_id: str | None):
+        """保存 checkpoint (供 stop hook / 手动触发).
+
+        默认从 stdin 读取 JSON state, --state-file 指定则从文件读取.
+        保存到当前目录 .ae-checkpoints/ae-checkpoints.db.
+        """
+        import json as _json
+        from auto_engineering.engine.state import EngineState
+        from auto_engineering.loop.checkpoint import SQLiteCheckpointStore
+
+        state_data: dict = {}
+        if state_file:
+            with open(state_file, "r") as f:
+                state_data = _json.load(f)
+        else:
+            try:
+                state_data = _json.loads(click.get_text_stream("stdin").read())
+            except (ValueError, OSError):
+                state_data = {}
+
+        if not state_data and not isinstance(state_data, dict):
+            click.echo("[error] 无法解析 state JSON (stdin 或 --state-file)", err=True)
+            raise SystemExit(1)
+
+        try:
+            state = EngineState.from_dict(state_data)
+        except Exception as e:
+            _logger.warning("无法解析 EngineState: %s", e, exc_info=True)
+            click.echo(f"[error] 无法解析 EngineState: {e}", err=True)
+            raise SystemExit(1)
+
+        cwd = Path.cwd()
+        cp_dir = cwd / ".ae-checkpoints"
+        cp_dir.mkdir(exist_ok=True)
+        db_path = cp_dir / "ae-checkpoints.db"
+
+        try:
+            store = SQLiteCheckpointStore(str(db_path))
+            cp_id = store.save(
+                state=state if isinstance(state, EngineState) else state_data,  # type: ignore[arg-type]
+                round=round,
+                step=step,
+                tag=tag or "manual",
+                checkpoint_id=checkpoint_id,
+            )
+        except Exception as e:
+            _logger.warning("save checkpoint failed: %s", e, exc_info=True)
+            click.echo(f"[error] save checkpoint failed: {e}", err=True)
+            raise SystemExit(1) from e
+
+        click.echo(f"Checkpoint saved: {cp_id}")
+        click.echo(f"  round={round}, step={step}, tag={tag or 'manual'}, db={db_path}")
 
     @checkpoint.command("list")
     def checkpoint_list_cmd():
@@ -38,12 +116,7 @@ def register_checkpoint_commands(main: click.Group) -> None:
             return
 
         all_checkpoints: list[dict] = []
-        for db_file in sorted(cp_dir.glob("*.db")):
-            try:
-                store = SQLiteCheckpointStore(str(db_file))
-            except Exception as e:
-                click.echo(f"[warn] skip {db_file.name}: {e}", err=True)
-                continue
+        for store, db_file in _iter_checkpoint_stores(cp_dir):
             try:
                 for meta in store.list_all():
                     all_checkpoints.append(
@@ -57,6 +130,7 @@ def register_checkpoint_commands(main: click.Group) -> None:
                         }
                     )
             except Exception as e:
+                _logger.warning("read %s failed: %s", db_file.name, e, exc_info=True)
                 click.echo(f"[warn] read {db_file.name} failed: {e}", err=True)
                 continue
 
@@ -94,13 +168,13 @@ def register_checkpoint_commands(main: click.Group) -> None:
             click.echo(f"(no checkpoint directory: {cp_dir})", err=True)
             raise SystemExit(1)
 
-        for db_file in sorted(cp_dir.glob("*.db")):
+        for store, db_file in _iter_checkpoint_stores(cp_dir):
             try:
-                store = SQLiteCheckpointStore(str(db_file))
                 cp = store.load(checkpoint_id)
             except CheckpointNotFoundError:
                 continue
             except Exception as e:
+                _logger.warning("error reading %s: %s", db_file.name, e, exc_info=True)
                 click.echo(f"[warn] error reading {db_file.name}: {e}", err=True)
                 continue
             click.echo(f"ID:            {cp.id}")
@@ -148,13 +222,13 @@ def register_checkpoint_commands(main: click.Group) -> None:
             click.echo(f"(no checkpoint directory: {cp_dir})", err=True)
             raise SystemExit(1)
 
-        for db_file in sorted(cp_dir.glob("*.db")):
+        for store, db_file in _iter_checkpoint_stores(cp_dir):
             try:
-                store = SQLiteCheckpointStore(str(db_file))
                 store.load(checkpoint_id)  # 验证存在
             except CheckpointNotFoundError:
                 continue
             except Exception as e:
+                _logger.warning("error reading %s: %s", db_file.name, e, exc_info=True)
                 click.echo(f"[warn] error reading {db_file.name}: {e}", err=True)
                 continue
             click.echo(f"Resume from checkpoint '{checkpoint_id}'")
@@ -190,12 +264,7 @@ def register_checkpoint_commands(main: click.Group) -> None:
             return
 
         all_checkpoints: list[dict] = []
-        for db_file in sorted(cp_dir.glob("*.db")):
-            try:
-                store = SQLiteCheckpointStore(str(db_file))
-            except Exception as e:
-                click.echo(f"[warn] skip {db_file.name}: {e}", err=True)
-                continue
+        for store, db_file in _iter_checkpoint_stores(cp_dir):
             try:
                 for meta in store.list_all():
                     if round is not None and meta.round != round:
@@ -232,7 +301,7 @@ def register_checkpoint_commands(main: click.Group) -> None:
     @click.argument("checkpoint_id")
     def checkpoint_v2_show_cmd(checkpoint_id: str) -> None:
         """查看 v2.0 Checkpoint 详情."""
-        from auto_engineering.loop.checkpoint import CheckpointNotFoundError, SQLiteCheckpointStore
+        from auto_engineering.loop.checkpoint import CheckpointNotFoundError
 
         cwd = Path.cwd()
         cp_dir = cwd / ".ae-checkpoints"
@@ -240,13 +309,13 @@ def register_checkpoint_commands(main: click.Group) -> None:
             click.echo(f"(no checkpoint directory: {cp_dir})", err=True)
             raise SystemExit(1)
 
-        for db_file in sorted(cp_dir.glob("*.db")):
-            store = SQLiteCheckpointStore(str(db_file))
+        for store, db_file in _iter_checkpoint_stores(cp_dir):
             try:
                 cp = store.load(checkpoint_id)
             except CheckpointNotFoundError:
                 continue
             except Exception as e:
+                _logger.warning("error reading %s: %s", db_file.name, e, exc_info=True)
                 click.echo(f"[warn] error reading {db_file.name}: {e}", err=True)
                 continue
             click.echo(f"ID:            {cp.id}")
@@ -277,7 +346,6 @@ def register_checkpoint_commands(main: click.Group) -> None:
     @click.argument("checkpoint_id")
     def checkpoint_v2_delete_cmd(checkpoint_id: str) -> None:
         """删除 v2.0 Checkpoint."""
-        from auto_engineering.loop.checkpoint import SQLiteCheckpointStore
 
         cwd = Path.cwd()
         cp_dir = cwd / ".ae-checkpoints"
@@ -285,8 +353,7 @@ def register_checkpoint_commands(main: click.Group) -> None:
             click.echo(f"(no checkpoint directory: {cp_dir})", err=True)
             raise SystemExit(1)
 
-        for db_file in sorted(cp_dir.glob("*.db")):
-            store = SQLiteCheckpointStore(str(db_file))
+        for store, db_file in _iter_checkpoint_stores(cp_dir):
             if store.delete(checkpoint_id):
                 click.echo(f"Deleted v2.0 checkpoint '{checkpoint_id}' from {db_file.name}")
                 return
@@ -308,11 +375,12 @@ def register_checkpoint_commands(main: click.Group) -> None:
 
         迁移方向: v2.0 → v2.0 (单向, 不可逆).
         """
-        from auto_engineering.checkpoint.migrate import migrate_v1_to_v2
+        from auto_engineering.loop.checkpoint.migration import migrate_v1_to_v2
 
         try:
             cp_id = migrate_v1_to_v2(Path(src_json), Path(dst_sqlite))
         except Exception as e:
+            _logger.warning("迁移失败: %s", e, exc_info=True)
             click.echo(f"[迁移失败] {e}", err=True)
             raise SystemExit(1) from e
         click.echo(f"Migrated v2.0 → v2.0: checkpoint_id={cp_id}")

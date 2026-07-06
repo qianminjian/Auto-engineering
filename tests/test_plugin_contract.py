@@ -186,10 +186,10 @@ class TestAgent:
 
 
 class TestDevLoopJSON:
-    """ae dev-loop --log-format json — 6 字段 JSON 契约."""
+    """ae dev-loop --format json — 6 字段 JSON 契约."""
 
     def test_ae_dev_loop_stdout_json_schema(self) -> None:
-        """--log-format json 输出必须含 6 字段: status/thread_id/rounds/verdict/duration_sec/gate_summary."""
+        """--format json 输出必须含 6 字段: status/thread_id/rounds/verdict/duration_sec/gate_summary."""
         import os
 
         env = os.environ.copy()
@@ -217,7 +217,7 @@ class TestDevLoopJSON:
 
             ae_bin = shutil.which("ae") or str(REPO_ROOT / ".venv" / "bin" / "ae")
             result = subprocess.run(
-                [ae_bin, "dev-loop", "noop", "--log-format", "json", "--max-rounds", "1"],
+                [ae_bin, "dev-loop", "noop", "--format", "json", "--max-rounds", "1"],
                 cwd=str(tdir),
                 capture_output=True,
                 text=True,

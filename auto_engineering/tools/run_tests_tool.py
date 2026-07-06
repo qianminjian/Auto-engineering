@@ -6,11 +6,14 @@
 
 from __future__ import annotations
 
+import logging
 import subprocess
 import sys
 from typing import ClassVar
 
 from .base import BaseTool, ToolResult
+
+_logger = logging.getLogger("ae.tools.run_tests")
 
 _RUNNER_CMDS = {
     # 用 sys.executable -m pytest 避免 PATH 找不到 pytest
@@ -65,12 +68,14 @@ class RunTestsTool(BaseTool):
                 error=None if result.returncode == 0 else f"exit code {result.returncode}",
             )
         except subprocess.TimeoutExpired:
+            _logger.warning("测试超时 (%ds)", timeout)
             return ToolResult(
                 success=False,
                 content="",
                 error=f"Tests timed out after {timeout}s",
             )
         except Exception as exc:
+            _logger.warning("测试执行异常: %s", exc, exc_info=True)
             return ToolResult(success=False, content="", error=str(exc))
 
     @staticmethod

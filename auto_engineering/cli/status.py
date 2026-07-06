@@ -15,11 +15,14 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 
 import click
 
 from auto_engineering.config.environment import ProjectEnvironment
+
+_logger = logging.getLogger("ae.cli.status")
 
 
 def _collect_status_json(cwd: Path) -> dict:
@@ -54,8 +57,8 @@ def _collect_status_json(cwd: Path) -> dict:
             if ckpt is not None:
                 if latest_ckpt is None or ckpt.round > latest_ckpt.round:
                     latest_ckpt = ckpt
-        except Exception:
-            # corrupted db → 跳过, 找下一个
+        except Exception as exc:
+            _logger.warning("checkpoint db 读取失败, 跳过: %s", db_file, exc_info=True)
             continue
 
     if latest_ckpt is None:
@@ -163,7 +166,8 @@ def register_status_command(main_group: click.Group) -> None:
                 try:
                     store = SQLiteCheckpointStore(str(db_file))
                     total_v2 += store.count()
-                except Exception:
+                except Exception as exc:
+                    _logger.warning("checkpoint count 失败, 跳过: %s", db_file, exc_info=True)
                     continue
             if total_v2 > 0:
                 click.echo(f"  v2.0 Checkpoints: {total_v2} (见 `ae checkpoint v2 list`)")

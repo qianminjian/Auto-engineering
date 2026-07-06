@@ -20,11 +20,14 @@
 
 from __future__ import annotations
 
+import logging
 import re
 import subprocess
 from pathlib import Path
 
-from auto_engineering.gates.base import Gate, Verdict
+from auto_engineering.gates.base import Gate, GateVerdict
+
+_logger = logging.getLogger("ae.gates.safety")
 
 # Secret pattern (常见公开 pattern, 不覆盖 100% 场景但覆盖主要风险)
 # 2026-07-04 P1-1 补 5 种 (设计 §B12.4 声称但实际缺失):
@@ -199,7 +202,7 @@ class SafetyGate(Gate):
         self.use_gitleaks = use_gitleaks
         self.timeout = timeout
 
-    def run(self, project_root: Path, contracts: dict | None = None) -> Verdict:
+    def run(self, project_root: Path, contracts: dict | None = None) -> GateVerdict:
         """执行 safety 检查.
 
         Args:
@@ -207,11 +210,11 @@ class SafetyGate(Gate):
             contracts: v5.0 §B6.1a — 契约字典 (SafetyGate 不使用, 仅签名兼容)
 
         Returns:
-            Verdict: passed=True 表示无 secret; passed=False 表示检测到 secret.
+            GateVerdict: passed=True 表示无 secret; passed=False 表示检测到 secret.
         """
         project_root = Path(project_root)
         if not project_root.exists():
-            return Verdict.failed(
+            return GateVerdict.failed(
                 f"project_root 不存在: {project_root}",
                 gate_name=self.name,
             )
@@ -227,9 +230,13 @@ class SafetyGate(Gate):
                 msg_lines.append(f"  {rel}: {', '.join(descs)}")
             if len(findings) > 5:
                 msg_lines.append(f"  ... (还有 {len(findings) - 5} 个)")
-            return Verdict.failed("\n".join(msg_lines), gate_name=self.name)
+            return GateVerdict.failed("\n".join(msg_lines), gate_name=self.name)
 
-        # 备路径: gitleaks(若启用)— 仅用于补充, regex 通过即可
+        # 备路径: gitleaks(若启用)— 仅用于补充, regex 通过即可.
+        # 注: gitleaks 需特殊 CLI args (--no-git/--source/--no-banner/--no-color)
+        # 和自定义 exit code 处理 (0=clean, 1=leak, other=error), 不使用公共
+        # run_gate_command (其设计为通用 subprocess timeout 包装, 不处理
+        # gitleaks 特有 exit code 语义). v5.4 审计 P1-8.
         if self.use_gitleaks:
             try:
                 result = subprocess.run(
@@ -257,12 +264,12 @@ class SafetyGate(Gate):
                     # 字符 (而非 500) 减少暴露面. 调用方用 gitleaks
                     # `--redact` 拿纯 leak 描述 (无 secret 值).
                     sanitized = _redact_gitleaks_output(result.stdout[:200])
-                    return Verdict.failed(
+                    return GateVerdict.failed(
                         f"gitleaks 检测到 secret (secret 值已脱敏):\n{sanitized}",
                         gate_name=self.name,
                     )
             except (FileNotFoundError, subprocess.TimeoutExpired):
                 # gitleaks 未安装或超时, 跳过 — regex 已通过
-                pass
+                _logger.warning("gitleaks 超时或未安装 (%ss), 仅 regex 扫描已通过", self.timeout)
 
-        return Verdict.passed("无 secret 检测到", gate_name=self.name)
+        return GateVerdict.passed("无 secret 检测到", gate_name=self.name)
