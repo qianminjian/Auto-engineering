@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -1560,3 +1561,147 @@ class TestGuardrailIntegration:
         assert orch.verdict.should_stop
         assert orch.verdict.level == 4  # HARD_LIMIT (guardrail block)
 
+
+# ============================================================
+# v5.5 Phase 2: Orchestrator T9 + DeepAudit 集成测试
+# ============================================================
+
+
+class TestV55OrchestratorDeepAudit:
+    """v5.5: Orchestrator._run_deep_audit() + _sync_design_docs() + T9 flow."""
+
+    def test_run_deep_audit_returns_tuple(self, tmp_path: Path) -> None:
+        """_run_deep_audit() 返回 (bool, list[dict])."""
+        from auto_engineering.engine.state import EngineState
+
+        config = OrchestratorConfig(project_root=tmp_path)
+        orch = Orchestrator(
+            requirement="x", tasks=[], executor=None, config=config,
+        )
+        audit_found, findings = orch._run_deep_audit(tmp_path)
+        assert isinstance(audit_found, bool)
+        assert isinstance(findings, list)
+
+    def test_run_deep_audit_no_findings_returns_false(self, tmp_path: Path) -> None:
+        """无 findings → audit_found_issues=False."""
+        from auto_engineering.engine.state import EngineState
+
+        config = OrchestratorConfig(project_root=tmp_path)
+        orch = Orchestrator(
+            requirement="x", tasks=[], executor=None, config=config,
+        )
+        audit_found, findings = orch._run_deep_audit(tmp_path)
+        assert audit_found is False
+        assert findings == []
+
+    def test_sync_design_docs_does_not_raise(self) -> None:
+        """_sync_design_docs() 骨架不抛异常."""
+        from auto_engineering.engine.state import EngineState
+
+        state = EngineState(requirement="test")
+        config = OrchestratorConfig()
+        orch = Orchestrator(
+            requirement="test", tasks=[], executor=None, config=config,
+        )
+        # Should not raise
+        orch._sync_design_docs(state)
+
+    def test_step_2j_sets_audit_findings_to_none_when_no_issues(self, tmp_path: Path) -> None:
+        """步2j: DeepAudit pass → audit_findings=None."""
+        from auto_engineering.engine.state import EngineState
+
+        state = EngineState(requirement="test")
+        state.verdict = "APPROVE"
+        state.current_stage = "critic"
+
+        config = OrchestratorConfig(project_root=tmp_path)
+        orch = Orchestrator(
+            requirement="test", tasks=[], executor=None, config=config,
+        )
+        orch._state = state
+
+        # Directly test step 2j logic
+        audit_found, findings = orch._run_deep_audit(tmp_path)
+        if not audit_found:
+            state.audit_findings = None
+        else:
+            state.audit_findings = findings
+
+        assert state.audit_findings is None
+
+    def test_t9_params_passed_to_stage_router(self) -> None:
+        """步2k: StageRouter.next() 接受 T9 参数."""
+        from auto_engineering.loop.stage_router import StageRouter
+
+        router = StageRouter()
+        # T9 场景: audit found issues, under limit → architect
+        decision = router.next(
+            current_stage="critic",
+            verdict="APPROVE",
+            majors_in_a_row=0,
+            total_majors=0,
+            audit_found_issues=True,
+            plan_refine_count=1,
+            max_plan_refines=3,
+        )
+        assert decision.next_stage == "architect"
+        assert decision.should_stop is False
+
+    def test_gate_verdict_details_contains_findings(self) -> None:
+        """GateVerdict.details 含 findings 列表 (DeepAudit output)."""
+        from auto_engineering.gates.base import GateVerdict
+
+        verdict = GateVerdict(
+            gate_name="DeepAuditGate",
+            passed=False,
+            message="FAIL (P0=1, P1=2/6, P2=3)",
+            details={
+                "p0_count": 1, "p1_count": 2, "p2_count": 3,
+                "findings": [
+                    {"severity": "P0", "file": "x.py", "line": 10,
+                     "description": "null deref"},
+                ],
+            },
+            suggestions=["Add null check at line 10"],
+        )
+        assert not verdict.passed
+        assert "findings" in verdict.details
+        assert len(verdict.details["findings"]) == 1
+        assert verdict.details["findings"][0]["severity"] == "P0"
+        assert len(verdict.suggestions) == 1
+
+    def test_orchestrator_config_accepts_convergence_v55_fields(self) -> None:
+        """OrchestratorConfig 接受 ConvergenceConfig v5.5 扩展字段."""
+        from auto_engineering.engine.state import EngineState
+
+        config = OrchestratorConfig(
+            convergence_config=ConvergenceConfig(
+                max_iterations=10,
+                auto_tune=True,
+                max_plan_refines=5,
+                min_samples_for_learning=8,
+            ),
+        )
+        orch = Orchestrator(
+            requirement="test", tasks=[], executor=None, config=config,
+        )
+        assert orch.judge is not None
+        assert orch.judge.config.auto_tune is True
+        assert orch.judge.config.max_plan_refines == 5
+        assert orch.judge.config.min_samples_for_learning == 8
+
+    def test_orchestrator_state_has_v55_fields(self) -> None:
+        """Orchestrator._state 包含 v5.5 新字段."""
+        from auto_engineering.engine.state import EngineState
+
+        config = OrchestratorConfig()
+        orch = Orchestrator(
+            requirement="test", tasks=[], executor=None, config=config,
+        )
+        assert orch._state is not None
+        assert hasattr(orch._state, "audit_findings")
+        assert hasattr(orch._state, "plan_refine_count")
+        assert hasattr(orch._state, "strengths")
+        assert hasattr(orch._state, "assessment")
+        assert orch._state.audit_findings is None
+        assert orch._state.plan_refine_count == 0

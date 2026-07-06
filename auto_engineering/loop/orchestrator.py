@@ -520,7 +520,59 @@ class Orchestrator:
         # 2h MAJOR 计数 (critic 阶段)
         self._step_2h_major_count(self._state, self._state.verdict, current_stage)
 
-        # 2i StageRouter.next + Judge.evaluate + 退出条件 + checkpoint
+        # v5.5 Phase 2: 步2i-2k (DocSync + DeepAudit + T9)
+        all_gates_passed = self._all_gates_passed(round_result)
+        is_critic_approve = (
+            current_stage == "critic"
+            and self._state.verdict == "APPROVE"
+        )
+
+        # 步2i: Design Doc Sync (critic APPROVE + all gates passed)
+        if is_critic_approve and all_gates_passed:
+            self._sync_design_docs(self._state)
+
+        # 步2j: DeepAuditGate (critic APPROVE + all gates passed)
+        audit_found_issues = False
+        if is_critic_approve and all_gates_passed:
+            audit_found_issues, findings = self._run_deep_audit(
+                self.config.project_root or Path.cwd()
+            )
+            if audit_found_issues:
+                self._state.audit_findings = findings
+            else:
+                self._state.audit_findings = None
+
+        # 步2k: StageRouter.next + T9 logic + Judge.evaluate
+        if audit_found_issues and is_critic_approve:
+            # T9: DeepAudit 发现问题 → PLAN-REFINE 回路, 跳过 ConvergenceJudge
+            self._state.plan_refine_count += 1
+            max_plan_refines = (
+                self.judge.config.max_plan_refines
+                if self.judge and self.judge.config
+                else 3
+            )
+            decision = self._router.next(
+                current_stage=current_stage,
+                verdict=self._state.verdict,
+                majors_in_a_row=self._state.majors_in_a_row,
+                total_majors=self._state.total_majors,
+                audit_found_issues=True,
+                plan_refine_count=self._state.plan_refine_count,
+                max_plan_refines=max_plan_refines,
+            )
+            if decision.should_stop:
+                self.verdict = ConvVerdict.stop(
+                    level=4, reason=decision.stop_reason or "T9-LIMIT stop"
+                )
+                self._save_checkpoint(round_id=round_id, step=2, tag="after_tick_t9_stop")
+                return True
+            # T9: 回到 architect, 跳过 Judge
+            clear_stage_fields(self._state, current_stage)
+            self._state.current_stage = decision.next_stage or "architect"
+            self._save_checkpoint(round_id=round_id, step=2, tag="after_tick_t9")
+            return False  # continue, 不调 Judge
+
+        # 2k (正常路径): StageRouter.next + Judge.evaluate + 退出条件
         should_break = self._step_2i_route_and_judge(
             self._router, self.judge, current_stage, self._state,
         )
@@ -822,6 +874,78 @@ class Orchestrator:
                 self._channel_versions[key] = self._channel_versions.get(key, 0) + 1
                 self._channel_hashes[key] = value_hash
         return dict(self._channel_versions)
+
+    # ========================================================================
+    # v5.5 Phase 2: DeepAudit + DocSync + T9 methods
+    # ========================================================================
+
+    def _run_deep_audit(self, project_root: Path) -> tuple[bool, list[dict]]:
+        """B7.1 步2j: 运行 DeepAuditGate, 返回 (audit_found_issues, findings).
+
+        Phase 1 骨架: DeepAuditOrchestrator 收集文件但返回空报告.
+        Phase 5+ 实现真实的 3-agent spawn 并行审计.
+
+        Args:
+            project_root: 项目根目录路径.
+
+        Returns:
+            (audit_found_issues, findings): audit_found_issues=True 表示
+            发现问题需 T9 回路, findings 为 DeepAuditFinding dict 列表.
+        """
+        from auto_engineering.gates.deep_audit import DeepAuditGate
+        from auto_engineering.loop.deep_audit import DeepAuditOrchestrator
+
+        orchestrator = DeepAuditOrchestrator(project_root)
+        report = orchestrator.run_audit()  # Phase 1 骨架: 收集文件但返回空
+
+        gate = DeepAuditGate(project_root, p1_threshold=6)
+        result = gate.run(contracts={
+            "findings": [
+                {
+                    "severity": f.severity,
+                    "dimension": f.dimension,
+                    "file": f.file,
+                    "line": f.line,
+                    "description": f.description,
+                    "evidence": f.evidence,
+                    "suggested_fix": f.suggested_fix,
+                    "agent_source": f.agent_source,
+                }
+                for f in report.findings
+            ],
+        })
+
+        audit_found = not result.passed
+        findings_list: list[dict] = result.details.get("findings", []) if result.details else []
+        return audit_found, findings_list
+
+    def _all_gates_passed(self, round_result: RoundResult) -> bool:
+        """检查本轮所有 Gate 是否全部通过.
+
+        Args:
+            round_result: 本轮执行结果.
+
+        Returns:
+            True 如果所有 gate 通过或无 gate 运行, False 如果任一 gate 失败.
+        """
+        if not round_result.history:
+            return True
+        gate_results = round_result.history[0].gate_results if round_result.history else {}
+        if not gate_results:
+            return True
+        return all(v.passed for v in gate_results.values())
+
+    def _sync_design_docs(self, state: "EngineState") -> None:
+        """B7.1 步2i: 同步设计文档 (Phase 2 骨架, Phase 3+ 完整实现).
+
+        当前骨架: 记录日志, 不执行实际文档同步.
+        Phase 3+ 实现: 自动对照 design/ 文档, 更新不一致处.
+        """
+        _logger = logging.getLogger(__name__)
+        _logger.info(
+            "Design doc sync: 本轮改动需对照 design/ 文档检查 "
+            "(stage=%s, verdict=%s)", state.current_stage, state.verdict
+        )
 
     def _step_3_exit_block(
         self,
