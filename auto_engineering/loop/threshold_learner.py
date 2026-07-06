@@ -54,6 +54,34 @@ class ThresholdLearner:
         avg_rounds = statistics.mean(rounds)
         return min(int(avg_rounds * 2), 20)
 
+    def auto_tune_threshold(self, current: int) -> int | None:
+        """若连续 3 次 P1 计数一致且变化 ≤50%, 返回新阈值; 否则 None.
+
+        算法:
+            1. 读取全部历史记录
+            2. 取最近 3 条, 若 P1 计数不全相同 → 返回 None
+            3. 全相同 → 调用 compute_p1_threshold() 算推荐值
+            4. should_adjust(recommended, current) 检查变化幅度
+            5. 通过 → 返回 recommended; 未通过 → 返回 None
+
+        Args:
+            current: 当前 P1 阈值.
+
+        Returns:
+            int | None: 新阈值 (自动调整), 或 None (不调整).
+        """
+        entries = self._history.read_history()
+        if len(entries) < 3:
+            return None
+        last_3 = entries[-3:]
+        p1s = [e["p1_count"] for e in last_3]
+        if len(set(p1s)) != 1:  # 最近 3 次 P1 计数不全相同
+            return None
+        recommended = self.compute_p1_threshold()
+        if self.should_adjust(recommended, current):
+            return recommended
+        return None
+
     def should_adjust(self, recommended: int, current: int) -> bool:
         """安全机制: 变化 >50% 时返回 False (需人工确认).
 
