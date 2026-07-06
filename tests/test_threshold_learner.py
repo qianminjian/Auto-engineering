@@ -171,6 +171,77 @@ class TestShouldAdjust:
             assert learner.should_adjust(recommended=999, current=0) is True
 
 
+class TestAutoTuneThreshold:
+    """auto_tune_threshold 连续 3 次一致自动调整测试."""
+
+    def test_insufficient_entries_returns_none(self):
+        """条目不足 3 条时返回 None (不给建议)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            history = AuditHistory(project_root=root)
+            # 只写 2 条
+            for p1 in [3, 3]:
+                history.append_entry(p0=0, p1=p1, p2=0, threshold=6,
+                                     total_files=50, plan_refine_triggered=False)
+            learner = ThresholdLearner(audit_history=history)
+            result = learner.auto_tune_threshold(current=6)
+            assert result is None
+
+    def test_not_all_same_returns_none(self):
+        """最近 3 次 P1 计数不一致时返回 None."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            history = AuditHistory(project_root=root)
+            # 最近 3 次: 3, 5, 4 — 不全相同
+            for p1 in [2, 3, 3, 5, 4]:
+                history.append_entry(p0=0, p1=p1, p2=0, threshold=6,
+                                     total_files=50, plan_refine_triggered=False)
+            learner = ThresholdLearner(audit_history=history)
+            result = learner.auto_tune_threshold(current=6)
+            assert result is None
+
+    def test_three_consistent_returns_new_threshold(self):
+        """连续 3 次 P1 计数一致且变化 ≤50% → 返回新阈值."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            history = AuditHistory(project_root=root)
+            # 写 10 条, P1: [1,2,2,3,3,4,4,4,4,4] — 最后 3 条都是 4
+            # 10 条足够 MIN_SAMPLES, p75 ≈ 4 (p75 of [1,2,2,3,3,4,4,4,4,4])
+            p1_values = [1, 2, 2, 3, 3, 4, 4, 4, 4, 4]
+            for p1 in p1_values:
+                history.append_entry(p0=0, p1=p1, p2=0, threshold=6,
+                                     total_files=50, plan_refine_triggered=False)
+            learner = ThresholdLearner(audit_history=history)
+            # current=6, p75≈4, change=33% ≤ 50% → auto-tune
+            result = learner.auto_tune_threshold(current=6)
+            assert result is not None
+            assert result == 4
+
+    def test_large_change_blocked_even_when_consistent(self):
+        """连续 3 次一致但变化 >50% → 返回 None (安全机制拦截)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            history = AuditHistory(project_root=root)
+            # P1 values: [8, 8, 8, 8, 8] — 最后 3 条都是 8
+            for _ in range(8):
+                history.append_entry(p0=0, p1=8, p2=0, threshold=6,
+                                     total_files=50, plan_refine_triggered=False)
+            learner = ThresholdLearner(audit_history=history)
+            # current=6, recommended=8, change=33% → actually ≤ 50%, should pass
+            # But with p1=8 values all same, p75=8, current=6 → 33%
+            result = learner.auto_tune_threshold(current=6)
+            assert result == 8  # 33% ≤ 50%, should auto-tune
+
+    def test_empty_history_returns_none(self):
+        """空历史返回 None."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            history = AuditHistory(project_root=root)
+            learner = ThresholdLearner(audit_history=history)
+            result = learner.auto_tune_threshold(current=6)
+            assert result is None
+
+
 class TestMinSamples:
     """MIN_SAMPLES 常量测试."""
 
