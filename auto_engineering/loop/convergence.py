@@ -296,6 +296,32 @@ class ConvergenceJudge:
         """
         self.config = config or ConvergenceConfig()
 
+    def auto_tune_max_iter(self, audit_history: Any) -> int | None:
+        """冷启动自适应 max_iter.
+
+        冷启动 (样本 < min_samples_for_learning): 返回 None, 调用方使用
+        config.max_iterations 作为默认值.
+        足够样本后: 委托 ThresholdLearner.compute_max_iter() 计算
+        min(avg_rounds * 2, 20).
+
+        Args:
+            audit_history: AuditHistory 实例, 提供历史审计记录.
+
+        Returns:
+            int | None: 推荐的 max_iter, 或 None (数据不足, 使用默认值).
+        """
+        from auto_engineering.loop.audit_history import AuditHistory
+        from auto_engineering.loop.threshold_learner import ThresholdLearner
+
+        if not isinstance(audit_history, AuditHistory):
+            return None
+        entries = audit_history.read_history()
+        min_samples = self.config.min_samples_for_learning
+        if len(entries) < min_samples:
+            return None
+        learner = ThresholdLearner(audit_history)
+        return learner.compute_max_iter()
+
     def evaluate(
         self, history: list[RoundHistory]
     ) -> ConvergenceVerdict:
