@@ -3,10 +3,10 @@ gsd_state_version: '1.0'
 status: in-progress
 progress:
   total_phases: 6
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 6
-  completed_plans: 3
-  percent: 50
+  completed_plans: 4
+  percent: 67
 ---
 
 # Project State
@@ -19,19 +19,19 @@ See: .planning/PROJECT.md (not yet created)
 
 ## Current Position
 
-Phase: 3 of 6 (Agent Prompt Enhancement — Superpowers Integration)
+Phase: 4 of 6 (学习系统 — P1 threshold auto-learning + max_iter adaptive)
 Plan: 1 of 1 in current phase (complete)
-Status: Phase 3 complete — awaiting Phase 4
-Last activity: 2026-07-07 — Completed Superpowers prompt integration with 5 prompt rewrites
+Status: Phase 4 complete — awaiting Phase 5
+Last activity: 2026-07-07 — Completed learning system: JSONL audit history, auto_tune_threshold (3-consistent), auto_tune_max_iter (cold start)
 
-Progress: [█████░░░░░] 50%
+Progress: [██████░░░░] 67%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 3
-- Average duration: ~10 min
-- Total execution time: ~0.5 hours
+- Total plans completed: 4
+- Average duration: ~12 min
+- Total execution time: ~0.8 hours
 
 **By Phase:**
 
@@ -40,9 +40,10 @@ Progress: [█████░░░░░] 50%
 | 1 | 1 | 3.8m | 3.8m |
 | 2 | 1 | ~15m | ~15m |
 | 3 | 1 | ~10m | ~10m |
+| 4 | 1 | ~17m | ~17m |
 
 **Recent Trend:**
-- Last 5 plans: [~10m, ~15m, 3.8m]
+- Last 5 plans: [~17m, ~10m, ~15m, 3.8m]
 - Trend: Stable
 
 ## Accumulated Context
@@ -64,6 +65,11 @@ Progress: [█████░░░░░] 50%
 - [Phase 3]: Developer prompt enhanced with receiving-code-review 5-step protocol
 - [Phase 3]: Architect prompt rewritten with 3-mode selection (brainstorming + PLAN-REFINE + DESIGN-INTEGRATION)
 - [Phase 3]: batch_plan extended with verification + steps fields for richer task descriptions
+- [Phase 4]: _run_deep_audit() now writes JSONL audit history after every audit run
+- [Phase 4]: _get_p1_threshold() returns cold-start default 6, extensible for Phase 5+ ThresholdLearner integration
+- [Phase 4]: auto_tune_threshold() uses 3-consecutive-consistent P1 counts before recommending new threshold
+- [Phase 4]: auto_tune_max_iter() cold-start guard: returns None when entries < min_samples_for_learning
+- [Phase 4]: min_samples_for_learning in ConvergenceConfig is the single source for cold-start threshold
 
 ### Pending Todos
 
@@ -83,6 +89,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-07-07 17:02
-Stopped at: Completed Phase 3 Plan 1 — Agent Prompt Enhancement (Superpowers Integration)
+Last session: 2026-07-07
+Stopped at: Completed Phase 4 Plan 1 — 学习系统 (JSONL audit history + auto_tune_threshold + auto_tune_max_iter)
 Resume file: None
