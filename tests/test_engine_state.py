@@ -121,12 +121,12 @@ class TestEngineStateFieldDefaults:
     """
 
     def test_all_18_fields_exist(self) -> None:
-        """EngineState 暴露 18 个字段 (v5.0 §B1.1 + 2026-07-04 suggested_fix)."""
+        """EngineState 暴露 21 个字段 (v5.5 Phase 2 + v5.0 §B1.1 + suggested_fix)."""
         from dataclasses import fields
 
         state = EngineState()
         field_names = {f.name for f in fields(EngineState)}
-        # 18 字段 (含 _pending_sends 是 v2.0+ 多 Agent 字段 + suggested_fix)
+        # 21 字段 (v5.5 新增 audit_findings, plan_refine_count, strengths, assessment)
         expected = {
             "requirement", "current_stage",
             "thread_id", "majors_in_a_row", "total_majors",
@@ -135,9 +135,12 @@ class TestEngineStateFieldDefaults:
             "verdict", "findings", "critic_feedback",
             "suggested_fix",  # 2026-07-04 Self-Refine 深化
             "_pending_sends",
+            # v5.5 Phase 2 new fields
+            "audit_findings", "plan_refine_count",
+            "strengths", "assessment",
         }
         assert field_names == expected, (
-            f"EngineState 字段不匹配 v5.0 §B1.1 + suggested_fix. "
+            f"EngineState 字段不匹配 v5.5. "
             f"缺失: {expected - field_names}, 多余: {field_names - expected}"
         )
 
@@ -287,21 +290,20 @@ class TestEngineStateBoundary:
         assert not hasattr(state, "nonexistent")
 
     def test_to_dict_contains_all_18_fields(self) -> None:
-        """to_dict 输出含全部 18 字段 (含 _pending_sends + suggested_fix)."""
+        """to_dict 输出含全部 21 字段 (v5.5 Phase 2 + suggested_fix)."""
         state = EngineState()
         d = state.to_dict()
-        # 2026-07-04 (Self-Refine 深化): 17 → 18 字段 (+suggested_fix)
-        assert len(d) == 17, (
-            f"to_dict 应含 18 字段 (含 _pending_sends), 实际 {len(d)}: "
+        # v5.5 Phase 2: 17 → 21 字段 (+audit_findings, +plan_refine_count, +strengths, +assessment)
+        assert len(d) == 21, (
+            f"to_dict 应含 21 字段, 实际 {len(d)}: "
             f"{sorted(d.keys())}"
         )
-        # 实际: requirement, current_stage, thread_id, majors_in_a_row, total_majors,
-        #       plan, file_list, batch_plan, contracts,
-        #       files_changed, commit_hash, test_results,
-        #       verdict, findings, critic_feedback, suggested_fix,
-        #       _pending_sends
         assert "_pending_sends" in d
         assert "suggested_fix" in d, "to_dict 必须包含 suggested_fix (Self-Refine 深化)"
+        assert "audit_findings" in d, "to_dict 必须包含 audit_findings (v5.5 Phase 2)"
+        assert "plan_refine_count" in d, "to_dict 必须包含 plan_refine_count (v5.5 Phase 2)"
+        assert "strengths" in d, "to_dict 必须包含 strengths (v5.5 CriticOutput 扩展)"
+        assert "assessment" in d, "to_dict 必须包含 assessment (v5.5 CriticOutput 扩展)"
         assert d["thread_id"] == state.thread_id
 
     def test_from_dict_with_empty_dict_uses_all_defaults(self) -> None:
@@ -314,6 +316,123 @@ class TestEngineStateBoundary:
         assert state.current_stage == ""
         assert state.majors_in_a_row == 0
         assert state.file_list == []
+
+
+class TestV55EngineStateFields:
+    """v5.5 Phase 2: EngineState 新字段 (audit_findings, plan_refine_count,
+    strengths, assessment) — B1.1 字段 18-21."""
+
+    def test_audit_findings_defaults_to_none(self) -> None:
+        """audit_findings 默认 None (DeepAudit 未触发时)."""
+        state = EngineState()
+        assert state.audit_findings is None
+
+    def test_audit_findings_accepts_structured_list(self) -> None:
+        """audit_findings 接受 list[dict] 格式 findings."""
+        findings = [
+            {
+                "severity": "P0", "dimension": "代码质量",
+                "file": "orchestrator.py", "line": 500,
+                "description": "missing null check",
+                "evidence": "line 500: state._state used without None guard",
+                "suggested_fix": "Add `if self._state is None: return`",
+                "agent_source": "code_quality",
+            },
+            {
+                "severity": "P1", "dimension": "架构合理性",
+                "file": "stage_router.py", "line": 150,
+                "description": "cyclical dependency detected",
+                "evidence": "A imports B, B imports A via TYPE_CHECKING",
+                "suggested_fix": "Use dependency inversion",
+                "agent_source": "architecture",
+            },
+        ]
+        state = EngineState(audit_findings=findings)
+        assert len(state.audit_findings) == 2
+        assert state.audit_findings[0]["severity"] == "P0"
+        assert state.audit_findings[1]["agent_source"] == "architecture"
+
+    def test_plan_refine_count_defaults_to_zero(self) -> None:
+        """plan_refine_count 默认 0."""
+        state = EngineState()
+        assert state.plan_refine_count == 0
+
+    def test_plan_refine_count_increments_and_resets(self) -> None:
+        """plan_refine_count 可递增和归零."""
+        state = EngineState()
+        state.plan_refine_count += 1
+        assert state.plan_refine_count == 1
+        state.plan_refine_count += 2
+        assert state.plan_refine_count == 3
+        state.plan_refine_count = 0
+        assert state.plan_refine_count == 0
+
+    def test_strengths_defaults_to_none(self) -> None:
+        """strengths 默认 None."""
+        state = EngineState()
+        assert state.strengths is None
+
+    def test_strengths_accepts_list_of_strings(self) -> None:
+        """strengths 接受 list[str]."""
+        state = EngineState(strengths=["Good modularity", "Clean error handling"])
+        assert state.strengths == ["Good modularity", "Clean error handling"]
+
+    def test_assessment_defaults_to_none(self) -> None:
+        """assessment 默认 None."""
+        state = EngineState()
+        assert state.assessment is None
+
+    def test_assessment_accepts_string(self) -> None:
+        """assessment 接受 str."""
+        state = EngineState(assessment="Overall good with minor P2 issues")
+        assert state.assessment == "Overall good with minor P2 issues"
+
+    def test_v55_fields_round_trip_to_dict_from_dict(self) -> None:
+        """v5.5 新字段 to_dict/from_dict round-trip."""
+        state = EngineState(
+            audit_findings=[
+                {"severity": "P0", "file": "x.py", "line": 10,
+                 "description": "bug", "evidence": "...", "suggested_fix": "...",
+                 "dimension": "代码质量", "agent_source": "code_quality"},
+            ],
+            plan_refine_count=2,
+            strengths=["readable code", "good tests"],
+            assessment="Minor issues only",
+        )
+        restored = EngineState.from_dict(state.to_dict())
+        assert restored.audit_findings == state.audit_findings
+        assert restored.plan_refine_count == 2
+        assert restored.strengths == ["readable code", "good tests"]
+        assert restored.assessment == "Minor issues only"
+
+    def test_audit_findings_set_to_none_clears(self) -> None:
+        """audit_findings 显式设 None → 清除 (DeepAudit pass 行为)."""
+        state = EngineState(audit_findings=[{"severity": "P1"}])
+        state.audit_findings = None
+        assert state.audit_findings is None
+
+    def test_field_count_is_21(self) -> None:
+        """v5.5: 字段总数从 17 → 21 (新增 audit_findings, plan_refine_count,
+        strengths, assessment)."""
+        from dataclasses import fields
+
+        state = EngineState()
+        field_names = {f.name for f in fields(EngineState)}
+        expected = {
+            "requirement", "current_stage",
+            "thread_id", "majors_in_a_row", "total_majors",
+            "plan", "file_list", "batch_plan", "contracts",
+            "files_changed", "commit_hash", "test_results",
+            "verdict", "findings", "critic_feedback",
+            "suggested_fix", "_pending_sends",
+            # v5.5 Phase 2 new fields
+            "audit_findings", "plan_refine_count",
+            "strengths", "assessment",
+        }
+        assert field_names == expected, (
+            f"EngineState 字段不匹配 v5.5. "
+            f"缺失: {expected - field_names}, 多余: {field_names - expected}"
+        )
 
 
 class TestEngineStateEquality:

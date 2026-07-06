@@ -276,12 +276,13 @@ class TestClearStageFields:
     """clear_stage_fields 3 stage 映射 (§B3.3)."""
 
     def test_clear_architect_fields(self) -> None:
-        """stage='architect' → clear plan / file_list / batch_plan / contracts."""
+        """stage='architect' → clear plan / file_list / batch_plan / contracts / audit_findings."""
         state = EngineState(
             plan="some plan",
             file_list=["a.py", "b.py"],
             batch_plan=[{"id": "1"}],
             contracts={"k": "v"},
+            audit_findings=[{"severity": "P0", "file": "x.py"}],
             verdict="MAJOR",
             findings=[{"x": 1}],
             files_changed=["x.py"],
@@ -294,6 +295,7 @@ class TestClearStageFields:
         assert state.file_list == []
         assert state.batch_plan == []
         assert state.contracts == {}
+        assert state.audit_findings is None, "audit_findings 应在 architect 阶段清除时重置"
         # 其他字段不应被清空 (Stage 隔离)
         assert state.verdict == "MAJOR"
         assert state.findings == [{"x": 1}]
@@ -380,14 +382,12 @@ class TestNewEngineStateFields:
         assert isinstance(state.batch_plan, list)
 
     def test_field_count_is_18(self) -> None:
-        """字段总数 = 18 (v2.5 基线 13 + M1 新增 3 + 2026-07-04 suggested_fix +1).
+        """字段总数 = 21 (v5.0 基线 13 + M1 新增 3 + suggested_fix + v5.5 4 字段).
 
-        说明: 设计 §B1.1 列 17 字段含 round/stage/round_history, 这些在
-        Phase 04 Orchestrator 重构时引入, 不在本 Phase 01 范围. Phase 01 仅
-        新增 3 个字段 (thread_id / majors_in_a_row / total_majors), batch_plan
-        字段已存在仅类型修正 (dict → list[dict]).
-        2026-07-04: 17 → 18 (+suggested_fix, Self-Refine 原则 1 结构化 patch).
+        v5.5 Phase 2: 17 → 21 (+audit_findings, +plan_refine_count, +strengths, +assessment).
         """
         state = EngineState()
         fields = list(state.__dataclass_fields__.keys())
-        assert len(fields) == 17, f"Expected 17 fields (含 _pending_sends), got {len(fields)}: {fields}"
+        assert len(fields) == 21, (
+            f"Expected 21 fields (v5.5), got {len(fields)}: {fields}"
+        )

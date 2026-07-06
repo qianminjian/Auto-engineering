@@ -240,8 +240,7 @@ def clear_stage_fields(state: Any, stage: str) -> None:
 
     field_names = ROLE_FIELD_MAP.get(stage, [])
     for field_name in field_names:
-        default = ROLE_FIELD_DEFAULTS.get(field_name)
-        if default is not None:
-            setattr(state, field_name, default)
+        if field_name in ROLE_FIELD_DEFAULTS:
+            setattr(state, field_name, ROLE_FIELD_DEFAULTS[field_name])
 
 

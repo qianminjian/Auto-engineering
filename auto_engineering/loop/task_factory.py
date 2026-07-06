@@ -81,7 +81,8 @@ def tasks_from_batch_plan(
 # role→fields 映射表 (v5.4 审计 P0-2): 替代 12 个重复 if "field" in values 守卫.
 # 新增 role/field 只需在此表追加, 无需修改 apply_outcome_to_state 主体.
 ROLE_FIELD_MAP: dict[str, list[str]] = {
-    "architect": ["plan", "file_list", "batch_plan", "contracts"],
+    # v5.5 Phase 2: architect 扩展 audit_findings (DeepAudit pass/PLAN-REFINE 后清除)
+    "architect": ["plan", "file_list", "batch_plan", "contracts", "audit_findings"],
     "developer": ["files_changed", "commit_hash", "test_results"],
     "critic": ["verdict", "findings", "critic_feedback", "suggested_fix"],
 }
@@ -93,6 +94,7 @@ ROLE_FIELD_DEFAULTS: dict[str, object] = {
     "file_list": [],
     "batch_plan": [],
     "contracts": {},
+    "audit_findings": None,  # v5.5 Phase 2: DeepAudit pass/PLAN-REFINE 后清除
     "files_changed": [],
     "commit_hash": "",
     "test_results": {},

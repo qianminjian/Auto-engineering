@@ -75,6 +75,23 @@ class EngineState:
     # 重做时直接拿到 patch 应用, 不重新解读. Self-Refine 论文表明效果 2-3x.
     suggested_fix: str = ""
 
+    # v5.5 Phase 2: DeepAudit + PLAN-REFINE 字段 (B1.1 字段 18-19)
+    audit_findings: list[dict[str, Any]] | None = None
+    # 格式: [{severity:P0|P1|P2, dimension, file, line, description,
+    #         evidence, suggested_fix, agent_source}]
+    # 写入者: Orchestrator._step_2j (DeepAudit 后)
+    # 消费: ArchitectAgent PLAN-REFINE MODE (B4.1a)
+    # 重置: DeepAudit pass (T4) 时设为 None
+
+    plan_refine_count: int = 0
+    # 只计 T9 回路次数, 不与 MAJOR 计数混淆
+    # 写入者: Orchestrator._step_2k (T9 触发时 ++)
+    # 重置: DeepAudit pass (T4) 时归零
+
+    # v5.5 CriticOutput 扩展字段
+    strengths: list[str] | None = None
+    assessment: str | None = None
+
     # 多 Agent 预留(v2.0+ Send 动态路由)
     _pending_sends: list = field(default_factory=list)
 
