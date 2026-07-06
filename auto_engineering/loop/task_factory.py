@@ -105,8 +105,19 @@ ROLE_FIELD_DEFAULTS: dict[str, object] = {
 }
 
 
+# v5.5 Phase 2: LLM severity 标签 → P0/P1/P2 映射表
+_SEVERITY_MAP: dict[str, str] = {
+    "Critical": "P0",
+    "Important": "P1",
+    "Minor": "P2",
+}
+
+
 def apply_outcome_to_state(state: EngineState, outcome: TaskOutcome) -> None:
     """按 task_role 分发 outcome.output 写入 EngineState 字段 (v5.0 §B7.2).
+
+    v5.5 Phase 2: critic findings 的 severity 字段映射 LLM 标签 →
+    P0/P1/P2 (Critical→P0, Important→P1, Minor→P2).
 
     Args:
         state: EngineState 实例 (会被 mutate).
@@ -124,6 +135,16 @@ def apply_outcome_to_state(state: EngineState, outcome: TaskOutcome) -> None:
         return
 
     values: dict[str, Any] = outcome.output if isinstance(outcome.output, dict) else {}
+
+    # v5.5 Phase 2: critic findings severity 映射
+    if role == "critic" and "findings" in values:
+        findings = values["findings"]
+        if isinstance(findings, list):
+            for finding in findings:
+                if isinstance(finding, dict) and "severity" in finding:
+                    raw = finding["severity"]
+                    finding["severity"] = _SEVERITY_MAP.get(raw, raw)
+
     if values:
         validated = validate_role_output(role, values)
         if validated is not None:

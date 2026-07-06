@@ -320,3 +320,125 @@ def test_apply_outcome_critic_partial_fields_leaves_others_unchanged() -> None:
     # 缺失字段不变
     assert state.findings == [{"old": "value"}]
     assert state.critic_feedback == "old feedback"
+
+
+# ============================================================
+# v5.5 Phase 2: severity 映射 (LLM 标签 → P0/P1/P2)
+# ============================================================
+
+
+class TestSeverityMapping:
+    """v5.5: apply_outcome_to_state 将 LLM severity 标签映射为 P0/P1/P2."""
+
+    def test_critical_maps_to_p0(self) -> None:
+        """severity='Critical' → P0."""
+        state = EngineState()
+        outcome = TaskOutcome(
+            task_id="crit-1", status="completed", task_role="critic",
+            output={
+                "verdict": "MAJOR",
+                "findings": [
+                    {"severity": "Critical", "file": "x.py", "line": 1,
+                     "issue": "null deref"},
+                ],
+            },
+        )
+        apply_outcome_to_state(state, outcome)
+        assert state.findings[0]["severity"] == "P0"
+
+    def test_important_maps_to_p1(self) -> None:
+        """severity='Important' → P1."""
+        state = EngineState()
+        outcome = TaskOutcome(
+            task_id="crit-1", status="completed", task_role="critic",
+            output={
+                "verdict": "MAJOR",
+                "findings": [
+                    {"severity": "Important", "file": "y.py", "line": 42,
+                     "issue": "missing error handling"},
+                ],
+            },
+        )
+        apply_outcome_to_state(state, outcome)
+        assert state.findings[0]["severity"] == "P1"
+
+    def test_minor_maps_to_p2(self) -> None:
+        """severity='Minor' → P2."""
+        state = EngineState()
+        outcome = TaskOutcome(
+            task_id="crit-1", status="completed", task_role="critic",
+            output={
+                "verdict": "MAJOR",
+                "findings": [
+                    {"severity": "Minor", "file": "z.py", "line": 100,
+                     "issue": "unused import"},
+                ],
+            },
+        )
+        apply_outcome_to_state(state, outcome)
+        assert state.findings[0]["severity"] == "P2"
+
+    def test_p0_preserved(self) -> None:
+        """severity='P0' (已映射) → 保持不变."""
+        state = EngineState()
+        outcome = TaskOutcome(
+            task_id="crit-1", status="completed", task_role="critic",
+            output={
+                "verdict": "MAJOR",
+                "findings": [
+                    {"severity": "P0", "file": "a.py", "line": 1,
+                     "issue": "SQL injection"},
+                ],
+            },
+        )
+        apply_outcome_to_state(state, outcome)
+        assert state.findings[0]["severity"] == "P0"
+
+    def test_unknown_severity_preserved(self) -> None:
+        """未知 severity 标签 → 保持原值 (不覆盖)."""
+        state = EngineState()
+        outcome = TaskOutcome(
+            task_id="crit-1", status="completed", task_role="critic",
+            output={
+                "verdict": "MAJOR",
+                "findings": [
+                    {"severity": "UnknownTag", "file": "b.py", "line": 5,
+                     "issue": "some issue"},
+                ],
+            },
+        )
+        apply_outcome_to_state(state, outcome)
+        assert state.findings[0]["severity"] == "UnknownTag"
+
+    def test_multiple_findings_mixed_severity(self) -> None:
+        """多个 findings 不同 severity 全部正确映射."""
+        state = EngineState()
+        outcome = TaskOutcome(
+            task_id="crit-1", status="completed", task_role="critic",
+            output={
+                "verdict": "MAJOR",
+                "findings": [
+                    {"severity": "Critical", "file": "x.py", "line": 1,
+                     "issue": "crash"},
+                    {"severity": "Important", "file": "y.py", "line": 42,
+                     "issue": "leak"},
+                    {"severity": "Minor", "file": "z.py", "line": 100,
+                     "issue": "style"},
+                ],
+            },
+        )
+        apply_outcome_to_state(state, outcome)
+        assert state.findings[0]["severity"] == "P0"
+        assert state.findings[1]["severity"] == "P1"
+        assert state.findings[2]["severity"] == "P2"
+
+    def test_non_critic_role_skips_severity_mapping(self) -> None:
+        """非 critic role 不触发 severity 映射."""
+        state = EngineState()
+        outcome = TaskOutcome(
+            task_id="dev-1", status="completed", task_role="developer",
+            output={"files_changed": ["a.py"], "commit_hash": "abc123",
+                    "test_results": {"passed": 1}},
+        )
+        apply_outcome_to_state(state, outcome)
+        assert state.files_changed == ["a.py"]
