@@ -466,6 +466,83 @@ class TestConvergenceConfigV55:
 
 
 # ============================================================
+# B++. v5.5 ConvergenceJudge auto_tune + 冷启动
+# ============================================================
+
+
+class TestConvergenceJudgeV55AutoTune:
+    """v5.5 Task 4.3: ConvergenceJudge.auto_tune_max_iter + 冷启动."""
+
+    def test_auto_tune_max_iter_cold_start_returns_none(self, tmp_path) -> None:
+        """冷启动 (样本不足) 返回 None, 表示使用默认 max_iter."""
+        from pathlib import Path
+
+        from auto_engineering.loop.audit_history import AuditHistory
+
+        root = Path(tmp_path)
+        history = AuditHistory(project_root=root)
+        # 只写 3 条 (不足 MIN_SAMPLES=5)
+        for _ in range(3):
+            history.append_entry(p0=0, p1=2, p2=0, threshold=6,
+                                 total_files=50, plan_refine_triggered=False)
+
+        judge = ConvergenceJudge(ConvergenceConfig(auto_tune=True))
+        result = judge.auto_tune_max_iter(audit_history=history)
+        assert result is None, "冷启动应返回 None"
+
+    def test_auto_tune_max_iter_sufficient_samples_returns_int(self, tmp_path) -> None:
+        """足够样本后返回计算值 (min(avg_rounds*2, 20))."""
+        from pathlib import Path
+
+        from auto_engineering.loop.audit_history import AuditHistory
+
+        root = Path(tmp_path)
+        history = AuditHistory(project_root=root)
+        # 写 8 条 (足够 MIN_SAMPLES=5), entries without rounds → defaults=1
+        for _ in range(8):
+            history.append_entry(p0=0, p1=2, p2=0, threshold=6,
+                                 total_files=50, plan_refine_triggered=False)
+        # With defaults (rounds=1): avg=1, max_iter=min(2,20)=2
+
+        judge = ConvergenceJudge(ConvergenceConfig(auto_tune=True))
+        result = judge.auto_tune_max_iter(audit_history=history)
+        assert result is not None
+        assert result == 2
+
+    def test_auto_tune_max_iter_empty_history_returns_none(self, tmp_path) -> None:
+        """空历史返回 None."""
+        from pathlib import Path
+
+        from auto_engineering.loop.audit_history import AuditHistory
+
+        root = Path(tmp_path)
+        history = AuditHistory(project_root=root)
+
+        judge = ConvergenceJudge(ConvergenceConfig(auto_tune=True))
+        result = judge.auto_tune_max_iter(audit_history=history)
+        assert result is None
+
+    def test_auto_tune_max_iter_uses_judge_config_min_samples(self, tmp_path) -> None:
+        """使用 judge.config.min_samples_for_learning 而非 ThresholdLearner.MIN_SAMPLES."""
+        from pathlib import Path
+
+        from auto_engineering.loop.audit_history import AuditHistory
+
+        root = Path(tmp_path)
+        history = AuditHistory(project_root=root)
+        # 写 6 条, 自定义 min_samples_for_learning=10 → 冷启动
+        for _ in range(6):
+            history.append_entry(p0=0, p1=2, p2=0, threshold=6,
+                                 total_files=50, plan_refine_triggered=False)
+
+        judge = ConvergenceJudge(ConvergenceConfig(
+            auto_tune=True, min_samples_for_learning=10,
+        ))
+        result = judge.auto_tune_max_iter(audit_history=history)
+        assert result is None, "自定义 min_samples=10, 6 条应不足"
+
+
+# ============================================================
 # C. Checkpoint save/load/list
 # ============================================================
 
