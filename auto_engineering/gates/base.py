@@ -33,11 +33,15 @@ class GateVerdict:
         gate_name: Gate 名称(由 Gate 实例填入, 调用方无需传)
         passed: True = 通过, False = 失败
         message: 失败/通过的详细信息(便于排查)
+        details: v5.5 扩展 — 结构化详情 (如 DeepAuditGate 的 findings 摘要)
+        suggestions: v5.5 扩展 — 修复建议列表
     """
 
     gate_name: str = ""
     passed: bool = False
     message: str = ""
+    details: dict | None = None
+    suggestions: list[str] | None = None
 
     # 注: passed 字段与 GateVerdict.passed() 类方法同名是 dataclass 不可避免的副作用,
     # 通过 @classmethod 访问避免歧义. 字段访问走 v.passed, 方法访问走 GateVerdict.passed().
