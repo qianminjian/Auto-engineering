@@ -322,6 +322,29 @@ def test_apply_outcome_critic_partial_fields_leaves_others_unchanged() -> None:
     assert state.critic_feedback == "old feedback"
 
 
+def test_apply_outcome_critic_with_strengths_and_assessment() -> None:
+    """v5.5: critic outcome 含 strengths + assessment → 正确写入 state."""
+    state = EngineState()
+    outcome = TaskOutcome(
+        task_id="crit-3",
+        status="completed",
+        task_role="critic",
+        output={
+            "verdict": "APPROVE",
+            "findings": [],
+            "critic_feedback": "great work",
+            "strengths": [
+                {"description": "Clean architecture", "location": "src/core.py"},
+            ],
+            "assessment": "Ready to merge",
+        },
+    )
+    apply_outcome_to_state(state, outcome)
+    assert state.verdict == "APPROVE"
+    assert state.strengths == [{"description": "Clean architecture", "location": "src/core.py"}]
+    assert state.assessment == "Ready to merge"
+
+
 # ============================================================
 # v5.5 Phase 2: severity 映射 (LLM 标签 → P0/P1/P2)
 # ============================================================

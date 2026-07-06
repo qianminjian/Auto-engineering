@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -53,4 +53,13 @@ class CriticOutput(BaseModel):
     suggested_fix: str = Field(
         default="",
         description="unified diff patch (MAJOR 时必填)",
+    )
+    # v5.5 Phase 3: Superpowers code-reviewer.md 整合
+    strengths: list[dict[str, Any]] | None = Field(
+        default=None,
+        description="本轮的强项/做对了什么 [{description, location}]",
+    )
+    assessment: str | None = Field(
+        default=None,
+        description="总体评估结论: Ready to merge / Ready to merge: With fixes / Needs rework",
     )

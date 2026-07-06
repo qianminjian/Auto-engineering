@@ -84,7 +84,7 @@ ROLE_FIELD_MAP: dict[str, list[str]] = {
     # v5.5 Phase 2: architect 扩展 audit_findings (DeepAudit pass/PLAN-REFINE 后清除)
     "architect": ["plan", "file_list", "batch_plan", "contracts", "audit_findings"],
     "developer": ["files_changed", "commit_hash", "test_results"],
-    "critic": ["verdict", "findings", "critic_feedback", "suggested_fix"],
+    "critic": ["verdict", "findings", "critic_feedback", "suggested_fix", "strengths", "assessment"],
 }
 
 # 每个 field 的清空默认值 (v5.4 审计 r2 P1-3: clear_stage_fields 引用此表 + ROLE_FIELD_DEFAULTS,
@@ -102,6 +102,8 @@ ROLE_FIELD_DEFAULTS: dict[str, object] = {
     "findings": [],
     "critic_feedback": "",
     "suggested_fix": "",
+    "strengths": None,
+    "assessment": None,
 }
 
 

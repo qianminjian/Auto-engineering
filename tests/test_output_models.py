@@ -116,3 +116,65 @@ class TestCriticOutput:
         """额外字段被忽略."""
         obj = CriticOutput(verdict="APPROVE", extra=123)
         assert obj.verdict == "APPROVE"
+
+
+class TestCriticOutputV55:
+    """v5.5 CriticOutput 扩展字段 — strengths + assessment."""
+
+    def test_strengths_defaults_to_none(self):
+        """strengths 默认值为 None (向后兼容)."""
+        obj = CriticOutput()
+        assert obj.strengths is None
+
+    def test_strengths_accepts_list(self):
+        """strengths 接受 list[dict] 格式."""
+        obj = CriticOutput(
+            verdict="APPROVE",
+            strengths=[
+                {"description": "Clean architecture", "location": "src/core.py"},
+                {"description": "Good test coverage", "location": "tests/"},
+            ],
+        )
+        assert len(obj.strengths) == 2
+        assert obj.strengths[0]["description"] == "Clean architecture"
+        assert obj.strengths[0]["location"] == "src/core.py"
+
+    def test_assessment_defaults_to_none(self):
+        """assessment 默认值为 None (向后兼容)."""
+        obj = CriticOutput()
+        assert obj.assessment is None
+
+    def test_assessment_accepts_ready_to_merge(self):
+        """assessment 接受 'Ready to merge'."""
+        obj = CriticOutput(verdict="APPROVE", assessment="Ready to merge")
+        assert obj.assessment == "Ready to merge"
+
+    def test_assessment_accepts_ready_to_merge_with_fixes(self):
+        """assessment 接受 'Ready to merge: With fixes'."""
+        obj = CriticOutput(
+            verdict="MAJOR",
+            assessment="Ready to merge: With fixes",
+        )
+        assert obj.assessment == "Ready to merge: With fixes"
+
+    def test_assessment_accepts_needs_rework(self):
+        """assessment 接受 'Needs rework'."""
+        obj = CriticOutput(verdict="MAJOR", assessment="Needs rework")
+        assert obj.assessment == "Needs rework"
+
+    def test_full_critic_output_with_v55_fields(self):
+        """完整 CriticOutput 含 v5.5 新字段."""
+        obj = CriticOutput(
+            verdict="MAJOR",
+            findings=[{"file": "x.py", "line": 1, "severity": "P0", "issue": "bug"}],
+            critic_feedback="needs work",
+            suggested_fix="diff --git ...",
+            strengths=[
+                {"description": "Good error handling", "location": "src/api.py:42-58"},
+            ],
+            assessment="Ready to merge: With fixes",
+        )
+        assert obj.verdict == "MAJOR"
+        assert len(obj.findings) == 1
+        assert obj.strengths[0]["description"] == "Good error handling"
+        assert obj.assessment == "Ready to merge: With fixes"
