@@ -402,6 +402,70 @@ def test_stagnation_triggers_via_judge(make_history) -> None:
 
 
 # ============================================================
+# B+. v5.5 ConvergenceConfig 扩展字段
+# ============================================================
+
+
+class TestConvergenceConfigV55:
+    """v5.5 Phase 2: ConvergenceConfig 新字段 (auto_tune, max_plan_refines,
+    min_samples_for_learning)."""
+
+    def test_default_auto_tune_is_false(self) -> None:
+        """auto_tune 默认 False (向后兼容)."""
+        config = ConvergenceConfig()
+        assert config.auto_tune is False
+
+    def test_default_max_plan_refines_is_three(self) -> None:
+        """max_plan_refines 默认 3."""
+        config = ConvergenceConfig()
+        assert config.max_plan_refines == 3
+
+    def test_default_min_samples_for_learning_is_five(self) -> None:
+        """min_samples_for_learning 默认 5 (冷启动最小样本)."""
+        config = ConvergenceConfig()
+        assert config.min_samples_for_learning == 5
+
+    def test_auto_tune_can_be_enabled(self) -> None:
+        """auto_tune 可显式启用."""
+        config = ConvergenceConfig(auto_tune=True)
+        assert config.auto_tune is True
+
+    def test_max_plan_refines_custom_value(self) -> None:
+        """max_plan_refines 可自定义."""
+        config = ConvergenceConfig(max_plan_refines=5)
+        assert config.max_plan_refines == 5
+
+    def test_min_samples_for_learning_custom_value(self) -> None:
+        """min_samples_for_learning 可自定义."""
+        config = ConvergenceConfig(min_samples_for_learning=10)
+        assert config.min_samples_for_learning == 10
+
+    def test_backward_compatible_with_judge(self) -> None:
+        """ConvergenceJudge 接受 v5.5 扩展字段."""
+        config = ConvergenceConfig(
+            max_iterations=10,
+            auto_tune=True,
+            max_plan_refines=4,
+            min_samples_for_learning=7,
+        )
+        judge = ConvergenceJudge(config=config)
+        assert judge.config.max_iterations == 10
+        assert judge.config.auto_tune is True
+        assert judge.config.max_plan_refines == 4
+        assert judge.config.min_samples_for_learning == 7
+
+    def test_backward_compatible_old_constructor(self) -> None:
+        """旧构造方式仍有效 (不传 v5.5 字段)."""
+        config = ConvergenceConfig(max_iterations=10, stagnation_threshold=2)
+        assert config.max_iterations == 10
+        assert config.stagnation_threshold == 2
+        # v5.5 默认值
+        assert config.auto_tune is False
+        assert config.max_plan_refines == 3
+        assert config.min_samples_for_learning == 5
+
+
+# ============================================================
 # C. Checkpoint save/load/list
 # ============================================================
 

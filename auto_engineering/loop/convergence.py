@@ -56,11 +56,17 @@ class ConvergenceConfig:
         max_iterations: 单会话最大迭代轮次 (硬上限)
         stagnation_threshold: 连续多少轮无实质变化触发停滞检测
         stagnation_diff_ratio: diff 变化率阈值 (低于此值视为无变化)
+        auto_tune: v5.5 — 启用 max_iter 自动学习 (default False)
+        max_plan_refines: v5.5 — T9 回路最大次数 (default 3)
+        min_samples_for_learning: v5.5 — 冷启动最小样本数 (default 5)
     """
 
     max_iterations: int = DEFAULT_MAX_ITERATIONS
     stagnation_threshold: int = DEFAULT_STAGNATION_THRESHOLD
     stagnation_diff_ratio: float = DEFAULT_STAGNATION_DIFF_RATIO
+    auto_tune: bool = False             # v5.5: 启用 max_iter 自动学习
+    max_plan_refines: int = 3           # v5.5: T9 回路最大次数
+    min_samples_for_learning: int = 5   # v5.5: 冷启动最小样本数
 
 
 @dataclass
