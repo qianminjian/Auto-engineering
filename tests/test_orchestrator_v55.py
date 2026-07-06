@@ -179,6 +179,31 @@ class TestOrchestratorV55Integration:
         assert audit_found is False
         assert findings == []
 
+    # --- 5a. Task 4.1: JSONL 审计历史写入 ---
+
+    def test_run_deep_audit_writes_jsonl(self, tmp_path: Path) -> None:
+        """_run_deep_audit() 完成后写入 JSONL 审计历史."""
+        config = OrchestratorConfig(project_root=tmp_path)
+        orch = Orchestrator(
+            requirement="x", tasks=[], executor=None, config=config,
+        )
+        orch._run_deep_audit(tmp_path)
+
+        jsonl_path = tmp_path / ".ae-state" / "audit-history.jsonl"
+        assert jsonl_path.exists(), "JSONL 审计历史文件应存在"
+
+        import json
+        lines = jsonl_path.read_text().strip().split("\n")
+        assert len(lines) >= 1, "应至少写入一条记录"
+        entry = json.loads(lines[0])
+        assert "p0_count" in entry
+        assert "p1_count" in entry
+        assert "p2_count" in entry
+        assert "p1_threshold" in entry
+        assert "total_files" in entry
+        assert "plan_refine_triggered" in entry
+        assert "timestamp" in entry
+
     # --- 6. GateVerdict.details 含 findings ---
 
     def test_gate_verdict_details_has_findings(self) -> None:
