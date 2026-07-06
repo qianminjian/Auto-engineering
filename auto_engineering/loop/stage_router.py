@@ -127,14 +127,20 @@ class StageRouter:
         verdict: str,
         majors_in_a_row: int,
         total_majors: int,
+        audit_found_issues: bool = False,      # v5.5: DeepAudit 是否发现问题
+        plan_refine_count: int = 0,            # v5.5: 当前 T9 回路计数
+        max_plan_refines: int = 3,             # v5.5: T9 回路上限
     ) -> StageDecision:
-        """根据当前 Stage + Critic verdict 决定下一步 Stage (§B2.2 T1-T6).
+        """根据当前 Stage + Critic verdict 决定下一步 Stage (§B2.2 T1-T6, T9/T9-LIMIT).
 
         Args:
             current_stage: 当前 Stage ("" | "architect" | "developer" | "critic").
             verdict: Critic 产出 ("" | "APPROVE" | "MAJOR"). 非 critic 阶段传 "".
             majors_in_a_row: 连续 MAJOR 计数 (≥0).
             total_majors: 累计 MAJOR 计数 (≥0).
+            audit_found_issues: v5.5 T9 — DeepAudit 是否发现问题 (default False).
+            plan_refine_count: v5.5 T9 — 当前 T9 回路计数 (default 0).
+            max_plan_refines: v5.5 T9 — T9 回路最大次数 (default 3).
 
         Returns:
             StageDecision 含 next_stage / should_stop / stop_reason.
@@ -156,9 +162,23 @@ class StageRouter:
         if current_stage == "developer":
             return StageDecision(next_stage="critic", should_stop=False)
 
-        # T4/T5/T6: critic 阶段
+        # T4/T5/T6/T9: critic 阶段
         if current_stage == "critic":
             if verdict == "APPROVE":
+                # v5.5 T9: DeepAudit 发现问题 → PLAN-REFINE 回路
+                if audit_found_issues:
+                    if plan_refine_count >= max_plan_refines:
+                        # T9-LIMIT: 超过 plan refine 上限 → 停止
+                        return StageDecision(
+                            next_stage=None,
+                            should_stop=True,
+                            stop_reason=(
+                                f"T9-LIMIT: plan refine 上限 "
+                                f"({plan_refine_count}/{max_plan_refines})"
+                            ),
+                        )
+                    # T9: 回到 architect 进行 PLAN-REFINE
+                    return StageDecision(next_stage="architect", should_stop=False)
                 # T4: APPROVE → Judge 触发 GOAL_ACHIEVED (本路由不停止)
                 return StageDecision(next_stage=None, should_stop=False)
 

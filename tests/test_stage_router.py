@@ -391,3 +391,117 @@ class TestNewEngineStateFields:
         assert len(fields) == 21, (
             f"Expected 21 fields (v5.5), got {len(fields)}: {fields}"
         )
+
+
+# ---------- v5.5 T9/T9-LIMIT 转换 (DeepAudit → PLAN-REFINE 回路) ----------
+
+
+class TestT9Transition:
+    """v5.5 T9: DeepAudit 发现问题 → 回到 architect (PLAN-REFINE)."""
+
+    def test_t9_audit_found_issues_returns_architect(self) -> None:
+        """T9: audit_found_issues=True + plan_refine_count < max → next='architect'."""
+        router = StageRouter()
+        decision = router.next(
+            current_stage="critic",
+            verdict="APPROVE",
+            majors_in_a_row=0,
+            total_majors=0,
+            audit_found_issues=True,
+            plan_refine_count=0,
+            max_plan_refines=3,
+        )
+        assert decision.next_stage == "architect"
+        assert decision.should_stop is False
+
+    def test_t9_limit_reached_should_stop(self) -> None:
+        """T9-LIMIT: audit_found_issues=True + plan_refine_count >= max → stop."""
+        router = StageRouter()
+        decision = router.next(
+            current_stage="critic",
+            verdict="APPROVE",
+            majors_in_a_row=0,
+            total_majors=0,
+            audit_found_issues=True,
+            plan_refine_count=3,
+            max_plan_refines=3,
+        )
+        assert decision.next_stage is None
+        assert decision.should_stop is True
+        assert decision.stop_reason is not None
+        assert "T9-LIMIT" in decision.stop_reason
+        assert "plan refine 上限" in decision.stop_reason
+
+    def test_t9_exceeds_limit_should_stop(self) -> None:
+        """T9-LIMIT: plan_refine_count > max → stop."""
+        router = StageRouter()
+        decision = router.next(
+            current_stage="critic",
+            verdict="APPROVE",
+            majors_in_a_row=0,
+            total_majors=0,
+            audit_found_issues=True,
+            plan_refine_count=5,
+            max_plan_refines=3,
+        )
+        assert decision.next_stage is None
+        assert decision.should_stop is True
+
+    def test_t9_plan_refine_count_at_max_minus_one(self) -> None:
+        """T9: plan_refine_count = max-1 → 仍返回 architect (未超限)."""
+        router = StageRouter()
+        decision = router.next(
+            current_stage="critic",
+            verdict="APPROVE",
+            majors_in_a_row=0,
+            total_majors=0,
+            audit_found_issues=True,
+            plan_refine_count=2,
+            max_plan_refines=3,
+        )
+        assert decision.next_stage == "architect"
+        assert decision.should_stop is False
+
+    def test_no_audit_issues_returns_normal_t4_behavior(self) -> None:
+        """audit_found_issues=False → 正常 T4 行为 (next=None, should_stop=False)."""
+        router = StageRouter()
+        decision = router.next(
+            current_stage="critic",
+            verdict="APPROVE",
+            majors_in_a_row=0,
+            total_majors=0,
+            audit_found_issues=False,
+            plan_refine_count=0,
+            max_plan_refines=3,
+        )
+        assert decision.next_stage is None
+        assert decision.should_stop is False
+
+    def test_t9_defaults_backward_compatible(self) -> None:
+        """无 T9 参数 → 向后兼容 T4 行为."""
+        router = StageRouter()
+        decision = router.next(
+            current_stage="critic",
+            verdict="APPROVE",
+            majors_in_a_row=0,
+            total_majors=0,
+        )
+        # 默认 audit_found_issues=False → T4
+        assert decision.next_stage is None
+        assert decision.should_stop is False
+
+    def test_t9_custom_max_plan_refines(self) -> None:
+        """自定义 max_plan_refines=2 → 第 2 次触发 T9-LIMIT."""
+        router = StageRouter()
+        decision = router.next(
+            current_stage="critic",
+            verdict="APPROVE",
+            majors_in_a_row=0,
+            total_majors=0,
+            audit_found_issues=True,
+            plan_refine_count=2,
+            max_plan_refines=2,
+        )
+        assert decision.next_stage is None
+        assert decision.should_stop is True
+        assert "T9-LIMIT" in decision.stop_reason
