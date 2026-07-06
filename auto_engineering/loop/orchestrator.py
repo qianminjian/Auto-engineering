@@ -893,6 +893,7 @@ class Orchestrator:
             发现问题需 T9 回路, findings 为 DeepAuditFinding dict 列表.
         """
         from auto_engineering.gates.deep_audit import DeepAuditGate
+        from auto_engineering.loop.audit_history import AuditHistory
         from auto_engineering.loop.deep_audit import DeepAuditOrchestrator
 
         orchestrator = DeepAuditOrchestrator(project_root)
@@ -917,7 +918,29 @@ class Orchestrator:
 
         audit_found = not result.passed
         findings_list: list[dict] = result.details.get("findings", []) if result.details else []
+
+        # v5.5 Task 4.1: JSONL 审计历史写入
+        history = AuditHistory(project_root)
+        history.append_entry(
+            p0=report.p0_count,
+            p1=report.p1_count,
+            p2=report.p2_count,
+            threshold=self._get_p1_threshold(),
+            total_files=report.total_audited_files,
+            plan_refine_triggered=audit_found,
+        )
+
         return audit_found, findings_list
+
+    def _get_p1_threshold(self) -> int:
+        """获取当前 P1 阈值 (冷启动默认 6).
+
+        Task 4.2+ 可从 ThresholdLearner 动态获取; Phase 1 返回硬编码默认值.
+
+        Returns:
+            int: 当前 P1 阈值.
+        """
+        return 6
 
     def _all_gates_passed(self, round_result: RoundResult) -> bool:
         """检查本轮所有 Gate 是否全部通过.
