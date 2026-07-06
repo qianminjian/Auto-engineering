@@ -55,22 +55,28 @@ class DeepAuditGate(Gate):
     # v5.5 §B6.5: DeepAuditGate 在 critic APPROVE 后运行, 仅 critic stage
     applies_to_stages = ("critic",)
 
-    def __init__(self, project_root: Path, p1_threshold: int = 6):
-        self._project_root = Path(project_root)
+    def __init__(self, project_root: Path | None = None, p1_threshold: int = 6):
+        self._project_root = Path(project_root) if project_root else None
         self._p1_threshold = p1_threshold
 
-    def run(self, contracts: dict | None = None) -> GateVerdict:
+    def run(
+        self, project_root: Path | None = None, contracts: dict | None = None
+    ) -> GateVerdict:
         """执行 DeepAudit, 返回 GateVerdict.
 
-        当前 Phase 1 为骨架实现: 从 contracts 读取预收集 findings.
-        Phase 2 接入真实的 3-agent 编排器后, 调用 DeepAuditOrchestrator.
+        兼容 Gate ABC 签名: run(project_root, contracts=None).
+        project_root 可从参数传入或从 __init__ 获取.
 
         Args:
+            project_root: 项目根目录 (Gate ABC 签名). 若 __init__ 也有, 参数优先.
             contracts: 可选上下文字典, 可包含 "findings" key (list[dict]).
 
         Returns:
             GateVerdict (passed + details + suggestions).
         """
+        root = project_root if project_root is not None else self._project_root
+        if root is not None:
+            root = Path(root)
         report = DeepAuditReport()
         findings_raw = contracts.get("findings", []) if contracts else []
         for f in findings_raw:

@@ -5,7 +5,7 @@
 负责:
 - 收集项目文件列表 (排除非代码目录)
 - 按架构/代码质量/工程化 3 维度分配文件给 3 个 agent
-  (当前 Phase 1 骨架: 用串行模拟并行, 返回结构化占位报告)
+  (Phase 1: 用 AuditGate 本地静态扫描作为基线; Phase 5+ LLM agent 增强)
 - 合并 3 个 agent 的报告, 做 severity 归一化 (Critical→P0, Important→P1, Minor→P2)
 - 返回合并后的 DeepAuditReport
 """
@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from auto_engineering.gates.audit import AuditFinding, AuditGate
 from auto_engineering.gates.deep_audit import DeepAuditFinding, DeepAuditReport
 
 # 3 个审计维度 → agent role 映射
@@ -33,8 +34,8 @@ _EXCLUDE_DIRS = {
 class DeepAuditOrchestrator:
     """编排 3 个 agent 并行审计, 合并结果.
 
-    Phase 1 骨架: 收集文件列表, 返回空报告.
-    Phase 5+ 实现真实的 3-agent spawn 并行审计.
+    Phase 1: 用 AuditGate 的本地静态扫描能力提供基线审计.
+    Phase 5+ 实现真实的 3-agent spawn 并行 LLM 审计增强.
 
     Args:
         project_root: 项目根目录路径.
@@ -56,15 +57,45 @@ class DeepAuditOrchestrator:
         return files
 
     def run_audit(self) -> DeepAuditReport:
-        """Phase 1 骨架: 收集文件但返回空结果.
+        """Phase 1 基线审计: 调用 AuditGate 本地静态扫描.
 
-        Phase 5+ 实现真实的 3-agent spawn 并行审计.
+        AuditGate 的 5 维度静态扫描 (regex pattern matching) 提供确定性基线.
+        Phase 5+ 追加 3-agent LLM 并行审计增强深度.
 
         Returns:
-            DeepAuditReport (Phase 1: findings 为空, total_audited_files 为文件数).
+            DeepAuditReport (含 AuditGate 的 AuditFinding 转换).
         """
-        files = self.collect_files()
+        import time
+        start = time.monotonic()
+
+        gate = AuditGate()
+        gate_result = gate.run(self._project_root)
+
+        # 从 AuditGate 的 verdict.details 提取 findings 并转换为 DeepAuditFinding
+        findings: list[DeepAuditFinding] = []
+        raw_findings: list[dict] = gate_result.details.get("findings", []) if gate_result.details else []
+
+        for f in raw_findings:
+            findings.append(DeepAuditFinding(
+                severity=f.get("severity", "P2"),
+                dimension=f.get("dimension", "代码质量"),
+                file=f.get("file", ""),
+                line=f.get("line"),
+                description=f.get("description", ""),
+                evidence=f.get("evidence", ""),
+                suggested_fix="",
+                agent_source="audit-gate-static",
+            ))
+
+        p0_count = sum(1 for f in findings if f.severity == "P0")
+        p1_count = sum(1 for f in findings if f.severity == "P1")
+        p2_count = sum(1 for f in findings if f.severity == "P2")
+
         return DeepAuditReport(
-            findings=[],
-            total_audited_files=len(files),
+            findings=findings,
+            p0_count=p0_count,
+            p1_count=p1_count,
+            p2_count=p2_count,
+            total_audited_files=gate_result.details.get("files_scanned", 0) if gate_result.details else 0,
+            audit_duration_ms=int((time.monotonic() - start) * 1000),
         )

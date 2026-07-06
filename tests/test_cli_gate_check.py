@@ -1,7 +1,7 @@
 """ae gate-check CLI 测试 (v5.0 §PE.6).
 
 RED marker 测试 — 验证 gate-check 子命令行为:
-- --all 模式: 跑 6 道 Gate (safety/lint/type_check/contract/test/build)
+- --all 模式: 跑 7 道 Gate (safety/lint/type_check/audit/contract/test/build)
 - --quick 模式: 跑 3 道 Gate (safety/lint/type_check)
 - JSON 契约: project_root / mode / passed / failed / skipped / gate_summary
 - gate_summary 每 Gate 含 status/passed/message 字段
@@ -73,14 +73,15 @@ def test_quick_gates_is_3_tuple() -> None:
     assert set(QUICK_GATES) == {"safety", "lint", "type_check"}
 
 
-def test_all_gates_is_6_tuple() -> None:
-    """ALL_GATES 是 6 元素 tuple 覆盖 6 道 Gate (v5.4 Q2: coverage 已删除)."""
+def test_all_gates_is_7_tuple() -> None:
+    """ALL_GATES 是 7 元素 tuple 覆盖 7 道 Gate (v5.5: +audit)."""
     assert isinstance(ALL_GATES, tuple)
-    assert len(ALL_GATES) == 6
+    assert len(ALL_GATES) == 7
     assert set(ALL_GATES) == {
         "safety",
         "lint",
         "type_check",
+        "audit",
         "contract",
         "test",
         "build",
@@ -343,7 +344,7 @@ def test_cli_gate_check_default_is_all(runner: CliRunner, tmp_cwd: Path) -> None
     data = json.loads(result.output)
     assert data["mode"] == "all"
     assert data["gate_names"] == list(ALL_GATES)
-    assert len(data["gate_names"]) == 6
+    assert len(data["gate_names"]) == 7
 
 
 def test_cli_gate_check_quick_mode(runner: CliRunner, tmp_cwd: Path) -> None:
@@ -507,10 +508,10 @@ def test_cli_gate_check_default_project_root_uses_cwd(
     assert captured_roots[0] == Path(tmp_cwd).resolve() or captured_roots[0] == tmp_cwd
 
 
-def test_cli_gate_check_all_includes_full_6(
+def test_cli_gate_check_all_includes_full_7(
     runner: CliRunner, tmp_cwd: Path
 ) -> None:
-    """--all 模式覆盖全部 6 个 Gate 名 (v5.4 Q2: coverage 已删除)."""
+    """--all 模式覆盖全部 7 个 Gate 名 (v5.5: +audit)."""
     fake_gate = MagicMock()
     v = MagicMock()
     v.passed = True
@@ -526,6 +527,7 @@ def test_cli_gate_check_all_includes_full_6(
         "safety",
         "lint",
         "type_check",
+        "audit",
         "contract",
         "test",
         "build",

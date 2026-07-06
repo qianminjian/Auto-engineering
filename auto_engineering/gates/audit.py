@@ -446,6 +446,26 @@ class AuditGate(Gate):
 
         message = "\n".join(msg_lines)
 
+        details = {
+            "findings": [
+                {
+                    "severity": f.severity,
+                    "dimension": f.dimension,
+                    "file": f.file,
+                    "line": f.line,
+                    "description": f.description,
+                    "evidence": f.evidence,
+                }
+                for f in findings
+            ],
+            "files_scanned": files_scanned,
+        }
         if failed:
-            return GateVerdict.failed(message, gate_name=self.name)
-        return GateVerdict.passed(message, gate_name=self.name)
+            return GateVerdict(
+                gate_name=self.name, passed=False, message=message,
+                details=details,
+            )
+        return GateVerdict(
+            gate_name=self.name, passed=True, message=message,
+            details=details,
+        )

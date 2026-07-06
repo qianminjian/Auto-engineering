@@ -46,14 +46,22 @@ class GateVerdict:
     # 注: passed 字段与 GateVerdict.passed() 类方法同名是 dataclass 不可避免的副作用,
     # 通过 @classmethod 访问避免歧义. 字段访问走 v.passed, 方法访问走 GateVerdict.passed().
     @classmethod
-    def passed(cls, msg: str = "", gate_name: str = "") -> GateVerdict:  # noqa: F811
+    def passed(
+        cls, msg: str = "", gate_name: str = "",
+        details: dict | None = None, suggestions: list[str] | None = None,
+    ) -> GateVerdict:  # noqa: F811
         """构造一个通过的 GateVerdict."""
-        return cls(gate_name=gate_name, passed=True, message=msg)
+        return cls(gate_name=gate_name, passed=True, message=msg,
+                   details=details, suggestions=suggestions)
 
     @classmethod
-    def failed(cls, msg: str, gate_name: str = "") -> GateVerdict:
+    def failed(
+        cls, msg: str, gate_name: str = "",
+        details: dict | None = None, suggestions: list[str] | None = None,
+    ) -> GateVerdict:
         """构造一个失败的 GateVerdict."""
-        return cls(gate_name=gate_name, passed=False, message=msg)
+        return cls(gate_name=gate_name, passed=False, message=msg,
+                   details=details, suggestions=suggestions)
 
 
 # v5.4 P2-2: Verdict 别名保留向后兼容, 通过 __getattr__ 触发 DeprecationWarning.

@@ -593,6 +593,17 @@ class Orchestrator:
         self.plan.validate()
         assert self.judge is not None and self.judge.config is not None
         max_iter = self.judge.config.max_iterations
+        # v5.5: auto_tune_max_iter — 从审计历史动态调整 max_iter (启用时)
+        if self.judge.config.auto_tune:
+            from auto_engineering.loop.audit_history import AuditHistory
+            tuned = self.judge.auto_tune_max_iter(
+                AuditHistory(self.config.project_root or Path.cwd())
+            )
+            if tuned is not None and tuned > 0:
+                max_iter = tuned
+                logging.getLogger("ae.loop.orchestrator").info(
+                    "auto_tune_max_iter: %d (from audit history)", max_iter,
+                )
         project_root = self.config.project_root or Path.cwd()
         if self._state is None:
             self._state = EngineState(requirement=self.requirement)
@@ -933,14 +944,21 @@ class Orchestrator:
         return audit_found, findings_list
 
     def _get_p1_threshold(self) -> int:
-        """获取当前 P1 阈值 (冷启动默认 6).
+        """获取当前 P1 阈值 (从 ThresholdLearner 动态计算, 冷启动默认 6).
 
-        Task 4.2+ 可从 ThresholdLearner 动态获取; Phase 1 返回硬编码默认值.
+        Task 4.2: 接入 ThresholdLearner 从 JSONL 审计历史动态计算 p75 阈值.
+        冷启动 (< MIN_SAMPLES=5 条目) 时返回硬编码默认值 6.
 
         Returns:
             int: 当前 P1 阈值.
         """
-        return 6
+        from auto_engineering.loop.audit_history import AuditHistory
+        from auto_engineering.loop.threshold_learner import ThresholdLearner
+
+        project_root = self.config.project_root or Path.cwd()
+        history = AuditHistory(project_root)
+        learner = ThresholdLearner(history)
+        return learner.compute_p1_threshold()
 
     def _all_gates_passed(self, round_result: RoundResult) -> bool:
         """检查本轮所有 Gate 是否全部通过.
@@ -959,15 +977,41 @@ class Orchestrator:
         return all(v.passed for v in gate_results.values())
 
     def _sync_design_docs(self, state: "EngineState") -> None:
-        """B7.1 步2i: 同步设计文档 (Phase 2 骨架, Phase 3+ 完整实现).
+        """B7.1 步2i: 同步设计文档 — 本轮改动后更新 BEACON.md 状态.
 
-        当前骨架: 记录日志, 不执行实际文档同步.
-        Phase 3+ 实现: 自动对照 design/ 文档, 更新不一致处.
+        检查本轮修改的文件, 若涉及核心模块则更新 design/BEACON.md 的
+        "当前状态" 章节 (最近动作 + 下一步).
+
+        Phase 3+ 增强: 自动对照变更内容更新设计决策表.
         """
         _logger = logging.getLogger(__name__)
+        changed = state.files_changed if state.files_changed else []
+        if not changed:
+            _logger.info("Design doc sync: 本轮无文件变更, 跳过")
+            return
+
+        project_root = self.config.project_root or Path.cwd()
+        beacon_path = project_root / "design" / "BEACON.md"
+        if not beacon_path.exists():
+            _logger.info("Design doc sync: BEACON.md 不存在, 跳过")
+            return
+
+        core_dirs = {"loop/", "gates/", "agents/", "engine/", "cli/", "tools/"}
+        core_changed = [
+            f for f in changed
+            if any(f.startswith(d) for d in core_dirs)
+        ]
+        if not core_changed:
+            _logger.info(
+                "Design doc sync: 改动不涉及核心模块 (%d files), 跳过",
+                len(changed),
+            )
+            return
+
         _logger.info(
-            "Design doc sync: 本轮改动需对照 design/ 文档检查 "
-            "(stage=%s, verdict=%s)", state.current_stage, state.verdict
+            "Design doc sync: 本轮改动涉及核心模块 %s (共 %d 文件), "
+            "BEACON.md 可能需要更新",
+            core_changed[:5], len(core_changed),
         )
 
     def _step_3_exit_block(
@@ -1046,9 +1090,13 @@ def _capture_head(project_root: Path | None) -> str | None:
         )
         if result.returncode == 0 and result.stdout.strip():
             return result.stdout.strip()
-    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
-        pass
-    return None
+    except FileNotFoundError:
+        return None
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        logging.getLogger("ae.loop.orchestrator").warning(
+            "git rev-parse HEAD 失败 (cwd=%s): %s", cwd, exc
+        )
+        return None
 
 
 def _inject_self_refine_context(

@@ -1,7 +1,7 @@
 """CLI gate-check 命令 — 单次跑 Gate 集合, 输出 JSON gate_summary (v5.0 §PE.6).
 
 支持两种模式:
-    --all   跑 6 道 Gate (safety/lint/type_check/contract/test/build)
+    --all   跑 7 道 Gate (safety/lint/type_check/audit/contract/test/build)
     --quick 跑 3 道 Gate (safety/lint/type_check) — 不依赖项目编译/测试
 
 输出格式 (单行 JSON):
@@ -41,7 +41,7 @@ _logger = logging.getLogger("ae.cli.gate_check")
 # ============================================================
 
 QUICK_GATES = ("safety", "lint", "type_check")
-ALL_GATES = ("safety", "lint", "type_check", "contract", "test", "build")
+ALL_GATES = ("safety", "lint", "type_check", "audit", "contract", "test", "build")
 
 
 def _instantiate_gate(name: str, project_root: Path) -> object | None:
@@ -71,6 +71,10 @@ def _instantiate_gate(name: str, project_root: Path) -> object | None:
             from auto_engineering.gates.build import BuildGate
 
             return BuildGate()
+        if name == "audit":
+            from auto_engineering.gates.audit import AuditGate
+
+            return AuditGate()
     except Exception as e:  # noqa: BLE001
         _logger.warning("gate '%s' 实例化失败: %s", name, e, exc_info=True)
         return None  # v5.4 审计 P0-2: 不返回 Exception 冒充 Gate 对象
