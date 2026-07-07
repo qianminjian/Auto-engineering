@@ -392,7 +392,12 @@ class ConvergenceJudge:
             history: 历史轮次列表
 
         Returns:
-            ConvergenceVerdict 或 None (None 表示未触发或 Gate 还没全实现)
+            ConvergenceVerdict STOP if all gates passed, None if not applicable
+            (history empty, no gates run, or some gates failed — caller continues
+            to next check).
+
+            None semantics: 本检查无法做出判定 (非 pass/fail), 交由下一级检查.
+            这和返回 CONTINUE 不同 — CONTINUE 是"判定: 继续", None 是"无判定".
 
         Note:
             v2.3 Phase D (P0.4): gate_results 是 dict[gate_name, GateVerdict],

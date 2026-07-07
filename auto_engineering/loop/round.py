@@ -27,6 +27,10 @@ from auto_engineering.gates.base import Gate, GateVerdict
 from auto_engineering.loop.plan import ConflictError, Task
 from auto_engineering.runtime.cancellation import CancellationToken
 
+import logging
+
+_logger = logging.getLogger("ae.loop.round")
+
 # v5.0 §B2.12a: 错误分类
 try:
     from auto_engineering.errors import AEError, ErrorCode
@@ -219,8 +223,7 @@ def _build_per_task_ctx(ctx: Any, task: Task) -> Any:
                 # 没 current_task_id 字段 → 直接复制 (避免共享 state mutation 风险)
                 return replace(ctx)
         except Exception:
-            import logging
-            logging.getLogger("ae.loop.round").warning(
+            _logger.warning(
                 "_inject_task_id failed for task=%s", task.id, exc_info=True,
             )
     return ctx
@@ -394,6 +397,7 @@ def _parse_git_numstat(
                 cwd=cwd, capture_output=True, text=True, timeout=10,
             )
         except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+            _logger.debug("git diff 执行失败 (文件缺失/超时)")
             return None
 
     result_run = None
@@ -421,6 +425,7 @@ def _parse_git_numstat(
             total_added += int(added_str)
             total_removed += int(removed_str)
         except ValueError:
+            _logger.debug("git diff 行解析失败: %s", line)
             continue
     return (total_added, total_removed)
 
@@ -444,7 +449,7 @@ def _parse_git_changed_files(
         if result.returncode == 0:
             return [f.strip() for f in result.stdout.splitlines() if f.strip()]
     except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
-        pass
+        _logger.debug("git diff 文件列表获取失败")
     return []
 
 

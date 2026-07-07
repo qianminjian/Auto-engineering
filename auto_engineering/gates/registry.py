@@ -123,11 +123,16 @@ def reset_default_gates_cache() -> None:
 
 
 def get_default_gates() -> list[Gate]:
-    """惰性构造 6 道默认 Gate（避免 import 时副作用）."""
+    """惰性构造 7 道默认 Gate（避免 import 时副作用）."""
     global _default_gates_cache
     if _default_gates_cache is None:
         _default_gates_cache = _build_default_gates()
     return _default_gates_cache
+
+
+def get_default_gate_names() -> list[str]:
+    """返回默认 Gate 名称列表 (SSOT, 从 Gate.name 推导)."""
+    return [g.name for g in get_default_gates()]
 
 
 # v5.4 审计 P1-11: 惰性构造 DEFAULT_GATES 避免 import 时副作用.

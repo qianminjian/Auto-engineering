@@ -121,14 +121,14 @@ class TestEngineStateFieldDefaults:
     """
 
     def test_all_18_fields_exist(self) -> None:
-        """EngineState 暴露 21 个字段 (v5.5 Phase 2 + v5.0 §B1.1 + suggested_fix)."""
+        """EngineState 暴露 22 个字段 (v5.5 P0-4: +round)."""
         from dataclasses import fields
 
         state = EngineState()
         field_names = {f.name for f in fields(EngineState)}
-        # 21 字段 (v5.5 新增 audit_findings, plan_refine_count, strengths, assessment)
+        # 22 字段 (v5.5 P0-4: +round)
         expected = {
-            "requirement", "current_stage",
+            "requirement", "current_stage", "round",
             "thread_id", "majors_in_a_row", "total_majors",
             "plan", "file_list", "batch_plan", "contracts",
             "files_changed", "commit_hash", "test_results",
@@ -290,12 +290,12 @@ class TestEngineStateBoundary:
         assert not hasattr(state, "nonexistent")
 
     def test_to_dict_contains_all_18_fields(self) -> None:
-        """to_dict 输出含全部 21 字段 (v5.5 Phase 2 + suggested_fix)."""
+        """to_dict 输出含全部 22 字段 (v5.5 P0-4: +round)."""
         state = EngineState()
         d = state.to_dict()
-        # v5.5 Phase 2: 17 → 21 字段 (+audit_findings, +plan_refine_count, +strengths, +assessment)
-        assert len(d) == 21, (
-            f"to_dict 应含 21 字段, 实际 {len(d)}: "
+        # v5.5 P0-4: 21 → 22 字段 (+round)
+        assert len(d) == 22, (
+            f"to_dict 应含 22 字段, 实际 {len(d)}: "
             f"{sorted(d.keys())}"
         )
         assert "_pending_sends" in d
@@ -412,14 +412,13 @@ class TestV55EngineStateFields:
         assert state.audit_findings is None
 
     def test_field_count_is_21(self) -> None:
-        """v5.5: 字段总数从 17 → 21 (新增 audit_findings, plan_refine_count,
-        strengths, assessment)."""
+        """v5.5: 字段总数从 21 → 22 (新增 round, P0-4)."""
         from dataclasses import fields
 
         state = EngineState()
         field_names = {f.name for f in fields(EngineState)}
         expected = {
-            "requirement", "current_stage",
+            "requirement", "current_stage", "round",
             "thread_id", "majors_in_a_row", "total_majors",
             "plan", "file_list", "batch_plan", "contracts",
             "files_changed", "commit_hash", "test_results",

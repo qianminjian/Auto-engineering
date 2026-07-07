@@ -383,15 +383,15 @@ def test_run_agent_instruction_passed_via_task(tmp_path: Path) -> None:
             run_agent(
                 "architect", "describe a long instruction here please", tmp_path
             )
-    # 验证 mock agent.execute 被调用, 入参 task 是 dict-like 含 description
+    # 验证 mock agent.execute 被调用, 入参 task 是 RuntimeTask 含 description
     assert mock_agent.execute.called
     call_args = mock_agent.execute.call_args
     task_arg = call_args.kwargs.get("task") or call_args.args[0]
-    assert "describe a long instruction here please" == task_arg["description"]
+    assert "describe a long instruction here please" == task_arg.description
 
 
 def test_run_agent_long_instruction_truncated_in_title(tmp_path: Path) -> None:
-    """长 instruction 在 task.title 中被截断到 50 字符."""
+    """长 instruction 完整传入 task.description (RuntimeTask 无 title 截断)."""
     with patch.dict(
         "os.environ", {"ANTHROPIC_API_KEY": "sk-test"}, clear=True
     ):
@@ -409,9 +409,8 @@ def test_run_agent_long_instruction_truncated_in_title(tmp_path: Path) -> None:
             run_agent("architect", long, tmp_path)
     call_args = mock_agent.execute.call_args
     task_arg = call_args.kwargs.get("task") or call_args.args[0]
-    title = task_arg["title"]
-    assert len(title) <= 50, f"title 应被截断 ≤50, 实测 {len(title)}"
-    assert title == long[:50]
+    # RuntimeTask.description 完整保留, 不截断
+    assert task_arg.description == long
 
 
 def test_run_agent_special_chars_in_instruction(tmp_path: Path) -> None:
@@ -433,7 +432,7 @@ def test_run_agent_special_chars_in_instruction(tmp_path: Path) -> None:
             run_agent("developer", special, tmp_path)
     call_args = mock_agent.execute.call_args
     task_arg = call_args.kwargs.get("task") or call_args.args[0]
-    assert task_arg["description"] == special
+    assert task_arg.description == special
 
 
 def test_run_agent_returns_7_required_fields(tmp_path: Path) -> None:

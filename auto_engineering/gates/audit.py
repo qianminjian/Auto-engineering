@@ -198,6 +198,7 @@ class AuditGate(Gate):
                 if size_mb > _MAX_FILE_MB:
                     continue
             except OSError:
+                _logger.debug("audit scan: stat 失败 %s", py_file)
                 continue
 
             findings.extend(self._scan_file(path, rel))
@@ -216,6 +217,7 @@ class AuditGate(Gate):
         try:
             content = path.read_text(errors="ignore")
         except OSError:
+            _logger.debug("audit scan: 读取失败 %s", path)
             return []
 
         findings: list[AuditFinding] = []
@@ -378,6 +380,7 @@ class AuditGate(Gate):
             try:
                 line_count = path.read_text(errors="ignore").count("\n")
             except OSError:
+                _logger.debug("audit scan: 大文件检查失败 %s", path)
                 continue
             if line_count > _LARGE_FILE_LINES:
                 rel = str(path.relative_to(project_root))

@@ -136,6 +136,7 @@ def _scan_file(path: Path) -> list[str]:
             return []
         content = path.read_text(errors="ignore")
     except (OSError, UnicodeDecodeError):
+        _logger.debug("secret scan: 不可读文件 %s", path)
         return []
 
     hits: dict[str, None] = {}  # 用 dict 保插入顺序去重

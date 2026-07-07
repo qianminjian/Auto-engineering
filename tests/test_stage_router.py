@@ -382,14 +382,14 @@ class TestNewEngineStateFields:
         assert isinstance(state.batch_plan, list)
 
     def test_field_count_is_18(self) -> None:
-        """字段总数 = 21 (v5.0 基线 13 + M1 新增 3 + suggested_fix + v5.5 4 字段).
+        """字段总数 = 22 (v5.5 P0-4: +round).
 
-        v5.5 Phase 2: 17 → 21 (+audit_findings, +plan_refine_count, +strengths, +assessment).
+        v5.5 P0-4: 21 → 22 (+round).
         """
         state = EngineState()
         fields = list(state.__dataclass_fields__.keys())
-        assert len(fields) == 21, (
-            f"Expected 21 fields (v5.5), got {len(fields)}: {fields}"
+        assert len(fields) == 22, (
+            f"Expected 22 fields (v5.5), got {len(fields)}: {fields}"
         )
 
 

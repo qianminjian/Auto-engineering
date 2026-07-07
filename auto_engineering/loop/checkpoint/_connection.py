@@ -134,4 +134,4 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
-__all__ = ["init_file_conn", "_with_conn", "_atomic"]
+__all__ = ["init_file_conn"]  # _with_conn / _atomic 为包内私有, 不公开导出

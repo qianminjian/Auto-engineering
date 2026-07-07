@@ -131,10 +131,15 @@ def run_agent(role: str, instruction: str, project_root: Path) -> dict:
         agent = runtime.get(role)
 
         async def _exec():
-            # 用 .execute 走真实 LLM 路径; mock-friendly: 无 api_key 时仍构造
+            from auto_engineering.runtime.task import Task as RuntimeTask
+
             try:
                 return await agent.execute(
-                    task={"id": task_id, "title": instruction[:50], "description": instruction},
+                    task=RuntimeTask(
+                        id=task_id,
+                        description=instruction,
+                        expected_output="",
+                    ),
                     ctx=None,
                 )
             except TypeError:

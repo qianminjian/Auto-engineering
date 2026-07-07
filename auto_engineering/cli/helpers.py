@@ -35,19 +35,14 @@ class ErrorCategory(enum.Enum):
 _ERROR_CATEGORY_MAP: dict[str, ErrorCategory] = {
     # USER_ERROR
     "CONFIG_": ErrorCategory.USER_ERROR,
-    "TASK_NOT_FOUND": ErrorCategory.USER_ERROR,
     "INVALID_AGENT_OUTPUT": ErrorCategory.USER_ERROR,
     # API_ERROR
     "LLM_": ErrorCategory.API_ERROR,
-    # NETWORK_ERROR
-    "CHECKPOINT_": ErrorCategory.NETWORK_ERROR,
     # BUSINESS_ERROR
     "GUARDRAIL_": ErrorCategory.BUSINESS_ERROR,
-    "STAGE_RETRY_": ErrorCategory.BUSINESS_ERROR,
-    "GRAPH_RECURSION_LIMIT": ErrorCategory.BUSINESS_ERROR,
     "AGENT_REGISTRATION_ERROR": ErrorCategory.USER_ERROR,
-    "OUTPUT_DROPPED": ErrorCategory.BUSINESS_ERROR,
-    "BUDGET_EXCEEDED": ErrorCategory.USER_ERROR,  # 预算超出归用户错(用户可调整阈值)
+    "OUTPUT_DROPPED": ErrorCategory.BUSINESS_ERROR,  # 保留 API, guardrail drop 信号
+    "BUDGET_EXCEEDED": ErrorCategory.USER_ERROR,
 }
 
 # 错误码 → 显式退出码覆盖 (v5.0 §PE.6: 130 = SIGINT)

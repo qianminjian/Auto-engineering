@@ -37,18 +37,13 @@ class EngineState:
     Note (P1-B): 旧名 LoopState 是 EngineState 的 alias, 保持向后兼容.
         新代码推荐 import EngineState.
 
-    Note (v5.0 M1): 字段总数从 13 → 17. 新增字段含义:
-        - batch_plan: list[dict] (architect 产出, v5.0 §B1.1 字段 6)
-        - majors_in_a_row: int (连续 MAJOR 计数, §B1.1 字段 16)
-        - total_majors: int (累计 MAJOR 计数, §B1.1 字段 17)
-        - thread_id: str (UUID v4, §B1.1 字段 15)
-    Note (2026-07-05): 17 字段 — 无 round 字段 (round 由 orchestrator 局部变量管理,
-    硬上限由 ConvergenceJudge._check_hard_limit 检查).
-    设计文档 B1.1 表与代码字段已同步.
+    Note (v5.5): 18 字段 — round 字段持久化到 EngineState (v5.5 audit P0-4).
+    硬上限由 ConvergenceJudge._check_hard_limit 检查.
     """
 
     requirement: str = ""
     current_stage: str = ""
+    round: int = 0  # v5.5 audit P0-4: round 计数器持久化到 EngineState, ae status 消费
 
     # 控制 (v5.0 §B1.1 字段 15-17: thread_id / majors_in_a_row / total_majors)
     thread_id: str = field(default_factory=_new_thread_id)

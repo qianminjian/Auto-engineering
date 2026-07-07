@@ -65,6 +65,7 @@ def register_checkpoint_commands(main: click.Group) -> None:
             try:
                 state_data = _json.loads(click.get_text_stream("stdin").read())
             except (ValueError, OSError):
+                _logger.warning("stdin JSON 解析失败, 回退空 state", exc_info=True)
                 state_data = {}
 
         if not state_data and not isinstance(state_data, dict):

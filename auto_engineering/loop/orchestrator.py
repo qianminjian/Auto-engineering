@@ -63,7 +63,7 @@ from typing import TYPE_CHECKING, Any
 
 from auto_engineering.agents.schema import derive_output_schema
 from auto_engineering.engine.state import EngineState, LoopState
-from auto_engineering.gates.base import Gate, GateVerdict
+from auto_engineering.gates.base import Gate
 from auto_engineering.loop.checkpoint.manager import CheckpointManager
 from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
 from auto_engineering.loop.convergence import (
@@ -72,7 +72,7 @@ from auto_engineering.loop.convergence import (
     RoundHistory,
 )
 from auto_engineering.loop.convergence import (
-    ConvergenceVerdict as ConvVerdict,
+    ConvergenceVerdict,
 )
 from auto_engineering.loop.guardrail import GuardrailChain
 from auto_engineering.loop.guardrail_facade import GuardrailFacade
@@ -203,7 +203,7 @@ class Orchestrator:
     round_results: deque[RoundResult] = field(
         default_factory=lambda: deque(maxlen=50)
     )
-    verdict: ConvVerdict | None = None
+    verdict: ConvergenceVerdict | None = None
     # v5.0 M4 (B2.1): 内部状态 — 由 __post_init__ 初始化, 默认占位.
     # _state: EngineState 17 字段 Channel 容器 (v5.0 §B1.1)
     # _retry_counters: Guardrail retry 计数 (per-stage 隔离)
@@ -362,6 +362,7 @@ class Orchestrator:
             round_id = 0
             while round_id < max_iter:
                 round_id += 1
+                self._state.round = round_id  # v5.5 P0-4: persist round to EngineState
 
                 round_result, current_stage, action = await self._tick(
                     round_id, max_iter, cancellation, guardrail_chain, project_root,
@@ -457,7 +458,7 @@ class Orchestrator:
             guardrail_chain, current_stage, self._state
         )
         if pre_action == "stop":
-            self.verdict = ConvVerdict.stop(level=4, reason="PRE guardrail stop")
+            self.verdict = ConvergenceVerdict.stop(level=4, reason="PRE guardrail stop")
             return None, current_stage, "break"
         if pre_action == "retry":
             return None, current_stage, "advance"
@@ -499,7 +500,7 @@ class Orchestrator:
             guardrail_chain, current_stage, self._state
         )
         if post_action == "stop":
-            self.verdict = ConvVerdict.stop(level=4, reason="POST guardrail stop")
+            self.verdict = ConvergenceVerdict.stop(level=4, reason="POST guardrail stop")
             return True
         if post_action == "retry":
             return False  # continue
@@ -521,7 +522,9 @@ class Orchestrator:
         self._step_2h_major_count(self._state, self._state.verdict, current_stage)
 
         # v5.5 Phase 2: 步2i-2k (DocSync + DeepAudit + T9)
-        all_gates_passed = self._all_gates_passed(round_result)
+        all_gates_passed = ConvergenceFacade._all_gates_passed(
+            round_result.history[0].gate_results if round_result.history else {}
+        )
         is_critic_approve = (
             current_stage == "critic"
             and self._state.verdict == "APPROVE"
@@ -561,7 +564,7 @@ class Orchestrator:
                 max_plan_refines=max_plan_refines,
             )
             if decision.should_stop:
-                self.verdict = ConvVerdict.stop(
+                self.verdict = ConvergenceVerdict.stop(
                     level=4, reason=decision.stop_reason or "T9-LIMIT stop"
                 )
                 self._save_checkpoint(round_id=round_id, step=2, tag="after_tick_t9_stop")
@@ -624,7 +627,7 @@ class Orchestrator:
             # 避免与"Gate 全 PASS" (level=3) 混淆. 之前用 level=3 会被
             # dev_loop.py 映射为 status="completed" (exit 0), 用户取消看起来像成功.
             # 现在 level=4 → status="failed" → exit 2.
-            self.verdict = ConvVerdict.stop(
+            self.verdict = ConvergenceVerdict.stop(
                 level=4,
                 reason="用户取消 (CancellationToken) → HARD_LIMIT",
             )
@@ -813,7 +816,7 @@ class Orchestrator:
                 exc.verdict,
             )
             return False
-        self.verdict = ConvVerdict.stop(
+        self.verdict = ConvergenceVerdict.stop(
             level=4,
             reason=f"critic verdict 异常 (重试 {MAX_CRITIC_RETRIES} 次仍失败, Bug 3 升级到 HARD_LIMIT): {exc.verdict!r}",
         )
@@ -829,7 +832,7 @@ class Orchestrator:
         返回 True=break, False=continue, None=需 judge 评估.
         """
         if decision.should_stop:
-            self.verdict = ConvVerdict.stop(
+            self.verdict = ConvergenceVerdict.stop(
                 level=4, reason=decision.stop_reason or "StageRouter stop"
             )
             return True
@@ -960,21 +963,7 @@ class Orchestrator:
         learner = ThresholdLearner(history)
         return learner.compute_p1_threshold()
 
-    def _all_gates_passed(self, round_result: RoundResult) -> bool:
-        """检查本轮所有 Gate 是否全部通过.
 
-        Args:
-            round_result: 本轮执行结果.
-
-        Returns:
-            True 如果所有 gate 通过或无 gate 运行, False 如果任一 gate 失败.
-        """
-        if not round_result.history:
-            return True
-        gate_results = round_result.history[0].gate_results if round_result.history else {}
-        if not gate_results:
-            return True
-        return all(v.passed for v in gate_results.values())
 
     def _sync_design_docs(self, state: "EngineState") -> None:
         """B7.1 步2i: 同步设计文档 — 本轮改动后更新 BEACON.md 状态.
@@ -1021,7 +1010,7 @@ class Orchestrator:
         latest_gates: dict[str, Any],
         max_iter: int,
         round_id: int,
-    ) -> tuple[list[RoundHistory], ConvVerdict]:
+    ) -> tuple[list[RoundHistory], ConvergenceVerdict]:
         """step 3: 退出块. 返回 (history, final_verdict).
 
         3 种退出原因:
@@ -1031,7 +1020,7 @@ class Orchestrator:
         退出前 _save_checkpoint 一次 (兜底持久化).
         """
         self._save_checkpoint(round_id=round_id, step=2, tag="exit_block")
-        final_verdict = ConvVerdict.stop(
+        final_verdict = ConvergenceVerdict.stop(
             level=4,
             reason=f"达到最大轮次 {max_iter} (硬上限)",
         )

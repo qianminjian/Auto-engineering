@@ -41,7 +41,22 @@ _logger = logging.getLogger("ae.cli.gate_check")
 # ============================================================
 
 QUICK_GATES = ("safety", "lint", "type_check")
-ALL_GATES = ("safety", "lint", "type_check", "audit", "contract", "test", "build")
+
+
+def _all_gate_names() -> tuple[str, ...]:
+    """返回全量 Gate 名称 (SSOT: gates/registry.py get_default_gate_names()).
+
+    若 registry 不可用 (import 错误等), 回退到硬编码列表.
+    """
+    try:
+        from auto_engineering.gates.registry import get_default_gate_names
+
+        return tuple(get_default_gate_names())
+    except Exception:
+        return ("safety", "lint", "type_check", "audit", "contract", "test", "build")
+
+
+ALL_GATES = _all_gate_names()
 
 
 def _instantiate_gate(name: str, project_root: Path) -> object | None:

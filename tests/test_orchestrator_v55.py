@@ -247,21 +247,13 @@ class TestOrchestratorV55Integration:
         )
         orch._sync_design_docs(state)  # Should not raise
 
-    # --- 8. _all_gates_passed 逻辑 ---
+    # --- 8. ConvergenceFacade._all_gates_passed 逻辑 ---
 
     def test_all_gates_passed_empty_history(self) -> None:
-        """无 history → _all_gates_passed 返回 True."""
-        from auto_engineering.loop.round import RoundResult
+        """空 gate_results → ConvergenceFacade._all_gates_passed 返回 True."""
+        from auto_engineering.loop.convergence_facade import ConvergenceFacade
 
-        result = RoundResult(
-            round_id=1, outcomes=[], history=[],
-            gate_results={},
-        )
-        config = OrchestratorConfig()
-        orch = Orchestrator(
-            requirement="test", tasks=[], executor=None, config=config,
-        )
-        assert orch._all_gates_passed(result) is True
+        assert ConvergenceFacade._all_gates_passed({}) is True
 
     # --- 9. Orchestrator 初始化包含 v5.5 字段 ---
 
