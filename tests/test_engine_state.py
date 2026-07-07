@@ -134,10 +134,11 @@ class TestEngineStateFieldDefaults:
             "files_changed", "commit_hash", "test_results",
             "verdict", "findings", "critic_feedback",
             "suggested_fix",  # 2026-07-04 Self-Refine 深化
-            "_pending_sends",
             # v5.5 Phase 2 new fields
             "audit_findings", "plan_refine_count",
             "strengths", "assessment",
+            # v5.5 P1-5: 内部写入审计日志
+            "_write_log",
         }
         assert field_names == expected, (
             f"EngineState 字段不匹配 v5.5. "
@@ -172,9 +173,6 @@ class TestEngineStateFieldDefaults:
         assert state.verdict == ""
         assert state.findings == []
         assert state.critic_feedback == ""
-
-        # 多 Agent 预留
-        assert state._pending_sends == []
 
     def test_thread_id_is_unique_per_instance(self) -> None:
         """每个新 EngineState 实例的 thread_id 应唯一 (UUID v4)."""
@@ -294,11 +292,10 @@ class TestEngineStateBoundary:
         state = EngineState()
         d = state.to_dict()
         # v5.5 P0-4: 21 → 22 字段 (+round)
-        assert len(d) == 22, (
-            f"to_dict 应含 22 字段, 实际 {len(d)}: "
+        assert len(d) == 21, (
+            f"to_dict 应含 21 字段, 实际 {len(d)}: "
             f"{sorted(d.keys())}"
         )
-        assert "_pending_sends" in d
         assert "suggested_fix" in d, "to_dict 必须包含 suggested_fix (Self-Refine 深化)"
         assert "audit_findings" in d, "to_dict 必须包含 audit_findings (v5.5 Phase 2)"
         assert "plan_refine_count" in d, "to_dict 必须包含 plan_refine_count (v5.5 Phase 2)"
@@ -423,10 +420,12 @@ class TestV55EngineStateFields:
             "plan", "file_list", "batch_plan", "contracts",
             "files_changed", "commit_hash", "test_results",
             "verdict", "findings", "critic_feedback",
-            "suggested_fix", "_pending_sends",
+            "suggested_fix",
             # v5.5 Phase 2 new fields
             "audit_findings", "plan_refine_count",
             "strengths", "assessment",
+            # v5.5 P1-5: 内部写入审计日志
+            "_write_log",
         }
         assert field_names == expected, (
             f"EngineState 字段不匹配 v5.5. "

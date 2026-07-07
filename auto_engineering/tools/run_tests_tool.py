@@ -13,6 +13,8 @@ from typing import ClassVar
 
 from .base import BaseTool, ToolResult
 
+__all__ = ["RunTestsTool"]
+
 _logger = logging.getLogger("ae.tools.run_tests")
 
 _RUNNER_CMDS = {

@@ -3,7 +3,7 @@
 设计来源: design/v2.0-Analysis-Loop.md §4.3 文件隔离 + §4.5 多 Agent 并发.
 
 核心组件:
-    Task           — 单个任务 (id / agent_type / target_files / depends_on)
+    Task           — 单个任务 (id / role / target_files / depends_on)
     TaskDAG        — DAG 容器 + 拓扑排序 (Kahn 算法)
     Plan           — 完整计划 (task list + validate + parallelism_groups)
     ConflictError  — 文件冲突异常
@@ -43,10 +43,16 @@ VALID_TASK_ROLES = frozenset({"developer", "critic", "reviewer", "architect"})
 class ConflictError(Exception):
     """文件冲突异常 — Orchestrator 拆分失败时抛."""
 
-    def __init__(self, conflicts: list[str]) -> None:
+    def __init__(self, conflicts: list[str], suggestion: str = "") -> None:
         self.conflicts = conflicts
+        self.suggestion = suggestion or (
+            "将冲突文件合并到同一个 Task 顺序执行, "
+            "或拆分到不同的源文件以消除冲突"
+        )
         super().__init__(
-            f"文件冲突 ({len(conflicts)} 处):\n  - " + "\n  - ".join(conflicts)
+            f"文件冲突 ({len(conflicts)} 处):\n  - "
+            + "\n  - ".join(conflicts)
+            + f"\n建议: {self.suggestion}"
         )
 
 
@@ -78,12 +84,11 @@ class Task:
         target_files: 涉及的文件路径集合 (用于文件隔离检查)
         context_files: 上下文文件列表 (只读, 新字段)
         validation: 验证规则 (Gate 子集, 新字段)
-        deps: 前置 Task ID 列表 (新字段名, 同时保留 depends_on 旧字段名)
+        depends_on: 前置 Task ID 列表 (v5.5 audit P0-6: 统一字段, 废弃 deps)
         estimated_minutes: 预估耗时 (供 Round Close 监控)
         status: 任务状态
         output: 任务输出 (新字段, 完成后赋值)
-        agent_type: 执行 Agent 角色 (保留旧字段, 与 role 同义)
-        depends_on: 前置 Task ID 列表 (保留旧字段名, 与 deps 同义)
+        agent_type: Deprecated property, delegates to role (v5.5 P1-7)
     """
 
     id: str
@@ -94,35 +99,31 @@ class Task:
     target_files: frozenset[str] = field(default_factory=frozenset)
     context_files: list[str] = field(default_factory=list)
     validation: TaskValidation | None = None
-    deps: list[str] = field(default_factory=list)
+    depends_on: list[str] = field(default_factory=list)
     estimated_minutes: int = 30
     status: TaskStatus = TaskStatus.PENDING
     output: Any = None
     # v5.5 Phase 3: batch_plan 扩展字段 (verification + steps)
     verification: str | None = None
     steps: list[str] | None = None
-    # 保留旧字段名 (向后兼容)
-    agent_type: str = "developer"
-    depends_on: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         """归一化 target_files 为 frozenset[str] (允许 list/set 输入)."""
         if not isinstance(self.target_files, frozenset):
             self.target_files = frozenset(self.target_files)
-        # depends_on / deps 拷贝并同步 (deps 优先, depends_on 补充)
-        self.deps = list(self.deps)
         self.depends_on = list(self.depends_on)
-        # 同步: deps 未设置时从 depends_on 拷贝, depends_on 未设置时从 deps 拷贝
-        if not self.deps and self.depends_on:
-            self.deps = list(self.depends_on)
-        if not self.depends_on and self.deps:
-            self.depends_on = list(self.deps)
         self.context_files = list(self.context_files)
-        # 同步 agent_type / role (向后兼容: agent_type 缺省时用 role)
-        if self.agent_type == "developer" and self.role != "developer":
-            self.agent_type = self.role
-        elif self.role == "developer" and self.agent_type != "developer":
-            self.role = self.agent_type
+
+    # v5.5 P1-7: agent_type → role 统一, agent_type 作为 deprecated property
+    @property
+    def agent_type(self) -> str:
+        """Deprecated: use role instead."""
+        return self.role
+
+    @agent_type.setter
+    def agent_type(self, value: str) -> None:
+        """Deprecated: set role instead."""
+        self.role = value
 
 
 @dataclass
@@ -301,7 +302,7 @@ def _topological_levels(tasks: list[Task]) -> list[list[Task]]:
     # 计算入度 (只统计 batch 内 deps; 外部 dep 不计入)
     in_degree: dict[str, int] = {}
     for t in tasks:
-        in_degree[t.id] = sum(1 for d in t.deps if d in task_map)
+        in_degree[t.id] = sum(1 for d in t.depends_on if d in task_map)
 
     # Kahn BFS 分层
     current: list[Task] = [t for t in tasks if in_degree[t.id] == 0]
@@ -315,7 +316,7 @@ def _topological_levels(tasks: list[Task]) -> list[list[Task]]:
         next_level: list[Task] = []
         for task in current:
             for other in tasks:
-                if other.id not in seen and task.id in other.deps:
+                if other.id not in seen and task.id in other.depends_on:
                     in_degree[other.id] -= 1
                     if in_degree[other.id] == 0:
                         next_level.append(other)

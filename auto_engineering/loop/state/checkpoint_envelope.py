@@ -24,12 +24,14 @@ from pydantic import BaseModel, Field
 
 _logger = logging.getLogger("ae.loop.state.cp")
 
-from auto_engineering.loop.state.channels import (
+from auto_engineering.loop.checkpoint._serialization import (
     AccumulatingChannel,
     BarrierChannel,
     Channel,
     LastValueChannel,
 )
+from auto_engineering.loop.plan import Task, TaskValidation
+from auto_engineering.loop.round import TaskOutcome
 from auto_engineering.loop.state.metrics import MetricsSnapshot, Signal
 
 
@@ -260,9 +262,6 @@ def _rebuild_task(value: Any) -> Any:
     """
     if not isinstance(value, dict):
         return value
-    # 避免循环依赖: 延迟导入
-    from auto_engineering.loop.plan import Task, TaskValidation
-
     # 过滤: 只保留 Task 字段 (避免 Pydantic 报警)
     field_names = set(Task.__dataclass_fields__)
     kwargs = {k: v for k, v in value.items() if k in field_names}
@@ -297,9 +296,6 @@ def _rebuild_task_outcome(value: Any) -> Any:
     """
     if not isinstance(value, dict):
         return value
-    # 避免循环依赖: 延迟导入
-    from auto_engineering.loop.round import TaskOutcome
-
     field_names = set(TaskOutcome.__dataclass_fields__)
     kwargs = {k: v for k, v in value.items() if k in field_names}
     try:

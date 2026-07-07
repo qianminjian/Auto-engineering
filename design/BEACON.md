@@ -6,13 +6,13 @@
 2. **`ae dev-loop` CLI**：调试入口, stdout JSON 契约 (6 字段)
 3. **确定性 Guardrail**：每 Stage 前后自动检查 (G1-G5, pass/block/retry 三态)
 4. **Checkpoint 恢复**：SQLite WAL 持久化, 中断可恢复
-5. **6 道 Gate**（v5.4）：safety → lint → type_check → contract → test → build（TDDGate + StageTransitionGate 在 quality_gate.py 作为 Guardrail 参考实现，不在 DEFAULT_GATES）
+5. **8 道 Gate**（v5.5）：DEFAULT_GATES 7 道: safety → lint → type_check → audit → contract → test → build；按需 Gate 1 道: deep_audit（仅 critic APPROVE 时触发）
 6. **Init-Loop 接口契约**（IL.1-IL.6）：消费 Init 项目 `.ae-state/init-manifest.json`
 
 ## 范围边界
 
-**做：** Python Orchestrator 12 步主循环；Agent Tool 直接执行模式 (architect/critic/developer 统一走 AgentRuntime 路径)；GuardrailChain + 6 Gates + StageRouter + ConvergenceJudge + SQLite checkpoint；Agent Working Agreements Hook；Init-Loop 接口契约
-**不做：** Init Engineering（独立项目）；多 LLM Provider、Web UI、SaaS 服务端
+**做：** Python Orchestrator 12 步主循环；Agent Tool 直接执行模式 (architect/critic/developer 统一走 AgentRuntime 路径)；GuardrailChain + 8 Gates + StageRouter + ConvergenceJudge + SQLite checkpoint；Agent Working Agreements Hook；Init-Loop 接口契约
+**不做：** Init Engineering（独立项目）；多 LLM Provider（--llm-provider 选项仅 anthropic，为预留扩展点）、Web UI、SaaS 服务端
 
 ## 设计决策
 

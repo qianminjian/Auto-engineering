@@ -22,9 +22,11 @@ from __future__ import annotations
 
 from auto_engineering.loop.checkpoint import SQLiteCheckpointStore
 from auto_engineering.loop.state import (
+    CheckpointEnvelope,
+)
+from auto_engineering.loop.checkpoint._serialization import (
     AccumulatingChannel,
     BarrierChannel,
-    CheckpointEnvelope,
     LastValueChannel,
 )
 

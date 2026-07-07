@@ -1,11 +1,9 @@
-"""v5.4 审计后 ErrorCode 全覆盖测试 — 15 ErrorCode + AEError 基类.
+"""v5.5 审计后 ErrorCode 全覆盖测试 — 13 ErrorCode + AEError 基类.
 
-v5.4 审计 P1-2+P1-3: 删除 8 个 dead ErrorCode (CHECKPOINT_SAVE_FAILED,
-CHECKPOINT_LOAD_FAILED, LLM_MAX_RETRIES, CONFIG_INVALID_VALUE, CONTRACT_REJECTED,
-STAGE_RETRY_EXCEEDED, GRAPH_RECURSION_LIMIT, TASK_NOT_FOUND) +
-3 个从未 raise 的异常类 (GuardrailBlockedError, GuardrailRetrySignal, OutputDropped).
+v5.5 审计 Round 1: 删除 3 个从未使用的 ErrorCode (GUARDRAIL_BLOCKED,
+GUARDRAIL_RETRY, OUTPUT_DROPPED) + 新增 TOOL_EXECUTION_ERROR.
 
-本文件验证剩余 15 ErrorCode + AEError 基类的构造/链式/序列化行为.
+本文件验证剩余 13 ErrorCode + AEError 基类的构造/链式/序列化行为.
 """
 
 from __future__ import annotations
@@ -21,10 +19,10 @@ from auto_engineering.errors import AEError, ErrorCode
 
 
 class TestErrorCodeEnum:
-    """枚举完整性 — 15 ErrorCode (v5.4 审计后)."""
+    """枚举完整性 — 13 ErrorCode (v5.5 审计后)."""
 
     def test_all_codes_defined(self) -> None:
-        """15 个 ErrorCode 全存在."""
+        """13 个 ErrorCode 全存在."""
         expected = {
             # LLM / API (6)
             "LLM_TIMEOUT",
@@ -33,16 +31,13 @@ class TestErrorCodeEnum:
             "LLM_AUTH_ERROR",
             "LLM_RATE_LIMIT",
             "LLM_UNKNOWN_ERROR",
-            # Guardrail (2, 保留供未来集成)
-            "GUARDRAIL_BLOCKED",
-            "GUARDRAIL_RETRY",
-            # Stage / Loop (2)
+            # Stage / Loop (3)
             "MAX_TOOL_CALLS_EXCEEDED",
             "INVALID_AGENT_OUTPUT",
-            # Task / Cancellation (3)
+            "TOOL_EXECUTION_ERROR",
+            # Task / Cancellation (2)
             "TASK_CANCELLED",
             "AGENT_REGISTRATION_ERROR",
-            "OUTPUT_DROPPED",
             # Configuration (1)
             "CONFIG_MISSING_API_KEY",
             # Budget (1)
@@ -120,7 +115,7 @@ class TestAEErrorConstruction:
 
 
 class TestActiveCodesRaisePoints:
-    """15 active codes 的预期 message 形式 (v5.4 审计后).
+    """13 active codes 的预期 message 形式 (v5.5 审计后).
 
     这些是 raise sites 的 contract — 如果上游调用方依赖
     特定 substring 来做错误处理, 改 message 会 break.
@@ -158,6 +153,16 @@ class TestActiveCodesRaisePoints:
         err = AEError(ErrorCode.INVALID_AGENT_OUTPUT, "JSON 解析失败: line 5")
         assert "json" in err.message.lower() or "解析" in err.message
 
+    def test_tool_execution_error(self) -> None:
+        """TOOL_EXECUTION_ERROR (BaseAgent.execute() → 工具业务失败)."""
+        err = AEError(
+            ErrorCode.TOOL_EXECUTION_ERROR,
+            "Tool 'git_commit' error: nothing to commit",
+            suggestion="检查工具 'git_commit' 的输入参数或运行环境",
+        )
+        assert err.code is ErrorCode.TOOL_EXECUTION_ERROR
+        assert "git_commit" in err.message
+
     def test_task_cancelled(self) -> None:
         err = AEError(ErrorCode.TASK_CANCELLED, "用户 Ctrl-C")
         assert "用户" in err.message or "ctrl" in err.message.lower()
@@ -177,43 +182,27 @@ class TestActiveCodesRaisePoints:
         err = AEError(ErrorCode.BUDGET_EXCEEDED, "tokens 8192 > max 4096")
         assert "token" in err.message.lower()
 
-    def test_guardrail_blocked_message(self) -> None:
-        """GUARDRAIL_BLOCKED 保留供未来 guardrail block 信号."""
-        err = AEError(ErrorCode.GUARDRAIL_BLOCKED, "guardrail blocked: missing tests")
-        assert "guardrail" in err.message.lower() or "missing" in err.message.lower()
-
-    def test_guardrail_retry_message(self) -> None:
-        """GUARDRAIL_RETRY 保留供未来 guardrail retry 信号."""
-        err = AEError(ErrorCode.GUARDRAIL_RETRY, "guardrail retry: please fix")
-        assert "retry" in err.message.lower() or "fix" in err.message.lower()
-
-    def test_output_dropped_message(self) -> None:
-        """OUTPUT_DROPPED 保留供未来 guardrail drop 信号."""
-        err = AEError(ErrorCode.OUTPUT_DROPPED, "output dropped by guardrail")
-        assert "drop" in err.message.lower() or "output" in err.message.lower()
-
 
 # ============================================================
-# IV. v5.0 错误码 → 抛点映射契约 (审计后 15 codes)
+# IV. v5.0 错误码 → 抛点映射契约 (审计后 13 codes)
 # ============================================================
 
 
 class TestV5ErrorCodeMapping:
-    """v5.0 错误码 → 抛点映射契约 (v5.4 审计后 15 codes).
+    """v5.0 错误码 → 抛点映射契约 (v5.5 审计后 13 codes).
 
     按类别分组:
         LLM (6): TIMEOUT, NETWORK_ERROR, INVALID_RESPONSE, AUTH_ERROR, RATE_LIMIT, UNKNOWN_ERROR
-        Guardrail (2): BLOCKED, RETRY
-        Stage (2): MAX_TOOL_CALLS_EXCEEDED, INVALID_AGENT_OUTPUT
-        Task (3): CANCELLED, AGENT_REGISTRATION_ERROR, OUTPUT_DROPPED
+        Stage (3): MAX_TOOL_CALLS_EXCEEDED, INVALID_AGENT_OUTPUT, TOOL_EXECUTION_ERROR
+        Task (2): CANCELLED, AGENT_REGISTRATION_ERROR
         Config (1): MISSING_API_KEY
         Budget (1): EXCEEDED
     """
 
-    def test_error_code_total_count_is_15(self) -> None:
-        """ErrorCode 总数 = 15 (v5.4 审计后)."""
-        assert len(ErrorCode) == 15, (
-            f"ErrorCode 总数应 15, 实际 {len(ErrorCode)}. "
+    def test_error_code_total_count_is_13(self) -> None:
+        """ErrorCode 总数 = 13 (v5.5 审计后)."""
+        assert len(ErrorCode) == 13, (
+            f"ErrorCode 总数应 13, 实际 {len(ErrorCode)}. "
             f"新增/删除需同步 test_all_codes_defined"
         )
 
@@ -229,29 +218,27 @@ class TestV5ErrorCodeMapping:
         for c in codes:
             assert c.name.startswith("LLM_"), f"{c.name} 不属于 LLM 类别"
 
-    def test_category_guardrail_codes(self) -> None:
-        codes = [ErrorCode.GUARDRAIL_BLOCKED, ErrorCode.GUARDRAIL_RETRY]
-        for c in codes:
-            assert c.name.startswith("GUARDRAIL_"), f"{c.name} 不属于 Guardrail 类别"
-
     def test_category_stage_codes(self) -> None:
-        codes = [ErrorCode.MAX_TOOL_CALLS_EXCEEDED, ErrorCode.INVALID_AGENT_OUTPUT]
+        codes = [
+            ErrorCode.MAX_TOOL_CALLS_EXCEEDED,
+            ErrorCode.INVALID_AGENT_OUTPUT,
+            ErrorCode.TOOL_EXECUTION_ERROR,
+        ]
         for c in codes:
-            assert c.name.endswith("_EXCEEDED") or c.name == "INVALID_AGENT_OUTPUT", (
-                f"{c.name} 不符合 Stage 命名约定"
-            )
+            assert (
+                c.name.endswith("_EXCEEDED")
+                or c.name == "INVALID_AGENT_OUTPUT"
+                or c.name == "TOOL_EXECUTION_ERROR"
+            ), f"{c.name} 不符合 Stage 命名约定"
 
     def test_category_task_codes(self) -> None:
         codes = [
             ErrorCode.TASK_CANCELLED,
             ErrorCode.AGENT_REGISTRATION_ERROR,
-            ErrorCode.OUTPUT_DROPPED,
         ]
         for c in codes:
             assert (
-                c.name.startswith("TASK_")
-                or c.name.startswith("AGENT_")
-                or c.name.startswith("OUTPUT_")
+                c.name.startswith("TASK_") or c.name.startswith("AGENT_")
             ), f"{c.name} 不属于 Task 类别"
 
     def test_category_config_code(self) -> None:
@@ -267,12 +254,6 @@ class TestV5ErrorCodeMapping:
         )
         assert err.code is ErrorCode.CONFIG_MISSING_API_KEY
         assert "ANTHROPIC_API_KEY" in err.message
-
-    def test_v5_b_guardrail_block(self) -> None:
-        """GUARDRAIL_BLOCKED (保留供未来 guardrail block 信号)."""
-        err = AEError(ErrorCode.GUARDRAIL_BLOCKED, "Guardrail blocked: Plan 缺失")
-        assert err.code is ErrorCode.GUARDRAIL_BLOCKED
-        assert "block" in str(err).lower() or "missing" in str(err).lower()
 
     def test_v5_d_llm_timeout(self) -> None:
         """LLM_TIMEOUT (BaseAgent._map_llm_exception APITimeoutError)."""

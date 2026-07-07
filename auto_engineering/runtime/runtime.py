@@ -12,10 +12,13 @@ v2.0 API:
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from auto_engineering.runtime.context import TaskContext
 from auto_engineering.runtime.task import Task, TaskResult
+
+if TYPE_CHECKING:
+    from auto_engineering.runtime.cancellation import CancellationToken
 
 
 @runtime_checkable
@@ -26,7 +29,7 @@ class Agent(Protocol):
         self,
         task: Task,
         ctx: TaskContext,
-        cancellation: Any = None,
+        cancellation: "CancellationToken | None" = None,
     ) -> TaskResult: ...
 
 

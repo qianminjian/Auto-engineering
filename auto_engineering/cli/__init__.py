@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import click
@@ -21,32 +22,32 @@ import click
 from auto_engineering import __version__
 from auto_engineering.errors import AEError, ErrorCode
 
-# Re-export 所有 helpers + dev_loop 符号, 保持 from auto_engineering.cli import ... 兼容
+# Re-export 公开符号, 保持 from auto_engineering.cli import ... 兼容
 from auto_engineering.runtime.cancellation import CancellationToken  # noqa: F401
 from auto_engineering.cli.helpers import (  # noqa: F401
     ErrorCategory,
     ProgressLogger,
     TokenTracker,
-    _CATEGORY_FRIENDLY_PREFIX,
-    _emit_stage_done,
-    _install_sigint_handler,
-    _log_engine_version,
-    _log_stage_progress,
     classify_error,
 )
 from auto_engineering.cli.dev_loop import (  # noqa: F401
     OrchestratorRunResult,
-    _build_v2_agent_runtime,
-    _run_v2_orchestrator,
 )
 from auto_engineering.cli.checkpoint import register_checkpoint_commands  # noqa: F401
 from auto_engineering.cli.doctor import register_doctor_command  # noqa: F401
 from auto_engineering.cli.gate_check import register_gate_check_command  # noqa: F401
 from auto_engineering.cli.agent import register_agent_command  # noqa: F401
 from auto_engineering.cli.status import (  # noqa: F401
-    _collect_status_json,
     register_status_command,
 )
+
+# 内部使用 (不 re-export, 非公开 API)
+from auto_engineering.cli.helpers import (  # noqa: F401
+    _CATEGORY_FRIENDLY_PREFIX,
+    _install_sigint_handler,
+    _log_engine_version,
+)
+from auto_engineering.cli.dev_loop import _run_v2_orchestrator  # noqa: F401
 
 
 # ============================================================
@@ -71,9 +72,9 @@ def main():
 @click.option("--format", "log_format", type=click.Choice(["text", "json"]), default="text", help="输出格式 (与 ae status --format 统一)")
 @click.option(
     "--llm-provider",
-    type=click.Choice(["anthropic", "ollama", "openai"]),
+    type=click.Choice(["anthropic"]),
     default="anthropic",
-    help="LLM 提供方",
+    help="LLM 提供方 (仅 anthropic 已实装)",
 )
 @click.option("--project-root", type=click.Path(exists=True), help="项目根目录 (默认 cwd)")
 def dev_loop(
@@ -84,7 +85,7 @@ def dev_loop(
     llm_provider: str,
     project_root: str,
 ):
-    """单需求开发循环 (v5.4 Agent Tool 直接执行模式).
+    """单需求开发循环 (v5.5 Agent Tool 直接执行模式).
 
     v5.4: architect/critic 两个 LLM 调用点统一走 AgentRuntime 路径,
     不再使用 JSONL 协议.
@@ -95,31 +96,33 @@ def dev_loop(
 
     root = Path(project_root).resolve() if project_root else Path.cwd()
 
-    from auto_engineering.config.environment import load_ae_answers, preflight
+    from auto_engineering.config.environment import preflight
 
     try:
         preflight(root)
     except SystemExit:
         raise
 
-    from auto_engineering.config.settings import Settings
+    from auto_engineering.utils.plugin_mode import is_llm_available
 
-    try:
-        Settings.from_env()
-    except AEError as e:
-        category, exit_code = classify_error(e)
-        click.echo(f"{_CATEGORY_FRIENDLY_PREFIX[category]} {e.message}", err=True)
+    if not is_llm_available():
+        msg = (
+            "环境变量 ANTHROPIC_API_KEY/ANTHROPIC_AUTH_TOKEN 未设置。"
+            "Plugin mode (Claude Code agent 内) 应零配置, 由 Claude Code OAuth 自动注入。"
+            "CLI 调试模式需手动 export ANTHROPIC_API_KEY=sk-ant-..."
+        )
+        category, exit_code = classify_error(
+            AEError(ErrorCode.CONFIG_MISSING_API_KEY, msg)
+        )
+        click.echo(f"{_CATEGORY_FRIENDLY_PREFIX[category]} {msg}", err=True)
         raise SystemExit(exit_code) from None
-
-    answers_data = load_ae_answers(root)
-    _ = answers_data
 
     cancellation = CancellationToken()
     _install_sigint_handler(cancellation)
 
     progress = ProgressLogger(log_format=log_format)
     click.echo(f"Starting dev-loop: {requirement}")
-    _log_engine_version("v5.4")
+    _log_engine_version("v5.5")
 
     tracker = TokenTracker(max_tokens=max_tokens)
     try:
@@ -135,7 +138,6 @@ def dev_loop(
         category, exit_code = classify_error(e)
         prefix = _CATEGORY_FRIENDLY_PREFIX[category]
         if log_format == "json":
-            import json
             import uuid
 
             error_payload = {
@@ -156,8 +158,6 @@ def dev_loop(
 
     if log_format == "json":
         # v5.0 §B13.2: 6 字段 JSON 契约
-        import json
-
         click.echo(json.dumps(result.to_json_dict(), ensure_ascii=False, indent=2))
     else:
         click.echo(

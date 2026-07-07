@@ -40,7 +40,7 @@ def project_with_v1_checkpoints(
     (tmp_path / ".ae-answers.yml").write_text("project_name: test\n")
     monkeypatch.chdir(tmp_path)
 
-    cp_dir = tmp_path / ".ae-checkpoints"
+    cp_dir = tmp_path / ".ae-state"
     cp_dir.mkdir()
     db_file = cp_dir / "v1.db"
     from auto_engineering.loop.checkpoint import SQLiteCheckpointStore
@@ -62,7 +62,7 @@ def project_with_v2_checkpoints(
     (tmp_path / ".ae-answers.yml").write_text("project_name: test\n")
     monkeypatch.chdir(tmp_path)
 
-    cp_dir = tmp_path / ".ae-checkpoints"
+    cp_dir = tmp_path / ".ae-state"
     cp_dir.mkdir()
     db_file = cp_dir / "v2.db"
     from auto_engineering.loop.checkpoint import SQLiteCheckpointStore
@@ -78,7 +78,7 @@ def project_with_v2_checkpoints(
 
 @pytest.fixture
 def empty_project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """项目根但无 .ae-checkpoints 目录."""
+    """项目根但无 .ae-state 目录."""
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
     (tmp_path / ".git").mkdir()
     (tmp_path / ".ae-answers.yml").write_text("project_name: test\n")
@@ -95,7 +95,7 @@ class TestCheckpointListV1:
     """ae checkpoint list (v1 入口)."""
 
     def test_list_empty_dir_message(self, empty_project: Path) -> None:
-        """无 .ae-checkpoints 目录 → 显示 'no checkpoint directory'."""
+        """无 .ae-state 目录 → 显示 'no checkpoint directory'."""
         runner = CliRunner()
         result = runner.invoke(main, ["checkpoint", "list"])
         assert result.exit_code == 0
@@ -113,12 +113,12 @@ class TestCheckpointListV1:
     def test_list_handles_corrupted_db(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """.ae-checkpoints 目录含损坏 .db 文件 → 跳过 + warn."""
+        """.ae-state 目录含损坏 .db 文件 → 跳过 + warn."""
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
         (tmp_path / ".git").mkdir()
         (tmp_path / ".ae-answers.yml").write_text("project_name: test\n")
         monkeypatch.chdir(tmp_path)
-        cp_dir = tmp_path / ".ae-checkpoints"
+        cp_dir = tmp_path / ".ae-state"
         cp_dir.mkdir()
         bad_db = cp_dir / "bad.db"
         bad_db.write_bytes(b"not a sqlite database")
@@ -143,7 +143,7 @@ class TestCheckpointShowV1:
         runner = CliRunner()
         from auto_engineering.loop.checkpoint import SQLiteCheckpointStore
 
-        cp_dir = project_with_v1_checkpoints / ".ae-checkpoints"
+        cp_dir = project_with_v1_checkpoints / ".ae-state"
         store = SQLiteCheckpointStore(str(cp_dir / "v1.db"))
         metas = store.list_all()
         cp_id = metas[0].id
@@ -161,7 +161,7 @@ class TestCheckpointShowV1:
         assert "not found" in result.output
 
     def test_show_without_checkpoint_dir(self, empty_project: Path) -> None:
-        """无 .ae-checkpoints → exit 1."""
+        """无 .ae-state → exit 1."""
         runner = CliRunner()
         result = runner.invoke(main, ["checkpoint", "show", "any-id"])
         assert result.exit_code != 0
@@ -179,7 +179,7 @@ class TestCheckpointResumeV1:
         runner = CliRunner()
         from auto_engineering.loop.checkpoint import SQLiteCheckpointStore
 
-        cp_dir = project_with_v1_checkpoints / ".ae-checkpoints"
+        cp_dir = project_with_v1_checkpoints / ".ae-state"
         store = SQLiteCheckpointStore(str(cp_dir / "v1.db"))
         metas = store.list_all()
         cp_id = metas[0].id
@@ -254,7 +254,7 @@ class TestCheckpointV2Show:
         runner = CliRunner()
         from auto_engineering.loop.checkpoint import SQLiteCheckpointStore
 
-        cp_dir = project_with_v2_checkpoints / ".ae-checkpoints"
+        cp_dir = project_with_v2_checkpoints / ".ae-state"
         store = SQLiteCheckpointStore(str(cp_dir / "v2.db"))
         metas = store.list_all()
         cp_id = metas[0].id
@@ -288,7 +288,7 @@ class TestCheckpointV2Delete:
         runner = CliRunner()
         from auto_engineering.loop.checkpoint import SQLiteCheckpointStore
 
-        cp_dir = project_with_v2_checkpoints / ".ae-checkpoints"
+        cp_dir = project_with_v2_checkpoints / ".ae-state"
         store = SQLiteCheckpointStore(str(cp_dir / "v2.db"))
         metas = store.list_all()
         assert len(metas) >= 1

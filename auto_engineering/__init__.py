@@ -29,3 +29,5 @@ GitHub: https://github.com/qianminjian/Auto-engineering
 # 与 _ae_version (模板引擎版本) 不同: _ae_version 在 answers.py BUILTIN_VARS 中,
 # 用于模板渲染上下文,判断模板引擎的能力支持
 __version__ = "5.5.0"
+
+__all__ = ["__version__"]

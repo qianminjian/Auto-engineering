@@ -20,7 +20,7 @@ from auto_engineering.loop.checkpoint.records import (
     CheckpointNotFoundError,
 )
 from auto_engineering.loop.checkpoint.store import (
-    SCHEMA_VERSION,
+    DB_SCHEMA_VERSION,
     SQLiteCheckpointStore,
 )
 
@@ -147,7 +147,7 @@ class TestStoreSaveLoad:
         ck: Checkpoint = store.load(ck_id)
         assert ck.round == 1
         assert ck.step == 1
-        assert ck.schema_version == SCHEMA_VERSION
+        assert ck.schema_version == DB_SCHEMA_VERSION
         assert ck.state == state
         assert len(ck.history) == 2
 

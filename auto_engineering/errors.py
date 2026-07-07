@@ -22,19 +22,14 @@ class ErrorCode(Enum):
     LLM_RATE_LIMIT = "LLM_RATE_LIMIT"  # base.py:_map_llm_exception → RateLimitError
     LLM_UNKNOWN_ERROR = "LLM_UNKNOWN_ERROR"  # base.py:_map_llm_exception → 未知异常
 
-    # ── Guardrail ──
-    GUARDRAIL_BLOCKED = "GUARDRAIL_BLOCKED"  # 保留 API, guardrail block 信号
-    GUARDRAIL_RETRY = "GUARDRAIL_RETRY"  # 保留 API, guardrail retry 信号
-
     # ── Stage / Loop ──
     MAX_TOOL_CALLS_EXCEEDED = "MAX_TOOL_CALLS_EXCEEDED"  # BaseAgent.execute() → 工具循环超限
     INVALID_AGENT_OUTPUT = "INVALID_AGENT_OUTPUT"  # BaseAgent._parse_final_response() → JSON 解析失败
+    TOOL_EXECUTION_ERROR = "TOOL_EXECUTION_ERROR"  # BaseAgent.execute() → 工具业务失败 (非 agent 输出问题)
 
     # ── Task / Cancellation ──
     TASK_CANCELLED = "TASK_CANCELLED"  # CancellationToken.check() → 用户 Ctrl-C
     AGENT_REGISTRATION_ERROR = "AGENT_REGISTRATION_ERROR"  # AgentRuntime → agent_type 未注册
-    OUTPUT_DROPPED = "OUTPUT_DROPPED"  # 保留 API, guardrail drop 信号
-
     # ── Configuration ──
     CONFIG_MISSING_API_KEY = "CONFIG_MISSING_API_KEY"  # settings.py: CLI 模式缺 API key
 

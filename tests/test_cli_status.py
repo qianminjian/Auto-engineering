@@ -19,7 +19,8 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
-from auto_engineering.cli import _collect_status_json, main
+from auto_engineering.cli import main
+from auto_engineering.cli.status import _collect_status_json
 
 
 # ============================================================
@@ -35,7 +36,7 @@ def runner() -> CliRunner:
 
 @pytest.fixture
 def tmp_cwd(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """临时目录作为 cwd (status 默认读 cwd/.ae-checkpoints)."""
+    """临时目录作为 cwd (status 默认读 cwd/.ae-state)."""
     monkeypatch.chdir(tmp_path)
     return tmp_path
 
@@ -127,7 +128,7 @@ def test_status_recent_history_max_5(tmp_cwd: Path) -> None:
     from auto_engineering.loop.convergence import RoundHistory
     from auto_engineering.loop.state import CheckpointEnvelope
 
-    cp_dir = tmp_cwd / ".ae-checkpoints"
+    cp_dir = tmp_cwd / ".ae-state"
     cp_dir.mkdir()
     db_path = cp_dir / "test.db"
     store = SQLiteCheckpointStore[CheckpointEnvelope](str(db_path))
@@ -151,7 +152,7 @@ def test_status_recent_history_round_id_desc(tmp_cwd: Path) -> None:
     from auto_engineering.loop.convergence import RoundHistory
     from auto_engineering.loop.state import CheckpointEnvelope
 
-    cp_dir = tmp_cwd / ".ae-checkpoints"
+    cp_dir = tmp_cwd / ".ae-state"
     cp_dir.mkdir()
     db_path = cp_dir / "test.db"
     store = SQLiteCheckpointStore[CheckpointEnvelope](str(db_path))
@@ -182,8 +183,8 @@ def test_status_command_registered_in_cli_main(runner: CliRunner, tmp_cwd: Path)
 
 
 def test_status_handles_missing_checkpoint(runner: CliRunner, tmp_cwd: Path) -> None:
-    """缺失 .ae-checkpoints 目录: 输出 7 字段默认 JSON (无 error)."""
-    # tmp_cwd 不创建 .ae-checkpoints
+    """缺失 .ae-state 目录: 输出 7 字段默认 JSON (无 error)."""
+    # tmp_cwd 不创建 .ae-state
     result = runner.invoke(main, ["status", "--format", "json"])
     assert result.exit_code == 0
     data = json.loads(result.output)
@@ -199,8 +200,8 @@ def test_status_handles_missing_checkpoint(runner: CliRunner, tmp_cwd: Path) -> 
 
 
 def test_status_handles_corrupted_state_db(runner: CliRunner, tmp_cwd: Path) -> None:
-    """.ae-checkpoints/*.db 文件损坏: status 不崩溃, 输出默认 JSON."""
-    cp_dir = tmp_cwd / ".ae-checkpoints"
+    """.ae-state/*.db 文件损坏: status 不崩溃, 输出默认 JSON."""
+    cp_dir = tmp_cwd / ".ae-state"
     cp_dir.mkdir()
     # 写入非法 SQLite 内容
     (cp_dir / "corrupt.db").write_bytes(b"NOT A SQLITE FILE")

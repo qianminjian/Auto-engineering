@@ -20,10 +20,19 @@ from __future__ import annotations
 
 import logging
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 from auto_engineering.gates.base import Gate, GateVerdict
+
+__all__ = [
+    "AuditFinding",
+    "AuditGate",
+    "SKIP_DIRS",
+    "DEFAULT_MAX_P0",
+    "DEFAULT_MAX_P1",
+    "DEFAULT_MAX_P2",
+]
 
 _logger = logging.getLogger("ae.gates.audit")
 
@@ -51,7 +60,7 @@ class AuditFinding:
 # 跳过这些目录
 SKIP_DIRS = {
     ".git", ".venv", "venv", "node_modules", "__pycache__",
-    ".pytest_cache", ".ae-checkpoints", "dist", "build", ".eggs",
+    ".pytest_cache", ".ae-state", "dist", "build", ".eggs",
     "_scratch", ".planning",
 }
 
@@ -76,11 +85,6 @@ DEFAULT_MAX_P2 = 10  # ≥10 P2 → fail (warn)
 _SILENT_EXCEPT_PY = re.compile(
     r"^\s*except\b(?!.*\b(?:logger|logging|exc_info|raise|# noqa)\b)",
     re.MULTILINE,
-)
-
-# P0: 空 except 块 (Python) — 缩进后只有 pass 或空白
-_EMPTY_EXCEPT_PY = re.compile(
-    r"except[^:]*:\s*\n\s*(?:pass|\.\.\.)\s*(?:\n|$)",
 )
 
 # P0: 硬编码密钥/密码 (通用)
@@ -160,7 +164,7 @@ class AuditGate(Gate):
         self.max_p2 = max_p2
         self.include_large_files = include_large_files
 
-    def run(self, project_root: Path, contracts: dict | None = None) -> GateVerdict:
+    def run(self, project_root: Path) -> GateVerdict:
         project_root = Path(project_root)
         if not project_root.exists():
             return GateVerdict.failed(
@@ -170,8 +174,8 @@ class AuditGate(Gate):
 
         # v5.4: 增量扫描 — 若 contracts 提供 files_changed, 仅扫描变更文件
         target_files: set[str] | None = None
-        if contracts and "files_changed" in contracts:
-            raw = contracts["files_changed"]
+        if self.contracts and "files_changed" in self.contracts:
+            raw = self.contracts["files_changed"]
             if isinstance(raw, list) and raw:
                 target_files = set(raw)
 
@@ -198,7 +202,7 @@ class AuditGate(Gate):
                 if size_mb > _MAX_FILE_MB:
                     continue
             except OSError:
-                _logger.debug("audit scan: stat 失败 %s", py_file)
+                _logger.warning("audit scan: stat 失败 %s", path)
                 continue
 
             findings.extend(self._scan_file(path, rel))
@@ -217,7 +221,7 @@ class AuditGate(Gate):
         try:
             content = path.read_text(errors="ignore")
         except OSError:
-            _logger.debug("audit scan: 读取失败 %s", path)
+            _logger.warning("audit scan: 读取失败 %s", path)
             return []
 
         findings: list[AuditFinding] = []
@@ -380,7 +384,7 @@ class AuditGate(Gate):
             try:
                 line_count = path.read_text(errors="ignore").count("\n")
             except OSError:
-                _logger.debug("audit scan: 大文件检查失败 %s", path)
+                _logger.warning("audit scan: 大文件检查失败 %s", path)
                 continue
             if line_count > _LARGE_FILE_LINES:
                 rel = str(path.relative_to(project_root))

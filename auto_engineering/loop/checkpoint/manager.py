@@ -60,7 +60,7 @@ class CheckpointManager:
             )
         except Exception:
             _logger.warning(
-                "checkpoint save 失败 (round=%s, step=%s): %s",
+                "checkpoint save 失败 (round=%s, step=%s)",
                 round_id, step, exc_info=True,
             )
             return None

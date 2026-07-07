@@ -28,10 +28,20 @@ raise CriticVerdictInvalid 让 orchestrator 显式处理 (重试或抛异常).
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from auto_engineering.engine.state import EngineState
+
+from auto_engineering.loop.task_factory import ROLE_FIELD_DEFAULTS, ROLE_FIELD_MAP
+
+__all__ = [
+    "CriticVerdictInvalid",
+    "StageDecision",
+    "StageRouter",
+    "update_majors_count",
+    "clear_stage_fields",
+]
 
 
 class CriticVerdictInvalid(Exception):
@@ -67,9 +77,9 @@ class StageDecision:
         - should_stop=False, next_stage="X": 推进到 X Stage
     """
 
-    next_stage: Optional[str] = None
+    next_stage: str | None = None
     should_stop: bool = False
-    stop_reason: Optional[str] = None
+    stop_reason: str | None = None
 
 
 class StageRouter:
@@ -99,10 +109,8 @@ class StageRouter:
         """初始化 StageRouter.
 
         Args:
-            max_majors_in_a_row: 连续 MAJOR 计数上限, 超过触发 T6 stop.
-                                 默认 2 (与 v5.0 §B2.2 默认值一致).
-            max_total_majors: 累计 MAJOR 计数上限, 超过触发 T6 stop.
-                              默认 3 (与 v5.0 §B2.2 默认值一致).
+            max_majors_in_a_row: 连续 MAJOR 计数上限, 超过触发 T6 stop. 默认 3.
+            max_total_majors: 累计 MAJOR 计数上限, 超过触发 T6 stop. 默认 4.
 
         Raises:
             ValueError: 任一参数 < 1 (无意义配置).
@@ -129,7 +137,7 @@ class StageRouter:
         total_majors: int,
         audit_found_issues: bool = False,      # v5.5: DeepAudit 是否发现问题
         plan_refine_count: int = 0,            # v5.5: 当前 T9 回路计数
-        max_plan_refines: int = 3,             # v5.5: T9 回路上限
+        max_plan_refines: int = 3,             # v5.5 P1-14: fallback, Orchestrator 从 ConvergenceConfig 显式传入
     ) -> StageDecision:
         """根据当前 Stage + Critic verdict 决定下一步 Stage (§B2.2 T1-T6, T9/T9-LIMIT).
 
@@ -233,10 +241,10 @@ def update_majors_count(state: "EngineState", verdict: str) -> None:
         - 其他 ("", 异常值): 不变.
     """
     if verdict == "APPROVE":
-        state.majors_in_a_row = 0
+        state.write_field("majors_in_a_row", 0, "stage_router")
     elif verdict == "MAJOR":
-        state.majors_in_a_row = state.majors_in_a_row + 1
-        state.total_majors = state.total_majors + 1
+        state.write_field("majors_in_a_row", state.majors_in_a_row + 1, "stage_router")
+        state.write_field("total_majors", state.total_majors + 1, "stage_router")
     # else: verdict="" 或其他 → 不变
 
 
@@ -256,7 +264,6 @@ def clear_stage_fields(state: Any, stage: str) -> None:
     v5.4 审计 r2 P1-3: 引用 task_factory.ROLE_FIELD_MAP + ROLE_FIELD_DEFAULTS
     作为单一真相源, 消除重复硬编码.
     """
-    from auto_engineering.loop.task_factory import ROLE_FIELD_DEFAULTS, ROLE_FIELD_MAP
 
     field_names = ROLE_FIELD_MAP.get(stage, [])
     for field_name in field_names:

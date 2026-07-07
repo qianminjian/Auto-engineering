@@ -20,6 +20,8 @@ from pathlib import Path
 
 from auto_engineering.gates.base import Gate, GateVerdict, run_gate_command
 
+__all__ = ["BuildGate", "DEFAULT_TIMEOUT"]
+
 DEFAULT_TIMEOUT = 30.0
 
 
@@ -48,16 +50,15 @@ class BuildGate(Gate):
         self.timeout = timeout
         self.cwd = cwd
 
-    def run(self, project_root: Path, contracts: dict | None = None) -> GateVerdict:
+    def run(self, project_root: Path) -> GateVerdict:
         """执行 build 验证.
-
-        Args:
-            project_root: 项目根目录(用于设置 cwd)
-            contracts: v5.0 §B6.1a — 契约字典 (BuildGate 不使用, 仅签名兼容)
 
         Returns:
             GateVerdict: passed=True 表示模块可导入; passed=False 表示导入失败.
         """
+        if verdict := self._validate_project_root(project_root):
+            return verdict
+
         cwd = Path(project_root)
 
         cmd = [sys.executable, "-c", f"import {self.module}"]
@@ -71,7 +72,7 @@ class BuildGate(Gate):
             )
 
         if result.returncode == 0:
-            return GateVerdict.passed(
+            return GateVerdict.ok(
                 f"import {self.module} 成功",
                 gate_name=self.name,
             )

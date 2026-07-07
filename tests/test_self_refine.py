@@ -80,7 +80,7 @@ class TestInjectSelfRefineContext:
         from auto_engineering.gates.base import GateVerdict
 
         gates = {
-            "lint": GateVerdict.passed(msg="no issues", gate_name="lint"),
+            "lint": GateVerdict.ok(msg="no issues", gate_name="lint"),
             "test": GateVerdict.failed(msg="3 tests failed", gate_name="test"),
         }
         result = _inject_self_refine_context(tasks, state, "developer", gates)

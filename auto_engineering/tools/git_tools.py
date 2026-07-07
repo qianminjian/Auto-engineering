@@ -13,9 +13,11 @@ import logging
 import os
 import subprocess
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import ClassVar
 
 from .base import BaseTool, ToolResult
+
+__all__ = ["GitStatusTool", "GitCommitTool", "GitDiffTool"]
 
 _logger = logging.getLogger("ae.tools.git")
 
@@ -75,10 +77,6 @@ class GitStatusTool(BaseTool):
         "cwd": {"type": "string", "description": "Repository path (optional)"},
     }
 
-    def __init__(self, project_root: Path | None = None, **kwargs: Any) -> None:
-        super().__init__(**kwargs)
-        self.project_root = project_root
-
     async def execute(self, **kwargs) -> ToolResult:
         cwd = kwargs.get("cwd")
         try:
@@ -102,10 +100,6 @@ class GitCommitTool(BaseTool):
         "message": {"type": "string", "description": "Commit message"},
         "cwd": {"type": "string", "description": "Repository path (optional)"},
     }
-
-    def __init__(self, project_root: Path | None = None, **kwargs: Any) -> None:
-        super().__init__(**kwargs)
-        self.project_root = project_root
 
     async def execute(self, **kwargs) -> ToolResult:
         cwd = kwargs.get("cwd")
@@ -145,10 +139,6 @@ class GitDiffTool(BaseTool):
         "target": {"type": "string", "description": "Compare against ref/branch (e.g. HEAD~1)"},
         "cwd": {"type": "string", "description": "Repository path (optional)"},
     }
-
-    def __init__(self, project_root: Path | None = None, **kwargs: Any) -> None:
-        super().__init__(**kwargs)
-        self.project_root = project_root
 
     async def execute(self, **kwargs) -> ToolResult:
         cwd = kwargs.get("cwd")

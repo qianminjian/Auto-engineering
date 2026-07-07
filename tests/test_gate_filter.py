@@ -88,13 +88,14 @@ class TestGateBaseClass:
         assert hasattr(Gate, "applies_to_stages")
         assert isinstance(Gate.applies_to_stages, tuple)
 
-    def test_gate_run_accepts_contracts_param(self):
-        """Gate.run() 应当接受 contracts: dict | None = None 参数."""
+    def test_gate_has_contracts_instance_attribute(self):
+        """Gate 基类应具有 contracts 实例属性 (v5.5 P1-9: 从 run() 参数改为实例属性)."""
         from auto_engineering.gates.base import Gate
-        import inspect
 
-        sig = inspect.signature(Gate.run)
-        assert "contracts" in sig.parameters
+        assert hasattr(Gate, "contracts")
+        # 默认值应当是 None
+        gate = Gate.__new__(Gate)
+        assert gate.contracts is None
 
     def test_default_gates_list(self):
         """DEFAULT_GATES 应当是 6 道 Gate 的实例列表 (v5.4 Q1: TDDGate/StageTransitionGate 已移出)."""
@@ -115,7 +116,7 @@ class TestGateVerdictRename:
     def test_gate_verdict_class_exists(self):
         from auto_engineering.gates.base import GateVerdict
 
-        v = GateVerdict.passed("ok", gate_name="lint")
+        v = GateVerdict.ok("ok", gate_name="lint")
         assert v.passed is True
         assert v.message == "ok"
         assert v.gate_name == "lint"
@@ -150,10 +151,12 @@ class TestContractGateChecks:
         from auto_engineering.gates.contract import ContractGate
 
         gate = ContractGate()
-        verdict = gate.run(tmp_path, contracts=None)
+        verdict = gate.run(tmp_path)
         assert verdict.passed is True
 
-        verdict2 = gate.run(tmp_path, contracts={})
+        gate2 = ContractGate()
+        gate2.contracts = {}
+        verdict2 = gate2.run(tmp_path)
         assert verdict2.passed is True
 
     def test_contract_gate_finds_route_in_source(self, tmp_path: Path):
@@ -168,13 +171,13 @@ class TestContractGateChecks:
             "    return {'users': []}\n"
         )
         gate = ContractGate()
-        contracts = {
+        gate.contracts = {
             "list_users": {
                 "path": "/api/users",
                 "method": "GET",
             }
         }
-        verdict = gate.run(tmp_path, contracts=contracts)
+        verdict = gate.run(tmp_path)
         assert verdict.passed is True
 
     def test_contract_gate_missing_route_fails(self, tmp_path: Path):
@@ -182,8 +185,8 @@ class TestContractGateChecks:
         from auto_engineering.gates.contract import ContractGate
 
         gate = ContractGate()
-        contracts = {"missing_route": {"path": "/api/nonexistent"}}
-        verdict = gate.run(tmp_path, contracts=contracts)
+        gate.contracts = {"missing_route": {"path": "/api/nonexistent"}}
+        verdict = gate.run(tmp_path)
         assert verdict.passed is False
 
     def test_contract_gate_scans_src_directory(self, tmp_path: Path):
@@ -194,9 +197,8 @@ class TestContractGateChecks:
         src.mkdir()
         (src / "api.py").write_text("def handler():\n    return 200\n")
         gate = ContractGate()
-        # 状态码 200 应当在 src/api.py 中找到
-        contracts = {"api_endpoint": {"status_code": 200}}
-        verdict = gate.run(tmp_path, contracts=contracts)
+        gate.contracts = {"api_endpoint": {"status_code": 200}}
+        verdict = gate.run(tmp_path)
         assert verdict.passed is True
 
     def test_contract_gate_only_scans_source_extensions(self, tmp_path: Path):
@@ -206,7 +208,7 @@ class TestContractGateChecks:
         # 创建非源码文件
         (tmp_path / "README.md").write_text("# /api/users status=200\n")
         gate = ContractGate()
-        contracts = {"api": {"path": "/api/users", "status_code": 200}}
-        verdict = gate.run(tmp_path, contracts=contracts)
+        gate.contracts = {"api": {"path": "/api/users", "status_code": 200}}
+        verdict = gate.run(tmp_path)
         # README.md 不被扫描 → 路径找不到 → failed
         assert verdict.passed is False

@@ -18,6 +18,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from auto_engineering.engine.state import EngineState
@@ -152,10 +153,9 @@ def apply_outcome_to_state(state: EngineState, outcome: TaskOutcome) -> None:
 
     if values:
         validated = validate_role_output(role, values)
-        if validated is not None:
-            for k in list(values.keys()):
-                if k in validated:
-                    values[k] = validated[k]
+        for k in list(values.keys()):
+            if k in validated:
+                values[k] = validated[k]
 
     field_names = ROLE_FIELD_MAP.get(role, [])
     for field_name in field_names:
@@ -163,8 +163,14 @@ def apply_outcome_to_state(state: EngineState, outcome: TaskOutcome) -> None:
             setattr(state, field_name, values[field_name])
 
 
-def validate_role_output(role: str, values: dict) -> dict | None:
-    """Pydantic 校验 agent 输出, 返回 model_dump 或降级原始 dict."""
+def validate_role_output(role: str, values: dict) -> dict:
+    """Pydantic 校验 agent 输出, 返回 model_dump 或降级原始 dict.
+
+    Pydantic ValidationError → 降级原始 values (非致命, agent 输出可能缺少可选字段).
+    其他异常 → 传播 (非预期错误).
+    """
+    from pydantic import ValidationError
+
     try:
         if role == "architect":
             from auto_engineering.agents.output_models import ArchitectOutput
@@ -178,8 +184,7 @@ def validate_role_output(role: str, values: dict) -> dict | None:
             from auto_engineering.agents.output_models import CriticOutput
             validated = CriticOutput.model_validate(values)
             return validated.model_dump()
-    except Exception:
-        import logging
+    except ValidationError:
         logging.getLogger("ae.loop.task_factory").warning(
             "Pydantic 校验失败 (role=%s), 降级使用原始 values", role, exc_info=True
         )

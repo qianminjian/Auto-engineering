@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from auto_engineering.loop.guardrail import GuardrailChain, handle_guardrail_result
 
@@ -39,27 +39,26 @@ class GuardrailFacade:
     def check_pre(
         self, current_stage: str, state: "EngineState"
     ) -> str:
-        """PRE Guardrail 检查. 返回 'pass' / 'stop' / 'retry'.
+        """PRE Guardrail 检查. 返回 'pass' / 'stop' / 'retry'."""
+        return self._do_check("pre", current_stage, state)
+
+    def check_post(
+        self, current_stage: str, state: "EngineState"
+    ) -> str:
+        """POST Guardrail 检查. 返回 'pass' / 'stop' / 'retry'."""
+        return self._do_check("post", current_stage, state)
+
+    def _do_check(
+        self, timing: str, current_stage: str, state: "EngineState"
+    ) -> str:
+        """统一 Guardrail 检查逻辑 (v5.5 audit P2-20).
 
         None chain → 视为 pass (向后兼容).
         """
         if self._chain is None:
             return "pass"
         result = self._chain.check(
-            "pre", current_stage, state, self._project_root
-        )
-        return handle_guardrail_result(
-            result, current_stage, state, self._retry_counters
-        )
-
-    def check_post(
-        self, current_stage: str, state: "EngineState"
-    ) -> str:
-        """POST Guardrail 检查. 返回 'pass' / 'stop' / 'retry'."""
-        if self._chain is None:
-            return "pass"
-        result = self._chain.check(
-            "post", current_stage, state, self._project_root
+            timing, current_stage, state, self._project_root
         )
         return handle_guardrail_result(
             result, current_stage, state, self._retry_counters

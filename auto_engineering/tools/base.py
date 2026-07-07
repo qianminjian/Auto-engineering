@@ -6,9 +6,11 @@ import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from auto_engineering.errors import ErrorCode
+
+__all__ = ["ToolResult", "BaseTool"]
 
 _logger = logging.getLogger("ae.tools.base")
 
@@ -45,6 +47,9 @@ class BaseTool(ABC):
     # 子类可覆盖黑名单(命令)或白名单(path)
     DANGEROUS_PATTERNS: ClassVar[list[str]] = []
 
+    def __init__(self, project_root: Path | None = None, **kwargs: Any) -> None:
+        self.project_root = project_root
+
     @abstractmethod
     async def execute(self, **kwargs) -> ToolResult:
         """Execute the tool. Must be implemented by subclasses."""
@@ -65,7 +70,7 @@ class BaseTool(ABC):
         import os
 
         if self.project_root is None:
-            if os.environ.get("ALLOW_NO_SANDBOX") == "true":
+            if os.environ.get("ALLOW_NO_SANDBOX", "").lower() == "true":
                 import warnings
                 warnings.warn(
                     f"{type(self).__name__}._is_path_safe called with project_root=None. "
@@ -108,10 +113,24 @@ class BaseTool(ABC):
         Returns:
             ToolResult — 校验失败时 (直接返回给调用方), None — 校验通过.
         """
+        if not file_path:
+            return ToolResult(success=False, content="", error="empty path rejected")
         safe, err = self._is_path_safe(file_path)
         if not safe:
             return ToolResult(success=False, content="", error=err)
         return None
+
+    @staticmethod
+    def _fsync(path: Path) -> None:
+        """v5.5 P2-3: fsync 文件确保写入持久化 (防崩溃丢数据)."""
+        import os
+
+        try:
+            fd = os.open(str(path), os.O_RDONLY)
+            os.fsync(fd)
+            os.close(fd)
+        except OSError:
+            pass
 
     def to_schema(self) -> dict:
         return {

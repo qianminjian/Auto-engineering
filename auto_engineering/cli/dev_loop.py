@@ -165,8 +165,6 @@ def _build_v2_agent_runtime(
     Returns:
         AgentRuntime 实例 (已注册 architect/developer/critic)
     """
-    import os
-
     from auto_engineering.agents.base import BaseAgent
     from auto_engineering.agents.prompts import (
         ARCHITECT_SYSTEM_PROMPT,

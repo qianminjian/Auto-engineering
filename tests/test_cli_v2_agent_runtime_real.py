@@ -11,7 +11,8 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from auto_engineering.agents.base import BaseAgent
-from auto_engineering.cli import ProgressLogger, _build_v2_agent_runtime
+from auto_engineering.cli import ProgressLogger
+from auto_engineering.cli.dev_loop import _build_v2_agent_runtime
 
 
 class TestBuildV2AgentRuntimeReal:

@@ -27,6 +27,8 @@ from pathlib import Path
 
 from auto_engineering.gates.base import Gate, GateVerdict
 
+__all__ = ["SafetyGate", "SECRET_PATTERNS", "SKIP_DIRS"]
+
 _logger = logging.getLogger("ae.gates.safety")
 
 # Secret pattern (常见公开 pattern, 不覆盖 100% 场景但覆盖主要风险)
@@ -95,7 +97,7 @@ SKIP_DIRS = {
     "node_modules",
     "__pycache__",
     ".pytest_cache",
-    ".ae-checkpoints",
+    ".ae-state",
     "dist",
     "build",
     ".eggs",
@@ -203,22 +205,14 @@ class SafetyGate(Gate):
         self.use_gitleaks = use_gitleaks
         self.timeout = timeout
 
-    def run(self, project_root: Path, contracts: dict | None = None) -> GateVerdict:
+    def run(self, project_root: Path) -> GateVerdict:
         """执行 safety 检查.
-
-        Args:
-            project_root: 项目根目录
-            contracts: v5.0 §B6.1a — 契约字典 (SafetyGate 不使用, 仅签名兼容)
 
         Returns:
             GateVerdict: passed=True 表示无 secret; passed=False 表示检测到 secret.
         """
-        project_root = Path(project_root)
-        if not project_root.exists():
-            return GateVerdict.failed(
-                f"project_root 不存在: {project_root}",
-                gate_name=self.name,
-            )
+        if verdict := self._validate_project_root(project_root):
+            return verdict
 
         # 主路径: regex 扫描
         findings = _scan_dir(project_root)
@@ -273,4 +267,4 @@ class SafetyGate(Gate):
                 # gitleaks 未安装或超时, 跳过 — regex 已通过
                 _logger.warning("gitleaks 超时或未安装 (%ss), 仅 regex 扫描已通过", self.timeout)
 
-        return GateVerdict.passed("无 secret 检测到", gate_name=self.name)
+        return GateVerdict.ok("无 secret 检测到", gate_name=self.name)

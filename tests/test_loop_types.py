@@ -1,10 +1,8 @@
 """Phase 12.6 — loop/types.py 扩展测试 (≥85% 覆盖率).
 
-设计来源: auto_engineering/loop/types.py (105 行, 48% → ≥85%).
+设计来源: auto_engineering/loop/types.py.
 
 覆盖目标:
-    - LoopStateProtocol 鸭子类型 (含 round/step/status/channels/model_dump 字段自动满足)
-    - 缺字段: 缺 round → 协议不满足
     - serialize_state:
         * Pydantic 对象 (有 model_dump) → 序列化为 JSON
         * 字典 → 序列化为 JSON
@@ -27,90 +25,7 @@ import pytest
 
 
 # ============================================================
-# 1. LoopStateProtocol 鸭子类型
-# ============================================================
-
-
-class TestLoopStateProtocol:
-    """LoopStateProtocol 鸭子类型 (structural subtyping)."""
-
-    def test_full_object_satisfies_protocol(self):
-        """含 round/step/status/channels/model_dump → 满足协议."""
-        from auto_engineering.loop.types import LoopStateProtocol
-
-        @dataclass
-        class FakeState:
-            round: int = 1
-            step: int = 0
-            status: str = "running"
-            channels: dict = field(default_factory=dict)
-
-            def model_dump(self, **kwargs: Any) -> dict:
-                return {"round": self.round, "step": self.step}
-
-        state = FakeState()
-        assert isinstance(state, LoopStateProtocol)
-
-    def test_object_missing_round_fails_protocol(self):
-        """缺 round → 不满足协议 (runtime_checkable)."""
-        from auto_engineering.loop.types import LoopStateProtocol
-
-        @dataclass
-        class IncompleteState:
-            step: int = 0
-            status: str = "running"
-            channels: dict = field(default_factory=dict)
-
-            def model_dump(self, **kwargs: Any) -> dict:
-                return {}
-
-        state = IncompleteState()
-        assert not isinstance(state, LoopStateProtocol)
-
-    def test_object_missing_status_fails_protocol(self):
-        """缺 status → 不满足协议."""
-        from auto_engineering.loop.types import LoopStateProtocol
-
-        @dataclass
-        class IncompleteState:
-            round: int = 1
-            step: int = 0
-            channels: dict = field(default_factory=dict)
-
-            def model_dump(self, **kwargs: Any) -> dict:
-                return {}
-
-        state = IncompleteState()
-        assert not isinstance(state, LoopStateProtocol)
-
-    def test_dict_does_not_satisfy_protocol(self):
-        """裸 dict 不满足协议 (dict 没有 model_dump 方法)."""
-        from auto_engineering.loop.types import LoopStateProtocol
-
-        d = {"round": 1, "step": 0, "status": "ok", "channels": {}}
-        # runtime_checkable 检查实例属性 — dict 没有 model_dump → 不满足
-        assert not isinstance(d, LoopStateProtocol)
-
-    def test_object_with_dynamic_attrs_satisfies_protocol(self):
-        """类外动态设置的属性也算协议成员 (runtime_checkable 检查实例)."""
-        from auto_engineering.loop.types import LoopStateProtocol
-
-        class Bare:
-            pass
-
-        obj = Bare()
-        obj.round = 1
-        obj.step = 0
-        obj.status = "ok"
-        obj.channels = {}
-        obj.model_dump = lambda **kw: {}
-
-        # typing.runtime_checkable 实际检查实例属性,而非类声明.
-        assert isinstance(obj, LoopStateProtocol)
-
-
-# ============================================================
-# 2. serialize_state - Pydantic 风格对象
+# 1. serialize_state - Pydantic 风格对象
 # ============================================================
 
 
@@ -427,17 +342,15 @@ class TestExports:
     """types.py __all__ 导出."""
 
     def test_all_exports(self):
-        """__all__ 包含 LoopStateProtocol / serialize_state / deserialize_state."""
+        """__all__ 包含 serialize_state / deserialize_state."""
         from auto_engineering.loop import types
 
-        assert "LoopStateProtocol" in types.__all__
         assert "serialize_state" in types.__all__
         assert "deserialize_state" in types.__all__
 
     def test_importable_from_module(self):
         """可从模块直接导入."""
-        from auto_engineering.loop.types import LoopStateProtocol, deserialize_state, serialize_state
+        from auto_engineering.loop.types import deserialize_state, serialize_state
 
-        assert LoopStateProtocol is not None
         assert serialize_state is not None
         assert deserialize_state is not None

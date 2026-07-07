@@ -15,7 +15,7 @@ from __future__ import annotations
 import pytest
 
 from auto_engineering.loop.checkpoint.migration import (
-    SCHEMA_VERSION,
+    ENVELOPE_SCHEMA_VERSION,
     _parse_version,
     migrate_envelope,
     validate_envelope,
@@ -40,7 +40,7 @@ def _make_1_0_envelope(**overrides: object) -> dict:
         "metrics": {"values": {}},
         "channels": {},
         "channel_versions": {},
-        "schema_version": SCHEMA_VERSION,
+        "schema_version": ENVELOPE_SCHEMA_VERSION,
     }
     base.update(overrides)  # type: ignore[arg-type]
     return base
@@ -90,7 +90,7 @@ class TestMigrate1_0Passthrough:
         env = _make_1_0_envelope()
         result = migrate_envelope(env)
         assert result is env  # 同一对象, 不拷贝
-        assert result["schema_version"] == SCHEMA_VERSION
+        assert result["schema_version"] == ENVELOPE_SCHEMA_VERSION
 
     def test_1_0_preserves_extra_fields(self) -> None:
         """额外字段保留, 不被删除."""
@@ -124,7 +124,7 @@ class TestMigrate0_9To1_0:
     def test_0_9_adds_missing_fields(self) -> None:
         env = _make_0_9_envelope()
         result = migrate_envelope(env)
-        assert result["schema_version"] == SCHEMA_VERSION
+        assert result["schema_version"] == ENVELOPE_SCHEMA_VERSION
         assert result["step"] == 0
         assert result["task_results"] == {}
         assert result["gate_results"] == {}
@@ -151,7 +151,7 @@ class TestMigrate0_9To1_0:
         env = _make_0_9_envelope(legacy_field="old_data")
         result = migrate_envelope(env)
         assert result["legacy_field"] == "old_data"
-        assert result["schema_version"] == SCHEMA_VERSION
+        assert result["schema_version"] == ENVELOPE_SCHEMA_VERSION
 
     def test_migrate_is_idempotent(self) -> None:
         """两次迁移结果一致."""
@@ -193,7 +193,7 @@ class TestMigrateNoVersion:
     def test_no_version_treated_as_0_9(self) -> None:
         env = {"round": 1, "status": "running", "tasks": {}, "channels": {}}
         result = migrate_envelope(env)
-        assert result["schema_version"] == SCHEMA_VERSION
+        assert result["schema_version"] == ENVELOPE_SCHEMA_VERSION
         assert result["step"] == 0
         assert result["channel_versions"] == {}
 
@@ -281,11 +281,11 @@ class TestValidateEnvelope:
 
 
 # ============================================================
-# SCHEMA_VERSION 常量
+# ENVELOPE_SCHEMA_VERSION 常量
 # ============================================================
 
 
 def test_schema_version_is_1_0_string() -> None:
-    """SCHEMA_VERSION 是字符串 '1.0'."""
-    assert SCHEMA_VERSION == "1.0"
-    assert isinstance(SCHEMA_VERSION, str)
+    """ENVELOPE_SCHEMA_VERSION 是字符串 '1.0'."""
+    assert ENVELOPE_SCHEMA_VERSION == "1.0"
+    assert isinstance(ENVELOPE_SCHEMA_VERSION, str)

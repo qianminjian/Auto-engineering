@@ -18,10 +18,29 @@ API:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from auto_engineering.gates.base import GateVerdict
+    from auto_engineering.loop.audit_history import AuditHistory
+
+__all__ = [
+    "DEFAULT_MAX_ITERATIONS",
+    "DEFAULT_STAGNATION_THRESHOLD",
+    "DEFAULT_STAGNATION_DIFF_RATIO",
+    "LEVEL_CONTINUE",
+    "LEVEL_SEMANTIC",
+    "LEVEL_STAGNANT",
+    "LEVEL_QUALITY",
+    "LEVEL_HARD_LIMIT",
+    "LEVEL_NAMES",
+    "ConvergenceConfig",
+    "RoundHistory",
+    "ConvergenceVerdict",
+    "ConvergenceJudge",
+    "diff_ratio",
+    "detect_stagnation",
+]
 
 # ============================================================
 # 常量: 4 级收敛 + 默认继续
@@ -67,6 +86,10 @@ class ConvergenceConfig:
     auto_tune: bool = False             # v5.5: 启用 max_iter 自动学习
     max_plan_refines: int = 3           # v5.5: T9 回路最大次数
     min_samples_for_learning: int = 5   # v5.5: 冷启动最小样本数
+    deep_audit_enabled: bool = True     # v5.5: DeepAudit Feature Flag.
+    # 当 True 时, T9 plan-refine 回路激活 (critic APPROVE → DeepAudit → architect).
+    # 当 False 时, 跳过 DeepAudit 扫描 (仅用于测试/调试场景).
+    # 参见 design/v5.5-IMPLEMENTATION-PLAN.md Phase G (DeepAudit Integration).
 
 
 @dataclass
@@ -296,7 +319,7 @@ class ConvergenceJudge:
         """
         self.config = config or ConvergenceConfig()
 
-    def auto_tune_max_iter(self, audit_history: Any) -> int | None:
+    def auto_tune_max_iter(self, audit_history: "AuditHistory") -> int | None:
         """冷启动自适应 max_iter.
 
         冷启动 (样本 < min_samples_for_learning): 返回 None, 调用方使用

@@ -51,7 +51,6 @@ def make_task(
         description=f"task {task_id}",
         expected_output=f"output for {task_id}",
         role=role,
-        agent_type="developer",
         target_files=frozenset(target_files or []),
         depends_on=list(deps or []),
     )
@@ -284,7 +283,7 @@ async def test_orchestrator_calls_semantic_evaluator_each_round(tmp_path: Path):
     critic_task = Task(
         id="critic-1", title="c", description="c",
         expected_output="ok", role="critic",
-        agent_type="critic", target_files=frozenset(),
+        target_files=frozenset(),
     )
     config = OrchestratorConfig(
         convergence_config=ConvergenceConfig(
@@ -324,7 +323,7 @@ async def test_orchestrator_semantic_evaluator_returning_false(tmp_path: Path):
     critic_task = Task(
         id="critic-1", title="c", description="c",
         expected_output="ok", role="critic",
-        agent_type="critic", target_files=frozenset(),
+        target_files=frozenset(),
     )
     config = OrchestratorConfig(
         convergence_config=ConvergenceConfig(
@@ -424,7 +423,7 @@ async def test_orchestrator_combined_gates_and_semantic_evaluator(tmp_path: Path
     critic_task = Task(
         id="critic-1", title="c", description="c",
         expected_output="ok", role="critic",
-        agent_type="critic", target_files=frozenset(),
+        target_files=frozenset(),
     )
     config = OrchestratorConfig(
         convergence_config=ConvergenceConfig(

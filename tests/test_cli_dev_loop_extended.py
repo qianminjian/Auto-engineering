@@ -376,14 +376,14 @@ class TestCliArgsParsing:
         assert "--project-root" in result.output
         assert "--max-tokens" in result.output
 
-    def test_dev_loop_unsupported_provider_exits_6(self, tmp_project: Path) -> None:
-        """--llm-provider=openai/ollama → exit 6."""
+    def test_dev_loop_unsupported_provider_rejected_by_click(self, tmp_project: Path) -> None:
+        """--llm-provider=openai/ollama → Click 拒绝 (未列入 Choice)."""
         runner = CliRunner()
         result = runner.invoke(
             main, ["dev-loop", "--llm-provider", "openai", "test requirement"]
         )
-        assert result.exit_code == 6
-        assert "未实现" in result.output or "未实装" in result.output
+        assert result.exit_code == 2
+        assert "Invalid value" in result.output or "invalid choice" in result.output
 
     def test_dev_loop_missing_api_key_exits_via_preflight(
         self, tmp_project: Path, monkeypatch: pytest.MonkeyPatch

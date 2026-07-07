@@ -95,8 +95,9 @@ class TestClassifyErrorExactMatch:
         assert cat == ErrorCategory.USER_ERROR
         assert code == 2
 
-    def test_output_dropped_business_error(self) -> None:
-        err = AEError(ErrorCode.OUTPUT_DROPPED, "dropped by guardrail")
+    def test_tool_execution_error_business_error(self) -> None:
+        """TOOL_EXECUTION_ERROR → BUSINESS_ERROR (v5.5 审计新增)."""
+        err = AEError(ErrorCode.TOOL_EXECUTION_ERROR, "tool execution failed")
         cat, code = classify_error(err)
         assert cat == ErrorCategory.BUSINESS_ERROR
         assert code == 5
@@ -135,17 +136,19 @@ class TestClassifyErrorPrefixMatch:
         assert cat == ErrorCategory.API_ERROR
         assert code == 3
 
-    def test_guardrail_blocked_business_error(self) -> None:
-        err = AEError(ErrorCode.GUARDRAIL_BLOCKED, "blocked")
+    def test_tool_execution_error_prefix_business(self) -> None:
+        """TOOL_EXECUTION_ERROR 精确匹配 → BUSINESS_ERROR."""
+        err = AEError(ErrorCode.TOOL_EXECUTION_ERROR, "tool failed")
         cat, code = classify_error(err)
         assert cat == ErrorCategory.BUSINESS_ERROR
         assert code == 5
 
-    def test_guardrail_retry_business_error(self) -> None:
-        err = AEError(ErrorCode.GUARDRAIL_RETRY, "retry over limit")
+    def test_llm_unknown_error_api_error(self) -> None:
+        """LLM_UNKNOWN_ERROR 前缀匹配 → API_ERROR."""
+        err = AEError(ErrorCode.LLM_UNKNOWN_ERROR, "unknown LLM error")
         cat, code = classify_error(err)
-        assert cat == ErrorCategory.BUSINESS_ERROR
-        assert code == 5
+        assert cat == ErrorCategory.API_ERROR
+        assert code == 3
 
 
 # ============================================================
@@ -158,7 +161,7 @@ class TestClassifyErrorFallback:
 
     def test_unknown_code_falls_back_to_user_error(self) -> None:
         # 构造一个 code_str 不在 map 中的错误 (mock with str code)
-        err = AEError(ErrorCode.OUTPUT_DROPPED, "x")  # use a known code, but pretend str
+        err = AEError(ErrorCode.TASK_CANCELLED, "x")  # use a known code, but pretend str
         # 直接 monkey-patch code 为 str
         err.code = "UNKNOWN_FAKE_CODE"  # type: ignore[assignment]
         cat, code = classify_error(err)

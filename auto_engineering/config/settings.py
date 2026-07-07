@@ -27,6 +27,8 @@ class Settings:
     max_tool_calls: int = 10
     retry_max_attempts: int = 3
     retry_timeout: float = 120.0
+    log_level: str = "INFO"           # v5.5 audit P1-7: AE_LOG_LEVEL 实现
+    gate_timeout: int = 300           # v5.5 audit P1-7: AE_GATE_TIMEOUT 实现
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -45,6 +47,11 @@ class Settings:
         max_tool_calls = int(os.environ.get("AE_MAX_TOOL_CALLS", "10").strip())
         retry_max_attempts = int(os.environ.get("AE_RETRY_MAX_ATTEMPTS", "3").strip())
         retry_timeout = float(os.environ.get("AE_RETRY_TIMEOUT", "120.0").strip())
+        log_level = os.environ.get("AE_LOG_LEVEL", "INFO").strip().upper()
+        gate_timeout = int(os.environ.get("AE_GATE_TIMEOUT", "300").strip())
+        # v5.5 audit P1-7: AE_DB_PATH 作为 AE_CHECKPOINT_DIR 的别名
+        if not os.environ.get("AE_CHECKPOINT_DIR") and os.environ.get("AE_DB_PATH"):
+            checkpoint_dir = os.environ.get("AE_DB_PATH", ".ae-state").strip()
 
         if not is_llm_available():
             raise AEError(
@@ -61,6 +68,8 @@ class Settings:
             max_tool_calls=max_tool_calls,
             retry_max_attempts=retry_max_attempts,
             retry_timeout=retry_timeout,
+            log_level=log_level,
+            gate_timeout=gate_timeout,
         )
 
 

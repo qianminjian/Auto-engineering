@@ -191,7 +191,8 @@ def test_check_contract_in_source_oserror_handled(tmp_path: Path) -> None:
 def test_run_with_contracts_dict_skip_empty(tmp_path: Path) -> None:
     """run() with empty contracts dict → skip Verdict."""
     gate = ContractGate()
-    verdict = gate.run(tmp_path, contracts={})
+    gate.contracts = {}
+    verdict = gate.run(tmp_path)
     assert verdict.passed is True
     assert "skip" in verdict.message.lower()
     assert "空" in verdict.message
@@ -200,7 +201,8 @@ def test_run_with_contracts_dict_skip_empty(tmp_path: Path) -> None:
 def test_run_with_contracts_non_dict(tmp_path: Path) -> None:
     """run() with non-dict contracts → Verdict.failed."""
     gate = ContractGate()
-    verdict = gate.run(tmp_path, contracts="not a dict")
+    gate.contracts = "not a dict"
+    verdict = gate.run(tmp_path)
     assert verdict.passed is False
     assert "必须是 dict" in verdict.message
 
@@ -218,14 +220,14 @@ def test_run_with_contracts_valid_v5_path(tmp_path: Path) -> None:
     )
 
     gate = ContractGate()
-    contracts = {
+    gate.contracts = {
         "items-api": {
             "path": "/api/items",
             "status_code": 201,
             "request": {"name": "str"},
         }
     }
-    verdict = gate.run(tmp_path, contracts=contracts)
+    verdict = gate.run(tmp_path)
     assert verdict.passed is True
     assert "通过" in verdict.message
 
@@ -239,7 +241,8 @@ def test_check_contracts_project_root_not_exist(tmp_path: Path) -> None:
     """_check_contracts: project_root不存在 → Verdict.failed."""
     gate = ContractGate()
     nonexistent = tmp_path / "nonexistent_dir"
-    verdict = gate._check_contracts(nonexistent, {"api": {"path": "/x"}})
+    gate.contracts = {"api": {"path": "/x"}}
+    verdict = gate._check_contracts(nonexistent)
     assert verdict.passed is False
     assert "不存在" in verdict.message
 
@@ -248,7 +251,8 @@ def test_check_contracts_no_source_files(tmp_path: Path) -> None:
     """_check_contracts: no source files found → Verdict.failed."""
     gate = ContractGate()
     # tmp_path is empty, no source code files
-    verdict = gate._check_contracts(tmp_path, {"api": {"path": "/x"}})
+    gate.contracts = {"api": {"path": "/x"}}
+    verdict = gate._check_contracts(tmp_path)
     assert verdict.passed is False
     assert "未找到源文件" in verdict.message
 
@@ -260,7 +264,8 @@ def test_check_contracts_non_dict_entry(tmp_path: Path) -> None:
     (src_dir / "app.py").write_text("hello")
 
     gate = ContractGate()
-    verdict = gate._check_contracts(tmp_path, {"bad": "not a dict"})
+    gate.contracts = {"bad": "not a dict"}
+    verdict = gate._check_contracts(tmp_path)
     assert verdict.passed is False
     assert "必须是 dict" in verdict.message
 
@@ -279,84 +284,11 @@ def test_check_contracts_mixed_pass_fail(tmp_path: Path) -> None:
         "ok-api": {"path": "/api/ok"},
         "fail-api": {"path": "/api/missing"},
     }
-    verdict = gate._check_contracts(tmp_path, contracts)
+    gate.contracts = contracts
+    verdict = gate._check_contracts(tmp_path)
     # Should fail because second contract's path is not found
     assert verdict.passed is False
     assert "missing" in verdict.message
-
-
-# ============================================================
-# Group 6: _check_contracts_dir — extended paths
-# ============================================================
-
-
-def test_check_contracts_dir_with_json_file(tmp_path: Path) -> None:
-    """_check_contracts_dir: JSON format contract file is parsed."""
-    import json
-
-    contracts_dir = tmp_path / ".ae-contracts"
-    contracts_dir.mkdir()
-    (contracts_dir / "api.json").write_text(
-        json.dumps({"agents": {"developer": {"provides": ["impl.py"]}}})
-    )
-
-    gate = ContractGate(contracts_dir=contracts_dir)
-    verdict = gate._check_contracts_dir(tmp_path, 2)
-    assert verdict.passed is True
-    assert "valid" in verdict.message.lower()
-
-
-def test_check_contracts_dir_empty_file(tmp_path: Path) -> None:
-    """_check_contracts_dir: empty contract file → Verdict.failed."""
-    contracts_dir = tmp_path / ".ae-contracts"
-    contracts_dir.mkdir()
-    (contracts_dir / "empty.yml").write_text("")
-
-    gate = ContractGate(contracts_dir=contracts_dir)
-    verdict = gate._check_contracts_dir(tmp_path, 2)
-    assert verdict.passed is False
-    assert "empty" in verdict.message.lower()
-
-
-def test_check_contracts_dir_no_yaml_or_json_files(tmp_path: Path) -> None:
-    """_check_contracts_dir: directory exists but no .yml/.yaml/.json → Verdict.failed."""
-    contracts_dir = tmp_path / ".ae-contracts"
-    contracts_dir.mkdir()
-    (contracts_dir / "readme.txt").write_text("not a contract file")
-
-    gate = ContractGate(contracts_dir=contracts_dir)
-    verdict = gate._check_contracts_dir(tmp_path, 2)
-    assert verdict.passed is False
-    assert "no contract files" in verdict.message.lower()
-
-
-def test_check_contracts_dir_with_yaml_file(tmp_path: Path) -> None:
-    """_check_contracts_dir: .yaml extension (not .yml) is also accepted."""
-    contracts_dir = tmp_path / ".ae-contracts"
-    contracts_dir.mkdir()
-    (contracts_dir / "api.yaml").write_text("agents:\n  developer:\n    provides: [impl.py]\n")
-
-    gate = ContractGate(contracts_dir=contracts_dir)
-    verdict = gate._check_contracts_dir(tmp_path, 2)
-    assert verdict.passed is True
-    assert "valid" in verdict.message.lower()
-
-
-def test_check_contracts_dir_relative_path_resolves(tmp_path: Path) -> None:
-    """_check_contracts_dir: relative contracts_dir resolved against project_root."""
-    contracts_dir = tmp_path / ".ae-contracts"
-    contracts_dir.mkdir()
-    (contracts_dir / "api.yml").write_text("agents:\n  dev:\n    provides: [x.py]\n")
-
-    # Relative path ".ae-contracts"
-    gate = ContractGate(contracts_dir=".ae-contracts")
-    verdict = gate._check_contracts_dir(tmp_path, 2)
-    assert verdict.passed is True
-
-
-# ============================================================
-# Group 7: backward-compatible paths
-# ============================================================
 
 
 def test_run_single_agent_no_contracts(tmp_path: Path) -> None:
@@ -365,13 +297,6 @@ def test_run_single_agent_no_contracts(tmp_path: Path) -> None:
     verdict = gate.run(tmp_path)
     assert verdict.passed is True
     assert "skip" in verdict.message.lower()
-
-
-def test_run_multi_agent_no_contracts_dir(tmp_path: Path) -> None:
-    """_check_contracts_dir without .ae-contracts dir → failed."""
-    gate = ContractGate(contracts_dir=".ae-contracts")
-    verdict = gate._check_contracts_dir(tmp_path, 3)
-    assert verdict.passed is False
 
 
 def test_contract_gate_default_constructor(tmp_path: Path) -> None:

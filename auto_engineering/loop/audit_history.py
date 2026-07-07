@@ -15,6 +15,8 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 
+__all__ = ["AuditHistory"]
+
 
 class AuditHistory:
     """append-only JSONL 审计历史日志存储.
@@ -55,7 +57,7 @@ class AuditHistory:
             "total_files": total_files,
             "plan_refine_triggered": plan_refine_triggered,
         }
-        with open(self._path, "a") as f:
+        with open(self._path, "a", encoding="utf-8") as f:
             f.write(json.dumps(entry) + "\n")
 
     def read_history(self) -> list[dict]:
@@ -68,7 +70,7 @@ class AuditHistory:
         if not self._path.exists():
             return []
         entries: list[dict] = []
-        with open(self._path) as f:
+        with open(self._path, encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if line:

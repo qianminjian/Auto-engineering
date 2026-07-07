@@ -14,8 +14,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from auto_engineering.gates.audit import AuditFinding, AuditGate
+from auto_engineering.gates.audit import AuditGate
 from auto_engineering.gates.deep_audit import DeepAuditFinding, DeepAuditReport
+
+__all__ = ["AUDIT_DIMENSIONS", "DeepAuditOrchestrator"]
 
 # 3 个审计维度 → agent role 映射
 AUDIT_DIMENSIONS = {

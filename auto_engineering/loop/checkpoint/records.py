@@ -8,19 +8,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, TypeVar
+from typing import TypeVar
 
 from auto_engineering.loop.convergence import RoundHistory
-from auto_engineering.loop.types import LoopStateProtocol
 
-# v2.2-G: 用 Protocol 替代 Any, 打破循环引用并提供类型安全
-# - LoopStateProtocol 在 loop/types.py 定义 (不引用 loop/state)
-# - TypeVar T bound Protocol 让 Checkpoint/SQLiteCheckpointStore 接受具体类型
-# - mypy 看到 state 字段是 LoopStateProtocol (或其子类型), 不是 Any
-# - v5.4 P2-2: TypeVar bound 仅 mypy 静态检查, 运行时无强制. EngineState 不实现
-#   LoopStateProtocol (缺 round/step/status/channels), 但 save() 入口的
-#   _validate_state_serializable() 做 duck-type 兼容性检查.
-T = TypeVar("T", bound=LoopStateProtocol)
+# v5.5 P1-8: TypeVar 移除 LoopStateProtocol bound (Protocol 形同虚设, 项目不使用 mypy).
+# Checkpoint.state 的实际类型由 caller 决定, 运行时通过 _validate_state_serializable() 做 duck-type 检查.
+T = TypeVar("T")
 
 
 # ============================================================
@@ -45,16 +39,14 @@ class CheckpointMeta:
 class Checkpoint[T]:
     """完整 Checkpoint (含 state + history).
 
-    v2.2-G: 用 Generic[T] bound LoopStateProtocol 替代 Any.
-    - 类型安全: mypy 看到 state 字段是 LoopStateProtocol, 访问 .round/.step 不报 Any
-    - 打破循环: checkpoint.py 不再 import 具体 LoopState 类, 只用 Protocol 接口
+    v2.2-G: 用 Generic[T] 替代 Any, v5.5 P1-8 移除 Protocol bound.
     - 使用: Checkpoint[CheckpointEnvelope](...) — caller 显式指定 T
     """
 
     id: str
     round: int
     step: int
-    state: T  # LoopStateProtocol (caller 决定具体类型, 典型 CheckpointEnvelope)
+    state: T  # caller 决定具体类型, 典型 CheckpointEnvelope
     history: list[RoundHistory]  # v2.3 Phase M (P2.3): 强类型, 非 list[dict]
     created_at: datetime
     schema_version: int

@@ -1,7 +1,7 @@
 """Checkpoint 迁移 — Envelope schema_version 迁移 + v1.1 JSON → v2.0 SQLite 遗产迁移.
 
-与 store.py::SCHEMA_VERSION (int, SQLite 表 schema 版本) 不同,
-本文件的 SCHEMA_VERSION 是 CheckpointEnvelope 数据格式版本 (str).
+与 store.py::DB_SCHEMA_VERSION (int, SQLite 表 schema 版本) 不同,
+本文件的 ENVELOPE_SCHEMA_VERSION 是 CheckpointEnvelope 数据格式版本 (str).
 二者独立演化: 表结构变更不必然触发 envelope 格式变更, 反之亦然.
 
 v5.4 审计 P1-6: 合并 checkpoint_migration/migrate.py 到本文件,
@@ -16,10 +16,11 @@ from typing import Any
 
 from auto_engineering.loop.checkpoint import SQLiteCheckpointStore
 from auto_engineering.loop.convergence import RoundHistory
-from auto_engineering.loop.state import CheckpointEnvelope, LastValueChannel
+from auto_engineering.loop.state import CheckpointEnvelope
+from auto_engineering.loop.checkpoint._serialization import LastValueChannel
 
 # CheckpointEnvelope 数据格式版本 (str, 语义化版本)
-SCHEMA_VERSION = "1.0"
+ENVELOPE_SCHEMA_VERSION = "1.0"
 
 # 1.0 格式必需字段 → 类型映射
 _REQUIRED_FIELDS: dict[str, type | tuple[type, ...]] = {
@@ -48,7 +49,13 @@ _MIGRATE_0_9_DEFAULTS: dict[str, Any] = {
 
 
 def _parse_version(version: str) -> tuple[int, ...]:
-    """解析语义化版本字符串为整数元组, 用于可比对."""
+    """解析语义化版本字符串为整数元组, 用于可比对.
+
+    NOTE: 这里是严格解析 (每段必须为整数), 与 utils.parse_version 的容错版
+    不同。migration 场景需要严格校验 schema_version 格式正确性 —
+    格式异常的数据不应静默降级, 而应拒绝迁移 (抛出 ValueError)。
+    容错版 parse_version 适用于用户输入 / 配置文件的宽松场景。
+    """
     try:
         return tuple(int(p) for p in version.split("."))
     except (ValueError, AttributeError):
@@ -59,7 +66,7 @@ def _parse_version(version: str) -> tuple[int, ...]:
 
 
 def migrate_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
-    """迁移 CheckpointEnvelope dict 到当前 SCHEMA_VERSION.
+    """迁移 CheckpointEnvelope dict 到当前 ENVELOPE_SCHEMA_VERSION.
 
     迁移路径:
       - schema_version == "1.0" (当前) → 直接返回, 不修改
@@ -71,7 +78,7 @@ def migrate_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
         envelope: CheckpointEnvelope 的 dict 表示 (state_json 反序列化后).
 
     Returns:
-        迁移后的 dict (schema_version 已更新为 SCHEMA_VERSION).
+        迁移后的 dict (schema_version 已更新为 ENVELOPE_SCHEMA_VERSION).
 
     Raises:
         ValueError: schema_version 格式非法或版本过低 (<0.9).
@@ -96,7 +103,7 @@ def migrate_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
             )
         current = _parse_version(raw_version)
 
-    target = _parse_version(SCHEMA_VERSION)
+    target = _parse_version(ENVELOPE_SCHEMA_VERSION)
 
     if current == target:
         # 已是最新, 不修改
@@ -106,7 +113,7 @@ def migrate_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
         # 未来版本 → 拒绝 (不支持降级)
         raise ValueError(
             f"Envelope schema_version {raw_version} is newer than current "
-            f"{SCHEMA_VERSION}. Downgrade not supported. "
+            f"{ENVELOPE_SCHEMA_VERSION}. Downgrade not supported. "
             f"Please upgrade Auto-Engineering."
         )
 
@@ -128,16 +135,16 @@ def _migrate_0_9_to_1_0(envelope: dict[str, Any]) -> dict[str, Any]:
     for field, default in _MIGRATE_0_9_DEFAULTS.items():
         if field not in migrated:
             migrated[field] = default
-    migrated["schema_version"] = SCHEMA_VERSION
+    migrated["schema_version"] = ENVELOPE_SCHEMA_VERSION
     return migrated
 
 
 def validate_envelope(envelope: dict[str, Any]) -> bool:
-    """验证 CheckpointEnvelope dict 是否符合当前 SCHEMA_VERSION 格式.
+    """验证 CheckpointEnvelope dict 是否符合当前 ENVELOPE_SCHEMA_VERSION 格式.
 
     检查项:
       1. envelope 是 dict
-      2. schema_version 匹配 SCHEMA_VERSION
+      2. schema_version 匹配 ENVELOPE_SCHEMA_VERSION
       3. 所有必需字段存在且类型正确
 
     Args:
@@ -150,7 +157,7 @@ def validate_envelope(envelope: dict[str, Any]) -> bool:
         return False
 
     # 版本检查
-    if envelope.get("schema_version") != SCHEMA_VERSION:
+    if envelope.get("schema_version") != ENVELOPE_SCHEMA_VERSION:
         return False
 
     # 字段存在 + 类型检查
@@ -322,7 +329,7 @@ def migrate_v1_to_v2(src_json: Path, dst_sqlite: Path) -> str:
 
 
 __all__ = [
-    "SCHEMA_VERSION",
+    "ENVELOPE_SCHEMA_VERSION",
     "load_v1_checkpoint",
     "migrate_envelope",
     "migrate_v1_to_v2",

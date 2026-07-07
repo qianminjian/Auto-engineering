@@ -30,7 +30,7 @@ def valid_project_with_checkpoint(tmp_path: Path, monkeypatch):
     monkeypatch.chdir(tmp_path)
 
     # 创建 1 个 v2.0 checkpoint (用 CheckpointEnvelope)
-    cp_dir = tmp_path / ".ae-checkpoints"
+    cp_dir = tmp_path / ".ae-state"
     cp_dir.mkdir()
     db_file = cp_dir / "test.db"
     store = SQLiteCheckpointStore(str(db_file))
@@ -80,7 +80,7 @@ class TestCheckpointShow:
         from auto_engineering.cli import main
         from auto_engineering.loop.checkpoint import SQLiteCheckpointStore
 
-        cp_dir = valid_project_with_checkpoint / ".ae-checkpoints"
+        cp_dir = valid_project_with_checkpoint / ".ae-state"
         store = SQLiteCheckpointStore(str(cp_dir / "test.db"))
         metas = store.list_all()
         assert len(metas) > 0

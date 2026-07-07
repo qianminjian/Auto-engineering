@@ -14,6 +14,8 @@ import statistics
 
 from auto_engineering.loop.audit_history import AuditHistory
 
+__all__ = ["ThresholdLearner"]
+
 
 class ThresholdLearner:
     """P1 阈值 + max_iter 自适应学习器.
@@ -22,10 +24,12 @@ class ThresholdLearner:
         audit_history: AuditHistory 实例, 提供历史审计记录.
     """
 
-    MIN_SAMPLES = 5
+    MIN_SAMPLES = 5  # 类级默认, 实例可覆盖
 
-    def __init__(self, audit_history: AuditHistory):
+    def __init__(self, audit_history: AuditHistory, min_samples: int | None = None):
         self._history = audit_history
+        if min_samples is not None:
+            self.MIN_SAMPLES = min_samples
 
     def compute_p1_threshold(self) -> int:
         """从历史 P1 计数算 p75, 作为推荐阈值.

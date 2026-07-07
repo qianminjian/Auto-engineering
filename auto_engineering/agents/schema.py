@@ -9,6 +9,8 @@ import json
 import logging
 import re
 
+__all__ = ["derive_output_schema"]
+
 _logger = logging.getLogger("ae.agents.schema")
 
 

@@ -7,7 +7,7 @@ Covers missed paths:
 - _collect_status_json with corrupted db + valid db mixed
 - _collect_status_json recent_history field defaults
 - register_status_command function
-- Text mode with .ae-checkpoints present and populated
+- Text mode with .ae-state present and populated
 """
 
 from __future__ import annotations
@@ -18,7 +18,8 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
-from auto_engineering.cli import _collect_status_json, main
+from auto_engineering.cli import main
+from auto_engineering.cli.status import _collect_status_json
 
 
 # ============================================================
@@ -52,7 +53,7 @@ def test_collect_status_json_state_as_dict_branch(tmp_path: Path) -> None:
     """
     from auto_engineering.loop.checkpoint import SQLiteCheckpointStore
 
-    cp_dir = tmp_path / ".ae-checkpoints"
+    cp_dir = tmp_path / ".ae-state"
     cp_dir.mkdir()
     db_path = cp_dir / "test.db"
     store = SQLiteCheckpointStore(str(db_path))
@@ -90,7 +91,7 @@ def test_collect_status_json_state_as_checkpoint_envelope_round(tmp_path: Path) 
     from auto_engineering.loop.checkpoint import SQLiteCheckpointStore
     from auto_engineering.loop.state import CheckpointEnvelope
 
-    cp_dir = tmp_path / ".ae-checkpoints"
+    cp_dir = tmp_path / ".ae-state"
     cp_dir.mkdir()
     db_path = cp_dir / "test.db"
     store = SQLiteCheckpointStore[CheckpointEnvelope](str(db_path))
@@ -114,7 +115,7 @@ def test_collect_status_json_state_object_default_fallback(tmp_path: Path) -> No
     from auto_engineering.loop.checkpoint import SQLiteCheckpointStore
     from auto_engineering.loop.state import CheckpointEnvelope
 
-    cp_dir = tmp_path / ".ae-checkpoints"
+    cp_dir = tmp_path / ".ae-state"
     cp_dir.mkdir()
     db_path = cp_dir / "test.db"
     store = SQLiteCheckpointStore[CheckpointEnvelope](str(db_path))
@@ -138,7 +139,7 @@ def test_collect_status_json_multiple_db_picks_highest_round(tmp_path: Path) -> 
     from auto_engineering.loop.checkpoint import SQLiteCheckpointStore
     from auto_engineering.loop.state import CheckpointEnvelope
 
-    cp_dir = tmp_path / ".ae-checkpoints"
+    cp_dir = tmp_path / ".ae-state"
     cp_dir.mkdir()
 
     # db1: round=2 (lower)
@@ -165,7 +166,7 @@ def test_collect_status_json_corrupted_plus_valid_db(tmp_path: Path) -> None:
     from auto_engineering.loop.checkpoint import SQLiteCheckpointStore
     from auto_engineering.loop.state import CheckpointEnvelope
 
-    cp_dir = tmp_path / ".ae-checkpoints"
+    cp_dir = tmp_path / ".ae-state"
     cp_dir.mkdir()
 
     # corrupted file
@@ -196,7 +197,7 @@ def test_collect_status_json_history_defaults(tmp_path: Path) -> None:
     from auto_engineering.loop.convergence import RoundHistory
     from auto_engineering.loop.state import CheckpointEnvelope
 
-    cp_dir = tmp_path / ".ae-checkpoints"
+    cp_dir = tmp_path / ".ae-state"
     cp_dir.mkdir()
     db_path = cp_dir / "test.db"
     store = SQLiteCheckpointStore[CheckpointEnvelope](str(db_path))
@@ -222,7 +223,7 @@ def test_collect_status_json_history_semantic_satisfied(tmp_path: Path) -> None:
     from auto_engineering.loop.convergence import RoundHistory
     from auto_engineering.loop.state import CheckpointEnvelope
 
-    cp_dir = tmp_path / ".ae-checkpoints"
+    cp_dir = tmp_path / ".ae-state"
     cp_dir.mkdir()
     db_path = cp_dir / "test.db"
     store = SQLiteCheckpointStore[CheckpointEnvelope](str(db_path))
@@ -243,7 +244,7 @@ def test_collect_status_json_history_semantic_satisfied(tmp_path: Path) -> None:
 
 
 def test_collect_status_json_no_checkpoint_dir_returns_defaults(tmp_path: Path) -> None:
-    """_collect_status_json with no .ae-checkpoints → 7-field defaults."""
+    """_collect_status_json with no .ae-state → 7-field defaults."""
     data = _collect_status_json(tmp_path)
     assert data["thread_id"] == ""
     assert data["round"] == 0
@@ -279,11 +280,11 @@ def test_register_status_command_registers_on_group() -> None:
 
 
 def test_status_text_mode_with_checkpoints(runner: CliRunner, tmp_cwd: Path) -> None:
-    """Status text mode with .ae-checkpoints present and populated."""
+    """Status text mode with .ae-state present and populated."""
     from auto_engineering.loop.checkpoint import SQLiteCheckpointStore
     from auto_engineering.loop.state import CheckpointEnvelope
 
-    cp_dir = tmp_cwd / ".ae-checkpoints"
+    cp_dir = tmp_cwd / ".ae-state"
     cp_dir.mkdir()
     store = SQLiteCheckpointStore[CheckpointEnvelope](str(cp_dir / "test.db"))
     env = CheckpointEnvelope(round=1, step=1, status="running")
@@ -299,7 +300,7 @@ def test_status_text_mode_with_multiple_checkpoints(runner: CliRunner, tmp_cwd: 
     from auto_engineering.loop.checkpoint import SQLiteCheckpointStore
     from auto_engineering.loop.state import CheckpointEnvelope
 
-    cp_dir = tmp_cwd / ".ae-checkpoints"
+    cp_dir = tmp_cwd / ".ae-state"
     cp_dir.mkdir()
     store1 = SQLiteCheckpointStore[CheckpointEnvelope](str(cp_dir / "db1.db"))
     env1 = CheckpointEnvelope(round=1, step=1, status="running")
@@ -322,7 +323,7 @@ def test_status_json_round_equal_in_different_dbs(tmp_path: Path) -> None:
     from auto_engineering.loop.checkpoint import SQLiteCheckpointStore
     from auto_engineering.loop.state import CheckpointEnvelope
 
-    cp_dir = tmp_path / ".ae-checkpoints"
+    cp_dir = tmp_path / ".ae-state"
     cp_dir.mkdir()
     store1 = SQLiteCheckpointStore[CheckpointEnvelope](str(cp_dir / "a.db"))
     env1 = CheckpointEnvelope(round=5, step=1, status="running")
@@ -336,8 +337,8 @@ def test_status_json_round_equal_in_different_dbs(tmp_path: Path) -> None:
 
 
 def test_status_json_empty_checkpoint_dir(tmp_path: Path) -> None:
-    """_collect_status_json with empty .ae-checkpoints dir → defaults."""
-    cp_dir = tmp_path / ".ae-checkpoints"
+    """_collect_status_json with empty .ae-state dir → defaults."""
+    cp_dir = tmp_path / ".ae-state"
     cp_dir.mkdir()
     # no .db files
 
@@ -354,13 +355,13 @@ def test_status_text_mode_no_project_env_warning(tmp_cwd: Path) -> None:
 
 
 def test_status_text_mode_env_resolve_exception(tmp_cwd: Path) -> None:
-    """Status text mode handles ProjectEnvironment.resolve exception gracefully."""
+    """Status text mode handles ProjectEnvironment.resolve_and_persist exception gracefully."""
     from unittest.mock import patch
     from auto_engineering.config.environment import ProjectEnvironment
 
     runner = CliRunner()
     with patch.object(
-        ProjectEnvironment, "resolve", side_effect=RuntimeError("simulated error")
+        ProjectEnvironment, "resolve_and_persist", side_effect=RuntimeError("simulated error")
     ):
         result = runner.invoke(main, ["status"])
         assert result.exit_code == 0
@@ -372,7 +373,7 @@ def test_status_text_mode_corrupted_db_counting(tmp_cwd: Path) -> None:
     from auto_engineering.loop.checkpoint import SQLiteCheckpointStore
     from auto_engineering.loop.state import CheckpointEnvelope
 
-    cp_dir = tmp_cwd / ".ae-checkpoints"
+    cp_dir = tmp_cwd / ".ae-state"
     cp_dir.mkdir()
     # corrupted db (will trigger exception in SQLiteCheckpointStore constructor)
     (cp_dir / "corrupt.db").write_bytes(b"NOT A VALID SQLITE DATABASE")

@@ -16,7 +16,6 @@ Exit codes:
 
 from __future__ import annotations
 
-import os
 import shutil
 import sqlite3
 import sys
@@ -31,20 +30,7 @@ GIT_MIN = (2, 40, 0)
 SQLITE_MIN = (3, 42, 0)
 
 
-def _parse_version(version_str: str) -> tuple[int, ...]:
-    """解析 'X.Y.Z' 形式版本号 → tuple[int, ...]. 解析失败返回 (0,)."""
-    parts: list[int] = []
-    for chunk in version_str.strip().split("."):
-        # 截断非数字前缀 (e.g. "v1.2.3" → 1.2.3)
-        digits = ""
-        for ch in chunk:
-            if ch.isdigit():
-                digits += ch
-            else:
-                break
-        if digits:
-            parts.append(int(digits))
-    return tuple(parts) if parts else (0,)
+from auto_engineering.utils import parse_version as _parse_version
 
 
 def _check_python() -> tuple[bool, str]:
@@ -130,15 +116,11 @@ def _check_api_key() -> tuple[bool, str]:
 
 
 def _check_ae_state(project_root: Path) -> tuple[bool, str]:
-    """检查 .ae-state/ 可读写."""
+    """检查 .ae-state/ 可读写 (诊断命令, 不自动创建目录)."""
     ae_state = project_root / ".ae-state"
     if not ae_state.exists():
-        try:
-            ae_state.mkdir(parents=True)
-            return True, ".ae-state/ 目录已创建 (可读写)"
-        except (PermissionError, OSError) as e:
-            return False, f".ae-state/ 不可写: {e}"
-    # 存在则测读写
+        return False, ".ae-state/ 目录不存在 — 运行 ae dev-loop 初始化项目"
+    # 测读写
     test_file = ae_state / ".doctor_write_test"
     try:
         test_file.write_text("ok")

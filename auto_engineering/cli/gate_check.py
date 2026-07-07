@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import json
 import logging
-import sys
 from pathlib import Path
 
 import click
@@ -53,7 +52,9 @@ def _all_gate_names() -> tuple[str, ...]:
 
         return tuple(get_default_gate_names())
     except Exception:
-        return ("safety", "lint", "type_check", "audit", "contract", "test", "build")
+        _logger.warning("_all_gate_names fallback to hardcoded list", exc_info=True)
+        # 与 registry._build_default_gates 保持同步
+        return ("safety", "lint", "type_check", "audit", "contract", "test", "build", "deep_audit")
 
 
 ALL_GATES = _all_gate_names()
@@ -62,37 +63,14 @@ ALL_GATES = _all_gate_names()
 def _instantiate_gate(name: str, project_root: Path) -> object | None:
     """按名称实例化单个 Gate 对象. 不支持的返回 None (skip)."""
     try:
-        if name == "safety":
-            from auto_engineering.gates.safety import SafetyGate
+        from auto_engineering.gates.registry import get_gate_by_name
 
-            return SafetyGate(use_gitleaks=False)
-        if name == "lint":
-            from auto_engineering.gates.lint import LintGate
-
-            return LintGate()
-        if name == "type_check":
-            from auto_engineering.gates.type_check import TypeCheckGate
-
-            return TypeCheckGate()
-        if name == "contract":
-            from auto_engineering.gates.contract import ContractGate
-
-            return ContractGate()
-        if name == "test":
-            from auto_engineering.gates.test_gate import TestGate
-
-            return TestGate()
-        if name == "build":
-            from auto_engineering.gates.build import BuildGate
-
-            return BuildGate()
-        if name == "audit":
-            from auto_engineering.gates.audit import AuditGate
-
-            return AuditGate()
+        gate = get_gate_by_name(name)
+        if gate is not None:
+            return gate
     except Exception as e:  # noqa: BLE001
         _logger.warning("gate '%s' 实例化失败: %s", name, e, exc_info=True)
-        return None  # v5.4 审计 P0-2: 不返回 Exception 冒充 Gate 对象
+        return None
     return None
 
 
@@ -116,6 +94,7 @@ def run_gates(gate_names: tuple[str, ...], project_root: Path) -> dict:
         try:
             verdict = gate.run(project_root)
         except Exception as e:  # noqa: BLE001
+            _logger.warning("gate '%s' 执行异常", name, exc_info=True)
             summary[name] = {"status": "skipped", "passed": None, "message": f"run error: {e}"}
             skipped_count += 1
             continue
@@ -149,7 +128,7 @@ def register_gate_check_command(main: click.Group) -> None:
     """向 main Click Group 注册 ae gate-check 子命令."""
 
     @main.command("gate-check")
-    @click.option("--all", "run_all", is_flag=True, default=True, help="跑 6 道 Gate (默认)")
+    @click.option("--all", "run_all", is_flag=True, default=True, help="跑 7 道 Gate (默认)")
     @click.option("--quick", is_flag=True, default=False, help="只跑 3 道 (safety/lint/type_check)")
     @click.option(
         "--project-root",

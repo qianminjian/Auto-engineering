@@ -13,6 +13,7 @@ from pathlib import Path
 
 from auto_engineering.gates.base import Gate, GateVerdict
 
+__all__ = ["DeepAuditFinding", "DeepAuditReport", "DeepAuditGate"]
 
 @dataclass
 class DeepAuditFinding:
@@ -59,17 +60,10 @@ class DeepAuditGate(Gate):
         self._project_root = Path(project_root) if project_root else None
         self._p1_threshold = p1_threshold
 
-    def run(
-        self, project_root: Path | None = None, contracts: dict | None = None
-    ) -> GateVerdict:
+    def run(self, project_root: Path) -> GateVerdict:
         """执行 DeepAudit, 返回 GateVerdict.
 
-        兼容 Gate ABC 签名: run(project_root, contracts=None).
-        project_root 可从参数传入或从 __init__ 获取.
-
-        Args:
-            project_root: 项目根目录 (Gate ABC 签名). 若 __init__ 也有, 参数优先.
-            contracts: 可选上下文字典, 可包含 "findings" key (list[dict]).
+        v5.5 P1-9: contracts 改为实例属性 (self.contracts).
 
         Returns:
             GateVerdict (passed + details + suggestions).
@@ -78,7 +72,7 @@ class DeepAuditGate(Gate):
         if root is not None:
             root = Path(root)
         report = DeepAuditReport()
-        findings_raw = contracts.get("findings", []) if contracts else []
+        findings_raw = self.contracts.get("findings", []) if self.contracts else []
         for f in findings_raw:
             if isinstance(f, dict):
                 finding = DeepAuditFinding(**f)

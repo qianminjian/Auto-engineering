@@ -27,8 +27,8 @@ from auto_engineering.loop.plan import (
 from auto_engineering.loop.round import TaskOutcome
 from auto_engineering.loop.state import (
     CheckpointEnvelope,
-    LastValueChannel,
 )
+from auto_engineering.loop.checkpoint._serialization import LastValueChannel
 
 # ============================================================
 # D.1 CheckpointEnvelope 8 字段测试
@@ -79,7 +79,7 @@ def test_loop_state_default_signals_is_empty_list():
 
 def test_loop_state_default_metrics_is_metrics_snapshot():
     """CheckpointEnvelope.metrics 默认 MetricsSnapshot 实例 (不是 None)."""
-    from auto_engineering.loop.state import MetricsSnapshot
+    from auto_engineering.loop.state.metrics import MetricsSnapshot
 
     state = CheckpointEnvelope()
     assert isinstance(state.metrics, MetricsSnapshot)
@@ -93,7 +93,7 @@ def test_loop_state_default_channels_is_empty_dict():
 
 def test_loop_state_construct_with_all_8_fields():
     """CheckpointEnvelope 可构造时一次性传入 8 字段."""
-    from auto_engineering.loop.state import MetricsSnapshot
+    from auto_engineering.loop.state.metrics import MetricsSnapshot
 
     metrics = MetricsSnapshot()
     state = CheckpointEnvelope(
@@ -130,7 +130,7 @@ def test_loop_state_get_task_returns_task_by_id():
 
 def test_loop_state_get_signal_returns_first_signal_of_type():
     """CheckpointEnvelope.get_signal(type) 返回第一个匹配 type 的信号."""
-    from auto_engineering.loop.state import Signal
+    from auto_engineering.loop.state.metrics import Signal
 
     sig1 = Signal(type="metric.update", payload={"name": "tokens", "value": 100})
     sig2 = Signal(type="task.done", payload={"task_id": "t1"})
@@ -269,12 +269,10 @@ def test_task_construct_with_all_10_fields():
         target_files=frozenset({"src/x.py"}),
         context_files=["docs/spec.md"],
         validation=validation,
-        deps=["t0"],
+        depends_on=["t0"],
         estimated_minutes=45,
         status=TaskStatus.COMPLETED,
         output=outcome,
-        agent_type="developer",
-        depends_on=["t0"],
     )
     assert task.title == "实现 X 模块"
     assert task.expected_output == "src/x.py 含 class X"

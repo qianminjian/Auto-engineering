@@ -19,7 +19,7 @@ import asyncio
 import json
 import logging
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING
 
 from auto_engineering.agents.authz import authz_check
 from auto_engineering.errors import AEError, ErrorCode
@@ -27,6 +27,25 @@ from auto_engineering.llm.anthropic_provider import AnthropicProvider
 from auto_engineering.runtime.context import TaskContext
 from auto_engineering.runtime.task import Task, TaskResult
 from auto_engineering.tools.base import BaseTool
+
+if TYPE_CHECKING:
+    from auto_engineering.runtime.cancellation import CancellationToken
+    from auto_engineering.cli.helpers import TokenTracker
+
+__all__ = ["BaseAgent"]
+
+# v5.5 audit P2-5: 模块级懒加载 Anthropic SDK 异常类 (只 import 一次)
+try:
+    from anthropic import (  # type: ignore[import-untyped]
+        APIConnectionError,
+        APIStatusError,
+        APITimeoutError,
+        AuthenticationError,
+        RateLimitError,
+    )
+    _ANTHROPIC_ERROR_TYPES = (APITimeoutError, APIConnectionError, APIStatusError, AuthenticationError, RateLimitError)
+except (ImportError, TypeError):
+    _ANTHROPIC_ERROR_TYPES = None
 
 
 @dataclass
@@ -59,8 +78,8 @@ class BaseAgent:
         self,
         task: Task,
         ctx: TaskContext,
-        cancellation: Any = None,
-        token_tracker: Any = None,
+        cancellation: CancellationToken | None = None,
+        token_tracker: TokenTracker | None = None,
     ) -> TaskResult:
         """执行 task: LLM 调用循环 + 工具循环 + 输出解析.
 
@@ -167,8 +186,9 @@ class BaseAgent:
                         # P1.4: error_code 存在 → 工具认定的业务错误,抛 AEError
                         if result.error_code is not None:
                             raise AEError(
-                                ErrorCode.INVALID_AGENT_OUTPUT,
+                                ErrorCode.TOOL_EXECUTION_ERROR,
                                 f"Tool '{tool_name}' error: {result.error}",
+                                suggestion=f"检查工具 '{tool_name}' 的输入参数或运行环境",
                             )
                         tool_results.append(
                             {
@@ -210,6 +230,7 @@ class BaseAgent:
         raise AEError(
             ErrorCode.MAX_TOOL_CALLS_EXCEEDED,
             f"Agent '{self.__class__.__name__}' exceeded {self.max_tool_calls} tool calls",
+            suggestion="增大 max_tool_calls 或简化 task description, 减少 LLM 需要调用的工具数量",
         )
 
     def _build_system_prompt(self, task: Task) -> str:
@@ -237,14 +258,11 @@ class BaseAgent:
             - RateLimitError      → LLM_RATE_LIMIT
             - 其他                → LLM_UNKNOWN_ERROR
         """
-        # 1. 尝试 isinstance 精确匹配 (生产环境)
-        try:
-            from anthropic import (  # type: ignore[import-untyped]
-                APIConnectionError,
-                APIStatusError,
-                APITimeoutError,
-                AuthenticationError,
-                RateLimitError,
+        # v5.5 audit P2-5: 模块级懒加载 (只 import 一次), 避免每次异常都 try/except 导入
+        # 1. isinstance 精确匹配
+        if _ANTHROPIC_ERROR_TYPES is not None:
+            APITimeoutError, APIConnectionError, APIStatusError, AuthenticationError, RateLimitError = (
+                _ANTHROPIC_ERROR_TYPES
             )
             if isinstance(exc, APITimeoutError):
                 return AEError(ErrorCode.LLM_TIMEOUT, f"LLM timeout: {exc}", original_error=exc,
@@ -260,8 +278,6 @@ class BaseAgent:
             if isinstance(exc, RateLimitError):
                 return AEError(ErrorCode.LLM_RATE_LIMIT, f"LLM rate limit: {exc}", original_error=exc,
                                suggestion="等待片刻后重试, 或升级 API tier 提高限额")
-        except (ImportError, TypeError):
-            pass  # SDK 不可用或 mock 对象 → 降级到 §2 字符串匹配
 
         # 2. isinstance 未命中 (mock 对象或 SDK 未安装) → 降级为 type().__name__ 匹配
         exc_name = type(exc).__name__
@@ -309,7 +325,7 @@ class BaseAgent:
             if actual is None:
                 continue
             # 类型校验(只做基础类型检查)
-            if expected_type == "integer" and not isinstance(actual, int):
+            if expected_type == "integer" and type(actual) is not int:
                 raise AEError(
                     ErrorCode.INVALID_AGENT_OUTPUT,
                     f"Tool '{tool_name}' parameter '{param_name}' must be integer, "
@@ -334,6 +350,7 @@ class BaseAgent:
             raise AEError(
                 ErrorCode.INVALID_AGENT_OUTPUT,
                 f"Failed to parse LLM output as JSON: {content[:200]}",
+                suggestion="检查 LLM 输出是否包含 ```json fence 标记, 或调整 system prompt 要求 JSON 格式输出",
             )
         return parsed
 

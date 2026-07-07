@@ -22,30 +22,16 @@ P1-A 拆分: state.py 702 行 -> state/channels.py + state/checkpoint_envelope.p
 
 from __future__ import annotations
 
-from auto_engineering.loop.state.channels import (
-    AccumulatingChannel,
-    BarrierChannel,
-    BarrierState,
+from auto_engineering.loop.checkpoint._serialization import (
     Channel,
-    LastValueChannel,
 )
 from auto_engineering.loop.state.checkpoint_envelope import (
     CheckpointEnvelope,
     deserialize_loop_state,
 )
-from auto_engineering.loop.state.metrics import (
-    MetricsSnapshot,
-    Signal,
-)
 
 __all__ = [
-    "AccumulatingChannel",
-    "BarrierChannel",
-    "BarrierState",
     "Channel",
-    "CheckpointEnvelope",  # v2.3 P0-A 重命名 (原 LoopState, checkpoint 专用)
-    "LastValueChannel",
-    "MetricsSnapshot",
-    "Signal",
+    "CheckpointEnvelope",
     "deserialize_loop_state",
 ]

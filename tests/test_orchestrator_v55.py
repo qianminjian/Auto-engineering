@@ -236,24 +236,24 @@ class TestOrchestratorV55Integration:
         assert verdict.passed is True
         assert verdict.details["findings"] == []
 
-    # --- 7. _sync_design_docs() 骨架 ---
+    # --- 7. _warn_design_docs_update() 骨架 ---
 
-    def test_sync_design_docs_does_not_raise(self) -> None:
-        """_sync_design_docs() 骨架不抛异常."""
+    def test_warn_design_docs_update_does_not_raise(self) -> None:
+        """_warn_design_docs_update() 骨架不抛异常."""
         state = EngineState(requirement="test")
         config = OrchestratorConfig()
         orch = Orchestrator(
             requirement="test", tasks=[], executor=None, config=config,
         )
-        orch._sync_design_docs(state)  # Should not raise
+        orch._warn_design_docs_update(state)  # Should not raise
 
-    # --- 8. ConvergenceFacade._all_gates_passed 逻辑 ---
+    # --- 8. all_gates_passed 逻辑 ---
 
     def test_all_gates_passed_empty_history(self) -> None:
-        """空 gate_results → ConvergenceFacade._all_gates_passed 返回 True."""
-        from auto_engineering.loop.convergence_facade import ConvergenceFacade
+        """空 gate_results → all_gates_passed 返回 True."""
+        from auto_engineering.loop.convergence_facade import all_gates_passed
 
-        assert ConvergenceFacade._all_gates_passed({}) is True
+        assert all_gates_passed({}) is True
 
     # --- 9. Orchestrator 初始化包含 v5.5 字段 ---
 

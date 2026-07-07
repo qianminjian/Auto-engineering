@@ -604,7 +604,7 @@ class TestToolLoopEdgeCases:
         ctx = _make_ctx()
         with pytest.raises(AEError) as exc_info:
             run_async(agent.execute(task, ctx))
-        assert exc_info.value.code == ErrorCode.INVALID_AGENT_OUTPUT
+        assert exc_info.value.code == ErrorCode.TOOL_EXECUTION_ERROR
 
 
 # =============================================================================

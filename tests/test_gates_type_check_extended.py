@@ -59,13 +59,12 @@ class TestTypeCheckGateBasics:
         assert gate.require_config is True
 
     def test_backward_compat_mypy_bin(self):
-        """向后兼容: mypy_bin 字段保留作为 type_checker_bin 别名."""
+        """向后兼容: mypy_bin 作为 @property 别名委托到 type_checker_bin."""
         from auto_engineering.gates.type_check import TypeCheckGate
 
         gate = TypeCheckGate(type_checker_bin="custom-mypy")
-        # 旧字段 mypy_bin 仍可访问
+        # 旧名 mypy_bin 通过 @property getter 访问 (DeprecationWarning)
         assert gate.mypy_bin == "custom-mypy"
-        # 新字段 type_checker_bin 也存在
         assert gate.type_checker_bin == "custom-mypy"
 
     def test_class_attributes(self):
@@ -218,21 +217,20 @@ class TestResolveTypeCheckCmd:
     def test_resolve_uses_shutil_which(self):
         """非 'bash -n' + type_checker_bin 非空 → 返回 [bin_name].
 
-        注: 当前实现中 mypy_bin 始终被设为 type_checker_bin,所以 shutil.which
-        分支实际是 dead code. 此处记录行为契约.
+        注: type_checker_bin 始终有默认值, shutil.which 分支实际是 dead code.
+        此处记录行为契约.
         """
         from auto_engineering.gates.type_check import TypeCheckGate
 
         gate = TypeCheckGate(type_checker_bin="pyright")
         with patch.object(shutil, "which", return_value="/usr/bin/pyright"):
             cmd = gate._resolve_type_check_cmd()
-        # 实际行为: 返回 [self.mypy_bin] 而非 shutil.which 的解析结果
         assert cmd == ["pyright"]
 
     def test_resolve_returns_list_even_when_not_in_path(self):
-        """工具不在 PATH → 当前实现仍返回 [bin_name] (consistency 缺陷).
+        """工具不在 PATH → 返回 [bin_name] (type_checker_bin 始终 truthy).
 
-        注: 这是已知实现 — mypy_bin 永远 truthy,shutil.which 检查被跳过.
+        注: type_checker_bin 永远有默认值, shutil.which 检查被跳过.
         run() 实际执行时由 subprocess.run 处理 FileNotFoundError.
         """
         from auto_engineering.gates.type_check import TypeCheckGate
@@ -240,15 +238,13 @@ class TestResolveTypeCheckCmd:
         gate = TypeCheckGate(type_checker_bin="nonexistent-tool-xyz")
         with patch.object(shutil, "which", return_value=None):
             cmd = gate._resolve_type_check_cmd()
-        # 实际返回 [bin_name],不返回 None
         assert cmd == ["nonexistent-tool-xyz"]
 
-    def test_resolve_uses_explicit_mypy_bin(self):
-        """mypy_bin 显式指定时优先使用(向后兼容路径)."""
+    def test_resolve_uses_explicit_type_checker_bin(self):
+        """type_checker_bin 显式指定时优先使用."""
         from auto_engineering.gates.type_check import TypeCheckGate
 
         gate = TypeCheckGate(type_checker_bin="my-custom-mypy")
-        # mypy_bin 已被设置为 type_checker_bin (非 'bash -n'), 返回 [mypy_bin]
         with patch.object(shutil, "which", return_value="/usr/local/bin/my-custom-mypy"):
             cmd = gate._resolve_type_check_cmd()
         assert cmd == ["my-custom-mypy"]

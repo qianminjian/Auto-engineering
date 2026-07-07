@@ -5,7 +5,7 @@
     majors_in_a_row / total_majors / recent_history (≤5 条 RoundHistory)
 
 设计:
-- `_collect_status_json(cwd)` 是核心函数, 从 .ae-checkpoints/*.db 读最新 CheckpointEnvelope
+- `_collect_status_json(cwd)` 是核心函数, 从 .ae-state/*.db 读最新 CheckpointEnvelope
 - Click 命令 `status` 包装 `_collect_status_json` + 输出格式化
 - 边界: 缺失 checkpoint → 默认 7 字段; corrupted db → 跳过该 db 继续找下一个
 
@@ -42,7 +42,7 @@ def _collect_status_json(cwd: Path) -> dict:
         "recent_history": [],
     }
 
-    cp_dir = cwd / ".ae-checkpoints"
+    cp_dir = cwd / ".ae-state"
     if not cp_dir.exists():
         return payload
 
@@ -142,7 +142,7 @@ def register_status_command(main_group: click.Group) -> None:
         click.echo(f"当前目录: {cwd}")
 
         try:
-            env = ProjectEnvironment.resolve(cwd)
+            env = ProjectEnvironment.resolve_and_persist(cwd)
             click.echo(f"  项目名称: {env.project_name}")
             click.echo(f"  项目类型: {env.project_type or '未知'}")
             click.echo(f"  包管理器: {env.package_manager or '未知'}")
@@ -157,7 +157,7 @@ def register_status_command(main_group: click.Group) -> None:
         except Exception as e:
             click.echo(f"  读取项目环境失败: {e}")
 
-        cp_dir = cwd / ".ae-checkpoints"
+        cp_dir = cwd / ".ae-state"
         if cp_dir.exists():
             from auto_engineering.loop.checkpoint import SQLiteCheckpointStore
 

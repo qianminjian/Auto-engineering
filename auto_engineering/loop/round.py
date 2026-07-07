@@ -17,27 +17,21 @@
 from __future__ import annotations
 
 import asyncio
+import subprocess
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from auto_engineering.errors import AEError, ErrorCode
 from auto_engineering.gates.base import Gate, GateVerdict
-from auto_engineering.loop.plan import ConflictError, Task
+from auto_engineering.loop.plan import Task
 from auto_engineering.runtime.cancellation import CancellationToken
 
 import logging
 
 _logger = logging.getLogger("ae.loop.round")
-
-# v5.0 §B2.12a: 错误分类
-try:
-    from auto_engineering.errors import AEError, ErrorCode
-    _TASK_CANCELLED_CODE = ErrorCode.TASK_CANCELLED
-except ImportError:
-    AEError = None  # type: ignore[assignment]
-    _TASK_CANCELLED_CODE = None
 
 if TYPE_CHECKING:
     from auto_engineering.loop.convergence import RoundHistory
@@ -169,12 +163,7 @@ async def _execute_single(
         )
     except Exception as exc:
         # v5.0 §B2.12a: AEError(TASK_CANCELLED) → cancelled; 其他 → failed
-        if (
-            AEError is not None
-            and _TASK_CANCELLED_CODE is not None
-            and isinstance(exc, AEError)
-            and getattr(exc, "code", None) is _TASK_CANCELLED_CODE
-        ):
+        if isinstance(exc, AEError) and exc.code is ErrorCode.TASK_CANCELLED:
             duration = time.monotonic() - start
             return TaskOutcome(
                 task_id=task.id,
@@ -183,6 +172,9 @@ async def _execute_single(
                 duration=duration,
             )
         duration = time.monotonic() - start
+        _logger.warning(
+            "task %s 执行异常 (非取消类): %s", task.id, exc, exc_info=True,
+        )
         return TaskOutcome(
             task_id=task.id,
             status="failed",
@@ -238,7 +230,6 @@ async def run_round(
     gates: list[Gate] | None = None,
     project_root: Path | None = None,
     stage: str = "",
-    contracts: dict | None = None,
     channel_versions: dict[str, int] | None = None,
     start_commit: str | None = None,
 ) -> RoundResult:
@@ -254,7 +245,6 @@ async def run_round(
         project_root: v2.2 Phase H — Gate 运行的项目根目录 (与 gates 同时提供才生效)
         stage: v5.0 §B2.12 — 当前阶段名 (architect/developer/critic),
                用于 _run_gates 按 applies_to_stages 过滤
-        contracts: v5.0 §B2.12 — 跨 Agent 契约字典, 透传给 ContractGate
 
     Returns:
         RoundResult 含每个 task 的 outcome + gate_results + history[0] (RoundHistory).
@@ -278,11 +268,9 @@ async def run_round(
         # 即使无 task, 也跑 Gate (若提供) — Phase H 行为: Gate 在 task 之后跑
         # v5.0 §B6.1: 按 stage 过滤 Gate
         if gates and project_root is not None:
-            merged_contracts = _merge_contracts_with_changed_files(
-                contracts, project_root, start_commit,
-            )
-            result.gate_results = await _run_gates(gates, project_root, stage=stage, contracts=merged_contracts)
-        await _attach_round_history(result, tasks, project_root, channel_versions, start_commit)
+            _apply_git_diff_enrichment(gates, project_root, start_commit)
+            result.gate_results = await _run_gates(gates, project_root, stage=stage)
+        await _attach_round_history(result, tasks, project_root, stage, channel_versions, start_commit)
         return result
 
     # 创建并发任务
@@ -316,12 +304,10 @@ async def run_round(
     result.finished_at = time.monotonic()
 
     # v2.2 Phase H: 跑 Gate (task 完成后), 写入 gate_results
-    # v5.0 §B6.1: 按 stage 过滤 + 透传 contracts
+    # v5.0 §B6.1: 按 stage 过滤
     if gates and project_root is not None:
-        merged_contracts = _merge_contracts_with_changed_files(
-            contracts, project_root, start_commit,
-        )
-        result.gate_results = await _run_gates(gates, project_root, stage=stage, contracts=merged_contracts)
+        _apply_git_diff_enrichment(gates, project_root, start_commit)
+        result.gate_results = await _run_gates(gates, project_root, stage=stage)
 
     # v2.3 Phase G (P1.3): 末尾构造 RoundHistory 写入 round_result.history
     await _attach_round_history(result, tasks, project_root, stage, channel_versions, start_commit)
@@ -386,7 +372,6 @@ def _parse_git_numstat(
 
     仓库无 HEAD / git 不可用 → (0, 0)
     """
-    import subprocess
 
     cwd = str(project_root) if project_root is not None else "."
 
@@ -438,8 +423,6 @@ def _parse_git_changed_files(
     供 AuditGate 增量扫描 — 避免每轮扫描全项目文件.
     git 不可用或无变更 → 返回空列表.
     """
-    import subprocess
-
     cwd = str(project_root) if project_root is not None else "."
     try:
         result = subprocess.run(
@@ -453,31 +436,31 @@ def _parse_git_changed_files(
     return []
 
 
-def _merge_contracts_with_changed_files(
-    contracts: dict | None,
+def _apply_git_diff_enrichment(
+    gates: list[Gate],
     project_root: Path,
     start_commit: str | None,
-) -> dict | None:
-    """v5.4: 把本轮 git diff 变更文件列表注入 contracts dict.
+) -> None:
+    """MUTATES gates list elements: 把本轮 git diff 变更文件列表注入 gate.contracts.
 
-    若 git 不可用或无变更 → 返回原 contracts (AuditGate 会走全量扫描).
-    若原 contracts 为 None 且无变更 → 返回 None.
+    若 git 不可用或无变更 → 不修改 gate.contracts.
+    供 AuditGate 增量扫描使用.
     """
     changed = _parse_git_changed_files(project_root, start_commit)
     if not changed:
-        return contracts
-    if contracts is None:
-        return {"files_changed": changed}
-    merged = dict(contracts)
-    merged.setdefault("files_changed", changed)
-    return merged
+        return
+    enrichment = {"files_changed": changed}
+    for g in gates:
+        if g.contracts is None:
+            g.contracts = enrichment
+        else:
+            g.contracts = {**g.contracts, "files_changed": changed}
 
 
 async def _run_gates(
     gates: list[Gate],
     project_root: Path,
     stage: str = "",
-    contracts: dict | None = None,
 ) -> dict[str, GateVerdict]:
     """跑 Gate 列表, 返回 {gate_name: GateVerdict} dict.
 
@@ -485,7 +468,7 @@ async def _run_gates(
         - 若 stage 非空, 仅跑 g.applies_to_stages 含 stage 的 Gate
         - 若 stage 为空, 跑所有 Gate (向后兼容, 默认行为)
 
-    v5.0 §B6.1a — contracts 透传: 给每个 Gate.run() 传 contracts 参数 (ContractGate 用).
+    v5.5 P0-2: contracts 不再透传 — 调用方在 gate.contracts 实例属性上预设.
 
     Gate 异常被吞, 写入 GateVerdict(passed=False, message=str(exc)).
     始终写入 dict (含失败 entry), 让 RoundResult.all_gates_passed 能正确反映"有 Gate 失败".
@@ -506,13 +489,12 @@ async def _run_gates(
 
     async def _run_one(gate: Gate) -> tuple[str, GateVerdict]:
         try:
-            # v5.0 §B6.1a: 透传 contracts 给 Gate.run() (用 kwargs 避免子类签名不匹配)
             verdict = await asyncio.to_thread(
-                gate.run, project_root, contracts=contracts
+                gate.run, project_root
             )
         except Exception as exc:
             verdict = GateVerdict.failed(
-                f"Gate {gate.name} 异常: {exc}",
+                f"Gate {gate.name} {type(exc).__name__}: {exc}",
                 gate_name=gate.name,
             )
         return gate.name, verdict

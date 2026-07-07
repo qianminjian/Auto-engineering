@@ -5,72 +5,31 @@
 单向依赖: registry → 各具体 Gate 模块 → base.py (Gate ABC).
 base.py 不再引用任何子类, 循环消除.
 
-v5.4 审计 r3 P1-1: LANGUAGE_TOOLS + get_gate_tools_from_manifest 从
-loop/init_contract.py 迁移至此, 消除 gates → loop 反向依赖.
+v5.5 P1-1: LANGUAGE_TOOLS + get_gate_tools_from_manifest 提取到 _tools.py,
+消除 registry → lint/test_gate/type_check → registry 懒加载循环.
+现在所有模块从 _tools 顶层导入, 无循环.
 """
 
 from __future__ import annotations
 
-from typing import Any
-
+from auto_engineering.gates._tools import LANGUAGE_TOOLS, _default_tools_for, get_gate_tools_from_manifest  # noqa: F401
 from auto_engineering.gates.audit import AuditGate
 from auto_engineering.gates.base import Gate
 from auto_engineering.gates.build import BuildGate
 from auto_engineering.gates.contract import ContractGate
+from auto_engineering.gates.deep_audit import DeepAuditGate
 from auto_engineering.gates.lint import LintGate
 from auto_engineering.gates.safety import SafetyGate
 from auto_engineering.gates.test_gate import TestGate
 from auto_engineering.gates.type_check import TypeCheckGate
 
-# v5.4 Q1 + P1-6: TDDGate + StageTransitionGate 已删除.
-# 它们实现 check(stage, state, project_root) 而非 run(project_root),
-# 本质上是有状态 Guardrail 检查而非无状态 Gate.
-# 如需 Guardrail 集成参考, 见 git 历史 _stage_checks.py + quality_gate.py.
-
-# ============================================================
-# 5 语言默认 Gate 工具映射 (v5.0 §IL.2)
-# v5.4 审计 r3 P1-1: 从 loop/init_contract.py 迁移至此
-# ============================================================
-
-LANGUAGE_TOOLS: dict[str, tuple[str, str, str]] = {
-    "python": ("ruff", "pyright", "pytest"),
-    "typescript": ("eslint", "tsc", "vitest"),
-    "go": ("golangci-lint", "go vet", "go test"),
-    "rust": ("clippy", "cargo check", "cargo test"),
-    "bash": ("shellcheck", "bash -n", "bats"),
-}
-
-
-def _default_tools_for(language: str) -> tuple[str, str, str]:
-    """查 LANGUAGE_TOOLS, 不支持则回退 python."""
-    return LANGUAGE_TOOLS.get(language, LANGUAGE_TOOLS["python"])
-
-
-def get_gate_tools_from_manifest(manifest: dict[str, Any]) -> dict[str, str]:
-    """从 init-manifest conventions 提取 Gate 工具配置 (v5.0 §IL-AC-02).
-
-    Args:
-        manifest: load_init_manifest 返回的 dict.
-
-    Returns:
-        {"linter": str, "type_checker": str, "test_runner": str}
-        - 若 conventions 缺失, 回退到 language 默认工具 (LANGUAGE_TOOLS)
-        - 若 language 也不支持, 用 python 默认 (向后兼容)
-    """
-    conventions = manifest.get("conventions")
-    language = manifest.get("language", "python")
-    if not isinstance(conventions, dict):
-        return dict(zip(("linter", "type_checker", "test_runner"), _default_tools_for(language)))
-    linter = conventions.get("linter")
-    type_checker = conventions.get("type_checker")
-    test_runner = conventions.get("test_runner")
-    default = _default_tools_for(language)
-    return {
-        "linter": linter or default[0],
-        "type_checker": type_checker or default[1],
-        "test_runner": test_runner or default[2],
-    }
-
+__all__ = [
+    "build_gates_from_manifest",
+    "reset_default_gates_cache",
+    "get_default_gates",
+    "get_default_gate_names",
+    "get_gate_by_name",
+]
 
 def _build_default_gates(manifest: dict | None = None) -> list[Gate]:
     """构造 6 道 Gate 的默认实例列表.
@@ -102,6 +61,26 @@ def _build_default_gates(manifest: dict | None = None) -> list[Gate]:
         test_gate,
         BuildGate(),
     ]
+
+
+def get_gate_by_name(name: str) -> Gate | None:
+    """按名称返回 Gate 实例 (SSOT 工厂, 供 CLI gate_check 使用)."""
+    mapping: dict[str, type[Gate]] = {
+        "safety": SafetyGate,
+        "lint": LintGate,
+        "type_check": TypeCheckGate,
+        "audit": AuditGate,
+        "contract": ContractGate,
+        "test": TestGate,
+        "build": BuildGate,
+        "deep_audit": DeepAuditGate,
+    }
+    gate_cls = mapping.get(name)
+    if gate_cls is None:
+        return None
+    if gate_cls is SafetyGate:
+        return SafetyGate(use_gitleaks=False)
+    return gate_cls()
 
 
 def build_gates_from_manifest(manifest: dict) -> list[Gate]:

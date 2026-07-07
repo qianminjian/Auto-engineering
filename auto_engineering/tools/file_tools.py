@@ -9,9 +9,11 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import ClassVar
 
 from .base import BaseTool, ToolResult
+
+__all__ = ["ReadFileTool", "WriteFileTool", "EditFileTool", "SearchCodeTool", "ListDirTool"]
 
 _logger = logging.getLogger("ae.tools.file_tools")
 
@@ -29,10 +31,6 @@ class ReadFileTool(BaseTool):
         "offset": {"type": "integer", "description": "Start line (1-based, default 1)"},
         "limit": {"type": "integer", "description": "Lines to read (default 200)"},
     }
-
-    def __init__(self, project_root: Path | None = None, **kwargs: Any):
-        super().__init__(**kwargs)
-        self.project_root = project_root
 
     async def execute(self, **kwargs) -> ToolResult:
         file_path = kwargs.get("file_path", "")
@@ -69,10 +67,6 @@ class WriteFileTool(BaseTool):
         "content": {"type": "string", "description": "Full file content"},
     }
 
-    def __init__(self, project_root: Path | None = None, **kwargs: Any):
-        super().__init__(**kwargs)
-        self.project_root = project_root
-
     async def execute(self, **kwargs) -> ToolResult:
         file_path = kwargs.get("file_path", "")
         content = kwargs.get("content", "")
@@ -84,6 +78,7 @@ class WriteFileTool(BaseTool):
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(content, encoding="utf-8")
+            self._fsync(path)
             return ToolResult(success=True, content=f"Wrote {len(content)} bytes to {path}")
         except Exception as exc:
             _logger.warning("WriteFileTool 失败: %s", exc, exc_info=True)
@@ -103,10 +98,6 @@ class EditFileTool(BaseTool):
         "old_string": {"type": "string", "description": "Existing string to replace"},
         "new_string": {"type": "string", "description": "Replacement string"},
     }
-
-    def __init__(self, project_root: Path | None = None, **kwargs: Any):
-        super().__init__(**kwargs)
-        self.project_root = project_root
 
     async def execute(self, **kwargs) -> ToolResult:
         file_path = kwargs.get("file_path", "")
@@ -129,6 +120,7 @@ class EditFileTool(BaseTool):
                 )
             new_content = content.replace(old, new, 1)  # 只替换第一个
             path.write_text(new_content, encoding="utf-8")
+            self._fsync(path)
             return ToolResult(success=True, content=f"Edited {path}")
         except Exception as exc:
             _logger.warning("EditFileTool 失败: %s", exc, exc_info=True)
@@ -148,10 +140,6 @@ class SearchCodeTool(BaseTool):
         "path": {"type": "string", "description": "Directory to search (default '.')"},
         "file_pattern": {"type": "string", "description": "Glob file filter (e.g. '*.py')"},
     }
-
-    def __init__(self, project_root: Path | None = None, **kwargs: Any):
-        super().__init__(**kwargs)
-        self.project_root = project_root
 
     async def execute(self, **kwargs) -> ToolResult:
         import re
@@ -180,8 +168,7 @@ class SearchCodeTool(BaseTool):
                         if regex.search(line):
                             matches.append(f"{file}:{line_no}:{line}")
                 except Exception:
-                    import logging
-                    logging.getLogger("ae.tools.file_tools").warning(
+                    _logger.warning(
                         "SearchCode 文件读取失败: %s", file, exc_info=True,
                     )
                     continue
@@ -194,7 +181,10 @@ class SearchCodeTool(BaseTool):
 
 
 class ListDirTool(BaseTool):
-    """List directory contents."""
+    """List directory contents with project_root whitelist.
+
+    P1-E: project_root 限制列表操作必须在目录内 (2026-07-07 审计 P2-2).
+    """
 
     name = "list_dir"
     description = "List files and subdirectories in a directory."
@@ -203,7 +193,12 @@ class ListDirTool(BaseTool):
     }
 
     async def execute(self, **kwargs) -> ToolResult:
-        path = Path(kwargs.get("path", "."))
+        dir_path = kwargs.get("path", ".")
+
+        if err_result := self._validate_path(dir_path):
+            return err_result
+
+        path = Path(dir_path)
         try:
             if not path.exists():
                 return ToolResult(success=False, content="", error=f"Path not found: {path}")

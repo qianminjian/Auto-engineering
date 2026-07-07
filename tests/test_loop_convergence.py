@@ -26,7 +26,7 @@ import threading
 import pytest
 
 from auto_engineering.loop.checkpoint import (
-    SCHEMA_VERSION,
+    DB_SCHEMA_VERSION,
     CheckpointMeta,
     CheckpointNotFoundError,
     CheckpointSchemaMismatchError,
@@ -141,7 +141,7 @@ def test_convergence_quality_gate_all_passed() -> None:
         RoundHistory(
             round_id=2,
             gate_results={
-                f"gate_{i}": GateVerdict.passed(f"ok-{i}", gate_name=f"gate_{i}")
+                f"gate_{i}": GateVerdict.ok(f"ok-{i}", gate_name=f"gate_{i}")
                 for i in range(7)
             },  # 7 道全过
         ),
@@ -165,9 +165,9 @@ def test_convergence_quality_gate_partial_returns_continue() -> None:
         RoundHistory(
             round_id=1,
             gate_results={
-                "g1": GateVerdict.passed("ok", gate_name="g1"),
+                "g1": GateVerdict.ok("ok", gate_name="g1"),
                 "g2": GateVerdict.failed("boom", gate_name="g2"),
-                "g3": GateVerdict.passed("ok", gate_name="g3"),
+                "g3": GateVerdict.ok("ok", gate_name="g3"),
             },
         ),
     ]
@@ -266,7 +266,7 @@ def test_convergence_priority_hard_limit_beats_quality() -> None:
     history = [
         RoundHistory(
             round_id=10,  # = max_iterations
-            gate_results={"g1": GateVerdict.passed("ok", gate_name="g1")},
+            gate_results={"g1": GateVerdict.ok("ok", gate_name="g1")},
             semantic_satisfied=True,
         ),
     ]
@@ -288,8 +288,8 @@ def test_convergence_priority_quality_beats_stagnant() -> None:
             round_id=4,
             files_changed=5,  # 无变化
             gate_results={
-                "g1": GateVerdict.passed("ok", gate_name="g1"),
-                "g2": GateVerdict.passed("ok", gate_name="g2"),
+                "g1": GateVerdict.ok("ok", gate_name="g1"),
+                "g2": GateVerdict.ok("ok", gate_name="g2"),
             },  # 全过
         ),
     ]
@@ -756,11 +756,11 @@ def test_checkpoint_transaction_atomicity(tmp_path) -> None:
 
 
 def test_checkpoint_schema_version_recorded(store: SQLiteCheckpointStore) -> None:
-    """save() 记录的 schema_version 等于当前 SCHEMA_VERSION."""
+    """save() 记录的 schema_version 等于当前 DB_SCHEMA_VERSION."""
     state = CheckpointEnvelope()
     cp_id = store.save(state, round=1)
     loaded = store.load(cp_id)
-    assert loaded.schema_version == SCHEMA_VERSION
+    assert loaded.schema_version == DB_SCHEMA_VERSION
 
 
 def test_checkpoint_schema_mismatch_raises(tmp_path) -> None:
@@ -775,7 +775,7 @@ def test_checkpoint_schema_mismatch_raises(tmp_path) -> None:
     conn = sqlite3.connect(str(db_path))
     conn.execute(
         "UPDATE checkpoints SET schema_version = ? WHERE id = ?",
-        (SCHEMA_VERSION - 1, cp_id),
+        (DB_SCHEMA_VERSION - 1, cp_id),
     )
     conn.commit()
     conn.close()
@@ -783,8 +783,8 @@ def test_checkpoint_schema_mismatch_raises(tmp_path) -> None:
     # load 应抛 SchemaMismatch
     with pytest.raises(CheckpointSchemaMismatchError) as exc_info:
         store.load(cp_id)
-    assert exc_info.value.found == SCHEMA_VERSION - 1
-    assert exc_info.value.expected == SCHEMA_VERSION
+    assert exc_info.value.found == DB_SCHEMA_VERSION - 1
+    assert exc_info.value.expected == DB_SCHEMA_VERSION
 
 
 def test_checkpoint_schema_mismatch_latest_raises(tmp_path) -> None:
@@ -854,7 +854,7 @@ def test_round_history_gate_results_contains_verdict() -> None:
     history = RoundHistory(
         round_id=1,
         gate_results={
-            "safety": GateVerdict.passed("ok", gate_name="safety"),
+            "safety": GateVerdict.ok("ok", gate_name="safety"),
             "lint": GateVerdict.failed("syntax error at line 3", gate_name="lint"),
         },
     )
@@ -905,7 +905,7 @@ def test_round_history_gate_results_serialization_roundtrip() -> None:
         RoundHistory(
             round_id=1,
             gate_results={
-                "safety": GateVerdict.passed("no secrets", gate_name="safety"),
+                "safety": GateVerdict.ok("no secrets", gate_name="safety"),
                 "lint": GateVerdict.failed("unused import 'os'", gate_name="lint"),
             },
         ),
@@ -941,8 +941,8 @@ def test_convergence_judge_quality_all_passed_uses_verdict_objects() -> None:
         RoundHistory(
             round_id=1,
             gate_results={
-                "safety": GateVerdict.passed("clean", gate_name="safety"),
-                "lint": GateVerdict.passed("no issues", gate_name="lint"),
+                "safety": GateVerdict.ok("clean", gate_name="safety"),
+                "lint": GateVerdict.ok("no issues", gate_name="lint"),
             },
         ),
     ]
@@ -967,7 +967,7 @@ def test_convergence_judge_quality_mixed_continues() -> None:
             round_id=1,
             gate_results={
                 "lint": GateVerdict.failed("undefined variable 'x'", gate_name="lint"),
-                "type_check": GateVerdict.passed("ok", gate_name="type_check"),
+                "type_check": GateVerdict.ok("ok", gate_name="type_check"),
             },
         ),
     ]
@@ -983,10 +983,9 @@ def test_convergence_judge_quality_mixed_continues() -> None:
 
 
 class TestCheckpointStateTyping:
-    """Phase 2.2-G: Checkpoint.state 不再是 Any, 用 LoopStateProtocol 约束.
+    """Phase 2.2-G: Checkpoint.state 用 Generic[T] 约束, v5.5 P1-8 移除 Protocol bound.
 
-    设计动机: 旧版 `state: Any` 让 IDE/mypy 看不到字段, 任何代码访问 .state
-    IDE 都不报错, 类型安全破坏. 重构后用 Protocol + TypeVar 让 mypy 看到类型.
+    设计动机: 旧版 `state: Any` 让 IDE/mypy 看不到字段. 重构后用 TypeVar 泛型.
     """
 
     def test_checkpoint_state_field_is_not_any(
@@ -1004,7 +1003,7 @@ class TestCheckpointStateTyping:
         # 关键: state 字段类型不是 Any
         assert "state" in hints, "Checkpoint 必须有 state 字段"
         assert hints["state"] is not Any, (
-            f"Checkpoint.state 类型必须是 LoopStateProtocol/具体类型, 不能是 Any. "
+            f"Checkpoint.state 类型不能是 Any (应为 TypeVar 泛型). "
             f"实际: {hints['state']}"
         )
 
@@ -1028,50 +1027,17 @@ class TestCheckpointStateTyping:
             state=state,
             history=[],
             created_at=datetime.now(UTC),
-            schema_version=SCHEMA_VERSION,
+            schema_version=DB_SCHEMA_VERSION,
         )
         assert isinstance(cp.state, CheckpointEnvelope)
         assert cp.state is state, "state 引用应保留 (无深拷贝)"
 
-    def test_loopstate_satisfies_protocol(
-        self, store: SQLiteCheckpointStore
-    ) -> None:
-        """CheckpointEnvelope 必须实现 LoopStateProtocol (runtime_checkable).
-
-        Protocol 定义: round, step, status, channels, model_dump(**kwargs).
-        """
-        from auto_engineering.loop.state import CheckpointEnvelope  # v2.3 P0-A 重命名
-        from auto_engineering.loop.types import LoopStateProtocol
-
-        state = CheckpointEnvelope()
-        missing = [
-            p
-            for p in ("round", "step", "status", "channels", "model_dump")
-            if not hasattr(state, p)
-        ]
-        assert isinstance(state, LoopStateProtocol), (
-            f"CheckpointEnvelope 必须实现 LoopStateProtocol. 缺失属性: {missing}"
-        )
-
-    def test_types_module_exposes_protocol_and_helpers(self) -> None:
-        """types.py 必须暴露 LoopStateProtocol + serialize/deserialize 帮助函数.
-
-        这是打破循环引用的核心: types.py 不引用 loop/state.py, 只用 Protocol.
-        """
-        import typing
-
+    def test_types_module_exposes_helpers(self) -> None:
+        """types.py 必须暴露 serialize/deserialize 帮助函数."""
         from auto_engineering.loop import types
 
-        # 1. Protocol 存在
-        assert hasattr(types, "LoopStateProtocol"), "types.py 必须定义 LoopStateProtocol"
-
-        # 2. 帮助函数存在
         assert hasattr(types, "serialize_state"), "types.py 必须暴露 serialize_state"
         assert hasattr(types, "deserialize_state"), "types.py 必须暴露 deserialize_state"
-
-        # 3. types.py 不应 import state (避免循环引用再次出现)
-        # Protocol 应当是 typing.Protocol 类型
-        assert typing.Protocol is not None
 
     def test_checkpoint_state_round_trip_preserves_type(
         self, store: SQLiteCheckpointStore
@@ -1481,36 +1447,6 @@ class TestStageRouterIntegration:
         state.plan = "keep me"
         clear_stage_fields(state, "unknown_stage")
         assert state.plan == "keep me"  # 未被清空
-
-    def test_derive_status_with_real_engine_state(self) -> None:
-        """_derive_status 用真实 EngineState 派生 status (2026-07-05 修正).
-
-        验证 3 种判定:
-        1. verdict=APPROVE → "completed"
-        2. current_stage == "" → "completed"
-        3. else → "running"
-
-        注: round 硬上限检查由 ConvergenceJudge._check_hard_limit 负责,
-        _derive_status 不再读 state.round (EngineState 无此字段).
-        """
-        from auto_engineering.engine.state import EngineState
-        from auto_engineering.loop.stage_router import _derive_status
-
-        # Case 1: APPROVE → completed
-        state1 = EngineState(current_stage="critic", verdict="APPROVE")
-        assert _derive_status(state1, max_iterations=10) == "completed"
-
-        # Case 2: stage=="" → completed
-        state2 = EngineState(current_stage="")
-        assert _derive_status(state2, max_iterations=10) == "completed"
-
-        # Case 3: verdict=MAJOR + stage≠"" → running
-        state3 = EngineState(current_stage="developer", verdict="MAJOR")
-        assert _derive_status(state3, max_iterations=10) == "running"
-
-        # Case 4: else → running
-        state4 = EngineState(current_stage="developer", verdict="MAJOR")
-        assert _derive_status(state4, max_iterations=10) == "running"
 
     def test_stage_router_init_validates_positive_limits(self) -> None:
         """StageRouter 拒绝 ≤0 限制 (无意义配置)."""

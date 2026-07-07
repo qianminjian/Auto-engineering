@@ -28,13 +28,14 @@ class TestDeepAuditGateInterface:
     def test_run_returns_gateverdict(self):
         """run() 应返回 GateVerdict 实例."""
         gate = DeepAuditGate(project_root=Path("/tmp"))
-        verdict = gate.run()
+        verdict = gate.run(Path("/tmp"))
         assert isinstance(verdict, GateVerdict)
 
     def test_run_accepts_contracts(self):
-        """run() 应接受 contracts 参数 (匹配 Gate ABC 签名)."""
+        """run() 应通过 contracts 实例属性接受数据."""
         gate = DeepAuditGate(project_root=Path("/tmp"))
-        verdict = gate.run(contracts={"files_changed": ["a.py"]})
+        gate.contracts = {"files_changed": ["a.py"]}
+        verdict = gate.run(Path("/tmp"))
         assert isinstance(verdict, GateVerdict)
 
 
@@ -44,14 +45,14 @@ class TestDeepAuditGateEmptyRun:
     def test_empty_context_passes(self):
         """无 context 时应 pass (P0=0, P1=0)."""
         gate = DeepAuditGate(project_root=Path("/tmp"))
-        verdict = gate.run()
+        verdict = gate.run(Path("/tmp"))
         assert verdict.passed is True
         assert verdict.gate_name == "DeepAuditGate"
 
     def test_empty_context_default_threshold(self):
         """默认 P1 阈值为 6, 空输入 details 正确."""
         gate = DeepAuditGate(project_root=Path("/tmp"))
-        verdict = gate.run()
+        verdict = gate.run(Path("/tmp"))
         assert verdict.details is not None
         assert verdict.details["p0_count"] == 0
         assert verdict.details["p1_count"] == 0
@@ -69,7 +70,8 @@ class TestDeepAuditGateWithFindings:
              "description": "硬编码密钥", "evidence": "API_KEY = 'abc123'", "suggested_fix": "用环境变量"},
         ]
         gate = DeepAuditGate(project_root=Path("/tmp"))
-        verdict = gate.run(contracts={"findings": findings})
+        gate.contracts = {"findings": findings}
+        verdict = gate.run(Path("/tmp"))
         assert verdict.passed is False
         assert verdict.details["p0_count"] == 1
 
@@ -81,7 +83,8 @@ class TestDeepAuditGateWithFindings:
             for i in range(5)  # 5 <= 6 阈值
         ]
         gate = DeepAuditGate(project_root=Path("/tmp"))
-        verdict = gate.run(contracts={"findings": findings})
+        gate.contracts = {"findings": findings}
+        verdict = gate.run(Path("/tmp"))
         assert verdict.passed is True
         assert verdict.details["p1_count"] == 5
 
@@ -93,7 +96,8 @@ class TestDeepAuditGateWithFindings:
             for i in range(7)  # 7 > 6 阈值
         ]
         gate = DeepAuditGate(project_root=Path("/tmp"))
-        verdict = gate.run(contracts={"findings": findings})
+        gate.contracts = {"findings": findings}
+        verdict = gate.run(Path("/tmp"))
         assert verdict.passed is False
         assert verdict.details["p1_count"] == 7
 
@@ -106,7 +110,8 @@ class TestDeepAuditGateWithFindings:
         ]
         # threshold=10, 8 <= 10 → pass
         gate = DeepAuditGate(project_root=Path("/tmp"), p1_threshold=10)
-        verdict = gate.run(contracts={"findings": findings})
+        gate.contracts = {"findings": findings}
+        verdict = gate.run(Path("/tmp"))
         assert verdict.passed is True
 
     def test_p2_only_passes(self):
@@ -117,7 +122,8 @@ class TestDeepAuditGateWithFindings:
             for i in range(20)
         ]
         gate = DeepAuditGate(project_root=Path("/tmp"))
-        verdict = gate.run(contracts={"findings": findings})
+        gate.contracts = {"findings": findings}
+        verdict = gate.run(Path("/tmp"))
         assert verdict.passed is True
         assert verdict.details["p2_count"] == 20
 
@@ -132,7 +138,8 @@ class TestDeepAuditGateWithFindings:
              "description": "裸 print", "evidence": "", "suggested_fix": ""},
         ]
         gate = DeepAuditGate(project_root=Path("/tmp"))
-        verdict = gate.run(contracts={"findings": findings})
+        gate.contracts = {"findings": findings}
+        verdict = gate.run(Path("/tmp"))
         assert verdict.passed is False
         assert verdict.details["p0_count"] == 1
         assert verdict.details["p1_count"] == 1
@@ -149,7 +156,8 @@ class TestDeepAuditGateWithFindings:
              "description": "TODO", "evidence": "", "suggested_fix": "移除或创建 issue"},
         ]
         gate = DeepAuditGate(project_root=Path("/tmp"))
-        verdict = gate.run(contracts={"findings": findings})
+        gate.contracts = {"findings": findings}
+        verdict = gate.run(Path("/tmp"))
         assert verdict.passed is False
         assert verdict.suggestions is not None
         assert "用 os.environ" in verdict.suggestions
@@ -162,7 +170,8 @@ class TestDeepAuditGateWithFindings:
              "description": "裸 print", "evidence": "", "suggested_fix": "替换为 logger"},
         ]
         gate = DeepAuditGate(project_root=Path("/tmp"))
-        verdict = gate.run(contracts={"findings": findings})
+        gate.contracts = {"findings": findings}
+        verdict = gate.run(Path("/tmp"))
         assert verdict.passed is True
         assert verdict.suggestions == []
 

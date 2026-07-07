@@ -2,6 +2,10 @@
 
 Phase 2 之后 conftest.py 只 re-export(避免 cli.py 反向依赖 conftest).
 Phase 0.3 增强: 跨 session 失败计数 + 自动 skip(检测阻塞测试).
+
+WARNING: 本文件含跨 session 持久化 hook (pytest_runtest_logreport), 写入
+/tmp/_ae_test_failures.json 做失败计数. 累计 >=3 次失败后自动 skip 后续测试.
+要重置阻塞状态: 删除 /tmp/_ae_test_failures.json 文件.
 """
 
 from __future__ import annotations
@@ -112,7 +116,7 @@ def _reset_block_cache():
 @pytest.fixture
 def checkpoint_dir(tmp_path):
     """每个测试用独立 tmp 目录存 checkpoint SQLite."""
-    return str(tmp_path / ".ae-checkpoints")
+    return str(tmp_path / ".ae-state")
 
 
 def run_async(coro):

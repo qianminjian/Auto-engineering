@@ -18,18 +18,32 @@ v5.4 P2-8: drop 态已从类型系统和 handler 中完全移除.
 依赖:
     - stage_router.clear_stage_fields (Stage 字段清理复用)
     - EngineState (任意对象, duck-typed)
-    - subprocess (G3/G5 真实 git 操作)
 """
 
 from __future__ import annotations
 
-import subprocess
+from auto_engineering.utils.git import run_git as _run_git, run_git_diff as _run_git_diff
+
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal, TYPE_CHECKING
+from typing import Literal, TYPE_CHECKING
 
 from auto_engineering.loop.stage_router import clear_stage_fields
+
+__all__ = [
+    "Action",
+    "MAX_RETRY_PER_STAGE",
+    "GuardrailResult",
+    "Guardrail",
+    "RequirementValid",
+    "PlanExists",
+    "GitDiffExists",
+    "TestsPass",
+    "GitClean",
+    "GuardrailChain",
+    "handle_guardrail_result",
+]
 
 if TYPE_CHECKING:
     from auto_engineering.engine.state import EngineState
@@ -412,36 +426,3 @@ def handle_guardrail_result(
     return "stop"
 
 
-# ==================== Git subprocess 工具 ====================
-
-
-def _run_git(root: Path, *args: str) -> tuple[int, str]:
-    """同步跑 git 命令, 返回 (rc, stdout).
-
-    stderr 丢弃 (避免污染结果). 异常 → rc=255, stdout="".
-    """
-    try:
-        proc = subprocess.run(
-            ["git", "-C", str(root), *args],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        return proc.returncode, proc.stdout
-    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-        return 255, ""
-
-
-
-
-def _run_git_diff(root: Path, diff_args: list[str]) -> tuple[int, str]:
-    """git diff + numstat 的封装.
-
-    Args:
-        root: 项目根.
-        diff_args: 传给 git diff 的参数 (e.g. ["HEAD~1..HEAD"] 或 ["--cached"]).
-
-    Returns:
-        (rc, stdout). stdout 为空表示无 diff.
-    """
-    return _run_git(root, "diff", "--numstat", *diff_args)

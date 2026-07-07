@@ -62,8 +62,7 @@ def make_task(
         title=f"Task {task_id}",
         description=f"task {task_id}",
         expected_output=f"output for {task_id}",
-        role=role,
-        agent_type=agent_type or role,
+        role=agent_type or role,
         target_files=frozenset(target_files or []),
         depends_on=list(deps or []),
     )
@@ -237,6 +236,7 @@ class TestOrchestratorAfterTickT9:
             convergence_config=ConvergenceConfig(
                 max_iterations=20,
                 max_plan_refines=max_plan_refines,
+                deep_audit_enabled=True,
             ),
             project_root=tmp_path,
         )
@@ -499,6 +499,7 @@ class TestT9FullLoopE2E:
             convergence_config=ConvergenceConfig(
                 max_iterations=10,
                 max_plan_refines=3,
+                deep_audit_enabled=True,
             ),
             project_root=tmp_path,
         )
@@ -565,6 +566,7 @@ class TestT9FullLoopE2E:
             convergence_config=ConvergenceConfig(
                 max_iterations=10,
                 max_plan_refines=2,
+                deep_audit_enabled=True,
             ),
             project_root=tmp_path,
         )
@@ -617,7 +619,7 @@ class TestT9FullLoopE2E:
     async def test_t9_p1_above_threshold_triggers_refine(self, tmp_path: Path):
         """P1 >= threshold (无 P0) 也触发 T9 (audit_found_issues=True)."""
         config = OrchestratorConfig(
-            convergence_config=ConvergenceConfig(max_plan_refines=3),
+            convergence_config=ConvergenceConfig(max_plan_refines=3, deep_audit_enabled=True),
             project_root=tmp_path,
         )
         orch = Orchestrator(

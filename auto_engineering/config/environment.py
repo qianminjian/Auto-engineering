@@ -6,7 +6,6 @@ v2.0 Plan B: 新增 load_ae_answers() 和 preflight() 函数.
 
 from __future__ import annotations
 
-import os
 import shutil
 import sys
 from dataclasses import dataclass
@@ -30,8 +29,12 @@ class ProjectEnvironment:
     has_git: bool = True
 
     @classmethod
-    def resolve(cls, project_root: Path) -> ProjectEnvironment:
-        """从 .ae-answers.yml + 代码自检测 解析工程环境。"""
+    def resolve_and_persist(cls, project_root: Path) -> ProjectEnvironment:
+        """从 .ae-answers.yml + 代码自检测 解析工程环境并持久化。
+
+        注意: 此方法有副作用——会将检测结果写入 .ae-answers.yml。
+        若只需查询不写入, 请用 _from_answers_file 或 _from_detection 直接调用。
+        """
         answers_file = project_root / ".ae-answers.yml"
 
         if answers_file.exists():
@@ -174,7 +177,7 @@ def load_ae_answers(project_root: Path) -> dict | None:
 
     Note:
         这是 init/dev-loop 的低级加载函数,不做字段合并/冲突检测。
-        字段冲突由 ProjectEnvironment.resolve() 处理.
+        字段冲突由 ProjectEnvironment.resolve_and_persist() 处理.
     """
     answers_file = project_root / ".ae-answers.yml"
     if not answers_file.exists():

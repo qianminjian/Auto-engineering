@@ -31,8 +31,8 @@ from auto_engineering.loop.checkpoint.records import (
     T,
 )
 
-# Schema 版本号 (变更时 +1, 用于未来兼容)
-SCHEMA_VERSION = 1
+# SQLite 表结构 Schema 版本号 (变更时 +1, 用于未来兼容)
+DB_SCHEMA_VERSION = 1
 
 
 class SQLiteCheckpointStore[T]:
@@ -140,7 +140,7 @@ class SQLiteCheckpointStore[T]:
     def _validate_state_serializable(state: object) -> None:
         """运行时验证 state 可被 serialize_state 处理 (v5.4 P2-2).
 
-        TypeVar T bound=LoopStateProtocol 仅 mypy 层约束, 运行时无强制.
+        TypeVar T 无 bound, 运行时通过 _validate_state_serializable 做 duck-type 检查.
         此方法在 save 入口做 duck-type 检查: 必须是 dataclass / dict /
         或具有 model_dump 方法的对象.
 
@@ -176,7 +176,7 @@ class SQLiteCheckpointStore[T]:
         """保存 Checkpoint.
 
         Args:
-            state: 满足 LoopStateProtocol 的对象 (典型: EngineState 实例)
+            state: 可序列化对象 (典型: EngineState 实例)
             round: 当前轮次
             step: 当前 step (L1 Inner Loop 内 iteration 计数)
             history: RoundHistory 列表 (可为空)
@@ -219,7 +219,7 @@ class SQLiteCheckpointStore[T]:
                     step,
                     state_json,
                     history_json,
-                    SCHEMA_VERSION,
+                    DB_SCHEMA_VERSION,
                     parent_id,
                     tag,
                     now,
@@ -344,9 +344,9 @@ class SQLiteCheckpointStore[T]:
 def _row_to_checkpoint(row: Any) -> Checkpoint[T]:
     """将 sqlite Row 转 Checkpoint (校验 schema_version)."""
     schema_version = row["schema_version"]
-    if schema_version != SCHEMA_VERSION:
+    if schema_version != DB_SCHEMA_VERSION:
         raise CheckpointSchemaMismatchError(
-            found=schema_version, expected=SCHEMA_VERSION
+            found=schema_version, expected=DB_SCHEMA_VERSION
         )
     state = deserialize_state(row["state_json"])
     history = json.loads(row["history_json"])

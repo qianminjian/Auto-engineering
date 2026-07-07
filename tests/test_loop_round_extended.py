@@ -46,8 +46,8 @@ from auto_engineering.loop.plan import _topological_levels
 # ============================================================
 
 
-def make_task(tid: str, deps: list[str] | None = None, role: str = "developer") -> Task:
-    return Task(id=tid, deps=list(deps or []), role=role)
+def make_task(tid: str, depends_on: list[str] | None = None, role: str = "developer") -> Task:
+    return Task(id=tid, depends_on=list(depends_on or []), role=role)
 
 
 async def _ok_executor(task, ctx):
@@ -89,13 +89,13 @@ class _StubGate(Gate):
         self.captured_contracts = captured_contracts
         self.call_count = 0
 
-    def run(self, project_root, contracts=None):  # type: ignore[override]
+    def run(self, project_root):  # type: ignore[override]
         self.call_count += 1
-        self.captured_contracts = contracts
+        self.captured_contracts = self.contracts
         if self._raise_exc is not None:
             raise self._raise_exc
         if self._verdict_passed:
-            return GateVerdict.passed("ok", gate_name=self.name)
+            return GateVerdict.ok("ok", gate_name=self.name)
         return GateVerdict.failed("nope", gate_name=self.name)
 
 
@@ -155,7 +155,7 @@ class TestRoundResultProperties:
         r = RoundResult(
             round_id=1,
             gate_results={
-                "lint": GateVerdict.passed("ok", gate_name="lint"),
+                "lint": GateVerdict.ok("ok", gate_name="lint"),
                 "type": GateVerdict.failed("bad", gate_name="type"),
             },
         )
@@ -165,8 +165,8 @@ class TestRoundResultProperties:
         r = RoundResult(
             round_id=1,
             gate_results={
-                "lint": GateVerdict.passed("ok", gate_name="lint"),
-                "type": GateVerdict.passed("ok", gate_name="type"),
+                "lint": GateVerdict.ok("ok", gate_name="lint"),
+                "type": GateVerdict.ok("ok", gate_name="type"),
             },
         )
         assert r.all_gates_passed is True
@@ -228,8 +228,8 @@ class TestTopologicalLayersExtended:
     """额外覆盖: 自环 (a→a) / 外部 dep 不计入入度 / 多环混合."""
 
     def test_self_loop_raises_conflict(self):
-        """自环: t1.deps=[t1] → ConflictError."""
-        tasks = [make_task("t1", deps=["t1"])]
+        """自环: t1.depends_on=[t1] → ConflictError."""
+        tasks = [make_task("t1", depends_on=["t1"])]
         with pytest.raises(ConflictError) as exc_info:
             _topological_levels(tasks)
         # 验证 conflicts 字段含 cycle 描述
@@ -239,8 +239,8 @@ class TestTopologicalLayersExtended:
         """deps 引用 batch 外的 task → 不计入入度, 视为已满足."""
         tasks = [
             make_task("t1"),  # 无 deps, 外部 dep
-            make_task("t2", deps=["external"]),  # external 不在 batch
-            make_task("t3", deps=["t1"]),
+            make_task("t2", depends_on=["external"]),  # external 不在 batch
+            make_task("t3", depends_on=["t1"]),
         ]
         layers = _topological_levels(tasks)
         # 期望: 第 1 层含 t1 + t2 (两者都入度 0), 第 2 层 t3
@@ -344,18 +344,18 @@ class TestRunRoundStageFilter:
 
 
 class TestRunRoundContractsPassthrough:
-    """contracts dict 透传给每个 Gate.run(contracts=...)."""
+    """gate.contracts 在 run_round 调用前由调用方预设 (v5.5 P0-2: contracts 不再作为 run_round 参数)."""
 
     @pytest.mark.asyncio
     async def test_contracts_passed_to_gate_run(self, tmp_path: Path):
         gate = _StubGate()
         contracts = {"api_user": {"request": {}, "response": {}, "status": 200}}
+        gate.contracts = contracts
         await run_round(
             tasks=[make_task("t1")],
             executor=_ok_executor,
             gates=[gate],
             project_root=tmp_path,
-            contracts=contracts,
         )
         assert gate.captured_contracts == contracts
 

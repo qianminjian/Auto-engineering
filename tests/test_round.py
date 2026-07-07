@@ -17,6 +17,7 @@ import time
 
 import pytest
 
+from auto_engineering.gates.base import Gate, GateVerdict
 from auto_engineering.loop.round import (
     run_round,
     TaskOutcome,
@@ -24,14 +25,29 @@ from auto_engineering.loop.round import (
 from auto_engineering.loop.plan import Task, ConflictError, _topological_levels
 
 
+class _StubGate(Gate):
+    """可记录 contracts 透传的 stub Gate (用于测试)."""
+
+    name = "stub"
+
+    def __init__(self):
+        self.captured_contracts = None
+        self.call_count = 0
+
+    def run(self, project_root):
+        self.call_count += 1
+        self.captured_contracts = self.contracts
+        return GateVerdict.ok("ok", gate_name=self.name)
+
+
 # ============================================================
 # 共享 helper
 # ============================================================
 
 
-def make_task(tid: str, deps: list[str] | None = None) -> Task:
+def make_task(tid: str, depends_on: list[str] | None = None) -> Task:
     """构造测试用 Task (role=developer 默认)."""
-    return Task(id=tid, deps=list(deps or []), role="developer")
+    return Task(id=tid, depends_on=list(depends_on or []), role="developer")
 
 
 # ============================================================
@@ -40,7 +56,7 @@ def make_task(tid: str, deps: list[str] | None = None) -> Task:
 
 
 class TestRunRoundSignature:
-    """v5.0 §B2.12 — run_round 接受 stage + contracts 参数."""
+    """v5.0 §B2.12 — run_round 接受 stage 参数 (v5.5 P0-2: contracts 已移至 gate.contracts 实例属性)."""
 
     @pytest.mark.asyncio
     async def test_run_round_with_stage_param(self):
@@ -58,24 +74,26 @@ class TestRunRoundSignature:
         assert result.completed_count == 1
 
     @pytest.mark.asyncio
-    async def test_run_round_with_contracts_param(self):
-        """run_round 接受 contracts: dict | None 参数."""
+    async def test_run_round_with_gate_contracts_preset(self, tmp_path):
+        """gate.contracts 应在调用 run_round 前由调用方预设."""
         async def executor(task, ctx):
             return TaskOutcome(task_id=task.id, status="completed", output=task.id)
 
+        gate = _StubGate()
+        gate.contracts = {"api_user": {"request": {}, "response": {}, "status": 200}}
         task = make_task("t1")
-        contracts = {"api_user": {"request": {}, "response": {}, "status": 200}}
-        # contracts=None 默认, contracts=dict 应被接受
         result = await run_round(
             tasks=[task],
             executor=executor,
-            contracts=contracts,
+            gates=[gate],
+            project_root=tmp_path,
         )
         assert result.completed_count == 1
+        assert gate.captured_contracts == {"api_user": {"request": {}, "response": {}, "status": 200}}
 
     @pytest.mark.asyncio
-    async def test_run_round_default_stage_and_contracts(self):
-        """不传 stage/contracts 也应工作 (向后兼容)."""
+    async def test_run_round_default_stage(self):
+        """不传 stage 也应工作 (向后兼容)."""
         async def executor(task, ctx):
             return TaskOutcome(task_id=task.id, status="completed", output=task.id)
 
@@ -115,8 +133,8 @@ class TestTopologicalLayers:
         """依赖链 t1 → t2 → t3 → 3 层, 每层 1 个."""
         tasks = [
             make_task("t1"),
-            make_task("t2", deps=["t1"]),
-            make_task("t3", deps=["t2"]),
+            make_task("t2", depends_on=["t1"]),
+            make_task("t3", depends_on=["t2"]),
         ]
         layers = _topological_levels(tasks)
         assert len(layers) == 3
@@ -128,9 +146,9 @@ class TestTopologicalLayers:
         """菱形依赖: t1 → t2, t1 → t3, t2 → t4, t3 → t4 → 3 层."""
         tasks = [
             make_task("t1"),
-            make_task("t2", deps=["t1"]),
-            make_task("t3", deps=["t1"]),
-            make_task("t4", deps=["t2", "t3"]),
+            make_task("t2", depends_on=["t1"]),
+            make_task("t3", depends_on=["t1"]),
+            make_task("t4", depends_on=["t2", "t3"]),
         ]
         layers = _topological_levels(tasks)
         assert len(layers) == 3
@@ -142,8 +160,8 @@ class TestTopologicalLayers:
     def test_topological_levels_cycle_raises(self):
         """环检测: t1 → t2 → t1 → ConflictError."""
         tasks = [
-            make_task("t1", deps=["t2"]),
-            make_task("t2", deps=["t1"]),
+            make_task("t1", depends_on=["t2"]),
+            make_task("t2", depends_on=["t1"]),
         ]
         with pytest.raises(ConflictError):
             _topological_levels(tasks)

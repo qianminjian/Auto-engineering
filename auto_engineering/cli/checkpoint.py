@@ -5,28 +5,56 @@
 
 from __future__ import annotations
 
+import json as _json
 import logging
+import sqlite3
 from pathlib import Path
 
 import click
 
+from auto_engineering.engine.state import EngineState
+from auto_engineering.loop.checkpoint import CheckpointNotFoundError, SQLiteCheckpointStore
+from auto_engineering.loop.checkpoint.migration import migrate_v1_to_v2
+
 _logger = logging.getLogger("ae.cli.checkpoint")
 
 
+def _get_checkpoint_dir() -> Path:
+    """返回 .ae-state/ 目录路径 (相对于 cwd). 不自动创建."""
+    return Path.cwd() / ".ae-state"
+
+
+def _cli_error(msg: str) -> None:
+    """Echo error to stderr + log + SystemExit(1). P2-14: 集中退出码. 无 except 场景 (无 exc_info)."""
+    _logger.warning("%s", msg)
+    click.echo(f"[error] {msg}", err=True)
+    raise SystemExit(1)
+
+
+def _cli_fatal(msg: str) -> None:
+    """Log error + echo to stderr + SystemExit(1). P1-12: 消除 8 处重复 try-except-log 模式."""
+    _logger.error("%s", msg, exc_info=True)
+    click.echo(f"[error] {msg}", err=True)
+    raise SystemExit(1)
+
+
+def _cli_warn(msg: str) -> None:
+    """Log warning + echo to stderr (non-fatal). P1-12: 消除 8 处重复 try-except-log 模式."""
+    _logger.warning("%s", msg, exc_info=True)
+    click.echo(f"[warn] {msg}", err=True)
+
+
 def _iter_checkpoint_stores(cp_dir: Path):
-    """遍历 .ae-checkpoints/ 下所有 SQLite DB, yield (store, db_file).
+    """遍历 .ae-state/ 下所有 SQLite DB, yield (store, db_file).
 
     v5.4 审计 P2-10: 提取 5 处重复的 "for db_file in sorted(cp_dir.glob('*.db'))" 模式.
     """
-    from auto_engineering.loop.checkpoint import SQLiteCheckpointStore
-
     for db_file in sorted(cp_dir.glob("*.db")):
         try:
             store = SQLiteCheckpointStore(str(db_file))
             yield store, db_file
-        except Exception as e:
-            _logger.warning("skip %s: %s", db_file.name, e, exc_info=True)
-            click.echo(f"[warn] skip {db_file.name}: {e}", err=True)
+        except (OSError, sqlite3.Error, ValueError) as e:
+            _cli_warn(f"skip {db_file.name}: {e}")
 
 
 # ============================================================
@@ -51,12 +79,8 @@ def register_checkpoint_commands(main: click.Group) -> None:
         """保存 checkpoint (供 stop hook / 手动触发).
 
         默认从 stdin 读取 JSON state, --state-file 指定则从文件读取.
-        保存到当前目录 .ae-checkpoints/ae-checkpoints.db.
+        保存到当前目录 .ae-state/ae-checkpoints.db.
         """
-        import json as _json
-        from auto_engineering.engine.state import EngineState
-        from auto_engineering.loop.checkpoint import SQLiteCheckpointStore
-
         state_data: dict = {}
         if state_file:
             with open(state_file, "r") as f:
@@ -69,18 +93,14 @@ def register_checkpoint_commands(main: click.Group) -> None:
                 state_data = {}
 
         if not state_data and not isinstance(state_data, dict):
-            click.echo("[error] 无法解析 state JSON (stdin 或 --state-file)", err=True)
-            raise SystemExit(1)
+            _cli_error("无法解析 state JSON (stdin 或 --state-file)")
 
         try:
             state = EngineState.from_dict(state_data)
         except Exception as e:
-            _logger.warning("无法解析 EngineState: %s", e, exc_info=True)
-            click.echo(f"[error] 无法解析 EngineState: {e}", err=True)
-            raise SystemExit(1)
+            _cli_fatal(f"无法解析 EngineState: {e}")
 
-        cwd = Path.cwd()
-        cp_dir = cwd / ".ae-checkpoints"
+        cp_dir = _get_checkpoint_dir()
         cp_dir.mkdir(exist_ok=True)
         db_path = cp_dir / "ae-checkpoints.db"
 
@@ -94,9 +114,7 @@ def register_checkpoint_commands(main: click.Group) -> None:
                 checkpoint_id=checkpoint_id,
             )
         except Exception as e:
-            _logger.warning("save checkpoint failed: %s", e, exc_info=True)
-            click.echo(f"[error] save checkpoint failed: {e}", err=True)
-            raise SystemExit(1) from e
+            _cli_fatal(f"save checkpoint failed: {e}")
 
         click.echo(f"Checkpoint saved: {cp_id}")
         click.echo(f"  round={round}, step={step}, tag={tag or 'manual'}, db={db_path}")
@@ -108,10 +126,7 @@ def register_checkpoint_commands(main: click.Group) -> None:
         历史: v2.0 用 engine.checkpoint.CheckpointStore (v2.5 P0-FINAL 已删除, BEACON 决策 27).
         v2.0/v2.3: 用 loop.checkpoint.SQLiteCheckpointStore (与 v2.0 子命令共用).
         """
-        from auto_engineering.loop.checkpoint import SQLiteCheckpointStore
-
-        cwd = Path.cwd()
-        cp_dir = cwd / ".ae-checkpoints"
+        cp_dir = _get_checkpoint_dir()
         if not cp_dir.exists():
             click.echo("(no checkpoint directory)")
             return
@@ -131,8 +146,7 @@ def register_checkpoint_commands(main: click.Group) -> None:
                         }
                     )
             except Exception as e:
-                _logger.warning("read %s failed: %s", db_file.name, e, exc_info=True)
-                click.echo(f"[warn] read {db_file.name} failed: {e}", err=True)
+                _cli_warn(f"read {db_file.name} failed: {e}")
                 continue
 
         if not all_checkpoints:
@@ -158,16 +172,9 @@ def register_checkpoint_commands(main: click.Group) -> None:
         (v2.5 P0-FINAL 已删除, BEACON 决策 27).
         v2.0/v2.3: 用 loop.checkpoint.SQLiteCheckpointStore.load.
         """
-        from auto_engineering.loop.checkpoint import (
-            CheckpointNotFoundError,
-            SQLiteCheckpointStore,
-        )
-
-        cwd = Path.cwd()
-        cp_dir = cwd / ".ae-checkpoints"
+        cp_dir = _get_checkpoint_dir()
         if not cp_dir.exists():
-            click.echo(f"(no checkpoint directory: {cp_dir})", err=True)
-            raise SystemExit(1)
+            _cli_error(f"no checkpoint directory: {cp_dir}")
 
         for store, db_file in _iter_checkpoint_stores(cp_dir):
             try:
@@ -175,8 +182,7 @@ def register_checkpoint_commands(main: click.Group) -> None:
             except CheckpointNotFoundError:
                 continue
             except Exception as e:
-                _logger.warning("error reading %s: %s", db_file.name, e, exc_info=True)
-                click.echo(f"[warn] error reading {db_file.name}: {e}", err=True)
+                _cli_warn(f"error reading {db_file.name}: {e}")
                 continue
             click.echo(f"ID:            {cp.id}")
             click.echo(f"Round:         {cp.round}")
@@ -199,8 +205,7 @@ def register_checkpoint_commands(main: click.Group) -> None:
                 click.echo(f"  ... ({len(cp.history) - 5} more)")
             return
 
-        click.echo(f"Checkpoint '{checkpoint_id}' not found", err=True)
-        raise SystemExit(1)
+        _cli_error(f"Checkpoint '{checkpoint_id}' not found")
 
     @checkpoint.command("resume")
     @click.argument("checkpoint_id")
@@ -212,16 +217,9 @@ def register_checkpoint_commands(main: click.Group) -> None:
         v2.0/v2.3: 用 loop.checkpoint.SQLiteCheckpointStore.load.
         (实际恢复请使用 `ae dev-loop` — 它会自动检测中断并提示 resume.)
         """
-        from auto_engineering.loop.checkpoint import (
-            CheckpointNotFoundError,
-            SQLiteCheckpointStore,
-        )
-
-        cwd = Path.cwd()
-        cp_dir = cwd / ".ae-checkpoints"
+        cp_dir = _get_checkpoint_dir()
         if not cp_dir.exists():
-            click.echo(f"(no checkpoint directory: {cp_dir})", err=True)
-            raise SystemExit(1)
+            _cli_error(f"no checkpoint directory: {cp_dir}")
 
         for store, db_file in _iter_checkpoint_stores(cp_dir):
             try:
@@ -229,20 +227,18 @@ def register_checkpoint_commands(main: click.Group) -> None:
             except CheckpointNotFoundError:
                 continue
             except Exception as e:
-                _logger.warning("error reading %s: %s", db_file.name, e, exc_info=True)
-                click.echo(f"[warn] error reading {db_file.name}: {e}", err=True)
+                _cli_warn(f"error reading {db_file.name}: {e}")
                 continue
             click.echo(f"Resume from checkpoint '{checkpoint_id}'")
             click.echo(
                 "(实际恢复请使用 `ae dev-loop` — 它会自动检测中断并提示 resume)"
             )
             click.echo(
-                f'使用: ae dev-loop --resume-checkpoint {checkpoint_id} "your requirement"'
+                f"使用: ae checkpoint resume {checkpoint_id}"
             )
             return
 
-        click.echo(f"Checkpoint '{checkpoint_id}' not found", err=True)
-        raise SystemExit(1)
+        _cli_error(f"Checkpoint '{checkpoint_id}' not found")
 
     # ============================================================
     # v2.0 Phase 04: ae checkpoint v2 list/show (SQLite v2.0 store)
@@ -256,10 +252,7 @@ def register_checkpoint_commands(main: click.Group) -> None:
     @click.option("--round", type=int, default=None, help="按 round 过滤")
     def checkpoint_v2_list_cmd(round: int | None) -> None:
         """列出 v2.0 Checkpoint (按 round ASC, created_at ASC)."""
-        from auto_engineering.loop.checkpoint import SQLiteCheckpointStore
-
-        cwd = Path.cwd()
-        cp_dir = cwd / ".ae-checkpoints"
+        cp_dir = _get_checkpoint_dir()
         if not cp_dir.exists():
             click.echo("(no checkpoint directory)")
             return
@@ -302,13 +295,9 @@ def register_checkpoint_commands(main: click.Group) -> None:
     @click.argument("checkpoint_id")
     def checkpoint_v2_show_cmd(checkpoint_id: str) -> None:
         """查看 v2.0 Checkpoint 详情."""
-        from auto_engineering.loop.checkpoint import CheckpointNotFoundError
-
-        cwd = Path.cwd()
-        cp_dir = cwd / ".ae-checkpoints"
+        cp_dir = _get_checkpoint_dir()
         if not cp_dir.exists():
-            click.echo(f"(no checkpoint directory: {cp_dir})", err=True)
-            raise SystemExit(1)
+            _cli_error(f"no checkpoint directory: {cp_dir}")
 
         for store, db_file in _iter_checkpoint_stores(cp_dir):
             try:
@@ -316,8 +305,7 @@ def register_checkpoint_commands(main: click.Group) -> None:
             except CheckpointNotFoundError:
                 continue
             except Exception as e:
-                _logger.warning("error reading %s: %s", db_file.name, e, exc_info=True)
-                click.echo(f"[warn] error reading {db_file.name}: {e}", err=True)
+                _cli_warn(f"error reading {db_file.name}: {e}")
                 continue
             click.echo(f"ID:            {cp.id}")
             click.echo(f"Round:         {cp.round}")
@@ -340,26 +328,22 @@ def register_checkpoint_commands(main: click.Group) -> None:
                 click.echo(f"  ... ({len(cp.history) - 5} more)")
             return
 
-        click.echo(f"v2.0 Checkpoint '{checkpoint_id}' not found", err=True)
-        raise SystemExit(1)
+        _cli_error(f"v2.0 Checkpoint '{checkpoint_id}' not found")
 
     @checkpoint_v2.command("delete")
     @click.argument("checkpoint_id")
     def checkpoint_v2_delete_cmd(checkpoint_id: str) -> None:
         """删除 v2.0 Checkpoint."""
 
-        cwd = Path.cwd()
-        cp_dir = cwd / ".ae-checkpoints"
+        cp_dir = _get_checkpoint_dir()
         if not cp_dir.exists():
-            click.echo(f"(no checkpoint directory: {cp_dir})", err=True)
-            raise SystemExit(1)
+            _cli_error(f"no checkpoint directory: {cp_dir}")
 
         for store, db_file in _iter_checkpoint_stores(cp_dir):
             if store.delete(checkpoint_id):
                 click.echo(f"Deleted v2.0 checkpoint '{checkpoint_id}' from {db_file.name}")
                 return
-        click.echo(f"v2.0 Checkpoint '{checkpoint_id}' not found", err=True)
-        raise SystemExit(1)
+        _cli_error(f"v2.0 Checkpoint '{checkpoint_id}' not found")
 
     # ============================================================
     # v2.3 Phase I (P1.5): ae checkpoint v2 migrate
@@ -376,12 +360,8 @@ def register_checkpoint_commands(main: click.Group) -> None:
 
         迁移方向: v2.0 → v2.0 (单向, 不可逆).
         """
-        from auto_engineering.loop.checkpoint.migration import migrate_v1_to_v2
-
         try:
             cp_id = migrate_v1_to_v2(Path(src_json), Path(dst_sqlite))
         except Exception as e:
-            _logger.warning("迁移失败: %s", e, exc_info=True)
-            click.echo(f"[迁移失败] {e}", err=True)
-            raise SystemExit(1) from e
+            _cli_fatal(f"迁移失败: {e}")
         click.echo(f"Migrated v2.0 → v2.0: checkpoint_id={cp_id}")

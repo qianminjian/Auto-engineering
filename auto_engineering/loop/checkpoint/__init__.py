@@ -26,7 +26,7 @@ from auto_engineering.loop.checkpoint.records import (
 )
 from auto_engineering.loop.checkpoint.manager import CheckpointManager
 from auto_engineering.loop.checkpoint.store import (
-    SCHEMA_VERSION,
+    DB_SCHEMA_VERSION,
     SQLiteCheckpointStore,
 )
 
@@ -37,6 +37,6 @@ __all__ = [
     "CheckpointMeta",
     "CheckpointNotFoundError",
     "CheckpointSchemaMismatchError",
-    "SCHEMA_VERSION",
+    "DB_SCHEMA_VERSION",
     "SQLiteCheckpointStore",
 ]

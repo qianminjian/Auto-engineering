@@ -18,7 +18,6 @@ import subprocess
 import warnings
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 # ============================================================
 # GateVerdict (v5.0 §B6.1 — Verdict → GateVerdict 重命名)
@@ -43,10 +42,10 @@ class GateVerdict:
     details: dict | None = None
     suggestions: list[str] | None = None
 
-    # 注: passed 字段与 GateVerdict.passed() 类方法同名是 dataclass 不可避免的副作用,
-    # 通过 @classmethod 访问避免歧义. 字段访问走 v.passed, 方法访问走 GateVerdict.passed().
+    # 注: passed 布尔字段与 GateVerdict.ok() 类方法不冲突.
+    # 字段访问走 v.passed (bool), 工厂方法走 GateVerdict.ok().
     @classmethod
-    def passed(
+    def ok(
         cls, msg: str = "", gate_name: str = "",
         details: dict | None = None, suggestions: list[str] | None = None,
     ) -> GateVerdict:  # noqa: F811
@@ -134,7 +133,7 @@ def run_gate_command(cmd: list[str], cwd: Path, timeout: float) -> SubprocessRes
 class Gate:
     """Gate 基类(v2.0 Phase 04 新接口).
 
-    子类必须实现 run(project_root) 方法, 返回 Verdict.
+    子类必须实现 run(project_root) 方法, 返回 GateVerdict.
     默认实现: 检查项目根存在 → 委托子类.
 
     旧接口 Gate.check(stage, context) 保留供 v2.0 Guardrail 体系使用.
@@ -142,24 +141,44 @@ class Gate:
     v5.0 §B2.9 扩展:
         - 类属性 applies_to_stages: tuple[str, ...] — 标识该 Gate 在哪些
           Stage 阶段运行 (architect/developer/critic). 默认 = 三阶段全跑.
-        - run() 新增 contracts: dict | None = None 参数 — 供 ContractGate
-          等需要契约数据的 Gate 使用 (向后兼容: 默认 None).
+        - v5.5 audit P1-9: contracts 从 run() 签名移除, 改为实例属性.
+          仅 ContractGate 需要 contracts, 其他 6 个 Gate 不再有冗余参数.
+        - v5.5 audit P2-15: _register_alias 统一向后兼容别名模式.
     """
 
     name: str = "base"
     # v5.0 §B2.9: 默认覆盖三阶段, 子类按需覆盖 (如 CoverageGate 仅 developer)
     applies_to_stages: tuple[str, ...] = ("architect", "developer", "critic")
+    # v5.5 audit P1-9: contracts 实例属性 (仅 ContractGate 使用, 其他 Gate 忽略)
+    contracts: dict | None = None
+
+    @classmethod
+    def _register_alias(cls, old_name: str, new_name: str) -> None:
+        """注册废弃别名 property, 访问时触发 DeprecationWarning.
+
+        Usage (at module level after class definition):
+            LintGate._register_alias("ruff_bin", "linter_bin")
+        """
+        import warnings
+
+        def _getter(self: "Gate") -> object:
+            warnings.warn(
+                f"{cls.__name__}.{old_name} is deprecated, use .{new_name} instead",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            return getattr(self, new_name)
+
+        setattr(cls, old_name, property(_getter))
 
     def run(
         self,
         project_root: Path,
-        contracts: dict | None = None,
     ) -> GateVerdict:
         """执行 Gate 检查.
 
         Args:
             project_root: 项目根目录路径
-            contracts: v5.0 §B2.9 — 可选契约字典 (供 ContractGate 等使用)
 
         Returns:
             GateVerdict (passed + message)
@@ -168,8 +187,36 @@ class Gate:
             NotImplementedError: 子类未实现时
         """
         raise NotImplementedError(
-            f"{type(self).__name__}.run() must be implemented by subclass"
+            f"{type(self).__name__}.run(project_root: Path) -> GateVerdict 必须由子类实现.\n"
+            f"参考实现: 覆写 run(), 调用 self._validate_project_root(project_root) 验证项目路径, "
+            f"然后执行 Gate 特定检查逻辑."
         )
+
+    @classmethod
+    def from_manifest(cls, manifest: dict) -> "Gate":
+        """从 init-manifest.json 构造 Gate 实例 (可选覆写).
+
+        默认不支持 manifest 构造 — 子类如需支持 (如 LintGate/TypeCheckGate/TestGate)
+        应覆写此方法, 从 manifest 的 conventions 读取工具配置.
+        """
+        raise NotImplementedError(
+            f"{cls.__name__}.from_manifest() 未实现 — "
+            f"该 Gate 不支持从 init-manifest.json 构造"
+        )
+
+    def _validate_project_root(self, project_root: Path) -> GateVerdict | None:
+        """验证 project_root 存在且为目录 (v5.5 P1-4: 消除 5 处重复).
+
+        Returns:
+            None 表示验证通过; GateVerdict.failed 表示失败.
+        """
+        root = Path(project_root)
+        if not root.is_dir():
+            return GateVerdict.failed(
+                f"project_root 不存在或非目录: {root}",
+                gate_name=self.name,
+            )
+        return None
 
 # v5.4: DEFAULT_GATES / _build_default_gates / build_gates_from_manifest
 # 已提取到 auto_engineering.gates.registry, 消除 base ↔ build 导入循环.

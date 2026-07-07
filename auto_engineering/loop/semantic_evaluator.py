@@ -24,8 +24,8 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
+import logging
 import os
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -118,7 +118,6 @@ class ClaudeSemanticEvaluator:
         try:
             response = await self._call_claude(prompt)
         except Exception:
-            import logging
             logging.getLogger("ae.loop.semantic_evaluator").warning(
                 "Claude API 调用失败, 降级返回 False", exc_info=True,
             )
@@ -201,8 +200,12 @@ class ClaudeSemanticEvaluator:
             bool: 解析成功 → 数据值, 解析失败 → False (保守)
         """
         try:
+            # response.content 可能是 list[ContentBlock] | str | None
             c = response.content if hasattr(response, "content") else ""
-            content = c[0].text if c and not isinstance(c, str) else c
+            if c and not isinstance(c, str):
+                content = c[0].text  # ContentBlock.text
+            else:
+                content = c if isinstance(c, str) else ""
             data = json.loads(content)
             return bool(data.get("satisfied", False))
         except (json.JSONDecodeError, KeyError, IndexError, AttributeError, TypeError):

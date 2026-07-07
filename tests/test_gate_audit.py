@@ -225,7 +225,8 @@ class TestAuditGateIncrementalScan:
             'API_KEY = "sk-deadbeef1234567890abcdef1234567890"\n'
         )
         gate = AuditGate()
-        verdict = gate.run(tmp_path, contracts={"files_changed": ["changed.py"]})
+        gate.contracts = {"files_changed": ["changed.py"]}
+        verdict = gate.run(tmp_path)
         # 仅扫描 changed.py → 1 P0, max_p0=0 → fail
         assert verdict.passed is False
         assert "P0=1" in verdict.message
@@ -239,7 +240,8 @@ class TestAuditGateIncrementalScan:
             'API_KEY = "sk-1234567890abcdef1234567890abcdef"\n'
         )
         gate = AuditGate()
-        verdict = gate.run(tmp_path, contracts={"files_changed": ["clean.py"]})
+        gate.contracts = {"files_changed": ["clean.py"]}
+        verdict = gate.run(tmp_path)
         assert verdict.passed is True
         assert "无审计发现" in verdict.message
 
@@ -249,7 +251,7 @@ class TestAuditGateIncrementalScan:
             'API_KEY = "sk-1234567890abcdef1234567890abcdef"\n'
         )
         gate = AuditGate()
-        verdict = gate.run(tmp_path, contracts=None)
+        verdict = gate.run(tmp_path)
         assert verdict.passed is False
         assert "P0=1" in verdict.message
 
@@ -259,7 +261,8 @@ class TestAuditGateIncrementalScan:
             'API_KEY = "sk-1234567890abcdef1234567890abcdef"\n'
         )
         gate = AuditGate()
-        verdict = gate.run(tmp_path, contracts={"files_changed": []})
+        gate.contracts = {"files_changed": []}
+        verdict = gate.run(tmp_path)
         assert verdict.passed is False
 
     def test_incremental_skips_large_file_scan(self, tmp_path: Path) -> None:
@@ -267,7 +270,8 @@ class TestAuditGateIncrementalScan:
         content = "\n".join(f"line {i}" for i in range(500))
         (tmp_path / "big.py").write_text(content)
         gate = AuditGate()
-        verdict = gate.run(tmp_path, contracts={"files_changed": ["big.py"]})
+        gate.contracts = {"files_changed": ["big.py"]}
+        verdict = gate.run(tmp_path)
         # 大文件检查在增量模式下跳过 → 不报告大文件
         assert "大文件" not in verdict.message
 

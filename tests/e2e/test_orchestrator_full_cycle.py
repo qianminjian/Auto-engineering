@@ -52,7 +52,6 @@ def _make_task(
         expected_output=f"output for {task_id}",
         role=agent_type,
         depends_on=list(deps or []),
-        agent_type=agent_type,
     )
 
 
@@ -79,7 +78,6 @@ def _setup_orchestrator(
         config=config,
     )
     orch._state = EngineState(requirement="E2E test: implement login flow")
-    orch._retry_counters = {}
     orch._router = StageRouter()
     return orch
 
@@ -334,7 +332,7 @@ async def test_full_cycle_with_gates_all_pass(tmp_path: Path) -> None:
     mock_gate = MagicMock()
     mock_gate.name = "mock_gate"
     mock_gate.applies_to_stages = ("architect", "developer", "critic")
-    mock_gate.run.return_value = GateVerdict.passed("mock ok", gate_name="mock_gate")
+    mock_gate.run.return_value = GateVerdict.ok("mock ok", gate_name="mock_gate")
 
     tasks = [
         _make_task("arch-1", agent_type="architect"),

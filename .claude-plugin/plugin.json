@@ -29,20 +29,45 @@
       "sqlite3": ">=3.35"
     },
     "env": {
+      "AE_CHECKPOINT_DIR": {
+        "description": "Checkpoint SQLite database directory (default: .ae-state)",
+        "required": false,
+        "default": ".ae-state"
+      },
       "AE_DB_PATH": {
-        "description": "Path to ae-state SQLite database (default: .ae-state/checkpoints.db)",
+        "description": "DEPRECATED: 使用 AE_CHECKPOINT_DIR 替代. Checkpoint DB 路径 (default: .ae-state/checkpoints.db)",
         "required": false,
         "default": ".ae-state/checkpoints.db"
       },
       "AE_LOG_LEVEL": {
-        "description": "Logging level (DEBUG/INFO/WARN/ERROR)",
+        "description": "Logging level: DEBUG/INFO/WARNING/ERROR (default: INFO)",
         "required": false,
         "default": "INFO"
       },
       "AE_GATE_TIMEOUT": {
-        "description": "Gate execution timeout in seconds (default: 300)",
+        "description": "Gate execution timeout in seconds (default: 300, affects safety/lint/type_check/test/build)",
         "required": false,
         "default": "300"
+      },
+      "AE_MAX_STEPS": {
+        "description": "Maximum orchestration loop steps (default: 50)",
+        "required": false,
+        "default": "50"
+      },
+      "AE_MAX_TOOL_CALLS": {
+        "description": "Maximum tool calls per agent invocation (default: 10)",
+        "required": false,
+        "default": "10"
+      },
+      "AE_RETRY_MAX_ATTEMPTS": {
+        "description": "Maximum LLM retry attempts on failure (default: 3)",
+        "required": false,
+        "default": "3"
+      },
+      "AE_RETRY_TIMEOUT": {
+        "description": "LLM retry timeout in seconds (default: 120.0)",
+        "required": false,
+        "default": "120.0"
       }
     }
   }

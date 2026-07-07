@@ -15,6 +15,7 @@ from typing import Any
 import click
 
 from auto_engineering.errors import AEError, ErrorCode
+from auto_engineering.runtime.cancellation import CancellationToken
 
 
 # ============================================================
@@ -28,7 +29,7 @@ class ErrorCategory(enum.Enum):
     USER_ERROR = "user_error"  # 用户输入/配置错 (CONFIG_*, TASK_NOT_FOUND)
     API_ERROR = "api_error"  # API/LLM 错 (LLM_*)
     NETWORK_ERROR = "network_error"  # 网络/IO 错 (CHECKPOINT_*)
-    BUSINESS_ERROR = "business_error"  # 业务规则错 (GUARDRAIL_*, STAGE_RETRY_*)
+    BUSINESS_ERROR = "business_error"  # 业务规则错 (SANDBOX_*, STAGE_RETRY_*)
 
 
 # 错误码 → 类别 映射(按 code 字符串前缀分类)
@@ -36,12 +37,11 @@ _ERROR_CATEGORY_MAP: dict[str, ErrorCategory] = {
     # USER_ERROR
     "CONFIG_": ErrorCategory.USER_ERROR,
     "INVALID_AGENT_OUTPUT": ErrorCategory.USER_ERROR,
+    "TOOL_EXECUTION_ERROR": ErrorCategory.BUSINESS_ERROR,
     # API_ERROR
     "LLM_": ErrorCategory.API_ERROR,
     # BUSINESS_ERROR
-    "GUARDRAIL_": ErrorCategory.BUSINESS_ERROR,
     "AGENT_REGISTRATION_ERROR": ErrorCategory.USER_ERROR,
-    "OUTPUT_DROPPED": ErrorCategory.BUSINESS_ERROR,  # 保留 API, guardrail drop 信号
     "BUDGET_EXCEEDED": ErrorCategory.USER_ERROR,
 }
 

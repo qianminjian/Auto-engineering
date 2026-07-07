@@ -30,49 +30,46 @@ import time
 import uuid
 from pathlib import Path
 
-_logger = logging.getLogger("ae.cli.agent")
-
 import click
 
+from auto_engineering.agents.base import BaseAgent
+from auto_engineering.agents.prompts import (
+    ARCHITECT_SYSTEM_PROMPT,
+    CRITIC_SYSTEM_PROMPT,
+    DEVELOPER_SYSTEM_PROMPT,
+)
+from auto_engineering.llm.anthropic_provider import AnthropicProvider
+from auto_engineering.runtime.runtime import AgentRuntime
+from auto_engineering.runtime.task import Task as RuntimeTask
+from auto_engineering.tools.bash_tools import RunBashTool
+from auto_engineering.tools.file_tools import (
+    EditFileTool,
+    ListDirTool,
+    ReadFileTool,
+    SearchCodeTool,
+    WriteFileTool,
+)
+from auto_engineering.tools.git_tools import GitStatusTool
+from auto_engineering.utils.plugin_mode import is_llm_available
+
+_logger = logging.getLogger("ae.cli.agent")
 
 VALID_ROLES = ("architect", "developer", "critic")
 
 
 def _build_role_system_prompt(role: str) -> str:
     """获取 role 对应 system prompt (从 agents/prompts.py)."""
-    try:
-        from auto_engineering.agents.prompts import (
-            ARCHITECT_SYSTEM_PROMPT,
-            CRITIC_SYSTEM_PROMPT,
-            DEVELOPER_SYSTEM_PROMPT,
-        )
-
-        if role == "architect":
-            return ARCHITECT_SYSTEM_PROMPT
-        if role == "developer":
-            return DEVELOPER_SYSTEM_PROMPT
-        if role == "critic":
-            return CRITIC_SYSTEM_PROMPT
-    except ImportError:
-        pass
+    if role == "architect":
+        return ARCHITECT_SYSTEM_PROMPT
+    if role == "developer":
+        return DEVELOPER_SYSTEM_PROMPT
+    if role == "critic":
+        return CRITIC_SYSTEM_PROMPT
     return f"You are a {role} agent. Process the user request and produce a structured response."
 
 
 def _build_runtime_for_role(role: str, project_root: Path) -> object:
     """构造单 Agent 用的最小 runtime (含 6 个常用工具)."""
-    from auto_engineering.agents.base import BaseAgent
-    from auto_engineering.llm.anthropic_provider import AnthropicProvider
-    from auto_engineering.runtime.runtime import AgentRuntime
-    from auto_engineering.tools.bash_tools import RunBashTool
-    from auto_engineering.tools.file_tools import (
-        EditFileTool,
-        ListDirTool,
-        ReadFileTool,
-        SearchCodeTool,
-        WriteFileTool,
-    )
-    from auto_engineering.tools.git_tools import GitStatusTool
-
     llm = AnthropicProvider()  # SDK 自动从 ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN 读
     tools = [
         WriteFileTool(project_root=project_root),
@@ -114,7 +111,6 @@ def run_agent(role: str, instruction: str, project_root: Path) -> dict:
     # 2026-07-04 修复 (v5.0 深度审计 + Bug 4 prismscan 集成):
     # - 原 if False bug 已修
     # - in_llm_agent 用 detect_plugin_mode() 共用函数 (Bug 4)
-    from auto_engineering.utils.plugin_mode import is_llm_available
     if not is_llm_available():
         return {
             "task_id": task_id,
@@ -131,8 +127,6 @@ def run_agent(role: str, instruction: str, project_root: Path) -> dict:
         agent = runtime.get(role)
 
         async def _exec():
-            from auto_engineering.runtime.task import Task as RuntimeTask
-
             try:
                 return await agent.execute(
                     task=RuntimeTask(

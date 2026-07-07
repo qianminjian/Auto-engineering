@@ -54,7 +54,7 @@ from auto_engineering.loop.round import TaskOutcome, run_round
 def make_task(
     task_id: str,
     target_files: list[str] | None = None,
-    deps: list[str] | None = None,
+    depends_on: list[str] | None = None,
     agent_type: str = "developer",
 ) -> Task:
     """构造测试 Task (target_files 用字符串列表, 内部转 frozenset).
@@ -68,8 +68,7 @@ def make_task(
         expected_output=f"output for {task_id}",
         role=agent_type,
         target_files=frozenset(target_files or []),
-        depends_on=list(deps or []),
-        agent_type=agent_type,
+        depends_on=list(depends_on or []),
     )
 
 
@@ -100,8 +99,8 @@ def conflicting_tasks() -> list[Task]:
 def test_topological_sort_linear_chain():
     """线性依赖链: t1 → t2 → t3."""
     tasks = [
-        make_task("t3", deps=["t2"]),
-        make_task("t2", deps=["t1"]),
+        make_task("t3", depends_on=["t2"]),
+        make_task("t2", depends_on=["t1"]),
         make_task("t1"),
     ]
     order = topological_sort(tasks)
@@ -112,9 +111,9 @@ def test_topological_sort_diamond_dependency():
     """菱形依赖: t1 → t2, t1 → t3, t2 → t4, t3 → t4."""
     tasks = [
         make_task("t1"),
-        make_task("t2", deps=["t1"]),
-        make_task("t3", deps=["t1"]),
-        make_task("t4", deps=["t2", "t3"]),
+        make_task("t2", depends_on=["t1"]),
+        make_task("t3", depends_on=["t1"]),
+        make_task("t4", depends_on=["t2", "t3"]),
     ]
     order = topological_sort(tasks)
     # t1 必须先, t4 必须最后
@@ -127,8 +126,8 @@ def test_topological_sort_diamond_dependency():
 def test_topological_sort_detects_cycle():
     """循环依赖 → ValueError."""
     tasks = [
-        make_task("t1", deps=["t2"]),
-        make_task("t2", deps=["t1"]),
+        make_task("t1", depends_on=["t2"]),
+        make_task("t2", depends_on=["t1"]),
     ]
     with pytest.raises(ValueError, match=r"[Cc]ycle|[Cc]ircular"):
         topological_sort(tasks)
@@ -157,7 +156,7 @@ def test_check_file_isolation_only_parallel_groups():
     # t1 先做, t2 依赖 t1 (串行, 不并行)
     tasks = [
         make_task("t1", ["src/shared.py"]),
-        make_task("t2", ["src/shared.py"], deps=["t1"]),
+        make_task("t2", ["src/shared.py"], depends_on=["t1"]),
     ]
     conflicts = check_file_isolation(tasks)
     assert conflicts == []
@@ -236,9 +235,9 @@ def test_plan_parallelism_groups_diamond():
     """菱形依赖 → 两个并行组: [t1] → [t2,t3] → [t4]."""
     tasks = [
         make_task("t1"),
-        make_task("t2", deps=["t1"]),
-        make_task("t3", deps=["t1"]),
-        make_task("t4", deps=["t2", "t3"]),
+        make_task("t2", depends_on=["t1"]),
+        make_task("t3", depends_on=["t1"]),
+        make_task("t4", depends_on=["t2", "t3"]),
     ]
     plan = Plan(tasks=tasks)
     groups = plan.parallelism_groups()
@@ -790,7 +789,6 @@ class _TrackingMockAgent:
             values={"role": self.role, "task_id": task.id},
             raw_response=f"mock-{self.role}",
             tool_calls=[],
-            agent_type=self.role,
         )
 
 
@@ -859,26 +857,23 @@ async def test_orchestrator_with_agent_runtime_routes_by_role():
 async def test_orchestrator_agent_runtime_missing_role_returns_failed():
     """task.role 在 Runtime 未注册 → TaskOutcome.status='failed' (不抛异常).
 
-    严禁虚化: 注册 developer/critic 但 task.role='reviewer' (合法角色但 Runtime
-    未注册) → 真 Orchestrator 调 AgentRuntime.get('reviewer') → None → 返回
-    failed TaskOutcome (Graceful degradation, 不允许抛 KeyError/LookupError).
+    严禁虚化: 注册 architect/critic 但不注册 developer → Orchestrator 调
+    AgentRuntime.get('developer') → None → 返回 failed TaskOutcome
+    (Graceful degradation, 不允许抛 KeyError/LookupError).
     """
     from auto_engineering.runtime.runtime import AgentRuntime
 
     runtime = AgentRuntime()
     runtime.register("architect", lambda: _TrackingMockAgent("architect"))
-    runtime.register("developer", lambda: _TrackingMockAgent("developer"))
     runtime.register("critic", lambda: _TrackingMockAgent("critic"))
-    # 注意: 'reviewer' 是合法 role 但 Runtime 未注册
-    # t2 role="developer" → developer stage 运行,
-    # agent_type="reviewer" → Runtime 查无 → graceful degradation
+    # 故意不注册 developer → Runtime 查无 → graceful degradation
+    # 注意: v5.5 P1-7 — agent_type 已统一为 role property.
+    # 故意不注册 developer → Runtime 查无 → graceful degradation.
+    # 原测试 cover agent_type/role 分离场景, 统一后改为 cover missing role.
 
-    t2 = make_task("t2", agent_type="developer")
-    t2.agent_type = "reviewer"  # override 后 Role/agent_type 分离
     tasks = [
         make_task("t0", agent_type="architect"),
         make_task("t1", agent_type="developer"),
-        t2,
         make_task("t3", agent_type="critic"),
     ]
 
@@ -899,20 +894,21 @@ async def test_orchestrator_agent_runtime_missing_role_returns_failed():
     # 不应抛异常 — 优雅降级
     await orch.run()
 
-    # 验证: developer 阶段 round_result 含 reviewer 的 failed status
+    # 验证: developer 阶段 round_result 含 developer role 的 failed outcome
+    # (Runtime 未注册 developer → task 失败但不抛异常)
     assert len(orch.round_results) >= 2, (
         f"应至少 2 轮 (architect+developer), 实际: {len(orch.round_results)}"
     )
     rr = orch.round_results[1]
     failed_outcomes = [o for o in rr.outcomes if o.status == "failed"]
     assert len(failed_outcomes) == 1, (
-        f"reviewer (未注册) 应 1 个 failed outcome, 实际: "
+        f"developer (未注册) 应 1 个 failed outcome, 实际: "
         f"{[(o.task_id, o.status) for o in rr.outcomes]}"
     )
-    assert failed_outcomes[0].task_id == "t2"
+    assert failed_outcomes[0].task_id == "t1"
     # 验证: error 字段含角色名 (便于调试)
-    assert "reviewer" in (failed_outcomes[0].error or ""), (
-        f"failed outcome error 应含 'reviewer', 实际: {failed_outcomes[0].error}"
+    assert "developer" in (failed_outcomes[0].error or ""), (
+        f"failed outcome error 应含 'developer', 实际: {failed_outcomes[0].error}"
     )
 
 
@@ -1157,7 +1153,6 @@ class TestOrchestratorV5MainLoop:
         class V5Orchestrator(Orchestrator):
             def __init__(self, *args, **kwargs):
                 self._state = EngineState(requirement="test")
-                self._retry_counters: dict[str, int] = {}
                 self._router = StageRouter()
                 super().__init__(*args, **kwargs)
 
@@ -1207,9 +1202,8 @@ class TestOrchestratorV5MainLoop:
 
         orch = Orchestrator(requirement="block test", tasks=tasks, executor=executor)
         orch._state = EngineState(requirement="block test")
-        orch._retry_counters = {}
         orch._router = StageRouter()
-        orch.config.guardrail_chain = GuardrailChain([BlockGuardrail()])
+        orch._guardrail_facade._chain = GuardrailChain([BlockGuardrail()])
 
         history = await orch.run(cancellation=None)
         # block → 立即停止
@@ -1246,16 +1240,15 @@ class TestOrchestratorV5MainLoop:
 
         orch = Orchestrator(requirement="retry exhaustion", tasks=tasks, executor=executor)
         orch._state = EngineState(requirement="retry exhaustion")
-        orch._retry_counters = {}
         orch._router = StageRouter()
-        orch.config.guardrail_chain = GuardrailChain([AlwaysRetryGuardrail()])
+        orch._guardrail_facade._chain = GuardrailChain([AlwaysRetryGuardrail()])
 
         history = await orch.run(cancellation=None)
         # retry 耗尽 → 停止
         assert orch.verdict is not None
         # 验证: retry 计数器 ≥ 3 (耗尽)
-        assert orch._retry_counters.get("architect", 0) >= 3, (
-            f"retry 计数器应 ≥ 3, 实际: {orch._retry_counters.get('architect', 0)}"
+        assert orch._guardrail_facade._retry_counters.get("architect", 0) >= 3, (
+            f"retry 计数器应 ≥ 3, 实际: {orch._guardrail_facade._retry_counters.get('architect', 0)}"
         )
 
     @pytest.mark.asyncio
@@ -1297,10 +1290,8 @@ class TestOrchestratorV5MainLoop:
 
         orch = Orchestrator(requirement="major loop", tasks=tasks, executor=executor)
         orch._state = EngineState(requirement="major loop")
-        orch._retry_counters = {}
         # router 用更宽松的阈值避免提前 stop
         orch._router = StageRouter(max_majors_in_a_row=2, max_total_majors=3)
-        orch.config.guardrail_chain = GuardrailChain([])
 
         await orch.run(cancellation=None)
         # 验证: 至少跑了 1 轮 MAJOR 循环
@@ -1335,9 +1326,7 @@ class TestOrchestratorV5MainLoop:
         orch = Orchestrator(requirement="hard limit", tasks=tasks,
                             executor=executor, config=cfg)
         orch._state = EngineState(requirement="hard limit")
-        orch._retry_counters = {}
         orch._router = StageRouter()
-        orch.config.guardrail_chain = GuardrailChain([])
 
         await orch.run(cancellation=None)
         # 验证: verdict.level == 4 (LEVEL_HARD_LIMIT)
@@ -1568,7 +1557,7 @@ class TestGuardrailIntegration:
 
 
 class TestV55OrchestratorDeepAudit:
-    """v5.5: Orchestrator._run_deep_audit() + _sync_design_docs() + T9 flow."""
+    """v5.5: Orchestrator._run_deep_audit() + _warn_design_docs_update() + T9 flow."""
 
     def test_run_deep_audit_returns_tuple(self, tmp_path: Path) -> None:
         """_run_deep_audit() 返回 (bool, list[dict])."""
@@ -1594,8 +1583,8 @@ class TestV55OrchestratorDeepAudit:
         assert audit_found is False
         assert findings == []
 
-    def test_sync_design_docs_does_not_raise(self) -> None:
-        """_sync_design_docs() 骨架不抛异常."""
+    def test_warn_design_docs_update_does_not_raise(self) -> None:
+        """_warn_design_docs_update() 骨架不抛异常."""
         from auto_engineering.engine.state import EngineState
 
         state = EngineState(requirement="test")
@@ -1604,7 +1593,7 @@ class TestV55OrchestratorDeepAudit:
             requirement="test", tasks=[], executor=None, config=config,
         )
         # Should not raise
-        orch._sync_design_docs(state)
+        orch._warn_design_docs_update(state)
 
     def test_step_2j_sets_audit_findings_to_none_when_no_issues(self, tmp_path: Path) -> None:
         """步2j: DeepAudit pass → audit_findings=None."""

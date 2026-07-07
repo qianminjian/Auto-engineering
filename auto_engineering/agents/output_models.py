@@ -10,9 +10,10 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+__all__ = ["ArchitectOutput", "DeveloperOutput", "CriticOutput"]
 
 class ArchitectOutput(BaseModel):
-    """ArchitectAgent 输出契约 (§B4.1a)."""
+    """Architect 角色输出契约 (§B4.1a)."""
 
     files_needed: list[str] = Field(default_factory=list, description="所有涉及的文件路径")
     files_to_create: list[str] = Field(default_factory=list, description="本次新创建的文件")
@@ -24,7 +25,7 @@ class ArchitectOutput(BaseModel):
 
 
 class DeveloperOutput(BaseModel):
-    """DeveloperAgent 输出契约 (§B4.2a)."""
+    """Developer 角色输出契约 (§B4.2a)."""
 
     files_changed: list[str] = Field(default_factory=list, description="修改/创建的文件路径")
     commit_hash: str = Field(
@@ -39,7 +40,7 @@ class DeveloperOutput(BaseModel):
 
 
 class CriticOutput(BaseModel):
-    """CriticAgent 输出契约 (§B4.3a)."""
+    """Critic 角色输出契约 (§B4.3a)."""
 
     verdict: Literal["APPROVE", "MAJOR"] = Field(
         default="MAJOR",

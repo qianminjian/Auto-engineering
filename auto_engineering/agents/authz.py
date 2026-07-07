@@ -15,6 +15,8 @@
 
 from __future__ import annotations
 
+__all__ = ["AUTHZ_MATRIX", "authz_check"]
+
 # v5.0 §B12.1: AUTHZ_MATRIX 9 工具 × 3 角色
 # role -> {tool_name: allowed}
 # 2026-07-04 修复 (v5.0 深度审计 P1-S-03): 加 git_status 权限 (三角色都允许, 只读).

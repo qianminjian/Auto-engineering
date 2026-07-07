@@ -63,7 +63,6 @@ SUPPORTED_LANGUAGES: frozenset[str] = frozenset(
 # 此处 re-export 保持向后兼容. 新代码请直接从 gates.registry import.
 from auto_engineering.gates.registry import (  # noqa: E402
     LANGUAGE_TOOLS,
-    _default_tools_for,
     get_gate_tools_from_manifest,
 )
 
@@ -120,19 +119,7 @@ class ValidationResult:
 # ============================================================
 
 
-def _parse_version(version_str: str) -> tuple[int, ...]:
-    """解析 'X.Y.Z' 形式版本号 → tuple[int, ...]. 解析失败返回 (0,)."""
-    parts: list[int] = []
-    for chunk in str(version_str).strip().split("."):
-        digits = ""
-        for ch in chunk:
-            if ch.isdigit():
-                digits += ch
-            else:
-                break
-        if digits:
-            parts.append(int(digits))
-    return tuple(parts) if parts else (0,)
+from auto_engineering.utils import parse_version as _parse_version
 
 
 def _manifest_path(project_root: Path) -> Path:

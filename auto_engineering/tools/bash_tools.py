@@ -21,6 +21,8 @@ from typing import ClassVar
 
 from .base import BaseTool, ToolResult
 
+__all__ = ["RunBashTool"]
+
 # v5.4 审计 P2-8: logger 命名统一为 _logger (曾用 _audit_logger)
 _logger = logging.getLogger("ae.tools.bash")
 
@@ -90,6 +92,7 @@ class RunBashTool(BaseTool):
         )
 
         try:
+            _logger.warning("bash_exec shell=True: %s", command[:200])
             result = subprocess.run(
                 command,
                 shell=True,

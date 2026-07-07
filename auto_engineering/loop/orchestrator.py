@@ -59,13 +59,12 @@ import os
 from collections import deque
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 
 from auto_engineering.agents.schema import derive_output_schema
-from auto_engineering.engine.state import EngineState, LoopState
+from auto_engineering.engine.state import EngineState
 from auto_engineering.gates.base import Gate
 from auto_engineering.loop.checkpoint.manager import CheckpointManager
-from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
 from auto_engineering.loop.convergence import (
     ConvergenceConfig,
     ConvergenceJudge,
@@ -74,9 +73,9 @@ from auto_engineering.loop.convergence import (
 from auto_engineering.loop.convergence import (
     ConvergenceVerdict,
 )
-from auto_engineering.loop.guardrail import GuardrailChain
 from auto_engineering.loop.guardrail_facade import GuardrailFacade
-from auto_engineering.loop.convergence_facade import ConvergenceFacade
+from auto_engineering.loop.convergence_facade import all_gates_passed, evaluate as _evaluate_convergence
+from auto_engineering.utils.git import capture_head
 from auto_engineering.loop.plan import Plan, Task
 from auto_engineering.loop.round import (
     RoundResult,
@@ -91,11 +90,15 @@ from auto_engineering.loop.semantic_evaluator import (
 )
 from auto_engineering.loop.stage_router import (
     CriticVerdictInvalid,
-    StageDecision,
     StageRouter,
     clear_stage_fields,
     update_majors_count,
 )
+
+if TYPE_CHECKING:
+    from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
+    from auto_engineering.loop.guardrail import GuardrailChain
+    from auto_engineering.loop.stage_router import StageDecision
 from auto_engineering.loop.task_factory import apply_outcome_to_state, tasks_from_batch_plan
 from auto_engineering.runtime.cancellation import CancellationToken
 from auto_engineering.runtime.context import TaskContext
@@ -133,9 +136,11 @@ class OrchestratorConfig:
 
     convergence_config: ConvergenceConfig | None = None
     gates: list[Gate] | None = None
-    semantic_evaluator: SemanticEvaluator | None = None
+    semantic_evaluator: SemanticEvaluator | None = None  # None="auto"(默认) 或实例(显式). False=强制禁用
     project_root: Path | None = None
     agent_runtime: AgentRuntime | None = None  # P1.4 — None = 旧行为 (用 executor)
+    # v5.5 P2-7: 可注入 plugin_mode_detector 供测试 mock (默认 detect_plugin_mode)
+    plugin_mode_detector: Callable[[], bool] | None = None
     # v5.0 M4: 3 个新字段 (B2.1)
     checkpoint_store: "SQLiteCheckpointStore | None" = None
     guardrail_chain: "GuardrailChain | None" = None
@@ -152,10 +157,10 @@ class OrchestratorConfig:
     def __post_init__(self) -> None:
         """v2.3 Phase J (P1.6): 默认启用 ClaudeSemanticEvaluator (有 API key 时).
 
-        行为契约:
-            - semantic_evaluator 已是用户显式传入 (非 None) → 不覆盖
-            - semantic_evaluator 为 None + 有 KEY 且不在 LLM agent
-              (detect_plugin_mode() == False) → 自动启用 ClaudeSemanticEvaluator
+        行为契约 (v5.5 audit P0-7 改进):
+            - semantic_evaluator 已是用户显式传入 (非 None/非 False) → 不覆盖
+            - semantic_evaluator 为 False → 强制禁用 (用户显式 opt-out)
+            - semantic_evaluator 为 None (默认) + 有 KEY 且不在 LLM agent → 自动启用
             - semantic_evaluator 为 None + 无 API key 或在 LLM agent → 保持 None
 
         2026-07-04 修复 (Bug 4 prismscan 集成): in_llm_agent 改用
@@ -163,14 +168,28 @@ class OrchestratorConfig:
         OAuth 注入信号 — 解决 plugin 模式下 plugin_mode 检测失败导致 LLM 评估
         误启用的反向问题.
         """
-        in_llm_agent = detect_plugin_mode()
+        # v5.5 audit P0-7: False = 显式禁用
+        if self.semantic_evaluator is False:
+            self.semantic_evaluator = None
+            return
+
+        detector = self.plugin_mode_detector or detect_plugin_mode
+        in_llm_agent = detector()
         api_key_present = self._detect_api_key()
         if (
             self.semantic_evaluator is None
             and api_key_present
             and not in_llm_agent
         ):
+            logging.getLogger(__name__).info(
+                "auto-enabling ClaudeSemanticEvaluator (API key detected)"
+            )
             self.semantic_evaluator = ClaudeSemanticEvaluator()
+        elif self.semantic_evaluator is None:
+            logging.getLogger(__name__).debug(
+                "semantic_evaluator=None, API key present=%s, in_llm_agent=%s",
+                api_key_present, in_llm_agent,
+            )
 
 
 @dataclass
@@ -206,7 +225,6 @@ class Orchestrator:
     verdict: ConvergenceVerdict | None = None
     # v5.0 M4 (B2.1): 内部状态 — 由 __post_init__ 初始化, 默认占位.
     # _state: EngineState 17 字段 Channel 容器 (v5.0 §B1.1)
-    # _retry_counters: Guardrail retry 计数 (per-stage 隔离)
     # _router: StageRouter 引用 (从 config 拉, 避免每个 step 都访问 config)
     _state: "EngineState | None" = None
     _channel_versions: dict[str, int] = field(default_factory=dict)
@@ -273,7 +291,7 @@ class Orchestrator:
 
         协议转换:
             loop.Task  →  runtime.Task (BaseAgent 期望的格式)
-            ctx        →  TaskContext(state=LoopState(requirement=self.requirement))
+            ctx        →  TaskContext(state=EngineState(requirement=self.requirement))
             result.values → output=str(values)
 
         Args:
@@ -285,8 +303,8 @@ class Orchestrator:
         async def runtime_executor(
             loop_task: Task, ctx: Any
         ) -> TaskOutcome:
-            # 1. 按 agent_type 查 Agent; fallback 到 role (懒实例化)
-            lookup = loop_task.agent_type or loop_task.role
+            # 1. 按 role 查 Agent (懒实例化)
+            lookup = loop_task.role
             agent = runtime.get(lookup)
             if agent is None:
                 # 未注册 → 失败 outcome (graceful degradation, 不抛)
@@ -306,8 +324,8 @@ class Orchestrator:
                 schema = derive_output_schema(loop_task.expected_output)
                 if schema:
                     runtime_task.output_schema = schema
-            # 3. 构造 TaskContext (state 必填, 用 LoopState 默认值即可)
-            state: LoopState = ctx if isinstance(ctx, LoopState) else LoopState(
+            # 3. 构造 TaskContext (state 必填, 用 EngineState 默认值即可)
+            state: EngineState = ctx if isinstance(ctx, EngineState) else EngineState(
                 requirement=self.requirement
             )
             task_ctx = TaskContext(
@@ -362,7 +380,7 @@ class Orchestrator:
             round_id = 0
             while round_id < max_iter:
                 round_id += 1
-                self._state.round = round_id  # v5.5 P0-4: persist round to EngineState
+                self._state.write_field("round", round_id, "orchestrator")
 
                 round_result, current_stage, action = await self._tick(
                     round_id, max_iter, cancellation, guardrail_chain, project_root,
@@ -440,13 +458,7 @@ class Orchestrator:
         # 2c 选任务
         round_tasks, advance = self._step_2c_select_tasks(current_stage)
         if not round_tasks and current_stage == "architect" and advance and self.config.agent_runtime is not None:
-            round_tasks = [Task(
-                id="architect-synthetic",
-                title="Generate implementation plan",
-                description=f"Analyze requirement: {self.requirement}",
-                expected_output="batch_plan with developer tasks",
-                role="architect",
-            )]
+            round_tasks = [self._make_architect_synthetic_task()]
             advance = False
         if not round_tasks and advance:
             return None, current_stage, "advance"
@@ -522,31 +534,47 @@ class Orchestrator:
         self._step_2h_major_count(self._state, self._state.verdict, current_stage)
 
         # v5.5 Phase 2: 步2i-2k (DocSync + DeepAudit + T9)
-        all_gates_passed = ConvergenceFacade._all_gates_passed(
+        gates_passed = all_gates_passed(
             round_result.history[0].gate_results if round_result.history else {}
         )
         is_critic_approve = (
             current_stage == "critic"
             and self._state.verdict == "APPROVE"
         )
+        deep_audit_enabled = (
+            self.judge is not None
+            and self.judge.config is not None
+            and self.judge.config.deep_audit_enabled
+        )
 
-        # 步2i: Design Doc Sync (critic APPROVE + all gates passed)
-        if is_critic_approve and all_gates_passed:
-            self._sync_design_docs(self._state)
+        # 步2i: Design Doc Check (critic APPROVE + all gates passed)
+        if is_critic_approve and gates_passed:
+            design_docs_stale = self._warn_design_docs_update(self._state)
+            if design_docs_stale:
+                # v5.5 audit P0-3: Stage 4 强制步骤 — 设计文档过期时标记到 state,
+                # 供收敛判定参考. 当前不硬阻断 (全自动同步尚未实现),
+                # 但记录到 critic_feedback 供下一轮 architect 参考.
+                self._state.write_field(
+                    "critic_feedback",
+                    self._state.critic_feedback
+                    + "\n[Stage 4 Design Doc Sync] BEACON.md 可能过期, "
+                    + "请在下一轮 architect PLAN-REFINE 中更新设计文档.",
+                    "orchestrator",
+                )
 
-        # 步2j: DeepAuditGate (critic APPROVE + all gates passed)
+        # 步2j: DeepAuditGate (critic APPROVE + all gates passed + deep_audit_enabled)
         audit_found_issues = False
-        if is_critic_approve and all_gates_passed:
+        if is_critic_approve and gates_passed and deep_audit_enabled:
             audit_found_issues, findings = self._run_deep_audit(
                 self.config.project_root or Path.cwd()
             )
             if audit_found_issues:
-                self._state.audit_findings = findings
+                self._state.write_field("audit_findings", findings, "orchestrator")
             else:
-                self._state.audit_findings = None
+                self._state.write_field("audit_findings", None, "orchestrator")
 
         # 步2k: StageRouter.next + T9 logic + Judge.evaluate
-        if audit_found_issues and is_critic_approve:
+        if audit_found_issues and is_critic_approve and deep_audit_enabled:
             # T9: DeepAudit 发现问题 → PLAN-REFINE 回路, 跳过 ConvergenceJudge
             self._state.plan_refine_count += 1
             max_plan_refines = (
@@ -571,7 +599,7 @@ class Orchestrator:
                 return True
             # T9: 回到 architect, 跳过 Judge
             clear_stage_fields(self._state, current_stage)
-            self._state.current_stage = decision.next_stage or "architect"
+            self._state.write_field("current_stage", decision.next_stage or "architect", "orchestrator")
             self._save_checkpoint(round_id=round_id, step=2, tag="after_tick_t9")
             return False  # continue, 不调 Judge
 
@@ -650,8 +678,13 @@ class Orchestrator:
             verdict="",
             majors_in_a_row=state.majors_in_a_row,
             total_majors=state.total_majors,
+            max_plan_refines=(
+                self.judge.config.max_plan_refines
+                if self.judge and self.judge.config
+                else 3
+            ),
         )
-        state.current_stage = decision.next_stage or ""
+        state.write_field("current_stage", decision.next_stage or "", "orchestrator")
         return decision
 
     def _step_2c_select_tasks(
@@ -689,10 +722,24 @@ class Orchestrator:
             return [], False
         if advance_decision.next_stage is not None:
             clear_stage_fields(self._state, current_stage)
-            self._state.current_stage = advance_decision.next_stage
+            self._state.write_field("current_stage", advance_decision.next_stage, "orchestrator")
             return [], True
         # stage 流终点: 跳出
         return [], False
+
+    _ARCHITECT_SYNTHETIC_ID = "architect-synthetic"
+    _ARCHITECT_SYNTHETIC_TITLE = "Generate implementation plan"
+    _ARCHITECT_SYNTHETIC_OUTPUT = "batch_plan with developer tasks"
+
+    def _make_architect_synthetic_task(self) -> Task:
+        """当 plan 无 architect task 时, 合成一个默认 task 触发 LLM 规划."""
+        return Task(
+            id=self._ARCHITECT_SYNTHETIC_ID,
+            title=self._ARCHITECT_SYNTHETIC_TITLE,
+            description=f"Analyze requirement: {self.requirement}",
+            expected_output=self._ARCHITECT_SYNTHETIC_OUTPUT,
+            role="architect",
+        )
 
     def _step_2d_guardrail_pre(
         self,
@@ -724,7 +771,7 @@ class Orchestrator:
             round_tasks, state, current_stage, self._collect_latest_gates(),
         )
         channel_versions = self._update_channel_versions(state)
-        start_commit = _capture_head(project_root)
+        start_commit = capture_head(project_root)
         round_result = await run_round(
             tasks=enhanced_tasks,
             executor=self.executor,
@@ -808,7 +855,7 @@ class Orchestrator:
         MAX_CRITIC_RETRIES = 2
         if self._critic_retry_count < MAX_CRITIC_RETRIES:
             self._critic_retry_count += 1
-            state.current_stage = "critic"
+            state.write_field("current_stage", "critic", "orchestrator")
             logging.getLogger("ae.loop.orchestrator").warning(
                 "Bug 2 方案 A: critic verdict 异常, 重试 (%d/%d): %r",
                 self._critic_retry_count,
@@ -838,7 +885,7 @@ class Orchestrator:
             return True
         if decision.next_stage is not None:
             clear_stage_fields(state, current_stage)
-            state.current_stage = decision.next_stage
+            state.write_field("current_stage", decision.next_stage, "orchestrator")
             return False
         return None
 
@@ -849,13 +896,13 @@ class Orchestrator:
         current_stage: str,
     ) -> bool:
         """ConvergenceJudge 评估 + gate 反向补丁 (v5.4 审计 P1-1: 委托 ConvergenceFacade)."""
-        verdict = ConvergenceFacade.evaluate(judge, list(self.history), current_stage)
+        verdict = _evaluate_convergence(judge, list(self.history), current_stage)
         if verdict is not None:
             self.verdict = verdict
             return True
         return False
 
-    def _collect_latest_gates(self) -> dict:
+    def _collect_latest_gates(self) -> dict[str, GateVerdict]:
         """收集最近一轮 RoundHistory 的 gate_results (dict[str, GateVerdict]).
 
         2026-07-04 (Bug 3 方案 C): 用于 step 2i gate_summary 反向防御检查.
@@ -894,52 +941,51 @@ class Orchestrator:
     # ========================================================================
 
     def _run_deep_audit(self, project_root: Path) -> tuple[bool, list[dict]]:
-        """B7.1 步2j: 运行 DeepAuditGate, 返回 (audit_found_issues, findings).
+        """B7.1 步2j: 运行 DeepAudit 基线扫描 + counting/threshold 判定.
 
-        Phase 1 骨架: DeepAuditOrchestrator 收集文件但返回空报告.
-        Phase 5+ 实现真实的 3-agent spawn 并行审计.
+        流程:
+            1. DeepAuditOrchestrator 调用 AuditGate 静态扫描
+            2. 内联 counting: P0>0 或 P1>threshold → audit_found
+            3. 写入审计历史 JSONL (供 ThresholdLearner 学习)
 
         Args:
             project_root: 项目根目录路径.
 
         Returns:
             (audit_found_issues, findings): audit_found_issues=True 表示
-            发现问题需 T9 回路, findings 为 DeepAuditFinding dict 列表.
+            发现问题需 T9 回路, findings 为 dict 列表.
         """
-        from auto_engineering.gates.deep_audit import DeepAuditGate
         from auto_engineering.loop.audit_history import AuditHistory
         from auto_engineering.loop.deep_audit import DeepAuditOrchestrator
 
-        orchestrator = DeepAuditOrchestrator(project_root)
-        report = orchestrator.run_audit()  # Phase 1 骨架: 收集文件但返回空
+        p1_threshold = self._get_p1_threshold()
 
-        gate = DeepAuditGate(project_root, p1_threshold=6)
-        result = gate.run(contracts={
-            "findings": [
-                {
-                    "severity": f.severity,
-                    "dimension": f.dimension,
-                    "file": f.file,
-                    "line": f.line,
-                    "description": f.description,
-                    "evidence": f.evidence,
-                    "suggested_fix": f.suggested_fix,
-                    "agent_source": f.agent_source,
-                }
-                for f in report.findings
-            ],
-        })
+        audit_orchestrator = DeepAuditOrchestrator(project_root)
+        report = audit_orchestrator.run_audit()
 
-        audit_found = not result.passed
-        findings_list: list[dict] = result.details.get("findings", []) if result.details else []
+        # 内联 counting (替代 DeepAuditGate 包装层)
+        audit_found = report.p0_count > 0 or report.p1_count > p1_threshold
 
-        # v5.5 Task 4.1: JSONL 审计历史写入
+        findings_list: list[dict] = [
+            {
+                "severity": f.severity,
+                "dimension": f.dimension,
+                "file": f.file,
+                "line": f.line,
+                "description": f.description,
+                "evidence": f.evidence,
+                "suggested_fix": f.suggested_fix,
+                "agent_source": f.agent_source,
+            }
+            for f in report.findings
+        ]
+
         history = AuditHistory(project_root)
         history.append_entry(
             p0=report.p0_count,
             p1=report.p1_count,
             p2=report.p2_count,
-            threshold=self._get_p1_threshold(),
+            threshold=p1_threshold,
             total_files=report.total_audited_files,
             plan_refine_triggered=audit_found,
         )
@@ -965,25 +1011,24 @@ class Orchestrator:
 
 
 
-    def _sync_design_docs(self, state: "EngineState") -> None:
-        """B7.1 步2i: 同步设计文档 — 本轮改动后更新 BEACON.md 状态.
+    def _warn_design_docs_update(self, state: "EngineState") -> bool:
+        """B7.1 步2i (Stage 4 Design Doc Sync): 检查 BEACON.md 是否滞后于代码改动.
 
-        检查本轮修改的文件, 若涉及核心模块则更新 design/BEACON.md 的
-        "当前状态" 章节 (最近动作 + 下一步).
+        强制步骤 (CLAUDE.md Stage 4): 若核心模块改动但 BEACON.md 在改动前最后修改,
+        说明文档未同步 → 返回 True (需更新). 调用方应将此信息写入 state 供下一步决策.
 
-        Phase 3+ 增强: 自动对照变更内容更新设计决策表.
+        Returns:
+            True 若 BEACON.md 需要更新, False 若已同步或无核心改动.
         """
         _logger = logging.getLogger(__name__)
         changed = state.files_changed if state.files_changed else []
         if not changed:
-            _logger.info("Design doc sync: 本轮无文件变更, 跳过")
-            return
+            return False
 
         project_root = self.config.project_root or Path.cwd()
         beacon_path = project_root / "design" / "BEACON.md"
         if not beacon_path.exists():
-            _logger.info("Design doc sync: BEACON.md 不存在, 跳过")
-            return
+            return False
 
         core_dirs = {"loop/", "gates/", "agents/", "engine/", "cli/", "tools/"}
         core_changed = [
@@ -991,17 +1036,30 @@ class Orchestrator:
             if any(f.startswith(d) for d in core_dirs)
         ]
         if not core_changed:
-            _logger.info(
-                "Design doc sync: 改动不涉及核心模块 (%d files), 跳过",
-                len(changed),
+            return False
+
+        # 检查 BEACON.md 修改时间 vs 本轮改动时间
+        beacon_mtime = beacon_path.stat().st_mtime
+        stale = False
+        for f in core_changed:
+            fpath = project_root / f
+            if fpath.exists() and fpath.stat().st_mtime > beacon_mtime:
+                stale = True
+                break
+
+        if stale:
+            _logger.error(
+                "Stage 4 Design Doc Sync: 核心模块 %s 在 BEACON.md 之后修改 (%d 文件), "
+                "设计文档可能过期. 请更新 BEACON.md 后重新运行.",
+                core_changed[:5], len(core_changed),
             )
-            return
+            return True
 
         _logger.info(
-            "Design doc sync: 本轮改动涉及核心模块 %s (共 %d 文件), "
-            "BEACON.md 可能需要更新",
-            core_changed[:5], len(core_changed),
+            "Stage 4 Design Doc Sync: BEACON.md 已是最新 (核心改动 %d 文件).",
+            len(core_changed),
         )
+        return False
 
     def _step_3_exit_block(
         self,
@@ -1059,33 +1117,12 @@ class Orchestrator:
             return None
         try:
             return await self.config.semantic_evaluator(round_result)
-        except (RuntimeError, ValueError, OSError, TimeoutError) as exc:
+        except Exception as exc:
             logging.warning(
                 "语义评估器异常 (round_id=%s): %s",
                 getattr(round_result, "round_id", "?"), exc, exc_info=True,
             )
             return None
-
-
-def _capture_head(project_root: Path | None) -> str | None:
-    """捕获当前 HEAD commit hash, 供 git diff 稳定基线."""
-    import subprocess
-
-    cwd = str(project_root) if project_root is not None else "."
-    try:
-        result = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            cwd=cwd, capture_output=True, text=True, timeout=5,
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            return result.stdout.strip()
-    except FileNotFoundError:
-        return None
-    except (subprocess.TimeoutExpired, OSError) as exc:
-        logging.getLogger("ae.loop.orchestrator").warning(
-            "git rev-parse HEAD 失败 (cwd=%s): %s", cwd, exc
-        )
-        return None
 
 
 def _inject_self_refine_context(
