@@ -53,13 +53,13 @@ class LintGate(Gate):
         self,
         linter_bin: str | None = None,
         linter_subcommand: str = "check",
-        timeout: float = _DEFAULT_TIMEOUT,
+        timeout: float | None = None,
         extra_args: list[str] | None = None,
         project_root: Path | None = None,
     ):
         self.linter_bin = linter_bin or _DEFAULT_LINTER
         self.linter_subcommand = linter_subcommand
-        self.timeout = timeout
+        self.timeout = timeout if timeout is not None else Gate._resolve_timeout(_DEFAULT_TIMEOUT)
         self.extra_args = extra_args or []
         self.project_root = project_root
 
@@ -67,7 +67,7 @@ class LintGate(Gate):
     def from_manifest(
         cls,
         manifest: dict,
-        timeout: float = _DEFAULT_TIMEOUT,
+        timeout: float | None = None,
         project_root: Path | None = None,
     ) -> "LintGate":
         """v5.0 §IL-AC-02: 从 init-manifest.json 构造 LintGate.

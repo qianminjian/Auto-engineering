@@ -1600,7 +1600,7 @@ class TestV55OrchestratorDeepAudit:
         from auto_engineering.engine.state import EngineState
 
         state = EngineState(requirement="test")
-        state.verdict = "APPROVE"
+        state.critic_verdict = "APPROVE"
         state.current_stage = "critic"
 
         config = OrchestratorConfig(project_root=tmp_path)

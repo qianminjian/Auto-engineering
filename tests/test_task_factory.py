@@ -326,7 +326,7 @@ def test_apply_outcome_critic_writes_all_three_fields() -> None:
         },
     )
     apply_outcome_to_state(state, outcome)
-    assert state.verdict == "APPROVE"
+    assert state.critic_verdict == "APPROVE"
     assert state.findings == [{"severity": "minor", "msg": "f1"}]
     assert state.critic_feedback == "ok"
 
@@ -343,7 +343,7 @@ def test_apply_outcome_critic_partial_fields_leaves_others_unchanged() -> None:
         output={"verdict": "MAJOR"},
     )
     apply_outcome_to_state(state, outcome)
-    assert state.verdict == "MAJOR"
+    assert state.critic_verdict == "MAJOR"
     # 缺失字段不变
     assert state.findings == [{"old": "value"}]
     assert state.critic_feedback == "old feedback"
@@ -367,7 +367,7 @@ def test_apply_outcome_critic_with_strengths_and_assessment() -> None:
         },
     )
     apply_outcome_to_state(state, outcome)
-    assert state.verdict == "APPROVE"
+    assert state.critic_verdict == "APPROVE"
     assert state.strengths == [{"description": "Clean architecture", "location": "src/core.py"}]
     assert state.assessment == "Ready to merge"
 

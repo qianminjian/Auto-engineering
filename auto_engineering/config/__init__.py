@@ -1,7 +1,6 @@
 """项目配置.
 
 核心类:
-    Settings            — 全局配置
     ProjectEnvironment  — init/dev-loop 共享契约
 
 v2.0 Plan B 新增:
@@ -10,11 +9,9 @@ v2.0 Plan B 新增:
 """
 
 from .environment import ProjectEnvironment, load_ae_answers, preflight
-from .settings import Settings
 
 __all__ = [
     "ProjectEnvironment",
-    "Settings",
     "load_ae_answers",
     "preflight",
 ]

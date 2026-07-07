@@ -251,9 +251,31 @@ class TestOrchestratorV55Integration:
 
     def test_all_gates_passed_empty_history(self) -> None:
         """空 gate_results → all_gates_passed 返回 True."""
-        from auto_engineering.loop.convergence_facade import all_gates_passed
+        from auto_engineering.loop.convergence_facade import check_gates_passed
 
-        assert all_gates_passed({}) is True
+        assert check_gates_passed({}) is True
+
+    def test_all_gates_passed_with_gateverdict_objects(self) -> None:
+        """P0-4: GateVerdict 对象 (非 Any) → 类型安全."""
+        from auto_engineering.gates.base import GateVerdict
+        from auto_engineering.loop.convergence_facade import check_gates_passed
+
+        assert check_gates_passed({}) is True
+        assert check_gates_passed({
+            "safety": GateVerdict.ok("ok", gate_name="safety"),
+            "lint": GateVerdict.ok("ok", gate_name="lint"),
+        }) is True
+        assert check_gates_passed({
+            "safety": GateVerdict.ok("ok", gate_name="safety"),
+            "lint": GateVerdict.failed("failed", gate_name="lint"),
+        }) is False
+
+    def test_all_gates_passed_rejects_non_gateverdict(self) -> None:
+        """P0-4: 非 GateVerdict 对象传参触发 AttributeError (不静默)."""
+        from auto_engineering.loop.convergence_facade import check_gates_passed
+
+        with pytest.raises(AttributeError, match="passed"):
+            check_gates_passed({"bad": True})  # bool 没有 .passed
 
     # --- 9. Orchestrator 初始化包含 v5.5 字段 ---
 

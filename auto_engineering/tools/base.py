@@ -125,12 +125,15 @@ class BaseTool(ABC):
         """v5.5 P2-3: fsync 文件确保写入持久化 (防崩溃丢数据)."""
         import os
 
+        fd = -1
         try:
             fd = os.open(str(path), os.O_RDONLY)
             os.fsync(fd)
-            os.close(fd)
         except OSError:
-            pass
+            logging.getLogger("ae.tools.base").debug("fsync failed for %s", path, exc_info=True)
+        finally:
+            if fd >= 0:
+                os.close(fd)
 
     def to_schema(self) -> dict:
         return {

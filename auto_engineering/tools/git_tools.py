@@ -87,7 +87,7 @@ class GitStatusTool(BaseTool):
                 success=True,
                 content=result.stdout.strip() or "(clean)",
             )
-        except (subprocess.TimeoutExpired, ValueError, Exception) as exc:
+        except Exception as exc:
             return _handle_git_error(exc, "status")
 
 
@@ -125,7 +125,7 @@ class GitCommitTool(BaseTool):
                 success=True,
                 content=commit_result.stdout.strip() or "(commit created)",
             )
-        except (subprocess.TimeoutExpired, ValueError, Exception) as exc:
+        except Exception as exc:
             return _handle_git_error(exc, "commit")
 
 
@@ -157,5 +157,5 @@ class GitDiffTool(BaseTool):
                 success=True,
                 content=result.stdout.strip() or "(no changes)",
             )
-        except (subprocess.TimeoutExpired, ValueError, Exception) as exc:
+        except Exception as exc:
             return _handle_git_error(exc, "diff")

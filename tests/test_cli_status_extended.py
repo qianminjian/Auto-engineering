@@ -355,13 +355,13 @@ def test_status_text_mode_no_project_env_warning(tmp_cwd: Path) -> None:
 
 
 def test_status_text_mode_env_resolve_exception(tmp_cwd: Path) -> None:
-    """Status text mode handles ProjectEnvironment.resolve_and_persist exception gracefully."""
+    """Status text mode handles ProjectEnvironment._from_detection exception gracefully."""
     from unittest.mock import patch
     from auto_engineering.config.environment import ProjectEnvironment
 
     runner = CliRunner()
     with patch.object(
-        ProjectEnvironment, "resolve_and_persist", side_effect=RuntimeError("simulated error")
+        ProjectEnvironment, "_from_detection", side_effect=RuntimeError("simulated error")
     ):
         result = runner.invoke(main, ["status"])
         assert result.exit_code == 0

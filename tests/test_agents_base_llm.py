@@ -241,6 +241,24 @@ class TestParseFinalResponse:
         # 截断后总长 <= 200 + 前缀 + 后缀
         assert len(exc_info.value.message) < 500
 
+    def test_pydantic_model_converted_to_dict(self, monkeypatch):
+        """P0-5: parse_agent_output 返回 PydanticModel 时自动转为 dict."""
+        from pydantic import BaseModel
+
+        class FakeOutput(BaseModel):
+            x: int = 1
+            y: str = "hello"
+
+        model_instance = FakeOutput(x=42, y="world")
+        agent = _make_agent()
+        monkeypatch.setattr(
+            "auto_engineering.agents.parser.parse_agent_output",
+            lambda content, schema=None: model_instance,
+        )
+        result = agent._parse_final_response('{"x": 42}')
+        assert isinstance(result, dict), f"Expected dict, got {type(result)}"
+        assert result == {"x": 42, "y": "world"}
+
 
 # =============================================================================
 # 3. _validate_tool_input: 5 类场景

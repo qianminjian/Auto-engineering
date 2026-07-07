@@ -201,9 +201,9 @@ class SafetyGate(Gate):
     name = "safety"
     applies_to_stages = ("architect", "developer", "critic")
 
-    def __init__(self, use_gitleaks: bool = True, timeout: float = 30.0):
+    def __init__(self, use_gitleaks: bool = True, timeout: float | None = None):
         self.use_gitleaks = use_gitleaks
-        self.timeout = timeout
+        self.timeout = timeout if timeout is not None else Gate._resolve_timeout(30.0)
 
     def run(self, project_root: Path) -> GateVerdict:
         """执行 safety 检查.

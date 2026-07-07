@@ -1,4 +1,4 @@
-> 创建：2026-06-24 | 更新：2026-07-06 | 阶段：v5.5 Design (DeepAudit 扩展设计)
+> 创建：2026-06-24 | 更新：2026-07-07 | 阶段：v5.5 Implementation (代码审计修复完成 → DeepAuditGate 骨架开发)
 
 ## 目标与成功标准
 
@@ -31,16 +31,17 @@
 
 ## 当前状态
 
-**阶段：** v5.5 Design — DeepAudit Gate + T9 plan-refine 回路设计完成。
+**阶段：** v5.5 Implementation — DeepAudit Gate + T9 plan-refine 回路设计完成，代码审计修复完成。
 
 **最近动作 (2026-07-07)：**
-- **v5.5 设计文档三轮深度审计 + 修复**: 审计报告 `_scratch/reports/2026-07-07-audit-v5.5-design.md` (第一轮, 7.2→7.8) + `round2` (第二轮, 7.8→8.2) + `round3` (第三轮, 8.2→预估 8.5+)。修复 8 P0 + 18 P1 + 5 P2:
-  - **第一轮 (3 P0 + 8 P1)**: B7.1 DeepAuditGate+T9+DocSync步骤 / B2.2 StageRouter签名 / PART C废弃标注 / B3.1 T9触发归属 / DeepAuditGate不注册DEFAULT_GATES / B1.1字段18-19 / P1阈值公式p75 / severity映射 / Architect自动化子规则 / Design Doc Sync步骤 / D.3c隔离边界 / IMPL-PLAN Task 1.2+4.2
-  - **第二轮 (2 P0 + 4 P1 + 3 P2)**: B7.1 all_gates_passed变量定义 / B2b.2 T9数据流路径 / B2b.3 TaskContext条件化 / T9 batch_plan重转换 / B2b.1 previous_plan幽灵字段 / IMPL-PLAN依赖图+Task 2.3步骤引用
-  - **第三轮 (3 P0 + 6 P1 + 2 P2)**: D.3a/D.3b触发归属+幽灵字段同步 / IMPL-PLAN Phase 2头注释 / B4.1a/B6.5e/D.5/IMPL-PLAN 共11处 previous_plan→state.plan 命名统一 / Task 2.3方法名+Task 2.4标题更新
-- **Pre-v5.5 全量代码审计 + IMPL-PLAN Phase 0**: 全量审计确认所有 v5.0 核心基础设施 (Gates/Guardrail/Checkpoint/CLI/Orchestrator) 均为真实实现无 stub。发现 4 项遗留问题: doctor.py _check_api_key 未调用 / semantic_evaluator 模型名不完整 / CLAUDE.md authz 工具数 9→10 / errors.py 3 保留 ErrorCode 确认有意设计。排入 IMPL-PLAN Phase 0 (4 Task)
+- **v5.5 全量代码审计 + 修复**: 审计报告 `_scratch/reports/2026-07-07-audit.md` (11 P0 + 21 P1 + 11 P2)。已修复 11 P0 + 15 P1 + 5 P2（1475 tests, 0 fail）:
+  - **P0 (11 项)**: AuditGate _validate_project_root / convergence_facade 类型 / _parse_final_response 返回类型 / DeepAuditGate project_root / CheckpointManager 职责 / EngineState Channel 写控制 / role 字段统一 / Protocol 移除 / GuardrailChain.default() / TDDGate+StageTransitionGate 删除 / JSONL 协议移除
+  - **P1 (15 项)**: LANGUAGE_TOOLS 循环依赖消除 / CheckpointEnvelope 字段 / convergence_facade 公共 API / verdict→critic_verdict 重命名 / StageRouter.next() 参数 vs EngineState 构造 / round._mutate_gates_with_diff 命名 / checkpoint resume→validate 重命名 / parser debug log / errors.py 注释 / registry lru_cache / environment get_undetectable_fields 公共化 / 等
+  - **P2 (5 项)**: fsync debug log / parser 三层 debug log / errors.py ErrorCode 计数 / registry lru_cache 单例 / environment 公共 API
+- **9 项延后处理** → 记录在 `design/decisions/audit-deferred-2026-07-07.md`（含问题、方案、风险、触发条件）
+- **v5.5 设计文档三轮深度审计 + 修复**: 修复 8 P0 + 18 P1 + 5 P2（设计文档控制流/数据流/章节同步）
 
-**下一步：** Phase 0 清理 (4 Task) → DeepAuditGate 骨架 (Phase 1) → Orchestrator 集成 (Phase 2) → Architect 扩展 (Phase 3) → 学习系统 (Phase 4) → E2E 验证 (Phase 5)
+**下一步：** P1-7 Gate timeout 统一 → DeepAuditGate 骨架 (Phase 1) → Orchestrator 集成 (Phase 2) → Architect 扩展 (Phase 3) → 学习系统 (Phase 4) → E2E 验证 (Phase 5)
 
 **阻塞项：** 无
 
@@ -66,4 +67,4 @@
 
 ## 引用文件
 
-@design/v5.0-Design-Loop.md · @design/INDEX.md · @docs/EARS-v5.0.md · @docs/api-reference.md · @docs/production-deployment.md
+@design/v5.0-Design-Loop.md · @design/INDEX.md · @docs/EARS-v5.0.md · @docs/api-reference.md · @docs/production-deployment.md · @design/decisions/audit-deferred-2026-07-07.md

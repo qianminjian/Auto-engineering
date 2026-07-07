@@ -54,7 +54,7 @@ def _all_gate_names() -> tuple[str, ...]:
     except Exception:
         _logger.warning("_all_gate_names fallback to hardcoded list", exc_info=True)
         # 与 registry._build_default_gates 保持同步
-        return ("safety", "lint", "type_check", "audit", "contract", "test", "build", "deep_audit")
+        return ("safety", "lint", "type_check", "audit", "contract", "test", "build")
 
 
 ALL_GATES = _all_gate_names()

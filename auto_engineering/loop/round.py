@@ -268,7 +268,7 @@ async def run_round(
         # 即使无 task, 也跑 Gate (若提供) — Phase H 行为: Gate 在 task 之后跑
         # v5.0 §B6.1: 按 stage 过滤 Gate
         if gates and project_root is not None:
-            _apply_git_diff_enrichment(gates, project_root, start_commit)
+            _mutate_gates_with_diff(gates, project_root, start_commit)
             result.gate_results = await _run_gates(gates, project_root, stage=stage)
         await _attach_round_history(result, tasks, project_root, stage, channel_versions, start_commit)
         return result
@@ -306,7 +306,7 @@ async def run_round(
     # v2.2 Phase H: 跑 Gate (task 完成后), 写入 gate_results
     # v5.0 §B6.1: 按 stage 过滤
     if gates and project_root is not None:
-        _apply_git_diff_enrichment(gates, project_root, start_commit)
+        _mutate_gates_with_diff(gates, project_root, start_commit)
         result.gate_results = await _run_gates(gates, project_root, stage=stage)
 
     # v2.3 Phase G (P1.3): 末尾构造 RoundHistory 写入 round_result.history
@@ -436,12 +436,12 @@ def _parse_git_changed_files(
     return []
 
 
-def _apply_git_diff_enrichment(
+def _mutate_gates_with_diff(
     gates: list[Gate],
     project_root: Path,
     start_commit: str | None,
 ) -> None:
-    """MUTATES gates list elements: 把本轮 git diff 变更文件列表注入 gate.contracts.
+    """副作用: 把本轮 git diff 变更文件列表注入 gates[].contracts (原地修改).
 
     若 git 不可用或无变更 → 不修改 gate.contracts.
     供 AuditGate 增量扫描使用.

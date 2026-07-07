@@ -255,7 +255,7 @@ class TestOrchestratorAfterTickT9:
 
         # 设置 state 为 critic APPROVE
         orch._state.current_stage = "critic"
-        orch._state.verdict = "APPROVE"
+        orch._state.critic_verdict = "APPROVE"
 
         # 构造 critic 的 round_result (所有 gates 通过)
         from auto_engineering.gates.base import GateVerdict
@@ -300,7 +300,7 @@ class TestOrchestratorAfterTickT9:
         orch = self._make_orchestrator_with_state(tmp_path)
 
         orch._state.current_stage = "critic"
-        orch._state.verdict = "APPROVE"
+        orch._state.critic_verdict = "APPROVE"
 
         from auto_engineering.gates.base import GateVerdict
 
@@ -341,7 +341,7 @@ class TestOrchestratorAfterTickT9:
         orch = self._make_orchestrator_with_state(tmp_path, max_plan_refines=2)
 
         orch._state.current_stage = "critic"
-        orch._state.verdict = "APPROVE"
+        orch._state.critic_verdict = "APPROVE"
         orch._state.plan_refine_count = 1  # 已达 1, 再触发一次到 2
 
         from auto_engineering.gates.base import GateVerdict
@@ -386,7 +386,7 @@ class TestOrchestratorAfterTickT9:
         orch = self._make_orchestrator_with_state(tmp_path)
 
         orch._state.current_stage = "developer"
-        orch._state.verdict = ""  # developer 无 verdict
+        orch._state.critic_verdict = ""  # developer 无 verdict
 
         round_result = RoundResult(
             round_id=1, outcomes=[], history=[], gate_results={},
@@ -412,7 +412,7 @@ class TestOrchestratorAfterTickT9:
         orch = self._make_orchestrator_with_state(tmp_path)
 
         orch._state.current_stage = "critic"
-        orch._state.verdict = "MAJOR"
+        orch._state.critic_verdict = "MAJOR"
 
         from auto_engineering.gates.base import GateVerdict
 
@@ -511,7 +511,7 @@ class TestT9FullLoopE2E:
 
         # 第一轮: critic APPROVE, DeepAudit 发现 P0
         orch._state.current_stage = "critic"
-        orch._state.verdict = "APPROVE"
+        orch._state.critic_verdict = "APPROVE"
 
         passed_verdict = GateVerdict(
             gate_name="test", passed=True, message="PASS",
@@ -538,7 +538,7 @@ class TestT9FullLoopE2E:
 
         # 第二轮: architect → developer → critic APPROVE, DeepAudit pass
         orch._state.current_stage = "critic"
-        orch._state.verdict = "APPROVE"
+        orch._state.critic_verdict = "APPROVE"
 
         rh2 = RoundHistory(
             round_id=2, stage="critic", files_changed=2,
@@ -581,7 +581,7 @@ class TestT9FullLoopE2E:
 
         # 第 1 次 refine
         orch._state.current_stage = "critic"
-        orch._state.verdict = "APPROVE"
+        orch._state.critic_verdict = "APPROVE"
         rh1 = RoundHistory(round_id=1, stage="critic", files_changed=3,
                            gate_results={"test": passed_verdict})
         rr1 = RoundResult(round_id=1, outcomes=[], history=[rh1],
@@ -597,7 +597,7 @@ class TestT9FullLoopE2E:
 
         # 第 2 次 refine (达到 max_plan_refines=2)
         orch._state.current_stage = "critic"
-        orch._state.verdict = "APPROVE"
+        orch._state.critic_verdict = "APPROVE"
         rh2 = RoundHistory(round_id=2, stage="critic", files_changed=2,
                            gate_results={"test": passed_verdict})
         rr2 = RoundResult(round_id=2, outcomes=[], history=[rh2],
@@ -627,7 +627,7 @@ class TestT9FullLoopE2E:
         )
 
         orch._state.current_stage = "critic"
-        orch._state.verdict = "APPROVE"
+        orch._state.critic_verdict = "APPROVE"
 
         from auto_engineering.gates.base import GateVerdict
         passed_verdict = GateVerdict(

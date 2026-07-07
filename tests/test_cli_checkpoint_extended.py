@@ -5,7 +5,7 @@ cli/checkpoint.py 扩展覆盖率测试.
 覆盖关键路径:
 - ae checkpoint list (v1 + v2)
 - ae checkpoint show <id>
-- ae checkpoint resume <id>
+- ae checkpoint validate <id>
 - ae checkpoint v2 list [--round N]
 - ae checkpoint v2 show <id>
 - ae checkpoint v2 delete <id>
@@ -168,14 +168,14 @@ class TestCheckpointShowV1:
 
 
 # ============================================================
-# 3. ae checkpoint resume (v1)
+# 3. ae checkpoint validate (v1)
 # ============================================================
 
 
-class TestCheckpointResumeV1:
-    """ae checkpoint resume <id>."""
+class TestCheckpointValidateV1:
+    """ae checkpoint validate <id>."""
 
-    def test_resume_existing(self, project_with_v1_checkpoints: Path) -> None:
+    def test_validate_existing(self, project_with_v1_checkpoints: Path) -> None:
         runner = CliRunner()
         from auto_engineering.loop.checkpoint import SQLiteCheckpointStore
 
@@ -184,14 +184,14 @@ class TestCheckpointResumeV1:
         metas = store.list_all()
         cp_id = metas[0].id
 
-        result = runner.invoke(main, ["checkpoint", "resume", cp_id])
+        result = runner.invoke(main, ["checkpoint", "validate", cp_id])
         assert result.exit_code == 0, f"output: {result.output}"
-        assert "Resume" in result.output
-        assert "ae dev-loop" in result.output or "--resume" in result.output
+        assert "Checkpoint" in result.output
+        assert "ae dev-loop" in result.output or "resume" in result.output
 
-    def test_resume_nonexistent_id(self, project_with_v1_checkpoints: Path) -> None:
+    def test_validate_nonexistent_id(self, project_with_v1_checkpoints: Path) -> None:
         runner = CliRunner()
-        result = runner.invoke(main, ["checkpoint", "resume", "nope"])
+        result = runner.invoke(main, ["checkpoint", "validate", "nope"])
         assert result.exit_code != 0
         assert "not found" in result.output
 

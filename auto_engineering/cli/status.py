@@ -57,7 +57,7 @@ def _collect_status_json(cwd: Path) -> dict:
             if ckpt is not None:
                 if latest_ckpt is None or ckpt.round > latest_ckpt.round:
                     latest_ckpt = ckpt
-        except Exception as exc:
+        except Exception:
             _logger.warning("checkpoint db 读取失败, 跳过: %s", db_file, exc_info=True)
             continue
 
@@ -138,11 +138,15 @@ def register_status_command(main_group: click.Group) -> None:
             click.echo(json.dumps(_collect_status_json(cwd), ensure_ascii=False, indent=2))
             return
 
-        # 文本模式 (兼容老行为)
+        # 文本模式 (只读, 不写入 .ae-answers.yml)
         click.echo(f"当前目录: {cwd}")
 
         try:
-            env = ProjectEnvironment.resolve_and_persist(cwd)
+            answers_file = cwd / ".ae-answers.yml"
+            if answers_file.exists():
+                env = ProjectEnvironment._from_answers_file(answers_file)
+            else:
+                env = ProjectEnvironment._from_detection(cwd)
             click.echo(f"  项目名称: {env.project_name}")
             click.echo(f"  项目类型: {env.project_type or '未知'}")
             click.echo(f"  包管理器: {env.package_manager or '未知'}")
@@ -151,7 +155,7 @@ def register_status_command(main_group: click.Group) -> None:
             click.echo(f"  Lefthook: {'是' if env.use_lefthook else '否'}")
             click.echo(f"  CI: {env.ci_platform or '无'}")
             click.echo(f"  Git: {'是' if env.has_git else '否'}")
-            undetectable = env._warn_undetectable(cwd)
+            undetectable = env.get_undetectable_fields(cwd)
             if undetectable:
                 click.echo(f"  ⚠ 不可自动判定: {', '.join(undetectable)}", err=True)
         except Exception as e:
@@ -166,7 +170,7 @@ def register_status_command(main_group: click.Group) -> None:
                 try:
                     store = SQLiteCheckpointStore(str(db_file))
                     total_v2 += store.count()
-                except Exception as exc:
+                except Exception:
                     _logger.warning("checkpoint count 失败, 跳过: %s", db_file, exc_info=True)
                     continue
             if total_v2 > 0:

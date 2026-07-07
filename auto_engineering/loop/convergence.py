@@ -155,7 +155,7 @@ class ConvergenceVerdict:
         """停止执行的便捷构造 (level 校验)."""
         if level not in LEVEL_NAMES:
             raise ValueError(
-                f"Invalid level {level} (from caller: stop({level=}, {reason=})). "
+                f"Invalid level {level} (reason: {reason}). "
                 f"Must be one of {sorted(LEVEL_NAMES.keys())}"
             )
         return cls(should_stop=True, level=level, reason=reason)

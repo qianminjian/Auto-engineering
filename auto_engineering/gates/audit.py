@@ -166,11 +166,8 @@ class AuditGate(Gate):
 
     def run(self, project_root: Path) -> GateVerdict:
         project_root = Path(project_root)
-        if not project_root.exists():
-            return GateVerdict.failed(
-                f"project_root 不存在: {project_root}",
-                gate_name=self.name,
-            )
+        if verdict := self._validate_project_root(project_root):
+            return verdict
 
         # v5.4: 增量扫描 — 若 contracts 提供 files_changed, 仅扫描变更文件
         target_files: set[str] | None = None

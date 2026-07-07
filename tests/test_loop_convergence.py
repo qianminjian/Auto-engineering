@@ -1413,7 +1413,7 @@ class TestStageRouterIntegration:
         state.files_changed = ["a.py"]
         state.commit_hash = "abc123"
         state.test_results = {"test1": "pass"}
-        state.verdict = "MAJOR"
+        state.critic_verdict = "MAJOR"
         state.findings = ["finding1"]
         state.critic_feedback = "fix this"
 
@@ -1424,7 +1424,7 @@ class TestStageRouterIntegration:
         assert state.batch_plan == []
         assert state.contracts == {}
         # 其他 stage 字段未动
-        assert state.verdict == "MAJOR"
+        assert state.critic_verdict == "MAJOR"
 
         # 清空 developer
         clear_stage_fields(state, "developer")
@@ -1434,7 +1434,7 @@ class TestStageRouterIntegration:
 
         # 清空 critic
         clear_stage_fields(state, "critic")
-        assert state.verdict == ""
+        assert state.critic_verdict == ""
         assert state.findings == []
         assert state.critic_feedback == ""
 

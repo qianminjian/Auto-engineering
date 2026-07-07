@@ -101,12 +101,12 @@ class TestCheckpointShow:
         assert result.exit_code != 0
 
 
-class TestCheckpointResume:
-    """ae checkpoint resume <id>."""
+class TestCheckpointValidate:
+    """ae checkpoint validate <id>."""
 
-    def test_resume_nonexistent(self, valid_project_with_checkpoint):
+    def test_validate_nonexistent(self, valid_project_with_checkpoint):
         from auto_engineering.cli import main
 
         runner = CliRunner()
-        result = runner.invoke(main, ["checkpoint", "resume", "nonexistent-id"])
+        result = runner.invoke(main, ["checkpoint", "validate", "nonexistent-id"])
         assert result.exit_code != 0

@@ -9,7 +9,7 @@ from enum import Enum
 
 
 class ErrorCode(Enum):
-    """结构化错误码 (v5.4: 15 实际使用, 3 保留供未来集成).
+    """结构化错误码 (v5.5: 14 个 ErrorCode).
 
     格式: 错误码 = "ERROR_CODE"  # 抛出点 → 触发条件
     """
@@ -31,7 +31,7 @@ class ErrorCode(Enum):
     TASK_CANCELLED = "TASK_CANCELLED"  # CancellationToken.check() → 用户 Ctrl-C
     AGENT_REGISTRATION_ERROR = "AGENT_REGISTRATION_ERROR"  # AgentRuntime → agent_type 未注册
     # ── Configuration ──
-    CONFIG_MISSING_API_KEY = "CONFIG_MISSING_API_KEY"  # settings.py: CLI 模式缺 API key
+    CONFIG_MISSING_API_KEY = "CONFIG_MISSING_API_KEY"  # cli/__init__.py: CLI 模式缺 API key
 
     # ── Budget ──
     BUDGET_EXCEEDED = "BUDGET_EXCEEDED"  # TokenTracker.add() → 超 max_tokens

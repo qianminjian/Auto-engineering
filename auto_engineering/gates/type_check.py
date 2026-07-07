@@ -49,12 +49,12 @@ class TypeCheckGate(Gate):
     def __init__(
         self,
         type_checker_bin: str | None = None,
-        timeout: float = _DEFAULT_TIMEOUT,
+        timeout: float | None = None,
         require_config: bool = False,
         strict: bool = False,
     ):
         self.type_checker_bin = type_checker_bin or _DEFAULT_TYPE_CHECKER
-        self.timeout = timeout
+        self.timeout = timeout if timeout is not None else Gate._resolve_timeout(_DEFAULT_TIMEOUT)
         self.require_config = require_config
         self.strict = strict
 
@@ -62,7 +62,7 @@ class TypeCheckGate(Gate):
     def from_manifest(
         cls,
         manifest: dict,
-        timeout: float = _DEFAULT_TIMEOUT,
+        timeout: float | None = None,
     ) -> "TypeCheckGate":
         """v5.0 §IL-AC-02: 从 init-manifest.json 构造 TypeCheckGate.
 
@@ -119,6 +119,7 @@ class TypeCheckGate(Gate):
             GateVerdict: passed=True 表示无类型错误 / skip;
                      passed=False 表示有类型错误.
         """
+        project_root = Path(project_root)
         if verdict := self._validate_project_root(project_root):
             return verdict
 

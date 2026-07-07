@@ -784,12 +784,12 @@ class TestHandleGuardrailResult:
 
         # Critic retry
         state2 = EngineState(
-            verdict="MAJOR", findings=[{"x": 1}], critic_feedback="fb",
+            critic_verdict="MAJOR", findings=[{"x": 1}], critic_feedback="fb",
         )
         handle_guardrail_result(
             GuardrailResult(action="retry", message="r"),
             "critic", state2, {},
         )
-        assert state2.verdict == ""
+        assert state2.critic_verdict == ""
         assert state2.findings == []
         assert state2.critic_feedback == ""

@@ -88,7 +88,7 @@ ROLE_FIELD_MAP: dict[str, list[str]] = {
     # v5.5 Phase 2: architect 扩展 audit_findings (DeepAudit pass/PLAN-REFINE 后清除)
     "architect": ["plan", "file_list", "batch_plan", "contracts", "audit_findings"],
     "developer": ["files_changed", "commit_hash", "test_results"],
-    "critic": ["verdict", "findings", "critic_feedback", "suggested_fix", "strengths", "assessment"],
+    "critic": ["critic_verdict", "findings", "critic_feedback", "suggested_fix", "strengths", "assessment"],
 }
 
 # 每个 field 的清空默认值 (v5.4 审计 r2 P1-3: clear_stage_fields 引用此表 + ROLE_FIELD_DEFAULTS,
@@ -102,7 +102,7 @@ ROLE_FIELD_DEFAULTS: dict[str, object] = {
     "files_changed": [],
     "commit_hash": "",
     "test_results": {},
-    "verdict": "",
+    "critic_verdict": "",
     "findings": [],
     "critic_feedback": "",
     "suggested_fix": "",
@@ -110,6 +110,11 @@ ROLE_FIELD_DEFAULTS: dict[str, object] = {
     "assessment": None,
 }
 
+
+# EngineState字段名 → LLM输出key 映射 (字段名与LLM输出key不一致时使用)
+_STATE_TO_LLM_KEY: dict[str, str] = {
+    "critic_verdict": "verdict",
+}
 
 # v5.5 Phase 2: LLM severity 标签 → P0/P1/P2 映射表
 _SEVERITY_MAP: dict[str, str] = {
@@ -159,8 +164,10 @@ def apply_outcome_to_state(state: EngineState, outcome: TaskOutcome) -> None:
 
     field_names = ROLE_FIELD_MAP.get(role, [])
     for field_name in field_names:
-        if field_name in values:
-            setattr(state, field_name, values[field_name])
+        # 通过映射表查找 LLM 输出中的对应 key (默认同名字段)
+        llm_key = _STATE_TO_LLM_KEY.get(field_name, field_name)
+        if llm_key in values:
+            setattr(state, field_name, values[llm_key])
 
 
 def validate_role_output(role: str, values: dict) -> dict:

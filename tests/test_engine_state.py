@@ -34,7 +34,7 @@ class TestEngineStateRoundTrip:
             file_list=["src/main.py", "tests/test_main.py"],
             commit_hash="abc123",
             test_results={"passed": 5, "failed": 0},
-            verdict="APPROVE",
+            critic_verdict="APPROVE",
             findings=[{"severity": "info", "msg": "ok"}],
             critic_feedback="Looks good.",
         )
@@ -132,7 +132,7 @@ class TestEngineStateFieldDefaults:
             "thread_id", "majors_in_a_row", "total_majors",
             "plan", "file_list", "batch_plan", "contracts",
             "files_changed", "commit_hash", "test_results",
-            "verdict", "findings", "critic_feedback",
+            "critic_verdict", "findings", "critic_feedback",
             "suggested_fix",  # 2026-07-04 Self-Refine 深化
             # v5.5 Phase 2 new fields
             "audit_findings", "plan_refine_count",
@@ -170,7 +170,7 @@ class TestEngineStateFieldDefaults:
         assert state.test_results == {}
 
         # Critic 输出
-        assert state.verdict == ""
+        assert state.critic_verdict == ""
         assert state.findings == []
         assert state.critic_feedback == ""
 
@@ -419,7 +419,7 @@ class TestV55EngineStateFields:
             "thread_id", "majors_in_a_row", "total_majors",
             "plan", "file_list", "batch_plan", "contracts",
             "files_changed", "commit_hash", "test_results",
-            "verdict", "findings", "critic_feedback",
+            "critic_verdict", "findings", "critic_feedback",
             "suggested_fix",
             # v5.5 Phase 2 new fields
             "audit_findings", "plan_refine_count",

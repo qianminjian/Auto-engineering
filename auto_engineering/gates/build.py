@@ -43,11 +43,11 @@ class BuildGate(Gate):
     def __init__(
         self,
         module: str = "auto_engineering",
-        timeout: float = DEFAULT_TIMEOUT,
+        timeout: float | None = None,
         cwd: Path | None = None,
     ):
         self.module = module
-        self.timeout = timeout
+        self.timeout = timeout if timeout is not None else Gate._resolve_timeout(DEFAULT_TIMEOUT)
         self.cwd = cwd
 
     def run(self, project_root: Path) -> GateVerdict:

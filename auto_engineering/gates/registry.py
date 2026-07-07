@@ -12,7 +12,9 @@ v5.5 P1-1: LANGUAGE_TOOLS + get_gate_tools_from_manifest 提取到 _tools.py,
 
 from __future__ import annotations
 
-from auto_engineering.gates._tools import LANGUAGE_TOOLS, _default_tools_for, get_gate_tools_from_manifest  # noqa: F401
+from functools import lru_cache
+
+from auto_engineering.gates._tools import LANGUAGE_TOOLS, get_gate_tools_from_manifest  # noqa: F401
 from auto_engineering.gates.audit import AuditGate
 from auto_engineering.gates.base import Gate
 from auto_engineering.gates.build import BuildGate
@@ -29,16 +31,18 @@ __all__ = [
     "get_default_gates",
     "get_default_gate_names",
     "get_gate_by_name",
+    "LANGUAGE_TOOLS",
+    "get_gate_tools_from_manifest",
 ]
 
 def _build_default_gates(manifest: dict | None = None) -> list[Gate]:
-    """构造 6 道 Gate 的默认实例列表.
+    """构造 7 道 Gate 的默认实例列表 (safety/lint/type_check/audit/contract/test/build).
 
     v5.4 Q1: TDDGate + StageTransitionGate 从 DEFAULT_GATES 移除.
     它们实现 check(stage, state, project_root) 而非 run(project_root),
     本质是 Guardrail 检查不是 Gate 质量检查.
 
-    v5.0 §IL-AC-02 扩展:
+    v5.0 IL-AC-02 扩展:
         - manifest 不为 None 时, 从 init-manifest.json 读 conventions 替换默认
           linter / type_checker / test_runner
         - manifest 为 None 时, 用 python 默认 (ruff/mypy/pytest)
@@ -92,21 +96,15 @@ def build_gates_from_manifest(manifest: dict) -> list[Gate]:
     return _build_default_gates(manifest=manifest)
 
 
-_default_gates_cache: list[Gate] | None = None
-
-
 def reset_default_gates_cache() -> None:
-    """v5.4 审计 P1-10: 重置 DEFAULT_GATES 全局缓存, 供测试使用."""
-    global _default_gates_cache
-    _default_gates_cache = None
+    """重置 DEFAULT_GATES 缓存, 供测试使用 (兼容包装, 委托 lru_cache)."""
+    get_default_gates.cache_clear()
 
 
+@lru_cache(maxsize=1)
 def get_default_gates() -> list[Gate]:
-    """惰性构造 7 道默认 Gate（避免 import 时副作用）."""
-    global _default_gates_cache
-    if _default_gates_cache is None:
-        _default_gates_cache = _build_default_gates()
-    return _default_gates_cache
+    """惰性构造默认 Gate 列表 (lru_cache 避免 import 时副作用)."""
+    return _build_default_gates()
 
 
 def get_default_gate_names() -> list[str]:

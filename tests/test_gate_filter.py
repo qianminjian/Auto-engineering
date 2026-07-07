@@ -98,11 +98,11 @@ class TestGateBaseClass:
         assert gate.contracts is None
 
     def test_default_gates_list(self):
-        """DEFAULT_GATES 应当是 6 道 Gate 的实例列表 (v5.4 Q1: TDDGate/StageTransitionGate 已移出)."""
+        """DEFAULT_GATES 应当是 7 道 Gate 的实例列表 (safety/lint/type_check/audit/contract/test/build)."""
         from auto_engineering.gates.registry import DEFAULT_GATES
 
         assert isinstance(DEFAULT_GATES, list)
-        assert len(DEFAULT_GATES) >= 6  # safety, lint, type_check, contract, test, build
+        assert len(DEFAULT_GATES) == 7  # v5.4 Q1: TDDGate/StageTransitionGate 已移出, 保留 7 道
 
 
 # ============================================================

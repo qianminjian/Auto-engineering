@@ -54,6 +54,7 @@ v5.0 M4 主循环流程 (12 步):
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from collections import deque
@@ -68,13 +69,11 @@ from auto_engineering.loop.checkpoint.manager import CheckpointManager
 from auto_engineering.loop.convergence import (
     ConvergenceConfig,
     ConvergenceJudge,
+    ConvergenceVerdict,
     RoundHistory,
 )
-from auto_engineering.loop.convergence import (
-    ConvergenceVerdict,
-)
 from auto_engineering.loop.guardrail_facade import GuardrailFacade
-from auto_engineering.loop.convergence_facade import all_gates_passed, evaluate as _evaluate_convergence
+from auto_engineering.loop.convergence_facade import check_gates_passed, collect_latest_gates, evaluate as _evaluate_convergence
 from auto_engineering.utils.git import capture_head
 from auto_engineering.loop.plan import Plan, Task
 from auto_engineering.loop.round import (
@@ -531,15 +530,15 @@ class Orchestrator:
             )
 
         # 2h MAJOR 计数 (critic 阶段)
-        self._step_2h_major_count(self._state, self._state.verdict, current_stage)
+        self._step_2h_major_count(self._state, self._state.critic_verdict, current_stage)
 
         # v5.5 Phase 2: 步2i-2k (DocSync + DeepAudit + T9)
-        gates_passed = all_gates_passed(
+        gates_passed = check_gates_passed(
             round_result.history[0].gate_results if round_result.history else {}
         )
         is_critic_approve = (
             current_stage == "critic"
-            and self._state.verdict == "APPROVE"
+            and self._state.critic_verdict == "APPROVE"
         )
         deep_audit_enabled = (
             self.judge is not None
@@ -584,7 +583,7 @@ class Orchestrator:
             )
             decision = self._router.next(
                 current_stage=current_stage,
-                verdict=self._state.verdict,
+                verdict=self._state.critic_verdict,
                 majors_in_a_row=self._state.majors_in_a_row,
                 total_majors=self._state.total_majors,
                 audit_found_issues=True,
@@ -771,7 +770,7 @@ class Orchestrator:
             round_tasks, state, current_stage, self._collect_latest_gates(),
         )
         channel_versions = self._update_channel_versions(state)
-        start_commit = capture_head(project_root)
+        start_commit = await asyncio.to_thread(capture_head, project_root)
         round_result = await run_round(
             tasks=enhanced_tasks,
             executor=self.executor,
@@ -835,7 +834,7 @@ class Orchestrator:
         try:
             decision = router.next(
                 current_stage=current_stage,
-                verdict=state.verdict if current_stage == "critic" else "",
+                verdict=state.critic_verdict if current_stage == "critic" else "",
                 majors_in_a_row=state.majors_in_a_row,
                 total_majors=state.total_majors,
             )
@@ -903,17 +902,8 @@ class Orchestrator:
         return False
 
     def _collect_latest_gates(self) -> dict[str, GateVerdict]:
-        """收集最近一轮 RoundHistory 的 gate_results (dict[str, GateVerdict]).
-
-        2026-07-04 (Bug 3 方案 C): 用于 step 2i gate_summary 反向防御检查.
-        2026-07-04 P0 修复: 唯一权威实现 (前 c2fd29e commit 误加同方法覆盖
-        返回 dict[str, bool] 破坏 _gates_all_passed + _inject_self_refine_context).
-        消费方期望 dict[str, GateVerdict] (有 .passed / .message 属性).
-        """
-        if not self.history:
-            return {}
-        last_round = self.history[-1]
-        return last_round.gate_results or {}
+        """收集最近一轮 RoundHistory 的 gate_results (委托 convergence_facade.collect_latest_gates)."""
+        return collect_latest_gates(list(self.history))
 
     def _update_channel_versions(self, state: "EngineState") -> dict[str, int]:
         """更新并返回 channel_versions (基于 state 字段内容 hash).
@@ -955,6 +945,7 @@ class Orchestrator:
             (audit_found_issues, findings): audit_found_issues=True 表示
             发现问题需 T9 回路, findings 为 dict 列表.
         """
+        from auto_engineering.gates.deep_audit import DeepAuditGate
         from auto_engineering.loop.audit_history import AuditHistory
         from auto_engineering.loop.deep_audit import DeepAuditOrchestrator
 
@@ -963,8 +954,22 @@ class Orchestrator:
         audit_orchestrator = DeepAuditOrchestrator(project_root)
         report = audit_orchestrator.run_audit()
 
-        # 内联 counting (替代 DeepAuditGate 包装层)
-        audit_found = report.p0_count > 0 or report.p1_count > p1_threshold
+        # v5.5 audit P0-2: 回填 DeepAuditGate.contracts, 通过 Gate 接口判定
+        deep_audit_gate = DeepAuditGate(p1_threshold=p1_threshold)
+        deep_audit_gate.contracts = {"findings": [
+            {
+                "severity": f.severity,
+                "dimension": f.dimension,
+                "file": f.file,
+                "line": f.line,
+                "description": f.description,
+                "evidence": f.evidence,
+                "suggested_fix": f.suggested_fix,
+            }
+            for f in report.findings
+        ]}
+        verdict = deep_audit_gate.run(project_root)
+        audit_found = not verdict.passed
 
         findings_list: list[dict] = [
             {

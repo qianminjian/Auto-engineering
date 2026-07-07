@@ -172,7 +172,7 @@ class TestActiveCodesRaisePoints:
         assert "未注册" in err.message or "registered" in err.message.lower()
 
     def test_config_missing_api_key(self) -> None:
-        """Settings.from_env() 实际抛点."""
+        """CLI dev-loop 入口实际抛点."""
         err = AEError(
             ErrorCode.CONFIG_MISSING_API_KEY, "环境变量 ANTHROPIC_API_KEY 未设置"
         )

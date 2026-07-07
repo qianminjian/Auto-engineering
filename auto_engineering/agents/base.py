@@ -65,7 +65,9 @@ class BaseAgent:
     system_prompt: str
     role: str = "BaseAgent"  # P1-A: 工厂返回时覆盖 (architect/developer/critic)
     tools: list[BaseTool] = field(default_factory=list)
-    max_tool_calls: int = 10
+    max_tool_calls: int = field(
+        default_factory=lambda: int(__import__("os").environ.get("AE_MAX_TOOL_CALLS", "10"))
+    )
     model: str = "claude-sonnet-4-6"
     max_tokens: int = 4096
 
@@ -342,7 +344,10 @@ class BaseAgent:
         """解析 LLM 最终响应为 dict. 双层防御(直接 JSON / fence / 内联块).
 
         解析失败 → 抛 AEError(INVALID_AGENT_OUTPUT)
+        Pydantic model → 自动 .model_dump() 转为 dict
         """
+        from pydantic import BaseModel
+
         from auto_engineering.agents.parser import parse_agent_output
 
         parsed = parse_agent_output(content)
@@ -352,6 +357,8 @@ class BaseAgent:
                 f"Failed to parse LLM output as JSON: {content[:200]}",
                 suggestion="检查 LLM 输出是否包含 ```json fence 标记, 或调整 system prompt 要求 JSON 格式输出",
             )
+        if isinstance(parsed, BaseModel):
+            return parsed.model_dump()
         return parsed
 
 

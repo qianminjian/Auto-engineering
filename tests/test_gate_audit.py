@@ -65,6 +65,16 @@ class TestAuditGateEmptyProject:
         assert verdict.passed is False
         assert "不存在" in verdict.message
 
+    def test_project_root_is_file_not_dir(self, tmp_path: Path) -> None:
+        """P0-6: project_root 是文件非目录 → failed (is_dir 检查)."""
+        file_path = tmp_path / "not_a_dir.txt"
+        file_path.write_text("hello")
+        assert file_path.exists(), "测试前置: 文件应存在"
+        gate = AuditGate()
+        verdict = gate.run(file_path)
+        assert verdict.passed is False
+        assert "非目录" in verdict.message
+
 
 class TestAuditGateP0Findings:
     def test_hardcoded_secret_in_py_file_fails(self, tmp_path: Path) -> None:

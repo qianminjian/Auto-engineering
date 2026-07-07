@@ -40,7 +40,7 @@ class TestEngineStateRename:
         assert "requirement" in fields
         assert "plan" in fields
         assert "files_changed" in fields
-        assert "verdict" in fields
+        assert "critic_verdict" in fields
 
     def test_enginestate_instantiable(self) -> None:
         """EngineState 可正常实例化 (确认不是 stub)."""

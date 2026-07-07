@@ -41,13 +41,30 @@ from auto_engineering.cli.status import (  # noqa: F401
     register_status_command,
 )
 
-# 内部使用 (不 re-export, 非公开 API)
-from auto_engineering.cli.helpers import (  # noqa: F401
+# 私有符号 (模块内部使用, _ 前缀按 Python 约定不公开)
+# v5.5 audit P0-11: __all__ 排除私有符号, from cli import * 不会导出
+from auto_engineering.cli.helpers import (
     _CATEGORY_FRIENDLY_PREFIX,
     _install_sigint_handler,
     _log_engine_version,
 )
-from auto_engineering.cli.dev_loop import _run_v2_orchestrator  # noqa: F401
+from auto_engineering.cli.dev_loop import _run_v2_orchestrator
+
+__all__ = [
+    "CancellationToken",
+    "ErrorCategory",
+    "OrchestratorRunResult",
+    "ProgressLogger",
+    "TokenTracker",
+    "classify_error",
+    "main",
+    "dev_loop",
+    "register_checkpoint_commands",
+    "register_doctor_command",
+    "register_gate_check_command",
+    "register_agent_command",
+    "register_status_command",
+]
 
 
 # ============================================================
@@ -62,7 +79,14 @@ def main():
 
     Init 工程 (项目脚手架) 已拆分独立项目, 见 design/BEACON.md.
     """
-    pass
+    import logging
+    import os
+
+    log_level = os.environ.get("AE_LOG_LEVEL", "INFO").strip().upper()
+    logging.basicConfig(
+        level=getattr(logging, log_level, logging.INFO),
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    )
 
 
 @main.command()

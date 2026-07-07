@@ -207,15 +207,13 @@ def register_checkpoint_commands(main: click.Group) -> None:
 
         _cli_error(f"Checkpoint '{checkpoint_id}' not found")
 
-    @checkpoint.command("resume")
+    @checkpoint.command("validate")
     @click.argument("checkpoint_id")
-    def checkpoint_resume_cmd(checkpoint_id: str):
-        """从 checkpoint 恢复 (v2.3 P0-B: 切到 SQLiteCheckpointStore).
+    def checkpoint_validate_cmd(checkpoint_id: str):
+        """验证 checkpoint 是否存在 (不执行恢复).
 
-        历史: v2.0 用 engine.checkpoint.CheckpointStore.load_checkpoint
-        (v2.5 P0-FINAL 已删除, BEACON 决策 27).
-        v2.0/v2.3: 用 loop.checkpoint.SQLiteCheckpointStore.load.
-        (实际恢复请使用 `ae dev-loop` — 它会自动检测中断并提示 resume.)
+        用途: 检查 checkpoint 是否可恢复, 输出 checkpoint 详情.
+        实际恢复: 使用 `ae dev-loop` — 它会自动检测中断并提示 resume.
         """
         cp_dir = _get_checkpoint_dir()
         if not cp_dir.exists():
@@ -229,12 +227,9 @@ def register_checkpoint_commands(main: click.Group) -> None:
             except Exception as e:
                 _cli_warn(f"error reading {db_file.name}: {e}")
                 continue
-            click.echo(f"Resume from checkpoint '{checkpoint_id}'")
+            click.echo(f"Checkpoint '{checkpoint_id}' is valid")
             click.echo(
-                "(实际恢复请使用 `ae dev-loop` — 它会自动检测中断并提示 resume)"
-            )
-            click.echo(
-                f"使用: ae checkpoint resume {checkpoint_id}"
+                "实际恢复请使用 `ae dev-loop` — 它会自动检测中断并提示 resume"
             )
             return
 
@@ -259,23 +254,20 @@ def register_checkpoint_commands(main: click.Group) -> None:
 
         all_checkpoints: list[dict] = []
         for store, db_file in _iter_checkpoint_stores(cp_dir):
-            try:
-                for meta in store.list_all():
-                    if round is not None and meta.round != round:
-                        continue
-                    all_checkpoints.append(
-                        {
-                            "id": meta.id,
-                            "round": meta.round,
-                            "step": meta.step,
-                            "created_at": meta.created_at.isoformat(),
-                            "schema_version": meta.schema_version,
-                            "tag": meta.tag,
-                            "db_file": db_file.name,
-                        }
-                    )
-            finally:
-                pass
+            for meta in store.list_all():
+                if round is not None and meta.round != round:
+                    continue
+                all_checkpoints.append(
+                    {
+                        "id": meta.id,
+                        "round": meta.round,
+                        "step": meta.step,
+                        "created_at": meta.created_at.isoformat(),
+                        "schema_version": meta.schema_version,
+                        "tag": meta.tag,
+                        "db_file": db_file.name,
+                    }
+                )
 
         if not all_checkpoints:
             click.echo("(no v2 checkpoints)")

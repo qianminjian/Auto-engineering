@@ -56,21 +56,18 @@ class DeepAuditGate(Gate):
     # v5.5 §B6.5: DeepAuditGate 在 critic APPROVE 后运行, 仅 critic stage
     applies_to_stages = ("critic",)
 
-    def __init__(self, project_root: Path | None = None, p1_threshold: int = 6):
-        self._project_root = Path(project_root) if project_root else None
+    def __init__(self, p1_threshold: int = 6):
         self._p1_threshold = p1_threshold
 
     def run(self, project_root: Path) -> GateVerdict:
         """执行 DeepAudit, 返回 GateVerdict.
 
         v5.5 P1-9: contracts 改为实例属性 (self.contracts).
+        v5.5 audit P0-2: Orchestrator 通过 contracts 回填真实 findings.
 
         Returns:
             GateVerdict (passed + details + suggestions).
         """
-        root = project_root if project_root is not None else self._project_root
-        if root is not None:
-            root = Path(root)
         report = DeepAuditReport()
         findings_raw = self.contracts.get("findings", []) if self.contracts else []
         for f in findings_raw:

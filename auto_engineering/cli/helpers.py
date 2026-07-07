@@ -131,6 +131,7 @@ class TokenTracker:
             raise AEError(
                 ErrorCode.BUDGET_EXCEEDED,
                 f"Token budget exceeded: {self.total_tokens} > {self.max_tokens}",
+                suggestion="请增大 --max-tokens 参数或缩小需求范围",
             )
 
 

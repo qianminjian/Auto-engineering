@@ -14,6 +14,7 @@ Layer 2 (regex): 如果直接解析失败,提取 markdown ```json ... ``` 块或
 from __future__ import annotations
 
 import json
+import logging
 import re
 from typing import TypeVar
 
@@ -33,25 +34,26 @@ def _try_parse_json(text: str) -> dict | None:
     """尝试从 text 中提取 JSON dict. 返回 dict 或 None."""
     if not text or not text.strip():
         return None
+    _log = logging.getLogger("ae.agents.parser")
     # 1. 直接解析
     try:
         return json.loads(text)
     except (json.JSONDecodeError, ValueError):
-        pass
+        _log.debug("直接 JSON 解析失败, 尝试 markdown fence")
     # 2. markdown fence
     m = _JSON_FENCE_RE.search(text)
     if m:
         try:
             return json.loads(m.group(1))
         except (json.JSONDecodeError, ValueError):
-            pass
+            _log.debug("markdown fence JSON 解析失败, 尝试内联 {...} 块")
     # 3. 首个 {...} 块
     m = _JSON_INLINE_RE.search(text)
     if m:
         try:
             return json.loads(m.group(1))
         except (json.JSONDecodeError, ValueError):
-            pass
+            _log.debug("内联 {...} 块 JSON 解析失败, 返回 None")
     return None
 
 

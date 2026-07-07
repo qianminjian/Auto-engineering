@@ -17,7 +17,7 @@ from pathlib import Path
 from auto_engineering.gates.audit import AuditGate
 from auto_engineering.gates.deep_audit import DeepAuditFinding, DeepAuditReport
 
-__all__ = ["AUDIT_DIMENSIONS", "DeepAuditOrchestrator"]
+__all__ = ["DeepAuditOrchestrator"]
 
 # 3 个审计维度 → agent role 映射
 AUDIT_DIMENSIONS = {

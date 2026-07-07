@@ -151,6 +151,17 @@ class Gate:
     applies_to_stages: tuple[str, ...] = ("architect", "developer", "critic")
     # v5.5 audit P1-9: contracts 实例属性 (仅 ContractGate 使用, 其他 Gate 忽略)
     contracts: dict | None = None
+    # v5.5 audit P1-7: timeout 不再作为 class 属性 (所有子类在 __init__ 中通过 _resolve_timeout 解析).
+    # 子类调用 Gate._resolve_timeout(default) → AE_GATE_TIMEOUT env var 或 subclass-specific default.
+
+    @staticmethod
+    def _resolve_timeout(default: float) -> float:
+        """从 AE_GATE_TIMEOUT 环境变量读取 timeout, 未设置则用 default."""
+        import os
+        env_val = os.environ.get("AE_GATE_TIMEOUT")
+        if env_val is not None:
+            return float(env_val)
+        return default
 
     @classmethod
     def _register_alias(cls, old_name: str, new_name: str) -> None:

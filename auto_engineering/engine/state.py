@@ -79,7 +79,7 @@ class WriteRecord(TypedDict, total=False):
 #   auto:          thread_id (UUID on init)
 #   architect:     plan, file_list, batch_plan, contracts
 #   developer:     files_changed, commit_hash, test_results
-#   critic:        verdict, findings, critic_feedback, suggested_fix, strengths, assessment
+#   critic:        critic_verdict, findings, critic_feedback, suggested_fix, strengths, assessment
 #   orchestrator:  current_stage, round, audit_findings, plan_refine_count
 #   stage_router:  majors_in_a_row, total_majors
 #
@@ -103,7 +103,7 @@ _WRITE_OWNERS: dict[str, frozenset[str]] = {
     "files_changed":     frozenset({"developer"}),
     "commit_hash":       frozenset({"developer"}),
     "test_results":      frozenset({"developer", "orchestrator"}),
-    "verdict":           frozenset({"critic", "orchestrator"}),
+    "critic_verdict":    frozenset({"critic", "orchestrator"}),
     "findings":          frozenset({"critic"}),
     "critic_feedback":   frozenset({"critic", "orchestrator"}),
     "suggested_fix":     frozenset({"critic"}),
@@ -169,7 +169,7 @@ class EngineState:
     test_results: TestResults = field(default_factory=dict)
 
     # Critic 输出
-    verdict: str = ""  # "APPROVE" | "MAJOR"
+    critic_verdict: str = ""  # "APPROVE" | "MAJOR"
     findings: list[CriticFinding] = field(default_factory=list)
     critic_feedback: str = ""
     suggested_fix: str = ""
@@ -306,9 +306,9 @@ def _validate_field_value(name: str, value: Any) -> None:
     Raises:
         ValueError: 值不合法.
     """
-    if name == "verdict" and value not in _VALID_VERDICTS:
+    if name == "critic_verdict" and value not in _VALID_VERDICTS:
         raise ValueError(
-            f"verdict 非法值 '{value}'. 合法值: {sorted(_VALID_VERDICTS)}"
+            f"critic_verdict 非法值 '{value}'. 合法值: {sorted(_VALID_VERDICTS)}"
         )
     if name == "current_stage" and value not in _VALID_STAGES:
         raise ValueError(

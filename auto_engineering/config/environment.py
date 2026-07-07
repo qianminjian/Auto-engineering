@@ -123,7 +123,7 @@ class ProjectEnvironment:
                 changed = True
         return changed
 
-    def _warn_undetectable(self, root: Path) -> list[str]:
+    def get_undetectable_fields(self, root: Path) -> list[str]:
         """A5: 列出当前无法自动判定的字段 (供 CLI 层 warning 提示).
 
         Returns:

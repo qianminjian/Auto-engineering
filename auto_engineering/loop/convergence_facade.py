@@ -2,7 +2,7 @@
 
 从 Orchestrator 提取收敛判定相关职责:
     - Judge 评估 + Gate 反向补丁 (evaluate)
-    - Gate 状态收集与校验 (_collect_latest_gates, all_gates_passed)
+    - Gate 状态收集与校验 (collect_latest_gates, check_gates_passed)
     - 诊断日志 (_log_gate_block)
 Orchestrator 委托调用, 减少 Orchestrator 方法数.
 """
@@ -10,13 +10,14 @@ Orchestrator 委托调用, 减少 Orchestrator 方法数.
 from __future__ import annotations
 
 import logging
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from auto_engineering.gates.base import GateVerdict
     from auto_engineering.loop.convergence import ConvergenceJudge, ConvergenceVerdict
     from auto_engineering.loop.round import RoundHistory
 
-__all__ = ["evaluate", "all_gates_passed"]
+__all__ = ["evaluate", "check_gates_passed", "collect_latest_gates"]
 
 _logger = logging.getLogger("ae.loop.convergence_facade")
 
@@ -35,39 +36,39 @@ def evaluate(
     if not verdict.should_stop:
         return None
 
-    latest_gates = _collect_latest_gates(history)
-    if latest_gates and not all_gates_passed(latest_gates):
+    latest_gates = collect_latest_gates(history)
+    if latest_gates and not check_gates_passed(latest_gates):
         _log_gate_block(verdict, latest_gates, current_stage)
         return None
 
     return verdict
 
 
-def _collect_latest_gates(history: list["RoundHistory"]) -> dict[str, Any]:
+def collect_latest_gates(history: list["RoundHistory"]) -> dict[str, "GateVerdict"]:
     """收集最近一轮 RoundHistory 的 gate_results."""
     if not history:
         return {}
     return history[-1].gate_results or {}
 
 
-def all_gates_passed(gate_results: dict[str, Any]) -> bool:
+def check_gates_passed(gate_results: dict[str, "GateVerdict"]) -> bool:
     """所有 gate 都通过. 空 dict (无 gate 配置) 返回 True."""
     if not gate_results:
         return True
     for verdict in gate_results.values():
-        if getattr(verdict, "passed", None) is False:
+        if not verdict.passed:
             return False
     return True
 
 
 def _log_gate_block(
-    verdict: "ConvergenceVerdict", latest_gates: dict[str, object], current_stage: str
+    verdict: "ConvergenceVerdict", latest_gates: dict[str, "GateVerdict"], current_stage: str
 ) -> None:
     """记录 gate fail 拦住 stop 的诊断日志 (Bug 3 方案 C)."""
     failed = [
         name
         for name, v in latest_gates.items()
-        if getattr(v, "passed", None) is False
+        if not v.passed
     ]
     _logger.info(
         "Bug 3 方案 C: judge QUALITY_PASS 但 gate fail, 不停止 → continue. "

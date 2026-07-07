@@ -283,7 +283,7 @@ class TestClearStageFields:
             batch_plan=[{"id": "1"}],
             contracts={"k": "v"},
             audit_findings=[{"severity": "P0", "file": "x.py"}],
-            verdict="MAJOR",
+            critic_verdict="MAJOR",
             findings=[{"x": 1}],
             files_changed=["x.py"],
             commit_hash="abc",
@@ -297,7 +297,7 @@ class TestClearStageFields:
         assert state.contracts == {}
         assert state.audit_findings is None, "audit_findings 应在 architect 阶段清除时重置"
         # 其他字段不应被清空 (Stage 隔离)
-        assert state.verdict == "MAJOR"
+        assert state.critic_verdict == "MAJOR"
         assert state.findings == [{"x": 1}]
         assert state.files_changed == ["x.py"]
 
@@ -308,7 +308,7 @@ class TestClearStageFields:
             files_changed=["x.py", "y.py"],
             commit_hash="abc123",
             test_results={"passed": 5, "failed": 0},
-            verdict="APPROVE",
+            critic_verdict="APPROVE",
             findings=[{"x": 1}],
         )
         clear_stage_fields(state, "developer")
@@ -317,19 +317,19 @@ class TestClearStageFields:
         assert state.test_results == {}
         # 其他字段保留
         assert state.plan == "kept"
-        assert state.verdict == "APPROVE"
+        assert state.critic_verdict == "APPROVE"
 
     def test_clear_critic_fields(self) -> None:
         """stage='critic' → clear verdict / findings / critic_feedback."""
         state = EngineState(
-            verdict="MAJOR",
+            critic_verdict="MAJOR",
             findings=[{"x": 1}],
             critic_feedback="bad code",
             plan="kept",
             files_changed=["kept.py"],
         )
         clear_stage_fields(state, "critic")
-        assert state.verdict == ""
+        assert state.critic_verdict == ""
         assert state.findings == []
         assert state.critic_feedback == ""
         # 其他字段保留

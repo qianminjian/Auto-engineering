@@ -55,12 +55,12 @@ class TestGate(Gate):
     def __init__(
         self,
         test_runner_bin: str | None = None,
-        timeout: float = DEFAULT_TIMEOUT,
+        timeout: float | None = None,
         pytest_args: list[str] | None = None,
         test_paths: list[str] | None = None,
     ):
         self.test_runner_bin = test_runner_bin or _DEFAULT_TEST_RUNNER
-        self.timeout = timeout
+        self.timeout = timeout if timeout is not None else Gate._resolve_timeout(DEFAULT_TIMEOUT)
         self.pytest_args = pytest_args if pytest_args is not None else []
         self.test_paths = test_paths if test_paths is not None else ["tests"]
 
@@ -68,7 +68,7 @@ class TestGate(Gate):
     def from_manifest(
         cls,
         manifest: dict,
-        timeout: float = DEFAULT_TIMEOUT,
+        timeout: float | None = None,
     ) -> "TestGate":
         """v5.0 §IL-AC-02: 从 init-manifest.json 构造 TestGate.
 
@@ -129,6 +129,7 @@ class TestGate(Gate):
             GateVerdict: passed=True 表示所有测试通过;
                      passed=False 表示有测试失败或 test_runner 错误.
         """
+        project_root = Path(project_root)
         if verdict := self._validate_project_root(project_root):
             return verdict
 
