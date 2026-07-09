@@ -1,6 +1,6 @@
 """M3 Plan + Task Factory — Plan.get_tasks_by_stage / parallelism_groups + task_factory 测试.
 
-设计参考: v5.0-Design-Loop.md §B1.7 (Plan 方法)
+设计参考: v5.6-Design-Loop.md §B1.7 (Plan 方法)
                    + §B2.12b (_topological_layers Kahn 变体)
                    + §B7.2 (apply_outcome_to_state)
                    + §B7.3 (tasks_from_batch_plan)

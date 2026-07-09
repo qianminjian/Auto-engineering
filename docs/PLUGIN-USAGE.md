@@ -218,6 +218,6 @@ REMOVED:
 REMOVED: ## 7. Reference
 REMOVED: 
 REMOVED: - `ae-plugin-acceptance-test.sh` — runs 3 acceptance scenarios
-REMOVED: - `design/v5.0-Design-Loop.md` — Engine design spec
+REMOVED: - `design/v5.6-Design-Loop.md` — Engine design spec
 REMOVED: - `_scratch/v5.0-refactor-plan.md` — refactor plan (模块 10)
 REMOVED: - `skills/auto-engineering/SKILL.md` — in-conversation skill reference

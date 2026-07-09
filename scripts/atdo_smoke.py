@@ -17,7 +17,7 @@ Exit codes:
 
 Reference:
     design/BEACON.md 决策 #28 (v5.0 P0-FINAL)
-    design/v5.0-Design-Loop.md §B7.1 (Orchestrator 12 步主循环)
+    design/v5.6-Design-Loop.md §B7.1 (Orchestrator 12 步主循环)
     docs/EARS-v5.0.md (15 AC + 5 IL-AC)
     docs/atdo-runtime-smoke-policy.md (smoke 政策)
 """

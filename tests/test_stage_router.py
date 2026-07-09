@@ -1,6 +1,6 @@
 """M1 Stage 状态机 — StageRouter + StageDecision + 5 helper functions 测试.
 
-设计参考: v5.0-Design-Loop.md §B2.2 (StageRouter 接口契约)
+设计参考: v5.6-Design-Loop.md §B2.2 (StageRouter 接口契约)
                    + §B3.1-B3.4 (Stage 状态机 + MAJOR 计数 + clear + derive)
 
 测试原则 (per pytest-memory-management.md):

@@ -1,6 +1,6 @@
 """v5.0 Phase 08 — Init-Loop 接口契约 (Loop 侧实现).
 
-设计来源: design/v5.0-Design-Loop.md §IL.1-IL.6.
+设计来源: design/v5.6-Design-Loop.md §IL.1-IL.6.
 
 核心组件:
     INIT_MANIFEST_SCHEMA_VERSION  — 当前支持的 init-manifest schema 版本

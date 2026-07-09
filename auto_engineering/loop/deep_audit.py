@@ -1,6 +1,6 @@
 """v5.5 — 3-agent 并行审计编排器.
 
-设计来源: design/v5.0-Design-Loop.md §B6.5b
+设计来源: design/v5.6-Design-Loop.md §B6.5b
 
 负责:
 - 收集项目文件列表 (排除非代码目录)

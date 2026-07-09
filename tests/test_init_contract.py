@@ -1,6 +1,6 @@
 """v5.0 Phase 08 — Init-Loop 接口契约 (Loop 侧) 测试.
 
-设计来源: design/v5.0-Design-Loop.md §IL.1-IL.6
+设计来源: design/v5.6-Design-Loop.md §IL.1-IL.6
 
 EARS 验收条件 (IL.6):
     IL-AC-01 — When Loop 启动且 .ae-state/init-manifest.json 不存在,

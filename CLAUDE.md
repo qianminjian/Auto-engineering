@@ -102,7 +102,7 @@ Engine 层 (auto_engineering/)
 |------|------|---------|
 | `design/BEACON.md` | 设计基线（目标/范围/决策/当前状态） | 任何设计讨论时先读 |
 | `design/INDEX.md` | 文档索引（含合并日志/归档清单） | 检索文档时 |
-| `design/v5.0-Design-Loop.md` | v5.0 Plugin + Loop Engine 完整设计（2934 行，自包含） | 开发 loop/gates/agents/cli 时 |
+| `design/v5.6-Design-Loop.md` | v5.6 Tick-Based Discrete Invocation 完整设计 (1728 行，自包含) | 开发 loop/gates/agents/cli/commands 时 |
 | `docs/EARS-v5.0.md` | v5.0 验收 15 AC + 5 IL-AC | 验收/审计时 |
 | `docs/api-reference.md` | v5.0 API 接口文档 + 5 代码示例 | 查阅 API 时 |
 | `docs/production-deployment.md` | 生产部署流程 + 环境变量 + 降级 | 部署时 |
@@ -186,7 +186,7 @@ python3 scripts/atdo_smoke.py       # Runtime smoke (7 维度)
 
 4. **Stage 4 — Design Doc Sync（Critic APPROVE 后、收敛判定前，强制执行）**
    - **对照 `design/` 文档检查本轮所有改动**：Agent 已知道本轮改了哪些文件、做了什么决策
-   - **代码与设计文档不一致** → 更新设计文档（`design/v5.0-Design-Loop.md` 或 `design/BEACON.md`）
+   - **代码与设计文档不一致** → 更新设计文档（`design/v5.6-Design-Loop.md` 或 `design/BEACON.md`）
    - **新增了设计文档未覆盖的决策** → 补充到 `design/BEACON.md` 决策表
    - **不接受"延后同步"**：文档未同步视为 Stage 4 未完成，不得进入收敛判定
    - **判断标准**：下一轮 dev-loop 的 Agent 能从设计文档中准确理解当前代码的真实架构
@@ -236,5 +236,6 @@ python3 scripts/atdo_smoke.py       # Runtime smoke (7 维度)
 - tests/ 下测试，覆盖率 ≥ 90%（用户硬指标）
 - 测试运行遵守 `@.claude/rules/pytest-memory-management.md`（16G 内存约束）
 - **Agent tool spawn 遵守 `@.claude/rules/agent-spawn-timeout.md`（3 层超时防护）**
+- **设计文档修改遵守 `@.claude/rules/design-document-inviolability.md`（🚨 2026-07-08 事故确立：BEACON决策翻转须审批、设计优先于代码）**
 - 参考源码（`$AE_REFS_DIR/`）为只读，不修改
 - Init Engineering 是独立项目——本项目通过 Init-Loop 接口契约（IL.1-IL.6）消费 Init 产物，不包含 Init 实现

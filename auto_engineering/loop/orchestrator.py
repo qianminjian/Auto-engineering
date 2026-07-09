@@ -3,7 +3,7 @@
 设计来源:
     - design/v2.0-Analysis-Loop.md §4.2 两层 Loop + §4.5 多 Agent 并发
     - design/v2.0-Analysis-Loop.md §4.7 收敛判定 (4 级)
-    - design/v5.0-Design-Loop.md §B7.1 (12 步主循环) + §B7.4 (Checkpoint) + §B7.5 (Resume)
+    - design/v5.6-Design-Loop.md §B7.1 (12 步主循环) + §B7.4 (Checkpoint) + §B7.5 (Resume)
 
 核心组件:
     OrchestratorConfig — 配置 (gates / semantic_evaluator / project_root / agent_runtime)

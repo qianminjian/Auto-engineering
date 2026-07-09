@@ -276,7 +276,7 @@ uv sync
 - `docs/api-reference.md` — 完整接口文档
 - `docs/e2e-real-run.md` — 端到端流程 + 性能基准
 - `docs/EARS-v5.0.md` — 15 AC + 5 IL-AC 验收
-- `design/BEACON.md` 决策 #28 · `design/v5.0-Design-Loop.md` §B13 降级
+- `design/BEACON.md` 决策 #28 · `design/v5.6-Design-Loop.md` §B13 降级
 - `.claude/rules/pytest-memory-management.md` — 16G 内存约束
 
 ---

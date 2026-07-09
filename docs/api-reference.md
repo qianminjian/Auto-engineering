@@ -1,7 +1,7 @@
 # Auto-Engineering v5.0 API Reference
 
 > **Version**: 5.0.0 | **Status**: Production-ready | **Last updated**: 2026-07-01
-> 决策依据: `design/BEACON.md` 决策 #28 (v5.0 P0-FINAL) · `design/v5.0-Design-Loop.md`
+> 决策依据: `design/BEACON.md` 决策 #28 (v5.0 P0-FINAL) · `design/v5.6-Design-Loop.md`
 >
 > v1.0 (`engine/loop.py` 旧 LoopEngine) / v2.0 (`engine/runtime/` + `engine/loop.py` asyncio.gather) / v2.3 (orchestrator) 章节已删除 — 归档版本见 `design/his_bak/api-reference.md`。
 
@@ -491,7 +491,7 @@ except AEError as e:
 
 ## 11. 引用
 
-- `design/v5.0-Design-Loop.md` — v5.0 设计基线
+- `design/v5.6-Design-Loop.md` — v5.0 设计基线
 - `design/BEACON.md` 决策 #28 (v5.0 P0-FINAL) + 决策 #31 (v5.0 深度审计)
 - `docs/PLUGIN-USAGE.md` — Plugin 安装/命令
 - `docs/production-deployment.md` — 部署 + 降级

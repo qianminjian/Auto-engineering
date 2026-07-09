@@ -1,6 +1,6 @@
 """M2 Guardrail 链 — GuardrailResult + Guardrail ABC + 5 Guardrails + Chain + handler 测试.
 
-设计参考: v5.0-Design-Loop.md §B2.3 (Guardrail 接口契约)
+设计参考: v5.6-Design-Loop.md §B2.3 (Guardrail 接口契约)
                    + §B1.8 (GuardrailResult 数据类)
                    + §B5.1 (5 Guardrail 规格 G1-G5)
                    + §B5.2 (_handle_guardrail_result 4 态)

@@ -17,7 +17,7 @@
     - RoundResult.all_succeeded 含 failed 时返回 False
     - gather 防御路径 (注入未捕获 BaseException → 走 fail 包装)
 
-设计参考: design/v5.0-Design-Loop.md §B2.12a §B2.12b + v2.5 P2-D-1/2.
+设计参考: design/v5.6-Design-Loop.md §B2.12a §B2.12b + v2.5 P2-D-1/2.
 """
 
 from __future__ import annotations

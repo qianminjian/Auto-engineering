@@ -66,6 +66,6 @@ ConvergenceJudge 4-level, Self-Refine 3-round limit, SQLite checkpoint.
 
 ## References
 
-- design/v5.0-Design-Loop.md — complete design spec
+- design/v5.6-Design-Loop.md — complete design spec
 - design/BEACON.md — architecture decisions
 - docs/EARS-v5.0.md — acceptance criteria (15 AC + 5 IL-AC)

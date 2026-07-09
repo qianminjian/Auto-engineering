@@ -1,6 +1,6 @@
 """v5.5 — P1 阈值自动学习 + max_iter 自适应.
 
-设计来源: design/v5.0-Design-Loop.md §B6.5c, §B6.5d
+设计来源: design/v5.6-Design-Loop.md §B6.5c, §B6.5d
 
 从审计历史 JSONL 学习:
 - compute_p1_threshold(): 从历史 P1 计数算 p75, 作为推荐阈值

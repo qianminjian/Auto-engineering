@@ -9,7 +9,7 @@
     ae checkpoint v2 list|show|delete|migrate   v2.0 Checkpoint 操作
 
     [已移除] ae init <project>  — Init Engineering 是独立项目, 按
-    @design/v5.0-Design-Loop.md §IL.1-IL.6 接口契约实现 Init 侧
+    @design/v5.6-Design-Loop.md §IL.1-IL.6 接口契约实现 Init 侧
 """
 
 from __future__ import annotations

@@ -254,7 +254,7 @@ ae doctor            # 环境问题
 ├── hooks/                              # 5 lifecycle 事件脚本
 ├── skills/                             # Agent skill 描述
 ├── docs/                               # 用户文档 + API 参考
-├── design/                             # 设计文档 (v5.0-Design-Loop, BEACON)
+├── design/                             # 设计文档 (v5.6-Design-Loop, BEACON)
 ├── tests/                              # 1253 测试
 ├── Makefile                            # make test/ci
 ├── pyproject.toml                      # Python 项目配置
@@ -311,7 +311,7 @@ Loop 端（本项目）消费 init manifest：
 
 - `CLAUDE.md` — 项目规则（Claude Code 行为约定）
 - `design/BEACON.md` — 项目明灯（目标/范围/决策）
-- `design/v5.0-Design-Loop.md` — 完整设计文档（2934 行）
+- `design/v5.6-Design-Loop.md` — 完整设计文档 (1728 行, v5.6 Tick 协议)
 - `docs/api-reference.md` — v5.0 API 接口 + 5 代码示例
 - `docs/PLUGIN-USAGE.md` — Plugin 安装/使用
 - `docs/production-deployment.md` — 生产部署

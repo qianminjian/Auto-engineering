@@ -65,7 +65,7 @@ ae checkpoint list  # checkpoint 管理
 
 ## 设计文档
 
-- `design/v5.0-Design-Loop.md` — v5.0 完整设计 (3099 行)
+- `design/v5.6-Design-Loop.md` — v5.0 完整设计 (3099 行)
 - `design/BEACON.md` — 架构决策 33 条
 - `docs/EARS-v5.0.md` — 15 AC + 5 IL-AC
 

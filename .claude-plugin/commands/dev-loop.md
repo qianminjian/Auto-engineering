@@ -3,14 +3,16 @@ name: dev-loop
 description: Multi-agent dev-loop — Architect (Plan) → Developer (TDD) → Critic (code-reviewer) → Auto-fix → PR
 ---
 
-# /ae:dev-loop — v5.1 Agent Tool Direct Execution
+# /ae:dev-loop — v5.1 Agent Tool Direct Execution ⚠️ 待 v5.6 重写
 
-Five-stage automated development pipeline. The Agent executes all stages directly
+> ⚠️ **过时提示**：本文件是 v5.1 遗留（5-stage Agent Tool 直执行）。v5.6 生产路径已改为
+> **Tick-Based Discrete Invocation 协议**（`ae dev-loop --init` → `--tick --result` 循环，
+> 8 stage + 5 层验证 + Pre-flight Gap Analysis），依据 **BEACON 决策 #39**（status ✅）+
+> `design/v5.6-Design-Loop.md` §C.7。本文件的 v5.6 重写为实施计划 C.12 **T10**。
+> T10 完成前，以下 5-stage 描述仅供参考，不代表当前设计。
+
+Five-stage automated development pipeline (v5.1 legacy). The Agent executes all stages directly
 (not via `ae dev-loop` subprocess), using real Plan agent and code-reviewer agent.
-
-> **Production path**: Agent Tool `/ae:dev-loop` is the production execution mode
-> (BEACON 决策 47). CLI `ae dev-loop` is the **Python Engine debug path** — for
-> testing Orchestrator logic locally without spawning Claude Code agents.
 
 ## Usage
 
@@ -264,5 +266,5 @@ $(git diff origin/main...HEAD --stat)
 
 - CLAUDE.md § /ae:dev-loop Agent Tool 执行模式 — this protocol
 - design/discussion/v5.1-code-review-integration-gap.md — architecture analysis
-- design/v5.0-Design-Loop.md — complete Loop design
+- design/v5.6-Design-Loop.md — complete Loop design
 - atdo Step 7.5 Gate Code Review — required code review gate

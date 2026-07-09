@@ -1,7 +1,7 @@
 # Auto-Engineering v5.0 End-to-End Real Run
 
 > **Version**: 5.0.0 | **Status**: Production-ready | **Last updated**: 2026-07-01
-> 决策依据: `design/BEACON.md` 决策 #28 · `design/v5.0-Design-Loop.md` §B7.6
+> 决策依据: `design/BEACON.md` 决策 #28 · `design/v5.6-Design-Loop.md` §B7.6
 >
 > v1.0 / v2.0 端到端流程已删除 — 归档版本见 `_scratch/his_bak/e2e-real-run.md` (v2.2 FINAL, 49 行)。
 
@@ -257,7 +257,7 @@ pytest tests/ --no-cov --timeout=300 -q      # 799 测试
 - `docs/production-deployment.md` — 安装 + 环境变量
 - `docs/api-reference.md` — 完整接口
 - `docs/EARS-v5.0.md` — 15 AC + 5 IL-AC 验收表
-- `design/v5.0-Design-Loop.md` §B7.6 — 性能基准
+- `design/v5.6-Design-Loop.md` §B7.6 — 性能基准
 - `ae-plugin-acceptance-test.sh` — 18 场景 acceptance test
 
 ---

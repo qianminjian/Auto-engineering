@@ -17,7 +17,7 @@
     ae status             查看当前进度
     ae agent <role>       单 Agent 调用 (architect/developer/critic)
 
-设计文档: design/v5.0-Design-Loop.md
+设计文档: design/v5.6-Design-Loop.md
 GitHub: https://github.com/qianminjian/Auto-engineering
 
 2026-07-04 v5.0 final: 整合 main 分支 (Self-Refine + suggested_fix + plugin mode

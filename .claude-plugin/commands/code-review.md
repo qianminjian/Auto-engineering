@@ -200,5 +200,5 @@ After PR is created:
 
 ## References
 
-- design/v5.0-Design-Loop.md §PE.5 — on-pr.sh hook specification
+- design/v5.6-Design-Loop.md §PE.5 — on-pr.sh hook specification
 - design/discussion/v5.1-code-review-pr-design.md — design analysis

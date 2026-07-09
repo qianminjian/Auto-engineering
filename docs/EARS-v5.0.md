@@ -1,7 +1,7 @@
 # Auto-Engineering v5.0 EARS Acceptance Criteria
 
 > **Version**: 5.0.0 | **Status**: v5.0 验收基线 | **Last updated**: 2026-07-01
-> 决策依据: `design/BEACON.md` 决策 #28 · `design/v5.0-Design-Loop.md` §B18 + §IL.6
+> 决策依据: `design/BEACON.md` 决策 #28 · `design/v5.6-Design-Loop.md` §B18 + §IL.6
 > 验收人: AI 自动 + 用户手动 (EARS AC-12/14 真实环境)
 
 **EARS 格式**: `When <trigger>, the <system> shall <response>`
@@ -159,8 +159,8 @@ uv run ae doctor
 
 ## 6. 引用
 
-- `design/v5.0-Design-Loop.md` §B18 — 15 AC 列表
-- `design/v5.0-Design-Loop.md` §IL.6 — 5 IL-AC 列表
+- `design/v5.6-Design-Loop.md` §B18 — 15 AC 列表
+- `design/v5.6-Design-Loop.md` §IL.6 — 5 IL-AC 列表
 - `tests/` — 全部测试覆盖（含 test_loop_orchestrator / test_stage_router / test_guardrail / test_plugin_contract / test_init_contract）
 - `ae-plugin-acceptance-test.sh` — 3 场景实装 + 15 场景扩展位
 - `docs/api-reference.md` — 完整接口（含 19 错误码表）

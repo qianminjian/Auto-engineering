@@ -68,5 +68,5 @@ This skill encapsulates the Auto-Engineering v5.0 plugin's domain knowledge. Use
 ## See also
 
 - `docs/PLUGIN-USAGE.md` — full install + usage
-- `_scratch/v5.0-refactor-plan.md` — design spec (模块 10) *(已迁移到 design/v5.0-Design-Loop.md)*
+- `_scratch/v5.0-refactor-plan.md` — design spec (模块 10) *(已迁移到 design/v5.6-Design-Loop.md)*
 - `ae-plugin-acceptance-test.sh` — acceptance test

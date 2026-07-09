@@ -3,7 +3,7 @@
 触发时机: Orchestrator 在 critic APPROVE + gates passed 后调 DeepAuditGate.run() (B7.1 步2j)
 输出: GateVerdict 含 P0/P1/P2 分类 findings.
 
-设计来源: design/v5.0-Design-Loop.md §B6.5
+设计来源: design/v5.6-Design-Loop.md §B6.5
 """
 
 from __future__ import annotations

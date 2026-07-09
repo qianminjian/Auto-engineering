@@ -1,6 +1,6 @@
 """M1 Stage 状态机 — StageRouter + StageDecision + 5 helper functions.
 
-设计参考: v5.0-Design-Loop.md §B2.2 (StageRouter 接口契约)
+设计参考: v5.6-Design-Loop.md §B2.2 (StageRouter 接口契约)
                    + §B3.1 (Stage 转换表 T1-T8)
                    + §B3.2 (MAJOR 计数更新)
                    + §B3.3 (clear_stage_fields)

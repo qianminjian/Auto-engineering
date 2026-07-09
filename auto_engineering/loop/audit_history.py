@@ -1,6 +1,6 @@
 """v5.5 — JSONL 审计历史日志.
 
-设计来源: design/v5.0-Design-Loop.md §B6.5c
+设计来源: design/v5.6-Design-Loop.md §B6.5c
 
 append-only JSONL 审计历史存储:
 - 路径: <project_root>/.ae-state/audit-history.jsonl

@@ -1,6 +1,6 @@
 """v5.0 M3 — Task Factory: batch_plan → Plan 转换 + outcome → state 分发.
 
-设计参考: v5.0-Design-Loop.md §B7.3 (_tasks_from_batch_plan)
+设计参考: v5.6-Design-Loop.md §B7.3 (_tasks_from_batch_plan)
                    + §B7.2 (_apply_outcome_to_state)
 
 模块职责:

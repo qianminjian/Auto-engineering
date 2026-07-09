@@ -1,6 +1,6 @@
 """v5.1 B1.13 — Agent 输出 Pydantic 模型.
 
-设计来源: design/v5.0-Design-Loop.md §B1.13 (line 888-912).
+设计来源: design/v5.6-Design-Loop.md §B1.13 (line 888-912).
 用途: Agent 输出的结构化校验 — 替代原 dict-based 的手动字段检查.
 """
 

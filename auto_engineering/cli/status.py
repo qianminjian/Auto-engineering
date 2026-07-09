@@ -9,7 +9,7 @@
 - Click 命令 `status` 包装 `_collect_status_json` + 输出格式化
 - 边界: 缺失 checkpoint → 默认 7 字段; corrupted db → 跳过该 db 继续找下一个
 
-引用: design/v5.0-Design-Loop.md §B13.2 stdout JSON 契约
+引用: design/v5.6-Design-Loop.md §B13.2 stdout JSON 契约
 """
 
 from __future__ import annotations
