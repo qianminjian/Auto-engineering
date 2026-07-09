@@ -181,9 +181,9 @@ Wave 4 (复核)
 | DS-8 | plan_refine 环路检测定案 | 决策+规格 | P1 | ✅ 完成 (B2 T9-T20/T17b + B4 + EngineState #19/#36) | ☑ | 收敛正确性 |
 | DS-9 | Haiku verifier 误判 fallback | 决策+规格 | P1 | ✅ 完成 (B6.6a, Sonnet 窄范围复核) | ☑ | 验证层可靠性 |
 | DS-10 | Tick 延迟预算+降级 | 决策+规格 | P1 | ✅ 完成 (C.2.6, 编排开销 P95<2s) | ☑ | 性能验收 |
-| DS-11 | B10 Pre-flight 规格复核 | 复核 | P2 | ☐ 待办 | ☐ | Phase 0 |
-| DS-12 | B9 ProgressTree 复核 | 复核 | P2 | ☐ 待办 | ☐ | T4b |
-| DS-13 | 实现任务↔设计背书 覆盖审计 | 复核 | P1 | ☐ 待办 | ☐ | 全部 Phase |
+| DS-11 | B10 Pre-flight 规格复核 | 复核 | P2 | ✅ 完成 (B10.3 分级判据 + clarity 子表) | ☑ | Phase 0 |
+| DS-12 | B9 ProgressTree 复核 | 复核 | P2 | ✅ 完成 (B9.8 确定性 sync + B9.7 折叠判据 + conflicts 非阻塞) | ☑ | T4b |
+| DS-13 | 实现任务↔设计背书 覆盖审计 | 复核 | P1 | ✅ 完成 (C.12.1 追溯矩阵, 62 T-task 0 空项, 补 T26d-h) | ☑ | 全部 Phase |
 
 ---
 
