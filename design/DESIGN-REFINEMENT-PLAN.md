@@ -160,7 +160,7 @@ Wave 4 (复核)
 
 | 项 | 内容 | 状态 |
 |----|------|------|
-| RegressionGate 归属 | 写 DS-3 时发现 B15 暂标"新 Gate"，但其 revert→restore 改工作树=有状态，与无状态并行 Gate 不兼容。依 BEACON #36 先例定案为 **Guardrail**（B5.5/B3 G9）。**此为 spec 期新增分类决策，非 5 预定案之一，待用户复核**（不改决策 #47 意图，仅纠技术归属）| ⚠️ 待复核 |
+| RegressionGate 归属 | 写 DS-3 时发现 B15 暂标"新 Gate"，但其 revert→restore 改工作树=有状态，与无状态并行 Gate 不兼容。依 BEACON #36 先例定案为 **Guardrail**（B5.5/B3 G9）。不改决策 #47 意图，仅纠技术归属 | ✅ 用户确认 (2026-07-09) |
 | batch_plan 结构澄清 | 代码 `task_factory` 用扁平 v5.0 结构（batch=单 task），v5.6 设计需嵌套（batch=一组 TDD task）。按设计优先标为 Phase 1 代码缺口，非降级 | 已记 B6.1a |
 | BatchState 2 处 sketch bug | ①仅 design-doc 模式建 BatchState（batch_plan 模式崩）②current_batch_idx 全局/相对二义。已在 C 章 sketch 修正 + B1.1a 定权威语义 | 已修 |
 | B5.1 gate 清单漂移 | 原表列 coverage 遗漏 audit，与 registry 代码 + BEACON #10 不符。已对齐（audit 入列、coverage 标 remote-only）| 已修 |
