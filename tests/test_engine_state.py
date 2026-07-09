@@ -15,6 +15,27 @@ import pytest
 
 from auto_engineering.engine.state import EngineState, LoopState
 
+# v5.6: 22 (v5.5) + 17 新增 (#20-36) = 39 dataclass 字段
+_EXPECTED_V56_FIELDS = {
+    "requirement", "current_stage", "round",
+    "thread_id", "majors_in_a_row", "total_majors",
+    "plan", "file_list", "batch_plan", "contracts",
+    "files_changed", "commit_hash", "test_results",
+    "critic_verdict", "findings", "critic_feedback",
+    "suggested_fix",
+    "audit_findings", "plan_refine_count",
+    "strengths", "assessment",
+    # v5.6 新增 #20-36
+    "tick", "expected_stage", "action_history", "gate_results",
+    "guardrail_retry_counters", "coverage_map", "batch_state_json",
+    "progress_tree_json", "gap_report_json", "design_supplements_json",
+    "pending_research_ids", "research_archive", "pending_gap_decisions",
+    "red_evidence", "design_doc_path", "refine_request_json",
+    "plan_refine_by_source",
+    # 内部写入审计日志
+    "_write_log",
+}
+
 
 class TestEngineStateRoundTrip:
     """to_dict → from_dict round-trip."""
@@ -120,28 +141,15 @@ class TestEngineStateFieldDefaults:
     +total_majors / +thread_id). 验证所有字段默认值与类型契约.
     """
 
-    def test_all_18_fields_exist(self) -> None:
-        """EngineState 暴露 22 个字段 (v5.5 P0-4: +round)."""
+    def test_all_39_fields_exist(self) -> None:
+        """EngineState 暴露 39 个字段 (v5.6: 22 + 17 新增 #20-36)."""
         from dataclasses import fields
 
         state = EngineState()
         field_names = {f.name for f in fields(EngineState)}
-        # 22 字段 (v5.5 P0-4: +round)
-        expected = {
-            "requirement", "current_stage", "round",
-            "thread_id", "majors_in_a_row", "total_majors",
-            "plan", "file_list", "batch_plan", "contracts",
-            "files_changed", "commit_hash", "test_results",
-            "critic_verdict", "findings", "critic_feedback",
-            "suggested_fix",  # 2026-07-04 Self-Refine 深化
-            # v5.5 Phase 2 new fields
-            "audit_findings", "plan_refine_count",
-            "strengths", "assessment",
-            # v5.5 P1-5: 内部写入审计日志
-            "_write_log",
-        }
+        expected = _EXPECTED_V56_FIELDS
         assert field_names == expected, (
-            f"EngineState 字段不匹配 v5.5. "
+            f"EngineState 字段不匹配 v5.6. "
             f"缺失: {expected - field_names}, 多余: {field_names - expected}"
         )
 
@@ -287,13 +295,12 @@ class TestEngineStateBoundary:
         assert state.plan == "ok"
         assert not hasattr(state, "nonexistent")
 
-    def test_to_dict_contains_all_18_fields(self) -> None:
-        """to_dict 输出含全部 22 字段 (v5.5 P0-4: +round)."""
+    def test_to_dict_contains_all_38_fields(self) -> None:
+        """to_dict 输出含全部 38 字段 (v5.6: 39 - _write_log)."""
         state = EngineState()
         d = state.to_dict()
-        # v5.5 P0-4: 21 → 22 字段 (+round)
-        assert len(d) == 21, (
-            f"to_dict 应含 21 字段, 实际 {len(d)}: "
+        assert len(d) == 38, (
+            f"to_dict 应含 38 字段, 实际 {len(d)}: "
             f"{sorted(d.keys())}"
         )
         assert "suggested_fix" in d, "to_dict 必须包含 suggested_fix (Self-Refine 深化)"
@@ -301,6 +308,7 @@ class TestEngineStateBoundary:
         assert "plan_refine_count" in d, "to_dict 必须包含 plan_refine_count (v5.5 Phase 2)"
         assert "strengths" in d, "to_dict 必须包含 strengths (v5.5 CriticOutput 扩展)"
         assert "assessment" in d, "to_dict 必须包含 assessment (v5.5 CriticOutput 扩展)"
+        assert "_write_log" not in d, "to_dict 不包含内部审计字段 _write_log"
         assert d["thread_id"] == state.thread_id
 
     def test_from_dict_with_empty_dict_uses_all_defaults(self) -> None:
@@ -408,28 +416,16 @@ class TestV55EngineStateFields:
         state.audit_findings = None
         assert state.audit_findings is None
 
-    def test_field_count_is_21(self) -> None:
-        """v5.5: 字段总数从 21 → 22 (新增 round, P0-4)."""
+    def test_field_count_is_39(self) -> None:
+        """v5.6: 字段总数 22 → 39 (新增 #20-36, 17 字段)."""
         from dataclasses import fields
 
         state = EngineState()
         field_names = {f.name for f in fields(EngineState)}
-        expected = {
-            "requirement", "current_stage", "round",
-            "thread_id", "majors_in_a_row", "total_majors",
-            "plan", "file_list", "batch_plan", "contracts",
-            "files_changed", "commit_hash", "test_results",
-            "critic_verdict", "findings", "critic_feedback",
-            "suggested_fix",
-            # v5.5 Phase 2 new fields
-            "audit_findings", "plan_refine_count",
-            "strengths", "assessment",
-            # v5.5 P1-5: 内部写入审计日志
-            "_write_log",
-        }
-        assert field_names == expected, (
-            f"EngineState 字段不匹配 v5.5. "
-            f"缺失: {expected - field_names}, 多余: {field_names - expected}"
+        assert field_names == _EXPECTED_V56_FIELDS, (
+            f"EngineState 字段不匹配 v5.6. "
+            f"缺失: {_EXPECTED_V56_FIELDS - field_names}, "
+            f"多余: {field_names - _EXPECTED_V56_FIELDS}"
         )
 
 
@@ -461,4 +457,113 @@ class TestEngineStateEquality:
         state = EngineState()
         with pytest.raises(TypeError, match="unhashable"):
             hash(state)
+
+
+class TestV56EngineStateFields:
+    """v5.6 T1: EngineState 新增字段 #20-36 (C.10 扩展清单)."""
+
+    def test_v56_field_defaults(self) -> None:
+        """17 个 v5.6 新字段默认值符合 C.10 表."""
+        s = EngineState()
+        assert s.tick == 0
+        assert s.expected_stage is None
+        assert s.action_history == []
+        assert s.gate_results == {}
+        assert s.guardrail_retry_counters == {}
+        assert s.coverage_map is None
+        assert s.batch_state_json is None
+        assert s.progress_tree_json is None
+        assert s.gap_report_json is None
+        assert s.design_supplements_json is None
+        assert s.pending_research_ids == []
+        assert s.research_archive == {}
+        assert s.pending_gap_decisions == []
+        assert s.red_evidence == []
+        assert s.design_doc_path is None
+        assert s.refine_request_json is None
+        assert s.plan_refine_by_source == {}
+
+    def test_v56_fields_round_trip(self) -> None:
+        """v5.6 新字段 to_dict/from_dict round-trip."""
+        s = EngineState(
+            tick=7,
+            expected_stage="component_verifier",
+            action_history=[{"tick": 1, "stage": "architect"}],
+            gate_results={"lint": {"passed": True, "message": "",
+                                   "files_snapshot_sha": "abc", "ran_at": "2026-07-09T00:00:00"}},
+            guardrail_retry_counters={"G4": 2},
+            coverage_map=[{"component": "B1", "missing": 0}],
+            batch_state_json='{"plates": []}',
+            progress_tree_json='{"nodes": {}}',
+            gap_report_json='{"gaps": []}',
+            design_supplements_json='{"B3": "..."}',
+            pending_research_ids=["gap-1", "gap-2"],
+            research_archive={"gap-1": {"finding": "x"}},
+            pending_gap_decisions=[{"gap_id": "gap-1", "decision": "Fill"}],
+            red_evidence=[{"task_id": "t1", "test_id": "test_x",
+                           "red_commit": "deadbeef", "failure_excerpt": "AssertionError"}],
+            design_doc_path="design/v5.6-Design-Loop.md",
+            refine_request_json='{"source": "system_verifier"}',
+            plan_refine_by_source={"system_verifier": 1},
+        )
+        r = EngineState.from_dict(s.to_dict())
+        assert r.tick == 7
+        assert r.expected_stage == "component_verifier"
+        assert r.action_history == [{"tick": 1, "stage": "architect"}]
+        assert r.gate_results["lint"]["files_snapshot_sha"] == "abc"
+        assert r.red_evidence[0]["red_commit"] == "deadbeef"
+        assert r.plan_refine_by_source == {"system_verifier": 1}
+        assert r == s
+
+    def test_v56_list_dict_factories_independent(self) -> None:
+        """新的 list/dict 字段用 default_factory, 实例间独立."""
+        s1 = EngineState()
+        s2 = EngineState()
+        s1.red_evidence.append({"task_id": "t1"})
+        s1.pending_research_ids.append("g1")
+        s1.plan_refine_by_source["system_verifier"] = 1
+        assert s2.red_evidence == []
+        assert s2.pending_research_ids == []
+        assert s2.plan_refine_by_source == {}
+
+    def test_tick_rejects_negative_via_write_field(self) -> None:
+        """tick 经 write_field 写入负数 → ValueError (≥0 约束)."""
+        s = EngineState()
+        with pytest.raises(ValueError, match="tick"):
+            s.write_field("tick", -1, "orchestrator")
+
+    def test_tick_accepts_nonneg_via_write_field(self) -> None:
+        """tick 经 write_field 写入非负 int → 成功 + 审计日志."""
+        s = EngineState()
+        s.write_field("tick", 5, "orchestrator")
+        assert s.tick == 5
+        assert any(r.get("field") == "tick" for r in s.get_write_log())
+
+
+class TestV56ValidStages:
+    """v5.6 T1: _VALID_STAGES 扩展到 12 值 (C.10 line 3908)."""
+
+    def test_valid_stages_full_set(self) -> None:
+        """_VALID_STAGES 含全部 12 个 v5.6 stage."""
+        from auto_engineering.engine.state import _VALID_STAGES
+
+        expected = {
+            "", "gap_scan", "gap_review", "research", "architect",
+            "developer", "critic", "component_verifier", "plate_deep_audit",
+            "system_verifier", "system_deep_audit", "plan_refine",
+        }
+        assert _VALID_STAGES == expected
+
+    def test_new_stages_accepted_by_write_field(self) -> None:
+        """新 stage 值经 write_field 写 current_stage 不被拒."""
+        s = EngineState()
+        for stage in ("gap_scan", "component_verifier", "system_deep_audit"):
+            s.write_field("current_stage", stage, "orchestrator")
+            assert s.current_stage == stage
+
+    def test_invalid_stage_still_rejected(self) -> None:
+        """非法 stage 值仍被 write_field 拒绝."""
+        s = EngineState()
+        with pytest.raises(ValueError, match="current_stage"):
+            s.write_field("current_stage", "bogus_stage", "orchestrator")
 

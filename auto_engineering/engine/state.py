@@ -111,13 +111,35 @@ _WRITE_OWNERS: dict[str, frozenset[str]] = {
     "plan_refine_count": frozenset({"orchestrator"}),
     "strengths":         frozenset({"critic"}),
     "assessment":        frozenset({"critic"}),
+    # v5.6 §C.10 新增 (#20-36): EngineState 唯一写入者 = orchestrator
+    "tick":                     frozenset({"orchestrator"}),
+    "expected_stage":           frozenset({"orchestrator"}),
+    "action_history":           frozenset({"orchestrator"}),
+    "gate_results":             frozenset({"orchestrator"}),
+    "guardrail_retry_counters": frozenset({"orchestrator"}),
+    "coverage_map":             frozenset({"orchestrator"}),
+    "batch_state_json":         frozenset({"orchestrator"}),
+    "progress_tree_json":       frozenset({"orchestrator"}),
+    "gap_report_json":          frozenset({"orchestrator"}),
+    "design_supplements_json":  frozenset({"orchestrator"}),
+    "pending_research_ids":     frozenset({"orchestrator"}),
+    "research_archive":         frozenset({"orchestrator"}),
+    "pending_gap_decisions":    frozenset({"orchestrator"}),
+    "red_evidence":             frozenset({"orchestrator", "developer"}),
+    "design_doc_path":          frozenset({"orchestrator"}),
+    "refine_request_json":      frozenset({"orchestrator"}),
+    "plan_refine_by_source":    frozenset({"orchestrator"}),
 }
 
 # 合法 verdict 值
 _VALID_VERDICTS = frozenset({"", "APPROVE", "MAJOR"})
 
-# 合法 stage 值
-_VALID_STAGES = frozenset({"", "architect", "developer", "critic", "plan_refine"})
+# 合法 stage 值 (v5.6 §C.10: 扩展到 12 值 — Pre-flight + 5 层验证阶段)
+_VALID_STAGES = frozenset({
+    "", "gap_scan", "gap_review", "research", "architect",
+    "developer", "critic", "component_verifier", "plate_deep_audit",
+    "system_verifier", "system_deep_audit", "plan_refine",
+})
 
 
 def _new_thread_id() -> str:
@@ -181,6 +203,26 @@ class EngineState:
     # v5.5 CriticOutput 扩展字段
     strengths: list[str] | None = None
     assessment: str | None = None
+
+    # ── v5.6 §C.10 扩展字段 (#20-36) ──
+    # 写入者均为 orchestrator (B1.1 v5.6: EngineState 唯一写入者)。
+    tick: int = 0                                                  # #20 当前 tick 序号
+    expected_stage: str | None = None                             # #21 期望的 Agent action stage
+    action_history: list[dict] = field(default_factory=list)      # #22 每 tick 的 action+result
+    gate_results: dict[str, dict] = field(default_factory=dict)   # #23 {passed,message,files_snapshot_sha,ran_at}
+    guardrail_retry_counters: dict[str, int] = field(default_factory=dict)  # #24 跨 tick retry 计数
+    coverage_map: list[dict] | None = None                        # #25 verifier 产出
+    batch_state_json: str | None = None                           # #26 BatchState 序列化
+    progress_tree_json: str | None = None                         # #27 ProgressTree 序列化
+    gap_report_json: str | None = None                            # #28 Pre-flight GapReport 序列化
+    design_supplements_json: str | None = None                    # #29 DesignDoc.supplements 序列化
+    pending_research_ids: list[str] = field(default_factory=list)  # #30 待 research 的 gap id 队列
+    research_archive: dict[str, dict] = field(default_factory=dict)  # #31 Defer+Research findings 存档
+    pending_gap_decisions: list[dict] = field(default_factory=list)  # #32 gap_review 决策
+    red_evidence: list[dict] = field(default_factory=list)        # #33 TDD RED 证据 (G7 REDGuard)
+    design_doc_path: str | None = None                            # #34 设计文档路径 (design-doc 模式)
+    refine_request_json: str | None = None                        # #35 plan_refine 输入 (RefineRequest)
+    plan_refine_by_source: dict[str, int] = field(default_factory=dict)  # #36 分源 refine 计数 (DS-8)
 
     # v5.5 P1-5: 写入审计日志 (repr=False 避免污染输出, 不参与序列化)
     _write_log: list[WriteRecord] = field(default_factory=list, repr=False, init=False)
@@ -316,7 +358,7 @@ def _validate_field_value(name: str, value: Any) -> None:
         )
     if name == "round" and not isinstance(value, int):
         raise ValueError(f"round 必须是 int, 收到 {type(value).__name__}")
-    if name in ("majors_in_a_row", "total_majors", "plan_refine_count"):
+    if name in ("majors_in_a_row", "total_majors", "plan_refine_count", "tick"):
         if not isinstance(value, int):
             raise ValueError(f"{name} 必须是 int, 收到 {type(value).__name__}")
         if value < 0:
