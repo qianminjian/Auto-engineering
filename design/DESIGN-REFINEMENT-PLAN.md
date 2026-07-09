@@ -156,18 +156,27 @@ Wave 4 (复核)
 
 **放行标准**：Wave 1-3 全部 DS 通过 DoD + DS-13 覆盖审计无空白 → 才 unlock 实现 Phase 1。5 个决策点（DS-1/6/8/9/10）已全部定案，均转入"写规格"。
 
+**Wave 1 执行补记（2026-07-09，spec-writing 阶段发现）：**
+
+| 项 | 内容 | 状态 |
+|----|------|------|
+| RegressionGate 归属 | 写 DS-3 时发现 B15 暂标"新 Gate"，但其 revert→restore 改工作树=有状态，与无状态并行 Gate 不兼容。依 BEACON #36 先例定案为 **Guardrail**（B5.5/B3 G9）。**此为 spec 期新增分类决策，非 5 预定案之一，待用户复核**（不改决策 #47 意图，仅纠技术归属）| ⚠️ 待复核 |
+| batch_plan 结构澄清 | 代码 `task_factory` 用扁平 v5.0 结构（batch=单 task），v5.6 设计需嵌套（batch=一组 TDD task）。按设计优先标为 Phase 1 代码缺口，非降级 | 已记 B6.1a |
+| BatchState 2 处 sketch bug | ①仅 design-doc 模式建 BatchState（batch_plan 模式崩）②current_batch_idx 全局/相对二义。已在 C 章 sketch 修正 + B1.1a 定权威语义 | 已修 |
+| B5.1 gate 清单漂移 | 原表列 coverage 遗漏 audit，与 registry 代码 + BEACON #10 不符。已对齐（audit 入列、coverage 标 remote-only）| 已修 |
+
 ---
 
 ## 五、进度跟踪表
 
 | DS | 标题 | 类型 | 优先级 | 状态 | DoD 勾选 | 阻塞的实现任务 |
 |----|------|------|--------|------|---------|--------------|
-| DS-1 | deep_audit 编排模型定案 | 决策+规格 | P0 | ☑ 决策已定(3-agent)·规格待写 | ☐ | T27 / Phase6 |
-| DS-2 | B15 Guardrail → B3 级规格 | 规格 | P0 | ☐ 待办 | ☐ | T29/T30 |
-| DS-3 | B5 Gate 清单对齐 + AuditGate 分层 | 规格+决策 | P0 | ☐ 待办 | ☐ | T30/T31 |
-| DS-4 | BatchState 完整数据模型 | 规格 | P0 | ☐ 待办 | ☐ | T3/T5-T8 |
-| DS-5 | batch_plan dict schema | 规格 | P0 | ☐ 待办 | ☐ | T1/T2/T3 |
-| DS-6 | DesignDoc.parse() 契约+层次识别 | 规格+决策 | P0 | ☑ 决策已定(混合)·规格待写 | ☐ | T4 / verifier |
+| DS-1 | deep_audit 编排模型定案 | 决策+规格 | P0 | ✅ 完成 (B6.7a, 3-agent) | ☑ | T27 / Phase6 |
+| DS-2 | B15 Guardrail → B3 级规格 | 规格 | P0 | ✅ 完成 (B3 G7/G8/G9 + B3.1-B3.3) | ☑ | T29/T30 |
+| DS-3 | B5 Gate 清单对齐 + AuditGate 分层 | 规格+决策 | P0 | ✅ 完成 (B5.1/B5.2/B5.5) | ☑ | T30/T31 |
+| DS-4 | BatchState 完整数据模型 | 规格 | P0 | ✅ 完成 (B1.1a) | ☑ | T3/T5-T8 |
+| DS-5 | batch_plan dict schema | 规格 | P0 | ✅ 完成 (B6.1a) | ☑ | T1/T2/T3 |
+| DS-6 | DesignDoc.parse() 契约+层次识别 | 规格+决策 | P0 | ✅ 完成 (B10.4a, 混合) | ☑ | T4 / verifier |
 | DS-7 | gap → architect 重规划输入契约 | 规格 | P1 | ☐ 待办 | ☐ | T5/T7c |
 | DS-8 | plan_refine 环路检测定案 | 决策+规格 | P1 | ☑ 决策已定(分源≤2+全局≤4)·规格待写 | ☐ | 收敛正确性 |
 | DS-9 | Haiku verifier 误判 fallback | 决策+规格 | P1 | ☑ 决策已定(Sonnet复核负判定)·规格待写 | ☐ | 验证层可靠性 |
