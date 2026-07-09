@@ -42,6 +42,17 @@ class Component:
     design_items: list[DesignItem] = field(default_factory=list)
     source_marker: str = "heading"
 
+    def design_spec_summary(self) -> str:
+        """组件设计条目摘要 (component_verifier action context).
+
+        每条设计条目一行: "title: claim1; claim2". 无 design_items → "".
+        """
+        lines = []
+        for item in self.design_items:
+            claims = "; ".join(item.key_claims)
+            lines.append(f"{item.title}: {claims}" if claims else item.title)
+        return "\n".join(lines)
+
 
 @dataclass
 class Plate:
@@ -53,6 +64,14 @@ class Plate:
 
     def cross_component_contracts(self) -> list[str]:
         return self.cross_component_contracts_raw
+
+    def components_summary(self) -> list[dict]:
+        """板块内组件清单 (plate_deep_audit action context)."""
+        return [
+            {"name": c.name, "design_section": c.design_section,
+             "design_items": len(c.design_items)}
+            for c in self.components
+        ]
 
 
 @dataclass
@@ -76,6 +95,7 @@ class DesignDoc:
     plates: list[Plate]
     supplements: dict[str, Supplement]                       # gap_id → Supplement
     parse_warnings: list[str] = field(default_factory=list)  # 结构不确定项 → 喂 gap_scan
+    path: str | None = None                                  # 源文档路径 (parse 时设置)
 
     @classmethod
     def parse(cls, path: str | Path) -> DesignDoc:
@@ -84,7 +104,21 @@ class DesignDoc:
         if not p.exists():
             raise FileNotFoundError(f"设计文档不存在: {p}")
         text = p.read_text(encoding="utf-8")
-        return _Parser(text).run()
+        doc = _Parser(text).run()
+        doc.path = str(p)
+        return doc
+
+    def sections_summary(self) -> list[dict]:
+        """全量设计章节清单 (system_verifier action context).
+
+        展平 plate→component: 每组件一条 {plate, component, design_section}.
+        """
+        return [
+            {"plate": plate.name, "component": comp.name,
+             "design_section": comp.design_section}
+            for plate in self.plates
+            for comp in plate.components
+        ]
 
 
 # ============================================================
