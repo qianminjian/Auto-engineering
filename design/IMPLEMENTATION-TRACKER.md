@@ -28,7 +28,7 @@
 
 | Phase | 名称 | 任务数 | 完成 | 状态 |
 |-------|------|:---:|:---:|------|
-| 1 | 数据模型 + 核心路由 | 6 | 2 | ◐ 进行中 |
+| 1 | 数据模型 + 核心路由 | 6 | 3 | ◐ 进行中 |
 | 2 | TickOrchestrator | 6 | 0 | ☐ 未开始 |
 | 3 | CLI + Command | 7 | 0 | ☐ 未开始 |
 | 4 | Agent Prompt 模板 | 10 | 0 | ☐ 未开始 |
@@ -36,7 +36,7 @@
 | 5 | 测试 | 17 | 0 | ☐ 未开始 |
 | 6 | 审计与验证方法论 (B15) | 5 | 0 | ☐ 未开始 |
 | 7 | Init-Loop 契约扩展 | 4 | 0 | ☐ 未开始 |
-| **合计** | | **62** | **2** | **~3%** |
+| **合计** | | **62** | **3** | **~5%** |
 
 ---
 
@@ -46,7 +46,7 @@
 |---|----------|------|:---:|--------|
 | T1 | `engine/state.py`（tick/expected_stage/coverage_map/batch_state_json/progress_tree_json + #33-36 + _VALID_STAGES）| T17/T22 + test_engine_state(ext) | ✅ | (本次) |
 | T2 | `loop/stage_router.py`（23 转换 + 分源/全局 refine 计数）| T18 | ⛔ | |
-| T3 | `engine/batch_state.py`（**新建** B1.1a）| T22 | ☐ | |
+| T3 | `engine/batch_state.py`（**新建** B1.1a）| T22 | ✅ | (本次) |
 | T4 | `engine/design_doc.py`（**新建** B10.4a parse）| T25/T21 | ✅ | (本次) |
 | T4b | `engine/progress_tree.py`（**新建** B9）| T23/T24 | ☐ | |
 | T4c | `engine/gap_analysis.py`（**新建** B10.2）| T25 | ☐ | |
