@@ -1619,7 +1619,7 @@ class TestV55OrchestratorDeepAudit:
         assert state.audit_findings is None
 
     def test_t9_params_passed_to_stage_router(self) -> None:
-        """步2k: StageRouter.next() 接受 T9 参数."""
+        """步2k: StageRouter.next() 接受 DS-8 refine 参数."""
         from auto_engineering.loop.stage_router import StageRouter
 
         router = StageRouter()
@@ -1630,8 +1630,10 @@ class TestV55OrchestratorDeepAudit:
             majors_in_a_row=0,
             total_majors=0,
             audit_found_issues=True,
-            plan_refine_count=1,
-            max_plan_refines=3,
+            refine_source_count=0,
+            refine_global_count=1,
+            max_refine_per_source=10**9,
+            max_refine_global=3,
         )
         assert decision.next_stage == "architect"
         assert decision.should_stop is False

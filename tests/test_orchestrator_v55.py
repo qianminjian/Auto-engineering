@@ -96,7 +96,7 @@ class TestOrchestratorV55Integration:
         assert restored.strengths == state.strengths
         assert restored.assessment == state.assessment
 
-    # --- 3. StageRouter.next() 接受 T9 参数 ---
+    # --- 3. StageRouter.next() 接受 DS-8 refine 参数 ---
 
     def test_stage_router_t9_back_to_architect(self) -> None:
         """T9: audit_found_issues=True + under limit → next='architect'."""
@@ -107,8 +107,10 @@ class TestOrchestratorV55Integration:
             majors_in_a_row=0,
             total_majors=0,
             audit_found_issues=True,
-            plan_refine_count=1,
-            max_plan_refines=3,
+            refine_source_count=0,
+            refine_global_count=1,
+            max_refine_per_source=10**9,
+            max_refine_global=3,
         )
         assert decision.next_stage == "architect"
         assert decision.should_stop is False
@@ -125,10 +127,10 @@ class TestOrchestratorV55Integration:
         assert decision.next_stage is None
         assert decision.should_stop is False
 
-    # --- 4. StageRouter 返回 T9-LIMIT ---
+    # --- 4. StageRouter 返回 REFINE_LIMIT (v5.6 T2: DS-8 双预算取代 v5.5 T9 单预算) ---
 
-    def test_stage_router_t9_limit_stop(self) -> None:
-        """T9-LIMIT: plan_refine_count >= max_plan_refines → should_stop=True."""
+    def test_stage_router_refine_limit_stop(self) -> None:
+        """REFINE_LIMIT: 全局预算耗尽 → should_stop=True (v5.6 DS-8; v5.5 单预算旁路分源)."""
         router = StageRouter()
         decision = router.next(
             current_stage="critic",
@@ -136,15 +138,17 @@ class TestOrchestratorV55Integration:
             majors_in_a_row=0,
             total_majors=0,
             audit_found_issues=True,
-            plan_refine_count=3,
-            max_plan_refines=3,
+            refine_source_count=0,
+            refine_global_count=4,
+            max_refine_per_source=10**9,
+            max_refine_global=4,
         )
         assert decision.next_stage is None
         assert decision.should_stop is True
-        assert "T9-LIMIT" in decision.stop_reason
+        assert "REFINE_LIMIT" in decision.stop_reason
 
-    def test_stage_router_t9_limit_custom_max(self) -> None:
-        """T9-LIMIT 自定义 max_plan_refines=2."""
+    def test_stage_router_refine_limit_custom_max(self) -> None:
+        """REFINE_LIMIT 自定义 max_refine_global=2."""
         router = StageRouter()
         decision = router.next(
             current_stage="critic",
@@ -152,8 +156,10 @@ class TestOrchestratorV55Integration:
             majors_in_a_row=0,
             total_majors=0,
             audit_found_issues=True,
-            plan_refine_count=2,
-            max_plan_refines=2,
+            refine_source_count=0,
+            refine_global_count=2,
+            max_refine_per_source=10**9,
+            max_refine_global=2,
         )
         assert decision.should_stop is True
 

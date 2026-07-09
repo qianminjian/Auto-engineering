@@ -574,31 +574,35 @@ class Orchestrator:
 
         # 步2k: StageRouter.next + T9 logic + Judge.evaluate
         if audit_found_issues and is_critic_approve and deep_audit_enabled:
-            # T9: DeepAudit 发现问题 → PLAN-REFINE 回路, 跳过 ConvergenceJudge
+            # T9: DeepAudit 发现问题 → PLAN-REFINE 回路, 跳过 ConvergenceJudge.
+            # 2026-07-09 (v5.6 T2): next() 迁移到 DS-8 双预算签名后, 保留
+            # Orchestrator (v5.5 debug 路径) 沿用单一全局预算, 直接复用共享谓词
+            # StageRouter.refine_allowed (单一真相源); 分源预算不适用 → 传大值旁路.
+            # "T9-LIMIT" 标签为 v5.5 debug 路径固有语义 (v5.6 新路径用 REFINE_LIMIT).
             self._state.plan_refine_count += 1
             max_plan_refines = (
                 self.judge.config.max_plan_refines
                 if self.judge and self.judge.config
                 else 3
             )
-            decision = self._router.next(
-                current_stage=current_stage,
-                verdict=self._state.critic_verdict,
-                majors_in_a_row=self._state.majors_in_a_row,
-                total_majors=self._state.total_majors,
-                audit_found_issues=True,
-                plan_refine_count=self._state.plan_refine_count,
-                max_plan_refines=max_plan_refines,
-            )
-            if decision.should_stop:
+            if not StageRouter.refine_allowed(
+                refine_source_count=0,
+                refine_global_count=self._state.plan_refine_count,
+                max_refine_per_source=10**9,
+                max_refine_global=max_plan_refines,
+            ):
                 self.verdict = ConvergenceVerdict.stop(
-                    level=4, reason=decision.stop_reason or "T9-LIMIT stop"
+                    level=4,
+                    reason=(
+                        f"T9-LIMIT stop: plan-refine "
+                        f"{self._state.plan_refine_count}/{max_plan_refines}"
+                    ),
                 )
                 self._save_checkpoint(round_id=round_id, step=2, tag="after_tick_t9_stop")
                 return True
             # T9: 回到 architect, 跳过 Judge
             clear_stage_fields(self._state, current_stage)
-            self._state.write_field("current_stage", decision.next_stage or "architect", "orchestrator")
+            self._state.write_field("current_stage", "architect", "orchestrator")
             self._save_checkpoint(round_id=round_id, step=2, tag="after_tick_t9")
             return False  # continue, 不调 Judge
 
@@ -677,11 +681,6 @@ class Orchestrator:
             verdict="",
             majors_in_a_row=state.majors_in_a_row,
             total_majors=state.total_majors,
-            max_plan_refines=(
-                self.judge.config.max_plan_refines
-                if self.judge and self.judge.config
-                else 3
-            ),
         )
         state.write_field("current_stage", decision.next_stage or "", "orchestrator")
         return decision

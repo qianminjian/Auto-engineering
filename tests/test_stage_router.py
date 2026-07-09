@@ -390,115 +390,152 @@ class TestNewEngineStateFields:
         )
 
 
-# ---------- v5.5 T9/T9-LIMIT 转换 (DeepAudit → PLAN-REFINE 回路) ----------
+# ---------- v5.6 DS-8: refine_allowed 放行谓词 (分源≤2 + 全局≤4) ----------
 
 
-class TestT9Transition:
-    """v5.5 T9: DeepAudit 发现问题 → 回到 architect (PLAN-REFINE)."""
+class TestRefineAllowed:
+    """StageRouter.refine_allowed staticmethod — 单一放行谓词 (§B2 DS-8)."""
 
-    def test_t9_audit_found_issues_returns_architect(self) -> None:
-        """T9: audit_found_issues=True + plan_refine_count < max → next='architect'."""
+    def test_allowed_when_both_under_limit(self) -> None:
+        assert StageRouter.refine_allowed(0, 0, 2, 4) is True
+        assert StageRouter.refine_allowed(1, 3, 2, 4) is True
+
+    def test_blocked_when_source_exhausted(self) -> None:
+        assert StageRouter.refine_allowed(2, 0, 2, 4) is False
+
+    def test_blocked_when_global_exhausted(self) -> None:
+        assert StageRouter.refine_allowed(0, 4, 2, 4) is False
+
+    def test_defaults_2_and_4(self) -> None:
+        assert StageRouter.refine_allowed(1, 3) is True
+        assert StageRouter.refine_allowed(2, 3) is False
+        assert StageRouter.refine_allowed(1, 4) is False
+
+
+# ---------- v5.6 验证/审计层 refine-or-stop (T9/T10·T13/T14·T17/T17b·T19/T20) ----------
+
+_REFINE_SOURCES = [
+    "component_verifier",   # T9/T10
+    "plate_deep_audit",     # T13/T14
+    "system_verifier",      # T17/T17b
+    "system_deep_audit",    # T19/T20
+]
+
+
+class TestVerificationRefineRouting:
+    """验证/审计层发现问题 + refine_allowed → architect; 否则 stop(REFINE_LIMIT)."""
+
+    @pytest.mark.parametrize("source", _REFINE_SOURCES)
+    def test_found_issues_allowed_returns_architect(self, source: str) -> None:
         router = StageRouter()
         decision = router.next(
-            current_stage="critic",
-            verdict="APPROVE",
-            majors_in_a_row=0,
-            total_majors=0,
+            current_stage=source, verdict="",
+            majors_in_a_row=0, total_majors=0,
             audit_found_issues=True,
-            plan_refine_count=0,
-            max_plan_refines=3,
+            refine_source_count=0, refine_global_count=0,
+            max_refine_per_source=2, max_refine_global=4,
         )
         assert decision.next_stage == "architect"
         assert decision.should_stop is False
 
-    def test_t9_limit_reached_should_stop(self) -> None:
-        """T9-LIMIT: audit_found_issues=True + plan_refine_count >= max → stop."""
+    @pytest.mark.parametrize("source", _REFINE_SOURCES)
+    def test_source_budget_exhausted_stops(self, source: str) -> None:
         router = StageRouter()
         decision = router.next(
-            current_stage="critic",
-            verdict="APPROVE",
-            majors_in_a_row=0,
-            total_majors=0,
+            current_stage=source, verdict="",
+            majors_in_a_row=0, total_majors=0,
             audit_found_issues=True,
-            plan_refine_count=3,
-            max_plan_refines=3,
+            refine_source_count=2, refine_global_count=2,
+            max_refine_per_source=2, max_refine_global=4,
         )
         assert decision.next_stage is None
         assert decision.should_stop is True
-        assert decision.stop_reason is not None
-        assert "T9-LIMIT" in decision.stop_reason
-        assert "plan refine 上限" in decision.stop_reason
+        assert "REFINE_LIMIT" in decision.stop_reason
+        assert "分源" in decision.stop_reason
 
-    def test_t9_exceeds_limit_should_stop(self) -> None:
-        """T9-LIMIT: plan_refine_count > max → stop."""
+    @pytest.mark.parametrize("source", _REFINE_SOURCES)
+    def test_global_budget_exhausted_stops(self, source: str) -> None:
         router = StageRouter()
         decision = router.next(
-            current_stage="critic",
-            verdict="APPROVE",
-            majors_in_a_row=0,
-            total_majors=0,
+            current_stage=source, verdict="",
+            majors_in_a_row=0, total_majors=0,
             audit_found_issues=True,
-            plan_refine_count=5,
-            max_plan_refines=3,
+            refine_source_count=0, refine_global_count=4,
+            max_refine_per_source=2, max_refine_global=4,
         )
         assert decision.next_stage is None
         assert decision.should_stop is True
+        assert "REFINE_LIMIT" in decision.stop_reason
+        assert "全局" in decision.stop_reason
 
-    def test_t9_plan_refine_count_at_max_minus_one(self) -> None:
-        """T9: plan_refine_count = max-1 → 仍返回 architect (未超限)."""
+    @pytest.mark.parametrize("source", _REFINE_SOURCES)
+    def test_no_issues_delegates_to_orchestrator(self, source: str) -> None:
+        """无缺失/问题 → (None, False): 推进由 orchestrator 按 BatchState/层裁剪决定."""
         router = StageRouter()
         decision = router.next(
-            current_stage="critic",
-            verdict="APPROVE",
-            majors_in_a_row=0,
-            total_majors=0,
-            audit_found_issues=True,
-            plan_refine_count=2,
-            max_plan_refines=3,
-        )
-        assert decision.next_stage == "architect"
-        assert decision.should_stop is False
-
-    def test_no_audit_issues_returns_normal_t4_behavior(self) -> None:
-        """audit_found_issues=False → 正常 T4 行为 (next=None, should_stop=False)."""
-        router = StageRouter()
-        decision = router.next(
-            current_stage="critic",
-            verdict="APPROVE",
-            majors_in_a_row=0,
-            total_majors=0,
+            current_stage=source, verdict="",
+            majors_in_a_row=0, total_majors=0,
             audit_found_issues=False,
-            plan_refine_count=0,
-            max_plan_refines=3,
         )
         assert decision.next_stage is None
         assert decision.should_stop is False
 
-    def test_t9_defaults_backward_compatible(self) -> None:
-        """无 T9 参数 → 向后兼容 T4 行为."""
-        router = StageRouter()
-        decision = router.next(
-            current_stage="critic",
-            verdict="APPROVE",
-            majors_in_a_row=0,
-            total_majors=0,
-        )
-        # 默认 audit_found_issues=False → T4
-        assert decision.next_stage is None
-        assert decision.should_stop is False
 
-    def test_t9_custom_max_plan_refines(self) -> None:
-        """自定义 max_plan_refines=2 → 第 2 次触发 T9-LIMIT."""
+# ---------- 保留 Orchestrator 兼容: critic + APPROVE + audit_found_issues → refine ----------
+
+
+class TestCriticApproveAuditCompat:
+    """保留的连续-while Orchestrator: critic APPROVE + DeepAudit 发现问题 → PLAN-REFINE."""
+
+    def test_critic_approve_audit_allowed_returns_architect(self) -> None:
         router = StageRouter()
         decision = router.next(
-            current_stage="critic",
-            verdict="APPROVE",
-            majors_in_a_row=0,
-            total_majors=0,
+            current_stage="critic", verdict="APPROVE",
+            majors_in_a_row=0, total_majors=0,
             audit_found_issues=True,
-            plan_refine_count=2,
-            max_plan_refines=2,
+            refine_source_count=0, refine_global_count=0,
+            max_refine_per_source=10**9, max_refine_global=3,
+        )
+        assert decision.next_stage == "architect"
+        assert decision.should_stop is False
+
+    def test_critic_approve_audit_global_exhausted_stops(self) -> None:
+        router = StageRouter()
+        decision = router.next(
+            current_stage="critic", verdict="APPROVE",
+            majors_in_a_row=0, total_majors=0,
+            audit_found_issues=True,
+            refine_source_count=0, refine_global_count=3,
+            max_refine_per_source=10**9, max_refine_global=3,
         )
         assert decision.next_stage is None
         assert decision.should_stop is True
-        assert "T9-LIMIT" in decision.stop_reason
+        assert "REFINE_LIMIT" in decision.stop_reason
+
+    def test_critic_approve_no_audit_returns_none(self) -> None:
+        """APPROVE 无 audit → (None, False): Judge 触发 GOAL_ACHIEVED."""
+        router = StageRouter()
+        decision = router.next(
+            current_stage="critic", verdict="APPROVE",
+            majors_in_a_row=0, total_majors=0,
+            audit_found_issues=False,
+        )
+        assert decision.next_stage is None
+        assert decision.should_stop is False
+
+
+# ---------- Phase 0 stage 委托给 orchestrator ----------
+
+
+class TestPhase0Delegates:
+    """gap_scan/gap_review/research 由 orchestrator Phase 0 handler 路由 → (None, False)."""
+
+    @pytest.mark.parametrize("stage", ["gap_scan", "gap_review", "research"])
+    def test_phase0_stage_delegates(self, stage: str) -> None:
+        router = StageRouter()
+        decision = router.next(
+            current_stage=stage, verdict="",
+            majors_in_a_row=0, total_majors=0,
+        )
+        assert decision.next_stage is None
+        assert decision.should_stop is False

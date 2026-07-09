@@ -109,7 +109,13 @@ def make_round_history(
 
 
 class TestStageRouterT9Unit:
-    """StageRouter T9 路由逻辑单元测试."""
+    """StageRouter T9 路由逻辑单元测试.
+
+    2026-07-09 (v5.6 T2): next() 迁移到 DS-8 双预算 (refine_source_count/
+    refine_global_count/max_refine_per_source/max_refine_global). v5.5 单一
+    plan_refine_count 映射为全局预算, 分源预算传大值旁路. 停止理由 T9-LIMIT
+    → REFINE_LIMIT (v5.6 next() 语义).
+    """
 
     def test_t9_critic_approve_with_audit_issues(self):
         """critic APPROVE + audit_found_issues=True → next_stage="architect"."""
@@ -120,8 +126,10 @@ class TestStageRouterT9Unit:
             majors_in_a_row=0,
             total_majors=0,
             audit_found_issues=True,
-            plan_refine_count=0,
-            max_plan_refines=3,
+            refine_source_count=0,
+            refine_global_count=0,
+            max_refine_per_source=10**9,
+            max_refine_global=3,
         )
         assert decision.next_stage == "architect"
         assert decision.should_stop is False
@@ -140,7 +148,7 @@ class TestStageRouterT9Unit:
         assert decision.should_stop is False
 
     def test_t9_limit_exact_equals(self):
-        """plan_refine_count == max_plan_refines → should_stop=True."""
+        """refine_global_count == max_refine_global → should_stop=True."""
         router = StageRouter()
         decision = router.next(
             current_stage="critic",
@@ -148,15 +156,17 @@ class TestStageRouterT9Unit:
             majors_in_a_row=0,
             total_majors=0,
             audit_found_issues=True,
-            plan_refine_count=3,
-            max_plan_refines=3,
+            refine_source_count=0,
+            refine_global_count=3,
+            max_refine_per_source=10**9,
+            max_refine_global=3,
         )
         assert decision.should_stop is True
         assert decision.next_stage is None
-        assert "T9-LIMIT" in (decision.stop_reason or "")
+        assert "REFINE_LIMIT" in (decision.stop_reason or "")
 
     def test_t9_limit_exceeded(self):
-        """plan_refine_count > max_plan_refines → should_stop=True."""
+        """refine_global_count > max_refine_global → should_stop=True."""
         router = StageRouter()
         decision = router.next(
             current_stage="critic",
@@ -164,14 +174,16 @@ class TestStageRouterT9Unit:
             majors_in_a_row=0,
             total_majors=0,
             audit_found_issues=True,
-            plan_refine_count=5,
-            max_plan_refines=3,
+            refine_source_count=0,
+            refine_global_count=5,
+            max_refine_per_source=10**9,
+            max_refine_global=3,
         )
         assert decision.should_stop is True
-        assert "T9-LIMIT" in (decision.stop_reason or "")
+        assert "REFINE_LIMIT" in (decision.stop_reason or "")
 
     def test_t9_backward_compatible_defaults(self):
-        """无 T9 参数 → 向后兼容 (默认 audit_found_issues=False)."""
+        """无 refine 参数 → 默认 audit_found_issues=False → None."""
         router = StageRouter()
         decision = router.next(
             current_stage="critic",
@@ -183,7 +195,7 @@ class TestStageRouterT9Unit:
         assert decision.should_stop is False
 
     def test_t9_incrementing_plan_refine_count(self):
-        """plan_refine_count 递增但仍在限制内 → 继续回 architect."""
+        """refine_global_count 递增但仍在限制内 → 继续回 architect."""
         router = StageRouter()
         for count in range(3):  # 0, 1, 2
             decision = router.next(
@@ -192,8 +204,10 @@ class TestStageRouterT9Unit:
                 majors_in_a_row=0,
                 total_majors=0,
                 audit_found_issues=True,
-                plan_refine_count=count,
-                max_plan_refines=3,
+                refine_source_count=0,
+                refine_global_count=count,
+                max_refine_per_source=10**9,
+                max_refine_global=3,
             )
             assert decision.next_stage == "architect"
             assert decision.should_stop is False, f"count={count} should not stop"
@@ -206,9 +220,11 @@ class TestStageRouterT9Unit:
             verdict="MAJOR",
             majors_in_a_row=1,
             total_majors=1,
-            audit_found_issues=True,  # T9 不应用于 MAJOR, MAJOR 回 developer
-            plan_refine_count=0,
-            max_plan_refines=3,
+            audit_found_issues=True,  # MAJOR 优先, 不走 refine 分支
+            refine_source_count=0,
+            refine_global_count=0,
+            max_refine_per_source=10**9,
+            max_refine_global=3,
         )
         # MAJOR → T5: back to developer (不是 architect)
         assert decision.next_stage == "developer"

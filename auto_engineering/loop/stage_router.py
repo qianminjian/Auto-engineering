@@ -135,26 +135,39 @@ class StageRouter:
         verdict: str,
         majors_in_a_row: int,
         total_majors: int,
-        audit_found_issues: bool = False,      # v5.5: DeepAudit 是否发现问题
-        plan_refine_count: int = 0,            # v5.5: 当前 T9 回路计数
-        max_plan_refines: int = 3,             # v5.5 P1-14: fallback, Orchestrator 从 ConvergenceConfig 显式传入
+        audit_found_issues: bool = False,           # 验证/审计层是否发现问题
+        refine_source_count: int = 0,               # DS-8: 当前源的 plan_refine 计数
+        refine_global_count: int = 0,               # DS-8: 全局 plan_refine 计数
+        max_refine_per_source: int = 2,             # DS-8: 分源上限 (默认 2)
+        max_refine_global: int = 4,                 # DS-8: 全局上限 (默认 4)
     ) -> StageDecision:
-        """根据当前 Stage + Critic verdict 决定下一步 Stage (§B2.2 T1-T6, T9/T9-LIMIT).
+        """根据当前 Stage 决定下一步 (§B2 完整转换表 T0.1-T22, +T17b).
+
+        StageRouter 拥有的**纯转换** (仅依 stage/verdict/计数决定):
+            - T1: "" → architect (Phase 0 gap_scan 入口由 orchestrator 在有 design_doc 时接管)
+            - T2: architect → developer
+            - T3: developer → critic (前向边; orchestrator 可依 BatchState 先循环 developer)
+            - T4/T5: critic + MAJOR → developer / stop(MAJOR 超限)
+            - T9/T10·T13/T14·T17/T17b·T19/T20: 验证/审计层 + 发现问题
+              → refine_allowed 则 architect, 否则 stop(REFINE_LIMIT)
+
+        依赖 BatchState/层裁剪的推进 (T6/T7/T8/T11/T12/T15/T16/T18) 返回
+        (next_stage=None, should_stop=False) —— 交 orchestrator after-handler 决定.
 
         Args:
-            current_stage: 当前 Stage ("" | "architect" | "developer" | "critic").
+            current_stage: 当前 Stage.
             verdict: Critic 产出 ("" | "APPROVE" | "MAJOR"). 非 critic 阶段传 "".
             majors_in_a_row: 连续 MAJOR 计数 (≥0).
             total_majors: 累计 MAJOR 计数 (≥0).
-            audit_found_issues: v5.5 T9 — DeepAudit 是否发现问题 (default False).
-            plan_refine_count: v5.5 T9 — 当前 T9 回路计数 (default 0).
-            max_plan_refines: v5.5 T9 — T9 回路最大次数 (default 3).
+            audit_found_issues: 验证/审计层是否发现问题 (missing/diverged/P0/P1 超阈).
+            refine_source_count: 当前源已用 plan_refine 次数 (DS-8 分源预算).
+            refine_global_count: 全局已用 plan_refine 次数 (DS-8 全局预算).
+            max_refine_per_source: 分源上限 (默认 2).
+            max_refine_global: 全局上限 (默认 4).
 
         Returns:
             StageDecision 含 next_stage / should_stop / stop_reason.
         """
-        # 2026-07-04 修复 (Issue #4, 95 分): 记录 current_stage 到 history_stages
-        # 供 CriticVerdictInvalid 异常时显示调用链 (不再永远是空).
         if current_stage:
             self.history_stages.append(current_stage)
 
@@ -166,70 +179,90 @@ class StageRouter:
         if current_stage == "architect":
             return StageDecision(next_stage="developer", should_stop=False)
 
-        # T3: developer → critic
+        # T3: developer → critic (前向边)
         if current_stage == "developer":
             return StageDecision(next_stage="critic", should_stop=False)
 
-        # T4/T5/T6/T9: critic 阶段
+        # critic: T4/T5 (MAJOR) / APPROVE (含保留 Orchestrator 的 audit compat)
         if current_stage == "critic":
-            if verdict == "APPROVE":
-                # v5.5 T9: DeepAudit 发现问题 → PLAN-REFINE 回路
-                if audit_found_issues:
-                    if plan_refine_count >= max_plan_refines:
-                        # T9-LIMIT: 超过 plan refine 上限 → 停止
-                        return StageDecision(
-                            next_stage=None,
-                            should_stop=True,
-                            stop_reason=(
-                                f"T9-LIMIT: plan refine 上限 "
-                                f"({plan_refine_count}/{max_plan_refines})"
-                            ),
-                        )
-                    # T9: 回到 architect 进行 PLAN-REFINE
-                    return StageDecision(next_stage="architect", should_stop=False)
-                # T4: APPROVE → Judge 触发 GOAL_ACHIEVED (本路由不停止)
-                return StageDecision(next_stage=None, should_stop=False)
-
             if verdict == "MAJOR":
-                # T6: 超限检查 (先连续后累计)
-                if majors_in_a_row >= self.max_majors_in_a_row:
+                # T5: 连续或累计 MAJOR 超限 → stop
+                if (majors_in_a_row >= self.max_majors_in_a_row
+                        or total_majors >= self.max_total_majors):
                     return StageDecision(
-                        next_stage=None,
-                        should_stop=True,
-                        stop_reason=(
-                            f"MAJOR 超限: 连续{majors_in_a_row}/"
-                            f"累计{total_majors}"
-                        ),
+                        next_stage=None, should_stop=True,
+                        stop_reason=f"MAJOR 超限: 连续{majors_in_a_row}/累计{total_majors}",
                     )
-                if total_majors >= self.max_total_majors:
-                    return StageDecision(
-                        next_stage=None,
-                        should_stop=True,
-                        stop_reason=(
-                            f"MAJOR 超限: 连续{majors_in_a_row}/"
-                            f"累计{total_majors}"
-                        ),
-                    )
-                # T5: 未超限 → 回到 developer 重做
+                # T4: 未超限 → developer 重做
                 return StageDecision(next_stage="developer", should_stop=False)
 
-            # verdict="" 或其他非法值 → 抛 CriticVerdictInvalid (2026-07-04 Bug 3 修复)
-            #
-            # 旧实现: should_stop=True + reason="verdict 异常" → 反向语义
-            # (异常 → PASS → 停止, 整个 loop 2 秒退出 0 代码改动).
-            # 新实现: 抛异常让 orchestrator 显式处理 (重试或升级), 不静默归一化.
-            # 设计意图"critic 阶段必须给出 verdict"是设计约束, 不是 fallback.
-            raise CriticVerdictInvalid(
-                verdict=verdict,
-                history_stages=self.history_stages,
-            )
+            if verdict == "APPROVE":
+                # 保留 Orchestrator 兼容: critic APPROVE + DeepAudit 发现问题 → PLAN-REFINE
+                if audit_found_issues:
+                    return self._refine_or_stop(
+                        "critic", refine_source_count, refine_global_count,
+                        max_refine_per_source, max_refine_global)
+                # T6/T7: batch/组件完成判定依 BatchState → orchestrator 决定
+                return StageDecision(next_stage=None, should_stop=False)
 
-        # 未知 stage → 安全停止 (防御性, 不抛异常避免 Orchestrator 僵死)
+            # verdict="" 或非法值 → 抛 CriticVerdictInvalid (2026-07-04 Bug 3)
+            raise CriticVerdictInvalid(
+                verdict=verdict, history_stages=self.history_stages)
+
+        # 验证/审计层: 发现问题 → refine-or-stop; 无问题 → 交 orchestrator 推进
+        if current_stage in (
+            "component_verifier", "plate_deep_audit",
+            "system_verifier", "system_deep_audit",
+        ):
+            if audit_found_issues:
+                return self._refine_or_stop(
+                    current_stage, refine_source_count, refine_global_count,
+                    max_refine_per_source, max_refine_global)
+            # T8/T11/T12/T16/T18: 无问题, 推进由 orchestrator 按 BatchState/层裁剪决定
+            return StageDecision(next_stage=None, should_stop=False)
+
+        # Phase 0 stage (gap_scan/gap_review/research): 由 orchestrator Phase 0 handler 路由
+        if current_stage in ("gap_scan", "gap_review", "research"):
+            return StageDecision(next_stage=None, should_stop=False)
+
+        # 未知 stage → 安全停止 (防御性)
         return StageDecision(
-            next_stage=None,
-            should_stop=True,
-            stop_reason=f"未知 Stage: '{current_stage}'",
-        )
+            next_stage=None, should_stop=True,
+            stop_reason=f"未知 Stage: '{current_stage}'")
+
+    @staticmethod
+    def refine_allowed(
+        refine_source_count: int,
+        refine_global_count: int,
+        max_refine_per_source: int = 2,
+        max_refine_global: int = 4,
+    ) -> bool:
+        """plan_refine 放行谓词 (§B2 DS-8, 单一真相源).
+
+        orchestrator._handle_plan_refine 亦调此谓词, 保证分源/全局预算逻辑一致.
+        """
+        return (refine_source_count < max_refine_per_source
+                and refine_global_count < max_refine_global)
+
+    def _refine_or_stop(
+        self,
+        source: str,
+        refine_source_count: int,
+        refine_global_count: int,
+        max_refine_per_source: int,
+        max_refine_global: int,
+    ) -> StageDecision:
+        """发现问题 + refine_allowed → architect; 否则 stop(REFINE_LIMIT)."""
+        if self.refine_allowed(refine_source_count, refine_global_count,
+                               max_refine_per_source, max_refine_global):
+            return StageDecision(next_stage="architect", should_stop=False)
+        if refine_source_count >= max_refine_per_source:
+            reason = (f"REFINE_LIMIT: {source} 分源 "
+                      f"{refine_source_count}/{max_refine_per_source} 未解决")
+        else:
+            reason = (f"REFINE_LIMIT: 全局 "
+                      f"{refine_global_count}/{max_refine_global}")
+        return StageDecision(next_stage=None, should_stop=True, stop_reason=reason)
 
 
 def update_majors_count(state: "EngineState", verdict: str) -> None:
