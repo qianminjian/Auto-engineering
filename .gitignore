@@ -21,5 +21,7 @@ references/
 # atdo runtime metadata (本地工作文件, 不发布)
 .ae-state/
 .ruff_cache/
+# 设计文档本地备份归档 (修改前 cp 备份 + 旧版本归档, 不发布)
+design/his_bak/
 # Claude Code 项目级配置 (本地, 不发布)
 # 测试覆盖率临时文件 (本地)
