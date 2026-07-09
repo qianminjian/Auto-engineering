@@ -177,10 +177,10 @@ Wave 4 (复核)
 | DS-4 | BatchState 完整数据模型 | 规格 | P0 | ✅ 完成 (B1.1a) | ☑ | T3/T5-T8 |
 | DS-5 | batch_plan dict schema | 规格 | P0 | ✅ 完成 (B6.1a) | ☑ | T1/T2/T3 |
 | DS-6 | DesignDoc.parse() 契约+层次识别 | 规格+决策 | P0 | ✅ 完成 (B10.4a, 混合) | ☑ | T4 / verifier |
-| DS-7 | gap → architect 重规划输入契约 | 规格 | P1 | ☐ 待办 | ☐ | T5/T7c |
-| DS-8 | plan_refine 环路检测定案 | 决策+规格 | P1 | ☑ 决策已定(分源≤2+全局≤4)·规格待写 | ☐ | 收敛正确性 |
-| DS-9 | Haiku verifier 误判 fallback | 决策+规格 | P1 | ☑ 决策已定(Sonnet复核负判定)·规格待写 | ☐ | 验证层可靠性 |
-| DS-10 | Tick 延迟预算+降级 | 决策+规格 | P1 | ☑ 决策已定(Python开销P95<2s)·规格待写 | ☐ | 性能验收 |
+| DS-7 | gap → architect 重规划输入契约 | 规格 | P1 | ✅ 完成 (B6.10, RefineRequest + EngineState #35) | ☑ | T5/T7c |
+| DS-8 | plan_refine 环路检测定案 | 决策+规格 | P1 | ✅ 完成 (B2 T9-T20/T17b + B4 + EngineState #19/#36) | ☑ | 收敛正确性 |
+| DS-9 | Haiku verifier 误判 fallback | 决策+规格 | P1 | ✅ 完成 (B6.6a, Sonnet 窄范围复核) | ☑ | 验证层可靠性 |
+| DS-10 | Tick 延迟预算+降级 | 决策+规格 | P1 | ✅ 完成 (C.2.6, 编排开销 P95<2s) | ☑ | 性能验收 |
 | DS-11 | B10 Pre-flight 规格复核 | 复核 | P2 | ☐ 待办 | ☐ | Phase 0 |
 | DS-12 | B9 ProgressTree 复核 | 复核 | P2 | ☐ 待办 | ☐ | T4b |
 | DS-13 | 实现任务↔设计背书 覆盖审计 | 复核 | P1 | ☐ 待办 | ☐ | 全部 Phase |
