@@ -28,7 +28,7 @@
 
 | Phase | 名称 | 任务数 | 完成 | 状态 |
 |-------|------|:---:|:---:|------|
-| 1 | 数据模型 + 核心路由 | 6 | 1 | ◐ 进行中 |
+| 1 | 数据模型 + 核心路由 | 6 | 2 | ◐ 进行中 |
 | 2 | TickOrchestrator | 6 | 0 | ☐ 未开始 |
 | 3 | CLI + Command | 7 | 0 | ☐ 未开始 |
 | 4 | Agent Prompt 模板 | 10 | 0 | ☐ 未开始 |
@@ -36,7 +36,7 @@
 | 5 | 测试 | 17 | 0 | ☐ 未开始 |
 | 6 | 审计与验证方法论 (B15) | 5 | 0 | ☐ 未开始 |
 | 7 | Init-Loop 契约扩展 | 4 | 0 | ☐ 未开始 |
-| **合计** | | **62** | **1** | **~2%** |
+| **合计** | | **62** | **2** | **~3%** |
 
 ---
 
@@ -47,7 +47,7 @@
 | T1 | `engine/state.py`（tick/expected_stage/coverage_map/batch_state_json/progress_tree_json + #33-36 + _VALID_STAGES）| T17/T22 + test_engine_state(ext) | ✅ | (本次) |
 | T2 | `loop/stage_router.py`（23 转换 + 分源/全局 refine 计数）| T18 | ⛔ | |
 | T3 | `engine/batch_state.py`（**新建** B1.1a）| T22 | ☐ | |
-| T4 | `engine/design_doc.py`（**新建** B10.4a parse）| T25/T21 | ☐ | |
+| T4 | `engine/design_doc.py`（**新建** B10.4a parse）| T25/T21 | ✅ | (本次) |
 | T4b | `engine/progress_tree.py`（**新建** B9）| T23/T24 | ☐ | |
 | T4c | `engine/gap_analysis.py`（**新建** B10.2）| T25 | ☐ | |
 
@@ -151,3 +151,5 @@
 | 2026-07-09 | T1 | **状态字段命名契约**：设计 B1.1 表用 `stage`/`verdict`/`round_history`(EngineState字段)，代码用 `current_stage`/`critic_verdict`(20文件/1486测试)，round_history 由 round.py 承载非字段；B1.1 #3 枚举 stale(5值) vs C.10 全量(12值)。语义等价，纯命名/表示分歧，非功能缺口。governs 全部 62 task 的字段引用。 | ✅ 定案 **A 代码为名称权威**：保留代码名，同步 B1.1 表标签+修枚举+澄清 round_history。零代码 churn。 |
 | 2026-07-09 | (pre-existing) | **发现既有失败（非本轮引入）**：`test_checkpoint_store.py` 5 项在 clean tree 已 fail——`_fake_state(step="idle")` 与 `CheckpointEnvelope.step: int` 冲突（test fixture bug）。与 T1 无关（stash 验证）。 | ⏳ 记录待处理；不阻塞 T1。建议 Phase 5/独立轮次修 fixture（step 应传 int 或改字段名）。 |
 | 2026-07-09 | T2↔T5 | **Phase 耦合**：T2 DS-8 改 next() 签名（旧 plan_refine_count/max_plan_refines → 新 refine_source_count/refine_global_count/max_refine_per_source/max_refine_global），破坏 v5.5 orchestrator 4 处调用（orchestrator.py:584/675/713/835）+ orchestrator 测试。C.5 sketch 确认新路由：verifier/audit after-handler 内联路由 + 共享 `refine_allowed` staticmethod，next() 仅 critic-MAJOR 分支。T2 无法原子落地不破 orchestrator（Phase 2 T5-T8 才重写）。 | ✅ 定案 **B**：先做零耦合新文件 T3/T4/T4b/T4c，再把 T2+T5-T8 作为「路由组」耦合单元一次性攻克。T2 状态 = ⛔ 延后至路由组。 |
+| 2026-07-09 | T4 | **新依赖决策**：B10.4a 明确「用成熟库 markdown-it-py，不自造正则」，但项目未声明也未安装。自造正则 = 设计降级。 | ✅ 用户定案 **加 markdown-it-py 依赖**：pyproject.toml dependencies += `markdown-it-py>=3.0`（MIT，实测 4.2.0）；`uv sync` 安装。符合设计规格，不降级。 |
+| 2026-07-09 | T4→T3 | **组内依赖发现**：T3 BatchState.from_design_doc 构造 Plate/Component（B10.4a 数据类），故 T4（定义这些类）须先于 T3。 | ✅ 新文件组内重排：T4 → T3 → T4b → T4c。T4 完成（本次，23 tests）。 |

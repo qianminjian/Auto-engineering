@@ -20,11 +20,13 @@ classifiers = [
 dependencies = [
     "anthropic>=0.39",
     "click>=8.1",
+    "markdown-it-py>=3.0",
     "packaging>=24",
     "pydantic>=2.9",
     "pyyaml>=6.0",
     # 2026-07-04 清理 (v5.0 深度审计 P1-T-01): Init 工程拆分独立后,
     # binaryornot / jinja2 / pathspec 不再使用 (BEACON 决策 30).
+    # 2026-07-09 (v5.6 T4): markdown-it-py 用于 DesignDoc.parse() 层次识别 (B10.4a).
 ]
 
 [project.optional-dependencies]
