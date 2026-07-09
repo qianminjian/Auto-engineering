@@ -39,16 +39,17 @@
 | **45** | **Commit→PR→CI/CD Pipeline 分层设计 (B13)** | ① **颗粒度**：commit=task / Gate=stage / AI review=batch→system 递进 / PR=loop / merge=PR。人工闸门恒锚 `done` 后（环界线外）。② **PR 颗粒度由输入端控制**（方案 D，呼应 #41 D13），不在 loop 内造切分。方案 C（每板块停）仅强监管作显式开关。③ **CI 双平台**（GitHub Actions + GitLab CI）：单一逻辑入口 + 平台薄壳（DRY）；远程 CI 跑 Gate 非 dev-loop，不需 API_KEY。④ **环内 vs 远程分层**：环内=增量快子集(秒级,skip coverage)，远程=全量权威(pytest+coverage≥90%+build)；**共享 pyproject.toml 标准而非运行时**。⑤ 实施: ci.yml / release.yml fix / code-review.md 校准 / git add -A 收窄 / test gate 增量。D18 | 2026-07-09 | ✅ |
 | **46** | **外部 Skill/Agent 依赖管控 (Internalization Constraint, B14)** | 全项目审计：运行时外部 agent 依赖仅在 dev-loop.md v5.1（Plan/code-reviewer//code-review/**gsd-code-fixer** 4 项，2026-07-04 生产失效根因）。原则：① 自有 role+B12 prompt 替代外部 agent spawn（v5.6 已设计，T10 移除）；② 外部技术用**复制内化**（Superpowers→prompts.py 已完成），注释溯源非运行时链接；③ 系统依赖(gh/uv/PyPI)不内化但需 doctor 预检 + 抽象(gh→PRBackend)；④ **gsd-* 零容忍**；⑤ MCP 零运行时调用。D19 | 2026-07-09 | ✅ |
 | **47** | **借鉴 Superpowers 验证方法论加固审计与验证层 (B15)** | 合并两组分析（Superpowers 三工具方法论 + `/audit` 三层现状）去重为统一借鉴清单，一律实现为 **Python 确定性门控**（非 Agent 自觉）：REDGuard(TDD RED commit-time 校验,P0) / FreshGate(Gate 证据新鲜度锁定,P1) / RegressionGate(revert-red-restore+审计规则自测,P1)；补 `/audit` 缺口：DeepAuditGate 骨架→实际(P0) / `/audit` 内化去 Superpowers 运行时(P0,B14) / AuditGate 语义层+与 system_deep_audit 分层澄清(P1)。**不借鉴** Agent 自调节(v5.0灭亡根因)/压力测试评估/阈值自学习(YAGNI)。承接 D16+D9。D20 | 2026-07-09 | ✅ |
+| **48** | **Init-Loop 契约 v5.6 扩展 (IL.2-IL.5)** | 评估确认契约架构选型正确(单向/文件桥接/只读/forward-compat)，仅补缺口：**A** 抽 `init-manifest.schema.json` 版本化 SSOT(双仓库唯一权威源，Loop 对照 jsonschema 校验/Init 依它生成，复制内化非运行时链接) / **B1** `conventions.ci_platform` 入 manifest(Init 声明，供 B13 CI 壳选型) / **B2** 设计文档内容留 CLI `--design-doc`、manifest 只声明 `structure.design_root` 位置 / **C** monorepo 保留枚举但单包降级+WARN(多包 YAGNI 推迟，不删枚举避免降级) / **D** 消费者驱动契约测试(共享 reference fixture 双仓库同步)。解 spec 债：checkpoints.db 从契约面移除。+IL-AC-06/07/08、Phase 7(T32-T35)。D21 | 2026-07-09 | ✅ |
 
 ## 当前状态
 
 **阶段：** v5.6 Design — Tick-Based Discrete Invocation + 5 层验证 + Pre-flight Gap Analysis，设计整合完成。实现待启动。
 
 **最近动作 (2026-07-09)：**
-- **Superpowers 验证方法论借鉴** (B15, 决策 #47)：合并"三工具方法论 + `/audit` 三层现状"两组分析去重为 9 项借鉴矩阵，一律 Python 确定性门控。设计文档 +B15 章 6 小节 + D20 + Phase 6 (T27-T31)、discussion §十四
-- **Commit→PR→CI/CD 专题设计** (B13, 决策 #45)：颗粒度金字塔 + 环界线；PR 颗粒度输入端控制（方案 D）；CI 双平台薄壳；环内增量 vs 远程全量。+B13 章 + D18 + Phase 4b。发现 P0：release.yml merge 冲突 + 无远程 CI
-- **v5.6 设计文档整合**: `design/v5.6-Design-Loop.md`：PART A 双层架构；PART B 8 Agent/6 Guardrail/7+1 Gates/B9-B15；PART C Tick 协议 + EngineState 32 字段 + 实施计划
-- **BEACON 决策 #40/#42/#43/#44/#45/#46/#47**: 5 层验证 / Pre-flight / B11 行为塑形 / B12 Prompt Registry / B13 CI Pipeline / B14 外部依赖管控 / B15 验证方法论借鉴
+- **Init-Loop 契约 v5.6 扩展** (决策 #48)：评估确认架构选型正确，补缺口——`init-manifest.schema.json` 版本化 SSOT(A) + ci_platform/design_root 字段(B) + monorepo 单包降级(C) + 消费者驱动契约测试(D)；checkpoints.db 从契约面移除。IL 章重写 IL.1-IL.5 + IL-AC-06/07/08 + Phase 7(T32-T35) + D21、discussion §十五
+- **Superpowers 验证方法论借鉴** (B15, 决策 #47)：两组分析去重为 9 项借鉴矩阵，一律 Python 确定性门控。+B15 章 + D20 + Phase 6 (T27-T31)、discussion §十四
+- **Commit→PR→CI/CD 专题设计** (B13, 决策 #45)：颗粒度金字塔 + 环界线；PR 输入端控制；CI 双平台薄壳；环内增量 vs 远程全量。+B13 章 + D18 + Phase 4b
+- **BEACON 决策 #40/#42/#43/#44/#45/#46/#47/#48**: 5 层验证 / Pre-flight / B11 / B12 Prompt Registry / B13 CI / B14 外部依赖 / B15 验证借鉴 / Init-Loop 契约扩展
 
 **下一步：** 用户审核通过 → Phase 1 实现 (CLI + TickOrchestrator) → Phase 2 (命令文件 + SKILL.md) → Phase 3 (测试)
 
@@ -58,6 +59,7 @@
 
 | 日期 | 变更 | 原因 |
 |------|------|------|
+| 2026-07-09 | **Init-Loop 契约 v5.6 扩展 (IL.2-IL.5)** | 评估"衔接部分如何定义/是否合理/优化方案"：架构选型正确(单向/文件桥接/只读/forward-compat)，但缺口①跨仓库无 Schema SSOT(文档表+Python函数两处定义→漂移) ②相对 v5.6 滞后(缺 design_doc/ci_platform，monorepo 枚举不自洽)。方案 A(schema SSOT jsonschema 校验)+B(ci_platform/design_root 字段)+C(monorepo 单包降级不删枚举)+D(消费者驱动契约测试)。checkpoints.db 从契约面移除解 spec 债。IL 章重写 + IL-AC-06/07/08 + Phase 7(T32-T35) + D21、discussion §十五。BEACON 决策 #48 |
 | 2026-07-09 | **借鉴 Superpowers 验证方法论加固审计与验证层 (B15)** | 两组分析合并去重：① Superpowers 三工具（TDD/verification/requesting-code-review）→ REDGuard+FreshGate+RegressionGate（Python 门控，非 Agent 自觉）；② `/audit` 三层现状（audit.md/audit.py/deep_audit.py）→ 内化+语义层+骨架→实际+分层澄清。+B15 章 6 小节、+D20、+Phase 6(T27-T31)、discussion §十四。BEACON 决策 #47 |
 | 2026-07-09 | **Commit→PR→CI/CD Pipeline 专题设计 (B13)** | 5 轮讨论：现状分析(P0 release.yml冲突+无远程CI, P1 code-review.md漂移+虚构引用+git add -A) → 颗粒度金字塔+时间轴+环界线 → PR=plate 是否中断(结论:人工闸门恒在环外,方案D输入端控粒度) → CI 双平台(单一入口+薄壳,DRY) → 环内vs远程(共享pyproject标准非运行时,增量快子集vs全量权威)。+B13 章 9 小节、+D18、+Phase 4b (T16h-T16n)、discussion §十二。BEACON 决策 #45 |
 | 2026-07-09 | **中央提示词管理 (Prompt Registry, B12)** | 提示词清单盘点发现散落 3 层(prompts.py/commands/SKILL.md)×3 版本(v5.5/v5.1/v5.0)漂移严重。集中 A/B 类到 `prompts/`(roles+fragments+schema)，frontmatter 声明片段组合，init 一次性加载 + sha256 hash 锁入 checkpoint。C 类命令 `.md` 结构约束不移位，`sync-prompts.py` 注入共享片段。+B12 章 8 小节、+D17、Phase 4 T13-T16d 改写 + T16e/T16f/T16g。文档 2932→3070 行。BEACON 决策 #44 |
@@ -67,12 +69,11 @@
 | 2026-07-06 | **v5.5 DeepAudit 扩展设计** | T9 plan-refine 回路 (DeepAudit → architect); P1 阈值自学习; Agent-Reach 集成; max_iter 自适应; Python/LLM 边界映射 |
 | 2026-07-06 | **v5.4 JSONL 协议移除 + BEACON 同步 + P0 dead code 清理** | JSONL 路径 (`_orchestrator_agent.py`) 已删除；BEACON.md 移除 7 处 JSONL 引用；`_derive_status` dead code 清理 |
 | 2026-07-09 | **外部 Skill/Agent 依赖审计 + 内化约束 (B14)** | 全项目 75.py+3命令+SKILL+5hook 排查：运行时外部依赖仅 dev-loop.md v5.1（Plan/code-reviewer//code-review/gsd-code-fixer 4项）。Superpowers 已复制内化(范本)。gsd-* 零容忍。建立"不 spawn 外部 agent、借鉴=复制非链接、系统依赖需抽象"准入规则。+B14 章 4 小节、+D19、T10 细化为移除 4 项、+T10c(PRBackend)。BEACON 决策 #46 |
-| 2026-07-05 | **v5.1 JSONL 集成修复 + Quality Gates + Hook** (BEACON 34-37) | JSONL 25 测试全修复；借鉴 CrewAI/SonarQube/pre-commit 实现 TDDGate/StageTransitionGate/Agent Working Agreements；DEFAULT_GATES 7→9 |
 
 ## 待解决问题
 
-[Q?] Tick 协议下 Agent 文件桥接延迟 — 每 tick CLI 调用 + Agent spawn 的端到端延迟是否可接受，需实测验证 | [Q?] component_verifier (Haiku) 在复杂组件上的覆盖映射准确率 — 需验证 Haiku 对设计→代码映射的能力边界 | [Q?] plan_refine 回路环路检测 — T9/T13/T17/T19 均可能回到 architect，需防止无限 architect→developer 环路
+[Q?] Tick 端到端延迟 — DS-10 承接：Python 编排开销 P95<2s + 超标告警不中断，延迟数值待用户最终确认 | [已解 DS-9] Haiku verifier 误判 → verifier 输出 MISSING/DIVERGED 后插入 Sonnet 窄范围复核，假阳由 system_deep_audit 兜底 | [已解 DS-8] plan_refine 环路 → 分源计数 ≤2 + 全局 ≤4，同层第 2 次未解决即停
 
 ## 引用文件
 
-@design/v5.6-Design-Loop.md · @design/discussion/v5.6-layered-verification-design.md · @design/INDEX.md · @docs/EARS-v5.0.md · @docs/api-reference.md · @docs/production-deployment.md · @design/decisions/audit-deferred-2026-07-07.md
+@design/v5.6-Design-Loop.md · @design/INIT-LOOP-CONTRACT.md · @design/discussion/v5.6-layered-verification-design.md · @design/INDEX.md · @docs/EARS-v5.0.md · @docs/api-reference.md · @docs/production-deployment.md · @design/decisions/audit-deferred-2026-07-07.md
