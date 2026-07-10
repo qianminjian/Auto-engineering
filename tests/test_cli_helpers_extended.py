@@ -14,18 +14,18 @@
 """
 from __future__ import annotations
 
+import re
 import signal
 from dataclasses import dataclass
 from typing import Any
 
 import pytest
 
-from auto_engineering.runtime.cancellation import CancellationToken
 from auto_engineering.cli.helpers import (
+    _CATEGORY_FRIENDLY_PREFIX,
     ErrorCategory,
     ProgressLogger,
     TokenTracker,
-    _CATEGORY_FRIENDLY_PREFIX,
     _emit_stage_done,
     _install_sigint_handler,
     _log_engine_version,
@@ -33,7 +33,7 @@ from auto_engineering.cli.helpers import (
     classify_error,
 )
 from auto_engineering.errors import AEError, ErrorCode
-
+from auto_engineering.runtime.cancellation import CancellationToken
 
 # ============================================================
 # 1. ErrorCategory enum + _CATEGORY_FRIENDLY_PREFIX 映射
@@ -285,7 +285,9 @@ class TestProgressLogger:
         p = ProgressLogger(log_format="text")
         p.emit("stage_started", stage="architect", round=1)
         captured = capsys.readouterr()
-        assert captured.err == "[stage_started] stage=architect round=1\n"
+        # 前缀带本地时间戳 [HH:MM:SS], 事件内容不变
+        assert re.match(r"^\[\d{2}:\d{2}:\d{2}\] ", captured.err)
+        assert captured.err.endswith("[stage_started] stage=architect round=1\n")
 
     def test_emit_json_format(self, capsys: pytest.CaptureFixture) -> None:
         import json
@@ -299,6 +301,7 @@ class TestProgressLogger:
         assert data["event"] == "stage_started"
         assert data["stage"] == "architect"
         assert data["round"] == 1
+        assert "ts" in data  # ISO8601 时间戳字段
 
     def test_emit_json_with_unicode(self, capsys: pytest.CaptureFixture) -> None:
         """ensure_ascii=False (L189)."""
@@ -364,7 +367,8 @@ class TestStageProgressHelpers:
     def test_log_stage_progress(self, capsys: pytest.CaptureFixture) -> None:
         _log_stage_progress(1, 3, "architect")
         captured = capsys.readouterr()
-        assert captured.out == "Stage 1/3: architect\n"
+        assert re.match(r"^\[\d{2}:\d{2}:\d{2}\] ", captured.out)
+        assert captured.out.endswith("Stage 1/3: architect\n")
 
     def test_emit_stage_done_with_tokens(self, capsys: pytest.CaptureFixture) -> None:
         _emit_stage_done("architect", 1.234, tokens=567)
@@ -383,4 +387,5 @@ class TestStageProgressHelpers:
     def test_log_engine_version(self, capsys: pytest.CaptureFixture) -> None:
         _log_engine_version("v2.5")
         captured = capsys.readouterr()
-        assert captured.out == "[engine] using v2.5 orchestrator\n"
+        assert re.match(r"^\[\d{2}:\d{2}:\d{2}\] ", captured.out)
+        assert captured.out.endswith("[engine] using v2.5 orchestrator\n")

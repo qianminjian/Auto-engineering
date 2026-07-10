@@ -10,12 +10,18 @@ import enum
 import json
 import signal
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 import click
 
 from auto_engineering.errors import AEError, ErrorCode
 from auto_engineering.runtime.cancellation import CancellationToken
+
+
+def _ts() -> str:
+    """本地时间 HH:MM:SS — 进度/日志行前缀 (人读, 便于判断卡死时刻)."""
+    return datetime.now().strftime("%H:%M:%S")
 
 
 # ============================================================
@@ -160,27 +166,31 @@ class ProgressLogger:
     log_format: str = "text"  # 'text' | 'json'
 
     def emit(self, event: str, **fields: Any) -> None:
-        """输出一行日志.text 格式: '[event] key=value ...',json 格式: JSON 对象."""
+        """输出一行日志.text 格式: '[ts] [event] key=value ...',json 格式: JSON 对象(含 ts)."""
         if self.log_format == "json":
-            payload = {"event": event, **fields}
+            payload = {
+                "ts": datetime.now().isoformat(timespec="seconds"),
+                "event": event,
+                **fields,
+            }
             click.echo(json.dumps(payload, ensure_ascii=False), err=True)
         else:
-            parts = [f"[{event}]"]
+            parts = [f"[{_ts()}]", f"[{event}]"]
             for k, v in fields.items():
                 parts.append(f"{k}={v}")
             click.echo(" ".join(parts), err=True)
 
 
 def _log_stage_progress(current: int, total: int, name: str) -> None:
-    """输出 stage 进度: 'Stage X/3: architect'."""
-    click.echo(f"Stage {current}/{total}: {name}")
+    """输出 stage 进度: '[ts] Stage X/3: architect'."""
+    click.echo(f"[{_ts()}] Stage {current}/{total}: {name}")
 
 
 def _emit_stage_done(stage: str, elapsed: float, tokens: int = 0) -> None:
-    """输出 stage 完成: '  ✓ Stage X done in 1.2s (tokens: 1234)'."""
-    click.echo(f"  ✓ Stage {stage} done in {elapsed:.1f}s (tokens: {tokens})")
+    """输出 stage 完成: '[ts]   ✓ Stage X done in 1.2s (tokens: 1234)'."""
+    click.echo(f"[{_ts()}]   ✓ Stage {stage} done in {elapsed:.1f}s (tokens: {tokens})")
 
 
 def _log_engine_version(version: str) -> None:
     """输出当前使用的 engine 版本(v2.0 / v2.0)."""
-    click.echo(f"[engine] using {version} orchestrator")
+    click.echo(f"[{_ts()}] [engine] using {version} orchestrator")
