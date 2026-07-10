@@ -26,20 +26,20 @@ if TYPE_CHECKING:
 
 __all__ = [
     "DEFAULT_MAX_ITERATIONS",
-    "DEFAULT_STAGNATION_THRESHOLD",
     "DEFAULT_STAGNATION_DIFF_RATIO",
+    "DEFAULT_STAGNATION_THRESHOLD",
     "LEVEL_CONTINUE",
-    "LEVEL_SEMANTIC",
-    "LEVEL_STAGNANT",
-    "LEVEL_QUALITY",
     "LEVEL_HARD_LIMIT",
     "LEVEL_NAMES",
+    "LEVEL_QUALITY",
+    "LEVEL_SEMANTIC",
+    "LEVEL_STAGNANT",
     "ConvergenceConfig",
-    "RoundHistory",
-    "ConvergenceVerdict",
     "ConvergenceJudge",
-    "diff_ratio",
+    "ConvergenceVerdict",
+    "RoundHistory",
     "detect_stagnation",
+    "diff_ratio",
 ]
 
 # ============================================================
@@ -118,7 +118,7 @@ class RoundHistory:
     files_changed: int = 0
     lines_added: int = 0
     lines_removed: int = 0
-    gate_results: dict[str, "GateVerdict"] = field(default_factory=dict)
+    gate_results: dict[str, GateVerdict] = field(default_factory=dict)
     guardrail_result: str | None = None  # PRE/POST guardrail 判定结果 (pass/block/retry)
     semantic_satisfied: bool | None = None  # None = 未评估
     tasks_run: list[str] = field(default_factory=list)
@@ -319,7 +319,7 @@ class ConvergenceJudge:
         """
         self.config = config or ConvergenceConfig()
 
-    def auto_tune_max_iter(self, audit_history: "AuditHistory") -> int | None:
+    def auto_tune_max_iter(self, audit_history: AuditHistory) -> int | None:
         """冷启动自适应 max_iter.
 
         冷启动 (样本 < min_samples_for_learning): 返回 None, 调用方使用
@@ -346,7 +346,11 @@ class ConvergenceJudge:
         return learner.compute_max_iter()
 
     def evaluate(
-        self, history: list[RoundHistory]
+        self,
+        history: list[RoundHistory],
+        *,
+        design_coverage_ok: bool = False,
+        system_deep_audit_ok: bool = False,
     ) -> ConvergenceVerdict:
         """评估当前是否应该停止循环.
 
@@ -355,12 +359,32 @@ class ConvergenceJudge:
         engine.state.LoopState dataclass, CheckpointEnvelope 仅供
         checkpoint 持久化 — judge 不读 runtime state). 移除 vestigial 参数.
 
+        v5.6 §C.5: 离散 tick 路径不填充 history.semantic_satisfied (无 LLM
+        自评), 改由 system_deep_audit + 设计覆盖双通过作为语义达成信号.
+        两个 keyword-only 参数默认 False, 保持 v5.5 连续路径调用兼容.
+
+        终态成功优先级 (§C.5.5): 双通过的 GOAL_ACHIEVED 优先于硬上限 —
+        若恰在 max_iterations 那轮达成成功, 应报 GOAL_ACHIEVED 而非
+        HARD_LIMIT (工作已完成, 报硬上限会误导).
+
         Args:
             history: 历史轮次列表 (可为空)
+            design_coverage_ok: 设计覆盖无缺口 (无 MISSING/DIVERGED design item)
+            system_deep_audit_ok: system_deep_audit 通过 (P0=0 且 P1≤阈值)
 
         Returns:
             ConvergenceVerdict: 判定结果, should_stop=True 表示应停止
         """
+        # 0. 终态成功 (v5.6 §C.5): audit + 覆盖双通过 → GOAL_ACHIEVED, 优先于硬上限
+        if system_deep_audit_ok and design_coverage_ok:
+            return ConvergenceVerdict.stop(
+                level=LEVEL_SEMANTIC,
+                reason=(
+                    "system_deep_audit 通过且设计覆盖无缺口 "
+                    "(P0=0, P1≤阈值, 无 MISSING/DIVERGED)"
+                ),
+            )
+
         # 1. 硬上限检查
         verdict = self._check_hard_limit(history)
         if verdict is not None:
@@ -376,7 +400,7 @@ class ConvergenceJudge:
         if verdict is not None:
             return verdict
 
-        # 4. 语义收敛检查
+        # 4. 语义收敛检查 (retained 路径: LLM 自评 semantic_satisfied)
         verdict = self._check_semantic(history)
         if verdict is not None:
             return verdict
@@ -438,7 +462,7 @@ class ConvergenceJudge:
         # v2.3 Phase D: gate_results 是 dict[gate_name, GateVerdict]
         # 必须读 .passed (不能 all(values), 否则 GateVerdict dataclass 实例永远 truthy)
         gate_verdicts = latest.gate_results
-        failed_gates: list[tuple[str, "GateVerdict"]] = [
+        failed_gates: list[tuple[str, GateVerdict]] = [
             (name, v) for name, v in gate_verdicts.items() if not v.passed
         ]
 
@@ -497,6 +521,8 @@ class ConvergenceJudge:
         Note:
             Phase 2 实现: 仅当 semantic_satisfied=True 时触发
             v2.0+ 接 LLM 调用: 内部调用 LLM 评估当前产出
+            v5.6 §C.5 的离散路径终态成功 (audit + 覆盖双通过) 在 evaluate()
+            顶层判定, 不在此方法 — 因其优先级高于硬上限.
         """
         if not history:
             return None
