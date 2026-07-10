@@ -451,12 +451,17 @@ class TickOrchestrator:
         self._write_audit_history(p0, p1, result.get("p2_count", 0), False)
         self._display_progress()
 
-        design_coverage_ok = (
-            result.get("missing_count", 0) == 0
-            and result.get("diverged_count", 0) == 0
-        )
+        # 审计无 P0/P1 但设计覆盖有缺口 (MISSING/DIVERGED) → 回 architect 做
+        # 补充设计 + 计划表调整 (对齐 component/system_verifier 同款回路,
+        # 由 _handle_plan_refine 的 REFINE_LIMIT 提供防循环保护).
+        missing = result.get("missing_count", 0)
+        diverged = result.get("diverged_count", 0)
+        if missing > 0 or diverged > 0:
+            self._state.audit_findings = result.get("findings", [])
+            return self._handle_plan_refine("system_deep_audit")
+
         return self._convergence_check(
-            design_coverage_ok=design_coverage_ok, system_deep_audit_ok=True)
+            design_coverage_ok=True, system_deep_audit_ok=True)
 
     # ── Phase 0 handlers (Pre-flight Gap Analysis, 仅 --design-doc 模式) ──
 
@@ -597,13 +602,21 @@ class TickOrchestrator:
         self._advance_stage("architect")
         return self._build_action()
 
+    def _safe_design_section(self) -> str | None:
+        """当前 component 的 design_section.
+
+        组件级阶段 (architect/developer 批内) current component 有效; 系统级 refine
+        (system_verifier/system_deep_audit) 在 batch 全部完成后触发, 无单一 current
+        component → 返回 None (缺口细节由 audit_findings 承载, 不依赖单组件游标).
+        """
+        if self._batch_state is None or self._batch_state.is_plate_complete():
+            return None
+        return self._batch_state.current_design_section()
+
     def _build_refine_request(self, source: str) -> dict:
         return {
             "source": source,
-            "design_section": (
-                self._batch_state.current_design_section()
-                if self._batch_state else None
-            ),
+            "design_section": self._safe_design_section(),
             "audit_findings": self._state.audit_findings,
             "coverage_map": self._state.coverage_map,
             "plan_refine_count": self._state.plan_refine_count,
@@ -714,9 +727,7 @@ class TickOrchestrator:
         elif stage == "architect":
             return {**base, "action": "architect", "context": {
                 "requirement": self._state.requirement,
-                "design_section": (
-                    self._batch_state.current_design_section()
-                    if self._batch_state else None),
+                "design_section": self._safe_design_section(),
                 "project_root": str(self.project_root),
                 "init_manifest": self._init_manifest,
                 "design_supplements": (
@@ -846,6 +857,8 @@ class TickOrchestrator:
                 "total_audited_files": "int",
                 "design_docs_stale": "bool",
                 "design_doc_suggestions": "string",
+                "missing_count": "int",
+                "diverged_count": "int",
             }}
 
         else:

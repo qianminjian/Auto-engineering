@@ -251,6 +251,80 @@ class TestFullLeafConvergence:
         assert a_audit["verdict"] == "GOAL_ACHIEVED"
 
 
+# ── system_deep_audit 设计覆盖度闸门 (审计修复 Bug 2) ──
+
+
+class TestSystemDeepAuditCoverageGate:
+    """system_deep_audit 覆盖度信号不能是空操作.
+
+    Bug 2: expected_format 不含 missing_count/diverged_count → Agent 不产出 →
+    design_coverage_ok 恒 True → 每次首轮无 P0/P1 即误判 GOAL_ACHIEVED.
+    修复方向 (对齐 verifier 回路): 补 expected_format 键 + 覆盖缺口路由到
+    plan_refine 做补充设计, 而非终止.
+    """
+
+    def _drive_to_system_deep_audit(self, o) -> dict:
+        """走 architect→dev→critic→comp_verifier(clean), 返回 system_deep_audit action."""
+        o.init("实现单个组件")
+        o.tick(_make_result_file({
+            "stage": "architect", "plan": _VALID_PLAN,
+            "batch_plan": [{
+                "batch_id": "batch-F-1", "design_section": "B2", "component": "Foo",
+                "tasks": [{"id": "T1", "description": "实现 foo", "module_ref": "§B2",
+                           "file_targets": ["foo.py"]}],
+            }], "file_list": ["foo.py"], "contracts": {},
+        }))
+        o.tick(_make_result_file({
+            "stage": "developer", "batch_id": "batch-F-1",
+            "files_changed": ["foo.py"],
+            "test_results": {"passed": 2, "failed": 0},
+        }))
+        o.tick(_make_result_file({
+            "stage": "critic", "verdict": "APPROVE", "findings": [],
+        }))
+        return o.tick(_make_result_file({
+            "stage": "component_verifier", "component": "Foo",
+            "coverage_map": [{"design_item": "B2-1", "status": "IMPLEMENTED",
+                              "file": "foo.py", "line": 10, "note": ""}],
+            "missing_count": 0, "diverged_count": 0,
+        }))
+
+    def test_expected_format_requests_coverage_keys(self) -> None:
+        """system_deep_audit action 必须向 Agent 索要 missing_count/diverged_count."""
+        o = _orchestrator()
+        a = self._drive_to_system_deep_audit(o)
+        assert a["stage"] == "system_deep_audit"
+        assert "missing_count" in a["expected_format"]
+        assert "diverged_count" in a["expected_format"]
+
+    def test_coverage_gap_routes_to_plan_refine_not_goal(self) -> None:
+        """无 P0/P1 但 missing_count>0 → 回 architect 补充设计, 不误判 GOAL_ACHIEVED."""
+        o = _orchestrator(max_rounds=20)
+        self._drive_to_system_deep_audit(o)
+        a = o.tick(_make_result_file({
+            "stage": "system_deep_audit", "findings": [],
+            "p0_count": 0, "p1_count": 0, "p2_count": 0,
+            "total_audited_files": 2,
+            "design_docs_stale": False, "design_doc_suggestions": "",
+            "missing_count": 1, "diverged_count": 0,
+        }))
+        assert a["action"] == "architect"  # plan_refine → 补充设计
+        assert a.get("verdict") not in ("GOAL_ACHIEVED", "UNEXPECTED")
+
+    def test_diverged_gap_also_routes_to_plan_refine(self) -> None:
+        """diverged_count>0 同样触发补充设计回路."""
+        o = _orchestrator(max_rounds=20)
+        self._drive_to_system_deep_audit(o)
+        a = o.tick(_make_result_file({
+            "stage": "system_deep_audit", "findings": [],
+            "p0_count": 0, "p1_count": 0, "p2_count": 0,
+            "total_audited_files": 2,
+            "design_docs_stale": False, "design_doc_suggestions": "",
+            "missing_count": 0, "diverged_count": 2,
+        }))
+        assert a["action"] == "architect"
+
+
 # ── MAJOR loop ──
 
 
