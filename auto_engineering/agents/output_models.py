@@ -20,7 +20,13 @@ class ArchitectOutput(BaseModel):
     files_to_modify: list[str] = Field(default_factory=list, description="本次修改的已有文件")
     plan: str = Field(default="", description="实现计划 (Markdown)")
     file_list: list[str] = Field(default_factory=list, description="需创建/修改的文件路径")
-    batch_plan: list[dict] = Field(default_factory=list, description="分批策略 [{id,description,files,depends_on}]")
+    batch_plan: list[dict] = Field(
+        default_factory=list,
+        description=(
+            "分批策略 (B6.1a 嵌套): [{batch_id, design_section, component, "
+            "tasks:[{id, description, module_ref, file_targets}], depends_on}]"
+        ),
+    )
     contracts: dict = Field(default_factory=dict, description="跨模块契约")
 
 

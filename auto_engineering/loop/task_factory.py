@@ -30,46 +30,39 @@ def tasks_from_batch_plan(
     batch_plan: list[dict],
     requirement: str,
 ) -> Plan:
-    """从 ArchitectAgent 产出的 batch_plan 构建 Plan (v5.0 §B7.3).
+    """从 ArchitectAgent 产出的 batch_plan 构建 Plan (v5.6 B6.1a 嵌套 schema).
 
-    设计假设 (v5.0 §B7.3):
-        batch_plan 由 ArchitectAgent 生成, 仅含 developer 可执行的任务.
-        architect 的分析工作和 critic 的审查工作不由 batch_plan 描述.
-        因此所有 batch 的 role 硬编码为 "developer".
-        若未来需要支持非 developer batch, 扩展 batch_plan 的 role 字段.
+    batch_plan 层级: list[Batch] → Batch.tasks[] → Task{id, description, file_targets}.
+    所有 task 展平为 developer Task; 末尾追加 1 个 critic-review Task.
 
     Args:
         batch_plan: list[dict], 每个 dict 含 keys:
-            - id: Task ID (必填)
-            - description: 任务描述 (必填, 用于 Agent prompt)
-            - files: list[str], 目标文件 (可选, 默认 [])
-            - depends_on: list[str], 依赖 Task ID 列表 (可选, 默认 [])
-        requirement: 原始需求描述 (写入 Plan.requirement, critic 任务 prompt 中引用).
+            - batch_id: str (必填, 唯一)
+            - component: str (必填)
+            - design_section: str (必填)
+            - tasks: list[dict] (必填, ≥1), 每元素含:
+                - id: str (必填, 单次 run 内唯一)
+                - description: str (必填)
+                - file_targets: list[str] (必填, ≥1)
+                - module_ref: str | list[str] (丢弃, 仅供 ProgressTree 使用)
+            - depends_on: list[str] (可选, batch 级依赖, 不下放到 task)
+        requirement: 原始需求描述.
 
     Returns:
-        Plan 实例:
-            - 包含所有 batch 转化的 developer Task
-            - 末尾追加 1 个 critic-review Task (depends_on = 所有 developer task id)
-
-    Note:
-        - 即使 batch_plan 为空, 仍返回含 critic-review task 的 Plan (空开发 + 单审查)
-        - 字段裁剪: Task 只承载 batch dict 的契约字段 (id/description/file_targets/depends_on),
-          其他 batch 字段 (priority/estimated_minutes 等) 暂不映射 (YAGNI).
+        Plan 实例: 含所有展平的 developer Task + 1 个 critic-review Task.
     """
     tasks: list[Task] = []
     for batch in batch_plan:
-        tasks.append(Task(
-            id=batch["id"],
-            title=batch.get("description", batch["id"])[:60],  # title 截断 ≤60 char (避免过长)
-            description=batch.get("description", ""),
-            expected_output=batch.get("description", ""),  # batch 阶段 description 即期望产出
-            role="developer",  # 硬编码: batch_plan 仅描述 developer 任务 (v5.0 §B7.3)
-            target_files=frozenset(batch.get("files", [])),
-            depends_on=list(batch.get("depends_on", [])),
-            # v5.5 Phase 3: 消费 Architect 产出的 verification + steps 字段
-            verification=batch.get("verification"),
-            steps=batch.get("steps"),
-        ))
+        for task_dict in batch.get("tasks", []):
+            tasks.append(Task(
+                id=task_dict["id"],
+                title=task_dict.get("description", task_dict["id"])[:60],
+                description=task_dict.get("description", ""),
+                expected_output=f"实现并测试通过 {task_dict.get('description', '')}",
+                role="developer",
+                target_files=frozenset(task_dict.get("file_targets", [])),
+                depends_on=[],  # task 级为空; batch 内顺序 = 隐式依赖
+            ))
     # 追加 critic task (审查所有 developer 产出)
     tasks.append(Task(
         id="critic-review",
@@ -77,7 +70,7 @@ def tasks_from_batch_plan(
         description=f"审查所有 developer 产出. 需求: {requirement}",
         expected_output='{"verdict": "APPROVE|MAJOR", "findings": [...], "feedback": "..."}',
         role="critic",
-        depends_on=[t.id for t in tasks],  # 依赖所有 developer task
+        depends_on=[t.id for t in tasks],
     ))
     return Plan(tasks=tasks, requirement=requirement)
 

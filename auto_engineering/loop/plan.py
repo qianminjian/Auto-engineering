@@ -103,9 +103,6 @@ class Task:
     estimated_minutes: int = 30
     status: TaskStatus = TaskStatus.PENDING
     output: Any = None
-    # v5.5 Phase 3: batch_plan 扩展字段 (verification + steps)
-    verification: str | None = None
-    steps: list[str] | None = None
 
     def __post_init__(self) -> None:
         """归一化 target_files 为 frozenset[str] (允许 list/set 输入)."""

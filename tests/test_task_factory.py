@@ -159,79 +159,98 @@ def test_tasks_from_batch_plan_empty_batch_returns_critic_only() -> None:
     assert plan.requirement == "req-1"
 
 
-def test_tasks_from_batch_plan_single_batch_returns_dev_plus_critic() -> None:
-    """单 batch → 1 个 developer task + critic 追加 (depends_on dev)."""
+def test_tasks_from_nested_batch_plan_single_batch_multiple_tasks() -> None:
+    """v5.6 嵌套: 单 batch 含 2 task → 2 个 developer Task (id 匹配 nested) + critic."""
     batch_plan = [{
-        "id": "batch-1",
-        "description": "实现 foo 模块",
-        "files": ["src/foo.py"],
+        "batch_id": "batch-SR-1",
+        "design_section": "B2",
+        "component": "StageRouter",
         "depends_on": [],
+        "tasks": [
+            {"id": "T1", "description": "StageDecision dataclass + next() 骨架",
+             "module_ref": "§B2",
+             "file_targets": ["auto_engineering/loop/stage_router.py",
+                              "tests/test_stage_router.py"]},
+            {"id": "T2", "description": "T1-T22 转换表填充",
+             "module_ref": "§B2",
+             "file_targets": ["auto_engineering/loop/stage_router.py"]},
+        ],
     }]
-    plan = tasks_from_batch_plan(batch_plan, requirement="实现 foo")
-    assert len(plan.tasks) == 2
-    # developer task
-    dev = plan.tasks[0]
-    assert dev.id == "batch-1"
-    assert dev.role == "developer"
-    assert dev.description == "实现 foo 模块"
-    assert "src/foo.py" in dev.target_files
-    assert dev.depends_on == []
-    # critic task 依赖于 dev
-    critic = plan.tasks[1]
-    assert critic.id == "critic-review"
-    assert critic.role == "critic"
-    assert critic.depends_on == ["batch-1"]
+    plan = tasks_from_batch_plan(batch_plan, requirement="实现 StageRouter")
+    # 2 developer + 1 critic
+    assert len(plan.tasks) == 3
+    devs = plan.get_tasks_by_stage("developer")
+    assert [t.id for t in devs] == ["T1", "T2"]
+    for t in devs:
+        assert t.role == "developer"
+    # BatchState.current_batch_tasks 靠 task id 匹配 — id 必须来自 nested task
+    t1 = plan.get_task("T1")
+    assert t1 is not None
+    assert t1.description == "StageDecision dataclass + next() 骨架"
 
 
-def test_tasks_from_batch_plan_multiple_batches_adds_critic_with_all_deps() -> None:
-    """多 batch → N 个 developer + 1 critic (depends_on 全部 N 个 dev)."""
+def test_tasks_from_nested_batch_plan_file_targets_per_task() -> None:
+    """每个 developer Task 携带自己 task 的 file_targets (非 batch 级 files)."""
+    batch_plan = [{
+        "batch_id": "batch-SR-1", "design_section": "B2", "component": "StageRouter",
+        "tasks": [
+            {"id": "T1", "description": "d1", "module_ref": "§B2",
+             "file_targets": ["a.py", "test_a.py"]},
+            {"id": "T2", "description": "d2", "module_ref": "§B2",
+             "file_targets": ["b.py"]},
+        ],
+    }]
+    plan = tasks_from_batch_plan(batch_plan, requirement="r")
+    t1 = plan.get_task("T1")
+    t2 = plan.get_task("T2")
+    assert t1.target_files == frozenset({"a.py", "test_a.py"})
+    assert t2.target_files == frozenset({"b.py"})
+
+
+def test_tasks_from_nested_batch_plan_expected_output_derived() -> None:
+    """expected_output 由 description 派生 (module_ref 丢弃, 不进 developer action)."""
+    batch_plan = [{
+        "batch_id": "b1", "design_section": "B2", "component": "C",
+        "tasks": [{"id": "T1", "description": "实现登录校验", "module_ref": "§B2",
+                   "file_targets": ["login.py"]}],
+    }]
+    plan = tasks_from_batch_plan(batch_plan, requirement="r")
+    t1 = plan.get_task("T1")
+    assert "实现登录校验" in t1.expected_output
+    assert t1.expected_output.strip() != ""  # 非空 (Plan.validate contract)
+
+
+def test_tasks_from_nested_batch_plan_task_depends_on_empty() -> None:
+    """task 级 depends_on 默认 [] (batch 内顺序即隐式依赖; 跨 batch 由 batch 级表达)."""
+    batch_plan = [{
+        "batch_id": "b1", "design_section": "B2", "component": "C",
+        "depends_on": ["b0"],  # batch 级依赖不下放到 task
+        "tasks": [{"id": "T1", "description": "d", "module_ref": "§B2",
+                   "file_targets": ["x.py"]}],
+    }]
+    plan = tasks_from_batch_plan(batch_plan, requirement="r")
+    assert plan.get_task("T1").depends_on == []
+
+
+def test_tasks_from_nested_batch_plan_multiple_batches_critic_all_task_ids() -> None:
+    """多 batch → 所有 task 展平为 developer + 1 critic (depends_on = 全部 task id)."""
     batch_plan = [
-        {"id": "b1", "description": "d1", "files": [], "depends_on": []},
-        {"id": "b2", "description": "d2", "files": [], "depends_on": ["b1"]},
-        {"id": "b3", "description": "d3", "files": [], "depends_on": ["b1"]},
+        {"batch_id": "b1", "design_section": "B2", "component": "C1",
+         "tasks": [{"id": "T1", "description": "d1", "module_ref": "§B2",
+                    "file_targets": ["a.py"]}]},
+        {"batch_id": "b2", "design_section": "B3", "component": "C2", "depends_on": ["b1"],
+         "tasks": [
+             {"id": "T2", "description": "d2", "module_ref": "§B3", "file_targets": ["b.py"]},
+             {"id": "T3", "description": "d3", "module_ref": "§B3", "file_targets": ["c.py"]},
+         ]},
     ]
-    plan = tasks_from_batch_plan(batch_plan, requirement="multi-batch")
-    assert len(plan.tasks) == 4
-    # 前 3 个都是 developer
-    for i in range(3):
-        assert plan.tasks[i].role == "developer"
-    # critic 依赖所有 developer task
-    critic = plan.tasks[3]
-    assert critic.id == "critic-review"
+    plan = tasks_from_batch_plan(batch_plan, requirement="multi")
+    devs = plan.get_tasks_by_stage("developer")
+    assert {t.id for t in devs} == {"T1", "T2", "T3"}
+    critic = plan.get_task("critic-review")
     assert critic.role == "critic"
-    assert set(critic.depends_on) == {"b1", "b2", "b3"}
-    assert plan.requirement == "multi-batch"
-
-
-def test_tasks_from_batch_plan_with_verification_and_steps() -> None:
-    """v5.5: batch_plan 含 verification + steps → Task 对象携带这些字段."""
-    batch_plan = [{
-        "id": "batch-1",
-        "description": "实现登录模块",
-        "files": ["src/login.py"],
-        "depends_on": [],
-        "verification": "pytest tests/test_login.py -v --no-cov",
-        "steps": ["1. 创建 test_login.py", "2. 实现 login.py", "3. 运行测试"],
-    }]
-    plan = tasks_from_batch_plan(batch_plan, requirement="login")
-    dev = plan.tasks[0]
-    assert dev.id == "batch-1"
-    assert dev.verification == "pytest tests/test_login.py -v --no-cov"
-    assert dev.steps == ["1. 创建 test_login.py", "2. 实现 login.py", "3. 运行测试"]
-
-
-def test_tasks_from_batch_plan_without_verification_and_steps_defaults() -> None:
-    """batch_plan 不含 verification/steps → Task 默认空值."""
-    batch_plan = [{
-        "id": "batch-1",
-        "description": "实现简单功能",
-        "files": [],
-        "depends_on": [],
-    }]
-    plan = tasks_from_batch_plan(batch_plan, requirement="simple")
-    dev = plan.tasks[0]
-    assert dev.verification is None
-    assert dev.steps is None
+    assert set(critic.depends_on) == {"T1", "T2", "T3"}
+    assert plan.requirement == "multi"
 # ============================================================
 
 
