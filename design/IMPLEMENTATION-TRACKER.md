@@ -26,17 +26,19 @@
 
 ## 进度总览
 
+> ⚠️ **关键风险（2026-07-10 状态核对发现）**：Phase 1+2 代码已落地，但 **v5.6 Tick 引擎尚未接入任何运行入口**——`cli/dev_loop.py` 仍用旧 v5.5 `Orchestrator`；无 `ae dev-loop --init/--tick/--result` CLI 入口；`commands/dev-loop.md` 仍是 v5.1 Agent-tool 模式。即 `tick_orchestrator.py`(1017行,~230单测) 单测全绿但**端到端跑不通**（代码存在未集成）。接线 = Phase 3 的 T9/T10 前置。
+
 | Phase | 名称 | 任务数 | 完成 | 状态 |
 |-------|------|:---:|:---:|------|
 | 1 | 数据模型 + 核心路由 | 6 | 6 | ✅ 完成 |
-| 2 | TickOrchestrator | 6 | 0 | ☐ 未开始 |
-| 3 | CLI + Command | 7 | 0 | ☐ 未开始 |
+| 2 | TickOrchestrator | 6 | 6 | ✅ 完成（代码；**未接线**）|
+| 3 | CLI + Command | 7 | 0 | ☐ 未开始（**含接线**：T9 --tick 入口 / T10 命令重写）|
 | 4 | Agent Prompt 模板 | 10 | 0 | ☐ 未开始 |
 | 4b | Commit→PR→CI/CD Pipeline | 7 | 0 | ☐ 未开始 |
-| 5 | 测试 | 17 | 0 | ☐ 未开始 |
-| 6 | 审计与验证方法论 (B15) | 5 | 0 | ☐ 未开始 |
-| 7 | Init-Loop 契约扩展 | 4 | 0 | ☐ 未开始 |
-| **合计** | | **62** | **6** | **~10%** |
+| 5 | 测试 | 17 | 4 | ◐ 部分（单元层 T17/T18/T22/T23 ✅；集成/E2E 待补）|
+| 6 | 审计与验证方法论 (B15) | 5 | 0 | ☐ 未开始（deep_audit/audit/guardrail 仅 v5.5 骨架）|
+| 7 | Init-Loop 契约扩展 | 4 | 0 | ☐ 未开始（schema.json 缺）|
+| **合计** | | **62** | **16** | **~26% 代码；端到端 0%（未接线）** |
 
 ---
 
@@ -53,14 +55,18 @@
 
 ## Phase 2 — TickOrchestrator
 
+> **实现落点偏离（记录，非降级）**：计划列 `loop/orchestrator.py`（扩展旧文件），实际实现为**新文件** `loop/tick_orchestrator.py`（1017 行）。旧 `orchestrator.py`(1208行, v5.5 连续循环) 保留共存（迁移期）。C.5 描述的是 TickOrchestrator，新文件符合设计意图。**未接入 CLL**（见总览关键风险）。
+
 | T | 文件/产出 | 验收 | 状态 | Commit |
 |---|----------|------|:---:|--------|
-| T5 | `loop/orchestrator.py` 4 个 `_after_*` verifier/audit handler | T17/T19 | ☐ | |
-| T6 | `loop/orchestrator.py` `_build_action()` 8 种 action | T17 | ☐ | |
-| T7 | `loop/orchestrator.py` `_apply_result_to_state()` 扩展 | T17/T19 | ☐ | |
-| T7b | `loop/orchestrator.py` ProgressTree 更新 + `_display_progress()` | T23 | ☐ | |
-| T7c | `loop/orchestrator.py` Phase 0 handlers（gap_scan/gap_review/research/inject_supplement）| T25 | ☐ | |
-| T8 | `loop/convergence.py` `evaluate()` +design_coverage_ok/system_deep_audit_ok | T21 + test_loop_convergence(ext) | ☐ | |
+| T5 | `loop/tick_orchestrator.py` 4 个 `_after_*` verifier/audit handler（+`actions.py`+`verification_layers.py`+DesignDoc accessors）| T17/T19 | ✅ | 4cea2cd/627de93/f518bb8/96399ad |
+| T6 | `loop/tick_orchestrator.py` `_build_action()` 全 stage action（gap_scan/gap_review/research/architect/developer/critic/component_verifier/plate_deep_audit/system_verifier/system_deep_audit）| T17 | ✅ | 96399ad |
+| T7 | `loop/tick_orchestrator.py` `_apply_result_to_state()` | T17/T19 | ✅ | 96399ad |
+| T7b | `loop/tick_orchestrator.py` ProgressTree 更新 + `_display_progress()` | T23 | ✅ | 96399ad |
+| T7c | `loop/tick_orchestrator.py` Phase 0 handlers（gap_scan/gap_review/research/inject_supplement + T0.7 复审回路）| T25 | ✅ | 96399ad/81e97cc |
+| T8 | `loop/convergence.py` `evaluate()` +design_coverage_ok/system_deep_audit_ok（双通过终态优先）| T21 + test_loop_convergence(ext) | ✅ | 7547c19/54f123a |
+
+> **本轮附带修复（2026-07-10, commit f1b327e）**：code-review 发现 system_deep_audit 覆盖度闸门空操作（expected_format 缺 missing_count/diverged_count）+ 覆盖缺口 → plan_refine 补充设计回路（T19）+ 系统级 refine 的 current_design_section 越界。已修 + 补 3 测试。
 
 ## Phase 3 — CLI + Command
 
@@ -105,17 +111,17 @@
 
 | T | 内容 | 状态 | Commit |
 |---|------|:---:|--------|
-| T17 | TickOrchestrator 单元（init/tick/8 stage）| ☐ | |
-| T18 | 23 条 StageRouter 转换（含 T17b + refine 上限 DS-8）| ☐ | |
+| T17 | TickOrchestrator 单元（init/tick/8 stage）| ✅ | test_tick_orchestrator.py (52) |
+| T18 | 23 条 StageRouter 转换（含 T17b + refine 上限 DS-8）| ✅ | test_stage_router.py (43) |
 | T19 | 验证层集成（component→plate→system verifier/audit）| ☐ | |
-| T20 | plan-refine 回路（3 层 + 分源≤2/全局≤4 + RefineRequest 归一）| ☐ | |
-| T21 | 完整 2 轮 E2E（design-doc → done）| ☐ | |
-| T22 | BatchState 跨 tick 持久化 + 恢复 | ☐ | |
-| T23 | ProgressTree 构建/同步/聚合/展示/序列化 | ☐ | |
+| T20 | plan-refine 回路（3 层 + 分源≤2/全局≤4 + RefineRequest 归一）| ☐ | 部分见 test_tick_orchestrator TestPlanRefineLimit |
+| T21 | 完整 2 轮 E2E（design-doc → done）| ☐ | 仅 LEAF 单轮 TestFullLeafConvergence |
+| T22 | BatchState 跨 tick 持久化 + 恢复 | ✅ | test_batch_state.py (21) |
+| T23 | ProgressTree 构建/同步/聚合/展示/序列化 | ✅ | test_progress_tree.py (20) |
 | T24 | ProgressTree plan_refine 动态同步（added/modified/removed/conflicts）| ☐ | |
-| T25 | Pre-flight 全路径（4 用户路径 + has_blocking Guardrail）| ☐ | |
+| T25 | Pre-flight 全路径（4 用户路径 + has_blocking Guardrail）| ◐ | test_gap_analysis(14)+Phase0 部分 |
 | T26 | ResearchAgent 分层知识源 | ☐ | |
-| T26b | Tick 编排延迟 P95<2s（DS-10）| ☐ | |
+| T26b | Tick 编排延迟 P95<2s（DS-10）| ◐ | test_tick_orchestrator TestTickLatencyInstrumentation |
 | T26c | verifier Sonnet 复核兜底（DS-9）| ☐ | |
 | T26d | PromptRegistry + B12 迁移（背书 T16e/f/g）| ☐ | |
 | T26e | PRBackend 选型（背书 T10c/T33）| ☐ | |
@@ -154,3 +160,4 @@
 | 2026-07-09 | T4 | **新依赖决策**：B10.4a 明确「用成熟库 markdown-it-py，不自造正则」，但项目未声明也未安装。自造正则 = 设计降级。 | ✅ 用户定案 **加 markdown-it-py 依赖**：pyproject.toml dependencies += `markdown-it-py>=3.0`（MIT，实测 4.2.0）；`uv sync` 安装。符合设计规格，不降级。 |
 | 2026-07-09 | T4→T3 | **组内依赖发现**：T3 BatchState.from_design_doc 构造 Plate/Component（B10.4a 数据类），故 T4（定义这些类）须先于 T3。 | ✅ 新文件组内重排：T4 → T3 → T4b → T4c。T4 完成（本次，23 tests）。 |
 | 2026-07-09 | T2 | **next() 签名迁移策略**：DS-8 双预算取代 v5.5 单一 plan_refine_count/max_plan_refines。next() 有 4 处调用（orchestrator.py 584/675/713/835）+ 6 处直接测试调用。713/835 只用前 4 参数安全。 | ✅ 用户定案 **A 单一新 API + 迁移保留 Orchestrator**：next() 只留新签名（无旧参数别名，遵守"禁向后兼容 hack"）。584 T9 分支改直调 `StageRouter.refine_allowed`（单一真相源，单全局预算旁路分源），保留 v5.5 "T9-LIMIT" 标签（新 TickOrchestrator 用 "REFINE_LIMIT"）；675 去 max_plan_refines。测试 6 处直调迁移到 DS-8 参数 + 断言 T9-LIMIT→REFINE_LIMIT。153 tests green，lint 无新增。 |
+| 2026-07-10 | 全表 | **状态核对：tracker 严重滞后于代码**。Phase 2（T5-T8+TickOrchestrator）实际已在 4cea2cd/627de93/f518bb8/7547c19/54f123a/96399ad 落地，表却仍标 0/6。核对后更新：Phase 2→6/6✅、Phase 5→4/17◐（单元层）、总完成 6→16。**发现关键风险：v5.6 Tick 引擎未接入 CLL**（dev_loop.py 仍用旧 Orchestrator，无 --tick 入口，dev-loop.md 仍 v5.1 模式）——单测全绿但端到端 0%。接线归 Phase 3 T9/T10。 | ✅ 已更新总览+Phase2+Phase5 表 + 关键风险标注。DESIGN-REFINEMENT-PLAN.md 核对：13 DS 全✅（设计细化门，非实现任务），无待纳入项。 |
