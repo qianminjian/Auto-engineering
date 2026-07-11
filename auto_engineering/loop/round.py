@@ -183,19 +183,25 @@ async def _execute_single(
 
 
 def _build_per_task_ctx(ctx: Any, task: Task) -> Any:
-    """v5.0 §B2.12a — 为单个 task 构造独立 ctx, 避免并发共享导致串扰.
+    """v5.0 §B2.12a — 为单个 task 构造独立 ctx, 隔离 `current_task_id` 标记.
 
-    策略:
-        - 若 ctx 是 TaskContext (含 state 字段), 用 dataclasses.replace 复制后
-          显式赋一个 `current_task_id` 标记 (向后兼容, 不影响已有字段)
-        - 否则透传原 ctx (类型不识别时不复制, 保持向后兼容)
+    策略 (仅顶层浅拷贝):
+        - 若 ctx 是 TaskContext (含 state 字段), 用 dataclasses.replace 做**浅拷贝**,
+          仅为隔离 `current_task_id` 字段 (避免并发 task 互相覆盖该标记)。
+        - 否则透传原 ctx (类型不识别时不复制, 保持向后兼容)。
+
+    ⚠️ 隔离边界: replace() 是浅拷贝 — `state` (EngineState) 字段在原 ctx 与
+    per-task ctx 间**共享同一引用**, 不做深拷贝。这是**有意设计**: 同一 round 内
+    并发 task 按 role 天然 partition 写不相交字段 (_WRITE_OWNERS), 结果在 round
+    结束后统一 apply 回共享 state。深拷贝 state 会切断 write-back → 产出丢失。
+    故本函数隔离的是 `current_task_id` 标记, 不隔离 state。
 
     Args:
         ctx: 共享 ctx (TaskContext 或其他)
         task: 当前 task
 
     Returns:
-        独立 ctx (per_task_ctx) 或原 ctx
+        独立 ctx (per_task_ctx, state 仍共享) 或原 ctx
     """
     # 识别 TaskContext 类型 — 不引入硬 import, 用鸭子类型 (含 state + requirement 字段)
     if ctx is None:
@@ -211,7 +217,7 @@ def _build_per_task_ctx(ctx: Any, task: Task) -> Any:
                 f_names = {f.name for f in fields(ctx)}
                 if "current_task_id" in f_names:
                     return replace(ctx, current_task_id=task.id)
-                # 没 current_task_id 字段 → 直接复制 (避免共享 state mutation 风险)
+                # 无 current_task_id 字段 → 浅拷贝顶层 (state 仍共享, 见 docstring)
                 return replace(ctx)
         except Exception:
             _logger.warning(
