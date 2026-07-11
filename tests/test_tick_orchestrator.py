@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import json
+import statistics
 import tempfile
 import time
 from pathlib import Path
@@ -20,7 +21,7 @@ from unittest.mock import MagicMock
 
 from auto_engineering.engine.verification_layers import VerificationLayers
 from auto_engineering.loop.guardrail import GuardrailChain
-from auto_engineering.loop.tick_orchestrator import TickOrchestrator
+from auto_engineering.loop.tick_orchestrator import ORCH_BUDGET_MS, TickOrchestrator
 
 
 def _pass_gate_runner(gate_names, project_root):
@@ -1414,6 +1415,76 @@ class TestTickLatencyInstrumentation:
             }))
         # gate 花了 50ms 但归 t_gate, orchestration 仍远低于 2000ms
         assert "超预算" not in caplog.text
+
+
+def _leaf_cycle_results() -> list[Path]:
+    """一个 LEAF 周期的 5 个 result file (顺序: architect→dev→critic→verifier→audit)。"""
+    return [
+        _make_result_file({
+            "stage": "architect", "plan": _VALID_PLAN,
+            "batch_plan": [{
+                "batch_id": "batch-F-1", "design_section": "B2", "component": "Foo",
+                "tasks": [{"id": "T1", "description": "实现 foo", "module_ref": "§B2",
+                           "file_targets": ["foo.py"]}],
+            }], "file_list": ["foo.py"], "contracts": {},
+        }),
+        _make_result_file({
+            "stage": "developer", "batch_id": "batch-F-1", "files_changed": ["foo.py"],
+            "test_results": {"passed": 2, "failed": 0},
+        }),
+        _make_result_file({
+            "stage": "critic", "verdict": "APPROVE", "findings": [],
+            "critic_feedback": "LGTM",
+        }),
+        _make_result_file({
+            "stage": "component_verifier", "component": "Foo",
+            "coverage_map": [{"design_item": "B2-1", "status": "IMPLEMENTED",
+                              "file": "foo.py", "line": 10, "note": ""}],
+            "missing_count": 0, "diverged_count": 0,
+        }),
+        _make_result_file({
+            "stage": "system_deep_audit", "findings": [],
+            "p0_count": 0, "p1_count": 0, "p2_count": 1, "total_audited_files": 2,
+            "design_docs_stale": False, "design_doc_suggestions": "",
+            "missing_count": 0, "diverged_count": 0,
+        }),
+    ]
+
+
+def _run_leaf_cycle() -> TickOrchestrator:
+    o = _orchestrator()
+    o.init("实现单个组件")
+    for res in _leaf_cycle_results():
+        o.tick(res)
+    return o
+
+
+class TestOrchestrationP95Budget:
+    """T26b / DS-10 (C.2.6 §4108): ≥30 tick 代表性 run 收集 t_orchestration_ms 分布,
+    断言 P95 < 2000ms; t_gate 墙钟作参考观测 (无阈值)。"""
+
+    def test_p95_orchestration_under_budget_over_30_ticks(self, capsys) -> None:
+        orch_ms: list[float] = []
+        gate_ms: list[float] = []
+        while len(orch_ms) < 30:
+            hist = _run_leaf_cycle()._state.action_history
+            orch_ms += [r["t_orchestration_ms"] for r in hist]
+            gate_ms += [r["t_gate_ms"] for r in hist]
+        assert len(orch_ms) >= 30
+        # P95 (statistics.quantiles inclusive, n=20 → index 18 = 95th pct)
+        p95 = statistics.quantiles(orch_ms, n=20, method="inclusive")[18]
+        assert p95 < ORCH_BUDGET_MS, (
+            f"P95 编排延迟 {p95:.2f}ms 超预算 {ORCH_BUDGET_MS}ms (纯 Python 退化信号)")
+        # 参考观测: t_gate 分布只打印不断言 (外部子进程墙钟, 各由 timeout 兜底)
+        gate_p95 = statistics.quantiles(gate_ms, n=20, method="inclusive")[18]
+        print(f"[DS-10] n={len(orch_ms)} orch_P95={p95:.3f}ms "
+              f"gate_P95(ref)={gate_p95:.3f}ms")
+
+    def test_every_tick_records_orchestration_ms(self) -> None:
+        """每 tick 必写 t_orchestration_ms (分布无缺项 → P95 聚合无偏)。"""
+        vals = [r["t_orchestration_ms"] for r in _run_leaf_cycle()._state.action_history]
+        assert len(vals) == 5
+        assert all(isinstance(v, (int, float)) and v >= 0 for v in vals)
 
 
 def _store_orchestrator(store) -> TickOrchestrator:
