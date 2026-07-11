@@ -199,6 +199,22 @@ def _check_init_manifest(project_root: Path) -> tuple[bool, str]:
     return True, f"init-manifest.json 存在 (schema_version {schema_version}){warn_str}"
 
 
+def _check_pr_backend() -> tuple[bool, str]:
+    """检查 PR 后端可用性 (B13.9 #8, 非致命).
+
+    PR 创建仅在 loop `done` 时需要, 故此项恒 ok=True (advisory):
+    有 gh/glab → 列出; 都无 → 提示 done 时手动创建 PR (不阻断预检).
+    """
+    from auto_engineering.tools.pr_backend import available_backends
+
+    backends = available_backends()
+    if backends:
+        return True, f"PR 后端可用: {', '.join(backends)} (gh/glab, B13.9)"
+    return True, (
+        "PR 后端: 无 (gh/glab 均未安装) — loop done 时将提示手动创建 PR"
+    )
+
+
 def run_doctor_checks(project_root: Path) -> tuple[int, list[tuple[bool, str]]]:
     """执行全部 doctor 检查, 返回 (exit_code, [(ok, line), ...])."""
     results: list[tuple[bool, str]] = []
@@ -210,6 +226,7 @@ def run_doctor_checks(project_root: Path) -> tuple[int, list[tuple[bool, str]]]:
     results.append(_check_api_key())
     results.append(_check_ae_state(project_root))
     results.append(_check_init_manifest(project_root))
+    results.append(_check_pr_backend())
     failed = sum(1 for ok, _ in results if not ok)
     return (1 if failed > 0 else 0), results
 
