@@ -25,6 +25,7 @@ This skill encapsulates the Auto-Engineering v5.0 plugin's domain knowledge. Use
    |-------------|---------------|
    | "Run dev-loop on X" | `/ae:dev-loop X` |
    | "Show loop status" | `/ae:status` |
+   | "Show progress board" | `/ae:progress` |
    | "Manage checkpoints" | `/ae:checkpoint list\|show\|resume\|delete` |
    | "TDD on X" | `/ae:project-tdd X` |
    | "Create worktree" | `/ae:project-worktree BRANCH` |
@@ -32,7 +33,7 @@ This skill encapsulates the Auto-Engineering v5.0 plugin's domain knowledge. Use
    | "Run CI" | `/ae:project-ci` |
 
 3. **Respect the loop state**: if `ae status` shows a loop is already running, ask the user before starting a new one.
-4. **Stream JSON output**: commands emit JSONL events — surface them in chat for transparency.
+4. **Tick-based transparency (v5.6)**: `ae dev-loop` is driven tick-by-tick — each `--tick` prints one `action` JSON to stdout (progress/logs to stderr). Surface each action in chat so the user sees the loop is really running (§A.1 file-bridge; never fake a `done`).
 
 ## Constraints
 
@@ -43,6 +44,37 @@ This skill encapsulates the Auto-Engineering v5.0 plugin's domain knowledge. Use
 - **Network**: plugin does NOT make outbound network calls except via the Engine's `anthropic` SDK (Claude Code auto-injects credentials).
 - **State**: v2 SQLite checkpoint DB at `.ae-state/checkpoints.db` (overridable via `AE_DB_PATH`).
 - **Plugin compatibility**: requires Claude Code ≥ `1.0.0` (per `plugin.json` metadata).
+
+## Layered verification (v5.6, 决策 #40/#41/#46)
+
+The dev-loop enforces a **5-layer verification architecture** — a frequency × scope matrix:
+high-frequency narrow-scope work uses lightweight models, low-frequency full-scope work uses
+heavy ones. Each layer is a Python-routed tick `action`, not a choice you make.
+
+| Layer (`action`) | Scope | Model tier | Cadence |
+|------------------|-------|-----------|---------|
+| `critic` | diff only | fast | every developer batch |
+| `component_verifier` | one component, design → code coverage | Haiku | per component |
+| `plate_deep_audit` | cross-component contracts in a plate | Sonnet | per plate |
+| `system_verifier` | full design coverage | Haiku | once (exit gate) |
+| `system_deep_audit` | full 6-dimension code quality | Sonnet | once (exit gate) |
+
+**Auto-scaling by design layer (#41)** — Python picks the depth, you never do:
+
+- **LEAF** (single component): 5 layers (skips `plate_deep_audit` + `system_verifier`)
+- **PLATE** (single plate, multiple components): 6 layers (skips `system_verifier`)
+- **FULL** (multiple plates): all 7 layers
+
+**Constraints — do not shortcut verification:**
+
+- Each layer arrives as a tick `action`. **Execute the role you are handed**; never choose which
+  layers run, skip one, or reorder them — the StageRouter decides.
+- `critic` is **diff-level only**. Requirement acceptance belongs to the verifier layers, not
+  critic — do not conflate them.
+- Never substitute a quick glance for a required layer. Produce the full `coverage_map` /
+  `findings` the action's `expected_format` demands, with honest MISSING/DIVERGED/P0/P1 counts.
+- There is **no `/code-review` and no `gsd-code-fixer`** inside the loop (决策 #46). The built-in
+  `critic` + 4 verifier layers are the entire review surface — do not spawn external review agents.
 
 ## Key files
 
