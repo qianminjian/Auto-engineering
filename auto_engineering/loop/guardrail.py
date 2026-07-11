@@ -67,8 +67,8 @@ class GuardrailResult:
         message: 用户可读消息 (失败原因)
 
     v5.1 P0-1: drop 态已从契约中删除 (YAGNI, 与 retry 语义重叠).
-                handle_guardrail_result 仍兼容旧 drop 输入
-                (按 retry 处理 + 触发 DeprecationWarning).
+                旧 drop 输入不再特殊处理, 按未知 action 落入防御性 "stop"
+                (见 handle_guardrail_result 末尾)。
 
     注: 默认 action="pass" — 大多数 Guardrail pass path 返回纯 pass。
     """
@@ -386,7 +386,7 @@ def handle_guardrail_result(
     Action 分发 (v5.1 P0-1: 3 态, drop 已 deprecated):
         - "pass"  → "continue" (不动计数器)
         - "block" → "stop"    (不动计数器)
-        - "drop"  (deprecated) → 当 retry 处理 + 触发 DeprecationWarning
+        - "drop"  (deprecated) → 无专门分支, 落入未知 action → "stop"
         - "retry":
             1. counter += 1
             2. counter >= MAX_RETRY_PER_STAGE (3) → "stop" (不再清字段)
