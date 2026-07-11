@@ -594,7 +594,9 @@ class TickOrchestrator:
 
         兼顾初审与 T0.7 复审: 复审时 (gap 已在 research_archive) 用户据 findings 做
         补充设计 — Fill→Supplement(消费存档), Defer→留 architect; 已研究 gap 不再入队
-        (防重复研究/死循环). G6 Guardrail 已在 tick() 中确认无 architectural gap 被 defer.
+        (防重复研究/死循环). G6 NoDeferredBlockingGap (post/gap_review) 已在 tick()
+        Guardrail 链拦截 architectural gap 被 Defer/Defer+Research (§B10.5), 到此处
+        决策已满足阻塞约束.
         """
         decisions = self._state.pending_gap_decisions
         report = json.loads(self._state.gap_report_json or '{"gaps": []}')

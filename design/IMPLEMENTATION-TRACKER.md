@@ -122,7 +122,7 @@
 | T22 | BatchState 跨 tick 持久化 + 恢复 | ✅ | test_batch_state.py (21) |
 | T23 | ProgressTree 构建/同步/聚合/展示/序列化 | ✅ | test_progress_tree.py (20) |
 | T24 | ProgressTree plan_refine 动态同步（added/modified/removed/conflicts）| ✅ | test_progress_tree TestSync (单元) + test_tick_orchestrator TestPlanRefineProgressSync (编排集成: added 保留旧 / removed 标记不删) |
-| T25 | Pre-flight 全路径（4 用户路径 + has_blocking Guardrail）| ◐ | test_gap_analysis(14)+Phase0 部分 |
+| T25 | Pre-flight 全路径（4 用户路径 + has_blocking Guardrail）| ✅ | test_gap_analysis(14) + **G6 NoDeferredBlockingGap 接线**(guardrail.py, 修复死代码 validate_resolutions 从未接线) + test_guardrail TestNoDeferredBlockingGap(11) + test_tick_orchestrator TestPhase0BlockingGapGuardrail(5, 4 路径 Fill/Research/Defer/Defer+Research + architectural defer→GUARDRAIL_BLOCK) |
 | T26 | ResearchAgent 分层知识源 | ☐ | |
 | T26b | Tick 编排延迟 P95<2s（DS-10）| ◐ | test_tick_orchestrator TestTickLatencyInstrumentation |
 | T26c | verifier Sonnet 复核兜底（DS-9）| ✅ | _build_action recheck 字段 (component/system_verifier) + 两 prompt 5 步复核协议 + recheck_log + test_tick_orchestrator TestVerifierRecheck + test_prompt_registry TestVerifierRecheckProtocol |

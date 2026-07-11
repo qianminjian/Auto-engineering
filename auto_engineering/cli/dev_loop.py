@@ -248,7 +248,7 @@ def _run_v2_orchestrator(
 
     2026-07-04 升级 (从 v2.0 Phase C 演示代码):
     - gates: [SafetyGate+LintGate] → DEFAULT_GATES (7 道)
-    - guardrail_chain: None → GuardrailChain.default() (5 Guardrail)
+    - guardrail_chain: None → GuardrailChain.default() (6 Guardrail: G1-G5 + G6)
     - stage_router: None → StageRouter() (T1-T6)
     - checkpoint_store: None → SQLiteCheckpointStore (持久化)
     - Task: 硬编码 → orchestrator step_1 走 architect 生成
@@ -279,7 +279,7 @@ def _run_v2_orchestrator(
         gates=gates,                      # init-manifest 驱动的 Gate 列表 (IL-AC-02)
         project_root=project_root,
         agent_runtime=agent_runtime,
-        guardrail_chain=GuardrailChain.default(),   # 5 Guardrail
+        guardrail_chain=GuardrailChain.default(),   # 6 Guardrail (G1-G5 + G6)
         stage_router=StageRouter(),                  # T1-T6 路由
         checkpoint_store=checkpoint_store,            # SQLite 持久化
     )

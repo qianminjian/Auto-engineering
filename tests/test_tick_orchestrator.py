@@ -19,6 +19,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from auto_engineering.engine.verification_layers import VerificationLayers
+from auto_engineering.loop.guardrail import GuardrailChain
 from auto_engineering.loop.tick_orchestrator import TickOrchestrator
 
 
@@ -1748,3 +1749,87 @@ class TestTwoRoundDesignDocE2E:
         assert a["verdict"] == "GOAL_ACHIEVED"
         # 收敛前恰好经过 1 次 refine (2 轮 architect)
         assert o._state.plan_refine_count == 1
+
+
+def _real_guardrail_orch(tmp_path) -> TickOrchestrator:
+    """带真实 GuardrailChain.default() (含 G6) 的 orchestrator — 用于 G6 端到端."""
+    o = TickOrchestrator(
+        gate_runner=_pass_gate_runner,
+        guardrail=GuardrailChain.default(),
+        checkpoint_store=None,
+    )
+    o.project_root = tmp_path
+    return o
+
+
+class TestPhase0BlockingGapGuardrail:
+    """T25: G6 NoDeferredBlockingGap 端到端 + gap_review 4 用户路径.
+
+    用真实 GuardrailChain.default() (含 G6); gap_review post 时机仅 G6 适用
+    (GitDiff/Tests/GitClean 按 stage 过滤掉 → 无 git 子进程)。修复前 G6 未接线,
+    architectural gap 被 Defer 会静默放行 (违反 §B10.5)。
+    """
+
+    @staticmethod
+    def _to_gap_review(o: TickOrchestrator, tmp_path, grade: str) -> None:
+        design = tmp_path / "design.md"
+        design.write_text("## A1 板块\n\n### B2 Foo\n\ncontent\n", encoding="utf-8")
+        o.init("req", design_doc_path=str(design))
+        o.tick(_make_result_file({
+            "stage": "gap_scan",
+            "gaps": [{"id": "g1", "design_section_ref": "§B2", "grade": grade,
+                      "clarity": "missing", "summary": "契约缺失", "depends_on": []}],
+            "scanned_sections": 1,
+            "has_blocking": grade == "architectural",
+        }))
+
+    def test_architectural_defer_blocks_via_guardrail(self, tmp_path) -> None:
+        o = _real_guardrail_orch(tmp_path)
+        self._to_gap_review(o, tmp_path, "architectural")
+        a = o.tick(_make_result_file({
+            "stage": "gap_review",
+            "decisions": [{"gap_id": "g1", "resolution": "defer"}],
+        }))
+        assert a["action"] == "error"
+        assert a["error_code"] == "GUARDRAIL_BLOCK"
+        assert "g1" in a["message"]
+
+    def test_architectural_defer_research_blocks_via_guardrail(self, tmp_path) -> None:
+        o = _real_guardrail_orch(tmp_path)
+        self._to_gap_review(o, tmp_path, "architectural")
+        a = o.tick(_make_result_file({
+            "stage": "gap_review",
+            "decisions": [{"gap_id": "g1", "resolution": "defer_research"}],
+        }))
+        assert a["error_code"] == "GUARDRAIL_BLOCK"
+
+    def test_path_fill_architectural_passes(self, tmp_path) -> None:
+        """路径1 Fill: architectural gap Fill → 通过 G6 → architect (注入 Supplement)."""
+        o = _real_guardrail_orch(tmp_path)
+        self._to_gap_review(o, tmp_path, "architectural")
+        a = o.tick(_make_result_file({
+            "stage": "gap_review",
+            "decisions": [{"gap_id": "g1", "resolution": "fill",
+                           "fill_content": "契约 X→Y"}],
+        }))
+        assert a["stage"] == "architect"
+
+    def test_path_research_architectural_passes(self, tmp_path) -> None:
+        """路径2 Research: architectural gap Research → 通过 G6 → research 阶段."""
+        o = _real_guardrail_orch(tmp_path)
+        self._to_gap_review(o, tmp_path, "architectural")
+        a = o.tick(_make_result_file({
+            "stage": "gap_review",
+            "decisions": [{"gap_id": "g1", "resolution": "research"}],
+        }))
+        assert a["stage"] == "research"
+
+    def test_path_defer_component_passes(self, tmp_path) -> None:
+        """路径3 Defer: 非 architectural gap Defer → 不阻塞 → architect (只 architectural 受约束)."""
+        o = _real_guardrail_orch(tmp_path)
+        self._to_gap_review(o, tmp_path, "component")
+        a = o.tick(_make_result_file({
+            "stage": "gap_review",
+            "decisions": [{"gap_id": "g1", "resolution": "defer"}],
+        }))
+        assert a["stage"] == "architect"

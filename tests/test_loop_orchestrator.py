@@ -1494,7 +1494,7 @@ class TestGuardrailIntegration:
 
     @pytest.mark.asyncio
     async def test_orchestrator_runs_with_default_guardrail_chain(self, tmp_path: Path):
-        """Orchestrator 使用 GuardrailChain.default() 运行, 5 个 guardrail 都注册."""
+        """Orchestrator 使用 GuardrailChain.default() 运行, 6 个 guardrail 都注册."""
         from auto_engineering.loop.convergence import ConvergenceConfig
         from auto_engineering.loop.guardrail import GuardrailChain
         from auto_engineering.loop.orchestrator import Orchestrator, OrchestratorConfig
@@ -1513,9 +1513,9 @@ class TestGuardrailIntegration:
             executor=executor,
             config=config,
         )
-        # GuardrailChain.default() 不应抛异常 (5 个 guardrail 正确注册)
+        # GuardrailChain.default() 不应抛异常 (6 个 guardrail 正确注册: G1-G5 + G6)
         assert orch.config.guardrail_chain is not None
-        assert len(orch.config.guardrail_chain.guardrails) == 5
+        assert len(orch.config.guardrail_chain.guardrails) == 6
         history = await orch.run()
         # 可能因为 G3 retry 导致 0 轮, 但不应 crash
         assert isinstance(history, list)

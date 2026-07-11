@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -27,6 +28,7 @@ from auto_engineering.loop.guardrail import (
     Guardrail,
     GuardrailChain,
     GuardrailResult,
+    NoDeferredBlockingGap,
     PlanExists,
     RequirementValid,
     TestsPass,
@@ -568,16 +570,17 @@ class TestGuardrailChain:
         # post/developer → G3 + G4 + G5
         assert len([g for g in chain.guardrails if g.timing == "post" and "developer" in g.applies_to_stages]) == 3
 
-    def test_default_factory_returns_5_guardrails(self) -> None:
-        """GuardrailChain.default() 返回 5 Guardrail 链 (v5.1)."""
+    def test_default_factory_returns_6_guardrails(self) -> None:
+        """GuardrailChain.default() 返回 6 Guardrail 链 (G1-G5 + G6 NoDeferredBlockingGap)."""
         chain = GuardrailChain.default()
-        assert len(chain.guardrails) == 5
+        assert len(chain.guardrails) == 6
         names = [type(g).__name__ for g in chain.guardrails]
         assert "RequirementValid" in names
         assert "PlanExists" in names
         assert "GitDiffExists" in names
         assert "TestsPass" in names
         assert "GitClean" in names
+        assert "NoDeferredBlockingGap" in names
 
     def test_default_factory_same_structure_as_manual(self) -> None:
         """GuardrailChain.default() 与手动构造的 chain 行为一致."""
@@ -588,6 +591,7 @@ class TestGuardrailChain:
             GitDiffExists(),
             TestsPass(),
             GitClean(),
+            NoDeferredBlockingGap(),
         ])
         # 同数量
         assert len(default_chain.guardrails) == len(manual_chain.guardrails)
@@ -793,3 +797,109 @@ class TestHandleGuardrailResult:
         assert state2.critic_verdict == ""
         assert state2.findings == []
         assert state2.critic_feedback == ""
+
+
+# ==================== G6: NoDeferredBlockingGap ====================
+
+
+def _gap_review_state(*, has_blocking, gaps, decisions):
+    """构造 post/gap_review Guardrail 输入: gap_report_json + pending_gap_decisions."""
+    return EngineState(
+        gap_report_json=json.dumps(
+            {"gaps": gaps, "scanned_sections": len(gaps),
+             "has_blocking": has_blocking},
+            ensure_ascii=False),
+        pending_gap_decisions=decisions,
+    )
+
+
+class TestNoDeferredBlockingGap:
+    """G6 (§B10.5 / B3 line 642): has_blocking 时 architectural gap 不允许
+    Defer/Defer+Research → block. 修复前 validate_resolutions 是死代码 (从未接线)."""
+
+    def test_timing_and_stage(self) -> None:
+        g = NoDeferredBlockingGap()
+        assert g.timing == "post"
+        assert g.applies_to_stages == ("gap_review",)
+
+    def test_architectural_defer_blocks(self) -> None:
+        state = _gap_review_state(
+            has_blocking=True,
+            gaps=[{"id": "g1", "grade": "architectural", "clarity": "missing",
+                   "summary": "契约缺失"}],
+            decisions=[{"gap_id": "g1", "resolution": "defer"}],
+        )
+        r = NoDeferredBlockingGap().check("gap_review", state)
+        assert r.action == "block"
+        assert "g1" in r.message
+
+    def test_architectural_defer_research_blocks(self) -> None:
+        state = _gap_review_state(
+            has_blocking=True,
+            gaps=[{"id": "g1", "grade": "architectural", "clarity": "vague",
+                   "summary": "契约模糊"}],
+            decisions=[{"gap_id": "g1", "resolution": "defer_research"}],
+        )
+        assert NoDeferredBlockingGap().check("gap_review", state).action == "block"
+
+    def test_architectural_fill_passes(self) -> None:
+        state = _gap_review_state(
+            has_blocking=True,
+            gaps=[{"id": "g1", "grade": "architectural", "clarity": "missing",
+                   "summary": "契约缺失"}],
+            decisions=[{"gap_id": "g1", "resolution": "fill",
+                        "fill_content": "契约 X→Y"}],
+        )
+        assert NoDeferredBlockingGap().check("gap_review", state).action == "pass"
+
+    def test_architectural_research_passes(self) -> None:
+        state = _gap_review_state(
+            has_blocking=True,
+            gaps=[{"id": "g1", "grade": "architectural", "clarity": "missing",
+                   "summary": "契约缺失"}],
+            decisions=[{"gap_id": "g1", "resolution": "research"}],
+        )
+        assert NoDeferredBlockingGap().check("gap_review", state).action == "pass"
+
+    def test_component_defer_passes(self) -> None:
+        """非 architectural gap 允许 defer — 只有 architectural 受 B10.5 约束."""
+        state = _gap_review_state(
+            has_blocking=False,
+            gaps=[{"id": "g1", "grade": "component", "clarity": "vague",
+                   "summary": "接口细节"}],
+            decisions=[{"gap_id": "g1", "resolution": "defer"}],
+        )
+        assert NoDeferredBlockingGap().check("gap_review", state).action == "pass"
+
+    def test_mixed_one_architectural_defer_blocks(self) -> None:
+        """component gap fill + architectural gap defer → 因 architectural 仍 block."""
+        state = _gap_review_state(
+            has_blocking=True,
+            gaps=[{"id": "gc", "grade": "component", "clarity": "vague", "summary": "x"},
+                  {"id": "ga", "grade": "architectural", "clarity": "missing",
+                   "summary": "契约"}],
+            decisions=[{"gap_id": "gc", "resolution": "fill", "fill_content": "c"},
+                       {"gap_id": "ga", "resolution": "defer"}],
+        )
+        r = NoDeferredBlockingGap().check("gap_review", state)
+        assert r.action == "block"
+        assert "ga" in r.message and "gc" not in r.message
+
+    def test_no_decisions_passes(self) -> None:
+        state = _gap_review_state(
+            has_blocking=True,
+            gaps=[{"id": "g1", "grade": "architectural", "clarity": "missing",
+                   "summary": "契约"}],
+            decisions=[],
+        )
+        assert NoDeferredBlockingGap().check("gap_review", state).action == "pass"
+
+    def test_malformed_gap_report_json_fails_closed(self) -> None:
+        state = EngineState(gap_report_json="{not valid json",
+                            pending_gap_decisions=[{"gap_id": "g1", "resolution": "defer"}])
+        assert NoDeferredBlockingGap().check("gap_review", state).action == "block"
+
+    def test_missing_gap_report_passes(self) -> None:
+        """无 gap_report_json (非 design-doc 模式) → pass (无 architectural 约束)."""
+        state = EngineState()
+        assert NoDeferredBlockingGap().check("gap_review", state).action == "pass"

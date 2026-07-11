@@ -1,8 +1,9 @@
-"""M2 Guardrail 链 — GuardrailResult + Guardrail ABC + 5 Guardrails + Chain + handler.
+"""M2 Guardrail 链 — GuardrailResult + Guardrail ABC + 6 Guardrails + Chain + handler.
 
 设计参考: v5.6-Design-Loop.md §B2.3 (Guardrail 接口契约)
                    + §B1.8 (GuardrailResult 数据类)
                    + §B5.1 (5 Guardrail 规格 G1-G5)
+                   + §B10.5 / §B3 (G6 NoDeferredBlockingGap)
                    + §B5.2 (handle_guardrail_result 3 态)
                    + 附录 C R-5 (GitDiffExists 新仓库降级)
 
@@ -11,7 +12,7 @@ v5.4 P2-8: drop 态已从类型系统和 handler 中完全移除.
 
 模块职责:
     - GuardrailResult / Guardrail ABC: 契约定义 (action 3 态)
-    - 5 Guardrail (G1-G5): 内置检查 (只用 pass/block/retry)
+    - 6 Guardrail (G1-G5 + G6): 内置检查 (只用 pass/block/retry)
     - GuardrailChain: 编排 (fail-fast + timing/stage 过滤)
     - handle_guardrail_result: action 分发 (continue/stop/retry)
 
@@ -22,6 +23,7 @@ v5.4 P2-8: drop 态已从类型系统和 handler 中完全移除.
 
 from __future__ import annotations
 
+import json
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
@@ -121,7 +123,7 @@ class Guardrail(ABC):
         """
 
 
-# ==================== 5 内置 Guardrail ====================
+# ==================== G1-G5 内置 Guardrail ====================
 
 
 class RequirementValid(Guardrail):
@@ -315,6 +317,61 @@ class GitClean(Guardrail):
         return GuardrailResult()
 
 
+# architectural gap 禁止的 resolution (§B10.5: 契约模糊不允许延后, 须 Fill/Research)
+_BLOCKING_FORBIDDEN_RESOLUTIONS = frozenset({"defer", "defer_research"})
+
+
+class NoDeferredBlockingGap(Guardrail):
+    """G6: has_blocking 时 architectural gap 不允许 Defer/Defer+Research (§B10.5 / B3).
+
+    post/gap_review: 用户在 gap_review 对每个 gap 决策后, 若存在 grade==architectural
+    的 gap 被标为 defer/defer_research → block (architectural 契约模糊不允许延后, 否则
+    组件设计无契约依据). 决策取自 state.pending_gap_decisions (尚未 apply 到 gap_report),
+    grade 取自 state.gap_report_json (gap_scan 判定). 非 design-doc 模式无 gap_report → pass.
+
+    失败 action=block (用户须改为 Fill/Research 重提 gap_review). 判定逻辑与
+    gap_analysis.GapReport.validate_resolutions 同源 (_BLOCKING_FORBIDDEN_RESOLUTIONS).
+    """
+
+    name = "NoDeferredBlockingGap"
+    timing = "post"
+    applies_to_stages = ("gap_review",)
+
+    def check(
+        self,
+        stage: str,
+        state: EngineState,
+        project_root: Path | None = None,
+    ) -> GuardrailResult:
+        raw = getattr(state, "gap_report_json", None)
+        if not raw:
+            return GuardrailResult()  # 非 design-doc 模式: 无 architectural 约束
+        try:
+            report = json.loads(raw)
+        except (ValueError, TypeError):
+            # fail-closed: gap_report 损坏时不放行 (契约完整性未知)
+            return GuardrailResult(
+                action="block", message="gap_report_json 解析失败, 无法校验阻塞 gap")
+        if not report.get("has_blocking"):
+            return GuardrailResult()  # 无 architectural gap → 无约束
+        grade_by_id = {
+            g.get("id"): g.get("grade") for g in report.get("gaps", [])}
+        deferred = [
+            d.get("gap_id")
+            for d in (getattr(state, "pending_gap_decisions", None) or [])
+            if grade_by_id.get(d.get("gap_id")) == "architectural"
+            and d.get("resolution") in _BLOCKING_FORBIDDEN_RESOLUTIONS
+        ]
+        if deferred:
+            return GuardrailResult(
+                action="block",
+                message=(
+                    f"architectural gap {deferred} 被标为 Defer/Defer+Research — "
+                    "契约模糊不允许延后 (§B10.5); 请改为 Fill 或 Research 重提 gap_review"),
+            )
+        return GuardrailResult()
+
+
 # ==================== GuardrailChain ====================
 
 
@@ -334,13 +391,14 @@ class GuardrailChain:
 
     @classmethod
     def default(cls) -> GuardrailChain:
-        """工厂方法: 创建包含全部 5 个 Guardrail (G1-G5) 的默认链."""
+        """工厂方法: 创建默认链 (G1-G5 + G6 NoDeferredBlockingGap, §B3)."""
         return cls([
             RequirementValid(),
             PlanExists(),
             GitDiffExists(),
             TestsPass(),
             GitClean(),
+            NoDeferredBlockingGap(),
         ])
 
     def check(
