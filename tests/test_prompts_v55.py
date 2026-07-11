@@ -58,10 +58,14 @@ class TestCriticPromptV55:
         assert "MAJOR" in CRITIC_SYSTEM_PROMPT
 
     def test_strengths_before_findings_section(self) -> None:
-        """strengths 章节在 findings/issues 章节之前 (Superpowers: acknowledge strengths first)."""
+        """strengths 章节在 findings/issues 章节之前 (Superpowers: acknowledge strengths first).
+
+        v5.6: critic prompt = B11 fragments (含合理化表, 内有单数 "finding") + 正文.
+        按正文中 `findings` 章节 (复数字段名) 定位, 避免匹配到前置片段里的单数 "finding".
+        """
         prompt_lower = CRITIC_SYSTEM_PROMPT.lower()
         strengths_pos = prompt_lower.find("strength")
-        findings_pos = prompt_lower.find("finding")
+        findings_pos = prompt_lower.find("findings")
         if strengths_pos >= 0 and findings_pos >= 0:
             assert strengths_pos < findings_pos, (
                 f"strengths section should appear before findings, "

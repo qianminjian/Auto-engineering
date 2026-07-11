@@ -236,16 +236,14 @@ class BaseAgent:
         )
 
     def _build_system_prompt(self, task: Task) -> str:
-        """构造 system prompt. 有 output_schema 时注入 schema 约束."""
+        """构造 system prompt. 有 output_schema 时注入 schema 约束 (§B12: 模板中央化)."""
         system = self.system_prompt
         if task.output_schema:
+            from auto_engineering.prompts.registry import default_registry
+
             schema_str = json.dumps(task.output_schema, indent=2, ensure_ascii=False)
-            system += (
-                "\n\n## Output Schema\n"
-                "你必须输出符合以下 JSON Schema 的 JSON"
-                "(用 markdown ```json``` fence 或纯文本):\n"
-                f"```json\n{schema_str}\n```"
-            )
+            template = default_registry().schema_injection_template()
+            system += "\n\n" + template.replace("{schema_json}", schema_str)
         return system
 
     def _map_llm_exception(self, exc: Exception) -> AEError:

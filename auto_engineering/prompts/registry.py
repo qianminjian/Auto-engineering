@@ -15,10 +15,20 @@ from pathlib import Path
 
 import yaml
 
-__all__ = ["PromptRegistry"]
+__all__ = ["PromptRegistry", "default_registry"]
 
 # 默认: 本包目录 (auto_engineering/prompts/), 含 roles/ + fragments/ + schema/.
 DEFAULT_PROMPTS_DIR = Path(__file__).parent
+
+_DEFAULT_REGISTRY: PromptRegistry | None = None
+
+
+def default_registry() -> PromptRegistry:
+    """进程级单例 (懒加载). Engine A/B 类 prompt 消费者共享一份 (§B12.5 init 加载)."""
+    global _DEFAULT_REGISTRY
+    if _DEFAULT_REGISTRY is None:
+        _DEFAULT_REGISTRY = PromptRegistry()
+    return _DEFAULT_REGISTRY
 
 
 class PromptRegistry:
@@ -29,6 +39,7 @@ class PromptRegistry:
         self._roles: dict[str, str] = {}       # role → 完整 system prompt
         self._hashes: dict[str, str] = {}      # role → sha256(content)
         self._models: dict[str, str] = {}      # role → model id (frontmatter)
+        self._schema_template: str = ""        # schema/output_schema_injection.md
         self._load_all(self._dir)
 
     @property
@@ -51,6 +62,13 @@ class PromptRegistry:
         self._require(role)
         return self._models[role]
 
+    def schema_injection_template(self) -> str:
+        """返回 output_schema 注入模板 (含 `{schema_json}` 占位, base.py 消费).
+
+        B 类片段 (§B12.1): 从 base.py 硬编码抽出到 schema/output_schema_injection.md.
+        """
+        return self._schema_template
+
     # ── 内部 ──
 
     def _require(self, role: str) -> None:
@@ -61,6 +79,9 @@ class PromptRegistry:
     def _load_all(self, d: Path) -> None:
         """读 roles/*.md → 解析 frontmatter.fragments → 拼接 fragments/*.md → 存 + hash."""
         fragments = self._load_fragments(d / "fragments")
+        schema_file = d / "schema" / "output_schema_injection.md"
+        if schema_file.exists():
+            self._schema_template = schema_file.read_text(encoding="utf-8").strip()
         roles_dir = d / "roles"
         for role_file in sorted(roles_dir.glob("*.md")):
             meta, body = self._split_frontmatter(role_file)
