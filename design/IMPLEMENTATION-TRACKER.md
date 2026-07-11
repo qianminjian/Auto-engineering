@@ -39,7 +39,8 @@
 | 6 | 审计与验证方法论 (B15) | 5 | 0 | ☐ 未开始（deep_audit/audit/guardrail 仅 v5.5 骨架）|
 | 7 | Init-Loop 契约扩展 | 4 | 0 | ☐ 未开始（schema.json 缺）|
 | 8 | 设计文档深化补充（审计 S-task）| 22 | 22 | ✅ 完成（2026-07-11 深度审计 → 全部收口）|
-| **合计** | | **85** | **38** | **~19% 代码；文档深化 22/22 ✅；端到端 0%（未接线）** |
+| 9 | 代码审计修复（审计 A-task）| 15 | 9 | ◐ 孤立快修批完成（A2/A5/A6/A10-A15，9 commits）；A1/A3 checkpoint 契约待修 / A4 需决策 / A7-A9 P2 待办 |
+| **合计** | | **100** | **47** | **~19% 代码；文档深化 22/22 ✅；代码审计 9/15；端到端 0%（未接线）** |
 
 ---
 
@@ -185,6 +186,32 @@
 
 ---
 
+## Phase 9 — 代码审计修复（2026-07-11 code audit A-task）
+
+> 来源：2026-07-11 代码实现深度审计（`_scratch/reports/2026-07-11-audit.md`；Phase 1 自动化 + 3 并行只读 agent）。总体 6.8/10。
+> 性质：**代码 bug 修复**（活跃 CLI 路径真实 bug + 虚化），区别于 Phase 8（设计规格收口）。全部经 grep 直接验证。
+> 决策（2026-07-11 用户定案）：**仅报告，暂不修 → 落表跟踪，作为开发任务**（不跨轮次遗失）。A1/A2/A5 + P2 为纯 bug 修复无架构变更；A3/A4 涉及 tick 接线/删模块需拍板。
+
+| A | 修复项 | 严重度 | 位置 | 验收 | 状态 | Commit |
+|---|-------|:---:|------|------|:---:|--------|
+| A1 | `ae status` verdict 恒空 → 读 `critic_verdict`（输出 key 仍 `verdict`，符 §B13.2）| P1 | `cli/status.py:73,80` | test_cli_status 断言非空 verdict | ☐ | |
+| A2 | Gate 崩溃 fail-open → 执行异常计 `failed_count`（fail-closed），区分 skipped(不适用)/errored(崩溃)| P1 | `cli/gate_check.py:96-99,23` | test_gate_check 崩溃 gate → exit≠0 | ✅ | 633af89 |
+| A3 | `batch_state_json` 持久化断链（零写零读 → 游标每 tick 归零）| P1 | `state.py:121,215`；`tick_orchestrator.py:236` | T22 跨 tick 恢复 | ☐ 并入 Phase 3 T9/T10 接线闭合 | |
+| A4 | `gap_analysis.py` 孤儿（GapReport 全实现+有测试，生产 0 引用，tick 用内联 dict）| P1 | `engine/gap_analysis.py` vs `tick_orchestrator.py:516` | 接线去重 or 删除 | ☐ **需决策：接线/删除** | |
+| A5 | F821 `Any` 未导入（type_check gate 会红）→ TYPE_CHECKING 块加 `from typing import Any` | P1 | `loop/stage_router.py:284`、`runtime/runtime.py:42` | ruff F821 清零 + type_check gate 绿 | ✅ | 04db92c |
+| A6 | 畸形 batch_plan 抛 raw KeyError → 改抛 AEError 契约错误 | P2 | `loop/task_factory.py:58` | test_task_factory 缺 id 断言 | ✅ | c3e6b4f |
+| A7 | per-task ctx 仅顶层浅拷贝（注释宣称隔离，名不副实）→ 文档如实标注或 outputs 深拷 | P2 | `loop/round.py:186` | 自含 | ☐ | |
+| A8 | `set_channels` 绕过 write_field 所有权校验 + 重复 `import logging` | P2 | `engine/state.py:321` | 自含 | ☐ | |
+| A9 | 8× 集中 `# type: ignore`（graph 节点弱类型区）→ 补 Protocol | P2 | `engine/design_doc.py:220-298` | mypy 无 ignore | ☐ | |
+| A10 | B904：`raise ValueError` 无 `from`（丢异常链）| P2 | `loop/checkpoint/migration.py:62` | ruff B904 清零 | ✅ | 67546c3 |
+| A11 | B905：`dict(zip(...))` 无 `strict=`（静默截断）| P2 | `gates/_tools.py:40` | ruff B905 清零 | ✅ | 4301055 |
+| A12 | docstring 漂移：guardrail 称 drop→retry+DeprecationWarning，实际 unknown→stop | P2 | `loop/guardrail.py:69-72` | 文档与代码一致 | ✅ | fec06fd |
+| A13 | docstring 漂移：ContractGate 声明已不存在的 `run(project_root, contracts=)` 签名 | P2 | `gates/contract.py:14-15` | 文档与代码一致 | ✅ | b9baa9e |
+| A14 | docstring 漂移：StageRouter T4/T5 编号在 docstring 与内联注释间互换（判定：内联+设计§B2 为准，docstring 漂移）| P2 | `loop/stage_router.py:8-15` | 编号统一 + 对齐设计追溯 | ✅ | 78ff8ac |
+| A15 | ruff 样式批（实际 407 findings 非~186）：安全 `--fix` 已修 264 项/84 文件 | P2 | 全仓 | 安全 auto-fix + 全量零新增失败 | ◐ | 1a22a99（余 163 非自动修 → 新任务）|
+
+---
+
 ## 阻塞/决策日志
 
 | 日期 | T-task | 阻塞/决策 | 处理 |
@@ -197,3 +224,5 @@
 | 2026-07-09 | T2 | **next() 签名迁移策略**：DS-8 双预算取代 v5.5 单一 plan_refine_count/max_plan_refines。next() 有 4 处调用（orchestrator.py 584/675/713/835）+ 6 处直接测试调用。713/835 只用前 4 参数安全。 | ✅ 用户定案 **A 单一新 API + 迁移保留 Orchestrator**：next() 只留新签名（无旧参数别名，遵守"禁向后兼容 hack"）。584 T9 分支改直调 `StageRouter.refine_allowed`（单一真相源，单全局预算旁路分源），保留 v5.5 "T9-LIMIT" 标签（新 TickOrchestrator 用 "REFINE_LIMIT"）；675 去 max_plan_refines。测试 6 处直调迁移到 DS-8 参数 + 断言 T9-LIMIT→REFINE_LIMIT。153 tests green，lint 无新增。 |
 | 2026-07-10 | 全表 | **状态核对：tracker 严重滞后于代码**。Phase 2（T5-T8+TickOrchestrator）实际已在 4cea2cd/627de93/f518bb8/7547c19/54f123a/96399ad 落地，表却仍标 0/6。核对后更新：Phase 2→6/6✅、Phase 5→4/17◐（单元层）、总完成 6→16。**发现关键风险：v5.6 Tick 引擎未接入 CLL**（dev_loop.py 仍用旧 Orchestrator，无 --tick 入口，dev-loop.md 仍 v5.1 模式）——单测全绿但端到端 0%。接线归 Phase 3 T9/T10。 | ✅ 已更新总览+Phase2+Phase5 表 + 关键风险标注。DESIGN-REFINEMENT-PLAN.md 核对：13 DS 全✅（设计细化门，非实现任务），无待纳入项。 |
 | 2026-07-11 | Phase 8 + T10d | **设计文档深度审计（S-task 落表）**：3 并行子代理审 v5.6-Design-Loop + INIT-LOOP-CONTRACT，发现 P0×4（全代码缺口，已有 T 编号）+ P1×13 + P2×7 + 过度设计×2（均设计规格缺陷：矛盾/契约模糊/边界未定义）。用户定案：全做 + S-1 方向A（移除语义评估）。S-1 **代码**移除跟踪至 Phase 3 T10d（随 v5.5 退役，避免破坏活跃路径）。 | ◐ Phase 8 执行中；审计报告 `_scratch/design-audit/AUDIT-REPORT.md` + `findings-{A,B,C}.md`。 |
+| 2026-07-11 | Phase 9 (A1-A15) | **代码实现深度审计（A-task 落表）**：Phase 1 自动化(ruff/grep) + 3 并行只读 agent 审 auto_engineering/(82文件/16K行)。总体 6.8/10——内核代码工艺高（异常纪律优秀/无静默吞异常/依赖方向干净/无环/DRY），但 3 活跃 CLL 路径真实 P1 bug（A1 status verdict 恒空 / A2 gate 崩溃 fail-open / A3 batch_state 断链）+ A4 gap_analysis 孤儿 + A5 F821 + 10 P2（docstring 漂移/B904/B905/ruff 样式）。全部 grep 直接验证。 | ◐ 用户定案 **仅报告暂不修 → 落表跟踪作为开发任务**。A3 并入 Phase 3 tick 接线；A4 需决策（接线/删除）。报告 `_scratch/reports/2026-07-11-audit.md`。 |
+| 2026-07-11 | Phase 9 孤立快修批 | **9 项孤立快修完成（superpowers TDD/lint-verify，每任务一 commit）**：A5=04db92c、A10=67546c3、A11=4301055（prior）+ A12=fec06fd、A13=b9baa9e、A14=78ff8ac（docstring 对齐设计，A14 判定内联+§B2 为准）、A2=633af89（gate fail-closed，TDD）、A6=c3e6b4f（KeyError→AEError，TDD）、A15=1a22a99（ruff safe --fix 264 项/84 文件）。**A14/A2/A6 过程中发现审计估计偏差**：A13 无 AttributeError（Gate 基类有 contracts 默认）、A14 是 docstring 漂移非内联漂移、A15 实际 407 findings 非~186。全量 1692 passed / 8 failed（与修复前完全一致，零新增）。 | ✅ 用户定案 A15 安全 auto-fix + 余项另立（#73）。**下一步：checkpoint 契约修复（A1/A3 根因，方向①反序列化→EngineState）**。A4 决策 / A7-A9 P2 待办。 |
