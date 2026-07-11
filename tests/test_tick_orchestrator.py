@@ -1138,3 +1138,76 @@ class TestInitPersistsDesignDocPath:
         o.project_root = tmp_path
         o.init("req", design_doc_path=str(design))
         assert o._state.design_doc_path == str(design)
+
+
+class TestCrossTickE2E:
+    """T21: 完整 LEAF 循环, 每 tick 前从 store restore 全新 orchestrator.
+
+    模拟 §A.1 每 tick 独立进程: 状态只经 SQLite 流转, 无 in-memory 残留 —
+    每步都是 restore() 出的新实例。验证 tick 引擎在真实离散进程模型下端到端收敛。
+    """
+
+    def test_full_leaf_cycle_through_restore_each_tick(self, tmp_path) -> None:
+        from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
+
+        store = SQLiteCheckpointStore(tmp_path / "cp.db")
+
+        def _fresh() -> TickOrchestrator:
+            # 每 tick 一个全新实例 (无 in-memory 状态), 只从 store restore
+            return TickOrchestrator.restore(
+                tmp_path, store,
+                gate_runner=_pass_gate_runner, guardrail=_pass_guardrail())
+
+        # init (第一个"进程")
+        o0 = TickOrchestrator(
+            tmp_path, gate_runner=_pass_gate_runner,
+            guardrail=_pass_guardrail(), checkpoint_store=store)
+        first = o0.init("实现单个组件")
+        assert first["stage"] == "architect"
+
+        # tick 1: architect → developer
+        a = _fresh().tick(_make_result_file({
+            "stage": "architect", "plan": _VALID_PLAN,
+            "batch_plan": [{
+                "batch_id": "batch-F-1", "design_section": "B2", "component": "Foo",
+                "tasks": [{"id": "T1", "description": "实现 foo", "module_ref": "§B2",
+                           "file_targets": ["foo.py"]}],
+            }],
+            "file_list": ["foo.py"], "contracts": {},
+        }))
+        assert a["stage"] == "developer"
+        assert a["batch_id"] == "batch-F-1"  # 跨进程 batch_state 保真
+
+        # tick 2: developer → critic
+        a = _fresh().tick(_make_result_file({
+            "stage": "developer", "batch_id": "batch-F-1",
+            "files_changed": ["foo.py"], "test_results": {"passed": 2, "failed": 0},
+        }))
+        assert a["stage"] == "critic"
+
+        # tick 3: critic APPROVE → component_verifier
+        a = _fresh().tick(_make_result_file({
+            "stage": "critic", "verdict": "APPROVE", "findings": [],
+            "critic_feedback": "LGTM",
+        }))
+        assert a["stage"] == "component_verifier"
+
+        # tick 4: component_verifier (无缺口) → system_deep_audit
+        a = _fresh().tick(_make_result_file({
+            "stage": "component_verifier", "component": "Foo",
+            "coverage_map": [{"design_item": "B2-1", "status": "IMPLEMENTED",
+                              "file": "foo.py", "line": 10, "note": ""}],
+            "missing_count": 0, "diverged_count": 0,
+        }))
+        assert a["stage"] == "system_deep_audit"
+
+        # tick 5: system_deep_audit (无 P0/P1) → GOAL_ACHIEVED
+        a = _fresh().tick(_make_result_file({
+            "stage": "system_deep_audit", "findings": [],
+            "p0_count": 0, "p1_count": 0, "p2_count": 1, "total_audited_files": 2,
+            "design_docs_stale": False, "design_doc_suggestions": "",
+            "missing_count": 0, "diverged_count": 0,
+        }))
+        assert a["action"] == "done"
+        assert a["verdict"] == "GOAL_ACHIEVED"  # 5 次跨进程 restore 后收敛
+        store.close()
