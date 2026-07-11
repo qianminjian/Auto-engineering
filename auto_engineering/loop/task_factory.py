@@ -22,6 +22,7 @@ import logging
 from typing import Any
 
 from auto_engineering.engine.state import EngineState
+from auto_engineering.errors import AEError, ErrorCode
 from auto_engineering.loop.plan import Plan, Task
 from auto_engineering.loop.round import TaskOutcome
 
@@ -54,9 +55,18 @@ def tasks_from_batch_plan(
     tasks: list[Task] = []
     for batch in batch_plan:
         for task_dict in batch.get("tasks", []):
+            task_id = task_dict.get("id")
+            if not task_id:
+                # 契约违规: task id 必填 (空/缺失破坏 depends_on + critic 引用)
+                raise AEError(
+                    ErrorCode.INVALID_AGENT_OUTPUT,
+                    f"batch_plan task 缺少必填字段 'id' "
+                    f"(batch_id={batch.get('batch_id', '?')})",
+                    suggestion="architect 需为每个 task 提供唯一非空 id (见 §B6.1a schema)",
+                )
             tasks.append(Task(
-                id=task_dict["id"],
-                title=task_dict.get("description", task_dict["id"])[:60],
+                id=task_id,
+                title=task_dict.get("description", task_id)[:60],
                 description=task_dict.get("description", ""),
                 expected_output=f"实现并测试通过 {task_dict.get('description', '')}",
                 role="developer",

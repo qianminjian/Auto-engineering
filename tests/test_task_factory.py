@@ -19,6 +19,7 @@ from __future__ import annotations
 import pytest
 
 from auto_engineering.engine.state import EngineState
+from auto_engineering.errors import AEError, ErrorCode
 from auto_engineering.loop.plan import (
     ConflictError,
     Plan,
@@ -157,6 +158,33 @@ def test_tasks_from_batch_plan_empty_batch_returns_critic_only() -> None:
     assert plan.tasks[0].id == "critic-review"
     assert plan.tasks[0].role == "critic"
     assert plan.requirement == "req-1"
+
+
+def test_tasks_from_batch_plan_missing_task_id_raises_aeerror() -> None:
+    """畸形 batch_plan (task 缺必填 id) → 抛 AEError(INVALID_AGENT_OUTPUT), 非 raw KeyError."""
+    batch_plan = [{
+        "batch_id": "batch-X",
+        "design_section": "B2",
+        "component": "Foo",
+        "tasks": [
+            {"description": "缺 id 的畸形 task",
+             "file_targets": ["auto_engineering/foo.py"]},
+        ],
+    }]
+    with pytest.raises(AEError) as exc_info:
+        tasks_from_batch_plan(batch_plan, requirement="r")
+    assert exc_info.value.code is ErrorCode.INVALID_AGENT_OUTPUT
+
+
+def test_tasks_from_batch_plan_empty_task_id_raises_aeerror() -> None:
+    """task id 为空串 → 同样视作契约违规 (空 id 破坏 depends_on/critic 引用)."""
+    batch_plan = [{
+        "batch_id": "batch-Y",
+        "tasks": [{"id": "", "description": "空 id", "file_targets": ["x.py"]}],
+    }]
+    with pytest.raises(AEError) as exc_info:
+        tasks_from_batch_plan(batch_plan, requirement="r")
+    assert exc_info.value.code is ErrorCode.INVALID_AGENT_OUTPUT
 
 
 def test_tasks_from_nested_batch_plan_single_batch_multiple_tasks() -> None:
