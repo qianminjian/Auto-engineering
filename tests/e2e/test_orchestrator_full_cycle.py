@@ -374,14 +374,16 @@ async def test_full_cycle_with_gates_all_pass(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_full_cycle_checkpoint_save_round() -> None:
+async def test_full_cycle_checkpoint_save_round(tmp_path: Path) -> None:
     """每轮 checkpoint 持久化: 验证 store 写入.
 
-    用 :memory: SQLite checkpoint store, 跑完后验证 checkpoint 存在.
+    用文件 SQLite store (对齐生产). run() 的 finally 会 close 传入的 store —
+    :memory: 模式 close 会销毁 DB, 故用文件 store: run 后重开新 store 验证磁盘持久化.
     """
     from auto_engineering.loop.checkpoint import SQLiteCheckpointStore
 
-    store = SQLiteCheckpointStore(":memory:")
+    db_path = str(tmp_path / "ck.db")
+    store = SQLiteCheckpointStore(db_path)
 
     tasks = [
         _make_task("arch-1", agent_type="architect"),
@@ -412,14 +414,16 @@ async def test_full_cycle_checkpoint_save_round() -> None:
         return TaskOutcome(task_id=task.id, status="failed", task_role=role)
 
     orch = _setup_orchestrator(tasks, executor, checkpoint_store=store)
-    history = await orch.run(cancellation=None)
+    await orch.run(cancellation=None)
 
     assert orch.verdict is not None
     assert orch.verdict.should_stop is True
 
-    # 验证 checkpoint 存在
-    checkpoints = store.list_all()
+    # run() finally 已 close 传入的 store — 重开新 store 验证磁盘持久化
+    verify_store = SQLiteCheckpointStore(db_path)
+    checkpoints = verify_store.list_all()
     assert len(checkpoints) >= 1, f"应至少 1 个 checkpoint, 实际: {len(checkpoints)}"
+    verify_store.close()
 
 
 # ============================================================
