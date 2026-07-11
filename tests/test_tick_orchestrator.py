@@ -381,6 +381,9 @@ class TestPlateConvergence:
         }))
         assert a_audit["action"] == "done"
         assert a_audit["verdict"] == "GOAL_ACHIEVED"
+
+
+class TestSystemDeepAuditCoverageGate:
     """system_deep_audit 覆盖度信号不能是空操作.
 
     Bug 2: expected_format 不含 missing_count/diverged_count → Agent 不产出 →
