@@ -24,6 +24,10 @@ from auto_engineering.cli.agent import register_agent_command
 from auto_engineering.cli.checkpoint import register_checkpoint_commands
 from auto_engineering.cli.dev_loop import (
     OrchestratorRunResult,
+    _run_tick_init,
+    _run_tick_resume,
+    _run_tick_status,
+    _run_tick_step,
     _run_v2_orchestrator,
 )
 from auto_engineering.cli.doctor import register_doctor_command
@@ -88,7 +92,18 @@ def main():
 
 
 @main.command()
-@click.argument("requirement")
+@click.argument("requirement", required=False)
+@click.option("--init", "init_flag", is_flag=True,
+              help="v5.6: 初始化 tick loop, 输出第一个 action JSON")
+@click.option("--tick", "tick_flag", is_flag=True,
+              help="v5.6: 处理一个 tick (需 --result)")
+@click.option("--result", "result_file", type=click.Path(exists=True),
+              help="--tick 的 stage-result.json 路径")
+@click.option("--status", "status_flag", is_flag=True,
+              help="v5.6: 查询当前 tick 状态")
+@click.option("--resume", "resume_id", help="v5.6: 从指定 checkpoint 恢复")
+@click.option("--design-doc", "design_doc", type=click.Path(exists=True),
+              help="--init 的设计文档路径 (design-doc 模式)")
 @click.option("--max-rounds", type=int, default=3, help="最大 Round 数")
 @click.option("--max-tokens", type=int, default=0, help="Token 预算上限 (0 = 无限制)")
 @click.option("--format", "log_format", type=click.Choice(["text", "json"]), default="text", help="输出格式 (与 ae status --format 统一)")
@@ -100,18 +115,62 @@ def main():
 )
 @click.option("--project-root", type=click.Path(exists=True), help="项目根目录 (默认 cwd)")
 def dev_loop(
-    requirement: str,
+    requirement: str | None,
+    init_flag: bool,
+    tick_flag: bool,
+    result_file: str | None,
+    status_flag: bool,
+    resume_id: str | None,
+    design_doc: str | None,
     max_rounds: int,
     max_tokens: int,
     log_format: str,
     llm_provider: str,
     project_root: str,
 ):
-    """单需求开发循环 (v5.5 Agent Tool 直接执行模式).
+    """单需求开发循环.
 
-    v5.4: architect/critic 两个 LLM 调用点统一走 AgentRuntime 路径,
-    不再使用 JSONL 协议.
+    v5.6 tick 模式 (§A.1 Python 永不调 LLM, 每次调用独立进程):
+        ae dev-loop --init "req" [--design-doc <path>]   初始化, 输出第一个 action
+        ae dev-loop --tick --result <file>               处理一个 tick, 输出下一 action
+        ae dev-loop --status                             查询当前 tick 状态
+        ae dev-loop --resume <id>                         从 checkpoint 恢复
+
+    v5.5 legacy 模式 (连续 while, 调 LLM):
+        ae dev-loop "req"                                 单需求连续调试
     """
+    root = Path(project_root).resolve() if project_root else Path.cwd()
+
+    # ── v5.6 tick 模式分派 (先于 LLM preflight — Python 不需 API key) ──
+    tick_modes = [init_flag, tick_flag, status_flag, bool(resume_id)]
+    if sum(bool(m) for m in tick_modes) > 1:
+        click.echo("错误: --init/--tick/--status/--resume 互斥, 仅可指定一个", err=True)
+        raise SystemExit(1)
+    if init_flag:
+        if not requirement:
+            click.echo("错误: --init 需要 requirement 参数", err=True)
+            raise SystemExit(1)
+        _run_tick_init(requirement, design_doc, root, max_rounds)
+        return
+    if tick_flag:
+        if not result_file:
+            click.echo("错误: --tick 必须带 --result <file>", err=True)
+            raise SystemExit(1)
+        _run_tick_step(Path(result_file), root)
+        return
+    if status_flag:
+        _run_tick_status(root)
+        return
+    if resume_id:
+        _run_tick_resume(resume_id, root)
+        return
+
+    # ── v5.5 legacy 模式 (需 requirement + LLM) ──
+    if not requirement:
+        click.echo(
+            "错误: requirement 参数必填 (或用 --init/--tick/--status/--resume)", err=True)
+        raise SystemExit(1)
+
     if llm_provider != "anthropic":
         click.echo(f"[未实现] --llm-provider={llm_provider} 暂未实装。", err=True)
         raise SystemExit(6)

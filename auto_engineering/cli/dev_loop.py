@@ -321,3 +321,101 @@ def _run_v2_orchestrator(
         duration_sec=duration_sec,
         gate_results=last_gate_results,
     )
+
+
+# ============================================================
+# v5.6 Tick 模式 CLI 处理器 (§A.1 Python 永不调 LLM — 不需 API key)
+# 每次调用是独立进程, 从 .ae-state/checkpoints.db 恢复/持久化状态。
+# ============================================================
+
+
+def _checkpoint_db_path(root: Path) -> Path:
+    """.ae-state/checkpoints.db — 跨 tick 持久化 store (目录不存在则创建)."""
+    state_dir = root / ".ae-state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    return state_dir / "checkpoints.db"
+
+
+def _run_tick_init(
+    requirement: str, design_doc_path: str | None, root: Path, max_rounds: int
+) -> None:
+    """ae dev-loop --init: 初始化 tick loop, 输出第一个 action JSON (stdout 契约)."""
+    import json
+
+    import click
+
+    from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
+    from auto_engineering.loop.tick_orchestrator import TickOrchestrator
+
+    store = SQLiteCheckpointStore(_checkpoint_db_path(root))
+    try:
+        orch = TickOrchestrator(root, checkpoint_store=store)
+        action = orch.init(
+            requirement, design_doc_path=design_doc_path, max_rounds=max_rounds)
+        click.echo(json.dumps(action, ensure_ascii=False))
+    finally:
+        store.close()
+
+
+def _run_tick_step(result_file: Path, root: Path) -> None:
+    """ae dev-loop --tick --result <file>: restore → tick → 下一 action JSON."""
+    import json
+
+    import click
+
+    from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
+    from auto_engineering.loop.tick_orchestrator import TickOrchestrator
+
+    store = SQLiteCheckpointStore(_checkpoint_db_path(root))
+    try:
+        orch = TickOrchestrator.restore(root, store)
+        action = orch.tick(result_file)
+        click.echo(json.dumps(action, ensure_ascii=False))
+    finally:
+        store.close()
+
+
+def _run_tick_status(root: Path) -> None:
+    """ae dev-loop --status: restore → 输出当前 tick 状态摘要 JSON."""
+    import json
+
+    import click
+
+    from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
+    from auto_engineering.loop.tick_orchestrator import TickOrchestrator
+
+    store = SQLiteCheckpointStore(_checkpoint_db_path(root))
+    try:
+        orch = TickOrchestrator.restore(root, store)
+        s = orch._state
+        summary = {
+            "thread_id": s.thread_id,
+            "current_stage": s.current_stage,
+            "expected_stage": s.expected_stage,
+            "tick": s.tick,
+            "round": s.round,
+            "verdict": s.critic_verdict,
+            "total_majors": s.total_majors,
+            "plan_refine_count": s.plan_refine_count,
+        }
+        click.echo(json.dumps(summary, ensure_ascii=False))
+    finally:
+        store.close()
+
+
+def _run_tick_resume(checkpoint_id: str, root: Path) -> None:
+    """ae dev-loop --resume <id>: 从指定 checkpoint 恢复 → 输出当前 action JSON."""
+    import json
+
+    import click
+
+    from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
+    from auto_engineering.loop.tick_orchestrator import TickOrchestrator
+
+    store = SQLiteCheckpointStore(_checkpoint_db_path(root))
+    try:
+        orch = TickOrchestrator.restore(root, store, checkpoint_id=checkpoint_id)
+        action = orch._build_action()
+        click.echo(json.dumps(action, ensure_ascii=False))
+    finally:
+        store.close()
