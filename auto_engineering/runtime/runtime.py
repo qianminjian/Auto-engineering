@@ -12,7 +12,7 @@ v2.0 API:
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from auto_engineering.runtime.context import TaskContext
 from auto_engineering.runtime.task import Task, TaskResult

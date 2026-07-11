@@ -28,7 +28,7 @@ raise CriticVerdictInvalid 让 orchestrator 显式处理 (重试或抛异常).
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from auto_engineering.engine.state import EngineState
