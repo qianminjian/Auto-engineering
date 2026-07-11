@@ -1289,6 +1289,27 @@ class TestPhase0Research:
         assert "gap-A" in o._design_doc.supplements
         assert "gap-B" in o._design_doc.supplements
 
+    def test_research_action_injects_four_tier_knowledge_contract(
+            self, tmp_path) -> None:
+        """T26/§B10.6: research action 必须携带 4-tier 知识源 + 内存约束契约."""
+        o = _orchestrator()
+        self._drive_to_research(o, tmp_path, "research")
+        action = o._build_action()
+        assert action["stage"] == "research"
+        ks = action["knowledge_sources"]
+        assert ks["tier_order"] == [
+            "tier0", "tier1_ref_code", "tier2_doc_kb", "tier3_web"]
+        # 内存护栏: grep 定位 + 禁批量/并行 (96GB 事故防线)
+        assert "grep" in ks["memory_constraint"]
+        assert "禁止批量/并行扫描" in ks["memory_constraint"]
+        # 当前 gap 上下文透传
+        assert action["gap"]["id"] == "gap-B2"
+        # 输出契约要求分层来源 + 置信度 + 可注入 supplement 的设计
+        fmt = action["expected_format"]
+        assert fmt["source_tier"] == "tier0|tier1|tier2|tier3"
+        assert fmt["confidence"] == "high|medium|low"
+        assert "recommended_design" in fmt
+
 
 # ── #30 / DS-10 (C.2.6): tick 延迟打点 (超预算告警不中断) ──
 
@@ -1825,7 +1846,7 @@ class TestPhase0BlockingGapGuardrail:
         assert a["stage"] == "research"
 
     def test_path_defer_component_passes(self, tmp_path) -> None:
-        """路径3 Defer: 非 architectural gap Defer → 不阻塞 → architect (只 architectural 受约束)."""
+        """路径3 Defer: 非 architectural gap Defer → 不阻塞 → architect (仅 arch 受约束)."""
         o = _real_guardrail_orch(tmp_path)
         self._to_gap_review(o, tmp_path, "component")
         a = o.tick(_make_result_file({

@@ -123,7 +123,7 @@
 | T23 | ProgressTree 构建/同步/聚合/展示/序列化 | ✅ | test_progress_tree.py (20) |
 | T24 | ProgressTree plan_refine 动态同步（added/modified/removed/conflicts）| ✅ | test_progress_tree TestSync (单元) + test_tick_orchestrator TestPlanRefineProgressSync (编排集成: added 保留旧 / removed 标记不删) |
 | T25 | Pre-flight 全路径（4 用户路径 + has_blocking Guardrail）| ✅ | test_gap_analysis(14) + **G6 NoDeferredBlockingGap 接线**(guardrail.py, 修复死代码 validate_resolutions 从未接线) + test_guardrail TestNoDeferredBlockingGap(11) + test_tick_orchestrator TestPhase0BlockingGapGuardrail(5, 4 路径 Fill/Research/Defer/Defer+Research + architectural defer→GUARDRAIL_BLOCK) |
-| T26 | ResearchAgent 分层知识源 | ☐ | |
+| T26 | ResearchAgent 分层知识源 | ✅ | research action 4-tier `knowledge_sources` 契约（tier_order + memory_constraint grep/禁批量并行）+ expected_format(source_tier/confidence/recommended_design) test_tick_orchestrator TestPhase0Research::test_research_action_injects_four_tier_knowledge_contract + test_prompt_registry TestResearchTieredKnowledge(4: 四层/内存护栏/可信度分级/只读) |
 | T26b | Tick 编排延迟 P95<2s（DS-10）| ◐ | test_tick_orchestrator TestTickLatencyInstrumentation |
 | T26c | verifier Sonnet 复核兜底（DS-9）| ✅ | _build_action recheck 字段 (component/system_verifier) + 两 prompt 5 步复核协议 + recheck_log + test_tick_orchestrator TestVerifierRecheck + test_prompt_registry TestVerifierRecheckProtocol |
 | T26d | PromptRegistry + B12 迁移（背书 T16e/f/g）| ✅ | 570bec0（B12.5 版本锁）+ test_prompt_registry(24)+test_sync_prompts(9) |

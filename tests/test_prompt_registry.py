@@ -94,6 +94,42 @@ class TestVerifierRecheckProtocol:
         assert "跳过复核" in p                # 无负判定零成本短路
 
 
+class TestResearchTieredKnowledge:
+    """T26/§B10.6: research prompt 锁定四层知识源 + 内存护栏 + 可信度分级."""
+
+    def test_prompt_declares_four_knowledge_tiers(
+        self, registry: PromptRegistry
+    ) -> None:
+        p = registry.get("research")
+        for tier in ("Tier 0", "Tier 1", "Tier 2", "Tier 3"):
+            assert tier in p
+        assert "tier_order" in p
+        assert "tier1_ref_code" in p
+
+    def test_prompt_carries_memory_guardrail(
+        self, registry: PromptRegistry
+    ) -> None:
+        p = registry.get("research")
+        assert "三步法" in p
+        assert "grep 定位" in p
+        assert "禁止批量/并行扫描" in p  # 96GB 内存爆炸事故防线
+
+    def test_prompt_requires_confidence_grading(
+        self, registry: PromptRegistry
+    ) -> None:
+        p = registry.get("research")
+        assert "confidence" in p
+        for level in ("high", "medium", "low"):
+            assert level in p
+        assert "source_tier" in p
+        assert "recommended_design" in p
+
+    def test_prompt_is_read_only(self, registry: PromptRegistry) -> None:
+        p = registry.get("research")
+        assert "write_file" in p and "edit_file" in p  # 出现在禁令行
+        assert "只检索" in p
+
+
 class TestHash:
     def test_hash_is_sha256_hex(self, registry: PromptRegistry) -> None:
         h = registry.hash("developer")
