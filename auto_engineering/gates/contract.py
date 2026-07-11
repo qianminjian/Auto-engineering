@@ -10,9 +10,10 @@
     - Phase 04: 实现契约文件存在性 + 格式校验(YAML/JSON parse)
     - Phase 05 (v5.0 §B6.1a): 4 项检查 — 静态文本匹配, 不做 AST
 
-核心 API:
-    ContractGate.run(project_root, contracts=...) -> Verdict
-    ContractGate.run(project_root, agent_count=N) -> Verdict (旧 multi-agent 路径)
+核心 API (v5.5 P1-9: contracts 为实例属性, 不再作为 run() 参数):
+    ContractGate(contracts_dir=...)      # 构造 (contracts_dir 供旧 multi-agent 路径)
+    gate.contracts = {...}               # 可选: 预设 4 项检查契约 (dict)
+    gate.run(project_root) -> GateVerdict # contracts=None → skip single-agent
 """
 
 from __future__ import annotations
