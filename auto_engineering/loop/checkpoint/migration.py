@@ -62,7 +62,7 @@ def _parse_version(version: str) -> tuple[int, ...]:
         raise ValueError(
             f"Invalid schema_version format: {version!r}. "
             f"Expected semantic version (e.g. '1.0', '0.9')."
-        )
+        ) from None
 
 
 def migrate_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
