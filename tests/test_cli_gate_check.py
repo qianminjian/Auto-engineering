@@ -257,8 +257,9 @@ def test_run_gates_instantiate_exception_is_skipped(tmp_path: Path) -> None:
     assert entry["passed"] is None
 
 
-def test_run_gates_run_exception_is_skipped(tmp_path: Path) -> None:
-    """gate.run() 抛异常 -> 该 Gate 标记 skipped (其他 Gate 继续)."""
+def test_run_gates_run_exception_is_error_failclosed(tmp_path: Path) -> None:
+    """gate.run() 抛异常 → fail-closed: 标记 status='error' + 计入 failed
+    (区别于 'skipped' 不适用). 崩溃的质量门禁不得静默放行. 其他 Gate 继续跑."""
     call_count = {"n": 0}
 
     def side_effect(project_root):
@@ -277,14 +278,15 @@ def test_run_gates_run_exception_is_skipped(tmp_path: Path) -> None:
         "auto_engineering.cli.gate_check._instantiate_gate", return_value=fake_gate
     ):
         result = run_gates(("safety", "lint"), tmp_path)
-    # safety 抛异常 -> skipped
-    assert result["gate_summary"]["safety"]["status"] == "skipped"
-    # lint 跑完 -> pass
+    # safety 崩溃 → fail-closed error (不是 skipped)
+    assert result["gate_summary"]["safety"]["status"] == "error"
+    assert result["gate_summary"]["safety"]["passed"] is False
+    # lint 跑完 → pass (隔离性: 一个崩溃不影响其他)
     assert result["gate_summary"]["lint"]["status"] == "pass"
-    # 计数: skipped=1 (safety), passed=1 (lint)
-    assert result["skipped"] == 1
+    # 计数: 崩溃计入 failed (fail-closed); skipped 仅留给"不适用"
+    assert result["failed"] == 1
     assert result["passed"] == 1
-    assert result["failed"] == 0
+    assert result["skipped"] == 0
 
 
 def test_run_gates_isolates_one_gate_failure(tmp_path: Path, mock_verdict) -> None:
@@ -420,6 +422,21 @@ def test_cli_gate_check_exit_code_1_on_failure(
     ):
         result = runner.invoke(main, ["gate-check", "--quick"])
     assert result.exit_code == 1
+
+
+def test_cli_gate_check_crashing_gate_exits_nonzero(
+    runner: CliRunner, tmp_cwd: Path
+) -> None:
+    """崩溃 Gate (run() 抛异常) → exit≠0 (fail-closed, 不因崩溃静默放行)."""
+    fake_gate = MagicMock()
+    fake_gate.run.side_effect = RuntimeError("boom")
+    with patch(
+        "auto_engineering.cli.gate_check._instantiate_gate", return_value=fake_gate
+    ):
+        result = runner.invoke(main, ["gate-check", "--quick"])
+    assert result.exit_code != 0
+    data = json.loads(result.output)
+    assert data["failed"] >= 1
 
 
 def test_cli_gate_check_skip_does_not_fail(

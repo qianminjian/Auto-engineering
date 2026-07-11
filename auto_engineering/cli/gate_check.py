@@ -19,9 +19,11 @@
       }
     }
 
+每 Gate status: "pass" | "fail" | "error"(崩溃, fail-closed) | "skipped"(不适用/无此 Gate)
+
 Exit codes:
-    0 = 全部 PASS (或 skipped)
-    1 = 存在 FAIL
+    0 = 全部 PASS (或 skipped 不适用)
+    1 = 存在 FAIL 或 ERROR (崩溃 gate 计入 failed, fail-closed)
 """
 
 from __future__ import annotations
@@ -95,8 +97,9 @@ def run_gates(gate_names: tuple[str, ...], project_root: Path) -> dict:
             verdict = gate.run(project_root)
         except Exception as e:  # noqa: BLE001
             _logger.warning("gate '%s' 执行异常", name, exc_info=True)
-            summary[name] = {"status": "skipped", "passed": None, "message": f"run error: {e}"}
-            skipped_count += 1
+            # fail-closed: 崩溃的质量门禁不得静默放行 (区别于"不适用" skipped)
+            summary[name] = {"status": "error", "passed": False, "message": f"run error: {e}"}
+            failed_count += 1
             continue
         # 解析 verdict
         ok = bool(getattr(verdict, "passed", False))
