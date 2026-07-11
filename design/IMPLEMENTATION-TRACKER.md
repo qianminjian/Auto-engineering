@@ -93,7 +93,7 @@
 | T16 | `prompts/roles/` Architect prompt design-doc 模式 | T20/T21 | ✅ | cf4e3e5 |
 | T16b | `prompts/roles/` + `agents/authz.py` gap_scan/research prompt+授权 | T25/T26 + test_authz(ext) | ✅ | cf4e3e5+25cd2fb |
 | T16c | `prompts/roles/` Developer prompt B11 注入 | T21 + wc -w | ✅ | cf4e3e5 |
-| T16d | `SKILL.md` + `commands/dev-loop.md` B11 注入 | wc -w + Plugin 验收 | ☐ | |
+| T16d | `SKILL.md` + `commands/dev-loop.md` B11 注入 | wc -w + Plugin 验收 | ✅ | e116e37 |
 | T16e | `prompts/registry.py`（**新建** PromptRegistry）| T26d | ✅ | 9454dc4 |
 | T16f | `prompts/roles/`(9) + `prompts/fragments/`(8) B12 目录骨架+迁移 | T26d | ✅ | cf4e3e5 |
 | T16g | `scripts/sync-prompts.py` + `agents/base.py` 重构 | T26d + T16m | ✅ | f8c1710+6adafdd |
