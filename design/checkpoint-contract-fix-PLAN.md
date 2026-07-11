@@ -62,12 +62,16 @@
 
 ## 4. 验收基线（本修复关闭的 pre-existing 失败）
 
-| 失败 | 数量 | 本修复关闭 |
-|------|:---:|:---:|
-| `test_checkpoint_store`（deserialize CheckpointError）| 5 | ✅ Step 2 |
-| `test_full_cycle_checkpoint_save_round`（e2e）| 1 | ✅ Step 2 |
-| `test_cli_status_extended`（fallback raw-dict）| 1 | ✅ Step 3 |
-| `plugin_contract --format`（独立 CLI 选项漂移）| 1 | ❌ 归 #73 |
+> ⚠️ **执行后修正（2026-07-11）**：原表把 e2e 归为 deserialize 根因 —— **错误**。实测 clean main 上 e2e 从不因 deserialize 失败，真根因是 orchestrator.run() finally close 调用方传入的 :memory: store（独立 store 生命周期 bug），另立 commit 5983bca 修（改测试用文件 store）。修正后基线见下表「实际」列。
+
+| 失败 | 数量 | 计划预期 | 实际 | Commit |
+|------|:---:|:---:|:---:|--------|
+| `test_checkpoint_store`（deserialize CheckpointError）| 5 | ✅ Step 2 | ✅ | 2fc8950 |
+| `test_cli_status_extended`（verdict 源字段）| 1 | ✅ Step 3 | ✅ | 89d850a |
+| `test_full_cycle_checkpoint_save_round`（e2e）| 1 | ✅ Step 2（误判）| ✅ **独立根因**（store 生命周期，非 deserialize）| 5983bca |
+| `plugin_contract --format`（独立 CLI 选项漂移）| 1 | ❌ 归 #73 | ❌ 归 #73 | — |
+
+**结果**：8 pre-existing 失败 → 1（仅 plugin_contract）；1704 passed，零新增失败。
 
 ## 5. 风险与设计合规
 
