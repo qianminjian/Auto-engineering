@@ -118,7 +118,7 @@
 | T18 | 23 条 StageRouter 转换（含 T17b + refine 上限 DS-8）| ✅ | test_stage_router.py (43) |
 | T19 | 验证层集成（component→plate→system verifier/audit）| ✅ | test_tick_orchestrator TestPlateConvergence (PLATE 6-agent + FULL 7-agent 尾部路由) |
 | T20 | plan-refine 回路（3 层 + 分源≤2/全局≤4 + RefineRequest 归一）| ✅ | loop/refine.py (B6.10 归一) + test_refine(11) + test_tick_orchestrator TestRefineRequestDelivery/TestRefineSourcesAndLimits + fragments/refine_input.md |
-| T21 | 完整 2 轮 E2E（design-doc → done）| ◐ | LEAF 单轮 TestFullLeafConvergence + **跨 tick restore E2E**（TestCrossTickE2E, 37de252）；2 轮 design-doc E2E 待补 |
+| T21 | 完整 2 轮 E2E（design-doc → done）| ✅ | LEAF 单轮 TestFullLeafConvergence + 跨 tick restore E2E TestCrossTickE2E (37de252) + **2 轮 design-doc E2E** TestTwoRoundDesignDocE2E (gap_scan→轮1 覆盖缺口 plan_refine→轮2 收敛 GOAL_ACHIEVED) |
 | T22 | BatchState 跨 tick 持久化 + 恢复 | ✅ | test_batch_state.py (21) |
 | T23 | ProgressTree 构建/同步/聚合/展示/序列化 | ✅ | test_progress_tree.py (20) |
 | T24 | ProgressTree plan_refine 动态同步（added/modified/removed/conflicts）| ✅ | test_progress_tree TestSync (单元) + test_tick_orchestrator TestPlanRefineProgressSync (编排集成: added 保留旧 / removed 标记不删) |

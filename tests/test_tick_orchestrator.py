@@ -1646,3 +1646,105 @@ class TestCrossTickE2E:
         assert a["action"] == "done"
         assert a["verdict"] == "GOAL_ACHIEVED"  # 5 次跨进程 restore 后收敛
         store.close()
+
+
+def _write_leaf_design(tmp_path) -> str:
+    """LEAF 设计文档: 1 板块 (§A1) + 1 组件 (§B2 Foo) → design-doc 模式入口."""
+    (tmp_path / ".ae-state").mkdir(parents=True, exist_ok=True)
+    design = tmp_path / "design.md"
+    design.write_text(
+        "## A1 认证板块\n\n### B2 Foo\n\n登录组件契约: 用户名+密码校验\n",
+        encoding="utf-8",
+    )
+    return str(design)
+
+
+# design-doc 2 轮 E2E 用: architect 每轮同一 batch_plan (component Foo → LEAF)
+_LEAF_ARCH_RESULT = {
+    "stage": "architect", "plan": _VALID_PLAN,
+    "batch_plan": [{
+        "batch_id": "b-Foo", "design_section": "B2", "component": "Foo",
+        "tasks": [{"id": "T1", "description": "实现 Foo", "module_ref": "§B2",
+                   "file_targets": ["foo.py"]}],
+    }],
+    "file_list": ["foo.py"], "contracts": {},
+}
+
+
+class TestTwoRoundDesignDocE2E:
+    """T21: design-doc 入口 → 完整 2 轮 E2E (轮1 覆盖缺口→plan_refine→轮2 收敛→done).
+
+    唯一同时覆盖 Phase 0 (gap_scan) 入口 + plan_refine 回路 + LEAF 收敛三段的
+    端到端路径。验证 design-doc 模式下多轮 refine 后仍能收敛到 GOAL_ACHIEVED，
+    且第一轮的覆盖缺口经归一 RefineRequest 回流 architect 而非误判收敛。
+    """
+
+    @staticmethod
+    def _dev_critic_approve(o: TickOrchestrator) -> dict:
+        """developer → critic APPROVE → 返回 component_verifier action."""
+        o.tick(_make_result_file({
+            "stage": "developer", "batch_id": "b-Foo", "files_changed": ["foo.py"],
+            "test_results": {"passed": 1, "failed": 0},
+        }))
+        return o.tick(_make_result_file({
+            "stage": "critic", "verdict": "APPROVE", "findings": [],
+            "critic_feedback": "ok",
+        }))
+
+    def test_two_round_design_doc_refine_then_converge(self, tmp_path) -> None:
+        o = _orchestrator(max_rounds=20)
+        o.project_root = tmp_path
+        o.init("实现登录", design_doc_path=_write_leaf_design(tmp_path))
+
+        # Phase 0: gap_scan (无缺口) → architect
+        a = o.tick(_make_result_file({
+            "stage": "gap_scan", "gaps": [], "scanned_sections": 1,
+            "has_blocking": False,
+        }))
+        assert a["stage"] == "architect"
+
+        # ── 轮 1: architect → dev → critic → component_verifier(MISSING) → plan_refine
+        a = o.tick(_make_result_file(_LEAF_ARCH_RESULT))
+        assert a["stage"] == "developer"
+        assert o._verification_layers == VerificationLayers.LEAF  # design_doc 单组件
+
+        a = self._dev_critic_approve(o)
+        assert a["stage"] == "component_verifier"
+
+        a = o.tick(_make_result_file({
+            "stage": "component_verifier", "component": "Foo",
+            "coverage_map": [{"design_item": "B2-1", "status": "MISSING",
+                              "file": None, "line": None, "note": "未实现"}],
+            "missing_count": 1, "diverged_count": 0,
+        }))
+        # 覆盖缺口 → 回 architect (plan_refine), 携带归一 RefineRequest
+        assert a["action"] == "architect"
+        assert a["feedback"]["mode"] == "PLAN_REFINE"
+        assert a["feedback"]["refine_request"]["source"] == "component_verifier"
+        assert o._state.plan_refine_count == 1
+
+        # ── 轮 2: architect 重排 → dev → critic → component_verifier(clean) → audit → done
+        a = o.tick(_make_result_file(_LEAF_ARCH_RESULT))
+        assert a["stage"] == "developer"  # refine 后重回开发
+
+        a = self._dev_critic_approve(o)
+        assert a["stage"] == "component_verifier"
+
+        a = o.tick(_make_result_file({
+            "stage": "component_verifier", "component": "Foo",
+            "coverage_map": [{"design_item": "B2-1", "status": "IMPLEMENTED",
+                              "file": "foo.py", "line": 10, "note": ""}],
+            "missing_count": 0, "diverged_count": 0,
+        }))
+        assert a["stage"] == "system_deep_audit"  # LEAF 跳板块/系统验证
+
+        a = o.tick(_make_result_file({
+            "stage": "system_deep_audit", "findings": [],
+            "p0_count": 0, "p1_count": 0, "p2_count": 0, "total_audited_files": 1,
+            "design_docs_stale": False, "design_doc_suggestions": "",
+            "missing_count": 0, "diverged_count": 0,
+        }))
+        assert a["action"] == "done"
+        assert a["verdict"] == "GOAL_ACHIEVED"
+        # 收敛前恰好经过 1 次 refine (2 轮 architect)
+        assert o._state.plan_refine_count == 1
