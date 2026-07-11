@@ -45,6 +45,7 @@ from auto_engineering.loop.stage_router import (
     update_majors_count,
 )
 from auto_engineering.loop.task_factory import tasks_from_batch_plan
+from auto_engineering.prompts.registry import default_registry
 
 # Gate runner type: (gate_names, project_root) → {name: GateVerdict}
 GateRunner = Callable[..., dict]
@@ -121,7 +122,11 @@ class TickOrchestrator:
         if design_doc_path:
             self._design_doc = DesignDoc.parse(design_doc_path)
 
-        self._state = EngineState(requirement=requirement, thread_id=str(uuid4()))
+        self._state = EngineState(
+            requirement=requirement,
+            thread_id=str(uuid4()),
+            prompt_registry_hash=default_registry().registry_hash(),  # B12.5 版本锁
+        )
         if design_doc_path:
             # 持久化路径 — 跨进程 restore 据此重 parse 设计文档 (T9a)
             self._state.design_doc_path = design_doc_path
@@ -218,6 +223,18 @@ class TickOrchestrator:
             self._plan = tasks_from_batch_plan(batch_plan, state.requirement)
             self._verification_layers = determine_verification_layers(
                 self._design_doc, batch_plan)
+
+        # B12.5 版本锁: 运行中 prompt 文件被改 → hash 不符 → 警告 (非致命, §A.1 stderr)
+        stored_hash = state.prompt_registry_hash
+        if stored_hash:
+            current_hash = default_registry().registry_hash()
+            if stored_hash != current_hash:
+                print(
+                    f"[warn] prompt registry hash 不符 "
+                    f"(checkpoint={stored_hash[:12]} 当前={current_hash[:12]}): "
+                    f"loop 运行中 prompt 已变更, 同一 loop 不应换 prompt (B12.5)。",
+                    file=sys.stderr,
+                )
 
         return self
 

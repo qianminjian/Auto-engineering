@@ -57,6 +57,16 @@ class PromptRegistry:
         self._require(role)
         return self._hashes[role]
 
+    def registry_hash(self) -> str:
+        """全 registry 内容的聚合 sha256 (§B12.5 版本锁).
+
+        对全部 role 按名排序拼接其组合 prompt 再算 sha256 —— 任一 prompt 文件
+        变更即改变聚合 hash。Engine init 盖此 hash 入 EngineState, resume 时校验:
+        运行中 prompt 被改 → hash 不符 → 警告 (同一 loop 不应换 prompt)。
+        """
+        joined = "\n".join(f"{r}\x00{self._roles[r]}" for r in sorted(self._roles))
+        return hashlib.sha256(joined.encode("utf-8")).hexdigest()
+
     def model(self, role: str) -> str:
         """返回该 role 的 model id (frontmatter 声明, 驱动 Haiku/Sonnet 分层)."""
         self._require(role)

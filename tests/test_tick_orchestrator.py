@@ -1128,6 +1128,49 @@ class TestCrossProcessRestore:
         assert cid  # init 返回值 (action dict) 非空
 
 
+class TestPromptVersionLock:
+    """B12.5 版本锁: init 盖 registry hash, restore 校验漂移 (警告非致命)."""
+
+    def test_init_stamps_prompt_registry_hash(self) -> None:
+        from auto_engineering.prompts.registry import default_registry
+
+        o = _orchestrator()
+        o.init("req")
+        assert o._state.prompt_registry_hash == default_registry().registry_hash()
+        assert o._state.prompt_registry_hash  # 非空
+
+    def test_restore_matching_hash_no_warning(self, tmp_path, capsys) -> None:
+        from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
+
+        db = tmp_path / "cp.db"
+        store = SQLiteCheckpointStore(db)
+        o = _store_orchestrator(store)
+        o.init("实现 X")
+        store.close()
+
+        store2 = SQLiteCheckpointStore(db)
+        TickOrchestrator.restore(tmp_path, store2)
+        store2.close()
+        assert "hash 不符" not in capsys.readouterr().err
+
+    def test_restore_mismatched_hash_warns(self, tmp_path, capsys) -> None:
+        from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
+
+        db = tmp_path / "cp.db"
+        store = SQLiteCheckpointStore(db)
+        o = _store_orchestrator(store)
+        o.init("实现 X")
+        # 篡改持久化的 hash → 模拟 loop 运行中 prompt 文件被改
+        o._state.prompt_registry_hash = "0" * 64
+        o._save_checkpoint()
+        store.close()
+
+        store2 = SQLiteCheckpointStore(db)
+        TickOrchestrator.restore(tmp_path, store2)
+        store2.close()
+        assert "hash 不符" in capsys.readouterr().err
+
+
 class TestInitPersistsDesignDocPath:
     """T9a 前置: init 必须持久化 design_doc_path, restore 才能重 parse 设计文档."""
 

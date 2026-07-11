@@ -97,6 +97,39 @@ class TestHash:
         assert h1 == h2
 
 
+class TestRegistryHash:
+    """B12.5 版本锁: 全 registry 聚合 sha256, 用于 resume 校验 prompt 漂移."""
+
+    def test_registry_hash_is_sha256_hex(self, registry: PromptRegistry) -> None:
+        h = registry.registry_hash()
+        assert len(h) == 64
+        assert all(c in "0123456789abcdef" for c in h)
+
+    def test_registry_hash_deterministic_across_instances(self) -> None:
+        assert (
+            PromptRegistry(_REAL_DIR).registry_hash()
+            == PromptRegistry(_REAL_DIR).registry_hash()
+        )
+
+    def test_registry_hash_covers_all_roles_not_single(
+        self, registry: PromptRegistry
+    ) -> None:
+        # 聚合 hash 覆盖全部 role, 不等于任一单 role 的 hash
+        assert registry.registry_hash() != registry.hash("developer")
+
+    def test_registry_hash_changes_when_role_content_changes(
+        self, tmp_path: Path
+    ) -> None:
+        d1 = tmp_path / "r1"
+        _make_role_dir(d1, body="version one body")
+        d2 = tmp_path / "r2"
+        _make_role_dir(d2, body="version two body — DIFFERENT")
+        assert (
+            PromptRegistry(d1).registry_hash() != PromptRegistry(d2).registry_hash()
+        )
+
+
+
 class TestModel:
     def test_haiku_for_component_verifier(self, registry: PromptRegistry) -> None:
         assert registry.model("component_verifier") == "claude-haiku-4-5-20251001"
@@ -163,5 +196,16 @@ def _make_min_dir(base: Path, *, role_fm: str) -> None:
     roles.mkdir()
     (roles / "x.md").write_text(
         f"---\nrole: x\nmodel: m\n{role_fm}\n---\nbody text\n",
+        encoding="utf-8",
+    )
+
+
+def _make_role_dir(base: Path, *, body: str) -> None:
+    """构造最小 prompts 目录: 1 role (无 fragment) + 给定正文, 用于 hash 对比."""
+    (base / "fragments").mkdir(parents=True)
+    roles = base / "roles"
+    roles.mkdir(parents=True)
+    (roles / "x.md").write_text(
+        f"---\nrole: x\nmodel: m\nfragments: []\n---\n{body}\n",
         encoding="utf-8",
     )

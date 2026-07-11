@@ -15,7 +15,7 @@ import pytest
 
 from auto_engineering.engine.state import EngineState, LoopState
 
-# v5.6: 22 (v5.5) + 17 新增 (#20-36) = 39 dataclass 字段
+# v5.6: 22 (v5.5) + 17 (#20-36) + 1 (#37 B12.5 版本锁) = 40 dataclass 字段
 _EXPECTED_V56_FIELDS = {
     "requirement", "current_stage", "round",
     "thread_id", "majors_in_a_row", "total_majors",
@@ -32,6 +32,8 @@ _EXPECTED_V56_FIELDS = {
     "pending_research_ids", "research_archive", "pending_gap_decisions",
     "red_evidence", "design_doc_path", "refine_request_json",
     "plan_refine_by_source",
+    # #37 B12.5 版本锁
+    "prompt_registry_hash",
     # 内部写入审计日志
     "_write_log",
 }
@@ -142,7 +144,7 @@ class TestEngineStateFieldDefaults:
     """
 
     def test_all_39_fields_exist(self) -> None:
-        """EngineState 暴露 39 个字段 (v5.6: 22 + 17 新增 #20-36)."""
+        """EngineState 暴露 40 个字段 (v5.6: 22 + 17 #20-36 + 1 #37 B12.5)."""
         from dataclasses import fields
 
         state = EngineState()
@@ -295,11 +297,11 @@ class TestEngineStateBoundary:
         assert not hasattr(state, "nonexistent")
 
     def test_to_dict_contains_all_38_fields(self) -> None:
-        """to_dict 输出含全部 38 字段 (v5.6: 39 - _write_log)."""
+        """to_dict 输出含全部 39 字段 (v5.6: 40 - _write_log)."""
         state = EngineState()
         d = state.to_dict()
-        assert len(d) == 38, (
-            f"to_dict 应含 38 字段, 实际 {len(d)}: "
+        assert len(d) == 39, (
+            f"to_dict 应含 39 字段, 实际 {len(d)}: "
             f"{sorted(d.keys())}"
         )
         assert "suggested_fix" in d, "to_dict 必须包含 suggested_fix (Self-Refine 深化)"
@@ -416,7 +418,7 @@ class TestV55EngineStateFields:
         assert state.audit_findings is None
 
     def test_field_count_is_39(self) -> None:
-        """v5.6: 字段总数 22 → 39 (新增 #20-36, 17 字段)."""
+        """v5.6: 字段总数 22 → 40 (#20-36 共 17 + #37 B12.5 版本锁)."""
         from dataclasses import fields
 
         state = EngineState()
