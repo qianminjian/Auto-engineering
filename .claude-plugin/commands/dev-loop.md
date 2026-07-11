@@ -1,270 +1,130 @@
 ---
 name: dev-loop
-description: Multi-agent dev-loop — Architect (Plan) → Developer (TDD) → Critic (code-reviewer) → Auto-fix → PR
+description: Auto-Engineering dev-loop — v5.6 Tick-Based Discrete Invocation (architect → developer → critic → 5-layer verification), Python-controlled, Agent-executed
 ---
 
-# /ae:dev-loop — v5.1 Agent Tool Direct Execution ⚠️ 待 v5.6 重写
+# /ae:dev-loop — v5.6 Tick-Based Discrete Invocation
 
-> ⚠️ **过时提示**：本文件是 v5.1 遗留（5-stage Agent Tool 直执行）。v5.6 生产路径已改为
-> **Tick-Based Discrete Invocation 协议**（`ae dev-loop --init` → `--tick --result` 循环，
-> 8 stage + 5 层验证 + Pre-flight Gap Analysis），依据 **BEACON 决策 #39**（status ✅）+
-> `design/v5.6-Design-Loop.md` §C.7。本文件的 v5.6 重写为实施计划 C.12 **T10**。
-> T10 完成前，以下 5-stage 描述仅供参考，不代表当前设计。
+Requirement-to-PR development loop. The **Python engine is a deterministic controller**
+that never calls an LLM; the **Agent (you) is the LLM executor**. You drive the loop by
+repeatedly calling `ae dev-loop --tick`, reading the returned `action` JSON, doing that
+role's work, writing a result file, and ticking again — until `action == "done"`.
 
-Five-stage automated development pipeline (v5.1 legacy). The Agent executes all stages directly
-(not via `ae dev-loop` subprocess), using real Plan agent and code-reviewer agent.
+> Authority: BEACON 决策 #39 (Tick protocol, ✅) + #40/#41 (5-layer verification) +
+> #46 (Internalization Constraint — no external agent spawns) + `design/v5.6-Design-Loop.md`
+> §A.1 / §B13 / §C.3 (file-bridge) / §C.5 (tick).
+
+## Core model (§A.1)
+
+- **Each `ae dev-loop --tick` is a separate OS process.** It restores state from SQLite
+  (`.ae-state/checkpoints.db`), advances exactly one tick, prints the next `action` JSON to
+  **stdout**, and exits. Progress/logs go to **stderr**.
+- **Python owns all control flow deterministically**: StageRouter (T1–T22), 5 Guardrails,
+  7+1 Gates, ConvergenceJudge, BatchState cursor, Checkpoint. It computes *what to do next*.
+- **You own all reasoning**: for each `action`, you act as the named role, produce the
+  `expected_format` JSON, and write it to a result file. You never decide routing.
 
 ## Usage
 
 ```
 /ae:dev-loop "Implement OAuth2 login flow"
-/ae:dev-loop "Refactor auth module" --max-rounds 3
-/ae:dev-loop --resume
+/ae:dev-loop "Implement payment module" --design-doc design/payment-spec.md
+/ae:dev-loop --resume <checkpoint_id>
 ```
 
-## Flags
+## CLI contract (§B13)
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--max-rounds` | 3 | Max Self-Refine rounds (MAJOR → fix → re-review) |
-| `--no-deep-review` | false | Skip Stage 4 deep review + auto-fix |
-| `--no-pr` | false | Skip Stage 5 PR creation |
+| Command | Behavior | Output | Exit |
+|---------|----------|--------|:---:|
+| `ae dev-loop --init "req" [--design-doc <path>]` | Initialize loop | first action JSON (stdout) | 0/1 |
+| `ae dev-loop --tick --result <file>` | Process one tick | next action JSON (stdout) | 0/1 |
+| `ae dev-loop --status` | Query current tick state | state summary JSON | 0 |
+| `ae dev-loop --resume <id>` | Restore from checkpoint | action JSON | 0/1 |
 
----
+`--design-doc` enables **Pre-flight Gap Analysis** (Phase 0). Without it, the loop starts in
+fuzzy-requirement mode (architect infers the plan).
 
-## Stage 1 — Architect (Plan Agent)
-
-**Objective**: Produce a structured implementation plan.
-
-**Execution**:
-Spawn a Plan agent via `Agent` tool with `subagent_type="Plan"`.
+## The driving loop (your algorithm)
 
 ```
-Agent(
-  subagent_type="Plan",
-  description="Architect: design implementation plan",
-  prompt="
-    Analyze the following requirement and produce a structured implementation plan:
-    
-    REQUIREMENT: {requirement}
-    
-    Output must be valid JSON with these fields:
-    - plan: string — architecture overview and approach
-    - file_list: list[string] — files to create/modify (ordered)
-    - batch_plan: list[object] — task breakdown. Each task has:
-        id, title, description, expected_output, role (always 'developer'),
-        target_files (list), depends_on (list, may be empty)
-    - contracts: object — cross-module interfaces if any (may be empty)
-    
-    Constraints:
-    - Each batch ≤ 5 files
-    - Each task independently testable
-    - Dependencies form a DAG (no cycles)
-    - Use read_file / search_code / list_dir to understand existing code first
-  "
-)
+1. action = run: ae dev-loop --init "<requirement>" [--design-doc <path>]
+2. while action.action != "done":
+     if action.action == "error":
+         report action.error_code + message to the user; STOP (do not silently downgrade)
+     result = <do the work for action.action>          # see Action reference
+     write result JSON to a temp file; result["stage"] MUST equal action.stage
+     action = run: ae dev-loop --tick --result <temp file>
+3. On "done": report action.verdict + verdict_reason. If GOAL_ACHIEVED/QUALITY → create PR.
 ```
 
-**Gate check**: Plan agent must output structured JSON with all required fields.
-If output is only 2-3 lines of text without JSON structure → **re-spawn Plan agent** (do not proceed).
+Print progress before each tick: `[Tick N | stage <action.stage>] …`.
 
-**Output**: `batch_plan`, `file_list`, `plan`, `contracts`
+## Action reference
 
----
+Each tick returns one `action`. Perform it, then write a result whose `stage` matches, with
+the fields listed in the action's `expected_format`.
 
-## Stage 2 — Developer (Agent Self, TDD)
+| `action` | Role (you act as) | What you do | Result you write |
+|----------|-------------------|-------------|------------------|
+| `gap_scan` | Gap scanner | Grade fuzzy design sections (architectural/component/module) | `{gaps, scanned_sections, has_blocking}` |
+| `gap_review` | Facilitator | Per gap, `AskUserQuestion`: Fill / Research / Defer / Defer+Research. Blocking architectural gaps may NOT be deferred | `{decisions}` |
+| `research` | Researcher | Tiered lookup (Tier0 CLAUDE.md refs → Tier1 ref code → Tier2 docs → Tier3 web). Ref-code uses 3-step method, **no bulk/parallel scans** (96GB incident) | `{findings, sources, source_tier, confidence, recommended_design}` |
+| `architect` | Architect | Produce plan + task DAG. Each batch ≤5 files, tasks independently testable, deps form a DAG | `{plan, batch_plan, file_list, contracts}` |
+| `developer` | Developer | For each task in the batch: **TDD Red→Green→Refactor** + one atomic commit per task | `{stage, files_changed, test_results, commit_hash}` |
+| `critic` | Critic | **Diff-level** review only (not requirement acceptance). Verdict APPROVE/MAJOR + findings | `{stage, verdict, findings, critic_feedback}` |
+| `component_verifier` | Component verifier (Haiku-tier) | Map component design spec → code; mark IMPLEMENTED/MISSING/DIVERGED | `{stage, coverage_map, missing_count, diverged_count}` |
+| `plate_deep_audit` | Plate auditor (Sonnet-tier) | Cross-component contract + quality audit for the plate | `{stage, findings, p0_count, p1_count, p2_count, cross_component_issues, total_audited_files}` |
+| `system_verifier` | System verifier (Haiku-tier) | Full design→code coverage map (exit gate, once) | `{stage, full_coverage_map, total_design_items, covered_count, missing_count, diverged_count}` |
+| `system_deep_audit` | System auditor (Sonnet-tier) | Full 6-dimension code-quality audit (exit gate, once) | `{stage, findings, p0_count, p1_count, p2_count, total_audited_files, design_docs_stale, design_doc_suggestions}` |
+| `done` | — | Loop terminated | (nothing — report to user) |
+| `error` | — | Engine-side error (parse/validation/stage mismatch) | (nothing — report `error_code`) |
 
-**Objective**: Implement each task in `batch_plan` following strict TDD.
+Verification depth auto-scales by design layer (#41): single component (LEAF) runs 5 layers,
+single plate (PLATE) 6, multi-plate (FULL) all 7. Python picks the path; you just execute the
+action you're handed.
 
-**Execution**:
-For each task in `batch_plan` (in dependency order, same-level tasks can be parallel):
+## Roles are internal — no external agent spawns (#46 B14)
 
-### TDD Cycle per Task
+This loop has **zero runtime external dependencies**. Do **not**:
 
-```
-RED:   Write a failing test for the task's expected_output
-       → run_tests → confirm FAIL (if it passes, the test is wrong)
-GREEN: Write minimal implementation to pass the test
-       → run_tests → confirm PASS
-       → NO extra features, NO "future-proofing"
-REFACTOR: Clean up code while tests stay green
-       → run_tests → confirm still PASS
-       → git_commit with message: "feat({scope}): {task.title}"
-```
+- ❌ spawn `subagent_type="Plan"` for architect — you act as architect directly, using the
+  project's architect prompt (surfaced in the action `context` / `expected_format`).
+- ❌ spawn `subagent_type="code-reviewer"` for critic — you act as critic directly.
+- ❌ call `/code-review --fix --auto` or `gsd-code-fixer` — code review is covered by the
+  built-in `critic` + 4 verification layers.
+- ❌ call any `gsd-*` agent or MCP tool as part of the loop.
 
-### Constraints
+The severity/verdict rubric (P0 blocking / P1 important / P2 suggestion; APPROVE = 0 P0 + ≤2 P1;
+MAJOR = ≥1 P0 or ≥3 P1) is enforced by Python via the result you submit — supply honest findings.
 
-- Each commit = one task (atomic)
-- Never skip RED phase (no implementing before test exists)
-- Never mark tests as skip/xfail to bypass failures
-- After ALL tasks complete: run full test suite to verify no regressions
+## Convergence & done verdicts
 
-### Gate Check (after all tasks)
+Python decides termination and emits `{"action":"done", "verdict":…, "verdict_reason":…}`:
 
-Run all gates in parallel:
-```
-safety → lint → type_check → test → tdd → build
-```
+| verdict | Meaning |
+|---------|---------|
+| `GOAL_ACHIEVED` | APPROVE + all gates pass + verification layers clean → create PR |
+| `QUALITY` | Quality bar met at round limit |
+| `STAGNANT` | No progress across rounds → report to user |
+| `HARD_LIMIT` | `max_rounds` reached → report to user |
+| `REFINE_LIMIT` | plan-refine loop cap (per-source ≤2 / global ≤4) hit → report to user |
 
-Record: `files_changed`, `commit_hash` (of last commit), `test_results`
+## On `done` → PR (human gate, outside the loop)
 
----
+When verdict is `GOAL_ACHIEVED`/`QUALITY`, push and open a PR for human review (the only human
+gate; it lives outside the loop per #45). Use `gh` (or the PRBackend abstraction). Include
+requirement, rounds, gate summary, and a reviewer checklist.
 
-## Stage 3 — Critic (code-reviewer Agent)
+## Failure transparency (do not silently downgrade)
 
-**Objective**: Deep code review of developer's output. This is the gate check before proceeding.
-
-**Execution**:
-Spawn a code-reviewer agent via `Agent` tool with `subagent_type="code-reviewer"`.
-
-```
-Agent(
-  subagent_type="code-reviewer",
-  description="Critic: review developer output",
-  prompt="
-    Review the developer's code changes against the original requirement and plan.
-    
-    CONTEXT:
-    - Requirement: {requirement}
-    - Plan: {plan_summary}
-    - Files changed: {files_changed}
-    - Test results: {test_results}
-    - Gate results: {gate_results}
-    - Commits: {commit_list}
-    
-    Use read_file to examine the actual code changes.
-    Use run_tests to verify tests pass.
-    Use git_diff to review the diff.
-    
-    Output structured findings as JSON:
-    {
-      \"verdict\": \"APPROVE\" | \"MAJOR\",
-      \"findings\": [
-        {
-          \"file\": \"path/to/file\",
-          \"line\": 123,
-          \"severity\": \"P0\" | \"P1\" | \"P2\",
-          \"dimension\": \"architecture\" | \"code_quality\" | \"engineering\" | \"team_collab\" | \"logic_fidelity\" | \"tdd\",
-          \"issue\": \"specific description\",
-          \"suggested_fix\": \"concrete fix suggestion\"
-        }
-      ],
-      \"critic_feedback\": \"overall assessment\"
-    }
-    
-    Severity:
-    - P0: blocking — logic error, security issue, test failure, unimplemented requirement
-    - P1: important — missing error handling, unclear naming, insufficient tests
-    - P2: suggestion — style improvement, optional refactor
-    
-    Verdict:
-    - APPROVE: 0 P0 + ≤2 P1
-    - MAJOR: ≥1 P0 or ≥3 P1
-  "
-)
-```
-
-**If MAJOR**:
-1. Log findings prominently
-2. Agent fixes P0 first, then P1 (up to 3 per batch)
-3. Each fix: edit → run_tests → git_commit
-4. Re-spawn code-reviewer agent to re-review
-5. Max 3 Self-Refine rounds (consecutive_majors ≥ 3 → HARD_LIMIT, report to user)
-
-**If APPROVE**: Proceed to Stage 4.
-
----
-
-## Stage 4 — Deep Review + Auto-fix
-
-**Objective**: Final deep review using the `/code-review` skill, with automatic fix of remaining P1/P2 issues.
-
-**Prerequisite**: Stage 3 returned APPROVE.
-
-**Execution**:
-Run the built-in `/code-review` command with `--fix` flag:
-
-```
-/code-review --fix --auto
-```
-
-This spawns a code-reviewer agent that:
-1. Reads all changed source files
-2. Produces REVIEW.md with severity-classified findings
-3. Auto-fixes P1 and P2 issues (gsd-code-fixer)
-4. Commits each fix atomically
-5. Re-reviews to confirm fixes (--auto loop, capped at 3 iterations)
-
-**Skip with**: `--no-deep-review` flag.
-
----
-
-## Stage 5 — PR + Merge
-
-**Objective**: Push changes and create PR for human review.
-
-**Execution**:
-
-```bash
-# Push
-BRANCH=$(git branch --show-current)
-git push -u origin "$BRANCH"
-
-# Create PR
-gh pr create \
-  --title "{descriptive title from requirement}" \
-  --base main \
-  --head "$BRANCH" \
-  --body "## AI Dev-Loop Summary
-
-**Requirement**: {requirement}
-**Rounds**: {rounds}
-**Status**: APPROVED by Critic + Deep Review passed
-
-### Gate Results
-{gate_results_summary}
-
-### Changes
-$(git diff origin/main...HEAD --stat)
-
-### Human Review Checklist
-- [ ] Core logic matches the requirement
-- [ ] No security issues
-- [ ] Test coverage is adequate
-- [ ] Architecture is consistent
-
----
-:robot: Auto-Engineering v5.1 | Critic + code-reviewer approved"
-```
-
-**Skip with**: `--no-pr` flag.
-
----
-
-## Convergence Rules
-
-| Condition | Action |
-|-----------|--------|
-| max_rounds reached | HARD_LIMIT — report to user |
-| consecutive_majors ≥ 3 | HARD_LIMIT — report findings, ask user |
-| APPROVE + all gates pass + deep review pass | SUCCESS → PR created |
-
----
-
-## Key Principles
-
-- Stage 1 MUST spawn Plan agent (not just 3 bullet points)
-- Stage 3 MUST spawn code-reviewer agent (not just quick glance)
-- Each TDD cycle MUST follow RED → GREEN → REFACTOR order
-- Gates MUST run in parallel after all tasks complete
-- Self-Refine: MAJOR → fix → re-review (not skip)
-- Stage 4 is automated, Stage 5 is automated (no user prompts unless HARD_LIMIT)
-- Every agent spawn must display progress: `[Stage N/5] Running <stage>...`
-- If Plan agent or code-reviewer agent is unavailable, REPORT to user, do not silently downgrade
+- If the CLI exits non-zero or a Bash block fails → **read the error and report it to the user**.
+  Do not skip the step or fall back to hand-coding without telling them.
+- If `action == "error"` → surface `error_code` + `message`; stop after 2 consecutive
+  unrecoverable errors and ask the user to check installation (`ae doctor`).
+- The user has the right to know whether the loop is really running — never fake a `done`.
 
 ## References
 
-- CLAUDE.md § /ae:dev-loop Agent Tool 执行模式 — this protocol
-- design/discussion/v5.1-code-review-integration-gap.md — architecture analysis
-- design/v5.6-Design-Loop.md — complete Loop design
-- atdo Step 7.5 Gate Code Review — required code review gate
+- `design/v5.6-Design-Loop.md` — §A.1 (process model) / §B13 (CLI) / §C.3 (file-bridge) / §C.5 (tick) / §B2,B4,B6 (verification layers)
+- `design/BEACON.md` — 决策 #39/#40/#41/#46
+- `docs/EARS-v5.0.md` — acceptance criteria (15 AC + 5 IL-AC)
