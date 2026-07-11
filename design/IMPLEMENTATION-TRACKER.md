@@ -32,13 +32,14 @@
 |-------|------|:---:|:---:|------|
 | 1 | 数据模型 + 核心路由 | 6 | 6 | ✅ 完成 |
 | 2 | TickOrchestrator | 6 | 6 | ✅ 完成（代码；**未接线**）|
-| 3 | CLI + Command | 7 | 0 | ☐ 未开始（**含接线**：T9 --tick 入口 / T10 命令重写）|
+| 3 | CLI + Command | 8 | 0 | ☐ 未开始（**含接线**：T9 --tick 入口 / T10 命令重写 / T10d S-1 语义评估代码移除）|
 | 4 | Agent Prompt 模板 | 10 | 0 | ☐ 未开始 |
 | 4b | Commit→PR→CI/CD Pipeline | 7 | 0 | ☐ 未开始 |
 | 5 | 测试 | 17 | 4 | ◐ 部分（单元层 T17/T18/T22/T23 ✅；集成/E2E 待补）|
 | 6 | 审计与验证方法论 (B15) | 5 | 0 | ☐ 未开始（deep_audit/audit/guardrail 仅 v5.5 骨架）|
 | 7 | Init-Loop 契约扩展 | 4 | 0 | ☐ 未开始（schema.json 缺）|
-| **合计** | | **62** | **16** | **~26% 代码；端到端 0%（未接线）** |
+| 8 | 设计文档深化补充（审计 S-task）| 22 | 22 | ✅ 完成（2026-07-11 深度审计 → 全部收口）|
+| **合计** | | **85** | **38** | **~19% 代码；文档深化 22/22 ✅；端到端 0%（未接线）** |
 
 ---
 
@@ -79,6 +80,7 @@
 | T10c | `tools/pr_backend.py`（**新建** PRBackend/GitHub/GitLab）| T26e | ☐ | |
 | T11 | `skills/auto-engineering/SKILL.md` 分层验证约束 | Plugin 验收 + grep | ☐ | |
 | T12 | `design/BEACON.md` 更新决策表+当前状态 | 文档评审 | ☐ | |
+| T10d | v5.5 orchestrator 退役时移除 semantic_evaluator 全链（S-1 代码；semantic_evaluator.py + orchestrator/convergence/round/checkpoint/status + 8 测试）| test_loop_orchestrator/semantic(ext) | ☐ | |
 
 ## Phase 4 — Agent Prompt 模板
 
@@ -150,6 +152,39 @@
 
 ---
 
+## Phase 8 — 设计文档深化补充（2026-07-11 深度审计 S-task）
+
+> 来源：2026-07-11 设计文档深度审计（`_scratch/design-audit/AUDIT-REPORT.md` + `findings-{A,B,C}.md`）。
+> 性质：**设计规格缺陷收口**（矛盾/契约模糊/边界未定义），非代码缺口。方向遵守 design-document-inviolability：补全规格，不降级。
+> 决策（2026-07-11 用户定案）：全做；S-1 方向A（移除语义评估）；S-1 **代码**移除跟踪至 Phase 3 T10d（随 v5.5 退役，避免破坏活跃路径）。
+
+| S | 深化项 | 严重度 | 位置 | 状态 | Commit |
+|---|-------|:---:|------|:---:|--------|
+| S-1 | B4↔B7 语义评估矛盾收口（v5.6 全路径无语义评估；Python 永不调 LLM）| P1 | §B4 L764/§B7 L1187,L1198 | ✅ | 本轮（代码→T10d）|
+| S-2 | coverage_map item 权威 schema（消解 B6.4 字符串 vs B6.6a/B6.10 结构体）| P1 | §B6.4/§B6.6a/§B6.10 | ✅ | 本轮 |
+| S-3 | FreshGate(G8) 契约：B5 每 Gate 产出 files_snapshot_sha+ran_at | P1 | §B3.2/§B5.1 | ✅ | 本轮 |
+| S-4 | guardrail_retry_counters 键粒度 + G8 retry 语义（rerun_gates 动作）| P1 | §B3 L629-649,L646,L702 | ✅ | 本轮 |
+| S-5 | file-bridge 契约边界矩阵（缺失/半写/错位/重复/超时→action+error_code+恢复）| P1 | §C.3.5（新增）| ✅ | 本轮 |
+| S-6 | Guardrail 数量统一（当前5/目标9 + 状态列）| P1 | §C.8/附录/§B3 | ✅ | 本轮 |
+| S-7 | done verdict 完整枚举 + 终态优先级 + HARD_LIMIT 拆名 | P1 | §C.3.1/§C.5.4/§C.5.5 | ✅ | 本轮 |
+| S-8 | B2 转换表增"决策方(router 纯转换/orchestrator 委派)"列 | P1 | §B2 L544-556 | ✅ | 本轮 |
+| S-9 | REDGuard RED 证据机制（否则明标为启发式）| P1 | §B15.2 | ✅ | 本轮 |
+| S-10 | ResearchAgent 工具级内存护栏规格（authz 限 Read 范围/禁 ls -R）| P1 | §B10.6/§B11.7 | ✅ | 本轮 |
+| S-11 | B14 外部依赖清单收口（audit.md 内化关系，消解与 B15.1 矛盾）| P1 | §B14.1/§B15.1 | ✅ | 本轮 |
+| S-12 | commit 序列规范（test+impl）+ B9.5 父节点 pending 聚合分支 | P1 | §B13/§B15/§B9.5 | ✅ | 本轮 |
+| S-13 | C.12/C.12.1 路径修正 tick_orchestrator.py + 矩阵加"实现状态"澄清 | P1 | §C.12 Phase2 | ✅ | 本轮 |
+| S-14 | B1.1 数据模型表补全 #26/#33/#34/#35/#36 | P2 | §B1.1 L370 | ✅ | 本轮 |
+| S-15 | B6.1a 现状描述追代码（task_factory 已迁移嵌套 schema）| P2 | §B6.1a L916 | ✅ | 本轮 |
+| S-16 | B4 参数→判定对照 + semantic_satisfied 标 legacy | P2 | §B4 | ✅ | 本轮 |
+| S-17 | plan_refine 双重身份定案（architect 子模式；澄清 _VALID_STAGES 语义）| P2 | §B1.1/§C.10 | ✅ | 本轮 |
+| S-18 | checkpoints WITHOUT ROWID + 大 blob 反模式（定案改 rowid，迁移待落地）| P2 | §B1.3 L485 | ✅ | 本轮（DDL 迁移单列）|
+| S-19 | RegressionGate 新建文件分支进伪码 + 正反例断言 | P2 | §B3.3 | ✅ | 本轮 |
+| S-20 | 示例坐标加"(示意)"标注（防误读为接线证据）| P2 | §C.3.2/C.3.1 | ✅ | 本轮 |
+| Q-1 | B10.5 Defer+Research 复审回路(T0.7)：定案保留 + 理由 | P2 | §B10.5 | ✅ | 本轮 |
+| Q-2 | B9 ProgressTree 聚合/removed 保留：定案保留 + 理由 | P2 | §B9.1 | ✅ | 本轮 |
+
+---
+
 ## 阻塞/决策日志
 
 | 日期 | T-task | 阻塞/决策 | 处理 |
@@ -161,3 +196,4 @@
 | 2026-07-09 | T4→T3 | **组内依赖发现**：T3 BatchState.from_design_doc 构造 Plate/Component（B10.4a 数据类），故 T4（定义这些类）须先于 T3。 | ✅ 新文件组内重排：T4 → T3 → T4b → T4c。T4 完成（本次，23 tests）。 |
 | 2026-07-09 | T2 | **next() 签名迁移策略**：DS-8 双预算取代 v5.5 单一 plan_refine_count/max_plan_refines。next() 有 4 处调用（orchestrator.py 584/675/713/835）+ 6 处直接测试调用。713/835 只用前 4 参数安全。 | ✅ 用户定案 **A 单一新 API + 迁移保留 Orchestrator**：next() 只留新签名（无旧参数别名，遵守"禁向后兼容 hack"）。584 T9 分支改直调 `StageRouter.refine_allowed`（单一真相源，单全局预算旁路分源），保留 v5.5 "T9-LIMIT" 标签（新 TickOrchestrator 用 "REFINE_LIMIT"）；675 去 max_plan_refines。测试 6 处直调迁移到 DS-8 参数 + 断言 T9-LIMIT→REFINE_LIMIT。153 tests green，lint 无新增。 |
 | 2026-07-10 | 全表 | **状态核对：tracker 严重滞后于代码**。Phase 2（T5-T8+TickOrchestrator）实际已在 4cea2cd/627de93/f518bb8/7547c19/54f123a/96399ad 落地，表却仍标 0/6。核对后更新：Phase 2→6/6✅、Phase 5→4/17◐（单元层）、总完成 6→16。**发现关键风险：v5.6 Tick 引擎未接入 CLL**（dev_loop.py 仍用旧 Orchestrator，无 --tick 入口，dev-loop.md 仍 v5.1 模式）——单测全绿但端到端 0%。接线归 Phase 3 T9/T10。 | ✅ 已更新总览+Phase2+Phase5 表 + 关键风险标注。DESIGN-REFINEMENT-PLAN.md 核对：13 DS 全✅（设计细化门，非实现任务），无待纳入项。 |
+| 2026-07-11 | Phase 8 + T10d | **设计文档深度审计（S-task 落表）**：3 并行子代理审 v5.6-Design-Loop + INIT-LOOP-CONTRACT，发现 P0×4（全代码缺口，已有 T 编号）+ P1×13 + P2×7 + 过度设计×2（均设计规格缺陷：矛盾/契约模糊/边界未定义）。用户定案：全做 + S-1 方向A（移除语义评估）。S-1 **代码**移除跟踪至 Phase 3 T10d（随 v5.5 退役，避免破坏活跃路径）。 | ◐ Phase 8 执行中；审计报告 `_scratch/design-audit/AUDIT-REPORT.md` + `findings-{A,B,C}.md`。 |

@@ -1,4 +1,4 @@
-> 创建：2026-06-24 | 更新：2026-07-09 | 阶段：v5.6 Design — Tick-Based Discrete Invocation + 5 层验证 + Commit→PR→CI/CD Pipeline
+> 创建：2026-06-24 | 更新：2026-07-11 | 阶段：v5.6 Design — Tick-Based Discrete Invocation + 5 层验证 + Commit→PR→CI/CD Pipeline
 > ⚠️ **决策状态翻转管控**：status 列 ✅→❌ 或 ❌→✅ 必须经用户审批。AI 不得自行翻转。详见 `.claude/rules/design-document-inviolability.md` §2。
 
 ## 目标与成功标准
@@ -40,18 +40,17 @@
 | **46** | **外部 Skill/Agent 依赖管控 (Internalization Constraint, B14)** | 全项目审计：运行时外部 agent 依赖仅在 dev-loop.md v5.1（Plan/code-reviewer//code-review/**gsd-code-fixer** 4 项，2026-07-04 生产失效根因）。原则：① 自有 role+B12 prompt 替代外部 agent spawn（v5.6 已设计，T10 移除）；② 外部技术用**复制内化**（Superpowers→prompts.py 已完成），注释溯源非运行时链接；③ 系统依赖(gh/uv/PyPI)不内化但需 doctor 预检 + 抽象(gh→PRBackend)；④ **gsd-* 零容忍**；⑤ MCP 零运行时调用。D19 | 2026-07-09 | ✅ |
 | **47** | **借鉴 Superpowers 验证方法论加固审计与验证层 (B15)** | 合并两组分析（Superpowers 三工具方法论 + `/audit` 三层现状）去重为统一借鉴清单，一律实现为 **Python 确定性门控**（非 Agent 自觉）：REDGuard(TDD RED commit-time 校验,P0) / FreshGate(Gate 证据新鲜度锁定,P1) / RegressionGate(revert-red-restore+审计规则自测,P1)；补 `/audit` 缺口：DeepAuditGate 骨架→实际(P0) / `/audit` 内化去 Superpowers 运行时(P0,B14) / AuditGate 语义层+与 system_deep_audit 分层澄清(P1)。**不借鉴** Agent 自调节(v5.0灭亡根因)/压力测试评估/阈值自学习(YAGNI)。承接 D16+D9。D20 | 2026-07-09 | ✅ |
 | **48** | **Init-Loop 契约 v5.6 扩展 (IL.2-IL.5)** | 评估确认契约架构选型正确(单向/文件桥接/只读/forward-compat)，仅补缺口：**A** 抽 `init-manifest.schema.json` 版本化 SSOT(双仓库唯一权威源，Loop 对照 jsonschema 校验/Init 依它生成，复制内化非运行时链接) / **B1** `conventions.ci_platform` 入 manifest(Init 声明，供 B13 CI 壳选型) / **B2** 设计文档内容留 CLI `--design-doc`、manifest 只声明 `structure.design_root` 位置 / **C** monorepo 保留枚举但单包降级+WARN(多包 YAGNI 推迟，不删枚举避免降级) / **D** 消费者驱动契约测试(共享 reference fixture 双仓库同步)。解 spec 债：checkpoints.db 从契约面移除。+IL-AC-06/07/08、Phase 7(T32-T35)。D21 | 2026-07-09 | ✅ |
+| **49** | **设计文档深度审计 + 22 项收口深化 (Phase 8)** | 3 并行审计子代理审 v5.6-Design-Loop.md(4214行)+INIT-LOOP-CONTRACT.md：规格成熟度 6.5/10、端到端 2.5/10（内核真实非虚化但全链未接线）。P0×4 全为**代码缺口**(Tick未接线/dev-loop.md v5.1/Init schema/DeepAuditGate骨架)已 T9/T10/T27/T32 跟踪；文档规格缺陷 S-1~S-20+Q-1/Q-2 共 22 项**纯文档收口**(补权威 schema/边界矩阵/枚举，非降级)。**S-1**(B4↔B7 语义评估矛盾)：确认决策 #40/D6 定案——v5.6 全路径无语义评估，B7 2g 属 v5.5 legacy；**代码 semantic_evaluator 全链移除跟踪到 Phase 3 T10d**（随 v5.5 orchestrator 退役，不即时大改以免破坏活跃路径）。无 status 翻转。D22 | 2026-07-11 | ✅ |
 
 ## 当前状态
 
-**阶段：** v5.6 Design — Tick-Based Discrete Invocation + 5 层验证 + Pre-flight Gap Analysis，设计整合完成。实现待启动。
+**阶段：** v5.6 Design — Tick-Based Discrete Invocation + 5 层验证 + Pre-flight Gap Analysis，设计整合完成 + 深度审计收口。实现待启动。
 
-**最近动作 (2026-07-09)：**
-- **Init-Loop 契约 v5.6 扩展** (决策 #48)：评估确认架构选型正确，补缺口——`init-manifest.schema.json` 版本化 SSOT(A) + ci_platform/design_root 字段(B) + monorepo 单包降级(C) + 消费者驱动契约测试(D)；checkpoints.db 从契约面移除。IL 章重写 IL.1-IL.5 + IL-AC-06/07/08 + Phase 7(T32-T35) + D21、discussion §十五
-- **Superpowers 验证方法论借鉴** (B15, 决策 #47)：两组分析去重为 9 项借鉴矩阵，一律 Python 确定性门控。+B15 章 + D20 + Phase 6 (T27-T31)、discussion §十四
-- **Commit→PR→CI/CD 专题设计** (B13, 决策 #45)：颗粒度金字塔 + 环界线；PR 输入端控制；CI 双平台薄壳；环内增量 vs 远程全量。+B13 章 + D18 + Phase 4b
-- **BEACON 决策 #40/#42/#43/#44/#45/#46/#47/#48**: 5 层验证 / Pre-flight / B11 / B12 Prompt Registry / B13 CI / B14 外部依赖 / B15 验证借鉴 / Init-Loop 契约扩展
+**最近动作 (2026-07-11)：**
+- **设计文档深度审计 + 22 项收口深化** (决策 #49, Phase 8)：3 并行子代理审 4214 行 → 规格 6.5/10、端到端 2.5/10。P0×4 全为代码缺口(已 T9/T10/T27/T32 跟踪)；文档规格缺陷 S-1~S-20+Q-1/Q-2 共 22 项**纯文档收口**（补 CoverageItem/GateVerdict/done verdict 权威 schema + file-bridge 边界矩阵 §C.3.5 + 路径更正 + 过度设计存续论证）。**S-1 语义评估矛盾定案**：v5.6 全路径无语义评估，代码 semantic_evaluator 移除跟踪到 Phase 3 T10d。审计产出 `_scratch/design-audit/`，无 status 翻转
+- **Init-Loop 契约 v5.6 扩展** (决策 #48)：`init-manifest.schema.json` 版本化 SSOT + ci_platform/design_root 字段 + monorepo 单包降级 + 消费者驱动契约测试
 
-**下一步：** 用户审核通过 → Phase 1 实现 (CLI + TickOrchestrator) → Phase 2 (命令文件 + SKILL.md) → Phase 3 (测试)
+**下一步：** 用户审核通过 → Phase 3 实现（CLI --tick 接线 + 命令重写 + T10d 语义评估代码移除）→ Phase 4/4b（Prompt + Pipeline）→ Phase 5/6/7（测试 + 审计方法论 + Init 契约）
 
 **阻塞项：** 无
 
@@ -59,6 +58,7 @@
 
 | 日期 | 变更 | 原因 |
 |------|------|------|
+| 2026-07-11 | **设计文档深度审计 + 22 项收口深化 (Phase 8, 决策 #49)** | 3 并行审计子代理审 v5.6-Design-Loop.md(4214行)+INIT-LOOP-CONTRACT.md：规格 6.5/10、端到端 2.5/10（内核真实非虚化，全链未接线）。分两类：P0×4 全为**代码缺口**(Tick未接线/dev-loop.md v5.1/DeepAuditGate骨架/Init schema)已 T9/T10/T27/T32 跟踪；S-1~S-20+Q-1/Q-2 共 22 项**纯文档规格缺陷收口**——补 CoverageItem/GateVerdict/done verdict 三处权威 schema、file-bridge 边界矩阵(§C.3.5)、B2 决策方列、Tick 路径更正、Guardrail "当前5/目标9"状态列、Q-1/Q-2 过度设计存续论证。**S-1**(B4↔B7 语义评估矛盾)定案：v5.6 全路径无语义评估(呼应 #40/D6)，代码 semantic_evaluator 全链移除跟踪到 Phase 3 T10d（不即时大改以免破坏活跃 v5.5 路径）。全程无 status 翻转、无设计降级（design-document-inviolability 遵守）。审计产出 `_scratch/design-audit/{findings-A/B/C,AUDIT-REPORT}.md`。BEACON 决策 #49 |
 | 2026-07-09 | **Init-Loop 契约 v5.6 扩展 (IL.2-IL.5)** | 评估"衔接部分如何定义/是否合理/优化方案"：架构选型正确(单向/文件桥接/只读/forward-compat)，但缺口①跨仓库无 Schema SSOT(文档表+Python函数两处定义→漂移) ②相对 v5.6 滞后(缺 design_doc/ci_platform，monorepo 枚举不自洽)。方案 A(schema SSOT jsonschema 校验)+B(ci_platform/design_root 字段)+C(monorepo 单包降级不删枚举)+D(消费者驱动契约测试)。checkpoints.db 从契约面移除解 spec 债。IL 章重写 + IL-AC-06/07/08 + Phase 7(T32-T35) + D21、discussion §十五。BEACON 决策 #48 |
 | 2026-07-09 | **借鉴 Superpowers 验证方法论加固审计与验证层 (B15)** | 两组分析合并去重：① Superpowers 三工具（TDD/verification/requesting-code-review）→ REDGuard+FreshGate+RegressionGate（Python 门控，非 Agent 自觉）；② `/audit` 三层现状（audit.md/audit.py/deep_audit.py）→ 内化+语义层+骨架→实际+分层澄清。+B15 章 6 小节、+D20、+Phase 6(T27-T31)、discussion §十四。BEACON 决策 #47 |
 | 2026-07-09 | **Commit→PR→CI/CD Pipeline 专题设计 (B13)** | 5 轮讨论：现状分析(P0 release.yml冲突+无远程CI, P1 code-review.md漂移+虚构引用+git add -A) → 颗粒度金字塔+时间轴+环界线 → PR=plate 是否中断(结论:人工闸门恒在环外,方案D输入端控粒度) → CI 双平台(单一入口+薄壳,DRY) → 环内vs远程(共享pyproject标准非运行时,增量快子集vs全量权威)。+B13 章 9 小节、+D18、+Phase 4b (T16h-T16n)、discussion §十二。BEACON 决策 #45 |
