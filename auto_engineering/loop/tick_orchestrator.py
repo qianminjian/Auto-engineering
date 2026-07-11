@@ -981,9 +981,25 @@ class TickOrchestrator:
     def _save_checkpoint(self) -> str | None:
         if self._checkpoint_mgr is None:
             return None
+        self._populate_serialized_state()
         return self._checkpoint_mgr.save(
             self._state, self._state.round, step=self._state.tick,
             history=self._round_history)
+
+    def _populate_serialized_state(self) -> None:
+        """save 前把 in-memory 派生状态序列化回 EngineState (A3 写侧, T9b).
+
+        跨进程 restore 从这些字段重建 _batch_state/_progress_tree — 不 populate
+        则游标每 tick 归零. batch_state_json 每 save 必写 (to_json 仅 4 int, 廉价);
+        progress_tree_json 兜底 (_display_progress 非每 tick 展示 → 保证一致).
+        """
+        if self._state is None:
+            return
+        if self._batch_state is not None:
+            self._state.batch_state_json = self._batch_state.to_json()
+        if self._progress_tree is not None:
+            self._state.progress_tree_json = json.dumps(
+                self._progress_tree.to_dict(), ensure_ascii=False)
 
     def _resolve_batch_id(self) -> str | None:
         """返回当前 batch_id, 组件完成时回退到 _last_batch_id."""

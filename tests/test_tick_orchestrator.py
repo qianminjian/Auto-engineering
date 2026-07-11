@@ -1000,3 +1000,43 @@ class TestTickLatencyInstrumentation:
             }))
         # gate 花了 50ms 但归 t_gate, orchestration 仍远低于 2000ms
         assert "超预算" not in caplog.text
+
+
+def _store_orchestrator(store) -> TickOrchestrator:
+    """带真实 checkpoint_store 的 orchestrator (跨进程 restore 测试用)."""
+    return TickOrchestrator(
+        gate_runner=_pass_gate_runner,
+        guardrail=_pass_guardrail(),
+        checkpoint_store=store,
+    )
+
+
+class TestA3WriteSide:
+    """T9b — A3 写侧: _save_checkpoint 前序列化 _batch_state → state.batch_state_json.
+
+    根因: _display_progress 只写 progress_tree_json, batch_state_json 零写 →
+    跨 tick restore 游标归零. 写侧必须在每次 save 前 populate.
+    """
+
+    def test_batch_state_persisted_on_save(self, tmp_path) -> None:
+        from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
+
+        db = tmp_path / "cp.db"
+        store = SQLiteCheckpointStore(db)
+        o = _store_orchestrator(store)
+        o.init("实现 X")
+        o.tick(_architect_result_file())  # architect → developer, 建 batch_state + save
+        assert o._batch_state is not None
+
+        verify = SQLiteCheckpointStore(db)
+        ck = verify.load_latest()
+        assert ck is not None
+        # deserialize → EngineState (production shape, 含 thread_id)
+        assert ck.state.batch_state_json, "batch_state_json 应在 save 前被 populate"
+        data = json.loads(ck.state.batch_state_json)
+        assert data["current_batch_idx"] == o._batch_state.current_batch_idx
+        assert data["current_component_idx"] == o._batch_state.current_component_idx
+        assert data["current_plate_idx"] == o._batch_state.current_plate_idx
+        assert data["total_batches"] == o._batch_state.total_batches
+        verify.close()
+        store.close()
