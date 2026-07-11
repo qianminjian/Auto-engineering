@@ -37,7 +37,7 @@ def get_gate_tools_from_manifest(manifest: dict[str, Any]) -> dict[str, str]:
     conventions = manifest.get("conventions")
     language = manifest.get("language", "python")
     if not isinstance(conventions, dict):
-        return dict(zip(("linter", "type_checker", "test_runner"), _default_tools_for(language)))
+        return dict(zip(("linter", "type_checker", "test_runner"), _default_tools_for(language), strict=True))
     linter = conventions.get("linter")
     type_checker = conventions.get("type_checker")
     test_runner = conventions.get("test_runner")
