@@ -26,21 +26,21 @@
 
 ## 进度总览
 
-> ⚠️ **关键风险（2026-07-10 状态核对发现）**：Phase 1+2 代码已落地，但 **v5.6 Tick 引擎尚未接入任何运行入口**——`cli/dev_loop.py` 仍用旧 v5.5 `Orchestrator`；无 `ae dev-loop --init/--tick/--result` CLI 入口；`commands/dev-loop.md` 仍是 v5.1 Agent-tool 模式。即 `tick_orchestrator.py`(1017行,~230单测) 单测全绿但**端到端跑不通**（代码存在未集成）。接线 = Phase 3 的 T9/T10 前置。
+> ✅ **关键风险已缓解（2026-07-11 T9 接线）**：v5.6 Tick 引擎原「端到端跑不通」（`tick_orchestrator.py` 单测全绿但无运行入口）已接线——`ae dev-loop --init/--tick/--result/--status/--resume` CLI 入口 + 跨进程 `TickOrchestrator.restore()` + A3 写侧落地，e2e 真跑 3 独立进程验证 thread_id/游标跨进程保真（fe8bee2/f4e4175/0a2daca）。**残余**：`commands/dev-loop.md` 仍 v5.1 Agent-tool 模式（T10 重写）+ `skills/SKILL.md`（T11）待做——Command/Skill 层重写是 Phase 3 后续。
 
 | Phase | 名称 | 任务数 | 完成 | 状态 |
 |-------|------|:---:|:---:|------|
 | 1 | 数据模型 + 核心路由 | 6 | 6 | ✅ 完成 |
-| 2 | TickOrchestrator | 6 | 6 | ✅ 完成（代码；**未接线**）|
-| 3 | CLI + Command | 8 | 0 | ☐ 未开始（**含接线**：T9 --tick 入口 / T10 命令重写 / T10d S-1 语义评估代码移除）|
+| 2 | TickOrchestrator | 6 | 6 | ✅ 完成（代码 + **已接线**，T9：--init/--tick 端到端可跑）|
+| 3 | CLI + Command | 8 | 1 | ◐ T9 接线✅（--init/--tick/--status/--resume/--design-doc + 跨进程 restore + A3 写侧）；T9b progress / T10 命令重写 / T10d 语义移除 待做 |
 | 4 | Agent Prompt 模板 | 10 | 0 | ☐ 未开始 |
 | 4b | Commit→PR→CI/CD Pipeline | 7 | 0 | ☐ 未开始 |
 | 5 | 测试 | 17 | 4 | ◐ 部分（单元层 T17/T18/T22/T23 ✅；集成/E2E 待补）|
 | 6 | 审计与验证方法论 (B15) | 5 | 0 | ☐ 未开始（deep_audit/audit/guardrail 仅 v5.5 骨架）|
 | 7 | Init-Loop 契约扩展 | 4 | 0 | ☐ 未开始（schema.json 缺）|
 | 8 | 设计文档深化补充（审计 S-task）| 22 | 22 | ✅ 完成（2026-07-11 深度审计 → 全部收口）|
-| 9 | 代码审计修复（审计 A-task）| 15 | 13 | ◐ A2/A5/A6/A7/A8/A10-A15 + checkpoint 契约（A1✅/A3 读侧✅）完成；A3 写侧→Phase 3；A4 需决策（接线/删除）；A9 ⛔ mypy 未装 |
-| **合计** | | **100** | **51** | **~19% 代码；文档深化 22/22 ✅；代码审计 13/15；端到端 0%（未接线）** |
+| 9 | 代码审计修复（审计 A-task）| 15 | 13 | ◐ A2/A5/A6/A7/A8/A10-A15 + checkpoint 契约（A1✅/A3 读+写侧✅，fe8bee2/f4e4175）完成；A4 需决策（接线/删除）；A9 ⛔ mypy 未装 |
+| **合计** | | **100** | **52** | **~20% 代码；文档深化 22/22 ✅；代码审计 13/15；端到端：tick 引擎已接线（--init/--tick 真跑✅），Command/Skill 层 T10/T11 待重写** |
 
 ---
 
@@ -74,7 +74,7 @@
 
 | T | 文件/产出 | 验收 | 状态 | Commit |
 |---|----------|------|:---:|--------|
-| T9 | `cli/dev_loop.py` --design-doc 选项 | T21 + test_cli_dev_loop_extended(ext) | ☐ | |
+| T9 | **TickOrchestrator CLI 接线**（跨进程 restore + A3 写侧 + `dev_loop.py` --init/--tick/--result/--status/--resume/--design-doc）| test_tick_orchestrator(restore/A3) + test_cli_dev_loop_tick(7) + e2e 真跑 3 进程 | ✅ | fe8bee2/f4e4175/0a2daca |
 | T9b | `cli/progress.py`（**新建** ae progress）| T23 | ☐ | |
 | T10 | `commands/dev-loop.md` 8-stage 重写（移除 4 外部依赖）| Plugin 验收 + grep 断言 | ☐ | |
 | T10b | `commands/progress.md`（**新建**）| Plugin 验收 | ☐ | |
@@ -196,7 +196,7 @@
 |---|-------|:---:|------|------|:---:|--------|
 | A1 | `ae status` verdict 恒空 → 读 `critic_verdict`（输出 key 仍 `verdict`，符 §B13.2）| P1 | `cli/status.py:73,80` | test_cli_status 断言非空 verdict | ✅ | 89d850a |
 | A2 | Gate 崩溃 fail-open → 执行异常计 `failed_count`（fail-closed），区分 skipped(不适用)/errored(崩溃)| P1 | `cli/gate_check.py:96-99,23` | test_gate_check 崩溃 gate → exit≠0 | ✅ | 633af89 |
-| A3 | `batch_state_json` 持久化断链（零写零读 → 游标每 tick 归零）| P1 | `state.py:121,215`；`tick_orchestrator.py:236` | T22 跨 tick 恢复 | ◐ 读侧✅（2fc8950 deserialize→EngineState 保真 batch_state_json）；写侧→Phase 3 T9/T10 | 2fc8950 |
+| A3 | `batch_state_json` 持久化断链（零写零读 → 游标每 tick 归零）| P1 | `state.py:121,215`；`tick_orchestrator.py:236` | T22 跨 tick 恢复 | ✅ 读侧✅（2fc8950 deserialize→EngineState）+ 写侧✅（fe8bee2 `_populate_serialized_state`）+ restore✅（f4e4175）；跨进程游标不归零，e2e 真跑验证 | 2fc8950/fe8bee2/f4e4175 |
 | A4 | `gap_analysis.py` 孤儿（GapReport 全实现+有测试，生产 0 引用，tick 用内联 dict）| P1 | `engine/gap_analysis.py` vs `tick_orchestrator.py:516` | 接线去重 or 删除 | ☐ **需决策：接线/删除** | |
 | A5 | F821 `Any` 未导入（type_check gate 会红）→ TYPE_CHECKING 块加 `from typing import Any` | P1 | `loop/stage_router.py:284`、`runtime/runtime.py:42` | ruff F821 清零 + type_check gate 绿 | ✅ | 04db92c |
 | A6 | 畸形 batch_plan 抛 raw KeyError → 改抛 AEError 契约错误 | P2 | `loop/task_factory.py:58` | test_task_factory 缺 id 断言 | ✅ | c3e6b4f |
@@ -228,3 +228,4 @@
 | 2026-07-11 | Phase 9 孤立快修批 | **9 项孤立快修完成（superpowers TDD/lint-verify，每任务一 commit）**：A5=04db92c、A10=67546c3、A11=4301055（prior）+ A12=fec06fd、A13=b9baa9e、A14=78ff8ac（docstring 对齐设计，A14 判定内联+§B2 为准）、A2=633af89（gate fail-closed，TDD）、A6=c3e6b4f（KeyError→AEError，TDD）、A15=1a22a99（ruff safe --fix 264 项/84 文件）。**A14/A2/A6 过程中发现审计估计偏差**：A13 无 AttributeError（Gate 基类有 contracts 默认）、A14 是 docstring 漂移非内联漂移、A15 实际 407 findings 非~186。全量 1692 passed / 8 failed（与修复前完全一致，零新增）。 | ✅ 用户定案 A15 安全 auto-fix + 余项另立（#73）。**下一步：checkpoint 契约修复（A1/A3 根因，方向①反序列化→EngineState）**。A4 决策 / A7-A9 P2 待办。 |
 | 2026-07-11 | Phase 9 checkpoint 契约修复 | **deserialize shape-aware 分派 + A1 + e2e（计划 `design/checkpoint-contract-fix-PLAN.md`，8a8991a）**：2fc8950=deserialize_state 按 dict 形状三路分派（channels→Envelope / thread_id→EngineState / else→raw dict，marker 有 guard 测试）关闭 5×test_checkpoint_store；89d850a=A1 status.py 两分支读 critic_verdict（输出 key 仍 verdict）关闭 1×test_cli_status_extended；5983bca=e2e 测试改文件 store 关闭 1×e2e。**修正计划基线错误**：计划 §4 把 e2e test_full_cycle_checkpoint_save_round 归为 deserialize 根因，实测在 clean main 上它从不因 deserialize 失败——真根因是 orchestrator.run() finally close 调用方传入的 :memory: store → 测试随后 list_all 断言失败（独立 store 生命周期 bug）。A3 读侧由 deserialize 修复自动保真（batch_state_json round-trip），写侧仍属 Phase 3。 | ✅ 8 pre-existing 失败 → 1（仅 plugin_contract --format 漂移，#73）；1704 passed，零新增。e2e 修法用户定案「改测试用文件 store」（生产用文件 store，close 释放句柄有意设计；:memory: 从不用于生产）。 |
 | 2026-07-11 | Phase 9 P2 收尾 (A7/A8/A9) | **A7=715facc（round.py 如实标注浅拷贝：state 有意共享非缺陷）+ A8=6cece7f（state.py import logging 提模块级去重 + set_channels 所有权旁路如实标注）**。A9 阻塞：8× `# type: ignore` 为 mypy 专属错误码，验收「mypy 无 ignore」；venv 未装 mypy → 无法本地验证移除；盲改 parse-critical 代码违「验证后再说完成」。**A3 写侧确认与 T9 耦合**：`_display_progress` 已写 progress_tree_json，但 batch_state_json 零写且**无 restore 路径**——写而不读回是半措施，必须随 T9 跨进程 restore 一起落地。 | ◐ A7/A8 ✅；A9 ⛔ 需决策（装 mypy dev-dep 审批 or 接受文档化 ignore）。Phase 9 = 13/15。**下一大块：Phase 3 T9 接线**（TickOrchestrator 跨进程 restore + A3 写侧 + CLI --init/--tick + file-bridge，为一体耦合单元，需 grounded 子计划）。红线门：A4 删/接线、Phase 4b CI/CD 配置。 |
+| 2026-07-11 | Phase 3 T9 接线（`design/phase3-t9-wiring-PLAN.md`，39a4dd2）| **v5.6 tick 引擎端到端接线（TDD, 每步一 commit）**：fe8bee2=T9b A3 写侧（`_populate_serialized_state` 每 save 前序列化 batch_state/progress_tree 回 EngineState）；f4e4175=T9a 跨进程 `restore()` classmethod（重建 _state/_design_doc/_batch_state/_progress_tree/_plan）+ init 持久化 design_doc_path；0a2daca=T9c CLI `--init/--tick/--result/--status/--resume`（tick 分派先于 LLM preflight，§A.1 Python 不调 LLM）。**根因修正（非降级）**：`clear_stage_fields` 在 architect→developer 清空 `EngineState.batch_plan`(#6)，而 batch_state.py 序列化原假设 #6 跨 tick 存活 → batch_state_json 自包含化（内嵌轻量 batch_plan seed，plates 仍不持久化=主设计决策保留）。e2e 真跑 3 独立 `ae` 进程：--init→architect / --tick→developer(tick2, batch_id 保真) / --status→developer，thread_id `2e0845ee` 跨进程一致。 | ✅ 1717 passed / 1 skipped / 1 pre-existing 失败（plugin_contract：`shutil.which("ae")` 命中 stale 全局 `~/.local/bin/ae` 无 `--format`，非本次回归，归 #73）；零新增失败。A3 全链闭合（读+写+restore）。**下一步**：T10 命令重写 / Phase 4 prompt / 红线门 A4/A9/Phase 4b。 |

@@ -72,4 +72,4 @@
 
 ## 5. 前置验证（编码前必做）
 
-确认 `BatchState.from_dict/to_dict`、`ProgressTree.from_dict/to_dict`、`DesignDoc.parse` 均存在且可 round-trip。缺任一 → 该序列化补齐是 T9a 子步（不降级为「跳过持久化」）。
+确认序列化 API 存在且可 round-trip。**执行时修正（2026-07-11）**：实际 API 是 `BatchState.to_json/from_json`（非 `to_dict/from_dict`）、`ProgressTree.to_dict/from_dict`、`DesignDoc.parse`——均存在。`BatchState.from_json(s, design_doc, batch_plan)` 原依赖 `EngineState.batch_plan`(#6) 跨 tick 存活来重建 plates，但 `clear_stage_fields` 在 architect→developer 清空 #6 → 序列化改为**自包含**（batch_state_json 内嵌轻量 batch_plan seed，plates 仍不持久化）。此为「补代码使持久化真能保真」非降级（主设计决策"不存 plates"保留）。
