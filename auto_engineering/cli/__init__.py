@@ -32,6 +32,7 @@ from auto_engineering.cli.dev_loop import (
 )
 from auto_engineering.cli.doctor import register_doctor_command
 from auto_engineering.cli.gate_check import register_gate_check_command
+from auto_engineering.cli.progress import register_progress_command
 
 # 私有符号 (模块内部使用, _ 前缀按 Python 约定不公开)
 # v5.5 audit P0-11: __all__ 排除私有符号, from cli import * 不会导出
@@ -65,6 +66,7 @@ __all__ = [
     "register_checkpoint_commands",
     "register_doctor_command",
     "register_gate_check_command",
+    "register_progress_command",
     "register_status_command",
 ]
 
@@ -274,6 +276,8 @@ register_gate_check_command(main)
 register_agent_command(main)
 # 注册 status 命令 (从 cli/status.py 注入, P0-2 修复 v5.0 §B13.2)
 register_status_command(main)
+# 注册 progress 命令 (从 cli/progress.py 注入, T9b B9 ProgressTree 看板)
+register_progress_command(main)
 
 
 if __name__ == "__main__":
