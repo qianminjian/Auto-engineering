@@ -650,6 +650,82 @@ class TestRefineRequestDelivery:
         assert req["trigger_tick"] >= 0
 
 
+class TestRefineSourcesAndLimits:
+    """T20: 多回源触发 plan_refine + 分源≤2/全局≤4 上限 (§B6.10/DS-8)."""
+
+    def _seed_two_component_plate(self, o: TickOrchestrator) -> None:
+        o.init("实现两个组件的板块")
+        o.tick(_make_result_file({
+            "stage": "architect", "plan": _VALID_PLAN,
+            "batch_plan": [
+                {"batch_id": "b-Foo", "design_section": "B2", "component": "Foo",
+                 "tasks": [{"id": "T1", "description": "foo", "module_ref": "§B2",
+                            "file_targets": ["foo.py"]}]},
+                {"batch_id": "b-Bar", "design_section": "B3", "component": "Bar",
+                 "tasks": [{"id": "T2", "description": "bar", "module_ref": "§B3",
+                            "file_targets": ["bar.py"]}]},
+            ],
+            "file_list": ["foo.py", "bar.py"], "contracts": {},
+        }))
+
+    def test_plate_deep_audit_finding_routes_to_refine_with_audit_gap(self) -> None:
+        o = _orchestrator(max_rounds=30)
+        self._seed_two_component_plate(o)
+        TestPlateConvergence._approve_component(o, "Foo", "b-Foo")
+        a_bar = TestPlateConvergence._approve_component(o, "Bar", "b-Bar")
+        assert a_bar["stage"] == "plate_deep_audit"
+        # plate_deep_audit 发现 P0 → plan_refine 回 architect
+        a = o.tick(_make_result_file({
+            "stage": "plate_deep_audit", "plate": "(single)",
+            "findings": [{"severity": "P0", "dimension": "architecture",
+                          "agent_source": ["a"], "file": "foo.py", "line": 3,
+                          "description": "跨组件契约破坏", "suggested_fix": "对齐接口"}],
+            "p0_count": 1, "p1_count": 0, "p2_count": 0,
+            "cross_component_issues": [], "total_audited_files": 2,
+        }))
+        assert a["action"] == "architect"
+        req = a["feedback"]["refine_request"]
+        assert req["source"] == "plate_deep_audit"
+        assert req["scope_plate"] == "(single)"
+        assert req["gaps"][0]["kind"] == "AUDIT_FINDING"
+        assert req["gaps"][0]["severity"] == "P0"
+
+    def test_global_limit_stops_even_when_per_source_under_cap(self) -> None:
+        """全局计数达 4 → REFINE_LIMIT, 即便当前源分源计数为 0 (DS-8 全局独立上限)."""
+        o = _orchestrator(max_rounds=30)
+        o.init("req")
+        # 全局已 4, component_verifier 分源 0 → 触发的是全局上限
+        o._state.plan_refine_count = 4
+        o.tick(_make_result_file({
+            "stage": "architect", "plan": _VALID_PLAN, "batch_plan": [{
+                "batch_id": "b1", "design_section": "B2", "component": "C",
+                "tasks": [{"id": "T1", "description": "d", "module_ref": "§B2",
+                           "file_targets": ["x.py"]}],
+            }], "file_list": ["x.py"], "contracts": {},
+        }))
+        o.tick(_make_result_file({
+            "stage": "developer", "batch_id": "b1", "files_changed": ["x.py"],
+            "test_results": {"passed": 1, "failed": 0},
+        }))
+        o.tick(_make_result_file({
+            "stage": "critic", "verdict": "APPROVE", "findings": [],
+        }))
+        a = o.tick(_make_result_file({
+            "stage": "component_verifier", "component": "C",
+            "coverage_map": [{"design_item": "B2-1", "status": "MISSING"}],
+            "missing_count": 1, "diverged_count": 0,
+        }))
+        assert a["action"] == "done"
+        assert a["verdict"] == "REFINE_LIMIT"
+        assert "全局" in a["verdict_reason"]
+
+    def test_per_source_counter_increments_on_each_refine(self) -> None:
+        o = _orchestrator(max_rounds=30)
+        TestRefineRequestDelivery._drive_component_gap(o, "MISSING")
+        assert o._state.plan_refine_by_source["component_verifier"] == 1
+        assert o._state.plan_refine_count == 1
+
+
 # ── _build_action context checks ──
 
 
