@@ -32,7 +32,7 @@
 |-------|------|:---:|:---:|------|
 | 1 | 数据模型 + 核心路由 | 6 | 6 | ✅ 完成 |
 | 2 | TickOrchestrator | 6 | 6 | ✅ 完成（代码 + **已接线**，T9：--init/--tick 端到端可跑）|
-| 3 | CLI + Command | 8 | 1 | ◐ T9 接线✅（--init/--tick/--status/--resume/--design-doc + 跨进程 restore + A3 写侧）；T9b progress / T10 命令重写 / T10d 语义移除 待做 |
+| 3 | CLI + Command | 8 | 7 | ◐ T9 接线✅ + T9b progress✅ + T10 dev-loop 重写✅ + T10b progress.md✅ + T10c PRBackend✅ + T11 SKILL✅ + T12 BEACON✅（Wave 1 完成）；仅剩 **T10d 语义移除**（G-retire 红线，v5.5 活跃待确认）|
 | 4 | Agent Prompt 模板 | 10 | 0 | ☐ 未开始 |
 | 4b | Commit→PR→CI/CD Pipeline | 7 | 0 | ☐ 未开始 |
 | 5 | 测试 | 17 | 4 | ◐ 部分（单元层 T17/T18/T22/T23 ✅；集成/E2E 待补）|
@@ -40,7 +40,7 @@
 | 7 | Init-Loop 契约扩展 | 4 | 0 | ☐ 未开始（schema.json 缺）|
 | 8 | 设计文档深化补充（审计 S-task）| 22 | 22 | ✅ 完成（2026-07-11 深度审计 → 全部收口）|
 | 9 | 代码审计修复（审计 A-task）| 15 | 13 | ◐ A2/A5/A6/A7/A8/A10-A15 + checkpoint 契约（A1✅/A3 读+写侧✅，fe8bee2/f4e4175）完成；A4 需决策（接线/删除）；A9 ⛔ mypy 未装 |
-| **合计** | | **100** | **52** | **~20% 代码；文档深化 22/22 ✅；代码审计 13/15；端到端：tick 引擎已接线（--init/--tick 真跑✅），Command/Skill 层 T10/T11 待重写** |
+| **合计** | | **100** | **58** | **~24% 代码；文档深化 22/22 ✅；代码审计 13/15；端到端：tick 引擎已接线（--init/--tick 真跑✅）+ Phase 3 Wave 1 完成（progress CLI/命令/SKILL/PRBackend/dev-loop v5.6 重写）；下一步 Wave 2 Phase 4 prompt** |
 
 ---
 
@@ -75,12 +75,12 @@
 | T | 文件/产出 | 验收 | 状态 | Commit |
 |---|----------|------|:---:|--------|
 | T9 | **TickOrchestrator CLI 接线**（跨进程 restore + A3 写侧 + `dev_loop.py` --init/--tick/--result/--status/--resume/--design-doc）| test_tick_orchestrator(restore/A3) + test_cli_dev_loop_tick(7) + e2e 真跑 3 进程 | ✅ | fe8bee2/f4e4175/0a2daca |
-| T9b | `cli/progress.py`（**新建** ae progress）| T23 | ☐ | |
-| T10 | `commands/dev-loop.md` 8-stage 重写（移除 4 外部依赖）| Plugin 验收 + grep 断言 | ☐ | |
-| T10b | `commands/progress.md`（**新建**）| Plugin 验收 | ☐ | |
-| T10c | `tools/pr_backend.py`（**新建** PRBackend/GitHub/GitLab）| T26e | ☐ | |
-| T11 | `skills/auto-engineering/SKILL.md` 分层验证约束 | Plugin 验收 + grep | ☐ | |
-| T12 | `design/BEACON.md` 更新决策表+当前状态 | 文档评审 | ☐ | |
+| T9b | `cli/progress.py`（**新建** ae progress）| T23 | ✅ | 4628c33（读持久化 progress_tree_json → display/summary，无 checkpoint 优雅降级；4 tests）|
+| T10 | `commands/dev-loop.md` 8-stage 重写（移除 4 外部依赖）| Plugin 验收 + grep 断言 | ✅ | e13da0c（两份 dev-loop.md 统一 v5.6 Tick 协议；action 参考表对齐 _build_action；移除 Plan/code-reviewer/code-review/gsd-code-fixer + dead AE_JSONL_MODE）|
+| T10b | `commands/progress.md`（**新建**）| Plugin 验收 | ✅ | 6e30f35（/ae:progress 委托 ae progress，flags 对齐实际 CLI）|
+| T10c | `tools/pr_backend.py`（**新建** PRBackend/GitHub/GitLab）| T26e | ✅ | 9da5dbe（PRBackend ABC + gh/glab 薄壳 + select_backend(ci_platform) + doctor 非致命预检；12 tests）|
+| T11 | `skills/auto-engineering/SKILL.md` 分层验证约束 | Plugin 验收 + grep | ✅ | 6a4fe19（5 层验证矩阵 + LEAF/PLATE/FULL 自动裁剪 + 不可短路约束；修 JSONL→tick action）|
+| T12 | `design/BEACON.md` 更新决策表+当前状态 | 文档评审 | ✅ | e27a8fd（当前状态记 T9 接线完成，无 status 翻转）|
 | T10d | v5.5 orchestrator 退役时移除 semantic_evaluator 全链（S-1 代码；semantic_evaluator.py + orchestrator/convergence/round/checkpoint/status + 8 测试）| test_loop_orchestrator/semantic(ext) | ☐ | |
 
 ## Phase 4 — Agent Prompt 模板
@@ -229,3 +229,4 @@
 | 2026-07-11 | Phase 9 checkpoint 契约修复 | **deserialize shape-aware 分派 + A1 + e2e（计划 `design/checkpoint-contract-fix-PLAN.md`，8a8991a）**：2fc8950=deserialize_state 按 dict 形状三路分派（channels→Envelope / thread_id→EngineState / else→raw dict，marker 有 guard 测试）关闭 5×test_checkpoint_store；89d850a=A1 status.py 两分支读 critic_verdict（输出 key 仍 verdict）关闭 1×test_cli_status_extended；5983bca=e2e 测试改文件 store 关闭 1×e2e。**修正计划基线错误**：计划 §4 把 e2e test_full_cycle_checkpoint_save_round 归为 deserialize 根因，实测在 clean main 上它从不因 deserialize 失败——真根因是 orchestrator.run() finally close 调用方传入的 :memory: store → 测试随后 list_all 断言失败（独立 store 生命周期 bug）。A3 读侧由 deserialize 修复自动保真（batch_state_json round-trip），写侧仍属 Phase 3。 | ✅ 8 pre-existing 失败 → 1（仅 plugin_contract --format 漂移，#73）；1704 passed，零新增。e2e 修法用户定案「改测试用文件 store」（生产用文件 store，close 释放句柄有意设计；:memory: 从不用于生产）。 |
 | 2026-07-11 | Phase 9 P2 收尾 (A7/A8/A9) | **A7=715facc（round.py 如实标注浅拷贝：state 有意共享非缺陷）+ A8=6cece7f（state.py import logging 提模块级去重 + set_channels 所有权旁路如实标注）**。A9 阻塞：8× `# type: ignore` 为 mypy 专属错误码，验收「mypy 无 ignore」；venv 未装 mypy → 无法本地验证移除；盲改 parse-critical 代码违「验证后再说完成」。**A3 写侧确认与 T9 耦合**：`_display_progress` 已写 progress_tree_json，但 batch_state_json 零写且**无 restore 路径**——写而不读回是半措施，必须随 T9 跨进程 restore 一起落地。 | ◐ A7/A8 ✅；A9 ⛔ 需决策（装 mypy dev-dep 审批 or 接受文档化 ignore）。Phase 9 = 13/15。**下一大块：Phase 3 T9 接线**（TickOrchestrator 跨进程 restore + A3 写侧 + CLI --init/--tick + file-bridge，为一体耦合单元，需 grounded 子计划）。红线门：A4 删/接线、Phase 4b CI/CD 配置。 |
 | 2026-07-11 | Phase 3 T9 接线（`design/phase3-t9-wiring-PLAN.md`，39a4dd2）| **v5.6 tick 引擎端到端接线（TDD, 每步一 commit）**：fe8bee2=T9b A3 写侧（`_populate_serialized_state` 每 save 前序列化 batch_state/progress_tree 回 EngineState）；f4e4175=T9a 跨进程 `restore()` classmethod（重建 _state/_design_doc/_batch_state/_progress_tree/_plan）+ init 持久化 design_doc_path；0a2daca=T9c CLI `--init/--tick/--result/--status/--resume`（tick 分派先于 LLM preflight，§A.1 Python 不调 LLM）。**根因修正（非降级）**：`clear_stage_fields` 在 architect→developer 清空 `EngineState.batch_plan`(#6)，而 batch_state.py 序列化原假设 #6 跨 tick 存活 → batch_state_json 自包含化（内嵌轻量 batch_plan seed，plates 仍不持久化=主设计决策保留）。e2e 真跑 3 独立 `ae` 进程：--init→architect / --tick→developer(tick2, batch_id 保真) / --status→developer，thread_id `2e0845ee` 跨进程一致。 | ✅ 1717 passed / 1 skipped / 1 pre-existing 失败（plugin_contract：`shutil.which("ae")` 命中 stale 全局 `~/.local/bin/ae` 无 `--format`，非本次回归，归 #73）；零新增失败。A3 全链闭合（读+写+restore）。**下一步**：T10 命令重写 / Phase 4 prompt / 红线门 A4/A9/Phase 4b。 |
+| 2026-07-11 | Phase 3 Wave 1 收尾（`design/remaining-execution-PLAN.md`）| **Phase 3 剩余 6 任务完成（TDD, 每任务一 commit）**：e27a8fd=T12 BEACON 当前状态记 T9（无 status 翻转）；4628c33=T9b `cli/progress.py`（读持久化 progress_tree_json → display/summary，无 checkpoint 优雅降级，4 tests）；6e30f35=T10b `commands/progress.md`（/ae:progress 委托）；e13da0c=T10 两份 dev-loop.md 统一 v5.6 Tick 协议重写（action 参考表对齐 `_build_action` 实际输出；**移除 4 外部依赖** Plan/code-reviewer/code-review/gsd-code-fixer + dead ref AE_JSONL_MODE，决策 #46 实施非降级）；6a4fe19=T11 SKILL.md 分层验证约束（5 层矩阵 + LEAF/PLATE/FULL 自动裁剪 + 不可短路）；9da5dbe=T10c `tools/pr_backend.py`（PRBackend ABC + gh/glab 薄壳 + select_backend(ci_platform) + doctor 非致命预检，12 tests，去 gh 硬编码）。 | ✅ Wave 1 blast radius 94 passed / 1 pre-existing 失败（#73 同上，非回归）。Phase 3 = 7/8，仅剩 **T10d**（G-retire 红线，v5.5 活跃待确认时机）。**下一步**：Wave 2 Phase 4 Agent Prompt 模板（T13-T16g）。 |
