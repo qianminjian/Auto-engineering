@@ -11,10 +11,13 @@ v5.5 P1-5: 写入控制 — 字段级写所有权 + write_field() 验证 + _writ
 为未来多 Agent 并发写同一 EngineState 打基础 (当前按 role 天然 partition, 无共享写).
 """
 
+import logging
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from typing import Any, TypedDict
+
+_logger = logging.getLogger("ae.engine.state")
 
 # ============================================================
 # v5.5 audit P2-17: TypedDict 替代 dict[str, Any] (类型安全)
@@ -307,8 +310,6 @@ class EngineState:
 
         缺失的 channel 会记录 WARNING 日志.
         """
-        import logging
-        _logger = logging.getLogger("ae.engine.state")
         result = {}
         for n in names:
             if hasattr(self, n):
@@ -318,16 +319,19 @@ class EngineState:
         return result
 
     def set_channels(self, writes: dict[str, Any], writer: str = "orchestrator") -> None:
-        """批量写入 channel, 做审计日志但不强制所有权校验 (向后兼容).
+        """批量写入 channel, 做审计日志但**不强制**所有权校验 (向后兼容).
 
-        旧 API, 所有权不严格 — 新代码应使用 write_field().
+        ⚠️ 有意的所有权旁路: write_field() 会按 _WRITE_OWNERS 校验 writer 是否有权
+        写该字段; set_channels **跳过**该校验 (仅做 hasattr + 值校验 + 审计日志)。
+        这是**已知设计取舍**——orchestrator 用本方法批量 apply 多字段产出 (默认
+        writer="orchestrator"), 若逐字段强制 role 所有权会破坏 apply-outcome 流。
+        新代码应优先用 write_field() 获得所有权保护; set_channels 保留给
+        orchestrator 批量写入路径。
 
         Args:
             writes: {field_name: value} 映射.
             writer: 写入者标识 (默认 orchestrator).
         """
-        import logging
-        _logger = logging.getLogger("ae.engine.state")
         for k, v in writes.items():
             if not hasattr(self, k):
                 _logger.warning("set_channels: unknown channel '%s', skipped", k)
