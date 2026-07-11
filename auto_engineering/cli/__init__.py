@@ -20,35 +20,33 @@ from pathlib import Path
 import click
 
 from auto_engineering import __version__
-from auto_engineering.errors import AEError, ErrorCode
-
-# Re-export 公开符号, 保持 from auto_engineering.cli import ... 兼容
-from auto_engineering.runtime.cancellation import CancellationToken  # noqa: F401
-from auto_engineering.cli.helpers import (  # noqa: F401
-    ErrorCategory,
-    ProgressLogger,
-    TokenTracker,
-    classify_error,
-)
-from auto_engineering.cli.dev_loop import (  # noqa: F401
+from auto_engineering.cli.agent import register_agent_command
+from auto_engineering.cli.checkpoint import register_checkpoint_commands
+from auto_engineering.cli.dev_loop import (
     OrchestratorRunResult,
+    _run_v2_orchestrator,
 )
-from auto_engineering.cli.checkpoint import register_checkpoint_commands  # noqa: F401
-from auto_engineering.cli.doctor import register_doctor_command  # noqa: F401
-from auto_engineering.cli.gate_check import register_gate_check_command  # noqa: F401
-from auto_engineering.cli.agent import register_agent_command  # noqa: F401
-from auto_engineering.cli.status import (  # noqa: F401
-    register_status_command,
-)
+from auto_engineering.cli.doctor import register_doctor_command
+from auto_engineering.cli.gate_check import register_gate_check_command
 
 # 私有符号 (模块内部使用, _ 前缀按 Python 约定不公开)
 # v5.5 audit P0-11: __all__ 排除私有符号, from cli import * 不会导出
 from auto_engineering.cli.helpers import (
     _CATEGORY_FRIENDLY_PREFIX,
+    ErrorCategory,
+    ProgressLogger,
+    TokenTracker,
     _install_sigint_handler,
     _log_engine_version,
+    classify_error,
 )
-from auto_engineering.cli.dev_loop import _run_v2_orchestrator
+from auto_engineering.cli.status import (
+    register_status_command,
+)
+from auto_engineering.errors import AEError, ErrorCode
+
+# Re-export 公开符号, 保持 from auto_engineering.cli import ... 兼容
+from auto_engineering.runtime.cancellation import CancellationToken
 
 __all__ = [
     "CancellationToken",
@@ -57,12 +55,12 @@ __all__ = [
     "ProgressLogger",
     "TokenTracker",
     "classify_error",
-    "main",
     "dev_loop",
+    "main",
+    "register_agent_command",
     "register_checkpoint_commands",
     "register_doctor_command",
     "register_gate_check_command",
-    "register_agent_command",
     "register_status_command",
 ]
 

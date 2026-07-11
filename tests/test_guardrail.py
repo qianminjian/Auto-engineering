@@ -33,7 +33,6 @@ from auto_engineering.loop.guardrail import (
     handle_guardrail_result,
 )
 
-
 # ---------- helpers ----------
 
 def _git(cwd: Path, *args: str, env: dict[str, str] | None = None) -> None:
@@ -121,10 +120,10 @@ class TestGuardrailResult:
 
         验证 Action type alias 只暴露 3 个值 — drop 已从契约中删除.
         """
-        from auto_engineering.loop.guardrail import Action
-
         # 1. typing.get_args 校验 Literal 包含的字符串
         import typing
+
+        from auto_engineering.loop.guardrail import Action
 
         args = set(typing.get_args(Action))
         assert args == {"pass", "block", "retry"}, (
@@ -138,8 +137,9 @@ class TestGuardrailResult:
         此测试先注释 — 实现层应升级到 Action Literal 才能启用.
         当前是契约文档层证明 drop 不在合法 action 集合.
         """
-        from auto_engineering.loop.guardrail import Action
         import typing
+
+        from auto_engineering.loop.guardrail import Action
 
         args = set(typing.get_args(Action))
         assert "drop" not in args, "drop 态必须已从 Action Literal 删除"

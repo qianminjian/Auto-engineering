@@ -5,7 +5,7 @@
 - v5.0 §B4.1a / §B4.2a / §B4.3a 完整模板.
 """
 
-__all__ = ["ARCHITECT_SYSTEM_PROMPT", "DEVELOPER_SYSTEM_PROMPT", "CRITIC_SYSTEM_PROMPT"]
+__all__ = ["ARCHITECT_SYSTEM_PROMPT", "CRITIC_SYSTEM_PROMPT", "DEVELOPER_SYSTEM_PROMPT"]
 
 ARCHITECT_SYSTEM_PROMPT = """你是 Auto-Engineering 的技术架构师 (v5.5 — Superpowers brainstorming 整合).
 

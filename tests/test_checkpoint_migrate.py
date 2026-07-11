@@ -189,8 +189,8 @@ def test_migrate_v1_to_v2_saves_to_sqlite(tmp_path: Path) -> None:
 
 def test_migrate_round_trip_loadable(tmp_path: Path) -> None:
     """迁移后, store.load(cp_id) 能读回原数据 (round-trip OK)."""
-    from auto_engineering.loop.checkpoint.migration import migrate_v1_to_v2
     from auto_engineering.loop.checkpoint import SQLiteCheckpointStore
+    from auto_engineering.loop.checkpoint.migration import migrate_v1_to_v2
 
     v1_data = {
         "status": "interrupted",

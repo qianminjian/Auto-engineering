@@ -13,12 +13,9 @@
 """
 from __future__ import annotations
 
-import tempfile
 from pathlib import Path
 
-import pytest
-
-from auto_engineering.gates.audit import AuditGate, AuditFinding
+from auto_engineering.gates.audit import AuditFinding, AuditGate
 
 
 class TestAuditGateConstruction:
@@ -210,7 +207,6 @@ class TestAuditGateMessageFormat:
 
     def test_message_truncates_long_evidence(self, tmp_path: Path) -> None:
         """evidence 截断保护."""
-        from auto_engineering.gates.audit import AuditFinding
 
         f = AuditFinding(
             severity="P0", dimension="代码质量",

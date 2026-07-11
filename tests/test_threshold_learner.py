@@ -8,8 +8,6 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
-import pytest
-
 from auto_engineering.loop.audit_history import AuditHistory
 from auto_engineering.loop.threshold_learner import ThresholdLearner
 

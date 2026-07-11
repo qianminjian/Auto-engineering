@@ -10,8 +10,6 @@ from __future__ import annotations
 import asyncio
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 # 复用现有 helpers
 from .test_loop_semantic_evaluator import _make_mock_response, _make_round_result_with_history
 

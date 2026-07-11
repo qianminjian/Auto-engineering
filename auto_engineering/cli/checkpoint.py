@@ -83,7 +83,7 @@ def register_checkpoint_commands(main: click.Group) -> None:
         """
         state_data: dict = {}
         if state_file:
-            with open(state_file, "r") as f:
+            with open(state_file) as f:
                 state_data = _json.load(f)
         else:
             try:

@@ -10,7 +10,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-__all__ = ["ArchitectOutput", "DeveloperOutput", "CriticOutput"]
+__all__ = ["ArchitectOutput", "CriticOutput", "DeveloperOutput"]
 
 class ArchitectOutput(BaseModel):
     """Architect 角色输出契约 (§B4.1a)."""

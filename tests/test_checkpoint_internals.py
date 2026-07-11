@@ -11,15 +11,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 from auto_engineering.loop.checkpoint._serialization import (
-    serialize_state,
     deserialize_state,
-    normalize_history_item,
     normalize_value,
+    serialize_state,
 )
-
 
 # ============================================================
 # serialize_state

@@ -18,11 +18,8 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
-
-import pytest
-
 
 # ============================================================
 # 1. serialize_state - Pydantic 风格对象

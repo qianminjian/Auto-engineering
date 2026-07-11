@@ -25,7 +25,6 @@ from auto_engineering.loop.stage_router import (
     update_majors_count,
 )
 
-
 # ---------- StageDecision 数据类字段 ----------
 
 class TestStageDecisionFields:

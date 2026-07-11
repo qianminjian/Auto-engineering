@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from auto_engineering.engine.state import EngineState
 from auto_engineering.loop.orchestrator import _inject_self_refine_context
 from auto_engineering.loop.plan import Task

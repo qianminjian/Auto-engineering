@@ -17,16 +17,16 @@ if TYPE_CHECKING:
     from auto_engineering.loop.convergence import ConvergenceJudge, ConvergenceVerdict
     from auto_engineering.loop.round import RoundHistory
 
-__all__ = ["evaluate", "check_gates_passed", "collect_latest_gates"]
+__all__ = ["check_gates_passed", "collect_latest_gates", "evaluate"]
 
 _logger = logging.getLogger("ae.loop.convergence_facade")
 
 
 def evaluate(
-    judge: "ConvergenceJudge",
-    history: list["RoundHistory"],
+    judge: ConvergenceJudge,
+    history: list[RoundHistory],
     current_stage: str,
-) -> "ConvergenceVerdict | None":
+) -> ConvergenceVerdict | None:
     """评估是否应停止循环. 返回 ConvergenceVerdict (应停止) 或 None (继续).
 
     包含 Bug 3 方案 C 的 gate 反向补丁:
@@ -44,14 +44,14 @@ def evaluate(
     return verdict
 
 
-def collect_latest_gates(history: list["RoundHistory"]) -> dict[str, "GateVerdict"]:
+def collect_latest_gates(history: list[RoundHistory]) -> dict[str, GateVerdict]:
     """收集最近一轮 RoundHistory 的 gate_results."""
     if not history:
         return {}
     return history[-1].gate_results or {}
 
 
-def check_gates_passed(gate_results: dict[str, "GateVerdict"]) -> bool:
+def check_gates_passed(gate_results: dict[str, GateVerdict]) -> bool:
     """所有 gate 都通过. 空 dict (无 gate 配置) 返回 True."""
     if not gate_results:
         return True
@@ -62,7 +62,7 @@ def check_gates_passed(gate_results: dict[str, "GateVerdict"]) -> bool:
 
 
 def _log_gate_block(
-    verdict: "ConvergenceVerdict", latest_gates: dict[str, "GateVerdict"], current_stage: str
+    verdict: ConvergenceVerdict, latest_gates: dict[str, GateVerdict], current_stage: str
 ) -> None:
     """记录 gate fail 拦住 stop 的诊断日志 (Bug 3 方案 C)."""
     failed = [

@@ -15,9 +15,9 @@ from pathlib import Path
 from typing import Any
 
 from auto_engineering.loop.checkpoint import SQLiteCheckpointStore
+from auto_engineering.loop.checkpoint._serialization import LastValueChannel
 from auto_engineering.loop.convergence import RoundHistory
 from auto_engineering.loop.state import CheckpointEnvelope
-from auto_engineering.loop.checkpoint._serialization import LastValueChannel
 
 # CheckpointEnvelope 数据格式版本 (str, 语义化版本)
 ENVELOPE_SCHEMA_VERSION = "1.0"

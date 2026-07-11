@@ -100,7 +100,7 @@ class AnthropicProvider:
         if hasattr(self._client, "close"):
             self._client.close()
 
-    def __enter__(self) -> "AnthropicProvider":
+    def __enter__(self) -> AnthropicProvider:
         return self
 
     def __exit__(self, *exc_info) -> None:

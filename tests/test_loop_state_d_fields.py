@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import pytest
 
+from auto_engineering.loop.checkpoint._serialization import LastValueChannel
 from auto_engineering.loop.plan import (
     Plan,
     Task,
@@ -28,7 +29,6 @@ from auto_engineering.loop.round import TaskOutcome
 from auto_engineering.loop.state import (
     CheckpointEnvelope,
 )
-from auto_engineering.loop.checkpoint._serialization import LastValueChannel
 
 # ============================================================
 # D.1 CheckpointEnvelope 8 字段测试

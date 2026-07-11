@@ -58,9 +58,10 @@ import asyncio
 import logging
 import os
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any
 
 from auto_engineering.agents.schema import derive_output_schema
 from auto_engineering.engine.state import EngineState
@@ -72,9 +73,9 @@ from auto_engineering.loop.convergence import (
     ConvergenceVerdict,
     RoundHistory,
 )
+from auto_engineering.loop.convergence_facade import check_gates_passed, collect_latest_gates
+from auto_engineering.loop.convergence_facade import evaluate as _evaluate_convergence
 from auto_engineering.loop.guardrail_facade import GuardrailFacade
-from auto_engineering.loop.convergence_facade import check_gates_passed, collect_latest_gates, evaluate as _evaluate_convergence
-from auto_engineering.utils.git import capture_head
 from auto_engineering.loop.plan import Plan, Task
 from auto_engineering.loop.round import (
     RoundResult,
@@ -82,7 +83,6 @@ from auto_engineering.loop.round import (
     TaskOutcome,
     run_round,
 )
-
 from auto_engineering.loop.semantic_evaluator import (
     ClaudeSemanticEvaluator,
     SemanticEvaluator,
@@ -93,6 +93,7 @@ from auto_engineering.loop.stage_router import (
     clear_stage_fields,
     update_majors_count,
 )
+from auto_engineering.utils.git import capture_head
 
 if TYPE_CHECKING:
     from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
@@ -104,6 +105,7 @@ from auto_engineering.runtime.context import TaskContext
 from auto_engineering.runtime.runtime import AgentRuntime
 from auto_engineering.runtime.task import Task as RuntimeTask
 from auto_engineering.utils.plugin_mode import detect_plugin_mode
+
 
 @dataclass
 class OrchestratorConfig:
@@ -141,9 +143,9 @@ class OrchestratorConfig:
     # v5.5 P2-7: 可注入 plugin_mode_detector 供测试 mock (默认 detect_plugin_mode)
     plugin_mode_detector: Callable[[], bool] | None = None
     # v5.0 M4: 3 个新字段 (B2.1)
-    checkpoint_store: "SQLiteCheckpointStore | None" = None
-    guardrail_chain: "GuardrailChain | None" = None
-    stage_router: "StageRouter | None" = None
+    checkpoint_store: SQLiteCheckpointStore | None = None
+    guardrail_chain: GuardrailChain | None = None
+    stage_router: StageRouter | None = None
 
     @staticmethod
     def _detect_api_key() -> bool:
@@ -225,12 +227,12 @@ class Orchestrator:
     # v5.0 M4 (B2.1): 内部状态 — 由 __post_init__ 初始化, 默认占位.
     # _state: EngineState 17 字段 Channel 容器 (v5.0 §B1.1)
     # _router: StageRouter 引用 (从 config 拉, 避免每个 step 都访问 config)
-    _state: "EngineState | None" = None
+    _state: EngineState | None = None
     _channel_versions: dict[str, int] = field(default_factory=dict)
     _channel_hashes: dict[str, int] = field(default_factory=dict)
-    _router: "StageRouter | None" = None
-    _checkpoint_mgr: "CheckpointManager | None" = None
-    _guardrail_facade: "GuardrailFacade | None" = None
+    _router: StageRouter | None = None
+    _checkpoint_mgr: CheckpointManager | None = None
+    _guardrail_facade: GuardrailFacade | None = None
     # 2026-07-04 (Bug 2 prismscan 方案 A): critic 重试计数 (替代直接升级 HARD_LIMIT)
     _critic_retry_count: int = 0
 
@@ -427,9 +429,9 @@ class Orchestrator:
         round_id: int,
         max_iter: int,
         cancellation: CancellationToken | None,
-        guardrail_chain: "GuardrailChain | None",
+        guardrail_chain: GuardrailChain | None,
         project_root: Path,
-    ) -> tuple["RoundResult | None", str, str]:
+    ) -> tuple[RoundResult | None, str, str]:
         """tick 阶段: 准备任务 + 前置检查 + Agent 执行 (Steps 2a-2e).
 
         借鉴 LangGraph PregelLoop.tick() (pregel/_loop.py:592-691):
@@ -483,9 +485,9 @@ class Orchestrator:
 
     async def _after_tick(
         self,
-        round_result: "RoundResult | None",
+        round_result: RoundResult | None,
         current_stage: str,
-        guardrail_chain: "GuardrailChain | None",
+        guardrail_chain: GuardrailChain | None,
         round_id: int,
     ) -> bool:
         """after_tick 阶段: 后置检查 + 状态更新 + 收敛判定 + 持久化 (Steps 2f-2i).
@@ -617,7 +619,7 @@ class Orchestrator:
     # v5.0 P1-1: run() 拆 8 子方法 (单一职责) — 由 tick/after_tick 调度
     # ========================================================================
 
-    def _step_1_init(self) -> tuple[int, Path, "GuardrailChain | None"]:
+    def _step_1_init(self) -> tuple[int, Path, GuardrailChain | None]:
         """step 1: 初始化. 返回 (max_iter, project_root, guardrail_chain).
 
         集中所有初始化: Plan.validate() / state / router / project_root / guardrail_chain.
@@ -667,9 +669,9 @@ class Orchestrator:
 
     def _step_2b_route_init(
         self,
-        state: "EngineState",
-        router: "StageRouter",
-    ) -> "StageDecision | None":
+        state: EngineState,
+        router: StageRouter,
+    ) -> StageDecision | None:
         """step 2b: state.current_stage=="" 时调 router.next 初始化.
 
         返回 StageDecision (供测试 spy 验证); 副作用写 state.current_stage.
@@ -741,9 +743,9 @@ class Orchestrator:
 
     def _step_2d_guardrail_pre(
         self,
-        guardrail_chain: "GuardrailChain | None",
+        guardrail_chain: GuardrailChain | None,
         current_stage: str,
-        state: "EngineState",
+        state: EngineState,
     ) -> str:
         """step 2d: PRE Guardrail 检查. 委托 GuardrailFacade (v5.4 审计 P1-1)."""
         assert self._guardrail_facade is not None
@@ -753,7 +755,7 @@ class Orchestrator:
         self,
         current_stage: str,
         round_tasks: list[Task],
-        state: "EngineState",
+        state: EngineState,
         project_root: Path,
         cancellation: CancellationToken | None,
         round_id: int,
@@ -788,9 +790,9 @@ class Orchestrator:
 
     def _step_2f_guardrail_post(
         self,
-        guardrail_chain: "GuardrailChain | None",
+        guardrail_chain: GuardrailChain | None,
         current_stage: str,
-        state: "EngineState",
+        state: EngineState,
     ) -> str:
         """step 2f: POST Guardrail 检查. 委托 GuardrailFacade (v5.4 审计 P1-1)."""
         assert self._guardrail_facade is not None
@@ -811,7 +813,7 @@ class Orchestrator:
 
     def _step_2h_major_count(
         self,
-        state: "EngineState",
+        state: EngineState,
         verdict: str,
         current_stage: str,
     ) -> None:
@@ -824,10 +826,10 @@ class Orchestrator:
 
     def _step_2i_route_and_judge(
         self,
-        router: "StageRouter",
+        router: StageRouter,
         judge: ConvergenceJudge,
         current_stage: str,
-        state: "EngineState",
+        state: EngineState,
     ) -> bool:
         """step 2i: StageRouter.next + Judge.evaluate. 返回 should_break."""
         try:
@@ -847,7 +849,7 @@ class Orchestrator:
         return self._judge_convergence(judge, state, current_stage)
 
     def _handle_critic_verdict_invalid(
-        self, exc: CriticVerdictInvalid, state: "EngineState"
+        self, exc: CriticVerdictInvalid, state: EngineState
     ) -> bool:
         """CriticVerdictInvalid 重试/升级. 返回 should_break."""
         MAX_CRITIC_RETRIES = 2
@@ -869,8 +871,8 @@ class Orchestrator:
 
     def _apply_stage_decision(
         self,
-        decision: "StageDecision",
-        state: "EngineState",
+        decision: StageDecision,
+        state: EngineState,
         current_stage: str,
     ) -> bool | None:
         """应用 StageDecision: should_stop / next_stage / None→需要 judge.
@@ -890,7 +892,7 @@ class Orchestrator:
     def _judge_convergence(
         self,
         judge: ConvergenceJudge,
-        state: "EngineState",
+        state: EngineState,
         current_stage: str,
     ) -> bool:
         """ConvergenceJudge 评估 + gate 反向补丁 (v5.4 审计 P1-1: 委托 ConvergenceFacade)."""
@@ -904,7 +906,7 @@ class Orchestrator:
         """收集最近一轮 RoundHistory 的 gate_results (委托 convergence_facade.collect_latest_gates)."""
         return collect_latest_gates(list(self.history))
 
-    def _update_channel_versions(self, state: "EngineState") -> dict[str, int]:
+    def _update_channel_versions(self, state: EngineState) -> dict[str, int]:
         """更新并返回 channel_versions (基于 state 字段内容 hash).
 
         每次字段值变化时递增对应 channel 的 version.
@@ -1015,7 +1017,7 @@ class Orchestrator:
 
 
 
-    def _warn_design_docs_update(self, state: "EngineState") -> bool:
+    def _warn_design_docs_update(self, state: EngineState) -> bool:
         """B7.1 步2i (Stage 4 Design Doc Sync): 检查 BEACON.md 是否滞后于代码改动.
 
         强制步骤 (CLAUDE.md Stage 4): 若核心模块改动但 BEACON.md 在改动前最后修改,
@@ -1067,7 +1069,7 @@ class Orchestrator:
 
     def _step_3_exit_block(
         self,
-        state: "EngineState | None",
+        state: EngineState | None,
         history: deque[RoundHistory],
         latest_gates: dict[str, Any],
         max_iter: int,
@@ -1131,7 +1133,7 @@ class Orchestrator:
 
 def _inject_self_refine_context(
     round_tasks: list[Task],
-    state: "EngineState",
+    state: EngineState,
     current_stage: str,
     latest_gates: dict[str, Any],
 ) -> list[Task]:

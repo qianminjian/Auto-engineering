@@ -22,26 +22,26 @@ v5.4 P2-8: drop 态已从类型系统和 handler 中完全移除.
 
 from __future__ import annotations
 
-from auto_engineering.utils.git import run_git as _run_git, run_git_diff as _run_git_diff
-
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from auto_engineering.loop.stage_router import clear_stage_fields
+from auto_engineering.utils.git import run_git as _run_git
+from auto_engineering.utils.git import run_git_diff as _run_git_diff
 
 __all__ = [
-    "Action",
     "MAX_RETRY_PER_STAGE",
-    "GuardrailResult",
-    "Guardrail",
-    "RequirementValid",
-    "PlanExists",
-    "GitDiffExists",
-    "TestsPass",
+    "Action",
     "GitClean",
+    "GitDiffExists",
+    "Guardrail",
     "GuardrailChain",
+    "GuardrailResult",
+    "PlanExists",
+    "RequirementValid",
+    "TestsPass",
     "handle_guardrail_result",
 ]
 
@@ -333,7 +333,7 @@ class GuardrailChain:
         self.guardrails = list(guardrails)
 
     @classmethod
-    def default(cls) -> "GuardrailChain":
+    def default(cls) -> GuardrailChain:
         """工厂方法: 创建包含全部 5 个 Guardrail (G1-G5) 的默认链."""
         return cls([
             RequirementValid(),

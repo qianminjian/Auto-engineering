@@ -26,12 +26,12 @@ from pathlib import Path
 from auto_engineering.gates.base import Gate, GateVerdict
 
 __all__ = [
-    "AuditFinding",
-    "AuditGate",
-    "SKIP_DIRS",
     "DEFAULT_MAX_P0",
     "DEFAULT_MAX_P1",
     "DEFAULT_MAX_P2",
+    "SKIP_DIRS",
+    "AuditFinding",
+    "AuditGate",
 ]
 
 _logger = logging.getLogger("ae.gates.audit")

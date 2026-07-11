@@ -435,7 +435,6 @@ def _make_rate_limit_error() -> Exception:
     模拟 SDK 真实行为: RateLimitError 是 APIStatusError 子类,
     有 status_code=429, response.headers.
     """
-    import anthropic
 
     mock_response = MagicMock()
     mock_response.status_code = 429
@@ -449,6 +448,5 @@ def _make_rate_limit_error() -> Exception:
 
 def _make_connection_error() -> Exception:
     """构造一个 anthropic.APIConnectionError 异常."""
-    import anthropic
 
     return anthropic.APIConnectionError(request=MagicMock())

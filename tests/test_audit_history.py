@@ -9,8 +9,6 @@ import json
 import tempfile
 from pathlib import Path
 
-import pytest
-
 from auto_engineering.loop.audit_history import AuditHistory
 
 

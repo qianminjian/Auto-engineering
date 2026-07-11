@@ -1111,13 +1111,10 @@ class TestOrchestratorV5MainLoop:
         """
         from auto_engineering.engine.state import EngineState
         from auto_engineering.loop.guardrail import (
-            Guardrail,
             GuardrailChain,
-            GuardrailResult,
         )
         from auto_engineering.loop.orchestrator import Orchestrator
         from auto_engineering.loop.stage_router import StageRouter
-        from auto_engineering.loop.task_factory import apply_outcome_to_state
 
         # 1. 构造 3 task plan (architect/developer/critic)
         tasks = [
@@ -1255,7 +1252,6 @@ class TestOrchestratorV5MainLoop:
     async def test_run_with_major_loop(self) -> None:
         """MAJOR verdict 触发 MAJOR 循环: critic MAJOR → 回到 developer."""
         from auto_engineering.engine.state import EngineState
-        from auto_engineering.loop.guardrail import GuardrailChain
         from auto_engineering.loop.orchestrator import Orchestrator
         from auto_engineering.loop.stage_router import StageRouter
 
@@ -1305,11 +1301,12 @@ class TestOrchestratorV5MainLoop:
         """达到 max_iterations → 硬上限停止 (LEVEL_HARD_LIMIT)."""
         from auto_engineering.engine.state import EngineState
         from auto_engineering.loop.convergence import (
-            ConvergenceConfig, LEVEL_HARD_LIMIT,
+            LEVEL_HARD_LIMIT,
+            ConvergenceConfig,
         )
-        from auto_engineering.loop.guardrail import GuardrailChain
         from auto_engineering.loop.orchestrator import (
-            Orchestrator, OrchestratorConfig,
+            Orchestrator,
+            OrchestratorConfig,
         )
         from auto_engineering.loop.stage_router import StageRouter
 
@@ -1406,7 +1403,7 @@ class TestOrchestratorStepHelpers:
         from auto_engineering.loop.orchestrator import Orchestrator
 
         # 1. 子方法 spy 计数
-        call_counts: dict[str, int] = {name: 0 for name in self.EXPECTED_HELPERS}
+        call_counts: dict[str, int] = dict.fromkeys(self.EXPECTED_HELPERS, 0)
 
         async def noop_executor(task, ctx):
             return TaskOutcome(task_id=task.id, status="completed", output="x")
@@ -1477,7 +1474,7 @@ class TestOrchestratorStepHelpers:
         # 4. 跑 run() (用 asyncio.wait_for 防 hang)
         try:
             await asyncio.wait_for(orch.run(cancellation=None), timeout=5.0)
-        except (asyncio.TimeoutError, Exception):
+        except (TimeoutError, Exception):
             # spy 内部 None 返回可能导致后续逻辑异常, 我们只关心调用次数
             pass
 
@@ -1561,7 +1558,6 @@ class TestV55OrchestratorDeepAudit:
 
     def test_run_deep_audit_returns_tuple(self, tmp_path: Path) -> None:
         """_run_deep_audit() 返回 (bool, list[dict])."""
-        from auto_engineering.engine.state import EngineState
 
         config = OrchestratorConfig(project_root=tmp_path)
         orch = Orchestrator(
@@ -1573,7 +1569,6 @@ class TestV55OrchestratorDeepAudit:
 
     def test_run_deep_audit_no_findings_returns_false(self, tmp_path: Path) -> None:
         """无 findings → audit_found_issues=False."""
-        from auto_engineering.engine.state import EngineState
 
         config = OrchestratorConfig(project_root=tmp_path)
         orch = Orchestrator(
@@ -1663,7 +1658,6 @@ class TestV55OrchestratorDeepAudit:
 
     def test_orchestrator_config_accepts_convergence_v55_fields(self) -> None:
         """OrchestratorConfig 接受 ConvergenceConfig v5.5 扩展字段."""
-        from auto_engineering.engine.state import EngineState
 
         config = OrchestratorConfig(
             convergence_config=ConvergenceConfig(
@@ -1683,7 +1677,6 @@ class TestV55OrchestratorDeepAudit:
 
     def test_orchestrator_state_has_v55_fields(self) -> None:
         """Orchestrator._state 包含 v5.5 新字段."""
-        from auto_engineering.engine.state import EngineState
 
         config = OrchestratorConfig()
         orch = Orchestrator(

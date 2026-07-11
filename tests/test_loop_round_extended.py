@@ -22,7 +22,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -30,7 +29,7 @@ from pathlib import Path
 import pytest
 
 from auto_engineering.gates.base import Gate, GateVerdict
-from auto_engineering.loop.plan import ConflictError, Task
+from auto_engineering.loop.plan import ConflictError, Task, _topological_levels
 from auto_engineering.loop.round import (
     RoundResult,
     TaskOutcome,
@@ -38,8 +37,6 @@ from auto_engineering.loop.round import (
     _parse_git_numstat,
     run_round,
 )
-from auto_engineering.loop.plan import _topological_levels
-
 
 # ============================================================
 # Helpers

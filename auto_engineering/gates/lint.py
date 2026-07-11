@@ -69,7 +69,7 @@ class LintGate(Gate):
         manifest: dict,
         timeout: float | None = None,
         project_root: Path | None = None,
-    ) -> "LintGate":
+    ) -> LintGate:
         """v5.0 §IL-AC-02: 从 init-manifest.json 构造 LintGate.
 
         读 manifest.conventions.linter, 缺则用 LANGUAGE_TOOLS 默认.

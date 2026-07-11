@@ -21,13 +21,13 @@ Phase A 已修复 save() 不抛异常, 但 load() 半完成:
 from __future__ import annotations
 
 from auto_engineering.loop.checkpoint import SQLiteCheckpointStore
-from auto_engineering.loop.state import (
-    CheckpointEnvelope,
-)
 from auto_engineering.loop.checkpoint._serialization import (
     AccumulatingChannel,
     BarrierChannel,
     LastValueChannel,
+)
+from auto_engineering.loop.state import (
+    CheckpointEnvelope,
 )
 
 

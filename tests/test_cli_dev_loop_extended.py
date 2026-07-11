@@ -16,7 +16,6 @@ cli/dev_loop.py 扩展覆盖率测试.
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -28,7 +27,6 @@ from auto_engineering.cli.dev_loop import (
     OrchestratorRunResult,
     _build_gate_summary,
 )
-
 
 # ============================================================
 # 1. OrchestratorRunResult dataclass
@@ -613,18 +611,17 @@ class TestRunV2OrchestratorUnit:
         with patch(
             "auto_engineering.loop.orchestrator.Orchestrator",
             return_value=fake_orchestrator,
+        ), patch(
+            "auto_engineering.cli.dev_loop._build_v2_agent_runtime",
+            return_value=MagicMock(),
         ):
-            with patch(
-                "auto_engineering.cli.dev_loop._build_v2_agent_runtime",
-                return_value=MagicMock(),
-            ):
-                result = _run_v2_orchestrator_passthrough(
-                    requirement="test req",
-                    project_root=tmp_path,
-                    max_rounds=2,
-                    progress=progress,
-                    cancellation=cancellation,
-                )
+            result = _run_v2_orchestrator_passthrough(
+                requirement="test req",
+                project_root=tmp_path,
+                max_rounds=2,
+                progress=progress,
+                cancellation=cancellation,
+            )
         assert result.status == "completed"
         # _thread_id 由 _run_v2_orchestrator 内部赋值为 uuid.uuid4().hex (32 字符)
         assert len(result.thread_id) == 32
@@ -652,18 +649,17 @@ class TestRunV2OrchestratorUnit:
         with patch(
             "auto_engineering.loop.orchestrator.Orchestrator",
             return_value=fake_orchestrator,
+        ), patch(
+            "auto_engineering.cli.dev_loop._build_v2_agent_runtime",
+            return_value=MagicMock(),
         ):
-            with patch(
-                "auto_engineering.cli.dev_loop._build_v2_agent_runtime",
-                return_value=MagicMock(),
-            ):
-                result = _run_v2_orchestrator_passthrough(
-                    requirement="x",
-                    project_root=tmp_path,
-                    max_rounds=3,
-                    progress=progress,
-                    cancellation=cancellation,
-                )
+            result = _run_v2_orchestrator_passthrough(
+                requirement="x",
+                project_root=tmp_path,
+                max_rounds=3,
+                progress=progress,
+                cancellation=cancellation,
+            )
         assert result.status == "max_rounds"
         assert result.rounds == 0
         # history 为空, max_rounds 路径 reason 用 0 轮 (因为 rounds=len(history)=0)
@@ -677,6 +673,7 @@ def _run_v2_orchestrator_passthrough(**kwargs):
     2026-07-04 v5.0 M4 升级: 加 mock 覆盖 orchestrator 新导入的模块.
     """
     from unittest.mock import MagicMock, patch
+
     from auto_engineering.cli.dev_loop import _run_v2_orchestrator
 
     with patch("auto_engineering.loop.checkpoint.store.SQLiteCheckpointStore", MagicMock()), \

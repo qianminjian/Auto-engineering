@@ -29,8 +29,8 @@ from auto_engineering.runtime.task import Task, TaskResult
 from auto_engineering.tools.base import BaseTool
 
 if TYPE_CHECKING:
-    from auto_engineering.runtime.cancellation import CancellationToken
     from auto_engineering.cli.helpers import TokenTracker
+    from auto_engineering.runtime.cancellation import CancellationToken
 
 __all__ = ["BaseAgent"]
 

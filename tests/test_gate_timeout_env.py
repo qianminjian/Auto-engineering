@@ -5,12 +5,6 @@
 
 from __future__ import annotations
 
-import os
-from pathlib import Path
-
-import pytest
-
-
 # ============================================================
 # 测试: AE_GATE_TIMEOUT env var 被各子类读取
 # ============================================================

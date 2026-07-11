@@ -1,6 +1,5 @@
 """Tests for agents/schema.py — derive_output_schema."""
 
-import pytest
 from auto_engineering.agents.schema import derive_output_schema
 
 

@@ -19,8 +19,8 @@ from .test_gate import TestGate
 from .type_check import TypeCheckGate
 
 __all__ = [
-    "AuditGate",
     "DEFAULT_GATES",
+    "AuditGate",
     "BuildGate",
     "ContractGate",
     "DeepAuditFinding",

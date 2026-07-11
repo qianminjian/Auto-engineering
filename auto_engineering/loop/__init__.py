@@ -51,6 +51,7 @@ from auto_engineering.loop.round import (
     RoundResult,
 )
 from auto_engineering.loop.threshold_learner import ThresholdLearner
+
 # v2.3 P0-A (BEACON 决策 23): CheckpointEnvelope / Channel 不再从 __init__ 导出
 # (消除与 engine.state.LoopState 同名双义). 需显式:
 #   from auto_engineering.loop.state import CheckpointEnvelope, Channel, LastValueChannel, ...

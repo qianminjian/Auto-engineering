@@ -17,6 +17,7 @@ v2.5 P1-D 二次拆分: store.py 609 行 → store.py(290) + _connection.py(76) 
 
 from __future__ import annotations
 
+from auto_engineering.loop.checkpoint.manager import CheckpointManager
 from auto_engineering.loop.checkpoint.records import (
     Checkpoint,
     CheckpointError,
@@ -24,19 +25,18 @@ from auto_engineering.loop.checkpoint.records import (
     CheckpointNotFoundError,
     CheckpointSchemaMismatchError,
 )
-from auto_engineering.loop.checkpoint.manager import CheckpointManager
 from auto_engineering.loop.checkpoint.store import (
     DB_SCHEMA_VERSION,
     SQLiteCheckpointStore,
 )
 
 __all__ = [
+    "DB_SCHEMA_VERSION",
     "Checkpoint",
     "CheckpointError",
     "CheckpointManager",
     "CheckpointMeta",
     "CheckpointNotFoundError",
     "CheckpointSchemaMismatchError",
-    "DB_SCHEMA_VERSION",
     "SQLiteCheckpointStore",
 ]

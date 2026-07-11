@@ -31,9 +31,6 @@ import json
 import os
 from pathlib import Path
 
-import pytest
-
-
 # ============================================================
 # 1. IL-AC-01: 文件缺失 → ✗ + 提示运行 Init
 # ============================================================
@@ -527,7 +524,6 @@ def test_il_ac_05_ae_doctor_does_not_modify_manifest_mtime(
     mtime_before_ns = manifest_path.stat().st_mtime_ns
 
     # 跑 ae doctor (用 CliRunner 走 CLI 路径, 不子进程)
-    import os
 
     original_cwd = os.getcwd()
     try:

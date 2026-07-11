@@ -70,7 +70,7 @@ def _instantiate_gate(name: str, project_root: Path) -> object | None:
         gate = get_gate_by_name(name)
         if gate is not None:
             return gate
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         _logger.warning("gate '%s' 实例化失败: %s", name, e, exc_info=True)
         return None
     return None
@@ -95,7 +95,7 @@ def run_gates(gate_names: tuple[str, ...], project_root: Path) -> dict:
         # 跑 Gate
         try:
             verdict = gate.run(project_root)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             _logger.warning("gate '%s' 执行异常", name, exc_info=True)
             # fail-closed: 崩溃的质量门禁不得静默放行 (区别于"不适用" skipped)
             summary[name] = {"status": "error", "passed": False, "message": f"run error: {e}"}

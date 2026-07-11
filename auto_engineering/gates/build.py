@@ -20,7 +20,7 @@ from pathlib import Path
 
 from auto_engineering.gates.base import Gate, GateVerdict, run_gate_command
 
-__all__ = ["BuildGate", "DEFAULT_TIMEOUT"]
+__all__ = ["DEFAULT_TIMEOUT", "BuildGate"]
 
 DEFAULT_TIMEOUT = 30.0
 

@@ -48,7 +48,7 @@ class GateVerdict:
     def ok(
         cls, msg: str = "", gate_name: str = "",
         details: dict | None = None, suggestions: list[str] | None = None,
-    ) -> GateVerdict:  # noqa: F811
+    ) -> GateVerdict:
         """构造一个通过的 GateVerdict."""
         return cls(gate_name=gate_name, passed=True, message=msg,
                    details=details, suggestions=suggestions)
@@ -172,7 +172,7 @@ class Gate:
         """
         import warnings
 
-        def _getter(self: "Gate") -> object:
+        def _getter(self: Gate) -> object:
             warnings.warn(
                 f"{cls.__name__}.{old_name} is deprecated, use .{new_name} instead",
                 DeprecationWarning,
@@ -204,7 +204,7 @@ class Gate:
         )
 
     @classmethod
-    def from_manifest(cls, manifest: dict) -> "Gate":
+    def from_manifest(cls, manifest: dict) -> Gate:
         """从 init-manifest.json 构造 Gate 实例 (可选覆写).
 
         默认不支持 manifest 构造 — 子类如需支持 (如 LintGate/TypeCheckGate/TestGate)

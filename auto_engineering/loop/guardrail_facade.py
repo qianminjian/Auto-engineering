@@ -37,19 +37,19 @@ class GuardrailFacade:
         self._retry_counters: dict[str, int] = {}
 
     def check_pre(
-        self, current_stage: str, state: "EngineState"
+        self, current_stage: str, state: EngineState
     ) -> str:
         """PRE Guardrail 检查. 返回 'pass' / 'stop' / 'retry'."""
         return self._do_check("pre", current_stage, state)
 
     def check_post(
-        self, current_stage: str, state: "EngineState"
+        self, current_stage: str, state: EngineState
     ) -> str:
         """POST Guardrail 检查. 返回 'pass' / 'stop' / 'retry'."""
         return self._do_check("post", current_stage, state)
 
     def _do_check(
-        self, timing: str, current_stage: str, state: "EngineState"
+        self, timing: str, current_stage: str, state: EngineState
     ) -> str:
         """统一 Guardrail 检查逻辑 (v5.5 audit P2-20).
 

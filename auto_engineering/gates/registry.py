@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from auto_engineering.gates._tools import LANGUAGE_TOOLS, get_gate_tools_from_manifest  # noqa: F401
+from auto_engineering.gates._tools import LANGUAGE_TOOLS, get_gate_tools_from_manifest
 from auto_engineering.gates.audit import AuditGate
 from auto_engineering.gates.base import Gate
 from auto_engineering.gates.build import BuildGate
@@ -26,13 +26,13 @@ from auto_engineering.gates.test_gate import TestGate
 from auto_engineering.gates.type_check import TypeCheckGate
 
 __all__ = [
-    "build_gates_from_manifest",
-    "reset_default_gates_cache",
-    "get_default_gates",
-    "get_default_gate_names",
-    "get_gate_by_name",
     "LANGUAGE_TOOLS",
+    "build_gates_from_manifest",
+    "get_default_gate_names",
+    "get_default_gates",
+    "get_gate_by_name",
     "get_gate_tools_from_manifest",
+    "reset_default_gates_cache",
 ]
 
 def _build_default_gates(manifest: dict | None = None) -> list[Gate]:

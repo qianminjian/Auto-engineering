@@ -15,34 +15,25 @@
 
 from __future__ import annotations
 
-import asyncio
 from pathlib import Path
-from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
 from auto_engineering.engine.state import EngineState
 from auto_engineering.loop.convergence import (
-    LEVEL_QUALITY,
     ConvergenceConfig,
     ConvergenceJudge,
-    ConvergenceVerdict,
     RoundHistory,
 )
 from auto_engineering.loop.orchestrator import Orchestrator, OrchestratorConfig
 from auto_engineering.loop.plan import Task
 from auto_engineering.loop.round import (
     RoundResult,
-    TaskOutcome,
-    run_round,
 )
 from auto_engineering.loop.stage_router import (
-    StageDecision,
     StageRouter,
-    clear_stage_fields,
 )
-
 
 # ============================================================
 # Helpers

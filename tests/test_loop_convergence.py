@@ -41,12 +41,14 @@ from auto_engineering.loop.convergence import (
     LEVEL_STAGNANT,
     ConvergenceConfig,
     ConvergenceJudge,
-    RoundHistory,
     ConvergenceVerdict,
+    RoundHistory,
     detect_stagnation,
     diff_ratio,
 )
-from auto_engineering.loop.state import CheckpointEnvelope  # v2.3 P0-A 重命名 (原 LoopState, v2.0 Pydantic Checkpoint 数据信封)
+from auto_engineering.loop.state import (
+    CheckpointEnvelope,  # v2.3 P0-A 重命名 (原 LoopState, v2.0 Pydantic Checkpoint 数据信封)
+)
 
 # ============================================================
 # Fixtures
@@ -1381,6 +1383,7 @@ class TestStageRouterIntegration:
         (反向语义). 新实现 raise CriticVerdictInvalid 让 orchestrator 显式处理.
         """
         import pytest
+
         from auto_engineering.loop.stage_router import CriticVerdictInvalid, StageRouter
 
         router = StageRouter()

@@ -24,11 +24,8 @@ from auto_engineering.cli import main
 from auto_engineering.cli.agent import (
     VALID_ROLES,
     _build_role_system_prompt,
-    _build_runtime_for_role,
-    register_agent_command,
     run_agent,
 )
-
 
 # ============================================================
 # Fixtures
@@ -193,19 +190,18 @@ def test_run_agent_in_llm_agent_skips_key_check(tmp_path: Path) -> None:
     """CLAUDE_CODE 设置时 不走缺 KEY 早返回路径."""
     with patch.dict(
         "os.environ", {"CLAUDE_CODE": "1"}, clear=True
-    ):
-        with patch("auto_engineering.cli.agent._build_runtime_for_role") as mock_build:
-            mock_runtime = MagicMock()
-            mock_agent = MagicMock()
-            mock_runtime.get.return_value = mock_agent
+    ), patch("auto_engineering.cli.agent._build_runtime_for_role") as mock_build:
+        mock_runtime = MagicMock()
+        mock_agent = MagicMock()
+        mock_runtime.get.return_value = mock_agent
 
-            async def fake_exec(task, ctx):
-                return {"output": "hello", "error": None}
+        async def fake_exec(task, ctx):
+            return {"output": "hello", "error": None}
 
-            mock_agent.execute = fake_exec
+        mock_agent.execute = fake_exec
 
-            mock_build.return_value = mock_runtime
-            result = run_agent("architect", "test", tmp_path)
+        mock_build.return_value = mock_runtime
+        result = run_agent("architect", "test", tmp_path)
     assert result["status"] == "completed"
     assert result["output"] == "hello"
 
@@ -214,18 +210,17 @@ def test_run_agent_anthropic_cli_set_skips_key_check(tmp_path: Path) -> None:
     """ANTHROPIC_CLI 含 'claude' (大小写不敏感) -> 跳过 KEY 早返回."""
     with patch.dict(
         "os.environ", {"ANTHROPIC_CLI": "Claude"}, clear=True
-    ):
-        with patch("auto_engineering.cli.agent._build_runtime_for_role") as mock_build:
-            mock_runtime = MagicMock()
-            mock_agent = MagicMock()
-            mock_runtime.get.return_value = mock_agent
+    ), patch("auto_engineering.cli.agent._build_runtime_for_role") as mock_build:
+        mock_runtime = MagicMock()
+        mock_agent = MagicMock()
+        mock_runtime.get.return_value = mock_agent
 
-            async def fake_exec(task, ctx):
-                return {"output": "ok"}
+        async def fake_exec(task, ctx):
+            return {"output": "ok"}
 
-            mock_agent.execute = fake_exec
-            mock_build.return_value = mock_runtime
-            result = run_agent("critic", "x", tmp_path)
+        mock_agent.execute = fake_exec
+        mock_build.return_value = mock_runtime
+        result = run_agent("critic", "x", tmp_path)
     assert result["status"] == "completed"
 
 
@@ -238,18 +233,17 @@ def test_run_agent_with_real_key_calls_runtime(tmp_path: Path) -> None:
     """设置 KEY + mock runtime -> 走真实调用路径."""
     with patch.dict(
         "os.environ", {"ANTHROPIC_API_KEY": "sk-test"}, clear=True
-    ):
-        with patch("auto_engineering.cli.agent._build_runtime_for_role") as mock_build:
-            mock_runtime = MagicMock()
-            mock_agent = MagicMock()
-            mock_runtime.get.return_value = mock_agent
+    ), patch("auto_engineering.cli.agent._build_runtime_for_role") as mock_build:
+        mock_runtime = MagicMock()
+        mock_agent = MagicMock()
+        mock_runtime.get.return_value = mock_agent
 
-            async def fake_exec(task, ctx):
-                return {"output": "responded", "error": None}
+        async def fake_exec(task, ctx):
+            return {"output": "responded", "error": None}
 
-            mock_agent.execute = fake_exec
-            mock_build.return_value = mock_runtime
-            result = run_agent("architect", "build a plan", tmp_path)
+        mock_agent.execute = fake_exec
+        mock_build.return_value = mock_runtime
+        result = run_agent("architect", "build a plan", tmp_path)
     assert result["status"] == "completed"
     assert result["output"] == "responded"
     assert result["error"] is None
@@ -259,18 +253,17 @@ def test_run_agent_dict_result_with_error(tmp_path: Path) -> None:
     """agent 返回 dict 含 error -> status='failed'."""
     with patch.dict(
         "os.environ", {"ANTHROPIC_API_KEY": "sk-test"}, clear=True
-    ):
-        with patch("auto_engineering.cli.agent._build_runtime_for_role") as mock_build:
-            mock_runtime = MagicMock()
-            mock_agent = MagicMock()
-            mock_runtime.get.return_value = mock_agent
+    ), patch("auto_engineering.cli.agent._build_runtime_for_role") as mock_build:
+        mock_runtime = MagicMock()
+        mock_agent = MagicMock()
+        mock_runtime.get.return_value = mock_agent
 
-            async def fake_exec(task, ctx):
-                return {"output": None, "error": "LLM timeout"}
+        async def fake_exec(task, ctx):
+            return {"output": None, "error": "LLM timeout"}
 
-            mock_agent.execute = fake_exec
-            mock_build.return_value = mock_runtime
-            result = run_agent("architect", "x", tmp_path)
+        mock_agent.execute = fake_exec
+        mock_build.return_value = mock_runtime
+        result = run_agent("architect", "x", tmp_path)
     assert result["status"] == "failed"
     assert result["error"] == "LLM timeout"
 
@@ -279,23 +272,22 @@ def test_run_agent_object_result_extracts_attrs(tmp_path: Path) -> None:
     """agent 返回对象 (非 dict) -> 提取 output/error/status 属性."""
     with patch.dict(
         "os.environ", {"ANTHROPIC_API_KEY": "sk-test"}, clear=True
-    ):
-        with patch("auto_engineering.cli.agent._build_runtime_for_role") as mock_build:
-            mock_runtime = MagicMock()
-            mock_agent = MagicMock()
-            mock_runtime.get.return_value = mock_agent
+    ), patch("auto_engineering.cli.agent._build_runtime_for_role") as mock_build:
+        mock_runtime = MagicMock()
+        mock_agent = MagicMock()
+        mock_runtime.get.return_value = mock_agent
 
-            class FakeOutcome:
-                output = "object-output"
-                error = None
-                status = "completed"
+        class FakeOutcome:
+            output = "object-output"
+            error = None
+            status = "completed"
 
-            async def fake_exec(task, ctx):
-                return FakeOutcome()
+        async def fake_exec(task, ctx):
+            return FakeOutcome()
 
-            mock_agent.execute = fake_exec
-            mock_build.return_value = mock_runtime
-            result = run_agent("developer", "x", tmp_path)
+        mock_agent.execute = fake_exec
+        mock_build.return_value = mock_runtime
+        result = run_agent("developer", "x", tmp_path)
     assert result["output"] == "object-output"
     assert result["status"] == "completed"
 
@@ -304,12 +296,11 @@ def test_run_agent_runtime_exception_returns_failed(tmp_path: Path) -> None:
     """_build_runtime_for_role 抛异常 -> 捕获, 返回 failed."""
     with patch.dict(
         "os.environ", {"ANTHROPIC_API_KEY": "sk-test"}, clear=True
+    ), patch(
+        "auto_engineering.cli.agent._build_runtime_for_role",
+        side_effect=RuntimeError("boom"),
     ):
-        with patch(
-            "auto_engineering.cli.agent._build_runtime_for_role",
-            side_effect=RuntimeError("boom"),
-        ):
-            result = run_agent("architect", "x", tmp_path)
+        result = run_agent("architect", "x", tmp_path)
     assert result["status"] == "failed"
     assert "RuntimeError" in result["error"]
     assert "boom" in result["error"]
@@ -319,18 +310,17 @@ def test_run_agent_execute_timeout_returns_failed(tmp_path: Path) -> None:
     """agent.execute() 抛超时异常 -> caught + failed."""
     with patch.dict(
         "os.environ", {"ANTHROPIC_API_KEY": "sk-test"}, clear=True
-    ):
-        with patch("auto_engineering.cli.agent._build_runtime_for_role") as mock_build:
-            mock_runtime = MagicMock()
-            mock_agent = MagicMock()
+    ), patch("auto_engineering.cli.agent._build_runtime_for_role") as mock_build:
+        mock_runtime = MagicMock()
+        mock_agent = MagicMock()
 
-            async def fake_exec(task, ctx):
-                raise TimeoutError("LLM call timed out")
+        async def fake_exec(task, ctx):
+            raise TimeoutError("LLM call timed out")
 
-            mock_agent.execute = fake_exec
-            mock_runtime.get.return_value = mock_agent
-            mock_build.return_value = mock_runtime
-            result = run_agent("critic", "x", tmp_path)
+        mock_agent.execute = fake_exec
+        mock_runtime.get.return_value = mock_agent
+        mock_build.return_value = mock_runtime
+        result = run_agent("critic", "x", tmp_path)
     assert result["status"] == "failed"
     assert "TimeoutError" in result["error"]
 
@@ -339,28 +329,27 @@ def test_run_agent_typeerror_falls_back_to_old_interface(tmp_path: Path) -> None
     """agent.execute 抛 TypeError (旧接口不匹配) -> 走 fallback agent.execute(instruction)."""
     with patch.dict(
         "os.environ", {"ANTHROPIC_API_KEY": "sk-test"}, clear=True
-    ):
-        with patch("auto_engineering.cli.agent._build_runtime_for_role") as mock_build:
-            mock_runtime = MagicMock()
-            mock_agent = MagicMock()
+    ), patch("auto_engineering.cli.agent._build_runtime_for_role") as mock_build:
+        mock_runtime = MagicMock()
+        mock_agent = MagicMock()
 
-            call_count = {"n": 0}
+        call_count = {"n": 0}
 
-            def fake_exec(*args, **kwargs):
-                call_count["n"] += 1
-                # First call via task/ctx raises TypeError, second with single arg works
-                if call_count["n"] == 1:
-                    raise TypeError("execute() got unexpected argument")
-                # Return awaitable for asyncio.run
-                async def _coro():
-                    return {"output": "legacy", "error": None}
+        def fake_exec(*args, **kwargs):
+            call_count["n"] += 1
+            # First call via task/ctx raises TypeError, second with single arg works
+            if call_count["n"] == 1:
+                raise TypeError("execute() got unexpected argument")
+            # Return awaitable for asyncio.run
+            async def _coro():
+                return {"output": "legacy", "error": None}
 
-                return _coro()
+            return _coro()
 
-            mock_agent.execute = fake_exec
-            mock_runtime.get.return_value = mock_agent
-            mock_build.return_value = mock_runtime
-            result = run_agent("architect", "legacy test", tmp_path)
+        mock_agent.execute = fake_exec
+        mock_runtime.get.return_value = mock_agent
+        mock_build.return_value = mock_runtime
+        result = run_agent("architect", "legacy test", tmp_path)
     assert call_count["n"] >= 1  # At least first call attempted
     assert result["status"] in {"completed", "failed"}
 
@@ -369,44 +358,42 @@ def test_run_agent_instruction_passed_via_task(tmp_path: Path) -> None:
     """instruction 通过 task.description 传给 agent.execute."""
     with patch.dict(
         "os.environ", {"ANTHROPIC_API_KEY": "sk-test"}, clear=True
-    ):
-        with patch("auto_engineering.cli.agent._build_runtime_for_role") as mock_build:
-            mock_runtime = MagicMock()
-            mock_agent = MagicMock()
+    ), patch("auto_engineering.cli.agent._build_runtime_for_role") as mock_build:
+        mock_runtime = MagicMock()
+        mock_agent = MagicMock()
 
-            async def fake_exec(task, ctx):
-                return {"output": "ok"}
+        async def fake_exec(task, ctx):
+            return {"output": "ok"}
 
-            mock_agent.execute = MagicMock(side_effect=fake_exec)
-            mock_runtime.get.return_value = mock_agent
-            mock_build.return_value = mock_runtime
-            run_agent(
-                "architect", "describe a long instruction here please", tmp_path
-            )
+        mock_agent.execute = MagicMock(side_effect=fake_exec)
+        mock_runtime.get.return_value = mock_agent
+        mock_build.return_value = mock_runtime
+        run_agent(
+            "architect", "describe a long instruction here please", tmp_path
+        )
     # 验证 mock agent.execute 被调用, 入参 task 是 RuntimeTask 含 description
     assert mock_agent.execute.called
     call_args = mock_agent.execute.call_args
     task_arg = call_args.kwargs.get("task") or call_args.args[0]
-    assert "describe a long instruction here please" == task_arg.description
+    assert task_arg.description == "describe a long instruction here please"
 
 
 def test_run_agent_long_instruction_truncated_in_title(tmp_path: Path) -> None:
     """长 instruction 完整传入 task.description (RuntimeTask 无 title 截断)."""
     with patch.dict(
         "os.environ", {"ANTHROPIC_API_KEY": "sk-test"}, clear=True
-    ):
-        with patch("auto_engineering.cli.agent._build_runtime_for_role") as mock_build:
-            mock_runtime = MagicMock()
-            mock_agent = MagicMock()
+    ), patch("auto_engineering.cli.agent._build_runtime_for_role") as mock_build:
+        mock_runtime = MagicMock()
+        mock_agent = MagicMock()
 
-            async def fake_exec(task, ctx):
-                return {"output": "ok"}
+        async def fake_exec(task, ctx):
+            return {"output": "ok"}
 
-            mock_agent.execute = MagicMock(side_effect=fake_exec)
-            mock_runtime.get.return_value = mock_agent
-            mock_build.return_value = mock_runtime
-            long = "x" * 200
-            run_agent("architect", long, tmp_path)
+        mock_agent.execute = MagicMock(side_effect=fake_exec)
+        mock_runtime.get.return_value = mock_agent
+        mock_build.return_value = mock_runtime
+        long = "x" * 200
+        run_agent("architect", long, tmp_path)
     call_args = mock_agent.execute.call_args
     task_arg = call_args.kwargs.get("task") or call_args.args[0]
     # RuntimeTask.description 完整保留, 不截断
@@ -417,19 +404,18 @@ def test_run_agent_special_chars_in_instruction(tmp_path: Path) -> None:
     """instruction 含特殊字符 (引号/换行) -> 完整透传."""
     with patch.dict(
         "os.environ", {"ANTHROPIC_API_KEY": "sk-test"}, clear=True
-    ):
-        with patch("auto_engineering.cli.agent._build_runtime_for_role") as mock_build:
-            mock_runtime = MagicMock()
-            mock_agent = MagicMock()
+    ), patch("auto_engineering.cli.agent._build_runtime_for_role") as mock_build:
+        mock_runtime = MagicMock()
+        mock_agent = MagicMock()
 
-            async def fake_exec(task, ctx):
-                return {"output": "ok"}
+        async def fake_exec(task, ctx):
+            return {"output": "ok"}
 
-            mock_agent.execute = MagicMock(side_effect=fake_exec)
-            mock_runtime.get.return_value = mock_agent
-            mock_build.return_value = mock_runtime
-            special = "line1\nline2 \"quoted\" 'tick' $VAR"
-            run_agent("developer", special, tmp_path)
+        mock_agent.execute = MagicMock(side_effect=fake_exec)
+        mock_runtime.get.return_value = mock_agent
+        mock_build.return_value = mock_runtime
+        special = "line1\nline2 \"quoted\" 'tick' $VAR"
+        run_agent("developer", special, tmp_path)
     call_args = mock_agent.execute.call_args
     task_arg = call_args.kwargs.get("task") or call_args.args[0]
     assert task_arg.description == special
@@ -597,18 +583,17 @@ def test_cli_agent_in_llm_agent_mode_completes(
     """CLAUDE_CODE=1 模式下完整调用, exit code 0."""
     with patch.dict(
         "os.environ", {"CLAUDE_CODE": "1"}, clear=True
-    ):
-        with patch("auto_engineering.cli.agent._build_runtime_for_role") as mock_build:
-            mock_runtime = MagicMock()
-            mock_agent = MagicMock()
-            mock_runtime.get.return_value = mock_agent
+    ), patch("auto_engineering.cli.agent._build_runtime_for_role") as mock_build:
+        mock_runtime = MagicMock()
+        mock_agent = MagicMock()
+        mock_runtime.get.return_value = mock_agent
 
-            async def fake_exec(task, ctx):
-                return {"output": "ok", "error": None}
+        async def fake_exec(task, ctx):
+            return {"output": "ok", "error": None}
 
-            mock_agent.execute = fake_exec
-            mock_build.return_value = mock_runtime
-            result = runner.invoke(main, ["agent", "architect", "x"])
+        mock_agent.execute = fake_exec
+        mock_build.return_value = mock_runtime
+        result = runner.invoke(main, ["agent", "architect", "x"])
     assert result.exit_code == 0
     data = json.loads(result.output)
     assert data["status"] == "completed"
@@ -660,18 +645,17 @@ def test_run_agent_key_set_stripped(tmp_path: Path) -> None:
     """ANTHROPIC_API_KEY 含首尾空格被 strip."""
     with patch.dict(
         "os.environ", {"ANTHROPIC_API_KEY": "  sk-test  "}, clear=True
-    ):
-        with patch("auto_engineering.cli.agent._build_runtime_for_role") as mock_build:
-            mock_runtime = MagicMock()
-            mock_agent = MagicMock()
-            mock_runtime.get.return_value = mock_agent
+    ), patch("auto_engineering.cli.agent._build_runtime_for_role") as mock_build:
+        mock_runtime = MagicMock()
+        mock_agent = MagicMock()
+        mock_runtime.get.return_value = mock_agent
 
-            async def fake_exec(task, ctx):
-                return {"output": "ok"}
+        async def fake_exec(task, ctx):
+            return {"output": "ok"}
 
-            mock_agent.execute = fake_exec
-            mock_build.return_value = mock_runtime
-            run_agent("architect", "x", tmp_path)
+        mock_agent.execute = fake_exec
+        mock_build.return_value = mock_runtime
+        run_agent("architect", "x", tmp_path)
     # Verify mocked was called — strip() 处理不应抛
     assert mock_build.called
 
@@ -680,12 +664,11 @@ def test_run_agent_handles_runtime_exception(tmp_path: Path) -> None:
     """任何 RuntimeError 在 run_agent 被捕获为 failed, 不传染."""
     with patch.dict(
         "os.environ", {"ANTHROPIC_API_KEY": "sk-test"}, clear=True
+    ), patch(
+        "auto_engineering.cli.agent._build_runtime_for_role",
+        side_effect=ValueError("bad value"),
     ):
-        with patch(
-            "auto_engineering.cli.agent._build_runtime_for_role",
-            side_effect=ValueError("bad value"),
-        ):
-            result = run_agent("architect", "x", tmp_path)
+        result = run_agent("architect", "x", tmp_path)
     assert result["status"] == "failed"
     assert result["task_id"].startswith("agent-")
 
@@ -694,18 +677,17 @@ def test_run_agent_kwargs_error_robust(tmp_path: Path) -> None:
     """agent.execute 抛各种异常均被捕获."""
     with patch.dict(
         "os.environ", {"ANTHROPIC_API_KEY": "sk-test"}, clear=True
-    ):
-        with patch("auto_engineering.cli.agent._build_runtime_for_role") as mock_build:
-            mock_runtime = MagicMock()
-            mock_agent = MagicMock()
+    ), patch("auto_engineering.cli.agent._build_runtime_for_role") as mock_build:
+        mock_runtime = MagicMock()
+        mock_agent = MagicMock()
 
-            async def fake_exec(task, ctx):
-                raise KeyError("missing key")
+        async def fake_exec(task, ctx):
+            raise KeyError("missing key")
 
-            mock_agent.execute = fake_exec
-            mock_runtime.get.return_value = mock_agent
-            mock_build.return_value = mock_runtime
-            result = run_agent("developer", "x", tmp_path)
+        mock_agent.execute = fake_exec
+        mock_runtime.get.return_value = mock_agent
+        mock_build.return_value = mock_runtime
+        result = run_agent("developer", "x", tmp_path)
     assert result["status"] == "failed"
     assert "KeyError" in result["error"]
 

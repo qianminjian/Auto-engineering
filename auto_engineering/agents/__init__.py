@@ -8,7 +8,7 @@ from .prompts import ARCHITECT_SYSTEM_PROMPT, CRITIC_SYSTEM_PROMPT, DEVELOPER_SY
 
 __all__ = [
     "ARCHITECT_SYSTEM_PROMPT",
-    "BaseAgent",
     "CRITIC_SYSTEM_PROMPT",
     "DEVELOPER_SYSTEM_PROMPT",
+    "BaseAgent",
 ]

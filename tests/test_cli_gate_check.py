@@ -24,10 +24,8 @@ from auto_engineering.cli.gate_check import (
     ALL_GATES,
     QUICK_GATES,
     _instantiate_gate,
-    register_gate_check_command,
     run_gates,
 )
-
 
 # ============================================================
 # Fixtures

@@ -130,7 +130,7 @@ class SQLiteCheckpointStore[T]:
             self._shared_conn.close()
             self._shared_conn = None
 
-    def __enter__(self) -> "SQLiteCheckpointStore[T]":
+    def __enter__(self) -> SQLiteCheckpointStore[T]:
         return self
 
     def __exit__(self, *exc_info) -> None:

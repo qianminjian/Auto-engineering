@@ -22,9 +22,6 @@ import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
-
-
 # ============================================================
 # 1. TypeCheckGate 基础
 # ============================================================
@@ -418,13 +415,12 @@ class TestTypeCheckRun:
 
         self._make_configured_project(tmp_path)
         gate = TypeCheckGate(type_checker_bin="fake-mypy", timeout=10.0)
-        with patch.object(shutil, "which", return_value="/usr/bin/fake-mypy"):
-            with patch.object(
-                subprocess,
-                "run",
-                side_effect=subprocess.TimeoutExpired(cmd=["fake-mypy"], timeout=10.0),
-            ):
-                verdict = gate.run(tmp_path)
+        with patch.object(shutil, "which", return_value="/usr/bin/fake-mypy"), patch.object(
+            subprocess,
+            "run",
+            side_effect=subprocess.TimeoutExpired(cmd=["fake-mypy"], timeout=10.0),
+        ):
+            verdict = gate.run(tmp_path)
         assert verdict.passed is False
         assert "超时" in verdict.message
 

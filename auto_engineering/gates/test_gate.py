@@ -28,7 +28,7 @@ from pathlib import Path
 from auto_engineering.gates._tools import get_gate_tools_from_manifest
 from auto_engineering.gates.base import Gate, GateVerdict, run_gate_command
 
-__all__ = ["TestGate", "DEFAULT_TIMEOUT"]
+__all__ = ["DEFAULT_TIMEOUT", "TestGate"]
 
 # 默认 timeout 与 .claude/rules/pytest-memory-management.md 对齐
 DEFAULT_TIMEOUT = 60.0
@@ -69,7 +69,7 @@ class TestGate(Gate):
         cls,
         manifest: dict,
         timeout: float | None = None,
-    ) -> "TestGate":
+    ) -> TestGate:
         """v5.0 §IL-AC-02: 从 init-manifest.json 构造 TestGate.
 
         读 manifest.conventions.test_runner, 缺则用 LANGUAGE_TOOLS 默认.

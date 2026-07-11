@@ -14,13 +14,11 @@ RED marker: 以下模块/函数在 Phase 07 之前不存在, 测试应全部 FAI
 from __future__ import annotations
 
 import json
-import re
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
-
 
 # ============================================================
 # 辅助工具: subprocess 调用 CLI (不污染 cwd, 隔离 state)

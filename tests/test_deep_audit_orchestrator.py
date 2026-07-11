@@ -8,8 +8,6 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
-import pytest
-
 from auto_engineering.loop.deep_audit import (
     AUDIT_DIMENSIONS,
     DeepAuditOrchestrator,

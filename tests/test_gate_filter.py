@@ -15,9 +15,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
-
 # ============================================================
 # Group 1: Gate 基类 applies_to_stages
 # ============================================================

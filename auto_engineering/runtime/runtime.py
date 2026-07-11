@@ -28,7 +28,7 @@ class Agent(Protocol):
         self,
         task: Task,
         ctx: TaskContext,
-        cancellation: "CancellationToken | None" = None,
+        cancellation: CancellationToken | None = None,
     ) -> TaskResult: ...
 
 

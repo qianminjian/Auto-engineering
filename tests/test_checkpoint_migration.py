@@ -21,7 +21,6 @@ from auto_engineering.loop.checkpoint.migration import (
     validate_envelope,
 )
 
-
 # ============================================================
 # 辅助: 构造 1.0 / 0.9 envelope
 # ============================================================

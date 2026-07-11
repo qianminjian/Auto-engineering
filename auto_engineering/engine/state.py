@@ -13,9 +13,8 @@ v5.5 P1-5: 写入控制 — 字段级写所有权 + write_field() 验证 + _writ
 
 import uuid
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, TypedDict
-
 
 # ============================================================
 # v5.5 audit P2-17: TypedDict 替代 dict[str, Any] (类型安全)
@@ -264,7 +263,7 @@ class EngineState:
         self._write_log.append(WriteRecord(
             field=name,
             writer=writer,
-            timestamp=datetime.now(timezone.utc).isoformat(),
+            timestamp=datetime.now(UTC).isoformat(),
         ))
 
     def get_write_log(self, field_name: str | None = None) -> list[WriteRecord]:
@@ -338,7 +337,7 @@ class EngineState:
             self._write_log.append(WriteRecord(
                 field=k,
                 writer=writer,
-                timestamp=datetime.now(timezone.utc).isoformat(),
+                timestamp=datetime.now(UTC).isoformat(),
             ))
 
 

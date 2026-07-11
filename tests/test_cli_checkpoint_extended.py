@@ -16,14 +16,12 @@ cli/checkpoint.py 扩展覆盖率测试.
 from __future__ import annotations
 
 import json
-import sqlite3
 from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
 
 from auto_engineering.cli import main
-
 
 # ============================================================
 # Fixtures

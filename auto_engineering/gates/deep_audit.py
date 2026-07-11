@@ -13,7 +13,7 @@ from pathlib import Path
 
 from auto_engineering.gates.base import Gate, GateVerdict
 
-__all__ = ["DeepAuditFinding", "DeepAuditReport", "DeepAuditGate"]
+__all__ = ["DeepAuditFinding", "DeepAuditGate", "DeepAuditReport"]
 
 @dataclass
 class DeepAuditFinding:

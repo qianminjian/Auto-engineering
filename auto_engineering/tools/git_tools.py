@@ -17,7 +17,7 @@ from typing import ClassVar
 
 from .base import BaseTool, ToolResult
 
-__all__ = ["GitStatusTool", "GitCommitTool", "GitDiffTool"]
+__all__ = ["GitCommitTool", "GitDiffTool", "GitStatusTool"]
 
 _logger = logging.getLogger("ae.tools.git")
 

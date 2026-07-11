@@ -160,7 +160,7 @@ def run_agent(role: str, instruction: str, project_root: Path) -> dict:
             "duration": duration,
             "task_role": role,
         }
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         _logger.warning("agent '%s' 执行异常: %s", role, e, exc_info=True)
         return {
             "task_id": task_id,

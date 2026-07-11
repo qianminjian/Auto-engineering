@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 __all__ = ["AuditHistory"]
@@ -49,7 +49,7 @@ class AuditHistory:
         """
         os.makedirs(self._path.parent, exist_ok=True)
         entry = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "p0_count": p0,
             "p1_count": p1,
             "p2_count": p2,

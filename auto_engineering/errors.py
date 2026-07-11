@@ -5,6 +5,7 @@ P2-B: 清理注释, 标注每个错误码"在何处抛出, 由谁触发".
 """
 
 from __future__ import annotations
+
 from enum import Enum
 
 

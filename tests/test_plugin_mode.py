@@ -253,11 +253,11 @@ class TestPluginModeIntegration:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """cli/agent.py run_agent 使用 detect_plugin_mode (不重复实现)."""
-        from auto_engineering.utils.plugin_mode import detect_plugin_mode
 
         # agent.run_agent 应该 import + 调用 detect_plugin_mode
         # (静态分析 + 运行时验证)
         import inspect
+
         from auto_engineering.cli import agent
 
         source = inspect.getsource(agent.run_agent)
@@ -270,6 +270,7 @@ class TestPluginModeIntegration:
     ) -> None:
         """orchestrator.__post_init__ 使用 detect_plugin_mode."""
         import inspect
+
         from auto_engineering.loop import orchestrator
 
         # 找 OrchestratorConfig dataclass 源
@@ -283,6 +284,7 @@ class TestPluginModeIntegration:
     ) -> None:
         """doctor._check_plugin_mode 使用 detect_plugin_mode_detail."""
         import inspect
+
         from auto_engineering.cli import doctor
 
         source = inspect.getsource(doctor)

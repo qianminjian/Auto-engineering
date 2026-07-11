@@ -14,14 +14,14 @@ import inspect
 
 import pytest
 
-from auto_engineering.loop.state import (
-    Channel,
-    CheckpointEnvelope,
-)
 from auto_engineering.loop.checkpoint._serialization import (
     AccumulatingChannel,
     BarrierChannel,
     LastValueChannel,
+)
+from auto_engineering.loop.state import (
+    Channel,
+    CheckpointEnvelope,
 )
 
 # ============================================================

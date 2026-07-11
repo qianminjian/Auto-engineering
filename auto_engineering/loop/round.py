@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import subprocess
 import time
 from collections.abc import Awaitable, Callable
@@ -28,8 +29,6 @@ from auto_engineering.errors import AEError, ErrorCode
 from auto_engineering.gates.base import Gate, GateVerdict
 from auto_engineering.loop.plan import Task
 from auto_engineering.runtime.cancellation import CancellationToken
-
-import logging
 
 _logger = logging.getLogger("ae.loop.round")
 
@@ -204,7 +203,7 @@ def _build_per_task_ctx(ctx: Any, task: Task) -> Any:
     # 鸭子类型检查: 必须是 dataclass-like (有 state 字段)
     if hasattr(ctx, "state") and hasattr(ctx, "requirement"):
         try:
-            from dataclasses import replace, fields
+            from dataclasses import fields, replace
 
             # 仅当 dataclass 时才 replace
             if hasattr(ctx, "__dataclass_fields__"):

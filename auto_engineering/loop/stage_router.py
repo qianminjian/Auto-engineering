@@ -40,8 +40,8 @@ __all__ = [
     "CriticVerdictInvalid",
     "StageDecision",
     "StageRouter",
-    "update_majors_count",
     "clear_stage_fields",
+    "update_majors_count",
 ]
 
 
@@ -266,7 +266,7 @@ class StageRouter:
         return StageDecision(next_stage=None, should_stop=True, stop_reason=reason)
 
 
-def update_majors_count(state: "EngineState", verdict: str) -> None:
+def update_majors_count(state: EngineState, verdict: str) -> None:
     """更新 EngineState 的 MAJOR 计数 (§B3.2).
 
     行为:

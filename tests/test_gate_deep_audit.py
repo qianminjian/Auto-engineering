@@ -7,8 +7,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from auto_engineering.gates.base import Gate, GateVerdict
 from auto_engineering.gates.deep_audit import DeepAuditFinding, DeepAuditGate, DeepAuditReport
 

@@ -14,17 +14,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-import yaml
-
-from auto_engineering.gates.base import GateVerdict
 from auto_engineering.gates.contract import (
     ContractGate,
-    _collect_source_files,
     _check_contract_in_source,
-    _SOURCE_EXTENSIONS,
+    _collect_source_files,
 )
-
 
 # ============================================================
 # Group 1: _collect_source_files

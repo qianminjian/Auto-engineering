@@ -27,7 +27,7 @@ from pathlib import Path
 
 from auto_engineering.gates.base import Gate, GateVerdict
 
-__all__ = ["SafetyGate", "SECRET_PATTERNS", "SKIP_DIRS"]
+__all__ = ["SECRET_PATTERNS", "SKIP_DIRS", "SafetyGate"]
 
 _logger = logging.getLogger("ae.gates.safety")
 

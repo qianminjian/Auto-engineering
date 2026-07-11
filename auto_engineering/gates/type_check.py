@@ -63,7 +63,7 @@ class TypeCheckGate(Gate):
         cls,
         manifest: dict,
         timeout: float | None = None,
-    ) -> "TypeCheckGate":
+    ) -> TypeCheckGate:
         """v5.0 §IL-AC-02: 从 init-manifest.json 构造 TypeCheckGate.
 
         读 manifest.conventions.type_checker, 缺则用 LANGUAGE_TOOLS 默认.

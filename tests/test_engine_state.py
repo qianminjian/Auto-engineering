@@ -189,7 +189,6 @@ class TestEngineStateFieldDefaults:
 
     def test_thread_id_format_is_uuid_v4(self) -> None:
         """thread_id 默认值符合 UUID v4 格式 (8-4-4-4-12)."""
-        import re
         import uuid
 
         state = EngineState()
@@ -443,7 +442,6 @@ class TestEngineStateEquality:
 
     def test_copied_state_with_same_thread_id_is_equal(self) -> None:
         """同 thread_id + 同字段 → 相等."""
-        from copy import deepcopy
 
         s1 = EngineState(requirement="x", plan="p", file_list=["a.py"])
         # 强制同 thread_id
@@ -552,7 +550,7 @@ class TestV56ValidStages:
             "developer", "critic", "component_verifier", "plate_deep_audit",
             "system_verifier", "system_deep_audit", "plan_refine",
         }
-        assert _VALID_STAGES == expected
+        assert expected == _VALID_STAGES
 
     def test_new_stages_accepted_by_write_field(self) -> None:
         """新 stage 值经 write_field 写 current_stage 不被拒."""

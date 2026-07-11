@@ -24,7 +24,6 @@ from auto_engineering.loop.checkpoint.store import (
     SQLiteCheckpointStore,
 )
 
-
 # ============================================================
 # Group 1: _with_conn
 # ============================================================

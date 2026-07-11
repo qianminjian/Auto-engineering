@@ -13,16 +13,15 @@
 from __future__ import annotations
 
 import asyncio
-import time
 
 import pytest
 
 from auto_engineering.gates.base import Gate, GateVerdict
+from auto_engineering.loop.plan import ConflictError, Task, _topological_levels
 from auto_engineering.loop.round import (
-    run_round,
     TaskOutcome,
+    run_round,
 )
-from auto_engineering.loop.plan import Task, ConflictError, _topological_levels
 
 
 class _StubGate(Gate):

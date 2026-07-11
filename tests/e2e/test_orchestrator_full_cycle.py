@@ -27,13 +27,11 @@ import pytest
 
 from auto_engineering.loop.convergence import (
     LEVEL_HARD_LIMIT,
-    LEVEL_QUALITY,
     ConvergenceConfig,
 )
 from auto_engineering.loop.orchestrator import Orchestrator, OrchestratorConfig
 from auto_engineering.loop.plan import Task
 from auto_engineering.loop.round import TaskOutcome
-
 
 # ============================================================
 # Helpers

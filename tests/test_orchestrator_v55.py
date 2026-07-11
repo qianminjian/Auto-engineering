@@ -25,7 +25,7 @@ import pytest
 
 from auto_engineering.engine.state import EngineState
 from auto_engineering.gates.base import GateVerdict
-from auto_engineering.loop.convergence import ConvergenceConfig, ConvergenceJudge
+from auto_engineering.loop.convergence import ConvergenceConfig
 from auto_engineering.loop.orchestrator import Orchestrator, OrchestratorConfig
 from auto_engineering.loop.stage_router import StageRouter
 

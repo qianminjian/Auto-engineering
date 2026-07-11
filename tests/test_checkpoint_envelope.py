@@ -8,9 +8,7 @@ Checkpoint[T] 泛型 + meta() 提取 + 异常类属性. SQLiteCheckpointStore
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-
-import pytest
+from datetime import UTC, datetime
 
 from auto_engineering.loop.checkpoint.records import (
     Checkpoint,
@@ -26,7 +24,7 @@ class TestCheckpointMeta:
     """CheckpointMeta 轻量元数据."""
 
     def test_construction(self) -> None:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         meta = CheckpointMeta(
             id="cp-1",
             round=1,
@@ -44,7 +42,7 @@ class TestCheckpointMeta:
             id="cp-2",
             round=2,
             step=1,
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
             schema_version=1,
             parent_id="cp-1",
             tag="before-refactor",
@@ -65,7 +63,7 @@ class TestCheckpoint:
             step=0,
             state=state,
             history=[],
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
             schema_version=1,
         )
         assert cp.state is state
@@ -73,7 +71,7 @@ class TestCheckpoint:
 
     def test_meta_extracts_metadata(self) -> None:
         """meta() 从 Checkpoint 提取 CheckpointMeta (用于 list_all 轻量)."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         cp = Checkpoint[dict](
             id="cp-1",
             round=1,
@@ -102,7 +100,7 @@ class TestCheckpoint:
             step=0,
             state={"huge": "x" * 10000},
             history=[RoundHistory(round_id=1)] * 100,
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
             schema_version=1,
         )
         meta = cp.meta()

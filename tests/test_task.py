@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 
 class TestTask:
     """Task dataclass 构造与默认值."""

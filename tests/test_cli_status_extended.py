@@ -12,7 +12,6 @@ Covers missed paths:
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pytest
@@ -20,7 +19,6 @@ from click.testing import CliRunner
 
 from auto_engineering.cli import main
 from auto_engineering.cli.status import _collect_status_json
-
 
 # ============================================================
 # Fixtures
@@ -263,6 +261,7 @@ def test_collect_status_json_no_checkpoint_dir_returns_defaults(tmp_path: Path) 
 def test_register_status_command_registers_on_group() -> None:
     """register_status_command adds 'status' command to a Click group."""
     import click
+
     from auto_engineering.cli.status import register_status_command
 
     @click.group()
@@ -357,6 +356,7 @@ def test_status_text_mode_no_project_env_warning(tmp_cwd: Path) -> None:
 def test_status_text_mode_env_resolve_exception(tmp_cwd: Path) -> None:
     """Status text mode handles ProjectEnvironment._from_detection exception gracefully."""
     from unittest.mock import patch
+
     from auto_engineering.config.environment import ProjectEnvironment
 
     runner = CliRunner()

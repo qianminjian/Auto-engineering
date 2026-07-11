@@ -12,7 +12,6 @@ import pytest
 
 from auto_engineering.errors import AEError, ErrorCode
 
-
 # ============================================================
 # I. ErrorCode 枚举完整性 (防止重命名/删除)
 # ============================================================
