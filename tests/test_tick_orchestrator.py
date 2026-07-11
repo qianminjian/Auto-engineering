@@ -592,6 +592,64 @@ class TestPlanRefineLimit:
         assert a["verdict"] == "REFINE_LIMIT"
 
 
+class TestRefineRequestDelivery:
+    """T20b: plan_refine 后 architect action 经 feedback 承载归一 RefineRequest (§B6.10)."""
+
+    @staticmethod
+    def _drive_component_gap(o: TickOrchestrator, status: str) -> dict:
+        """architect→dev→critic(APPROVE)→component_verifier(缺口) → architect action."""
+        o.init("req")
+        o.tick(_make_result_file({
+            "stage": "architect", "plan": _VALID_PLAN, "batch_plan": [{
+                "batch_id": "b1", "design_section": "B2", "component": "Foo",
+                "tasks": [{"id": "T1", "description": "d", "module_ref": "§B2",
+                           "file_targets": ["foo.py"]}],
+            }], "file_list": ["foo.py"], "contracts": {},
+        }))
+        o.tick(_make_result_file({
+            "stage": "developer", "batch_id": "b1", "files_changed": ["foo.py"],
+            "test_results": {"passed": 1, "failed": 0},
+        }))
+        o.tick(_make_result_file({
+            "stage": "critic", "verdict": "APPROVE", "findings": [],
+        }))
+        return o.tick(_make_result_file({
+            "stage": "component_verifier", "component": "Foo",
+            "coverage_map": [{"design_item": "B2-1", "status": status,
+                              "file": "foo.py", "line": 7, "note": "缺"}],
+            "missing_count": 1 if status == "MISSING" else 0,
+            "diverged_count": 1 if status == "DIVERGED" else 0,
+        }))
+
+    def test_architect_action_carries_plan_refine_feedback(self) -> None:
+        o = _orchestrator(max_rounds=20)
+        a = self._drive_component_gap(o, "MISSING")
+        assert a["action"] == "architect"
+        fb = a["feedback"]
+        assert fb["mode"] == "PLAN_REFINE"
+        req = fb["refine_request"]
+        assert req["source"] == "component_verifier"
+        assert req["scope_component"] == "Foo"
+        assert len(req["gaps"]) == 1
+        assert req["gaps"][0]["kind"] == "MISSING"
+        assert req["gaps"][0]["design_ref"] == "B2-1"
+
+    def test_diverged_gap_normalized_with_location(self) -> None:
+        o = _orchestrator(max_rounds=20)
+        a = self._drive_component_gap(o, "DIVERGED")
+        gap = a["feedback"]["refine_request"]["gaps"][0]
+        assert gap["kind"] == "DIVERGED"
+        assert gap["location"] == "foo.py:7"
+
+    def test_refine_request_json_persisted_to_state(self) -> None:
+        o = _orchestrator(max_rounds=20)
+        self._drive_component_gap(o, "MISSING")
+        assert o._state.refine_request_json
+        req = json.loads(o._state.refine_request_json)
+        assert req["source"] == "component_verifier"
+        assert req["trigger_tick"] >= 0
+
+
 # ── _build_action context checks ──
 
 

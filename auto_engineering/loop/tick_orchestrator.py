@@ -39,6 +39,7 @@ from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
 from auto_engineering.loop.convergence import ConvergenceConfig, ConvergenceJudge
 from auto_engineering.loop.guardrail import GuardrailChain
 from auto_engineering.loop.plan import Plan
+from auto_engineering.loop.refine import build_refine_request
 from auto_engineering.loop.stage_router import (
     StageRouter,
     clear_stage_fields,
@@ -711,15 +712,33 @@ class TickOrchestrator:
             return None
         return self._batch_state.current_design_section()
 
+    def _refine_scope(self, source: str) -> tuple[str | None, str | None]:
+        """(scope_plate, scope_component) 按源层级 (§B6.10 line 1158-1159).
+
+        component_verifier=组件级 (板块+组件); plate_deep_audit=板块级 (仅板块);
+        system_verifier/system_deep_audit=全局 (None/None).
+        """
+        bs = self._batch_state
+        if bs is None:
+            return None, None
+        if source == "component_verifier":
+            return bs.current_plate().name, bs.current_component_name()
+        if source == "plate_deep_audit":
+            return bs.current_plate().name, None
+        return None, None  # system 级 → 全局
+
     def _build_refine_request(self, source: str) -> dict:
-        return {
-            "source": source,
-            "design_section": self._safe_design_section(),
-            "audit_findings": self._state.audit_findings,
-            "coverage_map": self._state.coverage_map,
-            "plan_refine_count": self._state.plan_refine_count,
-            "created_at": _now_iso(),
-        }
+        """归一 coverage_map/audit_findings → RefineRequest dict (§B6.10, T20)."""
+        scope_plate, scope_component = self._refine_scope(source)
+        req = build_refine_request(
+            source=source,
+            trigger_tick=self._state.tick,
+            scope_plate=scope_plate,
+            scope_component=scope_component,
+            coverage_map=self._state.coverage_map,
+            audit_findings=self._state.audit_findings,
+        )
+        return asdict(req)
 
     # ── 收敛判定 ──
 
@@ -823,7 +842,7 @@ class TickOrchestrator:
                     }}
 
         elif stage == "architect":
-            return {**base, "action": "architect", "context": {
+            action = {**base, "action": "architect", "context": {
                 "requirement": self._state.requirement,
                 "design_section": self._safe_design_section(),
                 "project_root": str(self.project_root),
@@ -841,6 +860,13 @@ class TickOrchestrator:
                 "file_list": "[string] (min 1 file)",
                 "contracts": "object (may be empty)",
             }}
+            # PLAN-REFINE 回路: RefineRequest 经 feedback 承载 (§B6.10 line 1178-1182)
+            if self._state.refine_request_json:
+                action["feedback"] = {
+                    "mode": "PLAN_REFINE",
+                    "refine_request": json.loads(self._state.refine_request_json),
+                }
+            return action
 
         elif stage == "developer":
             tasks = (

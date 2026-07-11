@@ -89,9 +89,12 @@ def tasks_from_batch_plan(
 # 新增 role/field 只需在此表追加, 无需修改 apply_outcome_to_state 主体.
 ROLE_FIELD_MAP: dict[str, list[str]] = {
     # v5.5 Phase 2: architect 扩展 audit_findings (DeepAudit pass/PLAN-REFINE 后清除)
-    "architect": ["plan", "file_list", "batch_plan", "contracts", "audit_findings"],
+    # v5.6 B6.10: refine_request_json — architect PLAN-REFINE 消费后清除 (避免 stale 泄漏)
+    "architect": ["plan", "file_list", "batch_plan", "contracts", "audit_findings",
+                  "refine_request_json"],
     "developer": ["files_changed", "commit_hash", "test_results"],
-    "critic": ["critic_verdict", "findings", "critic_feedback", "suggested_fix", "strengths", "assessment"],
+    "critic": ["critic_verdict", "findings", "critic_feedback", "suggested_fix",
+               "strengths", "assessment"],
 }
 
 # 每个 field 的清空默认值 (v5.4 审计 r2 P1-3: clear_stage_fields 引用此表 + ROLE_FIELD_DEFAULTS,
@@ -102,6 +105,7 @@ ROLE_FIELD_DEFAULTS: dict[str, object] = {
     "batch_plan": [],
     "contracts": {},
     "audit_findings": None,  # v5.5 Phase 2: DeepAudit pass/PLAN-REFINE 后清除
+    "refine_request_json": None,  # v5.6 B6.10: architect PLAN-REFINE 消费后清除
     "files_changed": [],
     "commit_hash": "",
     "test_results": {},
