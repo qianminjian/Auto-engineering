@@ -44,13 +44,14 @@
 
 ## 当前状态
 
-**阶段：** v5.6 Design — Tick-Based Discrete Invocation + 5 层验证 + Pre-flight Gap Analysis，设计整合完成 + 深度审计收口。实现待启动。
+**阶段：** v5.6 实现启动 — Tick-Based Discrete Invocation + 5 层验证 + Pre-flight Gap Analysis。设计整合完成 + 深度审计收口；Phase 3 T9 Tick CLI 接线完成，进入 Phase 3 收尾。
 
 **最近动作 (2026-07-11)：**
+- **Phase 3 T9 Tick CLI 接线完成** (fe8bee2/f4e4175/0a2daca)：`ae dev-loop --init/--tick/--status/--resume` + 跨进程 restore（SQLite → EngineState → BatchState/ProgressTree/DesignDoc rehydrate）+ A3 `batch_state_json` 写侧闭合。BatchState 序列化自包含（内嵌轻量 batch_plan seed，plates 不持久化——"不存重 plates"主决策保留）。1717 tests 通过，端到端 3 独立进程验证 thread_id/batch_id 跨进程保真。属实现接线，无 status 翻转、无设计降级
 - **设计文档深度审计 + 22 项收口深化** (决策 #49, Phase 8)：3 并行子代理审 4214 行 → 规格 6.5/10、端到端 2.5/10。P0×4 全为代码缺口(已 T9/T10/T27/T32 跟踪)；文档规格缺陷 S-1~S-20+Q-1/Q-2 共 22 项**纯文档收口**（补 CoverageItem/GateVerdict/done verdict 权威 schema + file-bridge 边界矩阵 §C.3.5 + 路径更正 + 过度设计存续论证）。**S-1 语义评估矛盾定案**：v5.6 全路径无语义评估，代码 semantic_evaluator 移除跟踪到 Phase 3 T10d。审计产出 `_scratch/design-audit/`，无 status 翻转
 - **Init-Loop 契约 v5.6 扩展** (决策 #48)：`init-manifest.schema.json` 版本化 SSOT + ci_platform/design_root 字段 + monorepo 单包降级 + 消费者驱动契约测试
 
-**下一步：** 用户审核通过 → Phase 3 实现（CLI --tick 接线 + 命令重写 + T10d 语义评估代码移除）→ Phase 4/4b（Prompt + Pipeline）→ Phase 5/6/7（测试 + 审计方法论 + Init 契约）
+**下一步：** Phase 3 收尾（T9b progress CLI + T10 dev-loop.md 8-stage 重写 + T11 SKILL.md + T10c PRBackend）→ Phase 4/4b（Prompt Registry + Pipeline）→ Phase 5/6/7（测试 + 审计方法论 + Init 契约）。T10d 语义评估代码移除属退役红线（v5.5 仍活跃，待确认时机）
 
 **阻塞项：** 无
 
