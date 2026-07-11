@@ -136,7 +136,7 @@
 
 | T | 文件/产出 | 验收 | 状态 | Commit |
 |---|----------|------|:---:|--------|
-| T27 | `gates/deep_audit.py` 骨架→实际（3-agent 编排）| test_deep_audit(ext) | ☐ | |
+| T27 | `gates/deep_audit.py` 骨架→实际（3-agent 编排）| test_deep_audit(ext) | ✅ | DeepAuditFinding.agent_source str→list[str]；`recount_findings()` 权威去重入口（key=(file,line,desc[:40]归一化)，保留最高severity+合并agent_source+重算p0/p1/p2）；DeepAuditGate.run() + tick `_after_plate/system_deep_audit` 共用（消解路由信任Agent自报计数的静默失效 §B6.7a L1068）；test_gate_deep_audit TestDeepAuditGateDedup(6) + test_tick_orchestrator 2 recount 集成（膨胀不误触发/漏报仍触发）|
 | T28 | `commands/audit.md` 内化（去 Superpowers 依赖）| grep 断言 | ☐ | |
 | T29 | `loop/guardrail.py` REDGuard + FreshGate | T26g | ☐ | |
 | T30 | `loop/guardrail.py` RegressionGate + audit regex 自测 | T26g + test_gate_audit(ext) | ☐ | |

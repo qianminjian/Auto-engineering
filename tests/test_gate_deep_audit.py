@@ -65,7 +65,8 @@ class TestDeepAuditGateWithFindings:
         """任何 P0 → fail (即使 P1 未超阈值)."""
         findings = [
             {"severity": "P0", "dimension": "代码质量", "file": "a.py", "line": 10,
-             "description": "硬编码密钥", "evidence": "API_KEY = 'abc123'", "suggested_fix": "用环境变量"},
+             "description": "硬编码密钥", "evidence": "API_KEY = 'abc123'",
+             "suggested_fix": "用环境变量"},
         ]
         gate = DeepAuditGate()
         gate.contracts = {"findings": findings}
@@ -147,7 +148,8 @@ class TestDeepAuditGateWithFindings:
         """失败时 suggestions 应包含所有有 suggested_fix 的 finding."""
         findings = [
             {"severity": "P0", "dimension": "代码质量", "file": "a.py", "line": 10,
-             "description": "硬编码密钥", "evidence": "KEY='abc'", "suggested_fix": "用 os.environ"},
+             "description": "硬编码密钥", "evidence": "KEY='abc'",
+             "suggested_fix": "用 os.environ"},
             {"severity": "P0", "dimension": "代码质量", "file": "b.py", "line": 20,
              "description": "空 except", "evidence": "except:", "suggested_fix": ""},
             {"severity": "P1", "dimension": "工程化规范", "file": "c.py", "line": 30,
@@ -174,16 +176,112 @@ class TestDeepAuditGateWithFindings:
         assert verdict.suggestions == []
 
 
+class TestDeepAuditGateDedup:
+    """B6.7a: 3-Agent 合并的 findings 确定性去重 + 重算计数 (Python 权威)."""
+
+    def test_same_finding_merged_keeps_highest_severity(self):
+        """同 (file,line,desc) 被多 Agent 命中 → 合并 1 条, 保留最高 severity."""
+        findings = [
+            {"severity": "P1", "dimension": "代码质量", "file": "z.py", "line": 7,
+             "description": "同一问题", "evidence": "", "suggested_fix": "",
+             "agent_source": "architecture"},
+            {"severity": "P0", "dimension": "代码质量", "file": "z.py", "line": 7,
+             "description": "同一问题", "evidence": "", "suggested_fix": "",
+             "agent_source": "code_quality"},
+        ]
+        gate = DeepAuditGate()
+        gate.contracts = {"findings": findings}
+        verdict = gate.run(Path("/tmp"))
+        # 去重后 1 条 P0 (非 1 P0 + 1 P1)
+        assert verdict.details["p0_count"] == 1
+        assert verdict.details["p1_count"] == 0
+        assert len(verdict.details["findings"]) == 1
+
+    def test_merged_finding_unions_agent_source(self):
+        """合并条目的 agent_source = 命中它的所有 Agent 列表 (置信度信号)."""
+        findings = [
+            {"severity": "P1", "dimension": "代码质量", "file": "z.py", "line": 7,
+             "description": "同一问题", "evidence": "", "suggested_fix": "",
+             "agent_source": "architecture"},
+            {"severity": "P0", "dimension": "代码质量", "file": "z.py", "line": 7,
+             "description": "同一问题", "evidence": "", "suggested_fix": "",
+             "agent_source": "code_quality"},
+        ]
+        gate = DeepAuditGate()
+        gate.contracts = {"findings": findings}
+        verdict = gate.run(Path("/tmp"))
+        src = verdict.details["findings"][0]["agent_source"]
+        assert src == ["architecture", "code_quality"]
+
+    def test_agent_reported_counts_ignored_python_recount_authoritative(self):
+        """Agent 报的 p0/p1/p2 count 仅供参考, Python 去重重算为准."""
+        findings = [
+            {"severity": "P0", "dimension": "代码质量", "file": "a.py", "line": 1,
+             "description": "dup", "evidence": "", "suggested_fix": "",
+             "agent_source": "architecture"},
+            {"severity": "P0", "dimension": "代码质量", "file": "a.py", "line": 1,
+             "description": "dup", "evidence": "", "suggested_fix": "",
+             "agent_source": "engineering"},
+        ]
+        gate = DeepAuditGate()
+        # 即使 contracts 带了膨胀的 p0_count, 也以去重重算为准
+        gate.contracts = {"findings": findings, "p0_count": 99}
+        verdict = gate.run(Path("/tmp"))
+        assert verdict.details["p0_count"] == 1
+
+    def test_dedup_key_normalizes_case_and_whitespace(self):
+        """去重键对 description[:40] 归一化小写去空白 → 同义命中合并."""
+        findings = [
+            {"severity": "P1", "dimension": "代码质量", "file": "a.py", "line": 2,
+             "description": "Missing  Boundary Check", "evidence": "",
+             "suggested_fix": "", "agent_source": "architecture"},
+            {"severity": "P1", "dimension": "代码质量", "file": "a.py", "line": 2,
+             "description": "missing boundary check", "evidence": "",
+             "suggested_fix": "", "agent_source": "code_quality"},
+        ]
+        gate = DeepAuditGate()
+        gate.contracts = {"findings": findings}
+        verdict = gate.run(Path("/tmp"))
+        assert len(verdict.details["findings"]) == 1
+
+    def test_distinct_findings_not_merged(self):
+        """不同 (file,line,desc) → 各自独立, 不误合并."""
+        findings = [
+            {"severity": "P1", "dimension": "代码质量", "file": "a.py", "line": 1,
+             "description": "问题甲", "evidence": "", "suggested_fix": "",
+             "agent_source": "architecture"},
+            {"severity": "P1", "dimension": "代码质量", "file": "b.py", "line": 1,
+             "description": "问题乙", "evidence": "", "suggested_fix": "",
+             "agent_source": "code_quality"},
+        ]
+        gate = DeepAuditGate()
+        gate.contracts = {"findings": findings}
+        verdict = gate.run(Path("/tmp"))
+        assert len(verdict.details["findings"]) == 2
+
+    def test_str_agent_source_normalized_to_list(self):
+        """单 Agent 命中: 入参 str agent_source → 归一化为单元素列表."""
+        findings = [
+            {"severity": "P2", "dimension": "工程化规范", "file": "a.py", "line": 3,
+             "description": "裸 print", "evidence": "", "suggested_fix": "",
+             "agent_source": "engineering"},
+        ]
+        gate = DeepAuditGate()
+        gate.contracts = {"findings": findings}
+        verdict = gate.run(Path("/tmp"))
+        assert verdict.details["findings"][0]["agent_source"] == ["engineering"]
+
+
 class TestDeepAuditFinding:
     """DeepAuditFinding 数据类测试."""
 
     def test_default_agent_source(self):
-        """agent_source 默认应为空字符串."""
+        """agent_source 默认应为空列表 (T27: str→list[str], 多 Agent 命中合并)."""
         f = DeepAuditFinding(
             severity="P0", dimension="代码质量", file="a.py", line=10,
             description="test", evidence="e", suggested_fix="f",
         )
-        assert f.agent_source == ""
+        assert f.agent_source == []
 
     def test_line_can_be_none(self):
         """line 可为 None (如架构维度无具体行号)."""

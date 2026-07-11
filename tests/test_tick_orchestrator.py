@@ -692,6 +692,45 @@ class TestRefineSourcesAndLimits:
         assert req["gaps"][0]["kind"] == "AUDIT_FINDING"
         assert req["gaps"][0]["severity"] == "P0"
 
+    def test_plate_audit_recounts_not_trusting_inflated_agent_count(self) -> None:
+        """B6.7a: Agent 自报 p1_count 膨胀但去重后 ≤ 阈值 → 不误触发 plan_refine."""
+        o = _orchestrator(max_rounds=30)
+        self._seed_two_component_plate(o)
+        TestPlateConvergence._approve_component(o, "Foo", "b-Foo")
+        a_bar = TestPlateConvergence._approve_component(o, "Bar", "b-Bar")
+        assert a_bar["stage"] == "plate_deep_audit"
+        dup = {"severity": "P1", "dimension": "code_quality",
+               "file": "foo.py", "line": 5, "description": "同一 P1", "suggested_fix": "fix"}
+        a = o.tick(_make_result_file({
+            "stage": "plate_deep_audit", "plate": "(single)",
+            "findings": [
+                {**dup, "agent_source": "architecture"},
+                {**dup, "agent_source": "code_quality"},  # 同一问题, 去重后 1 条
+            ],
+            "p0_count": 0, "p1_count": 99,  # Agent 膨胀自报
+            "p2_count": 0, "total_audited_files": 2, "cross_component_issues": [],
+        }))
+        # 去重后仅 1 条 P1 ≤ 阈值 6 → 推进到 system_deep_audit (非 architect refine)
+        assert a["stage"] == "system_deep_audit"
+
+    def test_plate_audit_recount_detects_p0_despite_agent_zero_count(self) -> None:
+        """B6.7a: Agent 漏报 p0_count=0 但 findings 含 P0 → Python 重算触发 plan_refine."""
+        o = _orchestrator(max_rounds=30)
+        self._seed_two_component_plate(o)
+        TestPlateConvergence._approve_component(o, "Foo", "b-Foo")
+        a_bar = TestPlateConvergence._approve_component(o, "Bar", "b-Bar")
+        assert a_bar["stage"] == "plate_deep_audit"
+        a = o.tick(_make_result_file({
+            "stage": "plate_deep_audit", "plate": "(single)",
+            "findings": [{"severity": "P0", "dimension": "architecture",
+                          "agent_source": "architecture", "file": "foo.py", "line": 3,
+                          "description": "真 P0", "suggested_fix": "对齐接口"}],
+            "p0_count": 0, "p1_count": 0, "p2_count": 0,  # Agent 漏报计数
+            "total_audited_files": 2, "cross_component_issues": [],
+        }))
+        assert a["action"] == "architect"  # Python 重算 p0=1 → 触发 plan_refine
+        assert a["feedback"]["refine_request"]["gaps"][0]["severity"] == "P0"
+
     def test_global_limit_stops_even_when_per_source_under_cap(self) -> None:
         """全局计数达 4 → REFINE_LIMIT, 即便当前源分源计数为 0 (DS-8 全局独立上限)."""
         o = _orchestrator(max_rounds=30)

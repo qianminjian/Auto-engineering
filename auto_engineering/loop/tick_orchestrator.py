@@ -33,6 +33,7 @@ from auto_engineering.engine.verification_layers import (
     VerificationLayers,
     determine_verification_layers,
 )
+from auto_engineering.gates.deep_audit import recount_findings
 from auto_engineering.loop.actions import ActionDone, ActionError, ErrorResponse
 from auto_engineering.loop.checkpoint.manager import CheckpointManager
 from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
@@ -491,8 +492,8 @@ class TickOrchestrator:
     # ── _after_plate_deep_audit ──
 
     def _after_plate_deep_audit(self, result: dict) -> dict:
-        p0 = result.get("p0_count", 0)
-        p1 = result.get("p1_count", 0)
+        # B6.7a: Agent 报的 count 仅参考 — Python 去重重算为路由权威计数
+        deduped, p0, p1, p2 = recount_findings(result.get("findings", []))
         p1_threshold = self._get_p1_threshold()
 
         if self._progress_tree:
@@ -503,12 +504,12 @@ class TickOrchestrator:
                     node.deep_audit_status = "failed" if (p0 > 0 or p1 > p1_threshold) else "pass"
                     node.deep_audit_p0 = p0
                     node.deep_audit_p1 = p1
-                    node.deep_audit_p2 = result.get("p2_count", 0)
+                    node.deep_audit_p2 = p2
             self._progress_tree.recalculate_parents(
                 f"sys/{self._batch_state.current_plate_idx}")
 
         if p0 > 0 or p1 > p1_threshold:
-            self._state.audit_findings = result.get("findings", [])
+            self._state.audit_findings = deduped
             return self._handle_plan_refine("plate_deep_audit")
 
         self._batch_state.advance_plate()
@@ -543,8 +544,8 @@ class TickOrchestrator:
     # ── _after_system_deep_audit ──
 
     def _after_system_deep_audit(self, result: dict) -> dict:
-        p0 = result.get("p0_count", 0)
-        p1 = result.get("p1_count", 0)
+        # B6.7a: Agent 报的 count 仅参考 — Python 去重重算为路由权威计数
+        deduped, p0, p1, p2 = recount_findings(result.get("findings", []))
         p1_threshold = self._get_p1_threshold()
 
         if result.get("design_docs_stale"):
@@ -553,10 +554,10 @@ class TickOrchestrator:
                 + "[Design Doc Sync] " + result.get("design_doc_suggestions", ""))
 
         if p0 > 0 or p1 > p1_threshold:
-            self._state.audit_findings = result.get("findings", [])
+            self._state.audit_findings = deduped
             return self._handle_plan_refine("system_deep_audit")
 
-        self._write_audit_history(p0, p1, result.get("p2_count", 0), False)
+        self._write_audit_history(p0, p1, p2, False)
         self._display_progress()
 
         # 审计无 P0/P1 但设计覆盖有缺口 (MISSING/DIVERGED) → 回 architect 做
@@ -565,7 +566,7 @@ class TickOrchestrator:
         missing = result.get("missing_count", 0)
         diverged = result.get("diverged_count", 0)
         if missing > 0 or diverged > 0:
-            self._state.audit_findings = result.get("findings", [])
+            self._state.audit_findings = deduped
             return self._handle_plan_refine("system_deep_audit")
 
         return self._convergence_check(

@@ -75,7 +75,8 @@ class DeepAuditOrchestrator:
 
         # 从 AuditGate 的 verdict.details 提取 findings 并转换为 DeepAuditFinding
         findings: list[DeepAuditFinding] = []
-        raw_findings: list[dict] = gate_result.details.get("findings", []) if gate_result.details else []
+        details = gate_result.details or {}
+        raw_findings: list[dict] = details.get("findings", [])
 
         for f in raw_findings:
             findings.append(DeepAuditFinding(
@@ -86,7 +87,7 @@ class DeepAuditOrchestrator:
                 description=f.get("description", ""),
                 evidence=f.get("evidence", ""),
                 suggested_fix="",
-                agent_source="audit-gate-static",
+                agent_source=["audit-gate-static"],
             ))
 
         p0_count = sum(1 for f in findings if f.severity == "P0")
@@ -98,6 +99,6 @@ class DeepAuditOrchestrator:
             p0_count=p0_count,
             p1_count=p1_count,
             p2_count=p2_count,
-            total_audited_files=gate_result.details.get("files_scanned", 0) if gate_result.details else 0,
+            total_audited_files=details.get("files_scanned", 0),
             audit_duration_ms=int((time.monotonic() - start) * 1000),
         )
