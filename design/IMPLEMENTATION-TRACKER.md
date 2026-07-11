@@ -118,7 +118,7 @@
 | T18 | 23 条 StageRouter 转换（含 T17b + refine 上限 DS-8）| ✅ | test_stage_router.py (43) |
 | T19 | 验证层集成（component→plate→system verifier/audit）| ☐ | |
 | T20 | plan-refine 回路（3 层 + 分源≤2/全局≤4 + RefineRequest 归一）| ☐ | 部分见 test_tick_orchestrator TestPlanRefineLimit |
-| T21 | 完整 2 轮 E2E（design-doc → done）| ☐ | 仅 LEAF 单轮 TestFullLeafConvergence |
+| T21 | 完整 2 轮 E2E（design-doc → done）| ◐ | LEAF 单轮 TestFullLeafConvergence + **跨 tick restore E2E**（TestCrossTickE2E, 37de252）；2 轮 design-doc E2E 待补 |
 | T22 | BatchState 跨 tick 持久化 + 恢复 | ✅ | test_batch_state.py (21) |
 | T23 | ProgressTree 构建/同步/聚合/展示/序列化 | ✅ | test_progress_tree.py (20) |
 | T24 | ProgressTree plan_refine 动态同步（added/modified/removed/conflicts）| ☐ | |
