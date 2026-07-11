@@ -380,3 +380,35 @@ class TestSubcommandRegistration:
         runner = CliRunner()
         result = runner.invoke(main, ["agent", "--help"])
         assert result.exit_code == 0, f"ae agent not registered: {result.output}"
+
+
+# ============================================================
+# T28: /ae:audit 命令内化 (B14 零外部运行时依赖)
+# ============================================================
+
+
+class TestAuditCommandInternalized:
+    """T28/B14: commands/audit.md 不得依赖外部通用 /audit 运行时 (自含 AuditGate)."""
+
+    def _audit_md(self) -> str:
+        p = REPO_ROOT / ".claude-plugin" / "commands" / "audit.md"
+        assert p.exists(), "commands/audit.md 缺失"
+        return p.read_text(encoding="utf-8")
+
+    def test_no_superpowers_generic_audit_delegation(self) -> None:
+        """不得含 '执行通用 /audit' 委托 (Superpowers 运行时依赖, 违反 B14)."""
+        text = self._audit_md()
+        assert "执行通用" not in text, "audit.md 仍委托外部通用 /audit (运行时依赖未移除)"
+        assert "通用 `/audit` 的 Phase" not in text
+
+    def test_delegates_to_own_gate_and_stage(self) -> None:
+        """内化: 委托项目自有 AuditGate + system_deep_audit 方法论."""
+        text = self._audit_md()
+        assert "AuditGate" in text
+        assert "system_deep_audit" in text
+        assert "recount_findings" in text  # Python 侧确定性求值 (§B6.7a)
+
+    def test_declares_zero_external_runtime_dependency(self) -> None:
+        """显式声明自含 / 不依赖外部 /audit 运行时."""
+        text = self._audit_md()
+        assert "不依赖任何外部 `/audit` 运行时" in text or "自含" in text
