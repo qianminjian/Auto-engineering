@@ -1,20 +1,21 @@
 """M1 Stage 状态机 — StageRouter + StageDecision + 5 helper functions.
 
-设计参考: v5.6-Design-Loop.md §B2.2 (StageRouter 接口契约)
-                   + §B3.1 (Stage 转换表 T1-T8)
-                   + §B3.2 (MAJOR 计数更新)
-                   + §B3.3 (clear_stage_fields)
+设计参考: v5.6-Design-Loop.md §B2 (StageRouter — Stage 状态机 T0.1-T22):
+                   + §B2 转换表 (T1-T22, 权威定义)
+                   + §B2 "MAJOR 计数更新" 子节
+                   (clear_stage_fields 为本模块内部 helper, 无独立设计节)
 
-T1-T6 转换表 (§B2.2):
+T1-T6 转换表 (§B2 转换表, 与设计文档 + 下方 next() 行内注释一致):
     T1: stage="" → next="architect"
     T2: architect → next="developer"
     T3: developer → next="critic"
-    T4: critic + APPROVE → next=None, should_stop=False (Judge 触发 GOAL_ACHIEVED)
-    T5: critic + MAJOR + 未超限 → next="developer"
-    T6: critic + MAJOR + 超限 → next=None, should_stop=True
+    T4: critic + MAJOR + 未超限 → next="developer" (修复当前 batch)
+    T5: critic + MAJOR + 超限 (连续≥3 或 累计≥4) → next=None, should_stop=True
         reason="MAJOR 超限: 连续{majors}/累计{total}"
+    T6: critic + APPROVE + 组件 batch 未完 → next="developer" (依 BatchState, orchestrator 决定)
 
-T7/T8 由 Orchestrator / ConvergenceJudge 处理, 不在本模块范围.
+T7 (APPROVE + 全部完成 → component_verifier) 及后续转换由 orchestrator /
+ConvergenceJudge 处理, 不在本模块纯转换范围.
 
 2026-07-04 修复 (Bug 3 prismscan 集成): critic verdict 异常分支不再默认
 should_stop=True + level=3 (静默归一化为 PASS, 反向语义), 改为
@@ -73,7 +74,7 @@ class StageDecision:
 
     语义:
         - should_stop=False, next_stage=None: critic+APPROVE (由 Judge 触发 GOAL_ACHIEVED)
-        - should_stop=True, next_stage=None: critic+MAJOR 超限 (T6) 或 critic+verdict='' (异常)
+        - should_stop=True, next_stage=None: critic+MAJOR 超限 (T5) 或 critic+verdict='' (异常)
         - should_stop=False, next_stage="X": 推进到 X Stage
     """
 
@@ -109,8 +110,8 @@ class StageRouter:
         """初始化 StageRouter.
 
         Args:
-            max_majors_in_a_row: 连续 MAJOR 计数上限, 超过触发 T6 stop. 默认 3.
-            max_total_majors: 累计 MAJOR 计数上限, 超过触发 T6 stop. 默认 4.
+            max_majors_in_a_row: 连续 MAJOR 计数上限, 超过触发 T5 stop. 默认 3.
+            max_total_majors: 累计 MAJOR 计数上限, 超过触发 T5 stop. 默认 4.
 
         Raises:
             ValueError: 任一参数 < 1 (无意义配置).
