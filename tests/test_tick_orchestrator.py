@@ -726,6 +726,86 @@ class TestRefineSourcesAndLimits:
         assert o._state.plan_refine_count == 1
 
 
+class TestPlanRefineProgressSync:
+    """T24: plan_refine 后 architect 重出 batch_plan → ProgressTree 增量同步 (§B9.8).
+
+    验证 _after_architect (plan_refine 分支) 调 sync_from_batch_plan, 产出
+    added/removed 反映到看板树, 而非重建丢历史.
+    """
+
+    @staticmethod
+    def _refine_to_architect(o: TickOrchestrator, batch_plan_v1: list[dict]) -> None:
+        """init → architect(v1) → dev → critic → component_verifier(MISSING) → architect."""
+        o.init("req")
+        first_comp = batch_plan_v1[0]["component"]
+        first_batch = batch_plan_v1[0]["batch_id"]
+        o.tick(_make_result_file({
+            "stage": "architect", "plan": _VALID_PLAN,
+            "batch_plan": batch_plan_v1,
+            "file_list": ["foo.py", "bar.py"], "contracts": {},
+        }))
+        o.tick(_make_result_file({
+            "stage": "developer", "batch_id": first_batch,
+            "files_changed": ["foo.py"], "test_results": {"passed": 1, "failed": 0},
+        }))
+        o.tick(_make_result_file({
+            "stage": "critic", "verdict": "APPROVE", "findings": [],
+        }))
+        a = o.tick(_make_result_file({
+            "stage": "component_verifier", "component": first_comp,
+            "coverage_map": [{"design_item": "B2-1", "status": "MISSING"}],
+            "missing_count": 1, "diverged_count": 0,
+        }))
+        assert a["action"] == "architect"
+
+    def test_refine_adds_new_component_to_tree_preserving_old(self) -> None:
+        o = _orchestrator(max_rounds=20)
+        self._refine_to_architect(o, [
+            {"batch_id": "b1", "design_section": "B2", "component": "Foo",
+             "tasks": [{"id": "T1", "description": "d", "module_ref": "§B2",
+                        "file_targets": ["foo.py"]}]},
+        ])
+        names_before = {n.name for n in o._progress_tree.nodes.values()}
+        assert "Foo" in names_before and "Bar" not in names_before
+
+        # architect v2 (PLAN-REFINE): 保留 Foo + 新增 Bar
+        o.tick(_make_result_file({
+            "stage": "architect", "plan": _VALID_PLAN, "batch_plan": [
+                {"batch_id": "b1", "design_section": "B2", "component": "Foo",
+                 "tasks": [{"id": "T1", "description": "d", "module_ref": "§B2",
+                            "file_targets": ["foo.py"]}]},
+                {"batch_id": "b2", "design_section": "B3", "component": "Bar",
+                 "tasks": [{"id": "T2", "description": "d2", "module_ref": "§B3",
+                            "file_targets": ["bar.py"]}]},
+            ], "file_list": ["foo.py", "bar.py"], "contracts": {},
+        }))
+        names_after = {n.name for n in o._progress_tree.nodes.values()}
+        assert "Foo" in names_after  # 增量: 旧节点保留
+        assert "Bar" in names_after  # added
+
+    def test_refine_marks_dropped_component_removed_not_deleted(self) -> None:
+        o = _orchestrator(max_rounds=20)
+        self._refine_to_architect(o, [
+            {"batch_id": "b1", "design_section": "B2", "component": "Foo",
+             "tasks": [{"id": "T1", "description": "d", "module_ref": "§B2",
+                        "file_targets": ["foo.py"]}]},
+            {"batch_id": "b2", "design_section": "B3", "component": "Bar",
+             "tasks": [{"id": "T2", "description": "d2", "module_ref": "§B3",
+                        "file_targets": ["bar.py"]}]},
+        ])
+        # architect v2: 丢掉 Foo, 只剩 Bar
+        o.tick(_make_result_file({
+            "stage": "architect", "plan": _VALID_PLAN, "batch_plan": [
+                {"batch_id": "b2", "design_section": "B3", "component": "Bar",
+                 "tasks": [{"id": "T2", "description": "d2", "module_ref": "§B3",
+                            "file_targets": ["bar.py"]}]},
+            ], "file_list": ["bar.py"], "contracts": {},
+        }))
+        foo_nodes = [n for n in o._progress_tree.nodes.values() if n.name == "Foo"]
+        assert len(foo_nodes) == 1  # 未删除
+        assert foo_nodes[0].design_status == "removed"  # 标记 removed
+
+
 # ── _build_action context checks ──
 
 
