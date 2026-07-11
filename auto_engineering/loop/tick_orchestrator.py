@@ -56,6 +56,15 @@ _MAX_PER_SOURCE = 2
 _MAX_GLOBAL = 4
 _ISO_FMT = "%Y-%m-%dT%H:%M:%SZ"
 
+# DS-9 (B6.6a): Haiku verifier 负判定 (MISSING/DIVERGED) → Sonnet 窄范围复核指令。
+# 仅负判定触发 (trigger=on_negative), scope 收窄到负判定条目 (成本 O(负判定数))。
+_VERIFIER_RECHECK = {
+    "enabled": True,
+    "model": "claude-sonnet-4-6",
+    "trigger": "on_negative",
+    "scope": "narrow",
+}
+
 # DS-10 / C.2.6: Python 编排开销预算 (t_orchestration = t_total − t_gate − t_guard_sub).
 # 超预算只告警不中断 — 延迟是可观测性指标, 不是正确性门控. P95 判定离线聚合 (Phase 5).
 ORCH_BUDGET_MS = 2000
@@ -919,13 +928,16 @@ class TickOrchestrator:
                 "design_spec": comp.design_spec_summary(),
                 "implementation_files": getattr(comp, "implementation_files", []),
                 "contracts": getattr(comp, "contracts", {}),
-            }, "expected_format": {
+            }, "recheck": dict(_VERIFIER_RECHECK), "expected_format": {
                 "stage": "component_verifier",
                 "coverage_map": (
                     "[{design_item, status(IMPLEMENTED|MISSING|DIVERGED), "
                     "file, line, note}]"),
                 "missing_count": "int",
                 "diverged_count": "int",
+                "recheck_log": (
+                    "[{design_item, haiku_status, sonnet_verdict, final_status}] "
+                    "(仅负判定经 Sonnet 复核后填, 无负判定则空)"),
             }}
 
         elif stage == "plate_deep_audit":
@@ -953,7 +965,7 @@ class TickOrchestrator:
                     self._design_doc.sections_summary()
                     if self._design_doc else []),
                 "project_root": str(self.project_root),
-            }, "expected_format": {
+            }, "recheck": dict(_VERIFIER_RECHECK), "expected_format": {
                 "stage": "system_verifier",
                 "full_coverage_map": (
                     "[{design_section, design_item, status, "
@@ -962,6 +974,9 @@ class TickOrchestrator:
                 "covered_count": "int",
                 "missing_count": "int",
                 "diverged_count": "int",
+                "recheck_log": (
+                    "[{design_item, haiku_status, sonnet_verdict, final_status}] "
+                    "(仅负判定经 Sonnet 复核后填, 无负判定则空)"),
             }}
 
         elif stage == "system_deep_audit":

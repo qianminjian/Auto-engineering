@@ -80,6 +80,20 @@ class TestCompose:
         assert "NO PRODUCTION CODE WITHOUT A FAILING TEST FIRST" not in p
 
 
+class TestVerifierRecheckProtocol:
+    """T26c/DS-9: 两个 Haiku verifier prompt 携带 Sonnet 负判定复核协议."""
+
+    @pytest.mark.parametrize("role", ["component_verifier", "system_verifier"])
+    def test_verifier_prompt_has_recheck_protocol(
+        self, registry: PromptRegistry, role: str
+    ) -> None:
+        p = registry.get(role)
+        assert "DS-9" in p
+        assert "recheck_log" in p            # 输出字段
+        assert "overturn" in p and "confirm" in p  # Sonnet 复核裁决
+        assert "跳过复核" in p                # 无负判定零成本短路
+
+
 class TestHash:
     def test_hash_is_sha256_hex(self, registry: PromptRegistry) -> None:
         h = registry.hash("developer")

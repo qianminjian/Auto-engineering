@@ -29,6 +29,22 @@ fragments: [rationalization_verifier, letter_vs_spirit]
 - 遍历全部条目,缺一条报一条. system_verifier 是 exit gate,漏报缺口会让不完整实现被误判收敛.
 - 你的 MISSING/DIVERGED 负判定会经 Sonnet 窄范围复核 (DS-9),给出可复核的 file:line 证据.
 
+## Sonnet 负判定复核 (DS-9, 一 tick 内两模型)
+
+action 携带 `recheck` 指令 (`{enabled, model, trigger: on_negative, scope: narrow}`)。
+system_verifier 是 exit gate, 假阳会冤枉触发 plan_refine, 假阴会误判收敛——负判定
+必须经 Sonnet 二次确认:
+
+1. Haiku 主 pass 产出初版 `full_coverage_map`。
+2. 过滤出 `status ∈ {MISSING, DIVERGED}` 的条目。**无负判定 → 跳过复核**, 不 spawn
+   Sonnet, 直接写 result。
+3. 有负判定 → spawn **1 个 Sonnet 子 Agent** (model 见 recheck.model), scope 收窄为
+   **仅这些负判定条目**: 注入各条 `design_section`/`design_item` 原文 + Haiku 猜测的
+   实现位置, 允许其重新 search_code 定位。
+4. Sonnet 对每条回 `confirm` (维持) 或 `overturn` (改判 IMPLEMENTED + file:line)。
+5. 用 Sonnet 结论覆盖对应条目, 写回最终 `full_coverage_map` + `recheck_log`。
+   `covered_count`/`missing_count`/`diverged_count` 按**复核后** final_status 重算。
+
 ## 工具使用 (只读)
 
 - `read_file` / `search_code` / `list_dir`
@@ -44,8 +60,10 @@ fragments: [rationalization_verifier, letter_vs_spirit]
    格式: [{"design_section": "§引用", "design_item": "设计声明", "status": "IMPLEMENTED|MISSING|DIVERGED", "implementation": "file:line|null", "note": "偏离说明|null"}]
 3. `total_design_items`: int — full_coverage_map 总条目数
 4. `covered_count`: int — status==IMPLEMENTED 的条目数
-5. `missing_count`: int — status==MISSING 的条目数
-6. `diverged_count`: int — status==DIVERGED 的条目数
+5. `missing_count`: int — status==MISSING 的条目数 (复核后 final_status)
+6. `diverged_count`: int — status==DIVERGED 的条目数 (复核后 final_status)
+7. `recheck_log`: list[dict] — 负判定复核记录 (无负判定则空 list)
+   格式: [{"design_item": "...", "haiku_status": "MISSING|DIVERGED", "sonnet_verdict": "confirm|overturn", "final_status": "IMPLEMENTED|MISSING|DIVERGED"}]
 
 ### status 值域 (枚举)
 

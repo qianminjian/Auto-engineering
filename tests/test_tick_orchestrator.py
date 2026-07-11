@@ -806,6 +806,55 @@ class TestPlanRefineProgressSync:
         assert foo_nodes[0].design_status == "removed"  # 标记 removed
 
 
+class TestVerifierRecheck:
+    """T26c/DS-9 (B6.6a): Haiku verifier action 携带 Sonnet 窄范围复核指令.
+
+    负判定 (MISSING/DIVERGED) 触发 Sonnet 二次确认, 消除假阳无谓 plan_refine.
+    """
+
+    def test_component_verifier_action_carries_recheck(self) -> None:
+        o = _orchestrator()
+        o.init("req")
+        o.tick(_make_result_file({
+            "stage": "architect", "plan": _VALID_PLAN, "batch_plan": [{
+                "batch_id": "b1", "design_section": "B2", "component": "Foo",
+                "tasks": [{"id": "T1", "description": "d", "module_ref": "§B2",
+                           "file_targets": ["foo.py"]}],
+            }], "file_list": ["foo.py"], "contracts": {},
+        }))
+        o.tick(_make_result_file({
+            "stage": "developer", "batch_id": "b1", "files_changed": ["foo.py"],
+            "test_results": {"passed": 1, "failed": 0},
+        }))
+        a = o.tick(_make_result_file({
+            "stage": "critic", "verdict": "APPROVE", "findings": [],
+        }))
+        assert a["stage"] == "component_verifier"
+        rc = a["recheck"]
+        assert rc["enabled"] is True
+        assert rc["trigger"] == "on_negative"
+        assert rc["scope"] == "narrow"
+        assert "sonnet" in rc["model"].lower()
+
+    def test_system_verifier_action_carries_recheck(self) -> None:
+        o = _orchestrator()
+        o.init("req")
+        o._state.current_stage = "system_verifier"
+        a = o._build_action()
+        assert a["stage"] == "system_verifier"
+        rc = a["recheck"]
+        assert rc["enabled"] is True
+        assert rc["trigger"] == "on_negative"
+        assert "sonnet" in rc["model"].lower()
+
+    def test_non_verifier_action_has_no_recheck(self) -> None:
+        # architect action 无 recheck (仅 Haiku verifier 需要)
+        o = _orchestrator()
+        a = o.init("req")
+        assert a["stage"] == "architect"
+        assert "recheck" not in a
+
+
 # ── _build_action context checks ──
 
 
