@@ -42,12 +42,12 @@ def tmp_cwd(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 def test_collect_status_json_state_as_dict_branch(tmp_path: Path) -> None:
-    """_collect_status_json with state as dict — triggered when
-    deserialize_loop_state fails and returns raw dict.
+    """_collect_status_json with state as raw dict — status.py dict 分支.
 
-    Strategy: save a dict with channels=non_dict, which causes
-    deserialize_loop_state to raise ValueError → caught → returns raw dict.
-    Then isinstance(state, dict) is True and dict.get path is executed.
+    Step 2 分派: dict 无 "channels" 且无 "thread_id" → deserialize_state 原样返回 dict.
+    (旧 fixture 用 channels="not_a_dict" 期望 raw-dict 降级, 但 channels-bearing dict
+    走 envelope 分支并 raise CheckpointError — 该降级从不存在, 是失效测试.)
+    此 fixture 用真正的 plain dict 覆盖 status.py 的 isinstance(state, dict) 分支.
     """
     from auto_engineering.loop.checkpoint import SQLiteCheckpointStore
 
@@ -56,22 +56,19 @@ def test_collect_status_json_state_as_dict_branch(tmp_path: Path) -> None:
     db_path = cp_dir / "test.db"
     store = SQLiteCheckpointStore(str(db_path))
 
-    # Save a dict that will survive _deserialize_state as a raw dict
-    # channels = "not_a_dict" causes deserialize_loop_state to raise ValueError
-    # → caught → returns the raw dict
+    # plain dict: 无 channels / 无 thread_id → deserialize_state 返回原始 dict
     state_dict: dict = {
-        "thread_id": "dict-thread-1",
         "round": 5,
         "current_stage": "developer",
-        "verdict": "APPROVE",
+        "critic_verdict": "APPROVE",
         "majors_in_a_row": 3,
         "total_majors": 7,
-        "channels": "not_a_dict",  # triggers ValueError in deserialize_loop_state
     }
     store.save(state=state_dict, round=5, step=1)
 
     data = _collect_status_json(tmp_path)
-    assert data["thread_id"] == "dict-thread-1"
+    # thread_id 不在 raw dict (若在则会路由到 EngineState) → 默认 ""
+    assert data["thread_id"] == ""
     assert data["round"] == 5
     assert data["stage"] == "developer"
     assert data["verdict"] == "APPROVE"
@@ -82,6 +79,38 @@ def test_collect_status_json_state_as_dict_branch(tmp_path: Path) -> None:
 # ============================================================
 # Group 2: _collect_status_json — state as object (CheckpointEnvelope path)
 # ============================================================
+
+
+def test_collect_status_json_enginestate_verdict_non_empty(tmp_path: Path) -> None:
+    """A1: production EngineState checkpoint → status.verdict 读 critic_verdict.
+
+    Step 2 后 EngineState checkpoint 反序列化为 EngineState 对象 (有 thread_id).
+    status.py object 分支须读 critic_verdict (EngineState 字段名), 否则恒空.
+    对外 JSON key 仍为 "verdict" (契约 §B13.2 不变).
+    """
+    from auto_engineering.engine.state import EngineState
+    from auto_engineering.loop.checkpoint import SQLiteCheckpointStore
+
+    cp_dir = tmp_path / ".ae-state"
+    cp_dir.mkdir()
+    store = SQLiteCheckpointStore(str(cp_dir / "test.db"))
+    state = EngineState(
+        thread_id="engine-thread-1",
+        current_stage="critic",
+        round=4,
+        critic_verdict="APPROVE",
+        majors_in_a_row=1,
+        total_majors=2,
+    )
+    store.save(state=state, round=4, step=1)
+
+    data = _collect_status_json(tmp_path)
+    assert data["thread_id"] == "engine-thread-1"
+    assert data["stage"] == "critic"
+    assert data["round"] == 4
+    assert data["verdict"] == "APPROVE"
+    assert data["majors_in_a_row"] == 1
+    assert data["total_majors"] == 2
 
 
 def test_collect_status_json_state_as_checkpoint_envelope_round(tmp_path: Path) -> None:

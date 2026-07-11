@@ -66,18 +66,19 @@ def _collect_status_json(cwd: Path) -> dict:
 
     state = latest_ckpt.state
     # 提取 state 字段 (兼容 dict / Pydantic BaseModel / dataclass)
+    # 注: 源字段是 EngineState.critic_verdict; 对外 JSON key 仍为 "verdict" (§B13.2 不变).
     if isinstance(state, dict):
         payload["thread_id"] = state.get("thread_id", "")
         payload["round"] = state.get("round", 0)
         payload["stage"] = state.get("current_stage", "")
-        payload["verdict"] = state.get("verdict", "")
+        payload["verdict"] = state.get("critic_verdict", "")
         payload["majors_in_a_row"] = state.get("majors_in_a_row", 0)
         payload["total_majors"] = state.get("total_majors", 0)
     else:
         payload["thread_id"] = getattr(state, "thread_id", "") or ""
         payload["round"] = getattr(state, "round", 0)
         payload["stage"] = getattr(state, "current_stage", "") or ""
-        payload["verdict"] = getattr(state, "verdict", "") or ""
+        payload["verdict"] = getattr(state, "critic_verdict", "") or ""
         payload["majors_in_a_row"] = getattr(state, "majors_in_a_row", 0)
         payload["total_majors"] = getattr(state, "total_majors", 0)
 
