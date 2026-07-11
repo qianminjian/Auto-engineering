@@ -61,14 +61,19 @@ def serialize_state(state: Any) -> str:
 
 
 def deserialize_state(state_json: str) -> Any:
-    """反序列化 JSON → CheckpointEnvelope 实例 (v2.0-D 修复).
+    """反序列化 JSON → 按 dict 形状三路分派 (checkpoint 契约修复).
 
-    v2.0-D: 返回 CheckpointEnvelope 实例, channels 是 Channel 实例.
-    输入是 CheckpointEnvelope 序列化结果 (model_dump JSON),
-    返回 CheckpointEnvelope 实例 (调用 deserialize_loop_state 重建 Channel).
-    (v2.3 P0-A: 原 LoopState 重命名为 CheckpointEnvelope.)
+    历史行为 (v2.0-D) 无条件强构造 CheckpointEnvelope, 导致两类 bug:
+      - plain dict (step 为 string) → pydantic ValidationError → CheckpointError
+      - production EngineState checkpoint → 丢 critic_verdict/thread_id/batch_state_json
 
-    反序列化失败时 raise CheckpointSchemaMismatchError (不再静默降级).
+    修复: 按 dict 形状分派 (marker 不重叠, 见 test_dispatch_markers_*):
+      1. "channels" in data   → CheckpointEnvelope  (migration/历史, model_dump 恒发 channels)
+      2. "thread_id" in data  → EngineState          (production 主循环状态, asdict 恒发 thread_id)
+      3. else                 → 返回原始 dict        (plain/partial, 不强构造)
+
+    非 dict / 无法解析的 JSON 原样返回.
+    CheckpointError 仅在 envelope 分支真异常时抛出 (不再无条件包装).
     """
     try:
         data = json.loads(state_json)
@@ -78,16 +83,27 @@ def deserialize_state(state_json: str) -> Any:
     if not isinstance(data, dict):
         return data
 
-    # 延迟导入避免循环依赖
-    from auto_engineering.loop.checkpoint.records import CheckpointError
-    from auto_engineering.loop.state import deserialize_loop_state
+    # 分派 1 — migration/历史: CheckpointEnvelope model_dump 恒发 "channels" 键
+    if "channels" in data:
+        # 延迟导入避免循环依赖
+        from auto_engineering.loop.checkpoint.records import CheckpointError
+        from auto_engineering.loop.state import deserialize_loop_state
 
-    try:
-        return deserialize_loop_state(data)
-    except Exception as exc:
-        raise CheckpointError(
-            f"反序列化失败 (schema 可能不一致): {exc}"
-        ) from exc
+        try:
+            return deserialize_loop_state(data)
+        except Exception as exc:
+            raise CheckpointError(
+                f"反序列化失败 (schema 可能不一致): {exc}"
+            ) from exc
+
+    # 分派 2 — production 主循环状态: EngineState asdict 恒发 "thread_id", 无 "channels"
+    if "thread_id" in data:
+        from auto_engineering.engine.state import EngineState
+
+        return EngineState.from_dict(data)
+
+    # 分派 3 — plain/partial dict: 不强构造, 原样返回 (满足 store 层 ck.state == state)
+    return data
 
 
 __all__ = [

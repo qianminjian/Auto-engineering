@@ -80,6 +80,84 @@ def testdeserialize_state_json_typeerror() -> None:
 
 
 # ============================================================
+# deserialize_state — shape-aware 3-way dispatch (checkpoint 契约修复)
+# ============================================================
+# 三路分派:
+#   "channels" in data   → CheckpointEnvelope  (migration/历史)
+#   "thread_id" in data  → EngineState         (production 主循环状态)
+#   else                 → raw dict            (plain/partial, 不强构造)
+
+
+def test_deserialize_state_plain_dict_roundtrips_to_dict() -> None:
+    """plain dict (无 channels/无 thread_id) → 反序列化保真为 dict (不强构造 Envelope).
+
+    _fake_state 形状 {round, step:str, status}. 现行为把它强路由到
+    CheckpointEnvelope(step=str) → pydantic ValidationError → CheckpointError.
+    修复后应原样返回 dict, 满足 store 层 `ck.state == state`.
+    """
+    state = {"round": 3, "step": "developer", "status": "running"}
+    result = deserialize_state(serialize_state(state))
+    assert result == state
+    assert isinstance(result, dict)
+
+
+def test_deserialize_state_enginestate_roundtrips_to_enginestate() -> None:
+    """EngineState (有 thread_id, 无 channels) → 反序列化保真为 EngineState.
+
+    critic_verdict / thread_id / batch_state_json 三字段必须保真 —
+    现行为强构造 CheckpointEnvelope 会丢弃这些 EngineState-only 字段.
+    """
+    from auto_engineering.engine.state import EngineState
+
+    state = EngineState(
+        requirement="build login",
+        critic_verdict="APPROVE",
+        thread_id="thread-abc-123",
+        batch_state_json='{"batch": "state"}',
+    )
+    result = deserialize_state(serialize_state(state))
+    assert isinstance(result, EngineState)
+    assert result.critic_verdict == "APPROVE"
+    assert result.thread_id == "thread-abc-123"
+    assert result.batch_state_json == '{"batch": "state"}'
+
+
+def test_deserialize_state_envelope_roundtrips_to_envelope() -> None:
+    """CheckpointEnvelope (有 channels) → 反序列化保真为 CheckpointEnvelope.
+
+    migration/历史路径不受影响 — channels 重建为 Channel 实例.
+    """
+    from auto_engineering.loop.checkpoint._serialization import Channel
+    from auto_engineering.loop.state.checkpoint_envelope import CheckpointEnvelope
+
+    env = CheckpointEnvelope()
+    result = deserialize_state(serialize_state(env))
+    assert isinstance(result, CheckpointEnvelope)
+    for ch in result.channels.values():
+        assert isinstance(ch, Channel)
+
+
+def test_dispatch_markers_are_non_overlapping() -> None:
+    """分派 marker 稳健性: 三种输入形状的判别键互不重叠 (防未来字段命名冲突).
+
+    若未来给 EngineState 加了名为 'channels' 的字段, 或给 CheckpointEnvelope
+    加了 'thread_id', 此测试会失败 — 提示 deserialize_state 分派需重新审视.
+    """
+    from dataclasses import asdict
+
+    from auto_engineering.engine.state import EngineState
+    from auto_engineering.loop.state.checkpoint_envelope import CheckpointEnvelope
+
+    engine_keys = asdict(EngineState()).keys()
+    assert "thread_id" in engine_keys
+    assert "channels" not in engine_keys
+
+    envelope_keys = CheckpointEnvelope().model_dump(mode="json").keys()
+    assert "channels" in envelope_keys
+    assert "thread_id" not in envelope_keys
+
+
+# ============================================================
 # normalize_value
 # ============================================================
 
