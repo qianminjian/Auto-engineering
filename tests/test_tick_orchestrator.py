@@ -1040,3 +1040,101 @@ class TestA3WriteSide:
         assert data["total_batches"] == o._batch_state.total_batches
         verify.close()
         store.close()
+
+
+def _two_batch_architect_file() -> Path:
+    """component C 有 2 个 batch (b1, b2) — 用于验证游标推进后 restore 保真."""
+    return _make_result_file({
+        "stage": "architect", "plan": _VALID_PLAN, "batch_plan": [
+            {"batch_id": "b1", "design_section": "B2", "component": "C",
+             "tasks": [{"id": "T1", "description": "d1", "module_ref": "§B2",
+                        "file_targets": ["x.py"]}]},
+            {"batch_id": "b2", "design_section": "B2", "component": "C",
+             "tasks": [{"id": "T2", "description": "d2", "module_ref": "§B2",
+                        "file_targets": ["y.py"]}]},
+        ], "file_list": ["x.py", "y.py"], "contracts": {},
+    })
+
+
+class TestCrossProcessRestore:
+    """T9a — 跨进程 restore (§A.1: 每 tick 独立进程, 从 SQLite 恢复状态).
+
+    新进程无 in-memory 状态 → restore() 从 checkpoint 重建
+    _state/_batch_state/_progress_tree/_plan, 游标不归零.
+    """
+
+    def test_restore_roundtrip_batch_plan_mode(self, tmp_path) -> None:
+        from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
+
+        db = tmp_path / "cp.db"
+        store = SQLiteCheckpointStore(db)
+        o = _store_orchestrator(store)
+        o.init("实现 X")
+        o.tick(_two_batch_architect_file())  # → developer, batch_state @ idx 0
+        # 模拟 b1 完成: 推进游标到 b2 + 持久化
+        o._batch_state.advance_batch()
+        o._save_checkpoint()
+
+        thread_id = o._state.thread_id
+        expected_batch_id = o._batch_state.current_batch_id()  # "b2"
+        assert expected_batch_id == "b2"
+        assert o._batch_state.current_batch_idx == 1
+        store.close()
+
+        # 新进程: 独立 store, 无 in-memory 状态
+        store2 = SQLiteCheckpointStore(db)
+        restored = TickOrchestrator.restore(tmp_path, store2)
+        assert restored._state is not None
+        assert restored._state.thread_id == thread_id
+        assert restored._state.current_stage == "developer"
+        assert restored._batch_state is not None
+        assert restored._batch_state.current_batch_idx == 1
+        assert restored._batch_state.current_batch_id() == "b2"
+        assert restored._plan is not None
+        assert len(restored._plan.get_tasks_by_stage("developer")) == 2
+        assert restored._progress_tree is not None
+        store2.close()
+
+    def test_restore_missing_checkpoint_raises(self, tmp_path) -> None:
+        from auto_engineering.loop.checkpoint.records import CheckpointNotFoundError
+        from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
+
+        empty = SQLiteCheckpointStore(tmp_path / "empty.db")
+        try:
+            import pytest
+            with pytest.raises(CheckpointNotFoundError):
+                TickOrchestrator.restore(tmp_path, empty)
+        finally:
+            empty.close()
+
+    def test_restore_by_checkpoint_id(self, tmp_path) -> None:
+        from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
+
+        db = tmp_path / "cp.db"
+        store = SQLiteCheckpointStore(db)
+        o = _store_orchestrator(store)
+        cid = o.init("实现 X")  # init 返回 action, checkpoint_id 从 store 取
+        # 取 init 落的 checkpoint id
+        metas = store.list_all()
+        assert metas
+        first_id = metas[0].id
+        store.close()
+
+        store2 = SQLiteCheckpointStore(db)
+        restored = TickOrchestrator.restore(tmp_path, store2, checkpoint_id=first_id)
+        assert restored._state is not None
+        assert restored._state.current_stage == "architect"
+        store2.close()
+        assert cid  # init 返回值 (action dict) 非空
+
+
+class TestInitPersistsDesignDocPath:
+    """T9a 前置: init 必须持久化 design_doc_path, restore 才能重 parse 设计文档."""
+
+    def test_init_with_design_doc_persists_path(self, tmp_path) -> None:
+        design = tmp_path / "design.md"
+        design.write_text("## B2 StageRouter\n\ncontent\n", encoding="utf-8")
+        o = _orchestrator()
+        o.project_root = tmp_path
+        o.init("req", design_doc_path=str(design))
+        assert o._state.design_doc_path == str(design)

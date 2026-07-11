@@ -9,9 +9,12 @@
 访问方法确定性无副作用 (越界加断言兜底, 仅在对应 is_*_complete() 为 False 时调用);
 推进方法有副作用 (仅 Orchestrator 调用).
 
-序列化只存游标 (3 int + total_batches), 不存 plates —— 避免重复持久化:
-  design-doc 模式由 design_doc_path (#34) 每 tick 重 parse (确定性无漂移);
-  batch_plan 模式由 batch_plan (#6) 重新合成.
+序列化不存 plates (重嵌套树), 只存游标 + batch_plan (轻量 seed) —— plates 每次
+从 seed 重建, 避免持久化 Plate/Component/DesignItem 深层树:
+  design-doc 模式: plates 由 design_doc_path (#34) 每 tick 重 parse (确定性无漂移);
+  batch_plan 模式: plates 由内嵌 batch_plan 重新合成.
+batch_plan 内嵌 (不依赖 EngineState.batch_plan #6): #6 被 clear_stage_fields 在
+architect→developer 过渡时清空, 跨 tick 不可依赖 → batch_state_json 必须自包含 (T9a).
 
 参考: v5.6-Design-Loop.md §B1.1a.
 """
@@ -183,18 +186,25 @@ class BatchState:
             "current_component_idx": self.current_component_idx,
             "current_batch_idx": self.current_batch_idx,
             "total_batches": self.total_batches,
+            "batch_plan": self.batch_plan,  # 轻量 seed; plates 仍不存 (从此重建)
         })
 
     @classmethod
     def from_json(
-        cls, s: str, design_doc: DesignDoc | None, batch_plan: list[dict]
+        cls, s: str, design_doc: DesignDoc | None,
+        batch_plan: list[dict] | None = None,
     ) -> BatchState:
-        """重建 plates (design_doc 有→真实; 无→合成) 再恢复游标."""
+        """重建 plates (design_doc 有→真实; 无→合成) 再恢复游标.
+
+        batch_plan 优先用 json 内嵌 (自包含, T9a); 无内嵌时回退传入参数
+        (兼容旧调用). #6 (EngineState.batch_plan) 跨 tick 被清空, 不能依赖.
+        """
         data = json.loads(s)
+        bp = data.get("batch_plan") or batch_plan or []
         if design_doc is not None:
-            bs = cls.from_design_doc(design_doc, batch_plan)
+            bs = cls.from_design_doc(design_doc, bp)
         else:
-            bs = cls.from_batch_plan(batch_plan)
+            bs = cls.from_batch_plan(bp)
         bs.current_plate_idx = data["current_plate_idx"]
         bs.current_component_idx = data["current_component_idx"]
         bs.current_batch_idx = data["current_batch_idx"]

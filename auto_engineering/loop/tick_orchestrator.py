@@ -122,6 +122,9 @@ class TickOrchestrator:
             self._design_doc = DesignDoc.parse(design_doc_path)
 
         self._state = EngineState(requirement=requirement, thread_id=str(uuid4()))
+        if design_doc_path:
+            # 持久化路径 — 跨进程 restore 据此重 parse 设计文档 (T9a)
+            self._state.design_doc_path = design_doc_path
         self._router = StageRouter()
         self._judge = ConvergenceJudge(ConvergenceConfig(max_iterations=max_rounds))
         self._gates = self._load_default_gates()
@@ -139,6 +142,84 @@ class TickOrchestrator:
         self._state.tick = 0
         self._save_checkpoint()
         return self._build_action()
+
+    @classmethod
+    def restore(
+        cls,
+        project_root: Path,
+        checkpoint_store: SQLiteCheckpointStore,
+        *,
+        checkpoint_id: str | None = None,
+        gate_runner: GateRunner | None = None,
+        guardrail: GuardrailChain | None = None,
+        max_rounds: int = 5,
+    ) -> TickOrchestrator:
+        """跨进程恢复 (§A.1: 每 tick 独立进程, 从 SQLite 重建全部 in-memory 状态).
+
+        新进程 self._state=None → tick() 立即崩. restore() 从 checkpoint 重建
+        _state/_design_doc/_batch_state/_progress_tree/_plan, 游标不归零。
+
+        无 checkpoint_id → load_latest; 无 checkpoint → raise CheckpointNotFoundError.
+        max_rounds: EngineState 未持久化该字段 → restore 用默认 5 (与 init 一致);
+        精确恢复需扩 schema (本步不扩)。
+        """
+        from auto_engineering.loop.checkpoint.records import CheckpointNotFoundError
+
+        self = cls(
+            project_root,
+            gate_runner=gate_runner,
+            guardrail=guardrail,
+            checkpoint_store=checkpoint_store,
+        )
+
+        ck = (checkpoint_store.load(checkpoint_id) if checkpoint_id
+              else checkpoint_store.load_latest())
+        if ck is None:
+            raise CheckpointNotFoundError(
+                f"无 checkpoint 可恢复 (project_root={project_root})")
+
+        state = ck.state
+        if isinstance(state, dict):  # 防御: deserialize 未命中 EngineState 分派
+            state = EngineState.from_dict(state)
+        self._state = state
+        self._round_history = list(ck.history or [])
+
+        # 协作组件 (无状态 / 从 store 重建)
+        self._router = StageRouter()
+        self._judge = ConvergenceJudge(ConvergenceConfig(max_iterations=max_rounds))
+        self._gates = self._load_default_gates()
+        self._checkpoint_mgr = CheckpointManager(checkpoint_store)
+        if self._guardrail is None:
+            self._guardrail = GuardrailChain.default()
+
+        manifest_path = project_root / ".ae-state" / "init-manifest.json"
+        if manifest_path.exists():
+            self._init_manifest = json.loads(manifest_path.read_text())
+
+        # design_doc: design-doc 模式每 tick 重 parse (确定性无漂移)
+        if state.design_doc_path:
+            self._design_doc = DesignDoc.parse(state.design_doc_path)
+
+        # batch_state: 自包含 (内嵌 batch_plan seed), plates 由 design_doc/seed 重建
+        if state.batch_state_json:
+            self._batch_state = BatchState.from_json(
+                state.batch_state_json, self._design_doc)
+
+        # progress_tree
+        if state.progress_tree_json:
+            self._progress_tree = ProgressTree.from_dict(
+                json.loads(state.progress_tree_json))
+
+        # plan + verification_layers — batch_plan 从 _batch_state 取 (#6 已被清空)
+        batch_plan = (
+            self._batch_state.batch_plan if self._batch_state
+            else state.batch_plan)
+        if batch_plan:
+            self._plan = tasks_from_batch_plan(batch_plan, state.requirement)
+            self._verification_layers = determine_verification_layers(
+                self._design_doc, batch_plan)
+
+        return self
 
     def tick(self, result_file: Path) -> dict:
         """处理一个 tick + DS-10 延迟打点 (C.2.6).

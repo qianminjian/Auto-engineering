@@ -237,18 +237,33 @@ class TestBoundaryGuards:
 
 
 class TestSerialization:
-    def test_to_json_stores_only_cursors(self) -> None:
+    def test_to_json_stores_cursors_and_batch_plan_no_plates(self) -> None:
+        """T9a: 序列化含游标 + batch_plan (seed), 但不存 plates (重嵌套树).
+
+        batch_plan 内嵌使 batch_state_json 自包含 (#6 跨 tick 被清空, 不可依赖);
+        plates 仍从 seed 重建, 不持久化 Plate/Component/DesignItem 深层树.
+        """
         bp = [_batch("b1", "CompX"), _batch("b2", "CompY")]
         bs = BatchState.from_batch_plan(bp)
         bs.advance_batch()
         data = json.loads(bs.to_json())
         assert set(data.keys()) == {
             "current_plate_idx", "current_component_idx",
-            "current_batch_idx", "total_batches",
+            "current_batch_idx", "total_batches", "batch_plan",
         }
         assert data["current_batch_idx"] == 1
         assert data["total_batches"] == 2
-        assert "plates" not in data
+        assert "plates" not in data  # 重嵌套树不持久化 (主设计决策保留)
+        assert data["batch_plan"] == bp  # 轻量 seed 内嵌
+
+    def test_from_json_self_contained_without_batch_plan_arg(self) -> None:
+        """T9a: from_json 不传 batch_plan 也能重建 (内嵌 seed 自足)."""
+        bp = [_batch("b1", "CompX"), _batch("b2", "CompY")]
+        bs = BatchState.from_batch_plan(bp)
+        bs.advance_batch()
+        restored = BatchState.from_json(bs.to_json(), design_doc=None)
+        assert restored.current_batch_idx == 1
+        assert [c.name for c in restored.plates[0].components] == ["CompX", "CompY"]
 
     def test_from_json_batch_plan_mode_round_trip(self) -> None:
         bp = [_batch("b1", "CompX"), _batch("b2", "CompY")]
