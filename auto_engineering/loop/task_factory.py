@@ -72,6 +72,8 @@ def tasks_from_batch_plan(
                 role="developer",
                 target_files=frozenset(task_dict.get("file_targets", [])),
                 depends_on=[],  # task 级为空; batch 内顺序 = 隐式依赖
+                kind=task_dict.get("kind", ""),  # v5.6 T30: regression_fix → RegressionGate(G9)
+                regression_test_id=task_dict.get("regression_test_id", ""),
             ))
     # 追加 critic task (审查所有 developer 产出)
     tasks.append(Task(

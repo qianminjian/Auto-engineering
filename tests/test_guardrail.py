@@ -32,6 +32,7 @@ from auto_engineering.loop.guardrail import (
     NoDeferredBlockingGap,
     PlanExists,
     REDGuard,
+    RegressionGate,
     RequirementValid,
     TestsPass,
     _aggregate_sha,
@@ -574,10 +575,10 @@ class TestGuardrailChain:
         # post/developer → G3 + G4 + G5
         assert len([g for g in chain.guardrails if g.timing == "post" and "developer" in g.applies_to_stages]) == 3
 
-    def test_default_factory_returns_8_guardrails(self) -> None:
-        """GuardrailChain.default() 返回 8 Guardrail 链 (G1-G6 + G7 REDGuard + G8 FreshGate)."""
+    def test_default_factory_returns_9_guardrails(self) -> None:
+        """GuardrailChain.default() 返回 9 Guardrail (G1-G6 + G7 REDGuard + G8 FreshGate + G9 RegressionGate)."""
         chain = GuardrailChain.default()
-        assert len(chain.guardrails) == 8
+        assert len(chain.guardrails) == 9
         names = [type(g).__name__ for g in chain.guardrails]
         assert "RequirementValid" in names
         assert "PlanExists" in names
@@ -587,6 +588,7 @@ class TestGuardrailChain:
         assert "NoDeferredBlockingGap" in names
         assert "REDGuard" in names
         assert "FreshGate" in names
+        assert "RegressionGate" in names
 
     def test_default_factory_same_structure_as_manual(self) -> None:
         """GuardrailChain.default() 与手动构造的 chain 行为一致."""
@@ -600,6 +602,7 @@ class TestGuardrailChain:
             NoDeferredBlockingGap(),
             REDGuard(),
             FreshGate(),
+            RegressionGate(),
         ])
         # 同数量
         assert len(default_chain.guardrails) == len(manual_chain.guardrails)
@@ -1241,3 +1244,153 @@ class TestRetryKeyGranularity:
             "developer", state, counters,
         )
         assert action == "stop"
+
+
+# ==================== G9: RegressionGate (revert-red-restore) ====================
+
+
+class _RegTask:
+    """轻量回归修复 Task 替身 (RegressionGate 读 kind/regression_test_id/target_files/id)."""
+
+    def __init__(
+        self, task_id: str, target_files: list[str], *,
+        kind: str = "", regression_test_id: str = "",
+    ) -> None:
+        self.id = task_id
+        self.target_files = target_files
+        self.kind = kind
+        self.regression_test_id = regression_test_id
+
+
+def _make_regression_repo(tmp_path: Path, *, new_file: bool = False) -> tuple[Path, str]:
+    """构造回归修复提交序列.
+
+    non-new: impl^ 有 buggy calc.py(return 0) → 修复 commit calc.py(return 1)+test_reg.py
+    new:     impl^ 无 calc.py(仅 seed) → 修复 commit 新建 calc.py + test_reg.py
+
+    HEAD 下 test_reg.test_f 断言 f()==1 → PASS; 回退 calc 到 impl^ → FAIL.
+
+    Returns:
+        (repo, impl_commit_sha).
+    """
+    repo = tmp_path / "reg"
+    repo.mkdir()
+    env = {
+        "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@x",
+        "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@x",
+        "GIT_AUTHOR_DATE": "2024-01-01T00:00:00+0000",
+        "GIT_COMMITTER_DATE": "2024-01-01T00:00:00+0000",
+    }
+    _git(repo, "init", "-q", env=env)
+    _git(repo, "config", "user.email", "t@x", env=env)
+    _git(repo, "config", "user.name", "t", env=env)
+    if new_file:
+        (repo / "README").write_text("seed\n")
+        _git(repo, "add", "README", env=env)
+    else:
+        (repo / "calc.py").write_text("def f():\n    return 0\n")  # buggy
+        _git(repo, "add", "calc.py", env=env)
+    _git(repo, "commit", "-q", "-m", "before fix", env=env)
+
+    # 修复 commit (HEAD): calc 返回 1 + 回归测试
+    (repo / "calc.py").write_text("def f():\n    return 1\n")
+    (repo / "test_reg.py").write_text(
+        "from calc import f\n\n\ndef test_f():\n    assert f() == 1\n")
+    _git(repo, "add", "calc.py", "test_reg.py", env=env)
+    _git(repo, "commit", "-q", "-m", "fix: regression", env=env)
+    impl_commit = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"],
+        capture_output=True, text=True, check=True,
+    ).stdout.strip()
+    return repo, impl_commit
+
+
+def _reg_state(impl_commit: str, task: _RegTask) -> EngineState:
+    state = EngineState(commit_hash=impl_commit)
+    state.batch_state = _StubBatchState([task])  # type: ignore[attr-defined]
+    state._plan = object()  # type: ignore[attr-defined]
+    return state
+
+
+class TestRegressionGate:
+    """G9: 回归修复 task 的 revert→MUST FAIL→restore→pass 序列 (B3.3)."""
+
+    def test_timing_and_stage(self) -> None:
+        g = RegressionGate()
+        assert g.timing == "post"
+        assert g.applies_to_stages == ("developer",)
+
+    def test_non_regression_task_passes_na(self, tmp_path: Path) -> None:
+        """非回归修复 task (无 kind) → pass N/A."""
+        repo, impl_c = _make_regression_repo(tmp_path)
+        task = _RegTask("t1", ["calc.py", "test_reg.py"])  # kind=""
+        r = RegressionGate().check("developer", _reg_state(impl_c, task), project_root=repo)
+        assert r.action == "pass"
+
+    def test_no_regression_task_in_batch_passes(self, tmp_path: Path) -> None:
+        """batch 无回归修复 task → pass."""
+        repo, impl_c = _make_regression_repo(tmp_path)
+        task = _RegTask("t1", ["calc.py"], kind="feature")
+        r = RegressionGate().check("developer", _reg_state(impl_c, task), project_root=repo)
+        assert r.action == "pass"
+
+    def test_real_revert_must_fail_then_restore_passes(self, tmp_path: Path) -> None:
+        """既有实现文件: 回退到 impl^ → 回归测试真的 FAIL → 恢复 → pass; 工作树复原."""
+        repo, impl_c = _make_regression_repo(tmp_path)
+        task = _RegTask("t1", ["calc.py", "test_reg.py"],
+                        kind="regression_fix", regression_test_id="test_f")
+        r = RegressionGate().check("developer", _reg_state(impl_c, task), project_root=repo)
+        assert r.action == "pass", r.message
+        # 工作树已恢复: calc.py 为修复版, git status 干净
+        assert (repo / "calc.py").read_text() == "def f():\n    return 1\n"
+        status = subprocess.run(
+            ["git", "-C", str(repo), "status", "--porcelain"],
+            capture_output=True, text=True, check=True,
+        ).stdout
+        assert status.strip() == "", f"工作树未复原: {status!r}"
+
+    def test_block_when_revert_still_passes(self, tmp_path: Path, monkeypatch) -> None:
+        """回退实现后测试仍 PASS → 测试无效未捕捉回归 → block."""
+        import auto_engineering.loop.guardrail as gmod
+
+        repo, impl_c = _make_regression_repo(tmp_path)
+        task = _RegTask("t1", ["calc.py", "test_reg.py"],
+                        kind="regression_fix", regression_test_id="test_f")
+        # 无论回退与否测试都 PASS (测试无效)
+        monkeypatch.setattr(gmod, "_run_test", lambda *a, **k: "PASS")
+        r = RegressionGate().check("developer", _reg_state(impl_c, task), project_root=repo)
+        assert r.action == "block"
+        assert "test_f" in r.message
+        # finally 仍恢复工作树
+        assert (repo / "calc.py").read_text() == "def f():\n    return 1\n"
+
+    def test_block_when_no_impl_files(self, tmp_path: Path) -> None:
+        """回归修复 task 只改测试文件 (无实现文件) → 无法验证回归 → block."""
+        repo, impl_c = _make_regression_repo(tmp_path)
+        task = _RegTask("t1", ["test_reg.py"],
+                        kind="regression_fix", regression_test_id="test_f")
+        r = RegressionGate().check("developer", _reg_state(impl_c, task), project_root=repo)
+        assert r.action == "block"
+
+    def test_new_impl_file_uses_git_rm_branch(self, tmp_path: Path, monkeypatch) -> None:
+        """新建实现文件 (impl^ 无父版本): checkout pathspec 错 → git rm 模拟'修复前不存在'."""
+        import auto_engineering.loop.guardrail as gmod
+
+        repo, impl_c = _make_regression_repo(tmp_path, new_file=True)
+        task = _RegTask("t1", ["calc.py", "test_reg.py"],
+                        kind="regression_fix", regression_test_id="test_f")
+        # 回退分支 (git rm 后) 测试 FAIL, 恢复后 PASS
+        calls: list[str] = []
+
+        def _fake_run_test(test_id, project_root):
+            # 第 1 次调用 (回退后): calc.py 应已被 git rm → FAIL; 第 2 次 (恢复后): PASS
+            calc_exists = (repo / "calc.py").exists()
+            calls.append("exists" if calc_exists else "removed")
+            return "PASS" if calc_exists else "FAIL"
+
+        monkeypatch.setattr(gmod, "_run_test", _fake_run_test)
+        r = RegressionGate().check("developer", _reg_state(impl_c, task), project_root=repo)
+        assert r.action == "pass", r.message
+        assert "removed" in calls  # git rm 分支被走到 (回退后 calc.py 不存在)
+        # 恢复后 calc.py 回来
+        assert (repo / "calc.py").exists()

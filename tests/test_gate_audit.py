@@ -300,3 +300,75 @@ class TestAuditGateIntegration:
         assert "P0=1" in verdict.message
         assert "P1=1" in verdict.message
         assert "P2=1" in verdict.message
+
+
+# ==================== T30/B15 #5: 审计正则规则自测 ====================
+# 每个正则 pattern 附正例(必须命中)/反例(必须不命中), 确定性证明规则"能捕捉
+# 且不误伤" — 同 RegressionGate 的 revert-red-restore 思想应用到正则规则.
+
+
+class TestAuditRegexSelfTest:
+    """gates/audit.py 每个正则 pattern 的正例/反例自测 (规则不失效/不误伤)."""
+
+    def test_silent_except_py(self) -> None:
+        from auto_engineering.gates.audit import _SILENT_EXCEPT_PY
+        assert _SILENT_EXCEPT_PY.search("    except ValueError:\n")  # 正例: 裸吞
+        # 反例: 有 logger / raise / # noqa 同行 → 不算静默吞
+        assert not _SILENT_EXCEPT_PY.search("    except ValueError:  # noqa\n")
+        assert not _SILENT_EXCEPT_PY.search("    except ValueError:  # logger.warning\n")
+
+    def test_hardcoded_secret(self) -> None:
+        from auto_engineering.gates.audit import _HARDCODED_SECRET
+        assert _HARDCODED_SECRET.search('api_key = "abcdef1234567890XYZ"')  # 16+ chars
+        assert not _HARDCODED_SECRET.search('api_key = "short"')  # 反例: 太短
+        assert not _HARDCODED_SECRET.search("counter = 0")  # 反例: 非密钥字段
+
+    def test_todo_fixme(self) -> None:
+        from auto_engineering.gates.audit import _TODO_FIXME
+        assert _TODO_FIXME.search("# TODO: fix later")
+        assert _TODO_FIXME.search("// FIXME broken")
+        assert not _TODO_FIXME.search("# already done, shipped")  # 反例
+
+    def test_commented_code_py(self) -> None:
+        from auto_engineering.gates.audit import _COMMENTED_CODE_PY
+        assert _COMMENTED_CODE_PY.search("# def old_func():\n")  # 正例: 注释掉的 def
+        assert _COMMENTED_CODE_PY.search("    # return None\n")
+        assert not _COMMENTED_CODE_PY.search("# 这是一段正常的中文说明注释\n")  # 反例
+
+    def test_commented_code_js(self) -> None:
+        from auto_engineering.gates.audit import _COMMENTED_CODE_JS
+        assert _COMMENTED_CODE_JS.search("// function old() {\n")  # 正例
+        assert _COMMENTED_CODE_JS.search("  // const x = 1;\n")
+        assert not _COMMENTED_CODE_JS.search("// normal explanatory comment\n")  # 反例
+
+    def test_long_line(self) -> None:
+        from auto_engineering.gates.audit import _LONG_LINE
+        assert _LONG_LINE.search("x" * 121)  # 正例: >120
+        assert not _LONG_LINE.search("x" * 80)  # 反例: 短行
+
+    def test_debug_print_py(self) -> None:
+        from auto_engineering.gates.audit import _DEBUG_PRINT_PY
+        assert _DEBUG_PRINT_PY.search('    print("debug")\n')  # 正例
+        assert not _DEBUG_PRINT_PY.search("    logger.info(x)\n")  # 反例
+        assert not _DEBUG_PRINT_PY.search("    pprint(x)\n")  # 反例: pprint 非裸 print
+
+    def test_debug_print_js(self) -> None:
+        from auto_engineering.gates.audit import _DEBUG_PRINT_JS
+        assert _DEBUG_PRINT_JS.search("  console.log(x)\n")  # 正例
+        assert _DEBUG_PRINT_JS.search("  console.warn(x)\n")
+        assert not _DEBUG_PRINT_JS.search("  logger.info(x)\n")  # 反例
+
+    def test_every_pattern_has_self_test(self) -> None:
+        """元测试: audit.py 导出的每个 _*_PATTERN/_*_PY/_*_JS 正则均被上面自测覆盖."""
+        import auto_engineering.gates.audit as amod
+        regex_names = {
+            n for n in dir(amod)
+            if n.startswith("_") and hasattr(getattr(amod, n), "search")
+        }
+        covered = {
+            "_SILENT_EXCEPT_PY", "_HARDCODED_SECRET", "_TODO_FIXME",
+            "_COMMENTED_CODE_PY", "_COMMENTED_CODE_JS", "_LONG_LINE",
+            "_DEBUG_PRINT_PY", "_DEBUG_PRINT_JS",
+        }
+        missing = regex_names - covered
+        assert not missing, f"以下正则缺少正例/反例自测: {missing}"

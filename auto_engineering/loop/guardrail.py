@@ -1,9 +1,10 @@
-"""M2 Guardrail 链 — GuardrailResult + Guardrail ABC + 6 Guardrails + Chain + handler.
+"""M2 Guardrail 链 — GuardrailResult + Guardrail ABC + 9 Guardrails + Chain + handler.
 
 设计参考: v5.6-Design-Loop.md §B2.3 (Guardrail 接口契约)
                    + §B1.8 (GuardrailResult 数据类)
                    + §B5.1 (5 Guardrail 规格 G1-G5)
                    + §B10.5 / §B3 (G6 NoDeferredBlockingGap)
+                   + §B3.1/B3.2/B3.3 (G7 REDGuard / G8 FreshGate / G9 RegressionGate)
                    + §B5.2 (handle_guardrail_result 3 态)
                    + 附录 C R-5 (GitDiffExists 新仓库降级)
 
@@ -12,9 +13,9 @@ v5.4 P2-8: drop 态已从类型系统和 handler 中完全移除.
 
 模块职责:
     - GuardrailResult / Guardrail ABC: 契约定义 (action 3 态)
-    - 6 Guardrail (G1-G5 + G6): 内置检查 (只用 pass/block/retry)
+    - 9 Guardrail (G1-G6 基线 + G7/G8/G9): 内置检查 (只用 pass/block/retry)
     - GuardrailChain: 编排 (fail-fast + timing/stage 过滤)
-    - handle_guardrail_result: action 分发 (continue/stop/retry)
+    - handle_guardrail_result: action 分发 (continue/stop/retry/rerun_gates)
 
 依赖:
     - stage_router.clear_stage_fields (Stage 字段清理复用)
@@ -27,6 +28,7 @@ import hashlib
 import json
 import os
 import subprocess
+import sys
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
@@ -47,6 +49,7 @@ __all__ = [
     "GuardrailResult",
     "PlanExists",
     "REDGuard",
+    "RegressionGate",
     "RequirementValid",
     "TestsPass",
     "handle_guardrail_result",
@@ -602,6 +605,149 @@ class FreshGate(Guardrail):
         return GuardrailResult()
 
 
+# ==================== G9 helpers (B3.3) ====================
+
+
+def _run_test(test_id: str, project_root: Path) -> str:
+    """跑单个测试 (`pytest -k <test_id>`), 返回 'PASS'/'FAIL'/'UNKNOWN'.
+
+    显式传 project_root 作为唯一 collection root (限定采集范围, 避免向上
+    climb 到父项目 pyproject 触发 testpaths 全量采集); `-o addopts=` 清空
+    继承的 addopts (不依赖父配置); `-B` 禁写 .pyc (revert/restore 同秒内
+    git checkout 会令 mtime 相同, 陈旧字节码会掩盖源码回退 → 必须禁缓存).
+    returncode==0 → PASS, 其余 → FAIL, 子进程异常 → UNKNOWN.
+    """
+    if not test_id:
+        return "UNKNOWN"
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-B", "-m", "pytest", str(project_root), "-k", test_id,
+             "-q", "--no-header", "-o", "addopts=", "-p", "no:cacheprovider"],
+            cwd=str(project_root), capture_output=True, text=True, timeout=120,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return "UNKNOWN"
+    return "PASS" if proc.returncode == 0 else "FAIL"
+
+
+def _git_checkout_paths(ref: str, files: list[str], root: Path) -> int:
+    """git checkout <ref> -- <files>: 回退/恢复指定文件到 ref 版本. 返回 rc.
+
+    同时更新 index + working tree, 故 restore("HEAD") 后 working tree 干净.
+    """
+    if not files:
+        return 0
+    rc, _ = _run_git(root, "checkout", ref, "--", *files)
+    return rc
+
+
+def _git_rm(files: list[str], root: Path) -> int:
+    """git rm -f <files>: 移除文件 (模拟'修复前不存在'). 返回 rc.
+
+    S-19: 实现文件在 impl_commit 中新建时, checkout impl^ 会 pathspec 报错;
+    改用 git rm 让文件消失, 再由 restore("HEAD") 恢复.
+    """
+    if not files:
+        return 0
+    rc, _ = _run_git(root, "rm", "-f", *files)
+    return rc
+
+
+def _current_regression_task(state: EngineState):
+    """从运行时 batch 句柄取当前 batch 首个 kind=='regression_fix' task, 无则 None.
+
+    与 REDGuard 同源读 state.batch_state / state._plan (TickOrchestrator 注入).
+    非 batch 运行时 (无句柄) 或无回归修复 task → None (Gate 判 N/A pass).
+    """
+    batch_state = getattr(state, "batch_state", None)
+    plan = getattr(state, "_plan", None)
+    if batch_state is None or plan is None:
+        return None
+    try:
+        tasks = batch_state.current_batch_tasks(plan)
+    except Exception:  # 句柄不完整时降级 (纯函数不抛给上层, 见 ABC check 约束)
+        return None
+    for task in tasks or []:
+        if getattr(task, "kind", "") == "regression_fix":
+            return task
+    return None
+
+
+class RegressionGate(Guardrail):
+    """G9: 回归修复测试有效性校验 — revert→MUST FAIL→restore (§B3.3).
+
+    post/developer: 仅当本轮 batch 含 kind=="regression_fix" task 时生效.
+    验证该 task 新增/修改的回归测试**确实能捕捉被修复的回归**:
+        1. checkout impl_commit^ 回退实现文件 (新建文件 pathspec 报错 → git rm 模拟)
+        2. 回归测试 MUST FAIL (回退后仍 PASS ⇒ 测试无效, 未真正覆盖回归)
+        3. finally checkout HEAD 恢复实现 (working tree 复原)
+        4. 恢复后回归测试 MUST PASS
+
+    失败 action=block (而非 retry): 无效回归测试须重写, 非重跑 Agent 可修复.
+    非回归修复轮次 / 无运行时句柄 → pass (N/A). 与 G7 REDGuard 互补:
+    REDGuard 校验"测试先于实现且曾红", RegressionGate 校验"测试真能红".
+    """
+
+    name = "RegressionGate"
+    timing = "post"
+    applies_to_stages = ("developer",)
+
+    def check(
+        self,
+        stage: str,
+        state: EngineState,
+        project_root: Path | None = None,
+    ) -> GuardrailResult:
+        root = project_root if project_root is not None else Path.cwd()
+        task = _current_regression_task(state)
+        if task is None:
+            return GuardrailResult()  # 非回归修复轮次 → N/A pass
+
+        task_id = getattr(task, "id", "?")
+        test_id = getattr(task, "regression_test_id", "") or ""
+        impl_commit = getattr(state, "commit_hash", "") or ""
+        targets = list(getattr(task, "target_files", []) or [])
+        impl_files = [f for f in targets if not _is_test_file(f)]
+
+        if not impl_files:
+            return GuardrailResult(
+                action="block",
+                message=f"回归修复 task {task_id} 无实现文件 — 无法验证回归测试有效性",
+            )
+        if not test_id:
+            return GuardrailResult(
+                action="block",
+                message=f"回归修复 task {task_id} 缺 regression_test_id — 无法定位回归测试",
+            )
+        if not impl_commit:
+            return GuardrailResult(
+                action="block",
+                message=f"回归修复 task {task_id} 无实现 commit_hash — 无法回退验证",
+            )
+
+        try:
+            rc = _git_checkout_paths(f"{impl_commit}^", impl_files, root)
+            if rc != 0:
+                # S-19: 实现文件在 impl_commit 中新建, impl^ 无该 pathspec → git rm
+                _git_rm(impl_files, root)
+            if _run_test(test_id, root) != "FAIL":
+                return GuardrailResult(
+                    action="block",
+                    message=(
+                        f"回归测试 {test_id} 在回退实现后仍未 FAIL — "
+                        "测试无效, 未真正捕捉回归"),
+                )
+        finally:
+            _git_checkout_paths("HEAD", impl_files, root)
+
+        if _run_test(test_id, root) != "PASS":
+            return GuardrailResult(
+                action="block",
+                message=f"回归测试 {test_id} 恢复实现后未 PASS — 测试或实现不稳定",
+            )
+        return GuardrailResult()
+
+
 # ==================== GuardrailChain ====================
 class GuardrailChain:
     """Guardrail 链表 — fail-fast 遍历 (§B2.3).
@@ -619,7 +765,7 @@ class GuardrailChain:
 
     @classmethod
     def default(cls) -> GuardrailChain:
-        """工厂方法: 创建默认链 (G1-G6 基线 + G7 REDGuard + G8 FreshGate, §B3)."""
+        """工厂方法: 默认链 (G1-G6 基线 + G7 REDGuard + G8 FreshGate + G9 RegressionGate, §B3)."""
         return cls([
             RequirementValid(),
             PlanExists(),
@@ -629,6 +775,7 @@ class GuardrailChain:
             NoDeferredBlockingGap(),
             REDGuard(),
             FreshGate(),
+            RegressionGate(),
         ])
 
     def check(

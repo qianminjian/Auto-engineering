@@ -103,6 +103,10 @@ class Task:
     estimated_minutes: int = 30
     status: TaskStatus = TaskStatus.PENDING
     output: Any = None
+    # v5.6 T30 (B3.3): 回归修复标记 — RegressionGate(G9) 仅对 kind=="regression_fix"
+    # 的 task 执行 revert→MUST FAIL→restore 验证; regression_test_id 为其复现测试.
+    kind: str = ""
+    regression_test_id: str = ""
 
     def __post_init__(self) -> None:
         """归一化 target_files 为 frozenset[str] (允许 list/set 输入)."""
