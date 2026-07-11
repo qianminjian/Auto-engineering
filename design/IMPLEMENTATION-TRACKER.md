@@ -116,7 +116,7 @@
 |---|------|:---:|--------|
 | T17 | TickOrchestrator 单元（init/tick/8 stage）| ✅ | test_tick_orchestrator.py (52) |
 | T18 | 23 条 StageRouter 转换（含 T17b + refine 上限 DS-8）| ✅ | test_stage_router.py (43) |
-| T19 | 验证层集成（component→plate→system verifier/audit）| ☐ | |
+| T19 | 验证层集成（component→plate→system verifier/audit）| ✅ | test_tick_orchestrator TestPlateConvergence (PLATE 6-agent + FULL 7-agent 尾部路由) |
 | T20 | plan-refine 回路（3 层 + 分源≤2/全局≤4 + RefineRequest 归一）| ☐ | 部分见 test_tick_orchestrator TestPlanRefineLimit |
 | T21 | 完整 2 轮 E2E（design-doc → done）| ◐ | LEAF 单轮 TestFullLeafConvergence + **跨 tick restore E2E**（TestCrossTickE2E, 37de252）；2 轮 design-doc E2E 待补 |
 | T22 | BatchState 跨 tick 持久化 + 恢复 | ✅ | test_batch_state.py (21) |
@@ -126,7 +126,7 @@
 | T26 | ResearchAgent 分层知识源 | ☐ | |
 | T26b | Tick 编排延迟 P95<2s（DS-10）| ◐ | test_tick_orchestrator TestTickLatencyInstrumentation |
 | T26c | verifier Sonnet 复核兜底（DS-9）| ☐ | |
-| T26d | PromptRegistry + B12 迁移（背书 T16e/f/g）| ☐ | |
+| T26d | PromptRegistry + B12 迁移（背书 T16e/f/g）| ✅ | 570bec0（B12.5 版本锁）+ test_prompt_registry(24)+test_sync_prompts(9) |
 | T26e | PRBackend 选型（背书 T10c/T33）| ☐ | |
 | T26f | 环内增量 test_gate + commit_msg（背书 T16l/T16n）| ☐ | |
 | T26g | B15 Guardrail REDGuard/FreshGate/RegressionGate（背书 T29/T30）| ☐ | |

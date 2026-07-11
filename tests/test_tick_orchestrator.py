@@ -251,10 +251,136 @@ class TestFullLeafConvergence:
         assert a_audit["verdict"] == "GOAL_ACHIEVED"
 
 
-# ── system_deep_audit 设计覆盖度闸门 (审计修复 Bug 2) ──
+class TestPlateConvergence:
+    """PLATE (T19): 2 组件单板块 → component_verifier×2 → plate_deep_audit →
+    system_deep_audit → GOAL_ACHIEVED (跳过 system_verifier)。
 
+    覆盖 LEAF 路径不经过的 plate_deep_audit 层集成。
+    """
 
-class TestSystemDeepAuditCoverageGate:
+    @staticmethod
+    def _approve_component(o: TickOrchestrator, component: str, batch_id: str) -> dict:
+        """driver: developer → critic APPROVE → component_verifier(clean), 返回下一 action."""
+        a_dev = o.tick(_make_result_file({
+            "stage": "developer", "batch_id": batch_id,
+            "files_changed": [f"{component.lower()}.py"],
+            "test_results": {"passed": 1, "failed": 0},
+        }))
+        assert a_dev["stage"] == "critic"
+        a_critic = o.tick(_make_result_file({
+            "stage": "critic", "verdict": "APPROVE", "findings": [],
+            "critic_feedback": "ok",
+        }))
+        assert a_critic["stage"] == "component_verifier"
+        return o.tick(_make_result_file({
+            "stage": "component_verifier", "component": component,
+            "coverage_map": [
+                {"design_item": f"{component}-1", "status": "IMPLEMENTED",
+                 "file": f"{component.lower()}.py", "line": 1, "note": ""},
+            ],
+            "missing_count": 0, "diverged_count": 0,
+        }))
+
+    def test_plate_cycle_runs_plate_deep_audit_then_goal(self) -> None:
+        o = _orchestrator()
+        o.init("实现两个组件的板块")
+
+        # architect: 2 distinct components → PLATE (total_plates=1, components=2)
+        o.tick(_make_result_file({
+            "stage": "architect", "plan": _VALID_PLAN,
+            "batch_plan": [
+                {"batch_id": "b-Foo", "design_section": "B2", "component": "Foo",
+                 "tasks": [{"id": "T1", "description": "foo", "module_ref": "§B2",
+                            "file_targets": ["foo.py"]}]},
+                {"batch_id": "b-Bar", "design_section": "B3", "component": "Bar",
+                 "tasks": [{"id": "T2", "description": "bar", "module_ref": "§B3",
+                            "file_targets": ["bar.py"]}]},
+            ],
+            "file_list": ["foo.py", "bar.py"], "contracts": {},
+        }))
+        assert o._verification_layers == VerificationLayers.PLATE
+
+        # 组件 1 (Foo) 验完 → 仍有组件 → 回 developer (Bar)
+        a_after_foo = self._approve_component(o, "Foo", "b-Foo")
+        assert a_after_foo["stage"] == "developer"
+
+        # 组件 2 (Bar) 验完 → 无更多组件 → PLATE → plate_deep_audit
+        a_after_bar = self._approve_component(o, "Bar", "b-Bar")
+        assert a_after_bar["stage"] == "plate_deep_audit"
+
+        # plate_deep_audit clean → 无更多板块 → PLATE → system_deep_audit (跳 system_verifier)
+        a_plate = o.tick(_make_result_file({
+            "stage": "plate_deep_audit", "plate": "(single)", "findings": [],
+            "p0_count": 0, "p1_count": 0, "p2_count": 0,
+            "cross_component_issues": [], "total_audited_files": 2,
+        }))
+        assert a_plate["stage"] == "system_deep_audit"
+
+        # system_deep_audit clean → GOAL_ACHIEVED
+        a_audit = o.tick(_make_result_file({
+            "stage": "system_deep_audit", "findings": [],
+            "p0_count": 0, "p1_count": 0, "p2_count": 0,
+            "total_audited_files": 2, "design_docs_stale": False,
+            "design_doc_suggestions": "", "missing_count": 0, "diverged_count": 0,
+        }))
+        assert a_audit["action"] == "done"
+        assert a_audit["verdict"] == "GOAL_ACHIEVED"
+
+    def test_full_layer_routes_plate_audit_through_system_verifier(self) -> None:
+        """FULL: plate_deep_audit clean → system_verifier → system_deep_audit。
+
+        与 PLATE 的差异只在验证尾部多一层 system_verifier (7 Agent)。多板块推进
+        机制已由 determine_verification_layers 单测覆盖 (test_verification_layers.py)；
+        此处置单板块 + 手动 FULL 隔离该分支路由 (line 511-512 / 528), 避免重复
+        构造重量级多板块 design_doc E2E。
+        """
+        o = _orchestrator()
+        o.init("实现两个组件的板块")
+        o.tick(_make_result_file({
+            "stage": "architect", "plan": _VALID_PLAN,
+            "batch_plan": [
+                {"batch_id": "b-Foo", "design_section": "B2", "component": "Foo",
+                 "tasks": [{"id": "T1", "description": "foo", "module_ref": "§B2",
+                            "file_targets": ["foo.py"]}]},
+                {"batch_id": "b-Bar", "design_section": "B3", "component": "Bar",
+                 "tasks": [{"id": "T2", "description": "bar", "module_ref": "§B3",
+                            "file_targets": ["bar.py"]}]},
+            ],
+            "file_list": ["foo.py", "bar.py"], "contracts": {},
+        }))
+        # 模拟多板块设计文档场景的验证尾部路由
+        o._verification_layers = VerificationLayers.FULL
+
+        self._approve_component(o, "Foo", "b-Foo")
+        a_after_bar = self._approve_component(o, "Bar", "b-Bar")
+        assert a_after_bar["stage"] == "plate_deep_audit"
+
+        # plate_deep_audit clean → FULL → system_verifier (不跳过)
+        a_plate = o.tick(_make_result_file({
+            "stage": "plate_deep_audit", "plate": "(single)", "findings": [],
+            "p0_count": 0, "p1_count": 0, "p2_count": 0,
+            "cross_component_issues": [], "total_audited_files": 2,
+        }))
+        assert a_plate["stage"] == "system_verifier"
+
+        # system_verifier clean → system_deep_audit
+        a_sysv = o.tick(_make_result_file({
+            "stage": "system_verifier",
+            "full_coverage_map": [{"design_section": "B2", "status": "IMPLEMENTED"}],
+            "total_design_items": 1, "covered_count": 1,
+            "missing_count": 0, "diverged_count": 0,
+        }))
+        assert a_sysv["stage"] == "system_deep_audit"
+
+        # system_deep_audit clean → GOAL_ACHIEVED
+        a_audit = o.tick(_make_result_file({
+            "stage": "system_deep_audit", "findings": [],
+            "p0_count": 0, "p1_count": 0, "p2_count": 0,
+            "total_audited_files": 2, "design_docs_stale": False,
+            "design_doc_suggestions": "", "missing_count": 0, "diverged_count": 0,
+        }))
+        assert a_audit["action"] == "done"
+        assert a_audit["verdict"] == "GOAL_ACHIEVED"
     """system_deep_audit 覆盖度信号不能是空操作.
 
     Bug 2: expected_format 不含 missing_count/diverged_count → Agent 不产出 →
