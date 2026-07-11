@@ -23,6 +23,7 @@ import pytest
 
 from auto_engineering.engine.state import EngineState
 from auto_engineering.loop.guardrail import (
+    FreshGate,
     GitClean,
     GitDiffExists,
     Guardrail,
@@ -30,8 +31,11 @@ from auto_engineering.loop.guardrail import (
     GuardrailResult,
     NoDeferredBlockingGap,
     PlanExists,
+    REDGuard,
     RequirementValid,
     TestsPass,
+    _aggregate_sha,
+    _git_is_ancestor,
     handle_guardrail_result,
 )
 
@@ -570,10 +574,10 @@ class TestGuardrailChain:
         # post/developer → G3 + G4 + G5
         assert len([g for g in chain.guardrails if g.timing == "post" and "developer" in g.applies_to_stages]) == 3
 
-    def test_default_factory_returns_6_guardrails(self) -> None:
-        """GuardrailChain.default() 返回 6 Guardrail 链 (G1-G5 + G6 NoDeferredBlockingGap)."""
+    def test_default_factory_returns_8_guardrails(self) -> None:
+        """GuardrailChain.default() 返回 8 Guardrail 链 (G1-G6 + G7 REDGuard + G8 FreshGate)."""
         chain = GuardrailChain.default()
-        assert len(chain.guardrails) == 6
+        assert len(chain.guardrails) == 8
         names = [type(g).__name__ for g in chain.guardrails]
         assert "RequirementValid" in names
         assert "PlanExists" in names
@@ -581,6 +585,8 @@ class TestGuardrailChain:
         assert "TestsPass" in names
         assert "GitClean" in names
         assert "NoDeferredBlockingGap" in names
+        assert "REDGuard" in names
+        assert "FreshGate" in names
 
     def test_default_factory_same_structure_as_manual(self) -> None:
         """GuardrailChain.default() 与手动构造的 chain 行为一致."""
@@ -592,6 +598,8 @@ class TestGuardrailChain:
             TestsPass(),
             GitClean(),
             NoDeferredBlockingGap(),
+            REDGuard(),
+            FreshGate(),
         ])
         # 同数量
         assert len(default_chain.guardrails) == len(manual_chain.guardrails)
@@ -903,3 +911,333 @@ class TestNoDeferredBlockingGap:
         """无 gap_report_json (非 design-doc 模式) → pass (无 architectural 约束)."""
         state = EngineState()
         assert NoDeferredBlockingGap().check("gap_review", state).action == "pass"
+
+
+# ==================== G7: REDGuard (TDD RED commit-time 校验) ====================
+
+
+class _StubTask:
+    """轻量 Task 替身 (REDGuard 只读 .id / .target_files)."""
+
+    def __init__(self, task_id: str, target_files: list[str]) -> None:
+        self.id = task_id
+        self.target_files = target_files
+
+
+class _StubBatchState:
+    """轻量 BatchState 替身 (REDGuard 只调 .current_batch_tasks(plan))."""
+
+    def __init__(self, tasks: list[_StubTask]) -> None:
+        self._tasks = tasks
+
+    def current_batch_tasks(self, plan: Any) -> list[_StubTask]:
+        return self._tasks
+
+
+def _make_tdd_repo(tmp_path: Path, *, same_commit: bool = False) -> tuple[Path, str, str]:
+    """构造 TDD 提交序列: seed → RED(test commit) → GREEN(impl commit).
+
+    same_commit=True: 测试与实现放在同一 commit (违反 TDD 分离) —
+    此时无"先于实现的独立测试 commit".
+
+    Returns:
+        (repo, test_commit_sha, impl_commit_sha). same_commit 时 test==impl.
+    """
+    repo = tmp_path / "tdd"
+    repo.mkdir()
+    env = {
+        "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@x",
+        "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@x",
+        "GIT_AUTHOR_DATE": "2024-01-01T00:00:00+0000",
+        "GIT_COMMITTER_DATE": "2024-01-01T00:00:00+0000",
+    }
+    _git(repo, "init", "-q", env=env)
+    _git(repo, "config", "user.email", "t@x", env=env)
+    _git(repo, "config", "user.name", "t", env=env)
+    (repo / "README").write_text("seed\n")
+    _git(repo, "add", "README", env=env)
+    _git(repo, "commit", "-q", "-m", "seed", env=env)
+
+    tests_dir = repo / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "test_x.py").write_text("def test_x():\n    assert False\n")
+
+    def _head() -> str:
+        out = subprocess.run(
+            ["git", "-C", str(repo), "rev-parse", "HEAD"],
+            capture_output=True, text=True, check=True,
+        )
+        return out.stdout.strip()
+
+    if same_commit:
+        (repo / "impl.py").write_text("def x():\n    return 1\n")
+        _git(repo, "add", "tests/test_x.py", "impl.py", env=env)
+        _git(repo, "commit", "-q", "-m", "test+impl together", env=env)
+        sha = _head()
+        return repo, sha, sha
+
+    # RED: 独立测试 commit
+    _git(repo, "add", "tests/test_x.py", env=env)
+    _git(repo, "commit", "-q", "-m", "red: test_x", env=env)
+    test_commit = _head()
+    # GREEN: 独立实现 commit
+    (repo / "impl.py").write_text("def x():\n    return 1\n")
+    _git(repo, "add", "impl.py", env=env)
+    _git(repo, "commit", "-q", "-m", "green: impl", env=env)
+    impl_commit = _head()
+    return repo, test_commit, impl_commit
+
+
+def _redguard_state(
+    *, impl_commit: str, batch_state: Any, red_evidence: list[dict] | None = None,
+) -> EngineState:
+    state = EngineState(commit_hash=impl_commit, red_evidence=red_evidence or [])
+    # 运行时非持久句柄 (orchestrator 每 tick 挂载, 见 B3 line 657)
+    state.batch_state = batch_state  # type: ignore[attr-defined]
+    state._plan = object()  # type: ignore[attr-defined]
+    return state
+
+
+class TestREDGuard:
+    """G7: 本轮 task 的测试 commit 先于实现 commit 且当时 FAIL (B3.1)."""
+
+    def test_timing_and_stage(self) -> None:
+        g = REDGuard()
+        assert g.timing == "post"
+        assert g.applies_to_stages == ("developer",)
+
+    def test_pass_proper_tdd_with_evidence(self, tmp_path: Path) -> None:
+        """测试先于实现独立 commit + red_evidence 匹配 → pass."""
+        repo, test_c, impl_c = _make_tdd_repo(tmp_path)
+        task = _StubTask("t1", ["tests/test_x.py", "impl.py"])
+        state = _redguard_state(
+            impl_commit=impl_c,
+            batch_state=_StubBatchState([task]),
+            red_evidence=[{"task_id": "t1", "test_id": "test_x",
+                           "red_commit": test_c, "failure_excerpt": "assert False"}],
+        )
+        assert REDGuard().check("developer", state, project_root=repo).action == "pass"
+
+    def test_retry_when_test_not_separate_commit(self, tmp_path: Path) -> None:
+        """测试与实现同一 commit (无先于实现的独立测试 commit) → retry."""
+        repo, _sha, impl_c = _make_tdd_repo(tmp_path, same_commit=True)
+        task = _StubTask("t1", ["tests/test_x.py", "impl.py"])
+        state = _redguard_state(
+            impl_commit=impl_c, batch_state=_StubBatchState([task]),
+            red_evidence=[{"task_id": "t1", "red_commit": impl_c}],
+        )
+        r = REDGuard().check("developer", state, project_root=repo)
+        assert r.action == "retry"
+        assert "t1" in r.message
+
+    def test_retry_when_missing_red_evidence(self, tmp_path: Path) -> None:
+        """独立测试 commit 存在但缺 red_evidence (非严格模式) → retry."""
+        repo, _test_c, impl_c = _make_tdd_repo(tmp_path)
+        task = _StubTask("t1", ["tests/test_x.py", "impl.py"])
+        state = _redguard_state(
+            impl_commit=impl_c, batch_state=_StubBatchState([task]),
+            red_evidence=[],
+        )
+        r = REDGuard().check("developer", state, project_root=repo)
+        assert r.action == "retry"
+        assert "red_evidence" in r.message
+
+    def test_pass_pure_config_task_exempt(self, tmp_path: Path) -> None:
+        """纯配置/文档 task (无测试文件) → 豁免 pass."""
+        repo, _test_c, impl_c = _make_tdd_repo(tmp_path)
+        task = _StubTask("t1", ["pyproject.toml", "README.md"])
+        state = _redguard_state(
+            impl_commit=impl_c, batch_state=_StubBatchState([task]),
+        )
+        assert REDGuard().check("developer", state, project_root=repo).action == "pass"
+
+    def test_pass_when_no_runtime_handles(self, tmp_path: Path) -> None:
+        """无 batch_state/_plan 运行时句柄 (非 batch 模式) → pass (无从校验)."""
+        repo, _test_c, impl_c = _make_tdd_repo(tmp_path)
+        state = EngineState(commit_hash=impl_c)  # 不挂 batch_state
+        assert REDGuard().check("developer", state, project_root=repo).action == "pass"
+
+    def test_pass_when_no_commit_hash(self, tmp_path: Path) -> None:
+        """无 impl commit_hash → pass (G3/G4 已覆盖'有无改动', REDGuard 无对象可校验)."""
+        repo, _test_c, _impl_c = _make_tdd_repo(tmp_path)
+        task = _StubTask("t1", ["tests/test_x.py"])
+        state = _redguard_state(impl_commit="", batch_state=_StubBatchState([task]))
+        assert REDGuard().check("developer", state, project_root=repo).action == "pass"
+
+    def test_strict_mode_reruns_test(self, tmp_path: Path, monkeypatch) -> None:
+        """严格模式 + 证据不匹配: red_commit 对不上 → checkout 重跑; 未 FAIL → retry."""
+        import auto_engineering.loop.guardrail as gmod
+
+        repo, _test_c, impl_c = _make_tdd_repo(tmp_path)
+        task = _StubTask("t1", ["tests/test_x.py", "impl.py"])
+        # red_commit 与实际测试 commit 不符 → 不走信任路径, 落入 _STRICT_RED 重跑
+        state = _redguard_state(
+            impl_commit=impl_c, batch_state=_StubBatchState([task]),
+            red_evidence=[{"task_id": "t1", "test_id": "test_x",
+                           "red_commit": "0" * 40}],
+        )
+        monkeypatch.setattr(gmod, "_STRICT_RED", True)
+        # 重跑返回 PASS (即测试当时未真的 FAIL) → retry
+        monkeypatch.setattr(gmod, "_run_test_at_commit", lambda *a, **k: "PASS")
+        r = REDGuard().check("developer", state, project_root=repo)
+        assert r.action == "retry"
+
+
+def test_git_is_ancestor_helper(tmp_path: Path) -> None:
+    """_git_is_ancestor: 父 commit 是子 commit 的祖先 → True; 反之 False."""
+    repo, test_c, impl_c = _make_tdd_repo(tmp_path)
+    assert _git_is_ancestor(test_c, impl_c, repo) is True
+    assert _git_is_ancestor(impl_c, test_c, repo) is False
+
+
+# ==================== G8: FreshGate (Gate 证据新鲜度锁定) ====================
+
+
+class TestFreshGate:
+    """G8: gate_results 绑定的 files 快照哈希 == 当前工作树 (B3.2)."""
+
+    def test_timing_and_stages(self) -> None:
+        g = FreshGate()
+        assert g.timing == "post"
+        assert g.applies_to_stages == ("developer", "critic")
+
+    def test_pass_when_snapshot_matches(self, tmp_path: Path) -> None:
+        """Gate 记录的 files_snapshot_sha == 当前工作树聚合 sha → pass."""
+        (tmp_path / "a.py").write_text("print(1)\n")
+        files = ["a.py"]
+        sha = _aggregate_sha(files, tmp_path)
+        state = EngineState(
+            files_changed=files,
+            gate_results={"lint": {"passed": True, "message": "ok",
+                                   "files_snapshot_sha": sha}},
+        )
+        assert FreshGate().check("developer", state, project_root=tmp_path).action == "pass"
+
+    def test_retry_when_snapshot_stale(self, tmp_path: Path) -> None:
+        """Gate 运行后代码又变更 (sha 不匹配) → retry (强制重跑 Gate)."""
+        (tmp_path / "a.py").write_text("print(1)\n")
+        files = ["a.py"]
+        stale_sha = _aggregate_sha(files, tmp_path)
+        # Gate 跑完后代码又改了
+        (tmp_path / "a.py").write_text("print(2)  # changed after gate\n")
+        state = EngineState(
+            files_changed=files,
+            gate_results={"lint": {"passed": True, "message": "ok",
+                                   "files_snapshot_sha": stale_sha}},
+        )
+        r = FreshGate().check("developer", state, project_root=tmp_path)
+        assert r.action == "retry"
+        assert "lint" in r.message
+
+    def test_pass_when_no_snapshot_recorded(self, tmp_path: Path) -> None:
+        """gate_results 项无 files_snapshot_sha (旧格式) → pass (无可比对基线)."""
+        state = EngineState(
+            files_changed=["a.py"],
+            gate_results={"lint": {"passed": True, "message": "ok"}},
+        )
+        assert FreshGate().check("developer", state, project_root=tmp_path).action == "pass"
+
+    def test_pass_empty_gate_results(self, tmp_path: Path) -> None:
+        """无 gate_results → pass."""
+        state = EngineState(files_changed=["a.py"], gate_results={})
+        assert FreshGate().check("critic", state, project_root=tmp_path).action == "pass"
+
+
+def test_aggregate_sha_deterministic_and_content_sensitive(tmp_path: Path) -> None:
+    """_aggregate_sha: 同内容同 sha; 内容变则 sha 变; 缺文件不抛异常."""
+    (tmp_path / "a.py").write_text("x\n")
+    s1 = _aggregate_sha(["a.py"], tmp_path)
+    s2 = _aggregate_sha(["a.py"], tmp_path)
+    assert s1 == s2
+    (tmp_path / "a.py").write_text("y\n")
+    assert _aggregate_sha(["a.py"], tmp_path) != s1
+    # 缺文件不抛
+    assert isinstance(_aggregate_sha(["missing.py"], tmp_path), str)
+
+
+# ==================== GuardrailResult.guardrail_name + Chain 注入 ====================
+
+
+class TestGuardrailNameInjection:
+    """非 pass 结果须携带 guardrail_name (供 handler 分源计数 / FreshGate 分流)."""
+
+    def test_result_has_guardrail_name_default_empty(self) -> None:
+        assert GuardrailResult().guardrail_name == ""
+
+    def test_chain_injects_name_on_block(self) -> None:
+        """Chain 命中 block 时把命中的 Guardrail 名注入结果."""
+        chain = GuardrailChain([RequirementValid()])
+        result = chain.check("pre", "architect", EngineState(requirement=""))
+        assert result.action == "block"
+        assert result.guardrail_name == "RequirementValid"
+
+    def test_chain_injects_name_on_retry(self) -> None:
+        chain = GuardrailChain([PlanExists()])
+        result = chain.check("post", "architect", EngineState(plan="", file_list=[]))
+        assert result.action == "retry"
+        assert result.guardrail_name == "PlanExists"
+
+    def test_chain_pass_result_name_empty(self) -> None:
+        chain = GuardrailChain([RequirementValid()])
+        result = chain.check("pre", "architect", EngineState(requirement="ok"))
+        assert result.action == "pass"
+        assert result.guardrail_name == ""
+
+
+# ==================== S-4: retry 计数键粒度 + FreshGate rerun_gates ====================
+
+
+class TestRetryKeyGranularity:
+    """S-4: key = f'{stage}:{guardrail_name}' — 同 stage 多 retry Guardrail 独立预算."""
+
+    def test_same_stage_different_guardrails_independent_budget(self) -> None:
+        """post-developer 的 G3/G7 各自独立计数, 互不挤占."""
+        state = EngineState()
+        counters: dict[str, int] = {}
+        handle_guardrail_result(
+            GuardrailResult(action="retry", message="a", guardrail_name="GitDiffExists"),
+            "developer", state, counters,
+        )
+        handle_guardrail_result(
+            GuardrailResult(action="retry", message="b", guardrail_name="REDGuard"),
+            "developer", state, counters,
+        )
+        assert counters == {"developer:GitDiffExists": 1, "developer:REDGuard": 1}
+
+    def test_empty_name_backward_compat_keys_by_stage(self) -> None:
+        """无 guardrail_name (旧调用) → 退回 stage 单键 (向后兼容)."""
+        state = EngineState()
+        counters: dict[str, int] = {}
+        handle_guardrail_result(
+            GuardrailResult(action="retry", message="x"),
+            "developer", state, counters,
+        )
+        assert counters == {"developer": 1}
+
+    def test_freshgate_retry_returns_rerun_gates_no_clear(self) -> None:
+        """G8 FreshGate retry → 'rerun_gates' (只重跑 Gate, 不清 stage 字段/不丢实现)."""
+        state = EngineState(
+            files_changed=["a.py"], commit_hash="abc",
+            test_results={"passed": 1},
+        )
+        counters: dict[str, int] = {}
+        action = handle_guardrail_result(
+            GuardrailResult(action="retry", message="stale", guardrail_name="FreshGate"),
+            "developer", state, counters,
+        )
+        assert action == "rerun_gates"
+        # 不清字段: 已提交的实现证据保留
+        assert state.files_changed == ["a.py"]
+        assert state.commit_hash == "abc"
+        # 仍按自身键计数
+        assert counters == {"developer:FreshGate": 1}
+
+    def test_freshgate_retry_exhaustion_stops(self) -> None:
+        """FreshGate rerun_gates 也受 MAX_RETRY 约束: 达上限 → stop."""
+        state = EngineState()
+        counters: dict[str, int] = {"developer:FreshGate": 3}
+        action = handle_guardrail_result(
+            GuardrailResult(action="retry", message="stale", guardrail_name="FreshGate"),
+            "developer", state, counters,
+        )
+        assert action == "stop"

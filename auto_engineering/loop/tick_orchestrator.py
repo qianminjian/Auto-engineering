@@ -272,13 +272,25 @@ class TickOrchestrator:
 
         self._apply_result_to_state(result)
 
+        # 挂运行时非持久句柄供 Guardrail (G7 REDGuard 读 batch_state/_plan, B3 line 657).
+        # asdict 只序列化 dataclass 字段 → 不泄漏进 checkpoint.
+        self._state.batch_state = self._batch_state  # type: ignore[attr-defined]
+        self._state._plan = self._plan  # type: ignore[attr-defined]
+
         t_g = time.perf_counter()
         gr = self._guardrail.check("post", self._state.current_stage,
                                    self._state, self.project_root)
         self._t_guard_sub_ms += (time.perf_counter() - t_g) * 1000
 
         if gr.action != "pass":
-            return self._handle_guardrail_result(gr)
+            # G8 FreshGate@developer: 陈旧 gate 证据由随后的 Gate 重跑刷新
+            # (rerun_gates 语义, S-4) → 不清实现/不返错, 放行至 Gate 重跑刷新快照.
+            is_freshgate_dev = (
+                getattr(gr, "guardrail_name", "") == "FreshGate"
+                and self._state.current_stage == "developer"
+            )
+            if not is_freshgate_dev:
+                return self._handle_guardrail_result(gr)
 
         if self._state.current_stage == "developer":
             self._run_developer_gates()
@@ -1098,8 +1110,19 @@ class TickOrchestrator:
             results = run_gates(gate_names, self.project_root)
         self._t_gate_ms += (time.perf_counter() - t_g) * 1000
 
+        # S-3 生产者契约 (喂给 G8 FreshGate): 每个 Gate 结果附 files_snapshot_sha
+        # (运行时 files_changed 内容聚合 sha256) + ran_at. 不产出则 FreshGate 恒 pass 静默失效.
+        from auto_engineering.loop.guardrail import _aggregate_sha
+        snapshot_sha = _aggregate_sha(
+            self._state.files_changed, self.project_root)
+        ran_at = datetime.now(UTC).isoformat()
         self._state.gate_results = {
-            name: {"passed": v.passed, "message": v.message}
+            name: {
+                "passed": v.passed,
+                "message": v.message,
+                "files_snapshot_sha": snapshot_sha,
+                "ran_at": ran_at,
+            }
             for name, v in results.items()
         }
 

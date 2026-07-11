@@ -23,7 +23,10 @@ v5.4 P2-8: drop 态已从类型系统和 handler 中完全移除.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
+import subprocess
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
@@ -36,12 +39,14 @@ from auto_engineering.utils.git import run_git_diff as _run_git_diff
 __all__ = [
     "MAX_RETRY_PER_STAGE",
     "Action",
+    "FreshGate",
     "GitClean",
     "GitDiffExists",
     "Guardrail",
     "GuardrailChain",
     "GuardrailResult",
     "PlanExists",
+    "REDGuard",
     "RequirementValid",
     "TestsPass",
     "handle_guardrail_result",
@@ -73,10 +78,15 @@ class GuardrailResult:
                 (见 handle_guardrail_result 末尾)。
 
     注: 默认 action="pass" — 大多数 Guardrail pass path 返回纯 pass。
+
+    guardrail_name: 命中的 Guardrail 名 (Chain 在非 pass 时注入). 供
+        handle_guardrail_result 按 f"{stage}:{guardrail_name}" 分源计数
+        (S-4), 并让 FreshGate(G8) 走 rerun_gates 特化 retry 语义.
     """
 
     action: Action = "pass"
     message: str = ""
+    guardrail_name: str = ""
 
 
 class Guardrail(ABC):
@@ -372,9 +382,227 @@ class NoDeferredBlockingGap(Guardrail):
         return GuardrailResult()
 
 
+# ==================== G7/G8 helpers (B3.1 / B3.2) ====================
+
+# 严格模式 (opt-in): REDGuard checkout red_commit 重跑测试确认 FAIL.
+# 默认 False — 信任 developer 提交的 red_evidence, 避免 checkout 重跑成本 (B3.1).
+_STRICT_RED = os.environ.get("AE_STRICT_RED", "") == "1"
+
+
+def _is_test_file(path: str) -> bool:
+    """判定路径是否为测试文件 (tests/ 目录 或 test_*/*_test 命名)."""
+    p = str(path).replace("\\", "/")
+    name = p.rsplit("/", 1)[-1]
+    return (
+        p.startswith("tests/")
+        or "/tests/" in p
+        or name.startswith("test_")
+        or name.endswith("_test.py")
+    )
+
+
+def _git_log_first_touching(
+    test_files: list[str], before: str, cwd: Path,
+) -> str | None:
+    """定位先于 impl commit 且触碰 test_files 的最近独立测试 commit.
+
+    `git log <before> -- <test_files>` 列出 before 可达且触碰这些文件的
+    commit (新→旧). 排除 impl commit 自身 (TDD 要求测试是**独立且更早**的
+    commit, 见 B3.1 + S-12), 取剩余最新者. 无独立测试 commit → None.
+    """
+    if not test_files:
+        return None
+    rc, out = _run_git(cwd, "log", "--format=%H", before, "--", *test_files)
+    if rc != 0:
+        return None
+    commits = [c.strip() for c in out.splitlines() if c.strip()]
+    commits = [c for c in commits if c != before]  # 排除实现 commit 自身
+    return commits[0] if commits else None
+
+
+def _git_is_ancestor(ancestor: str, descendant: str, cwd: Path) -> bool:
+    """git merge-base --is-ancestor: ancestor 是否为 descendant 的祖先."""
+    if not ancestor or not descendant:
+        return False
+    rc, _ = _run_git(cwd, "merge-base", "--is-ancestor", ancestor, descendant)
+    return rc == 0
+
+
+def _find_evidence(red_evidence: list[dict], task_id: str) -> dict | None:
+    """从 red_evidence 找匹配 task_id 的条目 (B3.1)."""
+    for ev in red_evidence or []:
+        if isinstance(ev, dict) and ev.get("task_id") == task_id:
+            return ev
+    return None
+
+
+def _run_test_at_commit(
+    test_commit: str, test_id: str | None, project_root: Path,
+) -> str:
+    """严格模式: checkout 测试文件到 red_commit 重跑, 返回 'FAIL'/'PASS'/'UNKNOWN'.
+
+    仅 _STRICT_RED opt-in 时调用 (默认路径信任 red_evidence, 不进本函数).
+    checkout <red_commit> -- (whole tree 只读跑) 成本高且需 clean tree;
+    此处用 `git stash`-free 的只读方式: 在临时 worktree 跑, 失败降级 UNKNOWN
+    (严格模式下 UNKNOWN 不阻塞, 由调用方按 != 'FAIL' 判定).
+    """
+    if not test_id:
+        return "UNKNOWN"
+    import tempfile
+    root = Path(project_root)
+    try:
+        with tempfile.TemporaryDirectory() as wt:
+            rc, _ = _run_git(root, "worktree", "add", "--detach", wt, test_commit)
+            if rc != 0:
+                return "UNKNOWN"
+            try:
+                proc = subprocess.run(
+                    ["python", "-m", "pytest", "-k", test_id, "-q", "--no-header"],
+                    cwd=wt, capture_output=True, text=True, timeout=120,
+                )
+                return "FAIL" if proc.returncode != 0 else "PASS"
+            finally:
+                _run_git(root, "worktree", "remove", "--force", wt)
+    except (OSError, subprocess.SubprocessError):
+        return "UNKNOWN"
+
+
+def _aggregate_sha(files_changed: list[str], project_root: Path) -> str:
+    """聚合 files_changed 内容的 sha256 (B3.2 files_snapshot_sha).
+
+    对排序后的 (相对路径, 内容) 逐项 update, 保证确定性. 缺失文件用占位符
+    (代码被删除也是一种变更, 应影响哈希). files_changed 为空 → 空内容哈希.
+    """
+    h = hashlib.sha256()
+    root = Path(project_root)
+    for f in sorted(files_changed or []):
+        h.update(str(f).encode("utf-8"))
+        h.update(b"\0")
+        try:
+            h.update((root / f).read_bytes())
+        except OSError:
+            h.update(b"<missing>")
+        h.update(b"\0")
+    return h.hexdigest()
+
+
+# ==================== G7 REDGuard / G8 FreshGate ====================
+
+
+class REDGuard(Guardrail):
+    """G7: TDD RED commit-time 校验 (§B3.1).
+
+    post/developer: 对本轮 batch 的每个 task, 若含测试文件, 校验存在一个
+    **先于实现 commit** 的独立测试 commit 且当时 FAIL:
+        1. `git log impl -- test_files` 定位先于实现的测试 commit (排除 impl 自身)
+        2. merge-base --is-ancestor 确认测试 commit 是实现 commit 祖先
+        3. 默认信任 red_evidence (red_commit 匹配); _STRICT_RED 则 checkout 重跑
+
+    纯配置/文档 task (无测试文件) 豁免. 无运行时句柄 (batch_state/_plan) 或无
+    impl commit_hash → pass (无对象可校验). 失败 action=retry (补证据后重试).
+
+    与 G3/G4 不重叠: G3/G4 确认"有改动 + 测试绿", REDGuard 补充"测试先于实现且曾红".
+    """
+
+    name = "REDGuard"
+    timing = "post"
+    applies_to_stages = ("developer",)
+
+    def check(
+        self,
+        stage: str,
+        state: EngineState,
+        project_root: Path | None = None,
+    ) -> GuardrailResult:
+        root = project_root if project_root is not None else Path.cwd()
+        impl_commit: str = getattr(state, "commit_hash", "") or ""
+        if not impl_commit:
+            return GuardrailResult()  # 无实现 commit, 无对象可校验 (G3/G4 已覆盖有无改动)
+
+        batch_state = getattr(state, "batch_state", None)
+        plan = getattr(state, "_plan", None)
+        if batch_state is None or plan is None:
+            return GuardrailResult()  # 非 batch 运行时 (无句柄) → 不阻塞
+        try:
+            tasks = batch_state.current_batch_tasks(plan)
+        except Exception:  # 句柄不完整时降级放行 (纯函数不抛给上层, 见 ABC check 约束)
+            return GuardrailResult()
+
+        red_evidence = getattr(state, "red_evidence", []) or []
+        for task in tasks:
+            targets = list(getattr(task, "target_files", []) or [])
+            test_files = [f for f in targets if _is_test_file(f)]
+            if not test_files:
+                continue  # 纯配置/文档 task 豁免
+            task_id = getattr(task, "id", "?")
+            test_commit = _git_log_first_touching(test_files, impl_commit, root)
+            if test_commit is None:
+                return GuardrailResult(
+                    action="retry",
+                    message=f"task {task_id}: 无先于实现的测试 commit — 违反 TDD RED",
+                )
+            if not _git_is_ancestor(test_commit, impl_commit, root):
+                return GuardrailResult(
+                    action="retry",
+                    message=f"task {task_id}: 测试 commit 非实现 commit 祖先",
+                )
+            ev = _find_evidence(red_evidence, task_id)
+            if ev and ev.get("red_commit") == test_commit:
+                continue  # 信任 developer 记录的 RED 证据
+            if _STRICT_RED:
+                test_id = ev.get("test_id") if ev else None
+                if _run_test_at_commit(test_commit, test_id, root) != "FAIL":
+                    return GuardrailResult(
+                        action="retry",
+                        message=f"task {task_id}: 测试在 red_commit 未 FAIL — 非真 RED",
+                    )
+            else:
+                return GuardrailResult(
+                    action="retry",
+                    message=f"task {task_id}: 缺 red_evidence — 补充后重试",
+                )
+        return GuardrailResult()
+
+
+class FreshGate(Guardrail):
+    """G8: Gate 证据新鲜度锁定 (§B3.2).
+
+    post/developer + post/critic: gate_results 每项记录运行时 files_changed 的
+    聚合 sha256 (files_snapshot_sha, 由 run_gates 生产者契约注入, S-3). 若当前
+    工作树聚合 sha 与某 Gate 记录不符 → 代码在 Gate 后又变更 → 证据陈旧 → retry.
+
+    retry 语义特化 (S-4): 不清 stage 字段/不丢弃已提交实现, 而是触发 rerun_gates
+    (仅重跑 Gate 刷新 gate_results). 由 handle_guardrail_result 依 guardrail_name 分流.
+    旧格式 (无 files_snapshot_sha) 或空 gate_results → pass (无可比对基线).
+    """
+
+    name = "FreshGate"
+    timing = "post"
+    applies_to_stages = ("developer", "critic")
+
+    def check(
+        self,
+        stage: str,
+        state: EngineState,
+        project_root: Path | None = None,
+    ) -> GuardrailResult:
+        root = project_root if project_root is not None else Path.cwd()
+        gate_results: dict = getattr(state, "gate_results", {}) or {}
+        if not gate_results:
+            return GuardrailResult()
+        files_changed = getattr(state, "files_changed", []) or []
+        current_sha = _aggregate_sha(files_changed, root)
+        for gate_name, r in gate_results.items():
+            snapshot = (r or {}).get("files_snapshot_sha") if isinstance(r, dict) else None
+            if snapshot and snapshot != current_sha:
+                return GuardrailResult(
+                    action="retry",
+                    message=f"Gate {gate_name} 证据陈旧(代码在其后又变更) — 强制重跑 Gate",
+                )
+        return GuardrailResult()
+
+
 # ==================== GuardrailChain ====================
-
-
 class GuardrailChain:
     """Guardrail 链表 — fail-fast 遍历 (§B2.3).
 
@@ -391,7 +619,7 @@ class GuardrailChain:
 
     @classmethod
     def default(cls) -> GuardrailChain:
-        """工厂方法: 创建默认链 (G1-G5 + G6 NoDeferredBlockingGap, §B3)."""
+        """工厂方法: 创建默认链 (G1-G6 基线 + G7 REDGuard + G8 FreshGate, §B3)."""
         return cls([
             RequirementValid(),
             PlanExists(),
@@ -399,6 +627,8 @@ class GuardrailChain:
             TestsPass(),
             GitClean(),
             NoDeferredBlockingGap(),
+            REDGuard(),
+            FreshGate(),
         ])
 
     def check(
@@ -417,7 +647,8 @@ class GuardrailChain:
             project_root: 项目根目录 (None → fallback cwd).
 
         Returns:
-            第一个不 pass 的 GuardrailResult, 或全 pass 时的 GuardrailResult("pass", "").
+            第一个不 pass 的 GuardrailResult (注入命中的 guardrail_name),
+            或全 pass 时的 GuardrailResult("pass", "").
         """
         for g in self.guardrails:
             if g.timing != timing:
@@ -426,6 +657,9 @@ class GuardrailChain:
                 continue
             result = g.check(stage, state, project_root=project_root)
             if result.action != "pass":
+                # S-4: 注入命中的 Guardrail 名, 供 handler 分源计数 + FreshGate 分流
+                if not result.guardrail_name:
+                    result.guardrail_name = g.name
                 return result
         return GuardrailResult()
 
@@ -446,19 +680,21 @@ def handle_guardrail_result(
         - "block" → "stop"    (不动计数器)
         - "drop"  (deprecated) → 无专门分支, 落入未知 action → "stop"
         - "retry":
-            1. counter += 1
+            1. counter += 1 (S-4: key = f"{stage}:{guardrail_name}", 空名退回 stage)
             2. counter >= MAX_RETRY_PER_STAGE (3) → "stop" (不再清字段)
-            3. counter  <  MAX_RETRY_PER_STAGE     → "retry"
-               + 清空 stage 对应字段 (复用 stage_router.clear_stage_fields)
+            3. counter  <  MAX_RETRY_PER_STAGE:
+               - FreshGate(G8) → "rerun_gates" (只重跑 Gate, **不清** stage 字段,
+                 避免丢弃已提交实现; S-4 特化语义)
+               - 其余 (G3/G4/G7...) → "retry" + 清空 stage 字段 (重跑 Agent)
 
     Args:
-        result: GuardrailChain.check() 返回的 GuardrailResult.
+        result: GuardrailChain.check() 返回的 GuardrailResult (含 guardrail_name).
         stage: 当前 Stage 名 (用于 counter key + 字段清空).
         state: EngineState 实例 (会被修改: 清字段).
-        retry_counters: 共享计数器字典 (按 stage 隔离).
+        retry_counters: 共享计数器字典 (S-4: 按 stage:guardrail 隔离).
 
     Returns:
-        主循环动作: "continue" | "stop" | "retry".
+        主循环动作: "continue" | "stop" | "retry" | "rerun_gates".
 
     注: 防御性: 未知 action → "stop" (避免 Orchestrator 在非预期动作上僵死).
     """
@@ -471,12 +707,19 @@ def handle_guardrail_result(
         return "stop"
 
     if action == "retry":
-        current = retry_counters.get(stage, 0)
+        # S-4: 同 stage 多 retry 型 Guardrail 各自独立预算 (key=stage:guardrail_name);
+        # 空 guardrail_name (旧直调) 退回 stage 单键, 保持向后兼容.
+        gname = getattr(result, "guardrail_name", "") or ""
+        key = f"{stage}:{gname}" if gname else stage
+        current = retry_counters.get(key, 0)
         # 先判定, 再累加: 已达上限 → stop 且不动 counter/state
         if current >= MAX_RETRY_PER_STAGE:
             return "stop"
-        # 未耗尽: 累加 + clear stage fields + 允许 retry
-        retry_counters[stage] = current + 1
+        retry_counters[key] = current + 1
+        # FreshGate(G8) retry 特化: 只重跑 Gate 刷新证据, 不清 stage 字段 (不丢实现)
+        if gname == "FreshGate":
+            return "rerun_gates"
+        # 通用 retry: 清 stage 字段 + 重跑 Agent
         clear_stage_fields(state, stage)
         return "retry"
 
