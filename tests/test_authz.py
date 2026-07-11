@@ -15,6 +15,9 @@ from __future__ import annotations
 
 import pytest
 
+# v5.6 §B12 只读角色 (component/system verifier + gap_scan + research).
+_READONLY_ROLES = ["component_verifier", "system_verifier", "gap_scan", "research"]
+
 
 class TestAuthzCheckArchitect:
     """Architect 只允许 3 个只读工具."""
@@ -193,7 +196,63 @@ class TestAuthzEdgeCases:
 
         assert hasattr(authz, "AUTHZ_MATRIX")
         assert isinstance(authz.AUTHZ_MATRIX, dict)
-        # 必须含 3 角色
-        assert set(authz.AUTHZ_MATRIX.keys()) == {"architect", "developer", "critic"}
+        # 9 role: v5.5 三角色 + v5.6 §B12 分层验证/Phase0 六角色 (T16b)
+        assert set(authz.AUTHZ_MATRIX.keys()) == {
+            "architect", "developer", "critic",
+            "component_verifier", "system_verifier",
+            "plate_deep_audit", "system_deep_audit",
+            "gap_scan", "research",
+        }
         # developer 必须含全部 10 工具 (9 + git_status P1-S-03)
         assert len(authz.AUTHZ_MATRIX["developer"]) == 10
+
+
+class TestAuthzV56VerifierRoles:
+    """v5.6 §B12 六新角色授权 (T16b) — 均只读, 无写/无 shell/无 commit.
+
+    tick 模型下这些角色由 Agent 路径执行; authz 是 in-process 路径 (base.py) 的
+    role→tool 权威契约, 补全 9 role 使矩阵与角色词汇表一致 (缺行=静默全拒).
+    每角色权限锚定其 prompts/roles/*.md 声明的工具集.
+    """
+
+    @pytest.mark.parametrize("role", _READONLY_ROLES)
+    @pytest.mark.parametrize(
+        "tool_name", ["read_file", "search_code", "list_dir", "git_status"])
+    def test_readonly_roles_allow_read_tools(self, role: str, tool_name: str) -> None:
+        from auto_engineering.agents.authz import authz_check
+
+        assert authz_check(role, tool_name) is True
+
+    @pytest.mark.parametrize("role", _READONLY_ROLES)
+    @pytest.mark.parametrize(
+        "tool_name",
+        ["write_file", "edit_file", "run_bash", "git_commit", "git_diff", "run_tests"])
+    def test_readonly_roles_deny_write_tools(self, role: str, tool_name: str) -> None:
+        from auto_engineering.agents.authz import authz_check
+
+        assert authz_check(role, tool_name) is False
+
+    def test_plate_deep_audit_allows_git_diff_denies_write(self) -> None:
+        from auto_engineering.agents.authz import authz_check
+
+        for t in ("read_file", "search_code", "list_dir", "git_status", "git_diff"):
+            assert authz_check("plate_deep_audit", t) is True, t
+        for t in ("write_file", "edit_file", "run_bash", "git_commit", "run_tests"):
+            assert authz_check("plate_deep_audit", t) is False, t
+
+    def test_system_deep_audit_allows_git_diff_and_run_tests(self) -> None:
+        from auto_engineering.agents.authz import authz_check
+
+        for t in ("read_file", "search_code", "list_dir",
+                  "git_status", "git_diff", "run_tests"):
+            assert authz_check("system_deep_audit", t) is True, t
+        for t in ("write_file", "edit_file", "run_bash", "git_commit"):
+            assert authz_check("system_deep_audit", t) is False, t
+
+    def test_all_nine_roles_have_full_tool_vocabulary(self) -> None:
+        """每个 role 的 perms 覆盖全部 10 工具 (无缺列 → 无隐式漏洞)."""
+        from auto_engineering.agents.authz import AUTHZ_MATRIX
+
+        dev_tools = set(AUTHZ_MATRIX["developer"])
+        for role, perms in AUTHZ_MATRIX.items():
+            assert set(perms) == dev_tools, f"{role} 工具列不完整"
