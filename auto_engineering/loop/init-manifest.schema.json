@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://auto-engineering.dev/schemas/init-manifest.schema.json",
+  "title": "Init Manifest",
+  "description": "Schema for .ae-state/init-manifest.json — Init→Loop contract (v5.6 IL-AC-06).",
+  "type": "object",
+  "required": ["schema_version", "project_type", "language", "structure", "conventions"],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "description": "Semantic version of this manifest schema."
+    },
+    "project_type": {
+      "type": "string",
+      "enum": [
+        "app-service", "library", "cli-tool", "skill",
+        "hook", "mcp-server", "spec-doc", "monorepo"
+      ],
+      "description": "High-level project archetype (v5.0 IL.2)."
+    },
+    "language": {
+      "type": "string",
+      "enum": ["python", "typescript", "go", "rust", "bash"],
+      "description": "Primary implementation language."
+    },
+    "framework": {
+      "type": "string",
+      "description": "Optional: framework name (e.g. FastAPI, React)."
+    },
+    "created_at": {
+      "type": "string",
+      "description": "ISO 8601 timestamp when Init created this manifest."
+    },
+    "init_version": {
+      "type": "string",
+      "description": "Version of the Init tool that produced this manifest."
+    },
+    "structure": {
+      "type": "object",
+      "required": ["source_root", "test_root"],
+      "properties": {
+        "source_root": {
+          "type": "string",
+          "description": "Relative path to source code root."
+        },
+        "test_root": {
+          "type": "string",
+          "description": "Relative path to test root."
+        },
+        "config_files": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Project config file paths."
+        },
+        "entry_point": {
+          "type": "string",
+          "description": "Relative path to entry point (e.g. src/main.py)."
+        },
+        "design_root": {
+          "type": "string",
+          "description": "T33: Relative path to design docs directory (e.g. design/)."
+        }
+      },
+      "additionalProperties": true
+    },
+    "conventions": {
+      "type": "object",
+      "required": ["linter", "type_checker", "test_runner"],
+      "properties": {
+        "package_manager": {"type": "string"},
+        "linter": {"type": "string"},
+        "type_checker": {"type": "string"},
+        "test_runner": {"type": "string"},
+        "ci_platform": {
+          "type": "string",
+          "enum": ["github", "gitlab", "none"],
+          "description": "T33: CI platform used by the project."
+        }
+      },
+      "additionalProperties": true
+    },
+    "templates_applied": {
+      "type": "array",
+      "items": {"type": "string"},
+      "description": "List of Init templates applied."
+    },
+    "answers": {
+      "type": "object",
+      "description": "User answers collected during Init wizard.",
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

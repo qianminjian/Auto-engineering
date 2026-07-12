@@ -121,6 +121,27 @@ class ValidationResult:
 
 from auto_engineering.utils import parse_version as _parse_version
 
+# T32: JSON Schema SSOT (IL-AC-06). 与 init-manifest.schema.json 同目录.
+INIT_MANIFEST_SCHEMA_PATH: Path = Path(__file__).resolve().parent / "init-manifest.schema.json"
+
+
+def _load_schema() -> dict[str, Any] | None:
+    """加载 init-manifest JSON Schema. 文件缺失/损坏 → None."""
+    try:
+        return json.loads(INIT_MANIFEST_SCHEMA_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as e:
+        _logger.warning("无法加载 init-manifest schema: %s", e)
+        return None
+
+
+def _jsonschema_lib() -> Any | None:
+    """返回 jsonschema 库或 None (未安装时)."""
+    try:
+        import jsonschema  # type: ignore[import-untyped]
+        return jsonschema
+    except ImportError:
+        return None
+
 
 def _manifest_path(project_root: Path) -> Path:
     """init-manifest.json 标准路径 = project_root/.ae-state/init-manifest.json."""
@@ -165,8 +186,35 @@ def load_init_manifest(project_root: Path) -> dict[str, Any] | None:
 # ============================================================
 
 
+def validate_against_schema(manifest: dict[str, Any]) -> ValidationResult:
+    """T32: 用 JSON Schema 校验 manifest (IL-AC-06).
+
+    jsonschema 库未安装时返回 ok=True (graceful degrade, 后续手工校验补位).
+    仅捕获 schema 校验层面的问题: 缺必需字段 / 类型错误 / enum 失败.
+    """
+    errors: list[str] = []
+    schema = _load_schema()
+    if schema is None:
+        msg = "schema file missing, skipping schema validation"
+        return ValidationResult(ok=True, warnings=[msg])
+    jsonschema = _jsonschema_lib()
+    if jsonschema is None:
+        msg = "jsonschema not installed, skipping schema validation"
+        return ValidationResult(ok=True, warnings=[msg])
+    try:
+        jsonschema.validate(instance=manifest, schema=schema)
+    except jsonschema.ValidationError as e:
+        errors.append(f"schema 校验失败: {e.message}")
+    except Exception as e:
+        _logger.warning("schema 校验异常: %s", e)
+        return ValidationResult(ok=True, warnings=[f"schema validation error: {e}"])
+    return ValidationResult(ok=len(errors) == 0, errors=errors)
+
+
 def validate_init_manifest(manifest: dict[str, Any]) -> ValidationResult:
-    """校验 init-manifest 内容 (v5.0 §IL.2 + §IL.4 + IL-AC-01~05).
+    """校验 init-manifest 内容 (v5.0 §IL.2 + §IL.4 + IL-AC-01~06).
+
+    T32: 先跑 JSON Schema (IL-AC-06), 再跑手工校验 (IL-AC-01~05).
 
     校验项:
         1. schema_version 存在 + 解析成功
@@ -186,6 +234,11 @@ def validate_init_manifest(manifest: dict[str, Any]) -> ValidationResult:
     """
     errors: list[str] = []
     warnings: list[str] = []
+
+    # T32: JSON Schema 校验先跑 (IL-AC-06)
+    schema_result = validate_against_schema(manifest)
+    errors.extend(schema_result.errors)
+    warnings.extend(schema_result.warnings)
 
     # 1-3. schema_version 校验
     schema_version = manifest.get("schema_version")
@@ -257,6 +310,7 @@ def validate_init_manifest(manifest: dict[str, Any]) -> ValidationResult:
 
 
 __all__ = [
+    "INIT_MANIFEST_SCHEMA_PATH",
     "INIT_MANIFEST_SCHEMA_VERSION",
     "LANGUAGE_TOOLS",
     "SUPPORTED_LANGUAGES",
@@ -264,5 +318,6 @@ __all__ = [
     "ValidationResult",
     "get_gate_tools_from_manifest",
     "load_init_manifest",
+    "validate_against_schema",
     "validate_init_manifest",
 ]

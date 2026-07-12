@@ -30,6 +30,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+from typing import ClassVar
 
 # ============================================================
 # 1. IL-AC-01: 文件缺失 → ✗ + 提示运行 Init
@@ -541,3 +542,69 @@ def test_il_ac_05_ae_doctor_does_not_modify_manifest_mtime(
         f"init-manifest.json mtime changed by ae doctor: "
         f"{mtime_before_ns} -> {mtime_after_ns}"
     )
+
+
+# ============================================================
+# T32 — JSON Schema SSOT (IL-AC-06)
+# ============================================================
+
+
+class TestInitManifestSchema:
+    """T32: init-manifest.schema.json + schema 作为 SSOT."""
+
+    _MANIFEST_VALID: ClassVar[dict] = {
+        "schema_version": "1.0",
+        "project_type": "app-service",
+        "language": "python",
+        "structure": {
+            "source_root": "src/",
+            "test_root": "tests/",
+        },
+        "conventions": {
+            "linter": "ruff",
+            "type_checker": "pyright",
+            "test_runner": "pytest",
+        },
+    }
+
+    def test_schema_file_exists_and_is_valid_json(self) -> None:
+        """init-manifest.schema.json 存在且是合法 JSON."""
+        from auto_engineering.loop.init_contract import INIT_MANIFEST_SCHEMA_PATH
+
+        path = INIT_MANIFEST_SCHEMA_PATH
+        assert path.is_file(), f"schema 文件不存在: {path}"
+        schema = json.loads(path.read_text(encoding="utf-8"))
+        assert isinstance(schema, dict)
+        assert "$schema" in schema, "schema 应包含 $schema 自引用"
+
+    def test_schema_accepts_valid_manifest(self) -> None:
+        """合法 manifest 通过 schema 校验."""
+        from auto_engineering.loop.init_contract import validate_against_schema
+
+        result = validate_against_schema(self._MANIFEST_VALID)
+        assert result.ok is True, f"合法 manifest 应通过: {result.errors}"
+
+    def test_schema_rejects_missing_required(self) -> None:
+        """缺必需字段的 manifest 被 schema 拒绝."""
+        from auto_engineering.loop.init_contract import validate_against_schema
+
+        invalid = dict(self._MANIFEST_VALID)
+        del invalid["project_type"]
+        result = validate_against_schema(invalid)
+        assert result.ok is False
+
+    def test_schema_rejects_bad_enum(self) -> None:
+        """非法 project_type 被 schema 拒绝."""
+        from auto_engineering.loop.init_contract import validate_against_schema
+
+        invalid = dict(self._MANIFEST_VALID)
+        invalid["project_type"] = "not-a-valid-type"
+        result = validate_against_schema(invalid)
+        assert result.ok is False
+
+    def test_validate_init_manifest_uses_schema(self) -> None:
+        """validate_init_manifest 内部调用 schema 校验."""
+        from auto_engineering.loop.init_contract import validate_init_manifest
+
+        result = validate_init_manifest(self._MANIFEST_VALID)
+        assert result.ok is True, f"合法 manifest 应通过: {result.errors}"

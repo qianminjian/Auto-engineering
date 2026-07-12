@@ -20,6 +20,7 @@ classifiers = [
 dependencies = [
     "anthropic>=0.39",
     "click>=8.1",
+    "jsonschema>=4.26.0",
     "markdown-it-py>=3.0",
     "packaging>=24",
     "pydantic>=2.9",
