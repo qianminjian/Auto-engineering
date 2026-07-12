@@ -44,12 +44,15 @@
 | **50** | **PRBackend 选型背书 (T26e)** | 实现验证 T10c(`tools/pr_backend.py`) + T33(`init_contract.py` ci_platform/design_root 提取) 与决策 #45(Commit→PR→CI/CD Pipeline) 一致：① PRBackend ABC + gh/glab 薄壳——单一逻辑入口 + 平台薄壳(DRY)，符合 #45 §③ CI 双平台；② `select_backend(ci_platform)` 从 init-manifest.json 消费 `conventions.ci_platform`(T33)，实现 Init→CI Shell 的全自动平台选择——无需用户指定 `--ci-platform` 标记；③ doctor 预检(`ae doctor`)对 gh/glab 做非致命检测(未安装→WARN, 不阻断)，符合"系统依赖需抽象"约束(#46 §③)。文档数 2 源文件(5543+404行) + 12 tests + 2 提取函数。D23 | 2026-07-12 | ✅ |
 | **51** | **环内增量 test_gate + commit_msg 背书 (T26f)** | 实现验证 T16l(`gates/test_gate.py` files_changed→pytest -k) + T16n(`gates/commit_msg_gate.py` Angular 格式) 与决策 #45(环内 vs 远程分层) 一致：① 环内增量测试(`_files_to_pytest_k()` 从 files_changed 推导 test keywords, `-k` 注入 `_build_cmd()`)——环内跑快速子集(秒级, skip coverage)，远程跑全量权威 pypi+coverage≥90%；② commit_msg gate 作为可选 gate(环内 developer stage 后)——Angular 12 类型校验 + subject≤50 字符，可选安装(不在 DEFAULT_GATES，需显式注册)；③ 两者均通过 `-k` 增量 + 可选 gate 设计回避了环内全量测试的 30-60s 延迟——符合 #45 §④ 环内=增量快子集原则。文档数 2 源文件(8187+3407行) + 18 tests(4 test_gate + 14 commit_msg_gate)。D24 | 2026-07-12 | ✅ |
 | **52** | **A4 gap_analysis 定案：GapReport schema-SSOT 保留 + 常量复用（非删除）** | 代码审计 A4 原表述"删除孤儿"，深入调研**修正方向**：GapReport/GapItem 是 gap_report_json 的**schema SSOT + 序列化契约 + 校验规则**，与 init-manifest.schema.json 同构——schema 定义体不需生产运行时 import，靠**契约测试**(test_gap_analysis 14 测)保证 dict 数据流符合契约。gap_report 数据流 **dict-native**(跨 tick 序列化存储 + `_build_action` 原样输出 gaps 到 action JSON 给 Agent + in-place resolution 修改)，插入 GapReport 对象需每点 from_dict/asdict 来回转换=负优化。**不删除**(设计 §B10.2 定义模型，删=降级违反 governance)、**不全流程 OO 接线**(负优化)，仅消除**唯一真实瑕疵**：guardrail.py:334 独立重复定义 `_BLOCKING_FORBIDDEN_RESOLUTIONS` → 复用 `gap_analysis._BLOCKING_FORBIDDEN` SSOT(同一 frozenset 对象)。澄清 guardrail:346 注释——与 validate_resolutions 仅共享禁止集常量，校验**时序不同**(apply前拦截 pending_decisions vs apply后审查 report)不可合并。类比 Channel/CheckpointManager 保留决策。D25 | 2026-07-12 | ✅ |
+| **53** | **T10d 定案：v5.5 orchestrator + semantic_evaluator 保留（不退役，共存）** | 退役前置只读审计确认 v5.5 orchestrator 是**活代码**：`ae dev-loop "需求"`(裸参数无 tick flag) → cli/__init__.py:212 `_run_v2_orchestrator` → v5.5 连续 while 循环(直调 LLM)，与 v5.6 tick 模式(--init/--tick/--status/--resume → `_run_tick_*`)按设计**并列共存**(docstring :135-142)。semantic_evaluator 唯一运行时消费者=orchestrator.py。用户决策**保留共存**：退役将 (1) 移除可达且有文档的 legacy CLI 路径(破坏性) (2) 需翻转共存决策(设计降级) (3) 级联删 semantic_evaluator 221 行 + 4 测试——撞两条红线，不执行。**修正 D22 中"semantic_evaluator 随 T10d 退役"的计划方向为保留**。类比 Channel/CheckpointManager 保留决策。无 status 翻转。D26 | 2026-07-12 | ✅ |
 
 ## 当前状态
 
 **阶段：** v5.6 实现启动 — Tick-Based Discrete Invocation + 5 层验证 + Pre-flight Gap Analysis。设计整合完成 + 深度审计收口；Phase 3 T9 Tick CLI 接线完成，进入 Phase 3 收尾。
 
 **最近动作 (2026-07-12)：**
+- **T16h ci.yml 薄壳 + ruff 全量转绿** (24afa07)：line-length 100→120 消化中文注释宽度；生产 ruff 全清(E402 上移/E501 折行/SIM108 三元)，测试 per-file-ignore 扩 RUF012/SIM117/B017；`.github/workflows/ci.yml`(uv+ruff+pytest 薄壳)。1968 passed。mypy(203)/coverage-gate 刻意排除薄壳待决策
+- **T10d 定案：v5.5 orchestrator + semantic_evaluator 保留**（决策 #53）：退役前置审计确认 v5.5 是活代码(`ae dev-loop` 裸参数路径)，用户决策不退役、保留 v5.5/v6 共存。修正 D22 计划方向。无 status 翻转
 - **设计背书收口**：T26e PRBackend 选型背书（决策 #50）+ T26f 环内增量 test_gate + commit_msg（决策 #51）——实现验证通过，与决策 #45 一致。Wave 6 设计背书全部完成
 - **Phase 7 Init-Loop 契约扩展** (T32-T35)：schema.json SSOT + ci_platform/design_root 提取 + monorepo 降级 WARN + reference fixture round-trip 测试。33 tests pass
 
@@ -58,7 +61,7 @@
 - **设计文档深度审计 + 22 项收口深化** (决策 #49, Phase 8)：3 并行子代理审 4214 行 → 规格 6.5/10、端到端 2.5/10。P0×4 全为代码缺口(已 T9/T10/T27/T32 跟踪)；文档规格缺陷 S-1~S-20+Q-1/Q-2 共 22 项**纯文档收口**（补 CoverageItem/GateVerdict/done verdict 权威 schema + file-bridge 边界矩阵 §C.3.5 + 路径更正 + 过度设计存续论证）。**S-1 语义评估矛盾定案**：v5.6 全路径无语义评估，代码 semantic_evaluator 移除跟踪到 Phase 3 T10d。审计产出 `_scratch/design-audit/`，无 status 翻转
 - **Init-Loop 契约 v5.6 扩展** (决策 #48)：`init-manifest.schema.json` 版本化 SSOT + ci_platform/design_root 字段 + monorepo 单包降级 + 消费者驱动契约测试
 
-**下一步：** Phase 3 收尾（T9b progress CLI + T10 dev-loop.md 8-stage 重写 + T11 SKILL.md + T10c PRBackend）→ Phase 4/4b（Prompt Registry + Pipeline）→ Phase 5/6/7（测试 + 审计方法论 + Init 契约）。T10d 语义评估代码移除属退役红线（v5.5 仍活跃，待确认时机）
+**下一步：** Phase 3 收尾（T9b progress CLI + T10 dev-loop.md 8-stage 重写 + T11 SKILL.md + T10c PRBackend）→ Phase 4/4b（Prompt Registry + Pipeline）→ Phase 5/6/7（测试 + 审计方法论 + Init 契约）。T10d 已定案保留共存（决策 #53），semantic_evaluator 不再计划移除
 
 **阻塞项：** 无
 

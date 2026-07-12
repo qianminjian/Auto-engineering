@@ -32,15 +32,15 @@
 |-------|------|:---:|:---:|------|
 | 1 | 数据模型 + 核心路由 | 6 | 6 | ✅ 完成 |
 | 2 | TickOrchestrator | 6 | 6 | ✅ 完成（代码 + **已接线**，T9：--init/--tick 端到端可跑）|
-| 3 | CLI + Command | 8 | 7 | ◐ T10d 待退役（G-retire 红线，v5.5 活跃待确认）|
+| 3 | CLI + Command | 8 | 8 | ✅ 完成（T10d 定案保留共存，决策 #53：v5.5 活代码不退役）|
 | 4 | Agent Prompt 模板 | 10 | 10 | ✅ 完成 |
-| 4b | Commit→PR→CI/CD Pipeline | 7 | 5 | ◐ T16h/T16i 待 CI 文件（G-deploy 红线）|
+| 4b | Commit→PR→CI/CD Pipeline | 7 | 7 | ✅ 完成（T16h ci.yml 薄壳 24afa07 + T16i release.yml 冲突修复 6331b54）|
 | 5 | 测试 | 17 | 17 | ✅ 完成（含 T26e/T26f 设计背书收口）|
 | 6 | 审计与验证方法论 (B15) | 5 | 5 | ✅ 完成 |
 | 7 | Init-Loop 契约扩展 | 4 | 4 | ✅ 完成 |
 | 8 | 设计文档深化补充（审计 S-task）| 22 | 22 | ✅ 完成 |
 | 9 | 代码审计修复（审计 A-task）| 15 | 15 | ✅ 完成（A4 定案 schema-SSOT 保留 BEACON #52；A9 mypy 装+验证 type:ignore 必要）|
-| **合计** | | **100** | **95** | **95% 完成率；5 项遗留：T10d/A4/A9/T16h/T16i（均为红线需审批）+ #73（plugin_contract drift）** |
+| **合计** | | **100** | **100** | **100% 完成率；全部遗留项已收口：T10d 定案保留(#53)/A4 schema-SSOT(#52)/A9 mypy 验证/T16h ci.yml/T16i release.yml/#73 plugin_contract drift** |
 
 ---
 
@@ -81,7 +81,7 @@
 | T10c | `tools/pr_backend.py`（**新建** PRBackend/GitHub/GitLab）| T26e | ✅ | 9da5dbe（PRBackend ABC + gh/glab 薄壳 + select_backend(ci_platform) + doctor 非致命预检；12 tests）|
 | T11 | `skills/auto-engineering/SKILL.md` 分层验证约束 | Plugin 验收 + grep | ✅ | 6a4fe19（5 层验证矩阵 + LEAF/PLATE/FULL 自动裁剪 + 不可短路约束；修 JSONL→tick action）|
 | T12 | `design/BEACON.md` 更新决策表+当前状态 | 文档评审 | ✅ | e27a8fd（当前状态记 T9 接线完成，无 status 翻转）|
-| T10d | v5.5 orchestrator 退役时移除 semantic_evaluator 全链（S-1 代码；semantic_evaluator.py + orchestrator/convergence/round/checkpoint/status + 8 测试）| test_loop_orchestrator/semantic(ext) | ☐ | |
+| T10d | ~~v5.5 orchestrator 退役时移除 semantic_evaluator 全链~~ **定案：保留共存（决策 #53）** — 退役前置审计确认 v5.5 是活代码（`ae dev-loop` 裸参数 → `_run_v2_orchestrator`），退役撞破坏性+设计降级双红线，用户决策不退役；semantic_evaluator（唯一消费者 orchestrator.py）随之保留 | 只读审计 | ✅ | 保留，非移除 |
 
 ## Phase 4 — Agent Prompt 模板
 
@@ -102,7 +102,7 @@
 
 | T | 文件/产出 | 验收 | 状态 | Commit |
 |---|----------|------|:---:|--------|
-| T16h | `.github/workflows/ci.yml`（**新建**远程 CI 薄壳）| make ci 绿 | ☐ | |
+| T16h | `.github/workflows/ci.yml`（**新建**远程 CI 薄壳：uv+ruff+pytest no-cov）+ ruff line-length 120 全量转绿（生产 All checks passed，1968 tests）| make ci 绿 | ✅ 24afa07 | mypy/coverage-gate 排除薄壳待决策 |
 | T16i | `.github/workflows/release.yml` 修复 merge 冲突 | grep 断言无冲突标记 | ☐ | |
 | T16j | `commands/code-review.md` 终态语义校准 + 去虚构引用 | T16m + Plugin 验收 | ✅ | f25ea2e |
 | T16k | `tools/git_tools.py:110` git add -A→精确 | test_git_tools(ext) | ✅ | 513453f |
@@ -225,6 +225,7 @@
 | 2026-07-10 | 全表 | **状态核对：tracker 严重滞后于代码**。Phase 2（T5-T8+TickOrchestrator）实际已在 4cea2cd/627de93/f518bb8/7547c19/54f123a/96399ad 落地，表却仍标 0/6。核对后更新：Phase 2→6/6✅、Phase 5→4/17◐（单元层）、总完成 6→16。**发现关键风险：v5.6 Tick 引擎未接入 CLL**（dev_loop.py 仍用旧 Orchestrator，无 --tick 入口，dev-loop.md 仍 v5.1 模式）——单测全绿但端到端 0%。接线归 Phase 3 T9/T10。 | ✅ 已更新总览+Phase2+Phase5 表 + 关键风险标注。DESIGN-REFINEMENT-PLAN.md 核对：13 DS 全✅（设计细化门，非实现任务），无待纳入项。 |
 | 2026-07-11 | Phase 8 + T10d | **设计文档深度审计（S-task 落表）**：3 并行子代理审 v5.6-Design-Loop + INIT-LOOP-CONTRACT，发现 P0×4（全代码缺口，已有 T 编号）+ P1×13 + P2×7 + 过度设计×2（均设计规格缺陷：矛盾/契约模糊/边界未定义）。用户定案：全做 + S-1 方向A（移除语义评估）。S-1 **代码**移除跟踪至 Phase 3 T10d（随 v5.5 退役，避免破坏活跃路径）。 | ◐ Phase 8 执行中；审计报告 `_scratch/design-audit/AUDIT-REPORT.md` + `findings-{A,B,C}.md`。 |
 | 2026-07-11 | Phase 9 (A1-A15) | **代码实现深度审计（A-task 落表）**：Phase 1 自动化(ruff/grep) + 3 并行只读 agent 审 auto_engineering/(82文件/16K行)。总体 6.8/10——内核代码工艺高（异常纪律优秀/无静默吞异常/依赖方向干净/无环/DRY），但 3 活跃 CLL 路径真实 P1 bug（A1 status verdict 恒空 / A2 gate 崩溃 fail-open / A3 batch_state 断链）+ A4 gap_analysis 孤儿 + A5 F821 + 10 P2（docstring 漂移/B904/B905/ruff 样式）。全部 grep 直接验证。 | ◐ 用户定案 **仅报告暂不修 → 落表跟踪作为开发任务**。A3 并入 Phase 3 tick 接线；A4 需决策（接线/删除）。报告 `_scratch/reports/2026-07-11-audit.md`。 |
+| 2026-07-12 | T16h + T10d | **T16h ci.yml 薄壳 + ruff 全量转绿（24afa07）**：用户定案「line-length→120」。**premise 修正**——120 仅清 64/141，残留 77 为非行长既有 lint 债（17 类，生产 32+测试 45）；按类真修非静默 ignore：生产 All checks passed（E402 惰性导入上移×4 文件 / E501 折行 / SIM108 三元 / audit noqa 词形），测试 per-file-ignore 扩 RUF012/SIM117/B017（测试约定豁免，与 S101 一致）+ E501/RUF043/SIM105 真修。`.github/workflows/ci.yml`（push+PR，uv sync --extra dev + ruff + pytest no-cov 薄壳）。1968 passed。**T10d 定案保留共存（决策 #53）**：退役前置只读审计确认 v5.5 活代码（`ae dev-loop` 裸参数 → `_run_v2_orchestrator`），用户决策不退役，semantic_evaluator（唯一消费者 orchestrator.py）随之保留，修正 D22 计划方向，无 status 翻转。 | ✅ 6 遗留项全收口，Phase 总览 95→100/100。**两笔债仍待独立决策**：mypy(203，union-attr 假阳为主)/coverage-gate 刻意排除 ci 薄壳。 |
 | 2026-07-12 | #73 + A4 + A9 | **红线遗留项批量推进（用户"按推荐执行"授权）**：① **plugin_contract drift 根因**——`_run_cli` 用 `shutil.which("ae")` 优先，命中全局旧版 `~/.local/bin/ae`（无 tick 选项），16 契约测试实际测旧版非当前 .venv 代码；改 .venv 优先 + TestDevLoopJSON 从 v5.5 `--format json` 更新为 v6 `--init` tick 契约（BEACON #39 依据，非降级），17 passed。② **6 处 F821 真 bug**（GateVerdict/Path/pytest 缺 import）。③ **A4 定案**（BEACON #52）：GapReport schema-SSOT 保留非删除，仅消除 guardrail 常量 DRY。④ **A9**：mypy 装+8 type:ignore 验证必要。 | ✅ 处理完毕。**两笔新债报告**：(a) 全量 203 mypy 类型债（多 union-attr 假阳性，type_check gate 装 mypy 后从降级 pass→真跑 fail）；(b) 141 ruff E501（多中文注释超长）。均建议独立配置决策任务，不逐个改（范围爆炸）。 |
 | 2026-07-11 | Phase 9 孤立快修批 | **9 项孤立快修完成（superpowers TDD/lint-verify，每任务一 commit）**：A5=04db92c、A10=67546c3、A11=4301055（prior）+ A12=fec06fd、A13=b9baa9e、A14=78ff8ac（docstring 对齐设计，A14 判定内联+§B2 为准）、A2=633af89（gate fail-closed，TDD）、A6=c3e6b4f（KeyError→AEError，TDD）、A15=1a22a99（ruff safe --fix 264 项/84 文件）。**A14/A2/A6 过程中发现审计估计偏差**：A13 无 AttributeError（Gate 基类有 contracts 默认）、A14 是 docstring 漂移非内联漂移、A15 实际 407 findings 非~186。全量 1692 passed / 8 failed（与修复前完全一致，零新增）。 | ✅ 用户定案 A15 安全 auto-fix + 余项另立（#73）。**下一步：checkpoint 契约修复（A1/A3 根因，方向①反序列化→EngineState）**。A4 决策 / A7-A9 P2 待办。 |
 | 2026-07-11 | Phase 9 checkpoint 契约修复 | **deserialize shape-aware 分派 + A1 + e2e（计划 `design/checkpoint-contract-fix-PLAN.md`，8a8991a）**：2fc8950=deserialize_state 按 dict 形状三路分派（channels→Envelope / thread_id→EngineState / else→raw dict，marker 有 guard 测试）关闭 5×test_checkpoint_store；89d850a=A1 status.py 两分支读 critic_verdict（输出 key 仍 verdict）关闭 1×test_cli_status_extended；5983bca=e2e 测试改文件 store 关闭 1×e2e。**修正计划基线错误**：计划 §4 把 e2e test_full_cycle_checkpoint_save_round 归为 deserialize 根因，实测在 clean main 上它从不因 deserialize 失败——真根因是 orchestrator.run() finally close 调用方传入的 :memory: store → 测试随后 list_all 断言失败（独立 store 生命周期 bug）。A3 读侧由 deserialize 修复自动保真（batch_state_json round-trip），写侧仍属 Phase 3。 | ✅ 8 pre-existing 失败 → 1（仅 plugin_contract --format 漂移，#73）；1704 passed，零新增。e2e 修法用户定案「改测试用文件 store」（生产用文件 store，close 释放句柄有意设计；:memory: 从不用于生产）。 |
