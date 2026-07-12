@@ -101,3 +101,40 @@ class TestSyncFile:
         f.write_text(_wrap("red_flags", "canonical") + "\n", encoding="utf-8")
         assert sync_prompts.sync_file(
             f, {"red_flags": "canonical"}, check=True) is False
+
+
+class TestCodeReviewCoverage:
+    """T16m: code-review.md 已被 sync_prompts 覆盖 (有 FRAGMENT 标记)."""
+
+    _COMMAND = (
+        Path(__file__).resolve().parents[1]
+        / ".claude-plugin" / "commands" / "code-review.md"
+    )
+
+    def test_code_review_md_has_fragment_markers(self) -> None:
+        """code-review.md 必须包含 FRAGMENT 标记, 否则 sync 不覆盖."""
+        assert self._COMMAND.is_file(), f"{self._COMMAND} 不存在"
+        content = self._COMMAND.read_text(encoding="utf-8")
+        assert "<!-- FRAGMENT:" in content, (
+            "code-review.md 缺少 FRAGMENT 标记 — 不被 sync_prompts 覆盖. "
+            "添加 FRAGMENT:red_flags START/END 区块."
+        )
+
+    def test_code_review_md_discovered_by_scan(self) -> None:
+        """discover_targets 应该发现 code-review.md."""
+        targets = sync_prompts.discover_targets()
+        target_paths = [str(t.relative_to(self._COMMAND.parents[2])) for t in targets]
+        assert ".claude-plugin/commands/code-review.md" in target_paths, (
+            f"code-review.md 未被 discover_targets 发现. "
+            f"当前发现: {target_paths}"
+        )
+
+    def test_code_review_md_sync_no_unknown_fragments(self) -> None:
+        """code-review.md 的 FRAGMENT 引用都必须对应真实 fragment 文件."""
+        content = self._COMMAND.read_text(encoding="utf-8")
+        frags = sync_prompts.load_fragments()
+        # 如果解析成功说明所有引用真实存在
+        updated = sync_prompts.sync_text(content, frags)
+        assert updated is not None
+        # 校验同步后的内容仍然结构完整
+        assert "<!-- FRAGMENT:" in updated
