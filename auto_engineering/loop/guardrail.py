@@ -34,6 +34,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
+from auto_engineering.engine.gap_analysis import (
+    _BLOCKING_FORBIDDEN as _BLOCKING_FORBIDDEN_RESOLUTIONS,
+)
 from auto_engineering.loop.stage_router import clear_stage_fields
 from auto_engineering.utils.git import run_git as _run_git
 from auto_engineering.utils.git import run_git_diff as _run_git_diff
@@ -331,7 +334,8 @@ class GitClean(Guardrail):
 
 
 # architectural gap 禁止的 resolution (§B10.5: 契约模糊不允许延后, 须 Fill/Research)
-_BLOCKING_FORBIDDEN_RESOLUTIONS = frozenset({"defer", "defer_research"})
+# _BLOCKING_FORBIDDEN_RESOLUTIONS 复用 gap_analysis SSOT (顶部 import) — A4 消除常量 DRY.
+# gap_analysis._BLOCKING_FORBIDDEN 是 architectural gap 禁止 resolution 的唯一定义源.
 
 
 class NoDeferredBlockingGap(Guardrail):
@@ -342,8 +346,11 @@ class NoDeferredBlockingGap(Guardrail):
     组件设计无契约依据). 决策取自 state.pending_gap_decisions (尚未 apply 到 gap_report),
     grade 取自 state.gap_report_json (gap_scan 判定). 非 design-doc 模式无 gap_report → pass.
 
-    失败 action=block (用户须改为 Fill/Research 重提 gap_review). 判定逻辑与
-    gap_analysis.GapReport.validate_resolutions 同源 (_BLOCKING_FORBIDDEN_RESOLUTIONS).
+    失败 action=block (用户须改为 Fill/Research 重提 gap_review). 与
+    gap_analysis.GapReport.validate_resolutions **共享禁止集常量**
+    (_BLOCKING_FORBIDDEN, 已复用 SSOT) 但**校验时序不同**: 本 Guardrail 校验
+    pending_gap_decisions (apply 前拦截), validate_resolutions 校验 report 内
+    已 apply 的 resolution (apply 后审查) — 故不可合并为同一方法.
     """
 
     name = "NoDeferredBlockingGap"

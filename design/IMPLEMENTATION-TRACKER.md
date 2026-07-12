@@ -39,7 +39,7 @@
 | 6 | 审计与验证方法论 (B15) | 5 | 5 | ✅ 完成 |
 | 7 | Init-Loop 契约扩展 | 4 | 4 | ✅ 完成 |
 | 8 | 设计文档深化补充（审计 S-task）| 22 | 22 | ✅ 完成 |
-| 9 | 代码审计修复（审计 A-task）| 15 | 13 | ◐ A4 需决策（接线/删除）；A9 ⛔ mypy 未装 |
+| 9 | 代码审计修复（审计 A-task）| 15 | 15 | ✅ 完成（A4 定案 schema-SSOT 保留 BEACON #52；A9 mypy 装+验证 type:ignore 必要）|
 | **合计** | | **100** | **95** | **95% 完成率；5 项遗留：T10d/A4/A9/T16h/T16i（均为红线需审批）+ #73（plugin_contract drift）** |
 
 ---
@@ -197,12 +197,12 @@
 | A1 | `ae status` verdict 恒空 → 读 `critic_verdict`（输出 key 仍 `verdict`，符 §B13.2）| P1 | `cli/status.py:73,80` | test_cli_status 断言非空 verdict | ✅ | 89d850a |
 | A2 | Gate 崩溃 fail-open → 执行异常计 `failed_count`（fail-closed），区分 skipped(不适用)/errored(崩溃)| P1 | `cli/gate_check.py:96-99,23` | test_gate_check 崩溃 gate → exit≠0 | ✅ | 633af89 |
 | A3 | `batch_state_json` 持久化断链（零写零读 → 游标每 tick 归零）| P1 | `state.py:121,215`；`tick_orchestrator.py:236` | T22 跨 tick 恢复 | ✅ 读侧✅（2fc8950 deserialize→EngineState）+ 写侧✅（fe8bee2 `_populate_serialized_state`）+ restore✅（f4e4175）；跨进程游标不归零，e2e 真跑验证 | 2fc8950/fe8bee2/f4e4175 |
-| A4 | `gap_analysis.py` 孤儿（GapReport 全实现+有测试，生产 0 引用，tick 用内联 dict）| P1 | `engine/gap_analysis.py` vs `tick_orchestrator.py:516` | 接线去重 or 删除 | ☐ **需决策：接线/删除** | |
+| A4 | `gap_analysis.py`（GapReport 全实现+有测试，生产 dict-native）| P1 | `engine/gap_analysis.py` + `guardrail.py:334` | 常量 SSOT 复用 + 行为不变 | ✅ **定案：schema-SSOT 保留（非删除）** BEACON #52 | (本轮) |
 | A5 | F821 `Any` 未导入（type_check gate 会红）→ TYPE_CHECKING 块加 `from typing import Any` | P1 | `loop/stage_router.py:284`、`runtime/runtime.py:42` | ruff F821 清零 + type_check gate 绿 | ✅ | 04db92c |
 | A6 | 畸形 batch_plan 抛 raw KeyError → 改抛 AEError 契约错误 | P2 | `loop/task_factory.py:58` | test_task_factory 缺 id 断言 | ✅ | c3e6b4f |
 | A7 | per-task ctx 仅顶层浅拷贝（注释宣称隔离，名不副实）→ 文档如实标注或 outputs 深拷 | P2 | `loop/round.py:186` | 自含 | ✅ | 715facc |
 | A8 | `set_channels` 绕过 write_field 所有权校验 + 重复 `import logging` | P2 | `engine/state.py:321` | 自含 | ✅ | 6cece7f |
-| A9 | 8× 集中 `# type: ignore`（graph 节点弱类型区）→ 补 Protocol | P2 | `engine/design_doc.py:220-298` | mypy 无 ignore | ⛔ **需决策**：mypy 未装，验收「mypy 无 ignore」不可本地验证；装 mypy=dep 审批（同 markdown-it-py 先例）or 接受文档化 ignore | |
+| A9 | 8× 集中 `# type: ignore`（graph 节点弱类型区）| P2 | `engine/design_doc.py:220-298` | mypy 无多余 ignore | ✅ **验证：mypy 2.1.0 已装（--extra dev），8 处 type:ignore 经 --warn-unused-ignores 全部必要**（networkx 节点访问真实类型模糊，无可删）；副产品发现全量 203 mypy 类型债（多 union-attr 假阳性）→ 建议独立清理任务 | (纯验证无 commit) |
 | A10 | B904：`raise ValueError` 无 `from`（丢异常链）| P2 | `loop/checkpoint/migration.py:62` | ruff B904 清零 | ✅ | 67546c3 |
 | A11 | B905：`dict(zip(...))` 无 `strict=`（静默截断）| P2 | `gates/_tools.py:40` | ruff B905 清零 | ✅ | 4301055 |
 | A12 | docstring 漂移：guardrail 称 drop→retry+DeprecationWarning，实际 unknown→stop | P2 | `loop/guardrail.py:69-72` | 文档与代码一致 | ✅ | fec06fd |
