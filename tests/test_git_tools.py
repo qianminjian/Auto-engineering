@@ -144,6 +144,54 @@ class TestGitCommitTool:
         assert result.success is False
         assert "commit failed" in result.error.lower()
 
+    def test_commit_precise_files_excludes_others(self, tmp_path: Path) -> None:
+        """T16k: files=[...] → 只精确 stage 指定文件, 不误纳 .env/密钥/其他脏文件."""
+        _init_git_repo(tmp_path)
+        (tmp_path / "a.py").write_text("x = 1\n")
+        (tmp_path / ".env").write_text("SECRET_KEY = leak\n")  # 不得被 commit
+        result = run_async(GitCommitTool().execute(
+            cwd=str(tmp_path), message="add a", files=["a.py"]))
+        assert result.success is True
+        tracked = subprocess.run(
+            ["git", "ls-files"], cwd=tmp_path,
+            capture_output=True, text=True, check=True,
+        ).stdout
+        assert "a.py" in tracked
+        assert ".env" not in tracked  # 精确 stage: .env 仍未跟踪
+        # .env 仍是脏文件 (未提交)
+        status = run_async(GitStatusTool().execute(cwd=str(tmp_path)))
+        assert ".env" in status.content
+
+    def test_commit_precise_multiple_files(self, tmp_path: Path) -> None:
+        """T16k: files 多文件 → 全部精确 stage."""
+        _init_git_repo(tmp_path)
+        (tmp_path / "a.py").write_text("a = 1\n")
+        (tmp_path / "b.py").write_text("b = 2\n")
+        (tmp_path / "junk.log").write_text("noise\n")
+        result = run_async(GitCommitTool().execute(
+            cwd=str(tmp_path), message="add a,b", files=["a.py", "b.py"]))
+        assert result.success is True
+        tracked = subprocess.run(
+            ["git", "ls-files"], cwd=tmp_path,
+            capture_output=True, text=True, check=True,
+        ).stdout
+        assert "a.py" in tracked
+        assert "b.py" in tracked
+        assert "junk.log" not in tracked
+
+    def test_commit_empty_files_falls_back_to_add_all(self, tmp_path: Path) -> None:
+        """T16k: files 缺省/空 → 回退 git add -A (向后兼容, 保留新文件纳入)."""
+        _init_git_repo(tmp_path)
+        (tmp_path / "brand_new.txt").write_text("new file")
+        result = run_async(GitCommitTool().execute(
+            cwd=str(tmp_path), message="add new file", files=[]))
+        assert result.success is True
+        tracked = subprocess.run(
+            ["git", "ls-files"], cwd=tmp_path,
+            capture_output=True, text=True, check=True,
+        ).stdout
+        assert "brand_new.txt" in tracked
+
 
 # ============================================================
 # III. GitDiffTool

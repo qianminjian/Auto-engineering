@@ -92,22 +92,39 @@ class GitStatusTool(BaseTool):
 
 
 class GitCommitTool(BaseTool):
-    """Commit all staged changes with a message."""
+    """Commit changes with a message (precise staging via `files`)."""
 
     name = "git_commit"
-    description = "Stage all changes and commit with message."
+    description = (
+        "Stage changes and commit with message. Pass `files` (from the task's "
+        "target_files) to stage precisely; omit to stage all (git add -A)."
+    )
     parameters: ClassVar[dict] = {
         "message": {"type": "string", "description": "Commit message"},
+        "files": {
+            "type": "array",
+            "description": (
+                "Specific paths to stage (relative to repo). Recommended: pass the "
+                "task's target_files for precise staging. Omit/empty → git add -A."
+            ),
+        },
         "cwd": {"type": "string", "description": "Repository path (optional)"},
     }
 
     async def execute(self, **kwargs) -> ToolResult:
         cwd = kwargs.get("cwd")
         message = kwargs.get("message", "")
+        files = kwargs.get("files")
         try:
             if not message:
                 return ToolResult(success=False, content="", error="commit message is empty")
-            add_result = _run_git(["add", "-A"], cwd=cwd, project_root=self.project_root)
+            # T16k: 精确 stage — files 提供则只 add 指定文件 (避免误纳 .env/密钥/二进制);
+            # 缺省/空则回退 git add -A (向后兼容, 保留新文件纳入).
+            if isinstance(files, list) and files:
+                add_args = ["add", "--", *[str(f) for f in files]]
+            else:
+                add_args = ["add", "-A"]
+            add_result = _run_git(add_args, cwd=cwd, project_root=self.project_root)
             if add_result.returncode != 0:
                 return ToolResult(
                     success=False,
