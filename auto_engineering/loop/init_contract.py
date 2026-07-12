@@ -272,6 +272,14 @@ def validate_init_manifest(manifest: dict[str, Any]) -> ValidationResult:
             f"project_type '{project_type}' 不支持, 合法值: {sorted(SUPPORTED_PROJECT_TYPES)}"
         )
 
+    # T34: monorepo → 单包降级 WARN (IL-AC-08). 枚举保留, 多包沙箱 YAGNI 推迟.
+    if project_type == "monorepo":
+        warnings.append(
+            "project_type=monorepo: single-package degrade mode. "
+            "Multi-package sandbox isolation deferred (YAGNI). "
+            "source_root/test_root treated as main package root."
+        )
+
     # 6. language enum
     language = manifest.get("language")
     if language and language not in SUPPORTED_LANGUAGES:

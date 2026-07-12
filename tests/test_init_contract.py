@@ -633,6 +633,33 @@ _MANIFEST_FULL: dict = {
 }
 
 
+class TestMonorepoDegrade:
+    """T34: monorepo project_type → 单包降级 WARN (IL-AC-08)."""
+
+    def test_monorepo_emits_warning(self) -> None:
+        from auto_engineering.loop.init_contract import validate_init_manifest
+
+        m = dict(_MANIFEST_FULL)
+        m["project_type"] = "monorepo"
+        result = validate_init_manifest(m)
+        assert result.ok is True, "monorepo 仍应通过 (不阻断)"
+        assert any("monorepo" in w.lower() or "单包" in w for w in result.warnings), (
+            f"monorepo 应发出降级 WARN: {result.warnings}"
+        )
+
+    def test_non_monorepo_no_warning(self) -> None:
+        from auto_engineering.loop.init_contract import validate_init_manifest
+
+        result = validate_init_manifest(_MANIFEST_FULL)
+        monorepo_warns = [
+            w for w in result.warnings
+            if "monorepo" in w.lower() or "单包" in w
+        ]
+        assert monorepo_warns == [], (
+            f"非 monorepo 不应有 monorepo 降级警告: {monorepo_warns}"
+        )
+
+
 class TestCiPlatform:
     """T33: conventions.ci_platform 提取."""
 
