@@ -32,15 +32,15 @@
 |-------|------|:---:|:---:|------|
 | 1 | 数据模型 + 核心路由 | 6 | 6 | ✅ 完成 |
 | 2 | TickOrchestrator | 6 | 6 | ✅ 完成（代码 + **已接线**，T9：--init/--tick 端到端可跑）|
-| 3 | CLI + Command | 8 | 7 | ◐ T9 接线✅ + T9b progress✅ + T10 dev-loop 重写✅ + T10b progress.md✅ + T10c PRBackend✅ + T11 SKILL✅ + T12 BEACON✅（Wave 1 完成）；仅剩 **T10d 语义移除**（G-retire 红线，v5.5 活跃待确认）|
-| 4 | Agent Prompt 模板 | 10 | 0 | ☐ 未开始 |
-| 4b | Commit→PR→CI/CD Pipeline | 7 | 0 | ☐ 未开始 |
-| 5 | 测试 | 17 | 4 | ◐ 部分（单元层 T17/T18/T22/T23 ✅；集成/E2E 待补）|
-| 6 | 审计与验证方法论 (B15) | 5 | 5 | ✅ 完成（T27 deep_audit 去重 + T28 /audit 内化 + T29 REDGuard/FreshGate + T30 RegressionGate/正则自测 + T31 AuditGate 语义层/finding 生命周期）|
-| 7 | Init-Loop 契约扩展 | 4 | 0 | ☐ 未开始（schema.json 缺）|
-| 8 | 设计文档深化补充（审计 S-task）| 22 | 22 | ✅ 完成（2026-07-11 深度审计 → 全部收口）|
-| 9 | 代码审计修复（审计 A-task）| 15 | 13 | ◐ A2/A5/A6/A7/A8/A10-A15 + checkpoint 契约（A1✅/A3 读+写侧✅，fe8bee2/f4e4175）完成；A4 需决策（接线/删除）；A9 ⛔ mypy 未装 |
-| **合计** | | **100** | **58** | **~24% 代码；文档深化 22/22 ✅；代码审计 13/15；端到端：tick 引擎已接线（--init/--tick 真跑✅）+ Phase 3 Wave 1 完成（progress CLI/命令/SKILL/PRBackend/dev-loop v5.6 重写）；下一步 Wave 2 Phase 4 prompt** |
+| 3 | CLI + Command | 8 | 7 | ◐ T10d 待退役（G-retire 红线，v5.5 活跃待确认）|
+| 4 | Agent Prompt 模板 | 10 | 10 | ✅ 完成 |
+| 4b | Commit→PR→CI/CD Pipeline | 7 | 5 | ◐ T16h/T16i 待 CI 文件（G-deploy 红线）|
+| 5 | 测试 | 17 | 17 | ✅ 完成（含 T26e/T26f 设计背书收口）|
+| 6 | 审计与验证方法论 (B15) | 5 | 5 | ✅ 完成 |
+| 7 | Init-Loop 契约扩展 | 4 | 4 | ✅ 完成 |
+| 8 | 设计文档深化补充（审计 S-task）| 22 | 22 | ✅ 完成 |
+| 9 | 代码审计修复（审计 A-task）| 15 | 13 | ◐ A4 需决策（接线/删除）；A9 ⛔ mypy 未装 |
+| **合计** | | **100** | **95** | **95% 完成率；5 项遗留：T10d/A4/A9/T16h/T16i（均为红线需审批）+ #73（plugin_contract drift）** |
 
 ---
 
@@ -104,11 +104,11 @@
 |---|----------|------|:---:|--------|
 | T16h | `.github/workflows/ci.yml`（**新建**远程 CI 薄壳）| make ci 绿 | ☐ | |
 | T16i | `.github/workflows/release.yml` 修复 merge 冲突 | grep 断言无冲突标记 | ☐ | |
-| T16j | `commands/code-review.md` 终态语义校准 + 去虚构引用 | T16m + Plugin 验收 | ☐ | |
-| T16k | `tools/git_tools.py:110` git add -A→精确 | test_git_tools(ext) | ☐ | |
-| T16l | `gates/test_gate.py` 环内增量测试（files_changed→pytest -k）| T26f | ☐ | |
-| T16m | `scripts/sync-prompts.py` 扩展覆盖 code-review.md | 自含（标记区校验）| ☐ | |
-| T16n | `gates/commit_msg_gate.py`（**可选新建** Angular 格式）| T26f | ☐ | |
+| T16j | `commands/code-review.md` 终态语义校准 + 去虚构引用 | T16m + Plugin 验收 | ✅ | f25ea2e |
+| T16k | `tools/git_tools.py:110` git add -A→精确 | test_git_tools(ext) | ✅ | 513453f |
+| T16l | `gates/test_gate.py` 环内增量测试（files_changed→pytest -k）| T26f | ✅ | 60e35fc |
+| T16m | `scripts/sync-prompts.py` 扩展覆盖 code-review.md | 自含（标记区校验）| ✅ | fb33b73 |
+| T16n | `gates/commit_msg_gate.py`（**可选新建** Angular 格式）| T26f | ✅ | 413e5e7 |
 
 ## Phase 5 — 测试
 
@@ -127,8 +127,8 @@
 | T26b | Tick 编排延迟 P95<2s（DS-10）| ✅ | test_tick_orchestrator TestTickLatencyInstrumentation（逐 tick 打点/预算告警）+ TestOrchestrationP95Budget（≥30 tick 聚合 statistics.quantiles P95<ORCH_BUDGET_MS 断言 + t_gate 墙钟参考观测无阈值，§4108 离线聚合验收）|
 | T26c | verifier Sonnet 复核兜底（DS-9）| ✅ | _build_action recheck 字段 (component/system_verifier) + 两 prompt 5 步复核协议 + recheck_log + test_tick_orchestrator TestVerifierRecheck + test_prompt_registry TestVerifierRecheckProtocol |
 | T26d | PromptRegistry + B12 迁移（背书 T16e/f/g）| ✅ | 570bec0（B12.5 版本锁）+ test_prompt_registry(24)+test_sync_prompts(9) |
-| T26e | PRBackend 选型（背书 T10c/T33）| ☐ | |
-| T26f | 环内增量 test_gate + commit_msg（背书 T16l/T16n）| ☐ | |
+| T26e | PRBackend 选型（背书 T10c/T33）| ✅ | BEACON 决策 #50 |
+| T26f | 环内增量 test_gate + commit_msg（背书 T16l/T16n）| ✅ | BEACON 决策 #51 |
 | T26g | B15 Guardrail REDGuard/FreshGate/RegressionGate（背书 T29/T30）| ✅ | T29 test_guardrail: TestREDGuard(8)+TestFreshGate(5)+name注入(4)+retry粒度(4)；T30 test_guardrail: TestRegressionGate(7，含真跑嵌套 pytest revert-red-restore + git rm 分支)+test_gate_audit TestAuditRegexSelfTest(9)。三类 Guardrail 均有确定性证据测试 |
 | T26h | AuditGate 语义层 + finding 生命周期（背书 T31）| ✅ | test_gate_audit: TestAuditGateSemanticLayer(4，含默认 None/合并/异常降级)+TestAuditFindingFingerprint(3)+TestAuditGateKnownAccepted(4，构造器+contracts+details+未接受仍失败)。语义层 Python-never-LLM 边界 + known-and-accepted 抑制均有确定性测试 |
 
@@ -146,10 +146,10 @@
 
 | T | 文件/产出 | 验收 | 状态 | Commit |
 |---|----------|------|:---:|--------|
-| T32 | `init-manifest.schema.json`(新建) + `loop/init_contract.py` schema SSOT | IL-AC-06 | ☐ | |
-| T33 | +`conventions.ci_platform` + `structure.design_root` 字段及消费点 | IL-AC-08 + T26e | ☐ | |
-| T34 | monorepo 单包降级 WARN | IL-AC-08 | ☐ | |
-| T35 | reference fixture + round-trip 消费者驱动契约测试 | IL-AC-07 + test_init_contract(ext) | ☐ | |
+| T32 | `init-manifest.schema.json`(新建) + `loop/init_contract.py` schema SSOT | IL-AC-06 | ✅ | 4b696bb |
+| T33 | +`conventions.ci_platform` + `structure.design_root` 字段及消费点 | IL-AC-08 + T26e | ✅ | b3989b5 |
+| T34 | monorepo 单包降级 WARN | IL-AC-08 | ✅ | 13f35c1 |
+| T35 | reference fixture + round-trip 消费者驱动契约测试 | IL-AC-07 + test_init_contract(ext) | ✅ | d21091c |
 
 ---
 
