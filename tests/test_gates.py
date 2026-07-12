@@ -264,6 +264,62 @@ class TestTestGate:
         inspect.signature(gate.run)
         assert True  # signature 兼容
 
+    def test_files_changed_filters_by_k(self, tmp_path: Path):
+        """T16l: files_changed → pytest -k 过滤, 只跑相关测试."""
+        from auto_engineering.gates.test_gate import TestGate
+
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        (tests_dir / "test_module_a.py").write_text(
+            "def test_a():\n    assert 1 + 1 == 2\n"
+        )
+        (tests_dir / "test_module_b.py").write_text(
+            "def test_b():\n    assert 1 == 2\n"
+        )
+
+        gate = TestGate(timeout=60, files_changed=["src/module_a.py"])
+        k_expr = gate._files_to_pytest_k()
+        assert k_expr is not None
+        assert "module_a" in k_expr or "test_module_a" in k_expr
+        assert "module_b" not in k_expr
+
+        cmd = gate._build_cmd(tmp_path)
+        assert "-k" in cmd, f"增量模式应注入 -k 标志: {cmd}"
+
+    def test_files_changed_empty_runs_full_suite(self, tmp_path: Path):
+        """T16l: files_changed=[] → 全量测试 (向后兼容)."""
+        from auto_engineering.gates.test_gate import TestGate
+
+        gate = TestGate(timeout=60, files_changed=[])
+        k_expr = gate._files_to_pytest_k()
+        assert k_expr is None, "空 files_changed 应返回 None (全量模式)"
+
+    def test_files_changed_none_runs_full_suite(self, tmp_path: Path):
+        """T16l: files_changed=None → 全量测试 (向后兼容)."""
+        from auto_engineering.gates.test_gate import TestGate
+
+        gate = TestGate(timeout=60)
+        k_expr = gate._files_to_pytest_k()
+        assert k_expr is None, "files_changed=None 应返回 None (全量模式)"
+
+    def test_files_changed_derives_test_names(self, tmp_path: Path):
+        """T16l: 源文件 → 推导对应测试名."""
+        from auto_engineering.gates.test_gate import TestGate
+
+        gate1 = TestGate(files_changed=["tests/test_security.py"])
+        expr1 = gate1._files_to_pytest_k()
+        assert expr1 is not None
+        assert "test_security" in expr1
+
+        gate2 = TestGate(files_changed=["auto_engineering/gates/safety.py"])
+        expr2 = gate2._files_to_pytest_k()
+        assert expr2 is not None
+        assert "safety" in expr2 or "test_safety" in expr2
+
+        gate3 = TestGate(files_changed=["auto_engineering/__init__.py"])
+        expr3 = gate3._files_to_pytest_k()
+        assert expr3 is None
+
 
 # ============================================================
 # Group 8: Gate 6 — Build (Python import)

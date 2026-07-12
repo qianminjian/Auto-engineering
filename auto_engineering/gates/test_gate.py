@@ -58,11 +58,13 @@ class TestGate(Gate):
         timeout: float | None = None,
         pytest_args: list[str] | None = None,
         test_paths: list[str] | None = None,
+        files_changed: list[str] | None = None,
     ):
         self.test_runner_bin = test_runner_bin or _DEFAULT_TEST_RUNNER
         self.timeout = timeout if timeout is not None else Gate._resolve_timeout(DEFAULT_TIMEOUT)
         self.pytest_args = pytest_args if pytest_args is not None else []
         self.test_paths = test_paths if test_paths is not None else ["tests"]
+        self.files_changed = files_changed
 
     @classmethod
     def from_manifest(
@@ -92,6 +94,32 @@ class TestGate(Gate):
             return ["python", "-m", "pytest"]
         return None
 
+    def _files_to_pytest_k(self) -> str | None:
+        """T16l: files_changed → pytest -k 过滤表达式.
+
+        从变更文件推导对应测试名:
+          - 测试文件 (test_*/_test) → 直接用 stem
+          - 源文件 → 推导 test_{stem}
+          - __init__ → 跳过
+          - 无 files_changed 或空 → None (全量模式)
+        """
+        if not self.files_changed:
+            return None
+
+        keywords: set[str] = set()
+        for f in self.files_changed:
+            stem = Path(f).stem
+            if stem == "__init__":
+                continue
+            if stem.startswith("test_") or stem.endswith("_test"):
+                keywords.add(stem)
+            else:
+                keywords.add(f"test_{stem}")
+
+        if not keywords:
+            return None
+        return " or ".join(sorted(keywords))
+
     def _build_cmd(self, project_root: Path) -> list[str]:
         """构造 test_runner 命令.
 
@@ -117,6 +145,11 @@ class TestGate(Gate):
             )
             if has_inifile and not any(a.startswith("--timeout") for a in args):
                 args = [*args, "--timeout=60"]
+
+        # T16l: 环内增量测试 — files_changed → pytest -k 过滤
+        k_expr = self._files_to_pytest_k()
+        if k_expr is not None:
+            cmd.extend(["-k", k_expr])
 
         cmd.extend(args)
         cmd.extend(self.test_paths)
