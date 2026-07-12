@@ -190,16 +190,13 @@ def validate_role_output(role: str, values: dict) -> dict:
     try:
         if role == "architect":
             from auto_engineering.agents.output_models import ArchitectOutput
-            validated = ArchitectOutput.model_validate(values)
-            return validated.model_dump()
+            return ArchitectOutput.model_validate(values).model_dump()
         elif role == "developer":
             from auto_engineering.agents.output_models import DeveloperOutput
-            validated = DeveloperOutput.model_validate(values)
-            return validated.model_dump()
+            return DeveloperOutput.model_validate(values).model_dump()
         elif role == "critic":
             from auto_engineering.agents.output_models import CriticOutput
-            validated = CriticOutput.model_validate(values)
-            return validated.model_dump()
+            return CriticOutput.model_validate(values).model_dump()
     except ValidationError:
         logging.getLogger("ae.loop.task_factory").warning(
             "Pydantic 校验失败 (role=%s), 降级使用原始 values", role, exc_info=True

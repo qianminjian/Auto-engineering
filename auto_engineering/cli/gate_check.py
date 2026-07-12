@@ -31,8 +31,12 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import click
+
+if TYPE_CHECKING:
+    from auto_engineering.gates.base import Gate
 
 _logger = logging.getLogger("ae.cli.gate_check")
 
@@ -62,7 +66,7 @@ def _all_gate_names() -> tuple[str, ...]:
 ALL_GATES = _all_gate_names()
 
 
-def _instantiate_gate(name: str, project_root: Path) -> object | None:
+def _instantiate_gate(name: str, project_root: Path) -> Gate | None:
     """按名称实例化单个 Gate 对象. 不支持的返回 None (skip)."""
     try:
         from auto_engineering.gates.registry import get_gate_by_name

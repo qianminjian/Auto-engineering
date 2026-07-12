@@ -190,7 +190,7 @@ class EngineState:
     # Developer 输出
     files_changed: list[str] = field(default_factory=list)
     commit_hash: str = ""
-    test_results: TestResults = field(default_factory=dict)
+    test_results: TestResults = field(default_factory=TestResults)
 
     # Critic 输出
     critic_verdict: str = ""  # "APPROVE" | "MAJOR"

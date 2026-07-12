@@ -76,8 +76,10 @@ def classify_error(error: AEError) -> tuple[ErrorCategory, int]:
     # v5.0 §PE.6: 显式退出码覆盖 (优先级最高)
     if code_str in _ERROR_EXIT_CODE_OVERRIDE:
         # 用错误类别表 (无 → 默认 USER_ERROR) 仅用于分类
-        category = _ERROR_CATEGORY_MAP.get(code_str, ErrorCategory.USER_ERROR)
-        return category, _ERROR_EXIT_CODE_OVERRIDE[code_str]
+        return (
+            _ERROR_CATEGORY_MAP.get(code_str, ErrorCategory.USER_ERROR),
+            _ERROR_EXIT_CODE_OVERRIDE[code_str],
+        )
 
     # 优先精确匹配(覆盖前缀)
     category = _ERROR_CATEGORY_MAP.get(code_str)

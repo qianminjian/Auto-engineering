@@ -238,11 +238,11 @@ def _rebuild_channel(name: str, value: Any) -> Channel[Any]:
     """
     if isinstance(value, dict) and "expected" in value:
         # BarrierChannel: 必须从 value 拿 expected (构造需)
-        ch = BarrierChannel(name, expected=value["expected"])
+        ch: Channel[Any] = BarrierChannel(name, expected=value["expected"])
         ch.from_checkpoint(value)
         return ch
     elif isinstance(value, list):
-        ch: AccumulatingChannel[Any] = AccumulatingChannel(name)
+        ch = AccumulatingChannel(name)
         ch.from_checkpoint(value)
         return ch
     else:

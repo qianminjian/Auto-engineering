@@ -21,6 +21,7 @@ from pathlib import Path
 import click
 
 from auto_engineering.config.environment import ProjectEnvironment
+from auto_engineering.engine.state import EngineState
 
 _logger = logging.getLogger("ae.cli.status")
 
@@ -52,7 +53,7 @@ def _collect_status_json(cwd: Path) -> dict:
     latest_ckpt = None
     for db_file in cp_dir.glob("*.db"):
         try:
-            store = SQLiteCheckpointStore(str(db_file))
+            store: SQLiteCheckpointStore[EngineState] = SQLiteCheckpointStore(str(db_file))
             ckpt = store.load_latest()
             if ckpt is not None and (latest_ckpt is None or ckpt.round > latest_ckpt.round):
                 latest_ckpt = ckpt
@@ -168,7 +169,7 @@ def register_status_command(main_group: click.Group) -> None:
             total_v2 = 0
             for db_file in cp_dir.glob("*.db"):
                 try:
-                    store = SQLiteCheckpointStore(str(db_file))
+                    store: SQLiteCheckpointStore[EngineState] = SQLiteCheckpointStore(str(db_file))
                     total_v2 += store.count()
                 except Exception:
                     _logger.warning("checkpoint count 失败, 跳过: %s", db_file, exc_info=True)

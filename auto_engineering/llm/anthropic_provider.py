@@ -147,7 +147,7 @@ class AnthropicProvider:
         import time
         for attempt in range(1, self._max_retries + 2):  # 1..max_retries+1
             try:
-                response = self._client.messages.create(**kwargs)
+                response = self._client.messages.create(**kwargs)  # type: ignore[call-overload]  # SDK 严格 overload vs 动态 dict kwargs
                 break  # 成功, 退出 retry loop
             except self._RETRYABLE_EXCEPTIONS as exc:
                 if attempt > self._max_retries:

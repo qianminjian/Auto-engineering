@@ -43,7 +43,9 @@ try:
         AuthenticationError,
         RateLimitError,
     )
-    _ANTHROPIC_ERROR_TYPES = (APITimeoutError, APIConnectionError, APIStatusError, AuthenticationError, RateLimitError)
+    _ANTHROPIC_ERROR_TYPES: tuple[type[Exception], ...] | None = (
+        APITimeoutError, APIConnectionError, APIStatusError, AuthenticationError, RateLimitError,
+    )
 except (ImportError, TypeError):
     _ANTHROPIC_ERROR_TYPES = None
 
@@ -181,7 +183,7 @@ class BaseAgent:
 
                     # P1.7: 工具参数 schema 校验
                     tool = tool_map[tool_name]
-                    self._validate_tool_input(tool, tool_input, tool_name)
+                    self._validate_tool_input(tool, tool_input, tool_name)  # type: ignore[arg-type]  # task.tools 运行时由 AgentRuntime 解析为 BaseTool
 
                     try:
                         result = await tool.execute(**tool_input)

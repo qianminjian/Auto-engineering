@@ -68,7 +68,7 @@ def _build_role_system_prompt(role: str) -> str:
     return f"You are a {role} agent. Process the user request and produce a structured response."
 
 
-def _build_runtime_for_role(role: str, project_root: Path) -> object:
+def _build_runtime_for_role(role: str, project_root: Path) -> AgentRuntime:
     """构造单 Agent 用的最小 runtime (含 6 个常用工具)."""
     llm = AnthropicProvider()  # SDK 自动从 ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN 读
     tools = [
@@ -141,7 +141,7 @@ def run_agent(role: str, instruction: str, project_root: Path) -> dict:
                 )
             except TypeError:
                 # 兼容旧接口
-                return agent.execute(instruction)
+                return agent.execute(instruction)  # type: ignore[call-arg]  # legacy 单参 fallback
 
         result = asyncio.run(_exec())
         duration = time.monotonic() - started

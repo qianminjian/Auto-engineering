@@ -46,6 +46,7 @@ def capture_head(project_root: Path | str | None) -> str | None:
             "git rev-parse HEAD 失败 (cwd=%s): %s", cwd, exc
         )
         return None
+    return None
 
 
 def run_git_diff(root: Path, diff_args: list[str]) -> tuple[int, str]:

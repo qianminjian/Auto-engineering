@@ -71,8 +71,8 @@ def _dedup_findings(findings: list[dict]) -> list[dict]:
             order.append(key)
         else:
             cur = best[key]
-            if _SEVERITY_RANK.get(f.get("severity"), -1) > _SEVERITY_RANK.get(
-                    cur.get("severity"), -1):
+            if _SEVERITY_RANK.get(f.get("severity", ""), -1) > _SEVERITY_RANK.get(
+                    cur.get("severity", ""), -1):
                 best[key] = f
     return [best[k] for k in order]
 

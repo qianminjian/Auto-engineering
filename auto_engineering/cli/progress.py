@@ -18,6 +18,7 @@ from pathlib import Path
 import click
 
 from auto_engineering.engine.progress_tree import ProgressTree
+from auto_engineering.engine.state import EngineState
 
 _logger = logging.getLogger("ae.cli.progress")
 
@@ -44,7 +45,7 @@ def _load_progress_tree(cwd: Path) -> ProgressTree | None:
     latest_ckpt = None
     for db_file in cp_dir.glob("*.db"):
         try:
-            store = SQLiteCheckpointStore(str(db_file))
+            store: SQLiteCheckpointStore[EngineState] = SQLiteCheckpointStore(str(db_file))
             ckpt = store.load_latest()
             if ckpt is not None and (
                 latest_ckpt is None or ckpt.round > latest_ckpt.round

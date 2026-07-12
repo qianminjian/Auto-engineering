@@ -317,7 +317,7 @@ def migrate_v1_to_v2(src_json: Path, dst_sqlite: Path) -> str:
     history = _v1_history_to_v2(v1_data.get("history", []))
 
     # 3. SQLite 持久化
-    store = SQLiteCheckpointStore(str(dst_sqlite))
+    store: SQLiteCheckpointStore[CheckpointEnvelope] = SQLiteCheckpointStore(str(dst_sqlite))
     cp_id = store.save(
         state=state,
         round=state.round,

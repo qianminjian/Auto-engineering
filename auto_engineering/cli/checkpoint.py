@@ -51,7 +51,7 @@ def _iter_checkpoint_stores(cp_dir: Path):
     """
     for db_file in sorted(cp_dir.glob("*.db")):
         try:
-            store = SQLiteCheckpointStore(str(db_file))
+            store: SQLiteCheckpointStore[EngineState] = SQLiteCheckpointStore(str(db_file))
             yield store, db_file
         except (OSError, sqlite3.Error, ValueError) as e:
             _cli_warn(f"skip {db_file.name}: {e}")
@@ -106,7 +106,7 @@ def register_checkpoint_commands(main: click.Group) -> None:
         db_path = cp_dir / "ae-checkpoints.db"
 
         try:
-            store = SQLiteCheckpointStore(str(db_path))
+            store: SQLiteCheckpointStore[EngineState] = SQLiteCheckpointStore(str(db_path))
             cp_id = store.save(
                 state=state if isinstance(state, EngineState) else state_data,  # type: ignore[arg-type]
                 round=round,

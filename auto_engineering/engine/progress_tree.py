@@ -231,7 +231,7 @@ class ProgressTree:
                 meta[cid] = (comp_name, ref)
                 order.append(cid)
             counts[cid] += len(b.get("tasks", []))
-        targets = [
+        targets: list[tuple[str, str | None, str, str, str, int]] = [
             (cid, "sys", "component", meta[cid][0], meta[cid][1], counts[cid])
             for cid in order
         ]

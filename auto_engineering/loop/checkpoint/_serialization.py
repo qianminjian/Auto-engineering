@@ -56,7 +56,7 @@ def serialize_state(state: Any) -> str:
     if hasattr(state, "dict"):
         return json.dumps(state.dict())
     if is_dataclass(state):
-        return json.dumps(asdict(state))
+        return json.dumps(asdict(state))  # type: ignore[arg-type]  # is_dataclass 已确认为实例(非类)
     if isinstance(state, dict):
         return json.dumps(state)
     if hasattr(state, "to_dict"):
@@ -247,7 +247,7 @@ class LastValueChannel(Channel[T]):
 
     def copy(self) -> Self:
         """深拷贝 LastValueChannel(包含 _value)."""
-        new = LastValueChannel(self.name)
+        new: LastValueChannel[T] = LastValueChannel(self.name)
         # 深拷贝 _value 避免可变对象共享(JSON 序列化值可能是 dict/list)
         new._value = _copy.deepcopy(self._value)
         return new  # type: ignore[return-value]
@@ -280,7 +280,7 @@ class AccumulatingChannel(Channel[T]):
         super().__init__(name)
         self._values: list[T] = list(initial) if initial else []
 
-    def get(self) -> list[T]:
+    def get(self) -> list[T]:  # type: ignore[override]  # AccumulatingChannel 聚合语义: 返回 list 而非 T|None (有意的接口变体)
         return list(self._values)  # 防御性拷贝, 防止外部修改内部状态
 
     def update(self, values: Sequence[T | list[T]]) -> bool:
@@ -306,7 +306,7 @@ class AccumulatingChannel(Channel[T]):
 
     def copy(self) -> Self:
         """深拷贝 AccumulatingChannel(包含 _values)."""
-        new = AccumulatingChannel(self.name)
+        new: AccumulatingChannel[T] = AccumulatingChannel(self.name)
         new._values = _copy.deepcopy(self._values)
         return new  # type: ignore[return-value]
 

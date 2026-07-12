@@ -138,20 +138,20 @@ def _check_init_manifest_old() -> DimensionResult:
 
 
 def _check_gate_pass() -> DimensionResult:
-    """Smoke 2: 6 Gate 列表 + Stage 过滤 (v5.0 §B6.2, v5.4 Q2: coverage 已删除)."""
+    """Smoke 2: 7 Gate 列表 + Stage 过滤 (v5.6: safety/lint/type_check/audit/contract/test/build)."""
     try:
         from auto_engineering.gates import DEFAULT_GATES
         from auto_engineering.gates.base import GateVerdict, Verdict
 
-        # Test 1: DEFAULT_GATES 6 道实例 (v5.4 Q2: coverage 已删除)
-        if len(DEFAULT_GATES) != 6:
+        # Test 1: DEFAULT_GATES 7 道实例 (v5.6: coverage 删除, audit 新增)
+        if len(DEFAULT_GATES) != 7:
             return DimensionResult(
                 "gate_pass", False,
-                f"DEFAULT_GATES has {len(DEFAULT_GATES)} gates, expected 6",
+                f"DEFAULT_GATES has {len(DEFAULT_GATES)} gates, expected 7",
             )
 
         # Test 2: GateVerdict 有 passed 字段 (dataclass, 非 Enum)
-        sample_passing = GateVerdict.passed(msg="ok", gate_name="test")
+        sample_passing = GateVerdict.ok(msg="ok", gate_name="test")
         sample_failing = GateVerdict.failed(msg="bad", gate_name="test")
         if not (sample_passing.passed is True and sample_failing.passed is False):
             return DimensionResult(
@@ -168,7 +168,7 @@ def _check_gate_pass() -> DimensionResult:
 
         return DimensionResult(
             "gate_pass", True,
-            "DEFAULT_GATES=6 + Verdict alias",
+            "DEFAULT_GATES=7 + Verdict alias",
         )
     except Exception as e:
         return DimensionResult(

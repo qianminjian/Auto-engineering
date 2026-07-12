@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from auto_engineering.cli.helpers import ProgressLogger, TokenTracker
+from auto_engineering.engine.state import EngineState
 from auto_engineering.runtime.cancellation import CancellationToken
 
 
@@ -263,7 +264,7 @@ def _run_v2_orchestrator(
     db_path = Path(project_root) / ".ae-state" / "checkpoints.db"
     db_path.parent.mkdir(parents=True, exist_ok=True)
     from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
-    checkpoint_store = SQLiteCheckpointStore(str(db_path))
+    checkpoint_store: SQLiteCheckpointStore[EngineState] = SQLiteCheckpointStore(str(db_path))
 
     # 2. Gate 列表: 优先从 init-manifest 构造 (IL-AC-02), 否则用默认
     manifest = load_init_manifest(project_root)
@@ -288,7 +289,7 @@ def _run_v2_orchestrator(
         executor=None,
         config=config,
     )
-    orchestrator._thread_id = uuid.uuid4().hex
+    orchestrator._thread_id = uuid.uuid4().hex  # type: ignore[attr-defined]  # v5.5 动态注入 thread_id
 
     # 5. 启动 asyncio.run (Orchestrator.run 是 async)
     started_at = time.monotonic()
@@ -344,7 +345,7 @@ def _run_tick_init(
     from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
     from auto_engineering.loop.tick_orchestrator import TickOrchestrator
 
-    store = SQLiteCheckpointStore(_checkpoint_db_path(root))
+    store: SQLiteCheckpointStore[EngineState] = SQLiteCheckpointStore(_checkpoint_db_path(root))
     try:
         orch = TickOrchestrator(root, checkpoint_store=store)
         action = orch.init(
@@ -363,7 +364,7 @@ def _run_tick_step(result_file: Path, root: Path) -> None:
     from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
     from auto_engineering.loop.tick_orchestrator import TickOrchestrator
 
-    store = SQLiteCheckpointStore(_checkpoint_db_path(root))
+    store: SQLiteCheckpointStore[EngineState] = SQLiteCheckpointStore(_checkpoint_db_path(root))
     try:
         orch = TickOrchestrator.restore(root, store)
         action = orch.tick(result_file)
@@ -381,7 +382,7 @@ def _run_tick_status(root: Path) -> None:
     from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
     from auto_engineering.loop.tick_orchestrator import TickOrchestrator
 
-    store = SQLiteCheckpointStore(_checkpoint_db_path(root))
+    store: SQLiteCheckpointStore[EngineState] = SQLiteCheckpointStore(_checkpoint_db_path(root))
     try:
         orch = TickOrchestrator.restore(root, store)
         s = orch._state
@@ -409,7 +410,7 @@ def _run_tick_resume(checkpoint_id: str, root: Path) -> None:
     from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
     from auto_engineering.loop.tick_orchestrator import TickOrchestrator
 
-    store = SQLiteCheckpointStore(_checkpoint_db_path(root))
+    store: SQLiteCheckpointStore[EngineState] = SQLiteCheckpointStore(_checkpoint_db_path(root))
     try:
         orch = TickOrchestrator.restore(root, store, checkpoint_id=checkpoint_id)
         action = orch._build_action()
