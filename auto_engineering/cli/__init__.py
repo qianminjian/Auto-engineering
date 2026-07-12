@@ -32,7 +32,6 @@ from auto_engineering.cli.dev_loop import (
 )
 from auto_engineering.cli.doctor import register_doctor_command
 from auto_engineering.cli.gate_check import register_gate_check_command
-from auto_engineering.cli.progress import register_progress_command
 
 # 私有符号 (模块内部使用, _ 前缀按 Python 约定不公开)
 # v5.5 audit P0-11: __all__ 排除私有符号, from cli import * 不会导出
@@ -45,6 +44,7 @@ from auto_engineering.cli.helpers import (
     _log_engine_version,
     classify_error,
 )
+from auto_engineering.cli.progress import register_progress_command
 from auto_engineering.cli.status import (
     register_status_command,
 )

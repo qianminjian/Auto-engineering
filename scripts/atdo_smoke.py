@@ -24,7 +24,6 @@ Reference:
 from __future__ import annotations
 
 import argparse
-import asyncio
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -157,19 +156,19 @@ def _check_gate_pass() -> DimensionResult:
         if not (sample_passing.passed is True and sample_failing.passed is False):
             return DimensionResult(
                 "gate_pass", False,
-                f"GateVerdict.passed/failed factory methods 异常",
+                "GateVerdict.passed/failed factory methods 异常",
             )
 
         # Test 3: Verdict 是 GateVerdict 的别名 (v5.0 §B6.1 兼容)
         if Verdict is not GateVerdict:
             return DimensionResult(
                 "gate_pass", False,
-                f"Verdict is not identity-equal to GateVerdict, v5.0 §B6.1 兼容违反",
+                "Verdict is not identity-equal to GateVerdict, v5.0 §B6.1 兼容违反",
             )
 
         return DimensionResult(
             "gate_pass", True,
-            f"DEFAULT_GATES=6 + Verdict alias",
+            "DEFAULT_GATES=6 + Verdict alias",
         )
     except Exception as e:
         return DimensionResult(
@@ -319,7 +318,6 @@ def _check_guardrail_3_states() -> DimensionResult:
 def _check_cli_doctor() -> DimensionResult:
     """Smoke 6: CLI doctor 7 项检查 (P2-1)."""
     try:
-        import json
         import os
         import subprocess
 
@@ -390,12 +388,12 @@ def _check_plugin_load() -> DimensionResult:
             )
         try:
             import json
-            with open(plugin_json, "r", encoding="utf-8") as f:
+            with open(plugin_json, encoding="utf-8") as f:
                 data = json.load(f)
             if not isinstance(data, dict) or "name" not in data:
                 return DimensionResult(
                     "plugin_load", False,
-                    f"plugin.json 无效: 缺少 'name' 字段",
+                    "plugin.json 无效: 缺少 'name' 字段",
                 )
         except json.JSONDecodeError as e:
             return DimensionResult(

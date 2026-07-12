@@ -313,7 +313,7 @@ class TestAuditRegexSelfTest:
     def test_silent_except_py(self) -> None:
         from auto_engineering.gates.audit import _SILENT_EXCEPT_PY
         assert _SILENT_EXCEPT_PY.search("    except ValueError:\n")  # 正例: 裸吞
-        # 反例: 有 logger / raise / # noqa 同行 → 不算静默吞
+        # 反例: 有 logger / raise /
         assert not _SILENT_EXCEPT_PY.search("    except ValueError:  # noqa\n")
         assert not _SILENT_EXCEPT_PY.search("    except ValueError:  # logger.warning\n")
 
