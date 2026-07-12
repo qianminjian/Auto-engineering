@@ -21,9 +21,11 @@ jobs:
         uses: astral-sh/setup-uv@v5
         with:
           python-version: "3.12"
-      - name: Sync deps (含 dev: ruff/pytest 插件)
+      - name: "Sync deps (含 dev: ruff/pytest 插件)"
         run: uv sync --extra dev
       - name: Lint (ruff)
         run: uv run ruff check .
-      - name: Test (pytest, no-cov)
-        run: uv run pytest tests/ --no-cov -q --timeout=120
+      - name: Test + coverage gate (pytest, ≥90%)
+        # design §B5.1/B13: coverage 为 remote-only gate — 环内 7 道不含 coverage
+        # (16G 内存约束下 per-stage instrumentation ~2× 不可行), 由远程 CI 全量跑一次强制 ≥90%.
+        run: uv run pytest tests/ --cov=auto_engineering --cov-report=term-missing --cov-fail-under=90 -q --timeout=120

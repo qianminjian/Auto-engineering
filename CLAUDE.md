@@ -74,7 +74,7 @@ Engine 层 (auto_engineering/)
     prompts.py         — v5.0 system prompts (architect/developer/critic)
   gates/
     base.py            — Gate ABC + GateVerdict + DEFAULT_GATES (7 道)
-    safety/lint/type_check/contract/test/coverage/build.py
+    safety/lint/type_check/audit/contract/test/build.py
   cli/
     doctor.py          — 环境预检 (Python/uv/git/sqlite3/API_KEY/.ae-state/init-manifest)
     gate_check.py      — --all (5 道) / --quick (3 道)
@@ -175,7 +175,7 @@ python3 scripts/atdo_smoke.py       # Runtime smoke (7 维度)
 2. **Stage 2 — Developer (Claude Code Agent 自己）**
    - **逐个 TaskCreate 执行 TDD（Red→Green→Refactor）**
    - 每个 unit: RED (write failing test) → GREEN (minimal impl) → REFACTOR (clean > still green) → git commit
-   - **完成所有 TaskCreate 后**：跑全部 7 Gate **并行** (`safety` + `lint` + `type_check` + `contract` + `test` + `coverage` + `build`)
+   - **完成所有 TaskCreate 后**：跑全部 7 Gate **并行** (`safety` + `lint` + `type_check` + `audit` + `contract` + `test` + `build`)
    - 记录：files_changed, commit_hash, test_results
 
 3. **Stage 3 — Critic (code-reviewer Agent）**
