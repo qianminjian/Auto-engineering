@@ -608,3 +608,73 @@ class TestInitManifestSchema:
 
         result = validate_init_manifest(self._MANIFEST_VALID)
         assert result.ok is True, f"合法 manifest 应通过: {result.errors}"
+
+
+# ============================================================
+# T33 — conventions.ci_platform + structure.design_root (IL-AC-08)
+# ============================================================
+
+
+_MANIFEST_FULL: dict = {
+    "schema_version": "1.0",
+    "project_type": "app-service",
+    "language": "python",
+    "structure": {
+        "source_root": "src/",
+        "test_root": "tests/",
+        "design_root": "design/",
+    },
+    "conventions": {
+        "linter": "ruff",
+        "type_checker": "pyright",
+        "test_runner": "pytest",
+        "ci_platform": "github",
+    },
+}
+
+
+class TestCiPlatform:
+    """T33: conventions.ci_platform 提取."""
+
+    def test_extract_ci_platform(self) -> None:
+        from auto_engineering.loop.init_contract import get_ci_platform_from_manifest
+
+        assert get_ci_platform_from_manifest(_MANIFEST_FULL) == "github"
+
+    def test_ci_platform_missing_returns_none(self) -> None:
+        from auto_engineering.loop.init_contract import get_ci_platform_from_manifest
+
+        m = dict(_MANIFEST_FULL)
+        m["conventions"] = dict(m["conventions"])
+        del m["conventions"]["ci_platform"]
+        assert get_ci_platform_from_manifest(m) is None
+
+    def test_ci_platform_invalid_enum_returns_none(self) -> None:
+        from auto_engineering.loop.init_contract import get_ci_platform_from_manifest
+
+        m = dict(_MANIFEST_FULL)
+        m["conventions"] = dict(m["conventions"])
+        m["conventions"]["ci_platform"] = "jenkins"
+        assert get_ci_platform_from_manifest(m) is None
+
+
+class TestDesignRoot:
+    """T33: structure.design_root 提取."""
+
+    def test_extract_design_root(self) -> None:
+        from auto_engineering.loop.init_contract import get_design_root_from_manifest
+
+        assert get_design_root_from_manifest(_MANIFEST_FULL) == "design/"
+
+    def test_design_root_missing_returns_default(self) -> None:
+        from auto_engineering.loop.init_contract import get_design_root_from_manifest
+
+        m = dict(_MANIFEST_FULL)
+        m["structure"] = dict(m["structure"])
+        del m["structure"]["design_root"]
+        assert get_design_root_from_manifest(m) == "design/"
+
+    def test_design_root_missing_structure_returns_default(self) -> None:
+        from auto_engineering.loop.init_contract import get_design_root_from_manifest
+
+        assert get_design_root_from_manifest({}) == "design/"

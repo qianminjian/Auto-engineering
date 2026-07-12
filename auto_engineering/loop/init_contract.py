@@ -305,6 +305,40 @@ def validate_init_manifest(manifest: dict[str, Any]) -> ValidationResult:
     )
 
 
+# ============================================================
+# T33 — conventions.ci_platform + structure.design_root (IL-AC-08)
+# ============================================================
+
+_VALID_CI_PLATFORMS: frozenset[str] = frozenset({"github", "gitlab", "none"})
+
+
+def get_ci_platform_from_manifest(manifest: dict[str, Any]) -> str | None:
+    """T33: 从 manifest.conventions.ci_platform 提取 CI 平台.
+
+    仅返回 schema 定义的合法值 (github/gitlab/none), 其他返回 None.
+    """
+    conventions = manifest.get("conventions")
+    if not isinstance(conventions, dict):
+        return None
+    val = conventions.get("ci_platform")
+    if isinstance(val, str) and val in _VALID_CI_PLATFORMS:
+        return val
+    return None
+
+
+def get_design_root_from_manifest(manifest: dict[str, Any]) -> str:
+    """T33: 从 manifest.structure.design_root 提取设计文档目录.
+
+    缺省返回 "design/" (约定优于配置).
+    """
+    structure = manifest.get("structure")
+    if isinstance(structure, dict):
+        val = structure.get("design_root")
+        if isinstance(val, str) and val.strip():
+            return val
+    return "design/"
+
+
 # v5.4 审计 r3 P1-1: get_gate_tools_from_manifest 已迁移到 gates.registry,
 # 此处 re-export (见文件顶部 import). 函数体不再重复定义.
 
@@ -316,6 +350,8 @@ __all__ = [
     "SUPPORTED_LANGUAGES",
     "SUPPORTED_PROJECT_TYPES",
     "ValidationResult",
+    "get_ci_platform_from_manifest",
+    "get_design_root_from_manifest",
     "get_gate_tools_from_manifest",
     "load_init_manifest",
     "validate_against_schema",
