@@ -633,6 +633,91 @@ _MANIFEST_FULL: dict = {
 }
 
 
+# ============================================================
+# T35 — Reference fixture + round-trip 消费者驱动契约测试 (IL-AC-07)
+# ============================================================
+
+
+_REFERENCE_MANIFEST: dict = {
+    "schema_version": "1.0",
+    "project_type": "app-service",
+    "language": "python",
+    "framework": "FastAPI",
+    "structure": {
+        "source_root": "src/",
+        "test_root": "tests/",
+        "design_root": "design/",
+        "entry_point": "src/main.py",
+        "config_files": ["pyproject.toml"],
+    },
+    "conventions": {
+        "package_manager": "uv",
+        "linter": "ruff",
+        "type_checker": "pyright",
+        "test_runner": "pytest",
+        "ci_platform": "github",
+    },
+}
+
+
+class TestReferenceManifestRoundTrip:
+    """T35: 消费者驱动契约 — 参考manifest写→读→验→提取全链路."""
+
+    def test_reference_manifest_is_valid(self) -> None:
+        """参考 fixture 本身应通过 schema + validate_init_manifest."""
+        from auto_engineering.loop.init_contract import validate_init_manifest
+
+        result = validate_init_manifest(_REFERENCE_MANIFEST)
+        assert result.ok is True, f"参考 manifest 应通过: {result.errors}"
+        assert result.warnings == [], f"参考 manifest 不应有 WARN: {result.warnings}"
+
+    def test_reference_manifest_round_trip_write_read(self, tmp_path: Path) -> None:
+        """写→读→验: 参考 manifest → 文件 → load → validate → 一致."""
+        from auto_engineering.loop.init_contract import (
+            load_init_manifest,
+            validate_init_manifest,
+        )
+
+        state_dir = tmp_path / ".ae-state"
+        state_dir.mkdir()
+        (state_dir / "init-manifest.json").write_text(
+            json.dumps(_REFERENCE_MANIFEST, indent=2)
+        )
+
+        loaded = load_init_manifest(tmp_path)
+        assert loaded is not None
+        assert loaded["project_type"] == "app-service"
+        assert loaded["language"] == "python"
+
+        result = validate_init_manifest(loaded)
+        assert result.ok is True
+
+    def test_reference_manifest_field_extraction_consistency(self) -> None:
+        """T33 提取函数与参考 fixture 一致."""
+        from auto_engineering.loop.init_contract import (
+            get_ci_platform_from_manifest,
+            get_design_root_from_manifest,
+            get_gate_tools_from_manifest,
+        )
+
+        assert get_ci_platform_from_manifest(_REFERENCE_MANIFEST) == "github"
+        assert get_design_root_from_manifest(_REFERENCE_MANIFEST) == "design/"
+
+        tools = get_gate_tools_from_manifest(_REFERENCE_MANIFEST)
+        assert tools["linter"] == "ruff"
+        assert tools["type_checker"] == "pyright"
+        assert tools["test_runner"] == "pytest"
+
+    def test_reference_manifest_schema_idempotent(self) -> None:
+        """Schema 校验两次结果一致 (幂等)."""
+        from auto_engineering.loop.init_contract import validate_against_schema
+
+        r1 = validate_against_schema(_REFERENCE_MANIFEST)
+        r2 = validate_against_schema(_REFERENCE_MANIFEST)
+        assert r1.ok == r2.ok
+        assert r1.errors == r2.errors
+
+
 class TestMonorepoDegrade:
     """T34: monorepo project_type → 单包降级 WARN (IL-AC-08)."""
 
