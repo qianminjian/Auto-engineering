@@ -45,23 +45,24 @@
 | **51** | **环内增量 test_gate + commit_msg 背书 (T26f)** | 实现验证 T16l(`gates/test_gate.py` files_changed→pytest -k) + T16n(`gates/commit_msg_gate.py` Angular 格式) 与决策 #45(环内 vs 远程分层) 一致：① 环内增量测试(`_files_to_pytest_k()` 从 files_changed 推导 test keywords, `-k` 注入 `_build_cmd()`)——环内跑快速子集(秒级, skip coverage)，远程跑全量权威 pypi+coverage≥90%；② commit_msg gate 作为可选 gate(环内 developer stage 后)——Angular 12 类型校验 + subject≤50 字符，可选安装(不在 DEFAULT_GATES，需显式注册)；③ 两者均通过 `-k` 增量 + 可选 gate 设计回避了环内全量测试的 30-60s 延迟——符合 #45 §④ 环内=增量快子集原则。文档数 2 源文件(8187+3407行) + 18 tests(4 test_gate + 14 commit_msg_gate)。D24 | 2026-07-12 | ✅ |
 | **52** | **A4 gap_analysis 定案：GapReport schema-SSOT 保留 + 常量复用（非删除）** | 代码审计 A4 原表述"删除孤儿"，深入调研**修正方向**：GapReport/GapItem 是 gap_report_json 的**schema SSOT + 序列化契约 + 校验规则**，与 init-manifest.schema.json 同构——schema 定义体不需生产运行时 import，靠**契约测试**(test_gap_analysis 14 测)保证 dict 数据流符合契约。gap_report 数据流 **dict-native**(跨 tick 序列化存储 + `_build_action` 原样输出 gaps 到 action JSON 给 Agent + in-place resolution 修改)，插入 GapReport 对象需每点 from_dict/asdict 来回转换=负优化。**不删除**(设计 §B10.2 定义模型，删=降级违反 governance)、**不全流程 OO 接线**(负优化)，仅消除**唯一真实瑕疵**：guardrail.py:334 独立重复定义 `_BLOCKING_FORBIDDEN_RESOLUTIONS` → 复用 `gap_analysis._BLOCKING_FORBIDDEN` SSOT(同一 frozenset 对象)。澄清 guardrail:346 注释——与 validate_resolutions 仅共享禁止集常量，校验**时序不同**(apply前拦截 pending_decisions vs apply后审查 report)不可合并。类比 Channel/CheckpointManager 保留决策。D25 | 2026-07-12 | ✅ |
 | **53** | **T10d 定案：v5.5 orchestrator + semantic_evaluator 保留（不退役，共存）** | 退役前置只读审计确认 v5.5 orchestrator 是**活代码**：`ae dev-loop "需求"`(裸参数无 tick flag) → cli/__init__.py:212 `_run_v2_orchestrator` → v5.5 连续 while 循环(直调 LLM)，与 v5.6 tick 模式(--init/--tick/--status/--resume → `_run_tick_*`)按设计**并列共存**(docstring :135-142)。semantic_evaluator 唯一运行时消费者=orchestrator.py。用户决策**保留共存**：退役将 (1) 移除可达且有文档的 legacy CLI 路径(破坏性) (2) 需翻转共存决策(设计降级) (3) 级联删 semantic_evaluator 221 行 + 4 测试——撞两条红线，不执行。**修正 D22 中"semantic_evaluator 随 T10d 退役"的计划方向为保留**。类比 Channel/CheckpointManager 保留决策。无 status 翻转。D26 | 2026-07-12 | ✅ |
+| **54** | **单引擎 + 双驱动 (Dual-Driver) 远期架构方向 (v7.0) + "永不调 LLM"原则精确化** | 远期规划：v5.6 TickOrchestrator 收敛为**唯一循环引擎**，在 action/result 契约接缝挂两驱动——A(现状) Claude Code Agent 文件桥接填 result / B(v7.0) 独立进程内 AgentRuntime **自带 key** 调 LLM 填 result 回喂同一 tick。ports&adapters：**内部编排完全一致，只换执行后端**；Driver B 复用 v5.5 `_step_2e_run_agent` 执行栈作 tick 填充器，**subsume v5.5 独立跑护城河** → 给 T10d(#53) 明确远期退役出口(换薄驱动非留 fork)。**原则精确化(扩展非翻转,#39/#40 status 不变)**：「Python 永不调 LLM」→「**循环引擎**永不调 LLM；**驱动**可 opt-in 调(需 BYO key)」，引擎保持纯 Python 可测试。**当前只落地 2 项 P0 预留**(Phase 10, 净收益)：action/stage-result 版本化 schema SSOT + 契约测试(T33a)、执行栈标注双驱动共享资产不误删(T33b)。StandaloneDriver 本体 + v5.5 退役 → v7.0(路线图 V7-1~V7-8)。规格 `v7.0-Plan-DualDriver.md`，讨论 `discussion/v7.0-dual-driver-architecture.md`。D27 | 2026-07-12 | ✅ |
 
 ## 当前状态
 
 **阶段：** v5.6 实现启动 — Tick-Based Discrete Invocation + 5 层验证 + Pre-flight Gap Analysis。设计整合完成 + 深度审计收口；Phase 3 T9 Tick CLI 接线完成，进入 Phase 3 收尾。
 
 **最近动作 (2026-07-12)：**
+- **v7.0 双驱动远期架构立项**（决策 #54）：单引擎(TickOrchestrator)+双驱动(Agent/Standalone) ports&adapters，subsume v5.5 独立跑护城河并给 T10d 退役出口；「Python 永不调 LLM」精确化为「引擎不调/驱动可调」(扩展非翻转)。产出 `v7.0-Plan-DualDriver.md` + discussion。**当前落地 Phase 10 两项 P0 预留**(T33a action/result schema SSOT + T33b 执行栈共享标注)，StandaloneDriver 本体入 v7.0 路线图
 - **T16h ci.yml 薄壳 + ruff 全量转绿** (24afa07)：line-length 100→120 消化中文注释宽度；生产 ruff 全清(E402 上移/E501 折行/SIM108 三元)，测试 per-file-ignore 扩 RUF012/SIM117/B017；`.github/workflows/ci.yml`(uv+ruff+pytest 薄壳)。1968 passed。mypy(203)/coverage-gate 刻意排除薄壳待决策
 - **T10d 定案：v5.5 orchestrator + semantic_evaluator 保留**（决策 #53）：退役前置审计确认 v5.5 是活代码(`ae dev-loop` 裸参数路径)，用户决策不退役、保留 v5.5/v6 共存。修正 D22 计划方向。无 status 翻转
 - **设计背书收口**：T26e PRBackend 选型背书（决策 #50）+ T26f 环内增量 test_gate + commit_msg（决策 #51）——实现验证通过，与决策 #45 一致。Wave 6 设计背书全部完成
-- **Phase 7 Init-Loop 契约扩展** (T32-T35)：schema.json SSOT + ci_platform/design_root 提取 + monorepo 降级 WARN + reference fixture round-trip 测试。33 tests pass
 
 **最近动作 (2026-07-11)：**
 - **Phase 3 T9 Tick CLI 接线完成** (fe8bee2/f4e4175/0a2daca)：`ae dev-loop --init/--tick/--status/--resume` + 跨进程 restore（SQLite → EngineState → BatchState/ProgressTree/DesignDoc rehydrate）+ A3 `batch_state_json` 写侧闭合。BatchState 序列化自包含（内嵌轻量 batch_plan seed，plates 不持久化——"不存重 plates"主决策保留）。1717 tests 通过，端到端 3 独立进程验证 thread_id/batch_id 跨进程保真。属实现接线，无 status 翻转、无设计降级
 - **设计文档深度审计 + 22 项收口深化** (决策 #49, Phase 8)：3 并行子代理审 4214 行 → 规格 6.5/10、端到端 2.5/10。P0×4 全为代码缺口(已 T9/T10/T27/T32 跟踪)；文档规格缺陷 S-1~S-20+Q-1/Q-2 共 22 项**纯文档收口**（补 CoverageItem/GateVerdict/done verdict 权威 schema + file-bridge 边界矩阵 §C.3.5 + 路径更正 + 过度设计存续论证）。**S-1 语义评估矛盾定案**：v5.6 全路径无语义评估，代码 semantic_evaluator 移除跟踪到 Phase 3 T10d。审计产出 `_scratch/design-audit/`，无 status 翻转
 - **Init-Loop 契约 v5.6 扩展** (决策 #48)：`init-manifest.schema.json` 版本化 SSOT + ci_platform/design_root 字段 + monorepo 单包降级 + 消费者驱动契约测试
 
-**下一步：** Phase 3 收尾（T9b progress CLI + T10 dev-loop.md 8-stage 重写 + T11 SKILL.md + T10c PRBackend）→ Phase 4/4b（Prompt Registry + Pipeline）→ Phase 5/6/7（测试 + 审计方法论 + Init 契约）。T10d 已定案保留共存（决策 #53），semantic_evaluator 不再计划移除
+**下一步：** Phase 1-9 全完成 (100/100)。**当前唯一进行中：Phase 10 双驱动接缝预留**（T33a action/result schema SSOT + T33b 执行栈共享标注，v7.0 前置必须项，净收益）。v7.0 双驱动主体（StandaloneDriver + v5.5 退役）见 `v7.0-Plan-DualDriver.md` 路线图，待里程碑扩展。T10d 已定案保留共存（#53），v7.0 由 Driver B subsume 后再退役
 
 **阻塞项：** 无
 
@@ -87,4 +88,4 @@
 
 ## 引用文件
 
-@design/v5.6-Design-Loop.md · @design/INIT-LOOP-CONTRACT.md · @design/discussion/v5.6-layered-verification-design.md · @design/INDEX.md · @docs/EARS-v5.0.md · @docs/api-reference.md · @docs/production-deployment.md · @design/decisions/audit-deferred-2026-07-07.md
+@design/v5.6-Design-Loop.md · @design/v7.0-Plan-DualDriver.md · @design/INIT-LOOP-CONTRACT.md · @design/discussion/v5.6-layered-verification-design.md · @design/discussion/v7.0-dual-driver-architecture.md · @design/INDEX.md · @docs/EARS-v5.0.md · @docs/api-reference.md
