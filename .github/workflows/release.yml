@@ -9,15 +9,12 @@ on:
         description: "Release version (e.g. 5.0.0)"
         required: true
 
-<<<<<<< HEAD
 permissions:
   contents: write
   issues: write
   pull-requests: write
   packages: write
 
-=======
->>>>>>> 8f95426a614139462d235628b8ffdbf263ec807b
 jobs:
   release:
     runs-on: ubuntu-latest
