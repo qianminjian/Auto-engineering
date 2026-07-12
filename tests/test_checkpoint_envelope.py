@@ -9,6 +9,7 @@ Checkpoint[T] 泛型 + meta() 提取 + 异常类属性. SQLiteCheckpointStore
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from pathlib import Path
 
 from auto_engineering.loop.checkpoint.records import (
     Checkpoint,

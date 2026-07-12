@@ -17,6 +17,8 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
+import pytest
+
 from auto_engineering.tools.bash_tools import RunBashTool
 from auto_engineering.tools.file_tools import EditFileTool, WriteFileTool
 from tests.conftest import run_async

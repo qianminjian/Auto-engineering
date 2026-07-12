@@ -65,7 +65,7 @@ from typing import TYPE_CHECKING, Any
 
 from auto_engineering.agents.schema import derive_output_schema
 from auto_engineering.engine.state import EngineState
-from auto_engineering.gates.base import Gate
+from auto_engineering.gates.base import Gate, GateVerdict
 from auto_engineering.loop.checkpoint.manager import CheckpointManager
 from auto_engineering.loop.convergence import (
     ConvergenceConfig,

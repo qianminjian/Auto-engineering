@@ -36,14 +36,10 @@ def _run_cli(*args: str, cwd: Path | None = None, timeout: int = 30) -> subproce
     """
     import shutil
 
-    ae_bin = shutil.which("ae")
-    if ae_bin is None:
-        # 退而求其次: 找 .venv/bin/ae
-        venv_ae = REPO_ROOT / ".venv" / "bin" / "ae"
-        if venv_ae.exists():
-            ae_bin = str(venv_ae)
-        else:
-            ae_bin = sys.executable  # 最后退到 python -c
+    # 优先项目 .venv/bin/ae (当前开发版), 避免命中全局旧版安装 (~/.local/bin/ae) —
+    # which("ae") 会解析到 PATH 中的陈旧全局 ae, 导致契约测试实际测旧版而非当前代码。
+    venv_ae = REPO_ROOT / ".venv" / "bin" / "ae"
+    ae_bin = str(venv_ae) if venv_ae.exists() else (shutil.which("ae") or sys.executable)
     return subprocess.run(
         [ae_bin, *args],
         cwd=str(cwd) if cwd else str(REPO_ROOT),
@@ -184,75 +180,46 @@ class TestAgent:
 
 
 class TestDevLoopJSON:
-    """ae dev-loop --format json — 6 字段 JSON 契约."""
+    """ae dev-loop --init — v6 tick action JSON 契约 (BEACON #39/#2)."""
 
-    def test_ae_dev_loop_stdout_json_schema(self) -> None:
-        """--format json 输出必须含 6 字段: status/thread_id/rounds/verdict/duration_sec/gate_summary."""
-        import os
+    def test_ae_dev_loop_init_action_json_schema(self) -> None:
+        """--init 输出首个 action JSON, 含 v6 tick 契约字段.
 
-        env = os.environ.copy()
-        env["ANTHROPIC_API_KEY"] = "test-key-for-contract"
-        env["CLAUDE_CODE"] = "1"  # 跳过 preflight api_key 检查
-        # 在 tmp_path 中构造最小 git 仓库
+        v5.6 起 dev-loop 为离散 tick 调用 (BEACON #39 替换 v5.5 一次性
+        --format json; CLAUDE.md v5.1 起 CLI 子进程模式废弃)。--init 由 Python
+        构造首 action, 不调 LLM, 无需 API key。
+        """
         import subprocess
+        import tempfile
 
-        subprocess.run(["git", "init"], cwd="/tmp", capture_output=True, timeout=10)
-        with __import__("tempfile").TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory() as tmp:
             tdir = Path(tmp)
             subprocess.run(["git", "init"], cwd=tdir, capture_output=True, timeout=10)
-            subprocess.run(
-                ["git", "config", "user.email", "test@ae.dev"], cwd=tdir, capture_output=True
+            result = _run_cli(
+                "dev-loop", "noop", "--init", "--max-rounds", "1",
+                cwd=tdir, timeout=60,
             )
-            subprocess.run(
-                ["git", "config", "user.name", "Test"], cwd=tdir, capture_output=True
-            )
-            (tdir / "README.md").write_text("test")
-            subprocess.run(["git", "add", "."], cwd=tdir, capture_output=True)
-            subprocess.run(
-                ["git", "commit", "-m", "init"], cwd=tdir, capture_output=True
-            )
-            import shutil
-
-            ae_bin = shutil.which("ae") or str(REPO_ROOT / ".venv" / "bin" / "ae")
-            result = subprocess.run(
-                [ae_bin, "dev-loop", "noop", "--format", "json", "--max-rounds", "1"],
-                cwd=str(tdir),
-                capture_output=True,
-                text=True,
-                timeout=60,
-                env=env,
-            )
-        # 即使 LLM 不可达, JSON 契约必须被尊重
-        # 找含 "status" 字段的多行 JSON block (6 字段契约对象)
-        # 排除 progress log (单行 {"event": ...})
-        json_blocks: list[str] = []
-        depth = 0
-        current: list[str] = []
+        # --init 输出单行 compact action JSON。逐行找含 thread_id+action 的 dict。
+        data = None
         for ln in result.stdout.splitlines():
-            stripped = ln.strip()
-            if stripped.startswith("{") and depth == 0:
-                current = [ln]
-                depth = 1
-            elif depth > 0:
-                current.append(ln)
-                depth += ln.count("{") - ln.count("}")
-                if depth == 0:
-                    json_blocks.append("\n".join(current))
-        if not json_blocks:
-            pytest.fail(f"no JSON block in stdout:\n{result.stdout[:500]}\nstderr={result.stderr[:300]}")
-        # 找最后含 6 字段契约的 block
-        for block in reversed(json_blocks):
+            ln = ln.strip()
+            if not (ln.startswith("{") and ln.endswith("}")):
+                continue
             try:
-                data = json.loads(block)
+                obj = json.loads(ln)
             except json.JSONDecodeError:
                 continue
-            if "thread_id" in data and "gate_summary" in data:
-                # 6 字段验证
-                required = {"status", "thread_id", "rounds", "verdict", "duration_sec", "gate_summary"}
-                missing = required - set(data.keys())
-                assert not missing, f"missing fields: {missing}, got: {set(data.keys())}"
-                return
-        pytest.fail(f"no JSON block with 6-field contract in stdout:\n{result.stdout[:500]}")
+            if isinstance(obj, dict) and "thread_id" in obj and "action" in obj:
+                data = obj
+                break
+        if data is None:
+            pytest.fail(
+                f"no action JSON with thread_id+action in stdout:\n"
+                f"{result.stdout[:500]}\nstderr={result.stderr[:300]}"
+            )
+        required = {"tick", "stage", "thread_id", "action", "gate_summary"}
+        missing = required - set(data.keys())
+        assert not missing, f"missing fields: {missing}, got: {set(data.keys())}"
 
 
 # ============================================================
