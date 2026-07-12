@@ -86,12 +86,12 @@ class BaseTool(ABC):
 
         try:
             root_real = os.path.realpath(self.project_root)
-            # 文件存在 → realpath 双侧 (展 symlink); 不存在 → lexical
-            if os.path.exists(file_path):
-                target_real = os.path.realpath(file_path)
-            else:
-                # Path.resolve() 在中间目录不存在时, 仍尽量解析已存在部分
-                target_real = str(Path(file_path).resolve())
+            # 文件存在 → realpath 双侧 (展 symlink); 不存在 → lexical resolve
+            target_real = (
+                os.path.realpath(file_path)
+                if os.path.exists(file_path)
+                else str(Path(file_path).resolve())
+            )
 
             # 防御: realpath 后不在 root_real + sep 内
             root_prefix = root_real if root_real.endswith(os.sep) else root_real + os.sep

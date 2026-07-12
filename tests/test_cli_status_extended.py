@@ -298,7 +298,7 @@ def test_register_status_command_registers_on_group() -> None:
         pass
 
     register_status_command(test_group)
-    commands = [cmd for cmd in test_group.commands]
+    commands = list(test_group.commands)
     assert "status" in commands
 
 

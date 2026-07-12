@@ -28,7 +28,7 @@ class TestInjectSelfRefineContext:
         )
         result = _inject_self_refine_context(tasks, state, "architect", {})
         # architect stage 直接返回原 list (不做任何注入, 无需复制)
-        for orig, res in zip(tasks, result):
+        for orig, res in zip(tasks, result, strict=False):
             assert res.description == orig.description
         assert result is tasks  # 同一引用, 不做无谓复制
 
@@ -37,7 +37,7 @@ class TestInjectSelfRefineContext:
         tasks = _make_tasks()
         state = EngineState(requirement="test")
         result = _inject_self_refine_context(tasks, state, "developer", {})
-        for orig, res in zip(tasks, result):
+        for orig, res in zip(tasks, result, strict=False):
             assert res.description == orig.description
 
     def test_developer_stage_injects_critic_feedback(self):

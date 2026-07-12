@@ -145,6 +145,6 @@ class TestAuditDimensions:
 
     def test_dimensions_have_descriptions(self):
         """每个维度应有非空描述."""
-        for key, desc in AUDIT_DIMENSIONS.items():
+        for _key, desc in AUDIT_DIMENSIONS.items():
             assert isinstance(desc, str)
             assert len(desc) > 10

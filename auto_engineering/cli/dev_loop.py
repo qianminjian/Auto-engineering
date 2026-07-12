@@ -81,12 +81,9 @@ class OrchestratorRunResult:
         verdict_obj = getattr(orchestrator, "verdict", None)
         if verdict_obj is not None and getattr(verdict_obj, "should_stop", False):
             level = getattr(verdict_obj, "level", 0)
-            if level == 4:
-                # HARD_LIMIT (Bug 3 升级: critic 异常 → 异常停止)
-                status = "failed"
-            else:
-                # QUALITY_PASS 或 MAJOR 超限等 (含 level=2 STAGNANT)
-                status = "completed"
+            # level=4 HARD_LIMIT (Bug 3 升级: critic 异常) → failed;
+            # 其余 (QUALITY_PASS / MAJOR 超限 / level=2 STAGNANT) → completed
+            status = "failed" if level == 4 else "completed"
             verdict_dict = {
                 "level": level,
                 "level_name": getattr(verdict_obj, "level_name", "UNKNOWN"),

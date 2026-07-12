@@ -19,9 +19,7 @@ def detect_plugin_mode() -> bool:
     anthropic_cli = os.environ.get("ANTHROPIC_CLI", "").lower()
     if "claude" in anthropic_cli:
         return True
-    if os.environ.get("ANTHROPIC_AUTH_TOKEN"):
-        return True
-    return False
+    return bool(os.environ.get("ANTHROPIC_AUTH_TOKEN"))
 
 
 def detect_plugin_mode_detail():

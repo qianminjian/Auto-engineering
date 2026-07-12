@@ -27,6 +27,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from auto_engineering.utils import parse_version as _parse_version
+
 _logger = logging.getLogger(__name__)
 
 
@@ -118,8 +120,6 @@ class ValidationResult:
 # 工具函数
 # ============================================================
 
-
-from auto_engineering.utils import parse_version as _parse_version
 
 # T32: JSON Schema SSOT (IL-AC-06). 与 init-manifest.schema.json 同目录.
 INIT_MANIFEST_SCHEMA_PATH: Path = Path(__file__).resolve().parent / "init-manifest.schema.json"

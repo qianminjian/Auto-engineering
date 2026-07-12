@@ -64,7 +64,7 @@ class TestClassifyErrorOverride:
 
     def test_task_cancelled_returns_130(self) -> None:
         err = AEError(ErrorCode.TASK_CANCELLED, "user pressed Ctrl-C")
-        cat, code = classify_error(err)
+        _cat, code = classify_error(err)
         # TASK_CANCELLED 精确匹配 USER_ERROR (default in map), 显式 exit 130
         assert code == 130
 

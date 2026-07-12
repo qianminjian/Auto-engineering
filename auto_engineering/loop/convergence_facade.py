@@ -55,10 +55,7 @@ def check_gates_passed(gate_results: dict[str, GateVerdict]) -> bool:
     """所有 gate 都通过. 空 dict (无 gate 配置) 返回 True."""
     if not gate_results:
         return True
-    for verdict in gate_results.values():
-        if not verdict.passed:
-            return False
-    return True
+    return all(verdict.passed for verdict in gate_results.values())
 
 
 def _log_gate_block(

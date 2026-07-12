@@ -296,7 +296,9 @@ class TestExitCodes:
         # tmp_path 不在 git 仓库内
         result = _run_cli("dev-loop", "test", "--max-rounds", "1", cwd=tmp_path, timeout=20)
         # preflight 失败 → SystemExit(1)
-        assert result.returncode == 1, f"expected 1 (preflight fail), got {result.returncode}:\nstderr={result.stderr[:200]}"
+        assert result.returncode == 1, (
+            f"expected 1 (preflight fail), got {result.returncode}:\nstderr={result.stderr[:200]}"
+        )
 
     def test_exit_code_130_sigint(self) -> None:
         """SIGINT 退出码契约: 验证 classify_error 映射 (TASK_CANCELLED → 130)."""

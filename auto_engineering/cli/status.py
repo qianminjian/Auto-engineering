@@ -54,9 +54,8 @@ def _collect_status_json(cwd: Path) -> dict:
         try:
             store = SQLiteCheckpointStore(str(db_file))
             ckpt = store.load_latest()
-            if ckpt is not None:
-                if latest_ckpt is None or ckpt.round > latest_ckpt.round:
-                    latest_ckpt = ckpt
+            if ckpt is not None and (latest_ckpt is None or ckpt.round > latest_ckpt.round):
+                latest_ckpt = ckpt
         except Exception:
             _logger.warning("checkpoint db 读取失败, 跳过: %s", db_file, exc_info=True)
             continue

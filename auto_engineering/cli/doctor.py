@@ -23,14 +23,13 @@ from pathlib import Path
 
 import click
 
+from auto_engineering.utils import parse_version as _parse_version
+
 # 最低版本要求
 PYTHON_MIN = (3, 12)
 UV_MIN = (0, 5, 0)
 GIT_MIN = (2, 40, 0)
 SQLITE_MIN = (3, 42, 0)
-
-
-from auto_engineering.utils import parse_version as _parse_version
 
 
 def _check_python() -> tuple[bool, str]:
@@ -192,10 +191,7 @@ def _check_init_manifest(project_root: Path) -> tuple[bool, str]:
         return False, f"init-manifest.json 校验失败: {joined}"
     # 通过, 拼接 schema_version + warnings
     schema_version = data.get("schema_version", "?")
-    if result.warnings:
-        warn_str = " [WARN: " + "; ".join(result.warnings) + "]"
-    else:
-        warn_str = ""
+    warn_str = " [WARN: " + "; ".join(result.warnings) + "]" if result.warnings else ""
     return True, f"init-manifest.json 存在 (schema_version {schema_version}){warn_str}"
 
 

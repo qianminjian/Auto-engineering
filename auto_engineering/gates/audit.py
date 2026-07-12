@@ -102,8 +102,8 @@ DEFAULT_MAX_P2 = 10  # ≥10 P2 → fail (warn)
 
 # P0: 静默吞异常 (Python)
 _SILENT_EXCEPT_PY = re.compile(
-    # 排除词用 noqa 词形 (非 "# noqa" 指令): `\b#` 永不匹配(前后皆非单词字符)→ 排除项会失效.
-    # T30 规则自测发现此死分支, 改用 \bnoqa\b 使 "# noqa" 注释行真正被排除.
+    # 排除词用 noqa 词形 (非 "noqa" 抑制指令): `\b#` 永不匹配(前后皆非单词字符)→ 排除项会失效.
+    # T30 规则自测发现此死分支, 改用 \bnoqa\b 使 "noqa" 注释行真正被排除.
     r"^\s*except\b(?!.*\b(?:logger|logging|exc_info|raise|noqa)\b)",
     re.MULTILINE,
 )

@@ -146,13 +146,6 @@ class TestTypeCheckGateFromManifest:
         """
         from auto_engineering.gates.type_check import TypeCheckGate
 
-        manifest = {
-            "schema_version": "1.0",
-            "project_type": "app-service",
-            "language": "python",
-            "structure": {"source_root": "src/", "test_root": "tests/"},
-            # 无 conventions
-        }
         # 注: 实际 init_contract 在缺 conventions 时返回 tuple (非 dict),
         # 所以 tools["type_checker"] 会抛 TypeError. 这是已知问题.
         # 此处验证 TypeCheckGate.from_manifest 在 conventions 存在但 type_checker 缺失时回退.

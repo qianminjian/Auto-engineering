@@ -88,15 +88,13 @@ def _check_contract_in_source(
 
     # 1. 路由 (path) — 必须存在
     declared_path = contract.get("path")
-    if declared_path:
-        if str(declared_path) not in source_text:
-            return False, f"path '{declared_path}' not found in source"
+    if declared_path and str(declared_path) not in source_text:
+        return False, f"path '{declared_path}' not found in source"
 
     # 2. 状态码 (status_code) — 可选
     status_code = contract.get("status_code")
-    if status_code is not None:
-        if str(status_code) not in source_text:
-            return False, f"status_code '{status_code}' not found in source"
+    if status_code is not None and str(status_code) not in source_text:
+        return False, f"status_code '{status_code}' not found in source"
 
     # 3. 请求 schema — 可选 (字段名存在性检查)
     request_schema = contract.get("request")

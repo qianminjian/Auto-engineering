@@ -58,10 +58,7 @@ def _load_progress_tree(cwd: Path) -> ProgressTree | None:
         return None
 
     state = latest_ckpt.state
-    if isinstance(state, dict):
-        raw = state.get("progress_tree_json")
-    else:
-        raw = getattr(state, "progress_tree_json", None)
+    raw = state.get("progress_tree_json") if isinstance(state, dict) else getattr(state, "progress_tree_json", None)
     if not raw:
         return None
     try:

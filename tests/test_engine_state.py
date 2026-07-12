@@ -147,7 +147,7 @@ class TestEngineStateFieldDefaults:
         """EngineState 暴露 40 个字段 (v5.6: 22 + 17 #20-36 + 1 #37 B12.5)."""
         from dataclasses import fields
 
-        state = EngineState()
+        EngineState()
         field_names = {f.name for f in fields(EngineState)}
         expected = _EXPECTED_V56_FIELDS
         assert field_names == expected, (
@@ -421,7 +421,7 @@ class TestV55EngineStateFields:
         """v5.6: 字段总数 22 → 40 (#20-36 共 17 + #37 B12.5 版本锁)."""
         from dataclasses import fields
 
-        state = EngineState()
+        EngineState()
         field_names = {f.name for f in fields(EngineState)}
         assert field_names == _EXPECTED_V56_FIELDS, (
             f"EngineState 字段不匹配 v5.6. "

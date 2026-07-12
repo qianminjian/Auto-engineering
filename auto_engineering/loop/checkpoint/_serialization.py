@@ -10,9 +10,13 @@ Channel 类型仅用于 CheckpointEnvelope 的 checkpoint 序列化/反序列化
 
 from __future__ import annotations
 
+import asyncio
+import copy as _copy
 import json
-from dataclasses import asdict, is_dataclass
-from typing import Any
+from abc import ABC, abstractmethod
+from collections.abc import Sequence
+from dataclasses import asdict, dataclass, is_dataclass
+from typing import Any, Self, TypeVar
 
 
 def normalize_history_item(item: dict[str, Any]) -> dict[str, Any]:
@@ -107,16 +111,16 @@ def deserialize_state(state_json: str) -> Any:
 
 
 __all__ = [
-    "normalize_history_item",
-    "normalize_value",
-    "serialize_state",
-    "deserialize_state",
-    # Channel 类型 (v5.5 P1-3: 从 loop/state/channels.py 折叠)
-    "Channel",
-    "LastValueChannel",
     "AccumulatingChannel",
     "BarrierChannel",
     "BarrierState",
+    # Channel 类型 (v5.5 P1-3: 从 loop/state/channels.py 折叠)
+    "Channel",
+    "LastValueChannel",
+    "deserialize_state",
+    "normalize_history_item",
+    "normalize_value",
+    "serialize_state",
 ]
 
 
@@ -127,13 +131,6 @@ __all__ = [
 # 主循环状态管理走 engine.state.EngineState dataclass, 不经过 Channel.
 # 若未来引入多 Agent 并发写同一 Channel 的用例, 需在 Envelope 层加
 # asyncio.Lock + 按 Agent role 分区.
-
-import asyncio
-import copy as _copy
-from abc import ABC, abstractmethod
-from collections.abc import Sequence
-from dataclasses import dataclass
-from typing import Self, TypeVar
 
 T = TypeVar("T")
 

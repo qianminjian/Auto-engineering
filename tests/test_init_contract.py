@@ -458,7 +458,11 @@ def test_build_gates_from_manifest_returns_6_gates() -> None:
     assert len(gates) >= 6
     # lint / type_check / test 三个 gate 用 manifest 配置
     names_to_bins = {
-        g.name: getattr(g, "linter_bin", None) or getattr(g, "type_checker_bin", None) or getattr(g, "test_runner_bin", None)
+        g.name: (
+            getattr(g, "linter_bin", None)
+            or getattr(g, "type_checker_bin", None)
+            or getattr(g, "test_runner_bin", None)
+        )
         for g in gates
         if g.name in ("lint", "type_check", "test")
     }

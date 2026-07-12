@@ -202,10 +202,11 @@ class ClaudeSemanticEvaluator:
         try:
             # response.content 可能是 list[ContentBlock] | str | None
             c = response.content if hasattr(response, "content") else ""
-            if c and not isinstance(c, str):
-                content = c[0].text  # ContentBlock.text
-            else:
-                content = c if isinstance(c, str) else ""
+            # list[ContentBlock] → [0].text; str → 原值; 其他 → ""
+            content = (
+                c[0].text if c and not isinstance(c, str)
+                else c if isinstance(c, str) else ""
+            )
             data = json.loads(content)
             return bool(data.get("satisfied", False))
         except (json.JSONDecodeError, KeyError, IndexError, AttributeError, TypeError):

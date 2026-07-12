@@ -223,7 +223,6 @@ async def test_full_cycle_stage_transitions_verify() -> None:
         _make_task("critic-1", agent_type="critic"),
     ]
 
-    stage_sequence: list[str] = []
 
     async def executor(task, ctx):
         role = task.role
@@ -302,7 +301,7 @@ async def test_full_cycle_major_exhaustion_hard_limit() -> None:
         return TaskOutcome(task_id=task.id, status="failed", task_role=role)
 
     orch = _setup_orchestrator(tasks, executor, max_iterations=10)
-    history = await orch.run(cancellation=None)
+    await orch.run(cancellation=None)
 
     assert orch.verdict is not None
     assert orch.verdict.should_stop is True
@@ -506,7 +505,7 @@ async def test_full_cycle_stage_router_default_config() -> None:
         return TaskOutcome(task_id=task.id, status="failed", task_role=role)
 
     orch = _setup_orchestrator(tasks, executor, max_iterations=10)
-    history = await orch.run(cancellation=None)
+    await orch.run(cancellation=None)
 
     assert orch.verdict is not None
     assert orch.verdict.should_stop is True

@@ -201,10 +201,7 @@ class BatchState:
         """
         data = json.loads(s)
         bp = data.get("batch_plan") or batch_plan or []
-        if design_doc is not None:
-            bs = cls.from_design_doc(design_doc, bp)
-        else:
-            bs = cls.from_batch_plan(bp)
+        bs = cls.from_design_doc(design_doc, bp) if design_doc is not None else cls.from_batch_plan(bp)
         bs.current_plate_idx = data["current_plate_idx"]
         bs.current_component_idx = data["current_component_idx"]
         bs.current_batch_idx = data["current_batch_idx"]

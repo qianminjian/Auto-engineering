@@ -117,7 +117,10 @@ def run_agent(role: str, instruction: str, project_root: Path) -> dict:
             "role": role,
             "status": "failed",
             "output": None,
-            "error": "ANTHROPIC_API_KEY/ANTHROPIC_AUTH_TOKEN 未设置 (Plugin 模式通过 OAuth 自动注入; CLI 调试模式需手动 export)",
+            "error": (
+                "ANTHROPIC_API_KEY/ANTHROPIC_AUTH_TOKEN 未设置 "
+                "(Plugin 模式通过 OAuth 自动注入; CLI 调试模式需手动 export)"
+            ),
             "duration": time.monotonic() - started,
             "task_role": role,
         }

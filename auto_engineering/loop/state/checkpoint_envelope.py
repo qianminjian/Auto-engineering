@@ -22,8 +22,6 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-_logger = logging.getLogger("ae.loop.state.cp")
-
 from auto_engineering.loop.checkpoint._serialization import (
     AccumulatingChannel,
     BarrierChannel,
@@ -33,6 +31,8 @@ from auto_engineering.loop.checkpoint._serialization import (
 from auto_engineering.loop.plan import Task, TaskValidation
 from auto_engineering.loop.round import TaskOutcome
 from auto_engineering.loop.state.metrics import MetricsSnapshot, Signal
+
+_logger = logging.getLogger("ae.loop.state.cp")
 
 
 class CheckpointEnvelope(BaseModel):

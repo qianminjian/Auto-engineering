@@ -37,7 +37,9 @@ def _handle_git_error(exc: Exception, operation: str) -> ToolResult:
     return ToolResult(success=False, content="", error=str(exc))
 
 
-def _run_git(args: list[str], cwd: str | None, project_root: Path | None, timeout: int = 30) -> subprocess.CompletedProcess:
+def _run_git(
+    args: list[str], cwd: str | None, project_root: Path | None, timeout: int = 30
+) -> subprocess.CompletedProcess:
     """Helper: 跑 git 命令 + timeout + 沙箱验证.
 
     P1-S-02 (2026-07-04): 加 project_root 沙箱验证, realpath 双侧归一化
@@ -120,10 +122,7 @@ class GitCommitTool(BaseTool):
                 return ToolResult(success=False, content="", error="commit message is empty")
             # T16k: 精确 stage — files 提供则只 add 指定文件 (避免误纳 .env/密钥/二进制);
             # 缺省/空则回退 git add -A (向后兼容, 保留新文件纳入).
-            if isinstance(files, list) and files:
-                add_args = ["add", "--", *[str(f) for f in files]]
-            else:
-                add_args = ["add", "-A"]
+            add_args = ["add", "--", *[str(f) for f in files]] if isinstance(files, list) and files else ["add", "-A"]
             add_result = _run_git(add_args, cwd=cwd, project_root=self.project_root)
             if add_result.returncode != 0:
                 return ToolResult(

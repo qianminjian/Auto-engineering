@@ -108,7 +108,8 @@ def main():
               help="--init 的设计文档路径 (design-doc 模式)")
 @click.option("--max-rounds", type=int, default=3, help="最大 Round 数")
 @click.option("--max-tokens", type=int, default=0, help="Token 预算上限 (0 = 无限制)")
-@click.option("--format", "log_format", type=click.Choice(["text", "json"]), default="text", help="输出格式 (与 ae status --format 统一)")
+@click.option("--format", "log_format", type=click.Choice(["text", "json"]),
+              default="text", help="输出格式 (与 ae status --format 统一)")
 @click.option(
     "--llm-provider",
     type=click.Choice(["anthropic"]),

@@ -22,6 +22,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -183,7 +184,7 @@ def test_check_file_isolation_rejects_absolute_path():
         make_task("t1", ["/etc/passwd"]),
         make_task("t2", ["src/normal.py"]),
     ]
-    with pytest.raises(ConflictError, match="绝对路径|workspace"):
+    with pytest.raises(ConflictError, match=r"绝对路径|workspace"):
         check_file_isolation(tasks, raise_on_conflict=True)
 
 
@@ -203,7 +204,7 @@ def test_check_file_isolation_rejects_tilde_expansion():
         make_task("t1", ["~/.ssh/id_rsa"]),
         make_task("t2", ["src/normal.py"]),
     ]
-    with pytest.raises(ConflictError, match="~|workspace"):
+    with pytest.raises(ConflictError, match=r"~|workspace"):
         check_file_isolation(tasks, raise_on_conflict=True)
 
 
@@ -1154,7 +1155,7 @@ class TestOrchestratorV5MainLoop:
                 super().__init__(*args, **kwargs)
 
         # 4. 构造 guardrail chain (空 — 全 pass)
-        chain = GuardrailChain([])
+        GuardrailChain([])
 
         orch = V5Orchestrator(
             requirement="test",
@@ -1202,7 +1203,7 @@ class TestOrchestratorV5MainLoop:
         orch._router = StageRouter()
         orch._guardrail_facade._chain = GuardrailChain([BlockGuardrail()])
 
-        history = await orch.run(cancellation=None)
+        await orch.run(cancellation=None)
         # block → 立即停止
         assert orch.verdict is not None, "block 后 verdict 应存在"
         assert orch.verdict.reason is not None
@@ -1240,7 +1241,7 @@ class TestOrchestratorV5MainLoop:
         orch._router = StageRouter()
         orch._guardrail_facade._chain = GuardrailChain([AlwaysRetryGuardrail()])
 
-        history = await orch.run(cancellation=None)
+        await orch.run(cancellation=None)
         # retry 耗尽 → 停止
         assert orch.verdict is not None
         # 验证: retry 计数器 ≥ 3 (耗尽)
@@ -1434,7 +1435,10 @@ class TestOrchestratorStepHelpers:
             from auto_engineering.loop.round import RoundResult
             return RoundResult(
                 round_id=round_id,
-                outcomes=[TaskOutcome(task_id=t.id, status="completed", output="x", task_role=t.role) for t in round_tasks],
+                outcomes=[
+                    TaskOutcome(task_id=t.id, status="completed", output="x", task_role=t.role)
+                    for t in round_tasks
+                ],
                 gate_results={},
                 history=[],
             )
@@ -1472,11 +1476,9 @@ class TestOrchestratorStepHelpers:
         orch._step_3_exit_block = lambda s, h, lg, mi, ri: sync_spy_3(orch, s, h, lg, mi, ri)
 
         # 4. 跑 run() (用 asyncio.wait_for 防 hang)
-        try:
+        # spy 内部 None 返回可能导致后续逻辑异常, 我们只关心调用次数
+        with contextlib.suppress(TimeoutError, Exception):
             await asyncio.wait_for(orch.run(cancellation=None), timeout=5.0)
-        except (TimeoutError, Exception):
-            # spy 内部 None 返回可能导致后续逻辑异常, 我们只关心调用次数
-            pass
 
         # 5. 验证: 8 个子方法至少被调用 1 次 (主循环跑过)
         for name in self.EXPECTED_HELPERS:
@@ -1541,7 +1543,7 @@ class TestGuardrailIntegration:
             executor=executor,
             config=config,
         )
-        history = await orch.run()
+        await orch.run()
         # G1 RequirementValid block → 立即 stop
         assert orch.verdict is not None
         assert orch.verdict.should_stop

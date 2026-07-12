@@ -114,7 +114,7 @@ def test_check_contract_in_source_no_path_declared(tmp_path: Path) -> None:
     source_file.write_text("returns status 200")
 
     contract = {"status_code": 200}
-    passed, msg = _check_contract_in_source(contract, [source_file])
+    passed, _msg = _check_contract_in_source(contract, [source_file])
     assert passed is True
 
 
@@ -172,7 +172,7 @@ def test_check_contract_in_source_oserror_handled(tmp_path: Path) -> None:
     # Use a path that doesn't exist as a file
     nonexistent = tmp_path / "nonexistent.py"
     contract = {"path": "/api/test"}
-    passed, msg = _check_contract_in_source(contract, [nonexistent])
+    passed, _msg = _check_contract_in_source(contract, [nonexistent])
     # Should not crash, path not found because source text is empty
     assert passed is False
 

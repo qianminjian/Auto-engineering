@@ -331,7 +331,7 @@ class TestOrchestratorAfterTickT9:
         with patch.object(
             orch, "_run_deep_audit", return_value=(False, []),
         ):
-            should_break = await orch._after_tick(
+            await orch._after_tick(
                 round_result=round_result,
                 current_stage="critic",
                 guardrail_chain=None,
@@ -403,7 +403,7 @@ class TestOrchestratorAfterTickT9:
         with patch.object(
             orch, "_run_deep_audit",
         ) as mock_audit:
-            should_break = await orch._after_tick(
+            await orch._after_tick(
                 round_result=round_result,
                 current_stage="developer",
                 guardrail_chain=None,
@@ -439,7 +439,7 @@ class TestOrchestratorAfterTickT9:
         with patch.object(
             orch, "_run_deep_audit",
         ) as mock_audit:
-            should_break = await orch._after_tick(
+            await orch._after_tick(
                 round_result=round_result,
                 current_stage="critic",
                 guardrail_chain=None,

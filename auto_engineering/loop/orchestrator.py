@@ -865,7 +865,10 @@ class Orchestrator:
             return False
         self.verdict = ConvergenceVerdict.stop(
             level=4,
-            reason=f"critic verdict 异常 (重试 {MAX_CRITIC_RETRIES} 次仍失败, Bug 3 升级到 HARD_LIMIT): {exc.verdict!r}",
+            reason=(
+                f"critic verdict 异常 (重试 {MAX_CRITIC_RETRIES} 次仍失败, "
+                f"Bug 3 升级到 HARD_LIMIT): {exc.verdict!r}"
+            ),
         )
         return True
 

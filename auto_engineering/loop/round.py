@@ -487,10 +487,7 @@ async def _run_gates(
     results: dict[str, GateVerdict] = {}
 
     # v5.0 §B6.1+§B6.2: stage 过滤 — 按 applies_to_stages 决定哪些 Gate 跑
-    if stage:
-        gates_to_run = [g for g in gates if stage in g.applies_to_stages]
-    else:
-        gates_to_run = list(gates)
+    gates_to_run = [g for g in gates if stage in g.applies_to_stages] if stage else list(gates)
 
     async def _run_one(gate: Gate) -> tuple[str, GateVerdict]:
         try:

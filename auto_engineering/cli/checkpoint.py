@@ -73,7 +73,8 @@ def register_checkpoint_commands(main: click.Group) -> None:
     @click.option("--round", type=int, required=True, help="当前轮次 (对应 EngineState, 必填)")
     @click.option("--step", type=int, default=0, help="当前 step (默认 0)")
     @click.option("--tag", type=str, default=None, help="可选标签 (如 'interrupted')")
-    @click.option("--state-file", type=click.Path(exists=True), default=None, help="JSON 文件路径 (含 EngineState 序列化数据)")
+    @click.option("--state-file", type=click.Path(exists=True), default=None,
+                  help="JSON 文件路径 (含 EngineState 序列化数据)")
     @click.option("--checkpoint-id", type=str, default=None, help="显式指定 checkpoint_id (默认自动 UUID)")
     def checkpoint_save_cmd(round: int, step: int, tag: str | None, state_file: str | None, checkpoint_id: str | None):
         """保存 checkpoint (供 stop hook / 手动触发).

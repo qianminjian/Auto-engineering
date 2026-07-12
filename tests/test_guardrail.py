@@ -457,7 +457,12 @@ class TestGitClean:
             "developer", EngineState(), project_root=repo,
         )
         assert result.action == "block"
-        assert "dirty" in result.message.lower() or "未提交" in result.message or "变更" in result.message or "untracked" in result.message.lower()
+        assert (
+            "dirty" in result.message.lower()
+            or "未提交" in result.message
+            or "变更" in result.message
+            or "untracked" in result.message.lower()
+        )
 
     def test_block_staged_changes(self, tmp_path: Path) -> None:
         """有已 staged 未 commit 的变更 → block."""

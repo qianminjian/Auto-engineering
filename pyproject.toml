@@ -46,7 +46,7 @@ ae = "auto_engineering.cli:main"
 
 [tool.ruff]
 target-version = "py312"
-line-length = 100
+line-length = 120
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "C4", "RUF"]
@@ -54,7 +54,10 @@ select = ["E", "F", "I", "UP", "B", "SIM", "C4", "RUF"]
 ignore = ["RUF001", "RUF002", "RUF003"]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/*.py" = ["S101"]
+# 测试约定豁免 (与生产不同): S101 assert 是测试主体; RUF012 mock/stub 类的
+# 可变类属性是有意的 fixture 状态; SIM117 多个 patch 上下文的嵌套 with 更易读;
+# B017 "失败即抛" 测试有意断言宽泛 Exception.
+"tests/*.py" = ["S101", "RUF012", "SIM117", "B017"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

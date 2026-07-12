@@ -1,4 +1,6 @@
-"""v2.0 Loop 子系统 — Channel 系统 + CheckpointEnvelope (v2.0 Checkpoint 数据) + 收敛判定 + Checkpoint 持久化 + 多 Agent 并发.
+"""v2.0 Loop 子系统 — Channel 系统 + CheckpointEnvelope (v2.0 Checkpoint 数据).
+
+收敛判定 + Checkpoint 持久化 + 多 Agent 并发.
 
 参考 LangGraph Channel 系统 + design/v2.0-Analysis-Loop.md §4.4/§4.7/§五.
 

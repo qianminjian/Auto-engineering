@@ -113,7 +113,7 @@ class TestDetectPluginMode:
     def test_priority_claude_code_over_entrypoint(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """CLAUDE_CODE + CLAUDE_CODE_ENTRYPOINT 都设 → CLAUDE_CODE 优先 (本身不影响 True/False, 但 detail 返回 CLAUDE_CODE)."""
+        """CLAUDE_CODE + ENTRYPOINT 同设 → CLAUDE_CODE 优先 (不影响 bool, detail 返回 CLAUDE_CODE)."""
         from auto_engineering.utils.plugin_mode import detect_plugin_mode, detect_plugin_mode_detail
 
         monkeypatch.setenv("CLAUDE_CODE", "1")
