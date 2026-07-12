@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from auto_engineering.gates.audit import AuditFinding, AuditGate
+from auto_engineering.gates.audit import AuditFinding, AuditGate, finding_fingerprint
 
 
 class TestAuditGateConstruction:
@@ -372,3 +372,105 @@ class TestAuditRegexSelfTest:
         }
         missing = regex_names - covered
         assert not missing, f"以下正则缺少正例/反例自测: {missing}"
+
+
+# ==================== T31: AuditGate 语义层 (B15.3 #6) ====================
+
+
+class TestAuditGateSemanticLayer:
+    """opt-in 语义检查扩展点 — 默认 None = 纯正则 (Python 永不调 LLM, §A.1)."""
+
+    def test_default_semantic_checker_is_none(self) -> None:
+        """默认无语义检查器 → 纯正则路径."""
+        assert AuditGate().semantic_checker is None
+
+    def test_semantic_findings_merged_and_counted(self, tmp_path: Path) -> None:
+        """注入的语义检查器返回的 finding 并入结果并参与阈值判定."""
+        (tmp_path / "m.py").write_text("x = 1\n")  # 正则视角干净
+
+        def checker(rel: str, content: str) -> list[AuditFinding]:
+            return [AuditFinding(
+                severity="P1", dimension="代码逻辑虚化度",
+                file=rel, line=1, description="误导性命名(语义)")]
+
+        gate = AuditGate(semantic_checker=checker, max_p1=0)
+        verdict = gate.run(tmp_path)
+        assert verdict.passed is False
+        assert "误导性命名(语义)" in verdict.message
+
+    def test_no_checker_regex_only_clean_file_passes(self, tmp_path: Path) -> None:
+        """无语义检查器 + 正则干净文件 → passed (纯正则)."""
+        (tmp_path / "m.py").write_text("x = 1\n")
+        verdict = AuditGate().run(tmp_path)
+        assert verdict.passed is True
+
+    def test_faulty_semantic_checker_degrades_not_crash(self, tmp_path: Path) -> None:
+        """语义检查器抛异常 → 降级 (仅正则结果), 不让 Gate 崩溃."""
+        (tmp_path / "m.py").write_text("x = 1\n")
+
+        def bad(rel: str, content: str) -> list[AuditFinding]:
+            raise RuntimeError("semantic backend down")
+
+        gate = AuditGate(semantic_checker=bad)
+        verdict = gate.run(tmp_path)  # 不抛
+        assert verdict.passed is True  # 正则干净, 语义降级
+
+
+# ==================== T31: finding 生命周期 (B15.3 #9) ====================
+
+
+class TestAuditFindingFingerprint:
+    """finding 指纹 — 行号不入指纹 (行漂移仍同一问题身份)."""
+
+    def test_fingerprint_ignores_line(self) -> None:
+        f1 = AuditFinding("P0", "代码质量", "a.py", 3, "硬编码密钥/token")
+        f2 = AuditFinding("P0", "代码质量", "a.py", 99, "硬编码密钥/token")
+        assert finding_fingerprint(f1) == finding_fingerprint(f2)
+
+    def test_fingerprint_differs_by_description(self) -> None:
+        f1 = AuditFinding("P1", "工程化规范", "a.py", 1, "遗留标记: TODO")
+        f2 = AuditFinding("P1", "工程化规范", "a.py", 1, "遗留标记: FIXME")
+        assert finding_fingerprint(f1) != finding_fingerprint(f2)
+
+    def test_fingerprint_differs_by_file(self) -> None:
+        f1 = AuditFinding("P0", "代码质量", "a.py", 1, "硬编码密钥/token")
+        f2 = AuditFinding("P0", "代码质量", "b.py", 1, "硬编码密钥/token")
+        assert finding_fingerprint(f1) != finding_fingerprint(f2)
+
+
+class TestAuditGateKnownAccepted:
+    """known-and-accepted: 已知已接受的 finding 从阈值计数中抑制 (避免重复淹没新增)."""
+
+    _SECRET = 'API_KEY = "sk-1234567890abcdef1234567890abcdef"\n'
+    _FP = "P0|代码质量|c.py|硬编码密钥/token"
+
+    def test_accepted_fingerprint_suppressed_from_threshold(self, tmp_path: Path) -> None:
+        """构造器 accepted_fingerprints → 该 P0 不计入阈值 → passed."""
+        (tmp_path / "c.py").write_text(self._SECRET)
+        gate = AuditGate(accepted_fingerprints={self._FP})
+        verdict = gate.run(tmp_path)
+        assert verdict.passed is True
+        assert "P0=0" in verdict.message
+
+    def test_accepted_via_contracts(self, tmp_path: Path) -> None:
+        """contracts['accepted_audit_findings'] 同样抑制 (与 files_changed 同源机制)."""
+        (tmp_path / "c.py").write_text(self._SECRET)
+        gate = AuditGate()
+        gate.contracts = {"accepted_audit_findings": [self._FP]}
+        verdict = gate.run(tmp_path)
+        assert verdict.passed is True
+
+    def test_accepted_reported_in_details(self, tmp_path: Path) -> None:
+        """被抑制的 finding 计入 details['accepted_suppressed'], 不静默丢弃."""
+        (tmp_path / "c.py").write_text(self._SECRET)
+        gate = AuditGate(accepted_fingerprints={self._FP})
+        verdict = gate.run(tmp_path)
+        assert verdict.details["accepted_suppressed"] == 1
+
+    def test_non_accepted_still_fails(self, tmp_path: Path) -> None:
+        """未被接受的 P0 仍正常失败 (接受机制不影响新增问题)."""
+        (tmp_path / "c.py").write_text(self._SECRET)
+        gate = AuditGate(accepted_fingerprints={"P0|代码质量|other.py|别的问题"})
+        verdict = gate.run(tmp_path)
+        assert verdict.passed is False
+        assert "P0=1" in verdict.message

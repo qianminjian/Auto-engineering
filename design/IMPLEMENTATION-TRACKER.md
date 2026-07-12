@@ -36,7 +36,7 @@
 | 4 | Agent Prompt 模板 | 10 | 0 | ☐ 未开始 |
 | 4b | Commit→PR→CI/CD Pipeline | 7 | 0 | ☐ 未开始 |
 | 5 | 测试 | 17 | 4 | ◐ 部分（单元层 T17/T18/T22/T23 ✅；集成/E2E 待补）|
-| 6 | 审计与验证方法论 (B15) | 5 | 0 | ☐ 未开始（deep_audit/audit/guardrail 仅 v5.5 骨架）|
+| 6 | 审计与验证方法论 (B15) | 5 | 5 | ✅ 完成（T27 deep_audit 去重 + T28 /audit 内化 + T29 REDGuard/FreshGate + T30 RegressionGate/正则自测 + T31 AuditGate 语义层/finding 生命周期）|
 | 7 | Init-Loop 契约扩展 | 4 | 0 | ☐ 未开始（schema.json 缺）|
 | 8 | 设计文档深化补充（审计 S-task）| 22 | 22 | ✅ 完成（2026-07-11 深度审计 → 全部收口）|
 | 9 | 代码审计修复（审计 A-task）| 15 | 13 | ◐ A2/A5/A6/A7/A8/A10-A15 + checkpoint 契约（A1✅/A3 读+写侧✅，fe8bee2/f4e4175）完成；A4 需决策（接线/删除）；A9 ⛔ mypy 未装 |
@@ -130,7 +130,7 @@
 | T26e | PRBackend 选型（背书 T10c/T33）| ☐ | |
 | T26f | 环内增量 test_gate + commit_msg（背书 T16l/T16n）| ☐ | |
 | T26g | B15 Guardrail REDGuard/FreshGate/RegressionGate（背书 T29/T30）| ✅ | T29 test_guardrail: TestREDGuard(8)+TestFreshGate(5)+name注入(4)+retry粒度(4)；T30 test_guardrail: TestRegressionGate(7，含真跑嵌套 pytest revert-red-restore + git rm 分支)+test_gate_audit TestAuditRegexSelfTest(9)。三类 Guardrail 均有确定性证据测试 |
-| T26h | AuditGate 语义层 + finding 生命周期（背书 T31）| ☐ | |
+| T26h | AuditGate 语义层 + finding 生命周期（背书 T31）| ✅ | test_gate_audit: TestAuditGateSemanticLayer(4，含默认 None/合并/异常降级)+TestAuditFindingFingerprint(3)+TestAuditGateKnownAccepted(4，构造器+contracts+details+未接受仍失败)。语义层 Python-never-LLM 边界 + known-and-accepted 抑制均有确定性测试 |
 
 ## Phase 6 — 审计与验证方法论 (B15)
 
@@ -140,7 +140,7 @@
 | T28 | `commands/audit.md` 内化（去 Superpowers 依赖）| grep 断言 | ✅ | audit.md 三阶段自含重写（Phase1 `ae gate-check --all`+make / Phase2 3-agent B6.7a 内化 / Phase3 `recount_findings` 确定性求值），移除"执行通用 `/audit`" Superpowers 运行时委托（B14 零外部依赖）；test_plugin_contract TestAuditCommandInternalized(3: 无通用委托/委托自有Gate+stage/声明零外部依赖）|
 | T29 | `loop/guardrail.py` REDGuard + FreshGate | test_guardrail(ext) | ✅ | G7 REDGuard（post/developer：`git log`定位先于实现的独立测试commit + `merge-base --is-ancestor`祖先校验 + 信任red_evidence，`_STRICT_RED` opt-in重跑；纯配置task豁免）+ G8 FreshGate（post/developer,critic：`_aggregate_sha`(files_changed)比对gate快照，陈旧→retry）；`GuardrailResult.guardrail_name`+Chain注入；S-3生产者契约（`_run_developer_gates`注入`files_snapshot_sha`+`ran_at`，否则G8静默失效）；S-4 retry键粒度`{stage}:{guardrail_name}`+FreshGate `rerun_gates`分流（不清实现）；tick挂运行时句柄`batch_state`/`_plan`；`default()`6→8；test_guardrail +REDGuard(8)/FreshGate(5)/name注入(4)/retry粒度(4)/helper(2) |
 | T30 | `loop/guardrail.py` RegressionGate + audit regex 自测 | T26g + test_gate_audit(ext) | ✅ | G9 RegressionGate（post/developer，block）：`_current_regression_task`取batch首个`kind=="regression_fix"` task；`revert(git checkout impl^ -- 实现文件)→_run_test MUST FAIL→finally restore(git checkout HEAD)→_run_test MUST PASS`；S-19新建实现文件（impl^无pathspec→rc≠0）走`git rm`模拟"修复前不存在"；`_run_test`用`sys.executable -B -m pytest <root> -k <id> -o addopts= -p no:cacheprovider`（`-B`禁写.pyc避免同秒git checkout mtime相同致陈旧字节码掩盖回退）；无实现文件/缺test_id/缺commit_hash→block；`default()`8→9。plan.py Task+`kind`/`regression_test_id`字段+task_factory透传。audit.py正则自测（`TestAuditRegexSelfTest` 9测：每pattern正例/反例+元测试断言全覆盖）——surfaced并修复`_SILENT_EXCEPT_PY`的`# noqa`死分支（`\b#`永不匹配→改`\bnoqa\b`）。test_guardrail +RegressionGate(7)/factory(9→) |
-| T31 | `gates/audit.py` + `orchestrator.py` AuditGate 语义层 + finding 生命周期 | T26h | ☐ | |
+| T31 | `gates/audit.py` + `orchestrator.py` AuditGate 语义层 + finding 生命周期 | T26h | ✅ | #6 语义层=`AuditGate(semantic_checker: SemanticChecker|None=None)` 可注入扩展点（默认 None=纯正则，Python 永不调 LLM §A.1；语义 findings 合并；检查器异常降级不崩）。#9 finding 生命周期=known-and-accepted（`finding_fingerprint`=severity\|dimension\|file\|description，行号不入；`accepted_fingerprints` 构造器 + `contracts["accepted_audit_findings"]` 抑制阈值计数，记 `details["accepted_suppressed"]`）。#8 crafted context 复用既有分层上下文（plate components/contracts + system coverage_map + git_diff 工具 + design/ 直读）——未加 files_changed（audit 阶段已清空且 prompt 不消费，加之虚化）。test_gate_audit +语义层(4)/fingerprint(3)/known-accepted(4) |
 
 ## Phase 7 — Init-Loop 契约 v5.6 扩展 (IL.2-IL.5)
 

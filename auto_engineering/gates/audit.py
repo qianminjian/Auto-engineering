@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -32,6 +33,8 @@ __all__ = [
     "SKIP_DIRS",
     "AuditFinding",
     "AuditGate",
+    "SemanticChecker",
+    "finding_fingerprint",
 ]
 
 _logger = logging.getLogger("ae.gates.audit")
@@ -51,6 +54,22 @@ class AuditFinding:
     line: int
     description: str
     evidence: str = ""
+
+
+# 语义检查器扩展点 (B15.3 #6): (rel_path, content) → 额外 findings.
+# 默认注入 None (纯正则路径). 这是 Agent 侧 / LLM 后端语义层的挂载点 —
+# Python 本身永不调 LLM (§A.1), 只做确定性正则 + 合并"注入进来"的语义结果.
+# 检测正则看不到的语义问题 (误导性命名 / 逻辑与设计矛盾, 用 crafted context).
+SemanticChecker = Callable[[str, str], list["AuditFinding"]]
+
+
+def finding_fingerprint(f: AuditFinding) -> str:
+    """finding 稳定指纹 `severity|dimension|file|description` — 行号**不入**指纹.
+
+    行号随无关改动漂移; 排除后同一问题跨轮保持同一身份, 供 known-and-accepted
+    生命周期 (B15.3 #9) 判定"是否已知已接受", 避免同一问题重复报告淹没新增项.
+    """
+    return f"{f.severity}|{f.dimension}|{f.file}|{f.description}"
 
 
 # ============================================================
@@ -83,8 +102,8 @@ DEFAULT_MAX_P2 = 10  # ≥10 P2 → fail (warn)
 
 # P0: 静默吞异常 (Python)
 _SILENT_EXCEPT_PY = re.compile(
-    # noqa 用词形 (非 "# noqa"): `\b#` 永不匹配(前后皆非单词字符)→ 该排除项会失效.
-    # T30 规则自测发现此死分支, 改用 \bnoqa\b 使 "# noqa" 行真正被排除.
+    # 排除词用 noqa 词形 (非 "# noqa" 指令): `\b#` 永不匹配(前后皆非单词字符)→ 排除项会失效.
+    # T30 规则自测发现此死分支, 改用 \bnoqa\b 使 "# noqa" 注释行真正被排除.
     r"^\s*except\b(?!.*\b(?:logger|logging|exc_info|raise|noqa)\b)",
     re.MULTILINE,
 )
@@ -160,11 +179,18 @@ class AuditGate(Gate):
         max_p1: int = DEFAULT_MAX_P1,
         max_p2: int = DEFAULT_MAX_P2,
         include_large_files: bool = True,
+        semantic_checker: SemanticChecker | None = None,
+        accepted_fingerprints: set[str] | None = None,
     ):
         self.max_p0 = max_p0
         self.max_p1 = max_p1
         self.max_p2 = max_p2
         self.include_large_files = include_large_files
+        # B15.3 #6: opt-in 语义层 (默认 None = 纯正则, Python 永不调 LLM)
+        self.semantic_checker = semantic_checker
+        # B15.3 #9: known-and-accepted 指纹集 (从阈值计数中抑制, 运行时可经
+        # contracts["accepted_audit_findings"] 追加)
+        self.accepted_fingerprints = set(accepted_fingerprints or ())
 
     def run(self, project_root: Path) -> GateVerdict:
         project_root = Path(project_root)
@@ -177,6 +203,13 @@ class AuditGate(Gate):
             raw = self.contracts["files_changed"]
             if isinstance(raw, list) and raw:
                 target_files = set(raw)
+
+        # B15.3 #9: known-and-accepted 指纹 (构造器 + contracts 合并)
+        accepted: set[str] = set(self.accepted_fingerprints)
+        if self.contracts and "accepted_audit_findings" in self.contracts:
+            raw_acc = self.contracts["accepted_audit_findings"]
+            if isinstance(raw_acc, list):
+                accepted.update(str(x) for x in raw_acc)
 
         findings: list[AuditFinding] = []
         files_scanned = 0
@@ -211,7 +244,7 @@ class AuditGate(Gate):
         if self.include_large_files and target_files is None:
             findings.extend(self._scan_large_files(project_root))
 
-        return self._build_verdict(findings, files_scanned)
+        return self._build_verdict(findings, files_scanned, accepted)
 
     # ── 文件级扫描 ──
 
@@ -242,7 +275,20 @@ class AuditGate(Gate):
         elif is_js:
             findings.extend(self._scan_js(content, rel))
 
+        # B15.3 #6: opt-in 语义层 — 合并注入的语义 findings (默认无检查器则跳过)
+        if self.semantic_checker is not None:
+            findings.extend(self._run_semantic(rel, content))
+
         return findings
+
+    def _run_semantic(self, rel: str, content: str) -> list[AuditFinding]:
+        """调用注入的语义检查器, 异常降级为空 (语义后端故障不阻断确定性正则路径)."""
+        try:
+            extra = self.semantic_checker(rel, content) if self.semantic_checker else []
+        except Exception:  # 语义后端(LLM/Agent)故障 → 降级, 保留正则结果
+            _logger.warning("audit scan: 语义检查器异常 %s", rel, exc_info=True)
+            return []
+        return [f for f in (extra or []) if isinstance(f, AuditFinding)]
 
     def _scan_py(self, content: str, rel: str) -> list[AuditFinding]:
         findings: list[AuditFinding] = []
@@ -408,10 +454,17 @@ class AuditGate(Gate):
 
     def _build_verdict(
         self, findings: list[AuditFinding], files_scanned: int,
+        accepted: set[str] | None = None,
     ) -> GateVerdict:
-        p0 = [f for f in findings if f.severity == "P0"]
-        p1 = [f for f in findings if f.severity == "P1"]
-        p2 = [f for f in findings if f.severity == "P2"]
+        # B15.3 #9: 分离 known-and-accepted — 仅 active findings 参与阈值判定,
+        # accepted 命中不计数但记入 details (不静默丢弃).
+        accepted = accepted or set()
+        active = [f for f in findings if finding_fingerprint(f) not in accepted]
+        suppressed = len(findings) - len(active)
+
+        p0 = [f for f in active if f.severity == "P0"]
+        p1 = [f for f in active if f.severity == "P1"]
+        p2 = [f for f in active if f.severity == "P2"]
 
         failed = (
             len(p0) > self.max_p0
@@ -419,11 +472,12 @@ class AuditGate(Gate):
             or len(p2) > self.max_p2
         )
 
+        suppressed_note = f", 已接受抑制={suppressed}" if suppressed else ""
         msg_lines = [
             f"审计完成: {files_scanned} 文件扫描, "
             f"P0={len(p0)} (max={self.max_p0}), "
             f"P1={len(p1)} (max={self.max_p1}), "
-            f"P2={len(p2)} (max={self.max_p2})",
+            f"P2={len(p2)} (max={self.max_p2})" + suppressed_note,
         ]
 
         if p0:
@@ -447,7 +501,7 @@ class AuditGate(Gate):
             if len(p2) > 3:
                 msg_lines.append(f"    ... (还有 {len(p2) - 3} 个)")
 
-        if not findings:
+        if not active:
             msg_lines.append("\n  无审计发现")
 
         message = "\n".join(msg_lines)
@@ -462,9 +516,10 @@ class AuditGate(Gate):
                     "description": f.description,
                     "evidence": f.evidence,
                 }
-                for f in findings
+                for f in active
             ],
             "files_scanned": files_scanned,
+            "accepted_suppressed": suppressed,
         }
         if failed:
             return GateVerdict(
