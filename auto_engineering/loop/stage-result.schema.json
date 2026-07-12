@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://auto-engineering.dev/schemas/stage-result.schema.json",
+  "title": "Stage Result",
+  "description": "Driver->Engine contract (v7.0 T33a). Shape of the stage-result JSON the driver writes and TickOrchestrator._read_and_validate / _apply_result_to_state consume. Per-stage required fields mirror actions.RESULT_SCHEMA (the runtime validator). This is the second of the two coupling points between the loop engine and any driver.",
+  "$comment": "stage-result contract schema v1.0.0 — SSOT for driver->engine. Per-stage 'required' MUST stay identical to actions.RESULT_SCHEMA; drift is caught by tests/test_action_result_contract.py.",
+  "type": "object",
+  "required": ["stage"],
+  "properties": {
+    "stage": {
+      "type": "string",
+      "enum": [
+        "gap_scan", "gap_review", "research", "architect", "developer",
+        "critic", "component_verifier", "plate_deep_audit",
+        "system_verifier", "system_deep_audit"
+      ]
+    },
+    "plan": {"type": "string"},
+    "batch_plan": {"type": "array"},
+    "file_list": {"type": "array"},
+    "contracts": {"type": "object"},
+    "batch_id": {"type": ["string", "null"]},
+    "files_changed": {"type": "array"},
+    "commit_hash": {"type": "string"},
+    "test_results": {"type": "object"},
+    "verdict": {"type": "string"},
+    "findings": {"type": "array"},
+    "critic_feedback": {"type": "string"},
+    "component": {"type": ["string", "null"]},
+    "coverage_map": {"type": "array"},
+    "full_coverage_map": {"type": "array"},
+    "missing_count": {"type": "integer"},
+    "diverged_count": {"type": "integer"},
+    "covered_count": {"type": "integer"},
+    "total_design_items": {"type": "integer"},
+    "plate": {"type": "string"},
+    "p0_count": {"type": "integer"},
+    "p1_count": {"type": "integer"},
+    "p2_count": {"type": "integer"},
+    "cross_component_issues": {"type": "array"},
+    "total_audited_files": {"type": "integer"},
+    "recheck_log": {"type": "array"},
+    "gaps": {"type": "array"},
+    "scanned_sections": {"type": "integer"},
+    "has_blocking": {"type": "boolean"},
+    "decisions": {"type": "array"}
+  },
+  "allOf": [
+    {
+      "if": {"required": ["stage"], "properties": {"stage": {"const": "architect"}}},
+      "then": {"required": ["stage", "plan", "batch_plan", "file_list"]}
+    },
+    {
+      "if": {"required": ["stage"], "properties": {"stage": {"const": "developer"}}},
+      "then": {"required": ["stage", "batch_id", "files_changed", "test_results"]}
+    },
+    {
+      "if": {"required": ["stage"], "properties": {"stage": {"const": "critic"}}},
+      "then": {
+        "required": ["stage", "verdict", "findings"],
+        "properties": {"verdict": {"enum": ["APPROVE", "MAJOR"]}}
+      }
+    },
+    {
+      "if": {"required": ["stage"], "properties": {"stage": {"const": "component_verifier"}}},
+      "then": {
+        "required": ["stage", "component", "coverage_map", "missing_count", "diverged_count"],
+        "properties": {
+          "coverage_map": {
+            "type": "array",
+            "items": {"properties": {"status": {"enum": ["IMPLEMENTED", "MISSING", "DIVERGED"]}}}
+          }
+        }
+      }
+    },
+    {
+      "if": {"required": ["stage"], "properties": {"stage": {"const": "plate_deep_audit"}}},
+      "then": {
+        "required": ["stage", "plate", "findings", "p0_count", "p1_count", "p2_count", "cross_component_issues"],
+        "properties": {
+          "findings": {
+            "type": "array",
+            "items": {"properties": {"severity": {"enum": ["P0", "P1", "P2"]}}}
+          }
+        }
+      }
+    },
+    {
+      "if": {"required": ["stage"], "properties": {"stage": {"const": "system_verifier"}}},
+      "then": {
+        "required": ["stage", "full_coverage_map", "total_design_items", "covered_count", "missing_count", "diverged_count"],
+        "properties": {
+          "full_coverage_map": {
+            "type": "array",
+            "items": {"properties": {"status": {"enum": ["IMPLEMENTED", "MISSING", "DIVERGED"]}}}
+          }
+        }
+      }
+    },
+    {
+      "if": {"required": ["stage"], "properties": {"stage": {"const": "system_deep_audit"}}},
+      "then": {
+        "required": ["stage", "findings", "p0_count", "p1_count", "p2_count", "total_audited_files"],
+        "properties": {
+          "findings": {
+            "type": "array",
+            "items": {"properties": {"severity": {"enum": ["P0", "P1", "P2"]}}}
+          }
+        }
+      }
+    }
+  ],
+  "additionalProperties": true
+}

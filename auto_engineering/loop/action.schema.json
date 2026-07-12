@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://auto-engineering.dev/schemas/action.schema.json",
+  "title": "Tick Action",
+  "description": "Engine->Driver contract (v7.0 T33a). Shape of the action JSON emitted each tick by TickOrchestrator._build_action / ActionDone / ActionError. This is one of the two coupling points between the loop engine and any driver (AgentDriver / StandaloneDriver).",
+  "$comment": "action contract schema v1.0.0 — SSOT for engine->driver. Kept in sync with tick_orchestrator._build_action + actions.ActionDone/ActionError by tests/test_action_result_contract.py.",
+  "type": "object",
+  "required": ["action"],
+  "properties": {
+    "action": {
+      "type": "string",
+      "enum": [
+        "gap_scan", "gap_review", "research", "architect", "developer",
+        "critic", "component_verifier", "plate_deep_audit",
+        "system_verifier", "system_deep_audit", "done", "error"
+      ],
+      "description": "Discriminator: the stage to run, or a terminal action (done/error)."
+    },
+    "tick": {"type": "integer", "minimum": 0, "description": "1-based tick sequence for the requested action."},
+    "stage": {"type": ["string", "null"], "description": "Current engine stage (null on done)."},
+    "thread_id": {"type": "string", "description": "Stable loop thread id across ticks."},
+    "gate_summary": {"type": "object", "description": "Per-gate results snapshot {gate: {passed, message, ...}}."},
+    "feedback": {
+      "type": ["string", "object", "null"],
+      "description": "Free feedback string, or PLAN_REFINE object {mode, refine_request} for architect refine."
+    },
+    "progress_summary": {"type": ["object", "null"], "description": "ProgressTree.summary() or null."},
+    "context": {"type": "object", "description": "Stage-specific input context for the driver."},
+    "expected_format": {"type": "object", "description": "Human-readable shape hint for the driver's result."},
+    "recheck": {"type": "object", "description": "Verifier Sonnet-recheck protocol config (verifier stages)."},
+    "error_code": {"type": "string", "description": "Machine error code (error action)."},
+    "message": {"type": "string", "description": "Human-readable error message (error action)."},
+    "verdict": {"type": "string", "description": "Terminal verdict level name (done action)."},
+    "verdict_level": {"type": ["integer", "null"], "description": "Numeric verdict level (done action)."},
+    "verdict_reason": {"type": ["string", "null"], "description": "Why the loop terminated (done action)."}
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "action": {
+            "enum": [
+              "gap_scan", "gap_review", "research", "architect", "developer",
+              "critic", "component_verifier", "plate_deep_audit",
+              "system_verifier", "system_deep_audit"
+            ]
+          }
+        }
+      },
+      "then": {"required": ["tick", "stage", "thread_id", "action"]}
+    },
+    {
+      "if": {"properties": {"action": {"const": "error"}}},
+      "then": {"required": ["action", "error_code", "message"]}
+    },
+    {
+      "if": {"properties": {"action": {"const": "done"}}},
+      "then": {"required": ["action", "verdict"]}
+    }
+  ],
+  "additionalProperties": true
+}

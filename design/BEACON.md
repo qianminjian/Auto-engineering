@@ -49,10 +49,10 @@
 
 ## 当前状态
 
-**阶段：** v5.6 实现启动 — Tick-Based Discrete Invocation + 5 层验证 + Pre-flight Gap Analysis。设计整合完成 + 深度审计收口；Phase 3 T9 Tick CLI 接线完成，进入 Phase 3 收尾。
+**阶段：** v5.6 里程碑收官 — Tick-Based Discrete Invocation + 5 层验证 + Pre-flight Gap Analysis + Commit→PR→CI/CD Pipeline。Phase 1-10 = 102/102 全完成（含 Phase 10 双驱动接缝预留）。
 
 **最近动作 (2026-07-12)：**
-- **v7.0 双驱动远期架构立项**（决策 #54）：单引擎(TickOrchestrator)+双驱动(Agent/Standalone) ports&adapters，subsume v5.5 独立跑护城河并给 T10d 退役出口；「Python 永不调 LLM」精确化为「引擎不调/驱动可调」(扩展非翻转)。产出 `v7.0-Plan-DualDriver.md` + discussion。**当前落地 Phase 10 两项 P0 预留**(T33a action/result schema SSOT + T33b 执行栈共享标注)，StandaloneDriver 本体入 v7.0 路线图
+- **v7.0 双驱动远期架构立项**（决策 #54）：单引擎(TickOrchestrator)+双驱动(Agent/Standalone) ports&adapters，subsume v5.5 独立跑护城河并给 T10d 退役出口；「Python 永不调 LLM」精确化为「引擎不调/驱动可调」(扩展非翻转)。产出 `v7.0-Plan-DualDriver.md` + discussion。**当前落地 Phase 10 两项 P0 预留已实现**(T33a `action.schema.json`+`stage-result.schema.json` 版本化 SSOT + 21 契约测试防漂移；T33b 4 处执行栈「双驱动共享资产」标注)；v7.0 主体(V7-1~V7-8)用户明确搁置、不主动启动，入路线图待后续里程碑
 - **T16h ci.yml 薄壳 + ruff 全量转绿** (24afa07)：line-length 100→120 消化中文注释宽度；生产 ruff 全清(E402 上移/E501 折行/SIM108 三元)，测试 per-file-ignore 扩 RUF012/SIM117/B017；`.github/workflows/ci.yml`(uv+ruff+pytest 薄壳)。1968 passed。mypy(203)/coverage-gate 刻意排除薄壳待决策
 - **T10d 定案：v5.5 orchestrator + semantic_evaluator 保留**（决策 #53）：退役前置审计确认 v5.5 是活代码(`ae dev-loop` 裸参数路径)，用户决策不退役、保留 v5.5/v6 共存。修正 D22 计划方向。无 status 翻转
 - **设计背书收口**：T26e PRBackend 选型背书（决策 #50）+ T26f 环内增量 test_gate + commit_msg（决策 #51）——实现验证通过，与决策 #45 一致。Wave 6 设计背书全部完成
@@ -62,7 +62,7 @@
 - **设计文档深度审计 + 22 项收口深化** (决策 #49, Phase 8)：3 并行子代理审 4214 行 → 规格 6.5/10、端到端 2.5/10。P0×4 全为代码缺口(已 T9/T10/T27/T32 跟踪)；文档规格缺陷 S-1~S-20+Q-1/Q-2 共 22 项**纯文档收口**（补 CoverageItem/GateVerdict/done verdict 权威 schema + file-bridge 边界矩阵 §C.3.5 + 路径更正 + 过度设计存续论证）。**S-1 语义评估矛盾定案**：v5.6 全路径无语义评估，代码 semantic_evaluator 移除跟踪到 Phase 3 T10d。审计产出 `_scratch/design-audit/`，无 status 翻转
 - **Init-Loop 契约 v5.6 扩展** (决策 #48)：`init-manifest.schema.json` 版本化 SSOT + ci_platform/design_root 字段 + monorepo 单包降级 + 消费者驱动契约测试
 
-**下一步：** Phase 1-9 全完成 (100/100)。**当前唯一进行中：Phase 10 双驱动接缝预留**（T33a action/result schema SSOT + T33b 执行栈共享标注，v7.0 前置必须项，净收益）。v7.0 双驱动主体（StandaloneDriver + v5.5 退役）见 `v7.0-Plan-DualDriver.md` 路线图，待里程碑扩展。T10d 已定案保留共存（#53），v7.0 由 Driver B subsume 后再退役
+**下一步：** Phase 1-10 全完成 (102/102)，v5.6 里程碑收官。**v7.0 双驱动主体（V7-1~V7-8）用户明确搁置、不主动启动**，放置待后续里程碑再议；届时 V7-7 v5.5 退役撞决策翻转红线须审批。T10d 已定案保留共存（#53），v7.0 由 Driver B subsume 后再退役。
 
 **阻塞项：** 无
 
