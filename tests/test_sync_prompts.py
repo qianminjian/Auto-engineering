@@ -138,3 +138,43 @@ class TestCodeReviewCoverage:
         assert updated is not None
         # 校验同步后的内容仍然结构完整
         assert "<!-- FRAGMENT:" in updated
+
+
+class TestCodeReviewSemantics:
+    """T16j: code-review.md 终态语义校准 + 去虚构引用."""
+
+    _COMMAND = (
+        Path(__file__).resolve().parents[1]
+        / ".claude-plugin" / "commands" / "code-review.md"
+    )
+    _ROOT = Path(__file__).resolve().parents[1]
+
+    def test_no_fictitious_file_references(self) -> None:
+        """code-review.md 引用的 design/ 文件必须真实存在."""
+        content = self._COMMAND.read_text(encoding="utf-8")
+        for line in content.split("\n"):
+            stripped = line.strip()
+            if stripped.startswith("- ") and "design/" in stripped:
+                ref = stripped[2:].split("—")[0].split(" - ")[0].strip()
+                if ref.endswith(".md"):
+                    path_parts = ref.rsplit(".md", 1)[0]
+                    full = (self._ROOT / f"{path_parts}.md")
+                    assert full.exists(), (
+                        f"虚构引用: {ref} (完整路径: {full}) 不存在. "
+                        "移除或更正引用."
+                    )
+
+    def test_no_fictitious_cli_flags(self) -> None:
+        """code-review.md 的 Bash 块不引用不存在的 CLI 标志."""
+        content = self._COMMAND.read_text(encoding="utf-8")
+        # gate-check 没有 --json 标志 (默认输出 JSON)
+        assert "gate-check --quick --json" not in content, (
+            "ae gate-check 没有 --json 标志, 输出默认就是 JSON."
+        )
+
+    def test_version_reference_is_v56(self) -> None:
+        """code-review.md 版本引用应为 v5.6 (不是 v5.1)."""
+        content = self._COMMAND.read_text(encoding="utf-8")
+        assert "Auto-Engineering v5.1" not in content, (
+            "版本应为 v5.6, 不是 v5.1."
+        )
