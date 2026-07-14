@@ -375,11 +375,9 @@ class BaseAgent:
 
         parsed = parse_agent_output(content)
         if parsed is None:
-            _log = logging.getLogger("ae.agents.base")
-            _log.error("LLM output parse FAILED. Content (%d chars):\n%s", len(content), content[:500])
             raise AEError(
                 ErrorCode.INVALID_AGENT_OUTPUT,
-                f"Failed to parse LLM output as JSON ({len(content)} chars): {content[:200]}",
+                f"Failed to parse LLM output as JSON: {content[:200]}",
                 suggestion="检查 LLM 输出是否包含 ```json fence 标记, 或调整 system prompt 要求 JSON 格式输出",
             )
         if isinstance(parsed, BaseModel):

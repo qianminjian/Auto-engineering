@@ -91,8 +91,9 @@ def _extract_from_markdown(text: str) -> dict | None:
     text_lower = text.lower()
 
     # ── Critic stage detection ──
-    critic_kw = ("verdict", "approve", "finding", "审查", "裁决", "问题",
-                 "代码质量", "代码审查", "review", "critic")
+    # v7.0: 只检测强信号 (代码审查专有术语), 避免通用词误匹配 architect 输出
+    critic_kw = ("代码审查结果", "审查发现", "审查裁决", "code review findings",
+                 "critic verdict", "critic report")
     if any(kw in text_lower for kw in critic_kw):
         verdict = "APPROVE" if ("approve" in text_lower or "通过" in text) else "MAJOR"
         return {
@@ -201,15 +202,6 @@ def parse_agent_output[T: BaseModel](
         _log = logging.getLogger("ae.agents.parser")
         _log.info("JSON 解析全部失败, 尝试 markdown fallback 提取")
         parsed = _extract_from_markdown(text)
-    else:
-        import json as _json_mod
-        _log = logging.getLogger("ae.agents.parser")
-        if isinstance(parsed, dict):
-            _log.warning("JSON parse SUCCESS. Keys: %s. Full text (%d chars):\n%s",
-                         list(parsed.keys()), len(text), text[:800])
-        elif isinstance(parsed, list):
-            _log.warning("JSON parse SUCCESS (list, len=%d). Full text (%d chars):\n%s",
-                         len(parsed), len(text), text[:800])
     if parsed is None:
         return None
     if schema is not None:

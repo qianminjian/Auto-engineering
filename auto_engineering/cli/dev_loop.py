@@ -475,7 +475,7 @@ def _run_standalone(
             lambda: BaseAgent(
                 llm=llm, role="architect",
                 system_prompt=ARCHITECT_SYSTEM_PROMPT, tools=tools,
-                max_tool_calls=25,
+                max_tool_calls=12,
             ),
         )
         runtime.register(
