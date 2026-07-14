@@ -1964,3 +1964,43 @@ class TestPhase0BlockingGapGuardrail:
             "decisions": [{"gap_id": "g1", "resolution": "defer"}],
         }))
         assert a["stage"] == "architect"
+
+
+def _dict_gate_runner(gate_names, project_root):
+    """Gate runner that returns plain dicts (not objects) — Driver B path."""
+    return {name: {"passed": True, "message": "ok"} for name in gate_names}
+
+
+class TestRunDeveloperGates:
+    """_run_developer_gates 验证 gate_results 兼容 dict 和 object 输入."""
+
+    def test_gate_results_from_dict_runner(self) -> None:
+        """gate_runner 返回 dict (含 passed/message) → gate_results 正确提取 passed/message."""
+        o = TickOrchestrator(
+            gate_runner=_dict_gate_runner,
+            guardrail=_pass_guardrail(),
+            checkpoint_store=None,
+        )
+        plan = _VALID_PLAN
+        o.init("实现功能")
+        a = o.tick(_make_result_file({
+            "stage": "architect",
+            "plan": plan,
+            "file_list": ["f1.py"],
+            "batch_plan": [{"batch_id": "B1", "design_section": "A1",
+                            "component": "Foo", "tasks": [
+                                {"id": "T1", "description": "task1",
+                                 "file_targets": ["f1.py"]},
+                            ]}],
+            "design_doc_updated": True,
+        }))
+        assert a["stage"] == "developer", f"expected developer, got stage={a.get('stage')}, action={a.get('action')}"
+        # 从 architect→developer 转换会触发 _run_developer_gates
+        assert o._state.gate_results is not None
+        # 验证 gate_results 中每个项目的 passed 和 message 被正确提取
+        for gate_name, gate_val in o._state.gate_results.items():
+            assert isinstance(gate_val, dict), f"{gate_name}: 应为 dict, 实际 {type(gate_val)}"
+            assert gate_val["passed"] is True, f"{gate_name}: passed 应为 True"
+            assert gate_val["message"] == "ok", f"{gate_name}: message 应为 ok"
+            assert "files_snapshot_sha" in gate_val, f"{gate_name}: 应有 files_snapshot_sha"
+            assert "ran_at" in gate_val, f"{gate_name}: 应有 ran_at"

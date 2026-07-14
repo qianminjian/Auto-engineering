@@ -1166,8 +1166,16 @@ class TickOrchestrator:
         ran_at = datetime.now(UTC).isoformat()
         self._state.gate_results = {
             name: {
-                "passed": v.passed,
-                "message": v.message,
+                "passed": (
+                    v.get("passed")
+                    if isinstance(v, dict)
+                    else getattr(v, "passed", None)
+                ),
+                "message": (
+                    v.get("message", "")
+                    if isinstance(v, dict)
+                    else getattr(v, "message", "") or ""
+                ),
                 "files_snapshot_sha": snapshot_sha,
                 "ran_at": ran_at,
             }
