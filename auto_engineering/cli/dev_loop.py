@@ -1,14 +1,16 @@
-"""CLI dev_loop 核心 — _build_v2_agent_runtime / _run_v2_orchestrator.
+"""CLI dev_loop — v5.5 Orchestrator + v5.6 Tick 模式 + v7.6 Standalone 模式.
 
 从 cli.py 拆分 (Plan P1-B, 原 cli.py §218-451).
 
 v5.0 §PE.6 + §B13.2 — OrchestratorRunResult 扩展 6 字段 JSON 契约:
     - status: 终态 (completed / max_rounds / failed)
     - thread_id: 唯一线程 ID (UUID hex)
-    - rounds: 实际跑了几轮
+    - rounds: 实际跑的轮数
     - verdict: 收敛判定 level + reason
     - duration_sec: 总耗时 (秒)
     - gate_summary: 各 Gate 的 pass/fail dict
+
+v7.6: 新增 _run_standalone (Driver B) — 进程内 AgentRuntime 调 LLM, 不回写文件.
 """
 
 from __future__ import annotations
@@ -121,12 +123,12 @@ def _build_gate_summary(gate_results: dict) -> dict:
         if v is None:
             summary[name] = {"status": "skipped", "passed": None, "message": ""}
             continue
-        passed = getattr(v, "passed", None)
+        passed = v.get("passed") if isinstance(v, dict) else getattr(v, "passed", None)
         if passed is None:
             # ConvergenceVerdict 类型, 用 should_stop 推断
             should_stop = getattr(v, "should_stop", False)
             passed = bool(should_stop)
-        message = getattr(v, "message", "") or ""
+        message = v.get("message", "") if isinstance(v, dict) else getattr(v, "message", "") or ""
         if not message:
             reason = getattr(v, "reason", "")
             if reason:
@@ -187,15 +189,11 @@ def _build_v2_agent_runtime(
     from auto_engineering.tools.run_tests_tool import RunTestsTool
 
     llm = AnthropicProvider()  # SDK 自动从 ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN 读
-    # P1.9 fix: 只有支持 project_root 的工具传 project_root (白名单沙箱)
-    # P1-C: ReadFileTool 现在也支持 project_root
     tools = [
         WriteFileTool(project_root=project_root),
         EditFileTool(project_root=project_root),
         SearchCodeTool(project_root=project_root),
         ReadFileTool(project_root=project_root),
-        # 不支持 project_root 的工具: ListDirTool / RunBashTool /
-        # GitStatusTool / GitCommitTool / GitDiffTool / RunTestsTool
         ListDirTool(),
         RunBashTool(),
         GitStatusTool(),
@@ -265,60 +263,62 @@ def _run_v2_orchestrator(
     db_path.parent.mkdir(parents=True, exist_ok=True)
     from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
     checkpoint_store: SQLiteCheckpointStore[EngineState] = SQLiteCheckpointStore(str(db_path))
+    try:
+        # 2. Gate 列表: 优先从 init-manifest 构造 (IL-AC-02), 否则用默认
+        manifest = load_init_manifest(project_root)
+        gates = build_gates_from_manifest(manifest) if manifest else DEFAULT_GATES
 
-    # 2. Gate 列表: 优先从 init-manifest 构造 (IL-AC-02), 否则用默认
-    manifest = load_init_manifest(project_root)
-    gates = build_gates_from_manifest(manifest) if manifest else DEFAULT_GATES
+        # 3. v5.0 M4 完整 OrchestratorConfig
+        agent_runtime = _build_v2_agent_runtime(project_root, progress, token_tracker)
+        config = OrchestratorConfig(
+            convergence_config=ConvergenceConfig(max_iterations=max_rounds),
+            gates=gates,                      # init-manifest 驱动的 Gate 列表 (IL-AC-02)
+            project_root=project_root,
+            agent_runtime=agent_runtime,
+            guardrail_chain=GuardrailChain.default(),   # 6 Guardrail (G1-G5 + G6)
+            stage_router=StageRouter(),                  # T1-T6 路由
+            checkpoint_store=checkpoint_store,            # SQLite 持久化
+        )
 
-    # 3. v5.0 M4 完整 OrchestratorConfig
-    agent_runtime = _build_v2_agent_runtime(project_root, progress, token_tracker)
-    config = OrchestratorConfig(
-        convergence_config=ConvergenceConfig(max_iterations=max_rounds),
-        gates=gates,                      # init-manifest 驱动的 Gate 列表 (IL-AC-02)
-        project_root=project_root,
-        agent_runtime=agent_runtime,
-        guardrail_chain=GuardrailChain.default(),   # 6 Guardrail (G1-G5 + G6)
-        stage_router=StageRouter(),                  # T1-T6 路由
-        checkpoint_store=checkpoint_store,            # SQLite 持久化
-    )
+        # 3. Orchestrator (空 tasks → step_1 走 architect 自动生成 batch_plan)
+        orchestrator = Orchestrator(
+            requirement=requirement,
+            tasks=[],
+            executor=None,
+            config=config,
+        )
+        orchestrator._thread_id = uuid.uuid4().hex  # type: ignore[attr-defined]  # v5.5 动态注入 thread_id
 
-    # 3. Orchestrator (空 tasks → step_1 走 architect 自动生成 batch_plan)
-    orchestrator = Orchestrator(
-        requirement=requirement,
-        tasks=[],
-        executor=None,
-        config=config,
-    )
-    orchestrator._thread_id = uuid.uuid4().hex  # type: ignore[attr-defined]  # v5.5 动态注入 thread_id
+        # 5. 启动 asyncio.run (Orchestrator.run 是 async)
+        started_at = time.monotonic()
+        history = asyncio.run(orchestrator.run(cancellation=cancellation))
+        duration_sec = time.monotonic() - started_at
 
-    # 5. 启动 asyncio.run (Orchestrator.run 是 async)
-    started_at = time.monotonic()
-    history = asyncio.run(orchestrator.run(cancellation=cancellation))
-    duration_sec = time.monotonic() - started_at
+        # 6. 输出总结
+        total_rounds = len(history)
+        # 提取最后一轮的 gate_results
+        last_gate_results: dict = {}
+        if history:
+            last = history[-1]
+            if hasattr(last, "gate_results"):
+                last_gate_results = last.gate_results or {}
 
-    # 6. 输出总结
-    total_rounds = len(history)
-    # 提取最后一轮的 gate_results
-    last_gate_results: dict = {}
-    if history:
-        last = history[-1]
-        if hasattr(last, "gate_results"):
-            last_gate_results = last.gate_results or {}
+        # 进度输出
+        progress.emit(
+            "orchestrator_done",
+            rounds=total_rounds,
+            verdict_level=orchestrator.verdict.level if orchestrator.verdict else None,
+            should_stop=orchestrator.verdict.should_stop if orchestrator.verdict else False,
+        )
 
-    # 进度输出
-    progress.emit(
-        "orchestrator_done",
-        rounds=total_rounds,
-        verdict_level=orchestrator.verdict.level if orchestrator.verdict else None,
-        should_stop=orchestrator.verdict.should_stop if orchestrator.verdict else False,
-    )
-
-    return OrchestratorRunResult.from_orchestrator(
-        orchestrator=orchestrator,
-        total_rounds=total_rounds,
-        duration_sec=duration_sec,
-        gate_results=last_gate_results,
-    )
+        return OrchestratorRunResult.from_orchestrator(
+            orchestrator=orchestrator,
+            total_rounds=total_rounds,
+            duration_sec=duration_sec,
+            gate_results=last_gate_results,
+        )
+    finally:
+        checkpoint_store.close()
 
 
 # ============================================================
@@ -417,3 +417,157 @@ def _run_tick_resume(checkpoint_id: str, root: Path) -> None:
         click.echo(json.dumps(action, ensure_ascii=False))
     finally:
         store.close()
+
+
+# ============================================================
+# V7-6: Standalone 模式 (Driver B — 进程内调 LLM)
+# ============================================================
+
+
+def _run_standalone(
+    requirement: str,
+    root: Path,
+    max_rounds: int = 5,
+    *,
+    api_key: str | None = None,
+    design_doc_path: str | None = None,
+) -> OrchestratorRunResult:
+    """ae dev-loop --standalone: Driver B 独立进程内循环.
+
+    与 v5.6 tick 模式不同: standalone 在单个进程内完成完整 dev-loop,
+    AgentRuntime 直接调 LLM (不通过文件桥接).
+
+    Args:
+        requirement: 需求描述
+        root: 项目根目录
+        max_rounds: 最大 round 数
+        api_key: Anthropic API key (None → 从环境变量读)
+        design_doc_path: 设计文档路径 (可选)
+
+    Returns:
+        OrchestratorRunResult (与 v5.5 legacy 模式兼容的输出格式)
+    """
+    import asyncio
+
+    import click
+
+    from auto_engineering.agents.base import BaseAgent
+    from auto_engineering.agents.prompts import (
+        ARCHITECT_SYSTEM_PROMPT,
+        CRITIC_SYSTEM_PROMPT,
+        DEVELOPER_SYSTEM_PROMPT,
+    )
+    from auto_engineering.llm.anthropic_provider import AnthropicProvider
+    from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
+    from auto_engineering.loop.guardrail import GuardrailChain
+    from auto_engineering.loop.standalone_driver import StandaloneDriver
+    from auto_engineering.loop.tick_orchestrator import TickOrchestrator
+    from auto_engineering.runtime.runtime import AgentRuntime
+
+    db_path = _checkpoint_db_path(root)
+    store: SQLiteCheckpointStore[EngineState] = SQLiteCheckpointStore(db_path)
+    try:
+        llm = AnthropicProvider(api_key=api_key) if api_key else AnthropicProvider()
+        tools = _build_standalone_tools(root)
+        runtime = AgentRuntime()
+        runtime.register(
+            "architect",
+            lambda: BaseAgent(
+                llm=llm, role="architect",
+                system_prompt=ARCHITECT_SYSTEM_PROMPT, tools=tools,
+                max_tool_calls=25,
+            ),
+        )
+        runtime.register(
+            "developer",
+            lambda: BaseAgent(
+                llm=llm, role="developer",
+                system_prompt=DEVELOPER_SYSTEM_PROMPT, tools=tools,
+                max_tool_calls=50,
+            ),
+        )
+        runtime.register(
+            "critic",
+            lambda: BaseAgent(
+                llm=llm, role="critic",
+                system_prompt=CRITIC_SYSTEM_PROMPT, tools=tools,
+                max_tool_calls=15,
+            ),
+        )
+
+        orch = TickOrchestrator(
+            root, checkpoint_store=store,
+            guardrail=GuardrailChain.default(),
+        )
+        driver = StandaloneDriver(
+            orchestrator=orch,
+            agent_runtime=runtime,
+            project_root=root,
+            max_rounds=max_rounds,
+            design_doc_path=design_doc_path,
+        )
+
+        started_at = time.monotonic()
+        summary = asyncio.run(driver.run_async(requirement))
+        duration_sec = time.monotonic() - started_at
+
+        if summary.success:
+            click.echo(
+                f"dev-loop standalone complete: status=completed, "
+                f"ticks={summary.total_ticks}, verdict={summary.verdict}, "
+                f"duration={duration_sec:.1f}s"
+            )
+        else:
+            click.echo(
+                f"dev-loop standalone: status=failed, ticks={summary.total_ticks}, "
+                f"error={summary.error_message}, duration={duration_sec:.1f}s",
+                err=True,
+            )
+
+        verdict_dict = {"level": 3 if summary.success else 4,
+                         "level_name": "QUALITY_PASS" if summary.success else "HARD_LIMIT",
+                         "reason": summary.error_message}
+
+        return OrchestratorRunResult(
+            status="completed" if summary.success else "failed",
+            thread_id=uuid.uuid4().hex,
+            rounds=summary.total_ticks,
+            verdict=verdict_dict,
+            duration_sec=duration_sec,
+            gate_summary={},
+            total_steps=summary.total_ticks,
+        )
+    finally:
+        store.close()
+        llm.close()
+
+
+def _build_standalone_tools(root: Path) -> list:
+    """构造 standalone 模式的工具集 (与 _build_v2_agent_runtime 共享逻辑)."""
+    from auto_engineering.tools.bash_tools import RunBashTool
+    from auto_engineering.tools.file_tools import (
+        EditFileTool,
+        ListDirTool,
+        ReadFileTool,
+        SearchCodeTool,
+        WriteFileTool,
+    )
+    from auto_engineering.tools.git_tools import (
+        GitCommitTool,
+        GitDiffTool,
+        GitStatusTool,
+    )
+    from auto_engineering.tools.run_tests_tool import RunTestsTool
+
+    return [
+        WriteFileTool(project_root=root),
+        EditFileTool(project_root=root),
+        SearchCodeTool(project_root=root),
+        ReadFileTool(project_root=root),
+        ListDirTool(),
+        RunBashTool(),
+        GitStatusTool(),
+        GitCommitTool(),
+        GitDiffTool(),
+        RunTestsTool(),
+    ]

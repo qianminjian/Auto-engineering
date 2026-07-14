@@ -35,7 +35,7 @@ class RunTestsTool(BaseTool):
         "Run project tests. Detects runner (pytest/npm/pnpm/yarn/uv) or uses runner parameter."
     )
     parameters: ClassVar[dict] = {
-        "scope": {"type": "string", "description": "Test scope: all/unit/integration/coverage"},
+        "scope": {"type": "string", "description": "Test scope: all/unit/integration/coverage", "required": True},
         "runner": {"type": "string", "description": "Force runner (pytest/npm/pnpm/yarn/uv)"},
         "cwd": {"type": "string", "description": "Working directory (optional)"},
         "timeout": {"type": "integer", "description": "Timeout in seconds (default 300)"},

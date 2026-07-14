@@ -136,12 +136,18 @@ class BaseTool(ABC):
                 os.close(fd)
 
     def to_schema(self) -> dict:
+        # Strip internal "required" marker from properties — it's non-standard
+        # JSON Schema and breaks strict endpoints (DeepSeek Anthropic-compatible).
+        clean_props = {
+            k: {kk: vv for kk, vv in v.items() if kk != "required"}
+            for k, v in self.parameters.items()
+        }
         return {
             "name": self.name,
             "description": self.description,
             "input_schema": {
                 "type": "object",
-                "properties": self.parameters,
-                "required": list(self.parameters.keys()),
+                "properties": clean_props,
+                "required": [k for k, v in self.parameters.items() if v.get("required", False)],
             },
         }

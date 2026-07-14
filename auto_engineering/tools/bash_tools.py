@@ -38,7 +38,7 @@ class RunBashTool(BaseTool):
     name = "run_bash"
     description = "Execute shell command and return output. Blocks until done or timeout."
     parameters: ClassVar[dict] = {
-        "command": {"type": "string", "description": "Shell command to execute"},
+        "command": {"type": "string", "description": "Shell command to execute", "required": True},
         "cwd": {"type": "string", "description": "Working directory (optional)"},
         "timeout": {"type": "integer", "description": "Timeout in seconds (default 120)"},
     }

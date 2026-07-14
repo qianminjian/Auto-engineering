@@ -1182,8 +1182,8 @@ def _inject_self_refine_context(
     if has_gates:
         gate_lines = ["\n\n## [Self-Refine gate_results] 上一轮 Gate 检查结果 (非 LLM 信号):"]
         for name, verdict in latest_gates.items():
-            passed = getattr(verdict, "passed", None)
-            message = getattr(verdict, "message", "")
+            passed = verdict.get("passed") if isinstance(verdict, dict) else getattr(verdict, "passed", None)
+            message = verdict.get("message", "") if isinstance(verdict, dict) else getattr(verdict, "message", "")
             status = "✓ pass" if passed else "✗ FAIL"
             gate_lines.append(f"- `{name}`: {status} — {message}")
         gate_lines.append(

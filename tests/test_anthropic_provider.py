@@ -119,7 +119,7 @@ class TestAnthropicProvider:
             model="claude-x",
             max_tokens=2048,
             system="sys-prompt",
-            messages=[{"role": "user", "content": "q"}],
+            messages=[{"role": "user", "content": [{"type": "text", "text": "q"}]}],
         )
 
     def test_create_message_default_client_no_args(self):
@@ -292,7 +292,7 @@ class TestAnthropicProviderKwargs:
             model="claude-x",
             max_tokens=2048,
             system="sys-prompt",
-            messages=[{"role": "user", "content": "q"}],
+            messages=[{"role": "user", "content": [{"type": "text", "text": "q"}]}],
             tools=tools,
         )
 

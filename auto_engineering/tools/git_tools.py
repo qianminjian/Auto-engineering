@@ -102,7 +102,7 @@ class GitCommitTool(BaseTool):
         "target_files) to stage precisely; omit to stage all (git add -A)."
     )
     parameters: ClassVar[dict] = {
-        "message": {"type": "string", "description": "Commit message"},
+        "message": {"type": "string", "description": "Commit message", "required": True},
         "files": {
             "type": "array",
             "description": (

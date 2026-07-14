@@ -91,6 +91,41 @@ class AnthropicProvider:
                 self._client = anthropic.Anthropic()  # SDK 自动从 env 读 key
         self._max_retries = max_retries
 
+    @staticmethod
+    def _normalize_messages(messages: list[dict]) -> list[dict]:
+        """标准化消息 content 为 content-block 格式 (DeepSeek 兼容).
+
+        DeepSeek Anthropic-compatible 端点要求 content 必须是
+        [{type, text/tool_use_id, ...}] 格式, 不接受纯字符串 content.
+        """
+        normalized = []
+        for msg in messages:
+            content = msg.get("content")
+            role = msg.get("role")
+            if isinstance(content, str):
+                content = [{"type": "text", "text": content}]
+            elif isinstance(content, list):
+                normalized_blocks = []
+                for block in content:
+                    if isinstance(block, dict):
+                        if "type" not in block:
+                            # tool_use block 缺 type → 补充
+                            if "name" in block and "input" in block:
+                                block = {"type": "tool_use", **block}
+                            # tool_result block 或 text block 缺 type
+                            elif "tool_use_id" in block:
+                                block = {"type": "tool_result", **block}
+                            elif "text" in block:
+                                block = {"type": "text", **block}
+                        normalized_blocks.append(block)
+                    elif isinstance(block, str):
+                        normalized_blocks.append({"type": "text", "text": block})
+                    else:
+                        normalized_blocks.append(block)
+                content = normalized_blocks
+            normalized.append({"role": role, "content": content})
+        return normalized
+
     def close(self) -> None:
         """显式关闭底层 httpx 连接 (v2.5 P2-D-6).
 
@@ -136,7 +171,7 @@ class AnthropicProvider:
             "model": model,
             "max_tokens": max_tokens,
             "system": system,
-            "messages": messages,
+            "messages": self._normalize_messages(messages),
         }
         if tools:
             kwargs["tools"] = tools

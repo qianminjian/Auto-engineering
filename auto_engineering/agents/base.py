@@ -32,6 +32,27 @@ if TYPE_CHECKING:
     from auto_engineering.cli.helpers import TokenTracker
     from auto_engineering.runtime.cancellation import CancellationToken
 
+
+def _truncate_tool_results(results: list[dict], max_chars: int = 8000) -> list[dict]:
+    """截断 tool_result 的 content 防止上下文爆炸.
+
+    read_file 等工具可返回 100KB+ 内容, 在 agent 工具循环中累积
+    10+ 次后轻松超过 DeepSeek 1M 上下文窗口. 每个 result 截断为
+    max_chars 字符, 超出部分替换为截断提示.
+    """
+    truncated = []
+    for r in results:
+        content = r.get("content", "")
+        if isinstance(content, str) and len(content) > max_chars:
+            r = dict(r)
+            r["content"] = (
+                content[:max_chars]
+                + f"\n\n[... 内容已截断, 原始长度 {len(content)} 字符, "
+                + f"显示前 {max_chars} 字符 ...]"
+            )
+        truncated.append(r)
+    return truncated
+
 __all__ = ["BaseAgent"]
 
 # v5.5 audit P2-5: 模块级懒加载 Anthropic SDK 异常类 (只 import 一次)
@@ -219,7 +240,9 @@ class BaseAgent:
                         )
 
                 messages.append({"role": "assistant", "content": response.tool_use_blocks})
-                messages.append({"role": "user", "content": tool_results})
+                # v7.0: 截断超大 tool_result 防止上下文爆炸 (DeepSeek 1M 窗口)
+                _truncated = _truncate_tool_results(tool_results, max_chars=8000)
+                messages.append({"role": "user", "content": _truncated})
                 continue
 
             values = self._parse_final_response(response.content)
@@ -315,7 +338,7 @@ class BaseAgent:
         for param_name, param_spec in schema.items():
             if param_name not in tool_input:
                 # 必填字段缺失
-                if param_spec.get("required", True):
+                if param_spec.get("required", False):
                     raise AEError(
                         ErrorCode.INVALID_AGENT_OUTPUT,
                         f"Tool '{tool_name}' missing required parameter: {param_name}",
@@ -352,9 +375,11 @@ class BaseAgent:
 
         parsed = parse_agent_output(content)
         if parsed is None:
+            _log = logging.getLogger("ae.agents.base")
+            _log.error("LLM output parse FAILED. Content (%d chars):\n%s", len(content), content[:500])
             raise AEError(
                 ErrorCode.INVALID_AGENT_OUTPUT,
-                f"Failed to parse LLM output as JSON: {content[:200]}",
+                f"Failed to parse LLM output as JSON ({len(content)} chars): {content[:200]}",
                 suggestion="检查 LLM 输出是否包含 ```json fence 标记, 或调整 system prompt 要求 JSON 格式输出",
             )
         if isinstance(parsed, BaseModel):

@@ -264,9 +264,31 @@ class TickOrchestrator:
         self._record_tick_latency(t_start, tick_no)
         return action
 
+    def tick_dict(self, result: dict) -> dict:
+        """处理一个 tick — 直接接受 result dict (Driver B standalone 模式).
+
+        与 tick() 相同流程, 但跳过文件读取步骤, 直接验证并处理 result dict.
+        """
+        t_start = time.perf_counter()
+        self._t_gate_ms = 0.0
+        self._t_guard_sub_ms = 0.0
+        tick_no = self._state.tick if self._state else 0
+        action = self._tick_body_dict(result)
+        self._record_tick_latency(t_start, tick_no)
+        return action
+
     def _tick_body(self, result_file: Path) -> dict:
         """tick 核心逻辑: 验证 → Guardrail → Gate → 路由 → Checkpoint → action."""
         result = self._read_and_validate(result_file)
+        return self._tick_process_result(result)
+
+    def _tick_body_dict(self, result: dict) -> dict:
+        """tick 核心逻辑 (dict 版本): 验证 → Guardrail → Gate → 路由 → Checkpoint → action."""
+        result = self._validate_result_dict(result)
+        return self._tick_process_result(result)
+
+    def _tick_process_result(self, result: dict) -> dict:
+        """tick 公共处理逻辑: Guardrail → Gate → 路由 → action."""
         if isinstance(result, ErrorResponse):
             return result.to_dict()
 
@@ -296,6 +318,32 @@ class TickOrchestrator:
             self._run_developer_gates()
 
         return self._after_tick(result)
+
+    def _validate_result_dict(self, result: dict) -> dict | ErrorResponse:
+        """验证 result dict (不读文件, Driver B standalone 用)."""
+        if not isinstance(result, dict):
+            return ErrorResponse(
+                error_code="RESULT_TYPE_ERROR",
+                message="result 必须是 JSON object",
+                current_state=self._state.to_dict() if self._state else None)
+
+        result_stage = result.get("stage", "")
+        if result_stage != self._state.current_stage:
+            return ErrorResponse(
+                error_code="STAGE_MISMATCH",
+                message=f"stage 不匹配: result={result_stage!r}, "
+                        f"expected={self._state.current_stage!r}",
+                current_state=self._state.to_dict())
+
+        from auto_engineering.loop.actions import validate_result_format
+        errors = validate_result_format(result, self._state.current_stage)
+        if errors:
+            return ErrorResponse(
+                error_code="RESULT_VALIDATION_ERROR",
+                message="; ".join(errors),
+                current_state=self._state.to_dict())
+
+        return result
 
     def _record_tick_latency(self, t_start: float, tick_no: int) -> None:
         """DS-10: 写 tick 延迟记录到 action_history, 超编排预算只告警不中断.

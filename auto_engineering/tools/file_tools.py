@@ -27,7 +27,7 @@ class ReadFileTool(BaseTool):
     name = "read_file"
     description = "Read file content. Supports line range via offset/limit."
     parameters: ClassVar[dict] = {
-        "file_path": {"type": "string", "description": "Absolute file path"},
+        "file_path": {"type": "string", "description": "Absolute file path", "required": True},
         "offset": {"type": "integer", "description": "Start line (1-based, default 1)"},
         "limit": {"type": "integer", "description": "Lines to read (default 200)"},
     }
@@ -63,8 +63,8 @@ class WriteFileTool(BaseTool):
     name = "write_file"
     description = "Create or overwrite a file. Auto-creates parent directories."
     parameters: ClassVar[dict] = {
-        "file_path": {"type": "string", "description": "Absolute file path"},
-        "content": {"type": "string", "description": "Full file content"},
+        "file_path": {"type": "string", "description": "Absolute file path", "required": True},
+        "content": {"type": "string", "description": "Full file content", "required": True},
     }
 
     async def execute(self, **kwargs) -> ToolResult:
@@ -94,9 +94,9 @@ class EditFileTool(BaseTool):
     name = "edit_file"
     description = "Replace exact string in file. Returns error if old_string not found."
     parameters: ClassVar[dict] = {
-        "file_path": {"type": "string", "description": "Absolute file path"},
-        "old_string": {"type": "string", "description": "Existing string to replace"},
-        "new_string": {"type": "string", "description": "Replacement string"},
+        "file_path": {"type": "string", "description": "Absolute file path", "required": True},
+        "old_string": {"type": "string", "description": "Existing string to replace", "required": True},
+        "new_string": {"type": "string", "description": "Replacement string", "required": True},
     }
 
     async def execute(self, **kwargs) -> ToolResult:
@@ -136,7 +136,7 @@ class SearchCodeTool(BaseTool):
     name = "search_code"
     description = "Search regex pattern in files. Returns matching lines with file:line:content."
     parameters: ClassVar[dict] = {
-        "pattern": {"type": "string", "description": "Regex pattern"},
+        "pattern": {"type": "string", "description": "Regex pattern", "required": True},
         "path": {"type": "string", "description": "Directory to search (default '.')"},
         "file_pattern": {"type": "string", "description": "Glob file filter (e.g. '*.py')"},
     }
