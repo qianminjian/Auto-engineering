@@ -2004,3 +2004,105 @@ class TestRunDeveloperGates:
             assert gate_val["message"] == "ok", f"{gate_name}: message 应为 ok"
             assert "files_snapshot_sha" in gate_val, f"{gate_name}: 应有 files_snapshot_sha"
             assert "ran_at" in gate_val, f"{gate_name}: 应有 ran_at"
+
+
+class TestFreshGateAtCritic:
+    """FreshGate G8 在 critic stage 应 rerun gates 而非返回错误.
+
+    FreshGate 适用于 developer + critic 两阶段 (§B3.2). 原代码只对 developer 放行,
+    critic 阶段返回 GUARDRAIL_RETRY → ActionError, 但正确行为应是重跑 Gate 刷新证据后继续.
+    """
+
+    def test_freshgate_at_critic_runs_gates_and_continues(self) -> None:
+        """critic tick 中 FreshGate 触发 → 应 rerun gates 并继续到 after_tick 而非报错."""
+        # guardrail 在第三次调用 (critic tick) 返回 FreshGate
+        # 调用: #1=architect tick, #2=developer tick, #3=critic tick
+        call_count = [0]
+        def _guardrail_side_effect(*args, **kwargs):
+            call_count[0] += 1
+            if call_count[0] == 3:  # critic tick
+                return MagicMock(action="retry", guardrail_name="FreshGate")
+            return MagicMock(action="pass")
+        gr = MagicMock()
+        gr.check.side_effect = _guardrail_side_effect
+
+        gate_calls = [0]
+        def _counting_gate_runner(gate_names, project_root):
+            gate_calls[0] += 1
+            return {name: {"passed": True, "message": "ok"}
+                    for name in gate_names}
+
+        o = TickOrchestrator(
+            gate_runner=_counting_gate_runner,
+            guardrail=gr,
+            checkpoint_store=None,
+        )
+        o.init("req")
+
+        # architect tick → guardrail.check() call #1 (pass)
+        o.tick(_make_result_file({
+            "stage": "architect",
+            "plan": _VALID_PLAN,
+            "batch_plan": [{
+                "batch_id": "B1", "design_section": "B2", "component": "Foo",
+                "tasks": [{"id": "T1", "description": "t1", "module_ref": "§B2",
+                           "file_targets": ["f.py"]}],
+            }],
+            "file_list": ["f.py"], "contracts": {},
+        }))
+
+        # developer tick → guardrail.check() call #2 (pass)
+        action = o.tick(_make_result_file({
+            "stage": "developer", "batch_id": "B1",
+            "files_changed": ["f.py"],
+            "test_results": {"passed": 1, "failed": 0},
+        }))
+        assert action["stage"] == "critic"
+
+        # critic tick → guardrail.check() call #3 (FreshGate)
+        action = o.tick(_make_result_file({
+            "stage": "critic", "verdict": "APPROVE", "findings": [],
+            "critic_feedback": "LGTM",
+        }))
+        # 不应返回 GUARDRAIL_* 错误
+        assert action.get("error_code", "") != "GUARDRAIL_RETRY", \
+            f"FreshGate at critic 不应返回错误: {action}"
+        # 应正常路由到下一 stage
+        assert action["stage"] == "component_verifier", \
+            f"预期 component_verifier, 实际 stage={action.get('stage')}"
+
+    def test_freshgate_at_developer_still_works(self) -> None:
+        """FreshGate at developer 应仍正常工作 (回归测试)."""
+        call_count = [0]
+        def _guardrail_side_effect(*args, **kwargs):
+            call_count[0] += 1
+            if call_count[0] == 2:  # developer tick (architect→developer 转换前的检查)
+                return MagicMock(action="retry", guardrail_name="FreshGate")
+            return MagicMock(action="pass")
+        gr = MagicMock()
+        gr.check.side_effect = _guardrail_side_effect
+
+        o = TickOrchestrator(
+            gate_runner=_pass_gate_runner,
+            guardrail=gr,
+            checkpoint_store=None,
+        )
+        o.init("req")
+        o.tick(_make_result_file({
+            "stage": "architect",
+            "plan": _VALID_PLAN,
+            "batch_plan": [{
+                "batch_id": "B1", "design_section": "B2", "component": "Foo",
+                "tasks": [{"id": "T1", "description": "t1", "module_ref": "§B2",
+                           "file_targets": ["f.py"]}],
+            }],
+            "file_list": ["f.py"], "contracts": {},
+        }))
+        action = o.tick(_make_result_file({
+            "stage": "developer", "batch_id": "B1",
+            "files_changed": ["f.py"],
+            "test_results": {"passed": 1, "failed": 0},
+        }))
+        # FreshGate at developer 不应阻塞
+        assert action.get("error_code", "") != "GUARDRAIL_RETRY"
+        assert action["stage"] == "critic"

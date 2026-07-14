@@ -305,13 +305,14 @@ class TickOrchestrator:
         self._t_guard_sub_ms += (time.perf_counter() - t_g) * 1000
 
         if gr.action != "pass":
-            # G8 FreshGate@developer: 陈旧 gate 证据由随后的 Gate 重跑刷新
-            # (rerun_gates 语义, S-4) → 不清实现/不返错, 放行至 Gate 重跑刷新快照.
-            is_freshgate_dev = (
-                getattr(gr, "guardrail_name", "") == "FreshGate"
-                and self._state.current_stage == "developer"
-            )
-            if not is_freshgate_dev:
+            # G8 FreshGate: 代码在 Gate 后又变更 → 陈旧证据 → 强制重跑 Gate
+            # (S-4 rerun_gates 语义). 适用 developer + critic 两阶段 (§B3.2).
+            # FreshGate 不清实现/不返错, 放行至 Gate 重跑刷新快照.
+            # 非 FreshGate 的 guardrail → 返回错误.
+            if getattr(gr, "guardrail_name", "") == "FreshGate":
+                if self._state.current_stage != "developer":
+                    self._run_developer_gates()
+            else:
                 return self._handle_guardrail_result(gr)
 
         if self._state.current_stage == "developer":
