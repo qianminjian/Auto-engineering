@@ -844,6 +844,7 @@ class TickOrchestrator:
             "thread_id": self._state.thread_id,
             "gate_summary": self._state.gate_results,
             "feedback": feedback,
+            "requirement": self._state.requirement,
             "progress_summary": (
                 self._progress_tree.summary() if self._progress_tree else None
             ),

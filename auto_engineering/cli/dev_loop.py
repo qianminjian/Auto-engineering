@@ -483,7 +483,7 @@ def _run_standalone(
             lambda: BaseAgent(
                 llm=llm, role="developer",
                 system_prompt=DEVELOPER_SYSTEM_PROMPT, tools=tools,
-                max_tool_calls=50,
+                max_tool_calls=30,
             ),
         )
         runtime.register(

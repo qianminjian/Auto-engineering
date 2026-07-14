@@ -15,6 +15,7 @@ container with no network, read-only root fs). 详见 BEACON §v2.5 P1-S2.
 from __future__ import annotations
 
 import logging
+import os
 import re
 import subprocess
 from typing import ClassVar
@@ -72,6 +73,10 @@ class RunBashTool(BaseTool):
 
         if not command:
             return ToolResult(success=False, content="", error="command is empty")
+
+        # v7.0: cwd 不存在或无法访问 → 回退到 project_root (DeepSeek 幻觉 /workspace 等路径)
+        if cwd and not os.path.isdir(str(cwd)):
+            cwd = str(self.project_root) if self.project_root else None
 
         # P1.5: 黑名单检查
         for pattern in self.DANGEROUS_PATTERNS:

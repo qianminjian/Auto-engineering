@@ -288,6 +288,11 @@ class StandaloneDriver:
         # V7-5 §3: validate_result_format + 最多 1 次重试
         errors = validate_result_format(result, role)
         if not errors:
+            # v7.0.1: developer 完成后 auto-commit (防止 GitClean guardrail 拦截)
+            if role == "developer":
+                self._auto_commit(
+                    result.get("batch_id", action.get("batch_id", "T1")), "",
+                )
             return result
 
         _logger.warning(
@@ -295,9 +300,13 @@ class StandaloneDriver:
             role, action.get("tick", "?"), "; ".join(errors[:3]),
         )
         # 当首次结果已有部分有效数据 (如 markdown fallback), 跳过重试避免数据丢失
+        _meaningful_keys = (
+            ("plan", "batch_plan", "file_list") if role == "architect"
+            else ("files_changed", "test_results", "batch_id")
+        )
         has_meaningful_data = any(
-            result.get(k) for k in ("plan", "batch_plan", "file_list")
-            if isinstance(result.get(k), (list, str)) and len(result.get(k)) > 0
+            bool(result.get(k)) for k in _meaningful_keys
+            if isinstance(result.get(k), (list, str, dict))
         )
         if has_meaningful_data:
             _logger.info(
@@ -594,15 +603,45 @@ class StandaloneDriver:
         if action_type == "developer":
             tasks = context.get("tasks", [])
             batch_id = context.get("batch_id", action.get("batch_id", ""))
+            plan = action.get("plan", "")
+            requirement = action.get("requirement", "")
             task_descs = "\n".join(
                 f"  - {t.get('id', '?')}: {t.get('description', '')}"
+                + (f" (files: {', '.join(t.get('file_targets', []))})"
+                   if t.get('file_targets') else "")
                 for t in tasks
             )
+            plan_context = (
+                f"\n\n架构计划:\n{plan[:3000]}" if plan else ""
+            )
+            req_context = (
+                f"\n\n原始需求:\n{requirement[:2000]}" if requirement else ""
+            )
+            # v7.0: 当 batch_plan 为空时, 让 developer 自行规划设计 (DeepSeek 兼容)
+            if not tasks or not any(t.get("file_targets") for t in tasks):
+                self_directed = (
+                    f"\n\n注意: 架构计划中没有给出具体文件列表。"
+                    f"请直接根据原始需求创建文件, 不要花时间浏览项目。\n"
+                    f"步骤:\n"
+                    f"1. 先用 mkdir -p 创建必要的目录 (如 src/, tests/)\n"
+                    f"2. 立即用 write_file 创建实现文件 (最多 3 个)\n"
+                    f"3. 用 write_file 创建测试文件 (1 个)\n"
+                    f"4. 用 run_tests 运行测试\n"
+                    f"5. 用 git_commit 提交所有变更\n"
+                    f"6. 输出 files_changed + test_results JSON\n"
+                    f"重要: 必须使用 write_file 创建文件, 不要只读不写。"
+                    f"前 3 个工具调用中至少要有 1 个 write_file。"
+                )
+            else:
+                self_directed = ""
             return {
                 "description": (
-                    f"你是一个软件开发者。实现以下任务 (batch={batch_id}):\n"
-                    f"{task_descs}\n\n"
-                    f"遵守 TDD: Red→Green→Refactor。每个文件改动后跑测试。"
+                    f"你是一个软件开发者。实现以下需求 (batch={batch_id}):\n"
+                    f"{req_context}"
+                    f"{plan_context}"
+                    f"{self_directed}\n\n"
+                    f"遵守 TDD: Red→Green→Refactor。\n"
+                    f"每个文件改动后跑测试。先创建必要的目录, 再写代码。"
                 ),
                 "expected_output": (
                     "JSON with: files_changed (list), test_results "

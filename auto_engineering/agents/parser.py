@@ -26,8 +26,8 @@ __all__ = ["parse_agent_output"]
 
 T = TypeVar("T", bound=BaseModel)
 
-# markdown ```json ... ``` 块
-_JSON_FENCE_RE = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL)
+# markdown ```json ... ``` 块 (v7.0.1: 贪婪匹配支持嵌套 JSON)
+_JSON_FENCE_RE = re.compile(r"```(?:json)?\s*(\{.*\})\s*```", re.DOTALL)
 # 任意位置首个 {...} 块（贪婪匹配跨行）
 _JSON_INLINE_RE = re.compile(r"(\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\})", re.DOTALL)
 
@@ -143,7 +143,7 @@ def _extract_from_markdown(text: str) -> dict | None:
         }]
 
     # 无任何结构化信号 → 不是有效的 agent 输出, 返回 None
-    if not batch_plan and not file_list:
+    if not batch_plan and not file_list and not text.strip():
         return None
 
     return {
@@ -197,6 +197,15 @@ def _fill_defaults(parsed: dict, text: str) -> None:
         parsed.setdefault("batch_plan", [])
         parsed.setdefault("file_list", _extract_file_paths(text))
         parsed.setdefault("contracts", [])
+        # v7.0: batch_plan 为空时构造最小 batch (DeepSeek 兼容)
+        if not parsed["batch_plan"]:
+            parsed["batch_plan"] = [{
+                "batch_id": "T1",
+                "component": "implementation",
+                "design_section": "implementation",
+                "tasks": [{"id": "T1", "description": "implementation",
+                           "file_targets": parsed.get("file_list", [])}],
+            }]
     elif stage == "developer":
         parsed.setdefault("batch_id", "T1")
         parsed.setdefault("files_changed", _extract_file_paths(text))

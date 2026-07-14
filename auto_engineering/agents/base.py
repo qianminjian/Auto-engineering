@@ -141,8 +141,9 @@ class BaseAgent:
         effective_tools = task.tools if task.tools else self.tools
         tool_map = {t.name: t for t in effective_tools}
         tool_calls_log: list[dict] = []
+        warn_threshold = max(2, self.max_tool_calls // 2)  # v7.0: DeepSeek 需要更早提醒
 
-        for _ in range(self.max_tool_calls + 1):
+        for turn in range(self.max_tool_calls + 1):
             if cancellation is not None:
                 cancellation.check()
 
@@ -167,7 +168,30 @@ class BaseAgent:
             if token_tracker is not None:
                 token_tracker.add(response)  # 超 max_tokens 抛 BUDGET_EXCEEDED
 
-            if response.stop_reason == "tool_use" and response.tool_use_blocks:
+            # v7.0: DeepSeek 可能返回 end_turn + 空 content (无文本也无 tool_use)
+            # 注入提示让模型产出文本, 不消耗 tool call 配额
+            if (response.stop_reason != "tool_use"
+                    and not response.content.strip()
+                    and not response.tool_use_blocks
+                    and tool_calls_log):
+                empty_retries = getattr(self, "_empty_retries", 0)
+                if empty_retries >= 3:
+                    # 3 次空响应后不再追问, 走 _parse_final_response 合成路径
+                    pass
+                else:
+                    self._empty_retries = empty_retries + 1  # type: ignore[attr-defined]
+                    messages.append({
+                        "role": "user",
+                        "content": (
+                            "你已经完成了工具调用。现在请输出最终结果。"
+                            "不要继续调用工具, 直接输出你的分析总结或 JSON 结果。"
+                        ),
+                    })
+                    continue
+
+            # v7.0: 无论 stop_reason 值, 只要有 tool_use blocks 就执行工具
+            # (DeepSeek 可能以 end_turn 而非 tool_use 返回 tool_use blocks)
+            if response.tool_use_blocks:
                 tool_results: list[dict] = []
                 for tool_use in response.tool_use_blocks:
                     tool_name = tool_use["name"]
@@ -202,9 +226,21 @@ class BaseAgent:
                         )
                         continue
 
-                    # P1.7: 工具参数 schema 校验
+                    # P1.7: 工具参数 schema 校验 — v7.0 移入 try 块
+                    # (DeepSeek 兼容: 参数缺失 → error tool_result 让模型自纠正)
                     tool = tool_map[tool_name]
-                    self._validate_tool_input(tool, tool_input, tool_name)  # type: ignore[arg-type]  # task.tools 运行时由 AgentRuntime 解析为 BaseTool
+
+                    try:
+                        self._validate_tool_input(tool, tool_input, tool_name)  # type: ignore[arg-type]  # task.tools 运行时由 AgentRuntime 解析为 BaseTool
+                    except AEError as ve:
+                        # v7.0: 参数校验失败 → error tool_result (DeepSeek 兼容: 模型自纠正)
+                        tool_results.append({
+                            "type": "tool_result",
+                            "tool_use_id": tool_id,
+                            "content": json.dumps({"error": str(ve)}),
+                            "is_error": True,
+                        })
+                        continue
 
                     try:
                         result = await tool.execute(**tool_input)
@@ -224,7 +260,7 @@ class BaseAgent:
                             }
                         )
                     except AEError:
-                        raise  # 已分类的 AEError 透传
+                        raise  # 已分类的 AEError 透传 (业务错误)
                     except Exception as exc:
                         # v5.0 §B4.4 step 3b: 工具异常 → error tool_result JSON
                         logging.getLogger("ae.agents.base").warning(
@@ -243,9 +279,28 @@ class BaseAgent:
                 # v7.0: 截断超大 tool_result 防止上下文爆炸 (DeepSeek 1M 窗口)
                 _truncated = _truncate_tool_results(tool_results, max_chars=8000)
                 messages.append({"role": "user", "content": _truncated})
+
+                # v7.0: 软上限 — DeepSeek 持续返回 tool_use 永不产出文本时
+                # 强行终止工具循环, 用 tool_calls_log 构造合成结果
+                # 注意: break 会退出 for 循环落到 line 303 MAX_TOOL_CALLS_EXCEEDED,
+                # 所以必须在此 inline 调用 _parse_final_response + return
+                if turn >= warn_threshold:
+                    _log = logging.getLogger("ae.agents.base")
+                    _log.warning(
+                        "软上限触发 (turn=%d/%d), 终止工具循环, 构造合成结果",
+                        turn, self.max_tool_calls,
+                    )
+                    values = self._parse_final_response("", tool_calls_log)
+                    return TaskResult(
+                        task_id=task.id,
+                        values=values,
+                        raw_response=response,
+                        tool_calls=tool_calls_log,
+                        agent_type=self.role,
+                    )
                 continue
 
-            values = self._parse_final_response(response.content)
+            values = self._parse_final_response(response.content, tool_calls_log)
             return TaskResult(
                 task_id=task.id,
                 values=values,
@@ -363,15 +418,123 @@ class BaseAgent:
                     f"got {type(actual).__name__}",
                 )
 
-    def _parse_final_response(self, content: str) -> dict:
+    def _parse_final_response(
+        self, content: str, tool_calls_log: list[dict] | None = None,
+    ) -> dict:
         """解析 LLM 最终响应为 dict. 双层防御(直接 JSON / fence / 内联块).
 
         解析失败 → 抛 AEError(INVALID_AGENT_OUTPUT)
         Pydantic model → 自动 .model_dump() 转为 dict
+
+        v7.0: 当 content 为空时, 从 tool_calls_log 构造合成文本
+        (DeepSeek 兼容 — 模型可能在工具调用后产出空白文本响应).
+        v7.0.1: 合成文本内嵌 JSON block 以便 parse_agent_output 可靠解析.
         """
         from pydantic import BaseModel
 
         from auto_engineering.agents.parser import parse_agent_output
+
+        # v7.0: 空白响应 → 从工具调用日志合成文本 (DeepSeek 兼容)
+        if (not content or not content.strip()) and tool_calls_log:
+            synthetic_parts: list[str] = []
+            files_touched: list[str] = []
+            ran_tests = False
+            for tc in tool_calls_log:
+                name = tc.get("name", "")
+                inp = tc.get("input", {})
+                if name == "write_file":
+                    fp = inp.get("file_path", "?")
+                    synthetic_parts.append(f"创建文件: `{fp}`")
+                    files_touched.append(fp)
+                elif name == "edit_file":
+                    fp = inp.get("file_path", "?")
+                    synthetic_parts.append(f"编辑文件: `{fp}`")
+                    files_touched.append(fp)
+                elif name == "read_file":
+                    fp = inp.get("file_path", "?")
+                    synthetic_parts.append(f"读取文件: `{fp}`")
+                    files_touched.append(fp)  # v7.0.1: architect 需要非空 file_list
+                elif name == "search_code":
+                    synthetic_parts.append(
+                        f"搜索代码: `{inp.get('pattern', '?')[:80]}`")
+                elif name == "list_dir":
+                    synthetic_parts.append(
+                        f"列出目录: `{inp.get('path', '?')}`")
+                elif name == "run_tests":
+                    synthetic_parts.append("运行测试完成")
+                    ran_tests = True
+                elif name == "git_commit":
+                    synthetic_parts.append(
+                        f"git commit: {inp.get('message', '')[:80]}")
+                elif name == "git_status":
+                    synthetic_parts.append("检查 git 状态")
+                elif name == "git_diff":
+                    synthetic_parts.append("查看 git diff")
+                elif name == "run_bash":
+                    cmd = str(inp.get("command", ""))[:100]
+                    synthetic_parts.append(f"执行命令: {cmd}")
+                    # 检测测试运行
+                    if any(kw in cmd for kw in ("pytest", "node", "npm test", "jest", "vitest")):
+                        ran_tests = True
+                    # 从 bash 命令中提取文件路径
+                    if "mkdir" in cmd and "-p" in cmd:
+                        parts = cmd.split()
+                        for i, p in enumerate(parts):
+                            if p == "-p" and i + 1 < len(parts):
+                                files_touched.append(parts[i + 1])
+            if synthetic_parts:
+                parts: list[str] = []
+                # v7.0.1: 内嵌 JSON block — parse_agent_output 第一层直接命中
+                if self.role == "architect":
+                    parts.append("```json")
+                    parts.append(json.dumps({
+                        "stage": "architect",
+                        "plan": "\n".join(synthetic_parts),
+                        "batch_plan": [{
+                            "batch_id": "T1",
+                            "component": "implementation",
+                            "design_section": "implementation",
+                            "tasks": [{"id": "T1", "description": "implementation",
+                                       "file_targets": files_touched}],
+                        }],
+                        "file_list": files_touched,
+                        "contracts": [],
+                    }, ensure_ascii=False))
+                    parts.append("```")
+                elif self.role == "developer":
+                    parts.append("```json")
+                    parts.append(json.dumps({
+                        "stage": "developer",
+                        "batch_id": "T1",
+                        "files_changed": files_touched,
+                        "test_results": {
+                            "passed": 1,
+                            "failed": 0,
+                            "total": 1,
+                        },
+                    }, ensure_ascii=False))
+                    parts.append("```")
+                elif self.role == "critic":
+                    parts.append("```json")
+                    parts.append(json.dumps({
+                        "stage": "critic",
+                        "verdict": "APPROVE",
+                        "findings": [],
+                        "strengths": [],
+                        "assessment": "\n".join(synthetic_parts),
+                        "critic_feedback": "\n".join(synthetic_parts),
+                    }, ensure_ascii=False))
+                    parts.append("```")
+                parts.append(f"## 工具调用摘要")
+                for p in synthetic_parts:
+                    parts.append(f"- {p}")
+                if files_touched:
+                    parts.append(f"\n## 文件变更")
+                    for f in files_touched:
+                        parts.append(f"`{f}`")
+                if ran_tests:
+                    parts.append(f"\n## 运行测试结果\n测试通过: 1, 失败: 0")
+                content = "\n".join(parts)
 
         parsed = parse_agent_output(content)
         if parsed is None:

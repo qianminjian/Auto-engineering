@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>克隆你的声音，让自己的声音传遍全世界</title>
+    <link rel="stylesheet" href="styles/nature.css">
+</head>
+<body>
+    <div class="container">
+        <header class="header">
+            <h1>🎵 克隆你的声音</h1>
+            <p class="subtitle">让自己的声音传遍全世界</p>
+        </header>
+
+        <section class="card" id="api-key-section">
+            <h2>🔑 API 授权</h2>
+            <div class="form-group">
+                <label for="api-key">MiniMax SK-API-Key <span class="required">*</span></label>
+                <input type="password" id="api-key" class="form-input" placeholder="请输入您的 MiniMax SK-API-Key" required>
+                <small class="hint">每次使用均需提供授权密钥</small>
+            </div>
+        </section>
+
+        <section class="card" id="voice-id-section">
+            <h2>🎤 自定义音色 ID</h2>
+            <div class="form-group">
+                <label for="voice-id">Voice ID <span class="required">*</span></label>
+                <input type="text" id="voice-id" class="form-input" placeholder="例: minimax_man_01" required>
+                <div class="constraint-list">
+                    <p class="constraint-title">创建规则：</p>
+                    <ul>
+                        <li>长度范围：8 ~ 256 个字符</li>
+                        <li>首字符必须为英文字母</li>
+                        <li>允许使用字母、数字</li>
+                        <li>末位字符不可为 <code>-</code> 或 <code>_</code></li>
+                    </ul>
+                </div>
+                <div id="voice-id-errors" class="error-messages"></div>
+            </div>
+        </section>
+
+        <section class="card" id="audio-source-section">
+            <h2>🎧 音频来源</h2>
+            <div class="tab-bar">
+                <button class="tab-btn active" data-tab="upload" id="tab-upload">📁 上传音频</button>
+                <button class="tab-btn" data-tab="record" id="tab-record">🎙️ 在线录制</button>
+            </div>
+
+            <!-- Upload Tab -->
+            <div class="tab-content active" id="upload-tab">
+                <div class="upload-zone" id="upload-zone">
+                    <div class="upload-icon">📂</div>
+                    <p>拖拽音频文件到此处，或点击选择</p>
+                    <p class="upload-hint">支持 mp3 / m4a / wav 格式，时长 10秒 ~ 5分钟，大小 ≤ 20MB</p>
+                    <input type="file" id="file-input" accept=".mp3,.m4a,.wav" hidden>
+                    <button class="btn btn-secondary" id="file-select-btn">选择音频文件</button>
+                </div>
+                <div id="upload-preview" class="audio-preview hidden">
+                    <div class="audio-info">
+                        <span id="file-name"></span>
+                        <span id="file-size"></span>
+                        <span id="file-duration"></span>
+                    </div>
+                    <audio controls id="upload-player"></audio>
+                    <button class="btn btn-danger" id="remove-file-btn">移除</button>
+                </div>
+                <div id="upload-errors" class="error-messages"></div>
+            </div>
+
+            <!-- Record Tab -->
+            <div class="tab-content" id="record-tab">
+                <div class="record-controls">
+                    <button class="btn btn-record" id="record-btn">🔴 开始录制</button>
+                    <div class="record-status" id="record-status">准备录制</div>
+                    <div class="record-timer" id="record-timer">00:00</div>
+                </div>
+                <div id="record-preview" class="audio-preview hidden">
+                    <audio controls id="record-player"></audio>
+                    <button class="btn btn-danger" id="remove-record-btn">移除录制</button>
+                </div>
+                <div id="record-errors" class="error-messages"></div>
+            </div>
+        </section>
+
+        <section class="card" id="audio-prompt-section">
+            <h2>🎼 参考提示音频 <span class="optional">(可选)</span></h2>
+            <p class="section-desc">作为参考样本，增强合成时的音色稳定性</p>
+            <div class="prompt-upload-zone" id="prompt-upload-zone">
+                <div class="upload-icon">🎵</div>
+                <p>上传不超过 8 秒的调优音频</p>
+                <input type="file" id="prompt-input" accept=".mp3,.m4a,.wav" hidden>
+                <button class="btn btn-secondary" id="prompt-select-btn">选择调优音频</button>
+            </div>
+            <div id="prompt-preview" class="audio-preview hidden">
+                <audio controls id="prompt-player"></audio>
+                <button class="btn btn-danger" id="remove-prompt-btn">移除</button>
+            </div>
+            <div id="prompt-errors" class="error-messages"></div>
+        </section>
+
+        <section class="card" id="preview-text-section">
+            <h2>📝 试听文本 <span class="required">*</span></h2>
+            <p class="section-desc">用于克隆完成后试听效果</p>
+            <div class="form-group">
+                <textarea id="preview-text" class="form-textarea" placeholder="请输入试听文本，不超过 1000 字..." maxlength="1000" required></textarea>
+                <div class="char-count">
+                    <span id="char-count-display">0</span> / 1000
+                </div>
+            </div>
+        </section>
+
+        <section class="card" id="actions-section">
+            <button class="btn btn-primary btn-large" id="clone-btn">🔄 开始克隆</button>
+            <button class="btn btn-secondary" id="reset-btn">🔄 重置所有</button>
+        </section>
+
+        <section class="card hidden" id="progress-section">
+            <h3>⏳ 克隆进度</h3>
+            <div class="progress-bar">
+                <div class="progress-fill" id="progress-fill"></div>
+            </div>
+            <p class="progress-text" id="progress-text">准备中...</p>
+        </section>
+
+        <section class="card hidden" id="result-section">
+            <h2>✅ 克隆完成</h2>
+            <div class="result-info">
+                <p><strong>Voice ID:</strong> <span id="result-voice-id"></span></p>
+            </div>
+            <div class="result-player">
+                <h3>🎧 试听效果</h3>
+                <div class="player-controls">
+                    <audio controls id="result-player"></audio>
+                </div>
+                <div class="playback-params">
+                    <div class="param">
+                        <label>语速</label>
+                        <span id="param-speed">1.0x</span>
+                    </div>
+                    <div class="param">
+                        <label>音量</label>
+                        <span id="param-volume">100%</span>
+                    </div>
+                    <div class="param">
+                        <label>音调</label>
+                        <span id="param-pitch">1.0x</span>
+                    </div>
+                </div>
+                <button class="btn btn-primary" id="download-btn">⬇️ 下载示范音频</button>
+            </div>
+        </section>
+
+        <section class="card" id="code-examples-section">
+            <h2>
+                <button class="collapsible-header" id="code-toggle">
+                    📚 调用接口代码示例
+                    <span class="toggle-icon">▶</span>
+                </button>
+            </h2>
+            <div class="collapsible-content hidden" id="code-content">
+                <div class="code-notice">
+                    <p>使用克隆音色复刻生成的 <code>voice_id</code>，根据实际需求调用语音生成接口。</p>
+                    <ul>
+                        <li><a href="https://platform.minimaxi.com/document/T2A%20V2?key=66719005a427f0c8a5701643" target="_blank">同步语音合成文档</a></li>
+                        <li><a href="https://platform.minimaxi.com/document/T2A%20Large%20v2?key=66b3559f290299a26b2347d2" target="_blank">自适应长文本语音合成文档</a></li>
+                    </ul>
+                    <div class="warning-box">
+                        ⚠️ 本接口内部的快速复刻音色为临时音色，若希望永久保留某个复刻音色，请于 168 小时（7天）内任何 T2A 语音合成接口中调用该音色（不包含本接口内的试听行为）。若超过时限，该音色将被删除。
+                    </div>
+                </div>
+
+                <h4>Python 代码示例</h4>
+                <div class="code-block">
+                    <button class="copy-btn" data-target="code-python">📋 复制</button>
+                    <pre id="code-python"><code>import requests
+
+url = "https://api.minimaxi.com/v1/t2a_v2"
+headers = {
+    "Authorization": "Bearer YOUR_SK_API_KEY",
+    "Content-Type": "application/json"
+}
+data = {
+    "model": "speech-02-turbo",
+    "voice_id": "YOUR_VOICE_ID",
+    "text": "要合成的文本内容",
+    "speed": 1.0,
+    "volume": 1.0,
+    "pitch": 1.0
+}
+response = requests.post(url, headers=headers, json=data)
+if response.status_code == 200:
+    with open("output.mp3", "wb") as f:
+        f.write(response.content)
+    print("语音生成成功！")
+else:
+    print(f"请求失败: {response.status_code}")</code></pre>
+                </div>
+
+                <h4>JavaScript 代码示例</h4>
+                <div class="code-block">
+                    <button class="copy-btn" data-target="code-js">📋 复制</button>
+                    <pre id="code-js"><code>async function synthesizeSpeech(apiKey, voiceId, text) {
+    const response = await fetch("https://api.minimaxi.com/v1/t2a_v2", {
+        method: "POST",
+        headers: {
+            "Authorization": `Bearer ${apiKey}`,
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+            model: "speech-02-turbo",
+            voice_id: voiceId,
+            text: text,
+            speed: 1.0,
+            volume: 1.0,
+            pitch: 1.0
+        })
+    });
+
+    if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+    }
+
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const audio = new Audio(url);
+    audio.play();
+}</code></pre>
+                </div>
+
+                <h4>cURL 命令</h4>
+                <div class="code-block">
+                    <button class="copy-btn" data-target="code-curl">📋 复制</button>
+                    <pre id="code-curl"><code>curl -X POST "https://api.minimaxi.com/v1/t2a_v2" \
+  -H "Authorization: Bearer YOUR_SK_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "speech-02-turbo",
+    "voice_id": "YOUR_VOICE_ID",
+    "text": "要合成的文本内容",
+    "speed": 1.0,
+    "volume": 1.0,
+    "pitch": 1.0
+  }' \
+  --output output.mp3</code></pre>
+                </div>
+            </div>
+        </section>
+
+        <footer class="footer">
+            <p>Powered by MiniMax Voice Clone API</p>
+        </footer>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
