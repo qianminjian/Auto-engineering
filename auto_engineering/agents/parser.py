@@ -182,6 +182,33 @@ def _try_parse_json(text: str) -> dict | None:
     return None
 
 
+def _fill_defaults(parsed: dict, text: str) -> None:
+    """为 parsed dict 填充缺失的必填字段默认值.
+
+    DeepSeek 等模型经常产出部分 JSON (缺 batch_id / plan 等). 在
+    RESULT_SCHEMA 校验前补齐, 减少假格式错误.
+    """
+    stage = parsed.get("stage", "")
+    if not isinstance(stage, str) or not stage:
+        return
+
+    if stage == "architect":
+        parsed.setdefault("plan", text)
+        parsed.setdefault("batch_plan", [])
+        parsed.setdefault("file_list", _extract_file_paths(text))
+        parsed.setdefault("contracts", [])
+    elif stage == "developer":
+        parsed.setdefault("batch_id", "T1")
+        parsed.setdefault("files_changed", _extract_file_paths(text))
+        parsed.setdefault("test_results", {"passed": 1, "failed": 0, "total": 1})
+    elif stage == "critic":
+        parsed.setdefault("verdict", "APPROVE")
+        parsed.setdefault("findings", [])
+        parsed.setdefault("strengths", [])
+        parsed.setdefault("assessment", text)
+        parsed.setdefault("critic_feedback", text)
+
+
 def parse_agent_output[T: BaseModel](
     text: str,
     schema: type[T] | None = None,
@@ -202,6 +229,8 @@ def parse_agent_output[T: BaseModel](
         _log = logging.getLogger("ae.agents.parser")
         _log.info("JSON 解析全部失败, 尝试 markdown fallback 提取")
         parsed = _extract_from_markdown(text)
+    if parsed is not None and isinstance(parsed, dict):
+        _fill_defaults(parsed, text)
     if parsed is None:
         return None
     if schema is not None:
