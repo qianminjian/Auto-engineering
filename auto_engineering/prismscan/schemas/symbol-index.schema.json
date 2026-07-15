@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SymbolIndex",
+  "description": "Extract 阶段输出 — tree-sitter 符号提取结果",
+  "type": "object",
+  "required": ["symbols", "dependency_graph"],
+  "properties": {
+    "symbols": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "kind", "file", "line"],
+        "properties": {
+          "name": { "type": "string" },
+          "kind": {
+            "type": "string",
+            "enum": ["class", "function", "method", "interface", "struct", "enum", "variable", "module"]
+          },
+          "file": { "type": "string" },
+          "line": { "type": "integer" },
+          "scope": { "type": "string" },
+          "signature": { "type": "string" }
+        }
+      }
+    },
+    "dependency_graph": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "array",
+        "items": { "type": "string" }
+      }
+    }
+  }
+}

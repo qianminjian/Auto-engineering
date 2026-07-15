@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AnalysisResult",
+  "description": "Analyze 阶段输出 — Agent LLM 架构分析结果",
+  "type": "object",
+  "required": ["architecture", "business_domains", "api_surface", "data_models", "security", "scheduled_tasks", "deployment"],
+  "properties": {
+    "architecture": {
+      "type": "object",
+      "required": ["pattern", "description"],
+      "properties": {
+        "pattern": { "type": "string" },
+        "description": { "type": "string" },
+        "layers": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "business_domains": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "type", "key_classes"],
+        "properties": {
+          "name": { "type": "string" },
+          "type": { "type": "string" },
+          "key_classes": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "description": { "type": "string" }
+        }
+      }
+    },
+    "api_surface": {
+      "type": "object",
+      "required": ["total_endpoints"],
+      "properties": {
+        "total_endpoints": { "type": "integer" },
+        "grouped_by_resource": {
+          "type": "object",
+          "additionalProperties": { "type": "integer" }
+        },
+        "auth_required_endpoints": { "type": "integer" }
+      }
+    },
+    "data_models": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["entity", "table", "fields"],
+        "properties": {
+          "entity": { "type": "string" },
+          "table": { "type": "string" },
+          "fields": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "relationships": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        }
+      }
+    },
+    "security": {
+      "type": "object",
+      "properties": {
+        "auth_mechanism": { "type": "string" },
+        "auth_files": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "permission_model": { "type": "string" }
+      }
+    },
+    "scheduled_tasks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "schedule", "file"],
+        "properties": {
+          "name": { "type": "string" },
+          "schedule": { "type": "string" },
+          "file": { "type": "string" }
+        }
+      }
+    },
+    "deployment": {
+      "type": "object",
+      "properties": {
+        "has_docker": { "type": "boolean" },
+        "has_k8s": { "type": "boolean" },
+        "ci_platform": { "type": "string" },
+        "env_files": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ProjectShape",
+  "description": "Discover 阶段输出 — 项目形态识别结果",
+  "type": "object",
+  "required": [
+    "project_name", "languages", "build_system", "modules",
+    "entry_points", "has_docker", "total_files", "directory_tree_summary"
+  ],
+  "properties": {
+    "project_name": { "type": "string" },
+    "languages": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "build_system": { "type": "string" },
+    "modules": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "path", "file_count", "language"],
+        "properties": {
+          "name": { "type": "string" },
+          "path": { "type": "string" },
+          "file_count": { "type": "integer" },
+          "language": { "type": "string" },
+          "entry_point": { "type": "string" }
+        }
+      }
+    },
+    "entry_points": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "has_docker": { "type": "boolean" },
+    "total_files": { "type": "integer" },
+    "directory_tree_summary": { "type": "string" }
+  }
+}
