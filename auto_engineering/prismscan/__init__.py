@@ -1,0 +1,76 @@
+"""PrismScan V5.1 — 代码库反向工程管道.
+
+Phase 1 最小闭环:
+  discover(project_root) → ProjectShape
+  extract(project_shape) → SymbolIndex
+  → Agent analyze subagent (JSONL 桥接)
+  → check_result(analysis_json) → 校验 + 持久化
+
+公开 API:
+  PrismScanOrchestrator — 主编排器 (orchestrator.py)
+  discover               — 目录扫描 (discover.py)
+  extract                — 符号提取 (extract.py)
+  jsonl_protocol         — JSONL 文件桥接 (jsonl_protocol.py)
+  schemas                — 数据模型 (schemas.py)
+"""
+
+from auto_engineering.prismscan.discover import discover
+from auto_engineering.prismscan.extract import extract
+from auto_engineering.prismscan.jsonl import JSONLProtocol
+from auto_engineering.prismscan.jsonl_protocol import (
+    JSONLErrorCode,
+    JSONLProtocolError,
+    JSONLTimeoutError,
+    read_request,
+    read_response,
+    write_request,
+    write_response,
+)
+from auto_engineering.prismscan.orchestrator import PrismScanOrchestrator
+from auto_engineering.prismscan.schemas import (
+    AnalysisResult,
+    ArchitectureInfo,
+    ApiSurfaceInfo,
+    BusinessDomainInfo,
+    DataModelInfo,
+    DeploymentInfo,
+    ModuleInfo,
+    ProjectShape,
+    ScheduledTaskInfo,
+    SecurityInfo,
+    SymbolIndex,
+    SymbolInfo,
+    jsonschema_validate,
+)
+
+__all__ = [
+    # Orchestrator
+    "PrismScanOrchestrator",
+    # Pipeline functions
+    "discover",
+    "extract",
+    # JSONL Protocol
+    "JSONLProtocol",
+    "JSONLErrorCode",
+    "JSONLProtocolError",
+    "JSONLTimeoutError",
+    "read_request",
+    "read_response",
+    "write_request",
+    "write_response",
+    # Data models
+    "AnalysisResult",
+    "ArchitectureInfo",
+    "ApiSurfaceInfo",
+    "BusinessDomainInfo",
+    "DataModelInfo",
+    "DeploymentInfo",
+    "ModuleInfo",
+    "ProjectShape",
+    "ScheduledTaskInfo",
+    "SecurityInfo",
+    "SymbolIndex",
+    "SymbolInfo",
+    # Validation
+    "jsonschema_validate",
+]

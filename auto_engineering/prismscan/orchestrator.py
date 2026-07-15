@@ -18,6 +18,7 @@ from pathlib import Path
 
 from auto_engineering.prismscan.discover import discover
 from auto_engineering.prismscan.extract import extract
+from auto_engineering.prismscan.jsonl import JSONLProtocol as _JSONL
 from auto_engineering.prismscan.schemas import AnalysisResult, jsonschema_validate
 
 _logger = logging.getLogger("ae.prismscan.orchestrator")
@@ -88,16 +89,16 @@ class PrismScanOrchestrator:
                 len(self._symbol_index.dependency_graph),
             )
 
-            # Step 3: 序列化数据到文件 (供 Agent 读取)
-            data_file = Path(self.project_root) / "repowiki" / ".state"
-            data_file.mkdir(parents=True, exist_ok=True)
-            data_path = data_file / "prismscan-data.json"
+            # Step 3: 通过 JSONL 协议序列化数据到文件 (供 Agent 读取)
+            proto = _JSONL(mode="file")
             data_payload = {
                 "project_shape": self._project_shape.to_dict(),
                 "symbol_index": self._symbol_index.to_dict(),
             }
-            data_path.write_text(
-                json.dumps(data_payload, ensure_ascii=False, indent=2)
+            data_path = proto.write_request(
+                "analyze",
+                data_payload,
+                Path(self.project_root) / "repowiki" / ".state" / "analyze-request.json",
             )
             self._data_file = str(data_path)
 
