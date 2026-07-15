@@ -35,16 +35,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - 名称：Auto-Engineering
 - 类型：Python CLI 应用 + Claude Code Plugin（`/dev-loop` slash command 形态）
-- 版本：v5.0（Plugin + Loop Engineering + Init-Loop 接口契约）
-- 创建日期：2026-06-23
+- 版本：v5.6（Tick-Based Discrete Invocation + 5 层验证 + Pre-flight Gap Analysis）+ v7.0 双驱动远期架构
+- 创建日期：2026-06-23 | 更新：2026-07-15
+- 里程碑：Phase 1-10 = 102/102 全完成；v7.0 主体搁置待后续里程碑
 
 ## 项目性质
 
 **Loop Engineering 调度脚手架**——提供 Claude Code Plugin 形态的 Stage-sequenced Agent loop。用户在 Claude Code 会话中输入 `/dev-loop "实现登录功能"`，Plugin 调度 Python Loop Engine 在子进程中运行 architect → developer → critic 三阶段 Agent 循环。
 
-**两层架构**：
+**两层架构 + 双引擎共存**：
 - **Plugin 层**（`.claude-plugin/`）：Bash 委托 `ae <subcommand>`，控制流在 Python
-- **Engine 层**（`auto_engineering/`）：Python 控制流（12 步主循环 + StageRouter + Guardrail + 7 Gates + Checkpoint）
+- **Engine 层**（`auto_engineering/`）：
+  - **v5.6 TickOrchestrator**（主引擎）：Tick-Based Discrete Invocation（`ae dev-loop --init → --tick → --result` 文件桥接协议），Python 每次 tick 独立进程（读 SQLite → 验证 → Guardrail → Gate → ConvergenceJudge → Checkpoint → 输出 action JSON → 退出），Agent 通过反复调用 `--tick` 驱动循环。Python 循环引擎永不调 LLM
+  - **v5.5 Orchestrator**（共存）：`ae dev-loop "需求"` 裸参数路径，连续 while 循环直调 LLM（legacy，保留共存不复用）
+- **v7.0 双驱动远期架构**：单引擎(TickOrchestrator)+双驱动(Agent/Standalone) ports&adapters，当前仅做接缝预留（T33a/T33b）
 
 **Init Engineering 是独立项目**——本项目通过 Init-Loop 接口契约消费 Init 产出的 `.ae-state/init-manifest.json`。Init 项目不在本仓库范围。
 
@@ -60,32 +64,46 @@ Plugin 层 (.claude-plugin/)
 
 Engine 层 (auto_engineering/)
   loop/
-    orchestrator.py    — 12 步主循环 (v5.0 §B7.1)
-    stage_router.py    — T1-T6 转换表 + MAJOR 计数
-    guardrail.py       — 5 Guardrail (3 态: pass/block/retry)
-    round.py           — DAG 拓扑分层 + asyncio.gather
-    plan.py            — Task DAG + get_tasks_by_stage
-    task_factory.py    — _apply_outcome_to_state + _tasks_from_batch_plan
-    convergence.py     — 4 级收敛判定 (hard/quality/stagnant/semantic)
-    init_contract.py   — Init-Loop 接口契约 (IL-AC-01~05)
+    tick_orchestrator.py — v5.6 Tick 主引擎 (1017 行, 4 after-handler + _build_action + _apply_result_to_state)
+    orchestrator.py      — v5.5 连续 while 循环 (1208 行, 共存)
+    stage_router.py      — T1-T22 转换表 + MAJOR 计数 + refine_allowed
+    guardrail.py         — 9 Guardrail (3 态: pass/block/retry, 含 REDGuard/FreshGate/RegressionGate)
+    convergence.py       — 4 级收敛判定 (hard/quality/stagnant/semantic) + done verdict
+    plan.py              — Task DAG + get_tasks_by_stage
+    task_factory.py      — _apply_outcome_to_state + _tasks_from_batch_plan
+    init_contract.py     — Init-Loop 接口契约 (IL-AC-01~08)
+    refine.py            — plan_refine 回路 (B6.10 归一)
+    checkpoint/          — SQLite checkpoint 持久化
   agents/
-    base.py            — BaseAgent + tool_use loop + double-layer parse
-    authz.py           — AUTHZ_MATRIX 10×3 (role-based tool authorization)
-    prompts.py         — v5.0 system prompts (architect/developer/critic)
+    base.py              — BaseAgent + tool_use loop + double-layer parse
+    authz.py             — AUTHZ_MATRIX 10×3 (role-based tool authorization)
+    prompts.py           — v5.0 system prompts (architect/developer/critic, legacy)
+  prompts/
+    registry.py          — PromptRegistry (B12 中央提示词管理, sha256 版本锁)
+    roles/               — 9 角色 prompt (architect/developer/critic/verifier/audit/...)
+    fragments/           — 8 共享片段
   gates/
-    base.py            — Gate ABC + GateVerdict + DEFAULT_GATES (7 道)
+    base.py              — Gate ABC + GateVerdict + DEFAULT_GATES (7 道)
     safety/lint/type_check/audit/contract/test/build.py
+    commit_msg_gate.py   — Angular 格式校验 (可选)
+    deep_audit.py        — 3-agent 编排 deep audit
   cli/
-    doctor.py          — 环境预检 (Python/uv/git/sqlite3/API_KEY/.ae-state/init-manifest)
-    gate_check.py      — --all (5 道) / --quick (3 道)
-    agent.py           — 单 Agent 调用 (architect/developer/critic)
-    dev_loop.py        — 入口, 构造 Orchestrator + AgentRuntime
-    status.py          — JSON 输出 loop 进度 (7 字段 + recent_history × 5)
-    checkpoint.py      — SQLite checkpoint list/show/delete/resume
+    doctor.py            — 环境预检 (Python/uv/git/sqlite3/API_KEY/.ae-state/init-manifest)
+    gate_check.py        — --all (5 道) / --quick (3 道)
+    agent.py             — 单 Agent 调用 (architect/developer/critic)
+    dev_loop.py          — Tick CLI 入口 (--init/--tick/--result/--status/--resume/--design-doc) + v5.5 裸参数路径
+    status.py            — JSON 输出 loop 进度
+    checkpoint.py        — SQLite checkpoint list/show/delete/resume
+    progress.py          — 读 progress_tree_json → display/summary
   engine/
-    state.py           — EngineState dataclass (16 字段, v5.0 §B1.1)
-  tools/               — file/bash/git/test tools + sandbox
-  runtime/             — AgentRuntime + CancellationToken + TaskContext
+    state.py             — EngineState dataclass (36 字段, v5.6 扩展)
+    batch_state.py       — BatchState 跨 tick 进度管理
+    design_doc.py        — 设计文档解析 (markdown-it-py)
+    progress_tree.py     — ProgressTree 构建/同步/聚合
+    gap_analysis.py      — Pre-flight gap scan (B10.2)
+  tools/                 — file/bash/git/test tools + sandbox + pr_backend.py
+  runtime/               — AgentRuntime + CancellationToken + TaskContext
+  prismscan/             — V5.1 代码库反向工程 (discover → extract → analyze)
 ```
 
 **参考框架：**
@@ -108,11 +126,26 @@ Engine 层 (auto_engineering/)
 | `docs/production-deployment.md` | 生产部署流程 + 环境变量 + 降级 | 部署时 |
 | `docs/e2e-real-run.md` | 端到端验证流程 + 性能基准 | 真跑验证时 |
 | `docs/PLUGIN-USAGE.md` | Plugin 安装 + 使用 + 故障排查 | 用户安装时 |
+| `design/IMPLEMENTATION-TRACKER.md` | v5.6 实施跟踪表 (Phase 1-10, 102/102 任务) | 任何开发/进度汇报时 |
+| `design/v7.0-Plan-DualDriver.md` | v7.0 双驱动远期架构路线图 (V7-1~V7-8) | v7.0 相关讨论时 |
 
 ## 核心命令
 
 ```bash
+# PrismScan V5.1 (代码库反向工程)
+ae prismscan discover-extract     # discover + extract → action JSON
+ae prismscan check-result <file>  # 校验 AnalysisResult JSON
+/prismscan                        # Plugin 命令入口 (完整 Phase 1 闭环)
+
+# v5.6 Tick 循环 (离散调用, Python 每次 tick 独立进程)
+ae dev-loop --init                           # 初始化 tick 循环
+ae dev-loop --tick --result <result.json>    # 提交本轮 result, 推进 tick
+ae dev-loop --status --format json           # 当前进度
+ae dev-loop --resume                         # 从 checkpoint 恢复
+ae dev-loop "需求"                           # v5.5 裸参数路径 (legacy, 连续 while 循环)
+
 # 测试（16G 内存约束 + 虚拟环境）
+# 全量: ~2132 tests, ~50s
 uv run pytest tests/test_xxx.py -v --no-cov --timeout=60   # 单文件
 uv run pytest tests/ --no-cov --timeout=120 -q              # 全量
 uv run pytest tests/ --cov=auto_engineering --cov-report=term-missing --timeout=300 -q  # 覆盖率
@@ -121,9 +154,8 @@ uv run pytest tests/ --cov=auto_engineering --cov-report=term-missing --timeout=
 ae doctor                    # 环境预检 (7 项)
 ae gate-check --quick        # 快速 Gate (safety+lint+type_check)
 ae gate-check --all          # 全量 Gate
-ae status --format json      # 当前进度
 ae agent architect "需求"    # 单 Agent 调用
-ae dev-loop "需求"           # 完整 3 Stage 循环
+ae progress                  # 显示 tick 循环进度
 
 # Plugin
 bash ae-plugin-acceptance-test.sh   # Plugin 验收 (20 场景)
@@ -231,11 +263,21 @@ python3 scripts/atdo_smoke.py       # Runtime smoke (7 维度)
 
 ---
 
+## 当前测试状态 (2026-07-15)
+
+- **全量**: ~2132 tests, ~50s (16G 内存约束, `--no-cov --timeout=120`)
+- **PrismScan V5.1**: 92 tests (Phase 1 流转覆盖率 92%, 25 条路径覆盖 23 条)
+- **v5.6 Tick 引擎**: TickOrchestrator 单测 52 + StageRouter 43 + BatchState 21 + ProgressTree 20 + 集成测试
+- **契约测试**: action/result schema 21 tests + init_contract round-trip + Plugin 验收 20 场景
+- **S6.6 Agent 运行时**: 2 tests (需 API key, 无 key 时自动 skip)
+
 ## 管理约束
 
 - tests/ 下测试，覆盖率 ≥ 90%（用户硬指标）
+- 全量 ~2132 tests 通过（2026-07-15 基准）
 - 测试运行遵守 `@.claude/rules/pytest-memory-management.md`（16G 内存约束）
 - **Agent tool spawn 遵守 `@.claude/rules/agent-spawn-timeout.md`（3 层超时防护）**
 - **设计文档修改遵守 `@.claude/rules/design-document-inviolability.md`（🚨 2026-07-08 事故确立：BEACON决策翻转须审批、设计优先于代码）**
+- **每次操作遵守「先记录→再执行→再更新」纪律**（memory `feedback-record-before-execute.md`）
 - 参考源码（`$AE_REFS_DIR/`）为只读，不修改
 - Init Engineering 是独立项目——本项目通过 Init-Loop 接口契约（IL.1-IL.6）消费 Init 产物，不包含 Init 实现

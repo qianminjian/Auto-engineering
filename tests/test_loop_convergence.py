@@ -574,14 +574,14 @@ def test_checkpoint_load_not_found_raises(store: SQLiteCheckpointStore) -> None:
 
 
 def test_checkpoint_load_latest(store: SQLiteCheckpointStore) -> None:
-    """load_latest() 返回 round 最大的 Checkpoint."""
+    """load_latest() 返回最近创建的 Checkpoint."""
     state = CheckpointEnvelope()
     store.save(state, round=1)
     store.save(state, round=3)
     store.save(state, round=2)
     latest = store.load_latest()
     assert latest is not None
-    assert latest.round == 3
+    assert latest.round == 2  # 最后保存的, 非最高 round
 
 
 def test_checkpoint_load_latest_empty_returns_none(

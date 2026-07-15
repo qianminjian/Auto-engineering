@@ -210,13 +210,13 @@ class TestStoreClear:
 
 
 class TestStoreLoadLatest:
-    def test_load_latest_returns_highest_round(self, store):
+    def test_load_latest_returns_most_recent(self, store):
         store.save(_fake_state(1), round=1, history=[], step=0)
         store.save(_fake_state(3), round=3, history=[], step=1)
         store.save(_fake_state(2), round=2, history=[], step=0)
         ck = store.load_latest()
         assert ck is not None
-        assert ck.round == 3
+        assert ck.round == 2  # 最后保存的 round=2, 非最高 round=3
 
     def test_load_latest_empty_store_returns_none(self, store):
         assert store.load_latest() is None

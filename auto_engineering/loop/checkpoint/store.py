@@ -245,11 +245,11 @@ class SQLiteCheckpointStore[T]:
             return _row_to_checkpoint(row)
 
     def load_latest(self) -> Checkpoint[T] | None:
-        """加载最新 Checkpoint (按 round DESC, created_at DESC)."""
+        """加载最新 Checkpoint (按 created_at DESC)."""
         with self._conn() as conn:
             row = conn.execute(
                 "SELECT * FROM checkpoints "
-                "ORDER BY round DESC, created_at DESC LIMIT 1"
+                "ORDER BY created_at DESC LIMIT 1"
             ).fetchone()
             return _row_to_checkpoint(row) if row else None
 

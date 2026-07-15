@@ -72,7 +72,17 @@ class BatchState:
                 sorted(zero_batch),
             )
 
-        return cls(plates=doc.plates, batch_plan=batch_plan, total_batches=len(batch_plan))
+        # 过滤: 仅保留有 batch 的 component, 移除无 component 的 plate
+        batch_component_set = set(batch_components)
+        filtered_plates = []
+        for plate in doc.plates:
+            active = [c for c in plate.components if c.name in batch_component_set]
+            if active:
+                filtered_plates.append(Plate(
+                    name=plate.name, design_section=plate.design_section,
+                    components=active, cross_component_contracts_raw=plate.cross_component_contracts_raw,
+                ))
+        return cls(plates=filtered_plates, batch_plan=batch_plan, total_batches=len(batch_plan))
 
     @classmethod
     def from_batch_plan(cls, batch_plan: list[dict]) -> BatchState:
