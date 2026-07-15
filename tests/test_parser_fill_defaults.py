@@ -6,15 +6,13 @@ DeepSeek 等模型经常产出部分 JSON. _fill_defaults 在 RESULT_SCHEMA
 
 from __future__ import annotations
 
-import pytest
-
 
 class TestFillDefaultsArchitect:
     """Architect stage 默认值补齐."""
 
     def test_fills_missing_plan_from_text(self):
         """architect 缺 plan → 用原始 text 填充."""
-        from auto_engineering.agents.parser import _fill_defaults, _extract_file_paths
+        from auto_engineering.agents.parser import _fill_defaults
 
         text = "Some plan description"
         parsed = {"stage": "architect"}
@@ -238,7 +236,11 @@ class TestFillDefaultsIntegration:
         """developer 完整 JSON → 不覆盖已有字段."""
         from auto_engineering.agents.parser import parse_agent_output
 
-        text = '{"stage": "developer", "batch_id": "B2", "files_changed": ["x.py"], "test_results": {"passed": 3, "failed": 0}}'
+        text = (
+            '{"stage": "developer", "batch_id": "B2", '
+            '"files_changed": ["x.py"], '
+            '"test_results": {"passed": 3, "failed": 0}}'
+        )
         result = parse_agent_output(text)
         assert result is not None
         assert isinstance(result, dict)

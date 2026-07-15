@@ -478,10 +478,10 @@ class BaseAgent:
                         ran_tests = True
                     # 从 bash 命令中提取文件路径
                     if "mkdir" in cmd and "-p" in cmd:
-                        parts = cmd.split()
-                        for i, p in enumerate(parts):
-                            if p == "-p" and i + 1 < len(parts):
-                                files_touched.append(parts[i + 1])
+                        cmd_parts = cmd.split()
+                        for i, p in enumerate(cmd_parts):
+                            if p == "-p" and i + 1 < len(cmd_parts):
+                                files_touched.append(cmd_parts[i + 1])
             if synthetic_parts:
                 parts: list[str] = []
                 # v7.0.1: 内嵌 JSON block — parse_agent_output 第一层直接命中
@@ -525,15 +525,15 @@ class BaseAgent:
                         "critic_feedback": "\n".join(synthetic_parts),
                     }, ensure_ascii=False))
                     parts.append("```")
-                parts.append(f"## 工具调用摘要")
+                parts.append("## 工具调用摘要")
                 for p in synthetic_parts:
                     parts.append(f"- {p}")
                 if files_touched:
-                    parts.append(f"\n## 文件变更")
+                    parts.append("\n## 文件变更")
                     for f in files_touched:
                         parts.append(f"`{f}`")
                 if ran_tests:
-                    parts.append(f"\n## 运行测试结果\n测试通过: 1, 失败: 0")
+                    parts.append("\n## 运行测试结果\n测试通过: 1, 失败: 0")
                 content = "\n".join(parts)
 
         parsed = parse_agent_output(content)

@@ -37,7 +37,10 @@ _ACTION_ROLE_MAP: dict[str, str] = {
 }
 
 # Stages whose result format is free-form (no RESULT_SCHEMA enforcement)
-_PHASE0_STAGES: frozenset[str] = frozenset({"gap_scan", "gap_review", "research", "component_verifier", "audit", "system_deep_audit", "deep_audit", "report", "convergence", "design_sync"})
+_PHASE0_STAGES: frozenset[str] = frozenset({
+    "gap_scan", "gap_review", "research", "component_verifier", "audit",
+    "system_deep_audit", "deep_audit", "report", "convergence", "design_sync",
+})
 
 # Auto-pass stub result per stage — must satisfy RESULT_SCHEMA in actions.py
 _AUTO_PASS_RESULT: dict[str, dict] = {
@@ -130,7 +133,7 @@ class StandaloneDriver:
             _logger.exception("TickOrchestrator.init() 失败")
             return RunSummary(
                 success=False, total_ticks=0, final_stage="",
-                error_message=f"init 失败: 详见日志",
+                error_message="init 失败: 详见日志",
             )
 
         tick_count = 0
@@ -193,7 +196,7 @@ class StandaloneDriver:
                 success=False,
                 total_ticks=tick_count,
                 final_stage=action.get("stage", ""),
-                error_message=f"run_async 异常: 详见日志",
+                error_message="run_async 异常: 详见日志",
                 action_history=action_history,
             )
 
@@ -258,10 +261,9 @@ class StandaloneDriver:
         self, action: dict, agent: Any, role: str
     ) -> dict:
         """执行单个 task: 构造 Task → execute → validate → retry once."""
+        from auto_engineering.cli.helpers import TokenTracker
         from auto_engineering.loop.actions import validate_result_format
         from auto_engineering.runtime.cancellation import CancellationToken
-        from auto_engineering.runtime.context import TaskContext
-        from auto_engineering.cli.helpers import TokenTracker
 
         task = self._action_to_task(action)
         ctx = self._make_task_context(role)
@@ -331,7 +333,7 @@ class StandaloneDriver:
             )
         except Exception:
             _logger.exception("Stage '%s' 重试失败", role)
-            return {"stage": role, "error": f"重试失败: 详见日志"}
+            return {"stage": role, "error": "重试失败: 详见日志"}
 
         retry_values = dict(retry_result.values)
         if "stage" not in retry_values:
@@ -350,9 +352,8 @@ class StandaloneDriver:
 
         非 asyncio.gather — 保持 TDD Red→Green→Refactor 顺序。
         """
-        from auto_engineering.runtime.cancellation import CancellationToken
-        from auto_engineering.runtime.context import TaskContext
         from auto_engineering.cli.helpers import TokenTracker
+        from auto_engineering.runtime.cancellation import CancellationToken
 
         tasks = action.get("context", {}).get("tasks", [])
         if not tasks:
@@ -373,7 +374,7 @@ class StandaloneDriver:
         for i, task_info in enumerate(tasks):
             task_id = task_info.get("id", f"T{i}")
             task_desc = task_info.get("description", "")
-            expected = task_info.get("expected_output", "JSON")
+            _expected = task_info.get("expected_output", "JSON")
             _logger.info(
                 "[developer] Task %d/%d: %s (batch=%s)",
                 i + 1, len(tasks), task_id, batch_id,
@@ -389,8 +390,8 @@ class StandaloneDriver:
                     f"每个 task 产出独立的 files_changed + test_results。"
                 ),
                 expected_output=(
-                    f"JSON with: task_id, files_changed (list), "
-                    f"test_results ({{passed, failed}}), commit_hash"
+                    "JSON with: task_id, files_changed (list), "
+                    "test_results ({passed, failed}), commit_hash"
                 ),
             )
 
@@ -492,9 +493,6 @@ class StandaloneDriver:
 
         有 research findings 时自动 inject supplement；无时全部 Defer。
         """
-        from auto_engineering.runtime.cancellation import CancellationToken
-        from auto_engineering.runtime.context import TaskContext
-        from auto_engineering.cli.helpers import TokenTracker
 
         gaps = action.get("gaps", [])
         research_findings = action.get("research_findings", {})
@@ -605,7 +603,7 @@ class StandaloneDriver:
             batch_id = context.get("batch_id", action.get("batch_id", ""))
             plan = action.get("plan", "")
             requirement = action.get("requirement", "")
-            task_descs = "\n".join(
+            _task_descs = "\n".join(
                 f"  - {t.get('id', '?')}: {t.get('description', '')}"
                 + (f" (files: {', '.join(t.get('file_targets', []))})"
                    if t.get('file_targets') else "")
@@ -620,17 +618,17 @@ class StandaloneDriver:
             # v7.0: 当 batch_plan 为空时, 让 developer 自行规划设计 (DeepSeek 兼容)
             if not tasks or not any(t.get("file_targets") for t in tasks):
                 self_directed = (
-                    f"\n\n注意: 架构计划中没有给出具体文件列表。"
-                    f"请直接根据原始需求创建文件, 不要花时间浏览项目。\n"
-                    f"步骤:\n"
-                    f"1. 先用 mkdir -p 创建必要的目录 (如 src/, tests/)\n"
-                    f"2. 立即用 write_file 创建实现文件 (最多 3 个)\n"
-                    f"3. 用 write_file 创建测试文件 (1 个)\n"
-                    f"4. 用 run_tests 运行测试\n"
-                    f"5. 用 git_commit 提交所有变更\n"
-                    f"6. 输出 files_changed + test_results JSON\n"
-                    f"重要: 必须使用 write_file 创建文件, 不要只读不写。"
-                    f"前 3 个工具调用中至少要有 1 个 write_file。"
+                    "\n\n注意: 架构计划中没有给出具体文件列表。"
+                    "请直接根据原始需求创建文件, 不要花时间浏览项目。\n"
+                    "步骤:\n"
+                    "1. 先用 mkdir -p 创建必要的目录 (如 src/, tests/)\n"
+                    "2. 立即用 write_file 创建实现文件 (最多 3 个)\n"
+                    "3. 用 write_file 创建测试文件 (1 个)\n"
+                    "4. 用 run_tests 运行测试\n"
+                    "5. 用 git_commit 提交所有变更\n"
+                    "6. 输出 files_changed + test_results JSON\n"
+                    "重要: 必须使用 write_file 创建文件, 不要只读不写。"
+                    "前 3 个工具调用中至少要有 1 个 write_file。"
                 )
             else:
                 self_directed = ""
@@ -779,9 +777,9 @@ class StandaloneDriver:
             return {
                 "description": (
                     "同步设计文档与代码实现。\n"
-                    f"检查本轮所有改动是否与 design/ 文档一致。\n"
-                    f"代码与设计文档不一致 → 更新设计文档。\n"
-                    f"新增了设计文档未覆盖的决策 → 补充到 BEACON.md 决策表。"
+                    "检查本轮所有改动是否与 design/ 文档一致。\n"
+                    "代码与设计文档不一致 → 更新设计文档。\n"
+                    "新增了设计文档未覆盖的决策 → 补充到 BEACON.md 决策表。"
                 ),
                 "expected_output": (
                     "JSON with: synced_sections (list), new_decisions (list), "
@@ -852,7 +850,7 @@ class StandaloneDriver:
         """构造 TaskContext (含 CancellationToken/TokenTracker)."""
         from auto_engineering.runtime.context import TaskContext
 
-        state = getattr(self._orch, "_state", None)
+        state: Any = getattr(self._orch, "_state", None)
         return TaskContext(
             state=state,
             requirement=getattr(state, "requirement", "") if state else "",

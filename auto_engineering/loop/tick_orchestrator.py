@@ -284,10 +284,10 @@ class TickOrchestrator:
 
     def _tick_body_dict(self, result: dict) -> dict:
         """tick 核心逻辑 (dict 版本): 验证 → Guardrail → Gate → 路由 → Checkpoint → action."""
-        result = self._validate_result_dict(result)
-        return self._tick_process_result(result)
+        validated = self._validate_result_dict(result)
+        return self._tick_process_result(validated)
 
-    def _tick_process_result(self, result: dict) -> dict:
+    def _tick_process_result(self, result: dict | ErrorResponse) -> dict:
         """tick 公共处理逻辑: Guardrail → Gate → 路由 → action."""
         if isinstance(result, ErrorResponse):
             return result.to_dict()

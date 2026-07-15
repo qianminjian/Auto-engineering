@@ -6,8 +6,6 @@ V7-5 §3: Developer stage-result 必须包含 batch_id, files_changed (>=1), tes
 
 from __future__ import annotations
 
-import pytest
-
 
 class TestDeveloperResultFormat:
     """Developer stage-result 必须通过 validate_result_format 校验."""
@@ -77,10 +75,10 @@ class TestDeveloperResultFormat:
 
     def test_developer_result_has_required_fields_in_standalone_driver(self):
         """StandaloneDriver._execute_developer_serial 返回结果含必需字段."""
-        from auto_engineering.loop.standalone_driver import StandaloneDriver
-
         # Verify the return dict contract by inspecting the source
         import inspect
+
+        from auto_engineering.loop.standalone_driver import StandaloneDriver
         source = inspect.getsource(StandaloneDriver._execute_developer_serial)
         assert "batch_id" in source, "_execute_developer_serial 应包含 batch_id"
         assert "files_changed" in source, "_execute_developer_serial 应包含 files_changed"
@@ -92,9 +90,8 @@ class TestFormatCorrectionRetry:
 
     def test_correction_prompt_includes_field_names(self):
         """correction prompt 包含缺失字段名."""
-        from auto_engineering.loop.standalone_driver import StandaloneDriver
 
-        result = {
+        _result = {
             "stage": "developer",
             "files_changed": ["x.py"],
             "test_results": {"passed": 1, "failed": 0},

@@ -1,4 +1,4 @@
-> 创建：2026-06-24 | 更新：2026-07-11 | 阶段：v5.6 Design — Tick-Based Discrete Invocation + 5 层验证 + Commit→PR→CI/CD Pipeline
+> 创建：2026-06-24 | 更新：2026-07-15 | 阶段：v5.6 Design — Tick-Based Discrete Invocation + 5 层验证 + Commit→PR→CI/CD Pipeline；PrismScan V5.1 Phase 1 测试完成
 > ⚠️ **决策状态翻转管控**：status 列 ✅→❌ 或 ❌→✅ 必须经用户审批。AI 不得自行翻转。详见 `.claude/rules/design-document-inviolability.md` §2。
 
 ## 目标与成功标准
@@ -50,6 +50,15 @@
 ## 当前状态
 
 **阶段：** v5.6 里程碑收官 — Tick-Based Discrete Invocation + 5 层验证 + Pre-flight Gap Analysis + Commit→PR→CI/CD Pipeline。Phase 1-10 = 102/102 全完成（含 Phase 10 双驱动接缝预留）。
+
+**最近动作 (2026-07-15)：**
+- **v5.6 tick 闭环验证完成**：用 tick driver（`/tmp/_ae_tick_driver6.py`）对 `_scratch/Design-V5.0-plugin-final.md`（71KB PrismScan V5.1 设计文档）跑完整 14 tick 闭环：gap_scan → gap_review → architect → developer → critic → component_verifier → plate_deep_audit → developer(B2) → critic → component_verifier → plate_deep_audit → system_verifier → system_deep_audit → DONE。verdict: GOAL_ACHIEVED。全程 Python TickOrchestrator + SQLite checkpoint 持久化有效、Guardrail + Gate 通过、StageRouter T1-T22 转换正确、5 层验证架构全部触发。
+- **P1 Bug 修复（tick 闭环过程中发现）**：
+  - `load_latest()` 排序从 `round DESC, created_at DESC` 改为 `created_at DESC`——旧排序 `--init`(round=0) 新建 checkpoint 后 load_latest 仍返回历史高 round 记录，导致 restore 拿到 stale state。修复后 129 相关测试全部通过。
+  - `BatchState.from_design_doc()` 组件过滤——原实现保留所有 17 个 plate（含无 batch 的组件），`is_component_complete()` 对 0-batch 组件返回 True（`0 >= 0`），导致 developer 阶段 assertion 失败。修复：filter plates 仅保留有 batch 的 component，无 active component 的 plate 移除。
+- **CLAUDE.md 更新**：v5.0→v5.6+v7.0 架构、v5.6 tick CLI、~2132 tests、PrismScan 92 tests、S6.6 Agent 运行时、文档纪律规则。
+- **PrismScan V5.1 Phase 1 流转覆盖率补充测试完成**：从 loop flow 流转角度分析 25 条路径，14→23 覆盖（56%→92%）。新增 45 测试。详见 `design/IMPLEMENTATION-TRACKER.md`。
+- **文档纪律强化**：用户要求每次操作必须"先记录→再执行→再更新"。新增 memory `feedback-record-before-execute.md`。
 
 **最近动作 (2026-07-12)：**
 - **v7.0 双驱动远期架构立项**（决策 #54）：单引擎(TickOrchestrator)+双驱动(Agent/Standalone) ports&adapters，subsume v5.5 独立跑护城河并给 T10d 退役出口；「Python 永不调 LLM」精确化为「引擎不调/驱动可调」(扩展非翻转)。产出 `v7.0-Plan-DualDriver.md` + discussion。**当前落地 Phase 10 两项 P0 预留已实现**(T33a `action.schema.json`+`stage-result.schema.json` 版本化 SSOT + 21 契约测试防漂移；T33b 4 处执行栈「双驱动共享资产」标注)；v7.0 主体(V7-1~V7-8)用户明确搁置、不主动启动，入路线图待后续里程碑

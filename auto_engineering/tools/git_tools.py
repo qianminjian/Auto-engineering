@@ -56,7 +56,7 @@ def _run_git(
             target_real = os.path.realpath(cwd)
         except OSError:
             # v7.0: cwd 不存在 (如 DeepSeek 幻觉 /workspace) → 回退到 project_root
-            cwd = project_root
+            cwd = str(project_root)
             root_real = os.path.realpath(project_root)
             target_real = root_real
         root_prefix = root_real if root_real.endswith(os.sep) else root_real + os.sep
