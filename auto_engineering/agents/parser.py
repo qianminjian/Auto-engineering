@@ -143,7 +143,8 @@ def _extract_from_markdown(text: str) -> dict | None:
         }]
 
     # 无任何结构化信号 → 不是有效的 agent 输出, 返回 None
-    if not batch_plan and not file_list and not text.strip():
+    # v7.0.1: 无 batch_plan 且无 file_list → 肯定不是 agent 输出 (纯文本/错误消息)
+    if not batch_plan and not file_list:
         return None
 
     return {

@@ -2106,3 +2106,255 @@ class TestFreshGateAtCritic:
         # FreshGate at developer 不应阻塞
         assert action.get("error_code", "") != "GUARDRAIL_RETRY"
         assert action["stage"] == "critic"
+
+
+# ── S-2: Driver A vs Driver B 保真度对比 ──
+
+
+class TestValidationConsistency:
+    """_validate_result_dict vs _read_and_validate — 两个验证入口必须一致.
+
+    Driver A (tick) 走 _read_and_validate (文件→dict→验证),
+    Driver B (tick_dict) 走 _validate_result_dict (dict→验证).
+    同一份数据应产出一致的 dict 或一致的 ErrorResponse.
+    """
+
+    def test_valid_architect_result_consistent(self) -> None:
+        """有效 architect result: dict 验证 vs 文件验证 → 一致."""
+        o = _orchestrator()
+        o.init("req")
+        data = {
+            "stage": "architect", "plan": _VALID_PLAN,
+            "batch_plan": [{
+                "batch_id": "b1", "design_section": "B2", "component": "C",
+                "tasks": [{"id": "T1", "description": "d", "module_ref": "§B2",
+                           "file_targets": ["x.py"]}],
+            }], "file_list": ["x.py"], "contracts": {},
+        }
+        via_dict = o._validate_result_dict(data)
+        via_file = o._read_and_validate(_make_result_file(data))
+        assert via_dict == via_file
+
+    def test_stage_mismatch_consistent(self) -> None:
+        """stage 不匹配: 两种入口返回相同 error_code + 相同 message."""
+        o = _orchestrator()
+        o.init("req")  # expected_stage = "architect"
+        data = {"stage": "developer", "files_changed": ["x.py"]}
+        via_dict = o._validate_result_dict(data)
+        via_file = o._read_and_validate(_make_result_file(data))
+        assert via_dict.error_code == via_file.error_code == "STAGE_MISMATCH"
+        assert via_dict.message == via_file.message
+
+    def test_type_error_consistent(self) -> None:
+        """result 不是 dict: 两种入口返回 RESULT_TYPE_ERROR."""
+        o = _orchestrator()
+        o.init("req")
+        # Driver B 直接传 list: _validate_result_dict 立即检测
+        via_dict = o._validate_result_dict(["not", "a", "dict"])
+        assert via_dict.error_code == "RESULT_TYPE_ERROR"
+        # Driver A 从文件读: JSON 顶层是 list, _read_and_validate 也检测
+        f = Path(tempfile.mktemp(suffix=".json"))
+        f.write_text(json.dumps(["not", "a", "dict"]), encoding="utf-8")
+        via_file = o._read_and_validate(f)
+        assert via_file.error_code == "RESULT_TYPE_ERROR"
+
+    def test_empty_batch_plan_consistent(self) -> None:
+        """空 batch_plan: 两种入口都返回 RESULT_VALIDATION_ERROR."""
+        o = _orchestrator()
+        o.init("req")
+        data = {
+            "stage": "architect", "plan": _VALID_PLAN, "batch_plan": [],
+            "file_list": ["x.py"], "contracts": {},
+        }
+        via_dict = o._validate_result_dict(data)
+        via_file = o._read_and_validate(_make_result_file(data))
+        assert via_dict.error_code == via_file.error_code == "RESULT_VALIDATION_ERROR"
+
+    def test_parse_error_only_from_file(self) -> None:
+        """文件解析失败 (RESULT_PARSE_ERROR): 仅 Driver A 路径可达.
+        Driver B 路径 dict 已在内存, 不存在 parse 失败场景.
+        这是两个驱动的合理差异 (非 bug).
+        """
+        o = _orchestrator()
+        o.init("req")
+        bad_file = Path(tempfile.mktemp(suffix=".json"))
+        bad_file.write_text("not json{{{", encoding="utf-8")
+        via_file = o._read_and_validate(bad_file)
+        assert via_file.error_code == "RESULT_PARSE_ERROR"
+        # Driver B 不存在等价场景 — 这是设计上的合理差异
+
+
+class TestTickVsTickDictIdenticalActions:
+    """tick(file) vs tick_dict(dict) — 同一 state + 同一 result → 同一 next action.
+
+    这是双驱动架构的核心保真度断言: 循环引擎的 action 产出只依赖 result 内容,
+    不依赖 result 的传输方式 (文件 vs 内存 dict).
+    """
+
+    @staticmethod
+    def _seed_to_developer(o: TickOrchestrator) -> dict:
+        """init → architect tick → 停在 developer, 返回 developer 的 batch_id."""
+        o.init("实现登录功能")
+        action = o.tick(_make_result_file({
+            "stage": "architect", "plan": _VALID_PLAN,
+            "batch_plan": [{
+                "batch_id": "b1", "design_section": "B2", "component": "C",
+                "tasks": [{"id": "T1", "description": "d", "module_ref": "§B2",
+                           "file_targets": ["x.py"]}],
+            }], "file_list": ["x.py"], "contracts": {},
+        }))
+        assert action["stage"] == "developer"
+        return action
+
+    @staticmethod
+    def _strip_nondeterministic(action: dict) -> dict:
+        """去掉非确定性字段 (UUID/时间戳), 只比循环逻辑字段."""
+        stripped = dict(action)
+        stripped.pop("thread_id", None)
+        if "gate_summary" in stripped:
+            gs = {}
+            for k, v in stripped["gate_summary"].items():
+                gs[k] = {kk: vv for kk, vv in v.items()
+                         if kk not in ("ran_at", "files_snapshot_sha")}
+            stripped["gate_summary"] = gs
+        return stripped
+
+    def test_developer_result_same_next_action(self) -> None:
+        """developer result 通过 tick() 和 tick_dict() 产出一致的下一 action."""
+        result = {
+            "stage": "developer", "batch_id": "b1",
+            "files_changed": ["x.py"],
+            "test_results": {"passed": 2, "failed": 0},
+        }
+
+        # tick() 路径 (Driver A)
+        o1 = _orchestrator()
+        self._seed_to_developer(o1)
+        action_file = self._strip_nondeterministic(o1.tick(_make_result_file(result)))
+
+        # tick_dict() 路径 (Driver B)
+        o2 = _orchestrator()
+        self._seed_to_developer(o2)
+        action_dict = self._strip_nondeterministic(o2.tick_dict(result))
+
+        assert action_file == action_dict, (
+            f"tick() != tick_dict():\n"
+            f"  file: {action_file}\n"
+            f"  dict: {action_dict}"
+        )
+
+    def test_critic_result_same_next_action(self) -> None:
+        """critic APPROVE result: tick() vs tick_dict() → 一致."""
+        result = {
+            "stage": "critic", "verdict": "APPROVE", "findings": [],
+            "critic_feedback": "LGTM",
+        }
+
+        # 推进到 critic
+        o1 = _orchestrator()
+        self._seed_to_developer(o1)
+        o1.tick(_make_result_file({
+            "stage": "developer", "batch_id": "b1",
+            "files_changed": ["x.py"],
+            "test_results": {"passed": 2, "failed": 0},
+        }))
+        action_file = self._strip_nondeterministic(o1.tick(_make_result_file(result)))
+
+        o2 = _orchestrator()
+        self._seed_to_developer(o2)
+        o2.tick_dict({
+            "stage": "developer", "batch_id": "b1",
+            "files_changed": ["x.py"],
+            "test_results": {"passed": 2, "failed": 0},
+        })
+        action_dict = self._strip_nondeterministic(o2.tick_dict(result))
+
+        assert action_file == action_dict
+
+    def test_error_result_same_action(self) -> None:
+        """无效 result (stage mismatch): tick() vs tick_dict() 产出一致错误."""
+        o1 = _orchestrator()
+        o1.init("req")
+        bad = {"stage": "developer", "files_changed": ["x.py"]}
+
+        action_file = o1.tick(_make_result_file(bad))
+
+        o2 = _orchestrator()
+        o2.init("req")
+        action_dict = o2.tick_dict(bad)
+
+        assert action_file["error_code"] == action_dict["error_code"]
+        assert action_file["action"] == action_dict["action"]
+
+
+class TestDualDriverContract:
+    """双驱动契约: TickOrchestrator 核心接缝 (action/result) 的驱动无关性.
+
+    验证:
+    1. init() 返回的 action schema 对两个驱动一致
+    2. _build_action() 的产出不依赖驱动类型
+    3. _tick_process_result() 公共路径对两个驱动一致
+    """
+
+    def test_init_action_schema_consistent(self) -> None:
+        """init() 返回的 action 必须含 driver-agnostic 字段."""
+        o = _orchestrator()
+        action = o.init("实现功能")
+        for key in ("action", "stage", "tick", "context", "expected_format"):
+            assert key in action, f"action 缺字段: {key}"
+
+    def test_build_action_stage_deterministic(self) -> None:
+        """_build_action() 由 state.current_stage 决定, 与驱动无关."""
+        o = _orchestrator()
+        o.init("req")
+
+        # architect stage — init 后就在 architect
+        a1 = o._build_action()
+        assert a1["stage"] == "architect"
+        assert a1["action"] == "architect"
+
+        # 推进到 developer stage
+        o.tick(_make_result_file({
+            "stage": "architect", "plan": _VALID_PLAN,
+            "batch_plan": [{
+                "batch_id": "b1", "design_section": "B2", "component": "C",
+                "tasks": [{"id": "T1", "description": "d", "module_ref": "§B2",
+                           "file_targets": ["x.py"]}],
+            }], "file_list": ["x.py"], "contracts": {},
+        }))
+        a2 = o._build_action()
+        assert a2["stage"] == "developer"
+        assert a2["action"] == "developer"
+        assert "tasks" in a2
+
+    def test_tick_process_result_shared_path(self) -> None:
+        """_tick_process_result 是 tick()/tick_dict() 的公共出口."""
+        o = _orchestrator()
+        o.init("req")
+        result = {
+            "stage": "architect", "plan": _VALID_PLAN,
+            "batch_plan": [{
+                "batch_id": "b1", "design_section": "B2", "component": "C",
+                "tasks": [{"id": "T1", "description": "d", "module_ref": "§B2",
+                           "file_targets": ["x.py"]}],
+            }], "file_list": ["x.py"], "contracts": {},
+        }
+        action = o._tick_process_result(result)
+        assert action["action"] == "developer"
+        assert action["stage"] == "developer"
+
+    def test_checkpoint_save_same_for_both_drivers(self) -> None:
+        """_advance_stage → _save_checkpoint 在 tick()/tick_dict() 中行为一致."""
+        o = _orchestrator()
+        o.init("req")
+        tick_before = o._state.tick
+        o._tick_process_result({
+            "stage": "architect", "plan": _VALID_PLAN,
+            "batch_plan": [{
+                "batch_id": "b1", "design_section": "B2", "component": "C",
+                "tasks": [{"id": "T1", "description": "d", "module_ref": "§B2",
+                           "file_targets": ["x.py"]}],
+            }], "file_list": ["x.py"], "contracts": {},
+        })
+        assert o._state.tick == tick_before + 1
+        assert o._state.current_stage == "developer"

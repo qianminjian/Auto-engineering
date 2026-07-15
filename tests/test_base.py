@@ -91,7 +91,8 @@ class TestBaseTool:
         assert schema["name"] == "calc"
         assert schema["description"] == "Calculate"
         assert schema["input_schema"]["type"] == "object"
-        assert schema["input_schema"]["properties"] == {"a": "integer", "b": "integer"}
+        # v7.0.1: 短格式 "integer" 标准化为 {"type": "integer"}
+        assert schema["input_schema"]["properties"] == {"a": {"type": "integer"}, "b": {"type": "integer"}}
         assert set(schema["input_schema"]["required"]) == {"a", "b"}
 
     def test_abstract_subclass_cannot_be_instantiated(self):

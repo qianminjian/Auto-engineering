@@ -22,12 +22,14 @@ class TestFillDefaultsArchitect:
         assert parsed["plan"] == text
 
     def test_fills_missing_batch_plan_as_empty_list(self):
-        """architect 缺 batch_plan → 空列表."""
+        """architect 缺 batch_plan → v7.0.1: 自动构造最小 batch (DeepSeek 兼容)."""
         from auto_engineering.agents.parser import _fill_defaults
 
         parsed = {"stage": "architect"}
         _fill_defaults(parsed, "some text")
-        assert parsed["batch_plan"] == []
+        # v7.0.1: 空 batch_plan 自动填充最小 batch
+        assert len(parsed["batch_plan"]) == 1
+        assert parsed["batch_plan"][0]["batch_id"] == "T1"
 
     def test_fills_missing_file_list_from_text(self):
         """architect 缺 file_list → 从 text 提取."""

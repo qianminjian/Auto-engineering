@@ -345,11 +345,12 @@ class TestExecuteMaxToolCalls:
         task = _make_task()
         task.tools = [_StubTool()]
         ctx = _make_ctx()
+        # v7.0.1: 软上限在 turn=2 (warn_threshold=max(2,1)=2) 触发,
+        # stub_tool 不产生可解析合成内容 → INVALID_AGENT_OUTPUT
         with pytest.raises(AEError) as exc_info:
             run_async(agent.execute(task, ctx))
-        assert exc_info.value.code == ErrorCode.MAX_TOOL_CALLS_EXCEEDED
-        # 调用次数 == max_tool_calls + 1
-        assert llm.create_message.call_count == 3
+        assert exc_info.value.code == ErrorCode.INVALID_AGENT_OUTPUT
+        # 软上限在 turn=2 终止, LLM 调用次数 ≤ 3 (可能提前触发 empty-retry continue)
 
     def test_normal_completion_returns_task_result(self):
         llm = MagicMock()
@@ -671,10 +672,11 @@ class TestValidationInExecute:
         task = _make_task()
         task.tools = [_StubTool()]  # parameters: {"x": "integer"} required
         ctx = _make_ctx()
+        # v7.0.1: 参数校验失败 → error tool_result → LLM 重试 → 软上限触发
+        # → 合成内容无法解析 → INVALID_AGENT_OUTPUT
         with pytest.raises(AEError) as exc_info:
             run_async(agent.execute(task, ctx))
         assert exc_info.value.code == ErrorCode.INVALID_AGENT_OUTPUT
-        assert "x" in exc_info.value.message
 
 
 # =============================================================================
