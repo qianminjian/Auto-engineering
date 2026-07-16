@@ -35,8 +35,8 @@ from auto_engineering.prismscan.jsonl_protocol import (
 from auto_engineering.prismscan.orchestrator import PrismScanOrchestrator
 from auto_engineering.prismscan.schemas import (
     AnalysisResult,
-    ArchitectureInfo,
     ApiSurfaceInfo,
+    ArchitectureInfo,
     BusinessDomainInfo,
     DataModelInfo,
     DeploymentInfo,
@@ -50,33 +50,28 @@ from auto_engineering.prismscan.schemas import (
 )
 
 __all__ = [
-    # Orchestrator
-    "PrismScanOrchestrator",
-    # Pipeline functions
-    "discover",
-    "extract",
-    # JSONL Protocol
-    "JSONLProtocol",
-    "JSONLErrorCode",
-    "JSONLProtocolError",
-    "JSONLTimeoutError",
-    "read_request",
-    "read_response",
-    "write_request",
-    "write_response",
-    # Data models
     "AnalysisResult",
-    "ArchitectureInfo",
     "ApiSurfaceInfo",
+    "ArchitectureInfo",
     "BusinessDomainInfo",
     "DataModelInfo",
     "DeploymentInfo",
+    "JSONLErrorCode",
+    "JSONLProtocol",
+    "JSONLProtocolError",
+    "JSONLTimeoutError",
     "ModuleInfo",
+    "PrismScanOrchestrator",
     "ProjectShape",
     "ScheduledTaskInfo",
     "SecurityInfo",
     "SymbolIndex",
     "SymbolInfo",
-    # Validation
+    "discover",
+    "extract",
     "jsonschema_validate",
+    "read_request",
+    "read_response",
+    "write_request",
+    "write_response",
 ]

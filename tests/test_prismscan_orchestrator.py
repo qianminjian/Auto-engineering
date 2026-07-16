@@ -7,14 +7,13 @@ import tempfile
 from pathlib import Path
 from unittest import mock
 
-import pytest
-
 
 class TestPrismScanOrchestrator:
     """PrismScanOrchestrator 核心功能测试."""
 
     def test_init_creates_orchestrator(self):
         import os
+
         from auto_engineering.prismscan.orchestrator import PrismScanOrchestrator
 
         with tempfile.TemporaryDirectory() as tmp:

@@ -6,8 +6,6 @@ import json
 import subprocess
 from unittest import mock
 
-import pytest
-
 from auto_engineering.prismscan.schemas import SymbolInfo
 
 
@@ -80,7 +78,6 @@ class TestDeduplicate:
 
     def test_deduplicates_by_name_file_kind(self):
         from auto_engineering.prismscan.extract import deduplicate
-        from auto_engineering.prismscan.schemas import SymbolInfo
 
         symbols = [
             SymbolInfo(name="Foo", kind="class", file="a.py", line=10),
@@ -98,7 +95,6 @@ class TestBuildDependencyGraph:
 
     def test_builds_graph_from_imports(self):
         from auto_engineering.prismscan.extract import build_dependency_graph
-        from auto_engineering.prismscan.schemas import SymbolInfo
 
         symbols = [
             SymbolInfo(name="main", kind="function", file="main.py", line=1,
@@ -111,7 +107,6 @@ class TestBuildDependencyGraph:
 
     def test_filters_unresolved_deps(self):
         from auto_engineering.prismscan.extract import build_dependency_graph
-        from auto_engineering.prismscan.schemas import SymbolInfo
 
         symbols = [
             SymbolInfo(name="main", kind="function", file="main.py", line=1,
@@ -134,7 +129,6 @@ class TestBuildDependencyGraph:
 
     def test_deduplicate_all_unique(self):
         from auto_engineering.prismscan.extract import deduplicate
-        from auto_engineering.prismscan.schemas import SymbolInfo
 
         symbols = [
             SymbolInfo(name="A", kind="class", file="a.py", line=1),
@@ -150,7 +144,6 @@ class TestExtractImports:
 
     def test_parses_import_x_syntax(self):
         from auto_engineering.prismscan.extract import _extract_imports
-        from auto_engineering.prismscan.schemas import SymbolInfo
 
         s = SymbolInfo(name="main", kind="function", file="main.py", line=1,
                        scope="import os\nimport sys, json")
@@ -161,7 +154,6 @@ class TestExtractImports:
 
     def test_parses_from_x_import_y_with_alias(self):
         from auto_engineering.prismscan.extract import _extract_imports
-        from auto_engineering.prismscan.schemas import SymbolInfo
 
         s = SymbolInfo(name="main", kind="function", file="main.py", line=1,
                        scope="from core import Client as C")
@@ -171,7 +163,6 @@ class TestExtractImports:
 
     def test_empty_scope_returns_empty(self):
         from auto_engineering.prismscan.extract import _extract_imports
-        from auto_engineering.prismscan.schemas import SymbolInfo
 
         s = SymbolInfo(name="main", kind="function", file="main.py", line=1)
         deps = _extract_imports(s)
@@ -179,7 +170,6 @@ class TestExtractImports:
 
     def test_none_scope_returns_empty(self):
         from auto_engineering.prismscan.extract import _extract_imports
-        from auto_engineering.prismscan.schemas import SymbolInfo
 
         s = SymbolInfo(name="main", kind="function", file="main.py", line=1, scope="")
         deps = _extract_imports(s)

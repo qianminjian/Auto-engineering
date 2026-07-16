@@ -81,9 +81,7 @@ _ENTRY_PATTERNS: list[str] = [
 def _should_ignore(name: str) -> bool:
     if name in _IGNORE_DIRS:
         return True
-    if name.startswith(".") and name != ".github":
-        return True
-    return False
+    return bool(name.startswith(".") and name != ".github")
 
 
 def walk_directory(project_root: str) -> list[Path]:

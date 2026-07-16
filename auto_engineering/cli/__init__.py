@@ -32,9 +32,6 @@ from auto_engineering.cli.dev_loop import (
 )
 from auto_engineering.cli.doctor import register_doctor_command
 from auto_engineering.cli.gate_check import register_gate_check_command
-
-# 私有符号 (模块内部使用, _ 前缀按 Python 约定不公开)
-# v5.5 audit P0-11: __all__ 排除私有符号, from cli import * 不会导出
 from auto_engineering.cli.helpers import (
     _CATEGORY_FRIENDLY_PREFIX,
     ErrorCategory,
@@ -50,8 +47,6 @@ from auto_engineering.cli.status import (
     register_status_command,
 )
 from auto_engineering.errors import AEError, ErrorCode
-
-# Re-export 公开符号, 保持 from auto_engineering.cli import ... 兼容
 from auto_engineering.runtime.cancellation import CancellationToken
 
 __all__ = [
@@ -141,7 +136,7 @@ def dev_loop(
         ae dev-loop --status                             查询当前 tick 状态
         ae dev-loop --resume <id>                         从 checkpoint 恢复
 
-    v5.5 legacy 模式 (连续 while, 调 LLM):
+    v5.5 legacy 模式 (连续 while, 调 LLM, BEACON #53 保留共存):
         ae dev-loop "req"                                 单需求连续调试
     """
     root = Path(project_root).resolve() if project_root else Path.cwd()
@@ -243,7 +238,6 @@ def dev_loop(
         raise SystemExit(exit_code) from None
 
     if log_format == "json":
-        # v5.0 §B13.2: 6 字段 JSON 契约
         click.echo(json.dumps(result.to_json_dict(), ensure_ascii=False, indent=2))
     else:
         click.echo(
@@ -251,12 +245,7 @@ def dev_loop(
             f"steps={result.total_steps}, checkpoint={result.checkpoint_id}"
         )
 
-    # v5.0 exit codes: 0=completed (QUALITY_PASS level=3),
-    # 2=failed (verdict.level=4 HARD_LIMIT, Bug 3 prismscan / Issue #13),
-    # 130=SIGINT (AEError raised above)
     if result.status == "failed":
-        # Bug 3 prismscan 修复: verdict.level=4 (HARD_LIMIT, critic 异常升级) →
-        # status="failed" → CLI exit 非 0. 旧行为 exit 0 是 0 代码改动退出的根因.
         click.echo(
             f"✗ dev-loop failed (verdict.level=4 HARD_LIMIT): "
             f"{result.verdict.get('reason', 'unknown')}",
@@ -264,8 +253,7 @@ def dev_loop(
         )
         raise SystemExit(2)
     if result.status == "completed":
-        return  # exit 0
-    # max_rounds / 其他 → exit 0 (达到上限非异常, v2.0 行为兼容)
+        return
     return
 
 

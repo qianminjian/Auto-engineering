@@ -1,7 +1,7 @@
 {
   "name": "auto-engineering",
-  "version": "5.0.0",
-  "description": "Auto-Engineering v5.0 — multi-agent AI engineering loop with stage-aware guardrails, Gate quality system, and Init-Loop contract. Drives development from requirement to PR through Architect/Developer/Critic stages.",
+  "version": "5.6.0",
+  "description": "Auto-Engineering v5.6 — Tick-Based Discrete Invocation loop with 5-layer verification, PrismScan V5.1 codebase reverse engineering, Gate quality system, and Init-Loop contract.",
   "author": {
     "name": "Qian Minjian (钱敏健)",
     "email": "noreply@anthropic.com"

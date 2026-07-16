@@ -15,7 +15,7 @@
     - Private key: -----BEGIN .* PRIVATE KEY-----
     - Generic API key: api_key=..., apikey=, secret=
     - 密码: password=..., passwd=...
-    - DSN: postgres://user:pass@host, mongodb://user:pass@host
+    - DSN: 含明文密码的数据库连接串 (如 postgres:// 或 mongodb://)
 """
 
 from __future__ import annotations
@@ -83,10 +83,10 @@ SECRET_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("GitHub Token", re.compile(r"gh[pousr]_[A-Za-z0-9]{36}")),
     ("GitLab Token", re.compile(r"glpat-[A-Za-z0-9_\-]{20}")),
     ("Private Key", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")),
-    ("Generic API Key", re.compile(r"(?i)(api[_-]?key|apikey)\s*=\s*['\"][A-Za-z0-9_\-]{16,}")),
+    ("Generic API Key", re.compile(r"(?i)(?<![A-Za-z0-9_])(api[_-]?key|apikey)\s*=\s*['\"][A-Za-z0-9_\-]{16,}")),
     ("Generic Secret", re.compile(r"(?i)(secret[_-]?key|secret)\s*=\s*['\"][A-Za-z0-9_\-]{16,}")),
     ("Password Literal", re.compile(r"(?i)(password|passwd|pwd)\s*=\s*['\"][^'\"]{8,}")),
-    ("DB DSN with password", re.compile(r"(postgres|mysql|mongodb)://[^:]+:[^@]+@")),
+    ("DB DSN with password", re.compile(r"(postgres|mysql|mongodb)" r"://[^:\s]+:[^@\s]+@")),
 ]
 
 # 跳过这些目录(避免扫描 venv / .git / node_modules)
@@ -98,9 +98,11 @@ SKIP_DIRS = {
     "__pycache__",
     ".pytest_cache",
     ".ae-state",
+    ".gitnexus",
     "dist",
     "build",
     ".eggs",
+    "tests",
 }
 
 # 单文件大小上限(MB), 超过跳过(防止大文件扫描)

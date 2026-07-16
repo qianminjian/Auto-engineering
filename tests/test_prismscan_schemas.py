@@ -7,7 +7,6 @@ from pathlib import Path
 
 import pytest
 
-
 SCHEMAS_DIR = Path(__file__).parent.parent / "auto_engineering" / "prismscan" / "schemas"
 
 
@@ -209,8 +208,11 @@ class TestDataClasses:
 
     def test_analysis_result_round_trip(self):
         from auto_engineering.prismscan.schemas import (
-            AnalysisResult, ArchitectureInfo, ApiSurfaceInfo,
-            SecurityInfo, DeploymentInfo,
+            AnalysisResult,
+            ApiSurfaceInfo,
+            ArchitectureInfo,
+            DeploymentInfo,
+            SecurityInfo,
         )
 
         result = AnalysisResult(
@@ -262,8 +264,12 @@ class TestMinimalAnalysisResult:
 
     def test_minimal_analysis_result_passes_schema(self):
         from auto_engineering.prismscan.schemas import (
-            AnalysisResult, ArchitectureInfo, ApiSurfaceInfo,
-            SecurityInfo, DeploymentInfo, jsonschema_validate,
+            AnalysisResult,
+            ApiSurfaceInfo,
+            ArchitectureInfo,
+            DeploymentInfo,
+            SecurityInfo,
+            jsonschema_validate,
         )
 
         result = AnalysisResult(
@@ -280,8 +286,11 @@ class TestMinimalAnalysisResult:
 
     def test_minimal_analysis_result_round_trip(self):
         from auto_engineering.prismscan.schemas import (
-            AnalysisResult, ArchitectureInfo, ApiSurfaceInfo,
-            SecurityInfo, DeploymentInfo,
+            AnalysisResult,
+            ApiSurfaceInfo,
+            ArchitectureInfo,
+            DeploymentInfo,
+            SecurityInfo,
         )
 
         result = AnalysisResult(
@@ -360,9 +369,14 @@ class TestComplexAnalysisResult:
 
     def test_many_domains_and_models(self):
         from auto_engineering.prismscan.schemas import (
-            AnalysisResult, ArchitectureInfo, ApiSurfaceInfo,
-            BusinessDomainInfo, DataModelInfo,
-            SecurityInfo, DeploymentInfo, ScheduledTaskInfo,
+            AnalysisResult,
+            ApiSurfaceInfo,
+            ArchitectureInfo,
+            BusinessDomainInfo,
+            DataModelInfo,
+            DeploymentInfo,
+            ScheduledTaskInfo,
+            SecurityInfo,
         )
 
         domains = [

@@ -14,7 +14,6 @@ from pathlib import Path
 
 import pytest
 
-
 AE_PROJECT = Path(__file__).resolve().parent.parent
 
 
@@ -405,7 +404,7 @@ class TestAgentContextConsumption:
 
             # Step 2: Agent 从 context 提取关键信息
             assert ps["project_name"] == root.name
-            assert "python" in [l.lower() for l in ps["languages"]]
+            assert "python" in [lang.lower() for lang in ps["languages"]]
             assert isinstance(si["symbols"], list)
             assert isinstance(si["dependency_graph"], dict)
 
@@ -563,7 +562,8 @@ class TestAgentRuntimeIntegration:
             text = output.strip()
             # TaskResult repr: TaskResult(task_id='...', values={...}, raw_response=...)
             if text.startswith("TaskResult("):
-                import ast, re
+                import ast
+                import re
                 m = re.search(r"values=(\{.*\}), raw_response=", text)
                 if m:
                     try:

@@ -142,7 +142,7 @@ def read_response(
                 raise JSONLProtocolError(
                     JSONLErrorCode.INVALID_JSON,
                     f"响应文件不是有效 JSON: {e}",
-                )
+                ) from e
 
             if not lines:
                 time.sleep(poll_interval)
@@ -222,5 +222,5 @@ def read_request(request_file: str | Path) -> dict:
         raise JSONLProtocolError(
             JSONLErrorCode.INVALID_JSON,
             f"请求文件不是有效 JSON: {e}",
-        )
+        ) from e
     return msg.get("payload", msg)

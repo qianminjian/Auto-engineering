@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import os
 import tempfile
 from pathlib import Path
@@ -28,7 +27,7 @@ class TestDiscover:
             shape = discover(str(root))
             assert isinstance(shape, ProjectShape)
             assert shape.project_name == os.path.basename(str(root))
-            assert "python" in [l.lower() for l in shape.languages]
+            assert "python" in [lang.lower() for lang in shape.languages]
             assert shape.build_system == "uv"  # pyproject.toml → uv
             assert shape.has_docker is True
             assert shape.total_files >= 4
@@ -47,7 +46,7 @@ class TestDiscover:
 
             shape = discover(str(root))
             assert shape.build_system == "maven"
-            assert "java" in [l.lower() for l in shape.languages]
+            assert "java" in [lang.lower() for lang in shape.languages]
 
     def test_empty_directory(self):
         from auto_engineering.prismscan.discover import discover

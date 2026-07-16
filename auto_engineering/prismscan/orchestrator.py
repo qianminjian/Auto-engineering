@@ -19,7 +19,12 @@ from pathlib import Path
 from auto_engineering.prismscan.discover import discover
 from auto_engineering.prismscan.extract import extract
 from auto_engineering.prismscan.jsonl import JSONLProtocol as _JSONL
-from auto_engineering.prismscan.schemas import AnalysisResult, jsonschema_validate
+from auto_engineering.prismscan.schemas import (
+    AnalysisResult,
+    ProjectShape,
+    SymbolIndex,
+    jsonschema_validate,
+)
 
 _logger = logging.getLogger("ae.prismscan.orchestrator")
 
@@ -49,9 +54,9 @@ class PrismScanOrchestrator:
         )
         self._guardrail = guardrail
         self._gate_runner = gate_runner
-        self._project_shape = None
-        self._symbol_index = None
-        self._analysis_result = None
+        self._project_shape: ProjectShape | None = None
+        self._symbol_index: SymbolIndex | None = None
+        self._analysis_result: AnalysisResult | None = None
         self._data_file: str = ""
 
     def run_discover_extract(self) -> dict:

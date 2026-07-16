@@ -12,7 +12,6 @@ from pathlib import Path
 
 import jsonschema
 
-
 _SCHEMAS_DIR = Path(__file__).parent / "schemas"
 
 
@@ -161,8 +160,8 @@ class ArchitectureInfo:
     description: str
     layers: list[str] = field(default_factory=list)
 
-    def to_dict(self) -> dict:
-        d = {"pattern": self.pattern, "description": self.description}
+    def to_dict(self) -> dict[str, object]:
+        d: dict[str, object] = {"pattern": self.pattern, "description": self.description}
         if self.layers:
             d["layers"] = self.layers
         return d
