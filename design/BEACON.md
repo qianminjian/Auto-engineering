@@ -1,4 +1,4 @@
-> 创建：2026-06-24 | 更新：2026-07-15 | 阶段：v5.6 Design — Tick-Based Discrete Invocation + 5 层验证 + Commit→PR→CI/CD Pipeline；PrismScan V5.1 Phase 1 测试完成
+> 创建：2026-06-24 | 更新：2026-07-16 | 阶段：v5.6 里程碑收官 — Tick-Based Discrete Invocation + 5 层验证 + Commit→PR→CI/CD Pipeline
 > ⚠️ **决策状态翻转管控**：status 列 ✅→❌ 或 ❌→✅ 必须经用户审批。AI 不得自行翻转。详见 `.claude/rules/design-document-inviolability.md` §2。
 
 ## 目标与成功标准
@@ -51,6 +51,15 @@
 
 **阶段：** v5.6 里程碑收官 — Tick-Based Discrete Invocation + 5 层验证 + Pre-flight Gap Analysis + Commit→PR→CI/CD Pipeline。Phase 1-10 = 102/102 全完成（含 Phase 10 双驱动接缝预留）。
 
+**最近动作 (2026-07-16)：**
+- **真实 Agent 驱动 v5.6 tick 闭环验证完成**：用 `/ae:dev-loop` 对 hello_world 工具走通完整的 architect (Plan agent spawn) → developer (TDD Red→Green→Refactor, 3/3 tests passed) → critic (APPROVE) → component_verifier (3/3 IMPLEMENTED) → system_deep_audit (P0=P1=P2=0) → GOAL_ACHIEVED。验证了 Agent tool spawn 路径真实可用，弥补了此前仅 Python tick driver 模拟的缺口。
+- **mypy 类型债清零**：修复 HelloWorldTool ClassVar→instance var（对齐 BaseTool 约定）+ `cli/agent.py` runtime.get() None 守卫 + type:ignore 错误码覆盖。mypy 0 errors（默认 + `--check-untyped-defs` 双模式），98 源文件全绿。
+- **T16i release.yml 确认**：文件已在 6331b54 修复，无冲突标记，追踪表状态同步。
+- **coverage-gate 确认**：CI 已在 1bd50c9 接入 `--cov-fail-under=90`，追踪表滞后注释已清理。
+- **E501 ruff 确认**：line-length=120 下 0 violations，已无待处理项。
+- **设计文档目录修复**：`design/discussion/` 从 `his_bak` 双重嵌套恢复，INDEX.md 补全 4 个讨论文件。
+- **全量测试**：2135 passed。
+
 **最近动作 (2026-07-15)：**
 - **v5.6 tick 闭环验证完成**：用 tick driver（`/tmp/_ae_tick_driver6.py`）对 `_scratch/Design-V5.0-plugin-final.md`（71KB PrismScan V5.1 设计文档）跑完整 14 tick 闭环：gap_scan → gap_review → architect → developer → critic → component_verifier → plate_deep_audit → developer(B2) → critic → component_verifier → plate_deep_audit → system_verifier → system_deep_audit → DONE。verdict: GOAL_ACHIEVED。全程 Python TickOrchestrator + SQLite checkpoint 持久化有效、Guardrail + Gate 通过、StageRouter T1-T22 转换正确、5 层验证架构全部触发。
 - **P1 Bug 修复（tick 闭环过程中发现）**：
@@ -62,7 +71,7 @@
 
 **最近动作 (2026-07-12)：**
 - **v7.0 双驱动远期架构立项**（决策 #54）：单引擎(TickOrchestrator)+双驱动(Agent/Standalone) ports&adapters，subsume v5.5 独立跑护城河并给 T10d 退役出口；「Python 永不调 LLM」精确化为「引擎不调/驱动可调」(扩展非翻转)。产出 v5.6-Design-Loop.md 附录 C(原 v7.0-Plan-DualDriver.md) + discussion。**当前落地 Phase 10 两项 P0 预留已实现**(T33a `action.schema.json`+`stage-result.schema.json` 版本化 SSOT + 21 契约测试防漂移；T33b 4 处执行栈「双驱动共享资产」标注)；v7.0 主体(V7-1~V7-8)用户明确搁置、不主动启动，入路线图待后续里程碑
-- **T16h ci.yml 薄壳 + ruff 全量转绿** (24afa07)：line-length 100→120 消化中文注释宽度；生产 ruff 全清(E402 上移/E501 折行/SIM108 三元)，测试 per-file-ignore 扩 RUF012/SIM117/B017；`.github/workflows/ci.yml`(uv+ruff+pytest 薄壳)。1968 passed。mypy(203)/coverage-gate 刻意排除薄壳待决策
+- **T16h ci.yml 薄壳 + ruff 全量转绿** (24afa07/1bd50c9)：line-length 100→120 消化中文注释宽度；生产 ruff 全清(E402 上移/E501 折行/SIM108 三元)；`.github/workflows/ci.yml`(uv+ruff+pytest + coverage≥90%)。2135 passed。
 - **T10d 定案：v5.5 orchestrator + semantic_evaluator 保留**（决策 #53）：退役前置审计确认 v5.5 是活代码(`ae dev-loop` 裸参数路径)，用户决策不退役、保留 v5.5/v6 共存。修正 D22 计划方向。无 status 翻转
 - **设计背书收口**：T26e PRBackend 选型背书（决策 #50）+ T26f 环内增量 test_gate + commit_msg（决策 #51）——实现验证通过，与决策 #45 一致。Wave 6 设计背书全部完成
 
@@ -97,4 +106,4 @@
 
 ## 引用文件
 
-@design/v5.6-Design-Loop.md · @design/INDEX.md · @docs/EARS-v5.0.md · @docs/api-reference.md
+@design/v5.6-Design-Loop.md · @design/INDEX.md · @design/IMPLEMENTATION-TRACKER.md · @design/discussion/ · @docs/EARS-v5.0.md · @docs/api-reference.md

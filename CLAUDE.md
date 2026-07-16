@@ -36,7 +36,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - 名称：Auto-Engineering
 - 类型：Python CLI 应用 + Claude Code Plugin（`/dev-loop` slash command 形态）
 - 版本：v5.6（Tick-Based Discrete Invocation + 5 层验证 + Pre-flight Gap Analysis）+ v7.0 双驱动远期架构
-- 创建日期：2026-06-23 | 更新：2026-07-15
+- 创建日期：2026-06-23 | 更新：2026-07-16
 - 里程碑：Phase 1-10 = 102/102 全完成；v7.0 主体搁置待后续里程碑
 
 ## 项目性质
@@ -146,7 +146,7 @@ ae dev-loop --resume                         # 从 checkpoint 恢复
 ae dev-loop "需求"                           # v5.5 裸参数路径 (legacy, 连续 while 循环)
 
 # 测试（16G 内存约束 + 虚拟环境）
-# 全量: ~2132 tests, ~50s
+# 全量: ~2135 tests, ~54s
 uv run pytest tests/test_xxx.py -v --no-cov --timeout=60   # 单文件
 uv run pytest tests/ --no-cov --timeout=120 -q              # 全量
 uv run pytest tests/ --cov=auto_engineering --cov-report=term-missing --timeout=300 -q  # 覆盖率
@@ -264,9 +264,9 @@ python3 scripts/atdo_smoke.py       # Runtime smoke (7 维度)
 
 ---
 
-## 当前测试状态 (2026-07-15)
+## 当前测试状态 (2026-07-16)
 
-- **全量**: ~2132 tests, ~50s (16G 内存约束, `--no-cov --timeout=120`)
+- **全量**: ~2135 tests, ~54s (16G 内存约束, `--no-cov --timeout=120`)
 - **PrismScan V5.1**: 92 tests (Phase 1 流转覆盖率 92%, 25 条路径覆盖 23 条)
 - **v5.6 Tick 引擎**: TickOrchestrator 单测 52 + StageRouter 43 + BatchState 21 + ProgressTree 20 + 集成测试
 - **契约测试**: action/result schema 21 tests + init_contract round-trip + Plugin 验收 20 场景
@@ -275,7 +275,7 @@ python3 scripts/atdo_smoke.py       # Runtime smoke (7 维度)
 ## 管理约束
 
 - tests/ 下测试，覆盖率 ≥ 90%（用户硬指标）
-- 全量 ~2132 tests 通过（2026-07-15 基准）
+- 全量 ~2135 tests 通过（2026-07-16 基准）
 - 测试运行遵守 `@.claude/rules/pytest-memory-management.md`（16G 内存约束）
 - **Agent tool spawn 遵守 `@.claude/rules/agent-spawn-timeout.md`（3 层超时防护）**
 - **设计文档修改遵守 `@.claude/rules/design-document-inviolability.md`（🚨 2026-07-08 事故确立：BEACON决策翻转须审批、设计优先于代码）**

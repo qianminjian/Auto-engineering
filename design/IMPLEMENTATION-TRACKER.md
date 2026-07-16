@@ -103,8 +103,8 @@
 
 | T | 文件/产出 | 验收 | 状态 | Commit |
 |---|----------|------|:---:|--------|
-| T16h | `.github/workflows/ci.yml`（**新建**远程 CI 薄壳：uv+ruff+pytest no-cov）+ ruff line-length 120 全量转绿（生产 All checks passed，1968 tests）| make ci 绿 | ✅ 24afa07 | mypy/coverage-gate 排除薄壳待决策 |
-| T16i | `.github/workflows/release.yml` 修复 merge 冲突 | grep 断言无冲突标记 | ☐ | |
+| T16h | `.github/workflows/ci.yml`（**新建**远程 CI：uv+ruff+pytest + coverage≥90%）+ ruff line-length 120 全量转绿（生产 All checks passed，2135 tests）| make ci 绿 | ✅ | 24afa07/1bd50c9 |
+| T16i | `.github/workflows/release.yml` 修复 merge 冲突 | grep 断言无冲突标记 | ✅ | 6331b54 |
 | T16j | `commands/code-review.md` 终态语义校准 + 去虚构引用 | T16m + Plugin 验收 | ✅ | f25ea2e |
 | T16k | `tools/git_tools.py:110` git add -A→精确 | test_git_tools(ext) | ✅ | 513453f |
 | T16l | `gates/test_gate.py` 环内增量测试（files_changed→pytest -k）| T26f | ✅ | 60e35fc |
