@@ -14,8 +14,8 @@ _logger = logging.getLogger("ae.tools.hello_world")
 class HelloWorldTool(BaseTool):
     """问候语工具 — 无参数，execute() 返回固定字符串."""
 
-    name: ClassVar[str] = "hello_world"
-    description: ClassVar[str] = "返回 'Hello, Auto-Engineering!' 问候语，零依赖零参数"
+    name: str = "hello_world"
+    description: str = "返回 'Hello, Auto-Engineering!' 问候语，零依赖零参数"
     parameters: ClassVar[dict[str, Any]] = {}
 
     async def execute(self, **kwargs: Any) -> ToolResult:
