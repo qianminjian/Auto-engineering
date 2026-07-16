@@ -59,6 +59,7 @@
 - **E501 ruff 确认**：line-length=120 下 0 violations，已无待处理项。
 - **设计文档目录修复**：`design/discussion/` 从 `his_bak` 双重嵌套恢复，INDEX.md 补全 4 个讨论文件。
 - **全量测试**：2135 passed。
+- **docs/ 用户向文档同步 v5.6**：7 份文档（PLUGIN-USAGE.md/entry-points.md/EARS-v5.0.md/api-reference.md/e2e-real-run.md/USER_GUIDE.md/production-deployment.md）从 v5.0 更新到 v5.6。PLUGIN-USAGE.md 修复 "REMOVED:" 全行前缀损坏；entry-points.md 删除已删文件引用 + 增加 Tick 协议路径；api-reference.md 增加 TickOrchestrator 章节 + 模块清单重构；其余文档版本/测试数/覆盖率同步。commit d1a5770。
 
 **最近动作 (2026-07-15)：**
 - **v5.6 tick 闭环验证完成**：用 tick driver（`/tmp/_ae_tick_driver6.py`）对 `_scratch/Design-V5.0-plugin-final.md`（71KB PrismScan V5.1 设计文档）跑完整 14 tick 闭环：gap_scan → gap_review → architect → developer → critic → component_verifier → plate_deep_audit → developer(B2) → critic → component_verifier → plate_deep_audit → system_verifier → system_deep_audit → DONE。verdict: GOAL_ACHIEVED。全程 Python TickOrchestrator + SQLite checkpoint 持久化有效、Guardrail + Gate 通过、StageRouter T1-T22 转换正确、5 层验证架构全部触发。
