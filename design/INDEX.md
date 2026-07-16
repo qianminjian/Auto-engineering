@@ -1,6 +1,6 @@
 # design/ — 文档索引
 
-> 创建：2026-06-25 | 更新：2026-07-12 | 维护规则：每次合并/重命名后更新本文件
+> 创建：2026-06-25 | 更新：2026-07-16 | 维护规则：每次合并/重命名后更新本文件
 
 ---
 
@@ -18,9 +18,8 @@
 | 类别 | 文件 | 描述 |
 |------|------|------|
 | **项目明灯** | `BEACON.md` | 当前阶段/目标/阻塞项/设计决策（v5.6 Tick-Based 协议 + 5 层验证架构, 决策 #1-#54） |
-| **设计文档** | `v5.6-Design-Loop.md` | v5.6 Loop Engineering 完整设计 — Tick-Based Discrete Invocation + 5 层验证架构 (1974 行, 自包含) |
-| **远期规划** | `v7.0-Plan-DualDriver.md` | v7.0 单引擎+双驱动（Dual-Driver）远期架构 — TickOrchestrator 唯一真相源 + Driver A/B（ports & adapters）；当前只落地 Phase 10 两项 P0 预留（T33a/T33b），主体路线图 V7-1~V7-8 待扩展 |
-| **实施跟踪** | `IMPLEMENTATION-TRACKER.md` | v5.6 实现进度主表（Phase 1-9=100/100 + Phase 10 双驱动 P0 预留） |
+| **设计文档** | `v5.6-Design-Loop.md` | v5.6 Loop Engineering 唯一设计文档（自包含）：Tick-Based Discrete Invocation + 5 层验证架构；附录 B: Init→Loop 接口契约 / 附录 C: v7.0 双驱动远期架构 |
+| **实施跟踪** | `IMPLEMENTATION-TRACKER.md` | v5.6 实现进度主表（Phase 1-10=102/102 全完成） |
 | **讨论记录** | `discussion/v5.6-layered-verification-design.md` | v5.6 分层验证架构设计讨论全过程 — 已解决问题/用户纠正/设计原则/后续参考 |
 | **讨论记录** | `discussion/v7.0-dual-driver-architecture.md` | v7.0 单引擎+双驱动架构讨论过程（"为什么这么想"）— 起点/可行性论证/优于保留 fork/争议点定调/YAGNI 边界 |
 | ~~`v5.0-Design-Init.md`~~ | **已移出本项目** | Init Engineering 现在是独立项目, Init 侧按 `v5.6-Design-Loop.md` §IL.1-IL.6 实现 |
@@ -52,6 +51,7 @@ V<major>.<minor>-<Category>-<Name>.md
 
 | 日期 | 主文档 | 来源/操作 | 摘要 |
 |------|--------|---------|------|
+| 2026-07-16 | `v5.6-Design-Loop.md` | 设计文档整合 | 按用户要求 consolidation：`INIT-LOOP-CONTRACT.md` + `v7.0-Plan-DualDriver.md` 并入 v5.6-Design-Loop.md 附录 B/C，原文件归档 his_bak/。设计文档现仅 4 文件：BEACON.md + INDEX.md + v5.6-Design-Loop.md + IMPLEMENTATION-TRACKER.md |
 | 2026-07-12 | `v7.0-Plan-DualDriver.md` + `discussion/v7.0-dual-driver-architecture.md` (新建) | v7.0 单引擎+双驱动远期架构立项 | 由 T10d「v5.5 是否值得保留」追问延伸：v5.5 唯一护城河（脱 Claude Code 独立/headless 跑）在主场景 Plugin 已死（2026-07-04 AUTH_TOKEN）+ 流水线落后 v6 + 双引擎税（T9 shim）→ 用户提「一套引擎、两个入口」：TickOrchestrator 唯一真相源 + Driver A（现状 Agent 填 result）/Driver B（进程内 AgentRuntime 自带 key，复用 v5.5 `_step_2e_run_agent` 执行栈作 tick 填充器），ports & adapters 替代双引擎 fork，给 v5.5 干净退役出口。**原则精确化非翻转**：「Python 永不调 LLM」→「循环引擎永不调 LLM；驱动可 opt-in 调」（#39/#40 status 不变）。产物：Plan 文档（架构图+路线图 V7-1~V7-8）+ discussion（推理过程）+ BEACON 决策 #54。**当前仅落地 Phase 10 两项 P0 预留**（净收益）：T33a action/stage-result schema SSOT + 契约测试；T33b 执行栈双驱动共享资产标注。v7.0 主体（StandaloneDriver/`--standalone` CLI/v5.5 退役=决策翻转红线须审批/保真度基准）非当前范围，等后续里程碑扩展。tracker 新增 Phase 10（102/100 合计）+ 决策日志一行。DOCS ONLY，不实现 T33a/T33b。 |
 | 2026-07-09 | `INIT-LOOP-CONTRACT.md` (新建) | Init 项目需求交接文档 | 将 D21 契约变革中**对 Init 项目的需求输入**抽为自包含交接文档（Init 团队照此实现，不依赖 Loop 内部设计文档）：TL;DR 4 件事 / 契约总览 / manifest 完整字段规格 + 示例 / 枚举 / v5.6 新增字段设计思路(ci_platform B1 + design_root B2) / Schema SSOT 协议(复制内化+版本 pin+生成自校验+变更流程) + 权威 JSON Schema 1.1 / reference fixture 双仓库同步 / monorepo 单包约定 / 明确不属于 Init 的部分 / Init 侧验收清单 / 变更历史。挂入 BEACON 引用文件。供用户单独更新 Init 项目 |
 | 2026-07-09 | `v5.6-Design-Loop.md` + `discussion/…` | Init-Loop 契约 v5.6 扩展 (IL.2-IL.5) | 评估"和 Init 工程衔接如何定义/是否合理/优化"：架构选型正确(单向/文件桥接/只读/forward-compat)，两缺口——①跨仓库无 Schema SSOT(设计文档表+Python函数两处定义→漂移) ②相对 v5.6 滞后(缺 design_doc/ci_platform, monorepo 枚举不自洽)。IL 章重写：IL.1(移除 checkpoints.db 契约面声明解 spec 债) + IL.2 Schema SSOT(A, `init-manifest.schema.json` 版本化 JSON Schema 骨架, jsonschema 校验, 复制内化) + IL.3 完整字段表(+ conventions.ci_platform[B1] + structure.design_root[B2], monorepo 单包降级[C]) + IL.4(+IL-AC-06/07/08) + IL.5 消费者驱动契约测试(D, 共享 reference fixture 双仓库同步)。+D21 + Phase 7(T32-T35)。discussion §十五(现状/评估/A-B-C-D 决策与判断依据/已解决问题/后续参考)。关键决策：schema SSOT 消漂移、design_doc 内容走 CLI 不入 manifest、monorepo 不删枚举避免降级。BEACON 决策 #48 |

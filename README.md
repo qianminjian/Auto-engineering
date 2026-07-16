@@ -1,57 +1,56 @@
-# Auto-Engineering v5.0
+# Auto-Engineering v5.6
 
-Claude Code Plugin — Loop Engineering 调度脚手架
+Claude Code Plugin — Tick-Based Discrete Invocation Loop Engineering 调度脚手架
 
-团队内部分发 (5-20 用户本地安装) — 不是 SaaS, 不是个人工具.
+团队内部分发 (5-20 用户本地安装) — 不是 SaaS，不是个人工具。
 
 ## 环境要求
 
 - Python >= 3.12
-- uv >= 0.5.0 ([安装指南](https://docs.astral.sh/uv/getting-started/installation/))
+- uv >= 0.5.0
 - git >= 2.40
 - sqlite3 >= 3.42
 
-## 安装 (一条命令)
+## 安装
 
 ```bash
-# 1. git clone
 git clone https://github.com/qianminjian/Auto-engineering.git ~/.claude/plugins/auto-engineering
-
-# 2. 安装依赖
 cd ~/.claude/plugins/auto-engineering && uv sync
-
-# 3. 重启 Claude Code → /ae:dev-loop 等 7 个 slash command 可用
 ```
+
+重启 Claude Code 后 7 个 slash command 可用。
 
 全局 `ae` 命令（可选，CLI 调试用）：
 
 ```bash
 cd ~/.claude/plugins/auto-engineering
 uv tool install . --force
-ae --version   # 5.0.0
 ae doctor      # 环境预检
 ```
 
 ## 使用
 
-### Agent Tool 模式 (推荐，零配置)
+### Plugin 模式（推荐，零配置）
 
 ```
 /ae:dev-loop "实现用户登录功能，支持 JWT 认证"
 ```
 
-直接在 Claude Code agent 内执行三阶段循环（architect → developer → critic），复用 agent 的 LLM 连接，**零配置**。
+直接在 Claude Code agent 内执行 Tick-Based 离散循环（architect → developer → critic → 5 层验证），复用 agent 的 LLM 连接。
 
-### CLI 模式 (需要 `uv tool install .`)
+### CLI 模式
 
 ```bash
-ae dev-loop "实现登录功能" --max-rounds 10 --log-format json
-ae doctor        # 环境预检 (7 项)
-ae status        # 查看 loop 进度
-ae checkpoint list  # checkpoint 管理
+ae dev-loop --init                        # 初始化 tick 循环
+ae dev-loop --tick --result result.json   # 提交本轮 result，推进 tick
+ae dev-loop --status --format json        # 查看进度
+ae dev-loop --resume                      # 从 checkpoint 恢复
+ae doctor                                 # 环境预检
+ae gate-check --quick                     # 快速 Gate (safety+lint+type_check)
+ae gate-check --all                       # 全量 Gate
 ```
 
-## 其他命令
+## Slash Commands
 
 | 命令 | 说明 |
 |------|------|
@@ -63,26 +62,41 @@ ae checkpoint list  # checkpoint 管理
 | `/ae:project-agent` | 单 Agent 调用 |
 | `/ae:project-ci` | 跑全量 CI gate |
 
+## 架构
+
+```
+Plugin 层 (.claude-plugin/)
+  commands/*.md  ──→  Bash 委托 ae <subcommand>
+  hooks/*.sh     ──→  事件响应
+  skills/SKILL.md ──→  Agent 使用指引
+
+Engine 层 (auto_engineering/)
+  loop/tick_orchestrator.py  — v5.6 Tick 主引擎
+  loop/orchestrator.py       — v5.5 连续 while 循环 (共存)
+  loop/stage_router.py       — T1-T22 转换表
+  loop/guardrail.py          — 9 Guardrail (含 REDGuard/FreshGate/RegressionGate)
+  loop/convergence.py        — 4 级收敛判定
+  gates/                     — 7+1 道 Gate (safety→lint→type_check→audit→contract→test→build)
+  agents/                    — BaseAgent + tool_use loop + AUTHZ_MATRIX
+  prompts/                   — B12 中央提示词管理 (9 角色 + 8 片段)
+  runtime/                   — AgentRuntime + CancellationToken
+  prismscan/                 — V5.1 代码库反向工程
+```
+
 ## 设计文档
 
-- `design/v5.6-Design-Loop.md` — v5.0 完整设计 (3099 行)
-- `design/BEACON.md` — 架构决策 33 条
-- `docs/EARS-v5.0.md` — 15 AC + 5 IL-AC
+| 文档 | 内容 |
+|------|------|
+| `design/BEACON.md` | 设计基线（目标/范围/54 条决策/当前状态） |
+| `design/v5.6-Design-Loop.md` | 唯一设计文档：Tick-Based 协议 + 5 层验证 + Init→Loop 契约 + v7.0 双驱动 |
+| `design/IMPLEMENTATION-TRACKER.md` | 实施跟踪表（Phase 1-10, 102/102 全完成） |
+| `design/INDEX.md` | 文档索引 |
 
 ## 测试
 
 ```bash
-.venv/bin/pytest tests/ -q --timeout=30
-# 1337 passed + 1 skipped + 0 failed
-```
-
-## 架构
-
-```
-Claude Code Agent (宿主)
-  /ae:dev-loop ──→ commands/dev-loop.md ──→ JSONL 协议
-    Plan agent (architect) → agent 自己 (developer) → code-reviewer agent (critic)
-  Python 控制流: while 循环 / Gate 并行 / 收敛判定 / Checkpoint 持久化
+uv run pytest tests/ --no-cov --timeout=120 -q
+# ~2132 tests passed
 ```
 
 ## 许可

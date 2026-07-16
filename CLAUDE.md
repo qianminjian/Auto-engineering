@@ -120,14 +120,15 @@ Engine 层 (auto_engineering/)
 |------|------|---------|
 | `design/BEACON.md` | 设计基线（目标/范围/决策/当前状态） | 任何设计讨论时先读 |
 | `design/INDEX.md` | 文档索引（含合并日志/归档清单） | 检索文档时 |
-| `design/v5.6-Design-Loop.md` | v5.6 Tick-Based Discrete Invocation 完整设计 (1728 行，自包含) | 开发 loop/gates/agents/cli/commands 时 |
+| `design/v5.6-Design-Loop.md` | v5.6 唯一设计文档（自包含）：Tick-Based 协议 + 5 层验证 + 附录 B(Init→Loop) + 附录 C(v7.0 双驱动) | 开发 loop/gates/agents/cli/commands 时 |
 | `docs/EARS-v5.0.md` | v5.0 验收 15 AC + 5 IL-AC | 验收/审计时 |
 | `docs/api-reference.md` | v5.0 API 接口文档 + 5 代码示例 | 查阅 API 时 |
 | `docs/production-deployment.md` | 生产部署流程 + 环境变量 + 降级 | 部署时 |
 | `docs/e2e-real-run.md` | 端到端验证流程 + 性能基准 | 真跑验证时 |
 | `docs/PLUGIN-USAGE.md` | Plugin 安装 + 使用 + 故障排查 | 用户安装时 |
+| `docs/USER_GUIDE.md` | v5.0 用户指南 — 面向团队内部分发 (5-20 用户本地安装) | 新用户上手时 |
+| `docs/entry-points.md` | 三条入口路径说明 (Plugin / ae CLI / ae dev-loop) + 调用链 + 环境要求 | 理解项目入口时 |
 | `design/IMPLEMENTATION-TRACKER.md` | v5.6 实施跟踪表 (Phase 1-10, 102/102 任务) | 任何开发/进度汇报时 |
-| `design/v7.0-Plan-DualDriver.md` | v7.0 双驱动远期架构路线图 (V7-1~V7-8) | v7.0 相关讨论时 |
 
 ## 核心命令
 

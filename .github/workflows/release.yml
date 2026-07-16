@@ -27,10 +27,10 @@ jobs:
               --exclude='__pycache__' --exclude='*.pyc' \
               --exclude='.pytest_cache' --exclude='.ruff_cache' \
               --exclude='htmlcov' --exclude='.coverage' \
-              --exclude='_proc-use' --exclude='docs/his_bak' \
+              --exclude='_proc-use' --exclude='design/his_bak' \
               -czf release/auto-engineering-${{ inputs.version || github.ref_name }}.tar.gz \
-              .claude-plugin commands hooks skills auto_engineering \
-              tests pyproject.toml README.md CLAUDE.md LICENSE 2>/dev/null || true
+              .claude-plugin auto_engineering tests \
+              pyproject.toml README.md CLAUDE.md LICENSE 2>/dev/null || true
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:

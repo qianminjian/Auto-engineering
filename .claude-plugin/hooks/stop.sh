@@ -1,20 +1,25 @@
 #!/bin/bash
-# stop.sh — 会话结束时 checkpoint 状态检查
-# 触发: Stop
-# 用途: 检查 checkpoint 状态；若 running → 标记为 interrupted
-#
-# Hook 协议: 输出 JSON {"decision":"block"/"allow"} 到 stdout
+# stop.sh — Auto-Engineering session-stop checkpoint save (v5.0 §PE.3)
+# Triggered: Stop hook (user interrupt or completion)
+# Behavior: if latest checkpoint is "running", mark as "interrupted"
 
-INPUT="$1"
+set -u
 
-# 检查是否有活跃的 tick loop
-if [ -f ".ae-state/checkpoints.db" ]; then
-  STATUS=$(uv run ae dev-loop --status --format json 2>/dev/null || echo '{"current_stage":""}')
-  CURRENT_STAGE=$(echo "$STATUS" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('current_stage',''))" 2>/dev/null || echo "")
-  if [ -n "$CURRENT_STAGE" ] && [ "$CURRENT_STAGE" != "done" ]; then
-    echo "{\"decision\":\"allow\",\"reason\":\"活跃 loop 仍在进行中 (stage=$CURRENT_STAGE)\"}"
-    exit 0
-  fi
+# Skip if ae CLI not available
+[[ ! -x "ae" ]] && exit 0
+
+# Check for checkpoints.db
+DB_PATH="${AE_DB_PATH:-.ae-state/checkpoints.db}"
+[[ ! -f "$DB_PATH" ]] && exit 0
+
+# Query latest checkpoint status
+LATEST_STATUS=$(sqlite3 "$DB_PATH" "SELECT status FROM checkpoints ORDER BY id DESC LIMIT 1;" 2>/dev/null || echo "")
+
+if [[ "$LATEST_STATUS" == "running" ]]; then
+  # Mark as interrupted
+  sqlite3 "$DB_PATH" "UPDATE checkpoints SET status='interrupted', interrupted_at=CURRENT_TIMESTAMP WHERE status='running';" 2>/dev/null || true
+  echo '{"decision":"allow","info":"marked running checkpoint as interrupted"}'
+else
+  echo '{"decision":"allow"}'
 fi
-
-echo '{"decision":"allow"}'
+exit 0

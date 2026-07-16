@@ -26,3 +26,5 @@ design/his_bak/
 # Claude Code 项目级配置 (本地, 不发布)
 # 测试覆盖率临时文件 (本地)
 repowiki/
+.mypy_cache/
+.gitnexus/

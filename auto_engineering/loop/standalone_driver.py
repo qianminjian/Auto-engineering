@@ -5,7 +5,7 @@ v7.0 双驱动架构:
   - Driver B (StandaloneDriver): 进程内 AgentRuntime 自带 key 调 LLM,
     产出 stage-result dict 回喂同一 tick 循环
 
-设计参考: design/v7.0-Plan-DualDriver.md §5.2 + V7-5.
+设计参考: design/v5.6-Design-Loop.md 附录 C §5.2 + V7-5.
 """
 
 from __future__ import annotations
