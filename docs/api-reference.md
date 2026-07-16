@@ -1,19 +1,22 @@
-# Auto-Engineering v5.0 API Reference
+# Auto-Engineering v5.6 API Reference
 
-> **Version**: 5.0.0 | **Status**: Production-ready | **Last updated**: 2026-07-01
-> 决策依据: `design/BEACON.md` 决策 #28 (v5.0 P0-FINAL) · `design/v5.6-Design-Loop.md`
+> **Version**: 5.6.0 | **Status**: Production-ready | **Last updated**: 2026-07-16
+> 决策依据: `design/BEACON.md` 决策 #28, #41, #53 · `design/v5.6-Design-Loop.md`
 >
-> v1.0 (`engine/loop.py` 旧 LoopEngine) / v2.0 (`engine/runtime/` + `engine/loop.py` asyncio.gather) / v2.3 (orchestrator) 章节已删除 — 归档版本见 `design/his_bak/api-reference.md`。
+> v1.0 / v2.0 / v2.3 / v5.0 章节已归档 — 见 `design/his_bak/api-reference.md`。
 
-Auto-Engineering v5.0 is a **stage-driven multi-agent engineering loop** with:
-- **Orchestrator 12-step main loop** (v5.0 §B7.1)
-- **StageRouter** (T1-T6 转换表 + MAJOR 计数)
-- **GuardrailChain** (5 内置 Guardrails, fail-fast)
-- **7 Gate 体系** (lint / type_check / test / coverage / safety / build / contract)
-- **3 Stage pipeline** (architect → developer → critic, 后续 Stage 由 StageRouter 决定)
-- **v2 SQLite Checkpoint** + retry_counters 持久化 (Phase 04 改造)
+Auto-Engineering v5.6 is a **Tick-Based Discrete Invocation loop engine** with:
+- **TickOrchestrator** (v5.6 主引擎, tick/after_tick 控制流, 文件桥接协议)
+- **v5.5 Orchestrator** (共存 legacy, 连续 while 循环直调 LLM)
+- **5 层验证管道** (architect → developer → critic → component_verifier → system_deep_audit)
+- **LEAF/PLATE/FULL 自动验证深度裁剪** (决策 #41)
+- **9 Guardrail 系统** (3 态: pass/block/retry, 含 REDGuard/FreshGate/RegressionGate)
+- **7 Gate 体系** (safety / lint / type_check / audit / contract / test / build)
+- **StageRouter** (T1-T22 转换表 + MAJOR 计数 + refine_allowed)
+- **SQLite Checkpoint** + retry_counters 持久化
 - **Init-Loop 契约** (init-manifest.json v1, 5 IL-AC 验证)
-- **19 错误码** (ErrorCode 枚举, v5.0 §B10.1a)
+- **19 错误码** (ErrorCode 枚举)
+- **v7.0 双驱动远期架构** (单引擎+双驱动 ports&adapters, 当前仅 T33a/T33b 接缝预留)
 
 ---
 
@@ -23,21 +26,26 @@ Auto-Engineering v5.0 is a **stage-driven multi-agent engineering loop** with:
 ae <subcommand> [options]
 ```
 
-### 1.1 子命令总览 (v5.0)
+### 1.1 子命令总览 (v5.6)
 
 | 子命令 | 类别 | 说明 | Phase |
 |--------|------|------|-------|
 | `ae doctor` | env | 环境自检（Python/uv/git/sqlite3/API_KEY/.ae-state/init-manifest）| 07+08 |
-| `ae dev-loop "<req>"` | loop | 启动 3 Stage dev-loop（orchestrator 12 步主循环）| 04 |
-| `ae dev-loop --resume` | loop | 从最近 checkpoint 恢复（带 retry_counters）| 04 |
-| `ae dev-loop --no-gates` | loop | 3 级收敛（跳过 Gate 体系）| 07 |
+| `ae dev-loop --init` | loop | 初始化 tick 循环（v5.6 Tick 协议）| 10 |
+| `ae dev-loop --tick --result <file>` | loop | 提交本轮 result, 推进 tick | 10 |
+| `ae dev-loop --status --format json` | loop | 当前 tick 循环进度 | 10 |
+| `ae dev-loop --resume` | loop | 从 checkpoint 恢复 tick 循环 | 10 |
+| `ae dev-loop --design-doc <file>` | loop | 指定设计文档路径 | 10 |
+| `ae dev-loop "<req>"` | loop | v5.5 裸参数路径 (legacy, 连续 while 循环) | 04 |
 | `ae gate-check [--all\|--quick]` | gate | 手动跑 7 Gates（按当前 stage 过滤）| 05+07 |
 | `ae agent <role> "<req>"` | agent | 单 Agent 调用（architect/developer/critic）| 07 |
 | `ae status` | state | 查 LoopState + recent_history × 5 | 07 |
-| `ae checkpoint list` | ckpt | 列 v2 SQLite checkpoints | 04 |
+| `ae progress` | state | 读 progress_tree_json → display/summary | 10 |
+| `ae checkpoint list` | ckpt | 列 SQLite checkpoints | 04 |
 | `ae checkpoint show <id>` | ckpt | 看 checkpoint 详情 | 04 |
 | `ae checkpoint delete <id>` | ckpt | 删 checkpoint | 04 |
 | `ae checkpoint resume <id>` | ckpt | 恢复指定 checkpoint | 04 |
+| `ae prismscan discover-extract` | prism | PrismScan V5.1 代码库反向工程 | 05 |
 
 > 旧路径 `ae init <project>` 已迁移到独立 Init Engineering 项目 (BEACON 决策 30)。Init 侧按 §6 Init-Loop 接口契约 (IL.1-IL.6) 实现, 本项目只消费 `.ae-state/init-manifest.json`.
 
@@ -72,7 +80,49 @@ ae <subcommand> [options]
 
 ---
 
-## 2. Orchestrator 12 步主循环 (v5.0 §B7.1)
+## 2. TickOrchestrator — v5.6 主引擎 (v5.6 §B7)
+
+**模块**: `auto_engineering.loop.tick_orchestrator.TickOrchestrator`
+
+v5.6 Tick-Based Discrete Invocation: Python 每次 tick 独立进程（读 SQLite → 验证 → Guardrail → Gate → ConvergenceJudge → Checkpoint → 输出 action JSON → 退出），Agent 通过反复调用 `--tick` 驱动循环。Python 循环引擎永不调 LLM。
+
+```python
+from auto_engineering.loop.tick_orchestrator import TickOrchestrator
+
+orch = TickOrchestrator(project_root=Path("."))
+action = orch.init(requirement="实现 OAuth2 登录")
+# → 输出 init action JSON (stage=architect, 第一次 tick)
+
+# Agent 执行 architect 后, 提交 result:
+action = orch.tick(result_json_path=Path("/tmp/result.json"))
+# → 输出下一个 action JSON (stage=developer 或 critic 或 APPROVE)
+```
+
+### 2.1 Tick 协议文件桥接
+
+```
+ae dev-loop --init          → init action JSON (stdout)
+Agent 执行 Stage            → 写 result JSON 到 /tmp/_ae_tick{N}_result.json
+ae dev-loop --tick --result → 读 result JSON → 验证 → 输出下一个 action JSON
+...重复直到 GOAL_ACHIEVED
+```
+
+### 2.2 关键方法
+
+| 方法 | 输入 | 输出 | 说明 |
+|------|------|------|------|
+| `init(requirement)` | str | `dict` (action JSON) | 初始化 tick 循环 |
+| `tick(result_json_path)` | Path | `dict` (action JSON) | 提交本轮 result, 推进 tick |
+| `status()` | — | `dict` | 当前进度 (JSON) |
+| `resume(checkpoint_id)` | str | `dict` | 从 checkpoint 恢复 |
+
+### 2.3 v5.5 Orchestrator（共存 legacy）
+
+**模块**: `auto_engineering.loop.orchestrator.Orchestrator`
+
+裸参数路径 `ae dev-loop "需求"`，连续 while 循环直调 LLM。与 v5.6 Tick 引擎共存，不复用。
+
+## 3. Orchestrator 12 步主循环 (v5.0 Legacy, §B7.1)
 
 **模块**: `auto_engineering.loop.orchestrator.Orchestrator`
 
@@ -156,11 +206,11 @@ async def run(self) -> OrchestratorResult:
 
 ---
 
-## 3. StageRouter (v5.0 §B3)
+## 4. StageRouter (v5.6 §B3)
 
 **模块**: `auto_engineering.loop.stage_router.StageRouter`
 
-### 3.1 状态机 T1-T6 转换表
+### 4.1 状态机 T1-T22 转换表
 
 | 触发 | T# | current_stage → next_stage | 行为 |
 |------|----|---------------------------|------|
@@ -169,9 +219,14 @@ async def run(self) -> OrchestratorResult:
 | developer 通过 + critic MAJOR=0 | T3 | developer → critic | 进入评审 |
 | critic MINOR/MAJOR=0 | T4 | critic → APPROVE | 终止 (success) |
 | critic MAJOR ≥ 1 | T5 | critic → developer | 退回 (MAJOR 计数 +1) |
-| critic 连续 2 MAJOR | T6 | developer → STOP | 终止 (StageRouter.should_stop=True) |
+| 连续 MAJOR ≥ 3 | T6 | developer → STOP | 终止 (StageRouter.should_stop=True) |
+| developer → component_verifier | T10 | developer → component_verifier | 组件验证 |
+| component_verifier → plate_deep_audit | T11 | component_verifier → plate_deep_audit | PLATE 深度审计 |
+| plate_deep_audit → system_verifier | T12 | plate_deep_audit → system_verifier | 系统验证 |
+| system_verifier → system_deep_audit | T13 | system_verifier → system_deep_audit | 系统深度审计 |
+| system_deep_audit → GOAL_ACHIEVED | T14 | system_deep_audit → GOAL_ACHIEVED | 目标达成 |
 
-### 3.2 关键类
+### 4.2 关键类
 
 ```python
 from auto_engineering.loop.stage_router import StageRouter, StageDecision
@@ -188,20 +243,21 @@ decision: StageDecision = router.next(engine_state)
 | `should_stop` | bool | 终态标志（成功或失败）|
 | `reason` | str | 决策理由（用于日志）|
 
-### 3.3 MAJOR 计数规则 (v5.0 §B3.2)
+### 4.3 MAJOR 计数规则 (v5.6 §B3.2)
 
 - `majors_in_a_row` — 连续 MAJOR 计数（达到 2 → should_stop=True）
 - `total_majors` — 累计 MAJOR 计数（用于 metrics，不影响决策）
 - 每次 critic verdict=MAJOR → `majors_in_a_row += 1`
 - 每次 MINOR 或 PASS → `majors_in_a_row = 0`
+- max_majors_in_a_row 默认 3 (Self-Refine 原则 3 最优)
 
 ---
 
-## 4. GuardrailChain (v5.0 §B2)
+## 5. GuardrailChain (v5.6 §B2)
 
 **模块**: `auto_engineering.loop.guardrail`
 
-### 4.1 5 内置 Guardrails
+### 5.1 9 Guardrails
 
 | ID | 类 | 触发时机 | 失败动作 |
 |----|------|---------|----------|
@@ -210,8 +266,12 @@ decision: StageDecision = router.next(engine_state)
 | G3 | `GitDiffExists` | post / developer | block (无 diff) |
 | G4 | `TestsPass` | post / developer | retry (测试失败) |
 | G5 | `GitClean` | post / developer | retry (有未提交) |
+| G6 | `REDGuard` | pre / critic | block (未提交变更) |
+| G7 | `FreshGate` | pre / critic | block (stale gate 结果) |
+| G8 | `RegressionGate` | post / developer | retry (测试回归) |
+| G9 | `RefineGate` | post / developer | retry (refine 检查) |
 
-### 4.2 GuardrailResult 数据类
+### 5.2 GuardrailResult 数据类
 
 ```python
 @dataclass
@@ -227,7 +287,7 @@ class GuardrailResult:
 > 旧 caller 传入 `drop` 时, `_handle_guardrail_result` 仍按 `retry` 处理（计数+1 + clear stage fields）并触发 `DeprecationWarning` 提示迁移. 
 > 类型契约: `Action = Literal["pass", "block", "retry"]`.
 
-### 4.3 3 态动作 (v5.1 §B2.4, P0-1)
+### 5.3 3 态动作 (v5.1 §B2.4, P0-1)
 
 | Action | 含义 | Orchestrator 处理 |
 |--------|------|-------------------|
@@ -236,7 +296,7 @@ class GuardrailResult:
 | `block` | 阻塞 | 立即终止 Stage |
 | ~~`drop`~~ | ~~丢弃~~ | **deprecated (v5.1 P0-1)** — 旧输入被 handler 当 retry 处理 + DeprecationWarning |
 
-### 4.4 默认链
+### 5.4 默认链
 
 ```python
 from auto_engineering.loop.guardrail import GuardrailChain
@@ -248,11 +308,11 @@ result = chain.check(timing="pre", stage="architect", state=state)
 
 ---
 
-## 5. 7 Gate 体系 (v5.0 §B6)
+## 6. 7 Gate 体系 (v5.6 §B6)
 
 **模块**: `auto_engineering.gates`
 
-### 5.1 Gate 列表
+### 6.1 Gate 列表
 
 | Gate | 模块 | 适用 Stage | 不可用时降级 |
 |------|------|-----------|-------------|
@@ -264,7 +324,7 @@ result = chain.check(timing="pre", stage="architect", state=state)
 | `BuildGate` | `gates/build.py` | developer | skip (无构建) |
 | `ContractGate` | `gates/contract.py` | developer | skip (无 manifest) |
 
-### 5.2 Gate 基类
+### 6.2 Gate 基类
 
 ```python
 class Gate(ABC):
@@ -275,7 +335,7 @@ class Gate(ABC):
         """执行 Gate 检查。"""
 ```
 
-### 5.3 GateVerdict
+### 6.3 GateVerdict
 
 ```python
 class GateVerdict(Enum):
@@ -284,7 +344,7 @@ class GateVerdict(Enum):
     SKIP = "skip"     # 工具缺失 / 适用 Stage 不匹配
 ```
 
-### 5.4 关键签名
+### 6.4 关键签名
 
 ```python
 from auto_engineering.gates import DEFAULT_GATES, run_gates
@@ -297,11 +357,11 @@ verdicts: dict[str, bool] = await run_gates(
 
 ---
 
-## 6. Init-Loop 契约 (v5.0 §IL)
+## 7. Init-Loop 契约 (v5.6 §IL)
 
 **模块**: `auto_engineering.loop.init_contract`
 
-### 6.1 init-manifest.json Schema (schema_version=1)
+### 7.1 init-manifest.json Schema (schema_version=1)
 
 ```json
 {
@@ -321,7 +381,7 @@ verdicts: dict[str, bool] = await run_gates(
 }
 ```
 
-### 6.2 关键 API
+### 7.2 关键 API
 
 ```python
 from auto_engineering.loop.init_contract import (
@@ -334,23 +394,23 @@ from auto_engineering.loop.init_contract import (
 # 在 Gate 配置中替换硬编码 ruff/mypy/pytest
 ```
 
-### 6.3 5 IL-AC 验收点
+### 7.3 5 IL-AC 验收点
 
 详见 `docs/EARS-v5.0.md` §IL-AC。
 
 ---
 
-## 7. Checkpoint 持久化 (v5.0 §B11)
+## 8. Checkpoint 持久化 (v5.6 §B11)
 
 **模块**: `auto_engineering.loop.checkpoint`
 
-### 7.1 持久化位置
+### 8.1 持久化位置
 
-- **v5.0 (新)**: `.ae-state/checkpoints.db` (SQLite, PRIMARY KEY = `checkpoint_id`)
+- **v5.6 (新)**: `.ae-state/checkpoints.db` (SQLite, PRIMARY KEY = `checkpoint_id`)
 - **v2.0 (旧)**: `.ae-state/v2-*.json` (JSON 文件, 已弃用, 自动迁移)
 - **v1.0 (旧)**: `.ae-state/checkpoints/*.json` (v1.1, 已弃用)
 
-### 7.2 关键类
+### 8.2 关键类
 
 ```python
 from auto_engineering.loop.checkpoint import SQLiteCheckpointStore
@@ -362,7 +422,7 @@ store.list_all() -> list[dict]                    # → 元信息列表
 store.delete(checkpoint_id: str) -> bool
 ```
 
-### 7.3 CheckpointEnvelope 字段 (v5.0)
+### 8.3 CheckpointEnvelope 字段 (v5.6)
 
 ```python
 @dataclass
@@ -377,17 +437,17 @@ class CheckpointEnvelope:
     schema_version: int = 1
 ```
 
-### 7.4 resume 语义 (v5.0 §B7.5)
+### 8.4 resume 语义 (v5.6 §B7.5)
 
 - `Orchestrator.resume(checkpoint_id)` → `store.load()` → 重建 `LoopState` + `RoundHistory deque` + 注入 `retry_counters` → 进入 12 步主循环。
 
 ---
 
-## 8. AgentRuntime 与 BaseAgent (v5.0 §B4)
+## 9. AgentRuntime 与 BaseAgent (v5.6 §B4)
 
 **模块**: `auto_engineering.agents`
 
-### 8.1 AgentRuntime
+### 9.1 AgentRuntime
 
 ```python
 from auto_engineering.agents import AgentRuntime, MockAgentRuntime
@@ -398,7 +458,7 @@ runtime = AgentRuntime.from_env()  # 真实 Anthropic SDK
 agent = runtime.get_agent("architect")  # → BaseAgent 实例
 ```
 
-### 8.2 BaseAgent 三个子类
+### 9.2 BaseAgent 角色 Prompt
 
 | Role | 模块 | Prompt |
 |------|------|--------|
@@ -406,7 +466,7 @@ agent = runtime.get_agent("architect")  # → BaseAgent 实例
 | `DeveloperAgent` | `agents/developer.py` | `prompts.DEVELOPER_PROMPT` (v5.0 §B4.2a) |
 | `CriticAgent` | `agents/critic.py` | `prompts.CRITIC_PROMPT` (v5.0 §B4.3a) |
 
-### 8.3 工具授权矩阵 (v5.0 §B4.4)
+### 9.3 工具授权矩阵 (v5.6 §B4.4)
 
 `agents/authz.py` 提供 9 工具 × 3 role = 27 组合的 `authz_check`：
 
@@ -424,7 +484,7 @@ agent = runtime.get_agent("architect")  # → BaseAgent 实例
 
 ---
 
-## 9. 19 错误码 (v5.0 §B10.1a)
+## 10. 19 错误码 (v5.6 §B10.1a)
 
 **模块**: `auto_engineering.errors.ErrorCode`
 
@@ -452,7 +512,7 @@ agent = runtime.get_agent("architect")  # → BaseAgent 实例
 
 > 19 错误码 = 13 实际抛出 + 6 预留（LLM 系列: `LLM_NETWORK_ERROR` / `LLM_INVALID_RESPONSE` / `LLM_AUTH_ERROR` / `LLM_RATE_LIMIT` / `LLM_UNKNOWN_ERROR` 5 + `STAGE_RETRY_EXCEEDED` / `GRAPH_RECURSION_LIMIT` / `TASK_NOT_FOUND` 3 个 v1.0 保留 API）。详见 `tests/test_error_codes.py`。
 
-### 9.1 AEError 异常族
+### 10.1 AEError 异常族
 
 ```python
 from auto_engineering.errors import AEError, ErrorCode, GuardrailBlockedError
@@ -466,32 +526,37 @@ except AEError as e:
 
 ---
 
-## 10. 模块清单 (v5.0 Phase 01-10 落地)
+## 11. 模块清单 (v5.6 Phase 01-10 落地)
 
 | 模块路径 | Phase | 用途 |
 |---------|-------|------|
-| `auto_engineering/loop/state.py` | 01 | EngineState 17 字段 dataclass |
-| `auto_engineering/loop/stage_router.py` | 01 | StageDecision + StageRouter T1-T6 |
-| `auto_engineering/loop/guardrail.py` | 02 | 5 Guardrails + Chain |
-| `auto_engineering/loop/plan.py` | 03 | Plan.get_tasks_by_stage + parallelism_groups |
-| `auto_engineering/loop/task_factory.py` | 03 | _tasks_from_batch_plan |
-| `auto_engineering/loop/orchestrator.py` | 04 | Orchestrator 12 步主循环 + resume |
-| `auto_engineering/loop/round.py` | 05 | run_round + _topological_layers |
-| `auto_engineering/gates/{base,lint,type_check,test,coverage,safety,build,contract}.py` | 05+06 | 7 Gate 实现 |
-| `auto_engineering/agents/authz.py` | 07 | 9×3 工具授权矩阵 |
-| `auto_engineering/agents/prompts.py` | 07 | 3 Agent prompt 模板 |
-| `auto_engineering/cli.py` | 07+08 | 11 子命令 + JSON 契约 |
-| `auto_engineering/loop/init_contract.py` | 08 | INIT_MANIFEST_SCHEMA_VERSION + load + validate |
-| `auto_engineering/errors.py` | 10 | ErrorCode 19 错误码 + AEError |
-| `auto_engineering/loop/checkpoint.py` | 04 | SQLiteCheckpointStore |
-| `auto_engineering/loop/convergence.py` | 03 | 4 级收敛判定 (gate PASS / no-gates / max-round / stop) |
-| `auto_engineering/loop/semantic_evaluator.py` | 04 | LLM 语义评估（不可用时降为 3 级）|
+| `auto_engineering/loop/tick_orchestrator.py` | 10 | v5.6 Tick 主引擎 (1017 行, after_handler + _build_action) |
+| `auto_engineering/loop/orchestrator.py` | 04 | v5.5 连续 while 循环 (legacy, 共存) |
+| `auto_engineering/loop/stage_router.py` | 01 | StageDecision + StageRouter T1-T22 |
+| `auto_engineering/loop/guardrail.py` | 02 | 9 Guardrails (含 REDGuard/FreshGate/RegressionGate) |
+| `auto_engineering/loop/convergence.py` | 03 | 4 级收敛判定 (hard/quality/stagnant/semantic) |
+| `auto_engineering/loop/plan.py` | 03 | Plan.get_tasks_by_stage + Task DAG |
+| `auto_engineering/loop/task_factory.py` | 03 | _apply_outcome_to_state + _tasks_from_batch_plan |
+| `auto_engineering/loop/init_contract.py` | 08 | Init-Loop 接口契约 (IL-AC-01~08) |
+| `auto_engineering/loop/refine.py` | 10 | plan_refine 回路 (B6.10 归一) |
+| `auto_engineering/engine/state.py` | 10 | EngineState dataclass (36 字段, v5.6 扩展) |
+| `auto_engineering/engine/batch_state.py` | 10 | BatchState 跨 tick 进度管理 |
+| `auto_engineering/engine/design_doc.py` | 10 | 设计文档解析 (markdown-it-py) |
+| `auto_engineering/engine/progress_tree.py` | 10 | ProgressTree 构建/同步/聚合 |
+| `auto_engineering/engine/gap_analysis.py` | 10 | Pre-flight gap scan (B10.2) |
+| `auto_engineering/gates/` | 05+06 | 7 Gate 实现 (safety/lint/type_check/audit/contract/test/build) |
+| `auto_engineering/agents/base.py` | 07 | BaseAgent + tool_use loop + double-layer parse |
+| `auto_engineering/agents/authz.py` | 07 | AUTHZ_MATRIX 10×3 (role-based tool authorization) |
+| `auto_engineering/prompts/registry.py` | 12 | PromptRegistry (sha256 版本锁) |
+| `auto_engineering/cli/dev_loop.py` | 10 | Tick CLI 入口 (--init/--tick/--result/--status/--resume) |
+| `auto_engineering/cli/agent.py` | 07 | 单 Agent 调用 (architect/developer/critic) |
+| `auto_engineering/prismscan/` | 10 | PrismScan V5.1 代码库反向工程 |
 
 ---
 
-## 11. 引用
+## 12. 引用
 
-- `design/v5.6-Design-Loop.md` — v5.0 设计基线
+- `design/v5.6-Design-Loop.md` — v5.6 设计基线
 - `design/BEACON.md` 决策 #28 (v5.0 P0-FINAL) + 决策 #31 (v5.0 深度审计)
 - `docs/PLUGIN-USAGE.md` — Plugin 安装/命令
 - `docs/production-deployment.md` — 部署 + 降级
@@ -499,11 +564,11 @@ except AEError as e:
 
 ---
 
-_v1.0 / v2.0 / v2.3 章节已删除。归档版本见 `design/his_bak/api-reference.md` (v2.2 FINAL, 79 行)。_
+_v1.0 / v2.0 / v2.3 / v5.0 章节已归档 — 见 `design/his_bak/api-reference.md`。_
 
 ---
 
-## 12. 代码示例
+## 13. 代码示例
 
 以下 5 个示例均为最小可运行片段，可直接复制执行。
 
@@ -624,4 +689,4 @@ active_gates = GATE_MAP.get(manifest["project_type"], ["lint", "test"])
 
 ---
 
-_v1.0 / v2.0 / v2.3 章节已删除。归档版本见 `design/his_bak/api-reference.md` (v2.2 FINAL, 79 行)。_
+_v1.0 / v2.0 / v2.3 / v5.0 章节已归档 — 见 `design/his_bak/api-reference.md`。_

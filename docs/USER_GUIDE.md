@@ -1,4 +1,4 @@
-# Auto-Engineering v5.0 用户指南
+# Auto-Engineering v5.6 用户指南
 
 ## 这是什么
 
@@ -9,12 +9,14 @@ Auto-Engineering 是 **Claude Code Plugin 形态的 Loop Engineering 脚手架**
 在 Claude Code 会话中输入 `/dev-loop "需求描述"`，插件会调度 Python Loop Engine 执行 architect → developer → critic 三阶段 Agent 循环，自动产出代码变更、测试、审查结论。
 
 核心特性：
-- **三阶段 Agent 循环**（architect / developer / critic）
-- **5 层 Guardrail 守门**（每阶段前后自动检查）
-- **7 道 Gate 质量门**（safety / lint / type_check / contract / test / coverage / build）
+- **Tick-Based 离散调用**（v5.6 Tick 协议, 文件桥接, Python 每次 tick 独立进程）
+- **5 层验证管道**（architect → developer → critic → component_verifier → system_deep_audit）
+- **9 Guardrail 守门**（3 态: pass/block/retry, 含 REDGuard/FreshGate/RegressionGate）
+- **7 道 Gate 质量门**（safety / lint / type_check / audit / contract / test / build）
 - **SQLite checkpoint 恢复**（中断后不丢进度）
-- **双层 Agent 输出解析**（schema + regex fallback）
+- **LEAF/PLATE/FULL 自动验证深度裁剪**
 - **Init-Loop 接口契约**（消费 Init 项目产出的 init-manifest.json）
+- **v5.5 连续循环共存**（legacy, `ae dev-loop "需求"` 裸参数路径）
 
 ---
 
@@ -255,7 +257,7 @@ ae doctor            # 环境问题
 ├── skills/                             # Agent skill 描述
 ├── docs/                               # 用户文档 + API 参考
 ├── design/                             # 设计文档 (v5.6-Design-Loop, BEACON)
-├── tests/                              # 1253 测试
+├── tests/                              # ~2135 测试
 ├── Makefile                            # make test/ci
 ├── pyproject.toml                      # Python 项目配置
 └── CLAUDE.md                           # Claude Code 项目规则
@@ -312,7 +314,7 @@ Loop 端（本项目）消费 init manifest：
 - `CLAUDE.md` — 项目规则（Claude Code 行为约定）
 - `design/BEACON.md` — 项目明灯（目标/范围/决策）
 - `design/v5.6-Design-Loop.md` — 完整设计文档 (1728 行, v5.6 Tick 协议)
-- `docs/api-reference.md` — v5.0 API 接口 + 5 代码示例
+- `docs/api-reference.md` — v5.6 API 接口 + 5 代码示例
 - `docs/PLUGIN-USAGE.md` — Plugin 安装/使用
 - `docs/production-deployment.md` — 生产部署
 - `docs/EARS-v5.0.md` — 验收 15 AC + 5 IL-AC
@@ -323,4 +325,4 @@ Loop 端（本项目）消费 init manifest：
 
 - GitHub: https://github.com/qianminjian/Auto-engineering
 - 内部测试项目: `/Users/minjianq/Documents/66-Project/ClaudeCode/test-project/prismscan_for_auto_cc`
-- 测试状态: 1253 passed + 1 skipped, 7/7 doctor, 7/7 smoke, 20/20 acceptance, 90% coverage
+- 测试状态: ~2135 passed, 7/7 doctor, 20/20 acceptance, ≥90% coverage (2026-07-16 基准)

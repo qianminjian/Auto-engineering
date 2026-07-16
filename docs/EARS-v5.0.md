@@ -1,7 +1,7 @@
-# Auto-Engineering v5.0 EARS Acceptance Criteria
+# Auto-Engineering v5.6 EARS Acceptance Criteria
 
-> **Version**: 5.0.0 | **Status**: v5.0 验收基线 | **Last updated**: 2026-07-01
-> 决策依据: `design/BEACON.md` 决策 #28 · `design/v5.6-Design-Loop.md` §B18 + §IL.6
+> **Version**: 5.6.0 | **Status**: v5.6 验收基线 (v5.0 15 AC + v5.6 扩展) | **Last updated**: 2026-07-16
+> 决策依据: `design/BEACON.md` 决策 #28, #41, #53 · `design/v5.6-Design-Loop.md` §B18 + §IL.6
 > 验收人: AI 自动 + 用户手动 (EARS AC-12/14 真实环境)
 
 **EARS 格式**: `When <trigger>, the <system> shall <response>`
@@ -104,7 +104,7 @@ Init-Loop 契约验收（Phase 08 实现）。
 ```bash
 # 1. 单元 + 集成测试
 pytest tests/ --no-cov --timeout=300 -q
-# 期望: 799 passed, 2 skipped (Phase 10 实测)
+# 期望: ~2135 passed (v5.6 基准, 2026-07-16)
 
 # 2. Plugin acceptance test
 bash ae-plugin-acceptance-test.sh
@@ -116,7 +116,7 @@ uv run ae doctor
 
 # 4. 覆盖率
 .venv/bin/pytest tests/ --cov=auto_engineering --cov-report=term-missing --timeout=120
-# 期望: ≥ 78% (Phase 10 baseline 78%)
+# 期望: ≥ 90% (v5.6 基准, 用户硬指标)
 ```
 
 ---

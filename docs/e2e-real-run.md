@@ -1,11 +1,11 @@
-# Auto-Engineering v5.0 End-to-End Real Run
+# Auto-Engineering v5.6 End-to-End Real Run
 
-> **Version**: 5.0.0 | **Status**: Production-ready | **Last updated**: 2026-07-01
-> 决策依据: `design/BEACON.md` 决策 #28 · `design/v5.6-Design-Loop.md` §B7.6
+> **Version**: 5.6.0 | **Status**: Production-ready | **Last updated**: 2026-07-16
+> 决策依据: `design/BEACON.md` 决策 #28, #41, #53 · `design/v5.6-Design-Loop.md` §B7.6
 >
-> v1.0 / v2.0 端到端流程已删除 — 归档版本见 `_scratch/his_bak/e2e-real-run.md` (v2.2 FINAL, 49 行)。
+> v1.0 / v2.0 / v5.0 端到端流程已归档 — 见 `design/his_bak/`。
 
-本文档描述 Auto-Engineering v5.0 真实端到端运行流程：Plugin 安装 → dev-loop 启动 → 3 Stage → APPROVE → Gate → Checkpoint → 验收。
+本文档描述 Auto-Engineering v5.6 端到端运行流程：Tick 协议初始化 → 5 层验证管道 → GOAL_ACHIEVED。同时保留 v5.5 连续循环路径 (legacy)。
 
 ---
 
@@ -145,12 +145,11 @@
 | 组件 | 峰值 |
 |------|------|
 | Python 引擎 | ~250 MB |
-| uv sync 后 .venv | ~800 MB |
-| pytest + coverage (禁用) | 0 (coverage 默认关) |
-| pytest 无 coverage | ~150 MB |
+| .venv | ~800 MB |
+| pytest (无 coverage) | ~150 MB |
 | **单 dev-loop run 总计** | **~1.2 GB** |
 
-> Coverage 默认禁用，详见 `docs/production-deployment.md` §5.1。
+> Coverage 默认禁用。全量 ~2135 tests, ~54s (16G 内存约束, --no-cov --timeout=120)。
 
 ---
 
@@ -244,9 +243,9 @@ Settings.from_env() → CONFIG_MISSING_API_KEY
 
 ```bash
 # 一键端到端验证
-bash ae-plugin-acceptance-test.sh           # 18 场景 (Phase 09 实装 3 场景)
+bash ae-plugin-acceptance-test.sh           # 20 场景
 .venv/bin/ae doctor                          # 环境自检
-pytest tests/ --no-cov --timeout=300 -q      # 799 测试
+.venv/bin/pytest tests/ --no-cov --timeout=120 -q  # ~2135 测试
 ```
 
 ---
@@ -262,4 +261,4 @@ pytest tests/ --no-cov --timeout=300 -q      # 799 测试
 
 ---
 
-_v2.0 端到端流程已删除。归档版本见 `_scratch/his_bak/e2e-real-run.md`。_
+_v2.0 / v5.0 端到端流程已归档 — 见 `design/his_bak/`。_

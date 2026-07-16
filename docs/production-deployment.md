@@ -1,11 +1,11 @@
-# Auto-Engineering v5.0 Production Deployment
+# Auto-Engineering v5.6 Production Deployment
 
-> **Version**: 5.0.0 | **Status**: Production-ready | **Last updated**: 2026-07-01
-> 决策依据: `design/BEACON.md` 决策 #28 · `docs/PLUGIN-USAGE.md`
+> **Version**: 5.6.0 | **Status**: Production-ready | **Last updated**: 2026-07-16
+> 决策依据: `design/BEACON.md` 决策 #28, #41 · `docs/PLUGIN-USAGE.md`
 >
-> v1.0 / v2.0 / v2.3 部署章节已删除 — 归档版本见 `_scratch/his_bak/production-deployment.md` (v2.2 FINAL, 79 行)。
+> v1.0 / v2.0 / v2.3 / v5.0 部署章节已归档 — 见 `design/his_bak/`。
 
-Auto-Engineering v5.0 以 **Claude Code Plugin** 形式分发。部署 = 把 `.claude-plugin/` 拷贝到目标项目 + uv sync + 重启 Claude Code。
+Auto-Engineering v5.6 以 **Claude Code Plugin** 形式分发。部署 = 把 `.claude-plugin/` 拷贝到目标项目 + uv sync + 重启 Claude Code。v5.6 Tick 协议通过文件桥接驱动，Python 引擎永不调 LLM。
 
 ---
 
@@ -143,7 +143,7 @@ sqlite3 .ae-state/checkpoints.db \
 
 ## 5. 降级路径 (v5.0 §B13)
 
-Auto-Engineering v5.0 内置 3 类降级，按严重度排序：
+Auto-Engineering v5.6 内置 3 类降级，按严重度排序：
 
 ### 5.1 CoverageGate 永远 skip (v5.0 §B6.4 决策)
 
@@ -248,9 +248,9 @@ uv sync
 
 ### 6.3 Checkpoint 兼容性
 
-- v5.0 → v5.x：兼容（`schema_version=1`）
-- v2.0 JSON → v5.0 SQLite：自动迁移 (`CheckpointMigrator`)
-- v1.0 JSON → v5.0：需手动 export/import
+- v5.6 → v5.x：兼容（`schema_version=1`）
+- v5.0 JSON → v5.6 SQLite：自动迁移 (`CheckpointMigrator`)
+- v1.0/v2.0 JSON → v5.6：需手动 export/import
 
 ---
 
@@ -265,8 +265,8 @@ uv sync
 - [ ] `.ae-state/` 在 `.gitignore` 中
 - [ ] `.venv/` 在 `.gitignore` 中
 - [ ] `init-manifest.json` 在项目根且 schema_version=1
-- [ ] `bash ae-plugin-acceptance-test.sh` 18/18 PASS
-- [ ] `pytest tests/ --no-cov --timeout=300 -q` 全 PASS
+- [ ] `bash ae-plugin-acceptance-test.sh` 20/20 PASS
+- [ ] `.venv/bin/pytest tests/ --no-cov --timeout=120 -q` 全 PASS (~2135 tests)
 
 ---
 
@@ -281,4 +281,4 @@ uv sync
 
 ---
 
-_v1.0 / v2.0 部署流程已删除。归档版本见 `_scratch/his_bak/production-deployment.md`。_
+_v1.0 / v2.0 / v5.0 部署流程已归档 — 见 `design/his_bak/`。_
