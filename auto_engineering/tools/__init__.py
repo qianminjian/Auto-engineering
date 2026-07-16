@@ -12,6 +12,7 @@ from .base import BaseTool, ToolResult
 from .bash_tools import RunBashTool
 from .file_tools import EditFileTool, ListDirTool, ReadFileTool, SearchCodeTool, WriteFileTool
 from .git_tools import GitCommitTool, GitDiffTool, GitStatusTool
+from .hello_world import HelloWorldTool
 from .run_tests_tool import RunTestsTool
 
 __all__ = [
@@ -20,6 +21,7 @@ __all__ = [
     "GitCommitTool",
     "GitDiffTool",
     "GitStatusTool",
+    "HelloWorldTool",
     "ListDirTool",
     "ReadFileTool",
     "RunBashTool",
