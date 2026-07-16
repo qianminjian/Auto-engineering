@@ -128,6 +128,16 @@ def run_agent(role: str, instruction: str, project_root: Path) -> dict:
     try:
         runtime = _build_runtime_for_role(role, project_root)
         agent = runtime.get(role)
+        if agent is None:
+            return {
+                "task_id": task_id,
+                "role": role,
+                "status": "failed",
+                "output": None,
+                "error": f"Agent '{role}' not found in runtime",
+                "duration": time.monotonic() - started,
+                "task_role": role,
+            }
 
         async def _exec():
             try:
@@ -137,11 +147,11 @@ def run_agent(role: str, instruction: str, project_root: Path) -> dict:
                         description=instruction,
                         expected_output="",
                     ),
-                    ctx=None,
+                    ctx=None,  # type: ignore[arg-type]  # CLI 调试入口, 无 EngineState, 触发 TypeError fallback 到旧接口
                 )
             except TypeError:
                 # 兼容旧接口
-                return agent.execute(instruction)  # type: ignore[call-arg]  # legacy 单参 fallback
+                return agent.execute(instruction)  # type: ignore[arg-type, call-arg, union-attr]  # legacy 单参 fallback
 
         result = asyncio.run(_exec())
         duration = time.monotonic() - started
