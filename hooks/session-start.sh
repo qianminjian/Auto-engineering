@@ -23,6 +23,17 @@ fi
 
 CHECKS_JSON=""
 
+# ── Auto-bootstrap: run uv sync if venv/ae not installed ──
+_bootstrap() {
+  if [[ ! -x ".venv/bin/ae" ]] && command -v uv >/dev/null 2>&1; then
+    uv sync --quiet 2>/dev/null || uv sync 2>/dev/null || true
+  fi
+  # Ensure ae is on PATH for this session
+  if [[ -d ".venv/bin" ]]; then
+    export PATH="$PWD/.venv/bin:$PATH"
+  fi
+}
+
 check_command() {
   local name="$1"
   local cmd="$2"
@@ -52,6 +63,9 @@ check_env() {
     CHECKS_JSON="$CHECKS_JSON\"$name\":\"missing\","
   fi
 }
+
+# 0. Bootstrap Python environment before checking
+_bootstrap
 
 # 1. Python
 check_command "python" "python3"
@@ -116,8 +130,8 @@ else
   CHECKS_JSON="$CHECKS_JSON\"venv\":\"missing\","
 fi
 
-# 9. ae
-if [[ -x "ae" ]]; then
+# 9. ae (in .venv)
+if [[ -x ".venv/bin/ae" ]]; then
   CHECKS_JSON="$CHECKS_JSON\"ae_cli\":\"ok\","
 else
   CHECKS_JSON="$CHECKS_JSON\"ae_cli\":\"missing\","
