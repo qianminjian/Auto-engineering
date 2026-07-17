@@ -49,10 +49,11 @@
 | **55** | **v8.0 多 Agent 平台适配 (Multi-Platform Plugin Adaptation)** | 一套源码、三个平台（Claude Code / Codex / CodeBuddy）同时运行。核心发现：三平台共享相同的 Commands `.md` 格式和 Skills `SKILL.md` + YAML frontmatter 格式；CodeBuddy 原生读取 `.claude-plugin/plugin.json` 作 fallback。设计原则：① 一套源码三个 manifest（`.claude-plugin/` + `.codex-plugin/` + `.codebuddy-plugin/` symlink）；② Engine 平台无关（TickOrchestrator 不变）；③ 最小适配——Codex 仅 4 hook 事件（无 on-pr.sh），Hook 脚本用 `$AE_PLUGIN_ROOT` 统一变量 + `$AE_PLATFORM` 平台检测；④ Provider 抽象——`LLMProvider` Protocol 桥接 Anthropic SDK 与 OpenAI SDK 的 tool_use/function_call 格式差异，使 StandaloneDriver 可切 OpenAI 后端。规划 8 任务、~4.3 天。规格 v5.6-Design-Loop.md 附录 D（13 节，含三平台对比矩阵/Hook 适配表/Provider 完整代码/install.sh 重写/命令语法差异）。D28 | 2026-07-16 | ✅ |
 | **56** | **v7.8 StandaloneDriver 基准修复 (Architect 瓶颈消除)** | StandaloneDriver 基准收敛率 40%→100%。4 项修复（parser regex/architect prompt/developer max_calls+project_root/batch_plan 规范化）。剩余问题：设计文档模式过严，通过 spec 内嵌绕过。D29 | 2026-07-17 | ✅ |
 | **57** | **Step 3 AgentDriver 基准 10/10 全部完成 — 双驱动保真度等价验证** | 全部 10 需求（R01-R10）手动驱动 v5.6 Tick 协议 GOAL_ACHIEVED（100%）。双驱动收敛率等价（AgentDriver 100% vs StandaloneDriver 100%），AgentDriver 无软上限问题、测试更精简，StandaloneDriver 更快可批量。修复 `_apply_result_to_state()` red_evidence 映射 bug。R09/R10 通过 spec 内嵌 requirement 绕过 `from_design_doc()` 校验过严问题。D30 | 2026-07-17 | ✅ |
+| **58** | **Plugin 安装标准化 — Marketplace 替代 install.sh** | 调研三平台（Claude Code/Codex/CodeBuddy）标准安装机制：均为 Marketplace + `/plugin install` 模式，平台自动 `git clone` 完整仓库到缓存目录。删除自造 `install.sh`（V8-6），改为标准 marketplace 自引用（`marketplace.json` source=`"./"`）。修正 `plugin.json` 路径从 `"../commands/"` 到 `"./commands/"`（`./` 相对插件根 = 仓库根，对齐 Claude Code 规范）。更新 PLUGIN-USAGE.md 和 USER_GUIDE.md 安装章节。**不**单独维护 Codex marketplace（`.codex-plugin/marketplace.json`），Codex 共享 Claude Code 的 marketplace 或通过自有 marketplace 机制发现。D31 | 2026-07-17 | ✅ |
 
 ## 当前状态
 
-**阶段：** v5.6 里程碑收官 — Step 3 AgentDriver 基准 10/10 全部 GOAL_ACHIEVED。双驱动保真度等价验证完成（Agent 100% / Standalone 100%）。117/118 任务完成。Phase 1-10 = 102/102，Phase 11 v7.0 = 7/8（仅 V7-7 v5.5 退役锁定），Phase 12 v8.0 = 8/8。2246 tests 全绿。
+**阶段：** v5.6 里程碑收官 — Step 3 AgentDriver 基准 10/10 全部 GOAL_ACHIEVED。双驱动保真度等价验证完成（Agent 100% / Standalone 100%）。Plugin 安装标准化为 Marketplace 模式（删除 install.sh，修正 plugin.json 路径）。117/118 任务完成。Phase 1-10 = 102/102，Phase 11 v7.0 = 7/8（仅 V7-7 v5.5 退役锁定），Phase 12 v8.0 = 8/8。2246 tests 全绿。
 
 **最近动作 (2026-07-17 StandaloneDriver E2E 真跑验证)：**
 - **StandaloneDriver 真实 LLM 端到端验证通过**：architect→developer→critic→GOAL_ACHIEVED（6 ticks），在 `/tmp/_ae_test_project/` 产出 fibonacci 实现（`src/fibonacci.py` + `tests/test_fibonacci.py` 10 tests）+ auto-commit（`530fe42`）。10 个 fibonacci 断言全部通过。
@@ -77,7 +78,7 @@
 **最近动作 (2026-07-17 Phase 12 收尾)：**
 - **Phase 12 V8-1 目录重构完成**：`commands/` `hooks/` `skills/` 从 `.claude-plugin/` 提升到项目根，三平台共享同一套 Command/Skill 源文件。`.claude-plugin/plugin.json` paths 更新为 `../` 相对路径。`.codex-plugin/plugin.json` 新建。`.codebuddy-plugin/` → `.claude-plugin/` symlink。7 new tests + 修复 9 个路径引用断裂。
 - **Phase 12 V8-2 Hook 注册拆分完成**：三份平台特定 hook 注册文件（`hooks-cc.json` 5 hooks / `hooks-codex.json` 4 hooks 无 on-pr / `hooks-codebuddy.json` 5 hooks）。`hooks/session-start.sh` 添加 `$AE_PLATFORM` 平台检测逻辑（`$CLAUDE_PLUGIN_ROOT` / `$CODEX_PLUGIN_ROOT` / `$CODEBUDDY_PLUGIN_ROOT`）。7 new tests。
-- **Phase 12 V8-6 install.sh 多平台改造完成**：`install.sh`（~150 行）支持 `--auto`/`--claude-code`/`--codex`/`--codebuddy`/`--all`/`--uninstall`。`detect_platforms()` 用 `command -v` + 目录检测。CodeBuddy 用 symlink 共享 Claude Code 安装。4 new tests。
+- **Phase 12 V8-6 安装方案标准化（2026-07-17 替换为 Marketplace）**：原 `install.sh`（~150 行，手动 cp 安装）已删除，改为三平台标准 Marketplace 机制（`/plugin marketplace add` + `/plugin install`）。plugin.json 路径从 `../` 修正为 `./`（对齐 Claude Code 规范）。PLUGIN-USAGE.md + USER_GUIDE.md 安装章节重写。
 - **Phase 12 V8-7 doctor + pyproject 更新完成**：`ae doctor` 新增 `_check_openai_api_key()`（`OPENAI_API_KEY` 环境变量检测）。`pyproject.toml` 新增 `[project.optional-dependencies] openai = ["openai>=1.0"]`。2 new tests。
 - **Phase 12 V8-8 文档更新完成**：`docs/PLUGIN-USAGE.md` 重写安装章（Quick Install + Manual Install 三平台 + 命令验证含 Codex `//ae:` 语法）。`docs/USER_GUIDE.md` 新增多平台安装说明 + 命令语法差异表（Claude Code `/ae:dev-loop` vs Codex `//ae:dev-loop` vs CodeBuddy `/ae:dev-loop`）。2 new tests。
 - **全量测试**：2212 passed (+77 从 2135 基线)，2 skipped，0 回归。
@@ -123,7 +124,7 @@
 - **设计文档深度审计 + 22 项收口深化** (决策 #49, Phase 8)：3 并行子代理审 4214 行 → 规格 6.5/10、端到端 2.5/10。P0×4 全为代码缺口(已 T9/T10/T27/T32 跟踪)；文档规格缺陷 S-1~S-20+Q-1/Q-2 共 22 项**纯文档收口**（补 CoverageItem/GateVerdict/done verdict 权威 schema + file-bridge 边界矩阵 §C.3.5 + 路径更正 + 过度设计存续论证）。**S-1 语义评估矛盾定案**：v5.6 全路径无语义评估，代码 semantic_evaluator 移除跟踪到 Phase 3 T10d。审计产出 `_scratch/design-audit/`，无 status 翻转
 - **Init-Loop 契约 v5.6 扩展** (决策 #48)：`init-manifest.schema.json` 版本化 SSOT + ci_platform/design_root 字段 + monorepo 单包降级 + 消费者驱动契约测试
 
-**下一步：** Step 3 AgentDriver 基准 10/10 全部完成，双驱动保真度等价验证闭环。按需：V7-7 v5.5 退役（锁定在 hard gates 后）；`from_design_doc()` 校验放宽（使简单设计文档无需 spec 内嵌 workaround）。
+**下一步：** Step 3 AgentDriver 基准 10/10 全部完成，双驱动保真度等价验证闭环。Plugin 安装已标准化为 Marketplace 模式。按需：V7-7 v5.5 退役（锁定在 hard gates 后）；`from_design_doc()` 校验放宽。
 
 **阻塞项：** 无
 
@@ -131,6 +132,7 @@
 
 | 日期 | 变更 | 原因 |
 |------|------|------|
+| 2026-07-17 | **Plugin 安装标准化 — Marketplace 替代 install.sh（决策 #58）** | 调研三平台标准安装机制后，删除自造 `install.sh`，改为 Claude Code/Codex/CodeBuddy 标准 Marketplace 安装（`/plugin marketplace add` + `/plugin install`）。修正 plugin.json 路径 `../` → `./`（对齐规范）。更新 PLUGIN-USAGE.md + USER_GUIDE.md。 |
 | 2026-07-17 | **Step 3 AgentDriver 基准 10/10 全部完成** | 手动驱动 v5.6 Tick 协议完成全部 10 需求（R01-R10）全 tick 闭环，100% GOAL_ACHIEVED。R09/R10 通过 spec 内嵌绕过 `from_design_doc()` 校验过严。双驱动保真度等价验证闭环（Agent 100% / Standalone 100%）。collect 脚本产出最终 results.json。BEACON 决策 #57 更新。 |
 | 2026-07-17 | **Step 3 AgentDriver 基准 3/3 完成** | 手动驱动 v5.6 Tick 协议完成 R01/R04/R07 全 tick 闭环，全部 GOAL_ACHIEVED。双驱动保真度等价验证通过。修复 `red_evidence` 映射 bug + collect 脚本 git 命令。BEACON 决策 #57。 |
 | 2026-07-17 | **v7.8 Architect 瓶颈消除 + 基准重跑 10/10** | StandaloneDriver 基准收敛率 40%→100%。4 项修复（parser regex/architect prompt/developer max_calls+project_root/batch_plan 规范化）消除 architect file_list 瓶颈（原占失败 67%）。10 需求全量验证通过，产出报告 `_scratch/benchmark_report.md`。BEACON 决策 #56。 |

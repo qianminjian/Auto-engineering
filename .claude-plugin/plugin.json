@@ -17,9 +17,9 @@
     "gate-quality",
     "claude-code-plugin"
   ],
-  "commands": "../commands/",
-  "hooks": "../hooks/",
-  "skills": "../skills/",
+  "commands": "./commands/",
+  "hooks": "./hooks/",
+  "skills": "./skills/",
   "metadata": {
     "min_claude_code_version": "1.0.0",
     "requirements": {

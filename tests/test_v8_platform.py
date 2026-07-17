@@ -46,17 +46,19 @@ class TestV8_1_DirectoryRestructuring:
         assert (root / "hooks" / "session-start.sh").is_file()
 
     def test_claude_plugin_json_paths_updated(self) -> None:
-        """.claude-plugin/plugin.json paths 指向 ../commands/ 等."""
+        """.claude-plugin/plugin.json paths 使用 ./ 相对路径 (平台标准)."""
         root = _project_root()
         plugin_json = root / ".claude-plugin" / "plugin.json"
         if not plugin_json.is_file():
-            return  # 如果旧 plugin.json 已移除, 此 test skip
+            return
         data = json.loads(plugin_json.read_text())
-        # paths 应为 ../ 相对路径 (从 .claude-plugin/ 指到根目录)
+        # paths 应为 ./ 相对路径 (相对 plugin root, 即项目根)
         for key in ("commands", "hooks", "skills"):
             if key in data:
                 val = data[key]
-                assert ".." in val, f"plugin.json '{key}' 应使用 ../ 相对路径, 实际: {val}"
+                assert val.startswith("./"), (
+                    f"plugin.json '{key}' 应使用 ./ 相对路径, 实际: {val}"
+                )
 
     def test_claude_plugin_json_valid(self) -> None:
         """.claude-plugin/plugin.json 是合法 JSON."""
@@ -152,33 +154,55 @@ class TestV8_7_DoctorAndPyproject:
         )
 
 
-class TestV8_6_InstallScript:
-    """V8-6: install.sh 多平台安装脚本."""
+class TestV8_6_MarketplaceInstall:
+    """V8-6: Marketplace 标准化安装 (替代 install.sh)."""
 
-    def test_install_sh_exists(self) -> None:
-        """install.sh 存在且可执行."""
+    def test_claude_plugin_json_has_marketplace_fields(self) -> None:
+        """.claude-plugin/plugin.json 含 marketplace 所需字段 (name/version/description)."""
         root = _project_root()
-        install_sh = root / "install.sh"
-        assert install_sh.is_file(), "install.sh 不存在"
-        assert install_sh.stat().st_mode & 0o111, "install.sh 不可执行"
+        plugin_json = root / ".claude-plugin" / "plugin.json"
+        assert plugin_json.is_file(), ".claude-plugin/plugin.json 不存在"
+        data = json.loads(plugin_json.read_text())
+        assert "name" in data
+        assert "version" in data
+        assert "description" in data
 
-    def test_install_sh_mentions_claude_code(self) -> None:
-        """install.sh 包含 Claude Code 安装路径."""
+    def test_codex_plugin_json_has_marketplace_fields(self) -> None:
+        """.codex-plugin/plugin.json 含 marketplace 所需字段."""
         root = _project_root()
-        content = (root / "install.sh").read_text()
-        assert ".claude/plugins" in content or "claude" in content.lower()
+        codex_json = root / ".codex-plugin" / "plugin.json"
+        assert codex_json.is_file(), ".codex-plugin/plugin.json 不存在"
+        data = json.loads(codex_json.read_text())
+        assert "name" in data
+        assert "version" in data
 
-    def test_install_sh_mentions_codex(self) -> None:
-        """install.sh 包含 Codex 安装路径."""
+    def test_plugin_paths_use_dot_slash(self) -> None:
+        """两个 plugin.json 的 paths 均使用 ./ 相对路径."""
         root = _project_root()
-        content = (root / "install.sh").read_text()
-        assert ".codex/plugins" in content or "codex" in content.lower()
+        for platform_dir in (".claude-plugin", ".codex-plugin"):
+            plugin_json = root / platform_dir / "plugin.json"
+            if not plugin_json.is_file():
+                continue
+            data = json.loads(plugin_json.read_text())
+            for key in ("commands", "hooks", "skills"):
+                if key in data:
+                    val = data[key]
+                    assert val.startswith("./"), (
+                        f"{platform_dir}/plugin.json '{key}' 应使用 ./ 路径, 实际: {val}"
+                    )
 
-    def test_install_sh_mentions_codebuddy(self) -> None:
-        """install.sh 包含 CodeBuddy 安装参考."""
+    def test_plugin_usage_mentions_marketplace_add(self) -> None:
+        """PLUGIN-USAGE.md 包含 marketplace add 安装命令."""
         root = _project_root()
-        content = (root / "install.sh").read_text()
-        assert "codebuddy" in content.lower() or "CODEBUDDY" in content
+        doc = root / "docs" / "PLUGIN-USAGE.md"
+        assert doc.is_file(), "PLUGIN-USAGE.md 不存在"
+        content = doc.read_text()
+        assert "marketplace add" in content, (
+            "PLUGIN-USAGE.md 应包含 /plugin marketplace add 安装命令"
+        )
+        assert "plugin install" in content, (
+            "PLUGIN-USAGE.md 应包含 /plugin install 安装命令"
+        )
 
 
 class TestV8_8_Documentation:
@@ -209,11 +233,11 @@ class TestV8_8_Documentation:
         assert doc.is_file(), "USER_GUIDE.md 不存在"
         content = doc.read_text()
         has_multi_platform = (
-            "install.sh" in content
+            "marketplace add" in content
             or "多平台" in content
             or "Codex" in content
             or "CodeBuddy" in content
         )
         assert has_multi_platform, (
-            "USER_GUIDE.md 应提及 install.sh 多平台安装或 Codex/CodeBuddy"
+            "USER_GUIDE.md 应提及 marketplace add 多平台安装或 Codex/CodeBuddy"
         )

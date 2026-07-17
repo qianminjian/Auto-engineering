@@ -20,25 +20,22 @@ Auto-Engineering 是 **Claude Code Plugin 形态的 Loop Engineering 脚手架**
 
 ---
 
-## 安装（用户级一次性, 单条命令）
+## 安装（用户级一次性, 2 条命令）
 
-```bash
-bash install.sh    # 1 条命令完成全部安装 (auto-detect 平台)
+在 Claude Code / Codex / CodeBuddy 会话中输入：
+
+```
+/plugin marketplace add qianminjian/Auto-engineering
+/plugin install auto-engineering@qianminjian --scope user
 ```
 
-支持三平台自动检测安装：
-- **Claude Code**: 安装到 `~/.claude/plugins/auto-engineering/`
-- **Codex**: 安装到 `~/.codex/plugins/auto-engineering/`
-- **CodeBuddy**: symlink 到 Claude Code 安装目录
+Codex 等效命令：
+```
+codex plugin marketplace add qianminjian/Auto-engineering
+codex plugin install auto-engineering
+```
 
-也可以指定平台：`bash install.sh --claude-code` / `--codex` / `--codebuddy` / `--all`。
-
-`install.sh` 做 3 件事:
-1. `git clone` 源码到平台 plugin 目录
-2. `uv tool install .` 全局装 Engine (`~/.local/bin/ae`)
-3. Panel 通过 `installed_plugins.json` 识别 plugin
-
-Claude Code 通过 `installed_plugins.json` 识别 plugin (不是目录扫描).
+平台自动 `git clone` 仓库到插件缓存目录，加载所有 commands/hooks/skills。
 
 安装完成后**重启对应平台**即可使用。
 
@@ -48,16 +45,16 @@ Claude Code 通过 `installed_plugins.json` 识别 plugin (不是目录扫描).
 |------|---------|------|
 | Claude Code | `/ae:dev-loop "需求"` | slash command 标准语法 |
 | Codex | `//ae:dev-loop "需求"` | 双斜杠 skill 调用 |
-| CodeBuddy | `/ae:dev-loop "需求"` | 与 Claude Code 相同 (symlink 共享 commands/) |
+| CodeBuddy | `/ae:dev-loop "需求"` | 与 Claude Code 相同（兼容 `.claude-plugin/plugin.json`） |
 
 ### 卸载
-```bash
-bash install.sh --uninstall
+```
+/plugin uninstall auto-engineering
 ```
 
 ### 升级
-```bash
-cd ~/.claude/plugins/auto-engineering && git pull && bash install.sh
+```
+/plugin update auto-engineering
 ```
 
 ---

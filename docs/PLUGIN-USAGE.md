@@ -10,43 +10,51 @@ Auto-Engineering v5.6 is a Tick-Based Discrete Invocation loop engine with 5-lay
 
 ### 1.1 Prerequisites
 
-- **Python** ≥ 3.12
-- **uv** ≥ 0.5.0 (package manager — install from [astral-sh/uv](https://github.com/astral-sh/uv))
-- **git** ≥ 2.30
-- **sqlite3** ≥ 3.35 (CLI tool, for inspecting checkpoint DB)
 - **Claude Code** ≥ 1.0.0, **Codex**, or **CodeBuddy**
-- **ANTHROPIC_API_KEY** environment variable (or ANTHROPIC_AUTH_TOKEN in Plugin mode)
+- **Python** ≥ 3.12
+- **uv** ≥ 0.5.0 (package manager)
+- **git** ≥ 2.30
+- **sqlite3** ≥ 3.35
+- **ANTHROPIC_API_KEY** (or ANTHROPIC_AUTH_TOKEN in Plugin mode)
 - **OPENAI_API_KEY** (optional, for OpenAI Provider backend)
 
-### 1.2 Quick Install (recommended)
+### 1.2 Quick Install (marketplace, recommended)
 
-```bash
-cd auto-engineering
-./install.sh                  # auto-detect platform and install
-./install.sh --all            # install for all detected platforms
-./install.sh --claude-code    # Claude Code only
-./install.sh --codex          # Codex only
-./install.sh --codebuddy      # CodeBuddy only
+In Claude Code / Codex / CodeBuddy:
+
+```
+/plugin marketplace add qianminjian/Auto-engineering
+/plugin install auto-engineering@qianminjian --scope user
 ```
 
-### 1.3 Manual Install
+This clones the repository from GitHub and installs the plugin globally — available in all projects.
+
+Codex equivalent:
+```
+codex plugin marketplace add qianminjian/Auto-engineering
+codex plugin install auto-engineering
+```
+
+### 1.3 Manual Install (development)
+
+For local development, clone and symlink:
 
 ```bash
-# Claude Code
-cp -r .claude-plugin ~/.claude/plugins/auto-engineering
+git clone https://github.com/qianminjian/Auto-engineering.git
+cd Auto-engineering
 
-# Codex
-cp -r .codex-plugin ~/.codex/plugins/auto-engineering
+# Claude Code — symlink .claude-plugin to plugins directory
+ln -sfn "$(pwd)" ~/.claude/plugins/auto-engineering
 
-# CodeBuddy (symlink to Claude Code plugin)
-ln -sfn ~/.claude/plugins/auto-engineering ~/.codebuddy/plugins/auto-engineering
+# Install Python environment
+uv sync
 ```
 
 ### 1.4 Verify installation
 
-In your platform, type `/help`. You should see commands prefixed with `/ae:`:
+In your platform, type `/help`. You should see commands prefixed with `/ae:` or `//ae:`:
 
-- `/ae:dev-loop` (Claude Code/CodeBuddy) or `//ae:dev-loop` (Codex skill)
+- `/ae:dev-loop` (Claude Code/CodeBuddy) or `//ae:dev-loop` (Codex)
 - `/ae:status`
 - `/ae:checkpoint`
 - `/ae:project-tdd`
@@ -54,7 +62,7 @@ In your platform, type `/help`. You should see commands prefixed with `/ae:`:
 - `/ae:project-agent`
 - `/ae:project-ci`
 
-(7 commands — `/init` is provided by the Init subsystem, not the plugin.)
+Run `ae doctor` to verify the Python engine environment.
 
 ---
 

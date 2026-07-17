@@ -6,7 +6,7 @@
     "name": "Qian Minjian",
     "email": "noreply@anthropic.com"
   },
-  "commands": "../commands/",
-  "hooks": "../hooks/",
-  "skills": "../skills/"
+  "commands": "./commands/",
+  "hooks": "./hooks/",
+  "skills": "./skills/"
 }
