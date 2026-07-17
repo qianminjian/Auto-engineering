@@ -45,7 +45,8 @@
 | **12** | **v8.0 多 Agent 平台适配（V8-1/2/3/4/5/6/7/8 全部 ✅，V8-6 已替换为 Marketplace）** | **8** | **8** | **2026-07-17: 全部完成。多平台基础架构就绪 — 三平台 manifest、三 hook 注册、Marketplace 标准安装、OpenAI Provider、文档覆盖。原 V8-6 install.sh 已删除，替换为三平台标准 /plugin marketplace add + /plugin install 机制。plugin.json 路径 `../` → `./` 对齐规范。** |
 | **13** | **真跑故障修复 (voice_clone 2026-07-17)** | **10** | **9** | **P0 B3 crash ✅ → P1 7/7 全完成 → P2 1/2 (T41 ⊘ 项目侧) → T43 集成 5 tests ✅** |
 | **14** | **gate_results 结构错配修复 (忠实度分析)** | **1** | **1** | **T44 修复 production 路径 gate 结果全部丢失 ✅** |
-| **合计** | | **129** | **127** | **Phase 1-10 = 102/102 完成；Phase 11 v7.0 = 7/8；Phase 12 v8.0 = 8/8；Phase 13 = 9/10（1 ⊘ 项目侧）；Phase 14 = 1/1** |
+| **15** | **DebugTracer — dev-loop 调度轨迹诊断** | **1** | **1** | **T45 DebugTracer 实现 + TickOrchestrator 集成 + CLI 接线 ✅** |
+| **合计** | | **130** | **128** | **Phase 1-10 = 102/102 完成；Phase 11 v7.0 = 7/8；Phase 12 v8.0 = 8/8；Phase 13 = 9/10（1 ⊘ 项目侧）；Phase 14 = 1/1；Phase 15 = 1/1** |
 
 ---
 
@@ -314,6 +315,20 @@
 | T44 | D4 | `loop/tick_orchestrator.py:_run_developer_gates()` — `run_gates()` 返回 `{project_root, gate_names, passed, failed, skipped, gate_summary: {实际gate结果}}`，原代码直接迭代顶层 key 误将 wrapper key 当 gate 名。修复：`raw.get("gate_summary", raw)` 统一提取内层结果，扁平 dict（测试 stub）无此 key 回退自身。新增 `test_extracts_gate_summary_from_nested_run_gates_output`。 | production 路径 gate_results 含真实 gate 名非 wrapper key + 全量 251 passed 零回归 | P0 | ✅ | (本轮) |
 
 > **真实严重度定级 P0**：gate_results 是 Iron Law D4（Python is Gatekeeper）的核心输出——所有 gate 结果静默丢失意味着生产运行时 gate 执行了但结果不可观测，侵蚀引擎"可观测的 Gatekeeper"定位。测试全绿是因为测试 stub 返回扁平 dict 不经过 `run_gates()` 嵌套路径——代码与测试路径分叉制造了虚假绿色。
+
+---
+
+## Phase 15 — DebugTracer: dev-loop 调度轨迹诊断 (2026-07-17)
+
+> 来源：用户需求——为真实项目测试中记录 loop 工程问题，增加 debug 选项将调度轨迹/故障信息写入运行项目的 debug 目录。
+> 设计：`ae dev-loop --init --debug` 或 `AE_DEBUG=1` 激活。三输出文件：tick-{N:04d}.json、errors.jsonl、trace.json。`DebugTracer.disabled()` 零开销 no-op。
+> BEACON 决策 #61。
+
+| T | 文件/描述 | 验收 | P | 状态 | Commit |
+|---|----------|------|:---:|:---:|--------|
+| T45 | `loop/debug_tracer.py`（101 行）+ `tests/test_debug_tracer.py`（9 tests）+ EngineState #38-39 + `tick_orchestrator.py` 5 hook 点集成 + `cli/__init__.py` `--debug`/`--debug-dir` flag + `cli/dev_loop.py` 全路径接线 | 9 debug_tracer tests + 103 tick_orchestrator tests + 47 engine_state + 21 batch_state + 58 stage_router = 238 passed 零回归 | P1 | ✅ | (本轮) |
+
+> **真实严重度定级 P1**：debug 功能非引擎核心路径，但为生产问题诊断提供关键可观测性——per-tick 快照 + 故障事件 JSONL + 最终摘要覆盖了"引擎静默出错时无现场"的诊断盲区。
 
 ---
 

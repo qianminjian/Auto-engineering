@@ -1,4 +1,4 @@
-> 创建：2026-06-24 | 更新：2026-07-17 | 阶段：v5.6 里程碑收官 — Phase 14 gate_results 结构错配修复完成。127/129 任务完成（1 ⊘ 项目侧）。
+> 创建：2026-06-24 | 更新：2026-07-17 | 阶段：v5.6 里程碑 — Phase 15 DebugTracer 实现完成。129/130 任务完成（1 ⊘ 项目侧）。
 > ⚠️ **决策状态翻转管控**：status 列 ✅→❌ 或 ❌→✅ 必须经用户审批。AI 不得自行翻转。详见 `.claude/rules/design-document-inviolability.md` §2。
 
 ## 目标与成功标准
@@ -52,10 +52,17 @@
 | **58** | **Plugin 安装标准化 — Marketplace 替代 install.sh** | 调研三平台（Claude Code/Codex/CodeBuddy）标准安装机制：均为 Marketplace + `/plugin install` 模式，平台自动 `git clone` 完整仓库到缓存目录。删除自造 `install.sh`（V8-6），改为标准 marketplace 自引用（`marketplace.json` source=`"./"`）。修正 `plugin.json` 路径从 `"../commands/"` 到 `"./commands/"`（`./` 相对插件根 = 仓库根，对齐 Claude Code 规范）。更新 PLUGIN-USAGE.md 和 USER_GUIDE.md 安装章节。**不**单独维护 Codex marketplace（`.codex-plugin/marketplace.json`），Codex 共享 Claude Code 的 marketplace 或通过自有 marketplace 机制发现。D31 | 2026-07-17 | ✅ |
 | **59** | **Phase 13 真跑故障修复 (voice_clone 2026-07-17)** | 29 问题中 10 项引擎/设计修复：9/10 完成（8 ✅ + 1 ⊘ 项目侧）。P0 B3 crash ✅ / P1 B2/B4/B5/B8/B9/B11/D1 全部 ✅ / P2 B6 ⊘(项目侧) D3 ✅。T43 集成 5 tests 覆盖 6 场景。全量 250 passed 零回归。D32 | 2026-07-17 | ✅ |
 | **60** | **Phase 14 gate_results 结构错配修复 (voice_clone 忠实度分析发现)** | `_run_developer_gates()` 调用 `run_gates()` 但 `run_gates()` 返回嵌套结构 `{project_root, gate_names, passed, failed, skipped, gate_summary: {实际gate结果}}`，而 `_run_developer_gates()` 直接迭代顶层 key → gate_results 全是 wrapper key 而非真实 gate 名 → production 路径所有 gate 结果丢失。修复：统一提取 `raw.get("gate_summary", raw)` — 扁平 dict（测试 stub）无此 key 则回退自身。D33 | 2026-07-17 | ✅ |
+| **61** | **Phase 15 DebugTracer — dev-loop 调度轨迹诊断** | `ae dev-loop --init --debug` 将 per-tick 快照（tick-{N}.json）、故障事件（errors.jsonl）、最终摘要（trace.json）写入目标项目 `_scratch/debug/`。`DebugTracer.disabled()` 零开销 no-op 工厂（`if self._dir is None: return`）。`AE_DEBUG=1` 环境变量等价激活。集成点：`tick_dict()` 记录快照 + terminal verdict finalize、`_tick_process_result()` 记录 ErrorResponse/guardrail 故障、`_validate_result_dict()` 记录格式错误。EngineState #38-39 持久化 debug 开关跨 tick。D34 | 2026-07-17 | ✅ |
 
 ## 当前状态
 
-**阶段：** v5.6 里程碑收官 — Phase 14 gate_results 结构错配修复完成。Step 3 AgentDriver 基准 10/10 GOAL_ACHIEVED。双驱动保真度等价验证完成。Plugin 安装标准化。Phase 1-14 = 127/129（1 ⊘ 项目侧）。
+**阶段：** v5.6 里程碑 — Phase 15 DebugTracer 实现完成。Phase 1-15 = 129/130（1 ⊘ 项目侧）。
+
+**最近动作 (2026-07-17 Phase 15 DebugTracer 实现完成)：**
+- **DebugTracer 完整实现（TDD）**：`loop/debug_tracer.py`（101 行）+ `tests/test_debug_tracer.py`（9 tests）。三输出文件：tick-{N:04d}.json（per-tick 快照）、errors.jsonl（故障事件追加）、trace.json（最终摘要含 stage_sequence/error_counts/verdict）。`disabled()` 工厂返回零开销 no-op 实例（`if self._dir is None: return`）。`AE_DEBUG=1` 环境变量或 `--debug` CLI flag 激活。
+- **TickOrchestrator 集成**：5 个 hook 点——`tick_dict()` 记录快照 + terminal verdict finalize、`_tick_process_result()` 记录 ErrorResponse/guardrail 故障、`_validate_result_dict()` 记录格式错误。`init()` 根据 debug flag 创建 DebugTracer、`restore()` 从持久化 state 重建。EngineState #38（debug_enabled）+ #39（debug_dir）跨 tick 持久化。
+- **CLI 接线**：`ae dev-loop --init --debug [--debug-dir <path>]` + `AE_DEBUG=1` 环境变量。`_run_tick_init`/`_run_tick_step`/`_run_standalone` 全路径支持。默认输出目录 `<project_root>/_scratch/debug/`。
+- **全量测试**：238 passed（engine_state + batch_state + stage_router + tick_orchestrator + debug_tracer）零回归。BEACON 决策 #61。
 
 **最近动作 (2026-07-17 Phase 14 gate_results 结构错配修复完成)：**
 - **gate_results 结构错配修复（TDD）**：`_run_developer_gates()` 调用 `run_gates()` 但 `run_gates()` 返回嵌套结构 `{project_root, gate_names, passed, failed, skipped, gate_summary: {实际gate结果}}`，直接迭代顶层 key 导致 production 路径所有 gate 结果丢失。修复：统一提取 `raw.get("gate_summary", raw)`，扁平 dict（测试 stub）回退自身。新增 test_extracts_gate_summary_from_nested_run_gates_output。全量 251 passed 零回归。BEACON 决策 #60。

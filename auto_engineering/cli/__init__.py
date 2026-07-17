@@ -117,6 +117,10 @@ def main():
 @click.option("--project-root", type=click.Path(exists=True), help="项目根目录 (默认 cwd)")
 @click.option("--standalone", "standalone_flag", is_flag=True,
               help="Standalone 模式 (Driver B): 进程内 AgentRuntime 自带 key 调 LLM")
+@click.option("--debug", "debug_flag", is_flag=True,
+              help="启用调试模式: 调度轨迹/故障信息写入 _scratch/debug/")
+@click.option("--debug-dir", "debug_dir_opt", type=click.Path(),
+              help="调试输出目录 (默认 <project_root>/_scratch/debug/)")
 def dev_loop(
     requirement: str | None,
     init_flag: bool,
@@ -131,6 +135,8 @@ def dev_loop(
     llm_provider: str,
     project_root: str,
     standalone_flag: bool = False,
+    debug_flag: bool = False,
+    debug_dir_opt: str | None = None,
 ):
     """单需求开发循环.
 
@@ -148,6 +154,10 @@ def dev_loop(
     """
     root = Path(project_root).resolve() if project_root else Path.cwd()
 
+    # AE_DEBUG=1 环境变量也可激活 debug 模式
+    import os as _os
+    _debug = debug_flag or _os.environ.get("AE_DEBUG", "").strip() == "1"
+
     # ── v5.6 tick 模式分派 (先于 LLM preflight — Python 不需 API key) ──
     tick_modes = [init_flag, tick_flag, status_flag, bool(resume_id)]
     if sum(bool(m) for m in tick_modes) > 1:
@@ -162,13 +172,15 @@ def dev_loop(
         if not requirement:
             click.echo("错误: --init 需要 requirement 参数", err=True)
             raise SystemExit(1)
-        _run_tick_init(requirement, design_doc, root, max_rounds)
+        _run_tick_init(requirement, design_doc, root, max_rounds, debug=_debug,
+                       debug_dir=debug_dir_opt)
         return
     if tick_flag:
         if not result_file:
             click.echo("错误: --tick 必须带 --result <file>", err=True)
             raise SystemExit(1)
-        _run_tick_step(Path(result_file), root)
+        _run_tick_step(Path(result_file), root, debug=_debug,
+                       debug_dir=debug_dir_opt)
         return
     if status_flag:
         _run_tick_status(root)
@@ -182,7 +194,8 @@ def dev_loop(
         if not requirement:
             click.echo("错误: --standalone 需要 requirement 参数", err=True)
             raise SystemExit(1)
-        _run_standalone(requirement, design_doc, root, max_rounds, max_tokens, llm_provider, resume_id)
+        _run_standalone(requirement, design_doc, root, max_rounds, max_tokens,
+                        llm_provider, resume_id, debug=_debug, debug_dir=debug_dir_opt)
         return
 
     # ── v5.5 legacy 模式 (需 requirement + LLM) ──

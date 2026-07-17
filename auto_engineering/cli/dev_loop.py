@@ -335,7 +335,8 @@ def _checkpoint_db_path(root: Path) -> Path:
 
 
 def _run_tick_init(
-    requirement: str, design_doc_path: str | None, root: Path, max_rounds: int
+    requirement: str, design_doc_path: str | None, root: Path, max_rounds: int,
+    debug: bool = False, debug_dir: str | None = None,
 ) -> None:
     """ae dev-loop --init: 初始化 tick loop, 输出第一个 action JSON (stdout 契约)."""
     import json
@@ -347,7 +348,8 @@ def _run_tick_init(
 
     store: SQLiteCheckpointStore[EngineState] = SQLiteCheckpointStore(_checkpoint_db_path(root))
     try:
-        orch = TickOrchestrator(root, checkpoint_store=store)
+        orch = TickOrchestrator(root, checkpoint_store=store,
+                                debug=debug, debug_dir=debug_dir)
         action = orch.init(
             requirement, design_doc_path=design_doc_path, max_rounds=max_rounds)
         click.echo(json.dumps(action, ensure_ascii=False))
@@ -355,7 +357,8 @@ def _run_tick_init(
         store.close()
 
 
-def _run_tick_step(result_file: Path, root: Path) -> None:
+def _run_tick_step(result_file: Path, root: Path,
+                   debug: bool = False, debug_dir: str | None = None) -> None:
     """ae dev-loop --tick --result <file>: restore → tick → 下一 action JSON."""
     import json
 
@@ -366,7 +369,7 @@ def _run_tick_step(result_file: Path, root: Path) -> None:
 
     store: SQLiteCheckpointStore[EngineState] = SQLiteCheckpointStore(_checkpoint_db_path(root))
     try:
-        orch = TickOrchestrator.restore(root, store)
+        orch = TickOrchestrator.restore(root, store, debug=debug, debug_dir=debug_dir)
         action = orch.tick(result_file)
         click.echo(json.dumps(action, ensure_ascii=False))
     finally:
@@ -436,6 +439,8 @@ def _run_standalone(
     max_tokens: int,
     llm_provider: str,
     resume_id: str | None,
+    debug: bool = False,
+    debug_dir: str | None = None,
 ) -> None:
     """Standalone 模式 (Driver B): 进程内 StandaloneDriver 调 LLM.
 
@@ -461,7 +466,7 @@ def _run_standalone(
     )
     from auto_engineering.tools.run_tests_tool import RunTestsTool
 
-    orch = TickOrchestrator(project_root)
+    orch = TickOrchestrator(project_root, debug=debug, debug_dir=debug_dir)
     runtime = AgentRuntime()
     prompts = default_registry()
 

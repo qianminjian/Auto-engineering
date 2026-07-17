@@ -131,6 +131,8 @@ _WRITE_OWNERS: dict[str, frozenset[str]] = {
     "design_doc_path":          frozenset({"orchestrator"}),
     "refine_request_json":      frozenset({"orchestrator"}),
     "plan_refine_by_source":    frozenset({"orchestrator"}),
+    "debug_enabled":           frozenset({"orchestrator"}),
+    "debug_dir":               frozenset({"orchestrator"}),
 }
 
 # 合法 verdict 值
@@ -226,6 +228,8 @@ class EngineState:
     refine_request_json: str | None = None                        # #35 plan_refine 输入 (RefineRequest)
     plan_refine_by_source: dict[str, int] = field(default_factory=dict)  # #36 分源 refine 计数 (DS-8)
     prompt_registry_hash: str = ""  # #37 B12.5 版本锁 (init 盖, resume 校验)
+    debug_enabled: bool = False  # #38 --debug 开关 (AE_DEBUG=1 或 --debug flag)
+    debug_dir: str | None = None  # #39 debug 输出目录 (默认 <project_root>/_scratch/debug/)
 
     # v5.5 P1-5: 写入审计日志 (repr=False 避免污染输出, 不参与序列化)
     _write_log: list[WriteRecord] = field(default_factory=list, repr=False, init=False)

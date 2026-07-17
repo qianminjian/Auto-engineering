@@ -29,6 +29,7 @@ from auto_engineering.engine.batch_state import BatchState
 from auto_engineering.engine.design_doc import DesignDoc, Supplement
 from auto_engineering.engine.progress_tree import ProgressTree
 from auto_engineering.engine.state import EngineState
+from auto_engineering.loop.debug_tracer import DebugTracer
 from auto_engineering.engine.verification_layers import (
     VerificationLayers,
     determine_verification_layers,
@@ -93,11 +94,15 @@ class TickOrchestrator:
         gate_runner: GateRunner | None = None,
         guardrail: GuardrailChain | None = None,
         checkpoint_store: SQLiteCheckpointStore | None = None,
+        debug: bool = False,
+        debug_dir: str | None = None,
     ) -> None:
         self.project_root = project_root or Path.cwd()
         self._gate_runner = gate_runner
         self._guardrail = guardrail
         self._checkpoint_store = checkpoint_store
+        self._debug_enabled = debug
+        self._debug_dir = debug_dir
 
         self._state: EngineState | None = None
         self._router: StageRouter | None = None
@@ -116,6 +121,9 @@ class TickOrchestrator:
         # DS-10 延迟打点累加器 (每 tick 起始清零, tick() 内累加子进程墙钟)
         self._t_gate_ms: float = 0.0
         self._t_guard_sub_ms: float = 0.0
+        # DebugTracer (可选, --debug 或 AE_DEBUG=1 时激活)
+        self._debug_tracer: DebugTracer | None = None
+        self._last_guardrail: dict | None = None
 
     # ── 公共入口 ──
 
@@ -141,6 +149,15 @@ class TickOrchestrator:
         if design_doc_path:
             # 持久化路径 — 跨进程 restore 据此重 parse 设计文档 (T9a)
             self._state.design_doc_path = design_doc_path
+
+        # DebugTracer 激活 (--debug 或 AE_DEBUG=1)
+        if self._debug_enabled:
+            debug_path = Path(self._debug_dir) if self._debug_dir else (
+                self.project_root / "_scratch" / "debug")
+            self._state.debug_enabled = True
+            self._state.debug_dir = str(debug_path)
+            self._debug_tracer = DebugTracer(debug_path)
+
         self._router = StageRouter()
         self._judge = ConvergenceJudge(ConvergenceConfig(max_iterations=max_rounds))
         self._gates = self._load_default_gates()
@@ -169,6 +186,8 @@ class TickOrchestrator:
         gate_runner: GateRunner | None = None,
         guardrail: GuardrailChain | None = None,
         max_rounds: int = 5,
+        debug: bool = False,
+        debug_dir: str | None = None,
     ) -> TickOrchestrator:
         """跨进程恢复 (§A.1: 每 tick 独立进程, 从 SQLite 重建全部 in-memory 状态).
 
@@ -186,6 +205,8 @@ class TickOrchestrator:
             gate_runner=gate_runner,
             guardrail=guardrail,
             checkpoint_store=checkpoint_store,
+            debug=debug,
+            debug_dir=debug_dir,
         )
 
         ck = (checkpoint_store.load(checkpoint_id) if checkpoint_id
@@ -235,6 +256,10 @@ class TickOrchestrator:
             self._verification_layers = determine_verification_layers(
                 self._design_doc, batch_plan)
 
+        # DebugTracer: 从持久化状态重建 (跨进程恢复)
+        if state.debug_enabled and state.debug_dir:
+            self._debug_tracer = DebugTracer(Path(state.debug_dir))
+
         # B12.5 版本锁: 运行中 prompt 文件被改 → hash 不符 → 警告 (非致命, §A.1 stderr)
         stored_hash = state.prompt_registry_hash
         if stored_hash:
@@ -266,8 +291,39 @@ class TickOrchestrator:
         self._t_gate_ms = 0.0
         self._t_guard_sub_ms = 0.0
         tick_no = self._state.tick if self._state else 0
+        stage_in = self._state.current_stage if self._state else "?"
         action = self._tick_body_dict(result)
         self._record_tick_latency(t_start, tick_no)
+
+        # DebugTracer: 记录 per-tick 快照
+        if self._debug_tracer is not None:
+            t_total_ms = (time.perf_counter() - t_start) * 1000
+            self._debug_tracer.record_tick(
+                tick_num=tick_no,
+                stage_in=stage_in,
+                action=action,
+                state_snapshot=self._state.to_dict() if self._state else {},
+                guardrail_results=self._last_guardrail or {},
+                gate_results=self._state.gate_results if self._state else {},
+                timing_ms={
+                    "t_total": round(t_total_ms, 2),
+                    "t_gate": round(self._t_gate_ms, 2),
+                    "t_guard_sub": round(self._t_guard_sub_ms, 2),
+                    "t_orchestration": round(
+                        t_total_ms - self._t_gate_ms - self._t_guard_sub_ms, 2),
+                },
+            )
+            # 检查 terminal verdict → finalize
+            action_type = action.get("action", "")
+            verdict = action.get("verdict", "")
+            if action_type == "done" or verdict in (
+                "GOAL_ACHIEVED", "HARD_LIMIT", "REFINE_LIMIT", "STAGNANT",
+            ):
+                self._debug_tracer.finalize(
+                    verdict=verdict or "UNKNOWN",
+                    total_ticks=tick_no + 1,
+                )
+
         return action
 
     def _tick_body_dict(self, result: dict) -> dict:
@@ -278,6 +334,12 @@ class TickOrchestrator:
     def _tick_process_result(self, result: dict | ErrorResponse) -> dict:
         """tick 公共处理逻辑: Guardrail → Gate → 路由 → action."""
         if isinstance(result, ErrorResponse):
+            if self._debug_tracer is not None:
+                self._debug_tracer.record_error(
+                    tick=self._state.tick,
+                    category=result.error_code,
+                    detail={"message": result.message},
+                )
             return result.to_dict()
 
         self._apply_result_to_state(result)
@@ -292,6 +354,13 @@ class TickOrchestrator:
                                    self._state, self.project_root)
         self._t_guard_sub_ms += (time.perf_counter() - t_g) * 1000
 
+        # 存储供 DebugTracer 使用
+        self._last_guardrail = {
+            "action": gr.action,
+            "message": gr.message,
+            "guardrail_name": getattr(gr, "guardrail_name", ""),
+        }
+
         if gr.action != "pass":
             # G8 FreshGate: 代码在 Gate 后又变更 → 陈旧证据 → 强制重跑 Gate
             # (S-4 rerun_gates 语义). 适用 developer + critic 两阶段 (§B3.2).
@@ -301,6 +370,16 @@ class TickOrchestrator:
                 if self._state.current_stage != "developer":
                     self._run_developer_gates()
             else:
+                if self._debug_tracer is not None:
+                    self._debug_tracer.record_error(
+                        tick=self._state.tick,
+                        category=f"GUARDRAIL_{gr.action.upper()}",
+                        detail={
+                            "guardrail": getattr(gr, "guardrail_name", ""),
+                            "message": gr.message,
+                            "stage": self._state.current_stage,
+                        },
+                    )
                 return self._handle_guardrail_result(gr)
 
         if self._state.current_stage == "developer":

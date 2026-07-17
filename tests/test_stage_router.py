@@ -380,12 +380,12 @@ class TestNewEngineStateFields:
         assert state.batch_plan == []
         assert isinstance(state.batch_plan, list)
 
-    def test_field_count_is_39(self) -> None:
-        """字段总数 = 40 (v5.6 T1: +17 #20-36; +1 #37 B12.5 版本锁)."""
+    def test_field_count_is_41(self) -> None:
+        """字段总数 = 42 (v5.6 T1: +17 #20-36; +1 #37; +2 #38-39 debug)."""
         state = EngineState()
         fields = list(state.__dataclass_fields__.keys())
-        assert len(fields) == 40, (
-            f"Expected 40 fields (v5.6 T1 + #37), got {len(fields)}: {fields}"
+        assert len(fields) == 42, (
+            f"Expected 42 fields (v5.6 T1 + #37 + #38-39), got {len(fields)}: {fields}"
         )
 
 

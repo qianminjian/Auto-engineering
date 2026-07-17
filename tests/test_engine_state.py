@@ -34,6 +34,8 @@ _EXPECTED_V56_FIELDS = {
     "plan_refine_by_source",
     # #37 B12.5 版本锁
     "prompt_registry_hash",
+    # #38-39 DebugTracer 开关
+    "debug_enabled", "debug_dir",
     # 内部写入审计日志
     "_write_log",
 }
@@ -143,8 +145,8 @@ class TestEngineStateFieldDefaults:
     +total_majors / +thread_id). 验证所有字段默认值与类型契约.
     """
 
-    def test_all_39_fields_exist(self) -> None:
-        """EngineState 暴露 40 个字段 (v5.6: 22 + 17 #20-36 + 1 #37 B12.5)."""
+    def test_all_41_fields_exist(self) -> None:
+        """EngineState 暴露 42 个字段 (v5.6: 22 + 17 #20-36 + 1 #37 + 2 #38-39)."""
         from dataclasses import fields
 
         EngineState()
@@ -296,12 +298,12 @@ class TestEngineStateBoundary:
         assert state.plan == "ok"
         assert not hasattr(state, "nonexistent")
 
-    def test_to_dict_contains_all_38_fields(self) -> None:
-        """to_dict 输出含全部 39 字段 (v5.6: 40 - _write_log)."""
+    def test_to_dict_contains_all_40_fields(self) -> None:
+        """to_dict 输出含全部 41 字段 (v5.6: 42 - _write_log)."""
         state = EngineState()
         d = state.to_dict()
-        assert len(d) == 39, (
-            f"to_dict 应含 39 字段, 实际 {len(d)}: "
+        assert len(d) == 41, (
+            f"to_dict 应含 41 字段, 实际 {len(d)}: "
             f"{sorted(d.keys())}"
         )
         assert "suggested_fix" in d, "to_dict 必须包含 suggested_fix (Self-Refine 深化)"
@@ -417,8 +419,8 @@ class TestV55EngineStateFields:
         state.audit_findings = None
         assert state.audit_findings is None
 
-    def test_field_count_is_39(self) -> None:
-        """v5.6: 字段总数 22 → 40 (#20-36 共 17 + #37 B12.5 版本锁)."""
+    def test_field_count_is_41(self) -> None:
+        """v5.6: 字段总数 22 → 42 (#20-36 共 17 + #37 + #38-39 debug)."""
         from dataclasses import fields
 
         EngineState()
