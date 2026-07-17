@@ -18,7 +18,13 @@
     "claude-code-plugin"
   ],
   "commands": "./commands/",
-  "hooks": "./hooks/",
+  "hooks": {
+    "SessionStart": ["hooks/session-start.sh"],
+    "PostToolUse": ["hooks/post-edit.sh"],
+    "PreToolUse": ["hooks/pre-tool.sh"],
+    "Stop": ["hooks/stop.sh"],
+    "onPR": ["hooks/on-pr.sh"]
+  },
   "skills": "./skills/",
   "metadata": {
     "min_claude_code_version": "1.0.0",
