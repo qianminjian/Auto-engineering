@@ -23,11 +23,11 @@ from __future__ import annotations
 
 import json
 import logging
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 # 已警告过的零 batch 组件集合 (防重复警告, T39 B9/D2)
 _warned_zero_batch: set[str] = set()
-from dataclasses import dataclass
-from typing import TYPE_CHECKING
 
 from auto_engineering.engine.design_doc import Component, DesignDoc, Plate
 

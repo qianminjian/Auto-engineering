@@ -1425,61 +1425,69 @@ class TestVoiceCloneRegression:
         assert "dict" in result.message.lower()
 
     def test_redguard_green_touches_test_files(self, tmp_path: Path) -> None:
-        """B8: GREEN commit 修改测试文件 → retry + 提示 GREEN 不应改测试."""
-        repo, _test_c, impl_c = _make_tdd_repo(tmp_path)
+        """B8: test+impl 在同一 commit → 检测到 GREEN 修改测试文件."""
+        # same_commit=True: test+impl 同一 commit, 无独立 RED commit
+        repo, _sha, impl_c = _make_tdd_repo(tmp_path, same_commit=True)
         task = _StubTask("t1", ["tests/test_x.py", "impl.py"])
         state = _redguard_state(
             impl_commit=impl_c, batch_state=_StubBatchState([task]),
             red_evidence=[],
         )
         r = REDGuard().check("developer", state, project_root=repo)
-        # clean TDD repo: RED then GREEN → should pass (RED is ancestor of GREEN)
-        # This test verifies the detection path exists, not that it triggers here
-        assert r.action in ("pass", "retry")
+        assert r.action == "retry", (
+            f"expected retry (GREEN 不应改测试), got {r.action}: {r.message}"
+        )
+        assert "GREEN" in r.message, r.message
 
     def test_redguard_format_error_is_clear(self, tmp_path: Path) -> None:
         """B11: red_evidence 格式错误 → 明确提示期望格式."""
-        repo, test_c, impl_c = _make_tdd_repo(tmp_path)
+        # clean TDD repo: git fallback 找到 RED ancestor → 进入 format 检查
+        # red_evidence 是 list[str] (非 list[dict]) → _find_evidence 返回 None
+        # → 进入 format error 路径
+        repo, _test_c, impl_c = _make_tdd_repo(tmp_path)
         task = _StubTask("t1", ["tests/test_x.py", "impl.py"])
         state = _redguard_state(
             impl_commit=impl_c, batch_state=_StubBatchState([task]),
             red_evidence=["hash1", "hash2"],  # wrong format: list[str]
         )
         r = REDGuard().check("developer", state, project_root=repo)
-        if r.action == "retry":
-            msg = r.message.lower()
-            assert "red_evidence" in msg
-            # Message should mention expected format elements
-            assert "task_id" in r.message or "red_commit" in r.message
+        assert r.action == "retry", (
+            f"expected retry for malformed red_evidence, got {r.action}: {r.message}"
+        )
+        assert "red_evidence" in r.message.lower()
+        assert "task_id" in r.message or "red_commit" in r.message
 
     def test_zero_batch_warning_dedup(self) -> None:
         """B9/D2: 零 batch 组件警告每个组件只输出一次."""
         from auto_engineering.engine.batch_state import _warned_zero_batch
-        initial_size = len(_warned_zero_batch)
+        saved = set(_warned_zero_batch)
+        try:
+            design_items = [DesignItem(item_id="D1", design_section="B2", title="item1",
+                                        key_claims=["claim1"], source_marker="manual")]
+            comps = [
+                Component(name="comp_a", design_section="B2",
+                          design_items=design_items, source_marker="manual"),
+                Component(name="comp_b", design_section="B3",
+                          design_items=design_items, source_marker="manual"),
+            ]
+            plate = Plate(name="plate1", design_section="B",
+                           components=comps, cross_component_contracts_raw=[])
+            doc = DesignDoc(path=None, plates=[plate], supplements={})
 
-        design_items = [DesignItem(item_id="D1", design_section="B2", title="item1",
-                                    key_claims=["claim1"], source_marker="manual")]
-        comps = [
-            Component(name="comp_a", design_section="B2",
-                      design_items=design_items, source_marker="manual"),
-            Component(name="comp_b", design_section="B3",
-                      design_items=design_items, source_marker="manual"),
-        ]
-        plate = Plate(name="plate1", design_section="B",
-                       components=comps, cross_component_contracts_raw=[])
-        doc = DesignDoc(path=None, plates=[plate], supplements={})
-
-        batch_plan = [{
-            "batch_id": "B1", "design_section": "B2", "component": "comp_a",
-            "tasks": [{"id": "T1", "description": "task1",
-                       "file_targets": ["a.py"], "module_ref": "§B2"}],
-        }]
-        # First call: should warn about comp_b (not in batch_plan)
-        BatchState.from_design_doc(doc, batch_plan)
-        # Second call: should NOT warn again for comp_b
-        BatchState.from_design_doc(doc, batch_plan)
-        # _warned_zero_batch should contain the warned component
-        assert "comp_b" in _warned_zero_batch
+            batch_plan = [{
+                "batch_id": "B1", "design_section": "B2", "component": "comp_a",
+                "tasks": [{"id": "T1", "description": "task1",
+                           "file_targets": ["a.py"], "module_ref": "§B2"}],
+            }]
+            # First call: should warn about comp_b (not in batch_plan)
+            BatchState.from_design_doc(doc, batch_plan)
+            # Second call: should NOT warn again for comp_b
+            BatchState.from_design_doc(doc, batch_plan)
+            # _warned_zero_batch should contain the warned component
+            assert "comp_b" in _warned_zero_batch
+        finally:
+            _warned_zero_batch.clear()
+            _warned_zero_batch.update(saved)
 
     def test_progress_tree_verifier_reset_on_resync(self) -> None:
         """D1: plan_refine 后 progress_tree 组件 total_tasks 变化 → verifier_status 重置."""
