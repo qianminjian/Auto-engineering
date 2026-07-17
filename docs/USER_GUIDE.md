@@ -23,21 +23,36 @@ Auto-Engineering 是 **Claude Code Plugin 形态的 Loop Engineering 脚手架**
 ## 安装（用户级一次性, 单条命令）
 
 ```bash
-bash install.sh    # 1 条命令完成全部安装
+bash install.sh    # 1 条命令完成全部安装 (auto-detect 平台)
 ```
 
+支持三平台自动检测安装：
+- **Claude Code**: 安装到 `~/.claude/plugins/auto-engineering/`
+- **Codex**: 安装到 `~/.codex/plugins/auto-engineering/`
+- **CodeBuddy**: symlink 到 Claude Code 安装目录
+
+也可以指定平台：`bash install.sh --claude-code` / `--codex` / `--codebuddy` / `--all`。
+
 `install.sh` 做 3 件事:
-1. `git clone` 源码到 `~/.claude/plugins/auto-engineering/`
+1. `git clone` 源码到平台 plugin 目录
 2. `uv tool install .` 全局装 Engine (`~/.local/bin/ae`)
-3. 注册 plugin 到 `~/.claude/plugins/installed_plugins.json` (Claude Code 发现机制)
+3. Panel 通过 `installed_plugins.json` 识别 plugin
 
 Claude Code 通过 `installed_plugins.json` 识别 plugin (不是目录扫描).
 
-安装完成后**重启 Claude Code**, `/dev-loop` 在所有项目可用.
+安装完成后**重启对应平台**即可使用。
+
+### 命令语法差异
+
+| 平台 | 命令格式 | 备注 |
+|------|---------|------|
+| Claude Code | `/ae:dev-loop "需求"` | slash command 标准语法 |
+| Codex | `//ae:dev-loop "需求"` | 双斜杠 skill 调用 |
+| CodeBuddy | `/ae:dev-loop "需求"` | 与 Claude Code 相同 (symlink 共享 commands/) |
 
 ### 卸载
 ```bash
-bash uninstall.sh
+bash install.sh --uninstall
 ```
 
 ### 升级

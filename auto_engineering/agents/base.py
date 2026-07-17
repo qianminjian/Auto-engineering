@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING
 
 from auto_engineering.agents.authz import authz_check
 from auto_engineering.errors import AEError, ErrorCode
-from auto_engineering.llm.anthropic_provider import AnthropicProvider
+from auto_engineering.providers.base import LLMProvider
 from auto_engineering.runtime.context import TaskContext
 from auto_engineering.runtime.task import Task, TaskResult
 from auto_engineering.tools.base import BaseTool
@@ -84,7 +84,7 @@ class BaseAgent:
         max_tokens      — 单次响应最大 token
     """
 
-    llm: AnthropicProvider
+    llm: LLMProvider
     system_prompt: str
     role: str = "BaseAgent"  # P1-A: 工厂返回时覆盖 (architect/developer/critic)
     tools: list[BaseTool] = field(default_factory=list)

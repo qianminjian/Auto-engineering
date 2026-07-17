@@ -16,6 +16,7 @@ Exit codes:
 
 from __future__ import annotations
 
+import os
 import shutil
 import sqlite3
 import sys
@@ -112,6 +113,16 @@ def _check_api_key() -> tuple[bool, str]:
     if has_llm_credentials():
         return True, "LLM 凭据已设置 (ANTHROPIC_API_KEY 或 ANTHROPIC_AUTH_TOKEN)"
     return False, "LLM 凭据未设置 — 请 export ANTHROPIC_API_KEY=sk-... 或在 .env 中设置"
+
+
+def _check_openai_api_key() -> tuple[bool, str]:
+    """检查 OpenAI API key (v8.0 多平台 Provider 抽象需要)."""
+    key = os.environ.get("OPENAI_API_KEY", "")
+    if key and key.startswith("sk-"):
+        return True, "OPENAI_API_KEY 已设置 (OpenAI Provider 可用)"
+    if key:
+        return False, "OPENAI_API_KEY 格式异常 (应以 sk- 开头)"
+    return False, "OPENAI_API_KEY 未设置 — OpenAI Provider 不可用 (Anthropic 仍可用)"
 
 
 def _check_ae_state(project_root: Path) -> tuple[bool, str]:
@@ -220,6 +231,7 @@ def run_doctor_checks(project_root: Path) -> tuple[int, list[tuple[bool, str]]]:
     results.append(_check_sqlite3())
     results.append(_check_plugin_mode())
     results.append(_check_api_key())
+    results.append(_check_openai_api_key())
     results.append(_check_ae_state(project_root))
     results.append(_check_init_manifest(project_root))
     results.append(_check_pr_backend())

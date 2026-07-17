@@ -360,7 +360,7 @@ class TestAuditCommandInternalized:
     """T28/B14: commands/audit.md 不得依赖外部通用 /audit 运行时 (自含 AuditGate)."""
 
     def _audit_md(self) -> str:
-        p = REPO_ROOT / ".claude-plugin" / "commands" / "audit.md"
+        p = REPO_ROOT / "commands" / "audit.md"
         assert p.exists(), "commands/audit.md 缺失"
         return p.read_text(encoding="utf-8")
 

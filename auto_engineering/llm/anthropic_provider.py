@@ -135,6 +135,35 @@ class AnthropicProvider:
         if hasattr(self._client, "close"):
             self._client.close()
 
+    def _to_llm_response(self, message: anthropic.types.Message) -> Any:
+        """将原始 SDK Message 转换为 providers.base.LLMResponse (V8-3 适配).
+
+        提取 content blocks → ToolUseBlock 列表 + 纯文本拼接.
+        """
+        from auto_engineering.providers.base import LLMResponse as UnifiedResponse
+        from auto_engineering.providers.base import ToolUseBlock
+
+        content_text = ""
+        tool_blocks: list[ToolUseBlock] = []
+        for block in message.content:
+            if block.type == "text":
+                content_text += block.text
+            elif block.type == "tool_use":
+                tool_blocks.append(ToolUseBlock(
+                    id=block.id, name=block.name, input=block.input or {},
+                ))
+
+        return UnifiedResponse(
+            content=content_text,
+            model=message.model,
+            stop_reason=message.stop_reason or "end_turn",
+            tool_use_blocks=tool_blocks,
+            usage={
+                "input_tokens": message.usage.input_tokens,
+                "output_tokens": message.usage.output_tokens,
+            } if message.usage else {},
+        )
+
     def __enter__(self) -> AnthropicProvider:
         return self
 

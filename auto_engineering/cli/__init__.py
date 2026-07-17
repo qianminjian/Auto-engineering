@@ -24,6 +24,7 @@ from auto_engineering.cli.agent import register_agent_command
 from auto_engineering.cli.checkpoint import register_checkpoint_commands
 from auto_engineering.cli.dev_loop import (
     OrchestratorRunResult,
+    _run_standalone,
     _run_tick_init,
     _run_tick_resume,
     _run_tick_status,
@@ -114,6 +115,8 @@ def main():
     help="LLM 提供方 (仅 anthropic 已实装)",
 )
 @click.option("--project-root", type=click.Path(exists=True), help="项目根目录 (默认 cwd)")
+@click.option("--standalone", "standalone_flag", is_flag=True,
+              help="Standalone 模式 (Driver B): 进程内 AgentRuntime 自带 key 调 LLM")
 def dev_loop(
     requirement: str | None,
     init_flag: bool,
@@ -127,6 +130,7 @@ def dev_loop(
     log_format: str,
     llm_provider: str,
     project_root: str,
+    standalone_flag: bool = False,
 ):
     """单需求开发循环.
 
@@ -135,6 +139,9 @@ def dev_loop(
         ae dev-loop --tick --result <file>               处理一个 tick, 输出下一 action
         ae dev-loop --status                             查询当前 tick 状态
         ae dev-loop --resume <id>                         从 checkpoint 恢复
+
+    v7.6 standalone 模式 (Driver B, 进程内 AgentRuntime 自带 key 调 LLM):
+        ae dev-loop --standalone "req"                    独立运行, 不依赖 Claude Code Agent
 
     v5.5 legacy 模式 (连续 while, 调 LLM, BEACON #53 保留共存):
         ae dev-loop "req"                                 单需求连续调试
@@ -145,6 +152,11 @@ def dev_loop(
     tick_modes = [init_flag, tick_flag, status_flag, bool(resume_id)]
     if sum(bool(m) for m in tick_modes) > 1:
         click.echo("错误: --init/--tick/--status/--resume 互斥, 仅可指定一个", err=True)
+        raise SystemExit(1)
+
+    # ── v7.6 standalone 模式互斥检查 ──
+    if standalone_flag and sum(bool(m) for m in tick_modes) > 0:
+        click.echo("错误: --standalone 与 --init/--tick/--status/--resume 互斥", err=True)
         raise SystemExit(1)
     if init_flag:
         if not requirement:
@@ -165,10 +177,18 @@ def dev_loop(
         _run_tick_resume(resume_id, root)
         return
 
+    # ── v7.6 standalone 模式 (Driver B) ──
+    if standalone_flag:
+        if not requirement:
+            click.echo("错误: --standalone 需要 requirement 参数", err=True)
+            raise SystemExit(1)
+        _run_standalone(requirement, design_doc, root, max_rounds, max_tokens, llm_provider, resume_id)
+        return
+
     # ── v5.5 legacy 模式 (需 requirement + LLM) ──
     if not requirement:
         click.echo(
-            "错误: requirement 参数必填 (或用 --init/--tick/--status/--resume)", err=True)
+            "错误: requirement 参数必填 (或用 --init/--tick/--status/--resume/--standalone)", err=True)
         raise SystemExit(1)
 
     if llm_provider != "anthropic":

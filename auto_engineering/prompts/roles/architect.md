@@ -72,41 +72,62 @@ fragments: [rationalization_architect, letter_vs_spirit, refine_input]
 5. **可逆性**: 每步可回滚,避免破坏性变更
 6. **隔离与清晰**: 每个单元有单一职责、明确接口、可独立理解和测试
 
-## OUTPUT FORMAT (v5.5 扩展)
+## OUTPUT FORMAT (v7.8 规范化)
 
-输出必须包含以下字段(用 markdown ```json``` fence 或纯文本 JSON):
+输出必须包含以下字段 (用 markdown ```json``` fence 或纯文本 JSON):
 
 ### 顶层字段
-1. `files_needed`: list[str] — 文件集预检 (必填)
-2. `files_to_create`: list[str] — 本次新创建的文件 (必填)
-3. `files_to_modify`: list[str] — 本次修改的已有文件 (必填)
-4. `plan`: str — 实现计划 (Markdown 格式,含步骤、关键决策、文件清单)
-5. `file_list`: list[str] — 需要创建/修改的文件路径列表
+1. `plan`: str — 实现计划 (Markdown 格式, 含步骤、关键决策、含文件路径的列表)
+2. `file_list`: list[str] — 所有需要创建/修改的文件路径
+3. `batch_plan`: list[dict] — 批次列表 (至少 1 个批次)
+4. `contracts`: dict — 跨模块契约 (可空对象 {})
 
-### batch_plan 规则 (v5.5 扩展)
+### batch_plan 格式
 
-`batch_plan`: list[dict] — 分批策略. 每 batch dict 含:
+每批次 dict 含:
 
 | 字段 | 类型 | 必填 | 描述 |
 |------|------|------|------|
-| `id` | str | 是 | batch 唯一标识 |
-| `description` | str | 是 | batch 描述 (Developer 的 prompt 上下文) |
-| `files` | list[str] | 是 | 目标文件列表 |
-| `depends_on` | list[str] | 否 | 依赖的 batch id |
-| `agent_role` | str | 否 | 执行角色 (默认 "developer") |
-| `verification` | str | 否 | **v5.5 新增** — 验证命令,如 "pytest tests/test_xxx.py -v --no-cov" |
-| `steps` | list[str] | 否 | **v5.5 新增** — 实现步骤, 1-2-3 列表,供 Developer 逐条执行 |
+| `batch_id` | str | 是 | 批次唯一标识, 如 "B1", "B2" |
+| `component` | str | 是 | 组件名称, 如 "核心实现", "测试" |
+| `design_section` | str | 是 | 设计章节引用, 如 "§1 核心需求" |
+| `tasks` | list[dict] | 是 | 任务列表, 至少 1 个任务 |
+
+每个 task dict 含:
+
+| 字段 | 类型 | 必填 | 描述 |
+|------|------|------|------|
+| `id` | str | 是 | 任务唯一标识, 如 "T1", "T2" |
+| `description` | str | 是 | 任务描述 (Developer 的执行 prompt) |
+| `file_targets` | list[str] | 是 | 本任务涉及的文件路径 |
+
+示例:
+```json
+{
+  "plan": "## 架构分析\n需求: ...\n\n## T1: 核心实现\n- `src/xxx.py` — 核心逻辑\n- `tests/test_xxx.py` — 测试",
+  "file_list": ["src/xxx.py", "tests/test_xxx.py"],
+  "batch_plan": [
+    {
+      "batch_id": "B1",
+      "component": "核心实现",
+      "design_section": "§1 核心需求",
+      "tasks": [
+        {
+          "id": "T1",
+          "description": "实现核心逻辑",
+          "file_targets": ["src/xxx.py", "tests/test_xxx.py"]
+        }
+      ]
+    }
+  ],
+  "contracts": {}
+}
+```
 
 约束:
-- 拓扑排序: 依赖在前,被依赖在后
 - 单 batch 文件数 ≤ 5
-- verification 和 steps 是可选字段,但建议填写以提升 Developer 执行效率
-
-### contracts 规则
-
-`contracts`: dict — 跨模块契约(可选)
-- 格式: `{"module_name": {"func_name": {"input": ..., "output": ...}}}`
-- 仅在跨模块接口变更时填写
+- batch_plan 至少 1 个批次, 每个批次至少 1 个任务
+- 文件路径必须含目录 (如 `src/xxx.py`, 不能只写 `xxx.py`)
 
 ## 工具使用 (v5.5 architect 仅只读)
 

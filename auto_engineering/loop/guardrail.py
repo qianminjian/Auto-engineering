@@ -251,12 +251,20 @@ class GitDiffExists(Guardrail):
 
         # 降级: HEAD~1 不存在 (新仓库), 用 --cached
         rc2, stdout2 = _run_git_diff(root, ["--cached"])
-        # 即使新仓库也可能 --cached 为空 → 视作 retry 让 developer 提交
         if rc2 == 0 and stdout2.strip():
             return GuardrailResult()  # pass via cached
+
+        # 降级: --cached 也为空, 但 HEAD 存在 → StandaloneDriver auto_commit 路径
+        # developer 已通过 _auto_commit() 提交, 检查 HEAD 是否包含文件变更
+        rc3, _ = _run_git(root, "rev-parse", "HEAD")
+        if rc3 == 0:
+            rc4, stdout4 = _run_git(root, "diff-tree", "--no-commit-id", "-r", "HEAD")
+            if rc4 == 0 and stdout4.strip():
+                return GuardrailResult()  # pass: HEAD commit 包含文件变更
+
         return GuardrailResult(
             action="retry",
-            message="新仓库且无 staged 变更,developer 需先 git add/commit",
+            message="新仓库且无变更 (staged/committed),developer 需先 git add/commit",
         )
 
 

@@ -6,19 +6,85 @@ v7.0 双驱动架构:
     产出 stage-result dict 回喂同一 tick 循环
 
 设计参考: design/v5.6-Design-Loop.md 附录 C §5.2 + V7-5.
+双驱动共享资产: 本文件及 agents/runtime/tools/round.py 标注见 §2.3.
 """
 
 from __future__ import annotations
 
 import logging
+import os
 import subprocess
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from auto_engineering.errors import AEError, ErrorCode
 from auto_engineering.runtime.task import Task
 
 _logger = logging.getLogger("ae.loop.standalone_driver")
+
+# ── V7-2: STAGE_TO_ROLE mapping ──
+# 10 个 stage → role (gap_review → None 表示无 LLM role, headless auto-Defer)
+
+STAGE_TO_ROLE: dict[str, str | None] = {
+    "gap_scan": "gap_scan",
+    "gap_review": None,
+    "research": "research",
+    "architect": "architect",
+    "developer": "developer",
+    "critic": "critic",
+    "component_verifier": "component_verifier",
+    "plate_deep_audit": "plate_deep_audit",
+    "system_verifier": "system_verifier",
+    "system_deep_audit": "system_deep_audit",
+}
+
+# ── V7-2: ROLE_MODEL mapping ──
+# role → 默认模型, 可通过 AE_MODEL_<ROLE> 环境变量覆盖
+
+ROLE_MODEL: dict[str, str] = {
+    "gap_scan": "claude-haiku-4-5-20251001",
+    "research": "claude-haiku-4-5-20251001",
+    "architect": "claude-sonnet-4-6",
+    "developer": "claude-sonnet-4-6",
+    "critic": "claude-sonnet-4-6",
+    "component_verifier": "claude-haiku-4-5-20251001",
+    "plate_deep_audit": "claude-sonnet-4-6",
+    "system_verifier": "claude-haiku-4-5-20251001",
+    "system_deep_audit": "claude-sonnet-4-6",
+}
+
+
+def _resolve_model(role: str) -> str:
+    """Resolve model for role, with AE_MODEL_<ROLE> env var override."""
+    env_key = f"AE_MODEL_{role.upper()}"
+    return os.environ.get(env_key, ROLE_MODEL.get(role, "claude-sonnet-4-6"))
+
+
+# ── V7-3: AuthProvider ──
+
+AuthProvider = Callable[[], str]
+
+
+def _resolve_auth_provider() -> AuthProvider:
+    """Resolve auth provider from environment.
+
+    Priority: ANTHROPIC_AUTH_TOKEN > ANTHROPIC_API_KEY.
+    Raises AEError if neither is set.
+    """
+    auth_token = os.environ.get("ANTHROPIC_AUTH_TOKEN")
+    if auth_token:
+        return lambda: auth_token
+
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if api_key:
+        return lambda: api_key
+
+    raise AEError(
+        ErrorCode.CONFIG_MISSING_API_KEY,
+        "No ANTHROPIC_AUTH_TOKEN or ANTHROPIC_API_KEY set",
+    )
 
 # action → role mapping (all known stages)
 _ACTION_ROLE_MAP: dict[str, str] = {
@@ -121,28 +187,60 @@ class StandaloneDriver:
 
         return asyncio.run(self.run_async(requirement))
 
-    async def run_async(self, requirement: str) -> RunSummary:
-        """run() 的 async 版本 (直接 await, 适合已有 event loop 场景)."""
-        try:
-            action = self._orch.init(
-                requirement,
-                design_doc_path=self._design_doc_path,
-                max_rounds=self.max_rounds,
-            )
-        except Exception:
-            _logger.exception("TickOrchestrator.init() 失败")
-            return RunSummary(
-                success=False, total_ticks=0, final_stage="",
-                error_message="init 失败: 详见日志",
-            )
+    async def resume(self, checkpoint_id: str) -> RunSummary:
+        """从 checkpoint 恢复并继续 dev-loop.
 
+        V7-4: 跨进程 resume — 从 SQLite checkpoint 重建 TickOrchestrator,
+        继续 tick 循环直到 done/error/max_rounds.
+
+        Args:
+            checkpoint_id: SQLite checkpoint ID (传给 TickOrchestrator.restore).
+
+        Returns:
+            RunSummary with success/failure + execution metadata.
+        """
+        from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
+
+        store = SQLiteCheckpointStore(self.project_root / ".ae-state" / "checkpoints.db")
+        restored = self._orch.restore(self.project_root, store, checkpoint_id=checkpoint_id)
+        self._orch = restored
+        return await self._run_loop(initial_action=None)
+
+    def close(self) -> None:
+        """释放 StandaloneDriver 资源 (AgentRuntime cleanup)."""
+        if hasattr(self._runtime, "close"):
+            self._runtime.close()
+
+    async def _run_loop(self, initial_action: dict | None) -> RunSummary:
+        """共享的主循环: 从 given action 开始 tick loop 直到终止.
+
+        Args:
+            initial_action: 起始 action (None = 用 self._orch 当前游标状态).
+        """
+        if initial_action is None:
+            # resume scenario: orchestrator 已从 checkpoint 恢复,
+            # 用当前游标位置继续
+            action = self._orch._state.to_dict() if self._orch._state else {}
+            if not action or action.get("action") == "done":
+                return RunSummary(
+                    success=True, total_ticks=0, final_stage="",
+                    verdict="GOAL_ACHIEVED",
+                )
+            # 触发 orchestrator 产生下一个 action
+            action = self._orch.tick_dict({})
+        else:
+            action = initial_action
+
+        return await self._run_loop_from_action(action)
+
+    async def _run_loop_from_action(self, action: dict) -> RunSummary:
+        """从给定的 action 开始 tick 循环."""
         tick_count = 0
         action_history: list[dict] = []
+
         _logger.info(
-            "[StandaloneDriver] 启动: requirement=%s, max_rounds=%d, "
-            "design_doc=%s",
-            requirement[:80], self.max_rounds,
-            self._design_doc_path or "无",
+            "[StandaloneDriver] 启动: max_rounds=%d, design_doc=%s",
+            self.max_rounds, self._design_doc_path or "无",
         )
 
         try:
@@ -162,18 +260,14 @@ class StandaloneDriver:
 
                 if action.get("action") == "done":
                     return RunSummary(
-                        success=True,
-                        total_ticks=tick_count,
-                        final_stage=stage,
+                        success=True, total_ticks=tick_count, final_stage=stage,
                         verdict=action.get("verdict", "GOAL_ACHIEVED"),
                         action_history=action_history,
                     )
 
                 if action.get("action") == "error":
                     return RunSummary(
-                        success=False,
-                        total_ticks=tick_count,
-                        final_stage=stage,
+                        success=False, total_ticks=tick_count, final_stage=stage,
                         error_message=action.get("message", "unknown error"),
                         action_history=action_history,
                     )
@@ -181,9 +275,7 @@ class StandaloneDriver:
                 action = await self._execute_action_safe(action, action_history)
                 if action is None:
                     return RunSummary(
-                        success=False,
-                        total_ticks=tick_count,
-                        final_stage=stage,
+                        success=False, total_ticks=tick_count, final_stage=stage,
                         error_message="execute_action 返回 None",
                         action_history=action_history,
                     )
@@ -191,22 +283,44 @@ class StandaloneDriver:
                 action = self._orch.tick_dict(action)
 
         except Exception:
-            _logger.exception("run_async 未捕获异常 (tick=%s)", tick_count)
+            _logger.exception("_run_loop_from_action 未捕获异常 (tick=%s)", tick_count)
             return RunSummary(
-                success=False,
-                total_ticks=tick_count,
+                success=False, total_ticks=tick_count,
                 final_stage=action.get("stage", ""),
                 error_message="run_async 异常: 详见日志",
                 action_history=action_history,
             )
 
         return RunSummary(
-            success=False,
-            total_ticks=tick_count,
+            success=False, total_ticks=tick_count,
             final_stage=action.get("stage", ""),
             error_message="max iterations reached",
             action_history=action_history,
         )
+
+    async def run_async(self, requirement: str) -> RunSummary:
+        """run() 的 async 版本 (直接 await, 适合已有 event loop 场景)."""
+        try:
+            action = self._orch.init(
+                requirement,
+                design_doc_path=self._design_doc_path,
+                max_rounds=self.max_rounds,
+            )
+        except Exception:
+            _logger.exception("TickOrchestrator.init() 失败")
+            return RunSummary(
+                success=False, total_ticks=0, final_stage="",
+                error_message="init 失败: 详见日志",
+            )
+
+        _logger.info(
+            "[StandaloneDriver] 启动: requirement=%s, max_rounds=%d, "
+            "design_doc=%s",
+            requirement[:80], self.max_rounds,
+            self._design_doc_path or "无",
+        )
+
+        return await self._run_loop_from_action(action)
 
     async def _execute_action_safe(
         self, action: dict, action_history: list[dict]
@@ -301,6 +415,22 @@ class StandaloneDriver:
             "Stage '%s' result 校验失败 (tick=%s): %s",
             role, action.get("tick", "?"), "; ".join(errors[:3]),
         )
+
+        # v7.8: architect markdown enrichment — 从 plan 文本提取文件路径
+        if role == "architect":
+            enriched = self._enrich_architect_result(result)
+            enriched_errors = validate_result_format(enriched, role)
+            if not enriched_errors:
+                _logger.info(
+                    "architect result enriched: file_list=%d batch_plan=%d",
+                    len(enriched.get("file_list", [])),
+                    len(enriched.get("batch_plan", [])),
+                )
+                return enriched
+            if enriched.get("file_list") or enriched.get("batch_plan"):
+                result = enriched
+                errors = enriched_errors
+
         # 当首次结果已有部分有效数据 (如 markdown fallback), 跳过重试避免数据丢失
         _meaningful_keys = (
             ("plan", "batch_plan", "file_list") if role == "architect"
@@ -532,6 +662,49 @@ class StandaloneDriver:
 
         return {"stage": "gap_review", "decisions": decisions}
 
+    # ── v7.8: architect result enrichment ──
+
+    @staticmethod
+    def _enrich_architect_result(result: dict) -> dict:
+        """从 markdown plan 文本提取 file_list 和 batch_plan (v7.8).
+
+        DeepSeek architect 经常产出 markdown plan 但 batch_plan/file_list 为空。
+        此方法从 plan 文本中重新提取文件路径, 构建最小 batch_plan。
+        """
+        plan_text = result.get("plan", "")
+        if not plan_text or len(plan_text) < 20:
+            return result
+
+        from auto_engineering.agents.parser import _extract_file_paths
+
+        file_list = result.get("file_list") or []
+        batch_plan = result.get("batch_plan") or []
+
+        if not file_list:
+            file_list = _extract_file_paths(plan_text)
+        if not batch_plan and file_list:
+            batch_plan = [{
+                "batch_id": "T1",
+                "component": "implementation",
+                "design_section": "implementation",
+                "tasks": [{
+                    "id": "T1",
+                    "description": "implementation",
+                    "file_targets": file_list,
+                }],
+            }]
+
+        if file_list or batch_plan:
+            result = dict(result)
+            result["file_list"] = file_list
+            result["batch_plan"] = batch_plan
+            _logger.info(
+                "enriched architect: %d files, %d batches",
+                len(file_list), len(batch_plan),
+            )
+
+        return result
+
     # ── action → role ──
 
     def _action_role(self, action: dict) -> str:
@@ -585,16 +758,48 @@ class StandaloneDriver:
 
         if action_type == "architect":
             req = context.get("requirement", "")
+            design_section = context.get("design_section", "")
+            init_manifest = context.get("init_manifest") or {}
+
+            # v7.8: 设计文档模式下, 提供设计文档章节信息
+            design_doc_info = ""
+            if self._design_doc_path:
+                design_doc_info = (
+                    f"\n\n设计文档: {self._design_doc_path}\n"
+                    f"先用 read_file 读取设计文档, 了解已定义的章节结构。\n"
+                    f"batch_plan 中每个 batch 的 component 字段必须使用设计文档的章节名"
+                    f" (如 \"概述\", \"功能需求\", \"API\", \"文件\")。\n"
+                )
+            elif design_section:
+                design_doc_info = (
+                    f"\n\n当前设计章节: {design_section}\n"
+                    f"batch_plan 的 component 字段必须对齐设计文档章节名。\n"
+                )
+
             return {
                 "description": (
-                    f"你是一个软件架构师。根据以下需求生成架构计划。\n\n"
-                    f"需求: {req}\n\n"
-                    f"先用工具探索项目结构, 然后输出架构计划。\n"
-                    f"用 ## T1: 名称 格式列出每个批次, "
-                    f"每批次下用列表列出目标文件路径。"
+                    f"你是一个软件架构师。根据以下需求生成详细的架构计划。\n\n"
+                    f"需求: {req}"
+                    f"{design_doc_info}\n\n"
+                    f"先用工具 (list_dir, read_file) 探索项目结构, 了解现有代码。\n"
+                    f"然后输出架构计划 (至少 100 字):\n"
+                    f"1. 理解需求, 列出需要创建/修改的文件\n"
+                    f"2. 用 ## T1: 名称 格式列出每个实现批次\n"
+                    f"3. 每个批次下用 - `path/to/file.py` — 描述 列出文件路径\n"
+                    f"4. 说明每个文件的作用\n\n"
+                    f"示例格式:\n"
+                    f"## 架构分析\n"
+                    f"需求分析: ...\n\n"
+                    f"## T1: 核心实现\n"
+                    f"- `src/xxx.py` — 核心逻辑实现\n"
+                    f"- `tests/test_xxx.py` — 单元测试\n\n"
+                    f"## T2: 测试与集成\n"
+                    f"- `tests/test_integration.py` — 集成测试\n\n"
+                    f"务必列出完整的文件路径 (含目录), 至少 100 字。"
+                    f"每个文件名用反引号包裹。"
                 ),
                 "expected_output": (
-                    "Markdown 架构计划, 含 ## T1/T2 批次标题 + 文件路径列表"
+                    "Markdown 架构计划, 含 ## T1/T2 批次标题 + 反引号文件路径列表, 至少 100 字"
                 ),
             }
 
@@ -632,14 +837,18 @@ class StandaloneDriver:
                 )
             else:
                 self_directed = ""
+            project_root = str(getattr(self, 'project_root', Path.cwd()))
             return {
                 "description": (
-                    f"你是一个软件开发者。实现以下需求 (batch={batch_id}):\n"
+                    f"你是一个软件开发者。项目根目录: {project_root}\n"
+                    f"实现以下需求 (batch={batch_id}):\n"
                     f"{req_context}"
                     f"{plan_context}"
                     f"{self_directed}\n\n"
                     f"遵守 TDD: Red→Green→Refactor。\n"
-                    f"每个文件改动后跑测试。先创建必要的目录, 再写代码。"
+                    f"每个文件改动后跑测试。先创建必要的目录, 再写代码。\n"
+                    f"所有路径相对于项目根目录 {project_root}。"
+                    f"不要 cd 到其他目录 — 工具默认工作目录就是项目根目录。"
                 ),
                 "expected_output": (
                     "JSON with: files_changed (list), test_results "

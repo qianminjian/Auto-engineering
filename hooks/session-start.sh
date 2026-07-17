@@ -6,6 +6,21 @@
 set -u
 # NOTE: do NOT use set -e — we want to report all check results, not fail-fast
 
+# ── V8-2: Multi-platform detection ──
+if [[ -n "${CLAUDE_PLUGIN_ROOT:-}" ]]; then
+  export AE_PLATFORM="claude-code"
+  export AE_PLUGIN_ROOT="$CLAUDE_PLUGIN_ROOT"
+elif [[ -n "${CODEX_PLUGIN_ROOT:-}" ]]; then
+  export AE_PLATFORM="codex"
+  export AE_PLUGIN_ROOT="$CODEX_PLUGIN_ROOT"
+elif [[ -n "${CODEBUDDY_PLUGIN_ROOT:-}" ]]; then
+  export AE_PLATFORM="codebuddy"
+  export AE_PLUGIN_ROOT="$CODEBUDDY_PLUGIN_ROOT"
+else
+  export AE_PLATFORM="unknown"
+  export AE_PLUGIN_ROOT=""
+fi
+
 CHECKS_JSON=""
 
 check_command() {

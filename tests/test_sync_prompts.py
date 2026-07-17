@@ -108,7 +108,7 @@ class TestCodeReviewCoverage:
 
     _COMMAND = (
         Path(__file__).resolve().parents[1]
-        / ".claude-plugin" / "commands" / "code-review.md"
+        / "commands" / "code-review.md"
     )
 
     def test_code_review_md_has_fragment_markers(self) -> None:
@@ -123,8 +123,8 @@ class TestCodeReviewCoverage:
     def test_code_review_md_discovered_by_scan(self) -> None:
         """discover_targets 应该发现 code-review.md."""
         targets = sync_prompts.discover_targets()
-        target_paths = [str(t.relative_to(self._COMMAND.parents[2])) for t in targets]
-        assert ".claude-plugin/commands/code-review.md" in target_paths, (
+        target_paths = [str(t.relative_to(self._COMMAND.parents[1])) for t in targets]
+        assert "commands/code-review.md" in target_paths, (
             f"code-review.md 未被 discover_targets 发现. "
             f"当前发现: {target_paths}"
         )
@@ -145,7 +145,7 @@ class TestCodeReviewSemantics:
 
     _COMMAND = (
         Path(__file__).resolve().parents[1]
-        / ".claude-plugin" / "commands" / "code-review.md"
+        / "commands" / "code-review.md"
     )
     _ROOT = Path(__file__).resolve().parents[1]
 

@@ -34,7 +34,10 @@ _JSON_INLINE_RE = re.compile(r"(\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\})", re.DOTALL)
 # markdown fallback: 提取文件路径 `path/to/file.ext`
 _FILE_PATH_RE = re.compile(r"`([a-zA-Z0-9_\-\./]+\.[a-zA-Z]{1,6})`")
 # markdown fallback: 提取明文文件路径 (每行一个, 或以 - 开头的列表项)
-_PLAIN_PATH_RE = re.compile(r"^\s*(?:-\s+)?([a-zA-Z0-9_\-\./]{2,}\.[a-zA-Z]{1,6})\s*$", re.MULTILINE)
+# v7.8: 去掉 $ 锚点 — DeepSeek 经常输出 "path/to/file.py — 描述" 格式
+_PLAIN_PATH_RE = re.compile(r"^\s*(?:[-*]\s+)?([a-zA-Z0-9_\-\./]{3,}\.[a-zA-Z]{1,6})\b", re.MULTILINE)
+# v7.8: 额外提取模式 — 路径出现在行中任意位置 (如 "创建 src/module.py 实现...")
+_INLINE_PATH_RE = re.compile(r"([a-zA-Z0-9_\-\./]{3,}\.[a-zA-Z]{1,6})\b")
 # markdown fallback: JSON 数组中的文件路径 `["file1", "file2"]`
 _JSON_ARRAY_PATH_RE = re.compile(r'"([a-zA-Z0-9_\-\./]+\.[a-zA-Z]{1,6})"')
 # markdown fallback: 提取 batch heading "## T1: Name" / "### Batch T1"
@@ -68,10 +71,13 @@ def _extract_file_paths(text: str) -> list[str]:
     # 2. JSON arrays: ["file1", "file2"]
     for m in _JSON_ARRAY_PATH_RE.finditer(text):
         _add(m.group(1))
-    # 3. plain text lines
+    # 3. plain text lines (bullet list items, optional descriptions)
     for m in _PLAIN_PATH_RE.finditer(text):
         _add(m.group(1))
-    # 4. code blocks
+    # 4. v7.8: inline paths in prose (e.g. "创建 src/module.py 实现核心逻辑")
+    for m in _INLINE_PATH_RE.finditer(text):
+        _add(m.group(1))
+    # 5. code blocks
     for block_m in _CODE_BLOCK_RE.finditer(text):
         for m in _FILE_PATH_RE.finditer(block_m.group(1)):
             _add(m.group(1))
@@ -183,6 +189,57 @@ def _try_parse_json(text: str) -> dict | None:
     return None
 
 
+def _normalize_batch_plan(raw: list[dict], file_list: list[str]) -> list[dict]:
+    """将 batch_plan 标准化为 pipeline 期望的嵌套格式 (v7.8).
+
+    兼容两种旧格式:
+    1. 扁平格式: [{"id":"B1", "description":"...", "files":[...]}]
+    2. 旧嵌套格式: [{"batch_id":"T1", ...}] (可能缺 tasks 子对象)
+    """
+    if not raw or not isinstance(raw, list):
+        return []
+
+    normalized: list[dict] = []
+    for i, batch in enumerate(raw):
+        if not isinstance(batch, dict):
+            continue
+        # 新格式已正确: 有 tasks 列表且非空 → 直接保留
+        if batch.get("tasks") and isinstance(batch["tasks"], list):
+            normalized.append(batch)
+            continue
+        # 旧扁平格式: 有 "files" 字段 (无 "tasks")
+        if batch.get("files") and not batch.get("tasks"):
+            flat_id = batch.get("id", f"T{i + 1}")
+            flat_desc = batch.get("description", "implementation")
+            normalized.append({
+                "batch_id": batch.get("batch_id", flat_id),
+                "component": batch.get("component", flat_desc),
+                "design_section": batch.get("design_section", flat_desc),
+                "tasks": [{
+                    "id": flat_id,
+                    "description": flat_desc,
+                    "file_targets": batch["files"],
+                }],
+            })
+            continue
+        # 部分新格式 (有 batch_id 但缺 tasks) → 补 tasks (不修改原 dict)
+        batch_id = batch.get("batch_id", f"T{i + 1}")
+        component = batch.get("component", "implementation")
+        design = batch.get("design_section", component)
+        normalized.append({
+            **batch,
+            "batch_id": batch_id,
+            "component": component,
+            "design_section": design,
+            "tasks": batch.get("tasks") or [{
+                "id": batch.get("id", f"T{i + 1}"),
+                "description": batch.get("description", "implementation"),
+                "file_targets": batch.get("file_targets", file_list),
+            }],
+        })
+    return normalized
+
+
 def _fill_defaults(parsed: dict, text: str) -> None:
     """为 parsed dict 填充缺失的必填字段默认值.
 
@@ -198,6 +255,10 @@ def _fill_defaults(parsed: dict, text: str) -> None:
         parsed.setdefault("batch_plan", [])
         parsed.setdefault("file_list", _extract_file_paths(text))
         parsed.setdefault("contracts", [])
+        # v7.8: normalize batch_plan format (兼容旧扁平格式)
+        if parsed["batch_plan"]:
+            parsed["batch_plan"] = _normalize_batch_plan(
+                parsed["batch_plan"], parsed["file_list"])
         # v7.0: batch_plan 为空时构造最小 batch (DeepSeek 兼容)
         if not parsed["batch_plan"]:
             parsed["batch_plan"] = [{

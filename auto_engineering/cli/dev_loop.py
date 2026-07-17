@@ -419,131 +419,38 @@ def _run_tick_resume(checkpoint_id: str, root: Path) -> None:
         store.close()
 
 
-# ============================================================
-# V7-6: Standalone 模式 (Driver B — 进程内调 LLM)
-# ============================================================
+
+
+def _resolve_standalone_model(llm_provider: str) -> str:
+    """解析 Standalone 模式下的模型名."""
+    if llm_provider == "openai":
+        return "gpt-4o"
+    return "claude-sonnet-4-6"
 
 
 def _run_standalone(
     requirement: str,
-    root: Path,
-    max_rounds: int = 5,
-    *,
-    api_key: str | None = None,
-    design_doc_path: str | None = None,
-) -> OrchestratorRunResult:
-    """ae dev-loop --standalone: Driver B 独立进程内循环.
+    design_doc: str | None,
+    project_root: Path,
+    max_rounds: int,
+    max_tokens: int,
+    llm_provider: str,
+    resume_id: str | None,
+) -> None:
+    """Standalone 模式 (Driver B): 进程内 StandaloneDriver 调 LLM.
 
-    与 v5.6 tick 模式不同: standalone 在单个进程内完成完整 dev-loop,
-    AgentRuntime 直接调 LLM (不通过文件桥接).
-
-    Args:
-        requirement: 需求描述
-        root: 项目根目录
-        max_rounds: 最大 round 数
-        api_key: Anthropic API key (None → 从环境变量读)
-        design_doc_path: 设计文档路径 (可选)
-
-    Returns:
-        OrchestratorRunResult (与 v5.5 legacy 模式兼容的输出格式)
+    不依赖 Claude Code Agent — 自带 Anthropic API key.
     """
     import asyncio
+    import json
 
-    import click
-
-    from auto_engineering.agents.base import BaseAgent
-    from auto_engineering.agents.prompts import (
-        ARCHITECT_SYSTEM_PROMPT,
-        CRITIC_SYSTEM_PROMPT,
-        DEVELOPER_SYSTEM_PROMPT,
-    )
-    from auto_engineering.llm.anthropic_provider import AnthropicProvider
-    from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
-    from auto_engineering.loop.guardrail import GuardrailChain
     from auto_engineering.loop.standalone_driver import StandaloneDriver
     from auto_engineering.loop.tick_orchestrator import TickOrchestrator
     from auto_engineering.runtime.runtime import AgentRuntime
 
-    db_path = _checkpoint_db_path(root)
-    store: SQLiteCheckpointStore[EngineState] = SQLiteCheckpointStore(db_path)
-    try:
-        llm = AnthropicProvider(api_key=api_key) if api_key else AnthropicProvider()
-        tools = _build_standalone_tools(root)
-        runtime = AgentRuntime()
-        runtime.register(
-            "architect",
-            lambda: BaseAgent(
-                llm=llm, role="architect",
-                system_prompt=ARCHITECT_SYSTEM_PROMPT, tools=tools,
-                max_tool_calls=12,
-            ),
-        )
-        runtime.register(
-            "developer",
-            lambda: BaseAgent(
-                llm=llm, role="developer",
-                system_prompt=DEVELOPER_SYSTEM_PROMPT, tools=tools,
-                max_tool_calls=30,
-            ),
-        )
-        runtime.register(
-            "critic",
-            lambda: BaseAgent(
-                llm=llm, role="critic",
-                system_prompt=CRITIC_SYSTEM_PROMPT, tools=tools,
-                max_tool_calls=15,
-            ),
-        )
-
-        orch = TickOrchestrator(
-            root, checkpoint_store=store,
-            guardrail=GuardrailChain.default(),
-        )
-        driver = StandaloneDriver(
-            orchestrator=orch,
-            agent_runtime=runtime,
-            project_root=root,
-            max_rounds=max_rounds,
-            design_doc_path=design_doc_path,
-        )
-
-        started_at = time.monotonic()
-        summary = asyncio.run(driver.run_async(requirement))
-        duration_sec = time.monotonic() - started_at
-
-        if summary.success:
-            click.echo(
-                f"dev-loop standalone complete: status=completed, "
-                f"ticks={summary.total_ticks}, verdict={summary.verdict}, "
-                f"duration={duration_sec:.1f}s"
-            )
-        else:
-            click.echo(
-                f"dev-loop standalone: status=failed, ticks={summary.total_ticks}, "
-                f"error={summary.error_message}, duration={duration_sec:.1f}s",
-                err=True,
-            )
-
-        verdict_dict = {"level": 3 if summary.success else 4,
-                         "level_name": "QUALITY_PASS" if summary.success else "HARD_LIMIT",
-                         "reason": summary.error_message}
-
-        return OrchestratorRunResult(
-            status="completed" if summary.success else "failed",
-            thread_id=uuid.uuid4().hex,
-            rounds=summary.total_ticks,
-            verdict=verdict_dict,
-            duration_sec=duration_sec,
-            gate_summary={},
-            total_steps=summary.total_ticks,
-        )
-    finally:
-        store.close()
-        llm.close()
-
-
-def _build_standalone_tools(root: Path) -> list:
-    """构造 standalone 模式的工具集 (与 _build_v2_agent_runtime 共享逻辑)."""
+    from auto_engineering.agents.base import BaseAgent
+    from auto_engineering.llm.anthropic_provider import AnthropicProvider
+    from auto_engineering.prompts.registry import default_registry
     from auto_engineering.tools.bash_tools import RunBashTool
     from auto_engineering.tools.file_tools import (
         EditFileTool,
@@ -552,22 +459,81 @@ def _build_standalone_tools(root: Path) -> list:
         SearchCodeTool,
         WriteFileTool,
     )
-    from auto_engineering.tools.git_tools import (
-        GitCommitTool,
-        GitDiffTool,
-        GitStatusTool,
-    )
     from auto_engineering.tools.run_tests_tool import RunTestsTool
 
-    return [
-        WriteFileTool(project_root=root),
-        EditFileTool(project_root=root),
-        SearchCodeTool(project_root=root),
-        ReadFileTool(project_root=root),
-        ListDirTool(),
-        RunBashTool(),
-        GitStatusTool(),
-        GitCommitTool(),
-        GitDiffTool(),
-        RunTestsTool(),
+    orch = TickOrchestrator(project_root)
+    runtime = AgentRuntime()
+    prompts = default_registry()
+
+    # 通用工具集 (所有 role 共享)
+    base_tools = [
+        ReadFileTool(project_root=project_root),
+        WriteFileTool(project_root=project_root),
+        EditFileTool(project_root=project_root),
+        ListDirTool(project_root=project_root),
+        SearchCodeTool(project_root=project_root),
+        RunBashTool(project_root=project_root),
+        RunTestsTool(project_root=project_root),
     ]
+
+    # v7.8: 按 role 分配工具 — architect 只需探索工具, 不写代码
+    architect_tools = [
+        ReadFileTool(project_root=project_root),
+        ListDirTool(project_root=project_root),
+        SearchCodeTool(project_root=project_root),
+    ]
+    critic_tools = [
+        ReadFileTool(project_root=project_root),
+        ListDirTool(project_root=project_root),
+        SearchCodeTool(project_root=project_root),
+        RunBashTool(project_root=project_root),  # git diff
+    ]
+
+    model = _resolve_standalone_model(llm_provider)
+
+    for role in ("architect", "developer", "critic"):
+        provider = AnthropicProvider()
+        system_prompt = prompts.get(role)
+        # v7.8: DeepSeek 常产纯 tool_use 无文本, 软上限 = max_calls//2 易误杀
+        # developer: 30 (warn=15), critic: 15 (warn=7), architect: 15 (warn=7)
+        max_calls = {"architect": 15, "developer": 30, "critic": 15}.get(role, 10)
+        tools = {"architect": architect_tools, "developer": base_tools, "critic": critic_tools}.get(role, base_tools)
+        agent = BaseAgent(
+            llm=provider,
+            system_prompt=system_prompt,
+            role=role,
+            tools=list(tools),
+            model=model,
+            max_tool_calls=max_calls,
+        )
+        runtime.register(role, lambda a=agent: a)
+
+    driver = StandaloneDriver(
+        orchestrator=orch,
+        agent_runtime=runtime,
+        project_root=project_root,
+        max_rounds=max_rounds,
+        max_tokens=max_tokens,
+        design_doc_path=design_doc,
+    )
+
+    try:
+        if resume_id:
+            summary = asyncio.run(driver.resume(resume_id))
+        else:
+            summary = driver.run(requirement)
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        raise SystemExit(1)
+    finally:
+        driver.close() if hasattr(driver, "close") else None
+
+    output = {
+        "status": "completed" if summary.success else "failed",
+        "total_ticks": summary.total_ticks,
+        "final_stage": summary.final_stage,
+        "verdict": summary.verdict,
+        "error_message": summary.error_message,
+    }
+    print(json.dumps(output, ensure_ascii=False, indent=2))

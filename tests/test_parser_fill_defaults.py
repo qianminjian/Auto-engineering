@@ -56,13 +56,19 @@ class TestFillDefaultsArchitect:
         assert parsed["plan"] == "existing plan"
 
     def test_does_not_override_existing_batch_plan(self):
-        """architect 已有 batch_plan → 不覆盖."""
+        """architect 已有 batch_plan → 标准化但不覆盖核心字段 (v7.8)."""
         from auto_engineering.agents.parser import _fill_defaults
 
         bp = [{"batch_id": "B1", "component": "test"}]
         parsed = {"stage": "architect", "batch_plan": bp}
         _fill_defaults(parsed, "text")
-        assert parsed["batch_plan"] == bp
+        # v7.8: batch_plan 经过 _normalize_batch_plan 标准化, 补 tasks
+        result = parsed["batch_plan"]
+        assert len(result) == 1
+        assert result[0]["batch_id"] == "B1"
+        assert result[0]["component"] == "test"
+        assert "tasks" in result[0]
+        assert len(result[0]["tasks"]) == 1
 
 
 class TestFillDefaultsDeveloper:

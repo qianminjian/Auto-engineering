@@ -2358,3 +2358,46 @@ class TestDualDriverContract:
         })
         assert o._state.tick == tick_before + 1
         assert o._state.current_stage == "developer"
+
+
+# ── V7-1: tick() 委托 tick_dict() ──
+
+
+class TestV7_1_TickDelegation:
+    """V7-1: tick() 简化为薄包装 — 读文件 → 委托 tick_dict()."""
+
+    def test_tick_delegates_to_tick_dict(self, tmp_path: Path) -> None:
+        """tick(result_file) 与 json.loads + tick_dict() 产生相同 action."""
+        o = _orchestrator()
+        o.init("req")
+
+        result = {
+            "stage": "architect", "plan": _VALID_PLAN,
+            "batch_plan": [{
+                "batch_id": "b1", "design_section": "B2", "component": "C",
+                "tasks": [{"id": "T1", "description": "d", "module_ref": "§B2",
+                           "file_targets": ["x.py"]}],
+            }], "file_list": ["x.py"], "contracts": {},
+        }
+
+        # 通过文件路径调用 tick()
+        result_file = tmp_path / "result.json"
+        result_file.write_text(json.dumps(result))
+        action_via_file = o.tick(result_file)
+
+        # 直接通过 dict 调用 tick_dict()
+        o2 = _orchestrator()
+        o2.init("req")
+        action_via_dict = o2.tick_dict(result)
+
+        assert action_via_file["action"] == action_via_dict["action"]
+        assert action_via_file["stage"] == action_via_dict["stage"]
+
+    def test_tick_body_lines_not_exceed_5(self) -> None:
+        """tick() 方法体 ≤ 5 行 (不含 docstring 和 def 行)."""
+        import inspect
+        source = inspect.getsource(TickOrchestrator.tick)
+        lines = [l for l in source.split("\n") if l.strip() and not l.strip().startswith('"""')]
+        # lines[0] = "def tick(...):", body = lines[1:]
+        body_lines = [l for l in lines[1:] if not l.strip().startswith("#") and not l.strip().startswith('"""')]
+        assert len(body_lines) <= 5, f"tick() body should be ≤5 lines, got {len(body_lines)}: {body_lines}"

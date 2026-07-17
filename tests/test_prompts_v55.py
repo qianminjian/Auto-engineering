@@ -118,11 +118,12 @@ class TestArchitectPromptV55:
         assert len(found) >= 2, f"Expected >=2 brainstorming keywords, found: {found}"
 
     def test_includes_structured_batch_plan_output(self) -> None:
-        """Architect prompt 含 batch_plan 结构化输出要求 (verification + steps)."""
+        """Architect prompt 含 batch_plan 结构化输出要求 (v7.8 规范化格式)."""
         prompt = ARCHITECT_SYSTEM_PROMPT
         assert "batch_plan" in prompt.lower()
-        assert "verification" in prompt.lower()
-        assert "steps" in prompt.lower()
+        assert "batch_id" in prompt.lower()
+        assert "file_targets" in prompt.lower()
+        assert "tasks" in prompt.lower()
 
     def test_includes_agent_reach_reference(self) -> None:
         """Architect prompt 含 Agent-Reach 引用."""

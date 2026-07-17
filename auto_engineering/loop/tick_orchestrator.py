@@ -250,19 +250,12 @@ class TickOrchestrator:
         return self
 
     def tick(self, result_file: Path) -> dict:
-        """处理一个 tick + DS-10 延迟打点 (C.2.6).
-
-        墙钟切分: t_total (本方法) / t_gate (_run_developer_gates) /
-        t_guard_sub (guardrail.check). t_orchestration = t_total − t_gate − t_guard_sub,
-        写入 action_history; 超预算只告警不中断.
-        """
-        t_start = time.perf_counter()
-        self._t_gate_ms = 0.0
-        self._t_guard_sub_ms = 0.0
-        tick_no = self._state.tick if self._state else 0
-        action = self._tick_body(result_file)
-        self._record_tick_latency(t_start, tick_no)
-        return action
+        """File-bridge entry point (Driver A). Reads result JSON, delegates to tick_dict()."""
+        try:
+            return self.tick_dict(json.loads(result_file.read_text(encoding="utf-8")))
+        except (json.JSONDecodeError, OSError) as e:
+            return ErrorResponse("RESULT_PARSE_ERROR", f"无法解析 result 文件: {e}",
+                                self._state.to_dict() if self._state else None).to_dict()
 
     def tick_dict(self, result: dict) -> dict:
         """处理一个 tick — 直接接受 result dict (Driver B standalone 模式).
@@ -276,11 +269,6 @@ class TickOrchestrator:
         action = self._tick_body_dict(result)
         self._record_tick_latency(t_start, tick_no)
         return action
-
-    def _tick_body(self, result_file: Path) -> dict:
-        """tick 核心逻辑: 验证 → Guardrail → Gate → 路由 → Checkpoint → action."""
-        result = self._read_and_validate(result_file)
-        return self._tick_process_result(result)
 
     def _tick_body_dict(self, result: dict) -> dict:
         """tick 核心逻辑 (dict 版本): 验证 → Guardrail → Gate → 路由 → Checkpoint → action."""
@@ -1124,6 +1112,7 @@ class TickOrchestrator:
             self._state.files_changed = result.get("files_changed", [])
             self._state.commit_hash = result.get("commit_hash", "")
             self._state.test_results = result.get("test_results", {})
+            self._state.red_evidence = result.get("red_evidence", [])
         elif stage == "critic":
             self._state.critic_verdict = result.get("verdict", "")
             self._state.findings = result.get("findings", [])

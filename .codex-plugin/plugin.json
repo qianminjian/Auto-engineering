@@ -1,0 +1,12 @@
+{
+  "name": "auto-engineering",
+  "version": "5.6.0",
+  "description": "Auto-Engineering v5.6 — Multi-agent engineering loop for Codex",
+  "author": {
+    "name": "Qian Minjian",
+    "email": "noreply@anthropic.com"
+  },
+  "commands": "../commands/",
+  "hooks": "../hooks/",
+  "skills": "../skills/"
+}

@@ -1,0 +1,8 @@
+{
+  "hooks": {
+    "SessionStart": ["hooks/session-start.sh"],
+    "PostToolUse": ["hooks/post-edit.sh"],
+    "PreToolUse": ["hooks/pre-tool.sh"],
+    "Stop": ["hooks/stop.sh"]
+  }
+}
