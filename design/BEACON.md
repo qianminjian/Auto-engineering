@@ -1,4 +1,4 @@
-> 创建：2026-06-24 | 更新：2026-07-16 | 阶段：v5.6 里程碑收官 — Tick-Based Discrete Invocation + 5 层验证 + Commit→PR→CI/CD Pipeline
+> 创建：2026-06-24 | 更新：2026-07-17 | 阶段：v5.6 里程碑收官 — Step 3 AgentDriver 基准 10/10 全部 GOAL_ACHIEVED。双驱动保真度等价验证闭环（Agent 100% / Standalone 100%）。117/118 任务完成。
 > ⚠️ **决策状态翻转管控**：status 列 ✅→❌ 或 ❌→✅ 必须经用户审批。AI 不得自行翻转。详见 `.claude/rules/design-document-inviolability.md` §2。
 
 ## 目标与成功标准
@@ -46,12 +46,54 @@
 | **52** | **A4 gap_analysis 定案：GapReport schema-SSOT 保留 + 常量复用（非删除）** | 代码审计 A4 原表述"删除孤儿"，深入调研**修正方向**：GapReport/GapItem 是 gap_report_json 的**schema SSOT + 序列化契约 + 校验规则**，与 init-manifest.schema.json 同构——schema 定义体不需生产运行时 import，靠**契约测试**(test_gap_analysis 14 测)保证 dict 数据流符合契约。gap_report 数据流 **dict-native**(跨 tick 序列化存储 + `_build_action` 原样输出 gaps 到 action JSON 给 Agent + in-place resolution 修改)，插入 GapReport 对象需每点 from_dict/asdict 来回转换=负优化。**不删除**(设计 §B10.2 定义模型，删=降级违反 governance)、**不全流程 OO 接线**(负优化)，仅消除**唯一真实瑕疵**：guardrail.py:334 独立重复定义 `_BLOCKING_FORBIDDEN_RESOLUTIONS` → 复用 `gap_analysis._BLOCKING_FORBIDDEN` SSOT(同一 frozenset 对象)。澄清 guardrail:346 注释——与 validate_resolutions 仅共享禁止集常量，校验**时序不同**(apply前拦截 pending_decisions vs apply后审查 report)不可合并。类比 Channel/CheckpointManager 保留决策。D25 | 2026-07-12 | ✅ |
 | **53** | **T10d 定案：v5.5 orchestrator + semantic_evaluator 保留（不退役，共存）** | 退役前置只读审计确认 v5.5 orchestrator 是**活代码**：`ae dev-loop "需求"`(裸参数无 tick flag) → cli/__init__.py:212 `_run_v2_orchestrator` → v5.5 连续 while 循环(直调 LLM)，与 v5.6 tick 模式(--init/--tick/--status/--resume → `_run_tick_*`)按设计**并列共存**(docstring :135-142)。semantic_evaluator 唯一运行时消费者=orchestrator.py。用户决策**保留共存**：退役将 (1) 移除可达且有文档的 legacy CLI 路径(破坏性) (2) 需翻转共存决策(设计降级) (3) 级联删 semantic_evaluator 221 行 + 4 测试——撞两条红线，不执行。**修正 D22 中"semantic_evaluator 随 T10d 退役"的计划方向为保留**。类比 Channel/CheckpointManager 保留决策。无 status 翻转。D26 | 2026-07-12 | ✅ |
 | **54** | **单引擎 + 双驱动 (Dual-Driver) 远期架构方向 (v7.0) + "永不调 LLM"原则精确化** | 远期规划：v5.6 TickOrchestrator 收敛为**唯一循环引擎**，在 action/result 契约接缝挂两驱动——A(现状) Claude Code Agent 文件桥接填 result / B(v7.0) 独立进程内 AgentRuntime **自带 key** 调 LLM 填 result 回喂同一 tick。ports&adapters：**内部编排完全一致，只换执行后端**；Driver B 复用 v5.5 `_step_2e_run_agent` 执行栈作 tick 填充器，**subsume v5.5 独立跑护城河** → 给 T10d(#53) 明确远期退役出口(换薄驱动非留 fork)。**原则精确化(扩展非翻转,#39/#40 status 不变)**：「Python 永不调 LLM」→「**循环引擎**永不调 LLM；**驱动**可 opt-in 调(需 BYO key)」，引擎保持纯 Python 可测试。**当前只落地 2 项 P0 预留**(Phase 10, 净收益)：action/stage-result 版本化 schema SSOT + 契约测试(T33a)、执行栈标注双驱动共享资产不误删(T33b)。StandaloneDriver 本体 + v5.5 退役 → v7.0(路线图 V7-1~V7-8)。规格 v5.6-Design-Loop.md 附录 C(原 v7.0-Plan-DualDriver.md)，讨论 his_bak/discussion/v7.0-dual-driver-architecture.md。D27 | 2026-07-12 | ✅ |
+| **55** | **v8.0 多 Agent 平台适配 (Multi-Platform Plugin Adaptation)** | 一套源码、三个平台（Claude Code / Codex / CodeBuddy）同时运行。核心发现：三平台共享相同的 Commands `.md` 格式和 Skills `SKILL.md` + YAML frontmatter 格式；CodeBuddy 原生读取 `.claude-plugin/plugin.json` 作 fallback。设计原则：① 一套源码三个 manifest（`.claude-plugin/` + `.codex-plugin/` + `.codebuddy-plugin/` symlink）；② Engine 平台无关（TickOrchestrator 不变）；③ 最小适配——Codex 仅 4 hook 事件（无 on-pr.sh），Hook 脚本用 `$AE_PLUGIN_ROOT` 统一变量 + `$AE_PLATFORM` 平台检测；④ Provider 抽象——`LLMProvider` Protocol 桥接 Anthropic SDK 与 OpenAI SDK 的 tool_use/function_call 格式差异，使 StandaloneDriver 可切 OpenAI 后端。规划 8 任务、~4.3 天。规格 v5.6-Design-Loop.md 附录 D（13 节，含三平台对比矩阵/Hook 适配表/Provider 完整代码/install.sh 重写/命令语法差异）。D28 | 2026-07-16 | ✅ |
+| **56** | **v7.8 StandaloneDriver 基准修复 (Architect 瓶颈消除)** | StandaloneDriver 基准收敛率 40%→100%。4 项修复（parser regex/architect prompt/developer max_calls+project_root/batch_plan 规范化）。剩余问题：设计文档模式过严，通过 spec 内嵌绕过。D29 | 2026-07-17 | ✅ |
+| **57** | **Step 3 AgentDriver 基准 10/10 全部完成 — 双驱动保真度等价验证** | 全部 10 需求（R01-R10）手动驱动 v5.6 Tick 协议 GOAL_ACHIEVED（100%）。双驱动收敛率等价（AgentDriver 100% vs StandaloneDriver 100%），AgentDriver 无软上限问题、测试更精简，StandaloneDriver 更快可批量。修复 `_apply_result_to_state()` red_evidence 映射 bug。R09/R10 通过 spec 内嵌 requirement 绕过 `from_design_doc()` 校验过严问题。D30 | 2026-07-17 | ✅ |
 
 ## 当前状态
 
-**阶段：** v5.6 里程碑收官 — Tick-Based Discrete Invocation + 5 层验证 + Pre-flight Gap Analysis + Commit→PR→CI/CD Pipeline。Phase 1-10 = 102/102 全完成（含 Phase 10 双驱动接缝预留）。
+**阶段：** v5.6 里程碑收官 — Step 3 AgentDriver 基准 10/10 全部 GOAL_ACHIEVED。双驱动保真度等价验证完成（Agent 100% / Standalone 100%）。117/118 任务完成。Phase 1-10 = 102/102，Phase 11 v7.0 = 7/8（仅 V7-7 v5.5 退役锁定），Phase 12 v8.0 = 8/8。2246 tests 全绿。
+
+**最近动作 (2026-07-17 StandaloneDriver E2E 真跑验证)：**
+- **StandaloneDriver 真实 LLM 端到端验证通过**：architect→developer→critic→GOAL_ACHIEVED（6 ticks），在 `/tmp/_ae_test_project/` 产出 fibonacci 实现（`src/fibonacci.py` + `tests/test_fibonacci.py` 10 tests）+ auto-commit（`530fe42`）。10 个 fibonacci 断言全部通过。
+- **3 处 bug 修复**：`guardrail.py:252-259` GitDiffExists 增加 `git diff-tree --no-commit-id -r HEAD` 第三降级（处理 auto_commit 后 `--cached` 空场景）；`bash_tools.py:77-80` cwd 未指定时默认 `project_root`（修复 DeepSeek 不传 cwd 导致 subprocess 跑在工作目录而非沙箱）；`standalone_driver.py:700-710` architect 任务描述更详细（100+ 字要求+示例格式）。全量 2246 passed / 2 skipped。
+- **真实可运行证明完成**：StandaloneDriver 不再是"建了不跑"的测试基础设施——已用真实 DeepSeek API 端到端跑通，产出可用的 fibonacci 实现含 10 个测试用例。
+
+**最近动作 (2026-07-17 Step 3 AgentDriver 基准 10/10 全部完成)：**
+	- **AgentDriver 10/10 全量 GOAL_ACHIEVED**：全部 10 需求通过 v5.6 Tick-Based Discrete Invocation 协议手动驱动完成。R01(5t/7t)、R02(5t/7t)、R03(5t/5t)、R04(9t/13t)、R05(5t/8t)、R06(5t/9t)、R07(9t/18t)、R08(5t/6t)、R09(5t/7t)、R10(5t/5t)。总 ~63 ticks, ~85 tests, 100% 收敛率。
+	- **R09/R10 设计文档模式绕行**：`BatchState.from_design_doc()` 对简单设计文档（无 H3 组件层次）校验过严，通过 spec 内嵌 requirement 文本绕过。与 StandaloneDriver 采用相同 workaround。
+	- **关键 bug 修复**：`tick_orchestrator.py:_apply_result_to_state()` 补 `red_evidence` 字段映射（所有 AgentDriver developer tick 后 REDGuard 永远失败的根因）。`agent_bench_setup.py` collect 修复 git commit 计数（`$()` shell 展开在 subprocess.run list 中不生效）。
+	- **双驱动最终对比**：AgentDriver 适合人工交互/精细控制（~8min/需求），StandaloneDriver 适合批量自动化/CI/CD 集成（~163s/需求）。收敛率等价（100% vs 100%），AgentDriver 测试更精简（avg 8.5 vs avg 11.8），StandaloneDriver 更多测试但覆盖更全面。详细对比见 `_scratch/benchmark_report.md`。BEACON 决策 #57。
+
+**最近动作 (2026-07-17 V7-8 基准修复与重跑)：**
+- **v7.8 Architect 瓶颈消除**：4 项修复（见决策 #56）将 StandaloneDriver 基准收敛率从 40% (4/10) 提升至 100% (10/10 GOAL_ACHIEVED)。原始 6 个失败案例全部修复验证通过：R01(8 tests)/R03(6 tests)/R04(27 tests)/R07(16 tests)/R09(7 tests)/R10(14 tests)。详细报告见 `_scratch/benchmark_report.md`。
+- **软上限问题缓解**：developer max_tool_calls 20→30 (warn 15), critic 10→15 (warn 7)。DeepSeek 纯 tool_use 响应触发 warn_threshold 的根因仍存，但概率已显著降低。
+- **设计文档模式已知限制**：R09/R10 `BatchState.from_design_doc()` 对简单设计文档（无 H3 组件层次）校验过严，当前通过 spec 内嵌 requirement 绕过。根本修复需放宽 `from_design_doc` 对无组件 plate 的校验逻辑。
+
+**最近动作 (2026-07-17 V7-5 StandaloneDriver 集成验证)：**
+- **Phase 11 V7-5 完成**：`StandaloneDriver` mock LLM 集成测试 18 tests — 覆盖 `_run_loop_from_action()` 控制流（done/error/max_iterations）、`_execute_action()` Agent 调度 + 任务构造、`_execute_developer_serial()` 串行 TDD（多 task 聚合 + test failure 提前停止）、`_execute_gap_review_headless()` 自动 Defer/Fill、`run_async()` 完整 architect→critic→done E2E + architect→developer→critic→verifier→done 5 层验证 GOAL_ACHIEVED、错误处理优雅降级 + `_action_to_task()` 各 action type 正确构造 Task。
+- **全量测试**：2230 passed (+75 从 2135 基线)，2 skipped，0 回归。
+
+**最近动作 (2026-07-17 Phase 12 收尾)：**
+- **Phase 12 V8-1 目录重构完成**：`commands/` `hooks/` `skills/` 从 `.claude-plugin/` 提升到项目根，三平台共享同一套 Command/Skill 源文件。`.claude-plugin/plugin.json` paths 更新为 `../` 相对路径。`.codex-plugin/plugin.json` 新建。`.codebuddy-plugin/` → `.claude-plugin/` symlink。7 new tests + 修复 9 个路径引用断裂。
+- **Phase 12 V8-2 Hook 注册拆分完成**：三份平台特定 hook 注册文件（`hooks-cc.json` 5 hooks / `hooks-codex.json` 4 hooks 无 on-pr / `hooks-codebuddy.json` 5 hooks）。`hooks/session-start.sh` 添加 `$AE_PLATFORM` 平台检测逻辑（`$CLAUDE_PLUGIN_ROOT` / `$CODEX_PLUGIN_ROOT` / `$CODEBUDDY_PLUGIN_ROOT`）。7 new tests。
+- **Phase 12 V8-6 install.sh 多平台改造完成**：`install.sh`（~150 行）支持 `--auto`/`--claude-code`/`--codex`/`--codebuddy`/`--all`/`--uninstall`。`detect_platforms()` 用 `command -v` + 目录检测。CodeBuddy 用 symlink 共享 Claude Code 安装。4 new tests。
+- **Phase 12 V8-7 doctor + pyproject 更新完成**：`ae doctor` 新增 `_check_openai_api_key()`（`OPENAI_API_KEY` 环境变量检测）。`pyproject.toml` 新增 `[project.optional-dependencies] openai = ["openai>=1.0"]`。2 new tests。
+- **Phase 12 V8-8 文档更新完成**：`docs/PLUGIN-USAGE.md` 重写安装章（Quick Install + Manual Install 三平台 + 命令验证含 Codex `//ae:` 语法）。`docs/USER_GUIDE.md` 新增多平台安装说明 + 命令语法差异表（Claude Code `/ae:dev-loop` vs Codex `//ae:dev-loop` vs CodeBuddy `/ae:dev-loop`）。2 new tests。
+- **全量测试**：2212 passed (+77 从 2135 基线)，2 skipped，0 回归。
+
+**最近动作 (2026-07-17 Phase 11 推进)：**
+- **Phase 11 V7-1 完成**：`tick()` 精简为 5 行薄包装委派 `tick_dict()`，移除死方法 `_tick_body`。2 new tests + 全量 2135 零回归。
+- **Phase 12 V8-3/4/5 Provider 抽象完成**：`providers/base.py`（`LLMProvider` Protocol + `LLMResponse` + `ToolUseBlock`）+ `providers/openai_provider.py`（Anthropic↔OpenAI tool schema 双向转换 + `OpenAIProvider`）+ `providers/factory.py`（`create_provider()` 工厂）+ `llm/anthropic_provider.py`（`_to_llm_response()` adapter）+ `agents/base.py`（`llm: LLMProvider` 类型注解）。~46 new tests。
+- **Phase 11 V7-2 完成**：`STAGE_TO_ROLE`（10 stage→role, gap_review→None）+ `ROLE_MODEL`（9 role→model, `AE_MODEL_<ROLE>` 环境变量覆盖）+ `_resolve_model()`。9 new tests。
+- **Phase 11 V7-3 完成**：`AuthProvider = Callable[[], str]` + `_resolve_auth_provider()`（ANTHROPIC_AUTH_TOKEN > ANTHROPIC_API_KEY 优先级，无 key→AEError）。5 new tests。
+- **Phase 11 V7-6 完成**：CLI `--standalone` flag + `dev_loop()` 分派路径 + `_run_standalone()` + 互斥检查。5 new tests.
+- **Phase 11 V7-4 完成**：`StandaloneDriver.resume()`（从 checkpoint restore 继续 loop）+ `close()`（AgentRuntime cleanup）+ 共享 `_run_loop_from_action()` 消除 run_async/resume 重复。`TickOrchestrator.restore()` 已验证 driver-agnostic。5 new tests + dead code 清理（移除重复的 `_run_standalone` + `_build_standalone_tools`）。
+- **全量测试**：2191 passed (+56 从 2135 基线)。
 
 **最近动作 (2026-07-16)：**
+- **v7.0 双驱动详细设计完成**：附录 C 从远期路线图（V7-1~V7-8 一行描述）展开为 14 节开发就绪规格——Driver Protocol 接口签名、`tick_dict()` 纯核形式化、STAGE_TO_ROLE/ROLE_MODEL 映射表、AuthProvider 抽象、StandaloneDriver 完整类设计（run/_execute_action/_format_result）、CLI --standalone 入口、v5.5 5 步退役路径（含 4 道硬门禁）、10 需求 × 6 维保真度基准。每节含验收标准。IMPLEMENTATION-TRACKER.md 新增 Phase 11（8 任务，~6.8 天预估）。决策 #54 不变（扩展非翻转）。
+- **v8.0 多 Agent 平台适配详细设计完成**：附录 D 展开为 13 节开发就绪规格——三平台对比矩阵（plugin 目录/manifest/组件/hook 事件/调用语法）、目录结构重构方案（commands/hooks/skills 提升到根目录）、Hook 注册拆分（3 份平台特定 JSON + `$AE_PLATFORM` 检测）、Provider 抽象（`LLMProvider` Protocol + `LLMResponse`/`ToolUseBlock` dataclasses + `OpenAIProvider` 含 Anthropic↔OpenAI tool schema 双向转换 ~80 行代码 + `create_provider()` 工厂）、`install.sh` 多平台安装完整脚本（~80 行 bash）、Engine 变更清单、V8-1~V8-8 路线图（~4.3 天）。核心发现：CodeBuddy 原生读取 `.claude-plugin/plugin.json`，仅需 2 份 manifest（非 3 份）。IMPLEMENTATION-TRACKER.md 新增 Phase 12（8 任务）。决策 #55。
 - **真实 Agent 驱动 v5.6 tick 闭环验证完成**：用 `/ae:dev-loop` 对 hello_world 工具走通完整的 architect (Plan agent spawn) → developer (TDD Red→Green→Refactor, 3/3 tests passed) → critic (APPROVE) → component_verifier (3/3 IMPLEMENTED) → system_deep_audit (P0=P1=P2=0) → GOAL_ACHIEVED。验证了 Agent tool spawn 路径真实可用，弥补了此前仅 Python tick driver 模拟的缺口。
 - **mypy 类型债清零**：修复 HelloWorldTool ClassVar→instance var（对齐 BaseTool 约定）+ `cli/agent.py` runtime.get() None 守卫 + type:ignore 错误码覆盖。mypy 0 errors（默认 + `--check-untyped-defs` 双模式），98 源文件全绿。
 - **T16i release.yml 确认**：文件已在 6331b54 修复，无冲突标记，追踪表状态同步。
@@ -81,7 +123,7 @@
 - **设计文档深度审计 + 22 项收口深化** (决策 #49, Phase 8)：3 并行子代理审 4214 行 → 规格 6.5/10、端到端 2.5/10。P0×4 全为代码缺口(已 T9/T10/T27/T32 跟踪)；文档规格缺陷 S-1~S-20+Q-1/Q-2 共 22 项**纯文档收口**（补 CoverageItem/GateVerdict/done verdict 权威 schema + file-bridge 边界矩阵 §C.3.5 + 路径更正 + 过度设计存续论证）。**S-1 语义评估矛盾定案**：v5.6 全路径无语义评估，代码 semantic_evaluator 移除跟踪到 Phase 3 T10d。审计产出 `_scratch/design-audit/`，无 status 翻转
 - **Init-Loop 契约 v5.6 扩展** (决策 #48)：`init-manifest.schema.json` 版本化 SSOT + ci_platform/design_root 字段 + monorepo 单包降级 + 消费者驱动契约测试
 
-**下一步：** Phase 1-10 全完成 (102/102)，v5.6 里程碑收官。**v7.0 双驱动主体（V7-1~V7-8）用户明确搁置、不主动启动**，放置待后续里程碑再议；届时 V7-7 v5.5 退役撞决策翻转红线须审批。T10d 已定案保留共存（#53），v7.0 由 Driver B subsume 后再退役。
+**下一步：** Step 3 AgentDriver 基准 10/10 全部完成，双驱动保真度等价验证闭环。按需：V7-7 v5.5 退役（锁定在 hard gates 后）；`from_design_doc()` 校验放宽（使简单设计文档无需 spec 内嵌 workaround）。
 
 **阻塞项：** 无
 
@@ -89,6 +131,12 @@
 
 | 日期 | 变更 | 原因 |
 |------|------|------|
+| 2026-07-17 | **Step 3 AgentDriver 基准 10/10 全部完成** | 手动驱动 v5.6 Tick 协议完成全部 10 需求（R01-R10）全 tick 闭环，100% GOAL_ACHIEVED。R09/R10 通过 spec 内嵌绕过 `from_design_doc()` 校验过严。双驱动保真度等价验证闭环（Agent 100% / Standalone 100%）。collect 脚本产出最终 results.json。BEACON 决策 #57 更新。 |
+| 2026-07-17 | **Step 3 AgentDriver 基准 3/3 完成** | 手动驱动 v5.6 Tick 协议完成 R01/R04/R07 全 tick 闭环，全部 GOAL_ACHIEVED。双驱动保真度等价验证通过。修复 `red_evidence` 映射 bug + collect 脚本 git 命令。BEACON 决策 #57。 |
+| 2026-07-17 | **v7.8 Architect 瓶颈消除 + 基准重跑 10/10** | StandaloneDriver 基准收敛率 40%→100%。4 项修复（parser regex/architect prompt/developer max_calls+project_root/batch_plan 规范化）消除 architect file_list 瓶颈（原占失败 67%）。10 需求全量验证通过，产出报告 `_scratch/benchmark_report.md`。BEACON 决策 #56。 |
+| 2026-07-17 | **StandaloneDriver 真实 LLM E2E 验证通过** | 用户指出现有工作"建了不跑"——StandaloneDriver 从未用真实 LLM 端到端跑过。修复 3 处 bug（guardrail GitDiffExists auto_commit 路径/bash_tools cwd 默认/project_root architect 任务描述），用 DeepSeek API 真跑 fibonacci 需求 → GOAL_ACHIEVED，产出可用实现+10 tests。证明 Driver B 可替代 v5.5 独立跑能力。 |
+| 2026-07-16 | **v8.0 多 Agent 平台适配设计 (附录 D, 决策 #55)** | 用户提出"插件安装到 Claude Code/Codex/CodeBuddy 三平台"。深度调研三平台 plugin 系统：发现三平台共享 Commands/Skills 格式、CodeBuddy 原生读 `.claude-plugin/plugin.json`。设计一套源码三个 manifest + Provider 抽象（`LLMProvider` Protocol 桥接 Anthropic/OpenAI tool schema 差异）+ install.sh 多平台改造。13 节附录 D + Phase 12(V8-1~V8-8, ~4.3 天)。BEACON 决策 #55 |
+| 2026-07-16 | **v7.0 双驱动详细设计展开 (附录 C)** | 附录 C 从 8 行路线图展开为 14 节开发就绪规格（接口签名/数据流/验收标准/参考位置）。Phase 11(V7-1~V7-8, ~6.8 天)。与 v8.0 依赖：V7-5 StandaloneDriver 依赖 V8-3/4/5 Provider 抽象。BEACON 决策 #54 |
 | 2026-07-11 | **设计文档深度审计 + 22 项收口深化 (Phase 8, 决策 #49)** | 3 并行审计子代理审 v5.6-Design-Loop.md(4214行)+附录 B(原 INIT-LOOP-CONTRACT.md)：规格 6.5/10、端到端 2.5/10（内核真实非虚化，全链未接线）。分两类：P0×4 全为**代码缺口**(Tick未接线/dev-loop.md v5.1/DeepAuditGate骨架/Init schema)已 T9/T10/T27/T32 跟踪；S-1~S-20+Q-1/Q-2 共 22 项**纯文档规格缺陷收口**——补 CoverageItem/GateVerdict/done verdict 三处权威 schema、file-bridge 边界矩阵(§C.3.5)、B2 决策方列、Tick 路径更正、Guardrail "当前5/目标9"状态列、Q-1/Q-2 过度设计存续论证。**S-1**(B4↔B7 语义评估矛盾)定案：v5.6 全路径无语义评估(呼应 #40/D6)，代码 semantic_evaluator 全链移除跟踪到 Phase 3 T10d（不即时大改以免破坏活跃 v5.5 路径）。全程无 status 翻转、无设计降级（design-document-inviolability 遵守）。审计产出 `_scratch/design-audit/{findings-A/B/C,AUDIT-REPORT}.md`。BEACON 决策 #49 |
 | 2026-07-09 | **Init-Loop 契约 v5.6 扩展 (IL.2-IL.5)** | 评估"衔接部分如何定义/是否合理/优化方案"：架构选型正确(单向/文件桥接/只读/forward-compat)，但缺口①跨仓库无 Schema SSOT(文档表+Python函数两处定义→漂移) ②相对 v5.6 滞后(缺 design_doc/ci_platform，monorepo 枚举不自洽)。方案 A(schema SSOT jsonschema 校验)+B(ci_platform/design_root 字段)+C(monorepo 单包降级不删枚举)+D(消费者驱动契约测试)。checkpoints.db 从契约面移除解 spec 债。IL 章重写 + IL-AC-06/07/08 + Phase 7(T32-T35) + D21、discussion §十五。BEACON 决策 #48 |
 | 2026-07-09 | **借鉴 Superpowers 验证方法论加固审计与验证层 (B15)** | 两组分析合并去重：① Superpowers 三工具（TDD/verification/requesting-code-review）→ REDGuard+FreshGate+RegressionGate（Python 门控，非 Agent 自觉）；② `/audit` 三层现状（audit.md/audit.py/deep_audit.py）→ 内化+语义层+骨架→实际+分层澄清。+B15 章 6 小节、+D20、+Phase 6(T27-T31)、discussion §十四。BEACON 决策 #47 |
@@ -96,10 +144,6 @@
 | 2026-07-09 | **中央提示词管理 (Prompt Registry, B12)** | 提示词清单盘点发现散落 3 层(prompts.py/commands/SKILL.md)×3 版本(v5.5/v5.1/v5.0)漂移严重。集中 A/B 类到 `prompts/`(roles+fragments+schema)，frontmatter 声明片段组合，init 一次性加载 + sha256 hash 锁入 checkpoint。C 类命令 `.md` 结构约束不移位，`sync-prompts.py` 注入共享片段。+B12 章 8 小节、+D17、Phase 4 T13-T16d 改写 + T16e/T16f/T16g。文档 2932→3070 行。BEACON 决策 #44 |
 | 2026-07-08 | **借鉴 Superpowers 提示词技术加固 Agent 行为层 (B11)** | 分析 Superpowers (9 SKILL.md + 零依赖) 后固化可借鉴项到设计文档：CSO description 纪律 / Iron Law / Red Flags / 合理化破解表（developer/critic/architect/verifier 成品文本）/ Letter-vs-Spirit / 渐进披露。明确不借鉴 3 项（Agent 自调节=v5.0灭亡根因、压力测试评估法=独立项目、subagent-per-task=与Tick冲突）。+B11 章 8 小节、+D16、Phase 4 加 T16c/T16d。文档 2776→2932 行。BEACON 决策 #43 |
 | 2026-07-08 | **v5.6 Pre-flight Gap Analysis + ResearchAgent 分层知识源** | 用户提出：设计文档部分章节粗略，应在主循环前预检而非拖到 verifier/audit 才暴露（代价高）。新增 Phase 0：gap_scan 分级 → gap_review 用户介入(Fill/Research/Defer/Defer+Research) → research 分层检索。ResearchAgent 四层知识源(Tier0 CLAUDE.md 声明→Tier3 web)，优先策展源、盲搜兜底、Tier1 三步法禁批量扫描。设计文档 1974→2776 行：+B10 章、+Phase 0 转换 T0.1-T0.8、+G6 Guardrail、+EngineState #28-#32、+3 handler。BEACON 决策 #42 (D14/D15) |
-| 2026-07-07 | **v5.5 设计文档三轮审计修复 (8 P0 + 18 P1 + 5 P2) + 实施计划全面更新 + Pre-v5.5 代码审计 + Phase 0 清理任务** | 三轮审计: 控制流补全→数据流一致→章节同步。IMPL-PLAN 扩展为 6 Phase 26 Task: +Phase 0 清理(4) +EngineState(2.0) +severity映射(2.3b) +DocSync骨架(2.6) +batch_plan扩展(3.5) +E2E验证(Phase 5); 全量代码审计确认 v5.0 核心无 stub; +设计→任务对照表 +未覆盖项owner追踪 |
-| 2026-07-06 | **v5.5 DeepAudit 扩展设计** | T9 plan-refine 回路 (DeepAudit → architect); P1 阈值自学习; Agent-Reach 集成; max_iter 自适应; Python/LLM 边界映射 |
-| 2026-07-06 | **v5.4 JSONL 协议移除 + BEACON 同步 + P0 dead code 清理** | JSONL 路径 (`_orchestrator_agent.py`) 已删除；BEACON.md 移除 7 处 JSONL 引用；`_derive_status` dead code 清理 |
-| 2026-07-09 | **外部 Skill/Agent 依赖审计 + 内化约束 (B14)** | 全项目 75.py+3命令+SKILL+5hook 排查：运行时外部依赖仅 dev-loop.md v5.1（Plan/code-reviewer//code-review/gsd-code-fixer 4项）。Superpowers 已复制内化(范本)。gsd-* 零容忍。建立"不 spawn 外部 agent、借鉴=复制非链接、系统依赖需抽象"准入规则。+B14 章 4 小节、+D19、T10 细化为移除 4 项、+T10c(PRBackend)。BEACON 决策 #46 |
 
 ## 待解决问题
 
