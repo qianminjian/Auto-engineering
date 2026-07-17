@@ -43,7 +43,9 @@
 | **10** | **双驱动接缝预留（v7.0 前置，必须）** | **2** | **2** | ✅ 完成：T33a action/stage-result schema SSOT + 契约测试（21 tests）+ T33b 执行栈共享标注（4 处）（BEACON #54）|
 | **11** | **v7.0 双驱动主体（V7-1~V7-8，V7-5 E2E 真跑 ✅，V7-7 🔒）** | **8** | **7** | **2026-07-17: V7-1~V7-6 核心抽象+CLI+mock集成全部完成 + V7-5 StandaloneDriver 真实 LLM E2E 验证通过（architect→developer→critic→GOAL_ACHIEVED，产出 fibonacci 实现+10 tests+auto-commit）。V7-8 基准框架 16 tests 覆盖数据模型/需求集/差异计算/报告生成/数据校验。3 处 bug 修复确保 E2E 可跑（guardrail GitDiffExists auto_commit 路径/bash_tools cwd 默认 project_root/architect 任务描述更详细）。V7-7 锁定。** |
 | **12** | **v8.0 多 Agent 平台适配（V8-1/2/3/4/5/6/7/8 全部 ✅，V8-6 已替换为 Marketplace）** | **8** | **8** | **2026-07-17: 全部完成。多平台基础架构就绪 — 三平台 manifest、三 hook 注册、Marketplace 标准安装、OpenAI Provider、文档覆盖。原 V8-6 install.sh 已删除，替换为三平台标准 /plugin marketplace add + /plugin install 机制。plugin.json 路径 `../` → `./` 对齐规范。** |
-| **合计** | | **118** | **117** | **Phase 1-10 = 102/102 完成；Phase 11 v7.0 = 7/8（仅 V7-7 v5.5 退役锁定）；Phase 12 v8.0 = 8/8。** |
+| **13** | **真跑故障修复 (voice_clone 2026-07-17)** | **10** | **9** | **P0 B3 crash ✅ → P1 7/7 全完成 → P2 1/2 (T41 ⊘ 项目侧) → T43 集成 5 tests ✅** |
+| **14** | **gate_results 结构错配修复 (忠实度分析)** | **1** | **1** | **T44 修复 production 路径 gate 结果全部丢失 ✅** |
+| **合计** | | **129** | **127** | **Phase 1-10 = 102/102 完成；Phase 11 v7.0 = 7/8；Phase 12 v8.0 = 8/8；Phase 13 = 9/10（1 ⊘ 项目侧）；Phase 14 = 1/1** |
 
 ---
 
@@ -274,6 +276,44 @@
 > **推荐实施顺序**：先 v8.0 Provider 抽象（V8-3→V8-4→V8-5），再做 v7.0 StandaloneDriver（V7-5），因为 StandaloneDriver 依赖 Provider 工厂。v8.0 平台适配层（V8-1/2/6/7/8）可独立于 v7.0 推进。
 > **与 v7.0 依赖关系**：V7-5 StandaloneDriver ↔ V8-3/4/5 Provider 抽象（前置）；V7-6 CLI ↔ V8-7 doctor 扩展；V8-1/2/6 目录+Hook+install.sh 为 v8.0 独有。
 > 详细接口签名/Provider 代码/install.sh 脚本见 v5.6-Design-Loop.md 附录 D 各节。
+
+---
+
+## Phase 13 — 真跑故障修复 (voice_clone 2026-07-17)
+
+> 来源：voice_clone_for_auto_test-2 项目使用 `/ae:dev-loop` 真跑产出的 29 问题报告。
+> 范围：10 项引擎/设计层面修复（19 项为项目侧，不在本仓库范围）。
+> 依赖顺序：P0 crash → P1 数据契约+REDGuard+状态管理 → P2 改善项 → 集成测试。
+> BEACON 决策 #59。
+
+| T | Issue | 文件/描述 | 验收 | P | 状态 | Commit |
+|---|-------|----------|------|:---:|:---:|--------|
+| T34 | B3 | `loop/guardrail.py:291` TestsPass.check() — `isinstance(results, dict)` 类型守卫。test_results 传入字符串时 `results.get()` crash，期望 dict 收到 str 应返回明确错误而非 Python crash | 字符串 test_results → retry + 明确错误信息 | P0 | ✅ | (本次) |
+| T35 | B2 | `loop/tick_orchestrator.py` RESULT_VALIDATION_ERROR — stage 不匹配时错误信息区分 `stage`（角色名如 "developer"）和 `batch_id`（如 "B4"），提示用户填角色名非 batch_id | STAGE_MISMATCH 错误信息含 "(stage 是角色名如 'developer'/'architect', 不是 batch_id 如 'B4')" | P1 | ✅ | (本次) |
+| T36 | B4/B5 | `loop/tick_orchestrator.py` expected_format — component_verifier 和 plate_deep_audit 的 expected_format 列出所有必填字段（component/plate），避免 RESULT_VALIDATION_ERROR 因缺字段遗漏 | expected_format 含 component(verifier)/plate(audit) 必填字段声明 | P1 | ✅ | (本次) |
+| T37 | B11 | `loop/guardrail.py` REDGuard red_evidence 格式校验 — 字符串数组 vs 对象数组格式错误时给出明确提示+期望格式 | red_evidence format error 信息含期望格式示例 `[{"task_id": "B3-T1", "red_commit": "abc123"}]` | P1 | ✅ | (本次) |
+| T38 | B8 | `loop/guardrail.py` REDGuard 交叉文件检测 — GREEN commit 修改了 RED commit 的测试文件时（RED→GREEN 链断裂），检测并给出明确错误 | GREEN commit 触碰 test 文件 → retry + "GREEN commit 修改了测试文件" 提示 | P1 | ✅ | (本次) |
+| T39 | B9/D2 | `engine/batch_state.py` 零 batch 组件警告抑制 — module-level `_warned_zero_batch` set 去重，每个组件只警告一次 | 同一组件警告只输出一次，后续 tick 不再重复 | P1 | ✅ | (本次) |
+| T40 | D1 | `engine/progress_tree.py` _apply_sync — plan_refine 后 total_tasks 变化时将旧 verifier_status 重置为 "pending"，避免 stale "failed" 状态 | plan_refine 后组件 total_tasks 变化 → verifier_status 自动重置为 "pending" | P1 | ✅ | (本次) |
+| T41 | B6 | `commands/dev-loop.md` 测试命令 — 移除 `--no-cov` 参数（vitest 无此参数）。经查引擎 TestGate 不硬编码 --no-cov（仅 pytest 可能加 --timeout），B6 根因在项目 Agent 行为非引擎代码。标记为项目侧，无引擎修改。 | (项目侧，引擎无需修改) | P2 | ⊘ | 引擎无硬编码 |
+| T42 | D3 | `loop/tick_orchestrator.py` REFINE_LIMIT 错误信息 — 超配额时给出 actionable 建议（拆分 Phase / design_doc 标注延后）| REFINE_LIMIT reason 含 "建议: 拆分需求为多个 Phase 分别处理, 或在 design_doc 中标注设计项为延后" | P2 | ✅ | (本次) |
+| T43 | — | `tests/test_guardrail.py::TestVoiceCloneRegression` 集成测试 — 5 场景覆盖 B3/B8/B11/B9/D2/D1 修复不回归 | 5 tests pass, 全量 250 passed (guardrail+tick_orch+batch_state+progress_tree) | P1 | ✅ | (本次) |
+
+> **实施顺序**：T34(P0) → T35/T36/T37(独立 P1) → T38(P1 REDGuard) → T39/T40(P1 状态管理) → T41/T42(P2) → T43(集成测试)
+
+---
+
+## Phase 14 — gate_results 结构错配修复 (忠实度分析 2026-07-17)
+
+> 来源：voice_clone 项目 dev-loop 忠实度分析发现 production 路径 gate_results 全部为 null。
+> 根因：`_run_developer_gates()` 调用 `run_gates()` 但 `run_gates()` 返回嵌套结构，`_run_developer_gates()` 直接迭代顶层 key → 所有 gate 结果丢失。
+> 性质：代码 bug 修复（production 路径 gate 结果静默丢失）。BEACON 决策 #60。
+
+| T | Issue | 文件/描述 | 验收 | P | 状态 | Commit |
+|---|-------|----------|------|:---:|:---:|--------|
+| T44 | D4 | `loop/tick_orchestrator.py:_run_developer_gates()` — `run_gates()` 返回 `{project_root, gate_names, passed, failed, skipped, gate_summary: {实际gate结果}}`，原代码直接迭代顶层 key 误将 wrapper key 当 gate 名。修复：`raw.get("gate_summary", raw)` 统一提取内层结果，扁平 dict（测试 stub）无此 key 回退自身。新增 `test_extracts_gate_summary_from_nested_run_gates_output`。 | production 路径 gate_results 含真实 gate 名非 wrapper key + 全量 251 passed 零回归 | P0 | ✅ | (本轮) |
+
+> **真实严重度定级 P0**：gate_results 是 Iron Law D4（Python is Gatekeeper）的核心输出——所有 gate 结果静默丢失意味着生产运行时 gate 执行了但结果不可观测，侵蚀引擎"可观测的 Gatekeeper"定位。测试全绿是因为测试 stub 返回扁平 dict 不经过 `run_gates()` 嵌套路径——代码与测试路径分叉制造了虚假绿色。
 
 ---
 

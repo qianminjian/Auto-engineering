@@ -251,6 +251,11 @@ class ProgressTree:
                 changed = False
                 if not structural and total != node.total_tasks:
                     node.total_tasks = total  # 保留 done_tasks
+                    # T40 D1: plan_refine 后旧 verifier 结果已失效, 重置为 pending
+                    if node.level == "component" and node.verifier_status != "pending":
+                        node.verifier_status = "pending"
+                        node.verifier_missing = 0
+                        node.verifier_diverged = 0
                     changed = True
                 if node.name != name:
                     node.name = name

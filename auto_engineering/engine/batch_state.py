@@ -23,6 +23,9 @@ from __future__ import annotations
 
 import json
 import logging
+
+# 已警告过的零 batch 组件集合 (防重复警告, T39 B9/D2)
+_warned_zero_batch: set[str] = set()
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -64,12 +67,15 @@ class BatchState:
             )
 
         # 零 batch 组件: design_doc 有但无对应 batch → WARN (交 architect 确认)
+        # T39 B9/D2: 每个组件只警告一次, 跨 tick 不重复
         zero_batch = [c for c in plate_component_names if c not in batch_components]
-        if zero_batch:
+        new_warns = [c for c in zero_batch if c not in _warned_zero_batch]
+        if new_warns:
+            _warned_zero_batch.update(new_warns)
             _logger.warning(
                 "零 batch 组件 %s: design_doc 声明但 batch_plan 无对应 batch —— "
                 "确认是'有意不实现'还是'漏排 batch'",
-                sorted(zero_batch),
+                sorted(new_warns),
             )
 
         # 过滤: 仅保留有 batch 的 component, 移除无 component 的 plate

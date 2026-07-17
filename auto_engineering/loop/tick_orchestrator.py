@@ -321,7 +321,8 @@ class TickOrchestrator:
             return ErrorResponse(
                 error_code="STAGE_MISMATCH",
                 message=f"stage 不匹配: result={result_stage!r}, "
-                        f"expected={self._state.current_stage!r}",
+                        f"expected={self._state.current_stage!r} "
+                        f"(stage 是角色名如 'developer'/'architect', 不是 batch_id 如 'B4')",
                 current_state=self._state.to_dict())
 
         from auto_engineering.loop.actions import validate_result_format
@@ -751,6 +752,8 @@ class TickOrchestrator:
             else:
                 reason = (f"REFINE_LIMIT: 全局 "
                           f"{self._state.plan_refine_count}/{_MAX_GLOBAL}")
+            reason += (" — 建议: 拆分需求为多个 Phase 分别处理, "
+                       "或在 design_doc 中标注设计项为延后")
             return ActionDone(verdict="REFINE_LIMIT", reason=reason).to_dict()
 
         self._state.plan_refine_by_source[source] = src_count + 1
@@ -983,6 +986,7 @@ class TickOrchestrator:
                 "contracts": getattr(comp, "contracts", {}),
             }, "recheck": dict(_VERIFIER_RECHECK), "expected_format": {
                 "stage": "component_verifier",
+                "component": "string (组件名称, 必填)",
                 "coverage_map": (
                     "[{design_item, status(IMPLEMENTED|MISSING|DIVERGED), "
                     "file, line, note}]"),
@@ -1002,6 +1006,7 @@ class TickOrchestrator:
                 "project_root": str(self.project_root),
             }, "expected_format": {
                 "stage": "plate_deep_audit",
+                "plate": "string (板块名称, 必填)",
                 "findings": (
                     "[{severity, dimension, agent_source, file, line, "
                     "description, suggested_fix}]"),
@@ -1080,7 +1085,8 @@ class TickOrchestrator:
             return ErrorResponse(
                 error_code="STAGE_MISMATCH",
                 message=f"stage 不匹配: result={result_stage!r}, "
-                        f"expected={self._state.current_stage!r}",
+                        f"expected={self._state.current_stage!r} "
+                        f"(stage 是角色名如 'developer'/'architect', 不是 batch_id 如 'B4')",
                 current_state=self._state.to_dict())
 
         from auto_engineering.loop.actions import validate_result_format
@@ -1143,10 +1149,14 @@ class TickOrchestrator:
 
         t_g = time.perf_counter()
         if self._gate_runner:
-            results = self._gate_runner(gate_names, self.project_root)
+            raw = self._gate_runner(gate_names, self.project_root)
         else:
             from auto_engineering.cli.gate_check import run_gates
-            results = run_gates(gate_names, self.project_root)
+            raw = run_gates(gate_names, self.project_root)
+        # run_gates() 返回嵌套结构 {project_root, gate_names, passed,
+        # failed, skipped, gate_summary: {实际gate结果}} —
+        # 提取 gate_summary; 扁平 dict (测试 stub) 无此 key 则回退自身
+        per_gate = raw.get("gate_summary", raw)
         self._t_gate_ms += (time.perf_counter() - t_g) * 1000
 
         # S-3 生产者契约 (喂给 G8 FreshGate): 每个 Gate 结果附 files_snapshot_sha
@@ -1170,7 +1180,7 @@ class TickOrchestrator:
                 "files_snapshot_sha": snapshot_sha,
                 "ran_at": ran_at,
             }
-            for name, v in results.items()
+            for name, v in per_gate.items()
         }
 
     def _load_default_gates(self) -> list:

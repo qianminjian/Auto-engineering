@@ -2005,6 +2005,67 @@ class TestRunDeveloperGates:
             assert "files_snapshot_sha" in gate_val, f"{gate_name}: 应有 files_snapshot_sha"
             assert "ran_at" in gate_val, f"{gate_name}: 应有 ran_at"
 
+    def test_extracts_gate_summary_from_nested_run_gates_output(self) -> None:
+        """run_gates() 返回 {project_root, gate_names, passed, failed, skipped, gate_summary}
+        嵌套结构，_run_developer_gates 必须提取 gate_summary 中的逐 gate 结果，
+        而非将 project_root/gate_names/passed/failed/skipped 当作 gate 名。"""
+        def _nested_runner(gate_names, project_root):
+            return {
+                "project_root": str(project_root),
+                "gate_names": list(gate_names),
+                "passed": 3,
+                "failed": 0,
+                "skipped": 0,
+                "gate_summary": {
+                    name: {"status": "pass", "passed": True, "message": "ok",
+                           "gate_name": name}
+                    for name in gate_names
+                },
+            }
+
+        o = TickOrchestrator(
+            gate_runner=_nested_runner,
+            guardrail=_pass_guardrail(),
+            checkpoint_store=None,
+        )
+        o.init("实现功能")
+        # Tick 1: architect → developer
+        a = o.tick(_make_result_file({
+            "stage": "architect",
+            "plan": _VALID_PLAN,
+            "file_list": ["f1.py"],
+            "batch_plan": [{"batch_id": "B1", "design_section": "A1",
+                            "component": "Foo", "tasks": [
+                                {"id": "T1", "description": "task1",
+                                 "file_targets": ["f1.py"]},
+                            ]}],
+            "design_doc_updated": True,
+        }))
+        assert a["stage"] == "developer"
+        # Tick 2: submit developer result → 触发 _run_developer_gates
+        o.tick(_make_result_file({
+            "stage": "developer",
+            "batch_id": "B1",
+            "files_changed": ["f1.py"],
+            "commit_hash": "a" * 40,
+            "test_results": {"passed": 1, "total": 1},
+            "red_evidence": [],
+            "tasks_completed": ["T1"],
+        }))
+        gr = o._state.gate_results
+        assert gr is not None
+        # 顶层 key 必须是 gate 名 (safety/lint/...), 不能是 wrapper key
+        for wrapper in ("project_root", "gate_names", "passed", "failed", "skipped"):
+            assert wrapper not in gr, (
+                f"gate_results 不应包含 wrapper key '{wrapper}' — "
+                f"未从 run_gates() 嵌套结构中提取 gate_summary"
+            )
+        # 至少有一个 gate 结果
+        assert len(gr) > 0, "gate_results 不应为空"
+        for gate_name, gate_val in gr.items():
+            assert isinstance(gate_val, dict), f"{gate_name}: 应为 dict"
+            assert gate_val["passed"] is True, f"{gate_name}: passed 应为 True"
+
 
 class TestFreshGateAtCritic:
     """FreshGate G8 在 critic stage 应 rerun gates 而非返回错误.

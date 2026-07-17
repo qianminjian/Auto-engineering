@@ -288,6 +288,11 @@ class TestsPass(Guardrail):
         project_root: Path | None = None,
     ) -> GuardrailResult:
         results: dict = getattr(state, "test_results", {}) or {}
+        if not isinstance(results, dict):
+            return GuardrailResult(
+                action="retry",
+                message=f"test_results 应为 dict, 实际为 {type(results).__name__}: {str(results)[:100]}",
+            )
         passed = int(results.get("passed", 0) or 0)
         failed = int(results.get("failed", 0) or 0)
         errors = int(results.get("errors", 0) or 0)
@@ -446,6 +451,14 @@ def _git_is_ancestor(ancestor: str, descendant: str, cwd: Path) -> bool:
     return rc == 0
 
 
+def _git_commit_touches(commit: str, files: list[str], cwd: Path) -> bool:
+    """检查 commit 是否触碰了 files 中的任何文件."""
+    if not commit or not files:
+        return False
+    rc, _ = _run_git(cwd, "diff-tree", "--no-commit-id", "-r", commit, "--", *files)
+    return rc == 0 and bool(_.strip())
+
+
 def _find_evidence(red_evidence: list[dict], task_id: str) -> dict | None:
     """从 red_evidence 找匹配 task_id 的条目 (B3.1)."""
     for ev in red_evidence or []:
@@ -555,9 +568,15 @@ class REDGuard(Guardrail):
             task_id = getattr(task, "id", "?")
             test_commit = _git_log_first_touching(test_files, impl_commit, root)
             if test_commit is None:
+                # Check if impl_commit itself touches test files (GREEN commit 不应改测试)
+                impl_touches_test = _git_commit_touches(impl_commit, test_files, root)
+                detail = (
+                    " — GREEN commit 修改了测试文件, 测试应在独立 RED commit 中创建"
+                    if impl_touches_test else ""
+                )
                 return GuardrailResult(
                     action="retry",
-                    message=f"task {task_id}: 无先于实现的测试 commit — 违反 TDD RED",
+                    message=f"task {task_id}: 无先于实现的测试 commit — 违反 TDD RED{detail}",
                 )
             if not _git_is_ancestor(test_commit, impl_commit, root):
                 return GuardrailResult(
@@ -577,7 +596,14 @@ class REDGuard(Guardrail):
             else:
                 return GuardrailResult(
                     action="retry",
-                    message=f"task {task_id}: 缺 red_evidence — 补充后重试",
+                    message=(
+                        f"task {task_id}: 缺 red_evidence — "
+                        f"red_evidence 格式应为 [{{'task_id': '{task_id}', "
+                        f"'red_commit': '<hash>'}}], 当前为 "
+                        f"{type(red_evidence).__name__}"
+                        + (f"[{type(red_evidence[0]).__name__}]" if red_evidence else "")
+                        + ("" if red_evidence else " (空列表)")
+                    ),
                 )
         return GuardrailResult()
 
