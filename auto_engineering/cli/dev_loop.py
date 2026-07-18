@@ -337,6 +337,7 @@ def _checkpoint_db_path(root: Path) -> Path:
 def _run_tick_init(
     requirement: str, design_doc_path: str | None, root: Path, max_rounds: int,
     debug: bool = False, debug_dir: str | None = None,
+    pause_at_stage: str | None = None,
 ) -> None:
     """ae dev-loop --init: 初始化 tick loop, 输出第一个 action JSON (stdout 契约)."""
     import json
@@ -350,6 +351,9 @@ def _run_tick_init(
     try:
         orch = TickOrchestrator(root, checkpoint_store=store,
                                 debug=debug, debug_dir=debug_dir)
+        if pause_at_stage:
+            stages = [s.strip() for s in pause_at_stage.split(",") if s.strip()]
+            orch.set_pause_at_stages(stages)
         action = orch.init(
             requirement, design_doc_path=design_doc_path, max_rounds=max_rounds)
         click.echo(json.dumps(action, ensure_ascii=False))

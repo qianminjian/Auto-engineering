@@ -121,6 +121,8 @@ def main():
               help="启用调试模式: 调度轨迹/故障信息写入 _scratch/debug/")
 @click.option("--debug-dir", "debug_dir_opt", type=click.Path(),
               help="调试输出目录 (默认 <project_root>/_scratch/debug/)")
+@click.option("--pause-at-stage", "pause_at_stage",
+              help="T64: 指定 stage 前暂停 (逗号分隔, 如 architect,critic)")
 def dev_loop(
     requirement: str | None,
     init_flag: bool,
@@ -137,6 +139,7 @@ def dev_loop(
     standalone_flag: bool = False,
     debug_flag: bool = False,
     debug_dir_opt: str | None = None,
+    pause_at_stage: str | None = None,
 ):
     """单需求开发循环.
 
@@ -173,7 +176,7 @@ def dev_loop(
             click.echo("错误: --init 需要 requirement 参数", err=True)
             raise SystemExit(1)
         _run_tick_init(requirement, design_doc, root, max_rounds, debug=_debug,
-                       debug_dir=debug_dir_opt)
+                       debug_dir=debug_dir_opt, pause_at_stage=pause_at_stage)
         return
     if tick_flag:
         if not result_file:

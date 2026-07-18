@@ -411,7 +411,7 @@
 | T62 | `auto_engineering/loop/guardrail.py` — FileAccessGuardrail：新增 Guardrail，post-agent 检查 developer 的 `files_changed` 是否全在 `batch_plan.file_targets` 范围内。超出 → block + 报告越界文件列表 | 越界文件 block + 白名单 `.ae-state/` `_scratch/` 自动放行 + test_file_access_guardrail ≥5 tests | ✅ | 65d02df |
 | T62a | `auto_engineering/gates/` 或 guardrail 内部 — glob 支持：`pathspec` 库集成，支持 `.gitignore` 风格的 file_targets 匹配（`src/**/*.py`） | glob 模式匹配正确 + test_glob_matching ≥3 tests | ✅ | e923b86 |
 | T63 | `llm/anthropic_provider.py` — Prompt caching：在 `create_message()` 中注入 `cache_control`（`{"type": "ephemeral", "ttl": "5m"}`）到 system content block 和 tools 数组。Anthropic Messages API 原生支持，system 是顶级参数非 messages role | cache_control 注入 + `usage.cache_creation_input_tokens` > 0 + test_prompt_caching ≥3 tests | ✅ | 37e21ee |
-| T64 | `loop/tick_orchestrator.py` + `cli/dev_loop.py` — Stage Checkpoint Gate（DecisionGate 形态 3，§1.5.5）：`--pause-at-stage` 参数，指定 stage 前暂停等待 CLI 输入（继续/审查/终止） | --pause-at-stage architect/developer/critic 暂停 + 进度摘要输出 + test_stage_checkpoint ≥5 tests | ☐ | — |
+| T64 | `loop/tick_orchestrator.py` + `cli/dev_loop.py` — Stage Checkpoint Gate（DecisionGate 形态 3，§1.5.5）：`--pause-at-stage` 参数，指定 stage 前暂停等待 CLI 输入（继续/审查/终止） | --pause-at-stage architect/developer/critic 暂停 + 进度摘要输出 + test_stage_checkpoint ≥5 tests | ✅ | — |
 
 > **T58 设计参考**：LangChain `ChatZhipuAI`/`ChatTongyi` 等 adapter — 复用 API 差异处理模式（大部分国产模型已兼容 OpenAI 格式，adapter 很薄）。
 > **T60/T61 设计参考**：OpenTelemetry SDK + Deep Agents LangSmith middleware（复用 trace 层级设计模式）。

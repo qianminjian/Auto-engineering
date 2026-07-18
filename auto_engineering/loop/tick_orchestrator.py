@@ -29,7 +29,6 @@ from auto_engineering.engine.batch_state import BatchState
 from auto_engineering.engine.design_doc import DesignDoc, Supplement
 from auto_engineering.engine.progress_tree import ProgressTree
 from auto_engineering.engine.state import EngineState
-from auto_engineering.loop.debug_tracer import DebugTracer
 from auto_engineering.engine.verification_layers import (
     VerificationLayers,
     determine_verification_layers,
@@ -39,6 +38,7 @@ from auto_engineering.loop.actions import ActionDone, ActionError, ErrorResponse
 from auto_engineering.loop.checkpoint.manager import CheckpointManager
 from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
 from auto_engineering.loop.convergence import ConvergenceConfig, ConvergenceJudge
+from auto_engineering.loop.debug_tracer import DebugTracer
 from auto_engineering.loop.guardrail import GuardrailChain
 from auto_engineering.loop.plan import Plan
 from auto_engineering.loop.refine import build_refine_request
@@ -124,6 +124,34 @@ class TickOrchestrator:
         # DebugTracer (可选, --debug 或 AE_DEBUG=1 时激活)
         self._debug_tracer: DebugTracer | None = None
         self._last_guardrail: dict | None = None
+        # T64: Stage Checkpoint Gate (DecisionGate 形态 3)
+        self._pause_at_stages: set[str] = set()
+        self._passed_checkpoints: set[str] = set()
+
+    # ── T64: Stage Checkpoint Gate ──
+
+    def set_pause_at_stages(self, stages: list[str]) -> None:
+        """Set stages to pause at (T64 --pause-at-stage)."""
+        self._pause_at_stages = set(stages)
+
+    def _checkpoint_passed(self, stage: str) -> bool:
+        """Check if Stage Checkpoint Gate for this stage has been passed."""
+        return stage in self._passed_checkpoints
+
+    def _progress_summary(self) -> str:
+        """Generate current progress summary for gate action display.
+
+        Format: "tick=N, stage=S, round=R"
+        """
+        s = self._state
+        if s is None:
+            return "tick=0, stage=?"
+        parts = [f"tick={s.tick}/{s.round}", f"stage={s.current_stage}"]
+        if self._batch_state and not self._batch_state.is_component_complete():
+            parts.append(f"batch={self._batch_state.current_batch_id()}")
+        elif self._last_batch_id:
+            parts.append(f"batch={self._last_batch_id}")
+        return ", ".join(parts)
 
     # ── 公共入口 ──
 
@@ -327,12 +355,17 @@ class TickOrchestrator:
         return action
 
     def _tick_body_dict(self, result: dict) -> dict:
-        """tick 核心逻辑 (dict 版本): 验证 → Guardrail → Gate → 路由 → Checkpoint → action."""
+        """tick 核心逻辑 (dict 版本): Gate resolution → 验证 → Guardrail → Gate → 路由 → action."""
+        # T64: handle gate_resolution before validation (no stage field)
+        gate_resolution = result.get("gate_resolution")
+        if gate_resolution and isinstance(gate_resolution, dict):
+            return self._tick_process_result(result)
+
         validated = self._validate_result_dict(result)
         return self._tick_process_result(validated)
 
     def _tick_process_result(self, result: dict | ErrorResponse) -> dict:
-        """tick 公共处理逻辑: Guardrail → Gate → 路由 → action."""
+        """tick 公共处理逻辑: Gate resolution → Guardrail → Gate → 路由 → action."""
         if isinstance(result, ErrorResponse):
             if self._debug_tracer is not None:
                 self._debug_tracer.record_error(
@@ -341,6 +374,30 @@ class TickOrchestrator:
                     detail={"message": result.message},
                 )
             return result.to_dict()
+
+        # T64: handle gate_resolution (Stage Checkpoint Gate)
+        gate_resolution = result.get("gate_resolution")
+        if gate_resolution and isinstance(gate_resolution, dict):
+            gate_id = gate_resolution.get("gate_id", "")
+            resolution = gate_resolution.get("resolution", "")
+            if resolution == "终止 loop":
+                return {
+                    "action": "done",
+                    "verdict": "TERMINATED",
+                    "message": f"用户通过 {gate_id} 终止 loop",
+                    "stage": self._state.current_stage,
+                    "tick": self._state.tick + 1,
+                    "thread_id": self._state.thread_id,
+                }
+            if resolution == "继续":
+                expected_stage = self._state.current_stage
+                self._passed_checkpoints.add(expected_stage)
+                return self._build_action()
+            # "审查当前产出" or any other: proceed to stage with review feedback
+            self._passed_checkpoints.add(self._state.current_stage)
+            return self._build_action(
+                feedback="用户选择审查当前产出，请展示当前进度和已完成内容供审查。"
+            )
 
         self._apply_result_to_state(result)
 
@@ -909,6 +966,29 @@ class TickOrchestrator:
 
     def _build_action(self, feedback: str | None = None) -> dict:
         stage = self._state.current_stage
+
+        # T64: Stage Checkpoint Gate — pause before entering checkpointed stages
+        if stage in self._pause_at_stages and not self._checkpoint_passed(stage):
+            return {
+                "action": "gate",
+                "tick": self._state.tick + 1,
+                "stage": stage,
+                "thread_id": self._state.thread_id,
+                "gate": {
+                    "id": f"checkpoint_{stage}",
+                    "type": "stage_checkpoint",
+                    "trigger": f"before_{stage}",
+                    "question": (
+                        f"即将进入 {stage} 阶段。"
+                        f"当前进度：{self._progress_summary()}"
+                    ),
+                    "options": ["继续", "审查当前产出", "终止 loop"],
+                    "default": "继续",
+                    "timeout_ms": 0,
+                },
+                "progress_summary": self._progress_summary(),
+            }
+
         base: dict = {
             "tick": self._state.tick + 1,
             "stage": stage,
