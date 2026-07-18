@@ -63,11 +63,13 @@ def create_provider(provider: str = "", *, api_key: str = "") -> LLMProvider:
     if resolved == "glm":
         from auto_engineering.providers.glm import GLMProvider
 
-        return GLMProvider()
+        key = api_key or os.environ.get("ZHIPUAI_API_KEY", "")
+        return GLMProvider(api_key=key)
 
     if resolved == "qwen":
         from auto_engineering.providers.qwen import QwenProvider
 
-        return QwenProvider()
+        key = api_key or os.environ.get("DASHSCOPE_API_KEY", "")
+        return QwenProvider(api_key=key)
 
     raise ValueError(f"Unknown provider: {resolved}")

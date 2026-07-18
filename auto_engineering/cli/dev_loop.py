@@ -428,13 +428,6 @@ def _run_tick_resume(checkpoint_id: str, root: Path) -> None:
 
 
 
-def _resolve_standalone_model(llm_provider: str) -> str:
-    """解析 Standalone 模式下的模型名."""
-    if llm_provider == "openai":
-        return "gpt-4o"
-    return "claude-sonnet-4-6"
-
-
 def _run_standalone(
     requirement: str,
     design_doc: str | None,
@@ -453,12 +446,13 @@ def _run_standalone(
     import asyncio
     import json
 
-    from auto_engineering.loop.standalone_driver import StandaloneDriver
+    from auto_engineering.loop.standalone_driver import (
+        StandaloneDriver, _resolve_model, _resolve_provider,
+    )
     from auto_engineering.loop.tick_orchestrator import TickOrchestrator
     from auto_engineering.runtime.runtime import AgentRuntime
 
     from auto_engineering.agents.base import BaseAgent
-    from auto_engineering.llm.anthropic_provider import AnthropicProvider
     from auto_engineering.prompts.registry import default_registry
     from auto_engineering.tools.bash_tools import RunBashTool
     from auto_engineering.tools.file_tools import (
@@ -498,10 +492,10 @@ def _run_standalone(
         RunBashTool(project_root=project_root),  # git diff
     ]
 
-    model = _resolve_standalone_model(llm_provider)
-
     for role in ("architect", "developer", "critic"):
-        provider = AnthropicProvider()
+        # T59: multi-provider — resolve provider+model per role via env vars
+        provider = _resolve_provider(role)
+        model = _resolve_model(role)
         system_prompt = prompts.get(role)
         # v7.8: DeepSeek 常产纯 tool_use 无文本, 软上限 = max_calls//2 易误杀
         # developer: 30 (warn=15), critic: 15 (warn=7), architect: 15 (warn=7)

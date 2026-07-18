@@ -62,6 +62,19 @@ def _resolve_model(role: str) -> str:
     return os.environ.get(env_key, ROLE_MODEL.get(role, "claude-sonnet-4-6"))
 
 
+def _resolve_provider(role: str) -> Any:
+    """Resolve LLM provider for role with AE_PROVIDER_<ROLE> env var (T59).
+
+    Uses create_provider() for auto-detection with per-role override.
+    Returns an LLMProvider-compatible instance.
+    """
+    from auto_engineering.providers.factory import create_provider
+
+    env_key = f"AE_PROVIDER_{role.upper()}"
+    provider_name = os.environ.get(env_key, "")
+    return create_provider(provider_name)
+
+
 # ── V7-3: AuthProvider ──
 
 AuthProvider = Callable[[], str]
