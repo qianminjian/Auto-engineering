@@ -535,6 +535,7 @@ class TickOrchestrator:
                     next_batch = self._batch_state.current_batch()
                     if next_batch.get("tasks"):
                         node.current_task = next_batch["tasks"][0]["description"]
+            self._save_checkpoint()
             return self._build_action()
 
         self._snapshot_developer_output()

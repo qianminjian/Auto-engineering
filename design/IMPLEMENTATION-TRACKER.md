@@ -46,7 +46,8 @@
 | **13** | **真跑故障修复 (voice_clone 2026-07-17)** | **10** | **9** | **P0 B3 crash ✅ → P1 7/7 全完成 → P2 1/2 (T41 ⊘ 项目侧) → T43 集成 5 tests ✅** |
 | **14** | **gate_results 结构错配修复 (忠实度分析)** | **1** | **1** | **T44 修复 production 路径 gate 结果全部丢失 ✅** |
 | **15** | **DebugTracer — dev-loop 调度轨迹诊断** | **1** | **1** | **T45 DebugTracer 实现 + TickOrchestrator 集成 + CLI 接线 ✅** |
-| **合计** | | **130** | **128** | **Phase 1-10 = 102/102 完成；Phase 11 v7.0 = 7/8；Phase 12 v8.0 = 8/8；Phase 13 = 9/10（1 ⊘ 项目侧）；Phase 14 = 1/1；Phase 15 = 1/1** |
+| **16** | **PrismScan 真跑故障修复 (2026-07-18)** | **3** | **3** | **✅ 完成：BUG-01(P1) G2 error 消息 / BUG-02(P2) GitDiffExists root commit / BUG-03(P0) batch 间 checkpoint** |
+| **合计** | | **133** | **132** | **Phase 1-10 = 102/102 完成；Phase 11 v7.0 = 7/8；Phase 12 v8.0 = 8/8；Phase 13 = 9/10（1 ⊘ 项目侧）；Phase 14 = 1/1；Phase 15 = 1/1；Phase 16 = 3/3** |
 
 ---
 
@@ -329,6 +330,22 @@
 | T45 | `loop/debug_tracer.py`（101 行）+ `tests/test_debug_tracer.py`（9 tests）+ EngineState #38-39 + `tick_orchestrator.py` 5 hook 点集成 + `cli/__init__.py` `--debug`/`--debug-dir` flag + `cli/dev_loop.py` 全路径接线 | 9 debug_tracer tests + 103 tick_orchestrator tests + 47 engine_state + 21 batch_state + 58 stage_router = 238 passed 零回归 | P1 | ✅ | (本轮) |
 
 > **真实严重度定级 P1**：debug 功能非引擎核心路径，但为生产问题诊断提供关键可观测性——per-tick 快照 + 故障事件 JSONL + 最终摘要覆盖了"引擎静默出错时无现场"的诊断盲区。
+
+---
+
+## Phase 16 — PrismScan 真跑故障修复 (2026-07-18)
+
+> 来源：prismscan_for_auto_cc_Design 项目使用 `/ae:dev-loop` 真跑测试产出的 3 个 bug 报告（`design/buginfo/BUG-0{1,2,3}-*.md`）。
+> 范围：3 项引擎修复。BEACON 决策 #62。
+
+| T | Issue | 文件/描述 | 验收 | P | 状态 | Commit |
+|---|-------|----------|------|:---:|:---:|--------|
+| T46 | BUG-01 | `engine/batch_state.py:64-67` — G2 error 信息补全有效 component 名列表。原错误信息只列 orphan component，不提示有效 component 名，agent 需 3 轮 retry 才能定位根因 | 错误信息含 "有效 component 名: [...]" 列表 | P1 | ✅ | (本次) |
+| T47 | BUG-02 | `loop/guardrail.py:259-268` GitDiffExists.check() — root commit 降级。`git diff-tree --no-commit-id -r HEAD` 对 root commit 返回空（无 parent 可 diff），导致 guardrail 假阳报"新仓库且无变更"。修复：`diff-tree` 空时用 `git show --stat --format= HEAD` 作为最终降级 | root commit 后 GitDiffExists 返回 pass + 全量 guardrail 测试零回归 | P2 | ✅ | (本次) |
+| T48 | BUG-03 | `loop/tick_orchestrator.py:531-538` `_after_developer()` — batch 间未保存 checkpoint。`advance_batch()` 仅更新 in-memory 游标，未调 `_save_checkpoint()`。下一个 `--tick` 进程 restore 旧 checkpoint（batch_idx=0）→ 永远回到 B1 | `has_more_batches_for(comp)` 分支加 `self._save_checkpoint()` + 跨 batch tick 测试 batch_idx 推进 | P0 | ✅ | (本次) |
+
+> **实施顺序**：T48(P0) → T46(P1) → T47(P2)
+> **BUG-03 定级 P0**：阻断所有多 batch 组件——`done_tasks` 永远停在 batch 1，引擎无法推进到 batch 2+。任何含 >1 batch 的 component 100% 触发。
 
 ---
 

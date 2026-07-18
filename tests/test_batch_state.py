@@ -73,11 +73,23 @@ class TestConstruction:
         assert bs.total_batches == 3
 
     def test_from_design_doc_orphan_batch_raises(self) -> None:
-        """batch component 不在任何 plate → 构造抛错 (G2 retry)."""
+        """batch component 不在任何 plate → 构造抛错 (G2 retry), 含有效 component 名."""
         doc = _design_doc({"PlateA": ["CompX"]})
         bp = [_batch("b1", "CompX"), _batch("b2", "OrphanComp")]
-        with pytest.raises(ValueError, match=r"OrphanComp|孤儿"):
+        with pytest.raises(ValueError, match=r"OrphanComp|孤儿|有效 component 名"):
             BatchState.from_design_doc(doc, bp)
+
+    def test_from_design_doc_orphan_error_includes_valid_names(self) -> None:
+        """BUG-01: orphan error 必须列出有效 component 名以加速调试."""
+        doc = _design_doc({"PlateA": ["CompX", "CompY", "CompZ"]})
+        bp = [_batch("b1", "OrphanComp")]
+        with pytest.raises(ValueError) as excinfo:
+            BatchState.from_design_doc(doc, bp)
+        msg = str(excinfo.value)
+        assert "有效 component 名" in msg
+        assert "CompX" in msg
+        assert "CompY" in msg
+        assert "CompZ" in msg
 
     def test_from_design_doc_zero_batch_component_warns(
         self, caplog: pytest.LogCaptureFixture

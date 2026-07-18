@@ -342,9 +342,21 @@ class TestGitDiffExists:
         assert result.action == "pass"
 
     def test_retry_no_diff(self, tmp_path: Path) -> None:
-        """有 commit 但 HEAD~1..HEAD 无变化 → retry."""
+        """有 2+ commit 但 HEAD~1..HEAD 无变化 → retry.
+
+        使用 2 个 commit (非 root commit) 以避免 git show --stat 降级
+        误判 root commit 为 developer 产出 (root commit 场景见
+        test_pass_root_commit_with_show_stat).
+        """
         repo = _make_git_repo(tmp_path)
-        # 不再做 commit，HEAD~1..HEAD 就是空
+        env = {
+            "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@x",
+            "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@x",
+            "GIT_AUTHOR_DATE": "2024-01-01T00:00:00+0000",
+            "GIT_COMMITTER_DATE": "2024-01-01T00:00:00+0000",
+        }
+        # 创建第二个空 commit，使 HEAD~1 存在但 HEAD~1..HEAD 无文件变更
+        _git(repo, "commit", "-q", "--allow-empty", "-m", "noop", env=env)
         state = EngineState()
         result = GitDiffExists().check(
             "developer", state, project_root=repo,
@@ -370,6 +382,30 @@ class TestGitDiffExists:
             "developer", state, project_root=repo,
         )
         assert result.action == "retry"
+
+    def test_pass_root_commit_with_show_stat(self, tmp_path: Path) -> None:
+        """BUG-02: root commit (无 parent) diff-tree 返回空 → git show --stat 降级 pass."""
+        repo = tmp_path / "root_repo"
+        repo.mkdir()
+        env = {
+            "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@x",
+            "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@x",
+            "GIT_AUTHOR_DATE": "2024-01-01T00:00:00+0000",
+            "GIT_COMMITTER_DATE": "2024-01-01T00:00:00+0000",
+        }
+        _git(repo, "init", "-q", env=env)
+        _git(repo, "config", "user.email", "t@x", env=env)
+        _git(repo, "config", "user.name", "t", env=env)
+        # 创建 root commit（唯一 commit，无 parent）
+        (repo / "main.py").write_text("print('hello')\n")
+        _git(repo, "add", "main.py", env=env)
+        _git(repo, "commit", "-q", "-m", "root commit", env=env)
+        # staged 干净（auto_commit 后场景）— 不需要断言, GitDiffExists.check 内部会判定
+        state = EngineState()
+        result = GitDiffExists().check(
+            "developer", state, project_root=repo,
+        )
+        assert result.action == "pass"
 
     def test_uses_asyncio_to_thread(self) -> None:
         """G3 是 async-safe: 调用 .check() 是同步入口,但内部用 asyncio.run 封装.

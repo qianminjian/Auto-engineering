@@ -191,6 +191,50 @@ class TestTickDeveloperToCritic:
         }))
         assert a2["action"] == "critic"
 
+    def test_checkpoint_saved_between_batches(self, tmp_path) -> None:
+        """BUG-03: batch 间切换必须保存 checkpoint, 否则跨进程 batch_idx 归零."""
+        from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
+
+        db = tmp_path / "cp.db"
+        store = SQLiteCheckpointStore(db)
+        o = TickOrchestrator(
+            gate_runner=_pass_gate_runner,
+            guardrail=_pass_guardrail(),
+            checkpoint_store=store,
+        )
+        o.init("req")
+        o.tick(_make_result_file({
+            "stage": "architect",
+            "plan": _VALID_PLAN,
+            "batch_plan": [
+                {"batch_id": "b1", "design_section": "B2", "component": "C",
+                 "tasks": [{"id": "T1", "description": "d1", "module_ref": "§B2",
+                            "file_targets": ["a.py"]}]},
+                {"batch_id": "b2", "design_section": "B2", "component": "C",
+                 "tasks": [{"id": "T2", "description": "d2", "module_ref": "§B2",
+                            "file_targets": ["b.py"]}]},
+            ],
+            "file_list": ["a.py", "b.py"], "contracts": {},
+        }))
+        # first developer batch → 应存 checkpoint (batch_idx 0→1)
+        o.tick(_make_result_file({
+            "stage": "developer", "batch_id": "b1",
+            "files_changed": ["a.py"],
+            "test_results": {"passed": 1, "failed": 0},
+        }))
+
+        # 模拟跨进程 restore: 新 TickOrchestrator 从 checkpoint 恢复
+        restored = TickOrchestrator.restore(tmp_path, store)
+        assert restored._batch_state is not None
+        assert restored._batch_state.current_batch_idx == 1, (
+            f"BUG-03: batch_idx 应为 1 (已推进到 b2), "
+            f"实际为 {restored._batch_state.current_batch_idx} "
+            f"(checkpoint 未保存导致跨进程归零)"
+        )
+        assert restored._batch_state.current_batch_id() == "b2"
+        assert restored._state.current_stage == "developer"
+        store.close()
+
 
 # ── critic → component_verifier → system_deep_audit → convergence ──
 

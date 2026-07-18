@@ -1,4 +1,4 @@
-> 创建：2026-06-24 | 更新：2026-07-17 | 阶段：v5.6 里程碑 — Phase 15 DebugTracer 实现完成。129/130 任务完成（1 ⊘ 项目侧）。
+> 创建：2026-06-24 | 更新：2026-07-18 | 阶段：v5.6 里程碑 — Phase 16 PrismScan 真跑故障修复完成。132/133 任务完成（1 ⊘ 项目侧）。
 > ⚠️ **决策状态翻转管控**：status 列 ✅→❌ 或 ❌→✅ 必须经用户审批。AI 不得自行翻转。详见 `.claude/rules/design-document-inviolability.md` §2。
 
 ## 目标与成功标准
@@ -53,10 +53,14 @@
 | **59** | **Phase 13 真跑故障修复 (voice_clone 2026-07-17)** | 29 问题中 10 项引擎/设计修复：9/10 完成（8 ✅ + 1 ⊘ 项目侧）。P0 B3 crash ✅ / P1 B2/B4/B5/B8/B9/B11/D1 全部 ✅ / P2 B6 ⊘(项目侧) D3 ✅。T43 集成 5 tests 覆盖 6 场景。全量 250 passed 零回归。D32 | 2026-07-17 | ✅ |
 | **60** | **Phase 14 gate_results 结构错配修复 (voice_clone 忠实度分析发现)** | `_run_developer_gates()` 调用 `run_gates()` 但 `run_gates()` 返回嵌套结构 `{project_root, gate_names, passed, failed, skipped, gate_summary: {实际gate结果}}`，而 `_run_developer_gates()` 直接迭代顶层 key → gate_results 全是 wrapper key 而非真实 gate 名 → production 路径所有 gate 结果丢失。修复：统一提取 `raw.get("gate_summary", raw)` — 扁平 dict（测试 stub）无此 key 则回退自身。D33 | 2026-07-17 | ✅ |
 | **61** | **Phase 15 DebugTracer — dev-loop 调度轨迹诊断** | `ae dev-loop --init --debug` 将 per-tick 快照（tick-{N}.json）、故障事件（errors.jsonl）、最终摘要（trace.json）写入目标项目 `_scratch/debug/`。`DebugTracer.disabled()` 零开销 no-op 工厂（`if self._dir is None: return`）。`AE_DEBUG=1` 环境变量等价激活。集成点：`tick_dict()` 记录快照 + terminal verdict finalize、`_tick_process_result()` 记录 ErrorResponse/guardrail 故障、`_validate_result_dict()` 记录格式错误。EngineState #38-39 持久化 debug 开关跨 tick。D34 | 2026-07-17 | ✅ |
+| **62** | **Phase 16 PrismScan 真跑故障修复（3 bugs）** | BUG-01(P1): `batch_state.py` G2 error 信息补全有效 component name 列表 / BUG-02(P2): `guardrail.py` GitDiffExists root commit diff-tree 返回空→`git show --stat` 降级 / BUG-03(P0): `tick_orchestrator.py` `_after_developer()` batch 间未调 `_save_checkpoint()`→跨进程状态丢失。三个均为 prismscan_for_auto_cc_Design 真跑测试发现。D35 | 2026-07-18 | ✅ |
 
 ## 当前状态
 
-**阶段：** v5.6 里程碑 — Phase 15 DebugTracer 实现完成。Phase 1-15 = 129/130（1 ⊘ 项目侧）。
+**阶段：** v5.6 里程碑 — Phase 16 PrismScan 真跑故障修复完成。Phase 1-16 = 132/133（1 ⊘ 项目侧）。
+
+**最近动作 (2026-07-18 Phase 16 PrismScan 真跑故障修复完成)：**
+- **3 个 bug 修复（TDD）**：BUG-03(P0) `tick_orchestrator.py` `_after_developer()` batch 间加 `_save_checkpoint()` → 跨进程游标不再归零 / BUG-01(P1) `batch_state.py` G2 error 信息补全有效 component 名列表 → agent 1 轮定位 / BUG-02(P2) `guardrail.py` GitDiffExists root commit `git show --stat` 降级 → 不再假阳。全量 234 passed 零回归。BEACON 决策 #62 结案。
 
 **最近动作 (2026-07-17 Phase 15 DebugTracer 实现完成)：**
 - **DebugTracer 完整实现（TDD）**：`loop/debug_tracer.py`（101 行）+ `tests/test_debug_tracer.py`（9 tests）。三输出文件：tick-{N:04d}.json（per-tick 快照）、errors.jsonl（故障事件追加）、trace.json（最终摘要含 stage_sequence/error_counts/verdict）。`disabled()` 工厂返回零开销 no-op 实例（`if self._dir is None: return`）。`AE_DEBUG=1` 环境变量或 `--debug` CLI flag 激活。
@@ -141,7 +145,7 @@
 - **设计文档深度审计 + 22 项收口深化** (决策 #49, Phase 8)：3 并行子代理审 4214 行 → 规格 6.5/10、端到端 2.5/10。P0×4 全为代码缺口(已 T9/T10/T27/T32 跟踪)；文档规格缺陷 S-1~S-20+Q-1/Q-2 共 22 项**纯文档收口**（补 CoverageItem/GateVerdict/done verdict 权威 schema + file-bridge 边界矩阵 §C.3.5 + 路径更正 + 过度设计存续论证）。**S-1 语义评估矛盾定案**：v5.6 全路径无语义评估，代码 semantic_evaluator 移除跟踪到 Phase 3 T10d。审计产出 `_scratch/design-audit/`，无 status 翻转
 - **Init-Loop 契约 v5.6 扩展** (决策 #48)：`init-manifest.schema.json` 版本化 SSOT + ci_platform/design_root 字段 + monorepo 单包降级 + 消费者驱动契约测试
 
-**下一步：** v5.6 里程碑主体完成 — 后续可推进 v7.0 StandaloneDriver 剩余任务（V7-7 v5.5 退役需审批）或新里程碑规划。
+**下一步：** 无特定 Phase。v5.6 里程碑 132/133 任务完成。剩余 1 项为 ⊘ 项目侧（T41 B6 vitest 参数）。
 
 **阻塞项：** 无
 
@@ -149,6 +153,8 @@
 
 | 日期 | 变更 | 原因 |
 |------|------|------|
+| 2026-07-18 | **Phase 16 PrismScan 真跑故障修复完成（决策 #62 结案）** | 3 bugs 全部修复（TDD）：BUG-03(P0) batch 间 checkpoint 保存 / BUG-01(P1) G2 error 有效 component 名 / BUG-02(P2) GitDiffExists root commit git show --stat 降级。全量 234 passed 零回归。BEACON #62 ✅。 |
+| 2026-07-18 | **Phase 16 PrismScan 真跑故障修复（决策 #62）** | prismscan_for_auto_cc_Design 真跑测试发现 3 bugs：BUG-01(P1) batch_state G2 error 消息无有效 component 名 → 补全有效名列表 / BUG-02(P2) GitDiffExists diff-tree root commit 返回空 → `git show --stat` 降级 / BUG-03(P0) batch 间 checkpoint 未保存 → `_after_developer()` 加 `_save_checkpoint()`。BEACON #62 立项。 |
 | 2026-07-17 | **Phase 14 gate_results 结构错配修复（决策 #60）** | voice_clone 忠实度分析发现 production 路径 gate_results 全部丢失。根因：`_run_developer_gates()` 消费 `run_gates()` 返回的嵌套结构时未提取 `gate_summary` 层。修复：`raw.get("gate_summary", raw)` 统一提取，测试 stub 扁平 dict 回退。BEACON #60 结案。 |
 | 2026-07-17 | **Phase 13 真跑故障修复完成（决策 #59）** | 9/10 引擎修复完成（TDD，+5 integration tests）。P0 B3 guardrail 类型守卫 / P1 B2/B4/B5/B8/B9/B11/D1 全部 ✅ / P2 D3 ✅ / T41 B6 ⊘ 项目侧。全量 250 passed 零回归。BEACON #59 结案。 |
 | 2026-07-17 | **真跑故障报告分析 + Phase 13 立项（决策 #59）** | voice_clone 项目真跑产出 29 问题，10 项引擎/设计层面可修复：B3 crash/B2 stage/B4-B5 expected_format/B8 REDGuard/B9 重复警告/B11 format/B6 vitest/D1 progress_tree。分类为 P0(1) P1(7) P2(2)，按依赖 TDD 推进。 |

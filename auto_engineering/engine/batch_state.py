@@ -61,8 +61,10 @@ class BatchState:
         # 孤儿 batch: component 不在任何 plate → 抛错 (G2 retry, 否则静默漏实现)
         orphans = [c for c in batch_components if c not in plate_component_names]
         if orphans:
+            valid = sorted(plate_component_names)
             raise ValueError(
-                f"孤儿 batch: component {orphans} 不在任何 plate 中 —— "
+                f"孤儿 batch: component {orphans} 不在任何 plate 中。"
+                f"有效 component 名: {valid} —— "
                 f"architect 须重出 batch_plan (G2 retry)"
             )
 

@@ -261,6 +261,11 @@ class GitDiffExists(Guardrail):
             rc4, stdout4 = _run_git(root, "diff-tree", "--no-commit-id", "-r", "HEAD")
             if rc4 == 0 and stdout4.strip():
                 return GuardrailResult()  # pass: HEAD commit 包含文件变更
+            # 降级: diff-tree 对 root commit 返回空 (无 parent 可 diff)
+            # → git show --stat (不依赖 parent, 列出 HEAD 的文件变更)
+            rc5, stdout5 = _run_git(root, "show", "--stat", "--format=", "HEAD")
+            if rc5 == 0 and stdout5.strip():
+                return GuardrailResult()
 
         return GuardrailResult(
             action="retry",
