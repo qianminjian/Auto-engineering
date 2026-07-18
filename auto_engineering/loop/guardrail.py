@@ -44,6 +44,7 @@ from auto_engineering.utils.git import run_git_diff as _run_git_diff
 __all__ = [
     "MAX_RETRY_PER_STAGE",
     "Action",
+    "FileAccessGuardrail",
     "FreshGate",
     "GitClean",
     "GitDiffExists",
@@ -792,6 +793,72 @@ class RegressionGate(Guardrail):
                 message=f"回归测试 {test_id} 恢复实现后未 PASS — 测试或实现不稳定",
             )
         return GuardrailResult()
+
+
+# ==================== G11 FileAccessGuardrail ====================
+
+
+class FileAccessGuardrail(Guardrail):
+    """G11: 检查 developer 文件操作范围是否在 batch_plan 声明内 (T62).
+
+    post/developer: 收集 batch_plan 中所有 task 的 file_targets，对比
+    files_changed 是否全部在声明范围内。白名单路径 (.ae-state/、_scratch/)
+    自动放行。首次运行无 batch_plan → skip pass。
+
+    设计 ref: v5.6-Design-Loop.md appendix E §E.4。
+    """
+
+    name = "FileAccessGuardrail"
+    timing = "post"
+    applies_to_stages = ("developer",)
+
+    _AUTO_ALLOW_PREFIXES = (".ae-state/", "_scratch/")
+
+    def check(
+        self,
+        stage: str,
+        state: EngineState,
+        project_root: Path | None = None,
+    ) -> GuardrailResult:
+        if stage not in self.applies_to_stages:
+            return GuardrailResult()
+
+        files_changed = getattr(state, "files_changed", []) or []
+        if not files_changed:
+            return GuardrailResult()
+
+        batch_plan = getattr(state, "batch_plan", []) or []
+
+        # 收集所有 batch_plan 中声明的 file_targets
+        allowed_targets: set[str] = set()
+        for batch in batch_plan:
+            for task in batch.get("tasks", []):
+                for ft in task.get("file_targets", []):
+                    allowed_targets.add(ft)
+
+        if not allowed_targets:
+            return GuardrailResult()  # 无约束则放行（首次运行）
+
+        # 检查 files_changed
+        out_of_bounds: list[str] = []
+        for f in files_changed:
+            if self._is_auto_allowed(f):
+                continue
+            if f not in allowed_targets:
+                out_of_bounds.append(f)
+
+        if out_of_bounds:
+            return GuardrailResult(
+                action="block",
+                message=(
+                    f"越界文件修改（不在 batch_plan file_targets 内）: "
+                    f"{', '.join(out_of_bounds)}"
+                ),
+            )
+        return GuardrailResult()
+
+    def _is_auto_allowed(self, filepath: str) -> bool:
+        return any(filepath.startswith(prefix) for prefix in self._AUTO_ALLOW_PREFIXES)
 
 
 # ==================== GuardrailChain ====================
