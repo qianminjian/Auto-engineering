@@ -53,6 +53,25 @@ def _truncate_tool_results(results: list[dict], max_chars: int = 8000) -> list[d
         truncated.append(r)
     return truncated
 
+
+def _redact_tool_results(results: list[dict]) -> list[dict]:
+    """对 tool_result 内容做 PII 脱敏 (T57).
+
+    在每个 tool_result 的 content 上调用 PIIRedactor.scan_text(),
+    命中 PII 规则时脱敏 + logger.warning. 不改变函数签名.
+    """
+    from auto_engineering.pii.redactor import PIIRedactor
+
+    _redactor = PIIRedactor()
+    redacted = []
+    for r in results:
+        r = dict(r)
+        content = r.get("content", "")
+        if isinstance(content, str):
+            r["content"] = _redactor.scan_text(content, source=f"tool:{r.get('tool_use_id', '')}")
+        redacted.append(r)
+    return redacted
+
 __all__ = ["BaseAgent"]
 
 # v5.5 audit P2-5: 模块级懒加载 Anthropic SDK 异常类 (只 import 一次)
@@ -278,7 +297,8 @@ class BaseAgent:
                 messages.append({"role": "assistant", "content": response.tool_use_blocks})
                 # v7.0: 截断超大 tool_result 防止上下文爆炸 (DeepSeek 1M 窗口)
                 _truncated = _truncate_tool_results(tool_results, max_chars=8000)
-                messages.append({"role": "user", "content": _truncated})
+                _redacted = _redact_tool_results(_truncated)
+                messages.append({"role": "user", "content": _redacted})
 
                 # v7.0: 软上限 — DeepSeek 持续返回 tool_use 永不产出文本时
                 # 强行终止工具循环, 用 tool_calls_log 构造合成结果
