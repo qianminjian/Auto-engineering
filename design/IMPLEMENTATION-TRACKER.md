@@ -49,8 +49,8 @@
 | **16** | **PrismScan 真跑故障修复 (2026-07-18)** | **3** | **3** | **✅ 完成：BUG-01(P1) G2 error 消息 / BUG-02(P2) GitDiffExists root commit / BUG-03(P0) batch 间 checkpoint** |
 | **17** | **设计治理修复（vNext Phase 17）** | **12** | **12** | ✅ 完成 — 6 角色 subagent 隔离恢复 + Governance 规则扩展（T49-T52d, a6b0d33）|
 | **18** | **Context & 安全加固（vNext Phase 18）** | **5** | **5** | ✅ 完成 — Context offloading + summarization + Ollama + PII redaction/scan（T53-T57, 92d3a47）|
-| **19** | **模型扩展 & 可观测性（vNext Phase 19）** | **8** | **1** | ◐ 进行中 — 国产模型 (T58 ✅) + StandaloneDriver + OTLP + audit log + FileAccessGuardrail + prompt caching + Stage Checkpoint Gate（T59-T64, T62a）|
-| **合计** | | **158** | **150** | **Phase 1-18 = 149/158 完成；Phase 19 = 1/8** |
+| **19** | **模型扩展 & 可观测性（vNext Phase 19）** | **8** | **2** | ◐ 进行中 — 国产模型 (T58 ✅) + OTLP tracing (T60 ✅) + StandaloneDriver + audit log + FileAccessGuardrail + prompt caching + Stage Checkpoint Gate（T59, T61-T64, T62a）|
+| **合计** | | **158** | **151** | **Phase 1-18 = 149/158 完成；Phase 19 = 2/8** |
 
 ---
 
@@ -406,7 +406,7 @@
 |---|----------|------|:---:|--------|
 | T58 | `auto_engineering/providers/glm.py` + `auto_engineering/providers/qwen.py` 等（新建）— 国产模型 adapter（GLM/通义/文心）。优先 OpenAI 兼容格式（大部分国产模型已兼容），adapter 做得很薄。**信创合规 P0** | 至少 2 个国产模型 E2E 通过 + test_domestic_providers ≥5 tests | ✅ | a204fa1 |
 | T59 | `loop/standalone_driver.py` — StandaloneDriver 完善（v7.0 路线图 V7-5 已 mock 验证，补齐真实 LLM 多 provider 集成）。**银行内网 P0**：无外部 Agent 平台时的唯一运行方式 | Ollama + 国产模型 E2E GOAL_ACHIEVED + test_standalone_multi_provider ≥5 tests | ☐ | — |
-| T60 | `auto_engineering/observability/tracing.py`（新建）— OpenTelemetry tracing：每个 stage/guardrail/gate 打 OTLP span，导出到 OTLP collector。行业标准，不绑定厂商 | OTLP span 含 stage/guardrail/gate 层级 + test_tracing ≥5 tests | ☐ | — |
+| T60 | `auto_engineering/observability/tracing.py`（新建）— OpenTelemetry tracing：每个 stage/guardrail/gate 打 OTLP span，导出到 OTLP collector。行业标准，不绑定厂商 | OTLP span 含 stage/guardrail/gate 层级 + test_tracing ≥5 tests | ✅ | — |
 | T61 | `auto_engineering/observability/audit_log.py`（新建）— Structured audit log：每次 LLM 调用记录完整 request/response/timestamp/tokens，JSONL 格式持久化。扩展 DebugTracer | audit JSONL 含完整 request/response + test_audit_log ≥5 tests | ☐ | — |
 | T62 | `auto_engineering/loop/guardrail.py` — FileAccessGuardrail：新增 Guardrail，post-agent 检查 developer 的 `files_changed` 是否全在 `batch_plan.file_targets` 范围内。超出 → block + 报告越界文件列表 | 越界文件 block + 白名单 `.ae-state/` `_scratch/` 自动放行 + test_file_access_guardrail ≥5 tests | ☐ | — |
 | T62a | `auto_engineering/gates/` 或 guardrail 内部 — glob 支持：`pathspec` 库集成，支持 `.gitignore` 风格的 file_targets 匹配（`src/**/*.py`） | glob 模式匹配正确 + test_glob_matching ≥3 tests | ☐ | — |
