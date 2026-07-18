@@ -26,14 +26,21 @@ def create_provider(provider: str = "", *, api_key: str = "") -> LLMProvider:
     resolved = provider or os.environ.get("AE_LLM_PROVIDER", "")
 
     if not resolved:
-        if os.environ.get("OPENAI_API_KEY"):
+        if os.environ.get("OLLAMA_HOST"):
+            resolved = "ollama"
+        elif os.environ.get("ZHIPUAI_API_KEY"):
+            resolved = "glm"
+        elif os.environ.get("DASHSCOPE_API_KEY"):
+            resolved = "qwen"
+        elif os.environ.get("OPENAI_API_KEY"):
             resolved = "openai"
         elif os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN"):
             resolved = "anthropic"
         else:
             raise ValueError(
                 "Unknown provider: no provider specified and no API key found. "
-                "Set OPENAI_API_KEY or ANTHROPIC_API_KEY."
+                "Set OLLAMA_HOST, ZHIPUAI_API_KEY, DASHSCOPE_API_KEY, "
+                "OPENAI_API_KEY, or ANTHROPIC_API_KEY."
             )
 
     if resolved == "openai":
@@ -47,5 +54,20 @@ def create_provider(provider: str = "", *, api_key: str = "") -> LLMProvider:
 
         key = api_key or os.environ.get("ANTHROPIC_API_KEY", "")
         return AnthropicProvider(api_key=key)  # type: ignore[return-value]  # param order differs from Protocol, structural compat at runtime
+
+    if resolved == "ollama":
+        from auto_engineering.providers.ollama import OllamaProvider
+
+        return OllamaProvider()
+
+    if resolved == "glm":
+        from auto_engineering.providers.glm import GLMProvider
+
+        return GLMProvider()
+
+    if resolved == "qwen":
+        from auto_engineering.providers.qwen import QwenProvider
+
+        return QwenProvider()
 
     raise ValueError(f"Unknown provider: {resolved}")

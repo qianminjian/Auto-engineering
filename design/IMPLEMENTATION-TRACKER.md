@@ -47,10 +47,10 @@
 | **14** | **gate_results 结构错配修复 (忠实度分析)** | **1** | **1** | **T44 修复 production 路径 gate 结果全部丢失 ✅** |
 | **15** | **DebugTracer — dev-loop 调度轨迹诊断** | **1** | **1** | **T45 DebugTracer 实现 + TickOrchestrator 集成 + CLI 接线 ✅** |
 | **16** | **PrismScan 真跑故障修复 (2026-07-18)** | **3** | **3** | **✅ 完成：BUG-01(P1) G2 error 消息 / BUG-02(P2) GitDiffExists root commit / BUG-03(P0) batch 间 checkpoint** |
-| **17** | **设计治理修复（vNext Phase 17）** | **12** | **0** | ☐ 待启动 — 6 角色 subagent 隔离恢复 + Governance 规则扩展（T49-T52c）|
-| **18** | **Context & 安全加固（vNext Phase 18）** | **5** | **0** | ☐ 待启动 — Context offloading + summarization + Ollama + PII redaction/scan（T53-T57）|
-| **19** | **模型扩展 & 可观测性（vNext Phase 19）** | **8** | **0** | ☐ 待启动 — 国产模型 + StandaloneDriver + OTLP + audit log + FileAccessGuardrail + prompt caching + Stage Checkpoint Gate（T58-T64, T62a）|
-| **合计** | | **158** | **132** | **Phase 1-16 = 132/133 完成；Phase 17/18/19 = 0/25 待启动** |
+| **17** | **设计治理修复（vNext Phase 17）** | **12** | **12** | ✅ 完成 — 6 角色 subagent 隔离恢复 + Governance 规则扩展（T49-T52d, a6b0d33）|
+| **18** | **Context & 安全加固（vNext Phase 18）** | **5** | **5** | ✅ 完成 — Context offloading + summarization + Ollama + PII redaction/scan（T53-T57, 92d3a47）|
+| **19** | **模型扩展 & 可观测性（vNext Phase 19）** | **8** | **1** | ◐ 进行中 — 国产模型 (T58 ✅) + StandaloneDriver + OTLP + audit log + FileAccessGuardrail + prompt caching + Stage Checkpoint Gate（T59-T64, T62a）|
+| **合计** | | **158** | **150** | **Phase 1-18 = 149/158 完成；Phase 19 = 1/8** |
 
 ---
 
@@ -361,18 +361,18 @@
 
 | T | 文件/产出 | 验收 | 状态 | Commit |
 |---|----------|------|:---:|--------|
-| T49 | `commands/dev-loop.md` + `skills/auto-engineering/SKILL.md` — 禁令块整段删除（L98-L105 / L41-L45 四行禁令移除） | grep 断言禁令行已删除 + Plugin 验收 | ☐ | — |
-| T50 | `commands/dev-loop.md` — 恢复外部搜索/MCP 能力（加回 MCP 工具和搜索 skill 的允许指令） | grep 断言搜索/MCP 指令存在 | ☐ | — |
-| T51a | `commands/dev-loop.md` Stage 1 — architect 恢复 Plan subagent（改回 spawn `subagent_type="Plan"`） | Plugin 验收：architect 指令含 spawn Plan agent | ☐ | — |
-| T51b | `commands/dev-loop.md` Stage 3 — critic 恢复 code-reviewer subagent（改回 spawn `subagent_type="code-reviewer"`） | Plugin 验收：critic 指令含 spawn code-reviewer agent | ☐ | — |
-| T51c | `commands/dev-loop.md` — component_verifier 恢复 general-purpose subagent（Haiku 轻量模型） | Plugin 验收：verifier 指令含 spawn general-purpose agent（Haiku） | ☐ | — |
-| T51d | `commands/dev-loop.md` — plate_deep_audit 恢复 3× code-reviewer subagent（Sonnet，B6.7a 并行审计） | Plugin 验收：plate_deep_audit 指令含 3 并行 spawn | ☐ | — |
-| T51e | `commands/dev-loop.md` — system_verifier 恢复 general-purpose subagent（Haiku 轻量模型） | Plugin 验收：system_verifier 指令含 spawn general-purpose agent（Haiku） | ☐ | — |
-| T51f | `commands/dev-loop.md` — system_deep_audit 恢复 3× code-reviewer subagent（Sonnet，B6.7a 全量审计） | Plugin 验收：system_deep_audit 指令含 3 并行 spawn | ☐ | — |
-| T52a | `.claude/rules/design-document-inviolability.md` — 覆盖范围扩展到 `commands/*.md` + `skills/*/SKILL.md` + `hooks/*.sh` 中涉及架构设计约束的变更 | grep 断言规则覆盖 commands/skills/hooks | ☐ | — |
-| T52b | `design/BEACON.md` — B14 追加澄清：Claude Code 内置 subagent（Plan/code-reviewer/general-purpose）**不属于**"外部依赖"，是平台原生能力。禁令仅针对外部框架专属 agent（gsd-* / superpowers-*） | grep 断言 B14 澄清文本存在 | ☐ | — |
-| T52c | `design/BEACON.md` — B14 追加澄清：MCP 工具和外部搜索 skill 是**信息获取工具**，不是执行者，不在禁令范围 | grep 断言 B14 澄清文本存在 | ☐ | — |
-| T52d | 全量回归测试 — 修改后 dev-loop.md + SKILL.md Plugin 验收 20 场景 + 现有测试全量通过 | 全量 pytest 零回归 + Plugin 验收 20/20 | ☐ | — |
+| T49 | `commands/dev-loop.md` + `skills/auto-engineering/SKILL.md` — 禁令块整段删除（L98-L105 / L41-L45 四行禁令移除） | grep 断言禁令行已删除 + Plugin 验收 | ✅ | a6b0d33 |
+| T50 | `commands/dev-loop.md` — 恢复外部搜索/MCP 能力（加回 MCP 工具和搜索 skill 的允许指令） | grep 断言搜索/MCP 指令存在 | ✅ | a6b0d33 |
+| T51a | `commands/dev-loop.md` Stage 1 — architect 恢复 Plan subagent（改回 spawn `subagent_type="Plan"`） | Plugin 验收：architect 指令含 spawn Plan agent | ✅ | a6b0d33 |
+| T51b | `commands/dev-loop.md` Stage 3 — critic 恢复 code-reviewer subagent（改回 spawn `subagent_type="code-reviewer"`） | Plugin 验收：critic 指令含 spawn code-reviewer agent | ✅ | a6b0d33 |
+| T51c | `commands/dev-loop.md` — component_verifier 恢复 general-purpose subagent（Haiku 轻量模型） | Plugin 验收：verifier 指令含 spawn general-purpose agent（Haiku） | ✅ | a6b0d33 |
+| T51d | `commands/dev-loop.md` — plate_deep_audit 恢复 3× code-reviewer subagent（Sonnet，B6.7a 并行审计） | Plugin 验收：plate_deep_audit 指令含 3 并行 spawn | ✅ | a6b0d33 |
+| T51e | `commands/dev-loop.md` — system_verifier 恢复 general-purpose subagent（Haiku 轻量模型） | Plugin 验收：system_verifier 指令含 spawn general-purpose agent（Haiku） | ✅ | a6b0d33 |
+| T51f | `commands/dev-loop.md` — system_deep_audit 恢复 3× code-reviewer subagent（Sonnet，B6.7a 全量审计） | Plugin 验收：system_deep_audit 指令含 3 并行 spawn | ✅ | a6b0d33 |
+| T52a | `.claude/rules/design-document-inviolability.md` — 覆盖范围扩展到 `commands/*.md` + `skills/*/SKILL.md` + `hooks/*.sh` 中涉及架构设计约束的变更 | grep 断言规则覆盖 commands/skills/hooks | ✅ | a6b0d33 |
+| T52b | `design/BEACON.md` — B14 追加澄清：Claude Code 内置 subagent（Plan/code-reviewer/general-purpose）**不属于**"外部依赖"，是平台原生能力。禁令仅针对外部框架专属 agent（gsd-* / superpowers-*） | grep 断言 B14 澄清文本存在 | ✅ | a6b0d33 |
+| T52c | `design/BEACON.md` — B14 追加澄清：MCP 工具和外部搜索 skill 是**信息获取工具**，不是执行者，不在禁令范围 | grep 断言 B14 澄清文本存在 | ✅ | a6b0d33 |
+| T52d | 全量回归测试 — 修改后 dev-loop.md + SKILL.md Plugin 验收 20 场景 + 现有测试全量通过 | 全量 pytest 零回归 + Plugin 验收 20/20 | ✅ | a6b0d33 |
 
 > **关键设计约束**：仅 developer 角色需要跨 batch 上下文连贯（主 Agent 自身）。其他 6 角色（architect/critic/component_verifier/plate_deep_audit/system_verifier/system_deep_audit）均为独立 subagent——每次 tick 新 spawn，不共享 developer 上下文，只消费结构化输入（设计文档/batch_plan/diff）产出结构化 JSON。
 
@@ -386,11 +386,11 @@
 
 | T | 文件/产出 | 验收 | 状态 | Commit |
 |---|----------|------|:---:|--------|
-| T53 | `auto_engineering/context/offloading.py`（新建）— Stage context offloading：每 stage 完成后将全量 context 卸载到文件，下 stage 只加载摘要+必要上下文。**Phase 17 后更简单**：每个 subagent 产出是结构化 JSON（batch_plan/findings），主 Agent 只消费摘要 | offload 文件含 stage/round/timestamp + 摘要质量可配置 + test_context_offloading ≥5 tests | ☐ | — |
-| T54 | `auto_engineering/context/summarization.py`（新建）— Cross-tick developer session summarization：tick 超过可配置阈值（默认 5）时将前 N-1 tick 的对话历史压缩为结构化摘要注入 prompt。**仅 developer 需要**——其他 6 角色每次 tick 新 spawn，天然无累积压力 | tick=阈值+1 时摘要生成 + 摘要含关键决策/文件变更/MAJOR 历史 + test_summarization ≥5 tests | ☐ | — |
-| T55 | `auto_engineering/providers/ollama.py`（新建）— Ollama adapter：OpenAI 兼容 API，tool_use ↔ function_call 格式转换复用 v8.0 Provider 抽象。**银行内网 P0**：离线部署不依赖外部 API | Ollama 本地模型 E2E（architect→critic APPROVE）+ test_ollama_provider ≥5 tests | ☐ | — |
-| T56 | `auto_engineering/pii/redactor.py`（新建）+ `agents/base.py` — Prompt PII redaction：在 `BaseAgent.execute()` 的 LLM 调用前插入 `PIIRedactor.scan(messages)` → 命中规则脱敏 + `logger.warning`。非侵入式 pipeline，不修改 system prompt 模板 | 5 类 PII 规则扫描 + 脱敏后 messages 正确传递 + test_pii_redactor ≥8 tests | ☐ | — |
-| T57 | `auto_engineering/pii/redactor.py` + `agents/base.py` `_truncate_tool_results()` 扩展 — Tool result PII scan：在每个 tool_result content 调用 `PIIRedactor.scan_text()` → 脱敏 + warn。不改变函数签名 | tool_result PII 脱敏 + 调用方无感 + test_pii_scan ≥5 tests | ☐ | — |
+| T53 | `auto_engineering/context/offloading.py`（新建）— Stage context offloading：每 stage 完成后将全量 context 卸载到文件，下 stage 只加载摘要+必要上下文。**Phase 17 后更简单**：每个 subagent 产出是结构化 JSON（batch_plan/findings），主 Agent 只消费摘要 | offload 文件含 stage/round/timestamp + 摘要质量可配置 + test_context_offloading ≥5 tests | ✅ | 92d3a47 |
+| T54 | `auto_engineering/context/summarization.py`（新建）— Cross-tick developer session summarization：tick 超过可配置阈值（默认 5）时将前 N-1 tick 的对话历史压缩为结构化摘要注入 prompt。**仅 developer 需要**——其他 6 角色每次 tick 新 spawn，天然无累积压力 | tick=阈值+1 时摘要生成 + 摘要含关键决策/文件变更/MAJOR 历史 + test_summarization ≥5 tests | ✅ | 92d3a47 |
+| T55 | `auto_engineering/providers/ollama.py`（新建）— Ollama adapter：OpenAI 兼容 API，tool_use ↔ function_call 格式转换复用 v8.0 Provider 抽象。**银行内网 P0**：离线部署不依赖外部 API | Ollama 本地模型 E2E（architect→critic APPROVE）+ test_ollama_provider ≥5 tests | ✅ | 92d3a47 |
+| T56 | `auto_engineering/pii/redactor.py`（新建）+ `agents/base.py` — Prompt PII redaction：在 `BaseAgent.execute()` 的 LLM 调用前插入 `PIIRedactor.scan(messages)` → 命中规则脱敏 + `logger.warning`。非侵入式 pipeline，不修改 system prompt 模板 | 5 类 PII 规则扫描 + 脱敏后 messages 正确传递 + test_pii_redactor ≥8 tests | ✅ | 92d3a47 |
+| T57 | `auto_engineering/pii/redactor.py` + `agents/base.py` `_truncate_tool_results()` 扩展 — Tool result PII scan：在每个 tool_result content 调用 `PIIRedactor.scan_text()` → 脱敏 + warn。不改变函数签名 | tool_result PII 脱敏 + 调用方无感 + test_pii_scan ≥5 tests | ✅ | 92d3a47 |
 
 > **T53/T54 设计参考**：Deep Agents `deepagents/middleware/summarization.py`（Apache 2.0）— 复用摘要 prompt 模板 + offload 策略，改造后纳入 `auto_engineering/context/`。T55 参考 LangChain `ChatOllama` adapter 的 OpenAI 兼容层——复用 tool_use ↔ function_call 格式转换，去掉 LangChain 依赖。
 > **T56/T57 PII 检测规则**：PIIDetectionRule dataclass — cn_id_card / cn_phone / bank_card / api_key / email。含 exclusion_patterns + 白名单机制。失败不阻断（默认脱敏+WARN），block 模式可选开关。详见 v5.6-Design-Loop.md 附录 E §E.3。
@@ -404,7 +404,7 @@
 
 | T | 文件/产出 | 验收 | 状态 | Commit |
 |---|----------|------|:---:|--------|
-| T58 | `auto_engineering/providers/glm.py` + `auto_engineering/providers/qwen.py` 等（新建）— 国产模型 adapter（GLM/通义/文心）。优先 OpenAI 兼容格式（大部分国产模型已兼容），adapter 做得很薄。**信创合规 P0** | 至少 2 个国产模型 E2E 通过 + test_domestic_providers ≥5 tests | ☐ | — |
+| T58 | `auto_engineering/providers/glm.py` + `auto_engineering/providers/qwen.py` 等（新建）— 国产模型 adapter（GLM/通义/文心）。优先 OpenAI 兼容格式（大部分国产模型已兼容），adapter 做得很薄。**信创合规 P0** | 至少 2 个国产模型 E2E 通过 + test_domestic_providers ≥5 tests | ✅ | — |
 | T59 | `loop/standalone_driver.py` — StandaloneDriver 完善（v7.0 路线图 V7-5 已 mock 验证，补齐真实 LLM 多 provider 集成）。**银行内网 P0**：无外部 Agent 平台时的唯一运行方式 | Ollama + 国产模型 E2E GOAL_ACHIEVED + test_standalone_multi_provider ≥5 tests | ☐ | — |
 | T60 | `auto_engineering/observability/tracing.py`（新建）— OpenTelemetry tracing：每个 stage/guardrail/gate 打 OTLP span，导出到 OTLP collector。行业标准，不绑定厂商 | OTLP span 含 stage/guardrail/gate 层级 + test_tracing ≥5 tests | ☐ | — |
 | T61 | `auto_engineering/observability/audit_log.py`（新建）— Structured audit log：每次 LLM 调用记录完整 request/response/timestamp/tokens，JSONL 格式持久化。扩展 DebugTracer | audit JSONL 含完整 request/response + test_audit_log ≥5 tests | ☐ | — |
