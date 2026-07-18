@@ -170,6 +170,32 @@ class AnthropicProvider:
     def __exit__(self, *exc_info) -> None:
         self.close()
 
+    @staticmethod
+    def _inject_cache_control_system(system: str | list[dict]) -> str | list[dict]:
+        """Inject cache_control on last system content block (T63).
+
+        Anthropic caches the last content block in the system array.
+        String system → converted to single-block list with cache_control.
+        """
+        if isinstance(system, str):
+            return [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}]
+        # Defensive copy: don't mutate caller's list
+        blocks = [dict(b) for b in system]
+        if blocks:
+            blocks[-1]["cache_control"] = {"type": "ephemeral"}
+        return blocks
+
+    @staticmethod
+    def _inject_cache_control_tools(tools: list[dict]) -> list[dict]:
+        """Inject cache_control on last tool definition (T63).
+
+        Anthropic caches the last element in the tools array.
+        """
+        result = [dict(t) for t in tools]
+        if result:
+            result[-1]["cache_control"] = {"type": "ephemeral"}
+        return result
+
     def create_message(
         self,
         model: str,
@@ -196,14 +222,18 @@ class AnthropicProvider:
             anthropic.APITimeoutError: 超过 max_retries 后仍未成功
             其他异常: 立即抛出, 不重试
         """
+        # T63: prompt caching — inject cache_control on system + tools
+        system_for_api = self._inject_cache_control_system(system)
+        tools_for_api = self._inject_cache_control_tools(tools) if tools else None
+
         kwargs = {
             "model": model,
             "max_tokens": max_tokens,
-            "system": system,
+            "system": system_for_api,
             "messages": self._normalize_messages(messages),
         }
-        if tools:
-            kwargs["tools"] = tools
+        if tools_for_api:
+            kwargs["tools"] = tools_for_api
 
         # P0-4: retry 策略 — RateLimitError / APIConnectionError / APITimeoutError
         # 总尝试次数 = 1 (原始) + max_retries
