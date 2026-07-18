@@ -32,7 +32,7 @@ import sys
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, ClassVar, Literal
 
 from auto_engineering.engine.gap_analysis import (
     _BLOCKING_FORBIDDEN as _BLOCKING_FORBIDDEN_RESOLUTIONS,
@@ -799,11 +799,11 @@ class RegressionGate(Guardrail):
 
 
 class FileAccessGuardrail(Guardrail):
-    """G11: 检查 developer 文件操作范围是否在 batch_plan 声明内 (T62).
+    """G11: 检查 developer 文件操作范围是否在 batch_plan 声明内 (T62 + T62a).
 
-    post/developer: 收集 batch_plan 中所有 task 的 file_targets，对比
-    files_changed 是否全部在声明范围内。白名单路径 (.ae-state/、_scratch/)
-    自动放行。首次运行无 batch_plan → skip pass。
+    post/developer: 收集 batch_plan 中所有 task 的 file_targets，用 pathspec
+    glob 匹配对比 files_changed 是否全部在声明范围内。白名单路径
+    (.ae-state/**、_scratch/**) 自动放行。首次运行无 batch_plan → skip pass。
 
     设计 ref: v5.6-Design-Loop.md appendix E §E.4。
     """
@@ -812,7 +812,20 @@ class FileAccessGuardrail(Guardrail):
     timing = "post"
     applies_to_stages = ("developer",)
 
-    _AUTO_ALLOW_PREFIXES = (".ae-state/", "_scratch/")
+    _AUTO_ALLOW_PATTERNS: ClassVar[list[str]] = [
+        ".ae-state/**",
+        "_scratch/**",
+        ".gitignore",
+        "pyproject.toml",
+    ]
+
+    def __init__(self) -> None:
+        import pathspec
+
+        self._paths_spec_module = pathspec
+        self._auto_allow_spec = pathspec.PathSpec.from_lines(
+            "gitignore", self._AUTO_ALLOW_PATTERNS
+        )
 
     def check(
         self,
@@ -830,21 +843,25 @@ class FileAccessGuardrail(Guardrail):
         batch_plan = getattr(state, "batch_plan", []) or []
 
         # 收集所有 batch_plan 中声明的 file_targets
-        allowed_targets: set[str] = set()
+        allowed_patterns: list[str] = []
         for batch in batch_plan:
             for task in batch.get("tasks", []):
                 for ft in task.get("file_targets", []):
-                    allowed_targets.add(ft)
+                    allowed_patterns.append(ft)
 
-        if not allowed_targets:
+        if not allowed_patterns:
             return GuardrailResult()  # 无约束则放行（首次运行）
+
+        target_spec = self._paths_spec_module.PathSpec.from_lines(
+            "gitignore", allowed_patterns
+        )
 
         # 检查 files_changed
         out_of_bounds: list[str] = []
         for f in files_changed:
-            if self._is_auto_allowed(f):
+            if self._auto_allow_spec.match_file(f):
                 continue
-            if f not in allowed_targets:
+            if not target_spec.match_file(f):
                 out_of_bounds.append(f)
 
         if out_of_bounds:
@@ -858,7 +875,7 @@ class FileAccessGuardrail(Guardrail):
         return GuardrailResult()
 
     def _is_auto_allowed(self, filepath: str) -> bool:
-        return any(filepath.startswith(prefix) for prefix in self._AUTO_ALLOW_PREFIXES)
+        return self._auto_allow_spec.match_file(filepath)
 
 
 # ==================== GuardrailChain ====================

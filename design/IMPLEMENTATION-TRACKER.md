@@ -49,8 +49,8 @@
 | **16** | **PrismScan 真跑故障修复 (2026-07-18)** | **3** | **3** | **✅ 完成：BUG-01(P1) G2 error 消息 / BUG-02(P2) GitDiffExists root commit / BUG-03(P0) batch 间 checkpoint** |
 | **17** | **设计治理修复（vNext Phase 17）** | **12** | **12** | ✅ 完成 — 6 角色 subagent 隔离恢复 + Governance 规则扩展（T49-T52d, a6b0d33）|
 | **18** | **Context & 安全加固（vNext Phase 18）** | **5** | **5** | ✅ 完成 — Context offloading + summarization + Ollama + PII redaction/scan（T53-T57, 92d3a47）|
-| **19** | **模型扩展 & 可观测性（vNext Phase 19）** | **8** | **4** | ◐ 进行中 — 国产模型 (T58 ✅) + OTLP (T60 ✅) + audit log (T61 ✅) + FileAccessGuardrail (T62 ✅) + StandaloneDriver + glob + prompt caching + Stage Checkpoint Gate（T59, T62a, T63-T64）|
-| **合计** | | **158** | **153** | **Phase 1-18 = 149/158 完成；Phase 19 = 4/8** |
+| **19** | **模型扩展 & 可观测性（vNext Phase 19）** | **8** | **5** | ◐ 进行中 — 国产模型 (T58 ✅) + OTLP (T60 ✅) + audit log (T61 ✅) + FileAccessGuardrail + glob (T62/T62a ✅) + StandaloneDriver + prompt caching + Stage Checkpoint Gate（T59, T63-T64）|
+| **合计** | | **158** | **154** | **Phase 1-18 = 149/158 完成；Phase 19 = 5/8** |
 
 ---
 
@@ -409,7 +409,7 @@
 | T60 | `auto_engineering/observability/tracing.py`（新建）— OpenTelemetry tracing：每个 stage/guardrail/gate 打 OTLP span，导出到 OTLP collector。行业标准，不绑定厂商 | OTLP span 含 stage/guardrail/gate 层级 + test_tracing ≥5 tests | ✅ | 5a9864b |
 | T61 | `auto_engineering/observability/audit_log.py`（新建）— Structured audit log：每次 LLM 调用记录完整 request/response/timestamp/tokens，JSONL 格式持久化。扩展 DebugTracer | audit JSONL 含完整 request/response + test_audit_log ≥5 tests | ✅ | 34fa671 |
 | T62 | `auto_engineering/loop/guardrail.py` — FileAccessGuardrail：新增 Guardrail，post-agent 检查 developer 的 `files_changed` 是否全在 `batch_plan.file_targets` 范围内。超出 → block + 报告越界文件列表 | 越界文件 block + 白名单 `.ae-state/` `_scratch/` 自动放行 + test_file_access_guardrail ≥5 tests | ✅ | 65d02df |
-| T62a | `auto_engineering/gates/` 或 guardrail 内部 — glob 支持：`pathspec` 库集成，支持 `.gitignore` 风格的 file_targets 匹配（`src/**/*.py`） | glob 模式匹配正确 + test_glob_matching ≥3 tests | ☐ | — |
+| T62a | `auto_engineering/gates/` 或 guardrail 内部 — glob 支持：`pathspec` 库集成，支持 `.gitignore` 风格的 file_targets 匹配（`src/**/*.py`） | glob 模式匹配正确 + test_glob_matching ≥3 tests | ✅ | — |
 | T63 | `llm/anthropic_provider.py` — Prompt caching：在 `create_message()` 中注入 `cache_control`（`{"type": "ephemeral", "ttl": "5m"}`）到 system content block 和 tools 数组。Anthropic Messages API 原生支持，system 是顶级参数非 messages role | cache_control 注入 + `usage.cache_creation_input_tokens` > 0 + test_prompt_caching ≥3 tests | ☐ | — |
 | T64 | `loop/tick_orchestrator.py` + `cli/dev_loop.py` — Stage Checkpoint Gate（DecisionGate 形态 3，§1.5.5）：`--pause-at-stage` 参数，指定 stage 前暂停等待 CLI 输入（继续/审查/终止） | --pause-at-stage architect/developer/critic 暂停 + 进度摘要输出 + test_stage_checkpoint ≥5 tests | ☐ | — |
 
