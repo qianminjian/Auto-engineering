@@ -41,13 +41,16 @@
 | 8 | 设计文档深化补充（审计 S-task）| 22 | 22 | ✅ 完成 |
 | 9 | 代码审计修复（审计 A-task）| 15 | 15 | ✅ 完成（A4 定案 schema-SSOT 保留 BEACON #52；A9 mypy 装+验证 type:ignore 必要）|
 | **10** | **双驱动接缝预留（v7.0 前置，必须）** | **2** | **2** | ✅ 完成：T33a action/stage-result schema SSOT + 契约测试（21 tests）+ T33b 执行栈共享标注（4 处）（BEACON #54）|
-| **11** | **v7.0 双驱动主体（V7-1~V7-8，V7-5 E2E 真跑 ✅，V7-7 🔒）** | **8** | **7** | **2026-07-17: V7-1~V7-6 核心抽象+CLI+mock集成全部完成 + V7-5 StandaloneDriver 真实 LLM E2E 验证通过（architect→developer→critic→GOAL_ACHIEVED，产出 fibonacci 实现+10 tests+auto-commit）。V7-8 基准框架 16 tests 覆盖数据模型/需求集/差异计算/报告生成/数据校验。3 处 bug 修复确保 E2E 可跑（guardrail GitDiffExists auto_commit 路径/bash_tools cwd 默认 project_root/architect 任务描述更详细）。V7-7 锁定。** |
-| **12** | **v8.0 多 Agent 平台适配（V8-1/2/3/4/5/6/7/8 全部 ✅，V8-6 已替换为 Marketplace）** | **8** | **8** | **2026-07-17: 全部完成。多平台基础架构就绪 — 三平台 manifest、三 hook 注册、Marketplace 标准安装、OpenAI Provider、文档覆盖。原 V8-6 install.sh 已删除，替换为三平台标准 /plugin marketplace add + /plugin install 机制。plugin.json 路径 `../` → `./` 对齐规范。** |
+| **11** | **v7.0 双驱动主体（V7-1~V7-8，V7-5 E2E 真跑 ✅，V7-7 🔒）** | **8** | **7** | **2026-07-17: V7-1~V7-6 核心抽象+CLI+mock集成全部完成 + V7-5 StandaloneDriver 真实 LLM E2E 验证通过。V7-7 锁定。** |
+| **12** | **v8.0 多 Agent 平台适配（V8-1/2/3/4/5/6/7/8 全部 ✅）** | **8** | **8** | **2026-07-17: 全部完成。多平台基础架构就绪。** |
 | **13** | **真跑故障修复 (voice_clone 2026-07-17)** | **10** | **9** | **P0 B3 crash ✅ → P1 7/7 全完成 → P2 1/2 (T41 ⊘ 项目侧) → T43 集成 5 tests ✅** |
 | **14** | **gate_results 结构错配修复 (忠实度分析)** | **1** | **1** | **T44 修复 production 路径 gate 结果全部丢失 ✅** |
 | **15** | **DebugTracer — dev-loop 调度轨迹诊断** | **1** | **1** | **T45 DebugTracer 实现 + TickOrchestrator 集成 + CLI 接线 ✅** |
 | **16** | **PrismScan 真跑故障修复 (2026-07-18)** | **3** | **3** | **✅ 完成：BUG-01(P1) G2 error 消息 / BUG-02(P2) GitDiffExists root commit / BUG-03(P0) batch 间 checkpoint** |
-| **合计** | | **133** | **132** | **Phase 1-10 = 102/102 完成；Phase 11 v7.0 = 7/8；Phase 12 v8.0 = 8/8；Phase 13 = 9/10（1 ⊘ 项目侧）；Phase 14 = 1/1；Phase 15 = 1/1；Phase 16 = 3/3** |
+| **17** | **设计治理修复（vNext Phase 17）** | **12** | **0** | ☐ 待启动 — 6 角色 subagent 隔离恢复 + Governance 规则扩展（T49-T52c）|
+| **18** | **Context & 安全加固（vNext Phase 18）** | **5** | **0** | ☐ 待启动 — Context offloading + summarization + Ollama + PII redaction/scan（T53-T57）|
+| **19** | **模型扩展 & 可观测性（vNext Phase 19）** | **8** | **0** | ☐ 待启动 — 国产模型 + StandaloneDriver + OTLP + audit log + FileAccessGuardrail + prompt caching + Stage Checkpoint Gate（T58-T64, T62a）|
+| **合计** | | **158** | **132** | **Phase 1-16 = 132/133 完成；Phase 17/18/19 = 0/25 待启动** |
 
 ---
 
@@ -346,6 +349,88 @@
 
 > **实施顺序**：T48(P0) → T46(P1) → T47(P2)
 > **BUG-03 定级 P0**：阻断所有多 batch 组件——`done_tasks` 永远停在 batch 1，引擎无法推进到 batch 2+。任何含 >1 batch 的 component 100% 触发。
+
+---
+
+---
+
+## Phase 17 — 设计治理修复（vNext，~3-5 天）
+
+> 来源：`design/discussion/vNext-LangGraph-DeepAgents-对标分析.md` §🚨 前置发现 + BEACON 决策 #64。
+> 目标：恢复 6 角色独立 Agent 隔离 + Governance 规则扩展。T10（2026-07-11）误将 Claude Code 内置 subagent 与外部框架 agent 打包禁用——修复此设计执行错误。
+
+| T | 文件/产出 | 验收 | 状态 | Commit |
+|---|----------|------|:---:|--------|
+| T49 | `commands/dev-loop.md` + `skills/auto-engineering/SKILL.md` — 禁令块整段删除（L98-L105 / L41-L45 四行禁令移除） | grep 断言禁令行已删除 + Plugin 验收 | ☐ | — |
+| T50 | `commands/dev-loop.md` — 恢复外部搜索/MCP 能力（加回 MCP 工具和搜索 skill 的允许指令） | grep 断言搜索/MCP 指令存在 | ☐ | — |
+| T51a | `commands/dev-loop.md` Stage 1 — architect 恢复 Plan subagent（改回 spawn `subagent_type="Plan"`） | Plugin 验收：architect 指令含 spawn Plan agent | ☐ | — |
+| T51b | `commands/dev-loop.md` Stage 3 — critic 恢复 code-reviewer subagent（改回 spawn `subagent_type="code-reviewer"`） | Plugin 验收：critic 指令含 spawn code-reviewer agent | ☐ | — |
+| T51c | `commands/dev-loop.md` — component_verifier 恢复 general-purpose subagent（Haiku 轻量模型） | Plugin 验收：verifier 指令含 spawn general-purpose agent（Haiku） | ☐ | — |
+| T51d | `commands/dev-loop.md` — plate_deep_audit 恢复 3× code-reviewer subagent（Sonnet，B6.7a 并行审计） | Plugin 验收：plate_deep_audit 指令含 3 并行 spawn | ☐ | — |
+| T51e | `commands/dev-loop.md` — system_verifier 恢复 general-purpose subagent（Haiku 轻量模型） | Plugin 验收：system_verifier 指令含 spawn general-purpose agent（Haiku） | ☐ | — |
+| T51f | `commands/dev-loop.md` — system_deep_audit 恢复 3× code-reviewer subagent（Sonnet，B6.7a 全量审计） | Plugin 验收：system_deep_audit 指令含 3 并行 spawn | ☐ | — |
+| T52a | `.claude/rules/design-document-inviolability.md` — 覆盖范围扩展到 `commands/*.md` + `skills/*/SKILL.md` + `hooks/*.sh` 中涉及架构设计约束的变更 | grep 断言规则覆盖 commands/skills/hooks | ☐ | — |
+| T52b | `design/BEACON.md` — B14 追加澄清：Claude Code 内置 subagent（Plan/code-reviewer/general-purpose）**不属于**"外部依赖"，是平台原生能力。禁令仅针对外部框架专属 agent（gsd-* / superpowers-*） | grep 断言 B14 澄清文本存在 | ☐ | — |
+| T52c | `design/BEACON.md` — B14 追加澄清：MCP 工具和外部搜索 skill 是**信息获取工具**，不是执行者，不在禁令范围 | grep 断言 B14 澄清文本存在 | ☐ | — |
+| T52d | 全量回归测试 — 修改后 dev-loop.md + SKILL.md Plugin 验收 20 场景 + 现有测试全量通过 | 全量 pytest 零回归 + Plugin 验收 20/20 | ☐ | — |
+
+> **关键设计约束**：仅 developer 角色需要跨 batch 上下文连贯（主 Agent 自身）。其他 6 角色（architect/critic/component_verifier/plate_deep_audit/system_verifier/system_deep_audit）均为独立 subagent——每次 tick 新 spawn，不共享 developer 上下文，只消费结构化输入（设计文档/batch_plan/diff）产出结构化 JSON。
+
+---
+
+## Phase 18 — Context & 安全加固（vNext，~7-11 天）
+
+> 来源：`design/discussion/vNext-LangGraph-DeepAgents-对标分析.md` §2 + §3 + §5 + BEACON 决策 #65。
+> 前置：Phase 17 subagent 隔离恢复（subagent 隔离恢复后 context 压力从"1 个 Agent 扛 7 个角色"变为"7 个独立 window 分摊"，T53/T54 仅 developer 需要）。
+> 银行生产级定位要求模型无关 + PII 防护为 P0。
+
+| T | 文件/产出 | 验收 | 状态 | Commit |
+|---|----------|------|:---:|--------|
+| T53 | `auto_engineering/context/offloading.py`（新建）— Stage context offloading：每 stage 完成后将全量 context 卸载到文件，下 stage 只加载摘要+必要上下文。**Phase 17 后更简单**：每个 subagent 产出是结构化 JSON（batch_plan/findings），主 Agent 只消费摘要 | offload 文件含 stage/round/timestamp + 摘要质量可配置 + test_context_offloading ≥5 tests | ☐ | — |
+| T54 | `auto_engineering/context/summarization.py`（新建）— Cross-tick developer session summarization：tick 超过可配置阈值（默认 5）时将前 N-1 tick 的对话历史压缩为结构化摘要注入 prompt。**仅 developer 需要**——其他 6 角色每次 tick 新 spawn，天然无累积压力 | tick=阈值+1 时摘要生成 + 摘要含关键决策/文件变更/MAJOR 历史 + test_summarization ≥5 tests | ☐ | — |
+| T55 | `auto_engineering/providers/ollama.py`（新建）— Ollama adapter：OpenAI 兼容 API，tool_use ↔ function_call 格式转换复用 v8.0 Provider 抽象。**银行内网 P0**：离线部署不依赖外部 API | Ollama 本地模型 E2E（architect→critic APPROVE）+ test_ollama_provider ≥5 tests | ☐ | — |
+| T56 | `auto_engineering/pii/redactor.py`（新建）+ `agents/base.py` — Prompt PII redaction：在 `BaseAgent.execute()` 的 LLM 调用前插入 `PIIRedactor.scan(messages)` → 命中规则脱敏 + `logger.warning`。非侵入式 pipeline，不修改 system prompt 模板 | 5 类 PII 规则扫描 + 脱敏后 messages 正确传递 + test_pii_redactor ≥8 tests | ☐ | — |
+| T57 | `auto_engineering/pii/redactor.py` + `agents/base.py` `_truncate_tool_results()` 扩展 — Tool result PII scan：在每个 tool_result content 调用 `PIIRedactor.scan_text()` → 脱敏 + warn。不改变函数签名 | tool_result PII 脱敏 + 调用方无感 + test_pii_scan ≥5 tests | ☐ | — |
+
+> **T53/T54 设计参考**：Deep Agents `deepagents/middleware/summarization.py`（Apache 2.0）— 复用摘要 prompt 模板 + offload 策略，改造后纳入 `auto_engineering/context/`。T55 参考 LangChain `ChatOllama` adapter 的 OpenAI 兼容层——复用 tool_use ↔ function_call 格式转换，去掉 LangChain 依赖。
+> **T56/T57 PII 检测规则**：PIIDetectionRule dataclass — cn_id_card / cn_phone / bank_card / api_key / email。含 exclusion_patterns + 白名单机制。失败不阻断（默认脱敏+WARN），block 模式可选开关。详见 v5.6-Design-Loop.md 附录 E §E.3。
+
+---
+
+## Phase 19 — 模型扩展 & 可观测性（vNext，~8-14 天）
+
+> 来源：`design/discussion/vNext-LangGraph-DeepAgents-对标分析.md` §3 + §4 + §6 + §1.5 + BEACON 决策 #66。
+> 前置：Phase 18 T55 Ollama adapter（Provider 抽象验证）。
+
+| T | 文件/产出 | 验收 | 状态 | Commit |
+|---|----------|------|:---:|--------|
+| T58 | `auto_engineering/providers/glm.py` + `auto_engineering/providers/qwen.py` 等（新建）— 国产模型 adapter（GLM/通义/文心）。优先 OpenAI 兼容格式（大部分国产模型已兼容），adapter 做得很薄。**信创合规 P0** | 至少 2 个国产模型 E2E 通过 + test_domestic_providers ≥5 tests | ☐ | — |
+| T59 | `loop/standalone_driver.py` — StandaloneDriver 完善（v7.0 路线图 V7-5 已 mock 验证，补齐真实 LLM 多 provider 集成）。**银行内网 P0**：无外部 Agent 平台时的唯一运行方式 | Ollama + 国产模型 E2E GOAL_ACHIEVED + test_standalone_multi_provider ≥5 tests | ☐ | — |
+| T60 | `auto_engineering/observability/tracing.py`（新建）— OpenTelemetry tracing：每个 stage/guardrail/gate 打 OTLP span，导出到 OTLP collector。行业标准，不绑定厂商 | OTLP span 含 stage/guardrail/gate 层级 + test_tracing ≥5 tests | ☐ | — |
+| T61 | `auto_engineering/observability/audit_log.py`（新建）— Structured audit log：每次 LLM 调用记录完整 request/response/timestamp/tokens，JSONL 格式持久化。扩展 DebugTracer | audit JSONL 含完整 request/response + test_audit_log ≥5 tests | ☐ | — |
+| T62 | `auto_engineering/loop/guardrail.py` — FileAccessGuardrail：新增 Guardrail，post-agent 检查 developer 的 `files_changed` 是否全在 `batch_plan.file_targets` 范围内。超出 → block + 报告越界文件列表 | 越界文件 block + 白名单 `.ae-state/` `_scratch/` 自动放行 + test_file_access_guardrail ≥5 tests | ☐ | — |
+| T62a | `auto_engineering/gates/` 或 guardrail 内部 — glob 支持：`pathspec` 库集成，支持 `.gitignore` 风格的 file_targets 匹配（`src/**/*.py`） | glob 模式匹配正确 + test_glob_matching ≥3 tests | ☐ | — |
+| T63 | `llm/anthropic_provider.py` — Prompt caching：在 `create_message()` 中注入 `cache_control`（`{"type": "ephemeral", "ttl": "5m"}`）到 system content block 和 tools 数组。Anthropic Messages API 原生支持，system 是顶级参数非 messages role | cache_control 注入 + `usage.cache_creation_input_tokens` > 0 + test_prompt_caching ≥3 tests | ☐ | — |
+| T64 | `loop/tick_orchestrator.py` + `cli/dev_loop.py` — Stage Checkpoint Gate（DecisionGate 形态 3，§1.5.5）：`--pause-at-stage` 参数，指定 stage 前暂停等待 CLI 输入（继续/审查/终止） | --pause-at-stage architect/developer/critic 暂停 + 进度摘要输出 + test_stage_checkpoint ≥5 tests | ☐ | — |
+
+> **T58 设计参考**：LangChain `ChatZhipuAI`/`ChatTongyi` 等 adapter — 复用 API 差异处理模式（大部分国产模型已兼容 OpenAI 格式，adapter 很薄）。
+> **T60/T61 设计参考**：OpenTelemetry SDK + Deep Agents LangSmith middleware（复用 trace 层级设计模式）。
+
+---
+
+### 战略储备（不入当前 Phase，后续评估）
+
+> 来源：`design/discussion/vNext-LangGraph-DeepAgents-对标分析.md` §9 战略储备。
+
+| 储备项 | 描述 | 触发条件 |
+|--------|------|---------|
+| **PII Guardrail (G10)** | `auto_engineering/pii/guardrail.py`（新建）— `PIIGuardrail(Guardrail)`，post-agent 扫描 developer `files_changed` 全量内容。T56/T57 的第二道防线——防写入代码文件的泄露 | T56/T57 验证后扩展为独立 Guardrail |
+| **Intermediate artifact offloading** | 大文件（design doc、全量代码）不直接塞 prompt，改为先写入 offload 文件，prompt 中只放文件路径 + 摘要 | T53 验证后，大文件场景出现 context 压力时 |
+| **LangSmith exporter** | 可选 LangSmith exporter（通过 OTLP bridge），不做硬依赖 | OTLP tracing（T60）就绪后作为可选插件 |
+| **Pre-planned Gate（DecisionGate 形态 1）** | architect 在 batch_plan 中声明 gate（trigger/question/options/default），TickOrchestrator 到达 trigger 时输出 gate action JSON | Stage Checkpoint Gate（T64）验证后扩展 batch_plan JSON schema |
+| **Escalation Gate（DecisionGate 形态 2）** | 新增 CLI `ae dev-loop --escalate --question "..." --options '[...]"` ，Agent 主动举手等用户回复 | Pre-planned Gate（形态 1）验证后，需新增 CLI 入口 |
+| **Task DAG 依赖声明（ORCA P2 #1）** | batch_plan 的 batch 间增加 `depends_on` 字段，支持"A→B/C 并行→D"的 DAG 拓扑。developer 按拓扑序执行，可并行 batch 留给后续并行执行能力 | 多 batch 并行执行需求出现时；需扩展 batch_plan JSON schema + BatchState 按 ready queue 推进 |
+| **消息类型语义（ORCA P2 #2）** | tick action/result JSON 增加 `message_type` 字段（status/dispatch/escalation），让 agent 和 Python 之间的消息有显式语义类型，而非通用 payload | DecisionGate 3 形态均验证后；需扩展 action/result JSON schema |
 
 ---
 

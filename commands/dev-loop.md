@@ -11,8 +11,8 @@ repeatedly calling `ae dev-loop --tick`, reading the returned `action` JSON, doi
 role's work, writing a result file, and ticking again — until `action == "done"`.
 
 > Authority: BEACON 决策 #39 (Tick protocol, ✅) + #40/#41 (5-layer verification) +
-> #46 (Internalization Constraint — no external agent spawns) + `design/v5.6-Design-Loop.md`
-> §A.1 / §B13 / §C.3 (file-bridge) / §C.5 (tick).
+> #64 (Subagent isolation restore — Phase 17) + `design/v5.6-Design-Loop.md`
+> §A.1 / §B13 / §C.3 (file-bridge) / §C.5 (tick) / §E.0 (Phase 17 spec).
 
 ## Core model (§A.1)
 
@@ -93,16 +93,40 @@ Verification depth auto-scales by design layer (#41): single component (LEAF) ru
 single plate (PLATE) 6, multi-plate (FULL) all 7. Python picks the path; you just execute the
 action you're handed.
 
-## Roles are internal — no external agent spawns (#46 B14)
+## Role execution — Subagent isolation (BEACON #64)
 
-This loop has **zero runtime external dependencies**. Do **not**:
+Each role uses a dedicated Claude Code subagent for **context isolation** — independent context
+windows prevent role cross-contamination and keep the developer's main window uncluttered.
 
-- ❌ spawn `subagent_type="Plan"` for architect — you act as architect directly, using the
-  project's architect prompt (surfaced in the action `context` / `expected_format`).
-- ❌ spawn `subagent_type="code-reviewer"` for critic — you act as critic directly.
-- ❌ call `/code-review --fix --auto` or `gsd-code-fixer` — code review is covered by the
-  built-in `critic` + 4 verification layers.
-- ❌ call any `gsd-*` agent or MCP tool as part of the loop.
+**Claude Code built-in subagents (Plan / code-reviewer / general-purpose) are platform-native
+capabilities, not external dependencies.** The B14 external-dependency ban applies only to
+external-framework agents (gsd-* / superpowers-*). MCP tools and search skills are information
+gathering tools — allowed as research aids, not as execution delegates.
+
+### Role → Agent mapping
+
+| Role | Agent mode | Model | Spawn instruction |
+|------|-----------|-------|-------------------|
+| **architect** | `subagent_type="Plan"` | Sonnet | Spawn a Plan agent with the action's `context` (requirement + design_doc) and `expected_format`. Architect produces `batch_plan` JSON — not just bullet points. |
+| **developer** | **Main agent (you)** | Sonnet | No spawn — the only role with cross-tick context coherence. Execute TDD Red→Green→Refactor per task in the batch. |
+| **critic** | `subagent_type="code-reviewer"` | Sonnet | Spawn a code-reviewer agent with `files_changed` + `test_results` + `gate_results`. Critic produces `findings` (file:line + severity + issue + suggested_fix) + `verdict` (APPROVE/MAJOR). |
+| **component_verifier** | `subagent_type="general-purpose"` | **Haiku** | Lightweight model for component-level design→code coverage mapping. Spawn with component design spec + code files. |
+| **plate_deep_audit** | 3× `subagent_type="code-reviewer"` | **Sonnet** | **3 parallel spawns** — each injected with different audit dimensions + scope_files. Merge findings via `recount_findings()`. |
+| **system_verifier** | `subagent_type="general-purpose"` | **Haiku** | Lightweight model for full design→code coverage check. Spawn with full design spec + full codebase file list. |
+| **system_deep_audit** | 3× `subagent_type="code-reviewer"` | **Sonnet** | **3 parallel spawns** — 6-dimension code quality audit. Each agent gets different dimensions. Merge via `recount_findings()`. |
+
+### Why subagent isolation matters
+
+- **Context pressure**: 7 roles in one window = prompt bloat + role confusion. 7 independent windows = each role sees only its relevant context.
+- **Critic independence**: Critic must NOT see the developer's thinking process — spawning a fresh code-reviewer subagent guarantees blind review.
+- **Parallel audit**: plate_deep_audit and system_deep_audit spawn 3 agents in parallel, each auditing different dimensions, then merge results.
+
+### B14 boundary (what's still prohibited)
+
+- ❌ External-framework agents: `gsd-*`, `superpowers-*` — these are NOT Claude Code built-ins
+- ❌ Delegating execution decisions to MCP tools — MCP tools provide information, not decisions
+- ✅ Claude Code built-in subagents: Plan, code-reviewer, general-purpose — **platform-native, always allowed**
+- ✅ MCP tools and search skills as research/information aids — **allowed**
 
 The severity/verdict rubric (P0 blocking / P1 important / P2 suggestion; APPROVE = 0 P0 + ≤2 P1;
 MAJOR = ≥1 P0 or ≥3 P1) is enforced by Python via the result you submit — supply honest findings.
@@ -149,5 +173,5 @@ requirement, rounds, gate summary, and a reviewer checklist.
 ## References
 
 - `design/v5.6-Design-Loop.md` — §A.1 (process model) / §B13 (CLI) / §C.3 (file-bridge) / §C.5 (tick) / §B2,B4,B6 (verification layers)
-- `design/BEACON.md` — 决策 #39/#40/#41/#46
+- `design/BEACON.md` — 决策 #39/#40/#41/#64
 - `docs/EARS-v5.0.md` — acceptance criteria (15 AC + 5 IL-AC)

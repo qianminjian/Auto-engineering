@@ -1,4 +1,4 @@
-> 创建：2026-06-24 | 更新：2026-07-18 | 阶段：v5.6 里程碑 — Phase 16 PrismScan 真跑故障修复完成。132/133 任务完成（1 ⊘ 项目侧）。
+> 创建：2026-06-24 | 更新：2026-07-18 | 阶段：vNext 设计定稿 — Phase 17/18/19 路线图就绪。132/133 v5.6 任务完成。Phase 17 立项待启动。
 > ⚠️ **决策状态翻转管控**：status 列 ✅→❌ 或 ❌→✅ 必须经用户审批。AI 不得自行翻转。详见 `.claude/rules/design-document-inviolability.md` §2。
 
 ## 目标与成功标准
@@ -54,13 +54,24 @@
 | **60** | **Phase 14 gate_results 结构错配修复 (voice_clone 忠实度分析发现)** | `_run_developer_gates()` 调用 `run_gates()` 但 `run_gates()` 返回嵌套结构 `{project_root, gate_names, passed, failed, skipped, gate_summary: {实际gate结果}}`，而 `_run_developer_gates()` 直接迭代顶层 key → gate_results 全是 wrapper key 而非真实 gate 名 → production 路径所有 gate 结果丢失。修复：统一提取 `raw.get("gate_summary", raw)` — 扁平 dict（测试 stub）无此 key 则回退自身。D33 | 2026-07-17 | ✅ |
 | **61** | **Phase 15 DebugTracer — dev-loop 调度轨迹诊断** | `ae dev-loop --init --debug` 将 per-tick 快照（tick-{N}.json）、故障事件（errors.jsonl）、最终摘要（trace.json）写入目标项目 `_scratch/debug/`。`DebugTracer.disabled()` 零开销 no-op 工厂（`if self._dir is None: return`）。`AE_DEBUG=1` 环境变量等价激活。集成点：`tick_dict()` 记录快照 + terminal verdict finalize、`_tick_process_result()` 记录 ErrorResponse/guardrail 故障、`_validate_result_dict()` 记录格式错误。EngineState #38-39 持久化 debug 开关跨 tick。D34 | 2026-07-17 | ✅ |
 | **62** | **Phase 16 PrismScan 真跑故障修复（3 bugs）** | BUG-01(P1): `batch_state.py` G2 error 信息补全有效 component name 列表 / BUG-02(P2): `guardrail.py` GitDiffExists root commit diff-tree 返回空→`git show --stat` 降级 / BUG-03(P0): `tick_orchestrator.py` `_after_developer()` batch 间未调 `_save_checkpoint()`→跨进程状态丢失。三个均为 prismscan_for_auto_cc_Design 真跑测试发现。D35 | 2026-07-18 | ✅ |
+| **63** | **vNext 战略定调：银行生产级框架 + 源码级内化** | Auto-engineering 定位为银行生产级框架——模型无关（Ollama/国产模型）、PII 防护、平台无关（StandaloneDriver）全部升级为 P0。Deep Agents (Apache 2.0) 源码级内化：harness 层能力（PII/Provider/Context offloading）直接复用源码改造后纳入 `auto_engineering/`，零运行时依赖；纪律层（Tick/Gate/Guardrail/收敛/DecisionGate）保持原创。5 项复用原则 + 7 项源码复用映射表。D36 | 2026-07-18 | ✅ |
+| **64** | **Phase 17 — 设计治理修复：6 角色独立 Agent 隔离恢复 + B14 澄清** | 恢复 v5.1 原始设计——developer 单独主会话，architect/critic/component_verifier/plate_deep_audit/system_verifier/system_deep_audit 恢复独立 subagent 隔离（Plan/code-reviewer/general-purpose，Haiku/Sonnet 按需）。B14 追加澄清：Claude Code 内置 subagent 不属于"外部依赖"；MCP/搜索 skill 是信息获取工具不在禁令范围。Governance 规则覆盖范围扩展到 commands/*.md + skills/*/SKILL.md + hooks/*.sh。T49-T52c。D37 | 2026-07-18 | ✅ |
+| **65** | **Phase 18 — Context & 安全加固** | T53 Stage context offloading（每 stage 完成后 context 卸载到文件，下 stage 只加载摘要）；T54 Cross-tick developer session summarization（tick>5 时压缩 developer 对话历史，仅 developer 需要，subagent 每次新 spawn 天然无累积压力）；T55 Ollama adapter（OpenAI 兼容格式，复用 v8.0 Provider 抽象）；T56 Prompt PII redaction（BaseAgent.execute() 发送前正则扫描+脱敏）；T57 Tool result PII scan（_truncate_tool_results 同步 PII 扫描）。D38 | 2026-07-18 | ✅ |
+| **66** | **Phase 19 — 模型扩展 & 可观测性** | T58 国产模型 adapter（GLM/通义/文心，信创合规）；T59 StandaloneDriver 完善（v7.0 路线图，银行内网部署）；T60 OpenTelemetry tracing（每 stage/guardrail/gate 打 OTLP span）；T61 Structured audit log（LLM 调用完整 request/response JSONL）；T62 FileAccessGuardrail（developer files_changed 必须在 file_targets 内）；T62a glob 支持（pathspec 库集成）；T63 Prompt caching（Anthropic 原生支持）；T64 Stage Checkpoint Gate（TickOrchestrator --pause-at-stage，DecisionGate 形态 3）。D39 | 2026-07-18 | ✅ |
+| **67** | **ORCA DecisionGate — 3 形态 HITL 双向阻塞机制** | 借鉴 ORCA 的两条 HITL 通道（Gate 自上而下 + Ask/Reply 自下而上），抽象为 Tick 协议的三形态 DecisionGate 原语：① Pre-planned Gate（architect 在 batch_plan 中声明 gate，TickOrchestrator 到达 trigger 时输出 gate action JSON）；② Escalation Gate（Agent 主动举手，新增 CLI `ae dev-loop --escalate`）；③ Stage Checkpoint Gate（TickOrchestrator --pause-at-stage，阶段边界输出进度摘要+等用户决策）。不引入 ORCA 的消息系统（SQLite mail store + check --wait 循环对单 tick 架构过重），在现有 tick JSON 协议上扩展 gate 字段。D40 | 2026-07-18 | ✅ |
+| **68** | **PII Middleware — 三道防线 + PIIDetectionRule** | 银行场景 PII 防护三道防线：① Prompt PII redaction（T56，LLM 调用前正则扫描+脱敏，防敏感数据出境）；② Tool result PII scan（T57，tool_result 写入前扫描）；③ PII Guardrail G10（post-agent 全量文件扫描，第二道防线）。PIIDetectionRule dataclass 定义 5 类规则（身份证/手机号/银行卡/API Key/邮箱），含 exclusion_patterns 防误杀 + 白名单机制。非侵入式 pipeline 插入 BaseAgent.execute() 调用链。失败不阻断（默认脱敏+WARN），block 模式可选开关。D41 | 2026-07-18 | ✅ |
 
 ## 当前状态
 
-**阶段：** v5.6 里程碑 — Phase 16 PrismScan 真跑故障修复完成。Phase 1-16 = 132/133（1 ⊘ 项目侧）。
+**阶段：** vNext 设计定稿 — Phase 17/18/19 路线图就绪。132/133 v5.6 任务完成（1 ⊘ 项目侧）。Phase 17 立项待启动。
 
-**最近动作 (2026-07-18 Phase 16 PrismScan 真跑故障修复完成)：**
-- **3 个 bug 修复（TDD）**：BUG-03(P0) `tick_orchestrator.py` `_after_developer()` batch 间加 `_save_checkpoint()` → 跨进程游标不再归零 / BUG-01(P1) `batch_state.py` G2 error 信息补全有效 component 名列表 → agent 1 轮定位 / BUG-02(P2) `guardrail.py` GitDiffExists root commit `git show --stat` 降级 → 不再假阳。全量 234 passed 零回归。BEACON 决策 #62 结案。
+**最近动作 (2026-07-18 vNext 设计定稿)：**
+- **对标分析讨论稿完成**：`design/discussion/vNext-LangGraph-DeepAgents-对标分析.md` — LangGraph + Deep Agents + ORCA 七方对比分析，12 项关键决策全部确认。银行生产级框架定位 + 源码级内化策略（Apache 2.0，7 项源码复用映射）。
+- **ORCA HITL 深度分析**：借鉴 ORCA 双向阻塞机制（Gate + Ask/Reply），设计 DecisionGate 3 形态（Pre-planned Gate / Escalation Gate / Stage Checkpoint Gate），不引入 ORCA 消息系统。
+- **PII Middleware 详细设计**：PIIDetectionRule dataclass（5 类规则）+ T56/T57 pipeline + G10 PII Guardrail，三道防线覆盖 LLM 传输链路。
+- **Phase 17/18/19 路线图定稿**：Phase 17 设计治理修复（T49-T52c，~3-5 天）→ Phase 18 Context & 安全加固（T53-T57，~7-11 天）→ Phase 19 模型扩展 & 可观测性（T58-T64，~8-14 天）。战略储备：PII Guardrail G10、Intermediate artifact offloading、LangSmith exporter、Pre-planned Gate + Escalation Gate。
+- **AI Coding 度量与自进化体系讨论稿**：独立讨论主题 `design/discussion/vNext-AI-Coding-度量与自进化体系.md`，作为可观测性层深层设计输入，Phase 20-22 远期规划。
+- **设计文档同步**：讨论稿决策点全部更新到 BEACON.md（决策 #63-#68）+ IMPLEMENTATION-TRACKER.md（Phase 17/18/19）+ v5.6-Design-Loop.md（附录 E：vNext 设计规格）。讨论稿不再与后续开发形成依赖关系。
 
 **最近动作 (2026-07-17 Phase 15 DebugTracer 实现完成)：**
 - **DebugTracer 完整实现（TDD）**：`loop/debug_tracer.py`（101 行）+ `tests/test_debug_tracer.py`（9 tests）。三输出文件：tick-{N:04d}.json（per-tick 快照）、errors.jsonl（故障事件追加）、trace.json（最终摘要含 stage_sequence/error_counts/verdict）。`disabled()` 工厂返回零开销 no-op 实例（`if self._dir is None: return`）。`AE_DEBUG=1` 环境变量或 `--debug` CLI flag 激活。
@@ -145,14 +156,15 @@
 - **设计文档深度审计 + 22 项收口深化** (决策 #49, Phase 8)：3 并行子代理审 4214 行 → 规格 6.5/10、端到端 2.5/10。P0×4 全为代码缺口(已 T9/T10/T27/T32 跟踪)；文档规格缺陷 S-1~S-20+Q-1/Q-2 共 22 项**纯文档收口**（补 CoverageItem/GateVerdict/done verdict 权威 schema + file-bridge 边界矩阵 §C.3.5 + 路径更正 + 过度设计存续论证）。**S-1 语义评估矛盾定案**：v5.6 全路径无语义评估，代码 semantic_evaluator 移除跟踪到 Phase 3 T10d。审计产出 `_scratch/design-audit/`，无 status 翻转
 - **Init-Loop 契约 v5.6 扩展** (决策 #48)：`init-manifest.schema.json` 版本化 SSOT + ci_platform/design_root 字段 + monorepo 单包降级 + 消费者驱动契约测试
 
-**下一步：** 无特定 Phase。v5.6 里程碑 132/133 任务完成。剩余 1 项为 ⊘ 项目侧（T41 B6 vitest 参数）。
+**下一步：** Phase 17 设计治理修复（T49-T52c，~3-5 天）。Phase 18/19 启动时间待用户确定。
 
-**阻塞项：** 无
+**阻塞项：** 无。Phase 17 启动时间待用户决策。
 
 ## 设计演进日志
 
 | 日期 | 变更 | 原因 |
 |------|------|------|
+| 2026-07-18 | **vNext 设计定稿 — 对标分析讨论完成 + 决策同步到设计文档（决策 #63-#68）** | 七方对比分析（LangGraph+Deep Agents+ORCA+AutoGen+CrewAI+Superpowers+Claude Code）产出 12 项关键决策：银行生产级定位、源码级内化、DecisionGate 3 形态、PII Middleware、Phase 17/18/19 路线图。讨论稿决策点全部更新到 BEACON/IMPLEMENTATION-TRACKER/v5.6-Design-Loop.md 附录 E。讨论稿不再作为开发依赖。 |
 | 2026-07-18 | **Phase 16 PrismScan 真跑故障修复完成（决策 #62 结案）** | 3 bugs 全部修复（TDD）：BUG-03(P0) batch 间 checkpoint 保存 / BUG-01(P1) G2 error 有效 component 名 / BUG-02(P2) GitDiffExists root commit git show --stat 降级。全量 234 passed 零回归。BEACON #62 ✅。 |
 | 2026-07-18 | **Phase 16 PrismScan 真跑故障修复（决策 #62）** | prismscan_for_auto_cc_Design 真跑测试发现 3 bugs：BUG-01(P1) batch_state G2 error 消息无有效 component 名 → 补全有效名列表 / BUG-02(P2) GitDiffExists diff-tree root commit 返回空 → `git show --stat` 降级 / BUG-03(P0) batch 间 checkpoint 未保存 → `_after_developer()` 加 `_save_checkpoint()`。BEACON #62 立项。 |
 | 2026-07-17 | **Phase 14 gate_results 结构错配修复（决策 #60）** | voice_clone 忠实度分析发现 production 路径 gate_results 全部丢失。根因：`_run_developer_gates()` 消费 `run_gates()` 返回的嵌套结构时未提取 `gate_summary` 层。修复：`raw.get("gate_summary", raw)` 统一提取，测试 stub 扁平 dict 回退。BEACON #60 结案。 |
@@ -177,6 +189,10 @@
 
 [已解 DS-10] Tick 延迟 → Python 编排开销 P95<2s（`t_orchestration`=tick墙钟−gate−guard子进程），超标只告警不中断；LLM/gate 墙钟单独观测。规格 C.2.6 | [已解 DS-9] Haiku verifier 误判 → verifier 输出 MISSING/DIVERGED 后插入 Sonnet 窄范围复核，假阳由 system_deep_audit 兜底。规格 B6.6a | [已解 DS-8] plan_refine 环路 → 分源计数 ≤2 + 全局 ≤4，同层第 2 次未解决即停。规格 B2/B4
 
+[已解 B14] B14 外部依赖禁令澄清（BEACON #64, 2026-07-19 实施） — 1. Claude Code 内置 subagent（Plan/code-reviewer/general-purpose）**不属于**"外部依赖"，是平台原生能力。禁令仅针对外部框架专属 agent（gsd-* / superpowers-*）。2. MCP 工具和外部搜索 skill 是**信息获取工具**，不是执行者，不在禁令范围。
+
+[Q?] Post-Phase-19 能力覆盖矩阵回溯验证 — Phase 17-19 全部开发完毕后，以实际代码实现为基准，按 `docs/AI-Loop框架七方对比分析报告.html` §七 11 项能力覆盖矩阵重新评分（当前: 上下文隔离 ✗→✅, 人在环 ◐→✅, 多 agent 路由 ✗→◐, 可观测性 ◐→✅, 模型无关 ✗→✅, PII 防护 ✗→✅, 平台无关 ◐→✅, 沙箱隔离 ◐→◐），对比讨论稿预期提升。Phase 19 完成后触发。记入 BEACON 防止遗忘。
+
 ## 引用文件
 
-@design/v5.6-Design-Loop.md · @design/INDEX.md · @design/IMPLEMENTATION-TRACKER.md · @design/discussion/ · @docs/EARS-v5.0.md · @docs/api-reference.md
+@design/v5.6-Design-Loop.md · @design/INDEX.md · @design/IMPLEMENTATION-TRACKER.md · @design/discussion/vNext-LangGraph-DeepAgents-对标分析.md · @design/discussion/vNext-AI-Coding-度量与自进化体系.md · @docs/EARS-v5.0.md · @docs/api-reference.md

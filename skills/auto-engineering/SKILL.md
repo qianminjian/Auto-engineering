@@ -38,14 +38,26 @@ When executing dev-loop:
 | Single agent query | `/project-agent <role> <instruction>` |
 | Run CI gates | `/project-ci` |
 
-## Roles Are Internal — No External Agent Spawns
+## Role execution — Subagent isolation
 
-This loop has **zero runtime external dependencies**. Do **not** spawn external agents
-(Plan, code-reviewer, gsd-*, MCP tools) as part of the loop. You act as each role
-directly using the project's prompt definitions.
+This loop uses **Claude Code built-in subagents** (Plan / code-reviewer / general-purpose)
+for context isolation across roles. These are platform-native capabilities — not external
+dependencies. The B14 external-dependency ban applies only to external-framework agents
+(gsd-* / superpowers-*).
+
+- **developer**: Main agent (you) — only role with cross-tick context coherence
+- **architect**: `subagent_type="Plan"` (Sonnet)
+- **critic**: `subagent_type="code-reviewer"` (Sonnet)
+- **component_verifier**: `subagent_type="general-purpose"` (Haiku)
+- **plate_deep_audit**: 3× `subagent_type="code-reviewer"` (Sonnet, parallel)
+- **system_verifier**: `subagent_type="general-purpose"` (Haiku)
+- **system_deep_audit**: 3× `subagent_type="code-reviewer"` (Sonnet, parallel)
+
+MCP tools and search skills are information gathering tools — allowed as research aids,
+not as execution delegates.
 
 ## References
 
 - `commands/dev-loop.md` — Full tick protocol and action reference
 - `design/v5.6-Design-Loop.md` — Architecture and stage specification
-- `design/BEACON.md` — Design decisions and current state
+- `design/BEACON.md` — Design decisions (#39/#40/#41/#64) and current state

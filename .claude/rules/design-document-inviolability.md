@@ -80,4 +80,24 @@
 
 ---
 
+## §7 覆盖范围扩展（Phase 17 T52a）
+
+> 来源：BEACON 决策 #64。2026-07-18 T10 误禁 Claude Code 内置 subagent 事故确立。
+
+**本协议的覆盖范围从 `BEACON.md` + `design/*.md` 扩展到：**
+
+| 文件类别 | 路径模式 | 防护内容 | 示例 |
+|---------|---------|---------|------|
+| Command 文件 | `commands/*.md` | 架构设计约束（角色分配、stage 路由、验证层级） | `dev-loop.md` 中 role→agent 映射不可被无声删除 |
+| Skill 文件 | `skills/*/SKILL.md` | 设计的硬约束声明（Hard Constraints） | `SKILL.md` 中 Iron Law 和 subagent 隔离声明 |
+| Hook 脚本 | `hooks/*.sh` | Gate/Guardrail 触发逻辑（涉及架构决策的部分） | `pre-tool.sh` 中 gate 调用的拦截逻辑 |
+
+**防护规则**：上述文件中涉及架构设计约束的变更（删除/降级/禁能），触发 §2 审批流程——等同于 BEACON 决策翻转。
+
+**不触发审批的变更**：格式调整、措辞优化、非架构性的流程说明补充——这些是实现细节。
+
+**Why:** 2026-07-18 T10 执行 B14 外部依赖管控时，将 Claude Code 内置 subagent（Plan/code-reviewer）与外部框架专属 agent（gsd-code-fixer）打包一刀切移除。修改发生在 `commands/dev-loop.md` 和 `skills/auto-engineering/SKILL.md`（非 `design/` 目录），绕过了本协议的防护范围。本扩展确保命令层的架构约束变更也受审批保护。
+
+---
+
 _🚨 源自 2026-07-08 重大事故 —— 每次会话加载以警示_
