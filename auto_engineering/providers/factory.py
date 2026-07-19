@@ -20,8 +20,12 @@ def create_provider(provider: str = "", *, api_key: str = "") -> LLMProvider:
     Priority:
     1. Explicit provider parameter ("anthropic" / "openai")
     2. AE_LLM_PROVIDER environment variable
-    3. Auto-detect: OPENAI_API_KEY → OpenAIProvider; ANTHROPIC_API_KEY → AnthropicProvider
+    3. Auto-detect in order: OLLAMA_HOST → ZHIPUAI_API_KEY → DASHSCOPE_API_KEY
+       → OPENAI_API_KEY → ANTHROPIC_API_KEY/ANTHROPIC_AUTH_TOKEN
     4. Neither → raises ValueError
+
+    Note: 多 key 同时设置时，OLLAMA_HOST 优先级最高。
+    如需特定 provider，显式传参或用 AE_LLM_PROVIDER 覆盖。
     """
     resolved = provider or os.environ.get("AE_LLM_PROVIDER", "")
 

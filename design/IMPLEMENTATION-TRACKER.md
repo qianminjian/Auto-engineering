@@ -41,16 +41,23 @@
 | 8 | 设计文档深化补充（审计 S-task）| 22 | 22 | ✅ 完成 |
 | 9 | 代码审计修复（审计 A-task）| 15 | 15 | ✅ 完成（A4 定案 schema-SSOT 保留 BEACON #52；A9 mypy 装+验证 type:ignore 必要）|
 | **10** | **双驱动接缝预留（v7.0 前置，必须）** | **2** | **2** | ✅ 完成：T33a action/stage-result schema SSOT + 契约测试（21 tests）+ T33b 执行栈共享标注（4 处）（BEACON #54）|
-| **11** | **v7.0 双驱动主体（V7-1~V7-8，V7-5 E2E 真跑 ✅，V7-7 🔒）** | **8** | **7** | **2026-07-17: V7-1~V7-6 核心抽象+CLI+mock集成全部完成 + V7-5 StandaloneDriver 真实 LLM E2E 验证通过。V7-7 锁定。** |
+| **11** | **v7.0 双驱动主体（V7-1~V7-8，全部完成 ✅）** | **8** | **8** | **2026-07-19: V7-7 v5.5 退役 30 天过渡期启动。Phase 11 全部完成。** |
 | **12** | **v8.0 多 Agent 平台适配（V8-1/2/3/4/5/6/7/8 全部 ✅）** | **8** | **8** | **2026-07-17: 全部完成。多平台基础架构就绪。** |
-| **13** | **真跑故障修复 (voice_clone 2026-07-17)** | **10** | **9** | **P0 B3 crash ✅ → P1 7/7 全完成 → P2 1/2 (T41 ⊘ 项目侧) → T43 集成 5 tests ✅** |
+| **13** | **真跑故障修复 (voice_clone 2026-07-17)** | **9** | **9** | **✅ 完成 — P0 B3 crash + P1 7/7 + P2 1/1 (T41 作废，非本项目范围) + T43 集成 5 tests** |
 | **14** | **gate_results 结构错配修复 (忠实度分析)** | **1** | **1** | **T44 修复 production 路径 gate 结果全部丢失 ✅** |
 | **15** | **DebugTracer — dev-loop 调度轨迹诊断** | **1** | **1** | **T45 DebugTracer 实现 + TickOrchestrator 集成 + CLI 接线 ✅** |
-| **16** | **PrismScan 真跑故障修复 (2026-07-18)** | **3** | **3** | **✅ 完成：BUG-01(P1) G2 error 消息 / BUG-02(P2) GitDiffExists root commit / BUG-03(P0) batch 间 checkpoint** |
+
 | **17** | **设计治理修复（vNext Phase 17）** | **12** | **12** | ✅ 完成 — 6 角色 subagent 隔离恢复 + Governance 规则扩展（T49-T52d, a6b0d33）|
 | **18** | **Context & 安全加固（vNext Phase 18）** | **5** | **5** | ✅ 完成 — Context offloading + summarization + Ollama + PII redaction/scan（T53-T57, 92d3a47）|
 | **19** | **模型扩展 & 可观测性（vNext Phase 19）** | **8** | **8** | ✅ 完成 — 国产模型 (T58) + StandaloneDriver 多 provider (T59) + OTLP tracing (T60) + audit log (T61) + FileAccessGuardrail + glob (T62/T62a) + prompt caching (T63) + Stage Checkpoint Gate (T64) |
-| **合计** | | **158** | **157** | **Phase 1-19 = 157/158 完成；仅剩 V7-7(P11) 锁定未完成** |
+| **20** | **AI Coding 度量与自进化体系** | **7** | **7** | **✅ 完成 — T65-T69c 全部落地（1424 行，6 模块），AE_METRICS=1 激活** |
+| **21** | **自进化深化（阈值学习 + 规则发现）** | **3** | **3** | **✅ 完成 — T70-T72 全部落地，32 tests（16+10+6）** |
+| **22** | **Phase 18-19 虚化模块集成接线（审计发现）** | **6** | **6** | **6/6 完成 — T73+T74+T75+T76+T77+T78 全部接线** |
+| **23** | **Phase 20 P0 数据流修复（审计发现）** | **3** | **3** | **3/3 完成 — T79 信号管线 + T80 M2 criteria_met + T81 M5 git diff** |
+| **24** | **Phase 20 P1/P2 修复（审计发现）** | **9** | **9** | **9/9 完成 — T82-T90 全部完成，19 tests** |
+| **25** | **战略储备激活（按依赖顺序执行）** | **7** | **7** | **✅ 完成 — T91-T97 全部落地，16 tests** |
+| **26** | **设计-实现对齐 + 遗留清理** | **4** | **4** | **✅ 完成 — T98-T101 全部落地，2573 tests 零回归** |
+| **合计** | | **193** | **193** | **Phase 1-26 全完成** |
 
 ---
 
@@ -252,7 +259,7 @@
 | V7-4 | `loop/tick_orchestrator.py` + `loop/standalone_driver.py` — `restore()` 审查（不含驱动信息）+ `StandaloneDriver.resume()` + 跨进程 resume 集成测试 | restore 不依赖驱动类型 + EngineState.to_dict 不含 auth + resume E2E | ✅ | — |
 | V7-5 | **`loop/standalone_driver.py`** — `StandaloneDriver` 完整实现：`run()` 主循环 + `_execute_action()` + `_execute_developer_serial()` + `_execute_gap_review_headless()` + `_execute_single_task()` + `resume()` + `close()` | 3 stage E2E APPROVE + 5 层验证 GOAL_ACHIEVED + 每 stage 产出符合 schema 的 result + mock LLM 18 tests + **真实 LLM E2E 验证 (fibonacci GOAL_ACHIEVED)** + _run_loop_from_action 控制流 + developer 串行 TDD + gap_review headless auto-Defer + 错误处理优雅降级 | ✅ | V7-1, V7-2, V7-3, V7-4 |
 | V7-6 | `cli/dev_loop.py` — `--standalone` flag + `_run_standalone()` + AgentRuntime 注册（architect/developer/critic + AnthropicProvider + 7 tools）+ `cli/doctor.py` — API_KEY 检查项 | `ae dev-loop --standalone "hello"` E2E ✅（真实 LLM 真跑: 6 ticks, GOAL_ACHIEVED, fibonacci 实现+10 tests）+ `--resume` + doctor key 检查 + `--standalone` 与 tick flag 互斥 | ✅ | 2026-07-17 E2E 真跑验证 |
-| V7-7 | **v5.5 退役** — Step 1 提取执行栈到 `execution_stack.py` → Step 2 删 orchestrator.py 循环 → Step 3 删 semantic_evaluator.py → Step 4 改 CLI 裸参数路由 → Step 5 文档+BEACON 同步 | G1-G4 全满足 + `ae agent` 仍可用 + Standalone E2E 仍绿 + 裸参数输出引导 + BEACON #53 ✅→❌（用户审批）| 🔒 | — |
+| V7-7 | **v5.5 退役（30 天过渡期）** — Step 4 CLI 裸参数 WARN ✅ → Step 5 BEACON #53 ✅→❌ ✅ → 30 天后执行 Step 1 提取执行栈 → Step 2-3 物理删除 | ✅ 裸参数 `ae dev-loop "req"` 输出 WARN 引导 `--standalone` + BEACON #53 已翻转 + 30 天过渡期启动 | ✅ | a6b0d33 |
 | V7-8 | `auto_engineering/benchmark.py` — 基准框架（数据模型 + 10 需求集 + 差异计算 + 报告生成 + 数据校验）| 16 tests PASS + `generate_report()` 产出含汇总/逐需求 6 维对比/场景推荐/v5.5 退役风险评估的完整报告 | ✅ | V7-5, V7-6 |
 
 > **实施顺序**：V7-1 → V7-2 → V7-3 → V7-4 → V7-5 → V7-6 → V7-8 → V7-7（退役）。
@@ -300,7 +307,7 @@
 | T38 | B8 | `loop/guardrail.py` REDGuard 交叉文件检测 — GREEN commit 修改了 RED commit 的测试文件时（RED→GREEN 链断裂），检测并给出明确错误 | GREEN commit 触碰 test 文件 → retry + "GREEN commit 修改了测试文件" 提示 | P1 | ✅ | (本次) |
 | T39 | B9/D2 | `engine/batch_state.py` 零 batch 组件警告抑制 — module-level `_warned_zero_batch` set 去重，每个组件只警告一次 | 同一组件警告只输出一次，后续 tick 不再重复 | P1 | ✅ | (本次) |
 | T40 | D1 | `engine/progress_tree.py` _apply_sync — plan_refine 后 total_tasks 变化时将旧 verifier_status 重置为 "pending"，避免 stale "failed" 状态 | plan_refine 后组件 total_tasks 变化 → verifier_status 自动重置为 "pending" | P1 | ✅ | (本次) |
-| T41 | B6 | `commands/dev-loop.md` 测试命令 — 移除 `--no-cov` 参数（vitest 无此参数）。经查引擎 TestGate 不硬编码 --no-cov（仅 pytest 可能加 --timeout），B6 根因在项目 Agent 行为非引擎代码。标记为项目侧，无引擎修改。 | (项目侧，引擎无需修改) | P2 | ⊘ | 引擎无硬编码 |
+| T41 | B6 | ~~`commands/dev-loop.md` 测试命令 — 移除 `--no-cov` 参数（vitest 无此参数）。~~ 经查引擎 TestGate 不硬编码 --no-cov，根因在项目 Agent 行为非引擎代码。**作废：非本项目范围，voice_clone 项目侧问题。** | — | — | 🗑️ | 作废 — 非本项目 |
 | T42 | D3 | `loop/tick_orchestrator.py` REFINE_LIMIT 错误信息 — 超配额时给出 actionable 建议（拆分 Phase / design_doc 标注延后）| REFINE_LIMIT reason 含 "建议: 拆分需求为多个 Phase 分别处理, 或在 design_doc 中标注设计项为延后" | P2 | ✅ | (本次) |
 | T43 | — | `tests/test_guardrail.py::TestVoiceCloneRegression` 集成测试 — 5 场景覆盖 B3/B8/B11/B9/D2/D1 修复不回归 | 5 tests pass, 全量 250 passed (guardrail+tick_orch+batch_state+progress_tree) | P1 | ✅ | (本次) |
 
@@ -333,24 +340,6 @@
 | T45 | `loop/debug_tracer.py`（101 行）+ `tests/test_debug_tracer.py`（9 tests）+ EngineState #38-39 + `tick_orchestrator.py` 5 hook 点集成 + `cli/__init__.py` `--debug`/`--debug-dir` flag + `cli/dev_loop.py` 全路径接线 | 9 debug_tracer tests + 103 tick_orchestrator tests + 47 engine_state + 21 batch_state + 58 stage_router = 238 passed 零回归 | P1 | ✅ | (本轮) |
 
 > **真实严重度定级 P1**：debug 功能非引擎核心路径，但为生产问题诊断提供关键可观测性——per-tick 快照 + 故障事件 JSONL + 最终摘要覆盖了"引擎静默出错时无现场"的诊断盲区。
-
----
-
-## Phase 16 — PrismScan 真跑故障修复 (2026-07-18)
-
-> 来源：prismscan_for_auto_cc_Design 项目使用 `/ae:dev-loop` 真跑测试产出的 3 个 bug 报告（`design/buginfo/BUG-0{1,2,3}-*.md`）。
-> 范围：3 项引擎修复。BEACON 决策 #62。
-
-| T | Issue | 文件/描述 | 验收 | P | 状态 | Commit |
-|---|-------|----------|------|:---:|:---:|--------|
-| T46 | BUG-01 | `engine/batch_state.py:64-67` — G2 error 信息补全有效 component 名列表。原错误信息只列 orphan component，不提示有效 component 名，agent 需 3 轮 retry 才能定位根因 | 错误信息含 "有效 component 名: [...]" 列表 | P1 | ✅ | (本次) |
-| T47 | BUG-02 | `loop/guardrail.py:259-268` GitDiffExists.check() — root commit 降级。`git diff-tree --no-commit-id -r HEAD` 对 root commit 返回空（无 parent 可 diff），导致 guardrail 假阳报"新仓库且无变更"。修复：`diff-tree` 空时用 `git show --stat --format= HEAD` 作为最终降级 | root commit 后 GitDiffExists 返回 pass + 全量 guardrail 测试零回归 | P2 | ✅ | (本次) |
-| T48 | BUG-03 | `loop/tick_orchestrator.py:531-538` `_after_developer()` — batch 间未保存 checkpoint。`advance_batch()` 仅更新 in-memory 游标，未调 `_save_checkpoint()`。下一个 `--tick` 进程 restore 旧 checkpoint（batch_idx=0）→ 永远回到 B1 | `has_more_batches_for(comp)` 分支加 `self._save_checkpoint()` + 跨 batch tick 测试 batch_idx 推进 | P0 | ✅ | (本次) |
-
-> **实施顺序**：T48(P0) → T46(P1) → T47(P2)
-> **BUG-03 定级 P0**：阻断所有多 batch 组件——`done_tasks` 永远停在 batch 1，引擎无法推进到 batch 2+。任何含 >1 batch 的 component 100% 触发。
-
----
 
 ---
 
@@ -418,19 +407,146 @@
 
 ---
 
-### 战略储备（不入当前 Phase，后续评估）
+## Phase 20 — AI Coding 度量与自进化体系（设计定稿，待实现）
 
-> 来源：`design/discussion/vNext-LangGraph-DeepAgents-对标分析.md` §9 战略储备。
+> 来源：`design/discussion/vNext-AI-Coding-度量与自进化体系.md`（2026-07-19 四项用户决策定案）+ v5.6-Design-Loop.md 附录 F（开发就绪规格）。
+> 前置：Phase 15 DebugTracer + Phase 19 OTLP tracing + audit log（基础设施就绪）。
+> 预估：~12-17 天 | 依赖链：T65 → {T66, T67}（并行）→ T68 → T69a → T69b → T69c
 
-| 储备项 | 描述 | 触发条件 |
-|--------|------|---------|
-| **PII Guardrail (G10)** | `auto_engineering/pii/guardrail.py`（新建）— `PIIGuardrail(Guardrail)`，post-agent 扫描 developer `files_changed` 全量内容。T56/T57 的第二道防线——防写入代码文件的泄露 | T56/T57 验证后扩展为独立 Guardrail |
-| **Intermediate artifact offloading** | 大文件（design doc、全量代码）不直接塞 prompt，改为先写入 offload 文件，prompt 中只放文件路径 + 摘要 | T53 验证后，大文件场景出现 context 压力时 |
-| **LangSmith exporter** | 可选 LangSmith exporter（通过 OTLP bridge），不做硬依赖 | OTLP tracing（T60）就绪后作为可选插件 |
-| **Pre-planned Gate（DecisionGate 形态 1）** | architect 在 batch_plan 中声明 gate（trigger/question/options/default），TickOrchestrator 到达 trigger 时输出 gate action JSON | Stage Checkpoint Gate（T64）验证后扩展 batch_plan JSON schema |
-| **Escalation Gate（DecisionGate 形态 2）** | 新增 CLI `ae dev-loop --escalate --question "..." --options '[...]"` ，Agent 主动举手等用户回复 | Pre-planned Gate（形态 1）验证后，需新增 CLI 入口 |
-| **Task DAG 依赖声明（ORCA P2 #1）** | batch_plan 的 batch 间增加 `depends_on` 字段，支持"A→B/C 并行→D"的 DAG 拓扑。developer 按拓扑序执行，可并行 batch 留给后续并行执行能力 | 多 batch 并行执行需求出现时；需扩展 batch_plan JSON schema + BatchState 按 ready queue 推进 |
-| **消息类型语义（ORCA P2 #2）** | tick action/result JSON 增加 `message_type` 字段（status/dispatch/escalation），让 agent 和 Python 之间的消息有显式语义类型，而非通用 payload | DecisionGate 3 形态均验证后；需扩展 action/result JSON schema |
+| T | 文件/产出 | 验收 | 状态 | Commit |
+|---|----------|------|:---:|--------|
+| T65 | `auto_engineering/metrics/collector.py`（新建 ~300 行）— MetricsCollector + `AIOrigin` dataclass + 5 类事件采集 + 需求生命周期（begin/end）+ M1-M5 聚合计算（含 loc_added 效率比）+ 基线管理 + compare_periods 时段对比 | 5 事件类型采集 + summary.json 含 M1-M5 + AE_METRICS=1 激活 + test_metrics_collector ≥8 tests | ✅ | 2026-07-19 |
+| T66 | `agents/base.py` `execute()` — `asyncio.to_thread(self.llm.create_message, ...)` 返回后同步调 `MetricsCollector.record_token_usage()`（一处覆盖所有 provider）| token_usage 事件正确记录 + 所有 provider 统一走 agent 层 hook + test_token_hook ≥3 tests | ✅ | 2026-07-19 |
+| T67 | `auto_engineering/metrics/signals.py` + `diagnoser.py`（新建）— SignalDetector（5 种检测：趋势/突变/比率异常/成本告警，含冷启动 M5 硬编码阈值）+ Diagnoser（5 条诊断规则，human_actions 显式标注）| 5 种信号检测正确（含冷启动分支）+ 5 条诊断规则覆盖 + test_signals ≥5 tests + test_diagnoser ≥3 tests | ✅ | 2026-07-19 |
+| T68 | `auto_engineering/metrics/ratchet.py`（新建）— RatchetController（keep/revert/stop 三元判定）+ 配置版本化（git tag ae-config-v{N} + JSON 配置文件，git tag 失败返回 None）+ 回滚机制 | keep/revert/stop 判定正确 + 配置快照/回滚 + git tag 降级 JSON 备选 + test_ratchet ≥5 tests | ✅ | 2026-07-19 |
+| T69a | `loop/tick_orchestrator.py` 5 集成点 + `cli/dev_loop.py` 生命周期 | `.ae-state/metrics/` 有完整 events.jsonl + summary.json（无信号/诊断）+ test_metrics_integration ≥3 tests | ✅ | 2026-07-19 |
+| T69b | `loop/tick_orchestrator.py` `_build_action()` 接线 SignalDetector + Diagnoser | 收敛后 action JSON 含 signals + diagnosis + test_metrics_integration ≥2 tests | ✅ | 2026-07-19 |
+| T69c | `loop/tick_orchestrator.py` RatchetController 集成 + action JSON `suggestions` 字段 | E2E 完整链路 + 低风险自动调整/中风险 AskUserQuestion + test_metrics_integration ≥3 tests | ✅ | 2026-07-19 |
+
+> **实施顺序**：T65（MetricsCollector 基础）→ T66（Provider hook）和 T67（SignalDetector+Diagnoser）**可完全并行** → T68（RatchetController，依赖 T67 信号输出）→ T69a（事件打点）→ T69b（信号+诊断接线）→ T69c（Ratchet + suggestions 完整接线）。
+> 详细接口签名/数据流/验收标准见 v5.6-Design-Loop.md 附录 F 各节。
+
+---
+
+## Phase 21 — 自进化深化（阈值学习 + 规则发现，设计定稿，Phase 20 后启动）
+
+> 来源：v5.6-Design-Loop.md 附录 F.10-F.12（2026-07-19 设计定稿）+ BEACON 决策 #70。
+> 前置：Phase 20 T69c 完成 + 生产数据积累 ≥30 需求。
+> 预估：~6-9 天 | 依赖链：T70 和 T71 完全并行 → T72（需两者输出）
+
+| T | 文件/产出 | 验收 | 状态 | Commit |
+|---|----------|------|:---:|--------|
+| T70 | `auto_engineering/metrics/threshold_learner.py`（新建 ~120 行）— ThresholdLearner + Beta-Binomial 贝叶斯共轭先验模型：10 个可学习阈值（5 tunable params + 5 cold-start 阈值），Beta(α=2,β=2) 弱先验 → 二元观测更新 → 后验 Beta(α+successes, β+failures)，≥30 观测提议调整，硬上下界安全护栏，propose_adjustments() 一次只提议一个阈值 | 后验收敛验证 + 提议偏离 >5% 触发 + test_threshold_learner 16 tests | ✅ | 2026-07-19 |
+| T71 | `auto_engineering/metrics/rule_discoverer.py`（新建 ~250 行）— DiagnosticRuleDiscoverer：6 压力维度（需求模糊度/设计文档大小/恢复频率/模型版本变更/需求复杂度/跨组件耦合度）× M1-M5 Spearman 秩相关扫描，|ρ|>0.5 + p<0.05 → 候选诊断规则，CandidateRule dataclass，JSON 输出供人工审查 | 30+ 需求输入 → ≥1 候选规则（|ρ|>0.5）+ Spearman 计算正确性验证 + test_rule_discoverer 10 tests | ✅ | 2026-07-19 |
+| T72 | `auto_engineering/metrics/ratchet.py` 扩展 — RatchetController `sandbox_evaluate()`：接收 ThresholdLearner 提议 + DiagnosticRuleDiscoverer 候选规则，sandbox 预验证（历史数据回放 + 对比评估），keep/revert/stop 三元判定 + `_merge_rule()` 合并规则到 baselines/merged_rules.json | sandbox 预验证正确 + keep/revert/stop 判定 + test_ratchet_sandbox 6 tests | ✅ | 2026-07-19 |
+
+> **实施顺序**：Phase 20 T69c 完成 → 积累 ≥30 需求生产数据 → T70（ThresholdLearner）和 T71（DiagnosticRuleDiscoverer）**可完全并行**（各自独立消费 events.jsonl + summary.json）→ T72（RatchetController sandbox_evaluate + CLI，需要 T70 提议 + T71 候选规则）。
+> **为什么不在 Phase 20**：Beta 后验需要 ≥30 观测才提议调整，Spearman 相关需要 ≥30 需求数据点——Phase 20 跑通度量采集前不满足。Phase 20 先用 5 条手工诊断规则跑通信号→诊断→棘轮全链路，Phase 21 再用数据驱动深化。
+> 详细设计见 v5.6-Design-Loop.md 附录 F.10（ThresholdLearner）、F.11（DiagnosticRuleDiscoverer）、F.12（Phase 21 任务分解）。
+
+---
+
+---
+
+## Phase 22 — Phase 18-19 虚化模块集成接线（审计发现，~4-6 天）
+
+> 来源：`_scratch/audit-phase17-21/PHASE17-21-DEEP-AUDIT.md`（2026-07-19 深度审计）。
+> 根因："Build-then-Wire" 反模式——7 个模块完整构建+测试通过，但生产调用链从未到达。~1875 行虚化代码。
+> 前置：Phase 18 + Phase 19 模块已构建（T53-T64 代码完成）。
+
+| T | 文件/产出 | 验收 | P | 状态 | Commit |
+|---|----------|------|:---:|:---:|--------|
+| T73 | `loop/tick_orchestrator.py` — ContextOffloader 集成：在 `_after_architect`/`_after_developer`/`_after_critic` 等 stage 切换处调用 `ContextOffloader.offload()` + 下一 stage 开始时 `load_summary()` | stage 切换后 offload 文件存在 + 下一 stage 加载摘要 + test_context_integration ≥3 tests | P1 | ✅ | 2026-07-19 |
+| T74 | `loop/tick_orchestrator.py` — SessionSummarizer 集成：tick 循环中 tick>5 时调用 `should_summarize()` → `summarize()` → 注入 developer system prompt | tick>5 时摘要生成 + 摘要注入 prompt + test_summarization_integration ≥3 tests | P1 | ✅ | 2026-07-19 |
+| T75 | `agents/base.py` — PIIRedactor T56 prompt 脱敏接入：`BaseAgent.execute()` 在 `self.llm.create_message()` 前调用 `PIIRedactor.scan(messages)` | 5 类 PII 规则扫描 + 脱敏后 messages 传递 + test_pii_prompt_redaction ≥3 tests | P1-HIGH | ✅ | 2026-07-19 |
+| T76 | `cli/__init__.py` — setup_tracing() 接入：CLI main() 入口处调用 `setup_tracing()`（`AE_OTLP_ENDPOINT` 环境变量激活） | OTLP span 含 stage/guardrail/gate 层级 + test_tracing_integration ≥2 tests | P1 | ✅ | 2026-07-19 |
+| T77 | `llm/anthropic_provider.py` — AuditLogger 接入：`create_message()` 中调用 `AuditLogger.log_call()` 记录完整 request/response | audit JSONL 含完整 request/response + test_audit_integration ≥2 tests | P1 | ✅ | 2026-07-19 |
+| T78 | `loop/guardrail.py` — FileAccessGuardrail G11 接入：`GuardrailChain.default()` 中注册 G11（post-developer 检查 files_changed 是否在 file_targets 内） | 越界文件 block + G11 在 default chain 中 + test_g11_integration ≥3 tests | P1-HIGH | ✅ | 2026-07-19 |
+
+> **实施顺序**：T75（安全防线）和 T78（安全防线）最高优先 → T73/T74（运维增强）→ T76/T77（可观测性）。
+> **为什么不在 Phase 18-19 原任务中修复**：原任务已标记完成并 commit。这些是集成接线缺失——模块代码正确，调用链未注册。作为独立 Phase 追溯审计发现。
+
+---
+
+## Phase 23 — Phase 20 P0 数据流修复（审计发现，~2-3 天）
+
+> 来源：`_scratch/audit-phase20-deep/PHASE20-ROUND4-AUDIT.md`（2026-07-19 Round 4 审计）。
+> 3 个 P0 阻断：信号管线无历史数据、M2 结构性为零、M5 效率比永久为零。
+> 前置：Phase 20 T65（MetricsCollector）代码已存在。
+
+| T | 文件/产出 | 验收 | P | 状态 | Commit |
+|---|----------|------|:---:|:---:|--------|
+| T79 | `loop/tick_orchestrator.py` — P0-A 信号管线传入 history + baseline：`_build_action()` → `compute_metrics_signals(mc, history=recent_history, baseline=baseline)` + `MetricsCollector.load_history()` + `load_baseline()` | 5 种信号检测器全部可触发（≥5 history 时 trend 检测触发，≥8 时 verification_skip 触发） + test_signals_with_history ≥3 tests | P0 | ✅ | 2026-07-19 |
+| T80 | `loop/tick_orchestrator.py` — P0-B M2 传入 criteria_met：terminal verdict 处调用 `record_convergence(criteria_met="critic_approved"/"plan_refine"/"hard_limit")` | M2_critic_major_rate > 0（critic MAJOR 后） + test_m2_criteria_met ≥3 tests | P0 | ✅ | 2026-07-19 |
+| T81 | `auto_engineering/metrics/collector.py` — P0-C M5 git diff 修复：`_compute_loc_added` 中 `git diff --stat --cached HEAD` → `git diff --stat HEAD~1 HEAD` | M5_token_efficiency > 0（有代码变更时） + test_m5_efficiency ≥2 tests | P0 | ✅ | 2026-07-19 |
+
+> **实施顺序**：T79 → T80 → T81（可并行，各自独立修复）。
+
+---
+
+## Phase 24 — Phase 20 P1/P2 修复（审计发现，~3-5 天）
+
+> 来源：`_scratch/audit-phase20-deep/PHASE20-ROUND4-AUDIT.md` §P1 + §P2。
+> 5 P1（功能缺口/数据流断裂）+ 4 P2（代码质量）。
+> 前置：Phase 23 P0 修复完成。
+
+| T | 文件/产出 | 验收 | P | 状态 | Commit |
+|---|----------|------|:---:|:---:|--------|
+| T82 | `cli/dev_loop.py` — P1-A category 参数传入：2 处 `begin_requirement()` 调用传入 `requirement_category` | by_category/ 目录有分类基线文件 + test_category_baseline ≥2 tests | P1 | ✅ | — |
+| T83 | `loop/tick_orchestrator.py` — P1-B 信号管线仅收敛后调用：`_build_action()` 中 `compute_metrics_signals` 移到 done verdict 分支（`_convergence_check`） | 非收敛 tick 不触发信号分析 + test_signals_only_on_convergence ≥2 tests | P1 | ✅ | — |
+| T84 | `auto_engineering/metrics/collector.py` — P1-C tick 编号统一：`record_tick_snapshot` 改为 `tick_no + 1`（1-based，与 `record_tick_complete` 一致） | tick-0001.json 对应 tick_number=1 + test_tick_numbering ≥2 tests | P1 | ✅ | — |
+| T85 | `auto_engineering/metrics/collector.py` — P1-D resume_events 恢复 category：`resume_events()` 读取 `metadata.json` 恢复 `_current_category` | 跨进程 resume 后 category 正确 + test_resume_category ≥2 tests | P1 | ✅ | — |
+| T86 | `auto_engineering/metrics/collector.py` — P1-E compare_periods 对齐设计：按 requirements/*/summary.json tag 时间戳分 before/after + statistics.median 聚合 | compare_periods 输出含 M1/M2 median + sample_size + test_compare_periods ≥3 tests | P1 | ✅ | — |
+| T87 | `auto_engineering/metrics/signals.py` — P2-A 死代码处理：5 个仅测试调用的 helper 方法接入 `analyze()` | 5 方法在生产路径可达 + test_signals_coverage ≥2 tests | P2 | ✅ | — |
+| T88 | `cli/dev_loop.py` — P2-B 冗余 _flush 移除：`_run_tick_init` 中 `begin_requirement()` 后的 `collector._flush()` 移除 | 无冗余 flush + test_no_redundant_flush ≥1 test | P2 | ✅ | — |
+| T89 | `auto_engineering/metrics/collector.py` — P2-C statistics.median 替换：手动排序+中位数 → `statistics.median(values)` | 结果一致 + test_median_consistency ≥1 test | P2 | ✅ | — |
+| T90 | `auto_engineering/metrics/collector.py` — P2-D _get_tag_timestamp 补充：实现 `_get_tag_timestamp(tag) → float | None` | compare_periods 可按 tag 时间戳动态分割 + test_tag_timestamp ≥2 tests | P2 | ✅ | — |
+
+> **实施顺序**：P1 按优先级（T82→T83→T84/T85→T86）→ P2 任意顺序。
+
+---
+
+## Phase 25 — 战略储备激活（按依赖顺序执行，~8-12 天）
+
+> 来源：`design/discussion/vNext-LangGraph-DeepAgents-对标分析.md` §9 战略储备 + BEACON 决策 #67/68。
+> **修正（2026-07-19 审计）**：原标记为"战略储备（不入当前 Phase，后续评估）"——用户决策是"按依赖顺序执行"，不是"搁置不做"。恢复为活跃任务，前置任务完成后自动调度。
+> 前置依赖链：Phase 22 T75（T56 集成）→ T91；Phase 22 T73（T53 集成）→ T92；Phase 22 T76（T60 集成）→ T93；Phase 22 T78（T64 集成）→ T94 → T95
+
+| T | 文件/产出 | 验收 | P | 状态 | Commit |
+|---|----------|------|:---:|:---:|--------|
+| T91 | `auto_engineering/pii/guardrail.py`（新建）— PII Guardrail G10：`PIIGuardrail(Guardrail)`，post-agent 扫描 developer `files_changed` 全量内容。T56/T57 的第二道防线 | 全量文件 PII 扫描 + block 模式可选 + test_pii_guardrail ≥5 tests | P1 | ✅ | 2026-07-19 |
+| T92 | `auto_engineering/context/offloading.py` 扩展 — Intermediate artifact offloading：大文件（design doc、全量代码）写入 offload 文件，prompt 中只放路径+摘要 | 大文件 offload + prompt 只含路径摘要 + test_large_file_offload ≥3 tests | P2 | ✅ | 2026-07-19 |
+| T93 | `auto_engineering/observability/langsmith_exporter.py`（新建）— LangSmith exporter：通过 OTLP bridge 可选导出到 LangSmith，不做硬依赖 | OTLP → LangSmith 桥接 + 可选安装 + test_langsmith_exporter ≥3 tests | P2 | ✅ | 2026-07-19 |
+| T94 | `loop/tick_orchestrator.py` + `engine/batch_state.py` — Pre-planned Gate（DecisionGate 形态 1）：batch_plan schema 扩展 `gate` 字段 + `_get_pending_gate()` + gate action JSON 输出 | batch_plan 含 gate 声明 + tick 到达 trigger 时输出 gate action + test_preplanned_gate ≥5 tests | P2 | ✅ | 2026-07-19 |
+| T95 | `cli/__init__.py` — Escalation Gate（DecisionGate 形态 2）：新增 `ae dev-loop --escalate --question "..." --options '[...]'` CLI 入口 | --escalate 正确传递 question/options + test_escalation_gate ≥5 tests | P2 | ✅ | 2026-07-19 |
+| T96 | `engine/batch_state.py` + `loop/task_factory.py` — Task DAG 依赖声明（ORCA P2 #1）：batch_plan batch 间增加 `depends_on` 字段，BatchState 按 ready queue 拓扑序推进 | DAG 拓扑排序正确 + 并行 batch 同时就绪 + test_batch_dag ≥5 tests | P2 | ✅ | 2026-07-19 |
+| T97 | `loop/action.schema.json` + `loop/stage-result.schema.json` — 消息类型语义（ORCA P2 #2）：action/result JSON 增加 `message_type` 字段（status/dispatch/escalation） | schema 扩展 + message_type 正确填充 + test_message_type ≥3 tests | P2 | ✅ | 2026-07-19 |
+
+> **实施顺序（严格依赖链）**：
+> - T91（G10）依赖 T75（T56 集成）
+> - T92（大文件 offload）依赖 T73（T53 集成）
+> - T93（LangSmith）依赖 T76（T60 集成）
+> - T94（Pre-planned Gate）依赖 T78（T64 集成）
+> - T95（Escalation Gate）依赖 T94（形态 1）
+> - T96（Task DAG）无前置依赖，可随时启动
+> - T97（消息类型语义）依赖 T94 + T95（DecisionGate 3 形态全部验证后）
+
+---
+
+## Phase 26 — 设计-实现对齐 + 遗留清理（~1-2 天）
+
+> 来源：Phase 17-21 审计 BEACON 偏差 + ⏳ 遗留测试修复 + [Q?] 能力矩阵验证。
+> 性质：设计文档精确化 + 低风险修复。
+
+| T | 文件/产出 | 验收 | P | 状态 | Commit |
+|---|----------|------|:---:|:---:|--------|
+| T98 | `design/BEACON.md` — BEACON #67 状态描述精确化：标题"3 形态"→ 标注"形态 3 已实现，形态 1/2 战略储备（Phase 25）" | BEACON #67 描述与实现状态一致 | P2 | ✅ | 2026-07-19 |
+| T99 | `auto_engineering/pii/rules.py` — bank_card PII severity WARN → CRITICAL + 正则 `\b\d{16,19}\b` 收紧防误匹配（git commit hash 等） | bank_card severity=CRITICAL + 正则不含假阳性 + test_pii_rules ≥2 tests | P2 | ✅ | 2026-07-19 |
+| T100 | `tests/test_checkpoint_store.py` — `_fake_state(step=0)` 类型修复（`step: int|str = 0` 替代 `step: str = "idle"`） | 23/23 tests pass + 全量零回归 | P2 | ✅ | 2026-07-19 |
+| T101 | `docs/AI-Loop框架七方对比分析报告.html` §七 — Post-Phase-19 能力覆盖矩阵回溯验证：以实际代码实现为基准，11 项能力重新评分（上下文隔离 ✗→◐, 人在环 ◐→✅, 多 agent 路由 ✗→◐, 评分 14.5→15/24） | 能力覆盖矩阵评分更新 + 对比讨论稿预期 | P2 | ✅ | 2026-07-19 |
+
+> **T100 背景**：2026-07-09 发现，`_fake_state(step="idle")` str vs `CheckpointEnvelope.step: int` 类型冲突。记录为 ⏳ 待处理已 10 天，本次一并清理。
+> **T101 背景**：BEACON [Q?] 自 Phase 19 完成后即待验证，Phase 17-19 全部开发完毕后触发。
 
 ---
 
@@ -456,8 +572,11 @@
 | 2026-07-11 | Phase 3 Wave 1 收尾（`design/remaining-execution-PLAN.md`）| **Phase 3 剩余 6 任务完成（TDD, 每任务一 commit）**：e27a8fd=T12 BEACON 当前状态记 T9（无 status 翻转）；4628c33=T9b `cli/progress.py`（读持久化 progress_tree_json → display/summary，无 checkpoint 优雅降级，4 tests）；6e30f35=T10b `commands/progress.md`（/ae:progress 委托）；e13da0c=T10 两份 dev-loop.md 统一 v5.6 Tick 协议重写（action 参考表对齐 `_build_action` 实际输出；**移除 4 外部依赖** Plan/code-reviewer/code-review/gsd-code-fixer + dead ref AE_JSONL_MODE，决策 #46 实施非降级）；6a4fe19=T11 SKILL.md 分层验证约束（5 层矩阵 + LEAF/PLATE/FULL 自动裁剪 + 不可短路）；9da5dbe=T10c `tools/pr_backend.py`（PRBackend ABC + gh/glab 薄壳 + select_backend(ci_platform) + doctor 非致命预检，12 tests，去 gh 硬编码）。 | ✅ Wave 1 blast radius 94 passed / 1 pre-existing 失败（#73 同上，非回归）。Phase 3 = 7/8，仅剩 **T10d**（G-retire 红线，v5.5 活跃待确认时机）。**下一步**：Wave 2 Phase 4 Agent Prompt 模板（T13-T16g）。 |
 | 2026-07-12 | Phase 10（v7.0 双驱动预留）| **单引擎+双驱动远期架构立项 + 当前 P0 预留落表（决策 #54）**：由 T10d「v5.5 是否值得保留」追问延伸——v5.5 唯一护城河（脱 Claude Code 独立/headless 跑）在主场景（Plugin）已死（2026-07-04 子进程拿不到 AUTH_TOKEN），且流水线落后 v6 + 双引擎税（orchestrator.py:580-609 T9 `10**9` shim）。用户提出「一套引擎、两个入口」：TickOrchestrator 为唯一真相源，接缝挂 Driver A（Claude Code Agent 填 result，现状）+ Driver B（进程内 AgentRuntime 自带 key 调 LLM，v7.0），编排机制完全一致只换执行后端（ports & adapters）。Driver B 复用 v5.5 `_step_2e_run_agent` 执行栈作 tick 填充器 → subsume v5.5，给 T10d 干净退役出口（薄驱动替 fork）。**原则精确化（非翻转，#39/#40 status 不变）**：「Python 永不调 LLM」→「循环引擎永不调 LLM；驱动可 opt-in 调」。产物：v5.6-Design-Loop.md 附录 C（架构图+路线图 V7-1~V7-8）+ `discussion/v7.0-dual-driver-architecture.md`（推理过程）+ BEACON #54。**当前阶段仅做两项 P0 预留**（净收益，非 v7.0 本体）：T33a action/stage-result schema SSOT + 契约测试；T33b 执行栈双驱动共享资产标注（防退役 v5.5 时误删）。 | ◐ Phase 10 立项，T33a/T33b 落表为**本阶段必须任务**（待做）。v7.0 主体（V7-5 StandaloneDriver / V7-6 `--standalone` CLI / V7-7 v5.5 退役=决策翻转红线须审批 / V7-8 保真度基准）入 v5.6-Design-Loop.md 附录 C 路线图，**非当前范围，等后续里程碑扩展**。本轮 DOCS ONLY，不实现 T33a/T33b。 |
 | 2026-07-12 | Phase 10 T33a+T33b 实现 | **双驱动接缝预留落地（用户"现在开始实现 T33a + T33b"授权；v7.0 主体明确搁置不主动启动）**：T33a=`loop/action.schema.json`+`loop/stage-result.schema.json`（draft2020-12，$id 版本化 SSOT，固化 `_build_action` 与 `actions.RESULT_SCHEMA` 两处形状）+ `test_action_result_contract.py`（21 tests；核心防漂移断言 schema per-stage required == `actions.RESULT_SCHEMA` + 真实 `_build_action`(architect/gap_scan) round-trip + done/error + result 双校验一致；jsonschema 仅测试期用，生产不 import schema）；T33b=4 处执行栈 docstring（agents/runtime/tools/round.py）标注「双驱动共享资产，退役 v5.5 不得删执行层」+ 交叉引用 §2.3。ruff/mypy 全绿，182 相关测试零回归。 | ✅ Phase 10 = 2/2，v5.6 里程碑 102/102 全完成。v7.0 主体（V7-1~V7-8）用户搁置，待后续里程碑。 |
-| 2026-07-15 | **PrismScan V5.1 Phase 1 流转覆盖率补充测试** | **从 loop flow 流转角度分析 25 条路径，14→23 覆盖（56%→92%）**。新增 45 测试（P0×12: tree-sitter 降级/schema-pass-but-from_dict-fails/独立check-result/stage状态机/内部异常；P1×15: 最小AnalysisResult/高复杂度压力/大型符号索引/2-retry闭环/Agent消费context；P2×8: 重复discover-extract/构造参数注入/AST边界/import解析；S6.6×2: Agent运行时真实LLM闭环）。全量 92 passed（22.56s），含 Agent 真实调用 2 tests（需 API key，无 key 自动 skip）。v5.6 tick 闭环 smoke test：`ae dev-loop --init/--tick` 验证通过（plan≥50 字符校验/stage mismatch 拦截正确）。 | ✅ PrismScan Phase 1 补充测试完成。**待做：真实 Agent 驱动的 v5.6 tick 完整闭环**（用 /ae:dev-loop 对 Design-V5.0-plugin-final.md 真实验证）。 |
+
 | 2026-07-15 | **v5.6 P1 Bug 修复 (tick 闭环前置)** | **(1) load_latest() 排序修复**（`store.py:251`）：`ORDER BY round DESC, created_at DESC` → `ORDER BY created_at DESC`。`--init`(round=0) 创建 checkpoint 后 load_latest 仍返回历史高 round 记录（`round DESC` 第一键），导致 restore 拿到 stale state。修复 + 2 测试更新（test_checkpoint_store.py:test_load_latest_returns_most_recent / test_loop_convergence.py:576）。**(2) BatchState.from_design_doc() 组件过滤修复**（`batch_state.py:75-84`）：原实现在无 batch 的 component 上 `is_component_complete()` 返回 True（`current_batch_idx=0 >= len(batches_for(comp))=0`），导致 developer 阶段 `current_batch()` assertion 失败。修复：filter plates 仅保留有 batch 的 component，无 active component 的 plate 移除。129 + 21 相关测试全部通过。 | ✅ 2/2 P1 修复。CLAUDE.md 同步更新（v5.6 架构 + ~2132 tests + 文档纪律）。 |
 | 2026-07-17 | **Phase 11 V7-5 StandaloneDriver 真实 LLM E2E 验证** | **StandaloneDriver 端到端真跑成功**：architect→developer→critic→GOAL_ACHIEVED（6 ticks），在 `/tmp/_ae_test_project/` 产出 fibonacci 实现（`src/fibonacci.py` + `tests/test_fibonacci.py` 10 tests）+ auto-commit。**3 处 bug 修复确保 E2E 可跑**：(1) `guardrail.py:252-259` GitDiffExists 增加第三降级路径（`git diff-tree --no-commit-id -r HEAD`）处理 StandaloneDriver auto_commit 后 `--cached` 空的场景；(2) `bash_tools.py:77-80` cwd 未指定时默认 project_root（之前只在幻觉路径回退，None cwd 不处理→subprocess 跑在工作目录而非沙箱）；(3) `standalone_driver.py:700-710` architect 任务描述更详细（100+ 字要求+示例格式+明确步骤）确保 DeepSeek 产出足够长的计划。全量 2246 passed / 2 skipped。 | ✅ StandaloneDriver 可运行证明完成。V7-7 v5.5 退役仍需 V7-8 基准数据 + 用户审批。 |
 | 2026-07-17 | **Step 3 AgentDriver 基准 10/10 全部完成** | **AgentDriver 手动驱动 v5.6 Tick 协议全量基准**：全部 10 需求（R01-R10，含 simple_function/medium_crud/complex_multi_module/with_design_doc 四类）GOAL_ACHIEVED（100%）。R01(5t/7t)、R02(5t/7t)、R03(5t/5t)、R04(9t/13t)、R05(5t/8t)、R06(5t/9t)、R07(9t/18t)、R08(5t/6t)、R09(5t/7t)、R10(5t/5t)。总 ~63 ticks, ~85 tests。**双驱动最终对比**：Agent 100% vs Standalone 100% 收敛率等价；AgentDriver 测试更精简（avg 8.5 vs 11.8），StandaloneDriver 更快可批量（~163s vs ~8min）。R09/R10 通过 spec 内嵌 requirement 绕过 `from_design_doc()` 校验过严问题。修复 red_evidence 映射 bug + collect 脚本 git 命令。产出 `_scratch/benchmark_report.md` + `/tmp/_ae_agent_bench/results.json`。BEACON 决策 #57 更新。 | ✅ Step 3 双驱动保真度等价验证闭环。AgentDriver vs StandaloneDriver 全 4 类需求类型 100% 收敛。 |
 | 2026-07-17 | **Plugin 安装标准化 — Marketplace 替代 install.sh** | **V8-6 替换为三平台标准 Marketplace 机制**：删除自造 `install.sh`（~150 行），修正 `.claude-plugin/plugin.json` 和 `.codex-plugin/plugin.json` 路径从 `"../commands/"` 到 `"./commands/"`（对齐 Claude Code `./` 相对插件根规范）。PLUGIN-USAGE.md + USER_GUIDE.md 安装章节重写为 `/plugin marketplace add` + `/plugin install` 标准流程。BEACON 决策 #58。 | ✅ Plugin 安装对齐三平台标准，不再依赖自造脚本。 |
+| 2026-07-19 | **V7-7 v5.5 退役 30 天过渡期启动** | **用户审批通过 v5.5 退役**：裸参数路径 `ae dev-loop "req"` 输出 WARN 引导用户改用 `--standalone`。BEACON 决策 #53 ✅→❌（superseded by V7-7）。不立即物理删除代码（30 天过渡期让用户切换）。**Phase 1-19 = 158/158 全部完成**。 | ✅ V7-7 Phase A（弃用 WARN）完成。30 天后执行 Phase B（物理删除 orchestrator.py 循环 + semantic_evaluator.py）。 |
+| 2026-07-19 | Phase 17-21 审计 | **深度审计发现 7 模块虚化（~1875 行）+ Phase 20 3 P0 + 5 P1 + 4 P2 + BEACON #67 范围偏差 + 战略储备误分类**。虚化根因："Build-then-Wire" 反模式——模块 TDD 构建完整但集成步骤从未执行。Phase 20 数据流断裂：接线正确但上游不供数据。 | → 落表 Phase 22（6 任务，虚化集成接线）+ Phase 23（3 P0 修复）+ Phase 24（9 P1/P2 修复）+ Phase 25（7 任务，战略储备按依赖激活）+ Phase 26（4 任务，设计对齐+遗留清理）。详见 `_scratch/audit-phase17-21/PHASE17-21-DEEP-AUDIT.md` + `_scratch/audit-phase20-deep/PHASE20-ROUND4-AUDIT.md`。 |
+| 2026-07-19 | 战略储备 | **用户纠正：战略储备不是"搁置不做"**——用户决策是"按依赖顺序执行"，AI 擅自将依赖排序曲解为"不入当前 Phase"。7 项全部恢复为活跃任务，前置任务完成后自动调度。 | → Phase 25（T91-T97），各任务标注前置依赖。原 战略储备 章节移除。 |

@@ -40,7 +40,7 @@ from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
 from auto_engineering.loop.convergence import ConvergenceConfig, ConvergenceJudge
 from auto_engineering.loop.debug_tracer import DebugTracer
 from auto_engineering.loop.guardrail import GuardrailChain
-from auto_engineering.loop.plan import Plan
+from auto_engineering.loop.plan import Plan, TaskDAG
 from auto_engineering.loop.refine import build_refine_request
 from auto_engineering.loop.stage_router import (
     StageRouter,
@@ -48,6 +48,7 @@ from auto_engineering.loop.stage_router import (
     update_majors_count,
 )
 from auto_engineering.loop.task_factory import tasks_from_batch_plan
+from auto_engineering.observability.audit_log import AuditLogger
 from auto_engineering.prompts.registry import default_registry
 
 # Gate runner type: (gate_names, project_root) → {name: GateVerdict}
@@ -58,8 +59,10 @@ _MAX_PER_SOURCE = 2
 _MAX_GLOBAL = 4
 _ISO_FMT = "%Y-%m-%dT%H:%M:%SZ"
 
-# DS-9 (B6.6a): Haiku verifier 负判定 (MISSING/DIVERGED) → Sonnet 窄范围复核指令。
-# 仅负判定触发 (trigger=on_negative), scope 收窄到负判定条目 (成本 O(负判定数))。
+# DS-9 (B6.6a): Haiku verifier 负判定 (MISSING/DIVERGED) → Sonnet 窄范围复核。
+# NOTE: DS-9 recheck is specified but not yet executed in the engine — this config
+# is surfaced in action output so the Agent can optionally apply it, and will be
+# wired into the automatic recheck loop in a future phase.
 _VERIFIER_RECHECK = {
     "enabled": True,
     "model": "claude-sonnet-4-6",
@@ -70,6 +73,10 @@ _VERIFIER_RECHECK = {
 # DS-10 / C.2.6: Python 编排开销预算 (t_orchestration = t_total − t_gate − t_guard_sub).
 # 超预算只告警不中断 — 延迟是可观测性指标, 不是正确性门控. P95 判定离线聚合 (Phase 5).
 ORCH_BUDGET_MS = 2000
+
+_STAGE_CHECKPOINT_REVIEW_FEEDBACK = (
+    "用户选择审查当前产出，请展示当前进度和已完成内容供审查。"
+)
 
 _logger = logging.getLogger("ae.loop.tick_orchestrator")
 
@@ -94,13 +101,22 @@ class TickOrchestrator:
         gate_runner: GateRunner | None = None,
         guardrail: GuardrailChain | None = None,
         checkpoint_store: SQLiteCheckpointStore | None = None,
+        context_offloader: Any | None = None,
+        session_summarizer: Any | None = None,
+        audit_logger: AuditLogger | None = None,
+        escalate: bool = False,
         debug: bool = False,
         debug_dir: str | None = None,
     ) -> None:
         self.project_root = project_root or Path.cwd()
         self._gate_runner = gate_runner
+        self._audit_logger = audit_logger
+        self._escalate = escalate
         self._guardrail = guardrail
         self._checkpoint_store = checkpoint_store
+        self._context_offloader = context_offloader
+        self._session_summarizer = session_summarizer
+        self._cached_session_summary: Any = None
         self._debug_enabled = debug
         self._debug_dir = debug_dir
 
@@ -113,6 +129,7 @@ class TickOrchestrator:
         self._init_manifest: dict | None = None
         self._design_doc: DesignDoc | None = None
         self._batch_state: BatchState | None = None
+        self._task_dag: TaskDAG | None = None  # P0-3: 拓扑排序 DAG
         self._progress_tree: ProgressTree | None = None
         self._verification_layers: VerificationLayers | None = None
         self._round_history: list = []  # T1: 在 TickOrchestrator, 非 EngineState 字段
@@ -131,7 +148,20 @@ class TickOrchestrator:
     # ── T64: Stage Checkpoint Gate ──
 
     def set_pause_at_stages(self, stages: list[str]) -> None:
-        """Set stages to pause at (T64 --pause-at-stage)."""
+        """Set stages to pause at (T64 --pause-at-stage).
+
+        Unknown stage names are warned but not rejected — typos would
+        silently prevent the checkpoint from ever triggering.
+        """
+        from auto_engineering.loop.standalone_driver import STAGE_TO_ROLE
+        known = set(STAGE_TO_ROLE.keys())
+        for s in stages:
+            if s not in known:
+                _logger.warning(
+                    "pause-at-stage: '%s' is not a known stage. "
+                    "Known: %s. This checkpoint will never trigger.",
+                    s, ", ".join(sorted(known)),
+                )
         self._pause_at_stages = set(stages)
 
     def _checkpoint_passed(self, stage: str) -> bool:
@@ -141,16 +171,17 @@ class TickOrchestrator:
     def _progress_summary(self) -> str:
         """Generate current progress summary for gate action display.
 
-        Format: "tick=N, stage=S, round=R"
+        Format: "tick=N, stage=S, round=R[, batch=B/complete]"
         """
         s = self._state
         if s is None:
             return "tick=0, stage=?"
         parts = [f"tick={s.tick}/{s.round}", f"stage={s.current_stage}"]
-        if self._batch_state and not self._batch_state.is_component_complete():
-            parts.append(f"batch={self._batch_state.current_batch_id()}")
-        elif self._last_batch_id:
-            parts.append(f"batch={self._last_batch_id}")
+        if self._batch_state is not None:
+            if self._batch_state.is_component_complete():
+                parts.append("batch=complete")
+            else:
+                parts.append(f"batch={self._batch_state.current_batch_id()}")
         return ", ".join(parts)
 
     # ── 公共入口 ──
@@ -315,32 +346,74 @@ class TickOrchestrator:
 
         与 tick() 相同流程, 但跳过文件读取步骤, 直接验证并处理 result dict.
         """
+        # P1-8: _state=None 时尽早失败，避免深层空指针
+        if self._state is None:
+            return ErrorResponse(
+                "NO_STATE",
+                "TickOrchestrator._state is None — 请先调用 --init 初始化",
+            ).to_dict()
+
         t_start = time.perf_counter()
         self._t_gate_ms = 0.0
         self._t_guard_sub_ms = 0.0
-        tick_no = self._state.tick if self._state else 0
-        stage_in = self._state.current_stage if self._state else "?"
+        tick_no = self._state.tick
+        stage_in = self._state.current_stage
         action = self._tick_body_dict(result)
+        duration_ms = int((time.perf_counter() - t_start) * 1000)
         self._record_tick_latency(t_start, tick_no)
 
-        # DebugTracer: 记录 per-tick 快照
+        # T69a: Record tick completion event for metrics collector
+        from auto_engineering.metrics.collector import AIOrigin, get_collector
+        mc = get_collector()
+        if mc is not None:
+            verdict = ""
+            if action.get("action") == "done":
+                verdict = action.get("verdict", "")
+            mc.record_tick_complete(
+                tick_number=tick_no + 1,
+                stage=stage_in,
+                duration_ms=duration_ms,
+                verdict=verdict,
+                ai_origin=AIOrigin(
+                    level="led",
+                    agent_role=stage_in,
+                    driver_type="agent",
+                ),
+            )
+
+        # DebugTracer + Metrics: 记录 per-tick 快照
+        t_total_ms = (time.perf_counter() - t_start) * 1000
+        timing_ms = {
+            "t_total": round(t_total_ms, 2),
+            "t_gate": round(self._t_gate_ms, 2),
+            "t_guard_sub": round(self._t_guard_sub_ms, 2),
+            "t_orchestration": round(
+                t_total_ms - self._t_gate_ms - self._t_guard_sub_ms, 2),
+        }
+        state_snapshot = self._state.to_dict() if self._state else {}
+        guardrail_snapshot = self._last_guardrail or {}
+        gate_snapshot = self._state.gate_results if self._state else {}
         if self._debug_tracer is not None:
-            t_total_ms = (time.perf_counter() - t_start) * 1000
             self._debug_tracer.record_tick(
                 tick_num=tick_no,
                 stage_in=stage_in,
                 action=action,
-                state_snapshot=self._state.to_dict() if self._state else {},
-                guardrail_results=self._last_guardrail or {},
-                gate_results=self._state.gate_results if self._state else {},
-                timing_ms={
-                    "t_total": round(t_total_ms, 2),
-                    "t_gate": round(self._t_gate_ms, 2),
-                    "t_guard_sub": round(self._t_guard_sub_ms, 2),
-                    "t_orchestration": round(
-                        t_total_ms - self._t_gate_ms - self._t_guard_sub_ms, 2),
-                },
+                state_snapshot=state_snapshot,
+                guardrail_results=guardrail_snapshot,
+                gate_results=gate_snapshot,
+                timing_ms=timing_ms,
             )
+            # Metrics: bridge per-tick snapshots into metrics storage
+            if mc is not None:
+                mc.record_tick_snapshot(
+                    tick_number=tick_no + 1,
+                    stage_in=stage_in,
+                    action=action,
+                    state_snapshot=state_snapshot,
+                    guardrail_results=guardrail_snapshot,
+                    gate_results=gate_snapshot,
+                    timing_ms=timing_ms,
+                )
             # 检查 terminal verdict → finalize
             action_type = action.get("action", "")
             verdict = action.get("verdict", "")
@@ -351,6 +424,26 @@ class TickOrchestrator:
                     verdict=verdict or "UNKNOWN",
                     total_ticks=tick_no + 1,
                 )
+                # T80: Record convergence with criteria_met for M2 calculation
+                if mc is not None:
+                    criteria_map = {
+                        "GOAL_ACHIEVED": "critic_approved",
+                        "HARD_LIMIT": "hard_limit",
+                        "REFINE_LIMIT": "plan_refine",
+                        "STAGNANT": "stagnant",
+                        "TERMINATED": "terminated",
+                    }
+                    criteria_met = criteria_map.get(verdict, verdict.lower())
+                    mc.record_convergence(
+                        verdict=verdict or "UNKNOWN",
+                        total_ticks=tick_no + 1,
+                        criteria_met=criteria_met,
+                        ai_origin=AIOrigin(
+                            level="led",
+                            agent_role=self._state.current_stage if self._state else "?",
+                            driver_type="agent",
+                        ),
+                    )
 
         return action
 
@@ -393,11 +486,13 @@ class TickOrchestrator:
                 expected_stage = self._state.current_stage
                 self._passed_checkpoints.add(expected_stage)
                 return self._build_action()
-            # "审查当前产出" or any other: proceed to stage with review feedback
-            self._passed_checkpoints.add(self._state.current_stage)
-            return self._build_action(
-                feedback="用户选择审查当前产出，请展示当前进度和已完成内容供审查。"
-            )
+            if resolution == "审查当前产出":
+                self._passed_checkpoints.add(self._state.current_stage)
+                return self._build_action(feedback=_STAGE_CHECKPOINT_REVIEW_FEEDBACK)
+            return ErrorResponse(
+                error_code="INVALID_GATE_RESOLUTION",
+                message=f"未知的 gate resolution: {resolution!r}，有效值: 继续 / 审查当前产出 / 终止 loop",
+            ).to_dict()
 
         self._apply_result_to_state(result)
 
@@ -544,6 +639,20 @@ class TickOrchestrator:
 
         self._plan = tasks_from_batch_plan(batches, self._state.requirement)
 
+        # P0-3: TaskDAG 拓扑排序 — 检测 depends_on 并构建 DAG 供 batch 调度
+        tasks_with_deps = [t for t in self._plan.tasks if t.depends_on]
+        if tasks_with_deps:
+            dag = TaskDAG()
+            for task in self._plan.tasks:
+                dag.add_task(task)
+            self._task_dag = dag
+            _logger.info(
+                "TaskDAG built: %d tasks, %d with depends_on",
+                len(self._plan.tasks), len(tasks_with_deps),
+            )
+        else:
+            self._task_dag = None
+
         if self._verification_layers is None:
             self._verification_layers = determine_verification_layers(
                 self._design_doc, batches)
@@ -563,6 +672,7 @@ class TickOrchestrator:
                 self._progress_tree.sync_from_batch_plan(batches)
 
         self._advance_stage("developer")
+        self._offload_stage("architect")
         return self._build_action()
 
     # ── _after_developer ──
@@ -593,10 +703,16 @@ class TickOrchestrator:
                     if next_batch.get("tasks"):
                         node.current_task = next_batch["tasks"][0]["description"]
             self._save_checkpoint()
+            self._offload_stage("developer")
+            # P1-5: T94 PrePlannedGate — 检查下一 batch 是否声明了 gate
+            pending_gate = self._batch_state._get_pending_gate()
+            if pending_gate:
+                return self._build_action(pre_gate=pending_gate)
             return self._build_action()
 
         self._snapshot_developer_output()
         self._advance_stage("critic")
+        self._offload_stage("developer")
         return self._build_action()
 
     def _snapshot_developer_output(self) -> None:
@@ -607,11 +723,50 @@ class TickOrchestrator:
             "test_results": self._state.test_results,
         }
 
+    def _offload_stage(self, stage: str) -> None:
+        """Persist stage context summary via ContextOffloader (T73).
+
+        Note: messages are NOT available at the TickOrchestrator level —
+        the orchestrator only sees action/result JSON, not Agent-level
+        conversation history. load_full_context() will return [] by design.
+        Offloading is summary-only; full context backtracking would require
+        the Agent to include message history in its result file.
+
+        (P1-2 fix: documented limitation instead of pretending full_context works.)
+        """
+        if self._context_offloader is None:
+            return
+        s = self._state
+        summary = f"{stage} stage completed at tick {s.tick}/{s.round}"
+        key_decisions: list[str] = []
+        files_changed: list[str] = list(s.files_changed) if s.files_changed else []
+        if stage == "architect":
+            summary = f"Architect plan: {s.plan[:200] if s.plan else 'N/A'}"
+            if s.batch_plan:
+                key_decisions = [
+                    f"batch_count={len(s.batch_plan)}",
+                    f"files={', '.join(s.file_list or [])}",
+                ]
+        elif stage == "developer":
+            tr = s.test_results or {}
+            summary = f"Developer: {tr.get('passed', 0)}/{tr.get('total', 0)} tests passed"
+        elif stage == "critic":
+            summary = f"Critic verdict: {s.critic_verdict or 'N/A'}"
+        self._context_offloader.offload(
+            stage=stage,
+            messages=[],
+            summary=summary,
+            key_decisions=key_decisions,
+            files_changed=files_changed,
+            gate_results=dict(s.gate_results or {}),
+        )
+
     # ── _after_critic ──
 
     def _after_critic(self, result: dict) -> dict:
         verdict = result.get("verdict", "")
         update_majors_count(self._state, verdict)
+        self._offload_stage("critic")
 
         if self._progress_tree:
             comp = self._batch_state.current_component()
@@ -951,21 +1106,52 @@ class TickOrchestrator:
             design_coverage_ok=design_coverage_ok,
             system_deep_audit_ok=system_deep_audit_ok)
 
+        # T83: Compute metrics signals only on convergence (done verdict).
+        # Previously in _build_action() on every tick — moved here so signals
+        # reflect terminal state and trend analysis is only triggered at loop end.
+        from auto_engineering.metrics.collector import get_collector
+        from auto_engineering.metrics.enrichment import compute_metrics_signals
+        mc = get_collector()
+        if mc is not None:
+            history = mc.load_history(limit=10)
+            baseline = mc.load_baseline()
+            enrichment = compute_metrics_signals(
+                mc, history=history, baseline=baseline,
+                project_root=str(self.project_root),
+            )
+
         if verdict.should_stop:
             self._save_checkpoint()
-            return ActionDone(
+            action = ActionDone(
                 verdict=verdict.level_name, reason=verdict.reason,
                 verdict_level=verdict.level).to_dict()
+            if mc is not None and enrichment:
+                action["metrics"] = enrichment
+            return action
 
         self._save_checkpoint()
-        return ActionDone(
+        action = ActionDone(
             verdict="UNEXPECTED",
             reason="ConvergenceJudge returned CONTINUE after full cycle").to_dict()
+        if mc is not None and enrichment:
+            action["metrics"] = enrichment
+        return action
 
     # ── _build_action ──
 
-    def _build_action(self, feedback: str | None = None) -> dict:
+    def _build_action(self, feedback: str | None = None, pre_gate: dict | None = None) -> dict:
         stage = self._state.current_stage
+
+        # P1-5: T94 PrePlannedGate — 注入架构师声明的 gate
+        if pre_gate:
+            return {
+                "action": "gate",
+                "tick": self._state.tick + 1,
+                "stage": stage,
+                "thread_id": self._state.thread_id,
+                "gate": pre_gate,
+                "progress_summary": self._progress_summary(),
+            }
 
         # T64: Stage Checkpoint Gate — pause before entering checkpointed stages
         if stage in self._pause_at_stages and not self._checkpoint_passed(stage):
@@ -1000,6 +1186,10 @@ class TickOrchestrator:
                 self._progress_tree.summary() if self._progress_tree else None
             ),
         }
+
+        # T69b: Inject metrics signals + diagnoses only on convergence (T83).
+        # Previously computed unconditionally on every tick — wasteful and noisy.
+        # Now moved to _convergence_check() so signals only fire on terminal ticks.
 
         if stage == "gap_scan":
             return {**base, "action": "gap_scan", "context": {
@@ -1100,7 +1290,7 @@ class TickOrchestrator:
                 else (self._plan.get_tasks_by_stage("developer")
                       if self._plan else [])
             )
-            return {**base, "action": "developer",
+            action = {**base, "action": "developer",
                     "component": (
                         self._batch_state.current_component_name()
                         if self._batch_state else None),
@@ -1115,6 +1305,18 @@ class TickOrchestrator:
                         for t in tasks
                     ],
                     "plan": self._state.plan}
+            # T74: Inject session summary for developer when tick > 5
+            if self._session_summarizer is not None:
+                if self._session_summarizer.should_summarize(self._state.tick):
+                    from auto_engineering.context.summarization import SessionSummary
+                    summary = self._cached_session_summary or SessionSummary(
+                        ticks_covered=range(
+                            max(1, self._state.tick - 5), self._state.tick + 1),
+                        generated_at_tick=self._state.tick,
+                    )
+                    action["session_summary"] = (
+                        self._session_summarizer.inject_into_prompt(summary))
+            return action
 
         elif stage == "critic":
             snap = self._dev_snapshot or {}
@@ -1300,7 +1502,27 @@ class TickOrchestrator:
         self._state.round += 1
         self._state.tick += 1
         self._state.guardrail_retry_counters[next_stage] = 0
+        self._append_round_history()
         self._save_checkpoint()
+
+    def _append_round_history(self) -> None:
+        """Append current tick as RoundHistory for convergence judge (P0-1 fix).
+
+        Previously _round_history was initialized and saved to checkpoint but
+        never populated — all 4 convergence levels (hard_limit, quality_gates,
+        stagnation, semantic) were silently bypassed.  Each stage transition
+        records a RoundHistory so the judge has real data.
+        """
+        from auto_engineering.loop.convergence import RoundHistory
+
+        gate_results = getattr(self._state, "gate_results", {}) or {}
+        files_changed = getattr(self._state, "files_changed", []) or []
+        self._round_history.append(RoundHistory(
+            round_id=self._state.round,
+            stage=self._state.current_stage,
+            files_changed=len(files_changed),
+            gate_results=gate_results,
+        ))
 
     def _run_developer_gates(self) -> None:
         from auto_engineering.gates.registry import DEFAULT_GATES
@@ -1342,6 +1564,27 @@ class TickOrchestrator:
             }
             for name, v in per_gate.items()
         }
+
+        # T69a: Record gate results for metrics collector
+        from auto_engineering.metrics.collector import AIOrigin, get_collector
+        mc = get_collector()
+        if mc is not None:
+            for name, info in self._state.gate_results.items():
+                findings = 0
+                msg = info.get("message", "")
+                if isinstance(msg, str) and msg:
+                    findings = msg.count("\n") + 1 if msg.strip() else 0
+                mc.record_gate_result(
+                    gate_name=name,
+                    passed=bool(info.get("passed")),
+                    duration_ms=int(self._t_gate_ms),
+                    findings_count=findings,
+                    ai_origin=AIOrigin(
+                        level="led",
+                        agent_role="developer",
+                        driver_type="agent",
+                    ),
+                )
 
     def _load_default_gates(self) -> list:
         from auto_engineering.gates.registry import DEFAULT_GATES

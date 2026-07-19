@@ -45,7 +45,7 @@ ae <subcommand> [options]
 | `ae checkpoint show <id>` | ckpt | 看 checkpoint 详情 | 04 |
 | `ae checkpoint delete <id>` | ckpt | 删 checkpoint | 04 |
 | `ae checkpoint resume <id>` | ckpt | 恢复指定 checkpoint | 04 |
-| `ae prismscan discover-extract` | prism | PrismScan V5.1 代码库反向工程 | 05 |
+
 
 > 旧路径 `ae init <project>` 已迁移到独立 Init Engineering 项目 (BEACON 决策 30)。Init 侧按 §6 Init-Loop 接口契约 (IL.1-IL.6) 实现, 本项目只消费 `.ae-state/init-manifest.json`.
 
@@ -550,7 +550,6 @@ except AEError as e:
 | `auto_engineering/prompts/registry.py` | 12 | PromptRegistry (sha256 版本锁) |
 | `auto_engineering/cli/dev_loop.py` | 10 | Tick CLI 入口 (--init/--tick/--result/--status/--resume) |
 | `auto_engineering/cli/agent.py` | 07 | 单 Agent 调用 (architect/developer/critic) |
-| `auto_engineering/prismscan/` | 10 | PrismScan V5.1 代码库反向工程 |
 
 ---
 

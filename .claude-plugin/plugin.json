@@ -1,7 +1,7 @@
 {
   "name": "auto-engineering",
   "version": "5.6.0",
-  "description": "Auto-Engineering v5.6 — Tick-Based Discrete Invocation loop with 5-layer verification, PrismScan V5.1 codebase reverse engineering, Gate quality system, and Init-Loop contract.",
+  "description": "Auto-Engineering v5.6 — Tick-Based Discrete Invocation loop with 5-layer verification, Gate quality system, and Init-Loop contract.",
   "author": {
     "name": "Qian Minjian (钱敏健)",
     "email": "noreply@anthropic.com"

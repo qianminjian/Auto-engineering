@@ -42,7 +42,6 @@ from auto_engineering.cli.helpers import (
     _log_engine_version,
     classify_error,
 )
-from auto_engineering.cli.prismscan import register_prismscan_command
 from auto_engineering.cli.progress import register_progress_command
 from auto_engineering.cli.status import (
     register_status_command,
@@ -63,7 +62,6 @@ __all__ = [
     "register_checkpoint_commands",
     "register_doctor_command",
     "register_gate_check_command",
-    "register_prismscan_command",
     "register_progress_command",
     "register_status_command",
 ]
@@ -88,6 +86,12 @@ def main():
     logging.basicConfig(
         level=getattr(logging, log_level, logging.INFO),
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    )
+    # T76: Initialize OTLP tracing (NoOp when AE_OTLP_ENDPOINT not set)
+    from auto_engineering.observability.tracing import setup_tracing
+    setup_tracing(
+        "auto-engineering",
+        otlp_endpoint=os.environ.get("AE_OTLP_ENDPOINT"),
     )
 
 
@@ -123,6 +127,8 @@ def main():
               help="调试输出目录 (默认 <project_root>/_scratch/debug/)")
 @click.option("--pause-at-stage", "pause_at_stage",
               help="T64: 指定 stage 前暂停 (逗号分隔, 如 architect,critic)")
+@click.option("--escalate", "escalate_flag", is_flag=True,
+              help="T95: 触发 escalation gate — 将当前 batch 升级为人工决策")
 def dev_loop(
     requirement: str | None,
     init_flag: bool,
@@ -140,6 +146,7 @@ def dev_loop(
     debug_flag: bool = False,
     debug_dir_opt: str | None = None,
     pause_at_stage: str | None = None,
+    escalate_flag: bool = False,
 ):
     """单需求开发循环.
 
@@ -152,8 +159,8 @@ def dev_loop(
     v7.6 standalone 模式 (Driver B, 进程内 AgentRuntime 自带 key 调 LLM):
         ae dev-loop --standalone "req"                    独立运行, 不依赖 Claude Code Agent
 
-    v5.5 legacy 模式 (连续 while, 调 LLM, BEACON #53 保留共存):
-        ae dev-loop "req"                                 单需求连续调试
+    v5.5 legacy 模式 (⚠️ 已弃用, 30 天后移除, 改用 --standalone):
+        ae dev-loop "req"                                 旧路径 (仍可用但输出弃用 WARN)
     """
     root = Path(project_root).resolve() if project_root else Path.cwd()
 
@@ -176,7 +183,8 @@ def dev_loop(
             click.echo("错误: --init 需要 requirement 参数", err=True)
             raise SystemExit(1)
         _run_tick_init(requirement, design_doc, root, max_rounds, debug=_debug,
-                       debug_dir=debug_dir_opt, pause_at_stage=pause_at_stage)
+                       debug_dir=debug_dir_opt, pause_at_stage=pause_at_stage,
+                       escalate=escalate_flag)
         return
     if tick_flag:
         if not result_file:
@@ -201,11 +209,21 @@ def dev_loop(
                         llm_provider, resume_id, debug=_debug, debug_dir=debug_dir_opt)
         return
 
-    # ── v5.5 legacy 模式 (需 requirement + LLM) ──
+    # ── v5.5 legacy 模式 (⚠️ 已弃用, 30 天后移除, BEACON #53 退役) ──
     if not requirement:
         click.echo(
             "错误: requirement 参数必填 (或用 --init/--tick/--status/--resume/--standalone)", err=True)
         raise SystemExit(1)
+
+    import os as _os2
+    if _os2.environ.get("AE_SUPPRESS_DEPRECATION", "").strip() != "1":
+        click.echo(
+            "⚠️  ae dev-loop 'requirement' (v5.5 legacy) 已弃用，将在 30 天后移除。\n"
+            "   请改用: ae dev-loop --standalone 'requirement'\n"
+            "   详见: design/BEACON.md 决策 #53\n"
+            "   (设置 AE_SUPPRESS_DEPRECATION=1 抑制此警告)",
+            err=True,
+        )
 
     if llm_provider != "anthropic":
         click.echo(f"[未实现] --llm-provider={llm_provider} 暂未实装。", err=True)
@@ -303,8 +321,6 @@ register_gate_check_command(main)
 register_agent_command(main)
 # 注册 status 命令 (从 cli/status.py 注入, P0-2 修复 v5.0 §B13.2)
 register_status_command(main)
-# 注册 prismscan 命令 (从 cli/prismscan.py 注入)
-register_prismscan_command(main)
 # 注册 progress 命令 (从 cli/progress.py 注入, T9b B9 ProgressTree 看板)
 register_progress_command(main)
 

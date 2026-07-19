@@ -130,8 +130,14 @@ class TokenTracker:
         if usage is None:
             return
 
-        in_t = getattr(usage, "input_tokens", 0) or 0
-        out_t = getattr(usage, "output_tokens", 0) or 0
+        # Support both dict usage (providers.base.LLMResponse) and
+        # object usage (legacy anthropic_provider.LLMResponse / LLMUsage).
+        if isinstance(usage, dict):
+            in_t = usage.get("input_tokens", 0) or 0
+            out_t = usage.get("output_tokens", 0) or 0
+        else:
+            in_t = getattr(usage, "input_tokens", 0) or 0
+            out_t = getattr(usage, "output_tokens", 0) or 0
         self.input_tokens += in_t
         self.output_tokens += out_t
 

@@ -56,12 +56,12 @@ PII_RULES: list[PIIDetectionRule] = [
     ),
     PIIDetectionRule(
         name="bank_card",
-        pattern=r"\b\d{13,19}\b",
+        pattern=r"\b\d{16,19}\b",
         replacement="****",
-        severity=PIISeverity.WARN,
+        severity=PIISeverity.CRITICAL,
         category=PIICategory.FINANCIAL,
-        description="银行卡号（13-19 位）",
-        exclusion_patterns=[r"[0-9a-f]{40}", r"\d{10,13}\b"],
+        description="银行卡号（16-19 位）",
+        exclusion_patterns=[r"[0-9a-f]{40}", r"[0-9a-f]{64}", r"\d{10,15}\b", r"\d{4}-\d{2}-\d{2}", r"^\d{10,13}$"],
     ),
     PIIDetectionRule(
         name="api_key",

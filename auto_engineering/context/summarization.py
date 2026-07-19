@@ -93,10 +93,10 @@ class SessionSummarizer:
                 max_tokens=1024,
             )
             decisions, files, majors, issues = _parse_summary_response(response.content)
-        except Exception:
+        except Exception as exc:
             logger.warning("Session summarization failed, using degraded summary", exc_info=True)
             decisions, files, majors, issues = (
-                ["(summarization failed — see offload files for details)"],
+                [f"(summarization failed: {exc} — see offload files for details)"],
                 {},
                 [],
                 [],

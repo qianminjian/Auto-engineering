@@ -7,6 +7,11 @@
   "type": "object",
   "required": ["action"],
   "properties": {
+    "message_type": {
+      "type": "string",
+      "enum": ["action", "result", "event", "error"],
+      "description": "Message type discriminator for action/result schema extension (T97)."
+    },
     "action": {
       "type": "string",
       "enum": [

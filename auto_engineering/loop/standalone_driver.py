@@ -67,12 +67,37 @@ def _resolve_provider(role: str) -> Any:
 
     Uses create_provider() for auto-detection with per-role override.
     Returns an LLMProvider-compatible instance.
+
+    T77 (P0-1 fix): When AE_AUDIT_LOG=1, wraps the provider with an
+    AuditLogger so all LLM calls are recorded to JSONL.
     """
+    import os as _os
+
     from auto_engineering.providers.factory import create_provider
 
     env_key = f"AE_PROVIDER_{role.upper()}"
-    provider_name = os.environ.get(env_key, "")
-    return create_provider(provider_name)
+    provider_name = _os.environ.get(env_key, "")
+    provider = create_provider(provider_name)
+
+    # T77: Wire AuditLogger when AE_AUDIT_LOG=1
+    if _os.environ.get("AE_AUDIT_LOG", "").strip() == "1":
+        try:
+            from auto_engineering.observability.audit_log import AuditLogger
+            from pathlib import Path
+            log_dir = Path(_os.environ.get(
+                "AE_AUDIT_LOG_DIR",
+                str(Path.cwd() / ".ae-state" / "audit-logs"),
+            ))
+            audit_logger = AuditLogger(log_dir)
+            # Inject audit_logger into the provider if it supports it
+            if hasattr(provider, '_audit_logger'):
+                provider._audit_logger = audit_logger
+        except Exception:
+            import logging
+            _logger = logging.getLogger("ae.standalone")
+            _logger.warning("Failed to initialize AuditLogger", exc_info=True)
+
+    return provider
 
 
 # ── V7-3: AuthProvider ──

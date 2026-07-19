@@ -16,6 +16,7 @@ the loop by following the action JSON produced by each `ae dev-loop --tick` call
 
 ## Hard Constraints (v5.6 Tick Protocol)
 
+<!-- FRAGMENT:iron_law_gatekeeper START -->
 When executing dev-loop:
 
 1. MUST invoke `ae dev-loop --init "<requirement>"` first — Python initializes state
@@ -25,6 +26,7 @@ When executing dev-loop:
 5. If Python rejects a result (`{"action":"error"}`), read error message and fix
 6. MUST commit after each developer batch (Guardrail: working tree must be clean)
 7. All gate results are decided by Python — do not skip or fake gates
+<!-- FRAGMENT:iron_law_gatekeeper END -->
 
 ## When to Use Which Command
 

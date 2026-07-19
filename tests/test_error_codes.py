@@ -83,8 +83,14 @@ class TestAEErrorConstruction:
         assert err.original_error is original
 
     def test_str_representation(self) -> None:
-        """str(err) 格式: [CODE] message."""
+        """str(err) 格式: [CODE] message — 建议: ... (P2-12: suggestion 自动填充)."""
         err = AEError(ErrorCode.BUDGET_EXCEEDED, "tokens 超限")
+        s = str(err)
+        assert s == "[BUDGET_EXCEEDED] tokens 超限 — 建议: 增大 --max-tokens 参数或缩小需求范围"
+
+    def test_str_representation_no_suggestion(self) -> None:
+        """str(err) 无 suggestion 时不追加 — 建议 后缀."""
+        err = AEError(ErrorCode.BUDGET_EXCEEDED, "tokens 超限", suggestion="")
         s = str(err)
         assert s == "[BUDGET_EXCEEDED] tokens 超限"
 

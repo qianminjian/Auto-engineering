@@ -166,6 +166,7 @@ requirement, rounds, gate summary, and a reviewer checklist.
 - Agent tool spawn 失败了，我正准备自己手工模拟这个 stage
 - 我正准备跳过 --tick 自己推进到下一个 stage
 - critic 返回 MAJOR，我正准备忽略 findings 直接进收敛
+- 我正准备 spawn 外部框架专属 agent（gsd-* / superpowers-*）来执行 stage——只能用 Claude Code 内置 subagent
 
 以上任何一条都意味着：停止。向用户报告失败原因 + 状态 + 选项。禁止静默降级。
 <!-- FRAGMENT:red_flags END -->

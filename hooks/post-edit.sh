@@ -37,10 +37,14 @@ esac
 [[ ! -x "ae" ]] && exit 0
 
 # Run quick gate
-RESULT=$(ae gate-check --quick --json 2>&1) || true
+RESULT=$(ae gate-check --quick 2>&1) || true
 
 # Always allow — just surface results
-if echo "$RESULT" | grep -q '"status":"fail"'; then
+if echo "$RESULT" | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+assert d.get('failed', 0) > 0
+" 2>/dev/null; then
   echo "{\"decision\":\"allow\",\"warning\":\"post-edit gate-check reported failures\",\"output\":$(echo "$RESULT" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))')}"
 else
   echo "{\"decision\":\"allow\"}"

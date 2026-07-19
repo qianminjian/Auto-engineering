@@ -26,6 +26,7 @@ from auto_engineering.engine.design_doc import Component, DesignDoc, DesignItem,
 from auto_engineering.engine.progress_tree import ProgressTree
 from auto_engineering.engine.state import EngineState
 from auto_engineering.loop.guardrail import (
+    FileAccessGuardrail,
     FreshGate,
     GitClean,
     GitDiffExists,
@@ -42,6 +43,7 @@ from auto_engineering.loop.guardrail import (
     _git_is_ancestor,
     handle_guardrail_result,
 )
+from auto_engineering.pii.guardrail import PIIGuardrail
 
 # ---------- helpers ----------
 
@@ -626,10 +628,10 @@ class TestGuardrailChain:
         # post/developer → G3 + G4 + G5
         assert len([g for g in chain.guardrails if g.timing == "post" and "developer" in g.applies_to_stages]) == 3
 
-    def test_default_factory_returns_9_guardrails(self) -> None:
-        """GuardrailChain.default() 返回 9 Guardrail (G1-G6 + G7 REDGuard + G8 FreshGate + G9 RegressionGate)."""
+    def test_default_factory_returns_10_guardrails(self) -> None:
+        """GuardrailChain.default() 返回 11 Guardrail (G1-G11)."""
         chain = GuardrailChain.default()
-        assert len(chain.guardrails) == 9
+        assert len(chain.guardrails) == 11
         names = [type(g).__name__ for g in chain.guardrails]
         assert "RequirementValid" in names
         assert "PlanExists" in names
@@ -640,6 +642,7 @@ class TestGuardrailChain:
         assert "REDGuard" in names
         assert "FreshGate" in names
         assert "RegressionGate" in names
+        assert "FileAccessGuardrail" in names
 
     def test_default_factory_same_structure_as_manual(self) -> None:
         """GuardrailChain.default() 与手动构造的 chain 行为一致."""
@@ -654,6 +657,8 @@ class TestGuardrailChain:
             REDGuard(),
             FreshGate(),
             RegressionGate(),
+            PIIGuardrail(),
+            FileAccessGuardrail(),
         ])
         # 同数量
         assert len(default_chain.guardrails) == len(manual_chain.guardrails)

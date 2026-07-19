@@ -87,15 +87,6 @@ ae doctor   # 检查 Python/uv/git/sqlite3/API_KEY/.ae-state
 
 ---
 
-## 7. PrismScan (`ae prismscan`)
-
-```bash
-ae prismscan discover-extract     # discover + extract → action JSON
-ae prismscan check-result <file>  # 校验 AnalysisResult JSON
-```
-
----
-
 ## 路径选择速查
 
 | 场景 | 使用 |
@@ -106,4 +97,3 @@ ae prismscan check-result <file>  # 校验 AnalysisResult JSON
 | 单独调 Agent | `ae agent <role>` |
 | 手动质量检查 | `ae gate-check --all` |
 | 环境诊断 | `ae doctor` |
-| 代码库反向工程 | `ae prismscan discover-extract` |

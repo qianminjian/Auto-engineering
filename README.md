@@ -80,7 +80,6 @@ Engine 层 (auto_engineering/)
   agents/                    — BaseAgent + tool_use loop + AUTHZ_MATRIX
   prompts/                   — B12 中央提示词管理 (9 角色 + 8 片段)
   runtime/                   — AgentRuntime + CancellationToken
-  prismscan/                 — V5.1 代码库反向工程
 ```
 
 ## 设计文档

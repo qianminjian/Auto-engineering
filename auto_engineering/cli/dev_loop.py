@@ -250,6 +250,12 @@ def _run_v2_orchestrator(
     - Task: 硬编码 → orchestrator step_1 走 architect 生成
     """
     import asyncio
+    import logging
+
+    _logger = logging.getLogger("ae.cli.dev_loop")
+
+    # P1-1: v5.5 legacy path deprecated — 30 天后移除
+    _logger.warning("v5.5 legacy path deprecated, use --standalone")
 
     from auto_engineering.gates.registry import DEFAULT_GATES, build_gates_from_manifest
     from auto_engineering.loop.convergence import ConvergenceConfig
@@ -334,13 +340,39 @@ def _checkpoint_db_path(root: Path) -> Path:
     return state_dir / "checkpoints.db"
 
 
+def _infer_category(requirement: str) -> str:
+    """Heuristic category inference for baseline stratification.
+
+    Maps requirement text to one of the known complexity categories:
+    simple_function / medium_crud / complex_multi_module.
+
+    Design ref: v5.6-Design-Loop.md F.2.3 — by_category baselines.
+    """
+    req_lower = requirement.lower()
+    simple_keywords = ["simple", "fix", "typo", "comment", "format", "rename", "remove unused"]
+    complex_keywords = [
+        "complex", "multi", "module", "refactor", "redesign", "architecture",
+        "pipeline", "orchestrat", "migration", "database schema", "auth",
+        "payment", "transaction", "security audit",
+    ]
+    # Check complex first (stronger signal)
+    if any(kw in req_lower for kw in complex_keywords):
+        return "complex_multi_module"
+    if any(kw in req_lower for kw in simple_keywords):
+        return "simple_function"
+    return "medium_crud"
+
+
 def _run_tick_init(
     requirement: str, design_doc_path: str | None, root: Path, max_rounds: int,
     debug: bool = False, debug_dir: str | None = None,
     pause_at_stage: str | None = None,
+    escalate: bool = False,
 ) -> None:
     """ae dev-loop --init: 初始化 tick loop, 输出第一个 action JSON (stdout 契约)."""
+    import hashlib
     import json
+    import os as _os
 
     import click
 
@@ -350,12 +382,29 @@ def _run_tick_init(
     store: SQLiteCheckpointStore[EngineState] = SQLiteCheckpointStore(_checkpoint_db_path(root))
     try:
         orch = TickOrchestrator(root, checkpoint_store=store,
-                                debug=debug, debug_dir=debug_dir)
+                                debug=debug, debug_dir=debug_dir,
+                                escalate=escalate)
         if pause_at_stage:
             stages = [s.strip() for s in pause_at_stage.split(",") if s.strip()]
             orch.set_pause_at_stages(stages)
         action = orch.init(
             requirement, design_doc_path=design_doc_path, max_rounds=max_rounds)
+
+        # T69a: Activate metrics collector when AE_METRICS=1
+        if _os.environ.get("AE_METRICS", "").strip() == "1":
+            from auto_engineering.metrics.collector import (
+                MetricsCollector,
+                set_collector,
+            )
+            collector = MetricsCollector(root)
+            set_collector(collector)
+            thread_id = action.get("thread_id", "")
+            req_hash = hashlib.sha256(requirement.encode()).hexdigest()[:12]
+            collector.begin_requirement(
+                thread_id, req_hash,
+                requirement_category=_infer_category(requirement),
+            )
+
         click.echo(json.dumps(action, ensure_ascii=False))
     finally:
         store.close()
@@ -365,6 +414,7 @@ def _run_tick_step(result_file: Path, root: Path,
                    debug: bool = False, debug_dir: str | None = None) -> None:
     """ae dev-loop --tick --result <file>: restore → tick → 下一 action JSON."""
     import json
+    import os as _os
 
     import click
 
@@ -374,7 +424,31 @@ def _run_tick_step(result_file: Path, root: Path,
     store: SQLiteCheckpointStore[EngineState] = SQLiteCheckpointStore(_checkpoint_db_path(root))
     try:
         orch = TickOrchestrator.restore(root, store, debug=debug, debug_dir=debug_dir)
+
+        # T69a: Restore metrics collector from disk for cross-process continuity
+        if _os.environ.get("AE_METRICS", "").strip() == "1":
+            from auto_engineering.metrics.collector import (
+                MetricsCollector,
+                set_collector,
+            )
+            collector = MetricsCollector(root)
+            set_collector(collector)
+            collector.resume_events(orch._state.thread_id)
+
         action = orch.tick(result_file)
+
+        # T69a: Flush metrics events after tick, end requirement if terminal
+        if _os.environ.get("AE_METRICS", "").strip() == "1":
+            from auto_engineering.metrics.collector import get_collector
+            mc = get_collector()
+            if mc is not None:
+                if action.get("action") == "done":
+                    verdict = action.get("verdict", "UNKNOWN")
+                    total_ticks = action.get("tick", orch._state.tick if orch._state else 0)
+                    mc.end_requirement(verdict, total_ticks=total_ticks)
+                else:
+                    mc._flush()
+
         click.echo(json.dumps(action, ensure_ascii=False))
     finally:
         store.close()
@@ -520,6 +594,23 @@ def _run_standalone(
         design_doc_path=design_doc,
     )
 
+    # T69a: Activate metrics collector when AE_METRICS=1
+    import os as _os2
+    if _os2.environ.get("AE_METRICS", "").strip() == "1":
+        import hashlib
+        from auto_engineering.metrics.collector import (
+            MetricsCollector,
+            set_collector,
+        )
+        collector = MetricsCollector(project_root)
+        set_collector(collector)
+        req_hash = hashlib.sha256(requirement.encode()).hexdigest()[:12]
+        collector.begin_requirement(
+            orch._state.thread_id, req_hash,
+            requirement_category=_infer_category(requirement),
+        )
+
+    summary = None  # guard against NameError in finally block
     try:
         if resume_id:
             summary = asyncio.run(driver.resume(resume_id))
@@ -530,13 +621,22 @@ def _run_standalone(
         traceback.print_exc()
         raise SystemExit(1)
     finally:
+        # T69a: End metrics requirement
+        if _os2.environ.get("AE_METRICS", "").strip() == "1":
+            from auto_engineering.metrics.collector import get_collector
+            mc = get_collector()
+            if mc is not None:
+                mc.end_requirement(
+                    summary.verdict if summary is not None else "ERROR",
+                    total_ticks=summary.total_ticks if summary is not None else 0,
+                )
         driver.close() if hasattr(driver, "close") else None
 
     output = {
-        "status": "completed" if summary.success else "failed",
-        "total_ticks": summary.total_ticks,
-        "final_stage": summary.final_stage,
-        "verdict": summary.verdict,
-        "error_message": summary.error_message,
+        "status": "completed" if (summary is not None and summary.success) else "failed",
+        "total_ticks": summary.total_ticks if summary is not None else 0,
+        "final_stage": summary.final_stage if summary is not None else "error",
+        "verdict": summary.verdict if summary is not None else "ERROR",
+        "error_message": summary.error_message if summary is not None else "unhandled exception",
     }
     print(json.dumps(output, ensure_ascii=False, indent=2))

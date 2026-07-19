@@ -16,28 +16,31 @@ fi
 # Run quick gate to attach to PR body
 [[ ! -x "ae" ]] && exit 0
 
-GATE_OUTPUT=$(ae gate-check --quick --json 2>&1) || true
+GATE_OUTPUT=$(ae gate-check --quick 2>&1) || true
 
 # Format as markdown table
 PR_BODY=$(echo "$GATE_OUTPUT" | python3 -c "
 import sys, json
 try:
     data = json.loads(sys.stdin.read())
-    gates = data.get('gates', [])
-    if not gates:
+    gate_summary = data.get('gate_summary', {})
+    if not gate_summary:
         print('No gate results available.')
     else:
         print('## Auto-Engineering Gate Results')
         print()
-        print('| Gate | Status | Duration |')
-        print('|------|--------|----------|')
-        for g in gates:
-            name = g.get('name', '?')
-            status = g.get('status', '?')
-            dur = g.get('duration_ms', 0)
-            print(f'| {name} | {status} | {dur}ms |')
+        print('| Gate | Status | Message |')
+        print('|------|--------|---------|')
+        for name, result in gate_summary.items():
+            passed = result.get('passed', False)
+            status = 'PASS' if passed else 'FAIL'
+            msg = result.get('message', '')[:80]
+            print(f'| {name} | {status} | {msg} |')
         print()
-        print(f\"_Total: {data.get('summary', 'N/A')}_\")
+        passed = data.get('passed', 0)
+        failed = data.get('failed', 0)
+        total = passed + failed
+        print(f\"_Passed: {passed}/{total} | Failed: {failed}/{total}_\")
 except Exception as e:
     print(f'Gate summary unavailable: {e}')
 " 2>/dev/null || echo "Gate summary unavailable.")

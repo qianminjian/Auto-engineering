@@ -37,6 +37,11 @@ from typing import TYPE_CHECKING, ClassVar, Literal
 from auto_engineering.engine.gap_analysis import (
     _BLOCKING_FORBIDDEN as _BLOCKING_FORBIDDEN_RESOLUTIONS,
 )
+from auto_engineering.gates.guardrail_base import (
+    Action,
+    Guardrail,
+    GuardrailResult,
+)
 from auto_engineering.loop.stage_router import clear_stage_fields
 from auto_engineering.utils.git import run_git as _run_git
 from auto_engineering.utils.git import run_git_diff as _run_git_diff
@@ -62,82 +67,11 @@ __all__ = [
 if TYPE_CHECKING:
     from auto_engineering.engine.state import EngineState
 
-# v5.1 P0-1: Guardrail 3 态动作 (drop 已删除, 仅保留 pass/block/retry)
-Action = Literal["pass", "block", "retry"]
+# P1-3: GuardrailResult + Guardrail ABC 已提取到 gates/guardrail_base.py
+# Action / GuardrailResult / Guardrail 从共享模块导入
+# 本地仅保留 Action re-export + MAX_RETRY_PER_STAGE + 具体 Guardrail 实现
 
-# v5.0 §B5.1 + §B5.2 配
 MAX_RETRY_PER_STAGE = 3
-
-
-@dataclass
-class GuardrailResult:
-    """Guardrail 检查结果 (§B1.8).
-
-    Fields:
-        action: "pass" | "block" | "retry"
-                - pass:  通过,继续
-                - block: 严重错误,终止主循环
-                - retry: 可恢复,retry 计数 + 1
-        message: 用户可读消息 (失败原因)
-
-    v5.1 P0-1: drop 态已从契约中删除 (YAGNI, 与 retry 语义重叠).
-                旧 drop 输入不再特殊处理, 按未知 action 落入防御性 "stop"
-                (见 handle_guardrail_result 末尾)。
-
-    注: 默认 action="pass" — 大多数 Guardrail pass path 返回纯 pass。
-
-    guardrail_name: 命中的 Guardrail 名 (Chain 在非 pass 时注入). 供
-        handle_guardrail_result 按 f"{stage}:{guardrail_name}" 分源计数
-        (S-4), 并让 FreshGate(G8) 走 rerun_gates 特化 retry 语义.
-    """
-
-    action: Action = "pass"
-    message: str = ""
-    guardrail_name: str = ""
-
-
-class Guardrail(ABC):
-    """Guardrail 抽象基类 (§B2.3).
-
-    类属性:
-        name: 唯一名 (用于日志/错误)
-        timing: "pre" (Stage 执行前) | "post" (Stage 执行后)
-        applies_to_stages: 适用的 Stage 元组 — 过滤维度 1
-        — Chain 还按 timing 过滤 (维度 2)
-
-    实例方法:
-        check(stage, state, project_root=None) → GuardrailResult:
-            stage: 当前 Stage 名
-            state: EngineState 实例
-            project_root: 项目根目录 (默认 cwd via Chain 兜底)
-    """
-
-    name: str = ""  # 子类必须覆盖
-    timing: Literal["pre", "post"] = "pre"  # 子类必须覆盖
-    applies_to_stages: tuple[str, ...] = ()  # 子类必须覆盖
-
-    @abstractmethod
-    def check(
-        self,
-        stage: str,
-        state: EngineState,
-        project_root: Path | None = None,
-    ) -> GuardrailResult:
-        """执行 Guardrail 检查.
-
-        Args:
-            stage: 当前 Stage 名.
-            state: EngineState 实例 (duck-typed,需有对应字段).
-            project_root: 项目根目录 (None 时 Chain fallback 到 cwd).
-
-        Returns:
-            GuardrailResult 含 action + message.
-
-        行为约束 (CrewAI 业界规范):
-            - 纯函数: 不修改 state (handlers 才负责清理).
-            - 异常处理: check() 内部捕获 IO 异常,降级到 retry/block,
-              不抛给上层避免 Orchestrator 僵死.
-        """
 
 
 # ==================== G1-G5 内置 Guardrail ====================
@@ -895,7 +829,9 @@ class GuardrailChain:
 
     @classmethod
     def default(cls) -> GuardrailChain:
-        """工厂方法: 默认链 (G1-G6 基线 + G7 REDGuard + G8 FreshGate + G9 RegressionGate, §B3)."""
+        """工厂方法: 默认链 (G1-G9 基线 + G10 PIIGuardrail + G11 FileAccessGuardrail, §B3)."""
+        from auto_engineering.pii.guardrail import PIIGuardrail
+
         return cls([
             RequirementValid(),
             PlanExists(),
@@ -906,6 +842,8 @@ class GuardrailChain:
             REDGuard(),
             FreshGate(),
             RegressionGate(),
+            PIIGuardrail(),
+            FileAccessGuardrail(),
         ])
 
     def check(

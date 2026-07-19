@@ -54,15 +54,38 @@ def _truncate_tool_results(results: list[dict], max_chars: int = 8000) -> list[d
     return truncated
 
 
+def _get_pii_redactor():
+    """Module-level singleton factory for PIIRedactor (P3-1 fix).
+
+    Avoids creating a new PIIRedactor instance on every prompt/tool call.
+    Pattern mirrors metrics/collector.py get_collector().
+    """
+    global _pii_redactor
+    if _pii_redactor is None:
+        from auto_engineering.pii.redactor import PIIRedactor
+        _pii_redactor = PIIRedactor()
+    return _pii_redactor
+
+
+_pii_redactor = None  # type: ignore[var-annotated]  # module-level singleton
+
+
+def _redact_prompt_messages(messages: list[dict]) -> list[dict]:
+    """对 prompt messages 做 PII 脱敏 (T56).
+
+    在 messages 上调用 PIIRedactor.scan(), 命中 PII 规则时脱敏.
+    返回脱敏后的深拷贝, 不修改原始 messages.
+    """
+    return _get_pii_redactor().scan(messages)
+
+
 def _redact_tool_results(results: list[dict]) -> list[dict]:
     """对 tool_result 内容做 PII 脱敏 (T57).
 
     在每个 tool_result 的 content 上调用 PIIRedactor.scan_text(),
     命中 PII 规则时脱敏 + logger.warning. 不改变函数签名.
     """
-    from auto_engineering.pii.redactor import PIIRedactor
-
-    _redactor = PIIRedactor()
+    _redactor = _get_pii_redactor()
     redacted = []
     for r in results:
         r = dict(r)
@@ -107,9 +130,7 @@ class BaseAgent:
     system_prompt: str
     role: str = "BaseAgent"  # P1-A: 工厂返回时覆盖 (architect/developer/critic)
     tools: list[BaseTool] = field(default_factory=list)
-    max_tool_calls: int = field(
-        default_factory=lambda: int(__import__("os").environ.get("AE_MAX_TOOL_CALLS", "10"))
-    )
+    max_tool_calls: int = 10  # P1-12: 改为显式值，CLI 入口传入；default_factory 不再读 os.environ
     model: str = "claude-sonnet-4-6"
     max_tokens: int = 4096
 
@@ -166,6 +187,9 @@ class BaseAgent:
             if cancellation is not None:
                 cancellation.check()
 
+            # T56: PII prompt redaction before every LLM call (first line of defense)
+            messages = _redact_prompt_messages(messages)
+
             # P1.3: LLM 异常分类
             # D-P0-1 (deep audit): llm.create_message 是同步函数. 直接 await
             # 会让 asyncio.gather 假象 — 所有并行 agent 串行化等待 LLM.
@@ -174,11 +198,11 @@ class BaseAgent:
             try:
                 response = await asyncio.to_thread(
                     self.llm.create_message,
-                    model=self.model,
-                    max_tokens=self.max_tokens,
                     system=self._build_system_prompt(task),
                     messages=messages,
                     tools=[t.to_schema() for t in effective_tools] if effective_tools else None,
+                    model=self.model,
+                    max_tokens=self.max_tokens,
                 )
             except Exception as exc:  # 详见下面特定异常映射
                 raise self._map_llm_exception(exc) from exc
@@ -186,6 +210,31 @@ class BaseAgent:
             # v2.0: TokenTracker 累加 + 超阈值抛错
             if token_tracker is not None:
                 token_tracker.add(response)  # 超 max_tokens 抛 BUDGET_EXCEEDED
+
+            # T66: MetricsCollector token hook — record every LLM call.
+            # Uses module-level get_collector() so it works without changing
+            # BaseAgent constructor signature. AE_METRICS=1 activates it.
+            # Import inline to avoid circular dependency at module load time.
+            from auto_engineering.metrics.collector import (  # noqa: E402
+                AIOrigin,
+                get_collector,
+            )
+            mc = get_collector()
+            if mc is not None:
+                usage = response.usage or {}
+                mc.record_token_usage(
+                    input_tokens=usage.get("input_tokens", 0),
+                    output_tokens=usage.get("output_tokens", 0),
+                    model=self.model,
+                    provider=getattr(self.llm, 'provider_name', 'anthropic'),
+                    stage=self.role,
+                    ai_origin=AIOrigin(
+                        level="led",
+                        agent_role=self.role,
+                        model_name=self.model,
+                        driver_type="agent",
+                    ),
+                )
 
             # v7.0: DeepSeek 可能返回 end_turn + 空 content (无文本也无 tool_use)
             # 注入提示让模型产出文本, 不消耗 tool call 配额
@@ -208,14 +257,38 @@ class BaseAgent:
                     })
                     continue
 
+            # P0-3: 空 content + 无 tool_use + 无 prior tool calls
+            # 模型未产出任何有用内容, 重试一次或抛清晰错误
+            if (not response.content.strip()
+                    and not response.tool_use_blocks
+                    and not tool_calls_log):
+                if turn < self.max_tool_calls:
+                    messages.append({
+                        "role": "user",
+                        "content": "请输出你的分析结果。",
+                    })
+                    continue
+                raise AEError(
+                    ErrorCode.INVALID_AGENT_OUTPUT,
+                    "LLM 在所有轮次均返回空响应",
+                    suggestion="检查模型 API 连接或切换模型",
+                )
+
             # v7.0: 无论 stop_reason 值, 只要有 tool_use blocks 就执行工具
             # (DeepSeek 可能以 end_turn 而非 tool_use 返回 tool_use blocks)
             if response.tool_use_blocks:
                 tool_results: list[dict] = []
                 for tool_use in response.tool_use_blocks:
-                    tool_name = tool_use["name"]
-                    tool_input = tool_use.get("input", {}) or {}
-                    tool_id = tool_use.get("id", "")
+                    # Unified access: supports both dict (AnthropicProvider legacy)
+                    # and ToolUseBlock dataclass (providers.base.LLMProvider Protocol).
+                    if isinstance(tool_use, dict):
+                        tool_name = tool_use["name"]
+                        tool_input = tool_use.get("input", {}) or {}
+                        tool_id = tool_use.get("id", "")
+                    else:
+                        tool_name = tool_use.name
+                        tool_input = getattr(tool_use, "input", {}) or {}
+                        tool_id = tool_use.id
                     tool_calls_log.append({"name": tool_name, "input": tool_input})
 
                     # v5.0 §B4.4 step 3b: 未注册工具 → error tool_result JSON

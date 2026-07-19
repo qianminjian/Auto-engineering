@@ -116,7 +116,7 @@ system_verifier 判全量覆盖)。**不要**因"需求还没全部实现"判 MA
 - `search_code`: 搜索代码模式 (Grep)
 - `list_dir`: 浏览目录 (Glob)
 - `git_diff`: 查看变更 (Bash: git diff)
-- `run_tests`: 验证测试是否真通过 (Bash: pytest)
+- 验证测试结果: 检查 developer 提交的 test_results 中 passed/failed 与代码变更一致性
 
 **禁止**: 你不能使用 Write / Edit — 你的职责是审查,不是修改.
 

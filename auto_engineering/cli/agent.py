@@ -154,6 +154,8 @@ def run_agent(role: str, instruction: str, project_root: Path) -> dict:
                 return agent.execute(instruction)  # type: ignore[arg-type, call-arg, union-attr]  # legacy 单参 fallback
 
         result = asyncio.run(_exec())
+        # P1-9: 释放底层 httpx 连接
+        agent.close()
         duration = time.monotonic() - started
         # 兼容 Agent.execute 返回 dict / TaskOutcome
         if isinstance(result, dict):

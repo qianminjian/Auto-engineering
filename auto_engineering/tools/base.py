@@ -70,6 +70,12 @@ class BaseTool(ABC):
         import os
 
         if self.project_root is None:
+            # P1-13: 生产环境双重检查 — AE_PRODUCTION=1 时忽略 ALLOW_NO_SANDBOX
+            if os.environ.get("AE_PRODUCTION", "").strip() == "1":
+                return False, (
+                    f"{type(self).__name__}._is_path_safe called with project_root=None. "
+                    "生产环境 (AE_PRODUCTION=1) 下沙箱不可绕过。"
+                )
             if os.environ.get("ALLOW_NO_SANDBOX", "").lower() == "true":
                 import warnings
                 warnings.warn(
@@ -81,7 +87,8 @@ class BaseTool(ABC):
             return False, (
                 f"{type(self).__name__}._is_path_safe called with project_root=None. "
                 "Sandbox disabled — call site should pass project_root explicitly. "
-                "Set ALLOW_NO_SANDBOX=true to bypass (tests only)."
+                "P1-15: 测试外设置 ALLOW_NO_SANDBOX=true 禁用沙箱。"
+                "生产环境通过 BaseTool(project_root=Path.cwd()) 传递。"
             )
 
         try:

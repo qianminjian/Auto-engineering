@@ -79,15 +79,23 @@ class PIIRedactor:
         if self._is_whitelisted(source):
             return text
 
-        result = text
+        # P1-14: 先收集所有匹配跨度，再从后往前替换，避免规则间假阳性
+        # 规则按优先级排序（列表中靠前的规则优先），同一位置只保留首个匹配
+        replacements: list[tuple[int, int, str]] = []  # (start, end, replacement)
+        covered_ranges: list[tuple[int, int]] = []  # 已覆盖区间
         for rule in self._rules:
             if not rule.enabled:
                 continue
             for match in re.finditer(rule.pattern, text):
                 matched_text = match.group()
-                if any(re.search(ep, matched_text) for ep in rule.exclusion_patterns):
+                if any(re.fullmatch(ep, matched_text) for ep in rule.exclusion_patterns):
                     continue
-                result = result.replace(matched_text, rule.replacement, 1)
+                ms, me = match.start(), match.end()
+                # 检查是否与已有区间重叠
+                if any(not (me <= cs or ms >= ce) for cs, ce in covered_ranges):
+                    continue
+                covered_ranges.append((ms, me))
+                replacements.append((ms, me, rule.replacement))
                 logger.warning(
                     "PII detected: rule=%s category=%s severity=%s source=%s",
                     rule.name,
@@ -97,6 +105,10 @@ class PIIRedactor:
                 )
                 if self._block_mode and rule.severity == PIISeverity.CRITICAL:
                     raise PIIBlockedError(rule.name, rule.category.value)
+        # 从后往前替换，保持索引有效
+        result = text
+        for start, end, repl in sorted(replacements, key=lambda x: -x[0]):
+            result = result[:start] + repl + result[end:]
         return result
 
     # ---- internal ------------------------------------------------------

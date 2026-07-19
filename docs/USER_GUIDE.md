@@ -336,5 +336,5 @@ Loop 端（本项目）消费 init manifest：
 ## 反馈
 
 - GitHub: https://github.com/qianminjian/Auto-engineering
-- 内部测试项目: `/Users/minjianq/Documents/66-Project/ClaudeCode/test-project/prismscan_for_auto_cc`
+
 - 测试状态: ~2135 passed, 7/7 doctor, 20/20 acceptance, ≥90% coverage (2026-07-16 基准)

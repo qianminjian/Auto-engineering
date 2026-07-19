@@ -26,7 +26,7 @@ CHECKS_JSON=""
 # ── Auto-bootstrap: run uv sync if venv/ae not installed ──
 _bootstrap() {
   if [[ ! -x ".venv/bin/ae" ]] && command -v uv >/dev/null 2>&1; then
-    uv sync --quiet 2>/dev/null || uv sync 2>/dev/null || true
+    timeout 60 uv sync --quiet 2>/dev/null || uv sync --quiet 2>/dev/null || true
   fi
   # Ensure ae is on PATH for this session
   if [[ -d ".venv/bin" ]]; then

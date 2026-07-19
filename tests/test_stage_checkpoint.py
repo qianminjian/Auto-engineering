@@ -196,3 +196,45 @@ class TestStageCheckpoint:
         action = orch.tick(resolution)
         assert action["stage"] == "architect"
         assert "feedback" in action
+
+    def test_gate_resolution_invalid_returns_error(self) -> None:
+        """Invalid/unknown gate resolution returns ErrorResponse."""
+        orch = _orchestrator(pause_at_stages=["architect"])
+        action = orch.init("test requirement", max_rounds=5)
+        gate_id = action["gate"]["id"]
+
+        resolution = _make_result_file({
+            "gate_resolution": {"gate_id": gate_id, "resolution": "garbage"},
+        })
+        action = orch.tick(resolution)
+        assert action["action"] == "error"
+        assert "INVALID_GATE_RESOLUTION" in str(action)
+
+    def test_gate_resolution_empty_string_returns_error(self) -> None:
+        """Empty resolution string is treated as invalid → ErrorResponse (T64 audit fix)."""
+        orch = _orchestrator(pause_at_stages=["architect"])
+        action = orch.init("test requirement", max_rounds=5)
+        gate_id = action["gate"]["id"]
+
+        resolution = _make_result_file({
+            "gate_resolution": {"gate_id": gate_id, "resolution": ""},
+        })
+        action = orch.tick(resolution)
+        assert action["action"] == "error"
+        assert "INVALID_GATE_RESOLUTION" in str(action)
+
+    def test_unknown_stage_warns(self, caplog) -> None:
+        """Unknown stage name in set_pause_at_stages produces warning (P2 D3 fix)."""
+        orch = _orchestrator()
+        import logging
+        caplog.set_level(logging.WARNING)
+        orch.set_pause_at_stages(["nonexistent_stage", "architect"])
+        assert "nonexistent_stage" in caplog.text
+        assert "not a known stage" in caplog.text
+
+    def test_progress_summary_without_batch_state(self) -> None:
+        """_progress_summary works when _batch_state is None."""
+        orch = _orchestrator()
+        summary = orch._progress_summary()
+        assert isinstance(summary, str)
+        assert "tick=0" in summary

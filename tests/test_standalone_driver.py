@@ -184,6 +184,7 @@ class TestStandaloneDriverActionRouting:
         from auto_engineering.loop.standalone_driver import StandaloneDriver
 
         driver = StandaloneDriver.__new__(StandaloneDriver)
+        driver._design_doc_path = None
         task = driver._action_to_task({
             "action": "architect",
             "stage": "architect",
@@ -198,6 +199,7 @@ class TestStandaloneDriverActionRouting:
         from auto_engineering.loop.standalone_driver import StandaloneDriver
 
         driver = StandaloneDriver.__new__(StandaloneDriver)
+        driver._design_doc_path = None
         task = driver._action_to_task({
             "action": "developer",
             "stage": "developer",
@@ -211,6 +213,7 @@ class TestStandaloneDriverActionRouting:
         from auto_engineering.loop.standalone_driver import StandaloneDriver
 
         driver = StandaloneDriver.__new__(StandaloneDriver)
+        driver._design_doc_path = None
         task = driver._action_to_task({
             "action": "critic",
             "stage": "critic",

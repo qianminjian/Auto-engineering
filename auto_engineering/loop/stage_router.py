@@ -172,64 +172,88 @@ class StageRouter:
         if current_stage:
             self.history_stages.append(current_stage)
 
+        decision: StageDecision
+
         # T1: 初始 stage → architect
         if current_stage == "":
-            return StageDecision(next_stage="architect", should_stop=False)
+            decision = StageDecision(next_stage="architect", should_stop=False)
 
         # T2: architect → developer
-        if current_stage == "architect":
-            return StageDecision(next_stage="developer", should_stop=False)
+        elif current_stage == "architect":
+            decision = StageDecision(next_stage="developer", should_stop=False)
 
         # T3: developer → critic (前向边)
-        if current_stage == "developer":
-            return StageDecision(next_stage="critic", should_stop=False)
+        elif current_stage == "developer":
+            decision = StageDecision(next_stage="critic", should_stop=False)
 
         # critic: T4/T5 (MAJOR) / APPROVE (含保留 Orchestrator 的 audit compat)
-        if current_stage == "critic":
+        elif current_stage == "critic":
             if verdict == "MAJOR":
                 # T5: 连续或累计 MAJOR 超限 → stop
                 if (majors_in_a_row >= self.max_majors_in_a_row
                         or total_majors >= self.max_total_majors):
-                    return StageDecision(
+                    decision = StageDecision(
                         next_stage=None, should_stop=True,
                         stop_reason=f"MAJOR 超限: 连续{majors_in_a_row}/累计{total_majors}",
                     )
-                # T4: 未超限 → developer 重做
-                return StageDecision(next_stage="developer", should_stop=False)
+                else:
+                    # T4: 未超限 → developer 重做
+                    decision = StageDecision(next_stage="developer", should_stop=False)
 
-            if verdict == "APPROVE":
+            elif verdict == "APPROVE":
                 # 保留 Orchestrator 兼容: critic APPROVE + DeepAudit 发现问题 → PLAN-REFINE
                 if audit_found_issues:
-                    return self._refine_or_stop(
+                    decision = self._refine_or_stop(
                         "critic", refine_source_count, refine_global_count,
                         max_refine_per_source, max_refine_global)
-                # T6/T7: batch/组件完成判定依 BatchState → orchestrator 决定
-                return StageDecision(next_stage=None, should_stop=False)
+                else:
+                    # T6/T7: batch/组件完成判定依 BatchState → orchestrator 决定
+                    decision = StageDecision(next_stage=None, should_stop=False)
 
-            # verdict="" 或非法值 → 抛 CriticVerdictInvalid (2026-07-04 Bug 3)
-            raise CriticVerdictInvalid(
-                verdict=verdict, history_stages=self.history_stages)
+            else:
+                # verdict="" 或非法值 → 抛 CriticVerdictInvalid (2026-07-04 Bug 3)
+                raise CriticVerdictInvalid(
+                    verdict=verdict, history_stages=self.history_stages)
 
         # 验证/审计层: 发现问题 → refine-or-stop; 无问题 → 交 orchestrator 推进
-        if current_stage in (
+        elif current_stage in (
             "component_verifier", "plate_deep_audit",
             "system_verifier", "system_deep_audit",
         ):
             if audit_found_issues:
-                return self._refine_or_stop(
+                decision = self._refine_or_stop(
                     current_stage, refine_source_count, refine_global_count,
                     max_refine_per_source, max_refine_global)
-            # T8/T11/T12/T16/T18: 无问题, 推进由 orchestrator 按 BatchState/层裁剪决定
-            return StageDecision(next_stage=None, should_stop=False)
+            else:
+                # T8/T11/T12/T16/T18: 无问题, 推进由 orchestrator 按 BatchState/层裁剪决定
+                decision = StageDecision(next_stage=None, should_stop=False)
 
         # Phase 0 stage (gap_scan/gap_review/research): 由 orchestrator Phase 0 handler 路由
-        if current_stage in ("gap_scan", "gap_review", "research"):
-            return StageDecision(next_stage=None, should_stop=False)
+        elif current_stage in ("gap_scan", "gap_review", "research"):
+            decision = StageDecision(next_stage=None, should_stop=False)
 
         # 未知 stage → 安全停止 (防御性)
-        return StageDecision(
-            next_stage=None, should_stop=True,
-            stop_reason=f"未知 Stage: '{current_stage}'")
+        else:
+            decision = StageDecision(
+                next_stage=None, should_stop=True,
+                stop_reason=f"未知 Stage: '{current_stage}'")
+
+        # T69a: Record stage transition for metrics
+        from auto_engineering.metrics.collector import AIOrigin, get_collector
+        mc = get_collector()
+        if mc is not None:
+            mc.record_stage_transition(
+                from_stage=current_stage or "",
+                to_stage=decision.next_stage or "",
+                reason=verdict,
+                ai_origin=AIOrigin(
+                    level="led",
+                    agent_role=current_stage or "unknown",
+                    driver_type="agent",
+                ),
+            )
+
+        return decision
 
     @staticmethod
     def refine_allowed(

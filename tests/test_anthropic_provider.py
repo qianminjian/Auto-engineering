@@ -85,11 +85,12 @@ class TestAnthropicProvider:
             messages=[{"role": "user", "content": "say hi"}],
         )
 
-        assert isinstance(result, LLMResponse)
+        from auto_engineering.providers.base import LLMResponse as UnifiedResponse
+        assert isinstance(result, UnifiedResponse)
         assert result.content == "hi there"
         assert result.model == "claude-test-model"
-        assert result.usage.input_tokens == 5
-        assert result.usage.output_tokens == 3
+        assert result.usage["input_tokens"] == 5
+        assert result.usage["output_tokens"] == 3
 
     def test_create_message_passes_kwargs_to_sdk(self):
         """验证 model/max_tokens/system/messages 都传给 SDK."""
@@ -118,7 +119,8 @@ class TestAnthropicProvider:
         mock_client.messages.create.assert_called_once_with(
             model="claude-x",
             max_tokens=2048,
-            system="sys-prompt",
+            system=[{"type": "text", "text": "sys-prompt",
+                     "cache_control": {"type": "ephemeral"}}],
             messages=[{"role": "user", "content": [{"type": "text", "text": "q"}]}],
         )
 
@@ -197,7 +199,10 @@ class TestAnthropicProviderToolsSupport:
         )
         call_kwargs = mock_client.messages.create.call_args.kwargs
         assert "tools" in call_kwargs
-        assert call_kwargs["tools"] == tools
+        # T63: cache_control injected on last tool
+        expected_tools = [dict(t) for t in tools]
+        expected_tools[-1]["cache_control"] = {"type": "ephemeral"}
+        assert call_kwargs["tools"] == expected_tools
 
     def test_create_message_parses_tool_use_blocks(self):
         """SDK 返回 tool_use block 时, LLMResponse.tool_use_blocks 包含解析结果."""
@@ -231,9 +236,10 @@ class TestAnthropicProviderToolsSupport:
         assert result.stop_reason == "tool_use"
         assert result.content == "I'll read the file"
         assert len(result.tool_use_blocks) == 1
-        assert result.tool_use_blocks[0]["id"] == "toolu_abc123"
-        assert result.tool_use_blocks[0]["name"] == "read_file"
-        assert result.tool_use_blocks[0]["input"] == {"path": "x.py"}
+        tb = result.tool_use_blocks[0]
+        assert tb.id == "toolu_abc123"
+        assert tb.name == "read_file"
+        assert tb.input == {"path": "x.py"}
 
     def test_create_message_text_only_response(self):
         """SDK 返回纯 text block (无 tool_use) 时, tool_use_blocks 为空."""
@@ -288,12 +294,15 @@ class TestAnthropicProviderKwargs:
             messages=[{"role": "user", "content": "q"}],
             tools=tools,
         )
+        expected_tools = [dict(t) for t in tools]
+        expected_tools[-1]["cache_control"] = {"type": "ephemeral"}
         mock_client.messages.create.assert_called_once_with(
             model="claude-x",
             max_tokens=2048,
-            system="sys-prompt",
+            system=[{"type": "text", "text": "sys-prompt",
+                     "cache_control": {"type": "ephemeral"}}],
             messages=[{"role": "user", "content": [{"type": "text", "text": "q"}]}],
-            tools=tools,
+            tools=expected_tools,
         )
 
 

@@ -128,7 +128,7 @@ def store():
     return s
 
 
-def _fake_state(round_num: int = 0, step: str = "idle") -> dict:
+def _fake_state(round_num: int = 0, step: int | str = 0) -> dict:
     return {"round": round_num, "step": step, "status": "running"}
 
 

@@ -106,3 +106,15 @@ class TestPromptCaching:
             messages=[{"role": "user", "content": "Hi"}],
         )
         assert system_blocks == original
+
+    def test_cache_control_disabled_by_env_var(self, provider, mock_client, monkeypatch) -> None:
+        """AE_CACHE_CONTROL=0 disables cache_control injection."""
+        monkeypatch.setenv("AE_CACHE_CONTROL", "0")
+        provider.create_message(
+            model="claude-sonnet-4-6",
+            max_tokens=1024,
+            system="You are a helpful assistant.",
+            messages=[{"role": "user", "content": "Hello"}],
+        )
+        call_kwargs = mock_client.messages.create.call_args.kwargs
+        assert call_kwargs["system"] == "You are a helpful assistant."

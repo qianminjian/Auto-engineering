@@ -51,9 +51,10 @@ class ContextOffloader:
         full = offloader.load_full_context("architect")
     """
 
-    def __init__(self, offload_dir: Path) -> None:
-        self._dir = offload_dir
+    def __init__(self, storage_dir: Path | None = None, offload_dir: Path | None = None) -> None:
+        self._dir = storage_dir or offload_dir or Path(".ae-state/offload")
         self._round_counter: int = 0
+        self._summaries: dict[str, str] = {}
 
     # ---- public API ----------------------------------------------------
 
@@ -121,6 +122,32 @@ class ContextOffloader:
             return None
         data = json.loads(path.read_text())
         return data.get("messages", [])
+
+    def offload_file(
+        self,
+        name: str,
+        content: str,
+        max_inline_lines: int = 10,
+    ) -> Path | None:
+        """Write content to offload directory and return the file path.
+
+        Large files are written to disk; callers receive the path so they
+        can reference the artifact without keeping full content in context.
+        """
+        self._dir.mkdir(parents=True, exist_ok=True)
+        filepath = self._dir / f"{name}.md"
+        filepath.write_text(content)
+        # Store a short summary for get_summary()
+        lines = content.splitlines()
+        summary_lines = lines[:max_inline_lines]
+        self._summaries[name] = "\n".join(summary_lines)
+        if len(lines) > max_inline_lines:
+            self._summaries[name] += f"\n... ({len(lines)} lines total)"
+        return filepath
+
+    def get_summary(self, name: str) -> str | None:
+        """Return the stored summary for a previously offloaded file."""
+        return self._summaries.get(name)
 
     # ---- internal ------------------------------------------------------
 

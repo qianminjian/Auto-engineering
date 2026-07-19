@@ -103,7 +103,6 @@ Engine 层 (auto_engineering/)
     gap_analysis.py      — Pre-flight gap scan (B10.2)
   tools/                 — file/bash/git/test tools + sandbox + pr_backend.py
   runtime/               — AgentRuntime + CancellationToken + TaskContext
-  prismscan/             — V5.1 代码库反向工程 (discover → extract → analyze)
 ```
 
 **参考框架：**
@@ -133,11 +132,6 @@ Engine 层 (auto_engineering/)
 ## 核心命令
 
 ```bash
-# PrismScan V5.1 (代码库反向工程)
-ae prismscan discover-extract     # discover + extract → action JSON
-ae prismscan check-result <file>  # 校验 AnalysisResult JSON
-/prismscan                        # Plugin 命令入口 (完整 Phase 1 闭环)
-
 # v5.6 Tick 循环 (离散调用, Python 每次 tick 独立进程)
 ae dev-loop --init                           # 初始化 tick 循环
 ae dev-loop --tick --result <result.json>    # 提交本轮 result, 推进 tick
@@ -192,7 +186,7 @@ python3 scripts/atdo_smoke.py       # Runtime smoke (7 维度)
 
 ## /ae:dev-loop Agent Tool 执行模式（v5.1, 2026-07-04 生产反馈修正）
 
-**关键修正**：2026-07-04 生产使用报告（`prismscan/_scratch/reports/2026-07-04-dev-loop-execution-analysis.md`）显示 dev-loop 原有的 Python 子进程 (`ae dev-loop "..."`) 模式在 Claude Code agent 内**完全失效**——子进程无法获取 agent 的 ANTHROPIC_AUTH_TOKEN，导致 architect/critic LLM 调用永远失败。
+**关键修正**：2026-07-04 生产使用报告（`_scratch/reports/2026-07-04-dev-loop-execution-analysis.md`）显示 dev-loop 原有的 Python 子进程 (`ae dev-loop "..."`) 模式在 Claude Code agent 内**完全失效**——子进程无法获取 agent 的 ANTHROPIC_AUTH_TOKEN，导致 architect/critic LLM 调用永远失败。
 
 **v5.1 起 `ae dev-loop` CLI 子进程废弃**，改为 **Agent tool 直接执行模式**：
 
@@ -267,7 +261,6 @@ python3 scripts/atdo_smoke.py       # Runtime smoke (7 维度)
 ## 当前测试状态 (2026-07-16)
 
 - **全量**: ~2135 tests, ~54s (16G 内存约束, `--no-cov --timeout=120`)
-- **PrismScan V5.1**: 92 tests (Phase 1 流转覆盖率 92%, 25 条路径覆盖 23 条)
 - **v5.6 Tick 引擎**: TickOrchestrator 单测 52 + StageRouter 43 + BatchState 21 + ProgressTree 20 + 集成测试
 - **契约测试**: action/result schema 21 tests + init_contract round-trip + Plugin 验收 20 场景
 - **S6.6 Agent 运行时**: 2 tests (需 API key, 无 key 时自动 skip)

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from typing import Any
 
 import anthropic
 
@@ -32,7 +33,10 @@ class LLMUsage:
 
 @dataclass
 class LLMResponse:
-    """LLM 调用结构化响应.
+    """LLM 调用结构化响应 (DEPRECATED — 使用 providers.base.LLMResponse).
+
+    P0-4: 本类已废弃，保留仅供向后兼容。新代码应从 providers.base 导入
+    LLMResponse (tool_use_blocks: list[ToolUseBlock], usage: dict)。
 
     字段:
         content          — text block 拼接的纯文本(text 类型)
@@ -78,6 +82,7 @@ class AnthropicProvider:
         api_key: str | None = None,
         client: anthropic.Anthropic | None = None,
         max_retries: int = 3,
+        audit_logger: Any | None = None,
     ) -> None:
         if client is not None:
             self._client = client
@@ -90,6 +95,7 @@ class AnthropicProvider:
             else:
                 self._client = anthropic.Anthropic()  # SDK 自动从 env 读 key
         self._max_retries = max_retries
+        self._audit_logger = audit_logger
 
     @staticmethod
     def _normalize_messages(messages: list[dict]) -> list[dict]:
@@ -120,6 +126,14 @@ class AnthropicProvider:
                         normalized_blocks.append(block)
                     elif isinstance(block, str):
                         normalized_blocks.append({"type": "text", "text": block})
+                    elif hasattr(block, "id") and hasattr(block, "name"):
+                        # ToolUseBlock dataclass → Anthropic tool_use content block
+                        normalized_blocks.append({
+                            "type": "tool_use",
+                            "id": block.id,
+                            "name": block.name,
+                            "input": getattr(block, "input", {}),
+                        })
                     else:
                         normalized_blocks.append(block)
                 content = normalized_blocks
@@ -198,13 +212,18 @@ class AnthropicProvider:
 
     def create_message(
         self,
-        model: str,
-        max_tokens: int,
         system: str,
         messages: list[dict],
         tools: list[dict] | None = None,
+        model: str = "",
+        max_tokens: int = 4096,
     ) -> LLMResponse:
         """调用 Claude API.
+
+        P0-5: 参数顺序与 LLMProvider Protocol (providers/base.py) 对齐:
+        (system, messages, tools, model, max_tokens).
+
+        Returns providers.base.LLMResponse via _to_llm_response().
 
         Args:
             model    — 模型名(例 "claude-sonnet-4-6")
@@ -222,9 +241,20 @@ class AnthropicProvider:
             anthropic.APITimeoutError: 超过 max_retries 后仍未成功
             其他异常: 立即抛出, 不重试
         """
-        # T63: prompt caching — inject cache_control on system + tools
-        system_for_api = self._inject_cache_control_system(system)
-        tools_for_api = self._inject_cache_control_tools(tools) if tools else None
+        # T63: prompt caching — inject cache_control on system + tools.
+        # AE_CACHE_CONTROL=0 disables injection for local testing/debugging.
+        #
+        # Limitation (P2-2): cache_control injection only works for Anthropic.
+        # OpenAI/GLM/Qwen providers do not support this mechanism. For non-Anthropic
+        # backends (via StandaloneDriver --standalone), each call retransmits system
+        # prompt + tools at full token cost (~2-3x without caching).
+        import os as _os
+        if _os.environ.get("AE_CACHE_CONTROL", "").strip() != "0":
+            system_for_api = self._inject_cache_control_system(system)
+            tools_for_api = self._inject_cache_control_tools(tools) if tools else None
+        else:
+            system_for_api = system
+            tools_for_api = tools
 
         kwargs = {
             "model": model,
@@ -239,6 +269,7 @@ class AnthropicProvider:
         # 总尝试次数 = 1 (原始) + max_retries
         # v2.5 P2-D-4: 真实指数退避 2^attempt 秒, 测试用 _BACKOFF_FACTOR=0
         import time
+        start_time = time.time()
         for attempt in range(1, self._max_retries + 2):  # 1..max_retries+1
             try:
                 response = self._client.messages.create(**kwargs)  # type: ignore[call-overload]  # SDK 严格 overload vs 动态 dict kwargs
@@ -254,27 +285,26 @@ class AnthropicProvider:
                 if backoff > 0:
                     time.sleep(backoff)
 
-        content_text = ""
-        tool_use_blocks: list[dict] = []
-        for block in response.content:
-            if block.type == "text":
-                content_text += block.text
-            elif block.type == "tool_use":
-                tool_use_blocks.append(
-                    {
-                        "id": block.id,
-                        "name": block.name,
-                        "input": block.input,
-                    }
-                )
+        result = self._to_llm_response(response)
 
-        return LLMResponse(
-            content=content_text,
-            model=response.model,
-            usage=LLMUsage(
-                input_tokens=response.usage.input_tokens,
-                output_tokens=response.usage.output_tokens,
-            ),
-            stop_reason=response.stop_reason,
-            tool_use_blocks=tool_use_blocks,
-        )
+        # T77: Audit log — record complete request/response
+        if self._audit_logger is not None:
+            response_dict = {
+                "content": result.content,
+                "model": result.model,
+                "stop_reason": result.stop_reason,
+                "tool_uses": len(result.tool_use_blocks),
+            }
+            self._audit_logger.log_call(
+                stage="llm_call",
+                provider="anthropic",
+                model=model,
+                request_messages=messages,
+                request_tools=tools or None,
+                response=response_dict,
+                duration_ms=int((time.time() - start_time) * 1000),
+                tokens_prompt=response.usage.input_tokens,
+                tokens_completion=response.usage.output_tokens,
+            )
+
+        return result

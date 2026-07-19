@@ -324,8 +324,7 @@ class ConvergenceJudge:
 
         冷启动 (样本 < min_samples_for_learning): 返回 None, 调用方使用
         config.max_iterations 作为默认值.
-        足够样本后: 委托 ThresholdLearner.compute_max_iter() 计算
-        min(avg_rounds * 2, 20).
+        足够样本后: 优先用 Bayesian 后验, 冷启动时回退到 avg_rounds * 2 启发式.
 
         Args:
             audit_history: AuditHistory 实例, 提供历史审计记录.
@@ -333,8 +332,10 @@ class ConvergenceJudge:
         Returns:
             int | None: 推荐的 max_iter, 或 None (数据不足, 使用默认值).
         """
+        import statistics
+
         from auto_engineering.loop.audit_history import AuditHistory
-        from auto_engineering.loop.threshold_learner import ThresholdLearner
+        from auto_engineering.metrics.threshold_learner import ThresholdLearner
 
         if not isinstance(audit_history, AuditHistory):
             return None
@@ -342,8 +343,22 @@ class ConvergenceJudge:
         min_samples = self.config.min_samples_for_learning
         if len(entries) < min_samples:
             return None
-        learner = ThresholdLearner(audit_history)
-        return learner.compute_max_iter()
+        # P0-1: 使用 metrics/ Beta-Binomial 自进化模型 (BEACON #70)
+        metrics_dir = audit_history._path.parent / "metrics"
+        learner = ThresholdLearner(metrics_dir)
+        # Feed audit entries into Bayesian model, then check readiness
+        for entry in entries:
+            learner.observe_requirement(
+                summary={"completed": True, "rounds": entry.get("rounds", 1)},
+                signals=[],
+            )
+        bayesian = learner.compute_max_iter()
+        if bayesian != 10:  # Bayesian model is ready (not cold-start default)
+            return bayesian
+        # Fallback: simple heuristic from audit history
+        rounds = [e.get("rounds", 1) for e in entries]
+        avg_rounds = statistics.mean(rounds)
+        return min(int(avg_rounds * 2), 20)
 
     def evaluate(
         self,
@@ -377,36 +392,44 @@ class ConvergenceJudge:
         """
         # 0. 终态成功 (v5.6 §C.5): audit + 覆盖双通过 → GOAL_ACHIEVED, 优先于硬上限
         if system_deep_audit_ok and design_coverage_ok:
-            return ConvergenceVerdict.stop(
+            result = ConvergenceVerdict.stop(
                 level=LEVEL_SEMANTIC,
                 reason=(
                     "system_deep_audit 通过且设计覆盖无缺口 "
                     "(P0=0, P1≤阈值, 无 MISSING/DIVERGED)"
                 ),
             )
+        else:
+            # 1. 硬上限检查
+            result = self._check_hard_limit(history)
+            # 2. 质量门检查
+            if result is None:
+                result = self._check_quality_gates(history)
+            # 3. 停滞检测
+            if result is None:
+                result = self._check_stagnation(history)
+            # 4. 语义收敛检查 (retained 路径: LLM 自评 semantic_satisfied)
+            if result is None:
+                result = self._check_semantic(history)
+            # 默认: 继续
+            if result is None:
+                result = ConvergenceVerdict.continue_()
 
-        # 1. 硬上限检查
-        verdict = self._check_hard_limit(history)
-        if verdict is not None:
-            return verdict
+        # T69a: Record convergence event for metrics
+        from auto_engineering.metrics.collector import AIOrigin, get_collector
+        mc = get_collector()
+        if mc is not None:
+            mc.record_convergence(
+                verdict=result.level_name,
+                total_ticks=len(history),
+                ai_origin=AIOrigin(
+                    level="led",
+                    agent_role="critic",
+                    driver_type="agent",
+                ),
+            )
 
-        # 2. 质量门检查
-        verdict = self._check_quality_gates(history)
-        if verdict is not None:
-            return verdict
-
-        # 3. 停滞检测
-        verdict = self._check_stagnation(history)
-        if verdict is not None:
-            return verdict
-
-        # 4. 语义收敛检查 (retained 路径: LLM 自评 semantic_satisfied)
-        verdict = self._check_semantic(history)
-        if verdict is not None:
-            return verdict
-
-        # 默认: 继续
-        return ConvergenceVerdict.continue_()
+        return result
 
     def _check_hard_limit(
         self, history: list[RoundHistory]

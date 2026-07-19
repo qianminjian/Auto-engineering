@@ -207,6 +207,47 @@ class BatchState:
             "batch_plan": self.batch_plan,  # 轻量 seed; plates 仍不存 (从此重建)
         })
 
+    # ------------------------------------------------------------------
+    # T94: Pre-planned Gate (DecisionGate form 1)
+    # ------------------------------------------------------------------
+
+    def _get_pending_gate(self) -> dict | None:
+        """Return the next pending gate declaration for the current batch, or None."""
+        batch = self.current_batch() if not self.is_component_complete() else None
+        if batch:
+            return batch.get("gate")
+        return None
+
+    # ------------------------------------------------------------------
+    # T96: Task DAG dependencies — topological batch scheduling
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def from_plan(cls, plan_json: dict) -> BatchState:
+        """Create BatchState from a DAG plan with depends_on declarations."""
+        batches = plan_json.get("batches", [])
+        # Synthesize a minimal BatchState with _dag_batches tracking
+        bs = cls(plates=[], batch_plan=batches, total_batches=len(batches))
+        bs._dag_batches = batches
+        bs._completed_batches: set[str] = set()
+        return bs
+
+    def ready_batches(self) -> list[dict]:
+        """Return batches whose depends_on are all satisfied.
+
+        Topological order: batches with no pending dependencies are ready.
+        """
+        ready: list[dict] = []
+        for batch in self._dag_batches:
+            deps = set(batch.get("depends_on", []))
+            if deps <= self._completed_batches:
+                ready.append(batch)
+        return ready
+
+    # ------------------------------------------------------------------
+    # 序列化 (只存游标; plates 每 tick 重建)
+    # ------------------------------------------------------------------
+
     @classmethod
     def from_json(
         cls, s: str, design_doc: DesignDoc | None,
