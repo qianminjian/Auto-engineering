@@ -59,6 +59,42 @@ _MAX_PER_SOURCE = 2
 _MAX_GLOBAL = 4
 _ISO_FMT = "%Y-%m-%dT%H:%M:%SZ"
 
+# ── System-Initiated Escalation: 项目语言探测 ──
+
+_LANGUAGE_INDICATORS: list[tuple[str, str]] = [
+    ("python", "pyproject.toml"),
+    ("python", "setup.py"),
+    ("python", "setup.cfg"),
+    ("typescript", "package.json"),
+    ("go", "go.mod"),
+    ("rust", "Cargo.toml"),
+]
+
+
+def _detect_project_language(project_root: Path) -> str | None:
+    """从常见配置文件探测项目语言。返回 language code 或 None。
+
+    探测优先级按 _LANGUAGE_INDICATORS 顺序。package.json 需要二次确认——
+    检查 tsconfig.json 或 devDependencies/dependencies 中是否有 typescript。
+    """
+    for lang, indicator in _LANGUAGE_INDICATORS:
+        indicator_path = project_root / indicator
+        if not indicator_path.exists():
+            continue
+        if lang == "typescript":
+            if (project_root / "tsconfig.json").exists():
+                return "typescript"
+            try:
+                pkg = json.loads(indicator_path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                return "typescript"  # 有 package.json 就假定 JS/TS
+            deps = {**pkg.get("dependencies", {}), **pkg.get("devDependencies", {})}
+            if "typescript" in deps:
+                return "typescript"
+            return "typescript"  # 有 package.json 就算 JS/TS 生态
+        return lang
+    return None
+
 # DS-9 (B6.6a): Haiku verifier 负判定 (MISSING/DIVERGED) → Sonnet 窄范围复核。
 # NOTE: DS-9 recheck is specified but not yet executed in the engine — this config
 # is surfaced in action output so the Agent can optionally apply it, and will be
@@ -194,7 +230,11 @@ class TickOrchestrator:
         design_doc_path: str | None = None,
         max_rounds: int = 5,
     ) -> dict:
-        """初始化 loop。有设计文档时解析层次并进入 gap_scan; 否则直接 architect."""
+        """初始化 loop。有设计文档时解析层次并进入 gap_scan; 否则直接 architect.
+
+        System-Initiated Escalation: 当 init-manifest.json 缺失且项目非 Python 时,
+        不静默降级到 Python 默认工具, 而是输出 action: "gate" 提示用户决策工具链配置.
+        """
         manifest_path = self.project_root / ".ae-state" / "init-manifest.json"
         if manifest_path.exists():
             self._init_manifest = json.loads(manifest_path.read_text())
@@ -226,6 +266,29 @@ class TickOrchestrator:
 
         if self._guardrail is None:
             self._guardrail = GuardrailChain.default()
+
+        # System-Initiated Escalation: manifest 缺失 + 明确非 Python → 人工决策.
+        # detected is None (空目录/未知项目) 静默回退 Python 默认 (维持现有行为).
+        if self._init_manifest is None:
+            detected = _detect_project_language(self.project_root)
+            if detected is not None and detected != "python":
+                self._state.current_stage = "init"
+                self._state.expected_stage = "init"
+                self._state.tick = 0
+                self._save_checkpoint()
+                return self._build_action(pre_gate=self._build_init_manifest_gate(detected))
+
+        # T95 Agent-Initiated Escalation: --escalate flag → 启动时立即暂停
+        if self._escalate:
+            if self._design_doc:
+                self._state.current_stage = "gap_scan"
+                self._state.expected_stage = "gap_scan"
+            else:
+                self._state.current_stage = "architect"
+                self._state.expected_stage = "architect"
+            self._state.tick = 1
+            self._save_checkpoint()
+            return self._build_action(pre_gate=self._build_agent_escalation_gate(None))
 
         if self._design_doc:
             self._state.current_stage = "gap_scan"
@@ -471,6 +534,14 @@ class TickOrchestrator:
 
     def _tick_body_dict(self, result: dict) -> dict:
         """tick 核心逻辑 (dict 版本): Gate resolution → 验证 → Guardrail → Gate → 路由 → action."""
+        # T95: Agent mid-loop escalation — Agent 在 result 中置 escalate=true
+        if result.get("escalate") is True:
+            return self._build_action(pre_gate=self._build_agent_escalation_gate({
+                "question": result.get("escalation_question", ""),
+                "options": result.get("escalation_options"),
+                "default": result.get("escalation_default"),
+            }))
+
         # T64: handle gate_resolution before validation (no stage field)
         gate_resolution = result.get("gate_resolution")
         if gate_resolution and isinstance(gate_resolution, dict):
@@ -490,11 +561,53 @@ class TickOrchestrator:
                 )
             return result.to_dict()
 
-        # T64: handle gate_resolution (Stage Checkpoint Gate)
+        # T64+T95: handle gate_resolution — dispatch by gate type
         gate_resolution = result.get("gate_resolution")
         if gate_resolution and isinstance(gate_resolution, dict):
             gate_id = gate_resolution.get("gate_id", "")
             resolution = gate_resolution.get("resolution", "")
+
+            # System-Initiated Escalation: init_manifest_missing
+            if gate_id == "init_manifest_missing":
+                if resolution == "终止 loop":
+                    return {
+                        "action": "done",
+                        "verdict": "TERMINATED",
+                        "message": "用户终止 loop（拒绝配置 init-manifest）",
+                        "stage": self._state.current_stage,
+                        "tick": self._state.tick + 1,
+                        "thread_id": self._state.thread_id,
+                    }
+                return self._resolve_init_manifest_escalation(gate_resolution)
+
+            # T95 Agent-Initiated Escalation
+            if gate_id == "agent_escalation":
+                return self._resolve_agent_escalation(gate_resolution)
+
+            # Stage Checkpoint Gate (T64) — gate_id starts with "checkpoint_"
+            if gate_id.startswith("checkpoint_"):
+                if resolution == "终止 loop":
+                    return {
+                        "action": "done",
+                        "verdict": "TERMINATED",
+                        "message": f"用户通过 {gate_id} 终止 loop",
+                        "stage": self._state.current_stage,
+                        "tick": self._state.tick + 1,
+                        "thread_id": self._state.thread_id,
+                    }
+                if resolution == "继续":
+                    self._passed_checkpoints.add(self._state.current_stage)
+                    return self._build_action()
+                if resolution == "审查当前产出":
+                    self._passed_checkpoints.add(self._state.current_stage)
+                    return self._build_action(feedback=_STAGE_CHECKPOINT_REVIEW_FEEDBACK)
+                return ErrorResponse(
+                    error_code="INVALID_GATE_RESOLUTION",
+                    message=f"未知的 gate resolution: {resolution!r}，有效值: 继续 / 审查当前产出 / 终止 loop",
+                ).to_dict()
+
+            # T94 PrePlannedGate — architect 在 batch_plan 中声明的 gate.
+            # 接受 gate options 中的任意 resolution, 作为 feedback 传递给下一 stage.
             if resolution == "终止 loop":
                 return {
                     "action": "done",
@@ -504,17 +617,13 @@ class TickOrchestrator:
                     "tick": self._state.tick + 1,
                     "thread_id": self._state.thread_id,
                 }
-            if resolution == "继续":
-                expected_stage = self._state.current_stage
-                self._passed_checkpoints.add(expected_stage)
-                return self._build_action()
-            if resolution == "审查当前产出":
-                self._passed_checkpoints.add(self._state.current_stage)
-                return self._build_action(feedback=_STAGE_CHECKPOINT_REVIEW_FEEDBACK)
-            return ErrorResponse(
-                error_code="INVALID_GATE_RESOLUTION",
-                message=f"未知的 gate resolution: {resolution!r}，有效值: 继续 / 审查当前产出 / 终止 loop",
-            ).to_dict()
+            detail = gate_resolution.get("resolution_detail", {})
+            note = detail.get("note", "")
+            feedback = f"Gate '{gate_id}' resolved: {resolution}"
+            if note:
+                feedback += f" — {note}"
+            self._save_checkpoint()
+            return self._build_action(feedback=feedback)
 
         self._apply_result_to_state(result)
 
@@ -640,7 +749,7 @@ class TickOrchestrator:
     # ── _after_architect ──
 
     def _after_architect(self) -> dict:
-        batches = self._state.batch_plan
+        batches = BatchState._flatten_batch_plan(self._state.batch_plan)
         if not batches:
             return ActionError(error_code="EMPTY_BATCH_PLAN",
                                message="architect 输出 batch_plan 为空").to_dict()
@@ -1159,6 +1268,193 @@ class TickOrchestrator:
             action["metrics"] = enrichment
         return action
 
+    # ── System-Initiated Escalation: init-manifest 缺失 gate ──
+
+    @staticmethod
+    def _build_init_manifest_gate(detected_language: str | None) -> dict:
+        """构建 'init-manifest 缺失' 的 system escalation gate.
+
+        detected_language=None 表示无法探测, 用户需从全部语言中选择.
+        """
+        from auto_engineering.gates._tools import LANGUAGE_TOOLS
+
+        if detected_language:
+            default_tools = LANGUAGE_TOOLS.get(
+                detected_language, LANGUAGE_TOOLS["python"])
+            default_label = (
+                f"{detected_language}: {default_tools[0]}/{default_tools[1]}/{default_tools[2]}")
+            options = [
+                default_label,
+                "python: ruff/mypy/pytest",
+                "自定义（在 resolution_detail 中指定）",
+            ]
+            question = (
+                f"未找到 .ae-state/init-manifest.json。"
+                f"检测到项目可能为 {detected_language} 项目。"
+                f"请选择 Gate 工具链配置："
+            )
+        else:
+            options = []
+            for lang in ["python", "typescript", "go", "rust", "bash"]:
+                tools = LANGUAGE_TOOLS[lang]
+                options.append(f"{lang}: {tools[0]}/{tools[1]}/{tools[2]}")
+            options.append("自定义（在 resolution_detail 中指定）")
+            question = (
+                "未找到 .ae-state/init-manifest.json, 且无法自动探测项目语言。"
+                "请选择 Gate 工具链配置："
+            )
+            default_label = options[0]
+
+        return {
+            "id": "init_manifest_missing",
+            "type": "system_escalation",
+            "trigger": "missing_init_manifest",
+            "question": question,
+            "options": options,
+            "default": default_label,
+            "detected_language": detected_language,
+            "timeout_ms": 0,
+        }
+
+    def _resolve_init_manifest_escalation(self, gate_resolution: dict) -> dict:
+        """处理 init_manifest_missing 的 gate resolution — 创建 manifest 并继续."""
+        resolution = gate_resolution.get("resolution", "")
+        detail = gate_resolution.get("resolution_detail", {})
+        from auto_engineering.gates._tools import LANGUAGE_TOOLS
+        import os as _os_local
+
+        # 解析 resolution: "typescript: eslint/tsc/vitest" 或 "自定义（...）"
+        lang: str | None = None
+        tools: tuple[str, str, str] | None = None
+
+        if "自定义" in resolution:
+            # 用户自定义 → 从 resolution_detail 取
+            lang = detail.get("language", "python")
+            tools = (
+                detail.get("linter", LANGUAGE_TOOLS.get(lang, LANGUAGE_TOOLS["python"])[0]),
+                detail.get("type_checker", LANGUAGE_TOOLS.get(lang, LANGUAGE_TOOLS["python"])[1]),
+                detail.get("test_runner", LANGUAGE_TOOLS.get(lang, LANGUAGE_TOOLS["python"])[2]),
+            )
+        else:
+            # 解析 "typescript: eslint/tsc/vitest" 格式
+            for candidate in LANGUAGE_TOOLS:
+                if resolution.startswith(candidate):
+                    lang = candidate
+                    tools = LANGUAGE_TOOLS[candidate]
+                    break
+            if lang is None:
+                lang = "python"
+                tools = LANGUAGE_TOOLS["python"]
+
+        # 创建 .ae-state/ 目录和 init-manifest.json
+        ae_state_dir = self.project_root / ".ae-state"
+        ae_state_dir.mkdir(parents=True, exist_ok=True)
+
+        manifest = {
+            "schema_version": "1.0",
+            "project_type": "app-service",
+            "language": lang,
+            "structure": {
+                "source_root": "src/",
+                "test_root": "tests/",
+            },
+            "conventions": {
+                "linter": tools[0],
+                "type_checker": tools[1],
+                "test_runner": tools[2],
+            },
+            "created_at": datetime.now(UTC).strftime(_ISO_FMT),
+        }
+        manifest_path = ae_state_dir / "init-manifest.json"
+        manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False))
+
+        _logger.info(
+            "System escalation resolved: created init-manifest (language=%s, "
+            "linter=%s, type_checker=%s, test_runner=%s)",
+            lang, tools[0], tools[1], tools[2],
+        )
+
+        # 重新加载 manifest + 重建 gates
+        self._init_manifest = manifest
+        self._gates = self._load_default_gates()
+
+        # 推进到正确的初始 stage
+        if self._design_doc:
+            self._state.current_stage = "gap_scan"
+            self._state.expected_stage = "gap_scan"
+        else:
+            self._state.current_stage = "architect"
+            self._state.expected_stage = "architect"
+        self._state.tick = 0
+        self._save_checkpoint()
+        return self._build_action()
+
+    # ── Agent-Initiated Escalation (T95) ──
+
+    @staticmethod
+    def _build_agent_escalation_gate(agent_context: dict | None) -> dict:
+        """构建 Agent 发起的 escalation gate.
+
+        agent_context=None → --init --escalate (无 Agent 上下文)
+        agent_context 含 question/options → tick 中 Agent 提供具体决策点
+        """
+        if agent_context and agent_context.get("question"):
+            question = agent_context["question"]
+            options = agent_context.get("options") or [
+                "批准继续", "回退重设计", "终止 loop"]
+            default = agent_context.get("default") or options[0]
+        else:
+            question = "Agent 请求人工决策。请描述需要决策的事项，或选择操作："
+            options = ["继续（批准当前方向）", "回退到上一阶段", "终止 loop"]
+            default = options[0]
+
+        return {
+            "id": "agent_escalation",
+            "type": "agent_escalation",
+            "trigger": "agent_requested",
+            "question": question,
+            "options": options,
+            "default": default,
+            "timeout_ms": 0,
+        }
+
+    def _resolve_agent_escalation(self, gate_resolution: dict) -> dict:
+        """处理 Agent escalation 的 resolution."""
+        resolution = gate_resolution.get("resolution", "")
+        detail = gate_resolution.get("resolution_detail", {})
+
+        if resolution == "终止 loop":
+            return {
+                "action": "done",
+                "verdict": "TERMINATED",
+                "message": "用户通过 agent_escalation 终止 loop",
+                "stage": self._state.current_stage,
+                "tick": self._state.tick + 1,
+                "thread_id": self._state.thread_id,
+            }
+
+        if "回退" in resolution:
+            # 回到 architect 重新规划
+            self._state.current_stage = "architect"
+            self._state.expected_stage = "architect"
+            self._state.round += 1
+            self._save_checkpoint()
+            note = detail.get("note", "")
+            return self._build_action(
+                feedback=f"Agent escalation: 用户选择回退重设计。{note}".rstrip())
+
+        if "跳过" in resolution:
+            if self._batch_state is not None:
+                self._batch_state.advance_batch()
+            self._save_checkpoint()
+            return self._build_action()
+
+        # 默认: "批准继续" / "继续（批准当前方向）"
+        self._save_checkpoint()
+        note = detail.get("note", "")
+        return self._build_action(
+            feedback=f"Agent escalation: 用户批准继续。{note}".rstrip() if note else "")
+
     # ── _build_action ──
 
     def _build_action(self, feedback: str | None = None, pre_gate: dict | None = None) -> dict:
@@ -1636,7 +1932,9 @@ class TickOrchestrator:
             )
 
     def _load_default_gates(self) -> list:
-        from auto_engineering.gates.registry import DEFAULT_GATES
+        from auto_engineering.gates.registry import DEFAULT_GATES, build_gates_from_manifest
+        if self._init_manifest:
+            return build_gates_from_manifest(self._init_manifest)
         return DEFAULT_GATES
 
     def _handle_guardrail_result(self, gr) -> dict:

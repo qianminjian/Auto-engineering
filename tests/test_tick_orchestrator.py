@@ -34,11 +34,12 @@ def _pass_guardrail():
     return g
 
 
-def _orchestrator(max_rounds: int = 10) -> TickOrchestrator:
+def _orchestrator(max_rounds: int = 10, escalate: bool = False) -> TickOrchestrator:
     return TickOrchestrator(
         gate_runner=_pass_gate_runner,
         guardrail=_pass_guardrail(),
         checkpoint_store=None,
+        escalate=escalate,
     )
 
 
@@ -2506,3 +2507,361 @@ class TestV7_1_TickDelegation:
         # lines[0] = "def tick(...):", body = lines[1:]
         body_lines = [l for l in lines[1:] if not l.strip().startswith("#") and not l.strip().startswith('"""')]
         assert len(body_lines) <= 5, f"tick() body should be ≤5 lines, got {len(body_lines)}: {body_lines}"
+
+
+# ============================================================
+# System-Initiated Escalation: init_manifest_missing gate
+# ============================================================
+
+
+class TestDetectProjectLanguage:
+    """_detect_project_language() 语言探测."""
+
+    def test_detect_typescript_by_tsconfig(self, tmp_path: Path) -> None:
+        from auto_engineering.loop.tick_orchestrator import _detect_project_language
+        (tmp_path / "package.json").write_text("{}")
+        (tmp_path / "tsconfig.json").write_text("{}")
+        assert _detect_project_language(tmp_path) == "typescript"
+
+    def test_detect_typescript_by_package_json_deps(self, tmp_path: Path) -> None:
+        from auto_engineering.loop.tick_orchestrator import _detect_project_language
+        (tmp_path / "package.json").write_text(
+            json.dumps({"devDependencies": {"typescript": "^5.0"}}))
+        assert _detect_project_language(tmp_path) == "typescript"
+
+    def test_detect_python_by_pyproject(self, tmp_path: Path) -> None:
+        from auto_engineering.loop.tick_orchestrator import _detect_project_language
+        (tmp_path / "pyproject.toml").write_text("[project]\nname='test'")
+        assert _detect_project_language(tmp_path) == "python"
+
+    def test_detect_go_by_gomod(self, tmp_path: Path) -> None:
+        from auto_engineering.loop.tick_orchestrator import _detect_project_language
+        (tmp_path / "go.mod").write_text("module test")
+        assert _detect_project_language(tmp_path) == "go"
+
+    def test_detect_rust_by_cargo(self, tmp_path: Path) -> None:
+        from auto_engineering.loop.tick_orchestrator import _detect_project_language
+        (tmp_path / "Cargo.toml").write_text("[package]\nname='test'")
+        assert _detect_project_language(tmp_path) == "rust"
+
+    def test_detect_none_for_empty_dir(self, tmp_path: Path) -> None:
+        from auto_engineering.loop.tick_orchestrator import _detect_project_language
+        assert _detect_project_language(tmp_path) is None
+
+    def test_python_wins_over_typescript(self, tmp_path: Path) -> None:
+        """pyproject.toml 在 package.json 之前, python 优先."""
+        from auto_engineering.loop.tick_orchestrator import _detect_project_language
+        (tmp_path / "pyproject.toml").write_text("[project]")
+        (tmp_path / "package.json").write_text("{}")
+        (tmp_path / "tsconfig.json").write_text("{}")
+        assert _detect_project_language(tmp_path) == "python"
+
+
+class TestInitManifestEscalation:
+    """init() 在 manifest 缺失时的 escalation 行为."""
+
+    def test_init_escalates_for_typescript_project(self, tmp_path: Path) -> None:
+        """TypeScript 项目无 manifest → gate action."""
+        (tmp_path / "package.json").write_text(
+            json.dumps({"devDependencies": {"typescript": "^5.0"}}))
+        o = _orchestrator()
+        o.project_root = tmp_path
+        action = o.init("build a button")
+        assert action["action"] == "gate"
+        assert action["gate"]["id"] == "init_manifest_missing"
+        assert action["gate"]["type"] == "system_escalation"
+        assert "typescript" in action["gate"]["default"]
+
+    def test_init_no_escalation_for_python_project(self, tmp_path: Path) -> None:
+        """Python 项目无 manifest → 静默回退, 正常 architect."""
+        (tmp_path / "pyproject.toml").write_text("[project]\nname='test'")
+        o = _orchestrator()
+        o.project_root = tmp_path
+        action = o.init("build a thing")
+        assert action["action"] != "gate"
+        assert action["stage"] == "architect"
+
+    def test_init_no_escalation_for_empty_dir(self, tmp_path: Path) -> None:
+        """空目录无 manifest → 静默回退 Python 默认."""
+        o = _orchestrator()
+        o.project_root = tmp_path
+        action = o.init("build a thing")
+        assert action["action"] != "gate"
+        assert action["stage"] == "architect"
+
+    def test_init_no_escalation_when_manifest_exists(self, tmp_path: Path) -> None:
+        """有 manifest → 正常流程, 不 escalation."""
+        (tmp_path / ".ae-state").mkdir(parents=True)
+        (tmp_path / ".ae-state" / "init-manifest.json").write_text(json.dumps({
+            "schema_version": "1.0",
+            "project_type": "app-service",
+            "language": "typescript",
+            "structure": {"source_root": "src/", "test_root": "tests/"},
+            "conventions": {"linter": "eslint", "type_checker": "tsc", "test_runner": "vitest"},
+        }))
+        (tmp_path / "package.json").write_text("{}")
+        o = _orchestrator()
+        o.project_root = tmp_path
+        action = o.init("build a button")
+        assert action["action"] != "gate"
+        assert action["stage"] == "architect"
+
+
+class TestResolveInitManifestEscalation:
+    """System escalation resolution: 用户选择 → 创建 manifest → 继续 loop."""
+
+    def _setup_escalated(self, tmp_path: Path) -> TickOrchestrator:
+        (tmp_path / "package.json").write_text(
+            json.dumps({"devDependencies": {"typescript": "^5.0"}}))
+        o = _orchestrator()
+        o.project_root = tmp_path
+        o.init("build a button")
+        return o
+
+    def test_resolve_typescript_creates_manifest(self, tmp_path: Path) -> None:
+        o = self._setup_escalated(tmp_path)
+        result = {
+            "gate_resolution": {
+                "gate_id": "init_manifest_missing",
+                "resolution": "typescript: eslint/tsc/vitest",
+            }
+        }
+        action = o.tick_dict(result)
+        # 应该继续到 architect
+        assert action["action"] != "gate"
+        assert action["stage"] == "architect"
+        # manifest 已创建
+        manifest_path = tmp_path / ".ae-state" / "init-manifest.json"
+        assert manifest_path.exists()
+        manifest = json.loads(manifest_path.read_text())
+        assert manifest["language"] == "typescript"
+        assert manifest["conventions"]["linter"] == "eslint"
+        assert manifest["conventions"]["test_runner"] == "vitest"
+
+    def test_resolve_custom_creates_manifest(self, tmp_path: Path) -> None:
+        o = self._setup_escalated(tmp_path)
+        result = {
+            "gate_resolution": {
+                "gate_id": "init_manifest_missing",
+                "resolution": "自定义（在 resolution_detail 中指定）",
+                "resolution_detail": {
+                    "language": "go",
+                    "linter": "golangci-lint",
+                    "type_checker": "go vet",
+                    "test_runner": "go test",
+                },
+            }
+        }
+        action = o.tick_dict(result)
+        assert action["stage"] == "architect"
+        manifest = json.loads(
+            (tmp_path / ".ae-state" / "init-manifest.json").read_text())
+        assert manifest["language"] == "go"
+        assert manifest["conventions"]["linter"] == "golangci-lint"
+
+    def test_resolve_terminate_stops_loop(self, tmp_path: Path) -> None:
+        o = self._setup_escalated(tmp_path)
+        result = {
+            "gate_resolution": {
+                "gate_id": "init_manifest_missing",
+                "resolution": "终止 loop",
+            }
+        }
+        action = o.tick_dict(result)
+        assert action["action"] == "done"
+        assert action["verdict"] == "TERMINATED"
+        # manifest 不应创建
+        assert not (tmp_path / ".ae-state" / "init-manifest.json").exists()
+
+    def test_load_default_gates_uses_manifest(self, tmp_path: Path) -> None:
+        """验证 _load_default_gates 在 manifest 存在时使用其工具配置."""
+        (tmp_path / ".ae-state").mkdir(parents=True)
+        manifest = {
+            "schema_version": "1.0",
+            "project_type": "app-service",
+            "language": "typescript",
+            "structure": {"source_root": "src/", "test_root": "tests/"},
+            "conventions": {
+                "linter": "biome",
+                "type_checker": "swc",
+                "test_runner": "vitest",
+            },
+        }
+        (tmp_path / ".ae-state" / "init-manifest.json").write_text(
+            json.dumps(manifest))
+        o = _orchestrator()
+        o.project_root = tmp_path
+        # init 加载 manifest → _load_default_gates 应使用 biome/swc/vitest
+        o.init("build a thing")
+        # 找到 LintGate 实例验证 linter 是 biome
+        lint_gate = next(
+            (g for g in o._gates if g.name == "lint"), None)
+        assert lint_gate is not None
+        assert lint_gate.linter_bin == "biome"
+
+
+# ============================================================
+# T95 Agent-Initiated Escalation
+# ============================================================
+
+
+class TestAgentEscalation:
+    """Agent 发起 escalation (--init --escalate + mid-loop escalate)."""
+
+    def test_init_with_escalate_outputs_gate(self, tmp_path: Path) -> None:
+        """--init --escalate → 立即输出 agent escalation gate."""
+        o = _orchestrator(escalate=True)
+        o.project_root = tmp_path
+        action = o.init("build a feature")
+        assert action["action"] == "gate"
+        assert action["gate"]["id"] == "agent_escalation"
+        assert action["gate"]["type"] == "agent_escalation"
+
+    def test_tick_with_escalate_flag_outputs_gate(self, tmp_path: Path) -> None:
+        """result 中 escalate=true → 输出 agent escalation gate."""
+        o = _orchestrator()
+        o.project_root = tmp_path
+        o.init("build a feature")
+        result = {"stage": "developer", "escalate": True,
+                  "escalation_question": "Schema 变更需确认"}
+        action = o.tick_dict(result)
+        assert action["action"] == "gate"
+        assert action["gate"]["id"] == "agent_escalation"
+        assert "Schema 变更需确认" in action["gate"]["question"]
+
+    def test_resolve_approve_continues(self, tmp_path: Path) -> None:
+        """批准继续 → 正常推进."""
+        o = _orchestrator()
+        o.project_root = tmp_path
+        o.init("build a feature")
+        result = {"gate_resolution": {
+            "gate_id": "agent_escalation",
+            "resolution": "继续（批准当前方向）",
+        }}
+        action = o.tick_dict(result)
+        assert action["action"] != "gate"
+        assert action["stage"] == "architect"
+
+    def test_resolve_rollback_to_architect(self, tmp_path: Path) -> None:
+        """回退重设计 → 回到 architect."""
+        o = _orchestrator()
+        o.project_root = tmp_path
+        o.init("build a feature")
+        # 先推进到 developer
+        o.tick_dict({"stage": "architect", "batch_plan": [
+            {"plate": "plate1", "component": "comp1", "batches": [
+                {"batch_id": "b1", "tasks": [
+                    {"id": "t1", "description": "do it", "file_targets": ["a.py"]}],
+                 "batch_type": "implementation"}]}]})
+        o.tick_dict({"stage": "developer", "batch_id": "b1",
+                     "files_changed": ["a.py"],
+                     "commit_hash": "abc", "test_results": {"passed": 1}})
+        # 现在 escalating, 选择回退
+        result = {"gate_resolution": {
+            "gate_id": "agent_escalation",
+            "resolution": "回退重设计",
+            "resolution_detail": {"note": "需要重新考虑 API 设计"},
+        }}
+        action = o.tick_dict(result)
+        assert action["stage"] == "architect"
+        assert "回退重设计" in action.get("feedback", "")
+
+    def test_resolve_terminate(self, tmp_path: Path) -> None:
+        """终止 loop."""
+        o = _orchestrator()
+        o.project_root = tmp_path
+        o.init("build a feature")
+        result = {"gate_resolution": {
+            "gate_id": "agent_escalation",
+            "resolution": "终止 loop",
+        }}
+        action = o.tick_dict(result)
+        assert action["action"] == "done"
+        assert action["verdict"] == "TERMINATED"
+
+    def test_resolve_skip_batch(self, tmp_path: Path) -> None:
+        """跳过当前 batch → 推进 batch."""
+        o = _orchestrator()
+        o.project_root = tmp_path
+        o.init("build a feature")
+        # 先完成 architect, 到 developer
+        o.tick_dict({"stage": "architect", "batch_plan": [
+            {"plate": "p1", "component": "c1", "batches": [
+                {"batch_id": "b1", "tasks": [
+                    {"id": "t1", "description": "task1", "file_targets": ["a.py"]}],
+                 "batch_type": "implementation"}]}]})
+        result = {"gate_resolution": {
+            "gate_id": "agent_escalation",
+            "resolution": "跳过此 batch",
+        }}
+        action = o.tick_dict(result)
+        # 跳过 batch 后应继续
+        assert action["action"] != "gate"
+
+
+# ============================================================
+# T94 PrePlannedGate — architect 在 batch_plan 中声明 gate
+# ============================================================
+
+
+class TestPrePlannedGate:
+    """Architect 在 batch_plan 中声明 gate → resolution 处理."""
+
+    def test_pending_gate_triggers_after_developer_batch(self, tmp_path: Path) -> None:
+        """batch 中有 gate → developer batch 完成后输出 gate action."""
+        o = _orchestrator()
+        o.project_root = tmp_path
+        o.init("build a feature")
+        # architect: 声明两个 batch, b2 带 gate
+        o.tick_dict({"stage": "architect", "plan": _VALID_PLAN,
+                     "file_list": ["x.py"],
+                     "batch_plan": [{
+            "plate": "p1", "component": "c1", "batches": [
+                {"batch_id": "b1", "tasks": [
+                    {"id": "t1", "description": "impl", "file_targets": ["a.py"]}],
+                 "batch_type": "implementation"},
+                {"batch_id": "b2", "tasks": [
+                    {"id": "t2", "description": "deploy", "file_targets": ["b.py"]}],
+                 "batch_type": "implementation",
+                 "gate": {
+                     "id": "deploy_approval",
+                     "type": "pre_planned",
+                     "question": "是否批准部署？",
+                     "options": ["批准部署", "暂缓部署", "终止 loop"],
+                     "default": "暂缓部署",
+                 }},
+            ]}]})
+        # developer: 完成 b1 → b2 有 gate → 输出 gate action
+        action = o.tick_dict({"stage": "developer", "batch_id": "b1",
+                              "files_changed": ["a.py"],
+                              "commit_hash": "abc", "test_results": {"passed": 1}})
+        assert action["action"] == "gate"
+        assert action["gate"]["id"] == "deploy_approval"
+
+    def test_resolve_pre_planned_gate_accepts_custom_option(self, tmp_path: Path) -> None:
+        """PrePlannedGate 接受自定义 resolution → 作为 feedback."""
+        o = _orchestrator()
+        o.project_root = tmp_path
+        o.init("build a feature")
+        result = {"gate_resolution": {
+            "gate_id": "deploy_approval",
+            "resolution": "批准部署",
+            "resolution_detail": {"note": "已确认灰度策略"},
+        }}
+        action = o.tick_dict(result)
+        assert action["action"] != "gate"
+        assert "deploy_approval" in action.get("feedback", "")
+        assert "批准部署" in action.get("feedback", "")
+
+    def test_resolve_pre_planned_gate_terminate(self, tmp_path: Path) -> None:
+        """PrePlannedGate 也可以终止 loop."""
+        o = _orchestrator()
+        o.project_root = tmp_path
+        o.init("build a feature")
+        result = {"gate_resolution": {
+            "gate_id": "deploy_approval",
+            "resolution": "终止 loop",
+        }}
+        action = o.tick_dict(result)
+        assert action["action"] == "done"
+        assert action["verdict"] == "TERMINATED"

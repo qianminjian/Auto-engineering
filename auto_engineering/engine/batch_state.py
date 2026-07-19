@@ -50,9 +50,34 @@ class BatchState:
     # 构造 (双模式, 均在 _after_architect batch_plan 就绪后调用)
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _flatten_batch_plan(batch_plan: list[dict]) -> list[dict]:
+        """将 architect 嵌套格式扁平化为 BatchState 游标格式.
+
+        Architect 输入 (plate→component→batches 三层):
+          [{"plate": "p1", "component": "c1", "batches": [
+              {"batch_id": "b1", ...}, {"batch_id": "b2", ...}]}]
+        BatchState 游标格式 (flat, 每个 item 一个 batch):
+          [{"component": "c1", "batch_id": "b1", ...},
+           {"component": "c1", "batch_id": "b2", ...}]
+        已是 flat 格式则原样返回.
+        """
+        if not batch_plan:
+            return []
+        if "batches" in batch_plan[0]:
+            flat: list[dict] = []
+            for plate_entry in batch_plan:
+                component_name = plate_entry["component"]
+                for batch in plate_entry["batches"]:
+                    batch["component"] = component_name
+                    flat.append(batch)
+            return flat
+        return batch_plan
+
     @classmethod
     def from_design_doc(cls, doc: DesignDoc, batch_plan: list[dict]) -> BatchState:
         """design-doc 模式 — 用真实板块层次, 带一致性校验."""
+        batch_plan = cls._flatten_batch_plan(batch_plan)
         plate_component_names = {
             c.name for plate in doc.plates for c in plate.components
         }
@@ -104,6 +129,7 @@ class BatchState:
     @classmethod
     def from_batch_plan(cls, batch_plan: list[dict]) -> BatchState:
         """batch_plan 模式 — 按出现顺序提取 distinct component → 单一合成 plate."""
+        batch_plan = cls._flatten_batch_plan(batch_plan)
         names = list(dict.fromkeys(b["component"] for b in batch_plan))
         comps = [
             Component(name=n, design_section="", design_items=[], source_marker="batch_plan")
