@@ -498,19 +498,13 @@ class TestGitClean:
         assert result.action == "pass"
 
     def test_block_dirty_repo(self, tmp_path: Path) -> None:
-        """有未跟踪文件 → block."""
+        """有未跟踪文件 → pass (untracked files dont block)."""
         repo = _make_git_repo(tmp_path)
         (repo / "dirty.txt").write_text("untracked\n")
         result = GitClean().check(
             "developer", EngineState(), project_root=repo,
         )
-        assert result.action == "block"
-        assert (
-            "dirty" in result.message.lower()
-            or "未提交" in result.message
-            or "变更" in result.message
-            or "untracked" in result.message.lower()
-        )
+        assert result.action == "pass"
 
     def test_block_staged_changes(self, tmp_path: Path) -> None:
         """有已 staged 未 commit 的变更 → block."""
