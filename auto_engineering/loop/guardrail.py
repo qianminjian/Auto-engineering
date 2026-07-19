@@ -278,7 +278,12 @@ class GitClean(Guardrail):
                 action="block",
                 message=f"git status 失败 rc={rc}",
             )
-        if stdout.strip():
+        # 只检查 tracked 文件的变更 (M/A/D/R/C), 忽略 untracked (??) 和 ignored (!!)
+        dirty_lines = [
+            l for l in stdout.splitlines()
+            if l.strip() and not l.startswith("??") and not l.startswith("!!")
+        ]
+        if dirty_lines:
             return GuardrailResult(
                 action="block",
                 message="working tree 有未提交变更,需先 commit",
