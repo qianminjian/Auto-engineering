@@ -66,10 +66,16 @@
 | **72** | **Phase 23-24 — Phase 20 数据流修复（审计发现修复）** | Phase 20 Round 4 深度审计发现 3 P0 阻断（信号管线无历史数据/M2 结构性为零/M5 效率比永久为零）+ 5 P1（category 未传/信号每 tick 跑/tick 编号不一致/resume 不恢复 category/compare_periods 偏差）+ 4 P2。12 任务（T79-T90）。D45 | 2026-07-19 | ✅ |
 | **73** | **Phase 25 — 战略储备激活（按依赖顺序执行）** | 用户纠正：7 项"战略储备"不是"搁置不做"——用户决策是"按依赖顺序执行"，AI 擅自曲解为"不入当前 Phase"。恢复为活跃任务：PII Guardrail G10/Intermediate artifact offloading/LangSmith exporter/Pre-planned Gate/Escalation Gate/Task DAG/消息类型语义。7 任务（T91-T97），严格依赖链排序。D46 | 2026-07-19 | ✅ |
 | **74** | **Phase 26 — 设计-实现对齐 + 遗留清理** | BEACON #67 状态描述精确化（标题"3 形态"→标注实现度）/bank_card PII severity WARN→CRITICAL + 正则收紧/⏳ test_checkpoint_store.py 5 failures 修复/[Q?] Post-Phase-19 能力覆盖矩阵验证。4 任务（T98-T101）。D47 | 2026-07-19 | ✅ |
+| **75** | **Phase 27 — 真跑验证发现修复（T102-T104）** | VoiceClonePage + PrismScan 真跑验证发现 3 项：T102 Gate 增量扫描（run_gates files_changed 参数激活 AuditGate 增量逻辑）、T103 脚手架 batch 报错指引（test_results.passed 至少为 1 需说明验证方式）、T104 component 名称 difflib 模糊匹配（孤儿 batch 错误消息增加最接近匹配提示）。D48 | 2026-07-19 | ✅ |
+| **76** | **Phase 28 — 七方对标差距处理 + 审计 P1/P2 修复** | 交叉对标报告 6 项评分偏差中 4 项已代码修复（T102/T103/T104/GitClean），2 项待处理（T105 收敛复验 🟡、T107 人在环设计决策 🔵）。审计发现 2 P1（tracing span context manager + 34 文件未跟踪）+ 2 P2（模块实例化重复 + setup_tracing 无门控）全部修复。36 文件入 git。评估评分 11/24，T105 复验通过后预估回调至 ~13/24。D49 | 2026-07-19 | ✅ |
 
 ## 当前状态
 
-**阶段：** v5.6 全部完成 — Phase 1-26 全部完成（196/196 任务，2587 tests 零回归）。
+**阶段：** v5.6 全部完成 — Phase 1-28 全部完成（199/199 任务，2497 tests 零回归）。
+
+**最近动作 (2026-07-19 审计 P1/P2 修复 + 文件入库)：**
+- **审计修复提交 (8824cad)**：P1 tracing span `start_as_current_span`→`start_span`+手动 `end()` / P2 提取 `_build_injectables()` 消除重复 + `setup_tracing` 加 `AE_OTLP_ENDPOINT` 门控 / P1 34 个 Phase 20-25 源文件+测试文件+设计文档入 git（~7809 行）/ T102-T104 + 虚化模块接线 + audit log_event。42 files, +8034 −11, 2497 tests 零回归。
+- **BEACON 决策 #75（Phase 27）+ #76（Phase 28）追加**。
 
 **最近动作 (2026-07-19 审计发现落表)：**
 - **Phase 17-21 深度审计**：发现 7 模块虚化（~1875 行）——"Build-then-Wire" 反模式：ContextOffloader/SessionSummarizer/PIIRedactor T56/setup_tracing/AuditLogger/FileAccessGuardrail G11/Phase 20 信号管线。模块 TDD 构建完整，集成步骤从未执行。
