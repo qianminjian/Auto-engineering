@@ -80,10 +80,18 @@ def _instantiate_gate(name: str, project_root: Path) -> Gate | None:
     return None
 
 
-def run_gates(gate_names: tuple[str, ...], project_root: Path) -> dict:
+def run_gates(
+    gate_names: tuple[str, ...],
+    project_root: Path,
+    files_changed: list[str] | None = None,
+) -> dict:
     """跑给定名称列表的 Gate, 返回 JSON-ready dict.
 
     异常安全: 每个 Gate 单独 try, 不会因一个失败影响其他.
+
+    Args:
+        files_changed: 变更文件相对路径列表, 用于 Gate 增量扫描
+                       (如 AuditGate 仅扫描变更文件而非全项目).
     """
     summary: dict[str, dict] = {}
     passed_count = 0
@@ -96,6 +104,12 @@ def run_gates(gate_names: tuple[str, ...], project_root: Path) -> dict:
             summary[name] = {"status": "skipped", "passed": None, "message": "no such gate"}
             skipped_count += 1
             continue
+        # 注入 files_changed 到 contracts (激活增量扫描)
+        if files_changed:
+            if gate.contracts is None:
+                gate.contracts = {"files_changed": files_changed}
+            elif "files_changed" not in gate.contracts:
+                gate.contracts["files_changed"] = files_changed
         # 跑 Gate
         try:
             verdict = gate.run(project_root)

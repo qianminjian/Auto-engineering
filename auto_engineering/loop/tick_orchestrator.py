@@ -103,6 +103,7 @@ class TickOrchestrator:
         checkpoint_store: SQLiteCheckpointStore | None = None,
         context_offloader: Any | None = None,
         session_summarizer: Any | None = None,
+        tracer: Any | None = None,
         audit_logger: AuditLogger | None = None,
         escalate: bool = False,
         debug: bool = False,
@@ -116,6 +117,7 @@ class TickOrchestrator:
         self._checkpoint_store = checkpoint_store
         self._context_offloader = context_offloader
         self._session_summarizer = session_summarizer
+        self._tracer = tracer
         self._cached_session_summary: Any = None
         self._debug_enabled = debug
         self._debug_dir = debug_dir
@@ -244,6 +246,10 @@ class TickOrchestrator:
         checkpoint_id: str | None = None,
         gate_runner: GateRunner | None = None,
         guardrail: GuardrailChain | None = None,
+        context_offloader: Any | None = None,
+        session_summarizer: Any | None = None,
+        tracer: Any | None = None,
+        audit_logger: AuditLogger | None = None,
         max_rounds: int = 5,
         debug: bool = False,
         debug_dir: str | None = None,
@@ -264,6 +270,10 @@ class TickOrchestrator:
             gate_runner=gate_runner,
             guardrail=guardrail,
             checkpoint_store=checkpoint_store,
+            context_offloader=context_offloader,
+            session_summarizer=session_summarizer,
+            tracer=tracer,
+            audit_logger=audit_logger,
             debug=debug,
             debug_dir=debug_dir,
         )
@@ -358,8 +368,20 @@ class TickOrchestrator:
         self._t_guard_sub_ms = 0.0
         tick_no = self._state.tick
         stage_in = self._state.current_stage
+
+        # T75: OTLP tracing span per tick
+        tick_span = None
+        if self._tracer is not None:
+            tick_span = self._tracer.start_span(
+                f"tick.{stage_in}", attributes={"tick": tick_no, "stage": stage_in})
+
         action = self._tick_body_dict(result)
         duration_ms = int((time.perf_counter() - t_start) * 1000)
+
+        if tick_span is not None:
+            tick_span.set_attribute("duration_ms", duration_ms)
+            tick_span.set_attribute("action", action.get("action", ""))
+            tick_span.end()
         self._record_tick_latency(t_start, tick_no)
 
         # T69a: Record tick completion event for metrics collector
@@ -1529,12 +1551,19 @@ class TickOrchestrator:
         gates = self._gates or DEFAULT_GATES
         gate_names = tuple(g.name for g in gates)
 
+        # T75: OTLP tracing span for gate execution
+        gate_span = None
+        if self._tracer is not None:
+            gate_span = self._tracer.start_span(
+                "gates.run", attributes={"gate_names": list(gate_names)})
+
         t_g = time.perf_counter()
         if self._gate_runner:
             raw = self._gate_runner(gate_names, self.project_root)
         else:
             from auto_engineering.cli.gate_check import run_gates
-            raw = run_gates(gate_names, self.project_root)
+            raw = run_gates(gate_names, self.project_root,
+                           files_changed=self._state.files_changed)
         # run_gates() 返回嵌套结构 {project_root, gate_names, passed,
         # failed, skipped, gate_summary: {实际gate结果}} —
         # 提取 gate_summary; 扁平 dict (测试 stub) 无此 key 则回退自身
@@ -1585,6 +1614,26 @@ class TickOrchestrator:
                         driver_type="agent",
                     ),
                 )
+
+        # T75: close gate tracing span + T76: audit log gate results
+        if gate_span is not None:
+            passed = all(
+                v.get("passed") for v in self._state.gate_results.values())
+            gate_span.set_attribute("all_passed", passed)
+            gate_span.set_attribute("gate_count",
+                                    len(self._state.gate_results))
+            gate_span.end()
+
+        if self._audit_logger is not None:
+            self._audit_logger.log_event(
+                event="gate_run",
+                stage=self._state.current_stage,
+                tick=self._state.tick,
+                gate_results={
+                    name: {"passed": v["passed"], "message": v["message"][:200]}
+                    for name, v in self._state.gate_results.items()
+                },
+            )
 
     def _load_default_gates(self) -> list:
         from auto_engineering.gates.registry import DEFAULT_GATES

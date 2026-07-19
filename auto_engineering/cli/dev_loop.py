@@ -363,6 +363,38 @@ def _infer_category(requirement: str) -> str:
     return "medium_crud"
 
 
+def _build_injectables(root: Path, environ: dict) -> dict:
+    """Build injectable modules shared by --init and --tick paths.
+
+    Returns dict with keys: context_offloader, session_summarizer, tracer, audit_logger.
+    tracer is None unless AE_OTLP_ENDPOINT is set (avoids importing opentelemetry
+    when not needed).
+    """
+    from auto_engineering.context.offloading import ContextOffloader
+    from auto_engineering.context.summarization import SessionSummarizer
+
+    context_offloader = ContextOffloader(root / ".ae-state" / "offload")
+    session_summarizer = SessionSummarizer()  # no LLM provider (AgentDriver)
+
+    tracer = None
+    otlp_endpoint = environ.get("AE_OTLP_ENDPOINT")
+    if otlp_endpoint:
+        from auto_engineering.observability.tracing import setup_tracing
+        tracer = setup_tracing(service_name="auto-engineering", otlp_endpoint=otlp_endpoint)
+
+    audit_logger = None
+    if environ.get("AE_AUDIT_LOG", "").strip() == "1":
+        from auto_engineering.observability.audit_log import AuditLogger
+        audit_logger = AuditLogger(root / ".ae-state" / "audit")
+
+    return {
+        "context_offloader": context_offloader,
+        "session_summarizer": session_summarizer,
+        "tracer": tracer,
+        "audit_logger": audit_logger,
+    }
+
+
 def _run_tick_init(
     requirement: str, design_doc_path: str | None, root: Path, max_rounds: int,
     debug: bool = False, debug_dir: str | None = None,
@@ -381,7 +413,12 @@ def _run_tick_init(
 
     store: SQLiteCheckpointStore[EngineState] = SQLiteCheckpointStore(_checkpoint_db_path(root))
     try:
+        inj = _build_injectables(root, _os.environ)
         orch = TickOrchestrator(root, checkpoint_store=store,
+                                context_offloader=inj["context_offloader"],
+                                session_summarizer=inj["session_summarizer"],
+                                tracer=inj["tracer"],
+                                audit_logger=inj["audit_logger"],
                                 debug=debug, debug_dir=debug_dir,
                                 escalate=escalate)
         if pause_at_stage:
@@ -423,7 +460,12 @@ def _run_tick_step(result_file: Path, root: Path,
 
     store: SQLiteCheckpointStore[EngineState] = SQLiteCheckpointStore(_checkpoint_db_path(root))
     try:
-        orch = TickOrchestrator.restore(root, store, debug=debug, debug_dir=debug_dir)
+        inj = _build_injectables(root, _os.environ)
+        orch = TickOrchestrator.restore(root, store, debug=debug, debug_dir=debug_dir,
+                                        context_offloader=inj["context_offloader"],
+                                        session_summarizer=inj["session_summarizer"],
+                                        tracer=inj["tracer"],
+                                        audit_logger=inj["audit_logger"])
 
         # T69a: Restore metrics collector from disk for cross-process continuity
         if _os.environ.get("AE_METRICS", "").strip() == "1":

@@ -188,7 +188,11 @@ def validate_result_format(result: dict, stage: str) -> list[str]:
             if tr.get("failed", 0) != schema["test_results_required_failed"]:
                 errors.append(f"test_results.failed 必须为 0, 当前 {tr.get('failed')}")
             if tr.get("passed", 0) < schema["test_results_min_passed"]:
-                errors.append("test_results.passed 至少为 1")
+                errors.append(
+                    "test_results.passed 至少为 1 —— "
+                    "纯配置/脚手架 batch 也需验证产出"
+                    "（如文件是否存在、JSON 是否合法、配置项是否有效）"
+                )
         fc = result.get("files_changed")
         if isinstance(fc, list) and len(fc) < schema["files_changed_min"]:
             errors.append("files_changed 至少 1 个文件")

@@ -56,3 +56,23 @@ class AuditLogger:
         }
         with open(self._log_path, "a") as f:
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+    def log_event(
+        self,
+        *,
+        event: str,
+        stage: str = "",
+        tick: int = 0,
+        timestamp: str = "",
+        **kwargs: object,
+    ) -> None:
+        """Record a non-LLM event (gate run, convergence, guardrail block, etc.)."""
+        entry: dict[str, object] = {
+            "timestamp": timestamp or time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "event": event,
+            "stage": stage,
+            "tick": tick,
+        }
+        entry.update(kwargs)
+        with open(self._log_path, "a") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")

@@ -61,10 +61,19 @@ class BatchState:
         # 孤儿 batch: component 不在任何 plate → 抛错 (G2 retry, 否则静默漏实现)
         orphans = [c for c in batch_components if c not in plate_component_names]
         if orphans:
+            import difflib
             valid = sorted(plate_component_names)
+            hints = []
+            for orphan in orphans:
+                close = difflib.get_close_matches(orphan, valid, n=3, cutoff=0.3)
+                if close:
+                    hints.append(f"'{orphan}' → 最接近: {close}")
+                else:
+                    hints.append(f"'{orphan}' → 无相似匹配")
             raise ValueError(
                 f"孤儿 batch: component {orphans} 不在任何 plate 中。"
-                f"有效 component 名: {valid} —— "
+                f"有效 component 名: {valid}。"
+                f"{' | '.join(hints)} —— "
                 f"architect 须重出 batch_plan (G2 retry)"
             )
 

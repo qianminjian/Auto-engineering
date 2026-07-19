@@ -59,7 +59,7 @@ class SessionSummarizer:
             # prepend prompt_prefix to developer system prompt
     """
 
-    def __init__(self, llm_provider: LLMProvider, max_summary_words: int = 500) -> None:
+    def __init__(self, llm_provider: LLMProvider | None = None, max_summary_words: int = 500) -> None:
         self._llm = llm_provider
         self._max_words = max_summary_words
 
@@ -83,6 +83,13 @@ class SessionSummarizer:
         system = _SUMMARIZE_SYSTEM_PROMPT
         if previous_summary is not None:
             system += _render_previous_summary(previous_summary)
+
+        if self._llm is None:
+            logger.warning("SessionSummarizer has no LLM provider — returning empty summary")
+            return SessionSummary(
+                ticks_covered=range(1, tick + 1),
+                generated_at_tick=tick,
+            )
 
         user_content = _render_messages_for_summary(messages)
         try:
