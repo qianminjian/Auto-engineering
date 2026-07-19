@@ -1,6 +1,6 @@
 # design/ — 文档索引
 
-> 创建：2026-06-25 | 更新：2026-07-16（设计文档审计：恢复 discussion/ 目录、补全讨论文件索引） | 维护规则：每次合并/重命名后更新本文件
+> 创建：2026-06-25 | 更新：2026-07-19（PrismScan 移除 + 文档全面同步） | 维护规则：每次合并/重命名后更新本文件
 
 ---
 
@@ -17,9 +17,9 @@
 
 | 类别 | 文件 | 描述 |
 |------|------|------|
-| **项目明灯** | `BEACON.md` | 当前阶段/目标/阻塞项/设计决策（v5.6 Tick-Based 协议 + 5 层验证架构, 决策 #1-#54） |
+| **项目明灯** | `BEACON.md` | 当前阶段/目标/阻塞项/设计决策（v5.6 Tick-Based 协议 + 5 层验证架构, 决策 #1-#74） |
 | **设计文档** | `v5.6-Design-Loop.md` | v5.6 Loop Engineering 唯一设计文档（自包含）：Tick-Based Discrete Invocation + 5 层验证架构；附录 B: Init→Loop 接口契约 / 附录 C: v7.0 双驱动远期架构 |
-| **实施跟踪** | `IMPLEMENTATION-TRACKER.md` | v5.6 实现进度主表（Phase 1-10=102/102 全完成） |
+| **实施跟踪** | `IMPLEMENTATION-TRACKER.md` | v5.6 实现进度主表（Phase 1-26=196/196 全部完成） |
 | **讨论记录** | `discussion/v5.6-layered-verification-design.md` | v5.6 分层验证架构设计讨论全过程 — 已解决问题/用户纠正/设计原则/后续参考 |
 | **讨论记录** | `discussion/v5.6-progress-tree-design.md` | v5.6 ProgressTree 设计讨论 — 节点模型/同步策略/聚合算法 |
 | **讨论记录** | `discussion/v7.0-dual-driver-architecture.md` | v7.0 单引擎+双驱动架构讨论过程（"为什么这么想"）— 起点/可行性论证/优于保留 fork/争议点定调/YAGNI 边界 |

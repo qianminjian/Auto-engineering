@@ -191,28 +191,28 @@ class TestV8_6_MarketplaceInstall:
                         f"{platform_dir}/plugin.json '{key}' 应使用 ./ 路径, 实际: {val}"
                     )
 
-    def test_plugin_usage_mentions_marketplace_add(self) -> None:
-        """PLUGIN-USAGE.md 包含 marketplace add 安装命令."""
+    def test_user_guide_mentions_marketplace_add(self) -> None:
+        """USER_GUIDE.md 包含 marketplace add 安装命令."""
         root = _project_root()
-        doc = root / "docs" / "PLUGIN-USAGE.md"
-        assert doc.is_file(), "PLUGIN-USAGE.md 不存在"
+        doc = root / "docs" / "USER_GUIDE.md"
+        assert doc.is_file(), "USER_GUIDE.md 不存在"
         content = doc.read_text()
         assert "marketplace add" in content, (
-            "PLUGIN-USAGE.md 应包含 /plugin marketplace add 安装命令"
+            "USER_GUIDE.md 应包含 /plugin marketplace add 安装命令"
         )
         assert "plugin install" in content, (
-            "PLUGIN-USAGE.md 应包含 /plugin install 安装命令"
+            "USER_GUIDE.md 应包含 /plugin install 安装命令"
         )
 
 
 class TestV8_8_Documentation:
-    """V8-8: 三平台文档更新 — PLUGIN-USAGE / USER_GUIDE / production-deployment."""
+    """V8-8: 三平台文档更新 — USER_GUIDE."""
 
-    def test_plugin_usage_mentions_three_platforms(self) -> None:
-        """PLUGIN-USAGE.md 涵盖三平台安装说明."""
+    def test_user_guide_mentions_three_platforms(self) -> None:
+        """USER_GUIDE.md 涵盖三平台安装说明."""
         root = _project_root()
-        doc = root / "docs" / "PLUGIN-USAGE.md"
-        assert doc.is_file(), "PLUGIN-USAGE.md 不存在"
+        doc = root / "docs" / "USER_GUIDE.md"
+        assert doc.is_file(), "USER_GUIDE.md 不存在"
         content = doc.read_text()
         platforms = 0
         if "Claude Code" in content or "claude-code" in content:
@@ -222,7 +222,7 @@ class TestV8_8_Documentation:
         if "CodeBuddy" in content or "codebuddy" in content:
             platforms += 1
         assert platforms >= 2, (
-            f"PLUGIN-USAGE.md 应至少涵盖 2 个平台, "
+            f"USER_GUIDE.md 应至少涵盖 2 个平台, "
             f"当前 Claude Code/Codex/CodeBuddy 提及数: {platforms}"
         )
 

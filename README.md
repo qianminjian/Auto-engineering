@@ -86,16 +86,16 @@ Engine 层 (auto_engineering/)
 
 | 文档 | 内容 |
 |------|------|
-| `design/BEACON.md` | 设计基线（目标/范围/54 条决策/当前状态） |
+| `design/BEACON.md` | 设计基线（目标/范围/74 条决策/当前状态） |
 | `design/v5.6-Design-Loop.md` | 唯一设计文档：Tick-Based 协议 + 5 层验证 + Init→Loop 契约 + v7.0 双驱动 |
-| `design/IMPLEMENTATION-TRACKER.md` | 实施跟踪表（Phase 1-10, 102/102 全完成） |
+| `design/IMPLEMENTATION-TRACKER.md` | 实施跟踪表（Phase 1-26, 196/196 全部完成） |
 | `design/INDEX.md` | 文档索引 |
 
 ## 测试
 
 ```bash
 uv run pytest tests/ --no-cov --timeout=120 -q
-# ~2132 tests passed
+# ~2587 tests passed
 ```
 
 ## 许可

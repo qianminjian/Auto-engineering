@@ -104,7 +104,7 @@ Init-Loop 契约验收（Phase 08 实现）。
 ```bash
 # 1. 单元 + 集成测试
 pytest tests/ --no-cov --timeout=300 -q
-# 期望: ~2135 passed (v5.6 基准, 2026-07-16)
+# 期望: ~2587 passed (v5.6 基准, 2026-07-19)
 
 # 2. Plugin acceptance test
 bash ae-plugin-acceptance-test.sh
@@ -164,8 +164,7 @@ uv run ae doctor
 - `tests/` — 全部测试覆盖（含 test_loop_orchestrator / test_stage_router / test_guardrail / test_plugin_contract / test_init_contract）
 - `ae-plugin-acceptance-test.sh` — 3 场景实装 + 15 场景扩展位
 - `docs/api-reference.md` — 完整接口（含 19 错误码表）
-- `docs/production-deployment.md` §5 — 降级路径
-- `docs/e2e-real-run.md` §4 — 错误场景
+- `docs/USER_GUIDE.md` §6.2 — 降级路径 / §5.6 — 错误场景
 
 ---
 

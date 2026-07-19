@@ -16,7 +16,7 @@ Auto-Engineering v5.6 is a **Tick-Based Discrete Invocation loop engine** with:
 - **SQLite Checkpoint** + retry_counters 持久化
 - **Init-Loop 契约** (init-manifest.json v1, 5 IL-AC 验证)
 - **19 错误码** (ErrorCode 枚举)
-- **v7.0 双驱动远期架构** (单引擎+双驱动 ports&adapters, 当前仅 T33a/T33b 接缝预留)
+- **v7.0 双驱动远期架构** (单引擎+双驱动 ports&adapters, Phase 11 全部完成（8/8），StandaloneDriver 真实 LLM E2E 验证通过)
 
 ---
 
@@ -557,8 +557,7 @@ except AEError as e:
 
 - `design/v5.6-Design-Loop.md` — v5.6 设计基线
 - `design/BEACON.md` 决策 #28 (v5.0 P0-FINAL) + 决策 #31 (v5.0 深度审计)
-- `docs/PLUGIN-USAGE.md` — Plugin 安装/命令
-- `docs/production-deployment.md` — 部署 + 降级
+- `docs/USER_GUIDE.md` — 安装/命令/部署/降级/故障排查
 - `docs/EARS-v5.0.md` — 15 AC + 5 IL-AC 验收表
 
 ---

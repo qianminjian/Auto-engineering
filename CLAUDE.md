@@ -36,8 +36,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - 名称：Auto-Engineering
 - 类型：Python CLI 应用 + Claude Code Plugin（`/dev-loop` slash command 形态）
 - 版本：v5.6（Tick-Based Discrete Invocation + 5 层验证 + Pre-flight Gap Analysis）+ v7.0 双驱动远期架构
-- 创建日期：2026-06-23 | 更新：2026-07-16
-- 里程碑：Phase 1-10 = 102/102 全完成；v7.0 主体搁置待后续里程碑
+- 创建日期：2026-06-23 | 更新：2026-07-19
+- 里程碑：Phase 1-26 = 196/196 全部完成；v7.0 双驱动架构完整可用（AgentDriver 100% + StandaloneDriver 100% 收敛率等价）
 
 ## 项目性质
 
@@ -46,9 +46,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 **两层架构 + 双引擎共存**：
 - **Plugin 层**（`.claude-plugin/`）：Bash 委托 `ae <subcommand>`，控制流在 Python
 - **Engine 层**（`auto_engineering/`）：
-  - **v5.6 TickOrchestrator**（主引擎）：Tick-Based Discrete Invocation（`ae dev-loop --init → --tick → --result` 文件桥接协议），Python 每次 tick 独立进程（读 SQLite → 验证 → Guardrail → Gate → ConvergenceJudge → Checkpoint → 输出 action JSON → 退出），Agent 通过反复调用 `--tick` 驱动循环。Python 循环引擎永不调 LLM
-  - **v5.5 Orchestrator**（共存）：`ae dev-loop "需求"` 裸参数路径，连续 while 循环直调 LLM（legacy，保留共存不复用）
-- **v7.0 双驱动远期架构**：单引擎(TickOrchestrator)+双驱动(Agent/Standalone) ports&adapters，当前仅做接缝预留（T33a/T33b）
+	  - **v5.6 TickOrchestrator**（主引擎）：Tick-Based Discrete Invocation（`ae dev-loop --init → --tick → --result` 文件桥接协议），Python 每次 tick 独立进程（读 SQLite → 验证 → Guardrail → Gate → ConvergenceJudge → Checkpoint → 输出 action JSON → 退出），Agent 通过反复调用 `--tick` 驱动循环。Python 循环引擎永不调 LLM
+	  - **v5.5 Orchestrator**（退役过渡期）：`ae dev-loop "需求"` 裸参数路径，连续 while 循环直调 LLM（2026-07-19 启动 30 天退役过渡期，`--standalone` 替代，2026-08-18 物理删除）
+	  - **v7.0 双驱动架构**：单引擎(TickOrchestrator)+双驱动(Agent/Standalone) ports&adapters，Phase 11 全部完成（V7-1~V7-8 全量落地），AgentDriver 100% + StandaloneDriver 100% 收敛率等价
 
 **Init Engineering 是独立项目**——本项目通过 Init-Loop 接口契约消费 Init 产出的 `.ae-state/init-manifest.json`。Init 项目不在本仓库范围。
 
@@ -65,19 +65,31 @@ Plugin 层 (.claude-plugin/)
 Engine 层 (auto_engineering/)
   loop/
     tick_orchestrator.py — v5.6 Tick 主引擎 (1017 行, 4 after-handler + _build_action + _apply_result_to_state)
-    orchestrator.py      — v5.5 连续 while 循环 (1208 行, 共存)
+    orchestrator.py      — v5.5 连续 while 循环 (1208 行, 退役过渡期)
+    standalone_driver.py — v7.0 StandaloneDriver (双驱动 B 端, 自带 key 调 LLM)
     stage_router.py      — T1-T22 转换表 + MAJOR 计数 + refine_allowed
-    guardrail.py         — 9 Guardrail (3 态: pass/block/retry, 含 REDGuard/FreshGate/RegressionGate)
+    guardrail.py         — 10 Guardrail (3 态: pass/block/retry, 含 REDGuard/FreshGate/RegressionGate/PIIGuardrail)
     convergence.py       — 4 级收敛判定 (hard/quality/stagnant/semantic) + done verdict
     plan.py              — Task DAG + get_tasks_by_stage
     task_factory.py      — _apply_outcome_to_state + _tasks_from_batch_plan
     init_contract.py     — Init-Loop 接口契约 (IL-AC-01~08)
     refine.py            — plan_refine 回路 (B6.10 归一)
+    debug_tracer.py      — dev-loop 调度轨迹诊断 (tick-{N}.json/errors.jsonl/trace.json)
     checkpoint/          — SQLite checkpoint 持久化
   agents/
     base.py              — BaseAgent + tool_use loop + double-layer parse
     authz.py             — AUTHZ_MATRIX 10×3 (role-based tool authorization)
     prompts.py           — v5.0 system prompts (architect/developer/critic, legacy)
+  context/
+    offloading.py        — Stage context offloading (每 stage 完成 context 卸载到文件)
+    summarization.py     — Cross-tick developer session summarization (tick>5 压缩)
+  pii/
+    redactor.py          — Prompt PII redaction (正则扫描+脱敏)
+    rules.py             — PIIDetectionRule dataclass (5 类规则)
+    guardrail.py         — PII Guardrail G10 (post-agent 全量文件扫描)
+  metrics/               — AI Coding 度量与自进化体系 (Phase 20-21)
+  observability/
+    langsmith_exporter.py — LangSmith exporter (Phase 25 T93)
   prompts/
     registry.py          — PromptRegistry (B12 中央提示词管理, sha256 版本锁)
     roles/               — 9 角色 prompt (architect/developer/critic/verifier/audit/...)
@@ -87,6 +99,7 @@ Engine 层 (auto_engineering/)
     safety/lint/type_check/audit/contract/test/build.py
     commit_msg_gate.py   — Angular 格式校验 (可选)
     deep_audit.py        — 3-agent 编排 deep audit
+    guardrail_base.py   — GuardrailGate ABC (G10 PIIGuardrail 基类)
   cli/
     doctor.py            — 环境预检 (Python/uv/git/sqlite3/API_KEY/.ae-state/init-manifest)
     gate_check.py        — --all (5 道) / --quick (3 道)
@@ -102,6 +115,9 @@ Engine 层 (auto_engineering/)
     progress_tree.py     — ProgressTree 构建/同步/聚合
     gap_analysis.py      — Pre-flight gap scan (B10.2)
   tools/                 — file/bash/git/test tools + sandbox + pr_backend.py
+  providers/             — LLMProvider Protocol + OpenAI adapter + factory
+  config/                — 环境配置 (AE_* 环境变量)
+  utils/                 — plugin_mode 检测等工具函数
   runtime/               — AgentRuntime + CancellationToken + TaskContext
 ```
 
@@ -121,13 +137,10 @@ Engine 层 (auto_engineering/)
 | `design/INDEX.md` | 文档索引（含合并日志/归档清单） | 检索文档时 |
 | `design/v5.6-Design-Loop.md` | v5.6 唯一设计文档（自包含）：Tick-Based 协议 + 5 层验证 + 附录 B(Init→Loop) + 附录 C(v7.0 双驱动) | 开发 loop/gates/agents/cli/commands 时 |
 | `docs/EARS-v5.0.md` | v5.0 验收 15 AC + 5 IL-AC | 验收/审计时 |
-| `docs/api-reference.md` | v5.0 API 接口文档 + 5 代码示例 | 查阅 API 时 |
-| `docs/production-deployment.md` | 生产部署流程 + 环境变量 + 降级 | 部署时 |
-| `docs/e2e-real-run.md` | 端到端验证流程 + 性能基准 | 真跑验证时 |
-| `docs/PLUGIN-USAGE.md` | Plugin 安装 + 使用 + 故障排查 | 用户安装时 |
-| `docs/USER_GUIDE.md` | v5.0 用户指南 — 面向团队内部分发 (5-20 用户本地安装) | 新用户上手时 |
-| `docs/entry-points.md` | 三条入口路径说明 (Plugin / ae CLI / ae dev-loop) + 调用链 + 环境要求 | 理解项目入口时 |
-| `design/IMPLEMENTATION-TRACKER.md` | v5.6 实施跟踪表 (Phase 1-10, 102/102 任务) | 任何开发/进度汇报时 |
+| `docs/api-reference.md` | v5.6 API 接口文档 + 5 代码示例 | 查阅 API 时 |
+| `docs/USER_GUIDE.md` | v5.6 用户指南（含安装/入口路径/命令参考/工作流示例/部署配置/故障排查） | 新用户上手/部署/使用参考 |
+| `docs/PRODUCT-TRAINING-GUIDE.md` | 产品培训指南 | 培训/演示 |
+| `design/IMPLEMENTATION-TRACKER.md` | v5.6 实施跟踪表 (Phase 1-26, 196/196 任务) | 任何开发/进度汇报时 |
 
 ## 核心命令
 
@@ -140,7 +153,7 @@ ae dev-loop --resume                         # 从 checkpoint 恢复
 ae dev-loop "需求"                           # v5.5 裸参数路径 (legacy, 连续 while 循环)
 
 # 测试（16G 内存约束 + 虚拟环境）
-# 全量: ~2135 tests, ~54s
+# 全量: ~2587 tests, ~60s
 uv run pytest tests/test_xxx.py -v --no-cov --timeout=60   # 单文件
 uv run pytest tests/ --no-cov --timeout=120 -q              # 全量
 uv run pytest tests/ --cov=auto_engineering --cov-report=term-missing --timeout=300 -q  # 覆盖率
@@ -258,9 +271,9 @@ python3 scripts/atdo_smoke.py       # Runtime smoke (7 维度)
 
 ---
 
-## 当前测试状态 (2026-07-16)
+## 当前测试状态 (2026-07-19)
 
-- **全量**: ~2135 tests, ~54s (16G 内存约束, `--no-cov --timeout=120`)
+- **全量**: ~2587 tests, ~60s (16G 内存约束, `--no-cov --timeout=120`)
 - **v5.6 Tick 引擎**: TickOrchestrator 单测 52 + StageRouter 43 + BatchState 21 + ProgressTree 20 + 集成测试
 - **契约测试**: action/result schema 21 tests + init_contract round-trip + Plugin 验收 20 场景
 - **S6.6 Agent 运行时**: 2 tests (需 API key, 无 key 时自动 skip)
@@ -268,7 +281,7 @@ python3 scripts/atdo_smoke.py       # Runtime smoke (7 维度)
 ## 管理约束
 
 - tests/ 下测试，覆盖率 ≥ 90%（用户硬指标）
-- 全量 ~2135 tests 通过（2026-07-16 基准）
+- 全量 ~2587 tests 通过（2026-07-19 基准）
 - 测试运行遵守 `@.claude/rules/pytest-memory-management.md`（16G 内存约束）
 - **Agent tool spawn 遵守 `@.claude/rules/agent-spawn-timeout.md`（3 层超时防护）**
 - **设计文档修改遵守 `@.claude/rules/design-document-inviolability.md`（🚨 2026-07-08 事故确立：BEACON决策翻转须审批、设计优先于代码）**
