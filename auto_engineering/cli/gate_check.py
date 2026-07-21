@@ -38,7 +38,7 @@ import click
 from auto_engineering.gates.runner import run_gates  # P1-5: moved from this module
 
 if TYPE_CHECKING:
-    from auto_engineering.gates.base import Gate
+    pass  # reserved for future type-only imports
 
 _logger = logging.getLogger("ae.cli.gate_check")
 

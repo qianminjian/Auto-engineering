@@ -27,8 +27,6 @@ from collections import defaultdict, deque
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any
-
 
 class TaskStatus(StrEnum):
     """Task 生命周期状态."""
@@ -110,7 +108,7 @@ class Task:
     depends_on: list[str] = field(default_factory=list)
     estimated_minutes: int = 30
     status: TaskStatus = TaskStatus.PENDING
-    output: Any = None
+    output: object = None
     # v5.6 T30 (B3.3): 回归修复标记 — RegressionGuardrail(G9) 仅对 kind=="regression_fix"
     # 的 task 执行 revert→MUST FAIL→restore 验证; regression_test_id 为其复现测试.
     kind: str = ""
@@ -127,13 +125,13 @@ class Task:
     def agent_type(self) -> str:
         """Deprecated: use role instead."""
         import warnings
-        warnings.warn("agent_type is deprecated, use role instead", DeprecationWarning, stacklevel=2)
+        warnings.warn("agent_type is deprecated, use role instead", FutureWarning, stacklevel=2)
         return self.role
 
     @agent_type.setter
     def agent_type(self, value: str) -> None:
         import warnings
-        warnings.warn("agent_type is deprecated, use role instead", DeprecationWarning, stacklevel=2)
+        warnings.warn("agent_type is deprecated, use role instead", FutureWarning, stacklevel=2)
         self.role = value
 
 
@@ -453,12 +451,37 @@ class Plan:
         return None
 
 
+@dataclass
+class TaskOutcome:
+    """单个 task 的执行结果 (v2.0, 原 loop/round.py → engine/models.py P2-2).
+
+    消费方: task_factory.py / checkpoint_envelope.py / cli/agent.py
+
+    Attributes:
+        task_id: 任务 ID
+        status: completed | failed | cancelled
+        output: 任务输出 (成功时, dict 形式承载 stage-specific 字段)
+        error: 错误信息 (失败时)
+        duration: 耗时 (秒)
+        task_role: v5.0 M3 新增 — 对应 Task.role (architect/developer/critic),
+                   供 apply_outcome_to_state 分发写入 state 字段.
+    """
+
+    task_id: str
+    status: str  # completed | failed | cancelled
+    output: object = None
+    error: str | None = None
+    duration: float = 0.0
+    task_role: str | None = None
+
+
 __all__ = [
     "VALID_TASK_ROLES",
     "ConflictError",
     "Plan",
     "Task",
     "TaskDAG",
+    "TaskOutcome",
     "TaskStatus",
     "TaskValidation",
     "check_file_isolation",

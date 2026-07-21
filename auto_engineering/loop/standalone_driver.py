@@ -24,21 +24,10 @@ from auto_engineering.runtime.task import Task
 
 _logger = logging.getLogger("ae.loop.standalone_driver")
 
-# ── V7-2: STAGE_TO_ROLE mapping ──
-# 10 个 stage → role (gap_review → None 表示无 LLM role, headless auto-Defer)
+# ── V7-2: STAGE_TO_ROLE mapping (SSOT: config/constants.py) ──
+# Re-exported for backward compatibility with existing callers.
 
-STAGE_TO_ROLE: dict[str, str | None] = {
-    "gap_scan": "gap_scan",
-    "gap_review": None,
-    "research": "research",
-    "architect": "architect",
-    "developer": "developer",
-    "critic": "critic",
-    "component_verifier": "component_verifier",
-    "plate_deep_audit": "plate_deep_audit",
-    "system_verifier": "system_verifier",
-    "system_deep_audit": "system_deep_audit",
-}
+from auto_engineering.config.constants import STAGE_TO_ROLE  # noqa: F401 — re-export
 
 # ── V7-2: ROLE_MODEL mapping ──
 # role → 默认模型, 可通过 AE_MODEL_<ROLE> 环境变量覆盖

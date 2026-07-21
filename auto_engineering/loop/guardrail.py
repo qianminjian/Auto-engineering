@@ -1,4 +1,4 @@
-"""M2 Guardrail 链 — GuardrailResult + Guardrail ABC + 9 Guardrails + Chain + handler.
+"""M2 Guardrail 链 — GuardrailResult + Guardrail ABC + 12 Guardrails + Chain.
 
 设计参考: v5.6-Design-Loop.md §B2.3 (Guardrail 接口契约)
                    + §B1.8 (GuardrailResult 数据类)
@@ -15,7 +15,7 @@ v5.4 P2-8: drop 态已从类型系统和 handler 中完全移除.
     - GuardrailResult / Guardrail ABC: 契约定义 (action 3 态)
     - 9 Guardrail (G1-G6 基线 + G7/G8/G9): 内置检查 (只用 pass/block/retry)
     - GuardrailChain: 编排 (fail-fast + timing/stage 过滤)
-    - handle_guardrail_result: action 分发 (continue/stop/retry/rerun_gates)
+    - Orchestrator 内联 _handle_guardrail_result: action 分发 (continue/stop/retry/rerun_gates)
 
 依赖:
     - stage_router.clear_stage_fields (Stage 字段清理复用)
@@ -46,13 +46,13 @@ from auto_engineering.loop.guardrails.stateful import (
     REDGuardrail,
     RegressionGuardrail,
 )
-from auto_engineering.loop.stage_router import clear_stage_fields
 from auto_engineering.utils.git import run_git as _run_git
 from auto_engineering.utils.git import run_git_diff as _run_git_diff
 
 __all__ = [
     "MAX_RETRY_PER_STAGE",
     "Action",
+    "AuditTimingGuardrail",
     "FileAccessGuardrail",
     "FreshGuardrail",
     "GitClean",
@@ -65,7 +65,6 @@ __all__ = [
     "RegressionGuardrail",
     "RequirementValid",
     "TestsPass",
-    "handle_guardrail_result",
 ]
 
 if TYPE_CHECKING:
@@ -560,68 +559,6 @@ class GuardrailChain:
                 return result
         return GuardrailResult()
 
-
-# ==================== handle_guardrail_result ====================
-
-
-def handle_guardrail_result(
-    result: GuardrailResult,
-    stage: str,
-    state: EngineState,
-    retry_counters: dict[str, int],
-) -> str:
-    """处理 GuardrailResult, 返回主循环下一步动作 (§B5.2).
-
-    Action 分发 (v5.1 P0-1: 3 态, drop 已 deprecated):
-        - "pass"  → "continue" (不动计数器)
-        - "block" → "stop"    (不动计数器)
-        - "drop"  (deprecated) → 无专门分支, 落入未知 action → "stop"
-        - "retry":
-            1. counter += 1 (S-4: key = f"{stage}:{guardrail_name}", 空名退回 stage)
-            2. counter >= MAX_RETRY_PER_STAGE (3) → "stop" (不再清字段)
-            3. counter  <  MAX_RETRY_PER_STAGE:
-               - FreshGuardrail(G8) → "rerun_gates" (只重跑 Gate, **不清** stage 字段,
-                 避免丢弃已提交实现; S-4 特化语义)
-               - 其余 (G3/G4/G7...) → "retry" + 清空 stage 字段 (重跑 Agent)
-
-    Args:
-        result: GuardrailChain.check() 返回的 GuardrailResult (含 guardrail_name).
-        stage: 当前 Stage 名 (用于 counter key + 字段清空).
-        state: EngineState 实例 (会被修改: 清字段).
-        retry_counters: 共享计数器字典 (S-4: 按 stage:guardrail 隔离).
-
-    Returns:
-        主循环动作: "continue" | "stop" | "retry" | "rerun_gates".
-
-    注: 防御性: 未知 action → "stop" (避免 Orchestrator 在非预期动作上僵死).
-    """
-    action: str = result.action
-
-    if action == "pass":
-        return "continue"
-
-    if action == "block":
-        return "stop"
-
-    if action == "retry":
-        # S-4: 同 stage 多 retry 型 Guardrail 各自独立预算 (key=stage:guardrail_name);
-        # 空 guardrail_name (旧直调) 退回 stage 单键, 保持向后兼容.
-        gname = getattr(result, "guardrail_name", "") or ""
-        key = f"{stage}:{gname}" if gname else stage
-        current = retry_counters.get(key, 0)
-        # 先判定, 再累加: 已达上限 → stop 且不动 counter/state
-        if current >= MAX_RETRY_PER_STAGE:
-            return "stop"
-        retry_counters[key] = current + 1
-        # FreshGuardrail(G8) retry 特化: 只重跑 Gate 刷新证据, 不清 stage 字段 (不丢实现)
-        if gname == "FreshGuardrail":
-            return "rerun_gates"
-        # 通用 retry: 清 stage 字段 + 重跑 Agent
-        clear_stage_fields(state, stage)
-        return "retry"
-
-    # 未知 action (防御性)
-    return "stop"
 
 
 # ==================== G12 AuditTimingGuardrail (T112) ====================

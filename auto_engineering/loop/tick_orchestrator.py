@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import subprocess
 import sys
 import time
@@ -32,6 +31,7 @@ from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 from uuid import uuid4
 
+from auto_engineering.config.constants import DEFAULT_P1_THRESHOLD, _SPAWN_CONFIG
 from auto_engineering.config.runtime_config import RuntimeConfig, get_default_config
 from auto_engineering.engine.batch_state import BatchState
 from auto_engineering.engine.design_doc import DesignDoc, Supplement
@@ -41,37 +41,36 @@ from auto_engineering.engine.verification_layers import (
     VerificationLayers,
     determine_verification_layers,
 )
+from auto_engineering.gates._tools import LANGUAGE_TOOLS
 from auto_engineering.gates.deep_audit import recount_findings
+from auto_engineering.loop.action_builder import ActionBuilder, _STAGE_CHECKPOINT_REVIEW_FEEDBACK
 from auto_engineering.loop.actions import ActionDone, ActionError, ErrorResponse, validate_result_format
 from auto_engineering.loop.checkpoint.manager import CheckpointManager
 from auto_engineering.loop.checkpoint.records import CheckpointNotFoundError
 from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
 from auto_engineering.loop.convergence import ConvergenceConfig, ConvergenceJudge, RoundHistory
 from auto_engineering.loop.debug_tracer import DebugTracer, now_iso
-from auto_engineering.loop.action_builder import ActionBuilder
-from auto_engineering.loop.tick_gate_runner import TickGateRunner
 from auto_engineering.loop.guardrail import GuardrailChain
 from auto_engineering.loop.plan import Plan, TaskDAG
 from auto_engineering.loop.refine import build_refine_request
-from auto_engineering.loop.standalone_driver import STAGE_TO_ROLE
 from auto_engineering.loop.stage_router import (
     StageRouter,
     clear_stage_fields,
     update_majors_count,
 )
+from auto_engineering.config.constants import STAGE_TO_ROLE
 from auto_engineering.loop.task_factory import tasks_from_batch_plan
-from auto_engineering.observability.audit_log import AuditLogger
+from auto_engineering.loop.tick_gate_runner import TickGateRunner
 from auto_engineering.metrics.collector import AIOrigin, get_collector
 from auto_engineering.metrics.enrichment import compute_metrics_signals
 from auto_engineering.metrics.transcript_parser import create_parser
-from auto_engineering.gates._tools import LANGUAGE_TOOLS
+from auto_engineering.observability.audit_log import AuditLogger
 from auto_engineering.pii.redactor import PIIRedactor
 from auto_engineering.prompts.registry import default_registry
 
 # Gate runner type: (gate_names, project_root) → {name: GateVerdict}
 GateRunner = Callable[..., dict]
 
-_DEFAULT_P1_THRESHOLD = 6  # 冷启动默认
 _MAX_PER_SOURCE = 2
 _MAX_GLOBAL = 4
 _ISO_FMT = "%Y-%m-%dT%H:%M:%SZ"
@@ -117,91 +116,6 @@ def _detect_project_language(project_root: Path) -> str | None:
 # DS-10 / C.2.6: Python 编排开销预算 (t_orchestration = t_total − t_gate − t_guard_sub).
 # 超预算只告警不中断 — 延迟是可观测性指标, 不是正确性门控. P95 判定离线聚合 (Phase 5).
 ORCH_BUDGET_MS = 2000
-
-_STAGE_CHECKPOINT_REVIEW_FEEDBACK = (
-    "用户选择审查当前产出，请展示当前进度和已完成内容供审查。"
-)
-
-# T108a: Subagent spawn requirements per stage — injected into action JSON so the
-# Agent sees the spawn instruction in the per-tick signal, not just in dev-loop.md.
-# Key insight: normal conversation "spawn Plan agent" works reliably because the
-# instruction and context are in the same message. The Tick loop broke this by
-# separating "what to do" (action JSON) from "how to do it" (dev-loop.md spec).
-# Fix: encode the spawn requirement into every per-tick action JSON.
-_SPAWN_CONFIG: dict[str, dict] = {
-    "architect": {
-        "subagent_type": "Plan",
-        "count": 1,
-        "parallel": False,
-        "model": "Sonnet",
-        "instruction": (
-            "Spawn a Plan agent with the action's context (requirement + design_doc) "
-            "and expected_format. It MUST produce structured batch_plan JSON — not "
-            "just bullet points. Each batch ≤5 files, tasks independently testable."
-        ),
-    },
-    "critic": {
-        "subagent_type": "code-reviewer",
-        "count": 1,
-        "parallel": False,
-        "model": "Sonnet",
-        "instruction": (
-            "Spawn a code-reviewer agent. Feed it files_changed + test_results + "
-            "gate_results from the action's context. It MUST produce structured "
-            "findings (file:line + severity + issue + suggested_fix) and verdict "
-            "(APPROVE if 0 P0 + ≤2 P1, otherwise MAJOR)."
-        ),
-    },
-    "component_verifier": {
-        "subagent_type": "general-purpose",
-        "count": 1,
-        "parallel": False,
-        "model": "Haiku",
-        "instruction": (
-            "Spawn a general-purpose agent (Haiku model). Feed it the component "
-            "design spec + implementation files from the action's context. Map "
-            "each design item to IMPLEMENTED/MISSING/DIVERGED with file+line evidence."
-        ),
-    },
-    "plate_deep_audit": {
-        "subagent_type": "code-reviewer",
-        "count": 3,
-        "parallel": True,
-        "model": "Sonnet",
-        "instruction": (
-            "SPAWN 3 CODE-REVIEWER SUBAGENTS IN PARALLEL. Each audits different "
-            "dimensions of the plate's codebase (cross-component contracts, code "
-            "quality, design compliance). Merge all findings and recount p0/p1/p2 "
-            "counts. The expected_format requires findings array, p0/p1/p2 counts, "
-            "cross_component_issues, and total_audited_files."
-        ),
-    },
-    "system_verifier": {
-        "subagent_type": "general-purpose",
-        "count": 1,
-        "parallel": False,
-        "model": "Haiku",
-        "instruction": (
-            "Spawn a general-purpose agent (Haiku model). Feed it the full design "
-            "spec + full codebase file list from the action's context. Produce a "
-            "full_coverage_map for ALL design items (total_design_items, covered_count, "
-            "missing_count, diverged_count)."
-        ),
-    },
-    "system_deep_audit": {
-        "subagent_type": "code-reviewer",
-        "count": 3,
-        "parallel": True,
-        "model": "Sonnet",
-        "instruction": (
-            "SPAWN 3 CODE-REVIEWER SUBAGENTS IN PARALLEL. Each audits different "
-            "dimensions of the FULL codebase: (1) architecture + engineering, "
-            "(2) code quality + virtualization, (3) collaboration + design coverage. "
-            "Merge all findings via recount_findings() and produce p0/p1/p2 counts, "
-            "total_audited_files, design_docs_stale flag, and design_doc_suggestions."
-        ),
-    },
-}
 
 _logger = logging.getLogger("ae.loop.tick_orchestrator")
 
@@ -308,7 +222,7 @@ class TickOrchestrator:
 
     # ── T113 L2: Injectable access with visible None ──
 
-    def _require(self, attr_name: str, reason: str = "") -> Any:
+    def _require(self, attr_name: str, reason: str = "") -> object:
         """Get injectable with debug-level log when None.
 
         Replaces silent ``if self._x is not None`` checks with a unified
@@ -1079,7 +993,8 @@ class TickOrchestrator:
             return self.build_action()
 
         return ActionError(error_code="INVALID_VERDICT",
-                           message=f"非法 verdict: {verdict!r}").to_dict()
+                           message=f"非法 verdict: {verdict!r}, "
+                                   f"期望值: MAJOR 或 APPROVE").to_dict()
 
     # ── _after_component_verifier ──
 
@@ -1399,6 +1314,8 @@ class TickOrchestrator:
                 verdict_level=verdict.level).to_dict()
             if mc is not None and enrichment:
                 action["metrics"] = enrichment
+                # P1-2: RatchetController 接线 — 收敛时执行棘轮判定
+                action["ratchet"] = self._run_ratchet(mc, enrichment)
             return action
 
         self._save_checkpoint()
@@ -1408,6 +1325,36 @@ class TickOrchestrator:
         if mc is not None and enrichment:
             action["metrics"] = enrichment
         return action
+
+    # ── P1-2: RatchetController 接线 ──
+
+    def _run_ratchet(self, mc, enrichment: dict) -> dict | None:
+        """收敛时执行棘轮 keep/revert/stop 判定.
+
+        对比 baseline (before) 与当前 enrichment (after) 的 M1-M5 度量,
+        返回 RatchetDecision 或 None (度量未启用/无基线时).
+        """
+        try:
+            from auto_engineering.metrics.ratchet import RatchetController
+            baseline = mc.load_baseline() or {}
+            before = {k: v for k, v in baseline.items()
+                      if k.startswith("M") and isinstance(v, (int, float))}
+            after = {k: v for k, v in enrichment.get("signals", {}).items()
+                     if k.startswith("M") and isinstance(v, (int, float))}
+            if not before or not after:
+                return None
+            ratchet = RatchetController(self.project_root)
+            decision = ratchet.evaluate(before, after)
+            return {
+                "action": decision.action,
+                "reason": decision.reason,
+                "config_version": decision.config_version,
+            }
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except (ImportError, ValueError, TypeError, OSError, KeyError):
+            _logger.debug("RatchetController evaluate failed", exc_info=True)
+            return None
 
     # ── System-Initiated Escalation: init-manifest 缺失 gate ──
 
@@ -1829,16 +1776,17 @@ class TickOrchestrator:
 
     def _handle_guardrail_result(self, gr) -> dict:
         action = getattr(gr, "action", "block")
+        message = getattr(gr, "message", "") or f"Guardrail {action} with no message"
         return ActionError(
             error_code=f"GUARDRAIL_{action.upper()}",
-            message=getattr(gr, "message", "")).to_dict()
+            message=message).to_dict()
 
     def _get_p1_threshold(self) -> int:
         """Return P1 threshold for deep audit pass/fail decisions.
 
         T131 Bayesian wiring: when AE_METRICS=1 and ThresholdLearner has ≥30
         observations, reads the learned max_refine_global posterior mean as the
-        P1 threshold (clamped to [2, 8]).  Falls back to _DEFAULT_P1_THRESHOLD
+        P1 threshold (clamped to [2, 8]).  Falls back to DEFAULT_P1_THRESHOLD
         during cold start or when metrics are disabled.
 
         ThresholdLearner is @reserved (strategic reserve) — wiring activates
@@ -1851,17 +1799,19 @@ class TickOrchestrator:
                 learned = learner.compute_max_iter()
                 if learned != 10:  # 10 is the cold-start default — no real data yet
                     return max(2, min(8, learned // 2))
-        except Exception:
-            _logger.debug("self-learned threshold fallback to default %s", _DEFAULT_P1_THRESHOLD, exc_info=True)
-        return _DEFAULT_P1_THRESHOLD
+        except (ImportError, FileNotFoundError, ValueError, TypeError, OSError):
+            _logger.debug("self-learned threshold fallback to default %s", DEFAULT_P1_THRESHOLD, exc_info=True)
+        return DEFAULT_P1_THRESHOLD
 
     def _write_audit_history(self, p0: int, p1: int, p2: int,
                              triggered: bool) -> None:
+        """Record audit findings to state for cross-tick tracking."""
         if not any([p0, p1, p2]):
             return
-        _logger.debug(
-            "audit history not persisted (not yet implemented): "
-            "P0=%d P1=%d P2=%d triggered=%s", p0, p1, p2, triggered)
+        self._state.audit_findings_count = {"p0": p0, "p1": p1, "p2": p2}
+        _logger.info(
+            "audit findings recorded: P0=%d P1=%d P2=%d triggered=%s",
+            p0, p1, p2, triggered)
 
     def _save_checkpoint(self) -> str | None:
         if self._checkpoint_mgr is None:

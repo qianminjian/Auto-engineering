@@ -33,7 +33,7 @@ Auto-Engineering 是 **Claude Code Plugin 形态的 Loop Engineering 脚手架**
 
 | 组件 | 最低版本 | 检查命令 |
 |------|---------|----------|
-| Python | 3.10+ | `python3 --version` |
+| Python | 3.12+ | `python3 --version` |
 | uv | 0.1.0+ | `uv --version` |
 | git | 2.30+ | `git --version` |
 | sqlite3 | 3.35+ | `sqlite3 --version` |
@@ -173,7 +173,7 @@ ae dev-loop --status --format json → 当前进度
 ae dev-loop --resume            → 从 checkpoint 恢复
 ```
 
-**环境要求**：`uv sync` 安装依赖，`ANTHROPIC_API_KEY` 环境变量（或 Plugin 模式的 ANTHROPIC_AUTH_TOKEN），Python 3.11+。
+**环境要求**：`uv sync` 安装依赖，`ANTHROPIC_API_KEY` 环境变量（或 Plugin 模式的 ANTHROPIC_AUTH_TOKEN），Python 3.12+。
 
 **代码路径**：`auto_engineering/cli/dev_loop.py` → `loop/tick_orchestrator.py`
 
@@ -463,15 +463,14 @@ cd ~/projects/project-b
 
 | 变量 | 必需 | 默认 | 说明 |
 |------|------|------|------|
-| (no env var required) | — | — | SDK auto-reads from env; Claude Code agent injects ANTHROPIC_API_KEY in sub-process env |
-| `AE_DB_PATH` | 否 | `.ae-state/checkpoints.db` | SQLite checkpoint 路径 |
+| `AE_PII_ENABLED` | 否 | `true` | PII 四层防护总开关 |
+| `AE_METRICS` | 否 | `false` | AI Coding 度量采集（需 `AE_METRICS=1` 激活） |
+| `AE_DEBUG` | 否 | `false` | DebugTracer 诊断轨迹 |
 | `AE_LOG_LEVEL` | 否 | `INFO` | 引擎日志级别（`DEBUG`/`INFO`/`WARN`/`ERROR`） |
 | `AE_GATE_TIMEOUT` | 否 | `300` | Gate 执行超时（秒） |
-| `AE_NO_GATES` | 否 | `false` | 跳过 Gate 体系（3 级收敛） |
-| `AE_MAX_ITERATIONS` | 否 | `20` | Orchestrator 最大迭代步数 |
-| `AE_LLM_PROVIDER` | 否 | `anthropic` | 仅 `anthropic` 实装，其他保留 |
-| `AE_PROJECT_ROOT` | 否 | `cwd` | 项目根目录（绝对路径） |
-| `AE_INIT_MANIFEST` | 否 | `./init-manifest.json` | init-manifest 路径 |
+| `AE_LLM_PROVIDER` | 否 | `anthropic` | LLM Provider（anthropic/deepseek/glm/qwen/ollama） |
+| `AE_PRODUCTION` | 否 | `false` | 生产模式 — 严格 REDGuardrail + block gate 降级 |
+| `AE_CACHE_CONTROL` | 否 | `true` | Anthropic Prompt Caching |
 
 ```bash
 # ~/.zshrc 或 ~/.bashrc（可选优化）

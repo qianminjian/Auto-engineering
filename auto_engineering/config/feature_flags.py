@@ -15,7 +15,7 @@ feature_warnings() 在 --init 时调用, 向用户提示默认关闭的生产相
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Literal
 
 AgentMode = Literal["both", "standalone_only", "agent_only"]

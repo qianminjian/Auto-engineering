@@ -16,7 +16,6 @@ Exit codes:
 
 from __future__ import annotations
 
-import os
 import shutil
 import sqlite3
 import sys
@@ -247,7 +246,7 @@ def render_optional_features() -> list[tuple[bool, str]]:
     lines: list[tuple[bool, str]] = []
     for f in FEATURE_MANIFEST:
         s = status[f.key]
-        mark = "✓" if s["active"] else "✗"
+        _mark = "✓" if s["active"] else "✗"
         mode_note = ""
         if s["agent_mode"] != "both" and s["active"]:
             mode_note = f" (仅 {s['agent_mode'].replace('_', ' ')} 模式生效)"

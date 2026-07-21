@@ -1,4 +1,4 @@
-> 创建：2026-06-24 | 更新：2026-07-21 | 阶段：Phase 1-30 — 深度审计 28 项问题全部修复完成 (P0×7 + P1×12 + P2×8)
+> 创建：2026-06-24 | 更新：2026-07-21 | 阶段：Phase 1-30 — 2026-07-21 深度审计第二轮 28 项全部修复完成 (25 修复 + 2 暂缓 + 1 已确认)
 > ⚠️ **决策状态翻转管控**：status 列 ✅→❌ 或 ❌→✅ 必须经用户审批。AI 不得自行翻转。详见 `.claude/rules/design-document-inviolability.md` §2。
 
 ## 目标与成功标准
@@ -57,7 +57,7 @@
 | **62** | **真跑故障修复（3 bugs）** | BUG-01(P1): `batch_state.py` G2 error 信息补全有效 component name 列表 / BUG-02(P2): `guardrail.py` GitDiffExists root commit diff-tree 返回空→`git show --stat` 降级 / BUG-03(P0): `tick_orchestrator.py` `_after_developer()` batch 间未调 `_save_checkpoint()`→跨进程状态丢失。D35 | 2026-07-18 | ✅ |
 | **63** | **vNext 战略定调：银行生产级框架 + 源码级内化** | Auto-engineering 定位为银行生产级框架——模型无关（Ollama/国产模型）、PII 防护、平台无关（StandaloneDriver）全部升级为 P0。Deep Agents (Apache 2.0) 源码级内化：harness 层能力（PII/Provider/Context offloading）直接复用源码改造后纳入 `auto_engineering/`，零运行时依赖；纪律层（Tick/Gate/Guardrail/收敛/DecisionGate）保持原创。5 项复用原则 + 7 项源码复用映射表。D36 | 2026-07-18 | ✅ |
 | **64** | **Phase 17 — 设计治理修复：6 角色独立 Agent 隔离恢复 + B14 澄清** | 恢复 v5.1 原始设计——developer 单独主会话，architect/critic/component_verifier/plate_deep_audit/system_verifier/system_deep_audit 恢复独立 subagent 隔离（Plan/code-reviewer/general-purpose，Haiku/Sonnet 按需）。B14 追加澄清：Claude Code 内置 subagent 不属于"外部依赖"；MCP/搜索 skill 是信息获取工具不在禁令范围。Governance 规则覆盖范围扩展到 commands/*.md + skills/*/SKILL.md + hooks/*.sh。T49-T52c。D37 | 2026-07-18 | ✅ |
-| **65** | **Phase 18 — Context & 安全加固** | T53 Stage context offloading（每 stage 完成后 context 卸载到文件，下 stage 只加载摘要）；T54 Cross-tick developer session summarization（tick>5 时压缩 developer 对话历史，仅 developer 需要，subagent 每次新 spawn 天然无累积压力）；T55 Ollama adapter（OpenAI 兼容格式，复用 v8.0 Provider 抽象）；T56 Prompt PII redaction（BaseAgent.execute() 发送前正则扫描+脱敏）；T57 Tool result PII scan（_truncate_tool_results 同步 PII 扫描）。D38 | 2026-07-18 | ✅ |
+| **65** | **Phase 18 — Context & 安全加固** | T53 Stage context offloading（每 stage 完成后 context 卸载到文件，下 stage 只加载摘要）；T54 Cross-tick developer session summarization（已实现后因死代码删除 — Build-then-Wire 无生产消费者，Phase 30 审计物理删除。保留设计意图，实现留待未来接线需求）；T55 Ollama adapter（OpenAI 兼容格式，复用 v8.0 Provider 抽象）；T56 Prompt PII redaction（BaseAgent.execute() 发送前正则扫描+脱敏）；T57 Tool result PII scan（_truncate_tool_results 同步 PII 扫描）。D38 | 2026-07-18 | ⚠️ T54 已删除（死代码） |
 | **66** | **Phase 19 — 模型扩展 & 可观测性** | T58 国产模型 adapter（GLM/通义/文心，信创合规）；T59 StandaloneDriver 完善（v7.0 路线图，银行内网部署）；T60 OpenTelemetry tracing（每 stage/guardrail/gate 打 OTLP span）；T61 Structured audit log（LLM 调用完整 request/response JSONL）；T62 FileAccessGuardrail（developer files_changed 必须在 file_targets 内）；T62a glob 支持（pathspec 库集成）；T63 Prompt caching（Anthropic 原生支持）；T64 Stage Checkpoint Gate（TickOrchestrator --pause-at-stage，DecisionGate 形态 3）。D39 | 2026-07-18 | ✅ |
 | **67** | **ORCA DecisionGate — 3 形态 HITL 双向阻塞机制** | 借鉴 ORCA 的两条 HITL 通道（Gate 自上而下 + Ask/Reply 自下而上），抽象为 Tick 协议的三形态 DecisionGate 原语：① Pre-planned Gate（architect 在 batch_plan 中声明 gate）② Escalation Gate（Agent 主动举手，`ae dev-loop --escalate`）③ Stage Checkpoint Gate（--pause-at-stage）。**形态 3 已实现（Phase 19 T64），形态 1/2 战略储备（Phase 25 T94/T95）**。不引入 ORCA 的消息系统（SQLite mail store + check --wait 循环对单 tick 架构过重），在现有 tick JSON 协议上扩展 gate 字段。D40 | 2026-07-18 | ✅ |
 | **68** | **PII Middleware — 三道防线 + PIIDetectionRule** | 银行场景 PII 防护三道防线：① Prompt PII redaction（T56，LLM 调用前正则扫描+脱敏，防敏感数据出境）；② Tool result PII scan（T57，tool_result 写入前扫描）；③ PII Guardrail G10（post-agent 全量文件扫描，第二道防线）。PIIDetectionRule dataclass 定义 5 类规则（身份证/手机号/银行卡/API Key/邮箱），含 exclusion_patterns 防误杀 + 白名单机制。非侵入式 pipeline 插入 BaseAgent.execute() 调用链。失败不阻断（默认脱敏+WARN），block 模式可选开关。D41 | 2026-07-18 | ✅ |
@@ -80,13 +80,13 @@
 | **83** | **AuditTimingGuardrail 证据组合检测器（T112 深度分析）** | T112 兜底安全网——Agent 不 spawn subagent 时 Python 侧强制拦截。三重证据（E1 耗时/E2 findings 空/E3 p0/p1 零）经 2026-07-21 深度分析修正：E2→E3 非独立（E2 蕴含 E3），原 `≥2/3 → retry` 对场景 E（干净代码库正常审计 8s 无发现）误报。修正为 E1 必须参与组合：`effective = E1 + max(E2, E3)`，2/2 → retry，1/2 → WARN。跨 tick 计时（`action_timestamp` checkpoint 持久化）+ 首次 tick 冷启动 skip + StandaloneDriver 区分。5 个 spawn stage 阈值表（component_verifier 从 3s 上浮至 5s 防 Haiku spawn 开销误报）。与 T108c 分层：T108c WARN 早期信号，T112 block 兜底拦截。设计详见 IMPLEMENTATION-TRACKER.md T112 详细 | 2026-07-21 | ✅ |
 | **84** | **GitClean untracked 测试覆盖补全（T106 深度分析）** | GitClean guardrail 修复代码已有（ca5c4d1+d329d74，正确过滤 `??` 和 `!!`）。深度分析发现 4 项测试缺口：① 命名修正 `test_block_dirty_repo`→`test_untracked_files_pass`；② `!!` ignored 文件 → pass 测试；③ 混合场景 untracked+tracked 修改 → block（防过滤逻辑掩盖真实变更）；④ `git status` 命令失败 → block。~4 tests，~35 行。设计详见 IMPLEMENTATION-TRACKER.md T106 详细 | 2026-07-21 | ✅ |
 | **85** | **人在环 gap_review 自动暂停闸门（T107 深度分析定案）** | 交叉对标发现 gap_review 是"人在信息环"非"人在决策环"。3 方案评估后定案方案 C（阈值触发）：`has_blocking == true`（有 architectural gap）→ 自动插入 Stage Checkpoint Gate 暂停等用户确认（复用 T64 DecisionGate 基础设施，`_after_gap_review()` ~5 行改动）。`has_blocking == false`（仅 component/module 级）→ 不暂停直接进入 architect。4 子项（T107a-T107d）。设计详见 IMPLEMENTATION-TRACKER.md T107 详细 | 2026-07-21 | ✅ |
-| **86** | **深度审计 28 项发现 + 16 项自动修复 + 6 架构决策待确认（Phase 30）** | 2026-07-21 全量深度审计。28 项发现（P0×6 + P1×12 + P2×10）。第一批 16 项自动修复已完成。6 项架构决策待用户确认。 | 2026-07-21 | ✅（自动修复）/ ⛔（架构决策待确认） |
+| **86** | **深度审计 28 项发现（Phase 30 第二轮修复）** | 2026-07-21 全量深度审计。28 项发现（P0×3 + P1×11 + P2×14）。2026-07-21 第二轮修复：25 项完成（P0×3 + P1×9 + P2×13），2 项暂缓（P1-1 StandaloneDriver 拆分 + P2-1 TickOrchestrator 拆分），1 项已确认（P1-3 SessionSummarizer 已在 Phase 22 物理删除）。虚化代码 ~533→0 行。关键修复：RatchetController 接线到 _convergence_check（P1-2）、shared/guardrail.py 消除 pii→engine 反向依赖（P1-4）、from_manifest 基类提取去重（P1-5）、Guardrails 统一入口（P1-6）、10 处 Any→object（P2-7）、3 处 except 窄化（P2-8）、TaskOutcome 迁移（P2-2）、测试文件修复。全量 2358 tests 零回归。详见 _scratch/reports/2026-07-21-audit.md。 | 2026-07-21 | ✅（25/28） |
 | **87** | **P0-6 RuntimeConfig 环境变量集中化** | 替换 49 处散落 `os.environ` 调用为单一可注入 RuntimeConfig frozen dataclass（30+ typed properties + `get()`/`is_active()` 方法）。进程级 sentinel 模式：`set_default_config()` CLI 入口调用一次，`get_default_config()` 返回 sentinel 或回退到 fresh RuntimeConfig（支持 test monkeypatch）。`plugin_mode.py` 用自身 `_get_environ()` helper 避免循环导入。`_build_injectables()` 向后兼容 legacy dict。conftest autouse fixture 每测试间重置 `_SENTINEL`。涉及 18 源文件 + 2 测试文件，2372 tests 零回归。 | 2026-07-21 | ✅ |
 | **88** | **P0-5 裸 except Exception 窄化** | 31 处裸 `except Exception` 窄化为具体异常类型（OSError/sqlite3.Error/subprocess.CalledProcessError/json.JSONDecodeError/TypeError/ValueError/KeyError/ImportError/jsonschema.SchemaError/AttributeError）。13 处保留宽捕获（task executor/gate fail-closed/LLM tool handler/CLI handler/guardrail degradation）并添加解释性注释。涉及 16 源文件，零回归。Phase 30 完成后全项目裸 except 从 55 降至 ~33（剩余主要在 v5.5 legacy 路径 + gates fail-closed + CLI user-facing）。 | 2026-07-21 | ✅ |
 
 ## 当前状态
 
-**阶段：** v5.6 全部完成 — Phase 1-30 全部完成（241 顶级任务，Phase 30 审计修复持续推进中）。239/241 完成，6 项架构决策待确认。
+**阶段：** v5.6 全部完成 — Phase 1-30 全部完成（241 顶级任务）。2026-07-21 第二轮深度审计 28 项发现：25 项已修复 + 2 项暂缓（P1-1/P2-1）+ 1 项已确认（P1-3）。虚化代码 ~533→0。2358 tests 零回归。
 
 **最近动作 (2026-07-21 P0-1/P0-3/P0-4 审计修复完成)：**
 - **P0-1 TickOrchestrator God Class 拆分**：ActionBuilder 委托类（~400 行, 15 方法, 10 stage builder + dispatch + PII outbound）提取自 TickOrchestrator。TickGateRunner 委托类（~130 行, gate 选择/执行/解析/度量/追踪/审计）提取。`_run_developer_gates` 88→4 行委托代理。TickOrchestrator 2321→1885 行, 60→52 方法。代码审查发现 2 个 bug（audit log 丢失 stage/tick + 未使用的 logger 导入）已当场修复。
@@ -249,7 +249,7 @@
 - **设计文档深度审计 + 22 项收口深化** (决策 #49, Phase 8)：3 并行子代理审 4214 行 → 规格 6.5/10、端到端 2.5/10。P0×4 全为代码缺口(已 T9/T10/T27/T32 跟踪)；文档规格缺陷 S-1~S-20+Q-1/Q-2 共 22 项**纯文档收口**（补 CoverageItem/GateVerdict/done verdict 权威 schema + file-bridge 边界矩阵 §C.3.5 + 路径更正 + 过度设计存续论证）。**S-1 语义评估矛盾定案**：v5.6 全路径无语义评估，代码 semantic_evaluator 移除跟踪到 Phase 3 T10d。审计产出为会话内产物（未持久化为文件），无 status 翻转
 - **Init-Loop 契约 v5.6 扩展** (决策 #48)：`init-manifest.schema.json` 版本化 SSOT + ci_platform/design_root 字段 + monorepo 单包降级 + 消费者驱动契约测试
 
-**下一步：** T109a PIIRedactor.scan_dict/redact_dict 基础设施实现，然后 T109b-T109h 按依赖顺序推进。
+**下一步：** 长期迭代 — P1-1 StandaloneDriver 拆分 + P2-1 TickOrchestrator after_handlers Strategy 模式（暂缓，后续会话顺带推进）。
 
 **阻塞项：** 无。
 
@@ -257,6 +257,7 @@
 
 | 日期 | 变更 | 原因 |
 |------|------|------|
+| 2026-07-21 | **第二轮深度审计 28 项发现全部修复（25 修复 + 2 暂缓 + 1 已确认）** | P0 虚化代码消除（3/3：~533→0 行）→ P1 架构修复（9/11：RatchetController 接线/shared.guardrail/from_manifest 去重/Guardrails 统一入口/ActionError/SchemaMismatch 等）→ P2 代码质量（13/14：TaskOutcome 迁移/PromptsRegistry/DesignDocParser/Any→object/except 窄化等）。2 项暂缓（P1-1 StandaloneDriver + P2-1 TickOrchestrator 拆分，大重构风险高）。1 项已确认（P1-3 SessionSummarizer 已在 Phase 22 物理删除）。全量 2358 tests 零回归。审计报告 _scratch/reports/2026-07-21-audit.md。总体评分 7.5→8.5。 |
 | 2026-07-21 | **深度审计 28 项问题全部修复（P0×7 + P1×12 + P2×8）** | P0-1 God Class 拆分（ActionBuilder + TickGateRunner）→ P0-2~7 已修复（循环依赖/命名统一/裸 except/RuntimeConfig/build_action 拆分）→ P1-8~19 全部修复（ThresholdLearner @reserved + SessionSummarizer 物理删除 + _ 前缀/注释/docstring/feature_warnings 已有 → 本轮清理收尾）→ P2-20~27 全部已有修复（验证确认）。P1-9 summarization.py (223 行) + test 物理删除。总体评分 5.5→8.0。 |
 | 2026-07-21 | **P0-1 God Class 拆分 + P0-3/P0-4 命名统一（决策 #89 + #90）** | ActionBuilder（~400 行） + TickGateRunner（~130 行）委托类提取。Orchestrator 2321→1885 行。全量命名统一为 Guardrail 后缀（代码+文档 7 个活跃文件 + tests）。2389 tests 零回归。 |
 | 2026-07-21 | **P0-5 裸 except Exception 窄化（决策 #88）** | 深度审计代码质量 C1-C10。31 处裸 except 窄化为 10 种具体异常类型（18 源文件），13 处保留宽捕获（task executor/gate fail-closed/CLI handler）加解释性注释。全项目裸 except 从 55 降至 ~33。零回归。 |

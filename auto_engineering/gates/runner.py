@@ -60,6 +60,8 @@ def run_gates(
         # 跑 Gate
         try:
             verdict = gate.run(project_root)
+        except (KeyboardInterrupt, SystemExit):
+            raise
         except Exception as e:
             _logger.warning("gate '%s' 执行异常", name, exc_info=True)
             # fail-closed: 崩溃的质量门禁不得静默放行 (区别于"不适用" skipped)

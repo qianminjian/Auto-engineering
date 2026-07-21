@@ -116,9 +116,9 @@ def main():
               default="text", help="输出格式 (与 ae status --format 统一)")
 @click.option(
     "--llm-provider",
-    type=click.Choice(["anthropic"]),
+    type=click.Choice(["anthropic", "openai", "ollama", "glm", "qwen"]),
     default="anthropic",
-    help="LLM 提供方 (仅 anthropic 已实装)",
+    help="LLM 提供方 (anthropic/openai/ollama/glm/qwen)",
 )
 @click.option("--project-root", type=click.Path(exists=True), help="项目根目录 (默认 cwd)")
 @click.option("--standalone", "standalone_flag", is_flag=True,
@@ -173,16 +173,19 @@ def dev_loop(
     # ── v5.6 tick 模式分派 (先于 LLM preflight — Python 不需 API key) ──
     tick_modes = [init_flag, tick_flag, status_flag, bool(resume_id)]
     if sum(bool(m) for m in tick_modes) > 1:
-        click.echo("错误: --init/--tick/--status/--resume 互斥, 仅可指定一个", err=True)
+        click.echo("错误: --init/--tick/--status/--resume 互斥, 仅可指定一个。"
+                   "示例: ae dev-loop --init '你的需求'", err=True)
         raise SystemExit(1)
 
     # ── v7.6 standalone 模式互斥检查 ──
     if standalone_flag and sum(bool(m) for m in tick_modes) > 0:
-        click.echo("错误: --standalone 与 --init/--tick/--status/--resume 互斥", err=True)
+        click.echo("错误: --standalone 与 --init/--tick/--status/--resume 互斥。"
+                   "使用 --standalone 时直接提供需求参数: ae dev-loop --standalone '需求'", err=True)
         raise SystemExit(1)
     if init_flag:
         if not requirement:
-            click.echo("错误: --init 需要 requirement 参数", err=True)
+            click.echo("错误: --init 需要 requirement 参数。"
+                       "示例: ae dev-loop --init '实现用户登录功能'", err=True)
             raise SystemExit(1)
         run_tick_init(requirement, design_doc, root, max_rounds, debug=_debug,
                        debug_dir=debug_dir_opt, pause_at_stage=pause_at_stage,
@@ -190,7 +193,8 @@ def dev_loop(
         return
     if tick_flag:
         if not result_file:
-            click.echo("错误: --tick 必须带 --result <file>", err=True)
+            click.echo("错误: --tick 必须带 --result <file>。"
+                       "示例: ae dev-loop --tick --result stage-result.json", err=True)
             raise SystemExit(1)
         run_tick_step(Path(result_file), root, debug=_debug,
                        debug_dir=debug_dir_opt)
@@ -205,18 +209,31 @@ def dev_loop(
     # ── v7.6 standalone 模式 (Driver B) ──
     if standalone_flag:
         if not requirement:
-            click.echo("错误: --standalone 需要 requirement 参数", err=True)
+            click.echo("错误: --standalone 需要 requirement 参数。"
+                       "示例: ae dev-loop --standalone '实现用户登录功能'", err=True)
             raise SystemExit(1)
         run_standalone(requirement, design_doc, root, max_rounds, max_tokens,
                         llm_provider, resume_id, debug=_debug, debug_dir=debug_dir_opt)
         return
 
-    # v5.5 legacy 路径已退役 (T133b)
-    # 裸参数 ae dev-loop "req" 不再接收, 必须用 --init/--tick/--standalone
+    # v5.5 legacy 路径 30 天过渡期 (T133b)
+    # 裸参数 ae dev-loop "req" 仍可用但输出弃用 WARN, 引导改用 --standalone
+    # 过渡期截止 2026-08-18, 届时物理删除此路径
+    if requirement:
+        click.echo(
+            "⚠️  弃用警告: ae dev-loop 'req' 旧路径已弃用 (T133b), "
+            "请改用: ae dev-loop --standalone 'requirement'\n"
+            "    旧路径在 2026-08-18 前仍可用, 之后将移除.",
+            err=True,
+        )
+        run_standalone(requirement, design_doc, root, max_rounds, max_tokens,
+                        llm_provider, resume_id, debug=_debug, debug_dir=debug_dir_opt)
+        return
+
+    # 无参数且无 flag → 显示帮助
     click.echo(
-        "错误: requirement 参数必填 (或用 --init/--tick/--status/--resume/--standalone)\n"
-        "v5.5 ae dev-loop 'req' legacy 路径已退役 (T133b). "
-        "请改用: ae dev-loop --standalone 'requirement'",
+        "用法: ae dev-loop --init/--tick/--status/--resume/--standalone\n"
+        "试运行 ae dev-loop --help 查看完整文档.",
         err=True,
     )
     raise SystemExit(1)

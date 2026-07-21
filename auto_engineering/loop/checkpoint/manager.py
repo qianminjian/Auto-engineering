@@ -7,6 +7,7 @@ v5.4 审计 P0-1: Orchestrator 承担 7+ 种职责 (God Class).
 from __future__ import annotations
 
 import logging
+import sqlite3
 from typing import Any
 
 from auto_engineering.loop.checkpoint.records import CheckpointNotFoundError

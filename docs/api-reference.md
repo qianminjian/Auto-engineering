@@ -49,23 +49,10 @@ ae <subcommand> [options]
 
 > 旧路径 `ae init <project>` 已迁移到独立 Init Engineering 项目 (BEACON 决策 30)。Init 侧按 §6 Init-Loop 接口契约 (IL.1-IL.6) 实现, 本项目只消费 `.ae-state/init-manifest.json`.
 
-### 1.2 `ae doctor` 输出契约
+### 1.2 `ae doctor` 输出
 
-```json
-{
-  "status": "ok|warn|fail",
-  "checks": {
-    "python": {"ok": true, "version": "3.12.4"},
-    "uv": {"ok": true, "version": "0.4.18"},
-    "git": {"ok": true, "version": "2.39.3"},
-    "sqlite3": {"ok": true, "version": "3.43.2"},
-    ".ae-state": {"ok": true, "path": "/path/to/.ae-state"},
-    "init-manifest": {"ok": true, "schema_version": 1, "path": "init-manifest.json"}
-  }
-}
-```
-
-退码：`0` = all ok / `1` = one or more fail。
+`ae doctor` 以终端文本格式输出环境检查结果（非 JSON）。每行一个检查项，以 `✓` / `✗` 开头。
+退码：`0` = all ok / `1` = one or more fail / `2` = config error。
 
 ### 1.3 `ae dev-loop` 退出码
 
@@ -122,9 +109,13 @@ ae dev-loop --tick --result → 读 result JSON → 验证 → 输出下一个 a
 
 裸参数路径 `ae dev-loop "需求"`，连续 while 循环直调 LLM。与 v5.6 Tick 引擎共存，不复用。
 
-## 3. Orchestrator 12 步主循环 (v5.0 Legacy, §B7.1)
+## 3. Orchestrator 12 步主循环 (v5.0/v5.5 Legacy — 历史参考, §B7.1)
 
-**模块**: `auto_engineering.loop.orchestrator.Orchestrator`
+> ⚠️ **v5.5 已退役** (BEACON #53)。v5.0 Orchestrator 连续 while 循环已被 v5.6 Tick-Based Discrete Invocation 协议替代。
+> 以下内容仅供参考历史设计演进，不可直接运行。新代码请使用 v5.6 `ae dev-loop --init` → `--tick --result` 离散调用路径。
+> OR 使用 v7.0 `ae dev-loop --standalone "需求"` 双驱动 B 端。
+
+**模块**: `auto_engineering.loop.orchestrator.Orchestrator` (已删除, v5.5 退役)
 
 ```python
 from pathlib import Path
@@ -484,33 +475,27 @@ agent = runtime.get_agent("architect")  # → BaseAgent 实例
 
 ---
 
-## 10. 19 错误码 (v5.6 §B10.1a)
+## 10. 13 错误码 (v5.6 §B10.1a)
 
 **模块**: `auto_engineering.errors.ErrorCode`
 
 | 错误码 | 类别 | 抛出点 | 说明 |
 |--------|------|--------|------|
-| `CHECKPOINT_SAVE_FAILED` | IO | `CheckpointStore.save()` | SQLite 写失败 |
-| `CHECKPOINT_LOAD_FAILED` | IO | `CheckpointStore.load()` | SQLite 读失败 |
-| `LLM_TIMEOUT` | API | `AnthropicProvider.create_message` | 网络超时 |
-| `LLM_MAX_RETRIES` | API | `AnthropicProvider.create_message` | 超 max_retries |
-| `GUARDRAIL_BLOCKED` | GUARD | `Guardrail.check() action='block'` | 中止 Stage |
-| `GUARDRAIL_RETRY` | GUARD | `Guardrail.check() action='retry'` | 重试 Stage |
-| `STAGE_RETRY_EXCEEDED` | LOOP | 历史 (v1.0) | 保留 API |
+| `LLM_TIMEOUT` | API | `BaseAgent._map_llm_exception()` | API 超时 |
+| `LLM_NETWORK_ERROR` | API | `BaseAgent._map_llm_exception()` | 网络连接异常 |
+| `LLM_INVALID_RESPONSE` | API | `BaseAgent._map_llm_exception()` | API 返回非法响应 |
+| `LLM_AUTH_ERROR` | API | `BaseAgent._map_llm_exception()` | 认证失败 |
+| `LLM_RATE_LIMIT` | API | `BaseAgent._map_llm_exception()` | 速率限制 |
+| `LLM_UNKNOWN_ERROR` | API | `BaseAgent._map_llm_exception()` | 未知 LLM 异常 |
 | `MAX_TOOL_CALLS_EXCEEDED` | LOOP | `BaseAgent.execute()` | 工具循环超限 |
 | `INVALID_AGENT_OUTPUT` | LOOP | `BaseAgent._parse_final_response()` | JSON 解析失败 |
-| `GRAPH_RECURSION_LIMIT` | LOOP | 历史 (v1.0) | 保留 API |
-| `TASK_NOT_FOUND` | TASK | 历史 (v1.0) | 保留 API |
-| `TASK_CANCELLED` | TASK | `CancellationToken.check()` | Ctrl-C |
+| `TOOL_EXECUTION_ERROR` | TOOL | `BaseAgent.execute()` | 工具执行异常 |
+| `TASK_CANCELLED` | TASK | `CancellationToken.check()` | 用户中断 (Ctrl-C) |
 | `AGENT_REGISTRATION_ERROR` | TASK | `AgentRuntime` | agent_type 未注册 |
-| `OUTPUT_DROPPED` | TASK | `Guardrail action='drop'` (deprecated v5.1 P0-1) | 静默丢弃 → 现按 retry 处理 |
-| `CONFIG_MISSING_API_KEY` | CFG | (deprecated v5.0, Plugin 模式 Claude Code Agent 提供 key) | 保留 API 兼容 |
-| `CONFIG_INVALID_VALUE` | CFG | `Settings` 校验 | 非法配置值 |
-| `BUDGET_EXCEEDED` | BUDGET | `TokenTracker.add()` | 超 max_tokens |
-| `CONTRACT_REJECTED` | BIZ | `BaseAgent.contract_gate` | Gate 拒绝 |
-| `LLM_NETWORK_ERROR` | API | 预留 | 网络断开 |
+| `CONFIG_MISSING_API_KEY` | CFG | `cli/__init__.py` | CLI 模式缺少 API key |
+| `BUDGET_EXCEEDED` | BUDGET | `TokenTracker.add()` | 超出 token 预算 |
 
-> 19 错误码 = 13 实际抛出 + 6 预留（LLM 系列: `LLM_NETWORK_ERROR` / `LLM_INVALID_RESPONSE` / `LLM_AUTH_ERROR` / `LLM_RATE_LIMIT` / `LLM_UNKNOWN_ERROR` 5 + `STAGE_RETRY_EXCEEDED` / `GRAPH_RECURSION_LIMIT` / `TASK_NOT_FOUND` 3 个 v1.0 保留 API）。详见 `tests/test_error_codes.py`。
+> 历史码（v1.0-v5.0 已删除，仅保留注释引用）：`CHECKPOINT_SAVE_FAILED` / `CHECKPOINT_LOAD_FAILED` / `LLM_MAX_RETRIES` / `GUARDRAIL_BLOCKED` / `GUARDRAIL_RETRY` / `STAGE_RETRY_EXCEEDED` / `GRAPH_RECURSION_LIMIT` / `TASK_NOT_FOUND` / `OUTPUT_DROPPED` / `CONFIG_INVALID_VALUE` / `CONTRACT_REJECTED`。详见 `tests/test_error_codes.py`。
 
 ### 10.1 AEError 异常族
 

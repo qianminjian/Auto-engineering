@@ -56,6 +56,16 @@ class LLMResponse:
     stop_reason: str = "end_turn"
     tool_use_blocks: list[dict] = field(default_factory=list)
 
+    def __post_init__(self) -> None:
+        import warnings
+        warnings.warn(
+            "llm.anthropic_provider.LLMResponse is deprecated, "
+            "use providers.base.LLMResponse instead. "
+            "Will be removed after 2026-09-01.",
+            FutureWarning,
+            stacklevel=2,
+        )
+
 
 class AnthropicProvider:
     """Anthropic Claude API 客户端封装.

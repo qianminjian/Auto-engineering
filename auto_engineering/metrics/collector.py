@@ -5,6 +5,7 @@ Runtime 为每个 run 提供独立上下文（run_id, attempt 计数器），
 MetricsCollector 为每个需求提供独立采集作用域（thread_id → 事件流）。
 """
 import json
+import logging
 import os
 import subprocess
 import threading
@@ -12,6 +13,8 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
+
+_logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -137,6 +140,7 @@ class MetricsCollector:
                 meta = json.loads(meta_path.read_text())
                 self._current_category = meta.get("category", "")
             except (json.JSONDecodeError, OSError):
+                _logger.debug("metrics metadata read failed: %s", meta_path, exc_info=True)
                 self._current_category = ""
         else:
             self._current_category = ""
@@ -148,6 +152,7 @@ class MetricsCollector:
                     if line:
                         self._events.append(json.loads(line))
             except (json.JSONDecodeError, OSError):
+                _logger.debug("metrics events read failed: %s", events_path, exc_info=True)
                 self._events = []
         return self._events
 
@@ -207,6 +212,7 @@ class MetricsCollector:
                 data = json.loads(summary_path.read_text())
                 summaries.append(data)
             except (json.JSONDecodeError, OSError):
+                _logger.debug("metrics summary read failed: %s", summary_path, exc_info=True)
                 pass
         return summaries
 
@@ -221,6 +227,7 @@ class MetricsCollector:
         try:
             return json.loads(baseline_path.read_text())
         except (json.JSONDecodeError, OSError):
+            _logger.debug("metrics baseline read failed: %s", baseline_path, exc_info=True)
             return None
 
     # ── 事件采集 ──
@@ -481,6 +488,7 @@ class MetricsCollector:
             try:
                 summary = json.loads(summary_file.read_text())
             except (json.JSONDecodeError, OSError):
+                _logger.debug("metrics summary file read failed: %s", summary_file, exc_info=True)
                 continue
             all_summaries.append(summary)
             # Read category from metadata.json
@@ -562,6 +570,7 @@ class MetricsCollector:
                 return float(result.stdout.strip())
             return None
         except (subprocess.TimeoutExpired, ValueError, OSError):
+            _logger.debug("git tag timestamp failed", exc_info=True)
             return None
 
     @staticmethod
@@ -603,6 +612,7 @@ class MetricsCollector:
                     insertions = int(part.split()[0])
             return insertions
         except (subprocess.TimeoutExpired, ValueError, OSError):
+            _logger.debug("git diff stat failed", exc_info=True)
             return 0
 
 
