@@ -27,18 +27,21 @@ def create_provider(provider: str = "", *, api_key: str = "") -> LLMProvider:
     Note: 多 key 同时设置时，OLLAMA_HOST 优先级最高。
     如需特定 provider，显式传参或用 AE_LLM_PROVIDER 覆盖。
     """
-    resolved = provider or os.environ.get("AE_LLM_PROVIDER", "")
+    from auto_engineering.config.runtime_config import get_default_config
+    _cfg = get_default_config()
+
+    resolved = provider or _cfg.llm_provider
 
     if not resolved:
-        if os.environ.get("OLLAMA_HOST"):
+        if _cfg.ollama_host:
             resolved = "ollama"
-        elif os.environ.get("ZHIPUAI_API_KEY"):
+        elif _cfg.zhipu_api_key:
             resolved = "glm"
-        elif os.environ.get("DASHSCOPE_API_KEY"):
+        elif _cfg.dashscope_api_key:
             resolved = "qwen"
-        elif os.environ.get("OPENAI_API_KEY"):
+        elif _cfg.openai_api_key:
             resolved = "openai"
-        elif os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN"):
+        elif _cfg.anthropic_api_key or _cfg.anthropic_auth_token:
             resolved = "anthropic"
         else:
             raise ValueError(
@@ -50,13 +53,13 @@ def create_provider(provider: str = "", *, api_key: str = "") -> LLMProvider:
     if resolved == "openai":
         from auto_engineering.providers.openai_provider import OpenAIProvider
 
-        key = api_key or os.environ.get("OPENAI_API_KEY", "")
+        key = api_key or _cfg.openai_api_key
         return OpenAIProvider(api_key=key)
 
     if resolved == "anthropic":
         from auto_engineering.llm.anthropic_provider import AnthropicProvider
 
-        key = api_key or os.environ.get("ANTHROPIC_API_KEY", "")
+        key = api_key or _cfg.anthropic_api_key
         return AnthropicProvider(api_key=key)  # type: ignore[return-value]  # param order differs from Protocol, structural compat at runtime
 
     if resolved == "ollama":
@@ -67,13 +70,13 @@ def create_provider(provider: str = "", *, api_key: str = "") -> LLMProvider:
     if resolved == "glm":
         from auto_engineering.providers.glm import GLMProvider
 
-        key = api_key or os.environ.get("ZHIPUAI_API_KEY", "")
+        key = api_key or _cfg.zhipu_api_key
         return GLMProvider(api_key=key)
 
     if resolved == "qwen":
         from auto_engineering.providers.qwen import QwenProvider
 
-        key = api_key or os.environ.get("DASHSCOPE_API_KEY", "")
+        key = api_key or _cfg.dashscope_api_key
         return QwenProvider(api_key=key)
 
     raise ValueError(f"Unknown provider: {resolved}")

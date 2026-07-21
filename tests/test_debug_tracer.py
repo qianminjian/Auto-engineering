@@ -33,7 +33,7 @@ class TestRecordTick:
             stage_in="architect",
             action={"stage": "developer", "batch_id": "B1"},
             state_snapshot={"current_stage": "developer", "tick": 3},
-            guardrail_results={"REDGuard": "pass"},
+            guardrail_results={"REDGuardrail": "pass"},
             gate_results={"safety": {"passed": True}},
             timing_ms={"t_orchestration": 45, "t_gate": 1200},
         )
@@ -44,7 +44,7 @@ class TestRecordTick:
         assert data["stage_in"] == "architect"
         assert data["action"]["stage"] == "developer"
         assert data["state_snapshot"]["current_stage"] == "developer"
-        assert data["guardrail_results"]["REDGuard"] == "pass"
+        assert data["guardrail_results"]["REDGuardrail"] == "pass"
         assert data["gate_results"]["safety"]["passed"] is True
         assert data["timing_ms"]["t_orchestration"] == 45
         assert "timestamp" in data
@@ -73,7 +73,7 @@ class TestRecordError:
         debug_dir = tmp_path / "debug"
         tracer = DebugTracer(debug_dir)
         tracer.record_error(tick=5, category="GUARDRAIL_BLOCK",
-                            detail={"guardrail": "REDGuard", "message": "no red commit"})
+                            detail={"guardrail": "REDGuardrail", "message": "no red commit"})
         tracer.record_error(tick=7, category="GATE_FAIL",
                             detail={"gate": "type_check", "message": "F821 undefined"})
         errors_path = debug_dir / "errors.jsonl"
@@ -83,7 +83,7 @@ class TestRecordError:
         e1 = json.loads(lines[0])
         assert e1["tick"] == 5
         assert e1["category"] == "GUARDRAIL_BLOCK"
-        assert e1["detail"]["guardrail"] == "REDGuard"
+        assert e1["detail"]["guardrail"] == "REDGuardrail"
         e2 = json.loads(lines[1])
         assert e2["tick"] == 7
         assert e2["category"] == "GATE_FAIL"
@@ -102,7 +102,7 @@ class TestFinalize:
                 gate_results={}, timing_ms={},
             )
         tracer.record_error(tick=1, category="GUARDRAIL_BLOCK",
-                            detail={"guardrail": "REDGuard"})
+                            detail={"guardrail": "REDGuardrail"})
         tracer.finalize(verdict="GOAL_ACHIEVED", total_ticks=3)
 
         trace_file = debug_dir / "trace.json"

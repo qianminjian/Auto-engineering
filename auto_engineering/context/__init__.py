@@ -1,6 +1,5 @@
-"""Auto-Engineering Context Management — offloading & summarization."""
+"""Auto-Engineering Context Management — stage offloading."""
 
 from auto_engineering.context.offloading import ContextOffloader, StageContextOffload
-from auto_engineering.context.summarization import SessionSummarizer, SessionSummary
 
-__all__ = ["ContextOffloader", "SessionSummarizer", "SessionSummary", "StageContextOffload"]
+__all__ = ["ContextOffloader", "StageContextOffload"]

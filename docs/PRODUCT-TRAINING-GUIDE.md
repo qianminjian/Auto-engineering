@@ -456,7 +456,7 @@ ae dev-loop --standalone --debug --debug-dir /tmp/my-debug "需求"
   "verdict": "GOAL_ACHIEVED",
   "total_ticks": 6,
   "stage_sequence": ["architect", "developer", "critic", "component_verifier", "system_deep_audit", "done"],
-  "error_counts": {"REDGuard": 1},
+  "error_counts": {"REDGuardrail": 1},
   "total_duration_ms": 163245.50,
   "finished_at": "2026-07-19T10:30:00.123456Z"
 }
@@ -703,7 +703,7 @@ cat _scratch/debug/errors.jsonl  # 故障事件
 ls _scratch/debug/tick-*.json    # 停在哪个 tick
 ```
 
-### 16.3 REDGuard 频繁触发
+### 16.3 REDGuardrail 频繁触发
 
 StageRouter 中的 `MAJOR` 判定导致频繁回到 architect。常见原因:
 - developer 没有先写测试再写代码（TDD 纪律）

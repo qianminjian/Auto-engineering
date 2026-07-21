@@ -58,7 +58,7 @@ class CheckpointManager:
                 history=list(history or []),
                 tag=tag,
             )
-        except Exception:
+        except (OSError, sqlite3.Error):
             _logger.warning(
                 "checkpoint save 失败 (round=%s, step=%s)",
                 round_id, step, exc_info=True,

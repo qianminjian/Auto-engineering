@@ -40,11 +40,24 @@ class AIOrigin:
 # Module-level collector singleton — set by CLI/loop entry point, read by agents/base.py.
 # Pattern: AE_METRICS=1 env var activates → set_collector(MetricsCollector(project_root)).
 # When AE_METRICS is unset, _collector stays None → all hook points are no-ops.
+#
+# Lifecycle:
+#   1. CLI entry (dev_loop.py / standalone_driver.py) calls set_collector(...) at init
+#   2. Agent code (agents/base.py) calls get_collector() → None-safe no-op if disabled
+#   3. Process exit → singleton dies with process (no explicit teardown needed)
+#
+# Thread safety: _collector_lock protects set/get. Each tick is a fresh process
+# (Tick-Based Discrete Invocation), so no cross-tick state leakage.
 _collector: "MetricsCollector | None" = None
 _collector_lock = threading.Lock()
 
 
 def set_collector(collector: "MetricsCollector | None") -> None:
+    """激活或停用全局 MetricsCollector 单例.
+
+    由 CLI/dev_loop/standalone_driver 在初始化时调用。
+    传入 None 停用度量采集 (默认状态)。
+    """
     with _collector_lock:
         global _collector
         _collector = collector
@@ -390,7 +403,8 @@ class MetricsCollector:
         total_output = sum(e["payload"].get("output_tokens", 0) for e in token_events)
         total_tokens = total_input + total_output
         efficiency = (loc_added / (total_tokens / 1000)) if loc_added > 0 and total_tokens > 0 else 0.0
-        token_source = os.environ.get("AE_TOKEN_SOURCE", "provider")
+        from auto_engineering.config.runtime_config import get_default_config
+        token_source = get_default_config().token_source
         m5 = {
             "total_input_tokens": total_input,
             "total_output_tokens": total_output,

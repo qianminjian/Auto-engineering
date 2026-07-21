@@ -77,18 +77,15 @@ class ConvergenceConfig:
         max_iterations: 单会话最大迭代轮次 (硬上限)
         stagnation_threshold: 连续多少轮无实质变化触发停滞检测
         stagnation_diff_ratio: diff 变化率阈值 (低于此值视为无变化)
-        auto_tune: v5.5 — 启用 max_iter 自动学习 (default False)
-        max_plan_refines: v5.5 — T9 回路最大次数 (default 3)
-        min_samples_for_learning: v5.5 — 冷启动最小样本数 (default 5)
+        max_plan_refines: T9 回路最大次数 (default 3, v5.5, 保留兼容)
+        deep_audit_enabled: DeepAudit Feature Flag (default True, v5.5, 保留兼容)
     """
 
     max_iterations: int = DEFAULT_MAX_ITERATIONS
     stagnation_threshold: int = DEFAULT_STAGNATION_THRESHOLD
     stagnation_diff_ratio: float = DEFAULT_STAGNATION_DIFF_RATIO
-    auto_tune: bool = False             # v5.5: 启用 max_iter 自动学习
-    max_plan_refines: int = 3           # v5.5: T9 回路最大次数
-    min_samples_for_learning: int = 5   # v5.5: 冷启动最小样本数
-    deep_audit_enabled: bool = True     # v5.5: DeepAudit Feature Flag.
+    max_plan_refines: int = 3           # T9 回路最大次数 (v5.5 field, 保留兼容)
+    deep_audit_enabled: bool = True     # DeepAudit Feature Flag (v5.5 field, 保留兼容)
     # 当 True 时, T9 plan-refine 回路激活 (critic APPROVE → DeepAudit → architect).
     # 当 False 时, 跳过 DeepAudit 扫描 (仅用于测试/调试场景).
     # 参见 design/v5.5-IMPLEMENTATION-PLAN.md Phase G (DeepAudit Integration).
@@ -286,63 +283,6 @@ class ConvergenceJudge:
             config: 收敛配置, None = 默认配置
         """
         self.config = config or ConvergenceConfig()
-
-    def auto_tune_max_iter(self, audit_history: AuditHistory) -> int | None:
-        """冷启动自适应 max_iter.
-
-        冷启动 (样本 < min_samples_for_learning): 返回 None, 调用方使用
-        config.max_iterations 作为默认值.
-        足够样本后: 优先用 Bayesian 后验, 冷启动时回退到 avg_rounds * 2 启发式.
-
-        Args:
-            audit_history: AuditHistory 实例, 提供历史审计记录.
-
-        Returns:
-            int | None: 推荐的 max_iter, 或 None (数据不足, 使用默认值).
-        """
-        import statistics
-
-        from auto_engineering.loop.audit_history import AuditHistory
-        from auto_engineering.metrics.threshold_learner import ThresholdLearner
-
-        if not isinstance(audit_history, AuditHistory):
-            return None
-        entries = audit_history.read_history()
-        min_samples = self.config.min_samples_for_learning
-        if len(entries) < min_samples:
-            return None
-        # P0-1: 使用 metrics/ Beta-Binomial 自进化模型 (BEACON #70)
-        metrics_dir = audit_history._path.parent / "metrics"
-        learner = ThresholdLearner(metrics_dir)
-        # Feed audit entries into Bayesian model, then check readiness
-        for entry in entries:
-            learner.observe_requirement(
-                summary={"completed": True, "rounds": entry.get("rounds", 1)},
-                signals=[],
-            )
-        bayesian = learner.compute_max_iter()
-        if bayesian != 10:  # Bayesian model is ready (not cold-start default)
-            # T111: RatchetController sandbox 预验证
-            try:
-                from auto_engineering.metrics.ratchet import RatchetController
-                ratchet = RatchetController(metrics_dir)
-                proposals = learner.propose_adjustments()
-                if proposals:
-                    sandbox_result = ratchet.sandbox_evaluate(proposals)
-                    decisions = sandbox_result.get("decisions", [])
-                    stop_decisions = [d for d in decisions if d.get("action") == "stop"]
-                    if stop_decisions:
-                        _logger.warning(
-                            "RatchetController sandbox: %d stop decisions, "
-                            "keeping current thresholds", len(stop_decisions))
-                        return None  # 不回退，用当前默认值
-            except Exception:
-                pass  # sandbox 评估失败不影响主流程
-            return bayesian
-        # Fallback: simple heuristic from audit history
-        rounds = [e.get("rounds", 1) for e in entries]
-        avg_rounds = statistics.mean(rounds)
-        return min(int(avg_rounds * 2), 20)
 
     def evaluate(
         self,

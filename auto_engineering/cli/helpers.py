@@ -96,7 +96,7 @@ def classify_error(error: AEError) -> tuple[ErrorCategory, int]:
 
 
 # 类别 → 友好提示前缀
-_CATEGORY_FRIENDLY_PREFIX: dict[ErrorCategory, str] = {
+CATEGORY_FRIENDLY_PREFIX: dict[ErrorCategory, str] = {
     ErrorCategory.USER_ERROR: "[配置/参数错]",
     ErrorCategory.API_ERROR: "[API/LLM 错]",
     ErrorCategory.NETWORK_ERROR: "[网络/IO 错]",
@@ -113,7 +113,7 @@ _CATEGORY_FRIENDLY_PREFIX: dict[ErrorCategory, str] = {
 from auto_engineering.utils.token_tracker import TokenTracker  # noqa: F401
 
 
-def _install_sigint_handler(token: CancellationToken) -> None:
+def install_sigint_handler(token: CancellationToken) -> None:
     """注册 SIGINT handler → token.cancel()."""
 
     def _handler(sig, frame):
@@ -163,6 +163,6 @@ def _emit_stage_done(stage: str, elapsed: float, tokens: int = 0) -> None:
     click.echo(f"[{_ts()}]   ✓ Stage {stage} done in {elapsed:.1f}s (tokens: {tokens})")
 
 
-def _log_engine_version(version: str) -> None:
+def log_engine_version(version: str) -> None:
     """输出当前使用的 engine 版本(v2.0 / v2.0)."""
     click.echo(f"[{_ts()}] [engine] using {version} orchestrator")

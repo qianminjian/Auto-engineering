@@ -9,15 +9,26 @@ zero overhead, no SDK imports triggered.
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Protocol
+
+if TYPE_CHECKING:
+    from opentelemetry.trace import Tracer
 
 _logger = logging.getLogger("ae.observability.tracing")
+
+
+class _TracerLike(Protocol):
+    """Minimal tracer interface — duck-typed by opentelemetry Tracer + NoOpTracer."""
+
+    def start_as_current_span(
+        self, name: str, attributes: dict | None = None
+    ) -> object: ...
 
 
 def setup_tracing(
     service_name: str = "auto-engineering",
     otlp_endpoint: str | None = None,
-) -> Any:
+) -> _TracerLike:
     """Initialize OpenTelemetry tracing.
 
     Args:

@@ -92,7 +92,7 @@ class GitStatusTool(BaseTool):
                 success=True,
                 content=result.stdout.strip() or "(clean)",
             )
-        except Exception as exc:
+        except (OSError, subprocess.CalledProcessError) as exc:
             return _handle_git_error(exc, "status")
 
 
@@ -144,7 +144,7 @@ class GitCommitTool(BaseTool):
                 success=True,
                 content=commit_result.stdout.strip() or "(commit created)",
             )
-        except Exception as exc:
+        except (OSError, subprocess.CalledProcessError) as exc:
             return _handle_git_error(exc, "commit")
 
 
@@ -176,5 +176,5 @@ class GitDiffTool(BaseTool):
                 success=True,
                 content=result.stdout.strip() or "(no changes)",
             )
-        except Exception as exc:
+        except (OSError, subprocess.CalledProcessError) as exc:
             return _handle_git_error(exc, "diff")

@@ -51,7 +51,6 @@ class ActionDone:
         d: dict = {
             "action": "done",
             "tick": self.tick,
-            "stage": None,
             "verdict": self.verdict,
             "verdict_level": self.verdict_level,
             "verdict_reason": self.reason,

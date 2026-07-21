@@ -78,7 +78,7 @@ def compute_metrics_signals(
                             "params": auto_params,
                             "reason": decision.reason,
                         })
-        except Exception:
+        except (ValueError, TypeError, ImportError, OSError):
             _logger.warning("RatchetController enrichment failed", exc_info=True)
 
     result = {

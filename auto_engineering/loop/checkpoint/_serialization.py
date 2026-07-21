@@ -95,7 +95,7 @@ def deserialize_state(state_json: str) -> Any:
 
         try:
             return deserialize_loop_state(data)
-        except Exception as exc:
+        except (TypeError, ValueError, KeyError) as exc:
             raise CheckpointError(
                 f"反序列化失败 (schema 可能不一致): {exc}"
             ) from exc

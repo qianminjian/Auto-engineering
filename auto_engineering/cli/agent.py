@@ -176,6 +176,8 @@ def run_agent(role: str, instruction: str, project_root: Path) -> dict:
             "task_role": role,
         }
     except Exception as e:
+        # CLI 命令级兜底: Agent 执行可因任何原因失败 (LLM/网络/工具/事件循环),
+        # 统一捕获转为 failed dict 而非让异常传播到 Click
         _logger.warning("agent '%s' 执行异常: %s", role, e, exc_info=True)
         return {
             "task_id": task_id,

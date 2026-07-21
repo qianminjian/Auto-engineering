@@ -7,7 +7,33 @@ Design ref: v5.6-Design-Loop.md appendix D §3.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Protocol
+from typing import Protocol, runtime_checkable
+
+
+@runtime_checkable
+class _ChatCompletionLike(Protocol):
+    """Minimal structural protocol for OpenAI-compatible chat completion response.
+
+    Used by _openai_response_to_llm() adapters to narrow from Any without
+    depending on the openai SDK at runtime.  Covers OpenAI, Qwen (DashScope),
+    GLM (ZhipuAI), and Ollama responses.
+    """
+
+    class _ChoiceMessage:
+        content: str | None
+        tool_calls: list | None
+
+    class _Choice:
+        message: _ChoiceMessage
+        finish_reason: str | None
+
+    class _Usage:
+        prompt_tokens: int
+        completion_tokens: int
+
+    choices: list[_Choice]
+    model: str
+    usage: _Usage | None
 
 
 @dataclass

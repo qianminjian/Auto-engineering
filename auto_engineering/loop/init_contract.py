@@ -205,7 +205,7 @@ def validate_against_schema(manifest: dict[str, Any]) -> ValidationResult:
         jsonschema.validate(instance=manifest, schema=schema)
     except jsonschema.ValidationError as e:
         errors.append(f"schema 校验失败: {e.message}")
-    except Exception as e:
+    except (jsonschema.SchemaError, TypeError) as e:
         _logger.warning("schema 校验异常: %s", e)
         return ValidationResult(ok=True, warnings=[f"schema validation error: {e}"])
     return ValidationResult(ok=len(errors) == 0, errors=errors)

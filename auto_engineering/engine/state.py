@@ -223,7 +223,7 @@ class EngineState:
     pending_research_ids: list[str] = field(default_factory=list)  # #30 待 research 的 gap id 队列
     research_archive: dict[str, dict] = field(default_factory=dict)  # #31 Defer+Research findings 存档
     pending_gap_decisions: list[dict] = field(default_factory=list)  # #32 gap_review 决策
-    red_evidence: list[dict] = field(default_factory=list)        # #33 TDD RED 证据 (G7 REDGuard)
+    red_evidence: list[dict] = field(default_factory=list)        # #33 TDD RED 证据 (G7 REDGuardrail)
     design_doc_path: str | None = None                            # #34 设计文档路径 (design-doc 模式)
     refine_request_json: str | None = None                        # #35 plan_refine 输入 (RefineRequest)
     plan_refine_by_source: dict[str, int] = field(default_factory=dict)  # #36 分源 refine 计数 (DS-8)

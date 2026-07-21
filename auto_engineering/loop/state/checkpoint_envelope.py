@@ -280,7 +280,7 @@ def _rebuild_task(value: Any) -> Any:
 
     try:
         return Task(**kwargs)
-    except Exception:
+    except (TypeError, ValueError):
         _logger.debug("Task 重建失败, 回退 dict: %s", exc_info=True)
         return value
 
@@ -300,6 +300,6 @@ def _rebuild_task_outcome(value: Any) -> Any:
     kwargs = {k: v for k, v in value.items() if k in field_names}
     try:
         return TaskOutcome(**kwargs)
-    except Exception:
+    except (TypeError, ValueError):
         _logger.debug("TaskOutcome 重建失败, 回退 dict: %s", exc_info=True)
         return value

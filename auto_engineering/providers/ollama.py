@@ -13,9 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any
-
-from auto_engineering.providers.base import LLMProvider, LLMResponse, ToolUseBlock
+from auto_engineering.providers.base import LLMProvider, LLMResponse, ToolUseBlock, _ChatCompletionLike
 from auto_engineering.providers.openai_provider import (
     _anthropic_messages_to_openai,
     _anthropic_tools_to_openai,
@@ -43,7 +41,7 @@ def _is_ollama_available() -> bool:
         return False
 
 
-def _openai_response_to_llm(response: Any) -> LLMResponse:
+def _openai_response_to_llm(response: _ChatCompletionLike) -> LLMResponse:
     """Convert OpenAI-compatible response → LLMResponse."""
     choice = response.choices[0]
     content = choice.message.content or ""

@@ -8,9 +8,9 @@
 - classify_error: 非 ErrorCode 入参 (code=str)
 - TokenTracker.add(): usage=None / 无 .usage / input_tokens=None / 超 max_tokens
 - ProgressLogger.emit(): json 格式 / text 格式
-- _install_sigint_handler: 注册 + ValueError 容错
-- _log_engine_version, _emit_stage_done, _log_stage_progress
-- _CATEGORY_FRIENDLY_PREFIX 完整映射
+- install_sigint_handler: 注册 + ValueError 容错
+- log_engine_version, _emit_stage_done, _log_stage_progress
+- CATEGORY_FRIENDLY_PREFIX 完整映射
 """
 from __future__ import annotations
 
@@ -22,13 +22,13 @@ from typing import Any
 import pytest
 
 from auto_engineering.cli.helpers import (
-    _CATEGORY_FRIENDLY_PREFIX,
+    CATEGORY_FRIENDLY_PREFIX,
     ErrorCategory,
     ProgressLogger,
     TokenTracker,
     _emit_stage_done,
-    _install_sigint_handler,
-    _log_engine_version,
+    install_sigint_handler,
+    log_engine_version,
     _log_stage_progress,
     classify_error,
 )
@@ -36,7 +36,7 @@ from auto_engineering.errors import AEError, ErrorCode
 from auto_engineering.runtime.cancellation import CancellationToken
 
 # ============================================================
-# 1. ErrorCategory enum + _CATEGORY_FRIENDLY_PREFIX 映射
+# 1. ErrorCategory enum + CATEGORY_FRIENDLY_PREFIX 映射
 # ============================================================
 
 
@@ -50,8 +50,8 @@ class TestErrorCategoryEnum:
     def test_friendly_prefix_map_complete(self) -> None:
         """所有 4 个类别都有友好 prefix (L96-101)."""
         for cat in ErrorCategory:
-            assert cat in _CATEGORY_FRIENDLY_PREFIX
-            assert _CATEGORY_FRIENDLY_PREFIX[cat].startswith("[")
+            assert cat in CATEGORY_FRIENDLY_PREFIX
+            assert CATEGORY_FRIENDLY_PREFIX[cat].startswith("[")
 
 
 # ============================================================
@@ -317,7 +317,7 @@ class TestProgressLogger:
 
 
 # ============================================================
-# 8. _install_sigint_handler + CancellationToken
+# 8. install_sigint_handler + CancellationToken
 # ============================================================
 
 
@@ -328,7 +328,7 @@ class TestInstallSigintHandler:
         token = CancellationToken()
         prev_handler = signal.getsignal(signal.SIGINT)
         try:
-            _install_sigint_handler(token)
+            install_sigint_handler(token)
             # 新 handler 已注册 (即使在主线程, contextlib.suppress 会吞掉 ValueError)
             new_handler = signal.getsignal(signal.SIGINT)
             # 验证 handler 已变化 (可能是 SIG_DFL/SIG_IGN/自定义)
@@ -362,7 +362,7 @@ class TestCancellationTokenCheck:
 
 
 class TestStageProgressHelpers:
-    """L197-209: _log_stage_progress / _emit_stage_done / _log_engine_version."""
+    """L197-209: _log_stage_progress / _emit_stage_done / log_engine_version."""
 
     def test_log_stage_progress(self, capsys: pytest.CaptureFixture) -> None:
         _log_stage_progress(1, 3, "architect")
@@ -385,7 +385,7 @@ class TestStageProgressHelpers:
         assert "tokens: 0" in captured.out
 
     def test_log_engine_version(self, capsys: pytest.CaptureFixture) -> None:
-        _log_engine_version("v2.5")
+        log_engine_version("v2.5")
         captured = capsys.readouterr()
         assert re.match(r"^\[\d{2}:\d{2}:\d{2}\] ", captured.out)
         assert captured.out.endswith("[engine] using v2.5 orchestrator\n")

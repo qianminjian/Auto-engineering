@@ -27,7 +27,7 @@ from auto_engineering.engine.progress_tree import ProgressTree
 from auto_engineering.engine.state import EngineState
 from auto_engineering.loop.guardrail import (
     FileAccessGuardrail,
-    FreshGate,
+    FreshGuardrail,
     GitClean,
     GitDiffExists,
     Guardrail,
@@ -35,13 +35,15 @@ from auto_engineering.loop.guardrail import (
     GuardrailResult,
     NoDeferredBlockingGap,
     PlanExists,
-    REDGuard,
-    RegressionGate,
+    REDGuardrail,
+    RegressionGuardrail,
     RequirementValid,
     TestsPass,
+    handle_guardrail_result,
+)
+from auto_engineering.loop.guardrails.stateful import (
     _aggregate_sha,
     _git_is_ancestor,
-    handle_guardrail_result,
 )
 from auto_engineering.pii.guardrail import PIIGuardrail
 
@@ -665,9 +667,9 @@ class TestGuardrailChain:
         assert "TestsPass" in names
         assert "GitClean" in names
         assert "NoDeferredBlockingGap" in names
-        assert "REDGuard" in names
-        assert "FreshGate" in names
-        assert "RegressionGate" in names
+        assert "REDGuardrail" in names
+        assert "FreshGuardrail" in names
+        assert "RegressionGuardrail" in names
         assert "FileAccessGuardrail" in names
         assert "AuditTimingGuardrail" in names
 
@@ -683,9 +685,9 @@ class TestGuardrailChain:
             TestsPass(),
             GitClean(),
             NoDeferredBlockingGap(),
-            REDGuard(),
-            FreshGate(),
-            RegressionGate(),
+            REDGuardrail(),
+            FreshGuardrail(),
+            RegressionGuardrail(),
             PIIGuardrail(),
             FileAccessGuardrail(),
             AuditTimingGuardrail(),
@@ -1002,11 +1004,11 @@ class TestNoDeferredBlockingGap:
         assert NoDeferredBlockingGap().check("gap_review", state).action == "pass"
 
 
-# ==================== G7: REDGuard (TDD RED commit-time 校验) ====================
+# ==================== G7: REDGuardrail (TDD RED commit-time 校验) ====================
 
 
 class _StubTask:
-    """轻量 Task 替身 (REDGuard 只读 .id / .target_files)."""
+    """轻量 Task 替身 (REDGuardrail 只读 .id / .target_files)."""
 
     def __init__(self, task_id: str, target_files: list[str]) -> None:
         self.id = task_id
@@ -1014,7 +1016,7 @@ class _StubTask:
 
 
 class _StubBatchState:
-    """轻量 BatchState 替身 (REDGuard 只调 .current_batch_tasks(plan))."""
+    """轻量 BatchState 替身 (REDGuardrail 只调 .current_batch_tasks(plan))."""
 
     def __init__(self, tasks: list[_StubTask]) -> None:
         self._tasks = tasks
@@ -1087,11 +1089,11 @@ def _redguard_state(
     return state
 
 
-class TestREDGuard:
+class TestREDGuardrail:
     """G7: 本轮 task 的测试 commit 先于实现 commit 且当时 FAIL (B3.1)."""
 
     def test_timing_and_stage(self) -> None:
-        g = REDGuard()
+        g= REDGuardrail()
         assert g.timing == "post"
         assert g.applies_to_stages == ("developer",)
 
@@ -1105,7 +1107,7 @@ class TestREDGuard:
             red_evidence=[{"task_id": "t1", "test_id": "test_x",
                            "red_commit": test_c, "failure_excerpt": "assert False"}],
         )
-        assert REDGuard().check("developer", state, project_root=repo).action == "pass"
+        assert REDGuardrail().check("developer", state, project_root=repo).action == "pass"
 
     def test_retry_when_test_not_separate_commit(self, tmp_path: Path) -> None:
         """测试与实现同一 commit (无先于实现的独立测试 commit) → retry."""
@@ -1115,7 +1117,7 @@ class TestREDGuard:
             impl_commit=impl_c, batch_state=_StubBatchState([task]),
             red_evidence=[{"task_id": "t1", "red_commit": impl_c}],
         )
-        r = REDGuard().check("developer", state, project_root=repo)
+        r= REDGuardrail().check("developer", state, project_root=repo)
         assert r.action == "retry"
         assert "t1" in r.message
 
@@ -1127,7 +1129,7 @@ class TestREDGuard:
             impl_commit=impl_c, batch_state=_StubBatchState([task]),
             red_evidence=[],
         )
-        r = REDGuard().check("developer", state, project_root=repo)
+        r= REDGuardrail().check("developer", state, project_root=repo)
         assert r.action == "retry"
         assert "red_evidence" in r.message
 
@@ -1138,24 +1140,24 @@ class TestREDGuard:
         state = _redguard_state(
             impl_commit=impl_c, batch_state=_StubBatchState([task]),
         )
-        assert REDGuard().check("developer", state, project_root=repo).action == "pass"
+        assert REDGuardrail().check("developer", state, project_root=repo).action == "pass"
 
     def test_pass_when_no_runtime_handles(self, tmp_path: Path) -> None:
         """无 batch_state/_plan 运行时句柄 (非 batch 模式) → pass (无从校验)."""
         repo, _test_c, impl_c = _make_tdd_repo(tmp_path)
         state = EngineState(commit_hash=impl_c)  # 不挂 batch_state
-        assert REDGuard().check("developer", state, project_root=repo).action == "pass"
+        assert REDGuardrail().check("developer", state, project_root=repo).action == "pass"
 
     def test_pass_when_no_commit_hash(self, tmp_path: Path) -> None:
-        """无 impl commit_hash → pass (G3/G4 已覆盖'有无改动', REDGuard 无对象可校验)."""
+        """无 impl commit_hash → pass (G3/G4 已覆盖'有无改动', REDGuardrail 无对象可校验)."""
         repo, _test_c, _impl_c = _make_tdd_repo(tmp_path)
         task = _StubTask("t1", ["tests/test_x.py"])
         state = _redguard_state(impl_commit="", batch_state=_StubBatchState([task]))
-        assert REDGuard().check("developer", state, project_root=repo).action == "pass"
+        assert REDGuardrail().check("developer", state, project_root=repo).action == "pass"
 
     def test_strict_mode_reruns_test(self, tmp_path: Path, monkeypatch) -> None:
         """严格模式 + 证据不匹配: red_commit 对不上 → checkout 重跑; 未 FAIL → retry."""
-        import auto_engineering.loop.guardrail as gmod
+        import auto_engineering.loop.guardrails.stateful as smod
 
         repo, _test_c, impl_c = _make_tdd_repo(tmp_path)
         task = _StubTask("t1", ["tests/test_x.py", "impl.py"])
@@ -1165,10 +1167,10 @@ class TestREDGuard:
             red_evidence=[{"task_id": "t1", "test_id": "test_x",
                            "red_commit": "0" * 40}],
         )
-        monkeypatch.setattr(gmod, "_STRICT_RED", True)
+        monkeypatch.setattr(smod, "_STRICT_RED", True)
         # 重跑返回 PASS (即测试当时未真的 FAIL) → retry
-        monkeypatch.setattr(gmod, "_run_test_at_commit", lambda *a, **k: "PASS")
-        r = REDGuard().check("developer", state, project_root=repo)
+        monkeypatch.setattr(smod, "_run_test_at_commit", lambda *a, **k: "PASS")
+        r= REDGuardrail().check("developer", state, project_root=repo)
         assert r.action == "retry"
 
 
@@ -1179,14 +1181,14 @@ def test_git_is_ancestor_helper(tmp_path: Path) -> None:
     assert _git_is_ancestor(impl_c, test_c, repo) is False
 
 
-# ==================== G8: FreshGate (Gate 证据新鲜度锁定) ====================
+# ==================== G8: FreshGuardrail (Gate 证据新鲜度锁定) ====================
 
 
-class TestFreshGate:
+class TestFreshGuardrail:
     """G8: gate_results 绑定的 files 快照哈希 == 当前工作树 (B3.2)."""
 
     def test_timing_and_stages(self) -> None:
-        g = FreshGate()
+        g = FreshGuardrail()
         assert g.timing == "post"
         assert g.applies_to_stages == ("developer", "critic")
 
@@ -1200,7 +1202,7 @@ class TestFreshGate:
             gate_results={"lint": {"passed": True, "message": "ok",
                                    "files_snapshot_sha": sha}},
         )
-        assert FreshGate().check("developer", state, project_root=tmp_path).action == "pass"
+        assert FreshGuardrail().check("developer", state, project_root=tmp_path).action == "pass"
 
     def test_retry_when_snapshot_stale(self, tmp_path: Path) -> None:
         """Gate 运行后代码又变更 (sha 不匹配) → retry (强制重跑 Gate)."""
@@ -1214,7 +1216,7 @@ class TestFreshGate:
             gate_results={"lint": {"passed": True, "message": "ok",
                                    "files_snapshot_sha": stale_sha}},
         )
-        r = FreshGate().check("developer", state, project_root=tmp_path)
+        r = FreshGuardrail().check("developer", state, project_root=tmp_path)
         assert r.action == "retry"
         assert "lint" in r.message
 
@@ -1224,12 +1226,12 @@ class TestFreshGate:
             files_changed=["a.py"],
             gate_results={"lint": {"passed": True, "message": "ok"}},
         )
-        assert FreshGate().check("developer", state, project_root=tmp_path).action == "pass"
+        assert FreshGuardrail().check("developer", state, project_root=tmp_path).action == "pass"
 
     def test_pass_empty_gate_results(self, tmp_path: Path) -> None:
         """无 gate_results → pass."""
         state = EngineState(files_changed=["a.py"], gate_results={})
-        assert FreshGate().check("critic", state, project_root=tmp_path).action == "pass"
+        assert FreshGuardrail().check("critic", state, project_root=tmp_path).action == "pass"
 
 
 def test_aggregate_sha_deterministic_and_content_sensitive(tmp_path: Path) -> None:
@@ -1248,7 +1250,7 @@ def test_aggregate_sha_deterministic_and_content_sensitive(tmp_path: Path) -> No
 
 
 class TestGuardrailNameInjection:
-    """非 pass 结果须携带 guardrail_name (供 handler 分源计数 / FreshGate 分流)."""
+    """非 pass 结果须携带 guardrail_name (供 handler 分源计数 / FreshGuardrail 分流)."""
 
     def test_result_has_guardrail_name_default_empty(self) -> None:
         assert GuardrailResult().guardrail_name == ""
@@ -1273,7 +1275,7 @@ class TestGuardrailNameInjection:
         assert result.guardrail_name == ""
 
 
-# ==================== S-4: retry 计数键粒度 + FreshGate rerun_gates ====================
+# ==================== S-4: retry 计数键粒度 + FreshGuardrail rerun_gates ====================
 
 
 class TestRetryKeyGranularity:
@@ -1288,10 +1290,10 @@ class TestRetryKeyGranularity:
             "developer", state, counters,
         )
         handle_guardrail_result(
-            GuardrailResult(action="retry", message="b", guardrail_name="REDGuard"),
+            GuardrailResult(action="retry", message="b", guardrail_name="REDGuardrail"),
             "developer", state, counters,
         )
-        assert counters == {"developer:GitDiffExists": 1, "developer:REDGuard": 1}
+        assert counters == {"developer:GitDiffExists": 1, "developer:REDGuardrail": 1}
 
     def test_empty_name_backward_compat_keys_by_stage(self) -> None:
         """无 guardrail_name (旧调用) → 退回 stage 单键 (向后兼容)."""
@@ -1304,14 +1306,14 @@ class TestRetryKeyGranularity:
         assert counters == {"developer": 1}
 
     def test_freshgate_retry_returns_rerun_gates_no_clear(self) -> None:
-        """G8 FreshGate retry → 'rerun_gates' (只重跑 Gate, 不清 stage 字段/不丢实现)."""
+        """G8 FreshGuardrail retry → 'rerun_gates' (只重跑 Gate, 不清 stage 字段/不丢实现)."""
         state = EngineState(
             files_changed=["a.py"], commit_hash="abc",
             test_results={"passed": 1},
         )
         counters: dict[str, int] = {}
         action = handle_guardrail_result(
-            GuardrailResult(action="retry", message="stale", guardrail_name="FreshGate"),
+            GuardrailResult(action="retry", message="stale", guardrail_name="FreshGuardrail"),
             "developer", state, counters,
         )
         assert action == "rerun_gates"
@@ -1319,24 +1321,24 @@ class TestRetryKeyGranularity:
         assert state.files_changed == ["a.py"]
         assert state.commit_hash == "abc"
         # 仍按自身键计数
-        assert counters == {"developer:FreshGate": 1}
+        assert counters == {"developer:FreshGuardrail": 1}
 
     def test_freshgate_retry_exhaustion_stops(self) -> None:
-        """FreshGate rerun_gates 也受 MAX_RETRY 约束: 达上限 → stop."""
+        """FreshGuardrail rerun_gates 也受 MAX_RETRY 约束: 达上限 → stop."""
         state = EngineState()
-        counters: dict[str, int] = {"developer:FreshGate": 3}
+        counters: dict[str, int] = {"developer:FreshGuardrail": 3}
         action = handle_guardrail_result(
-            GuardrailResult(action="retry", message="stale", guardrail_name="FreshGate"),
+            GuardrailResult(action="retry", message="stale", guardrail_name="FreshGuardrail"),
             "developer", state, counters,
         )
         assert action == "stop"
 
 
-# ==================== G9: RegressionGate (revert-red-restore) ====================
+# ==================== G9: RegressionGuardrail (revert-red-restore) ====================
 
 
 class _RegTask:
-    """轻量回归修复 Task 替身 (RegressionGate 读 kind/regression_test_id/target_files/id)."""
+    """轻量回归修复 Task 替身 (RegressionGuardrail 读 kind/regression_test_id/target_files/id)."""
 
     def __init__(
         self, task_id: str, target_files: list[str], *,
@@ -1398,11 +1400,11 @@ def _reg_state(impl_commit: str, task: _RegTask) -> EngineState:
     return state
 
 
-class TestRegressionGate:
+class TestRegressionGuardrail:
     """G9: 回归修复 task 的 revert→MUST FAIL→restore→pass 序列 (B3.3)."""
 
     def test_timing_and_stage(self) -> None:
-        g = RegressionGate()
+        g = RegressionGuardrail()
         assert g.timing == "post"
         assert g.applies_to_stages == ("developer",)
 
@@ -1410,14 +1412,14 @@ class TestRegressionGate:
         """非回归修复 task (无 kind) → pass N/A."""
         repo, impl_c = _make_regression_repo(tmp_path)
         task = _RegTask("t1", ["calc.py", "test_reg.py"])  # kind=""
-        r = RegressionGate().check("developer", _reg_state(impl_c, task), project_root=repo)
+        r = RegressionGuardrail().check("developer", _reg_state(impl_c, task), project_root=repo)
         assert r.action == "pass"
 
     def test_no_regression_task_in_batch_passes(self, tmp_path: Path) -> None:
         """batch 无回归修复 task → pass."""
         repo, impl_c = _make_regression_repo(tmp_path)
         task = _RegTask("t1", ["calc.py"], kind="feature")
-        r = RegressionGate().check("developer", _reg_state(impl_c, task), project_root=repo)
+        r = RegressionGuardrail().check("developer", _reg_state(impl_c, task), project_root=repo)
         assert r.action == "pass"
 
     def test_real_revert_must_fail_then_restore_passes(self, tmp_path: Path) -> None:
@@ -1425,7 +1427,7 @@ class TestRegressionGate:
         repo, impl_c = _make_regression_repo(tmp_path)
         task = _RegTask("t1", ["calc.py", "test_reg.py"],
                         kind="regression_fix", regression_test_id="test_f")
-        r = RegressionGate().check("developer", _reg_state(impl_c, task), project_root=repo)
+        r = RegressionGuardrail().check("developer", _reg_state(impl_c, task), project_root=repo)
         assert r.action == "pass", r.message
         # 工作树已恢复: calc.py 为修复版, git status 干净
         assert (repo / "calc.py").read_text() == "def f():\n    return 1\n"
@@ -1437,14 +1439,14 @@ class TestRegressionGate:
 
     def test_block_when_revert_still_passes(self, tmp_path: Path, monkeypatch) -> None:
         """回退实现后测试仍 PASS → 测试无效未捕捉回归 → block."""
-        import auto_engineering.loop.guardrail as gmod
+        import auto_engineering.loop.guardrails.stateful as smod
 
         repo, impl_c = _make_regression_repo(tmp_path)
         task = _RegTask("t1", ["calc.py", "test_reg.py"],
                         kind="regression_fix", regression_test_id="test_f")
         # 无论回退与否测试都 PASS (测试无效)
-        monkeypatch.setattr(gmod, "_run_test", lambda *a, **k: "PASS")
-        r = RegressionGate().check("developer", _reg_state(impl_c, task), project_root=repo)
+        monkeypatch.setattr(smod, "_run_test", lambda *a, **k: "PASS")
+        r = RegressionGuardrail().check("developer", _reg_state(impl_c, task), project_root=repo)
         assert r.action == "block"
         assert "test_f" in r.message
         # finally 仍恢复工作树
@@ -1455,12 +1457,12 @@ class TestRegressionGate:
         repo, impl_c = _make_regression_repo(tmp_path)
         task = _RegTask("t1", ["test_reg.py"],
                         kind="regression_fix", regression_test_id="test_f")
-        r = RegressionGate().check("developer", _reg_state(impl_c, task), project_root=repo)
+        r = RegressionGuardrail().check("developer", _reg_state(impl_c, task), project_root=repo)
         assert r.action == "block"
 
     def test_new_impl_file_uses_git_rm_branch(self, tmp_path: Path, monkeypatch) -> None:
         """新建实现文件 (impl^ 无父版本): checkout pathspec 错 → git rm 模拟'修复前不存在'."""
-        import auto_engineering.loop.guardrail as gmod
+        import auto_engineering.loop.guardrails.stateful as smod
 
         repo, impl_c = _make_regression_repo(tmp_path, new_file=True)
         task = _RegTask("t1", ["calc.py", "test_reg.py"],
@@ -1474,8 +1476,8 @@ class TestRegressionGate:
             calls.append("exists" if calc_exists else "removed")
             return "PASS" if calc_exists else "FAIL"
 
-        monkeypatch.setattr(gmod, "_run_test", _fake_run_test)
-        r = RegressionGate().check("developer", _reg_state(impl_c, task), project_root=repo)
+        monkeypatch.setattr(smod, "_run_test", _fake_run_test)
+        r = RegressionGuardrail().check("developer", _reg_state(impl_c, task), project_root=repo)
         assert r.action == "pass", r.message
         assert "removed" in calls  # git rm 分支被走到 (回退后 calc.py 不存在)
         # 恢复后 calc.py 回来
@@ -1504,7 +1506,7 @@ class TestVoiceCloneRegression:
             impl_commit=impl_c, batch_state=_StubBatchState([task]),
             red_evidence=[],
         )
-        r = REDGuard().check("developer", state, project_root=repo)
+        r= REDGuardrail().check("developer", state, project_root=repo)
         assert r.action == "retry", (
             f"expected retry (GREEN 不应改测试), got {r.action}: {r.message}"
         )
@@ -1521,7 +1523,7 @@ class TestVoiceCloneRegression:
             impl_commit=impl_c, batch_state=_StubBatchState([task]),
             red_evidence=["hash1", "hash2"],  # wrong format: list[str]
         )
-        r = REDGuard().check("developer", state, project_root=repo)
+        r= REDGuardrail().check("developer", state, project_root=repo)
         assert r.action == "retry", (
             f"expected retry for malformed red_evidence, got {r.action}: {r.message}"
         )

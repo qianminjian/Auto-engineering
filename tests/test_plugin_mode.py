@@ -265,20 +265,6 @@ class TestPluginModeIntegration:
             "cli/agent.py:run_agent 必须用 detect_plugin_mode (防 prismscan Bug 4 退化)"
         )
 
-    def test_orchestrator_uses_detect_plugin_mode(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """orchestrator.__post_init__ 使用 detect_plugin_mode."""
-        import inspect
-
-        from auto_engineering.loop import orchestrator
-
-        # 找 OrchestratorConfig dataclass 源
-        source = inspect.getsource(orchestrator)
-        assert "detect_plugin_mode" in source, (
-            "loop/orchestrator.py:OrchestratorConfig 必须用 detect_plugin_mode"
-        )
-
     def test_doctor_reports_plugin_mode_via_detail(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

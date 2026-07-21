@@ -14,7 +14,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import click
@@ -23,36 +22,32 @@ from auto_engineering import __version__
 from auto_engineering.cli.agent import register_agent_command
 from auto_engineering.cli.checkpoint import register_checkpoint_commands
 from auto_engineering.cli.dev_loop import (
-    OrchestratorRunResult,
-    _run_standalone,
-    _run_tick_init,
-    _run_tick_resume,
-    _run_tick_status,
-    _run_tick_step,
-    _run_v2_orchestrator,
+    run_standalone,
+    run_tick_init,
+    run_tick_resume,
+    run_tick_status,
+    run_tick_step,
 )
 from auto_engineering.cli.doctor import register_doctor_command
 from auto_engineering.cli.gate_check import register_gate_check_command
 from auto_engineering.cli.helpers import (
-    _CATEGORY_FRIENDLY_PREFIX,
+    CATEGORY_FRIENDLY_PREFIX,
     ErrorCategory,
     ProgressLogger,
     TokenTracker,
-    _install_sigint_handler,
-    _log_engine_version,
+    install_sigint_handler,
+    log_engine_version,
     classify_error,
 )
 from auto_engineering.cli.progress import register_progress_command
 from auto_engineering.cli.status import (
     register_status_command,
 )
-from auto_engineering.errors import AEError, ErrorCode
 from auto_engineering.runtime.cancellation import CancellationToken
 
 __all__ = [
     "CancellationToken",
     "ErrorCategory",
-    "OrchestratorRunResult",
     "ProgressLogger",
     "TokenTracker",
     "classify_error",
@@ -80,22 +75,32 @@ def main():
     Init 工程 (项目脚手架) 已拆分独立项目, 见 design/BEACON.md.
     """
     import logging
-    import os
 
-    log_level = os.environ.get("AE_LOG_LEVEL", "INFO").strip().upper()
+    # P0-6: Construct RuntimeConfig once, set as process-wide default
+    from auto_engineering.config.runtime_config import RuntimeConfig, set_default_config
+    config = RuntimeConfig()
+    set_default_config(config)
+
     logging.basicConfig(
-        level=getattr(logging, log_level, logging.INFO),
+        level=getattr(logging, config.log_level, logging.INFO),
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
     # T76: Initialize OTLP tracing (NoOp when AE_OTLP_ENDPOINT not set)
     from auto_engineering.observability.tracing import setup_tracing
     setup_tracing(
         "auto-engineering",
-        otlp_endpoint=os.environ.get("AE_OTLP_ENDPOINT"),
+        otlp_endpoint=config.otlp_endpoint,
     )
 
 
-@main.command()
+@main.command(epilog="""
+示例:
+  ae dev-loop --init "实现用户登录"                  初始化 tick loop
+  ae dev-loop --tick --result result.json            提交本轮 tick 结果
+  ae dev-loop --status                               查看当前进度
+  ae dev-loop --standalone "实现支付功能"             独立运行 (自带 LLM key)
+  ae dev-loop --resume <checkpoint-id>               从 checkpoint 恢复
+""")
 @click.argument("requirement", required=False)
 @click.option("--init", "init_flag", is_flag=True,
               help="v5.6: 初始化 tick loop, 输出第一个 action JSON")
@@ -165,8 +170,8 @@ def dev_loop(
     root = Path(project_root).resolve() if project_root else Path.cwd()
 
     # AE_DEBUG=1 环境变量也可激活 debug 模式
-    import os as _os
-    _debug = debug_flag or _os.environ.get("AE_DEBUG", "").strip() == "1"
+    from auto_engineering.config.runtime_config import get_default_config
+    _debug = debug_flag or get_default_config().debug_enabled
 
     # ── v5.6 tick 模式分派 (先于 LLM preflight — Python 不需 API key) ──
     tick_modes = [init_flag, tick_flag, status_flag, bool(resume_id)]
@@ -182,7 +187,7 @@ def dev_loop(
         if not requirement:
             click.echo("错误: --init 需要 requirement 参数", err=True)
             raise SystemExit(1)
-        _run_tick_init(requirement, design_doc, root, max_rounds, debug=_debug,
+        run_tick_init(requirement, design_doc, root, max_rounds, debug=_debug,
                        debug_dir=debug_dir_opt, pause_at_stage=pause_at_stage,
                        escalate=escalate_flag)
         return
@@ -190,14 +195,14 @@ def dev_loop(
         if not result_file:
             click.echo("错误: --tick 必须带 --result <file>", err=True)
             raise SystemExit(1)
-        _run_tick_step(Path(result_file), root, debug=_debug,
+        run_tick_step(Path(result_file), root, debug=_debug,
                        debug_dir=debug_dir_opt)
         return
     if status_flag:
-        _run_tick_status(root)
+        run_tick_status(root)
         return
     if resume_id:
-        _run_tick_resume(resume_id, root)
+        run_tick_resume(resume_id, root)
         return
 
     # ── v7.6 standalone 模式 (Driver B) ──
@@ -205,110 +210,19 @@ def dev_loop(
         if not requirement:
             click.echo("错误: --standalone 需要 requirement 参数", err=True)
             raise SystemExit(1)
-        _run_standalone(requirement, design_doc, root, max_rounds, max_tokens,
+        run_standalone(requirement, design_doc, root, max_rounds, max_tokens,
                         llm_provider, resume_id, debug=_debug, debug_dir=debug_dir_opt)
         return
 
-    # ── v5.5 legacy 模式 (⚠️ 已弃用, 30 天后移除, BEACON #53 退役) ──
-    if not requirement:
-        click.echo(
-            "错误: requirement 参数必填 (或用 --init/--tick/--status/--resume/--standalone)", err=True)
-        raise SystemExit(1)
-
-    import os as _os2
-    if _os2.environ.get("AE_SUPPRESS_DEPRECATION", "").strip() != "1":
-        click.echo(
-            "⚠️  ae dev-loop 'requirement' (v5.5 legacy) 已弃用，将在 30 天后移除。\n"
-            "   请改用: ae dev-loop --standalone 'requirement'\n"
-            "   详见: design/BEACON.md 决策 #53\n"
-            "   (设置 AE_SUPPRESS_DEPRECATION=1 抑制此警告)",
-            err=True,
-        )
-
-    if llm_provider != "anthropic":
-        click.echo(f"[未实现] --llm-provider={llm_provider} 暂未实装。", err=True)
-        raise SystemExit(6)
-
-    root = Path(project_root).resolve() if project_root else Path.cwd()
-
-    from auto_engineering.config.environment import preflight
-
-    try:
-        preflight(root)
-    except SystemExit:
-        raise
-
-    from auto_engineering.utils.plugin_mode import is_llm_available
-
-    if not is_llm_available():
-        msg = (
-            "环境变量 ANTHROPIC_API_KEY/ANTHROPIC_AUTH_TOKEN 未设置。"
-            "Plugin mode (Claude Code agent 内) 应零配置, 由 Claude Code OAuth 自动注入。"
-            "CLI 调试模式需手动 export ANTHROPIC_API_KEY=sk-ant-..."
-        )
-        category, exit_code = classify_error(
-            AEError(ErrorCode.CONFIG_MISSING_API_KEY, msg)
-        )
-        click.echo(f"{_CATEGORY_FRIENDLY_PREFIX[category]} {msg}", err=True)
-        raise SystemExit(exit_code) from None
-
-    cancellation = CancellationToken()
-    _install_sigint_handler(cancellation)
-
-    progress = ProgressLogger(log_format=log_format)
-    click.echo(f"Starting dev-loop: {requirement}")
-    _log_engine_version("v5.5")
-
-    tracker = TokenTracker(max_tokens=max_tokens)
-    try:
-        result = _run_v2_orchestrator(
-            requirement=requirement,
-            project_root=root,
-            max_rounds=max_rounds,
-            progress=progress,
-            cancellation=cancellation,
-            token_tracker=tracker,
-        )
-    except AEError as e:
-        category, exit_code = classify_error(e)
-        prefix = _CATEGORY_FRIENDLY_PREFIX[category]
-        if log_format == "json":
-            import uuid
-
-            error_payload = {
-                "status": "failed",
-                "thread_id": uuid.uuid4().hex,
-                "rounds": 0,
-                "verdict": {"level": -1, "level_name": "ERROR", "reason": str(e.message)},
-                "duration_sec": 0.0,
-                "gate_summary": {},
-                "error": {"code": str(e.code.value), "category": category.value, "message": str(e.message)},
-            }
-            click.echo(json.dumps(error_payload, ensure_ascii=False, indent=2))
-        else:
-            click.echo(f"{prefix} {e.message}", err=True)
-            if e.code == ErrorCode.TASK_CANCELLED:
-                click.echo("Loop drained. Resume with: ae checkpoint resume <id>", err=True)
-        raise SystemExit(exit_code) from None
-
-    if log_format == "json":
-        click.echo(json.dumps(result.to_json_dict(), ensure_ascii=False, indent=2))
-    else:
-        click.echo(
-            f"\n✓ dev-loop complete: status={result.status}, "
-            f"steps={result.total_steps}, checkpoint={result.checkpoint_id}"
-        )
-
-    if result.status == "failed":
-        click.echo(
-            f"✗ dev-loop failed (verdict.level=4 HARD_LIMIT): "
-            f"{result.verdict.get('reason', 'unknown')}",
-            err=True,
-        )
-        raise SystemExit(2)
-    if result.status == "completed":
-        return
-    return
+    # v5.5 legacy 路径已退役 (T133b)
+    # 裸参数 ae dev-loop "req" 不再接收, 必须用 --init/--tick/--standalone
+    click.echo(
+        "错误: requirement 参数必填 (或用 --init/--tick/--status/--resume/--standalone)\n"
+        "v5.5 ae dev-loop 'req' legacy 路径已退役 (T133b). "
+        "请改用: ae dev-loop --standalone 'requirement'",
+        err=True,
+    )
+    raise SystemExit(1)
 
 
 # 注册 checkpoint 命令 (从 cli/checkpoint.py 注入)

@@ -7,6 +7,10 @@
     - ae doctor 自动从此清单渲染「可选功能」面板
     - --init stderr 一行功能状态来自此清单
     - action JSON ``feature_status`` 字段来自此清单
+
+Lifecycle: FEATURE_MANIFEST 是模块级常量列表 — 导入时初始化, 进程存活期不变.
+get_feature_status() 在每次调用时从 os.environ 读取实时值, 无缓存.
+feature_warnings() 在 --init 时调用, 向用户提示默认关闭的生产相关功能.
 """
 
 from __future__ import annotations
@@ -86,9 +90,11 @@ FEATURE_MANIFEST: list[FeatureFlag] = [
                 "safety", "both", "AE_PII_INBOUND=warn (需 AE_PII_ENABLED=1)"),
     FeatureFlag("AE_PII_OUTBOUND", "L2 — outbound action JSON PII 脱敏模式 (off/warn/block/redact)",
                 "safety", "both", "AE_PII_OUTBOUND=redact (需 AE_PII_ENABLED=1)"),
-    FeatureFlag("AE_PRODUCTION", "生产安全模式 — 严格 REDGuard + 阻断 Gate 降级",
+    FeatureFlag("AE_PRODUCTION", "生产安全模式 — 严格 REDGuardrail + 阻断 Gate 降级",
                 "safety", "both", "AE_PRODUCTION=1"),
-    FeatureFlag("AE_STRICT_RED", "严格 TDD REDGuard — test-first 强制 (仅 Plugin 模式)",
+    FeatureFlag("AE_AUDIT_LOG_DIR", "审计日志输出目录 (JSONL)",
+                "observability", "both", "AE_AUDIT_LOG_DIR=/path/to/logs"),
+    FeatureFlag("AE_STRICT_RED", "严格 TDD REDGuardrail — test-first 强制 (仅 Plugin 模式)",
                 "safety", "agent_only", "AE_STRICT_RED=1"),
 
     # ── suppression ──
@@ -181,6 +187,25 @@ def feature_status_oneline(environ: dict | None = None) -> str:
         suffix = f"({mode.replace('standalone_only', 'Standalone').replace('agent_only', 'Agent')})" if mode != "both" and active else ""
         parts.append(f"{name}:{mark}{suffix}")
     return "[Features] " + " ".join(parts)
+
+
+def feature_warnings(environ: dict | None = None) -> list[str]:
+    """Return warnings for important production features that are currently disabled.
+
+    Used by --init stderr output to inform users about features they may want to enable.
+    """
+    status = get_feature_status(environ)
+    warnings: list[str] = []
+    # Production safety features
+    if not status.get("AE_PII_ENABLED", {}).get("active"):
+        warnings.append("PII 脱敏未启用 (AE_PII_ENABLED=1)")
+    if not status.get("AE_METRICS", {}).get("active"):
+        warnings.append("度量采集未启用 (AE_METRICS=1) — 无 AI Coding 信号数据")
+    if not status.get("AE_AUDIT_LOG", {}).get("active"):
+        warnings.append("审计日志未启用 (AE_AUDIT_LOG=1)")
+    if not status.get("AE_OTLP_ENDPOINT", {}).get("active") and not status.get("AE_LANGSMITH", {}).get("active"):
+        warnings.append("无 observability 后端 (设置 AE_OTLP_ENDPOINT 或 AE_LANGSMITH)")
+    return warnings
 
 
 def feature_status_for_action(environ: dict | None = None) -> dict[str, bool]:

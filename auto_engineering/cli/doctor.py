@@ -62,7 +62,7 @@ def _check_uv() -> tuple[bool, str]:
         if current >= UV_MIN:
             return True, f"uv {ver_str}          (required: >={UV_MIN[0]}.{UV_MIN[1]})"
         return False, f"uv {ver_str}          (required: >={UV_MIN[0]}.{UV_MIN[1]}) — 版本过低"
-    except Exception as e:
+    except (OSError, subprocess.CalledProcessError, ValueError) as e:
         return False, f"uv 检查失败: {e}"
 
 
@@ -87,7 +87,7 @@ def _check_git() -> tuple[bool, str]:
         if current >= GIT_MIN:
             return True, f"git {ver_str}        (required: >={GIT_MIN[0]}.{GIT_MIN[1]})"
         return False, f"git {ver_str}        (required: >={GIT_MIN[0]}.{GIT_MIN[1]}) — 版本过低"
-    except Exception as e:
+    except (OSError, subprocess.CalledProcessError, ValueError) as e:
         return False, f"git 检查失败: {e}"
 
 
@@ -117,7 +117,8 @@ def _check_api_key() -> tuple[bool, str]:
 
 def _check_openai_api_key() -> tuple[bool, str]:
     """检查 OpenAI API key (v8.0 多平台 Provider 抽象需要)."""
-    key = os.environ.get("OPENAI_API_KEY", "")
+    from auto_engineering.config.runtime_config import get_default_config
+    key = get_default_config().openai_api_key
     if key and key.startswith("sk-"):
         return True, "OPENAI_API_KEY 已设置 (OpenAI Provider 可用)"
     if key:

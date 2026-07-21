@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import logging
+import sqlite3
 from pathlib import Path
 
 import click
@@ -57,7 +58,7 @@ def _collect_status_json(cwd: Path) -> dict:
             ckpt = store.load_latest()
             if ckpt is not None and (latest_ckpt is None or ckpt.round > latest_ckpt.round):
                 latest_ckpt = ckpt
-        except Exception:
+        except (OSError, sqlite3.Error):
             _logger.warning("checkpoint db 读取失败, 跳过: %s", db_file, exc_info=True)
             continue
 
@@ -160,6 +161,8 @@ def register_status_command(main_group: click.Group) -> None:
             if undetectable:
                 click.echo(f"  ⚠ 不可自动判定: {', '.join(undetectable)}", err=True)
         except Exception as e:
+            # 项目环境探测可能因任何原因失败 (文件 I/O/解析/检测逻辑),
+            # CLI status 命令应优雅降级而非崩溃
             click.echo(f"  读取项目环境失败: {e}")
 
         cp_dir = cwd / ".ae-state"
@@ -171,7 +174,7 @@ def register_status_command(main_group: click.Group) -> None:
                 try:
                     store: SQLiteCheckpointStore[EngineState] = SQLiteCheckpointStore(str(db_file))
                     total_v2 += store.count()
-                except Exception:
+                except (OSError, sqlite3.Error):
                     _logger.warning("checkpoint count 失败, 跳过: %s", db_file, exc_info=True)
                     continue
             if total_v2 > 0:

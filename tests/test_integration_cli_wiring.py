@@ -27,8 +27,8 @@ def test_all_required_injectables_non_none(tmp_path):
     inj = _get_injectables(tmp_path)
     assert inj["context_offloader"] is not None, (
         "ContextOffloader must be instantiated (required injectable)")
-    assert inj["session_summarizer"] is not None, (
-        "SessionSummarizer must be instantiated (required injectable)")
+    assert "session_summarizer" not in inj, (
+        "SessionSummarizer T133d 已物理删除, 不应出现在 injectables 中")
 
 
 def test_conditional_injectables_have_creation_paths(tmp_path, monkeypatch):
@@ -54,12 +54,12 @@ def test_injectables_passed_to_orchestrator(tmp_path):
     orch = TickOrchestrator(
         tmp_path,
         context_offloader=inj["context_offloader"],
-        session_summarizer=inj["session_summarizer"],
         tracer=inj["tracer"],
         audit_logger=inj["audit_logger"],
     )
     assert orch._context_offloader is not None
-    assert orch._session_summarizer is not None
+    # SessionSummarizer T133d 已物理删除: _session_summarizer 属性不应存在
+    assert not hasattr(orch, "_session_summarizer")
     # tracer may be None (no OTLP endpoint)
     assert orch._tracer is None
     assert orch._audit_logger is None
@@ -85,7 +85,7 @@ def test_new_module_wiring_convention():
             inj = _build_injectables(Path("/nonexistent"), minimal_env)
 
     actual_keys = set(inj.keys())
-    expected_required = {"context_offloader", "session_summarizer"}
+    expected_required = {"context_offloader"}
 
     missing = expected_required - actual_keys
     extra = actual_keys - expected_required - known_conditionals

@@ -49,7 +49,7 @@ class ReadFileTool(BaseTool):
             lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
             selected = lines[offset - 1 : offset - 1 + limit]
             return ToolResult(success=True, content="\n".join(selected))
-        except Exception as exc:
+        except (OSError, ValueError) as exc:
             _logger.warning("ReadFileTool 失败: %s", exc, exc_info=True)
             return ToolResult(success=False, content="", error=str(exc))
 
@@ -80,7 +80,7 @@ class WriteFileTool(BaseTool):
             path.write_text(content, encoding="utf-8")
             self._fsync(path)
             return ToolResult(success=True, content=f"Wrote {len(content)} bytes to {path}")
-        except Exception as exc:
+        except (OSError, ValueError) as exc:
             _logger.warning("WriteFileTool 失败: %s", exc, exc_info=True)
             return ToolResult(success=False, content="", error=str(exc))
 
@@ -122,7 +122,7 @@ class EditFileTool(BaseTool):
             path.write_text(new_content, encoding="utf-8")
             self._fsync(path)
             return ToolResult(success=True, content=f"Edited {path}")
-        except Exception as exc:
+        except (OSError, ValueError) as exc:
             _logger.warning("EditFileTool 失败: %s", exc, exc_info=True)
             return ToolResult(success=False, content="", error=str(exc))
 
@@ -167,7 +167,7 @@ class SearchCodeTool(BaseTool):
                     ):
                         if regex.search(line):
                             matches.append(f"{file}:{line_no}:{line}")
-                except Exception:
+                except (OSError, UnicodeDecodeError):
                     _logger.warning(
                         "SearchCode 文件读取失败: %s", file, exc_info=True,
                     )
@@ -175,7 +175,7 @@ class SearchCodeTool(BaseTool):
             if not matches:
                 return ToolResult(success=True, content="(no matches)")
             return ToolResult(success=True, content="\n".join(matches[:100]))
-        except Exception as exc:
+        except (OSError, ValueError) as exc:
             _logger.warning("SearchCodeTool 失败: %s", exc, exc_info=True)
             return ToolResult(success=False, content="", error=str(exc))
 
@@ -207,6 +207,6 @@ class ListDirTool(BaseTool):
             entries = sorted(path.iterdir(), key=lambda p: (p.is_file(), p.name))
             lines = [f"{'[D]' if e.is_dir() else '[F]'} {e.name}" for e in entries]
             return ToolResult(success=True, content="\n".join(lines) or "(empty)")
-        except Exception as exc:
+        except (OSError, ValueError) as exc:
             _logger.warning("ListDirTool 失败: %s", exc, exc_info=True)
             return ToolResult(success=False, content="", error=str(exc))

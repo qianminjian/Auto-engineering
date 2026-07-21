@@ -59,7 +59,7 @@ def _all_gate_names() -> tuple[str, ...]:
         from auto_engineering.gates.registry import get_default_gate_names
 
         return tuple(get_default_gate_names())
-    except Exception:
+    except (ImportError, ModuleNotFoundError):
         _logger.warning("_all_gate_names fallback to hardcoded list", exc_info=True)
         # 与 registry._build_default_gates 保持同步
         return ("safety", "lint", "type_check", "audit", "contract", "test", "build")
@@ -90,4 +90,9 @@ def register_gate_check_command(main: click.Group) -> None:
         click.echo(json.dumps(result, ensure_ascii=False, indent=2))
         # 退出码: 0 = 全部 pass/skip, 1 = 存在 fail
         if result["failed"] > 0:
+            click.echo(
+                f"Gate check ({mode}): {result['failed']} failed, "
+                f"{result.get('passed', 0)} passed",
+                err=True,
+            )
             raise SystemExit(1)

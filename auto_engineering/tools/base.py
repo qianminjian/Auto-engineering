@@ -71,12 +71,14 @@ class BaseTool(ABC):
 
         if self.project_root is None:
             # P1-13: 生产环境双重检查 — AE_PRODUCTION=1 时忽略 ALLOW_NO_SANDBOX
-            if os.environ.get("AE_PRODUCTION", "").strip() == "1":
+            from auto_engineering.config.runtime_config import get_default_config
+            _cfg = get_default_config()
+            if _cfg.production_mode:
                 return False, (
                     f"{type(self).__name__}._is_path_safe called with project_root=None. "
                     "生产环境 (AE_PRODUCTION=1) 下沙箱不可绕过。"
                 )
-            if os.environ.get("ALLOW_NO_SANDBOX", "").lower() == "true":
+            if _cfg.allow_no_sandbox:
                 import warnings
                 warnings.warn(
                     f"{type(self).__name__}._is_path_safe called with project_root=None. "
@@ -105,7 +107,7 @@ class BaseTool(ABC):
             if not (target_real == root_real or target_real.startswith(root_prefix)):
                 return False, f"path outside project_root: {file_path}"
             return True, ""
-        except Exception as e:
+        except (OSError, ValueError) as e:
             _logger.debug("路径安全检查异常: %s (%s)", file_path, e, exc_info=True)
             return False, f"invalid path: {file_path} ({e})"
 

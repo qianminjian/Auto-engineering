@@ -1,9 +1,11 @@
-"""Guardrail 共享基类 — GuardrailResult + Guardrail ABC.
+"""Guardrail shared types — GuardrailResult + Guardrail ABC.
 
-P1-3: 从 loop/guardrail.py 提取到 gates/ 层，消除 pii/guardrail → loop/guardrail
-反向依赖（基建层不应依赖核心编排层）。
+Originally loop/guardrail_base.py (T133f). Moved to engine/guardrail_types.py
+(2026-07-21) to break pii → loop → pii cycle (P0-2). pii/guardrail.py depends
+on Guardrail/GuardrailResult — these are pure interface types with only
+TYPE_CHECKING dependency on EngineState.
 
-loop/guardrail.py 和 pii/guardrail.py 均从此模块导入。
+loop/guardrail.py and pii/guardrail.py both import from this module.
 """
 
 from __future__ import annotations

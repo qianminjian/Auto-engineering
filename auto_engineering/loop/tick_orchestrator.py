@@ -2,14 +2,19 @@
 
 设计参考: design/v5.6-Design-Loop.md §C.5 (line 2960-3632).
 
+术语:
+  tick  — 一次完整的离散调用周期: read result → validate → guardrail → gate
+          → convergence judge → build action → save checkpoint → output JSON.
+          每次 tick 是独立 Python 进程 (Tick-Based Discrete Invocation).
+  step  — tick 内的一个 stage 转换 (e.g. architect→developer→critic).
+          一个 tick 恰好跨越一个 step; 收敛判定在每个 tick 结束时执行.
+  round — StageRouter 内的累积 stage 轮次, 跨 tick 递增. 对应 EngineState.round.
+
 核心契约:
   - 每 tick Python 输出一个 action dict (stdout JSON) 告诉 Agent 下一步做什么
   - Agent 执行后写 stage-result.json, Python 读回校验
   - Python 绝不自调 LLM — Agent 在 tick 之间做 LLM 工作
   - gate_runner/guardrail/checkpoint_store 可注入 (单元测试 stub, 防挂死)
-
-与保留 Orchestrator 的关系: TickOrchestrator = production 离散路径;
-Orchestrator (orchestrator.py) = v5.5 连续 while 调试路径 (ae dev-loop "req").
 """
 
 from __future__ import annotations
@@ -26,6 +31,7 @@ from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 from uuid import uuid4
 
+from auto_engineering.config.runtime_config import RuntimeConfig, get_default_config
 from auto_engineering.engine.batch_state import BatchState
 from auto_engineering.engine.design_doc import DesignDoc, Supplement
 from auto_engineering.engine.progress_tree import ProgressTree
@@ -40,6 +46,8 @@ from auto_engineering.loop.checkpoint.manager import CheckpointManager
 from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
 from auto_engineering.loop.convergence import ConvergenceConfig, ConvergenceJudge
 from auto_engineering.loop.debug_tracer import DebugTracer
+from auto_engineering.loop.action_builder import ActionBuilder
+from auto_engineering.loop.tick_gate_runner import TickGateRunner
 from auto_engineering.loop.guardrail import GuardrailChain
 from auto_engineering.loop.plan import Plan, TaskDAG
 from auto_engineering.loop.refine import build_refine_request
@@ -98,16 +106,7 @@ def _detect_project_language(project_root: Path) -> str | None:
         return lang
     return None
 
-# DS-9 (B6.6a): Haiku verifier 负判定 (MISSING/DIVERGED) → Sonnet 窄范围复核。
-# NOTE: DS-9 recheck is specified but not yet executed in the engine — this config
-# is surfaced in action output so the Agent can optionally apply it, and will be
-# wired into the automatic recheck loop in a future phase.
-_VERIFIER_RECHECK = {
-    "enabled": True,
-    "model": "claude-sonnet-4-6",
-    "trigger": "on_negative",
-    "scope": "narrow",
-}
+# _VERIFIER_RECHECK — 已提取到 ActionBuilder (P0-1)
 
 # DS-10 / C.2.6: Python 编排开销预算 (t_orchestration = t_total − t_gate − t_guard_sub).
 # 超预算只告警不中断 — 延迟是可观测性指标, 不是正确性门控. P95 判定离线聚合 (Phase 5).
@@ -216,15 +215,6 @@ class ContextOffloader(Protocol):
 
 
 @runtime_checkable
-class SessionSummarizer(Protocol):
-    """Session summarization — 跨 tick developer session 压缩."""
-
-    def should_summarize(self, tick: int) -> bool: ...
-    def summarize(self) -> object: ...
-    def inject_into_prompt(self, summary: object) -> str: ...
-
-
-@runtime_checkable
 class OTLPTracer(Protocol):
     """OTLP tracing — span lifecycle 管理."""
 
@@ -248,28 +238,28 @@ class TickOrchestrator:
         guardrail: GuardrailChain | None = None,
         checkpoint_store: SQLiteCheckpointStore | None = None,
         context_offloader: ContextOffloader | None = None,
-        session_summarizer: SessionSummarizer | None = None,
         tracer: OTLPTracer | None = None,
         audit_logger: AuditLogger | None = None,
+        runtime_config: RuntimeConfig | None = None,
         escalate: bool = False,
         debug: bool = False,
         debug_dir: str | None = None,
     ) -> None:
         self.project_root = project_root or Path.cwd()
-        self._gate_runner = gate_runner
         self._audit_logger = audit_logger
         self._escalate = escalate
         self._guardrail = guardrail
         self._checkpoint_store = checkpoint_store
         self._context_offloader = context_offloader
-        self._session_summarizer = session_summarizer
         self._tracer = tracer
-        self._cached_session_summary: Any = None
         self._debug_enabled = debug
         self._debug_dir = debug_dir
 
+        # P0-6: centralized config — injectable, defaults to process-wide sentinel
+        self._runtime_config = runtime_config if runtime_config is not None else get_default_config()
+
         # T109: PII 四层文件桥接防护
-        self._pii_enabled = os.environ.get("AE_PII_ENABLED", "1") == "1"
+        self._pii_enabled = self._runtime_config.pii_enabled
         self._pii_redactor: PIIRedactor | None = PIIRedactor() if self._pii_enabled else None
 
         # T110: M5 Token JSONL 采集 (Agent 驱动模式)
@@ -278,7 +268,6 @@ class TickOrchestrator:
         self._state: EngineState | None = None
         self._router: StageRouter | None = None
         self._judge: ConvergenceJudge | None = None
-        self._gates: list | None = None
         self._plan: Plan | None = None
         self._checkpoint_mgr: CheckpointManager | None = None
         self._init_manifest: dict | None = None
@@ -299,6 +288,21 @@ class TickOrchestrator:
         # T64: Stage Checkpoint Gate (DecisionGate 形态 3)
         self._pause_at_stages: set[str] = set()
         self._passed_checkpoints: set[str] = set()
+        # P0-1: ActionBuilder delegate — 提取 10 stage builder + dispatch + PII outbound
+        self._action_builder = ActionBuilder(
+            self.project_root,
+            pii_enabled=self._pii_enabled,
+            pii_redactor=self._pii_redactor,
+            pii_outbound=self._runtime_config.pii_outbound,
+        )
+        # P0-1: TickGateRunner delegate — gate selection, execution, metrics, tracing
+        self._tick_gate_runner = TickGateRunner(
+            self.project_root,
+            init_manifest=None,
+            gate_runner=gate_runner,
+            tracer=tracer,
+            audit_logger=audit_logger,
+        )
 
     # ── T113 L2: Injectable access with visible None ──
 
@@ -334,25 +338,7 @@ class TickOrchestrator:
                 )
         self._pause_at_stages = set(stages)
 
-    def _checkpoint_passed(self, stage: str) -> bool:
-        """Check if Stage Checkpoint Gate for this stage has been passed."""
-        return stage in self._passed_checkpoints
-
-    def _progress_summary(self) -> str:
-        """Generate current progress summary for gate action display.
-
-        Format: "tick=N, stage=S, round=R[, batch=B/complete]"
-        """
-        s = self._state
-        if s is None:
-            return "tick=0, stage=?"
-        parts = [f"tick={s.tick}/{s.round}", f"stage={s.current_stage}"]
-        if self._batch_state is not None:
-            if self._batch_state.is_component_complete():
-                parts.append("batch=complete")
-            else:
-                parts.append(f"batch={self._batch_state.current_batch_id()}")
-        return ", ".join(parts)
+    # _checkpoint_passed / _progress_summary — 已提取到 ActionBuilder (P0-1)
 
     # ── 公共入口 ──
 
@@ -399,7 +385,7 @@ class TickOrchestrator:
 
         self._router = StageRouter()
         self._judge = ConvergenceJudge(ConvergenceConfig(max_iterations=max_rounds))
-        self._gates = self._load_default_gates()
+        self._tick_gate_runner.reload(self._init_manifest)
         self._checkpoint_mgr = CheckpointManager(self._checkpoint_store)
 
         if self._guardrail is None:
@@ -414,7 +400,7 @@ class TickOrchestrator:
                 self._state.expected_stage = "init"
                 self._state.tick = 0
                 self._save_checkpoint()
-                return self._build_action(pre_gate=self._build_init_manifest_gate(detected))
+                return self.build_action(pre_gate=self._build_init_manifest_gate(detected))
 
         # T95 Agent-Initiated Escalation: --escalate flag → 启动时立即暂停
         if self._escalate:
@@ -426,7 +412,7 @@ class TickOrchestrator:
                 self._state.expected_stage = "architect"
             self._state.tick = 1
             self._save_checkpoint()
-            return self._build_action(pre_gate=self._build_agent_escalation_gate(None))
+            return self.build_action(pre_gate=self._build_agent_escalation_gate(None))
 
         if self._design_doc:
             self._state.current_stage = "gap_scan"
@@ -436,7 +422,7 @@ class TickOrchestrator:
             self._state.expected_stage = "architect"
         self._state.tick = 0
         self._save_checkpoint()
-        return self._build_action()
+        return self.build_action()
 
     @classmethod
     def restore(
@@ -448,9 +434,9 @@ class TickOrchestrator:
         gate_runner: GateRunner | None = None,
         guardrail: GuardrailChain | None = None,
         context_offloader: ContextOffloader | None = None,
-        session_summarizer: SessionSummarizer | None = None,
         tracer: OTLPTracer | None = None,
         audit_logger: AuditLogger | None = None,
+        runtime_config: RuntimeConfig | None = None,
         max_rounds: int = 5,
         debug: bool = False,
         debug_dir: str | None = None,
@@ -472,9 +458,9 @@ class TickOrchestrator:
             guardrail=guardrail,
             checkpoint_store=checkpoint_store,
             context_offloader=context_offloader,
-            session_summarizer=session_summarizer,
             tracer=tracer,
             audit_logger=audit_logger,
+            runtime_config=runtime_config,
             debug=debug,
             debug_dir=debug_dir,
         )
@@ -494,7 +480,7 @@ class TickOrchestrator:
         # 协作组件 (无状态 / 从 store 重建)
         self._router = StageRouter()
         self._judge = ConvergenceJudge(ConvergenceConfig(max_iterations=max_rounds))
-        self._gates = self._load_default_gates()
+        self._tick_gate_runner.reload(self._init_manifest)
         self._checkpoint_mgr = CheckpointManager(checkpoint_store)
         if self._guardrail is None:
             self._guardrail = GuardrailChain.default()
@@ -675,7 +661,7 @@ class TickOrchestrator:
         """tick 核心逻辑 (dict 版本): Gate resolution → 验证 → Guardrail → Gate → 路由 → action."""
         # T95: Agent mid-loop escalation — Agent 在 result 中置 escalate=true
         if result.get("escalate") is True:
-            return self._build_action(pre_gate=self._build_agent_escalation_gate({
+            return self.build_action(pre_gate=self._build_agent_escalation_gate({
                 "question": result.get("escalation_question", ""),
                 "options": result.get("escalation_options"),
                 "default": result.get("escalation_default"),
@@ -736,10 +722,10 @@ class TickOrchestrator:
                     }
                 if resolution == "继续":
                     self._passed_checkpoints.add(self._state.current_stage)
-                    return self._build_action()
+                    return self.build_action()
                 if resolution == "审查当前产出":
                     self._passed_checkpoints.add(self._state.current_stage)
-                    return self._build_action(feedback=_STAGE_CHECKPOINT_REVIEW_FEEDBACK)
+                    return self.build_action(feedback=_STAGE_CHECKPOINT_REVIEW_FEEDBACK)
                 return ErrorResponse(
                     error_code="INVALID_GATE_RESOLUTION",
                     message=f"未知的 gate resolution: {resolution!r}，有效值: 继续 / 审查当前产出 / 终止 loop",
@@ -762,11 +748,11 @@ class TickOrchestrator:
             if note:
                 feedback += f" — {note}"
             self._save_checkpoint()
-            return self._build_action(feedback=feedback)
+            return self.build_action(feedback=feedback)
 
         self._apply_result_to_state(result)
 
-        # 挂运行时非持久句柄供 Guardrail (G7 REDGuard 读 batch_state/_plan, B3 line 657).
+        # 挂运行时非持久句柄供 Guardrail (G7 REDGuardrail 读 batch_state/_plan, B3 line 657).
         # asdict 只序列化 dataclass 字段 → 不泄漏进 checkpoint.
         self._state.batch_state = self._batch_state  # type: ignore[attr-defined]
         self._state._plan = self._plan  # type: ignore[attr-defined]
@@ -784,11 +770,11 @@ class TickOrchestrator:
         }
 
         if gr.action != "pass":
-            # G8 FreshGate: 代码在 Gate 后又变更 → 陈旧证据 → 强制重跑 Gate
+            # G8 FreshGuardrail: 代码在 Gate 后又变更 → 陈旧证据 → 强制重跑 Gate
             # (S-4 rerun_gates 语义). 适用 developer + critic 两阶段 (§B3.2).
-            # FreshGate 不清实现/不返错, 放行至 Gate 重跑刷新快照.
-            # 非 FreshGate 的 guardrail → 返回错误.
-            if getattr(gr, "guardrail_name", "") == "FreshGate":
+            # FreshGuardrail 不清实现/不返错, 放行至 Gate 重跑刷新快照.
+            # 非 FreshGuardrail 的 guardrail → 返回错误.
+            if getattr(gr, "guardrail_name", "") == "FreshGuardrail":
                 if self._state.current_stage != "developer":
                     self._run_developer_gates()
             else:
@@ -961,7 +947,7 @@ class TickOrchestrator:
 
         self._advance_stage("developer")
         self._offload_stage("architect")
-        return self._build_action()
+        return self.build_action()
 
     # ── _after_developer ──
 
@@ -997,13 +983,13 @@ class TickOrchestrator:
             # P1-5: T94 PrePlannedGate — 检查下一 batch 是否声明了 gate
             pending_gate = self._batch_state._get_pending_gate()
             if pending_gate:
-                return self._build_action(pre_gate=pending_gate)
-            return self._build_action()
+                return self.build_action(pre_gate=pending_gate)
+            return self.build_action()
 
         self._snapshot_developer_output()
         self._advance_stage("critic")
         self._offload_stage("developer")
-        return self._build_action()
+        return self.build_action()
 
     def _snapshot_developer_output(self) -> None:
         """保存 developer 产出快照 (advance_stage 会 clear_stage_fields)."""
@@ -1081,16 +1067,16 @@ class TickOrchestrator:
             if self._batch_state.current_batch_idx > 0:
                 self._batch_state.current_batch_idx -= 1
             self._advance_stage("developer")
-            return self._build_action(
+            return self.build_action(
                 feedback=json.dumps(result.get("findings", [])))
 
         if verdict == "APPROVE":
             comp = self._batch_state.current_component()
             if self._batch_state.has_more_batches_for(comp):
                 self._advance_stage("developer")
-                return self._build_action()
+                return self.build_action()
             self._advance_stage("component_verifier")
-            return self._build_action()
+            return self.build_action()
 
         return ActionError(error_code="INVALID_VERDICT",
                            message=f"非法 verdict: {verdict!r}").to_dict()
@@ -1117,13 +1103,13 @@ class TickOrchestrator:
         self._batch_state.advance_component()
         if self._batch_state.has_more_components_in_plate():
             self._advance_stage("developer")
-            return self._build_action()
+            return self.build_action()
 
         if self._verification_layers == VerificationLayers.LEAF:
             self._advance_stage("system_deep_audit")
         else:
             self._advance_stage("plate_deep_audit")
-        return self._build_action()
+        return self.build_action()
 
     # ── _after_plate_deep_audit ──
 
@@ -1151,13 +1137,13 @@ class TickOrchestrator:
         self._batch_state.advance_plate()
         if self._batch_state.has_more_plates():
             self._advance_stage("developer")
-            return self._build_action()
+            return self.build_action()
 
         if self._verification_layers == VerificationLayers.PLATE:
             self._advance_stage("system_deep_audit")
         else:
             self._advance_stage("system_verifier")
-        action = self._build_action()
+        action = self.build_action()
         self._display_progress()
         return action
 
@@ -1173,7 +1159,7 @@ class TickOrchestrator:
             return self._handle_plan_refine("system_verifier")
 
         self._advance_stage("system_deep_audit")
-        action = self._build_action()
+        action = self.build_action()
         self._display_progress()
         return action
 
@@ -1224,7 +1210,7 @@ class TickOrchestrator:
             self._advance_stage("gap_review")
         else:
             self._advance_stage("architect")
-        return self._build_action()
+        return self.build_action()
 
     def _after_gap_review(self, result: dict) -> dict:
         """T0.4/T0.5: gap_review → research (有待研究) / architect (全 Fill/Defer).
@@ -1269,7 +1255,7 @@ class TickOrchestrator:
             self._advance_stage("research")
         else:
             self._advance_stage("architect")
-        return self._build_action()
+        return self.build_action()
 
     def _after_research(self, result: dict) -> dict:
         """T0.6/T0.7/T0.8: research → research (队列未空) / gap_review (复审) / architect.
@@ -1282,7 +1268,7 @@ class TickOrchestrator:
         by_id = {g["id"]: g for g in report.get("gaps", [])}
         if not self._state.pending_research_ids:
             self._advance_stage("architect")
-            return self._build_action()
+            return self.build_action()
         current_id = self._state.pending_research_ids.pop(0)
         g = by_id.get(current_id, {})
         if g.get("resolution") == "research":
@@ -1301,7 +1287,7 @@ class TickOrchestrator:
             self._advance_stage("gap_review")        # T0.7 复审 (补充设计)
         else:
             self._advance_stage("architect")         # T0.8
-        return self._build_action()
+        return self.build_action()
 
     def _has_pending_rereview(self, report: dict) -> bool:
         """T0.7: 存在 defer_research gap 已研究存档但未复审 (resolution 仍 defer_research)."""
@@ -1352,18 +1338,9 @@ class TickOrchestrator:
             self._build_refine_request(source))
         clear_stage_fields(self._state, self._state.current_stage)
         self._advance_stage("architect")
-        return self._build_action()
+        return self.build_action()
 
-    def _safe_design_section(self) -> str | None:
-        """当前 component 的 design_section.
-
-        组件级阶段 (architect/developer 批内) current component 有效; 系统级 refine
-        (system_verifier/system_deep_audit) 在 batch 全部完成后触发, 无单一 current
-        component → 返回 None (缺口细节由 audit_findings 承载, 不依赖单组件游标).
-        """
-        if self._batch_state is None or self._batch_state.is_plate_complete():
-            return None
-        return self._batch_state.current_design_section()
+    # _safe_design_section — 已提取到 ActionBuilder (P0-1)
 
     def _refine_scope(self, source: str) -> tuple[str | None, str | None]:
         """(scope_plate, scope_component) 按源层级 (§B6.10 line 1158-1159).
@@ -1541,7 +1518,7 @@ class TickOrchestrator:
 
         # 重新加载 manifest + 重建 gates
         self._init_manifest = manifest
-        self._gates = self._load_default_gates()
+        self._tick_gate_runner.reload(self._init_manifest)
 
         # 推进到正确的初始 stage
         if self._design_doc:
@@ -1552,7 +1529,7 @@ class TickOrchestrator:
             self._state.expected_stage = "architect"
         self._state.tick = 0
         self._save_checkpoint()
-        return self._build_action()
+        return self.build_action()
 
     # ── Agent-Initiated Escalation (T95) ──
 
@@ -1605,356 +1582,40 @@ class TickOrchestrator:
             self._state.round += 1
             self._save_checkpoint()
             note = detail.get("note", "")
-            return self._build_action(
+            return self.build_action(
                 feedback=f"Agent escalation: 用户选择回退重设计。{note}".rstrip())
 
         if "跳过" in resolution:
             if self._batch_state is not None:
                 self._batch_state.advance_batch()
             self._save_checkpoint()
-            return self._build_action()
+            return self.build_action()
 
         # 默认: "批准继续" / "继续（批准当前方向）"
         self._save_checkpoint()
         note = detail.get("note", "")
-        return self._build_action(
+        return self.build_action(
             feedback=f"Agent escalation: 用户批准继续。{note}".rstrip() if note else "")
 
-    # ── _build_action ──
-
-    def _apply_pii_outbound(self, action: dict) -> dict:
-        """T109c L2: outbound action JSON PII 脱敏."""
-        if not self._pii_enabled or not self._pii_redactor:
-            return action
-        outbound = os.environ.get("AE_PII_OUTBOUND", "redact")
-        if outbound == "redact":
-            return self._pii_redactor.redact_dict(action)
-        elif outbound in ("warn", "block"):
-            findings = self._pii_redactor.scan_dict(action)
-            if findings:
-                _logger.warning(
-                    "PII detected in outbound action: %d matches", len(findings))
-                if outbound == "block":
-                    s = self._state
-                    return {
-                        "action": "error",
-                        "tick": s.tick + 1 if s else 1,
-                        "stage": s.current_stage if s else "",
-                        "thread_id": s.thread_id if s else "",
-                        "error_code": "PII_BLOCKED_OUTBOUND",
-                        "message": (
-                            f"PII detected in outbound action: "
-                            f"{len(findings)} matches"),
-                    }
-        return action
-
-    def _build_action(self, feedback: str | None = None, pre_gate: dict | None = None) -> dict:
-        stage = self._state.current_stage
-        # T112: 记录 action 出站时间戳供 AuditTimingGuardrail 跨 tick 计时
-        import time
-        self._state.action_timestamp = time.time()
-
-        # P1-5: T94 PrePlannedGate — 注入架构师声明的 gate
-        if pre_gate:
-            return {
-                "action": "gate",
-                "tick": self._state.tick + 1,
-                "stage": stage,
-                "thread_id": self._state.thread_id,
-                "gate": pre_gate,
-                "progress_summary": self._progress_summary(),
-            }
-
-        # T64: Stage Checkpoint Gate — pause before entering checkpointed stages
-        if stage in self._pause_at_stages and not self._checkpoint_passed(stage):
-            return {
-                "action": "gate",
-                "tick": self._state.tick + 1,
-                "stage": stage,
-                "thread_id": self._state.thread_id,
-                "gate": {
-                    "id": f"checkpoint_{stage}",
-                    "type": "stage_checkpoint",
-                    "trigger": f"before_{stage}",
-                    "question": (
-                        f"即将进入 {stage} 阶段。"
-                        f"当前进度：{self._progress_summary()}"
-                    ),
-                    "options": ["继续", "审查当前产出", "终止 loop"],
-                    "default": "继续",
-                    "timeout_ms": 0,
-                },
-                "progress_summary": self._progress_summary(),
-            }
-
-        # T114 5.4: feature_status in action JSON for Agent mode visibility
-        from auto_engineering.config.feature_flags import feature_status_for_action
-        feature_status = feature_status_for_action()
-
-        base: dict = {
-            "tick": self._state.tick + 1,
-            "stage": stage,
-            "thread_id": self._state.thread_id,
-            "gate_summary": self._state.gate_results,
-            "feedback": feedback,
-            "requirement": self._state.requirement,
-            "feature_status": feature_status,
-            "progress_summary": (
-                self._progress_tree.summary() if self._progress_tree else None
-            ),
-        }
-
-        # T69b: Inject metrics signals + diagnoses only on convergence (T83).
-        # Previously computed unconditionally on every tick — wasteful and noisy.
-        # Now moved to _convergence_check() so signals only fire on terminal ticks.
-
-        if stage == "gap_scan":
-            action = {**base, "action": "gap_scan", "context": {
-                "design_doc_path": (
-                    self._design_doc.path if self._design_doc else None),
-                "plates": [
-                    {"id": p.design_section, "name": p.name,
-                     "components": [c.design_section or c.name
-                                    for c in p.components]}
-                    for p in (self._design_doc.plates if self._design_doc else [])
-                ],
-                "project_root": str(self.project_root),
-            }, "expected_format": {
-                "gaps": ("[{id, design_section_ref, grade, clarity, "
-                         "summary, depends_on}]"),
-                "scanned_sections": "int",
-                "has_blocking": "bool",
-            }}
-
-        elif stage == "gap_review":
-            report = json.loads(self._state.gap_report_json or '{"gaps": []}')
-            is_rereview = bool(self._state.research_archive)
-            action = {**base, "action": "gap_review",
-                    "gaps": report.get("gaps", []),
-                    "has_blocking": report.get("has_blocking", False),
-                    "is_rereview": is_rereview,
-                    "research_findings": dict(self._state.research_archive),
-                    "instruction": (
-                        "初审: 对每个 gap 用 AskUserQuestion 收集 Fill(用户补充) / "
-                        "Research(检索) / Defer(留给architect) / Defer+Research. "
-                        "has_blocking 的 architectural gap 禁止 Defer. "
-                        "复审(is_rereview=true, research_findings 非空): 呈现 findings, "
-                        "让用户据研究发现做补充设计 — Fill(写入细化内容→Supplement) "
-                        "或 Defer(留给 architect in-loop 细化)."),
-                    "expected_format": {
-                        "decisions": "[{gap_id, resolution, user_note, fill_content?}]",
-                    }}
-
-        elif stage == "research":
-            report = json.loads(self._state.gap_report_json or '{"gaps": []}')
-            by_id = {g["id"]: g for g in report.get("gaps", [])}
-            current_id = (
-                self._state.pending_research_ids[0]
-                if self._state.pending_research_ids else None)
-            gap = by_id.get(current_id, {}) if current_id else {}
-            action = {**base, "action": "research",
-                    "gap": {
-                        "id": gap.get("id"),
-                        "design_section_ref": gap.get("design_section_ref"),
-                        "grade": gap.get("grade"),
-                        "summary": gap.get("summary"),
-                    },
-                    "knowledge_sources": {
-                        "tier_order": [
-                            "tier0", "tier1_ref_code", "tier2_doc_kb", "tier3_web"],
-                        "memory_constraint": (
-                            "grep 定位 → 50-200 行 Read → 丢弃; 禁止批量/并行扫描"),
-                    },
-                    "expected_format": {
-                        "findings": "string",
-                        "sources": "[{tier, ref, note}]",
-                        "source_tier": "tier0|tier1|tier2|tier3",
-                        "confidence": "high|medium|low",
-                        "recommended_design": "string (可注入 supplement)",
-                    }}
-
-        elif stage == "architect":
-            action = {**base, "action": "architect",
-                    "spawn": _SPAWN_CONFIG.get("architect"),
-                    "context": {
-                "requirement": self._state.requirement,
-                "design_section": self._safe_design_section(),
-                "project_root": str(self.project_root),
-                "init_manifest": self._init_manifest,
-                "design_supplements": (
-                    json.loads(self._state.design_supplements_json)
-                    if self._state.design_supplements_json else {}),
-                "research_archive": self._state.research_archive,
-            }, "expected_format": {
-                "plan": "string (markdown, min 50 chars)",
-                "batch_plan": (
-                    "[{batch_id, design_section, component, "
-                    "tasks:[{id, description, module_ref, file_targets}], "
-                    "depends_on}] (min 1 batch)"),
-                "file_list": "[string] (min 1 file)",
-                "contracts": "object (may be empty)",
-            }}
-            # PLAN-REFINE 回路: RefineRequest 经 feedback 承载 (§B6.10 line 1178-1182)
-            if self._state.refine_request_json:
-                action["feedback"] = {
-                    "mode": "PLAN_REFINE",
-                    "refine_request": json.loads(self._state.refine_request_json),
-                }
-            # fall through to _apply_pii_outbound
-
-        elif stage == "developer":
-            tasks = (
-                self._batch_state.current_batch_tasks(self._plan)
-                if self._batch_state and self._plan
-                else (self._plan.get_tasks_by_stage("developer")
-                      if self._plan else [])
-            )
-            action = {**base, "action": "developer",
-                    "component": (
-                        self._batch_state.current_component_name()
-                        if self._batch_state else None),
-                    "batch_id": (
-                        self._batch_state.current_batch_id()
-                        if self._batch_state else None),
-                    "tasks": [
-                        {"id": t.id, "description": t.description,
-                         "expected_output": t.expected_output,
-                         "file_targets": list(t.target_files),
-                         "depends_on": t.depends_on}
-                        for t in tasks
-                    ],
-                    "plan": self._state.plan}
-            # T74: Inject session summary for developer when tick > 5
-            if self._session_summarizer is not None:
-                if self._session_summarizer.should_summarize(self._state.tick):
-                    from auto_engineering.context.summarization import SessionSummary
-                    summary = self._cached_session_summary or SessionSummary(
-                        ticks_covered=range(
-                            max(1, self._state.tick - 5), self._state.tick + 1),
-                        generated_at_tick=self._state.tick,
-                    )
-                    action["session_summary"] = (
-                        self._session_summarizer.inject_into_prompt(summary))
-            # fall through to _apply_pii_outbound
-
-        elif stage == "critic":
-            snap = self._dev_snapshot or {}
-            action = {**base, "action": "critic",
-                    "spawn": _SPAWN_CONFIG.get("critic"),
-                    "context": {
-                "files_changed": snap.get("files_changed", self._state.files_changed),
-                "test_results": snap.get("test_results", self._state.test_results),
-                "commit_hash": snap.get("commit_hash", self._state.commit_hash),
-                "component": (
-                    self._batch_state.current_component_name()
-                    if self._batch_state else None),
-                "design_section": (
-                    self._batch_state.current_design_section()
-                    if self._batch_state else None),
-                "batch_id": self._resolve_batch_id(),
-            }, "expected_format": {
-                "stage": "critic",
-                "verdict": "APPROVE | MAJOR",
-                "findings": "[{file, line, severity, issue, suggestion}]",
-                "critic_feedback": "string",
-            }}
-
-        elif stage == "component_verifier":
-            comp = self._batch_state.current_component()
-            action = {**base, "action": "component_verifier",
-                    "spawn": _SPAWN_CONFIG.get("component_verifier"),
-                    "context": {
-                "component": comp.name,
-                "design_section": comp.design_section,
-                "design_spec": comp.design_spec_summary(),
-                "implementation_files": getattr(comp, "implementation_files", []),
-                "contracts": getattr(comp, "contracts", {}),
-            }, "recheck": dict(_VERIFIER_RECHECK), "expected_format": {
-                "stage": "component_verifier",
-                "component": "string (组件名称, 必填)",
-                "coverage_map": (
-                    "[{design_item, status(IMPLEMENTED|MISSING|DIVERGED), "
-                    "file, line, note}]"),
-                "missing_count": "int",
-                "diverged_count": "int",
-                "recheck_log": (
-                    "[{design_item, haiku_status, sonnet_verdict, final_status}] "
-                    "(仅负判定经 Sonnet 复核后填, 无负判定则空)"),
-            }}
-
-        elif stage == "plate_deep_audit":
-            plate = self._batch_state.current_plate()
-            action = {**base, "action": "plate_deep_audit",
-                    "spawn": _SPAWN_CONFIG.get("plate_deep_audit"),
-                    "context": {
-                "plate": plate.name,
-                "components": plate.components_summary(),
-                "cross_component_contracts": plate.cross_component_contracts(),
-                "project_root": str(self.project_root),
-            }, "expected_format": {
-                "stage": "plate_deep_audit",
-                "plate": "string (板块名称, 必填)",
-                "findings": (
-                    "[{severity, dimension, agent_source, file, line, "
-                    "description, suggested_fix}]"),
-                "p0_count": "int", "p1_count": "int", "p2_count": "int",
-                "cross_component_issues": "[{contract_id, status, detail}]",
-                "total_audited_files": "int",
-            }}
-
-        elif stage == "system_verifier":
-            action = {**base, "action": "system_verifier",
-                    "spawn": _SPAWN_CONFIG.get("system_verifier"),
-                    "context": {
-                "design_doc": (
-                    self._design_doc.path if self._design_doc else None),
-                "design_sections": (
-                    self._design_doc.sections_summary()
-                    if self._design_doc else []),
-                "project_root": str(self.project_root),
-            }, "recheck": dict(_VERIFIER_RECHECK), "expected_format": {
-                "stage": "system_verifier",
-                "full_coverage_map": (
-                    "[{design_section, design_item, status, "
-                    "implementation, note}]"),
-                "total_design_items": "int",
-                "covered_count": "int",
-                "missing_count": "int",
-                "diverged_count": "int",
-                "recheck_log": (
-                    "[{design_item, haiku_status, sonnet_verdict, final_status}] "
-                    "(仅负判定经 Sonnet 复核后填, 无负判定则空)"),
-            }}
-
-        elif stage == "system_deep_audit":
-            action = {**base, "action": "system_deep_audit",
-                    "spawn": _SPAWN_CONFIG.get("system_deep_audit"),
-                    "context": {
-                "project_root": str(self.project_root),
-                "audit_dimensions": [
-                    "架构合理性", "代码质量", "工程化规范",
-                    "代码逻辑虚化度", "团队协作友好度", "设计覆盖度"],
-                "p1_threshold": self._get_p1_threshold(),
-                "coverage_map_from_verifier": self._state.coverage_map,
-            }, "expected_format": {
-                "stage": "system_deep_audit",
-                "findings": (
-                    "[{severity, dimension, file, line, description, "
-                    "evidence, suggested_fix}]"),
-                "p0_count": "int", "p1_count": "int", "p2_count": "int",
-                "total_audited_files": "int",
-                "design_docs_stale": "bool",
-                "design_doc_suggestions": "string",
-                "missing_count": "int",
-                "diverged_count": "int",
-            }}
-
-        else:
-            action = {**base, "action": "error",
-                    "error_code": "UNKNOWN_STAGE",
-                    "message": f"Unknown stage: {stage}"}
-
-        return self._apply_pii_outbound(action)
+    def build_action(self, feedback: str | None = None, pre_gate: dict | None = None) -> dict:
+        """Build the action dict for the current stage — delegates to ActionBuilder (P0-1)."""
+        return self._action_builder.build_action(
+            self._state,
+            design_doc=self._design_doc,
+            init_manifest=self._init_manifest,
+            batch_state=self._batch_state,
+            plan=self._plan,
+            dev_snapshot=self._dev_snapshot,
+            progress_tree=self._progress_tree,
+            pause_at_stages=self._pause_at_stages,
+            passed_checkpoints=self._passed_checkpoints,
+            last_batch_id=self._last_batch_id,
+            feedback=feedback,
+            pre_gate=pre_gate,
+            pii_enabled=self._pii_enabled,
+            pii_redactor=self._pii_redactor,
+            pii_outbound=self._runtime_config.pii_outbound,
+        )
 
     # ── T110b: Token 采集 ──
 
@@ -2014,7 +1675,7 @@ class TickOrchestrator:
         """T109d L3: inbound result JSON PII scan/redact/block."""
         if not self._pii_enabled or not self._pii_redactor:
             return result
-        inbound = os.environ.get("AE_PII_INBOUND", "warn")
+        inbound = self._runtime_config.pii_inbound
         if inbound == "redact":
             return self._pii_redactor.redact_dict(result)
         findings = self._pii_redactor.scan_dict(result)
@@ -2032,6 +1693,23 @@ class TickOrchestrator:
         return result
 
     def _apply_result_to_state(self, result: dict) -> None:
+        """将本轮 agent result 写入 EngineState 对应字段.
+
+        受影响字段 (按 stage):
+          gap_scan          → gap_report_json
+          gap_review        → pending_gap_decisions
+          architect         → plan, batch_plan, file_list, contracts
+          developer         → files_changed, commit_hash, test_results, red_evidence
+          critic            → critic_verdict, findings, critic_feedback
+          component_verifier → coverage_map
+          plate_deep_audit  → deep_audit_result
+          system_verifier   → system_verdict, design_gaps
+          system_deep_audit → system_deep_audit_result
+
+        Returns:
+            None (mutates self._state in place). 调用者 (_after_tick) 在调用前
+            不知道哪些字段会变更 — 此方法为唯一写入口, 集中管理状态变更。
+        """
         stage = result.get("stage", "")
         if stage == "gap_scan":
             self._state.gap_report_json = json.dumps({
@@ -2104,13 +1782,21 @@ class TickOrchestrator:
             gate_results=gate_results,
         ))
 
-    def _compute_diff_stats(self, files_changed: list) -> tuple[int, int]:
-        """Compute lines_added/lines_removed from git diff --numstat (T105b)."""
+    def _compute_diff_stats(self, files_changed: list, *, git_runner: Callable | None = None) -> tuple[int, int]:
+        """Compute lines_added/lines_removed from git diff --numstat (T105b).
+
+        Args:
+            files_changed: list of changed file paths.
+            git_runner: optional callable for git subprocess (injectable for testing).
+                        Signature: (list[str]) -> subprocess.CompletedProcess.
+                        Defaults to subprocess.run.
+        """
         if not files_changed:
             return 0, 0
         try:
             import subprocess
-            result = subprocess.run(
+            runner = git_runner if git_runner is not None else subprocess.run
+            result = runner(
                 ["git", "-C", str(self.project_root), "diff", "--numstat"],
                 capture_output=True, text=True, timeout=5,
             )
@@ -2135,99 +1821,13 @@ class TickOrchestrator:
             return 0, 0
 
     def _run_developer_gates(self) -> None:
-        from auto_engineering.gates.registry import DEFAULT_GATES
-        gates = self._gates or DEFAULT_GATES
-        gate_names = tuple(g.name for g in gates)
-
-        # T75: OTLP tracing span for gate execution
-        gate_span = None
-        if self._tracer is not None:
-            gate_span = self._tracer.start_span(
-                "gates.run", attributes={"gate_names": list(gate_names)})
-
-        t_g = time.perf_counter()
-        if self._gate_runner:
-            raw = self._gate_runner(gate_names, self.project_root)
-        else:
-            from auto_engineering.gates.runner import run_gates
-            raw = run_gates(gate_names, self.project_root,
-                           files_changed=self._state.files_changed)
-        # run_gates() 返回嵌套结构 {project_root, gate_names, passed,
-        # failed, skipped, gate_summary: {实际gate结果}} —
-        # 提取 gate_summary; 扁平 dict (测试 stub) 无此 key 则回退自身
-        per_gate = raw.get("gate_summary", raw)
-        self._t_gate_ms += (time.perf_counter() - t_g) * 1000
-
-        # S-3 生产者契约 (喂给 G8 FreshGate): 每个 Gate 结果附 files_snapshot_sha
-        # (运行时 files_changed 内容聚合 sha256) + ran_at. 不产出则 FreshGate 恒 pass 静默失效.
-        from auto_engineering.loop.guardrail import _aggregate_sha
-        snapshot_sha = _aggregate_sha(
-            self._state.files_changed, self.project_root)
-        ran_at = datetime.now(UTC).isoformat()
-        self._state.gate_results = {
-            name: {
-                "passed": (
-                    v.get("passed")
-                    if isinstance(v, dict)
-                    else getattr(v, "passed", None)
-                ),
-                "message": (
-                    v.get("message", "")
-                    if isinstance(v, dict)
-                    else getattr(v, "message", "") or ""
-                ),
-                "files_snapshot_sha": snapshot_sha,
-                "ran_at": ran_at,
-            }
-            for name, v in per_gate.items()
-        }
-
-        # T69a: Record gate results for metrics collector
-        from auto_engineering.metrics.collector import AIOrigin, get_collector
-        mc = get_collector()
-        if mc is not None:
-            for name, info in self._state.gate_results.items():
-                findings = 0
-                msg = info.get("message", "")
-                if isinstance(msg, str) and msg:
-                    findings = msg.count("\n") + 1 if msg.strip() else 0
-                mc.record_gate_result(
-                    gate_name=name,
-                    passed=bool(info.get("passed")),
-                    duration_ms=int(self._t_gate_ms),
-                    findings_count=findings,
-                    ai_origin=AIOrigin(
-                        level="led",
-                        agent_role="developer",
-                        driver_type="agent",
-                    ),
-                )
-
-        # T75: close gate tracing span + T76: audit log gate results
-        if gate_span is not None:
-            passed = all(
-                v.get("passed") for v in self._state.gate_results.values())
-            gate_span.set_attribute("all_passed", passed)
-            gate_span.set_attribute("gate_count",
-                                    len(self._state.gate_results))
-            gate_span.end()
-
-        if self._audit_logger is not None:
-            self._audit_logger.log_event(
-                event="gate_run",
-                stage=self._state.current_stage,
-                tick=self._state.tick,
-                gate_results={
-                    name: {"passed": v["passed"], "message": v["message"][:200]}
-                    for name, v in self._state.gate_results.items()
-                },
-            )
-
-    def _load_default_gates(self) -> list:
-        from auto_engineering.gates.registry import DEFAULT_GATES, build_gates_from_manifest
-        if self._init_manifest:
-            return build_gates_from_manifest(self._init_manifest)
-        return DEFAULT_GATES
+        """Run all gates via TickGateRunner delegate (P0-1)."""
+        results, duration_ms = self._tick_gate_runner.run(
+            self._state.files_changed,
+            stage=self._state.current_stage,
+            tick=self._state.tick)
+        self._state.gate_results = results
+        self._t_gate_ms += duration_ms
 
     def _handle_guardrail_result(self, gr) -> dict:
         action = getattr(gr, "action", "block")
@@ -2236,11 +1836,35 @@ class TickOrchestrator:
             message=getattr(gr, "message", "")).to_dict()
 
     def _get_p1_threshold(self) -> int:
+        """Return P1 threshold for deep audit pass/fail decisions.
+
+        T131 Bayesian wiring: when AE_METRICS=1 and ThresholdLearner has ≥30
+        observations, reads the learned max_refine_global posterior mean as the
+        P1 threshold (clamped to [2, 8]).  Falls back to _DEFAULT_P1_THRESHOLD
+        during cold start or when metrics are disabled.
+
+        ThresholdLearner is @reserved (strategic reserve) — wiring activates
+        automatically once the metrics pipeline accumulates sufficient data.
+        """
+        try:
+            from auto_engineering.config.runtime_config import get_default_config
+            if get_default_config().metrics_enabled:
+                from auto_engineering.metrics.threshold_learner import ThresholdLearner
+                learner = ThresholdLearner(self.project_root / ".ae-state" / "metrics")
+                learned = learner.compute_max_iter()
+                if learned != 10:  # 10 is the cold-start default — no real data yet
+                    return max(2, min(8, learned // 2))
+        except Exception:
+            pass
         return _DEFAULT_P1_THRESHOLD
 
     def _write_audit_history(self, p0: int, p1: int, p2: int,
                              triggered: bool) -> None:
-        pass  # 后续 Phase: 写入 ThresholdLearner 历史
+        if not any([p0, p1, p2]):
+            return
+        _logger.debug(
+            "audit history not persisted (not yet implemented): "
+            "P0=%d P1=%d P2=%d triggered=%s", p0, p1, p2, triggered)
 
     def _save_checkpoint(self) -> str | None:
         if self._checkpoint_mgr is None:
@@ -2265,13 +1889,7 @@ class TickOrchestrator:
             self._state.progress_tree_json = json.dumps(
                 self._progress_tree.to_dict(), ensure_ascii=False)
 
-    def _resolve_batch_id(self) -> str | None:
-        """返回当前 batch_id, 组件完成时回退到 _last_batch_id."""
-        if self._batch_state is None:
-            return None
-        if not self._batch_state.is_component_complete():
-            return self._batch_state.current_batch_id()
-        return self._last_batch_id
+    # _resolve_batch_id — 已提取到 ActionBuilder (P0-1)
 
     def _display_progress(self) -> None:
         """自动展示进度树 (同 tick 去重). 走 stderr, 不污染 stdout action JSON 契约."""
@@ -2290,8 +1908,5 @@ class TickOrchestrator:
 
 __all__ = [
     "ORCH_BUDGET_MS",
-    "_DEFAULT_P1_THRESHOLD",
-    "_MAX_GLOBAL",
-    "_MAX_PER_SOURCE",
     "TickOrchestrator",
 ]

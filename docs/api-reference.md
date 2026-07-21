@@ -10,7 +10,7 @@ Auto-Engineering v5.6 is a **Tick-Based Discrete Invocation loop engine** with:
 - **v5.5 Orchestrator** (共存 legacy, 连续 while 循环直调 LLM)
 - **5 层验证管道** (architect → developer → critic → component_verifier → system_deep_audit)
 - **LEAF/PLATE/FULL 自动验证深度裁剪** (决策 #41)
-- **9 Guardrail 系统** (3 态: pass/block/retry, 含 REDGuard/FreshGate/RegressionGate)
+- **9 Guardrail 系统** (3 态: pass/block/retry, 含 REDGuardrail/FreshGuardrail/RegressionGuardrail)
 - **7 Gate 体系** (safety / lint / type_check / audit / contract / test / build)
 - **StageRouter** (T1-T22 转换表 + MAJOR 计数 + refine_allowed)
 - **SQLite Checkpoint** + retry_counters 持久化
@@ -266,9 +266,9 @@ decision: StageDecision = router.next(engine_state)
 | G3 | `GitDiffExists` | post / developer | block (无 diff) |
 | G4 | `TestsPass` | post / developer | retry (测试失败) |
 | G5 | `GitClean` | post / developer | retry (有未提交) |
-| G6 | `REDGuard` | pre / critic | block (未提交变更) |
-| G7 | `FreshGate` | pre / critic | block (stale gate 结果) |
-| G8 | `RegressionGate` | post / developer | retry (测试回归) |
+| G6 | `REDGuardrail` | pre / critic | block (未提交变更) |
+| G7 | `FreshGuardrail` | pre / critic | block (stale gate 结果) |
+| G8 | `RegressionGuardrail` | post / developer | retry (测试回归) |
 | G9 | `RefineGate` | post / developer | retry (refine 检查) |
 
 ### 5.2 GuardrailResult 数据类
@@ -533,7 +533,7 @@ except AEError as e:
 | `auto_engineering/loop/tick_orchestrator.py` | 10 | v5.6 Tick 主引擎 (1017 行, after_handler + _build_action) |
 | `auto_engineering/loop/orchestrator.py` | 04 | v5.5 连续 while 循环 (legacy, 共存) |
 | `auto_engineering/loop/stage_router.py` | 01 | StageDecision + StageRouter T1-T22 |
-| `auto_engineering/loop/guardrail.py` | 02 | 9 Guardrails (含 REDGuard/FreshGate/RegressionGate) |
+| `auto_engineering/loop/guardrail.py` | 02 | 9 Guardrails (含 REDGuardrail/FreshGuardrail/RegressionGuardrail) |
 | `auto_engineering/loop/convergence.py` | 03 | 4 级收敛判定 (hard/quality/stagnant/semantic) |
 | `auto_engineering/loop/plan.py` | 03 | Plan.get_tasks_by_stage + Task DAG |
 | `auto_engineering/loop/task_factory.py` | 03 | _apply_outcome_to_state + _tasks_from_batch_plan |

@@ -17,7 +17,7 @@ Auto-Engineering 是 **Claude Code Plugin 形态的 Loop Engineering 脚手架**
 
 - **Tick-Based 离散调用**（v5.6 Tick 协议，文件桥接，Python 每次 tick 独立进程）
 - **5 层验证管道**（architect → developer → critic → component_verifier → system_deep_audit）
-- **10 Guardrail 守门**（3 态: pass/block/retry，含 REDGuard/FreshGate/RegressionGate/PIIGuardrail）
+- **10 Guardrail 守门**（3 态: pass/block/retry，含 REDGuardrail/FreshGuardrail/RegressionGuardrail/PIIGuardrail）
 - **7 道 Gate 质量门**（safety / lint / type_check / audit / contract / test / build）
 - **SQLite checkpoint 恢复**（中断后不丢进度）
 - **LEAF/PLATE/FULL 自动验证深度裁剪**

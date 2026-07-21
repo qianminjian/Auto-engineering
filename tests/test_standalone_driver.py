@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+import pytest
+
 # ── Test helpers ──
 
 _VALID_PLAN = (
@@ -221,3 +223,77 @@ class TestStandaloneDriverActionRouting:
             "context": {"files_changed": ["x.py"]},
         })
         assert task is not None
+
+
+# ── T134c: AE_MODEL_ROLE / AE_PROVIDER_ROLE parameterized tests ──
+
+
+class FakeConfig:
+    """Minimal RuntimeConfig stub for _resolve_model / _resolve_provider tests."""
+
+    def __init__(self, overrides: dict | None = None):
+        self._overrides = overrides or {}
+        self.audit_log_enabled = False
+
+    def get(self, key: str, default: str = "") -> str:
+        return self._overrides.get(key, default)
+
+
+class TestResolveModel:
+    """_resolve_model(role, config) — per-role model selection with env override."""
+
+    @pytest.mark.parametrize("role,expected", [
+        ("architect", "claude-sonnet-4-6"),
+        ("developer", "claude-sonnet-4-6"),
+        ("critic", "claude-sonnet-4-6"),
+        ("component_verifier", "claude-haiku-4-5-20251001"),
+        ("plate_deep_audit", "claude-sonnet-4-6"),
+        ("system_verifier", "claude-haiku-4-5-20251001"),
+        ("system_deep_audit", "claude-sonnet-4-6"),
+        ("gap_scan", "claude-haiku-4-5-20251001"),
+        ("research", "claude-haiku-4-5-20251001"),
+    ])
+    def test_default_model_per_role(self, role, expected):
+        """Each role has a sensible default model — no env override."""
+        from auto_engineering.loop.standalone_driver import _resolve_model
+        assert _resolve_model(role) == expected
+
+    def test_env_override_model(self):
+        """AE_MODEL_ARCHITECT=claude-opus-4-7 overrides default."""
+        from auto_engineering.loop.standalone_driver import _resolve_model
+        cfg = FakeConfig({"AE_MODEL_ARCHITECT": "claude-opus-4-7"})
+        assert _resolve_model("architect", config=cfg) == "claude-opus-4-7"
+
+    def test_unknown_role_returns_default(self):
+        """Unknown role returns the hardcoded fallback model."""
+        from auto_engineering.loop.standalone_driver import _resolve_model
+        assert _resolve_model("nonexistent") == "claude-sonnet-4-6"
+
+    def test_env_override_unknown_role(self):
+        """Env override works even for roles not in ROLE_MODEL dict."""
+        from auto_engineering.loop.standalone_driver import _resolve_model
+        cfg = FakeConfig({"AE_MODEL_CUSTOM": "claude-haiku-4-5-20251001"})
+        assert _resolve_model("custom", config=cfg) == "claude-haiku-4-5-20251001"
+
+
+class TestResolveProvider:
+    """_resolve_provider(role, config) — per-role provider selection."""
+
+    def test_default_provider_empty_when_no_env(self):
+        """No AE_PROVIDER_<ROLE> → provider_name='' → create_provider('') default."""
+        from auto_engineering.loop.standalone_driver import _resolve_provider
+        provider = _resolve_provider("architect")
+        assert provider is not None
+
+    def test_env_override_provider(self):
+        """AE_PROVIDER_CRITIC=anthropic overrides default for that role."""
+        from auto_engineering.loop.standalone_driver import _resolve_provider
+        cfg = FakeConfig({"AE_PROVIDER_CRITIC": "anthropic"})
+        provider = _resolve_provider("critic", config=cfg)
+        assert provider is not None
+
+    def test_provider_default_for_unknown_role(self):
+        """Unknown role still returns a valid provider (falls through to default)."""
+        from auto_engineering.loop.standalone_driver import _resolve_provider
+        provider = _resolve_provider("nonexistent")
+        assert provider is not None

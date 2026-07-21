@@ -72,9 +72,9 @@ Plugin 层 (.claude-plugin/)
 
 Engine 层 (auto_engineering/)
   loop/tick_orchestrator.py  — v5.6 Tick 主引擎
-  loop/orchestrator.py       — v5.5 连续 while 循环 (共存)
+  loop/standalone_driver.py  — v7.0 Standalone 驱动
   loop/stage_router.py       — T1-T22 转换表
-  loop/guardrail.py          — 9 Guardrail (含 REDGuard/FreshGate/RegressionGate)
+  loop/guardrail.py          — 9 Guardrail (含 REDGuardrail/FreshGuardrail/RegressionGuardrail)
   loop/convergence.py        — 4 级收敛判定
   gates/                     — 7+1 道 Gate (safety→lint→type_check→audit→contract→test→build)
   agents/                    — BaseAgent + tool_use loop + AUTHZ_MATRIX
@@ -97,6 +97,28 @@ Engine 层 (auto_engineering/)
 uv run pytest tests/ --no-cov --timeout=120 -q
 # ~2587 tests passed
 ```
+
+## 环境变量
+
+所有功能开关集中在 `auto_engineering/config/feature_flags.py` FeatureManifest SSOT。运行 `ae doctor` 查看完整面板。
+
+| 变量 | 默认 | 说明 |
+|------|------|------|
+| `ANTHROPIC_API_KEY` | — | Anthropic API 密钥（必需） |
+| `AE_PII_ENABLED` | 1 | PII 四层防护总开关 |
+| `AE_METRICS` | 0 | AI Coding 度量与自进化体系 |
+| `AE_AUDIT_LOG` | 0 | LLM 调用审计日志 (JSONL) |
+| `AE_DEBUG` | 0 | DebugTracer 诊断轨迹 |
+| `AE_OTLP_ENDPOINT` | — | OTLP 分布式追踪导出 |
+| `AE_LANGSMITH` | 0 | LangSmith 可观测性集成 |
+| `AE_GATE_TIMEOUT` | — | Gate 执行超时秒数 |
+| `AE_PRODUCTION` | 0 | 生产安全模式（严格 REDGuardrail） |
+| `AE_LLM_PROVIDER` | anthropic | LLM Provider 选择 |
+| `AE_STANDALONE_MODEL` | — | Standalone 模式模型覆盖 |
+| `AE_CACHE_CONTROL` | 1 | Anthropic Prompt Caching |
+| `AE_TOKEN_TRACKING` | 0 | 逐 Tick Token JSONL 采集 |
+
+完整 Manifest（22 项）通过 `ae doctor` 查看。
 
 ## 许可
 

@@ -76,7 +76,7 @@ class RunTestsTool(BaseTool):
                 content="",
                 error=f"Tests timed out after {timeout}s",
             )
-        except Exception as exc:
+        except (OSError, ValueError) as exc:
             _logger.warning("测试执行异常: %s", exc, exc_info=True)
             return ToolResult(success=False, content="", error=str(exc))
 

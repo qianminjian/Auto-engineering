@@ -12,13 +12,14 @@ v2.0 API:
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from auto_engineering.runtime.context import TaskContext
 from auto_engineering.runtime.task import Task, TaskResult
 
 if TYPE_CHECKING:
     from auto_engineering.runtime.cancellation import CancellationToken
+    from auto_engineering.prompts.registry import PromptRegistry
 
 
 class Agent(Protocol):
@@ -39,7 +40,7 @@ class AgentRuntime:
     不包含 v2.0 execute(stage, state) API.
     """
 
-    def __init__(self, registry: Any = None):
+    def __init__(self, registry: "PromptRegistry | None" = None):
         self._factories: dict[str, Callable[[], Agent]] = {}
         self._instances: dict[str, Agent] = {}
         self._expected_class: dict[str, type] = {}

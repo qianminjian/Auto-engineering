@@ -82,7 +82,7 @@ class SessionTranscriptParser:
             total_output += output_t
             models.update(models_set)
             message_count += msg_count
-        except Exception:
+        except (json.JSONDecodeError, OSError):
             _logger.debug("Failed to read main session file", exc_info=True)
 
         # Subagent files — scan subagents/ directory
@@ -100,11 +100,11 @@ class SessionTranscriptParser:
                         total_output += output_t
                         models.update(models_set)
                         message_count += msg_count
-                    except Exception:
+                    except (OSError, UnicodeDecodeError, ValueError):
                         _logger.debug(
                             "Failed to read subagent file %s", agent_file,
                             exc_info=True)
-            except Exception:
+            except (OSError, ValueError):
                 _logger.debug("Failed to scan subagent dir", exc_info=True)
 
         return {
@@ -205,8 +205,10 @@ def create_parser(project_root: str | Path) -> SessionTranscriptParser | None:
     Returns None if token tracking is disabled (default), so callers can
     skip the JSONL I/O entirely.
     """
-    if os.environ.get("AE_METRICS") != "1":
+    from auto_engineering.config.runtime_config import get_default_config
+    _cfg = get_default_config()
+    if not _cfg.metrics_enabled:
         return None
-    if os.environ.get("AE_TOKEN_TRACKING") != "1":
+    if not _cfg.token_tracking_enabled:
         return None
     return SessionTranscriptParser(project_root)

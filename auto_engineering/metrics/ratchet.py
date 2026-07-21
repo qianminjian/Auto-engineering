@@ -172,7 +172,7 @@ class RatchetController:
             if result.returncode != 0:
                 logger.warning("git tag failed for %s: %s", tag, result.stderr.strip())
                 return str(config_path)
-        except Exception as exc:
+        except (OSError, subprocess.CalledProcessError) as exc:
             logger.warning("git tag failed for %s: %s", tag, exc)
             return str(config_path)
 
@@ -201,6 +201,7 @@ class RatchetController:
             result = subprocess.run(
                 ["git", "tag", "-l", "ae-config-v*"],
                 cwd=str(self.project_root), capture_output=True, text=True,
+                timeout=5,
             )
             tags = result.stdout.strip().split("\n")
             versions = []
@@ -211,7 +212,7 @@ class RatchetController:
                     except ValueError:
                         pass
             return max(versions) if versions else 0
-        except Exception:
+        except (OSError, subprocess.CalledProcessError):
             _logger.debug("git tag version detection failed", exc_info=True)
         # Fallback: count JSON config files
         existing = sorted(self._configs_dir.glob("ae-config-v*.json"))

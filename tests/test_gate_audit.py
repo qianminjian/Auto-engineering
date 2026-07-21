@@ -304,7 +304,7 @@ class TestAuditGateIntegration:
 
 # ==================== T30/B15 #5: 审计正则规则自测 ====================
 # 每个正则 pattern 附正例(必须命中)/反例(必须不命中), 确定性证明规则"能捕捉
-# 且不误伤" — 同 RegressionGate 的 revert-red-restore 思想应用到正则规则.
+# 且不误伤" — 同 RegressionGuardrail 的 revert-red-restore 思想应用到正则规则.
 
 
 class TestAuditRegexSelfTest:

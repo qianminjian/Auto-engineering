@@ -132,6 +132,6 @@ class RunBashTool(BaseTool):
                 content="",
                 error=f"Command timed out after {timeout}s",
             )
-        except Exception as exc:
+        except (OSError, ValueError) as exc:
             _logger.error("bash_error: command=%r error=%r", command[:200], exc)
             return ToolResult(success=False, content="", error=str(exc))

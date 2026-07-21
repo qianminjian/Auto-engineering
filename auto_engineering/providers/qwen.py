@@ -11,9 +11,8 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any
 
-from auto_engineering.providers.base import LLMProvider, LLMResponse, ToolUseBlock
+from auto_engineering.providers.base import LLMProvider, LLMResponse, ToolUseBlock, _ChatCompletionLike
 from auto_engineering.providers.openai_provider import (
     _anthropic_messages_to_openai,
     _anthropic_tools_to_openai,
@@ -31,7 +30,7 @@ _FINISH_REASON_MAP: dict[str, str] = {
 }
 
 
-def _openai_response_to_llm(response: Any) -> LLMResponse:
+def _openai_response_to_llm(response: _ChatCompletionLike) -> LLMResponse:
     choice = response.choices[0]
     content = choice.message.content or ""
     finish_reason = choice.finish_reason or "stop"
@@ -72,7 +71,8 @@ class QwenProvider:
         except ImportError:
             raise ImportError("openai package not installed. Install with: uv sync --extra openai")
 
-        key = api_key or os.environ.get("DASHSCOPE_API_KEY", "")
+        from auto_engineering.config.runtime_config import get_default_config
+        key = api_key or get_default_config().dashscope_api_key
         self._client = AsyncOpenAI(api_key=key, base_url=base_url)
 
     async def create_message(

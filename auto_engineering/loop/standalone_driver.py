@@ -56,13 +56,21 @@ ROLE_MODEL: dict[str, str] = {
 }
 
 
-def _resolve_model(role: str) -> str:
-    """Resolve model for role, with AE_MODEL_<ROLE> env var override."""
+def _resolve_model(role: str, config: Any = None) -> str:
+    """Resolve model for role, with AE_MODEL_<ROLE> env var override.
+
+    Args:
+        role: Agent role name (architect/developer/critic/...)
+        config: Optional RuntimeConfig for test injection (P0-6)
+    """
     env_key = f"AE_MODEL_{role.upper()}"
-    return os.environ.get(env_key, ROLE_MODEL.get(role, "claude-sonnet-4-6"))
+    if config is not None:
+        return config.get(env_key, ROLE_MODEL.get(role, "claude-sonnet-4-6"))
+    from auto_engineering.config.runtime_config import get_default_config
+    return get_default_config().get(env_key, ROLE_MODEL.get(role, "claude-sonnet-4-6"))
 
 
-def _resolve_provider(role: str) -> Any:
+def _resolve_provider(role: str, config: Any = None) -> Any:
     """Resolve LLM provider for role with AE_PROVIDER_<ROLE> env var (T59).
 
     Uses create_provider() for auto-detection with per-role override.
@@ -70,24 +78,26 @@ def _resolve_provider(role: str) -> Any:
 
     T77 (P0-1 fix): When AE_AUDIT_LOG=1, wraps the provider with an
     AuditLogger so all LLM calls are recorded to JSONL.
-    """
-    import os as _os
 
+    Args:
+        role: Agent role name
+        config: Optional RuntimeConfig for test injection (P0-6)
+    """
+    from auto_engineering.config.runtime_config import get_default_config
     from auto_engineering.providers.factory import create_provider
 
+    _cfg = config if config is not None else get_default_config()
+
     env_key = f"AE_PROVIDER_{role.upper()}"
-    provider_name = _os.environ.get(env_key, "")
+    provider_name = _cfg.get(env_key, "")
     provider = create_provider(provider_name)
 
     # T77: Wire AuditLogger when AE_AUDIT_LOG=1
-    if _os.environ.get("AE_AUDIT_LOG", "").strip() == "1":
+    if _cfg.audit_log_enabled:
         try:
             from auto_engineering.observability.audit_log import AuditLogger
             from pathlib import Path
-            log_dir = Path(_os.environ.get(
-                "AE_AUDIT_LOG_DIR",
-                str(Path.cwd() / ".ae-state" / "audit-logs"),
-            ))
+            log_dir = Path(_cfg.audit_log_dir or str(Path.cwd() / ".ae-state" / "audit-logs"))
             audit_logger = AuditLogger(log_dir)
             # Inject audit_logger into the provider if it supports it
             if hasattr(provider, '_audit_logger'):
@@ -105,17 +115,23 @@ def _resolve_provider(role: str) -> Any:
 AuthProvider = Callable[[], str]
 
 
-def _resolve_auth_provider() -> AuthProvider:
+def _resolve_auth_provider(config: Any = None) -> AuthProvider:
     """Resolve auth provider from environment.
 
     Priority: ANTHROPIC_AUTH_TOKEN > ANTHROPIC_API_KEY.
     Raises AEError if neither is set.
+
+    Args:
+        config: Optional RuntimeConfig for test injection (P0-6)
     """
-    auth_token = os.environ.get("ANTHROPIC_AUTH_TOKEN")
+    from auto_engineering.config.runtime_config import get_default_config
+    _cfg = config if config is not None else get_default_config()
+
+    auth_token = _cfg.anthropic_auth_token
     if auth_token:
         return lambda: auth_token
 
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    api_key = _cfg.anthropic_api_key
     if api_key:
         return lambda: api_key
 
@@ -594,7 +610,7 @@ class StandaloneDriver:
         # 无论 task 成功或失败都 commit (否则 GitClean 会阻断后续 tick)
         last_commit_hash = self._auto_commit(batch_id, last_commit_hash)
 
-        # 生成 red_evidence (TDD RED 证据) — REDGuard 需要
+        # 生成 red_evidence (TDD RED 证据) — REDGuardrail 需要
         red_evidence: list[dict] = []
         if last_commit_hash and len(last_commit_hash) == 40:
             for task_info in tasks:

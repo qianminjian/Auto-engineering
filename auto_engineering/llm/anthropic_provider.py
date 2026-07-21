@@ -12,9 +12,13 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING
 
 import anthropic
+
+if TYPE_CHECKING:
+    from auto_engineering.observability.audit_log import AuditLogger
+    from auto_engineering.providers.base import LLMResponse
 
 _logger = logging.getLogger("ae.llm")
 
@@ -82,7 +86,7 @@ class AnthropicProvider:
         api_key: str | None = None,
         client: anthropic.Anthropic | None = None,
         max_retries: int = 3,
-        audit_logger: Any | None = None,
+        audit_logger: "AuditLogger | None" = None,
     ) -> None:
         if client is not None:
             self._client = client
@@ -149,7 +153,7 @@ class AnthropicProvider:
         if hasattr(self._client, "close"):
             self._client.close()
 
-    def _to_llm_response(self, message: anthropic.types.Message) -> Any:
+    def _to_llm_response(self, message: anthropic.types.Message) -> "LLMResponse":
         """将原始 SDK Message 转换为 providers.base.LLMResponse (V8-3 适配).
 
         提取 content blocks → ToolUseBlock 列表 + 纯文本拼接.
@@ -248,8 +252,8 @@ class AnthropicProvider:
         # OpenAI/GLM/Qwen providers do not support this mechanism. For non-Anthropic
         # backends (via StandaloneDriver --standalone), each call retransmits system
         # prompt + tools at full token cost (~2-3x without caching).
-        import os as _os
-        if _os.environ.get("AE_CACHE_CONTROL", "").strip() != "0":
+        from auto_engineering.config.runtime_config import get_default_config
+        if get_default_config().cache_control_enabled:
             system_for_api = self._inject_cache_control_system(system)
             tools_for_api = self._inject_cache_control_tools(tools) if tools else None
         else:

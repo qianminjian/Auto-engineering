@@ -98,7 +98,7 @@ def register_checkpoint_commands(main: click.Group) -> None:
 
         try:
             state = EngineState.from_dict(state_data)
-        except Exception as e:
+        except (ValueError, TypeError, KeyError) as e:
             _cli_fatal(f"无法解析 EngineState: {e}")
 
         cp_dir = _get_checkpoint_dir()
@@ -114,7 +114,7 @@ def register_checkpoint_commands(main: click.Group) -> None:
                 tag=tag or "manual",
                 checkpoint_id=checkpoint_id,
             )
-        except Exception as e:
+        except (OSError, sqlite3.Error, ValueError) as e:
             _cli_fatal(f"save checkpoint failed: {e}")
 
         click.echo(f"Checkpoint saved: {cp_id}")
@@ -146,7 +146,7 @@ def register_checkpoint_commands(main: click.Group) -> None:
                             "db_file": db_file.name,
                         }
                     )
-            except Exception as e:
+            except (OSError, sqlite3.Error, ValueError) as e:
                 _cli_warn(f"read {db_file.name} failed: {e}")
                 continue
 
@@ -182,7 +182,7 @@ def register_checkpoint_commands(main: click.Group) -> None:
                 cp = store.load(checkpoint_id)
             except CheckpointNotFoundError:
                 continue
-            except Exception as e:
+            except (OSError, sqlite3.Error, ValueError) as e:
                 _cli_warn(f"error reading {db_file.name}: {e}")
                 continue
             click.echo(f"ID:            {cp.id}")
@@ -225,7 +225,7 @@ def register_checkpoint_commands(main: click.Group) -> None:
                 store.load(checkpoint_id)  # 验证存在
             except CheckpointNotFoundError:
                 continue
-            except Exception as e:
+            except (OSError, sqlite3.Error, ValueError) as e:
                 _cli_warn(f"error reading {db_file.name}: {e}")
                 continue
             click.echo(f"Checkpoint '{checkpoint_id}' is valid")
@@ -297,7 +297,7 @@ def register_checkpoint_commands(main: click.Group) -> None:
                 cp = store.load(checkpoint_id)
             except CheckpointNotFoundError:
                 continue
-            except Exception as e:
+            except (OSError, sqlite3.Error, ValueError) as e:
                 _cli_warn(f"error reading {db_file.name}: {e}")
                 continue
             click.echo(f"ID:            {cp.id}")
@@ -355,6 +355,6 @@ def register_checkpoint_commands(main: click.Group) -> None:
         """
         try:
             cp_id = migrate_v1_to_v2(Path(src_json), Path(dst_sqlite))
-        except Exception as e:
+        except (OSError, ValueError) as e:
             _cli_fatal(f"迁移失败: {e}")
         click.echo(f"Migrated v2.0 → v2.0: checkpoint_id={cp_id}")

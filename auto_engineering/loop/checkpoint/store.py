@@ -9,6 +9,7 @@ v2.5 P1-D 二次拆分: store.py 609 行 → store.py + _connection.py + _serial
 
 from __future__ import annotations
 
+import contextlib
 import json
 import sqlite3
 import threading
@@ -319,10 +320,10 @@ class SQLiteCheckpointStore[T]:
             True = 已删除, False = 不存在
         """
         with self._conn() as conn, _atomic(conn):
-            cursor = conn.execute(
+            with contextlib.closing(conn.execute(
                 "DELETE FROM checkpoints WHERE id = ?", (checkpoint_id,)
-            )
-            return cursor.rowcount > 0
+            )) as cursor:
+                return cursor.rowcount > 0
 
     def clear(self) -> None:
         """清空所有 Checkpoint (主要用于测试).

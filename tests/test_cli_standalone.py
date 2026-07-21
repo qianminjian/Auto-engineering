@@ -33,11 +33,11 @@ class TestV7_6_StandaloneCliFlag:
         result = runner.invoke(main, ["dev-loop", "--standalone", "--init", "req"])
         assert result.exit_code != 0
 
-    @patch("auto_engineering.cli.__init__._run_standalone")
-    def test_standalone_dispatches_to_run_standalone(
+    @patch("auto_engineering.cli.__init__.run_standalone")
+    def test_standalone_dispatches_torun_standalone(
         self, mock_run: MagicMock
     ) -> None:
-        """--standalone "req" 时调用 _run_standalone."""
+        """--standalone "req" 时调用 run_standalone."""
         from click.testing import CliRunner
 
         from auto_engineering.cli.__init__ import main
@@ -45,7 +45,7 @@ class TestV7_6_StandaloneCliFlag:
         mock_run.return_value = None
         runner = CliRunner()
         result = runner.invoke(main, ["dev-loop", "--standalone", "test-req"])
-        # 如果 _run_standalone 被调用, 说明分派成功
+        # 如果 run_standalone 被调用, 说明分派成功
         mock_run.assert_called_once()
         assert result.exit_code == 0
 

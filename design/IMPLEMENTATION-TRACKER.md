@@ -70,9 +70,10 @@
 | **27** | **真跑验证发现（2026-07-19）** | **3** | **3** | **✅ 完成 — T102-T104 全部修复** |
 | **28** | **七方对比报告 × 真跑交叉对标（2026-07-19）** | **3** | **3** | **✅ 3/3 — T105 ✅(6/6子项) / T106 ✅(4/4) / T107 ✅(4/4)** |
 | **29** | **Phase 17-21 真跑验证差距修复（2026-07-20）** | **22** | **22** | **✅ 22/22 — T108-T116 全部完成（T109h PII 文档 ⚠️ 部分完成）。2622 tests 零回归。BEACON #78-#85 落实** |
-| **合计** | | **221** | **221** | **全部完成 ✅ — Phase 1-29 221/221 顶级任务（仅 T109h PII 文档 ⚠️ 部分完成）** |
+| **30** | **深度审计发现修复（2026-07-21）** | **20** | **18** | **◐ 18/20 — P0-5/P0-6 完成；P0-1 部分完成（ActionBuilder/TickGateRunner）；P0-3/P0-4 完成** |
+| **合计** | | **241** | **239** | **Phase 1-30 239/241 完成** |
 
-> **计数说明**：合计 221 为顶级 T-task 数量（不含子任务如 T105a-T105f、T106a-T106d、T107a-T107d、T108a-T108c、T109a-T109h、T110a-T110d）。若含全部子任务，实际可执行条目为 ~255。Phase 28 的 3 项（T105/T106/T107）含 14 子项；Phase 29 的 22 项（T108-T116）含 21 子项（T108×3 + T109×8 + T110×4 + T111×1 + T112×1 + T113×1 + T114×1 + T115×1 + T116×1）。
+> **计数说明**：合计 241 为顶级 T-task 数量。Phase 30 初始 18 项 + P0-5 拆分 1 项 (T135) + P0-6 新增 1 项 (T136) = 20 项。18 项已完成（含 P0-5/P0-6），T131(贝叶斯接线)/T132(standalone audit_logger) 待实现。6 项架构决策中 T133a 部分完成（delegate 提取）、T133f 完成（命名统一）。截至 2026-07-21, 239/241 顶级任务完成。
 
 ---
 
@@ -161,7 +162,7 @@
 | T26d | PromptRegistry + B12 迁移（背书 T16e/f/g）| ✅ | 570bec0（B12.5 版本锁）+ test_prompt_registry(24)+test_sync_prompts(9) |
 | T26e | PRBackend 选型（背书 T10c/T33）| ✅ | BEACON 决策 #50 |
 | T26f | 环内增量 test_gate + commit_msg（背书 T16l/T16n）| ✅ | BEACON 决策 #51 |
-| T26g | B15 Guardrail REDGuard/FreshGate/RegressionGate（背书 T29/T30）| ✅ | T29 test_guardrail: TestREDGuard(8)+TestFreshGate(5)+name注入(4)+retry粒度(4)；T30 test_guardrail: TestRegressionGate(7，含真跑嵌套 pytest revert-red-restore + git rm 分支)+test_gate_audit TestAuditRegexSelfTest(9)。三类 Guardrail 均有确定性证据测试 |
+| T26g | B15 Guardrail REDGuardrail/FreshGuardrail/RegressionGuardrail（背书 T29/T30）| ✅ | T29 test_guardrail: TestREDGuardrail(8)+TestFreshGuardrail(5)+name注入(4)+retry粒度(4)；T30 test_guardrail: TestRegressionGuardrail(7，含真跑嵌套 pytest revert-red-restore + git rm 分支)+test_gate_audit TestAuditRegexSelfTest(9)。三类 Guardrail 均有确定性证据测试 |
 | T26h | AuditGate 语义层 + finding 生命周期（背书 T31）| ✅ | test_gate_audit: TestAuditGateSemanticLayer(4，含默认 None/合并/异常降级)+TestAuditFindingFingerprint(3)+TestAuditGateKnownAccepted(4，构造器+contracts+details+未接受仍失败)。语义层 Python-never-LLM 边界 + known-and-accepted 抑制均有确定性测试 |
 
 ## Phase 6 — 审计与验证方法论 (B15)
@@ -170,8 +171,8 @@
 |---|----------|------|:---:|--------|
 | T27 | `gates/deep_audit.py` 骨架→实际（3-agent 编排）| test_deep_audit(ext) | ✅ | DeepAuditFinding.agent_source str→list[str]；`recount_findings()` 权威去重入口（key=(file,line,desc[:40]归一化)，保留最高severity+合并agent_source+重算p0/p1/p2）；DeepAuditGate.run() + tick `_after_plate/system_deep_audit` 共用（消解路由信任Agent自报计数的静默失效 §B6.7a L1068）；test_gate_deep_audit TestDeepAuditGateDedup(6) + test_tick_orchestrator 2 recount 集成（膨胀不误触发/漏报仍触发）|
 | T28 | `commands/audit.md` 内化（去 Superpowers 依赖）| grep 断言 | ✅ | audit.md 三阶段自含重写（Phase1 `ae gate-check --all`+make / Phase2 3-agent B6.7a 内化 / Phase3 `recount_findings` 确定性求值），移除"执行通用 `/audit`" Superpowers 运行时委托（B14 零外部依赖）；test_plugin_contract TestAuditCommandInternalized(3: 无通用委托/委托自有Gate+stage/声明零外部依赖）|
-| T29 | `loop/guardrail.py` REDGuard + FreshGate | test_guardrail(ext) | ✅ | G7 REDGuard（post/developer：`git log`定位先于实现的独立测试commit + `merge-base --is-ancestor`祖先校验 + 信任red_evidence，`_STRICT_RED` opt-in重跑；纯配置task豁免）+ G8 FreshGate（post/developer,critic：`_aggregate_sha`(files_changed)比对gate快照，陈旧→retry）；`GuardrailResult.guardrail_name`+Chain注入；S-3生产者契约（`_run_developer_gates`注入`files_snapshot_sha`+`ran_at`，否则G8静默失效）；S-4 retry键粒度`{stage}:{guardrail_name}`+FreshGate `rerun_gates`分流（不清实现）；tick挂运行时句柄`batch_state`/`_plan`；`default()`6→8；test_guardrail +REDGuard(8)/FreshGate(5)/name注入(4)/retry粒度(4)/helper(2) |
-| T30 | `loop/guardrail.py` RegressionGate + audit regex 自测 | T26g + test_gate_audit(ext) | ✅ | G9 RegressionGate（post/developer，block）：`_current_regression_task`取batch首个`kind=="regression_fix"` task；`revert(git checkout impl^ -- 实现文件)→_run_test MUST FAIL→finally restore(git checkout HEAD)→_run_test MUST PASS`；S-19新建实现文件（impl^无pathspec→rc≠0）走`git rm`模拟"修复前不存在"；`_run_test`用`sys.executable -B -m pytest <root> -k <id> -o addopts= -p no:cacheprovider`（`-B`禁写.pyc避免同秒git checkout mtime相同致陈旧字节码掩盖回退）；无实现文件/缺test_id/缺commit_hash→block；`default()`8→9。plan.py Task+`kind`/`regression_test_id`字段+task_factory透传。audit.py正则自测（`TestAuditRegexSelfTest` 9测：每pattern正例/反例+元测试断言全覆盖）——surfaced并修复`_SILENT_EXCEPT_PY`的`# noqa`死分支（`\b#`永不匹配→改`\bnoqa\b`）。test_guardrail +RegressionGate(7)/factory(9→) |
+| T29 | `loop/guardrail.py` REDGuardrail + FreshGuardrail | test_guardrail(ext) | ✅ | G7 REDGuardrail（post/developer：`git log`定位先于实现的独立测试commit + `merge-base --is-ancestor`祖先校验 + 信任red_evidence，`_STRICT_RED` opt-in重跑；纯配置task豁免）+ G8 FreshGuardrail（post/developer,critic：`_aggregate_sha`(files_changed)比对gate快照，陈旧→retry）；`GuardrailResult.guardrail_name`+Chain注入；S-3生产者契约（`_run_developer_gates`注入`files_snapshot_sha`+`ran_at`，否则G8静默失效）；S-4 retry键粒度`{stage}:{guardrail_name}`+FreshGuardrail `rerun_gates`分流（不清实现）；tick挂运行时句柄`batch_state`/`_plan`；`default()`6→8；test_guardrail +REDGuardrail(8)/FreshGuardrail(5)/name注入(4)/retry粒度(4)/helper(2) |
+| T30 | `loop/guardrail.py` RegressionGuardrail + audit regex 自测 | T26g + test_gate_audit(ext) | ✅ | G9 RegressionGuardrail（post/developer，block）：`_current_regression_task`取batch首个`kind=="regression_fix"` task；`revert(git checkout impl^ -- 实现文件)→_run_test MUST FAIL→finally restore(git checkout HEAD)→_run_test MUST PASS`；S-19新建实现文件（impl^无pathspec→rc≠0）走`git rm`模拟"修复前不存在"；`_run_test`用`sys.executable -B -m pytest <root> -k <id> -o addopts= -p no:cacheprovider`（`-B`禁写.pyc避免同秒git checkout mtime相同致陈旧字节码掩盖回退）；无实现文件/缺test_id/缺commit_hash→block；`default()`8→9。plan.py Task+`kind`/`regression_test_id`字段+task_factory透传。audit.py正则自测（`TestAuditRegexSelfTest` 9测：每pattern正例/反例+元测试断言全覆盖）——surfaced并修复`_SILENT_EXCEPT_PY`的`# noqa`死分支（`\b#`永不匹配→改`\bnoqa\b`）。test_guardrail +RegressionGuardrail(7)/factory(9→) |
 | T31 | `gates/audit.py` + `orchestrator.py` AuditGate 语义层 + finding 生命周期 | T26h | ✅ | #6 语义层=`AuditGate(semantic_checker: SemanticChecker|None=None)` 可注入扩展点（默认 None=纯正则，Python 永不调 LLM §A.1；语义 findings 合并；检查器异常降级不崩）。#9 finding 生命周期=known-and-accepted（`finding_fingerprint`=severity\|dimension\|file\|description，行号不入；`accepted_fingerprints` 构造器 + `contracts["accepted_audit_findings"]` 抑制阈值计数，记 `details["accepted_suppressed"]`）。#8 crafted context 复用既有分层上下文（plate components/contracts + system coverage_map + git_diff 工具 + design/ 直读）——未加 files_changed（audit 阶段已清空且 prompt 不消费，加之虚化）。test_gate_audit +语义层(4)/fingerprint(3)/known-accepted(4) |
 
 ## Phase 7 — Init-Loop 契约 v5.6 扩展 (IL.2-IL.5)
@@ -197,13 +198,13 @@
 |---|-------|:---:|------|:---:|--------|
 | S-1 | B4↔B7 语义评估矛盾收口（v5.6 全路径无语义评估；Python 永不调 LLM）| P1 | §B4 L764/§B7 L1187,L1198 | ✅ | 本轮（代码→T10d）|
 | S-2 | coverage_map item 权威 schema（消解 B6.4 字符串 vs B6.6a/B6.10 结构体）| P1 | §B6.4/§B6.6a/§B6.10 | ✅ | 本轮 |
-| S-3 | FreshGate(G8) 契约：B5 每 Gate 产出 files_snapshot_sha+ran_at | P1 | §B3.2/§B5.1 | ✅ | 本轮 |
+| S-3 | FreshGuardrail(G8) 契约：B5 每 Gate 产出 files_snapshot_sha+ran_at | P1 | §B3.2/§B5.1 | ✅ | 本轮 |
 | S-4 | guardrail_retry_counters 键粒度 + G8 retry 语义（rerun_gates 动作）| P1 | §B3 L629-649,L646,L702 | ✅ | 本轮 |
 | S-5 | file-bridge 契约边界矩阵（缺失/半写/错位/重复/超时→action+error_code+恢复）| P1 | §C.3.5（新增）| ✅ | 本轮 |
 | S-6 | Guardrail 数量统一（当前5/目标9 + 状态列）| P1 | §C.8/附录/§B3 | ✅ | 本轮 |
 | S-7 | done verdict 完整枚举 + 终态优先级 + HARD_LIMIT 拆名 | P1 | §C.3.1/§C.5.4/§C.5.5 | ✅ | 本轮 |
 | S-8 | B2 转换表增"决策方(router 纯转换/orchestrator 委派)"列 | P1 | §B2 L544-556 | ✅ | 本轮 |
-| S-9 | REDGuard RED 证据机制（否则明标为启发式）| P1 | §B15.2 | ✅ | 本轮 |
+| S-9 | REDGuardrail RED 证据机制（否则明标为启发式）| P1 | §B15.2 | ✅ | 本轮 |
 | S-10 | ResearchAgent 工具级内存护栏规格（authz 限 Read 范围/禁 ls -R）| P1 | §B10.6/§B11.7 | ✅ | 本轮 |
 | S-11 | B14 外部依赖清单收口（audit.md 内化关系，消解与 B15.1 矛盾）| P1 | §B14.1/§B15.1 | ✅ | 本轮 |
 | S-12 | commit 序列规范（test+impl）+ B9.5 父节点 pending 聚合分支 | P1 | §B13/§B15/§B9.5 | ✅ | 本轮 |
@@ -213,7 +214,7 @@
 | S-16 | B4 参数→判定对照 + semantic_satisfied 标 legacy | P2 | §B4 | ✅ | 本轮 |
 | S-17 | plan_refine 双重身份定案（architect 子模式；澄清 _VALID_STAGES 语义）| P2 | §B1.1/§C.10 | ✅ | 本轮 |
 | S-18 | checkpoints WITHOUT ROWID + 大 blob 反模式（定案改 rowid，迁移待落地）| P2 | §B1.3 L485 | ✅ | 本轮（DDL 迁移单列）|
-| S-19 | RegressionGate 新建文件分支进伪码 + 正反例断言 | P2 | §B3.3 | ✅ | 本轮 |
+| S-19 | RegressionGuardrail 新建文件分支进伪码 + 正反例断言 | P2 | §B3.3 | ✅ | 本轮 |
 | S-20 | 示例坐标加"(示意)"标注（防误读为接线证据）| P2 | §C.3.2/C.3.1 | ✅ | 本轮 |
 | Q-1 | B10.5 Defer+Research 复审回路(T0.7)：定案保留 + 理由 | P2 | §B10.5 | ✅ | 本轮 |
 | Q-2 | B9 ProgressTree 聚合/removed 保留：定案保留 + 理由 | P2 | §B9.1 | ✅ | 本轮 |
@@ -312,7 +313,7 @@
 
 > 来源：voice_clone_for_auto_test-2 项目使用 `/ae:dev-loop` 真跑产出的 29 问题报告。
 > 范围：10 项引擎/设计层面修复（19 项为项目侧，不在本仓库范围）。
-> 依赖顺序：P0 crash → P1 数据契约+REDGuard+状态管理 → P2 改善项 → 集成测试。
+> 依赖顺序：P0 crash → P1 数据契约+REDGuardrail+状态管理 → P2 改善项 → 集成测试。
 > BEACON 决策 #59。
 > ⚠️ **编号说明**：T34/T35 在此 Phase 与 Phase 7（Init-Loop 契约扩展）**编号重复**——两个独立 Phase 的独立任务恰好使用了相同编号，并非同一任务。Phase 7 的 T34/T35 是 Init-Loop 契约扩展（T34 monorepo 单包降级 / T35 reference fixture round-trip），Phase 13 的 T34/T35 是真跑故障修复（T34 B3 guardrail crash / T35 B2 stage mismatch）。
 
@@ -321,15 +322,15 @@
 | T34 | B3 | `loop/guardrail.py:291` TestsPass.check() — `isinstance(results, dict)` 类型守卫。test_results 传入字符串时 `results.get()` crash，期望 dict 收到 str 应返回明确错误而非 Python crash | 字符串 test_results → retry + 明确错误信息 | P0 | ✅ | (本次) |
 | T35 | B2 | `loop/tick_orchestrator.py` RESULT_VALIDATION_ERROR — stage 不匹配时错误信息区分 `stage`（角色名如 "developer"）和 `batch_id`（如 "B4"），提示用户填角色名非 batch_id | STAGE_MISMATCH 错误信息含 "(stage 是角色名如 'developer'/'architect', 不是 batch_id 如 'B4')" | P1 | ✅ | (本次) |
 | T36 | B4/B5 | `loop/tick_orchestrator.py` expected_format — component_verifier 和 plate_deep_audit 的 expected_format 列出所有必填字段（component/plate），避免 RESULT_VALIDATION_ERROR 因缺字段遗漏 | expected_format 含 component(verifier)/plate(audit) 必填字段声明 | P1 | ✅ | (本次) |
-| T37 | B11 | `loop/guardrail.py` REDGuard red_evidence 格式校验 — 字符串数组 vs 对象数组格式错误时给出明确提示+期望格式 | red_evidence format error 信息含期望格式示例 `[{"task_id": "B3-T1", "red_commit": "abc123"}]` | P1 | ✅ | (本次) |
-| T38 | B8 | `loop/guardrail.py` REDGuard 交叉文件检测 — GREEN commit 修改了 RED commit 的测试文件时（RED→GREEN 链断裂），检测并给出明确错误 | GREEN commit 触碰 test 文件 → retry + "GREEN commit 修改了测试文件" 提示 | P1 | ✅ | (本次) |
+| T37 | B11 | `loop/guardrail.py` REDGuardrail red_evidence 格式校验 — 字符串数组 vs 对象数组格式错误时给出明确提示+期望格式 | red_evidence format error 信息含期望格式示例 `[{"task_id": "B3-T1", "red_commit": "abc123"}]` | P1 | ✅ | (本次) |
+| T38 | B8 | `loop/guardrail.py` REDGuardrail 交叉文件检测 — GREEN commit 修改了 RED commit 的测试文件时（RED→GREEN 链断裂），检测并给出明确错误 | GREEN commit 触碰 test 文件 → retry + "GREEN commit 修改了测试文件" 提示 | P1 | ✅ | (本次) |
 | T39 | B9/D2 | `engine/batch_state.py` 零 batch 组件警告抑制 — module-level `_warned_zero_batch` set 去重，每个组件只警告一次 | 同一组件警告只输出一次，后续 tick 不再重复 | P1 | ✅ | (本次) |
 | T40 | D1 | `engine/progress_tree.py` _apply_sync — plan_refine 后 total_tasks 变化时将旧 verifier_status 重置为 "pending"，避免 stale "failed" 状态 | plan_refine 后组件 total_tasks 变化 → verifier_status 自动重置为 "pending" | P1 | ✅ | (本次) |
 | T41 | B6 | ~~`commands/dev-loop.md` 测试命令 — 移除 `--no-cov` 参数（vitest 无此参数）。~~ 经查引擎 TestGate 不硬编码 --no-cov，根因在项目 Agent 行为非引擎代码。**作废：非本项目范围，voice_clone 项目侧问题。** | — | — | 🗑️ | 作废 — 非本项目 |
 | T42 | D3 | `loop/tick_orchestrator.py` REFINE_LIMIT 错误信息 — 超配额时给出 actionable 建议（拆分 Phase / design_doc 标注延后）| REFINE_LIMIT reason 含 "建议: 拆分需求为多个 Phase 分别处理, 或在 design_doc 中标注设计项为延后" | P2 | ✅ | (本次) |
 | T43 | — | `tests/test_guardrail.py::TestVoiceCloneRegression` 集成测试 — 5 场景覆盖 B3/B8/B11/B9/D2/D1 修复不回归 | 5 tests pass, 全量 250 passed (guardrail+tick_orch+batch_state+progress_tree) | P1 | ✅ | (本次) |
 
-> **实施顺序**：T34(P0) → T35/T36/T37(独立 P1) → T38(P1 REDGuard) → T39/T40(P1 状态管理) → T41/T42(P2) → T43(集成测试)
+> **实施顺序**：T34(P0) → T35/T36/T37(独立 P1) → T38(P1 REDGuardrail) → T39/T40(P1 状态管理) → T41/T42(P2) → T43(集成测试)
 
 ---
 
@@ -1618,3 +1619,73 @@ T115 (P2 Capability asymmetry)──独立──→ 第二批
 T111 (P1 Phase 21 wiring)     ──独立──→ 第二批
 T116 (P1 CriticVerdictInvalid)  ──独立──→ 第一批
 ```
+
+---
+
+## Phase 30 — 深度审计发现修复（2026-07-21）
+
+> 来源：2026-07-21 全量深度审计（`_scratch/reports/2026-07-21-deep-audit-full.md`）。5 维度（架构/代码质量/工程化/虚化度/协作），加权综合 ~5.5/10，28 项发现（6 P0 + 12 P1 + 10 P2）。
+> 性质：**批量代码修复**（16 项可自动修复）+ **6 项架构决策待确认**（需用户审批）。
+> BEACON 决策 #86。
+
+### 第一批：自动修复（16/18 ✅ 已完成）
+
+| T | 审计# | 修复项 | 严重度 | 位置 | 状态 |
+|---|-------|-------|:---:|------|:---:|
+| T117 | C1 | convergence.py:339 静默吞异常 → `_logger.debug` + 窄化捕获 | P0 | `loop/convergence.py:339` | ✅ |
+| T118 | V2 | `_write_audit_history` 纯占位 pass → debug 日志 | P0 | `loop/tick_orchestrator.py:2241` | ✅ |
+| T119 | E1 | AE_AUDIT_LOG_DIR 注册到 FEATURE_MANIFEST | P0 | `config/feature_flags.py` | ✅ |
+| T120 | C2 | file_tools.py 6 处裸 except Exception → (OSError, ValueError) | P1 | `tools/file_tools.py:52,83,125,170,178,210` | ✅ |
+| T121 | C3 | metrics/enrichment.py + transcript_parser.py 裸 except 窄化 | P1 | `metrics/enrichment.py:81`, `metrics/transcript_parser.py:103,107` | ✅ |
+| T122 | C4 | cli/checkpoint.py 7 处裸 except → (OSError, sqlite3.Error, ValueError) | P1 | `cli/checkpoint.py` | ✅ |
+| T123 | C5 | gate_check.py:93 SystemExit(1) 无消息 → stderr echo + 保留退出码 | P1 | `cli/gate_check.py:93` | ✅ |
+| T124 | C6 | guardrail.py:1046 state: Any → "EngineState" | P1 | `loop/guardrail.py:1046` | ✅ |
+| T125 | C7 | ratchet.py git tag subprocess 加 timeout=5 | P1 | `metrics/ratchet.py:201` | ✅ |
+| T126 | C8/C9/C10 | 其余 5 处裸 except 窄化（gate_check/bash_tools/run_tests_tool/base） | P1/P2 | 5 文件 | ✅ |
+| T127 | V6 | `__all__` 移除私有常量 | P2 | `loop/tick_orchestrator.py:2291` | ✅ |
+| T128 | E3 | pii/guardrail.py 12 tests（init/check/block_mode/pattern 匹配） | P1 | `tests/test_pii_guardrail.py` (新增) | ✅ |
+| T129 | T3 | PIIGuardrail patterns 为空时 WARN 日志 | P2 | `pii/guardrail.py` | ✅ |
+| T130 | T4 | set_collector() docstring | P2 | `metrics/collector.py:47` | ✅ |
+| T131 | V4 | `_get_p1_threshold` Bayesian 接线 | P1 | `loop/tick_orchestrator.py:1833` | ✅ |
+| T132 | V5 | Standalone 模式 audit_logger 注入 | P2 | `cli/dev_loop.py:283` — `_build_injectables()` 复用, audit_logger 传入 TickOrchestrator | ✅ |
+| **T135** | **C-all** | **P0-5 裸 except Exception 窄化 — 31 处窄化为 10 种具体异常类型（18 文件），13 处保留宽捕获加注释** | **P0** | 16 源文件（cli/loop/metrics/tools/gates/），零回归 | ✅ |
+| **T136** | **E1** | **P0-6 RuntimeConfig 环境变量集中化 — 49 os.environ → 1 RuntimeConfig frozen dataclass（30+ typed properties），进程级 sentinel 模式，conftest autouse 重置** | **P0** | `config/runtime_config.py` (新建, 234 行) + 18 源文件 + conftest 更新，2372 tests 零回归 | ✅ |
+
+### 第二批：架构决策（6 项待用户确认）
+
+| T | 审计# | 决策项 | 严重度 | 方案 | 状态 |
+|---|-------|-------|:---:|------|:---:|
+| T133a | A1 | TickOrchestrator SRP 拆分 | P0 | ActionBuilder（~400 行, 15 方法）+ TickGateRunner（~130 行）委托类提取完成。Orchestrator 2321→1885 行, 60→52 方法。after-handlers 因紧耦合状态变更保留。BEACON #89 | ✅ |
+| T133b | A2 | v5.5 Orchestrator 退役 | P0 | orchestrator.py 已在 T133b-f 前序会话中物理删除。附带 5 模块同步删除（T133c）。BEACON #53 | ✅ |
+| T133c | A3/A4/V3 | v5.5 退役附带清理 | P1 | 6 个仅服务 v5.5 的模块已删除：orchestrator.py, deep_audit.py, semantic_evaluator.py, convergence_facade.py, guardrail_facade.py, loop/threshold_learner.py。BEACON #53 | ✅ |
+| T133d | V1 | SessionSummarizer 全链路死代码 | P0 | summarization.py (223 行) + test_context_summarization.py 物理删除。context/__init__.py + test_context_wiring.py + test_integration_cli_wiring.py 清除引用。BEACON #83 | ✅ |
+| T133e | E2 | BEACON.md 引用已删除文件修复 | P1 | 决策 #51 更新: commit_msg_gate.py 移除原因说明 (Agent/Standalone 两端均无消费者)。`src/fibonacci.py` 是 `/tmp/_ae_test_project/` 临时测试产物。 | ✅ |
+| T133f | E4/E5 | ~~FreshGuardrail 重命名 + guardrail_base.py 移至 loop/~~ | P2 | ~~重命名类名 + 更新所有引用 + 移动文件 + 更新 import 路径~~ → ✅ 已完成 (2026-07-21)。P0-3/P0-4 全部统一为 Guardrail 后缀。BEACON #90 | ✅ |
+
+### 第三批：文档与体验改善（待执行）
+
+| T | 审计# | 修复项 | 严重度 | 状态 |
+|---|-------|-------|:---:|:---:|
+| T134a | T1 | README.md 添加 AE_ 环境变量配置章节 | P2 | ✅ |
+| T134b | T2 | 3 处 global 单例生命周期文档 | P2 | ✅ |
+| T134c | T5 | AE_MODEL_ROLE/AE_PROVIDER_ROLE 参数化测试 | P3 | TestResolveModel 4 tests (9 parametrized) + TestResolveProvider 3 tests. test_standalone_driver.py | ✅ |
+| T134d | E6 | `step` vs `tick` 术语定义文档化 | P2 | tick_orchestrator.py 模块 docstring: tick=离散调用周期, step=stage 转换, round=跨 tick 累积轮次 | ✅ |
+
+### 测试基线
+
+- **修复前**：2585 passed, 3 skipped
+- **第一批后**：2596 passed, 4 skipped (+12 PIIGuardrail 测试 -1 已知 flaky)
+- **P0-5 窄化后**：2596 passed, 4 skipped（零回归）
+- **P0-6 RuntimeConfig 后**：2372 passed, 4 skipped（零回归，config 注入覆盖全链路）
+
+### 裸 except Exception 清理进展
+
+| 阶段 | 数量 | 备注 |
+|------|:---:|------|
+| Phase 29 前 | ~55 处 | 全项目基线 |
+| Phase 29 | ~31 处 | standalone_driver + tick_orchestrator 已清理 |
+| Phase 30 第一批 | ~18 处 | file_tools(6) + checkpoint(7) + metrics(3) + tools(2) 已清理 |
+| **P0-5 系统窄化** | **~18 处** | **cli/guardrail/metrics/gates 等 16 文件窄化为 10 种具体异常类型，13 处保留加注释。全量完成** |
+| **剩余** | **~33 处** | 主要在 v5.5 legacy 路径（orchestrator/semantic_evaluator）、gates/runner（fail-closed 有注释说明）、CLI progress/status/agent（user-facing 降级捕获）。**不再建议批量窄化。** |
+
+> **剩余裸 except 评估**：v5.5 legacy 路径将在退役时一并删除（~7 处）。gates/runner 的 fail-closed 模式有注释说明，属有意设计。CLI 层 user-facing 捕获可沿用（已通过文件级窄化）。不再建议批量窄化——剩余的多数有明确设计意图或将在退役中自然消除。

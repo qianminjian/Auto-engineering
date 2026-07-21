@@ -68,7 +68,7 @@ Engine 层 (auto_engineering/)
     orchestrator.py      — v5.5 连续 while 循环 (1208 行, 退役过渡期)
     standalone_driver.py — v7.0 StandaloneDriver (双驱动 B 端, 自带 key 调 LLM)
     stage_router.py      — T1-T22 转换表 + MAJOR 计数 + refine_allowed
-    guardrail.py         — 10 Guardrail (3 态: pass/block/retry, 含 REDGuard/FreshGate/RegressionGate/PIIGuardrail)
+    guardrail.py         — 10 Guardrail (3 态: pass/block/retry, 含 REDGuardrail/FreshGuardrail/RegressionGuardrail/PIIGuardrail)
     convergence.py       — 4 级收敛判定 (hard/quality/stagnant/semantic) + done verdict
     plan.py              — Task DAG + get_tasks_by_stage
     task_factory.py      — _apply_outcome_to_state + _tasks_from_batch_plan
@@ -116,7 +116,9 @@ Engine 层 (auto_engineering/)
     gap_analysis.py      — Pre-flight gap scan (B10.2)
   tools/                 — file/bash/git/test tools + sandbox + pr_backend.py
   providers/             — LLMProvider Protocol + OpenAI adapter + factory
-  config/                — 环境配置 (AE_* 环境变量)
+  config/
+    runtime_config.py   — RuntimeConfig frozen dataclass (P0-6, 30+ typed properties, 集中式 env var 访问)
+    feature_flags.py    — FeatureManifest SSOT (22 项 FeatureFlag)
   utils/                 — plugin_mode 检测等工具函数
   runtime/               — AgentRuntime + CancellationToken + TaskContext
 ```
@@ -288,3 +290,8 @@ python3 scripts/atdo_smoke.py       # Runtime smoke (7 维度)
 - **每次操作遵守「先记录→再执行→再更新」纪律**（memory `feedback-record-before-execute.md`）
 - 参考源码（`$AE_REFS_DIR/`）为只读，不修改
 - Init Engineering 是独立项目——本项目通过 Init-Loop 接口契约（IL.1-IL.6）消费 Init 产物，不包含 Init 实现
+
+## 编码约定
+
+- **语言约定**：用户可见字符串（CLI 输出、错误消息）用中文；error_code / 日志 key / 变量名 / 代码标识符用英文。禁止同一消息中英混杂。
+- **命名约定**：Guardrail 后缀统一 (`XxxGuardrail`)，Gate 后缀统一 (`XxxGate`)；REDGuardrail / FreshGuardrail / RegressionGuardrail 均使用 `Guardrail` 后缀。

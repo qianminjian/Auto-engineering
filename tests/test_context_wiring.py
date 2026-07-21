@@ -1,16 +1,11 @@
-"""T73+T74 Integration tests — ContextOffloader + SessionSummarizer wired into TickOrchestrator.
+"""T73 Integration tests — ContextOffloader wired into TickOrchestrator.
 
 Test layers:
-  Layer 1 (Unit) — existing tests in test_context_offloading.py + test_context_summarization.py
-  Layer 2 (Integration) — TickOrchestrator creates and calls ContextOffloader/SessionSummarizer
-  Layer 3 (E2E) — full tick flow triggers offload at stage transitions + summary at tick>5
+  Layer 1 (Unit) — existing tests in test_context_offloading.py
+  Layer 2 (Integration) — TickOrchestrator creates and calls ContextOffloader
+  Layer 3 (E2E) — full tick flow triggers offload at stage transitions
 
-RED phase: These tests FAIL because:
-  - TickOrchestrator.__init__() does not accept ContextOffloader or SessionSummarizer
-  - _after_architect/_after_developer/_after_critic do not call offload()
-  - _build_action does not inject session summary for developer when tick > 5
-
-Design ref: v5.6-Design-Loop.md appendix E §E.2.2 (T53), §E.2.3 (T54).
+Design ref: v5.6-Design-Loop.md appendix E §E.2.2 (T53).
 """
 
 from __future__ import annotations
@@ -23,7 +18,6 @@ from unittest.mock import MagicMock
 import pytest
 
 from auto_engineering.context.offloading import ContextOffloader
-from auto_engineering.context.summarization import SessionSummarizer, SessionSummary
 from auto_engineering.loop.guardrail import GuardrailChain
 from auto_engineering.loop.tick_orchestrator import TickOrchestrator
 
@@ -177,80 +171,4 @@ class TestContextOffloaderWiring:
         )
 
 
-# =============================================================================
-# Layer 2 — Integration: SessionSummarizer wired into TickOrchestrator
-# =============================================================================
 
-
-class TestSessionSummarizerWiring:
-    """T74: Verify TickOrchestrator integrates SessionSummarizer."""
-
-    def test_orchestrator_accepts_session_summarizer(self, tmp_path: Path) -> None:
-        """TickOrchestrator MUST accept an optional SessionSummarizer."""
-        mock_llm = MagicMock()
-        summarizer = SessionSummarizer(mock_llm)
-        orch = TickOrchestrator(
-            project_root=tmp_path,
-            session_summarizer=summarizer,
-            guardrail=GuardrailChain([]),
-        )
-        assert orch._session_summarizer is not None
-        assert isinstance(orch._session_summarizer, SessionSummarizer)
-
-    def test_orchestrator_has_summarizer_attribute_default_none(self) -> None:
-        """Without explicit summarizer, _session_summarizer should be None."""
-        orch = _orchestrator()
-        assert hasattr(orch, "_session_summarizer"), (
-            "T74 NOT WIRED: TickOrchestrator has no _session_summarizer attribute"
-        )
-
-    def test_developer_action_includes_summary_when_tick_exceeds_threshold(
-        self, tmp_path: Path
-    ) -> None:
-        """When tick > 5 and summarizer is set, developer action includes session summary."""
-        mock_llm = MagicMock()
-        summarizer = SessionSummarizer(mock_llm)
-        orch = TickOrchestrator(
-            project_root=tmp_path,
-            session_summarizer=summarizer,
-            guardrail=GuardrailChain([]),
-        )
-        orch.init("实现 StageRouter")
-        orch._state.batch_plan = _VALID_BATCH_PLAN
-        orch._state.plan = _VALID_PLAN
-        orch._state.file_list = ["auto_engineering/loop/stage_router.py"]
-        orch._after_architect()  # sets up batch_state, advances to developer
-
-        # Simulate high tick count to trigger summarization
-        orch._state.tick = 6
-        action = orch._build_action()
-
-        assert "session_summary" in action, (
-            "T74 NOT WIRED: _build_action does not include session_summary "
-            "when tick > 5 and summarizer is configured"
-        )
-
-    def test_developer_action_no_summary_when_tick_below_threshold(
-        self, tmp_path: Path
-    ) -> None:
-        """When tick ≤ 5, developer action should NOT include session summary."""
-        mock_llm = MagicMock()
-        summarizer = SessionSummarizer(mock_llm)
-        orch = TickOrchestrator(
-            project_root=tmp_path,
-            session_summarizer=summarizer,
-            guardrail=GuardrailChain([]),
-        )
-        orch.init("实现 StageRouter")
-        orch._state.batch_plan = _VALID_BATCH_PLAN
-        orch._state.plan = _VALID_PLAN
-        orch._state.file_list = ["auto_engineering/loop/stage_router.py"]
-        orch._after_architect()
-        orch._state.tick = 3  # below threshold
-
-        action = orch._build_action()
-
-        # No summary when tick ≤ 5
-        assert "session_summary" not in action, (
-            "session_summary should not be present when tick ≤ 5"
-        )

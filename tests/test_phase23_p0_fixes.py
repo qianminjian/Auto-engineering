@@ -5,7 +5,7 @@ T80: M2 criteria_met recording for critic_major_rate
 T81: M5 git diff fix (--cached → HEAD~1)
 
 RED phase: These tests FAIL because:
-  - compute_metrics_signals receives no history/baseline from _build_action
+  - compute_metrics_signals receives no history/baseline from build_action
   - record_convergence criteria_met is always "" → M2 always 0
   - _compute_loc_added uses --cached HEAD → always 0 after commits
 
@@ -80,7 +80,7 @@ class TestSignalPipelineHistory:
     def test_convergence_check_passes_history_to_signals(self) -> None:
         """_convergence_check() MUST pass history to compute_metrics_signals.
 
-        T83 moved signal computation from _build_action (every tick) to
+        T83 moved signal computation from build_action (every tick) to
         _convergence_check (done-verdict only). The history parameter must
         still be passed for trend detection.
         """

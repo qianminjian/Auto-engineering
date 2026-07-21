@@ -235,6 +235,7 @@ class TestStageCheckpoint:
     def test_progress_summary_without_batch_state(self) -> None:
         """_progress_summary works when _batch_state is None."""
         orch = _orchestrator()
-        summary = orch._progress_summary()
+        orch.init("实现功能")
+        summary = orch._action_builder._progress_summary()
         assert isinstance(summary, str)
         assert "tick=0" in summary

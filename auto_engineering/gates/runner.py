@@ -21,7 +21,7 @@ def _instantiate_gate(name: str, project_root: Path) -> Gate | None:
         gate = get_gate_by_name(name)
         if gate is not None:
             return gate
-    except Exception as e:
+    except (ImportError, TypeError) as e:
         _logger.warning("gate '%s' 实例化失败: %s", name, e, exc_info=True)
         return None
     return None

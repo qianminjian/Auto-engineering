@@ -168,6 +168,8 @@ async def _execute_single(
             duration=duration,
         )
     except Exception as exc:
+        # 任务执行器 catch-all: task 可能因任何原因失败 (LLM/网络/文件/子进程),
+        # 统一转为 TaskOutcome 避免单 task 崩溃传播到整个 round.
         # v5.0 §B2.12a: AEError(TASK_CANCELLED) → cancelled; 其他 → failed
         if isinstance(exc, AEError) and exc.code is ErrorCode.TASK_CANCELLED:
             duration = time.monotonic() - start
@@ -226,7 +228,7 @@ def _build_per_task_ctx(ctx: Any, task: Task) -> Any:
                     return replace(ctx, current_task_id=task.id)
                 # 无 current_task_id 字段 → 浅拷贝顶层 (state 仍共享, 见 docstring)
                 return replace(ctx)
-        except Exception:
+        except (TypeError, AttributeError):
             _logger.warning(
                 "_inject_task_id failed for task=%s", task.id, exc_info=True,
             )
@@ -502,6 +504,7 @@ async def _run_gates(
                 gate.run, project_root
             )
         except Exception as exc:
+            # Gate.run() 可触发任意异常 (子进程/文件 I/O/LLM), fail-closed 兜底
             verdict = GateVerdict.failed(
                 f"Gate {gate.name} {type(exc).__name__}: {exc}",
                 gate_name=gate.name,

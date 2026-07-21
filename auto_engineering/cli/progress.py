@@ -51,7 +51,7 @@ def _load_progress_tree(cwd: Path) -> ProgressTree | None:
                 latest_ckpt is None or ckpt.round > latest_ckpt.round
             ):
                 latest_ckpt = ckpt
-        except Exception:
+        except (OSError, sqlite3.Error):
             _logger.warning("checkpoint db 读取失败, 跳过: %s", db_file, exc_info=True)
             continue
 
@@ -64,7 +64,7 @@ def _load_progress_tree(cwd: Path) -> ProgressTree | None:
         return None
     try:
         return ProgressTree.from_dict(json.loads(raw))
-    except Exception:
+    except (json.JSONDecodeError, TypeError):
         _logger.warning("progress_tree_json 解析失败", exc_info=True)
         return None
 

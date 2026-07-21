@@ -15,7 +15,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from auto_engineering.gates.guardrail_base import Guardrail, GuardrailResult
+from auto_engineering.engine.guardrail_types import Guardrail, GuardrailResult
 from auto_engineering.pii.rules import PII_RULES
 
 
@@ -36,13 +36,18 @@ class PIIGuardrail(Guardrail):
     def __init__(self, project_root: Path | None = None, block_mode: bool | None = None) -> None:
         self._project_root = project_root
         if block_mode is None:
-            block_mode = os.environ.get("AE_PII_GUARDRAIL_MODE", "retry") == "block"
+            from auto_engineering.config.runtime_config import get_default_config
+            block_mode = get_default_config().pii_guardrail_mode == "block"
         self._block_mode = block_mode
         # Build scan patterns from PII_RULES SSOT (not duplicated)
         self._patterns: list[tuple[str, str, str]] = [
             (rule.name, rule.pattern, rule.description or rule.name)
             for rule in PII_RULES if rule.enabled
         ]
+        if not self._patterns:
+            import logging
+            _logger = logging.getLogger("ae.pii.guardrail")
+            _logger.warning("PIIGuardrail: no enabled PII_RULES — detection capability limited")
 
     def check(
         self,

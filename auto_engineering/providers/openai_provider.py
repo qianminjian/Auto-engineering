@@ -8,9 +8,8 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any
 
-from auto_engineering.providers.base import LLMProvider, LLMResponse, ToolUseBlock
+from auto_engineering.providers.base import LLMProvider, LLMResponse, ToolUseBlock, _ChatCompletionLike
 
 _logger = logging.getLogger("ae.providers.openai")
 
@@ -105,7 +104,7 @@ _FINISH_REASON_MAP: dict[str, str] = {
 }
 
 
-def _openai_response_to_llm(response: Any) -> LLMResponse:
+def _openai_response_to_llm(response: _ChatCompletionLike) -> LLMResponse:
     """Convert OpenAI API response → LLMResponse."""
     choice = response.choices[0]
     content = choice.message.content or ""

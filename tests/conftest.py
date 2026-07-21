@@ -138,5 +138,20 @@ def _allow_no_sandbox_default(monkeypatch):
     yield
 
 
+# P0-6: Reset RuntimeConfig sentinel between tests so monkeypatch.setenv() works.
+# Without this, a test that calls set_default_config() would leak its config to
+# subsequent tests, making their monkeypatch.env changes invisible.
+@pytest.fixture(autouse=True)
+def _reset_runtime_config_sentinel():
+    from auto_engineering.config.runtime_config import _SENTINEL as _sentinel_ref
+    # Save and clear
+    saved = _sentinel_ref
+    import auto_engineering.config.runtime_config as _rc_mod
+    _rc_mod._SENTINEL = None
+    yield
+    # Restore (in case the test itself set it)
+    _rc_mod._SENTINEL = saved
+
+
 # Fix: import sys(用于 stderr 输出)
 import sys  # noqa: E402

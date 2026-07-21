@@ -28,7 +28,7 @@ class TestActionDone:
         assert d["action"] == "done"
         assert d["verdict"] == "HARD_LIMIT"
         assert d["verdict_reason"] == "MAJOR 超限"
-        assert d["stage"] is None
+        assert "stage" not in d  # stage key omitted when None (P2-27 audit fix)
 
     def test_verdict_level_included(self) -> None:
         d = ActionDone(verdict="GOAL_ACHIEVED", reason="all covered", verdict_level=1).to_dict()

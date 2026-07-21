@@ -927,7 +927,7 @@ class TestVerifierRecheck:
         o = _orchestrator()
         o.init("req")
         o._state.current_stage = "system_verifier"
-        a = o._build_action()
+        a = o.build_action()
         assert a["stage"] == "system_verifier"
         rc = a["recheck"]
         assert rc["enabled"] is True
@@ -942,7 +942,7 @@ class TestVerifierRecheck:
         assert "recheck" not in a
 
 
-# ── _build_action context checks ──
+# ── build_action context checks ──
 
 
 class TestBuildActionContexts:
@@ -1466,7 +1466,7 @@ class TestPhase0Research:
         """T26/§B10.6: research action 必须携带 4-tier 知识源 + 内存约束契约."""
         o = _orchestrator()
         self._drive_to_research(o, tmp_path, "research")
-        action = o._build_action()
+        action = o.build_action()
         assert action["stage"] == "research"
         ks = action["knowledge_sources"]
         assert ks["tier_order"] == [
@@ -2199,22 +2199,22 @@ class TestRunDeveloperGates:
             assert gate_val["passed"] is True, f"{gate_name}: passed 应为 True"
 
 
-class TestFreshGateAtCritic:
-    """FreshGate G8 在 critic stage 应 rerun gates 而非返回错误.
+class TestFreshGuardrailAtCritic:
+    """FreshGuardrail G8 在 critic stage 应 rerun gates 而非返回错误.
 
-    FreshGate 适用于 developer + critic 两阶段 (§B3.2). 原代码只对 developer 放行,
+    FreshGuardrail 适用于 developer + critic 两阶段 (§B3.2). 原代码只对 developer 放行,
     critic 阶段返回 GUARDRAIL_RETRY → ActionError, 但正确行为应是重跑 Gate 刷新证据后继续.
     """
 
     def test_freshgate_at_critic_runs_gates_and_continues(self) -> None:
-        """critic tick 中 FreshGate 触发 → 应 rerun gates 并继续到 after_tick 而非报错."""
-        # guardrail 在第三次调用 (critic tick) 返回 FreshGate
+        """critic tick 中 FreshGuardrail 触发 → 应 rerun gates 并继续到 after_tick 而非报错."""
+        # guardrail 在第三次调用 (critic tick) 返回 FreshGuardrail
         # 调用: #1=architect tick, #2=developer tick, #3=critic tick
         call_count = [0]
         def _guardrail_side_effect(*args, **kwargs):
             call_count[0] += 1
             if call_count[0] == 3:  # critic tick
-                return MagicMock(action="retry", guardrail_name="FreshGate")
+                return MagicMock(action="retry", guardrail_name="FreshGuardrail")
             return MagicMock(action="pass")
         gr = MagicMock()
         gr.check.side_effect = _guardrail_side_effect
@@ -2252,25 +2252,25 @@ class TestFreshGateAtCritic:
         }))
         assert action["stage"] == "critic"
 
-        # critic tick → guardrail.check() call #3 (FreshGate)
+        # critic tick → guardrail.check() call #3 (FreshGuardrail)
         action = o.tick(_make_result_file({
             "stage": "critic", "verdict": "APPROVE", "findings": [],
             "critic_feedback": "LGTM",
         }))
         # 不应返回 GUARDRAIL_* 错误
         assert action.get("error_code", "") != "GUARDRAIL_RETRY", \
-            f"FreshGate at critic 不应返回错误: {action}"
+            f"FreshGuardrail at critic 不应返回错误: {action}"
         # 应正常路由到下一 stage
         assert action["stage"] == "component_verifier", \
             f"预期 component_verifier, 实际 stage={action.get('stage')}"
 
     def test_freshgate_at_developer_still_works(self) -> None:
-        """FreshGate at developer 应仍正常工作 (回归测试)."""
+        """FreshGuardrail at developer 应仍正常工作 (回归测试)."""
         call_count = [0]
         def _guardrail_side_effect(*args, **kwargs):
             call_count[0] += 1
             if call_count[0] == 2:  # developer tick (architect→developer 转换前的检查)
-                return MagicMock(action="retry", guardrail_name="FreshGate")
+                return MagicMock(action="retry", guardrail_name="FreshGuardrail")
             return MagicMock(action="pass")
         gr = MagicMock()
         gr.check.side_effect = _guardrail_side_effect
@@ -2296,7 +2296,7 @@ class TestFreshGateAtCritic:
             "files_changed": ["f.py"],
             "test_results": {"passed": 1, "failed": 0},
         }))
-        # FreshGate at developer 不应阻塞
+        # FreshGuardrail at developer 不应阻塞
         assert action.get("error_code", "") != "GUARDRAIL_RETRY"
         assert action["stage"] == "critic"
 
@@ -2485,7 +2485,7 @@ class TestDualDriverContract:
 
     验证:
     1. init() 返回的 action schema 对两个驱动一致
-    2. _build_action() 的产出不依赖驱动类型
+    2. build_action() 的产出不依赖驱动类型
     3. _tick_process_result() 公共路径对两个驱动一致
     """
 
@@ -2496,13 +2496,13 @@ class TestDualDriverContract:
         for key in ("action", "stage", "tick", "context", "expected_format"):
             assert key in action, f"action 缺字段: {key}"
 
-    def test_build_action_stage_deterministic(self) -> None:
-        """_build_action() 由 state.current_stage 决定, 与驱动无关."""
+    def testbuild_action_stage_deterministic(self) -> None:
+        """build_action() 由 state.current_stage 决定, 与驱动无关."""
         o = _orchestrator()
         o.init("req")
 
         # architect stage — init 后就在 architect
-        a1 = o._build_action()
+        a1 = o.build_action()
         assert a1["stage"] == "architect"
         assert a1["action"] == "architect"
 
@@ -2515,7 +2515,7 @@ class TestDualDriverContract:
                            "file_targets": ["x.py"]}],
             }], "file_list": ["x.py"], "contracts": {},
         }))
-        a2 = o._build_action()
+        a2 = o.build_action()
         assert a2["stage"] == "developer"
         assert a2["action"] == "developer"
         assert "tasks" in a2
@@ -2782,7 +2782,7 @@ class TestResolveInitManifestEscalation:
         o.init("build a thing")
         # 找到 LintGate 实例验证 linter 是 biome
         lint_gate = next(
-            (g for g in o._gates if g.name == "lint"), None)
+            (g for g in o._tick_gate_runner._gates if g.name == "lint"), None)
         assert lint_gate is not None
         assert lint_gate.linter_bin == "biome"
 
@@ -3421,7 +3421,7 @@ class TestT109PIIInit:
 
 
 class TestT109PIIOutbound:
-    """T109c: L2 — outbound action JSON PII redact in _build_action."""
+    """T109c: L2 — outbound action JSON PII redact in build_action."""
 
     def test_outbound_redact_default(self) -> None:
         """默认 redact 模式: PII 在 action JSON 中被脱敏."""
@@ -3431,7 +3431,7 @@ class TestT109PIIOutbound:
         o._pii_redactor = PIIRedactor()
         o.init("req")
         o._state.current_stage = "architect"
-        action = o._build_action()
+        action = o.build_action()
         # action 中 requirement 已脱敏
         req = action.get("context", {}).get("requirement", "")
         # 原始 requirement 包含 "req" 但 PIIRedactor 不会误杀正常文本
@@ -3446,7 +3446,7 @@ class TestT109PIIOutbound:
         # 用身份证号测试 (有明确词边界)
         o.init("用户身份证号 320102199001011234")
         o._state.current_stage = "architect"
-        action = o._build_action()
+        action = o.build_action()
         req = action.get("context", {}).get("requirement", "")
         # 身份证号被脱敏 (原始号码不在输出中)
         assert "320102199001011234" not in req
@@ -3463,7 +3463,7 @@ class TestT109PIIOutbound:
         o.init("req")
         o._state.current_stage = "architect"
         o._state.requirement = "身份证320102199001011234"
-        action = o._build_action()
+        action = o.build_action()
         # architect action 携带 requirement，含身份证号 → block
         if action["action"] == "error":
             assert action["error_code"] == "PII_BLOCKED_OUTBOUND"
@@ -3480,7 +3480,7 @@ class TestT109PIIOutbound:
         o._pii_redactor = PIIRedactor()
         o.init("req")
         o._state.current_stage = "architect"
-        action = o._build_action()
+        action = o.build_action()
         # warn 模式不阻断
         assert action["action"] == "architect"
 
@@ -3491,7 +3491,7 @@ class TestT109PIIOutbound:
         o._pii_redactor = None
         o.init("用户身份证号 320102199001011234")
         o._state.current_stage = "architect"
-        action = o._build_action()
+        action = o.build_action()
         req = action.get("context", {}).get("requirement", "")
         # 未脱敏
         assert "320102199001011234" in req

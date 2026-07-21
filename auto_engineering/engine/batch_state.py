@@ -32,7 +32,7 @@ _warned_zero_batch: set[str] = set()
 from auto_engineering.engine.design_doc import Component, DesignDoc, Plate
 
 if TYPE_CHECKING:
-    from auto_engineering.loop.plan import Plan, Task
+    from auto_engineering.engine.models import Plan, Task
 
 _logger = logging.getLogger("ae.engine.batch_state")
 

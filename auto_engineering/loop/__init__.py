@@ -41,10 +41,6 @@ from auto_engineering.loop.convergence import (
     ConvergenceJudge,
     RoundHistory,
 )
-from auto_engineering.loop.orchestrator import (
-    Orchestrator,
-    OrchestratorConfig,
-)
 from auto_engineering.loop.plan import (
     Plan,
     Task,
@@ -52,25 +48,21 @@ from auto_engineering.loop.plan import (
 from auto_engineering.loop.round import (
     RoundResult,
 )
-from auto_engineering.loop.threshold_learner import ThresholdLearner
 
 # v2.3 P0-A (BEACON 决策 23): CheckpointEnvelope / Channel 不再从 __init__ 导出
 # (消除与 engine.state.LoopState 同名双义). 需显式:
 #   from auto_engineering.loop.state import CheckpointEnvelope, Channel, LastValueChannel, ...
 # v2.3 P0-A: 原 LoopState (v2.0 Pydantic) 已重命名为 CheckpointEnvelope.
 
-# 字母序排列 (v2.3 P1-III: 缩减到核心 API)
+# 字母序排列
 __all__ = [
     "AuditHistory",
     "Checkpoint",
     "ConvergenceConfig",
     "ConvergenceJudge",
-    "Orchestrator",
-    "OrchestratorConfig",
     "Plan",
     "RoundHistory",
     "RoundResult",
     "SQLiteCheckpointStore",
     "Task",
-    "ThresholdLearner",
 ]

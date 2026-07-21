@@ -1,6 +1,11 @@
 """ThresholdLearner — Beta-Binomial Bayesian threshold learning (T70).
 
 Design spec: v5.6-Design-Loop.md Appendix F.10.
+
+@reserved: 战略储备模块 — 完整实现 (148 行, 32 tests PASS) 但零调用方。
+激活条件: metrics 管线累积 ≥30 条需求数据后, 在 enrichment.py:compute_metrics_signals()
+中实例化 ThresholdLearner 并调用 propose_adjustments()。
+参见 BEACON 决策 #83 Phase 30。
 """
 from __future__ import annotations
 

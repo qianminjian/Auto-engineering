@@ -65,7 +65,7 @@ class TestT82CategoryParameter:
         )
 
     def test_init_tick_loop_passes_category(self) -> None:
-        """_run_tick_init() MUST pass requirement_category to begin_requirement().
+        """run_tick_init() MUST pass requirement_category to begin_requirement().
 
         RED: Currently passes only thread_id and req_hash.
         """
@@ -74,21 +74,21 @@ class TestT82CategoryParameter:
         source_path = Path(__file__).parent.parent / "auto_engineering" / "cli" / "dev_loop.py"
         source = source_path.read_text()
 
-        # Find _run_tick_init and extract its body
+        # Find run_tick_init and extract its body
         assert "begin_requirement" in source, "No begin_requirement call found"
-        # Find the begin_requirement call within _run_tick_init
-        func_start = source.find("def _run_tick_init(")
-        assert func_start >= 0, "Cannot find _run_tick_init function"
-        # Find next def after _run_tick_init
+        # Find the begin_requirement call within run_tick_init
+        func_start = source.find("def run_tick_init(")
+        assert func_start >= 0, "Cannot find run_tick_init function"
+        # Find next def after run_tick_init
         next_def = source.find("\ndef ", func_start + 10)
         func_body = source[func_start:next_def] if next_def > 0 else source[func_start:]
         assert "requirement_category" in func_body, (
-            "T82 NOT FIXED: _run_tick_init() does not pass requirement_category "
+            "T82 NOT FIXED: run_tick_init() does not pass requirement_category "
             "to begin_requirement(). by_category/ will never get category-specific baselines."
         )
 
-    def test_run_standalone_passes_category(self) -> None:
-        """_run_standalone() MUST pass requirement_category to begin_requirement().
+    def testrun_standalone_passes_category(self) -> None:
+        """run_standalone() MUST pass requirement_category to begin_requirement().
 
         RED: Currently passes only thread_id and req_hash.
         """
@@ -96,14 +96,14 @@ class TestT82CategoryParameter:
         source = source_path.read_text()
 
         assert "begin_requirement" in source, "No begin_requirement call found"
-        # Find _run_standalone function (v5.5 legacy path)
-        func_start = source.find("def _run_standalone(")
-        assert func_start >= 0, "Cannot find _run_standalone function"
-        # Find next top-level def after _run_standalone
+        # Find run_standalone function (v5.5 legacy path)
+        func_start = source.find("def run_standalone(")
+        assert func_start >= 0, "Cannot find run_standalone function"
+        # Find next top-level def after run_standalone
         next_def = source.find("\ndef ", func_start + 10)
         func_body = source[func_start:next_def] if next_def > 0 else source[func_start:]
         assert "requirement_category" in func_body, (
-            "T82 NOT FIXED: _run_standalone() does not pass requirement_category "
+            "T82 NOT FIXED: run_standalone() does not pass requirement_category "
             "to begin_requirement(). by_category/ will never get category-specific baselines."
         )
 
@@ -116,17 +116,17 @@ class TestT82CategoryParameter:
 class TestT83SignalOnlyOnConvergence:
     """T83: compute_metrics_signals() should only be called on convergence."""
 
-    def test_build_action_does_not_compute_signals(self) -> None:
-        """_build_action() MUST NOT call compute_metrics_signals unconditionally.
+    def testbuild_action_does_not_compute_signals(self) -> None:
+        """build_action() MUST NOT call compute_metrics_signals unconditionally.
 
         Signal computation should be in the convergence path, not every tick.
         """
         import auto_engineering.loop.tick_orchestrator as tmod
         import inspect as _inspect
 
-        source = _inspect.getsource(tmod.TickOrchestrator._build_action)
+        source = _inspect.getsource(tmod.TickOrchestrator.build_action)
         assert "compute_metrics_signals" not in source, (
-            "T83 NOT FIXED: _build_action() still calls compute_metrics_signals "
+            "T83 NOT FIXED: build_action() still calls compute_metrics_signals "
             "unconditionally. Move it to _convergence_check() for done-verdict-only."
         )
 
@@ -300,16 +300,16 @@ class TestT87SignalsCoverage:
 
 
 class TestT88NoRedundantFlush:
-    """T88: _run_tick_init MUST NOT call _flush() after begin_requirement()."""
+    """T88: run_tick_init MUST NOT call _flush() after begin_requirement()."""
 
     def test_init_tick_loop_has_no_flush_after_begin(self) -> None:
-        """_run_tick_init() MUST NOT call collector._flush() after begin_requirement."""
+        """run_tick_init() MUST NOT call collector._flush() after begin_requirement."""
         source_path = Path(__file__).parent.parent / "auto_engineering" / "cli" / "dev_loop.py"
         source = source_path.read_text()
 
-        # Extract _run_tick_init function body
-        func_start = source.find("def _run_tick_init(")
-        assert func_start >= 0, "Cannot find _run_tick_init function"
+        # Extract run_tick_init function body
+        func_start = source.find("def run_tick_init(")
+        assert func_start >= 0, "Cannot find run_tick_init function"
         next_def = source.find("\ndef ", func_start + 10)
         func_body = source[func_start:next_def] if next_def > 0 else source[func_start:]
 
@@ -325,7 +325,7 @@ class TestT88NoRedundantFlush:
         after_lines = lines[begin_idx + 1:begin_idx + 6]
         has_flush = any("_flush()" in l for l in after_lines)
         assert not has_flush, (
-            "T88 NOT FIXED: _run_tick_init() has redundant _flush() after "
+            "T88 NOT FIXED: run_tick_init() has redundant _flush() after "
             "begin_requirement(). The _flush is already called when requirement ends."
         )
 
