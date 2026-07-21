@@ -1689,3 +1689,53 @@ T116 (P1 CriticVerdictInvalid)  ──独立──→ 第一批
 | **剩余** | **~33 处** | 主要在 v5.5 legacy 路径（orchestrator/semantic_evaluator）、gates/runner（fail-closed 有注释说明）、CLI progress/status/agent（user-facing 降级捕获）。**不再建议批量窄化。** |
 
 > **剩余裸 except 评估**：v5.5 legacy 路径将在退役时一并删除（~7 处）。gates/runner 的 fail-closed 模式有注释说明，属有意设计。CLI 层 user-facing 捕获可沿用（已通过文件级窄化）。不再建议批量窄化——剩余的多数有明确设计意图或将在退役中自然消除。
+
+---
+
+## Phase 31 — 2026-07-21 深度审计待办 (来源: 全量审计 40 项 + /tttt 深度追踪)
+
+> 已修复: 21 项 (全量审计 P0×9+P1×8 + 深度追踪 D1×1 + P1-8/P1-14/P2-9)
+> 剩余: 19 项 — 15 项 P2 低优先级 + 4 项需用户决策
+
+### 需用户决策 (⛔)
+
+| # | 来源 | 问题 | 选项 | 建议 |
+|---|------|------|------|------|
+| AD1 | P2-1 | **PRBackend ABC ~330 行零生产消费者** — `pr_backend.py` 含 GitHub/GitLab PR backend + `select_backend()`，仅 `ae doctor` 的 `available_backends()` 调用 | A. 接线到 convergence 路径自动创建 PR → ~2d / B. 物理删除 → 10min / C. 保持休眠 | B — BEACON #45 GitLab CI 同理是"已设计未实施"，不如果断清理 |
+| AD2 | P2-2 | **Channel[T] ABC 体系 (~100 行) v2.0 遗留** — `_serialization.py` 中 `Channel`/`LastValueChannel`/`AccumulatingChannel`/`BarrierChannel`，`loop/__init__.py` 明确注释"不再导出" | A. 审计调用方后删除 / B. 保留为"休眠模块" | A — 零消费者即删除 |
+| AD3 | P2-3 | **ThresholdLearner.propose_adjustments() 从未调用 (~30 行)** — 仅 `compute_max_iter()` 有消费者 | A. 接线到 `_run_ratchet()` → ~1d / B. 删除 → 10min | B — BEACON #47 已判 YAGNI，此方法是残留 |
+| AD4 | P2-4 | **`check_feature()` guard function 零调用方** — 设计为"新增 env var 必须先注册"的 enforcement，但从未被调用 | A. 在 CI test 中调用 → 30min / B. 删除 → 5min | A — 有价值的 guard，一行 import 即可激活 |
+
+### P2 低优先级（消化后自行决定）
+
+| # | 来源 | 任务 | 严重度 | 建议 |
+|---|------|------|:---:|------|
+| T135a | P1-7 | JSON 工具函数提取 — 37+ 处 `json.loads(path.read_text())` 重复，错误处理不一致 | P2 | 大重构，等空闲窗口。新建 `utils/file_utils.py`，统一 `safe_json_load/save` |
+| T135b | P1-9 | `_compute_loc_added()` 失败返回 0 vs None — 与"零变更"不可区分。且该方法本身零生产调用方（Build-then-Wire） | P2 | 先确认是否需要该方法，不需要则删除；需要则改返回 None |
+| T135c | P1-10 | `Any` 类型 → Protocol — `tracer: Any` `transcript_parser: Any` 等注入点 | P2 | 类型体操，无运行时价值。等 Protocol 定义稳定后再做 |
+| T135d | P1-11 | monkey-patching `type: ignore[attr-defined]` 8 处 — `_state.batch_state` `_state._plan` 动态注入 | P2 | 跟随 TickOrchestrator state refactor（BEACON #89 暂缓）一并处理 |
+| T135e | P1-15 | api-reference.md v5.0/v5.5 legacy 示例完整审查 — 加版本标注或移到附录 | P2 | 已加 deprecation banner，完整审查 ~1h |
+| T135f | P1-16 | FeatureManifest (23 flags) vs RuntimeConfig (30 properties) 分层文档化 | P2 | API key 类单独文档 + SDK 路径类补充注册 |
+| T135g | P2-5 | `_TracerLike` Protocol — 定义了但方法名与实际调用不匹配 (`start_as_current_span` vs `start_span`) | P2 | 删除或对齐方法名 |
+| T135h | P2-6 | CHANGELOG.md 创建 — 破坏性变更散落 90 个 BEACON 决策 | P2 | 首版从 BEACON 决策回溯关键变更，~2h |
+| T135i | P2-7 | `_` 前缀函数跨模块调用审查 — `Gate._resolve_timeout()` 等 | P2 | 审计后决定：保留（base→subclass 约定）还是重命名 |
+| T135j | P2-8 | 28 处 `type: ignore` 逐条审计 + 标注理由 | P2 | ~1h，与 T135d 重叠部分跟随 state refactor |
+| T135k | P2-10 | `_map_llm_exception` 可测试性 — 硬编码 Anthropic 类型 → 接受映射字典参数 | P2 | 加可选 `exception_map` 参数，测试时注入 |
+| T135l | P2-11 | test 质量：同义反复测试 — `test_default_name` 测构造函数默认值 | P2 | 删除或改为验证 name 在 gate 执行中的实际语义 |
+| T135m | P2-12 | `action.schema.json` $id 注释 — 指向不解析域名 | P2 | 加注释"内部标识符，非可解析 URL" |
+| T135n | 深度审计 | Guardrail type 迁移收尾 — 消除 `shared/` → `engine/` → `loop/` 三跳 re-export shim | P2 | 所有消费者直连 `shared/guardrail.py`，删两个 shim 文件 |
+| T135o | P1-2 | TickOrchestrator 暂缓标注更新 — 在 tracker 中标记"条件暂缓 (waiting on state refactor)" | P2 | 仅 tracker 文档更新 |
+
+### 修复统计
+
+| 类别 | 已修复 | 待办 | 需决策 |
+|------|:---:|:---:|:---:|
+| P0 | 9/9 | 0 | 0 |
+| P1 | 8/16 | 8 | 0 |
+| P2 | 4/15 | 11 | 0 |
+| 深度追踪 | 1/1 | 1 (shim 收尾) | 0 |
+| 架构决策 | 0/0 | 0 | 4 |
+| **合计** | **22** | **20** | **4** |
+
+> 审计报告: `_scratch/reports/2026-07-21-audit.md` (全量) + `_scratch/reports/2026-07-21-deep-audit-tttt.md` (深度追踪)
+> 已修复 commit: `81eb494` (17 项) + `59918db` (4 项) + Phase 30 `631dbc7` (28 项)
