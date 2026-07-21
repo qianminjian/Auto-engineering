@@ -92,7 +92,7 @@ def _resolve_provider(role: str) -> Any:
             # Inject audit_logger into the provider if it supports it
             if hasattr(provider, '_audit_logger'):
                 provider._audit_logger = audit_logger
-        except Exception:
+        except (OSError, ImportError, ValueError, TypeError):
             import logging
             _logger = logging.getLogger("ae.standalone")
             _logger.warning("Failed to initialize AuditLogger", exc_info=True)
@@ -320,7 +320,7 @@ class StandaloneDriver:
 
                 action = self._orch.tick_dict(action)
 
-        except Exception:
+        except (OSError, RuntimeError, ValueError, KeyError, TypeError):
             _logger.exception("_run_loop_from_action 未捕获异常 (tick=%s)", tick_count)
             return RunSummary(
                 success=False, total_ticks=tick_count,
@@ -344,7 +344,7 @@ class StandaloneDriver:
                 design_doc_path=self._design_doc_path,
                 max_rounds=self.max_rounds,
             )
-        except Exception:
+        except (OSError, RuntimeError, ValueError, TypeError):
             _logger.exception("TickOrchestrator.init() 失败")
             return RunSummary(
                 success=False, total_ticks=0, final_stage="",
@@ -369,7 +369,7 @@ class StandaloneDriver:
         """
         try:
             return await self._execute_action(action)
-        except Exception:
+        except (OSError, RuntimeError, ValueError, TypeError, KeyError):
             _logger.exception(
                 "_execute_action 异常 (tick=%d, stage=%s)",
                 len(action_history), action.get("stage", "?"),
@@ -427,7 +427,7 @@ class StandaloneDriver:
                 task, ctx,
                 cancellation=cancellation, token_tracker=token_tracker,
             )
-        except Exception:
+        except (OSError, RuntimeError, ValueError, TypeError, AttributeError):
             _logger.exception("Agent '%s' execute 失败", role)
             return {"stage": role, "error": f"Agent '{role}' 执行异常"}
 
@@ -499,7 +499,7 @@ class StandaloneDriver:
                 retry_task, ctx,
                 cancellation=cancellation, token_tracker=token_tracker,
             )
-        except Exception:
+        except (OSError, RuntimeError, ValueError, TypeError, AttributeError):
             _logger.exception("Stage '%s' 重试失败", role)
             return {"stage": role, "error": "重试失败: 详见日志"}
 
@@ -568,7 +568,7 @@ class StandaloneDriver:
                     subtask, ctx,
                     cancellation=cancellation, token_tracker=token_tracker,
                 )
-            except Exception:
+            except (OSError, RuntimeError, ValueError, TypeError, AttributeError):
                 _logger.exception(
                     "Developer task '%s' execute 失败", task_id,
                 )
@@ -650,7 +650,7 @@ class StandaloneDriver:
                 _logger.info("[auto-commit] %s → %s", batch_id, commit_hash[:8])
                 return commit_hash
             return fallback_hash
-        except Exception:
+        except (OSError, subprocess.SubprocessError, ValueError):
             _logger.exception("[auto-commit] 失败 (batch=%s)", batch_id)
             return fallback_hash
 
