@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sys
 import time
 from collections.abc import Callable
@@ -49,6 +50,8 @@ from auto_engineering.loop.stage_router import (
 )
 from auto_engineering.loop.task_factory import tasks_from_batch_plan
 from auto_engineering.observability.audit_log import AuditLogger
+from auto_engineering.metrics.transcript_parser import create_parser
+from auto_engineering.pii.redactor import PIIRedactor
 from auto_engineering.prompts.registry import default_registry
 
 # Gate runner type: (gate_names, project_root) → {name: GateVerdict}
@@ -114,6 +117,87 @@ _STAGE_CHECKPOINT_REVIEW_FEEDBACK = (
     "用户选择审查当前产出，请展示当前进度和已完成内容供审查。"
 )
 
+# T108a: Subagent spawn requirements per stage — injected into action JSON so the
+# Agent sees the spawn instruction in the per-tick signal, not just in dev-loop.md.
+# Key insight: normal conversation "spawn Plan agent" works reliably because the
+# instruction and context are in the same message. The Tick loop broke this by
+# separating "what to do" (action JSON) from "how to do it" (dev-loop.md spec).
+# Fix: encode the spawn requirement into every per-tick action JSON.
+_SPAWN_CONFIG: dict[str, dict] = {
+    "architect": {
+        "subagent_type": "Plan",
+        "count": 1,
+        "parallel": False,
+        "model": "Sonnet",
+        "instruction": (
+            "Spawn a Plan agent with the action's context (requirement + design_doc) "
+            "and expected_format. It MUST produce structured batch_plan JSON — not "
+            "just bullet points. Each batch ≤5 files, tasks independently testable."
+        ),
+    },
+    "critic": {
+        "subagent_type": "code-reviewer",
+        "count": 1,
+        "parallel": False,
+        "model": "Sonnet",
+        "instruction": (
+            "Spawn a code-reviewer agent. Feed it files_changed + test_results + "
+            "gate_results from the action's context. It MUST produce structured "
+            "findings (file:line + severity + issue + suggested_fix) and verdict "
+            "(APPROVE if 0 P0 + ≤2 P1, otherwise MAJOR)."
+        ),
+    },
+    "component_verifier": {
+        "subagent_type": "general-purpose",
+        "count": 1,
+        "parallel": False,
+        "model": "Haiku",
+        "instruction": (
+            "Spawn a general-purpose agent (Haiku model). Feed it the component "
+            "design spec + implementation files from the action's context. Map "
+            "each design item to IMPLEMENTED/MISSING/DIVERGED with file+line evidence."
+        ),
+    },
+    "plate_deep_audit": {
+        "subagent_type": "code-reviewer",
+        "count": 3,
+        "parallel": True,
+        "model": "Sonnet",
+        "instruction": (
+            "SPAWN 3 CODE-REVIEWER SUBAGENTS IN PARALLEL. Each audits different "
+            "dimensions of the plate's codebase (cross-component contracts, code "
+            "quality, design compliance). Merge all findings and recount p0/p1/p2 "
+            "counts. The expected_format requires findings array, p0/p1/p2 counts, "
+            "cross_component_issues, and total_audited_files."
+        ),
+    },
+    "system_verifier": {
+        "subagent_type": "general-purpose",
+        "count": 1,
+        "parallel": False,
+        "model": "Haiku",
+        "instruction": (
+            "Spawn a general-purpose agent (Haiku model). Feed it the full design "
+            "spec + full codebase file list from the action's context. Produce a "
+            "full_coverage_map for ALL design items (total_design_items, covered_count, "
+            "missing_count, diverged_count)."
+        ),
+    },
+    "system_deep_audit": {
+        "subagent_type": "code-reviewer",
+        "count": 3,
+        "parallel": True,
+        "model": "Sonnet",
+        "instruction": (
+            "SPAWN 3 CODE-REVIEWER SUBAGENTS IN PARALLEL. Each audits different "
+            "dimensions of the FULL codebase: (1) architecture + engineering, "
+            "(2) code quality + virtualization, (3) collaboration + design coverage. "
+            "Merge all findings via recount_findings() and produce p0/p1/p2 counts, "
+            "total_audited_files, design_docs_stale flag, and design_doc_suggestions."
+        ),
+    },
+}
+
 _logger = logging.getLogger("ae.loop.tick_orchestrator")
 
 
@@ -158,6 +242,13 @@ class TickOrchestrator:
         self._debug_enabled = debug
         self._debug_dir = debug_dir
 
+        # T109: PII 四层文件桥接防护
+        self._pii_enabled = os.environ.get("AE_PII_ENABLED", "1") == "1"
+        self._pii_redactor: PIIRedactor | None = PIIRedactor() if self._pii_enabled else None
+
+        # T110: M5 Token JSONL 采集 (Agent 驱动模式)
+        self._transcript_parser = create_parser(self.project_root)
+
         self._state: EngineState | None = None
         self._router: StageRouter | None = None
         self._judge: ConvergenceJudge | None = None
@@ -182,6 +273,21 @@ class TickOrchestrator:
         # T64: Stage Checkpoint Gate (DecisionGate 形态 3)
         self._pause_at_stages: set[str] = set()
         self._passed_checkpoints: set[str] = set()
+
+    # ── T113 L2: Injectable access with visible None ──
+
+    def _require(self, attr_name: str, reason: str = "") -> Any:
+        """Get injectable with debug-level log when None.
+
+        Replaces silent ``if self._x is not None`` checks with a unified
+        accessor that makes the None visible at DEBUG level.  Does NOT
+        change behavior — still degrades gracefully.
+        """
+        val = getattr(self, attr_name, None)
+        if val is None:
+            _logger.debug("Injectable '%s' is None — feature disabled. %s",
+                          attr_name, reason)
+        return val
 
     # ── T64: Stage Checkpoint Gate ──
 
@@ -241,6 +347,12 @@ class TickOrchestrator:
 
         if design_doc_path:
             self._design_doc = DesignDoc.parse(design_doc_path)
+
+        # T109b: L1 — requirement PII 扫描 (不阻断, 仅 WARN)
+        if self._pii_enabled and self._pii_redactor:
+            findings = self._pii_redactor.scan_dict({"requirement": requirement})
+            if findings:
+                _logger.warning("PII detected in requirement: %d matches", len(findings))
 
         self._state = EngineState(
             requirement=requirement,
@@ -434,8 +546,9 @@ class TickOrchestrator:
 
         # T75: OTLP tracing span per tick
         tick_span = None
-        if self._tracer is not None:
-            tick_span = self._tracer.start_span(
+        tracer = self._require("_tracer", "OTLP tracing disabled")
+        if tracer is not None:
+            tick_span = tracer.start_span(
                 f"tick.{stage_in}", attributes={"tick": tick_no, "stage": stage_in})
 
         action = self._tick_body_dict(result)
@@ -478,7 +591,7 @@ class TickOrchestrator:
         state_snapshot = self._state.to_dict() if self._state else {}
         guardrail_snapshot = self._last_guardrail or {}
         gate_snapshot = self._state.gate_results if self._state else {}
-        if self._debug_tracer is not None:
+        if self._require("_debug_tracer", "debug tracing disabled") is not None:
             self._debug_tracer.record_tick(
                 tick_num=tick_no,
                 stage_in=stage_in,
@@ -553,7 +666,7 @@ class TickOrchestrator:
     def _tick_process_result(self, result: dict | ErrorResponse) -> dict:
         """tick 公共处理逻辑: Gate resolution → Guardrail → Gate → 路由 → action."""
         if isinstance(result, ErrorResponse):
-            if self._debug_tracer is not None:
+            if self._require("_debug_tracer", "debug tracing disabled") is not None:
                 self._debug_tracer.record_error(
                     tick=self._state.tick,
                     category=result.error_code,
@@ -653,7 +766,7 @@ class TickOrchestrator:
                 if self._state.current_stage != "developer":
                     self._run_developer_gates()
             else:
-                if self._debug_tracer is not None:
+                if self._require("_debug_tracer", "debug tracing disabled") is not None:
                     self._debug_tracer.record_error(
                         tick=self._state.tick,
                         category=f"GUARDRAIL_{gr.action.upper()}",
@@ -694,6 +807,24 @@ class TickOrchestrator:
                 error_code="RESULT_VALIDATION_ERROR",
                 message="; ".join(errors),
                 current_state=self._state.to_dict())
+
+        # T108c: spawn stages with empty findings → WARN (timing guardrail T112
+        # provides the block layer; this is an early detection signal)
+        stage = self._state.current_stage
+        if stage in _SPAWN_CONFIG:
+            findings = result.get("findings")
+            if findings is None or (isinstance(findings, list) and len(findings) == 0):
+                p0 = result.get("p0_count", 0)
+                p1 = result.get("p1_count", 0)
+                if not isinstance(p0, int) or not isinstance(p1, int) or (p0 == 0 and p1 == 0):
+                    _logger.warning(
+                        "[spawn-empty] stage=%s has spawn requirement but "
+                        "findings=%s (empty), p0=%s, p1=%s — subagent may not "
+                        "have been spawned. action.spawn=%s",
+                        stage,
+                        type(findings).__name__ if findings is not None else "None",
+                        p0, p1,
+                        _SPAWN_CONFIG.get(stage, {}).get("subagent_type", "?"))
 
         return result
 
@@ -809,6 +940,8 @@ class TickOrchestrator:
     # ── _after_developer ──
 
     def _after_developer(self) -> dict:
+        self._collect_token_usage()  # T110b: 采集 Agent 本 tick 的 token 消耗
+
         comp = self._batch_state.current_component()
         # 缓存刚完成的 batch_id (advance_batch 后组件 complete → current_batch_id 不可用)
         prev_batch = self._batch_state.current_batch()
@@ -865,7 +998,9 @@ class TickOrchestrator:
 
         (P1-2 fix: documented limitation instead of pretending full_context works.)
         """
-        if self._context_offloader is None:
+        offloader = self._require("_context_offloader",
+                                  "stage context will not be persisted")
+        if offloader is None:
             return
         s = self._state
         summary = f"{stage} stage completed at tick {s.tick}/{s.round}"
@@ -883,7 +1018,7 @@ class TickOrchestrator:
             summary = f"Developer: {tr.get('passed', 0)}/{tr.get('total', 0)} tests passed"
         elif stage == "critic":
             summary = f"Critic verdict: {s.critic_verdict or 'N/A'}"
-        self._context_offloader.offload(
+        offloader.offload(
             stage=stage,
             messages=[],
             summary=summary,
@@ -895,6 +1030,8 @@ class TickOrchestrator:
     # ── _after_critic ──
 
     def _after_critic(self, result: dict) -> dict:
+        self._collect_token_usage()  # T110b: 采集 Agent 本 tick 的 token 消耗
+
         verdict = result.get("verdict", "")
         update_majors_count(self._state, verdict)
         self._offload_stage("critic")
@@ -1099,6 +1236,9 @@ class TickOrchestrator:
             # defer → node fuzzy, architect in-loop 细化
         self._state.gap_report_json = json.dumps(report, ensure_ascii=False)
         self._state.pending_research_ids = pending_research
+        # T107: has_blocking → auto-pause before architect via T64 Stage Checkpoint Gate
+        if report.get("has_blocking"):
+            self._pause_at_stages.add("architect")
         if pending_research:
             self._advance_stage("research")
         else:
@@ -1321,7 +1461,6 @@ class TickOrchestrator:
         resolution = gate_resolution.get("resolution", "")
         detail = gate_resolution.get("resolution_detail", {})
         from auto_engineering.gates._tools import LANGUAGE_TOOLS
-        import os as _os_local
 
         # 解析 resolution: "typescript: eslint/tsc/vitest" 或 "自定义（...）"
         lang: str | None = None
@@ -1457,8 +1596,37 @@ class TickOrchestrator:
 
     # ── _build_action ──
 
+    def _apply_pii_outbound(self, action: dict) -> dict:
+        """T109c L2: outbound action JSON PII 脱敏."""
+        if not self._pii_enabled or not self._pii_redactor:
+            return action
+        outbound = os.environ.get("AE_PII_OUTBOUND", "redact")
+        if outbound == "redact":
+            return self._pii_redactor.redact_dict(action)
+        elif outbound in ("warn", "block"):
+            findings = self._pii_redactor.scan_dict(action)
+            if findings:
+                _logger.warning(
+                    "PII detected in outbound action: %d matches", len(findings))
+                if outbound == "block":
+                    s = self._state
+                    return {
+                        "action": "error",
+                        "tick": s.tick + 1 if s else 1,
+                        "stage": s.current_stage if s else "",
+                        "thread_id": s.thread_id if s else "",
+                        "error_code": "PII_BLOCKED_OUTBOUND",
+                        "message": (
+                            f"PII detected in outbound action: "
+                            f"{len(findings)} matches"),
+                    }
+        return action
+
     def _build_action(self, feedback: str | None = None, pre_gate: dict | None = None) -> dict:
         stage = self._state.current_stage
+        # T112: 记录 action 出站时间戳供 AuditTimingGuardrail 跨 tick 计时
+        import time
+        self._state.action_timestamp = time.time()
 
         # P1-5: T94 PrePlannedGate — 注入架构师声明的 gate
         if pre_gate:
@@ -1493,6 +1661,10 @@ class TickOrchestrator:
                 "progress_summary": self._progress_summary(),
             }
 
+        # T114 5.4: feature_status in action JSON for Agent mode visibility
+        from auto_engineering.config.feature_flags import feature_status_for_action
+        feature_status = feature_status_for_action()
+
         base: dict = {
             "tick": self._state.tick + 1,
             "stage": stage,
@@ -1500,6 +1672,7 @@ class TickOrchestrator:
             "gate_summary": self._state.gate_results,
             "feedback": feedback,
             "requirement": self._state.requirement,
+            "feature_status": feature_status,
             "progress_summary": (
                 self._progress_tree.summary() if self._progress_tree else None
             ),
@@ -1510,7 +1683,7 @@ class TickOrchestrator:
         # Now moved to _convergence_check() so signals only fire on terminal ticks.
 
         if stage == "gap_scan":
-            return {**base, "action": "gap_scan", "context": {
+            action = {**base, "action": "gap_scan", "context": {
                 "design_doc_path": (
                     self._design_doc.path if self._design_doc else None),
                 "plates": [
@@ -1530,7 +1703,7 @@ class TickOrchestrator:
         elif stage == "gap_review":
             report = json.loads(self._state.gap_report_json or '{"gaps": []}')
             is_rereview = bool(self._state.research_archive)
-            return {**base, "action": "gap_review",
+            action = {**base, "action": "gap_review",
                     "gaps": report.get("gaps", []),
                     "has_blocking": report.get("has_blocking", False),
                     "is_rereview": is_rereview,
@@ -1553,7 +1726,7 @@ class TickOrchestrator:
                 self._state.pending_research_ids[0]
                 if self._state.pending_research_ids else None)
             gap = by_id.get(current_id, {}) if current_id else {}
-            return {**base, "action": "research",
+            action = {**base, "action": "research",
                     "gap": {
                         "id": gap.get("id"),
                         "design_section_ref": gap.get("design_section_ref"),
@@ -1575,7 +1748,9 @@ class TickOrchestrator:
                     }}
 
         elif stage == "architect":
-            action = {**base, "action": "architect", "context": {
+            action = {**base, "action": "architect",
+                    "spawn": _SPAWN_CONFIG.get("architect"),
+                    "context": {
                 "requirement": self._state.requirement,
                 "design_section": self._safe_design_section(),
                 "project_root": str(self.project_root),
@@ -1599,7 +1774,7 @@ class TickOrchestrator:
                     "mode": "PLAN_REFINE",
                     "refine_request": json.loads(self._state.refine_request_json),
                 }
-            return action
+            # fall through to _apply_pii_outbound
 
         elif stage == "developer":
             tasks = (
@@ -1634,11 +1809,13 @@ class TickOrchestrator:
                     )
                     action["session_summary"] = (
                         self._session_summarizer.inject_into_prompt(summary))
-            return action
+            # fall through to _apply_pii_outbound
 
         elif stage == "critic":
             snap = self._dev_snapshot or {}
-            return {**base, "action": "critic", "context": {
+            action = {**base, "action": "critic",
+                    "spawn": _SPAWN_CONFIG.get("critic"),
+                    "context": {
                 "files_changed": snap.get("files_changed", self._state.files_changed),
                 "test_results": snap.get("test_results", self._state.test_results),
                 "commit_hash": snap.get("commit_hash", self._state.commit_hash),
@@ -1658,7 +1835,9 @@ class TickOrchestrator:
 
         elif stage == "component_verifier":
             comp = self._batch_state.current_component()
-            return {**base, "action": "component_verifier", "context": {
+            action = {**base, "action": "component_verifier",
+                    "spawn": _SPAWN_CONFIG.get("component_verifier"),
+                    "context": {
                 "component": comp.name,
                 "design_section": comp.design_section,
                 "design_spec": comp.design_spec_summary(),
@@ -1679,7 +1858,9 @@ class TickOrchestrator:
 
         elif stage == "plate_deep_audit":
             plate = self._batch_state.current_plate()
-            return {**base, "action": "plate_deep_audit", "context": {
+            action = {**base, "action": "plate_deep_audit",
+                    "spawn": _SPAWN_CONFIG.get("plate_deep_audit"),
+                    "context": {
                 "plate": plate.name,
                 "components": plate.components_summary(),
                 "cross_component_contracts": plate.cross_component_contracts(),
@@ -1696,7 +1877,9 @@ class TickOrchestrator:
             }}
 
         elif stage == "system_verifier":
-            return {**base, "action": "system_verifier", "context": {
+            action = {**base, "action": "system_verifier",
+                    "spawn": _SPAWN_CONFIG.get("system_verifier"),
+                    "context": {
                 "design_doc": (
                     self._design_doc.path if self._design_doc else None),
                 "design_sections": (
@@ -1718,7 +1901,9 @@ class TickOrchestrator:
             }}
 
         elif stage == "system_deep_audit":
-            return {**base, "action": "system_deep_audit", "context": {
+            action = {**base, "action": "system_deep_audit",
+                    "spawn": _SPAWN_CONFIG.get("system_deep_audit"),
+                    "context": {
                 "project_root": str(self.project_root),
                 "audit_dimensions": [
                     "架构合理性", "代码质量", "工程化规范",
@@ -1739,9 +1924,28 @@ class TickOrchestrator:
             }}
 
         else:
-            return {**base, "action": "error",
+            action = {**base, "action": "error",
                     "error_code": "UNKNOWN_STAGE",
                     "message": f"Unknown stage: {stage}"}
+
+        return self._apply_pii_outbound(action)
+
+    # ── T110b: Token 采集 ──
+
+    def _collect_token_usage(self) -> None:
+        """T110b: 从 JSONL 转录文件增量采集本 tick 的 token 消耗."""
+        if self._transcript_parser is None:
+            return
+        try:
+            usage = self._transcript_parser.collect()
+            if usage.get("input_tokens") or usage.get("output_tokens"):
+                self._state.tick_token_usage = usage
+                _logger.debug(
+                    "Token collect: tick=%d input=%d output=%d model=%s",
+                    self._state.tick, usage["input_tokens"],
+                    usage["output_tokens"], usage.get("model", ""))
+        except Exception:
+            _logger.debug("Token collect failed", exc_info=True)
 
     # ── read/validate/apply ──
 
@@ -1777,6 +1981,28 @@ class TickOrchestrator:
                 message="; ".join(errors),
                 current_state=self._state.to_dict())
 
+        # T109d: L3 — inbound result JSON PII scan
+        return self._scan_inbound_for_pii(result)
+
+    def _scan_inbound_for_pii(self, result: dict) -> dict | ErrorResponse:
+        """T109d L3: inbound result JSON PII scan/redact/block."""
+        if not self._pii_enabled or not self._pii_redactor:
+            return result
+        inbound = os.environ.get("AE_PII_INBOUND", "warn")
+        if inbound == "redact":
+            return self._pii_redactor.redact_dict(result)
+        findings = self._pii_redactor.scan_dict(result)
+        if findings:
+            _logger.warning(
+                "PII detected in inbound result: %d matches", len(findings))
+            if inbound == "block":
+                s = self._state
+                return ErrorResponse(
+                    error_code="PII_BLOCKED_INBOUND",
+                    message=(
+                        f"PII detected in inbound result: "
+                        f"{len(findings)} matches"),
+                    current_state=s.to_dict() if s else None)
         return result
 
     def _apply_result_to_state(self, result: dict) -> None:
@@ -1800,7 +2026,11 @@ class TickOrchestrator:
             self._state.test_results = result.get("test_results", {})
             self._state.red_evidence = result.get("red_evidence", [])
         elif stage == "critic":
-            self._state.critic_verdict = result.get("verdict", "")
+            verdict = result.get("verdict", "")
+            if verdict not in ("", "APPROVE", "MAJOR"):
+                return ActionError(error_code="INVALID_VERDICT",
+                                   message=f"非法 critic verdict: {verdict!r}").to_dict()
+            self._state.critic_verdict = verdict
             self._state.findings = result.get("findings", [])
             self._state.critic_feedback = result.get("critic_feedback", "")
         elif stage == "component_verifier":
@@ -1814,13 +2044,13 @@ class TickOrchestrator:
     def _advance_stage(self, next_stage: str | None) -> None:
         if next_stage is None:
             return
+        self._append_round_history()
         clear_stage_fields(self._state, self._state.current_stage)
         self._state.current_stage = next_stage
         self._state.expected_stage = next_stage
         self._state.round += 1
         self._state.tick += 1
         self._state.guardrail_retry_counters[next_stage] = 0
-        self._append_round_history()
         self._save_checkpoint()
 
     def _append_round_history(self) -> None:
@@ -1830,17 +2060,53 @@ class TickOrchestrator:
         never populated — all 4 convergence levels (hard_limit, quality_gates,
         stagnation, semantic) were silently bypassed.  Each stage transition
         records a RoundHistory so the judge has real data.
+
+        T105b: lines_added/lines_removed populated from git diff --numstat so
+        stagnation detection can sense "small file big change" scenarios.
         """
         from auto_engineering.loop.convergence import RoundHistory
 
         gate_results = getattr(self._state, "gate_results", {}) or {}
         files_changed = getattr(self._state, "files_changed", []) or []
+        lines_added, lines_removed = self._compute_diff_stats(files_changed)
         self._round_history.append(RoundHistory(
             round_id=self._state.round,
             stage=self._state.current_stage,
             files_changed=len(files_changed),
+            lines_added=lines_added,
+            lines_removed=lines_removed,
             gate_results=gate_results,
         ))
+
+    def _compute_diff_stats(self, files_changed: list) -> tuple[int, int]:
+        """Compute lines_added/lines_removed from git diff --numstat (T105b)."""
+        if not files_changed:
+            return 0, 0
+        try:
+            import subprocess
+            result = subprocess.run(
+                ["git", "-C", str(self.project_root), "diff", "--numstat"],
+                capture_output=True, text=True, timeout=5,
+            )
+            if result.returncode != 0:
+                return 0, 0
+            added = 0
+            removed = 0
+            for line in result.stdout.strip().split("\n"):
+                if not line:
+                    continue
+                parts = line.split("\t")
+                if len(parts) >= 2:
+                    try:
+                        if parts[0] != "-":
+                            added += int(parts[0])
+                        if parts[1] != "-":
+                            removed += int(parts[1])
+                    except ValueError:
+                        pass
+            return added, removed
+        except Exception:
+            return 0, 0
 
     def _run_developer_gates(self) -> None:
         from auto_engineering.gates.registry import DEFAULT_GATES

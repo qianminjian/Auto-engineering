@@ -45,25 +45,32 @@ class RunBashTool(BaseTool):
     }
 
     # 黑名单: 匹配则拒绝执行
-    # 2026-07-04 修复 (v5.0 深度审计 P1-D-05): 统一为 13 模式与 hooks/pre-tool.sh 对齐.
-    # 删除 python -c 模式 (原第 14), 避免客户端/服务端黑名单不一致.
+    # 2026-07-04 修复 (v5.0 深度审计 P1-D-05): 统一为 13 模式.
+    # 2026-07-21 P0-1 加固: +8 模式覆盖 /bin/sh 绕过, rm 变体, $() 注入,
+    #   named pipe, /etc 敏感文件覆写, chmod 777 通用, --no-preserve-root.
     DANGEROUS_PATTERNS: ClassVar[list[str]] = [
         # P1.5 原列表
         r"rm\s+-rf\s+/\s*$",  # rm -rf / 或 rm -rf /...
         r"rm\s+-rf\s+/",  # rm -rf /任意位置(保守)
+        r"rm\s+.*--no-preserve-root",  # rm --no-preserve-root (绕过 GNU rm 保护)
+        r"rm\s+(-[a-zA-Z]*[rf][a-zA-Z]*[rf]|-r\s+-f|-f\s+-r)\s+/",  # rm 危险 flag 变体
         r"dd\s+if=",  # dd 直接复制设备
         r"mkfs",  # 文件系统创建
+        r"\bmkfifo\b",  # named pipe (反弹shell / 数据外泄)
         r"chmod\s+777\s+/etc",  # chmod 777 /etc
-        r">\s*/etc/",  # 重定向到 /etc
+        r">\s*/etc/",  # 重定向到 /etc (任意文件)
+        r">\s*/etc/(passwd|shadow|sudoers|crontab)\b",  # 覆写 /etc 敏感文件
         # v2.5 P1-S2 扩展: RCE proxy / 反向 shell / 数据外泄
         r"\bcurl\b.*\|\s*(ba)?sh\b",  # curl ... | sh / bash (下载即执行)
+        r"\bcurl\b.*\|\s*/bin/(ba)?sh\b",  # curl | /bin/sh (显式路径绕过)
         r"\bwget\b.*\|\s*(ba)?sh\b",  # wget ... | sh / bash
+        r"\bwget\b.*\|\s*/bin/(ba)?sh\b",  # wget | /bin/sh
         r"\bnc\b.*-[a-zA-Z]*e\b",  # nc -e (反向 shell)
         r"\bncat\b.*-[a-zA-Z]*e\b",  # ncat -e
         r"\bbash\s+-i\b.*>/dev/tcp/",  # bash interactive + /dev/tcp (反弹 shell)
         r"\beval\s+\$\(",  # eval $(...) 命令替换注入
+        r"\$\([^)]*\b(curl|wget|nc|bash\s+-i|rm\s+-rf)\b[^)]*\)",  # standalone $() 危险命令
         r"\bbase64\s+-d\b.*\|\s*(ba)?sh\b",  # base64 -d | sh
-        # python -c 已删除 (统一为 13 模式, 与 hooks/pre-tool.sh 一致)
     ]
 
     async def execute(self, **kwargs) -> ToolResult:

@@ -10,6 +10,7 @@ PII patterns are sourced from pii/rules.py PII_RULES (SSOT), not duplicated.
 
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 from typing import Any
@@ -32,8 +33,10 @@ class PIIGuardrail(Guardrail):
     timing = "post"
     applies_to_stages = ("developer",)
 
-    def __init__(self, project_root: Path | None = None, block_mode: bool = False) -> None:
+    def __init__(self, project_root: Path | None = None, block_mode: bool | None = None) -> None:
         self._project_root = project_root
+        if block_mode is None:
+            block_mode = os.environ.get("AE_PII_GUARDRAIL_MODE", "retry") == "block"
         self._block_mode = block_mode
         # Build scan patterns from PII_RULES SSOT (not duplicated)
         self._patterns: list[tuple[str, str, str]] = [
