@@ -1,0 +1,35 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3",
+            "args": [
+              "${CLAUDE_PROJECT_DIR}/scripts/sync_agent_instructions.py"
+            ],
+            "timeout": 10,
+            "statusMessage": "正在校准 Claude Code 与 Codex 项目规则"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3",
+            "args": [
+              "${CLAUDE_PROJECT_DIR}/scripts/sync_agent_instructions.py"
+            ],
+            "timeout": 10,
+            "statusMessage": "正在同步 Claude Code 与 Codex 项目规则"
+          }
+        ]
+      }
+    ]
+  }
+}
