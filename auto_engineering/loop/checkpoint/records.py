@@ -124,5 +124,6 @@ class CheckpointSchemaMismatchError(CheckpointError):
         self.found = found
         self.expected = expected
         super().__init__(
-            f"Schema version mismatch: found {found}, expected {expected}"
+            f"Schema version mismatch: found {found}, expected {expected}。"
+            f"运行 'ae checkpoint migrate' 迁移数据库"
         )

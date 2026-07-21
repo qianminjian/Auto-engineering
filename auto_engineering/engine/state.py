@@ -240,7 +240,7 @@ class EngineState:
     # v5.5 P1-5: 写入控制 API
     # ============================================================
 
-    def write_field(self, name: str, value: Any, writer: str) -> None:
+    def write_field(self, name: str, value: object, writer: str) -> None:
         """写入单个字段, 带所有权校验 + 审计日志.
 
         Args:
@@ -289,7 +289,7 @@ class EngineState:
             return list(self._write_log)
         return [r for r in self._write_log if r.get("field") == field_name]
 
-    def model_dump(self, **kwargs: Any) -> dict[str, Any]:
+    def model_dump(self, **kwargs: Any) -> dict[str, object]:
         """v5.4 审计 P1-13: 提供 Pydantic 兼容的序列化 API.
 
         serialize_state 优先检查 model_dump → 统一序列化入口。
@@ -352,7 +352,7 @@ class EngineState:
             ))
 
 
-def _validate_field_value(name: str, value: Any) -> None:
+def _validate_field_value(name: str, value: object) -> None:
     """字段值合法性校验 (v5.5 P1-5).
 
     Raises:

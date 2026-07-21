@@ -134,7 +134,7 @@ def _load_schema() -> dict[str, Any] | None:
         return None
 
 
-def _jsonschema_lib() -> Any | None:
+def _jsonschema_lib() -> object | None:
     """返回 jsonschema 库或 None (未安装时)."""
     try:
         import jsonschema  # type: ignore[import-untyped]

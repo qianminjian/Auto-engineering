@@ -18,7 +18,6 @@ import logging
 import shutil
 from pathlib import Path
 
-from auto_engineering.gates._tools import get_gate_tools_from_manifest
 from auto_engineering.gates.base import Gate, GateVerdict, run_gate_command
 
 __all__ = ["TypeCheckGate"]
@@ -39,12 +38,12 @@ class TypeCheckGate(Gate):
         require_config: 是否必须存在配置(默认 False — 缺失则 skip)
         strict: 是否使用 --strict 模式(默认 False, 仅 mypy 适用)
 
-    v5.0 §B6.1: applies_to_stages = (architect, developer, critic)
         类型检查每个 stage 都需通过
     """
 
     name = "type_check"
-    applies_to_stages = ("architect", "developer", "critic")
+    _MANIFEST_TOOL_KEY = "type_checker"
+    _TOOL_BIN_KWARG = "type_checker_bin"
 
     def __init__(
         self,
@@ -57,19 +56,6 @@ class TypeCheckGate(Gate):
         self.timeout = timeout if timeout is not None else Gate._resolve_timeout(_DEFAULT_TIMEOUT)
         self.require_config = require_config
         self.strict = strict
-
-    @classmethod
-    def from_manifest(
-        cls,
-        manifest: dict,
-        timeout: float | None = None,
-    ) -> TypeCheckGate:
-        """v5.0 §IL-AC-02: 从 init-manifest.json 构造 TypeCheckGate.
-
-        读 manifest.conventions.type_checker, 缺则用 LANGUAGE_TOOLS 默认.
-        """
-        tools = get_gate_tools_from_manifest(manifest)
-        return cls(type_checker_bin=tools["type_checker"], timeout=timeout)
 
     def _has_type_config(self, project_root: Path) -> bool:
         """检查项目是否有 type checker 配置.

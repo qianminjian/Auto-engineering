@@ -18,6 +18,10 @@ import subprocess
 import warnings
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from auto_engineering.config.runtime_config import RuntimeConfig
 
 # ============================================================
 # GateVerdict (v5.0 §B6.1 — Verdict → GateVerdict 重命名)
@@ -138,26 +142,25 @@ class Gate:
 
     旧接口 Gate.check(stage, context) 保留供 v2.0 Guardrail 体系使用.
 
-    v5.0 §B2.9 扩展:
-        - 类属性 applies_to_stages: tuple[str, ...] — 标识该 Gate 在哪些
-          Stage 阶段运行 (architect/developer/critic). 默认 = 三阶段全跑.
-        - v5.5 audit P1-9: contracts 从 run() 签名移除, 改为实例属性.
+    v5.5 audit P1-9: contracts 从 run() 签名移除, 改为实例属性.
           仅 ContractGate 需要 contracts, 其他 6 个 Gate 不再有冗余参数.
         - v5.5 audit P2-15: _register_alias 统一向后兼容别名模式.
     """
 
     name: str = "base"
-    # v5.0 §B2.9: 默认覆盖三阶段, 子类按需覆盖 (如 CoverageGate 仅 developer)
-    applies_to_stages: tuple[str, ...] = ("architect", "developer", "critic")
     # v5.5 audit P1-9: contracts 实例属性 (仅 ContractGate 使用, 其他 Gate 忽略)
     contracts: dict | None = None
     # _resolve_timeout / _validate_project_root 是 protected 方法 (Python 约定: _ 前缀 = 子类可访问).
     # 被 6+ 个 Gate 子类跨模块调用 — 这是基类→子类的标准 OOP 模式, 不是封装破坏.
     @staticmethod
-    def _resolve_timeout(default: float) -> float:
-        """从 AE_GATE_TIMEOUT 环境变量读取 timeout, 未设置则用 default."""
+    def _resolve_timeout(default: float, config: RuntimeConfig | None = None) -> float:
+        """从 AE_GATE_TIMEOUT 读取 timeout, 未设置则用 default.
+
+        P1-10: 支持 RuntimeConfig 注入, 未注入时降级到 get_default_config().
+        """
         from auto_engineering.config.runtime_config import get_default_config
-        val = get_default_config().gate_timeout
+        cfg = config if config is not None else get_default_config()
+        val = cfg.gate_timeout
         return float(val) if val is not None else default
 
     @classmethod
@@ -201,16 +204,34 @@ class Gate:
         )
 
     @classmethod
-    def from_manifest(cls, manifest: dict) -> Gate:
-        """从 init-manifest.json 构造 Gate 实例 (可选覆写).
+    def from_manifest(
+        cls,
+        manifest: dict,
+        timeout: float | None = None,
+        **extra_kwargs: object,
+    ) -> Gate:
+        """从 init-manifest.json 构造 Gate 实例。
 
-        默认不支持 manifest 构造 — 子类如需支持 (如 LintGate/TypeCheckGate/TestGate)
-        应覆写此方法, 从 manifest 的 conventions 读取工具配置.
+        默认实现从 manifest 提取工具配置并通过 _MANIFEST_TOOL_KEY /
+        _TOOL_BIN_KWARG 类属性映射到构造参数。
+        子类如需支持此功能，定义以下类属性即可：
+            _MANIFEST_TOOL_KEY: str — tools dict 中的键名 (如 "linter")
+            _TOOL_BIN_KWARG: str   — 构造函数的参数名 (如 "linter_bin")
         """
-        raise NotImplementedError(
-            f"{cls.__name__}.from_manifest() 未实现 — "
-            f"该 Gate 不支持从 init-manifest.json 构造"
-        )
+        from auto_engineering.gates._tools import get_gate_tools_from_manifest
+        tools = get_gate_tools_from_manifest(manifest)
+        tool_key: str | None = getattr(cls, "_MANIFEST_TOOL_KEY", None)
+        bin_kwarg: str | None = getattr(cls, "_TOOL_BIN_KWARG", None)
+        if tool_key is None or bin_kwarg is None:
+            raise NotImplementedError(
+                f"{cls.__name__}.from_manifest() 未实现 — "
+                f"该 Gate 不支持从 init-manifest.json 构造"
+            )
+        kwargs: dict[str, object] = {bin_kwarg: tools[tool_key]}
+        if timeout is not None:
+            kwargs["timeout"] = timeout
+        kwargs.update(extra_kwargs)
+        return cls(**kwargs)
 
     def _validate_project_root(self, project_root: Path) -> GateVerdict | None:
         """验证 project_root 存在且为目录 (v5.5 P1-4: 消除 5 处重复).

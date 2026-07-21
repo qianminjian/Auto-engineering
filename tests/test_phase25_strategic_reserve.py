@@ -208,47 +208,6 @@ class TestT95EscalationGate:
 
 
 # =============================================================================
-# T96 — Task DAG dependencies
-# =============================================================================
-
-
-class TestT96BatchDAG:
-    """T96: Batch DAG with depends_on for topological scheduling."""
-
-    def test_batch_state_supports_depends_on(self) -> None:
-        """BatchState MUST support depends_on field in batch_plan."""
-        from auto_engineering.engine.batch_state import BatchState
-
-        plan_json = {
-            "batches": [
-                {"id": "b1", "tasks": [], "depends_on": []},
-                {"id": "b2", "tasks": [], "depends_on": ["b1"]},
-            ],
-        }
-        bs = BatchState.from_plan(plan_json)
-        assert bs is not None
-
-    def test_batch_state_ready_queue(self) -> None:
-        """BatchState MUST provide ready batches in topological order."""
-        from auto_engineering.engine.batch_state import BatchState
-
-        plan_json = {
-            "batches": [
-                {"id": "b1", "tasks": [], "depends_on": []},
-                {"id": "b2", "tasks": [], "depends_on": ["b1"]},
-                {"id": "b3", "tasks": [], "depends_on": []},
-            ],
-        }
-        bs = BatchState.from_plan(plan_json)
-        ready = bs.ready_batches()
-        # b1 and b3 should be ready (no deps); b2 blocked by b1
-        ready_ids = {b["id"] if isinstance(b, dict) else b.id for b in ready}
-        assert "b1" in ready_ids
-        assert "b3" in ready_ids
-        assert "b2" not in ready_ids
-
-
-# =============================================================================
 # T97 — Message type semantics
 # =============================================================================
 

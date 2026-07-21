@@ -157,7 +157,6 @@ class DeepAuditGate(Gate):
 
     name = "DeepAuditGate"
     # v5.5 §B6.5: DeepAuditGate 在 critic APPROVE 后运行, 仅 critic stage
-    applies_to_stages = ("critic",)
 
     def __init__(self, p1_threshold: int = 6):
         self._p1_threshold = p1_threshold

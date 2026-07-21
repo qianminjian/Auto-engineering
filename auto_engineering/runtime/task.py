@@ -53,7 +53,7 @@ class TaskResult:
 
     task_id: str
     values: dict[str, Any]
-    raw_response: Any = None
+    raw_response: object = None
     tool_calls: list[dict] = field(default_factory=list)
     agent_type: str = ""
 

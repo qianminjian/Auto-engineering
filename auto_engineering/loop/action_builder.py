@@ -9,9 +9,11 @@ from __future__ import annotations
 import json
 import logging
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING
 
+from auto_engineering.config.constants import DEFAULT_P1_THRESHOLD, _SPAWN_CONFIG
 from auto_engineering.config.feature_flags import feature_status_for_action
 
 if TYPE_CHECKING:
@@ -35,83 +37,6 @@ _VERIFIER_RECHECK = {
 _STAGE_CHECKPOINT_REVIEW_FEEDBACK = (
     "用户选择审查当前产出，请展示当前进度和已完成内容供审查。"
 )
-
-# T108a: Subagent spawn requirements per stage
-_SPAWN_CONFIG: dict[str, dict] = {
-    "architect": {
-        "subagent_type": "Plan",
-        "count": 1,
-        "parallel": False,
-        "model": "Sonnet",
-        "instruction": (
-            "Spawn a Plan agent with the action's context (requirement + design_doc) "
-            "and expected_format. It MUST produce structured batch_plan JSON — not "
-            "just bullet points. Each batch ≤5 files, tasks independently testable."
-        ),
-    },
-    "critic": {
-        "subagent_type": "code-reviewer",
-        "count": 1,
-        "parallel": False,
-        "model": "Sonnet",
-        "instruction": (
-            "Spawn a code-reviewer agent. Feed it files_changed + test_results + "
-            "gate_results from the action's context. It MUST produce structured "
-            "findings (file:line + severity + issue + suggested_fix) and verdict "
-            "(APPROVE if 0 P0 + ≤2 P1, otherwise MAJOR)."
-        ),
-    },
-    "component_verifier": {
-        "subagent_type": "general-purpose",
-        "count": 1,
-        "parallel": False,
-        "model": "Haiku",
-        "instruction": (
-            "Spawn a general-purpose agent (Haiku model). Feed it the component "
-            "design spec + implementation files from the action's context. Map "
-            "each design item to IMPLEMENTED/MISSING/DIVERGED with file+line evidence."
-        ),
-    },
-    "plate_deep_audit": {
-        "subagent_type": "code-reviewer",
-        "count": 3,
-        "parallel": True,
-        "model": "Sonnet",
-        "instruction": (
-            "SPAWN 3 CODE-REVIEWER SUBAGENTS IN PARALLEL. Each audits different "
-            "dimensions of the plate's codebase (cross-component contracts, code "
-            "quality, design compliance). Merge all findings and recount p0/p1/p2 "
-            "counts. The expected_format requires findings array, p0/p1/p2 counts, "
-            "cross_component_issues, and total_audited_files."
-        ),
-    },
-    "system_verifier": {
-        "subagent_type": "general-purpose",
-        "count": 1,
-        "parallel": False,
-        "model": "Haiku",
-        "instruction": (
-            "Spawn a general-purpose agent (Haiku model). Feed it the full design "
-            "doc + implementation. Map each design item to IMPLEMENTED/MISSING/DIVERGED "
-            "with file+line evidence."
-        ),
-    },
-    "system_deep_audit": {
-        "subagent_type": "code-reviewer",
-        "count": 5,
-        "parallel": True,
-        "model": "Sonnet",
-        "instruction": (
-            "SPAWN 5 CODE-REVIEWER AGENTS IN PARALLEL. Each audits a different "
-            "dimension: architecture, code quality, engineering, team-collab, "
-            "dead-code/logic-virtualization. Merge all findings and recount "
-            "p0/p1/p2 counts."
-        ),
-    },
-}
-
-_DEFAULT_P1_THRESHOLD = 6
-
 
 class ActionBuilder:
     """Build per-tick action JSON for each stage.
@@ -179,13 +104,11 @@ class ActionBuilder:
         self._pause_at_stages = pause_at_stages or set()
         self._passed_checkpoints = passed_checkpoints or set()
         self._last_batch_id = last_batch_id
-        # Per-call PII overrides (may differ from init-time defaults)
-        if pii_enabled is not None:
-            self._pii_enabled = pii_enabled
-        if pii_redactor is not None:
-            self._pii_redactor = pii_redactor
-        if pii_outbound is not None:
-            self._pii_outbound = pii_outbound
+        # Per-call PII overrides (local copies — do NOT mutate instance state
+        # to avoid cross-tick leakage, P1-12)
+        _pi_enabled = pii_enabled if pii_enabled is not None else self._pii_enabled
+        _pi_redactor = pii_redactor if pii_redactor is not None else self._pii_redactor
+        _pi_outbound = pii_outbound if pii_outbound is not None else self._pii_outbound
 
         stage = state.current_stage
         state.action_timestamp = time.time()
@@ -244,7 +167,7 @@ class ActionBuilder:
                       "error_code": "UNKNOWN_STAGE",
                       "message": f"Unknown stage: {stage}"}
 
-        return self._apply_pii_outbound(action)
+        return self._apply_pii_outbound(action, _pi_enabled, _pi_redactor, _pi_outbound)
 
     # ── helpers ──
 
@@ -277,19 +200,18 @@ class ActionBuilder:
 
     # ── PII outbound ──
 
-    def _apply_pii_outbound(self, action: dict) -> dict:
+    def _apply_pii_outbound(self, action: dict, pii_enabled: bool, pii_redactor, pii_outbound: str) -> dict:
         """T109c L2: outbound action JSON PII 脱敏."""
-        if not self._pii_enabled or not self._pii_redactor:
+        if not pii_enabled or not pii_redactor:
             return action
-        outbound = self._pii_outbound
-        if outbound == "redact":
-            return self._pii_redactor.redact_dict(action)
-        elif outbound in ("warn", "block"):
-            findings = self._pii_redactor.scan_dict(action)
+        if pii_outbound == "redact":
+            return pii_redactor.redact_dict(action)
+        elif pii_outbound in ("warn", "block"):
+            findings = pii_redactor.scan_dict(action)
             if findings:
                 _logger.warning(
                     "PII detected in outbound action: %d matches", len(findings))
-                if outbound == "block":
+                if pii_outbound == "block":
                     s = self._state
                     return {
                         "action": "error",
@@ -540,7 +462,7 @@ class ActionBuilder:
             "audit_dimensions": [
                 "架构合理性", "代码质量", "工程化规范",
                 "代码逻辑虚化度", "团队协作友好度", "设计覆盖度"],
-            "p1_threshold": _DEFAULT_P1_THRESHOLD,
+            "p1_threshold": DEFAULT_P1_THRESHOLD,
             "coverage_map_from_verifier": self._state.coverage_map,
         }, expected_format={
             "stage": "system_deep_audit",

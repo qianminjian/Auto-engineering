@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from auto_engineering.config.runtime_config import get_default_config
+from auto_engineering.config.runtime_config import RuntimeConfig, get_default_config
 from auto_engineering.engine.state import EngineState
 
 _logger = logging.getLogger(__name__)
@@ -56,7 +56,11 @@ def _infer_category(requirement: str) -> str:
     return CATEGORY_MEDIUM
 
 
-def _build_injectables(root: Path, environ_or_config: "RuntimeConfig | dict[str, str] | None" = None) -> dict:
+def _build_injectables(
+    root: Path,
+    environ_or_config: RuntimeConfig | dict[str, str] | None = None,
+    injectables: dict | None = None,
+) -> dict:
     """Build injectable modules shared by --init and --tick paths.
 
     Returns dict with keys: context_offloader, tracer, audit_logger.
@@ -66,8 +70,10 @@ def _build_injectables(root: Path, environ_or_config: "RuntimeConfig | dict[str,
     Args:
         environ_or_config: Optional RuntimeConfig (P0-6) or legacy environ dict.
             Defaults to process-wide RuntimeConfig sentinel.
+        injectables: P2-12 — pre-built injectables to override defaults
+            (e.g. stub ContextOffloader for testing). Keys not provided
+            in injectables fall back to the standard factory logic.
     """
-    from auto_engineering.config.runtime_config import RuntimeConfig, get_default_config
     from auto_engineering.context.offloading import ContextOffloader
 
     if environ_or_config is None:
@@ -91,11 +97,17 @@ def _build_injectables(root: Path, environ_or_config: "RuntimeConfig | dict[str,
         from auto_engineering.observability.audit_log import AuditLogger
         audit_logger = AuditLogger(root / ".ae-state" / "audit")
 
-    return {
+    result = {
         "context_offloader": context_offloader,
         "tracer": tracer,
         "audit_logger": audit_logger,
     }
+
+    # P2-12: merge caller-supplied injectables over defaults
+    if injectables:
+        result.update(injectables)
+
+    return result
 
 
 def run_tick_init(
@@ -267,14 +279,15 @@ def run_standalone(
     import asyncio
     import json
 
+    from auto_engineering.agents.base import BaseAgent
     from auto_engineering.loop.standalone_driver import (
-        StandaloneDriver, _resolve_model, _resolve_provider,
+        StandaloneDriver,
+        _resolve_model,
+        _resolve_provider,
     )
     from auto_engineering.loop.tick_orchestrator import TickOrchestrator
-    from auto_engineering.runtime.runtime import AgentRuntime
-
-    from auto_engineering.agents.base import BaseAgent
     from auto_engineering.prompts.registry import default_registry
+    from auto_engineering.runtime.runtime import AgentRuntime
     from auto_engineering.tools.bash_tools import RunBashTool
     from auto_engineering.tools.file_tools import (
         EditFileTool,
@@ -283,6 +296,7 @@ def run_standalone(
         SearchCodeTool,
         WriteFileTool,
     )
+    from auto_engineering.tools.git_tools import GitCommitTool, GitDiffTool
     from auto_engineering.tools.run_tests_tool import RunTestsTool
 
     inj = _build_injectables(project_root)
@@ -302,6 +316,8 @@ def run_standalone(
         SearchCodeTool(project_root=project_root),
         RunBashTool(project_root=project_root),
         RunTestsTool(project_root=project_root),
+        GitCommitTool(project_root=project_root),
+        GitDiffTool(project_root=project_root),
     ]
 
     # v7.8: 按 role 分配工具 — architect 只需探索工具, 不写代码
@@ -348,6 +364,7 @@ def run_standalone(
     # T69a: Activate metrics collector when AE_METRICS=1
     if get_default_config().metrics_enabled:
         import hashlib
+
         from auto_engineering.metrics.collector import (
             MetricsCollector,
             set_collector,

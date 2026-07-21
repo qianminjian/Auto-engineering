@@ -6,6 +6,27 @@ PromptRegistry 在 Engine `init` 一次性加载 `roles/*.md`, 按 frontmatter �
 
 设计边界 (§B12.7): 无模板引擎 (简单字符串组合), 无热重载 (仅 init 加载, 保持
 Python 门控确定性). frontmatter 用 PyYAML 解析 (已是项目依赖).
+
+使用模式:
+    default_registry() 返回进程级单例 — 所有消费者共享同一份加载结果, 避免
+    重复解析 frontmatter. 典型用法:
+
+        from auto_engineering.prompts.registry import default_registry
+        _reg = default_registry()
+        prompt = _reg.get("architect")          # 组合后的 system prompt
+        sha = _reg.hash("architect")             # prompt 的 sha256
+        agg_sha = _reg.registry_hash()           # 全 registry 聚合 hash (版本锁)
+        model = _reg.model("architect")           # frontmatter 声明的 model id
+        template = _reg.schema_injection_template()  # schema 注入模板
+
+    注入自定义目录 (测试隔离):
+        reg = PromptRegistry(prompts_dir="/custom/path")
+
+    消费者清单 (全部使用 default_registry() 单例):
+        agents/prompts.py        — 模块级常量 (ARCHITECT/DEVELOPER/CRITIC_SYSTEM_PROMPT)
+        agents/base.py            — schema_injection_template() (延迟导入)
+        cli/dev_loop.py           — registry_hash() 版本锁校验 + 打印 registry 信息
+        loop/tick_orchestrator.py — registry_hash() checkpoint 版本锁
 """
 
 from __future__ import annotations

@@ -12,7 +12,7 @@ from .audit import AuditGate
 from .base import Gate, GateVerdict, SubprocessResult, run_gate_command
 from .build import BuildGate
 from .contract import ContractGate
-from .deep_audit import DeepAuditFinding, DeepAuditGate, DeepAuditReport
+from .deep_audit import DeepAuditFinding, DeepAuditGate, DeepAuditReport, recount_findings
 from .lint import LintGate
 from .safety import SafetyGate
 from .test_gate import TestGate
@@ -33,6 +33,7 @@ __all__ = [
     "SubprocessResult",
     "TestGate",
     "TypeCheckGate",
+    "recount_findings",
     "run_gate_command",
 ]
 

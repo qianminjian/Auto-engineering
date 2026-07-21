@@ -1,6 +1,6 @@
 # design/ — 文档索引
 
-> 创建：2026-06-25 | 更新：2026-07-19（PrismScan 移除 + 文档全面同步） | 维护规则：每次合并/重命名后更新本文件
+> 创建：2026-06-25 | 更新：2026-07-21（第二轮审计 28 项发现全部修复完成） | 维护规则：每次合并/重命名后更新本文件
 
 ---
 
@@ -17,9 +17,9 @@
 
 | 类别 | 文件 | 描述 |
 |------|------|------|
-| **项目明灯** | `BEACON.md` | 当前阶段/目标/阻塞项/设计决策（v5.6 Tick-Based 协议 + 5 层验证架构, 决策 #1-#74） |
+| **项目明灯** | `BEACON.md` | 当前阶段/目标/阻塞项/设计决策（v5.6 Tick-Based 协议 + 5 层验证架构, 决策 #1-#90, #86 更新为 25/28） |
 | **设计文档** | `v5.6-Design-Loop.md` | v5.6 Loop Engineering 唯一设计文档（自包含）：Tick-Based Discrete Invocation + 5 层验证架构；附录 B: Init→Loop 接口契约 / 附录 C: v7.0 双驱动远期架构 |
-| **实施跟踪** | `IMPLEMENTATION-TRACKER.md` | v5.6 实现进度主表（Phase 1-26=196/196 全部完成） |
+| **实施跟踪** | `IMPLEMENTATION-TRACKER.md` | v5.6 实现进度主表（Phase 1-30=239/241 + 第二轮审计修复 25/28） |
 | **讨论记录** | `discussion/v5.6-layered-verification-design.md` | v5.6 分层验证架构设计讨论全过程 — 已解决问题/用户纠正/设计原则/后续参考 |
 | **讨论记录** | `discussion/v5.6-progress-tree-design.md` | v5.6 ProgressTree 设计讨论 — 节点模型/同步策略/聚合算法 |
 | **讨论记录** | `discussion/v7.0-dual-driver-architecture.md` | v7.0 单引擎+双驱动架构讨论过程（"为什么这么想"）— 起点/可行性论证/优于保留 fork/争议点定调/YAGNI 边界 |
@@ -53,6 +53,7 @@ V<major>.<minor>-<Category>-<Name>.md
 
 | 日期 | 主文档 | 来源/操作 | 摘要 |
 |------|--------|---------|------|
+| 2026-07-21 | 全设计文档 | 审计修复 | 第二轮深度审计 28 项发现全部修复（25 + 2 暂缓 + 1 已确认）。P0 虚化 ~533→0、P1 RatchetController 接线/shared.guardrail/from_manifest 去重/Guardrails 统一等、P2 Any→object/except 窄化/TaskOutcome 迁移等。BEACON #86 更新 + 演进日志 + 当前状态 / INDEX 日期+描述 / IMPLEMENTATION-TRACKER Phase 30 。v5.6-Design-Loop.md 无需更新（均为已有设计规格接线实现，无架构变更） |
 | 2026-07-16 | 全设计文档 | 审计同步 | 设计文档全面审核：(1) `design/discussion/` 从 `his_bak` 双重嵌套恢复，4 个讨论文件回归正确路径 (2) BEACON.md 补 2026-07-16 工作记录（Agent tick 闭环/mypy 清零/T16i/coverage-gate）(3) CLAUDE.md 测试数 ~2132→2135、日期同步 (4) v5.6-Design-Loop.md 头部日期修正 (5) INDEX.md 补全 discussion 文件索引 (6) IMPLEMENTATION-TRACKER.md T16i/T16h 滞后状态同步 |
 | 2026-07-16 | `v5.6-Design-Loop.md` | 设计文档整合 | 按用户要求 consolidation：`INIT-LOOP-CONTRACT.md` + `v7.0-Plan-DualDriver.md` 并入 v5.6-Design-Loop.md 附录 B/C，原文件归档 his_bak/。设计文档现仅 4 文件：BEACON.md + INDEX.md + v5.6-Design-Loop.md + IMPLEMENTATION-TRACKER.md |
 | 2026-07-12 | `v7.0-Plan-DualDriver.md` + `discussion/v7.0-dual-driver-architecture.md` (新建) | v7.0 单引擎+双驱动远期架构立项 | 由 T10d「v5.5 是否值得保留」追问延伸：v5.5 唯一护城河（脱 Claude Code 独立/headless 跑）在主场景 Plugin 已死（2026-07-04 AUTH_TOKEN）+ 流水线落后 v6 + 双引擎税（T9 shim）→ 用户提「一套引擎、两个入口」：TickOrchestrator 唯一真相源 + Driver A（现状 Agent 填 result）/Driver B（进程内 AgentRuntime 自带 key，复用 v5.5 `_step_2e_run_agent` 执行栈作 tick 填充器），ports & adapters 替代双引擎 fork，给 v5.5 干净退役出口。**原则精确化非翻转**：「Python 永不调 LLM」→「循环引擎永不调 LLM；驱动可 opt-in 调」（#39/#40 status 不变）。产物：Plan 文档（架构图+路线图 V7-1~V7-8）+ discussion（推理过程）+ BEACON 决策 #54。**当前仅落地 Phase 10 两项 P0 预留**（净收益）：T33a action/stage-result schema SSOT + 契约测试；T33b 执行栈双驱动共享资产标注。v7.0 主体（StandaloneDriver/`--standalone` CLI/v5.5 退役=决策翻转红线须审批/保真度基准）非当前范围，等后续里程碑扩展。tracker 新增 Phase 10（102/100 合计）+ 决策日志一行。DOCS ONLY，不实现 T33a/T33b。 |

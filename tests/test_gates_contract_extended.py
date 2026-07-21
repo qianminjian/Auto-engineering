@@ -297,7 +297,6 @@ def test_contract_gate_default_constructor(tmp_path: Path) -> None:
     """ContractGate default constructor values."""
     gate = ContractGate()
     assert gate.name == "contract"
-    assert gate.applies_to_stages == ("developer", "critic")
     assert gate.contracts_dir == Path(".ae-contracts")
 
 

@@ -77,18 +77,11 @@ class ConvergenceConfig:
         max_iterations: 单会话最大迭代轮次 (硬上限)
         stagnation_threshold: 连续多少轮无实质变化触发停滞检测
         stagnation_diff_ratio: diff 变化率阈值 (低于此值视为无变化)
-        max_plan_refines: T9 回路最大次数 (default 3, v5.5, 保留兼容)
-        deep_audit_enabled: DeepAudit Feature Flag (default True, v5.5, 保留兼容)
     """
 
     max_iterations: int = DEFAULT_MAX_ITERATIONS
     stagnation_threshold: int = DEFAULT_STAGNATION_THRESHOLD
     stagnation_diff_ratio: float = DEFAULT_STAGNATION_DIFF_RATIO
-    max_plan_refines: int = 3           # T9 回路最大次数 (v5.5 field, 保留兼容)
-    deep_audit_enabled: bool = True     # DeepAudit Feature Flag (v5.5 field, 保留兼容)
-    # 当 True 时, T9 plan-refine 回路激活 (critic APPROVE → DeepAudit → architect).
-    # 当 False 时, 跳过 DeepAudit 扫描 (仅用于测试/调试场景).
-    # 参见 design/v5.5-IMPLEMENTATION-PLAN.md Phase G (DeepAudit Integration).
 
 
 @dataclass
@@ -174,10 +167,8 @@ def detect_stagnation(
 ) -> bool:
     """检测是否连续 N 轮产出无实质变化.
 
-    两信号联合判定 (借鉴 LangGraph channel_versions):
-        1. 数值变化: diff_ratio < diff_ratio_threshold → 数量无变化
-        2. 内容变化: _get_new_channel_versions 非空 → channel 内容有变化
-    两信号都无变化才计为"一轮无变化". 任一信号有变化 → 重置计数器.
+    基于 diff_ratio 数值变化信号: diff_ratio < diff_ratio_threshold → 数量无变化.
+    连续 threshold 轮无变化即触发停滞.
 
     Args:
         history: 历史轮次列表, 按时间顺序 (index 0 = 最早, -1 = 最新)
@@ -196,14 +187,7 @@ def detect_stagnation(
         previous = history[i - 1]
         ratio = diff_ratio(current, previous)
 
-        # 补充 channel_versions 信号: channel 内容变化则不算停滞
-        channels_changed = bool(
-            _get_new_channel_versions(
-                previous.channel_versions, current.channel_versions
-            )
-        )
-
-        if ratio < diff_ratio_threshold and not channels_changed:
+        if ratio < diff_ratio_threshold:
             consecutive_no_change += 1
             if consecutive_no_change >= threshold:
                 return True
@@ -332,9 +316,6 @@ class ConvergenceJudge:
             # 3. 停滞检测
             if result is None:
                 result = self._check_stagnation(history)
-            # 4. 语义收敛检查 (retained 路径: LLM 自评 semantic_satisfied)
-            if result is None:
-                result = self._check_semantic(history)
             # 默认: 继续
             if result is None:
                 result = ConvergenceVerdict.continue_()
@@ -451,33 +432,5 @@ class ConvergenceJudge:
                 level=LEVEL_STAGNANT,
                 reason=f"连续 {self.config.stagnation_threshold} 轮产出无实质变化 "
                 f"(diff_ratio < {self.config.stagnation_diff_ratio})",
-            )
-        return None
-
-    def _check_semantic(
-        self, history: list[RoundHistory]
-    ) -> ConvergenceVerdict | None:
-        """语义收敛检查: LLM 评估"本轮产出满足需求".
-
-        Args:
-            history: 历史轮次列表
-
-        Returns:
-            ConvergenceVerdict 或 None (None 表示未评估或未通过)
-
-        Note:
-            Phase 2 实现: 仅当 semantic_satisfied=True 时触发
-            v2.0+ 接 LLM 调用: 内部调用 LLM 评估当前产出
-            v5.6 §C.5 的离散路径终态成功 (audit + 覆盖双通过) 在 evaluate()
-            顶层判定, 不在此方法 — 因其优先级高于硬上限.
-        """
-        if not history:
-            return None
-
-        latest = history[-1]
-        if latest.semantic_satisfied is True:
-            return ConvergenceVerdict.stop(
-                level=LEVEL_SEMANTIC,
-                reason="LLM 评估: 本轮产出满足需求",
             )
         return None

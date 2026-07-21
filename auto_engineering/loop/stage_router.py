@@ -201,14 +201,8 @@ class StageRouter:
                     decision = StageDecision(next_stage="developer", should_stop=False)
 
             elif verdict == "APPROVE":
-                # 保留 Orchestrator 兼容: critic APPROVE + DeepAudit 发现问题 → PLAN-REFINE
-                if audit_found_issues:
-                    decision = self._refine_or_stop(
-                        "critic", refine_source_count, refine_global_count,
-                        max_refine_per_source, max_refine_global)
-                else:
-                    # T6/T7: batch/组件完成判定依 BatchState → orchestrator 决定
-                    decision = StageDecision(next_stage=None, should_stop=False)
+                # T6/T7: batch/组件完成判定依 BatchState → orchestrator 决定
+                decision = StageDecision(next_stage=None, should_stop=False)
 
             else:
                 # verdict="" 或非法值 → 抛 CriticVerdictInvalid (2026-07-04 Bug 3)
@@ -312,7 +306,7 @@ def clear_stage_fields(state: "EngineState", stage: str) -> None:
     两个使用场景:
     1. 正常 stage 过渡: Orchestrator._step_2i 推进到下一 stage 前清空旧产出
     2. Guardrail retry: 重试当前 stage 前清空旧产出, 避免读到脏数据
-    调用方: Orchestrator._step_2i (正常过渡) + guardrail.handle_guardrail_result (retry).
+    调用方: Orchestrator._step_2i (正常过渡) + Orchestrator._handle_guardrail_result (retry).
 
     Args:
         state: EngineState 实例 (duck-typed).

@@ -23,7 +23,6 @@ import shutil
 import sys
 from pathlib import Path
 
-from auto_engineering.gates._tools import get_gate_tools_from_manifest
 from auto_engineering.gates.base import Gate, GateVerdict, run_gate_command
 
 __all__ = ["LintGate"]
@@ -42,12 +41,12 @@ class LintGate(Gate):
         extra_args: 额外传给 linter 的参数(如 ["--select", "E,F"])
         project_root: 2026-07-04 (Bug 1) — 项目根目录, 用于 .venv/bin/{linter} 兜底
 
-    v5.0 §B6.1: applies_to_stages = (architect, developer, critic)
         静态检查每个 stage 都需通过
     """
 
     name = "lint"
-    applies_to_stages = ("architect", "developer", "critic")
+    _MANIFEST_TOOL_KEY = "linter"
+    _TOOL_BIN_KWARG = "linter_bin"
 
     def __init__(
         self,
@@ -62,26 +61,6 @@ class LintGate(Gate):
         self.timeout = timeout if timeout is not None else Gate._resolve_timeout(_DEFAULT_TIMEOUT)
         self.extra_args = extra_args or []
         self.project_root = project_root
-
-    @classmethod
-    def from_manifest(
-        cls,
-        manifest: dict,
-        timeout: float | None = None,
-        project_root: Path | None = None,
-    ) -> LintGate:
-        """v5.0 §IL-AC-02: 从 init-manifest.json 构造 LintGate.
-
-        读 manifest.conventions.linter, 缺则用 LANGUAGE_TOOLS 默认.
-
-        2026-07-04 (Bug 1): 加 project_root 参数, 让 _resolve_lint_cmd 能找 .venv/bin/linter.
-        """
-        tools = get_gate_tools_from_manifest(manifest)
-        return cls(
-            linter_bin=tools["linter"],
-            timeout=timeout,
-            project_root=project_root,
-        )
 
     def _resolve_lint_cmd(self, project_root: Path | None = None) -> list[str]:
         """解析 lint 命令.

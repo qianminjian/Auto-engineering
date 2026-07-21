@@ -76,8 +76,8 @@ def _build_runtime_for_role(role: str, project_root: Path) -> AgentRuntime:
         EditFileTool(project_root=project_root),
         SearchCodeTool(project_root=project_root),
         ReadFileTool(project_root=project_root),
-        ListDirTool(),
-        RunBashTool(),
+        ListDirTool(project_root=project_root),
+        RunBashTool(project_root=project_root),
         GitStatusTool(),
     ]
     runtime = AgentRuntime()

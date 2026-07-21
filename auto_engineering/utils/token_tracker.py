@@ -27,7 +27,7 @@ class TokenTracker:
     def total_tokens(self) -> int:
         return self.input_tokens + self.output_tokens
 
-    def add(self, response: Any) -> None:
+    def add(self, response: object) -> None:
         """累加 LLMResponse.usage 中的 token. 超阈值抛 AEError(BUDGET_EXCEEDED)."""
         usage = getattr(response, "usage", None)
         if usage is None:

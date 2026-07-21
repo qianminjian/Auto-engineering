@@ -130,7 +130,6 @@ class ContractGate(Gate):
     """
 
     name = "contract"
-    applies_to_stages = ("developer", "critic")
 
     def __init__(self, contracts_dir: str | Path | None = None):
         self.contracts_dir = Path(contracts_dir) if contracts_dir else Path(".ae-contracts")

@@ -1,17 +1,13 @@
 """init/dev-loop 共享契约 — 从 .ae-answers.yml + 代码自检测解析工程环境.
 
-解析流程见 design/v2.0-DESIGN.md §4.5 + design/v2.0-SHARED.md §共享契约.
-v2.0 Plan B: 新增 load_ae_answers() 和 preflight() 函数.
+解析流程见 design/v5.6-Design-Loop.md 附录 B (Init→Loop).
 """
 
 from __future__ import annotations
 
-import shutil
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-import click
 import yaml
 
 
@@ -187,57 +183,3 @@ def load_ae_answers(project_root: Path) -> dict | None:
         return {}
     return yaml.safe_load(content) or {}
 
-
-def preflight(project_root: Path) -> None:
-    """入口前置校验 — 检查 git/磁盘/Python 版本.
-
-    任一校验失败抛 SystemExit(1) + 友好 click 错误消息(无 traceback).
-    全部通过则静默返回.
-
-    检查项:
-        1. Python ≥ 3.12
-        2. ANTHROPIC_API_KEY/ANTHROPIC_AUTH_TOKEN (或 Plugin mode OAuth)
-        3. Git 仓库 (.git 目录存在)
-        4. 磁盘可用空间 ≥ 100 MB
-    """
-    errors: list[str] = []
-
-    # 1. Python 版本
-    py_version = sys.version_info
-    if (py_version.major, py_version.minor) < (3, 12):
-        errors.append(f"Python 版本过低: 当前 {py_version.major}.{py_version.minor}, 需要 ≥ 3.12")
-
-    # 2. ANTHROPIC_API_KEY (或 ANTHROPIC_AUTH_TOKEN for plugin OAuth)
-    # 2026-07-04 修复 (prismscan 真实 bug): 用 4 级 fallback detect_plugin_mode
-    # 而非 2 级, 支持 CLAUDE_CODE_ENTRYPOINT + ANTHROPIC_AUTH_TOKEN (prismscan 实际 env)
-    from auto_engineering.utils.plugin_mode import is_llm_available
-    if not is_llm_available():
-        errors.append(
-            "环境变量 ANTHROPIC_API_KEY/ANTHROPIC_AUTH_TOKEN 未设置。"
-            "请在 ~/.zshrc 中 export ANTHROPIC_API_KEY=sk-... 或在 .env 中设置。"
-            "Plugin mode (Claude Code agent 内) 应通过 ANTHROPIC_AUTH_TOKEN OAuth 自动注入, 零配置."
-        )
-
-    # 3. Git 仓库
-    if not (project_root / ".git").exists():
-        errors.append(
-            f"{project_root} 不是 git 仓库。"
-            f"ae dev-loop 需要 git 状态跟踪。请在项目根目录运行 `git init` 后再试。"
-        )
-
-    # 4. 磁盘可用空间
-    try:
-        usage = shutil.disk_usage(project_root)
-        free_mb = usage.free / (1024 * 1024)
-        if free_mb < 100:
-            errors.append(
-                f"磁盘可用空间不足: {free_mb:.1f} MB < 100 MB。ae 检查点/历史可能占用数十 MB。"
-            )
-    except OSError as e:
-        errors.append(f"无法获取磁盘信息: {e}")
-
-    if errors:
-        click.echo("✗ preflight 校验失败:", err=True)
-        for err in errors:
-            click.echo(f"  - {err}", err=True)
-        raise SystemExit(1)

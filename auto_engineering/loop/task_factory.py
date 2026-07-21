@@ -23,8 +23,7 @@ from typing import Any
 
 from auto_engineering.engine.state import EngineState
 from auto_engineering.errors import AEError, ErrorCode
-from auto_engineering.loop.plan import Plan, Task
-from auto_engineering.loop.round import TaskOutcome
+from auto_engineering.loop.plan import Plan, Task, TaskOutcome
 
 
 def tasks_from_batch_plan(

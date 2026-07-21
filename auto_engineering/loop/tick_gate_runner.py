@@ -110,7 +110,7 @@ class TickGateRunner:
                     duration_ms=int(duration_ms),
                     findings_count=findings,
                     ai_origin=AIOrigin(
-                        level="led", agent_role="developer", driver_type="agent",
+                        level="led", agent_role=stage or "developer", driver_type="agent",
                     ),
                 )
 

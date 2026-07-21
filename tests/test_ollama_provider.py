@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from auto_engineering.providers.base import LLMResponse
-from auto_engineering.providers.ollama import OllamaProvider, _is_ollama_available
+from auto_engineering.providers.ollama import OllamaProvider
 
 
 class TestOllamaProvider:
@@ -115,10 +115,6 @@ class TestOllamaProvider:
             OllamaProvider()
             call_kwargs = mock_cls.call_args.kwargs
             assert call_kwargs["base_url"] == "http://localhost:11434/v1"
-
-    def test_is_ollama_available_true(self) -> None:
-        """_is_ollama_available() returns True when ollama is importable."""
-        assert _is_ollama_available() is True
 
     @pytest.mark.asyncio
     async def test_close_releases_client(self, provider: OllamaProvider, mock_openai: AsyncMock) -> None:

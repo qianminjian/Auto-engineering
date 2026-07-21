@@ -147,6 +147,15 @@ def _extract_section(heading_text: str) -> tuple[str | None, str]:
 
 
 class _DesignDocParser:
+    """Markdown 设计文档解析器.
+
+    方法分组:
+      [入口]     __init__ + run                    — 初始化和主循环
+      [层次]     _on_heading / _new_plate / _new_component / _new_item / _make_item
+      [标记]     _on_marker / _apply_plate_marker / _apply_component_marker / _apply_item_marker
+      [内容]     _on_table / _on_list / _on_paragraph
+    """
+
     def __init__(self, text: str) -> None:
         md = MarkdownIt("commonmark").enable("table")
         self.tokens = md.parse(text)
@@ -157,6 +166,8 @@ class _DesignDocParser:
         self.cur_item: DesignItem | None = None
         # 最近创建的层级节点 (供 marker 覆盖): ("plate"|"component"|"item", obj)
         self.last_node: tuple[str, object] | None = None
+
+    # ── 入口: 初始化和主循环 ──
 
     def run(self) -> DesignDoc:
         toks = self.tokens
@@ -192,7 +203,7 @@ class _DesignDocParser:
             )
         return DesignDoc(plates=self.plates, supplements={}, parse_warnings=self.warnings)
 
-    # ---------- 标题 ----------
+    # ── 层次: 标题 → Plate / Component / DesignItem ──
 
     def _on_heading(self, level: int, text: str) -> None:
         if level == 1 or text.strip().upper().startswith("PART"):
@@ -247,7 +258,7 @@ class _DesignDocParser:
             source_marker=source_marker,
         )
 
-    # ---------- ae 标记覆盖 ----------
+    # ── 标记: <!-- ae:* --> 注释消歧 (覆盖层次启发) ──
 
     def _on_marker(self, content: str) -> None:
         m = _MARKER_RE.search(content)
@@ -309,7 +320,7 @@ class _DesignDocParser:
             self.cur_item = item
             self.last_node = ("item", item)
 
-    # ---------- 表格 ----------
+    # ── 内容: 表格 / 列表 / 段落 → DesignItem key_claims ──
 
     def _on_table(self, start: int) -> int:
         """收集 tbody 数据行. 有 cur_item → 并入 key_claims; 否则每行成 DesignItem."""
@@ -349,8 +360,6 @@ class _DesignDocParser:
                 )
                 self.cur_component.design_items.append(item)
         return i
-
-    # ---------- 列表 ----------
 
     def _on_list(self, start: int, open_type: str) -> int:
         close_type = open_type.replace("_open", "_close")

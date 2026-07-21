@@ -12,6 +12,7 @@ from auto_engineering.engine.models import (
     PlanValidationError,
     Task,
     TaskDAG,
+    TaskOutcome,
     TaskStatus,
     TaskValidation,
     _topological_levels,
@@ -26,9 +27,9 @@ __all__ = [
     "PlanValidationError",
     "Task",
     "TaskDAG",
+    "TaskOutcome",
     "TaskStatus",
     "TaskValidation",
-    "_topological_levels",
     "check_file_isolation",
     "topological_sort",
 ]

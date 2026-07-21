@@ -14,7 +14,7 @@ from auto_engineering.providers.base import LLMProvider
 _logger = logging.getLogger("ae.providers.factory")
 
 
-def create_provider(provider: str = "", *, api_key: str = "") -> LLMProvider:
+def create_provider(provider: str = "", *, api_key: str = "", audit_logger=None) -> LLMProvider:
     """Create LLM provider from name or environment auto-detection.
 
     Priority:
@@ -60,7 +60,7 @@ def create_provider(provider: str = "", *, api_key: str = "") -> LLMProvider:
         from auto_engineering.llm.anthropic_provider import AnthropicProvider
 
         key = api_key or _cfg.anthropic_api_key
-        return AnthropicProvider(api_key=key)  # type: ignore[return-value]  # param order differs from Protocol, structural compat at runtime
+        return AnthropicProvider(api_key=key, audit_logger=audit_logger)  # type: ignore[return-value]  # param order differs from Protocol, structural compat at runtime
 
     if resolved == "ollama":
         from auto_engineering.providers.ollama import OllamaProvider

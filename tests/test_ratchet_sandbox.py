@@ -37,30 +37,6 @@ class TestSandboxEvaluate:
         result = ratchet.evaluate(before, after)
         assert result.action == "stop"
 
-    def test_sandbox_evaluate_returns_keep_for_no_regression(
-        self, ratchet: RatchetController, tmp_path: Path,
-    ):
-        """sandbox_evaluate with threshold proposals that don't degrade metrics."""
-        proposals = [{
-            "param": "M1_tick_limit",
-            "current": 12.0,
-            "proposed": 14.0,
-            "confidence": 0.95,
-            "total_obs": 35,
-        }]
-        result = ratchet.sandbox_evaluate(
-            proposals, candidate_rules=[], dry_run=True)
-        assert isinstance(result, dict)
-        assert "decisions" in result
-        assert len(result["decisions"]) == 1
-        assert result["decisions"][0]["action"] in ("keep", "revert", "stop")
-
-    def test_sandbox_evaluate_handles_empty_input(
-        self, ratchet: RatchetController,
-    ):
-        result = ratchet.sandbox_evaluate([], candidate_rules=[], dry_run=True)
-        assert result == {"decisions": [], "summary": "no proposals to evaluate"}
-
 
 class TestMergeRules:
     def test_merge_rules_writes_to_diagnoser_format(

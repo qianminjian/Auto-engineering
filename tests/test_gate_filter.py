@@ -1,73 +1,11 @@
 """Tests for v5.0 Phase 05 — M6 Gate 体系扩展.
 
-设计: v5.0 §B6.1 Gate applies_to_stages (按 stage 过滤哪些 Gate 运行) +
-      §B6.1a ContractGate 4 项检查 +
-      §B6.2 run_gates 按 stage 过滤并行.
-
-Gate 阶段映射 (v5.0 §B6.1):
-    - safety / lint / type_check: (architect, developer, critic) 三阶段都跑
-    - contract / test:            (developer, critic)
-    - coverage:                   (developer,) — 但 BEACON 决策 25 永远 skip
-    - build:                      (developer,) — 打包构建
+设计: v5.0 §B6.1a ContractGate 4 项检查 + §B6.2 run_gates.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
-
-# ============================================================
-# Group 1: Gate 基类 applies_to_stages
-# ============================================================
-
-
-class TestGateAppliesToStages:
-    """v5.0 §B6.1 — Gate 基类扩展 applies_to_stages 类属性."""
-
-    def test_safety_gate_runs_all_stages(self):
-        from auto_engineering.gates.safety import SafetyGate
-
-        gate = SafetyGate(use_gitleaks=False)
-        assert "architect" in gate.applies_to_stages
-        assert "developer" in gate.applies_to_stages
-        assert "critic" in gate.applies_to_stages
-
-    def test_lint_gate_runs_all_stages(self):
-        from auto_engineering.gates.lint import LintGate
-
-        gate = LintGate()
-        assert "architect" in gate.applies_to_stages
-        assert "developer" in gate.applies_to_stages
-        assert "critic" in gate.applies_to_stages
-
-    def test_type_check_gate_runs_all_stages(self):
-        from auto_engineering.gates.type_check import TypeCheckGate
-
-        gate = TypeCheckGate()
-        assert "architect" in gate.applies_to_stages
-        assert "developer" in gate.applies_to_stages
-        assert "critic" in gate.applies_to_stages
-
-    def test_contract_gate_runs_developer_critic_only(self):
-        from auto_engineering.gates.contract import ContractGate
-
-        gate = ContractGate()
-        assert "developer" in gate.applies_to_stages
-        assert "critic" in gate.applies_to_stages
-        assert "architect" not in gate.applies_to_stages
-
-    def test_test_gate_runs_developer_critic_only(self):
-        from auto_engineering.gates.test_gate import TestGate
-
-        gate = TestGate()
-        assert "developer" in gate.applies_to_stages
-        assert "critic" in gate.applies_to_stages
-        assert "architect" not in gate.applies_to_stages
-
-    def test_build_gate_developer_only(self):
-        from auto_engineering.gates.build import BuildGate
-
-        gate = BuildGate()
-        assert gate.applies_to_stages == ("developer",)
 
 
 # ============================================================
@@ -77,13 +15,6 @@ class TestGateAppliesToStages:
 
 class TestGateBaseClass:
     """v5.0 §B6.1 — Gate 基类扩展 + DEFAULT_GATES 入口."""
-
-    def test_base_gate_has_applies_to_stages_attribute(self):
-        from auto_engineering.gates.base import Gate
-
-        # 基类应有默认 applies_to_stages (tuple, 至少存在)
-        assert hasattr(Gate, "applies_to_stages")
-        assert isinstance(Gate.applies_to_stages, tuple)
 
     def test_gate_has_contracts_instance_attribute(self):
         """Gate 基类应具有 contracts 实例属性 (v5.5 P1-9: 从 run() 参数改为实例属性)."""

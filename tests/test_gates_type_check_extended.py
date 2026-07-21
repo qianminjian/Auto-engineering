@@ -9,7 +9,6 @@
     - 工具超时 → skip (passed=True)
     - 工具成功 → GateVerdict.passed
     - from_manifest 工厂: pyright/mypy/tsc/bash -n/不支持工具/缺 conventions
-    - applies_to_stages 默认 + 显式 override
     - _resolve_type_check_cmd (bash -n 特殊处理)
 
 策略: 用 mock 隔离 subprocess.run + shutil.which,不真实调用 type_checker.
@@ -65,13 +64,10 @@ class TestTypeCheckGateBasics:
         assert gate.type_checker_bin == "custom-mypy"
 
     def test_class_attributes(self):
-        """类属性: name='type_check', applies_to_stages 三阶段."""
+        """类属性: name='type_check'."""
         from auto_engineering.gates.type_check import TypeCheckGate
 
         assert TypeCheckGate.name == "type_check"
-        assert "architect" in TypeCheckGate.applies_to_stages
-        assert "developer" in TypeCheckGate.applies_to_stages
-        assert "critic" in TypeCheckGate.applies_to_stages
 
 
 # ============================================================
@@ -488,30 +484,3 @@ class TestTypeCheckRun:
         assert "..." in verdict.message
 
 
-# ============================================================
-# 6. applies_to_stages 默认 + 显式 override
-# ============================================================
-
-
-class TestAppliesToStages:
-    """TypeCheckGate.applies_to_stages 三阶段覆盖."""
-
-    def test_default_applies_to_all_three_stages(self):
-        """默认 applies_to_stages 包含 architect/developer/critic."""
-        from auto_engineering.gates.type_check import TypeCheckGate
-
-        stages = TypeCheckGate.applies_to_stages
-        assert "architect" in stages
-        assert "developer" in stages
-        assert "critic" in stages
-
-    def test_subclass_can_override_applies_to_stages(self):
-        """子类可以显式 override applies_to_stages."""
-        from auto_engineering.gates.type_check import TypeCheckGate
-
-        class CustomTCGate(TypeCheckGate):
-            applies_to_stages = ("developer",)  # 只在 developer 阶段跑
-
-        gate = CustomTCGate()
-        assert gate.applies_to_stages == ("developer",)
-        assert "architect" not in gate.applies_to_stages

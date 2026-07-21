@@ -1,8 +1,7 @@
-"""Tests for config/environment.py — load_ae_answers + preflight.
+"""Tests for config/environment.py — load_ae_answers.
 
 覆盖:
     - load_ae_answers: 文件存在/缺失/字段冲突
-    - preflight: git/API key/磁盘/Python 版本校验
 """
 
 from __future__ import annotations
@@ -11,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from auto_engineering.config.environment import load_ae_answers, preflight
+from auto_engineering.config.environment import load_ae_answers
 
 
 class TestLoadAeAnswers:
@@ -59,24 +58,3 @@ class TestLoadAeAnswers:
         assert result["project_type"] == "cli-tool"
 
 
-class TestPreflight:
-    """preflight(project_root) — 入口前置校验 (Python 版本 + Git 仓库 + 磁盘空间).
-
-    2026-07-04 修复 (v5.0 深度审计): preflight 不检查 ANTHROPIC_API_KEY
-    (见 environment.py:200-229, SDK 自动从 env 读).
-    原 test_raises_systemexit_without_api_key + test_systemexit_code_is_one_on_failure
-    测试期望错, 删除.
-    """
-
-    def test_passes_in_valid_git_repo(self, tmp_path: Path):
-        """合法 git 仓库 + 足够磁盘空间时 preflight 通过."""
-        (tmp_path / ".git").mkdir()
-        # preflight 不抛 SystemExit
-        preflight(tmp_path)
-
-    def test_raises_systemexit_outside_git_repo(self, tmp_path: Path):
-        """非 git 仓库时 preflight 抛 SystemExit (code=1)."""
-        # tmp_path 没有 .git
-        with pytest.raises(SystemExit) as exc_info:
-            preflight(tmp_path)
-        assert exc_info.value.code == 1

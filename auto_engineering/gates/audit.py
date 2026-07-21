@@ -33,7 +33,6 @@ __all__ = [
     "SKIP_DIRS",
     "AuditFinding",
     "AuditGate",
-    "SemanticChecker",
     "finding_fingerprint",
 ]
 
@@ -60,8 +59,6 @@ class AuditFinding:
 # 默认注入 None (纯正则路径). 这是 Agent 侧 / LLM 后端语义层的挂载点 —
 # Python 本身永不调 LLM (§A.1), 只做确定性正则 + 合并"注入进来"的语义结果.
 # 检测正则看不到的语义问题 (误导性命名 / 逻辑与设计矛盾, 用 crafted context).
-SemanticChecker = Callable[[str, str], list["AuditFinding"]]
-
 
 def finding_fingerprint(f: AuditFinding) -> str:
     """finding 稳定指纹 `severity|dimension|file|description` — 行号**不入**指纹.
@@ -166,12 +163,10 @@ class AuditGate(Gate):
         max_p2: P2 数量上限 (默认 10)
         include_large_files: 是否检查大文件 (默认 True)
 
-    v5.0 §B6.1: applies_to_stages = (developer, critic)
         audit 在 developer 产出代码后、critic 审查前跑, 早期发现问题加速收敛.
     """
 
     name = "audit"
-    applies_to_stages = ("developer", "critic")
 
     def __init__(
         self,
@@ -179,15 +174,12 @@ class AuditGate(Gate):
         max_p1: int = DEFAULT_MAX_P1,
         max_p2: int = DEFAULT_MAX_P2,
         include_large_files: bool = True,
-        semantic_checker: SemanticChecker | None = None,
         accepted_fingerprints: set[str] | None = None,
     ):
         self.max_p0 = max_p0
         self.max_p1 = max_p1
         self.max_p2 = max_p2
         self.include_large_files = include_large_files
-        # B15.3 #6: opt-in 语义层 (默认 None = 纯正则, Python 永不调 LLM)
-        self.semantic_checker = semantic_checker
         # B15.3 #9: known-and-accepted 指纹集 (从阈值计数中抑制, 运行时可经
         # contracts["accepted_audit_findings"] 追加)
         self.accepted_fingerprints = set(accepted_fingerprints or ())
@@ -275,20 +267,7 @@ class AuditGate(Gate):
         elif is_js:
             findings.extend(self._scan_js(content, rel))
 
-        # B15.3 #6: opt-in 语义层 — 合并注入的语义 findings (默认无检查器则跳过)
-        if self.semantic_checker is not None:
-            findings.extend(self._run_semantic(rel, content))
-
         return findings
-
-    def _run_semantic(self, rel: str, content: str) -> list[AuditFinding]:
-        """调用注入的语义检查器, 异常降级为空 (语义后端故障不阻断确定性正则路径)."""
-        try:
-            extra = self.semantic_checker(rel, content) if self.semantic_checker else []
-        except Exception:  # 语义后端(LLM/Agent)故障 → 降级, 保留正则结果
-            _logger.warning("audit scan: 语义检查器异常 %s", rel, exc_info=True)
-            return []
-        return [f for f in (extra or []) if isinstance(f, AuditFinding)]
 
     def _scan_py(self, content: str, rel: str) -> list[AuditFinding]:
         findings: list[AuditFinding] = []

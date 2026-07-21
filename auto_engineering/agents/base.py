@@ -29,8 +29,8 @@ from auto_engineering.runtime.task import Task, TaskResult
 from auto_engineering.tools.base import BaseTool
 
 if TYPE_CHECKING:
-    from auto_engineering.utils.token_tracker import TokenTracker
     from auto_engineering.runtime.cancellation import CancellationToken
+    from auto_engineering.utils.token_tracker import TokenTracker
 
 
 def _truncate_tool_results(results: list[dict], max_chars: int = 8000) -> list[dict]:
@@ -119,6 +119,7 @@ class BaseAgent:
     max_tool_calls: int = 10  # P1-12: 改为显式值，CLI 入口传入；default_factory 不再读 os.environ
     model: str = "claude-sonnet-4-6"
     max_tokens: int = 4096
+    _empty_retries: int = field(default=0, init=False, repr=False)  # P1-8: 显式初始化，避免动态属性
 
     def close(self) -> None:
         """释放底层 LLM provider 连接."""
@@ -177,19 +178,26 @@ class BaseAgent:
             messages = _redact_prompt_messages(messages)
 
             # P1.3: LLM 异常分类
-            # D-P0-1 (deep audit): llm.create_message 是同步函数. 直接 await
-            # 会让 asyncio.gather 假象 — 所有并行 agent 串行化等待 LLM.
-            # 用 asyncio.to_thread 把同步 LLM 调用移到 thread pool, 真正并行.
-            # 同模式: semantic_evaluator.py:164 已正确实现.
+            # 同步 provider (Anthropic) → asyncio.to_thread 真并行.
+            # 异步 provider (OpenAI/GLM/Qwen/Ollama) → 直接 await.
             try:
-                response = await asyncio.to_thread(
-                    self.llm.create_message,
-                    system=self._build_system_prompt(task),
-                    messages=messages,
-                    tools=[t.to_schema() for t in effective_tools] if effective_tools else None,
-                    model=self.model,
-                    max_tokens=self.max_tokens,
-                )
+                if asyncio.iscoroutinefunction(self.llm.create_message):
+                    response = await self.llm.create_message(
+                        system=self._build_system_prompt(task),
+                        messages=messages,
+                        tools=[t.to_schema() for t in effective_tools] if effective_tools else None,
+                        model=self.model,
+                        max_tokens=self.max_tokens,
+                    )
+                else:
+                    response = await asyncio.to_thread(
+                        self.llm.create_message,
+                        system=self._build_system_prompt(task),
+                        messages=messages,
+                        tools=[t.to_schema() for t in effective_tools] if effective_tools else None,
+                        model=self.model,
+                        max_tokens=self.max_tokens,
+                    )
             except Exception as exc:  # 详见下面特定异常映射
                 raise self._map_llm_exception(exc) from exc
 
@@ -201,7 +209,7 @@ class BaseAgent:
             # Uses module-level get_collector() so it works without changing
             # BaseAgent constructor signature. AE_METRICS=1 activates it.
             # Import inline to avoid circular dependency at module load time.
-            from auto_engineering.metrics.collector import (  # noqa: E402
+            from auto_engineering.metrics.collector import (
                 AIOrigin,
                 get_collector,
             )
@@ -228,12 +236,11 @@ class BaseAgent:
                     and not response.content.strip()
                     and not response.tool_use_blocks
                     and tool_calls_log):
-                empty_retries = getattr(self, "_empty_retries", 0)
-                if empty_retries >= 3:
+                if self._empty_retries >= 3:
                     # 3 次空响应后不再追问, 走 _parse_final_response 合成路径
                     pass
                 else:
-                    self._empty_retries = empty_retries + 1  # type: ignore[attr-defined]
+                    self._empty_retries += 1
                     messages.append({
                         "role": "user",
                         "content": (

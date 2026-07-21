@@ -1,47 +1,17 @@
-"""Tests for v5.0 Phase 05 — M5 Round 重构.
+"""Tests for _topological_levels (Kahn BFS 分层) — v5.0 §B2.12b.
 
-设计: v5.0 §B2.12 run_round 签名扩展 + §B2.12a per_task_ctx 独立 +
-      §B2.12b _topological_levels (Kahn BFS 分层).
+Test symbols that were deleted from loop/round.py in P0-1 audit (run_round,
+_build_per_task_ctx, _parse_git_numstat) have been removed.
 
-覆盖:
-    - run_round 新增 stage: str / contracts: dict | None 参数
-    - _topological_levels: 单任务/并行/环检测
-    - per_task_ctx 独立 (避免 shared ctx.task 串扰)
-    - run_round 错误分类: AEError(ERR_TASK_CANCELLED) / CancelledError / Exception
+Design: v5.0 §B2.12b _topological_levels (Kahn BFS 分层).
+Imported via engine/models.py → loop/plan.py re-export.
 """
 
 from __future__ import annotations
 
-import asyncio
-
 import pytest
 
-from auto_engineering.gates.base import Gate, GateVerdict
 from auto_engineering.loop.plan import ConflictError, Task, _topological_levels
-from auto_engineering.loop.round import (
-    TaskOutcome,
-    run_round,
-)
-
-
-class _StubGate(Gate):
-    """可记录 contracts 透传的 stub Gate (用于测试)."""
-
-    name = "stub"
-
-    def __init__(self):
-        self.captured_contracts = None
-        self.call_count = 0
-
-    def run(self, project_root):
-        self.call_count += 1
-        self.captured_contracts = self.contracts
-        return GateVerdict.ok("ok", gate_name=self.name)
-
-
-# ============================================================
-# 共享 helper
-# ============================================================
 
 
 def make_task(tid: str, depends_on: list[str] | None = None) -> Task:
@@ -50,68 +20,12 @@ def make_task(tid: str, depends_on: list[str] | None = None) -> Task:
 
 
 # ============================================================
-# Group 1: run_round 签名扩展
-# ============================================================
-
-
-class TestRunRoundSignature:
-    """v5.0 §B2.12 — run_round 接受 stage 参数 (v5.5 P0-2: contracts 已移至 gate.contracts 实例属性)."""
-
-    @pytest.mark.asyncio
-    async def test_run_round_with_stage_param(self):
-        """run_round 接受 stage: str 参数 (默认空串不报错)."""
-        async def executor(task, ctx):
-            return TaskOutcome(task_id=task.id, status="completed", output=task.id)
-
-        task = make_task("t1")
-        # stage="developer" 应当被接受 (供 run_gates 过滤 Gate)
-        result = await run_round(
-            tasks=[task],
-            executor=executor,
-            stage="developer",
-        )
-        assert result.completed_count == 1
-
-    @pytest.mark.asyncio
-    async def test_run_round_with_gate_contracts_preset(self, tmp_path):
-        """gate.contracts 应在调用 run_round 前由调用方预设."""
-        async def executor(task, ctx):
-            return TaskOutcome(task_id=task.id, status="completed", output=task.id)
-
-        gate = _StubGate()
-        gate.contracts = {"api_user": {"request": {}, "response": {}, "status": 200}}
-        task = make_task("t1")
-        result = await run_round(
-            tasks=[task],
-            executor=executor,
-            gates=[gate],
-            project_root=tmp_path,
-        )
-        assert result.completed_count == 1
-        assert gate.captured_contracts == {"api_user": {"request": {}, "response": {}, "status": 200}}
-
-    @pytest.mark.asyncio
-    async def test_run_round_default_stage(self):
-        """不传 stage 也应工作 (向后兼容)."""
-        async def executor(task, ctx):
-            return TaskOutcome(task_id=task.id, status="completed", output=task.id)
-
-        task = make_task("t1")
-        result = await run_round(tasks=[task], executor=executor)
-        assert result.completed_count == 1
-
-
-# ============================================================
-# Group 2: _topological_levels (Kahn BFS 分层)
+# _topological_levels (Kahn BFS 分层)
 # ============================================================
 
 
 class TestTopologicalLayers:
-    """v5.0 §B2.12b — _topological_levels 分层 (round.py 内部使用).
-
-    注意: plan.py 已存在 _topological_levels (DFS 递归 + cache),
-    这里测试的是 round.py 中的 _topological_levels (Kahn BFS 实现).
-    """
+    """v5.0 §B2.12b — _topological_levels 分层 (engine/models.py, re-exported via plan.py)."""
 
     def test_topological_levels_single_task(self):
         """单个无依赖 task → [[t1]]."""
@@ -124,7 +38,6 @@ class TestTopologicalLayers:
         layers = _topological_levels(tasks)
         assert len(layers) == 1
         assert len(layers[0]) == 3
-        # 同层的 task id 应当是输入的 id 集合
         layer_ids = {t.id for t in layers[0]}
         assert layer_ids == {"t1", "t2", "t3"}
 
@@ -152,7 +65,6 @@ class TestTopologicalLayers:
         layers = _topological_levels(tasks)
         assert len(layers) == 3
         assert layers[0][0].id == "t1"
-        # t2 和 t3 在同层
         assert {t.id for t in layers[1]} == {"t2", "t3"}
         assert layers[2][0].id == "t4"
 
@@ -169,81 +81,28 @@ class TestTopologicalLayers:
         """空列表 → []."""
         assert _topological_levels([]) == []
 
+    def test_self_loop_raises_conflict(self):
+        """自环: t1.depends_on=[t1] → ConflictError."""
+        tasks = [make_task("t1", depends_on=["t1"])]
+        with pytest.raises(ConflictError) as exc_info:
+            _topological_levels(tasks)
+        assert any("cycle" in c for c in exc_info.value.conflicts)
 
-# ============================================================
-# Group 3: run_round 错误分类
-# ============================================================
-
-
-class TestRunRoundErrorCategorization:
-    """v5.0 §B2.12a — run_round 错误分类:
-
-        - AEError(ERR_TASK_CANCELLED) → status=cancelled
-        - asyncio.CancelledError     → status=cancelled
-        - Exception (其他)            → status=failed
-    """
-
-    @pytest.mark.asyncio
-    async def test_run_round_aeerror_task_cancelled(self):
-        """AEError(ERR_TASK_CANCELLED) → outcome status=cancelled."""
-        from auto_engineering.errors import AEError, ErrorCode
-
-        async def executor(task, ctx):
-            raise AEError(ErrorCode.TASK_CANCELLED, "用户中断")
-
-        task = make_task("t1")
-        result = await run_round(tasks=[task], executor=executor)
-        assert len(result.outcomes) == 1
-        outcome = result.outcomes[0]
-        assert outcome.status == "cancelled"
-        assert outcome.task_id == "t1"
-
-    @pytest.mark.asyncio
-    async def test_run_round_asyncio_cancelled(self):
-        """asyncio.CancelledError → outcome status=cancelled."""
-        async def executor(task, ctx):
-            raise asyncio.CancelledError()
-
-        task = make_task("t1")
-        result = await run_round(tasks=[task], executor=executor)
-        assert len(result.outcomes) == 1
-        assert result.outcomes[0].status == "cancelled"
-
-    @pytest.mark.asyncio
-    async def test_run_round_generic_exception_failed(self):
-        """Exception (RuntimeError) → outcome status=failed."""
-        async def executor(task, ctx):
-            raise RuntimeError("boom")
-
-        task = make_task("t1")
-        result = await run_round(tasks=[task], executor=executor)
-        assert len(result.outcomes) == 1
-        assert result.outcomes[0].status == "failed"
-        assert "boom" in (result.outcomes[0].error or "")
-
-    @pytest.mark.asyncio
-    async def test_run_round_mixed_error_types(self):
-        """混合错误类型: AEError/cancelled/Exception + success → 各自正确分类."""
-        from auto_engineering.errors import AEError, ErrorCode
-
-        async def executor(task, ctx):
-            if task.id == "ae_cancel":
-                raise AEError(ErrorCode.TASK_CANCELLED, "user cancel")
-            if task.id == "asyncio_cancel":
-                raise asyncio.CancelledError()
-            if task.id == "generic_err":
-                raise ValueError("bad input")
-            return TaskOutcome(task_id=task.id, status="completed", output="ok")
-
+    def test_external_dep_not_counted(self):
+        """deps 引用 batch 外的 task → 不计入入度, 视为已满足."""
         tasks = [
-            make_task("success"),
-            make_task("ae_cancel"),
-            make_task("asyncio_cancel"),
-            make_task("generic_err"),
+            make_task("t1"),
+            make_task("t2", depends_on=["external"]),
+            make_task("t3", depends_on=["t1"]),
         ]
-        result = await run_round(tasks=tasks, executor=executor)
-        by_id = {o.task_id: o.status for o in result.outcomes}
-        assert by_id["success"] == "completed"
-        assert by_id["ae_cancel"] == "cancelled"
-        assert by_id["asyncio_cancel"] == "cancelled"
-        assert by_id["generic_err"] == "failed"
+        layers = _topological_levels(tasks)
+        assert len(layers) == 2
+        assert {t.id for t in layers[0]} == {"t1", "t2"}
+        assert layers[1][0].id == "t3"
+
+    def test_layer_ordering_is_deterministic_sorted(self):
+        """同层 task 按 id 排序 (确定性输出)."""
+        tasks = [make_task("z"), make_task("a"), make_task("m")]
+        layers = _topological_levels(tasks)
+        assert len(layers) == 1
+        assert [t.id for t in layers[0]] == ["a", "m", "z"]

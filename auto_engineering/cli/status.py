@@ -163,6 +163,7 @@ def register_status_command(main_group: click.Group) -> None:
         except Exception as e:
             # 项目环境探测可能因任何原因失败 (文件 I/O/解析/检测逻辑),
             # CLI status 命令应优雅降级而非崩溃
+            _logger.warning("读取项目环境失败", exc_info=True)
             click.echo(f"  读取项目环境失败: {e}")
 
         cp_dir = cwd / ".ae-state"

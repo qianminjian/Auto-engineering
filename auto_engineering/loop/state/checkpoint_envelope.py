@@ -28,8 +28,7 @@ from auto_engineering.loop.checkpoint._serialization import (
     Channel,
     LastValueChannel,
 )
-from auto_engineering.loop.plan import Task, TaskValidation
-from auto_engineering.loop.round import TaskOutcome
+from auto_engineering.loop.plan import Task, TaskOutcome, TaskValidation
 from auto_engineering.loop.state.metrics import MetricsSnapshot, Signal
 
 _logger = logging.getLogger("ae.loop.state.cp")
@@ -89,7 +88,7 @@ class CheckpointEnvelope(BaseModel):
     # 便捷属性 (v2.0-D 新增)
     # ============================================================
 
-    def get_task(self, task_id: str) -> Any | None:
+    def get_task(self, task_id: str) -> object | None:
         """按 ID 读取 Task. 不存在返回 None."""
         return self.tasks.get(task_id)
 

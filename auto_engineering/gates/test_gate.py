@@ -25,7 +25,6 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-from auto_engineering.gates._tools import get_gate_tools_from_manifest
 from auto_engineering.gates.base import Gate, GateVerdict, run_gate_command
 
 __all__ = ["DEFAULT_TIMEOUT", "TestGate"]
@@ -45,12 +44,12 @@ class TestGate(Gate):
         pytest_args: 额外参数(默认 [])
         test_paths: 要测试的路径(默认 ["tests"])
 
-    v5.0 §B6.1: applies_to_stages = (developer, critic)
         测试执行仅在有代码产出 (developer) + 评审 (critic) 阶段跑
     """
 
     name = "test"
-    applies_to_stages = ("developer", "critic")
+    _MANIFEST_TOOL_KEY = "test_runner"
+    _TOOL_BIN_KWARG = "test_runner_bin"
 
     def __init__(
         self,
@@ -65,19 +64,6 @@ class TestGate(Gate):
         self.pytest_args = pytest_args if pytest_args is not None else []
         self.test_paths = test_paths if test_paths is not None else ["tests"]
         self.files_changed = files_changed
-
-    @classmethod
-    def from_manifest(
-        cls,
-        manifest: dict,
-        timeout: float | None = None,
-    ) -> TestGate:
-        """v5.0 §IL-AC-02: 从 init-manifest.json 构造 TestGate.
-
-        读 manifest.conventions.test_runner, 缺则用 LANGUAGE_TOOLS 默认.
-        """
-        tools = get_gate_tools_from_manifest(manifest)
-        return cls(test_runner_bin=tools["test_runner"], timeout=timeout)
 
     def _resolve_test_cmd(self) -> list[str] | None:
         """解析 test_runner 命令.

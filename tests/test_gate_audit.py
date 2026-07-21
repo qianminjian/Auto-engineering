@@ -1,7 +1,7 @@
 """AuditGate 测试 — v5.4 新增: 代码质量深度审计 Gate.
 
 覆盖:
-  - 基础构造 + name/applies_to_stages
+  - 基础构造 + name
   - 空项目 → passed
   - P0 硬编码密钥 → failed
   - P1 TODO/FIXME → threshold-based fail
@@ -22,11 +22,6 @@ class TestAuditGateConstruction:
     def test_default_name(self) -> None:
         gate = AuditGate()
         assert gate.name == "audit"
-
-    def test_applies_to_stages(self) -> None:
-        gate = AuditGate()
-        assert "developer" in gate.applies_to_stages
-        assert "critic" in gate.applies_to_stages
 
     def test_default_thresholds(self) -> None:
         gate = AuditGate()

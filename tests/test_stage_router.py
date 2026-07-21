@@ -480,47 +480,15 @@ class TestVerificationRefineRouting:
         assert decision.should_stop is False
 
 
-# ---------- 保留 Orchestrator 兼容: critic + APPROVE + audit_found_issues → refine ----------
-
-
-class TestCriticApproveAuditCompat:
-    """保留的连续-while Orchestrator: critic APPROVE + DeepAudit 发现问题 → PLAN-REFINE."""
-
-    def test_critic_approve_audit_allowed_returns_architect(self) -> None:
-        router = StageRouter()
-        decision = router.next(
-            current_stage="critic", verdict="APPROVE",
-            majors_in_a_row=0, total_majors=0,
-            audit_found_issues=True,
-            refine_source_count=0, refine_global_count=0,
-            max_refine_per_source=10**9, max_refine_global=3,
-        )
-        assert decision.next_stage == "architect"
-        assert decision.should_stop is False
-
-    def test_critic_approve_audit_global_exhausted_stops(self) -> None:
-        router = StageRouter()
-        decision = router.next(
-            current_stage="critic", verdict="APPROVE",
-            majors_in_a_row=0, total_majors=0,
-            audit_found_issues=True,
-            refine_source_count=0, refine_global_count=3,
-            max_refine_per_source=10**9, max_refine_global=3,
-        )
-        assert decision.next_stage is None
-        assert decision.should_stop is True
-        assert "REFINE_LIMIT" in decision.stop_reason
-
-    def test_critic_approve_no_audit_returns_none(self) -> None:
-        """APPROVE 无 audit → (None, False): Judge 触发 GOAL_ACHIEVED."""
-        router = StageRouter()
-        decision = router.next(
-            current_stage="critic", verdict="APPROVE",
-            majors_in_a_row=0, total_majors=0,
-            audit_found_issues=False,
-        )
-        assert decision.next_stage is None
-        assert decision.should_stop is False
+def test_critic_approve_returns_none() -> None:
+    """critic APPROVE → (None, False): Judge 触发 GOAL_ACHIEVED."""
+    router = StageRouter()
+    decision = router.next(
+        current_stage="critic", verdict="APPROVE",
+        majors_in_a_row=0, total_majors=0,
+    )
+    assert decision.next_stage is None
+    assert decision.should_stop is False
 
 
 # ---------- Phase 0 stage 委托给 orchestrator ----------

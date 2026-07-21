@@ -33,12 +33,10 @@ class BuildGate(Gate):
         timeout: subprocess 超时(秒)
         cwd: 工作目录(None = 当前目录)
 
-    v5.0 §B6.1: applies_to_stages = ("developer",)
         构建验证仅在 developer 阶段跑 (有代码产出才有意义)
     """
 
     name = "build"
-    applies_to_stages = ("developer",)
 
     def __init__(
         self,

@@ -15,7 +15,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from auto_engineering.engine.guardrail_types import Guardrail, GuardrailResult
+from auto_engineering.shared.guardrail import Guardrail, GuardrailResult
 from auto_engineering.pii.rules import PII_RULES
 
 
@@ -52,7 +52,7 @@ class PIIGuardrail(Guardrail):
     def check(
         self,
         stage: str = "",
-        state: Any = None,
+        state: object = None,
         project_root: Path | None = None,
         files_changed: list[str] | None = None,
     ) -> GuardrailResult:

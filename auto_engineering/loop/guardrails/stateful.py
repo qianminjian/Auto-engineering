@@ -207,7 +207,7 @@ class REDGuardrail(Guardrail):
             return GuardrailResult()  # 非 batch 运行时 (无句柄) → 不阻塞
         try:
             tasks = batch_state.current_batch_tasks(plan)
-        except Exception:  # 句柄不完整时降级放行 (纯函数不抛给上层, 见 ABC check 约束)
+        except (TypeError, ValueError, AttributeError):  # 句柄不完整时降级放行 (纯函数不抛给上层, 见 ABC check 约束)
             _logger.warning("_build_redguard_state: batch state parse failed, guardrail degraded", exc_info=True)
             return GuardrailResult()
 
@@ -358,7 +358,7 @@ def _current_regression_task(state: EngineState):
         return None
     try:
         tasks = batch_state.current_batch_tasks(plan)
-    except Exception:  # 句柄不完整时降级 (纯函数不抛给上层, 见 ABC check 约束)
+    except (TypeError, ValueError, AttributeError):  # 句柄不完整时降级 (纯函数不抛给上层, 见 ABC check 约束)
         _logger.warning("_find_regression_task: batch state parse failed, gate degraded", exc_info=True)
         return None
     for task in tasks or []:

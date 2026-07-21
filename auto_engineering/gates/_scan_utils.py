@@ -8,6 +8,8 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+__all__ = ["DEFAULT_MAX_FILE_MB", "iter_scan_files", "read_file_safe", "should_skip_path"]
+
 _logger = logging.getLogger("ae.gates.scan_utils")
 
 DEFAULT_MAX_FILE_MB = 5

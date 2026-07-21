@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from auto_engineering.engine.design_doc import Component, DesignDoc, Plate
@@ -44,7 +44,7 @@ class BatchState:
     current_batch_idx: int = 0
 
     # 已警告过的零 batch 组件集合 (防重复警告, T39 B9/D2)
-    _warned_zero_batch: set[str] | None = None
+    _warned_zero_batch: set[str] = field(default_factory=set)
 
     # ------------------------------------------------------------------
     # 构造 (双模式, 均在 _after_architect batch_plan 就绪后调用)
@@ -105,15 +105,11 @@ class BatchState:
         # 零 batch 组件: design_doc 有但无对应 batch → WARN (交 architect 确认)
         # T39 B9/D2: 每个组件只警告一次, 跨 tick 不重复
         zero_batch = [c for c in plate_component_names if c not in batch_components]
-        if cls._warned_zero_batch is None:
-            cls._warned_zero_batch = set()
-        new_warns = [c for c in zero_batch if c not in cls._warned_zero_batch]
-        if new_warns:
-            cls._warned_zero_batch.update(new_warns)
+        if zero_batch:
             _logger.warning(
                 "零 batch 组件 %s: design_doc 声明但 batch_plan 无对应 batch —— "
                 "确认是'有意不实现'还是'漏排 batch'",
-                sorted(new_warns),
+                sorted(zero_batch),
             )
 
         # 过滤: 仅保留有 batch 的 component, 移除无 component 的 plate
@@ -256,31 +252,6 @@ class BatchState:
         return None
 
     # ------------------------------------------------------------------
-    # T96: Task DAG dependencies — topological batch scheduling
-    # ------------------------------------------------------------------
-
-    @classmethod
-    def from_plan(cls, plan_json: dict) -> BatchState:
-        """Create BatchState from a DAG plan with depends_on declarations."""
-        batches = plan_json.get("batches", [])
-        # Synthesize a minimal BatchState with _dag_batches tracking
-        bs = cls(plates=[], batch_plan=batches, total_batches=len(batches))
-        bs._dag_batches = batches
-        bs._completed_batches: set[str] = set()
-        return bs
-
-    def ready_batches(self) -> list[dict]:
-        """Return batches whose depends_on are all satisfied.
-
-        Topological order: batches with no pending dependencies are ready.
-        """
-        ready: list[dict] = []
-        for batch in self._dag_batches:
-            deps = set(batch.get("depends_on", []))
-            if deps <= self._completed_batches:
-                ready.append(batch)
-        return ready
-
     # ------------------------------------------------------------------
     # 序列化 (只存游标; plates 每 tick 重建)
     # ------------------------------------------------------------------
