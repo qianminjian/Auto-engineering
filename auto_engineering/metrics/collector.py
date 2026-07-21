@@ -81,7 +81,6 @@ class MetricsCollector:
         self.project_root = project_root
         from auto_engineering.metrics._paths import get_metrics_dir
         self._metrics_dir = get_metrics_dir(project_root)
-        self._metrics_dir.mkdir(parents=True, exist_ok=True)
         self._current_thread_id: str = ""
         self._current_category: str = ""
         self._events: list[dict] = []
@@ -106,6 +105,7 @@ class MetricsCollector:
 
     def begin_requirement(self, thread_id: str, requirement_hash: str,
                           requirement_category: str = "") -> None:
+        self._metrics_dir.mkdir(parents=True, exist_ok=True)
         if self._events and self._current_thread_id:
             self._flush_events()
         self._current_thread_id = thread_id

@@ -34,30 +34,6 @@ def _which_only(monkeypatch, present: set[str]) -> None:
     )
 
 
-class TestSelection:
-    def test_select_github_by_platform(self) -> None:
-        b = prb.select_backend("github")
-        assert isinstance(b, prb.GitHubBackend)
-
-    def test_select_gitlab_by_platform(self) -> None:
-        b = prb.select_backend("gitlab")
-        assert isinstance(b, prb.GitLabBackend)
-
-    def test_none_auto_detect_prefers_available(self, monkeypatch) -> None:
-        _which_only(monkeypatch, {"glab"})  # 只有 glab 可用
-        b = prb.select_backend("none")
-        assert isinstance(b, prb.GitLabBackend)
-
-    def test_none_auto_detect_prefers_github_first(self, monkeypatch) -> None:
-        _which_only(monkeypatch, {"gh", "glab"})  # 两者都在 → 优先 github
-        b = prb.select_backend(None)
-        assert isinstance(b, prb.GitHubBackend)
-
-    def test_select_returns_none_when_no_cli(self, monkeypatch) -> None:
-        _which_only(monkeypatch, set())
-        assert prb.select_backend(None) is None
-
-
 class TestCreatePR:
     def test_github_builds_gh_args(self, monkeypatch) -> None:
         _which_only(monkeypatch, {"gh"})

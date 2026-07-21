@@ -21,18 +21,24 @@ _logger = logging.getLogger(__name__)
 # ============================================================
 
 
-def _checkpoint_db_path(root: Path) -> Path:
+def _ensure_checkpoint_db_path(root: Path) -> Path:
     """.ae-state/checkpoints.db — 跨 tick 持久化 store (目录不存在则创建)."""
     state_dir = root / ".ae-state"
     state_dir.mkdir(parents=True, exist_ok=True)
     return state_dir / "checkpoints.db"
 
 
+CATEGORY_SIMPLE = "simple_function"
+CATEGORY_MEDIUM = "medium_crud"
+CATEGORY_COMPLEX = "complex_multi_module"
+_REQUIREMENT_CATEGORIES = (CATEGORY_SIMPLE, CATEGORY_MEDIUM, CATEGORY_COMPLEX)
+
+
 def _infer_category(requirement: str) -> str:
     """Heuristic category inference for baseline stratification.
 
-    Maps requirement text to one of the known complexity categories:
-    simple_function / medium_crud / complex_multi_module.
+    Maps requirement text to one of the known complexity categories.
+    Returns one of CATEGORY_SIMPLE / CATEGORY_MEDIUM / CATEGORY_COMPLEX.
 
     Design ref: v5.6-Design-Loop.md F.2.3 — by_category baselines.
     """
@@ -43,12 +49,11 @@ def _infer_category(requirement: str) -> str:
         "pipeline", "orchestrat", "migration", "database schema", "auth",
         "payment", "transaction", "security audit",
     ]
-    # Check complex first (stronger signal)
     if any(kw in req_lower for kw in complex_keywords):
-        return "complex_multi_module"
+        return CATEGORY_COMPLEX
     if any(kw in req_lower for kw in simple_keywords):
-        return "simple_function"
-    return "medium_crud"
+        return CATEGORY_SIMPLE
+    return CATEGORY_MEDIUM
 
 
 def _build_injectables(root: Path, environ_or_config: "RuntimeConfig | dict[str, str] | None" = None) -> dict:
@@ -108,7 +113,7 @@ def run_tick_init(
     from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
     from auto_engineering.loop.tick_orchestrator import TickOrchestrator
 
-    store: SQLiteCheckpointStore[EngineState] = SQLiteCheckpointStore(_checkpoint_db_path(root))
+    store: SQLiteCheckpointStore[EngineState] = SQLiteCheckpointStore(_ensure_checkpoint_db_path(root))
     try:
         inj = _build_injectables(root)
         orch = TickOrchestrator(root, checkpoint_store=store,
@@ -159,7 +164,7 @@ def run_tick_step(result_file: Path, root: Path,
     from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
     from auto_engineering.loop.tick_orchestrator import TickOrchestrator
 
-    store: SQLiteCheckpointStore[EngineState] = SQLiteCheckpointStore(_checkpoint_db_path(root))
+    store: SQLiteCheckpointStore[EngineState] = SQLiteCheckpointStore(_ensure_checkpoint_db_path(root))
     try:
         inj = _build_injectables(root)
         orch = TickOrchestrator.restore(root, store, debug=debug, debug_dir=debug_dir,
@@ -205,7 +210,7 @@ def run_tick_status(root: Path) -> None:
     from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
     from auto_engineering.loop.tick_orchestrator import TickOrchestrator
 
-    store: SQLiteCheckpointStore[EngineState] = SQLiteCheckpointStore(_checkpoint_db_path(root))
+    store: SQLiteCheckpointStore[EngineState] = SQLiteCheckpointStore(_ensure_checkpoint_db_path(root))
     try:
         orch = TickOrchestrator.restore(root, store)
         s = orch._state
@@ -233,7 +238,7 @@ def run_tick_resume(checkpoint_id: str, root: Path) -> None:
     from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
     from auto_engineering.loop.tick_orchestrator import TickOrchestrator
 
-    store: SQLiteCheckpointStore[EngineState] = SQLiteCheckpointStore(_checkpoint_db_path(root))
+    store: SQLiteCheckpointStore[EngineState] = SQLiteCheckpointStore(_ensure_checkpoint_db_path(root))
     try:
         orch = TickOrchestrator.restore(root, store, checkpoint_id=checkpoint_id)
         action = orch.build_action()

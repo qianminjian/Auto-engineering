@@ -21,7 +21,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from auto_engineering.agents.authz import authz_check
+from auto_engineering.agents.authz import AUTHZ_MATRIX, authz_check
 from auto_engineering.errors import AEError, ErrorCode
 from auto_engineering.providers.base import LLMProvider
 from auto_engineering.runtime.context import TaskContext
@@ -54,29 +54,14 @@ def _truncate_tool_results(results: list[dict], max_chars: int = 8000) -> list[d
     return truncated
 
 
-def _get_pii_redactor():
-    """Module-level singleton factory for PIIRedactor (P3-1 fix).
-
-    Avoids creating a new PIIRedactor instance on every prompt/tool call.
-    Pattern mirrors metrics/collector.py get_collector().
-    """
-    global _pii_redactor
-    if _pii_redactor is None:
-        from auto_engineering.pii.redactor import PIIRedactor
-        _pii_redactor = PIIRedactor()
-    return _pii_redactor
-
-
-_pii_redactor = None  # type: ignore[var-annotated]  # module-level singleton
-
-
 def _redact_prompt_messages(messages: list[dict]) -> list[dict]:
     """对 prompt messages 做 PII 脱敏 (T56).
 
     在 messages 上调用 PIIRedactor.scan(), 命中 PII 规则时脱敏.
     返回脱敏后的深拷贝, 不修改原始 messages.
     """
-    return _get_pii_redactor().scan(messages)
+    from auto_engineering.pii.redactor import get_pii_redactor
+    return get_pii_redactor().scan(messages)
 
 
 def _redact_tool_results(results: list[dict]) -> list[dict]:
@@ -85,7 +70,8 @@ def _redact_tool_results(results: list[dict]) -> list[dict]:
     在每个 tool_result 的 content 上调用 PIIRedactor.scan_text(),
     命中 PII 规则时脱敏 + logger.warning. 不改变函数签名.
     """
-    _redactor = _get_pii_redactor()
+    from auto_engineering.pii.redactor import get_pii_redactor
+    _redactor = get_pii_redactor()
     redacted = []
     for r in results:
         r = dict(r)
@@ -297,7 +283,8 @@ class BaseAgent:
                             {
                                 "type": "tool_result",
                                 "tool_use_id": tool_id,
-                                "content": json.dumps({"error": f"unknown tool: {tool_name}"}),
+                                "content": json.dumps({"error": f"unknown tool: {tool_name}",
+                                                       "available_tools": sorted(tool_map.keys())}),
                                 "is_error": True,
                             }
                         )
@@ -311,7 +298,8 @@ class BaseAgent:
                                 "type": "tool_result",
                                 "tool_use_id": tool_id,
                                 "content": json.dumps(
-                                    {"error": f"tool {tool_name} not authorized for {self.role}"}
+                                    {"error": f"tool {tool_name} not authorized for {self.role}",
+                                     "authorized_roles": list(AUTHZ_MATRIX.get(tool_name, {}).keys())}
                                 ),
                                 "is_error": True,
                             }

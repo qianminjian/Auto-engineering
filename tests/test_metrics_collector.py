@@ -40,6 +40,7 @@ class TestMetricsCollectorInit:
         with tempfile.TemporaryDirectory() as tmp:
             project_root = Path(tmp)
             collector = MetricsCollector(project_root)
+            collector.begin_requirement("t1", "hash1")
             metrics_dir = project_root / ".ae-state" / "metrics"
             assert metrics_dir.exists()
             assert metrics_dir.is_dir()
@@ -51,6 +52,7 @@ class TestMetricsCollectorInit:
             ae_state = project_root / ".ae-state"
             assert not ae_state.exists()
             collector = MetricsCollector(project_root)
+            collector.begin_requirement("t1", "hash1")
             assert ae_state.exists()
 
 

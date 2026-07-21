@@ -319,10 +319,28 @@ class ActionBuilder:
             ),
         }
 
+    # ── helper: data-driven stage action builder ──
+
+    def _build_stage_action(
+        self, base: dict, action: str, context: dict | None = None,
+        expected_format: dict | None = None, **extra,
+    ) -> dict:
+        """Construct a stage action dict with auto-resolved spawn config."""
+        result: dict = {**base, "action": action}
+        if context:
+            result["context"] = context
+        spawn = _SPAWN_CONFIG.get(action)
+        if spawn is not None:
+            result["spawn"] = spawn
+        if expected_format is not None:
+            result["expected_format"] = expected_format
+        result.update(extra)
+        return result
+
     # ── stage builders ──
 
     def _build_action_gap_scan(self, base: dict) -> dict:
-        return {**base, "action": "gap_scan", "context": {
+        return self._build_stage_action(base, "gap_scan", context={
             "design_doc_path": (
                 self._design_doc.path if self._design_doc else None),
             "plates": [
@@ -332,31 +350,31 @@ class ActionBuilder:
                 for p in (self._design_doc.plates if self._design_doc else [])
             ],
             "project_root": str(self.project_root),
-        }, "expected_format": {
+        }, expected_format={
             "gaps": ("[{id, design_section_ref, grade, clarity, "
                      "summary, depends_on}]"),
             "scanned_sections": "int",
             "has_blocking": "bool",
-        }}
+        })
 
     def _build_action_gap_review(self, base: dict) -> dict:
         report = json.loads(self._state.gap_report_json or '{"gaps": []}')
         is_rereview = bool(self._state.research_archive)
-        return {**base, "action": "gap_review",
-                "gaps": report.get("gaps", []),
-                "has_blocking": report.get("has_blocking", False),
-                "is_rereview": is_rereview,
-                "research_findings": dict(self._state.research_archive),
-                "instruction": (
-                    "初审: 对每个 gap 用 AskUserQuestion 收集 Fill(用户补充) / "
-                    "Research(检索) / Defer(留给architect) / Defer+Research. "
-                    "has_blocking 的 architectural gap 禁止 Defer. "
-                    "复审(is_rereview=true, research_findings 非空): 呈现 findings, "
-                    "让用户据研究发现做补充设计 — Fill(写入细化内容→Supplement) "
-                    "或 Defer(留给 architect in-loop 细化)."),
-                "expected_format": {
-                    "decisions": "[{gap_id, resolution, user_note, fill_content?}]",
-                }}
+        return self._build_stage_action(base, "gap_review",
+            gaps=report.get("gaps", []),
+            has_blocking=report.get("has_blocking", False),
+            is_rereview=is_rereview,
+            research_findings=dict(self._state.research_archive),
+            instruction=(
+                "初审: 对每个 gap 用 AskUserQuestion 收集 Fill(用户补充) / "
+                "Research(检索) / Defer(留给architect) / Defer+Research. "
+                "has_blocking 的 architectural gap 禁止 Defer. "
+                "复审(is_rereview=true, research_findings 非空): 呈现 findings, "
+                "让用户据研究发现做补充设计 — Fill(写入细化内容→Supplement) "
+                "或 Defer(留给 architect in-loop 细化)."),
+            expected_format={
+                "decisions": "[{gap_id, resolution, user_note, fill_content?}]",
+            })
 
     def _build_action_research(self, base: dict) -> dict:
         report = json.loads(self._state.gap_report_json or '{"gaps": []}')
@@ -365,31 +383,35 @@ class ActionBuilder:
             self._state.pending_research_ids[0]
             if self._state.pending_research_ids else None)
         gap = by_id.get(current_id, {}) if current_id else {}
-        return {**base, "action": "research",
-                "gap": {
-                    "id": gap.get("id"),
-                    "design_section_ref": gap.get("design_section_ref"),
-                    "grade": gap.get("grade"),
-                    "summary": gap.get("summary"),
-                },
-                "knowledge_sources": {
-                    "tier_order": [
-                        "tier0", "tier1_ref_code", "tier2_doc_kb", "tier3_web"],
-                    "memory_constraint": (
-                        "grep 定位 → 50-200 行 Read → 丢弃; 禁止批量/并行扫描"),
-                },
-                "expected_format": {
-                    "findings": "string",
-                    "sources": "[{tier, ref, note}]",
-                    "source_tier": "tier0|tier1|tier2|tier3",
-                    "confidence": "high|medium|low",
-                    "recommended_design": "string (可注入 supplement)",
-                }}
+        return self._build_stage_action(base, "research",
+            gap={
+                "id": gap.get("id"),
+                "design_section_ref": gap.get("design_section_ref"),
+                "grade": gap.get("grade"),
+                "summary": gap.get("summary"),
+            },
+            knowledge_sources={
+                "tier_order": [
+                    "tier0", "tier1_ref_code", "tier2_doc_kb", "tier3_web"],
+                "memory_constraint": (
+                    "grep 定位 → 50-200 行 Read → 丢弃; 禁止批量/并行扫描"),
+            },
+            expected_format={
+                "findings": "string",
+                "sources": "[{tier, ref, note}]",
+                "source_tier": "tier0|tier1|tier2|tier3",
+                "confidence": "high|medium|low",
+                "recommended_design": "string (可注入 supplement)",
+            })
 
     def _build_action_architect(self, base: dict) -> dict:
-        action = {**base, "action": "architect",
-                "spawn": _SPAWN_CONFIG.get("architect"),
-                "context": {
+        extra: dict = {}
+        if self._state.refine_request_json:
+            extra["feedback"] = {
+                "mode": "PLAN_REFINE",
+                "refine_request": json.loads(self._state.refine_request_json),
+            }
+        return self._build_stage_action(base, "architect", context={
             "requirement": self._state.requirement,
             "design_section": self._safe_design_section(),
             "project_root": str(self.project_root),
@@ -398,7 +420,7 @@ class ActionBuilder:
                 json.loads(self._state.design_supplements_json)
                 if self._state.design_supplements_json else {}),
             "research_archive": self._state.research_archive,
-        }, "expected_format": {
+        }, expected_format={
             "plan": "string (markdown, min 50 chars)",
             "batch_plan": (
                 "[{batch_id, design_section, component, "
@@ -406,13 +428,7 @@ class ActionBuilder:
                 "depends_on}] (min 1 batch)"),
             "file_list": "[string] (min 1 file)",
             "contracts": "object (may be empty)",
-        }}
-        if self._state.refine_request_json:
-            action["feedback"] = {
-                "mode": "PLAN_REFINE",
-                "refine_request": json.loads(self._state.refine_request_json),
-            }
-        return action
+        }, **extra)
 
     def _build_action_developer(self, base: dict) -> dict:
         tasks = (
@@ -421,27 +437,25 @@ class ActionBuilder:
             else (self._plan.get_tasks_by_stage("developer")
                   if self._plan else [])
         )
-        return {**base, "action": "developer",
-                "component": (
-                    self._batch_state.current_component_name()
-                    if self._batch_state else None),
-                "batch_id": (
-                    self._batch_state.current_batch_id()
-                    if self._batch_state else None),
-                "tasks": [
-                    {"id": t.id, "description": t.description,
-                     "expected_output": t.expected_output,
-                     "file_targets": list(t.target_files),
-                     "depends_on": t.depends_on}
-                    for t in tasks
-                ],
-                "plan": self._state.plan}
+        return self._build_stage_action(base, "developer",
+            component=(
+                self._batch_state.current_component_name()
+                if self._batch_state else None),
+            batch_id=(
+                self._batch_state.current_batch_id()
+                if self._batch_state else None),
+            tasks=[
+                {"id": t.id, "description": t.description,
+                 "expected_output": t.expected_output,
+                 "file_targets": list(t.target_files),
+                 "depends_on": t.depends_on}
+                for t in tasks
+            ],
+            plan=self._state.plan)
 
     def _build_action_critic(self, base: dict) -> dict:
         snap = self._dev_snapshot or {}
-        return {**base, "action": "critic",
-                "spawn": _SPAWN_CONFIG.get("critic"),
-                "context": {
+        return self._build_stage_action(base, "critic", context={
             "files_changed": snap.get("files_changed", self._state.files_changed),
             "test_results": snap.get("test_results", self._state.test_results),
             "commit_hash": snap.get("commit_hash", self._state.commit_hash),
@@ -452,24 +466,22 @@ class ActionBuilder:
                 self._batch_state.current_design_section()
                 if self._batch_state else None),
             "batch_id": self._resolve_batch_id(),
-        }, "expected_format": {
+        }, expected_format={
             "stage": "critic",
             "verdict": "APPROVE | MAJOR",
             "findings": "[{file, line, severity, issue, suggestion}]",
             "critic_feedback": "string",
-        }}
+        })
 
     def _build_action_component_verifier(self, base: dict) -> dict:
         comp = self._batch_state.current_component()
-        return {**base, "action": "component_verifier",
-                "spawn": _SPAWN_CONFIG.get("component_verifier"),
-                "context": {
+        return self._build_stage_action(base, "component_verifier", context={
             "component": comp.name,
             "design_section": comp.design_section,
             "design_spec": comp.design_spec_summary(),
             "implementation_files": getattr(comp, "implementation_files", []),
             "contracts": getattr(comp, "contracts", {}),
-        }, "recheck": dict(_VERIFIER_RECHECK), "expected_format": {
+        }, expected_format={
             "stage": "component_verifier",
             "component": "string (组件名称, 必填)",
             "coverage_map": (
@@ -480,18 +492,16 @@ class ActionBuilder:
             "recheck_log": (
                 "[{design_item, haiku_status, sonnet_verdict, final_status}] "
                 "(仅负判定经 Sonnet 复核后填, 无负判定则空)"),
-        }}
+        }, recheck=dict(_VERIFIER_RECHECK))
 
     def _build_action_plate_deep_audit(self, base: dict) -> dict:
         plate = self._batch_state.current_plate()
-        return {**base, "action": "plate_deep_audit",
-                "spawn": _SPAWN_CONFIG.get("plate_deep_audit"),
-                "context": {
+        return self._build_stage_action(base, "plate_deep_audit", context={
             "plate": plate.name,
             "components": plate.components_summary(),
             "cross_component_contracts": plate.cross_component_contracts(),
             "project_root": str(self.project_root),
-        }, "expected_format": {
+        }, expected_format={
             "stage": "plate_deep_audit",
             "plate": "string (板块名称, 必填)",
             "findings": (
@@ -500,19 +510,17 @@ class ActionBuilder:
             "p0_count": "int", "p1_count": "int", "p2_count": "int",
             "cross_component_issues": "[{contract_id, status, detail}]",
             "total_audited_files": "int",
-        }}
+        })
 
     def _build_action_system_verifier(self, base: dict) -> dict:
-        return {**base, "action": "system_verifier",
-                "spawn": _SPAWN_CONFIG.get("system_verifier"),
-                "context": {
+        return self._build_stage_action(base, "system_verifier", context={
             "design_doc": (
                 self._design_doc.path if self._design_doc else None),
             "design_sections": (
                 self._design_doc.sections_summary()
                 if self._design_doc else []),
             "project_root": str(self.project_root),
-        }, "recheck": dict(_VERIFIER_RECHECK), "expected_format": {
+        }, expected_format={
             "stage": "system_verifier",
             "full_coverage_map": (
                 "[{design_section, design_item, status, "
@@ -524,19 +532,17 @@ class ActionBuilder:
             "recheck_log": (
                 "[{design_item, haiku_status, sonnet_verdict, final_status}] "
                 "(仅负判定经 Sonnet 复核后填, 无负判定则空)"),
-        }}
+        }, recheck=dict(_VERIFIER_RECHECK))
 
     def _build_action_system_deep_audit(self, base: dict) -> dict:
-        return {**base, "action": "system_deep_audit",
-                "spawn": _SPAWN_CONFIG.get("system_deep_audit"),
-                "context": {
+        return self._build_stage_action(base, "system_deep_audit", context={
             "project_root": str(self.project_root),
             "audit_dimensions": [
                 "架构合理性", "代码质量", "工程化规范",
                 "代码逻辑虚化度", "团队协作友好度", "设计覆盖度"],
             "p1_threshold": _DEFAULT_P1_THRESHOLD,
             "coverage_map_from_verifier": self._state.coverage_map,
-        }, "expected_format": {
+        }, expected_format={
             "stage": "system_deep_audit",
             "findings": (
                 "[{severity, dimension, file, line, description, "
@@ -547,7 +553,7 @@ class ActionBuilder:
             "design_doc_suggestions": "string",
             "missing_count": "int",
             "diverged_count": "int",
-        }}
+        })
 
 
 __all__ = ["ActionBuilder"]

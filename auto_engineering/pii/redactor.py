@@ -196,3 +196,15 @@ class PIIRedactor:
         if not source:
             return False
         return any(re.search(p, source) for p in self._whitelist)
+
+
+# Module-level singleton — both agents/base.py and loop/guardrail.py use this.
+_pii_redactor_singleton: PIIRedactor | None = None
+
+
+def get_pii_redactor() -> PIIRedactor:
+    """Return the module-level PIIRedactor singleton (lazy-init)."""
+    global _pii_redactor_singleton
+    if _pii_redactor_singleton is None:
+        _pii_redactor_singleton = PIIRedactor()
+    return _pii_redactor_singleton

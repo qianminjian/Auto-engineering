@@ -176,10 +176,10 @@ class GitDiffExists(Guardrail):
         state: EngineState,
         project_root: Path | None = None,
     ) -> GuardrailResult:
-        root = project_root if project_root is not None else Path.cwd()
+        resolved_root = project_root if project_root is not None else Path.cwd()
 
         # 先试 HEAD~1..HEAD (有 commit 的仓库)
-        rc1, stdout1 = _run_git_diff(root, ["HEAD~1..HEAD"])
+        rc1, stdout1 = _run_git_diff(resolved_root, ["HEAD~1..HEAD"])
         if rc1 == 0:
             if stdout1.strip():
                 return GuardrailResult()  # pass
@@ -189,20 +189,20 @@ class GitDiffExists(Guardrail):
             )
 
         # 降级: HEAD~1 不存在 (新仓库), 用 --cached
-        rc2, stdout2 = _run_git_diff(root, ["--cached"])
+        rc2, stdout2 = _run_git_diff(resolved_root, ["--cached"])
         if rc2 == 0 and stdout2.strip():
             return GuardrailResult()  # pass via cached
 
         # 降级: --cached 也为空, 但 HEAD 存在 → StandaloneDriver auto_commit 路径
         # developer 已通过 _auto_commit() 提交, 检查 HEAD 是否包含文件变更
-        rc3, _ = _run_git(root, "rev-parse", "HEAD")
+        rc3, _ = _run_git(resolved_root, "rev-parse", "HEAD")
         if rc3 == 0:
-            rc4, stdout4 = _run_git(root, "diff-tree", "--no-commit-id", "-r", "HEAD")
+            rc4, stdout4 = _run_git(resolved_root, "diff-tree", "--no-commit-id", "-r", "HEAD")
             if rc4 == 0 and stdout4.strip():
                 return GuardrailResult()  # pass: HEAD commit 包含文件变更
             # 降级: diff-tree 对 root commit 返回空 (无 parent 可 diff)
             # → git show --stat (不依赖 parent, 列出 HEAD 的文件变更)
-            rc5, stdout5 = _run_git(root, "show", "--stat", "--format=", "HEAD")
+            rc5, stdout5 = _run_git(resolved_root, "show", "--stat", "--format=", "HEAD")
             if rc5 == 0 and stdout5.strip():
                 return GuardrailResult()
 
@@ -274,8 +274,8 @@ class GitClean(Guardrail):
         state: EngineState,
         project_root: Path | None = None,
     ) -> GuardrailResult:
-        root = project_root if project_root is not None else Path.cwd()
-        rc, stdout = _run_git(root, "status", "--porcelain")
+        resolved_root = project_root if project_root is not None else Path.cwd()
+        rc, stdout = _run_git(resolved_root, "status", "--porcelain")
         if rc != 0:
             # git 命令失败 (非 git 目录等) → block (让 Orchestrator 报警)
             return GuardrailResult(
@@ -397,13 +397,10 @@ class FileAccessGuardrail(Guardrail):
         self._auto_allow_spec = pathspec.PathSpec.from_lines(
             "gitignore", self._AUTO_ALLOW_PATTERNS
         )
-        self._pii_redactor = None  # lazy init
-
-    def _get_pii_redactor(self):
-        if self._pii_redactor is None:
-            from auto_engineering.pii.redactor import PIIRedactor
-            self._pii_redactor = PIIRedactor()
-        return self._pii_redactor
+    @staticmethod
+    def _get_pii_redactor():
+        from auto_engineering.pii.redactor import get_pii_redactor
+        return get_pii_redactor()
 
     def _scan_file_for_pii(self, filepath: Path) -> list[dict]:
         """T109e: 扫描单个文件内容中的 PII."""
@@ -544,7 +541,7 @@ class GuardrailChain:
             timing: "pre" | "post".
             stage: 当前 Stage 名.
             state: EngineState 实例.
-            project_root: 项目根目录 (None → fallback cwd).
+            project_root: 项目根目录 (None → fallback 当前目录).
 
         Returns:
             第一个不 pass 的 GuardrailResult (注入命中的 guardrail_name),

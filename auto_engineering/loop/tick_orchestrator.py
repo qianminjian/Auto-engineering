@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import subprocess
 import sys
 import time
 from collections.abc import Callable
@@ -41,16 +42,18 @@ from auto_engineering.engine.verification_layers import (
     determine_verification_layers,
 )
 from auto_engineering.gates.deep_audit import recount_findings
-from auto_engineering.loop.actions import ActionDone, ActionError, ErrorResponse
+from auto_engineering.loop.actions import ActionDone, ActionError, ErrorResponse, validate_result_format
 from auto_engineering.loop.checkpoint.manager import CheckpointManager
+from auto_engineering.loop.checkpoint.records import CheckpointNotFoundError
 from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
-from auto_engineering.loop.convergence import ConvergenceConfig, ConvergenceJudge
-from auto_engineering.loop.debug_tracer import DebugTracer
+from auto_engineering.loop.convergence import ConvergenceConfig, ConvergenceJudge, RoundHistory
+from auto_engineering.loop.debug_tracer import DebugTracer, now_iso
 from auto_engineering.loop.action_builder import ActionBuilder
 from auto_engineering.loop.tick_gate_runner import TickGateRunner
 from auto_engineering.loop.guardrail import GuardrailChain
 from auto_engineering.loop.plan import Plan, TaskDAG
 from auto_engineering.loop.refine import build_refine_request
+from auto_engineering.loop.standalone_driver import STAGE_TO_ROLE
 from auto_engineering.loop.stage_router import (
     StageRouter,
     clear_stage_fields,
@@ -58,7 +61,10 @@ from auto_engineering.loop.stage_router import (
 )
 from auto_engineering.loop.task_factory import tasks_from_batch_plan
 from auto_engineering.observability.audit_log import AuditLogger
+from auto_engineering.metrics.collector import AIOrigin, get_collector
+from auto_engineering.metrics.enrichment import compute_metrics_signals
 from auto_engineering.metrics.transcript_parser import create_parser
+from auto_engineering.gates._tools import LANGUAGE_TOOLS
 from auto_engineering.pii.redactor import PIIRedactor
 from auto_engineering.prompts.registry import default_registry
 
@@ -200,25 +206,17 @@ _SPAWN_CONFIG: dict[str, dict] = {
 _logger = logging.getLogger("ae.loop.tick_orchestrator")
 
 
-def _now_iso() -> str:
-    return datetime.now(UTC).strftime(_ISO_FMT)
-
-
 # ── Protocol types (P1-10: replace Any with typed contracts) ──
 
 
 @runtime_checkable
-class ContextOffloader(Protocol):
-    """Context offloading — 将 stage context 写入文件."""
+class TickContextOffloader(Protocol):
+    """Context offloading — 将 stage context 写入文件.
+
+    Implementation: auto_engineering.context.offloading.ContextOffloader.
+    """
 
     def offload(self, stage: str, context: dict) -> Path: ...
-
-
-@runtime_checkable
-class OTLPTracer(Protocol):
-    """OTLP tracing — span lifecycle 管理."""
-
-    def start_span(self, name: str, attributes: dict | None = None) -> object: ...
 
 
 class TickOrchestrator:
@@ -237,10 +235,12 @@ class TickOrchestrator:
         gate_runner: GateRunner | None = None,
         guardrail: GuardrailChain | None = None,
         checkpoint_store: SQLiteCheckpointStore | None = None,
-        context_offloader: ContextOffloader | None = None,
-        tracer: OTLPTracer | None = None,
+        context_offloader: TickContextOffloader | None = None,
+        tracer: Any | None = None,
         audit_logger: AuditLogger | None = None,
         runtime_config: RuntimeConfig | None = None,
+        pii_redactor: PIIRedactor | None = None,
+        transcript_parser: Any | None = None,
         escalate: bool = False,
         debug: bool = False,
         debug_dir: str | None = None,
@@ -258,12 +258,15 @@ class TickOrchestrator:
         # P0-6: centralized config — injectable, defaults to process-wide sentinel
         self._runtime_config = runtime_config if runtime_config is not None else get_default_config()
 
-        # T109: PII 四层文件桥接防护
+        # T109: PII 四层文件桥接防护 (可注入, 默认自动创建)
         self._pii_enabled = self._runtime_config.pii_enabled
-        self._pii_redactor: PIIRedactor | None = PIIRedactor() if self._pii_enabled else None
+        self._pii_redactor: PIIRedactor | None = (
+            pii_redactor if pii_redactor is not None
+            else (PIIRedactor() if self._pii_enabled else None)
+        )
 
-        # T110: M5 Token JSONL 采集 (Agent 驱动模式)
-        self._transcript_parser = create_parser(self.project_root)
+        # T110: M5 Token JSONL 采集 (可注入, 默认自动创建)
+        self._transcript_parser = transcript_parser if transcript_parser is not None else create_parser(self.project_root)
 
         self._state: EngineState | None = None
         self._router: StageRouter | None = None
@@ -288,7 +291,6 @@ class TickOrchestrator:
         # T64: Stage Checkpoint Gate (DecisionGate 形态 3)
         self._pause_at_stages: set[str] = set()
         self._passed_checkpoints: set[str] = set()
-        # P0-1: ActionBuilder delegate — 提取 10 stage builder + dispatch + PII outbound
         self._action_builder = ActionBuilder(
             self.project_root,
             pii_enabled=self._pii_enabled,
@@ -327,7 +329,6 @@ class TickOrchestrator:
         Unknown stage names are warned but not rejected — typos would
         silently prevent the checkpoint from ever triggering.
         """
-        from auto_engineering.loop.standalone_driver import STAGE_TO_ROLE
         known = set(STAGE_TO_ROLE.keys())
         for s in stages:
             if s not in known:
@@ -433,8 +434,8 @@ class TickOrchestrator:
         checkpoint_id: str | None = None,
         gate_runner: GateRunner | None = None,
         guardrail: GuardrailChain | None = None,
-        context_offloader: ContextOffloader | None = None,
-        tracer: OTLPTracer | None = None,
+        context_offloader: TickContextOffloader | None = None,
+        tracer: Any | None = None,
         audit_logger: AuditLogger | None = None,
         runtime_config: RuntimeConfig | None = None,
         max_rounds: int = 5,
@@ -450,8 +451,6 @@ class TickOrchestrator:
         max_rounds: EngineState 未持久化该字段 → restore 用默认 5 (与 init 一致);
         精确恢复需扩 schema (本步不扩)。
         """
-        from auto_engineering.loop.checkpoint.records import CheckpointNotFoundError
-
         self = cls(
             project_root,
             gate_runner=gate_runner,
@@ -573,7 +572,6 @@ class TickOrchestrator:
         self._record_tick_latency(t_start, tick_no)
 
         # T69a: Record tick completion event for metrics collector
-        from auto_engineering.metrics.collector import AIOrigin, get_collector
         mc = get_collector()
         if mc is not None:
             verdict = ""
@@ -812,7 +810,6 @@ class TickOrchestrator:
                         f"(stage 是角色名如 'developer'/'architect', 不是 batch_id 如 'B4')",
                 current_state=self._state.to_dict())
 
-        from auto_engineering.loop.actions import validate_result_format
         errors = validate_result_format(result, self._state.current_stage)
         if errors:
             return ErrorResponse(
@@ -1304,7 +1301,7 @@ class TickOrchestrator:
                 gap_id=gap["id"],
                 design_section_ref=gap.get("design_section_ref", ""),
                 content=content, source=source, source_tier=source_tier,
-                confidence=confidence, created_at=_now_iso())
+                confidence=confidence, created_at=now_iso())
             self._state.design_supplements_json = json.dumps(
                 {k: asdict(v) for k, v in self._design_doc.supplements.items()},
                 ensure_ascii=False)
@@ -1383,8 +1380,6 @@ class TickOrchestrator:
         # T83: Compute metrics signals only on convergence (done verdict).
         # Previously in _build_action() on every tick — moved here so signals
         # reflect terminal state and trend analysis is only triggered at loop end.
-        from auto_engineering.metrics.collector import get_collector
-        from auto_engineering.metrics.enrichment import compute_metrics_signals
         mc = get_collector()
         if mc is not None:
             history = mc.load_history(limit=10)
@@ -1419,7 +1414,6 @@ class TickOrchestrator:
 
         detected_language=None 表示无法探测, 用户需从全部语言中选择.
         """
-        from auto_engineering.gates._tools import LANGUAGE_TOOLS
 
         if detected_language:
             default_tools = LANGUAGE_TOOLS.get(
@@ -1463,7 +1457,6 @@ class TickOrchestrator:
         """处理 init_manifest_missing 的 gate resolution — 创建 manifest 并继续."""
         resolution = gate_resolution.get("resolution", "")
         detail = gate_resolution.get("resolution_detail", {})
-        from auto_engineering.gates._tools import LANGUAGE_TOOLS
 
         # 解析 resolution: "typescript: eslint/tsc/vitest" 或 "自定义（...）"
         lang: str | None = None
@@ -1597,9 +1590,14 @@ class TickOrchestrator:
         return self.build_action(
             feedback=f"Agent escalation: 用户批准继续。{note}".rstrip() if note else "")
 
+    @property
+    def action_builder(self) -> ActionBuilder:
+        """Read-only access to the ActionBuilder delegate."""
+        return self._action_builder
+
     def build_action(self, feedback: str | None = None, pre_gate: dict | None = None) -> dict:
-        """Build the action dict for the current stage — delegates to ActionBuilder (P0-1)."""
-        return self._action_builder.build_action(
+        """Build the action dict for the current stage — delegates to ActionBuilder."""
+        return self.action_builder.build_action(
             self._state,
             design_doc=self._design_doc,
             init_manifest=self._init_manifest,
@@ -1660,7 +1658,6 @@ class TickOrchestrator:
                         f"(stage 是角色名如 'developer'/'architect', 不是 batch_id 如 'B4')",
                 current_state=self._state.to_dict())
 
-        from auto_engineering.loop.actions import validate_result_format
         errors = validate_result_format(result, self._state.current_stage)
         if errors:
             return ErrorResponse(
@@ -1768,7 +1765,6 @@ class TickOrchestrator:
         T105b: lines_added/lines_removed populated from git diff --numstat so
         stagnation detection can sense "small file big change" scenarios.
         """
-        from auto_engineering.loop.convergence import RoundHistory
 
         gate_results = getattr(self._state, "gate_results", {}) or {}
         files_changed = getattr(self._state, "files_changed", []) or []
@@ -1794,7 +1790,6 @@ class TickOrchestrator:
         if not files_changed:
             return 0, 0
         try:
-            import subprocess
             runner = git_runner if git_runner is not None else subprocess.run
             result = runner(
                 ["git", "-C", str(self.project_root), "diff", "--numstat"],
@@ -1847,7 +1842,6 @@ class TickOrchestrator:
         automatically once the metrics pipeline accumulates sufficient data.
         """
         try:
-            from auto_engineering.config.runtime_config import get_default_config
             if get_default_config().metrics_enabled:
                 from auto_engineering.metrics.threshold_learner import ThresholdLearner
                 learner = ThresholdLearner(self.project_root / ".ae-state" / "metrics")
@@ -1855,7 +1849,7 @@ class TickOrchestrator:
                 if learned != 10:  # 10 is the cold-start default — no real data yet
                     return max(2, min(8, learned // 2))
         except Exception:
-            pass
+            _logger.debug("self-learned threshold fallback to default %s", _DEFAULT_P1_THRESHOLD, exc_info=True)
         return _DEFAULT_P1_THRESHOLD
 
     def _write_audit_history(self, p0: int, p1: int, p2: int,

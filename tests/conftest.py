@@ -153,5 +153,28 @@ def _reset_runtime_config_sentinel():
     _rc_mod._SENTINEL = saved
 
 
+# P1-19: Reset module-level singletons between tests to prevent cross-test pollution.
+@pytest.fixture(autouse=True)
+def _reset_module_singletons():
+    """Reset _collector, _DEFAULT_REGISTRY, _STRICT_RED between tests."""
+    import auto_engineering.metrics.collector as _mc
+    import auto_engineering.prompts.registry as _pr
+    import auto_engineering.loop.guardrails.stateful as _gs
+
+    saved_collector = _mc._collector
+    saved_registry = _pr._DEFAULT_REGISTRY
+    saved_strict_red = _gs._STRICT_RED
+
+    _mc._collector = None
+    _pr._DEFAULT_REGISTRY = None
+    _gs._STRICT_RED = None
+
+    yield
+
+    _mc._collector = saved_collector
+    _pr._DEFAULT_REGISTRY = saved_registry
+    _gs._STRICT_RED = saved_strict_red
+
+
 # Fix: import sys(用于 stderr 输出)
 import sys  # noqa: E402

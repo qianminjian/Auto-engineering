@@ -65,7 +65,7 @@ def _build_role_system_prompt(role: str) -> str:
         return DEVELOPER_SYSTEM_PROMPT
     if role == "critic":
         return CRITIC_SYSTEM_PROMPT
-    return f"You are a {role} agent. Process the user request and produce a structured response."
+    raise ValueError(f"无效 role '{role}'，有效值: architect, developer, critic")
 
 
 def _build_runtime_for_role(role: str, project_root: Path) -> AgentRuntime:

@@ -51,8 +51,9 @@ class ContextOffloader:
         full = offloader.load_full_context("architect")
     """
 
-    def __init__(self, storage_dir: Path | None = None, offload_dir: Path | None = None) -> None:
-        self._dir = storage_dir or offload_dir or Path(".ae-state/offload")
+    def __init__(self, storage_dir: Path | None = None, offload_dir: Path | None = None,
+                 project_root: Path | None = None) -> None:
+        self._dir = storage_dir or offload_dir or (project_root / ".ae-state" / "offload" if project_root else Path(".ae-state/offload"))
         self._round_counter: int = 0
         self._summaries: dict[str, str] = {}
 

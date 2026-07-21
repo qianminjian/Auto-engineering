@@ -21,7 +21,7 @@ from typing import Any
 
 import pytest
 
-from auto_engineering.engine.batch_state import BatchState, _warned_zero_batch
+from auto_engineering.engine.batch_state import BatchState
 from auto_engineering.engine.design_doc import Component, DesignDoc, DesignItem, Plate
 from auto_engineering.engine.progress_tree import ProgressTree
 from auto_engineering.engine.state import EngineState
@@ -42,7 +42,7 @@ from auto_engineering.loop.guardrail import (
     handle_guardrail_result,
 )
 from auto_engineering.loop.guardrails.stateful import (
-    _aggregate_sha,
+    aggregate_files_sha,
     _git_is_ancestor,
 )
 from auto_engineering.pii.guardrail import PIIGuardrail
@@ -1196,7 +1196,7 @@ class TestFreshGuardrail:
         """Gate 记录的 files_snapshot_sha == 当前工作树聚合 sha → pass."""
         (tmp_path / "a.py").write_text("print(1)\n")
         files = ["a.py"]
-        sha = _aggregate_sha(files, tmp_path)
+        sha = aggregate_files_sha(files, tmp_path)
         state = EngineState(
             files_changed=files,
             gate_results={"lint": {"passed": True, "message": "ok",
@@ -1208,7 +1208,7 @@ class TestFreshGuardrail:
         """Gate 运行后代码又变更 (sha 不匹配) → retry (强制重跑 Gate)."""
         (tmp_path / "a.py").write_text("print(1)\n")
         files = ["a.py"]
-        stale_sha = _aggregate_sha(files, tmp_path)
+        stale_sha = aggregate_files_sha(files, tmp_path)
         # Gate 跑完后代码又改了
         (tmp_path / "a.py").write_text("print(2)  # changed after gate\n")
         state = EngineState(
@@ -1237,13 +1237,13 @@ class TestFreshGuardrail:
 def test_aggregate_sha_deterministic_and_content_sensitive(tmp_path: Path) -> None:
     """_aggregate_sha: 同内容同 sha; 内容变则 sha 变; 缺文件不抛异常."""
     (tmp_path / "a.py").write_text("x\n")
-    s1 = _aggregate_sha(["a.py"], tmp_path)
-    s2 = _aggregate_sha(["a.py"], tmp_path)
+    s1 = aggregate_files_sha(["a.py"], tmp_path)
+    s2 = aggregate_files_sha(["a.py"], tmp_path)
     assert s1 == s2
     (tmp_path / "a.py").write_text("y\n")
-    assert _aggregate_sha(["a.py"], tmp_path) != s1
+    assert aggregate_files_sha(["a.py"], tmp_path) != s1
     # 缺文件不抛
-    assert isinstance(_aggregate_sha(["missing.py"], tmp_path), str)
+    assert isinstance(aggregate_files_sha(["missing.py"], tmp_path), str)
 
 
 # ==================== GuardrailResult.guardrail_name + Chain 注入 ====================
@@ -1532,8 +1532,7 @@ class TestVoiceCloneRegression:
 
     def test_zero_batch_warning_dedup(self) -> None:
         """B9/D2: 零 batch 组件警告每个组件只输出一次."""
-        from auto_engineering.engine.batch_state import _warned_zero_batch
-        saved = set(_warned_zero_batch)
+        saved = set(BatchState._warned_zero_batch or set())
         try:
             design_items = [DesignItem(item_id="D1", design_section="B2", title="item1",
                                         key_claims=["claim1"], source_marker="manual")]
@@ -1557,10 +1556,12 @@ class TestVoiceCloneRegression:
             # Second call: should NOT warn again for comp_b
             BatchState.from_design_doc(doc, batch_plan)
             # _warned_zero_batch should contain the warned component
-            assert "comp_b" in _warned_zero_batch
+            assert BatchState._warned_zero_batch is not None
+            assert "comp_b" in BatchState._warned_zero_batch
         finally:
-            _warned_zero_batch.clear()
-            _warned_zero_batch.update(saved)
+            BatchState._warned_zero_batch.clear()
+            if saved:
+                BatchState._warned_zero_batch.update(saved)
 
     def test_progress_tree_verifier_reset_on_resync(self) -> None:
         """D1: plan_refine 后 progress_tree 组件 total_tasks 变化 → verifier_status 重置."""

@@ -134,13 +134,10 @@ def _scan_file(path: Path) -> list[str]:
     同时命中, 同一 secret 之前会被报两次 (不同 desc). 现用 dict by desc
     去重 (保持顺序).
     """
-    try:
-        size_mb = path.stat().st_size / (1024 * 1024)
-        if size_mb > _MAX_FILE_MB:
-            return []
-        content = path.read_text(errors="ignore")
-    except (OSError, UnicodeDecodeError):
-        _logger.debug("secret scan: 不可读文件 %s", path)
+    from auto_engineering.gates._scan_utils import read_file_safe
+
+    content = read_file_safe(path, max_size_mb=_MAX_FILE_MB)
+    if content is None:
         return []
 
     hits: dict[str, None] = {}  # 用 dict 保插入顺序去重

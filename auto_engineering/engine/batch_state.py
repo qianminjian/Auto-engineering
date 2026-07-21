@@ -26,9 +26,6 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-# 已警告过的零 batch 组件集合 (防重复警告, T39 B9/D2)
-_warned_zero_batch: set[str] = set()
-
 from auto_engineering.engine.design_doc import Component, DesignDoc, Plate
 
 if TYPE_CHECKING:
@@ -45,6 +42,9 @@ class BatchState:
     current_plate_idx: int = 0
     current_component_idx: int = 0
     current_batch_idx: int = 0
+
+    # 已警告过的零 batch 组件集合 (防重复警告, T39 B9/D2)
+    _warned_zero_batch: set[str] | None = None
 
     # ------------------------------------------------------------------
     # 构造 (双模式, 均在 _after_architect batch_plan 就绪后调用)
@@ -105,9 +105,11 @@ class BatchState:
         # 零 batch 组件: design_doc 有但无对应 batch → WARN (交 architect 确认)
         # T39 B9/D2: 每个组件只警告一次, 跨 tick 不重复
         zero_batch = [c for c in plate_component_names if c not in batch_components]
-        new_warns = [c for c in zero_batch if c not in _warned_zero_batch]
+        if cls._warned_zero_batch is None:
+            cls._warned_zero_batch = set()
+        new_warns = [c for c in zero_batch if c not in cls._warned_zero_batch]
         if new_warns:
-            _warned_zero_batch.update(new_warns)
+            cls._warned_zero_batch.update(new_warns)
             _logger.warning(
                 "零 batch 组件 %s: design_doc 声明但 batch_plan 无对应 batch —— "
                 "确认是'有意不实现'还是'漏排 batch'",

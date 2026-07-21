@@ -99,10 +99,9 @@ def test_build_role_prompt_critic_returns_string() -> None:
 
 
 def test_build_role_prompt_fallback_unknown_role() -> None:
-    """未知 role -> fallback 通用 prompt (含 role 名)."""
-    prompt = _build_role_system_prompt("not_a_real_role")
-    assert isinstance(prompt, str)
-    assert "not_a_real_role" in prompt
+    """未知 role -> ValueError."""
+    with pytest.raises(ValueError, match="无效 role 'not_a_real_role'"):
+        _build_role_system_prompt("not_a_real_role")
 
 
 def test_build_role_prompt_3_roles_differ() -> None:

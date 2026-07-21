@@ -41,14 +41,17 @@ class CheckpointManager:
 
         行为契约:
             - store 为 None → 跳过 (返回 None), 不影响主流程
+            - state 为 None → 跳过 (返回 None), 调用方传空
             - IO 异常 → 静默吞掉 (不阻塞主循环, 警告 log)
 
         Returns:
             checkpoint_id (str) — 成功时; None — store 未配置或 state 为 None.
         """
         if self._store is None:
+            _logger.debug("checkpoint save 跳过: store 未配置")
             return None
         if state is None:
+            _logger.debug("checkpoint save 跳过: state 为 None")
             return None
         try:
             return self._store.save(
@@ -74,7 +77,10 @@ class CheckpointManager:
     def load(self, checkpoint_id: str):
         """按 ID 加载完整 checkpoint."""
         if self._store is None:
-            raise CheckpointNotFoundError("store 未配置")
+            raise CheckpointNotFoundError(
+                "store 未配置 — 在 TickOrchestrator 初始化时传入 "
+                "SQLiteCheckpointStore(db_path)，或检查 AE_STATE_DIR 环境变量"
+            )
         return self._store.load(checkpoint_id)
 
     def count(self) -> int:

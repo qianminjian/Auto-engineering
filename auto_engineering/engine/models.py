@@ -123,15 +123,17 @@ class Task:
         self.depends_on = list(self.depends_on)
         self.context_files = list(self.context_files)
 
-    # v5.5 P1-7: agent_type → role 统一, agent_type 作为 deprecated property
     @property
     def agent_type(self) -> str:
         """Deprecated: use role instead."""
+        import warnings
+        warnings.warn("agent_type is deprecated, use role instead", DeprecationWarning, stacklevel=2)
         return self.role
 
     @agent_type.setter
     def agent_type(self, value: str) -> None:
-        """Deprecated: set role instead."""
+        import warnings
+        warnings.warn("agent_type is deprecated, use role instead", DeprecationWarning, stacklevel=2)
         self.role = value
 
 

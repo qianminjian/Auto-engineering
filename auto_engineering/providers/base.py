@@ -11,7 +11,7 @@ from typing import Protocol, runtime_checkable
 
 
 @runtime_checkable
-class _ChatCompletionLike(Protocol):
+class ChatCompletionLike(Protocol):
     """Minimal structural protocol for OpenAI-compatible chat completion response.
 
     Used by _openai_response_to_llm() adapters to narrow from Any without

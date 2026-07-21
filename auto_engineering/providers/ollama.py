@@ -13,10 +13,10 @@ from __future__ import annotations
 
 import json
 import logging
-from auto_engineering.providers.base import LLMProvider, LLMResponse, ToolUseBlock, _ChatCompletionLike
-from auto_engineering.providers.openai_provider import (
-    _anthropic_messages_to_openai,
-    _anthropic_tools_to_openai,
+from auto_engineering.providers.base import ChatCompletionLike, LLMProvider, LLMResponse, ToolUseBlock
+from auto_engineering.providers._openai_adapters import (
+    anthropic_messages_to_openai as _anthropic_messages_to_openai,
+    anthropic_tools_to_openai as _anthropic_tools_to_openai,
 )
 
 _logger = logging.getLogger("ae.providers.ollama")
@@ -41,7 +41,7 @@ def _is_ollama_available() -> bool:
         return False
 
 
-def _openai_response_to_llm(response: _ChatCompletionLike) -> LLMResponse:
+def _openai_response_to_llm(response: ChatCompletionLike) -> LLMResponse:
     """Convert OpenAI-compatible response → LLMResponse."""
     choice = response.choices[0]
     content = choice.message.content or ""

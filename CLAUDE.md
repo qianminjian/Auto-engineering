@@ -1,6 +1,17 @@
+<!--
+此文件由 agent-rules/instructions.md.tmpl 自动生成，请勿直接修改。
+修改模板后运行：python3 scripts/sync_agent_instructions.py
+-->
+
 # CLAUDE.md
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## 跨 Agent 规则同步
+
+- 修改项目 Agent 规则时，只编辑 `agent-rules/instructions.md.tmpl`。
+- 禁止直接编辑生成的 `CLAUDE.md` 和 `AGENTS.md`。
+- 修改模板后必须运行 `python3 scripts/sync_agent_instructions.py`，并用 `--check` 校验无漂移。
 
 ## ⚠️ 硬禁令（2026-06-24 96GB 内存爆炸事故后确立）
 
@@ -27,7 +38,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **三步法**：Grep 定位 → 50-200 行 Read → 立即丢弃。
 
-**Why：** 2026-06-24 atdo Phase 02 spawn 3 个 subagent，每个 claude code 进程扫描 project root 建立 file tree index，3 个进程叠加吃掉 96 GB 物理内存 → macOS 强制重启。
+**Why：** 2026-06-24 atdo Phase 02 spawn 3 个 subagent，每个 Claude Code 进程扫描 project root 建立 file tree index，3 个进程叠加吃掉 96 GB 物理内存 → macOS 强制重启。
 
 ---
 
@@ -64,8 +75,7 @@ Plugin 层 (.claude-plugin/)
 
 Engine 层 (auto_engineering/)
   loop/
-    tick_orchestrator.py — v5.6 Tick 主引擎 (1017 行, 4 after-handler + _build_action + _apply_result_to_state)
-    orchestrator.py      — v5.5 连续 while 循环 (1208 行, 退役过渡期)
+    tick_orchestrator.py — v5.6 Tick 主引擎 (1683 行, 10 after-handler + ActionBuilder + TickGateRunner)
     standalone_driver.py — v7.0 StandaloneDriver (双驱动 B 端, 自带 key 调 LLM)
     stage_router.py      — T1-T22 转换表 + MAJOR 计数 + refine_allowed
     guardrail.py         — 10 Guardrail (3 态: pass/block/retry, 含 REDGuardrail/FreshGuardrail/RegressionGuardrail/PIIGuardrail)
@@ -82,14 +92,12 @@ Engine 层 (auto_engineering/)
     prompts.py           — v5.0 system prompts (architect/developer/critic, legacy)
   context/
     offloading.py        — Stage context offloading (每 stage 完成 context 卸载到文件)
-    summarization.py     — Cross-tick developer session summarization (tick>5 压缩)
   pii/
     redactor.py          — Prompt PII redaction (正则扫描+脱敏)
     rules.py             — PIIDetectionRule dataclass (5 类规则)
     guardrail.py         — PII Guardrail G10 (post-agent 全量文件扫描)
   metrics/               — AI Coding 度量与自进化体系 (Phase 20-21)
-  observability/
-    langsmith_exporter.py — LangSmith exporter (Phase 25 T93)
+  observability/        — 追踪与审计日志 (setup_tracing + AuditLogger)
   prompts/
     registry.py          — PromptRegistry (B12 中央提示词管理, sha256 版本锁)
     roles/               — 9 角色 prompt (architect/developer/critic/verifier/audit/...)

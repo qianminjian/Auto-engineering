@@ -31,12 +31,9 @@ from auto_engineering.cli.dev_loop import (
 from auto_engineering.cli.doctor import register_doctor_command
 from auto_engineering.cli.gate_check import register_gate_check_command
 from auto_engineering.cli.helpers import (
-    CATEGORY_FRIENDLY_PREFIX,
     ErrorCategory,
     ProgressLogger,
     TokenTracker,
-    install_sigint_handler,
-    log_engine_version,
     classify_error,
 )
 from auto_engineering.cli.progress import register_progress_command

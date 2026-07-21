@@ -250,10 +250,10 @@ class AuditGate(Gate):
 
     def _scan_file(self, path: Path, rel: str) -> list[AuditFinding]:
         """扫描单个文件, 返回 AuditFinding 列表."""
-        try:
-            content = path.read_text(errors="ignore")
-        except OSError:
-            _logger.warning("audit scan: 读取失败 %s", path)
+        from auto_engineering.gates._scan_utils import read_file_safe
+
+        content = read_file_safe(path, max_size_mb=_MAX_FILE_MB)
+        if content is None:
             return []
 
         findings: list[AuditFinding] = []

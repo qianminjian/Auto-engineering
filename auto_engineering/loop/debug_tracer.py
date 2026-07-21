@@ -16,7 +16,7 @@ from pathlib import Path
 _ISO_FMT = "%Y-%m-%dT%H:%M:%S.%fZ"
 
 
-def _now_iso() -> str:
+def now_iso() -> str:
     return datetime.now(UTC).strftime(_ISO_FMT)
 
 
@@ -57,7 +57,7 @@ class DebugTracer:
         self._stage_sequence.append(stage_out)
         snapshot = {
             "tick": tick_num,
-            "timestamp": _now_iso(),
+            "timestamp": now_iso(),
             "stage_in": stage_in,
             "stage_out": stage_out,
             "action": action,
@@ -75,7 +75,7 @@ class DebugTracer:
             return
         entry = {
             "tick": tick,
-            "timestamp": _now_iso(),
+            "timestamp": now_iso(),
             "category": category,
             "detail": detail,
         }
@@ -94,7 +94,7 @@ class DebugTracer:
             "stage_sequence": self._stage_sequence,
             "error_counts": self._error_counts,
             "total_duration_ms": round(t_total_ms, 2),
-            "finished_at": _now_iso(),
+            "finished_at": now_iso(),
         }
         trace_file = self._dir / "trace.json"
         trace_file.write_text(json.dumps(trace, ensure_ascii=False, indent=2), encoding="utf-8")

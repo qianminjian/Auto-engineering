@@ -78,14 +78,14 @@ def register_gate_check_command(main: click.Group) -> None:
         "--project-root",
         type=click.Path(exists=True),
         default=None,
-        help="项目根目录 (默认 cwd)",
+        help="项目根目录 (默认当前目录)",
     )
     def gate_check(run_all: bool, quick: bool, project_root: str) -> None:
         """跑 Gate 检查, 输出 JSON gate_summary."""
-        root = Path(project_root).resolve() if project_root else Path.cwd()
+        project_root_path = Path(project_root).resolve() if project_root else Path.cwd()
         names = QUICK_GATES if quick else ALL_GATES
         mode = "quick" if quick else "all"
-        result = run_gates(names, root)
+        result = run_gates(names, project_root_path)
         result["mode"] = mode
         click.echo(json.dumps(result, ensure_ascii=False, indent=2))
         # 退出码: 0 = 全部 pass/skip, 1 = 存在 fail

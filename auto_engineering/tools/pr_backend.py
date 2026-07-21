@@ -27,7 +27,6 @@ __all__ = [
     "PRBackend",
     "PRResult",
     "available_backends",
-    "select_backend",
 ]
 
 _logger = logging.getLogger("ae.tools.pr_backend")
@@ -137,26 +136,6 @@ class GitLabBackend(PRBackend):
 # 探测顺序: github 优先 (auto-detect 平局时的确定性)。
 _BACKENDS: tuple[type[PRBackend], ...] = (GitHubBackend, GitLabBackend)
 _BY_NAME = {cls.name: cls for cls in _BACKENDS}
-
-
-def select_backend(
-    ci_platform: str | None = None,
-    *,
-    runner: Runner | None = None,
-    project_root: Path | str | None = None,
-) -> PRBackend | None:
-    """按 ci_platform 选后端；none/未知 → 按 PATH 可用性自动探测 (github 优先).
-
-    Returns None 当没有任何 PR 后端 CLI 可用 (调用方应降级为提示手动创建 PR).
-    """
-    cls = _BY_NAME.get((ci_platform or "").lower())
-    if cls is not None:
-        return cls(runner=runner, project_root=project_root)
-    for candidate in _BACKENDS:
-        backend = candidate(runner=runner, project_root=project_root)
-        if backend.is_available():
-            return backend
-    return None
 
 
 def available_backends(*, runner: Runner | None = None) -> list[str]:

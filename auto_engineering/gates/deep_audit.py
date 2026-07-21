@@ -77,6 +77,7 @@ def _finding_from_dict(d: dict) -> DeepAuditFinding:
         description=d.get("description", ""),
         evidence=d.get("evidence", ""),
         suggested_fix=d.get("suggested_fix", ""),
+        design_section=d.get("design_section") or d.get("section") or "",
         agent_source=_normalize_agent_source(d.get("agent_source")),
     )
 
@@ -85,7 +86,9 @@ def _finding_to_dict(f: DeepAuditFinding) -> dict:
     return {
         "severity": f.severity, "dimension": f.dimension, "file": f.file,
         "line": f.line, "description": f.description, "evidence": f.evidence,
-        "suggested_fix": f.suggested_fix, "agent_source": f.agent_source,
+        "suggested_fix": f.suggested_fix,
+        "design_section": f.design_section,
+        "agent_source": f.agent_source,
     }
 
 
@@ -125,6 +128,7 @@ class DeepAuditFinding:
     description: str
     evidence: str
     suggested_fix: str
+    design_section: str = ""  # 关联设计章节 (refine 路由使用)
     agent_source: list[str] = field(default_factory=list)  # 命中的 agent role 列表
 
 

@@ -13,6 +13,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from auto_engineering.gates.deep_audit import recount_findings
+
 # 归一映射建议动作 (设计 §B6.10 映射表, line 1167-1169)
 _MISSING_ACTION = "补充实现：新增覆盖该设计条目的 batch/task"
 _DIVERGED_ACTION = "判定方向：修正代码回归设计意图，或（若代码更优）更新设计文档（走 C.11）"
@@ -20,10 +22,6 @@ _AUDIT_ACTION_DEFAULT = "修复该 finding"
 
 _COVERAGE_SOURCES = frozenset({"component_verifier", "system_verifier"})
 _AUDIT_SOURCES = frozenset({"plate_deep_audit", "system_deep_audit"})
-
-# audit finding 只有 P0/P1 触发 plan_refine (P2 仅记录, 呼应 B6.7a 阈值)
-_SEVERITY_RANK = {"P0": 2, "P1": 1, "P2": 0}
-
 
 @dataclass
 class RefineGap:
@@ -51,30 +49,6 @@ def _fmt_location(file: str | None, line: int | None) -> str | None:
     if not file:
         return None
     return f"{file}:{line}" if line else file
-
-
-def _dedup_findings(findings: list[dict]) -> list[dict]:
-    """去重 (B6.7a): 键=(file, line, description[:40] 归一化). 碰撞保留最高 severity.
-
-    一条问题被多 Agent 命中 = 更高置信. 保序 (首次出现位置).
-    """
-    best: dict[tuple, dict] = {}
-    order: list[tuple] = []
-    for f in findings:
-        key = (
-            f.get("file", ""),
-            f.get("line", 0),
-            (f.get("description", "")[:40]).strip().lower(),
-        )
-        if key not in best:
-            best[key] = f
-            order.append(key)
-        else:
-            cur = best[key]
-            if _SEVERITY_RANK.get(f.get("severity", ""), -1) > _SEVERITY_RANK.get(
-                    cur.get("severity", ""), -1):
-                best[key] = f
-    return [best[k] for k in order]
 
 
 def build_refine_request(
@@ -113,7 +87,8 @@ def build_refine_request(
             # IMPLEMENTED → 跳过
 
     elif source in _AUDIT_SOURCES:
-        for f in _dedup_findings(audit_findings or []):
+        deduped, _, _, _ = recount_findings(audit_findings or [])
+        for f in deduped:
             severity = f.get("severity")
             if severity not in ("P0", "P1"):
                 continue  # P2 仅记录, 不触发 plan_refine

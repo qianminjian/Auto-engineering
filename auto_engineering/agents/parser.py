@@ -46,7 +46,7 @@ _BATCH_HEADING_RE = re.compile(r"#{2,4}\s*(T\d+|[Bb]atch\s*\d+)[：:\-\s]+([^\n]
 _CODE_BLOCK_RE = re.compile(r"```(?:[\w]*)\n(.*?)```", re.DOTALL)
 
 
-def _extract_file_paths(text: str) -> list[str]:
+def extract_file_paths(text: str) -> list[str]:
     """从文本中提取所有文件路径."""
     seen: set[str] = set()
     paths: list[str] = []
@@ -93,7 +93,7 @@ def _extract_from_markdown(text: str) -> dict | None:
     if not text or not text.strip():
         return None
 
-    file_list = _extract_file_paths(text)
+    file_list = extract_file_paths(text)
     text_lower = text.lower()
 
     # ── Critic stage detection ──
@@ -130,7 +130,7 @@ def _extract_from_markdown(text: str) -> dict | None:
         component = match.group(2).strip()
         start = match.end()
         end = batch_matches[i + 1].start() if i + 1 < len(batch_matches) else len(text)
-        section_files = _extract_file_paths(text[start:end])
+        section_files = extract_file_paths(text[start:end])
         task = {"id": batch_id, "description": component, "file_targets": section_files}
         batch_plan.append({
             "batch_id": batch_id,
@@ -253,7 +253,7 @@ def _fill_defaults(parsed: dict, text: str) -> None:
     if stage == "architect":
         parsed.setdefault("plan", text)
         parsed.setdefault("batch_plan", [])
-        parsed.setdefault("file_list", _extract_file_paths(text))
+        parsed.setdefault("file_list", extract_file_paths(text))
         parsed.setdefault("contracts", [])
         # v7.8: normalize batch_plan format (兼容旧扁平格式)
         if parsed["batch_plan"]:
@@ -270,7 +270,7 @@ def _fill_defaults(parsed: dict, text: str) -> None:
             }]
     elif stage == "developer":
         parsed.setdefault("batch_id", "T1")
-        parsed.setdefault("files_changed", _extract_file_paths(text))
+        parsed.setdefault("files_changed", extract_file_paths(text))
         parsed.setdefault("test_results", {"passed": 1, "failed": 0, "total": 1})
     elif stage == "critic":
         parsed.setdefault("verdict", "APPROVE")

@@ -21,12 +21,28 @@ from auto_engineering.engine.guardrail_types import (
     Guardrail,
     GuardrailResult,
 )
-from auto_engineering.utils.git import run_git as _run_git
+from auto_engineering.utils.git import run_git as _real_git
 
 if TYPE_CHECKING:
     from auto_engineering.engine.state import EngineState
 
 _logger = logging.getLogger(__name__)
+
+# Injectable runners (defaults → real implementations; tests can inject stubs).
+_run_git = _real_git
+_test_runner = None  # None → use subprocess.run(["python", "-m", "pytest", ...])
+
+
+def set_git_runner(runner) -> None:
+    """Inject a stub git runner (tests only). Call with None to restore default."""
+    global _run_git
+    _run_git = _real_git if runner is None else runner
+
+
+def set_test_runner(runner) -> None:
+    """Inject a stub pytest runner (tests only). Call with None to restore default."""
+    global _test_runner
+    _test_runner = runner
 
 # ==================== G7/G8 helpers (B3.1 / B3.2) ====================
 
@@ -113,24 +129,27 @@ def _run_test_at_commit(
     if not test_id:
         return "UNKNOWN"
     root = Path(project_root)
+    _git = _run_git  # local ref for injectable override
     try:
         with tempfile.TemporaryDirectory() as wt:
-            rc, _ = _run_git(root, "worktree", "add", "--detach", wt, test_commit)
+            rc, _ = _git(root, "worktree", "add", "--detach", wt, test_commit)
             if rc != 0:
                 return "UNKNOWN"
             try:
+                if _test_runner is not None:
+                    return _test_runner(test_commit, test_id, Path(wt))
                 proc = subprocess.run(
                     ["python", "-m", "pytest", "-k", test_id, "-q", "--no-header"],
                     cwd=wt, capture_output=True, text=True, timeout=120,
                 )
                 return "FAIL" if proc.returncode != 0 else "PASS"
             finally:
-                _run_git(root, "worktree", "remove", "--force", wt)
+                _git(root, "worktree", "remove", "--force", wt)
     except (OSError, subprocess.SubprocessError):
         return "UNKNOWN"
 
 
-def _aggregate_sha(files_changed: list[str], project_root: Path) -> str:
+def aggregate_files_sha(files_changed: list[str], project_root: Path) -> str:
     """聚合 files_changed 内容的 sha256 (B3.2 files_snapshot_sha).
 
     对排序后的 (相对路径, 内容) 逐项 update, 保证确定性. 缺失文件用占位符
@@ -189,6 +208,7 @@ class REDGuardrail(Guardrail):
         try:
             tasks = batch_state.current_batch_tasks(plan)
         except Exception:  # 句柄不完整时降级放行 (纯函数不抛给上层, 见 ABC check 约束)
+            _logger.warning("_build_redguard_state: batch state parse failed, guardrail degraded", exc_info=True)
             return GuardrailResult()
 
         red_evidence = getattr(state, "red_evidence", []) or []
@@ -267,7 +287,7 @@ class FreshGuardrail(Guardrail):
         if not gate_results:
             return GuardrailResult()
         files_changed = getattr(state, "files_changed", []) or []
-        current_sha = _aggregate_sha(files_changed, root)
+        current_sha = aggregate_files_sha(files_changed, root)
         for gate_name, r in gate_results.items():
             snapshot = (r or {}).get("files_snapshot_sha") if isinstance(r, dict) else None
             if snapshot and snapshot != current_sha:
@@ -339,6 +359,7 @@ def _current_regression_task(state: EngineState):
     try:
         tasks = batch_state.current_batch_tasks(plan)
     except Exception:  # 句柄不完整时降级 (纯函数不抛给上层, 见 ABC check 约束)
+        _logger.warning("_find_regression_task: batch state parse failed, gate degraded", exc_info=True)
         return None
     for task in tasks or []:
         if getattr(task, "kind", "") == "regression_fix":

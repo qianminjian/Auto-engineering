@@ -75,8 +75,8 @@ class TickGateRunner:
         per_gate = raw.get("gate_summary", raw)
         duration_ms = (time.perf_counter() - t_g) * 1000
 
-        from auto_engineering.loop.guardrails.stateful import _aggregate_sha
-        snapshot_sha = _aggregate_sha(files_changed, self._project_root)
+        from auto_engineering.loop.guardrails.stateful import aggregate_files_sha
+        snapshot_sha = aggregate_files_sha(files_changed, self._project_root)
         ran_at = datetime.now(UTC).isoformat()
 
         gate_results: dict[str, Any] = {

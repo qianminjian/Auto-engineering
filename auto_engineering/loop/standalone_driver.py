@@ -385,14 +385,14 @@ class StandaloneDriver:
         """
         try:
             return await self._execute_action(action)
-        except (OSError, RuntimeError, ValueError, TypeError, KeyError):
+        except (OSError, RuntimeError, ValueError, TypeError, KeyError) as e:
             _logger.exception(
-                "_execute_action 异常 (tick=%d, stage=%s)",
-                len(action_history), action.get("stage", "?"),
+                "_execute_action 异常 (tick=%d, stage=%s, exc=%s)",
+                len(action_history), action.get("stage", "?"), e,
             )
             return {
                 "stage": action.get("stage", "unknown"),
-                "error": "execute_action 内部异常, 详见日志",
+                "error": f"execute_action 异常 ({type(e).__name__}): {e}",
             }
 
     # ── action → task → execute ──
@@ -729,13 +729,13 @@ class StandaloneDriver:
         if not plan_text or len(plan_text) < 20:
             return result
 
-        from auto_engineering.agents.parser import _extract_file_paths
+        from auto_engineering.agents.parser import extract_file_paths
 
         file_list = result.get("file_list") or []
         batch_plan = result.get("batch_plan") or []
 
         if not file_list:
-            file_list = _extract_file_paths(plan_text)
+            file_list = extract_file_paths(plan_text)
         if not batch_plan and file_list:
             batch_plan = [{
                 "batch_id": "T1",
