@@ -577,6 +577,9 @@ class TickOrchestrator:
             verdict = ""
             if action.get("action") == "done":
                 verdict = action.get("verdict", "")
+            elif stage_in == "critic":
+                # T80: 传递 critic MAJOR/APPROVE 供 M2 统计
+                verdict = self._state.critic_verdict
             mc.record_tick_complete(
                 tick_number=tick_no + 1,
                 stage=stage_in,

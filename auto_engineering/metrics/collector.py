@@ -375,16 +375,13 @@ class MetricsCollector:
         m1 = len(ticks)
 
         # M2: Critic 打回率 — MAJOR verdict 占比
-        # criteria_met is a str (design F.3). Filter convergence events
-        # where criteria_met starts with "critic_" to isolate critic verdicts.
-        critic_verdicts = [
-            e for e in convergence_events
-            if isinstance(e["payload"].get("criteria_met", ""), str)
-            and e["payload"]["criteria_met"].startswith("critic_")
-        ]
-        major_count = sum(1 for e in critic_verdicts
+        # 从 tick_complete 事件中统计 stage="critic" 的 MAJOR 占比 (T80 fix)
+        # v5.6 tick 模式下单个 loop 只有最终 convergence 事件,
+        # 中间 critic MAJOR 必须从 tick_complete 获取
+        critic_ticks = [e for e in ticks if e["payload"].get("stage") == "critic"]
+        major_count = sum(1 for e in critic_ticks
                          if e["payload"].get("verdict") == "MAJOR")
-        m2 = major_count / max(len(critic_verdicts), 1)
+        m2 = major_count / max(len(critic_ticks), 1)
 
         # M3: 验证层级触发率
         verifier_stages = ["component_verifier", "plate_deep_audit",

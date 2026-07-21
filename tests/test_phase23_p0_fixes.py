@@ -127,19 +127,24 @@ class TestM2CriteriaMet:
         )
 
     def test_m2_nonzero_with_critic_major(self, tmp_path: Path) -> None:
-        """M2 MUST be > 0 when critic issued MAJOR verdicts."""
+        """M2 MUST be > 0 when critic issued MAJOR verdicts (T80 fix: tick_complete source)."""
         collector = MetricsCollector(tmp_path)
         collector.begin_requirement("t2b", "h2b")
-        # Simulate 5 ticks + 1 critic-approved + 1 critic-MAJOR
-        for i in range(5):
+        # Simulate 5 critic ticks: 3 APPROVE + 2 MAJOR → M2 = 2/5 = 0.4
+        for i in range(3):
             collector._events.append({
                 "timestamp": "",
                 "event_type": "tick_complete",
                 "thread_id": "t2b",
                 "payload": {"tick_number": i, "stage": "critic", "verdict": "APPROVE"},
             })
-        collector.record_convergence("APPROVE", 5, criteria_met="critic_approved")
-        collector.record_convergence("MAJOR", 6, criteria_met="critic_major_found")
+        for i in range(3, 5):
+            collector._events.append({
+                "timestamp": "",
+                "event_type": "tick_complete",
+                "thread_id": "t2b",
+                "payload": {"tick_number": i, "stage": "critic", "verdict": "MAJOR"},
+            })
         # Also add a token event to make M5 non-NaN
         collector._events.append({
             "timestamp": "",
@@ -149,9 +154,9 @@ class TestM2CriteriaMet:
         })
 
         summary = collector._compute_summary(loc_added=10)
-        assert summary["M2_critic_major_rate"] > 0, (
-            "T80 NOT FIXED: M2_critic_major_rate is zero despite MAJOR verdict. "
-            "criteria_met field is not being populated in convergence events."
+        assert summary["M2_critic_major_rate"] == 0.4, (
+            "T80 NOT FIXED: M2_critic_major_rate should be 0.4 (2 MAJOR / 5 critic ticks). "
+            f"Got {summary['M2_critic_major_rate']}"
         )
 
     def test_convergence_event_in_tick_orchestrator_passes_criteria_met(self) -> None:
