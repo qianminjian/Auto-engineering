@@ -442,6 +442,10 @@ def _run_tick_init(
                 requirement_category=_infer_category(requirement),
             )
 
+        # T114 5.3: one-line feature status on stderr
+        from auto_engineering.config.feature_flags import feature_status_oneline
+        click.echo(feature_status_oneline(), err=True)
+
         click.echo(json.dumps(action, ensure_ascii=False))
     finally:
         store.close()
@@ -645,6 +649,7 @@ def _run_standalone(
             set_collector,
         )
         collector = MetricsCollector(project_root)
+        collector.set_driver_mode("standalone")
         set_collector(collector)
         req_hash = hashlib.sha256(requirement.encode()).hexdigest()[:12]
         collector.begin_requirement(

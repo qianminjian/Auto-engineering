@@ -497,14 +497,46 @@ class TestGitClean:
         )
         assert result.action == "pass"
 
-    def test_block_dirty_repo(self, tmp_path: Path) -> None:
-        """有未跟踪文件 → pass (untracked files dont block)."""
+    def test_untracked_files_pass(self, tmp_path: Path) -> None:
+        """untracked 文件 (?? in git status) → pass (T106 命名修正)."""
         repo = _make_git_repo(tmp_path)
         (repo / "dirty.txt").write_text("untracked\n")
         result = GitClean().check(
             "developer", EngineState(), project_root=repo,
         )
         assert result.action == "pass"
+
+    def test_ignored_files_pass(self, tmp_path: Path) -> None:
+        """!! (ignored) 文件 → pass (T106a)."""
+        repo = _make_git_repo(tmp_path)
+        gitignore = repo / ".gitignore"
+        gitignore.write_text("*.log\n")
+        _git(repo, "add", ".gitignore")
+        _git(repo, "commit", "-m", "add gitignore")
+        (repo / "debug.log").write_text("ignored content\n")
+        result = GitClean().check(
+            "developer", EngineState(), project_root=repo,
+        )
+        assert result.action == "pass"
+
+    def test_untracked_plus_modified_tracked_blocks(self, tmp_path: Path) -> None:
+        """混合场景: untracked + tracked 修改 → block (T106b)."""
+        repo = _make_git_repo(tmp_path)
+        (repo / "untracked.txt").write_text("new file\n")
+        (repo / "seed.txt").write_text("modified\n")
+        result = GitClean().check(
+            "developer", EngineState(), project_root=repo,
+        )
+        assert result.action == "block"
+
+    def test_git_status_failure_blocks(self, tmp_path: Path) -> None:
+        """git status 命令失败 → block (T106c)."""
+        repo = _make_git_repo(tmp_path)
+        # 指向不存在的目录导致 git status 失败
+        result = GitClean().check(
+            "developer", EngineState(), project_root=repo / "nonexistent",
+        )
+        assert result.action == "block"
 
     def test_block_staged_changes(self, tmp_path: Path) -> None:
         """有已 staged 未 commit 的变更 → block."""
@@ -622,10 +654,10 @@ class TestGuardrailChain:
         # post/developer → G3 + G4 + G5
         assert len([g for g in chain.guardrails if g.timing == "post" and "developer" in g.applies_to_stages]) == 3
 
-    def test_default_factory_returns_10_guardrails(self) -> None:
-        """GuardrailChain.default() 返回 11 Guardrail (G1-G11)."""
+    def test_default_factory_returns_12_guardrails(self) -> None:
+        """GuardrailChain.default() 返回 12 Guardrail (G1-G12)."""
         chain = GuardrailChain.default()
-        assert len(chain.guardrails) == 11
+        assert len(chain.guardrails) == 12
         names = [type(g).__name__ for g in chain.guardrails]
         assert "RequirementValid" in names
         assert "PlanExists" in names
@@ -637,9 +669,12 @@ class TestGuardrailChain:
         assert "FreshGate" in names
         assert "RegressionGate" in names
         assert "FileAccessGuardrail" in names
+        assert "AuditTimingGuardrail" in names
 
     def test_default_factory_same_structure_as_manual(self) -> None:
         """GuardrailChain.default() 与手动构造的 chain 行为一致."""
+        from auto_engineering.loop.guardrail import AuditTimingGuardrail
+
         default_chain = GuardrailChain.default()
         manual_chain = GuardrailChain([
             RequirementValid(),
@@ -653,6 +688,7 @@ class TestGuardrailChain:
             RegressionGate(),
             PIIGuardrail(),
             FileAccessGuardrail(),
+            AuditTimingGuardrail(),
         ])
         # 同数量
         assert len(default_chain.guardrails) == len(manual_chain.guardrails)
@@ -1549,4 +1585,197 @@ class TestVoiceCloneRegression:
         assert node2 is not None
         assert node2.verifier_status == "pending"  # reset from "failed"
         assert node2.verifier_missing == 0
+
+
+# ── T112: AuditTimingGuardrail (evidence combination detector) ──
+
+
+class TestAuditTimingGuardrail:
+    """T112: AuditTimingGuardrail — 三重证据组合检测审计阶段 pass-through."""
+
+    @staticmethod
+    def _make_state(**overrides: Any) -> EngineState:
+        s = EngineState(requirement="test", thread_id="t1")
+        for k, v in overrides.items():
+            setattr(s, k, v)
+        return s
+
+    def _make_guardrail(self) -> Any:
+        from auto_engineering.loop.guardrail import AuditTimingGuardrail
+        return AuditTimingGuardrail()
+
+    def test_cold_start_skips_when_timestamp_zero(self) -> None:
+        """首次 tick (action_timestamp==0.0) → pass (无基线计算 elapsed)."""
+        g = self._make_guardrail()
+        state = self._make_state(action_timestamp=0.0)
+        result = g.check("plate_deep_audit", state)
+        assert result.action == "pass"
+
+    def test_fast_empty_findings_triggers_retry(self) -> None:
+        """E1(快) + E2(空) → effective=2 → retry."""
+        g = self._make_guardrail()
+        # action_timestamp 设在 0.1s 前 → elapsed ≈ 0.1s < 10s (plate_deep_audit)
+        import time
+        state = self._make_state(
+            action_timestamp=time.time() - 0.05,
+            findings=[],
+            p0_count=0, p1_count=0,
+        )
+        result = g.check("plate_deep_audit", state)
+        assert result.action == "retry"
+
+    def test_fast_zero_p0_p1_triggers_retry(self) -> None:
+        """E1(快) + E3(p0/p1零) → effective=2 → retry (findings=None 但 p0/p1=0)."""
+        g = self._make_guardrail()
+        import time
+        state = self._make_state(
+            action_timestamp=time.time() - 0.05,
+            findings=None,
+            p0_count=0, p1_count=0,
+        )
+        result = g.check("system_deep_audit", state)
+        assert result.action == "retry"
+
+    def test_normal_speed_with_empty_findings_is_warn_only(self) -> None:
+        """场景 E: 正常耗时 + 空 findings → effective=1 (仅内容空) → pass (WARN log)."""
+        g = self._make_guardrail()
+        import time
+        # 30s ago → elapsed ≈ 30s > 10s threshold → E1=0
+        state = self._make_state(
+            action_timestamp=time.time() - 30,
+            findings=[],
+            p0_count=0, p1_count=0,
+        )
+        result = g.check("plate_deep_audit", state)
+        assert result.action == "pass"
+
+    def test_fast_but_has_findings_is_warn_only(self) -> None:
+        """场景 D: 快速但有真实发现 → effective=1 (仅快) → pass (WARN log)."""
+        g = self._make_guardrail()
+        import time
+        state = self._make_state(
+            action_timestamp=time.time() - 0.05,
+            findings=[{"file": "x.py", "severity": "P1", "issue": "bug"}],
+            p0_count=0, p1_count=1,
+        )
+        result = g.check("component_verifier", state)
+        assert result.action == "pass"
+
+    def test_unknown_stage_skips(self) -> None:
+        """非审计阶段 → pass (不适用)."""
+        g = self._make_guardrail()
+        state = self._make_state()
+        result = g.check("architect", state)
+        assert result.action == "pass"
+
+    def test_stage_specific_thresholds(self) -> None:
+        """各 stage 使用不同阈值: component_verifier=5s, critic=3s."""
+        g = self._make_guardrail()
+        import time
+        # 4s — below component_verifier (5s) but above critic (3s)
+        ts = time.time() - 4
+        # component_verifier: elapsed=4s < 5s → E1=1
+        state_cv = self._make_state(action_timestamp=ts, findings=[], p0_count=0, p1_count=0)
+        result_cv = g.check("component_verifier", state_cv)
+        assert result_cv.action == "retry"  # E1+E2 = 2
+        # critic: elapsed=4s > 3s → E1=0
+        state_c = self._make_state(action_timestamp=ts, findings=[], p0_count=0, p1_count=0)
+        result_c = g.check("critic", state_c)
+        assert result_c.action == "pass"  # E1=0, E2=1 → eff=1
+
+
+# ── T109e: FileAccessGuardrail PII content scan ──
+
+
+class TestFileAccessPII:
+    """T109e L4: G11 FileAccessGuardrail PII 内容扫描."""
+
+    def _make_state(self, files_changed=None, batch_plan=None):
+        from auto_engineering.engine.state import EngineState
+        state = EngineState()
+        state.files_changed = files_changed or []
+        state.batch_plan = batch_plan or [
+            {"tasks": [{"file_targets": ["test.py", "src/**"]}]}
+        ]
+        return state
+
+    def test_pii_in_file_block_mode(self, tmp_path, monkeypatch) -> None:
+        """block 模式: PII 命中 → retry."""
+        monkeypatch.setenv("AE_PII_GUARDRAIL_MODE", "block")
+        # 写入含身份证号的文件
+        f = tmp_path / "test.py"
+        f.write_text("user_id = '320102199001011234'")
+        from auto_engineering.loop.guardrail import FileAccessGuardrail
+        g = FileAccessGuardrail()
+        state = self._make_state(files_changed=["test.py"])
+        result = g.check("developer", state, project_root=tmp_path)
+        assert result.action == "retry"
+        assert "PII detected" in result.message
+
+    def test_pii_in_file_warn_mode_default(self, tmp_path) -> None:
+        """默认 warn 模式: PII 命中 → WARN 日志, 不阻断."""
+        f = tmp_path / "test.py"
+        f.write_text("user_id = '320102199001011234'")
+        from auto_engineering.loop.guardrail import FileAccessGuardrail
+        g = FileAccessGuardrail()
+        state = self._make_state(
+            files_changed=["test.py"],
+            batch_plan=[{"tasks": [{"file_targets": ["test.py"]}]}],
+        )
+        result = g.check("developer", state, project_root=tmp_path)
+        # warn 模式不阻断
+        assert result.action == "pass"
+
+    def test_no_pii_in_file_passes(self, tmp_path) -> None:
+        """无 PII 文件正常通过."""
+        f = tmp_path / "test.py"
+        f.write_text("def hello(): return 'world'")
+        from auto_engineering.loop.guardrail import FileAccessGuardrail
+        g = FileAccessGuardrail()
+        state = self._make_state(files_changed=["test.py"])
+        result = g.check("developer", state, project_root=tmp_path)
+        assert result.action == "pass"
+
+    def test_non_text_file_skipped(self, tmp_path) -> None:
+        """非文本文件 (.png) 跳过 PII 扫描."""
+        f = tmp_path / "icon.png"
+        f.write_text("binary content")
+        from auto_engineering.loop.guardrail import FileAccessGuardrail
+        g = FileAccessGuardrail()
+        state = self._make_state(
+            files_changed=["icon.png"],
+            batch_plan=[{"tasks": [{"file_targets": ["icon.png"]}]}],
+        )
+        result = g.check("developer", state, project_root=tmp_path)
+        assert result.action == "pass"
+
+    def test_file_not_exists_skipped(self, tmp_path) -> None:
+        """不存在的文件跳过扫描."""
+        from auto_engineering.loop.guardrail import FileAccessGuardrail
+        g = FileAccessGuardrail()
+        state = self._make_state(
+            files_changed=["nonexistent.py"],
+            batch_plan=[{"tasks": [{"file_targets": ["nonexistent.py"]}]}],
+        )
+        result = g.check("developer", state, project_root=tmp_path)
+        assert result.action == "pass"
+
+    def test_pii_guardrail_disabled(self, tmp_path, monkeypatch) -> None:
+        """AE_PII_GUARDRAIL=0 跳过PII扫描."""
+        monkeypatch.setenv("AE_PII_GUARDRAIL", "0")
+        f = tmp_path / "test.py"
+        f.write_text("user_id = '320102199001011234'")
+        from auto_engineering.loop.guardrail import FileAccessGuardrail
+        g = FileAccessGuardrail()
+        state = self._make_state(files_changed=["test.py"])
+        result = g.check("developer", state, project_root=tmp_path)
+        assert result.action == "pass"
+
+    def test_not_developer_stage_skipped(self, tmp_path) -> None:
+        """非 developer stage 跳过."""
+        from auto_engineering.loop.guardrail import FileAccessGuardrail
+        g = FileAccessGuardrail()
+        state = self._make_state(files_changed=["test.py"])
+        result = g.check("critic", state, project_root=tmp_path)
+        assert result.action == "pass"
 

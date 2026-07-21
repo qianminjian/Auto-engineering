@@ -1035,11 +1035,11 @@ class TestCheckpointStateTyping:
         assert cp.state is state, "state 引用应保留 (无深拷贝)"
 
     def test_types_module_exposes_helpers(self) -> None:
-        """types.py 必须暴露 serialize/deserialize 帮助函数."""
-        from auto_engineering.loop import types
+        """checkpoint._serialization 必须暴露 serialize/deserialize 帮助函数."""
+        from auto_engineering.loop.checkpoint import _serialization
 
-        assert hasattr(types, "serialize_state"), "types.py 必须暴露 serialize_state"
-        assert hasattr(types, "deserialize_state"), "types.py 必须暴露 deserialize_state"
+        assert hasattr(_serialization, "serialize_state"), "_serialization 必须暴露 serialize_state"
+        assert hasattr(_serialization, "deserialize_state"), "_serialization 必须暴露 deserialize_state"
 
     def test_checkpoint_state_round_trip_preserves_type(
         self, store: SQLiteCheckpointStore

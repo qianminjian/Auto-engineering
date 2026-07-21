@@ -26,12 +26,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import subprocess
 import sys
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
+
+_logger = logging.getLogger(__name__)
 from typing import TYPE_CHECKING, ClassVar, Literal
 
 from auto_engineering.engine.gap_analysis import (
@@ -744,6 +747,9 @@ class FileAccessGuardrail(Guardrail):
     glob 匹配对比 files_changed 是否全部在声明范围内。白名单路径
     (.ae-state/**、_scratch/**) 自动放行。首次运行无 batch_plan → skip pass。
 
+    T109e L4: PII 内容扫描 — 检查 developer 创建的源代码文件是否包含
+    身份证号/手机号/银行卡号/API Key 等敏感信息。
+
     设计 ref: v5.6-Design-Loop.md appendix E §E.4。
     """
 
@@ -758,6 +764,11 @@ class FileAccessGuardrail(Guardrail):
         "pyproject.toml",
     ]
 
+    _SCAN_FILE_EXTS: ClassVar[set[str]] = {
+        ".py", ".ts", ".tsx", ".js", ".jsx", ".md", ".json", ".yaml", ".yml",
+        ".java", ".go", ".rs", ".vue", ".svelte",
+    }
+
     def __init__(self) -> None:
         import pathspec
 
@@ -765,6 +776,22 @@ class FileAccessGuardrail(Guardrail):
         self._auto_allow_spec = pathspec.PathSpec.from_lines(
             "gitignore", self._AUTO_ALLOW_PATTERNS
         )
+        self._pii_redactor = None  # lazy init
+
+    def _get_pii_redactor(self):
+        if self._pii_redactor is None:
+            from auto_engineering.pii.redactor import PIIRedactor
+            self._pii_redactor = PIIRedactor()
+        return self._pii_redactor
+
+    def _scan_file_for_pii(self, filepath: Path) -> list[dict]:
+        """T109e: 扫描单个文件内容中的 PII."""
+        try:
+            content = filepath.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            return []
+        redactor = self._get_pii_redactor()
+        return redactor.scan_dict({"content": content})
 
     def check(
         self,
@@ -811,6 +838,35 @@ class FileAccessGuardrail(Guardrail):
                     f"{', '.join(out_of_bounds)}"
                 ),
             )
+
+        # T109e L4: PII 内容扫描 — 检查创建的源代码文件
+        pii_enabled = os.environ.get("AE_PII_GUARDRAIL", "1") == "1"
+        if pii_enabled and project_root:
+            pii_files: list[str] = []
+            for f in files_changed:
+                fpath = project_root / f
+                if not fpath.suffix or fpath.suffix not in self._SCAN_FILE_EXTS:
+                    continue
+                if not fpath.exists():
+                    continue
+                findings = self._scan_file_for_pii(fpath)
+                if findings:
+                    pii_files.append(f"{f} ({len(findings)} matches)")
+            if pii_files:
+                mode = os.environ.get("AE_PII_GUARDRAIL_MODE", "warn")
+                if mode == "block":
+                    return GuardrailResult(
+                        action="retry",
+                        message=(
+                            f"PII detected in changed files: "
+                            f"{'; '.join(pii_files)}"
+                        ),
+                    )
+                else:
+                    _logger.warning(
+                        "G11 PII scan: %d files with PII detected: %s",
+                        len(pii_files), "; ".join(pii_files))
+
         return GuardrailResult()
 
     def _is_auto_allowed(self, filepath: str) -> bool:
@@ -834,7 +890,8 @@ class GuardrailChain:
 
     @classmethod
     def default(cls) -> GuardrailChain:
-        """工厂方法: 默认链 (G1-G9 基线 + G10 PIIGuardrail + G11 FileAccessGuardrail, §B3)."""
+        """工厂方法: 默认链 (G1-G9 基线 + G10 PIIGuardrail + G11 FileAccessGuardrail
+        + G12 AuditTimingGuardrail, §B3 + T112)."""
         from auto_engineering.pii.guardrail import PIIGuardrail
 
         return cls([
@@ -849,6 +906,7 @@ class GuardrailChain:
             RegressionGate(),
             PIIGuardrail(),
             FileAccessGuardrail(),
+            AuditTimingGuardrail(),
         ])
 
     def check(
@@ -947,3 +1005,87 @@ def handle_guardrail_result(
     return "stop"
 
 
+# ==================== G12 AuditTimingGuardrail (T112) ====================
+
+
+class AuditTimingGuardrail(Guardrail):
+    """G12: 审计阶段 pass-through 检测 — 证据组合检测器 (T112).
+
+    三重证据：E1 耗时过短 + E2 findings 空 + E3 p0/p1 全零。
+    E2/E3 不独立（findings 空 → p0/p1 必零），合并为一个内容信号：
+        effective = E1 + max(E2, E3)
+        effective == 2 → retry（快 + 内容空，双重确认）
+        effective == 1 → pass（单维度触发，仅 WARN 日志）
+        effective == 0 → pass（正常）
+
+    冷启动（action_timestamp == 0.0）→ skip pass。
+    仅适用于 spawn 阶段：component_verifier, plate_deep_audit,
+    system_verifier, system_deep_audit, critic。
+
+    设计 ref: IMPLEMENTATION-TRACKER.md T112 详细 (2026-07-21 深度分析)。
+    """
+
+    name = "AuditTimingGuardrail"
+    timing = "post"
+    applies_to_stages = (
+        "component_verifier", "plate_deep_audit",
+        "system_verifier", "system_deep_audit", "critic",
+    )
+
+    _STAGE_MIN_SECONDS: dict[str, float] = {
+        "component_verifier": 5.0,
+        "plate_deep_audit": 10.0,
+        "system_verifier": 5.0,
+        "system_deep_audit": 10.0,
+        "critic": 3.0,
+    }
+
+    def check(
+        self,
+        stage: str,
+        state: Any,
+        project_root: Path | None = None,
+    ) -> GuardrailResult:
+        import time
+
+        action_ts = getattr(state, "action_timestamp", 0.0) or 0.0
+        if action_ts == 0.0:
+            return GuardrailResult()  # cold start
+
+        threshold = self._STAGE_MIN_SECONDS.get(stage)
+        if threshold is None:
+            return GuardrailResult()  # not applicable
+
+        elapsed = time.time() - action_ts
+        e1 = 1 if elapsed < threshold else 0
+
+        findings = getattr(state, "findings", None)
+        e2 = 1 if (findings is None or (isinstance(findings, list) and len(findings) == 0)) else 0
+
+        p0 = getattr(state, "p0_count", None) or 0
+        p1 = getattr(state, "p1_count", None) or 0
+        e3 = 1 if (p0 == 0 and p1 == 0) else 0
+
+        effective = e1 + max(e2, e3)
+
+        if effective >= 2:
+            return GuardrailResult(
+                action="retry",
+                message=(
+                    f"AuditTimingGuardrail: {stage} 疑似 pass-through "
+                    f"(elapsed={elapsed:.1f}s < {threshold}s, "
+                    f"findings={'空' if e2 else '有内容'}, "
+                    f"p0={p0}, p1={p1})"
+                ),
+            )
+
+        if effective == 1:
+            import logging
+            _log = logging.getLogger(__name__)
+            _log.warning(
+                "AuditTimingGuardrail: %s 单证据触发 (elapsed=%.1fs, "
+                "threshold=%.0fs, e1=%d, e2=%d, e3=%d) — WARN only",
+                stage, elapsed, threshold, e1, e2, e3,
+            )
+
+        return GuardrailResult()

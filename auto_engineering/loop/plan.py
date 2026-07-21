@@ -56,6 +56,10 @@ class ConflictError(Exception):
         )
 
 
+class PlanValidationError(ValueError):
+    """Plan 验证失败 — task 字段非法或 DAG 结构异常."""
+
+
 @dataclass
 class TaskValidation:
     """Task 验证规则 (v2.0-D 新增).
@@ -138,9 +142,9 @@ class TaskDAG:
     tasks: dict[str, Task] = field(default_factory=dict)
 
     def add_task(self, task: Task) -> None:
-        """添加 Task, 重复 ID 抛 ValueError."""
+        """添加 Task, 重复 ID 抛 PlanValidationError."""
         if task.id in self.tasks:
-            raise ValueError(f"Task id '{task.id}' already in DAG")
+            raise PlanValidationError(f"Task id '{task.id}' already in DAG")
         self.tasks[task.id] = task
 
     def validate_deps(self) -> None:
@@ -148,7 +152,7 @@ class TaskDAG:
         for task in self.tasks.values():
             for dep in task.depends_on:
                 if dep not in self.tasks:
-                    raise ValueError(
+                    raise PlanValidationError(
                         f"Task '{task.id}' depends on missing task '{dep}'"
                     )
 
@@ -187,7 +191,7 @@ class TaskDAG:
         if len(order) != len(self.tasks):
             # 剩余节点的入度 > 0 → 循环依赖
             stuck = [tid for tid, deg in in_degree.items() if deg > 0]
-            raise ValueError(
+            raise PlanValidationError(
                 f"Cycle detected in task DAG: stuck tasks = {stuck}"
             )
         return order
@@ -376,16 +380,16 @@ class Plan:
         """
         for task in self.tasks:
             if not task.title or not task.title.strip():
-                raise ValueError(
+                raise PlanValidationError(
                     f"Task '{task.id}': title 不能为空 (Plan.validate contract 校验)"
                 )
             if not task.expected_output or not task.expected_output.strip():
-                raise ValueError(
+                raise PlanValidationError(
                     f"Task '{task.id}': expected_output 不能为空 "
                     f"(Plan.validate contract 校验)"
                 )
             if task.role not in VALID_TASK_ROLES:
-                raise ValueError(
+                raise PlanValidationError(
                     f"Task '{task.id}': role '{task.role}' 不合法 "
                     f"(必须为 {sorted(VALID_TASK_ROLES)} 之一)"
                 )

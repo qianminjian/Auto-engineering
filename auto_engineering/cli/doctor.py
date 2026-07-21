@@ -239,6 +239,24 @@ def run_doctor_checks(project_root: Path) -> tuple[int, list[tuple[bool, str]]]:
     return (1 if failed > 0 else 0), results
 
 
+def render_optional_features() -> list[tuple[bool, str]]:
+    """Render optional features panel from FeatureManifest SSOT (T114 5.2)."""
+    from auto_engineering.config.feature_flags import FEATURE_MANIFEST, get_feature_status
+    status = get_feature_status()
+    lines: list[tuple[bool, str]] = []
+    for f in FEATURE_MANIFEST:
+        s = status[f.key]
+        mark = "✓" if s["active"] else "✗"
+        mode_note = ""
+        if s["agent_mode"] != "both" and s["active"]:
+            mode_note = f" (仅 {s['agent_mode'].replace('_', ' ')} 模式生效)"
+        line = f"{f.description}{mode_note}"
+        if not s["active"]:
+            line += f" — {f.activation}"
+        lines.append((s["active"], line))
+    return lines
+
+
 def register_doctor_command(main: click.Group) -> None:
     """向 main Click Group 注册 ae doctor 子命令."""
 
@@ -256,5 +274,13 @@ def register_doctor_command(main: click.Group) -> None:
         for ok, line in results:
             mark = "✓" if ok else "✗"
             click.echo(f"{mark} {line}")
+
+        # T114 5.2: Optional features panel
+        click.echo("")
+        click.echo("── Optional Features ──")
+        for active, line in render_optional_features():
+            mark = "✓" if active else "✗"
+            click.echo(f"{mark} {line}")
+
         if exit_code != 0:
             raise SystemExit(exit_code)

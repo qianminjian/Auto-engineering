@@ -111,6 +111,85 @@ class PIIRedactor:
             result = result[:start] + repl + result[end:]
         return result
 
+    # ---- T109a: dict-level scan/redact for file-bridge PII protection ----
+
+    def scan_dict(self, data: dict | list, path: str = "") -> list[dict]:
+        """Recursively scan a nested dict/list for PII (T109a).
+
+        Returns a list of findings, each with: path, rule, matched, severity, category.
+        Non-string values are traversed but not scanned.
+        """
+        findings: list[dict] = []
+        if isinstance(data, dict):
+            for key, value in data.items():
+                current_path = f"{path}.{key}" if path else key
+                if isinstance(value, str):
+                    findings.extend(self._scan_string(value, current_path))
+                elif isinstance(value, (dict, list)):
+                    findings.extend(self.scan_dict(value, current_path))
+        elif isinstance(data, list):
+            for idx, item in enumerate(data):
+                current_path = f"{path}[{idx}]"
+                if isinstance(item, str):
+                    findings.extend(self._scan_string(item, current_path))
+                elif isinstance(item, (dict, list)):
+                    findings.extend(self.scan_dict(item, current_path))
+        return findings
+
+    def redact_dict(self, data: dict | list) -> dict | list:
+        """Recursively redact PII in a nested dict/list (T109a).
+
+        Returns a redacted **copy** — the input is never mutated.
+        Non-string values are preserved as-is.
+        """
+        if isinstance(data, dict):
+            result: dict = {}
+            for key, value in data.items():
+                if isinstance(value, str):
+                    result[key] = self.scan_text(value)
+                elif isinstance(value, (dict, list)):
+                    result[key] = self.redact_dict(value)
+                else:
+                    result[key] = value
+            return result
+        elif isinstance(data, list):
+            result_list: list = []
+            for item in data:
+                if isinstance(item, str):
+                    result_list.append(self.scan_text(item))
+                elif isinstance(item, (dict, list)):
+                    result_list.append(self.redact_dict(item))
+                else:
+                    result_list.append(item)
+            return result_list
+        return data
+
+    def _scan_string(self, text: str, path: str) -> list[dict]:
+        """Scan a single string value for PII, return findings list."""
+        findings: list[dict] = []
+        covered_ranges: list[tuple[int, int]] = []
+        for rule in self._rules:
+            if not rule.enabled:
+                continue
+            for match in re.finditer(rule.pattern, text):
+                matched_text = match.group()
+                if any(re.fullmatch(ep, matched_text) for ep in rule.exclusion_patterns):
+                    continue
+                ms, me = match.start(), match.end()
+                if any(not (me <= cs or ms >= ce) for cs, ce in covered_ranges):
+                    continue
+                covered_ranges.append((ms, me))
+                findings.append({
+                    "path": path,
+                    "rule": rule.name,
+                    "matched": matched_text,
+                    "severity": rule.severity.value,
+                    "category": rule.category.value,
+                })
+                if self._block_mode and rule.severity == PIISeverity.CRITICAL:
+                    raise PIIBlockedError(rule.name, rule.category.value)
+        return findings
+
     # ---- internal ------------------------------------------------------
 
     def _is_whitelisted(self, source: str) -> bool:

@@ -208,10 +208,10 @@ class TestFileAccessGuardrailIntegration:
         )
 
     def test_default_chain_has_10_guardrails(self) -> None:
-        """After adding G11, default() should have 11 guardrails."""
+        """After adding G12, default() should have 12 guardrails."""
         chain = GuardrailChain.default()
-        assert len(chain.guardrails) == 11, (
-            f"Expected 11 guardrails (G1-G11), got {len(chain.guardrails)}"
+        assert len(chain.guardrails) == 12, (
+            f"Expected 12 guardrails (G1-G12), got {len(chain.guardrails)}"
         )
 
     def test_default_chain_block_on_out_of_bounds_file(self, tmp_path: Path) -> None:

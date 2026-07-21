@@ -230,6 +230,8 @@ class EngineState:
     prompt_registry_hash: str = ""  # #37 B12.5 版本锁 (init 盖, resume 校验)
     debug_enabled: bool = False  # #38 --debug 开关 (AE_DEBUG=1 或 --debug flag)
     debug_dir: str | None = None  # #39 debug 输出目录 (默认 <project_root>/_scratch/debug/)
+    action_timestamp: float = 0.0  # #40 T112: _build_action() 出站时间戳 (跨 tick 计时)
+    tick_token_usage: dict | None = None  # #41 T110b: 当前 tick 的 token 消耗 (JSONL 采集)
 
     # v5.5 P1-5: 写入审计日志 (repr=False 避免污染输出, 不参与序列化)
     _write_log: list[WriteRecord] = field(default_factory=list, repr=False, init=False)

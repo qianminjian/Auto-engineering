@@ -23,9 +23,8 @@ from auto_engineering.cli import main
 from auto_engineering.cli.gate_check import (
     ALL_GATES,
     QUICK_GATES,
-    _instantiate_gate,
-    run_gates,
 )
+from auto_engineering.gates.runner import _instantiate_gate, run_gates  # P1-5: moved from cli
 
 # ============================================================
 # Fixtures
@@ -189,7 +188,7 @@ def test_run_gates_counts_passed(tmp_path: Path, mock_verdict) -> None:
     fake_gate = MagicMock()
     fake_gate.run.return_value = mock_verdict(passed=True, message="ok")
     with patch(
-        "auto_engineering.cli.gate_check._instantiate_gate", return_value=fake_gate
+        "auto_engineering.gates.runner._instantiate_gate", return_value=fake_gate
     ):
         result = run_gates(("safety", "lint"), tmp_path)
     assert result["passed"] == 2
@@ -202,7 +201,7 @@ def test_run_gates_counts_failed(tmp_path: Path, mock_verdict) -> None:
     fake_gate = MagicMock()
     fake_gate.run.return_value = mock_verdict(passed=False, message="lint failed")
     with patch(
-        "auto_engineering.cli.gate_check._instantiate_gate", return_value=fake_gate
+        "auto_engineering.gates.runner._instantiate_gate", return_value=fake_gate
     ):
         result = run_gates(("lint",), tmp_path)
     assert result["passed"] == 0
@@ -216,7 +215,7 @@ def test_run_gates_gate_summary_shape(tmp_path: Path, mock_verdict) -> None:
         passed=True, message="all good", gate_name="safety"
     )
     with patch(
-        "auto_engineering.cli.gate_check._instantiate_gate", return_value=fake_gate
+        "auto_engineering.gates.runner._instantiate_gate", return_value=fake_gate
     ):
         result = run_gates(("safety",), tmp_path)
     entry = result["gate_summary"]["safety"]
@@ -235,7 +234,7 @@ def test_run_gates_failure_status(tmp_path: Path, mock_verdict) -> None:
     fake_gate = MagicMock()
     fake_gate.run.return_value = mock_verdict(passed=False, message="err")
     with patch(
-        "auto_engineering.cli.gate_check._instantiate_gate", return_value=fake_gate
+        "auto_engineering.gates.runner._instantiate_gate", return_value=fake_gate
     ):
         result = run_gates(("test",), tmp_path)
     entry = result["gate_summary"]["test"]
@@ -246,7 +245,7 @@ def test_run_gates_failure_status(tmp_path: Path, mock_verdict) -> None:
 def test_run_gates_instantiate_exception_is_skipped(tmp_path: Path) -> None:
     """_instantiate_gate 返回 None (v5.4 P0-2: 不再返回 Exception) -> gate 标记 skipped."""
     with patch(
-        "auto_engineering.cli.gate_check._instantiate_gate",
+        "auto_engineering.gates.runner._instantiate_gate",
         return_value=None,
     ):
         result = run_gates(("safety",), tmp_path)
@@ -273,7 +272,7 @@ def test_run_gates_run_exception_is_error_failclosed(tmp_path: Path) -> None:
     fake_gate = MagicMock()
     fake_gate.run.side_effect = side_effect
     with patch(
-        "auto_engineering.cli.gate_check._instantiate_gate", return_value=fake_gate
+        "auto_engineering.gates.runner._instantiate_gate", return_value=fake_gate
     ):
         result = run_gates(("safety", "lint"), tmp_path)
     # safety 崩溃 → fail-closed error (不是 skipped)
@@ -300,7 +299,7 @@ def test_run_gates_isolates_one_gate_failure(tmp_path: Path, mock_verdict) -> No
     fake_gate = MagicMock()
     fake_gate.run.side_effect = side_effect
     with patch(
-        "auto_engineering.cli.gate_check._instantiate_gate", return_value=fake_gate
+        "auto_engineering.gates.runner._instantiate_gate", return_value=fake_gate
     ):
         result = run_gates(("g1", "g2"), tmp_path)
     assert result["passed"] == 1
@@ -316,7 +315,7 @@ def test_run_gates_missing_message_handled(tmp_path: Path, mock_verdict) -> None
     fake_gate = MagicMock()
     fake_gate.run.return_value = v
     with patch(
-        "auto_engineering.cli.gate_check._instantiate_gate", return_value=fake_gate
+        "auto_engineering.gates.runner._instantiate_gate", return_value=fake_gate
     ):
         result = run_gates(("safety",), tmp_path)
     # 不应抛异常 — message 默认空串
@@ -337,7 +336,7 @@ def test_cli_gate_check_default_is_all(runner: CliRunner, tmp_cwd: Path) -> None
     v.gate_name = "x"
     fake_gate.run.return_value = v
     with patch(
-        "auto_engineering.cli.gate_check._instantiate_gate", return_value=fake_gate
+        "auto_engineering.gates.runner._instantiate_gate", return_value=fake_gate
     ):
         result = runner.invoke(main, ["gate-check"])
     assert result.exit_code == 0
@@ -356,7 +355,7 @@ def test_cli_gate_check_quick_mode(runner: CliRunner, tmp_cwd: Path) -> None:
     v.gate_name = "x"
     fake_gate.run.return_value = v
     with patch(
-        "auto_engineering.cli.gate_check._instantiate_gate", return_value=fake_gate
+        "auto_engineering.gates.runner._instantiate_gate", return_value=fake_gate
     ):
         result = runner.invoke(main, ["gate-check", "--quick"])
     assert result.exit_code == 0
@@ -377,7 +376,7 @@ def test_cli_gate_check_quick_excludes_slow_gates(
     v.gate_name = "x"
     fake_gate.run.return_value = v
     with patch(
-        "auto_engineering.cli.gate_check._instantiate_gate", return_value=fake_gate
+        "auto_engineering.gates.runner._instantiate_gate", return_value=fake_gate
     ):
         result = runner.invoke(main, ["gate-check", "--quick"])
     data = json.loads(result.output)
@@ -399,7 +398,7 @@ def test_cli_gate_check_exit_code_0_on_all_pass(
     v.gate_name = "x"
     fake_gate.run.return_value = v
     with patch(
-        "auto_engineering.cli.gate_check._instantiate_gate", return_value=fake_gate
+        "auto_engineering.gates.runner._instantiate_gate", return_value=fake_gate
     ):
         result = runner.invoke(main, ["gate-check", "--quick"])
     assert result.exit_code == 0
@@ -416,7 +415,7 @@ def test_cli_gate_check_exit_code_1_on_failure(
     v.gate_name = "lint"
     fake_gate.run.return_value = v
     with patch(
-        "auto_engineering.cli.gate_check._instantiate_gate", return_value=fake_gate
+        "auto_engineering.gates.runner._instantiate_gate", return_value=fake_gate
     ):
         result = runner.invoke(main, ["gate-check", "--quick"])
     assert result.exit_code == 1
@@ -429,7 +428,7 @@ def test_cli_gate_check_crashing_gate_exits_nonzero(
     fake_gate = MagicMock()
     fake_gate.run.side_effect = RuntimeError("boom")
     with patch(
-        "auto_engineering.cli.gate_check._instantiate_gate", return_value=fake_gate
+        "auto_engineering.gates.runner._instantiate_gate", return_value=fake_gate
     ):
         result = runner.invoke(main, ["gate-check", "--quick"])
     assert result.exit_code != 0
@@ -442,7 +441,7 @@ def test_cli_gate_check_skip_does_not_fail(
 ) -> None:
     """Gate skipped 不导致 exit code 1 (只 fail 才)."""
     with patch(
-        "auto_engineering.cli.gate_check._instantiate_gate",
+        "auto_engineering.gates.runner._instantiate_gate",
         side_effect=lambda name, _: None,
     ):
         result = runner.invoke(main, ["gate-check", "--quick"])
@@ -463,7 +462,7 @@ def test_cli_gate_check_json_output_is_valid_json(
     v.gate_name = "x"
     fake_gate.run.return_value = v
     with patch(
-        "auto_engineering.cli.gate_check._instantiate_gate", return_value=fake_gate
+        "auto_engineering.gates.runner._instantiate_gate", return_value=fake_gate
     ):
         result = runner.invoke(main, ["gate-check", "--quick"])
     # 必须能 JSON 解析
@@ -488,7 +487,7 @@ def test_cli_gate_check_with_project_root(
         return fake_gate
 
     with patch(
-        "auto_engineering.cli.gate_check._instantiate_gate",
+        "auto_engineering.gates.runner._instantiate_gate",
         side_effect=capture_instantiate,
     ):
         result = runner.invoke(
@@ -515,7 +514,7 @@ def test_cli_gate_check_default_project_root_uses_cwd(
         return fake_gate
 
     with patch(
-        "auto_engineering.cli.gate_check._instantiate_gate",
+        "auto_engineering.gates.runner._instantiate_gate",
         side_effect=capture_instantiate,
     ):
         runner.invoke(main, ["gate-check", "--quick"])
@@ -534,7 +533,7 @@ def test_cli_gate_check_all_includes_full_7(
     v.gate_name = "x"
     fake_gate.run.return_value = v
     with patch(
-        "auto_engineering.cli.gate_check._instantiate_gate", return_value=fake_gate
+        "auto_engineering.gates.runner._instantiate_gate", return_value=fake_gate
     ):
         result = runner.invoke(main, ["gate-check", "--all"])
     data = json.loads(result.output)
@@ -560,7 +559,7 @@ def test_cli_gate_check_gate_summary_each_gate_has_required_fields(
     v.gate_name = "x"
     fake_gate.run.return_value = v
     with patch(
-        "auto_engineering.cli.gate_check._instantiate_gate", return_value=fake_gate
+        "auto_engineering.gates.runner._instantiate_gate", return_value=fake_gate
     ):
         result = runner.invoke(main, ["gate-check", "--quick"])
     data = json.loads(result.output)
@@ -582,7 +581,7 @@ def test_cli_gate_check_passed_failed_skipped_mutually_exclusive(
     v.gate_name = "x"
     fake_gate.run.return_value = v
     with patch(
-        "auto_engineering.cli.gate_check._instantiate_gate", return_value=fake_gate
+        "auto_engineering.gates.runner._instantiate_gate", return_value=fake_gate
     ):
         result = runner.invoke(main, ["gate-check", "--quick"])
     data = json.loads(result.output)
@@ -601,7 +600,7 @@ def test_cli_gate_check_project_root_in_output(
     v.gate_name = "x"
     fake_gate.run.return_value = v
     with patch(
-        "auto_engineering.cli.gate_check._instantiate_gate", return_value=fake_gate
+        "auto_engineering.gates.runner._instantiate_gate", return_value=fake_gate
     ):
         result = runner.invoke(
             main, ["gate-check", "--quick", "--project-root", str(tmp_path)]

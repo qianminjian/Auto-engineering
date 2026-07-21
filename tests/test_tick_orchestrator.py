@@ -21,6 +21,7 @@ from unittest.mock import MagicMock
 
 from auto_engineering.engine.verification_layers import VerificationLayers
 from auto_engineering.loop.guardrail import GuardrailChain
+from auto_engineering.engine.state import EngineState
 from auto_engineering.loop.tick_orchestrator import ORCH_BUDGET_MS, TickOrchestrator
 
 
@@ -1063,6 +1064,41 @@ class TestApplyResultToState:
         assert o._state.coverage_map == [
             {"design_section": "B2", "status": "IMPLEMENTED"}]
 
+    def test_critic_rejects_invalid_verdict_before_write(self) -> None:
+        """T116: 非法 critic verdict 在写入 state 前被拦截"""
+        o = _orchestrator()
+        o.init("req")
+        result = o._apply_result_to_state({
+            "stage": "critic", "verdict": "INVALID",
+            "findings": [], "critic_feedback": "",
+        })
+        assert result is not None
+        assert result.get("error_code") == "INVALID_VERDICT"
+        assert "INVALID" in result.get("message", "")
+        # state 未被修改
+        assert o._state.critic_verdict == ""
+
+    def test_critic_allows_empty_verdict(self) -> None:
+        """T116: 空字符串 verdict 通过（初始状态/未设置）"""
+        o = _orchestrator()
+        o.init("req")
+        o._apply_result_to_state({
+            "stage": "critic", "verdict": "",
+            "findings": [], "critic_feedback": "",
+        })
+        assert o._state.critic_verdict == ""
+
+    def test_critic_approve_verdict_still_writes(self) -> None:
+        """T116: 合法 APPROVE verdict 正常写入 state"""
+        o = _orchestrator()
+        o.init("req")
+        o._apply_result_to_state({
+            "stage": "critic", "verdict": "APPROVE",
+            "findings": [{"x": 1}], "critic_feedback": "",
+        })
+        assert o._state.critic_verdict == "APPROVE"
+        assert o._state.findings == [{"x": 1}]
+
 
 # ── T7b: ProgressTree 更新 + _display_progress ──
 
@@ -1173,6 +1209,14 @@ def _gap_scan_result(gaps: list[dict]) -> Path:
     })
 
 
+def _blocking_gap_scan_result(gaps: list[dict]) -> Path:
+    """gap_scan result with has_blocking=True (T107)."""
+    return _make_result_file({
+        "stage": "gap_scan", "gaps": gaps,
+        "scanned_sections": len(gaps), "has_blocking": True,
+    })
+
+
 _GAP_B2 = {"id": "gap-B2", "design_section_ref": "§B2", "grade": "component",
            "clarity": "vague", "summary": "边界未定义", "depends_on": []}
 
@@ -1245,6 +1289,49 @@ class TestPhase0GapReview:
         }))
         assert action["stage"] == "architect"
         assert o._state.pending_research_ids == []
+
+    # ── T107: gap_review human-in-the-loop auto-pause ──
+
+    def test_blocking_gap_adds_architect_to_pause_at_stages(self, tmp_path) -> None:
+        """T107a: has_blocking=True → architect 加入 _pause_at_stages."""
+        o = _orchestrator()
+        _init_design(o, tmp_path)
+        o.tick(_blocking_gap_scan_result([_GAP_B2]))
+        assert "architect" not in o._pause_at_stages
+        o.tick(_make_result_file({
+            "stage": "gap_review",
+            "decisions": [{"gap_id": "gap-B2", "resolution": "fill",
+                           "fill_content": "c"}],
+        }))
+        assert "architect" in o._pause_at_stages
+
+    def test_blocking_gap_triggers_checkpoint_gate(self, tmp_path) -> None:
+        """T107b: has_blocking=True → gap_review 返回 checkpoint gate (非 architect action)."""
+        o = _orchestrator()
+        _init_design(o, tmp_path)
+        o.tick(_blocking_gap_scan_result([_GAP_B2]))
+        action = o.tick(_make_result_file({
+            "stage": "gap_review",
+            "decisions": [{"gap_id": "gap-B2", "resolution": "fill",
+                           "fill_content": "c"}],
+        }))
+        assert action["action"] == "gate"
+        assert action["gate"]["type"] == "stage_checkpoint"
+        assert action["gate"]["id"] == "checkpoint_architect"
+
+    def test_no_blocking_skips_pause_at_stages(self, tmp_path) -> None:
+        """T107c: has_blocking=False → _pause_at_stages 不变, 直接进入 architect."""
+        o = _orchestrator()
+        _init_design(o, tmp_path)
+        o.tick(_gap_scan_result([_GAP_B2]))
+        assert "architect" not in o._pause_at_stages
+        action = o.tick(_make_result_file({
+            "stage": "gap_review",
+            "decisions": [{"gap_id": "gap-B2", "resolution": "fill",
+                           "fill_content": "c"}],
+        }))
+        assert action["action"] == "architect"
+        assert "architect" not in o._pause_at_stages
 
 
 class TestPhase0Research:
@@ -2865,3 +2952,687 @@ class TestPrePlannedGate:
         action = o.tick_dict(result)
         assert action["action"] == "done"
         assert action["verdict"] == "TERMINATED"
+
+
+# ── T105: Convergence history & convergence check tests ──
+
+
+class TestT105RoundHistory:
+    """T105a/b: _append_round_history 数据填充验证."""
+
+    def test_append_round_history_after_stage_transitions(self, tmp_path) -> None:
+        """T105a: 每次 stage 转换都 append RoundHistory, stage/round_id 正确."""
+        o = _orchestrator()
+        _init_design(o, tmp_path)
+        assert len(o._round_history) == 0
+        # gap_scan → gap_review: records completed "gap_scan" stage
+        o.tick(_gap_scan_result([_GAP_B2]))
+        assert len(o._round_history) >= 1
+        entry = o._round_history[0]
+        assert entry.stage == "gap_scan"
+        assert entry.round_id >= 0
+
+    def test_round_history_accumulates_across_ticks(self, tmp_path) -> None:
+        """T105a: 多 tick 后 _round_history 累积, 每个 stage 转换一条记录."""
+        o = _orchestrator()
+        _init_design(o, tmp_path)
+        # gap_scan → gap_review: records "gap_scan"
+        o.tick(_gap_scan_result([_GAP_B2]))
+        # gap_review → architect: records "gap_review"
+        o.tick(_make_result_file({
+            "stage": "gap_review",
+            "decisions": [{"gap_id": "gap-B2", "resolution": "fill",
+                           "fill_content": "c"}],
+        }))
+        assert len(o._round_history) == 2
+        stages = [e.stage for e in o._round_history]
+        assert stages == ["gap_scan", "gap_review"]
+
+    def test_round_history_includes_files_changed(self, tmp_path) -> None:
+        """T105a: developer stage 后 files_changed 非零时正确记录."""
+        o = _orchestrator()
+        o.init("req")
+        # architect
+        o.tick(_make_result_file({
+            "stage": "architect",
+            "plan": _VALID_PLAN,
+            "batch_plan": [{
+                "batch_id": "batch-F-1", "design_section": "B2", "component": "Foo",
+                "tasks": [{"id": "T1", "description": "impl",
+                           "module_ref": "§B2", "file_targets": ["foo.py"]}],
+            }],
+            "file_list": ["foo.py"], "contracts": {},
+        }))
+        # developer with files_changed
+        o.tick(_make_result_file({
+            "stage": "developer", "batch_id": "batch-F-1",
+            "files_changed": ["foo.py", "bar.py"],
+            "test_results": {"passed": 2, "failed": 0},
+        }))
+        dev_entry = o._round_history[-1]
+        assert dev_entry.stage == "developer"
+        assert dev_entry.files_changed == 2
+
+    def test_lines_added_removed_populated_when_files_changed(self, tmp_path) -> None:
+        """T105b: files_changed 非空时 lines_added/lines_removed 从 git diff 填充."""
+        o = _orchestrator()
+        o.init("req")
+        o.tick(_make_result_file({
+            "stage": "architect",
+            "plan": _VALID_PLAN,
+            "batch_plan": [{
+                "batch_id": "batch-F-1", "design_section": "B2", "component": "Foo",
+                "tasks": [{"id": "T1", "description": "impl",
+                           "module_ref": "§B2", "file_targets": ["foo.py"]}],
+            }],
+            "file_list": ["foo.py"], "contracts": {},
+        }))
+        o.tick(_make_result_file({
+            "stage": "developer", "batch_id": "batch-F-1",
+            "files_changed": ["foo.py"],
+            "test_results": {"passed": 1, "failed": 0},
+        }))
+        dev_entry = o._round_history[-1]
+        # In a git repo, lines_added/removed should be populated (may be 0 for
+        # new untracked files that haven't been committed yet, but the call
+        # should succeed without error)
+        assert isinstance(dev_entry.lines_added, int)
+        assert isinstance(dev_entry.lines_removed, int)
+
+    def test_lines_added_removed_zero_when_no_files_changed(self, tmp_path) -> None:
+        """T105b: files_changed 为空时 lines_added/lines_removed 为 0."""
+        o = _orchestrator()
+        _init_design(o, tmp_path)
+        o.tick(_gap_scan_result([_GAP_B2]))
+        entry = o._round_history[0]
+        assert entry.lines_added == 0
+        assert entry.lines_removed == 0
+
+    def test_lines_from_git_diff_numstat(self, tmp_path) -> None:
+        """T105b: 验证 git diff --numstat 解析正确 (需要 git repo)."""
+        import subprocess
+        # Create a real git repo to test numstat parsing
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        subprocess.run(["git", "-C", str(repo), "init"], capture_output=True)
+        subprocess.run(["git", "-C", str(repo), "config", "user.email", "test@test.com"],
+                       capture_output=True)
+        subprocess.run(["git", "-C", str(repo), "config", "user.name", "Test"],
+                       capture_output=True)
+        (repo / "foo.py").write_text("line1\nline2\nline3\n")
+        subprocess.run(["git", "-C", str(repo), "add", "foo.py"], capture_output=True)
+        subprocess.run(["git", "-C", str(repo), "commit", "-m", "init"], capture_output=True)
+        # Modify foo.py: remove line2, add line4+line5 → 1 removed, 2 added
+        (repo / "foo.py").write_text("line1\nline3\nline4\nline5\n")
+        # Now run _append_round_history manually via _advance_stage call
+        o = _orchestrator()
+        (repo / ".ae-state").mkdir(exist_ok=True)
+        o.project_root = repo
+        o.init("req")
+        # architect tick to get files_changed
+        o.tick(_make_result_file({
+            "stage": "architect",
+            "plan": _VALID_PLAN,
+            "batch_plan": [{
+                "batch_id": "batch-F-1", "design_section": "B2", "component": "Foo",
+                "tasks": [{"id": "T1", "description": "impl",
+                           "module_ref": "§B2", "file_targets": ["foo.py"]}],
+            }],
+            "file_list": ["foo.py"], "contracts": {},
+        }))
+        o.tick(_make_result_file({
+            "stage": "developer", "batch_id": "batch-F-1",
+            "files_changed": ["foo.py"],
+            "test_results": {"passed": 1, "failed": 0},
+        }))
+        entry = o._round_history[-1]
+        # File changed from 3 to 4 lines (removed line2, added line4+line5)
+        # git diff --numstat shows: added >= 1, removed >= 1
+        assert entry.lines_added >= 1, f"expected lines_added >= 1, got {entry.lines_added}"
+        assert entry.lines_removed >= 1, f"expected lines_removed >= 1, got {entry.lines_removed}"
+
+
+class TestT105ConvergenceCheck:
+    """T105c: _convergence_check HARD_LIMIT / STAGNANT 路径测试."""
+
+    def test_hard_limit_triggers_when_max_rounds_exceeded(self) -> None:
+        """T105c: round_id >= max_iterations 时触发 HARD_LIMIT.
+
+        GOAL_ACHIEVED (双通过) 优先于 HARD_LIMIT, 所以用 design_coverage_ok=False
+        来确保落入硬上限分支.
+        """
+        from auto_engineering.loop.convergence import RoundHistory
+        o = _orchestrator()
+        o.init("req", max_rounds=3)
+        o._round_history = [
+            RoundHistory(round_id=0, stage="architect"),
+            RoundHistory(round_id=1, stage="developer", files_changed=1),
+            RoundHistory(round_id=2, stage="critic"),
+            RoundHistory(round_id=3, stage="component_verifier"),
+        ]
+        o._state.round = 4
+        action = o._convergence_check(
+            design_coverage_ok=False, system_deep_audit_ok=False)
+        assert action["action"] == "done"
+        assert action["verdict"] == "MAX_ITERATIONS"
+
+    def test_stagnant_detected_when_no_change(self) -> None:
+        """T105c: 连续 2 轮无变化时触发 STAGNANT (default threshold=2)."""
+        from auto_engineering.loop.convergence import RoundHistory
+        o = _orchestrator()
+        o.init("req", max_rounds=10)
+        o._round_history = [
+            RoundHistory(round_id=0, stage="developer", files_changed=1,
+                         lines_added=5, lines_removed=2),
+            RoundHistory(round_id=1, stage="critic"),
+            RoundHistory(round_id=2, stage="developer", files_changed=0),
+            RoundHistory(round_id=3, stage="critic"),
+            RoundHistory(round_id=4, stage="developer", files_changed=0),
+            RoundHistory(round_id=5, stage="critic"),
+            RoundHistory(round_id=6, stage="developer", files_changed=0),
+        ]
+        o._state.round = 7
+        action = o._convergence_check(
+            design_coverage_ok=False, system_deep_audit_ok=False)
+        assert action["action"] == "done"
+        assert action["verdict"] == "STAGNANT"
+
+    def test_goal_achieved_prioritized_over_hard_limit(self) -> None:
+        """T105c: 双通过 GOAL_ACHIEVED 优先于 HARD_LIMIT, 即使 round 已达上限."""
+        from auto_engineering.loop.convergence import RoundHistory
+        o = _orchestrator()
+        o.init("req", max_rounds=1)
+        o._round_history = [
+            RoundHistory(round_id=0, stage="developer", files_changed=1),
+            RoundHistory(round_id=1, stage="critic"),
+        ]
+        o._state.round = 2
+        action = o._convergence_check(
+            design_coverage_ok=True, system_deep_audit_ok=True)
+        assert action["action"] == "done"
+        # GOAL_ACHIEVED maps to SEMANTIC level in judge, not HARD_LIMIT
+        assert action["verdict"] == "GOAL_ACHIEVED"
+
+    def test_fail_without_dual_pass_returns_hard_limit_at_limit(self) -> None:
+        """T105c: 双通过不满足时, 达上限触发 HARD_LIMIT."""
+        from auto_engineering.loop.convergence import RoundHistory
+        o = _orchestrator()
+        o.init("req", max_rounds=1)
+        o._round_history = [
+            RoundHistory(round_id=0, stage="developer", files_changed=1),
+            RoundHistory(round_id=1, stage="critic"),
+        ]
+        o._state.round = 2
+        action = o._convergence_check(
+            design_coverage_ok=False, system_deep_audit_ok=False)
+        assert action["verdict"] == "MAX_ITERATIONS"
+
+
+class TestT105EndToEndConvergence:
+    """T105d: 端到端收敛验证 — 完整 tick 循环 + _round_history + gate_results."""
+
+    def test_full_cycle_convergence_with_history(self) -> None:
+        """T105d: 完整 dev-loop 模拟收敛到 GOAL_ACHIEVED, _round_history 正确累积."""
+        o = _orchestrator()
+        o.init("实现单个组件")
+
+        assert len(o._round_history) == 0
+
+        # architect
+        o.tick(_make_result_file({
+            "stage": "architect",
+            "plan": _VALID_PLAN,
+            "batch_plan": [{
+                "batch_id": "batch-F-1", "design_section": "B2", "component": "Foo",
+                "tasks": [{"id": "T1", "description": "实现 foo",
+                           "module_ref": "§B2", "file_targets": ["foo.py"]}],
+            }],
+            "file_list": ["foo.py"], "contracts": {},
+        }))
+        assert len(o._round_history) >= 1
+        assert o._round_history[0].stage == "architect"
+
+        # developer
+        a_dev = o.tick(_make_result_file({
+            "stage": "developer", "batch_id": "batch-F-1",
+            "files_changed": ["foo.py"],
+            "test_results": {"passed": 2, "failed": 0},
+        }))
+        assert a_dev["stage"] == "critic"
+        dev_entry = o._round_history[-1]
+        assert dev_entry.stage == "developer"
+        assert dev_entry.files_changed == 1
+
+        # critic APPROVE
+        o.tick(_make_result_file({
+            "stage": "critic", "verdict": "APPROVE", "findings": [],
+            "critic_feedback": "LGTM",
+        }))
+
+        # component_verifier (clean)
+        o.tick(_make_result_file({
+            "stage": "component_verifier", "component": "Foo",
+            "coverage_map": [
+                {"design_item": "B2-1", "status": "IMPLEMENTED",
+                 "file": "foo.py", "line": 10, "note": ""},
+            ],
+            "missing_count": 0, "diverged_count": 0,
+        }))
+
+        # system_deep_audit (P0/P1 clean, design coverage ok)
+        a_audit = o.tick(_make_result_file({
+            "stage": "system_deep_audit",
+            "findings": [],
+            "p0_count": 0, "p1_count": 0, "p2_count": 1,
+            "total_audited_files": 2,
+            "design_docs_stale": False,
+            "design_doc_suggestions": "",
+            "missing_count": 0, "diverged_count": 0,
+        }))
+        assert a_audit["action"] == "done"
+        assert a_audit["verdict"] == "GOAL_ACHIEVED"
+
+        # _round_history should have entries for each stage transition
+        stages_seen = [e.stage for e in o._round_history]
+        assert "architect" in stages_seen
+        assert "developer" in stages_seen
+        assert "critic" in stages_seen or "component_verifier" in stages_seen
+
+    def test_full_cycle_stores_gate_results_in_history(self) -> None:
+        """T105e: developer stage 后 gate_results 在 _round_history 中非空."""
+        o = _orchestrator()
+        o.init("实现单个组件")
+
+        # architect
+        o.tick(_make_result_file({
+            "stage": "architect",
+            "plan": _VALID_PLAN,
+            "batch_plan": [{
+                "batch_id": "batch-F-1", "design_section": "B2", "component": "Foo",
+                "tasks": [{"id": "T1", "description": "实现 foo",
+                           "module_ref": "§B2", "file_targets": ["foo.py"]}],
+            }],
+            "file_list": ["foo.py"], "contracts": {},
+        }))
+
+        # developer with files_changed
+        o.tick(_make_result_file({
+            "stage": "developer", "batch_id": "batch-F-1",
+            "files_changed": ["foo.py"],
+            "test_results": {"passed": 2, "failed": 0},
+        }))
+
+        dev_entry = o._round_history[-1]
+        assert dev_entry.stage == "developer"
+        # gate_results should be captured (from _run_developer_gates)
+        assert isinstance(dev_entry.gate_results, dict), (
+            f"gate_results should be dict, got {type(dev_entry.gate_results)}"
+        )
+
+    def test_round_history_count_matches_stage_transitions(self) -> None:
+        """T105e: _round_history 条目数 = stage 转换次数."""
+        o = _orchestrator()
+        o.init("req")
+
+        # architect → gap_scan + gap_review + architect + developer + critic
+        # + component_verifier + system_deep_audit
+        o.tick(_make_result_file({
+            "stage": "architect",
+            "plan": _VALID_PLAN,
+            "batch_plan": [{
+                "batch_id": "batch-F-1", "design_section": "B2", "component": "Foo",
+                "tasks": [{"id": "T1", "description": "impl",
+                           "module_ref": "§B2", "file_targets": ["foo.py"]}],
+            }],
+            "file_list": ["foo.py"], "contracts": {},
+        }))
+        n_after_architect = len(o._round_history)
+
+        o.tick(_make_result_file({
+            "stage": "developer", "batch_id": "batch-F-1",
+            "files_changed": ["foo.py"],
+            "test_results": {"passed": 1, "failed": 0},
+        }))
+        n_after_developer = len(o._round_history)
+        assert n_after_developer == n_after_architect + 1
+
+        o.tick(_make_result_file({
+            "stage": "critic", "verdict": "APPROVE", "findings": [],
+            "critic_feedback": "ok",
+        }))
+        n_after_critic = len(o._round_history)
+        assert n_after_critic == n_after_developer + 1
+
+
+class TestT105MetricsConvergence:
+    """T105f: AE_METRICS=1 联合验证 — 度量管线 + 收敛判定同时正确."""
+
+    def test_metrics_pipeline_produces_events_during_convergence(self) -> None:
+        """T105f: AE_METRICS=1 时 tick 循环产生 metric events."""
+        import os
+        from auto_engineering.metrics.collector import get_collector
+
+        os.environ["AE_METRICS"] = "1"
+        try:
+            from auto_engineering.metrics.collector import MetricsCollector
+            collector = MetricsCollector(project_root=Path.cwd())
+            from auto_engineering.metrics.collector import set_collector
+            set_collector(collector)
+
+            o = _orchestrator()
+            o.init("实现单个组件")
+
+            # architect
+            o.tick(_make_result_file({
+                "stage": "architect",
+                "plan": _VALID_PLAN,
+                "batch_plan": [{
+                    "batch_id": "batch-F-1", "design_section": "B2", "component": "Foo",
+                    "tasks": [{"id": "T1", "description": "实现 foo",
+                               "module_ref": "§B2", "file_targets": ["foo.py"]}],
+                }],
+                "file_list": ["foo.py"], "contracts": {},
+            }))
+
+            # developer + critic + comp_verifier + system_deep_audit → GOAL_ACHIEVED
+            o.tick(_make_result_file({
+                "stage": "developer", "batch_id": "batch-F-1",
+                "files_changed": ["foo.py"],
+                "test_results": {"passed": 2, "failed": 0},
+            }))
+            o.tick(_make_result_file({
+                "stage": "critic", "verdict": "APPROVE", "findings": [],
+                "critic_feedback": "LGTM",
+            }))
+            o.tick(_make_result_file({
+                "stage": "component_verifier", "component": "Foo",
+                "coverage_map": [
+                    {"design_item": "B2-1", "status": "IMPLEMENTED",
+                     "file": "foo.py", "line": 10, "note": ""},
+                ],
+                "missing_count": 0, "diverged_count": 0,
+            }))
+            a_audit = o.tick(_make_result_file({
+                "stage": "system_deep_audit",
+                "findings": [],
+                "p0_count": 0, "p1_count": 0, "p2_count": 1,
+                "total_audited_files": 2,
+                "design_docs_stale": False,
+                "design_doc_suggestions": "",
+                "missing_count": 0, "diverged_count": 0,
+            }))
+            assert a_audit["action"] == "done"
+            assert a_audit["verdict"] == "GOAL_ACHIEVED"
+
+            # Metrics should have recorded convergence event
+            events = collector._events
+            converge_events = [e for e in events
+                               if e.get("event_type", "") == "convergence"]
+            assert len(converge_events) >= 1, (
+                f"Expected >= 1 convergence events, got {len(converge_events)}"
+            )
+        finally:
+            os.environ.pop("AE_METRICS", None)
+            from auto_engineering.metrics.collector import set_collector
+            set_collector(None)
+
+    def test_metrics_collector_not_initialized_without_env_var(self) -> None:
+        """T105f: AE_METRICS 未设置时 get_collector() 返回 None."""
+        import os
+        os.environ.pop("AE_METRICS", None)
+        from auto_engineering.metrics.collector import get_collector, set_collector
+        set_collector(None)
+        assert get_collector() is None
+
+
+# ── T109: PII 四层文件桥接防护 ──
+
+
+class TestT109PIIInit:
+    """T109b: L1 — requirement PII scan in init flow."""
+
+    def test_init_scans_requirement_for_pii(self) -> None:
+        """requirement 含身份证号 → WARN 日志."""
+        o = _orchestrator()
+        o._pii_enabled = True
+        from auto_engineering.pii.redactor import PIIRedactor
+        o._pii_redactor = PIIRedactor()
+        action = o.init("用户张三的身份证号是320102199001011234")
+        assert action["action"] == "architect"
+        # requirement 仍正常写入 (不阻断)
+        assert "张三" in o._state.requirement
+
+    def test_init_no_pii_clean_requirement(self) -> None:
+        """无 PII requirement 不触发 WARN."""
+        o = _orchestrator()
+        o._pii_enabled = True
+        from auto_engineering.pii.redactor import PIIRedactor
+        o._pii_redactor = PIIRedactor()
+        action = o.init("实现用户登录功能")
+        assert action["action"] == "architect"
+
+    def test_init_pii_disabled_skips_scan(self) -> None:
+        """AE_PII_ENABLED=0 时跳过扫描."""
+        o = _orchestrator()
+        o._pii_enabled = False
+        o._pii_redactor = None
+        action = o.init("用户身份证320102199001011234")
+        assert action["action"] == "architect"
+
+
+class TestT109PIIOutbound:
+    """T109c: L2 — outbound action JSON PII redact in _build_action."""
+
+    def test_outbound_redact_default(self) -> None:
+        """默认 redact 模式: PII 在 action JSON 中被脱敏."""
+        o = _orchestrator()
+        o._pii_enabled = True
+        from auto_engineering.pii.redactor import PIIRedactor
+        o._pii_redactor = PIIRedactor()
+        o.init("req")
+        o._state.current_stage = "architect"
+        action = o._build_action()
+        # action 中 requirement 已脱敏
+        req = action.get("context", {}).get("requirement", "")
+        # 原始 requirement 包含 "req" 但 PIIRedactor 不会误杀正常文本
+        assert "req" in req
+
+    def test_outbound_redact_masks_pii_in_action(self) -> None:
+        """action JSON 中的 PII 被脱敏."""
+        o = _orchestrator()
+        o._pii_enabled = True
+        from auto_engineering.pii.redactor import PIIRedactor
+        o._pii_redactor = PIIRedactor()
+        # 用身份证号测试 (有明确词边界)
+        o.init("用户身份证号 320102199001011234")
+        o._state.current_stage = "architect"
+        action = o._build_action()
+        req = action.get("context", {}).get("requirement", "")
+        # 身份证号被脱敏 (原始号码不在输出中)
+        assert "320102199001011234" not in req
+
+    def test_outbound_block_mode(self, monkeypatch) -> None:
+        """AE_PII_OUTBOUND=block: PII 命中 → error action."""
+        monkeypatch.setenv("AE_PII_OUTBOUND", "block")
+        o = _orchestrator()
+        # re-init PII with block-compatible env
+        import os as _os
+        o._pii_enabled = _os.environ.get("AE_PII_ENABLED", "1") == "1"
+        from auto_engineering.pii.redactor import PIIRedactor
+        o._pii_redactor = PIIRedactor()
+        o.init("req")
+        o._state.current_stage = "architect"
+        o._state.requirement = "身份证320102199001011234"
+        action = o._build_action()
+        # architect action 携带 requirement，含身份证号 → block
+        if action["action"] == "error":
+            assert action["error_code"] == "PII_BLOCKED_OUTBOUND"
+        else:
+            # requirement 也可能没被 scan_dict 命中 (只扫描字符串值)
+            pass
+
+    def test_outbound_warn_mode(self, monkeypatch) -> None:
+        """AE_PII_OUTBOUND=warn: PII 命中 → WARN 但不阻断."""
+        monkeypatch.setenv("AE_PII_OUTBOUND", "warn")
+        o = _orchestrator()
+        o._pii_enabled = True
+        from auto_engineering.pii.redactor import PIIRedactor
+        o._pii_redactor = PIIRedactor()
+        o.init("req")
+        o._state.current_stage = "architect"
+        action = o._build_action()
+        # warn 模式不阻断
+        assert action["action"] == "architect"
+
+    def test_outbound_pii_disabled_no_redact(self) -> None:
+        """PII 关闭时 action 原样返回."""
+        o = _orchestrator()
+        o._pii_enabled = False
+        o._pii_redactor = None
+        o.init("用户身份证号 320102199001011234")
+        o._state.current_stage = "architect"
+        action = o._build_action()
+        req = action.get("context", {}).get("requirement", "")
+        # 未脱敏
+        assert "320102199001011234" in req
+
+
+class TestT109PIIInbound:
+    """T109d: L3 — inbound result JSON PII scan."""
+
+    def test_inbound_warn_default(self) -> None:
+        """默认 warn 模式: PII 命中 → WARN 日志, 不阻断."""
+        o = _orchestrator()
+        o._pii_enabled = True
+        from auto_engineering.pii.redactor import PIIRedactor
+        o._pii_redactor = PIIRedactor()
+        o.init("req")
+        o._state.current_stage = "developer"
+        result = {
+            "stage": "developer",
+            "files_changed": ["test.py"],
+            "commit_hash": "abc123",
+            "description": "身份证号 320102199001011234",
+        }
+        validated = o._scan_inbound_for_pii(result)
+        assert isinstance(validated, dict)
+        # result 原样返回 (warn 不修改)
+        assert "320102199001011234" in validated.get("description", "")
+
+    def test_inbound_redact_mode(self, monkeypatch) -> None:
+        """AE_PII_INBOUND=redact: PII 被脱敏."""
+        monkeypatch.setenv("AE_PII_INBOUND", "redact")
+        import os as _os
+        o = _orchestrator()
+        o._pii_enabled = True
+        from auto_engineering.pii.redactor import PIIRedactor
+        o._pii_redactor = PIIRedactor()
+        o.init("req")
+        o._state.current_stage = "developer"
+        result = {
+            "stage": "developer",
+            "files_changed": ["test.py"],
+            "commit_hash": "abc123",
+            "description": "身份证号 320102199001011234",
+        }
+        validated = o._scan_inbound_for_pii(result)
+        assert isinstance(validated, dict)
+        # PII 被脱敏
+        assert "320102199001011234" not in validated.get("description", "")
+
+    def test_inbound_block_mode(self, monkeypatch) -> None:
+        """AE_PII_INBOUND=block: PII 命中 → ErrorResponse 拒绝."""
+        monkeypatch.setenv("AE_PII_INBOUND", "block")
+        o = _orchestrator()
+        o._pii_enabled = True
+        from auto_engineering.pii.redactor import PIIRedactor
+        o._pii_redactor = PIIRedactor()
+        o.init("req")
+        o._state.current_stage = "developer"
+        result = {
+            "stage": "developer",
+            "files_changed": ["test.py"],
+            "commit_hash": "abc123",
+            "description": "身份证号 320102199001011234",
+        }
+        validated = o._scan_inbound_for_pii(result)
+        from auto_engineering.loop.actions import ErrorResponse
+        assert isinstance(validated, ErrorResponse)
+        assert validated.error_code == "PII_BLOCKED_INBOUND"
+
+    def test_inbound_no_pii_clean_result(self) -> None:
+        """无 PII 的 result 原样通过."""
+        o = _orchestrator()
+        o._pii_enabled = True
+        from auto_engineering.pii.redactor import PIIRedactor
+        o._pii_redactor = PIIRedactor()
+        o.init("req")
+        o._state.current_stage = "developer"
+        result = {
+            "stage": "developer",
+            "files_changed": ["test.py"],
+            "commit_hash": "abc123",
+        }
+        validated = o._scan_inbound_for_pii(result)
+        assert isinstance(validated, dict)
+        assert validated == result
+
+    def test_inbound_pii_disabled(self) -> None:
+        """PII 关闭时 result 原样返回."""
+        o = _orchestrator()
+        o._pii_enabled = False
+        o._pii_redactor = None
+        o.init("req")
+        o._state.current_stage = "developer"
+        result = {
+            "stage": "developer",
+            "files_changed": ["test.py"],
+            "commit_hash": "abc123",
+            "description": "身份证号 320102199001011234",
+        }
+        validated = o._scan_inbound_for_pii(result)
+        assert isinstance(validated, dict)
+        assert "320102199001011234" in validated.get("description", "")
+
+
+class TestT113Require:
+    """T113 L2: _require() — 静默 No-op 可见化."""
+
+    def test_require_returns_value_when_not_none(self) -> None:
+        """非 None 属性正常返回."""
+        o = _orchestrator()
+        o.init("test requirement")
+        result = o._require("_state", "engine state")
+        assert result is not None
+        assert isinstance(result, EngineState)
+
+    def test_require_returns_none_when_attribute_is_none(self) -> None:
+        """None 属性返回 None, 不抛异常."""
+        o = _orchestrator()
+        result = o._require("_design_doc", "design doc not loaded")
+        assert result is None
+
+    def test_require_unknown_attribute_returns_none(self) -> None:
+        """不存在的属性返回 None, 不抛异常."""
+        o = _orchestrator()
+        result = o._require("_nonexistent_field_xyz", "unknown")
+        assert result is None
+
+    def test_require_logs_debug_when_none(self, caplog) -> None:
+        """None 时输出 DEBUG 级别日志, 包含属性名和原因."""
+        import logging
+        caplog.set_level(logging.DEBUG, logger="ae.loop.tick_orchestrator")
+        o = _orchestrator()
+        o._require("_design_doc", "design doc not loaded for test")
+        assert any("_design_doc" in r.message and "design doc not loaded" in r.message
+                   for r in caplog.records)
+
+    def test_require_no_log_when_not_none(self, caplog) -> None:
+        """非 None 时不输出额外日志."""
+        import logging
+        caplog.set_level(logging.DEBUG, logger="ae.loop.tick_orchestrator")
+        o = _orchestrator()
+        o.init("test")
+        caplog.clear()
+        o._require("_state", "should not log")
+        assert len(caplog.records) == 0

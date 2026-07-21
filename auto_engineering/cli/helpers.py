@@ -109,44 +109,8 @@ _CATEGORY_FRIENDLY_PREFIX: dict[ErrorCategory, str] = {
 
 
 
-@dataclass
-class TokenTracker:
-    """累加 LLM 调用的 token 消耗,超阈值抛 BUDGET_EXCEEDED.
-
-    支持 input_tokens + output_tokens 累加;mock-friendly(duck-typing on .usage).
-    """
-
-    max_tokens: int = 0
-    input_tokens: int = 0
-    output_tokens: int = 0
-
-    @property
-    def total_tokens(self) -> int:
-        return self.input_tokens + self.output_tokens
-
-    def add(self, response: Any) -> None:
-        """累加 LLMResponse.usage 中的 token. 超阈值抛 AEError(BUDGET_EXCEEDED)."""
-        usage = getattr(response, "usage", None)
-        if usage is None:
-            return
-
-        # Support both dict usage (providers.base.LLMResponse) and
-        # object usage (legacy anthropic_provider.LLMResponse / LLMUsage).
-        if isinstance(usage, dict):
-            in_t = usage.get("input_tokens", 0) or 0
-            out_t = usage.get("output_tokens", 0) or 0
-        else:
-            in_t = getattr(usage, "input_tokens", 0) or 0
-            out_t = getattr(usage, "output_tokens", 0) or 0
-        self.input_tokens += in_t
-        self.output_tokens += out_t
-
-        if self.max_tokens > 0 and self.total_tokens > self.max_tokens:
-            raise AEError(
-                ErrorCode.BUDGET_EXCEEDED,
-                f"Token budget exceeded: {self.total_tokens} > {self.max_tokens}",
-                suggestion="请增大 --max-tokens 参数或缩小需求范围",
-            )
+# P1-6: TokenTracker 定义已迁移至 utils/token_tracker.py, 此处保留 re-export
+from auto_engineering.utils.token_tracker import TokenTracker  # noqa: F401
 
 
 def _install_sigint_handler(token: CancellationToken) -> None:

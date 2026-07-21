@@ -36,6 +36,10 @@ _EXPECTED_V56_FIELDS = {
     "prompt_registry_hash",
     # #38-39 DebugTracer 开关
     "debug_enabled", "debug_dir",
+    # #40 T112: action_timestamp (跨 tick 计时)
+    "action_timestamp",
+    # #41 T110b: tick_token_usage (当前 tick token 消耗)
+    "tick_token_usage",
     # 内部写入审计日志
     "_write_log",
 }
@@ -299,11 +303,11 @@ class TestEngineStateBoundary:
         assert not hasattr(state, "nonexistent")
 
     def test_to_dict_contains_all_40_fields(self) -> None:
-        """to_dict 输出含全部 41 字段 (v5.6: 42 - _write_log)."""
+        """to_dict 输出含全部 43 字段 (v5.6, 不含 _write_log)."""
         state = EngineState()
         d = state.to_dict()
-        assert len(d) == 41, (
-            f"to_dict 应含 41 字段, 实际 {len(d)}: "
+        assert len(d) == 43, (
+            f"to_dict 应含 43 字段, 实际 {len(d)}: "
             f"{sorted(d.keys())}"
         )
         assert "suggested_fix" in d, "to_dict 必须包含 suggested_fix (Self-Refine 深化)"

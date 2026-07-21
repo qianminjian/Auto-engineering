@@ -20,6 +20,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from auto_engineering.loop.checkpoint.records import RoundHistory  # P1-7: definition moved to records
+
 if TYPE_CHECKING:
     from auto_engineering.gates.base import GateVerdict
     from auto_engineering.loop.audit_history import AuditHistory
@@ -90,40 +92,6 @@ class ConvergenceConfig:
     # 当 True 时, T9 plan-refine 回路激活 (critic APPROVE → DeepAudit → architect).
     # 当 False 时, 跳过 DeepAudit 扫描 (仅用于测试/调试场景).
     # 参见 design/v5.5-IMPLEMENTATION-PLAN.md Phase G (DeepAudit Integration).
-
-
-@dataclass
-class RoundHistory:
-    """单轮历史记录.
-
-    用于停滞检测算法: 计算与上一轮的 diff 变化率.
-
-    Attributes:
-        round_id: 轮次 ID (1-indexed)
-        files_changed: 本轮修改的文件数
-        lines_added: 本轮新增行数
-        lines_removed: 本轮删除行数
-        gate_results: v2.3 Phase D (P0.4) — 保留完整 GateVerdict 对象 dict[gate_name, GateVerdict].
-                      之前是 dict[str, bool], 丢失 verdict.message 语义.
-                      v5.4 P2-4: 从 dict[str, Any] 改为强类型 dict[str, GateVerdict].
-        semantic_satisfied: LLM 语义评估是否通过 (v2.0+ LLM 调用, Phase 2 可为 None)
-        tasks_run: v2.3 Phase C — 本轮实际跑的 task IDs (供 Orchestrator 增量选择参考)
-        task_outcomes: v2.3 Phase C — 本轮每个 task 的最终状态
-            {task_id: "completed" | "failed" | "cancelled"}, 供下一轮 _select_round_tasks
-            区分"已完成 (跳过)" vs "失败 (重跑)"
-    """
-
-    round_id: int
-    stage: str = ""
-    files_changed: int = 0
-    lines_added: int = 0
-    lines_removed: int = 0
-    gate_results: dict[str, GateVerdict] = field(default_factory=dict)
-    guardrail_result: str | None = None  # PRE/POST guardrail 判定结果 (pass/block/retry)
-    semantic_satisfied: bool | None = None  # None = 未评估
-    tasks_run: list[str] = field(default_factory=list)
-    task_outcomes: dict[str, str] = field(default_factory=dict)
-    channel_versions: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass
@@ -354,6 +322,22 @@ class ConvergenceJudge:
             )
         bayesian = learner.compute_max_iter()
         if bayesian != 10:  # Bayesian model is ready (not cold-start default)
+            # T111: RatchetController sandbox 预验证
+            try:
+                from auto_engineering.metrics.ratchet import RatchetController
+                ratchet = RatchetController(metrics_dir)
+                proposals = learner.propose_adjustments()
+                if proposals:
+                    sandbox_result = ratchet.sandbox_evaluate(proposals)
+                    decisions = sandbox_result.get("decisions", [])
+                    stop_decisions = [d for d in decisions if d.get("action") == "stop"]
+                    if stop_decisions:
+                        _logger.warning(
+                            "RatchetController sandbox: %d stop decisions, "
+                            "keeping current thresholds", len(stop_decisions))
+                        return None  # 不回退，用当前默认值
+            except Exception:
+                pass  # sandbox 评估失败不影响主流程
             return bayesian
         # Fallback: simple heuristic from audit history
         rounds = [e.get("rounds", 1) for e in entries]

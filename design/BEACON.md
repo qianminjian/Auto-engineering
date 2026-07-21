@@ -1,4 +1,4 @@
-> 创建：2026-06-24 | 更新：2026-07-19 | 阶段：Phase 1-26 全部完成 — 196/196 任务，2587 tests 零回归
+> 创建：2026-06-24 | 更新：2026-07-21 | 阶段：Phase 1-29 全部完成 — 221/221 任务（T109h PII 文档 ⚠️ 部分完成）
 > ⚠️ **决策状态翻转管控**：status 列 ✅→❌ 或 ❌→✅ 必须经用户审批。AI 不得自行翻转。详见 `.claude/rules/design-document-inviolability.md` §2。
 
 ## 目标与成功标准
@@ -29,6 +29,7 @@
 | **34** | ~~AE_JSONL_MODE 条件开关~~ (已废弃, 被 #39 替代) | JSONL 路径仅在 `AE_JSONL_MODE=1` 时启用. v5.4 删除 `_orchestrator_agent.py` + 所有 AE_JSONL_MODE 引用. v5.6 Tick 协议无需条件开关 | 2026-07-05 | ❌ (→ 📝 superseded by #39) |
 | **35** | **GuardrailChain.default() 工厂 + _tasks_from_batch_plan 接入** | guardrail.py 加 default() 返回 5 Guardrail 链；orchestrator 架构师响应中 batch_plan 接入 _tasks_from_batch_plan → developer tasks | 2026-07-05 | ✅ |
 | **36** | **TDDGate + StageTransitionGate（借鉴 CrewAI + SonarQube）** | CrewAI GuardrailResult(success/result/error) 三态 + SonarQube 条件门禁模式；TDDGate 强制 Red→Green→Refactor, StageTransitionGate 检查阶段过渡前置条件. v5.4 已删除 — 两者实现的是有状态 Guardrail 检查而非无状态 Gate, 与 Gate.run() 接口不兼容 | 2026-07-05 | ❌ (superseded) |
+| — | **(#37 编号跳过)** | v5.5→v5.6 架构过渡期间编号预留，后未使用。保留跳过以维持后续编号稳定 | 2026-07-08 | — |
 | **38** | **v5.5 DeepAudit 扩展设计 (T9 plan-refine 回路) + Superpowers 工具集整合** | critic APPROVE 后触发 DeepAuditGate (3-agent 并行全量代码审计), P0>0 或 P1>阈值 → T9 回到 architect 修正计划; P1 阈值从 6 开始自动学习; Architect 集成 Agent-Reach + brainstorming 设计流程; max_iter 从运行日志自动评估; 明确 Python 控制流 vs LLM 推理边界; 整合 Superpowers 5 个 skill (code-reviewer.md 模板 → Critic+DeepAudit, receiving-code-review → Developer, brainstorming+writing-plans → Architect) | 2026-07-06 | ✅ |
 | **39** | **v5.6 Tick-Based Discrete Invocation 协议** | 替换连续 while 循环为离散 CLI 调用 (`ae dev-loop --init` → `--tick --result` loop)；文件桥接替代 JSONL stdin/stdout；Python 每次 tick 独立进程 (读 SQLite → 验证 → Guardrail → Gate → ConvergenceJudge → Checkpoint → 输出 action JSON → 退出)；Agent 通过反复调用 `--tick` 驱动循环；Python 永不调 LLM API；8 Agent 规格 (architect/developer/critic + 4 验证层 + BatchState)；StageRouter T1-T22 (含全部验证路径)；BatchState Python 确定性跨 tick 进度管理。33/34 变更为 superseded（JSONL → Tick 文件桥接） | 2026-07-08 | ✅ |
 | **40** | **v5.6 5 层验证架构** | ① critic 只做 diff 审查（不判断需求验收，高频秒级）；② component_verifier 组件级设计→代码覆盖映射（Haiku 轻量模型，确定性匹配）；③ plate_deep_audit 板块级跨组件交互质量审计（Sonnet，检查跨组件契约）；④ system_verifier 全量设计覆盖（Haiku，退出闸门一次性）；⑤ system_deep_audit 全量代码质量 6 维审计（Sonnet，退出闸门一次性）。核心原理：频率×范围的矩阵——高频窄范围用轻量 Agent（秒级），低频全范围用重量 Agent（分钟级）。D6 修正：SemanticEvaluator 彻底移除，需求验收由 verifier 层承担。D11: Architect 双模式（模糊需求推理 / 设计文档解析+细化） | 2026-07-08 | ✅ |
@@ -67,11 +68,47 @@
 | **73** | **Phase 25 — 战略储备激活（按依赖顺序执行）** | 用户纠正：7 项"战略储备"不是"搁置不做"——用户决策是"按依赖顺序执行"，AI 擅自曲解为"不入当前 Phase"。恢复为活跃任务：PII Guardrail G10/Intermediate artifact offloading/LangSmith exporter/Pre-planned Gate/Escalation Gate/Task DAG/消息类型语义。7 任务（T91-T97），严格依赖链排序。D46 | 2026-07-19 | ✅ |
 | **74** | **Phase 26 — 设计-实现对齐 + 遗留清理** | BEACON #67 状态描述精确化（标题"3 形态"→标注实现度）/bank_card PII severity WARN→CRITICAL + 正则收紧/⏳ test_checkpoint_store.py 5 failures 修复/[Q?] Post-Phase-19 能力覆盖矩阵验证。4 任务（T98-T101）。D47 | 2026-07-19 | ✅ |
 | **75** | **Phase 27 — 真跑验证发现修复（T102-T104）** | VoiceClonePage + PrismScan 真跑验证发现 3 项：T102 Gate 增量扫描（run_gates files_changed 参数激活 AuditGate 增量逻辑）、T103 脚手架 batch 报错指引（test_results.passed 至少为 1 需说明验证方式）、T104 component 名称 difflib 模糊匹配（孤儿 batch 错误消息增加最接近匹配提示）。D48 | 2026-07-19 | ✅ |
-| **76** | **Phase 28 — 七方对标差距处理 + 审计 P1/P2 修复** | 交叉对标报告 6 项评分偏差中 4 项已代码修复（T102/T103/T104/GitClean），2 项待处理（T105 收敛复验 🟡、T107 人在环设计决策 🔵）。审计发现 2 P1（tracing span context manager + 34 文件未跟踪）+ 2 P2（模块实例化重复 + setup_tracing 无门控）全部修复。36 文件入 git。评估评分 11/24，T105 复验通过后预估回调至 ~13/24。D49 | 2026-07-19 | ✅ |
+| **76** | **Phase 28 — 七方对标差距处理 + 审计 P1/P2 修复** | 交叉对标报告 6 项评分偏差全部已代码修复（T102/T103/T104/GitClean/T105a-c/T106/T107）。审计 2 P1 + 2 P2 全部修复 + 36 文件入 git。T105d-f（端到端收敛验证）5 tests 完成，交叉对标总分 11→13/24。D49 | 2026-07-21 | ✅ |
+| **77** | **Phase 29 — Phase 17-21 真跑验证差距修复方案** | 真跑数据（VoiceClonePage 65 ticks）对照 Phase 17-21 设计规格的逐项验证发现 8 项差距。核心发现：① Phase 17 subagent 隔离是"说服式手段伪装成强制式"（prompt 指令 vs Python 门控），Agent 选择不 spawn subagent；② Phase 18-21 系统性 Build-then-Wire 反模式（~1875 行虚化代码）；③ Agent 驱动与 Standalone 模式能力不对等。Phase 29 共 22 项子任务：P0×3（T108a-c）+ P0/P1×8（T109a-h）+ P1×5（T110a-d + T111 + T116）+ P2×6（T112-T115 + T109f/T109h 重叠计入 P0 父任务）。方案详见 `_scratch/reports/his/2026-07-20-Phase29-问题分析与解决方案.md`。D50 | 2026-07-20 | ✅ |
+| **78** | **Agent-Agnostic PII 四层防护架构（T109 详细设计）** | 决策 #68 PII Middleware 三道防线仅覆盖 StandaloneDriver（BaseAgent.execute() pipeline），AgentDriver Tick 模式下从未触发——BaseAgent.execute() 在 Agent 模式永不调用。四层文件桥接协议边界防护：**L1** `--init` requirement 文本 PII 扫描（WARN 日志+metrics）→ **L2** `_build_action()` outbound action JSON 递归 PII 脱敏（redact_dict，防 PII 流入 Agent 上下文）→ **L3** `_validate_result_dict()` inbound result JSON 递归 PII 扫描（scan_dict，WARN+metrics）→ **L4** G10 PIIGuardrail + G11 FileAccessGuardrail 扩展（文件内容 PII 审计，retry/block）。基础设施：`PIIRedactor.scan_dict()` 递归只读扫描 + `redact_dict()` 递归脱敏返回副本。配置：`AE_PII_ENABLED` 总开关 + `AE_PII_OUTBOUND`(redact|warn|block) + `AE_PII_INBOUND`(warn|block|redact) + `AE_PII_GUARDRAIL`(retry|block) + `AE_PII_BLOCK` 全局 block 模式。承认架构边界：Agent→LLM API 链路不可拦截（Claude Code 外部进程），四层覆盖文件桥接双向数据流。参考：CrewAI 三层防御 + DeepAgents PIIMiddleware + AutoGen InterventionHandler。子任务 T109a-T109h 跟踪 | 2026-07-20 | ✅ |
+| **79** | **Agent 模式 M5 Token 效率 JSONL 转录采集（T110 详细设计）** | AgentDriver 模式下 `record_token_usage()` 永不调用（仅 BaseAgent.execute() 调用链），但 Claude Code **默认写入**每次 API 响应的 `usage` 数据到 `~/.claude/projects/<cwd>/<uuid>.jsonl`。三条外部采集路径：① JSONL 会话转录（事后、完整、零配置，**推荐**）② Statusline Hook（实时、部分、需配置）③ cccost npm 包（实时、完整、需安装）。方案：新建 `SessionTranscriptParser` 增量读取 JSONL（记录 offset 跨 tick）+ `message.id` 全局去重（同一 API 响应在父会话/resume/rewind/subagent 文件中可能重复）。**两级门控**：`AE_METRICS=1`（总开关）→ `AE_TOKEN_TRACKING=1`（M5 子开关，**默认 0 关闭**，避免每 tick JSONL I/O 影响循环性能）。仅两开关均启用才触发增量解析。`AE_TOKEN_SOURCE=transcript` 指定数据来源。关键决策：默认关闭（token 效率是成本分析指标非循环执行必要指标，对齐 AE_METRICS=0 的 opt-in 哲学）、JSONL 优先（零依赖）、message.id 去重、subagent 目录一并扫描、解析失败静默降级 M5=None。三框架对比：CrewAI/AutoGen/LangGraph 均通过进程内 Provider 层代码级拦截——外部 LLM 调用进程的 token 采集在业界目前无标准方案，JSONL 转录是 Claude Code 平台特有路径。子任务 T110a-T110d 跟踪 | 2026-07-20 | ✅ |
+| **80** | **FeatureManifest SSOT — 功能激活可见性（T114 详细设计）** | 17 个 AE_ 环境变量控制功能激活，散落 13 个文件，无集中清单。用户无任何途径知晓 AuditLog/OTLP/Metrics/DebugTracer/LangSmith/PromptCaching 等功能存在——这是 F.14 根因 #5（条件激活不可见）的具体表现。方案：新建 `auto_engineering/config/feature_flags.py`（**计划产物，文件尚未创建**）FeatureManifest dataclass（17 项 FeatureFlag，含 key/description/category/agent_mode/activation/default_active）→ `ae doctor` 新增「可选功能」面板（始终显示全部功能+激活指引，主发现入口）→ `ae dev-loop --init` stderr 一行功能状态（快速确认）→ action JSON `feature_status` 字段（Agent 模式适配）。约束：新增 env var → 必须先注册到 FEATURE_MANIFEST → doctor + --init 自动展示。L3 接线契约测试增加 `test_feature_manifest_coverage`。设计详见 IMPLEMENTATION-TRACKER.md T114 详细 | 2026-07-20 | ✅ |
+| **81** | **双驱动能力覆盖矩阵 + 驱动适用性设计规范（T115 详细设计）** | Phase 17-21 功能设计隐含 Standalone 假设（BaseAgent.execute() pipeline 为集成点），Agent 边界（外部 LLM 进程）未显式考虑。5 类功能在两个驱动下不对称：PII（设计替代—T109 文件桥接层等效）、Prompt Caching（架构固有—Agent 进程外 LLM 调用不可注入）、M5 Token（设计替代—T110 JSONL vs Provider hook）、AuditLog LLM 内容（架构固有）、模型选择（架构固有）。方案：① 能力覆盖矩阵 SSOT（附录 C §13，15+ 模块双驱动状态+分类标签）② 三种不对称分类体系（架构固有/设计替代/未实现）③ 驱动适用性设计规范（新增功能必须回答 3 问：集成点在哪/两驱动均可达/不可达时的替代路径）④ metrics report `driver_mode` + 信号 `source` 字段 ⑤ 已有模块追加双驱动标注。设计详见 IMPLEMENTATION-TRACKER.md T115 详细 | 2026-07-20 | ✅ |
+| **82** | **收敛判定端到端验证（T105 深度分析）** | T105 全部 6/6 子项完成。L1 (T105a-c)：_append_round_history 时序修复 + lines_added/removed git diff 填充 + HARD_LIMIT/STAGNANT/GOAL_ACHIEVED 优先级测试。L2 (T105d-f)：端到端收敛验证（完整 LEAF 循环→GOAL_ACHIEVED）+ gate_results 捕获 + AE_METRICS=1 联合验证。5 new tests, 2627 零回归。交叉对标总分 11→13/24。D49 | 2026-07-21 | ✅ |
+| **83** | **AuditTimingGuardrail 证据组合检测器（T112 深度分析）** | T112 兜底安全网——Agent 不 spawn subagent 时 Python 侧强制拦截。三重证据（E1 耗时/E2 findings 空/E3 p0/p1 零）经 2026-07-21 深度分析修正：E2→E3 非独立（E2 蕴含 E3），原 `≥2/3 → retry` 对场景 E（干净代码库正常审计 8s 无发现）误报。修正为 E1 必须参与组合：`effective = E1 + max(E2, E3)`，2/2 → retry，1/2 → WARN。跨 tick 计时（`action_timestamp` checkpoint 持久化）+ 首次 tick 冷启动 skip + StandaloneDriver 区分。5 个 spawn stage 阈值表（component_verifier 从 3s 上浮至 5s 防 Haiku spawn 开销误报）。与 T108c 分层：T108c WARN 早期信号，T112 block 兜底拦截。设计详见 IMPLEMENTATION-TRACKER.md T112 详细 | 2026-07-21 | ✅ |
+| **84** | **GitClean untracked 测试覆盖补全（T106 深度分析）** | GitClean guardrail 修复代码已有（ca5c4d1+d329d74，正确过滤 `??` 和 `!!`）。深度分析发现 4 项测试缺口：① 命名修正 `test_block_dirty_repo`→`test_untracked_files_pass`；② `!!` ignored 文件 → pass 测试；③ 混合场景 untracked+tracked 修改 → block（防过滤逻辑掩盖真实变更）；④ `git status` 命令失败 → block。~4 tests，~35 行。设计详见 IMPLEMENTATION-TRACKER.md T106 详细 | 2026-07-21 | ✅ |
+| **85** | **人在环 gap_review 自动暂停闸门（T107 深度分析定案）** | 交叉对标发现 gap_review 是"人在信息环"非"人在决策环"。3 方案评估后定案方案 C（阈值触发）：`has_blocking == true`（有 architectural gap）→ 自动插入 Stage Checkpoint Gate 暂停等用户确认（复用 T64 DecisionGate 基础设施，`_after_gap_review()` ~5 行改动）。`has_blocking == false`（仅 component/module 级）→ 不暂停直接进入 architect。4 子项（T107a-T107d）。设计详见 IMPLEMENTATION-TRACKER.md T107 详细 | 2026-07-21 | ✅ |
 
 ## 当前状态
 
-**阶段：** v5.6 全部完成 — Phase 1-28 全部完成（199/199 任务，2497 tests 零回归）。
+**阶段：** v5.6 全部完成 — Phase 1-27 全部完成（196/196 任务）。Phase 28 全部完成 ✅（T105/T106/T107）。Phase 29 全部完成 ✅（T108-T116，22/22 任务）。
+
+**最近动作 (2026-07-21 Phase 28/29 全部完成)：**
+- **T105-T116 全部实现 + 测试通过**：400 tests 零回归。Phase 28（3 项 + 14 子项）+ Phase 29（22 项 + 21 子项）全部完成。
+- **T109 PII 四层防护**：L1 init 扫描 + L2 outbound redact + L3 inbound scan + L4 G11 file scan + Metrics 集成，~40 tests。
+- **T110 M5 Token JSONL 采集**：SessionTranscriptParser 增量解析 + TickOrchestrator 集成 + M5 mode-aware，17 tests。
+- **T111 Phase 21 接线**：RuleDiscoverer + RatchetController sandbox + 收敛集成。
+- **T112 AuditTimingGuardrail**：证据组合检测器（E1+max(E2,E3)）+ 跨 tick 计时。
+- **T113 Build-then-Wire 预防**：L1 tracker 协议 + L2 _require() + L3 接线契约测试，~9 tests。
+- **T114 FeatureManifest SSOT**：22 项 FeatureFlag + doctor 面板 + --init stderr + action JSON feature_status，16 tests。
+- **T115 双驱动能力矩阵**：driver_mode + set_driver_mode() + metrics source 字段 + CLI 接线，5 tests。
+- BEACON 决策 #78-#81 全部落实，#82-#85 全部完成。
+- **对 T113 L1 的贡献**：新 env var 必须先注册 FEATURE_MANIFEST → 接线测试自动验证。条件激活模块的 FeatureFlag 包含未激活时的行为说明。
+
+**最近动作 (2026-07-20 T113 Build-then-Wire 系统性预防深度分析)：**
+- **T113 深度分析完成**：Phase 18-21 ~1875 行虚化代码的 5 层根因分析。核心发现：Phase 22（接线任务）本身也发生 Build-then-Wire——"接线"只做了参数位预留，CLI 侧从未实例化。三层防护升级：L1 跟踪表 ✅ 定义增加接线验证步骤（流程约束）→ L2 静默 No-op 改为 `_require()` 持续门控（代码约束）→ L3 接线契约测试 + 自动追加约定（测试约束）。当前残余虚化 ~400 行（DiagnosticRuleDiscoverer 零引用 + sandbox_evaluate 零调用 + loop/ 旧版 threshold_learner 残留）。T111 应在 T113 约束下调整——接线不作为独立 Phase。
+- **T110 M5 Token 效率 Agent 模式方案定稿**：原"架构边界不可解"结论被推翻——Claude Code 默认写入 JSONL 会话转录，事后增量解析即可采集 token 用量。新建 `SessionTranscriptParser` + 增量读取 + message.id 去重 + TickOrchestrator 每 tick 集成。三框架（CrewAI/AutoGen/LangGraph）均通过进程内 Provider 层拦截——外部 LLM 调用进程的 token 采集在业界无标准方案，JSONL 转录是 Claude Code 平台特有路径。BEACON 决策 #79。
+- **BEACON 决策 #78 + 跟踪表 T109 展开**完成。
+- **业界标杆调研完成**：CrewAI 事件总线 `LLMCallCompletedEvent` → AutoGen `RequestUsage` 嵌入消息 → LangGraph LangChain 回调委托——三者共同前提是 LLM 调用在进程内，无一家解决外部 LLM 进程的 token 采集问题。
+
+**最近动作 (2026-07-20 T108a/b/c 完成 — Subagent 隔离指令层修复)：**
+- **T108a** `_build_action()` 中 6 个 stage（architect/critic/component_verifier/plate_deep_audit/system_verifier/system_deep_audit）增加 `spawn` 字段 + `_SPAWN_CONFIG` 常量。Agent 每 tick 的 action JSON 现在自包含 subagent spawn 指令——不再需要回忆 dev-loop.md spec。
+- **T108b** `commands/dev-loop.md` subagent 隔离段从第 96 行前移到 Iron Law 之后（第 37 行）紧接执行铁律；driving loop while 循环增加 `if action.spawn exists` 分支；Red Flags 增加 2 条 spawn 相关条目。
+- **T108c** `_validate_result_dict()` 增加 spawn 阶段空 findings 检测 → WARN 日志。
+- 全量 128 tests (test_tick_orchestrator) + 7 tests (test_cli_dev_loop_tick) 零回归。
+- **真跑验证对标**：Phase 17-21 设计改进 × VoiceClonePage 真跑（65 ticks, 2026-07-19）逐 Phase 落地验证。核心发现：Phase 17 subagent 隔离未落地（contract gate 确认 "single agent mode"）、Phase 18-21 系统性 Build-then-Wire（~1875 行虚化代码）、Agent/Standalone 能力不对等。
+- **8 项问题根因分析 + 解决方案设计**：P0×2（T108 Subagent spawn 验证 + T109 PII Agent 模式覆盖）、P1×2（T110 M5 文档化 + T111 Phase 21 接线）、P2×4（T112 Timing Guardrail + T113 Build-then-Wire 预防 + T114 OTLP 可见性 + T115 能力矩阵文档化）。
+- **BEACON 决策 #77（Phase 29）+ Phase 29 跟踪表**追加。
 
 **最近动作 (2026-07-19 审计 P1/P2 修复 + 文件入库)：**
 - **审计修复提交 (8824cad)**：P1 tracing span `start_as_current_span`→`start_span`+手动 `end()` / P2 提取 `_build_injectables()` 消除重复 + `setup_tracing` 加 `AE_OTLP_ENDPOINT` 门控 / P1 34 个 Phase 20-25 源文件+测试文件+设计文档入 git（~7809 行）/ T102-T104 + 虚化模块接线 + audit log_event。42 files, +8034 −11, 2497 tests 零回归。
@@ -130,17 +167,17 @@
 		- **Phase 24（9/9）P1/P2 修复**：T82-T90 全部完成。
 		- **Phase 25（7/7）战略储备激活**：T91 PIIGuardrail G10 / T92 artifact offloading / T93 LangSmith / T94 Pre-planned Gate / T95 Escalation Gate / T96 Task DAG / T97 message_type。16 new tests。
 		- **Phase 26（4/4）设计-实现对齐 + 遗留清理**：T98 BEACON #67 / T99 bank_card CRITICAL / T100 type fix / T101 能力矩阵（14.5→15/24）。
-		- **全量测试**：2587 passed, 0 failed, 2 skipped。Phase 1-26 = 196/196 全部完成。
+		- **全量测试**：2521 passed, 0 failed, 2 skipped（PrismScan 移除后 -66 tests）。Phase 1-26 = 196/196 全部完成。
 
 
 **最近动作 (2026-07-17 Step 3 AgentDriver 基准 10/10 全部完成)：**
 	- **AgentDriver 10/10 全量 GOAL_ACHIEVED**：全部 10 需求通过 v5.6 Tick-Based Discrete Invocation 协议手动驱动完成。R01(5t/7t)、R02(5t/7t)、R03(5t/5t)、R04(9t/13t)、R05(5t/8t)、R06(5t/9t)、R07(9t/18t)、R08(5t/6t)、R09(5t/7t)、R10(5t/5t)。总 ~63 ticks, ~85 tests, 100% 收敛率。
 	- **R09/R10 设计文档模式绕行**：`BatchState.from_design_doc()` 对简单设计文档（无 H3 组件层次）校验过严，通过 spec 内嵌 requirement 文本绕过。与 StandaloneDriver 采用相同 workaround。
 	- **关键 bug 修复**：`tick_orchestrator.py:_apply_result_to_state()` 补 `red_evidence` 字段映射（所有 AgentDriver developer tick 后 REDGuard 永远失败的根因）。`agent_bench_setup.py` collect 修复 git commit 计数（`$()` shell 展开在 subprocess.run list 中不生效）。
-	- **双驱动最终对比**：AgentDriver 适合人工交互/精细控制（~8min/需求），StandaloneDriver 适合批量自动化/CI/CD 集成（~163s/需求）。收敛率等价（100% vs 100%），AgentDriver 测试更精简（avg 8.5 vs avg 11.8），StandaloneDriver 更多测试但覆盖更全面。详细对比见 `_scratch/benchmark_report.md`。BEACON 决策 #57。
+	- **双驱动最终对比**：AgentDriver 适合人工交互/精细控制（~8min/需求），StandaloneDriver 适合批量自动化/CI/CD 集成（~163s/需求）。收敛率等价（100% vs 100%），AgentDriver 测试更精简（avg 8.5 vs avg 11.8），StandaloneDriver 更多测试但覆盖更全面。详细对比见 `_scratch/reports/his/benchmark_report.md`。BEACON 决策 #57。
 
 **最近动作 (2026-07-17 V7-8 基准修复与重跑)：**
-- **v7.8 Architect 瓶颈消除**：4 项修复（见决策 #56）将 StandaloneDriver 基准收敛率从 40% (4/10) 提升至 100% (10/10 GOAL_ACHIEVED)。原始 6 个失败案例全部修复验证通过：R01(8 tests)/R03(6 tests)/R04(27 tests)/R07(16 tests)/R09(7 tests)/R10(14 tests)。详细报告见 `_scratch/benchmark_report.md`。
+- **v7.8 Architect 瓶颈消除**：4 项修复（见决策 #56）将 StandaloneDriver 基准收敛率从 40% (4/10) 提升至 100% (10/10 GOAL_ACHIEVED)。原始 6 个失败案例全部修复验证通过：R01(8 tests)/R03(6 tests)/R04(27 tests)/R07(16 tests)/R09(7 tests)/R10(14 tests)。详细报告见 `_scratch/reports/his/benchmark_report.md`。
 - **软上限问题缓解**：developer max_tool_calls 20→30 (warn 15), critic 10→15 (warn 7)。DeepSeek 纯 tool_use 响应触发 warn_threshold 的根因仍存，但概率已显著降低。
 - **设计文档模式已知限制**：R09/R10 `BatchState.from_design_doc()` 对简单设计文档（无 H3 组件层次）校验过严，当前通过 spec 内嵌 requirement 绕过。根本修复需放宽 `from_design_doc` 对无组件 plate 的校验逻辑。
 
@@ -193,10 +230,10 @@
 
 **最近动作 (2026-07-11)：**
 - **Phase 3 T9 Tick CLI 接线完成** (fe8bee2/f4e4175/0a2daca)：`ae dev-loop --init/--tick/--status/--resume` + 跨进程 restore（SQLite → EngineState → BatchState/ProgressTree/DesignDoc rehydrate）+ A3 `batch_state_json` 写侧闭合。BatchState 序列化自包含（内嵌轻量 batch_plan seed，plates 不持久化——"不存重 plates"主决策保留）。1717 tests 通过，端到端 3 独立进程验证 thread_id/batch_id 跨进程保真。属实现接线，无 status 翻转、无设计降级
-- **设计文档深度审计 + 22 项收口深化** (决策 #49, Phase 8)：3 并行子代理审 4214 行 → 规格 6.5/10、端到端 2.5/10。P0×4 全为代码缺口(已 T9/T10/T27/T32 跟踪)；文档规格缺陷 S-1~S-20+Q-1/Q-2 共 22 项**纯文档收口**（补 CoverageItem/GateVerdict/done verdict 权威 schema + file-bridge 边界矩阵 §C.3.5 + 路径更正 + 过度设计存续论证）。**S-1 语义评估矛盾定案**：v5.6 全路径无语义评估，代码 semantic_evaluator 移除跟踪到 Phase 3 T10d。审计产出 `_scratch/design-audit/`，无 status 翻转
+- **设计文档深度审计 + 22 项收口深化** (决策 #49, Phase 8)：3 并行子代理审 4214 行 → 规格 6.5/10、端到端 2.5/10。P0×4 全为代码缺口(已 T9/T10/T27/T32 跟踪)；文档规格缺陷 S-1~S-20+Q-1/Q-2 共 22 项**纯文档收口**（补 CoverageItem/GateVerdict/done verdict 权威 schema + file-bridge 边界矩阵 §C.3.5 + 路径更正 + 过度设计存续论证）。**S-1 语义评估矛盾定案**：v5.6 全路径无语义评估，代码 semantic_evaluator 移除跟踪到 Phase 3 T10d。审计产出为会话内产物（未持久化为文件），无 status 翻转
 - **Init-Loop 契约 v5.6 扩展** (决策 #48)：`init-manifest.schema.json` 版本化 SSOT + ci_platform/design_root 字段 + monorepo 单包降级 + 消费者驱动契约测试
 
-**下一步：** v5.6 设计规格内所有任务已完成（Phase 1-26 = 196/196）。用户确认下一里程碑方向。
+**下一步：** T109a PIIRedactor.scan_dict/redact_dict 基础设施实现，然后 T109b-T109h 按依赖顺序推进。
 
 **阻塞项：** 无。
 
@@ -204,7 +241,16 @@
 
 | 日期 | 变更 | 原因 |
 |------|------|------|
-| 2026-07-19 | **Phase 22-26 + Phase 21 全部完成（196/196 任务，2587 tests 零回归）** | Phase 21（3 自进化深化：T70 ThresholdLearner / T71 DiagnosticRuleDiscoverer / T72 sandbox_evaluate，+32 tests）/ Phase 22（6 虚化集成接线）/ Phase 23（3 P0 数据流修复）/ Phase 24（9 P1/P2 修复）/ Phase 25（7 战略储备激活，16 tests）/ Phase 26（4 设计-实现对齐 + 遗留清理）。全量 2587 passed, 0 failed, 2 skipped。v5.6 设计规格内所有任务完成。 |
+| 2026-07-21 | **GitClean untracked 测试覆盖补全（T106）+ 人在环 gap_review 自动暂停闸门定案（T107）** | T106：4 项测试缺口（命名+!!+混合+git status 失败）→ ~35 行。T107：方案 C 定案——has_blocking→自动暂停（复用 T64），~5 行改动。BEACON 决策 #84 + #85 |
+| 2026-07-21 | **AuditTimingGuardrail 证据组合检测器深度分析（T112）** | 3 证据组合检测 spawn stage pass-through。发现 E2→E3 非独立导致场景 E 误报，修正为 E1 必须参与组合（effective=E1+max(E2,E3)，2/2→retry，1/2→WARN）。跨 tick 计时 + 冷启动 skip + 5 stage 阈值表。与 T108c 分层协作。BEACON 决策 #83 |
+| 2026-07-21 | **收敛判定端到端验证深度分析（T105）** | 全项目审计 P0-1 `_round_history` 从未 populate 的根因分析 + T102 下游验证。`_append_round_history()` 已在 6470813 修复但数据填充不完整（lines/versions/gate_results 仅部分填充）。实际起作用路径仅 GOAL_ACHIEVED 双通过。6 子项（T105a-T105f）分两层：单元补测试+数据修复 + 真跑验证。BEACON 决策 #82 |
+| 2026-07-20 | **Agent/Standalone 能力不对称深度分析（T115 升级）** | T115 从 USEG_GUIDE 文档任务升级为能力覆盖矩阵 SSOT + 驱动适用性设计规范。发现 Phase 17-21 功能设计隐含 Standalone 假设（BaseAgent.execute() 集成点），Agent 边界未显式考虑。5 类功能不对称 → 三种分类（架构固有/设计替代/未实现）+ 15+ 模块矩阵 + 新增功能 3 问 checklist。BEACON 决策 #81 |
+| 2026-07-20 | **功能激活可见性深度分析（T114 升级）** | T114 从 2 项被动文档任务升级为 FeatureManifest SSOT 五层方案。17 个环境变量全景审计发现三层不可见（存在/激活/模式）。FeatureManifest dataclass 集中定义 → `ae doctor` 可选功能面板（主发现入口）+ `--init` stderr 状态行 + action JSON feature_status 字段。约束：新 env var 必须先注册 manifest。BEACON 决策 #80 |
+| 2026-07-20 | **Build-then-Wire 系统性预防深度分析（T113 升级）** | T113 从 2 项被动机制升级为三层主动防护（L1 完成定义 + L2 持续门控 + L3 契约测试）。5 层根因分析发现 Phase 22 接线任务自身也发生 Build-then-Wire。当前残余虚化 ~400 行（DiagnosticRuleDiscoverer/sandbox_evaluate/旧版 threshold_learner）。T111 应在 T113 约束下调整为 Build-后立即 Wire 模式 |
+| 2026-07-20 | **Agent 模式 M5 Token 效率 JSONL 转录采集方案（决策 #79）** | T110 深度分析推翻原"架构边界无解"结论——Claude Code 默认写入 JSONL 会话转录含每 API 调用 usage。新建 SessionTranscriptParser + 增量读取 + message.id 去重，每次 tick 后采集。CrewAI/AutoGen/LangGraph 同因"LLM 在进程内"而无需考虑此问题——外部 LLM 进程 token 采集在业界无标准方案，JSONL 是 CC 特有路径。4 子任务（T110a-T110d）|
+| 2026-07-20 | **Agent-Agnostic PII 四层防护详细设计（决策 #78）** | T109 深度分析：决策 #68 PII Middleware 仅覆盖 StandaloneDriver。四层文件桥接边界防护（L1-L4）+ PIIRedactor.scan_dict/redact_dict 基础设施。8 子任务（T109a-T109h）。参考 CrewAI/DeepAgents/AutoGen 设计模式 |
+| 2026-07-20 | **Phase 29 — 8 项真跑验证差距修复方案（决策 #77）** | Phase 17-21 对标真跑数据发现 subagent 隔离未落地（说服式≠强制式）+ Build-then-Wire 系统性问题。P0×2 + P1×2 + P2×4。方案详见 `_scratch/reports/his/2026-07-20-Phase29-问题分析与解决方案.md` |
+| 2026-07-19 | **Phase 22-26 + Phase 21 全部完成（196/196 任务，2521 tests 零回归）** | Phase 21（3 自进化深化）+ Phase 22（6 虚化集成接线）+ Phase 23（3 P0 数据流修复）+ Phase 24（9 P1/P2 修复）+ Phase 25（7 战略储备激活）+ Phase 26（4 设计-实现对齐）。全量 2521 passed（PrismScan 移除后 -66）。v5.6 设计规格内所有任务完成。 |
 | 2026-07-19 | **Phase 17-21 深度审计发现落表 + 战略储备误分类修正（决策 #71-#74）** | 深度审计发现 7 模块虚化（~1875 行，"Build-then-Wire" 反模式）+ Phase 20 3 P0 + 5 P1 + 4 P2 + BEACON #67 范围偏差。用户纠正：战略储备是"按依赖顺序执行"非"搁置不做"。新增 Phase 22-26（29 任务 T73-T101）。IMPLEMENTATION-TRACKER.md 总览 158/203。BEACON 决策 #71-#74。 |
 | 2026-07-18 | **vNext 设计定稿 — 对标分析讨论完成 + 决策同步到设计文档（决策 #63-#68）** | 七方对比分析（LangGraph+Deep Agents+ORCA+AutoGen+CrewAI+Superpowers+Claude Code）产出 12 项关键决策：银行生产级定位、源码级内化、DecisionGate 3 形态、PII Middleware、Phase 17/18/19 路线图。讨论稿决策点全部更新到 BEACON/IMPLEMENTATION-TRACKER/v5.6-Design-Loop.md 附录 E。讨论稿不再作为开发依赖。 |
 | 2026-07-18 | **真跑故障修复完成（决策 #62 结案）** | 3 bugs 全部修复（TDD）：BUG-03(P0) batch 间 checkpoint 保存 / BUG-01(P1) G2 error 有效 component 名 / BUG-02(P2) GitDiffExists root commit git show --stat 降级。全量 passed 零回归。BEACON #62 ✅。 |
@@ -215,11 +261,15 @@
 | 2026-07-17 | **Plugin 安装标准化 — Marketplace 替代 install.sh（决策 #58）** | 调研三平台标准安装机制后，删除自造 `install.sh`，改为 Claude Code/Codex/CodeBuddy 标准 Marketplace 安装（`/plugin marketplace add` + `/plugin install`）。修正 plugin.json 路径 `../` → `./`（对齐规范）。更新 PLUGIN-USAGE.md + USER_GUIDE.md。 |
 | 2026-07-17 | **Step 3 AgentDriver 基准 10/10 全部完成** | 手动驱动 v5.6 Tick 协议完成全部 10 需求（R01-R10）全 tick 闭环，100% GOAL_ACHIEVED。R09/R10 通过 spec 内嵌绕过 `from_design_doc()` 校验过严。双驱动保真度等价验证闭环（Agent 100% / Standalone 100%）。collect 脚本产出最终 results.json。BEACON 决策 #57 更新。 |
 | 2026-07-17 | **Step 3 AgentDriver 基准 3/3 完成** | 手动驱动 v5.6 Tick 协议完成 R01/R04/R07 全 tick 闭环，全部 GOAL_ACHIEVED。双驱动保真度等价验证通过。修复 `red_evidence` 映射 bug + collect 脚本 git 命令。BEACON 决策 #57。 |
-| 2026-07-17 | **v7.8 Architect 瓶颈消除 + 基准重跑 10/10** | StandaloneDriver 基准收敛率 40%→100%。4 项修复（parser regex/architect prompt/developer max_calls+project_root/batch_plan 规范化）消除 architect file_list 瓶颈（原占失败 67%）。10 需求全量验证通过，产出报告 `_scratch/benchmark_report.md`。BEACON 决策 #56。 |
+| 2026-07-17 | **v7.8 Architect 瓶颈消除 + 基准重跑 10/10** | StandaloneDriver 基准收敛率 40%→100%。4 项修复（parser regex/architect prompt/developer max_calls+project_root/batch_plan 规范化）消除 architect file_list 瓶颈（原占失败 67%）。10 需求全量验证通过，产出报告 `_scratch/reports/his/benchmark_report.md`。BEACON 决策 #56。 |
 | 2026-07-17 | **StandaloneDriver 真实 LLM E2E 验证通过** | 用户指出现有工作"建了不跑"——StandaloneDriver 从未用真实 LLM 端到端跑过。修复 3 处 bug（guardrail GitDiffExists auto_commit 路径/bash_tools cwd 默认/project_root architect 任务描述），用 DeepSeek API 真跑 fibonacci 需求 → GOAL_ACHIEVED，产出可用实现+10 tests。证明 Driver B 可替代 v5.5 独立跑能力。 |
 | 2026-07-16 | **v8.0 多 Agent 平台适配设计 (附录 D, 决策 #55)** | 用户提出"插件安装到 Claude Code/Codex/CodeBuddy 三平台"。深度调研三平台 plugin 系统：发现三平台共享 Commands/Skills 格式、CodeBuddy 原生读 `.claude-plugin/plugin.json`。设计一套源码三个 manifest + Provider 抽象（`LLMProvider` Protocol 桥接 Anthropic/OpenAI tool schema 差异）+ install.sh 多平台改造。13 节附录 D + Phase 12(V8-1~V8-8, ~4.3 天)。BEACON 决策 #55 |
 | 2026-07-16 | **v7.0 双驱动详细设计展开 (附录 C)** | 附录 C 从 8 行路线图展开为 14 节开发就绪规格（接口签名/数据流/验收标准/参考位置）。Phase 11(V7-1~V7-8, ~6.8 天)。与 v8.0 依赖：V7-5 StandaloneDriver 依赖 V8-3/4/5 Provider 抽象。BEACON 决策 #54 |
-| 2026-07-11 | **设计文档深度审计 + 22 项收口深化 (Phase 8, 决策 #49)** | 3 并行审计子代理审 v5.6-Design-Loop.md(4214行)+附录 B(原 INIT-LOOP-CONTRACT.md)：规格 6.5/10、端到端 2.5/10（内核真实非虚化，全链未接线）。分两类：P0×4 全为**代码缺口**(Tick未接线/dev-loop.md v5.1/DeepAuditGate骨架/Init schema)已 T9/T10/T27/T32 跟踪；S-1~S-20+Q-1/Q-2 共 22 项**纯文档规格缺陷收口**——补 CoverageItem/GateVerdict/done verdict 三处权威 schema、file-bridge 边界矩阵(§C.3.5)、B2 决策方列、Tick 路径更正、Guardrail "当前5/目标9"状态列、Q-1/Q-2 过度设计存续论证。**S-1**(B4↔B7 语义评估矛盾)定案：v5.6 全路径无语义评估(呼应 #40/D6)，代码 semantic_evaluator 全链移除跟踪到 Phase 3 T10d（不即时大改以免破坏活跃 v5.5 路径）。全程无 status 翻转、无设计降级（design-document-inviolability 遵守）。审计产出 `_scratch/design-audit/{findings-A/B/C,AUDIT-REPORT}.md`。BEACON 决策 #49 |
+| 2026-07-11 | **设计文档深度审计 + 22 项收口深化 (Phase 8, 决策 #49)** | 3 并行审计子代理审 v5.6-Design-Loop.md(4214行)+附录 B(原 INIT-LOOP-CONTRACT.md)：规格 6.5/10、端到端 2.5/10（内核真实非虚化，全链未接线）。分两类：P0×4 全为**代码缺口**(Tick未接线/dev-loop.md v5.1/DeepAuditGate骨架/Init schema)已 T9/T10/T27/T32 跟踪；S-1~S-20+Q-1/Q-2 共 22 项**纯文档规格缺陷收口**——补 CoverageItem/GateVerdict/done verdict 三处权威 schema、file-bridge 边界矩阵(§C.3.5)、B2 决策方列、Tick 路径更正、Guardrail "当前5/目标9"状态列、Q-1/Q-2 过度设计存续论证。**S-1**(B4↔B7 语义评估矛盾)定案：v5.6 全路径无语义评估(呼应 #40/D6)，代码 semantic_evaluator 全链移除跟踪到 Phase 3 T10d（不即时大改以免破坏活跃 v5.5 路径）。全程无 status 翻转、无设计降级（design-document-inviolability 遵守）。审计产出为会话内产物（未持久化为独立文件）。BEACON 决策 #49 |
+| 2026-07-15 | **v5.6 tick 闭环验证 + Phase 9-10 推进** | Tick CLI --init→--tick→--result 端到端验证通过（3 独立进程 thread_id/游标保真）。代码审计修复 Phase 9（A1-A15 全部完成）+ Phase 10 双驱动接缝预留（T33a schema SSOT + T33b 执行栈标注）。设计背书收口 T26e/T26f 实现验证。BEACON 决策 #50/#51/#52/#54 |
+| 2026-07-14 | **Phase 5 测试 + Phase 6 审计方法论完成** | 17 项测试任务全部通过（含 T26e PRBackend 选型背书 + T26f 增量 test_gate）。Phase 6 审计与验证方法论 5 项（T27-T31）完成。BEACON 决策 #45/#46/#47 部分。 |
+| 2026-07-13 | **Phase 4 Agent Prompt 模板完成** | 10 项 prompt 模板任务（T17-T26）全部完成，含 8 角色 prompt + 共享片段。v5.0 legacy prompts 退役迁移。BEACON 决策 #44。 |
+| 2026-07-12 | **CI/CD Pipeline + v5.5 保留定案** | T16h ci.yml 薄壳（ruff + pytest，coverage≥90%）+ T10d 定案保留 v5.5 共存（决策 #53）。plugin_contract drift 修复（.venv 优先）+ 6 处 F821 真 bug 修复。T16i release.yml 冲突修复。BEACON 决策 #52/#53 |
 | 2026-07-09 | **Init-Loop 契约 v5.6 扩展 (IL.2-IL.5)** | 评估"衔接部分如何定义/是否合理/优化方案"：架构选型正确(单向/文件桥接/只读/forward-compat)，但缺口①跨仓库无 Schema SSOT(文档表+Python函数两处定义→漂移) ②相对 v5.6 滞后(缺 design_doc/ci_platform，monorepo 枚举不自洽)。方案 A(schema SSOT jsonschema 校验)+B(ci_platform/design_root 字段)+C(monorepo 单包降级不删枚举)+D(消费者驱动契约测试)。checkpoints.db 从契约面移除解 spec 债。IL 章重写 + IL-AC-06/07/08 + Phase 7(T32-T35) + D21、discussion §十五。BEACON 决策 #48 |
 | 2026-07-09 | **借鉴 Superpowers 验证方法论加固审计与验证层 (B15)** | 两组分析合并去重：① Superpowers 三工具（TDD/verification/requesting-code-review）→ REDGuard+FreshGate+RegressionGate（Python 门控，非 Agent 自觉）；② `/audit` 三层现状（audit.md/audit.py/deep_audit.py）→ 内化+语义层+骨架→实际+分层澄清。+B15 章 6 小节、+D20、+Phase 6(T27-T31)、discussion §十四。BEACON 决策 #47 |
 | 2026-07-09 | **Commit→PR→CI/CD Pipeline 专题设计 (B13)** | 5 轮讨论：现状分析(P0 release.yml冲突+无远程CI, P1 code-review.md漂移+虚构引用+git add -A) → 颗粒度金字塔+时间轴+环界线 → PR=plate 是否中断(结论:人工闸门恒在环外,方案D输入端控粒度) → CI 双平台(单一入口+薄壳,DRY) → 环内vs远程(共享pyproject标准非运行时,增量快子集vs全量权威)。+B13 章 9 小节、+D18、+Phase 4b (T16h-T16n)、discussion §十二。BEACON 决策 #45 |
@@ -240,7 +290,7 @@
 
 [已解 T99] bank_card PII 规则 severity WARN→CRITICAL + 正则 `\b\d{16,19}\b` 收紧防误匹配 — Phase 26 T99 完成。
 
-[Q?] v5.5 Phase B 物理删除时间 — 30 天过渡期启动（2026-07-19），物理删除日期 2026-08-18。届时删除 orchestrator.py while 循环 + semantic_evaluator.py。
+[已解] v5.5 Phase B 物理删除时间 — 30 天过渡期启动（2026-07-19），物理删除日期 **2026-08-18**。届时删除 orchestrator.py while 循环 + semantic_evaluator.py。
 
 ## 引用文件
 

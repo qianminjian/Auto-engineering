@@ -470,3 +470,57 @@ class TestRecordTickSnapshot:
             assert (ticks_dir / "tick-0001.json").exists()
             assert (ticks_dir / "tick-0002.json").exists()
             assert (ticks_dir / "tick-0003.json").exists()
+
+
+class TestT115DriverMode:
+    """T115: driver_mode in metrics summary."""
+
+    def test_default_driver_mode_is_agent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            collector = MetricsCollector(Path(tmp))
+            assert collector._driver_mode == "agent"
+
+    def test_set_driver_mode_standalone(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            collector = MetricsCollector(Path(tmp))
+            collector.set_driver_mode("standalone")
+            assert collector._driver_mode == "standalone"
+
+    def test_invalid_driver_mode_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            collector = MetricsCollector(Path(tmp))
+            with pytest.raises(ValueError, match="driver_mode"):
+                collector.set_driver_mode("invalid_mode")
+
+    def test_driver_mode_appears_in_summary(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            collector = MetricsCollector(Path(tmp))
+            collector.set_driver_mode("standalone")
+            collector.begin_requirement("thread-1", "abc123")
+            collector.record_tick_complete(
+                tick_number=1, stage="developer", duration_ms=100,
+                ai_origin=AIOrigin(level="led", agent_role="developer",
+                                   model_name="test-model"))
+            collector.record_token_usage(
+                input_tokens=100, output_tokens=50, model="test-model",
+                provider="anthropic", stage="developer",
+                ai_origin=AIOrigin(level="led", agent_role="developer",
+                                   model_name="test-model"))
+            summary = collector.end_requirement(
+                verdict="APPROVE", total_ticks=1, loc_added=10)
+            assert summary.get("driver_mode") == "standalone"
+
+    def test_signal_source_field_in_m5(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            collector = MetricsCollector(Path(tmp))
+            collector.set_driver_mode("agent")
+            collector.begin_requirement("thread-1", "abc123")
+            collector.record_token_usage(
+                input_tokens=100, output_tokens=50, model="test-model",
+                provider="anthropic", stage="developer",
+                ai_origin=AIOrigin(level="led", agent_role="developer",
+                                   model_name="test-model"))
+            summary = collector.end_requirement(
+                verdict="APPROVE", total_ticks=1, loc_added=10)
+            m5 = summary.get("M5_token_efficiency", {})
+            assert "token_source" in m5

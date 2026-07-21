@@ -260,3 +260,97 @@ class TestPIIToolResultScan:
         redacted = [redactor.scan_text(r) for r in results]
         assert "13800001111" not in redacted[0]
         assert "320102199001011234" not in redacted[1]
+
+
+# ── T109a: scan_dict / redact_dict for file-bridge PII protection ──
+
+
+class TestPIIRedactorDict:
+    """T109a: scan_dict() and redact_dict() for nested dict PII scanning."""
+
+    @staticmethod
+    def _redactor() -> PIIRedactor:
+        return PIIRedactor()
+
+    def test_scan_dict_finds_pii_in_flat_dict(self) -> None:
+        """scan_dict finds PII in flat dict values."""
+        r = self._redactor()
+        data = {"requirement": "用户手机号 13800001111", "name": "test"}
+        findings = r.scan_dict(data)
+        assert len(findings) >= 1
+        phone_findings = [f for f in findings if f["rule"] == "cn_phone"]
+        assert len(phone_findings) >= 1
+        assert "138" in phone_findings[0]["matched"]
+
+    def test_scan_dict_finds_pii_in_nested_dict(self) -> None:
+        """scan_dict recursively finds PII in nested dicts."""
+        r = self._redactor()
+        data = {
+            "action": {
+                "context": {"note": "身份证 320102199001011234"},
+                "plan": "普通文本",
+            },
+        }
+        findings = r.scan_dict(data)
+        id_findings = [f for f in findings if f["rule"] == "cn_id_card"]
+        assert len(id_findings) >= 1
+        assert "320102" in id_findings[0]["matched"]
+
+    def test_scan_dict_finds_pii_in_list_values(self) -> None:
+        """scan_dict finds PII in list items."""
+        r = self._redactor()
+        data = {"messages": ["电话 13800001111", "普通"]}
+        findings = r.scan_dict(data)
+        phone_findings = [f for f in findings if f["rule"] == "cn_phone"]
+        assert len(phone_findings) >= 1
+
+    def test_scan_dict_returns_empty_for_clean_data(self) -> None:
+        """scan_dict returns empty list when no PII found."""
+        r = self._redactor()
+        data = {"name": "test", "count": 42, "items": ["a", "b"]}
+        findings = r.scan_dict(data)
+        assert findings == []
+
+    def test_redact_dict_returns_copy_with_pii_masked(self) -> None:
+        """redact_dict returns a copy with PII values redacted."""
+        r = self._redactor()
+        data = {"note": "手机 13800001111", "other": "keep"}
+        result = r.redact_dict(data)
+        assert result is not data  # returns a copy
+        assert "13800001111" not in result["note"]
+        assert result["other"] == "keep"
+
+    def test_redact_dict_handles_nested_structures(self) -> None:
+        """redact_dict recursively redacts nested dicts and lists."""
+        r = self._redactor()
+        data = {
+            "requirement": "用户 13800001111",
+            "context": {"desc": "身份证 320102199001011234"},
+            "items": ["电话 13900001111", "ok"],
+        }
+        result = r.redact_dict(data)
+        assert "13800001111" not in result["requirement"]
+        assert "320102199001011234" not in result["context"]["desc"]
+        assert "13900001111" not in result["items"][0]
+        assert result["items"][1] == "ok"
+
+    def test_redact_dict_preserves_non_string_values(self) -> None:
+        """redact_dict preserves int, float, bool, None values."""
+        r = self._redactor()
+        data = {"count": 42, "flag": True, "nothing": None, "pi": 3.14}
+        result = r.redact_dict(data)
+        assert result["count"] == 42
+        assert result["flag"] is True
+        assert result["nothing"] is None
+        assert result["pi"] == 3.14
+
+    def test_scan_and_redact_dict_roundtrip(self) -> None:
+        """scan_dict detects what redact_dict removes."""
+        r = self._redactor()
+        data = {"msg": "手机 13800001111 身份证 320102199001011234"}
+        findings = r.scan_dict(data)
+        assert len(findings) >= 2
+        redacted = r.redact_dict(data)
+        # After redaction, re-scan should find nothing
+        refindings = r.scan_dict(redacted)
+        assert refindings == []

@@ -104,7 +104,7 @@ class DesignDoc:
         if not p.exists():
             raise FileNotFoundError(f"设计文档不存在: {p}")
         text = p.read_text(encoding="utf-8")
-        doc = _Parser(text).run()
+        doc = _DesignDocParser(text).run()
         doc.path = str(p)
         return doc
 
@@ -146,7 +146,7 @@ def _extract_section(heading_text: str) -> tuple[str | None, str]:
     return None, heading_text.strip()
 
 
-class _Parser:
+class _DesignDocParser:
     def __init__(self, text: str) -> None:
         md = MarkdownIt("commonmark").enable("table")
         self.tokens = md.parse(text)

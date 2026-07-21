@@ -23,7 +23,7 @@ from collections.abc import Callable
 from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 from uuid import uuid4
 
 from auto_engineering.engine.batch_state import BatchState
@@ -205,6 +205,32 @@ def _now_iso() -> str:
     return datetime.now(UTC).strftime(_ISO_FMT)
 
 
+# ── Protocol types (P1-10: replace Any with typed contracts) ──
+
+
+@runtime_checkable
+class ContextOffloader(Protocol):
+    """Context offloading — 将 stage context 写入文件."""
+
+    def offload(self, stage: str, context: dict) -> Path: ...
+
+
+@runtime_checkable
+class SessionSummarizer(Protocol):
+    """Session summarization — 跨 tick developer session 压缩."""
+
+    def should_summarize(self, tick: int) -> bool: ...
+    def summarize(self) -> object: ...
+    def inject_into_prompt(self, summary: object) -> str: ...
+
+
+@runtime_checkable
+class OTLPTracer(Protocol):
+    """OTLP tracing — span lifecycle 管理."""
+
+    def start_span(self, name: str, attributes: dict | None = None) -> object: ...
+
+
 class TickOrchestrator:
     """Discrete-tick orchestrator with layered verification (C.5).
 
@@ -221,9 +247,9 @@ class TickOrchestrator:
         gate_runner: GateRunner | None = None,
         guardrail: GuardrailChain | None = None,
         checkpoint_store: SQLiteCheckpointStore | None = None,
-        context_offloader: Any | None = None,
-        session_summarizer: Any | None = None,
-        tracer: Any | None = None,
+        context_offloader: ContextOffloader | None = None,
+        session_summarizer: SessionSummarizer | None = None,
+        tracer: OTLPTracer | None = None,
         audit_logger: AuditLogger | None = None,
         escalate: bool = False,
         debug: bool = False,
@@ -421,9 +447,9 @@ class TickOrchestrator:
         checkpoint_id: str | None = None,
         gate_runner: GateRunner | None = None,
         guardrail: GuardrailChain | None = None,
-        context_offloader: Any | None = None,
-        session_summarizer: Any | None = None,
-        tracer: Any | None = None,
+        context_offloader: ContextOffloader | None = None,
+        session_summarizer: SessionSummarizer | None = None,
+        tracer: OTLPTracer | None = None,
         audit_logger: AuditLogger | None = None,
         max_rounds: int = 5,
         debug: bool = False,
@@ -1944,7 +1970,7 @@ class TickOrchestrator:
                     "Token collect: tick=%d input=%d output=%d model=%s",
                     self._state.tick, usage["input_tokens"],
                     usage["output_tokens"], usage.get("model", ""))
-        except Exception:
+        except (OSError, ValueError, KeyError, TypeError):
             _logger.debug("Token collect failed", exc_info=True)
 
     # ── read/validate/apply ──
@@ -2105,7 +2131,7 @@ class TickOrchestrator:
                     except ValueError:
                         pass
             return added, removed
-        except Exception:
+        except (OSError, subprocess.SubprocessError, ValueError):
             return 0, 0
 
     def _run_developer_gates(self) -> None:
@@ -2123,7 +2149,7 @@ class TickOrchestrator:
         if self._gate_runner:
             raw = self._gate_runner(gate_names, self.project_root)
         else:
-            from auto_engineering.cli.gate_check import run_gates
+            from auto_engineering.gates.runner import run_gates
             raw = run_gates(gate_names, self.project_root,
                            files_changed=self._state.files_changed)
         # run_gates() 返回嵌套结构 {project_root, gate_names, passed,

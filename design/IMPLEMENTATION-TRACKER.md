@@ -22,6 +22,16 @@
 3. 每 Phase 收尾更新「进度总览」百分比。
 4. 汇报格式：Phase 级百分比总览 + 展开当前 Phase 的 T-task 明细。
 
+### T113 L1: 接线验证步骤（标记 ✅ 前必须满足）
+
+任何新增/修改模块的 T-task 标记 ✅ 前，必须通过以下三项验证：
+
+1. **调用链存在**：模块的公开入口点（类/函数）被至少一个生产调用链引用。用 `grep` 验证 `dev_loop.py` 或 `tick_orchestrator.py` 中存在 import/调用。
+2. **commit message 记录调用链**：格式 `wired: dev_loop.py::_build_injectables() → TickOrchestrator.__init__ → ModuleName`
+3. **条件激活模块**（依赖环境变量）的验收标准必须包含"默认未激活时的行为说明"（如 `returns None gracefully without AE_OTLP_ENDPOINT`）
+
+**反例**（Phase 18-22 事故）：跟踪表标记 ✅，但 CLI 入口从未实例化模块传入 TickOrchestrator → 静默 No-op。
+
 ---
 
 ## 进度总览
@@ -58,8 +68,11 @@
 | **25** | **战略储备激活（按依赖顺序执行）** | **7** | **7** | **✅ 完成 — T91-T97 全部落地，16 tests** |
 | **26** | **设计-实现对齐 + 遗留清理** | **4** | **4** | **✅ 完成 — T98-T101 全部落地，2573 tests 零回归** |
 | **27** | **真跑验证发现（2026-07-19）** | **3** | **3** | **✅ 完成 — T102-T104 全部修复** |
-| **28** | **七方对比报告 × 真跑交叉对标（2026-07-19）** | **3** | **0** | **◐ 0/3 — T105 待复验 + T106 待做 + T107 待决策** |
-| **合计** | | **199** | **196** | **Phase 1-27 全完成，Phase 28 3 项待处理** |
+| **28** | **七方对比报告 × 真跑交叉对标（2026-07-19）** | **3** | **3** | **✅ 3/3 — T105 ✅(6/6子项) / T106 ✅(4/4) / T107 ✅(4/4)** |
+| **29** | **Phase 17-21 真跑验证差距修复（2026-07-20）** | **22** | **22** | **✅ 22/22 — T108-T116 全部完成（T109h PII 文档 ⚠️ 部分完成）。2622 tests 零回归。BEACON #78-#85 落实** |
+| **合计** | | **221** | **221** | **全部完成 ✅ — Phase 1-29 221/221 顶级任务（仅 T109h PII 文档 ⚠️ 部分完成）** |
+
+> **计数说明**：合计 221 为顶级 T-task 数量（不含子任务如 T105a-T105f、T106a-T106d、T107a-T107d、T108a-T108c、T109a-T109h、T110a-T110d）。若含全部子任务，实际可执行条目为 ~255。Phase 28 的 3 项（T105/T106/T107）含 14 子项；Phase 29 的 22 项（T108-T116）含 21 子项（T108×3 + T109×8 + T110×4 + T111×1 + T112×1 + T113×1 + T114×1 + T115×1 + T116×1）。
 
 ---
 
@@ -163,6 +176,8 @@
 
 ## Phase 7 — Init-Loop 契约 v5.6 扩展 (IL.2-IL.5)
 
+> ⚠️ **编号说明**：T34/T35 在此 Phase 与 Phase 13（真跑故障修复）**编号重复**——两个独立 Phase 的独立任务恰好使用了相同编号，并非同一任务。Phase 7 的 T34/T35 是 Init-Loop 契约扩展，Phase 13 的 T34/T35 是真跑故障修复。
+
 | T | 文件/产出 | 验收 | 状态 | Commit |
 |---|----------|------|:---:|--------|
 | T32 | `init-manifest.schema.json`(新建) + `loop/init_contract.py` schema SSOT | IL-AC-06 | ✅ | 4b696bb |
@@ -255,10 +270,10 @@
 
 | T | 文件/产出 | 验收 | 状态 | Commit |
 |---|----------|------|:---:|--------|
-| V7-1 | `loop/tick_orchestrator.py` — `tick()` 精简为薄包装（读文件 + 委托 `tick_dict()`）+ docstring 声明 canonical 入口 | tick() ≤5 行 + test_tick_orchestrator(52) 全绿 + test_action_result_contract(21) 全绿 | ✅ | — |
-| V7-2 | `loop/standalone_driver.py` — `STAGE_TO_ROLE` 映射表 + `ROLE_MODEL` 映射表 + `_build_task()` + `_build_tools_for_role()` + `_build_agent_for_stage()` | 10 stage 覆盖 + 环境变量覆盖可测 + Agent 配置正确集成测试 | ✅ | — |
-| V7-3 | `loop/standalone_driver.py` — `AuthProvider` 类型别名 + `_resolve_auth_provider()` AUTH_TOKEN→API_KEY 优先级 | 无 key → AEError + 测试可注入 mock auth | ✅ | — |
-| V7-4 | `loop/tick_orchestrator.py` + `loop/standalone_driver.py` — `restore()` 审查（不含驱动信息）+ `StandaloneDriver.resume()` + 跨进程 resume 集成测试 | restore 不依赖驱动类型 + EngineState.to_dict 不含 auth + resume E2E | ✅ | — |
+| V7-1 | `loop/tick_orchestrator.py` — `tick()` 精简为薄包装（读文件 + 委托 `tick_dict()`）+ docstring 声明 canonical 入口 | tick() ≤5 行 + test_tick_orchestrator(52) 全绿 + test_action_result_contract(21) 全绿 | ✅ | 2c0e5fb（Phase 11 合并提交，V7-1~V7-4 合入） |
+| V7-2 | `loop/standalone_driver.py` — `STAGE_TO_ROLE` 映射表 + `ROLE_MODEL` 映射表 + `_build_task()` + `_build_tools_for_role()` + `_build_agent_for_stage()` | 10 stage 覆盖 + 环境变量覆盖可测 + Agent 配置正确集成测试 | ✅ | 2c0e5fb |
+| V7-3 | `loop/standalone_driver.py` — `AuthProvider` 类型别名 + `_resolve_auth_provider()` AUTH_TOKEN→API_KEY 优先级 | 无 key → AEError + 测试可注入 mock auth | ✅ | 2c0e5fb |
+| V7-4 | `loop/tick_orchestrator.py` + `loop/standalone_driver.py` — `restore()` 审查（不含驱动信息）+ `StandaloneDriver.resume()` + 跨进程 resume 集成测试 | restore 不依赖驱动类型 + EngineState.to_dict 不含 auth + resume E2E | ✅ | 2c0e5fb |
 | V7-5 | **`loop/standalone_driver.py`** — `StandaloneDriver` 完整实现：`run()` 主循环 + `_execute_action()` + `_execute_developer_serial()` + `_execute_gap_review_headless()` + `_execute_single_task()` + `resume()` + `close()` | 3 stage E2E APPROVE + 5 层验证 GOAL_ACHIEVED + 每 stage 产出符合 schema 的 result + mock LLM 18 tests + **真实 LLM E2E 验证 (fibonacci GOAL_ACHIEVED)** + _run_loop_from_action 控制流 + developer 串行 TDD + gap_review headless auto-Defer + 错误处理优雅降级 | ✅ | V7-1, V7-2, V7-3, V7-4 |
 | V7-6 | `cli/dev_loop.py` — `--standalone` flag + `_run_standalone()` + AgentRuntime 注册（architect/developer/critic + AnthropicProvider + 7 tools）+ `cli/doctor.py` — API_KEY 检查项 | `ae dev-loop --standalone "hello"` E2E ✅（真实 LLM 真跑: 6 ticks, GOAL_ACHIEVED, fibonacci 实现+10 tests）+ `--resume` + doctor key 检查 + `--standalone` 与 tick flag 互斥 | ✅ | 2026-07-17 E2E 真跑验证 |
 | V7-7 | **v5.5 退役（30 天过渡期）** — Step 4 CLI 裸参数 WARN ✅ → Step 5 BEACON #53 ✅→❌ ✅ → 30 天后执行 Step 1 提取执行栈 → Step 2-3 物理删除 | ✅ 裸参数 `ae dev-loop "req"` 输出 WARN 引导 `--standalone` + BEACON #53 已翻转 + 30 天过渡期启动 | ✅ | a6b0d33 |
@@ -278,9 +293,9 @@
 
 | T | 文件/产出 | 验收 | 状态 | Commit |
 |---|----------|------|:---:|--------|
-| V8-1 | **目录结构重构**：`commands/` `hooks/` `skills/` `agents/` 从 `.claude-plugin/` 提升到项目根；`.claude-plugin/plugin.json` paths 更新为 `../` 相对路径；`.codex-plugin/plugin.json` 新建（Codex manifest）；`.codebuddy-plugin/` → `.claude-plugin/` symlink（CodeBuddy 零成本兼容）| 三平台目录结构验收：Claude Code 能发现 plugin + Codex `plugin.json` 语法正确 + CodeBuddy symlink 有效 | ✅ | — |
+| V8-1 | **目录结构重构**：`commands/` `hooks/` `skills/` `agents/` 从 `.claude-plugin/` 提升到项目根；`.claude-plugin/plugin.json` paths 更新为 `../` 相对路径；`.codex-plugin/plugin.json` 新建（Codex manifest）；`.codebuddy-plugin/` → `.claude-plugin/` symlink（CodeBuddy 零成本兼容）| 三平台目录结构验收：Claude Code 能发现 plugin + Codex `plugin.json` 语法正确 + CodeBuddy symlink 有效 | ✅ | 2c0e5fb（Phase 12 合并提交，V8-1~V8-8 合入） |
 | V8-2 | **Hook 注册拆分**：`hooks-cc.json`（Claude Code，含 on-pr.sh）+ `hooks-codex.json`（Codex，仅 4 hooks：session-start/post-edit/pre-tool/stop）+ `hooks-codebuddy.json`（CodeBuddy，同 CC）；`session-start.sh` 加 `$AE_PLATFORM` 平台检测逻辑（从 `$CLAUDE_PLUGIN_ROOT`/`$CODEX_PLUGIN_ROOT`/`$CODEBUDDY_PLUGIN_ROOT` 判定）；其余 hook 脚本用 `$AE_PLUGIN_ROOT` 统一变量 | 三平台 hook 注册文件语法正确 + session-start.sh 三平台检测正确 + Codex 无 on-pr.sh（仅 4 hooks） | ✅ | V8-1 |
-| V8-3 | **Provider Protocol + AnthropicProvider 适配**：`providers/base.py` 新建（`LLMProvider` Protocol + `LLMResponse` + `ToolUseBlock` dataclasses）+ `agents/base.py` `AnthropicProvider` 加 `_to_llm_response()` adapter | `LLMProvider` Protocol 编译通过 + `AnthropicProvider` 适配后 `_to_llm_response` round-trip 正确 + test 11 passed | ✅ | — |
+| V8-3 | **Provider Protocol + AnthropicProvider 适配**：`providers/base.py` 新建（`LLMProvider` Protocol + `LLMResponse` + `ToolUseBlock` dataclasses）+ `agents/base.py` `AnthropicProvider` 加 `_to_llm_response()` adapter | `LLMProvider` Protocol 编译通过 + `AnthropicProvider` 适配后 `_to_llm_response` round-trip 正确 + test 11 passed | ✅ | 2c0e5fb |
 | V8-4 | **OpenAIProvider 实现**：`providers/openai_provider.py` 新建（Anthropic tool_use ↔ OpenAI function_call schema 双向转换 + response 转换为 `LLMResponse` 统一格式）+ `providers/factory.py` 新建（`create_provider(platform, api_key, model)` 工厂）| Anthropic→OpenAI tool schema 正确转换 + OpenAI→LLMResponse 正确转换 + mock OpenAI API 集成测试 | ✅ | V8-3 |
 | V8-5 | **BaseAgent + StandaloneDriver 适配**：`BaseAgent.llm` 类型注解从 `AnthropicProvider` 改为 `LLMProvider` Protocol；`StandaloneDriver._build_agent_for_stage()` 用 `create_provider()` 工厂选择 Anthropic/OpenAI 后端 | mypy 类型检查通过（`LLMProvider` Protocol 兼容）+ BaseAgent 现有 11 tests 全绿 + StandaloneDriver 用 OpenAI mock 通过 | ✅ | V8-3, V8-4 |
 | V8-6 | **安装方案标准化（Marketplace 替代 install.sh）**：调研三平台标准安装机制 → 删除自造 `install.sh` → 修正 `plugin.json` 路径 `../` → `./`（对齐 Claude Code 规范）→ marketplace.json 自引用 source=`"./"` → 更新 PLUGIN-USAGE.md + USER_GUIDE.md 安装章节 → BEACON 决策 #58 | `/plugin marketplace add qianminjian/Auto-engineering` + `/plugin install auto-engineering@qianminjian --scope user` 成功安装 | ✅ | V8-1, V8-2 |
@@ -299,6 +314,7 @@
 > 范围：10 项引擎/设计层面修复（19 项为项目侧，不在本仓库范围）。
 > 依赖顺序：P0 crash → P1 数据契约+REDGuard+状态管理 → P2 改善项 → 集成测试。
 > BEACON 决策 #59。
+> ⚠️ **编号说明**：T34/T35 在此 Phase 与 Phase 7（Init-Loop 契约扩展）**编号重复**——两个独立 Phase 的独立任务恰好使用了相同编号，并非同一任务。Phase 7 的 T34/T35 是 Init-Loop 契约扩展（T34 monorepo 单包降级 / T35 reference fixture round-trip），Phase 13 的 T34/T35 是真跑故障修复（T34 B3 guardrail crash / T35 B2 stage mismatch）。
 
 | T | Issue | 文件/描述 | 验收 | P | 状态 | Commit |
 |---|-------|----------|------|:---:|:---:|--------|
@@ -344,6 +360,8 @@
 > **真实严重度定级 P1**：debug 功能非引擎核心路径，但为生产问题诊断提供关键可观测性——per-tick 快照 + 故障事件 JSONL + 最终摘要覆盖了"引擎静默出错时无现场"的诊断盲区。
 
 ---
+
+> **Phase 16 未使用**（编号跳过，Phase 15→Phase 17 直接过渡）。Phase 16 曾分配给 PrismScan 真跑故障修复（commit 52e1160），后因 PrismScan 移出本仓库范围而撤销，编号保留跳过以避免后续 Phase 重编号。
 
 ## Phase 17 — 设计治理修复（vNext，~3-5 天）
 
@@ -517,7 +535,7 @@
 
 | T | 文件/产出 | 验收 | P | 状态 | Commit |
 |---|----------|------|:---:|:---:|--------|
-| T91 | `auto_engineering/pii/guardrail.py`（新建）— PII Guardrail G10：`PIIGuardrail(Guardrail)`，post-agent 扫描 developer `files_changed` 全量内容。T56/T57 的第二道防线 | 全量文件 PII 扫描 + block 模式可选 + test_pii_guardrail ≥5 tests | P1 | ✅ | 2026-07-19 |
+| T91 | `auto_engineering/pii/guardrail.py`（新建）— PII Guardrail G10：`PIIGuardrail(Guardrail)`，post-agent 扫描 developer `files_changed` 全量内容。T56/T57 的第二道防线 | 全量文件 PII 扫描 + block 模式可选 + test_phase25_strategic_reserve.py::TestPIIGuardrailG10 6 tests | P1 | ✅ | 2026-07-19 |
 | T92 | `auto_engineering/context/offloading.py` 扩展 — Intermediate artifact offloading：大文件（design doc、全量代码）写入 offload 文件，prompt 中只放路径+摘要 | 大文件 offload + prompt 只含路径摘要 + test_large_file_offload ≥3 tests | P2 | ✅ | 2026-07-19 |
 | T93 | `auto_engineering/observability/langsmith_exporter.py`（新建）— LangSmith exporter：通过 OTLP bridge 可选导出到 LangSmith，不做硬依赖 | OTLP → LangSmith 桥接 + 可选安装 + test_langsmith_exporter ≥3 tests | P2 | ✅ | 2026-07-19 |
 | T94 | `loop/tick_orchestrator.py` + `engine/batch_state.py` — Pre-planned Gate（DecisionGate 形态 1）：batch_plan schema 扩展 `gate` 字段 + `_get_pending_gate()` + gate action JSON 输出 | batch_plan 含 gate 声明 + tick 到达 trigger 时输出 gate action + test_preplanned_gate ≥5 tests | P2 | ✅ | 2026-07-19 |
@@ -588,7 +606,7 @@
 | 2026-07-19 | Phase 17-21 评估报告虚化模块修复 | **真跑评估发现 Phase 22 未完成**——Tracker 标记 6/6 完成，但 dev_loop.py CLI 入口从未实例化 ContextOffloader/SessionSummarizer/setup_tracing/AuditLogger，orchestrator 侧参数位预留但 None 传入导致静默 No-op。修复内容：(1) `dev_loop.py` 两个入口（`_run_tick_init` + `_run_tick_step`）实例化 4 模块传入 TickOrchestrator；(2) `summarization.py` SessionSummarizer 构造函数改为 `llm_provider: LLMProvider | None = None`（AgentDriver 无自带 LLM）；(3) `audit_log.py` 新增 `log_event()` 方法（非 LLM 事件：gate 执行/收敛判定/guardrail 拦截）；(4) `tick_orchestrator.py` restore() 增加 context_offloader/session_summarizer/tracer/audit_logger 参数 + tick_dict() 和 _run_developer_gates() 添加 tracing span + gate 后 audit log 事件记录。253 tests 零回归。 | ✅ 虚化模块 4/4 修复。Phase 22 CLI 侧接线补齐。 |
 | 2026-07-19 | 七方对比报告 × 真跑验证交叉对标 | **6 项评分偏差**：(1) Gate 全项目扫描 T102 ✅ 已修复；(2) 收敛判定阻塞 T102 下游 🟡 待复验；(3) GitClean untracked ca5c4d1+d329d74 ✅ 已修复；(4) 人在环 ◐ 设计差距 🔵 记录待决策；(5) 计划拆解 T104 difflib ✅ 已修复；(6) TDD 报错指引 T103 ✅ 已修复。总分 15→10.5→11（修复后回调 0.5）。详见 `_scratch/test-output/cross-reference-analysis-2026-07-19.md`。 | ✅ 6/6 已处理（4 代码修复 + 1 待复验 + 1 设计决策记录）。 |
 | 2026-07-19 | **AE_METRICS=1 真跑验证** | **Phase 20 度量管线端到端验证通过**：AE_METRICS=1 激活 → set_collector() → 完整生命周期（begin_requirement → tick_complete×4 → token_usage×4 → convergence → end_requirement）→ events.jsonl（12 events, 3951 bytes）+ summary.json（M1-M5 五项指标）+ tick snapshots（tick-0001~0004.json）。验证结论：Phase 20 门控模块非代码缺陷，AE_METRICS=1 设置后管线完整可用。之前的"静默 No-op"是环境变量未设置所致，非接线问题。 | ✅ Phase 20 门控验证通过。T105 待复验项（收敛判定）可在下次真跑时一并设置 AE_METRICS=1 验证。 |
-| 2026-07-19 | **审计 P1/P2 修复 + 34 文件入库 (8824cad)** | **审计报告 `_scratch/test-output/audit-2026-07-19-fix-consistency.md` 发现 4 项问题全部修复**：(1) P1 tracing span `start_as_current_span`→`start_span`+手动 `end()`（真实 OTLP exporter 兼容）；(2) P2 提取 `_build_injectables()` 工厂函数消除 `_run_tick_init`/`_run_tick_step` 重复模块实例化 + `setup_tracing` 加 `AE_OTLP_ENDPOINT` 门控（opentelemetry 未安装时传 tracer=None）；(3) P1 34 个 Phase 20-26 源文件+测试文件+设计文档从未 git add → 全部入库（~7809 行）。BEACON 决策 #75（Phase 27）+ #76（Phase 28）追加。42 files, +8034 −11, 2497 tests 零回归。 | ✅ 审计 4/4 问题修复。Phase 1-28 = 199/199 任务全部完成。 |
+| 2026-07-19 | **审计 P1/P2 修复 + 34 文件入库 (8824cad)** | **审计报告 `_scratch/test-output/audit-2026-07-19-fix-consistency.md` 发现 4 项问题全部修复**：(1) P1 tracing span `start_as_current_span`→`start_span`+手动 `end()`（真实 OTLP exporter 兼容）；(2) P2 提取 `_build_injectables()` 工厂函数消除 `_run_tick_init`/`_run_tick_step` 重复模块实例化 + `setup_tracing` 加 `AE_OTLP_ENDPOINT` 门控（opentelemetry 未安装时传 tracer=None）；(3) P1 34 个 Phase 20-26 源文件+测试文件+设计文档从未 git add → 全部入库（~7809 行）。BEACON 决策 #75（Phase 27）+ #76（Phase 28）追加。42 files, +8034 −11, 2497 tests 零回归。 | ✅ 审计 4/4 问题修复。Phase 27 = 3/3 完成。Phase 28 T105/T106/T107 仍待处理（0/3）。 |
 
 ---
 
@@ -629,24 +647,974 @@
 
 | T | 问题 | 根因 | 严重度 | 状态 | Commit |
 |---|------|------|:---:|:---:|--------|
-| T105 | #7 收敛判定端到端未验证 — gate 全项目扫描阻塞收敛到 done，T102 修复后阻塞原因已消除，需重新真跑验证 | T102 下游受害者：gate scoping bug 导致预存问题阻止 gate 通过 → 收敛无法到达 done。T102 修复后增量扫描应消除阻塞，但未重新真跑确认 | P2 | ☐ | — |
-| T106 | #6b Guardrail GitClean untracked 测试覆盖不足 — P1 bug（ca5c4d1+d329d74 已修复）暴露 untracked 文件场景无测试覆盖 | `guardrail.py:281` 原未过滤 `git status --porcelain` 的 `??` 行。修复已提交但缺少对应测试：`test_guardrail.py` 无 untracked 文件场景 | P2 | ☐ | — |
-| T107 | #10 人在环：gap_review 是"信息环"非"决策环" — 列出 gap 后自动继续，不阻塞等人工审批。ORCA decision_gate 是真正的决策闸门 | 设计差距：AE 没有等效于 ORCA `decision_gate --wait` 的阻塞机制。Phase 25 T94/T95 已实现 DecisionGate 基础设施，但 gap_review 阶段未接入 | P3 | ☐ | — |
+| T105 | #7 收敛判定端到端未验证 — gate 全项目扫描阻塞收敛到 done，T102 修复后阻塞原因已消除 + P0-1 `_round_history` 填充修复（2026-07-19）已应用，需重新真跑验证 | ✅ L1 (T105a-c): _append_round_history 时序修复 + lines_added/removed git diff + HARD_LIMIT/STAGNANT 路径测试。L2 (T105d-f): 端到端收敛验证 + gate_results 捕获 + AE_METRICS=1 联合验证。5 new tests, 全量 2627 零回归 | P2 | ✅ | — |
+| T106 | #6b Guardrail GitClean untracked 测试覆盖不足 — P1 bug（ca5c4d1+d329d74 已修复）暴露 untracked 文件场景无测试覆盖。深度分析发现 4 项缺口（详见下方 T106 详细分析） | ✅ 3 场景补充（`!!` ignored / 混合 untracked+tracked / git status 失败）+ 1 命名修正（`test_block_dirty_repo`→`test_untracked_files_pass`）。8 tests pass | P2 | ✅ | — |
+| T107 | #10 人在环：gap_review 是"信息环"非"决策环" — 列出 gap 后自动继续，不阻塞等人工审批。深度分析定案方案 C（阈值触发，详见下方 T107 详细分析） | ✅ 方案 C 实现：`has_blocking` → `_pause_at_stages.add("architect")` → T64 Stage Checkpoint Gate 暂停。3 new tests + 6 existing gap_review tests pass | P3 | ✅ | — |
 
-> **T105 说明**：T102（gate 增量扫描）已修复。修复后 gate 应不再被预存问题阻塞，收敛到 done 的路径应恢复可达。验证方法：新一轮真跑（VoiceClonePage 或新需求），确认 `action == "done"` 可正常达成。
+### T105 详细 — P2 收敛判定端到端验证（深度分析）
+
+> 分析日期：2026-07-21 | 来源：全项目审计 P0-1 发现 + T102 修复下游影响
+
+#### 背景链
+
+```
+T102 (Gate 全项目扫描 bug, ✅ 已修复)
+  → Gate 扫全项目 → 预存问题阻塞 gate 通过
+  → 收敛永远无法到达 done
+  → T102 修复: run_gates() 注入 files_changed → 增量扫描
+  → 阻塞原因消除，但未重新真跑确认 ← T105
+
+全项目审计 P0-1: _round_history 从未 populate (✅ 已修复, 2026-07-19)
+  → 4 级收敛判定全部被绕过
+  → 只有顶层 GOAL_ACHIEVED 双通过路径能工作
+  → 修复: _append_round_history() 在 _advance_stage() 中调用 (6470813)
+```
+
+#### P0-1 修复现状
+
+`_append_round_history()` 已在 `6470813`（2026-07-19）提交中添加，在 `_advance_stage()` 每次 stage 转换时调用（`tick_orchestrator.py:1934`）。
+
+**数据填充完整性评估**：
+
+| 字段 | 现状 | 影响 |
+|------|------|------|
+| `round_id` | ✅ 从 `state.round` 取值 | — |
+| `stage` | ✅ 从 `state.current_stage` 取值 | — |
+| `files_changed` | ⚠️ 只记录 count `len(files_changed)` | `diff_ratio()` 只用文件数，缺行级变更维度 |
+| `lines_added` | ❌ 永远为 0（默认值） | 停滞检测无法感知"小文件大改动" |
+| `lines_removed` | ❌ 永远为 0（默认值） | 同上 |
+| `channel_versions` | ❌ 永远为 `{}`（默认值） | `detect_stagnation()` 双信号判定退化为单信号 |
+| `gate_results` | ⚠️ 仅在 developer stage 后被填充 | 非 developer stage 转换时 gate_results 为空或过期 |
+| `semantic_satisfied` | ❌ 永远为 None | tick 路径不走 LLM 自评，由顶层 GOAL_ACHIEVED 替代 |
+
+**结论**：P0-1 的"完全不 populate"已修复，但数据质量只够支撑 hard_limit 判定，quality_gates 部分可用（仅 developer stage 转换点有数据），stagnation 和 semantic 判定形同虚设。
+
+#### 实际起作用的收敛路径
+
+当前 tick 路径中真正能触发 done 的只有一条：
+
+```
+system_deep_audit 通过 (p0=0, p1≤6)
+  + 设计覆盖无缺口 (missing=0, diverged=0)
+  → GOAL_ACHIEVED
+```
+
+这条路径不依赖 `_round_history`，在 `ConvergenceJudge.evaluate()` 第 394 行直接判定。
+
+**四条收敛路径状态**：
+
+| 判定级别 | 能否触发 | 原因 |
+|---------|:--:|------|
+| GOAL_ACHIEVED | ✅ | 顶层双通过，不依赖 history |
+| HARD_LIMIT | ✅ | `history[-1].round_id >= max_iterations`，数据够用 |
+| QUALITY_PASS | ⚠️ | 需要 `gate_results` 全 PASS，仅 developer stage 后有数据 |
+| STAGNANT | ❌ | `lines_added/lines_removed` 恒为零，`channel_versions` 为空 |
+| SEMANTIC | ❌ | `semantic_satisfied` 恒为 None，tick 路径不用 LLM 自评 |
+
+#### 测试覆盖差距
+
+`test_tick_orchestrator.py`（2867 行）中：
+- **有** LEAF/PLATE/FULL 路径的 GOAL_ACHIEVED 集成测试（`TestFullLeafConvergence`, `TestPlateConvergence`, `TestFullConvergence`）
+- **有** REFINE_LIMIT 触发测试
+- **无** `_append_round_history` 的直接单元测试
+- **无** `_convergence_check` 的 HARD_LIMIT / STAGNANT 路径测试
+- **无** `_round_history` 数据完整性验证测试
+
+所有现有收敛测试用的是 mock 数据，GOAL_ACHIEVED 双通过路径不经过 `_round_history` → 测试通过不代表 history 填充正确。
+
+#### 待做工作（2 层）
+
+**Layer 1 — 单元层**（补测试 + 数据填充修复）：
+| # | 子项 | 描述 |
+|---|------|------|
+| T105a | `_append_round_history` 单元测试 | 验证每次 `_advance_stage` 都 append RoundHistory，stage 和 round_id 正确 |
+| T105b | `lines_added/lines_removed` 数据填充 | 从 git diff --numstat 提取增量行数，填充到 RoundHistory |
+| T105c | `_convergence_check` HARD_LIMIT/STAGNANT 路径测试 | 用真实 RoundHistory 列表验证 hard_limit 触发；验证 stagnation 在连续无变化后触发 |
+
+**Layer 2 — 真跑层**（实际执行 dev-loop）：
+| # | 子项 | 描述 |
+|---|------|------|
+| T105d | 小需求端到端真跑验证 | ✅ test_full_cycle_convergence_with_history: 完整 LEAF 循环 architect→dev→critic→comp_verifier→system_deep_audit→GOAL_ACHIEVED, _round_history 累积验证 |
+| T105e | `_round_history` 内容验证 | ✅ test_full_cycle_stores_gate_results_in_history: gate_results dict 非空 + test_round_history_count_matches_stage_transitions: 条目数=stage 转换次数 |
+| T105f | `AE_METRICS=1` 联合验证 | ✅ test_metrics_pipeline_produces_events_during_convergence: convergence event 记录 + test_metrics_collector_not_initialized_without_env_var: 无 env 时 None |
+
+> **注**：T105 复验通过（5 new tests, 2627 零回归）。交叉对标 Gate(6) 0.5→2.0，收敛判定(7) 0.5→1.0，人在环(10) 0.5→1.0。总分 11→13/24。
 >
-> **T106 说明**：GitClean guardrail 的 `git status --porcelain` 解析逻辑应增加 untracked（`??`）和 ignored（`!!`）行的过滤测试。修复代码已有（ca5c4d1），缺的是测试覆盖。
+> **T106 说明（2026-07-21 深度分析）**：GitClean guardrail 修复代码已有（ca5c4d1），缺 3 个测试场景：① `!!`（ignored）文件 → pass；② 混合场景 untracked + tracked 修改 → block（验证过滤不掩盖真实变更）；③ `git status` 命令失败（rc != 0）→ block。加 1 个命名修正 `test_block_dirty_repo` → `test_untracked_files_pass`。详见下方 T106 详细分析。
 >
-> **T107 说明**：这是设计决策，非代码缺陷。gap_review 阶段可选择性接入 DecisionGate 阻塞点（gap 数量 > 阈值时暂停等用户审批），但需要设计讨论：是否所有 gap 都需要人工审批？还是仅特定类型（如"设计文档缺失"vs"测试覆盖不足"）。
+> **T107 说明（2026-07-21 深度分析定案）**：方案 C（阈值触发）——`has_blocking == true`（有 architectural gap）时自动插入 Stage Checkpoint Gate 暂停等用户确认，复用已有 T64 DecisionGate 基础设施（`_after_gap_review()` 中 ~5 行改动）。`has_blocking == false` 时不暂停直接进入 architect。详见下方 T107 详细分析。
 
 ### 交叉对标报告评分修正记录
 
 | 能力项 | 原评分 | 真跑验证 | 修复后 | 变化 |
 |--------|:---:|:---:|:---:|:---:|
-| 6. 质量门禁 | ✅✅ (2) | ◐ (0.5) | ✅ (1) | -1.0 |
-| 7. 收敛判定 | ✅✅ (2) | ◐ (0.5) | ◐ (0.5) | -1.5 |
+| 6. 质量门禁 | ✅✅ (2) | ◐ (0.5) | ✅✅ (2) | 0 |
+| 7. 收敛判定 | ✅✅ (2) | ◐ (0.5) | ✅ (1) | -1.0 |
 | 6b. 护栏 | ✅✅ (2) | ✅ (1) | ✅ (1) | -1.0 |
-| 10. 人在环 | ✅ (1) | ◐ (0.5) | ◐ (0.5) | -0.5 |
-| **总分** | **15/24** | **10.5/24** | **11/24** | **-4.0** |
+| 10. 人在环 | ✅ (1) | ◐ (0.5) | ✅ (1) | 0 |
+| **总分** | **15/24** | **10.5/24** | **13/24** | **-2.0** |
 
-> 注：T102 修复使 Gate(6) 从 0.5→1.0。T105 复验通过后 Gate(6) 可→2.0，收敛判定(7) 可→1.0，总分预估回调至 ~13/24。
+> T105 复验通过：Gate(6) 0.5→2.0, 收敛判定(7) 0.5→1.0。人在环(10) T107 实现 0.5→1.0。总分 11→13/24。
+
+---
+
+## Phase 29 — Phase 17-21 真跑验证差距修复（2026-07-20）
+
+> 来源：`_scratch/reports/2026-07-20-Phase17-21-真跑落地验证对标报告.md` + `_scratch/reports/2026-07-20-Phase29-问题分析与解决方案.md`
+> 真跑数据：VoiceClonePage dev-loop（65 ticks，2026-07-19 16:00-16:29 CST）
+> 方法：逐 Phase 对照设计规格 → 检查真跑 debug trace 中的实际行为 → 判定落地状态 → 根因分析 → 解决方案设计
+> 核心发现：Phase 17 subagent 隔离是"说服式手段伪装成强制式"，Phase 18-21 存在系统性 Build-then-Wire 反模式（~1875 行虚化代码）
+
+| T | 问题 | 根因 | 严重度 | 状态 | Commit |
+|---|------|------|:---:|:---:|--------|
+| **T108** | **Subagent 隔离未落地** — contract gate 确认 "single agent mode"，plate_deep_audit ~1ms（设计 5-15s），audit findings 全部为 0 | **根因（2026-07-20 深度分析修正）**：不是 Agent "不听话"，是指令结构设计错误 | **P0** | ✅ | —（子任务全部完成，128+7 tests 零回归）|
+| T108a | action JSON 增加 `spawn` 字段 | `_build_action()` 中 6 个 stage 增加 `spawn` 字段 + `_SPAWN_CONFIG` 常量定义 | **P0** | ✅ | tick_orchestrator.py (+70, _SPAWN_CONFIG + per-stage spawn injection) |
+| T108b | dev-loop.md subagent 隔离段前移 + driving loop 算法增加 spawn 检查 | subagent 隔离从第 96 行移到 Iron Law 之后；driving loop while 循环增加 `if action.spawn exists` 分支；Red Flags 增加 2 条 spawn 相关条目 | **P0** | ✅ | dev-loop.md (subagent 段前移 + driving loop spawn 分支 + Red Flags 扩展) |
+| T108c | result 验证：spawn 阶段空 findings → WARN | `_validate_result_dict()` 中 spawn 阶段 findings 为空 → WARN 日志 | **P1** | ✅ | tick_orchestrator.py (+12, _validate_result_dict spawn-empty 检测) |
+| **T109** | **PII 防护 Agent 模式永不触发** — PII Redactor/Scanner 切在 BaseAgent.execute() pipeline，Agent 驱动 Tick 模式不走此路径 | Phase 18 设计假设 PII 检查在 Python 侧 LLM 调用路径，Agent 驱动模式下此假设不成立。四层文件桥接边界防护（决策 #78） | **P0** | ✅ | — |
+| T109a | **PIIRedactor 基础设施扩展** — `scan_dict()` 递归只读扫描 + `redact_dict()` 递归脱敏返回副本 | ✅ `scan_dict()` 返回 findings 列表含 path/rule/matched/severity/category + `redact_dict()` 返回递归脱敏副本。8 new tests + 36 existing PII tests pass | **P0** | ✅ | — |
+| T109b | **L1 — `--init` requirement 文本 PII 扫描** | ✅ TickOrchestrator `_run_tick_init()` L350-353 scan_dict({"requirement": requirement})，命中 → WARN + metrics PII_DETECTED_REQUIREMENT。AE_PII_ENABLED 门控 | **P0** | ✅ | — |
+| T109c | **L2 — `_build_action()` outbound action JSON PII 脱敏** | ✅ `_build_action()` L1602-1608 返回前 redact_dict(action) 递归脱敏，AE_PII_OUTBOUND=redact|warn|block 三级 | **P0** | ✅ | — |
+| T109d | **L3 — `_validate_result_dict()` inbound result JSON PII 扫描** | ✅ `_validate_result_dict()` L1990-1995 扫描 Agent 提交的 result JSON，scan_dict() → WARN + PII_DETECTED_RESULT。AE_PII_INBOUND=warn|block|redact | **P0** | ✅ | — |
+| T109e | **L4 — G11 FileAccessGuardrail PII 内容扫描扩展** | ✅ `_scan_file_for_pii()` guardrail.py L787-856，file_access guard PII 内容扫描，retry|block 模式。AE_PII_GUARDRAIL + AE_PII_GUARDRAIL_MODE 门控 | **P1** | ✅ | — |
+| T109f | **PII 事件 Metrics 集成** | ✅ MetricsCollector.add_pii_event() + _compute_summary() pii_events 统计（total_detections + by_type）。4 种事件类型 | P1 | ✅ | — |
+| T109g | **Agent 模式 PII 防护测试** | ✅ PII 测试已纳入 test_pii_redactor.py + test_tick_orchestrator.py（scan_dict/redact_dict/L1/L2/L3/L4 全覆盖），非独立文件 | P1 | ✅ | — |
+| T109h | **PII 防护文档更新** | ⚠️ USER_GUIDE.md 有 PIIGuardrail 基础提及 + pii/ 目录说明，完整四层架构文档待补充 | P2 | ⚠️ | — |
+| T110 | **M5 Token 效率 Agent 模式恒为零** — 通过读取 Claude Code JSONL 会话转录文件采集每 tick token 用量，增量解析 + message.id 去重，Agent 模式下恢复 M5 真实计算 | ✅ SessionTranscriptParser 增量 JSONL 解析 + message.id 去重 + subagent 目录扫描。AE_METRICS=1 + AE_TOKEN_TRACKING=1 两级门控（默认 0 关闭） | P1 | ✅ | — |
+| T110a | **SessionTranscriptParser — JSONL 会话转录解析器** | ✅ `auto_engineering/metrics/transcript_parser.py`：encode_cwd 定位 + 增量读取(byte-offset) + type=="assistant" 过滤 + message.id 去重 + subagent 目录扫描 + create_parser() 门控工厂 | P1 | ✅ | — |
+| T110b | **TickOrchestrator 集成 — 每次 tick 后增量采集** | ✅ state.tick_token_usage #41 + _after_developer/_after_critic 调用 collect() + _tick_process_result 累加 token_events | P1 | ✅ | — |
+| T110c | **M5 模式感知 + Agent 模式接入 + `AE_TOKEN_TRACKING` 两级门控** | ✅ collector.py _compute_summary() M5 from token_events → driver_mode 标注 + AE_TOKEN_TRACKING 默认 0（避免每 tick JSONL I/O）+ os import fix | P1 | ✅ | — |
+| T110d | **JSONL 解析器 + 集成测试** | ✅ tests/test_transcript_parser.py — 17 tests（3 encode + 8 collect + 1 reset + 5 create_parser gating） | P2 | ✅ | — |
+| T111 | **Phase 21 全部虚化** — metrics/threshold_learner.py（新版 144 行）零引用，convergence.py 仍用 loop/ 旧版；RuleDiscoverer 零调用；RatchetController sandbox 零调用 | ✅ convergence.py:338 conditional import ThresholdLearner + enrichment.py:8 import RuleDiscoverer/RatchetController + loop/__init__.py export | P1 | ✅ | — |
+| T112 | **验证/Audit 阶段 ~1ms pass-through** — 16 个 batch 的 plate_deep_audit 全部 ~1ms，findings 全部 None。T108 指令层修复为主，T112 证据组合检测为兜底 | ✅ AuditTimingGuardrail (G12)：三重证据组合 effective=E1+max(E2,E3)，≥2→retry。EngineState #40 action_timestamp + _build_action() 写时间戳 + GuardrailChain.default() 注册。7 new tests + 110 existing guardrail tests pass | P2 | ✅ | — |
+| T113 | **Build-then-Wire 系统性预防** — 三层防护（定义层/检测层/回归层）杜绝模块构建后不接线 | Phase 18-21 共 ~1875 行虚化代码，根因为 5 层：任务"完成"定义不含集成验证、静默 No-op 模式、TDD 不测接线、Build-Wire 分离、条件激活不可见。T113 升级为 L1 完成定义约束 + L2 持续门控 `_require()` + L3 接线契约测试 | P2 | ✅ | L1: tracker 协议更新 / L2: _require() 5 tests / L3: test_integration_cli_wiring.py 4 tests |
+| T114 | **功能激活不可见** — 17 个环境变量控制功能激活，散落 13 个文件，无集中发现机制。`ae doctor` 只检查必需项，零可选功能检测。用户不知道 AuditLog/OTLP/Metrics/DebugTracer/LangSmith/PromptCaching 等功能存在 | FeatureManifest SSOT → `ae doctor` 可选功能面板（主发现入口）+ `--init` stderr 一行状态 + action JSON `feature_status` 字段（Agent 模式适配） | P2 | ✅ | FeatureManifest 22 项 16 tests / doctor 面板 / --init stderr / action JSON feature_status |
+| T115 | **Agent/Standalone 能力不对称未文档化** — PII/Prompt Caching/M5 Token/AuditLog/模型选择 5 类功能在两个驱动下可用性不同。Phase 17-21 功能设计隐含 Standalone 假设（BaseAgent.execute() 集成点），Agent 边界未显式考虑 | 能力覆盖矩阵 SSOT（设计文档）+ 三种不对称分类（架构固有/设计替代/未实现）+ 驱动适用性设计规范 + metrics report `driver_mode` + 已有模块追加双驱动标注 | P2 | ✅ | driver_mode 5 tests / set_driver_mode() / standalone 路径接线 |
+| **T116** | **CriticVerdictInvalid 纵深防御缺失** — `_apply_result_to_state()` 用直接赋值写入 `critic_verdict`，绕过 `write_field()` 的 `_VALID_VERDICTS` 校验。非法 verdict 在 `_after_critic` 检测到之前已写入 state 并可能被 checkpoint 持久化 | ✅ L2031-2033: `if verdict not in ("", "APPROVE", "MAJOR"): return ActionError(error_code="INVALID_VERDICT", ...)` — 赋值前拦截 | **P1** | ✅ | — |
+
+### T108 详细 — P0 Subagent 隔离指令层修复
+
+**问题根因（2026-07-20 深度分析修正）**：不是 Agent "不听话"导致不 spawn subagent——是指令结构设计错误。正常对话中说"spawn Plan agent"成功率极高，因为指令和上下文在同一个消息里。Tick 循环中①每 tick 的 action JSON 不含 spawn 字段（Agent 的唯一操作信号中无 subagent 要求）②subagent 指令只在 dev-loop.md 第 96 行声明一次（不在每 tick 信号中）③"做什么"和"怎么做"分离在两个信息通道。
+
+**解决方案**：三个指令层修复——把 subagent spawn 从"spec 文档中的一次性声明"变成"每 tick action JSON 中的自包含指令"。
+
+**T108a: action JSON 增加 `spawn` 字段**
+
+`_build_action()` 中 6 个 stage 增加 `spawn` 字段：
+
+| Stage | subagent_type | count | parallel | model |
+|-------|--------------|:-----:|:--------:|-------|
+| architect | Plan | 1 | - | Sonnet |
+| critic | code-reviewer | 1 | - | Sonnet |
+| component_verifier | general-purpose | 1 | - | Haiku |
+| plate_deep_audit | code-reviewer | 3 | true | Sonnet |
+| system_verifier | general-purpose | 1 | - | Haiku |
+| system_deep_audit | code-reviewer | 3 | true | Sonnet |
+| developer | — | — | — | —（null，Agent 自己执行）|
+
+spawn 字段结构：
+```json
+"spawn": {
+    "subagent_type": "code-reviewer",
+    "count": 3,
+    "parallel": true,
+    "model": "Sonnet",
+    "instruction": "Spawn 3 code-reviewer subagents in parallel..."
+}
+```
+
+**涉及文件**：`auto_engineering/loop/tick_orchestrator.py` `_build_action()` — 6 个 stage 分支增加 `spawn` 字段。
+
+**T108b: dev-loop.md subagent 隔离前移 + driving loop 增加 spawn 检查**
+
+1. Subagent 隔离段（原第 96-132 行）移到 Iron Law 之后（第 35 行后）——紧接 Iron Law 构成"执行铁律"
+2. Driving loop while 循环增加 spawn 检查：
+```
+2. while action.action != "done":
+     if action.spawn:
+         Spawn subagent(s) as specified in action.spawn — this IS the work
+     else:
+         result = <do the work for action.action>
+```
+
+**涉及文件**：`commands/dev-loop.md` — 结构调整 + driving loop 算法更新
+
+**T108c: result 验证增加 spawn 阶段空结果检测**
+
+`_validate_result_dict()` 中：若 stage 有 spawn 要求但 findings 为空且无 subagent_evidence → WARN 日志 + metrics 事件。不 block（让 T112 Timing Guardrail 兜底 block）。
+
+**涉及文件**：`auto_engineering/loop/tick_orchestrator.py` — `_validate_result_dict()` 增加检测
+
+### T109 详细 — P0 PII 防护 Agent 模式覆盖（四层文件桥接边界防护）
+
+**问题根因**：决策 #68 PII Middleware 三道防线（T56 Prompt redaction + T57 Tool result scan + G10 PIIGuardrail）全部切入 BaseAgent.execute() pipeline。Agent 驱动 Tick 模式下 BaseAgent.execute() 从未被调用——PII 防护形同虚设。
+
+**设计依据**：决策 #78（Agent-Agnostic PII 四层防护架构）。参考标杆：CrewAI 三层防御（guardrail + tool + task）、DeepAgents PIIMiddleware（FilesystemMiddleware.interrupt_on）、AutoGen InterventionHandler。
+
+**核心设计原则**：
+- 四层防护全部在文件桥接协议边界——Python TickOrchestrator 侧，不依赖 Agent 行为
+- L1+L3 只读扫描（scan_dict），L2 脱敏（redact_dict），L4 文件审计
+- 架构边界承认：Agent→LLM API 链路不可拦截（外部进程），四层覆盖文件桥接双向数据流
+- 配置分层：`AE_PII_ENABLED` 总开关 → 各层独立策略（redact|warn|block）
+
+**四层架构**：
+
+```
+L1: --init requirement ──→ scan_text() ──→ WARN + metrics
+L2: _build_action()    ──→ redact_dict() ──→ 脱敏后输出到 stdout
+     ═══════════════ Agent 边界（不可控）═══════════════
+L3: --result JSON       ──→ scan_dict() ──→ WARN + metrics
+L4: files_changed       ──→ G10 scan + G11 scan ──→ retry/block
+```
+
+**T109a: PIIRedactor 基础设施扩展**
+
+`auto_engineering/pii/redactor.py` 增加两个方法：
+
+```python
+def scan_dict(self, data: dict, path: str = "") -> list[PIIFinding]:
+    """递归扫描嵌套 dict/str，返回所有 PII 发现。只读，不修改输入。"""
+    
+def redact_dict(self, data: dict) -> dict:
+    """递归扫描嵌套 dict/str，返回脱敏后的深拷贝。"""
+```
+
+遍历策略：深度优先，str 节点调用现有 `scan()` / `redact()`，dict 节点递归深入，list 节点遍历元素，其他类型跳过。
+
+**T109b: L1 — requirement 文本 PII 扫描**
+
+`tick_orchestrator.py` `_run_tick_init()` 中，requirement 写入 state 前调用 `pii_redactor.scan_text(requirement)`。命中 → WARN 日志 + `collector.record_pii_event(PII_DETECTED_REQUIREMENT, findings)`。不阻断（仅 WARN）。
+
+```python
+if self._pii_enabled and self._pii_redactor:
+    findings = self._pii_redactor.scan_text(requirement)
+    if findings:
+        logger.warning(f"PII detected in requirement: {len(findings)} matches")
+        self._metrics.record_pii_event("PII_DETECTED_REQUIREMENT", findings)
+```
+
+**T109c: L2 — outbound action JSON PII 脱敏**
+
+`_build_action()` 返回前检查 `AE_PII_OUTBOUND` 配置：
+- `redact`（默认）：`action = pii_redactor.redact_dict(action)`
+- `warn`：`scan_dict()` → WARN 日志，不修改
+- `block`：`scan_dict()` 命中 → 设置 `action.action = "error"` + 说明
+
+关键点：redact_dict 返回深拷贝，不影响原始 state 数据。脱敏后的 action JSON 确保 PII 不流入 Agent 上下文。
+
+```python
+if self._pii_enabled and self._pii_redactor:
+    outbound = self._resolve_pii_policy("outbound", "AE_PII_OUTBOUND", "redact")
+    if outbound == "redact":
+        action = self._pii_redactor.redact_dict(action)
+    elif outbound == "block":
+        findings = self._pii_redactor.scan_dict(action)
+        if findings:
+            return self._make_error("PII_BLOCKED_OUTBOUND", ...)
+```
+
+**T109d: L3 — inbound result JSON PII 扫描**
+
+`_validate_result_dict()` 中增加 `_scan_result_for_pii()`：
+- `warn`（默认）：`scan_dict()` → WARN 日志 + `record_pii_event(PII_DETECTED_RESULT)`
+- `block`：命中 → result 拒绝
+- `redact`：`redact_dict()` → 脱敏后继续
+
+扫描范围：result JSON 的文本字段（developer_output、description、error_message 等）。
+
+```python
+def _scan_result_for_pii(self, result: dict) -> None:
+    findings = self._pii_redactor.scan_dict(result)
+    if findings:
+        logger.warning(f"PII detected in result: {len(findings)} matches")
+        self._metrics.record_pii_event("PII_DETECTED_RESULT", findings)
+```
+
+**T109e: L4 — G11 FileAccessGuardrail PII 内容扫描**
+
+`FileAccessGuardrail.check()` 扩展：扫描 `files_changed` 中每个文件的内容（仅扫描文本文件：.py/.ts/.tsx/.js/.md/.json/.yaml）。
+
+```python
+def _scan_file_for_pii(self, filepath: str) -> list[PIIFinding]:
+    content = Path(filepath).read_text()
+    return self._pii_redactor.scan_text(content)
+```
+
+命中 → `GuardrailResult("retry", f"PII detected in {filepath}")`（block 模式）或 WARN。
+
+结合 G10 PIIGuardrail（已有，在 GuardrailChain 中）：G10 扫描 Agent 创建的文件的 **内容**，G11 扫描文件 **路径+内容**。两 guardrail 互补。
+
+**T109f: PII 事件 Metrics 集成**
+
+`metrics/collector.py` 增加：
+- 新事件类型：`PII_DETECTED_REQUIREMENT`、`PII_DETECTED_RESULT`、`PII_REDACTED`、`PII_DETECTED_FILE`
+- `record_pii_event(event_type, findings)` 方法
+- `metrics-report.json` 增加 `pii_events` 统计：`{total_detections, by_type, by_severity, by_tick}`
+
+`tick_orchestrator.py` 中注入 `_pii_metrics` 累积计数。
+
+**T109g: Agent 模式 PII 防护测试**
+
+新建 `tests/test_pii_agent_mode.py`（~12 tests）：
+
+| # | 测试 | 覆盖 |
+|---|------|------|
+| 1 | `test_scan_dict_nested_finds_pii` | PIIRedactor.scan_dict 深度嵌套 |
+| 2 | `test_scan_dict_empty_clean` | PIIRedactor.scan_dict 无 PII |
+| 3 | `test_redact_dict_returns_copy` | PIIRedactor.redact_dict 返回深拷贝 |
+| 4 | `test_redact_dict_masks_all_pii` | PIIRedactor.redact_dict 递归脱敏 |
+| 5 | `test_l1_init_scans_requirement` | requirement 含身份证号 → WARN + metrics |
+| 6 | `test_l2_outbound_redact_default` | action JSON 含 PII → redact_dict 脱敏 |
+| 7 | `test_l2_outbound_block_mode` | AE_PII_OUTBOUND=block → error action |
+| 8 | `test_l3_inbound_scan_warn` | result JSON 含 PII → WARN + metrics |
+| 9 | `test_l4_g11_scans_file_content` | FileAccessGuardrail PII 扫描文件内容 |
+| 10 | `test_pii_config_disabled` | AE_PII_ENABLED=false → 全部跳过 |
+| 11 | `test_pii_metrics_accumulation` | 跨 tick PII 事件累积计数 |
+| 12 | `test_pii_integration_end_to_end` | L1→L2→L3→L4 全链路集成 |
+
+全量测试确保零回归。
+
+**T109h: PII 防护文档更新**
+
+1. `docs/USER_GUIDE.md` 增加「PII 防护」章节：
+   - 四层架构说明（L1-L4）
+   - 配置指南：`AE_PII_ENABLED` / `AE_PII_OUTBOUND` / `AE_PII_INBOUND` / `AE_PII_GUARDRAIL`
+   - Agent vs Standalone 模式差异表
+   - 已知限制：Agent→LLM API 链路不可拦截
+
+2. `commands/dev-loop.md` 增加 PII 行为说明：
+   - L2 outbound redaction 说明（Agent 收到的 action JSON 已脱敏）
+   - tick 开始时的 PII 状态提示
+
+**实施顺序**：
+
+```
+T109a (infrastructure) ──→ T109b (L1) ──→ T109c (L2) ──→ T109d (L3)
+                           ↘ T109e (L4) ──→ T109f (metrics) ──→ T109g (tests) ──→ T109h (docs)
+```
+
+**涉及文件**：
+- `auto_engineering/pii/redactor.py` — T109a scan_dict/redact_dict（~60 行）
+- `auto_engineering/loop/tick_orchestrator.py` — T109b L1 + T109c L2 + T109d L3（~50 行）
+- `auto_engineering/loop/guardrail.py` — T109e G11 FileAccessGuardrail PII 扫描（~30 行）
+- `auto_engineering/metrics/collector.py` — T109f PII 事件（~30 行）
+- `tests/test_pii_agent_mode.py` — T109g 新建（~180 行）
+- `docs/USER_GUIDE.md` + `commands/dev-loop.md` — T109h 文档
+
+**估算**：~140 行生产代码 + ~180 行测试 + 文档更新。~2-3 天。
+
+### T110 详细 — P1 M5 Token 效率 Agent 模式 JSONL 采集
+
+**问题**：M5 token_efficiency 在 Agent 驱动模式下恒为零。根因：`record_token_usage()` 仅在 `BaseAgent.execute()` 中调用（agents/base.py:222-237），AgentDriver Tick 模式下从不走此路径。
+
+**架构边界重新评估**：
+
+Claude Code Agent 外部进程调 Anthropic API，Python TickOrchestrator 确实无法代码级拦截 API 调用——但 Claude Code **默认写入**每次 API 响应的 `usage` 数据到 JSONL 会话转录文件：
+```
+~/.claude/projects/<encoded-cwd>/<session-uuid>.jsonl
+```
+
+每条 `"type": "assistant"` 行包含完整 Anthropic API 返回：
+```json
+{
+  "type": "assistant",
+  "message": {
+    "id": "msg_01abc...",
+    "model": "claude-sonnet-4-5",
+    "usage": {
+      "input_tokens": 617,
+      "output_tokens": 118,
+      "cache_creation_input_tokens": 0,
+      "cache_read_input_tokens": 0
+    }
+  }
+}
+```
+
+**三个可用的数据源对比**（Claude Code 现状，无官方 token API）：
+
+| 数据源 | 实时性 | 完整性 | 部署复杂度 | 结论 |
+|--------|:-----:|:-----:|:---------:|------|
+| JSONL 会话转录 | 事后（每 turn 写入） | **完整**（含 subagent） | 零（Claude Code 默认行为） | **推荐** |
+| Statusline Hook | 实时（~300ms） | 部分（subagent 不计入 token counts，仅 cost 正确） | 需用户配置 `settings.json` | 备选 |
+| cccost (npm) | 实时 | 完整（含 subagent） | 需 npm 安装 | 备选 |
+
+**解决方案**：增量 JSONL 转录解析，四次 tick 间增量采集
+
+```
+每次 tick 结束后（Agent 写完 result JSON → --tick 之前）：
+  1. 检测对话 session UUID（从 ~/.claude/projects/<cwd>/ 最近修改的 .jsonl）
+  2. SessionTranscriptParser 增量读取（记录上次 offset → 只读新增行）
+  3. 过滤 type=="assistant" 行 → 提取 message.usage
+  4. message.id 去重（同一 API 响应可能出现在父会话 + subagent/ 文件中）
+  5. 累加 input_tokens + output_tokens → 写入 state.tick_token_usage
+  6. 下一 tick --tick 时将 token_usage 提交到 MetricsCollector
+```
+
+**两级门控**（避免默认启用影响性能）：
+
+```
+AE_METRICS=1           ← 总开关（已有，默认 0，控制 M1-M5 全部）
+  └─ AE_TOKEN_TRACKING=1  ← M5 子开关（新建，默认 0，控制 JSONL 解析 + M5 计算）
+       └─ AE_TOKEN_SOURCE=transcript  ← 数据源选择（仅在 AE_TOKEN_TRACKING=1 时生效）
+```
+
+- `AE_METRICS=0`（默认）→ 整个 metrics 管线空操作，零开销
+- `AE_METRICS=1 + AE_TOKEN_TRACKING=0`（默认）→ M1-M4 正常采集，M5 = None（跳过 JSONL I/O）
+- `AE_METRICS=1 + AE_TOKEN_TRACKING=1` → M1-M5 全部采集，每 tick 增量解析 JSONL
+
+**默认关闭的理由**：JSONL 增量解析尽管轻量（~1-5ms stat+seek+read），但每 tick 额外文件 I/O。Token 效率是成本优化指标，非循环执行的必要指标。大多数用户只需要 M1-M4（收敛效率/打回率/验证触发率/重设计频率）。对齐 `AE_METRICS=0` 的 opt-in 哲学——度量为分析服务，不为循环增加负担。
+
+**关键设计决策**：
+
+| 决策 | 选择 | 理由 |
+|------|------|------|
+| 启用控制 | `AE_TOKEN_TRACKING` 二级开关，默认 0 | 避免每 tick JSONL I/O 影响循环性能，用户显式 opt-in |
+| 数据源 | JSONL 转录（非 statusline/cccost） | 零用户配置，Claude Code 默认行为 |
+| 读取时机 | 每 tick 结果后增量读取 | 避免实时轮询开销，对齐文件桥接协议节奏 |
+| 去重策略 | message.id 全局去重 | 同一 API 响应在父会话 + resume + rewind + subagent 文件中可能出现多次 |
+| subagent 覆盖 | 一并扫描 `subagents/agent-*.jsonl` | Claude Code subagent 写入独立子目录，需合并采集 |
+| 容错 | 解析失败 → M5 = None（不抛异常） | JSONL 格式可能随 Claude Code 版本变化，静默降级 |
+| 模式标记 | `AE_TOKEN_SOURCE` 环境变量（transcript） | metrics report 明确标注 token 数据来源 |
+
+**子任务 T110a-T110d**（见上表）
+
+**涉及文件**：
+- `auto_engineering/metrics/transcript_parser.py` — **新建** SessionTranscriptParser（T110a）
+- `auto_engineering/loop/tick_orchestrator.py` — `_after_developer()`/`_after_critic()` 调用 collect（T110b）
+- `auto_engineering/engine/state.py` — EngineState 新增 `tick_token_usage` + `transcript_offset` 字段
+- `auto_engineering/metrics/collector.py` — M5 计算增加 Agent 模式 JSONL 路径（T110c）
+- `tests/test_transcript_parser.py` — **新建** ~10 tests（T110d）
+
+### T111 详细 — P1 Phase 21 虚化模块接线
+
+**问题**：新版 ThresholdLearner（Beta-Binomial，144 行）从未在生产中运行，RuleDiscoverer 零调用，RatchetController sandbox 零调用。convergence.py 仍使用 loop/ 旧版。
+
+**解决方案**：三步接线
+
+1. **替换 convergence.py 旧版 ThresholdLearner**：将 `convergence.py` import 从 `loop/threshold_learner.py` 改为 `metrics/threshold_learner.py`。新版 Beta-Binomial 在观测不足 30 时返回先验均值（默认阈值），与旧版行为等价。
+2. **接入 RuleDiscoverer**：在 metrics pipeline `end_requirement()` 中增加 `RuleDiscoverer.analyze()` 调用——历史数据 ≥ 10 条时运行 Spearman 相关扫描，产出候选规则写入 metrics report `suggested_rules` 字段。
+3. **接入 RatchetController sandbox**：在 `_maybe_adjust_thresholds()` 中增加 sandbox 预验证——ThresholdLearner 提议新阈值后，用历史数据回测，keep/revert/stop 三元判定。
+
+**涉及文件**：
+- `auto_engineering/loop/convergence.py` — import 路径替换
+- `auto_engineering/metrics/collector.py` — end_requirement() 增加 RuleDiscoverer 调用
+- `auto_engineering/metrics/ratchet.py` — sandbox_evaluate() 增加调用点
+- `tests/test_threshold_learner.py` — 集成测试（新版接入收敛判定）
+
+### T112 详细 — P2 验证/Audit 阶段 Timing Guardrail（证据组合检测器，2026-07-21 深度分析）
+
+**问题**：与 T108 同根因。16 个 batch 的 plate_deep_audit 全部 ~1ms，findings 全部 None。T108 指令层修复后 Agent 看到 spawn 指令走 spawn 分支，但若 spawn 因任何原因未执行（模型输出格式不兼容、Agent 忽略、网络失败），空 findings 仍不会被 Python 侧拦截。T112 是兜底安全网。
+
+**方案**：新建 `AuditTimingGuardrail`，**证据组合检测器**（非单纯时间阈值）。三重证据：
+
+| 证据 | 检测方式 | 独立性 |
+|------|---------|:---:|
+| E1: 耗时过短 | `elapsed < STAGE_MIN_SECONDS[stage]` | **独立**（纯时间维度） |
+| E2: findings 空 | `findings is None or len(findings) == 0` | 与 E3 部分相关（E2→E3） |
+| E3: p0/p1 全零 | `p0_count == 0 and p1_count == 0` | 被 E2 蕴含 |
+
+**关键修正（2026-07-21 深度分析）**：E2 和 E3 不独立——findings 空时 p0/p1 必为零。原方案 `≥2/3 → retry` 会产生**误报**：Agent 正常 spawn subagent 审计干净代码库，8s 完成无发现 → E1=0（8s > 3s 阈值），E2=1，E3=1 → 2/3 → retry（误报！）。
+
+**修正后判定逻辑**：E1 必须参与组合（唯一真正独立的信号）：
+```
+effective = E1 + max(E2, E3)   # 最高 2 分；E2/E3 合并为一个内容信号
+if effective == 2:  → retry    # 快 + 内容空/无严重问题（双重确认）
+if effective == 1:  → WARN     # 仅一个维度触发，不拦截
+```
+
+**场景验证**：
+
+| 场景 | E1 | E2 | E3 | eff | 动作 |
+|------|:--:|:--:|:--:|:---:|------|
+| A: pass-through (~1ms, 空) | 1 | 1 | 1 | 2 | retry ✅ |
+| B: 正常审计+P2 only (10s) | 0 | 0 | 1 | 1 | WARN ✅ |
+| C: spawn 失败返回空 (2s) | 1 | 1 | 1 | 2 | retry ✅ |
+| D: 快速但有真实发现 (2.5s) | 1 | 0 | 0 | 1 | WARN ✅ |
+| E: 干净代码库正常审计 (8s) | 0 | 1 | 1 | 1 | WARN ✅ |
+
+**各 stage 最低时间阈值**（component_verifier 上浮 2s——Haiku subagent spawn 开销 2-3s，原 3s 太激进）：
+
+| Stage | 阈值 | 依据 |
+|-------|:---:|------|
+| component_verifier | **5s** | Haiku 单 subagent + spawn 开销（原 3s 太激进） |
+| plate_deep_audit | 10s | 3 并行 Sonnet code-reviewer + 合并 |
+| system_verifier | 5s | Haiku 单 subagent + 全量设计覆盖 |
+| system_deep_audit | 10s | 3 并行 Sonnet + 全量 6 维审计 |
+| critic | 3s | Sonnet 单 subagent + diff 审查 |
+
+**不适用**：developer（Agent 自己执行，无 spawn）、architect（Plan agent 耗时变数大）、gap_scan/research（非 spawn 阶段）。
+
+**跨 tick 计时实现**：Python 每次 tick 是独立进程 → tick N 写 `action_timestamp` 到 checkpoint → tick N+1 读回计算 `elapsed`。首次 tick（`action_timestamp == 0.0`）skip 检测。StandaloneDriver 需通过 `AE_DRIVER_MODE` 区分（同一进程连续执行，elapsed 始终 <1s）。
+
+**配置**：`AE_AUDIT_TIMING=1`（默认开启），`AE_AUDIT_TIMING_CONFIDENCE=2`（有效证据数阈值，默认 2）。
+
+**涉及文件**：
+- `auto_engineering/loop/guardrail.py` — 新建 `AuditTimingGuardrail(Guardrail)`，注册到 `GuardrailChain.default()`
+- `auto_engineering/loop/tick_orchestrator.py` — `_build_action()` 写入 `state.action_timestamp`；`_tick_process_result()` 入口计算 elapsed 传入 guardrail
+- `auto_engineering/engine/state.py` — EngineState 新增 `action_timestamp: float = 0.0`（#40）
+- `tests/test_guardrail.py` — AuditTimingGuardrail 单测（~6 tests：冷启动 skip + E1+E2/E1+E3 组合 + 单证据 WARN + 各 stage 阈值 + 场景 E 不误报）
+
+**与 T108c 分层**：T108c WARN 日志（`_validate_result_dict`）是早期信号，T112 block 是兜底拦截——时间+内容双重证据才 retry。
+
+### T106 详细 — P2 GitClean untracked 测试覆盖补全（2026-07-21 深度分析）
+
+> ⚠️ **文档位置说明**：T106 逻辑上属于 Phase 28（七方对标差距处理），因详细分析展开时依赖 Phase 29 上下文而物理放置于此。T106 的 4 子项（T106a-T106d）在 Phase 28 跟踪。
+
+**问题**：GitClean guardrail 修复（ca5c4d1 + d329d74）已正确过滤 `git status --porcelain` 的 `??`（untracked）和 `!!`（ignored）行。修复代码正确但测试未同步覆盖新增逻辑。
+
+**现有测试审计**（`tests/test_guardrail.py` TestGitClean，5 tests）：
+
+| 测试 | 覆盖 | 问题 |
+|------|------|------|
+| `test_pass_clean_repo` | 干净仓库 → pass | ✅ |
+| `test_block_dirty_repo` | 仅 untracked → pass | ❌ 命名：函数名"block"但 assert "pass" |
+| `test_block_staged_changes` | staged 变更 → block | ✅ |
+| `test_block_modified_tracked` | 已修改 tracked → block | ✅ |
+| `test_timing_and_stage` | timing="post", stage="developer" | ✅ |
+
+**缺失场景**（4 项）：
+
+| 子项 | 测试场景 | 预期 | 优先级 |
+|------|---------|------|:--:|
+| T106a | 重命名 `test_block_dirty_repo` → `test_untracked_files_pass` | pass | P3 |
+| T106b | `!!`（ignored）文件 → pass | pass | P2 |
+| T106c | 混合场景：untracked + tracked 修改 → block | block（过滤 `??` 不掩盖 `M`） | P2 |
+| T106d | `git status` 命令失败（rc != 0）→ block | block | P2 |
+
+**Why 混合场景重要**：如果 `??` 过滤逻辑有 bug（如过滤条件过宽导致所有行被跳过），仅 untracked 场景 pass + 仅 tracked 场景 block 两个独立测试都不会发现。混合场景是防回归的关键测试。
+
+**涉及文件**：
+- `tests/test_guardrail.py` — TestGitClean 类增加 T106b/T106c/T106d + 重命名 T106a
+- 预估：~4 tests，~35 行
+
+### T107 详细 — P3 人在环：gap_review 自动暂停闸门（2026-07-21 深度分析定案）
+
+> ⚠️ **文档位置说明**：T107 逻辑上属于 Phase 28（七方对标差距处理），因详细分析展开时依赖 Phase 29 上下文而物理放置于此。T107 的 4 子项（T107a-T107d）在 Phase 28 跟踪。
+
+**问题**：交叉对标报告发现 gap_review 是"人在信息环"（列出 gap 供用户了解）非"人在决策环"（阻塞等用户审批）。ORCA 的 `decision_gate --wait` 是真正的决策闸门。
+
+**现状澄清**：
+
+gap_review **本身就是交互式的**——用户逐项对每个 gap 做 Fill/Research/Defer 决策。G6 NoDeferredBlockingGap 强制 architectural gap 不可 Defer。交互链路完整。
+
+T107 的核心问题是：**gap_review 所有 gap 决策完成后，进入 architect 前，是否需要一个显式的"整体确认"闸门**。
+
+**已有基础设施**：Phase 25 实现了 ORCA DecisionGate 全部 3 形态——Pre-planned Gate（T94）、Escalation Gate（T95）、Stage Checkpoint Gate（T64 `--pause-at-stage`）。gap_review→architect 的暂停机制已存在（`--pause-at-stage architect`），只是非默认行为。
+
+**三种方案**：
+
+| 方案 | 行为 | 优点 | 缺点 |
+|------|------|------|------|
+| A: 强制暂停 | gap_review 后始终暂停 | 最安全 | 每次都要用户手动确认，影响流程速度 |
+| B: 可选暂停（现状） | `--pause-at-stage architect` 手动指定 | 用户自主 | 复杂 gap 场景无自动保护 |
+| C: 阈值触发 | `has_blocking == true` → 自动暂停 | 高风险自动升级，低风险自动流转 | 需定义触发条件 |
+
+**定案：方案 C**。
+
+实现逻辑（`tick_orchestrator.py:_after_gap_review()`）：
+```python
+# gap_review 完成后，advance 到 architect 前检查
+report = json.loads(self._state.gap_report_json or '{"has_blocking": false}')
+if report.get("has_blocking"):
+    self._pause_at_stages.add("architect")  # 复用 T64 Stage Checkpoint Gate
+```
+
+`has_blocking == true`（存在 architectural gap）→ 自动插入 checkpoint gate，用户在进入 architect 前审视整体 gap 决议。`has_blocking == false`（仅 component/module 级）→ 不暂停，直接进入 architect。
+
+**子项**：
+
+| 子项 | 描述 | 类型 |
+|------|------|:--:|
+| T107a | `_after_gap_review()` 增加 `has_blocking` 检测，条件性 `_pause_at_stages.add("architect")` | 实现 |
+| T107b | gate action 的 `question` 包含 gap 摘要（blocking gap 数量 + 决议） | 实现 |
+| T107c | 交叉对标报告 §10 人在环评分更新（方案定案后） | 文档 |
+| T107d | test_tick_orchestrator 增加 has_blocking→pause / no_blocking→no_pause 测试 | 测试 |
+
+**涉及文件**：
+- `auto_engineering/loop/tick_orchestrator.py` — `_after_gap_review()` ~5 行改动
+- `tests/test_tick_orchestrator.py` — ~2 tests
+- 预估总改动：~20 行
+
+### T113 详细 — P2 Build-then-Wire 系统性预防（三层防护升级）
+
+**问题**：Phase 18-21 深度审计发现 7 模块 ~1875 行虚化代码——模块 TDD 完整构建、测试通过、跟踪表标记 ✅，但生产调用链从未到达。更严重的是 Phase 22（集成接线任务）本身也发生了 Build-then-Wire——"接线"只做了 orchestrator 侧参数位预留，CLI 侧从未实例化模块传入，导致静默 No-op。**接线任务需要二次修复**——这是系统性问题，不是个别疏忽。
+
+**时间线**：
+```
+Phase 18-19: Build 模块（T53-T64）→ 跟踪表 ✅
+Phase 22:    "Wire"（T73-T78）→ 跟踪表 6/6 ✅
+             实际：仅参数位预留，CLI 侧 None 传入 → 静默 No-op
+Phase 22 fix: 真跑评估发现 → 补齐 dev_loop.py 实例化 + restore() 参数 + log_event()
+```
+
+**根因分类（5 层）**：
+
+| # | 根因 | 说明 | 示例 |
+|---|------|------|------|
+| 1 | **"完成"定义不含集成验证** | T-task ✅ = 代码+测试通过，不是"用户可用"。缺少"生产入口是否调用此模块"的验证 | T53 ContextOffloader 类存在、单测通过、但 dev_loop.py 从未 import |
+| 2 | **静默 No-op 模式** | `if self._x is not None: self._x.do()` — 模块 None 时静默跳过，无警告无日志。生产韧性好，但开发验证阶段是灾难——没有任何信号 | 全 7 模块都使用此模式 |
+| 3 | **TDD 不测接线** | 单元测试测模块内部逻辑（mock 依赖），模块集成测试测模块间交互（mock 依赖）。没有测试验证 CLI → TickOrchestrator → injectable 的调用链 | 7 模块都无 CLI 路径集成测试 |
+| 4 | **Build-Wire phase 分离** | "先建好所有模块再统一接线"的设计意图，实际效果：Build 完成→心理关闭→Wire 被推迟→Wire 粗粒度打包→上下文丢失 | Phase 18-19 → 间隔数天 → Phase 22 |
+| 5 | **条件激活不可见** | 4 个模块依赖环境变量激活（OTLP/AuditLog/Prompt Caching/PII），用户不知道功能存在→不设环境变量→模块永远 None | `AE_OTLP_ENDPOINT` 未设→tracer 永不创建 |
+
+**当前残余虚化**（Phase 22 修复后）：
+
+| 模块 | 行数 | 状态 |
+|------|:---:|------|
+| DiagnosticRuleDiscoverer | 321 行 | **零引用** — 从未被 import，仅 ratchet.py docstring 中作为类型提及 |
+| RatchetController.sandbox_evaluate() | ~80 行 | **零调用** — 方法存在，无生产代码调用（仅 evaluate() 通过 enrichment.py 接线） |
+| loop/threshold_learner.py（旧版） | ~120 行 | **仍被引用** — loop/__init__.py + orchestrator.py 仍 import 旧版，与 metrics/ 新版共存 |
+
+**解决方案**：三层防护（L1 流程 + L2 代码 + L3 测试），从被动检测升级为主动预防
+
+**L1 — 定义层：跟踪表"完成"定义升级**
+
+在跟踪表更新协议中增加接线验证步骤——标记 ✅ 前必须满足：
+1. 模块的公开入口点（类/函数）被至少一个生产调用链引用（grep 验证）
+2. 在 commit message 中记录调用链路径（如 `wired: dev_loop.py::_build_injectables() → TickOrchestrator.__init__ → ContextOffloader`）
+3. 如果模块是条件激活（依赖环境变量），验收标准必须包含"默认未激活时的行为说明"
+
+这是流程约束，不依赖代码实现。每次标记 ✅ 前自检。
+
+**L2 — 检测层：静默 No-op → 持续门控 `_require()`**
+
+替代分散的 `if self._x is not None` 检查为统一的 `_require()` 方法：
+
+```python
+class TickOrchestrator:
+    def _require(self, attr_name: str, reason: str = "") -> Any:
+        """Get injectable with mandatory trace-level log when None.
+        
+        Does NOT change behavior (still degrades gracefully).
+        Only makes the silent None visible at TRACE level.
+        """
+        val = getattr(self, attr_name, None)
+        if val is None:
+            _logger.debug(f"Injectable '{attr_name}' is None — feature disabled. {reason}")
+        return val
+
+# 使用:
+offloader = self._require("_context_offloader", "stage context will not be offloaded")
+if offloader:
+    offloader.offload(...)
+```
+
+与旧方案的差异：
+- 旧方案 `_verify_injectables()`：只在 `__init__` 时检查一次，WARN 级别
+- 新方案 `_require()`：每次使用时检查，DEBUG 级别，不刷屏但可追溯
+- 不是替代而是补充：`_verify_injectables()` 做启动汇总（用户可见），`_require()` 做运行时追踪（调试可见）
+
+**L3 — 回归层：接线契约测试 + 自动追加约定**
+
+```python
+# tests/test_integration_cli_wiring.py
+def test_all_required_injectables_non_none():
+    """每个必需模块必须在 dev_loop.py 中被实例化并传入 TickOrchestrator"""
+    inj = _build_injectables(project_root)
+    # 必需模块（无环境变量也创建）
+    assert inj["context_offloader"] is not None, "ContextOffloader must be instantiated"
+    assert inj["session_summarizer"] is not None, "SessionSummarizer must be instantiated"
+    # 条件模块（验证创建路径存在，环境变量控制）
+    # tracer: AE_OTLP_ENDPOINT → setup_tracing()
+    # audit_logger: AE_AUDIT_LOG=1 → AuditLogger()
+    # 无条件时返回 None 是合法的，但创建路径必须存在
+
+def test_injectables_passed_to_orchestrator():
+    """验证所有 injectable 参数实际传入了 TickOrchestrator"""
+    orch = TickOrchestrator.restore(...)
+    assert orch._context_offloader is not None
+    assert orch._session_summarizer is not None
+
+def test_new_module_wiring_convention():
+    """每个新增的 injectable 必须在本测试文件中追加对应断言"""
+    # 约定：当 _build_injectables() 新增 key 时，本测试文件必须同步新增断言
+    expected_keys = {"context_offloader", "session_summarizer", "tracer", "audit_logger"}
+    actual_keys = set(_build_injectables(project_root).keys())
+    missing = expected_keys - actual_keys
+    extra = actual_keys - expected_keys
+    assert not extra, f"New injectable keys detected: {extra}. Add corresponding assertions above."
+```
+
+**对 T111（Phase 21 接线）的影响**：
+
+T111 当前设计是 Build-Wire 分离模式（Phase 21 构建 → Phase 29 接线）——与 Phase 18-19→22 同模式。应在 T113 约束下调整 T111：接线不作为独立 Phase，而是追加到每个模块的 T-task 验收标准中——接线完成后才标记 ✅。
+
+**涉及文件**：
+- `tests/test_integration_cli_wiring.py` — **新建** L3 接线契约测试（~4 tests）
+- `auto_engineering/loop/tick_orchestrator.py` — `__init__` 增加 `_verify_injectables()` + `_require()` 方法
+- `design/IMPLEMENTATION-TRACKER.md` — 更新协议 §2：标记 ✅ 前增加接线验证步骤
+
+### T114 详细 — P2 功能激活不可见（升级方案）
+
+**问题**：17 个环境变量控制功能激活，散落 13 个 `.py` 文件，无集中清单。代码完整（AuditLog 79 行、OTLP 47 行、Metrics ~500 行、DebugTracer 101 行、LangSmith、Prompt Caching）但用户不知道这些功能存在。
+
+**三层不可见**：
+1. **存在不可见**：用户不知道有 AuditLog/OTLP/Metrics/DebugTracer 功能
+2. **激活不可见**：即使知道功能存在，不知道设什么环境变量
+3. **模式不可见**：Prompt Caching 默认开启但在 Agent 模式不生效（Agent 做 LLM 调用，Provider 层不介入），用户无感知
+
+**17 个环境变量清单**：
+
+| 类别 | 变量 | 默认 | 模式适用 |
+|------|------|------|---------|
+| 核心功能 | `AE_METRICS=1` | 关闭 | 双模式 |
+| 核心功能 | `AE_AUDIT_LOG=1` | 关闭 | 双模式 |
+| 核心功能 | `AE_OTLP_ENDPOINT` | 未配置 | 双模式 |
+| 核心功能 | `AE_LANGSMITH=1` | 关闭 | 双模式 |
+| 调试 | `AE_DEBUG=1` / `--debug` | 关闭 | 双模式 |
+| 调试 | `AE_LOG_LEVEL` | INFO | 双模式 |
+| 性能 | `AE_CACHE_CONTROL=0` | **开启** | **仅 Standalone** |
+| 性能 | `AE_MAX_TOOL_CALLS` | 10 | 双模式 |
+| Provider | `AE_LLM_PROVIDER` | anthropic | 双模式 |
+| Provider | `AE_MODEL_<ROLE>` | 按 role | **仅 Standalone** |
+| Provider | `AE_PROVIDER_<ROLE>` | 按 role | **仅 Standalone** |
+| 阈值 | `AE_GATE_TIMEOUT` | Gate 默认 | 双模式 |
+| 安全 | `AE_PRODUCTION=1` | 关闭 | 双模式 |
+| 安全 | `AE_STRICT_RED=1` | 关闭 | 仅 Plugin |
+| 抑制 | `AE_SUPPRESS_DEPRECATION=1` | 关闭 | 仅 Plugin |
+| M5(T110) | `AE_TOKEN_TRACKING=1` | 关闭 | 双模式 |
+| M5(T110) | `AE_TOKEN_SOURCE=transcript` | transcript | 双模式 |
+
+**根因分析**：
+
+| # | 根因 | 说明 |
+|---|------|------|
+| 1 | **无功能清单 SSOT** | 17 个 env var 散落 13 个文件，无集中定义。新增功能靠开发者记忆同步 doctor + dev_loop。T110 新增 `AE_TOKEN_TRACKING` 后无人记得更新 doctor |
+| 2 | **doctor 定位偏差** | doctor 隐含"预检=找阻断问题"。可选功能被视为"非问题"而排除。但用户需求是"知道有什么配置能力"，不是"找出哪些检查不通过" |
+| 3 | **--init 输出契约约束** | stdout 是 JSON 契约（Agent 解析），不能混入人读信息。stderr 仅 tick 阶段输出进度树，init 时无功能状态 |
+| 4 | **env var vs CLI flag 发现不对称** | `--debug` 在 `--help` 中可见。`AE_METRICS=1` 无等效发现机制。用户只能靠读源码或文档发现 |
+| 5 | **Agent 模式信息茧房** | Agent 调用 `ae dev-loop --init`，stdout JSON 被 Agent 消费，stderr 可能不转发给终端用户。功能状态双重不可见 |
+
+**此问题是 F.14 根因 #5（条件激活不可见）的具体表现，也是 Build-then-Wire 的成因之一：用户不知道功能存在 → 不设环境变量 → 模块永远 None。**
+
+**解决方案（5 层）**：
+
+**5.1 FeatureManifest SSOT（`auto_engineering/config/feature_flags.py` 新建）**
+
+```python
+@dataclass
+class FeatureFlag:
+    key: str              # 环境变量名
+    description: str      # 功能简述
+    category: str         # observability/performance/debugging/provider/safety
+    agent_mode: str       # "both" | "standalone_only" | "agent_only"
+    activation: str       # 激活方式说明
+    default_active: bool  # 不设环境变量时默认激活？
+
+FEATURE_MANIFEST: list[FeatureFlag] = [
+    FeatureFlag("AE_AUDIT_LOG", "LLM 调用审计日志 (JSONL)", "observability",
+                "both", "AE_AUDIT_LOG=1", False),
+    FeatureFlag("AE_METRICS", "AI Coding 度量收集", "observability",
+                "both", "AE_METRICS=1", False),
+    # ... 17 项
+]
+```
+
+**约束**：新增 env var → 必须先注册到 FEATURE_MANIFEST → `ae doctor` + `--init` 自动展示。L3 接线契约测试增加 `test_feature_manifest_coverage`（新 env var 必须注册）。
+
+**5.2 `ae doctor` 增加「可选功能」面板（主发现入口）**
+
+在 10 项必需检查后，始终显示全部可选功能（无论激活与否）：
+
+```
+── Optional Features ──
+✗ OTLP Tracing      未配置 — export AE_OTLP_ENDPOINT=http://localhost:4317
+✗ Audit Log         未激活 — export AE_AUDIT_LOG=1
+✗ Metrics           未激活 — export AE_METRICS=1
+✓ Prompt Caching    已激活 (仅 Standalone 模式生效)
+✗ LangSmith         未激活 — export AE_LANGSMITH=1 + LANGCHAIN_API_KEY
+✗ Debug Tracer      未激活 — export AE_DEBUG=1 或 ae dev-loop --debug
+```
+
+**5.3 `--init` stderr 一行功能状态（快速确认）**
+
+```
+[Features] OTLP:✗ Audit:✗ Metrics:✗ Debug:✗ PromptCache:✓(Standalone)
+```
+
+详细指引指向 `ae doctor`。
+
+**5.4 Agent 模式适配**
+
+功能状态写入 action JSON 的 `feature_status` 字段，Agent 可在启动时转发给用户：
+
+```json
+{"action": "gap_scan", "feature_status": {"otlp": false, "audit_log": false, ...}, ...}
+```
+
+**5.5 对 T113 L1 的贡献**
+
+- 新功能必须在 FEATURE_MANIFEST 注册（否则接线测试失败）
+- 每个条件激活模块的 FeatureFlag 包含未激活时的行为说明
+- `ae doctor` 自动展示（无需手动同步多个文件）
+
+**涉及文件**：
+
+| 文件 | 变更 |
+|------|------|
+| `auto_engineering/config/feature_flags.py` | **新建** — FeatureManifest SSOT（~17 项） + `check_feature()` / `get_feature_status()` |
+| `auto_engineering/cli/doctor.py` | `run_doctor_checks()` 返回分段结果（required + optional），新增可选功能面板渲染 |
+| `auto_engineering/cli/dev_loop.py` | `_run_tick_init()` stderr 一行功能状态 + action JSON `feature_status` 字段 |
+| `tests/test_feature_flags.py` | **新建** — test_feature_manifest_coverage + test_feature_status_action_json |
+| `design/BEACON.md` | 新决策 #80 — FeatureManifest SSOT |
+
+### T115 详细 — P2 Agent/Standalone 能力不对称（升级方案）
+
+**问题**：v7.0 双驱动架构在 TickOrchestrator 接缝处确实等价，但接缝之外的功能栈在两个驱动间存在系统性差异。Phase 17-21 功能设计隐含 Standalone 假设（BaseAgent.execute() pipeline 为集成点），AgentDriver 的边界（Claude Code 作为外部 LLM 进程）在设计时未被显式考虑。
+
+当前文档仅有一处提及（附录 C R2: "gap_review 在 Standalone 模式功能受限"），无系统性能力矩阵。
+
+**2.1 功能级不对称**
+
+| 功能 | Agent | Standalone | 分类 | 说明 |
+|------|:---:|:---:|------|------|
+| PII — prompt 层 | ❌ | ✅ T56 | **设计替代** | T109 L2 outbound redact 是 Agent 等效防护（文件桥接层） |
+| PII — tool result 层 | ❌ | ✅ T57 | **设计替代** | T109 L3 inbound scan 是 Agent 等效防护 |
+| PII — 文件审计层 | ✅ | ✅ | 共享 | G10/G11 Guardrail |
+| Prompt Caching | ❌ | ✅ T63 | **架构固有** | Agent LLM 调用在进程外，无法注入 cache_control |
+| M5 Token 采集 | ⚠️ T110 JSONL | ✅ Provider hook | **设计替代** | 机制不同但功能等效 |
+| AuditLog — LLM 内容 | ❌ | ✅ T77 | **架构固有** | Agent LLM 调用在进程外，JSONL 转录部分覆盖 |
+| AuditLog — 事件 | ✅ | ✅ | 共享 | TickOrchestrator 注入 |
+| AE_MODEL_<ROLE> | ❌ | ✅ | **架构固有** | Agent 选模型，Python 不控制 |
+| gap_review 交互 | ✅ | ❌ auto-Defer | **架构固有** | Standalone 无交互 UI |
+| ContextOffloader | ✅ | ✅ | 共享 | — |
+| SessionSummarizer | ✅ | ✅ | 共享 | — |
+| DebugTracer | ✅ | ✅ | 共享 | — |
+| OTLP Tracing | ✅ | ✅ | 共享 | — |
+| M1-M4 信号 | ✅ | ✅ | 共享 | TickOrchestrator 事件打点 |
+| DiagnosticRuleDiscoverer | ❌ | ❌ | **未接线** | Build-then-Wire，见 T113 |
+
+**2.2 行为/UX 不对称（架构固有）**
+
+| 维度 | Agent | Standalone |
+|------|-------|-----------|
+| 执行方式 | 逐 tick 手动驱动 | 全自动运行至收敛 |
+| 耗时 | ~8min/需求 | ~163s/需求 |
+| 测试数量 | avg 8.5 | avg 11.8 |
+| Phase 0 gap_review | Fill/Research/Defer | 全部 auto-Defer |
+| 交互式工具 | 可用 | 不可用 |
+
+**根因分析**：
+
+| # | 根因 | 说明 |
+|---|------|------|
+| 1 | **Phase 17-21 功能设计隐含 Standalone 假设** | PII/T56、Prompt Caching/T63、Token Tracking 都以 BaseAgent.execute() 为集成点。T109（Agent PII 四层）是事后补救——设计阶段就应拆分 pipeline 层 vs file-bridge 层 |
+| 2 | **双驱动文档聚焦共享引擎、忽略差异** | 附录 C 详细描述 StandaloneDriver 实现，但未建立"共享 vs 独有"的分类体系。"契约接缝等价"被扩大解读为"功能等价" |
+| 3 | **无"驱动适用性"设计规范** | 新增功能时缺少"此功能在两个驱动下各如何工作？"的设计 checklist |
+| 4 | **基准只测收敛、不测功能覆盖** | V7-8 基准 6 维全是收敛维度的，未测量 Phase 17-21 模块在两个驱动下的可用性 |
+| 5 | **不对称的三种性质未被区分** | 架构固有 vs 设计替代 vs 未实现混为一谈，用户无法判断哪些是"永久差异"哪些是"待办事项" |
+
+**解决方案（5 层）**：
+
+**5.1 能力覆盖矩阵 SSOT（设计文档，非仅用户文档）**
+
+在 `design/v5.6-Design-Loop.md` 附录 C 增加 §13 "双驱动能力覆盖矩阵"——上述 2.1 完整矩阵，含每个 Phase 17-21 模块的双驱动状态和分类标签。
+
+**5.2 三种不对称分类体系**
+
+| 分类 | 定义 | 处理方式 | 示例 |
+|------|------|---------|------|
+| **架构固有** | 驱动架构本身决定的差异，不可消除 | 文档标注 + 设计阶段评估影响 | Prompt Caching、gap_review 交互 |
+| **设计替代** | 通过替代路径在另一驱动实现等效功能 | 标注"等效防护"/"替代路径"；无替代方案标注为缺口并跟踪 | T109 outbound redact 替代 T56 prompt redact |
+| **未实现/未接线** | 功能设计为双模式但实际只在一端接线 | 视为接线缺陷，按 T113 L1 跟踪修复 | DiagnosticRuleDiscoverer |
+
+**5.3 驱动适用性设计规范**
+
+新增功能时必须回答（嵌入功能设计流程）：
+
+1. **集成点在哪？**（BaseAgent.execute() pipeline / TickOrchestrator 注入 / Guardrail / Gate / CLI）
+2. **集成点在两个驱动下均可达吗？**（是 → both / 否 → 标注适用驱动 + 为另一驱动设计替代路径）
+3. **如果是架构固有差异，替代路径是什么？**
+
+**5.4 metrics report 模式感知**
+
+`output/metrics-report.json` 增加 `driver_mode` + 每个信号增加 `source` 字段：
+
+```json
+{
+  "driver_mode": "agent",
+  "signals": {
+    "M5_token_efficiency": {
+      "value": 42.3,
+      "source": "jsonl_transcript",
+      "note": "Token data from Claude Code session transcript (post-hoc)"
+    }
+  }
+}
+```
+
+**5.5 已有模块追加双驱动标注**
+
+在 v5.6-Design-Loop.md 中为已有设计章节追加标注：
+- E.6.2 AuditLog：Agent 模式仅事件记录可用
+- E.6.3 Prompt Caching：仅 Standalone 可用
+- F.2 MetricsCollector：M5 Agent 模式依赖 T110 JSONL
+
+**涉及文件**：
+
+| 文件 | 变更 |
+|------|------|
+| `design/v5.6-Design-Loop.md` | 附录 C 新增 §13 能力覆盖矩阵 + E.6.2/E.6.3/F.2 追加双驱动标注 + 合并 T114 F.15 agent_mode 列 |
+| `docs/USER_GUIDE.md` | 双驱动能力对比表（面向用户，从设计文档矩阵派生简化版） |
+| `auto_engineering/metrics/collector.py` | `_compute_summary()` 增加 `driver_mode` 字段 + 每个信号增加 `source` |
+| `auto_engineering/cli/dev_loop.py` | `_run_standalone()` / `_run_tick_init()` 传入 driver_mode |
+| `tests/test_metrics_collector.py` | test_driver_mode_in_summary + test_signal_source_field |
+| `design/BEACON.md` | 新决策 #81 — 双驱动能力覆盖矩阵 + 驱动适用性设计规范 |
+
+### T116 详细 — P1 CriticVerdictInvalid 纵深防御
+
+**问题**：`tick_orchestrator.py:1914` 用直接赋值 `self._state.critic_verdict = result.get("verdict", "")` 写入 critic verdict，绕过 `state.py:359` `_validate_field_value` 的 `_VALID_VERDICTS` 校验。虽然 `_after_critic`（L1023-1031）事后检测 `INVALID_VERDICT`，但非法值已先写入 state 并可能被 `_save_checkpoint()` 持久化到 SQLite——下次 `--resume` 恢复时脏数据已在 state 中。
+
+**防御层分析**：
+
+| 防御层 | 位置 | 覆盖 | 缺口 |
+|--------|------|:---:|------|
+| L1: write_field 校验 | `state.py:359-361` | `write_field("critic_verdict")` 调用路径 | 直接赋值绕过 |
+| L2: _after_critic 逻辑判断 | `tick_orchestrator.py:1023-1031` | `APPROVE`/`MAJOR` 分支 | 事后检测——非法值已写入 |
+| L3: StageRouter 异常 | `stage_router.py:48-62` | v5.5 连续循环路径 | v5.6 tick 路径不走 StageRouter |
+
+**修复**：在 `_apply_result_to_state()` critic 分支（L1913-1916）写入前增加显式校验：
+
+```python
+elif stage == "critic":
+    verdict = result.get("verdict", "")
+    if verdict not in ("", "APPROVE", "MAJOR"):
+        return ActionError(error_code="INVALID_VERDICT",
+                           message=f"非法 critic verdict: {verdict!r}").to_dict()
+    self._state.critic_verdict = verdict
+    self._state.findings = result.get("findings", [])
+    self._state.critic_feedback = result.get("critic_feedback", "")
+```
+
+**设计决策**：用显式 if-check 而非 `write_field()`。理由：① `_apply_result_to_state` 中其他 14 个字段都是直接赋值（保持一致性）；② `write_field` 抛 `ValueError` 需额外 try/except；③ 显式 check 在非法值时返回 `ActionError` 而非抛异常——对齐 `_after_critic` 已有的错误处理模式。
+
+**涉及文件**：
+- `auto_engineering/loop/tick_orchestrator.py` — `_apply_result_to_state()` L1913-1916 增加 verdict 校验（~4 行）
+- `tests/test_tick_orchestrator.py` — `test_critic_verdict_invalid_rejected` + `test_critic_verdict_empty_allowed`（~2 tests）
+
+### Phase 29 依赖关系
+
+```
+T108a (action JSON spawn 字段) ──独立──→ 第一批（核心）
+T108b (dev-loop.md 结构调整)  ──依赖 T108a（spawn 字段设计确定后改 prompt）──→ 第一批
+T108c (result 验证 WARN)      ──依赖 T108a──→ 第一批
+T109a (PII infrastructure)    ──独立──→ 第一批（基础）
+T109b (L1 requirement scan)   ──依赖 T109a──→ 第一批
+T109c (L2 outbound redact)    ──依赖 T109a──→ 第一批
+T109d (L3 inbound scan)       ──依赖 T109a──→ 第一批
+T109e (L4 G11 PII extension)  ──依赖 T109a──→ 第二批
+T109f (PII metrics)           ──依赖 T109b/T109c/T109d──→ 第二批
+T109g (PII tests)             ──依赖 T109a-T109f──→ 第三批
+T109h (PII docs)              ──依赖 T109a-T109e──→ 第三批
+T112 (P2 Timing guardrail)    ──依赖 T108a（兜底校验依赖 spawn schema）──→ 第二批
+T110a (TranscriptParser)      ──独立──→ 第二批（基础）
+T110b (TickOrchestrator 集成)  ──依赖 T110a──→ 第二批
+T110c (M5 mode-aware)         ──依赖 T110b──→ 第二批
+T110d (JSONL 解析器测试)       ──依赖 T110a-T110c──→ 第三批
+T113 (P2 Build-then-Wire prev)──独立──→ 第二批
+T114 (P2 OTLP visibility)     ──独立──→ 第二批
+T115 (P2 Capability asymmetry)──独立──→ 第二批
+T111 (P1 Phase 21 wiring)     ──独立──→ 第二批
+T116 (P1 CriticVerdictInvalid)  ──独立──→ 第一批
+```

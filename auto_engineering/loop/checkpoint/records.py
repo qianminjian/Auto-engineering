@@ -2,19 +2,57 @@
 
 从 loop/checkpoint.py 拆分 (P1-E: checkpoint → checkpoint/ 子模块).
 v5.4 审计 P1-7: 重命名 envelope.py → records.py, 消除与 state/checkpoint_envelope.py 的命名歧义.
+v5.6 审计 P1-7 (2026-07-21): RoundHistory 定义迁移至此, 消除 checkpoint→loop 依赖倒置.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
-from typing import TypeVar
+from typing import TYPE_CHECKING, TypeVar
 
-from auto_engineering.loop.convergence import RoundHistory
+if TYPE_CHECKING:
+    from auto_engineering.gates.base import GateVerdict
 
 # v5.5 P1-8: TypeVar 移除 LoopStateProtocol bound (Protocol 形同虚设, 项目不使用 mypy).
 # Checkpoint.state 的实际类型由 caller 决定, 运行时通过 _validate_state_serializable() 做 duck-type 检查.
 T = TypeVar("T")
+
+
+# ============================================================
+# RoundHistory — 单轮历史记录 (2026-07-21 P1-7 从 convergence.py 迁移)
+# ============================================================
+
+
+@dataclass
+class RoundHistory:
+    """单轮历史记录.
+
+    用于停滞检测算法: 计算与上一轮的 diff 变化率.
+
+    Attributes:
+        round_id: 轮次 ID (1-indexed)
+        files_changed: 本轮修改的文件数
+        lines_added: 本轮新增行数
+        lines_removed: 本轮删除行数
+        gate_results: 保留完整 GateVerdict 对象 dict[gate_name, GateVerdict].
+        semantic_satisfied: LLM 语义评估是否通过
+        tasks_run: 本轮实际跑的 task IDs
+        task_outcomes: 本轮每个 task 的最终状态
+        channel_versions: Channel 版本追踪
+    """
+
+    round_id: int
+    stage: str = ""
+    files_changed: int = 0
+    lines_added: int = 0
+    lines_removed: int = 0
+    gate_results: dict[str, GateVerdict] = field(default_factory=dict)
+    guardrail_result: str | None = None
+    semantic_satisfied: bool | None = None
+    tasks_run: list[str] = field(default_factory=list)
+    task_outcomes: dict[str, str] = field(default_factory=dict)
+    channel_versions: dict[str, int] = field(default_factory=dict)
 
 
 # ============================================================

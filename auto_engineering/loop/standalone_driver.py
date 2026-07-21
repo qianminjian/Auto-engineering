@@ -413,7 +413,7 @@ class StandaloneDriver:
         self, action: dict, agent: Any, role: str
     ) -> dict:
         """执行单个 task: 构造 Task → execute → validate → retry once."""
-        from auto_engineering.cli.helpers import TokenTracker
+        from auto_engineering.utils.token_tracker import TokenTracker
         from auto_engineering.loop.actions import validate_result_format
         from auto_engineering.runtime.cancellation import CancellationToken
 
@@ -520,7 +520,7 @@ class StandaloneDriver:
 
         非 asyncio.gather — 保持 TDD Red→Green→Refactor 顺序。
         """
-        from auto_engineering.cli.helpers import TokenTracker
+        from auto_engineering.utils.token_tracker import TokenTracker
         from auto_engineering.runtime.cancellation import CancellationToken
 
         tasks = action.get("context", {}).get("tasks", [])

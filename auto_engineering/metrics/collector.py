@@ -5,6 +5,7 @@ Runtime 为每个 run 提供独立上下文（run_id, attempt 计数器），
 MetricsCollector 为每个需求提供独立采集作用域（thread_id → 事件流）。
 """
 import json
+import os
 import subprocess
 import threading
 import time
@@ -72,6 +73,21 @@ class MetricsCollector:
         self._current_category: str = ""
         self._events: list[dict] = []
         self._latest_summary: dict | None = None
+        self._driver_mode: str = "agent"  # T115: "agent" | "standalone"
+
+    def set_driver_mode(self, mode: str) -> None:
+        """Set the driver mode for metrics labeling (T115 5.4).
+
+        Args:
+            mode: "agent" or "standalone".
+
+        Raises:
+            ValueError: if mode is not one of the valid values.
+        """
+        if mode not in ("agent", "standalone"):
+            raise ValueError(
+                f"Invalid driver_mode '{mode}'. Must be 'agent' or 'standalone'.")
+        self._driver_mode = mode
 
     # ── 需求级生命周期 ──
 
@@ -132,6 +148,24 @@ class MetricsCollector:
             "total_ticks": total_ticks,
         })
         summary = self._compute_summary(loc_added)
+
+        # T111: RuleDiscoverer — 历史数据 ≥ 10 时运行 Spearman 相关扫描
+        history = self.load_history(limit=100)
+        if len(history) >= 10:
+            from auto_engineering.metrics.rule_discoverer import DiagnosticRuleDiscoverer
+            discoverer = DiagnosticRuleDiscoverer(self._metrics_dir)
+            candidate_rules = discoverer.discover(min_requirements=10)
+            if candidate_rules:
+                summary["suggested_rules"] = [
+                    {
+                        "signal_name": r.signal_name,
+                        "metric": r.metric,
+                        "correlation_score": r.correlation_score,
+                        "confidence": r.confidence,
+                    }
+                    for r in candidate_rules
+                ]
+
         self._latest_summary = summary
         self._flush_events()
         self._write_summary(summary)
@@ -269,6 +303,30 @@ class MetricsCollector:
             event["ai_origin"] = ai_origin.to_dict()
         self._events.append(event)
 
+    # T109f: PII 事件
+    def record_pii_event(self, event_type: str, findings: list[dict],
+                         tick: int = 0) -> None:
+        """Record a PII detection event (T109f).
+
+        Args:
+            event_type: One of PII_DETECTED_REQUIREMENT, PII_DETECTED_RESULT,
+                        PII_REDACTED, PII_DETECTED_FILE.
+            findings: List of PII findings from scan_dict/scan_text.
+            tick: Current tick number for by_tick aggregation.
+        """
+        self._events.append({
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "event_type": event_type,
+            "thread_id": self._current_thread_id,
+            "payload": {
+                "tick": tick,
+                "count": len(findings),
+                "by_severity": _count_by(findings, "severity"),
+                "by_category": _count_by(findings, "category"),
+                "by_rule": _count_by(findings, "rule"),
+            },
+        })
+
     def record_tick_snapshot(self, tick_number: int, stage_in: str,
                               action: dict, state_snapshot: dict,
                               guardrail_results: dict, gate_results: dict,
@@ -332,17 +390,33 @@ class MetricsCollector:
         total_output = sum(e["payload"].get("output_tokens", 0) for e in token_events)
         total_tokens = total_input + total_output
         efficiency = (loc_added / (total_tokens / 1000)) if loc_added > 0 and total_tokens > 0 else 0.0
+        token_source = os.environ.get("AE_TOKEN_SOURCE", "provider")
         m5 = {
             "total_input_tokens": total_input,
             "total_output_tokens": total_output,
             "total_tokens": total_tokens,
             "loc_added": loc_added,
             "efficiency_ratio": round(efficiency, 2),
+            "token_source": token_source,  # T110c: provider (Standalone) or transcript (Agent JSONL)
         }
 
-        return {"M1_loop_efficiency": m1, "M2_critic_major_rate": m2,
+        # T109f: PII 事件统计
+        pii_events = [e for e in self._events
+                      if isinstance(e.get("event_type", ""), str)
+                      and e["event_type"].startswith("PII_")]
+        pii_stats = {
+            "total_detections": len(pii_events),
+            "by_type": _count_by(pii_events, "event_type"),
+            "by_tick": {},
+        }
+        for pe in pii_events:
+            tick = pe.get("payload", {}).get("tick", 0)
+            pii_stats["by_tick"][str(tick)] = pii_stats["by_tick"].get(str(tick), 0) + 1
+
+        return {"driver_mode": self._driver_mode,
+                "M1_loop_efficiency": m1, "M2_critic_major_rate": m2,
                 "M3_verification_trigger_rate": m3, "M4_plan_refine_count": m4,
-                "M5_token_efficiency": m5}
+                "M5_token_efficiency": m5, "pii_events": pii_stats}
 
     def _flush_events(self) -> None:
         """Write events buffer to events.jsonl (overwrite, not append)."""
@@ -519,3 +593,13 @@ class MetricsCollector:
             return insertions
         except (subprocess.TimeoutExpired, ValueError, OSError):
             return 0
+
+
+def _count_by(items: list[dict], key: str) -> dict[str, int]:
+    """Count items by a key, supporting nested payload access."""
+    result: dict[str, int] = {}
+    for item in items:
+        val = item.get(key, "unknown")
+        if isinstance(val, str):
+            result[val] = result.get(val, 0) + 1
+    return result

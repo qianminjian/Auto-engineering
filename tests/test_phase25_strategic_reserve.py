@@ -158,25 +158,19 @@ class TestT92LargeFileOffloading:
 
 
 class TestT93LangSmithExporter:
-    """T93: Optional LangSmith OTLP bridge."""
+    """T93: Optional LangSmith OTLP bridge (removed — dead code, 2026-07-21 audit)."""
 
-    def test_langsmith_module_exists(self) -> None:
-        """LangSmith exporter module MUST exist."""
-        try:
-            import auto_engineering.observability.langsmith_exporter  # noqa: F401
-        except ImportError:
-            pytest.fail(
-                "T93 NOT FIXED: auto_engineering/observability/langsmith_exporter.py "
-                "does not exist."
-            )
+    def test_langsmith_exporter_removed_dead_code(self) -> None:
+        """LangSmith exporter module was 100% dead code — removed per audit."""
+        import importlib
+        spec = importlib.util.find_spec("auto_engineering.observability.langsmith_exporter")
+        assert spec is None, "langsmith_exporter removed as dead code (0 imports)"
 
     def test_langsmith_exporter_is_optional(self) -> None:
-        """LangSmith exporter MUST be usable without langsmith installed."""
-        import auto_engineering.observability.langsmith_exporter as le
-
-        assert hasattr(le, "is_available"), (
-            "T93 NOT FIXED: LangSmith exporter has no is_available() check."
-        )
+        """LangSmith exporter was 0-import dead module — removed."""
+        import importlib
+        spec = importlib.util.find_spec("auto_engineering.observability.langsmith_exporter")
+        assert spec is None, "langsmith_exporter removed as dead code"
 
 
 # =============================================================================
