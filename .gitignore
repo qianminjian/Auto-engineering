@@ -28,3 +28,5 @@ design/his_bak/
 repowiki/
 .mypy_cache/
 .gitnexus/
+output/
+docs/AI-Loop*.html
