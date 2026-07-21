@@ -138,7 +138,6 @@ class ContextOffloader:
         self._dir.mkdir(parents=True, exist_ok=True)
         filepath = self._dir / f"{name}.md"
         filepath.write_text(content)
-        # Store a short summary for get_summary()
         lines = content.splitlines()
         summary_lines = lines[:max_inline_lines]
         self._summaries[name] = "\n".join(summary_lines)

@@ -1677,10 +1677,8 @@ class TickOrchestrator:
             self._state.test_results = result.get("test_results", {})
             self._state.red_evidence = result.get("red_evidence", [])
         elif stage == "critic":
+            # verdict 校验由 _after_critic() 统一执行 — _apply_result_to_state 只负责赋值
             verdict = result.get("verdict", "")
-            if verdict not in ("", "APPROVE", "MAJOR"):
-                return ActionError(error_code="INVALID_VERDICT",
-                                   message=f"非法 critic verdict: {verdict!r}").to_dict()
             self._state.critic_verdict = verdict
             self._state.findings = result.get("findings", [])
             self._state.critic_feedback = result.get("critic_feedback", "")

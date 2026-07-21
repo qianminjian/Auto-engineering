@@ -114,7 +114,7 @@ uv run pytest tests/ --no-cov --timeout=120 -q
 | `AE_GATE_TIMEOUT` | — | Gate 执行超时秒数 |
 | `AE_PRODUCTION` | 0 | 生产安全模式（严格 REDGuardrail） |
 | `AE_LLM_PROVIDER` | anthropic | LLM Provider 选择 |
-| `AE_STANDALONE_MODEL` | — | Standalone 模式模型覆盖 |
+| `AE_MODEL_ROLE` | — | 按 role 覆盖默认模型 (格式: `AE_MODEL_ARCHITECT=claude-sonnet-4-6`) |
 | `AE_CACHE_CONTROL` | 1 | Anthropic Prompt Caching |
 | `AE_TOKEN_TRACKING` | 0 | 逐 Tick Token JSONL 采集 |
 

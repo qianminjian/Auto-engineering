@@ -1064,19 +1064,23 @@ class TestApplyResultToState:
         assert o._state.coverage_map == [
             {"design_section": "B2", "status": "IMPLEMENTED"}]
 
-    def test_critic_rejects_invalid_verdict_before_write(self) -> None:
-        """T116: 非法 critic verdict 在写入 state 前被拦截"""
+    def test_critic_invalid_verdict_rejected_by_after_critic(self) -> None:
+        """T116: 非法 critic verdict 在 _after_critic() 中被拦截（非 _apply_result_to_state）"""
         o = _orchestrator()
         o.init("req")
-        result = o._apply_result_to_state({
+        # _apply_result_to_state 只负责赋值，不校验 verdict 合法性
+        o._apply_result_to_state({
             "stage": "critic", "verdict": "INVALID",
             "findings": [], "critic_feedback": "",
         })
-        assert result is not None
+        # state 被写入（原始值）
+        assert o._state.critic_verdict == "INVALID"
+        # _after_critic 捕获非法 verdict 并返回 ActionError
+        result = o._after_critic({
+            "stage": "critic", "verdict": "INVALID",
+            "findings": [], "critic_feedback": "",
+        })
         assert result.get("error_code") == "INVALID_VERDICT"
-        assert "INVALID" in result.get("message", "")
-        # state 未被修改
-        assert o._state.critic_verdict == ""
 
     def test_critic_allows_empty_verdict(self) -> None:
         """T116: 空字符串 verdict 通过（初始状态/未设置）"""
