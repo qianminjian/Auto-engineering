@@ -110,6 +110,8 @@ class SessionSummarizer:
             )
             decisions, files, majors, issues = _parse_summary_response(response.content)
         except Exception:
+            # LLM call can fail for any SDK error type. Summarization is best-effort
+            # degradation — failure must never crash the loop. (P0-5: LLM tool handler exemption)
             logger.warning("Session summarization failed, using degraded summary", exc_info=True)
             decisions, files, majors, issues = (
                 ["(summarization failed — see offload files for details)"],

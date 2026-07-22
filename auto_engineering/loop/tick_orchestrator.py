@@ -128,9 +128,14 @@ class TickContextOffloader(Protocol):
     """Context offloading — 将 stage context 写入文件.
 
     Implementation: auto_engineering.context.offloading.ContextOffloader.
+    The real signature is offload(stage, messages, summary, key_decisions,
+    files_changed, gate_results) -> StageContextOffload; this Protocol
+    only documents the structural interface for isinstance checks.
     """
 
-    def offload(self, stage: str, context: dict) -> Path: ...
+    def offload(self, stage: str, messages: list[dict], summary: str,
+                key_decisions: list[str], files_changed: list[str],
+                gate_results: dict) -> Any: ...
 
 
 @runtime_checkable
@@ -186,6 +191,7 @@ class TickOrchestrator:
         self._checkpoint_store = checkpoint_store
         self._context_offloader = context_offloader
         self._session_summarizer = session_summarizer
+        self._cached_session_summary: Any = None  # T54: 跨 tick 滚动摘要缓存
         self._tracer = tracer
         self._debug_enabled = debug
         self._debug_dir = debug_dir
@@ -974,7 +980,7 @@ class TickOrchestrator:
                         files_changed=list(s.files_changed or []),
                         commit_hash=s.commit_hash or "",
                         gate_results=dict(s.gate_results or {}),
-                        previous_summary=getattr(self, "_cached_session_summary", None),
+                        previous_summary=self._cached_session_summary,
                     )
                     injected = self._session_summarizer.inject_into_prompt(sess_summary)
                     if injected:
