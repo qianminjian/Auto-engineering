@@ -50,21 +50,18 @@ class TestCompose:
         p = registry.get("developer")
         # iron_law_tdd
         assert "NO PRODUCTION CODE WITHOUT A FAILING TEST FIRST" in p
-        # rationalization_developer
-        assert "RED 只花 30 秒" in p
         # letter_vs_spirit
         assert "违反规则的字面就是违反规则的精神" in p
-        # body
-        assert "你是 Auto-Engineering 的开发者" in p
+        # body (Phase 31: "你是开发者" instead of "你是 Auto-Engineering 的开发者")
+        assert "你是开发者" in p
 
     def test_fragments_prepended_in_declared_order(self, registry: PromptRegistry) -> None:
         p = registry.get("developer")
-        # frontmatter: [iron_law_tdd, rationalization_developer, letter_vs_spirit]
+        # frontmatter: [iron_law_tdd, letter_vs_spirit] (Phase 31: removed rationalization_developer)
         i_iron = p.index("NO PRODUCTION CODE WITHOUT A FAILING TEST FIRST")
-        i_rat = p.index("RED 只花 30 秒")
         i_letter = p.index("违反规则的字面就是违反规则的精神")
-        i_body = p.index("你是 Auto-Engineering 的开发者")
-        assert i_iron < i_rat < i_letter < i_body
+        i_body = p.index("你是开发者")
+        assert i_iron < i_letter < i_body
 
     def test_frontmatter_stripped_from_output(self, registry: PromptRegistry) -> None:
         p = registry.get("developer")
@@ -87,11 +84,10 @@ class TestVerifierRecheckProtocol:
     def test_verifier_prompt_has_recheck_protocol(
         self, registry: PromptRegistry, role: str
     ) -> None:
+        """Phase 31 重构后 verifier prompt 精简为 role+goal+context 结构。
+        DS-9 recheck 协议是执行机制，不在 role prompt 中——由 action JSON 的 recheck 指令承载。"""
         p = registry.get(role)
-        assert "DS-9" in p
-        assert "recheck_log" in p            # 输出字段
-        assert "overturn" in p and "confirm" in p  # Sonnet 复核裁决
-        assert "跳过复核" in p                # 无负判定零成本短路
+        assert "role" in p.lower() and "goal" in p.lower() and "context" in p.lower()
 
 
 class TestResearchTieredKnowledge:

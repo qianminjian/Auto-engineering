@@ -97,8 +97,14 @@ def _build_injectables(
         from auto_engineering.observability.audit_log import AuditLogger
         audit_logger = AuditLogger(root / ".ae-state" / "audit")
 
+    # T54: SessionSummarizer — structured mode in AgentDriver (no LLM needed),
+    # LLM mode in StandaloneDriver (provider passed from driver).
+    from auto_engineering.context.summarization import SessionSummarizer
+    session_summarizer = SessionSummarizer(llm_provider=None)
+
     result = {
         "context_offloader": context_offloader,
+        "session_summarizer": session_summarizer,
         "tracer": tracer,
         "audit_logger": audit_logger,
     }
@@ -130,6 +136,7 @@ def run_tick_init(
         inj = _build_injectables(root)
         orch = TickOrchestrator(root, checkpoint_store=store,
                                 context_offloader=inj["context_offloader"],
+                                session_summarizer=inj.get("session_summarizer"),
                                 tracer=inj["tracer"],
                                 audit_logger=inj["audit_logger"],
                                 debug=debug, debug_dir=debug_dir,
@@ -181,6 +188,7 @@ def run_tick_step(result_file: Path, root: Path,
         inj = _build_injectables(root)
         orch = TickOrchestrator.restore(root, store, debug=debug, debug_dir=debug_dir,
                                         context_offloader=inj["context_offloader"],
+                                        session_summarizer=inj.get("session_summarizer"),
                                         tracer=inj["tracer"],
                                         audit_logger=inj["audit_logger"])
 
@@ -380,10 +388,7 @@ def run_standalone(
 
     summary = None  # guard against NameError in finally block
     try:
-        if resume_id:
-            summary = asyncio.run(driver.resume(resume_id))
-        else:
-            summary = driver.run(requirement)
+        summary = asyncio.run(driver.resume(resume_id)) if resume_id else driver.run(requirement)
     except Exception:
         # Standalone driver 顶层兜底: 任何未处理异常统一日志 + 干净退出
         _logger.exception("Standalone driver 运行失败")

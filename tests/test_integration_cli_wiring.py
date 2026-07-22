@@ -27,8 +27,9 @@ def test_all_required_injectables_non_none(tmp_path):
     inj = _get_injectables(tmp_path)
     assert inj["context_offloader"] is not None, (
         "ContextOffloader must be instantiated (required injectable)")
-    assert "session_summarizer" not in inj, (
-        "SessionSummarizer T133d 已物理删除, 不应出现在 injectables 中")
+    # T54 SessionSummarizer — optional, only in Standalone mode with LLM provider
+    assert "session_summarizer" in inj, (
+        "SessionSummarizer 必须出现在 injectables 中 (T54 恢复)")
 
 
 def test_conditional_injectables_have_creation_paths(tmp_path, monkeypatch):
@@ -58,8 +59,8 @@ def test_injectables_passed_to_orchestrator(tmp_path):
         audit_logger=inj["audit_logger"],
     )
     assert orch._context_offloader is not None
-    # SessionSummarizer T133d 已物理删除: _session_summarizer 属性不应存在
-    assert not hasattr(orch, "_session_summarizer")
+    # T54: SessionSummarizer — optional, None in AgentDriver mode (no LLM provider)
+    assert hasattr(orch, "_session_summarizer")
     # tracer may be None (no OTLP endpoint)
     assert orch._tracer is None
     assert orch._audit_logger is None
@@ -74,7 +75,7 @@ def test_new_module_wiring_convention():
     expected_keys 必须同步更新. 不匹配的 extra keys 会触发测试失败,
     提醒开发者在此文件追加对应的接线验证断言.
     """
-    known_conditionals = {"tracer", "audit_logger"}
+    known_conditionals = {"tracer", "audit_logger", "session_summarizer"}
 
     # Build a ThrowawayPath to call _build_injectables without I/O
     with patch("pathlib.Path.mkdir"):

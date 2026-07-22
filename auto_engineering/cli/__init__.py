@@ -165,6 +165,15 @@ def dev_loop(
         ae dev-loop "req"                                 旧路径 (仍可用但输出弃用 WARN)
     """
     root = Path(project_root).resolve() if project_root else Path.cwd()
+    # P1-19: uv run --directory changes cwd to auto-eng source — detect and warn.
+    _ae_src_indicator = root / "auto_engineering" / "loop" / "tick_orchestrator.py"
+    if _ae_src_indicator.exists() and not project_root:
+        click.echo(
+            "⚠️  project-root 检测为 auto-engineering 源码目录。\n"
+            "   如果目标项目在其他路径，请用 --project-root 显式指定。\n"
+            "   示例: ae dev-loop --init '需求' --project-root /path/to/your/project",
+            err=True,
+        )
 
     # AE_DEBUG=1 环境变量也可激活 debug 模式
     from auto_engineering.config.runtime_config import get_default_config

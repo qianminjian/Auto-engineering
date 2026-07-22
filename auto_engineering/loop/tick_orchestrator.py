@@ -133,6 +133,25 @@ class TickContextOffloader(Protocol):
     def offload(self, stage: str, context: dict) -> Path: ...
 
 
+@runtime_checkable
+class TickSessionSummarizer(Protocol):
+    """Cross-tick session summarization (T54).
+
+    Generates structured summary from state metadata (AgentDriver)
+    or via LLM (StandaloneDriver).  The engine calls summarize_structured().
+    """
+
+    def should_summarize(self, current_tick: int, threshold: int = 5) -> bool: ...
+
+    def summarize_structured(
+        self, *, tick: int, test_results: dict | None = None,
+        files_changed: list[str] | None = None, commit_hash: str = "",
+        gate_results: dict | None = None, previous_summary: Any | None = None,
+    ) -> Any: ...
+
+    def inject_into_prompt(self, summary: Any) -> str: ...
+
+
 class TickOrchestrator:
     """Discrete-tick orchestrator with layered verification (C.5).
 
@@ -150,6 +169,7 @@ class TickOrchestrator:
         guardrail: GuardrailChain | None = None,
         checkpoint_store: SQLiteCheckpointStore | None = None,
         context_offloader: TickContextOffloader | None = None,
+        session_summarizer: TickSessionSummarizer | None = None,
         tracer: Any | None = None,
         audit_logger: AuditLogger | None = None,
         runtime_config: RuntimeConfig | None = None,
@@ -165,6 +185,7 @@ class TickOrchestrator:
         self._guardrail = guardrail
         self._checkpoint_store = checkpoint_store
         self._context_offloader = context_offloader
+        self._session_summarizer = session_summarizer
         self._tracer = tracer
         self._debug_enabled = debug
         self._debug_dir = debug_dir
@@ -349,6 +370,7 @@ class TickOrchestrator:
         gate_runner: GateRunner | None = None,
         guardrail: GuardrailChain | None = None,
         context_offloader: TickContextOffloader | None = None,
+        session_summarizer: TickSessionSummarizer | None = None,
         tracer: Any | None = None,
         audit_logger: AuditLogger | None = None,
         runtime_config: RuntimeConfig | None = None,
@@ -356,21 +378,14 @@ class TickOrchestrator:
         debug: bool = False,
         debug_dir: str | None = None,
     ) -> TickOrchestrator:
-        """跨进程恢复 (§A.1: 每 tick 独立进程, 从 SQLite 重建全部 in-memory 状态).
-
-        新进程 self._state=None → tick() 立即崩. restore() 从 checkpoint 重建
-        _state/_design_doc/_batch_state/_progress_tree/_plan, 游标不归零。
-
-        无 checkpoint_id → load_latest; 无 checkpoint → raise CheckpointNotFoundError.
-        max_rounds: EngineState 未持久化该字段 → restore 用默认 5 (与 init 一致);
-        精确恢复需扩 schema (本步不扩)。
-        """
+        """跨进程恢复 (§A.1: 每 tick 独立进程, 从 SQLite 重建全部 in-memory 状态)."""
         self = cls(
             project_root,
             gate_runner=gate_runner,
             guardrail=guardrail,
             checkpoint_store=checkpoint_store,
             context_offloader=context_offloader,
+            session_summarizer=session_summarizer,
             tracer=tracer,
             audit_logger=audit_logger,
             runtime_config=runtime_config,
@@ -485,9 +500,11 @@ class TickOrchestrator:
             tick_span.end()
         self._record_tick_latency(t_start, tick_no)
 
-        # T69a: Record tick completion event for metrics collector
+        # T69a: Record tick completion event for metrics collector.
+        # Only record successful ticks — error/retry submissions inflate M1.
+        is_error = isinstance(action, dict) and action.get("action") == "error"
         mc = get_collector()
-        if mc is not None:
+        if mc is not None and not is_error:
             verdict = ""
             if action.get("action") == "done":
                 verdict = action.get("verdict", "")
@@ -734,23 +751,25 @@ class TickOrchestrator:
                 message="; ".join(errors),
                 current_state=self._state.to_dict())
 
-        # T108c: spawn stages with empty findings → WARN (timing guardrail T112
-        # provides the block layer; this is an early detection signal)
+        # T142: spawn stages — enforce subagent execution via G2 retry.
+        # Checks "spawned" field in result: must be True for spawn stages.
+        # Previously WARN-only (T108c checked findings which architect
+        # doesn't produce, making it a systematic false-negative for architect).
         stage = self._state.current_stage
         if stage in _SPAWN_CONFIG:
-            findings = result.get("findings")
-            if findings is None or (isinstance(findings, list) and len(findings) == 0):
-                p0 = result.get("p0_count", 0)
-                p1 = result.get("p1_count", 0)
-                if not isinstance(p0, int) or not isinstance(p1, int) or (p0 == 0 and p1 == 0):
-                    _logger.warning(
-                        "[spawn-empty] stage=%s has spawn requirement but "
-                        "findings=%s (empty), p0=%s, p1=%s — subagent may not "
-                        "have been spawned. action.spawn=%s",
-                        stage,
-                        type(findings).__name__ if findings is not None else "None",
-                        p0, p1,
-                        _SPAWN_CONFIG.get(stage, {}).get("subagent_type", "?"))
+            spawned = result.get("spawned")
+            if spawned is not True:
+                subagent_type = _SPAWN_CONFIG[stage]["subagent_type"]
+                return ErrorResponse(
+                    error_code="SPAWN_REQUIRED",
+                    message=(
+                        f"Stage '{stage}' requires spawning a {subagent_type} "
+                        f"subagent. You MUST spawn the subagent, collect its "
+                        f"output, and set '\"spawned\": true' in the result. "
+                        f"Re-run this tick with actual subagent spawn."
+                    ),
+                    current_state=self._state.to_dict(),
+                )
 
         return result
 
@@ -942,8 +961,37 @@ class TickOrchestrator:
         elif stage == "developer":
             tr = s.test_results or {}
             summary = f"Developer: {tr.get('passed', 0)}/{tr.get('total', 0)} tests passed"
+            if s.commit_hash:
+                key_decisions.append(f"commit={s.commit_hash[:8]}")
+            if s.critic_feedback:
+                key_decisions.append(f"critic_feedback={s.critic_feedback[:120]}")
+            # T54: use SessionSummarizer for structured summary when tick > threshold
+            if (self._session_summarizer is not None
+                    and self._session_summarizer.should_summarize(s.tick)):
+                try:
+                    sess_summary = self._session_summarizer.summarize_structured(
+                        tick=s.tick, test_results=tr,
+                        files_changed=list(s.files_changed or []),
+                        commit_hash=s.commit_hash or "",
+                        gate_results=dict(s.gate_results or {}),
+                        previous_summary=getattr(self, "_cached_session_summary", None),
+                    )
+                    injected = self._session_summarizer.inject_into_prompt(sess_summary)
+                    if injected:
+                        summary = injected[:200]
+                        key_decisions.append("summarized=true")
+                        self._cached_session_summary = sess_summary
+                except Exception:
+                    _logger.debug("SessionSummarizer failed for offload", exc_info=True)
         elif stage == "critic":
-            summary = f"Critic verdict: {s.critic_verdict or 'N/A'}"
+            findings = s.findings or []
+            p0 = sum(1 for f in findings if f.get("severity") == "P0")
+            p1 = sum(1 for f in findings if f.get("severity") == "P1")
+            p2 = sum(1 for f in findings if f.get("severity") == "P2")
+            verdict = s.critic_verdict or "N/A"
+            summary = f"Critic: {verdict} | P0={p0} P1={p1} P2={p2}"
+            if s.critic_feedback:
+                key_decisions.append(f"feedback={s.critic_feedback[:200]}")
         offloader.offload(
             stage=stage,
             messages=[],
@@ -1547,7 +1595,7 @@ class TickOrchestrator:
 
     def build_action(self, feedback: str | None = None, pre_gate: dict | None = None) -> dict:
         """Build the action dict for the current stage — delegates to ActionBuilder."""
-        return self.action_builder.build_action(
+        action = self.action_builder.build_action(
             self._state,
             design_doc=self._design_doc,
             init_manifest=self._init_manifest,
@@ -1564,6 +1612,24 @@ class TickOrchestrator:
             pii_redactor=self._pii_redactor,
             pii_outbound=self._runtime_config.pii_outbound,
         )
+        # T54: inject session summary for developer when tick > threshold
+        if (action.get("action") == "developer"
+                and self._session_summarizer is not None
+                and self._session_summarizer.should_summarize(self._state.tick)):
+            s = self._state
+            summary = self._session_summarizer.summarize_structured(
+                tick=s.tick,
+                test_results=s.test_results or {},
+                files_changed=s.files_changed or [],
+                commit_hash=s.commit_hash or "",
+                gate_results=dict(s.gate_results or {}),
+                previous_summary=getattr(self, "_cached_session_summary", None),
+            )
+            injected = self._session_summarizer.inject_into_prompt(summary)
+            if injected:
+                action["session_summary"] = injected
+                self._cached_session_summary = summary
+        return action
 
     # ── T110b: Token 采集 ──
 

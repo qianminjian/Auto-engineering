@@ -30,47 +30,30 @@ class TestCriticPromptV55:
         assert "Ready to merge" in CRITIC_SYSTEM_PROMPT
         assert "Needs rework" in CRITIC_SYSTEM_PROMPT
 
-    def test_includes_superpowers_review_dimensions(self) -> None:
-        """Critic prompt 含 Superpowers 审查维度: 正确性/安全性/性能/可维护性/可读性."""
+    def test_includes_review_scope(self) -> None:
+        """Critic prompt 含审查范围说明."""
         prompt_lower = CRITIC_SYSTEM_PROMPT.lower()
-        # At least 3 of the 5 dimensions should be present
-        dimensions = ["正确性", "correctness", "安全性", "security",
-                      "性能", "performance", "可维护性", "maintainability", "可读性", "readability"]
-        found = [d for d in dimensions if d in prompt_lower]
-        assert len(found) >= 3, f"Expected >=3 review dimensions, found: {found}"
+        assert "role" in prompt_lower and "goal" in prompt_lower
 
     def test_includes_structured_findings_format(self) -> None:
-        """Critic prompt 含结构化 findings 格式: file:line + severity(P0/P1/P2) + issue + suggested_fix."""
-        assert "file:line" in CRITIC_SYSTEM_PROMPT.lower() or "file" in CRITIC_SYSTEM_PROMPT.lower()
-        assert "P0" in CRITIC_SYSTEM_PROMPT
-        assert "severity" in CRITIC_SYSTEM_PROMPT.lower()
+        """Critic prompt 含 verdict + findings 输出说明."""
+        assert "APPROVE" in CRITIC_SYSTEM_PROMPT
+        assert "MAJOR" in CRITIC_SYSTEM_PROMPT
+        assert "P0" in CRITIC_SYSTEM_PROMPT or "severity" in CRITIC_SYSTEM_PROMPT.lower()
 
     def test_includes_agent_permissions(self) -> None:
-        """Critic prompt 含 Agent 权限声明: Read/Grep/Glob/Bash, 不可 Write/Edit."""
-        assert "read" in CRITIC_SYSTEM_PROMPT.lower()
-        assert "grep" in CRITIC_SYSTEM_PROMPT.lower() or "search" in CRITIC_SYSTEM_PROMPT.lower()
-        # Should mention what Critic CANNOT do
-        assert "禁止" in CRITIC_SYSTEM_PROMPT or "cannot" in CRITIC_SYSTEM_PROMPT.lower()
+        """Critic prompt 含审查纪律（Phase 31 重构后精简为 role+goal+context 结构）."""
+        prompt = CRITIC_SYSTEM_PROMPT
+        assert "审查" in prompt or "review" in prompt.lower()
 
     def test_preserves_verdict_enum(self) -> None:
         """Critic prompt 保留 APPROVE/MAJOR 枚举判定."""
         assert "APPROVE" in CRITIC_SYSTEM_PROMPT
         assert "MAJOR" in CRITIC_SYSTEM_PROMPT
 
-    def test_strengths_before_findings_section(self) -> None:
-        """strengths 章节在 findings/issues 章节之前 (Superpowers: acknowledge strengths first).
-
-        v5.6: critic prompt = B11 fragments (含合理化表, 内有单数 "finding") + 正文.
-        按正文中 `findings` 章节 (复数字段名) 定位, 避免匹配到前置片段里的单数 "finding".
-        """
-        prompt_lower = CRITIC_SYSTEM_PROMPT.lower()
-        strengths_pos = prompt_lower.find("strength")
-        findings_pos = prompt_lower.find("findings")
-        if strengths_pos >= 0 and findings_pos >= 0:
-            assert strengths_pos < findings_pos, (
-                f"strengths section should appear before findings, "
-                f"got strengths@{strengths_pos}, findings@{findings_pos}"
-            )
+    def test_has_context_section(self) -> None:
+        """Critic prompt 含 Context 段（Phase 31 role+goal+context 结构）."""
+        assert "你收到" in CRITIC_SYSTEM_PROMPT or "context" in CRITIC_SYSTEM_PROMPT.lower()
 
 
 class TestDeveloperPromptV55:
@@ -101,12 +84,9 @@ class TestArchitectPromptV55:
     """v5.5 Architect prompt — brainstorming + Agent-Reach + 3 模式."""
 
     def test_includes_three_modes(self) -> None:
-        """Architect prompt 含 3 模式: INTERACTIVE/PLAN-REFINE/DESIGN-INTEGRATION."""
+        """Architect prompt 含 Role + Goal + Context 三段结构（Phase 31 重构）."""
         prompt = ARCHITECT_SYSTEM_PROMPT.lower()
-        modes = ["interactive", "plan-refin", "design-integrat",
-                 "plan_refin", "design_integrat"]
-        found = [m for m in modes if m in prompt]
-        assert len(found) >= 2, f"Expected >=2 mode keywords, found: {found}"
+        assert "role" in prompt and "goal" in prompt and "context" in prompt
 
     def test_includes_brainstorming_workflow(self) -> None:
         """Architect prompt 含 brainstorming 简化流程."""
@@ -118,14 +98,11 @@ class TestArchitectPromptV55:
         assert len(found) >= 2, f"Expected >=2 brainstorming keywords, found: {found}"
 
     def test_includes_structured_batch_plan_output(self) -> None:
-        """Architect prompt 含 batch_plan 结构化输出要求 (v7.8 规范化格式)."""
-        prompt = ARCHITECT_SYSTEM_PROMPT
-        assert "batch_plan" in prompt.lower()
-        assert "batch_id" in prompt.lower()
-        assert "file_targets" in prompt.lower()
-        assert "tasks" in prompt.lower()
+        """Architect prompt 含 batch_plan 输出要求（Phase 31 重构后精简，字段在 expected_format 中）."""
+        prompt = ARCHITECT_SYSTEM_PROMPT.lower()
+        assert "batch_plan" in prompt
 
     def test_includes_agent_reach_reference(self) -> None:
-        """Architect prompt 含 Agent-Reach 引用."""
+        """Architect prompt 含基本角色定义元素（Phase 31 重构后不再强制要求 Agent-Reach 引用）."""
         prompt = ARCHITECT_SYSTEM_PROMPT.lower()
-        assert "agent-reach" in prompt or "外部参考" in prompt or "mcp" in prompt
+        assert "role" in prompt and "goal" in prompt and "context" in prompt

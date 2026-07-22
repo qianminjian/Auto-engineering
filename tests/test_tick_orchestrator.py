@@ -96,7 +96,7 @@ class TestTickArchitectToDeveloper:
         o.init("实现 StageRouter")
         # feed nested batch_plan architect result
         r = _make_result_file({
-            "stage": "architect",
+            "stage": "architect", "spawned": True,
             "plan": _VALID_PLAN,
             "batch_plan": [{
                 "batch_id": "batch-SR-1",
@@ -125,7 +125,7 @@ class TestTickArchitectToDeveloper:
         o = _orchestrator()
         o.init("req")
         r = _make_result_file({
-            "stage": "architect", "plan": _VALID_PLAN, "batch_plan": [],
+            "stage": "architect", "spawned": True, "plan": _VALID_PLAN, "batch_plan": [],
             "file_list": ["x.py"], "contracts": {},
         })
         action = o.tick(r)
@@ -142,7 +142,7 @@ class TestTickDeveloperToCritic:
         o.init("req")
         # architect tick
         o.tick(_make_result_file({
-            "stage": "architect",
+            "stage": "architect", "spawned": True,
             "plan": _VALID_PLAN,
             "batch_plan": [{
                 "batch_id": "batch-X-1", "design_section": "B2", "component": "X",
@@ -165,7 +165,7 @@ class TestTickDeveloperToCritic:
         o = _orchestrator()
         o.init("req")
         o.tick(_make_result_file({
-            "stage": "architect",
+            "stage": "architect", "spawned": True,
             "plan": _VALID_PLAN,
             "batch_plan": [
                 {"batch_id": "b1", "design_section": "B2", "component": "C",
@@ -206,7 +206,7 @@ class TestTickDeveloperToCritic:
         )
         o.init("req")
         o.tick(_make_result_file({
-            "stage": "architect",
+            "stage": "architect", "spawned": True,
             "plan": _VALID_PLAN,
             "batch_plan": [
                 {"batch_id": "b1", "design_section": "B2", "component": "C",
@@ -249,7 +249,7 @@ class TestFullLeafConvergence:
 
         # 1. architect
         o.tick(_make_result_file({
-            "stage": "architect",
+            "stage": "architect", "spawned": True,
             "plan": _VALID_PLAN,
             "batch_plan": [{
                 "batch_id": "batch-F-1", "design_section": "B2", "component": "Foo",
@@ -269,14 +269,14 @@ class TestFullLeafConvergence:
 
         # 3. critic APPROVE
         a_critic = o.tick(_make_result_file({
-            "stage": "critic", "verdict": "APPROVE", "findings": [],
+            "stage": "critic", "spawned": True, "verdict": "APPROVE", "findings": [],
             "critic_feedback": "LGTM",
         }))
         assert a_critic["stage"] == "component_verifier"
 
         # 4. component_verifier (all covered, no gaps)
         a_verifier = o.tick(_make_result_file({
-            "stage": "component_verifier", "component": "Foo",
+            "stage": "component_verifier", "spawned": True, "component": "Foo",
             "coverage_map": [
                 {"design_item": "B2-1", "status": "IMPLEMENTED",
                  "file": "foo.py", "line": 10, "note": ""},
@@ -287,7 +287,7 @@ class TestFullLeafConvergence:
 
         # 5. system_deep_audit (no P0/P1, design_coverage_ok)
         a_audit = o.tick(_make_result_file({
-            "stage": "system_deep_audit",
+            "stage": "system_deep_audit", "spawned": True,
             "findings": [],
             "p0_count": 0, "p1_count": 0, "p2_count": 1,
             "total_audited_files": 2,
@@ -316,12 +316,12 @@ class TestPlateConvergence:
         }))
         assert a_dev["stage"] == "critic"
         a_critic = o.tick(_make_result_file({
-            "stage": "critic", "verdict": "APPROVE", "findings": [],
+            "stage": "critic", "spawned": True, "verdict": "APPROVE", "findings": [],
             "critic_feedback": "ok",
         }))
         assert a_critic["stage"] == "component_verifier"
         return o.tick(_make_result_file({
-            "stage": "component_verifier", "component": component,
+            "stage": "component_verifier", "spawned": True, "component": component,
             "coverage_map": [
                 {"design_item": f"{component}-1", "status": "IMPLEMENTED",
                  "file": f"{component.lower()}.py", "line": 1, "note": ""},
@@ -335,7 +335,7 @@ class TestPlateConvergence:
 
         # architect: 2 distinct components → PLATE (total_plates=1, components=2)
         o.tick(_make_result_file({
-            "stage": "architect", "plan": _VALID_PLAN,
+            "stage": "architect", "spawned": True, "plan": _VALID_PLAN,
             "batch_plan": [
                 {"batch_id": "b-Foo", "design_section": "B2", "component": "Foo",
                  "tasks": [{"id": "T1", "description": "foo", "module_ref": "§B2",
@@ -358,7 +358,7 @@ class TestPlateConvergence:
 
         # plate_deep_audit clean → 无更多板块 → PLATE → system_deep_audit (跳 system_verifier)
         a_plate = o.tick(_make_result_file({
-            "stage": "plate_deep_audit", "plate": "(single)", "findings": [],
+            "stage": "plate_deep_audit", "spawned": True, "plate": "(single)", "findings": [],
             "p0_count": 0, "p1_count": 0, "p2_count": 0,
             "cross_component_issues": [], "total_audited_files": 2,
         }))
@@ -366,7 +366,7 @@ class TestPlateConvergence:
 
         # system_deep_audit clean → GOAL_ACHIEVED
         a_audit = o.tick(_make_result_file({
-            "stage": "system_deep_audit", "findings": [],
+            "stage": "system_deep_audit", "spawned": True, "findings": [],
             "p0_count": 0, "p1_count": 0, "p2_count": 0,
             "total_audited_files": 2, "design_docs_stale": False,
             "design_doc_suggestions": "", "missing_count": 0, "diverged_count": 0,
@@ -385,7 +385,7 @@ class TestPlateConvergence:
         o = _orchestrator()
         o.init("实现两个组件的板块")
         o.tick(_make_result_file({
-            "stage": "architect", "plan": _VALID_PLAN,
+            "stage": "architect", "spawned": True, "plan": _VALID_PLAN,
             "batch_plan": [
                 {"batch_id": "b-Foo", "design_section": "B2", "component": "Foo",
                  "tasks": [{"id": "T1", "description": "foo", "module_ref": "§B2",
@@ -405,7 +405,7 @@ class TestPlateConvergence:
 
         # plate_deep_audit clean → FULL → system_verifier (不跳过)
         a_plate = o.tick(_make_result_file({
-            "stage": "plate_deep_audit", "plate": "(single)", "findings": [],
+            "stage": "plate_deep_audit", "spawned": True, "plate": "(single)", "findings": [],
             "p0_count": 0, "p1_count": 0, "p2_count": 0,
             "cross_component_issues": [], "total_audited_files": 2,
         }))
@@ -413,7 +413,7 @@ class TestPlateConvergence:
 
         # system_verifier clean → system_deep_audit
         a_sysv = o.tick(_make_result_file({
-            "stage": "system_verifier",
+            "stage": "system_verifier", "spawned": True,
             "full_coverage_map": [{"design_section": "B2", "status": "IMPLEMENTED"}],
             "total_design_items": 1, "covered_count": 1,
             "missing_count": 0, "diverged_count": 0,
@@ -422,7 +422,7 @@ class TestPlateConvergence:
 
         # system_deep_audit clean → GOAL_ACHIEVED
         a_audit = o.tick(_make_result_file({
-            "stage": "system_deep_audit", "findings": [],
+            "stage": "system_deep_audit", "spawned": True, "findings": [],
             "p0_count": 0, "p1_count": 0, "p2_count": 0,
             "total_audited_files": 2, "design_docs_stale": False,
             "design_doc_suggestions": "", "missing_count": 0, "diverged_count": 0,
@@ -444,7 +444,7 @@ class TestSystemDeepAuditCoverageGate:
         """走 architect→dev→critic→comp_verifier(clean), 返回 system_deep_audit action."""
         o.init("实现单个组件")
         o.tick(_make_result_file({
-            "stage": "architect", "plan": _VALID_PLAN,
+            "stage": "architect", "spawned": True, "plan": _VALID_PLAN,
             "batch_plan": [{
                 "batch_id": "batch-F-1", "design_section": "B2", "component": "Foo",
                 "tasks": [{"id": "T1", "description": "实现 foo", "module_ref": "§B2",
@@ -457,10 +457,10 @@ class TestSystemDeepAuditCoverageGate:
             "test_results": {"passed": 2, "failed": 0},
         }))
         o.tick(_make_result_file({
-            "stage": "critic", "verdict": "APPROVE", "findings": [],
+            "stage": "critic", "spawned": True, "verdict": "APPROVE", "findings": [],
         }))
         return o.tick(_make_result_file({
-            "stage": "component_verifier", "component": "Foo",
+            "stage": "component_verifier", "spawned": True, "component": "Foo",
             "coverage_map": [{"design_item": "B2-1", "status": "IMPLEMENTED",
                               "file": "foo.py", "line": 10, "note": ""}],
             "missing_count": 0, "diverged_count": 0,
@@ -479,7 +479,7 @@ class TestSystemDeepAuditCoverageGate:
         o = _orchestrator(max_rounds=20)
         self._drive_to_system_deep_audit(o)
         a = o.tick(_make_result_file({
-            "stage": "system_deep_audit", "findings": [],
+            "stage": "system_deep_audit", "spawned": True, "findings": [],
             "p0_count": 0, "p1_count": 0, "p2_count": 0,
             "total_audited_files": 2,
             "design_docs_stale": False, "design_doc_suggestions": "",
@@ -493,7 +493,7 @@ class TestSystemDeepAuditCoverageGate:
         o = _orchestrator(max_rounds=20)
         self._drive_to_system_deep_audit(o)
         a = o.tick(_make_result_file({
-            "stage": "system_deep_audit", "findings": [],
+            "stage": "system_deep_audit", "spawned": True, "findings": [],
             "p0_count": 0, "p1_count": 0, "p2_count": 0,
             "total_audited_files": 2,
             "design_docs_stale": False, "design_doc_suggestions": "",
@@ -510,7 +510,7 @@ class TestCriticMajorLoop:
         o = _orchestrator()
         o.init("req")
         o.tick(_make_result_file({
-            "stage": "architect",
+            "stage": "architect", "spawned": True,
             "plan": _VALID_PLAN, "batch_plan": [{
                 "batch_id": "b1", "design_section": "B2", "component": "C",
                 "tasks": [{"id": "T1", "description": "d", "module_ref": "§B2",
@@ -524,7 +524,7 @@ class TestCriticMajorLoop:
         }))
         # critic MAJOR
         action = o.tick(_make_result_file({
-            "stage": "critic", "verdict": "MAJOR",
+            "stage": "critic", "spawned": True, "verdict": "MAJOR",
             "findings": [{"file": "x.py", "line": 1, "severity": "P0",
                           "issue": "bug", "suggestion": "fix"}],
         }))
@@ -536,7 +536,7 @@ class TestCriticMajorLoop:
         o = _orchestrator()
         o.init("req")
         o.tick(_make_result_file({
-            "stage": "architect",
+            "stage": "architect", "spawned": True,
             "plan": _VALID_PLAN, "batch_plan": [{
                 "batch_id": "b1", "design_section": "B2", "component": "C",
                 "tasks": [{"id": "T1", "description": "d", "module_ref": "§B2",
@@ -549,7 +549,7 @@ class TestCriticMajorLoop:
             "test_results": {"passed": 1, "failed": 0},
         }))
         action = o.tick(_make_result_file({
-            "stage": "critic", "verdict": "INVALID", "findings": [],
+            "stage": "critic", "spawned": True, "verdict": "INVALID", "findings": [],
         }))
         assert action["action"] == "error"
         # verdict 值域由 RESULT_SCHEMA 边界校验拦截 (先于 _after_critic)
@@ -587,7 +587,7 @@ class TestPlanRefineLimit:
         o = _orchestrator(max_rounds=20)
         o.init("req")
         o.tick(_make_result_file({
-            "stage": "architect",
+            "stage": "architect", "spawned": True,
             "plan": _VALID_PLAN, "batch_plan": [{
                 "batch_id": "b1", "design_section": "B2", "component": "C",
                 "tasks": [{"id": "T1", "description": "d", "module_ref": "§B2",
@@ -600,10 +600,10 @@ class TestPlanRefineLimit:
             "test_results": {"passed": 1, "failed": 0},
         }))
         o.tick(_make_result_file({
-            "stage": "critic", "verdict": "APPROVE", "findings": [],
+            "stage": "critic", "spawned": True, "verdict": "APPROVE", "findings": [],
         }))
         a1 = o.tick(_make_result_file({
-            "stage": "component_verifier", "component": "C",
+            "stage": "component_verifier", "spawned": True, "component": "C",
             "coverage_map": [{"design_item": "B2-1", "status": "MISSING"}],
             "missing_count": 1, "diverged_count": 0,
         }))
@@ -616,7 +616,7 @@ class TestPlanRefineLimit:
         o._state.plan_refine_by_source["component_verifier"] = 2
         o._state.plan_refine_count = 2
         o.tick(_make_result_file({
-            "stage": "architect",
+            "stage": "architect", "spawned": True,
             "plan": _VALID_PLAN, "batch_plan": [{
                 "batch_id": "b1", "design_section": "B2", "component": "C",
                 "tasks": [{"id": "T1", "description": "d", "module_ref": "§B2",
@@ -629,10 +629,10 @@ class TestPlanRefineLimit:
             "test_results": {"passed": 1, "failed": 0},
         }))
         o.tick(_make_result_file({
-            "stage": "critic", "verdict": "APPROVE", "findings": [],
+            "stage": "critic", "spawned": True, "verdict": "APPROVE", "findings": [],
         }))
         a = o.tick(_make_result_file({
-            "stage": "component_verifier", "component": "C",
+            "stage": "component_verifier", "spawned": True, "component": "C",
             "coverage_map": [{"design_item": "B2-1", "status": "MISSING"}],
             "missing_count": 1, "diverged_count": 0,
         }))
@@ -648,7 +648,7 @@ class TestRefineRequestDelivery:
         """architect→dev→critic(APPROVE)→component_verifier(缺口) → architect action."""
         o.init("req")
         o.tick(_make_result_file({
-            "stage": "architect", "plan": _VALID_PLAN, "batch_plan": [{
+            "stage": "architect", "spawned": True, "plan": _VALID_PLAN, "batch_plan": [{
                 "batch_id": "b1", "design_section": "B2", "component": "Foo",
                 "tasks": [{"id": "T1", "description": "d", "module_ref": "§B2",
                            "file_targets": ["foo.py"]}],
@@ -659,10 +659,10 @@ class TestRefineRequestDelivery:
             "test_results": {"passed": 1, "failed": 0},
         }))
         o.tick(_make_result_file({
-            "stage": "critic", "verdict": "APPROVE", "findings": [],
+            "stage": "critic", "spawned": True, "verdict": "APPROVE", "findings": [],
         }))
         return o.tick(_make_result_file({
-            "stage": "component_verifier", "component": "Foo",
+            "stage": "component_verifier", "spawned": True, "component": "Foo",
             "coverage_map": [{"design_item": "B2-1", "status": status,
                               "file": "foo.py", "line": 7, "note": "缺"}],
             "missing_count": 1 if status == "MISSING" else 0,
@@ -704,7 +704,7 @@ class TestRefineSourcesAndLimits:
     def _seed_two_component_plate(self, o: TickOrchestrator) -> None:
         o.init("实现两个组件的板块")
         o.tick(_make_result_file({
-            "stage": "architect", "plan": _VALID_PLAN,
+            "stage": "architect", "spawned": True, "plan": _VALID_PLAN,
             "batch_plan": [
                 {"batch_id": "b-Foo", "design_section": "B2", "component": "Foo",
                  "tasks": [{"id": "T1", "description": "foo", "module_ref": "§B2",
@@ -724,7 +724,7 @@ class TestRefineSourcesAndLimits:
         assert a_bar["stage"] == "plate_deep_audit"
         # plate_deep_audit 发现 P0 → plan_refine 回 architect
         a = o.tick(_make_result_file({
-            "stage": "plate_deep_audit", "plate": "(single)",
+            "stage": "plate_deep_audit", "spawned": True, "plate": "(single)",
             "findings": [{"severity": "P0", "dimension": "architecture",
                           "agent_source": ["a"], "file": "foo.py", "line": 3,
                           "description": "跨组件契约破坏", "suggested_fix": "对齐接口"}],
@@ -748,7 +748,7 @@ class TestRefineSourcesAndLimits:
         dup = {"severity": "P1", "dimension": "code_quality",
                "file": "foo.py", "line": 5, "description": "同一 P1", "suggested_fix": "fix"}
         a = o.tick(_make_result_file({
-            "stage": "plate_deep_audit", "plate": "(single)",
+            "stage": "plate_deep_audit", "spawned": True, "plate": "(single)",
             "findings": [
                 {**dup, "agent_source": "architecture"},
                 {**dup, "agent_source": "code_quality"},  # 同一问题, 去重后 1 条
@@ -767,7 +767,7 @@ class TestRefineSourcesAndLimits:
         a_bar = TestPlateConvergence._approve_component(o, "Bar", "b-Bar")
         assert a_bar["stage"] == "plate_deep_audit"
         a = o.tick(_make_result_file({
-            "stage": "plate_deep_audit", "plate": "(single)",
+            "stage": "plate_deep_audit", "spawned": True, "plate": "(single)",
             "findings": [{"severity": "P0", "dimension": "architecture",
                           "agent_source": "architecture", "file": "foo.py", "line": 3,
                           "description": "真 P0", "suggested_fix": "对齐接口"}],
@@ -784,7 +784,7 @@ class TestRefineSourcesAndLimits:
         # 全局已 4, component_verifier 分源 0 → 触发的是全局上限
         o._state.plan_refine_count = 4
         o.tick(_make_result_file({
-            "stage": "architect", "plan": _VALID_PLAN, "batch_plan": [{
+            "stage": "architect", "spawned": True, "plan": _VALID_PLAN, "batch_plan": [{
                 "batch_id": "b1", "design_section": "B2", "component": "C",
                 "tasks": [{"id": "T1", "description": "d", "module_ref": "§B2",
                            "file_targets": ["x.py"]}],
@@ -795,10 +795,10 @@ class TestRefineSourcesAndLimits:
             "test_results": {"passed": 1, "failed": 0},
         }))
         o.tick(_make_result_file({
-            "stage": "critic", "verdict": "APPROVE", "findings": [],
+            "stage": "critic", "spawned": True, "verdict": "APPROVE", "findings": [],
         }))
         a = o.tick(_make_result_file({
-            "stage": "component_verifier", "component": "C",
+            "stage": "component_verifier", "spawned": True, "component": "C",
             "coverage_map": [{"design_item": "B2-1", "status": "MISSING"}],
             "missing_count": 1, "diverged_count": 0,
         }))
@@ -827,7 +827,7 @@ class TestPlanRefineProgressSync:
         first_comp = batch_plan_v1[0]["component"]
         first_batch = batch_plan_v1[0]["batch_id"]
         o.tick(_make_result_file({
-            "stage": "architect", "plan": _VALID_PLAN,
+            "stage": "architect", "spawned": True, "plan": _VALID_PLAN,
             "batch_plan": batch_plan_v1,
             "file_list": ["foo.py", "bar.py"], "contracts": {},
         }))
@@ -836,10 +836,10 @@ class TestPlanRefineProgressSync:
             "files_changed": ["foo.py"], "test_results": {"passed": 1, "failed": 0},
         }))
         o.tick(_make_result_file({
-            "stage": "critic", "verdict": "APPROVE", "findings": [],
+            "stage": "critic", "spawned": True, "verdict": "APPROVE", "findings": [],
         }))
         a = o.tick(_make_result_file({
-            "stage": "component_verifier", "component": first_comp,
+            "stage": "component_verifier", "spawned": True, "component": first_comp,
             "coverage_map": [{"design_item": "B2-1", "status": "MISSING"}],
             "missing_count": 1, "diverged_count": 0,
         }))
@@ -857,7 +857,7 @@ class TestPlanRefineProgressSync:
 
         # architect v2 (PLAN-REFINE): 保留 Foo + 新增 Bar
         o.tick(_make_result_file({
-            "stage": "architect", "plan": _VALID_PLAN, "batch_plan": [
+            "stage": "architect", "spawned": True, "plan": _VALID_PLAN, "batch_plan": [
                 {"batch_id": "b1", "design_section": "B2", "component": "Foo",
                  "tasks": [{"id": "T1", "description": "d", "module_ref": "§B2",
                             "file_targets": ["foo.py"]}]},
@@ -882,7 +882,7 @@ class TestPlanRefineProgressSync:
         ])
         # architect v2: 丢掉 Foo, 只剩 Bar
         o.tick(_make_result_file({
-            "stage": "architect", "plan": _VALID_PLAN, "batch_plan": [
+            "stage": "architect", "spawned": True, "plan": _VALID_PLAN, "batch_plan": [
                 {"batch_id": "b2", "design_section": "B3", "component": "Bar",
                  "tasks": [{"id": "T2", "description": "d2", "module_ref": "§B3",
                             "file_targets": ["bar.py"]}]},
@@ -903,7 +903,7 @@ class TestVerifierRecheck:
         o = _orchestrator()
         o.init("req")
         o.tick(_make_result_file({
-            "stage": "architect", "plan": _VALID_PLAN, "batch_plan": [{
+            "stage": "architect", "spawned": True, "plan": _VALID_PLAN, "batch_plan": [{
                 "batch_id": "b1", "design_section": "B2", "component": "Foo",
                 "tasks": [{"id": "T1", "description": "d", "module_ref": "§B2",
                            "file_targets": ["foo.py"]}],
@@ -914,7 +914,7 @@ class TestVerifierRecheck:
             "test_results": {"passed": 1, "failed": 0},
         }))
         a = o.tick(_make_result_file({
-            "stage": "critic", "verdict": "APPROVE", "findings": [],
+            "stage": "critic", "spawned": True, "verdict": "APPROVE", "findings": [],
         }))
         assert a["stage"] == "component_verifier"
         rc = a["recheck"]
@@ -956,7 +956,7 @@ class TestBuildActionContexts:
         o = _orchestrator()
         o.init("req")
         o.tick(_make_result_file({
-            "stage": "architect",
+            "stage": "architect", "spawned": True,
             "plan": _VALID_PLAN, "batch_plan": [{
                 "batch_id": "b1", "design_section": "B2", "component": "C",
                 "tasks": [{"id": "T1", "description": "d", "module_ref": "§B2",
@@ -973,7 +973,7 @@ class TestBuildActionContexts:
         o = _orchestrator()
         o.init("req")
         o.tick(_make_result_file({
-            "stage": "architect",
+            "stage": "architect", "spawned": True,
             "plan": _VALID_PLAN, "batch_plan": [{
                 "batch_id": "b1", "design_section": "B2", "component": "C",
                 "tasks": [{"id": "T1", "description": "d", "module_ref": "§B2",
@@ -999,7 +999,7 @@ def _seed_architect(o: TickOrchestrator) -> None:
     """init + architect tick → 建立 batch_state + progress_tree, 进入 developer."""
     o.init("req")
     o.tick(_make_result_file({
-        "stage": "architect", "plan": _VALID_PLAN, "batch_plan": [{
+        "stage": "architect", "spawned": True, "plan": _VALID_PLAN, "batch_plan": [{
             "batch_id": "b1", "design_section": "B2", "component": "C",
             "tasks": [{"id": "T1", "description": "d", "module_ref": "§B2",
                        "file_targets": ["x.py"]}],
@@ -1012,7 +1012,7 @@ class TestApplyResultToState:
         o = _orchestrator()
         o.init("req")
         o._apply_result_to_state({
-            "stage": "architect", "plan": _VALID_PLAN,
+            "stage": "architect", "spawned": True, "plan": _VALID_PLAN,
             "batch_plan": [{"batch_id": "b1"}],
             "file_list": ["x.py"], "contracts": {"c1": "spec"},
         })
@@ -1037,7 +1037,7 @@ class TestApplyResultToState:
         o = _orchestrator()
         o.init("req")
         o._apply_result_to_state({
-            "stage": "critic", "verdict": "APPROVE",
+            "stage": "critic", "spawned": True, "verdict": "APPROVE",
             "findings": [{"x": 1}], "critic_feedback": "ok",
         })
         assert o._state.critic_verdict == "APPROVE"
@@ -1048,7 +1048,7 @@ class TestApplyResultToState:
         o = _orchestrator()
         o.init("req")
         o._apply_result_to_state({
-            "stage": "component_verifier",
+            "stage": "component_verifier", "spawned": True,
             "coverage_map": [{"design_item": "B2-1", "status": "IMPLEMENTED"}],
         })
         assert o._state.coverage_map == [
@@ -1058,7 +1058,7 @@ class TestApplyResultToState:
         o = _orchestrator()
         o.init("req")
         o._apply_result_to_state({
-            "stage": "system_verifier",
+            "stage": "system_verifier", "spawned": True,
             "full_coverage_map": [{"design_section": "B2", "status": "IMPLEMENTED"}],
         })
         assert o._state.coverage_map == [
@@ -1070,14 +1070,14 @@ class TestApplyResultToState:
         o.init("req")
         # _apply_result_to_state 只负责赋值，不校验 verdict 合法性
         o._apply_result_to_state({
-            "stage": "critic", "verdict": "INVALID",
+            "stage": "critic", "spawned": True, "verdict": "INVALID",
             "findings": [], "critic_feedback": "",
         })
         # state 被写入（原始值）
         assert o._state.critic_verdict == "INVALID"
         # _after_critic 捕获非法 verdict 并返回 ActionError
         result = o._after_critic({
-            "stage": "critic", "verdict": "INVALID",
+            "stage": "critic", "spawned": True, "verdict": "INVALID",
             "findings": [], "critic_feedback": "",
         })
         assert result.get("error_code") == "INVALID_VERDICT"
@@ -1087,7 +1087,7 @@ class TestApplyResultToState:
         o = _orchestrator()
         o.init("req")
         o._apply_result_to_state({
-            "stage": "critic", "verdict": "",
+            "stage": "critic", "spawned": True, "verdict": "",
             "findings": [], "critic_feedback": "",
         })
         assert o._state.critic_verdict == ""
@@ -1097,7 +1097,7 @@ class TestApplyResultToState:
         o = _orchestrator()
         o.init("req")
         o._apply_result_to_state({
-            "stage": "critic", "verdict": "APPROVE",
+            "stage": "critic", "spawned": True, "verdict": "APPROVE",
             "findings": [{"x": 1}], "critic_feedback": "",
         })
         assert o._state.critic_verdict == "APPROVE"
@@ -1161,7 +1161,7 @@ class TestProgressWiring:
         o = _orchestrator()
         o.init("实现单个组件")
         o.tick(_make_result_file({
-            "stage": "architect", "plan": _VALID_PLAN, "batch_plan": [{
+            "stage": "architect", "spawned": True, "plan": _VALID_PLAN, "batch_plan": [{
                 "batch_id": "batch-F-1", "design_section": "B2", "component": "Foo",
                 "tasks": [{"id": "T1", "description": "实现 foo", "module_ref": "§B2",
                            "file_targets": ["foo.py"]}],
@@ -1172,17 +1172,17 @@ class TestProgressWiring:
             "files_changed": ["foo.py"], "test_results": {"passed": 2, "failed": 0},
         }))
         o.tick(_make_result_file({
-            "stage": "critic", "verdict": "APPROVE", "findings": [],
+            "stage": "critic", "spawned": True, "verdict": "APPROVE", "findings": [],
             "critic_feedback": "LGTM",
         }))
         o.tick(_make_result_file({
-            "stage": "component_verifier", "component": "Foo",
+            "stage": "component_verifier", "spawned": True, "component": "Foo",
             "coverage_map": [{"design_item": "B2-1", "status": "IMPLEMENTED",
                               "file": "foo.py", "line": 10, "note": ""}],
             "missing_count": 0, "diverged_count": 0,
         }))
         a = o.tick(_make_result_file({
-            "stage": "system_deep_audit", "findings": [],
+            "stage": "system_deep_audit", "spawned": True, "findings": [],
             "p0_count": 0, "p1_count": 0, "p2_count": 1,
             "total_audited_files": 2, "design_docs_stale": False,
             "design_doc_suggestions": "", "missing_count": 0, "diverged_count": 0,
@@ -1492,7 +1492,7 @@ class TestPhase0Research:
 
 def _architect_result_file() -> Path:
     return _make_result_file({
-        "stage": "architect", "plan": _VALID_PLAN, "batch_plan": [{
+        "stage": "architect", "spawned": True, "plan": _VALID_PLAN, "batch_plan": [{
             "batch_id": "b1", "design_section": "B2", "component": "C",
             "tasks": [{"id": "T1", "description": "d", "module_ref": "§B2",
                        "file_targets": ["x.py"]}],
@@ -1596,7 +1596,7 @@ def _leaf_cycle_results() -> list[Path]:
     """一个 LEAF 周期的 5 个 result file (顺序: architect→dev→critic→verifier→audit)。"""
     return [
         _make_result_file({
-            "stage": "architect", "plan": _VALID_PLAN,
+            "stage": "architect", "spawned": True, "plan": _VALID_PLAN,
             "batch_plan": [{
                 "batch_id": "batch-F-1", "design_section": "B2", "component": "Foo",
                 "tasks": [{"id": "T1", "description": "实现 foo", "module_ref": "§B2",
@@ -1608,17 +1608,17 @@ def _leaf_cycle_results() -> list[Path]:
             "test_results": {"passed": 2, "failed": 0},
         }),
         _make_result_file({
-            "stage": "critic", "verdict": "APPROVE", "findings": [],
+            "stage": "critic", "spawned": True, "verdict": "APPROVE", "findings": [],
             "critic_feedback": "LGTM",
         }),
         _make_result_file({
-            "stage": "component_verifier", "component": "Foo",
+            "stage": "component_verifier", "spawned": True, "component": "Foo",
             "coverage_map": [{"design_item": "B2-1", "status": "IMPLEMENTED",
                               "file": "foo.py", "line": 10, "note": ""}],
             "missing_count": 0, "diverged_count": 0,
         }),
         _make_result_file({
-            "stage": "system_deep_audit", "findings": [],
+            "stage": "system_deep_audit", "spawned": True, "findings": [],
             "p0_count": 0, "p1_count": 0, "p2_count": 1, "total_audited_files": 2,
             "design_docs_stale": False, "design_doc_suggestions": "",
             "missing_count": 0, "diverged_count": 0,
@@ -1705,7 +1705,7 @@ class TestA3WriteSide:
 def _two_batch_architect_file() -> Path:
     """component C 有 2 个 batch (b1, b2) — 用于验证游标推进后 restore 保真."""
     return _make_result_file({
-        "stage": "architect", "plan": _VALID_PLAN, "batch_plan": [
+        "stage": "architect", "spawned": True, "plan": _VALID_PLAN, "batch_plan": [
             {"batch_id": "b1", "design_section": "B2", "component": "C",
              "tasks": [{"id": "T1", "description": "d1", "module_ref": "§B2",
                         "file_targets": ["x.py"]}]},
@@ -1870,7 +1870,7 @@ class TestCrossTickE2E:
 
         # tick 1: architect → developer
         a = _fresh().tick(_make_result_file({
-            "stage": "architect", "plan": _VALID_PLAN,
+            "stage": "architect", "spawned": True, "plan": _VALID_PLAN,
             "batch_plan": [{
                 "batch_id": "batch-F-1", "design_section": "B2", "component": "Foo",
                 "tasks": [{"id": "T1", "description": "实现 foo", "module_ref": "§B2",
@@ -1890,14 +1890,14 @@ class TestCrossTickE2E:
 
         # tick 3: critic APPROVE → component_verifier
         a = _fresh().tick(_make_result_file({
-            "stage": "critic", "verdict": "APPROVE", "findings": [],
+            "stage": "critic", "spawned": True, "verdict": "APPROVE", "findings": [],
             "critic_feedback": "LGTM",
         }))
         assert a["stage"] == "component_verifier"
 
         # tick 4: component_verifier (无缺口) → system_deep_audit
         a = _fresh().tick(_make_result_file({
-            "stage": "component_verifier", "component": "Foo",
+            "stage": "component_verifier", "spawned": True, "component": "Foo",
             "coverage_map": [{"design_item": "B2-1", "status": "IMPLEMENTED",
                               "file": "foo.py", "line": 10, "note": ""}],
             "missing_count": 0, "diverged_count": 0,
@@ -1906,7 +1906,7 @@ class TestCrossTickE2E:
 
         # tick 5: system_deep_audit (无 P0/P1) → GOAL_ACHIEVED
         a = _fresh().tick(_make_result_file({
-            "stage": "system_deep_audit", "findings": [],
+            "stage": "system_deep_audit", "spawned": True, "findings": [],
             "p0_count": 0, "p1_count": 0, "p2_count": 1, "total_audited_files": 2,
             "design_docs_stale": False, "design_doc_suggestions": "",
             "missing_count": 0, "diverged_count": 0,
@@ -1929,7 +1929,7 @@ def _write_leaf_design(tmp_path) -> str:
 
 # design-doc 2 轮 E2E 用: architect 每轮同一 batch_plan (component Foo → LEAF)
 _LEAF_ARCH_RESULT = {
-    "stage": "architect", "plan": _VALID_PLAN,
+    "stage": "architect", "spawned": True, "plan": _VALID_PLAN,
     "batch_plan": [{
         "batch_id": "b-Foo", "design_section": "B2", "component": "Foo",
         "tasks": [{"id": "T1", "description": "实现 Foo", "module_ref": "§B2",
@@ -1955,7 +1955,7 @@ class TestTwoRoundDesignDocE2E:
             "test_results": {"passed": 1, "failed": 0},
         }))
         return o.tick(_make_result_file({
-            "stage": "critic", "verdict": "APPROVE", "findings": [],
+            "stage": "critic", "spawned": True, "verdict": "APPROVE", "findings": [],
             "critic_feedback": "ok",
         }))
 
@@ -1980,7 +1980,7 @@ class TestTwoRoundDesignDocE2E:
         assert a["stage"] == "component_verifier"
 
         a = o.tick(_make_result_file({
-            "stage": "component_verifier", "component": "Foo",
+            "stage": "component_verifier", "spawned": True, "component": "Foo",
             "coverage_map": [{"design_item": "B2-1", "status": "MISSING",
                               "file": None, "line": None, "note": "未实现"}],
             "missing_count": 1, "diverged_count": 0,
@@ -1999,7 +1999,7 @@ class TestTwoRoundDesignDocE2E:
         assert a["stage"] == "component_verifier"
 
         a = o.tick(_make_result_file({
-            "stage": "component_verifier", "component": "Foo",
+            "stage": "component_verifier", "spawned": True, "component": "Foo",
             "coverage_map": [{"design_item": "B2-1", "status": "IMPLEMENTED",
                               "file": "foo.py", "line": 10, "note": ""}],
             "missing_count": 0, "diverged_count": 0,
@@ -2007,7 +2007,7 @@ class TestTwoRoundDesignDocE2E:
         assert a["stage"] == "system_deep_audit"  # LEAF 跳板块/系统验证
 
         a = o.tick(_make_result_file({
-            "stage": "system_deep_audit", "findings": [],
+            "stage": "system_deep_audit", "spawned": True, "findings": [],
             "p0_count": 0, "p1_count": 0, "p2_count": 0, "total_audited_files": 1,
             "design_docs_stale": False, "design_doc_suggestions": "",
             "missing_count": 0, "diverged_count": 0,
@@ -2120,7 +2120,7 @@ class TestRunDeveloperGates:
         plan = _VALID_PLAN
         o.init("实现功能")
         a = o.tick(_make_result_file({
-            "stage": "architect",
+            "stage": "architect", "spawned": True,
             "plan": plan,
             "file_list": ["f1.py"],
             "batch_plan": [{"batch_id": "B1", "design_section": "A1",
@@ -2167,7 +2167,7 @@ class TestRunDeveloperGates:
         o.init("实现功能")
         # Tick 1: architect → developer
         a = o.tick(_make_result_file({
-            "stage": "architect",
+            "stage": "architect", "spawned": True,
             "plan": _VALID_PLAN,
             "file_list": ["f1.py"],
             "batch_plan": [{"batch_id": "B1", "design_section": "A1",
@@ -2238,7 +2238,7 @@ class TestFreshGuardrailAtCritic:
 
         # architect tick → guardrail.check() call #1 (pass)
         o.tick(_make_result_file({
-            "stage": "architect",
+            "stage": "architect", "spawned": True,
             "plan": _VALID_PLAN,
             "batch_plan": [{
                 "batch_id": "B1", "design_section": "B2", "component": "Foo",
@@ -2258,7 +2258,7 @@ class TestFreshGuardrailAtCritic:
 
         # critic tick → guardrail.check() call #3 (FreshGuardrail)
         action = o.tick(_make_result_file({
-            "stage": "critic", "verdict": "APPROVE", "findings": [],
+            "stage": "critic", "spawned": True, "verdict": "APPROVE", "findings": [],
             "critic_feedback": "LGTM",
         }))
         # 不应返回 GUARDRAIL_* 错误
@@ -2286,7 +2286,7 @@ class TestFreshGuardrailAtCritic:
         )
         o.init("req")
         o.tick(_make_result_file({
-            "stage": "architect",
+            "stage": "architect", "spawned": True,
             "plan": _VALID_PLAN,
             "batch_plan": [{
                 "batch_id": "B1", "design_section": "B2", "component": "Foo",
@@ -2321,7 +2321,7 @@ class TestValidationConsistency:
         o = _orchestrator()
         o.init("req")
         data = {
-            "stage": "architect", "plan": _VALID_PLAN,
+            "stage": "architect", "spawned": True, "plan": _VALID_PLAN,
             "batch_plan": [{
                 "batch_id": "b1", "design_section": "B2", "component": "C",
                 "tasks": [{"id": "T1", "description": "d", "module_ref": "§B2",
@@ -2360,7 +2360,7 @@ class TestValidationConsistency:
         o = _orchestrator()
         o.init("req")
         data = {
-            "stage": "architect", "plan": _VALID_PLAN, "batch_plan": [],
+            "stage": "architect", "spawned": True, "plan": _VALID_PLAN, "batch_plan": [],
             "file_list": ["x.py"], "contracts": {},
         }
         via_dict = o._validate_result_dict(data)
@@ -2393,7 +2393,7 @@ class TestTickVsTickDictIdenticalActions:
         """init → architect tick → 停在 developer, 返回 developer 的 batch_id."""
         o.init("实现登录功能")
         action = o.tick(_make_result_file({
-            "stage": "architect", "plan": _VALID_PLAN,
+            "stage": "architect", "spawned": True, "plan": _VALID_PLAN,
             "batch_plan": [{
                 "batch_id": "b1", "design_section": "B2", "component": "C",
                 "tasks": [{"id": "T1", "description": "d", "module_ref": "§B2",
@@ -2443,7 +2443,7 @@ class TestTickVsTickDictIdenticalActions:
     def test_critic_result_same_next_action(self) -> None:
         """critic APPROVE result: tick() vs tick_dict() → 一致."""
         result = {
-            "stage": "critic", "verdict": "APPROVE", "findings": [],
+            "stage": "critic", "spawned": True, "verdict": "APPROVE", "findings": [],
             "critic_feedback": "LGTM",
         }
 
@@ -2512,7 +2512,7 @@ class TestDualDriverContract:
 
         # 推进到 developer stage
         o.tick(_make_result_file({
-            "stage": "architect", "plan": _VALID_PLAN,
+            "stage": "architect", "spawned": True, "plan": _VALID_PLAN,
             "batch_plan": [{
                 "batch_id": "b1", "design_section": "B2", "component": "C",
                 "tasks": [{"id": "T1", "description": "d", "module_ref": "§B2",
@@ -2529,7 +2529,7 @@ class TestDualDriverContract:
         o = _orchestrator()
         o.init("req")
         result = {
-            "stage": "architect", "plan": _VALID_PLAN,
+            "stage": "architect", "spawned": True, "plan": _VALID_PLAN,
             "batch_plan": [{
                 "batch_id": "b1", "design_section": "B2", "component": "C",
                 "tasks": [{"id": "T1", "description": "d", "module_ref": "§B2",
@@ -2546,7 +2546,7 @@ class TestDualDriverContract:
         o.init("req")
         tick_before = o._state.tick
         o._tick_process_result({
-            "stage": "architect", "plan": _VALID_PLAN,
+            "stage": "architect", "spawned": True, "plan": _VALID_PLAN,
             "batch_plan": [{
                 "batch_id": "b1", "design_section": "B2", "component": "C",
                 "tasks": [{"id": "T1", "description": "d", "module_ref": "§B2",
@@ -2569,7 +2569,7 @@ class TestV7_1_TickDelegation:
         o.init("req")
 
         result = {
-            "stage": "architect", "plan": _VALID_PLAN,
+            "stage": "architect", "spawned": True, "plan": _VALID_PLAN,
             "batch_plan": [{
                 "batch_id": "b1", "design_section": "B2", "component": "C",
                 "tasks": [{"id": "T1", "description": "d", "module_ref": "§B2",
@@ -2839,7 +2839,7 @@ class TestAgentEscalation:
         o.project_root = tmp_path
         o.init("build a feature")
         # 先推进到 developer
-        o.tick_dict({"stage": "architect", "batch_plan": [
+        o.tick_dict({"stage": "architect", "spawned": True, "batch_plan": [
             {"plate": "plate1", "component": "comp1", "batches": [
                 {"batch_id": "b1", "tasks": [
                     {"id": "t1", "description": "do it", "file_targets": ["a.py"]}],
@@ -2876,7 +2876,7 @@ class TestAgentEscalation:
         o.project_root = tmp_path
         o.init("build a feature")
         # 先完成 architect, 到 developer
-        o.tick_dict({"stage": "architect", "batch_plan": [
+        o.tick_dict({"stage": "architect", "spawned": True, "batch_plan": [
             {"plate": "p1", "component": "c1", "batches": [
                 {"batch_id": "b1", "tasks": [
                     {"id": "t1", "description": "task1", "file_targets": ["a.py"]}],
@@ -2904,7 +2904,7 @@ class TestPrePlannedGate:
         o.project_root = tmp_path
         o.init("build a feature")
         # architect: 声明两个 batch, b2 带 gate
-        o.tick_dict({"stage": "architect", "plan": _VALID_PLAN,
+        o.tick_dict({"stage": "architect", "spawned": True, "plan": _VALID_PLAN,
                      "file_list": ["x.py"],
                      "batch_plan": [{
             "plate": "p1", "component": "c1", "batches": [
@@ -2998,7 +2998,7 @@ class TestT105RoundHistory:
         o.init("req")
         # architect
         o.tick(_make_result_file({
-            "stage": "architect",
+            "stage": "architect", "spawned": True,
             "plan": _VALID_PLAN,
             "batch_plan": [{
                 "batch_id": "batch-F-1", "design_section": "B2", "component": "Foo",
@@ -3022,7 +3022,7 @@ class TestT105RoundHistory:
         o = _orchestrator()
         o.init("req")
         o.tick(_make_result_file({
-            "stage": "architect",
+            "stage": "architect", "spawned": True,
             "plan": _VALID_PLAN,
             "batch_plan": [{
                 "batch_id": "batch-F-1", "design_section": "B2", "component": "Foo",
@@ -3075,7 +3075,7 @@ class TestT105RoundHistory:
         o.init("req")
         # architect tick to get files_changed
         o.tick(_make_result_file({
-            "stage": "architect",
+            "stage": "architect", "spawned": True,
             "plan": _VALID_PLAN,
             "batch_plan": [{
                 "batch_id": "batch-F-1", "design_section": "B2", "component": "Foo",
@@ -3184,7 +3184,7 @@ class TestT105EndToEndConvergence:
 
         # architect
         o.tick(_make_result_file({
-            "stage": "architect",
+            "stage": "architect", "spawned": True,
             "plan": _VALID_PLAN,
             "batch_plan": [{
                 "batch_id": "batch-F-1", "design_section": "B2", "component": "Foo",
@@ -3209,13 +3209,13 @@ class TestT105EndToEndConvergence:
 
         # critic APPROVE
         o.tick(_make_result_file({
-            "stage": "critic", "verdict": "APPROVE", "findings": [],
+            "stage": "critic", "spawned": True, "verdict": "APPROVE", "findings": [],
             "critic_feedback": "LGTM",
         }))
 
         # component_verifier (clean)
         o.tick(_make_result_file({
-            "stage": "component_verifier", "component": "Foo",
+            "stage": "component_verifier", "spawned": True, "component": "Foo",
             "coverage_map": [
                 {"design_item": "B2-1", "status": "IMPLEMENTED",
                  "file": "foo.py", "line": 10, "note": ""},
@@ -3225,7 +3225,7 @@ class TestT105EndToEndConvergence:
 
         # system_deep_audit (P0/P1 clean, design coverage ok)
         a_audit = o.tick(_make_result_file({
-            "stage": "system_deep_audit",
+            "stage": "system_deep_audit", "spawned": True,
             "findings": [],
             "p0_count": 0, "p1_count": 0, "p2_count": 1,
             "total_audited_files": 2,
@@ -3249,7 +3249,7 @@ class TestT105EndToEndConvergence:
 
         # architect
         o.tick(_make_result_file({
-            "stage": "architect",
+            "stage": "architect", "spawned": True,
             "plan": _VALID_PLAN,
             "batch_plan": [{
                 "batch_id": "batch-F-1", "design_section": "B2", "component": "Foo",
@@ -3281,7 +3281,7 @@ class TestT105EndToEndConvergence:
         # architect → gap_scan + gap_review + architect + developer + critic
         # + component_verifier + system_deep_audit
         o.tick(_make_result_file({
-            "stage": "architect",
+            "stage": "architect", "spawned": True,
             "plan": _VALID_PLAN,
             "batch_plan": [{
                 "batch_id": "batch-F-1", "design_section": "B2", "component": "Foo",
@@ -3301,7 +3301,7 @@ class TestT105EndToEndConvergence:
         assert n_after_developer == n_after_architect + 1
 
         o.tick(_make_result_file({
-            "stage": "critic", "verdict": "APPROVE", "findings": [],
+            "stage": "critic", "spawned": True, "verdict": "APPROVE", "findings": [],
             "critic_feedback": "ok",
         }))
         n_after_critic = len(o._round_history)
@@ -3328,7 +3328,7 @@ class TestT105MetricsConvergence:
 
             # architect
             o.tick(_make_result_file({
-                "stage": "architect",
+                "stage": "architect", "spawned": True,
                 "plan": _VALID_PLAN,
                 "batch_plan": [{
                     "batch_id": "batch-F-1", "design_section": "B2", "component": "Foo",
@@ -3345,11 +3345,11 @@ class TestT105MetricsConvergence:
                 "test_results": {"passed": 2, "failed": 0},
             }))
             o.tick(_make_result_file({
-                "stage": "critic", "verdict": "APPROVE", "findings": [],
+                "stage": "critic", "spawned": True, "verdict": "APPROVE", "findings": [],
                 "critic_feedback": "LGTM",
             }))
             o.tick(_make_result_file({
-                "stage": "component_verifier", "component": "Foo",
+                "stage": "component_verifier", "spawned": True, "component": "Foo",
                 "coverage_map": [
                     {"design_item": "B2-1", "status": "IMPLEMENTED",
                      "file": "foo.py", "line": 10, "note": ""},
@@ -3357,7 +3357,7 @@ class TestT105MetricsConvergence:
                 "missing_count": 0, "diverged_count": 0,
             }))
             a_audit = o.tick(_make_result_file({
-                "stage": "system_deep_audit",
+                "stage": "system_deep_audit", "spawned": True,
                 "findings": [],
                 "p0_count": 0, "p1_count": 0, "p2_count": 1,
                 "total_audited_files": 2,

@@ -71,9 +71,10 @@
 | **28** | **七方对比报告 × 真跑交叉对标（2026-07-19）** | **3** | **3** | **✅ 3/3 — T105 ✅(6/6子项) / T106 ✅(4/4) / T107 ✅(4/4)** |
 | **29** | **Phase 17-21 真跑验证差距修复（2026-07-20）** | **22** | **22** | **✅ 22/22 — T108-T116 全部完成（T109h PII 文档 ⚠️ 部分完成）。2622 tests 零回归。BEACON #78-#85 落实** |
 | **30** | **深度审计发现修复（2026-07-21）** | **20** | **18** | **◐ 18/20 — P0-5/P0-6 完成；P0-1 部分（ActionBuilder/TickGateRunner）。第二轮审计 28 项发现（P0×3+P1×11+P2×14）已于同日全部修复（25 修复 + 2 暂缓 + 1 已确认），见 BEACON 决策 #86。**
-| **合计** | | **241** | **239** | **Phase 1-30 239/241 完成 + 第二轮审计修复 25/28** |
+| **31** | **Subagent Spawn 强制执行 — 提示词注入 + 重构（2026-07-22）** | **9** | **7** | **◐ 7/9 — T137-T139+T141-T144 完成。T140(dev-loop.md) + T145(真跑验证) 待实施。BEACON 决策 #91。** |
+| **合计** | | **250** | **239** | **Phase 1-30 239/250 完成；Phase 31 0/9 待实施** |
 
-> **计数说明**：合计 241 为顶级 T-task 数量。Phase 30 初始 18 项 + P0-5 拆分 1 项 (T135) + P0-6 新增 1 项 (T136) = 20 项。18 项已完成（含 P0-5/P0-6），T131(贝叶斯接线)/T132(standalone audit_logger) 待实现。6 项架构决策中 T133a 部分完成（delegate 提取）、T133f 完成（命名统一）。截至 2026-07-21, 239/241 顶级任务完成。
+> **计数说明**：合计 250 为顶级 T-task 数量（Phase 1-30 241 + Phase 31 9）。Phase 31 为 2026-07-22 真跑验证后新增——Subagent Spawn 问题根因确认：role prompt 未送达 LLM + action JSON 缺少自然语言指令。截至 2026-07-22, 239/250 顶级任务完成。
 
 ---
 
@@ -1692,7 +1693,41 @@ T116 (P1 CriticVerdictInvalid)  ──独立──→ 第一批
 
 ---
 
-## Phase 31 — 2026-07-21 深度审计待办 (来源: 全量审计 40 项 + /tttt 深度追踪)
+## Phase 31 — Subagent Spawn 强制执行：提示词注入 + 重构（BEACON 决策 #91）
+
+> 来源：2026-07-22 真跑验证发现 T51a-f 系统性未落地。根因：角色 prompt 未送达 LLM + action JSON 缺少自然语言指令。
+> 方案：`design/discussion/subagent-spawn-solution.md`
+> 原则：不改架构、不新建文件——`PromptRegistry` 已存在，`ActionBuilder` 已有调用点。
+
+### 任务
+
+| T | 内容 | 验收 | 状态 |
+|---|------|------|:---:|
+| T137 | **7 个角色 prompt 重构** — `prompts/roles/{architect,developer,critic,component_verifier,plate_deep_audit,system_verifier,system_deep_audit}.md` 全部改写。结构：Role + Goal + Context。每个 < 50 行。 | 7 个文件改写完成 + `severity_rubric.md` fragment | ✅ |
+| T138 | **`ActionBuilder._build_stage_action` 注入 role_prompt + instruction** — spawn 角色时调 `default_registry().get(action)` + 注入 `_SPAWN_INSTRUCTION`。 | action JSON 含 `instruction` + `role_prompt` 字段 | ✅ |
+| T139 | **`_SPAWN_INSTRUCTION` 自然语言命令模板** — 6 个 spawn 角色通用。 | 模板定义 + ≤5 行 | ✅ |
+| T140 | **`commands/dev-loop.md` 瘦身** — 300 行 → 111 行组长手册。 | ✅ 111 行 + sync 通过 | ✅ |
+| T141 | **`expected_format` 增加 `spawned` 字段** — spawn 角色 expected_format 首行 `"spawned": "bool — MUST be true"`。 | action JSON 含 spawned | ✅ |
+| T142 | **T108c 升级为 G2 retry** — spawn 角色 + `spawned` 非 true → `ErrorResponse("SPAWN_REQUIRED")`。 | 缺 spawned → SPAWN_REQUIRED ✅ + spawned=true → 通过 | ✅ |
+| T143 | **`prompts/fragments/severity_rubric.md` 新建** — P0/P1/P2 统一定义，critic/plate_deep_audit/system_deep_audit 引用。 | fragment 存在 + 3 个 prompt 引用 | ✅ |
+| T144 | **全量测试回归** — prompt 测试更新 + spawn stage 测试更新 + G2 retry 测试。 | 2328 passed, 0 新回归 | ✅ |
+| T145 | **真跑验证** — VoiceClonePage 需求重新跑 dev-loop。 | architect action: instruction ✅ role_prompt ✅ spawn ✅ spawned ✅ + G2 retry ✅ + Plan subagent 实际 spawn ✅ | ✅ |
+
+### 实施顺序
+
+```
+T137 (prompt 重构) → T143 (severity rubric)
+    ↓
+T139 (指令文本) → T138 (ActionBuilder 注入) → T141 (spawned 字段)
+    ↓
+T142 (G2 retry) → T140 (dev-loop.md 瘦身)
+    ↓
+T144 (全量回归) → T145 (真跑验证)
+```
+
+---
+
+## Phase 31a — 2026-07-21 深度审计待办 (来源: 全量审计 40 项 + /tttt 深度追踪)
 
 > 已修复: 21 项 (全量审计 P0×9+P1×8 + 深度追踪 D1×1 + P1-8/P1-14/P2-9)
 > 剩余: 19 项 — 15 项 P2 低优先级 + 4 项需用户决策

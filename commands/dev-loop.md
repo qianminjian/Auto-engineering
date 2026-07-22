@@ -1,30 +1,34 @@
 ---
 name: dev-loop
-description: Auto-Engineering dev-loop — v5.6 Tick-Based Discrete Invocation (architect → developer → critic → 5-layer verification), Python-controlled, Agent-executed
+description: Auto-Engineering dev-loop — v5.6 Tick-Based Discrete Invocation, Team Lead coordinates 7 specialist subagents
 ---
 
-# /ae:dev-loop — v5.6 Tick-Based Discrete Invocation
+# /ae:dev-loop — Team Lead Manual
 
-Requirement-to-PR development loop. The **Python engine is a deterministic controller**
-that never calls an LLM; the **Agent (you) is the LLM executor**. You drive the loop by
-repeatedly calling `ae dev-loop --tick`, reading the returned `action` JSON, doing that
-role's work, writing a result file, and ticking again — until `action == "done"`.
+你是 Loop 组长。你管理一个 7 人专家团队完成开发任务——协调他们，不是代替他们。
+Python 引擎做所有确定性决策（路由/门禁/收敛），你做所有 LLM 推理工作。
 
-> Authority: BEACON 决策 #39 (Tick protocol, ✅) + #40/#41 (5-layer verification) +
-> #64 (Subagent isolation restore — Phase 17) + `design/v5.6-Design-Loop.md`
-> §A.1 / §B13 / §C.3 (file-bridge) / §C.5 (tick) / §E.0 (Phase 17 spec).
+> Authority: BEACON #39 (Tick) + #64 (Subagent isolation) + #91 (Spawn enforcement)
+> Spec: `design/v5.6-Design-Loop.md` §A.1 / §B13 / §C.5 / §E.0
 
-## Core model (§A.1)
+## Core model
 
-- **Each `ae dev-loop --tick` is a separate OS process.** It restores state from SQLite
-  (`.ae-state/checkpoints.db`), advances exactly one tick, prints the next `action` JSON to
-  **stdout**, and exits. Progress/logs go to **stderr**.
-- **Python owns all control flow deterministically**: StageRouter (T1–T22), 5 Guardrails,
-  7+1 Gates, ConvergenceJudge, BatchState cursor, Checkpoint. It computes *what to do next*.
-- **You own all reasoning**: for each `action`, you act as the named role, produce the
-  `expected_format` JSON, and write it to a result file. You never decide routing.
+- `ae dev-loop --tick` 是独立 OS 进程：读 SQLite → 验证 → Guardrail → Gate → 收敛 → 输出 action JSON → 退出
+- Python 决定「下一步做什么」，你执行「怎么做」
 
-## Iron Law (Python is the gatekeeper)
+## Your team
+
+| 角色 | 何时出场 | 你的动作 |
+|------|---------|---------|
+| Architect | 需要设计方案时 | spawn Plan subagent，把 action.role_prompt + action.context 交给它 |
+| Developer | 需要写代码时 | **你自己**（inline TDD） |
+| Critic | developer 完成后 | spawn code-reviewer subagent |
+| Component Verifier | 组件完成后 | spawn general-purpose subagent (Haiku) |
+| Plate Deep Auditor | 板块完成后 | spawn 3× code-reviewer subagent 并行 |
+| System Verifier | 全量开发完成后 | spawn general-purpose subagent (Haiku) |
+| System Deep Auditor | 全体验证通过后 | spawn 3× code-reviewer subagent 并行 |
+
+## Iron Law
 
 <!-- FRAGMENT:iron_law_gatekeeper START -->
 IRON LAW: PYTHON IS THE GATEKEEPER.
@@ -34,173 +38,91 @@ You may NOT declare done before Python outputs {"action":"done"}.
 Violating the letter of this rule is violating the spirit of this rule.
 <!-- FRAGMENT:iron_law_gatekeeper END -->
 
-## Subagent isolation — HARD REQUIREMENT (BEACON #64)
-
-**This is NOT optional. It comes RIGHT AFTER the Iron Law for a reason — every tick
-you MUST check `action.spawn` before doing any work.**
-
-Each role that requires subagent execution has a `spawn` field in the action JSON.
-When `action.spawn` exists, spawning the specified subagent(s) **IS the work for this tick**.
-Do NOT inline the work yourself — subagent spawning is the only way to guarantee context
-isolation, critic independence, and parallel audit.
-
-If `action.spawn` is absent (e.g. developer stage), do the work inline as the named role.
-
-**Claude Code built-in subagents (Plan / code-reviewer / general-purpose) are platform-native
-capabilities, not external dependencies.** The B14 external-dependency ban applies only to
-external-framework agents (gsd-* / superpowers-*). MCP tools and search skills are information
-gathering tools — allowed as research aids, not as execution delegates.
-
-### Spawn specification (from action JSON)
-
-Every action JSON that requires a subagent includes a `spawn` field:
-
-```json
-"spawn": {
-    "subagent_type": "Plan | code-reviewer | general-purpose",
-    "count": <1 or 3>,
-    "parallel": <true for plate_deep_audit / system_deep_audit>,
-    "model": "Sonnet | Haiku",
-    "instruction": "<exact spawn instructions — follow literally>"
-}
-```
-
-### Role → Agent mapping (for reference)
-
-| Role | `action.spawn` present? | What to do |
-|------|:---:|------------|
-| **architect** | ✅ `{subagent_type:"Plan", count:1}` | Spawn Plan agent with context + expected_format |
-| **developer** | ❌ absent | You ARE the developer — TDD Red→Green→Refactor per task |
-| **critic** | ✅ `{subagent_type:"code-reviewer", count:1}` | Spawn code-reviewer agent with files_changed + test_results |
-| **component_verifier** | ✅ `{subagent_type:"general-purpose", count:1, model:"Haiku"}` | Spawn Haiku agent for design→code coverage mapping |
-| **plate_deep_audit** | ✅ `{subagent_type:"code-reviewer", count:3, parallel:true}` | Spawn 3 Sonnet code-reviewers IN PARALLEL, merge findings |
-| **system_verifier** | ✅ `{subagent_type:"general-purpose", count:1, model:"Haiku"}` | Spawn Haiku agent for full design coverage check |
-| **system_deep_audit** | ✅ `{subagent_type:"code-reviewer", count:3, parallel:true}` | Spawn 3 Sonnet code-reviewers IN PARALLEL, merge findings |
-
-### Why subagent isolation matters
-
-- **Context pressure**: 7 roles in one window = prompt bloat + role confusion. 7 independent windows = each role sees only its relevant context.
-- **Critic independence**: Critic must NOT see the developer's thinking process — spawning a fresh code-reviewer subagent guarantees blind review.
-- **Parallel audit**: plate_deep_audit and system_deep_audit spawn 3 agents in parallel, each auditing different dimensions, then merge results.
-
-### B14 boundary (what's still prohibited)
-
-- ❌ External-framework agents: `gsd-*`, `superpowers-*` — these are NOT Claude Code built-ins
-- ❌ Delegating execution decisions to MCP tools — MCP tools provide information, not decisions
-- ✅ Claude Code built-in subagents: Plan, code-reviewer, general-purpose — **platform-native, always allowed**
-- ✅ MCP tools and search skills as research/information aids — **allowed**
-
-The severity/verdict rubric (P0 blocking / P1 important / P2 suggestion; APPROVE = 0 P0 + ≤2 P1;
-MAJOR = ≥1 P0 or ≥3 P1) is enforced by Python — supply honest findings from your subagents.
-
-## Usage
-
-```
-/ae:dev-loop "Implement OAuth2 login flow"
-/ae:dev-loop "Implement payment module" --design-doc design/payment-spec.md
-/ae:dev-loop --resume <checkpoint_id>
-```
-
-## CLI contract (§B13)
-
-| Command | Behavior | Output | Exit |
-|---------|----------|--------|:---:|
-| `ae dev-loop --init "req" [--design-doc <path>]` | Initialize loop | first action JSON (stdout) | 0/1 |
-| `ae dev-loop --tick --result <file>` | Process one tick | next action JSON (stdout) | 0/1 |
-| `ae dev-loop --status` | Query current tick state | state summary JSON | 0 |
-| `ae dev-loop --resume <id>` | Restore from checkpoint | action JSON | 0/1 |
-
-`--design-doc` enables **Pre-flight Gap Analysis** (Phase 0). Without it, the loop starts in
-fuzzy-requirement mode (architect infers the plan).
-
-## The driving loop (your algorithm)
+## Driving loop
 
 ```
 1. action = run: ae dev-loop --init "<requirement>" [--design-doc <path>]
 2. while action.action != "done":
      if action.action == "error":
-         report action.error_code + message to the user; STOP (do not silently downgrade)
-     # ═══ SPAWN CHECK FIRST — see "Subagent isolation" above ═══
+         report action.error_code + message; STOP
+     # ═══ Read action.instruction FIRST — it's a direct command ═══
+     # ═══ SPAWN or INLINE ═══
      if action.spawn exists:
-         Spawn subagent(s) as specified in action.spawn — this IS the work
-         Collect their output into the result JSON matching action.expected_format
+         🚨 action.instruction tells you to SPAWN.  Read it.  Do it.
+         # Read offload — developer reads architect offload, critic reads developer offload
+         (See "Context offloading" below)
+         Spawn the subagent(s) specified in action.spawn.
+         Give subagent: action.role_prompt + action.context + action.expected_format.
+         Collect output → write result JSON with "spawned": true.
      else:
-         result = <do the work inline for action.action>  # see Action reference
-     write result JSON to a temp file; result["stage"] MUST equal action.stage
+         # Read offload — developer reads architect offload before starting
+         Do the work inline for action.action (this only happens for developer).
+     write result JSON; result["stage"] MUST equal action.stage
      action = run: ae dev-loop --tick --result <temp file>
-3. On "done": report action.verdict + verdict_reason. If GOAL_ACHIEVED/QUALITY → create PR.
+3. On "done": report action.verdict.
 ```
 
-Print progress before each tick: `[Tick N | stage <action.stage>] …`.
+Print: `[Tick N | stage <action.stage>] …` before each tick.
 
-## Action reference
+## CLI contract
 
-Each tick returns one `action`. Perform it, then write a result whose `stage` matches, with
-the fields listed in the action's `expected_format`.
+| Command | Output |
+|---------|--------|
+| `ae dev-loop --init "req" [--design-doc <path>]` | first action JSON (stdout) |
+| `ae dev-loop --tick --result <file>` | next action JSON (stdout) |
+| `ae dev-loop --status` | state summary JSON |
+| `ae dev-loop --resume <id>` | action JSON |
 
-| `action` | Role (you act as) | What you do | Result you write |
-|----------|-------------------|-------------|------------------|
-| `gap_scan` | Gap scanner | Grade fuzzy design sections (architectural/component/module) | `{gaps, scanned_sections, has_blocking}` |
-| `gap_review` | Facilitator | Per gap, `AskUserQuestion`: Fill / Research / Defer / Defer+Research. Blocking architectural gaps may NOT be deferred | `{decisions}` |
-| `research` | Researcher | Tiered lookup (Tier0 CLAUDE.md refs → Tier1 ref code → Tier2 docs → Tier3 web). Ref-code uses 3-step method, **no bulk/parallel scans** (96GB incident) | `{findings, sources, source_tier, confidence, recommended_design}` |
-| `architect` | Architect | Produce plan + task DAG. Each batch ≤5 files, tasks independently testable, deps form a DAG | `{plan, batch_plan, file_list, contracts}` |
-| `developer` | Developer | For each task in the batch: **TDD Red→Green→Refactor** + one atomic commit per task | `{stage, files_changed, test_results, commit_hash}` |
-| `critic` | Critic | **Diff-level** review only (not requirement acceptance). Verdict APPROVE/MAJOR + findings | `{stage, verdict, findings, critic_feedback}` |
-| `component_verifier` | Component verifier (Haiku-tier) | Map component design spec → code; mark IMPLEMENTED/MISSING/DIVERGED | `{stage, coverage_map, missing_count, diverged_count}` |
-| `plate_deep_audit` | Plate auditor (Sonnet-tier) | Cross-component contract + quality audit for the plate | `{stage, findings, p0_count, p1_count, p2_count, cross_component_issues, total_audited_files}` |
-| `system_verifier` | System verifier (Haiku-tier) | Full design→code coverage map (exit gate, once) | `{stage, full_coverage_map, total_design_items, covered_count, missing_count, diverged_count}` |
-| `system_deep_audit` | System auditor (Sonnet-tier) | Full 6-dimension code-quality audit (exit gate, once) | `{stage, findings, p0_count, p1_count, p2_count, total_audited_files, design_docs_stale, design_doc_suggestions}` |
-| `done` | — | Loop terminated | (nothing — report to user) |
-| `error` | — | Engine-side error (parse/validation/stage mismatch) | (nothing — report `error_code`) |
+## Spawn discipline
 
-Verification depth auto-scales by design layer (#41): single component (LEAF) runs 5 layers,
-single plate (PLATE) 6, multi-plate (FULL) all 7. Python picks the path; you just execute the
-action you're handed.
+- action.instruction 是给你的直接命令——先读它
+- action.role_prompt 是给 subagent 的角色定义——原样传递
+- action.expected_format 首行有 `"spawned"` 字段——**必须设为 true**（Python gate 强制检查，缺失 → G2 retry）
+- 你是组长——spawn 就是你该做的事，不是可选的
 
-## Convergence & done verdicts
+## Done verdicts
 
-Python decides termination and emits `{"action":"done", "verdict":…, "verdict_reason":…}`:
+| verdict | 含义 |
+|---------|------|
+| GOAL_ACHIEVED | APPROVE + 全 gate 通过 + 验证层清 → 创建 PR |
+| QUALITY | 质量达标但达到轮次上限 |
+| STAGNANT | 无进展 |
+| HARD_LIMIT | 达到 max_rounds |
+| REFINE_LIMIT | plan_refine 回路超限 |
 
-| verdict | Meaning |
-|---------|---------|
-| `GOAL_ACHIEVED` | APPROVE + all gates pass + verification layers clean → create PR |
-| `QUALITY` | Quality bar met at round limit |
-| `STAGNANT` | No progress across rounds → report to user |
-| `HARD_LIMIT` | `max_rounds` reached → report to user |
-| `REFINE_LIMIT` | plan-refine loop cap (per-source ≤2 / global ≤4) hit → report to user |
+## Context offloading
 
-## On `done` → PR (human gate, outside the loop)
+Python 引擎在 architect/developer/critic 完成后自动写 offload 摘要到 `.ae-state/offload/`。
+developer 开始前读 architect offload，critic 开始前读 developer offload。
+详见 action.instruction。
 
-When verdict is `GOAL_ACHIEVED`/`QUALITY`, push and open a PR for human review (the only human
-gate; it lives outside the loop per #45). Use `gh` (or the PRBackend abstraction). Include
-requirement, rounds, gate summary, and a reviewer checklist.
+## Failure transparency
 
-## Failure transparency (do not silently downgrade)
-
-- If the CLI exits non-zero or a Bash block fails → **read the error and report it to the user**.
-  Do not skip the step or fall back to hand-coding without telling them.
-- If `action == "error"` → surface `error_code` + `message`; stop after 2 consecutive
-  unrecoverable errors and ask the user to check installation (`ae doctor`).
-- The user has the right to know whether the loop is really running — never fake a `done`.
+- CLI 非零退出或 Bash 块失败 → 读错误信息并报告用户，不静默跳过
+- action == "error" → 报告 error_code + message
+- 2 次连续不可恢复错误 → 停止，让用户检查 `ae doctor`
 
 <!-- FRAGMENT:red_flags START -->
-## Red Flags — STOP，不要继续，向用户报告
+## Red Flags — STOP，不要继续
 
 - 我正准备在 Python 输出 {"action":"developer"} 前编辑代码
 - 我正准备在 Python 输出 {"action":"done"} 前宣布完成
-- Bash 块失败了，我正准备静默切换到手工模式继续
-- Agent tool spawn 失败了，我正准备自己手工模拟这个 stage
-- 我正准备跳过 --tick 自己推进到下一个 stage
-- critic 返回 MAJOR，我正准备忽略 findings 直接进收敛
-- 我正准备 spawn 外部框架专属 agent（gsd-* / superpowers-*）来执行 stage——只能用 Claude Code 内置 subagent
-- action.spawn 字段存在，但我正准备自己 inline 完成工作而不是 spawn subagent
-- 我正准备提交空的 findings/p0_count=0 来跳过 plate_deep_audit 或 system_deep_audit
-
-以上任何一条都意味着：停止。向用户报告失败原因 + 状态 + 选项。禁止静默降级。
+- action.spawn 存在但我正准备自己 inline 而不是 spawn subagent
+- Bash 块失败了，我正准备静默切换到手工模式
+- 我正准备提交空的 findings/p0_count=0 来跳过审计
+- 以上任何一条 → 停止，报告用户
 <!-- FRAGMENT:red_flags END -->
 
-## References
+## Agent vs Standalone mode
 
-- `design/v5.6-Design-Loop.md` — §A.1 (process model) / §B13 (CLI) / §C.3 (file-bridge) / §C.5 (tick) / §B2,B4,B6 (verification layers)
-- `design/BEACON.md` — 决策 #39/#40/#41/#64
-- `docs/EARS-v5.0.md` — acceptance criteria (15 AC + 5 IL-AC)
+部分功能仅在 Standalone 模式下可用（Agent 模式受限于外部 LLM 进程边界）：
+
+| 功能 | Agent 模式 | Standalone 模式 |
+|------|:---:|:---:|
+| Subagent spawn（architect/critic/verifier/auditor） | ✅ action.instruction 驱动 | ✅ 引擎自动 |
+| Context offloading（T53） | ✅ 引擎写 + 你读 | ✅ 引擎读写 |
+| Session summarization（T54） | ✅ 结构化摘要（无 LLM） | ✅ LLM 摘要 |
+| PII 防护（T56/T57） | ✅ 文件桥接四层 | ✅ BaseAgent pipeline |
+| M5 Token 效率 | ⚠️ 需 `AE_TOKEN_TRACKING=1` | ✅ Provider hook |
+| Prompt caching（T63） | ✅ Claude Code 原生 | ✅ Anthropic API |
+| Ollama/国产模型（T55/T58） | — 不适用 | ✅ Provider 切换 |

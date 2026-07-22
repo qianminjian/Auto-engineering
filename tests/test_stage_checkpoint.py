@@ -47,6 +47,7 @@ def _make_result_file(data: dict) -> Path:
 def _architect_result() -> dict:
     return {
         "stage": "architect",
+        "spawned": True,
         "plan": _VALID_PLAN,
         "batch_plan": [{
             "batch_id": "B1",

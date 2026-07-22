@@ -15,6 +15,18 @@ from typing import TYPE_CHECKING
 
 from auto_engineering.config.constants import DEFAULT_P1_THRESHOLD, _SPAWN_CONFIG
 from auto_engineering.config.feature_flags import feature_status_for_action
+from auto_engineering.prompts.registry import default_registry
+
+# T139: Natural-language commands for spawn stages.
+# Injected as top-level "instruction" in the action JSON — the first text the
+# Agent reads when processing a tick.  No cross-referencing dev-loop.md needed.
+_SPAWN_INSTRUCTION = (
+    "你是 Loop 组长。现在需要 {subagent_type} subagent 来执行 {stage} 阶段。\n"
+    "用 Agent tool spawn {count} 个 {subagent_type} subagent{parallel}（model: {model}）。\n"
+    "把下面的 role_prompt + context + expected_format 交给它。\n"
+    "收集它的输出，写入 result JSON 文件。\n"
+    "🚨 你自己不要做 {stage} 的工作——spawn subagent 就是这个 tick 的工作。"
+)
 
 if TYPE_CHECKING:
     from auto_engineering.engine.batch_state import BatchState
@@ -247,13 +259,38 @@ class ActionBuilder:
         self, base: dict, action: str, context: dict | None = None,
         expected_format: dict | None = None, **extra,
     ) -> dict:
-        """Construct a stage action dict with auto-resolved spawn config."""
+        """Construct a stage action dict with auto-resolved spawn config.
+
+        T138: When *action* is a spawn stage, inject:
+        - ``instruction`` — natural-language command (top-level, Agent reads first)
+        - ``role_prompt`` — full role prompt text from PromptRegistry
+        - ``spawned`` in expected_format — G2 retry if not true
+        """
         result: dict = {**base, "action": action}
-        if context:
-            result["context"] = context
         spawn = _SPAWN_CONFIG.get(action)
         if spawn is not None:
             result["spawn"] = spawn
+            # T138: inject natural-language command + role prompt
+            result["instruction"] = _SPAWN_INSTRUCTION.format(
+                subagent_type=spawn["subagent_type"],
+                count=spawn["count"],
+                parallel=" 并行" if spawn.get("parallel") else "",
+                model=spawn.get("model", "default"),
+                stage=action,
+            )
+            try:
+                _reg = default_registry()
+                result["role_prompt"] = _reg.get(action)
+            except Exception:
+                result["role_prompt"] = ""
+            # T141: spawned field in expected_format
+            if expected_format is not None:
+                expected_format = {
+                    "spawned": "bool — MUST be true after spawning subagent",
+                    **expected_format,
+                }
+        if context:
+            result["context"] = context
         if expected_format is not None:
             result["expected_format"] = expected_format
         result.update(extra)
