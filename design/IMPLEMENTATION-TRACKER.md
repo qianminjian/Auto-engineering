@@ -80,7 +80,8 @@
 | **35** | **T51c-f 根因修复 + prompt 日志增强（2026-07-23）** | **4** | **4** | **✅ Fix A(design_items补全)+B(impl_files注入)+C(auto-skip)+prompt日志增强 — BEACON 决策 #95。** |
 | **36** | **深度审计 P0 全部修复（2026-07-23）** | **10** | **10** | **✅ P0-1~P0-10 全部修复 + 死测试清理 — BEACON 决策 #96。commit: 55df599。** |
 | **37** | **深度审计 P1/P2 修复（2026-07-23）** | **18** | **18** | **✅ P1×10 + P2×8 全部处理 (修复/确认/归档) — commit: e9326fb。** |
-| **合计** | | **332** | **332** | **Phase 1-37 332/332 完成 ✅** |
+| **38** | **T50-T55 真跑验证发现（2026-07-23）** | **18** | **0** | **◐ 进行中 — 18 项发现待修复（P0×1 + P1×11 + P2×6）。voice_clone 全参数真跑（Audit/Metrics/OTLP/Debug/Cache/PII/Token）** |
+| **合计** | | **350** | **332** | **Phase 1-37 332/332 ✅ + Phase 38 0/18 ☐** |
 
 > **v5.5 退役提醒**：`orchestrator.py` + `semantic_evaluator.py` 已物理删除。CLI 裸参数路径重定向到 `--standalone`。2026-08-18 清理 CLI 弃用 shim。
 
@@ -1996,3 +1997,65 @@ T144 (全量回归) → T145 (真跑验证)
 | T148a | TickOrchestrator God Class 拆分 — 17 个 `_after_*` handler 提取为 StageHandler 策略模式 | 1865→<1200 行, 每个 handler 独立文件 | ☐ |
 | T148b | StandaloneDriver 职责拆分 — TickRunner + ActionExecutor + TaskFactory | 1213→<600 行 | ☐ |
 | T148c | MetricsCollector 拆分 — MetricsStorage + MetricsAnalyzer | 605→<300 行 | ☐ |
+
+---
+
+## Phase 38 — T50-T55 真跑验证发现（2026-07-23）
+
+> 来源：voice_clone_for_auto_CC_Design 全参数真跑验证（Audit:✓ Metrics:✓ OTLP:✓ Debug:✓ Cache:✓(Standalone) PII:✓ Token:✓）
+> 报告：`_scratch/test-output/2026-07-23-真跑验证报告-Audit-Metrics-OTLP-Debug-Cache-PII-Token.md`
+> 范围：Agent 驱动 Tick 协议 7 ticks 全路径（init→gap_scan→gap_review→architect→developer→critic→component_verifier→plate_deep_audit）
+
+### T50-T55 设计目标 vs 真跑实际对照
+
+| 编号 | 设计目标 | 真跑结果 | 状态 |
+|:---:|---------|---------|:---:|
+| T50 | 外部搜索/MCP 恢复 | DuckDuckGo 搜索成功调用 3 次（MiniMax API/MediaRecorder/React），搜索结果融入 gap_review 决策 | ✅ |
+| T51a | Architect Plan spawn | Plan subagent spawn 成功，产出 10 batch/36 文件 batch_plan。Agent ~146s, ~30K tokens。spawn_proof 验证通过 | ✅ |
+| T51b | Critic code-reviewer spawn | Critic agent spawn 成功，APPROVE verdict (0P0+1P1+1P2)。Agent ~77s, ~45K tokens | ✅ |
+| T51c | Component verifier spawn | Spawn 成功但 `design_spec=""` — BEACON #95 Fix A 未完全生效。Verifier 自行阅读设计文档完成 8/8 IMPLEMENTED | ⚠️ |
+| T51d | Plate deep audit 3× spawn | Spawn 指令到达（count=3, parallel=true），因会话时间未完整执行 | ⚠️ |
+| T51e | System verifier spawn | 未到达 — PLATE 模式正确跳过（BEACON #41 自动裁剪）。需全量 batch 完成后触发 | ❌ |
+| T51f | System deep audit 3× spawn | 未到达 — 需 system_verifier 全部通过后触发 | ❌ |
+| T53 | Context offloading | offload 文件写入正常（architect/developer/critic），但摘要质量低（19-32 chars）。architect summary="N/A" | ⚠️ |
+| T54 | Session summarization | Agent 模式结构化摘要内容极简，无 LLM 调用。developer offload 显示 "0/0 tests"（实际 11/11） | ⚠️ |
+| T55 | Ollama adapter | Agent 模式不适用（LLM 由 Claude Code 平台处理，Provider 切换不可用）。仅 Standalone 模式可用 | ❌ |
+
+### 新发现问题清单
+
+| # | T | 严重度 | 位置 | 问题描述 | 修复方向 |
+|---|:---:|:---:|------|---------|---------|
+| **T149** | — | **P0** | `gates/test_gate.py:_build_cmd()` | **Test Gate vitest 输出被混入 pytest 解析**。vitest 显示 "collected 0 items" 但紧接着显示 pytest 插件列表（anyio/cov/timeout/asyncio/langsmith），说明 vitest 输出被 pytest 解析器误处理。所有 TypeScript 项目 test gate 实质不可用 | `_files_to_pytest_k()` 需检测 test_runner 类型并跳过 pytest 特有逻辑；或分离 vitest runner 路径 |
+| **T150** | BEACON #95 | **P1** | `engine/design_doc.py:_on_paragraph` | **design_spec 仍为空**。BEACON #95 Fix A（段落→DesignItem）宣称"2→24 组件有数据"，但真跑中 component_verifier 收到的 `design_spec=""`。§4.1 核心类型有 8 条设计声明，解析器未提取 | 验证 `_on_paragraph` 对 H3 下文本段落的提取逻辑；加 test_design_doc 覆盖 §4.1 类型章节 |
+| **T151** | BEACON #95 | **P1** | `loop/action_builder.py` | **auto-skip 未触发**。BEACON #95 Fix C 宣称"空数据时 auto-skip 不 spawn"，但真跑中 design_spec 为空时仍收到 SPAWN_REQUIRED 错误。空数据 → `action=skip` 的路径未生效 | 追踪 `_build_action()` 中 component_verifier 的 design_spec 空值分支；加 test_tick_orchestrator 覆盖 skip 路径 |
+| **T152** | T53 | **P1** | `loop/tick_orchestrator.py:_after_architect` | **T53 offload 摘要质量低（两层问题）**。L1 时序错误：offload 在 `_apply_result_to_state()` 之前执行 → architect summary="N/A"（plan 未写入），developer summary="0/0 tests passed"（batch_state 未更新）。L2 内容贫瘠：即使时序修正，摘要仅一行 `"{stage}: {verdict}"` 拼接——缺少 design doc §E.2.2 声明的 `key_decisions`/`files_changed`/`gate_results` 结构化字段。实测 3 个 offload 摘要 19-32 chars，远低于设计目标（≤500 words 结构化摘要） | L1: offload 移到 `_after_*` 末尾（apply_result 之后）；summary 从 `batch_state` 提取实际 batch 进度/测试计数。L2: summary 生成改为读取 `StageContextOffload` 各字段拼装结构化摘要（key_decisions 从 critic verdict/plan 提取, files_changed 从 batch_state 汇总, gate_results 从 gate_summary 提取） |
+| **T153** | T56/T57 | **P1** | `auto_engineering/pii/redactor.py` | **PII 假阳性**。API Key 正则匹配 URL 字符串中的 "api" 子串（如 `api.minimaxi.chat`）。每次 tick 都触发 `PII detected: rule=api_key` WARN | api_key 正则从 `\bapi[_-]?key\b` 收窄，排除 URL hostname 上下文；加 test_pii_redactor 覆盖 URL 场景 |
+| **T154** | T51 | **P1** | `gates/contract.py` | **Contract Gate "single agent mode"**。6 角色 subagent 已 spawn 并产出 spawn_proof，但 contract gate 仍报告 "skip: single agent mode, no cross-agent contract"。spawn 隔离未被 contract gate 感知 | contract gate 检测 spawn_proof 文件或 action.spawn 字段，修正 agent mode 判定 |
+| **T155** | — | **P1** | `gates/safety.py` | **Safety Gate 假阳性**。`_scratch/prompt-log/tick-*.md` 中的 spawn_proof_token 被 Long Token (32+ chars) 规则匹配。prompt-log 是引擎自写的调试产物，不应触发安全告警 | safety gate 加 `_scratch/` 目录白名单排除；或 token 检测排除已脱敏的 `***REDACTED***` 占位符 |
+| **T156** | — | **P1** | `gates/build_gate.py` | **Build Gate TypeScript 适配缺失**。对 TypeScript 项目（`build_cmd=pnpm build`），build gate 运行了 `import auto_engineering`（Python）而非 `pnpm build`。gate 虽 passed 但未实际验证项目构建 | `_build_cmd()` 从 init-manifest 读取 `conventions.build_cmd`；回退逻辑：language=typescript → `pnpm build` |
+| **T157** | — | **P2** | `gates/type_check.py` | **tsc exit=2 但仍 passed**。type_check gate 报告 "tsc 退出 2, 无类型 error"。tsc exit code 2 通常是配置错误（tsconfig.json 问题），不应简单 passed | 区分 tsc exit code：0=pass, 1=type errors(fail), 2=config error(warn+skip) |
+| **T158** | T60 | **P2** | `auto_engineering/observability/tracing.py` | **OTLP exporter 无 collector 时噪音日志**。每 tick 3 次重试 + ERROR 日志（"Failed to export traces to localhost:4317"），累计 20+ 条。无 collector 时应静默降级 | `AE_OTLP_ENDPOINT` 设置后先做 connectivity probe；不可达时降级为 NoopTracerProvider + WARN 一次 |
+| **T159** | T64 | **P1** | `commands/dev-loop.md` | **Driving loop 缺少 gate 分支**。Stage Checkpoint Gate 触发 `action: "gate"` 时，Agent 不知道如何响应。第一次用 `{"stage":"architect","decision":"继续"}` 提交 → RESULT_VALIDATION_ERROR（被当作 architect result 校验）。正确路径是 `--resume` 而非 `--tick --result`，但 dev-loop.md while 循环只描述了 spawn/inline 两分支 | dev-loop.md driving loop 增加 gate 分支：`if action.action == "gate"` → 读 gate.options + 默认继续 → 不写 result 直接 `--tick`（无 --result）推进 |
+| **T160** | — | **P1** | `cli/dev_loop.py:run_tick_resume()` | **resume 参数混淆 thread_id vs checkpoint_id**。action JSON 中含有 `thread_id`（UUID），但 `--resume` 接受的是 `checkpoint_id`（不同 UUID）。传 thread_id 直接 crash（`CheckpointNotFoundError`），需手动查 SQLite 才能找到正确 ID | `--resume` 支持 thread_id 回退查询：在 checkpoints 表中按 `state_json` 中的 `thread_id` 字段搜索最新 checkpoint；或 `--status` 输出当前 checkpoint_id |
+| **T161** | — | **P2** | `loop/guardrail.py:GitClean` | **GitClean 误报 `.ae-init.lock`**。Init Engineering 的 `.ae-init.lock` 被删除后触发 GUARDRAIL_BLOCK。`.ae-*` 前缀的系统文件应在 GitClean 白名单中（与 `.ae-state/`、`_scratch/` 同类） | GitClean 白名单扩展：`.ae-*`（dotfiles）和 `_scratch/**` |
+| **T162** | T60 | **P2** | `auto_engineering/observability/tracing.py:setup_tracing()` | **OTLP TracerProvider 重复初始化**。Claude Code 已初始化全局 TracerProvider，auto_engineering 再次调用 `set_tracer_provider()` 时触发 `Overriding of current TracerProvider is not allowed` WARN。每 tick 产生噪音 | `setup_tracing()` 先检查 `trace.get_tracer_provider()` 是否已是有效实例（非 ProxyTracerProvider），是则复用不覆盖 |
+| **T163** | — | **P2** | `loop/action_builder.py` | **feature_status 冗余**。每 tick action JSON 含 20 个 feature flag，其中仅 7 个激活（true）。大部分 false 字段对 Agent 无决策价值，徒增 action JSON 体积（~500 bytes/tick） | feature_status 仅输出已激活项（value=true），减少 action JSON 体积。`ae doctor` 保留全量显示 |
+| **T164** | T51e/T51f | **P2** | `loop/stage_router.py` | **T51e/T51f 对单板块项目结构性不可达**。PLATE 自动裁剪（BEACON #41）对单板块项目跳过 system_verifier → system_deep_audit 永远触发不到。voice_clone（所有组件在一个 plate 内）即此场景。验证覆盖需多板块项目 | 无需修复——裁剪逻辑本身正确。但需在测试策略中注释：T51e/T51f 验证需准备多板块测试项目（≥2 plates） |
+| **T165** | T51d | **P1** | `loop/tick_orchestrator.py` + Agent 侧 | **T51d plate_deep_audit 3-agent 并行 spawn 未端到端验证**。spawn 指令到达（`count=3, parallel=true`），spawn_proof 已写入，但 3 个审计 agent 实际未 spawn 执行——缺少端到端的 3-agent 并行 spawn → 结果合并 → recount 全链路验证。spawn 指令格式验证通过（count/parallel/role_prompt/expected_format 正确），但 Agent 侧并行 spawn 的实际行为（3 agent 是否真正并行、输出是否完整、合并是否正确）未证实 | 用多板块测试项目执行完整 plate_deep_audit tick：spawn 3 agent 并行 → 收集 3 份 findings → 合并去重 → recount p0/p1/p2。验证 spawn_proof + findings JSON + recount 全链路 |
+| **T166** | T54 | **P1** | `auto_engineering/context/summarization.py` | **T54 跨 tick 摘要质量极低**。Agent 模式"结构化摘要"仅 19-32 字符（如 "Developer: 0/0 tests passed"），无关键决策/文件变更/MAJOR 历史。设计允许 Agent 模式用非 LLM 的结构化摘要，但当前实现几乎不产生可用信息。7 tick 的 run 触发阈值（>5）后摘要内容无改善 | 结构化摘要从 `batch_state` 提取数据：已完成 batch 列表、test_results 统计、files_changed 汇总、critic verdict 历史、plan_refine 次数。不依赖 LLM 但需从 engine state 聚合实际数据，而非只读单 tick result 字段 |
+
+### 已验证通过（无需修复）
+
+| 编号 | 验证项 | 证据 |
+|:---:|-------|------|
+| T50 | MCP Search 通路 | DuckDuckGo 3 次成功调用，结果融入架构决策 |
+| T51a | Architect spawn enforcement | `action.spawn.count=1` + `spawn_proof_token` + SPAWN_REQUIRED 拦截 inline 提交 |
+| T51b | Critic spawn enforcement | Spawn proof 写入 + APPROVE verdict + 结构化 findings |
+| PII L1 | prompt PII 扫描 | 每次 tick 的 prompt 被扫描并记录 `PII detected: rule=api_key` |
+| Audit | LLM calls JSONL | `.ae-state/audit/llm-calls.jsonl` 已生成 |
+| Debug | DebugTracer 轨迹 | 6 个 `tick-{N}.json` + `errors.jsonl`（4 事件）|
+| Metrics | MetricsCollector | `.ae-state/metrics/requirements/` 已创建，requirement 生命周期已启动 |
+| Offload | T53 引擎侧写 | 3 个 offload JSON（architect/developer/critic）写入 `.ae-state/offload/` |
+| Prompt Log | prompt 日志增强 | 7 tick × 2 文件（action.json + prompt.md）= 14 文件写入 `_scratch/prompt-log/` |
+| Gate 多语言 | TypeScript lint/type_check | eslint + tsc 正确调用（eslint 0 errors, tsc 无类型错误） |
+| Spawn proof | proof 文件机制 | 4 个 proof JSON（architect/critic/verifier/auditor）写入 `.ae-state/spawn-proofs/` |
