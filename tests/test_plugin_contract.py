@@ -1,8 +1,8 @@
-"""Plugin-Engine stdout JSON 契约 + 子命令契约测试 (v5.0 M8).
+"""Plugin-Engine stdout JSON 契约 + 子命令契约测试 (v5.6).
 
-RED marker: 以下模块/函数在 Phase 07 之前不存在, 测试应全部 FAIL (ImportError).
+Phase 07+ 所有模块已实现, 测试验证 CLI 契约而非 ImportError。
 
-覆盖范围 (v5.0 §PE.6 CLI 子命令全集 + §B13.2 CLI JSON 契约):
+覆盖范围 (v5.6 CLI 子命令全集 + JSON 契约):
     - ae doctor         环境预检 (7 行 ✓/✗)
     - ae gate-check     Gate 检查 (--all / --quick)
     - ae agent          单 Agent 调用 (architect/developer/critic)

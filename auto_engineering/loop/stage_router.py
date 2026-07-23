@@ -312,9 +312,9 @@ def clear_stage_fields(state: "EngineState", stage: str) -> None:
     """清空 EngineState 中指定 Stage 产出的 channel (§B3.3).
 
     两个使用场景:
-    1. 正常 stage 过渡: Orchestrator._step_2i 推进到下一 stage 前清空旧产出
+    1. 正常 stage 过渡: TickOrchestrator._advance_stage 推进到下一 stage 前清空旧产出
     2. Guardrail retry: 重试当前 stage 前清空旧产出, 避免读到脏数据
-    调用方: Orchestrator._step_2i (正常过渡) + Orchestrator._handle_guardrail_result (retry).
+    调用方: TickOrchestrator._advance_stage (正常过渡) + TickOrchestrator._handle_guardrail_result (retry).
 
     Args:
         state: EngineState 实例 (duck-typed).

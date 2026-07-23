@@ -189,12 +189,15 @@ class AuditGate(Gate):
         if verdict := self._validate_project_root(project_root):
             return verdict
 
-        # v5.4: 增量扫描 — 若 contracts 提供 files_changed, 仅扫描变更文件
+        # v5.4: 增量扫描 — contracts files_changed 优先, 回退到直接属性 (runner 注入)
         target_files: set[str] | None = None
+        raw = None
         if self.contracts and "files_changed" in self.contracts:
             raw = self.contracts["files_changed"]
-            if isinstance(raw, list) and raw:
-                target_files = set(raw)
+        elif hasattr(self, "files_changed") and self.files_changed:
+            raw = self.files_changed
+        if isinstance(raw, list) and raw:
+            target_files = set(raw)
 
         # B15.3 #9: known-and-accepted 指纹 (构造器 + contracts 合并)
         accepted: set[str] = set(self.accepted_fingerprints)
@@ -456,7 +459,9 @@ class AuditGate(Gate):
             f"审计完成: {files_scanned} 文件扫描, "
             f"P0={len(p0)} (max={self.max_p0}), "
             f"P1={len(p1)} (max={self.max_p1}), "
-            f"P2={len(p2)} (max={self.max_p2})" + suppressed_note,
+            f"P2={len(p2)} (max={self.max_p2})"
+            + suppressed_note
+            + (" ⚠ 零文件扫描 — 无可审计文件(全被排除/过大/空目录)" if files_scanned == 0 else ""),
         ]
 
         if p0:

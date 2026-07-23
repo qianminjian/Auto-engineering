@@ -21,9 +21,9 @@ def _get_environ(environ: dict[str, str] | None = None) -> dict[str, str]:
     """
     if environ is not None:
         return environ
-    # Avoid importing RuntimeConfig here to prevent circular imports in
-    # low-level utility modules.  Runtime detection must read the real
-    # process environment, not a test-injected config.
+    # 有意绕过 RuntimeConfig: 本模块是底层工具, 引入 RuntimeConfig 会形成
+    # 循环依赖 (RuntimeConfig → 各模块 → utils → RuntimeConfig)。
+    # Runtime detection 必须读取真实进程环境, 不能走可注入的 RuntimeConfig。
     return dict(os.environ)
 
 

@@ -1770,6 +1770,7 @@ class TickOrchestrator:
                         if parts[1] != "-":
                             removed += int(parts[1])
                     except ValueError:
+                        _logger.debug("git diff numstat parse failed: %s", line, exc_info=True)
                         pass
             return added, removed
         except (OSError, subprocess.SubprocessError, ValueError):

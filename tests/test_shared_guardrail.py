@@ -1,6 +1,6 @@
-"""Guardrail base layer isolated tests — GuardrailResult + Guardrail ABC.
+"""shared/guardrail.py 独立测试 — GuardrailResult + Guardrail ABC.
 
-P2-24: guardrail_base.py 无独立测试，只在 test_guardrail.py 间接覆盖。
+Guardrail 类型已从旧模块(guardrail_base.py)迁移到 shared/guardrail.py (Phase 30)。
 """
 
 from __future__ import annotations

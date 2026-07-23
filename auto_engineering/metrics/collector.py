@@ -385,7 +385,10 @@ class MetricsCollector:
         # 从 tick_complete 事件中统计 stage="critic" 的 MAJOR 占比 (T80 fix)
         # v5.6 tick 模式下单个 loop 只有最终 convergence 事件,
         # 中间 critic MAJOR 必须从 tick_complete 获取
-        critic_ticks = [e for e in ticks if e["payload"].get("stage") == "critic"]
+        # 排除 verdict 为空的 tick (critic 未运行或 verdict 未设置 — 不计入分母)
+        critic_ticks = [e for e in ticks
+                       if e["payload"].get("stage") == "critic"
+                       and e["payload"].get("verdict")]
         major_count = sum(1 for e in critic_ticks
                          if e["payload"].get("verdict") == "MAJOR")
         m2 = major_count / max(len(critic_ticks), 1)

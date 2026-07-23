@@ -42,16 +42,17 @@ class TestLLMUsageDataclass:
 
 
 class TestLLMResponseDataclass:
-    """LLMResponse 数据类 — API 调用结果."""
+    """LLMResponse 数据类 — 迁移至 providers.base.LLMResponse."""
 
     def test_response_required_fields(self):
-        from auto_engineering.llm.anthropic_provider import LLMResponse, LLMUsage
+        from auto_engineering.providers.base import LLMResponse
 
-        usage = LLMUsage(input_tokens=10, output_tokens=20)
-        r = LLMResponse(content="hello", model="claude-test", usage=usage)
+        r = LLMResponse(content="hello", model="claude-test",
+                        usage={"input_tokens": 10, "output_tokens": 20})
         assert r.content == "hello"
         assert r.model == "claude-test"
-        assert r.usage.input_tokens == 10
+        assert r.usage is not None
+        assert r.usage["input_tokens"] == 10
 
 
 class TestAnthropicProvider:
@@ -60,10 +61,7 @@ class TestAnthropicProvider:
     @pytest.mark.asyncio
     async def test_create_message_returns_llm_response(self):
         """RED: provider.create_message 必须返回 LLMResponse (含 content/usage/model)."""
-        from auto_engineering.llm.anthropic_provider import (
-            AnthropicProvider,
-            LLMResponse,
-        )
+        from auto_engineering.llm.anthropic_provider import AnthropicProvider
 
         # Mock anthropic.Anthropic client
         mock_client = MagicMock()
@@ -148,31 +146,30 @@ class TestAnthropicProvider:
 
 
 class TestLLMResponseToolFields:
-    """LLMResponse 扩展字段 — 工具调用支持."""
+    """LLMResponse 扩展字段 — 工具调用支持 (迁移至 providers.base.LLMResponse)."""
 
     def test_response_default_stop_reason(self):
         """LLMResponse.stop_reason 默认 'end_turn'."""
-        from auto_engineering.llm.anthropic_provider import LLMResponse, LLMUsage
+        from auto_engineering.providers.base import LLMResponse
 
-        r = LLMResponse(content="x", model="m", usage=LLMUsage())
+        r = LLMResponse(content="x", model="m")
         assert r.stop_reason == "end_turn"
         assert r.tool_use_blocks == []
 
     def test_response_with_tool_use_blocks(self):
         """LLMResponse 可带 tool_use_blocks."""
-        from auto_engineering.llm.anthropic_provider import LLMResponse, LLMUsage
+        from auto_engineering.providers.base import LLMResponse, ToolUseBlock
 
-        blocks = [{"id": "toolu_1", "name": "read_file", "input": {"path": "x.py"}}]
+        blocks = [ToolUseBlock(id="toolu_1", name="read_file", input={"path": "x.py"})]
         r = LLMResponse(
             content="",
             model="m",
-            usage=LLMUsage(),
             stop_reason="tool_use",
             tool_use_blocks=blocks,
         )
         assert r.stop_reason == "tool_use"
         assert len(r.tool_use_blocks) == 1
-        assert r.tool_use_blocks[0]["name"] == "read_file"
+        assert r.tool_use_blocks[0].name == "read_file"
 
 
 class TestAnthropicProviderToolsSupport:

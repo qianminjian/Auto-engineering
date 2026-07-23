@@ -26,7 +26,7 @@ import pytest
 
 from auto_engineering.agents.base import BaseAgent
 from auto_engineering.errors import AEError, ErrorCode
-from auto_engineering.llm.anthropic_provider import LLMResponse, LLMUsage
+from auto_engineering.providers.base import LLMResponse  # migrated from deprecated anthropic_provider.LLMResponse
 from auto_engineering.runtime.cancellation import CancellationToken
 from auto_engineering.runtime.context import TaskContext
 from auto_engineering.runtime.task import Task, TaskResult
@@ -57,7 +57,7 @@ def _make_llm_response(
     return LLMResponse(
         content=content,
         model="claude-test",
-        usage=LLMUsage(input_tokens=usage_input, output_tokens=usage_output),
+        usage={"input_tokens": usage_input, "output_tokens": usage_output},
         stop_reason=stop_reason,
         tool_use_blocks=tool_use_blocks or [],
     )

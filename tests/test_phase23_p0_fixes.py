@@ -9,6 +9,11 @@ RED phase: These tests FAIL because:
   - record_convergence criteria_met is always "" → M2 always 0
   - _compute_loc_added uses --cached HEAD → always 0 after commits
 
+⚠ P1-9 WARNING: Several tests in this file use hasattr() and inspect.getsource()
+to verify source code PRESENCE rather than behavioral correctness. These tests
+will pass silently after refactoring that changes code structure while preserving
+behavior — a false negative.  Treat GREEN results as "code exists" not "code works".
+
 Design ref: v5.6-Design-Loop.md appendix F.
 """
 

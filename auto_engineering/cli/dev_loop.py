@@ -258,6 +258,7 @@ def run_tick_status(root: Path, verbose: bool = False) -> None:
                         "task_count": len(b.get("tasks", [])),
                     })
             except Exception:
+                _logger.debug("batch summary build failed", exc_info=True)
                 pass
             summary["batch_progress"] = {
                 "current_component": comp.name if comp else "?",

@@ -49,7 +49,6 @@ class TestAuditLoggerWiring:
     async def test_create_message_calls_audit_logger(self, tmp_path: Path) -> None:
         """create_message() MUST call audit_logger.log_call() with request/response."""
         from auto_engineering.llm.anthropic_provider import AnthropicProvider
-        from auto_engineering.llm.anthropic_provider import LLMResponse, LLMUsage
 
         audit_logger = AuditLogger(tmp_path / "audit")
         # Build a mock anthropic client that returns a valid response
@@ -90,7 +89,6 @@ class TestAuditLoggerWiring:
     async def test_create_message_no_audit_when_logger_not_set(self) -> None:
         """When audit_logger is None, create_message() should not throw."""
         from auto_engineering.llm.anthropic_provider import AnthropicProvider
-        from auto_engineering.llm.anthropic_provider import LLMResponse, LLMUsage
 
         mock_client = MagicMock()
         mock_message = MagicMock()

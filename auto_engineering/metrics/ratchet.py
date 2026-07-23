@@ -211,6 +211,7 @@ class RatchetController:
                     try:
                         versions.append(int(tag.split("v")[-1]))
                     except ValueError:
+                        logger.debug("malformed tag version: %s", tag, exc_info=True)
                         pass
             return max(versions) if versions else 0
         except (OSError, subprocess.CalledProcessError):

@@ -12,6 +12,11 @@ T90: implement _get_tag_timestamp() for compare_periods
 
 RED phase: These tests FAIL because P1/P2 fixes are not yet implemented.
 
+⚠ P1-9 WARNING: Several tests in this file use inspect.getsource() to verify
+source code PRESENCE rather than behavioral correctness. These tests will pass
+silently after refactoring that changes code structure while preserving behavior
+— a false negative.  Treat GREEN results as "code exists" not "code works".
+
 Design ref: v5.6-Design-Loop.md appendix F + Phase 20 Round 4 audit findings.
 """
 

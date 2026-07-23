@@ -2,7 +2,8 @@
 
 Design spec: v5.6-Design-Loop.md Appendix F.10.
 
-@reserved: 战略储备模块 — 完整实现 (148 行, 32 tests PASS) 但零调用方。
+接线状态: 已接线 — tick_orchestrator.py:_run_ratchet (line 1459) +
+_build_action 贝叶斯阈值调整路径 (line 1803)。
 激活条件: metrics 管线累积 ≥30 条需求数据后, 在 enrichment.py:compute_metrics_signals()
 中实例化 ThresholdLearner 并调用 propose_adjustments()。
 参见 BEACON 决策 #83 Phase 30。

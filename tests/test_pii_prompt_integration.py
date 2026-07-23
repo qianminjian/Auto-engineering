@@ -21,7 +21,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from auto_engineering.agents.base import BaseAgent
-from auto_engineering.llm.anthropic_provider import LLMResponse, LLMUsage
+from auto_engineering.providers.base import LLMResponse  # migrated from deprecated anthropic_provider.LLMResponse
 from auto_engineering.runtime.context import TaskContext
 from auto_engineering.runtime.task import Task
 
@@ -39,7 +39,7 @@ def _make_llm_response(
     return LLMResponse(
         content=content,
         model="claude-test",
-        usage=LLMUsage(input_tokens=10, output_tokens=5),
+        usage={"input_tokens": 10, "output_tokens": 5},
         stop_reason=stop_reason,
         tool_use_blocks=tool_use_blocks or [],
     )
