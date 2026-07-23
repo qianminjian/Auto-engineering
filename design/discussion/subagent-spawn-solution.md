@@ -2,6 +2,7 @@
 
 > 来源：T51a-f 真跑验证未落地 → 根因分析 → 标杆参考 → 方案
 > 日期：2026-07-22
+> ⚠️ **2026-07-23 真跑验证推翻**：方案中 `subagent_type: "code-reviewer"` 在 Claude Code 环境中不可用（工具名不匹配: `read_file/str_replace_editor/run_command` vs 实际 `Read/Edit/Bash`），导致 critic/plate_deep_audit/system_deep_audit spawn 失败。BEACON 决策 #92 修正：移除 `subagent_type` 字段，不传该参数让平台用默认 agent。代码落地: `594b602`。详见 `_scratch/test-output/2026-07-23-真跑问题清单.md` P1-1。
 
 ---
 

@@ -185,7 +185,25 @@ class ActionBuilder:
                       "error_code": "UNKNOWN_STAGE",
                       "message": f"Unknown stage: {stage}"}
 
-        return self._apply_pii_outbound(action, _pi_enabled, _pi_redactor, _pi_outbound)
+        action = self._apply_pii_outbound(action, _pi_enabled, _pi_redactor, _pi_outbound)
+
+        # P2-4: log the full action JSON so we can inspect exactly what the Agent receives
+        self._log_prompt(action)
+
+        return action
+
+    def _log_prompt(self, action: dict) -> None:
+        """Write action JSON to _scratch/prompt-log/ for debugging spawn issues."""
+        try:
+            log_dir = Path(self.project_root) / "_scratch" / "prompt-log"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            tick = action.get("tick", 0)
+            stage = action.get("stage", action.get("action", "unknown"))
+            log_file = log_dir / f"tick-{tick:04d}-{stage}-action.json"
+            with open(log_file, "w", encoding="utf-8") as f:
+                json.dump(action, f, indent=2, ensure_ascii=False)
+        except Exception:
+            pass  # best-effort logging, never crash the loop
 
     # ── helpers ──
 
@@ -276,11 +294,21 @@ class ActionBuilder:
         spawn = _SPAWN_CONFIG.get(action)
         if spawn is not None:
             result["spawn"] = spawn
-            # T138: inject natural-language command + role prompt
+            # P1-4: side-channel spawn proof token — Python 可验证 subagent 是否真的执行了
+            import uuid
+            proof_token = uuid.uuid4().hex
+            result["spawn_proof_token"] = proof_token
             result["instruction"] = _SPAWN_INSTRUCTION.format(
                 count=spawn["count"],
                 parallel=" 并行" if spawn.get("parallel") else "",
                 stage=action,
+            ) + (
+                f"\n\n spawn proof token: {proof_token}\n"
+                f"告诉 subagent 在完成后执行以下命令写证明文件:\n"
+                f"  mkdir -p .ae-state/spawn-proofs && echo '{{\"token\":\"{proof_token}\","
+                f"\"stage\":\"{action}\",\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}}'"
+                f" > .ae-state/spawn-proofs/{proof_token}.json\n"
+                f"Python 门控会验证此文件存在才放行 spawned: true。"
             )
             try:
                 _reg = default_registry()

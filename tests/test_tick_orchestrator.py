@@ -2408,6 +2408,14 @@ class TestTickVsTickDictIdenticalActions:
         """去掉非确定性字段 (UUID/时间戳), 只比循环逻辑字段."""
         stripped = dict(action)
         stripped.pop("thread_id", None)
+        stripped.pop("spawn_proof_token", None)
+        # Strip spawn proof token block from instruction (P1-4)
+        if "instruction" in stripped:
+            inst = stripped["instruction"]
+            # Remove everything from "spawn proof" to end
+            idx = inst.find("\n\n spawn proof")
+            if idx >= 0:
+                stripped["instruction"] = inst[:idx]
         if "gate_summary" in stripped:
             gs = {}
             for k, v in stripped["gate_summary"].items():

@@ -222,7 +222,7 @@ def run_tick_step(result_file: Path, root: Path,
         store.close()
 
 
-def run_tick_status(root: Path) -> None:
+def run_tick_status(root: Path, verbose: bool = False) -> None:
     """ae dev-loop --status: restore → 输出当前 tick 状态摘要 JSON."""
     import json
 
@@ -235,7 +235,7 @@ def run_tick_status(root: Path) -> None:
     try:
         orch = TickOrchestrator.restore(root, store)
         s = orch._state
-        summary = {
+        summary: dict = {
             "thread_id": s.thread_id,
             "current_stage": s.current_stage,
             "expected_stage": s.expected_stage,
@@ -245,6 +245,26 @@ def run_tick_status(root: Path) -> None:
             "total_majors": s.total_majors,
             "plan_refine_count": s.plan_refine_count,
         }
+        if verbose and orch._batch_state is not None:
+            bs = orch._batch_state
+            batches = []
+            try:
+                comp = bs.current_component()
+                for b in bs.batches_for(comp):
+                    batches.append({
+                        "batch_id": b.get("batch_id", ""),
+                        "component": b.get("component", ""),
+                        "task_count": len(b.get("tasks", [])),
+                    })
+            except Exception:
+                pass
+            summary["batch_progress"] = {
+                "current_component": comp.name if comp else "?",
+                "current_batch_idx": bs.current_batch_idx,
+                "total_batches": len(bs.batches_for(comp)) if comp else 0,
+                "batches": batches,
+                "total_components_seen": len(getattr(bs, "_seen_components", [])),
+            }
         click.echo(json.dumps(summary, ensure_ascii=False))
     finally:
         store.close()

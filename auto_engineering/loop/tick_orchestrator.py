@@ -784,8 +784,8 @@ class TickOrchestrator:
 
         # T142: spawn stages — enforce subagent execution via G2 retry.
         # Checks "spawned" field in result: must be True for spawn stages.
-        # Previously WARN-only (T108c checked findings which architect
-        # doesn't produce, making it a systematic false-negative for architect).
+        # P1-4: side-channel proof verification — checks that subagent wrote
+        # a proof file to .ae-state/spawn-proofs/{token}.json.
         stage = self._state.current_stage
         if stage in _SPAWN_CONFIG:
             spawned = result.get("spawned")
@@ -801,6 +801,31 @@ class TickOrchestrator:
                     ),
                     current_state=self._state.to_dict(),
                 )
+
+            # P1-4: verify spawn proof file exists
+            proof_token = result.get("spawn_proof_token")
+            if proof_token:
+                proof_file = (
+                    self.project_root / ".ae-state" / "spawn-proofs"
+                    / f"{proof_token}.json"
+                )
+                if not proof_file.exists():
+                    _logger.warning(
+                        "Spawn proof missing for stage=%s token=%s — "
+                        "spawned=true but no proof file. Subagent may not have "
+                        "executed (possible forged spawned field).",
+                        stage, proof_token,
+                    )
+                    if self._require("_debug_tracer", "debug tracing disabled") is not None:
+                        self._debug_tracer.record_error(
+                            tick=self._state.tick,
+                            category="SPAWN_PROOF_MISSING",
+                            detail={
+                                "stage": stage,
+                                "token": proof_token,
+                                "message": "spawned=true but proof file missing",
+                            },
+                        )
 
         return result
 

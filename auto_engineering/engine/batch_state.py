@@ -155,16 +155,28 @@ class BatchState:
                 sorted(new_zero),
             )
 
-        # 过滤: 仅保留有 batch 的 component, 移除无 component 的 plate
+        # 过滤: 仅保留有 batch 的 component, 移除无 component 的 plate.
+        # 排序: 按 batch_plan 首次出现顺序 (尊重 architect 的依赖顺序),
+        # 而非 design doc 的章节顺序 (如 §2 分层架构在 §4 类型系统之前).
         batch_component_set = set(batch_components)
+        component_order: dict[str, int] = {}
+        for i, name in enumerate(batch_components):
+            if name not in component_order:
+                component_order[name] = i
+
         filtered_plates = []
         for plate in doc.plates:
             active = [c for c in plate.components if c.name in batch_component_set]
             if active:
+                # Sort components within plate by batch_plan appearance order
+                active.sort(key=lambda c: component_order.get(c.name, 999))
                 filtered_plates.append(Plate(
                     name=plate.name, design_section=plate.design_section,
                     components=active, cross_component_contracts_raw=plate.cross_component_contracts_raw,
                 ))
+        # Sort plates by their first component's batch_plan position
+        filtered_plates.sort(
+            key=lambda p: min((component_order.get(c.name, 999) for c in p.components), default=999))
         return cls(plates=filtered_plates, batch_plan=batch_plan, total_batches=len(batch_plan))
 
     @classmethod

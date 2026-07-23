@@ -106,6 +106,8 @@ def main():
               help="--tick 的 stage-result.json 路径")
 @click.option("--status", "status_flag", is_flag=True,
               help="v5.6: 查询当前 tick 状态")
+@click.option("--verbose", "-v", "verbose_flag", is_flag=True,
+              help="--status 时输出 batch 级进度明细")
 @click.option("--resume", "resume_id", help="v5.6: 从指定 checkpoint 恢复")
 @click.option("--design-doc", "design_doc", type=click.Path(exists=True),
               help="--init 的设计文档路径 (design-doc 模式)")
@@ -148,6 +150,7 @@ def dev_loop(
     debug_dir_opt: str | None = None,
     pause_at_stage: str | None = None,
     escalate_flag: bool = False,
+    verbose_flag: bool = False,
 ):
     """单需求开发循环.
 
@@ -208,7 +211,7 @@ def dev_loop(
                        debug_dir=debug_dir_opt)
         return
     if status_flag:
-        run_tick_status(root)
+        run_tick_status(root, verbose=verbose_flag)
         return
     if resume_id:
         run_tick_resume(resume_id, root)
