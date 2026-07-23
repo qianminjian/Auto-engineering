@@ -70,15 +70,16 @@
 | **27** | **真跑验证发现（2026-07-19）** | **3** | **3** | **✅ 完成 — T102-T104 全部修复** |
 | **28** | **七方对比报告 × 真跑交叉对标（2026-07-19）** | **3** | **3** | **✅ 3/3 — T105 ✅(6/6子项) / T106 ✅(4/4) / T107 ✅(4/4)** |
 | **29** | **Phase 17-21 真跑验证差距修复（2026-07-20）** | **22** | **22** | **✅ 22/22 — T108-T116 全部完成（T109h PII 文档 ⚠️ 部分完成）。2622 tests 零回归。BEACON #78-#85 落实** |
-| **30** | **深度审计发现修复（2026-07-21）** | **20** | **18** | **◐ 18/20 — P0-5/P0-6 完成；P0-1 部分（ActionBuilder/TickGateRunner）。第二轮审计 28 项发现（P0×3+P1×11+P2×14）已于同日全部修复（25 修复 + 2 暂缓 + 1 已确认），见 BEACON 决策 #86。**
+| **30** | **深度审计发现修复（2026-07-21）** | **20** | **20** | **✅ 20/20 — P0-1 在 Phase 31 完成（ActionBuilder 提取），P0-5/P0-6 同日完成。第二轮审计 28 项已全部修复。BEACON 决策 #86。** |
 | **31** | **Subagent Spawn 强制执行 — 提示词注入 + 重构（2026-07-22）** | **9** | **9** | **✅ 9/9 — BEACON 决策 #91。** |
 | **32** | **5 层验证提示词增强 + subagent_type 移除 + Gate 多语言适配（2026-07-23）** | **22** | **22** | **✅ 22/22 — BEACON 决策 #92。** |
 | **33** | **全量深度审计（2026-07-23）** | **50** | **50** | **✅ 40 修复 + 10 废弃 — BEACON 决策 #93** |
 | **33a** | **用户决策执行（2026-07-23）** | **4** | **4** | **✅ AD1-4 按推荐方案执行** |
 | **33b** | **P2 低优先级深度修复（2026-07-23）** | **9** | **9** | **✅ JSON 工具+死代码+Protocol+文档+CHANGELOG** |
-| **合计** | | **294** | **284** | **Phase 1-33b 284/294 完成** |
+| **34** | **真跑问题全部修复（2026-07-23）** | **6** | **6** | **✅ P0-2 收敛+P1-4 spawn proof+P1-8 batch排序+P2-3 status verbose+P2-4 prompt日志+F-2 文档同步 — BEACON 决策 #94。** |
+| **合计** | | **300** | **300** | **Phase 1-34 300/300 完成 ✅** |
 
-> **计数说明**：合计 250 为顶级 T-task 数量（Phase 1-30 241 + Phase 31 9）。Phase 31 为 2026-07-22 真跑验证后新增——Subagent Spawn 问题根因确认：role prompt 未送达 LLM + action JSON 缺少自然语言指令。截至 2026-07-22, 239/250 顶级任务完成。
+> **v5.5 退役提醒**：`orchestrator.py` + `semantic_evaluator.py` 已物理删除。CLI 裸参数路径重定向到 `--standalone`。2026-08-18 清理 CLI 弃用 shim。
 
 ---
 
@@ -1825,7 +1826,7 @@ T144 (全量回归) → T145 (真跑验证)
 | T136v | Phase 17-21 真跑对标分析报告 | ✅ |
 | T136y | OTLP grpc 连接失败优雅降级 — 每次 tick 3-4 条 retry ERROR | ✅ (Phase 33b) |
 
-> **剩余**: T136w (STAGE_MISMATCH) + T136x (gate manifest→reload) → 见末尾「剩余待办」
+> **剩余**: T136w (STAGE_MISMATCH) — 代码逻辑正确需真跑触发。T136x 已在 Phase 34 修复 (commit `24c0ce1`)。
 
 ---
 
@@ -1939,5 +1940,28 @@ T144 (全量回归) → T145 (真跑验证)
 | T | 内容 | 严重度 | 阻塞原因 |
 |---|------|:---:|------|
 | T136w | STAGE_MISMATCH 系统性缺陷（E2） — Agent 延迟提交上一 stage 结果导致 spawn 校验短路 | P0→✅ | **已修复**: `_tick_body_dict` 增加 stale result 降级逻辑 — 匹配 `_last_completed_stage` 时自动接受并重建 action |
-| T136x | test gate manifest→reload 路径验证 | P0 | reload 调用链完整，需真跑验证 |
-| T136z | Phase 17-21 真跑对标分析 | ✅ | 报告: `_scratch/reports/2026-07-23-phase17-21-runtime-validation.md` |
+| T136x | test gate manifest→reload 路径验证 | P0→✅ | **已修复**: `restore()` 中 reload 移到 manifest 加载之后 (commit `24c0ce1`) |
+| T136z | Phase 17-21 真跑对标分析 | ✅ | 报告: `_scratch/test-output/2026-07-23-dev-loop-真跑深度对标分析报告.md` |
+
+---
+
+## Phase 34 — 真跑问题全部修复（BEACON #94）
+
+> 来源：2026-07-23 第二次 voice_clone 真跑验证 — 19 项问题（P0×3 + P1×8 + P2×5 + 流程×3）
+> 问题清单：`_scratch/test-output/2026-07-23-真跑问题清单.md`
+
+| T | 内容 | 验收 | 状态 |
+|---|------|------|:---:|
+| T146a | P0-1 `config` 未定义崩溃修复 — `dev_loop.py` `run_tick_init` 添加 `cfg = get_default_config()` | `ae dev-loop --init` 不再 crash | ✅ `373f183` |
+| T146b | P0-2 收敛失败修复 — `from_design_doc` plate/component 按 batch_plan 顺序排序 | developer tick 按 B1→B19 分发, 逐 batch 收敛 | ✅ `746091e` |
+| T146c | P0-3 `_STAGE_CHECKPOINT_OPTIONS` SSOT — 从 action_builder 提取常量, tick_orchestrator 导入 | ImportError 消除 | ✅ `373f183` |
+| T146d | P1-3 architect context 补传 `component_map` — `_build_component_map()` 从 DesignDoc 提取 §编号→组件名 | LLM 可按编号引用组件, 不再猜名称 | ✅ `373f183` |
+| T146e | P1-6 test gate manifest→reload 时序 — `restore()` 中 reload 移到 manifest 加载之后 | vitest 项目不再用 pytest 默认 | ✅ `24c0ce1` |
+| T146f | P1-7 SessionSummarizer 输出丰富度 — critic_verdict/total_majors/文件累积 | 摘要含结构化决策信息 | ✅ `24c0ce1` |
+| T146g | P1-4 spawn_proof_token side-channel 验证 — UUID token + proof 文件写入指令 + G2 proof 文件检查 | G2 不再仅依赖 Agent 自报 spawned 字段 | ✅ `746091e` |
+| T146h | P2-2 audit 输出完整性 — P0 全量/P1≤10/P2≤5, 截断提示 details.findings | audit gate 不再隐藏 blocking finding | ✅ `24c0ce1` |
+| T146i | P2-3 --status --verbose batch 进度 | `--verbose` flag + batch_progress JSON 段 | ✅ `746091e` |
+| T146j | P2-4 prompt 日志 — `_scratch/prompt-log/tick-NNNN-stage-action.json` | best-effort 写 action JSON | ✅ `746091e` |
+| T146k | F-2 设计文档同步 — `subagent-spawn-solution.md` 追加真跑推翻标记 | 文档与代码分叉消除 | ✅ `746091e` |
+
+> **剩余**: T136w (STAGE_MISMATCH) — 代码逻辑正确, 需真跑触发

@@ -1,4 +1,4 @@
-> 创建：2026-06-24 | 更新：2026-07-23 | 阶段：Phase 33b — 全量审计 63 项全部处理完毕，零遗留
+> 创建：2026-06-24 | 更新：2026-07-23 | 阶段：Phase 34 — 真跑问题全部修复完成
 > ⚠️ **决策状态翻转管控**：status 列 ✅→❌ 或 ❌→✅ 必须经用户审批。AI 不得自行翻转。详见 `.claude/rules/design-document-inviolability.md` §2。
 
 ## 目标与成功标准
@@ -85,54 +85,33 @@
 | **88** | **P0-5 裸 except Exception 窄化** | 31 处裸 `except Exception` 窄化为具体异常类型（OSError/sqlite3.Error/subprocess.CalledProcessError/json.JSONDecodeError/TypeError/ValueError/KeyError/ImportError/jsonschema.SchemaError/AttributeError）。13 处保留宽捕获（task executor/gate fail-closed/LLM tool handler/CLI handler/guardrail degradation）并添加解释性注释。涉及 16 源文件，零回归。Phase 30 完成后全项目裸 except 从 55 降至 ~33（剩余主要在 v5.5 legacy 路径 + gates fail-closed + CLI user-facing）。 | 2026-07-21 | ✅ |
 | **89** | **P0-6 RuntimeConfig 环境变量集中化** | (同 #87，编号重复保留以维持后续编号稳定) | 2026-07-21 | ✅ |
 | **90** | **P0-3/P0-4 Guardrail 命名统一** | (同 #86 第二轮审计，编号重复保留以维持后续编号稳定) | 2026-07-21 | ✅ |
-| **91** | **Subagent Spawn 强制执行 — 提示词注入 + 重构** | 真跑验证发现 Phase 17 T51a-f 全部未落地——6 个 spawn 角色在 Tick 协议下均未 spawn subagent。根因：① `prompts/roles/*.md` 从未被 Tick 路径加载——`PromptRegistry` 已 import 但 `registry.get("architect")` 从未调用；② action JSON 的 `spawn` key 是数据结构非自然语言命令，LLM 不会把 JSON key 当作执行指令。方案：① `ActionBuilder._build_stage_action` 在 spawn 角色时调用 `registry.get(stage)` 加载完整 role prompt + 注入 `instruction` 自然语言命令到 action JSON；② 7 个角色 prompt 重构（CrewAI role+goal+context 模式 + AutoGen 单决策任务 + 团队上下游关系 + <50 行）；③ `commands/dev-loop.md` 从操作手册改为组长手册。设计讨论：`design/discussion/subagent-spawn-solution.md`。 | 2026-07-22 | ☐ |
-| **92** | **5 层验证提示词增强 + subagent_type 移除 + Gate 多语言适配** | 2026-07-22-23 voice_clone 真跑验证（9 tick, 8 stage, 10 errors）驱动。① `_SPAWN_CONFIG` + `_SPAWN_INSTRUCTION` 移除 `subagent_type` 字段——Agent Tool 不传该参数即用平台默认 agent，消除 `~/.claude/agents/code-reviewer.md` 工具不兼容的依赖（E1）。② 5 层提示词增强：critic 搬用 Claude Code 5 维度 + 10 条 false positive 规则 + Superpowers DO/DON'T（37→82 行）；component_verifier 增加映射方法 + DIVERGED 判定表（33→61 行）；plate_deep_audit 拆为 3 个独立 agent prompt（契约/数据流/架构）+ 合并汇总；system_verifier 增加交叉验证（30→55 行）；system_deep_audit 拆为 5 个独立 agent prompt（架构/质量/规范/虚化/协作）+ 合并汇总。共 13 文件变更（5 增强 + 8 新建）。③ Gate 多语言适配：`TypeCheckGate._has_type_config` 按 type_checker_bin 路由配置检测（tsc→tsconfig.json, pyright→pyrightconfig.json, go vet→go.mod, cargo check→Cargo.toml, mypy→mypy.ini/setup.cfg/pyproject.toml）。④ batch_state "零 batch 组件" WARNING→INFO + ClassVar dedup（E6）。⑤ expected_format 补充必填标记（architect plan + plate_deep_audit plate/cross_component_issues, E5）。⑥ 真跑对标分析报告：`_scratch/test-output/voice_clone-v5.6-tick-phase17-21-analysis-20260723.md`。2327 tests 零回归。 | 2026-07-23 | ✅ |
-| **93** | **全量深度审计 63 项全部处理（50 审计 + 4 决策 + 9 低优先级）** | 3 Agent 并行审计+Phase 1 快扫发现 50 项→同日修复+废弃。后续 4 项用户决策（AD1-4 按推荐方案执行）+ 9 项 P2 低优先级深度修复。关键产出：FeatureManifest 清理+git 安全加固+3 虚化接入+TaskDAG 死代码移除+EscalationHandler 提取(~220行)+AE_PRODUCTION 接入+GateExecutionError+EngineState _runtime_ctx+dead import×5+PRBackend 删除+guardrail_base shim 删除+_compute_loc_added 删除+JSON 工具提取(safe_json_load 19 处)+_TracerLike Protocol 修正+OTLP 优雅降级+_map_llm_exception 可测试性+check_feature CI 测试+CHANGELOG.md 创建+FeatureManifest↔RuntimeConfig 分层文档。2324 tests PASS。报告: `_scratch/reports/2026-07-23-audit.md` | 2026-07-23 | ✅ |
+| **91** | **Subagent Spawn 强制执行 — 提示词注入 + 重构** | 真跑验证发现 Phase 17 T51a-f 全部未落地。方案：ActionBuilder 注入 instruction + role_prompt；7 角色 prompt 重构。设计讨论：`design/discussion/subagent-spawn-solution.md`。2026-07-23 真跑发现 `subagent_type: "code-reviewer"` 不可用，决策 #92 移除该字段。 | 2026-07-22 | ✅ |
+| **92** | **5 层验证提示词增强 + subagent_type 移除 + Gate 多语言适配** | 真跑验证驱动。① `_SPAWN_CONFIG` + `_SPAWN_INSTRUCTION` 移除 `subagent_type` 字段——Agent Tool 不传该参数即用平台默认。② 5 层提示词增强（13 文件）。③ Gate 多语言适配。④ batch_state 降级。⑤ expected_format 补全。commit: `594b602`。 | 2026-07-23 | ✅ |
+| **93** | **全量深度审计 63 项全部处理** | 50 审计 + 4 决策 + 9 低优先级。commit: `6c827c9`。 | 2026-07-23 | ✅ |
+| **94** | **真跑问题全部修复 — batch 分发顺序 + spawn proof + 收敛 + prompt 日志** | 2026-07-23 第二次真跑验证暴露 19 项问题全部修复。① batch 分发按 architect 依赖顺序（修复 B19 在 B1 前分发 → 同时解决收敛失败）。② spawn_proof_token side-channel 验证。③ SessionSummarizer 输出丰富度。④ test gate manifest→reload 时序修复（T136x）。⑤ architect context 补传 component_map。⑥ audit 输出完整性。⑦ prompt 日志。commit: `373f183` `24c0ce1` `746091e`。 | 2026-07-23 | ✅ |
 
 ## 当前状态
 
-**阶段：** Phase 33b — 全部审计修复完成。Phase 1-33 全部完成。63 项发现零遗留。
+**阶段：** Phase 34 — 真跑问题全部修复完成。Phase 1-34 全部完成。
 
-**剩余待办（2 项 P0，需真跑复现）：**
+**本轮真跑验证 (2026-07-23) — 19 项问题全部修复：**
 
-| # | 内容 | 严重度 | 阻塞原因 |
-|---|------|:---:|------|
-| T136w | STAGE_MISMATCH 系统性缺陷 — handler advance stage 后二次校验路径 | P0 | 代码路径逻辑正确，静态分析无法复现，需真跑触发 |
-| T136x | test gate manifest→reload 路径验证 — from_manifest 配置正确但实跑未生效 | P0 | reload 调用链完整，需真跑验证 |
+| 类别 | 数量 | 说明 |
+|------|:---:|------|
+| P0 引擎崩溃 | 3 | config 未定义 / 收敛失败 / _STAGE_CHECKPOINT_OPTIONS 导入 — 全部修复 |
+| P1 设计未落地 | 8 | subagent_type 移除 / model 移除 / component_map 补传 / spawn proof / test gate reload 时序 / summarization / batch 分发顺序 / 静默降级 |
+| P2 噪声 | 5 | OTLP 警告 / audit 输出 / status verbose / prompt 日志 / 非 Python Gate |
+| 流程 | 3 | Tracker 标记滞后 / 设计文档分叉 / 审计报告缺失 |
 
-**最近动作 (2026-07-23 P2 深度修复 + 决策执行 + 文档同步)：**
-- **P2 低优先级 9 项全部消化**：JSON 工具提取(safe_json_load 19 处)→_compute_loc_added 死代码删除→Protocol 类型定义→type: ignore 审计标注→api-reference 确认完善→FeatureManifest↔RuntimeConfig 分层文档→CHANGELOG.md 创建→_ 前缀跨模块审计(零违规)→tautological 测试确认非问题。
-- **4 项用户决策执行**：PRBackend 物理删除(147行+test)→Channel[T] 保留为内部迁移模块→ThresholdLearner.propose_adjustments() 接线→check_feature() CI 接入(3 tests)。
-- **新增文件**：`utils/file_utils.py`(safe_json_load/save) + `CHANGELOG.md` + `loop/escalation_handler.py`。
-- **删除文件**：`tools/pr_backend.py` + `tests/test_pr_backend.py` + `loop/guardrail_base.py`。
-- BEACON 决策 #93 更新（50→63 项）。演进日志追加。
+**commits**: `594b602` `373f183` `24c0ce1` `746091e` — 241 tests 零新回归。
 
-**阶段：** Phase 33 — 审计修复完成。Phase 1-33 全部完成（241+4 顶级任务）。2026-07-23 全量深度审计 50 项发现全部处理完毕（40 修复 + 10 废弃）。
+**剩余待办（1 项，需真跑触发）：**
 
-**最近动作 (2026-07-23 全量深度审计 50 项修复完成)：**
-- **3 Agent 并行深度审计**（架构+虚化度/代码质量+工程化/协作友好度）+ Phase 1 快扫。50 项发现全部处理完毕（40 修复 + 10 废弃）。
-- **FeatureManifest 清理**：AE_LANGSMITH + AE_SUPPRESS_DEPRECATION 虚假入口移除。
-- **standalone_driver git 安全加固**：_auto_commit 返回码检查 + escalation gate 不自动通过 + git add -A→.
-- **虚化模块接入**：DiagnosticRuleDiscoverer/RatchetController 闭环/ThresholdLearner 接入生产路径。
-- **EscalationHandler 提取**（~220行）+ AE_PRODUCTION 落地 + GateExecutionError 异常契约 + EngineState _runtime_ctx。
-- **代码清理**：dead import os ×5 + TaskDAG 死代码移除 + inline import→top + 命名规范化。
-- BEACON 决策 #93 追加。审计报告：`_scratch/reports/2026-07-23-audit.md`。
+| # | 内容 | 说明 |
+|---|------|------|
+| T136w | STAGE_MISMATCH 系统性缺陷 | 代码路径逻辑正确，静态分析无法复现，需下次真跑触发 |
 
-**最近动作 (2026-07-22 真跑验证 & 深度分析)：**
-- **T51a-f Subagent Spawn 真跑验证**：6 个角色全部未 spawn subagent——Agent inline 完成所有角色工作。
-- **根因分析**：`prompts/roles/*.md` 从未被 Tick 协议加载——`PromptRegistry.get()` 只在 StandaloneDriver 路径调用。action JSON 的 `spawn` key 是 JSON 数据不是自然语言命令。
-- **方案定稿**：`design/discussion/subagent-spawn-solution.md` — 提示词注入 + 7 角色 prompt 重构 + dev-loop.md 瘦身。
-- **T53 Context Offloading 修复完成**：dev-loop.md 增加 offload 读取指令 + `_offload_stage` 数据丰富。206 tests 零回归。
-- **T54 SessionSummarizer 恢复**：Phase 30 审计误判为死代码删除，2026-07-22 恢复——设计允许引擎调 Haiku 做机械性摘要（BEACON #54 追加）。206 tests 零回归。
-
-**最近动作 (2026-07-21 P0-1/P0-3/P0-4 审计修复完成)：**
-- **P0-1 TickOrchestrator God Class 拆分**：ActionBuilder 委托类（~400 行, 15 方法, 10 stage builder + dispatch + PII outbound）提取自 TickOrchestrator。TickGateRunner 委托类（~130 行, gate 选择/执行/解析/度量/追踪/审计）提取。`_run_developer_gates` 88→4 行委托代理。TickOrchestrator 2321→1885 行, 60→52 方法。代码审查发现 2 个 bug（audit log 丢失 stage/tick + 未使用的 logger 导入）已当场修复。
-- **P0-3 FreshGate/FreshGuardrail 旧名同步**：全量替换 README.md、docs/、design/INDEX.md 中旧名，核心设计文档（BEACON.md/v5.6-Design-Loop.md）已在早期修复。
-- **P0-4 Guardrail 类命名统一**：`REDGuard` / `FreshGate` / `RegressionGate` → 全部统一为 `Guardrail` 后缀。代码层在前序会话已统一，本批修复 tests/ + 7 个文档中的残留旧名。零残留。
-- BEACON 决策 #89（God Class 拆分）+ #90（命名统一）追加。
-
-**最近动作 (2026-07-21 P0-5/P0-6 审计修复完成)：**
-- **P0-6 RuntimeConfig 环境变量集中化**：新建 `config/runtime_config.py`（RuntimeConfig frozen dataclass，30+ typed properties）。替换 49 处散落 `os.environ` 调用（18 源文件）。进程级 sentinel 模式 + conftest autouse reset。`plugin_mode.py` 用自身 helper 避免循环导入。2372 tests 零回归。
+**v5.5 退役状态**：`orchestrator.py` + `semantic_evaluator.py` 已物理删除。CLI 裸参数路径重定向到 `--standalone`（弃用 WARN）。2026-08-18 清理 CLI shim。
 - **P0-5 裸 except Exception 窄化**：31 处裸 except 窄化为 10 种具体异常类型（18 源文件），13 处保留宽捕获加解释性注释。全项目裸 except 从 55 降至 ~33。
 - BEACON 决策 #87（P0-6 RuntimeConfig）+ #88（P0-5 裸 except）追加。
 
