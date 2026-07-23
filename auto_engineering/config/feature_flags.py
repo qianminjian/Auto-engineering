@@ -210,7 +210,7 @@ def feature_warnings(environ: dict | None = None) -> list[str]:
     if not status.get("AE_AUDIT_LOG", {}).get("active"):
         warnings.append("审计日志未启用 (AE_AUDIT_LOG=1)")
     if not status.get("AE_OTLP_ENDPOINT", {}).get("active"):
-        warnings.append("无 observability 后端 (设置 AE_OTLP_ENDPOINT)")
+        warnings.append("OTLP 分布式追踪未启用 (export AE_OTLP_ENDPOINT=http://localhost:4317)")
     return warnings
 
 

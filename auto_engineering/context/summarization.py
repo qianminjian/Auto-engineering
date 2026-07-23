@@ -141,6 +141,8 @@ class SessionSummarizer:
         files_changed: list[str] | None = None,
         commit_hash: str = "",
         gate_results: dict | None = None,
+        critic_verdict: str = "",
+        total_majors: int = 0,
         previous_summary: SessionSummary | None = None,
     ) -> SessionSummary:
         """Generate summary from state metadata — no LLM call.
@@ -172,16 +174,28 @@ class SessionSummarizer:
             else:
                 decisions.append("all gates passed")
 
-        # Files changed
+        # Critic verdict history
+        if critic_verdict:
+            if critic_verdict == "APPROVE":
+                decisions.append(f"critic: APPROVE (total MAJORs={total_majors})")
+            elif critic_verdict == "MAJOR":
+                issues.append(f"critic: MAJOR (total MAJORs={total_majors})")
+
+        # Files changed — group by directory for readability
         for f in (files_changed or []):
             files[f] = ""
 
-        # Carry forward previous unresolved issues
+        # Carry forward previous state
         if previous_summary is not None:
             if previous_summary.unresolved_issues:
                 issues.extend(previous_summary.unresolved_issues)
             if previous_summary.major_history:
                 majors.extend(previous_summary.major_history)
+            # Accumulate file list across ticks
+            if previous_summary.files_created_modified:
+                for fpath in previous_summary.files_created_modified:
+                    if fpath not in files:
+                        files[fpath] = ""
 
         return SessionSummary(
             ticks_covered=(

@@ -418,7 +418,6 @@ class TickOrchestrator:
         # 协作组件 (无状态 / 从 store 重建)
         self._router = StageRouter()
         self._judge = ConvergenceJudge(ConvergenceConfig(max_iterations=max_rounds))
-        self._tick_gate_runner.reload(self._init_manifest)
         self._checkpoint_mgr = CheckpointManager(checkpoint_store)
         if self._guardrail is None:
             self._guardrail = GuardrailChain.default()
@@ -426,6 +425,10 @@ class TickOrchestrator:
         manifest_path = project_root / ".ae-state" / "init-manifest.json"
         if manifest_path.exists():
             self._init_manifest = json.loads(manifest_path.read_text())
+
+        # T136x: reload MUST be after manifest load — otherwise gates
+        # use stale/None manifest and fall back to Python defaults (pytest/mypy).
+        self._tick_gate_runner.reload(self._init_manifest)
 
         # design_doc: design-doc 模式每 tick 重 parse (确定性无漂移)
         if state.design_doc_path:
@@ -1493,12 +1496,29 @@ class TickOrchestrator:
                 and self._session_summarizer is not None
                 and self._session_summarizer.should_summarize(self._state.tick)):
             s = self._state
+            # Collect batch progress for richer summary
+            batch_files: list[str] = []
+            if self._batch_state is not None:
+                try:
+                    comp = self._batch_state.current_component()
+                    for b in self._batch_state.batches_for(comp):
+                        for t in b.get("tasks", []):
+                            for ft in t.get("file_targets", []):
+                                if ft not in batch_files:
+                                    batch_files.append(ft)
+                except Exception:
+                    pass
+            all_files = list(dict.fromkeys(
+                list(s.files_changed or []) + batch_files))
+
             summary = self._session_summarizer.summarize_structured(
                 tick=s.tick,
                 test_results=s.test_results or {},
-                files_changed=s.files_changed or [],
+                files_changed=all_files,
                 commit_hash=s.commit_hash or "",
                 gate_results=dict(s.gate_results or {}),
+                critic_verdict=s.critic_verdict or "",
+                total_majors=s.total_majors,
                 previous_summary=getattr(self, "_cached_session_summary", None),
             )
             injected = self._session_summarizer.inject_into_prompt(summary)

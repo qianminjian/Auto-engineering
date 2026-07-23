@@ -461,24 +461,22 @@ class AuditGate(Gate):
 
         if p0:
             msg_lines.append(f"\n  P0 ({len(p0)}):")
-            for f in p0[:5]:
+            for f in p0:  # P0 blocking — always show all
                 msg_lines.append(f"    [{f.dimension}] {f.file}:{f.line} — {f.description}")
-            if len(p0) > 5:
-                msg_lines.append(f"    ... (还有 {len(p0) - 5} 个)")
 
         if p1:
             msg_lines.append(f"\n  P1 ({len(p1)}):")
-            for f in p1[:5]:
+            for f in p1[:10]:
                 msg_lines.append(f"    [{f.dimension}] {f.file}:{f.line} — {f.description}")
-            if len(p1) > 5:
-                msg_lines.append(f"    ... (还有 {len(p1) - 5} 个)")
+            if len(p1) > 10:
+                msg_lines.append(f"    ... (还有 {len(p1) - 10} 个, 完整列表见 details.findings)")
 
         if p2:
             msg_lines.append(f"\n  P2 ({len(p2)}):")
-            for f in p2[:3]:
+            for f in p2[:5]:
                 msg_lines.append(f"    [{f.dimension}] {f.file}:{f.line} — {f.description}")
-            if len(p2) > 3:
-                msg_lines.append(f"    ... (还有 {len(p2) - 3} 个)")
+            if len(p2) > 5:
+                msg_lines.append(f"    ... (还有 {len(p2) - 5} 个, 完整列表见 details.findings)")
 
         if not active:
             msg_lines.append("\n  无审计发现")
