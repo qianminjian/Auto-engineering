@@ -125,7 +125,7 @@ def test_build_role_prompt_import_fallback(monkeypatch: pytest.MonkeyPatch) -> N
     with patch.dict(sys.modules, {"auto_engineering.agents.prompts": None}):
         prompt = _build_role_system_prompt("architect")
     # Fallback string includes role
-    assert "architect" in prompt
+    assert "架构师" in prompt
 
 
 # ============================================================

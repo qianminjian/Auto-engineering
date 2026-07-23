@@ -155,7 +155,7 @@ class DeepAuditGate(Gate):
         p1_threshold: P1 数量上限 (默认 6). P0 任何数量都 fail.
     """
 
-    name = "DeepAuditGate"
+    name = "deep_audit"
     # v5.5 §B6.5: DeepAuditGate 在 critic APPROVE 后运行, 仅 critic stage
 
     def __init__(self, p1_threshold: int = 6):

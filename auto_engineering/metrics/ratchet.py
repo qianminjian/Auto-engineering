@@ -214,7 +214,7 @@ class RatchetController:
                         pass
             return max(versions) if versions else 0
         except (OSError, subprocess.CalledProcessError):
-            _logger.debug("git tag version detection failed", exc_info=True)
+            logger.debug("git tag version detection failed", exc_info=True)
         # Fallback: count JSON config files
         existing = sorted(self._configs_dir.glob("ae-config-v*.json"))
         return len(existing)

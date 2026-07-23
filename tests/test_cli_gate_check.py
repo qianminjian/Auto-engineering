@@ -432,7 +432,7 @@ def test_cli_gate_check_crashing_gate_exits_nonzero(
     ):
         result = runner.invoke(main, ["gate-check", "--quick"])
     assert result.exit_code != 0
-    data = json.loads(result.output)
+    data = json.loads(result.stdout)
     assert data["failed"] >= 1
 
 

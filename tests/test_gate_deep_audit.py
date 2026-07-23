@@ -21,7 +21,7 @@ class TestDeepAuditGateInterface:
     def test_has_name_property(self):
         """应实现 name 属性."""
         gate = DeepAuditGate()
-        assert gate.name == "DeepAuditGate"
+        assert gate.name == "deep_audit"
 
     def test_run_returns_gateverdict(self):
         """run() 应返回 GateVerdict 实例."""
@@ -45,7 +45,7 @@ class TestDeepAuditGateEmptyRun:
         gate = DeepAuditGate()
         verdict = gate.run(Path("/tmp"))
         assert verdict.passed is True
-        assert verdict.gate_name == "DeepAuditGate"
+        assert verdict.gate_name == "deep_audit"
 
     def test_empty_context_default_threshold(self):
         """默认 P1 阈值为 6, 空输入 details 正确."""

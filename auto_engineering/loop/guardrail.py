@@ -70,7 +70,7 @@ __all__ = [
 if TYPE_CHECKING:
     from auto_engineering.engine.state import EngineState
 
-# P1-3: GuardrailResult + Guardrail ABC 已提取到 gates/guardrail_base.py
+# P1-3: GuardrailResult + Guardrail ABC 已提取到 shared/guardrail.py
 # Action / GuardrailResult / Guardrail 从共享模块导入
 # 本地仅保留 Action re-export + MAX_RETRY_PER_STAGE + 具体 Guardrail 实现
 
@@ -367,9 +367,10 @@ class FileAccessGuardrail(Guardrail):
     glob 匹配对比 files_changed 是否全部在声明范围内。白名单路径
     (.ae-state/**、_scratch/**) 自动放行。首次运行无 batch_plan → skip pass。
 
-    T109e L4: PII 内容扫描 — 检查 developer 创建的源代码文件是否包含
-    身份证号/手机号/银行卡号/API Key 等敏感信息。
+    T109e L4: 文件访问边界检查 — 检查 developer 修改的文件是否在
+    batch_plan file_targets 范围内。
 
+    PII 扫描由 G10 PIIGuardrail 统一处理，G11 不重复扫描。
     设计 ref: v5.6-Design-Loop.md appendix E §E.4。
     """
 
@@ -384,11 +385,6 @@ class FileAccessGuardrail(Guardrail):
         "pyproject.toml",
     ]
 
-    _SCAN_FILE_EXTS: ClassVar[set[str]] = {
-        ".py", ".ts", ".tsx", ".js", ".jsx", ".md", ".json", ".yaml", ".yml",
-        ".java", ".go", ".rs", ".vue", ".svelte",
-    }
-
     def __init__(self) -> None:
         import pathspec
 
@@ -396,19 +392,6 @@ class FileAccessGuardrail(Guardrail):
         self._auto_allow_spec = pathspec.PathSpec.from_lines(
             "gitignore", self._AUTO_ALLOW_PATTERNS
         )
-    @staticmethod
-    def _get_pii_redactor():
-        from auto_engineering.pii.redactor import get_pii_redactor
-        return get_pii_redactor()
-
-    def _scan_file_for_pii(self, filepath: Path) -> list[dict]:
-        """T109e: 扫描单个文件内容中的 PII."""
-        try:
-            content = filepath.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            return []
-        redactor = self._get_pii_redactor()
-        return redactor.scan_dict({"content": content})
 
     def check(
         self,
@@ -456,34 +439,8 @@ class FileAccessGuardrail(Guardrail):
                 ),
             )
 
-        # T109e L4: PII 内容扫描 — 检查创建的源代码文件
-        from auto_engineering.config.runtime_config import get_default_config
-        _cfg = get_default_config()
-        if _cfg.pii_guardrail and project_root:
-            pii_files: list[str] = []
-            for f in files_changed:
-                fpath = project_root / f
-                if not fpath.suffix or fpath.suffix not in self._SCAN_FILE_EXTS:
-                    continue
-                if not fpath.exists():
-                    continue
-                findings = self._scan_file_for_pii(fpath)
-                if findings:
-                    pii_files.append(f"{f} ({len(findings)} matches)")
-            if pii_files:
-                mode = _cfg.pii_guardrail_mode
-                if mode == "block":
-                    return GuardrailResult(
-                        action="retry",
-                        message=(
-                            f"PII detected in changed files: "
-                            f"{'; '.join(pii_files)}"
-                        ),
-                    )
-                else:
-                    _logger.warning(
-                        "G11 PII scan: %d files with PII detected: %s",
-                        len(pii_files), "; ".join(pii_files))
+        # PII 扫描由 G10 PIIGuardrail 统一处理（避免 G10+G11 双重扫描）
+        # G11 仅负责文件访问边界检查
 
         return GuardrailResult()
 

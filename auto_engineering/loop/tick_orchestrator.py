@@ -1447,7 +1447,7 @@ class TickOrchestrator:
             baseline = mc.load_baseline() or {}
             before = {k: v for k, v in baseline.items()
                       if k.startswith("M") and isinstance(v, (int, float))}
-            after = {k: v for k, v in enrichment.get("signals", {}).items()
+            after = {k: v for k, v in enrichment.get("metrics_signals", {}).items()
                      if k.startswith("M") and isinstance(v, (int, float))}
             if not before or not after:
                 return None

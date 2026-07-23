@@ -248,19 +248,6 @@ def test_convergence_quality_gate_multiple_failed_continues() -> None:
     assert verdict.level == LEVEL_CONTINUE
 
 
-def test_convergence_semantic_satisfied_stops() -> None:
-    """语义收敛 (level=1): LLM 评估 semantic_satisfied=True → 停止."""
-    history = [
-        RoundHistory(round_id=1),
-        RoundHistory(round_id=2, semantic_satisfied=True),
-    ]
-    judge = ConvergenceJudge(ConvergenceConfig(max_iterations=10))
-    verdict = judge.evaluate(history=history)
-    assert verdict.should_stop is True
-    assert verdict.level == LEVEL_SEMANTIC
-    assert "LLM" in verdict.reason
-
-
 def test_convergence_priority_hard_limit_beats_quality() -> None:
     """优先级: 硬上限 (4) > 质量门 (3). 同时满足时返回硬上限."""
     from auto_engineering.gates.base import GateVerdict

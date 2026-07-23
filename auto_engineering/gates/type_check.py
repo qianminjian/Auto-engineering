@@ -118,9 +118,7 @@ class TypeCheckGate(Gate):
             return ["bash", "-n"]
         if self.type_checker_bin:
             return [self.type_checker_bin]
-        if shutil.which(self.type_checker_bin):
-            return [self.type_checker_bin]
-        return None  # type_checker 未安装
+        return None  # type_checker 未安装; not_found 由 run_gate_command() 处理
 
     def run(self, project_root: Path) -> GateVerdict:
         """执行 type check.

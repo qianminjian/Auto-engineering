@@ -372,43 +372,14 @@ class TestAuditRegexSelfTest:
 # ==================== T31: AuditGate 语义层 (B15.3 #6) ====================
 
 
-class TestAuditGateSemanticLayer:
-    """opt-in 语义检查扩展点 — 默认 None = 纯正则 (Python 永不调 LLM, §A.1)."""
+class TestAuditGateRegexOnly:
+    """纯正则审计路径 — semantic_checker 已随 v5.5 退役移除 (BEACON #39/#40)."""
 
-    def test_default_semantic_checker_is_none(self) -> None:
-        """默认无语义检查器 → 纯正则路径."""
-        assert AuditGate().semantic_checker is None
-
-    def test_semantic_findings_merged_and_counted(self, tmp_path: Path) -> None:
-        """注入的语义检查器返回的 finding 并入结果并参与阈值判定."""
-        (tmp_path / "m.py").write_text("x = 1\n")  # 正则视角干净
-
-        def checker(rel: str, content: str) -> list[AuditFinding]:
-            return [AuditFinding(
-                severity="P1", dimension="代码逻辑虚化度",
-                file=rel, line=1, description="误导性命名(语义)")]
-
-        gate = AuditGate(semantic_checker=checker, max_p1=0)
-        verdict = gate.run(tmp_path)
-        assert verdict.passed is False
-        assert "误导性命名(语义)" in verdict.message
-
-    def test_no_checker_regex_only_clean_file_passes(self, tmp_path: Path) -> None:
-        """无语义检查器 + 正则干净文件 → passed (纯正则)."""
+    def test_regex_only_clean_file_passes(self, tmp_path: Path) -> None:
+        """正则干净文件 → passed (v5.6 默认纯正则路径)."""
         (tmp_path / "m.py").write_text("x = 1\n")
         verdict = AuditGate().run(tmp_path)
         assert verdict.passed is True
-
-    def test_faulty_semantic_checker_degrades_not_crash(self, tmp_path: Path) -> None:
-        """语义检查器抛异常 → 降级 (仅正则结果), 不让 Gate 崩溃."""
-        (tmp_path / "m.py").write_text("x = 1\n")
-
-        def bad(rel: str, content: str) -> list[AuditFinding]:
-            raise RuntimeError("semantic backend down")
-
-        gate = AuditGate(semantic_checker=bad)
-        verdict = gate.run(tmp_path)  # 不抛
-        assert verdict.passed is True  # 正则干净, 语义降级
 
 
 # ==================== T31: finding 生命周期 (B15.3 #9) ====================
