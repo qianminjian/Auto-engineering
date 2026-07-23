@@ -60,13 +60,9 @@ def run_gates(
             summary[name] = {"status": "skipped", "passed": None, "message": "no such gate"}
             skipped_count += 1
             continue
-        # 注入 files_changed 到 contracts (激活增量扫描).
-        # P1-20: 通过新 dict 赋值而非 mutate 原对象, 避免隐式副作用.
-        if files_changed:
-            gate.contracts = {
-                **(gate.contracts or {}),
-                "files_changed": files_changed,
-            }
+        # 注入 files_changed — 仅对有该属性的 Gate 直接设置, 不污染 contracts
+        if files_changed and hasattr(gate, 'files_changed'):
+            gate.files_changed = files_changed
         # 跑 Gate
         try:
             verdict = gate.run(project_root)

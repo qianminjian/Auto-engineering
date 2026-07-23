@@ -25,6 +25,7 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
+from auto_engineering.gates._tools import LANGUAGE_TOOLS, detect_project_language
 from auto_engineering.gates.base import Gate, GateVerdict, run_gate_command
 
 __all__ = ["DEFAULT_TIMEOUT", "TestGate"]
@@ -71,6 +72,8 @@ class TestGate(Gate):
         v5.0 §IL-AC-02 兼容 5 语言 test_runner:
             - pytest / vitest / go test / cargo test / bats
         """
+        if self.test_runner_bin == "vitest":
+            return ["npx", "vitest", "run"]
         if self.test_runner_bin:
             return [self.test_runner_bin]
         if shutil.which(self.test_runner_bin):
@@ -151,6 +154,13 @@ class TestGate(Gate):
         project_root = Path(project_root)
         if verdict := self._validate_project_root(project_root):
             return verdict
+
+        # 自动检测项目语言：非 Python 项目用对应测试工具
+        if self.test_runner_bin == _DEFAULT_TEST_RUNNER:
+            language = detect_project_language(project_root)
+            if language != "python":
+                _, _, default_runner = LANGUAGE_TOOLS.get(language, LANGUAGE_TOOLS["python"])
+                self.test_runner_bin = default_runner
 
         cmd = self._build_cmd(project_root)
         if not cmd:

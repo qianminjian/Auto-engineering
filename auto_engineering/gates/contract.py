@@ -175,13 +175,10 @@ class ContractGate(Gate):
             )
 
         contracts = self.contracts or {}
-        # 逐契约检查
+        # 逐契约检查 — 跳过非 dict 值（如 runner 注入的元数据字段）
         for name, contract in contracts.items():
             if not isinstance(contract, dict):
-                return GateVerdict.failed(
-                    f"contract '{name}' 必须是 dict, 实际为 {type(contract).__name__}",
-                    gate_name=self.name,
-                )
+                continue
             passed, msg = _check_contract_in_source(contract, source_files)
             if not passed:
                 return GateVerdict.failed(

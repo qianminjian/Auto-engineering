@@ -252,7 +252,7 @@ def test_check_contracts_no_source_files(tmp_path: Path) -> None:
 
 
 def test_check_contracts_non_dict_entry(tmp_path: Path) -> None:
-    """_check_contracts: contract entry is not a dict → Verdict.failed."""
+    """_check_contracts: non-dict entries are skipped (safety net for metadata fields like files_changed)."""
     src_dir = tmp_path / "src"
     src_dir.mkdir()
     (src_dir / "app.py").write_text("hello")
@@ -260,8 +260,8 @@ def test_check_contracts_non_dict_entry(tmp_path: Path) -> None:
     gate = ContractGate()
     gate.contracts = {"bad": "not a dict"}
     verdict = gate._check_contracts(tmp_path)
-    assert verdict.passed is False
-    assert "必须是 dict" in verdict.message
+    # Non-dict values are skipped, no valid contracts → all passed
+    assert verdict.passed is True
 
 
 def test_check_contracts_mixed_pass_fail(tmp_path: Path) -> None:

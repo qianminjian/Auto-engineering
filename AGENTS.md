@@ -44,113 +44,18 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 
 ## 项目信息
 
-- 名称：Auto-Engineering
-- 类型：Python CLI 应用 + Codex Plugin（`/dev-loop` slash command 形态）
-- 版本：v5.6（Tick-Based Discrete Invocation + 5 层验证 + Pre-flight Gap Analysis）+ v7.0 双驱动远期架构
-- 创建日期：2026-06-23 | 更新：2026-07-19
-- 里程碑：Phase 1-26 = 196/196 全部完成；v7.0 双驱动架构完整可用（AgentDriver 100% + StandaloneDriver 100% 收敛率等价）
+- Auto-Engineering — Python CLI + Codex Plugin，Loop Engineering 调度脚手架
+- 入口命令：`ae <subcommand>`，核心流程：`ae dev-loop --init → --tick → --result`
+- Init Engineering 是独立项目，本项目通过 `.ae-state/init-manifest.json` 消费其产物
 
-## 项目性质
+## 关键设计文档
 
-**Loop Engineering 调度脚手架**——提供 Codex Plugin 形态的 Stage-sequenced Agent loop。用户在 Codex 会话中输入 `/dev-loop "实现登录功能"`，Plugin 调度 Python Loop Engine 在子进程中运行 architect → developer → critic 三阶段 Agent 循环。
-
-**两层架构 + 双引擎共存**：
-- **Plugin 层**（`.codex-plugin/`）：Bash 委托 `ae <subcommand>`，控制流在 Python
-- **Engine 层**（`auto_engineering/`）：
-	  - **v5.6 TickOrchestrator**（主引擎）：Tick-Based Discrete Invocation（`ae dev-loop --init → --tick → --result` 文件桥接协议），Python 每次 tick 独立进程（读 SQLite → 验证 → Guardrail → Gate → ConvergenceJudge → Checkpoint → 输出 action JSON → 退出），Agent 通过反复调用 `--tick` 驱动循环。Python 循环引擎永不调 LLM
-	  - **v5.5 Orchestrator**（退役过渡期）：`ae dev-loop "需求"` 裸参数路径，连续 while 循环直调 LLM（2026-07-19 启动 30 天退役过渡期，`--standalone` 替代，2026-08-18 物理删除）
-	  - **v7.0 双驱动架构**：单引擎(TickOrchestrator)+双驱动(Agent/Standalone) ports&adapters，Phase 11 全部完成（V7-1~V7-8 全量落地），AgentDriver 100% + StandaloneDriver 100% 收敛率等价
-
-**Init Engineering 是独立项目**——本项目通过 Init-Loop 接口契约消费 Init 产出的 `.ae-state/init-manifest.json`。Init 项目不在本仓库范围。
-
-**核心依赖**：`anthropic`、`click`、`pydantic`、`asyncio`
-
-## 架构
-
-```
-Plugin 层 (.codex-plugin/)
-  commands/*.md  ──→  Bash 委托 ae <subcommand>
-  hooks/*.sh     ──→  事件响应 (pre-tool/post-edit/stop/session-start/on-pr)
-  skills/SKILL.md ──→  告诉 Agent 何时使用 ae 命令
-
-Engine 层 (auto_engineering/)
-  loop/
-    tick_orchestrator.py — v5.6 Tick 主引擎 (1683 行, 10 after-handler + ActionBuilder + TickGateRunner)
-    standalone_driver.py — v7.0 StandaloneDriver (双驱动 B 端, 自带 key 调 LLM)
-    stage_router.py      — T1-T22 转换表 + MAJOR 计数 + refine_allowed
-    guardrail.py         — 10 Guardrail (3 态: pass/block/retry, 含 REDGuardrail/FreshGuardrail/RegressionGuardrail/PIIGuardrail)
-    convergence.py       — 4 级收敛判定 (hard/quality/stagnant/semantic) + done verdict
-    plan.py              — Task DAG + get_tasks_by_stage
-    task_factory.py      — _apply_outcome_to_state + _tasks_from_batch_plan
-    init_contract.py     — Init-Loop 接口契约 (IL-AC-01~08)
-    refine.py            — plan_refine 回路 (B6.10 归一)
-    debug_tracer.py      — dev-loop 调度轨迹诊断 (tick-{N}.json/errors.jsonl/trace.json)
-    checkpoint/          — SQLite checkpoint 持久化
-  agents/
-    base.py              — BaseAgent + tool_use loop + double-layer parse
-    authz.py             — AUTHZ_MATRIX 10×3 (role-based tool authorization)
-    prompts.py           — v5.0 system prompts (architect/developer/critic, legacy)
-  context/
-    offloading.py        — Stage context offloading (每 stage 完成 context 卸载到文件)
-  pii/
-    redactor.py          — Prompt PII redaction (正则扫描+脱敏)
-    rules.py             — PIIDetectionRule dataclass (5 类规则)
-    guardrail.py         — PII Guardrail G10 (post-agent 全量文件扫描)
-  metrics/               — AI Coding 度量与自进化体系 (Phase 20-21)
-  observability/        — 追踪与审计日志 (setup_tracing + AuditLogger)
-  prompts/
-    registry.py          — PromptRegistry (B12 中央提示词管理, sha256 版本锁)
-    roles/               — 9 角色 prompt (architect/developer/critic/verifier/audit/...)
-    fragments/           — 8 共享片段
-  gates/
-    base.py              — Gate ABC + GateVerdict + DEFAULT_GATES (7 道)
-    safety/lint/type_check/audit/contract/test/build.py
-    commit_msg_gate.py   — Angular 格式校验 (可选)
-    deep_audit.py        — 3-agent 编排 deep audit
-    guardrail_base.py   — GuardrailGate ABC (G10 PIIGuardrail 基类)
-  cli/
-    doctor.py            — 环境预检 (Python/uv/git/sqlite3/API_KEY/.ae-state/init-manifest)
-    gate_check.py        — --all (5 道) / --quick (3 道)
-    agent.py             — 单 Agent 调用 (architect/developer/critic)
-    dev_loop.py          — Tick CLI 入口 (--init/--tick/--result/--status/--resume/--design-doc) + v5.5 裸参数路径
-    status.py            — JSON 输出 loop 进度
-    checkpoint.py        — SQLite checkpoint list/show/delete/resume
-    progress.py          — 读 progress_tree_json → display/summary
-  engine/
-    state.py             — EngineState dataclass (36 字段, v5.6 扩展)
-    batch_state.py       — BatchState 跨 tick 进度管理
-    design_doc.py        — 设计文档解析 (markdown-it-py)
-    progress_tree.py     — ProgressTree 构建/同步/聚合
-    gap_analysis.py      — Pre-flight gap scan (B10.2)
-  tools/                 — file/bash/git/test tools + sandbox + pr_backend.py
-  providers/             — LLMProvider Protocol + OpenAI adapter + factory
-  config/
-    runtime_config.py   — RuntimeConfig frozen dataclass (P0-6, 30+ typed properties, 集中式 env var 访问)
-    feature_flags.py    — FeatureManifest SSOT (22 项 FeatureFlag)
-  utils/                 — plugin_mode 检测等工具函数
-  runtime/               — AgentRuntime + CancellationToken + TaskContext
-```
-
-**参考框架：**
-
-| 框架 | 路径 | 核心文件 | 借鉴内容 |
-|------|------|---------|---------|
-| LangGraph | `$AE_REFS_DIR/langgraph/` | `pregel/_loop.py`, `pregel/_algo.py` | tick/after_tick 控制流 + apply_writes packet |
-| AutoGen | `$AE_REFS_DIR/autogen/` | `_single_threaded_agent_runtime.py` | AgentRuntime 懒实例化 + role 路由 |
-| CrewAI | `$AE_REFS_DIR/crewai/` | `guardrail.py` | Guardrail 2 态 + pre/post 时机 |
-
-## 设计文档
-
-| 文档 | 内容 | 读取条件 |
-|------|------|---------|
-| `design/BEACON.md` | 设计基线（目标/范围/决策/当前状态） | 任何设计讨论时先读 |
-| `design/INDEX.md` | 文档索引（含合并日志/归档清单） | 检索文档时 |
-| `design/v5.6-Design-Loop.md` | v5.6 唯一设计文档（自包含）：Tick-Based 协议 + 5 层验证 + 附录 B(Init→Loop) + 附录 C(v7.0 双驱动) | 开发 loop/gates/agents/cli/commands 时 |
-| `docs/EARS-v5.0.md` | v5.0 验收 15 AC + 5 IL-AC | 验收/审计时 |
-| `docs/api-reference.md` | v5.6 API 接口文档 + 5 代码示例 | 查阅 API 时 |
-| `docs/USER_GUIDE.md` | v5.6 用户指南（含安装/入口路径/命令参考/工作流示例/部署配置/故障排查） | 新用户上手/部署/使用参考 |
-| `docs/PRODUCT-TRAINING-GUIDE.md` | 产品培训指南 | 培训/演示 |
-| `design/IMPLEMENTATION-TRACKER.md` | v5.6 实施跟踪表 (Phase 1-26, 196/196 任务) | 任何开发/进度汇报时 |
+| 文档 | 用途 |
+|------|------|
+| `design/BEACON.md` | 设计基线，任何设计讨论前先读 |
+| `design/v5.6-Design-Loop.md` | Tick 协议 + 验证层完整规格 |
+| `design/IMPLEMENTATION-TRACKER.md` | 实施进度跟踪 |
+| `skills/auto-engineering/SKILL.md` | dev-loop Agent 执行协议 |
 
 ## 核心命令
 
@@ -207,86 +112,7 @@ python3 scripts/atdo_smoke.py       # Runtime smoke (7 维度)
 
 ---
 
-## /ae:dev-loop Agent Tool 执行模式（v5.1, 2026-07-04 生产反馈修正）
-
-**关键修正**：2026-07-04 生产使用报告（`_scratch/reports/2026-07-04-dev-loop-execution-analysis.md`）显示 dev-loop 原有的 Python 子进程 (`ae dev-loop "..."`) 模式在 Codex agent 内**完全失效**——子进程无法获取 agent 的 ANTHROPIC_AUTH_TOKEN，导致 architect/critic LLM 调用永远失败。
-
-**v5.1 起 `ae dev-loop` CLI 子进程废弃**，改为 **Agent tool 直接执行模式**：
-
-### 执行协议（Agents 必须遵守）
-
-当用户调用 `/ae:dev-loop <requirement>` 时：
-
-1. **Stage 1 — Architect (Plan Agent)**
-   - **Spawn a Plan agent** via Agent tool（给定 `requirement` + `commands/dev-loop.md` 完整 spec 作为 prompt）
-   - Architect 回 output: `batch_plan` (TaskCreate list, ≤5 files/batch), `file_list`, `contracts`
-   - **禁止跳过**：Plan agent 必须产出结构化 JSON，不能只写 3 句标题
-
-2. **Stage 2 — Developer (Codex Agent 自己）**
-   - **逐个 TaskCreate 执行 TDD（Red→Green→Refactor）**
-   - 每个 unit: RED (write failing test) → GREEN (minimal impl) → REFACTOR (clean > still green) → git commit
-   - **完成所有 TaskCreate 后**：跑全部 7 Gate **并行** (`safety` + `lint` + `type_check` + `audit` + `contract` + `test` + `build`)
-   - 记录：files_changed, commit_hash, test_results
-
-3. **Stage 3 — Critic (code-reviewer Agent）**
-   - **Spawn a code-reviewer agent** via Agent tool（给定 `files_changed` + `test_results` + `gate_results`）
-   - Critic 回 output: `verdict` (APPROVE/MAJOR), `findings` (file:line + severity + issue + suggested_fix)
-   - **MAJOR criteria**: ≥1 P0 或 ≥3 P1
-   - **if MAJOR**: agent 回到 Stage 2，根据 `findings` + `suggested_fix` 修复问题
-
-4. **Stage 4 — Design Doc Sync（Critic APPROVE 后、收敛判定前，强制执行）**
-   - **对照 `design/` 文档检查本轮所有改动**：Agent 已知道本轮改了哪些文件、做了什么决策
-   - **代码与设计文档不一致** → 更新设计文档（`design/v5.6-Design-Loop.md` 或 `design/BEACON.md`）
-   - **新增了设计文档未覆盖的决策** → 补充到 `design/BEACON.md` 决策表
-   - **不接受"延后同步"**：文档未同步视为 Stage 4 未完成，不得进入收敛判定
-   - **判断标准**：下一轮 dev-loop 的 Agent 能从设计文档中准确理解当前代码的真实架构
-
-5. **Convergence while loop**（参考 `commands/dev-loop.md` 完整 spec）
-   - max_rounds = 3 (Self-Refine 最优)
-   - consecutive_majors ≥ 3 → HARD_LIMIT stop
-   - APPROVE + 所有 gate PASSED → 成功退出
-
-### 关键原则
-
-- ❌ 禁止只用串行 Read→Write→Edit→Commit 替代三阶段（这是 Interact 模式，不是 dev-loop）
-- ✅ 必须 spawn Plan agent 产出完整 batch_plan（不是"3 行 TaskCreate 标题"）
-- ✅ 必须 spawn code-reviewer agent 产出 structured findings（file:line + severity）
-- ✅ 每个 TDD 循环遵守 Red→Green→Refactor 顺序
-- ✅ Gate 必须并行跑（用 `asyncio.gather` 或至少跑 safety/lint/test 3 个）
-- ✅ MAJOR 反馈链（critic → developer → redo）是 Self-Refine 核心，不能被 skip
-- ✅ Stage 4 Design Doc Sync 是强制步骤：文档未同步不得进入收敛判定，不接受"延后同步"
-- ❌ **静默降级禁令**：当 Command/Skill 的 Bash 块或 Agent tool spawn 失败时，
-  Agent **不得**静默接管并手工模拟三阶段。必须向用户报告失败原因 + 提供替代方案。
-- ❌ **失败不可见禁令**：用户有权知道 dev-loop 是否真的在运行。任何 Bash 块失败、
-  Agent tool 不可用、plan/critic agent spawn 失败——必须**显式告知用户**，
-  不得在后台无声降级为手工编码模式。
-
-### Agent 行为规则（2026-07-04 生产反馈修正）
-
-1. **Bash 块失败处理**：当 `commands/*.md` 中的 Bash 块返回非零退出码时,
-   Agent 必须 read 输出中的错误信息并报告用户。Agent 不得直接跳过 Bash
-   块进入下一步。
-
-2. **Agent tool 不可用处理**：当 Plan agent 或 code-reviewer agent 不可用时,
-   Agent 必须告知用户："dev-loop 需要 Plan agent（architect 阶段）和
-   code-reviewer agent（critic 阶段）。当前不可用，是否继续手工模式？"
-   然后等待用户确认。
-
-3. **进度透明**：每个 dev-loop 阶段开始前，输出 `[Stage N/M] Running <stage>...`
-   让用户明确知道 Agent 在遵循 dev-loop 工作流而非手工编码。
-
-4. **不可恢复失败处理**：当连续 2 次 agent spawn 或 Bash 块失败时,
-   dev-loop 应停止并告知用户："dev-loop 无法继续，请检查 auto-engineering
-   安装状态或手动完成剩余工作。" 不得无限重试或静默切换模式。
-
 ---
-
-## 当前测试状态 (2026-07-19)
-
-- **全量**: ~2587 tests, ~60s (16G 内存约束, `--no-cov --timeout=120`)
-- **v5.6 Tick 引擎**: TickOrchestrator 单测 52 + StageRouter 43 + BatchState 21 + ProgressTree 20 + 集成测试
-- **契约测试**: action/result schema 21 tests + init_contract round-trip + Plugin 验收 20 场景
-- **S6.6 Agent 运行时**: 2 tests (需 API key, 无 key 时自动 skip)
 
 ## 管理约束
 

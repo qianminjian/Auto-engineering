@@ -18,6 +18,7 @@ import logging
 import shutil
 from pathlib import Path
 
+from auto_engineering.gates._tools import LANGUAGE_TOOLS, detect_project_language
 from auto_engineering.gates.base import Gate, GateVerdict, run_gate_command
 
 __all__ = ["TypeCheckGate"]
@@ -132,7 +133,14 @@ class TypeCheckGate(Gate):
         if verdict := self._validate_project_root(project_root):
             return verdict
 
-        # 检查 type_check 配置 (保守: mypy 兼容检测)
+        # 自动检测项目语言：非 Python 项目用对应工具
+        if self.type_checker_bin == _DEFAULT_TYPE_CHECKER:
+            language = detect_project_language(project_root)
+            if language != "python":
+                _, default_checker, _ = LANGUAGE_TOOLS.get(language, LANGUAGE_TOOLS["python"])
+                self.type_checker_bin = default_checker
+
+        # 检查 type_check 配置
         if not self._has_type_config(project_root):
             if self.require_config:
                 return GateVerdict.failed(

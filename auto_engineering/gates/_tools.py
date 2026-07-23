@@ -5,9 +5,10 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
-__all__ = ["LANGUAGE_TOOLS", "get_gate_tools_from_manifest"]
+__all__ = ["LANGUAGE_TOOLS", "detect_project_language", "get_gate_tools_from_manifest"]
 
 LANGUAGE_TOOLS: dict[str, tuple[str, str, str]] = {
     "python": ("ruff", "pyright", "pytest"),
@@ -16,6 +17,27 @@ LANGUAGE_TOOLS: dict[str, tuple[str, str, str]] = {
     "rust": ("clippy", "cargo check", "cargo test"),
     "bash": ("shellcheck", "bash -n", "bats"),
 }
+
+# 项目语言检测标记文件（按优先级排列）
+_LANGUAGE_MARKERS: list[tuple[str, str]] = [
+    ("typescript", "package.json"),
+    ("rust", "Cargo.toml"),
+    ("go", "go.mod"),
+    ("python", "pyproject.toml"),
+    ("python", "setup.py"),
+]
+
+
+def detect_project_language(project_root: Path) -> str:
+    """根据项目根目录的标记文件检测语言.
+
+    检测顺序: TypeScript → Rust → Go → Python.
+    默认回退 python.
+    """
+    for language, marker in _LANGUAGE_MARKERS:
+        if (project_root / marker).exists():
+            return language
+    return "python"
 
 
 def _default_tools_for(language: str) -> tuple[str, str, str]:
