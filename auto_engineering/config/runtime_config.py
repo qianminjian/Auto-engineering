@@ -72,11 +72,6 @@ class RuntimeConfig:
         return self.get("AE_TOKEN_TRACKING", "").strip() == "1"
 
     @property
-    def token_source(self) -> str:
-        """AE_TOKEN_SOURCE — provider or transcript."""
-        return self.get("AE_TOKEN_SOURCE", "provider")
-
-    @property
     def strict_red(self) -> bool:
         """AE_STRICT_RED — strict TDD REDGuardrail test-first enforcement."""
         return self.get("AE_STRICT_RED", "").strip() == "1"

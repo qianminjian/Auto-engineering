@@ -45,7 +45,8 @@ class TestAuditLoggerWiring:
             "T77 NOT WIRED: AnthropicProvider has no _audit_logger attribute"
         )
 
-    def test_create_message_calls_audit_logger(self, tmp_path: Path) -> None:
+    @pytest.mark.asyncio
+    async def test_create_message_calls_audit_logger(self, tmp_path: Path) -> None:
         """create_message() MUST call audit_logger.log_call() with request/response."""
         from auto_engineering.llm.anthropic_provider import AnthropicProvider
         from auto_engineering.llm.anthropic_provider import LLMResponse, LLMUsage
@@ -63,7 +64,7 @@ class TestAuditLoggerWiring:
         mock_client.messages.create.return_value = mock_message
 
         provider = AnthropicProvider(client=mock_client, audit_logger=audit_logger)
-        provider.create_message(
+        await provider.create_message(
             model="claude-sonnet-4-6",
             max_tokens=100,
             system="You are helpful.",
@@ -85,7 +86,8 @@ class TestAuditLoggerWiring:
         assert "response" in entry
         assert entry["request"]["messages_count"] == 1
 
-    def test_create_message_no_audit_when_logger_not_set(self) -> None:
+    @pytest.mark.asyncio
+    async def test_create_message_no_audit_when_logger_not_set(self) -> None:
         """When audit_logger is None, create_message() should not throw."""
         from auto_engineering.llm.anthropic_provider import AnthropicProvider
         from auto_engineering.llm.anthropic_provider import LLMResponse, LLMUsage
@@ -100,7 +102,7 @@ class TestAuditLoggerWiring:
 
         provider = AnthropicProvider(client=mock_client)
         # Should not throw
-        result = provider.create_message(
+        result = await provider.create_message(
             model="claude-sonnet-4-6",
             max_tokens=100,
             system="You are helpful.",
@@ -108,7 +110,8 @@ class TestAuditLoggerWiring:
         )
         assert result is not None
 
-    def test_audit_log_entry_contains_timing(self, tmp_path: Path) -> None:
+    @pytest.mark.asyncio
+    async def test_audit_log_entry_contains_timing(self, tmp_path: Path) -> None:
         """Audit log entry MUST contain duration_ms and token counts."""
         from auto_engineering.llm.anthropic_provider import AnthropicProvider
 
@@ -122,7 +125,7 @@ class TestAuditLoggerWiring:
         mock_client.messages.create.return_value = mock_message
 
         provider = AnthropicProvider(client=mock_client, audit_logger=audit_logger)
-        provider.create_message(
+        await provider.create_message(
             model="claude-sonnet-4-6",
             max_tokens=200,
             system="You are helpful.",
@@ -141,7 +144,8 @@ class TestAuditLoggerWiring:
 class TestAuditLoggerE2E:
     """E2E: audit log persists correctly across multiple calls."""
 
-    def test_multiple_calls_append_to_same_log(self, tmp_path: Path) -> None:
+    @pytest.mark.asyncio
+    async def test_multiple_calls_append_to_same_log(self, tmp_path: Path) -> None:
         """Multiple create_message calls append to the same JSONL file."""
         from auto_engineering.llm.anthropic_provider import AnthropicProvider
 
@@ -157,7 +161,7 @@ class TestAuditLoggerE2E:
         provider = AnthropicProvider(client=mock_client, audit_logger=audit_logger)
 
         for i in range(3):
-            provider.create_message(
+            await provider.create_message(
                 model="claude-sonnet-4-6",
                 max_tokens=100,
                 system="You are helpful.",

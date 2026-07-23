@@ -33,6 +33,10 @@ class ErrorCode(Enum):
     AGENT_REGISTRATION_ERROR = "AGENT_REGISTRATION_ERROR"  # AgentRuntime → agent_type 未注册
     # ── Configuration ──
     CONFIG_MISSING_API_KEY = "CONFIG_MISSING_API_KEY"  # cli/__init__.py: CLI 模式缺 API key
+    CONFIG_INVALID_PROVIDER = "CONFIG_INVALID_PROVIDER"  # providers/factory.py: 无法确定 LLM provider
+
+    # ── PII ──
+    PII_DETECTED = "PII_DETECTED"  # pii/redactor.py: block_mode 下检测到 CRITICAL PII
 
     # ── Budget ──
     BUDGET_EXCEEDED = "BUDGET_EXCEEDED"  # TokenTracker.add() → 超 max_tokens
@@ -61,6 +65,8 @@ _SUGGESTIONS: dict[str, str] = {
     "TASK_CANCELLED": "任务已被中断，重新提交即可",
     "AGENT_REGISTRATION_ERROR": "确认 Agent role 已在 AgentRuntime 中注册",
     "CONFIG_MISSING_API_KEY": "设置 ANTHROPIC_API_KEY 环境变量后重试",
+    "CONFIG_INVALID_PROVIDER": "设置 OLLAMA_HOST 或 ANTHROPIC_API_KEY 等环境变量，或显式传 provider 参数",
+    "PII_DETECTED": "检查输入内容中的敏感信息，脱敏后重试",
     "BUDGET_EXCEEDED": "增大 --max-tokens 参数或缩小需求范围",
     "GATE_EXECUTION_ERROR": "检查 Gate 工具链配置 (init-manifest.json) 和项目依赖是否完整",
 }

@@ -17,7 +17,7 @@ import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from auto_engineering.engine.guardrail_types import (
+from auto_engineering.shared.guardrail import (
     Guardrail,
     GuardrailResult,
 )
@@ -182,7 +182,7 @@ class REDGuardrail(Guardrail):
     **先于实现 commit** 的独立测试 commit 且当时 FAIL:
         1. `git log impl -- test_files` 定位先于实现的测试 commit (排除 impl 自身)
         2. merge-base --is-ancestor 确认测试 commit 是实现 commit 祖先
-        3. 默认信任 red_evidence (red_commit 匹配); _STRICT_RED 则 checkout 重跑
+        3. 默认信任 red_evidence (red_commit 匹配); strict_red 则 checkout 重跑
 
     纯配置/文档 task (无测试文件) 豁免. 无运行时句柄 (batch_state/_plan) 或无
     impl commit_hash → pass (无对象可校验). 失败 action=retry (补证据后重试).
@@ -193,6 +193,16 @@ class REDGuardrail(Guardrail):
     name = "REDGuardrail"
     timing = "post"
     applies_to_stages = ("developer",)
+
+    def __init__(self, strict_red: bool | None = None) -> None:
+        super().__init__()
+        self._strict_red = strict_red
+
+    def _resolve_strict_red(self) -> bool:
+        """Resolve strict RED mode: explicit param → env var fallback."""
+        if self._strict_red is not None:
+            return self._strict_red
+        return _get_strict_red()
 
     def check(
         self,
@@ -242,7 +252,7 @@ class REDGuardrail(Guardrail):
             ev = _find_evidence(red_evidence, task_id)
             if ev and ev.get("red_commit") == test_commit:
                 continue  # 信任 developer 记录的 RED 证据
-            if _get_strict_red():
+            if self._resolve_strict_red():
                 test_id = ev.get("test_id") if ev else None
                 if _run_test_at_commit(test_commit, test_id, root) != "FAIL":
                     return GuardrailResult(

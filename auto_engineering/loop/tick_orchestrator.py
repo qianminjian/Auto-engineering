@@ -32,6 +32,8 @@ from typing import Any, Protocol, runtime_checkable
 from uuid import uuid4
 
 from auto_engineering.config.constants import DEFAULT_P1_THRESHOLD, _SPAWN_CONFIG
+from auto_engineering.context.offloading import StageContextOffload
+from auto_engineering.context.summarization import SessionSummary
 from auto_engineering.config.runtime_config import RuntimeConfig, get_default_config
 from auto_engineering.loop.escalation_handler import (
     EscalationContext,
@@ -60,7 +62,7 @@ from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
 from auto_engineering.loop.convergence import ConvergenceConfig, ConvergenceJudge, RoundHistory
 from auto_engineering.loop.debug_tracer import DebugTracer, now_iso
 from auto_engineering.loop.guardrail import GuardrailChain
-from auto_engineering.loop.plan import Plan, TaskDAG
+from auto_engineering.loop.plan import Plan
 from auto_engineering.loop.refine import build_refine_request
 from auto_engineering.loop.stage_router import (
     StageRouter,
@@ -77,8 +79,12 @@ from auto_engineering.observability.audit_log import AuditLogger
 from auto_engineering.observability.tracing import _TracerLike
 from auto_engineering.pii.redactor import PIIRedactor
 from auto_engineering.prompts.registry import default_registry
-# Gate runner type: (gate_names, project_root) → {name: GateVerdict}
-GateRunner = Callable[..., dict]
+class _GateRunner(Protocol):
+    """Typed protocol for gate runner (replaces Callable[..., dict])."""
+    def __call__(self, gate_names: tuple[str, ...], project_root: Path,
+                 files_changed: list[str] | None = None) -> dict[str, dict]: ...
+
+GateRunner = _GateRunner  # backward-compat alias
 
 _MAX_PER_SOURCE = 2
 _MAX_GLOBAL = 4
@@ -112,7 +118,7 @@ class TickContextOffloader(Protocol):
 
     def offload(self, stage: str, messages: list[dict], summary: str,
                 key_decisions: list[str], files_changed: list[str],
-                gate_results: dict) -> Any: ...
+                gate_results: dict) -> StageContextOffload: ...
 
 
 @runtime_checkable
@@ -128,10 +134,10 @@ class TickSessionSummarizer(Protocol):
     def summarize_structured(
         self, *, tick: int, test_results: dict | None = None,
         files_changed: list[str] | None = None, commit_hash: str = "",
-        gate_results: dict | None = None, previous_summary: Any | None = None,
-    ) -> Any: ...
+        gate_results: dict | None = None, previous_summary: SessionSummary | None = None,
+    ) -> SessionSummary: ...
 
-    def inject_into_prompt(self, summary: Any) -> str: ...
+    def inject_into_prompt(self, summary: SessionSummary) -> str: ...
 
 
 @runtime_checkable
@@ -201,7 +207,6 @@ class TickOrchestrator:
         self._init_manifest: dict | None = None
         self._design_doc: DesignDoc | None = None
         self._batch_state: BatchState | None = None
-        self._task_dag: TaskDAG | None = None  # P0-3: 拓扑排序 DAG
         self._progress_tree: ProgressTree | None = None
         self._verification_layers: VerificationLayers | None = None
         self._round_history: list = []  # T1: 在 TickOrchestrator, 非 EngineState 字段
@@ -213,7 +218,7 @@ class TickOrchestrator:
         self._t_guard_sub_ms: float = 0.0
         # DebugTracer (可选, --debug 或 AE_DEBUG=1 时激活)
         self._debug_tracer: DebugTracer | None = None
-        self._last_guardrail: dict | None = None
+        self._last_guardrail: dict | None = None  # FUTURE: 并行 tick 时需 asyncio.Lock
         # T64: Stage Checkpoint Gate (DecisionGate 形态 3)
         self._pause_at_stages: set[str] = set()
         self._passed_checkpoints: set[str] = set()
@@ -902,11 +907,6 @@ class TickOrchestrator:
 
         self._plan = tasks_from_batch_plan(batches, self._state.requirement)
 
-        # P0-8: TaskDAG removed — depends_on is always [] at task level.
-        # Batch ordering is controlled implicitly by batch_plan ordering.
-        # Topological sort was built but its output was never consumed.
-        # If DAG-based scheduling is needed, re-add with wire to BatchState.next_batch().
-
         if self._verification_layers is None:
             self._verification_layers = determine_verification_layers(
                 self._design_doc, batches)
@@ -984,9 +984,9 @@ class TickOrchestrator:
 
         Note: messages are NOT available at the TickOrchestrator level —
         the orchestrator only sees action/result JSON, not Agent-level
-        conversation history. load_full_context() will return [] by design.
-        Offloading is summary-only; full context backtracking would require
-        the Agent to include message history in its result file.
+        conversation history. Offloading is summary-only; full context
+        backtracking would require the Agent to include message history
+        in its result file.
 
         (P1-2 fix: documented limitation instead of pretending full_context works.)
         """
@@ -1544,7 +1544,7 @@ class TickOrchestrator:
                                 if ft not in batch_files:
                                     batch_files.append(ft)
                 except Exception:
-                    pass
+                    _logger.debug("batch_files 收集跳过", exc_info=True)
             all_files = list(dict.fromkeys(
                 list(s.files_changed or []) + batch_files))
 

@@ -210,6 +210,11 @@ class SessionSummarizer:
             generated_at_tick=tick,
         )
 
+    def close(self) -> None:
+        """Release underlying LLM provider resources if any."""
+        if self._llm is not None and hasattr(self._llm, "close"):
+            self._llm.close()
+
     def inject_into_prompt(self, summary: SessionSummary) -> str:
         """Format *summary* as a developer system-prompt prefix."""
         lines = [
@@ -308,7 +313,10 @@ def _parse_summary_response(text: str) -> tuple[list[str], dict[str, str], list[
         elif line.startswith("ISSUE:"):
             issues.append(line.removeprefix("ISSUE:").strip())
         else:
-            # Non-prefixed lines are appended to the last decision or issue
-            pass
+            # Non-prefixed line — append as continuation to last decision
+            if decisions:
+                decisions[-1]["raw"] += " " + line.strip()
+            elif issues:
+                issues[-1] = issues[-1] + " " + line.strip()
 
     return decisions, files, majors, issues

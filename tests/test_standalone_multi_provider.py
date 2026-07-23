@@ -48,11 +48,12 @@ class TestProviderFactory:
         assert isinstance(provider, QwenProvider)
 
     def test_factory_raises_on_unknown_provider(self) -> None:
-        """create_provider with unknown name raises ValueError."""
+        """create_provider with unknown name raises AEError."""
         from auto_engineering.providers.factory import create_provider
+        from auto_engineering.errors import AEError
 
         with patch.dict(os.environ, {}, clear=True):
-            with pytest.raises(ValueError, match="Unknown provider"):
+            with pytest.raises(AEError, match="Unknown provider"):
                 create_provider("unknown_vendor")
 
     def test_factory_auto_detect_ollama_from_env(self) -> None:

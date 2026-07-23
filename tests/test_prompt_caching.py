@@ -27,9 +27,10 @@ class TestPromptCaching:
         from auto_engineering.llm.anthropic_provider import AnthropicProvider
         return AnthropicProvider(client=mock_client, max_retries=0)
 
-    def test_injects_cache_control_on_last_system_block(self, provider, mock_client) -> None:
+    @pytest.mark.asyncio
+    async def test_injects_cache_control_on_last_system_block(self, provider, mock_client) -> None:
         """System string → content blocks with cache_control on last block."""
-        provider.create_message(
+        await provider.create_message(
             model="claude-sonnet-4-6",
             max_tokens=1024,
             system="You are a helpful assistant.",
@@ -42,13 +43,14 @@ class TestPromptCaching:
         last_block = system_blocks[-1]
         assert last_block.get("cache_control") == {"type": "ephemeral"}
 
-    def test_injects_cache_control_on_last_tool(self, provider, mock_client) -> None:
+    @pytest.mark.asyncio
+    async def test_injects_cache_control_on_last_tool(self, provider, mock_client) -> None:
         """Last tool in tools array gets cache_control."""
         tools = [
             {"name": "bash", "description": "Run command", "input_schema": {"type": "object", "properties": {}}},
             {"name": "edit", "description": "Edit file", "input_schema": {"type": "object", "properties": {}}},
         ]
-        provider.create_message(
+        await provider.create_message(
             model="claude-sonnet-4-6",
             max_tokens=1024,
             system="You are a helpful assistant.",
@@ -61,9 +63,10 @@ class TestPromptCaching:
         last_tool = tools_sent[-1]
         assert last_tool.get("cache_control") == {"type": "ephemeral"}
 
-    def test_no_cache_control_when_no_tools(self, provider, mock_client) -> None:
+    @pytest.mark.asyncio
+    async def test_no_cache_control_when_no_tools(self, provider, mock_client) -> None:
         """No tools → no tools injection needed (only system block gets it)."""
-        provider.create_message(
+        await provider.create_message(
             model="claude-sonnet-4-6",
             max_tokens=1024,
             system="You are a helpful assistant.",
@@ -73,13 +76,14 @@ class TestPromptCaching:
         call_kwargs = mock_client.messages.create.call_args.kwargs
         assert "tools" not in call_kwargs or call_kwargs["tools"] is None
 
-    def test_system_already_list_preserved_with_cache_control(self, provider, mock_client) -> None:
+    @pytest.mark.asyncio
+    async def test_system_already_list_preserved_with_cache_control(self, provider, mock_client) -> None:
         """If system is already a list of blocks, cache_control added to last."""
         system_blocks = [
             {"type": "text", "text": "You are an architect."},
             {"type": "text", "text": "Additional guidelines..."},
         ]
-        provider.create_message(
+        await provider.create_message(
             model="claude-sonnet-4-6",
             max_tokens=1024,
             system=system_blocks,
@@ -92,14 +96,15 @@ class TestPromptCaching:
         # First block should NOT have cache_control (only last)
         assert "cache_control" not in sent_system[0]
 
-    def test_does_not_modify_original_system_list(self, provider, mock_client) -> None:
+    @pytest.mark.asyncio
+    async def test_does_not_modify_original_system_list(self, provider, mock_client) -> None:
         """Original system list is not mutated (defensive copy)."""
         system_blocks = [
             {"type": "text", "text": "You are an architect."},
             {"type": "text", "text": "Guidelines."},
         ]
         original = [dict(b) for b in system_blocks]
-        provider.create_message(
+        await provider.create_message(
             model="claude-sonnet-4-6",
             max_tokens=1024,
             system=system_blocks,
@@ -107,10 +112,11 @@ class TestPromptCaching:
         )
         assert system_blocks == original
 
-    def test_cache_control_disabled_by_env_var(self, provider, mock_client, monkeypatch) -> None:
+    @pytest.mark.asyncio
+    async def test_cache_control_disabled_by_env_var(self, provider, mock_client, monkeypatch) -> None:
         """AE_CACHE_CONTROL=0 disables cache_control injection."""
         monkeypatch.setenv("AE_CACHE_CONTROL", "0")
-        provider.create_message(
+        await provider.create_message(
             model="claude-sonnet-4-6",
             max_tokens=1024,
             system="You are a helpful assistant.",

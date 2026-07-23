@@ -63,8 +63,6 @@ FEATURE_MANIFEST: list[FeatureFlag] = [
                 "observability", "both", "export AE_OTLP_ENDPOINT=http://localhost:4317"),
     FeatureFlag("AE_TOKEN_TRACKING", "逐 Tick Token JSONL 采集 (M5)",
                 "observability", "both", "AE_TOKEN_TRACKING=1"),
-    FeatureFlag("AE_TOKEN_SOURCE", "Token 数据源选择 (provider/transcript)",
-                "observability", "both", "AE_TOKEN_SOURCE=transcript"),
 
     # ── debugging ──
     FeatureFlag("AE_DEBUG", "调试模式 — DebugTracer 诊断轨迹 + 详细日志",

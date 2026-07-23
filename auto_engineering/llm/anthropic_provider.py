@@ -10,7 +10,9 @@ v3.1 扩展 (v2.0 dev-loop 真接):
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import time as _time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -224,7 +226,7 @@ class AnthropicProvider:
             result[-1]["cache_control"] = {"type": "ephemeral"}
         return result
 
-    def create_message(
+    async def create_message(
         self,
         system: str,
         messages: list[dict],
@@ -232,7 +234,7 @@ class AnthropicProvider:
         model: str = "",
         max_tokens: int = 4096,
     ) -> LLMResponse:
-        """调用 Claude API.
+        """调用 Claude API (async).
 
         P0-5: 参数顺序与 LLMProvider Protocol (providers/base.py) 对齐:
         (system, messages, tools, model, max_tokens).
@@ -282,11 +284,12 @@ class AnthropicProvider:
         # P0-4: retry 策略 — RateLimitError / APIConnectionError / APITimeoutError
         # 总尝试次数 = 1 (原始) + max_retries
         # v2.5 P2-D-4: 真实指数退避 2^attempt 秒, 测试用 _BACKOFF_FACTOR=0
-        import time
-        start_time = time.time()
+        start_time = _time.time()
         for attempt in range(1, self._max_retries + 2):  # 1..max_retries+1
             try:
-                response = self._client.messages.create(**kwargs)  # type: ignore[call-overload]  # SDK 严格 overload vs 动态 dict kwargs
+                response = await asyncio.to_thread(
+                    self._client.messages.create, **kwargs
+                )  # type: ignore[call-overload]  # SDK 严格 overload vs 动态 dict kwargs
                 break  # 成功, 退出 retry loop
             except self._RETRYABLE_EXCEPTIONS as exc:
                 if attempt > self._max_retries:
@@ -297,7 +300,7 @@ class AnthropicProvider:
                     attempt, self._max_retries, backoff, type(exc).__name__,
                 )
                 if backoff > 0:
-                    time.sleep(backoff)
+                    await asyncio.sleep(backoff)
 
         result = self._to_llm_response(response)
 
@@ -316,7 +319,7 @@ class AnthropicProvider:
                 request_messages=messages,
                 request_tools=tools or None,
                 response=response_dict,
-                duration_ms=int((time.time() - start_time) * 1000),
+                duration_ms=int((_time.time() - start_time) * 1000),
                 tokens_prompt=response.usage.input_tokens,
                 tokens_completion=response.usage.output_tokens,
             )

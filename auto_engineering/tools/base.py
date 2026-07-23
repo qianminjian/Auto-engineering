@@ -51,8 +51,13 @@ class BaseTool(ABC):
         self.project_root = project_root
 
     @abstractmethod
-    async def execute(self, **kwargs) -> ToolResult:
-        """Execute the tool. Must be implemented by subclasses."""
+    async def execute(self, **kwargs: Any) -> ToolResult:
+        """Execute the tool. Must be implemented by subclasses.
+
+        Parameters are declared in the ``parameters`` ClassVar (JSON Schema subset).
+        Subclasses should document their accepted kwargs in their docstring.
+        Example: ``async def execute(self, *, file_path: str, content: str = "") -> ToolResult``
+        """
         ...
 
     def _is_path_safe(self, file_path: str) -> tuple[bool, str]:
@@ -108,7 +113,7 @@ class BaseTool(ABC):
                 return False, f"path outside project_root: {file_path}"
             return True, ""
         except (OSError, ValueError) as e:
-            _logger.debug("路径安全检查异常: %s (%s)", file_path, e, exc_info=True)
+            _logger.warning("路径安全检查异常: %s (%s)", file_path, e, exc_info=True)
             return False, f"invalid path: {file_path} ({e})"
 
     def _validate_path(self, file_path: str) -> ToolResult | None:

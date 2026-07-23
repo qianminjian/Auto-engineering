@@ -16,18 +16,22 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from auto_engineering.pii.rules import PIIDetectionRule
 
+from auto_engineering.errors import AEError, ErrorCode
 from auto_engineering.pii.rules import PIISeverity, PII_RULES, PII_WHITELIST_PATTERNS
 
 logger = logging.getLogger(__name__)
 
 
-class PIIBlockedError(Exception):
+class PIIBlockedError(AEError):
     """Raised in block_mode when a CRITICAL PII rule matches."""
 
     def __init__(self, rule_name: str, category: str) -> None:
         self.rule_name = rule_name
         self.category = category
-        super().__init__(f"PII blocked: {rule_name} ({category})")
+        super().__init__(
+            code=ErrorCode.PII_DETECTED,
+            message=f"PII blocked: {rule_name} ({category})",
+        )
 
 
 class PIIRedactor:
@@ -208,3 +212,9 @@ def get_pii_redactor() -> PIIRedactor:
     if _pii_redactor_singleton is None:
         _pii_redactor_singleton = PIIRedactor()
     return _pii_redactor_singleton
+
+
+def set_pii_redactor(redactor: PIIRedactor | None) -> None:
+    """Replace the module-level PIIRedactor singleton (for test injection)."""
+    global _pii_redactor_singleton
+    _pii_redactor_singleton = redactor

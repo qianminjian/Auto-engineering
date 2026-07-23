@@ -109,7 +109,7 @@ class TestGate(Gate):
             return None
         return " or ".join(sorted(keywords))
 
-    def _build_cmd(self, project_root: Path) -> list[str]:
+    def _build_cmd(self, project_root: Path, runner: str | None = None) -> list[str]:
         """构造 test_runner 命令.
 
         项目级约定 (.claude/rules/pytest-memory-management.md):
@@ -117,6 +117,7 @@ class TestGate(Gate):
             - 默认不开 --cov(显式 --cov=... 才启用)
             - 兼容无 pyproject.toml 的临时目录: 检测不到 inifile 时不强制加 --timeout
         """
+        runner = runner or self.test_runner_bin
         cmd_base = self._resolve_test_cmd()
         if cmd_base is None:
             return []
@@ -127,7 +128,7 @@ class TestGate(Gate):
         args = list(self.pytest_args)
 
         # 仅在项目根有 pytest inifile 且 test_runner=pytest 时加 --timeout
-        if self.test_runner_bin == "pytest":
+        if runner == "pytest":
             has_inifile = any(
                 (project_root / name).exists()
                 for name in ("pyproject.toml", "pytest.ini", "setup.cfg", "tox.ini")
@@ -155,17 +156,17 @@ class TestGate(Gate):
         if verdict := self._validate_project_root(project_root):
             return verdict
 
-        # 自动检测项目语言：非 Python 项目用对应测试工具
-        if self.test_runner_bin == _DEFAULT_TEST_RUNNER:
+        # 自动检测项目语言：非 Python 项目用对应测试工具（局部变量，不修改 self）
+        runner = self.test_runner_bin
+        if runner == _DEFAULT_TEST_RUNNER:
             language = detect_project_language(project_root)
             if language != "python":
-                _, _, default_runner = LANGUAGE_TOOLS.get(language, LANGUAGE_TOOLS["python"])
-                self.test_runner_bin = default_runner
+                _, _, runner = LANGUAGE_TOOLS.get(language, LANGUAGE_TOOLS["python"])
 
-        cmd = self._build_cmd(project_root)
+        cmd = self._build_cmd(project_root, runner)
         if not cmd:
             return GateVerdict.failed(
-                f"{self.test_runner_bin} 命令未找到 (PATH 也无 python)",
+                f"{runner} 命令未找到 (PATH 也无 python)",
                 gate_name=self.name,
             )
 
@@ -173,19 +174,19 @@ class TestGate(Gate):
 
         if result.timed_out:
             return GateVerdict.failed(
-                f"{self.test_runner_bin} 超时 (>{self.timeout}s): {' '.join(cmd)}",
+                f"{runner} 超时 (>{self.timeout}s): {' '.join(cmd)}",
                 gate_name=self.name,
             )
         if result.not_found:
             return GateVerdict.failed(
-                f"{self.test_runner_bin} 命令未找到",
+                f"{runner} 命令未找到",
                 gate_name=self.name,
             )
 
         if result.returncode == 0:
             output = result.stdout + result.stderr
             return GateVerdict.ok(
-                f"{self.test_runner_bin} 通过: {self._extract_summary(output)}",
+                f"{runner} 通过: {self._extract_summary(output)}",
                 gate_name=self.name,
             )
 
@@ -193,14 +194,14 @@ class TestGate(Gate):
             output = result.stdout + result.stderr
             snippet = output[-300:] if len(output) > 300 else output
             return GateVerdict.ok(
-                f"{self.test_runner_bin} skip: 未收集到测试 (exit={result.returncode})\n{snippet}",
+                f"{runner} skip: 未收集到测试 (exit={result.returncode})\n{snippet}",
                 gate_name=self.name,
             )
 
         output = result.stdout + result.stderr
         snippet = output[-1500:] if len(output) > 1500 else output
         return GateVerdict.failed(
-            f"{self.test_runner_bin} 失败 (exit={result.returncode}):\n{snippet}",
+            f"{runner} 失败 (exit={result.returncode}):\n{snippet}",
             gate_name=self.name,
         )
 

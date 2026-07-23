@@ -18,7 +18,8 @@ def _production_active(project_root: Path) -> bool:
     try:
         from auto_engineering.config.runtime_config import get_default_config
         return get_default_config().production_enabled
-    except Exception:
+    except (ImportError, AttributeError):
+        _logger.warning("_production_active 配置读取失败，fallback to False", exc_info=True)
         return False
 
 

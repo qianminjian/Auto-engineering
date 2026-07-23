@@ -14,6 +14,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Protocol
 
+from auto_engineering.errors import AEError, ErrorCode
 from auto_engineering.runtime.context import TaskContext
 from auto_engineering.runtime.task import Task, TaskResult
 
@@ -77,8 +78,10 @@ class AgentRuntime:
             return self._instances[agent_type]
 
         if agent_type not in self._factories:
-            raise LookupError(
-                f"Agent '{agent_type}' not registered. Available: {list(self._factories.keys())}"
+            raise AEError(
+                code=ErrorCode.AGENT_REGISTRATION_ERROR,
+                message=f"Agent '{agent_type}' not registered. "
+                f"Available: {list(self._factories.keys())}",
             )
 
         instance = self._factories[agent_type]()

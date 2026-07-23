@@ -48,8 +48,6 @@ class ContextOffloader:
         )
         # Later — load just the summary (cheap):
         summary = offloader.load_summary("architect")
-        # Or load the full conversation (expensive, only when backtracking):
-        full = offloader.load_full_context("architect")
     """
 
     def __init__(self, storage_dir: Path | None = None, offload_dir: Path | None = None,
@@ -116,14 +114,6 @@ class ContextOffloader:
             gate_results=data.get("gate_results", {}),
             raw_context_path=str(path),
         )
-
-    def load_full_context(self, stage: str) -> list[dict] | None:
-        """Load full conversation history for *stage* (expensive)."""
-        path = self._find_latest(stage)
-        if path is None:
-            return None
-        data = safe_json_load(path)
-        return data.get("messages", [])
 
     def offload_file(
         self,

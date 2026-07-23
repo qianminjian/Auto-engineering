@@ -146,33 +146,6 @@ class TestContextOffloader:
         """load_summary() returns None for stages that were never offloaded."""
         assert offloader.load_summary("developer") is None
 
-    def test_load_full_context_returns_messages(
-        self, offloader: ContextOffloader
-    ) -> None:
-        """load_full_context() returns the original messages."""
-        messages = [
-            {"role": "user", "content": "Review code."},
-            {"role": "assistant", "content": "Found 2 issues."},
-        ]
-        offloader.offload(
-            stage="critic",
-            messages=messages,
-            summary="Review complete.",
-            key_decisions=[],
-            files_changed=[],
-            gate_results={},
-        )
-        loaded = offloader.load_full_context("critic")
-        assert loaded is not None
-        assert len(loaded) == 2
-        assert loaded[0]["content"] == "Review code."
-
-    def test_load_full_context_returns_none_when_no_offload(
-        self, offloader: ContextOffloader
-    ) -> None:
-        """load_full_context() returns None for stages with no offload file."""
-        assert offloader.load_full_context("developer") is None
-
     def test_multiple_stages_offloaded_independently(
         self, offloader: ContextOffloader, offload_dir: Path
     ) -> None:
@@ -259,7 +232,10 @@ class TestContextOffloader:
             files_changed=[],
             gate_results={},
         )
-        loaded = offloader.load_full_context("critic")
-        assert loaded is not None
-        assert isinstance(loaded[0]["content"], list)
-        assert loaded[0]["content"][0]["type"] == "text"
+        # Verify via raw file path (load_full_context has been removed)
+        with open(offload.raw_context_path) as f:
+            data = json.load(f)
+        loaded_messages = data.get("messages", [])
+        assert len(loaded_messages) == 1
+        assert isinstance(loaded_messages[0]["content"], list)
+        assert loaded_messages[0]["content"][0]["type"] == "text"

@@ -245,8 +245,9 @@ class TestProviderFactory:
     def test_factory_unknown_provider_raises(self) -> None:
         """未知 provider → AEError."""
         from auto_engineering.providers.factory import create_provider
+        from auto_engineering.errors import AEError
 
-        with pytest.raises(ValueError, match="Unknown provider"):
+        with pytest.raises(AEError, match="Unknown provider"):
             create_provider("unknown_provider_xyz", api_key="test-key")
 
     def test_factory_auto_detect_from_env(self, monkeypatch) -> None:

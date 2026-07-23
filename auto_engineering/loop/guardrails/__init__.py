@@ -13,7 +13,7 @@ Lazy imports are used for classes defined in loop/guardrail.py to avoid a
 circular import (loop/guardrail.py → loop/guardrails/stateful.py → package init).
 """
 
-from auto_engineering.engine.guardrail_types import (
+from auto_engineering.shared.guardrail import (
     Action,
     Guardrail,
     GuardrailResult,

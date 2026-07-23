@@ -18,10 +18,10 @@ from auto_engineering.errors import AEError, ErrorCode
 
 
 class TestErrorCodeEnum:
-    """枚举完整性 — 14 ErrorCode (v5.5 审计后, P2-40 新增 GATE_EXECUTION_ERROR)."""
+    """枚举完整性 — 16 ErrorCode (P1-15 新增 CONFIG_INVALID_PROVIDER + PII_DETECTED)."""
 
     def test_all_codes_defined(self) -> None:
-        """14 个 ErrorCode 全存在."""
+        """16 个 ErrorCode 全存在."""
         expected = {
             # LLM / API (6)
             "LLM_TIMEOUT",
@@ -37,8 +37,11 @@ class TestErrorCodeEnum:
             # Task / Cancellation (2)
             "TASK_CANCELLED",
             "AGENT_REGISTRATION_ERROR",
-            # Configuration (1)
+            # Configuration (2)
             "CONFIG_MISSING_API_KEY",
+            "CONFIG_INVALID_PROVIDER",
+            # PII (1)
+            "PII_DETECTED",
             # Budget (1)
             "BUDGET_EXCEEDED",
             # Gate (1)
@@ -191,12 +194,12 @@ class TestActiveCodesRaisePoints:
 
 
 # ============================================================
-# IV. v5.0 错误码 → 抛点映射契约 (审计后 13 codes)
+# IV. v5.0 错误码 → 抛点映射契约 (P1-15 后 16 codes)
 # ============================================================
 
 
 class TestV5ErrorCodeMapping:
-    """v5.0 错误码 → 抛点映射契约 (v5.5 审计后 13 codes).
+    """v5.0 错误码 → 抛点映射契约 (P1-15 后 16 codes).
 
     按类别分组:
         LLM (6): TIMEOUT, NETWORK_ERROR, INVALID_RESPONSE, AUTH_ERROR, RATE_LIMIT, UNKNOWN_ERROR
@@ -206,10 +209,10 @@ class TestV5ErrorCodeMapping:
         Budget (1): EXCEEDED
     """
 
-    def test_error_code_total_count_is_14(self) -> None:
-        """ErrorCode 总数 = 14 (P2-40 新增 GATE_EXECUTION_ERROR)."""
-        assert len(ErrorCode) == 14, (
-            f"ErrorCode 总数应 14, 实际 {len(ErrorCode)}. "
+    def test_error_code_total_count_is_16(self) -> None:
+        """ErrorCode 总数 = 16 (P1-15 新增 CONFIG_INVALID_PROVIDER + PII_DETECTED)."""
+        assert len(ErrorCode) == 16, (
+            f"ErrorCode 总数应 16, 实际 {len(ErrorCode)}. "
             f"新增/删除需同步 test_all_codes_defined"
         )
 

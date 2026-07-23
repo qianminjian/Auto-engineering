@@ -503,7 +503,7 @@ class TestT115DriverMode:
                 verdict="APPROVE", total_ticks=1, loc_added=10)
             assert summary.get("driver_mode") == "standalone"
 
-    def test_signal_source_field_in_m5(self):
+    def test_m5_token_efficiency_computed(self):
         with tempfile.TemporaryDirectory() as tmp:
             collector = MetricsCollector(Path(tmp))
             collector.set_driver_mode("agent")
@@ -516,4 +516,5 @@ class TestT115DriverMode:
             summary = collector.end_requirement(
                 verdict="APPROVE", total_ticks=1, loc_added=10)
             m5 = summary.get("M5_token_efficiency", {})
-            assert "token_source" in m5
+            assert "total_input_tokens" in m5
+            assert m5["total_input_tokens"] == 100

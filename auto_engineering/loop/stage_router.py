@@ -129,6 +129,11 @@ class StageRouter:
         # 2026-07-04 修复 (Issue #4, 95 分): 初始化 history_stages 列表,
         # next() 追加 current_stage. CriticVerdictInvalid.history_stages 不再空.
         self.history_stages: list[str] = []
+        self._collector: Any = None  # injectable for testability (P1#13)
+
+    def set_collector(self, collector: Any) -> None:
+        """注入 metrics collector (测试/非默认环境)."""
+        self._collector = collector
 
     def next(
         self,
@@ -232,10 +237,13 @@ class StageRouter:
                 next_stage=None, should_stop=True,
                 stop_reason=f"未知 Stage: '{current_stage}'")
 
-        # T69a: Record stage transition for metrics
-        from auto_engineering.metrics.collector import AIOrigin, get_collector
-        mc = get_collector()
+        # T69a: Record stage transition for metrics (collector injectable for testability)
+        mc = self._collector
+        if mc is None:
+            from auto_engineering.metrics.collector import get_collector
+            mc = get_collector()
         if mc is not None:
+            from auto_engineering.metrics.collector import AIOrigin
             mc.record_stage_transition(
                 from_stage=current_stage or "",
                 to_stage=decision.next_stage or "",

@@ -407,15 +407,12 @@ class MetricsCollector:
         total_output = sum(e["payload"].get("output_tokens", 0) for e in token_events)
         total_tokens = total_input + total_output
         efficiency = (loc_added / (total_tokens / 1000)) if loc_added > 0 and total_tokens > 0 else 0.0
-        from auto_engineering.config.runtime_config import get_default_config
-        token_source = get_default_config().token_source
         m5 = {
             "total_input_tokens": total_input,
             "total_output_tokens": total_output,
             "total_tokens": total_tokens,
             "loc_added": loc_added,
             "efficiency_ratio": round(efficiency, 2),
-            "token_source": token_source,  # T110c: provider (Standalone) or transcript (Agent JSONL)
         }
 
         # T109f: PII 事件统计

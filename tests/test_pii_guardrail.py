@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
-from auto_engineering.engine.guardrail_types import GuardrailResult
+from auto_engineering.shared.guardrail import GuardrailResult
 from auto_engineering.pii.guardrail import PIIGuardrail
 
 

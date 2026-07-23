@@ -36,7 +36,7 @@ from typing import TYPE_CHECKING, ClassVar, Literal
 from auto_engineering.engine.gap_analysis import (
     _BLOCKING_FORBIDDEN as _BLOCKING_FORBIDDEN_RESOLUTIONS,
 )
-from auto_engineering.engine.guardrail_types import (  # T135n: direct import, skip shim
+from auto_engineering.shared.guardrail import (
     Action,
     Guardrail,
     GuardrailResult,

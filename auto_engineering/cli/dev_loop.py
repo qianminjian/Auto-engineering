@@ -95,7 +95,8 @@ def _build_injectables(
     audit_logger = None
     if cfg.audit_log_enabled:
         from auto_engineering.observability.audit_log import AuditLogger
-        audit_logger = AuditLogger(root / ".ae-state" / "audit")
+        audit_log_dir = cfg.audit_log_dir or str(root / ".ae-state" / "audit")
+        audit_logger = AuditLogger(Path(audit_log_dir))
 
     # T54: SessionSummarizer — structured mode in AgentDriver (no LLM needed),
     # LLM mode in StandaloneDriver (provider passed from driver).

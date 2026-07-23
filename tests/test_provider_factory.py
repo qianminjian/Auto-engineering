@@ -51,7 +51,8 @@ class TestFactoryMultiProvider:
         assert hasattr(p, "close")
 
     def test_create_unknown_provider_raises(self) -> None:
-        with pytest.raises(ValueError, match="Unknown provider"):
+        from auto_engineering.errors import AEError
+        with pytest.raises(AEError, match="Unknown provider"):
             create_provider("unknown_provider")
 
     def test_auto_detect_ollama_host(self) -> None:

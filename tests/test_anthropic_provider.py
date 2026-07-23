@@ -57,7 +57,8 @@ class TestLLMResponseDataclass:
 class TestAnthropicProvider:
     """AnthropicProvider — 封装 anthropic SDK 的客户端."""
 
-    def test_create_message_returns_llm_response(self):
+    @pytest.mark.asyncio
+    async def test_create_message_returns_llm_response(self):
         """RED: provider.create_message 必须返回 LLMResponse (含 content/usage/model)."""
         from auto_engineering.llm.anthropic_provider import (
             AnthropicProvider,
@@ -78,7 +79,7 @@ class TestAnthropicProvider:
         mock_client.messages.create.return_value = mock_response
 
         provider = AnthropicProvider(client=mock_client)
-        result = provider.create_message(
+        result = await provider.create_message(
             model="claude-test-model",
             max_tokens=100,
             system="you are a helper",
@@ -92,7 +93,8 @@ class TestAnthropicProvider:
         assert result.usage["input_tokens"] == 5
         assert result.usage["output_tokens"] == 3
 
-    def test_create_message_passes_kwargs_to_sdk(self):
+    @pytest.mark.asyncio
+    async def test_create_message_passes_kwargs_to_sdk(self):
         """验证 model/max_tokens/system/messages 都传给 SDK."""
         from auto_engineering.llm.anthropic_provider import AnthropicProvider
 
@@ -109,7 +111,7 @@ class TestAnthropicProvider:
         mock_client.messages.create.return_value = mock_response
 
         provider = AnthropicProvider(client=mock_client)
-        provider.create_message(
+        await provider.create_message(
             model="claude-x",
             max_tokens=2048,
             system="sys-prompt",
@@ -176,7 +178,8 @@ class TestLLMResponseToolFields:
 class TestAnthropicProviderToolsSupport:
     """AnthropicProvider 支持 tools 参数 + tool_use_blocks 解析."""
 
-    def test_create_message_accepts_tools_kwarg(self):
+    @pytest.mark.asyncio
+    async def test_create_message_accepts_tools_kwarg(self):
         """create_message 接受 tools 参数并传给 SDK."""
         from auto_engineering.llm.anthropic_provider import AnthropicProvider
 
@@ -190,7 +193,7 @@ class TestAnthropicProviderToolsSupport:
 
         provider = AnthropicProvider(client=mock_client)
         tools = [{"name": "read_file", "description": "Read a file"}]
-        provider.create_message(
+        await provider.create_message(
             model="m",
             max_tokens=100,
             system="sys",
@@ -204,7 +207,8 @@ class TestAnthropicProviderToolsSupport:
         expected_tools[-1]["cache_control"] = {"type": "ephemeral"}
         assert call_kwargs["tools"] == expected_tools
 
-    def test_create_message_parses_tool_use_blocks(self):
+    @pytest.mark.asyncio
+    async def test_create_message_parses_tool_use_blocks(self):
         """SDK 返回 tool_use block 时, LLMResponse.tool_use_blocks 包含解析结果."""
         from auto_engineering.llm.anthropic_provider import AnthropicProvider
 
@@ -227,7 +231,7 @@ class TestAnthropicProviderToolsSupport:
         mock_client.messages.create.return_value = mock_response
 
         provider = AnthropicProvider(client=mock_client)
-        result = provider.create_message(
+        result = await provider.create_message(
             model="m",
             max_tokens=100,
             system="sys",
@@ -241,7 +245,8 @@ class TestAnthropicProviderToolsSupport:
         assert tb.name == "read_file"
         assert tb.input == {"path": "x.py"}
 
-    def test_create_message_text_only_response(self):
+    @pytest.mark.asyncio
+    async def test_create_message_text_only_response(self):
         """SDK 返回纯 text block (无 tool_use) 时, tool_use_blocks 为空."""
         from auto_engineering.llm.anthropic_provider import AnthropicProvider
 
@@ -258,7 +263,7 @@ class TestAnthropicProviderToolsSupport:
         mock_client.messages.create.return_value = mock_response
 
         provider = AnthropicProvider(client=mock_client)
-        result = provider.create_message(
+        result = await provider.create_message(
             model="m",
             max_tokens=100,
             system="sys",
@@ -272,7 +277,8 @@ class TestAnthropicProviderToolsSupport:
 class TestAnthropicProviderKwargs:
     """AnthropicProvider.create_message 参数扩展 (model/max_tokens/system/messages/tools)."""
 
-    def test_create_message_passes_all_kwargs(self):
+    @pytest.mark.asyncio
+    async def test_create_message_passes_all_kwargs(self):
         """验证 model/max_tokens/system/messages/tools 都传给 SDK."""
         from auto_engineering.llm.anthropic_provider import AnthropicProvider
 
@@ -287,7 +293,7 @@ class TestAnthropicProviderKwargs:
 
         provider = AnthropicProvider(client=mock_client)
         tools = [{"name": "x"}]
-        provider.create_message(
+        await provider.create_message(
             model="claude-x",
             max_tokens=2048,
             system="sys-prompt",
@@ -318,7 +324,8 @@ class TestAnthropicProviderRetry:
     避免指数退避拖慢测试 (max_retries=3 走完需要 1+2+4=7 秒).
     """
 
-    def test_retries_on_rate_limit_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    @pytest.mark.asyncio
+    async def test_retries_on_rate_limit_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """RateLimitError → 重试 → 成功 → 返回 LLMResponse (RED: 生产 retry)."""
         from auto_engineering.llm import anthropic_provider
         from auto_engineering.llm.anthropic_provider import AnthropicProvider
@@ -332,7 +339,7 @@ class TestAnthropicProviderRetry:
         ]
 
         provider = AnthropicProvider(client=mock_client)
-        response = provider.create_message(
+        response = await provider.create_message(
             model="claude-x",
             max_tokens=100,
             system="sys",
@@ -341,7 +348,8 @@ class TestAnthropicProviderRetry:
         assert response.content == "OK"
         assert mock_client.messages.create.call_count == 2
 
-    def test_retries_on_connection_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    @pytest.mark.asyncio
+    async def test_retries_on_connection_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """APIConnectionError → 重试 → 成功."""
         from auto_engineering.llm import anthropic_provider
         from auto_engineering.llm.anthropic_provider import AnthropicProvider
@@ -355,7 +363,7 @@ class TestAnthropicProviderRetry:
         ]
 
         provider = AnthropicProvider(client=mock_client)
-        response = provider.create_message(
+        response = await provider.create_message(
             model="claude-x",
             max_tokens=100,
             system="sys",
@@ -364,7 +372,8 @@ class TestAnthropicProviderRetry:
         assert response.content == "OK"
         assert mock_client.messages.create.call_count == 2
 
-    def test_raises_after_max_retries(
+    @pytest.mark.asyncio
+    async def test_raises_after_max_retries(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """连续 N 次 RateLimitError → 抛 RateLimitError (不无限重试)."""
@@ -377,7 +386,7 @@ class TestAnthropicProviderRetry:
 
         provider = AnthropicProvider(client=mock_client, max_retries=3)
         with pytest.raises(Exception) as exc_info:
-            provider.create_message(
+            await provider.create_message(
                 model="claude-x",
                 max_tokens=100,
                 system="sys",
@@ -387,7 +396,8 @@ class TestAnthropicProviderRetry:
         assert mock_client.messages.create.call_count <= 5
         assert "rate" in str(exc_info.value).lower() or "limit" in str(exc_info.value).lower()
 
-    def test_does_not_retry_on_non_retryable_error(self) -> None:
+    @pytest.mark.asyncio
+    async def test_does_not_retry_on_non_retryable_error(self) -> None:
         """非重试错误 (如 ValueError) → 立即抛出, 不重试."""
         from auto_engineering.llm.anthropic_provider import AnthropicProvider
 
@@ -396,7 +406,7 @@ class TestAnthropicProviderRetry:
 
         provider = AnthropicProvider(client=mock_client)
         with pytest.raises(ValueError):
-            provider.create_message(
+            await provider.create_message(
                 model="claude-x",
                 max_tokens=100,
                 system="sys",
@@ -405,7 +415,8 @@ class TestAnthropicProviderRetry:
         # 只调用 1 次 (不重试)
         assert mock_client.messages.create.call_count == 1
 
-    def test_retry_respects_max_retries_param(self) -> None:
+    @pytest.mark.asyncio
+    async def test_retry_respects_max_retries_param(self) -> None:
         """max_retries=0 → 不重试, 单次失败立即抛."""
         from auto_engineering.llm.anthropic_provider import AnthropicProvider
 
@@ -414,7 +425,7 @@ class TestAnthropicProviderRetry:
 
         provider = AnthropicProvider(client=mock_client, max_retries=0)
         with pytest.raises(Exception):
-            provider.create_message(
+            await provider.create_message(
                 model="claude-x",
                 max_tokens=100,
                 system="sys",

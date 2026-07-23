@@ -58,13 +58,13 @@ class TypeCheckGate(Gate):
         self.require_config = require_config
         self.strict = strict
 
-    def _has_type_config(self, project_root: Path) -> bool:
+    def _has_type_config(self, project_root: Path, checker: str | None = None) -> bool:
         """检查项目是否有当前 type_checker 的配置文件.
 
         原仅检测 mypy 配置 (mypy.ini / pyproject.toml [tool.mypy])。
         v5.6 E3 修复: 按 type_checker_bin 检测对应配置。
         """
-        checker = self.type_checker_bin
+        checker = checker or self.type_checker_bin
 
         # tsc → tsconfig.json
         if checker == "tsc":
@@ -133,22 +133,21 @@ class TypeCheckGate(Gate):
         if verdict := self._validate_project_root(project_root):
             return verdict
 
-        # 自动检测项目语言：非 Python 项目用对应工具
-        if self.type_checker_bin == _DEFAULT_TYPE_CHECKER:
+        # 自动检测项目语言：非 Python 项目用对应工具（局部变量，不修改 self）
+        checker = self.type_checker_bin
+        if checker == _DEFAULT_TYPE_CHECKER:
             language = detect_project_language(project_root)
             if language != "python":
-                _, default_checker, _ = LANGUAGE_TOOLS.get(language, LANGUAGE_TOOLS["python"])
-                self.type_checker_bin = default_checker
+                _, checker, _ = LANGUAGE_TOOLS.get(language, LANGUAGE_TOOLS["python"])
 
         # 检查 type_check 配置
-        if not self._has_type_config(project_root):
+        if not self._has_type_config(project_root, checker):
             if self.require_config:
                 return GateVerdict.failed(
-                    "项目未配置 mypy (无 mypy.ini / pyproject.toml [tool.mypy])",
-                    gate_name=self.name,
+                    f"项目未配置 {checker}", gate_name=self.name,
                 )
             return GateVerdict.ok(
-                f"skip: 项目未配置 {self.type_checker_bin},跳过类型检查",
+                f"skip: 项目未配置 {checker},跳过类型检查",
                 gate_name=self.name,
             )
 
@@ -156,30 +155,30 @@ class TypeCheckGate(Gate):
         cmd_base = self._resolve_type_check_cmd()
         if cmd_base is None:
             return GateVerdict.ok(
-                f"skip: {self.type_checker_bin} 未安装,跳过类型检查",
+                f"skip: {checker} 未安装,跳过类型检查",
                 gate_name=self.name,
             )
 
         cmd = [*cmd_base, str(project_root)]
-        if self.strict and self.type_checker_bin == "mypy":
+        if self.strict and checker == "mypy":
             cmd.append("--strict")
 
         result = run_gate_command(cmd, project_root, self.timeout)
 
         if result.timed_out:
             return GateVerdict.failed(
-                f"{self.type_checker_bin} 超时 (>{self.timeout}s): {' '.join(cmd)}",
+                f"{checker} 超时 (>{self.timeout}s): {' '.join(cmd)}",
                 gate_name=self.name,
             )
         if result.not_found:
             return GateVerdict.ok(
-                f"skip: {self.type_checker_bin} 命令未找到",
+                f"skip: {checker} 命令未找到",
                 gate_name=self.name,
             )
 
         if result.returncode == 0:
             return GateVerdict.ok(
-                f"{self.type_checker_bin} 通过 (0 errors)",
+                f"{checker} 通过 (0 errors)",
                 gate_name=self.name,
             )
 
@@ -187,12 +186,12 @@ class TypeCheckGate(Gate):
         if "error:" in output.lower():
             snippet = output[:1500] + ("..." if len(output) > 1500 else "")
             return GateVerdict.failed(
-                f"{self.type_checker_bin} 失败 (exit={result.returncode}):\n{snippet}",
+                f"{checker} 失败 (exit={result.returncode}):\n{snippet}",
                 gate_name=self.name,
             )
 
         return GateVerdict.ok(
-            f"{self.type_checker_bin} 退出 {result.returncode}, 无类型 error",
+            f"{checker} 退出 {result.returncode}, 无类型 error",
             gate_name=self.name,
         )
 
