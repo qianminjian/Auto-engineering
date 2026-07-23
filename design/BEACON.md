@@ -1,4 +1,4 @@
-> 创建：2026-06-24 | 更新：2026-07-23 | 阶段：Phase 34 — 真跑问题全部修复完成
+> 创建：2026-06-24 | 更新：2026-07-23 | 阶段：Phase 35 — T51c-f 根因修复完成
 > ⚠️ **决策状态翻转管控**：status 列 ✅→❌ 或 ❌→✅ 必须经用户审批。AI 不得自行翻转。详见 `.claude/rules/design-document-inviolability.md` §2。
 
 ## 目标与成功标准
@@ -88,30 +88,26 @@
 | **91** | **Subagent Spawn 强制执行 — 提示词注入 + 重构** | 真跑验证发现 Phase 17 T51a-f 全部未落地。方案：ActionBuilder 注入 instruction + role_prompt；7 角色 prompt 重构。设计讨论：`design/discussion/subagent-spawn-solution.md`。2026-07-23 真跑发现 `subagent_type: "code-reviewer"` 不可用，决策 #92 移除该字段。 | 2026-07-22 | ✅ |
 | **92** | **5 层验证提示词增强 + subagent_type 移除 + Gate 多语言适配** | 真跑验证驱动。① `_SPAWN_CONFIG` + `_SPAWN_INSTRUCTION` 移除 `subagent_type` 字段——Agent Tool 不传该参数即用平台默认。② 5 层提示词增强（13 文件）。③ Gate 多语言适配。④ batch_state 降级。⑤ expected_format 补全。commit: `594b602`。 | 2026-07-23 | ✅ |
 | **93** | **全量深度审计 63 项全部处理** | 50 审计 + 4 决策 + 9 低优先级。commit: `6c827c9`。 | 2026-07-23 | ✅ |
-| **94** | **真跑问题全部修复 — batch 分发顺序 + spawn proof + 收敛 + prompt 日志** | 2026-07-23 第二次真跑验证暴露 19 项问题全部修复。① batch 分发按 architect 依赖顺序（修复 B19 在 B1 前分发 → 同时解决收敛失败）。② spawn_proof_token side-channel 验证。③ SessionSummarizer 输出丰富度。④ test gate manifest→reload 时序修复（T136x）。⑤ architect context 补传 component_map。⑥ audit 输出完整性。⑦ prompt 日志。commit: `373f183` `24c0ce1` `746091e`。 | 2026-07-23 | ✅ |
+| **94** | **真跑问题全部修复 — batch 分发顺序 + spawn proof + 收敛 + prompt 日志** | 2026-07-23 第二次真跑验证暴露 19 项问题全部修复。commit: `373f183` `24c0ce1` `746091e`。 | 2026-07-23 | ✅ |
+| **95** | **T51c-f 根因修复 — design_items 补全 + impl_files 注入 + auto-skip** | 独立测试验证 spawn 指令本身有效。根因：component_verifier 的 design_spec 为空（26/28 组件无 design_items，解析器不提取段落文本）+ implementation_files 永远为空。修复：A) 解析器段落→DesignItem（2→24 组件有数据）；B) batch_plan file_targets→impl_files；C) 空数据时 auto-skip 不 spawn。commit: `b28a353` `00a7627`。 | 2026-07-23 | ✅ |
 
 ## 当前状态
 
-**阶段：** Phase 34 — 真跑问题全部修复完成。Phase 1-34 全部完成。
+**阶段：** Phase 35 — T51c-f 根因修复完成。Phase 1-35 全部完成（304/304）。
 
-**本轮真跑验证 (2026-07-23) — 19 项问题全部修复：**
+**最新修复 (2026-07-23 T51c-f 根因)**：
+- 独立测试验证 spawn 指令有效——根因是送给 subagent 的 input data 为空
+- Fix A: 解析器段落→DesignItem（2→24 组件有数据）
+- Fix B: batch_plan file_targets→impl_files
+- Fix C: 空数据 auto-skip 不 spawn
+- prompt 日志增强：每 tick 生成人类可读 `-prompt.md`
 
-| 类别 | 数量 | 说明 |
-|------|:---:|------|
-| P0 引擎崩溃 | 3 | config 未定义 / 收敛失败 / _STAGE_CHECKPOINT_OPTIONS 导入 — 全部修复 |
-| P1 设计未落地 | 8 | subagent_type 移除 / model 移除 / component_map 补传 / spawn proof / test gate reload 时序 / summarization / batch 分发顺序 / 静默降级 |
-| P2 噪声 | 5 | OTLP 警告 / audit 输出 / status verbose / prompt 日志 / 非 Python Gate |
-| 流程 | 3 | Tracker 标记滞后 / 设计文档分叉 / 审计报告缺失 |
-
-**commits**: `594b602` `373f183` `24c0ce1` `746091e` — 241 tests 零新回归。
-
-**剩余待办（1 项，需真跑触发）：**
+**剩余 2 项（需真跑触发）：**
 
 | # | 内容 | 说明 |
 |---|------|------|
-| T136w | STAGE_MISMATCH 系统性缺陷 | 代码路径逻辑正确，静态分析无法复现，需下次真跑触发 |
-
-**v5.5 退役状态**：`orchestrator.py` + `semantic_evaluator.py` 已物理删除。CLI 裸参数路径重定向到 `--standalone`（弃用 WARN）。2026-08-18 清理 CLI shim。
+| T136w | STAGE_MISMATCH 系统性缺陷 | 代码路径逻辑正确，静态分析无法复现 |
+| P0-2 | 收敛失败—batch 批量完成 | 需真跑验证 batch 排序修复后是否收敛 |
 - **P0-5 裸 except Exception 窄化**：31 处裸 except 窄化为 10 种具体异常类型（18 源文件），13 处保留宽捕获加解释性注释。全项目裸 except 从 55 降至 ~33。
 - BEACON 决策 #87（P0-6 RuntimeConfig）+ #88（P0-5 裸 except）追加。
 

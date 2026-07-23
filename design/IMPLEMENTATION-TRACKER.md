@@ -76,8 +76,9 @@
 | **33** | **全量深度审计（2026-07-23）** | **50** | **50** | **✅ 40 修复 + 10 废弃 — BEACON 决策 #93** |
 | **33a** | **用户决策执行（2026-07-23）** | **4** | **4** | **✅ AD1-4 按推荐方案执行** |
 | **33b** | **P2 低优先级深度修复（2026-07-23）** | **9** | **9** | **✅ JSON 工具+死代码+Protocol+文档+CHANGELOG** |
-| **34** | **真跑问题全部修复（2026-07-23）** | **6** | **6** | **✅ P0-2 收敛+P1-4 spawn proof+P1-8 batch排序+P2-3 status verbose+P2-4 prompt日志+F-2 文档同步 — BEACON 决策 #94。** |
-| **合计** | | **300** | **300** | **Phase 1-34 300/300 完成 ✅** |
+| **34** | **真跑问题全部修复（2026-07-23）** | **6** | **6** | **✅ BEACON 决策 #94。** |
+| **35** | **T51c-f 根因修复 + prompt 日志增强（2026-07-23）** | **4** | **4** | **✅ Fix A(design_items补全)+B(impl_files注入)+C(auto-skip)+prompt日志增强 — BEACON 决策 #95。** |
+| **合计** | | **304** | **304** | **Phase 1-35 304/304 完成 ✅** |
 
 > **v5.5 退役提醒**：`orchestrator.py` + `semantic_evaluator.py` 已物理删除。CLI 裸参数路径重定向到 `--standalone`。2026-08-18 清理 CLI 弃用 shim。
 
@@ -1965,3 +1966,19 @@ T144 (全量回归) → T145 (真跑验证)
 | T146k | F-2 设计文档同步 — `subagent-spawn-solution.md` 追加真跑推翻标记 | 文档与代码分叉消除 | ✅ `746091e` |
 
 > **剩余**: T136w (STAGE_MISMATCH) — 代码逻辑正确, 需真跑触发
+
+---
+
+## Phase 35 — T51c-f 根因修复 + prompt 日志增强（BEACON #95）
+
+> 来源：2026-07-23 V2 真跑验证 + 独立 spawn 测试
+> 分析报告：`_scratch/test-output/2026-07-23-T51c-f-根因分析-独立测试验证.md`
+
+| T | 内容 | 验收 | 状态 |
+|---|------|------|:---:|
+| T147a | Fix A: `design_doc.py` `_on_paragraph` — H3 下段落文本自动创建 DesignItem | design_items 覆盖率 2→24 | ✅ `00a7627` |
+| T147b | Fix B: `action_builder.py` — component_verifier 从 batch_plan file_targets 注入 implementation_files | context.impl_files 非空 | ✅ `00a7627` |
+| T147c | Fix C: `action_builder.py` + `tick_orchestrator.py` — design_spec 为空时 auto-skip，不要求 spawn | action=skip → auto-advance | ✅ `00a7627` |
+| T147d | prompt 日志增强 — 每 tick 生成 `-prompt.md`（Part1 指令 + Part2 subagent prompt + Part3 Gate） | prompt-log 可读文件 | ✅ `b28a353` |
+
+> **独立测试结论**：用真实 action JSON 中的 prompt 独立 spawn agent，成功产出 verdict=APPROVE。spawn 指令本身有效——根因是 input data 为空。
