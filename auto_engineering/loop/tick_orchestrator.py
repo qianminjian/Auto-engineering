@@ -1039,9 +1039,16 @@ class TickOrchestrator:
             summary = f"Critic: {verdict} | P0={p0} P1={p1} P2={p2}"
             if s.critic_feedback:
                 key_decisions.append(f"feedback={s.critic_feedback[:200]}")
+        # Build context from cached session summary (accumulated tick history)
+        context_msgs: list[dict] = []
+        cached = getattr(self, "_cached_session_summary", None)
+        if cached is not None:
+            ctx_text = self._session_summarizer.inject_into_prompt(cached) if self._session_summarizer else ""
+            if ctx_text:
+                context_msgs = [{"role": "system", "content": ctx_text}]
         offloader.offload(
             stage=stage,
-            messages=[],
+            messages=context_msgs,
             summary=summary,
             key_decisions=key_decisions,
             files_changed=files_changed,
