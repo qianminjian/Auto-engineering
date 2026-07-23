@@ -1516,6 +1516,11 @@ class TickOrchestrator:
             pii_redactor=self._pii_redactor,
             pii_outbound=self._runtime_config.pii_outbound,
         )
+        # Fix C: auto-skip component_verifier when no design data
+        if action.get("action") == "skip" and action.get("stage") == "component_verifier":
+            _logger.info("Auto-skip component_verifier: %s", action.get("reason", ""))
+            self._advance_stage("plate_deep_audit")
+            return self.build_action()
         # T54: inject session summary for developer when tick > threshold
         if (action.get("action") == "developer"
                 and self._session_summarizer is not None

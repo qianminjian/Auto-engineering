@@ -593,11 +593,23 @@ class ActionBuilder:
 
     def _build_action_component_verifier(self, base: dict) -> dict:
         comp = self._batch_state.current_component()
+        # Fix B: collect implementation_files from batch_plan file_targets
+        impl_files: list[str] = []
+        for b in self._batch_state.batches_for(comp):
+            for t in b.get("tasks", []):
+                for ft in t.get("file_targets", []):
+                    if ft not in impl_files:
+                        impl_files.append(ft)
+        # Fix C: when design_spec is empty and no impl files, skip verification
+        design_spec = comp.design_spec_summary()
+        if not design_spec and not impl_files:
+            return {**base, "action": "skip", "reason": "no design items or implementation files for component",
+                    "stage": "component_verifier"}
         return self._build_stage_action(base, "component_verifier", context={
             "component": comp.name,
             "design_section": comp.design_section,
-            "design_spec": comp.design_spec_summary(),
-            "implementation_files": getattr(comp, "implementation_files", []),
+            "design_spec": design_spec,
+            "implementation_files": impl_files,
             "contracts": getattr(comp, "contracts", {}),
         }, expected_format={
             "stage": "component_verifier",

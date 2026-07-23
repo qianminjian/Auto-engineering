@@ -397,7 +397,19 @@ class _DesignDocParser:
     # ---------- 段落 ----------
 
     def _on_paragraph(self, content: str) -> None:
-        if self.cur_item is None:
+        content = content.strip()
+        if not content:
             return
-        if any(k in content for k in _CLAIM_KEYWORDS):
-            self.cur_item.key_claims.append(content.strip())
+        # Fix A: when paragraph under H3 component without H4 heading,
+        # auto-create a DesignItem from the paragraph text.
+        if self.cur_item is None and self.cur_component is not None:
+            # Use first sentence (up to 80 chars) as title
+            title = content[:80] + ("..." if len(content) > 80 else "")
+            item = self._make_item(title=title, source_marker="paragraph",
+                                   key_claims=[content])
+            self.cur_component.design_items.append(item)
+            self.cur_item = item
+            self.last_node = ("item", item)
+            return
+        if self.cur_item is not None and any(k in content for k in _CLAIM_KEYWORDS):
+            self.cur_item.key_claims.append(content)
