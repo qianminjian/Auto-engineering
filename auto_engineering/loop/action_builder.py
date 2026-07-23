@@ -193,15 +193,127 @@ class ActionBuilder:
         return action
 
     def _log_prompt(self, action: dict) -> None:
-        """Write action JSON to _scratch/prompt-log/ for debugging spawn issues."""
+        """Write the complete LLM prompt to _scratch/prompt-log/ for debugging.
+
+        Produces two files per tick:
+        - tick-NNNN-stage-action.json  — raw action JSON (machine-readable)
+        - tick-NNNN-stage-prompt.md    — complete prompt as LLM sees it (human-readable)
+
+        For spawn stages, also shows the reconstructed subagent prompt
+        (role_prompt + context data + expected output schema).
+        """
         try:
             log_dir = Path(self.project_root) / "_scratch" / "prompt-log"
             log_dir.mkdir(parents=True, exist_ok=True)
             tick = action.get("tick", 0)
             stage = action.get("stage", action.get("action", "unknown"))
-            log_file = log_dir / f"tick-{tick:04d}-{stage}-action.json"
-            with open(log_file, "w", encoding="utf-8") as f:
+
+            # 1. Raw JSON (existing)
+            json_file = log_dir / f"tick-{tick:04d}-{stage}-action.json"
+            with open(str(json_file), "w", encoding="utf-8") as f:
                 json.dump(action, f, indent=2, ensure_ascii=False)
+
+            # 2. Human-readable prompt
+            md_file = log_dir / f"tick-{tick:04d}-{stage}-prompt.md"
+            inst = action.get("instruction", "")
+            rp = action.get("role_prompt", "")
+            ctx = action.get("context", {})
+            ef = action.get("expected_format", {})
+            spawn = action.get("spawn", {})
+            is_spawn = bool(spawn)
+
+            lines = []
+            lines.append(f"# Tick {tick} — {stage}")
+            lines.append("")
+            lines.append(f"- action: `{action.get('action', '?')}`")
+            lines.append(f"- spawn stage: {is_spawn}")
+            if is_spawn:
+                lines.append(f"- spawn count: {spawn.get('count', 1)}")
+                lines.append(f"- spawn parallel: {spawn.get('parallel', False)}")
+                lines.append(f"- proof token: `{action.get('spawn_proof_token', 'N/A')}`")
+            lines.append("")
+
+            # ── Part 1: Instruction (what Agent LLM reads first) ──
+            lines.append("---")
+            lines.append("## Part 1 — Instruction（Agent LLM 收到的命令）")
+            lines.append("")
+            if inst:
+                lines.append("```")
+                lines.append(inst)
+                lines.append("```")
+            else:
+                lines.append("*(no instruction — inline stage)*")
+            lines.append("")
+
+            # ── Part 2: Subagent Prompt (for spawn stages) ──
+            if is_spawn and rp:
+                lines.append("---")
+                lines.append("## Part 2 — Subagent Prompt（传给 subagent LLM 的完整文本）")
+                lines.append("")
+                lines.append("### Role Prompt")
+                lines.append("")
+                lines.append("```")
+                lines.append(rp.strip())
+                lines.append("```")
+                lines.append("")
+
+                if ctx:
+                    # Strip noisy fields from subagent view
+                    sub_ctx = {k: v for k, v in ctx.items()
+                               if k not in ("init_manifest", "design_supplements",
+                                            "research_archive", "project_root")}
+                    lines.append("### Context Data")
+                    lines.append("")
+                    lines.append("```json")
+                    lines.append(json.dumps(sub_ctx, indent=2, ensure_ascii=False))
+                    lines.append("```")
+                    lines.append("")
+
+                if ef:
+                    sub_ef = {k: v for k, v in ef.items()
+                              if k not in ("spawned", "spawn_error", "stage")}
+                    lines.append("### Expected Output Schema")
+                    lines.append("")
+                    lines.append("```json")
+                    lines.append(json.dumps(sub_ef, indent=2, ensure_ascii=False))
+                    lines.append("```")
+                    lines.append("")
+
+                # Reconstruct the exact subagent prompt string
+                sub_prompt_parts = [rp.strip()]
+                if ctx:
+                    sub_prompt_parts.append("\n## Input Data\n```json\n" +
+                        json.dumps(ctx, indent=2, ensure_ascii=False) + "\n```")
+                if ef:
+                    sub_prompt_parts.append("\n## Required Output Schema\n```json\n" +
+                        json.dumps(sub_ef, indent=2, ensure_ascii=False) + "\n```")
+                sub_prompt_parts.append("\n输出严格 JSON，不要 markdown fence，不要额外解释。")
+                full_sub_prompt = "\n".join(sub_prompt_parts)
+
+                lines.append("### Complete Subagent Prompt (reconstructed)")
+                lines.append(f"*(length: {len(full_sub_prompt)} chars)*")
+                lines.append("")
+                lines.append("```")
+                lines.append(full_sub_prompt)
+                lines.append("```")
+                lines.append("")
+
+            # ── Part 3: Gate Summary ──
+            gs = action.get("gate_summary", {})
+            if gs:
+                lines.append("---")
+                lines.append("## Part 3 — Gate Results")
+                lines.append("")
+                for gname, gv in sorted(gs.items()):
+                    if isinstance(gv, dict):
+                        passed = "✓" if gv.get("passed") else "✗"
+                        msg = gv.get("message", "")[:120]
+                        lines.append(f"- {gname}: {passed} — {msg}")
+                lines.append("")
+
+            with open(str(md_file), "w", encoding="utf-8") as f:
+                f.write("\n".join(lines))
+
         except Exception:
             pass  # best-effort logging, never crash the loop
 
