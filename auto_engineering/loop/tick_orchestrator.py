@@ -1555,6 +1555,8 @@ class TickOrchestrator:
             if injected:
                 action["session_summary"] = injected
                 self._cached_session_summary = summary
+        # P2-4: log final action JSON AFTER all injections (session_summary etc.)
+        self.action_builder.log_prompt(self.project_root, action)
         return action
 
     # ── T110b: Token 采集 ──

@@ -186,13 +186,10 @@ class ActionBuilder:
                       "message": f"Unknown stage: {stage}"}
 
         action = self._apply_pii_outbound(action, _pi_enabled, _pi_redactor, _pi_outbound)
-
-        # P2-4: log the full action JSON so we can inspect exactly what the Agent receives
-        self._log_prompt(action)
-
         return action
 
-    def _log_prompt(self, action: dict) -> None:
+    @staticmethod
+    def log_prompt(project_root: Path, action: dict) -> None:
         """Write the complete LLM prompt to _scratch/prompt-log/ for debugging.
 
         Produces two files per tick:
@@ -201,9 +198,12 @@ class ActionBuilder:
 
         For spawn stages, also shows the reconstructed subagent prompt
         (role_prompt + context data + expected output schema).
+
+        This is a static method so the orchestrator can call it after all
+        injections (session_summary, etc.) to capture the final state.
         """
         try:
-            log_dir = Path(self.project_root) / "_scratch" / "prompt-log"
+            log_dir = project_root / "_scratch" / "prompt-log"
             log_dir.mkdir(parents=True, exist_ok=True)
             tick = action.get("tick", 0)
             stage = action.get("stage", action.get("action", "unknown"))
