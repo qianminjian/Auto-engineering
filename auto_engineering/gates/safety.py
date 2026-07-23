@@ -103,6 +103,9 @@ SKIP_DIRS = {
     "build",
     ".eggs",
     "tests",
+    # DS-14 (T155, 2026-07-23): _scratch/ 是引擎/Agent 调试产物目录，
+    # 含 prompt-log、debug traces 等——不应触发 safety gate 假阳性
+    "_scratch",
 }
 
 # 单文件大小上限(MB), 超过跳过(防止大文件扫描)

@@ -53,7 +53,8 @@ class TestSetupTracing:
              patch(_RESOURCE), \
              patch(_TP) as mock_tp, \
              patch(_SET_TP) as mock_set_tp, \
-             patch(_GET_TRACER) as mock_get_tracer:
+             patch(_GET_TRACER) as mock_get_tracer, \
+             patch.dict("os.environ", {"AE_OTLP_SKIP_PROBE": "1"}):  # DS-14 T158
             from auto_engineering.observability.tracing import setup_tracing
 
             tracer = setup_tracing(otlp_endpoint="http://localhost:4317")
@@ -71,7 +72,8 @@ class TestSetupTracing:
              patch(_RESOURCE) as mock_resource, \
              patch(_TP), \
              patch(_SET_TP), \
-             patch(_GET_TRACER):
+             patch(_GET_TRACER), \
+             patch.dict("os.environ", {"AE_OTLP_SKIP_PROBE": "1"}):  # DS-14 T158
             from auto_engineering.observability.tracing import setup_tracing
 
             setup_tracing(otlp_endpoint="http://localhost:4317")
@@ -85,7 +87,8 @@ class TestSetupTracing:
              patch(_RESOURCE) as mock_resource, \
              patch(_TP), \
              patch(_SET_TP), \
-             patch(_GET_TRACER):
+             patch(_GET_TRACER), \
+             patch.dict("os.environ", {"AE_OTLP_SKIP_PROBE": "1"}):  # DS-14 T158
             from auto_engineering.observability.tracing import setup_tracing
 
             setup_tracing(service_name="my-service", otlp_endpoint="http://localhost:4317")

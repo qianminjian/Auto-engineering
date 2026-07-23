@@ -383,6 +383,9 @@ class FileAccessGuardrail(Guardrail):
         "_scratch/**",
         ".gitignore",
         "pyproject.toml",
+        # DS-14 (T161, 2026-07-23): .ae-* dotfiles 是 Init/Engine 系统文件，
+        # 不应触发 GitClean guardrail（如 .ae-init.lock, .ae-answers.yml）
+        ".ae-*",
     ]
 
     def __init__(self) -> None:

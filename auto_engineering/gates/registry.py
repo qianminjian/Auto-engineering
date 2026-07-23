@@ -51,10 +51,12 @@ def _build_default_gates(manifest: dict | None = None) -> list[Gate]:
         lint_gate = LintGate.from_manifest(manifest)
         type_check_gate = TypeCheckGate.from_manifest(manifest)
         test_gate = TestGate.from_manifest(manifest)
+        build_gate = BuildGate.from_manifest(manifest)
     else:
         lint_gate = LintGate()
         type_check_gate = TypeCheckGate()
         test_gate = TestGate()
+        build_gate = BuildGate()
 
     return [
         SafetyGate(use_gitleaks=False),
@@ -63,7 +65,7 @@ def _build_default_gates(manifest: dict | None = None) -> list[Gate]:
         AuditGate(),
         ContractGate(),
         test_gate,
-        BuildGate(),
+        build_gate,
     ]
 
 

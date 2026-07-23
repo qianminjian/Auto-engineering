@@ -600,7 +600,9 @@ class ActionBuilder:
                 for ft in t.get("file_targets", []):
                     if ft not in impl_files:
                         impl_files.append(ft)
-        # Fix C: when design_spec is empty and no impl files, skip verification
+        # Fix C: when design_spec is empty and no impl files, skip verification.
+        # DS-14 (T151): 原 `and not impl_files` 逻辑保留 — design_spec 由 T150
+        # (fence code block→DesignItem) 保证非空。双空时才 skip，避免过度跳过。
         design_spec = comp.design_spec_summary()
         if not design_spec and not impl_files:
             return {**base, "action": "skip", "reason": "no design items or implementation files for component",

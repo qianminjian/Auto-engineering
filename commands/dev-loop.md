@@ -45,6 +45,20 @@ Violating the letter of this rule is violating the spirit of this rule.
 2. while action.action != "done":
      if action.action == "error":
          report action.error_code + message; STOP
+     # ═══ GATE (Stage Checkpoint) ═══
+     if action.action == "gate":
+         🚨 Python paused the loop for a DecisionGate checkpoint.
+         Read action.gate.question + action.gate.options.
+         Default is always safe ("继续").  Just advance:
+           action = run: ae dev-loop --tick  (NO --result file)
+         Python auto-passes the gate and emits the next real action.
+         continue  ← don't write a result file for gate actions
+     # ═══ SKIP ═══
+     if action.action == "skip":
+         # Engine auto-advanced (e.g. design_spec empty → skip verifier).
+         # Just loop: no result file needed.
+         action = run: ae dev-loop --tick  (NO --result file)
+         continue
      # ═══ Read action.instruction FIRST — it's a direct command ═══
      # ═══ SPAWN or INLINE ═══
      if action.spawn exists:

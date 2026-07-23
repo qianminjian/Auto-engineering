@@ -70,6 +70,13 @@ PII_RULES: list[PIIDetectionRule] = [
         severity=PIISeverity.CRITICAL,
         category=PIICategory.CREDENTIAL,
         description="API Key / Token / 密码",
+        # DS-14 (T153, 2026-07-23): 排除 URL hostname 中的 "api"（如 api.minimaxi.chat）
+        # 和已脱敏占位符 ***REDACTED***、API 版本路径 /v1/ 等
+        exclusion_patterns=[
+            r"https?://[a-z0-9.-]+",  # URL hostname（含 api.xxx.com）
+            r"\*\*\*REDACTED\*\*\*",  # 已脱敏占位符
+            r"/v\d+/[a-z_]+",         # API 版本路径
+        ],
     ),
     PIIDetectionRule(
         name="email",

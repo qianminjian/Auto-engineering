@@ -28,6 +28,7 @@ class TestSetupTracing:
     @patch("opentelemetry.sdk.trace.TracerProvider")
     @patch("opentelemetry.sdk.trace.export.BatchSpanProcessor")
     @patch("opentelemetry.sdk.resources.Resource")
+    @patch.dict("os.environ", {"AE_OTLP_SKIP_PROBE": "1"})  # DS-14 T158
     def test_with_endpoint_initializes_sdk(
         self, mock_resource, mock_bsp, mock_provider, mock_exporter
     ):

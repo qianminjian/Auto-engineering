@@ -156,6 +156,16 @@ class ContractGate(Gate):
                 )
             return self._check_contracts(project_root)
 
+        # DS-14 (T154, 2026-07-23): 检测 .ae-state/spawn-proofs/ 目录 —
+        # 非空 = 有 subagent spawn → 多 agent 模式，不应 skip
+        spawn_proofs_dir = Path(project_root) / ".ae-state" / "spawn-proofs"
+        if spawn_proofs_dir.is_dir() and any(spawn_proofs_dir.iterdir()):
+            return GateVerdict.ok(
+                "skip: multi-agent mode detected (spawn-proofs present), "
+                "cross-agent contract 检查待实现",
+                gate_name=self.name,
+            )
+
         return GateVerdict.ok(
             "skip: single agent mode, no cross-agent contract",
             gate_name=self.name,

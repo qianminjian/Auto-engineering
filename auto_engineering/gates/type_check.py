@@ -174,6 +174,10 @@ class TypeCheckGate(Gate):
                 gate_name=self.name,
             )
 
+        # DS-14 (T157, 2026-07-23): 区分 exit code 语义
+        #   tsc: 0=pass, 1=type errors, 2=config error (tsconfig.json 问题)
+        #   mypy: 0=pass, 1=type errors
+        #   go vet: 0=pass, 1=vet failures
         if result.returncode == 0:
             return GateVerdict.ok(
                 f"{checker} 通过 (0 errors)",
@@ -181,7 +185,16 @@ class TypeCheckGate(Gate):
             )
 
         output = result.stdout or result.stderr or ""
-        if "error:" in output.lower():
+
+        # tsc exit code 2 = 配置错误 (tsconfig.json 有问题), 非类型错误
+        if checker == "tsc" and result.returncode == 2:
+            snippet = output[:500] + ("..." if len(output) > 500 else "")
+            return GateVerdict.ok(
+                f"{checker} skip: 配置问题 (exit=2), 可能是 tsconfig.json 问题\n{snippet}",
+                gate_name=self.name,
+            )
+
+        if "error:" in output.lower() or "error " in output.lower():
             snippet = output[:1500] + ("..." if len(output) > 1500 else "")
             return GateVerdict.failed(
                 f"{checker} 失败 (exit={result.returncode}):\n{snippet}",

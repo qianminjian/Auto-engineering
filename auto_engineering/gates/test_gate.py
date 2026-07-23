@@ -136,10 +136,12 @@ class TestGate(Gate):
             if has_inifile and not any(a.startswith("--timeout") for a in args):
                 args = [*args, "--timeout=60"]
 
-        # T16l: 环内增量测试 — files_changed → pytest -k 过滤
-        k_expr = self._files_to_pytest_k()
-        if k_expr is not None:
-            cmd.extend(["-k", k_expr])
+        # T16l: 环内增量测试 — files_changed → -k 过滤（仅 pytest 适用）
+        # DS-14 (T149): vitest/go test/cargo test 等非 pytest runner 不注入 -k
+        if runner == "pytest":
+            k_expr = self._files_to_pytest_k()
+            if k_expr is not None:
+                cmd.extend(["-k", k_expr])
 
         cmd.extend(args)
         cmd.extend(self.test_paths)

@@ -194,6 +194,12 @@ class _DesignDocParser:
                 self._on_paragraph(content)
                 i += 3
                 continue
+            # DS-14 (T150): capture fenced code blocks as DesignItems
+            if t.type == "fence":
+                info = t.info.strip() if hasattr(t, "info") else ""
+                self._on_fence(info, t.content)
+                i += 1
+                continue
             i += 1
 
         if not self.plates and not self.warnings:
@@ -413,3 +419,25 @@ class _DesignDocParser:
             return
         if self.cur_item is not None and any(k in content for k in _CLAIM_KEYWORDS):
             self.cur_item.key_claims.append(content)
+
+    def _on_fence(self, info: str, content: str) -> None:
+        """DS-14 (T150, 2026-07-23): 捕获 fenced code block 内容作为 DesignItem.
+
+        很多设计文档（如 VoiceClonePage §4.1）在 H3 下直接用 fenced code block
+        描述接口/类型定义，没有段落文本。此 handler 将 code block 头 80 chars
+        作为 DesignItem title，完整 code 作为 key_claims。
+        """
+        content = content.strip()
+        if not content:
+            return
+        if self.cur_component is None:
+            return
+        lang = info.strip() if info else ""
+        title = f"[{lang} code]" if lang else "[code block]"
+        if len(content) <= 80:
+            title = content[:80]
+        item = self._make_item(title=title, source_marker="fence",
+                               key_claims=[content])
+        self.cur_component.design_items.append(item)
+        self.cur_item = item
+        self.last_node = ("item", item)

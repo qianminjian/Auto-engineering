@@ -999,28 +999,56 @@ class TickOrchestrator:
         key_decisions: list[str] = []
         files_changed: list[str] = list(s.files_changed) if s.files_changed else []
         if stage == "architect":
-            summary = f"Architect plan: {s.plan[:200] if s.plan else 'N/A'}"
+            plan_preview = (s.plan[:120] + "...") if (s.plan and len(s.plan) > 120) else (s.plan or "")
+            batch_info = f"{len(s.batch_plan)} batches, {len(s.file_list or [])} files" if s.batch_plan else "no batches"
+            summary = f"Architect: {batch_info}" + (f" — {plan_preview}" if plan_preview else "")
             if s.batch_plan:
                 key_decisions = [
                     f"batch_count={len(s.batch_plan)}",
-                    f"files={', '.join(s.file_list or [])}",
+                    f"file_count={len(s.file_list or [])}",
+                    f"plan_first_line={plan_preview[:80] if plan_preview else 'N/A'}",
                 ]
         elif stage == "developer":
+            # DS-14 (T152 L2): extract actual test stats from batch_state for richer summary
             tr = s.test_results or {}
-            summary = f"Developer: {tr.get('passed', 0)}/{tr.get('total', 0)} tests passed"
+            passed = tr.get("passed", 0)
+            total = tr.get("total", 0)
+            if self._batch_state is not None:
+                try:
+                    comp = self._batch_state.current_component()
+                    batch_id = self._batch_state.current_batch_id()
+                    summary = f"Developer: {comp.name if comp else '?'} batch={batch_id} — {passed}/{total} tests passed"
+                except Exception:
+                    summary = f"Developer: {passed}/{total} tests passed"
+            else:
+                summary = f"Developer: {passed}/{total} tests passed"
             if s.commit_hash:
                 key_decisions.append(f"commit={s.commit_hash[:8]}")
             if s.critic_feedback:
                 key_decisions.append(f"critic_feedback={s.critic_feedback[:120]}")
+            if s.files_changed:
+                key_decisions.append(f"files_changed_count={len(s.files_changed)}")
             # T54: use SessionSummarizer for structured summary when tick > threshold
             if (self._session_summarizer is not None
                     and self._session_summarizer.should_summarize(s.tick)):
                 try:
+                    # DS-14 (T166): pass richer state for structured summary
+                    batch_progress_str = ""
+                    if self._batch_state is not None:
+                        try:
+                            done = self._batch_state.done_count()
+                            total_b = self._batch_state.total_count()
+                            batch_progress_str = f"{done}/{total_b} batches done"
+                        except Exception:
+                            pass
                     sess_summary = self._session_summarizer.summarize_structured(
                         tick=s.tick, test_results=tr,
                         files_changed=list(s.files_changed or []),
                         commit_hash=s.commit_hash or "",
                         gate_results=dict(s.gate_results or {}),
+                        critic_verdict=s.critic_verdict or "",
+                        total_majors=s.total_majors,
+                        batch_progress=batch_progress_str,
                         previous_summary=self._cached_session_summary,
                     )
                     injected = self._session_summarizer.inject_into_prompt(sess_summary)

@@ -143,6 +143,7 @@ class SessionSummarizer:
         gate_results: dict | None = None,
         critic_verdict: str = "",
         total_majors: int = 0,
+        batch_progress: str = "",
         previous_summary: SessionSummary | None = None,
     ) -> SessionSummary:
         """Generate summary from state metadata — no LLM call.
@@ -152,12 +153,19 @@ class SessionSummarizer:
         Produces a SessionSummary with the same shape as the LLM path
         so downstream consumers (inject_into_prompt, offload) are
         identical regardless of mode.
+
+        DS-14 (T166, 2026-07-23): 新增 batch_progress 参数，从 engine state
+        聚合 batch 级别进度信息（已完成 batch 数、plan_refine 次数等）。
         """
         tr = test_results or {}
         decisions: list[str] = []
         files: dict[str, str] = {}
         majors: list[dict] = []
         issues: list[str] = []
+
+        # Batch progress (DS-14 T166: aggregated from engine state)
+        if batch_progress:
+            decisions.append(f"batch_progress: {batch_progress}")
 
         # Key decisions from this tick
         if commit_hash:

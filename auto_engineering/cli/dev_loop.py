@@ -273,7 +273,13 @@ def run_tick_status(root: Path, verbose: bool = False) -> None:
 
 
 def run_tick_resume(checkpoint_id: str, root: Path) -> None:
-    """ae dev-loop --resume <id>: 从指定 checkpoint 恢复 → 输出当前 action JSON."""
+    """ae dev-loop --resume <id>: 从指定 checkpoint 恢复 → 输出当前 action JSON.
+
+    DS-14 (T160, 2026-07-23): 支持 thread_id 作为回退查询。
+    用户常把 action JSON 中的 thread_id 当作 checkpoint_id 传入，
+    导致 CheckpointNotFoundError。当 checkpoint_id 未直接命中时，
+    在 checkpoints 表中搜索 state_json 包含该 ID 的记录。
+    """
     import json
 
     import click
@@ -283,11 +289,45 @@ def run_tick_resume(checkpoint_id: str, root: Path) -> None:
 
     store: SQLiteCheckpointStore[EngineState] = SQLiteCheckpointStore(_ensure_checkpoint_db_path(root))
     try:
-        orch = TickOrchestrator.restore(root, store, checkpoint_id=checkpoint_id)
+        try:
+            orch = TickOrchestrator.restore(root, store, checkpoint_id=checkpoint_id)
+        except Exception:
+            # T160: checkpoint_id 未直接命中 → 尝试作为 thread_id 搜索
+            resolved = _resolve_checkpoint_by_thread_id(checkpoint_id, store)
+            if resolved is None:
+                raise
+            _logger = __import__("logging").getLogger("ae.cli")
+            _logger.info("resume: '%s' 未直接命中 checkpoint，通过 thread_id 回退到 %s",
+                         checkpoint_id, resolved)
+            orch = TickOrchestrator.restore(root, store, checkpoint_id=resolved)
         action = orch.build_action()
         click.echo(json.dumps(action, ensure_ascii=False))
     finally:
         store.close()
+
+
+def _resolve_checkpoint_by_thread_id(
+    candidate: str, store: object
+) -> str | None:
+    """Search checkpoints table for a row whose state_json contains the candidate UUID."""
+    import json as _json
+    try:
+        raw = getattr(store, "_db", None)
+        if raw is None:
+            return None
+        rows = raw.execute(
+            "SELECT id, state_json FROM checkpoints ORDER BY rowid DESC LIMIT 50"
+        ).fetchall()
+        for row in rows:
+            try:
+                state = _json.loads(row[1])
+                if state.get("thread_id") == candidate:
+                    return row[0]
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return None
 
 
 

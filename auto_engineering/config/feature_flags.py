@@ -213,9 +213,13 @@ def feature_warnings(environ: dict | None = None) -> list[str]:
 
 
 def feature_status_for_action(environ: dict | None = None) -> dict[str, bool]:
-    """Return a compact {key: active} dict for action JSON ``feature_status`` (T114 5.4)."""
+    """Return a compact {key: active} dict for action JSON ``feature_status`` (T114 5.4).
+
+    DS-14 (T163, 2026-07-23): 仅输出已激活项 (active=True)，减少 action JSON 体积。
+    全量 feature flag 状态用 ``ae doctor`` 查看。
+    """
     status = get_feature_status(environ)
-    return {key: s["active"] for key, s in status.items()}
+    return {key: s["active"] for key, s in status.items() if s["active"]}
 
 
 def _is_active(key: str, env: dict, default: bool = False) -> bool:
