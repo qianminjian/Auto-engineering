@@ -1982,3 +1982,15 @@ T144 (全量回归) → T145 (真跑验证)
 | T147d | prompt 日志增强 — 每 tick 生成 `-prompt.md`（Part1 指令 + Part2 subagent prompt + Part3 Gate） | prompt-log 可读文件 | ✅ `b28a353` |
 
 > **独立测试结论**：用真实 action JSON 中的 prompt 独立 spawn agent，成功产出 verdict=APPROVE。spawn 指令本身有效——根因是 input data 为空。
+
+---
+
+## Phase 36 — 2026-07-23 深度审计修复
+
+> 来源：`_scratch/reports/2026-07-23-audit.md` | 30/33 已修复，3 项暂缓
+
+| T | 内容 | 验收 | 状态 |
+|---|------|------|:---:|
+| T148a | TickOrchestrator God Class 拆分 — 17 个 `_after_*` handler 提取为 StageHandler 策略模式 | 1865→<1200 行, 每个 handler 独立文件 | ☐ |
+| T148b | StandaloneDriver 职责拆分 — TickRunner + ActionExecutor + TaskFactory | 1213→<600 行 | ☐ |
+| T148c | MetricsCollector 拆分 — MetricsStorage + MetricsAnalyzer | 605→<300 行 | ☐ |
