@@ -367,6 +367,20 @@ class ActionBuilder:
                 "recommended_design": "string (可注入 supplement)",
             })
 
+    def _build_component_map(self) -> dict[str, str]:
+        """Build design_section → component_name mapping from design doc.
+
+        Used by architect to resolve section references (e.g. "§6.1" → "VoiceClonePage（主容器）").
+        """
+        if not self._design_doc:
+            return {}
+        cmap: dict[str, str] = {}
+        for plate in self._design_doc.plates:
+            for comp in plate.components:
+                if comp.design_section:
+                    cmap[comp.design_section] = comp.name
+        return cmap
+
     def _build_action_architect(self, base: dict) -> dict:
         extra: dict = {}
         if self._state.refine_request_json:
@@ -383,6 +397,7 @@ class ActionBuilder:
                 json.loads(self._state.design_supplements_json)
                 if self._state.design_supplements_json else {}),
             "research_archive": self._state.research_archive,
+            "component_map": self._build_component_map(),
         }, expected_format={
             "plan": "string (markdown, min 50 chars)",
             "batch_plan": (
