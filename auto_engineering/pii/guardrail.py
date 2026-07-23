@@ -10,7 +10,6 @@ PII patterns are sourced from pii/rules.py PII_RULES (SSOT), not duplicated.
 
 from __future__ import annotations
 
-import os
 import re
 from pathlib import Path
 from typing import Any

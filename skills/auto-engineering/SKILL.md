@@ -40,20 +40,19 @@ When executing dev-loop:
 | Single agent query | `/project-agent <role> <instruction>` |
 | Run CI gates | `/project-ci` |
 
-## Role execution — Subagent isolation
+## Role execution — Agent isolation
 
-This loop uses **Claude Code built-in subagents** (Plan / code-reviewer / general-purpose)
-for context isolation across roles. These are platform-native capabilities — not external
-dependencies. The B14 external-dependency ban applies only to external-framework agents
-(gsd-* / superpowers-*).
+Each stage spawns an independent agent with its own role_prompt from `prompts/roles/`.
+Agent context isolation prevents role confusion and cross-contamination.
+The B14 external-dependency ban applies only to external-framework agents (gsd-* / superpowers-*).
 
 - **developer**: Main agent (you) — only role with cross-tick context coherence
-- **architect**: `subagent_type="Plan"` (Sonnet)
-- **critic**: `subagent_type="code-reviewer"` (Sonnet)
-- **component_verifier**: `subagent_type="general-purpose"` (Haiku)
-- **plate_deep_audit**: 3× `subagent_type="code-reviewer"` (Sonnet, parallel)
-- **system_verifier**: `subagent_type="general-purpose"` (Haiku)
-- **system_deep_audit**: 3× `subagent_type="code-reviewer"` (Sonnet, parallel)
+- **architect**: 1 agent (Sonnet) — 产出 batch_plan
+- **critic**: 1 agent (Sonnet) — diff 审查, APPROVE/MAJOR 门禁
+- **component_verifier**: 1 agent (Haiku) — 设计→代码覆盖映射
+- **plate_deep_audit**: 3 agents parallel (Sonnet) — 契约/数据流/架构退化三维审计
+- **system_verifier**: 1 agent (Haiku) — 全量设计覆盖验证
+- **system_deep_audit**: 5 agents parallel (Sonnet) — 架构/质量/规范/虚化/协作五维审计
 
 MCP tools and search skills are information gathering tools — allowed as research aids,
 not as execution delegates.

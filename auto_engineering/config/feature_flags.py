@@ -8,6 +8,18 @@
     - --init stderr 一行功能状态来自此清单
     - action JSON ``feature_status`` 字段来自此清单
 
+与 RuntimeConfig 的分层关系 (T135f):
+    - **FeatureManifest** (本文件): What features exist — 声明层。定义所有 AE_* 开关的
+      元数据 (key/description/category/agent_mode/default_active)。只描述"有什么"，
+      不直接消费 env var。
+    - **RuntimeConfig** (runtime_config.py): How to access — 访问层。提供 typed
+      properties (e.g. ``metrics_enabled``→``self.get("AE_METRICS")``) 供业务代码调用。
+      进程级 sentinel 模式: CLI 入口 ``set_default_config()`` 一次, 业务代码
+      ``get_default_config()`` 随处取。
+    - **迁移规则**: 新增 AE_* 环境变量 → 先在 FEATURE_MANIFEST 注册 FeatureFlag →
+      然后在 RuntimeConfig 添加 typed property → 业务代码通过 property 读取。
+      check_feature() guard 函数在 CI 中验证此规则。
+
 Lifecycle: FEATURE_MANIFEST 是模块级常量列表 — 导入时初始化, 进程存活期不变.
 get_feature_status() 在每次调用时从 os.environ 读取实时值, 无缓存.
 feature_warnings() 在 --init 时调用, 向用户提示默认关闭的生产相关功能.
@@ -21,7 +33,7 @@ from typing import Literal
 AgentMode = Literal["both", "standalone_only", "agent_only"]
 Category = Literal[
     "observability", "performance", "debugging",
-    "provider", "safety", "suppression", "threshold",
+    "provider", "safety", "threshold",
 ]
 
 
@@ -49,8 +61,6 @@ FEATURE_MANIFEST: list[FeatureFlag] = [
                 "observability", "both", "AE_METRICS=1"),
     FeatureFlag("AE_OTLP_ENDPOINT", "OTLP 分布式追踪导出",
                 "observability", "both", "export AE_OTLP_ENDPOINT=http://localhost:4317"),
-    FeatureFlag("AE_LANGSMITH", "LangSmith 可观测性集成 (需 LANGCHAIN_API_KEY)",
-                "observability", "both", "AE_LANGSMITH=1 + LANGCHAIN_API_KEY"),
     FeatureFlag("AE_TOKEN_TRACKING", "逐 Tick Token JSONL 采集 (M5)",
                 "observability", "both", "AE_TOKEN_TRACKING=1"),
     FeatureFlag("AE_TOKEN_SOURCE", "Token 数据源选择 (provider/transcript)",
@@ -96,10 +106,6 @@ FEATURE_MANIFEST: list[FeatureFlag] = [
                 "observability", "both", "AE_AUDIT_LOG_DIR=/path/to/logs"),
     FeatureFlag("AE_STRICT_RED", "严格 TDD REDGuardrail — test-first 强制 (仅 Plugin 模式)",
                 "safety", "agent_only", "AE_STRICT_RED=1"),
-
-    # ── suppression ──
-    FeatureFlag("AE_SUPPRESS_DEPRECATION", "抑制弃用警告输出 (仅 Plugin 模式)",
-                "suppression", "agent_only", "AE_SUPPRESS_DEPRECATION=1"),
 
     # ── threshold ──
     FeatureFlag("AE_GATE_TIMEOUT", "Gate 执行超时秒数 (safety/lint/type_check 等)",
@@ -174,7 +180,7 @@ def feature_status_oneline(environ: dict | None = None) -> str:
     status = get_feature_status(environ)
     short_names = {
         "AE_AUDIT_LOG": "Audit", "AE_METRICS": "Metrics",
-        "AE_OTLP_ENDPOINT": "OTLP", "AE_LANGSMITH": "LangSmith",
+        "AE_OTLP_ENDPOINT": "OTLP",
         "AE_DEBUG": "Debug", "AE_CACHE_CONTROL": "Cache",
         "AE_PII_ENABLED": "PII", "AE_TOKEN_TRACKING": "Token",
     }
@@ -203,8 +209,8 @@ def feature_warnings(environ: dict | None = None) -> list[str]:
         warnings.append("度量采集未启用 (AE_METRICS=1) — 无 AI Coding 信号数据")
     if not status.get("AE_AUDIT_LOG", {}).get("active"):
         warnings.append("审计日志未启用 (AE_AUDIT_LOG=1)")
-    if not status.get("AE_OTLP_ENDPOINT", {}).get("active") and not status.get("AE_LANGSMITH", {}).get("active"):
-        warnings.append("无 observability 后端 (设置 AE_OTLP_ENDPOINT 或 AE_LANGSMITH)")
+    if not status.get("AE_OTLP_ENDPOINT", {}).get("active"):
+        warnings.append("无 observability 后端 (设置 AE_OTLP_ENDPOINT)")
     return warnings
 
 

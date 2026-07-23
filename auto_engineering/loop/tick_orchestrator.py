@@ -33,6 +33,11 @@ from uuid import uuid4
 
 from auto_engineering.config.constants import DEFAULT_P1_THRESHOLD, _SPAWN_CONFIG
 from auto_engineering.config.runtime_config import RuntimeConfig, get_default_config
+from auto_engineering.loop.escalation_handler import (
+    EscalationContext,
+    EscalationHandler,
+    detect_project_language,
+)
 from auto_engineering.engine.batch_state import BatchState
 from auto_engineering.engine.design_doc import DesignDoc, Supplement
 from auto_engineering.engine.progress_tree import ProgressTree
@@ -43,7 +48,11 @@ from auto_engineering.engine.verification_layers import (
 )
 from auto_engineering.gates._tools import LANGUAGE_TOOLS
 from auto_engineering.gates.deep_audit import recount_findings
-from auto_engineering.loop.action_builder import ActionBuilder, _STAGE_CHECKPOINT_REVIEW_FEEDBACK
+from auto_engineering.loop.action_builder import (
+    ActionBuilder,
+    _STAGE_CHECKPOINT_OPTIONS,
+    _STAGE_CHECKPOINT_REVIEW_FEEDBACK,
+)
 from auto_engineering.loop.actions import ActionDone, ActionError, ErrorResponse, validate_result_format
 from auto_engineering.loop.checkpoint.manager import CheckpointManager
 from auto_engineering.loop.checkpoint.records import CheckpointNotFoundError
@@ -65,9 +74,9 @@ from auto_engineering.metrics.collector import AIOrigin, get_collector
 from auto_engineering.metrics.enrichment import compute_metrics_signals
 from auto_engineering.metrics.transcript_parser import create_parser
 from auto_engineering.observability.audit_log import AuditLogger
+from auto_engineering.observability.tracing import _TracerLike
 from auto_engineering.pii.redactor import PIIRedactor
 from auto_engineering.prompts.registry import default_registry
-
 # Gate runner type: (gate_names, project_root) → {name: GateVerdict}
 GateRunner = Callable[..., dict]
 
@@ -77,39 +86,7 @@ _ISO_FMT = "%Y-%m-%dT%H:%M:%SZ"
 
 # ── System-Initiated Escalation: 项目语言探测 ──
 
-_LANGUAGE_INDICATORS: list[tuple[str, str]] = [
-    ("python", "pyproject.toml"),
-    ("python", "setup.py"),
-    ("python", "setup.cfg"),
-    ("typescript", "package.json"),
-    ("go", "go.mod"),
-    ("rust", "Cargo.toml"),
-]
-
-
-def _detect_project_language(project_root: Path) -> str | None:
-    """从常见配置文件探测项目语言。返回 language code 或 None。
-
-    探测优先级按 _LANGUAGE_INDICATORS 顺序。package.json 需要二次确认——
-    检查 tsconfig.json 或 devDependencies/dependencies 中是否有 typescript。
-    """
-    for lang, indicator in _LANGUAGE_INDICATORS:
-        indicator_path = project_root / indicator
-        if not indicator_path.exists():
-            continue
-        if lang == "typescript":
-            if (project_root / "tsconfig.json").exists():
-                return "typescript"
-            try:
-                pkg = json.loads(indicator_path.read_text(encoding="utf-8"))
-            except (json.JSONDecodeError, OSError):
-                return "typescript"  # 有 package.json 就假定 JS/TS
-            deps = {**pkg.get("dependencies", {}), **pkg.get("devDependencies", {})}
-            if "typescript" in deps:
-                return "typescript"
-            return "typescript"  # 有 package.json 就算 JS/TS 生态
-        return lang
-    return None
+# _LANGUAGE_INDICATORS + _detect_project_language → loop/escalation_handler.py (P1-9)
 
 # _VERIFIER_RECHECK — 已提取到 ActionBuilder (P0-1)
 
@@ -157,6 +134,13 @@ class TickSessionSummarizer(Protocol):
     def inject_into_prompt(self, summary: Any) -> str: ...
 
 
+@runtime_checkable
+class _TranscriptParserLike(Protocol):
+    """SessionTranscriptParser structural interface (T135c)."""
+
+    def parse_tick(self, tick_no: int) -> dict | None: ...
+
+
 class TickOrchestrator:
     """Discrete-tick orchestrator with layered verification (C.5).
 
@@ -175,11 +159,11 @@ class TickOrchestrator:
         checkpoint_store: SQLiteCheckpointStore | None = None,
         context_offloader: TickContextOffloader | None = None,
         session_summarizer: TickSessionSummarizer | None = None,
-        tracer: Any | None = None,
+        tracer: _TracerLike | None = None,  # T135c: typed Protocol
         audit_logger: AuditLogger | None = None,
         runtime_config: RuntimeConfig | None = None,
         pii_redactor: PIIRedactor | None = None,
-        transcript_parser: Any | None = None,
+        transcript_parser: _TranscriptParserLike | None = None,  # T135c: typed Protocol
         escalate: bool = False,
         debug: bool = False,
         debug_dir: str | None = None,
@@ -221,6 +205,7 @@ class TickOrchestrator:
         self._progress_tree: ProgressTree | None = None
         self._verification_layers: VerificationLayers | None = None
         self._round_history: list = []  # T1: 在 TickOrchestrator, 非 EngineState 字段
+        self._last_completed_stage: str = ""  # E2: 追踪上一完成 stage（延迟结果降级）
         self._last_batch_id: str | None = None  # 跨 stage 传 batch_id (组件完成后无 current)
         self._dev_snapshot: dict[str, Any] | None = None  # developer 产出快照 (供 critic 上下文)
         # DS-10 延迟打点累加器 (每 tick 起始清零, tick() 内累加子进程墙钟)
@@ -246,6 +231,25 @@ class TickOrchestrator:
             tracer=tracer,
             audit_logger=audit_logger,
         )
+
+    # ── P1-9 EscalationHandler delegate ──
+    _escalation: EscalationHandler | None = None
+
+    @property
+    def escalation(self) -> EscalationHandler:
+        """Lazily-created EscalationHandler — reads current mutable state (P1-9)."""
+        if self._escalation is None or self._escalation._ctx is None:
+            self._escalation = EscalationHandler(EscalationContext(
+                project_root=self.project_root,
+                state=self._state,
+                batch_state=self._batch_state,
+                design_doc=self._design_doc,
+                init_manifest=self._init_manifest,
+                tick_gate_runner=self._tick_gate_runner,
+                build_action=self.build_action,
+                save_checkpoint=self._save_checkpoint,
+            ))
+        return self._escalation
 
     # ── T113 L2: Injectable access with visible None ──
 
@@ -336,13 +340,13 @@ class TickOrchestrator:
         # System-Initiated Escalation: manifest 缺失 + 明确非 Python → 人工决策.
         # detected is None (空目录/未知项目) 静默回退 Python 默认 (维持现有行为).
         if self._init_manifest is None:
-            detected = _detect_project_language(self.project_root)
+            detected = detect_project_language(self.project_root)
             if detected is not None and detected != "python":
                 self._state.current_stage = "init"
                 self._state.expected_stage = "init"
                 self._state.tick = 0
                 self._save_checkpoint()
-                return self.build_action(pre_gate=self._build_init_manifest_gate(detected))
+                return self.build_action(pre_gate=self.escalation.build_init_manifest_gate(detected))
 
         # T95 Agent-Initiated Escalation: --escalate flag → 启动时立即暂停
         if self._escalate:
@@ -354,7 +358,7 @@ class TickOrchestrator:
                 self._state.expected_stage = "architect"
             self._state.tick = 1
             self._save_checkpoint()
-            return self.build_action(pre_gate=self._build_agent_escalation_gate(None))
+            return self.build_action(pre_gate=self.escalation.build_agent_escalation_gate(None))
 
         if self._design_doc:
             self._state.current_stage = "gap_scan"
@@ -599,7 +603,7 @@ class TickOrchestrator:
         """tick 核心逻辑 (dict 版本): Gate resolution → 验证 → Guardrail → Gate → 路由 → action."""
         # T95: Agent mid-loop escalation — Agent 在 result 中置 escalate=true
         if result.get("escalate") is True:
-            return self.build_action(pre_gate=self._build_agent_escalation_gate({
+            return self.build_action(pre_gate=self.escalation.build_agent_escalation_gate({
                 "question": result.get("escalation_question", ""),
                 "options": result.get("escalation_options"),
                 "default": result.get("escalation_default"),
@@ -609,6 +613,24 @@ class TickOrchestrator:
         gate_resolution = result.get("gate_resolution")
         if gate_resolution and isinstance(gate_resolution, dict):
             return self._tick_process_result(result)
+
+        # E2: STAGE_MISMATCH 降级 — Agent 提交上一 stage 的延迟结果时，
+        # 不再报错，接受结果并重建当前 stage 的 action。
+        # 解决 T51c-T51f spawn 校验被 stage 不匹配错误短路的问题。
+        result_stage = result.get("stage", "")
+        if (result_stage
+                and result_stage != self._state.current_stage
+                and result_stage == self._last_completed_stage):
+            _logger.warning(
+                "E2 downgrade: Agent sent stale result for '%s' "
+                "(orchestrator already at '%s'). Accepting + rebuilding action.",
+                result_stage, self._state.current_stage,
+            )
+            self._apply_result_to_state(result)
+            self._record_tick_latency(time.perf_counter(), self._state.tick)
+            if self._state.current_stage == "developer":
+                self._run_developer_gates()
+            return self.build_action()
 
         validated = self._validate_result_dict(result)
         return self._tick_process_result(validated)
@@ -641,11 +663,11 @@ class TickOrchestrator:
                         "tick": self._state.tick + 1,
                         "thread_id": self._state.thread_id,
                     }
-                return self._resolve_init_manifest_escalation(gate_resolution)
+                return self.escalation.resolve_init_manifest(gate_resolution)
 
             # T95 Agent-Initiated Escalation
             if gate_id == "agent_escalation":
-                return self._resolve_agent_escalation(gate_resolution)
+                return self.escalation.resolve_agent_escalation(gate_resolution)
 
             # Stage Checkpoint Gate (T64) — gate_id starts with "checkpoint_"
             if gate_id.startswith("checkpoint_"):
@@ -666,7 +688,7 @@ class TickOrchestrator:
                     return self.build_action(feedback=_STAGE_CHECKPOINT_REVIEW_FEEDBACK)
                 return ErrorResponse(
                     error_code="INVALID_GATE_RESOLUTION",
-                    message=f"未知的 gate resolution: {resolution!r}，有效值: 继续 / 审查当前产出 / 终止 loop",
+                    message=f"未知的 gate resolution: {resolution!r}，有效值: {' / '.join(_STAGE_CHECKPOINT_OPTIONS)}",
                 ).to_dict()
 
             # T94 PrePlannedGate — architect 在 batch_plan 中声明的 gate.
@@ -692,8 +714,8 @@ class TickOrchestrator:
 
         # 挂运行时非持久句柄供 Guardrail (G7 REDGuardrail 读 batch_state/_plan, B3 line 657).
         # asdict 只序列化 dataclass 字段 → 不泄漏进 checkpoint.
-        self._state.batch_state = self._batch_state  # type: ignore[attr-defined]
-        self._state._plan = self._plan  # type: ignore[attr-defined]
+        self._state._runtime_ctx["batch_state"] = self._batch_state
+        self._state._runtime_ctx["plan"] = self._plan
 
         t_g = time.perf_counter()
         gr = self._guardrail.check("post", self._state.current_stage,
@@ -765,14 +787,14 @@ class TickOrchestrator:
         if stage in _SPAWN_CONFIG:
             spawned = result.get("spawned")
             if spawned is not True:
-                subagent_type = _SPAWN_CONFIG[stage]["subagent_type"]
                 return ErrorResponse(
                     error_code="SPAWN_REQUIRED",
                     message=(
-                        f"Stage '{stage}' requires spawning a {subagent_type} "
-                        f"subagent. You MUST spawn the subagent, collect its "
-                        f"output, and set '\"spawned\": true' in the result. "
-                        f"Re-run this tick with actual subagent spawn."
+                        f"Stage '{stage}' requires spawning an agent. "
+                        f"Read the action.instruction — spawn the agent with "
+                        f"the provided role_prompt, collect its output, and set "
+                        f"'\"spawned\": true' in the result. "
+                        f"Re-run this tick with actual agent spawn."
                     ),
                     current_state=self._state.to_dict(),
                 )
@@ -831,7 +853,7 @@ class TickOrchestrator:
     # ── _after_architect ──
 
     def _after_architect(self) -> dict:
-        batches = BatchState._flatten_batch_plan(self._state.batch_plan)
+        batches = BatchState.flatten_batch_plan(self._state.batch_plan)
         if not batches:
             return ActionError(error_code="EMPTY_BATCH_PLAN",
                                message="architect 输出 batch_plan 为空").to_dict()
@@ -852,19 +874,10 @@ class TickOrchestrator:
 
         self._plan = tasks_from_batch_plan(batches, self._state.requirement)
 
-        # P0-3: TaskDAG 拓扑排序 — 检测 depends_on 并构建 DAG 供 batch 调度
-        tasks_with_deps = [t for t in self._plan.tasks if t.depends_on]
-        if tasks_with_deps:
-            dag = TaskDAG()
-            for task in self._plan.tasks:
-                dag.add_task(task)
-            self._task_dag = dag
-            _logger.info(
-                "TaskDAG built: %d tasks, %d with depends_on",
-                len(self._plan.tasks), len(tasks_with_deps),
-            )
-        else:
-            self._task_dag = None
+        # P0-8: TaskDAG removed — depends_on is always [] at task level.
+        # Batch ordering is controlled implicitly by batch_plan ordering.
+        # Topological sort was built but its output was never consumed.
+        # If DAG-based scheduling is needed, re-add with wire to BatchState.next_batch().
 
         if self._verification_layers is None:
             self._verification_layers = determine_verification_layers(
@@ -1368,7 +1381,13 @@ class TickOrchestrator:
                 verdict_level=verdict.level).to_dict()
             if mc is not None and enrichment:
                 action["metrics"] = enrichment
-                # P1-2: RatchetController 接线 — 收敛时执行棘轮判定
+                # P0-2: DiagnosticRuleDiscoverer — trigger on requirement completion
+                try:
+                    mc.end_requirement(self._state.requirement)
+                    _logger.debug("end_requirement triggered for DiagnosticRuleDiscoverer")
+                except Exception:
+                    _logger.debug("end_requirement failed (non-fatal)", exc_info=True)
+                # P0-3: RatchetController 接线 — 收敛时执行棘轮判定
                 action["ratchet"] = self._run_ratchet(mc, enrichment)
             return action
 
@@ -1383,7 +1402,7 @@ class TickOrchestrator:
     # ── P1-2: RatchetController 接线 ──
 
     def _run_ratchet(self, mc, enrichment: dict) -> dict | None:
-        """收敛时执行棘轮 keep/revert/stop 判定.
+        """收敛时执行棘轮 keep/revert/stop 判定 + 配置版本化闭环.
 
         对比 baseline (before) 与当前 enrichment (after) 的 M1-M5 度量,
         返回 RatchetDecision 或 None (度量未启用/无基线时).
@@ -1399,200 +1418,51 @@ class TickOrchestrator:
                 return None
             ratchet = RatchetController(self.project_root)
             decision = ratchet.evaluate(before, after)
-            return {
+
+            # AD3: ThresholdLearner.propose_adjustments() — 贝叶斯阈值建议
+            try:
+                from auto_engineering.metrics.threshold_learner import ThresholdLearner
+                learner = ThresholdLearner(self.project_root / ".ae-state" / "metrics")
+                proposals = learner.propose_adjustments()
+                if proposals:
+                    _logger.info("ThresholdLearner proposals: %s",
+                                 [(p["param"], p["proposed"]) for p in proposals])
+            except (ImportError, FileNotFoundError, ValueError, OSError):
+                _logger.debug("ThresholdLearner.propose_adjustments skipped", exc_info=True)
+
+            # P0-3: 配置版本化闭环 — save/rollback 根据判定结果
+            result: dict = {
                 "action": decision.action,
                 "reason": decision.reason,
                 "config_version": decision.config_version,
             }
+            if decision.action == "keep":
+                snapshot_tag = ratchet.save_config_snapshot(after)
+                if snapshot_tag:
+                    result["snapshot_tag"] = snapshot_tag
+                    _logger.info("Ratchet KEEP → saved config snapshot: %s", snapshot_tag)
+            elif decision.action == "revert":
+                previous = ratchet.rollback()
+                if previous is not None:
+                    result["rollback"] = "applied"
+                    _logger.warning("Ratchet REVERT → rolled back to previous config")
+                else:
+                    _logger.warning("Ratchet REVERT → no previous config to roll back to")
+            elif decision.action == "stop":
+                _logger.critical("Ratchet STOP — severe regression detected: %s", decision.reason)
+                previous = ratchet.rollback()
+                if previous is not None:
+                    result["rollback"] = "applied"
+                    _logger.critical("Ratchet STOP → emergency rollback applied")
+            return result
         except (KeyboardInterrupt, SystemExit):
             raise
-        except (ImportError, ValueError, TypeError, OSError, KeyError):
+        except (ImportError, ValueError, TypeError, OSError, KeyError,
+                json.JSONDecodeError):
             _logger.debug("RatchetController evaluate failed", exc_info=True)
             return None
 
-    # ── System-Initiated Escalation: init-manifest 缺失 gate ──
-
-    @staticmethod
-    def _build_init_manifest_gate(detected_language: str | None) -> dict:
-        """构建 'init-manifest 缺失' 的 system escalation gate.
-
-        detected_language=None 表示无法探测, 用户需从全部语言中选择.
-        """
-
-        if detected_language:
-            default_tools = LANGUAGE_TOOLS.get(
-                detected_language, LANGUAGE_TOOLS["python"])
-            default_label = (
-                f"{detected_language}: {default_tools[0]}/{default_tools[1]}/{default_tools[2]}")
-            options = [
-                default_label,
-                "python: ruff/mypy/pytest",
-                "自定义（在 resolution_detail 中指定）",
-            ]
-            question = (
-                f"未找到 .ae-state/init-manifest.json。"
-                f"检测到项目可能为 {detected_language} 项目。"
-                f"请选择 Gate 工具链配置："
-            )
-        else:
-            options = []
-            for lang in ["python", "typescript", "go", "rust", "bash"]:
-                tools = LANGUAGE_TOOLS[lang]
-                options.append(f"{lang}: {tools[0]}/{tools[1]}/{tools[2]}")
-            options.append("自定义（在 resolution_detail 中指定）")
-            question = (
-                "未找到 .ae-state/init-manifest.json, 且无法自动探测项目语言。"
-                "请选择 Gate 工具链配置："
-            )
-            default_label = options[0]
-
-        return {
-            "id": "init_manifest_missing",
-            "type": "system_escalation",
-            "trigger": "missing_init_manifest",
-            "question": question,
-            "options": options,
-            "default": default_label,
-            "detected_language": detected_language,
-            "timeout_ms": 0,
-        }
-
-    def _resolve_init_manifest_escalation(self, gate_resolution: dict) -> dict:
-        """处理 init_manifest_missing 的 gate resolution — 创建 manifest 并继续."""
-        resolution = gate_resolution.get("resolution", "")
-        detail = gate_resolution.get("resolution_detail", {})
-
-        # 解析 resolution: "typescript: eslint/tsc/vitest" 或 "自定义（...）"
-        lang: str | None = None
-        tools: tuple[str, str, str] | None = None
-
-        if "自定义" in resolution:
-            # 用户自定义 → 从 resolution_detail 取
-            lang = detail.get("language", "python")
-            tools = (
-                detail.get("linter", LANGUAGE_TOOLS.get(lang, LANGUAGE_TOOLS["python"])[0]),
-                detail.get("type_checker", LANGUAGE_TOOLS.get(lang, LANGUAGE_TOOLS["python"])[1]),
-                detail.get("test_runner", LANGUAGE_TOOLS.get(lang, LANGUAGE_TOOLS["python"])[2]),
-            )
-        else:
-            # 解析 "typescript: eslint/tsc/vitest" 格式
-            for candidate in LANGUAGE_TOOLS:
-                if resolution.startswith(candidate):
-                    lang = candidate
-                    tools = LANGUAGE_TOOLS[candidate]
-                    break
-            if lang is None:
-                lang = "python"
-                tools = LANGUAGE_TOOLS["python"]
-
-        # 创建 .ae-state/ 目录和 init-manifest.json
-        ae_state_dir = self.project_root / ".ae-state"
-        ae_state_dir.mkdir(parents=True, exist_ok=True)
-
-        manifest = {
-            "schema_version": "1.0",
-            "project_type": "app-service",
-            "language": lang,
-            "structure": {
-                "source_root": "src/",
-                "test_root": "tests/",
-            },
-            "conventions": {
-                "linter": tools[0],
-                "type_checker": tools[1],
-                "test_runner": tools[2],
-            },
-            "created_at": datetime.now(UTC).strftime(_ISO_FMT),
-        }
-        manifest_path = ae_state_dir / "init-manifest.json"
-        manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False))
-
-        _logger.info(
-            "System escalation resolved: created init-manifest (language=%s, "
-            "linter=%s, type_checker=%s, test_runner=%s)",
-            lang, tools[0], tools[1], tools[2],
-        )
-
-        # 重新加载 manifest + 重建 gates
-        self._init_manifest = manifest
-        self._tick_gate_runner.reload(self._init_manifest)
-
-        # 推进到正确的初始 stage
-        if self._design_doc:
-            self._state.current_stage = "gap_scan"
-            self._state.expected_stage = "gap_scan"
-        else:
-            self._state.current_stage = "architect"
-            self._state.expected_stage = "architect"
-        self._state.tick = 0
-        self._save_checkpoint()
-        return self.build_action()
-
-    # ── Agent-Initiated Escalation (T95) ──
-
-    @staticmethod
-    def _build_agent_escalation_gate(agent_context: dict | None) -> dict:
-        """构建 Agent 发起的 escalation gate.
-
-        agent_context=None → --init --escalate (无 Agent 上下文)
-        agent_context 含 question/options → tick 中 Agent 提供具体决策点
-        """
-        if agent_context and agent_context.get("question"):
-            question = agent_context["question"]
-            options = agent_context.get("options") or [
-                "批准继续", "回退重设计", "终止 loop"]
-            default = agent_context.get("default") or options[0]
-        else:
-            question = "Agent 请求人工决策。请描述需要决策的事项，或选择操作："
-            options = ["继续（批准当前方向）", "回退到上一阶段", "终止 loop"]
-            default = options[0]
-
-        return {
-            "id": "agent_escalation",
-            "type": "agent_escalation",
-            "trigger": "agent_requested",
-            "question": question,
-            "options": options,
-            "default": default,
-            "timeout_ms": 0,
-        }
-
-    def _resolve_agent_escalation(self, gate_resolution: dict) -> dict:
-        """处理 Agent escalation 的 resolution."""
-        resolution = gate_resolution.get("resolution", "")
-        detail = gate_resolution.get("resolution_detail", {})
-
-        if resolution == "终止 loop":
-            return {
-                "action": "done",
-                "verdict": "TERMINATED",
-                "message": "用户通过 agent_escalation 终止 loop",
-                "stage": self._state.current_stage,
-                "tick": self._state.tick + 1,
-                "thread_id": self._state.thread_id,
-            }
-
-        if "回退" in resolution:
-            # 回到 architect 重新规划
-            self._state.current_stage = "architect"
-            self._state.expected_stage = "architect"
-            self._state.round += 1
-            self._save_checkpoint()
-            note = detail.get("note", "")
-            return self.build_action(
-                feedback=f"Agent escalation: 用户选择回退重设计。{note}".rstrip())
-
-        if "跳过" in resolution:
-            if self._batch_state is not None:
-                self._batch_state.advance_batch()
-            self._save_checkpoint()
-            return self.build_action()
-
-        # 默认: "批准继续" / "继续（批准当前方向）"
-        self._save_checkpoint()
-        note = detail.get("note", "")
-        return self.build_action(
-            feedback=f"Agent escalation: 用户批准继续。{note}".rstrip() if note else "")
+    # P1-9: Escalation handler → loop/escalation_handler.py
 
     @property
     def action_builder(self) -> ActionBuilder:
@@ -1699,15 +1569,22 @@ class TickOrchestrator:
             return self._pii_redactor.redact_dict(result)
         findings = self._pii_redactor.scan_dict(result)
         if findings:
+            # P2-35: summarize by category for actionable diagnosis
+            by_cat: dict[str, int] = {}
+            for f in findings:
+                cat = getattr(f, "category", "unknown")
+                by_cat[cat] = by_cat.get(cat, 0) + 1
+            cat_summary = ", ".join(f"{c}:{n}" for c, n in sorted(by_cat.items())[:3])
             _logger.warning(
-                "PII detected in inbound result: %d matches", len(findings))
+                "PII detected in inbound result: %d matches (%s)", len(findings), cat_summary)
             if inbound == "block":
                 s = self._state
                 return ErrorResponse(
                     error_code="PII_BLOCKED_INBOUND",
                     message=(
                         f"PII detected in inbound result: "
-                        f"{len(findings)} matches"),
+                        f"{len(findings)} matches ({cat_summary}). "
+                        f"审查 result JSON 中的 PII 字段后重试"),
                     current_state=s.to_dict() if s else None)
         return result
 
@@ -1765,6 +1642,7 @@ class TickOrchestrator:
     def _advance_stage(self, next_stage: str | None) -> None:
         if next_stage is None:
             return
+        self._last_completed_stage = self._state.current_stage  # E2: 在推进前记录
         self._append_round_history()
         clear_stage_fields(self._state, self._state.current_stage)
         self._state.current_stage = next_stage
@@ -1823,7 +1701,10 @@ class TickOrchestrator:
                 if not line:
                     continue
                 parts = line.split("\t")
-                if len(parts) >= 2:
+                if len(parts) >= 3:
+                    # P2-32: binary files output "- \t - \t filename"
+                    if parts[0] == "-" and parts[1] == "-":
+                        continue
                     try:
                         if parts[0] != "-":
                             added += int(parts[0])
@@ -1854,21 +1735,17 @@ class TickOrchestrator:
     def _get_p1_threshold(self) -> int:
         """Return P1 threshold for deep audit pass/fail decisions.
 
-        T131 Bayesian wiring: when AE_METRICS=1 and ThresholdLearner has ≥30
-        observations, reads the learned max_refine_global posterior mean as the
-        P1 threshold (clamped to [2, 8]).  Falls back to DEFAULT_P1_THRESHOLD
-        during cold start or when metrics are disabled.
-
-        ThresholdLearner is @reserved (strategic reserve) — wiring activates
-        automatically once the metrics pipeline accumulates sufficient data.
+        T131 Bayesian wiring: ThresholdLearner is always attempted (P1-11 fix).
+        The learner handles cold start gracefully — returns default value (10)
+        when no data has been accumulated yet. Falls back to DEFAULT_P1_THRESHOLD
+        on import/IO errors.
         """
         try:
-            if get_default_config().metrics_enabled:
-                from auto_engineering.metrics.threshold_learner import ThresholdLearner
-                learner = ThresholdLearner(self.project_root / ".ae-state" / "metrics")
-                learned = learner.compute_max_iter()
-                if learned != 10:  # 10 is the cold-start default — no real data yet
-                    return max(2, min(8, learned // 2))
+            from auto_engineering.metrics.threshold_learner import ThresholdLearner
+            learner = ThresholdLearner(self.project_root / ".ae-state" / "metrics")
+            learned = learner.compute_max_iter()
+            if learned != 10:  # 10 is the cold-start default — no real data yet
+                return max(2, min(8, learned // 2))
         except (ImportError, FileNotFoundError, ValueError, TypeError, OSError):
             _logger.debug("self-learned threshold fallback to default %s", DEFAULT_P1_THRESHOLD, exc_info=True)
         return DEFAULT_P1_THRESHOLD

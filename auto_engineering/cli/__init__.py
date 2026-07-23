@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import click
@@ -71,8 +72,6 @@ def main():
 
     Init 工程 (项目脚手架) 已拆分独立项目, 见 design/BEACON.md.
     """
-    import logging
-
     # P0-6: Construct RuntimeConfig once, set as process-wide default
     from auto_engineering.config.runtime_config import RuntimeConfig, set_default_config
     config = RuntimeConfig()

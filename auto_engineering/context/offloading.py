@@ -9,6 +9,7 @@ Summary generation happens upstream (TickOrchestrator) before offload() is calle
 from __future__ import annotations
 
 import json
+from auto_engineering.utils.file_utils import safe_json_load
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -104,7 +105,7 @@ class ContextOffloader:
         path = self._find_latest(stage)
         if path is None:
             return None
-        data = json.loads(path.read_text())
+        data = safe_json_load(path)
         return StageContextOffload(
             stage=data["stage"],
             round_number=data["round_number"],
@@ -121,7 +122,7 @@ class ContextOffloader:
         path = self._find_latest(stage)
         if path is None:
             return None
-        data = json.loads(path.read_text())
+        data = safe_json_load(path)
         return data.get("messages", [])
 
     def offload_file(

@@ -227,6 +227,8 @@ class EngineState:
     design_doc_path: str | None = None                            # #34 设计文档路径 (design-doc 模式)
     refine_request_json: str | None = None                        # #35 plan_refine 输入 (RefineRequest)
     plan_refine_by_source: dict[str, int] = field(default_factory=dict)  # #36 分源 refine 计数 (DS-8)
+    _runtime_ctx: dict[str, object] = field(  # P1-28: 跨 tick 运行时句柄, 不进 checkpoint
+        default_factory=dict, repr=False, compare=False, metadata={"checkpoint_skip": True})
     prompt_registry_hash: str = ""  # #37 B12.5 版本锁 (init 盖, resume 校验)
     debug_enabled: bool = False  # #38 --debug 开关 (AE_DEBUG=1 或 --debug flag)
     debug_dir: str | None = None  # #39 debug 输出目录 (默认 <project_root>/_scratch/debug/)
@@ -294,10 +296,11 @@ class EngineState:
 
         serialize_state 优先检查 model_dump → 统一序列化入口。
         内部委托给 asdict (dataclass → dict 递归转换).
-        排除 _write_log (内部审计字段, 不参与序列化).
+        排除 _write_log (内部审计字段) + _runtime_ctx (P1-28 运行时句柄).
         """
         result = asdict(self)
         result.pop("_write_log", None)
+        result.pop("_runtime_ctx", None)  # P1-28: 不进 checkpoint
         return result
 
     def to_dict(self) -> dict[str, Any]:
@@ -308,8 +311,9 @@ class EngineState:
     def from_dict(cls, data: dict[str, Any]) -> "EngineState":
         """从 dict 重建. 忽略未知字段(防御性,处理 schema 演进)."""
         field_names = {f.name for f in cls.__dataclass_fields__.values()}
-        # 排除内部字段
+        # 排除内部字段 — 不参与序列化/反序列化
         field_names.discard("_write_log")
+        field_names.discard("_runtime_ctx")  # P1-28: 运行时句柄
         return cls(**{k: v for k, v in data.items() if k in field_names})
 
     def get_channels(self, names: list[str]) -> dict[str, Any]:

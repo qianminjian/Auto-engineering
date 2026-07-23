@@ -61,8 +61,9 @@ SUPPORTED_LANGUAGES: frozenset[str] = frozenset(
     {"python", "typescript", "go", "rust", "bash"}
 )
 
-# v5.4 审计 r3 P1-1: LANGUAGE_TOOLS / get_gate_tools_from_manifest 已迁移到 gates.registry,
-# 此处 re-export 保持向后兼容. 新代码请直接从 gates.registry import.
+# P1-13: LANGUAGE_TOOLS / get_gate_tools_from_manifest 的 canonical 定义在 gates.registry.
+# 此处保留 re-export 仅为向后兼容（tests/test_init_contract.py 引用）。
+# 新生产代码请直接从 gates.registry import。不再列入 __all__。
 from auto_engineering.gates.registry import (  # noqa: E402
     LANGUAGE_TOOLS,
     get_gate_tools_from_manifest,
@@ -354,14 +355,14 @@ def get_design_root_from_manifest(manifest: dict[str, Any]) -> str:
 __all__ = [
     "INIT_MANIFEST_SCHEMA_PATH",
     "INIT_MANIFEST_SCHEMA_VERSION",
-    "LANGUAGE_TOOLS",
     "SUPPORTED_LANGUAGES",
     "SUPPORTED_PROJECT_TYPES",
     "ValidationResult",
     "get_ci_platform_from_manifest",
     "get_design_root_from_manifest",
-    "get_gate_tools_from_manifest",
     "load_init_manifest",
     "validate_against_schema",
     "validate_init_manifest",
+    # LANGUAGE_TOOLS / get_gate_tools_from_manifest: canonical 在 gates.registry
+    # 此处不再列入 __all__，但保留 re-export 向后兼容（P1-13）
 ]

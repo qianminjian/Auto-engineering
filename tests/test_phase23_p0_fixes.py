@@ -25,26 +25,6 @@ from auto_engineering.metrics.collector import MetricsCollector, AIOrigin, get_c
 from auto_engineering.metrics.enrichment import compute_metrics_signals
 
 
-def _make_git_repo(tmp_path: Path) -> Path:
-    """Create a clean temp git repo with one initial commit and a second commit."""
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    env = {
-        "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@x",
-        "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@x",
-    }
-    subprocess.run(["git", "-C", str(repo), "init", "-q"], check=True, capture_output=True, env=env)
-    subprocess.run(["git", "-C", str(repo), "config", "user.email", "t@x"], check=True, capture_output=True, env=env)
-    subprocess.run(["git", "-C", str(repo), "config", "user.name", "t"], check=True, capture_output=True, env=env)
-    (repo / "file1.py").write_text("line1\nline2\nline3\n")
-    subprocess.run(["git", "-C", str(repo), "add", "file1.py"], check=True, capture_output=True, env=env)
-    subprocess.run(["git", "-C", str(repo), "commit", "-q", "-m", "init"], check=True, capture_output=True, env=env)
-    # Second commit with more lines
-    (repo / "file2.py").write_text("a\nb\nc\nd\ne\nf\ng\nh\ni\nj\n")
-    subprocess.run(["git", "-C", str(repo), "add", "file2.py"], check=True, capture_output=True, env=env)
-    subprocess.run(["git", "-C", str(repo), "commit", "-q", "-m", "add file2"], check=True, capture_output=True, env=env)
-    return repo
-
 
 # =============================================================================
 # T79 — Signal pipeline history + baseline
@@ -176,55 +156,3 @@ class TestM2CriteriaMet:
         )
 
 
-# =============================================================================
-# T81 — M5 git diff fix
-# =============================================================================
-
-
-class TestM5GitDiffFix:
-    """T81: Verify _compute_loc_added uses correct git diff command."""
-
-    def test_loc_added_nonzero_with_committed_changes(self, tmp_path: Path) -> None:
-        """_compute_loc_added MUST return > 0 when there are committed changes.
-
-        RED: Currently uses --cached HEAD which returns 0 for committed changes.
-        """
-        repo = _make_git_repo(tmp_path)
-        loc = MetricsCollector._compute_loc_added(repo)
-        assert loc > 0, (
-            "T81 NOT FIXED: _compute_loc_added returns 0 despite committed changes. "
-            "The --cached flag only counts staged (not committed) changes."
-        )
-
-    def test_git_diff_does_not_use_cached(self) -> None:
-        """_compute_loc_added MUST NOT use --cached flag in git command."""
-        import inspect
-        source = inspect.getsource(MetricsCollector._compute_loc_added)
-        # Only check git diff command lines (not comments)
-        git_cmd_lines = [
-            l for l in source.split("\n")
-            if "git" in l and "diff" in l and not l.strip().startswith("#")
-        ]
-        has_cached = any("--cached" in l for l in git_cmd_lines)
-        assert not has_cached, (
-            "T81 NOT FIXED: _compute_loc_added still uses --cached flag "
-            "in the git command. This causes M5 to always be zero."
-        )
-
-    def test_loc_added_zero_in_fresh_repo(self, tmp_path: Path) -> None:
-        """_compute_loc_added returns 0 in a fresh repo with no extra changes."""
-        repo = tmp_path / "empty_repo"
-        repo.mkdir()
-        env = {
-            "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@x",
-            "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@x",
-        }
-        subprocess.run(["git", "-C", str(repo), "init", "-q"], check=True, capture_output=True, env=env)
-        subprocess.run(["git", "-C", str(repo), "config", "user.email", "t@x"], check=True, capture_output=True, env=env)
-        subprocess.run(["git", "-C", str(repo), "config", "user.name", "t"], check=True, capture_output=True, env=env)
-        (repo / "seed.txt").write_text("hello\n")
-        subprocess.run(["git", "-C", str(repo), "add", "seed.txt"], check=True, capture_output=True, env=env)
-        subprocess.run(["git", "-C", str(repo), "commit", "-q", "-m", "init"], check=True, capture_output=True, env=env)
-        # Only one commit, no additional changes
-        loc = MetricsCollector._compute_loc_added(repo)
-        assert loc == 0

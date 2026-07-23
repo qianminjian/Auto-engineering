@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 import math
 import time
+from auto_engineering.utils.file_utils import safe_json_load
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -48,7 +49,7 @@ class DiagnosticRuleDiscoverer:
         for req_path in reqs_dir.iterdir():
             summary_file = req_path / "summary.json"
             if summary_file.exists():
-                summaries.append(json.loads(summary_file.read_text()))
+                summaries.append(safe_json_load(summary_file))
 
         if len(summaries) < min_requirements:
             return []

@@ -94,10 +94,10 @@ class TestConstruction:
     def test_from_design_doc_zero_batch_component_warns(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """design_doc 有组件但无对应 batch → WARN (不抛错)."""
+        """design_doc 有组件但无对应 batch → INFO (非阻塞, 信息性章节属正常)."""
         doc = _design_doc({"PlateA": ["CompX", "CompNoBatch"]})
         bp = [_batch("b1", "CompX")]
-        with caplog.at_level(logging.WARNING):
+        with caplog.at_level(logging.INFO):
             bs = BatchState.from_design_doc(doc, bp)
         assert bs.total_batches == 1
         assert any("CompNoBatch" in r.message for r in caplog.records)

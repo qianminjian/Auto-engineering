@@ -1,6 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://auto-engineering.dev/schemas/action.schema.json",
+  "$comment": "Internal identifier — $id is NOT a resolvable URL (T135m)",
   "title": "Tick Action",
   "description": "Engine->Driver contract (v7.0 T33a). Shape of the action JSON emitted each tick by TickOrchestrator._build_action / ActionDone / ActionError. This is one of the two coupling points between the loop engine and any driver (AgentDriver / StandaloneDriver).",
   "$comment": "action contract schema v1.0.0 — SSOT for engine->driver. Kept in sync with tick_orchestrator._build_action + actions.ActionDone/ActionError by tests/test_action_result_contract.py.",

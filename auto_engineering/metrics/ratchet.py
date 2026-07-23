@@ -5,6 +5,7 @@
 import json
 import logging
 import subprocess
+from auto_engineering.utils.file_utils import safe_json_load
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -184,7 +185,7 @@ class RatchetController:
         if len(existing) < 2:
             return None
         previous = existing[-2]
-        return json.loads(previous.read_text())
+        return safe_json_load(previous)
 
     def get_current_config(self) -> dict | None:
         """读取当前最新配置."""
@@ -223,7 +224,7 @@ class RatchetController:
         config_path = self._configs_dir / f"{target_version}.json"
         if not config_path.exists():
             return False
-        target_config = json.loads(config_path.read_text())
+        target_config = safe_json_load(config_path)
         active_path = self._configs_dir / "active.json"
         active_path.write_text(json.dumps(target_config, indent=2, ensure_ascii=False))
         return True
@@ -234,7 +235,7 @@ class RatchetController:
         rules_path.parent.mkdir(parents=True, exist_ok=True)
         existing = []
         if rules_path.exists():
-            existing = json.loads(rules_path.read_text())
+            existing = safe_json_load(rules_path)
         existing.append({
             "signal_name": rule.signal_name,
             "metric": rule.metric,

@@ -18,6 +18,7 @@ from auto_engineering.loop.checkpoint import SQLiteCheckpointStore
 from auto_engineering.loop.checkpoint._serialization import LastValueChannel
 from auto_engineering.loop.checkpoint.records import RoundHistory
 from auto_engineering.loop.state import CheckpointEnvelope
+from auto_engineering.utils.file_utils import safe_json_load
 
 # CheckpointEnvelope 数据格式版本 (str, 语义化版本)
 ENVELOPE_SCHEMA_VERSION = "1.0"
@@ -201,7 +202,7 @@ def load_v1_checkpoint(path: Path) -> dict[str, Any]:
     Returns:
         dict (解析后的 v1.1 Checkpoint 数据)
     """
-    return json.loads(path.read_text())
+    return safe_json_load(path)
 
 
 def _v1_loop_state_to_v2(v1_data: dict[str, Any]) -> CheckpointEnvelope:

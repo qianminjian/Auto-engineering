@@ -57,6 +57,11 @@ class RuntimeConfig:
         return self.get("AE_PII_GUARDRAIL_MODE", "warn")
 
     @property
+    def production_enabled(self) -> bool:
+        """AE_PRODUCTION — production safety mode (strict RED + gate hardening)."""
+        return self.get("AE_PRODUCTION", "").strip() == "1"
+
+    @property
     def metrics_enabled(self) -> bool:
         """AE_METRICS — metrics collection active."""
         return self.get("AE_METRICS", "").strip() == "1"
@@ -129,11 +134,6 @@ class RuntimeConfig:
         """AE_MAX_TOOL_CALLS — max tool calls per agent."""
         val = self.get("AE_MAX_TOOL_CALLS", "").strip()
         return int(val) if val else None
-
-    @property
-    def langsmith_enabled(self) -> bool:
-        """AE_LANGSMITH — LangSmith observability."""
-        return self.get("AE_LANGSMITH", "").strip() == "1"
 
     # ── provider credentials (NOT feature flags — secrets) ──
 

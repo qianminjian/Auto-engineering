@@ -13,6 +13,15 @@ from auto_engineering.gates.base import Gate
 _logger = logging.getLogger("ae.gates.runner")
 
 
+def _production_active(project_root: Path) -> bool:
+    """Check if AE_PRODUCTION=1 for gate hardening (P1-12)."""
+    try:
+        from auto_engineering.config.runtime_config import get_default_config
+        return get_default_config().production_enabled
+    except Exception:
+        return False
+
+
 def _instantiate_gate(name: str, project_root: Path) -> Gate | None:
     """按名称实例化单个 Gate 对象. 不支持的返回 None (skip)."""
     try:
@@ -51,12 +60,13 @@ def run_gates(
             summary[name] = {"status": "skipped", "passed": None, "message": "no such gate"}
             skipped_count += 1
             continue
-        # 注入 files_changed 到 contracts (激活增量扫描)
+        # 注入 files_changed 到 contracts (激活增量扫描).
+        # P1-20: 通过新 dict 赋值而非 mutate 原对象, 避免隐式副作用.
         if files_changed:
-            if gate.contracts is None:
-                gate.contracts = {"files_changed": files_changed}
-            elif "files_changed" not in gate.contracts:
-                gate.contracts["files_changed"] = files_changed
+            gate.contracts = {
+                **(gate.contracts or {}),
+                "files_changed": files_changed,
+            }
         # 跑 Gate
         try:
             verdict = gate.run(project_root)
@@ -72,7 +82,12 @@ def run_gates(
         ok = bool(getattr(verdict, "passed", False))
         message = str(getattr(verdict, "message", "") or "")
         gate_name = getattr(verdict, "gate_name", "") or name
-        status = "pass" if ok else "fail"
+        # P1-12: AE_PRODUCTION=1 → failed gates are hard_fail (不可降级为 warn)
+        if not ok and _production_active(project_root):
+            status = "hard_fail"
+            _logger.critical("Gate '%s' FAILED (production mode — 不可降级)", gate_name)
+        else:
+            status = "pass" if ok else "fail"
         summary[name] = {
             "status": status,
             "passed": ok,

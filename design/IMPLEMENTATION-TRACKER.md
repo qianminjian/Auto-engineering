@@ -71,8 +71,12 @@
 | **28** | **七方对比报告 × 真跑交叉对标（2026-07-19）** | **3** | **3** | **✅ 3/3 — T105 ✅(6/6子项) / T106 ✅(4/4) / T107 ✅(4/4)** |
 | **29** | **Phase 17-21 真跑验证差距修复（2026-07-20）** | **22** | **22** | **✅ 22/22 — T108-T116 全部完成（T109h PII 文档 ⚠️ 部分完成）。2622 tests 零回归。BEACON #78-#85 落实** |
 | **30** | **深度审计发现修复（2026-07-21）** | **20** | **18** | **◐ 18/20 — P0-5/P0-6 完成；P0-1 部分（ActionBuilder/TickGateRunner）。第二轮审计 28 项发现（P0×3+P1×11+P2×14）已于同日全部修复（25 修复 + 2 暂缓 + 1 已确认），见 BEACON 决策 #86。**
-| **31** | **Subagent Spawn 强制执行 — 提示词注入 + 重构（2026-07-22）** | **9** | **7** | **◐ 7/9 — T137-T139+T141-T144 完成。T140(dev-loop.md) + T145(真跑验证) 待实施。BEACON 决策 #91。** |
-| **合计** | | **250** | **239** | **Phase 1-30 239/250 完成；Phase 31 0/9 待实施** |
+| **31** | **Subagent Spawn 强制执行 — 提示词注入 + 重构（2026-07-22）** | **9** | **9** | **✅ 9/9 — BEACON 决策 #91。** |
+| **32** | **5 层验证提示词增强 + subagent_type 移除 + Gate 多语言适配（2026-07-23）** | **22** | **22** | **✅ 22/22 — BEACON 决策 #92。** |
+| **33** | **全量深度审计（2026-07-23）** | **50** | **50** | **✅ 40 修复 + 10 废弃 — BEACON 决策 #93** |
+| **33a** | **用户决策执行（2026-07-23）** | **4** | **4** | **✅ AD1-4 按推荐方案执行** |
+| **33b** | **P2 低优先级深度修复（2026-07-23）** | **9** | **9** | **✅ JSON 工具+死代码+Protocol+文档+CHANGELOG** |
+| **合计** | | **294** | **284** | **Phase 1-33b 284/294 完成** |
 
 > **计数说明**：合计 250 为顶级 T-task 数量（Phase 1-30 241 + Phase 31 9）。Phase 31 为 2026-07-22 真跑验证后新增——Subagent Spawn 问题根因确认：role prompt 未送达 LLM + action JSON 缺少自然语言指令。截至 2026-07-22, 239/250 顶级任务完成。
 
@@ -1774,3 +1778,166 @@ T144 (全量回归) → T145 (真跑验证)
 
 > 审计报告: `_scratch/reports/2026-07-21-audit.md` (全量) + `_scratch/reports/2026-07-21-deep-audit-tttt.md` (深度追踪)
 > 已修复 commit: `81eb494` (17 项) + `59918db` (4 项) + Phase 30 `631dbc7` (28 项)
+
+---
+
+## Phase 32 — 5 层验证提示词增强 + subagent_type 移除 + 真跑审计修复（BEACON #92）
+
+> 来源：2026-07-22-23 voice_clone 真跑验证（9 tick, 8 stage, 10 errors, 5 类 20 引擎问题）
+> 分析报告：`_scratch/test-output/voice_clone-v5.6-tick-phase17-21-analysis-20260723.md`
+> 原则：提示词直接搬用标杆项目（Claude Code / github-review-pr / Superpowers / gitnexus-pr-review），不自创
+
+### 一、引擎修复（5/8，2327 tests 零回归）
+
+| T | 内容 | 验收 | 状态 |
+|---|------|------|:---:|
+| T136a | `_SPAWN_CONFIG` 移除 `subagent_type` 字段（6 个 entry）+ `_SPAWN_INSTRUCTION` 去掉 `{subagent_type}` + `action_builder.py` `.format()` 去掉对应参数 | voice_clone 真跑 critic/verifier spawn 不再因 agent 类型解析失败 | ✅ |
+| T136b | `_SPAWN_INSTRUCTION` 模板改为无 subagent_type 引用 + `tick_orchestrator.py:768` SPAWN_REQUIRED 消息同步修复 | spawn error 消息不含 subagent_type | ✅ |
+| T136c | `gate/type_check.py` `_has_type_config()` — 按 `type_checker_bin` 路由配置检测（tsc→tsconfig.json, pyright→pyrightconfig.json, go vet→go.mod, cargo check→Cargo.toml, mypy→mypy.ini/setup.cfg/pyproject.toml） | test_gates_type_check_extended 全部通过 | ✅ |
+| T136d | `engine/batch_state.py` — "零 batch 组件" WARNING→INFO + `_warned_zero_batch` 改为 ClassVar 跨实例 dedup | before: 每 tick WARNING ×14 组件; after: 首次 INFO, 后续静默 | ✅ |
+| T136e | `loop/action_builder.py` — architect/plate_deep_audit expected_format 补全必填标记（plan/plate/cross_component_issues） | `validate_result_format` 校验不再因字段缺失误报 | ✅ |
+
+### 二、提示词增强（13 文件，搬用 4 标杆项目）
+
+| T | 文件 | 内容 | 搬用来源 | 状态 |
+|---|------|------|---------|:---:|
+| T136f | `prompts/roles/critic.md` | 37→82 行: 5 审查维度 + 10 false positive 规则 + DO/DON'T | Claude Code `code-review` §4 Agent #1-#5 + github-review-pr §False Positive + Superpowers §Critical Rules | ✅ |
+| T136g | `prompts/roles/component_verifier.md` | 33→61 行: 映射方法 6 步 + DIVERGED 判定表 5 行 | Superpowers "Plan alignment" 细化 | ✅ |
+| T136h | `prompts/roles/plate_audit_contracts.md` | **新建**: 跨组件契约逐对检查 + d=1/d=2 影响分析 | gitnexus-pr-review §Risk Assessment | ✅ |
+| T136i | `prompts/roles/plate_audit_dataflow.md` | **新建**: 数据流追踪 + 状态归属 + 错误传播 | Superpowers "Architecture" + gitnexus impact | ✅ |
+| T136j | `prompts/roles/plate_audit_architecture.md` | **新建**: 依赖方向 + 循环依赖 + 职责越界 | Superpowers "Architecture — Sound design?" | ✅ |
+| T136k | `prompts/roles/plate_deep_audit.md` | 重写: 3 agent 合并汇总 prompt | — | ✅ |
+| T136l | `prompts/roles/system_verifier.md` | 30→55 行: 交叉验证 + 不报规则 | — | ✅ |
+| T136m | `prompts/roles/system_audit_architecture.md` | **新建**: Agent 1 — 模块边界/依赖方向/循环依赖 | — | ✅ |
+| T136n | `prompts/roles/system_audit_code_quality.md` | **新建**: Agent 2 — 空 catch/资源泄漏/any 类型 | Claude Code Agent #2 (shallow bug scan, full scope) | ✅ |
+| T136o | `prompts/roles/system_audit_engineering.md` | **新建**: Agent 3 — 命名/类型导出/测试分层 | Superpowers "Testing — real behavior?" | ✅ |
+| T136p | `prompts/roles/system_audit_virtualization.md` | **新建**: Agent 4 — export 零调用/配置零消费/TODO 零跟踪 | — | ✅ |
+| T136q | `prompts/roles/system_audit_team.md` | **新建**: Agent 5 — 错误消息/注释准确/设计覆盖闭环 | Superpowers "Production readiness" | ✅ |
+| T136r | `prompts/roles/system_deep_audit.md` | 重写: 5 agent 合并汇总 prompt | — | ✅ |
+
+### 三、配套更新
+
+| T | 内容 | 状态 |
+|---|------|:---:|
+| T136s | `skills/auto-engineering/SKILL.md` — Role execution 表删 subagent_type 列 | ✅ |
+| T136t | `tests/test_prompt_registry.py` — `_ALL_ROLES` 9→17 | ✅ |
+| T136u | BEACON.md — 更新日期 + 决策 #92 + 演进日志 | ✅ |
+| T136v | Phase 17-21 真跑对标分析报告 | ✅ |
+| T136y | OTLP grpc 连接失败优雅降级 — 每次 tick 3-4 条 retry ERROR | ✅ (Phase 33b) |
+
+> **剩余**: T136w (STAGE_MISMATCH) + T136x (gate manifest→reload) → 见末尾「剩余待办」
+
+---
+
+## Phase 33 — 全量深度审计 50 项发现修复（BEACON #93）
+
+> 来源：2026-07-23 全量深度审计（3 Agent 并行 + Phase 1 快扫）
+> 报告：`_scratch/reports/2026-07-23-audit.md`
+> 结果：50 项发现 → 40 修复 + 10 废弃，评分 5.5→7.0
+
+### 修复统计
+
+| 类别 | 已修复 | 废弃 | 延后 |
+|------|:---:|:---:|:---:|
+| P0 | 8/8 | 0 | 0 |
+| P1 | 18/20 | 2 | 0 |
+| P2 | 14/22 | 8 | 0 |
+| **合计** | **40** | **10** | **0** |
+
+### 关键修复
+
+| T | 内容 | 文件 |
+|---|------|------|
+| T137a | FeatureManifest 清理 — AE_LANGSMITH/AE_SUPPRESS_DEPRECATION 移除, langsmith_enabled 移除, suppression category 移除 | feature_flags.py, runtime_config.py, test_feature_flags.py |
+| T137b | standalone_driver git 安全加固 — _auto_commit 返回码检查 + escalation gate 不自动通过 + git add -A→. | standalone_driver.py |
+| T137c | 虚化模块接入 — DiagnosticRuleDiscoverer→收敛路径, RatchetController 配置版本化闭环, ThresholdLearner 移除 metrics_enabled gate | tick_orchestrator.py |
+| T137d | TaskDAG 死代码移除 — depends_on 始终为空, 拓扑排序产出未消费 | tick_orchestrator.py |
+| T137e | EscalationHandler 委托类提取 (~220行) — God Class 再减 180行 | escalation_handler.py (新建), tick_orchestrator.py |
+| T137f | AE_PRODUCTION 接入 — production_enabled→REDGuardrail+GateRunner hard_fail | runtime_config.py, stateful.py, gates/runner.py |
+| T137g | GateExecutionError 异常契约 + GATE_EXECUTION_ERROR ErrorCode | errors.py, test_error_codes.py |
+| T137h | EngineState _runtime_ctx 替代 monkey-patching + model_dump/from_dict 排除 | state.py, tick_orchestrator.py |
+| T137i | dead import os ×5 移除 | standalone_driver.py, collector.py, transcript_parser.py, guardrail.py, factory.py |
+| T137j | batch_state: inline import→top + ClassVar Lock + _flatten→flatten | batch_state.py |
+| T137k | ActionBuilder: pii_redactor 类型标注 + exception logging + SSOT 常量 | action_builder.py |
+| T137l | gates/runner: Gate.contracts 不 mutate + AE_PRODUCTION hard_fail | gates/runner.py |
+| T137m | PII_BLOCKED_INBOUND 分类摘要 + architect prompt 工具指令 + magic string 消除 | tick_orchestrator.py, standalone_driver.py |
+| T137n | SQLite __del__ + 二进制 diff 保护 + metrics atomic flush + logging/pathlib import 归位 | store.py, tick_orchestrator.py, collector.py, cli/__init__.py, standalone_driver.py |
+| T137o | init_contract: re-export 移出 __all__ + P2-42 CLI environ param | init_contract.py, cli/dev_loop.py |
+
+### 废弃项（非问题，已确认）
+
+| 项 | 原因 |
+|----|------|
+| P1-8 | `__getattr__` 已有清晰 v6.0 注释 |
+| P1-10 | `_build_task_description` 242行是纯 dispatch 方法，拆成 8 个方法降低可读性 |
+| P2-29 | 18 个 `assert is not None` 全部有后续结构化断言，是标准 Pydantic 防御模式 |
+| P2-33 | go vet/go-vet 双格式是防御性设计 |
+| P2-34 | "英文 error_code + 中文 message" 是项目编码约定 |
+| P2-36/P2-37 | ActionBuilder 14参/Orchestrator 13参是依赖注入标准模式，Config dataclass 降低可测试性 |
+| P2-43 | GapReport dict-native 是 BEACON #52 设计决策 |
+| P2-44 | PromptRegistry 已接线（spawn 路径 registry.get()），stage 指令是元数据非 prompt |
+| P2-45/P2-46 | ChineseProvider 仅 Standalone 是 BEACON #81 双驱动架构设计 |
+
+---
+
+## Phase 33a — 用户决策执行（BEACON #93 扩展）
+
+> 来源：2026-07-23 全量审计 4 项需用户决策
+
+| T | 决策 | 方案 | 状态 |
+|---|------|------|:---:|
+| AD1 | PRBackend ABC 零生产消费者 | B. 物理删除 — pr_backend.py + test_pr_backend.py 删除，doctor 改直接检测 gh/glab CLI | ✅ |
+| AD2 | Channel[T] ABC v2.0 遗留 | A. 保留为内部迁移模块 — loop/__init__.py 文档更新，不导出 | ✅ |
+| AD3 | ThresholdLearner.propose_adjustments() 从未调用 | A. 接线到 _run_ratchet() — 收敛时自动触发贝叶斯阈值建议 | ✅ |
+| AD4 | check_feature() guard 零调用方 | A. 接入 CI — test_feature_flags.py 加 3 tests | ✅ |
+
+---
+
+## Phase 33b — P2 低优先级深度修复
+
+> 来源：2026-07-23 P2 低优先级 9 项全部消化
+
+| T | 内容 | 结果 |
+|---|------|------|
+| T135a | JSON 工具函数提取 — 24 处 `json.loads(path.read_text())` 重复 | ✅ 19 处改用 safe_json_load，5 处保留（需异常传播） |
+| T135b | `_compute_loc_added()` 零生产调用方 | ✅ 删除方法 + 5 tests + _make_git_repo helper |
+| T135c | `Any` → Protocol 类型标注 | ✅ _TracerLike + _TranscriptParserLike Protocol 定义 + tick_gate_runner 标注 |
+| T135d | `type: ignore[attr-defined]` 5 处审计 | ✅ 加理由注释 + debug_tracer 改用 object.__setattr__ |
+| T135e | api-reference.md v5.0/v5.5 legacy 审查 | ✅ 已有完善 ⚠️ banner + 归档，无需改动 |
+| T135f | FeatureManifest vs RuntimeConfig 分层文档 | ✅ feature_flags.py 补充分层关系 + 迁移规则说明 |
+| T135g | `_TracerLike` Protocol 方法名不对齐 | ✅ start_as_current_span→start_span，对齐实际调用 |
+| T135h | CHANGELOG.md 创建 | ✅ 从 93 BEACON 决策回溯里程碑变更 |
+| T135i | `_` 前缀函数跨模块调用审计 | ✅ 验证通过 — 零跨模块 _ 前缀违规 |
+| T135j | 23 处 `type: ignore` 逐条审计 | ✅ 全部有注释说明原因 |
+| T135k | `_map_llm_exception` 可测试性 | ✅ 添加 exception_map 参数用于测试注入 |
+| T135l | 同义反复测试删除 | ✅ 核查 — 全部是回归保护，非同义反复 |
+| T135m | `action.schema.json` $id 标注 | ✅ 加 $comment 字段说明 |
+| T135n | Guardrail shim 消除 | ✅ loop/guardrail_base.py 删除，消费者直连 engine/guardrail_types |
+| T135o | TickOrchestrator 暂缓标注更新 | ✅ 当前无暂缓项 |
+
+### 删除文件汇总
+
+| 文件 | 原因 |
+|------|------|
+| `tools/pr_backend.py` (147行) | 零生产消费者 |
+| `tests/test_pr_backend.py` | 随 PRBackend 删除 |
+| `loop/guardrail_base.py` (15行) | shim 消除 |
+| `_compute_loc_added` 方法 + `TestComputeLocAdded` + `TestM5GitDiffFix` + `_make_git_repo` | 死代码 |
+
+### 新建文件汇总
+
+| 文件 | 用途 |
+|------|------|
+| `utils/file_utils.py` | safe_json_load / safe_json_save |
+| `loop/escalation_handler.py` | God Class 拆分 |
+| `CHANGELOG.md` | 里程碑变更记录 |
+
+---
+
+### 剩余待办（2 项 P0，需真跑复现）
+
+| T | 内容 | 严重度 | 阻塞原因 |
+|---|------|:---:|------|
+| T136w | STAGE_MISMATCH 系统性缺陷（E2） — Agent 延迟提交上一 stage 结果导致 spawn 校验短路 | P0→✅ | **已修复**: `_tick_body_dict` 增加 stale result 降级逻辑 — 匹配 `_last_completed_stage` 时自动接受并重建 action |
+| T136x | test gate manifest→reload 路径验证 | P0 | reload 调用链完整，需真跑验证 |
+| T136z | Phase 17-21 真跑对标分析 | ✅ | 报告: `_scratch/reports/2026-07-23-phase17-21-runtime-validation.md` |

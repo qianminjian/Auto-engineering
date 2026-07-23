@@ -139,14 +139,11 @@ def _extract_from_markdown(text: str) -> dict | None:
             "tasks": [task],
         })
 
+    # Fallback: 有文件路径但无 batch 标题 → 不造假 batch_plan。
+    # 返回 None 让 validate_result_format 报 "缺少必填字段 batch_plan"，
+    # 这比 "孤儿 batch: component 'implementation'" 更准确。
     if not batch_plan and file_list:
-        task = {"id": "T1", "description": "implementation", "file_targets": file_list}
-        batch_plan = [{
-            "batch_id": "T1",
-            "component": "implementation",
-            "design_section": "implementation",
-            "tasks": [task],
-        }]
+        return None
 
     # 无任何结构化信号 → 不是有效的 agent 输出, 返回 None
     # v7.0.1: 无 batch_plan 且无 file_list → 肯定不是 agent 输出 (纯文本/错误消息)

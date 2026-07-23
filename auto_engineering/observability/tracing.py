@@ -18,9 +18,13 @@ _logger = logging.getLogger("ae.observability.tracing")
 
 
 class _TracerLike(Protocol):
-    """Minimal tracer interface — duck-typed by opentelemetry Tracer + NoOpTracer."""
+    """Minimal tracer interface — duck-typed by opentelemetry Tracer + NoOpTracer.
 
-    def start_as_current_span(
+    T135g: start_span is the canonical method (matches tick_orchestrator usage).
+    start_as_current_span removed — never called in codebase.
+    """
+
+    def start_span(
         self, name: str, attributes: dict | None = None
     ) -> object: ...
 
@@ -37,22 +41,33 @@ def setup_tracing(
             When None, returns a NoOp tracer (zero overhead).
 
     Returns:
-        A tracer object with start_as_current_span() interface.
+        A tracer object with start_span() interface.
     """
+    import logging
+    _logger = logging.getLogger("ae.observability.tracing")
+
     from opentelemetry import trace as otel_trace
 
     if not otlp_endpoint:
         return otel_trace.get_tracer(service_name)
 
-    from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
-    from opentelemetry.sdk.resources import Resource
-    from opentelemetry.sdk.trace import TracerProvider
-    from opentelemetry.sdk.trace.export import BatchSpanProcessor
+    try:
+        from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+        from opentelemetry.sdk.resources import Resource
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
-    resource = Resource.create(attributes={"service.name": service_name})
-    provider = TracerProvider(resource=resource)
-    exporter = OTLPSpanExporter(endpoint=otlp_endpoint)
-    provider.add_span_processor(BatchSpanProcessor(exporter))
-    otel_trace.set_tracer_provider(provider)
+        resource = Resource.create(attributes={"service.name": service_name})
+        provider = TracerProvider(resource=resource)
+        exporter = OTLPSpanExporter(endpoint=otlp_endpoint)
+        provider.add_span_processor(BatchSpanProcessor(exporter))
+        otel_trace.set_tracer_provider(provider)
 
-    return otel_trace.get_tracer(service_name)
+        return otel_trace.get_tracer(service_name)
+    except Exception:
+        _logger.warning(
+            "OTLP tracing setup failed for endpoint=%s — falling back to NoOp tracer. "
+            "Check that the collector is reachable and grpc dependencies are installed.",
+            otlp_endpoint, exc_info=True,
+        )
+        return otel_trace.get_tracer(service_name)

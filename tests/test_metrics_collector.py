@@ -424,15 +424,6 @@ class TestCategorizedBaselines:
             assert not (by_cat_dir / "unknown_type.json").exists()
 
 
-class TestComputeLocAdded:
-    """_compute_loc_added static method — F.3."""
-
-    def test_returns_zero_for_no_commits(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            result = MetricsCollector._compute_loc_added(Path(tmp))
-            assert result == 0
-
-
 class TestRecordTickSnapshot:
     """record_tick_snapshot — per-tick snapshots (F.2.3)."""
 

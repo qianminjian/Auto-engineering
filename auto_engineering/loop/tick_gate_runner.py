@@ -25,9 +25,9 @@ class TickGateRunner:
         project_root: Path,
         *,
         init_manifest: dict[str, Any] | None = None,
-        gate_runner: Any = None,
-        tracer: Any = None,
-        audit_logger: Any = None,
+        gate_runner: Any = None,  # GateRunner Callable | None (T135c)
+        tracer: Any = None,  # _TracerLike | None (T135c: avoid circular import)
+        audit_logger: Any = None,  # AuditLogger | None (T135c)
     ) -> None:
         self._project_root = project_root
         self._injected_runner = gate_runner

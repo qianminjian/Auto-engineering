@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import shutil
 import sqlite3
+import subprocess
 import sys
 from pathlib import Path
 
@@ -207,19 +208,20 @@ def _check_init_manifest(project_root: Path) -> tuple[bool, str]:
 
 
 def _check_pr_backend() -> tuple[bool, str]:
-    """检查 PR 后端可用性 (B13.9 #8, 非致命).
+    """检查 PR 后端可用性 (advisory, 不阻断预检).
 
-    PR 创建仅在 loop `done` 时需要, 故此项恒 ok=True (advisory):
-    有 gh/glab → 列出; 都无 → 提示 done 时手动创建 PR (不阻断预检).
+    AD1: PRBackend 模块已删除 (零生产消费者)。改为直接检测 CLI 工具。
     """
-    from auto_engineering.tools.pr_backend import available_backends
-
-    backends = available_backends()
+    backends = []
+    for tool in ("gh", "glab"):
+        try:
+            subprocess.run([tool, "--version"], capture_output=True, timeout=5, check=True)
+            backends.append(tool)
+        except (FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+            pass
     if backends:
-        return True, f"PR 后端可用: {', '.join(backends)} (gh/glab, B13.9)"
-    return True, (
-        "PR 后端: 无 (gh/glab 均未安装) — loop done 时将提示手动创建 PR"
-    )
+        return True, f"PR CLI 工具可用: {', '.join(backends)}"
+    return True, "PR CLI 工具: 无 (gh/glab 均未安装) — loop done 时提示手动创建 PR"
 
 
 def run_doctor_checks(project_root: Path) -> tuple[int, list[tuple[bool, str]]]:

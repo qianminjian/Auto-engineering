@@ -21,10 +21,13 @@ architect→developer 过渡时清空, 跨 tick 不可依赖 → batch_state_jso
 
 from __future__ import annotations
 
+import difflib
 import json
 import logging
+import re
+import threading
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 from auto_engineering.engine.design_doc import Component, DesignDoc, Plate
 
@@ -43,15 +46,16 @@ class BatchState:
     current_component_idx: int = 0
     current_batch_idx: int = 0
 
-    # 已警告过的零 batch 组件集合 (防重复警告, T39 B9/D2)
-    _warned_zero_batch: set[str] = field(default_factory=set)
+    # 已警告过的零 batch 组件集合 — 类级别 (防重复警告, T39 B9/D2)
+    _warned_zero_batch: ClassVar[set[str]] = set()
+    _warned_lock: ClassVar[threading.Lock] = threading.Lock()  # P1-16: 并行 tick 保护
 
     # ------------------------------------------------------------------
     # 构造 (双模式, 均在 _after_architect batch_plan 就绪后调用)
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _flatten_batch_plan(batch_plan: list[dict]) -> list[dict]:
+    def flatten_batch_plan(batch_plan: list[dict]) -> list[dict]:
         """将 architect 嵌套格式扁平化为 BatchState 游标格式.
 
         Architect 输入 (plate→component→batches 三层):
@@ -68,8 +72,11 @@ class BatchState:
             flat: list[dict] = []
             for plate_entry in batch_plan:
                 component_name = plate_entry["component"]
+                design_section = plate_entry.get("design_section", "")
                 for batch in plate_entry["batches"]:
                     batch["component"] = component_name
+                    if design_section:
+                        batch.setdefault("design_section", design_section)
                     flat.append(batch)
             return flat
         return batch_plan
@@ -77,39 +84,75 @@ class BatchState:
     @classmethod
     def from_design_doc(cls, doc: DesignDoc, batch_plan: list[dict]) -> BatchState:
         """design-doc 模式 — 用真实板块层次, 带一致性校验."""
-        batch_plan = cls._flatten_batch_plan(batch_plan)
+        batch_plan = cls.flatten_batch_plan(batch_plan)
         plate_component_names = {
             c.name for plate in doc.plates for c in plate.components
         }
+        # Build design_section → name lookup (LLM uses section IDs like "§6.1")
+        section_to_name: dict[str, str] = {}
+        for plate in doc.plates:
+            for comp in plate.components:
+                if comp.design_section:
+                    section_to_name[comp.design_section] = comp.name
+
+        # Step 1: Resolve design_section references first (preferred by architect)
+        for b in batch_plan:
+            ds = b.get("design_section")
+            if ds and ds in section_to_name and b["component"] not in plate_component_names:
+                b["component"] = section_to_name[ds]
+
         batch_components = list(dict.fromkeys(b["component"] for b in batch_plan))
 
-        # 孤儿 batch: component 不在任何 plate → 抛错 (G2 retry, 否则静默漏实现)
-        orphans = [c for c in batch_components if c not in plate_component_names]
-        if orphans:
-            import difflib
-            valid = sorted(plate_component_names)
+        # Step 2: 孤儿 batch — 归一化模糊匹配兜底
+        def _normalize(name: str) -> str:
+            n = name.replace("`", "").strip()
+            n = re.sub(r'\([^)]*\.(ts|tsx|py|js|css)[^)]*\)', '', n).strip()
+            n = re.sub(r' — .*$', '', n).strip()
+            return n
+        norm_map: dict[str, str] = {_normalize(n): n for n in plate_component_names}
+        valid = sorted(plate_component_names)
+        unresolved: list[str] = []
+        for b in batch_plan:
+            comp = b["component"]
+            if comp in plate_component_names:
+                continue
+            norm_comp = _normalize(comp)
+            if norm_comp in norm_map:
+                b["component"] = norm_map[norm_comp]
+                continue
+            subs = [v for v in valid if norm_comp.lower() in _normalize(v).lower()]
+            if len(subs) == 1:
+                b["component"] = subs[0]
+                continue
+            unresolved.append(comp)
+        if unresolved:
             hints = []
-            for orphan in orphans:
-                close = difflib.get_close_matches(orphan, valid, n=3, cutoff=0.3)
-                if close:
-                    hints.append(f"'{orphan}' → 最接近: {close}")
-                else:
-                    hints.append(f"'{orphan}' → 无相似匹配")
+            for orphan in unresolved:
+                close = difflib.get_close_matches(_normalize(orphan), list(norm_map.keys()), n=3, cutoff=0.3)
+                if close: hints.append(f"'{orphan}' → 最接近: {[norm_map[c] for c in close]}")
+                else: hints.append(f"'{orphan}' → 无相似匹配")
             raise ValueError(
-                f"孤儿 batch: component {orphans} 不在任何 plate 中。"
+                f"孤儿 batch: component {unresolved} 不在任何 plate 中。"
                 f"有效 component 名: {valid}。"
                 f"{' | '.join(hints)} —— "
                 f"architect 须重出 batch_plan (G2 retry)"
             )
 
-        # 零 batch 组件: design_doc 有但无对应 batch → WARN (交 architect 确认)
-        # T39 B9/D2: 每个组件只警告一次, 跨 tick 不重复
+        # Recompute after auto-correction (component names may have changed)
+        batch_components = list(dict.fromkeys(b["component"] for b in batch_plan))
+
+        # 零 batch 组件: design_doc 有但无对应 batch
+        # 降级为 INFO — 信息性章节 (数据流/设计决策/已知问题) 无需实现, 属正常情况.
+        # T39 B9/D2: 每个组件只记录一次.
         zero_batch = [c for c in plate_component_names if c not in batch_components]
-        if zero_batch:
-            _logger.warning(
-                "零 batch 组件 %s: design_doc 声明但 batch_plan 无对应 batch —— "
-                "确认是'有意不实现'还是'漏排 batch'",
-                sorted(zero_batch),
+        with cls._warned_lock:
+            new_zero = [c for c in zero_batch if c not in cls._warned_zero_batch]
+            if new_zero:
+                cls._warned_zero_batch.update(new_zero)
+        if new_zero:
+            _logger.info(
+                "设计文档组件无对应 batch (信息性章节，属正常): %s",
+                sorted(new_zero),
             )
 
         # 过滤: 仅保留有 batch 的 component, 移除无 component 的 plate
@@ -127,7 +170,7 @@ class BatchState:
     @classmethod
     def from_batch_plan(cls, batch_plan: list[dict]) -> BatchState:
         """batch_plan 模式 — 按出现顺序提取 distinct component → 单一合成 plate."""
-        batch_plan = cls._flatten_batch_plan(batch_plan)
+        batch_plan = cls.flatten_batch_plan(batch_plan)
         names = list(dict.fromkeys(b["component"] for b in batch_plan))
         comps = [
             Component(name=n, design_section="", design_items=[], source_marker="batch_plan")

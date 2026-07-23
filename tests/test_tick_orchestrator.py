@@ -2606,46 +2606,46 @@ class TestV7_1_TickDelegation:
 
 
 class TestDetectProjectLanguage:
-    """_detect_project_language() 语言探测."""
+    """detect_project_language() 语言探测."""
 
     def test_detect_typescript_by_tsconfig(self, tmp_path: Path) -> None:
-        from auto_engineering.loop.tick_orchestrator import _detect_project_language
+        from auto_engineering.loop.escalation_handler import detect_project_language
         (tmp_path / "package.json").write_text("{}")
         (tmp_path / "tsconfig.json").write_text("{}")
-        assert _detect_project_language(tmp_path) == "typescript"
+        assert detect_project_language(tmp_path) == "typescript"
 
     def test_detect_typescript_by_package_json_deps(self, tmp_path: Path) -> None:
-        from auto_engineering.loop.tick_orchestrator import _detect_project_language
+        from auto_engineering.loop.escalation_handler import detect_project_language
         (tmp_path / "package.json").write_text(
             json.dumps({"devDependencies": {"typescript": "^5.0"}}))
-        assert _detect_project_language(tmp_path) == "typescript"
+        assert detect_project_language(tmp_path) == "typescript"
 
     def test_detect_python_by_pyproject(self, tmp_path: Path) -> None:
-        from auto_engineering.loop.tick_orchestrator import _detect_project_language
+        from auto_engineering.loop.escalation_handler import detect_project_language
         (tmp_path / "pyproject.toml").write_text("[project]\nname='test'")
-        assert _detect_project_language(tmp_path) == "python"
+        assert detect_project_language(tmp_path) == "python"
 
     def test_detect_go_by_gomod(self, tmp_path: Path) -> None:
-        from auto_engineering.loop.tick_orchestrator import _detect_project_language
+        from auto_engineering.loop.escalation_handler import detect_project_language
         (tmp_path / "go.mod").write_text("module test")
-        assert _detect_project_language(tmp_path) == "go"
+        assert detect_project_language(tmp_path) == "go"
 
     def test_detect_rust_by_cargo(self, tmp_path: Path) -> None:
-        from auto_engineering.loop.tick_orchestrator import _detect_project_language
+        from auto_engineering.loop.escalation_handler import detect_project_language
         (tmp_path / "Cargo.toml").write_text("[package]\nname='test'")
-        assert _detect_project_language(tmp_path) == "rust"
+        assert detect_project_language(tmp_path) == "rust"
 
     def test_detect_none_for_empty_dir(self, tmp_path: Path) -> None:
-        from auto_engineering.loop.tick_orchestrator import _detect_project_language
-        assert _detect_project_language(tmp_path) is None
+        from auto_engineering.loop.escalation_handler import detect_project_language
+        assert detect_project_language(tmp_path) is None
 
     def test_python_wins_over_typescript(self, tmp_path: Path) -> None:
         """pyproject.toml 在 package.json 之前, python 优先."""
-        from auto_engineering.loop.tick_orchestrator import _detect_project_language
+        from auto_engineering.loop.escalation_handler import detect_project_language
         (tmp_path / "pyproject.toml").write_text("[project]")
         (tmp_path / "package.json").write_text("{}")
         (tmp_path / "tsconfig.json").write_text("{}")
-        assert _detect_project_language(tmp_path) == "python"
+        assert detect_project_language(tmp_path) == "python"
 
 
 class TestInitManifestEscalation:

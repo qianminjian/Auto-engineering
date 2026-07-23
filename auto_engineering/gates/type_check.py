@@ -58,30 +58,53 @@ class TypeCheckGate(Gate):
         self.strict = strict
 
     def _has_type_config(self, project_root: Path) -> bool:
-        """检查项目是否有 type checker 配置.
+        """检查项目是否有当前 type_checker 的配置文件.
 
-        默认检查 mypy 兼容配置. v5.0 §IL-AC-02 扩展: 简化判定, 只要 type_checker
-        二进制在 PATH 中, 就尝试跑. 真正的 "是否有 config" 留给 type_checker 自身.
+        原仅检测 mypy 配置 (mypy.ini / pyproject.toml [tool.mypy])。
+        v5.6 E3 修复: 按 type_checker_bin 检测对应配置。
         """
-        # 兼容旧逻辑: 找 mypy 配置
+        checker = self.type_checker_bin
+
+        # tsc → tsconfig.json
+        if checker == "tsc":
+            return (project_root / "tsconfig.json").exists()
+
+        # pyright → pyrightconfig.json / pyproject.toml [tool.pyright]
+        if checker == "pyright":
+            if (project_root / "pyrightconfig.json").exists():
+                return True
+            cfg = project_root / "pyproject.toml"
+            if cfg.exists():
+                try:
+                    return "[tool.pyright]" in cfg.read_text()
+                except OSError:
+                    return False
+            return False
+
+        # go vet → go.mod
+        if checker in ("go vet", "go-vet"):
+            return (project_root / "go.mod").exists()
+
+        # cargo check → Cargo.toml
+        if checker == "cargo check":
+            return (project_root / "Cargo.toml").exists()
+
+        # mypy (default) → mypy.ini / setup.cfg / pyproject.toml [tool.mypy]
         candidates = [
             project_root / "mypy.ini",
             project_root / ".mypy.ini",
-            project_root / "pyproject.toml",
             project_root / "setup.cfg",
         ]
         for c in candidates:
             if c.exists():
-                if c.name == "pyproject.toml":
-                    try:
-                        content = c.read_text()
-                        if "[tool.mypy]" in content:
-                            return True
-                    except OSError:
-                        _logger.warning("无法读取 pyproject.toml 检查 mypy 配置")
-                        continue
-                else:
+                return True
+        cfg = project_root / "pyproject.toml"
+        if cfg.exists():
+            try:
+                if "[tool.mypy]" in cfg.read_text():
                     return True
+            except OSError:
+                _logger.warning("无法读取 pyproject.toml 检查 mypy 配置")
         return False
 
     def _resolve_type_check_cmd(self) -> list[str] | None:

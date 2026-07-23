@@ -6,10 +6,10 @@ MetricsCollector 为每个需求提供独立采集作用域（thread_id → 事�
 """
 import json
 import logging
-import os
 import subprocess
 import threading
 import time
+from auto_engineering.utils.file_utils import safe_json_load
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -137,7 +137,7 @@ class MetricsCollector:
         meta_path = self._metrics_dir / "requirements" / thread_id / "metadata.json"
         if meta_path.exists():
             try:
-                meta = json.loads(meta_path.read_text())
+                meta = safe_json_load(meta_path)
                 self._current_category = meta.get("category", "")
             except (json.JSONDecodeError, OSError):
                 _logger.debug("metrics metadata read failed: %s", meta_path, exc_info=True)
@@ -209,7 +209,7 @@ class MetricsCollector:
             reverse=True,
         )[:limit]:
             try:
-                data = json.loads(summary_path.read_text())
+                data = safe_json_load(summary_path)
                 summaries.append(data)
             except (json.JSONDecodeError, OSError):
                 _logger.debug("metrics summary read failed: %s", summary_path, exc_info=True)
@@ -225,7 +225,7 @@ class MetricsCollector:
         if not baseline_path.exists():
             return None
         try:
-            return json.loads(baseline_path.read_text())
+            return safe_json_load(baseline_path)
         except (json.JSONDecodeError, OSError):
             _logger.debug("metrics baseline read failed: %s", baseline_path, exc_info=True)
             return None
@@ -437,13 +437,16 @@ class MetricsCollector:
                 "M5_token_efficiency": m5, "pii_events": pii_stats}
 
     def _flush_events(self) -> None:
-        """Write events buffer to events.jsonl (overwrite, not append)."""
+        """Write events buffer to events.jsonl (atomic overwrite via temp file, P2-41)."""
         req_dir = self._metrics_dir / "requirements" / self._current_thread_id
         req_dir.mkdir(parents=True, exist_ok=True)
         events_path = req_dir / "events.jsonl"
-        with open(events_path, "w") as f:
+        tmp_path = events_path.with_suffix(".jsonl.tmp")
+        with open(tmp_path, "w") as f:
             for event in self._events:
                 f.write(json.dumps(event, ensure_ascii=False) + "\n")
+        import os
+        os.replace(tmp_path, events_path)  # atomic on POSIX
 
     def _write_summary(self, summary: dict | None = None) -> None:
         """Write M1-M5 summary.json and category metadata.json."""
@@ -486,7 +489,7 @@ class MetricsCollector:
             if not summary_file.exists():
                 continue
             try:
-                summary = json.loads(summary_file.read_text())
+                summary = safe_json_load(summary_file)
             except (json.JSONDecodeError, OSError):
                 _logger.debug("metrics summary file read failed: %s", summary_file, exc_info=True)
                 continue
@@ -495,7 +498,7 @@ class MetricsCollector:
             meta_file = req_path / "metadata.json"
             if meta_file.exists():
                 try:
-                    meta = json.loads(meta_file.read_text())
+                    meta = safe_json_load(meta_file)
                     cat = meta.get("category", "")
                     if cat in self._KNOWN_CATEGORIES:
                         categorized[cat].append(summary)
@@ -550,8 +553,8 @@ class MetricsCollector:
         after_path = baselines_dir / f"{after_tag}.json"
         if not before_path.exists() or not after_path.exists():
             return None
-        before_data = json.loads(before_path.read_text())
-        after_data = json.loads(after_path.read_text())
+        before_data = safe_json_load(before_path)
+        after_data = safe_json_load(after_path)
         return {"before": before_data, "after": after_data}
 
     @staticmethod
@@ -591,30 +594,6 @@ class MetricsCollector:
         if f + 1 < len(sorted_vals):
             return sorted_vals[f] + c * (sorted_vals[f + 1] - sorted_vals[f])
         return sorted_vals[f]
-
-    @staticmethod
-    def _compute_loc_added(project_root: Path) -> int:
-        try:
-            # Count insertions from the most recent commit (not --cached).
-            # During tick loops, the developer commits after each batch,
-            # so --cached HEAD always returns 0.
-            result = subprocess.run(
-                ["git", "-C", str(project_root), "diff", "--stat", "HEAD~1", "HEAD"],
-                capture_output=True, text=True, timeout=5,
-            )
-            if result.returncode != 0 or not result.stdout.strip():
-                return 0
-            last_line = result.stdout.strip().split("\n")[-1]
-            insertions = 0
-            for part in last_line.split(","):
-                part = part.strip()
-                if "insertion" in part:
-                    insertions = int(part.split()[0])
-            return insertions
-        except (subprocess.TimeoutExpired, ValueError, OSError):
-            _logger.debug("git diff stat failed", exc_info=True)
-            return 0
-
 
 def _count_by(items: list[dict], key: str) -> dict[str, int]:
     """Count items by a key, supporting nested payload access."""

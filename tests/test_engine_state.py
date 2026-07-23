@@ -42,6 +42,8 @@ _EXPECTED_V56_FIELDS = {
     "tick_token_usage",
     # 内部写入审计日志
     "_write_log",
+    # P1-28: 运行时句柄 (不进 checkpoint)
+    "_runtime_ctx",
 }
 
 
@@ -149,8 +151,8 @@ class TestEngineStateFieldDefaults:
     +total_majors / +thread_id). 验证所有字段默认值与类型契约.
     """
 
-    def test_all_41_fields_exist(self) -> None:
-        """EngineState 暴露 42 个字段 (v5.6: 22 + 17 #20-36 + 1 #37 + 2 #38-39)."""
+    def test_all_42_fields_exist(self) -> None:
+        """EngineState 暴露 44 个字段 (含 _write_log + _runtime_ctx P1-28)."""
         from dataclasses import fields
 
         EngineState()
@@ -423,7 +425,7 @@ class TestV55EngineStateFields:
         state.audit_findings = None
         assert state.audit_findings is None
 
-    def test_field_count_is_41(self) -> None:
+    def test_field_count_is_42(self) -> None:
         """v5.6: 字段总数 22 → 42 (#20-36 共 17 + #37 + #38-39 debug)."""
         from dataclasses import fields
 

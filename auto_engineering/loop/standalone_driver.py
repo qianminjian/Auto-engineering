@@ -12,12 +12,15 @@ v7.0 双驱动架构:
 from __future__ import annotations
 
 import logging
-import os
 import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from auto_engineering.runtime.runtime import AgentRuntime
+    from auto_engineering.loop.tick_orchestrator import TickOrchestrator
 
 from auto_engineering.errors import AEError, ErrorCode
 from auto_engineering.runtime.task import Task
@@ -27,7 +30,7 @@ _logger = logging.getLogger("ae.loop.standalone_driver")
 # ── V7-2: STAGE_TO_ROLE mapping (SSOT: config/constants.py) ──
 # Re-exported for backward compatibility with existing callers.
 
-from auto_engineering.config.constants import STAGE_TO_ROLE  # noqa: F401 — re-export
+from auto_engineering.config.constants import STAGE_TO_ROLE, _SPAWN_CONFIG  # noqa: F401 — re-export
 
 # ── V7-2: ROLE_MODEL mapping ──
 # role → 默认模型, 可通过 AE_MODEL_<ROLE> 环境变量覆盖
@@ -45,7 +48,7 @@ ROLE_MODEL: dict[str, str] = {
 }
 
 
-def _resolve_model(role: str, config: Any = None) -> str:
+def _resolve_model(role: str, config: Any = None) -> str:  # RuntimeConfig | None
     """Resolve model for role, with AE_MODEL_<ROLE> env var override.
 
     Args:
@@ -85,7 +88,6 @@ def _resolve_provider(role: str, config: Any = None) -> Any:
     if _cfg.audit_log_enabled:
         try:
             from auto_engineering.observability.audit_log import AuditLogger
-            from pathlib import Path
             log_dir = Path(_cfg.audit_log_dir or str(Path.cwd() / ".ae-state" / "audit-logs"))
             audit_logger = AuditLogger(log_dir)
             # Inject audit_logger into the provider if it supports it
@@ -104,7 +106,7 @@ def _resolve_provider(role: str, config: Any = None) -> Any:
 AuthProvider = Callable[[], str]
 
 
-def _resolve_auth_provider(config: Any = None) -> AuthProvider:
+def _resolve_auth_provider(config: Any = None) -> AuthProvider:  # RuntimeConfig | None
     """Resolve auth provider from environment.
 
     Priority: ANTHROPIC_AUTH_TOKEN > ANTHROPIC_API_KEY.
@@ -154,21 +156,21 @@ _PHASE0_STAGES: frozenset[str] = frozenset({
 # Auto-pass stub result per stage — must satisfy RESULT_SCHEMA in actions.py
 _AUTO_PASS_RESULT: dict[str, dict] = {
     "component_verifier": {
-        "stage": "component_verifier", "component": "",
+        "stage": "component_verifier", "component": "", "spawned": True,
         "coverage_map": [], "missing_count": 0, "diverged_count": 0,
     },
     "system_verifier": {
-        "stage": "system_verifier", "full_coverage_map": [],
+        "stage": "system_verifier", "spawned": True, "full_coverage_map": [],
         "total_design_items": 0, "covered_count": 0,
         "missing_count": 0, "diverged_count": 0,
     },
     "system_deep_audit": {
-        "stage": "system_deep_audit", "findings": [],
+        "stage": "system_deep_audit", "spawned": True, "findings": [],
         "p0_count": 0, "p1_count": 0, "p2_count": 0,
         "total_audited_files": 0,
     },
     "plate_deep_audit": {
-        "stage": "plate_deep_audit", "plate": "", "findings": [],
+        "stage": "plate_deep_audit", "plate": "", "spawned": True, "findings": [],
         "p0_count": 0, "p1_count": 0, "p2_count": 0,
         "cross_component_issues": [],
     },
@@ -311,7 +313,7 @@ class StandaloneDriver:
                 if action.get("action") == "error":
                     return RunSummary(
                         success=False, total_ticks=tick_count, final_stage=stage,
-                        error_message=action.get("message", "unknown error"),
+                        error_message=action.get("message") or action.get("error_code", "NO_ERROR_MESSAGE"),
                         action_history=action_history,
                     )
 
@@ -398,6 +400,10 @@ class StandaloneDriver:
         Returns:
             result dict (符合 stage-result schema, 可直接喂 tick_dict).
         """
+        # Gate actions: headless 下自动选择 default 选项 (通常是 "继续")
+        if action.get("action") == "gate":
+            return self._auto_pass_gate(action)
+
         role = self._action_role(action)
         agent = self._runtime.get(role)
         if agent is None:
@@ -434,11 +440,17 @@ class StandaloneDriver:
             )
         except (OSError, RuntimeError, ValueError, TypeError, AttributeError):
             _logger.exception("Agent '%s' execute 失败", role)
-            return {"stage": role, "error": f"Agent '{role}' 执行异常"}
+            return {"stage": role, "error": f"Agent '{role}' 执行异常",
+                    "spawned": True}  # T142 compat
 
         result = dict(task_result.values)
         if "stage" not in result:
             result["stage"] = role
+        # T142 compat: Standalone mode uses BaseAgent (not subagent spawn),
+        # but the TickOrchestrator's G2 retry checks for spawned:true.
+        # BaseAgent execution IS the equivalent of spawning in Standalone.
+        if role in _SPAWN_CONFIG:
+            result["spawned"] = True
 
         # Phase 0 stages: free-form, skip validation (V7-5 §5)
         if role in _PHASE0_STAGES:
@@ -506,11 +518,14 @@ class StandaloneDriver:
             )
         except (OSError, RuntimeError, ValueError, TypeError, AttributeError):
             _logger.exception("Stage '%s' 重试失败", role)
-            return {"stage": role, "error": "重试失败: 详见日志"}
+            return {"stage": role, "error": "重试失败: 详见日志",
+                    "spawned": True}  # T142 compat
 
         retry_values = dict(retry_result.values)
         if "stage" not in retry_values:
             retry_values["stage"] = role
+        if role in _SPAWN_CONFIG:
+            retry_values["spawned"] = True  # T142 compat
         retry_errors = validate_result_format(retry_values, role)
         if retry_errors:
             _logger.error(
@@ -623,33 +638,63 @@ class StandaloneDriver:
             **({"error": "; ".join(errors)} if errors else {}),
         }
 
-    def _auto_commit(self, batch_id: str, fallback_hash: str) -> str:
-        """TDD 完成后自动 git commit (模型可能跳过 commit, 导致 Guardrail 拦截)."""
+    def _auto_commit(self, batch_id: str, fallback_hash: str,
+                     files: list[str] | None = None) -> str:
+        """TDD 完成后自动 git commit (模型可能跳过 commit, 导致 Guardrail 拦截).
+
+        Args:
+            batch_id: 当前 batch ID (用于 commit message).
+            fallback_hash: git add/commit 失败时的降级 commit hash.
+            files: 要暂存的文件列表 (None 时为全项目). 默认为 '.' 仅暂存项目根.
+        """
         try:
             status = subprocess.run(
                 ["git", "status", "--porcelain"],
                 cwd=str(self.project_root),
                 capture_output=True, text=True, timeout=15,
             )
+            if status.returncode != 0:
+                _logger.warning("[auto-commit] git status failed (rc=%d), skipping",
+                                status.returncode)
+                return fallback_hash
             if not status.stdout.strip():
                 return fallback_hash  # 无变更, 不需要 commit
 
-            subprocess.run(
-                ["git", "add", "-A"],
+            # 仅暂存指定文件或项目根, 不用 -A (避免卷入并发 tick 的变更)
+            add_args = ["git", "add"]
+            if files:
+                add_args.extend(files)
+            else:
+                add_args.append(".")
+            add_result = subprocess.run(
+                add_args,
                 cwd=str(self.project_root),
                 capture_output=True, text=True, timeout=15,
             )
+            if add_result.returncode != 0:
+                _logger.warning("[auto-commit] git add failed (rc=%d): %s",
+                                add_result.returncode, add_result.stderr.strip())
+                return fallback_hash
+
             msg = f"feat(dev-loop): {batch_id} — StandaloneDriver auto-commit"
-            subprocess.run(
+            commit_result = subprocess.run(
                 ["git", "commit", "-m", msg],
                 cwd=str(self.project_root),
                 capture_output=True, text=True, timeout=15,
             )
+            if commit_result.returncode != 0:
+                _logger.warning("[auto-commit] git commit failed (rc=%d): %s",
+                                commit_result.returncode, commit_result.stderr.strip())
+                return fallback_hash
+
             rev = subprocess.run(
                 ["git", "rev-parse", "HEAD"],
                 cwd=str(self.project_root),
                 capture_output=True, text=True, timeout=10,
             )
+            if rev.returncode != 0:
+                _logger.warning("[auto-commit] git rev-parse failed (rc=%d)", rev.returncode)
+                return fallback_hash
             commit_hash = rev.stdout.strip()
             if len(commit_hash) == 40:
                 _logger.info("[auto-commit] %s → %s", batch_id, commit_hash[:8])
@@ -759,6 +804,37 @@ class StandaloneDriver:
         role = action.get("role") or action.get("action") or ""
         return _ACTION_ROLE_MAP.get(role, role)
 
+    # Gate types that MUST NOT be auto-passed — require real resolution
+    _ESCALATION_GATE_TYPES = frozenset({"system_escalation", "agent_escalation"})
+
+    def _auto_pass_gate(self, action: dict) -> dict:
+        """Headless gate auto-pass: 选择 default 选项（通常是 "继续"）.
+
+        escalation 类型 gate 不自动通过 — 必须由调用方处理 (P0-6).
+        """
+        gate = action.get("gate", {})
+        gate_type = gate.get("type", "")
+        default = gate.get("default", "继续")
+        if gate_type in self._ESCALATION_GATE_TYPES:
+            _logger.warning(
+                "[StandaloneDriver] Escalation gate requires manual resolution: "
+                "id=%s type=%s — auto-pass BLOCKED",
+                gate.get("id", "?"), gate_type,
+            )
+            stage = action.get("stage", "architect")
+            return {
+                "stage": stage,
+                "gate_decision": "暂停",
+                "_auto_blocked": True,
+                "_reason": f"Escalation gate '{gate_type}' requires manual resolution",
+            }
+        _logger.info(
+            "[StandaloneDriver] Auto-pass gate: id=%s type=%s default=%s",
+            gate.get("id", "?"), gate_type, default,
+        )
+        stage = action.get("stage", "architect")
+        return {"stage": stage, "gate_decision": default}
+
     def _auto_pass_result(self, role: str, action: dict) -> dict:
         """返回 schema-compliant auto-pass stub (Phase 0 headless stages)."""
         stub = _AUTO_PASS_RESULT.get(role)
@@ -803,46 +879,29 @@ class StandaloneDriver:
             req = context.get("requirement", "")
             design_section = context.get("design_section", "")
             init_manifest = context.get("init_manifest") or {}
+            component_map = context.get("component_map", {})
 
-            # v7.8: 设计文档模式下, 提供设计文档章节信息
+            # Build component reference table
+            comp_table = ""
+            if component_map:
+                rows = "\n".join(f"  {k} → {v}" for k, v in sorted(component_map.items()))
+                comp_table = f"\n\n组件编号表（design_section 从这选）:\n{rows}\n"
+
             design_doc_info = ""
             if self._design_doc_path:
                 design_doc_info = (
-                    f"\n\n设计文档: {self._design_doc_path}\n"
-                    f"先用 read_file 读取设计文档, 了解已定义的章节结构。\n"
-                    f"batch_plan 中每个 batch 的 component 字段必须使用设计文档的章节名"
-                    f" (如 \"概述\", \"功能需求\", \"API\", \"文件\")。\n"
-                )
-            elif design_section:
-                design_doc_info = (
-                    f"\n\n当前设计章节: {design_section}\n"
-                    f"batch_plan 的 component 字段必须对齐设计文档章节名。\n"
+                    f"\n\n设计文档已解析，组件如下:\n{comp_table}\n"
                 )
 
             return {
                 "description": (
-                    f"你是一个软件架构师。根据以下需求生成详细的架构计划。\n\n"
-                    f"需求: {req}"
-                    f"{design_doc_info}\n\n"
-                    f"先用工具 (list_dir, read_file) 探索项目结构, 了解现有代码。\n"
-                    f"然后输出架构计划 (至少 100 字):\n"
-                    f"1. 理解需求, 列出需要创建/修改的文件\n"
-                    f"2. 用 ## T1: 名称 格式列出每个实现批次\n"
-                    f"3. 每个批次下用 - `path/to/file.py` — 描述 列出文件路径\n"
-                    f"4. 说明每个文件的作用\n\n"
-                    f"示例格式:\n"
-                    f"## 架构分析\n"
-                    f"需求分析: ...\n\n"
-                    f"## T1: 核心实现\n"
-                    f"- `src/xxx.py` — 核心逻辑实现\n"
-                    f"- `tests/test_xxx.py` — 单元测试\n\n"
-                    f"## T2: 测试与集成\n"
-                    f"- `tests/test_integration.py` — 集成测试\n\n"
-                    f"务必列出完整的文件路径 (含目录), 至少 100 字。"
-                    f"每个文件名用反引号包裹。"
+                    f"架构需求:\n{req}{design_doc_info}\n\n"
+                    f"先用 list_dir 和 read_file 探索项目结构和现有代码。"
+                    f"然后输出完整的 JSON 实现计划，包含 plan、"
+                    f"batch_plan（每项含 design_section 从编号表选）、file_list、contracts 四个字段。"
                 ),
                 "expected_output": (
-                    "Markdown 架构计划, 含 ## T1/T2 批次标题 + 反引号文件路径列表, 至少 100 字"
+                    "JSON object with plan, batch_plan, file_list, contracts"
                 ),
             }
 
@@ -1052,12 +1111,53 @@ class StandaloneDriver:
     # ── helpers ──
 
     def _build_output_schema(self, action: dict) -> dict | None:
-        """构造 output_schema 用于强制 JSON 输出格式.
-
-        architect 不使用 output_schema: 复杂规划任务中 DeepSeek 等模型
-        难以遵守 JSON-only 约束, 转而依赖 parser.py markdown fallback 提取.
-        """
+        """构造 output_schema 用于强制 JSON 输出格式."""
         action_type = action.get("action", "")
+        if action_type == "architect":
+            return {
+                "type": "object",
+                "required": ["plan", "batch_plan", "file_list"],
+                "properties": {
+                    "plan": {"type": "string"},
+                    "batch_plan": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "required": ["design_section", "batches"],
+                            "properties": {
+                                "design_section": {"type": "string"},
+                                "plate": {"type": "string"},
+                                "component": {"type": "string"},
+                                "batches": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "object",
+                                        "required": ["batch_id", "tasks"],
+                                        "properties": {
+                                            "batch_id": {"type": "string"},
+                                            "tasks": {
+                                                "type": "array",
+                                                "items": {
+                                                    "type": "object",
+                                                    "required": ["id", "description", "file_targets"],
+                                                    "properties": {
+                                                        "id": {"type": "string"},
+                                                        "description": {"type": "string"},
+                                                        "file_targets": {"type": "array", "items": {"type": "string"}},
+                                                        "depends_on": {"type": "array", "items": {"type": "string"}},
+                                                    },
+                                                },
+                                            },
+                                        },
+                                    },
+                                },
+                            },
+                        },
+                    },
+                    "file_list": {"type": "array", "items": {"type": "string"}},
+                    "contracts": {"type": "object"},
+                },
+            }
         if action_type == "critic":
             return {
                 "type": "object",

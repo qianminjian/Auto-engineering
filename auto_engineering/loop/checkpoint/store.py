@@ -131,6 +131,13 @@ class SQLiteCheckpointStore[T]:
             self._shared_conn.close()
             self._shared_conn = None
 
+    def __del__(self) -> None:
+        """P2-31: GC safety net — close connections if not explicitly closed."""
+        try:
+            self.close()
+        except Exception:
+            pass  # 析构期不抛异常
+
     def __enter__(self) -> SQLiteCheckpointStore[T]:
         return self
 

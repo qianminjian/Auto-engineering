@@ -279,9 +279,9 @@ class _DesignDocParser:
         if node and node[0] == "plate":
             plate = node[1]
             if attrs.get("name"):
-                plate.name = attrs["name"]  # type: ignore[attr-defined]
+                plate.name = attrs["name"]  # type: ignore[attr-defined]  # T135j: mypy can't narrow tuple union
             if contracts:
-                plate.cross_component_contracts_raw = contracts  # type: ignore[attr-defined]
+                plate.cross_component_contracts_raw = contracts  # type: ignore[attr-defined]  # T135j: same
         elif node and node[0] == "component":
             # 类型冲突: marker 赢 → 组件重分类为 Plate
             comp: Component = node[1]  # type: ignore[assignment]

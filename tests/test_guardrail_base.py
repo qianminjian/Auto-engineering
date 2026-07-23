@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from auto_engineering.engine.state import EngineState
-from auto_engineering.loop.guardrail_base import Guardrail, GuardrailResult
+from auto_engineering.engine.guardrail_types import Guardrail, GuardrailResult
 
 
 class TestGuardrailResult:

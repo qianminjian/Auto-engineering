@@ -18,10 +18,10 @@ from auto_engineering.errors import AEError, ErrorCode
 
 
 class TestErrorCodeEnum:
-    """枚举完整性 — 13 ErrorCode (v5.5 审计后)."""
+    """枚举完整性 — 14 ErrorCode (v5.5 审计后, P2-40 新增 GATE_EXECUTION_ERROR)."""
 
     def test_all_codes_defined(self) -> None:
-        """13 个 ErrorCode 全存在."""
+        """14 个 ErrorCode 全存在."""
         expected = {
             # LLM / API (6)
             "LLM_TIMEOUT",
@@ -41,6 +41,8 @@ class TestErrorCodeEnum:
             "CONFIG_MISSING_API_KEY",
             # Budget (1)
             "BUDGET_EXCEEDED",
+            # Gate (1)
+            "GATE_EXECUTION_ERROR",
         }
         actual = {member.name for member in ErrorCode}
         assert actual == expected, (
@@ -204,10 +206,10 @@ class TestV5ErrorCodeMapping:
         Budget (1): EXCEEDED
     """
 
-    def test_error_code_total_count_is_13(self) -> None:
-        """ErrorCode 总数 = 13 (v5.5 审计后)."""
-        assert len(ErrorCode) == 13, (
-            f"ErrorCode 总数应 13, 实际 {len(ErrorCode)}. "
+    def test_error_code_total_count_is_14(self) -> None:
+        """ErrorCode 总数 = 14 (P2-40 新增 GATE_EXECUTION_ERROR)."""
+        assert len(ErrorCode) == 14, (
+            f"ErrorCode 总数应 14, 实际 {len(ErrorCode)}. "
             f"新增/删除需同步 test_all_codes_defined"
         )
 

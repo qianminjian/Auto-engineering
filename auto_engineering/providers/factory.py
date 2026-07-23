@@ -7,7 +7,6 @@ Design ref: v5.6-Design-Loop.md appendix D §4.
 from __future__ import annotations
 
 import logging
-import os
 
 from auto_engineering.providers.base import LLMProvider
 

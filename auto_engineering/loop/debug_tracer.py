@@ -35,7 +35,7 @@ class DebugTracer:
     def disabled() -> "DebugTracer":
         """返回一个所有方法均为 no-op 的实例 (零开销, 无文件写入)."""
         tracer = object.__new__(DebugTracer)
-        tracer._dir = None  # type: ignore[attr-defined]
+        object.__setattr__(tracer, '_dir', None)  # T135d: bypass __init__ for disabled tracer
         return tracer
 
     # ── 记录方法 ──

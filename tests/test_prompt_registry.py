@@ -1,7 +1,7 @@
 """test_prompt_registry.py — T16e: B12 中央提示词 PromptRegistry (v5.6 §B12.4/B12.5).
 
 覆盖:
-  - 加载 roles/*.md 全部 9 role, 解析 frontmatter (role/model/fragments)
+  - 加载 roles/*.md 全部 role, 解析 frontmatter (role/model/fragments)
   - 组合: fragments 按声明顺序追加到正文顶部 (Iron Law/合理化表前置)
   - frontmatter 从 get() 输出剥离
   - sha256 版本锁: hash(role) == sha256(get(role)), 确定性可复现
@@ -25,7 +25,11 @@ _REAL_DIR = Path(__file__).resolve().parents[1] / "auto_engineering" / "prompts"
 _ALL_ROLES = {
     "architect", "developer", "critic",
     "component_verifier", "plate_deep_audit",
+    "plate_audit_contracts", "plate_audit_dataflow", "plate_audit_architecture",
     "system_verifier", "system_deep_audit",
+    "system_audit_architecture", "system_audit_code_quality",
+    "system_audit_engineering", "system_audit_virtualization",
+    "system_audit_team",
     "gap_scan", "research",
 }
 
@@ -36,11 +40,11 @@ def registry() -> PromptRegistry:
 
 
 class TestLoad:
-    def test_loads_all_nine_roles(self, registry: PromptRegistry) -> None:
+    def test_loads_all_roles(self, registry: PromptRegistry) -> None:
         assert set(registry.role_names) == _ALL_ROLES
 
     def test_default_dir_is_package_dir(self) -> None:
-        # 无参数 → 默认包内 prompts 目录, 同样加载 9 role
+        # 无参数 → 默认包内 prompts 目录, 加载全部 role
         reg = PromptRegistry()
         assert set(reg.role_names) == _ALL_ROLES
 

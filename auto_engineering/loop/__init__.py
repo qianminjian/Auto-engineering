@@ -1,23 +1,9 @@
-"""v2.0 Loop 子系统 — Channel 系统 + CheckpointEnvelope (v2.0 Checkpoint 数据).
+"""v5.6 Loop 子系统 — Tick 引擎 + 收敛判定 + Checkpoint 持久化.
 
-收敛判定 + Checkpoint 持久化 + 多 Agent 并发.
-
-参考 LangGraph Channel 系统 + design/v2.0-Analysis-Loop.md §4.4/§4.7/§五.
-
-Channel 三种类型语义:
-- LastValueChannel[T]:   单写,后续覆盖 (Plan 状态、Review 结论)
-- AccumulatingChannel[T]: 多写,append 列表 (Task 完成列表、Gate 结果汇总)
-- BarrierChannel:        等待所有 Agent 完成 (asyncio.Event 同步点)
-
-收敛判定 (v2.0 Phase 02):
-- 4 级判定 (硬上限/质量门/停滞检测/语义收敛) + 默认继续
-- 详见 design/v2.0-Analysis-Loop.md §4.7
-
-Checkpoint 持久化 (v2.0 Phase 02):
-- SQLite 持久化 CheckpointEnvelope + history
-- Schema 版本号 + 事务保证 + 线程隔离
-
-多 Agent 并发 (v2.0 Phase 03):
+Channel[T] ABC 体系 (LastValueChannel/AccumulatingChannel/BarrierChannel) —
+仅用于 v2.5→v5.6 checkpoint 迁移 (migration.py + checkpoint_envelope.py)。
+主循环状态管理走 engine.state.EngineState dataclass, 不经过 Channel。
+Channel 类型不导出 (AD2: 内部实现细节)。
 - Plan/Task DAG + check_file_isolation (确定性文件隔离检查)
 - Round 生命周期 + asyncio.gather 并发调度
 - Orchestrator 主循环 (Round Loop + 收敛判定 + 取消支持)

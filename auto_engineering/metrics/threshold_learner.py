@@ -10,6 +10,7 @@ Design spec: v5.6-Design-Loop.md Appendix F.10.
 from __future__ import annotations
 
 import json
+from auto_engineering.utils.file_utils import safe_json_load
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -129,7 +130,7 @@ class ThresholdLearner:
     def _get_current_value(self, param_name: str) -> float:
         active_path = self._metrics_dir / "configs" / "active.json"
         if active_path.exists():
-            config = json.loads(active_path.read_text())
+            config = safe_json_load(active_path)
             return float(config.get("params", {}).get(param_name, 0))
         defaults = {
             "M1_tick_limit": 12, "M2_cons_rise": 3,
@@ -153,7 +154,7 @@ class ThresholdLearner:
     def _load_state(self) -> None:
         state_path = self._metrics_dir / "baselines" / "threshold_posteriors.json"
         if state_path.exists():
-            state = json.loads(state_path.read_text())
+            state = safe_json_load(state_path)
             for name, params in state.items():
                 if name in self._estimates:
                     self._estimates[name].alpha = params["alpha"]

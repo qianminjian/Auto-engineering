@@ -164,8 +164,9 @@ def run_tick_init(
 
         # T114 5.3: one-line feature status on stderr
         from auto_engineering.config.feature_flags import feature_status_oneline, feature_warnings
-        click.echo(feature_status_oneline(), err=True)
-        for w in feature_warnings():
+        cfg = get_default_config()
+        click.echo(feature_status_oneline(cfg.environ), err=True)
+        for w in feature_warnings(cfg.environ):
             click.echo(f"  [WARN] {w}", err=True)
 
         click.echo(json.dumps(action, ensure_ascii=False))
@@ -348,7 +349,7 @@ def run_standalone(
         system_prompt = prompts.get(role)
         # v7.8: DeepSeek 常产纯 tool_use 无文本, 软上限 = max_calls//2 易误杀
         # developer: 30 (warn=15), critic: 15 (warn=7), architect: 15 (warn=7)
-        max_calls = {"architect": 15, "developer": 30, "critic": 15}.get(role, 10)
+        max_calls = {"architect": 15, "developer": 50, "critic": 15}.get(role, 10)
         tools = {"architect": architect_tools, "developer": base_tools, "critic": critic_tools}.get(role, base_tools)
         agent = BaseAgent(
             llm=provider,
@@ -370,6 +371,8 @@ def run_standalone(
     )
 
     # T69a: Activate metrics collector when AE_METRICS=1
+    mc = None
+    req_hash = ""
     if get_default_config().metrics_enabled:
         import hashlib
 
@@ -377,18 +380,20 @@ def run_standalone(
             MetricsCollector,
             set_collector,
         )
-        collector = MetricsCollector(project_root)
-        collector.set_driver_mode("standalone")
-        set_collector(collector)
+        mc = MetricsCollector(project_root)
+        mc.set_driver_mode("standalone")
+        set_collector(mc)
         req_hash = hashlib.sha256(requirement.encode()).hexdigest()[:12]
-        collector.begin_requirement(
-            orch._state.thread_id, req_hash,
-            requirement_category=_infer_category(requirement),
-        )
 
     summary = None  # guard against NameError in finally block
     try:
         summary = asyncio.run(driver.resume(resume_id)) if resume_id else driver.run(requirement)
+        # T69a: begin metrics after run() so orch._state.thread_id is available
+        if mc is not None and orch._state is not None:
+            mc.begin_requirement(
+                orch._state.thread_id, req_hash,
+                requirement_category=_infer_category(requirement),
+            )
     except Exception:
         # Standalone driver 顶层兜底: 任何未处理异常统一日志 + 干净退出
         _logger.exception("Standalone driver 运行失败")

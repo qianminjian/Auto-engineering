@@ -1,4 +1,4 @@
-> 创建：2026-06-24 | 更新：2026-07-21 | 阶段：Phase 1-30 — 2026-07-21 深度审计第二轮 28 项全部修复完成 (25 修复 + 2 暂缓 + 1 已确认)
+> 创建：2026-06-24 | 更新：2026-07-23 | 阶段：Phase 33b — 全量审计 63 项全部处理完毕，零遗留
 > ⚠️ **决策状态翻转管控**：status 列 ✅→❌ 或 ❌→✅ 必须经用户审批。AI 不得自行翻转。详见 `.claude/rules/design-document-inviolability.md` §2。
 
 ## 目标与成功标准
@@ -86,10 +86,37 @@
 | **89** | **P0-6 RuntimeConfig 环境变量集中化** | (同 #87，编号重复保留以维持后续编号稳定) | 2026-07-21 | ✅ |
 | **90** | **P0-3/P0-4 Guardrail 命名统一** | (同 #86 第二轮审计，编号重复保留以维持后续编号稳定) | 2026-07-21 | ✅ |
 | **91** | **Subagent Spawn 强制执行 — 提示词注入 + 重构** | 真跑验证发现 Phase 17 T51a-f 全部未落地——6 个 spawn 角色在 Tick 协议下均未 spawn subagent。根因：① `prompts/roles/*.md` 从未被 Tick 路径加载——`PromptRegistry` 已 import 但 `registry.get("architect")` 从未调用；② action JSON 的 `spawn` key 是数据结构非自然语言命令，LLM 不会把 JSON key 当作执行指令。方案：① `ActionBuilder._build_stage_action` 在 spawn 角色时调用 `registry.get(stage)` 加载完整 role prompt + 注入 `instruction` 自然语言命令到 action JSON；② 7 个角色 prompt 重构（CrewAI role+goal+context 模式 + AutoGen 单决策任务 + 团队上下游关系 + <50 行）；③ `commands/dev-loop.md` 从操作手册改为组长手册。设计讨论：`design/discussion/subagent-spawn-solution.md`。 | 2026-07-22 | ☐ |
+| **92** | **5 层验证提示词增强 + subagent_type 移除 + Gate 多语言适配** | 2026-07-22-23 voice_clone 真跑验证（9 tick, 8 stage, 10 errors）驱动。① `_SPAWN_CONFIG` + `_SPAWN_INSTRUCTION` 移除 `subagent_type` 字段——Agent Tool 不传该参数即用平台默认 agent，消除 `~/.claude/agents/code-reviewer.md` 工具不兼容的依赖（E1）。② 5 层提示词增强：critic 搬用 Claude Code 5 维度 + 10 条 false positive 规则 + Superpowers DO/DON'T（37→82 行）；component_verifier 增加映射方法 + DIVERGED 判定表（33→61 行）；plate_deep_audit 拆为 3 个独立 agent prompt（契约/数据流/架构）+ 合并汇总；system_verifier 增加交叉验证（30→55 行）；system_deep_audit 拆为 5 个独立 agent prompt（架构/质量/规范/虚化/协作）+ 合并汇总。共 13 文件变更（5 增强 + 8 新建）。③ Gate 多语言适配：`TypeCheckGate._has_type_config` 按 type_checker_bin 路由配置检测（tsc→tsconfig.json, pyright→pyrightconfig.json, go vet→go.mod, cargo check→Cargo.toml, mypy→mypy.ini/setup.cfg/pyproject.toml）。④ batch_state "零 batch 组件" WARNING→INFO + ClassVar dedup（E6）。⑤ expected_format 补充必填标记（architect plan + plate_deep_audit plate/cross_component_issues, E5）。⑥ 真跑对标分析报告：`_scratch/test-output/voice_clone-v5.6-tick-phase17-21-analysis-20260723.md`。2327 tests 零回归。 | 2026-07-23 | ✅ |
+| **93** | **全量深度审计 63 项全部处理（50 审计 + 4 决策 + 9 低优先级）** | 3 Agent 并行审计+Phase 1 快扫发现 50 项→同日修复+废弃。后续 4 项用户决策（AD1-4 按推荐方案执行）+ 9 项 P2 低优先级深度修复。关键产出：FeatureManifest 清理+git 安全加固+3 虚化接入+TaskDAG 死代码移除+EscalationHandler 提取(~220行)+AE_PRODUCTION 接入+GateExecutionError+EngineState _runtime_ctx+dead import×5+PRBackend 删除+guardrail_base shim 删除+_compute_loc_added 删除+JSON 工具提取(safe_json_load 19 处)+_TracerLike Protocol 修正+OTLP 优雅降级+_map_llm_exception 可测试性+check_feature CI 测试+CHANGELOG.md 创建+FeatureManifest↔RuntimeConfig 分层文档。2324 tests PASS。报告: `_scratch/reports/2026-07-23-audit.md` | 2026-07-23 | ✅ |
 
 ## 当前状态
 
-**阶段：** Phase 31 — Subagent Spawn 强制执行（提示词注入 + 重构）。Phase 1-30 全部完成（241 顶级任务）。2026-07-22 真跑验证暴露 T51a-f 系统性未落地，根因确认：角色提示词未送达 LLM + action JSON 缺少自然语言指令。
+**阶段：** Phase 33b — 全部审计修复完成。Phase 1-33 全部完成。63 项发现零遗留。
+
+**剩余待办（2 项 P0，需真跑复现）：**
+
+| # | 内容 | 严重度 | 阻塞原因 |
+|---|------|:---:|------|
+| T136w | STAGE_MISMATCH 系统性缺陷 — handler advance stage 后二次校验路径 | P0 | 代码路径逻辑正确，静态分析无法复现，需真跑触发 |
+| T136x | test gate manifest→reload 路径验证 — from_manifest 配置正确但实跑未生效 | P0 | reload 调用链完整，需真跑验证 |
+
+**最近动作 (2026-07-23 P2 深度修复 + 决策执行 + 文档同步)：**
+- **P2 低优先级 9 项全部消化**：JSON 工具提取(safe_json_load 19 处)→_compute_loc_added 死代码删除→Protocol 类型定义→type: ignore 审计标注→api-reference 确认完善→FeatureManifest↔RuntimeConfig 分层文档→CHANGELOG.md 创建→_ 前缀跨模块审计(零违规)→tautological 测试确认非问题。
+- **4 项用户决策执行**：PRBackend 物理删除(147行+test)→Channel[T] 保留为内部迁移模块→ThresholdLearner.propose_adjustments() 接线→check_feature() CI 接入(3 tests)。
+- **新增文件**：`utils/file_utils.py`(safe_json_load/save) + `CHANGELOG.md` + `loop/escalation_handler.py`。
+- **删除文件**：`tools/pr_backend.py` + `tests/test_pr_backend.py` + `loop/guardrail_base.py`。
+- BEACON 决策 #93 更新（50→63 项）。演进日志追加。
+
+**阶段：** Phase 33 — 审计修复完成。Phase 1-33 全部完成（241+4 顶级任务）。2026-07-23 全量深度审计 50 项发现全部处理完毕（40 修复 + 10 废弃）。
+
+**最近动作 (2026-07-23 全量深度审计 50 项修复完成)：**
+- **3 Agent 并行深度审计**（架构+虚化度/代码质量+工程化/协作友好度）+ Phase 1 快扫。50 项发现全部处理完毕（40 修复 + 10 废弃）。
+- **FeatureManifest 清理**：AE_LANGSMITH + AE_SUPPRESS_DEPRECATION 虚假入口移除。
+- **standalone_driver git 安全加固**：_auto_commit 返回码检查 + escalation gate 不自动通过 + git add -A→.
+- **虚化模块接入**：DiagnosticRuleDiscoverer/RatchetController 闭环/ThresholdLearner 接入生产路径。
+- **EscalationHandler 提取**（~220行）+ AE_PRODUCTION 落地 + GateExecutionError 异常契约 + EngineState _runtime_ctx。
+- **代码清理**：dead import os ×5 + TaskDAG 死代码移除 + inline import→top + 命名规范化。
+- BEACON 决策 #93 追加。审计报告：`_scratch/reports/2026-07-23-audit.md`。
 
 **最近动作 (2026-07-22 真跑验证 & 深度分析)：**
 - **T51a-f Subagent Spawn 真跑验证**：6 个角色全部未 spawn subagent——Agent inline 完成所有角色工作。
@@ -267,6 +294,9 @@
 
 | 日期 | 变更 | 原因 |
 |------|------|------|
+| 2026-07-23 | **全量深度审计 63 项全部处理完毕（决策 #93）** | 50 审计+4 决策+9 低优先级→零遗留。JSON 工具提取+死代码删除+Protocol 类型化+CHANGELOG+PRBackend 删除+guardrail shim 删除+check_feature CI。2324 tests PASS。 |
+| 2026-07-23 | **全量深度审计 50 项发现全部处理（决策 #93 初版）** | 3 Agent 并行审计（架构+虚化度/代码质量+工程化/协作友好度）+ Phase 1 快扫。50 项→ 40 修复+10 废弃。EscalationHandler 提取（God Class 1929→~1750行）+ AE_PRODUCTION 落地+GateExecutionError 异常契约+EngineState _runtime_ctx+FeatureManifest 清理。评分 5.5→7.0。审计报告: `_scratch/reports/2026-07-23-audit.md` |
+| 2026-07-22 | **Subagent Spawn 强制执行 + 5 层验证提示词增强（决策 #91+#92）** | Phase 17 T51a-f 真跑验证 6 角色未 spawn — 根因 PromptRegistry 未接线+action JSON 无自然语言指令。7 角色 prompt 重构（CrewAI+AutoGen 模式）+ 5 层验证 8 新建+5 增强 prompt。 |
 | 2026-07-21 | **第二轮深度审计 28 项发现全部修复（25 修复 + 2 暂缓 + 1 已确认）** | P0 虚化代码消除（3/3：~533→0 行）→ P1 架构修复（9/11：RatchetController 接线/shared.guardrail/from_manifest 去重/Guardrails 统一入口/ActionError/SchemaMismatch 等）→ P2 代码质量（13/14：TaskOutcome 迁移/PromptsRegistry/DesignDocParser/Any→object/except 窄化等）。2 项暂缓（P1-1 StandaloneDriver + P2-1 TickOrchestrator 拆分，大重构风险高）。1 项已确认（P1-3 SessionSummarizer 已在 Phase 22 物理删除）。全量 2358 tests 零回归。审计报告 _scratch/reports/2026-07-21-audit.md。总体评分 7.5→8.5。 |
 | 2026-07-21 | **深度审计 28 项问题全部修复（P0×7 + P1×12 + P2×8）** | P0-1 God Class 拆分（ActionBuilder + TickGateRunner）→ P0-2~7 已修复（循环依赖/命名统一/裸 except/RuntimeConfig/build_action 拆分）→ P1-8~19 全部修复（ThresholdLearner @reserved + SessionSummarizer 物理删除 + _ 前缀/注释/docstring/feature_warnings 已有 → 本轮清理收尾）→ P2-20~27 全部已有修复（验证确认）。P1-9 summarization.py (223 行) + test 物理删除。总体评分 5.5→8.0。 |
 | 2026-07-21 | **P0-1 God Class 拆分 + P0-3/P0-4 命名统一（决策 #89 + #90）** | ActionBuilder（~400 行） + TickGateRunner（~130 行）委托类提取。Orchestrator 2321→1885 行。全量命名统一为 Guardrail 后缀（代码+文档 7 个活跃文件 + tests）。2389 tests 零回归。 |
@@ -296,6 +326,7 @@
 | 2026-07-17 | **StandaloneDriver 真实 LLM E2E 验证通过** | 用户指出现有工作"建了不跑"——StandaloneDriver 从未用真实 LLM 端到端跑过。修复 3 处 bug（guardrail GitDiffExists auto_commit 路径/bash_tools cwd 默认/project_root architect 任务描述），用 DeepSeek API 真跑 fibonacci 需求 → GOAL_ACHIEVED，产出可用实现+10 tests。证明 Driver B 可替代 v5.5 独立跑能力。 |
 | 2026-07-16 | **v8.0 多 Agent 平台适配设计 (附录 D, 决策 #55)** | 用户提出"插件安装到 Claude Code/Codex/CodeBuddy 三平台"。深度调研三平台 plugin 系统：发现三平台共享 Commands/Skills 格式、CodeBuddy 原生读 `.claude-plugin/plugin.json`。设计一套源码三个 manifest + Provider 抽象（`LLMProvider` Protocol 桥接 Anthropic/OpenAI tool schema 差异）+ install.sh 多平台改造。13 节附录 D + Phase 12(V8-1~V8-8, ~4.3 天)。BEACON 决策 #55 |
 | 2026-07-16 | **v7.0 双驱动详细设计展开 (附录 C)** | 附录 C 从 8 行路线图展开为 14 节开发就绪规格（接口签名/数据流/验收标准/参考位置）。Phase 11(V7-1~V7-8, ~6.8 天)。与 v8.0 依赖：V7-5 StandaloneDriver 依赖 V8-3/4/5 Provider 抽象。BEACON 决策 #54 |
+| 2026-07-23 | **voice_clone 真跑验证 — 5 层 prompt 增强 + subagent_type 移除 + Gate 修复 + 对标分析** | v5.6 Tick 协议全路径验证（gap_scan→gap_review→architect→developer→critic MAJOR loop→component_verifier→plate_deep_audit），9 tick 10 errors。修复 5/8 引擎问题：E1 subagent_type 依赖移除、E3 type_check 配置检测多语言化、E5 expected_format 对齐、E6 batch_state 噪音降级、E8 SPAWN_REQUIRED crash。提示词内化：搬用 Claude Code / github-review-pr / Superpowers / gitnexus-pr-review 四个标杆项目的提示词到 5 层 13 文件。Phase 17-21 对标分析：T50 ✅ / T51b ❌（code-reviewer 工具不兼容）/ T53 ⚠️（No-op 风险）/ T54 ❌（未恢复）。BEACON 决策 #92 |
 | 2026-07-11 | **设计文档深度审计 + 22 项收口深化 (Phase 8, 决策 #49)** | 3 并行审计子代理审 v5.6-Design-Loop.md(4214行)+附录 B(原 INIT-LOOP-CONTRACT.md)：规格 6.5/10、端到端 2.5/10（内核真实非虚化，全链未接线）。分两类：P0×4 全为**代码缺口**(Tick未接线/dev-loop.md v5.1/DeepAuditGate骨架/Init schema)已 T9/T10/T27/T32 跟踪；S-1~S-20+Q-1/Q-2 共 22 项**纯文档规格缺陷收口**——补 CoverageItem/GateVerdict/done verdict 三处权威 schema、file-bridge 边界矩阵(§C.3.5)、B2 决策方列、Tick 路径更正、Guardrail "当前5/目标9"状态列、Q-1/Q-2 过度设计存续论证。**S-1**(B4↔B7 语义评估矛盾)定案：v5.6 全路径无语义评估(呼应 #40/D6)，代码 semantic_evaluator 全链移除跟踪到 Phase 3 T10d（不即时大改以免破坏活跃 v5.5 路径）。全程无 status 翻转、无设计降级（design-document-inviolability 遵守）。审计产出为会话内产物（未持久化为独立文件）。BEACON 决策 #49 |
 | 2026-07-15 | **v5.6 tick 闭环验证 + Phase 9-10 推进** | Tick CLI --init→--tick→--result 端到端验证通过（3 独立进程 thread_id/游标保真）。代码审计修复 Phase 9（A1-A15 全部完成）+ Phase 10 双驱动接缝预留（T33a schema SSOT + T33b 执行栈标注）。设计背书收口 T26e/T26f 实现验证。BEACON 决策 #50/#51/#52/#54 |
 | 2026-07-14 | **Phase 5 测试 + Phase 6 审计方法论完成** | 17 项测试任务全部通过（含 T26e PRBackend 选型背书 + T26f 增量 test_gate）。Phase 6 审计与验证方法论 5 项（T27-T31）完成。BEACON 决策 #45/#46/#47 部分。 |

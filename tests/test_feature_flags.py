@@ -44,13 +44,14 @@ class TestFeatureManifestCompleteness:
 
     EXPECTED_KEYS = {
         "AE_AUDIT_LOG", "AE_METRICS", "AE_OTLP_ENDPOINT",
-        "AE_LANGSMITH", "AE_DEBUG", "AE_LOG_LEVEL",
+        "AE_DEBUG", "AE_LOG_LEVEL",
         "AE_CACHE_CONTROL", "AE_MAX_TOOL_CALLS",
         "AE_LLM_PROVIDER", "AE_MODEL_ROLE", "AE_PROVIDER_ROLE",
         "AE_GATE_TIMEOUT", "AE_PRODUCTION", "AE_STRICT_RED",
-        "AE_SUPPRESS_DEPRECATION", "AE_TOKEN_TRACKING", "AE_TOKEN_SOURCE",
+        "AE_TOKEN_TRACKING", "AE_TOKEN_SOURCE",
         "AE_PII_ENABLED", "AE_PII_GUARDRAIL", "AE_PII_GUARDRAIL_MODE",
         "AE_PII_INBOUND", "AE_PII_OUTBOUND",
+        "AE_AUDIT_LOG_DIR",
     }
 
     def test_all_expected_keys_registered(self):
@@ -127,3 +128,23 @@ class TestListCategories:
         assert isinstance(cats, list)
         assert "observability" in cats
         assert "safety" in cats
+
+
+class TestCheckFeatureGuard:
+    """AD4: check_feature() guard — 新增 env var 必须先注册 FEATURE_MANIFEST."""
+
+    def test_known_key_returns_feature_flag(self):
+        result = check_feature("AE_METRICS")
+        assert isinstance(result, FeatureFlag)
+        assert result.key == "AE_METRICS"
+        assert result.category == "observability"
+
+    def test_unknown_key_raises_keyerror_with_guidance(self):
+        with pytest.raises(KeyError, match="Register it in"):
+            check_feature("AE_NOT_REGISTERED")
+
+    def test_all_manifest_keys_pass_guard(self):
+        """每个 FEATURE_MANIFEST 中注册的 key 都能通过 check_feature."""
+        for f in FEATURE_MANIFEST:
+            result = check_feature(f.key)
+            assert result.key == f.key

@@ -20,12 +20,16 @@ from auto_engineering.prompts.registry import default_registry
 # T139: Natural-language commands for spawn stages.
 # Injected as top-level "instruction" in the action JSON — the first text the
 # Agent reads when processing a tick.  No cross-referencing dev-loop.md needed.
+# T136b: subagent_type removed — 不传该参数，Agent Tool 用平台默认 agent 类型。
+# 旧的 "code-reviewer" 类型在 Claude Code 环境中工具不兼容 (read_file/str_replace_editor
+# vs Read/Edit/Bash)，导致 spawn 失败。
 _SPAWN_INSTRUCTION = (
-    "你是 Loop 组长。现在需要 {subagent_type} subagent 来执行 {stage} 阶段。\n"
-    "用 Agent tool spawn {count} 个 {subagent_type} subagent{parallel}（model: {model}）。\n"
+    "你是 Loop 组长。现在需要执行 {stage} 阶段。\n"
+    "用 Agent tool spawn {count} 个 agent{parallel}。\n"
     "把下面的 role_prompt + context + expected_format 交给它。\n"
     "收集它的输出，写入 result JSON 文件。\n"
-    "🚨 你自己不要做 {stage} 的工作——spawn subagent 就是这个 tick 的工作。"
+    "🚨 你自己不要做 {stage} 的工作——spawn agent 就是这个 tick 的工作。\n"
+    "如果 spawn 失败，在 result JSON 中设 \"spawned\": false + \"spawn_error\": \"<错误信息>\"，不要自己替代。"
 )
 
 if TYPE_CHECKING:
@@ -49,6 +53,8 @@ _VERIFIER_RECHECK = {
 _STAGE_CHECKPOINT_REVIEW_FEEDBACK = (
     "用户选择审查当前产出，请展示当前进度和已完成内容供审查。"
 )
+
+_STAGE_CHECKPOINT_OPTIONS = ["继续", "审查当前产出", "终止 loop"]  # P1-23: SSOT
 
 class ActionBuilder:
     """Build per-tick action JSON for each stage.
@@ -149,7 +155,7 @@ class ActionBuilder:
                         f"即将进入 {stage} 阶段。"
                         f"当前进度：{self._progress_summary()}"
                     ),
-                    "options": ["继续", "审查当前产出", "终止 loop"],
+                    "options": _STAGE_CHECKPOINT_OPTIONS,
                     "default": "继续",
                     "timeout_ms": 0,
                 },
@@ -272,10 +278,8 @@ class ActionBuilder:
             result["spawn"] = spawn
             # T138: inject natural-language command + role prompt
             result["instruction"] = _SPAWN_INSTRUCTION.format(
-                subagent_type=spawn["subagent_type"],
                 count=spawn["count"],
                 parallel=" 并行" if spawn.get("parallel") else "",
-                model=spawn.get("model", "default"),
                 stage=action,
             )
             try:

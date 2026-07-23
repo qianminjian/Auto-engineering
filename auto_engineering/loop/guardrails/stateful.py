@@ -53,11 +53,15 @@ _STRICT_RED: bool | None = None  # None = 未初始化, 首次访问时从 Runti
 
 
 def _get_strict_red() -> bool:
-    """Lazy init for _STRICT_RED from RuntimeConfig (P0-6)."""
+    """Lazy init for _STRICT_RED from RuntimeConfig (P0-6).
+
+    AE_PRODUCTION=1 also activates strict RED (P1-12).
+    """
     global _STRICT_RED
     if _STRICT_RED is None:
         from auto_engineering.config.runtime_config import get_default_config
-        _STRICT_RED = get_default_config().strict_red
+        cfg = get_default_config()
+        _STRICT_RED = cfg.strict_red or cfg.production_enabled
     return _STRICT_RED
 
 

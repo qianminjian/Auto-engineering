@@ -362,7 +362,13 @@ class BaseAgent:
                             }
                         )
 
-                messages.append({"role": "assistant", "content": response.tool_use_blocks})
+                # ToolUseBlock dataclass → Anthropic tool_use dict for message serialization
+                tool_use_dicts = [
+                    {"type": "tool_use", "id": tb.id, "name": tb.name, "input": tb.input}
+                    if not isinstance(tb, dict) else tb
+                    for tb in response.tool_use_blocks
+                ]
+                messages.append({"role": "assistant", "content": tool_use_dicts})
                 # v7.0: 截断超大 tool_result 防止上下文爆炸 (DeepSeek 1M 窗口)
                 _truncated = _truncate_tool_results(tool_results, max_chars=8000)
                 _redacted = _redact_tool_results(_truncated)
@@ -414,7 +420,9 @@ class BaseAgent:
             system += "\n\n" + template.replace("{schema_json}", schema_str)
         return system
 
-    def _map_llm_exception(self, exc: Exception) -> AEError:
+    def _map_llm_exception(self, exc: Exception,
+                            exception_map: dict[type, ErrorCode] | None = None
+                            ) -> AEError:
         """将 LLM SDK 异常映射为 AEError.
 
         优先用 isinstance 精确匹配 (生产环境), 降级到 type().__name__
@@ -425,7 +433,17 @@ class BaseAgent:
             - AuthenticationError → LLM_AUTH_ERROR
             - RateLimitError      → LLM_RATE_LIMIT
             - 其他                → LLM_UNKNOWN_ERROR
+
+        T135k: exception_map 参数用于测试注入 — 传入自定义映射可避免依赖
+        真实 Anthropic SDK 类型。
         """
+        # T135k: 测试注入 — 使用自定义映射替代 Anthropic SDK 类型
+        if exception_map is not None:
+            for exc_type, error_code in exception_map.items():
+                if isinstance(exc, exc_type):
+                    return AEError(error_code, str(exc), original_error=exc)
+            return AEError(ErrorCode.LLM_UNKNOWN_ERROR, str(exc), original_error=exc)
+
         # v5.5 audit P2-5: 模块级懒加载 (只 import 一次), 避免每次异常都 try/except 导入
         # 1. isinstance 精确匹配
         if _ANTHROPIC_ERROR_TYPES is not None:
