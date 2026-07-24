@@ -160,20 +160,24 @@ def _reset_module_singletons():
     import auto_engineering.metrics.collector as _mc
     import auto_engineering.prompts.registry as _pr
     import auto_engineering.loop.guardrails.stateful as _gs
+    import auto_engineering.pii.redactor as _pii
 
     saved_collector = _mc._collector
     saved_registry = _pr._DEFAULT_REGISTRY
     saved_strict_red = _gs._STRICT_RED
+    saved_pii = _pii._pii_redactor_singleton
 
     _mc._collector = None
     _pr._DEFAULT_REGISTRY = None
     _gs._STRICT_RED = None
+    _pii._pii_redactor_singleton = None
 
     yield
 
     _mc._collector = saved_collector
     _pr._DEFAULT_REGISTRY = saved_registry
     _gs._STRICT_RED = saved_strict_red
+    _pii._pii_redactor_singleton = saved_pii
 
 
 # Fix: import sys(用于 stderr 输出)

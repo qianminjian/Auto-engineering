@@ -72,13 +72,17 @@ class ActionError:
 
     error_code: str
     message: str
+    suggestion: str | None = None  # P1-9: 告诉 Agent 如何恢复
 
     def to_dict(self) -> dict:
-        return {
+        d: dict = {
             "action": "error",
             "error_code": self.error_code,
             "message": self.message,
         }
+        if self.suggestion:
+            d["suggestion"] = self.suggestion
+        return d
 
 
 @dataclass

@@ -495,12 +495,17 @@ class ActionBuilder:
         """
         prompt_path = Path(__file__).resolve().parent.parent / "prompts" / "roles" / f"{stage}.md"
         if prompt_path.is_file():
-            return prompt_path.read_text(encoding="utf-8")
+            try:
+                return prompt_path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError) as e:
+                _logger.warning("Failed to read prompt file %s: %s", prompt_path, e)
+                return ""
         # Fallback: PromptRegistry (old path, remove after migration)
         try:
             _reg = default_registry()
             return _reg.get(stage) or ""
         except Exception:
+            _logger.warning("PromptRegistry fallback failed for stage=%s", stage, exc_info=True)
             return ""
 
     def _write_spawn_proof_file(self, proof_token: str, stage: str) -> None:

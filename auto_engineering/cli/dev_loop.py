@@ -323,10 +323,11 @@ def _resolve_checkpoint_by_thread_id(
                 state = _json.loads(row[1])
                 if state.get("thread_id") == candidate:
                     return row[0]
-            except Exception:
+            except (json.JSONDecodeError, KeyError, TypeError):
                 continue
-    except Exception:
-        pass
+    except (OSError, ValueError, KeyError, TypeError) as e:
+        _logger = __import__("logging").getLogger("ae.cli")
+        _logger.debug("thread_id fallback lookup failed: %s", e)
     return None
 
 

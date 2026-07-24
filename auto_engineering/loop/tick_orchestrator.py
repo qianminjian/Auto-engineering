@@ -820,8 +820,10 @@ class TickOrchestrator:
                     try:
                         proof_data = json.loads(proof_file.read_text(encoding="utf-8"))
                         proof_ok = proof_data.get("status") == "completed"
-                    except Exception:
-                        pass
+                    except (json.JSONDecodeError, OSError) as e:
+                        _logger.warning(
+                            "Spawn proof file corrupted for stage=%s token=%s: %s",
+                            stage, proof_token, e)
                 if not proof_ok:
                     _logger.warning(
                         "Spawn proof incomplete for stage=%s token=%s — "
