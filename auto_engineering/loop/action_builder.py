@@ -17,19 +17,19 @@ from auto_engineering.config.constants import DEFAULT_P1_THRESHOLD, _SPAWN_CONFI
 from auto_engineering.config.feature_flags import feature_status_for_action
 from auto_engineering.prompts.registry import default_registry
 
-# T139: Natural-language commands for spawn stages.
-# Injected as top-level "instruction" in the action JSON — the first text the
-# Agent reads when processing a tick.  No cross-referencing dev-loop.md needed.
-# T136b: subagent_type removed — 不传该参数，Agent Tool 用平台默认 agent 类型。
-# 旧的 "code-reviewer" 类型在 Claude Code 环境中工具不兼容 (read_file/str_replace_editor
-# vs Read/Edit/Bash)，导致 spawn 失败。
+# DS-15: spawn instruction — Agent passes subagent_prompt verbatim,
+# sets effort per spawn config, collects output, extracts fields per expected_format.
 _SPAWN_INSTRUCTION = (
-    "你是 Loop 组长。现在需要执行 {stage} 阶段。\n"
-    "用 Agent tool spawn {count} 个 agent{parallel}。\n"
-    "把下面的 role_prompt + context + expected_format 交给它。\n"
-    "收集它的输出，写入 result JSON 文件。\n"
-    "🚨 你自己不要做 {stage} 的工作——spawn agent 就是这个 tick 的工作。\n"
-    "如果 spawn 失败，在 result JSON 中设 \"spawned\": false + \"spawn_error\": \"<错误信息>\"，不要自己替代。"
+    "Spawn {count} agent{parallel} with effort={effort} and subagent_prompt below.\n"
+    "Collect output → extract fields per expected_format → "
+    "write result: {{\"stage\":\"{stage}\",\"spawned\":true, ...merged}}.\n"
+    "Proof: .ae-state/spawn-proofs/{proof_token}.json (tell subagent to append stage+timestamp).\n"
+    "On failure: {{\"stage\":\"{stage}\",\"spawned\":false,\"spawn_error\":\"<reason>\"}}."
+)
+# Non-spawn stages (developer, gap_scan inline) use this:
+_INLINE_INSTRUCTION = (
+    "Do the work for stage '{stage}' per expected_format. "
+    "Write result JSON with stage='{stage}'."
 )
 
 if TYPE_CHECKING:
@@ -45,7 +45,6 @@ _logger = logging.getLogger("ae.loop.action_builder")
 # DS-9 (B6.6a): Haiku verifier 负判定 (MISSING/DIVERGED) → Sonnet 窄范围复核.
 _VERIFIER_RECHECK = {
     "enabled": True,
-    "model": "claude-sonnet-4-6",
     "trigger": "on_negative",
     "scope": "narrow",
 }
@@ -348,14 +347,36 @@ class ActionBuilder:
 
     # ── PII outbound ──
 
+    # DS-15: engine-generated fields that should NOT be PII-scanned.
+    # These are assembled from prompt templates and internal state — they never
+    # contain real user PII.  Scanning them causes false positives (e.g. spawn
+    # proof tokens matching api_key patterns → ***REDACTED*** → broken mechanism).
+    _PII_SKIP_FIELDS: frozenset[str] = frozenset({
+        "instruction", "subagent_prompt", "role_prompt", "expected_format",
+        "spawn", "spawn_proof_token", "gate_summary", "feature_status",
+        "progress_summary", "feedback",
+    })
+
     def _apply_pii_outbound(self, action: dict, pii_enabled: bool, pii_redactor, pii_outbound: str) -> dict:
-        """T109c L2: outbound action JSON PII 脱敏."""
+        """T109c L2: outbound action JSON PII 脱敏.
+
+        DS-15: 只扫描用户数据字段 (requirement 等)，跳过引擎生成字段。
+        redact_dict/scan_dict 递归全量扫描会破坏 spawn proof token 等
+        引擎注入的文本。
+        """
         if not pii_enabled or not pii_redactor:
             return action
+        # Collect user-data fields (everything NOT in _PII_SKIP_FIELDS)
+        user_fields = {k: v for k, v in action.items()
+                       if k not in self._PII_SKIP_FIELDS and isinstance(v, str)}
         if pii_outbound == "redact":
-            return pii_redactor.redact_dict(action)
+            for k in user_fields:
+                action[k] = pii_redactor.scan_text(action[k])
+            return action
         elif pii_outbound in ("warn", "block"):
-            findings = pii_redactor.scan_dict(action)
+            findings: list[dict] = []
+            for k, v in user_fields.items():
+                findings.extend(pii_redactor.scan_dict({k: v}))
             if findings:
                 _logger.warning(
                     "PII detected in outbound action: %d matches", len(findings))
@@ -395,44 +416,44 @@ class ActionBuilder:
         self, base: dict, action: str, context: dict | None = None,
         expected_format: dict | None = None, **extra,
     ) -> dict:
-        """Construct a stage action dict with auto-resolved spawn config.
+        """Construct a stage action dict.
 
-        T138: When *action* is a spawn stage, inject:
-        - ``instruction`` — natural-language command (top-level, Agent reads first)
-        - ``role_prompt`` — full role prompt text from PromptRegistry
-        - ``spawned`` in expected_format — G2 retry if not true
+        DS-15: subagent prompt is read from prompts/roles/<stage>.md verbatim.
+        No context injection, no expected_format for subagent.  Team Lead
+        extracts fields from subagent output and maps to result JSON per
+        expected_format.
+
+        Spawn proof: engine pre-writes the proof file, instruction references
+        the path.  Token is never embedded in instruction text → PII-safe.
         """
         result: dict = {**base, "action": action}
         spawn = _SPAWN_CONFIG.get(action)
         if spawn is not None:
             result["spawn"] = spawn
-            # P1-4: side-channel spawn proof token — Python 可验证 subagent 是否真的执行了
+            # DS-15: spawn proof — pre-write file, reference path in instruction
             import uuid
             proof_token = uuid.uuid4().hex
             result["spawn_proof_token"] = proof_token
+            self._write_spawn_proof_file(proof_token, action)
             result["instruction"] = _SPAWN_INSTRUCTION.format(
                 count=spawn["count"],
-                parallel=" 并行" if spawn.get("parallel") else "",
+                parallel=" (parallel)" if spawn.get("parallel") else "",
                 stage=action,
-            ) + (
-                f"\n\n spawn proof token: {proof_token}\n"
-                f"告诉 subagent 在完成后执行以下命令写证明文件:\n"
-                f"  mkdir -p .ae-state/spawn-proofs && echo '{{\"token\":\"{proof_token}\","
-                f"\"stage\":\"{action}\",\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}}'"
-                f" > .ae-state/spawn-proofs/{proof_token}.json\n"
-                f"Python 门控会验证此文件存在才放行 spawned: true。"
+                effort=spawn.get("effort", "high"),
+                proof_token=proof_token,
             )
-            try:
-                _reg = default_registry()
-                result["role_prompt"] = _reg.get(action)
-            except Exception:
-                result["role_prompt"] = ""
-            # T141: spawned field in expected_format
+            # DS-15: read prompt from file → single subagent_prompt field
+            result["subagent_prompt"] = self._load_prompt(action)
+            # T141: spawned field in expected_format (for Team Lead, NOT subagent)
             if expected_format is not None:
                 expected_format = {
                     "spawned": "bool — MUST be true after spawning subagent",
                     **expected_format,
                 }
+        else:
+            # Non-spawn stage — inline instruction
+            if action not in ("developer",):  # developer has custom instruction
+                result["instruction"] = _INLINE_INSTRUCTION.format(stage=action)
         if context:
             result["context"] = context
         if expected_format is not None:
@@ -440,18 +461,49 @@ class ActionBuilder:
         result.update(extra)
         return result
 
+    # ── DS-15 helpers ──
+
+    def _load_prompt(self, stage: str) -> str:
+        """Read prompts/roles/<stage>.md and return its content.
+
+        Falls back to PromptRegistry if the file doesn't exist (for
+        backward-compat during migration).
+        """
+        prompt_path = Path(__file__).resolve().parent.parent / "prompts" / "roles" / f"{stage}.md"
+        if prompt_path.is_file():
+            return prompt_path.read_text(encoding="utf-8")
+        # Fallback: PromptRegistry (old path, remove after migration)
+        try:
+            _reg = default_registry()
+            return _reg.get(stage) or ""
+        except Exception:
+            return ""
+
+    def _write_spawn_proof_file(self, proof_token: str, stage: str) -> None:
+        """DS-15: pre-write spawn proof file so subagent can append to it.
+
+        Engine writes the initial file with status='pending'.  Subagent
+        appends stage + timestamp after completing its work.
+        """
+        import os
+        proof_dir = self.project_root / ".ae-state" / "spawn-proofs"
+        proof_dir.mkdir(parents=True, exist_ok=True)
+        proof_file = proof_dir / f"{proof_token}.json"
+        payload = {
+            "token": proof_token,
+            "stage": stage,
+            "status": "pending",
+            "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        }
+        proof_file.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
     # ── stage builders ──
 
     def _build_action_gap_scan(self, base: dict) -> dict:
+        # DS-15: gap_scan prompt is self-contained — subagent uses Read to explore design doc.
         return self._build_stage_action(base, "gap_scan", context={
             "design_doc_path": (
                 self._design_doc.path if self._design_doc else None),
-            "plates": [
-                {"id": p.design_section, "name": p.name,
-                 "components": [c.design_section or c.name
-                                for c in p.components]}
-                for p in (self._design_doc.plates if self._design_doc else [])
-            ],
             "project_root": str(self.project_root),
         }, expected_format={
             "gaps": ("[{id, design_section_ref, grade, clarity, "
@@ -522,23 +574,15 @@ class ActionBuilder:
         return cmap
 
     def _build_action_architect(self, base: dict) -> dict:
+        # DS-15: subagent reads design doc + project structure itself.
+        # Only pass refine_request if present (cross-tick data).
         extra: dict = {}
         if self._state.refine_request_json:
             extra["feedback"] = {
                 "mode": "PLAN_REFINE",
                 "refine_request": json.loads(self._state.refine_request_json),
             }
-        return self._build_stage_action(base, "architect", context={
-            "requirement": self._state.requirement,
-            "design_section": self._safe_design_section(),
-            "project_root": str(self.project_root),
-            "init_manifest": self._init_manifest,
-            "design_supplements": (
-                json.loads(self._state.design_supplements_json)
-                if self._state.design_supplements_json else {}),
-            "research_archive": self._state.research_archive,
-            "component_map": self._build_component_map(),
-        }, expected_format={
+        return self._build_stage_action(base, "architect", expected_format={
             "plan": "string (markdown, min 50 chars)",
             "batch_plan": (
                 "[{batch_id, design_section, component, "
@@ -572,18 +616,13 @@ class ActionBuilder:
             plan=self._state.plan)
 
     def _build_action_critic(self, base: dict) -> dict:
+        # DS-15: subagent reads changed files itself via Read/Grep.
+        # Pass only the snapshot reference for Team Lead to relay.
         snap = self._dev_snapshot or {}
         return self._build_stage_action(base, "critic", context={
             "files_changed": snap.get("files_changed", self._state.files_changed),
             "test_results": snap.get("test_results", self._state.test_results),
             "commit_hash": snap.get("commit_hash", self._state.commit_hash),
-            "component": (
-                self._batch_state.current_component_name()
-                if self._batch_state else None),
-            "design_section": (
-                self._batch_state.current_design_section()
-                if self._batch_state else None),
-            "batch_id": self._resolve_batch_id(),
         }, expected_format={
             "stage": "critic",
             "verdict": "APPROVE | MAJOR",
@@ -607,13 +646,8 @@ class ActionBuilder:
         if not design_spec and not impl_files:
             return {**base, "action": "skip", "reason": "no design items or implementation files for component",
                     "stage": "component_verifier"}
-        return self._build_stage_action(base, "component_verifier", context={
-            "component": comp.name,
-            "design_section": comp.design_section,
-            "design_spec": design_spec,
-            "implementation_files": impl_files,
-            "contracts": getattr(comp, "contracts", {}),
-        }, expected_format={
+        # DS-15: subagent reads design doc + impl files itself.
+        return self._build_stage_action(base, "component_verifier", expected_format={
             "stage": "component_verifier",
             "component": "string (组件名称, 必填)",
             "coverage_map": (
@@ -627,13 +661,8 @@ class ActionBuilder:
         }, recheck=dict(_VERIFIER_RECHECK))
 
     def _build_action_plate_deep_audit(self, base: dict) -> dict:
-        plate = self._batch_state.current_plate()
-        return self._build_stage_action(base, "plate_deep_audit", context={
-            "plate": plate.name,
-            "components": plate.components_summary(),
-            "cross_component_contracts": plate.cross_component_contracts(),
-            "project_root": str(self.project_root),
-        }, expected_format={
+        # DS-15: subagent reads plate components + contracts itself.
+        return self._build_stage_action(base, "plate_deep_audit", expected_format={
             "stage": "plate_deep_audit",
             "plate": "string (板块名称, 必填)",
             "findings": (
@@ -645,14 +674,8 @@ class ActionBuilder:
         })
 
     def _build_action_system_verifier(self, base: dict) -> dict:
-        return self._build_stage_action(base, "system_verifier", context={
-            "design_doc": (
-                self._design_doc.path if self._design_doc else None),
-            "design_sections": (
-                self._design_doc.sections_summary()
-                if self._design_doc else []),
-            "project_root": str(self.project_root),
-        }, expected_format={
+        # DS-15: subagent reads design doc itself.
+        return self._build_stage_action(base, "system_verifier", expected_format={
             "stage": "system_verifier",
             "full_coverage_map": (
                 "[{design_section, design_item, status, "
@@ -667,14 +690,8 @@ class ActionBuilder:
         }, recheck=dict(_VERIFIER_RECHECK))
 
     def _build_action_system_deep_audit(self, base: dict) -> dict:
-        return self._build_stage_action(base, "system_deep_audit", context={
-            "project_root": str(self.project_root),
-            "audit_dimensions": [
-                "架构合理性", "代码质量", "工程化规范",
-                "代码逻辑虚化度", "团队协作友好度", "设计覆盖度"],
-            "p1_threshold": DEFAULT_P1_THRESHOLD,
-            "coverage_map_from_verifier": self._state.coverage_map,
-        }, expected_format={
+        # DS-15: subagent reads project + coverage_map itself.
+        return self._build_stage_action(base, "system_deep_audit", expected_format={
             "stage": "system_deep_audit",
             "findings": (
                 "[{severity, dimension, file, line, description, "

@@ -25,11 +25,7 @@ _REAL_DIR = Path(__file__).resolve().parents[1] / "auto_engineering" / "prompts"
 _ALL_ROLES = {
     "architect", "developer", "critic",
     "component_verifier", "plate_deep_audit",
-    "plate_audit_contracts", "plate_audit_dataflow", "plate_audit_architecture",
     "system_verifier", "system_deep_audit",
-    "system_audit_architecture", "system_audit_code_quality",
-    "system_audit_engineering", "system_audit_virtualization",
-    "system_audit_team",
     "gap_scan", "research",
 }
 
@@ -56,15 +52,15 @@ class TestCompose:
         assert "NO PRODUCTION CODE WITHOUT A FAILING TEST FIRST" in p
         # letter_vs_spirit
         assert "违反规则的字面就是违反规则的精神" in p
-        # body (Phase 31: "你是开发者" instead of "你是 Auto-Engineering 的开发者")
-        assert "你是开发者" in p
+        # DS-15: "你是 Developer" (English role name kept for consistency with .md files)
+        assert "你是 Developer" in p
 
     def test_fragments_prepended_in_declared_order(self, registry: PromptRegistry) -> None:
         p = registry.get("developer")
         # frontmatter: [iron_law_tdd, letter_vs_spirit] (Phase 31: removed rationalization_developer)
         i_iron = p.index("NO PRODUCTION CODE WITHOUT A FAILING TEST FIRST")
         i_letter = p.index("违反规则的字面就是违反规则的精神")
-        i_body = p.index("你是开发者")
+        i_body = p.index("你是 Developer")
         assert i_iron < i_letter < i_body
 
     def test_frontmatter_stripped_from_output(self, registry: PromptRegistry) -> None:
@@ -88,10 +84,10 @@ class TestVerifierRecheckProtocol:
     def test_verifier_prompt_has_recheck_protocol(
         self, registry: PromptRegistry, role: str
     ) -> None:
-        """Phase 31 重构后 verifier prompt 精简为 role+goal+context 结构。
-        DS-9 recheck 协议是执行机制，不在 role prompt 中——由 action JSON 的 recheck 指令承载。"""
+        """DS-15: verifier prompt 含工作流程和硬约束。
+        DS-9 recheck 协议由 action JSON 的 recheck 指令承载，不在 role prompt 中。"""
         p = registry.get(role)
-        assert "role" in p.lower() and "goal" in p.lower() and "context" in p.lower()
+        assert "工作流程" in p or "硬约束" in p or "映射方法" in p
 
 
 class TestResearchTieredKnowledge:
@@ -181,14 +177,28 @@ class TestRegistryHash:
 
 
 class TestModel:
-    def test_haiku_for_component_verifier(self, registry: PromptRegistry) -> None:
-        assert registry.model("component_verifier") == "claude-haiku-4-5-20251001"
+    """DS-15: model: removed from frontmatter — replaced by THINKING comment.
+    registry.model() returns empty string when no model frontmatter exists."""
 
-    def test_haiku_for_system_verifier(self, registry: PromptRegistry) -> None:
-        assert registry.model("system_verifier") == "claude-haiku-4-5-20251001"
+    def test_no_model_in_frontmatter(self, registry: PromptRegistry) -> None:
+        """All prompts should have model removed — return empty string."""
+        assert registry.model("architect") == ""
+        assert registry.model("developer") == ""
 
-    def test_sonnet_for_developer(self, registry: PromptRegistry) -> None:
-        assert registry.model("developer") == "claude-sonnet-4-6"
+    def test_thinking_keywords_in_prompts(self, registry: PromptRegistry) -> None:
+        """Claude Code recognized thinking keywords present in prompt.
+        Position varies (fragments prepended), but Claude Code detects keywords
+        anywhere in the text — position doesn't matter for token budget."""
+        # ultrathink → 32K budget (xhigh effort)
+        assert "ultrathink" in registry.get("architect")
+        # think hard → 10K budget (high effort)
+        assert "think hard" in registry.get("developer")
+        assert "think hard" in registry.get("critic")
+        assert "think hard" in registry.get("plate_deep_audit")
+        # no keyword → default 4K budget (low effort verifiers)
+        cv = registry.get("component_verifier")
+        assert "ultrathink" not in cv
+        assert "think hard" not in cv
 
 
 class TestSchemaTemplate:

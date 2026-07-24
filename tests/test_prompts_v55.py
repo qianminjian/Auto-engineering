@@ -31,9 +31,9 @@ class TestCriticPromptV55:
         assert "Needs rework" in CRITIC_SYSTEM_PROMPT
 
     def test_includes_review_scope(self) -> None:
-        """Critic prompt 含审查范围说明."""
+        """DS-15: Critic prompt 含审查维度和工作流程."""
         prompt_lower = CRITIC_SYSTEM_PROMPT.lower()
-        assert "role" in prompt_lower and "goal" in prompt_lower
+        assert "审查维度" in prompt_lower or "审查" in prompt_lower
 
     def test_includes_structured_findings_format(self) -> None:
         """Critic prompt 含 verdict + findings 输出说明."""
@@ -52,8 +52,9 @@ class TestCriticPromptV55:
         assert "MAJOR" in CRITIC_SYSTEM_PROMPT
 
     def test_has_context_section(self) -> None:
-        """Critic prompt 含 Context 段（Phase 31 role+goal+context 结构）."""
-        assert "你收到" in CRITIC_SYSTEM_PROMPT or "context" in CRITIC_SYSTEM_PROMPT.lower()
+        """DS-15: Critic prompt 含工作流程和信息来源."""
+        prompt = CRITIC_SYSTEM_PROMPT
+        assert "工作流程" in prompt or "信息来源" in prompt
 
 
 class TestDeveloperPromptV55:
@@ -84,18 +85,16 @@ class TestArchitectPromptV55:
     """v5.5 Architect prompt — brainstorming + Agent-Reach + 3 模式."""
 
     def test_includes_three_modes(self) -> None:
-        """Architect prompt 含 Role + Goal + Context 三段结构（Phase 31 重构）."""
+        """DS-15: Architect prompt 含工作流程和规则."""
         prompt = ARCHITECT_SYSTEM_PROMPT.lower()
-        assert "role" in prompt and "goal" in prompt and "context" in prompt
+        assert "工作流程" in prompt and "规则" in prompt
 
     def test_includes_brainstorming_workflow(self) -> None:
-        """Architect prompt 含 brainstorming 简化流程."""
+        """DS-15: Architect prompt 含设计文档阅读和依赖排序要求."""
         prompt_lower = ARCHITECT_SYSTEM_PROMPT.lower()
-        brainstorming_keywords = ["需求", "约束", "方案", "权衡",
-                                  "requirement", "constraint", "approach", "tradeoff",
-                                  "brainstorm"]
-        found = [k for k in brainstorming_keywords if k in prompt_lower]
-        assert len(found) >= 2, f"Expected >=2 brainstorming keywords, found: {found}"
+        design_keywords = ["设计文档", "batch", "依赖", "design", "batch_plan"]
+        found = [k for k in design_keywords if k in prompt_lower]
+        assert len(found) >= 2, f"Expected >=2 design keywords, found: {found}"
 
     def test_includes_structured_batch_plan_output(self) -> None:
         """Architect prompt 含 batch_plan 输出要求（Phase 31 重构后精简，字段在 expected_format 中）."""
@@ -103,6 +102,6 @@ class TestArchitectPromptV55:
         assert "batch_plan" in prompt
 
     def test_includes_agent_reach_reference(self) -> None:
-        """Architect prompt 含基本角色定义元素（Phase 31 重构后不再强制要求 Agent-Reach 引用）."""
+        """DS-15: Architect prompt 含技术架构师角色定义."""
         prompt = ARCHITECT_SYSTEM_PROMPT.lower()
-        assert "role" in prompt and "goal" in prompt and "context" in prompt
+        assert "技术架构师" in prompt or "架构师" in prompt

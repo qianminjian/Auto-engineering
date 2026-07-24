@@ -66,8 +66,8 @@ class TestInit:
         assert action["action"] == "architect"
         assert action["stage"] == "architect"
         assert action["tick"] == 1
-        assert "requirement" in action["context"]
-        assert action["context"]["requirement"] == "实现登录功能"
+        # DS-15: requirement at action top level, context removed from spawn stages
+        assert action["requirement"] == "实现登录功能"
 
     def test_init_sets_expected_stage(self) -> None:
         o = _orchestrator()
@@ -921,7 +921,7 @@ class TestVerifierRecheck:
         assert rc["enabled"] is True
         assert rc["trigger"] == "on_negative"
         assert rc["scope"] == "narrow"
-        assert "sonnet" in rc["model"].lower()
+        # DS-15: model removed — platform selects model, not hardcoded in recheck
 
     def test_system_verifier_action_carries_recheck(self) -> None:
         o = _orchestrator()
@@ -932,7 +932,6 @@ class TestVerifierRecheck:
         rc = a["recheck"]
         assert rc["enabled"] is True
         assert rc["trigger"] == "on_negative"
-        assert "sonnet" in rc["model"].lower()
 
     def test_non_verifier_action_has_no_recheck(self) -> None:
         # architect action 无 recheck (仅 Haiku verifier 需要)
@@ -985,11 +984,10 @@ class TestBuildActionContexts:
             "files_changed": ["x.py"],
             "test_results": {"passed": 1, "failed": 0},
         }))
-        # developer 完成后进入 critic, context 含快照的开发信息
+        # DS-15: developer 完成后进入 critic, context 含 code 快照
         assert action["action"] == "critic"
         assert action["stage"] == "critic"
         assert action["context"]["files_changed"] == ["x.py"]
-        assert action["context"]["batch_id"] == "b1"
 
 
 # ── T7: _apply_result_to_state (result → EngineState) ──
@@ -1267,8 +1265,7 @@ class TestPhase0GapReview:
         assert supp.source == "user"
         assert supp.confidence == "high"
         assert o._state.design_supplements_json
-        # architect action 携带 supplements (下游消费)
-        assert "gap-B2" in action["context"]["design_supplements"]
+        # DS-15: supplements 在 state 中，不再注入 architect context，不再注入 architect context
 
     def test_research_decision_routes_to_research(self, tmp_path) -> None:
         o = _orchestrator()
@@ -1401,7 +1398,7 @@ class TestPhase0Research:
         # Fill 后存档已消费
         assert "gap-B2" not in o._state.research_archive
         # architect 携带 supplement (计划表补充调整的依据)
-        assert "gap-B2" in action["context"]["design_supplements"]
+        # DS-15: context slimmed, supplements in state only
 
     def test_rereview_defer_keeps_findings_for_architect(self, tmp_path) -> None:
         """复审: 用户仍 Defer → findings 留 archive 给 architect, 不成 Supplement → architect."""
@@ -1418,7 +1415,7 @@ class TestPhase0Research:
         assert action["stage"] == "architect"
         assert "gap-B2" not in o._design_doc.supplements
         assert "gap-B2" in o._state.research_archive
-        assert "gap-B2" in action["context"]["research_archive"]
+        # DS-15: research_archive in state, not injected into architect context
 
     def test_rereview_reresearch_coerced_to_defer_terminates(self, tmp_path) -> None:
         """终止保证: 复审仍选 defer_research (已研究) → 归 defer → architect (不再研究)."""
@@ -2409,13 +2406,13 @@ class TestTickVsTickDictIdenticalActions:
         stripped = dict(action)
         stripped.pop("thread_id", None)
         stripped.pop("spawn_proof_token", None)
-        # Strip spawn proof token block from instruction (P1-4)
+        stripped.pop("subagent_prompt", None)  # DS-15: file-based, may differ
+        # DS-15: instruction contains proof_token which is UUID → strip it
         if "instruction" in stripped:
+            import re
             inst = stripped["instruction"]
-            # Remove everything from "spawn proof" to end
-            idx = inst.find("\n\n spawn proof")
-            if idx >= 0:
-                stripped["instruction"] = inst[:idx]
+            inst = re.sub(r'[0-9a-f]{32}', '<TOKEN>', inst)
+            stripped["instruction"] = inst
         if "gate_summary" in stripped:
             gs = {}
             for k, v in stripped["gate_summary"].items():
@@ -2505,7 +2502,7 @@ class TestDualDriverContract:
         """init() 返回的 action 必须含 driver-agnostic 字段."""
         o = _orchestrator()
         action = o.init("实现功能")
-        for key in ("action", "stage", "tick", "context", "expected_format"):
+        for key in ("action", "stage", "tick", "expected_format"):  # DS-15: context optional
             assert key in action, f"action 缺字段: {key}"
 
     def testbuild_action_stage_deterministic(self) -> None:
@@ -3436,7 +3433,7 @@ class TestT109PIIOutbound:
     """T109c: L2 — outbound action JSON PII redact in build_action."""
 
     def test_outbound_redact_default(self) -> None:
-        """默认 redact 模式: PII 在 action JSON 中被脱敏."""
+        """DS-15: requirement 在 action 顶层，不在 context 中. PII 扫描用户字段."""
         o = _orchestrator()
         o._pii_enabled = True
         from auto_engineering.pii.redactor import PIIRedactor
@@ -3444,22 +3441,20 @@ class TestT109PIIOutbound:
         o.init("req")
         o._state.current_stage = "architect"
         action = o.build_action()
-        # action 中 requirement 已脱敏
-        req = action.get("context", {}).get("requirement", "")
-        # 原始 requirement 包含 "req" 但 PIIRedactor 不会误杀正常文本
+        # DS-15: requirement 在 action 顶层
+        req = action.get("requirement", "")
         assert "req" in req
 
     def test_outbound_redact_masks_pii_in_action(self) -> None:
-        """action JSON 中的 PII 被脱敏."""
+        """action JSON 中的 PII 被脱敏 (requirement 顶层)."""
         o = _orchestrator()
         o._pii_enabled = True
         from auto_engineering.pii.redactor import PIIRedactor
         o._pii_redactor = PIIRedactor()
-        # 用身份证号测试 (有明确词边界)
         o.init("用户身份证号 320102199001011234")
         o._state.current_stage = "architect"
         action = o.build_action()
-        req = action.get("context", {}).get("requirement", "")
+        req = action.get("requirement", "")
         # 身份证号被脱敏 (原始号码不在输出中)
         assert "320102199001011234" not in req
 
@@ -3504,8 +3499,8 @@ class TestT109PIIOutbound:
         o.init("用户身份证号 320102199001011234")
         o._state.current_stage = "architect"
         action = o.build_action()
-        req = action.get("context", {}).get("requirement", "")
-        # 未脱敏
+        # DS-15: requirement at action top level, PII 禁用所以未脱敏
+        req = action.get("requirement", "")
         assert "320102199001011234" in req
 
 
