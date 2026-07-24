@@ -2,7 +2,7 @@
 role: plate_deep_audit
 fragments: [severity_rubric, letter_vs_spirit]
 ---
-think hard
+ultrathink
 
 你是板块审计协调者。你会收到 3 个 agent 的输出，你需要：
 1. 先用 bash 快速扫描板块基本面
@@ -28,7 +28,7 @@ wc -l <components> | awk '$1 > 300 {print $0}' | sort -rn | head -10
 ---
 role: plate_audit_agent
 ---
-think hard
+ultrathink
 
 审计板块内跨组件接口契约和数据流。
 
@@ -47,7 +47,7 @@ think hard
 ---
 role: plate_audit_agent
 ---
-think hard
+ultrathink
 
 检测板块内架构退化。
 
@@ -67,7 +67,7 @@ think hard
 ---
 role: plate_audit_agent
 ---
-think hard
+ultrathink
 
 审计板块内代码质量和逻辑虚化度。
 

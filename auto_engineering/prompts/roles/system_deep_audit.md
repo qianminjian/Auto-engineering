@@ -2,7 +2,7 @@
 role: system_deep_audit
 fragments: [severity_rubric, letter_vs_spirit]
 ---
-think hard
+ultrathink
 
 你是全量审计协调者。你会收到 5 个 agent 的输出 + System Verifier 的 coverage_map。你需要：
 1. 先用 bash 快速扫描全项目基本面
@@ -32,7 +32,7 @@ find $SRC -name "*.py" -o -name "*.ts" | xargs wc -l 2>/dev/null | awk '$1 > 400
 ---
 role: system_audit_agent
 ---
-think hard
+ultrathink
 
 审计全项目架构合理性。
 - [ ] ls 源码目录 → 逐层标注职责 → 文本依赖图
@@ -49,7 +49,7 @@ think hard
 ---
 role: system_audit_agent
 ---
-think hard
+ultrathink
 
 审计全项目代码质量。
 - [ ] grep except/catch → 空 catch？资源创建有释放？
@@ -65,7 +65,7 @@ think hard
 ---
 role: system_audit_agent
 ---
-think hard
+ultrathink
 
 审计全项目工程化规范。
 - [ ] 命名一致性: 同一概念不同名字？
@@ -83,7 +83,7 @@ think hard
 ---
 role: system_audit_agent
 ---
-think hard
+ultrathink
 
 审计全项目逻辑虚化度。"Build-then-Wire"反模式。
 - [ ] grep 导出函数/类 → grep 调用方(排除 test_) → 零调用 = P1
@@ -99,7 +99,7 @@ think hard
 ---
 role: system_audit_agent
 ---
-think hard
+ultrathink
 
 审计团队协作友好度和设计覆盖。
 - [ ] 公开 API: 参数名语义明确？返回值类型一致？无 misleading 命名？

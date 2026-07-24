@@ -45,8 +45,8 @@ _SPAWN_CONFIG: dict[str, dict] = {
     #   low   — mechanical verification (verifiers)
     "architect":          {"count": 1, "parallel": False, "effort": "xhigh"},
     "critic":             {"count": 1, "parallel": False, "effort": "high"},
-    "component_verifier": {"count": 1, "parallel": False, "effort": "low"},
-    "plate_deep_audit":   {"count": 3, "parallel": True,  "effort": "high"},
-    "system_verifier":    {"count": 1, "parallel": False, "effort": "low"},
-    "system_deep_audit":  {"count": 5, "parallel": True,  "effort": "high"},
+    "component_verifier": {"count": 1, "parallel": False, "effort": "high"},
+    "plate_deep_audit":   {"count": 3, "parallel": True,  "effort": "xhigh"},
+    "system_verifier":    {"count": 1, "parallel": False, "effort": "xhigh"},
+    "system_deep_audit":  {"count": 5, "parallel": True,  "effort": "xhigh"},
 }

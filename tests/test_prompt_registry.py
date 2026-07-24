@@ -189,16 +189,15 @@ class TestModel:
         """Claude Code recognized thinking keywords present in prompt.
         Position varies (fragments prepended), but Claude Code detects keywords
         anywhere in the text — position doesn't matter for token budget."""
-        # ultrathink → 32K budget (xhigh effort)
+        # ultrathink → 32K budget (xhigh effort): architect, all auditors, system_verifier
         assert "ultrathink" in registry.get("architect")
-        # think hard → 10K budget (high effort)
+        assert "ultrathink" in registry.get("plate_deep_audit")
+        assert "ultrathink" in registry.get("system_verifier")
+        assert "ultrathink" in registry.get("system_deep_audit")
+        # think hard → 10K budget (high effort): critic, developer, component_verifier
         assert "think hard" in registry.get("developer")
         assert "think hard" in registry.get("critic")
-        assert "think hard" in registry.get("plate_deep_audit")
-        # no keyword → default 4K budget (low effort verifiers)
-        cv = registry.get("component_verifier")
-        assert "ultrathink" not in cv
-        assert "think hard" not in cv
+        assert "think hard" in registry.get("component_verifier")
 
 
 class TestSchemaTemplate:
