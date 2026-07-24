@@ -80,8 +80,9 @@
 | **35** | **T51c-f 根因修复 + prompt 日志增强（2026-07-23）** | **4** | **4** | **✅ Fix A(design_items补全)+B(impl_files注入)+C(auto-skip)+prompt日志增强 — BEACON 决策 #95。** |
 | **36** | **深度审计 P0 全部修复（2026-07-23）** | **10** | **10** | **✅ P0-1~P0-10 全部修复 + 死测试清理 — BEACON 决策 #96。commit: 55df599。** |
 | **37** | **深度审计 P1/P2 修复（2026-07-23）** | **18** | **18** | **✅ P1×10 + P2×8 全部处理 (修复/确认/归档) — commit: e9326fb。** |
-| **38** | **T50-T55 真跑验证发现（2026-07-23）** | **18** | **0** | **◐ 进行中 — 18 项发现待修复（P0×1 + P1×11 + P2×6）。voice_clone 全参数真跑（Audit/Metrics/OTLP/Debug/Cache/PII/Token）** |
-| **合计** | | **350** | **332** | **Phase 1-37 332/332 ✅ + Phase 38 0/18 ☐** |
+| **38** | **T50-T55 真跑验证发现（2026-07-23）** | **18** | **18** | **✅ 18/18 修复 — P0×1 + P1×11 + P2×6。commit: 595ce67。** |
+| **39** | **DS-15 Agent-Subagent Prompt 投送模型重构（2026-07-24）** | **12** | **12** | **✅ 12/12 — Prompt 固化直送 + context 注入删除 + spawn proof 文件化 + PII 字段级跳过 + /audit 对标。commit: 1fdb843。** |
+| **合计** | | **362** | **362** | **Phase 1-39 362/362 ✅** |
 
 > **v5.5 退役提醒**：`orchestrator.py` + `semantic_evaluator.py` 已物理删除。CLI 裸参数路径重定向到 `--standalone`。2026-08-18 清理 CLI 弃用 shim。
 
@@ -2059,3 +2060,46 @@ T144 (全量回归) → T145 (真跑验证)
 | Prompt Log | prompt 日志增强 | 7 tick × 2 文件（action.json + prompt.md）= 14 文件写入 `_scratch/prompt-log/` |
 | Gate 多语言 | TypeScript lint/type_check | eslint + tsc 正确调用（eslint 0 errors, tsc 无类型错误） |
 | Spawn proof | proof 文件机制 | 4 个 proof JSON（architect/critic/verifier/auditor）写入 `.ae-state/spawn-proofs/` |
+
+---
+
+## Phase 39 — DS-15 Agent-Subagent Prompt 投送模型重构（2026-07-24）
+
+> 来源：Phase 38 真跑验证发现 + 讨论结论
+> 设计文档：v5.6-Design-Loop.md DS-15（~190 行）
+> Commit: `1fdb843`
+
+### 核心变化
+
+| # | 改造点 | 文件 | 说明 |
+|---|--------|------|------|
+| **T167** | Prompt 固化直送 | `action_builder.py:_build_stage_action()` | `.md` 文件 → `action.subagent_prompt` 单字段直送，不再拼接 role_prompt+context+expected_format |
+| **T168** | Context 注入删除 | `action_builder.py:_build_action_*`（6 个 spawn stage） | architect/critic/component_verifier/plate_deep_audit/system_verifier/system_deep_audit 的 context dict 全部删除（~200 行）。subagent 用 Read/Bash 自行探索 |
+| **T169** | Expected format 解耦 | `action_builder.py` | expected_format 保留在 action JSON 中给 Team Lead 看，不再传给 subagent |
+| **T170** | Spawn proof 文件化 | `action_builder.py:_write_spawn_proof_file()` | 引擎预写 proof 文件（status=pending），subagent 追加 status=completed。Token 独立 JSON 字段，不嵌入 instruction 文本 |
+| **T171** | PII outbound 字段级跳过 | `action_builder.py:_apply_pii_outbound()` | 定义 `_PII_SKIP_FIELDS`（10 个引擎生成字段），只扫描用户数据字段 |
+| **T172** | Instruction 精简 | `action_builder.py:_SPAWN_INSTRUCTION` | 650 chars → ~300 chars。删 4 次"不要自己做"。单 agent "subagent_prompt below"，多 agent "spawn.agents[].prompt" |
+| **T173** | 模型硬编码删除 | 全部 9 个 `.md` prompt 文件 | `model:` 全部删除，替换为 Claude Code 原生关键词（ultrathink=32K/xhigh, think hard=10K/high） |
+| **T174** | _SPAWN_CONFIG 加 effort | `config/constants.py` | 6 个 spawn stage 配置 effort（xhigh/high/low），instruction 告知 Team Lead spawn 时传入 |
+| **T175** | Prompt 对标 /audit 重构 | 9 个 prompt 文件 | 17 个碎片文件 → 9 个完整 prompt。Phase 1 bash 扫描 + checklist + grep 命令 + 内嵌输出表格 + 语言特定检查。删"你收到/你产出"，加"工作流程/信息来源" |
+| **T176** | plate_deep_audit 合并 | 4→1 文件，count=3（Python 管控并行） | 一个 .md 文件含 merge instructions + `***` 分隔的 3 个 agent prompt。Python 拆分为 spawn.agents[] |
+| **T177** | system_deep_audit 合并 | 6→1 文件，count=5（Python 管控并行） | 一个 .md 文件含 merge instructions + `***` 分隔的 5 个 agent prompt。Python 拆分为 spawn.agents[] |
+| **T178** | 调度与合并逻辑修复 | `commands/dev-loop.md`, `tick_orchestrator.py` | driving loop 加 gate/skip 分支。SPAWN_REQUIRED 消息改为 subagent_prompt。spawn proof 验证 status=completed。log_prompt 支持 spawn.agents[] 多 agent 输出。Team table 更新为 DS-15 模型 |
+
+### Prompt 文件清单（9 个）
+
+| # | 文件 | 思考深度 | effort | 说明 |
+|:---:|------|:---:|:---:|------|
+| 1 | `architect.md` | ultrathink | xhigh | 技术架构师，batch_plan 产出 |
+| 2 | `critic.md` | think hard | high | 代码审查，5 维审查 + 9 不报规则 |
+| 3 | `developer.md` | think hard | high | TDD 实现，RED→GREEN→REFACTOR |
+| 4 | `component_verifier.md` | 默认 | low | 组件设计覆盖映射 |
+| 5 | `plate_deep_audit.md` | think hard | high | 板块审计协调者 + 3 agent prompts（***分隔） |
+| 6 | `system_verifier.md` | 默认 | low | 全量设计覆盖，exit gate |
+| 7 | `system_deep_audit.md` | think hard | high | 全量审计协调者 + 5 agent prompts（***分隔） |
+| 8 | `gap_scan.md` | think hard | — | 设计模糊性扫描，Phase 0 入口 |
+| 9 | `research.md` | think hard | — | 四层知识源检索，96GB 内存护栏 |
+
+### 已删除 Prompt 文件（8 个）
+
+`plate_audit_contracts.md`, `plate_audit_dataflow.md`, `plate_audit_architecture.md`, `system_audit_architecture.md`, `system_audit_code_quality.md`, `system_audit_engineering.md`, `system_audit_team.md`, `system_audit_virtualization.md`

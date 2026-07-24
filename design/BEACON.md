@@ -94,9 +94,24 @@
 
 ## 当前状态
 
-**阶段：** Phase 38 — T50-T55 真跑验证发现。Phase 1-37 全部完成（332/332），Phase 38 0/10。
+**阶段：** Phase 39 完成 — DS-15 Prompt 投送模型重构。Phase 1-39 全部完成（362/362）。
 
-**最新动作 (2026-07-23 T50-T55 真跑验证)**：
+**最新动作 (2026-07-24 DS-15 Prompt 投送模型重构)**：
+- 17→9 个 prompt 文件（删除 8 个碎片，plate/system audit 各合并为 1 个）
+- Python 不再拼接 context+expected_format → `.md` 文件直送 `subagent_prompt`
+- 6 个 spawn stage 的 context 注入全部删除（~200 行）
+- expected_format 解耦：保留给 Team Lead，不给 subagent
+- Spawn proof 文件化：引擎预写 + status=completed 验证
+- PII outbound 字段级跳过：10 个引擎字段免扫描
+- 模型硬编码删除：17 prompts → Claude Code 原生关键词（ultrathink/think hard）
+- _SPAWN_CONFIG 加 effort：6 stage 配置 xhigh/high/low
+- Prompt 对标 /audit 重写：checklist + grep + 语言特定 + Phase 1 bash 扫描
+- plate_deep_audit: count=3 (Python 管控并行), system_deep_audit: count=5
+- 设计文档：v5.6-Design-Loop.md DS-15
+- 跟踪表：IMPLEMENTATION-TRACKER.md Phase 39（T167-T178）
+- Commit: 1fdb843 | 测试: 2312 passed
+
+**最近动作 (2026-07-23 Phase 38 真跑验证修复)**：
 - voice_clone_for_auto_CC_Design 全参数真跑（Audit:✓ Metrics:✓ OTLP:✓ Debug:✓ Cache:✓ PII:✓ Token:✓）
 - Agent 驱动 Tick 协议 7 ticks 全路径验证通过
 - T50 ✅ / T51a ✅ / T51b ✅ / T51c ⚠️ / T51d ⚠️ / T51e ❌ / T51f ❌ / T53 ⚠️ / T54 ⚠️ / T55 ❌

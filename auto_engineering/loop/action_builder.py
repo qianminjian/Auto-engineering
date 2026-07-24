@@ -17,14 +17,22 @@ from auto_engineering.config.constants import DEFAULT_P1_THRESHOLD, _SPAWN_CONFI
 from auto_engineering.config.feature_flags import feature_status_for_action
 from auto_engineering.prompts.registry import default_registry
 
-# DS-15: spawn instruction — Agent passes subagent_prompt verbatim,
-# sets effort per spawn config, collects output, extracts fields per expected_format.
+# DS-15: spawn instruction. For multi-agent stages (count>1), each agent gets
+# its own prompt from spawn.agents[]. Team Lead spawns all N, collects outputs,
+# merges into one result JSON.
 _SPAWN_INSTRUCTION = (
-    "Spawn {count} agent{parallel} with effort={effort} and subagent_prompt below.\n"
-    "Collect output → extract fields per expected_format → "
+    "Spawn {count} agent{parallel} with effort={effort}.\n"
+    "{multi_instruction}"
+    "Collect all outputs → merge into one result per expected_format → "
     "write result: {{\"stage\":\"{stage}\",\"spawned\":true, ...merged}}.\n"
-    "Proof: .ae-state/spawn-proofs/{proof_token}.json (tell subagent to append stage+timestamp).\n"
+    "Proof: .ae-state/spawn-proofs/{proof_token}.json (tell each subagent to append stage+timestamp).\n"
     "On failure: {{\"stage\":\"{stage}\",\"spawned\":false,\"spawn_error\":\"<reason>\"}}."
+)
+_SPAWN_MULTI_INSTRUCTION = (
+    "Each agent has its own prompt in spawn.agents[] — give agent[i] spawn.agents[i].prompt.\n"
+)
+_SPAWN_SINGLE_INSTRUCTION = (
+    "Use subagent_prompt below.\n"
 )
 # Non-spawn stages (developer, gap_scan inline) use this:
 _INLINE_INSTRUCTION = (
@@ -195,11 +203,9 @@ class ActionBuilder:
         - tick-NNNN-stage-action.json  — raw action JSON (machine-readable)
         - tick-NNNN-stage-prompt.md    — complete prompt as LLM sees it (human-readable)
 
-        For spawn stages, also shows the reconstructed subagent prompt
-        (role_prompt + context data + expected output schema).
-
-        This is a static method so the orchestrator can call it after all
-        injections (session_summary, etc.) to capture the final state.
+        DS-15: subagent_prompt is a single self-contained string read from
+        prompts/roles/<stage>.md.  No context assembly, no output schema injection.
+        expected_format is for Team Lead only, not subagent.
         """
         try:
             log_dir = project_root / "_scratch" / "prompt-log"
@@ -207,7 +213,7 @@ class ActionBuilder:
             tick = action.get("tick", 0)
             stage = action.get("stage", action.get("action", "unknown"))
 
-            # 1. Raw JSON (existing)
+            # 1. Raw JSON
             json_file = log_dir / f"tick-{tick:04d}-{stage}-action.json"
             with open(str(json_file), "w", encoding="utf-8") as f:
                 json.dump(action, f, indent=2, ensure_ascii=False)
@@ -215,8 +221,7 @@ class ActionBuilder:
             # 2. Human-readable prompt
             md_file = log_dir / f"tick-{tick:04d}-{stage}-prompt.md"
             inst = action.get("instruction", "")
-            rp = action.get("role_prompt", "")
-            ctx = action.get("context", {})
+            sp = action.get("subagent_prompt", "")
             ef = action.get("expected_format", {})
             spawn = action.get("spawn", {})
             is_spawn = bool(spawn)
@@ -230,11 +235,12 @@ class ActionBuilder:
                 lines.append(f"- spawn count: {spawn.get('count', 1)}")
                 lines.append(f"- spawn parallel: {spawn.get('parallel', False)}")
                 lines.append(f"- proof token: `{action.get('spawn_proof_token', 'N/A')}`")
+                lines.append(f"- effort: `{spawn.get('effort', 'high')}`")
             lines.append("")
 
-            # ── Part 1: Instruction (what Agent LLM reads first) ──
+            # ── Part 1: Instruction (Team Lead sees this first) ──
             lines.append("---")
-            lines.append("## Part 1 — Instruction（Agent LLM 收到的命令）")
+            lines.append("## Part 1 — Instruction（Team Lead 收到的命令）")
             lines.append("")
             if inst:
                 lines.append("```")
@@ -244,64 +250,54 @@ class ActionBuilder:
                 lines.append("*(no instruction — inline stage)*")
             lines.append("")
 
-            # ── Part 2: Subagent Prompt (for spawn stages) ──
-            if is_spawn and rp:
+            # ── Part 2: Subagent Prompt(s) ──
+            agents = spawn.get("agents", [])
+            if is_spawn:
                 lines.append("---")
-                lines.append("## Part 2 — Subagent Prompt（传给 subagent LLM 的完整文本）")
-                lines.append("")
-                lines.append("### Role Prompt")
-                lines.append("")
-                lines.append("```")
-                lines.append(rp.strip())
-                lines.append("```")
-                lines.append("")
-
-                if ctx:
-                    # Strip noisy fields from subagent view
-                    sub_ctx = {k: v for k, v in ctx.items()
-                               if k not in ("init_manifest", "design_supplements",
-                                            "research_archive", "project_root")}
-                    lines.append("### Context Data")
+                if agents:
+                    # Multi-agent: show merge instructions + per-agent prompts
+                    lines.append("## Part 2a — Merge Instructions（Team Lead 合并指引）")
+                    lines.append(f"*(length: {len(sp)} chars)*")
                     lines.append("")
-                    lines.append("```json")
-                    lines.append(json.dumps(sub_ctx, indent=2, ensure_ascii=False))
+                    lines.append("```")
+                    lines.append(sp.strip() if sp else "(empty)")
+                    lines.append("```")
+                    lines.append("")
+                    lines.append(f"## Part 2b — Agent Prompts（{len(agents)} 个 agent，各收到独立 prompt）")
+                    lines.append("")
+                    for ag in agents:
+                        ap = ag.get("prompt", "")
+                        lines.append(f"### Agent [{ag['index']}] — {len(ap)} chars")
+                        lines.append("")
+                        lines.append("```markdown")
+                        lines.append(ap.strip())
+                        lines.append("```")
+                        lines.append("")
+                elif sp:
+                    # Single agent
+                    lines.append("## Part 2 — Subagent Prompt（传给 subagent 的完整文本）")
+                    lines.append(f"*(length: {len(sp)} chars)*")
+                    lines.append("")
+                    lines.append("```")
+                    lines.append(sp.strip())
                     lines.append("```")
                     lines.append("")
 
-                if ef:
-                    sub_ef = {k: v for k, v in ef.items()
-                              if k not in ("spawned", "spawn_error", "stage")}
-                    lines.append("### Expected Output Schema")
-                    lines.append("")
-                    lines.append("```json")
-                    lines.append(json.dumps(sub_ef, indent=2, ensure_ascii=False))
-                    lines.append("```")
-                    lines.append("")
-
-                # Reconstruct the exact subagent prompt string
-                sub_prompt_parts = [rp.strip()]
-                if ctx:
-                    sub_prompt_parts.append("\n## Input Data\n```json\n" +
-                        json.dumps(ctx, indent=2, ensure_ascii=False) + "\n```")
-                if ef:
-                    sub_prompt_parts.append("\n## Required Output Schema\n```json\n" +
-                        json.dumps(sub_ef, indent=2, ensure_ascii=False) + "\n```")
-                sub_prompt_parts.append("\n输出严格 JSON，不要 markdown fence，不要额外解释。")
-                full_sub_prompt = "\n".join(sub_prompt_parts)
-
-                lines.append("### Complete Subagent Prompt (reconstructed)")
-                lines.append(f"*(length: {len(full_sub_prompt)} chars)*")
+            # ── Part 3: Expected Format (Team Lead reference, NOT subagent) ──
+            if ef:
+                lines.append("---")
+                lines.append("## Part 3 — Expected Format（Team Lead 写 result 时的字段约束）")
                 lines.append("")
-                lines.append("```")
-                lines.append(full_sub_prompt)
+                lines.append("```json")
+                lines.append(json.dumps(ef, indent=2, ensure_ascii=False))
                 lines.append("```")
                 lines.append("")
 
-            # ── Part 3: Gate Summary ──
+            # ── Part 4: Gate Summary ──
             gs = action.get("gate_summary", {})
             if gs:
                 lines.append("---")
-                lines.append("## Part 3 — Gate Results")
+                lines.append("## Part 4 — Gate Results")
                 lines.append("")
                 for gname, gv in sorted(gs.items()):
                     if isinstance(gv, dict):
@@ -352,7 +348,7 @@ class ActionBuilder:
     # contain real user PII.  Scanning them causes false positives (e.g. spawn
     # proof tokens matching api_key patterns → ***REDACTED*** → broken mechanism).
     _PII_SKIP_FIELDS: frozenset[str] = frozenset({
-        "instruction", "subagent_prompt", "role_prompt", "expected_format",
+        "instruction", "subagent_prompt", "expected_format",
         "spawn", "spawn_proof_token", "gate_summary", "feature_status",
         "progress_summary", "feedback",
     })
@@ -435,15 +431,43 @@ class ActionBuilder:
             proof_token = uuid.uuid4().hex
             result["spawn_proof_token"] = proof_token
             self._write_spawn_proof_file(proof_token, action)
+
+            count = spawn["count"]
+            is_multi = count > 1
+            multi_inst = _SPAWN_MULTI_INSTRUCTION if is_multi else _SPAWN_SINGLE_INSTRUCTION
+
             result["instruction"] = _SPAWN_INSTRUCTION.format(
-                count=spawn["count"],
+                count=count,
                 parallel=" (parallel)" if spawn.get("parallel") else "",
+                multi_instruction=multi_inst,
                 stage=action,
                 effort=spawn.get("effort", "high"),
                 proof_token=proof_token,
             )
-            # DS-15: read prompt from file → single subagent_prompt field
-            result["subagent_prompt"] = self._load_prompt(action)
+
+            # DS-15: read prompt from file
+            full_prompt = self._load_prompt(action)
+
+            if is_multi:
+                # Split by "***" into N+1 sections.
+                # Section 0 = merge instructions (Phase 1+3), Sections 1..N = agent prompts
+                sections = full_prompt.split("\n***\n")
+                if len(sections) >= count + 1:
+                    merge_prompt = sections[0].strip()
+                    agent_prompts = [s.strip() for s in sections[1:count+1]]
+                else:
+                    # Fallback: single prompt replicated to all agents
+                    merge_prompt = full_prompt
+                    agent_prompts = [full_prompt] * count
+
+                result["subagent_prompt"] = merge_prompt  # merge instructions for Team Lead
+                result["spawn"]["agents"] = [
+                    {"index": i, "prompt": p}
+                    for i, p in enumerate(agent_prompts)
+                ]
+            else:
+                result["subagent_prompt"] = full_prompt
+
             # T141: spawned field in expected_format (for Team Lead, NOT subagent)
             if expected_format is not None:
                 expected_format = {

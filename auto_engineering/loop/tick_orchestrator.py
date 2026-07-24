@@ -800,25 +800,33 @@ class TickOrchestrator:
                     message=(
                         f"Stage '{stage}' requires spawning an agent. "
                         f"Read the action.instruction — spawn the agent with "
-                        f"the provided role_prompt, collect its output, and set "
+                        f"the action.subagent_prompt, collect its output, and set "
                         f"'\"spawned\": true' in the result. "
                         f"Re-run this tick with actual agent spawn."
                     ),
                     current_state=self._state.to_dict(),
                 )
 
-            # P1-4: verify spawn proof file exists
+            # DS-15: verify spawn proof file was completed (engine pre-writes it,
+            # subagent must update status to "completed")
             proof_token = result.get("spawn_proof_token")
             if proof_token:
                 proof_file = (
                     self.project_root / ".ae-state" / "spawn-proofs"
                     / f"{proof_token}.json"
                 )
-                if not proof_file.exists():
+                proof_ok = False
+                if proof_file.exists():
+                    try:
+                        proof_data = json.loads(proof_file.read_text(encoding="utf-8"))
+                        proof_ok = proof_data.get("status") == "completed"
+                    except Exception:
+                        pass
+                if not proof_ok:
                     _logger.warning(
-                        "Spawn proof missing for stage=%s token=%s — "
-                        "spawned=true but no proof file. Subagent may not have "
-                        "executed (possible forged spawned field).",
+                        "Spawn proof incomplete for stage=%s token=%s — "
+                        "spawned=true but proof file status != 'completed'. "
+                        "Subagent may not have executed (possible forged spawned field).",
                         stage, proof_token,
                     )
                     if self._require("_debug_tracer", "debug tracing disabled") is not None:
@@ -828,7 +836,7 @@ class TickOrchestrator:
                             detail={
                                 "stage": stage,
                                 "token": proof_token,
-                                "message": "spawned=true but proof file missing",
+                                "message": "spawned=true but proof file incomplete",
                             },
                         )
 

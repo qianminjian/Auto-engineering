@@ -20,13 +20,16 @@ Python 引擎做所有确定性决策（路由/门禁/收敛），你做所有 L
 
 | 角色 | 何时出场 | 你的动作 |
 |------|---------|---------|
-| Architect | 需要设计方案时 | spawn Plan subagent，把 action.role_prompt + action.context 交给它 |
+| Architect | 需要设计方案时 | spawn agent with action.subagent_prompt |
 | Developer | 需要写代码时 | **你自己**（inline TDD） |
-| Critic | developer 完成后 | spawn code-reviewer subagent |
-| Component Verifier | 组件完成后 | spawn general-purpose subagent (Haiku) |
-| Plate Deep Auditor | 板块完成后 | spawn 3× code-reviewer subagent 并行 |
-| System Verifier | 全量开发完成后 | spawn general-purpose subagent (Haiku) |
-| System Deep Auditor | 全体验证通过后 | spawn 3× code-reviewer subagent 并行 |
+| Critic | developer 完成后 | spawn agent with action.subagent_prompt |
+| Component Verifier | 组件完成后 | spawn agent with action.subagent_prompt |
+| Plate Deep Auditor | 板块完成后 | spawn agent — 它内部会并行 spawn 3 个子 agent |
+| System Verifier | 全量开发完成后 | spawn agent with action.subagent_prompt |
+| System Deep Auditor | 全体验证通过后 | spawn agent — 它内部会并行 spawn 5 个子 agent |
+
+> DS-15: 每个 spawn stage 只有一个 action.subagent_prompt（prompts/roles/<stage>.md 原文），
+> 原样传给 subagent。不再有 role_prompt + context + expected_format 三字段分离。
 
 ## Iron Law
 
@@ -66,8 +69,8 @@ Violating the letter of this rule is violating the spirit of this rule.
          # Read offload — developer reads architect offload, critic reads developer offload
          (See "Context offloading" below)
          Spawn the subagent(s) specified in action.spawn.
-         Give subagent: action.role_prompt + action.context + action.expected_format.
-         Collect output → write result JSON with "spawned": true.
+         Give subagent: action.subagent_prompt (verbatim — single string, already complete).
+         Collect output → extract fields per action.expected_format → write result JSON with "spawned": true.
      else:
          # Read offload — developer reads architect offload before starting
          Do the work inline for action.action (this only happens for developer).
@@ -90,8 +93,10 @@ Print: `[Tick N | stage <action.stage>] …` before each tick.
 ## Spawn discipline
 
 - action.instruction 是给你的直接命令——先读它
-- action.role_prompt 是给 subagent 的角色定义——原样传递
-- action.expected_format 首行有 `"spawned"` 字段——**必须设为 true**（Python gate 强制检查，缺失 → G2 retry）
+- action.subagent_prompt 是给 subagent 的完整 prompt——原样传递，不要修改
+- action.expected_format 告诉你 result JSON 需要哪些字段——从 subagent 输出中提取
+- result 中 `"spawned"` 必须设为 true（Python gate 强制检查，缺失 → G2 retry）
+- action.spawn.effort 指定 spawn 时的思考深度——传给 Agent tool 的 effort 参数
 - 你是组长——spawn 就是你该做的事，不是可选的
 
 ## Done verdicts
