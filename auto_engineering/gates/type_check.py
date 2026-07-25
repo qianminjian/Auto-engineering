@@ -15,7 +15,6 @@
 from __future__ import annotations
 
 import logging
-import shutil
 from pathlib import Path
 
 from auto_engineering.gates._tools import LANGUAGE_TOOLS, detect_project_language

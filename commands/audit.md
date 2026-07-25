@@ -25,7 +25,8 @@ description: 深度审计 — 架构/代码质量/工程化/协作/虚化度 5 �
 ### Phase 1 — 自动化确定性扫描（项目自有 Gate）
 
 ```bash
-ae gate-check --all       # 7 道 Gate, 含 AuditGate 5 维静态扫描 (regex 确定性基线)
+# Phase 40: ae gate-check CLI 已删除。Gate 在 dev-loop 内自动运行。
+# 手动跑 Gate: ae dev-loop --tick (dev-loop 内自动 trigger gate chain)
 make check-gate           # 静默吞异常闸门
 make audit-dead-imports   # dead import (F401)
 make audit-line-count     # 超 400 行文件

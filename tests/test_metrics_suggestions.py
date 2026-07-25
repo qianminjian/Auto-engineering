@@ -2,8 +2,6 @@
 import tempfile
 from pathlib import Path
 
-import pytest
-
 from auto_engineering.metrics.collector import AIOrigin, MetricsCollector, set_collector
 from auto_engineering.metrics.enrichment import compute_metrics_signals
 from auto_engineering.metrics.ratchet import RatchetController
@@ -89,7 +87,7 @@ class TestRatchetIntegration:
                 )
             collector.end_requirement("APPROVE", total_ticks=7)
 
-            result = compute_metrics_signals(collector)
+            result = compute_metrics_signals(collector)  # noqa: F841
 
             before_config = {"M1_loop_efficiency": 3, "M2_critic_major_rate": 0.0}
             after_config = collector.get_latest_summary() or {}

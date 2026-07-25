@@ -18,8 +18,6 @@ import os
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
-
 from auto_engineering.observability.tracing import setup_tracing
 
 

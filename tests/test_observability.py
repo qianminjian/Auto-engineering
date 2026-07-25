@@ -9,8 +9,6 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
-
 from auto_engineering.observability.audit_log import AuditLogger
 from auto_engineering.observability.tracing import setup_tracing
 

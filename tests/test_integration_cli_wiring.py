@@ -5,12 +5,8 @@
 """
 
 import os
-import sys
 from pathlib import Path
 from unittest.mock import patch
-
-import pytest
-
 
 # ── Helpers ──
 
@@ -48,7 +44,6 @@ def test_conditional_injectables_have_creation_paths(tmp_path, monkeypatch):
 
 def test_injectables_passed_to_orchestrator(tmp_path):
     """验证所有 injectable 参数实际传入了 TickOrchestrator 构造器."""
-    from auto_engineering.cli.dev_loop import _build_injectables
     from auto_engineering.loop.tick_orchestrator import TickOrchestrator
 
     inj = _get_injectables(tmp_path)

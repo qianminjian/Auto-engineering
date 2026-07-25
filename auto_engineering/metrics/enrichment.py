@@ -3,11 +3,15 @@
 Wired into TickOrchestrator._build_action() to inject metrics intelligence
 into every action JSON returned to the agent.
 """
+import logging
+
 from auto_engineering.metrics.collector import MetricsCollector
 from auto_engineering.metrics.diagnoser import Diagnoser
 from auto_engineering.metrics.ratchet import RatchetController
 from auto_engineering.metrics.signals import SignalDetector
 from auto_engineering.metrics.suggestions import generate_suggestions
+
+_logger = logging.getLogger(__name__)
 
 
 def compute_metrics_signals(

@@ -113,7 +113,8 @@ echo ""
 echo "=== Collecting PR context ==="
 
 # Gate results
-GATE_OUTPUT=$(ae gate-check --quick 2>&1 || echo '{"gates":[]}')
+# Phase 40: ae gate-check CLI 已删除。Gate 在 dev-loop 内自动运行。使用 ae status 查 gate 结果。
+GATE_OUTPUT=$(ae status --format json 2>&1 || echo '{"gates":[]}')
 GATE_TABLE=$(echo "$GATE_OUTPUT" | python3 -c "
 import sys, json
 try:

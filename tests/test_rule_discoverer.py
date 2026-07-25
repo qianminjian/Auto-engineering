@@ -98,7 +98,7 @@ class TestDiagnosticRuleDiscoverer:
     def test_spearman_no_correlation(self):
         a = [1.0, 2.0, 3.0, 4.0, 5.0]
         b = [3.0, 1.0, 5.0, 2.0, 4.0]  # shuffled, near-zero correlation
-        rho, p = DiagnosticRuleDiscoverer._spearman_r(a, b)
+        rho, p = DiagnosticRuleDiscoverer._spearman_r(a, b)  # noqa: RUF059
         assert abs(rho) < 0.4
 
     def test_spearman_too_few_samples(self):

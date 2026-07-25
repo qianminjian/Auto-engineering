@@ -27,6 +27,7 @@ design/his_bak/
 # 测试覆盖率临时文件 (本地)
 repowiki/
 .mypy_cache/
+.pytest_cache/
 .gitnexus/
 output/
 docs/AI-Loop*.html

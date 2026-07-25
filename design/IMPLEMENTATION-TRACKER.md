@@ -82,9 +82,13 @@
 | **37** | **深度审计 P1/P2 修复（2026-07-23）** | **18** | **18** | **✅ P1×10 + P2×8 全部处理 (修复/确认/归档) — commit: e9326fb。** |
 | **38** | **T50-T55 真跑验证发现（2026-07-23）** | **18** | **18** | **✅ 18/18 修复 — P0×1 + P1×11 + P2×6。commit: 595ce67。** |
 | **39** | **DS-15 Agent-Subagent Prompt 投送模型重构（2026-07-24）** | **12** | **12** | **✅ 12/12 — Prompt 固化直送 + context 注入删除 + spawn proof 文件化 + PII 字段级跳过 + /audit 对标。commit: 1fdb843。** |
-| **合计** | | **362** | **362** | **Phase 1-39 362/362 ✅** |
-
-> **v5.5 退役提醒**：`orchestrator.py` + `semantic_evaluator.py` 已物理删除。CLI 裸参数路径重定向到 `--standalone`。2026-08-18 清理 CLI 弃用 shim。
+| **40** | **v5.7 入口统一简化 + StandaloneDriver 删除（2026-07-25）** | **7+** | **7+** | **✅ 完成 — CLI 入口统一 + ~4,800 行删除。BEACON 决策 #97。** |
+| **41** | **v5.7 清理收口（2026-07-25）** | **3** | **3** | **✅ 3/3 — P0 修复 + 死 ErrorCode 删除 + 过时注释更新。1814 tests。** |
+| **42** | **审计待办消化（2026-07-25 执行完成）** | **3** | **3** | **✅ 3/3 — 2 死函数删除 + dead CLI options + 文档引用。1811 tests。** |
+| **43** | **可观测性整合（2026-07-25 执行完成）** | **5** | **5** | **✅ 5/5 — OTLP 生命周期管理 + doctor 增强 + init 引导。1811 tests。BEACON 决策 #98。** |
+| **44** | **配置管理统一（2026-07-25 执行完成）** | **5** | **5** | **✅ 5/5 — ae.toml + FeatureFlag SSOT + RuntimeConfig 重构。1811 tests。BEACON 决策 #99。** |
+| **45** | **配置向导 + 启动闸门（2026-07-25 执行完成）** | **4** | **4** | **✅ 4/4 — ae doctor --wizard + --init 强制确认。1811 tests。BEACON 决策 #100。** |
+| **合计** | | | | **Phase 1-45 全部完成 ✅** |
 
 ---
 
@@ -1741,15 +1745,17 @@ T144 (全量回归) → T145 (真跑验证)
 
 > 已修复: 21 项 (全量审计 P0×9+P1×8 + 深度追踪 D1×1 + P1-8/P1-14/P2-9)
 > 剩余: 19 项 — 15 项 P2 低优先级 + 4 项需用户决策
+> **2026-07-23 更新**: 4 项需用户决策已在 Phase 33a 执行完毕（见下方 Phase 33a）。
+> **2026-07-25 更新**: AD1/AD2/AD3/AD4 深度分析确认执行状态 → 跟踪表清理。
 
-### 需用户决策 (⛔)
+### 需用户决策 (⛔ → 已执行，Phase 33a ✅)
 
-| # | 来源 | 问题 | 选项 | 建议 |
-|---|------|------|------|------|
-| AD1 | P2-1 | **PRBackend ABC ~330 行零生产消费者** — `pr_backend.py` 含 GitHub/GitLab PR backend + `select_backend()`，仅 `ae doctor` 的 `available_backends()` 调用 | A. 接线到 convergence 路径自动创建 PR → ~2d / B. 物理删除 → 10min / C. 保持休眠 | B — BEACON #45 GitLab CI 同理是"已设计未实施"，不如果断清理 |
-| AD2 | P2-2 | **Channel[T] ABC 体系 (~100 行) v2.0 遗留** — `_serialization.py` 中 `Channel`/`LastValueChannel`/`AccumulatingChannel`/`BarrierChannel`，`loop/__init__.py` 明确注释"不再导出" | A. 审计调用方后删除 / B. 保留为"休眠模块" | A — 零消费者即删除 |
-| AD3 | P2-3 | **ThresholdLearner.propose_adjustments() 从未调用 (~30 行)** — 仅 `compute_max_iter()` 有消费者 | A. 接线到 `_run_ratchet()` → ~1d / B. 删除 → 10min | B — BEACON #47 已判 YAGNI，此方法是残留 |
-| AD4 | P2-4 | **`check_feature()` guard function 零调用方** — 设计为"新增 env var 必须先注册"的 enforcement，但从未被调用 | A. 在 CI test 中调用 → 30min / B. 删除 → 5min | A — 有价值的 guard，一行 import 即可激活 |
+| # | 来源 | 问题 | 决策 | 执行 | 深度分析 |
+|---|------|------|------|------|------|
+| AD1 | P2-1 | PRBackend ABC 零生产消费者 | B. 物理删除 | ✅ `pr_backend.py` + `test_pr_backend.py` 已删除，doctor 改直接检测 gh/glab CLI | 决策正确。PRBackend 核心前提（loop done→auto-PR）从未实现，330 行零生产价值。未来用 `gh pr create` 一行命令即可 |
+| AD2 | P2-2 | Channel[T] ABC v2.0 遗留 | A. 保留为内部迁移模块 | ✅ 不导出，仅用于 checkpoint 反序列化 + migration.py。已加 sunset 条件：确认无旧格式 checkpoint 后可删 | 保留唯一正当理由：向后兼容旧 checkpoint 格式。附加 3 个月 sunset 条件（见 `_serialization.py` 头部注释） |
+| AD3 | P2-3 | ThresholdLearner.propose_adjustments() 从未调用 | A. 接线到 _run_ratchet() | ✅ `tick_orchestrator.py:1495-1504` 已接线，≥30 需求自动触发 | 自进化闭环核心——接线正确。需求计数可见性已在 doctor + --init stderr 中增强（`feature_flags.py:feature_warnings`） |
+| AD4 | P2-4 | check_feature() guard 零调用方 | A. 接入 CI + 动态扫描 RuntimeConfig | ✅ 测试覆盖 + 2026-07-25 增强：`test_feature_manifest_coverage` 改为 `inspect.getsource` 动态扫描 RuntimeConfig 中所有 `self.get("AE_XXX")` 调用，替代手维护 EXPECTED_KEYS | 以 RuntimeConfig 源码扫描为 enforcement——新增 env var 在 RuntimeConfig 加 property 时自动被测试捕获，无需手动维护 EXPECTED_KEYS |
 
 ### P2 低优先级（消化后自行决定）
 
@@ -1779,8 +1785,8 @@ T144 (全量回归) → T145 (真跑验证)
 | P1 | 8/16 | 8 | 0 |
 | P2 | 4/15 | 11 | 0 |
 | 深度追踪 | 1/1 | 1 (shim 收尾) | 0 |
-| 架构决策 | 0/0 | 0 | 4 |
-| **合计** | **22** | **20** | **4** |
+| 架构决策 | 4/4 | 0 | 0 |
+| **合计** | **26** | **20** | **0** |
 
 > 审计报告: `_scratch/reports/2026-07-21-audit.md` (全量) + `_scratch/reports/2026-07-21-deep-audit-tttt.md` (深度追踪)
 > 已修复 commit: `81eb494` (17 项) + `59918db` (4 项) + Phase 30 `631dbc7` (28 项)
@@ -2103,3 +2109,226 @@ T144 (全量回归) → T145 (真跑验证)
 ### 已删除 Prompt 文件（8 个）
 
 `plate_audit_contracts.md`, `plate_audit_dataflow.md`, `plate_audit_architecture.md`, `system_audit_architecture.md`, `system_audit_code_quality.md`, `system_audit_engineering.md`, `system_audit_team.md`, `system_audit_virtualization.md`
+
+---
+
+## Phase 40 — v5.7 入口统一简化（BEACON 决策 #97）
+
+> 来源：2026-07-25 真跑复盘 — 手动 CLI tick 路径绕过 Skill driving loop 导致质量塌方
+> 设计讨论：`design/discussion/2026-07-25-简化设计方案.md`
+> 原则：`/ae:dev-loop` Skill 为唯一 dev-loop 启动入口。`ae dev-loop --init/--tick/--result/--resume` 保留为 Skill driving loop 的内部调用协议。
+
+### 任务清单
+
+| T | 文件/产出 | 验收 | 状态 |
+|---|----------|------|:---:|
+| T179 | `auto_engineering/cli/__init__.py` + `cli/dev_loop.py` — 删除 `ae dev-loop --standalone` flag + v5.5 legacy 裸参数路径 + `--init/--tick/--result/--resume` 从用户文档中移除（代码保留为 Skill 内部协议） | CLI 只暴露 `ae dev-loop` 主命令 + `ae doctor` + `ae status`。`--init/--tick` 等 flag 保留但标注为 [内部协议] | ✅ |
+| T180 | `auto_engineering/cli/status.py` — 增加 `--verbose` flag 显示进度树（合并 progress 功能）。删除 test_cli_progress.py | `ae status --verbose` 输出含进度树。`ae progress` 不可用。70 tests PASS | ✅ |
+| T181 | `auto_engineering/cli/__init__.py` — 删除 `ae gate-check` 命令注册。删除 test_cli_gate_check.py + test_plugin_contract.py 中 gate-check 测试 | `ae gate-check` 不可用。plugin_contract 更新为断言不可注册 | ✅ |
+| T182 | `auto_engineering/cli/__init__.py` — 删除 `ae agent` 命令注册。删除 test_cli_agent.py + test_plugin_contract.py 中 agent 测试 | `ae agent` 不可用。plugin_contract 更新为断言不可注册 | ✅ |
+| T183 | `auto_engineering/cli/__init__.py` — 删除 `ae checkpoint` 命令注册（含 v2 子命令）。删除 test_cli_checkpoint_extended.py + test_checkpoint_cli.py | `ae checkpoint` 不可用 | ✅ |
+| T184 | `commands/` — 删除 6 个 command 文件。保留 dev-loop.md、audit.md、code-review.md、status.md | 4/4 command 文件存在，6/6 已删除 | ✅ |
+| T185 | `design/BEACON.md` + `design/IMPLEMENTATION-TRACKER.md` + 全量测试 | BEACON Phase 40 ✅，跟踪表 7/7 ✅，全量测试零回归 | ✅ |
+
+### 保留清单（不做改动）
+
+| 入口 | 用途 | 理由 |
+|------|------|------|
+| `/ae:dev-loop` Skill | dev-loop 唯一启动入口 | `commands/dev-loop.md` driving loop 含 gate/spawn/skip 三路分支 |
+| `ae doctor` | 首次环境诊断 | 独立于 dev-loop，新项目排查 Python/uv/git/sqlite3/API key |
+| `ae status` | 跨会话进度查询 | 用户想知道"上次跑到哪了" |
+| `ae dev-loop --init/--tick/--result/--resume` | Skill driving loop 内部调用协议 | 引擎 tick 协议接口，Skill 内部使用，不对用户暴露 |
+
+### 不保留清单（删除）
+
+| 入口 | 删除理由 |
+|------|---------|
+| `ae dev-loop --standalone` | Bank 内网 Ollama 未验证，Agent 模式不需要进程内 LLM |
+| `ae dev-loop "req"` (v5.5 legacy) | 已弃用 30 天过渡期，2026-08-18 到期 |
+| `ae progress` | 功能合并到 `ae status --verbose` |
+| `ae gate-check` | dev-loop 内 gate 自动运行，无独立场景 |
+| `ae agent <role>` | Skill spawn 机制已覆盖 |
+| `ae checkpoint` | 引擎内部自动管理 |
+
+### 实施顺序
+
+```
+T179 (CLI 入口清理) → {T180, T181, T182, T183} (4 子命令并行删除)
+  → T184 (/commands 清理) → T185 (文档收口)
+```
+
+### 风险控制
+
+- T179 中 `--init/--tick/--result/--resume` flag **代码保留**，仅从 help 文档中移除用户提示。Skill driving loop 仍通过 CLI 调用这些 flag。
+- 每个 T-task 完成后跑对应测试文件确认零回归。
+- T185 收口前跑全量测试（~2320 tests）确认最终状态。
+
+---
+
+## Phase 41 — v5.7 清理收口（审计 v2 修复）
+
+> 来源：2026-07-25 审计 v2 (8.0/10) — 1 P0 + 6 P2
+> 原则：Phase 40 删除后收口，清理残留
+
+| T | 文件/产出 | 验收 | 状态 |
+|---|----------|------|:---:|
+| T186 | `loop/action_builder.py:312` — 空 `except Exception: pass` → `except (OSError, UnicodeError) as exc` + `_logger.warning` | 异常不再静默吞噬 | ✅ |
+| T187 | `errors.py` — 删除死 ErrorCode `GATE_EXECUTION_ERROR` + `GateExecutionError` 类 + `_SUGGESTIONS` 条目 | grep 确认零残留引用 | ✅ |
+| T188 | 6 文件过时注释更新 — `config/constants.py` (2), `metrics/collector.py` (2), `gates/runner.py` (1), `gates/registry.py` (1), `tools/__init__.py` (1), `test_error_codes.py` (2) | grep 确认零 standalone_driver.py/gate_check.py 残留引用 | ✅ |
+| **Phase 41 合计** | | **3/3 ✅** | **1814 tests, 0 regression** |
+
+---
+
+## Phase 42 — 审计待办消化（来源：2026-07-25 审计 v1 + v2）
+
+> 来源：审计 v1 (7.0/10) + 审计 v2 (8.0/10)。Phase 40 已解决 5/6 P0 + 部分 P1/P2。
+> 粒度：P1 入表跟踪，P2 按优先级排列。
+
+### P1（6 项，逐项核实后 3 修复 + 3 关闭）
+
+| T | 问题 | 核实结果 | 状态 |
+|---|------|---------|:---:|
+| T189 | 2 个死函数（_emit_stage_done / _log_stage_progress） | ✅ 确认 0 callers → **已删除** | ✅ |
+| T190 | `--format` / `--max-tokens` 死 Click option | ✅ 确认 dev_loop() 从未使用 → **已移除** | ✅ |
+| T191 | summarization.py 缺 exc_info | ❌ **误报** — 第 112 行已有 `exc_info=True` | ⊘ |
+| T192 | --format 命名不一致 | ⚠️ T190 移除 dev_loop 的 --format 后自然解决 | ⊘ |
+| T193 | ~31 处文档引用已删除命令 | ✅ **已更新** — audit.md, code-review.md, v5.6-Design-Loop.md banner | ✅ |
+| T194 | tracing.py os.environ.pop() | ✅ **已知设计** — DS-14 修复，注释说明"本会话仅告警一次" | ⊘ |
+
+### P2（8 项，全部核实关闭）
+
+| T | 问题 | 核实结果 | 状态 |
+|---|------|---------|:---:|
+| T195 | God Class tick_orchestrator | ✅ **已知暂缓** — BEACON #86, 32/54 方法是 handler | ⊘ |
+| T196 | God Class action_builder | ✅ **已知** — 已从 orchestrator 拆分 | ⊘ |
+| T197 | tools/base.py os.open() | ✅ **正确代码** — os.fsync() 需要 fd, 有 finally 保护 | ⊘ |
+| T198 | guardrail.py vs guardrails/ | ✅ **历史原因** — 拆分时避免循环引用 | ⊘ |
+| T199 | 中英文混用 | ❌ **误报** — `_SUGGESTIONS` 全中文, EN 仅 error_code key（编码约定） | ⊘ |
+| T200 | singleton 无注入点 | ⚠️ **P2 改善** — `_DEFAULT_REGISTRY` lazy init, `_collector` set/get 存在 | ⊘ |
+| T201 | doctor.py 硬编码 subprocess | ✅ **正确设计** — doctor 诊断真实系统状态 | ⊘ |
+| T202 | datetime.UTC 仅 3.11+ | ✅ **非问题** — pyproject.toml `requires-python >=3.12` | ⊘ |
+
+**Phase 42 结论**：14 项审计待办中 3 项修复、11 项核实为误报/已知设计/正确代码。
+
+---
+
+## Phase 43 — v5.7 可观测性整合（BEACON 决策 #98）
+
+> 来源：2026-07-25 OTLP/LangSmith/Cache 参数分析。OTLP 是唯一依赖外部进程的功能。
+> 原则：`ae doctor` 统一管理 observability 生命周期，不新增 CLI 命令。
+
+### 任务清单
+
+| T | 文件/产出 | 验收 | 状态 |
+|---|----------|------|:---:|
+| T203 | `docker-compose.observability.yml` — 新建 Jaeger 服务定义（OTLP gRPC :4317 + UI :16686），内置模板 | compose 文件存在 + 语法正确 | ✅ |
+| T204 | `auto_engineering/cli/doctor.py` — 新增 `--setup-observability` flag：检测 Docker → compose up → 轮询等待 :4317 → 降级指引 | Docker 不可用时降级输出手动指引 | ✅ |
+| T205 | `auto_engineering/cli/doctor.py` — 新增 `--teardown-observability` flag：compose down → 确认停止 | `ae doctor --help` 含两个新 flag | ✅ |
+| T206 | `auto_engineering/cli/doctor.py` `render_optional_features()` — OTLP 行增加连通性实时探测三态（disabled/unreachable/connected） | `ae doctor` 输出含 OTLP 连通状态 | ✅ |
+| T207 | `auto_engineering/cli/dev_loop.py` `_build_injectables()` — OTLP endpoint 已设置但不可达时，stderr 输出 WARN + 引导 | 不可达时 WARN 含 `ae doctor --setup-observability` | ✅ |
+| — | **附带清理**：LangSmith 从未入代码（仅设计文档引用），无需删除。AE_CACHE_CONTROL 已在 Phase 42 删除 | grep 确认零残留 | ✅ |
+
+### 实施顺序
+
+```
+T203 (docker-compose 模板) → T204 (setup) → T205 (teardown) → T206 (诊断增强) → T207 (init 引导)
+```
+
+### 设计约束
+
+- `ae doctor` 无参数时**不自动启动容器**，仅诊断状态
+- `ae dev-loop --init` **不自动启动容器**，仅 stderr 引导
+- Docker 不可用时**降级为手动指引**，不报错退出
+- `docker-compose.observability.yml` **内置模板**，首次运行时自动生成到项目根目录
+
+---
+
+## Phase 44 — v5.7 配置管理统一（BEACON 决策 #99）
+
+> 来源：2026-07-25 参数管理讨论。当前 19 个功能开关通过 `export AE_XXX=1` 分散设置，三层默认值不一致。
+> 原则：`ae.toml` 为项目配置文件，FeatureFlag 为唯一默认值来源，环境变量仅保留 `ANTHROPIC_API_KEY`。
+
+### 数据流
+
+```
+FeatureFlag (SSOT)
+  default_value: str     ← 唯一默认值来源
+  default_active: bool   ← doctor 面板显示用
+  ↓
+ae doctor --init-config  → 生成 ae.toml 模板
+  ↓
+ae.toml (项目配置)       ← 用户编辑，可 git 版本控制
+  ↓
+AeConfig (运行时读取)    ← ae.toml → os.environ 覆盖 → FeatureFlag.default_value 回退
+  ↓
+RuntimeConfig (注入层)   ← 从 AeConfig 取值，不再硬编码默认值
+  ↓
+TickOrchestrator / Gate / Guardrail / Tracing (不改)
+```
+
+### 任务清单
+
+| T | 文件/产出 | 验收 | 状态 |
+|---|----------|------|:---:|
+| T208 | `config/feature_flags.py` — FeatureFlag 增加 `default_value` 字段，19 条全量填充 | 23 tests passed | ✅ |
+| T209 | `config/ae_config.py` — **新建** AeConfig：读 ae.toml → os.environ 覆盖 → FeatureFlag 回退 | 3 层优先级正确 | ✅ |
+| T210 | `config/runtime_config.py` — 18 个 property 硬编码默认值 → FeatureFlag.default_value | 23 tests passed, 0 regression | ✅ |
+| T211 | `cli/doctor.py` — `--init-config`：从 FeatureManifest 生成 ae.toml 模板 | 19 features, 5 categories, 格式正确 | ✅ |
+| T212 | `cli/doctor.py` `render_optional_features()` — ae.toml 状态行 | doctor 输出含 ae.toml 状态 | ✅ |
+| — | **附带修复**：`production_enabled`/`production_mode` 重复 property → `production_mode` 改为 alias | 消除重复 | ✅ |
+
+### 实施顺序
+
+```
+T208 (FeatureFlag SSOT) → T209 (AeConfig) → T210 (RuntimeConfig) → T211 (init-config) → T212 (doctor 面板)
+```
+
+### 配置优先级
+
+```
+os.environ > ae.toml > FeatureFlag.default_value
+```
+
+### 风险控制
+
+- T210 RuntimeConfig 重构涉及 18 个 property，每个修改后跑对应测试
+- `AeConfig` 引入 `tomllib`（Python 3.11+ 内置），兼容 Python 3.12+（项目要求）
+- `ae.toml` 缺失时 `AeConfig` 不报错，全量回退 FeatureFlag.default_value
+
+---
+
+## Phase 45 — v5.7 配置向导 + 启动闸门（BEACON 决策 #100）
+
+> 来源：2026-07-25 参数管理讨论。`ae dev-loop --init` 不能静默用默认值启动——跑完才发现什么都没采集。
+> 原则：`ae.toml` 不存在时强制暂停等用户确认，`ae.toml` 存在时直接启动。
+
+### 任务清单
+
+| T | 文件/产出 | 验收 | 状态 |
+|---|----------|------|:---:|
+| T213 | `auto_engineering/cli/doctor.py` — 新增 `--wizard` flag + `_run_wizard()` 函数 | 交互式配置，逐 category，保存 ae.toml | ✅ |
+| T214 | `auto_engineering/cli/dev_loop.py` — 新增 `_check_config_gate()` 函数 | 检查清单 + 三选项 | ✅ |
+| T215 | `auto_engineering/cli/dev_loop.py` `run_tick_init()` — 调用 `_check_config_gate()` + `AE_SKIP_CONFIG_CHECK=1` + conftest | CI 跳过，测试正常 | ✅ |
+| T216 | `auto_engineering/cli/dev_loop.py` — `(配置来源: ae.toml / 内置默认值)` | stderr 含来源 | ✅ |
+
+### 流程
+
+```
+ae dev-loop --init "需求"
+  ├─ AE_SKIP_CONFIG_CHECK=1? → 跳过，直接启动
+  ├─ ae.toml 存在? → stderr: (配置来源: ae.toml) → 直接启动
+  └─ ae.toml 不存在? → _check_config_gate()
+       ├─ 输出检查清单 + 三个选项
+       ├─ 1 → _run_wizard() → 保存 ae.toml → 重新启动
+       ├─ 2 → _init_config() → 退出
+       └─ 3 → 显式确认 → 继续启动
+```
+
+### 设计约束
+
+- 只在 `ae.toml` 不存在时触发——已有配置的用户不受影响
+- `AE_SKIP_CONFIG_CHECK=1` 环境变量跳过检查（CI 环境）
+- 选项 3 的确认消息记录到 stderr: `[config] user accepted defaults, N/19 active`
+- Skill 路径不受影响——Skill 环境应预先配置 `ae.toml`
+
+

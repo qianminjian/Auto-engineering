@@ -22,16 +22,10 @@ Design ref: v5.6-Design-Loop.md appendix F + Phase 20 Round 4 audit findings.
 
 from __future__ import annotations
 
-import inspect
 import json
-import os
-import subprocess
 from pathlib import Path
 
-import pytest
-
-from auto_engineering.metrics.collector import MetricsCollector, AIOrigin
-
+from auto_engineering.metrics.collector import MetricsCollector
 
 # =============================================================================
 # T82 — category parameter to begin_requirement() calls
@@ -92,25 +86,7 @@ class TestT82CategoryParameter:
             "to begin_requirement(). by_category/ will never get category-specific baselines."
         )
 
-    def testrun_standalone_passes_category(self) -> None:
-        """run_standalone() MUST pass requirement_category to begin_requirement().
-
-        RED: Currently passes only thread_id and req_hash.
-        """
-        source_path = Path(__file__).parent.parent / "auto_engineering" / "cli" / "dev_loop.py"
-        source = source_path.read_text()
-
-        assert "begin_requirement" in source, "No begin_requirement call found"
-        # Find run_standalone function (v5.5 legacy path)
-        func_start = source.find("def run_standalone(")
-        assert func_start >= 0, "Cannot find run_standalone function"
-        # Find next top-level def after run_standalone
-        next_def = source.find("\ndef ", func_start + 10)
-        func_body = source[func_start:next_def] if next_def > 0 else source[func_start:]
-        assert "requirement_category" in func_body, (
-            "T82 NOT FIXED: run_standalone() does not pass requirement_category "
-            "to begin_requirement(). by_category/ will never get category-specific baselines."
-        )
+    # Phase 40: run_standalone() 已删除 — 相关测试移除
 
 
 # =============================================================================
@@ -126,8 +102,9 @@ class TestT83SignalOnlyOnConvergence:
 
         Signal computation should be in the convergence path, not every tick.
         """
-        import auto_engineering.loop.tick_orchestrator as tmod
         import inspect as _inspect
+
+        import auto_engineering.loop.tick_orchestrator as tmod
 
         source = _inspect.getsource(tmod.TickOrchestrator.build_action)
         assert "compute_metrics_signals" not in source, (
@@ -137,8 +114,9 @@ class TestT83SignalOnlyOnConvergence:
 
     def test_convergence_check_computes_signals(self) -> None:
         """_convergence_check() MUST compute metrics signals on terminal verdict."""
-        import auto_engineering.loop.tick_orchestrator as tmod
         import inspect as _inspect
+
+        import auto_engineering.loop.tick_orchestrator as tmod
 
         source = _inspect.getsource(tmod.TickOrchestrator._convergence_check)
         assert "compute_metrics_signals" in source, (
@@ -182,8 +160,9 @@ class TestT84TickNumbering:
 
     def test_orchestrator_call_site_passes_one_based(self) -> None:
         """TickOrchestrator MUST pass tick_no + 1 to record_tick_snapshot()."""
-        import auto_engineering.loop.tick_orchestrator as tmod
         import inspect as _inspect
+
+        import auto_engineering.loop.tick_orchestrator as tmod
 
         # The tick_orchestrator module is inspectable
         source = _inspect.getsource(tmod.TickOrchestrator.tick_dict)
@@ -289,8 +268,9 @@ class TestT87SignalsCoverage:
 
     def test_analyze_calls_detect_trend(self) -> None:
         """analyze() MUST call _detect_trend() in its code path."""
-        import auto_engineering.metrics.signals as smod
         import inspect as _inspect
+
+        import auto_engineering.metrics.signals as smod
 
         source = _inspect.getsource(smod.SignalDetector.analyze)
         assert "_detect_trend" in source, (
@@ -328,7 +308,7 @@ class TestT88NoRedundantFlush:
 
         # Check the next 5 lines after begin_requirement for _flush
         after_lines = lines[begin_idx + 1:begin_idx + 6]
-        has_flush = any("_flush()" in l for l in after_lines)
+        has_flush = any("_flush()" in l for l in after_lines)  # noqa: E741
         assert not has_flush, (
             "T88 NOT FIXED: run_tick_init() has redundant _flush() after "
             "begin_requirement(). The _flush is already called when requirement ends."

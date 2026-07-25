@@ -17,14 +17,13 @@ API:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from auto_engineering.loop.checkpoint.records import RoundHistory  # P1-7: definition moved to records
 
 if TYPE_CHECKING:
     from auto_engineering.gates.base import GateVerdict
-    from auto_engineering.loop.audit_history import AuditHistory
 
 __all__ = [
     "DEFAULT_MAX_ITERATIONS",

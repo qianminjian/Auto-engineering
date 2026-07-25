@@ -6,6 +6,19 @@
 v5.5 P1-3: Channel 系统 (原 loop/state/channels.py) 折叠到本文件.
 Channel 类型仅用于 CheckpointEnvelope 的 checkpoint 序列化/反序列化,
 不参与运行时主循环 (主循环走 engine.state.EngineState dataclass).
+
+Sunset 条件 (AD2, BEACON 决策 #93, 2026-07-25):
+    Channel[T] ABC 体系 (~150 行, 4 个类) 保留的唯一理由是 **旧格式 checkpoint
+    向后兼容** — 能反序列化 v2.5 格式的 checkpoint (状态存在 Channel 中)。
+    当以下条件满足时, 可安全删除 Channel 类型 + 相关序列化逻辑:
+        1. 所有生产项目已迁移到 v5.6+ checkpoint 格式 (≥3 个月无旧格式读取)
+        2. migration.py 中 v2.5→v5.6 迁移路径确认无消费者
+    删除时需同时清理:
+        - 本文件中 Channel/LastValueChannel/AccumulatingChannel/BarrierChannel 定义
+        - checkpoint_envelope.py 中 4 个 Channel import
+        - state/__init__.py 中 Channel export
+        - migration.py 中 LastValueChannel import + v2.5 迁移逻辑
+    当前状态: 保留为休眠模块 (维护成本为零, 对齐 LangGraph 参考设计).
 """
 
 from __future__ import annotations

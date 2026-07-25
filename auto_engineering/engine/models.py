@@ -28,6 +28,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from enum import StrEnum
 
+
 class TaskStatus(StrEnum):
     """Task 生命周期状态."""
 

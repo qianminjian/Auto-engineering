@@ -5,9 +5,10 @@
 import json
 import logging
 import subprocess
-from auto_engineering.utils.file_utils import safe_json_load
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from auto_engineering.utils.file_utils import safe_json_load
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +87,7 @@ class RatchetController:
                 continue
             if b_val == 0 and a_val == 0:
                 continue
-            if b_val == 0:
+            if b_val == 0:  # noqa: SIM108
                 delta_pct = 1.0 if a_val > 0 else -1.0
             else:
                 delta_pct = (a_val - b_val) / b_val

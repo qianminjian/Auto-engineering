@@ -10,7 +10,6 @@ v5.4 审计 P1-6: 合并 checkpoint_migration/migrate.py 到本文件,
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 

@@ -26,20 +26,15 @@ import sys
 import time
 from collections.abc import Callable
 from dataclasses import asdict
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 from uuid import uuid4
 
-from auto_engineering.config.constants import DEFAULT_P1_THRESHOLD, _SPAWN_CONFIG
+from auto_engineering.config.constants import _SPAWN_CONFIG, DEFAULT_P1_THRESHOLD, STAGE_TO_ROLE
+from auto_engineering.config.runtime_config import RuntimeConfig, get_default_config
 from auto_engineering.context.offloading import StageContextOffload
 from auto_engineering.context.summarization import SessionSummary
-from auto_engineering.config.runtime_config import RuntimeConfig, get_default_config
-from auto_engineering.loop.escalation_handler import (
-    EscalationContext,
-    EscalationHandler,
-    detect_project_language,
-)
 from auto_engineering.engine.batch_state import BatchState
 from auto_engineering.engine.design_doc import DesignDoc, Supplement
 from auto_engineering.engine.progress_tree import ProgressTree
@@ -48,12 +43,11 @@ from auto_engineering.engine.verification_layers import (
     VerificationLayers,
     determine_verification_layers,
 )
-from auto_engineering.gates._tools import LANGUAGE_TOOLS
 from auto_engineering.gates.deep_audit import recount_findings
 from auto_engineering.loop.action_builder import (
-    ActionBuilder,
     _STAGE_CHECKPOINT_OPTIONS,
     _STAGE_CHECKPOINT_REVIEW_FEEDBACK,
+    ActionBuilder,
 )
 from auto_engineering.loop.actions import ActionDone, ActionError, ErrorResponse, validate_result_format
 from auto_engineering.loop.checkpoint.manager import CheckpointManager
@@ -61,6 +55,11 @@ from auto_engineering.loop.checkpoint.records import CheckpointNotFoundError
 from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
 from auto_engineering.loop.convergence import ConvergenceConfig, ConvergenceJudge, RoundHistory
 from auto_engineering.loop.debug_tracer import DebugTracer, now_iso
+from auto_engineering.loop.escalation_handler import (
+    EscalationContext,
+    EscalationHandler,
+    detect_project_language,
+)
 from auto_engineering.loop.guardrail import GuardrailChain
 from auto_engineering.loop.plan import Plan
 from auto_engineering.loop.refine import build_refine_request
@@ -69,7 +68,6 @@ from auto_engineering.loop.stage_router import (
     clear_stage_fields,
     update_majors_count,
 )
-from auto_engineering.config.constants import STAGE_TO_ROLE
 from auto_engineering.loop.task_factory import tasks_from_batch_plan
 from auto_engineering.loop.tick_gate_runner import TickGateRunner
 from auto_engineering.metrics.collector import AIOrigin, get_collector
@@ -79,6 +77,8 @@ from auto_engineering.observability.audit_log import AuditLogger
 from auto_engineering.observability.tracing import _TracerLike
 from auto_engineering.pii.redactor import PIIRedactor
 from auto_engineering.prompts.registry import default_registry
+
+
 class _GateRunner(Protocol):
     """Typed protocol for gate runner (replaces Callable[..., dict])."""
     def __call__(self, gate_names: tuple[str, ...], project_root: Path,
@@ -134,7 +134,11 @@ class TickSessionSummarizer(Protocol):
     def summarize_structured(
         self, *, tick: int, test_results: dict | None = None,
         files_changed: list[str] | None = None, commit_hash: str = "",
-        gate_results: dict | None = None, previous_summary: SessionSummary | None = None,
+        gate_results: dict | None = None,
+        critic_verdict: str = "",
+        total_majors: int = 0,
+        batch_progress: str = "",
+        previous_summary: SessionSummary | None = None,
     ) -> SessionSummary: ...
 
     def inject_into_prompt(self, summary: SessionSummary) -> str: ...
@@ -197,7 +201,7 @@ class TickOrchestrator:
         )
 
         # T110: M5 Token JSONL 采集 (可注入, 默认自动创建)
-        self._transcript_parser = transcript_parser if transcript_parser is not None else create_parser(self.project_root)
+        self._transcript_parser = transcript_parser if transcript_parser is not None else create_parser(self.project_root)  # noqa: E501
 
         self._state: EngineState | None = None
         self._router: StageRouter | None = None
@@ -977,8 +981,8 @@ class TickOrchestrator:
             return self.build_action()
 
         self._snapshot_developer_output()
-        self._advance_stage("critic")
         self._offload_stage("developer")
+        self._advance_stage("critic")
         return self.build_action()
 
     def _snapshot_developer_output(self) -> None:
@@ -1010,7 +1014,7 @@ class TickOrchestrator:
         files_changed: list[str] = list(s.files_changed) if s.files_changed else []
         if stage == "architect":
             plan_preview = (s.plan[:120] + "...") if (s.plan and len(s.plan) > 120) else (s.plan or "")
-            batch_info = f"{len(s.batch_plan)} batches, {len(s.file_list or [])} files" if s.batch_plan else "no batches"
+            batch_info = f"{len(s.batch_plan)} batches, {len(s.file_list or [])} files" if s.batch_plan else "no batches"  # noqa: E501
             summary = f"Architect: {batch_info}" + (f" — {plan_preview}" if plan_preview else "")
             if s.batch_plan:
                 key_decisions = [
@@ -1027,8 +1031,9 @@ class TickOrchestrator:
                 try:
                     comp = self._batch_state.current_component()
                     batch_id = self._batch_state.current_batch_id()
-                    summary = f"Developer: {comp.name if comp else '?'} batch={batch_id} — {passed}/{total} tests passed"
-                except Exception:
+                    summary = f"Developer: {comp.name if comp else '?'} batch={batch_id} — {passed}/{total} tests passed"  # noqa: E501
+                except (AssertionError, AttributeError, TypeError, ValueError) as exc:
+                    _logger.warning("batch_state component/batch access failed, using degraded summary: %s", exc)
                     summary = f"Developer: {passed}/{total} tests passed"
             else:
                 summary = f"Developer: {passed}/{total} tests passed"
@@ -1050,7 +1055,8 @@ class TickOrchestrator:
                             total_b = self._batch_state.total_count()
                             batch_progress_str = f"{done}/{total_b} batches done"
                         except Exception:
-                            pass
+                            _logger.warning("batch_state done/total count failed", exc_info=True)
+                            batch_progress_str = ""
                     sess_summary = self._session_summarizer.summarize_structured(
                         tick=s.tick, test_results=tr,
                         files_changed=list(s.files_changed or []),
@@ -1067,7 +1073,7 @@ class TickOrchestrator:
                         key_decisions.append("summarized=true")
                         self._cached_session_summary = sess_summary
                 except Exception:
-                    _logger.debug("SessionSummarizer failed for offload", exc_info=True)
+                    _logger.warning("SessionSummarizer failed for offload", exc_info=True)
         elif stage == "critic":
             findings = s.findings or []
             p0 = sum(1 for f in findings if f.get("severity") == "P0")

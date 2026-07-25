@@ -211,14 +211,7 @@ class TestSchemaTemplate:
 
 
 class TestSingleSourceWiring:
-    """agents/prompts.py 常量从 registry 派生 (§B12 单一源, roles/*.md 是唯一正文)."""
-
-    def test_prompts_module_constants_equal_registry(self) -> None:
-        from auto_engineering.agents import prompts as ap
-        reg = PromptRegistry(_REAL_DIR)
-        assert reg.get("architect") == ap.ARCHITECT_SYSTEM_PROMPT
-        assert reg.get("developer") == ap.DEVELOPER_SYSTEM_PROMPT
-        assert reg.get("critic") == ap.CRITIC_SYSTEM_PROMPT
+    """Phase 40: agents/prompts.py 已删除 — .md 文件是唯一正文."""
 
     def test_default_registry_is_singleton(self) -> None:
         from auto_engineering.prompts.registry import default_registry

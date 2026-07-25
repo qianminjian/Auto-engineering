@@ -7,7 +7,6 @@ TokenTracker 是共享引擎资源 (Agent/Standalone 双驱动均使用).
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
 
 from auto_engineering.errors import AEError, ErrorCode
 

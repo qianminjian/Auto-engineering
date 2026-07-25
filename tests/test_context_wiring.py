@@ -10,19 +10,13 @@ Design ref: v5.6-Design-Loop.md appendix E §E.2.2 (T53).
 
 from __future__ import annotations
 
-import json
-import tempfile
 from pathlib import Path
-from unittest.mock import MagicMock
-
-import pytest
 
 from auto_engineering.context.offloading import ContextOffloader
 from auto_engineering.loop.guardrail import GuardrailChain
 from auto_engineering.loop.tick_orchestrator import TickOrchestrator
 
-from .test_tick_orchestrator import _make_result_file, _orchestrator
-
+from .test_tick_orchestrator import _orchestrator
 
 # =============================================================================
 # Helpers

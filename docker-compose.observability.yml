@@ -1,0 +1,15 @@
+# Auto-Engineering Observability Stack
+# 管理: ae doctor --setup-observability / --teardown-observability
+# 首次运行 ae doctor --setup-observability 时自动从此模板生成
+
+version: "3.8"
+services:
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: ae-jaeger
+    ports:
+      - "4317:4317"    # OTLP gRPC — auto-engineering 发送 trace span
+      - "16686:16686"  # Jaeger UI — 浏览器查看调用链 http://localhost:16686
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    restart: unless-stopped

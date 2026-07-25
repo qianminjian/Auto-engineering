@@ -28,6 +28,7 @@ feature_warnings() 在 --init 时调用, 向用户提示默认关闭的生产相
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Literal
 
 AgentMode = Literal["both", "standalone_only", "agent_only"]
@@ -39,14 +40,19 @@ Category = Literal[
 
 @dataclass
 class FeatureFlag:
-    """单个功能开关的元数据."""
+    """单个功能开关的元数据.
+
+    Phase 44: default_value 是全项目唯一默认值来源。
+    优先级: os.environ > ae.toml > default_value.
+    """
 
     key: str
     description: str
     category: Category
+    default_value: str = ""     # Phase 44: SSOT 默认值（未设置环境变量/ae.toml 时使用）
     agent_mode: AgentMode = "both"
     activation: str = ""
-    default_active: bool = False
+    default_active: bool = False  # doctor 面板显示用（与 default_value 解耦）
 
     def __post_init__(self) -> None:
         if not self.activation:
@@ -56,58 +62,58 @@ class FeatureFlag:
 FEATURE_MANIFEST: list[FeatureFlag] = [
     # ── observability ──
     FeatureFlag("AE_AUDIT_LOG", "LLM 调用审计日志 (JSONL)",
-                "observability", "both", "AE_AUDIT_LOG=1"),
+                "observability", default_value="0", activation="AE_AUDIT_LOG=1"),
     FeatureFlag("AE_METRICS", "AI Coding 度量与自进化体系",
-                "observability", "both", "AE_METRICS=1"),
+                "observability", default_value="0", activation="AE_METRICS=1"),
     FeatureFlag("AE_OTLP_ENDPOINT", "OTLP 分布式追踪导出",
-                "observability", "both", "export AE_OTLP_ENDPOINT=http://localhost:4317"),
+                "observability", default_value="", activation="export AE_OTLP_ENDPOINT=http://localhost:4317"),
     FeatureFlag("AE_TOKEN_TRACKING", "逐 Tick Token JSONL 采集 (M5)",
-                "observability", "both", "AE_TOKEN_TRACKING=1"),
+                "observability", default_value="0", activation="AE_TOKEN_TRACKING=1"),
 
     # ── debugging ──
     FeatureFlag("AE_DEBUG", "调试模式 — DebugTracer 诊断轨迹 + 详细日志",
-                "debugging", "both", "AE_DEBUG=1 或 --debug"),
+                "debugging", default_value="0", activation="AE_DEBUG=1 或 --debug"),
     FeatureFlag("AE_LOG_LEVEL", "日志级别 (DEBUG/INFO/WARNING/ERROR)",
-                "debugging", "both", "export AE_LOG_LEVEL=DEBUG"),
+                "debugging", default_value="INFO", activation="export AE_LOG_LEVEL=DEBUG"),
 
     # ── performance ──
-    FeatureFlag("AE_CACHE_CONTROL", "Anthropic Prompt Caching (缓存命中降延迟)",
-                "performance", "standalone_only", "AE_CACHE_CONTROL=1",
-                default_active=True),
+    # Phase 42: AE_CACHE_CONTROL removed — standalone_only, 消费者 StandaloneDriver 已删除
     FeatureFlag("AE_MAX_TOOL_CALLS", "单 Agent 最大工具调用次数",
-                "performance", "both", "AE_MAX_TOOL_CALLS=20"),
+                "performance", default_value="20", activation="AE_MAX_TOOL_CALLS=20"),
 
     # ── provider ──
     FeatureFlag("AE_LLM_PROVIDER", "默认 LLM Provider (anthropic/deepseek/glm)",
-                "provider", "both", "AE_LLM_PROVIDER=anthropic"),
+                "provider", default_value="", activation="AE_LLM_PROVIDER=anthropic"),
     FeatureFlag("AE_MODEL_ROLE", "按 role 覆盖默认模型 (格式: AE_MODEL_<ROLE>_UPPER)",
-                "provider", "standalone_only",
-                "AE_MODEL_ARCHITECT=claude-sonnet-4-6"),
+                "provider", default_value="", agent_mode="standalone_only",
+                activation="AE_MODEL_ARCHITECT=claude-sonnet-4-6"),
     FeatureFlag("AE_PROVIDER_ROLE", "按 role 覆盖 Provider (格式: AE_PROVIDER_<ROLE>_UPPER)",
-                "provider", "standalone_only",
-                "AE_PROVIDER_CRITIC=deepseek"),
+                "provider", default_value="", agent_mode="standalone_only",
+                activation="AE_PROVIDER_CRITIC=deepseek"),
 
     # ── safety ──
     FeatureFlag("AE_PII_ENABLED", "PII 四层文件桥接防护总开关 (L1-L4)",
-                "safety", "both", "AE_PII_ENABLED=1", default_active=True),
+                "safety", default_value="1", default_active=True,
+                activation="AE_PII_ENABLED=1"),
     FeatureFlag("AE_PII_GUARDRAIL", "G11 PII Guardrail — 文件内容扫描 (L4)",
-                "safety", "both", "AE_PII_GUARDRAIL=1 (需 AE_PII_ENABLED=1)"),
+                "safety", default_value="1", activation="AE_PII_GUARDRAIL=1"),
     FeatureFlag("AE_PII_GUARDRAIL_MODE", "G11 PII Guardrail 模式 (warn/block)",
-                "safety", "both", "AE_PII_GUARDRAIL_MODE=warn (需 AE_PII_GUARDRAIL=1)"),
-    FeatureFlag("AE_PII_INBOUND", "L3 — inbound result JSON PII 扫描模式 (off/warn/block/redact)",
-                "safety", "both", "AE_PII_INBOUND=warn (需 AE_PII_ENABLED=1)"),
-    FeatureFlag("AE_PII_OUTBOUND", "L2 — outbound action JSON PII 脱敏模式 (off/warn/block/redact)",
-                "safety", "both", "AE_PII_OUTBOUND=redact (需 AE_PII_ENABLED=1)"),
-    FeatureFlag("AE_PRODUCTION", "生产安全模式 — 严格 REDGuardrail + 阻断 Gate 降级",
-                "safety", "both", "AE_PRODUCTION=1"),
+                "safety", default_value="warn", activation="AE_PII_GUARDRAIL_MODE=warn"),
+    FeatureFlag("AE_PII_INBOUND", "L3 — inbound result JSON PII 扫描",
+                "safety", default_value="warn", activation="AE_PII_INBOUND=warn"),
+    FeatureFlag("AE_PII_OUTBOUND", "L2 — outbound action JSON PII 脱敏",
+                "safety", default_value="redact", activation="AE_PII_OUTBOUND=redact"),
+    FeatureFlag("AE_PRODUCTION", "生产安全模式",
+                "safety", default_value="0", activation="AE_PRODUCTION=1"),
     FeatureFlag("AE_AUDIT_LOG_DIR", "审计日志输出目录 (JSONL)",
-                "observability", "both", "AE_AUDIT_LOG_DIR=/path/to/logs"),
-    FeatureFlag("AE_STRICT_RED", "严格 TDD REDGuardrail — test-first 强制 (仅 Plugin 模式)",
-                "safety", "agent_only", "AE_STRICT_RED=1"),
+                "observability", default_value="", activation="AE_AUDIT_LOG_DIR=/path/to/logs"),
+    FeatureFlag("AE_STRICT_RED", "严格 TDD REDGuardrail — test-first 强制",
+                "safety", default_value="0", agent_mode="agent_only",
+                activation="AE_STRICT_RED=1"),
 
     # ── threshold ──
-    FeatureFlag("AE_GATE_TIMEOUT", "Gate 执行超时秒数 (safety/lint/type_check 等)",
-                "threshold", "both", "AE_GATE_TIMEOUT=120"),
+    FeatureFlag("AE_GATE_TIMEOUT", "Gate 执行超时秒数",
+                "threshold", default_value="", activation="AE_GATE_TIMEOUT=120"),
 ]
 
 # PII sub-flags — disabled when AE_PII_ENABLED=0
@@ -173,13 +179,13 @@ def list_categories() -> list[str]:
 def feature_status_oneline(environ: dict | None = None) -> str:
     """Return a one-line feature status summary for stderr (T114 5.3).
 
-    Example: ``[Features] OTLP:✗ Audit:✗ Metrics:✗ Debug:✗ PII:✓ Cache:✓(Standalone)``
+    Example: ``[Features] OTLP:✗ Audit:✗ Metrics:✗ Debug:✗ PII:✓ Token:✗``
     """
     status = get_feature_status(environ)
     short_names = {
         "AE_AUDIT_LOG": "Audit", "AE_METRICS": "Metrics",
         "AE_OTLP_ENDPOINT": "OTLP",
-        "AE_DEBUG": "Debug", "AE_CACHE_CONTROL": "Cache",
+        "AE_DEBUG": "Debug",
         "AE_PII_ENABLED": "PII", "AE_TOKEN_TRACKING": "Token",
     }
     parts: list[str] = []
@@ -188,7 +194,9 @@ def feature_status_oneline(environ: dict | None = None) -> str:
         active = s.get("active", False)
         mark = "✓" if active else "✗"
         mode = s.get("agent_mode", "both")
-        suffix = f"({mode.replace('standalone_only', 'Standalone').replace('agent_only', 'Agent')})" if mode != "both" and active else ""
+        suffix = ""
+        if mode != "both" and active:
+            suffix = f"({mode.replace('standalone_only', 'Standalone').replace('agent_only', 'Agent')})"
         parts.append(f"{name}:{mark}{suffix}")
     return "[Features] " + " ".join(parts)
 
@@ -205,11 +213,41 @@ def feature_warnings(environ: dict | None = None) -> list[str]:
         warnings.append("PII 脱敏未启用 (AE_PII_ENABLED=1)")
     if not status.get("AE_METRICS", {}).get("active"):
         warnings.append("度量采集未启用 (AE_METRICS=1) — 无 AI Coding 信号数据")
+    else:
+        # AD3: 需求计数可见性 — 告知用户距离阈值学习激活还差多少
+        req_count = _count_requirements()
+        if req_count is not None and req_count < 30:
+            remaining = 30 - req_count
+            warnings.append(
+                f"度量需求计数: {req_count}/30 — "
+                f"还差 {remaining} 个需求激活贝叶斯阈值学习 (ThresholdLearner)"
+            )
     if not status.get("AE_AUDIT_LOG", {}).get("active"):
         warnings.append("审计日志未启用 (AE_AUDIT_LOG=1)")
     if not status.get("AE_OTLP_ENDPOINT", {}).get("active"):
         warnings.append("OTLP 分布式追踪未启用 (export AE_OTLP_ENDPOINT=http://localhost:4317)")
     return warnings
+
+
+def _count_requirements(project_root: Path | None = None) -> int | None:
+    """Count completed requirements in the metrics directory.
+
+    Returns the number of requirement subdirectories in
+    ``<project_root>/.ae-state/metrics/requirements/``.
+    Returns None if the metrics directory does not exist.
+    """
+    from pathlib import Path as _Path
+    try:
+        root = project_root or _Path.cwd()
+        reqs_dir = root / ".ae-state" / "metrics" / "requirements"
+        if not reqs_dir.is_dir():
+            return None
+        return sum(
+            1 for p in reqs_dir.iterdir()
+            if p.is_dir() and (p / "summary.json").exists()
+        )
+    except (OSError, PermissionError):
+        return None
 
 
 def feature_status_for_action(environ: dict | None = None) -> dict[str, bool]:
@@ -223,7 +261,10 @@ def feature_status_for_action(environ: dict | None = None) -> dict[str, bool]:
 
 
 def _is_active(key: str, env: dict, default: bool = False) -> bool:
-    """Determine if a feature flag is active from the environment."""
+    """Determine if a feature flag is active from the environment.
+
+    Phase 44: 默认值从 FeatureFlag.default_value 读取（不再硬编码）。
+    """
     val = env.get(key, "").strip()
     if not val:
         return default
@@ -231,5 +272,4 @@ def _is_active(key: str, env: dict, default: bool = False) -> bool:
         return True  # any non-empty value activates
     if key == "AE_PII_ENABLED":
         return val != "0"
-    # Boolean-style: "1" or "true" activates
     return val == "1" or val.lower() == "true"

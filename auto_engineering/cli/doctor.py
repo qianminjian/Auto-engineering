@@ -243,9 +243,19 @@ def run_doctor_checks(project_root: Path) -> tuple[int, list[tuple[bool, str]]]:
 
 def render_optional_features() -> list[tuple[bool, str]]:
     """Render optional features panel from FeatureManifest SSOT (T114 5.2)."""
-    from auto_engineering.config.feature_flags import FEATURE_MANIFEST, get_feature_status
+    from auto_engineering.config.feature_flags import FEATURE_MANIFEST, _count_requirements, get_feature_status
     status = get_feature_status()
     lines: list[tuple[bool, str]] = []
+
+    # Phase 44 T212: ae.toml 状态
+    from pathlib import Path as _Path
+    toml_path = _Path.cwd() / "ae.toml"
+    if toml_path.exists():
+        toml_active = sum(1 for s in status.values() if s.get("active"))
+        lines.append((True, f"ae.toml 已加载 ({toml_active}/{len(FEATURE_MANIFEST)} features active)"))
+    else:
+        lines.append((False, "ae.toml 未创建 — 运行 ae doctor --init-config 生成配置文件"))
+
     for f in FEATURE_MANIFEST:
         s = status[f.key]
         _mark = "✓" if s["active"] else "✗"
@@ -256,7 +266,348 @@ def render_optional_features() -> list[tuple[bool, str]]:
         if not s["active"]:
             line += f" — {f.activation}"
         lines.append((s["active"], line))
+
+    # AD3: 需求计数可见性 — 显示距离阈值学习激活的进度
+    if status.get("AE_METRICS", {}).get("active"):
+        req_count = _count_requirements()
+        if req_count is not None:
+            remaining = max(0, 30 - req_count)
+            if req_count >= 30:
+                lines.append((True, f"贝叶斯阈值学习: ✓ 已激活 ({req_count} 个需求)"))
+            else:
+                lines.append((False, f"贝叶斯阈值学习: 待激活 ({req_count}/30 需求, "
+                                     f"还差 {remaining}) — ThresholdLearner"))
+
+    # T206: OTLP 连通性实时探测 — 区分三态
+    _otlp_state = _check_otlp_connectivity()
+    for f in FEATURE_MANIFEST:
+        s = status[f.key]
+        line = f"{f.description}"
+        if f.key == "AE_OTLP_ENDPOINT":
+            if _otlp_state == "connected":
+                lines.append((True, f"{line} — collector 已连接 ({_otlp_status_text()})"))
+            elif _otlp_state == "unreachable":
+                lines.append((False, f"{line} — collector 不可达 ({_otlp_status_text()})"))
+                lines.append((False, "  → 运行 ae doctor --setup-observability 启动 collector"))
+            elif s["active"]:
+                lines.append((True, line))
+            else:
+                lines.append((False, f"{line} — {f.activation}"))
+            continue
+        _mark = "✓" if s["active"] else "✗"
+        mode_note = ""
+        if s["agent_mode"] != "both" and s["active"]:
+            mode_note = f" (仅 {s['agent_mode'].replace('_', ' ')} 模式生效)"
+        line_full = f"{line}{mode_note}"
+        if not s["active"]:
+            line_full += f" — {f.activation}"
+        lines.append((s["active"], line_full))
+
+    # AD3: 需求计数可见性
+    if status.get("AE_METRICS", {}).get("active"):
+        req_count = _count_requirements()
+        if req_count is not None:
+            remaining = max(0, 30 - req_count)
+            if req_count >= 30:
+                lines.append((True, f"贝叶斯阈值学习: ✓ 已激活 ({req_count} 个需求)"))
+            else:
+                lines.append((False, f"贝叶斯阈值学习: 待激活 ({req_count}/30 需求, "
+                                     f"还差 {remaining}) — ThresholdLearner"))
+
     return lines
+
+
+def _check_otlp_connectivity() -> str:
+    """检测 OTLP collector 连通性。
+
+    Returns:
+        "disabled" — AE_OTLP_ENDPOINT 未设置
+        "unreachable" — 已设置但端口不可达
+        "connected" — collector 可达
+    """
+    import os as _os
+    endpoint = _os.environ.get("AE_OTLP_ENDPOINT", "").strip()
+    if not endpoint:
+        return "disabled"
+    try:
+        from urllib.parse import urlparse
+        parsed = urlparse(endpoint)
+        host = parsed.hostname or "localhost"
+        port = parsed.port or 4317
+        import socket
+        with socket.create_connection((host, port), timeout=2):
+            return "connected"
+    except (TimeoutError, OSError, ValueError):
+        return "unreachable"
+
+
+def _otlp_status_text() -> str:
+    import os as _os
+    endpoint = _os.environ.get("AE_OTLP_ENDPOINT", "").strip()
+    if not endpoint:
+        return "AE_OTLP_ENDPOINT 未设置"
+    from urllib.parse import urlparse
+    parsed = urlparse(endpoint)
+    host = parsed.hostname or "localhost"
+    port = parsed.port or 4317
+    return f"{host}:{port}"
+
+
+def _setup_observability() -> None:
+    """启动 observability 栈 (Jaeger container).
+
+    Phase 43 T204: 检测 Docker → 检查 compose 文件 → docker compose up → 等待就绪。
+    Docker 不可用时降级为手动指引，不报错退出。
+    """
+    import shutil
+    import subprocess
+    import time
+    from pathlib import Path as _Path
+
+    # 1. 检测 Docker
+    if shutil.which("docker") is None:
+        click.echo("✗ Docker 未安装。请先安装 Docker Desktop:")
+        click.echo("  https://docs.docker.com/desktop/")
+        click.echo("  安装后运行: ae doctor --setup-observability")
+        return
+
+    # 2. 检查 collector 是否已在运行
+    if _check_otlp_connectivity() == "connected":
+        click.echo("✓ OTLP collector 已在运行")
+        click.echo(f"  endpoint: {_otlp_status_text()}")
+        click.echo("  Jaeger UI: http://localhost:16686")
+        return
+
+    # 3. 定位 compose 文件
+    compose_file = _Path(__file__).parent.parent.parent / "docker-compose.observability.yml"
+    if not compose_file.exists():
+        click.echo(f"✗ 未找到 {compose_file}")
+        click.echo("  请确认项目根目录存在 docker-compose.observability.yml")
+        return
+
+    # 4. 启动
+    click.echo("→ 启动 Jaeger collector...")
+    try:
+        result = subprocess.run(
+            ["docker", "compose", "-f", str(compose_file), "up", "-d"],
+            capture_output=True, text=True, timeout=60,
+        )
+        if result.returncode != 0:
+            click.echo(f"✗ docker compose 启动失败:\n{result.stderr}")
+            return
+    except (subprocess.TimeoutExpired, OSError) as e:
+        click.echo(f"✗ docker compose 执行失败: {e}")
+        return
+
+    # 5. 等待就绪
+    click.echo("  等待 collector 就绪", nl=False)
+    for _ in range(30):
+        if _check_otlp_connectivity() == "connected":
+            click.echo("")
+            click.echo("✓ Jaeger OTLP collector 已启动")
+            click.echo(f"  gRPC endpoint: {_otlp_status_text()}")
+            click.echo("  Jaeger UI: http://localhost:16686")
+            click.echo("")
+            click.echo(f"  现在设置 export AE_OTLP_ENDPOINT=http://{_otlp_status_text()} 即可启用 tracing")
+            return
+        time.sleep(1)
+        click.echo(".", nl=False)
+
+    click.echo("")
+    click.echo("⚠ collector 启动超时 (30s)。请手动检查:")
+    click.echo("  docker ps | grep ae-jaeger")
+    click.echo(f"  docker compose -f {compose_file} logs")
+
+
+def _teardown_observability() -> None:
+    """停止 observability 栈。
+
+    Phase 43 T205: docker compose down → 确认停止。
+    """
+    import subprocess
+    from pathlib import Path as _Path
+
+    compose_file = _Path(__file__).parent.parent.parent / "docker-compose.observability.yml"
+    if not compose_file.exists():
+        click.echo("✗ docker-compose.observability.yml 不存在，无需清理")
+        return
+
+    click.echo("→ 停止 Jaeger collector...")
+    try:
+        result = subprocess.run(
+            ["docker", "compose", "-f", str(compose_file), "down"],
+            capture_output=True, text=True, timeout=30,
+        )
+        if result.returncode == 0:
+            click.echo("✓ Observability 栈已停止")
+        else:
+            click.echo(f"✗ 停止失败:\n{result.stderr}")
+    except (subprocess.TimeoutExpired, OSError) as e:
+        click.echo(f"✗ docker compose 执行失败: {e}")
+
+
+def _init_config(project_root: Path) -> None:
+    """Generate ae.toml template from FeatureManifest.
+
+    Phase 44 T211: 读取 FeatureManifest → 按 category 分组 → 生成 TOML 模板。
+    """
+    from auto_engineering.config.feature_flags import FEATURE_MANIFEST
+
+    toml_path = project_root / "ae.toml"
+    if toml_path.exists():
+        click.echo(f"ae.toml 已存在: {toml_path}")
+        click.echo("如需重新生成，请先删除已有文件")
+        return
+
+    # Group by category
+    categories: dict[str, list[tuple[str, str, str]]] = {}
+    cat_order = ["observability", "debugging", "safety", "performance", "threshold"]
+    for f in FEATURE_MANIFEST:
+        if f.category not in categories:
+            categories[f.category] = []
+        categories[f.category].append((f.key, f.description, f.default_value))
+
+    lines: list[str] = [
+        "# Auto-Engineering 项目配置",
+        f"# 生成: ae doctor --init-config",
+        "# 优先级: 环境变量 > ae.toml > 内置默认值",
+        "# 编辑此文件取消注释所需功能，然后运行 /ae:dev-loop",
+        "",
+    ]
+
+    for cat in cat_order:
+        if cat not in categories:
+            continue
+        lines.append(f"[{cat}]")
+        for key, desc, default in categories[cat]:
+            if default:
+                lines.append(f"# {key} = \"{default}\"  # {desc}")
+            else:
+                lines.append(f"# {key} = \"\"  # {desc} (无默认值)")
+        lines.append("")
+
+    toml_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    click.echo(f"✓ ae.toml 已生成: {toml_path}")
+    click.echo(f"  共 {len(FEATURE_MANIFEST)} 个功能开关，默认全部注释")
+    click.echo("  编辑此文件取消注释所需功能，保存后生效")
+
+
+def _run_wizard(project_root: Path) -> None:
+    """Interactive configuration wizard (Phase 45 T213).
+
+    Reads current ae.toml as defaults, guides user through category-level
+    feature selection, saves to ae.toml.
+    """
+    import os as _os
+
+    from auto_engineering.config.feature_flags import FEATURE_MANIFEST
+
+    # Load current values as defaults
+    current: dict[str, str] = {}
+    toml_path = project_root / "ae.toml"
+    if toml_path.exists():
+        try:
+            from auto_engineering.config.ae_config import AeConfig
+            ae = AeConfig(project_root)
+            for f in FEATURE_MANIFEST:
+                current[f.key] = ae.get(f.key)
+        except (ImportError, ValueError, OSError):
+            pass
+
+    selected: dict[str, str] = {}
+    cat_order = ["observability", "debugging", "safety", "performance", "threshold"]
+    cat_names = {
+        "observability": "可观测性", "debugging": "调试",
+        "safety": "安全", "performance": "性能", "threshold": "阈值",
+    }
+
+    click.echo("")
+    click.echo("═══ Auto-Engineering 配置向导 ═══")
+    if toml_path.exists():
+        click.echo(f"检测到 ae.toml，将在此基础上修改")
+    click.echo("按 Ctrl+C 随时退出，修改不会保存")
+    click.echo("")
+
+    for cat in cat_order:
+        features = [(f.key, f.description, f.default_value) for f in FEATURE_MANIFEST if f.category == cat]
+        if not features:
+            continue
+
+        click.echo(f"── {cat_names.get(cat, cat)} ──")
+        for key, desc, default in features:
+            cur = current.get(key, default)
+            marker = "✓" if cur and cur != "0" and cur != "" else "✗"
+            click.echo(f"  [{marker}] {desc} (当前: {cur or '未设置'})")
+        click.echo("")
+
+        choice = click.prompt(
+            f"  全部启用? [y=全部启用 / N=全部跳过 / e=逐项选择]",
+            default="N", show_default=False,
+        ).strip().lower()
+
+        if choice == "y":
+            for key, desc, default in features:
+                selected[key] = "1" if default != "" else "1"
+        elif choice == "e":
+            for key, desc, default in features:
+                cur = current.get(key, default)
+                default_yn = "y" if (cur and cur != "0" and cur != "") else "n"
+                yn = click.prompt(
+                    f"    启用 {desc}? [y/N]", default=default_yn, show_default=False,
+                ).strip().lower()
+                if yn == "y":
+                    selected[key] = cur if cur else "1"
+                else:
+                    selected[key] = "0"
+        else:
+            for key, desc, default in features:
+                selected[key] = "0"
+
+    # Preview
+    click.echo("")
+    click.echo("── 配置预览 ──")
+    active_count = 0
+    for f in FEATURE_MANIFEST:
+        val = selected.get(f.key, "0")
+        active = val and val != "0" and val != ""
+        if active:
+            active_count += 1
+            click.echo(f"  ✓ {f.description}")
+    click.echo(f"  {active_count}/{len(FEATURE_MANIFEST)} features active")
+    click.echo("")
+
+    save = click.confirm("保存到 ae.toml?", default=True)
+    if not save:
+        click.echo("已取消，未保存")
+        return
+
+    # Write ae.toml
+    cat_feature_map: dict[str, list[tuple[str, str, str]]] = {}
+    for f in FEATURE_MANIFEST:
+        if f.category not in cat_feature_map:
+            cat_feature_map[f.category] = []
+        cat_feature_map[f.category].append((f.key, f.description, selected.get(f.key, "0")))
+
+    lines = [
+        "# Auto-Engineering 项目配置",
+        f"# 生成: ae doctor --wizard ({active_count}/{len(FEATURE_MANIFEST)} features active)",
+        "# 优先级: 环境变量 > ae.toml > 内置默认值",
+        "",
+    ]
+    for cat in cat_order:
+        if cat not in cat_feature_map:
+            continue
+        lines.append(f"[{cat}]")
+        for key, desc, val in cat_feature_map[cat]:
+            if val and val != "0":
+                lines.append(f"{key} = \"{val}\"  # {desc}")
+            else:
+                lines.append(f"# {key} = \"\"  # {desc} (已禁用)")
+        lines.append("")
+
+    toml_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    click.echo(f"✓ 配置已保存 ({active_count}/{len(FEATURE_MANIFEST)} features active)")
+    click.echo(f"  现在运行 /ae:dev-loop 即可自动加载")
 
 
 def register_doctor_command(main: click.Group) -> None:
@@ -269,8 +620,52 @@ def register_doctor_command(main: click.Group) -> None:
         default=None,
         help="项目根目录 (默认 cwd)",
     )
-    def doctor(project_root: str) -> None:
-        """环境预检 — Python/uv/git/sqlite3/.ae-state + init-manifest (IL-AC-01)."""
+    @click.option(
+        "--wizard",
+        is_flag=True,
+        help="Phase 45: 交互式配置向导",
+    )
+    @click.option(
+        "--init-config",
+        is_flag=True,
+        help="Phase 44: 生成 ae.toml 配置文件模板",
+    )
+    @click.option(
+        "--setup-observability",
+        is_flag=True,
+        help="Phase 43: 启动 observability 栈 (Jaeger collector)",
+    )
+    @click.option(
+        "--teardown-observability",
+        is_flag=True,
+        help="Phase 43: 停止 observability 栈",
+    )
+    def doctor(project_root: str, wizard: bool, init_config: bool, setup_observability: bool, teardown_observability: bool) -> None:
+        """环境预检 — Python/uv/git/sqlite3/.ae-state + init-manifest (IL-AC-01).
+
+        --wizard: 交互式配置向导
+        --init-config: 生成 ae.toml 配置文件模板
+        --setup-observability: 一键启动 OTLP collector (Jaeger)
+        --teardown-observability: 停止 OTLP collector
+        """
+        # Phase 45: 配置向导
+        if wizard:
+            root = Path(project_root).resolve() if project_root else Path.cwd()
+            _run_wizard(root)
+            return
+        # Phase 44: 配置文件生成
+        if init_config:
+            root = Path(project_root).resolve() if project_root else Path.cwd()
+            _init_config(root)
+            return
+        # Phase 43: 可观测性生命周期管理
+        if setup_observability:
+            _setup_observability()
+            return
+        if teardown_observability:
+            _teardown_observability()
+            return
+
         root = Path(project_root).resolve() if project_root else Path.cwd()
         exit_code, results = run_doctor_checks(root)
         for ok, line in results:

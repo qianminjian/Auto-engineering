@@ -232,8 +232,8 @@ def test_migrate_round_trip_loadable(tmp_path: Path) -> None:
 
 
 def test_cli_checkpoint_v2_migrate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """CLI ae checkpoint v2 migrate 子命令能调用 migrate_v1_to_v2 并输出 checkpoint_id."""
-    from auto_engineering.cli import main
+    """Phase 40: ae checkpoint CLI 已删除 — 直接测试 migrate_v1_to_v2 函数."""
+    from auto_engineering.loop.checkpoint.migration import migrate_v1_to_v2
 
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
     (tmp_path / ".git").mkdir()
@@ -259,10 +259,8 @@ def test_cli_checkpoint_v2_migrate(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     src.write_text(json.dumps(v1_data))
     dst = tmp_path / "v2.sqlite"
 
-    runner = CliRunner()
-    result = runner.invoke(main, ["checkpoint", "v2", "migrate", str(src), str(dst)])
-    assert result.exit_code == 0, f"CLI failed: {result.output}"
-    assert "Migrated" in result.output
+    cp_id = migrate_v1_to_v2(src, dst)
+    assert cp_id is not None, "migrate_v1_to_v2 should return checkpoint_id"
 
     # 验证 SQLite 真的存了
     assert dst.exists()

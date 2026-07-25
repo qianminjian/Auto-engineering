@@ -26,31 +26,28 @@ from __future__ import annotations
 
 import json
 import logging
-from abc import ABC, abstractmethod
-from dataclasses import dataclass
 from pathlib import Path
 
 _logger = logging.getLogger(__name__)
-from typing import TYPE_CHECKING, ClassVar, Literal
+from typing import TYPE_CHECKING, ClassVar  # noqa: E402
 
-from auto_engineering.engine.gap_analysis import (
+from auto_engineering.engine.gap_analysis import (  # noqa: E402
     _BLOCKING_FORBIDDEN as _BLOCKING_FORBIDDEN_RESOLUTIONS,
 )
-from auto_engineering.shared.guardrail import (
-    Action,
-    Guardrail,
-    GuardrailResult,
-)
-from auto_engineering.loop.guardrails.stateful import (
+from auto_engineering.loop.guardrails.stateful import (  # noqa: E402
     FreshGuardrail,
     REDGuardrail,
     RegressionGuardrail,
 )
-from auto_engineering.utils.git import run_git as _run_git
-from auto_engineering.utils.git import run_git_diff as _run_git_diff
+from auto_engineering.shared.guardrail import (  # noqa: E402
+    Action,
+    Guardrail,
+    GuardrailResult,
+)
+from auto_engineering.utils.git import run_git as _run_git  # noqa: E402
+from auto_engineering.utils.git import run_git_diff as _run_git_diff  # noqa: E402
 
 __all__ = [
-    "MAX_RETRY_PER_STAGE",
     "Action",
     "AuditTimingGuardrail",
     "FileAccessGuardrail",
@@ -72,9 +69,6 @@ if TYPE_CHECKING:
 
 # P1-3: GuardrailResult + Guardrail ABC 已提取到 shared/guardrail.py
 # Action / GuardrailResult / Guardrail 从共享模块导入
-# 本地仅保留 Action re-export + MAX_RETRY_PER_STAGE + 具体 Guardrail 实现
-
-MAX_RETRY_PER_STAGE = 3
 
 
 # ==================== G1-G5 内置 Guardrail ====================
@@ -283,7 +277,7 @@ class GitClean(Guardrail):
             )
         # 只检查 tracked 文件的变更 (M/A/D/R/C), 忽略 untracked (??) 和 ignored (!!)
         dirty_lines = [
-            l for l in stdout.splitlines()
+            l for l in stdout.splitlines()  # noqa: E741
             if l.strip() and not l.startswith("??") and not l.startswith("!!")
         ]
         if dirty_lines:
@@ -548,7 +542,7 @@ class AuditTimingGuardrail(Guardrail):
         "system_verifier", "system_deep_audit", "critic",
     )
 
-    _STAGE_MIN_SECONDS: dict[str, float] = {
+    _STAGE_MIN_SECONDS: dict[str, float] = {  # noqa: RUF012
         "component_verifier": 5.0,
         "plate_deep_audit": 10.0,
         "system_verifier": 5.0,
@@ -559,7 +553,7 @@ class AuditTimingGuardrail(Guardrail):
     def check(
         self,
         stage: str,
-        state: "EngineState",
+        state: EngineState,
         project_root: Path | None = None,
     ) -> GuardrailResult:
         import time

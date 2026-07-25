@@ -17,7 +17,7 @@ v2.3 P0-A: CheckpointEnvelope (原 LoopState) 从 v2.0 Pydantic 重命名, 明�
 内部类型通过子模块访问, 不通过 __init__ 导出.
 """
 
-from auto_engineering.loop.audit_history import AuditHistory
+from auto_engineering.loop.audit_history import AuditHistory  # noqa: I001
 from auto_engineering.loop.checkpoint import (
     Checkpoint,
     SQLiteCheckpointStore,
@@ -31,9 +31,7 @@ from auto_engineering.loop.plan import (
     Plan,
     Task,
 )
-from auto_engineering.loop.round import (
-    RoundResult,
-)
+# RoundResult 虚化代码已移除 (V1 ghost code cleanup, 2026-07-25)
 
 # v2.3 P0-A (BEACON 决策 23): CheckpointEnvelope / Channel 不再从 __init__ 导出
 # (消除与 engine.state.LoopState 同名双义). 需显式:
@@ -48,7 +46,6 @@ __all__ = [
     "ConvergenceJudge",
     "Plan",
     "RoundHistory",
-    "RoundResult",
     "SQLiteCheckpointStore",
     "Task",
 ]

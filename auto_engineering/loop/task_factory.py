@@ -188,13 +188,13 @@ def validate_role_output(role: str, values: dict) -> dict:
 
     try:
         if role == "architect":
-            from auto_engineering.agents.output_models import ArchitectOutput
+            from auto_engineering.loop.output_models import ArchitectOutput
             return ArchitectOutput.model_validate(values).model_dump()
         elif role == "developer":
-            from auto_engineering.agents.output_models import DeveloperOutput
+            from auto_engineering.loop.output_models import DeveloperOutput
             return DeveloperOutput.model_validate(values).model_dump()
         elif role == "critic":
-            from auto_engineering.agents.output_models import CriticOutput
+            from auto_engineering.loop.output_models import CriticOutput
             return CriticOutput.model_validate(values).model_dump()
     except ValidationError:
         logging.getLogger("ae.loop.task_factory").warning(

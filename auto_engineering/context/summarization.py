@@ -13,10 +13,39 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-
-from auto_engineering.providers.base import LLMProvider, LLMResponse
+from typing import Protocol, runtime_checkable
 
 logger = logging.getLogger(__name__)
+
+
+# ── Inlined from providers/base.py (Phase 40 consolidation) ──
+
+@dataclass
+class ToolUseBlock:
+    """Unified tool-use representation across LLM providers."""
+    id: str
+    name: str
+    input: dict = field(default_factory=dict)
+
+
+@dataclass
+class LLMResponse:
+    """Unified LLM response across providers."""
+    content: str = ""
+    model: str = ""
+    stop_reason: str = "end_turn"
+    tool_use_blocks: list[ToolUseBlock] = field(default_factory=list)
+    usage: dict = field(default_factory=dict)
+
+
+@runtime_checkable
+class LLMProvider(Protocol):
+    """Protocol for LLM provider backends."""
+    async def create_message(
+        self, system: str, messages: list[dict],
+        tools: list[dict] | None = None, model: str = "", max_tokens: int = 4096,
+    ) -> LLMResponse: ...
+    def close(self) -> None: ...
 
 _SUMMARIZE_SYSTEM_PROMPT = """\
 You are a session summarizer for a TDD development loop. Given the conversation

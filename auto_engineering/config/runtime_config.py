@@ -1,14 +1,12 @@
 """RuntimeConfig — centralized env var access (P0-6).
 
-Replaces scattered ``os.environ.get()`` calls with a single injectable config object.
-Construct once at CLI entry, pass to all components via ``__init__``.
+Phase 44: 所有 property 默认值从 FeatureFlag.default_value 读取（SSOT）。
+不再在 RuntimeConfig 中硬编码默认值。
 
 Usage::
 
-    config = RuntimeConfig()                    # reads os.environ
+    config = RuntimeConfig()                    # reads os.environ + FeatureFlag defaults
     config = RuntimeConfig(environ=test_env)    # test injection
-    config.is_active("AE_METRICS")              # feature flag check
-    config.get("AE_PII_OUTBOUND", "redact")     # raw env access
     config.pii_enabled                          # typed shortcut
 """
 
@@ -18,12 +16,18 @@ import os as _os
 from dataclasses import dataclass, field
 
 
+def _default(key: str) -> str:
+    """Return FeatureFlag.default_value for *key* (Phase 44 SSOT)."""
+    from auto_engineering.config.feature_flags import check_feature
+    return check_feature(key).default_value
+
+
 @dataclass(frozen=True)
 class RuntimeConfig:
     """Immutable runtime configuration wrapping environment variables.
 
     Construct once at CLI entry point, inject into TickOrchestrator,
-    StandaloneDriver, tools, gates, and guardrails via __init__.
+    tools, gates, and guardrails via __init__.
     """
 
     environ: dict[str, str] = field(
@@ -33,101 +37,79 @@ class RuntimeConfig:
 
     @property
     def pii_enabled(self) -> bool:
-        """AE_PII_ENABLED — master PII protection switch. Default True."""
-        return self.get("AE_PII_ENABLED", "1").strip() != "0"
+        return self.get("AE_PII_ENABLED", _default("AE_PII_ENABLED")).strip() != "0"
 
     @property
     def pii_outbound(self) -> str:
-        """AE_PII_OUTBOUND mode: off / warn / block / redact. Default redact."""
-        return self.get("AE_PII_OUTBOUND", "redact")
+        return self.get("AE_PII_OUTBOUND", _default("AE_PII_OUTBOUND"))
 
     @property
     def pii_inbound(self) -> str:
-        """AE_PII_INBOUND mode: off / warn / block / redact. Default warn."""
-        return self.get("AE_PII_INBOUND", "warn")
+        return self.get("AE_PII_INBOUND", _default("AE_PII_INBOUND"))
 
     @property
     def pii_guardrail(self) -> bool:
-        """AE_PII_GUARDRAIL — PII file content scanning. Default True."""
-        return self.get("AE_PII_GUARDRAIL", "1").strip() != "0"
+        return self.get("AE_PII_GUARDRAIL", _default("AE_PII_GUARDRAIL")).strip() != "0"
 
     @property
     def pii_guardrail_mode(self) -> str:
-        """AE_PII_GUARDRAIL_MODE: warn / block. Default warn."""
-        return self.get("AE_PII_GUARDRAIL_MODE", "warn")
+        return self.get("AE_PII_GUARDRAIL_MODE", _default("AE_PII_GUARDRAIL_MODE"))
 
     @property
     def production_enabled(self) -> bool:
-        """AE_PRODUCTION — production safety mode (strict RED + gate hardening)."""
-        return self.get("AE_PRODUCTION", "").strip() == "1"
+        return self.get("AE_PRODUCTION", _default("AE_PRODUCTION")).strip() == "1"
 
     @property
     def metrics_enabled(self) -> bool:
-        """AE_METRICS — metrics collection active."""
-        return self.get("AE_METRICS", "").strip() == "1"
+        return self.get("AE_METRICS", _default("AE_METRICS")).strip() == "1"
 
     @property
     def token_tracking_enabled(self) -> bool:
-        """AE_TOKEN_TRACKING — per-tick token JSONL collection."""
-        return self.get("AE_TOKEN_TRACKING", "").strip() == "1"
+        return self.get("AE_TOKEN_TRACKING", _default("AE_TOKEN_TRACKING")).strip() == "1"
 
     @property
     def strict_red(self) -> bool:
-        """AE_STRICT_RED — strict TDD REDGuardrail test-first enforcement."""
-        return self.get("AE_STRICT_RED", "").strip() == "1"
+        return self.get("AE_STRICT_RED", _default("AE_STRICT_RED")).strip() == "1"
 
     @property
     def production_mode(self) -> bool:
-        """AE_PRODUCTION — strict REDGuardrail + block gate degradation."""
-        return self.get("AE_PRODUCTION", "").strip() == "1"
+        """Phase 44: AE_PRODUCTION duplicate. Alias for production_enabled."""
+        return self.production_enabled
 
     @property
     def debug_enabled(self) -> bool:
-        """AE_DEBUG — debug tracing + detailed logging."""
-        return self.get("AE_DEBUG", "").strip() == "1"
+        return self.get("AE_DEBUG", _default("AE_DEBUG")).strip() == "1"
 
     @property
     def audit_log_enabled(self) -> bool:
-        """AE_AUDIT_LOG — LLM call audit logging."""
-        return self.get("AE_AUDIT_LOG", "").strip() == "1"
+        return self.get("AE_AUDIT_LOG", _default("AE_AUDIT_LOG")).strip() == "1"
 
     @property
     def audit_log_dir(self) -> str | None:
-        """AE_AUDIT_LOG_DIR — override audit log output directory."""
-        val = self.get("AE_AUDIT_LOG_DIR", "").strip()
+        val = self.get("AE_AUDIT_LOG_DIR", _default("AE_AUDIT_LOG_DIR")).strip()
         return val if val else None
 
     @property
-    def cache_control_enabled(self) -> bool:
-        """AE_CACHE_CONTROL — Anthropic prompt caching. Default True."""
-        return self.get("AE_CACHE_CONTROL", "").strip() != "0"
-
-    @property
     def gate_timeout(self) -> int | None:
-        """AE_GATE_TIMEOUT — gate execution timeout in seconds."""
-        val = self.get("AE_GATE_TIMEOUT", "").strip()
+        val = self.get("AE_GATE_TIMEOUT", _default("AE_GATE_TIMEOUT")).strip()
         return int(val) if val else None
 
     @property
     def log_level(self) -> str:
-        """AE_LOG_LEVEL — logging level. Default INFO."""
-        return self.get("AE_LOG_LEVEL", "INFO").strip().upper()
+        return self.get("AE_LOG_LEVEL", _default("AE_LOG_LEVEL")).strip().upper()
 
     @property
     def otlp_endpoint(self) -> str | None:
-        """AE_OTLP_ENDPOINT — OTLP tracing collector endpoint."""
-        val = self.get("AE_OTLP_ENDPOINT", "").strip()
+        val = self.get("AE_OTLP_ENDPOINT", _default("AE_OTLP_ENDPOINT")).strip()
         return val if val else None
 
     @property
     def llm_provider(self) -> str:
-        """AE_LLM_PROVIDER — default LLM provider."""
-        return self.get("AE_LLM_PROVIDER", "")
+        return self.get("AE_LLM_PROVIDER", _default("AE_LLM_PROVIDER"))
 
     @property
     def max_tool_calls(self) -> int | None:
-        """AE_MAX_TOOL_CALLS — max tool calls per agent."""
-        val = self.get("AE_MAX_TOOL_CALLS", "").strip()
+        val = self.get("AE_MAX_TOOL_CALLS", _default("AE_MAX_TOOL_CALLS")).strip()
         return int(val) if val else None
 
     # ── provider credentials (NOT feature flags — secrets) ──

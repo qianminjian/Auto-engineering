@@ -5,8 +5,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 from auto_engineering.loop.debug_tracer import DebugTracer
 
 

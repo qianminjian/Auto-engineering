@@ -89,6 +89,22 @@ def _build_injectables(
     tracer = None
     otlp_endpoint = cfg.otlp_endpoint
     if otlp_endpoint:
+        # Phase 43 T207: 启动前探测 collector 连通性，不可达时 stderr 引导
+        import socket as _socket
+        from urllib.parse import urlparse as _urlparse
+        try:
+            _parsed = _urlparse(otlp_endpoint)
+            _host = _parsed.hostname or "localhost"
+            _port = _parsed.port or 4317
+            with _socket.create_connection((_host, _port), timeout=2):
+                pass
+        except (TimeoutError, OSError, ValueError):
+            _logger.warning(
+                "OTLP collector %s 不可达 — tracing 已降级为 NoOp", otlp_endpoint
+            )
+            _logger.warning(
+                "  运行 ae doctor --setup-observability 启动 collector"
+            )
         from auto_engineering.observability.tracing import setup_tracing
         tracer = setup_tracing(service_name="auto-engineering", otlp_endpoint=otlp_endpoint)
 
@@ -117,6 +133,68 @@ def _build_injectables(
     return result
 
 
+def _check_config_gate(root: Path) -> bool:
+    """Phase 45 T214: ae.toml 不存在时强制暂停确认配置。
+
+    Returns:
+        True  — 继续启动
+        False — 用户选择退出（wizard 后需重新启动）
+    """
+    import os as _os
+    import click as _click
+
+    if _os.environ.get("AE_SKIP_CONFIG_CHECK") == "1":
+        return True
+
+    toml_path = root / "ae.toml"
+    if toml_path.exists():
+        return True
+
+    from auto_engineering.config.feature_flags import FEATURE_MANIFEST, get_feature_status
+
+    status = get_feature_status()
+    active = [k for k, v in status.items() if v.get("active")]
+    inactive = [k for k, v in status.items() if not v.get("active")]
+
+    _click.echo("", err=True)
+    _click.echo("⚠  ae.toml 未配置 — 将使用内置默认值启动", err=True)
+    _click.echo("", err=True)
+    _click.echo(f"当前生效的功能 (仅内置默认值, {len(active)}/{len(FEATURE_MANIFEST)} active):", err=True)
+    for f in FEATURE_MANIFEST:
+        if f.key in active:
+            _click.echo(f"  ✓ {f.description}", err=True)
+    _click.echo("", err=True)
+    _click.echo("以下功能未启用，开发过程将缺少:", err=True)
+    missing = ["无审计日志 → 无法回溯 LLM 调用", "无度量采集 → 无 AI Coding 信号数据",
+               "无 DebugTracer → 故障时缺少诊断信息", "无 Token 采集 → 无用量数据"]
+    for m in missing:
+        _click.echo(f"  - {m}", err=True)
+    _click.echo("", err=True)
+    _click.echo("选择:", err=True)
+    _click.echo("  [1] 运行 ae doctor --wizard 配置后重新启动", err=True)
+    _click.echo("  [2] 运行 ae doctor --init-config 生成模板后自行编辑", err=True)
+    _click.echo("  [3] 使用当前默认值继续 (不推荐)", err=True)
+    _click.echo("", err=True)
+
+    choice = _click.prompt("输入 1/2/3", type=int, default=3, err=True)
+    if choice == 1:
+        _click.echo("→ 启动配置向导...", err=True)
+        from auto_engineering.cli.doctor import _run_wizard
+        _run_wizard(root)
+        if (root / "ae.toml").exists():
+            _click.echo("✓ ae.toml 已保存，请重新运行 ae dev-loop --init", err=True)
+        return False
+    elif choice == 2:
+        _click.echo("→ 生成 ae.toml 模板...", err=True)
+        from auto_engineering.cli.doctor import _init_config
+        _init_config(root)
+        _click.echo("编辑 ae.toml 后重新运行", err=True)
+        return False
+    else:
+        _click.echo(f"[config] user accepted defaults, {len(active)}/{len(FEATURE_MANIFEST)} active", err=True)
+        return True
+
+
 def run_tick_init(
     requirement: str, design_doc_path: str | None, root: Path, max_rounds: int,
     debug: bool = False, debug_dir: str | None = None,
@@ -124,10 +202,14 @@ def run_tick_init(
     escalate: bool = False,
 ) -> None:
     """ae dev-loop --init: 初始化 tick loop, 输出第一个 action JSON (stdout 契约)."""
+    import click
+
+    # Phase 45: 配置闸门
+    if not _check_config_gate(root):
+        return
+
     import hashlib
     import json
-
-    import click
 
     from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
     from auto_engineering.loop.tick_orchestrator import TickOrchestrator
@@ -167,6 +249,13 @@ def run_tick_init(
         from auto_engineering.config.feature_flags import feature_status_oneline, feature_warnings
         cfg = get_default_config()
         click.echo(feature_status_oneline(cfg.environ), err=True)
+        # Phase 45 T216: 配置来源
+        toml_path = root / "ae.toml"
+        if toml_path.exists():
+            active_count = sum(1 for v in cfg.environ.values() if v == "1" or v not in ("", "0"))
+            click.echo(f"  (配置来源: ae.toml, {active_count}/19 active)", err=True)
+        else:
+            click.echo("  (配置来源: 内置默认值)", err=True)
         for w in feature_warnings(cfg.environ):
             click.echo(f"  [WARN] {w}", err=True)
 
@@ -323,161 +412,10 @@ def _resolve_checkpoint_by_thread_id(
                 state = _json.loads(row[1])
                 if state.get("thread_id") == candidate:
                     return row[0]
-            except (json.JSONDecodeError, KeyError, TypeError):
+            except (_json.JSONDecodeError, KeyError, TypeError):
                 continue
     except (OSError, ValueError, KeyError, TypeError) as e:
         _logger = __import__("logging").getLogger("ae.cli")
         _logger.debug("thread_id fallback lookup failed: %s", e)
     return None
 
-
-
-
-def run_standalone(
-    requirement: str,
-    design_doc: str | None,
-    project_root: Path,
-    max_rounds: int,
-    max_tokens: int,
-    llm_provider: str,
-    resume_id: str | None,
-    debug: bool = False,
-    debug_dir: str | None = None,
-) -> None:
-    """Standalone 模式 (Driver B): 进程内 StandaloneDriver 调 LLM.
-
-    不依赖 Claude Code Agent — 自带 Anthropic API key.
-    """
-    import asyncio
-    import json
-
-    from auto_engineering.agents.base import BaseAgent
-    from auto_engineering.loop.standalone_driver import (
-        StandaloneDriver,
-        _resolve_model,
-        _resolve_provider,
-    )
-    from auto_engineering.loop.tick_orchestrator import TickOrchestrator
-    from auto_engineering.prompts.registry import default_registry
-    from auto_engineering.runtime.runtime import AgentRuntime
-    from auto_engineering.tools.bash_tools import RunBashTool
-    from auto_engineering.tools.file_tools import (
-        EditFileTool,
-        ListDirTool,
-        ReadFileTool,
-        SearchCodeTool,
-        WriteFileTool,
-    )
-    from auto_engineering.tools.git_tools import GitCommitTool, GitDiffTool
-    from auto_engineering.tools.run_tests_tool import RunTestsTool
-
-    inj = _build_injectables(project_root)
-    orch = TickOrchestrator(project_root, debug=debug, debug_dir=debug_dir,
-                            context_offloader=inj["context_offloader"],
-                            audit_logger=inj["audit_logger"],
-                            tracer=inj["tracer"])
-    runtime = AgentRuntime()
-    prompts = default_registry()
-
-    # 通用工具集 (所有 role 共享)
-    base_tools = [
-        ReadFileTool(project_root=project_root),
-        WriteFileTool(project_root=project_root),
-        EditFileTool(project_root=project_root),
-        ListDirTool(project_root=project_root),
-        SearchCodeTool(project_root=project_root),
-        RunBashTool(project_root=project_root),
-        RunTestsTool(project_root=project_root),
-        GitCommitTool(project_root=project_root),
-        GitDiffTool(project_root=project_root),
-    ]
-
-    # v7.8: 按 role 分配工具 — architect 只需探索工具, 不写代码
-    architect_tools = [
-        ReadFileTool(project_root=project_root),
-        ListDirTool(project_root=project_root),
-        SearchCodeTool(project_root=project_root),
-    ]
-    critic_tools = [
-        ReadFileTool(project_root=project_root),
-        ListDirTool(project_root=project_root),
-        SearchCodeTool(project_root=project_root),
-        RunBashTool(project_root=project_root),  # git diff
-    ]
-
-    for role in ("architect", "developer", "critic"):
-        # T59: multi-provider — resolve provider+model per role via env vars
-        provider = _resolve_provider(role)
-        model = _resolve_model(role)
-        system_prompt = prompts.get(role)
-        # v7.8: DeepSeek 常产纯 tool_use 无文本, 软上限 = max_calls//2 易误杀
-        # developer: 30 (warn=15), critic: 15 (warn=7), architect: 15 (warn=7)
-        max_calls = {"architect": 15, "developer": 50, "critic": 15}.get(role, 10)
-        tools = {"architect": architect_tools, "developer": base_tools, "critic": critic_tools}.get(role, base_tools)
-        agent = BaseAgent(
-            llm=provider,
-            system_prompt=system_prompt,
-            role=role,
-            tools=list(tools),
-            model=model,
-            max_tool_calls=max_calls,
-        )
-        runtime.register(role, lambda a=agent: a)
-
-    driver = StandaloneDriver(
-        orchestrator=orch,
-        agent_runtime=runtime,
-        project_root=project_root,
-        max_rounds=max_rounds,
-        max_tokens=max_tokens,
-        design_doc_path=design_doc,
-    )
-
-    # T69a: Activate metrics collector when AE_METRICS=1
-    mc = None
-    req_hash = ""
-    if get_default_config().metrics_enabled:
-        import hashlib
-
-        from auto_engineering.metrics.collector import (
-            MetricsCollector,
-            set_collector,
-        )
-        mc = MetricsCollector(project_root)
-        mc.set_driver_mode("standalone")
-        set_collector(mc)
-        req_hash = hashlib.sha256(requirement.encode()).hexdigest()[:12]
-
-    summary = None  # guard against NameError in finally block
-    try:
-        summary = asyncio.run(driver.resume(resume_id)) if resume_id else driver.run(requirement)
-        # T69a: begin metrics after run() so orch._state.thread_id is available
-        if mc is not None and orch._state is not None:
-            mc.begin_requirement(
-                orch._state.thread_id, req_hash,
-                requirement_category=_infer_category(requirement),
-            )
-    except Exception:
-        # Standalone driver 顶层兜底: 任何未处理异常统一日志 + 干净退出
-        _logger.exception("Standalone driver 运行失败")
-        raise SystemExit(1)
-    finally:
-        # T69a: End metrics requirement
-        if get_default_config().metrics_enabled:
-            from auto_engineering.metrics.collector import get_collector
-            mc = get_collector()
-            if mc is not None:
-                mc.end_requirement(
-                    summary.verdict if summary is not None else "ERROR",
-                    total_ticks=summary.total_ticks if summary is not None else 0,
-                )
-        driver.close() if hasattr(driver, "close") else None
-
-    output = {
-        "status": "completed" if (summary is not None and summary.success) else "failed",
-        "total_ticks": summary.total_ticks if summary is not None else 0,
-        "final_stage": summary.final_stage if summary is not None else "error",
-        "verdict": summary.verdict if summary is not None else "ERROR",
-        "error_message": summary.error_message if summary is not None else "unhandled exception",
-    }
-    print(json.dumps(output, ensure_ascii=False, indent=2))

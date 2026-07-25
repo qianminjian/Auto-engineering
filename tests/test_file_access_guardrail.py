@@ -42,7 +42,7 @@ def _make_state(
     file_list: list[str] | None = None,
 ) -> EngineState:
     """Build minimal EngineState for guardrail testing."""
-    kwargs: dict = dict(
+    kwargs: dict = dict(  # noqa: C408
         requirement="test",
         files_changed=files_changed or [],
         batch_plan=batch_plan or [],

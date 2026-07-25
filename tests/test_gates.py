@@ -365,54 +365,5 @@ class TestCLIStatus:
         assert str(tmp_path) in result.output or "当前目录" in result.output
 
 
-class TestCLICheckpointV2:
-    """CLI: ae checkpoint v2 list/show."""
-
-    def test_checkpoint_v2_list_empty(self, tmp_path: Path, monkeypatch):
-        monkeypatch.chdir(tmp_path)
-        (tmp_path / ".ae-state").mkdir()
-        from auto_engineering.cli import main
-
-        runner = CliRunner()
-        result = runner.invoke(main, ["checkpoint", "v2", "list"])
-        # 接受 0 或 1 退出码(空时 exit 0/1 都可能)
-        assert result.exit_code in (0, 1)
-
-    def test_checkpoint_v2_list_with_db(self, tmp_path: Path, monkeypatch):
-        from auto_engineering.cli import main
-        from auto_engineering.loop.checkpoint import SQLiteCheckpointStore
-
-        monkeypatch.chdir(tmp_path)
-        (tmp_path / ".ae-state").mkdir()
-        # 创建一个 v2 SQLite checkpoint
-        store = SQLiteCheckpointStore(str(tmp_path / ".ae-state" / "v2.db"))
-        store.save(state={"requirement": "test"}, round=1, step=0)
-
-        runner = CliRunner()
-        result = runner.invoke(main, ["checkpoint", "v2", "list"])
-        assert result.exit_code == 0
-
-    def test_checkpoint_v2_show_existing(self, tmp_path: Path, monkeypatch):
-        from auto_engineering.cli import main
-        from auto_engineering.loop.checkpoint import SQLiteCheckpointStore
-
-        monkeypatch.chdir(tmp_path)
-        (tmp_path / ".ae-state").mkdir()
-        store = SQLiteCheckpointStore(str(tmp_path / ".ae-state" / "v2.db"))
-        cp_id = store.save(state={"requirement": "demo"}, round=1, step=0)
-
-        runner = CliRunner()
-        result = runner.invoke(main, ["checkpoint", "v2", "show", cp_id])
-        assert result.exit_code == 0
-        assert cp_id in result.output or "demo" in result.output or "round" in result.output.lower()
-
-    def test_checkpoint_v2_show_missing(self, tmp_path: Path, monkeypatch):
-        from auto_engineering.cli import main
-
-        monkeypatch.chdir(tmp_path)
-        (tmp_path / ".ae-state").mkdir()
-
-        runner = CliRunner()
-        result = runner.invoke(main, ["checkpoint", "v2", "show", "nonexistent-id"])
-        # 不存在的 ID 应该 fail
-        assert result.exit_code != 0
+# Phase 40: ae checkpoint 已删除 — TestCLICheckpointV2 测试已移除
+# checkpoint SQLite store 功能保留，仅 CLI 入口删除

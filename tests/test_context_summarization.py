@@ -2,13 +2,10 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock
-
 import pytest
 
 from auto_engineering.context.summarization import SessionSummarizer, SessionSummary
-from auto_engineering.providers.base import LLMProvider, LLMResponse
-
+from auto_engineering.context.summarization import LLMProvider, LLMResponse
 
 _DEFAULT_RESPONSE = (
     "DECISION: Used Decimal for monetary calculations\n"

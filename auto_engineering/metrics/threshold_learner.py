@@ -11,9 +11,10 @@ _build_action 贝叶斯阈值调整路径 (line 1803)。
 from __future__ import annotations
 
 import json
-from auto_engineering.utils.file_utils import safe_json_load
 from dataclasses import dataclass
 from pathlib import Path
+
+from auto_engineering.utils.file_utils import safe_json_load
 
 
 @dataclass

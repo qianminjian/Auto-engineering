@@ -6,8 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from auto_engineering.metrics.ratchet import RatchetController, RatchetDecision
-from auto_engineering.metrics.threshold_learner import ThresholdLearner
+from auto_engineering.metrics.ratchet import RatchetController
 from auto_engineering.metrics.rule_discoverer import CandidateRule
 
 

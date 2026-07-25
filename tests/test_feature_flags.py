@@ -1,21 +1,45 @@
 """T114: FeatureManifest 单元测试.
 
 Covers: FeatureFlag dataclass, FEATURE_MANIFEST completeness, get_feature_status,
-feature check, manifest registration enforcement.
+feature check, manifest registration enforcement, dynamic RuntimeConfig scanning (AD4).
 """
 
-import os
-from unittest.mock import patch
+import inspect
+import re
 
 import pytest
 
 from auto_engineering.config.feature_flags import (
     FEATURE_MANIFEST,
     FeatureFlag,
+    _count_requirements,
     check_feature,
     get_feature_status,
     list_categories,
 )
+
+
+def _ae_keys_from_runtime_config() -> set[str]:
+    """AD4: Dynamically scan RuntimeConfig source for all AE_XXX env var accesses.
+
+    Uses ``inspect.getsource`` to parse the RuntimeConfig class body, extracting
+    every ``self.get("AE_XXX")`` and ``self.is_active("AE_XXX")`` key.  This
+    replaces the hardcoded EXPECTED_KEYS set — when a developer adds a new
+    ``self.get("AE_NEW_FLAG")`` property to RuntimeConfig, this test automatically
+    picks it up.
+
+    Returns:
+        Set of AE_* env var key strings used by RuntimeConfig.
+    """
+    from auto_engineering.config import runtime_config
+    source = inspect.getsource(runtime_config.RuntimeConfig)
+    keys: set[str] = set()
+    for match in re.finditer(
+        r'self\.(?:get|is_active)\("([A-Z][A-Z_0-9]+)"',
+        source,
+    ):
+        keys.add(match.group(1))
+    return {k for k in keys if k.startswith("AE_")}
 
 
 class TestFeatureFlag:
@@ -40,24 +64,54 @@ class TestFeatureFlag:
 
 
 class TestFeatureManifestCompleteness:
-    """All env vars defined in this test's expected set must exist in FEATURE_MANIFEST."""
+    """AD4: Dynamic RuntimeConfig scanning — every AE_* key used in RuntimeConfig
+    must be registered in FEATURE_MANIFEST.
 
-    EXPECTED_KEYS = {
-        "AE_AUDIT_LOG", "AE_METRICS", "AE_OTLP_ENDPOINT",
-        "AE_DEBUG", "AE_LOG_LEVEL",
-        "AE_CACHE_CONTROL", "AE_MAX_TOOL_CALLS",
-        "AE_LLM_PROVIDER", "AE_MODEL_ROLE", "AE_PROVIDER_ROLE",
-        "AE_GATE_TIMEOUT", "AE_PRODUCTION", "AE_STRICT_RED",
-        "AE_TOKEN_TRACKING",
-        "AE_PII_ENABLED", "AE_PII_GUARDRAIL", "AE_PII_GUARDRAIL_MODE",
-        "AE_PII_INBOUND", "AE_PII_OUTBOUND",
-        "AE_AUDIT_LOG_DIR",
-    }
+    When a developer adds a new ``@property`` with ``self.get("AE_NEW_FLAG")`` to
+    RuntimeConfig, this test automatically picks it up from the source code —
+    no need to manually update EXPECTED_KEYS.
+    """
 
-    def test_all_expected_keys_registered(self):
+    def test_all_runtime_config_keys_registered_in_manifest(self):
+        """Each AE_* key accessed in RuntimeConfig must have a FeatureFlag entry.
+
+        Only enforces the RuntimeConfig → FEATURE_MANIFEST direction.
+        Extra entries in FEATURE_MANIFEST that aren't in RuntimeConfig may be
+        legitimately used elsewhere (e.g. standalone_driver prefix scanning,
+        AE_MODEL_ROLE/AE_PROVIDER_ROLE) — those are checked separately.
+        """
+        rt_keys = _ae_keys_from_runtime_config()
         manifest_keys = {f.key for f in FEATURE_MANIFEST}
-        missing = self.EXPECTED_KEYS - manifest_keys
-        assert not missing, f"Env vars not in FEATURE_MANIFEST: {missing}"
+        missing = rt_keys - manifest_keys
+        assert not missing, (
+            f"RuntimeConfig 使用了以下 AE_* key 但 FEATURE_MANIFEST 中未注册: {sorted(missing)}\n"
+            f"  请在 auto_engineering/config/feature_flags.py 的 FEATURE_MANIFEST 中注册"
+        )
+
+    def test_feature_manifest_entries_have_usage_path(self):
+        """FEATURE_MANIFEST 中每个条目应有明确的使用路径 (AD4).
+
+        不阻断 CI — 仅报告无明确路径的条目供人工审查。
+        部分 key（如 AE_MODEL_ROLE）通过 prefix scanning 使用，
+        不在 RuntimeConfig 直接访问。
+        """
+        rt_keys = _ae_keys_from_runtime_config()
+        manifest_keys = {f.key for f in FEATURE_MANIFEST}
+        extra = manifest_keys - rt_keys
+        # Keys known to be used via dynamic/prefix scanning outside RuntimeConfig
+        _DYNAMIC_KEYS = {
+            "AE_MODEL_ROLE",    # standalone_driver scans AE_MODEL_<ROLE>_UPPER
+            "AE_PROVIDER_ROLE",  # standalone_driver scans AE_PROVIDER_<ROLE>_UPPER
+        }
+        unverified = extra - _DYNAMIC_KEYS
+        if unverified:
+            # Advisory only — don't fail CI.  Future work: scan all source files.
+            import warnings
+            warnings.warn(  # noqa: B028
+                f"FEATURE_MANIFEST 中以下 key 未在 RuntimeConfig 直接访问，"
+                f"且不在已知动态 key 列表中: {sorted(unverified)}.\n"
+                f"  请确认它们仍在使用，或从 FEATURE_MANIFEST 中删除."
+            )
 
     def test_no_duplicate_keys(self):
         keys = [f.key for f in FEATURE_MANIFEST]
@@ -84,10 +138,10 @@ class TestGetFeatureStatus:
     def test_inactive_when_default_active_but_not_set(self):
         env: dict[str, str] = {}
         status = get_feature_status(env)
-        # AE_CACHE_CONTROL is default_active=True but being absent means active
-        ae_cache = status.get("AE_CACHE_CONTROL")
-        if ae_cache:
-            assert ae_cache["active"] is True
+        # AE_PII_ENABLED is default_active=True but being absent means active
+        ae_pii = status.get("AE_PII_ENABLED")
+        if ae_pii:
+            assert ae_pii["active"] is True
 
     def test_inactive_when_not_set_and_default_false(self):
         env: dict[str, str] = {}
@@ -148,3 +202,33 @@ class TestCheckFeatureGuard:
         for f in FEATURE_MANIFEST:
             result = check_feature(f.key)
             assert result.key == f.key
+
+
+class TestCountRequirements:
+    """AD3: _count_requirements — 度量需求计数可见性."""
+
+    def test_returns_none_when_metrics_dir_missing(self, tmp_path):
+        """metrics 目录不存在时返回 None."""
+        result = _count_requirements(tmp_path)
+        assert result is None
+
+    def test_counts_dirs_with_summary_json(self, tmp_path):
+        """正确计数含 summary.json 的需求子目录."""
+        reqs_dir = tmp_path / ".ae-state" / "metrics" / "requirements"
+        # Create 3 requirements with summary.json
+        for i in range(3):
+            req_dir = reqs_dir / f"req-{i}"
+            req_dir.mkdir(parents=True)
+            (req_dir / "summary.json").write_text("{}")
+        # Create 1 dir without summary.json (shouldn't count)
+        (reqs_dir / "incomplete").mkdir(parents=True)
+
+        result = _count_requirements(tmp_path)
+        assert result == 3
+
+    def test_returns_none_when_requirements_dir_missing(self, tmp_path):
+        """metrics 目录存在但 requirements 子目录不存在时返回 None."""
+        metrics_dir = tmp_path / ".ae-state" / "metrics"
+        metrics_dir.mkdir(parents=True)
+        result = _count_requirements(tmp_path)
+        assert result is None

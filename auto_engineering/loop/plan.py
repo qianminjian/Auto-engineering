@@ -15,7 +15,6 @@ from auto_engineering.engine.models import (
     TaskOutcome,
     TaskStatus,
     TaskValidation,
-    _topological_levels,
     check_file_isolation,
     topological_sort,
 )

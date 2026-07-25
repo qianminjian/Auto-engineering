@@ -8,8 +8,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from auto_engineering.config.environment import load_ae_answers
 
 

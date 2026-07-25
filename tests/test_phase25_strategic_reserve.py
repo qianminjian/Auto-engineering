@@ -20,9 +20,7 @@ from pathlib import Path
 
 import pytest
 
-from auto_engineering.loop.guardrail import Guardrail, GuardrailChain, GuardrailResult
-from auto_engineering.metrics.collector import MetricsCollector
-
+from auto_engineering.loop.guardrail import Guardrail, GuardrailChain
 
 # =============================================================================
 # T91 — PII Guardrail G10

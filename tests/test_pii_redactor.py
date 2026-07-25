@@ -8,11 +8,11 @@ import pytest
 
 from auto_engineering.pii.redactor import PIIBlockedError, PIIRedactor
 from auto_engineering.pii.rules import (
+    PII_RULES,
+    PII_WHITELIST_PATTERNS,
     PIICategory,
     PIIDetectionRule,
     PIISeverity,
-    PII_RULES,
-    PII_WHITELIST_PATTERNS,
 )
 
 

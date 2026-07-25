@@ -2,8 +2,6 @@
 import tempfile
 from pathlib import Path
 
-import pytest
-
 from auto_engineering.metrics.collector import AIOrigin, MetricsCollector, set_collector
 from auto_engineering.metrics.enrichment import compute_metrics_signals
 

@@ -42,7 +42,8 @@ class ErrorCode(Enum):
     BUDGET_EXCEEDED = "BUDGET_EXCEEDED"  # TokenTracker.add() → 超 max_tokens
 
     # ── Gate ──
-    GATE_EXECUTION_ERROR = "GATE_EXECUTION_ERROR"  # Gate.run() → 不可恢复运行时错误 (P2-40)
+    # Phase 40: GATE_EXECUTION_ERROR removed — dead code, never raised
+    # Gate errors use generic except Exception in gates/runner.py
 
 # v5.4 审计 P1-2+P1-3 已删除 (2026-07-06):
 #   异常类: GuardrailBlockedError, GuardrailRetrySignal, OutputDropped
@@ -68,7 +69,6 @@ _SUGGESTIONS: dict[str, str] = {
     "CONFIG_INVALID_PROVIDER": "设置 OLLAMA_HOST 或 ANTHROPIC_API_KEY 等环境变量，或显式传 provider 参数",
     "PII_DETECTED": "检查输入内容中的敏感信息，脱敏后重试",
     "BUDGET_EXCEEDED": "增大 --max-tokens 参数或缩小需求范围",
-    "GATE_EXECUTION_ERROR": "检查 Gate 工具链配置 (init-manifest.json) 和项目依赖是否完整",
 }
 
 
@@ -90,17 +90,4 @@ class AEError(Exception):
         super().__init__(f"[{code.value}] {message}{suffix}")
 
 
-class GateExecutionError(AEError):
-    """Gate 执行异常 — 用于 Gate.run() 异常契约 (P2-40).
-
-    与 Generic Gate.run() 返回 GateVerdict 不同,
-    此异常在 Gate 实现内部遇到不可恢复错误时抛出,
-    由 run_gates() 统一 catch 转为 "error" status.
-    """
-
-    def __init__(self, gate_name: str, message: str, original_error: Exception | None = None):
-        super().__init__(
-            code=ErrorCode.GATE_EXECUTION_ERROR,
-            message=f"[{gate_name}] {message}",
-            original_error=original_error,
-        )
+# Phase 40: GateExecutionError removed — dead code, never raised

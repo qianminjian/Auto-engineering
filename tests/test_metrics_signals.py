@@ -1,5 +1,4 @@
 """T67: SignalDetector — 5 种信号检测 (F.4)."""
-import pytest
 
 from auto_engineering.metrics.signals import Signal, SignalDetector
 

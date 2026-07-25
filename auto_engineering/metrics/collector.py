@@ -9,10 +9,11 @@ import logging
 import subprocess
 import threading
 import time
-from auto_engineering.utils.file_utils import safe_json_load
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
+
+from auto_engineering.utils.file_utils import safe_json_load
 
 _logger = logging.getLogger(__name__)
 
@@ -45,7 +46,7 @@ class AIOrigin:
 # When AE_METRICS is unset, _collector stays None → all hook points are no-ops.
 #
 # Lifecycle:
-#   1. CLI entry (dev_loop.py / standalone_driver.py) calls set_collector(...) at init
+#   1. CLI entry (dev_loop.py) calls set_collector(...) at init
 #   2. Agent code (agents/base.py) calls get_collector() → None-safe no-op if disabled
 #   3. Process exit → singleton dies with process (no explicit teardown needed)
 #
@@ -58,7 +59,7 @@ _collector_lock = threading.Lock()
 def set_collector(collector: "MetricsCollector | None") -> None:
     """激活或停用全局 MetricsCollector 单例.
 
-    由 CLI/dev_loop/standalone_driver 在初始化时调用。
+    由 CLI/dev_loop 在初始化时调用（standalone_driver 已删除 Phase 40）。
     传入 None 停用度量采集 (默认状态)。
     """
     with _collector_lock:

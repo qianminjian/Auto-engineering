@@ -20,16 +20,10 @@ Design ref: v5.6-Design-Loop.md appendix F.
 from __future__ import annotations
 
 import json
-import subprocess
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 
-import pytest
-
-from auto_engineering.metrics.collector import MetricsCollector, AIOrigin, get_collector, set_collector
+from auto_engineering.metrics.collector import MetricsCollector
 from auto_engineering.metrics.enrichment import compute_metrics_signals
-
-
 
 # =============================================================================
 # T79 — Signal pipeline history + baseline
@@ -69,8 +63,9 @@ class TestSignalPipelineHistory:
         _convergence_check (done-verdict only). The history parameter must
         still be passed for trend detection.
         """
-        import auto_engineering.loop.tick_orchestrator as tmod
         import inspect
+
+        import auto_engineering.loop.tick_orchestrator as tmod
 
         source = inspect.getsource(tmod.TickOrchestrator._convergence_check)
         # Check that compute_metrics_signals is called with history= parameter
@@ -103,7 +98,7 @@ class TestM2CriteriaMet:
 
         # Read back the events
         events_path = tmp_path / ".ae-state" / "metrics" / "requirements" / "t2" / "events.jsonl"
-        events = [json.loads(l) for l in events_path.read_text().strip().split("\n")]
+        events = [json.loads(l) for l in events_path.read_text().strip().split("\n")]  # noqa: E741
         conv_events = [e for e in events if e["event_type"] == "convergence"]
         assert len(conv_events) == 1
         assert conv_events[0]["payload"]["criteria_met"] == "critic_approved", (
@@ -149,8 +144,9 @@ class TestM2CriteriaMet:
 
         RED: Currently record_convergence is called but criteria_met may not be set.
         """
-        import auto_engineering.loop.tick_orchestrator as tmod
         import inspect
+
+        import auto_engineering.loop.tick_orchestrator as tmod
 
         source = inspect.getsource(tmod.TickOrchestrator)
         # record_convergence should be called with criteria_met=... somewhere

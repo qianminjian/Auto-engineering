@@ -343,7 +343,7 @@ class SignalDetector:
                     metric="M5_token_efficiency",
                     value=float(latest_tokens),
                     threshold=p95 * 1.5,
-                    description=f"Token usage exceeds baseline P95 by 50%",
+                    description="Token usage exceeds baseline P95 by 50%",
                 )]
             return []
         else:
@@ -355,6 +355,6 @@ class SignalDetector:
                     metric="M5_token_efficiency",
                     value=float(latest_tokens),
                     threshold=float(self.cold_start_token_threshold),
-                    description=f"Token usage {latest_tokens} exceeds cold-start threshold {self.cold_start_token_threshold}",
+                    description=f"Token usage {latest_tokens} exceeds cold-start threshold {self.cold_start_token_threshold}",  # noqa: E501
                 )]
             return []

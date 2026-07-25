@@ -6,22 +6,22 @@ Import from here for all guardrail needs:
         RequirementValid, PlanExists, GitDiffExists, TestsPass, GitClean,
         NoDeferredBlockingGap, FileAccessGuardrail, AuditTimingGuardrail,
         REDGuardrail, FreshGuardrail, RegressionGuardrail,
-        GuardrailChain, MAX_RETRY_PER_STAGE,
+        GuardrailChain,
     )
 
 Lazy imports are used for classes defined in loop/guardrail.py to avoid a
 circular import (loop/guardrail.py → loop/guardrails/stateful.py → package init).
 """
 
-from auto_engineering.shared.guardrail import (
-    Action,
-    Guardrail,
-    GuardrailResult,
-)
 from auto_engineering.loop.guardrails.stateful import (
     FreshGuardrail,
     REDGuardrail,
     RegressionGuardrail,
+)
+from auto_engineering.shared.guardrail import (
+    Action,
+    Guardrail,
+    GuardrailResult,
 )
 
 __all__ = [
@@ -34,7 +34,6 @@ __all__ = [
     "Guardrail",
     "GuardrailChain",
     "GuardrailResult",
-    "MAX_RETRY_PER_STAGE",
     "NoDeferredBlockingGap",
     "PlanExists",
     "REDGuardrail",
@@ -51,7 +50,6 @@ _LAZY_NAMES = frozenset({
     "GitClean",
     "GitDiffExists",
     "GuardrailChain",
-    "MAX_RETRY_PER_STAGE",
     "NoDeferredBlockingGap",
     "PlanExists",
     "RequirementValid",

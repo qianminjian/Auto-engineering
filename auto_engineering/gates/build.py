@@ -14,11 +14,10 @@ DS-14 (T156, 2026-07-23): 从 init-manifest conventions.build_cmd 读取构建�
 
 from __future__ import annotations
 
-import shutil
 import sys
 from pathlib import Path
 
-from auto_engineering.gates._tools import LANGUAGE_TOOLS, detect_project_language
+from auto_engineering.gates._tools import detect_project_language
 from auto_engineering.gates.base import Gate, GateVerdict, run_gate_command
 
 __all__ = ["DEFAULT_TIMEOUT", "BuildGate"]
@@ -58,7 +57,7 @@ class BuildGate(Gate):
         self.timeout = timeout if timeout is not None else Gate._resolve_timeout(DEFAULT_TIMEOUT)
 
     @classmethod
-    def from_manifest(cls, manifest: dict) -> "BuildGate":
+    def from_manifest(cls, manifest: dict) -> BuildGate:
         """DS-14: 从 init-manifest 创建 BuildGate (多语言支持)."""
         conventions = manifest.get("conventions")
         build_cmd = ""

@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from auto_engineering.agents.output_models import ArchitectOutput, CriticOutput, DeveloperOutput
+from auto_engineering.loop.output_models import ArchitectOutput, CriticOutput, DeveloperOutput
 
 
 class TestArchitectOutput:

@@ -1,11 +1,10 @@
 """T68: RatchetController — keep/revert/stop + config versioning (F.6)."""
-import json
 import tempfile
 from pathlib import Path
 
 import pytest
 
-from auto_engineering.metrics.ratchet import RatchetController, RatchetDecision
+from auto_engineering.metrics.ratchet import RatchetController
 
 
 class TestRatchetController:

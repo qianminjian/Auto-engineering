@@ -26,7 +26,7 @@ import json
 import logging
 import re
 import threading
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, ClassVar
 
 from auto_engineering.engine.design_doc import Component, DesignDoc, Plate
@@ -129,8 +129,10 @@ class BatchState:
             hints = []
             for orphan in unresolved:
                 close = difflib.get_close_matches(_normalize(orphan), list(norm_map.keys()), n=3, cutoff=0.3)
-                if close: hints.append(f"'{orphan}' → 最接近: {[norm_map[c] for c in close]}")
-                else: hints.append(f"'{orphan}' → 无相似匹配")
+                if close:
+                    hints.append(f"'{orphan}' → 最接近: {[norm_map[c] for c in close]}")
+                else:
+                    hints.append(f"'{orphan}' → 无相似匹配")
             raise ValueError(
                 f"孤儿 batch: component {unresolved} 不在任何 plate 中。"
                 f"有效 component 名: {valid}。"

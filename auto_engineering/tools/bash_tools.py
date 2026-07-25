@@ -82,10 +82,7 @@ class RunBashTool(BaseTool):
             return ToolResult(success=False, content="", error="command is empty")
 
         # v7.0: cwd 未指定 → 默认 project_root
-        if not cwd:
-            cwd = str(self.project_root) if self.project_root else None
-        # cwd 不存在或无法访问 → 回退到 project_root (DeepSeek 幻觉 /workspace 等路径)
-        elif not os.path.isdir(str(cwd)):
+        if not cwd or not os.path.isdir(str(cwd)):
             cwd = str(self.project_root) if self.project_root else None
 
         # P1.5: 黑名单检查

@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from auto_engineering.pii.rules import PIIDetectionRule
 
 from auto_engineering.errors import AEError, ErrorCode
-from auto_engineering.pii.rules import PIISeverity, PII_RULES, PII_WHITELIST_PATTERNS
+from auto_engineering.pii.rules import PII_RULES, PII_WHITELIST_PATTERNS, PIISeverity
 
 logger = logging.getLogger(__name__)
 

@@ -9,10 +9,11 @@ Summary generation happens upstream (TickOrchestrator) before offload() is calle
 from __future__ import annotations
 
 import json
-from auto_engineering.utils.file_utils import safe_json_load
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
+
+from auto_engineering.utils.file_utils import safe_json_load
 
 
 @dataclass
@@ -52,7 +53,7 @@ class ContextOffloader:
 
     def __init__(self, storage_dir: Path | None = None, offload_dir: Path | None = None,
                  project_root: Path | None = None) -> None:
-        self._dir = storage_dir or offload_dir or (project_root / ".ae-state" / "offload" if project_root else Path(".ae-state/offload"))
+        self._dir = storage_dir or offload_dir or (project_root / ".ae-state" / "offload" if project_root else Path(".ae-state/offload"))  # noqa: E501
         self._round_counter: int = 0
         self._summaries: dict[str, str] = {}
 
@@ -71,7 +72,7 @@ class ContextOffloader:
         self._round_counter += 1
         self._dir.mkdir(parents=True, exist_ok=True)
 
-        timestamp = datetime.now(timezone.utc).isoformat()
+        timestamp = datetime.now(UTC).isoformat()
         filename = f"{stage}-r{self._round_counter}.json"
         filepath = self._dir / filename
 

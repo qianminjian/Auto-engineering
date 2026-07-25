@@ -401,7 +401,7 @@ class TestCategorizedBaselines:
                                     requirement_category="simple_function")
                 c.end_requirement("GOAL_ACHIEVED", total_ticks=3)
 
-            baseline = c.update_baseline()
+            baseline = c.update_baseline()  # noqa: F841
             cat_path = c._metrics_dir / "baselines" / "by_category" / "simple_function.json"
             cat_data = json.loads(cat_path.read_text())
             assert "sample_size" in cat_data

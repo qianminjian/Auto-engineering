@@ -249,21 +249,7 @@ class TestHasLlmCredentials:
 class TestPluginModeIntegration:
     """plugin_mode 与项目内其他模块集成."""
 
-    def test_cli_agent_uses_detect_plugin_mode(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """cli/agent.py run_agent 使用 detect_plugin_mode (不重复实现)."""
-
-        # agent.run_agent 应该 import + 调用 detect_plugin_mode
-        # (静态分析 + 运行时验证)
-        import inspect
-
-        from auto_engineering.cli import agent
-
-        source = inspect.getsource(agent.run_agent)
-        assert "detect_plugin_mode" in source, (
-            "cli/agent.py:run_agent 必须用 detect_plugin_mode (防 prismscan Bug 4 退化)"
-        )
+    # Phase 40: cli/agent.py 已删除 — 相关测试移除
 
     def test_doctor_reports_plugin_mode_via_detail(
         self, monkeypatch: pytest.MonkeyPatch

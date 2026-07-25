@@ -21,8 +21,6 @@ from typing import Any
 
 import pytest
 
-from auto_engineering.engine.batch_state import BatchState
-from auto_engineering.engine.design_doc import Component, DesignDoc, DesignItem, Plate
 from auto_engineering.engine.progress_tree import ProgressTree
 from auto_engineering.engine.state import EngineState
 from auto_engineering.loop.guardrail import (
@@ -41,8 +39,8 @@ from auto_engineering.loop.guardrail import (
     TestsPass,
 )
 from auto_engineering.loop.guardrails.stateful import (
-    aggregate_files_sha,
     _git_is_ancestor,
+    aggregate_files_sha,
 )
 from auto_engineering.pii.guardrail import PIIGuardrail
 

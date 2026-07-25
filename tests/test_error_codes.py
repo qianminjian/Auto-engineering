@@ -21,7 +21,7 @@ class TestErrorCodeEnum:
     """枚举完整性 — 16 ErrorCode (P1-15 新增 CONFIG_INVALID_PROVIDER + PII_DETECTED)."""
 
     def test_all_codes_defined(self) -> None:
-        """16 个 ErrorCode 全存在."""
+        """15 个 ErrorCode 全存在 (Phase 40: GATE_EXECUTION_ERROR 已删除)."""
         expected = {
             # LLM / API (6)
             "LLM_TIMEOUT",
@@ -44,8 +44,6 @@ class TestErrorCodeEnum:
             "PII_DETECTED",
             # Budget (1)
             "BUDGET_EXCEEDED",
-            # Gate (1)
-            "GATE_EXECUTION_ERROR",
         }
         actual = {member.name for member in ErrorCode}
         assert actual == expected, (
@@ -209,10 +207,10 @@ class TestV5ErrorCodeMapping:
         Budget (1): EXCEEDED
     """
 
-    def test_error_code_total_count_is_16(self) -> None:
-        """ErrorCode 总数 = 16 (P1-15 新增 CONFIG_INVALID_PROVIDER + PII_DETECTED)."""
-        assert len(ErrorCode) == 16, (
-            f"ErrorCode 总数应 16, 实际 {len(ErrorCode)}. "
+    def test_error_code_total_count_is_15(self) -> None:
+        """ErrorCode 总数 = 15 (Phase 40: GATE_EXECUTION_ERROR 已删除)."""
+        assert len(ErrorCode) == 15, (
+            f"ErrorCode 总数应 15, 实际 {len(ErrorCode)}. "
             f"新增/删除需同步 test_all_codes_defined"
         )
 

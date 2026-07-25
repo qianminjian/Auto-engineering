@@ -37,7 +37,6 @@ from auto_engineering.loop.convergence import (
     LEVEL_CONTINUE,
     LEVEL_HARD_LIMIT,
     LEVEL_QUALITY,
-    LEVEL_SEMANTIC,
     LEVEL_STAGNANT,
     ConvergenceConfig,
     ConvergenceJudge,

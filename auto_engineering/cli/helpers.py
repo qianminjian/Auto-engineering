@@ -16,7 +16,7 @@ from typing import Any
 import click
 
 from auto_engineering.errors import AEError, ErrorCode
-from auto_engineering.runtime.cancellation import CancellationToken
+from auto_engineering.utils.cancellation import CancellationToken
 
 
 def _ts() -> str:
@@ -110,7 +110,7 @@ CATEGORY_FRIENDLY_PREFIX: dict[ErrorCategory, str] = {
 
 
 # P1-6: TokenTracker 定义已迁移至 utils/token_tracker.py, 此处保留 re-export
-from auto_engineering.utils.token_tracker import TokenTracker  # noqa: F401
+from auto_engineering.utils.token_tracker import TokenTracker  # noqa: E402, F401
 
 
 def install_sigint_handler(token: CancellationToken) -> None:
@@ -151,16 +151,6 @@ class ProgressLogger:
             for k, v in fields.items():
                 parts.append(f"{k}={v}")
             click.echo(" ".join(parts), err=True)
-
-
-def _log_stage_progress(current: int, total: int, name: str) -> None:
-    """输出 stage 进度: '[ts] Stage X/3: architect'."""
-    click.echo(f"[{_ts()}] Stage {current}/{total}: {name}")
-
-
-def _emit_stage_done(stage: str, elapsed: float, tokens: int = 0) -> None:
-    """输出 stage 完成: '[ts]   ✓ Stage X done in 1.2s (tokens: 1234)'."""
-    click.echo(f"[{_ts()}]   ✓ Stage {stage} done in {elapsed:.1f}s (tokens: {tokens})")
 
 
 def log_engine_version(version: str) -> None:

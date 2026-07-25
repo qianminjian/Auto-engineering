@@ -19,9 +19,9 @@ import time
 from pathlib import Path
 from unittest.mock import MagicMock
 
+from auto_engineering.engine.state import EngineState
 from auto_engineering.engine.verification_layers import VerificationLayers
 from auto_engineering.loop.guardrail import GuardrailChain
-from auto_engineering.engine.state import EngineState
 from auto_engineering.loop.tick_orchestrator import ORCH_BUDGET_MS, TickOrchestrator
 
 
@@ -2599,9 +2599,9 @@ class TestV7_1_TickDelegation:
         """tick() 方法体 ≤ 5 行 (不含 docstring 和 def 行)."""
         import inspect
         source = inspect.getsource(TickOrchestrator.tick)
-        lines = [l for l in source.split("\n") if l.strip() and not l.strip().startswith('"""')]
+        lines = [l for l in source.split("\n") if l.strip() and not l.strip().startswith('"""')]  # noqa: E741
         # lines[0] = "def tick(...):", body = lines[1:]
-        body_lines = [l for l in lines[1:] if not l.strip().startswith("#") and not l.strip().startswith('"""')]
+        body_lines = [l for l in lines[1:] if not l.strip().startswith("#") and not l.strip().startswith('"""')]  # noqa: E741
         assert len(body_lines) <= 5, f"tick() body should be ≤5 lines, got {len(body_lines)}: {body_lines}"
 
 
@@ -3319,7 +3319,7 @@ class TestT105MetricsConvergence:
     def test_metrics_pipeline_produces_events_during_convergence(self) -> None:
         """T105f: AE_METRICS=1 时 tick 循环产生 metric events."""
         import os
-        from auto_engineering.metrics.collector import get_collector
+
 
         os.environ["AE_METRICS"] = "1"
         try:
@@ -3529,7 +3529,6 @@ class TestT109PIIInbound:
     def test_inbound_redact_mode(self, monkeypatch) -> None:
         """AE_PII_INBOUND=redact: PII 被脱敏."""
         monkeypatch.setenv("AE_PII_INBOUND", "redact")
-        import os as _os
         o = _orchestrator()
         o._pii_enabled = True
         from auto_engineering.pii.redactor import PIIRedactor

@@ -1,6 +1,6 @@
 """Gate Runner — 按名称批量跑 Gate, 与 CLI/loop 层解耦.
 
-2026-07-21 P1-5: 从 cli/gate_check.py 提取, 消除 loop→CLI 依赖倒置.
+2026-07-21 P1-5: Phase 40: gate_check.py 已删除
 """
 
 from __future__ import annotations

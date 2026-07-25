@@ -13,7 +13,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from auto_engineering.config.constants import DEFAULT_P1_THRESHOLD, _SPAWN_CONFIG
+from auto_engineering.config.constants import _SPAWN_CONFIG
 from auto_engineering.config.feature_flags import feature_status_for_action
 from auto_engineering.prompts.registry import default_registry
 
@@ -309,8 +309,8 @@ class ActionBuilder:
             with open(str(md_file), "w", encoding="utf-8") as f:
                 f.write("\n".join(lines))
 
-        except Exception:
-            pass  # best-effort logging, never crash the loop
+        except (OSError, UnicodeError) as exc:
+            _logger.warning("prompt log write failed for stage=%s", stage, exc_info=True)
 
     # ── helpers ──
 
@@ -514,7 +514,6 @@ class ActionBuilder:
         Engine writes the initial file with status='pending'.  Subagent
         appends stage + timestamp after completing its work.
         """
-        import os
         proof_dir = self.project_root / ".ae-state" / "spawn-proofs"
         proof_dir.mkdir(parents=True, exist_ok=True)
         proof_file = proof_dir / f"{proof_token}.json"

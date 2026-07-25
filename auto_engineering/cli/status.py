@@ -122,22 +122,29 @@ def register_status_command(main_group: click.Group) -> None:
         help="输出格式 (默认 text)",
     )
     @click.option(
+        "--verbose", "-v",
+        is_flag=True,
+        help="显示进度树 (ProgressTree 层次化板块进度)",
+    )
+    @click.option(
         "--project-root",
         type=click.Path(exists=True),
         default=None,
         help="项目根目录 (默认 cwd)",
     )
-    def status(output_format: str, project_root: str | None):
+    def status(output_format: str, verbose: bool, project_root: str | None):
         """查看当前项目进度.
 
-        --format json: 输出 7 字段 JSON (v5.0 §B13.2):
-            thread_id / round / stage / verdict /
-            majors_in_a_row / total_majors / recent_history (≤5 条 RoundHistory)
+        --format json: 输出 7 字段 JSON (v5.0 §B13.2)
+        --verbose: 显示 ProgressTree 层次化板块进度
         """
         cwd = Path(project_root).resolve() if project_root else Path.cwd()
 
         if output_format == "json":
-            click.echo(json.dumps(_collect_status_json(cwd), ensure_ascii=False, indent=2))
+            payload = _collect_status_json(cwd)
+            if verbose:
+                payload["progress_tree"] = _load_progress_summary(cwd)
+            click.echo(json.dumps(payload, ensure_ascii=False, indent=2))
             return
 
         # 文本模式 (只读, 不写入 .ae-answers.yml)
@@ -161,10 +168,12 @@ def register_status_command(main_group: click.Group) -> None:
             if undetectable:
                 click.echo(f"  ⚠ 不可自动判定: {', '.join(undetectable)}", err=True)
         except Exception as e:
-            # 项目环境探测可能因任何原因失败 (文件 I/O/解析/检测逻辑),
-            # CLI status 命令应优雅降级而非崩溃
             _logger.warning("读取项目环境失败", exc_info=True)
             click.echo(f"  读取项目环境失败: {e}")
+
+        # ── verbose: 显示进度树 ──
+        if verbose:
+            _display_progress_tree(cwd)
 
         cp_dir = cwd / ".ae-state"
         if cp_dir.exists():
@@ -178,5 +187,46 @@ def register_status_command(main_group: click.Group) -> None:
                 except (OSError, sqlite3.Error):
                     _logger.warning("checkpoint count 失败, 跳过: %s", db_file, exc_info=True)
                     continue
-            if total_v2 > 0:
-                click.echo(f"  v2.0 Checkpoints: {total_v2} (见 `ae checkpoint v2 list`)")
+            if total_v2 > 0 and not verbose:
+                click.echo(f"  v2.0 Checkpoints: {total_v2} (使用 --verbose 查看进度树)")
+
+
+def _load_progress_summary(cwd: Path) -> dict:
+    """从最新 checkpoint 读取 progress_tree 摘要 (Phase 40 T180)."""
+    from auto_engineering.loop.checkpoint import SQLiteCheckpointStore
+    cp_dir = cwd / ".ae-state"
+    if not cp_dir.exists():
+        return {"completion_pct": 0.0, "total_tasks": 0, "done_tasks": 0, "node_count": 0}
+    latest_ckpt = None
+    for db_file in cp_dir.glob("*.db"):
+        try:
+            store: SQLiteCheckpointStore[EngineState] = SQLiteCheckpointStore(str(db_file))
+            ckpt = store.load_latest()
+            if ckpt is not None and (latest_ckpt is None or ckpt.round > latest_ckpt.round):
+                latest_ckpt = ckpt
+        except (OSError, sqlite3.Error):
+            continue
+    if latest_ckpt is None:
+        return {"completion_pct": 0.0, "total_tasks": 0, "done_tasks": 0, "node_count": 0}
+    try:
+        from auto_engineering.engine.progress_tree import ProgressTree
+        tree = ProgressTree.from_json(getattr(latest_ckpt.state, "progress_tree_json", None))
+        if tree:
+            return tree.summary()
+    except (ValueError, TypeError, json.JSONDecodeError, AttributeError):
+        pass
+    return {"completion_pct": 0.0, "total_tasks": 0, "done_tasks": 0, "node_count": 0}
+
+
+def _display_progress_tree(cwd: Path) -> None:
+    """显示进度树 (Phase 40 T180, 合并自 progress.py)."""
+    try:
+        from auto_engineering.cli.progress import _load_progress_tree
+        tree = _load_progress_tree(cwd)
+        if tree:
+            click.echo(tree.display())
+        else:
+            click.echo("  (暂无进度数据)")
+    except (ImportError, ValueError, TypeError, OSError) as e:
+        _logger.debug("进度树加载失败: %s", e)
+        click.echo("  (进度树暂不可用)")

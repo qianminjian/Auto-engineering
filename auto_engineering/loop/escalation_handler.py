@@ -12,12 +12,14 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any
 
 from auto_engineering.gates._tools import LANGUAGE_TOOLS
+
 if TYPE_CHECKING:
     from auto_engineering.engine.batch_state import BatchState
     from auto_engineering.engine.state import EngineState

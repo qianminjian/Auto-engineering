@@ -12,10 +12,9 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Any
 
-from auto_engineering.shared.guardrail import Guardrail, GuardrailResult
 from auto_engineering.pii.rules import PII_RULES
+from auto_engineering.shared.guardrail import Guardrail, GuardrailResult
 
 
 class PIIGuardrail(Guardrail):

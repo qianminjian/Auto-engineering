@@ -70,7 +70,7 @@ def _build_default_gates(manifest: dict | None = None) -> list[Gate]:
 
 
 def get_gate_by_name(name: str) -> Gate | None:
-    """按名称返回 Gate 实例 (SSOT 工厂, 供 CLI gate_check 使用)."""
+    """按名称返回 Gate 实例 (SSOT 工厂（gate_check CLI 已删除 Phase 40）)."""
     mapping: dict[str, type[Gate]] = {
         "safety": SafetyGate,
         "lint": LintGate,

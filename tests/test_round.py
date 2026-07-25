@@ -11,7 +11,8 @@ from __future__ import annotations
 
 import pytest
 
-from auto_engineering.loop.plan import ConflictError, Task, _topological_levels
+from auto_engineering.engine.models import _topological_levels
+from auto_engineering.loop.plan import ConflictError, Task
 
 
 def make_task(tid: str, depends_on: list[str] | None = None) -> Task:

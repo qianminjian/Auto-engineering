@@ -133,7 +133,7 @@ class SQLiteCheckpointStore[T]:
 
     def __del__(self) -> None:
         """P2-31: GC safety net — close connections if not explicitly closed."""
-        try:
+        try:  # noqa: SIM105
             self.close()
         except Exception:
             pass  # 析构期不抛异常
@@ -326,11 +326,10 @@ class SQLiteCheckpointStore[T]:
         Returns:
             True = 已删除, False = 不存在
         """
-        with self._conn() as conn, _atomic(conn):
-            with contextlib.closing(conn.execute(
-                "DELETE FROM checkpoints WHERE id = ?", (checkpoint_id,)
-            )) as cursor:
-                return cursor.rowcount > 0
+        with self._conn() as conn, _atomic(conn), contextlib.closing(conn.execute(
+            "DELETE FROM checkpoints WHERE id = ?", (checkpoint_id,)
+        )) as cursor:
+            return cursor.rowcount > 0
 
     def clear(self) -> None:
         """清空所有 Checkpoint (主要用于测试).

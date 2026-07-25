@@ -7,9 +7,10 @@ from __future__ import annotations
 import json
 import math
 import time
-from auto_engineering.utils.file_utils import safe_json_load
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from auto_engineering.utils.file_utils import safe_json_load
 
 
 @dataclass
@@ -170,7 +171,7 @@ class DiagnosticRuleDiscoverer:
         groups: dict[str, list[float]] = {}
         for s in summaries:
             mv = s.get("ai_origin", {}).get("model_version", "unknown")
-            if isinstance(s.get("ai_origin"), dict):
+            if isinstance(s.get("ai_origin"), dict):  # noqa: SIM108
                 mv = s["ai_origin"].get("model_version", "unknown")
             else:
                 mv = "unknown"

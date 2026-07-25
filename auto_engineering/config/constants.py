@@ -11,7 +11,7 @@ from __future__ import annotations
 
 # ── V7-2: STAGE_TO_ROLE mapping ──
 # 10 个 stage → role (gap_review → None 表示无 LLM role, headless auto-Defer)
-# SSOT — both tick_orchestrator and standalone_driver import from here.
+# SSOT — tick_orchestrator imports from here (standalone_driver deleted Phase 40)
 
 STAGE_TO_ROLE: dict[str, str | None] = {
     "gap_scan": "gap_scan",

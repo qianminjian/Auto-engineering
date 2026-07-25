@@ -115,63 +115,7 @@ class TestDoctor:
 # ============================================================
 
 
-class TestGateCheck:
-    """ae gate-check --all | --quick — 跑 Gate 集合, 输出 JSON gate_summary."""
-
-    def test_ae_gate_check_all(self, tmp_path: Path) -> None:
-        """ae gate-check --all 跑 7 道 Gate, 输出 JSON 含 gate_summary."""
-        result = _run_cli("gate-check", "--all", cwd=tmp_path)
-        # 退出码 0/1 都允许 (Gate 可能失败)
-        assert result.returncode in (0, 1), f"unexpected exit: {result.returncode}"
-        # 输出必须为有效 JSON
-        try:
-            data = json.loads(result.stdout)
-        except json.JSONDecodeError as e:
-            pytest.fail(f"stdout not valid JSON: {e}\n{result.stdout[:200]}")
-        # 必须含 gate_summary 字段
-        assert "gate_summary" in data, f"missing gate_summary: {data}"
-        # gate_summary 应含 safety/lint/type_check 三个核心 gate
-        summary = data["gate_summary"]
-        for gate in ("safety", "lint", "type_check"):
-            assert gate in summary, f"missing gate {gate} in summary: {summary}"
-
-    def test_ae_gate_check_quick(self, tmp_path: Path) -> None:
-        """ae gate-check --quick 只跑 3 道 Gate (safety + lint + type_check)."""
-        result = _run_cli("gate-check", "--quick", cwd=tmp_path)
-        assert result.returncode in (0, 1)
-        data = json.loads(result.stdout)
-        summary = data["gate_summary"]
-        # 至少 3 道
-        assert len(summary) >= 3
-        # 必须含 safety/lint/type_check
-        for gate in ("safety", "lint", "type_check"):
-            assert gate in summary
-        # 排除项: coverage/build 不应出现
-        assert "coverage" not in summary or summary.get("coverage", {}).get("status") == "skipped"
-        assert "build" not in summary or summary.get("build", {}).get("status") == "skipped"
-
-
-# ============================================================
-# ae agent 测试
-# ============================================================
-
-
-class TestAgent:
-    """ae agent <role> — 单 Agent 调用, 输出 TaskOutcome JSON."""
-
-    def test_ae_agent_architect_call(self, tmp_path: Path) -> None:
-        """ae agent architect <指令> 输出 TaskOutcome JSON."""
-        result = _run_cli("agent", "architect", "分析需求", cwd=tmp_path)
-        # 由于没真 LLM, 可能失败但 stdout 应为 JSON
-        # 至少 JSON 解析应成功
-        try:
-            data = json.loads(result.stdout) if result.stdout.strip() else {}
-        except json.JSONDecodeError:
-            # 没 stdout 也行, 但若有 stdout 必须是 JSON
-            pytest.fail(f"stdout not JSON: {result.stdout[:200]}")
-        # 期望字段
-        expected_fields = {"task_id", "status", "role"}
-        assert expected_fields.issubset(set(data.keys())), f"missing fields: {expected_fields - set(data.keys())}"
+# Phase 40: ae gate-check 和 ae agent 已删除 — 测试已移除
 
 
 # ============================================================
@@ -330,25 +274,29 @@ class TestSubcommandRegistration:
         assert result.exit_code == 0, f"ae doctor not registered: {result.output}"
         assert "doctor" in result.output.lower()
 
-    def test_ae_gate_check_registered(self) -> None:
-        """ae gate-check 子命令必须存在."""
+    def test_ae_gate_check_not_registered(self) -> None:
+        """Phase 40: ae gate-check 已删除 — 确认不可用."""
         from click.testing import CliRunner
-
         from auto_engineering.cli import main
-
         runner = CliRunner()
         result = runner.invoke(main, ["gate-check", "--help"])
-        assert result.exit_code == 0, f"ae gate-check not registered: {result.output}"
+        assert result.exit_code != 0, f"ae gate-check should NOT be registered: {result.output}"
 
-    def test_ae_agent_registered(self) -> None:
-        """ae agent 子命令必须存在."""
+    def test_ae_agent_not_registered(self) -> None:
+        """Phase 40: ae agent 已删除 — 确认不可用."""
         from click.testing import CliRunner
-
         from auto_engineering.cli import main
-
         runner = CliRunner()
         result = runner.invoke(main, ["agent", "--help"])
-        assert result.exit_code == 0, f"ae agent not registered: {result.output}"
+        assert result.exit_code != 0, f"ae agent should NOT be registered: {result.output}"
+
+    def test_ae_status_registered(self) -> None:
+        """Phase 40: ae status 必须保留."""
+        from click.testing import CliRunner
+        from auto_engineering.cli import main
+        runner = CliRunner()
+        result = runner.invoke(main, ["status", "--help"])
+        assert result.exit_code == 0, f"ae status not registered: {result.output}"
 
 
 # ============================================================

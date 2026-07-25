@@ -308,7 +308,7 @@ def update_majors_count(state: EngineState, verdict: str) -> None:
     # else: verdict="" 或其他 → 不变
 
 
-def clear_stage_fields(state: "EngineState", stage: str) -> None:
+def clear_stage_fields(state: EngineState, stage: str) -> None:
     """清空 EngineState 中指定 Stage 产出的 channel (§B3.3).
 
     两个使用场景:

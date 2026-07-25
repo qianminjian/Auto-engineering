@@ -4,10 +4,7 @@ Covers: encode_cwd, collect (empty/incremental/dedup/subagent), reset, create_pa
 """
 
 import json
-import os
-import tempfile
 from pathlib import Path
-from unittest.mock import patch
 
 from auto_engineering.metrics.transcript_parser import (
     SessionTranscriptParser,
@@ -92,10 +89,10 @@ class TestSessionTranscriptParserCollect:
         lines = [
             {"type": "system", "message": {"id": "s1", "usage": {"input_tokens": 10}}},
             {"type": "user", "message": {"id": "u1", "usage": {"input_tokens": 20}}},
-            {"type": "assistant", "message": {"id": "a1", "model": "claude", "usage": {"input_tokens": 30, "output_tokens": 10}}},
+            {"type": "assistant", "message": {"id": "a1", "model": "claude", "usage": {"input_tokens": 30, "output_tokens": 10}}},  # noqa: E501
         ]
         jsonl_file = session_dir / "session.jsonl"
-        jsonl_file.write_text("\n".join(json.dumps(l) for l in lines) + "\n")
+        jsonl_file.write_text("\n".join(json.dumps(l) for l in lines) + "\n")  # noqa: E741
 
         def fake_find(self):
             return jsonl_file

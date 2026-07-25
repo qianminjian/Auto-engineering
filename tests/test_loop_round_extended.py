@@ -1,19 +1,69 @@
-"""Tests for RoundResult properties (loop/round.py).
+"""Tests for RoundResult properties and _topological_levels extended coverage.
 
-P0-1 audit deleted run_round / _build_per_task_ctx / _parse_git_numstat from
-loop/round.py. Tests for deleted symbols removed. RoundResult dataclass remains
-with zero non-test consumers — test coverage retained for RoundResult properties.
-
-Also includes _topological_levels extended coverage (self-loop, external dep).
+RoundResult dataclass moved into this test file (V1 ghost code cleanup, 2026-07-25)
+— it had zero non-test consumers in production.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
+
 import pytest
 
 from auto_engineering.gates.base import GateVerdict
-from auto_engineering.loop.plan import ConflictError, Task, _topological_levels
-from auto_engineering.loop.round import RoundResult, TaskOutcome
+from auto_engineering.engine.models import _topological_levels
+from auto_engineering.loop.plan import ConflictError, Task, TaskOutcome
+
+
+@dataclass
+class RoundResult:
+    """一輪的匯總結果 (V1 ghost cleanup: moved from production to test file).
+
+    Attributes:
+        round_id: 輪次 ID
+        outcomes: 每個 task 的執行結果
+        gate_results: 本輪運行的 Gate 結果 dict[gate_name, GateVerdict]
+        started_at: 啟動時間戳
+        finished_at: 完成時間戳
+    """
+
+    round_id: int
+    stage: str = ""
+    outcomes: list[TaskOutcome] = field(default_factory=list)
+    gate_results: dict[str, GateVerdict] = field(default_factory=dict)
+    started_at: float = 0.0
+    finished_at: float = 0.0
+
+    @property
+    def duration(self) -> float:
+        return self.finished_at - self.started_at
+
+    @property
+    def completed_count(self) -> int:
+        return sum(1 for o in self.outcomes if o.status == "completed")
+
+    @property
+    def failed_count(self) -> int:
+        return sum(1 for o in self.outcomes if o.status == "failed")
+
+    @property
+    def all_succeeded(self) -> bool:
+        return all(o.status == "completed" for o in self.outcomes)
+
+    @property
+    def all_gates_passed(self) -> bool:
+        """所有 Gate 都通過. 規則:
+        - gate_results 為空 → True (無 Gate 跑, 不算失敗)
+        - 存在任一 verdict.passed=False → False
+        - 否則 True
+        """
+        if not self.gate_results:
+            return True
+        return all(v.passed for v in self.gate_results.values())
+
+    def files_changed(self) -> int:
+        """估算本輪修改文件數 (基於成功 task 數量)."""
+        return self.completed_count
 
 
 def make_task(tid: str, depends_on: list[str] | None = None, role: str = "developer") -> Task:

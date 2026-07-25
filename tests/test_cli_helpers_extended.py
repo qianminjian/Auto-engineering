@@ -26,14 +26,12 @@ from auto_engineering.cli.helpers import (
     ErrorCategory,
     ProgressLogger,
     TokenTracker,
-    _emit_stage_done,
+    classify_error,
     install_sigint_handler,
     log_engine_version,
-    _log_stage_progress,
-    classify_error,
 )
 from auto_engineering.errors import AEError, ErrorCode
-from auto_engineering.runtime.cancellation import CancellationToken
+from auto_engineering.utils.cancellation import CancellationToken
 
 # ============================================================
 # 1. ErrorCategory enum + CATEGORY_FRIENDLY_PREFIX 映射
@@ -362,27 +360,7 @@ class TestCancellationTokenCheck:
 
 
 class TestStageProgressHelpers:
-    """L197-209: _log_stage_progress / _emit_stage_done / log_engine_version."""
-
-    def test_log_stage_progress(self, capsys: pytest.CaptureFixture) -> None:
-        _log_stage_progress(1, 3, "architect")
-        captured = capsys.readouterr()
-        assert re.match(r"^\[\d{2}:\d{2}:\d{2}\] ", captured.out)
-        assert captured.out.endswith("Stage 1/3: architect\n")
-
-    def test_emit_stage_done_with_tokens(self, capsys: pytest.CaptureFixture) -> None:
-        _emit_stage_done("architect", 1.234, tokens=567)
-        captured = capsys.readouterr()
-        assert "architect" in captured.out
-        assert "1.2s" in captured.out  # L204: elapsed:.1f
-        assert "567" in captured.out
-
-    def test_emit_stage_done_no_tokens(self, capsys: pytest.CaptureFixture) -> None:
-        _emit_stage_done("developer", 0.0)
-        captured = capsys.readouterr()
-        assert "developer" in captured.out
-        assert "0.0s" in captured.out
-        assert "tokens: 0" in captured.out
+    """Phase 42: _log_stage_progress / _emit_stage_done 已删除。仅测试 log_engine_version."""
 
     def test_log_engine_version(self, capsys: pytest.CaptureFixture) -> None:
         log_engine_version("v2.5")

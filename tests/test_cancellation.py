@@ -18,7 +18,7 @@ import asyncio
 import pytest
 
 from auto_engineering.errors import AEError, ErrorCode
-from auto_engineering.runtime.cancellation import CancellationToken
+from auto_engineering.utils.cancellation import CancellationToken
 
 
 class TestCancellationTokenBasics:

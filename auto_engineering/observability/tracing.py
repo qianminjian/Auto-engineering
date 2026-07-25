@@ -12,7 +12,7 @@ import logging
 from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
-    from opentelemetry.trace import Tracer
+    pass
 
 _logger = logging.getLogger("ae.observability.tracing")
 
@@ -72,7 +72,7 @@ def setup_tracing(
             port = parsed.port or 4317
             with socket.create_connection((host, port), timeout=2):
                 pass
-        except (OSError, socket.timeout):
+        except (TimeoutError, OSError):
             _logger.warning(
                 "OTLP collector %s 不可达 — 降级为 NoOp tracer（本会话仅告警一次）",
                 otlp_endpoint,
