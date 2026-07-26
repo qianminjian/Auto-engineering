@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import os
 
+from auto_engineering.host import HostPlatform, detect_host
+
 
 def _get_environ(environ: dict[str, str] | None = None) -> dict[str, str]:
     """Return environ dict for runtime detection queries.
@@ -29,23 +31,17 @@ def _get_environ(environ: dict[str, str] | None = None) -> dict[str, str]:
 
 def detect_plugin_mode(environ: dict[str, str] | None = None) -> bool:
     env = _get_environ(environ)
-    if env.get("CLAUDE_CODE"):
+    if detect_host(env).platform is not HostPlatform.UNKNOWN:
         return True
-    if env.get("CLAUDE_CODE_ENTRYPOINT"):
-        return True
-    if "claude" in env.get("ANTHROPIC_CLI", "").lower():
-        return True
+    # 向后兼容旧 Claude OAuth 子进程；凭据不能用于识别具体 HostPlatform。
     return bool(env.get("ANTHROPIC_AUTH_TOKEN"))
 
 
 def detect_plugin_mode_detail(environ: dict[str, str] | None = None) -> tuple[bool, str]:
     env = _get_environ(environ)
-    if env.get("CLAUDE_CODE"):
-        return (True, "CLAUDE_CODE")
-    if env.get("CLAUDE_CODE_ENTRYPOINT"):
-        return (True, "CLAUDE_CODE_ENTRYPOINT")
-    if "claude" in env.get("ANTHROPIC_CLI", "").lower():
-        return (True, "ANTHROPIC_CLI (claude substring)")
+    detection = detect_host(env)
+    if detection.platform is not HostPlatform.UNKNOWN:
+        return (True, detection.signal)
     if env.get("ANTHROPIC_AUTH_TOKEN"):
         return (True, "ANTHROPIC_AUTH_TOKEN")
     return (False, "no plugin signal")

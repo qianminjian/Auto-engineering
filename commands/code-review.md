@@ -44,7 +44,7 @@ Before creating PR, verify:
 
 1. `gh` CLI is installed and authenticated: `gh auth status`
 2. Current branch has unpushed commits: `git log origin/$(git branch --show-current)..HEAD --oneline`
-3. Critic has APPROVED: `ae status --format json`
+3. Critic has APPROVED: `scripts/ae-run status --format json`
 
 ## Execution
 
@@ -86,7 +86,7 @@ if ! gh auth status &> /dev/null; then
 fi
 
 # Check critic status
-STATUS_JSON=$(ae status --format json 2>/dev/null || echo '{"verdict":""}')
+STATUS_JSON=$(scripts/ae-run status --format json 2>/dev/null || echo '{"verdict":""}')
 VERDICT=$(echo "$STATUS_JSON" | python3 -c "import sys,json; print(json.loads(sys.stdin.read()).get('verdict',''))" 2>/dev/null || echo "")
 
 if [[ "$VERDICT" != "APPROVE" ]]; then
@@ -113,8 +113,8 @@ echo ""
 echo "=== Collecting PR context ==="
 
 # Gate results
-# Phase 40: ae gate-check CLI 已删除。Gate 在 dev-loop 内自动运行。使用 ae status 查 gate 结果。
-GATE_OUTPUT=$(ae status --format json 2>&1 || echo '{"gates":[]}')
+# Phase 40: gate-check CLI 已删除。Gate 在 dev-loop 内自动运行。使用共享 resolver 查询状态。
+GATE_OUTPUT=$(scripts/ae-run status --format json 2>&1 || echo '{"gates":[]}')
 GATE_TABLE=$(echo "$GATE_OUTPUT" | python3 -c "
 import sys, json
 try:

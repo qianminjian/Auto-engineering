@@ -97,15 +97,22 @@ def _check_sqlite3() -> tuple[bool, str]:
 
 
 def _check_api_key() -> tuple[bool, str]:
-    """检查 LLM 凭据 (ANTHROPIC_API_KEY 或 ANTHROPIC_AUTH_TOKEN).
+    """检查宿主连接或 direct API 凭据。
 
-    2026-07-04 修复 (prismscan 真实 bug): 用 4 级 fallback detect_plugin_mode
-    而非 2 级, 支持 CLAUDE_CODE_ENTRYPOINT + ANTHROPIC_AUTH_TOKEN (prismscan 实际 env).
-    Plugin mode 用户零配置, 由 Claude Code OAuth 自动注入 ANTHROPIC_AUTH_TOKEN.
+    Host Agent 模式由宿主提供 LLM 连接，Python 引擎不要求平台 API 凭据。
+    未识别宿主时保留 Claude legacy OAuth 和 direct API 兼容检查。
     """
+    from auto_engineering.host import HostPlatform, detect_host
     from auto_engineering.utils.plugin_mode import detect_plugin_mode, has_llm_credentials
+
+    detection = detect_host()
+    if detection.platform is not HostPlatform.UNKNOWN:
+        return True, (
+            f"宿主 Agent 连接 ({detection.platform.display_name}) — "
+            "Python 引擎无需单独配置 LLM 凭据"
+        )
     if detect_plugin_mode():
-        return True, "LLM 凭据 (Plugin mode 零配置, Claude Code OAuth 自动注入 ANTHROPIC_AUTH_TOKEN)"
+        return True, "Claude legacy Plugin mode — 已检测到 OAuth 凭据"
     if has_llm_credentials():
         return True, "LLM 凭据已设置 (ANTHROPIC_API_KEY 或 ANTHROPIC_AUTH_TOKEN)"
     return False, "LLM 凭据未设置 — 请 export ANTHROPIC_API_KEY=sk-... 或在 .env 中设置"
@@ -138,21 +145,20 @@ def _check_ae_state(project_root: Path) -> tuple[bool, str]:
 
 
 def _check_plugin_mode() -> tuple[bool, str]:
-    """检查 Plugin mode 是否启用 (Bug 4 修复, 2026-07-04).
-
-    2026-07-04 深度设计 (用户洞察): Plugin mode 用户**零配置**原则.
-    Plugin 在 Claude Code agent 内运行时, ANTHROPIC_AUTH_TOKEN 由 Claude Code
-    通过 OAuth 自动注入, 用户不需要自己 export ANTHROPIC_API_KEY.
-    """
+    """检查 Host Agent / legacy Plugin mode 是否启用。"""
+    from auto_engineering.host import HostPlatform, detect_host
     from auto_engineering.utils.plugin_mode import detect_plugin_mode_detail
+
+    detection = detect_host()
+    if detection.platform is not HostPlatform.UNKNOWN:
+        return True, (
+            f"宿主模式已启用: {detection.platform.display_name} "
+            f"(via {detection.signal}) — LLM 连接由宿主 Agent 提供"
+        )
 
     in_plugin, signal = detect_plugin_mode_detail()
     if in_plugin:
-        # Plugin mode: 用户零配置, ANTHROPIC_AUTH_TOKEN 由 Claude Code OAuth 注入
-        return True, (
-            f"Plugin mode 已启用 (via {signal}) — 用户零配置, "
-            f"ANTHROPIC_AUTH_TOKEN 由 Claude Code OAuth 自动注入"
-        )
+        return True, f"Claude legacy Plugin mode 已启用 (via {signal})"
     # CLI 调试模式: 需要用户手动 export (独立跑 ae 才需要)
     return True, (
         "CLI 调试模式 (独立跑 ae) — 需手动 export ANTHROPIC_API_KEY. "

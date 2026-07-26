@@ -90,7 +90,9 @@
 | **45** | **配置向导 + 启动闸门（2026-07-25 执行完成）** | **4** | **4** | **✅ 4/4 — ae doctor --wizard + --init 强制确认。1811 tests。BEACON 决策 #100。** |
 | **46** | **独立复审 + 审计修复（2026-07-25/26）** | **25** | **25** | **✅ 25/25 — P0×3 清零（end_requirement 接线 / record_token_usage 接线 / tools/ 823 行删除）+ P1×12 + P2×7 + 新发现修复 2 项（from_json / batch_state 守卫）+ 9 回归测试。1701 tests。报告：_scratch/reports/2026-07-25-audit-independent.md** |
 | **47** | **mypy 清零 + collector 拆分（2026-07-26）** | **2** | **2** | **✅ 2/2 — T117 collector 606→408+245+108 三文件（20 项公共 API 零变化）+ T118 mypy 64→0（95 文件 0 errors，顺带发现修复 2 个潜伏 bug：summarizer decisions 续接 / batch_progress 属性不存在）。1704 tests** |
-| **合计** | | | | **Phase 1-47 全部完成 ✅** |
+| **48** | **真跑验证 + 9 bug 修复 + 提示词优化（2026-07-26）** | **16** | **16** | **✅ 完成 — voice_clone 69 tick / 19 batch / 116 tests，最终 GOAL_ACHIEVED；全量 1735 passed / 1 skipped。** |
+| **49** | **Host-neutral Core + Host Adapter 跨 Agent 适配（2026-07-27 立项）** | **22** | **3** | **◐ 进行中 — T217-T219 完成；下一项 T220 Codex Skill。BEACON #101 / 设计 D.14。** |
+| **合计** | | | | **Phase 1-48 完成；Phase 49 待实施** |
 
 ---
 
@@ -2407,3 +2409,69 @@ ae dev-loop --init "需求"
 | **T138** | P2 | God Class 拆分 | tick_orchestrator 1910 行 / action_builder ~750 行（BEACON #86 暂缓，本会话 action_builder 又增 ~50 行）|
 | **T139** | P2 | flaky test 修复 | OTel 全局状态隔离（1 个 flaky）|
 | **T140** | P3 | Standalone 文档残留清理 | v5.6 134 处 Standalone 引用已加附录 C 历史存档标记，未逐一清理（按"标记不删历史"惯例保留）|
+
+---
+
+## Phase 49 — Host-neutral Core + Host Adapter 跨 Agent 适配（2026-07-27）
+
+> 来源：Claude Code → Codex 迁移复审；BEACON 决策 #101；设计规格 `v5.6-Design-Loop.md` D.14。
+>
+> 成功标准：Auto-Engineering 的循环核心不感知具体 Agent 平台；Claude Code、Codex、CodeBuddy 通过独立 Host Adapter 复用同一 action/result 协议、Gate、Checkpoint 和角色语义。任务按表中顺序逐个实施，同一时刻只推进一个任务。
+>
+> Phase 49 状态口径：`✅` 表示实现和新鲜验证完成；commit hash 仅在用户明确授权提交时填写。该口径避免旧版“完成必须自动 commit”规则突破当前 Git 授权边界。
+
+### P0 — Codex 最小可运行链路
+
+| 顺序 | T-task | 任务 | 主要产出 | EARS 验收 | 依赖 | 状态 |
+|---:|---|---|---|---|---|:---:|
+| 1 | **T217** | CLI 解析统一 | 新增 `scripts/ae-run`：插件 venv → `uv run --project` → PATH；活跃 Skill/Command 使用 resolver；PostToolUse 移除已删除的 `gate-check` | ✅ 6 新测试；相关平台测试 28 passed；全量 1741 passed / 1 skipped；mypy 95 文件 0 errors | — | ✅ |
+| 2 | **T218** | HostPlatform + Capability 契约 | 新增 `auto_engineering.host` 平台枚举、检测证据、能力矩阵；RuntimeConfig/plugin mode/doctor 接入，凭据不再用于识别宿主 | ✅ 9 新测试；Codex doctor 真跑正确；全量 1750 passed / 1 skipped；mypy 96 文件 0 errors；相关 Ruff 全绿；Core 零宿主反向依赖 | T217 | ✅ |
+| 3 | **T219** | Codex Hooks 重建 | Plugin/项目两套 Codex schema；stdin dispatcher；`HostEvent` 归一化；无运行环境或非法 JSON 时安全降级 | ✅ 6 新测试；真实 stdin handler 零输出成功；全量 1756 passed / 1 skipped；mypy 97 文件 0 errors；相关 Ruff 全绿 | T218 | ✅ |
+| 4 | **T220** | Codex Skill 入口 | `$auto-engineering` 主入口；平台无关 Tick 驱动说明；清除模型名和 Claude Tool 假设 | While 用户在 Codex 调用 Skill, when action 要求 inline/spawn, the Skill shall 使用当前宿主原生能力执行 | T217-T219 | ☐ |
+| 5 | **T221** | Git 授权与 checkpoint 策略 | 区分 capability/authorization；未授权时不自动 commit/push/PR | While 用户未授权 Git 写操作, when batch 或 loop 完成, the system shall 不执行外部 Git 写入 | T220 | ☐ |
+| 6 | **T222** | 双平台 Release 包修复 | 完整打包 manifests、skills、commands、hooks、脚本、Core；移除掩盖失败的 `|| true` | While 构建 release, when 校验 manifest paths, the package shall 不存在缺失文件 | T219-T221 | ☐ |
+| 7 | **T223** | Codex 真实集成测试 | Hook schema/stdin、宿主识别、CLI、Skill 最小 Tick、发布包 smoke | While 旧适配实现存在, when 运行新增测试, tests shall 先失败；修复后全绿 | T217-T222 | ☐ |
+| 8 | **T135** | offload 摘要质量 | 修复 T152 时序和结构化摘要，补真实 Tick 回归 | While stage 完成, when 写 offload, the summary shall 含有效 decisions/files/gates 而非空占位 | T223 | ☐ |
+
+### P1 — 双平台可维护性与现有待办
+
+| 顺序 | T-task | 任务 | 主要产出 | EARS 验收 | 依赖 | 状态 |
+|---:|---|---|---|---|---|:---:|
+| 9 | **T224** | 双平台规则生成 | `core + claude adapter + codex adapter` 模板；生成 CLAUDE.md/AGENTS.md | While 公共规则变化, when 运行同步脚本, both outputs shall 同步公共规则且保留平台差异 | T220 | ☐ |
+| 10 | **T225** | Codex 关键规则加载 | 将内存、设计不可降级、Agent 超时等红线纳入 Codex 可稳定加载链 | While 新 Codex 会话启动, when 读取 AGENTS/Skill, the agent shall 获得关键红线且不依赖 Claude `@include` | T224 | ☐ |
+| 11 | **T136** | cross-tick summarization E2E | 构造真实触发场景，验证摘要进入后续 developer prompt | While 跨 tick 上下文超过阈值, when 下一 developer 开始, the prompt shall 含结构化摘要 | T135 | ☐ |
+| 12 | **T226** | BEACON/Tracker 状态收敛 | 修正历史与当前状态边界、Phase 汇总和待办映射 | While 查看任一设计入口, when 对照当前代码, the phase/status shall 一致 | — | ☐ |
+| 13 | **T227** | 版本与测试基线 SSOT | 统一 Python 包、Plugin、README 版本和测试基线检查 | While 版本或基线漂移, when CI 运行, the check shall 失败并指出来源 | T222,T226 | ☐ |
+| 14 | **T228** | 双平台文档重写 | README、USER_GUIDE、API/培训文档的 Claude/Codex 使用路径 | While 新用户只阅读文档, when 安装任一平台, the user shall 完成 doctor 和最小 Tick | T217-T223 | ☐ |
+| 15 | **T229** | metrics 宿主适配 | usage source 抽象；Codex 无稳定来源时 `None/unsupported`；移除固定 anthropic | While usage source 不可用, when 收集 M5, the system shall 不伪造 0 或 Anthropic provider | T218 | ☐ |
+| 16 | **T230** | 双平台 CI matrix | manifest、Hook、规则同步、包安装和 Skill smoke | While 任一宿主适配漂移, when CI 运行, the affected platform job shall 失败 | T222-T225,T227 | ☐ |
+| 17 | **T139** | OTel flaky 修复 | 隔离全局状态并增加稳定性验证 | While tests 重复运行, when OTel 测试结束, the global state shall 不污染后续测试 | 可并行但排在 P0 后 | ☐ |
+| 18 | **T140** | Standalone 文档残留收口 | 保留明确历史区，当前入口和能力说明零 Standalone 误导 | While 阅读当前使用章节, when 搜索 active capabilities, the docs shall 不宣称 Standalone 可用 | T228 | ☐ |
+
+### P2 — 能力增强与长期维护
+
+| 顺序 | T-task | 任务 | 主要产出 | EARS 验收 | 依赖 | 状态 |
+|---:|---|---|---|---|---|:---:|
+| 19 | **T137** | Research Web Search E2E | 宿主能力映射、来源记录、失败降级和真跑验证 | While research 需要外部资料, when 宿主支持搜索, the role shall 记录来源并返回结构化结果 | T220,T223 | ☐ |
+| 20 | **T138** | God Class 拆分 | 在协议测试保护下拆分 orchestrator/action builder 职责 | While 外部 Tick 契约不变, when 完成拆分, all contract/e2e tests shall 通过 | T135,T136 | ☐ |
+| 21 | **T231** | 静态配置残留清理 | 清理删除模块的 mypy override、旧 Provider flags 和错误描述 | While 运行 mypy/config audit, when 扫描配置, the system shall 无无效模块和旧宿主假设 | T227,T140 | ☐ |
+| 22 | **T232** | 安装后验收 | 从 Release 压缩包安装到临时环境并运行双平台 smoke | While 使用发布产物而非源码仓, when 安装完成, doctor and minimal Tick shall 通过 | T222,T230 | ☐ |
+
+### 依赖主路径
+
+```text
+T217 → T218 → T219 → T220 → T221 → T222 → T223 → T135 → T136
+                    └→ T224 → T225 ────────────────┐
+T226 → T227 ────────────────────────────────────────┼→ T230 → T232
+T228 ← T217-T223 ───────────────────────────────────┘
+T229 ← T218
+T140 ← T228
+T138 ← T135,T136
+```
+
+### 完成纪律
+
+- 每个任务先增加能证明平台契约的失败测试，再做最小实现。
+- Host Adapter 结论必须由主流程或发布包 smoke 证明，禁止仅凭文件存在或字符串匹配标记完成。
+- Phase 49 不自动 commit、push 或创建 PR；Git 写操作遵循用户当前授权。
+- 设计或实现若需要降低 Tick、Gate、Checkpoint、多角色隔离标准，必须回到 BEACON 决策审批，不得用“平台不支持”静默降级。

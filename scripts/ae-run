@@ -1,0 +1,25 @@
+#!/bin/sh
+# 平台无关的 Auto-Engineering CLI 启动器。
+
+set -u
+
+SCRIPT_DIR=$(CDPATH= cd -- "${0%/*}" && pwd -P)
+PLUGIN_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd -P)
+VENV_AE="$PLUGIN_ROOT/.venv/bin/ae"
+
+if [ -x "$VENV_AE" ]; then
+    exec "$VENV_AE" "$@"
+fi
+
+if command -v uv >/dev/null 2>&1; then
+    exec uv run --project "$PLUGIN_ROOT" ae "$@"
+fi
+
+if command -v ae >/dev/null 2>&1; then
+    exec ae "$@"
+fi
+
+printf '%s\n' \
+    "AE_CLI_NOT_FOUND: 未找到 Auto-Engineering CLI。" \
+    "请在插件目录运行：uv sync" >&2
+exit 127

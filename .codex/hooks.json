@@ -1,5 +1,5 @@
 {
-  "description": "Auto-Engineering Codex lifecycle hooks",
+  "description": "Auto-Engineering workspace hooks for Codex development",
   "hooks": {
     "SessionStart": [
       {
@@ -7,7 +7,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"$PLUGIN_ROOT/hooks/codex-hook.sh\"",
+            "command": "./hooks/codex-hook.sh",
             "timeout": 10
           }
         ]
@@ -19,7 +19,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"$PLUGIN_ROOT/hooks/codex-hook.sh\"",
+            "command": "./hooks/codex-hook.sh",
             "timeout": 10
           }
         ]
@@ -31,7 +31,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"$PLUGIN_ROOT/hooks/codex-hook.sh\"",
+            "command": "./hooks/codex-hook.sh",
             "timeout": 10
           }
         ]
@@ -42,7 +42,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"$PLUGIN_ROOT/hooks/codex-hook.sh\"",
+            "command": "./hooks/codex-hook.sh",
             "timeout": 10
           }
         ]

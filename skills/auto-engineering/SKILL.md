@@ -12,15 +12,15 @@ description: >
 Claude Code Plugin that implements a Python-gated, Agent-executed development loop.
 The **Python engine is the deterministic gatekeeper** (StageRouter → Guardrail → Gate
 → ConvergenceJudge → Checkpoint). The **Agent (you) is the LLM executor** — you drive
-the loop by following the action JSON produced by each `ae dev-loop --tick` call.
+the loop by following the action JSON produced by each `scripts/ae-run dev-loop --tick` call.
 
 ## Hard Constraints (v5.6 Tick Protocol)
 
 <!-- FRAGMENT:iron_law_gatekeeper START -->
 When executing dev-loop:
 
-1. MUST invoke `ae dev-loop --init "<requirement>"` first — Python initializes state
-2. MUST invoke `ae dev-loop --tick --result <file>` after each stage — Python validates
+1. MUST invoke `scripts/ae-run dev-loop --init "<requirement>"` first — Python initializes state
+2. MUST invoke `scripts/ae-run dev-loop --tick --result <file>` after each stage — Python validates
 3. MUST NOT edit code before Python outputs `{"action":"developer"}`
 4. MUST NOT declare completion before Python outputs `{"action":"done"}`
 5. If Python rejects a result (`{"action":"error"}`), read error message and fix

@@ -13,7 +13,7 @@ Python 引擎做所有确定性决策（路由/门禁/收敛），你做所有 L
 
 ## Core model
 
-- `ae dev-loop --tick` 是独立 OS 进程：读 SQLite → 验证 → Guardrail → Gate → 收敛 → 输出 action JSON → 退出
+- `scripts/ae-run dev-loop --tick` 是独立 OS 进程：读 SQLite → 验证 → Guardrail → Gate → 收敛 → 输出 action JSON → 退出
 - Python 决定「下一步做什么」，你执行「怎么做」
 
 ## Your team
@@ -35,7 +35,7 @@ Python 引擎做所有确定性决策（路由/门禁/收敛），你做所有 L
 
 <!-- FRAGMENT:iron_law_gatekeeper START -->
 IRON LAW: PYTHON IS THE GATEKEEPER.
-NO STAGE ADVANCEMENT WITHOUT `ae dev-loop --tick` VALIDATION.
+NO STAGE ADVANCEMENT WITHOUT `scripts/ae-run dev-loop --tick` VALIDATION.
 You may NOT edit code before Python outputs {"action":"developer"}.
 You may NOT declare done before Python outputs {"action":"done"}.
 Violating the letter of this rule is violating the spirit of this rule.
@@ -44,7 +44,7 @@ Violating the letter of this rule is violating the spirit of this rule.
 ## Driving loop
 
 ```
-1. action = run: ae dev-loop --init "<requirement>" [--design-doc <path>]
+1. action = run: scripts/ae-run dev-loop --init "<requirement>" [--design-doc <path>]
 2. while action.action != "done":
      if action.action == "error":
          report action.error_code + message; STOP
@@ -53,14 +53,14 @@ Violating the letter of this rule is violating the spirit of this rule.
          🚨 Python paused the loop for a DecisionGate checkpoint.
          Read action.gate.question + action.gate.options.
          Default is always safe ("继续").  Just advance:
-           action = run: ae dev-loop --tick  (NO --result file)
+           action = run: scripts/ae-run dev-loop --tick  (NO --result file)
          Python auto-passes the gate and emits the next real action.
          continue  ← don't write a result file for gate actions
      # ═══ SKIP ═══
      if action.action == "skip":
          # Engine auto-advanced (e.g. design_spec empty → skip verifier).
          # Just loop: no result file needed.
-         action = run: ae dev-loop --tick  (NO --result file)
+         action = run: scripts/ae-run dev-loop --tick  (NO --result file)
          continue
      # ═══ Read action.instruction FIRST — it's a direct command ═══
      # ═══ SPAWN or INLINE ═══
@@ -75,7 +75,7 @@ Violating the letter of this rule is violating the spirit of this rule.
          # Read offload — developer reads architect offload before starting
          Do the work inline for action.action (this only happens for developer).
      write result JSON; result["stage"] MUST equal action.stage
-     action = run: ae dev-loop --tick --result <temp file>
+     action = run: scripts/ae-run dev-loop --tick --result <temp file>
 3. On "done": report action.verdict.
 ```
 
@@ -85,10 +85,10 @@ Print: `[Tick N | stage <action.stage>] …` before each tick.
 
 | Command | Output |
 |---------|--------|
-| `ae dev-loop --init "req" [--design-doc <path>]` | first action JSON (stdout) |
-| `ae dev-loop --tick --result <file>` | next action JSON (stdout) |
-| `ae dev-loop --status` | state summary JSON |
-| `ae dev-loop --resume <id>` | action JSON |
+| `scripts/ae-run dev-loop --init "req" [--design-doc <path>]` | first action JSON (stdout) |
+| `scripts/ae-run dev-loop --tick --result <file>` | next action JSON (stdout) |
+| `scripts/ae-run dev-loop --status` | state summary JSON |
+| `scripts/ae-run dev-loop --resume <id>` | action JSON |
 
 ## Spawn discipline
 
@@ -119,7 +119,7 @@ developer 开始前读 architect offload，critic 开始前读 developer offload
 
 - CLI 非零退出或 Bash 块失败 → 读错误信息并报告用户，不静默跳过
 - action == "error" → 报告 error_code + message
-- 2 次连续不可恢复错误 → 停止，让用户检查 `ae doctor`
+- 2 次连续不可恢复错误 → 停止，让用户运行 `scripts/ae-run doctor`
 
 <!-- FRAGMENT:red_flags START -->
 ## Red Flags — STOP，不要继续

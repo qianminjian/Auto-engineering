@@ -16,6 +16,8 @@ import os as _os
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from auto_engineering.host import HostPlatform, detect_host
+
 
 def _default(key: str) -> str:
     """Return FeatureFlag.default_value for *key* (Phase 44 SSOT)."""
@@ -143,15 +145,19 @@ class RuntimeConfig:
     # ── runtime detection ──
 
     @property
+    def host_platform(self) -> HostPlatform:
+        return detect_host(self.environ).platform
+
+    @property
     def is_claude_code(self) -> bool:
-        return bool(
-            self.get("CLAUDE_CODE")
-            or self.get("CLAUDE_CODE_ENTRYPOINT")
-        )
+        return self.host_platform is HostPlatform.CLAUDE_CODE
 
     @property
     def is_plugin_mode(self) -> bool:
-        return self.is_claude_code or bool(self.anthropic_auth_token)
+        return (
+            self.host_platform is not HostPlatform.UNKNOWN
+            or bool(self.anthropic_auth_token)
+        )
 
     @property
     def anthropic_cli(self) -> str:

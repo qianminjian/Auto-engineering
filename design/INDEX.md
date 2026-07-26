@@ -1,6 +1,6 @@
 # design/ — 文档索引
 
-> 创建：2026-06-25 | 更新：2026-07-21（第二轮审计 28 项发现全部修复完成） | 维护规则：每次合并/重命名后更新本文件
+> 创建：2026-06-25 | 更新：2026-07-27（Phase 49 跨 Agent 宿主适配设计） | 维护规则：每次合并/重命名后更新本文件
 
 ---
 
@@ -17,9 +17,9 @@
 
 | 类别 | 文件 | 描述 |
 |------|------|------|
-| **项目明灯** | `BEACON.md` | 当前阶段/目标/阻塞项/设计决策（v5.6 Tick-Based 协议 + 5 层验证架构, 决策 #1-#90, #86 更新为 25/28） |
-| **设计文档** | `v5.6-Design-Loop.md` | v5.6 Loop Engineering 唯一设计文档（自包含）：Tick-Based Discrete Invocation + 5 层验证架构；附录 B: Init→Loop 接口契约 / 附录 C: v7.0 双驱动远期架构 |
-| **实施跟踪** | `IMPLEMENTATION-TRACKER.md` | v5.6 实现进度主表（Phase 1-30=239/241 + 第二轮审计修复 25/28） |
+| **项目明灯** | `BEACON.md` | 当前阶段/目标/阻塞项/设计决策；决策 #101 确立 Host-neutral Core + Host Adapter |
+| **设计文档** | `v5.6-Design-Loop.md` | Loop Engineering 唯一设计文档：Tick + 5 层验证；D.14 为当前跨 Agent 宿主适配规格 |
+| **实施跟踪** | `IMPLEMENTATION-TRACKER.md` | Phase 1-48 完成；Phase 49 按 P0/P1/P2 跟踪 Claude/Codex/后续 Agent 适配 |
 | **讨论记录** | `discussion/v5.6-layered-verification-design.md` | v5.6 分层验证架构设计讨论全过程 — 已解决问题/用户纠正/设计原则/后续参考 |
 | **讨论记录** | `discussion/v5.6-progress-tree-design.md` | v5.6 ProgressTree 设计讨论 — 节点模型/同步策略/聚合算法 |
 | **讨论记录** | `discussion/v7.0-dual-driver-architecture.md` | v7.0 单引擎+双驱动架构讨论过程（"为什么这么想"）— 起点/可行性论证/优于保留 fork/争议点定调/YAGNI 边界 |
@@ -53,6 +53,7 @@ V<major>.<minor>-<Category>-<Name>.md
 
 | 日期 | 主文档 | 来源/操作 | 摘要 |
 |------|--------|---------|------|
+| 2026-07-27 | 全设计文档 | Claude Code → Codex 迁移复审 | BEACON 新增决策 #101；主设计新增 D.14 Host-neutral Core + Host Adapter；Tracker 新增 Phase 49（T217-T232 + T135-T140，共 22 项），明确平台无关 Core、宿主 Capability、真实集成测试和实施依赖 |
 | 2026-07-21 | 全设计文档 | 审计修复 | 第二轮深度审计 28 项发现全部修复（25 + 2 暂缓 + 1 已确认）。P0 虚化 ~533→0、P1 RatchetController 接线/shared.guardrail/from_manifest 去重/Guardrails 统一等、P2 Any→object/except 窄化/TaskOutcome 迁移等。BEACON #86 更新 + 演进日志 + 当前状态 / INDEX 日期+描述 / IMPLEMENTATION-TRACKER Phase 30 。v5.6-Design-Loop.md 无需更新（均为已有设计规格接线实现，无架构变更） |
 | 2026-07-16 | 全设计文档 | 审计同步 | 设计文档全面审核：(1) `design/discussion/` 从 `his_bak` 双重嵌套恢复，4 个讨论文件回归正确路径 (2) BEACON.md 补 2026-07-16 工作记录（Agent tick 闭环/mypy 清零/T16i/coverage-gate）(3) CLAUDE.md 测试数 ~2132→2135、日期同步 (4) v5.6-Design-Loop.md 头部日期修正 (5) INDEX.md 补全 discussion 文件索引 (6) IMPLEMENTATION-TRACKER.md T16i/T16h 滞后状态同步 |
 | 2026-07-16 | `v5.6-Design-Loop.md` | 设计文档整合 | 按用户要求 consolidation：`INIT-LOOP-CONTRACT.md` + `v7.0-Plan-DualDriver.md` 并入 v5.6-Design-Loop.md 附录 B/C，原文件归档 his_bak/。设计文档现仅 4 文件：BEACON.md + INDEX.md + v5.6-Design-Loop.md + IMPLEMENTATION-TRACKER.md |

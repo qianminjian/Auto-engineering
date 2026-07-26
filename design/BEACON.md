@@ -96,11 +96,12 @@
 | **98** | **v5.7 可观测性整合：OTLP 生命周期管理** | **决策**：(1) `ae doctor --setup-observability` 一键启动 Jaeger collecto；(2) `--teardown-observability` 停止；(3) `ae doctor` OTLP 连通性三态探测；(4) `ae dev-loop --init` 不可达时 stderr 引导；(5) `docker-compose.observability.yml` 内置模板。D52 | 2026-07-25 | ✅ |
 | **99** | **v5.7 配置管理统一：ae.toml + FeatureFlag 默认值 SSOT** | 当前 19 个功能开关通过 `export AE_XXX=1` 分散设置。三层默认值（FeatureFlag/RuntimeConfig 硬编码/_is_active 判定）互相不一致。**决策**：(1) 新增 `ae.toml` 项目配置文件，18 个功能开关集中管理，环境变量仅保留 `ANTHROPIC_API_KEY`；(2) FeatureFlag 增加 `default_value` 字段，成为全项目唯一默认值来源；(3) RuntimeConfig 18 个 property 硬编码默认值改为从 FeatureFlag 读取；(4) `ae doctor --init-config` 从 FeatureManifest 生成 `ae.toml` 模板；(5) 优先级：环境变量 > ae.toml > FeatureFlag.default_value；(6) `ae.toml` 可 git 版本控制。D53 | 2026-07-25 | ✅ |
 | **100** | **v5.7 配置向导 + 启动闸门：ae doctor --wizard + --init 强制确认** | ae.toml 不存在时 ae dev-loop --init 必须暂停确认，不能静默用默认值启动。**决策**：(1) ae doctor --wizard 交互式配置向导，逐 category 引导，回显保存值；(2) ae dev-loop --init 检测 ae.toml 不存在 → 输出检查清单（当前生效功能 + 缺失功能影响 + 三个选项：wizard/模板/继续）；(3) AE_SKIP_CONFIG_CHECK=1 跳过（CI）；(4) ae.toml 存在时直接启动。D54 | 2026-07-25 | ✅ |
+| **101** | **Host-neutral Core + Host Adapter 跨 Agent 架构** | Auto-Engineering 从“Claude Code Plugin 为中心”演进为“平台无关循环核心 + 可插拔宿主适配器”。① Core 仅拥有 TickOrchestrator、action/result schema、Gate、Guardrail、Checkpoint、Prompt 角色语义，不感知 Claude/Codex/CodeBuddy、模型名、Skill/Command 语法、Hook 事件或 transcript 路径；② Host Adapter 统一暴露 `detect/capabilities/invoke_role/normalize_event/resolve_cli/usage_source` 能力，Claude Code、Codex、CodeBuddy 分别实现，未知宿主显式降级；③ Plugin manifest、Hooks、Skill/Command、安装方式属于 Adapter/Packaging 层；④ action/result 协议保持宿主中立，spawn 仅表达角色、提示词、并发和结果契约，不携带平台工具名；⑤ 新增 Agent 平台只允许增加适配器、能力矩阵和契约测试，不复制循环引擎；⑥ 当前附录 D 的 v8.0 三平台设计作为历史基线保留，其中 Commands 通用、裸 `ae`、Standalone/Provider 等失效假设由 D.14 演进规格替代；⑦ Git commit/push/PR 等外部副作用由 Capability + 用户授权共同控制，不得由宿主适配器默认执行。D55 | 2026-07-27 | 📝 设计确认，Phase 49 待实施 |
 
 
 ## 当前状态
 
-**阶段：** Phase 48 完成 — 真跑验证（voice_clone 全量 GOAL_ACHIEVED）+ 9 bug 修复（F1-F9）+ 提示词优化 + Standalone 删除（2026-07-26）。Phase 1-48 全部完成。报告 `_scratch/test-output/2026-07-26-T50-T55真跑回归验证-agentmode-7switches.md`。
+**阶段：** Phase 49 实施中 — T217 CLI resolver、T218 HostPlatform、T219 Codex Hooks 已完成，下一项 T220 Codex Skill。Claude Code → Codex 迁移按“Host-neutral Core + Host Adapter”推进；Phase 1-48 已完成。
 
 **v5.7 变更总结 (2026-07-25)**：
 
@@ -115,11 +116,13 @@
 | **46** | **独立复审 + 审计修复** | P0×3 清零（metrics 接线 ×2 + 死代码删除）+ P1/P2×19 修复 + 9 回归测试 |
 | **47** | **mypy 清零 + collector 拆分** | collector 三文件拆分（API 零变化）+ mypy 95 文件 0 errors + 顺带修复 2 个潜伏 bug |
 
-**项目规模**：93 源文件 / ~19,600 行 / 87 测试文件 / **1735 tests passed**（2026-07-26 Phase 48 基准；本会话真跑修复新增 ~31 测，mypy 全绿）
+**项目规模**：95 源文件 / ~19,800 行 / 90 测试文件 / **1756 tests passed**（2026-07-27 T219 基准；1 skipped，mypy 97 文件全绿）
 
-**关键决策**：#97（入口统一）、#98（可观测性整合）、#99（配置管理统一）
+**关键决策**：#97（入口统一）、#98（可观测性整合）、#99（配置管理统一）、#101（跨 Agent 宿主架构）
 
 **剩余已知问题**（Phase 48 真跑盘点）：
+- Phase 49 P0：Codex Skill、Git 授权、发布包和真实集成测试尚未按 Host Adapter 契约实现
+- `.claude/rules/*.md` 关键红线未进入 Codex 可稳定加载的规则链；`AGENTS.md` 中 Claude `@include` 语义对 Codex 无效
 - T53 offload 摘要质量贫瘠（T152 未完全修复：architect offload "no batches"、key_decisions 空；BEACON#65 已重定位为执行存档，内容贫瘠待改善）
 - T54 cross-tick summarization 真跑未充分触发（代码层 2 潜伏 bug Phase 47 已修，真跑摘要注入未验证）
 - T50 research 阶段 web search 实际调用真跑未触发（F9 路由已修，端到端搜索未验证）
@@ -131,6 +134,10 @@
 
 | 日期 | 变更 | 原因 |
 |------|------|------|
+| 2026-07-27 | **T219 Codex Hooks 完成** | `hooks-codex.json` 和项目 `.codex/hooks.json` 使用 Codex matcher/command handler schema；新增 stdin dispatcher 和 HostEvent 归一化，非法输入安全跳过。6 新测试，全量 1756 passed / 1 skipped；新 Hook 下一 Codex 会话加载 |
+| 2026-07-27 | **T218 HostPlatform + Capability 契约完成** | 新增 host-neutral 平台枚举、检测证据和能力矩阵；Codex 原生信号优先于 Claude 兼容变量；RuntimeConfig/legacy plugin mode 接入；doctor 在 Codex 下不再要求 Anthropic 凭据。9 新测试，全量 1750 passed / 1 skipped |
+| 2026-07-27 | **T217 平台无关 CLI resolver 完成** | 新增 `scripts/ae-run`，按插件 venv → `uv run --project` → PATH 解析 CLI；活跃 Skill/Command 使用共享入口；删除 PostToolUse 对已移除 `gate-check` 的调用。6 新测试，全量 1741 passed / 1 skipped |
+| 2026-07-27 | **Phase 49 跨 Agent 宿主适配设计立项（决策 #101）** | 项目从 Claude Code 转入 Codex 开发后复审发现：核心 Tick 引擎可复用，但 Codex Hooks、CLI PATH、宿主识别、Skill、规则加载、发布包和平台测试仍依赖 Claude 假设。确立 Host-neutral Core + Host Adapter，先修 P0 运行链路，再处理 T135-T140 |
 | 2026-07-23 | **深度审计 P0 全部修复（决策 #96）** | 4 Agent 并行审计发现 10 P0（RatchetController 死代码/NameError/测试回归/命名不一致/死代码/stale .pyc/双重 PII 扫描/block_detector 掩盖）。全部修复，2313 passed。审计报告 `_scratch/reports/2026-07-23-deep-audit.md` |
 | 2026-07-23 | **全量深度审计 63 项全部处理完毕（决策 #93）** | 50 审计+4 决策+9 低优先级→零遗留。JSON 工具提取+死代码删除+Protocol 类型化+CHANGELOG+PRBackend 删除+guardrail shim 删除+check_feature CI。2324 tests PASS。 |
 | 2026-07-23 | **全量深度审计 50 项发现全部处理（决策 #93 初版）** | 3 Agent 并行审计（架构+虚化度/代码质量+工程化/协作友好度）+ Phase 1 快扫。50 项→ 40 修复+10 废弃。EscalationHandler 提取（God Class 1929→~1750行）+ AE_PRODUCTION 落地+GateExecutionError 异常契约+EngineState _runtime_ctx+FeatureManifest 清理。评分 5.5→7.0。审计报告: `_scratch/reports/2026-07-23-audit.md` |

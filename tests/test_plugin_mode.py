@@ -6,7 +6,8 @@
     - has_llm_credentials(): 检查 ANTHROPIC_API_KEY 或 ANTHROPIC_AUTH_TOKEN
 
 覆盖范围:
-    - 4 级 fallback 优先级 (CLAUDE_CODE > CLAUDE_CODE_ENTRYPOINT > ANTHROPIC_CLI > ANTHROPIC_AUTH_TOKEN)
+    - Claude legacy fallback 优先级
+      (CLAUDE_CODE > CLAUDE_CODE_ENTRYPOINT > ANTHROPIC_CLI > ANTHROPIC_AUTH_TOKEN)
     - 边界 (None / empty / mixed)
     - has_llm_credentials 双 key 检查
     - 与 prismscan Bug 4 修复一致性 (orchestrator/agent.run_agent/doctor 共用)
@@ -15,6 +16,16 @@
 from __future__ import annotations
 
 import pytest
+
+
+@pytest.fixture(autouse=True)
+def _isolate_non_claude_host_signals(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """本文件只验证 Claude legacy fallback，不继承运行测试的宿主信号。"""
+    monkeypatch.delenv("CODEX_THREAD_ID", raising=False)
+    monkeypatch.delenv("CODEX_SANDBOX", raising=False)
+    monkeypatch.delenv("CODEBUDDY_PLUGIN_ROOT", raising=False)
 
 
 class TestDetectPluginMode:
