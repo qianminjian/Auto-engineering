@@ -70,7 +70,7 @@ class DiagnosticRuleDiscoverer:
     # ── 6 pressure dimension scans (F.11.2) ──
 
     def _scan_requirement_fuzziness(self, summaries) -> list[CandidateRule]:
-        candidates = []
+        candidates: list[CandidateRule] = []
         fuzzy_reqs = [s for s in summaries if s.get("M4_plan_refine_count", 0) >= 2]
         clear_reqs = [s for s in summaries if s.get("M4_plan_refine_count", 0) == 0]
         if len(fuzzy_reqs) < 5 or len(clear_reqs) < 5:
@@ -105,7 +105,7 @@ class DiagnosticRuleDiscoverer:
         return candidates
 
     def _scan_design_doc_size(self, summaries) -> list[CandidateRule]:
-        candidates = []
+        candidates: list[CandidateRule] = []
         sizes = [float(s.get("component_count", s.get("batch_count", 1))) for s in summaries]
         tokens = [float(
             s.get("M5_token_efficiency", {}).get("total_tokens", 0)
@@ -138,7 +138,7 @@ class DiagnosticRuleDiscoverer:
         return candidates
 
     def _scan_resume_frequency(self, summaries) -> list[CandidateRule]:
-        candidates = []
+        candidates: list[CandidateRule] = []
         resumes = [float(s.get("resume_count", 0)) for s in summaries]
         m1_vals = [float(s.get("M1_loop_efficiency", 0)) for s in summaries]
         if len(resumes) < 5:
@@ -167,7 +167,7 @@ class DiagnosticRuleDiscoverer:
         return candidates
 
     def _scan_model_changes(self, summaries) -> list[CandidateRule]:
-        candidates = []
+        candidates: list[CandidateRule] = []
         groups: dict[str, list[float]] = {}
         for s in summaries:
             mv = s.get("ai_origin", {}).get("model_version", "unknown")
@@ -211,7 +211,7 @@ class DiagnosticRuleDiscoverer:
         return candidates
 
     def _scan_requirement_complexity(self, summaries) -> list[CandidateRule]:
-        candidates = []
+        candidates: list[CandidateRule] = []
         batch_counts = [float(s.get("batch_count", s.get("task_count", 1))) for s in summaries]
         m4_vals = [float(s.get("M4_plan_refine_count", 0)) for s in summaries]
         if len(batch_counts) < 5:
@@ -241,7 +241,7 @@ class DiagnosticRuleDiscoverer:
         return candidates
 
     def _scan_cross_component_coupling(self, summaries) -> list[CandidateRule]:
-        candidates = []
+        candidates: list[CandidateRule] = []
         coupling = [float(s.get("plate_deep_audit_p1", 0)) for s in summaries]
         trigger_rates = [float(
             s.get("M3_verification_trigger_rate", {}).get("plate_deep_audit", 0)

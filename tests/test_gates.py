@@ -172,8 +172,9 @@ class TestLintGate:
         assert verdict.passed is True, (
             f"linter 不存在应 skipped (passed=True), 实际: {verdict.message}"
         )
-        assert "skipped" in verdict.message.lower(), (
-            f"应明确标记 skipped, 实际: {verdict.message}"
+        # P0 修复 (2026-07-26): skip 是一等公民字段 verdict.skipped，不再依赖 message 文本
+        assert verdict.skipped is True, (
+            f"应明确标记 skipped 字段, 实际: skipped={verdict.skipped} msg={verdict.message}"
         )
 
 

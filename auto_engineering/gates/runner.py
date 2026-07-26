@@ -77,10 +77,15 @@ def run_gates(
             continue
         # 解析 verdict
         ok = bool(getattr(verdict, "passed", False))
+        skipped = bool(getattr(verdict, "skipped", False))
         message = str(getattr(verdict, "message", "") or "")
         gate_name = getattr(verdict, "gate_name", "") or name
+        # P0 修复 (2026-07-26 真跑): 区分 skip 与 pass。skipped gate（工具缺失/无测试）
+        # 不阻断、不计入通过——旧版报 ✓ 使 test/lint/type_check 对 TS 项目静默 skip 当通过。
+        if skipped:
+            status = "skipped"
         # P1-12: AE_PRODUCTION=1 → failed gates are hard_fail (不可降级为 warn)
-        if not ok and _production_active(project_root):
+        elif not ok and _production_active(project_root):
             status = "hard_fail"
             _logger.critical("Gate '%s' FAILED (production mode — 不可降级)", gate_name)
         else:
@@ -88,10 +93,13 @@ def run_gates(
         summary[name] = {
             "status": status,
             "passed": ok,
+            "skipped": skipped,
             "message": message,
             "gate_name": gate_name,
         }
-        if ok:
+        if skipped:
+            skipped_count += 1
+        elif ok:
             passed_count += 1
         else:
             failed_count += 1

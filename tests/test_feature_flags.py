@@ -52,10 +52,11 @@ class TestFeatureFlag:
         assert f.activation == "AE_TEST=1"
         assert f.default_active is False
 
-    def test_agent_mode_standalone_only(self):
-        f = FeatureFlag("AE_X", "standalone only", "provider",
-                        agent_mode="standalone_only")
-        assert f.agent_mode == "standalone_only"
+    def test_agent_mode_agent_only(self):
+        """2026-07-26 删除 Standalone 路径: AgentMode 仅余 both/agent_only。"""
+        f = FeatureFlag("AE_X", "agent only", "provider",
+                        agent_mode="agent_only")
+        assert f.agent_mode == "agent_only"
 
     def test_activation_custom_text(self):
         f = FeatureFlag("AE_Y", "custom", "safety",
@@ -77,8 +78,7 @@ class TestFeatureManifestCompleteness:
 
         Only enforces the RuntimeConfig → FEATURE_MANIFEST direction.
         Extra entries in FEATURE_MANIFEST that aren't in RuntimeConfig may be
-        legitimately used elsewhere (e.g. standalone_driver prefix scanning,
-        AE_MODEL_ROLE/AE_PROVIDER_ROLE) — those are checked separately.
+        legitimately used elsewhere — those are checked separately.
         """
         rt_keys = _ae_keys_from_runtime_config()
         manifest_keys = {f.key for f in FEATURE_MANIFEST}
@@ -92,17 +92,14 @@ class TestFeatureManifestCompleteness:
         """FEATURE_MANIFEST 中每个条目应有明确的使用路径 (AD4).
 
         不阻断 CI — 仅报告无明确路径的条目供人工审查。
-        部分 key（如 AE_MODEL_ROLE）通过 prefix scanning 使用，
-        不在 RuntimeConfig 直接访问。
+        部分 key 可能通过动态/前缀扫描使用，不在 RuntimeConfig 直接访问。
         """
         rt_keys = _ae_keys_from_runtime_config()
         manifest_keys = {f.key for f in FEATURE_MANIFEST}
         extra = manifest_keys - rt_keys
-        # Keys known to be used via dynamic/prefix scanning outside RuntimeConfig
-        _DYNAMIC_KEYS = {
-            "AE_MODEL_ROLE",    # standalone_driver scans AE_MODEL_<ROLE>_UPPER
-            "AE_PROVIDER_ROLE",  # standalone_driver scans AE_PROVIDER_<ROLE>_UPPER
-        }
+        # Keys known to be used via dynamic/prefix scanning outside RuntimeConfig.
+        # 2026-07-26: AE_MODEL_ROLE/AE_PROVIDER_ROLE 已随 StandaloneDriver 删除。
+        _DYNAMIC_KEYS: set[str] = set()
         unverified = extra - _DYNAMIC_KEYS
         if unverified:
             # Advisory only — don't fail CI.  Future work: scan all source files.

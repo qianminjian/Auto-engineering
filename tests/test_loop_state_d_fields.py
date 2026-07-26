@@ -25,7 +25,7 @@ from auto_engineering.loop.plan import (
     Task,
     TaskStatus,
 )
-from auto_engineering.loop.round import TaskOutcome
+from auto_engineering.loop.plan import TaskOutcome
 from auto_engineering.loop.state import (
     CheckpointEnvelope,
 )

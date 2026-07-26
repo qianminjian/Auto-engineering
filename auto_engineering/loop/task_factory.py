@@ -18,6 +18,7 @@
 
 from __future__ import annotations
 
+import copy
 import logging
 from typing import Any
 
@@ -148,21 +149,26 @@ def apply_outcome_to_state(state: EngineState, outcome: TaskOutcome) -> None:
         - 缺字段 → 静默跳过, 不抛 KeyError
         - 未注册的 task_role → no-op (防御性).
         - output 为 None 或非 dict → 视为空 dict, 不写入任何字段.
+        - 不修改传入的 outcome 对象 (2026-07-26 审计修复 P1-11: 内部副本处理).
     """
     role = outcome.task_role
     if role is None:
         return
 
-    values: dict[str, Any] = outcome.output if isinstance(outcome.output, dict) else {}
+    # 2026-07-26 审计修复 (P1-11): 副本处理, 避免原地 mutate 调用方的 outcome.output
+    # (原 values 直接引用 outcome.output, 下方 findings severity 映射会连带修改嵌套 dict)
+    values: dict[str, Any] = dict(outcome.output) if isinstance(outcome.output, dict) else {}
 
-    # v5.5 Phase 2: critic findings severity 映射
+    # v5.5 Phase 2: critic findings severity 映射 (深拷贝消除嵌套引用共享)
     if role == "critic" and "findings" in values:
-        findings = values["findings"]
-        if isinstance(findings, list):
+        raw_findings = values["findings"]
+        if isinstance(raw_findings, list):
+            findings = copy.deepcopy(raw_findings)
             for finding in findings:
                 if isinstance(finding, dict) and "severity" in finding:
                     raw = finding["severity"]
                     finding["severity"] = _SEVERITY_MAP.get(raw, raw)
+            values["findings"] = findings
 
     if values:
         validated = validate_role_output(role, values)

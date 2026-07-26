@@ -105,6 +105,8 @@ class ContextOffloader:
         if path is None:
             return None
         data = safe_json_load(path)
+        if not isinstance(data, dict):
+            return None
         return StageContextOffload(
             stage=data["stage"],
             round_number=data["round_number"],

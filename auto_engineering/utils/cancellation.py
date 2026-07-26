@@ -36,7 +36,7 @@ class CancellationToken:
         if self._cancelled:
             raise AEError(
                 ErrorCode.TASK_CANCELLED,
-                "Loop was cancelled by user (SIGINT).",
+                "循环已被用户中断 (SIGINT)",
             )
 
 

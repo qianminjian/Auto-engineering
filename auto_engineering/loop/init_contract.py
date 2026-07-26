@@ -137,7 +137,7 @@ def _load_schema() -> dict[str, Any] | None:
 def _jsonschema_lib() -> object | None:
     """返回 jsonschema 库或 None (未安装时)."""
     try:
-        import jsonschema  # type: ignore[import-untyped]
+        import jsonschema  # type: ignore[import-untyped]  # jsonschema 库无内置类型存根
         return jsonschema
     except ImportError:
         return None
@@ -197,7 +197,9 @@ def validate_against_schema(manifest: dict[str, Any]) -> ValidationResult:
     if schema is None:
         msg = "schema file missing, skipping schema validation"
         return ValidationResult(ok=True, warnings=[msg])
-    jsonschema = _jsonschema_lib()
+    # jsonschema 是动态导入的模块对象，无法用 Protocol 表达结构，
+    # Any 注解是动态模块的标准模式（移除条件：jsonschema 库提供 py.typed 后可用 import 替代）
+    jsonschema: Any = _jsonschema_lib()
     if jsonschema is None:
         msg = "jsonschema not installed, skipping schema validation"
         return ValidationResult(ok=True, warnings=[msg])

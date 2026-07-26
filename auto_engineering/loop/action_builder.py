@@ -24,8 +24,11 @@ _SPAWN_INSTRUCTION = (
     "Spawn {count} agent{parallel} with effort={effort}.\n"
     "{multi_instruction}"
     "Collect all outputs → merge into one result per expected_format → "
-    "write result: {{\"stage\":\"{stage}\",\"spawned\":true, ...merged}}.\n"
-    "Proof: .ae-state/spawn-proofs/{proof_token}.json (tell each subagent to append stage+timestamp).\n"
+    "write result: {{\"stage\":\"{stage}\",\"spawned\":true,"
+    "\"spawn_proof_token\":\"{proof_token}\", ...merged}}.\n"
+    "Proof: tell each subagent to OVERWRITE .ae-state/spawn-proofs/{proof_token}.json with exactly one JSON object "
+    "{{\"status\":\"completed\",\"stage\":\"{stage}\",\"completed_at\":\"<ISO timestamp>\"}} "
+    "(do NOT append a second object — appending corrupts the file and fails verification).\n"
     "On failure: {{\"stage\":\"{stage}\",\"spawned\":false,\"spawn_error\":\"<reason>\"}}."
 )
 _SPAWN_MULTI_INSTRUCTION = (
@@ -301,15 +304,21 @@ class ActionBuilder:
                 lines.append("")
                 for gname, gv in sorted(gs.items()):
                     if isinstance(gv, dict):
-                        passed = "✓" if gv.get("passed") else "✗"
+                        # P0 修复 (2026-07-26): skip 显示 ⊘ SKIPPED，区别于 ✓(通过)/✗(失败)
+                        if gv.get("skipped"):
+                            mark = "⊘ SKIPPED"
+                        elif gv.get("passed"):
+                            mark = "✓"
+                        else:
+                            mark = "✗"
                         msg = gv.get("message", "")[:120]
-                        lines.append(f"- {gname}: {passed} — {msg}")
+                        lines.append(f"- {gname}: {mark} — {msg}")
                 lines.append("")
 
             with open(str(md_file), "w", encoding="utf-8") as f:
                 f.write("\n".join(lines))
 
-        except (OSError, UnicodeError) as exc:
+        except (OSError, UnicodeError):
             _logger.warning("prompt log write failed for stage=%s", stage, exc_info=True)
 
     # ── helpers ──
@@ -480,6 +489,21 @@ class ActionBuilder:
                 result["instruction"] = _INLINE_INSTRUCTION.format(stage=action)
         if context:
             result["context"] = context
+            # P1 优化 (2026-07-26 提示词分析): 把任务上下文直接拼进 subagent_prompt 头部，
+            # 让 subagent 第一时间看到聚焦对象（哪个组件/板块/文件），减少推断成本。
+            # （F8 已注入 action.context，本优化进一步拼进 subagent 实际收到的 prompt。）
+            if result.get("subagent_prompt"):
+                ctx_lines = []
+                for k, v in context.items():
+                    if not v:
+                        continue
+                    sv = v if isinstance(v, str) else json.dumps(v, ensure_ascii=False)
+                    ctx_lines.append(f"  - {k}: {sv}")
+                if ctx_lines:
+                    preamble = (
+                        "## 本次任务上下文（编排器注入，优先聚焦）\n"
+                        + "\n".join(ctx_lines) + "\n\n")
+                    result["subagent_prompt"] = preamble + result["subagent_prompt"]
         if expected_format is not None:
             result["expected_format"] = expected_format
         result.update(extra)
@@ -488,25 +512,29 @@ class ActionBuilder:
     # ── DS-15 helpers ──
 
     def _load_prompt(self, stage: str) -> str:
-        """Read prompts/roles/<stage>.md and return its content.
+        """Read prompts/roles/<stage>.md, preferring the PromptRegistry combination.
 
-        Falls back to PromptRegistry if the file doesn't exist (for
-        backward-compat during migration).
+        P2 优化 (2026-07-26 提示词分析): 优先用 PromptRegistry 的组合 prompt——
+        它剥离 frontmatter（否则 frontmatter 文本会原样发给 subagent）并注入 frontmatter
+        声明的共享 fragments（如 critic 的 severity_rubric / letter_vs_spirit）。此前直接读
+        原始文件，frontmatter 当正文发出、声明的 fragments 未注入。registry 失败回退读原文件。
         """
+        # 优先: PromptRegistry 组合 prompt（fragments 注入 + frontmatter 剥离）
+        try:
+            combined = default_registry().get(stage)
+            if combined:
+                return combined
+        except Exception:
+            _logger.warning("PromptRegistry get failed for stage=%s, fallback to raw file",
+                            stage, exc_info=True)
+        # 回退: 读原始文件
         prompt_path = Path(__file__).resolve().parent.parent / "prompts" / "roles" / f"{stage}.md"
         if prompt_path.is_file():
             try:
                 return prompt_path.read_text(encoding="utf-8")
             except (OSError, UnicodeDecodeError) as e:
                 _logger.warning("Failed to read prompt file %s: %s", prompt_path, e)
-                return ""
-        # Fallback: PromptRegistry (old path, remove after migration)
-        try:
-            _reg = default_registry()
-            return _reg.get(stage) or ""
-        except Exception:
-            _logger.warning("PromptRegistry fallback failed for stage=%s", stage, exc_info=True)
-            return ""
+        return ""
 
     def _write_spawn_proof_file(self, proof_token: str, stage: str) -> None:
         """DS-15: pre-write spawn proof file so subagent can append to it.
@@ -529,11 +557,24 @@ class ActionBuilder:
 
     def _build_action_gap_scan(self, base: dict) -> dict:
         # DS-15: gap_scan prompt is self-contained — subagent uses Read to explore design doc.
+        # P1 优化 (2026-07-26 提示词分析): 补 gap 识别方法论 + grade 分级标准 + 示例
+        # （原仅泛化指令 "Do the work..."，Team Lead 无方法论指引）。
         return self._build_stage_action(base, "gap_scan", context={
             "design_doc_path": (
                 self._design_doc.path if self._design_doc else None),
             "project_root": str(self.project_root),
-        }, expected_format={
+        }, instruction=(
+            "扫描设计文档识别实现前的模糊点（gap）。逐章 Read 设计文档，对每个实现单元判定清晰度。\n"
+            "grade 分级标准:\n"
+            "- architectural: 跨组件架构未定（通信协议/数据流/分层边界缺失）→ 通常 has_blocking=true\n"
+            "- component: 单组件接口未定（Props/函数签名/返回值缺失）\n"
+            "- module: 模块实现细节未定（算法/边界条件/错误处理缺失）\n"
+            "每个 gap 输出 {id, design_section_ref(章节号), grade, clarity(high/medium/low), "
+            "summary, depends_on}。architectural gap 标 has_blocking=true（阻塞需先解决）；"
+            "无模糊点则 gaps=[]、has_blocking=false。\n"
+            "示例: {id:G1, design_section_ref:§5, grade:component, clarity:low, "
+            "summary:'MiniMax API 错误响应结构未定义', depends_on:[]}"),
+        expected_format={
             "gaps": ("[{id, design_section_ref, grade, clarity, "
                      "summary, depends_on}]"),
             "scanned_sections": "int",
@@ -621,27 +662,60 @@ class ActionBuilder:
         }, **extra)
 
     def _build_action_developer(self, base: dict) -> dict:
-        tasks = (
+        raw_tasks = (
             self._batch_state.current_batch_tasks(self._plan)
             if self._batch_state and self._plan
             else (self._plan.get_tasks_by_stage("developer")
                   if self._plan else [])
         )
-        return self._build_stage_action(base, "developer",
-            component=(
-                self._batch_state.current_component_name()
-                if self._batch_state else None),
-            batch_id=(
-                self._batch_state.current_batch_id()
-                if self._batch_state else None),
-            tasks=[
-                {"id": t.id, "description": t.description,
-                 "expected_output": t.expected_output,
-                 "file_targets": list(t.target_files),
-                 "depends_on": t.depends_on}
-                for t in tasks
-            ],
+        component = (
+            self._batch_state.current_component_name()
+            if self._batch_state else None)
+        batch_id = (
+            self._batch_state.current_batch_id()
+            if self._batch_state else None)
+        task_dicts = [
+            {"id": t.id, "description": t.description,
+             "expected_output": t.expected_output,
+             "file_targets": list(t.target_files),
+             "depends_on": t.depends_on}
+            for t in raw_tasks
+        ]
+        action = self._build_stage_action(base, "developer",
+            component=component, batch_id=batch_id, tasks=task_dicts,
             plan=self._state.plan)
+        # P0 修复 (2026-07-26 真跑): developer 是最核心的编码环节，旧版无 instruction
+        # （prompt-log 显示 "no instruction — inline stage"），Team Lead 无标准化驱动指引。
+        # 渲染 inline instruction：当前 batch/组件/tasks + TDD 铁律 + 项目约定 + result 格式。
+        action["instruction"] = self._build_developer_instruction(
+            component, batch_id, task_dicts)
+        return action
+
+    def _build_developer_instruction(
+        self, component: str | None, batch_id: str | None,
+        task_dicts: list[dict],
+    ) -> str:
+        """Render developer inline instruction (P0 修复, 2026-07-26)."""
+        lines: list[str] = []
+        for t in task_dicts:
+            deps = t.get("depends_on") or []
+            dep_text = f"（依赖 {', '.join(deps)}）" if deps else ""
+            files = ", ".join(t.get("file_targets", []))
+            lines.append(f"  - [{t.get('id')}] {t.get('description', '')} → {files}{dep_text}")
+        tasks_text = "\n".join(lines) if lines else "  （无 task 明细，依设计文档与 batch_plan 推断）"
+        return (
+            "你（Team Lead）亲自执行 developer 阶段（inline TDD），不 spawn subagent。\n"
+            f"当前 batch: {batch_id or '?'} | 组件: {component or '?'}\n"
+            "Tasks（按 TDD 顺序执行）:\n"
+            f"{tasks_text}\n"
+            "TDD 铁律: 每个 task 先写会失败的测试（RED commit）→ 写最小实现使其通过"
+            "（GREEN commit）→ 重构；test task 先于其所依赖的 implement task（先红后绿）。\n"
+            "项目约定: 读 .ae-state/init-manifest.json 取 language / test_runner / "
+            "source_root / test_root，按其工具链开发与测试。\n"
+            '完成后写 result: {"stage":"developer","batch_id":"<batch_id>",'
+            '"files_changed":[...],"commit_hash":"<hash>",'
+            '"test_results":{"passed":N,"failed":0},"red_evidence":[...]}。'
+        )
 
     def _build_action_critic(self, base: dict) -> dict:
         # DS-15: subagent reads changed files itself via Read/Grep.
@@ -659,6 +733,12 @@ class ActionBuilder:
         })
 
     def _build_action_component_verifier(self, base: dict) -> dict:
+        # 2026-07-25 审计修复: batch_state 为 None 时原代码 AttributeError 崩溃,
+        # 按 Fix C 同模式优雅 skip (mypy union-attr 预存错误一并修复)。
+        if self._batch_state is None:
+            return {**base, "action": "skip",
+                    "reason": "no batch state for component_verifier",
+                    "stage": "component_verifier"}
         comp = self._batch_state.current_component()
         # Fix B: collect implementation_files from batch_plan file_targets
         impl_files: list[str] = []
@@ -675,7 +755,15 @@ class ActionBuilder:
             return {**base, "action": "skip", "reason": "no design items or implementation files for component",
                     "stage": "component_verifier"}
         # DS-15: subagent reads design doc + impl files itself.
-        return self._build_stage_action(base, "component_verifier", expected_format={
+        # F8 修复 (2026-07-26 真跑): 注入 component/design_section/design_spec/
+        # implementation_files 到 context —— 此前 context 为空，verifier subagent 不知
+        # 验哪个组件，须 Team Lead 手动查 batch_state 补上下文（驱动摩擦大）。
+        return self._build_stage_action(base, "component_verifier", context={
+            "component": comp.name,
+            "design_section": comp.design_section,
+            "design_spec": design_spec,
+            "implementation_files": impl_files,
+        }, expected_format={
             "stage": "component_verifier",
             "component": "string (组件名称, 必填)",
             "coverage_map": (
@@ -690,7 +778,19 @@ class ActionBuilder:
 
     def _build_action_plate_deep_audit(self, base: dict) -> dict:
         # DS-15: subagent reads plate components + contracts itself.
-        return self._build_stage_action(base, "plate_deep_audit", expected_format={
+        # F8 修复 (2026-07-26 真跑): 注入 plate/components 到 context，让审计 subagent
+        # 知道审哪个板块（此前 context 为空，须 Team Lead 手动补板块名）。
+        ctx: dict = {}
+        if self._batch_state is not None:
+            try:
+                plate = self._batch_state.current_plate()
+                ctx = {
+                    "plate": plate.name,
+                    "components": [c.name for c in plate.components],
+                }
+            except (AssertionError, IndexError):
+                ctx = {}
+        return self._build_stage_action(base, "plate_deep_audit", context=ctx or None, expected_format={
             "stage": "plate_deep_audit",
             "plate": "string (板块名称, 必填)",
             "findings": (

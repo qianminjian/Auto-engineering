@@ -3,8 +3,8 @@
 P2-9: Extracted from action_builder.py and tick_orchestrator.py to eliminate
 duplication and provide a single source of truth.
 
-P0-4 (2026-07-21 audit): STAGE_TO_ROLE moved from standalone_driver.py to break
-reverse dependency (tick_orchestrator → standalone_driver).
+P0-4 (2026-07-21 audit): STAGE_TO_ROLE 原在 standalone_driver.py（已于 Phase 40 删除），
+移出以消除反向依赖（tick_orchestrator → standalone_driver）。
 """
 
 from __future__ import annotations

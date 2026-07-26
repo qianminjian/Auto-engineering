@@ -23,6 +23,7 @@ import shutil
 import sys
 from pathlib import Path
 
+from auto_engineering.gates._tools import LANGUAGE_TOOLS, detect_project_language
 from auto_engineering.gates.base import Gate, GateVerdict, run_gate_command
 
 __all__ = ["LintGate"]
@@ -62,78 +63,95 @@ class LintGate(Gate):
         self.extra_args = extra_args or []
         self.project_root = project_root
 
-    def _resolve_lint_cmd(self, project_root: Path | None = None) -> list[str]:
+    def _resolve_lint_cmd(self, project_root: Path | None = None,
+                          linter: str | None = None) -> list[str]:
         """解析 lint 命令.
 
         2026-07-04 修复 (Bug 1 prismscan 集成): 5 级兜底.
-        旧实现只有 3 级, 最后兜底 sys.executable -m (ae 工具隔离 Python 没项目依赖,
-        ruff 缺失 → lint 假阳性 fail → 触发 critic 异常).
+        P0 修复 (2026-07-26 真跑): 按语言选 linter（参数 linter 由 run() 检测传入），
+        eslint 在项目 node_modules（非全局 PATH）用 npx 调用。
 
-        新 5 级优先级:
+        优先级:
+            -. eslint → npx eslint (TS, 项目在 node_modules)
             0. 项目 venv: <project_root>/.venv/bin/{linter}
-            1. 显式 linter_bin
-            2. PATH 中的 linter_bin (shutil.which)
+            1. 显式 linter
+            2. PATH 中的 linter (shutil.which)
             3. uv run (项目级, 需 uv 在 PATH)
             4. sys.executable -m (最后兜底, 仅 Python 生态)
         """
+        linter = linter or self.linter_bin
+        # P0 修复: eslint 在项目 node_modules，用 npx 调用（eslint 9 用 `eslint <dir>`，无 check 子命令）
+        if linter == "eslint":
+            return ["npx", "eslint"]
+
         # 优先级 0: 项目 venv (Bug 1 修复)
         _root = project_root or self.project_root
         if _root is not None:
-            venv_linter = Path(_root) / ".venv" / "bin" / self.linter_bin
+            venv_linter = Path(_root) / ".venv" / "bin" / linter
             if venv_linter.exists() and venv_linter.is_file():
                 return [str(venv_linter), self.linter_subcommand]
 
-        # 优先级 1: 显式 linter_bin
-        if self.linter_bin:
-            return [self.linter_bin, self.linter_subcommand]
+        # 优先级 1: 显式 linter
+        if linter:
+            return [linter, self.linter_subcommand]
 
-        # 优先级 2: PATH 中的 linter_bin
-        if shutil.which(self.linter_bin):
-            return [self.linter_bin, self.linter_subcommand]
+        # 优先级 2: PATH 中的 linter
+        if shutil.which(linter):
+            return [linter, self.linter_subcommand]
 
         # 优先级 3: uv run (项目级, 需 uv 在 PATH)
         if shutil.which("uv"):
-            return ["uv", "run", self.linter_bin, self.linter_subcommand]
+            return ["uv", "run", linter, self.linter_subcommand]
 
         # 优先级 4: sys.executable -m (最后兜底, 仅 Python 生态)
-        return [sys.executable, "-m", self.linter_bin, self.linter_subcommand]
+        return [sys.executable, "-m", linter, self.linter_subcommand]
 
     def run(self, project_root: Path) -> GateVerdict:
         """执行 lint 检查.
 
         Returns:
-            GateVerdict: passed=True 表示 lint 0 错误; passed=False 表示有错误或命令失败.
+            GateVerdict: passed=True 表示 lint 0 错误; passed=False 表示有错误或命令失败;
+                     skipped=True 表示 linter 未安装（不阻断，区别于通过）。
 
-        v5.5 P1-10: _resolve_lint_cmd 接受 project_root 参数, 不再写 self.project_root.
+        P0 修复 (2026-07-26): 按语言自动选 linter（TS→eslint via npx），旧版写死 ruff
+        对 TS 项目静默 skip；linter 缺失返回 skip（非 ok）。
         """
         if verdict := self._validate_project_root(project_root):
             return verdict
-        cmd = [*self._resolve_lint_cmd(project_root), str(project_root), *self.extra_args]
+
+        # P0 修复: 按语言选 linter（旧版写死 self.linter_bin=ruff，不检测语言）
+        linter = self.linter_bin
+        if linter == _DEFAULT_LINTER:
+            language = detect_project_language(project_root)
+            if language != "python":
+                linter, _, _ = LANGUAGE_TOOLS.get(language, LANGUAGE_TOOLS["python"])
+
+        cmd = [*self._resolve_lint_cmd(project_root, linter), str(project_root), *self.extra_args]
 
         result = run_gate_command(cmd, project_root, self.timeout)
 
         if result.timed_out:
             return GateVerdict.failed(
-                f"{self.linter_bin} 超时 (>{self.timeout}s): {' '.join(cmd)}",
+                f"{linter} 超时 (>{self.timeout}s): {' '.join(cmd)}",
                 gate_name=self.name,
             )
         if result.not_found:
-            return GateVerdict.ok(
-                f"skipped: {self.linter_bin} 未找到 (5 级兜底全失败). "
-                f"建议 `uv add --dev {self.linter_bin}` 或项目根有 {self.linter_bin} 二进制.",
+            return GateVerdict.skip(
+                f"{linter} 未找到 (5 级兜底全失败). "
+                f"建议安装 {linter}（TS: `pnpm add -D eslint`；Python: `uv add --dev ruff`）.",
                 gate_name=self.name,
             )
 
         if result.returncode == 0:
             return GateVerdict.ok(
-                f"{self.linter_bin} {self.linter_subcommand} 通过 (0 errors)",
+                f"{linter} 通过 (0 errors)",
                 gate_name=self.name,
             )
 
         output = result.stdout or result.stderr or ""
         snippet = output[:1500] + ("..." if len(output) > 1500 else "")
         return GateVerdict.failed(
-            f"{self.linter_bin} {self.linter_subcommand} 失败 (exit={result.returncode}):\n{snippet}",
+            f"{linter} 失败 (exit={result.returncode}):\n{snippet}",
             gate_name=self.name,
         )
 

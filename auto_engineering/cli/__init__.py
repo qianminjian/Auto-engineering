@@ -66,8 +66,9 @@ def main():
     Init 工程 (项目脚手架) 已拆分独立项目, 见 design/BEACON.md.
     """
     # P0-6: Construct RuntimeConfig once, set as process-wide default
+    # BEACON #99: from_project 合并 ae.toml（env > ae.toml > default SSOT 优先级）
     from auto_engineering.config.runtime_config import RuntimeConfig, set_default_config
-    config = RuntimeConfig()
+    config = RuntimeConfig.from_project(Path.cwd())
     set_default_config(config)
 
     logging.basicConfig(

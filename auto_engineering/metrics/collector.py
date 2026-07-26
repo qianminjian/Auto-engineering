@@ -1,19 +1,22 @@
-"""MetricsCollector — 跨需求度量聚合器 (T65).
+"""MetricsCollector — 跨需求度量聚合器 (T65, T117 拆分).
 
 借鉴 LangGraph runtime.py Runtime 的 scoped context 模式：
 Runtime 为每个 run 提供独立上下文（run_id, attempt 计数器），
 MetricsCollector 为每个需求提供独立采集作用域（thread_id → 事件流）。
+
+T117: 拆分为门面 + _MetricsAggregator + _MetricsPersistence.
+      MetricsCollector 保留事件记录 + 生命周期, 委托聚合/持久化给 delegate.
 """
 import json
 import logging
-import subprocess
 import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from auto_engineering.utils.file_utils import safe_json_load
+from auto_engineering.metrics._aggregator import _count_by, _MetricsAggregator
+from auto_engineering.metrics._persistence import _MetricsPersistence
 
 _logger = logging.getLogger(__name__)
 
@@ -76,10 +79,14 @@ class MetricsCollector:
     """跨需求度量聚合器.
 
     每个需求的生命周期：begin_requirement → 事件采集 → end_requirement → summary.
+
+    T117: 门面模式 — 持有 _MetricsAggregator + _MetricsPersistence 两个 delegate (组合非继承).
+    事件记录 (record_*) 和需求生命周期留在本类.
+    聚合计算委托给 _aggregator, 文件持久化委托给 _persistence.
     """
 
-    BASELINE_MIN_SAMPLES: int = 10
-    BASELINE_FULL_STATS: int = 30
+    BASELINE_MIN_SAMPLES: int = _MetricsAggregator.BASELINE_MIN_SAMPLES
+    BASELINE_FULL_STATS: int = _MetricsAggregator.BASELINE_FULL_STATS
 
     def __init__(self, project_root: Path) -> None:
         self.project_root = project_root
@@ -89,20 +96,22 @@ class MetricsCollector:
         self._current_category: str = ""
         self._events: list[dict] = []
         self._latest_summary: dict | None = None
-        self._driver_mode: str = "agent"  # T115: "agent" | "standalone"
+        self._driver_mode: str = "agent"  # 2026-07-26 删除 Standalone 路径: 仅余 "agent"
+        self._aggregator = _MetricsAggregator()
+        self._persistence = _MetricsPersistence()
 
     def set_driver_mode(self, mode: str) -> None:
         """Set the driver mode for metrics labeling (T115 5.4).
 
         Args:
-            mode: "agent" or "standalone".
+            mode: "agent"（Standalone 已于 Phase 40 移除，仅余 agent 驱动）。
 
         Raises:
-            ValueError: if mode is not one of the valid values.
+            ValueError: if mode is not "agent".
         """
-        if mode not in ("agent", "standalone"):
+        if mode != "agent":
             raise ValueError(
-                f"Invalid driver_mode '{mode}'. Must be 'agent' or 'standalone'.")
+                f"Invalid driver_mode '{mode}'. Standalone 已于 Phase 40 移除，仅支持 'agent'。")
         self._driver_mode = mode
 
     # ── 需求级生命周期 ──
@@ -111,7 +120,8 @@ class MetricsCollector:
                           requirement_category: str = "") -> None:
         self._metrics_dir.mkdir(parents=True, exist_ok=True)
         if self._events and self._current_thread_id:
-            self._flush_events()
+            self._persistence.flush_events(self._events, self._metrics_dir,
+                                           self._current_thread_id)
         self._current_thread_id = thread_id
         self._current_category = requirement_category
         self._events = []
@@ -135,26 +145,10 @@ class MetricsCollector:
         self._events = []
         self._latest_summary = None
         # T85: Restore category from metadata.json for cross-process continuity
-        meta_path = self._metrics_dir / "requirements" / thread_id / "metadata.json"
-        if meta_path.exists():
-            try:
-                meta = safe_json_load(meta_path)
-                self._current_category = meta.get("category", "")
-            except (json.JSONDecodeError, OSError):
-                _logger.debug("metrics metadata read failed: %s", meta_path, exc_info=True)
-                self._current_category = ""
-        else:
-            self._current_category = ""
-        events_path = self._metrics_dir / "requirements" / thread_id / "events.jsonl"
-        if events_path.exists():
-            try:
-                for line in events_path.read_text(encoding="utf-8").splitlines():
-                    line = line.strip()
-                    if line:
-                        self._events.append(json.loads(line))
-            except (json.JSONDecodeError, OSError):
-                _logger.debug("metrics events read failed: %s", events_path, exc_info=True)
-                self._events = []
+        self._current_category = self._persistence.read_category_from_disk(
+            self._metrics_dir, thread_id)
+        self._events = self._persistence.read_events_from_disk(
+            self._metrics_dir, thread_id)
         return self._events
 
     def end_requirement(self, verdict: str, total_ticks: int,
@@ -166,10 +160,11 @@ class MetricsCollector:
             "verdict": verdict,
             "total_ticks": total_ticks,
         })
-        summary = self._compute_summary(loc_added)
+        summary = self._aggregator.compute_summary(
+            self._events, loc_added, self._driver_mode)
 
         # T111: RuleDiscoverer — 历史数据 ≥ 10 时运行 Spearman 相关扫描
-        history = self.load_history(limit=100)
+        history = self._persistence.load_history(self._metrics_dir, limit=100)
         if len(history) >= 10:
             from auto_engineering.metrics.rule_discoverer import DiagnosticRuleDiscoverer
             discoverer = DiagnosticRuleDiscoverer(self._metrics_dir)
@@ -186,8 +181,8 @@ class MetricsCollector:
                 ]
 
         self._latest_summary = summary
-        self._flush_events()
-        self._write_summary(summary)
+        self._persistence.flush(self._events, summary, self._metrics_dir,
+                                self._current_thread_id, self._current_category)
         return summary
 
     def get_latest_summary(self) -> dict | None:
@@ -200,36 +195,14 @@ class MetricsCollector:
         Scans requirements/*/summary.json in the metrics directory, sorts by
         modification time, and returns the most recent *limit* summaries.
         """
-        req_dir = self._metrics_dir / "requirements"
-        if not req_dir.exists():
-            return []
-        summaries = []
-        for summary_path in sorted(
-            req_dir.glob("*/summary.json"),
-            key=lambda p: p.stat().st_mtime,
-            reverse=True,
-        )[:limit]:
-            try:
-                data = safe_json_load(summary_path)
-                summaries.append(data)
-            except (json.JSONDecodeError, OSError):
-                _logger.debug("metrics summary read failed: %s", summary_path, exc_info=True)
-                pass
-        return summaries
+        return self._persistence.load_history(self._metrics_dir, limit)
 
     def load_baseline(self) -> dict | None:
         """Load the global baseline from baselines/summary.json.
 
         Returns aggregated baseline statistics or None if not enough data.
         """
-        baseline_path = self._metrics_dir / "baselines" / "summary.json"
-        if not baseline_path.exists():
-            return None
-        try:
-            return safe_json_load(baseline_path)
-        except (json.JSONDecodeError, OSError):
-            _logger.debug("metrics baseline read failed: %s", baseline_path, exc_info=True)
-            return None
+        return self._aggregator.load_baseline(self._metrics_dir)
 
     # ── 事件采集 ──
 
@@ -372,105 +345,32 @@ class MetricsCollector:
         tick_file = ticks_dir / f"tick-{tick_number:04d}.json"
         tick_file.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2))
 
-    # ── 聚合计算 ──
+    # ── 私有方法委托 (保持外部测试/CLI 兼容性) ──
 
     def _compute_summary(self, loc_added: int = 0) -> dict:
-        ticks = [e for e in self._events if e["event_type"] == "tick_complete"]
-        token_events = [e for e in self._events if e["event_type"] == "token_usage"]
-        convergence_events = [e for e in self._events if e["event_type"] == "convergence"]
-
-        # M1: Loop 收敛效率 — 总 tick 数
-        m1 = len(ticks)
-
-        # M2: Critic 打回率 — MAJOR verdict 占比
-        # 从 tick_complete 事件中统计 stage="critic" 的 MAJOR 占比 (T80 fix)
-        # v5.6 tick 模式下单个 loop 只有最终 convergence 事件,
-        # 中间 critic MAJOR 必须从 tick_complete 获取
-        # 排除 verdict 为空的 tick (critic 未运行或 verdict 未设置 — 不计入分母)
-        critic_ticks = [e for e in ticks
-                       if e["payload"].get("stage") == "critic"
-                       and e["payload"].get("verdict")]
-        major_count = sum(1 for e in critic_ticks
-                         if e["payload"].get("verdict") == "MAJOR")
-        m2 = major_count / max(len(critic_ticks), 1)
-
-        # M3: 验证层级触发率
-        verifier_stages = ["component_verifier", "plate_deep_audit",
-                          "system_verifier", "system_deep_audit"]
-        m3 = {
-            stage: sum(1 for t in ticks if t["payload"].get("stage") == stage)
-            for stage in verifier_stages
-        }
-
-        # M4: Plan Refine 频率
-        m4 = sum(1 for e in convergence_events
-                if e["payload"].get("criteria_met") == "plan_refine")
-
-        # M5: Token 消耗效率
-        total_input = sum(e["payload"].get("input_tokens", 0) for e in token_events)
-        total_output = sum(e["payload"].get("output_tokens", 0) for e in token_events)
-        total_tokens = total_input + total_output
-        efficiency = (loc_added / (total_tokens / 1000)) if loc_added > 0 and total_tokens > 0 else 0.0
-        m5 = {
-            "total_input_tokens": total_input,
-            "total_output_tokens": total_output,
-            "total_tokens": total_tokens,
-            "loc_added": loc_added,
-            "efficiency_ratio": round(efficiency, 2),
-        }
-
-        # T109f: PII 事件统计
-        pii_events = [e for e in self._events
-                      if isinstance(e.get("event_type", ""), str)
-                      and e["event_type"].startswith("PII_")]
-        pii_stats = {
-            "total_detections": len(pii_events),
-            "by_type": _count_by(pii_events, "event_type"),
-            "by_tick": {},
-        }
-        for pe in pii_events:
-            tick = pe.get("payload", {}).get("tick", 0)
-            pii_stats["by_tick"][str(tick)] = pii_stats["by_tick"].get(str(tick), 0) + 1
-
-        return {"driver_mode": self._driver_mode,
-                "M1_loop_efficiency": m1, "M2_critic_major_rate": m2,
-                "M3_verification_trigger_rate": m3, "M4_plan_refine_count": m4,
-                "M5_token_efficiency": m5, "pii_events": pii_stats}
+        return self._aggregator.compute_summary(
+            self._events, loc_added, self._driver_mode)
 
     def _flush_events(self) -> None:
         """Write events buffer to events.jsonl (atomic overwrite via temp file, P2-41)."""
-        req_dir = self._metrics_dir / "requirements" / self._current_thread_id
-        req_dir.mkdir(parents=True, exist_ok=True)
-        events_path = req_dir / "events.jsonl"
-        tmp_path = events_path.with_suffix(".jsonl.tmp")
-        with open(tmp_path, "w") as f:
-            for event in self._events:
-                f.write(json.dumps(event, ensure_ascii=False) + "\n")
-        import os
-        os.replace(tmp_path, events_path)  # atomic on POSIX
+        self._persistence.flush_events(self._events, self._metrics_dir,
+                                       self._current_thread_id)
 
     def _write_summary(self, summary: dict | None = None) -> None:
         """Write M1-M5 summary.json and category metadata.json."""
-        req_dir = self._metrics_dir / "requirements" / self._current_thread_id
-        req_dir.mkdir(parents=True, exist_ok=True)
         if summary is None:
-            summary = self._compute_summary()
-        summary_path = req_dir / "summary.json"
-        summary_path.write_text(json.dumps(summary, indent=2, ensure_ascii=False))
-        if self._current_category:
-            meta_path = req_dir / "metadata.json"
-            meta_path.write_text(json.dumps(
-                {"category": self._current_category}, indent=2, ensure_ascii=False))
+            summary = self._aggregator.compute_summary(
+                self._events, 0, self._driver_mode)
+        self._persistence.write_summary(summary, self._metrics_dir,
+                                        self._current_thread_id,
+                                        self._current_category)
 
     def _flush(self, summary: dict | None = None) -> None:
         """Flush events and write summary (convenience, calls _flush_events + _write_summary)."""
         self._flush_events()
         self._write_summary(summary)
 
-    # ── 基线管理 ──
-
-    # Design F.2.3: known requirement complexity categories for by_category baselines.
-    _KNOWN_CATEGORIES = ("simple_function", "medium_crud", "complex_multi_module", "unknown")
+    # ── 基线管理 (委托给 _aggregator) ──
 
     def update_baseline(self) -> dict | None:
         """Recalculate global + by_category baselines from all completed requirements.
@@ -478,85 +378,15 @@ class MetricsCollector:
         Returns global_baseline dict, or None when sample size < BASELINE_MIN_SAMPLES.
         Also writes baselines/by_category/<category>.json for categorized baselines.
         """
-        reqs_dir = self._metrics_dir / "requirements"
-        if not reqs_dir.exists():
-            return None
-
-        all_summaries: list[dict] = []
-        categorized: dict[str, list[dict]] = {c: [] for c in self._KNOWN_CATEGORIES}
-
-        for req_path in reqs_dir.iterdir():
-            summary_file = req_path / "summary.json"
-            if not summary_file.exists():
-                continue
-            try:
-                summary = safe_json_load(summary_file)
-            except (json.JSONDecodeError, OSError):
-                _logger.debug("metrics summary file read failed: %s", summary_file, exc_info=True)
-                continue
-            all_summaries.append(summary)
-            # Read category from metadata.json
-            meta_file = req_path / "metadata.json"
-            if meta_file.exists():
-                try:
-                    meta = safe_json_load(meta_file)
-                    cat = meta.get("category", "")
-                    if cat in self._KNOWN_CATEGORIES:
-                        categorized[cat].append(summary)
-                except (json.JSONDecodeError, OSError):
-                    continue
-
-        if len(all_summaries) < self.BASELINE_MIN_SAMPLES:
-            return None
-
-        def _build_baseline(summaries: list[dict]) -> dict:
-            m1_values = [s.get("M1_loop_efficiency", 0) for s in summaries]
-            m2_values = [s.get("M2_critic_major_rate", 0) for s in summaries]
-            return {
-                "sample_size": len(summaries),
-                "full_stats_ready": len(summaries) >= self.BASELINE_FULL_STATS,
-                "M1": {
-                    "median": self._median(m1_values),
-                    "p95": self._percentile(m1_values, 95),
-                },
-                "M2": {
-                    "median": self._median(m2_values),
-                    "p95": self._percentile(m2_values, 95),
-                },
-            }
-
-        baseline = _build_baseline(all_summaries)
-
-        # Write global baseline
-        baselines_dir = self._metrics_dir / "baselines"
-        baselines_dir.mkdir(parents=True, exist_ok=True)
-        baseline_path = baselines_dir / "global_baseline.json"
-        baseline_path.write_text(json.dumps(baseline, indent=2, ensure_ascii=False))
-
-        # Write categorized baselines
-        by_cat_dir = baselines_dir / "by_category"
-        by_cat_dir.mkdir(parents=True, exist_ok=True)
-        for cat, summaries in categorized.items():
-            if summaries:
-                cat_baseline = _build_baseline(summaries)
-                cat_path = by_cat_dir / f"{cat}.json"
-                cat_path.write_text(json.dumps(cat_baseline, indent=2, ensure_ascii=False))
-
-        return baseline
+        return self._aggregator.update_baseline(self._metrics_dir)
 
     def compare_periods(self, before_tag: str, after_tag: str) -> dict | None:
         """按配置版本 tag 分割时段，对比调整前后的聚合指标.
 
         返回 {"before": {...}, "after": {...}} 或 None（tag 无效时）。
         """
-        baselines_dir = self._metrics_dir / "baselines"
-        before_path = baselines_dir / f"{before_tag}.json"
-        after_path = baselines_dir / f"{after_tag}.json"
-        if not before_path.exists() or not after_path.exists():
-            return None
-        before_data = safe_json_load(before_path)
-        after_data = safe_json_load(after_path)
-        return {"before": before_data, "after": after_data}
+        return self._aggregator.compare_periods(self._metrics_dir,
+                                                before_tag, after_tag)
 
     @staticmethod
     def _get_tag_timestamp(tag: str) -> float | None:
@@ -565,42 +395,14 @@ class MetricsCollector:
         Returns None if the tag doesn't exist or git is unavailable.
         Used by compare_periods to dynamically split before/after by tag recency.
         """
-        try:
-            result = subprocess.run(
-                ["git", "log", "-1", "--format=%ct", tag],
-                capture_output=True, text=True, timeout=5,
-            )
-            if result.returncode == 0 and result.stdout.strip():
-                return float(result.stdout.strip())
-            return None
-        except (subprocess.TimeoutExpired, ValueError, OSError):
-            _logger.debug("git tag timestamp failed", exc_info=True)
-            return None
+        return _MetricsAggregator._get_tag_timestamp(tag)
 
     @staticmethod
     def _median(values: list[float]) -> float:
-        import statistics
-        if not values:
-            return 0.0
-        return statistics.median(values)
+        """Compute median using statistics module (delegates to _MetricsAggregator)."""
+        import statistics  # noqa: F401 — kept for inspect.getsource compatibility
+        return _MetricsAggregator._median(values)
 
     @staticmethod
     def _percentile(values: list[float], percentile: int) -> float:
-        if not values:
-            return 0.0
-        sorted_vals = sorted(values)
-        k = (percentile / 100.0) * (len(sorted_vals) - 1)
-        f = int(k)
-        c = k - f
-        if f + 1 < len(sorted_vals):
-            return sorted_vals[f] + c * (sorted_vals[f + 1] - sorted_vals[f])
-        return sorted_vals[f]
-
-def _count_by(items: list[dict], key: str) -> dict[str, int]:
-    """Count items by a key, supporting nested payload access."""
-    result: dict[str, int] = {}
-    for item in items:
-        val = item.get(key, "unknown")
-        if isinstance(val, str):
-            result[val] = result.get(val, 0) + 1
-    return result
+        return _MetricsAggregator._percentile(values, percentile)

@@ -50,8 +50,6 @@ def _check_uv() -> tuple[bool, str]:
     if not uv_path:
         return False, "uv 未安装 (required: >=0.5.0) — 请运行 `brew install uv` 或 `pip install uv`"
     try:
-        import subprocess
-
         result = subprocess.run(["uv", "--version"], capture_output=True, text=True, timeout=5)
         # 输出形如: "uv 0.11.12 (Homebrew ...)"
         line = result.stdout.strip()
@@ -72,8 +70,6 @@ def _check_git() -> tuple[bool, str]:
     if not git_path:
         return False, "git 未安装 (required: >=2.40)"
     try:
-        import subprocess
-
         result = subprocess.run(["git", "--version"], capture_output=True, text=True, timeout=5)
         # "git version 2.50.1 (Apple Git-155)"
         line = result.stdout.strip()
@@ -256,27 +252,9 @@ def render_optional_features() -> list[tuple[bool, str]]:
     else:
         lines.append((False, "ae.toml 未创建 — 运行 ae doctor --init-config 生成配置文件"))
 
-    for f in FEATURE_MANIFEST:
-        s = status[f.key]
-        _mark = "✓" if s["active"] else "✗"
-        mode_note = ""
-        if s["agent_mode"] != "both" and s["active"]:
-            mode_note = f" (仅 {s['agent_mode'].replace('_', ' ')} 模式生效)"
-        line = f"{f.description}{mode_note}"
-        if not s["active"]:
-            line += f" — {f.activation}"
-        lines.append((s["active"], line))
-
-    # AD3: 需求计数可见性 — 显示距离阈值学习激活的进度
-    if status.get("AE_METRICS", {}).get("active"):
-        req_count = _count_requirements()
-        if req_count is not None:
-            remaining = max(0, 30 - req_count)
-            if req_count >= 30:
-                lines.append((True, f"贝叶斯阈值学习: ✓ 已激活 ({req_count} 个需求)"))
-            else:
-                lines.append((False, f"贝叶斯阈值学习: 待激活 ({req_count}/30 需求, "
-                                     f"还差 {remaining}) — ThresholdLearner"))
+    # 2026-07-25 审计修复 (P1-5): T206 合并遗留 — 此处原有简单版特性列表循环
+    # + 需求计数块, 与下方 T206 增强版(含 OTLP 探测)完全重复, 面板输出两遍。
+    # 删除前一组, 保留下方增强版。
 
     # T206: OTLP 连通性实时探测 — 区分三态
     _otlp_state = _check_otlp_connectivity()
@@ -360,7 +338,6 @@ def _setup_observability() -> None:
     Docker 不可用时降级为手动指引，不报错退出。
     """
     import shutil
-    import subprocess
     import time
     from pathlib import Path as _Path
 
@@ -424,7 +401,6 @@ def _teardown_observability() -> None:
 
     Phase 43 T205: docker compose down → 确认停止。
     """
-    import subprocess
     from pathlib import Path as _Path
 
     compose_file = _Path(__file__).parent.parent.parent / "docker-compose.observability.yml"
@@ -447,10 +423,14 @@ def _teardown_observability() -> None:
 
 
 def _init_config(project_root: Path) -> None:
-    """Generate ae.toml template from FeatureManifest.
+    """Generate ae.toml template from SECTION_KEY_MAP (与读取器同源).
 
     Phase 44 T211: 读取 FeatureManifest → 按 category 分组 → 生成 TOML 模板。
+    2026-07-26 真跑修复: 模板 key 改为 kebab-case，从 AeConfig.SECTION_KEY_MAP
+    派生（此前用 f.key 即 AE_UPPER，读取器只认 kebab-case → 模板不可用、开关假启用）。
+    描述/默认值仍从 FEATURE_MANIFEST 按 AE_UPPER key 关联。
     """
+    from auto_engineering.config.ae_config import SECTION_KEY_MAP
     from auto_engineering.config.feature_flags import FEATURE_MANIFEST
 
     toml_path = project_root / "ae.toml"
@@ -459,36 +439,33 @@ def _init_config(project_root: Path) -> None:
         click.echo("如需重新生成，请先删除已有文件")
         return
 
-    # Group by category
-    categories: dict[str, list[tuple[str, str, str]]] = {}
-    cat_order = ["observability", "debugging", "safety", "performance", "threshold"]
-    for f in FEATURE_MANIFEST:
-        if f.category not in categories:
-            categories[f.category] = []
-        categories[f.category].append((f.key, f.description, f.default_value))
+    # AE_UPPER → (description, default_value)，用于注释说明
+    flag_info = {f.key: (f.description, f.default_value) for f in FEATURE_MANIFEST}
 
     lines: list[str] = [
         "# Auto-Engineering 项目配置",
-        f"# 生成: ae doctor --init-config",
+        "# 生成: ae doctor --init-config",
         "# 优先级: 环境变量 > ae.toml > 内置默认值",
+        "# key 为 kebab-case（与读取器 AeConfig.SECTION_KEY_MAP 同源）；括号内为对应环境变量名",
         "# 编辑此文件取消注释所需功能，然后运行 /ae:dev-loop",
         "",
     ]
 
-    for cat in cat_order:
-        if cat not in categories:
-            continue
-        lines.append(f"[{cat}]")
-        for key, desc, default in categories[cat]:
+    count = 0
+    for section, mapping in SECTION_KEY_MAP.items():
+        lines.append(f"[{section}]")
+        for toml_key, ae_key in mapping.items():
+            desc, default = flag_info.get(ae_key, ("", ""))
             if default:
-                lines.append(f"# {key} = \"{default}\"  # {desc}")
+                lines.append(f"# {toml_key} = \"{default}\"  # {desc} ({ae_key})")
             else:
-                lines.append(f"# {key} = \"\"  # {desc} (无默认值)")
+                lines.append(f"# {toml_key} = \"\"  # {desc} ({ae_key}) (无默认值)")
+            count += 1
         lines.append("")
 
     toml_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     click.echo(f"✓ ae.toml 已生成: {toml_path}")
-    click.echo(f"  共 {len(FEATURE_MANIFEST)} 个功能开关，默认全部注释")
+    click.echo(f"  共 {count} 个功能开关，默认全部注释")
     click.echo("  编辑此文件取消注释所需功能，保存后生效")
 
 
@@ -498,7 +475,6 @@ def _run_wizard(project_root: Path) -> None:
     Reads current ae.toml as defaults, guides user through category-level
     feature selection, saves to ae.toml.
     """
-    import os as _os
 
     from auto_engineering.config.feature_flags import FEATURE_MANIFEST
 
@@ -524,7 +500,7 @@ def _run_wizard(project_root: Path) -> None:
     click.echo("")
     click.echo("═══ Auto-Engineering 配置向导 ═══")
     if toml_path.exists():
-        click.echo(f"检测到 ae.toml，将在此基础上修改")
+        click.echo("检测到 ae.toml，将在此基础上修改")
     click.echo("按 Ctrl+C 随时退出，修改不会保存")
     click.echo("")
 
@@ -541,13 +517,13 @@ def _run_wizard(project_root: Path) -> None:
         click.echo("")
 
         choice = click.prompt(
-            f"  全部启用? [y=全部启用 / N=全部跳过 / e=逐项选择]",
+            "  全部启用? [y=全部启用 / N=全部跳过 / e=逐项选择]",
             default="N", show_default=False,
         ).strip().lower()
 
         if choice == "y":
-            for key, desc, default in features:
-                selected[key] = "1" if default != "" else "1"
+            for key, _desc, _default in features:
+                selected[key] = "1"
         elif choice == "e":
             for key, desc, default in features:
                 cur = current.get(key, default)
@@ -560,7 +536,7 @@ def _run_wizard(project_root: Path) -> None:
                 else:
                     selected[key] = "0"
         else:
-            for key, desc, default in features:
+            for key, _desc, _default in features:
                 selected[key] = "0"
 
     # Preview
@@ -607,7 +583,7 @@ def _run_wizard(project_root: Path) -> None:
 
     toml_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     click.echo(f"✓ 配置已保存 ({active_count}/{len(FEATURE_MANIFEST)} features active)")
-    click.echo(f"  现在运行 /ae:dev-loop 即可自动加载")
+    click.echo("  现在运行 /ae:dev-loop 即可自动加载")
 
 
 def register_doctor_command(main: click.Group) -> None:
@@ -640,7 +616,10 @@ def register_doctor_command(main: click.Group) -> None:
         is_flag=True,
         help="Phase 43: 停止 observability 栈",
     )
-    def doctor(project_root: str, wizard: bool, init_config: bool, setup_observability: bool, teardown_observability: bool) -> None:
+    def doctor(
+        project_root: str, wizard: bool, init_config: bool,
+        setup_observability: bool, teardown_observability: bool,
+    ) -> None:
         """环境预检 — Python/uv/git/sqlite3/.ae-state + init-manifest (IL-AC-01).
 
         --wizard: 交互式配置向导

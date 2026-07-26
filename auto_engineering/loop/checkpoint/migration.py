@@ -201,7 +201,10 @@ def load_v1_checkpoint(path: Path) -> dict[str, Any]:
     Returns:
         dict (解析后的 v1.1 Checkpoint 数据)
     """
-    return safe_json_load(path)
+    data = safe_json_load(path)
+    if not isinstance(data, dict):
+        return {}
+    return data
 
 
 def _v1_loop_state_to_v2(v1_data: dict[str, Any]) -> CheckpointEnvelope:

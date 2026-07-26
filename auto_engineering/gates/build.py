@@ -57,7 +57,12 @@ class BuildGate(Gate):
         self.timeout = timeout if timeout is not None else Gate._resolve_timeout(DEFAULT_TIMEOUT)
 
     @classmethod
-    def from_manifest(cls, manifest: dict) -> BuildGate:
+    def from_manifest(
+        cls,
+        manifest: dict,
+        timeout: float | None = None,
+        **extra_kwargs: object,
+    ) -> BuildGate:
         """DS-14: 从 init-manifest 创建 BuildGate (多语言支持)."""
         conventions = manifest.get("conventions")
         build_cmd = ""

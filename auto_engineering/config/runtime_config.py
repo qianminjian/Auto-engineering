@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import os as _os
 from dataclasses import dataclass, field
+from pathlib import Path
 
 
 def _default(key: str) -> str:
@@ -182,6 +183,23 @@ class RuntimeConfig:
     def from_environ(cls, environ: dict[str, str] | None = None) -> RuntimeConfig:
         """Create RuntimeConfig from an environ dict (defaults to os.environ)."""
         return cls(environ=dict(environ if environ is not None else _os.environ))
+
+    @classmethod
+    def from_project(cls, project_root: str | Path) -> RuntimeConfig:
+        """Build RuntimeConfig merging ae.toml under os.environ (BEACON #99).
+
+        Priority: os.environ > ae.toml > FeatureFlag.default_value。
+        ae.toml 值 overlay 进 environ dict，使所有 property / is_active /
+        setup_tracing 都 honoring 项目配置；os.environ 仍按 SSOT 优先级覆盖。
+        ae.toml 缺失时 overlay 为空 → 等价于 RuntimeConfig()（行为不变）。
+
+        2026-07-26 真跑修复: 此前 CLI 入口用 RuntimeConfig()（仅 os.environ），
+        ae.toml 从未注入 → 项目配置的开关在引擎运行时全部静默失效。
+        """
+        from auto_engineering.config.ae_config import AeConfig
+        overlay = AeConfig(project_root).toml_overlay()
+        merged = {**overlay, **dict(_os.environ)}
+        return cls(environ=merged)
 
 
 # Module-level sentinel — only for use at CLI entry points where injection hasn't

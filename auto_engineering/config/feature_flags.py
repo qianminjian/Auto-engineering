@@ -27,11 +27,14 @@ feature_warnings() 在 --init 时调用, 向用户提示默认关闭的生产相
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-AgentMode = Literal["both", "standalone_only", "agent_only"]
+# 2026-07-26 删除 Standalone 路径: StandaloneDriver 已于 Phase 40 删除,
+# "standalone_only" 模式值移除（0 个活跃 flag 使用）, 仅余 both / agent_only。
+AgentMode = Literal["both", "agent_only"]
 Category = Literal[
     "observability", "performance", "debugging",
     "provider", "safety", "threshold",
@@ -77,19 +80,15 @@ FEATURE_MANIFEST: list[FeatureFlag] = [
                 "debugging", default_value="INFO", activation="export AE_LOG_LEVEL=DEBUG"),
 
     # ── performance ──
-    # Phase 42: AE_CACHE_CONTROL removed — standalone_only, 消费者 StandaloneDriver 已删除
+    # Phase 42: AE_CACHE_CONTROL 已删除（其消费者 StandaloneDriver 已于 Phase 40 删除）
     FeatureFlag("AE_MAX_TOOL_CALLS", "单 Agent 最大工具调用次数",
                 "performance", default_value="20", activation="AE_MAX_TOOL_CALLS=20"),
 
     # ── provider ──
     FeatureFlag("AE_LLM_PROVIDER", "默认 LLM Provider (anthropic/deepseek/glm)",
                 "provider", default_value="", activation="AE_LLM_PROVIDER=anthropic"),
-    FeatureFlag("AE_MODEL_ROLE", "按 role 覆盖默认模型 (格式: AE_MODEL_<ROLE>_UPPER)",
-                "provider", default_value="", agent_mode="standalone_only",
-                activation="AE_MODEL_ARCHITECT=claude-sonnet-4-6"),
-    FeatureFlag("AE_PROVIDER_ROLE", "按 role 覆盖 Provider (格式: AE_PROVIDER_<ROLE>_UPPER)",
-                "provider", default_value="", agent_mode="standalone_only",
-                activation="AE_PROVIDER_CRITIC=deepseek"),
+    # 2026-07-26 审计清理: AE_MODEL_ROLE/AE_PROVIDER_ROLE 已删除
+    # （其消费者 StandaloneDriver 已于 Phase 40 删除，零消费者）。
 
     # ── safety ──
     FeatureFlag("AE_PII_ENABLED", "PII 四层文件桥接防护总开关 (L1-L4)",
@@ -179,13 +178,14 @@ def list_categories() -> list[str]:
 def feature_status_oneline(environ: dict | None = None) -> str:
     """Return a one-line feature status summary for stderr (T114 5.3).
 
-    Example: ``[Features] OTLP:✗ Audit:✗ Metrics:✗ Debug:✗ PII:✓ Token:✗``
+    Example: ``[功能] OTLP:✗ 审计:✗ 度量:✗ 调试:✗ PII:✓ Token:✗``
     """
     status = get_feature_status(environ)
+    # 2026-07-26 审计修复 (P2-2): 用户可见短名中文化 (OTLP/PII/Token 技术术语保留英文)
     short_names = {
-        "AE_AUDIT_LOG": "Audit", "AE_METRICS": "Metrics",
+        "AE_AUDIT_LOG": "审计", "AE_METRICS": "度量",
         "AE_OTLP_ENDPOINT": "OTLP",
-        "AE_DEBUG": "Debug",
+        "AE_DEBUG": "调试",
         "AE_PII_ENABLED": "PII", "AE_TOKEN_TRACKING": "Token",
     }
     parts: list[str] = []
@@ -196,9 +196,9 @@ def feature_status_oneline(environ: dict | None = None) -> str:
         mode = s.get("agent_mode", "both")
         suffix = ""
         if mode != "both" and active:
-            suffix = f"({mode.replace('standalone_only', 'Standalone').replace('agent_only', 'Agent')})"
+            suffix = f"({mode.replace('agent_only', '仅 Agent')})"
         parts.append(f"{name}:{mark}{suffix}")
-    return "[Features] " + " ".join(parts)
+    return "[功能] " + " ".join(parts)
 
 
 def feature_warnings(environ: dict | None = None) -> list[str]:
@@ -260,7 +260,7 @@ def feature_status_for_action(environ: dict | None = None) -> dict[str, bool]:
     return {key: s["active"] for key, s in status.items() if s["active"]}
 
 
-def _is_active(key: str, env: dict, default: bool = False) -> bool:
+def _is_active(key: str, env: dict | Mapping[str, str], default: bool = False) -> bool:
     """Determine if a feature flag is active from the environment.
 
     Phase 44: 默认值从 FeatureFlag.default_value 读取（不再硬编码）。

@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -38,10 +39,36 @@ class DimensionResult:
     detail: str = ""
 
 
+def _run_check(
+    dimension: str,
+    fn: Callable[[], DimensionResult],
+    timeout_msg: str,
+    fnf_msg: str,
+) -> DimensionResult:
+    """运行维度检查并统一处理 subprocess 三层异常.
+
+    Args:
+        dimension: 维度名称 (用于失败结果标识).
+        fn: 无参检查函数, 返回 DimensionResult.
+        timeout_msg: subprocess.TimeoutExpired 时的 detail 消息.
+        fnf_msg: FileNotFoundError 时的 detail 消息模板 (可引用 {e}).
+    """
+    import subprocess
+    try:
+        return fn()
+    except subprocess.TimeoutExpired:
+        return DimensionResult(dimension, False, timeout_msg)
+    except FileNotFoundError as e:
+        return DimensionResult(dimension, False, fnf_msg.format(e=e))
+    except Exception as e:
+        return DimensionResult(dimension, False, f"exception: {type(e).__name__}: {e}")
+
+
 def _check_init_manifest() -> DimensionResult:
     """Smoke 1: Init-Loop manifest 加载 + 验证 (IL-AC-01/02/04)."""
     import subprocess
-    try:
+
+    def _check() -> DimensionResult:
         # 用 venv python 跑 (PEP 695 envelope.py 需要 3.12+)
         result = subprocess.run(
             [
@@ -84,12 +111,12 @@ def _check_init_manifest() -> DimensionResult:
             "init_manifest", True,
             f"load/validate API 一致 (缺→None, 旧 version→拒绝, schema={schema_version})",
         )
-    except subprocess.TimeoutExpired:
-        return DimensionResult("init_manifest", False, "venv python 超时 (30s)")
-    except FileNotFoundError as e:
-        return DimensionResult("init_manifest", False, f"venv python 找不到: {e}")
-    except Exception as e:
-        return DimensionResult("init_manifest", False, f"exception: {type(e).__name__}: {e}")
+
+    return _run_check(
+        "init_manifest", _check,
+        timeout_msg="venv python 超时 (30s)",
+        fnf_msg="venv python 找不到: {e}",
+    )
 
 
 def _check_init_manifest_old() -> DimensionResult:
@@ -182,8 +209,9 @@ def _check_orchestrator_12_steps() -> DimensionResult:
 
     通过 pytest tests/test_loop_orchestrator.py 验证 12 步主循环.
     """
-    try:
-        import subprocess
+    import subprocess
+
+    def _check() -> DimensionResult:
         result = subprocess.run(
             [
                 str(PROJECT_ROOT / ".venv" / "bin" / "pytest"),
@@ -206,21 +234,12 @@ def _check_orchestrator_12_steps() -> DimensionResult:
             "orchestrator_12_steps", True,
             "TestOrchestratorV5MainLoop 12 步主循环测试 PASS",
         )
-    except subprocess.TimeoutExpired:
-        return DimensionResult(
-            "orchestrator_12_steps", False,
-            "pytest TestOrchestratorV5MainLoop 超时 (180s)",
-        )
-    except FileNotFoundError as e:
-        return DimensionResult(
-            "orchestrator_12_steps", False,
-            f"pytest not found: {e}",
-        )
-    except Exception as e:
-        return DimensionResult(
-            "orchestrator_12_steps", False,
-            f"exception: {type(e).__name__}: {e}",
-        )
+
+    return _run_check(
+        "orchestrator_12_steps", _check,
+        timeout_msg="pytest TestOrchestratorV5MainLoop 超时 (180s)",
+        fnf_msg="pytest not found: {e}",
+    )
 
 
 def _check_stage_router_t1_t6() -> DimensionResult:
@@ -228,8 +247,9 @@ def _check_stage_router_t1_t6() -> DimensionResult:
 
     通过 pytest tests/test_stage_router.py 验证 T1-T6.
     """
-    try:
-        import subprocess
+    import subprocess
+
+    def _check() -> DimensionResult:
         result = subprocess.run(
             [
                 str(PROJECT_ROOT / ".venv" / "bin" / "pytest"),
@@ -251,21 +271,12 @@ def _check_stage_router_t1_t6() -> DimensionResult:
             "stage_router_t1_t6", True,
             "test_stage_router.py T1-T6 转换 + MAJOR 计数 全 PASS",
         )
-    except subprocess.TimeoutExpired:
-        return DimensionResult(
-            "stage_router_t1_t6", False,
-            "pytest test_stage_router 超时 (120s)",
-        )
-    except FileNotFoundError as e:
-        return DimensionResult(
-            "stage_router_t1_t6", False,
-            f"pytest not found: {e}",
-        )
-    except Exception as e:
-        return DimensionResult(
-            "stage_router_t1_t6", False,
-            f"exception: {type(e).__name__}: {e}",
-        )
+
+    return _run_check(
+        "stage_router_t1_t6", _check,
+        timeout_msg="pytest test_stage_router 超时 (120s)",
+        fnf_msg="pytest not found: {e}",
+    )
 
 
 def _check_guardrail_3_states() -> DimensionResult:
@@ -274,8 +285,9 @@ def _check_guardrail_3_states() -> DimensionResult:
     通过 pytest tests/test_guardrail.py 验证 3 态 + Chain + 5 内置 Guardrails.
     P0-1 (2026-07-01): 删 drop 态 (YAGNI, CrewAI 仅 2 态), handler 中 drop-as-retry 兼容.
     """
-    try:
-        import subprocess
+    import subprocess
+
+    def _check() -> DimensionResult:
         result = subprocess.run(
             [
                 str(PROJECT_ROOT / ".venv" / "bin" / "pytest"),
@@ -298,29 +310,20 @@ def _check_guardrail_3_states() -> DimensionResult:
             "guardrail_3_states", True,
             "test_guardrail.py 3 态契约 全 PASS (P0-1: drop deprecated)",
         )
-    except subprocess.TimeoutExpired:
-        return DimensionResult(
-            "guardrail_3_states", False,
-            "pytest test_guardrail 超时 (120s)",
-        )
-    except FileNotFoundError as e:
-        return DimensionResult(
-            "guardrail_3_states", False,
-            f"pytest not found: {e}",
-        )
-    except Exception as e:
-        return DimensionResult(
-            "guardrail_3_states", False,
-            f"exception: {type(e).__name__}: {e}",
-        )
+
+    return _run_check(
+        "guardrail_3_states", _check,
+        timeout_msg="pytest test_guardrail 超时 (120s)",
+        fnf_msg="pytest not found: {e}",
+    )
 
 
 def _check_cli_doctor() -> DimensionResult:
     """Smoke 6: CLI doctor 7 项检查 (P2-1)."""
-    try:
-        import os
-        import subprocess
+    import os
+    import subprocess
 
+    def _check() -> DimensionResult:
         env = os.environ.copy()
         env["ANTHROPIC_API_KEY"] = env.get("ANTHROPIC_API_KEY", "sk-smoke-test")
 
@@ -353,21 +356,12 @@ def _check_cli_doctor() -> DimensionResult:
             "cli_doctor", True,
             f"ae doctor 7/7 ✓ ({check_marks} checks PASS)",
         )
-    except subprocess.TimeoutExpired:
-        return DimensionResult(
-            "cli_doctor", False,
-            "ae doctor 超时 (30s)",
-        )
-    except FileNotFoundError as e:
-        return DimensionResult(
-            "cli_doctor", False,
-            f"uv not found: {e}",
-        )
-    except Exception as e:
-        return DimensionResult(
-            "cli_doctor", False,
-            f"exception: {type(e).__name__}: {e}",
-        )
+
+    return _run_check(
+        "cli_doctor", _check,
+        timeout_msg="ae doctor 超时 (30s)",
+        fnf_msg="uv not found: {e}",
+    )
 
 
 def _check_plugin_load() -> DimensionResult:

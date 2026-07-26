@@ -155,6 +155,8 @@ class EscalationHandler:
                 lang = "python"
                 tools = LANGUAGE_TOOLS["python"]
 
+        # 所有分支均赋值 tools，assert 消除 None 类型（逻辑保证，非运行时检查）
+        assert tools is not None, "tools must be set by one of the resolution branches"
         ae_state_dir = self._ctx.project_root / ".ae-state"
         ae_state_dir.mkdir(parents=True, exist_ok=True)
 

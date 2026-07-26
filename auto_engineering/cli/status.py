@@ -169,7 +169,7 @@ def register_status_command(main_group: click.Group) -> None:
                 click.echo(f"  ⚠ 不可自动判定: {', '.join(undetectable)}", err=True)
         except Exception as e:
             _logger.warning("读取项目环境失败", exc_info=True)
-            click.echo(f"  读取项目环境失败: {e}")
+            click.echo(f"  读取项目环境失败: {e} — 可运行 ae doctor 检查环境")
 
         # ── verbose: 显示进度树 ──
         if verbose:
@@ -182,8 +182,10 @@ def register_status_command(main_group: click.Group) -> None:
             total_v2 = 0
             for db_file in cp_dir.glob("*.db"):
                 try:
-                    store: SQLiteCheckpointStore[EngineState] = SQLiteCheckpointStore(str(db_file))
-                    total_v2 += store.count()
+                    # 2026-07-25 审计修复 (P1-6): with 确保 _file_conn/WAL 句柄关闭
+                    store: SQLiteCheckpointStore[EngineState]
+                    with SQLiteCheckpointStore(str(db_file)) as store:
+                        total_v2 += store.count()
                 except (OSError, sqlite3.Error):
                     _logger.warning("checkpoint count 失败, 跳过: %s", db_file, exc_info=True)
                     continue
@@ -193,24 +195,30 @@ def register_status_command(main_group: click.Group) -> None:
 
 def _load_progress_summary(cwd: Path) -> dict:
     """从最新 checkpoint 读取 progress_tree 摘要 (Phase 40 T180)."""
-    from auto_engineering.loop.checkpoint import SQLiteCheckpointStore
+    from auto_engineering.loop.checkpoint import Checkpoint, SQLiteCheckpointStore
     cp_dir = cwd / ".ae-state"
     if not cp_dir.exists():
         return {"completion_pct": 0.0, "total_tasks": 0, "done_tasks": 0, "node_count": 0}
     latest_ckpt = None
     for db_file in cp_dir.glob("*.db"):
         try:
-            store: SQLiteCheckpointStore[EngineState] = SQLiteCheckpointStore(str(db_file))
-            ckpt = store.load_latest()
-            if ckpt is not None and (latest_ckpt is None or ckpt.round > latest_ckpt.round):
-                latest_ckpt = ckpt
+            # 2026-07-25 审计修复 (P1-6): with 确保 _file_conn/WAL 句柄关闭
+            store: SQLiteCheckpointStore[EngineState]
+            with SQLiteCheckpointStore(str(db_file)) as store:
+                ckpt: Checkpoint[EngineState] | None = store.load_latest()
+                if ckpt is not None and (latest_ckpt is None or ckpt.round > latest_ckpt.round):
+                    latest_ckpt = ckpt
         except (OSError, sqlite3.Error):
             continue
     if latest_ckpt is None:
         return {"completion_pct": 0.0, "total_tasks": 0, "done_tasks": 0, "node_count": 0}
     try:
         from auto_engineering.engine.progress_tree import ProgressTree
-        tree = ProgressTree.from_json(getattr(latest_ckpt.state, "progress_tree_json", None))
+        # 2026-07-25 审计修复: ProgressTree 无 from_json (仅 from_dict)。原调用
+        # 必抛 AttributeError 被下方 except 静默吞噬 → 进度摘要恒为默认值
+        # (Phase 40 T180 失效)。
+        pt_json = getattr(latest_ckpt.state, "progress_tree_json", None)
+        tree = ProgressTree.from_dict(json.loads(pt_json)) if pt_json else None
         if tree:
             return tree.summary()
     except (ValueError, TypeError, json.JSONDecodeError, AttributeError):

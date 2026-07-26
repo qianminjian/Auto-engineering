@@ -8,9 +8,13 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from auto_engineering.config.runtime_config import RuntimeConfig, get_default_config
 from auto_engineering.engine.state import EngineState
+
+if TYPE_CHECKING:
+    from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
 
 _logger = logging.getLogger(__name__)
 
@@ -141,6 +145,7 @@ def _check_config_gate(root: Path) -> bool:
         False — 用户选择退出（wizard 后需重新启动）
     """
     import os as _os
+
     import click as _click
 
     if _os.environ.get("AE_SKIP_CONFIG_CHECK") == "1":
@@ -154,7 +159,6 @@ def _check_config_gate(root: Path) -> bool:
 
     status = get_feature_status()
     active = [k for k, v in status.items() if v.get("active")]
-    inactive = [k for k, v in status.items() if not v.get("active")]
 
     _click.echo("", err=True)
     _click.echo("⚠  ae.toml 未配置 — 将使用内置默认值启动", err=True)
@@ -191,7 +195,7 @@ def _check_config_gate(root: Path) -> bool:
         _click.echo("编辑 ae.toml 后重新运行", err=True)
         return False
     else:
-        _click.echo(f"[config] user accepted defaults, {len(active)}/{len(FEATURE_MANIFEST)} active", err=True)
+        _click.echo(f"[配置] 用户接受默认配置, {len(active)}/{len(FEATURE_MANIFEST)} 项激活", err=True)
         return True
 
 
@@ -252,8 +256,11 @@ def run_tick_init(
         # Phase 45 T216: 配置来源
         toml_path = root / "ae.toml"
         if toml_path.exists():
-            active_count = sum(1 for v in cfg.environ.values() if v == "1" or v not in ("", "0"))
-            click.echo(f"  (配置来源: ae.toml, {active_count}/19 active)", err=True)
+            from auto_engineering.config.feature_flags import FEATURE_MANIFEST
+            active_count = sum(1 for f in FEATURE_MANIFEST if cfg.is_active(f.key))
+            click.echo(
+                f"  (配置来源: ae.toml, {active_count}/{len(FEATURE_MANIFEST)} active)",
+                err=True)
         else:
             click.echo("  (配置来源: 内置默认值)", err=True)
         for w in feature_warnings(cfg.environ):
@@ -396,26 +403,18 @@ def run_tick_resume(checkpoint_id: str, root: Path) -> None:
 
 
 def _resolve_checkpoint_by_thread_id(
-    candidate: str, store: object
+    candidate: str, store: SQLiteCheckpointStore[EngineState]
 ) -> str | None:
-    """Search checkpoints table for a row whose state_json contains the candidate UUID."""
-    import json as _json
+    """按 thread_id 反查 checkpoint id (T160 resume 回退).
+
+    2026-07-26 审计修复 (P1-10): 原实现 getattr(store, "_db") 访问私有属性,
+    内部属性改名即静默返回 None → 误导性 CheckpointNotFoundError。
+    改走公开 API SQLiteCheckpointStore.find_by_thread_id()。
+    """
     try:
-        raw = getattr(store, "_db", None)
-        if raw is None:
-            return None
-        rows = raw.execute(
-            "SELECT id, state_json FROM checkpoints ORDER BY rowid DESC LIMIT 50"
-        ).fetchall()
-        for row in rows:
-            try:
-                state = _json.loads(row[1])
-                if state.get("thread_id") == candidate:
-                    return row[0]
-            except (_json.JSONDecodeError, KeyError, TypeError):
-                continue
+        return store.find_by_thread_id(candidate)
     except (OSError, ValueError, KeyError, TypeError) as e:
         _logger = __import__("logging").getLogger("ae.cli")
         _logger.debug("thread_id fallback lookup failed: %s", e)
-    return None
+        return None
 

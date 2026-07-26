@@ -186,7 +186,10 @@ class RatchetController:
         if len(existing) < 2:
             return None
         previous = existing[-2]
-        return safe_json_load(previous)
+        loaded = safe_json_load(previous)
+        if not isinstance(loaded, dict):
+            return None
+        return loaded
 
     def get_current_config(self) -> dict | None:
         """读取当前最新配置."""
@@ -235,9 +238,11 @@ class RatchetController:
         """Merge an approved candidate rule into active diagnosis rules."""
         rules_path = self._metrics_dir / "baselines" / "merged_rules.json"
         rules_path.parent.mkdir(parents=True, exist_ok=True)
-        existing = []
+        existing: list[dict] = []
         if rules_path.exists():
-            existing = safe_json_load(rules_path)
+            loaded = safe_json_load(rules_path)
+            if isinstance(loaded, list):
+                existing = loaded
         existing.append({
             "signal_name": rule.signal_name,
             "metric": rule.metric,
@@ -256,8 +261,10 @@ class RatchetController:
             return float(value)
         if isinstance(value, dict):
             # For nested metrics like M5_token_efficiency, use total_tokens or efficiency_ratio
-            return float(value.get("efficiency_ratio",
-                                   value.get("total_tokens", 0)))
+            raw = value.get("efficiency_ratio", value.get("total_tokens", 0))
+            if raw is None:
+                return None
+            return float(raw)
         return None
 
 

@@ -263,7 +263,7 @@ class LastValueChannel(Channel[T]):
         new: LastValueChannel[T] = LastValueChannel(self.name)
         # 深拷贝 _value 避免可变对象共享(JSON 序列化值可能是 dict/list)
         new._value = _copy.deepcopy(self._value)
-        return new  # type: ignore[return-value]
+        return new  # type: ignore[return-value]  # mypy 无法将 LastValueChannel[T] narrow 到 Self
 
     def checkpoint(self) -> Any:
         """导出 JSON 序列化值.
@@ -311,6 +311,7 @@ class AccumulatingChannel(Channel[T]):
             if isinstance(v, list):
                 self._values.extend(v)
             else:
+                # isinstance 负向分支: mypy 无法将 T | list[T] 排除 list[T] 后 narrow 为 T
                 self._values.append(v)  # type: ignore[arg-type]
         return True
 
@@ -447,7 +448,7 @@ class BarrierChannel(Channel[Any]):
             is_set=self._state.is_set,
         )
         new._sync_event()
-        return new  # type: ignore[return-value]
+        return new  # type: ignore[return-value]  # mypy 无法将 BarrierChannel[T] narrow 到 Self
 
     def checkpoint(self) -> dict[str, Any]:
         """导出 JSON 序列化值.

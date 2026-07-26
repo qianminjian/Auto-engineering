@@ -14,7 +14,7 @@ import re
 from pathlib import Path
 
 from auto_engineering.pii.rules import PII_RULES
-from auto_engineering.shared.guardrail import Guardrail, GuardrailResult
+from auto_engineering.shared.guardrail import Action, Guardrail, GuardrailResult
 
 
 class PIIGuardrail(Guardrail):
@@ -72,7 +72,7 @@ class PIIGuardrail(Guardrail):
                         findings.append(f"{fpath}:{line_no}: {desc} ({name})")
 
         if findings:
-            action = "block" if self._block_mode else "retry"
+            action: Action = "block" if self._block_mode else "retry"
             return GuardrailResult(
                 action=action,
                 message=f"PII detected in {len(findings)} location(s): {'; '.join(findings[:5])}"

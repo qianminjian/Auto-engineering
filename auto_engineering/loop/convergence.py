@@ -298,6 +298,7 @@ class ConvergenceJudge:
             ConvergenceVerdict: 判定结果, should_stop=True 表示应停止
         """
         # 0. 终态成功 (v5.6 §C.5): audit + 覆盖双通过 → GOAL_ACHIEVED, 优先于硬上限
+        result: ConvergenceVerdict | None
         if system_deep_audit_ok and design_coverage_ok:
             result = ConvergenceVerdict.stop(
                 level=LEVEL_SEMANTIC,

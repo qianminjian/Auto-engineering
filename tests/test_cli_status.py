@@ -229,3 +229,114 @@ def test_status_text_mode_no_checkpoint(runner: CliRunner, tmp_cwd: Path) -> Non
     assert result.exit_code == 0
     # 应至少输出 "当前目录"
     assert "当前目录" in result.output or "项目" in result.output
+
+
+# ============================================================
+# P1-6 回归: SQLiteCheckpointStore 资源泄漏 (2026-07-25 独立审计)
+# ============================================================
+
+
+def _make_spy_store():
+    """构造 spy store 工厂: 强引用抑制 __del__ 兜底, 使 close 断言稳定.
+
+    历史 bug: status.py 循环内创建 store 从不 close(), 依赖 __del__ 析构
+    兜底 — CPython 引用计数下 __del__ 会掩盖泄漏, 故测试用强引用抑制它,
+    只有显式 close (with 语句) 才计入 closed。
+    """
+    import auto_engineering.loop.checkpoint as checkpoint_mod
+    from auto_engineering.loop.checkpoint import SQLiteCheckpointStore
+
+    created: list = []
+    closed: list[bool] = []
+
+    class _SpyStore(SQLiteCheckpointStore):
+        def __init__(self, *args, **kwargs) -> None:
+            super().__init__(*args, **kwargs)
+            created.append(self)  # 强引用 → __del__ 不触发
+
+        def close(self) -> None:
+            closed.append(True)
+            super().close()
+
+    return checkpoint_mod, SQLiteCheckpointStore, _SpyStore, created, closed
+
+
+def test_load_progress_summary_closes_checkpoint_store(
+    tmp_cwd: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """P1-6 回归: _load_progress_summary 用后应显式关闭 store."""
+    checkpoint_mod, real_store, spy_store, _created, closed = _make_spy_store()
+
+    ae_state = tmp_cwd / ".ae-state"
+    ae_state.mkdir(exist_ok=True)
+    with real_store(str(ae_state / "thread.db")):
+        pass  # 空 db, load_latest 返回 None
+
+    monkeypatch.setattr(checkpoint_mod, "SQLiteCheckpointStore", spy_store)
+
+    from auto_engineering.cli.status import _load_progress_summary
+    _load_progress_summary(tmp_cwd)
+
+    assert closed, (
+        "_load_progress_summary 未显式关闭 SQLiteCheckpointStore"
+        "(P1-6: 连接泄漏回归)"
+    )
+
+
+def test_status_command_closes_checkpoint_stores(
+    runner: CliRunner, tmp_cwd: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """P1-6 回归: status 命令 checkpoint 计数路径用后应显式关闭 store."""
+    checkpoint_mod, real_store, spy_store, _created, closed = _make_spy_store()
+
+    ae_state = tmp_cwd / ".ae-state"
+    ae_state.mkdir(exist_ok=True)
+    with real_store(str(ae_state / "thread.db")):
+        pass
+
+    monkeypatch.setattr(checkpoint_mod, "SQLiteCheckpointStore", spy_store)
+
+    result = runner.invoke(main, ["status"])
+    assert result.exit_code == 0, result.output
+    assert closed, (
+        "status 命令 checkpoint 计数路径未显式关闭 SQLiteCheckpointStore"
+        "(P1-6: 连接泄漏回归)"
+    )
+
+
+def test_load_progress_summary_parses_progress_tree_json(tmp_cwd: Path) -> None:
+    """回归: _load_progress_summary 应解析 checkpoint 中的 progress_tree_json.
+
+    历史 bug (2026-07-25 审计发现, mypy 揭示): 调用 ProgressTree.from_json
+    (该方法不存在, 仅有 from_dict) → 必抛 AttributeError 被 except 静默吞噬
+    → 进度摘要恒返回全零默认值 (Phase 40 T180 功能失效)。
+    """
+    import json
+
+    from auto_engineering.engine.progress_tree import ProgressTree
+    from auto_engineering.engine.state import EngineState
+    from auto_engineering.loop.checkpoint import SQLiteCheckpointStore
+
+    tree = ProgressTree.from_batch_plan(
+        [{
+            "batch_id": "B1", "design_section": "B1", "component": "Foo",
+            "tasks": [{"id": "T1", "description": "实现 foo",
+                       "module_ref": "§B1", "file_targets": ["foo.py"]}],
+        }],
+        requirement="回归测试需求",
+    )
+
+    ae_state = tmp_cwd / ".ae-state"
+    ae_state.mkdir(exist_ok=True)
+    state = EngineState(requirement="回归测试需求", current_stage="developer")
+    state.progress_tree_json = json.dumps(tree.to_dict(), ensure_ascii=False)
+    with SQLiteCheckpointStore(str(ae_state / "thread.db")) as store:
+        store.save(state, round=1, history=[], step=1)
+
+    from auto_engineering.cli.status import _load_progress_summary
+    summary = _load_progress_summary(tmp_cwd)
+
+    assert summary["total_tasks"] > 0, (
+        f"progress_tree 摘要应为非默认值 (from_json→from_dict 回归), "
+        f"实际: {summary}"
+    )

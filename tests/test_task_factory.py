@@ -25,7 +25,7 @@ from auto_engineering.loop.plan import (
     Plan,
     Task,
 )
-from auto_engineering.loop.round import TaskOutcome
+from auto_engineering.loop.plan import TaskOutcome
 from auto_engineering.loop.task_factory import (
     apply_outcome_to_state,
     tasks_from_batch_plan,

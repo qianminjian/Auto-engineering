@@ -32,10 +32,12 @@ def _ts() -> str:
 class ErrorCategory(enum.Enum):
     """AEError 归类 — 按 code 前缀分 4 类."""
 
-    USER_ERROR = "user_error"  # 用户输入/配置错 (CONFIG_*, TASK_NOT_FOUND)
+    # 2026-07-26 审计修复: 注释举例对齐 _ERROR_CATEGORY_MAP 现存 ErrorCode
+    # (原注释引用的 TASK_NOT_FOUND/CHECKPOINT_*/SANDBOX_*/STAGE_RETRY_* 均已删除)
+    USER_ERROR = "user_error"  # 用户输入/配置错 (CONFIG_* 等, 见 _ERROR_CATEGORY_MAP)
     API_ERROR = "api_error"  # API/LLM 错 (LLM_*)
-    NETWORK_ERROR = "network_error"  # 网络/IO 错 (CHECKPOINT_*)
-    BUSINESS_ERROR = "business_error"  # 业务规则错 (SANDBOX_*, STAGE_RETRY_*)
+    NETWORK_ERROR = "network_error"  # 网络/IO 错 (当前无对应前缀, 保留分类)
+    BUSINESS_ERROR = "business_error"  # 业务规则错 (TOOL_EXECUTION_ERROR)
 
 
 # 错误码 → 类别 映射(按 code 字符串前缀分类)

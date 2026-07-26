@@ -193,10 +193,12 @@ class TestGate(Gate):
             )
 
         if result.returncode in (4, 5):
+            # P0 修复 (2026-07-26 真跑): exit=4/5 = 未收集到测试 → skip（非通过）。
+            # 旧版报 ok（✓）使「没测到」被误当「通过」，TS 项目测试门禁形同虚设。
             output = result.stdout + result.stderr
             snippet = output[-300:] if len(output) > 300 else output
-            return GateVerdict.ok(
-                f"{runner} skip: 未收集到测试 (exit={result.returncode})\n{snippet}",
+            return GateVerdict.skip(
+                f"{runner} 未收集到测试 (exit={result.returncode})\n{snippet}",
                 gate_name=self.name,
             )
 

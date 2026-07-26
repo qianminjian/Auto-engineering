@@ -19,9 +19,46 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from auto_engineering.config.feature_flags import FeatureFlag
+    pass
 
 _logger = logging.getLogger("ae.config")
+
+
+# ae.toml [section] → {kebab-case key: AE_UPPER 环境变量名} 的唯一权威映射。
+# 读取器 (_load_toml) 与生成器 (doctor._init_config) 共同派生于此常量，
+# 保证模板产出的 key 与读取器识别的 key 永远一致（2026-07-26 真跑修复：
+# 此前生成器输出 AE_UPPER key、读取器只认 kebab-case，模板不可用、开关假启用）。
+SECTION_KEY_MAP: dict[str, dict[str, str]] = {
+    "observability": {
+        "audit-log": "AE_AUDIT_LOG",
+        "metrics": "AE_METRICS",
+        "otlp-endpoint": "AE_OTLP_ENDPOINT",
+        "token-tracking": "AE_TOKEN_TRACKING",
+        "audit-log-dir": "AE_AUDIT_LOG_DIR",
+    },
+    "debugging": {
+        "debug": "AE_DEBUG",
+        "log-level": "AE_LOG_LEVEL",
+    },
+    "safety": {
+        "pii-enabled": "AE_PII_ENABLED",
+        "pii-outbound": "AE_PII_OUTBOUND",
+        "pii-inbound": "AE_PII_INBOUND",
+        "pii-guardrail": "AE_PII_GUARDRAIL",
+        "pii-guardrail-mode": "AE_PII_GUARDRAIL_MODE",
+        "production": "AE_PRODUCTION",
+        "strict-red": "AE_STRICT_RED",
+    },
+    "performance": {
+        "max-tool-calls": "AE_MAX_TOOL_CALLS",
+    },
+    "threshold": {
+        "gate-timeout": "AE_GATE_TIMEOUT",
+    },
+    "provider": {
+        "llm-provider": "AE_LLM_PROVIDER",
+    },
+}
 
 
 class AeConfig:
@@ -47,7 +84,7 @@ class AeConfig:
             import tomllib
         except ImportError:
             try:
-                import tomli as tomllib  # type: ignore[no-redef]
+                import tomli as tomllib  # type: ignore[no-redef]  # 条件 import: tomllib/tomli 同名重绑定
             except ImportError:
                 _logger.debug("tomllib/tomli not available, skipping ae.toml")
                 return
@@ -61,34 +98,8 @@ class AeConfig:
         # Flatten [section] → AE_UPPER key mapping
         # [observability] audit-log = true → AE_AUDIT_LOG=1
         # [safety] pii-outbound = "redact" → AE_PII_OUTBOUND=redact
-        _section_map = {
-            "observability": {
-                "audit-log": "AE_AUDIT_LOG",
-                "metrics": "AE_METRICS",
-                "otlp-endpoint": "AE_OTLP_ENDPOINT",
-                "token-tracking": "AE_TOKEN_TRACKING",
-            },
-            "debugging": {
-                "debug": "AE_DEBUG",
-                "log-level": "AE_LOG_LEVEL",
-            },
-            "safety": {
-                "pii-enabled": "AE_PII_ENABLED",
-                "pii-outbound": "AE_PII_OUTBOUND",
-                "pii-inbound": "AE_PII_INBOUND",
-                "pii-guardrail": "AE_PII_GUARDRAIL",
-                "pii-guardrail-mode": "AE_PII_GUARDRAIL_MODE",
-                "production": "AE_PRODUCTION",
-                "strict-red": "AE_STRICT_RED",
-            },
-            "performance": {
-                "max-tool-calls": "AE_MAX_TOOL_CALLS",
-            },
-            "threshold": {
-                "gate-timeout": "AE_GATE_TIMEOUT",
-            },
-        }
-        for section, mapping in _section_map.items():
+        # 使用模块级 SECTION_KEY_MAP（与 doctor._init_config 生成器同源）
+        for section, mapping in SECTION_KEY_MAP.items():
             if section in data and isinstance(data[section], dict):
                 section_data = data[section]
                 for toml_key, ae_key in mapping.items():
@@ -128,3 +139,11 @@ class AeConfig:
             return f.default_value
         except (KeyError, ImportError):
             return ""
+
+    def toml_overlay(self) -> dict[str, str]:
+        """Return ae.toml 提供的 {AE_KEY: value}（仅 ae.toml 值，不含默认）。
+
+        用于 RuntimeConfig.from_project() 合并到 environ（BEACON #99）——
+        os.environ 优先于本 overlay，本 overlay 优先于 FeatureFlag 默认值。
+        """
+        return dict(self._toml_data)

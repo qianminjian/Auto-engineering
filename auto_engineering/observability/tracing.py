@@ -9,7 +9,7 @@ zero overhead, no SDK imports triggered.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 if TYPE_CHECKING:
     pass
@@ -22,11 +22,17 @@ class _TracerLike(Protocol):
 
     T135g: start_span is the canonical method (matches tick_orchestrator usage).
     start_as_current_span removed — never called in codebase.
+
+    OTel 的 start_span 签名含 SpanKind/types.Attributes 等复杂类型，
+    无法在不引入 OTel 类型依赖的前提下让 Protocol 精确匹配。
+    使用 cast(_TracerLike, tracer) 在 return 点消除类型不兼容。
     """
 
     def start_span(
-        self, name: str, attributes: dict | None = None
-    ) -> object: ...
+        self,
+        name: str,
+        **kwargs: Any,
+    ) -> Any: ...
 
 
 def setup_tracing(
@@ -50,7 +56,15 @@ def setup_tracing(
     from opentelemetry import trace as otel_trace
 
     if not otlp_endpoint:
-        return otel_trace.get_tracer(service_name)
+        # 2026-07-26 审计修复 (flaky): 显式返回 NoOpTracer — docstring 契约
+        # "None → NoOp tracer (zero overhead)"。原实现返回 otel_trace.get_tracer()
+        # (全局 provider 的 tracer), 行为取决于是否有前置代码调过 set_tracer_provider
+        # (全局一次性) → 测试顺序依赖 flaky, 且无 endpoint 时违背零开销设计契约。
+        from opentelemetry.trace import NoOpTracer
+        # cast: OTel 类型签名与 _TracerLike Protocol 无法精确匹配（SpanKind 等复杂类型），
+        # NoOpTracer 实现 start_span(name, **kwargs) 接口，运行时兼容。
+        # 移除条件：OTel 提供 py.typed 后改用精确 Protocol
+        return cast(_TracerLike, NoOpTracer())
 
     # DS-14 (T162, 2026-07-23): 检查是否已有有效 TracerProvider（Claude Code 已初始化）
     # Skip in test mode (AE_OTLP_SKIP_PROBE=1) — tests need clean provider state.
@@ -59,7 +73,7 @@ def setup_tracing(
         from opentelemetry.trace import ProxyTracerProvider
         if not isinstance(current_provider, ProxyTracerProvider):
             _logger.debug("TracerProvider 已由外部初始化，复用现有 provider")
-            return otel_trace.get_tracer(service_name)
+            return cast(_TracerLike, otel_trace.get_tracer(service_name))
 
     # DS-14 (T158, 2026-07-23): 先做 connectivity probe，不可达 → 静默降级
     # Skip probe in CI/unit-test environments (AE_OTLP_SKIP_PROBE=1)
@@ -79,7 +93,7 @@ def setup_tracing(
             )
             # 设置环境变量为空，避免后续 tick 重复探测
             _os.environ.pop("AE_OTLP_ENDPOINT", None)
-            return otel_trace.get_tracer(service_name)
+            return cast(_TracerLike, otel_trace.get_tracer(service_name))
 
     try:
         from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
@@ -93,11 +107,11 @@ def setup_tracing(
         provider.add_span_processor(BatchSpanProcessor(exporter))
         otel_trace.set_tracer_provider(provider)
 
-        return otel_trace.get_tracer(service_name)
+        return cast(_TracerLike, otel_trace.get_tracer(service_name))
     except Exception:
         _logger.warning(
             "OTLP tracing setup failed for endpoint=%s — falling back to NoOp tracer. "
             "Check that the collector is reachable and grpc dependencies are installed.",
             otlp_endpoint, exc_info=True,
         )
-        return otel_trace.get_tracer(service_name)
+        return cast(_TracerLike, otel_trace.get_tracer(service_name))

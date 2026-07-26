@@ -88,7 +88,9 @@
 | **43** | **可观测性整合（2026-07-25 执行完成）** | **5** | **5** | **✅ 5/5 — OTLP 生命周期管理 + doctor 增强 + init 引导。1811 tests。BEACON 决策 #98。** |
 | **44** | **配置管理统一（2026-07-25 执行完成）** | **5** | **5** | **✅ 5/5 — ae.toml + FeatureFlag SSOT + RuntimeConfig 重构。1811 tests。BEACON 决策 #99。** |
 | **45** | **配置向导 + 启动闸门（2026-07-25 执行完成）** | **4** | **4** | **✅ 4/4 — ae doctor --wizard + --init 强制确认。1811 tests。BEACON 决策 #100。** |
-| **合计** | | | | **Phase 1-45 全部完成 ✅** |
+| **46** | **独立复审 + 审计修复（2026-07-25/26）** | **25** | **25** | **✅ 25/25 — P0×3 清零（end_requirement 接线 / record_token_usage 接线 / tools/ 823 行删除）+ P1×12 + P2×7 + 新发现修复 2 项（from_json / batch_state 守卫）+ 9 回归测试。1701 tests。报告：_scratch/reports/2026-07-25-audit-independent.md** |
+| **47** | **mypy 清零 + collector 拆分（2026-07-26）** | **2** | **2** | **✅ 2/2 — T117 collector 606→408+245+108 三文件（20 项公共 API 零变化）+ T118 mypy 64→0（95 文件 0 errors，顺带发现修复 2 个潜伏 bug：summarizer decisions 续接 / batch_progress 属性不存在）。1704 tests** |
+| **合计** | | | | **Phase 1-47 全部完成 ✅** |
 
 ---
 
@@ -2328,7 +2330,80 @@ ae dev-loop --init "需求"
 
 - 只在 `ae.toml` 不存在时触发——已有配置的用户不受影响
 - `AE_SKIP_CONFIG_CHECK=1` 环境变量跳过检查（CI 环境）
-- 选项 3 的确认消息记录到 stderr: `[config] user accepted defaults, N/19 active`
+- 选项 3 的确认消息记录到 stderr: `[配置] 用户接受默认配置, N/19 项激活`（2026-07-26 审计 P2-3 中文化）
 - Skill 路径不受影响——Skill 环境应预先配置 `ae.toml`
 
+---
 
+## Phase 46 — 独立复审 + 审计修复（2026-07-25/26）
+
+> 来源：`/audit` 全项目独立复审（否定 Final 自审计 8.5："P0=0 / 虚化~0" 不成立）。报告：`_scratch/reports/2026-07-25-audit-independent.md`
+
+### 已完成（25 项）
+
+**P0 清零（3 项）：**
+- P0-1: `end_requirement` 签名不匹配 + 双层接线缺陷（嵌套在 `and enrichment` 条件内，冷启动不触发）→ 传参修复 + 接线移出条件 + 日志 debug→warning ✅
+- P0-2: `record_token_usage` 零调用点 → M5 结构性为零 → `_collect_token_usage()` 接线 ✅
+- P0-3: tools/ 823 行死模块 + 6 测试文件 → 删除（用户批准红线）✅
+
+**P1 修复（12 项）：** P1-1 ContextOffloader 读侧改判结案（目标由 DS-15+T54 达成，BEACON #65 措辞修订）/ P1-2 AuditHistory 删除 / P1-3 round.py 删除 / P1-4 AE_MODEL_ROLE·AE_PROVIDER_ROLE 删除 / P1-5 doctor 重复输出 / P1-6 status.py 资源泄漏 / P1-7 ruff 14→0 / P1-8 ErrorCategory 注释 / P1-9 ae agent 虚报声明 / P1-10 _db→find_by_thread_id 公开 API / P1-11 双 mutation→副本 / P1-12 错误消息中文化 ✅（P1-13 God Class 维持 BEACON #86 暂缓）
+
+**P2 修复（7 项 + 1 改判）：** P2-1 type:ignore 理由 / P2-2 特性面板中文化 / P2-3 配置消息中文化 / P2-4 atdo_smoke 去重 / P2-9 status 指引 / P2-10 doctor 冗余 import / P2-11 engine docstring；P2-8 复审保留（三态语义合理）✅
+
+**新发现修复（2 项）：** ProgressTree.from_json 不存在 → from_dict+json.loads（Phase 40 T180 进度摘要恢复）/ action_builder batch_state None 守卫 ✅
+
+**其他：** 新增 9 个回归测试（1818→1701 含删除 117 死测试）+ CLAUDE.md/AGENTS.md 基准同步（tmpl→sync --check）+ T53 演进确认（BEACON #65 + v5.6 §E.2.2）✅
+
+---
+
+## Phase 47 — mypy 清零 + collector 拆分（2026-07-26 立项）
+
+| T-task | 内容 | 验收标准 | 状态 |
+|--------|------|--------|------|
+| T117 | collector.py 606 行拆分 → _MetricsAggregator (245) + _MetricsPersistence (108) + collector 门面 (408) | ✅ 20 项公共 API 零变化；47 metrics 测试绿；3 文件 mypy 0 errors；全量零回归 | ✅ |
+| T118 | 全项目 mypy 64→0（14 文件，narrowing/注解/Protocol 为主；5 cast + 1 Any 注解均附理由+移除条件） | ✅ mypy 95 文件 0 errors；**顺带发现修复 2 个潜伏 bug**（summarization.py decisions[-1]["raw"] dict 索引 / tick_orchestrator.py BatchState.done_count() 属性不存在，均在 T54/T166 路径）+ 2 回归测试；1704 tests | ✅ |
+
+**暂缓项（用户决策 2026-07-26，不立为本阶段任务）：**
+- doctor.py 683 行拆分 → 下次 doctor 加功能时顺手
+- _check_plugin_mode 三态 warn → 不做（CLI 模式消息已含 ⚠ 提醒，框架级三态成本收益不匹配）
+- 全局单例 contextvar 化 → 不动（set/get 访问器设计已锁定未来切换成本；触发条件：BEACON #54 Driver B 进程内驱动 或 pytest-xdist）
+
+
+
+## Phase 48 — 真跑验证（voice_clone 全量）+ 9 bug 修复 + 提示词优化（2026-07-26）
+
+> 真跑：`/dev-loop "design/V1.0-Design-VoiceClonePage.md"` → **verdict=GOAL_ACHIEVED**（69 tick / 19 batch / 116 测全过）。
+> 路径：gap_scan→gap_review→architect→19 batch(developer→critic→CV)→6 plate_deep_audit→system_verifier(T51e)→system_deep_audit(T51f)→done。
+> 报告：`_scratch/test-output/2026-07-26-T50-T55真跑回归验证-agentmode-7switches.md`；提示词汇总：`prompt-log-2026-07-26-真跑汇总.md`。
+
+| T-task | 内容 | 验收标准 | 状态 |
+|--------|------|--------|------|
+| T119 | **F2(P0)** ae.toml 未接入引擎运行时 → `AeConfig.toml_overlay()` + `RuntimeConfig.from_project()` + cli 入口改 `from_project(cwd)` | ✅ 6 开关端到端全 ✓ + 产物落盘 + 测试 | ✅ |
+| T120 | **F1** `--init-config` 模板 key 格式与读取器不一致 → `SECTION_KEY_MAP` 同源 SSOT + 生成器反推 kebab-case（补全 17 key） | ✅ 10 测试 | ✅ |
+| T121 | **F5** architect prompt 未禁拼接多章节 → 单一章节 + 禁拼接 + 一组件一 batch | ✅ 真跑重出合法 19-batch 计划验证 | ✅ |
+| T122 | **F6** 孤儿 batch `ValueError` 崩溃 → `_after_architect` try/except → `ActionError(ORPHAN_BATCH)` | ✅ 源已改 | ✅ |
+| T123 | **F7** spawn proof 防伪失效 → result 带 `spawn_proof_token` + subagent 覆写 `status=completed`（禁追加）+ gate 拦截 `SPAWN_PROOF_INCOMPLETE` | ✅ 4 测试 | ✅ |
+| T124 | **F8** action.context 为空 → component_verifier/plate_deep_audit 注入 context + developer inline instruction | ✅ 5 测试 | ✅ |
+| T125 | **F9** gap_review resolution 大小写/格式不匹配 → normalize（lower+去空格+'+'→'_'） | ✅ 4 测试 | ✅ |
+| T126 | **F3** feature_status 不同源 → 传 `get_default_config().environ` | ✅ 1 测试 | ✅ |
+| T127 | **F4** `51/19` 假计数 → `sum(FEATURE_MANIFEST if is_active)` + `len(FEATURE_MANIFEST)` | ✅ 现显示 6/17 | ✅ |
+| T128 | **P0** developer 内联提示词 → `_build_action_developer` 渲染 instruction（batch/组件/tasks/TDD 铁律/项目约定/result 格式） | ✅ 2 测试 | ✅ |
+| T129 | **P0** Gate 对 TS 支持 → `GateVerdict.skip` 一等公民 + test→vitest/lint→`npx eslint`/type_check→`npx tsc --noEmit` + formatter `⊘ SKIPPED` | ✅ 7 测试 + 2 旧测试更新 | ✅ |
+| T130 | **删除 Standalone 路径**（用户授权）→ AgentMode 删 `standalone_only` + driver_mode agent-only + 5 注释清理 + v5.6 附录 C/BEACON 历史存档标记 | ✅ 3 测试更新 | ✅ |
+| T131 | 提示词优化 gap_scan 补方法论（grade 分级 architectural/component/module + 示例） | ✅ 测试绿 | ✅ |
+| T132 | 提示词优化 subagent 上下文拼进 prompt（context 拼进 subagent_prompt 头部） | ✅ 测试绿 | ✅ |
+| T133 | 提示词优化 Gate Results 去冗余（紧凑单行 + 仅失败 gate 展开） | ✅ 测试绿 | ✅ |
+| T134 | 提示词优化 role prompt 抽 fragment（`_load_prompt` 优先用 PromptRegistry 组合 prompt，注入 fragments + 剥离 frontmatter） | ✅ 测试绿 | ✅ |
+
+**本轮测试基准**：**1735 passed / 1 skipped**（基线 1704 + 本会话新增 ~31 测）。
+
+### 待办盘点（本轮真跑暴露，未落地，按优先级排序，后续会话依此推进）
+
+| T-task | 优先级 | 项 | 说明 |
+|--------|:---:|----|------|
+| **T135** | **P0** | **T53 offload 摘要质量**（T152 未完全修复）| 本轮真跑 architect offload 仍 `summary="Architect: no batches"`、key_decisions/files_changed 全空。修复：L1 时序（offload 移到 `_apply_result_to_state` 之后）+ L2 按 §E.2.2 拼装结构化摘要（key_decisions 从 critic verdict/plan 提取、files_changed 从 batch_state 汇总、gate_results 从 gate_summary 提取）。**后续会话优先修复** |
+| **T136** | P1 | T54 cross-tick summarization 真跑验证 | 代码层 2 潜伏 bug（Phase 47）已修，但真跑摘要注入未触发验证；需设计触发引擎 cross-tick summarization 的真跑场景，验证摘要注入 developer prompt |
+| **T137** | P2 | T50 research web search 端到端验证 | F9 已修 research 路由（research 阶段可达），但本轮真跑 research 阶段未实际触发 web search/MCP 调用，T50 搜索通路端到端未验证 |
+| **T138** | P2 | God Class 拆分 | tick_orchestrator 1910 行 / action_builder ~750 行（BEACON #86 暂缓，本会话 action_builder 又增 ~50 行）|
+| **T139** | P2 | flaky test 修复 | OTel 全局状态隔离（1 个 flaky）|
+| **T140** | P3 | Standalone 文档残留清理 | v5.6 134 处 Standalone 引用已加附录 C 历史存档标记，未逐一清理（按"标记不删历史"惯例保留）|

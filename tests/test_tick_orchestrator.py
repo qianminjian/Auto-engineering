@@ -3385,6 +3385,164 @@ class TestT105MetricsConvergence:
             from auto_engineering.metrics.collector import set_collector
             set_collector(None)
 
+    def test_end_requirement_records_event_on_convergence(self) -> None:
+        """P0-1 回归: 收敛时 end_requirement 应真实写入 requirement_end 事件.
+
+        历史 bug(2026-07-25 独立审计发现): 调用点只传 1 个参数(requirement 文本),
+        而签名要求必填 total_ticks → 每次必抛 TypeError,被 except Exception
+        静默吞噬,DiagnosticRuleDiscoverer 从未在生产路径执行。
+        """
+        import os
+
+        os.environ["AE_METRICS"] = "1"
+        try:
+            from auto_engineering.metrics.collector import (
+                MetricsCollector, set_collector)
+            collector = MetricsCollector(project_root=Path.cwd())
+            set_collector(collector)
+
+            o = _orchestrator()
+            o.init("实现单个组件")
+            o.tick(_make_result_file({
+                "stage": "architect", "spawned": True,
+                "plan": _VALID_PLAN,
+                "batch_plan": [{
+                    "batch_id": "batch-G-1", "design_section": "B2",
+                    "component": "Foo",
+                    "tasks": [{"id": "T1", "description": "实现 foo",
+                               "module_ref": "§B2",
+                               "file_targets": ["foo.py"]}],
+                }],
+                "file_list": ["foo.py"], "contracts": {},
+            }))
+            o.tick(_make_result_file({
+                "stage": "developer", "batch_id": "batch-G-1",
+                "files_changed": ["foo.py"],
+                "test_results": {"passed": 2, "failed": 0},
+            }))
+            o.tick(_make_result_file({
+                "stage": "critic", "spawned": True, "verdict": "APPROVE",
+                "findings": [], "critic_feedback": "LGTM",
+            }))
+            o.tick(_make_result_file({
+                "stage": "component_verifier", "spawned": True,
+                "component": "Foo",
+                "coverage_map": [
+                    {"design_item": "B2-1", "status": "IMPLEMENTED",
+                     "file": "foo.py", "line": 10, "note": ""},
+                ],
+                "missing_count": 0, "diverged_count": 0,
+            }))
+            a = o.tick(_make_result_file({
+                "stage": "system_deep_audit", "spawned": True,
+                "findings": [],
+                "p0_count": 0, "p1_count": 0, "p2_count": 0,
+                "total_audited_files": 2,
+                "design_docs_stale": False,
+                "design_doc_suggestions": "",
+                "missing_count": 0, "diverged_count": 0,
+            }))
+            assert a["action"] == "done"
+
+            req_events = [e for e in collector._events
+                          if e.get("event_type") == "requirement_end"]
+            assert len(req_events) >= 1, (
+                "end_requirement 未写入 requirement_end 事件"
+                "(P0-1: 签名不匹配 bug 回归)"
+            )
+            assert req_events[0]["verdict"] == "GOAL_ACHIEVED"
+            assert req_events[0]["total_ticks"] >= 1
+        finally:
+            os.environ.pop("AE_METRICS", None)
+            from auto_engineering.metrics.collector import set_collector
+            set_collector(None)
+
+    def test_collect_token_usage_records_to_collector(self) -> None:
+        """P0-2 回归: _collect_token_usage 应将 token 用量记录到 collector.
+
+        历史 bug(2026-07-25 独立审计发现): 采集只写入 state.tick_token_usage,
+        从未调用 mc.record_token_usage() → collector token_events 恒空,
+        M5 token 效率结构性为零。
+        """
+        import os
+        from types import SimpleNamespace
+
+        os.environ["AE_METRICS"] = "1"
+        try:
+            from auto_engineering.metrics.collector import (
+                MetricsCollector, set_collector)
+            collector = MetricsCollector(project_root=Path.cwd())
+            set_collector(collector)
+
+            o = _orchestrator()
+            o.init("token 采集回归")
+            o._transcript_parser = SimpleNamespace(collect=lambda: {
+                "input_tokens": 120, "output_tokens": 34,
+                "model": "claude-test", "message_count": 3,
+                "source": "transcript",
+            })
+
+            o._collect_token_usage()
+
+            token_events = [e for e in collector._events
+                            if e.get("event_type") == "token_usage"]
+            assert len(token_events) == 1, (
+                "_collect_token_usage 未记录 token_usage 事件"
+                "(P0-2: record_token_usage 未接线 bug 回归)"
+            )
+            assert token_events[0]["payload"]["input_tokens"] == 120
+            assert token_events[0]["payload"]["output_tokens"] == 34
+            assert token_events[0]["payload"]["model"] == "claude-test"
+        finally:
+            os.environ.pop("AE_METRICS", None)
+            from auto_engineering.metrics.collector import set_collector
+            set_collector(None)
+
+    def test_offload_passes_non_empty_batch_progress_to_summarizer(
+        self, tmp_path
+    ) -> None:
+        """回归: _offload_stage(developer) 应传非空 batch_progress 给 summarize_structured.
+
+        历史 bug (2026-07-26 T118 mypy 揭示): 调用不存在的
+        BatchState.done_count()/total_count() → try/except 静默失败,
+        batch_progress 恒为空字符串 (DS-14 T166 batch 进度传递失效)。
+        """
+        from auto_engineering.context.offloading import ContextOffloader
+        from auto_engineering.context.summarization import SessionSummary
+
+        captured: dict = {}
+
+        class _FakeSummarizer:
+            def should_summarize(self, tick, threshold=5) -> bool:
+                return True
+
+            def summarize_structured(self, **kwargs) -> SessionSummary:
+                captured.update(kwargs)
+                return SessionSummary(ticks_covered=range(0, 1))
+
+            def inject_into_prompt(self, summary) -> str:
+                return "SUMMARY"
+
+        o = _orchestrator()
+        o.init("batch_progress 回归")
+        o._session_summarizer = _FakeSummarizer()
+        o._context_offloader = ContextOffloader(tmp_path / "offload")
+        o._state.batch_plan = [{
+            "batch_id": "batch-H-1", "design_section": "B2", "component": "Foo",
+            "tasks": [{"id": "T1", "description": "实现 foo",
+                       "module_ref": "§B2", "file_targets": ["foo.py"]}],
+        }]
+        o._state.plan = _VALID_PLAN
+        o._state.file_list = ["foo.py"]
+        o._after_architect()
+
+        o._offload_stage("developer")
+
+        assert captured.get("batch_progress"), (
+            "batch_progress 应非空 (T166 回归: done_count/total_count 不存在 bug)"
+        )
+        assert "batches done" in captured["batch_progress"]
+
     def test_metrics_collector_not_initialized_without_env_var(self) -> None:
         """T105f: AE_METRICS 未设置时 get_collector() 返回 None."""
         import os
@@ -3642,3 +3800,214 @@ class TestT113Require:
         caplog.clear()
         o._require("_state", "should not log")
         assert len(caplog.records) == 0
+
+
+class TestGapReviewResearchRouting:
+    """F9 (2026-07-26 真跑): gap_review resolution 大小写/格式归一化 → research 路由。
+
+    真跑中 Team Lead 按 prompt 提交 resolution="Research"（首字母大写），旧代码小写匹配
+    不识别 → pending_research 为空 → 跳过 research 直进 architect → T50 搜索通路未触发。
+    """
+
+    def _setup(self, resolution: str):
+        o = _orchestrator()
+        o.init("req")
+        o._state.current_stage = "gap_review"
+        o._state.gap_report_json = json.dumps(
+            {"gaps": [{"id": "G1", "grade": "module"}], "has_blocking": False})
+        o._state.pending_gap_decisions = [{"gap_id": "G1", "resolution": resolution}]
+        o._state.research_archive = {}
+        o._state.pending_research_ids = []
+        return o
+
+    def test_capital_research_routes_to_research(self, monkeypatch):
+        o = self._setup("Research")  # 首字母大写，如 prompt 指示
+        monkeypatch.setattr(o, "build_action", lambda: {"action": "research"})
+        monkeypatch.setattr(o, "_save_checkpoint", lambda: None)
+        o._after_gap_review({})
+        assert o._state.current_stage == "research"
+        assert o._state.pending_research_ids == ["G1"]
+
+    def test_defer_plus_research_routes_to_research(self, monkeypatch):
+        o = self._setup("Defer+Research")  # 带 + 格式
+        monkeypatch.setattr(o, "build_action", lambda: {"action": "research"})
+        monkeypatch.setattr(o, "_save_checkpoint", lambda: None)
+        o._after_gap_review({})
+        assert o._state.current_stage == "research"
+        assert o._state.pending_research_ids == ["G1"]
+
+    def test_capital_defer_routes_to_architect(self, monkeypatch):
+        o = self._setup("Defer")  # Defer → 留 architect，不进 research
+        monkeypatch.setattr(o, "build_action", lambda: {"action": "architect"})
+        monkeypatch.setattr(o, "_save_checkpoint", lambda: None)
+        o._after_gap_review({})
+        assert o._state.current_stage == "architect"
+        assert o._state.pending_research_ids == []
+
+    def test_lowercase_research_still_works(self, monkeypatch):
+        o = self._setup("research")  # 原小写形式不受影响
+        monkeypatch.setattr(o, "build_action", lambda: {"action": "research"})
+        monkeypatch.setattr(o, "_save_checkpoint", lambda: None)
+        o._after_gap_review({})
+        assert o._state.current_stage == "research"
+
+
+class TestF8ActionContextInjection:
+    """F8 (2026-07-26 真跑): verifier/audit action 注入 component/plate context。
+
+    此前 component_verifier/plate_deep_audit action 的 context 为空，subagent 不知
+    验哪个组件/审哪个板块，须 Team Lead 手动查 batch_state 补上下文。
+    """
+
+    def _builder(self, tmp_path, monkeypatch):
+        from auto_engineering.loop.action_builder import ActionBuilder
+        b = ActionBuilder(tmp_path)
+        monkeypatch.setattr(b, "_load_prompt", lambda stage: "test prompt")
+        monkeypatch.setattr(b, "_write_spawn_proof_file", lambda *a, **k: None)
+        return b
+
+    def test_component_verifier_action_has_component_context(self, tmp_path, monkeypatch):
+        b = self._builder(tmp_path, monkeypatch)
+        comp = MagicMock()
+        comp.name = "ApiKeyInput"
+        comp.design_section = "§6.2"
+        comp.design_spec_summary.return_value = "密码输入框 + Show/Hide"
+        bs = MagicMock()
+        bs.current_component.return_value = comp
+        bs.batches_for.return_value = [
+            {"tasks": [{"file_targets": ["src/components/ApiKeyInput.tsx"]}]}]
+        b._batch_state = bs
+        action = b._build_action_component_verifier(
+            {"tick": 1, "stage": "component_verifier"})
+        assert action["context"]["component"] == "ApiKeyInput"
+        assert action["context"]["design_section"] == "§6.2"
+        assert action["context"]["design_spec"] == "密码输入框 + Show/Hide"
+        assert action["context"]["implementation_files"] == ["src/components/ApiKeyInput.tsx"]
+
+    def test_plate_deep_audit_action_has_plate_context(self, tmp_path, monkeypatch):
+        b = self._builder(tmp_path, monkeypatch)
+        plate = MagicMock()
+        plate.name = "工具模块"
+        c1 = MagicMock()
+        c1.name = "voice-id.ts — Voice ID 校验"
+        plate.components = [c1]
+        bs = MagicMock()
+        bs.current_plate.return_value = plate
+        b._batch_state = bs
+        action = b._build_action_plate_deep_audit(
+            {"tick": 1, "stage": "plate_deep_audit"})
+        assert action["context"]["plate"] == "工具模块"
+        assert action["context"]["components"] == ["voice-id.ts — Voice ID 校验"]
+
+    def test_plate_deep_audit_no_batch_state_no_context(self, tmp_path, monkeypatch):
+        b = self._builder(tmp_path, monkeypatch)
+        b._batch_state = None
+        action = b._build_action_plate_deep_audit(
+            {"tick": 1, "stage": "plate_deep_audit"})
+        assert action.get("context") is None  # 无 batch_state 时不注入（优雅降级）
+
+
+class TestF7SpawnProofForgery:
+    """F7 (2026-07-26 真跑): spawn proof 防伪。
+
+    旧问题: ① spawn 指令未让 result 带 spawn_proof_token → gate 校验被整体跳过；
+    ② 指令让 subagent「追加」proof（损坏 JSON）且未写 status=completed；
+    ③ gate 即使发现 proof 不合格也只告警不拦截。修复后: result 带 token + subagent
+    覆写 status=completed + gate 在 token 存在但 proof 未完成时拦截（SPAWN_PROOF_INCOMPLETE）。
+    """
+
+    def test_instruction_includes_proof_token_and_overwrite(self):
+        from auto_engineering.loop.action_builder import _SPAWN_INSTRUCTION
+        rendered = _SPAWN_INSTRUCTION.format(
+            count=1, parallel="", effort="high", multi_instruction="",
+            stage="critic", proof_token="abc123")
+        assert "spawn_proof_token" in rendered   # result 须带 token
+        assert "abc123" in rendered
+        assert "OVERWRITE" in rendered           # 覆写而非追加
+        assert "completed" in rendered
+        assert "do NOT append" in rendered
+
+    def _setup_critic(self, tmp_path, proof_status):
+        o = _orchestrator()
+        o.init("req")
+        o._state.current_stage = "critic"
+        o._state.expected_stage = "critic"
+        o.project_root = tmp_path
+        proof_dir = tmp_path / ".ae-state" / "spawn-proofs"
+        proof_dir.mkdir(parents=True, exist_ok=True)
+        (proof_dir / "tok123.json").write_text(
+            json.dumps({"status": proof_status, "stage": "critic"}))
+        return o
+
+    def _critic_result(self):
+        return {"stage": "critic", "spawned": True, "spawn_proof_token": "tok123",
+                "verdict": "APPROVE", "findings": [], "critic_feedback": "ok"}
+
+    def test_proof_incomplete_blocks(self, tmp_path):
+        from auto_engineering.loop.actions import ErrorResponse
+        o = self._setup_critic(tmp_path, "pending")
+        resp = o._validate_result_dict(self._critic_result())
+        assert isinstance(resp, ErrorResponse)
+        assert resp.error_code == "SPAWN_PROOF_INCOMPLETE"
+
+    def test_proof_corrupted_blocks(self, tmp_path):
+        from auto_engineering.loop.actions import ErrorResponse
+        o = self._setup_critic(tmp_path, "pending")
+        # 模拟「追加第二段」损坏的 proof 文件（两个 JSON 对象拼接）
+        (tmp_path / ".ae-state" / "spawn-proofs" / "tok123.json").write_text(
+            '{"status":"pending"}{"status":"done"}')
+        resp = o._validate_result_dict(self._critic_result())
+        assert isinstance(resp, ErrorResponse)
+        assert resp.error_code == "SPAWN_PROOF_INCOMPLETE"
+
+    def test_proof_completed_passes(self, tmp_path):
+        from auto_engineering.loop.actions import ErrorResponse
+        o = self._setup_critic(tmp_path, "completed")
+        resp = o._validate_result_dict(self._critic_result())
+        assert not (isinstance(resp, ErrorResponse)
+                    and resp.error_code == "SPAWN_PROOF_INCOMPLETE")
+
+
+class TestDeveloperInstruction:
+    """P0 (2026-07-26 真跑): developer 阶段渲染 inline instruction。
+
+    旧版 developer action 无 instruction（"no instruction — inline stage"），最核心的
+    编码环节无标准化驱动指引。修复后渲染 batch/组件/tasks + TDD 铁律 + 项目约定 + result 格式。
+    """
+
+    def test_developer_action_has_instruction(self, tmp_path, monkeypatch):
+        from auto_engineering.loop.action_builder import ActionBuilder
+        b = ActionBuilder(tmp_path)
+        bs = MagicMock()
+        bs.current_component_name.return_value = "ApiKeyInput"
+        bs.current_batch_id.return_value = "B7"
+        task = MagicMock()
+        task.id = "B7-T1"
+        task.description = "实现 ApiKeyInput 组件"
+        task.expected_output = "ApiKeyInput.tsx"
+        task.target_files = ["src/components/ApiKeyInput.tsx"]
+        task.depends_on = []
+        bs.current_batch_tasks.return_value = [task]
+        b._batch_state = bs
+        b._plan = MagicMock()
+        b._state = MagicMock()
+        b._state.plan = "plan"
+        action = b._build_action_developer({"tick": 1, "stage": "developer"})
+        instr = action["instruction"]
+        assert "inline TDD" in instr
+        assert "B7" in instr
+        assert "ApiKeyInput" in instr
+        assert "B7-T1" in instr
+        assert "TDD 铁律" in instr
+        assert "init-manifest" in instr
+        assert "test_results" in instr  # result 格式指引
+
+    def test_developer_instruction_no_tasks_graceful(self, tmp_path):
+        from auto_engineering.loop.action_builder import ActionBuilder
+        b = ActionBuilder(tmp_path)
+        b._batch_state = None  # 无 batch_state
+        b._plan = None
+        b._state = MagicMock()
+        b._state.plan = "plan"
+        action = b._build_action_developer({"tick": 1, "stage": "developer"})
+        assert "无 task 明细" in action["instruction"]  # 优雅降级

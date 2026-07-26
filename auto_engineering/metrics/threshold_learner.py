@@ -133,7 +133,8 @@ class ThresholdLearner:
         active_path = self._metrics_dir / "configs" / "active.json"
         if active_path.exists():
             config = safe_json_load(active_path)
-            return float(config.get("params", {}).get(param_name, 0))
+            if isinstance(config, dict):
+                return float(config.get("params", {}).get(param_name, 0))
         defaults = {
             "M1_tick_limit": 12, "M2_cons_rise": 3,
             "M4_refine_limit": 2, "M5_token_limit": 200_000,
@@ -157,6 +158,8 @@ class ThresholdLearner:
         state_path = self._metrics_dir / "baselines" / "threshold_posteriors.json"
         if state_path.exists():
             state = safe_json_load(state_path)
+            if not isinstance(state, dict):
+                return
             for name, params in state.items():
                 if name in self._estimates:
                     self._estimates[name].alpha = params["alpha"]

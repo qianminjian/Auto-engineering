@@ -107,16 +107,22 @@ class TypeCheckGate(Gate):
                 _logger.warning("无法读取 pyproject.toml 检查 mypy 配置")
         return False
 
-    def _resolve_type_check_cmd(self) -> list[str] | None:
+    def _resolve_type_check_cmd(self, checker: str | None = None) -> list[str] | None:
         """解析 type_check 命令(若不可用返回 None).
 
         注意: 'bash -n' 是带参数的命令, 单独传 'bash' 然后在 cmd 中加 '-n'.
+        P0 修复 (2026-07-26 真跑): 传入检测到的 checker（旧版用 self.type_checker_bin
+        忽略了语言检测结果）；tsc 在项目 node_modules（非全局 PATH）用 npx 调用。
         """
+        checker = checker or self.type_checker_bin
         # 'bash -n' 等带 -n 标志的 type_checker 需要特殊处理
-        if self.type_checker_bin == "bash -n":
+        if checker == "bash -n":
             return ["bash", "-n"]
-        if self.type_checker_bin:
-            return [self.type_checker_bin]
+        # P0 修复: tsc 在项目 node_modules，用 npx tsc --noEmit（只类型检查不产出，用 cwd tsconfig）
+        if checker == "tsc":
+            return ["npx", "tsc", "--noEmit"]
+        if checker:
+            return [checker]
         return None  # type_checker 未安装; not_found 由 run_gate_command() 处理
 
     def run(self, project_root: Path) -> GateVerdict:
@@ -143,20 +149,23 @@ class TypeCheckGate(Gate):
                 return GateVerdict.failed(
                     f"项目未配置 {checker}", gate_name=self.name,
                 )
-            return GateVerdict.ok(
-                f"skip: 项目未配置 {checker},跳过类型检查",
+            return GateVerdict.skip(
+                f"项目未配置 {checker},跳过类型检查",
                 gate_name=self.name,
             )
 
-        # 解析 type_check 命令
-        cmd_base = self._resolve_type_check_cmd()
+        # 解析 type_check 命令 (P0 修复: 传入检测到的 checker，旧版用 self.type_checker_bin 忽略语言检测)
+        cmd_base = self._resolve_type_check_cmd(checker)
         if cmd_base is None:
-            return GateVerdict.ok(
-                f"skip: {checker} 未安装,跳过类型检查",
+            return GateVerdict.skip(
+                f"{checker} 未安装,跳过类型检查",
                 gate_name=self.name,
             )
 
-        cmd = [*cmd_base, str(project_root)]
+        # P0 修复: tsc 用 cwd 的 tsconfig.json，不追加 project_root 作位置参数
+        cmd = list(cmd_base)
+        if checker != "tsc":
+            cmd.append(str(project_root))
         if self.strict and checker == "mypy":
             cmd.append("--strict")
 
@@ -168,8 +177,8 @@ class TypeCheckGate(Gate):
                 gate_name=self.name,
             )
         if result.not_found:
-            return GateVerdict.ok(
-                f"skip: {checker} 命令未找到",
+            return GateVerdict.skip(
+                f"{checker} 命令未找到（TS 建议项目内 `pnpm add -D typescript`）",
                 gate_name=self.name,
             )
 
@@ -188,8 +197,8 @@ class TypeCheckGate(Gate):
         # tsc exit code 2 = 配置错误 (tsconfig.json 有问题), 非类型错误
         if checker == "tsc" and result.returncode == 2:
             snippet = output[:500] + ("..." if len(output) > 500 else "")
-            return GateVerdict.ok(
-                f"{checker} skip: 配置问题 (exit=2), 可能是 tsconfig.json 问题\n{snippet}",
+            return GateVerdict.skip(
+                f"{checker} 配置问题 (exit=2), 可能是 tsconfig.json 问题\n{snippet}",
                 gate_name=self.name,
             )
 

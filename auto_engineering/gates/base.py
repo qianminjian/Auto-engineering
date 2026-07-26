@@ -45,6 +45,10 @@ class GateVerdict:
     message: str = ""
     details: dict | None = None
     suggestions: list[str] | None = None
+    # P0 修复 (2026-07-26 真跑): 区分「跳过」与「通过」。旧版 gate 工具缺失/无测试时
+    # 返回 ok（passed=True）报 ✓，使 skip 被误当通过（test/lint/type_check 对 TS 项目
+    # 大面积静默 skip 却报 ✓）。skipped=True 表示未真正执行（不阻断，但区别于真通过）。
+    skipped: bool = False
 
     # 注: passed 布尔字段与 GateVerdict.ok() 类方法不冲突.
     # 字段访问走 v.passed (bool), 工厂方法走 GateVerdict.ok().
@@ -64,6 +68,15 @@ class GateVerdict:
     ) -> GateVerdict:
         """构造一个失败的 GateVerdict."""
         return cls(gate_name=gate_name, passed=False, message=msg,
+                   details=details, suggestions=suggestions)
+
+    @classmethod
+    def skip(
+        cls, msg: str, gate_name: str = "",
+        details: dict | None = None, suggestions: list[str] | None = None,
+    ) -> GateVerdict:
+        """构造一个跳过的 GateVerdict（未真正执行，不阻断，区别于通过）."""
+        return cls(gate_name=gate_name, passed=True, skipped=True, message=msg,
                    details=details, suggestions=suggestions)
 
 

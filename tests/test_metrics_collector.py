@@ -473,11 +473,12 @@ class TestT115DriverMode:
             collector = MetricsCollector(Path(tmp))
             assert collector._driver_mode == "agent"
 
-    def test_set_driver_mode_standalone(self):
+    def test_set_driver_mode_standalone_rejected(self):
+        """2026-07-26 删除 Standalone 路径: standalone 模式已移除，set 时拒绝。"""
         with tempfile.TemporaryDirectory() as tmp:
             collector = MetricsCollector(Path(tmp))
-            collector.set_driver_mode("standalone")
-            assert collector._driver_mode == "standalone"
+            with pytest.raises(ValueError, match="Standalone"):
+                collector.set_driver_mode("standalone")
 
     def test_invalid_driver_mode_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -488,7 +489,7 @@ class TestT115DriverMode:
     def test_driver_mode_appears_in_summary(self):
         with tempfile.TemporaryDirectory() as tmp:
             collector = MetricsCollector(Path(tmp))
-            collector.set_driver_mode("standalone")
+            collector.set_driver_mode("agent")
             collector.begin_requirement("thread-1", "abc123")
             collector.record_tick_complete(
                 tick_number=1, stage="developer", duration_ms=100,
@@ -501,7 +502,7 @@ class TestT115DriverMode:
                                    model_name="test-model"))
             summary = collector.end_requirement(
                 verdict="APPROVE", total_ticks=1, loc_added=10)
-            assert summary.get("driver_mode") == "standalone"
+            assert summary.get("driver_mode") == "agent"
 
     def test_m5_token_efficiency_computed(self):
         with tempfile.TemporaryDirectory() as tmp:

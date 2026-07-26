@@ -125,8 +125,8 @@ class TickContextOffloader(Protocol):
 class TickSessionSummarizer(Protocol):
     """Cross-tick session summarization (T54).
 
-    Generates structured summary from state metadata (AgentDriver)
-    or via LLM (StandaloneDriver).  The engine calls summarize_structured().
+    Generates structured summary from state metadata (AgentDriver).
+    Standalone 已于 Phase 40 移除；引擎调用 summarize_structured()（结构化模式）。
     """
 
     def should_summarize(self, current_tick: int, threshold: int = 5) -> bool: ...
@@ -508,9 +508,10 @@ class TickOrchestrator:
 
         # T75: OTLP tracing span per tick
         tick_span = None
-        tracer = self._require("_tracer", "OTLP tracing disabled")
-        if tracer is not None:
-            tick_span = tracer.start_span(
+        if self._tracer is None:
+            _logger.debug("Injectable '_tracer' is None — OTLP tracing disabled")
+        else:
+            tick_span = self._tracer.start_span(
                 f"tick.{stage_in}", attributes={"tick": tick_no, "stage": stage_in})
 
         action = self._tick_body_dict(result)
@@ -829,6 +830,9 @@ class TickOrchestrator:
                             "Spawn proof file corrupted for stage=%s token=%s: %s",
                             stage, proof_token, e)
                 if not proof_ok:
+                    # F7 修复 (2026-07-26 真跑): 防伪从「仅告警」升级为「拦截」。
+                    # spawned=true 但 proof 未 completed = subagent 可能未真实执行
+                    # （伪造 spawned 字段）→ 返回 ErrorResponse 触发 G2 重 spawn，不放行。
                     _logger.warning(
                         "Spawn proof incomplete for stage=%s token=%s — "
                         "spawned=true but proof file status != 'completed'. "
@@ -845,6 +849,16 @@ class TickOrchestrator:
                                 "message": "spawned=true but proof file incomplete",
                             },
                         )
+                    return ErrorResponse(
+                        error_code="SPAWN_PROOF_INCOMPLETE",
+                        message=(
+                            f"Stage '{stage}' spawned=true 但 spawn proof 未 completed "
+                            f"(token={proof_token})——subagent 可能未真实执行。请重新 spawn "
+                            f"subagent，并确保它用单个 JSON 覆写 proof 文件为 "
+                            f'{{"status":"completed",...}}（不要追加第二段，追加会损坏文件）。'
+                        ),
+                        current_state=self._state.to_dict(),
+                    )
 
         return result
 
@@ -1004,10 +1018,10 @@ class TickOrchestrator:
 
         (P1-2 fix: documented limitation instead of pretending full_context works.)
         """
-        offloader = self._require("_context_offloader",
-                                  "stage context will not be persisted")
-        if offloader is None:
+        if self._context_offloader is None:
+            _logger.debug("Injectable '_context_offloader' is None — stage context will not be persisted")
             return
+        offloader = self._context_offloader
         s = self._state
         summary = f"{stage} stage completed at tick {s.tick}/{s.round}"
         key_decisions: list[str] = []
@@ -1051,8 +1065,8 @@ class TickOrchestrator:
                     batch_progress_str = ""
                     if self._batch_state is not None:
                         try:
-                            done = self._batch_state.done_count()
-                            total_b = self._batch_state.total_count()
+                            done = self._batch_state.current_batch_idx
+                            total_b = self._batch_state.total_batches
                             batch_progress_str = f"{done}/{total_b} batches done"
                         except Exception:
                             _logger.warning("batch_state done/total count failed", exc_info=True)
@@ -1291,7 +1305,11 @@ class TickOrchestrator:
             g = by_id.get(gap_id)
             if not g:
                 continue
-            resolution = d.get("resolution")
+            # F9 修复 (2026-07-26 真跑): normalize resolution。gap_review prompt 指示
+            # Team Lead 用 "Fill/Research/Defer/Defer+Research"（首字母大写、Defer+Research
+            # 带 +），须归一化为小写下划线形式才匹配下方路由分支，否则 research 阶段被静默
+            # 跳过、T50 搜索通路永不触发。
+            resolution = (d.get("resolution") or "").strip().lower().replace(" ", "").replace("+", "_")
             already_researched = gap_id in self._state.research_archive
             g["resolution"] = resolution
             g["user_note"] = d.get("user_note")
@@ -1458,14 +1476,24 @@ class TickOrchestrator:
             action = ActionDone(
                 verdict=verdict.level_name, reason=verdict.reason,
                 verdict_level=verdict.level).to_dict()
-            if mc is not None and enrichment:
-                action["metrics"] = enrichment
-                # P0-2: DiagnosticRuleDiscoverer — trigger on requirement completion
+            if mc is not None:
+                # P0-2: DiagnosticRuleDiscoverer — trigger on requirement completion.
+                # 2026-07-25 审计修复(两层):
+                #   ① 原调用只传 requirement 文本, 签名要求 verdict + total_ticks
+                #      → 每次必抛 TypeError 被静默吞噬;
+                #   ② 原接线嵌套在 `and enrichment` 内 — 冷启动/信号管线无历史
+                #      数据时 enrichment={}, 整块跳过, 永不触发。需求完成事件应
+                #      独立于信号富集是否存在 (BEACON #69 T111)。
                 try:
-                    mc.end_requirement(self._state.requirement)
+                    mc.end_requirement(
+                        verdict=verdict.level_name,
+                        total_ticks=self._state.tick,
+                    )
                     _logger.debug("end_requirement triggered for DiagnosticRuleDiscoverer")
                 except Exception:
-                    _logger.debug("end_requirement failed (non-fatal)", exc_info=True)
+                    _logger.warning("end_requirement failed (non-fatal)", exc_info=True)
+            if mc is not None and enrichment:
+                action["metrics"] = enrichment
                 # P0-3: RatchetController 接线 — 收敛时执行棘轮判定
                 action["ratchet"] = self._run_ratchet(mc, enrichment)
             return action
@@ -1624,6 +1652,23 @@ class TickOrchestrator:
                     "Token collect: tick=%d input=%d output=%d model=%s",
                     self._state.tick, usage["input_tokens"],
                     usage["output_tokens"], usage.get("model", ""))
+                # 2026-07-25 审计修复: 记录到 collector, 打通 M5 数据流。
+                # 原实现只写 state.tick_token_usage, 从未调用
+                # record_token_usage() → token_events 恒空, M5 结构性为零。
+                mc = get_collector()
+                if mc is not None:
+                    mc.record_token_usage(
+                        input_tokens=usage["input_tokens"],
+                        output_tokens=usage["output_tokens"],
+                        model=usage.get("model", "unknown"),
+                        provider="anthropic",
+                        stage=self._state.current_stage or "",
+                        ai_origin=AIOrigin(
+                            level="led",
+                            agent_role=self._state.current_stage or "",
+                            driver_type="agent",
+                        ),
+                    )
         except (OSError, ValueError, KeyError, TypeError):
             _logger.debug("Token collect failed", exc_info=True)
 
@@ -1669,7 +1714,11 @@ class TickOrchestrator:
             return result
         inbound = self._runtime_config.pii_inbound
         if inbound == "redact":
-            return self._pii_redactor.redact_dict(result)
+            redacted = self._pii_redactor.redact_dict(result)
+            # redact_dict(dict) → dict (list 分支不可能，因 result 类型为 dict)
+            if isinstance(redacted, dict):
+                return redacted
+            return result
         findings = self._pii_redactor.scan_dict(result)
         if findings:
             # P2-35: summarize by category for actionable diagnosis

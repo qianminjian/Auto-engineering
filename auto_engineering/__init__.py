@@ -15,7 +15,8 @@
     ae doctor             环境预检
     ae dev-loop <req>     单需求开发循环
     ae status             查看当前进度
-    ae agent <role>       单 Agent 调用 (architect/developer/critic)
+    # 2026-07-26 审计清理: ae agent 声明删除 — Phase 40 入口统一(BEACON #97)
+    # 后该命令未注册, docstring 虚报。
 
 设计文档: design/v5.6-Design-Loop.md
 GitHub: https://github.com/qianminjian/Auto-engineering

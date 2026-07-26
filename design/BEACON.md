@@ -15,7 +15,7 @@
 
 **做：** `/ae:dev-loop` Skill 为唯一 dev-loop 入口（`commands/dev-loop.md` driving loop）；Tick-Based Discrete Invocation 协议（文件桥接，Python 每次 tick 独立进程，`--init/--tick/--result/--resume` 为 Skill 内部调用协议）；5 层验证架构（critic → component_verifier → plate_deep_audit → system_verifier → system_deep_audit）；StageRouter T1-T22 + GuardrailChain + 7+1 Gates + ConvergenceJudge + BatchState + SQLite checkpoint；Init-Loop 接口契约；`ae doctor`（环境诊断）+ `ae status`（进度查询）
 **做：** `/ae:dev-loop` Skill 为唯一 dev-loop 入口；Tick 协议（文件桥接）；5 层验证；Guardrail + Gates + ConvergenceJudge + BatchState + SQLite checkpoint；`ae.toml` 项目配置文件（18 功能开关集中管理）；`ae doctor`（环境诊断 + 可观测性生命周期管理 + `--wizard` 交互式配置 + `--init-config` 生成模板）；`ae dev-loop --init` 启动闸门（`ae.toml` 缺失时强制确认）；`ae status --verbose`（进度查询）；OTLP tracing（docker compose 一键部署 Jaeger collector）
-**不做：** Init Engineering（独立项目）；v5.5 legacy；`--standalone`；`ae progress`/`ae gate-check`/`ae agent`/`ae checkpoint`；多 LLM Provider；Web UI；SaaS 服务端；环境变量配置功能开关（改用 `ae.toml`）
+**不做：** Init Engineering（独立项目）；v5.5 legacy；`--standalone`（**Standalone/双驱动路径已于 Phase 40 删除**，决策 #54/#56/#57 为历史存档，当前仅余 Agent 驱动）；`ae progress`/`ae gate-check`/`ae agent`/`ae checkpoint`；多 LLM Provider；Web UI；SaaS 服务端；环境变量配置功能开关（改用 `ae.toml`）
 
 ## 设计决策
 
@@ -58,7 +58,7 @@
 | **62** | **真跑故障修复（3 bugs）** | BUG-01(P1): `batch_state.py` G2 error 信息补全有效 component name 列表 / BUG-02(P2): `guardrail.py` GitDiffExists root commit diff-tree 返回空→`git show --stat` 降级 / BUG-03(P0): `tick_orchestrator.py` `_after_developer()` batch 间未调 `_save_checkpoint()`→跨进程状态丢失。D35 | 2026-07-18 | ✅ |
 | **63** | **vNext 战略定调：银行生产级框架 + 源码级内化** | Auto-engineering 定位为银行生产级框架——模型无关（Ollama/国产模型）、PII 防护、平台无关（StandaloneDriver）全部升级为 P0。Deep Agents (Apache 2.0) 源码级内化：harness 层能力（PII/Provider/Context offloading）直接复用源码改造后纳入 `auto_engineering/`，零运行时依赖；纪律层（Tick/Gate/Guardrail/收敛/DecisionGate）保持原创。5 项复用原则 + 7 项源码复用映射表。D36 | 2026-07-18 | ✅ |
 | **64** | **Phase 17 — 设计治理修复：6 角色独立 Agent 隔离恢复 + B14 澄清** | 恢复 v5.1 原始设计——developer 单独主会话，architect/critic/component_verifier/plate_deep_audit/system_verifier/system_deep_audit 恢复独立 subagent 隔离（Plan/code-reviewer/general-purpose，Haiku/Sonnet 按需）。B14 追加澄清：Claude Code 内置 subagent 不属于"外部依赖"；MCP/搜索 skill 是信息获取工具不在禁令范围。Governance 规则覆盖范围扩展到 commands/*.md + skills/*/SKILL.md + hooks/*.sh。T49-T52c。D37 | 2026-07-18 | ✅ |
-| **65** | **Phase 18 — Context & 安全加固** | T53 Stage context offloading（每 stage 完成后 context 卸载到文件，下 stage 只加载摘要）；T54 Cross-tick developer session summarization（Phase 30 审计误判为死代码删除，2026-07-22 恢复——设计允许引擎调 Haiku 做机械性摘要，见 #54 追加。实现已恢复 + 接线完成）；T55 Ollama adapter（OpenAI 兼容格式，复用 v8.0 Provider 抽象）；T56 Prompt PII redaction（BaseAgent.execute() 发送前正则扫描+脱敏）；T57 Tool result PII scan（_truncate_tool_results 同步 PII 扫描）。D38 | 2026-07-18 | ✅ T54 已恢复并接线完成（见 BEACON #54 追加） |
+| **65** | **Phase 18 — Context & 安全加固** | T53 Stage context offloading（每 stage 完成后写执行存档到 .ae-state/offload/。「下 stage 只加载摘要」目标由 DS-15 文件桥接 + T54 SessionSummarizer 实现；T53 定位为执行存档（写侧接线）+ 存档读回 API（load_summary，有单测，未接入生产 prompt 路径）——2026-07-25 演进确认，见演进日志）；T54 Cross-tick developer session summarization（Phase 30 审计误判为死代码删除，2026-07-22 恢复——设计允许引擎调 Haiku 做机械性摘要，见 #54 追加。实现已恢复 + 接线完成）；T55 Ollama adapter（OpenAI 兼容格式，复用 v8.0 Provider 抽象）；T56 Prompt PII redaction（BaseAgent.execute() 发送前正则扫描+脱敏）；T57 Tool result PII scan（_truncate_tool_results 同步 PII 扫描）。D38 | 2026-07-18 | ✅ T54 已恢复并接线完成（见 BEACON #54 追加） |
 | **66** | **Phase 19 — 模型扩展 & 可观测性** | T58 国产模型 adapter（GLM/通义/文心，信创合规）；T59 StandaloneDriver 完善（v7.0 路线图，银行内网部署）；T60 OpenTelemetry tracing（每 stage/guardrail/gate 打 OTLP span）；T61 Structured audit log（LLM 调用完整 request/response JSONL）；T62 FileAccessGuardrail（developer files_changed 必须在 file_targets 内）；T62a glob 支持（pathspec 库集成）；T63 Prompt caching（Anthropic 原生支持）；T64 Stage Checkpoint Gate（TickOrchestrator --pause-at-stage，DecisionGate 形态 3）。D39 | 2026-07-18 | ✅ |
 | **67** | **ORCA DecisionGate — 3 形态 HITL 双向阻塞机制** | 借鉴 ORCA 的两条 HITL 通道（Gate 自上而下 + Ask/Reply 自下而上），抽象为 Tick 协议的三形态 DecisionGate 原语：① Pre-planned Gate（architect 在 batch_plan 中声明 gate）② Escalation Gate（Agent 主动举手，`ae dev-loop --escalate`）③ Stage Checkpoint Gate（--pause-at-stage）。**形态 3 已实现（Phase 19 T64），形态 1/2 战略储备（Phase 25 T94/T95）**。不引入 ORCA 的消息系统（SQLite mail store + check --wait 循环对单 tick 架构过重），在现有 tick JSON 协议上扩展 gate 字段。D40 | 2026-07-18 | ✅ |
 | **68** | **PII Middleware — 三道防线 + PIIDetectionRule** | 银行场景 PII 防护三道防线：① Prompt PII redaction（T56，LLM 调用前正则扫描+脱敏，防敏感数据出境）；② Tool result PII scan（T57，tool_result 写入前扫描）；③ PII Guardrail G10（post-agent 全量文件扫描，第二道防线）。PIIDetectionRule dataclass 定义 5 类规则（身份证/手机号/银行卡/API Key/邮箱），含 exclusion_patterns 防误杀 + 白名单机制。非侵入式 pipeline 插入 BaseAgent.execute() 调用链。失败不阻断（默认脱敏+WARN），block 模式可选开关。D41 | 2026-07-18 | ✅ |
@@ -100,7 +100,7 @@
 
 ## 当前状态
 
-**阶段：** Phase 45 完成 — v5.7 配置向导 + 启动闸门。Phase 1-45 全部完成。
+**阶段：** Phase 48 完成 — 真跑验证（voice_clone 全量 GOAL_ACHIEVED）+ 9 bug 修复（F1-F9）+ 提示词优化 + Standalone 删除（2026-07-26）。Phase 1-48 全部完成。报告 `_scratch/test-output/2026-07-26-T50-T55真跑回归验证-agentmode-7switches.md`。
 
 **v5.7 变更总结 (2026-07-25)**：
 
@@ -112,15 +112,19 @@
 | **43** | **可观测性整合** | OTLP 生命周期管理 |
 | **45** | **配置向导 + 启动闸门** | ae doctor --wizard + --init 强制确认 |
 | **44** | **配置管理统一** | ae.toml + FeatureFlag SSOT + RuntimeConfig 重构 |
+| **46** | **独立复审 + 审计修复** | P0×3 清零（metrics 接线 ×2 + 死代码删除）+ P1/P2×19 修复 + 9 回归测试 |
+| **47** | **mypy 清零 + collector 拆分** | collector 三文件拆分（API 零变化）+ mypy 95 文件 0 errors + 顺带修复 2 个潜伏 bug |
 
-**项目规模**：100 源文件 / 19,837 行 / 94 测试文件 / 1811 tests passed
+**项目规模**：93 源文件 / ~19,600 行 / 87 测试文件 / **1735 tests passed**（2026-07-26 Phase 48 基准；本会话真跑修复新增 ~31 测，mypy 全绿）
 
 **关键决策**：#97（入口统一）、#98（可观测性整合）、#99（配置管理统一）
 
-**剩余已知问题**：
+**剩余已知问题**（Phase 48 真跑盘点）：
+- T53 offload 摘要质量贫瘠（T152 未完全修复：architect offload "no batches"、key_decisions 空；BEACON#65 已重定位为执行存档，内容贫瘠待改善）
+- T54 cross-tick summarization 真跑未充分触发（代码层 2 潜伏 bug Phase 47 已修，真跑摘要注入未验证）
+- T50 research 阶段 web search 实际调用真跑未触发（F9 路由已修，端到端搜索未验证）
 - 1 个 flaky test（OTel 全局状态隔离）
-- God Class: tick_orchestrator 1910行（BEACON #86 暂缓）
-- God Class: action_builder 736行
+- God Class: tick_orchestrator 1910行 / action_builder ~750行（BEACON #86 暂缓）
 
 **阻塞项**：无
 
@@ -160,6 +164,9 @@
 | 2026-07-17 | **StandaloneDriver 真实 LLM E2E 验证通过** | 用户指出现有工作"建了不跑"——StandaloneDriver 从未用真实 LLM 端到端跑过。修复 3 处 bug（guardrail GitDiffExists auto_commit 路径/bash_tools cwd 默认/project_root architect 任务描述），用 DeepSeek API 真跑 fibonacci 需求 → GOAL_ACHIEVED，产出可用实现+10 tests。证明 Driver B 可替代 v5.5 独立跑能力。 |
 | 2026-07-16 | **v8.0 多 Agent 平台适配设计 (附录 D, 决策 #55)** | 用户提出"插件安装到 Claude Code/Codex/CodeBuddy 三平台"。深度调研三平台 plugin 系统：发现三平台共享 Commands/Skills 格式、CodeBuddy 原生读 `.claude-plugin/plugin.json`。设计一套源码三个 manifest + Provider 抽象（`LLMProvider` Protocol 桥接 Anthropic/OpenAI tool schema 差异）+ install.sh 多平台改造。13 节附录 D + Phase 12(V8-1~V8-8, ~4.3 天)。BEACON 决策 #55 |
 | 2026-07-16 | **v7.0 双驱动详细设计展开 (附录 C)** | 附录 C 从 8 行路线图展开为 14 节开发就绪规格（接口签名/数据流/验收标准/参考位置）。Phase 11(V7-1~V7-8, ~6.8 天)。与 v8.0 依赖：V7-5 StandaloneDriver 依赖 V8-3/4/5 Provider 抽象。BEACON 决策 #54 |
+| 2026-07-26 | **Phase 47 完成 — mypy 清零 + collector 拆分** | T117: collector.py 606→408+245(_MetricsAggregator)+108(_MetricsPersistence) 三文件，20 项公共 API 零变化，全量零回归。T118: 全项目 mypy 64→0（95 文件），narrowing/注解/Protocol 为主，5 cast + 1 Any 注解均附理由+移除条件；修复中发现 2 个潜伏 bug（T54 summarizer decisions 续接逻辑 dict 索引必抛 TypeError / T166 batch_progress 调用不存在的 BatchState 属性，均此前静默降级）+ 2 回归测试。pyproject 3 个未生效 mypy module section（agents.base/loop.orchestrator/semantic_evaluator 已不存在）记录待清理。基准 1704 passed。真跑前置条件具备。 |
+| 2026-07-26 | **独立复审 + 审计修复轮（Phase 46）** | 全量 /audit 独立复审否定 Final 自评 8.5（"P0=0 / 虚化~0" 声称不成立）：验证 3 个真实 P0（end_requirement 签名+双层接线缺陷 / record_token_usage 从未调用 / tools/ 823 行死模块）。修复：P0 清零 + P1×12 + P2×7 + 新发现修复 2 项（ProgressTree.from_json 不存在 / batch_state None 守卫）+ 9 个回归测试 + 死代码删除 13 文件（用户批准红线）+ CLAUDE.md 基准同步 1701 tests。报告：_scratch/reports/2026-07-25-audit-independent.md。Phase 47 立项：mypy 64→0 + collector 拆分。 |
+| 2026-07-25 | **T53 定位演进确认（独立复审）** | 独立复审发现 T53 读侧（load_summary）生产零消费者。证据链分析：设计目标「下 stage 只加载摘要」已由两替代机制实现——DS-15 文件桥接（action_builder 5 处 "subagent reads ... itself" 注释，agent 自读设计文档/代码/契约）+ T54 SessionSummarizer（inject_into_prompt 3 接线点）；v5.6 离散 tick 架构无进程内对话数据源（orchestrator 注释 "messages are NOT available"），原规格「LLM 摘要完整对话」数据模型不可实现。T53 重新定位为执行存档 + 存档读回 API（load_summary 有单测 + T73 接线验收测试，不接入生产）。v5.6-Design-Loop.md §E.2.2 同步演进说明。备份：his_bak/BEACON-pre-T53-evolution-2026-07-25.md。无 status 翻转（#65 保持 ✅）。 |
 | 2026-07-23 | **voice_clone 真跑验证 — 5 层 prompt 增强 + subagent_type 移除 + Gate 修复 + 对标分析** | v5.6 Tick 协议全路径验证（gap_scan→gap_review→architect→developer→critic MAJOR loop→component_verifier→plate_deep_audit），9 tick 10 errors。修复 5/8 引擎问题：E1 subagent_type 依赖移除、E3 type_check 配置检测多语言化、E5 expected_format 对齐、E6 batch_state 噪音降级、E8 SPAWN_REQUIRED crash。提示词内化：搬用 Claude Code / github-review-pr / Superpowers / gitnexus-pr-review 四个标杆项目的提示词到 5 层 13 文件。Phase 17-21 对标分析：T50 ✅ / T51b ❌（code-reviewer 工具不兼容）/ T53 ⚠️（No-op 风险）/ T54 ❌（未恢复）。BEACON 决策 #92 |
 | 2026-07-11 | **设计文档深度审计 + 22 项收口深化 (Phase 8, 决策 #49)** | 3 并行审计子代理审 v5.6-Design-Loop.md(4214行)+附录 B(原 INIT-LOOP-CONTRACT.md)：规格 6.5/10、端到端 2.5/10（内核真实非虚化，全链未接线）。分两类：P0×4 全为**代码缺口**(Tick未接线/dev-loop.md v5.1/DeepAuditGate骨架/Init schema)已 T9/T10/T27/T32 跟踪；S-1~S-20+Q-1/Q-2 共 22 项**纯文档规格缺陷收口**——补 CoverageItem/GateVerdict/done verdict 三处权威 schema、file-bridge 边界矩阵(§C.3.5)、B2 决策方列、Tick 路径更正、Guardrail "当前5/目标9"状态列、Q-1/Q-2 过度设计存续论证。**S-1**(B4↔B7 语义评估矛盾)定案：v5.6 全路径无语义评估(呼应 #40/D6)，代码 semantic_evaluator 全链移除跟踪到 Phase 3 T10d（不即时大改以免破坏活跃 v5.5 路径）。全程无 status 翻转、无设计降级（design-document-inviolability 遵守）。审计产出为会话内产物（未持久化为独立文件）。BEACON 决策 #49 |
 | 2026-07-15 | **v5.6 tick 闭环验证 + Phase 9-10 推进** | Tick CLI --init→--tick→--result 端到端验证通过（3 独立进程 thread_id/游标保真）。代码审计修复 Phase 9（A1-A15 全部完成）+ Phase 10 双驱动接缝预留（T33a schema SSOT + T33b 执行栈标注）。设计背书收口 T26e/T26f 实现验证。BEACON 决策 #50/#51/#52/#54 |
@@ -187,6 +194,12 @@
 [已解 T99] bank_card PII 规则 severity WARN→CRITICAL + 正则 `\b\d{16,19}\b` 收紧防误匹配 — Phase 26 T99 完成。
 
 [已解] v5.5 Phase B 物理删除时间 — 30 天过渡期启动（2026-07-19），物理删除日期 **2026-08-18**。届时删除 orchestrator.py while 循环 + semantic_evaluator.py。
+
+[待办 T118] 全项目 mypy 64 个预存错误（15 文件，union-attr/index/return-value 为主）→ Phase 47 立项（2026-07-26）。均非本轮复审引入；修复以恢复 mypy gate 的「新增错误报警」能力（本轮 ProgressTree.from_json bug 即由 mypy 揭示，64 条噪音下该能力失效）。
+
+[待办 T119] test_tracing OTel 全局 provider flaky（Final P2-3；根因：set_tracer_provider 一次性设置 + 测试顺序依赖）→ 立即修复（2026-07-26）。
+
+[暂缓] 2026-07-26 用户决策：doctor.py 拆分（下次 doctor 加功能时顺手）/ _check_plugin_mode 三态 warn（不做，消息已含 ⚠ 语义）/ 全局单例 contextvar 化（不动，触发条件：Driver B #54 进程内驱动 或 pytest-xdist 并行测试）。
 
 ## 引用文件
 

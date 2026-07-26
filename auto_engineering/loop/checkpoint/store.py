@@ -320,6 +320,26 @@ class SQLiteCheckpointStore[T]:
                 continue
         return sorted(thread_ids)
 
+    def find_by_thread_id(self, candidate: str) -> str | None:
+        """按 thread_id 反查 checkpoint id (CLI resume 回退, T160).
+
+        与 list_threads 同理: thread_id 在 checkpoint schema 无独立列,
+        从 state_json 提取。扫描最近 50 条 checkpoint (rowid 降序),
+        返回首个匹配 thread_id 的 checkpoint id, 无匹配返回 None。
+        """
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT id, state_json FROM checkpoints ORDER BY rowid DESC LIMIT 50"
+            ).fetchall()
+        for row in rows:
+            try:
+                state = json.loads(row["state_json"])
+            except (json.JSONDecodeError, TypeError):
+                continue
+            if isinstance(state, dict) and state.get("thread_id") == candidate:
+                return row["id"]
+        return None
+
     def delete(self, checkpoint_id: str) -> bool:
         """删除指定 Checkpoint.
 

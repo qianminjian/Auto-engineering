@@ -81,7 +81,7 @@ class SessionSummarizer:
 
     Two modes:
     - **LLM mode** (llm_provider is set): calls Haiku to compress conversation
-      history into a structured summary.  Used in StandaloneDriver.
+      history into a structured summary.  Standalone 已于 Phase 40 移除，LLM 模式当前无消费者（保留备用）。
     - **Structured mode** (llm_provider is None): generates summary from
       state metadata (test results, files changed, gate results) without
       any LLM call.  Used in AgentDriver (engine has no API key).
@@ -130,6 +130,8 @@ class SessionSummarizer:
             system += _render_previous_summary(previous_summary)
 
         user_content = _render_messages_for_summary(messages)
+        if self._llm is None:
+            raise RuntimeError("LLM provider required for summarize(); use summarize_structured() instead")
         try:
             response: LLMResponse = await self._llm.create_message(
                 system=system,
@@ -352,7 +354,7 @@ def _parse_summary_response(text: str) -> tuple[list[str], dict[str, str], list[
         else:
             # Non-prefixed line — append as continuation to last decision
             if decisions:
-                decisions[-1]["raw"] += " " + line.strip()
+                decisions[-1] += " " + line.strip()
             elif issues:
                 issues[-1] = issues[-1] + " " + line.strip()
 

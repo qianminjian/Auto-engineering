@@ -347,7 +347,9 @@ class TestTypeCheckRun:
         with patch.object(shutil, "which", return_value=None):
             verdict = gate.run(tmp_path)
         assert verdict.passed is True
-        assert "未安装" in verdict.message or "skip" in verdict.message.lower()
+        # P0 修复 (2026-07-26): skip 是一等公民字段 verdict.skipped
+        assert verdict.skipped is True
+        assert "未找到" in verdict.message or "未安装" in verdict.message
 
     def test_run_tool_success_passes(self, tmp_path: Path):
         """subprocess exit=0 → passed=True (type_checker 通过)."""

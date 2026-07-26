@@ -234,6 +234,7 @@ class _DesignDocParser:
             self._new_plate("(implicit)")
         num, name = _extract_section(text)
         comp = Component(name=name, design_section=f"§{num}" if num else name)
+        # _new_plate() 已赋值 cur_plate, 但 mypy 无法跨方法调用追踪属性窄化
         self.cur_plate.components.append(comp)  # type: ignore[union-attr]
         self.cur_component, self.cur_item = comp, None
         self.last_node = ("component", comp)
@@ -244,6 +245,7 @@ class _DesignDocParser:
             if self.cur_plate is None:
                 self._new_plate("(implicit)")
             comp = Component(name="(implicit)", design_section="(implicit)")
+            # _new_plate() 已赋值 cur_plate, 但 mypy 无法跨方法调用追踪属性窄化
             self.cur_plate.components.append(comp)  # type: ignore[union-attr]
             self.cur_component = comp
         item = self._make_item(title=text, source_marker="heading", key_claims=[])

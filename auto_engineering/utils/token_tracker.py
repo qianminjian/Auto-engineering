@@ -1,7 +1,7 @@
 """TokenTracker — LLM token 消耗累加与预算控制.
 
 2026-07-21 P1-6: 从 cli/helpers.py 提取, 消除 loop→CLI 依赖倒置.
-TokenTracker 是共享引擎资源 (Agent/Standalone 双驱动均使用).
+TokenTracker 是共享引擎资源（Standalone 已于 Phase 40 移除，当前 Agent 驱动使用）。
 """
 
 from __future__ import annotations
@@ -46,6 +46,6 @@ class TokenTracker:
         if self.max_tokens > 0 and self.total_tokens > self.max_tokens:
             raise AEError(
                 ErrorCode.BUDGET_EXCEEDED,
-                f"Token budget exceeded: {self.total_tokens} > {self.max_tokens}",
+                f"Token 预算超限: {self.total_tokens} > {self.max_tokens}",
                 suggestion="请增大 --max-tokens 参数或缩小需求范围",
             )
