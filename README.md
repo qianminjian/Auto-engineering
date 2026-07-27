@@ -65,16 +65,16 @@ Host-neutral Core (auto_engineering/)
 
 | 文档 | 内容 |
 |------|------|
-| `design/BEACON.md` | 设计基线（目标/范围/74 条决策/当前状态） |
-| `design/v5.6-Design-Loop.md` | 唯一设计文档：Tick-Based 协议 + 5 层验证 + Init→Loop 契约 + v7.0 双驱动 |
-| `design/IMPLEMENTATION-TRACKER.md` | 实施跟踪表（Phase 1-49 全部完成） |
-| `design/INDEX.md` | 文档索引 |
+| `design/BEACON.md` | 当前目标、范围、决策和下一步（≤80 行） |
+| `design/v5.6-Design-Loop.md` | 当前 Tick、Host Adapter、验证与 Release 契约 |
+| `design/IMPLEMENTATION-TRACKER.md` | 当前里程碑和新鲜验证证据 |
+| `design/archive/INDEX.md` | 完整历史设计与决策索引 |
 
 ## 测试
 
 ```bash
 uv run pytest tests/ --no-cov --timeout=120 -q
-<!-- test-baseline --> 1800 passed / 1 skipped
+<!-- test-baseline --> 1815 passed / 1 skipped
 ```
 
 ## 环境变量
@@ -83,7 +83,6 @@ uv run pytest tests/ --no-cov --timeout=120 -q
 
 | 变量 | 默认 | 说明 |
 |------|------|------|
-| `ANTHROPIC_API_KEY` | — | Claude Code 兼容诊断按需使用；Codex 不需要 |
 | `AE_PII_ENABLED` | 1 | PII 四层防护总开关 |
 | `AE_METRICS` | 0 | AI Coding 度量与自进化体系 |
 | `AE_AUDIT_LOG` | 0 | LLM 调用审计日志 (JSONL) |

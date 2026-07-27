@@ -5,6 +5,7 @@ from __future__ import annotations
 import subprocess
 import sys
 
+
 class TestAEDoctor:
     """Run ae doctor and check exit code 0."""
 

@@ -9,6 +9,7 @@ import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
+from pathlib import Path
 from typing import Protocol
 
 
@@ -85,11 +86,35 @@ class UsageSource:
     provider: str
 
 
+@dataclass(frozen=True)
+class HostEvent:
+    """不同宿主 Hook 共享的最小事件模型。"""
+
+    event: str
+    platform: HostPlatform
+    tool: str | None
+    file_path: str | None
+    project_root: Path
+    raw: dict[str, object]
+
+
 class HostAdapter(Protocol):
-    """所有宿主适配器必须暴露的最小静态契约。"""
+    """宿主差异不得越过的完整边界契约。"""
 
     platform: HostPlatform
     capabilities: HostCapabilities
+
+    def normalize_event(self, raw: Mapping[str, object]) -> HostEvent | None:
+        """把宿主事件归一化；不支持的事件返回 None。"""
+        ...
+
+    def resolve_cli(self, plugin_root: Path) -> tuple[str, ...]:
+        """解析 CLI 候选命令，但不执行外部进程。"""
+        ...
+
+    def usage_source(self, project_root: Path) -> UsageSource | None:
+        """返回宿主可信 usage 来源；不可用时返回 None。"""
+        ...
 
 
 _COMMON_HOOKS = frozenset({"session_start", "pre_tool", "post_tool", "stop"})
@@ -171,6 +196,7 @@ __all__ = [
     "HostAdapter",
     "HostCapabilities",
     "HostDetection",
+    "HostEvent",
     "HostPlatform",
     "UsageSource",
     "capabilities_for",

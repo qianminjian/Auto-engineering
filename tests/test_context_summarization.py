@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from auto_engineering.context.summarization import SessionSummarizer, SessionSummary
-from auto_engineering.context.summarization import LLMProvider, LLMResponse
+from auto_engineering.context.summarization import LLMProvider, LLMResponse, SessionSummarizer, SessionSummary
 
 _DEFAULT_RESPONSE = (
     "DECISION: Used Decimal for monetary calculations\n"

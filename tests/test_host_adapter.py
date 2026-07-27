@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
+import pytest
+
 
 def test_detects_codex_before_claude_compatibility_signals() -> None:
     from auto_engineering.host import HostPlatform, detect_host
@@ -75,6 +79,80 @@ def test_usage_source_is_explicit_per_host() -> None:
     assert claude.provider == "anthropic"
     assert usage_source_for(HostPlatform.CODEX) is None
     assert usage_source_for(HostPlatform.UNKNOWN) is None
+
+
+def test_codex_adapter_exposes_complete_host_contract(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import auto_engineering.host.adapters as adapters
+    from auto_engineering.host import HostPlatform
+
+    monkeypatch.setattr(
+        adapters.shutil,
+        "which",
+        lambda executable: "/usr/bin/uv" if executable == "uv" else None,
+    )
+
+    adapter = adapters.adapter_for(HostPlatform.CODEX)
+    event = adapter.normalize_event({
+        "hook_event_name": "PreToolUse",
+        "cwd": str(tmp_path),
+        "tool_name": "Read",
+        "tool_input": {"file_path": "src/example.py"},
+    })
+
+    assert adapter.platform is HostPlatform.CODEX
+    assert adapter.capabilities.commands is False
+    assert event is not None
+    assert event.platform is HostPlatform.CODEX
+    assert event.event == "pre_tool"
+    assert event.file_path == "src/example.py"
+    assert adapter.resolve_cli(tmp_path) == (
+        "/usr/bin/uv",
+        "run",
+        "--project",
+        str(tmp_path.resolve()),
+        "ae",
+    )
+    assert adapter.usage_source(tmp_path) is None
+
+
+def test_claude_adapter_prefers_local_cli_and_exposes_usage(
+    tmp_path: Path,
+) -> None:
+    from auto_engineering.host import HostPlatform
+    from auto_engineering.host.adapters import adapter_for
+
+    executable = tmp_path / ".venv" / "bin" / "ae"
+    executable.parent.mkdir(parents=True)
+    executable.touch(mode=0o755)
+
+    adapter = adapter_for(HostPlatform.CLAUDE_CODE)
+    event = adapter.normalize_event({
+        "hook_event_name": "PostToolUse",
+        "cwd": str(tmp_path),
+        "tool_name": "Write",
+        "tool_input": {"path": "README.md"},
+    })
+    usage = adapter.usage_source(tmp_path)
+
+    assert adapter.platform is HostPlatform.CLAUDE_CODE
+    assert event is not None
+    assert event.platform is HostPlatform.CLAUDE_CODE
+    assert event.event == "post_tool"
+    assert adapter.resolve_cli(tmp_path) == (str(executable.resolve()),)
+    assert usage is not None
+    assert usage.name == "claude-transcript"
+    assert usage.provider == "anthropic"
+
+
+def test_adapter_rejects_hosts_without_an_implementation() -> None:
+    from auto_engineering.host import HostPlatform
+    from auto_engineering.host.adapters import adapter_for
+
+    with pytest.raises(ValueError, match="HOST_ADAPTER_UNAVAILABLE"):
+        adapter_for(HostPlatform.UNKNOWN)
 
 
 def test_unknown_host_has_no_assumed_capabilities() -> None:

@@ -70,8 +70,12 @@ def _write_init_manifest(project: Path) -> None:
     )
 
 
-def accept_archive(archive: Path, host: str, workspace: Path) -> None:
-    """解压、安装并验证指定宿主的 doctor 与最小 Tick。"""
+def accept_archive(
+    archive: Path,
+    host: str,
+    workspace: Path,
+) -> dict[str, object]:
+    """执行可自动化的归档 smoke；不冒充真实宿主产品安装。"""
     if host not in _HOST_ENV:
         raise ValueError(f"未知宿主: {host}")
 
@@ -128,6 +132,26 @@ def accept_archive(archive: Path, host: str, workspace: Path) -> None:
     if not actions or not actions[-1].get("thread_id"):
         raise RuntimeError("最小 Tick 未生成有效 action")
 
+    return {
+        "host": host,
+        "archive_smoke": {
+            "status": "pass",
+            "evidence": [
+                "package_contract",
+                "isolated_uv_sync",
+                "doctor",
+                "minimal_tick",
+            ],
+        },
+        "product_install": {
+            "status": "not_run",
+            "reason": (
+                "自动验收仅模拟宿主信号；"
+                "需要在真实 Claude Code 或 Codex 产品内完成安装验收"
+            ),
+        },
+    }
+
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -136,8 +160,12 @@ def main() -> int:
     args = parser.parse_args()
 
     with tempfile.TemporaryDirectory(prefix=f"ae-{args.host}-") as temporary:
-        accept_archive(args.archive.resolve(), args.host, Path(temporary))
-    print(f"OK: {args.host} Release 安装、doctor 与最小 Tick")
+        report = accept_archive(
+            args.archive.resolve(),
+            args.host,
+            Path(temporary),
+        )
+    print(json.dumps(report, ensure_ascii=False))
     return 0
 
 

@@ -22,9 +22,20 @@ def check_metadata(root: Path) -> list[str]:
     project = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
     version = str(project["project"]["version"])
     baseline = project["tool"]["auto-engineering"]["baseline"]
+    project_metadata = project["project"]
     passed = int(baseline["passed"])
     skipped = int(baseline["skipped"])
     errors: list[str] = []
+
+    dependencies = project_metadata.get("dependencies", [])
+    optional_dependencies = project_metadata.get("optional-dependencies", {})
+    if any(str(item).startswith("anthropic") for item in dependencies):
+        errors.append("pyproject.toml 依赖漂移: anthropic 必须是可选 Provider")
+    if not any(
+        str(item).startswith("anthropic")
+        for item in optional_dependencies.get("anthropic", [])
+    ):
+        errors.append("pyproject.toml 依赖漂移: 缺少 anthropic 可选 Provider")
 
     plugin_paths = (
         Path(".claude-plugin/plugin.json"),
@@ -36,6 +47,27 @@ def check_metadata(root: Path) -> list[str]:
         if actual != version:
             errors.append(
                 f"{relative} 版本漂移: 期望 {version}，实际 {actual!r}"
+            )
+        if not isinstance(data, dict):
+            continue
+        if "anthropic" in json.dumps(data).lower():
+            errors.append(f"{relative} metadata 不得绑定 Anthropic 品牌")
+        metadata = data.get("metadata")
+        if (
+            relative == Path(".claude-plugin/plugin.json")
+            and isinstance(metadata, dict)
+            and metadata.get("env")
+        ):
+            errors.append(
+                ".claude-plugin/plugin.json metadata.env 已废弃；"
+                "运行配置必须来自 FeatureManifest"
+            )
+        if (
+            relative == Path(".codex-plugin/plugin.json")
+            and data.get("commands")
+        ):
+            errors.append(
+                ".codex-plugin/plugin.json 不得声明 Codex 不支持的 commands"
             )
 
     marketplace_path = root / ".claude-plugin/marketplace.json"

@@ -77,6 +77,31 @@ def test_codex_output_embeds_critical_rules_without_claude_includes() -> None:
     assert "先记录 → 再执行 → 再更新" in codex
 
 
+def test_current_rules_do_not_advertise_retired_cli_or_stale_baseline() -> None:
+    """公共模板及生成文件只能描述当前真实入口。"""
+    root = Path(__file__).parents[1]
+    retired_claims = (
+        "ae gate-check",
+        "ae agent architect",
+        "ae progress",
+        'ae dev-loop "需求"',
+        "1702 passed",
+        "~1703 tests",
+    )
+
+    for relative in (
+        "agent-rules/instructions.md.tmpl",
+        "CLAUDE.md",
+        "AGENTS.md",
+    ):
+        content = (root / relative).read_text(encoding="utf-8")
+        for retired in retired_claims:
+            assert retired not in content, f"{relative} 仍宣称退役入口: {retired}"
+        assert "scripts/ae-run doctor" in content
+        assert "scripts/ae-run status --format json" in content
+        assert "[tool.auto-engineering.baseline]" in content
+
+
 def test_check_returns_zero_when_generated_files_match(tmp_path: Path) -> None:
     _write_template(tmp_path)
     sync_agent_instructions.sync_instructions(tmp_path)

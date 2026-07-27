@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import tomllib
 from pathlib import Path
 
 from scripts import check_project_metadata
@@ -15,6 +16,10 @@ def _write_fixture(root: Path, *, plugin_version: str = "5.6.0") -> None:
         """
 [project]
 version = "5.6.0"
+dependencies = ["click>=8.1"]
+
+[project.optional-dependencies]
+anthropic = ["anthropic>=0.39"]
 
 [tool.auto-engineering.baseline]
 passed = 1775
@@ -29,7 +34,11 @@ skipped = 1
     )
     for directory in (".claude-plugin", ".codex-plugin"):
         (root / directory / "plugin.json").write_text(
-            json.dumps({"version": plugin_version}),
+            json.dumps({
+                "name": "auto-engineering",
+                "version": plugin_version,
+                "author": {"name": "Example"},
+            }),
             encoding="utf-8",
         )
     (root / ".claude-plugin" / "marketplace.json").write_text(
@@ -60,6 +69,48 @@ def test_mypy_overrides_only_reference_existing_modules() -> None:
         "auto_engineering.loop.semantic_evaluator",
     ):
         assert retired_module not in pyproject
+
+
+def test_provider_sdk_is_optional_and_plugin_metadata_is_host_neutral() -> None:
+    root = Path(__file__).parents[1]
+    project = tomllib.loads(
+        (root / "pyproject.toml").read_text(encoding="utf-8"),
+    )["project"]
+    claude = json.loads(
+        (root / ".claude-plugin/plugin.json").read_text(encoding="utf-8"),
+    )
+    codex = json.loads(
+        (root / ".codex-plugin/plugin.json").read_text(encoding="utf-8"),
+    )
+
+    assert all(
+        not dependency.startswith("anthropic")
+        for dependency in project["dependencies"]
+    )
+    assert project["optional-dependencies"]["anthropic"] == ["anthropic>=0.39"]
+    assert "env" not in claude.get("metadata", {})
+    assert "commands" not in codex
+    assert "anthropic" not in json.dumps(
+        {"claude": claude, "codex": codex},
+    ).lower()
+
+
+def test_dead_plugin_env_declarations_are_reported(tmp_path: Path) -> None:
+    _write_fixture(tmp_path)
+    plugin_path = tmp_path / ".claude-plugin" / "plugin.json"
+    plugin = json.loads(plugin_path.read_text(encoding="utf-8"))
+    plugin["metadata"] = {
+        "env": {
+            "AE_RETRY_TIMEOUT": {
+                "default": "120.0",
+            },
+        },
+    }
+    plugin_path.write_text(json.dumps(plugin), encoding="utf-8")
+
+    errors = check_project_metadata.check_metadata(tmp_path)
+
+    assert any("metadata.env" in error for error in errors)
 
 
 def test_plugin_version_drift_is_reported(tmp_path: Path) -> None:

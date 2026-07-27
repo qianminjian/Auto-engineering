@@ -56,29 +56,27 @@ This file provides guidance to {{AGENT_NAME}} ({{AGENT_SITE}}) when working with
 ## 核心命令
 
 ```bash
-# v5.6 Tick 循环 (离散调用, Python 每次 tick 独立进程)
-ae dev-loop --init                           # 初始化 tick 循环
-ae dev-loop --tick --result <result.json>    # 提交本轮 result, 推进 tick
-ae dev-loop --status --format json           # 当前进度
-ae dev-loop --resume                         # 从 checkpoint 恢复
-ae dev-loop "需求"                           # v5.5 裸参数路径 (legacy, 连续 while 循环)
+# 宿主入口
+# Claude Code: /ae:dev-loop "需求"
+# Codex: $auto-engineering
+
+# v5.6 Tick 内部协议（由宿主 Skill/Command 驱动）
+scripts/ae-run dev-loop --init "需求"
+scripts/ae-run dev-loop --tick --result <result.json>
+scripts/ae-run dev-loop --status --format json
+scripts/ae-run dev-loop --resume <checkpoint-id>
+scripts/ae-run status --format json
+scripts/ae-run doctor
 
 # 测试（16G 内存约束 + 虚拟环境）
-# 全量: ~1703 tests, ~10s (1702 passed + 1 skipped)
+# 权威基线见 pyproject.toml [tool.auto-engineering.baseline]，禁止复制固定数字。
 uv run pytest tests/test_xxx.py -v --no-cov --timeout=60   # 单文件
 uv run pytest tests/ --no-cov --timeout=120 -q              # 全量
 uv run pytest tests/ --cov=auto_engineering --cov-report=term-missing --timeout=300 -q  # 覆盖率
 
-# CLI
-ae doctor                    # 环境预检 (7 项)
-ae gate-check --quick        # 快速 Gate (safety+lint+type_check)
-ae gate-check --all          # 全量 Gate
-ae agent architect "需求"    # 单 Agent 调用
-ae progress                  # 显示 tick 循环进度
-
-# Plugin
-bash ae-plugin-acceptance-test.sh   # Plugin 验收 (20 场景)
-python3 scripts/atdo_smoke.py       # Runtime smoke (7 维度)
+# 发布与宿主验收
+python3 scripts/build_release.py --root . --output <release.tar.gz>
+python3 scripts/install_acceptance.py --archive <release.tar.gz> --host codex
 ```
 
 ## atdo 开发过程基本要求（2026-06-30 用户确立）
@@ -113,7 +111,7 @@ python3 scripts/atdo_smoke.py       # Runtime smoke (7 维度)
 ## 管理约束
 
 - tests/ 下测试，覆盖率 ≥ 90%（用户硬指标）
-- 全量 1702 passed / 1 skipped（2026-07-26 基准，含审计回归测试；死测试已随 tools/ 删除，OTel flaky 已修复）
+- 测试基线只以 `pyproject.toml [tool.auto-engineering.baseline]` 为权威源
 - 参考源码（`$AE_REFS_DIR/`）为只读，不修改
 - Init Engineering 是独立项目——本项目通过 Init-Loop 接口契约（IL.1-IL.6）消费 Init 产物，不包含 Init 实现
 

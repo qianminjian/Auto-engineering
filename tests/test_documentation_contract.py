@@ -52,3 +52,18 @@ def test_current_capability_sections_do_not_advertise_retired_paths() -> None:
     assert "v5.5 Orchestrator" not in api_intro
     assert "Driver B" not in training_intro
     assert "Standalone 模式可直接嵌入流水线" not in training_intro
+
+
+@pytest.mark.parametrize("relative", _CURRENT_DOCS)
+def test_current_docs_contain_no_retired_command_examples(relative: str) -> None:
+    content = (_ROOT / relative).read_text(encoding="utf-8")
+
+    for retired in (
+        "ae gate-check",
+        "ae agent ",
+        "ae checkpoint",
+        "ae progress",
+        "--standalone",
+        "//ae:dev-loop",
+    ):
+        assert retired not in content

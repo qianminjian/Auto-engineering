@@ -1,7 +1,7 @@
 [project]
 name = "auto-engineering"
 version = "5.6.0"
-description = "Auto-Engineering v5.0 — 团队级 Loop 工程 + 多 Agent 协作 + Plugin mode 零配置 + Self-Refine"
+description = "Auto-Engineering v5.6 — 跨宿主 Tick 驱动工程循环与分层验证"
 readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "MIT" }
@@ -18,7 +18,6 @@ classifiers = [
 ]
 
 dependencies = [
-    "anthropic>=0.39",
     "click>=8.1",
     "jsonschema>=4.26.0",
     "markdown-it-py>=3.0",
@@ -34,6 +33,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+anthropic = [
+    "anthropic>=0.39",
+]
 openai = [
     "openai>=1.0",
 ]
@@ -73,8 +75,11 @@ ignore = ["RUF001", "RUF002", "RUF003"]
 testpaths = ["tests"]
 addopts = ["--timeout=60", "-p no:cacheprovider"]
 
+[tool.coverage.run]
+patch = ["subprocess"]
+
 [tool.auto-engineering.baseline]
-passed = 1800
+passed = 1815
 skipped = 1
 
 [build-system]

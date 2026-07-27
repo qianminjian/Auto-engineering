@@ -1,11 +1,10 @@
-"""conftest.py — pytest 共享 fixtures + 阻塞检测 hook.
+"""conftest.py — pytest 共享 fixtures + 持续失败诊断 hook.
 
 Phase 2 之后 conftest.py 只 re-export(避免 cli.py 反向依赖 conftest).
-Phase 0.3 增强: 跨 session 失败计数 + 自动 skip(检测阻塞测试).
+Phase 50: 跨 session 失败计数只用于诊断，不得自动跳过测试。
 
 WARNING: 本文件含跨 session 持久化 hook (pytest_runtest_logreport), 写入
-/tmp/_ae_test_failures.json 做失败计数. 累计 >=3 次失败后自动 skip 后续测试.
-要重置阻塞状态: 删除 /tmp/_ae_test_failures.json 文件.
+/tmp/_ae_test_failures.json 做失败计数；该状态不得改变测试执行语义。
 """
 
 from __future__ import annotations
@@ -22,11 +21,9 @@ import pytest
 # 测试需要 mock agent 时直接用 unittest.mock.MagicMock.
 
 # ============================================================
-# Phase 0.3 阻塞检测 hook
+# Phase 0.3 持续失败诊断 hook
 # ============================================================
-# 思路: 某测试连续失败 >= 3 次(跨 session)→ 自动 mark skip
-# 目的: 避免在边角测试上反复死磕(如 git diff untracked 限制)
-# 状态: /tmp/_ae_test_failures.json(可手动清理重置)
+# 某测试连续失败 >= 3 次时前台报告，仍必须真实执行，禁止掩盖回归。
 
 
 _FAILURE_CACHE = Path(os.environ.get("AE_TEST_STATE_DIR", "/tmp")) / "_ae_test_failures.json"
@@ -50,10 +47,7 @@ def _write_failures(data: dict[str, int]) -> None:
 
 
 def pytest_runtest_logreport(report):
-    """累积测试失败次数(跨 session 持久化).
-
-    失败 >= _BLOCK_THRESHOLD 次 → 下次跑自动 mark skip.
-    """
+    """累积测试失败次数，供跨 session 诊断。"""
     if report.when == "call" and report.failed:
         failures = _read_failures()
         failures[report.nodeid] = failures.get(report.nodeid, 0) + 1
@@ -61,30 +55,19 @@ def pytest_runtest_logreport(report):
 
 
 def pytest_collection_modifyitems(config, items):
-    """收集阶段: 给持续失败的测试打 skip marker.
-
-    输出: stderr 列出本次跳过的 blocked tests(便于人工 review).
-    """
+    """收集阶段报告持续失败测试，但不改变其执行语义。"""
     failures = _read_failures()
     blocked = [tid for tid, count in failures.items() if count >= _BLOCK_THRESHOLD]
     if blocked:
         msg = (
-            f"\n[block_detector] Auto-skipping {len(blocked)} tests "
-            f"(failed >= {_BLOCK_THRESHOLD} times across sessions):"
+            f"\n[block_detector] Reporting {len(blocked)} persistently failing tests "
+            f"(failed >= {_BLOCK_THRESHOLD} times across sessions; tests will run):"
         )
         print(msg, file=sys.stderr)
         for tid in blocked[:5]:
             print(f"  - {tid}", file=sys.stderr)
         if len(blocked) > 5:
             print(f"  ... and {len(blocked) - 5} more", file=sys.stderr)
-
-    skip_marker = pytest.mark.skip(
-        reason=f"Auto-skip: failed >= {_BLOCK_THRESHOLD} times (blocked across sessions)"
-    )
-    for item in items:
-        if item.nodeid in blocked:
-            item.add_marker(skip_marker)
-
 
 # ============================================================
 # Phase 0.3 缓存清理 fixture

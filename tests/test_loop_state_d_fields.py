@@ -23,9 +23,9 @@ from auto_engineering.loop.checkpoint._serialization import LastValueChannel
 from auto_engineering.loop.plan import (
     Plan,
     Task,
+    TaskOutcome,
     TaskStatus,
 )
-from auto_engineering.loop.plan import TaskOutcome
 from auto_engineering.loop.state import (
     CheckpointEnvelope,
 )

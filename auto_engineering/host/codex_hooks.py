@@ -5,11 +5,10 @@ from __future__ import annotations
 import json
 import sys
 from collections.abc import Mapping
-from dataclasses import dataclass
 from pathlib import Path
 from typing import TextIO
 
-from auto_engineering.host import HostPlatform
+from auto_engineering.host import HostEvent, HostPlatform
 
 _EVENT_NAMES = {
     "SessionStart": "session_start",
@@ -17,18 +16,6 @@ _EVENT_NAMES = {
     "PostToolUse": "post_tool",
     "Stop": "stop",
 }
-
-
-@dataclass(frozen=True)
-class HostEvent:
-    """不同宿主 Hook 共享的最小事件模型。"""
-
-    event: str
-    platform: HostPlatform
-    tool: str | None
-    file_path: str | None
-    project_root: Path
-    raw: dict[str, object]
 
 
 def normalize_codex_event(raw: Mapping[str, object]) -> HostEvent:

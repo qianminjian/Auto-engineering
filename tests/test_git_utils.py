@@ -18,7 +18,7 @@ class TestRunGit:
 
     def test_run_git_status_succeeds(self) -> None:
         """git status in the repo root should succeed."""
-        rc, stdout = run_git(".", "status", "--porcelain")
+        rc, _stdout = run_git(".", "status", "--porcelain")
         assert rc == 0
 
     def test_run_git_invalid_path_returns_nonzero(self) -> None:
@@ -57,10 +57,10 @@ class TestRunGitDiff:
 
     def test_run_git_diff_with_head(self) -> None:
         """git diff --numstat HEAD should succeed (may be empty output)."""
-        rc, stdout = run_git_diff(Path("."), ["HEAD"])
+        rc, _stdout = run_git_diff(Path("."), ["HEAD"])
         assert rc == 0
 
     def test_run_git_diff_cached(self) -> None:
         """git diff --numstat --cached should succeed."""
-        rc, stdout = run_git_diff(Path("."), ["--cached"])
+        rc, _stdout = run_git_diff(Path("."), ["--cached"])
         assert rc == 0

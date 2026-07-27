@@ -16,9 +16,9 @@ class TestRenderOptionalFeaturesNoDuplicate:
         完全重复, `ae doctor` 特性面板整体输出两遍。
         """
         monkeypatch.chdir(tmp_path)  # 无 ae.toml
+        import auto_engineering.cli.doctor as doctor_mod
         from auto_engineering.config import feature_flags
         from auto_engineering.config.feature_flags import FEATURE_MANIFEST
-        import auto_engineering.cli.doctor as doctor_mod
 
         status = {
             f.key: {"active": True, "agent_mode": "both",
@@ -44,9 +44,9 @@ class TestRenderOptionalFeaturesNoDuplicate:
     ) -> None:
         """修复后特性列表与贝叶斯块仍应各输出一次(不能删过头)."""
         monkeypatch.chdir(tmp_path)
+        import auto_engineering.cli.doctor as doctor_mod
         from auto_engineering.config import feature_flags
         from auto_engineering.config.feature_flags import FEATURE_MANIFEST
-        import auto_engineering.cli.doctor as doctor_mod
 
         status = {
             f.key: {"active": True, "agent_mode": "both",

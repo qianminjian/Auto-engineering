@@ -104,7 +104,6 @@ name = "auto-engineering"
 version = "5.6.0"
 source = { editable = "." }
 dependencies = [
-    { name = "anthropic" },
     { name = "click" },
     { name = "jsonschema" },
     { name = "markdown-it-py" },
@@ -116,6 +115,9 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+anthropic = [
+    { name = "anthropic" },
+]
 dev = [
     { name = "mypy" },
     { name = "pre-commit" },
@@ -142,7 +144,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "anthropic", specifier = ">=0.39" },
+    { name = "anthropic", marker = "extra == 'anthropic'", specifier = ">=0.39" },
     { name = "click", specifier = ">=8.1" },
     { name = "jsonschema", specifier = ">=4.26.0" },
     { name = "markdown-it-py", specifier = ">=3.0" },
@@ -162,7 +164,7 @@ requires-dist = [
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.8" },
 ]
-provides-extras = ["openai", "otel", "dev"]
+provides-extras = ["anthropic", "openai", "otel", "dev"]
 
 [package.metadata.requires-dev]
 dev = [

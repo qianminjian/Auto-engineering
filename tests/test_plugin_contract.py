@@ -277,6 +277,7 @@ class TestSubcommandRegistration:
     def test_ae_gate_check_not_registered(self) -> None:
         """Phase 40: ae gate-check 已删除 — 确认不可用."""
         from click.testing import CliRunner
+
         from auto_engineering.cli import main
         runner = CliRunner()
         result = runner.invoke(main, ["gate-check", "--help"])
@@ -285,6 +286,7 @@ class TestSubcommandRegistration:
     def test_ae_agent_not_registered(self) -> None:
         """Phase 40: ae agent 已删除 — 确认不可用."""
         from click.testing import CliRunner
+
         from auto_engineering.cli import main
         runner = CliRunner()
         result = runner.invoke(main, ["agent", "--help"])
@@ -293,6 +295,7 @@ class TestSubcommandRegistration:
     def test_ae_status_registered(self) -> None:
         """Phase 40: ae status 必须保留."""
         from click.testing import CliRunner
+
         from auto_engineering.cli import main
         runner = CliRunner()
         result = runner.invoke(main, ["status", "--help"])
