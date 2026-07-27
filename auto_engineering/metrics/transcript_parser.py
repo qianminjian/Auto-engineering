@@ -111,6 +111,8 @@ class SessionTranscriptParser:
             "model": ", ".join(sorted(models)) if models else "unknown",
             "message_count": message_count,
             "source": "transcript",
+            "usage_source": "claude-transcript",
+            "provider": "anthropic",
         }
 
     def reset(self) -> None:
@@ -194,6 +196,8 @@ class SessionTranscriptParser:
             "model": "unknown",
             "message_count": 0,
             "source": "transcript",
+            "usage_source": "claude-transcript",
+            "provider": "anthropic",
         }
 
 
@@ -208,5 +212,8 @@ def create_parser(project_root: str | Path) -> SessionTranscriptParser | None:
     if not _cfg.metrics_enabled:
         return None
     if not _cfg.token_tracking_enabled:
+        return None
+    from auto_engineering.host import detect_host, usage_source_for
+    if usage_source_for(detect_host().platform) is None:
         return None
     return SessionTranscriptParser(project_root)

@@ -55,9 +55,6 @@ SECTION_KEY_MAP: dict[str, dict[str, str]] = {
     "threshold": {
         "gate-timeout": "AE_GATE_TIMEOUT",
     },
-    "provider": {
-        "llm-provider": "AE_LLM_PROVIDER",
-    },
 }
 
 

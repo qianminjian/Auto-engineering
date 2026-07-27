@@ -18,10 +18,10 @@ from auto_engineering.errors import AEError, ErrorCode
 
 
 class TestErrorCodeEnum:
-    """枚举完整性 — 16 ErrorCode (P1-15 新增 CONFIG_INVALID_PROVIDER + PII_DETECTED)."""
+    """枚举完整性 — 仅保留存在生产抛出点的 ErrorCode。"""
 
     def test_all_codes_defined(self) -> None:
-        """15 个 ErrorCode 全存在 (Phase 40: GATE_EXECUTION_ERROR 已删除)."""
+        """14 个 ErrorCode 全存在 (退役 Provider 错误码已删除)."""
         expected = {
             # LLM / API (6)
             "LLM_TIMEOUT",
@@ -37,9 +37,8 @@ class TestErrorCodeEnum:
             # Task / Cancellation (2)
             "TASK_CANCELLED",
             "AGENT_REGISTRATION_ERROR",
-            # Configuration (2)
+            # Configuration (1)
             "CONFIG_MISSING_API_KEY",
-            "CONFIG_INVALID_PROVIDER",
             # PII (1)
             "PII_DETECTED",
             # Budget (1)
@@ -207,10 +206,10 @@ class TestV5ErrorCodeMapping:
         Budget (1): EXCEEDED
     """
 
-    def test_error_code_total_count_is_15(self) -> None:
-        """ErrorCode 总数 = 15 (Phase 40: GATE_EXECUTION_ERROR 已删除)."""
-        assert len(ErrorCode) == 15, (
-            f"ErrorCode 总数应 15, 实际 {len(ErrorCode)}. "
+    def test_error_code_total_count_is_14(self) -> None:
+        """ErrorCode 总数 = 14（仅保留存在生产抛出点的错误码）。"""
+        assert len(ErrorCode) == 14, (
+            f"ErrorCode 总数应 14, 实际 {len(ErrorCode)}. "
             f"新增/删除需同步 test_all_codes_defined"
         )
 

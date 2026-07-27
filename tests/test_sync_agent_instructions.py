@@ -21,6 +21,14 @@ def _write_template(root: Path, content: str = _TEMPLATE) -> None:
     template = root / "agent-rules" / "instructions.md.tmpl"
     template.parent.mkdir(parents=True)
     template.write_text(content, encoding="utf-8")
+    (template.parent / "claude.md.tmpl").write_text(
+        "Claude adapter: {{AGENT_NAME}}\n",
+        encoding="utf-8",
+    )
+    (template.parent / "codex.md.tmpl").write_text(
+        "Codex adapter: {{AGENT_NAME}}\n",
+        encoding="utf-8",
+    )
 
 
 def test_rendering_uses_platform_specific_values(tmp_path: Path) -> None:
@@ -41,6 +49,32 @@ def test_rendering_uses_platform_specific_values(tmp_path: Path) -> None:
     assert "Plugin: .codex-plugin/" in codex
     assert "Rules: .claude/rules/" in claude
     assert "Rules: .claude/rules/" in codex
+    assert "Claude adapter: Claude Code" in claude
+    assert "Claude adapter:" not in codex
+    assert "Codex adapter: Codex" in codex
+    assert "Codex adapter:" not in claude
+
+
+def test_repository_uses_core_and_two_adapter_templates() -> None:
+    root = Path(__file__).parents[1]
+
+    for filename in (
+        "instructions.md.tmpl",
+        "claude.md.tmpl",
+        "codex.md.tmpl",
+    ):
+        assert (root / "agent-rules" / filename).is_file()
+
+
+def test_codex_output_embeds_critical_rules_without_claude_includes() -> None:
+    root = Path(__file__).parents[1]
+    codex = (root / "AGENTS.md").read_text(encoding="utf-8")
+
+    assert "@.claude/rules/" not in codex
+    assert "禁止并发运行多个 pytest 进程" in codex
+    assert "5 / 10 / 15 分钟心跳" in codex
+    assert "BEACON 决策状态翻转必须先获得用户审批" in codex
+    assert "先记录 → 再执行 → 再更新" in codex
 
 
 def test_check_returns_zero_when_generated_files_match(tmp_path: Path) -> None:

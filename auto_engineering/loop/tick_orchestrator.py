@@ -125,7 +125,7 @@ class TickContextOffloader(Protocol):
 class TickSessionSummarizer(Protocol):
     """Cross-tick session summarization (T54).
 
-    Generates structured summary from state metadata (AgentDriver).
+    Generates a host-neutral structured summary from state metadata.
     Standalone 已于 Phase 40 移除；引擎调用 summarize_structured()（结构化模式）。
     """
 
@@ -148,7 +148,7 @@ class TickSessionSummarizer(Protocol):
 class _TranscriptParserLike(Protocol):
     """SessionTranscriptParser structural interface (T135c)."""
 
-    def parse_tick(self, tick_no: int) -> dict | None: ...
+    def collect(self) -> dict[str, Any]: ...
 
 
 class TickOrchestrator:
@@ -452,6 +452,10 @@ class TickOrchestrator:
         if state.progress_tree_json:
             self._progress_tree = ProgressTree.from_dict(
                 json.loads(state.progress_tree_json))
+        if state.session_summary:
+            self._cached_session_summary = SessionSummary.from_dict(
+                state.session_summary
+            )
 
         # plan + verification_layers — batch_plan 从 _batch_state 取 (#6 已被清空)
         batch_plan = (
@@ -1358,14 +1362,19 @@ class TickOrchestrator:
             return self.build_action()
         current_id = self._state.pending_research_ids.pop(0)
         g = by_id.get(current_id, {})
-        if g.get("resolution") == "research":
+        self._state.research_archive[current_id] = result
+        search_status = result.get("search_status", "not_needed")
+        search_failed = search_status in {"unavailable", "failed"}
+        if search_failed:
+            # 宿主能力缺失/搜索失败时保留完整证据，回到 gap_review 由用户
+            # 补充或显式 defer；不得把空 findings 注入成稳定设计。
+            g["resolution"] = "defer_research"
+        elif g.get("resolution") == "research":
             self._inject_supplement(
                 g, result.get("recommended_design", ""),
                 source="research_agent",
                 source_tier=result.get("source_tier"),
                 confidence=result.get("confidence", "medium"))
-        else:  # defer_research: findings 存档, 待 gap_review 复审 (T0.7)
-            self._state.research_archive[current_id] = result
         self._state.gap_report_json = json.dumps(report, ensure_ascii=False)
 
         if self._state.pending_research_ids:
@@ -1522,60 +1531,9 @@ class TickOrchestrator:
         对比 baseline (before) 与当前 enrichment (after) 的 M1-M5 度量,
         返回 RatchetDecision 或 None (度量未启用/无基线时).
         """
-        try:
-            from auto_engineering.metrics.ratchet import RatchetController
-            baseline = mc.load_baseline() or {}
-            before = {k: v for k, v in baseline.items()
-                      if k.startswith("M") and isinstance(v, (int, float))}
-            after = {k: v for k, v in enrichment.get("metrics_signals", {}).items()
-                     if k.startswith("M") and isinstance(v, (int, float))}
-            if not before or not after:
-                return None
-            ratchet = RatchetController(self.project_root)
-            decision = ratchet.evaluate(before, after)
+        from auto_engineering.metrics.ratchet_runner import run_ratchet
 
-            # AD3: ThresholdLearner.propose_adjustments() — 贝叶斯阈值建议
-            try:
-                from auto_engineering.metrics.threshold_learner import ThresholdLearner
-                learner = ThresholdLearner(self.project_root / ".ae-state" / "metrics")
-                proposals = learner.propose_adjustments()
-                if proposals:
-                    _logger.info("ThresholdLearner proposals: %s",
-                                 [(p["param"], p["proposed"]) for p in proposals])
-            except (ImportError, FileNotFoundError, ValueError, OSError):
-                _logger.debug("ThresholdLearner.propose_adjustments skipped", exc_info=True)
-
-            # P0-3: 配置版本化闭环 — save/rollback 根据判定结果
-            result: dict = {
-                "action": decision.action,
-                "reason": decision.reason,
-                "config_version": decision.config_version,
-            }
-            if decision.action == "keep":
-                snapshot_tag = ratchet.save_config_snapshot(after)
-                if snapshot_tag:
-                    result["snapshot_tag"] = snapshot_tag
-                    _logger.info("Ratchet KEEP → saved config snapshot: %s", snapshot_tag)
-            elif decision.action == "revert":
-                previous = ratchet.rollback()
-                if previous is not None:
-                    result["rollback"] = "applied"
-                    _logger.warning("Ratchet REVERT → rolled back to previous config")
-                else:
-                    _logger.warning("Ratchet REVERT → no previous config to roll back to")
-            elif decision.action == "stop":
-                _logger.critical("Ratchet STOP — severe regression detected: %s", decision.reason)
-                previous = ratchet.rollback()
-                if previous is not None:
-                    result["rollback"] = "applied"
-                    _logger.critical("Ratchet STOP → emergency rollback applied")
-            return result
-        except (KeyboardInterrupt, SystemExit):
-            raise
-        except (ImportError, ValueError, TypeError, OSError, KeyError,
-                json.JSONDecodeError):
-            _logger.debug("RatchetController evaluate failed", exc_info=True)
-            return None
+        return run_ratchet(self.project_root, mc, enrichment)
 
     # P1-9: Escalation handler → loop/escalation_handler.py
 
@@ -1642,6 +1600,10 @@ class TickOrchestrator:
             if injected:
                 action["session_summary"] = injected
                 self._cached_session_summary = summary
+                self._state.session_summary = summary.to_dict()
+                # build_action 发生在 stage checkpoint 之后；立即持久化，确保
+                # 下一次独立 --tick 进程能恢复刚注入的滚动摘要。
+                self._save_checkpoint()
         # P2-4: log final action JSON AFTER all injections (session_summary etc.)
         self.action_builder.log_prompt(self.project_root, action)
         return action
@@ -1655,6 +1617,10 @@ class TickOrchestrator:
         try:
             usage = self._transcript_parser.collect()
             if usage.get("input_tokens") or usage.get("output_tokens"):
+                provider = usage.get("provider")
+                usage_source = usage.get("usage_source") or "unsupported"
+                usage["provider"] = provider
+                usage["usage_source"] = usage_source
                 self._state.tick_token_usage = usage
                 _logger.debug(
                     "Token collect: tick=%d input=%d output=%d model=%s",
@@ -1669,7 +1635,7 @@ class TickOrchestrator:
                         input_tokens=usage["input_tokens"],
                         output_tokens=usage["output_tokens"],
                         model=usage.get("model", "unknown"),
-                        provider="anthropic",
+                        provider=provider or "unsupported",
                         stage=self._state.current_stage or "",
                         ai_origin=AIOrigin(
                             level="led",
@@ -1943,6 +1909,10 @@ class TickOrchestrator:
         if self._progress_tree is not None:
             self._state.progress_tree_json = json.dumps(
                 self._progress_tree.to_dict(), ensure_ascii=False)
+        if self._cached_session_summary is not None:
+            self._state.session_summary = (
+                self._cached_session_summary.to_dict()
+            )
 
     # _resolve_batch_id — 已提取到 ActionBuilder (P0-1)
 

@@ -4,7 +4,8 @@ This file provides guidance to {{AGENT_NAME}} ({{AGENT_SITE}}) when working with
 
 ## 跨 Agent 规则同步
 
-- 修改项目 Agent 规则时，只编辑 `agent-rules/instructions.md.tmpl`。
+- 公共规则编辑 `agent-rules/instructions.md.tmpl`，平台差异编辑对应的
+  `agent-rules/claude.md.tmpl` 或 `agent-rules/codex.md.tmpl`。
 - 禁止直接编辑生成的 `CLAUDE.md` 和 `AGENTS.md`。
 - 修改模板后必须运行 `python3 scripts/sync_agent_instructions.py`，并用 `--check` 校验无漂移。
 
@@ -113,10 +114,6 @@ python3 scripts/atdo_smoke.py       # Runtime smoke (7 维度)
 
 - tests/ 下测试，覆盖率 ≥ 90%（用户硬指标）
 - 全量 1702 passed / 1 skipped（2026-07-26 基准，含审计回归测试；死测试已随 tools/ 删除，OTel flaky 已修复）
-- 测试运行遵守 `@{{RULES_DIR}}pytest-memory-management.md`（16G 内存约束）
-- **Agent tool spawn 遵守 `@{{RULES_DIR}}agent-spawn-timeout.md`（3 层超时防护）**
-- **设计文档修改遵守 `@{{RULES_DIR}}design-document-inviolability.md`（🚨 2026-07-08 事故确立：BEACON决策翻转须审批、设计优先于代码）**
-- **每次操作遵守「先记录→再执行→再更新」纪律**（memory `feedback-record-before-execute.md`）
 - 参考源码（`$AE_REFS_DIR/`）为只读，不修改
 - Init Engineering 是独立项目——本项目通过 Init-Loop 接口契约（IL.1-IL.6）消费 Init 产物，不包含 Init 实现
 

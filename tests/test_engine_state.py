@@ -15,7 +15,7 @@ import pytest
 
 from auto_engineering.engine.state import EngineState, LoopState
 
-# v5.6: 22 (v5.5) + 17 (#20-36) + 1 (#37 B12.5 版本锁) = 40 dataclass 字段
+# v5.6 状态字段（含 #42 T136 跨进程摘要）。
 _EXPECTED_V56_FIELDS = {
     "requirement", "current_stage", "round",
     "thread_id", "majors_in_a_row", "total_majors",
@@ -40,6 +40,8 @@ _EXPECTED_V56_FIELDS = {
     "action_timestamp",
     # #41 T110b: tick_token_usage (当前 tick token 消耗)
     "tick_token_usage",
+    # #42 T136: checkpoint 持久化滚动摘要
+    "session_summary",
     # 内部写入审计日志
     "_write_log",
     # P1-28: 运行时句柄 (不进 checkpoint)
@@ -151,8 +153,8 @@ class TestEngineStateFieldDefaults:
     +total_majors / +thread_id). 验证所有字段默认值与类型契约.
     """
 
-    def test_all_42_fields_exist(self) -> None:
-        """EngineState 暴露 44 个字段 (含 _write_log + _runtime_ctx P1-28)."""
+    def test_all_fields_exist(self) -> None:
+        """EngineState 字段集合与跨 tick checkpoint 契约一致。"""
         from dataclasses import fields
 
         EngineState()
@@ -304,12 +306,12 @@ class TestEngineStateBoundary:
         assert state.plan == "ok"
         assert not hasattr(state, "nonexistent")
 
-    def test_to_dict_contains_all_40_fields(self) -> None:
-        """to_dict 输出含全部 43 字段 (v5.6, 不含 _write_log)."""
+    def test_to_dict_contains_all_fields(self) -> None:
+        """to_dict 输出含全部 44 字段（不含内部字段）。"""
         state = EngineState()
         d = state.to_dict()
-        assert len(d) == 43, (
-            f"to_dict 应含 43 字段, 实际 {len(d)}: "
+        assert len(d) == 44, (
+            f"to_dict 应含 44 字段, 实际 {len(d)}: "
             f"{sorted(d.keys())}"
         )
         assert "suggested_fix" in d, "to_dict 必须包含 suggested_fix (Self-Refine 深化)"
@@ -318,6 +320,7 @@ class TestEngineStateBoundary:
         assert "strengths" in d, "to_dict 必须包含 strengths (v5.5 CriticOutput 扩展)"
         assert "assessment" in d, "to_dict 必须包含 assessment (v5.5 CriticOutput 扩展)"
         assert "_write_log" not in d, "to_dict 不包含内部审计字段 _write_log"
+        assert d["session_summary"] is None
         assert d["thread_id"] == state.thread_id
 
     def test_from_dict_with_empty_dict_uses_all_defaults(self) -> None:
@@ -574,4 +577,3 @@ class TestV56ValidStages:
         s = EngineState()
         with pytest.raises(ValueError, match="current_stage"):
             s.write_field("current_stage", "bogus_stage", "orchestrator")
-

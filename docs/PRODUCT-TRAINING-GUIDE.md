@@ -1,8 +1,26 @@
 # Auto-Engineering 产品培训手册
 
-> v5.6 + v7.0 双驱动 + v8.0 多平台 | 2026-07-19 | 适用版本: ae ≥ 5.6.0
+> v5.6 Host-neutral Core + Claude Code/Codex Adapter | 更新：2026-07-27
 > 目标读者: 团队开发者、技术负责人、平台运维
 > 预计阅读时间: 30 分钟
+
+## 当前产品口径（2026-07-27）
+
+Auto-Engineering 当前是“一个 Host-neutral Tick 核心 + 两个宿主入口”：
+
+| 平台 | 培训使用入口 |
+|------|-------------|
+| Claude Code | `/ae:dev-loop "需求"` |
+| Codex | `$auto-engineering`，随后描述需求 |
+
+```bash
+scripts/ae-run doctor
+scripts/ae-run dev-loop --init "需求"
+```
+
+`--init` 只返回首个 action，之后由宿主 Agent 执行并提交 result。Standalone、
+`ae agent`、`ae gate-check`、`ae checkpoint` 和 `ae progress` 已不属于当前产品
+入口；本手册后续对应章节暂作为历史培训材料保留，不得用于当前演示。
 
 ---
 
@@ -47,21 +65,17 @@
 | 无法追踪 AI 编码过程 | DebugTracer 完整轨迹 + OpenTelemetry OTLP + 审计日志 JSONL |
 | 缺乏人在环控制 | Stage Checkpoint Gate 在关键阶段暂停，等用户决策 |
 
-### 1.3 核心架构：双驱动 + 三平台
+### 1.3 当前架构：单核心 + 双宿主适配
 
 ```
 ┌──────────────────────────────────────────────────┐
 │                  用户入口                          │
-│  Claude Code │ Codex │ CodeBuddy │ 终端 CLI       │
-└────────┬────────────────────────────────┬────────┘
-         │                                │
-    ┌────▼─────┐                    ┌────▼──────────┐
-    │ Driver A │   Agent 驱动        │  Driver B     │  Standalone 驱动
-    │ Agent    │   文件桥接           │  进程内 LLM    │  自带 API Key
-    │ 填 result │                    │  填 result    │
-    └────┬─────┘                    └────┬──────────┘
-         │                                │
-         └──────────┬─────────────────────┘
+│       Claude Code │ Codex                         │
+└──────────────┬───────────────────────────────────┘
+               │ Host Adapter（Command / Skill）
+               │
+               ▼
+         scripts/ae-run
                     │
          ┌──────────▼──────────┐
          │  TickOrchestrator   │  唯一循环引擎
@@ -71,8 +85,8 @@
          └─────────────────────┘
 ```
 
-- **Driver A（Agent 驱动）**: Claude Code Agent 按照 Tick 协议反复调用 `ae dev-loop --tick`，通过文件桥接与引擎交互
-- **Driver B（Standalone 驱动）**: 进程内直接调 LLM，不依赖外部 Agent，适合 CI/CD 流水线、银行内网部署
+- **Host Adapter**：Claude Code Command 与 Codex Skill 按同一 Tick 协议执行 action。
+- **文件桥接**：所有宿主都通过 `scripts/ae-run` 提交 result，不复制循环逻辑。
 - **TickOrchestrator**: Python 确定性引擎，所有编排逻辑纯代码，不调 LLM，可测试
 
 ### 1.4 5 层验证管道
@@ -94,7 +108,7 @@
 - **5-20 人团队内部使用**: 作为 AI 编码的标准工作流（非 SaaS，本地安装）
 - **需要编码规范化的团队**: Gate 门禁强制安全/lint/类型/测试/覆盖率标准
 - **银行/金融/合规场景**: 多 Provider（国产模型）、PII 防护、可观测性、审计日志
-- **CI/CD 集成**: Standalone 模式可直接嵌入流水线
+- **CI/CD 集成**: CI 负责双平台契约、发布包与质量门验证，不在流水线内自主调用 LLM
 
 ---
 

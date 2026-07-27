@@ -5,9 +5,24 @@
 >
 > v1.0 / v2.0 / v2.3 / v5.0 章节已归档 — 见 `design/his_bak/api-reference.md`。
 
+## 当前跨宿主调用契约（2026-07-27）
+
+- Claude Code 用户入口：`/ae:dev-loop "需求"`。
+- Codex 用户入口：`$auto-engineering`，随后描述需求。
+- 两个平台都通过 `scripts/ae-run` 进入同一个 Python Tick 核心。
+
+```bash
+scripts/ae-run doctor
+scripts/ae-run dev-loop --init "需求"
+scripts/ae-run dev-loop --tick --result <result.json>
+scripts/ae-run status --format json
+```
+
+除 `doctor`、`status` 和 Skill 内部使用的 `dev-loop --init/--tick/--resume` 外，
+本文后续旧 CLI 示例均为历史 API，不代表当前可用入口。
+
 Auto-Engineering v5.6 is a **Tick-Based Discrete Invocation loop engine** with:
 - **TickOrchestrator** (v5.6 主引擎, tick/after_tick 控制流, 文件桥接协议)
-- **v5.5 Orchestrator** (共存 legacy, 连续 while 循环直调 LLM)
 - **5 层验证管道** (architect → developer → critic → component_verifier → system_deep_audit)
 - **LEAF/PLATE/FULL 自动验证深度裁剪** (决策 #41)
 - **9 Guardrail 系统** (3 态: pass/block/retry, 含 REDGuardrail/FreshGuardrail/RegressionGuardrail)
@@ -26,7 +41,7 @@ Auto-Engineering v5.6 is a **Tick-Based Discrete Invocation loop engine** with:
 ae <subcommand> [options]
 ```
 
-### 1.1 子命令总览 (v5.6)
+### 1.1 历史子命令总览（不可作为当前入口）
 
 | 子命令 | 类别 | 说明 | Phase |
 |--------|------|------|-------|

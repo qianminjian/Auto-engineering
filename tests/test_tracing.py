@@ -24,6 +24,21 @@ class TestSetupTracing:
         with tracer.start_as_current_span("test") as span:
             assert not span.is_recording()
 
+    def test_no_endpoint_ignores_preconfigured_global_provider(self) -> None:
+        """无 endpoint 行为不得受前序测试配置的全局 provider 影响。"""
+        from opentelemetry.trace import NoOpTracer
+
+        with patch(_GET_TRACER) as get_tracer, patch(
+            "opentelemetry.trace.get_tracer_provider"
+        ) as get_provider:
+            from auto_engineering.observability.tracing import setup_tracing
+
+            tracer = setup_tracing(otlp_endpoint=None)
+
+        assert isinstance(tracer, NoOpTracer)
+        get_tracer.assert_not_called()
+        get_provider.assert_not_called()
+
     def test_no_endpoint_does_not_import_opentelemetry_sdk(self) -> None:
         """NoOp path does not trigger heavy SDK imports (lazy import)."""
         import sys

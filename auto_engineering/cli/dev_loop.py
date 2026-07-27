@@ -1,4 +1,4 @@
-"""CLI dev_loop — v5.6 Tick 模式 + v7.6 Standalone 模式.
+"""CLI dev_loop — v5.6 离散 Tick 模式。
 
 从 cli.py 拆分 (Plan P1-B, 原 cli.py §218-451).
 v5.5 Orchestrator 已退役 (T133b).
@@ -118,8 +118,7 @@ def _build_injectables(
         audit_log_dir = cfg.audit_log_dir or str(root / ".ae-state" / "audit")
         audit_logger = AuditLogger(Path(audit_log_dir))
 
-    # T54: SessionSummarizer — structured mode in AgentDriver (no LLM needed),
-    # LLM mode in StandaloneDriver (provider passed from driver).
+    # Core 使用结构化摘要，不持有宿主模型凭据。
     from auto_engineering.context.summarization import SessionSummarizer
     session_summarizer = SessionSummarizer(llm_provider=None)
 
@@ -417,4 +416,3 @@ def _resolve_checkpoint_by_thread_id(
         _logger = __import__("logging").getLogger("ae.cli")
         _logger.debug("thread_id fallback lookup failed: %s", e)
         return None
-

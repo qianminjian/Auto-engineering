@@ -61,6 +61,7 @@ class HostCapabilities:
     parallel_subagents: bool = False
     interactive_questions: bool = False
     transcript_usage: bool = False
+    web_search: bool = False
     git_mutation: bool = False
 
 
@@ -74,6 +75,14 @@ class HostDetection:
     @property
     def capabilities(self) -> HostCapabilities:
         return capabilities_for(self.platform)
+
+
+@dataclass(frozen=True)
+class UsageSource:
+    """宿主可提供的 token usage 来源及其真实 provider。"""
+
+    name: str
+    provider: str
 
 
 class HostAdapter(Protocol):
@@ -94,6 +103,7 @@ _CAPABILITIES = {
         parallel_subagents=True,
         interactive_questions=True,
         transcript_usage=True,
+        web_search=True,
         git_mutation=True,
     ),
     HostPlatform.CODEX: HostCapabilities(
@@ -101,6 +111,7 @@ _CAPABILITIES = {
         hooks=_COMMON_HOOKS,
         subagents=True,
         parallel_subagents=True,
+        web_search=True,
         git_mutation=True,
     ),
     HostPlatform.CODEBUDDY: HostCapabilities(
@@ -119,6 +130,17 @@ _CAPABILITIES = {
 def capabilities_for(platform: HostPlatform) -> HostCapabilities:
     """返回平台的显式能力矩阵。"""
     return _CAPABILITIES[platform]
+
+
+def usage_source_for(platform: HostPlatform) -> UsageSource | None:
+    """返回稳定 usage 来源；不可用时明确返回 None。"""
+
+    if platform is HostPlatform.CLAUDE_CODE:
+        return UsageSource(
+            name="claude-transcript",
+            provider="anthropic",
+        )
+    return None
 
 
 def detect_host(environ: Mapping[str, str] | None = None) -> HostDetection:
@@ -150,6 +172,8 @@ __all__ = [
     "HostCapabilities",
     "HostDetection",
     "HostPlatform",
+    "UsageSource",
     "capabilities_for",
     "detect_host",
+    "usage_source_for",
 ]

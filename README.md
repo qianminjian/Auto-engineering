@@ -1,8 +1,29 @@
-# Auto-Engineering v5.6
+# Auto-Engineering v5.6.0
 
-Claude Code Plugin — Tick-Based Discrete Invocation Loop Engineering 调度脚手架
+跨 Claude Code / Codex 的 Tick-Based Discrete Invocation Loop Engineering 调度脚手架。
 
 团队内部分发 (5-20 用户本地安装) — 不是 SaaS，不是个人工具。
+
+## 当前入口
+
+Auto-Engineering 只有一套 Host-neutral Tick 核心，两个宿主仅入口不同：
+
+| 平台 | 用户入口 |
+|------|---------|
+| Claude Code | `/ae:dev-loop "需求"` |
+| Codex | `$auto-engineering`，随后描述需求 |
+
+从源码安装后的最小验证：
+
+```bash
+uv sync
+scripts/ae-run doctor
+scripts/ae-run dev-loop --init "需求"
+```
+
+`--init` 只产生首个 action JSON；当前宿主 Agent 按 action 执行后，使用
+`scripts/ae-run dev-loop --tick --result <result.json>` 推进，直到 Python 输出
+`{"action":"done"}`。Python 引擎不直接调用 LLM。
 
 ## 环境要求
 
@@ -11,75 +32,33 @@ Claude Code Plugin — Tick-Based Discrete Invocation Loop Engineering 调度脚
 - git >= 2.40
 - sqlite3 >= 3.42
 
-## 安装
+## 从源码安装
 
 ```bash
-git clone https://github.com/qianminjian/Auto-engineering.git ~/.claude/plugins/auto-engineering
-cd ~/.claude/plugins/auto-engineering && uv sync
+git clone https://github.com/qianminjian/Auto-engineering.git
+cd Auto-engineering
+uv sync
+scripts/ae-run doctor
 ```
 
-重启 Claude Code 后 7 个 slash command 可用。
-
-全局 `ae` 命令（可选，CLI 调试用）：
-
-```bash
-cd ~/.claude/plugins/auto-engineering
-uv tool install . --force
-ae doctor      # 环境预检
-```
-
-## 使用
-
-### Plugin 模式（推荐，零配置）
-
-```
-/ae:dev-loop "实现用户登录功能，支持 JWT 认证"
-```
-
-直接在 Claude Code agent 内执行 Tick-Based 离散循环（architect → developer → critic → 5 层验证），复用 agent 的 LLM 连接。
-
-### CLI 模式
-
-```bash
-ae dev-loop --init                        # 初始化 tick 循环
-ae dev-loop --tick --result result.json   # 提交本轮 result，推进 tick
-ae dev-loop --status --format json        # 查看进度
-ae dev-loop --resume                      # 从 checkpoint 恢复
-ae doctor                                 # 环境预检
-ae gate-check --quick                     # 快速 Gate (safety+lint+type_check)
-ae gate-check --all                       # 全量 Gate
-```
-
-## Slash Commands
-
-| 命令 | 说明 |
-|------|------|
-| `/ae:dev-loop` | 开发循环 |
-| `/ae:status` | 查看状态 |
-| `/ae:checkpoint` | Checkpoint 管理 |
-| `/ae:project-tdd` | TDD 执行 |
-| `/ae:project-worktree` | 创建 worktree |
-| `/ae:project-agent` | 单 Agent 调用 |
-| `/ae:project-ci` | 跑全量 CI gate |
+发布包包含 Claude Code 与 Codex 两套 manifest、Hook、规则和 Skill/Command；
+安装到宿主后仍通过顶部“当前入口”进入同一循环。
 
 ## 架构
 
 ```
-Plugin 层 (.claude-plugin/)
-  commands/*.md  ──→  Bash 委托 ae <subcommand>
-  hooks/*.sh     ──→  事件响应
-  skills/SKILL.md ──→  Agent 使用指引
+Host Adapter 层
+  .claude-plugin/ + commands/  ──→ Claude Code
+  .codex-plugin/ + skills/     ──→ Codex
+  scripts/ae-run               ──→ 共享 CLI resolver
 
-Engine 层 (auto_engineering/)
+Host-neutral Core (auto_engineering/)
   loop/tick_orchestrator.py  — v5.6 Tick 主引擎
-  loop/standalone_driver.py  — v7.0 Standalone 驱动
   loop/stage_router.py       — T1-T22 转换表
   loop/guardrail.py          — 9 Guardrail (含 REDGuardrail/FreshGuardrail/RegressionGuardrail)
   loop/convergence.py        — 4 级收敛判定
   gates/                     — 7+1 道 Gate (safety→lint→type_check→audit→contract→test→build)
-  agents/                    — BaseAgent + tool_use loop + AUTHZ_MATRIX
   prompts/                   — B12 中央提示词管理 (9 角色 + 8 片段)
-  runtime/                   — AgentRuntime + CancellationToken
 ```
 
 ## 设计文档
@@ -88,14 +67,14 @@ Engine 层 (auto_engineering/)
 |------|------|
 | `design/BEACON.md` | 设计基线（目标/范围/74 条决策/当前状态） |
 | `design/v5.6-Design-Loop.md` | 唯一设计文档：Tick-Based 协议 + 5 层验证 + Init→Loop 契约 + v7.0 双驱动 |
-| `design/IMPLEMENTATION-TRACKER.md` | 实施跟踪表（Phase 1-26, 196/196 全部完成） |
+| `design/IMPLEMENTATION-TRACKER.md` | 实施跟踪表（Phase 1-49 全部完成） |
 | `design/INDEX.md` | 文档索引 |
 
 ## 测试
 
 ```bash
 uv run pytest tests/ --no-cov --timeout=120 -q
-# ~2587 tests passed
+<!-- test-baseline --> 1800 passed / 1 skipped
 ```
 
 ## 环境变量
@@ -104,21 +83,17 @@ uv run pytest tests/ --no-cov --timeout=120 -q
 
 | 变量 | 默认 | 说明 |
 |------|------|------|
-| `ANTHROPIC_API_KEY` | — | Anthropic API 密钥（必需） |
+| `ANTHROPIC_API_KEY` | — | Claude Code 兼容诊断按需使用；Codex 不需要 |
 | `AE_PII_ENABLED` | 1 | PII 四层防护总开关 |
 | `AE_METRICS` | 0 | AI Coding 度量与自进化体系 |
 | `AE_AUDIT_LOG` | 0 | LLM 调用审计日志 (JSONL) |
 | `AE_DEBUG` | 0 | DebugTracer 诊断轨迹 |
 | `AE_OTLP_ENDPOINT` | — | OTLP 分布式追踪导出 |
-| `AE_LANGSMITH` | 0 | LangSmith 可观测性集成 |
 | `AE_GATE_TIMEOUT` | — | Gate 执行超时秒数 |
 | `AE_PRODUCTION` | 0 | 生产安全模式（严格 REDGuardrail） |
-| `AE_LLM_PROVIDER` | anthropic | LLM Provider 选择 |
-| `AE_MODEL_ROLE` | — | 按 role 覆盖默认模型 (格式: `AE_MODEL_ARCHITECT=claude-sonnet-4-6`) |
-| `AE_CACHE_CONTROL` | 1 | Anthropic Prompt Caching |
 | `AE_TOKEN_TRACKING` | 0 | 逐 Tick Token JSONL 采集 |
 
-完整 Manifest（22 项）通过 `ae doctor` 查看。
+完整 Manifest 通过 `ae doctor` 查看。
 
 ## 许可
 

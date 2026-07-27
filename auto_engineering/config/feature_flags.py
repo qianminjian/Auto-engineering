@@ -32,12 +32,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-# 2026-07-26 删除 Standalone 路径: StandaloneDriver 已于 Phase 40 删除,
-# "standalone_only" 模式值移除（0 个活跃 flag 使用）, 仅余 both / agent_only。
+# 2026-07-26 删除进程内独立驱动路径后，"standalone_only" 模式值移除
+# （0 个活跃 flag 使用），仅余 both / agent_only。
 AgentMode = Literal["both", "agent_only"]
 Category = Literal[
     "observability", "performance", "debugging",
-    "provider", "safety", "threshold",
+    "safety", "threshold",
 ]
 
 
@@ -80,15 +80,9 @@ FEATURE_MANIFEST: list[FeatureFlag] = [
                 "debugging", default_value="INFO", activation="export AE_LOG_LEVEL=DEBUG"),
 
     # ── performance ──
-    # Phase 42: AE_CACHE_CONTROL 已删除（其消费者 StandaloneDriver 已于 Phase 40 删除）
+    # Phase 42: AE_CACHE_CONTROL 已随进程内独立驱动路径删除
     FeatureFlag("AE_MAX_TOOL_CALLS", "单 Agent 最大工具调用次数",
                 "performance", default_value="20", activation="AE_MAX_TOOL_CALLS=20"),
-
-    # ── provider ──
-    FeatureFlag("AE_LLM_PROVIDER", "默认 LLM Provider (anthropic/deepseek/glm)",
-                "provider", default_value="", activation="AE_LLM_PROVIDER=anthropic"),
-    # 2026-07-26 审计清理: AE_MODEL_ROLE/AE_PROVIDER_ROLE 已删除
-    # （其消费者 StandaloneDriver 已于 Phase 40 删除，零消费者）。
 
     # ── safety ──
     FeatureFlag("AE_PII_ENABLED", "PII 四层文件桥接防护总开关 (L1-L4)",

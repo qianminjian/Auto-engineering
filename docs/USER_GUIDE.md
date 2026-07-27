@@ -3,15 +3,38 @@
 > **Version**: 5.6.0 | **Status**: Production-ready | **Last updated**: 2026-07-19
 > 决策依据: `design/BEACON.md` 决策 #28, #41, #53
 
-Auto-Engineering v5.6 是 Tick-Based Discrete Invocation Loop Engine，以 Claude Code Plugin 形态分发，支持 Claude Code / Codex / CodeBuddy 三个平台。Python 引擎永不调 LLM——Agent 通过文件桥接反复调用 `--tick` 驱动循环。
+## 当前入口（2026-07-27）
+
+本项目当前只有一套 Host-neutral Tick 核心，Claude Code 与 Codex 仅入口不同：
+
+| 平台 | 用户入口 |
+|------|---------|
+| Claude Code | `/ae:dev-loop "需求"` |
+| Codex | `$auto-engineering`，随后描述需求 |
+
+```bash
+scripts/ae-run doctor
+scripts/ae-run dev-loop --init "需求"
+```
+
+第二条命令只产生首个 action JSON；宿主 Agent 必须按 action 执行，并通过
+`scripts/ae-run dev-loop --tick --result <result.json>` 继续推进。`ae agent`、
+`ae gate-check`、`ae checkpoint`、`ae progress`、裸参数循环和 Standalone 均不是
+当前入口。本文后续若出现这些名称，属于历史说明，不能作为当前操作指引。
+
+Auto-Engineering v5.6 是 Host-neutral Tick-Based Discrete Invocation Loop Engine，
+当前通过 Claude Code 与 Codex 两个适配入口分发。Python 引擎永不调 LLM——Agent
+通过文件桥接反复调用 `--tick` 驱动循环。
 
 ---
 
 ## 1. 产品概述
 
-Auto-Engineering 是 **Claude Code Plugin 形态的 Loop Engineering 脚手架**，面向团队内部分发（5-20 用户本地安装）。
+Auto-Engineering 是**平台无关核心 + 宿主适配器**形态的 Loop Engineering
+脚手架，面向团队内部分发（5-20 用户本地安装）。
 
-在 Claude Code 会话中输入 `/ae:dev-loop "需求描述"`，插件调度 Python Loop Engine 执行 architect → developer → critic 三阶段 Agent 循环，自动产出代码变更、测试、审查结论。
+在 Claude Code 输入 `/ae:dev-loop "需求描述"`，或在 Codex 调用
+`$auto-engineering`，宿主适配器都会调度同一 Python Loop Engine。
 
 核心特性：
 
@@ -22,8 +45,7 @@ Auto-Engineering 是 **Claude Code Plugin 形态的 Loop Engineering 脚手架**
 - **SQLite checkpoint 恢复**（中断后不丢进度）
 - **LEAF/PLATE/FULL 自动验证深度裁剪**
 - **Init-Loop 接口契约**（消费 Init 项目产出的 init-manifest.json）
-- **v7.0 双驱动架构**（AgentDriver + StandaloneDriver，Phase 11 全部完成）
-- **v5.5 连续循环退役过渡期**（2026-07-19 启动 30 天过渡，`--standalone` 替代，2026-08-18 物理删除）
+- **Host Adapter**（Claude Code Command + Codex Skill 复用同一核心）
 
 ---
 

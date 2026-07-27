@@ -19,6 +19,8 @@ REQUIRED_PATHS = (
     Path("hooks"),
     Path("scripts/ae-run"),
     Path("scripts/build_release.py"),
+    Path("scripts/check_host_package.py"),
+    Path("scripts/install_acceptance.py"),
     Path("auto_engineering"),
     Path("pyproject.toml"),
     Path("README.md"),

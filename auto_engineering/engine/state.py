@@ -234,6 +234,7 @@ class EngineState:
     debug_dir: str | None = None  # #39 debug 输出目录 (默认 <project_root>/_scratch/debug/)
     action_timestamp: float = 0.0  # #40 T112: _build_action() 出站时间戳 (跨 tick 计时)
     tick_token_usage: dict | None = None  # #41 T110b: 当前 tick 的 token 消耗 (JSONL 采集)
+    session_summary: dict[str, Any] | None = None  # #42 T136: 跨进程滚动摘要 checkpoint
 
     # v5.5 P1-5: 写入审计日志 (repr=False 避免污染输出, 不参与序列化)
     _write_log: list[WriteRecord] = field(default_factory=list, repr=False, init=False)

@@ -11,13 +11,13 @@
 |------|------|
 | ☐ | 待办 |
 | ◐ | 进行中 |
-| ✅ | 完成（实现 + 验收通过 + 已提交）|
+| ✅ | 完成（实现 + 新鲜验收通过；commit 仅在当前用户授权时要求）|
 | ⛔ | 阻塞（需决策/红线/卡死，备注说明）|
 | ⊘ | 跳过（可选任务，备注理由）|
 
 ## 更新协议
 
-1. 开始一个 T-task → 状态置 ◐；完成（验收过 + commit）→ ✅ + 填 commit hash。
+1. 开始一个 T-task → 状态置 ◐；完成（新鲜验收通过）→ ✅；仅在用户当前明确授权时提交并填写 commit hash。
 2. 阻塞 → ⛔ + 备注（原因 + 需要的决策），停下汇报，不静默重试。
 3. 每 Phase 收尾更新「进度总览」百分比。
 4. 汇报格式：Phase 级百分比总览 + 展开当前 Phase 的 T-task 明细。
@@ -91,8 +91,8 @@
 | **46** | **独立复审 + 审计修复（2026-07-25/26）** | **25** | **25** | **✅ 25/25 — P0×3 清零（end_requirement 接线 / record_token_usage 接线 / tools/ 823 行删除）+ P1×12 + P2×7 + 新发现修复 2 项（from_json / batch_state 守卫）+ 9 回归测试。1701 tests。报告：_scratch/reports/2026-07-25-audit-independent.md** |
 | **47** | **mypy 清零 + collector 拆分（2026-07-26）** | **2** | **2** | **✅ 2/2 — T117 collector 606→408+245+108 三文件（20 项公共 API 零变化）+ T118 mypy 64→0（95 文件 0 errors，顺带发现修复 2 个潜伏 bug：summarizer decisions 续接 / batch_progress 属性不存在）。1704 tests** |
 | **48** | **真跑验证 + 9 bug 修复 + 提示词优化（2026-07-26）** | **16** | **16** | **✅ 完成 — voice_clone 69 tick / 19 batch / 116 tests，最终 GOAL_ACHIEVED；全量 1735 passed / 1 skipped。** |
-| **49** | **Host-neutral Core + Host Adapter 跨 Agent 适配（2026-07-27 立项）** | **22** | **3** | **◐ 进行中 — T217-T219 完成；下一项 T220 Codex Skill。BEACON #101 / 设计 D.14。** |
-| **合计** | | | | **Phase 1-48 完成；Phase 49 待实施** |
+| **49** | **Host-neutral Core + Host Adapter 跨 Agent 适配（2026-07-27 立项）** | **22** | **22** | **✅ 完成 — Claude/Codex 双宿主 Release 安装、doctor、最小 Tick 全链验收通过。BEACON #101 / 设计 D.14。** |
+| **合计** | | | | **Phase 1-49 全部完成；当前待办清零** |
 
 ---
 
@@ -2397,14 +2397,12 @@ ae dev-loop --init "需求"
 | T133 | 提示词优化 Gate Results 去冗余（紧凑单行 + 仅失败 gate 展开） | ✅ 测试绿 | ✅ |
 | T134 | 提示词优化 role prompt 抽 fragment（`_load_prompt` 优先用 PromptRegistry 组合 prompt，注入 fragments + 剥离 frontmatter） | ✅ 测试绿 | ✅ |
 
-**本轮测试基准**：**1735 passed / 1 skipped**（基线 1704 + 本会话新增 ~31 测）。
+**Phase 48 收尾测试基准**：**1735 passed / 1 skipped**（基线 1704 + 该轮新增 ~31 测）；Phase 49 当前基准见本阶段任务表。
 
 ### 待办盘点（本轮真跑暴露，未落地，按优先级排序，后续会话依此推进）
 
 | T-task | 优先级 | 项 | 说明 |
 |--------|:---:|----|------|
-| **T135** | **P0** | **T53 offload 摘要质量**（T152 未完全修复）| 本轮真跑 architect offload 仍 `summary="Architect: no batches"`、key_decisions/files_changed 全空。修复：L1 时序（offload 移到 `_apply_result_to_state` 之后）+ L2 按 §E.2.2 拼装结构化摘要（key_decisions 从 critic verdict/plan 提取、files_changed 从 batch_state 汇总、gate_results 从 gate_summary 提取）。**后续会话优先修复** |
-| **T136** | P1 | T54 cross-tick summarization 真跑验证 | 代码层 2 潜伏 bug（Phase 47）已修，但真跑摘要注入未触发验证；需设计触发引擎 cross-tick summarization 的真跑场景，验证摘要注入 developer prompt |
 | **T137** | P2 | T50 research web search 端到端验证 | F9 已修 research 路由（research 阶段可达），但本轮真跑 research 阶段未实际触发 web search/MCP 调用，T50 搜索通路端到端未验证 |
 | **T138** | P2 | God Class 拆分 | tick_orchestrator 1910 行 / action_builder ~750 行（BEACON #86 暂缓，本会话 action_builder 又增 ~50 行）|
 | **T139** | P2 | flaky test 修复 | OTel 全局状态隔离（1 个 flaky）|
@@ -2437,25 +2435,25 @@ ae dev-loop --init "需求"
 
 | 顺序 | T-task | 任务 | 主要产出 | EARS 验收 | 依赖 | 状态 |
 |---:|---|---|---|---|---|:---:|
-| 9 | **T224** | 双平台规则生成 | `core + claude adapter + codex adapter` 模板；生成 CLAUDE.md/AGENTS.md | While 公共规则变化, when 运行同步脚本, both outputs shall 同步公共规则且保留平台差异 | T220 | ☐ |
-| 10 | **T225** | Codex 关键规则加载 | 将内存、设计不可降级、Agent 超时等红线纳入 Codex 可稳定加载链 | While 新 Codex 会话启动, when 读取 AGENTS/Skill, the agent shall 获得关键红线且不依赖 Claude `@include` | T224 | ☐ |
-| 11 | **T136** | cross-tick summarization E2E | 构造真实触发场景，验证摘要进入后续 developer prompt | While 跨 tick 上下文超过阈值, when 下一 developer 开始, the prompt shall 含结构化摘要 | T135 | ◐ |
-| 12 | **T226** | BEACON/Tracker 状态收敛 | 修正历史与当前状态边界、Phase 汇总和待办映射 | While 查看任一设计入口, when 对照当前代码, the phase/status shall 一致 | — | ☐ |
-| 13 | **T227** | 版本与测试基线 SSOT | 统一 Python 包、Plugin、README 版本和测试基线检查 | While 版本或基线漂移, when CI 运行, the check shall 失败并指出来源 | T222,T226 | ☐ |
-| 14 | **T228** | 双平台文档重写 | README、USER_GUIDE、API/培训文档的 Claude/Codex 使用路径 | While 新用户只阅读文档, when 安装任一平台, the user shall 完成 doctor 和最小 Tick | T217-T223 | ☐ |
-| 15 | **T229** | metrics 宿主适配 | usage source 抽象；Codex 无稳定来源时 `None/unsupported`；移除固定 anthropic | While usage source 不可用, when 收集 M5, the system shall 不伪造 0 或 Anthropic provider | T218 | ☐ |
-| 16 | **T230** | 双平台 CI matrix | manifest、Hook、规则同步、包安装和 Skill smoke | While 任一宿主适配漂移, when CI 运行, the affected platform job shall 失败 | T222-T225,T227 | ☐ |
-| 17 | **T139** | OTel flaky 修复 | 隔离全局状态并增加稳定性验证 | While tests 重复运行, when OTel 测试结束, the global state shall 不污染后续测试 | 可并行但排在 P0 后 | ☐ |
-| 18 | **T140** | Standalone 文档残留收口 | 保留明确历史区，当前入口和能力说明零 Standalone 误导 | While 阅读当前使用章节, when 搜索 active capabilities, the docs shall 不宣称 Standalone 可用 | T228 | ☐ |
+| 9 | **T224** | 双平台规则生成 | `core + claude adapter + codex adapter` 模板；生成 CLAUDE.md/AGENTS.md | ✅ 公共模板 + Claude/Codex adapter 分层生成；平台差异隔离；同步与漂移检查通过 | T220 | ✅ |
+| 10 | **T225** | Codex 关键规则加载 | 将内存、设计不可降级、Agent 超时等红线纳入 Codex 可稳定加载链 | ✅ AGENTS.md 自包含测试内存、Agent 超时、设计不可降级、操作纪律；零 Claude `@include`；契约测试固化 | T224 | ✅ |
+| 11 | **T136** | cross-tick summarization E2E | 构造真实触发场景，验证摘要进入后续 developer prompt | ✅ SQLite save→restore→developer action E2E；历史/当前文件共同注入；全量 1773 passed / 1 skipped；mypy 97 文件 0 errors；相关 Ruff 全绿 | T135 | ✅ |
+| 12 | **T226** | BEACON/Tracker 状态收敛 | 修正历史与当前状态边界、Phase 汇总和待办映射 | ✅ BEACON/Tracker 均指向 Phase 49、11/22 和 T227；历史范围/当前范围分层；已完成 T135/T136 从待办盘点移除 | — | ✅ |
+| 13 | **T227** | 版本与测试基线 SSOT | 统一 Python 包、Plugin、README 版本和测试基线检查 | ✅ pyproject 提供版本/测试基线 SSOT；双 Plugin、Marketplace、README 漂移检查接入 CI；4 契约测试；全量 1779 passed / 1 skipped | T222,T226 | ✅ |
+| 14 | **T228** | 双平台文档重写 | README、USER_GUIDE、API/培训文档的 Claude/Codex 使用路径 | ✅ 四份当前文档统一 Claude `/ae:dev-loop` 与 Codex `$auto-engineering`、doctor 和最小 Tick；8 契约测试；全量 1787 passed / 1 skipped | T217-T223 | ✅ |
+| 15 | **T229** | metrics 宿主适配 | usage source 抽象；Codex 无稳定来源时 `None/unsupported`；移除固定 anthropic | ✅ UsageSource 按宿主映射；Codex/未知宿主不创建 Claude parser；无来源 provider=None/unsupported；3 回归测试；全量 1790 passed / 1 skipped | T218 | ✅ |
+| 16 | **T230** | 双平台 CI matrix | manifest、Hook、规则同步、包安装和 Skill smoke | ✅ Claude/Codex 独立 matrix；规则/契约/Release 安装 smoke；解压目录 uv sync + ae --help；全量 1791 passed / 1 skipped | T222-T225,T227 | ✅ |
+| 17 | **T139** | OTel flaky 修复 | 隔离全局状态并增加稳定性验证 | ✅ 既有 NoOpTracer 根因修复复核；新增全局 provider 污染回归；多顺序累计 17 轮稳定；全量 1792 passed / 1 skipped | 可并行但排在 P0 后 | ✅ |
+| 18 | **T140** | Standalone 文档残留收口 | 保留明确历史区，当前入口和能力说明零 Standalone 误导 | ✅ 当前能力区移除 Standalone/退役命令宣称，历史章节显式标记不可执行；1 防漂移测试；全量 1793 passed / 1 skipped | T228 | ✅ |
 
 ### P2 — 能力增强与长期维护
 
 | 顺序 | T-task | 任务 | 主要产出 | EARS 验收 | 依赖 | 状态 |
 |---:|---|---|---|---|---|:---:|
-| 19 | **T137** | Research Web Search E2E | 宿主能力映射、来源记录、失败降级和真跑验证 | While research 需要外部资料, when 宿主支持搜索, the role shall 记录来源并返回结构化结果 | T220,T223 | ☐ |
-| 20 | **T138** | God Class 拆分 | 在协议测试保护下拆分 orchestrator/action builder 职责 | While 外部 Tick 契约不变, when 完成拆分, all contract/e2e tests shall 通过 | T135,T136 | ☐ |
-| 21 | **T231** | 静态配置残留清理 | 清理删除模块的 mypy override、旧 Provider flags 和错误描述 | While 运行 mypy/config audit, when 扫描配置, the system shall 无无效模块和旧宿主假设 | T227,T140 | ☐ |
-| 22 | **T232** | 安装后验收 | 从 Release 压缩包安装到临时环境并运行双平台 smoke | While 使用发布产物而非源码仓, when 安装完成, doctor and minimal Tick shall 通过 | T222,T230 | ☐ |
+| 19 | **T137** | Research Web Search E2E | 宿主能力映射、来源记录、失败降级和真跑验证 | ✅ web_search 宿主能力；结构化 used/unavailable/failed；官方来源入 archive；失败回 gap_review；2 回归测试；全量 1795 passed / 1 skipped | T220,T223 | ✅ |
+| 20 | **T138** | God Class 拆分 | 在协议测试保护下拆分 orchestrator/action builder 职责 | ✅ prompt_logger 与 ratchet_runner 两个委托边界；原类分别降至 732/1937 行；2 边界测试；全量 1797 passed / 1 skipped | T135,T136 | ✅ |
+| 21 | **T231** | 静态配置残留清理 | 清理删除模块的 mypy override、旧 Provider flags 和错误描述 | ✅ 删除 3 个不存在模块的 mypy override、`AE_LLM_PROVIDER`、`CONFIG_INVALID_PROVIDER` 与旧双 Driver 描述；mypy 99 文件全绿；2 回归测试 | T227,T140 | ✅ |
+| 22 | **T232** | 安装后验收 | 从 Release 压缩包安装到临时环境并运行双平台 smoke | ✅ 发布包内置可复用验收器；Claude/Codex 均从压缩包隔离安装，宿主资产、doctor、最小 Tick 全部通过；CI matrix 调用同一验收入口 | T222,T230 | ✅ |
 
 ### 依赖主路径
 

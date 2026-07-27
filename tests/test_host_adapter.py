@@ -56,12 +56,25 @@ def test_codex_capabilities_are_explicit() -> None:
     assert capabilities.subagents is True
     assert capabilities.parallel_subagents is True
     assert capabilities.transcript_usage is False
+    assert capabilities.web_search is True
     assert capabilities.hooks == frozenset({
         "session_start",
         "pre_tool",
         "post_tool",
         "stop",
     })
+
+
+def test_usage_source_is_explicit_per_host() -> None:
+    from auto_engineering.host import HostPlatform, usage_source_for
+
+    claude = usage_source_for(HostPlatform.CLAUDE_CODE)
+
+    assert claude is not None
+    assert claude.name == "claude-transcript"
+    assert claude.provider == "anthropic"
+    assert usage_source_for(HostPlatform.CODEX) is None
+    assert usage_source_for(HostPlatform.UNKNOWN) is None
 
 
 def test_unknown_host_has_no_assumed_capabilities() -> None:
@@ -73,6 +86,7 @@ def test_unknown_host_has_no_assumed_capabilities() -> None:
     assert capabilities.commands is False
     assert capabilities.hooks == frozenset()
     assert capabilities.subagents is False
+    assert capabilities.web_search is False
     assert capabilities.git_mutation is False
 
 
@@ -102,7 +116,11 @@ def test_legacy_plugin_mode_api_reports_codex_signal() -> None:
 def test_doctor_describes_codex_without_anthropic_credentials(
     monkeypatch,
 ) -> None:
-    from auto_engineering.cli.doctor import _check_api_key, _check_plugin_mode
+    from auto_engineering.cli.doctor import (
+        _check_api_key,
+        _check_openai_api_key,
+        _check_plugin_mode,
+    )
 
     for key in (
         "CLAUDE_CODE",
@@ -116,10 +134,13 @@ def test_doctor_describes_codex_without_anthropic_credentials(
 
     plugin_ok, plugin_message = _check_plugin_mode()
     credential_ok, credential_message = _check_api_key()
+    openai_ok, openai_message = _check_openai_api_key()
 
     assert plugin_ok is True
     assert credential_ok is True
+    assert openai_ok is True
     assert "Codex" in plugin_message
     assert "ANTHROPIC" not in plugin_message
     assert "宿主 Agent" in credential_message
     assert "ANTHROPIC" not in credential_message
+    assert "Codex" in openai_message

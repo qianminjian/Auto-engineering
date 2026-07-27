@@ -292,6 +292,19 @@ class TestCreateParser:
     def test_returns_parser_when_both_enabled(self, tmp_path, monkeypatch):
         monkeypatch.setenv("AE_METRICS", "1")
         monkeypatch.setenv("AE_TOKEN_TRACKING", "1")
+        monkeypatch.setenv("CLAUDE_CODE", "1")
+        monkeypatch.delenv("CODEX_THREAD_ID", raising=False)
+        monkeypatch.delenv("CODEX_SANDBOX", raising=False)
         parser = create_parser(tmp_path)
         assert parser is not None
         assert isinstance(parser, SessionTranscriptParser)
+
+    def test_returns_none_for_codex_without_usage_source(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.setenv("AE_METRICS", "1")
+        monkeypatch.setenv("AE_TOKEN_TRACKING", "1")
+        monkeypatch.setenv("CODEX_THREAD_ID", "thread-1")
+        monkeypatch.delenv("CLAUDE_CODE", raising=False)
+
+        assert create_parser(tmp_path) is None

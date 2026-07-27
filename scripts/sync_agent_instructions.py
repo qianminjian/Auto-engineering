@@ -15,7 +15,7 @@ from pathlib import Path
 _ROOT = Path(__file__).resolve().parents[1]
 _TEMPLATE_RELATIVE = Path("agent-rules/instructions.md.tmpl")
 _GENERATED_HEADER = """<!--
-此文件由 agent-rules/instructions.md.tmpl 自动生成，请勿直接修改。
+此文件由 agent-rules/ 公共模板与平台适配模板自动生成，请勿直接修改。
 修改模板后运行：python3 scripts/sync_agent_instructions.py
 -->
 
@@ -27,6 +27,7 @@ _PLATFORM_VALUES = {
         "AGENT_SITE": "claude.ai/code",
         "PLUGIN_DIR": ".claude-plugin/",
         "RULES_DIR": ".claude/rules/",
+        "ADAPTER_TEMPLATE": "agent-rules/claude.md.tmpl",
     },
     "AGENTS.md": {
         "INSTRUCTION_FILE": "AGENTS.md",
@@ -35,6 +36,7 @@ _PLATFORM_VALUES = {
         "PLUGIN_DIR": ".codex-plugin/",
         # Codex 通过 AGENTS.md 显式读取项目已有的共享规则目录。
         "RULES_DIR": ".claude/rules/",
+        "ADAPTER_TEMPLATE": "agent-rules/codex.md.tmpl",
     },
 }
 _PLACEHOLDER = re.compile(r"{{\s*([A-Z][A-Z0-9_]*)\s*}}")
@@ -65,7 +67,12 @@ def sync_instructions(root: Path, *, check: bool = False) -> list[Path]:
     changed: list[Path] = []
     for filename, variables in _PLATFORM_VALUES.items():
         target = root / filename
-        content = render_template(template, variables)
+        adapter_path = root / variables["ADAPTER_TEMPLATE"]
+        adapter = adapter_path.read_text(encoding="utf-8")
+        content = render_template(
+            template.rstrip() + "\n\n" + adapter.lstrip(),
+            variables,
+        )
         if write_generated_file(
             root=root,
             target=target,

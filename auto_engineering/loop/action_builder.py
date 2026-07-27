@@ -210,116 +210,9 @@ class ActionBuilder:
         prompts/roles/<stage>.md.  No context assembly, no output schema injection.
         expected_format is for Team Lead only, not subagent.
         """
-        try:
-            log_dir = project_root / "_scratch" / "prompt-log"
-            log_dir.mkdir(parents=True, exist_ok=True)
-            tick = action.get("tick", 0)
-            stage = action.get("stage", action.get("action", "unknown"))
+        from auto_engineering.loop.prompt_logger import write_action_prompt_log
 
-            # 1. Raw JSON
-            json_file = log_dir / f"tick-{tick:04d}-{stage}-action.json"
-            with open(str(json_file), "w", encoding="utf-8") as f:
-                json.dump(action, f, indent=2, ensure_ascii=False)
-
-            # 2. Human-readable prompt
-            md_file = log_dir / f"tick-{tick:04d}-{stage}-prompt.md"
-            inst = action.get("instruction", "")
-            sp = action.get("subagent_prompt", "")
-            ef = action.get("expected_format", {})
-            spawn = action.get("spawn", {})
-            is_spawn = bool(spawn)
-
-            lines = []
-            lines.append(f"# Tick {tick} — {stage}")
-            lines.append("")
-            lines.append(f"- action: `{action.get('action', '?')}`")
-            lines.append(f"- spawn stage: {is_spawn}")
-            if is_spawn:
-                lines.append(f"- spawn count: {spawn.get('count', 1)}")
-                lines.append(f"- spawn parallel: {spawn.get('parallel', False)}")
-                lines.append(f"- proof token: `{action.get('spawn_proof_token', 'N/A')}`")
-                lines.append(f"- effort: `{spawn.get('effort', 'high')}`")
-            lines.append("")
-
-            # ── Part 1: Instruction (Team Lead sees this first) ──
-            lines.append("---")
-            lines.append("## Part 1 — Instruction（Team Lead 收到的命令）")
-            lines.append("")
-            if inst:
-                lines.append("```")
-                lines.append(inst)
-                lines.append("```")
-            else:
-                lines.append("*(no instruction — inline stage)*")
-            lines.append("")
-
-            # ── Part 2: Subagent Prompt(s) ──
-            agents = spawn.get("agents", [])
-            if is_spawn:
-                lines.append("---")
-                if agents:
-                    # Multi-agent: show merge instructions + per-agent prompts
-                    lines.append("## Part 2a — Merge Instructions（Team Lead 合并指引）")
-                    lines.append(f"*(length: {len(sp)} chars)*")
-                    lines.append("")
-                    lines.append("```")
-                    lines.append(sp.strip() if sp else "(empty)")
-                    lines.append("```")
-                    lines.append("")
-                    lines.append(f"## Part 2b — Agent Prompts（{len(agents)} 个 agent，各收到独立 prompt）")
-                    lines.append("")
-                    for ag in agents:
-                        ap = ag.get("prompt", "")
-                        lines.append(f"### Agent [{ag['index']}] — {len(ap)} chars")
-                        lines.append("")
-                        lines.append("```markdown")
-                        lines.append(ap.strip())
-                        lines.append("```")
-                        lines.append("")
-                elif sp:
-                    # Single agent
-                    lines.append("## Part 2 — Subagent Prompt（传给 subagent 的完整文本）")
-                    lines.append(f"*(length: {len(sp)} chars)*")
-                    lines.append("")
-                    lines.append("```")
-                    lines.append(sp.strip())
-                    lines.append("```")
-                    lines.append("")
-
-            # ── Part 3: Expected Format (Team Lead reference, NOT subagent) ──
-            if ef:
-                lines.append("---")
-                lines.append("## Part 3 — Expected Format（Team Lead 写 result 时的字段约束）")
-                lines.append("")
-                lines.append("```json")
-                lines.append(json.dumps(ef, indent=2, ensure_ascii=False))
-                lines.append("```")
-                lines.append("")
-
-            # ── Part 4: Gate Summary ──
-            gs = action.get("gate_summary", {})
-            if gs:
-                lines.append("---")
-                lines.append("## Part 4 — Gate Results")
-                lines.append("")
-                for gname, gv in sorted(gs.items()):
-                    if isinstance(gv, dict):
-                        # P0 修复 (2026-07-26): skip 显示 ⊘ SKIPPED，区别于 ✓(通过)/✗(失败)
-                        if gv.get("skipped"):
-                            mark = "⊘ SKIPPED"
-                        elif gv.get("passed"):
-                            mark = "✓"
-                        else:
-                            mark = "✗"
-                        msg = gv.get("message", "")[:120]
-                        lines.append(f"- {gname}: {mark} — {msg}")
-                lines.append("")
-
-            with open(str(md_file), "w", encoding="utf-8") as f:
-                f.write("\n".join(lines))
-
-        except (OSError, UnicodeError):
-            _logger.warning("prompt log write failed for stage=%s", stage, exc_info=True)
+        write_action_prompt_log(project_root, action)
 
     # ── helpers ──
 
@@ -608,6 +501,7 @@ class ActionBuilder:
             if self._state.pending_research_ids else None)
         gap = by_id.get(current_id, {}) if current_id else {}
         return self._build_stage_action(base, "research",
+            required_capabilities=["web_search"],
             gap={
                 "id": gap.get("id"),
                 "design_section_ref": gap.get("design_section_ref"),
@@ -626,6 +520,8 @@ class ActionBuilder:
                 "source_tier": "tier0|tier1|tier2|tier3",
                 "confidence": "high|medium|low",
                 "recommended_design": "string (可注入 supplement)",
+                "search_status": "used|unavailable|failed|not_needed",
+                "search_error": "string|null",
             })
 
     def _build_component_map(self) -> dict[str, str]:

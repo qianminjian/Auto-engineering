@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 logger = logging.getLogger(__name__)
 
@@ -75,26 +75,65 @@ class SessionSummary:
     unresolved_issues: list[str] = field(default_factory=list)
     generated_at_tick: int = 0
 
+    def to_dict(self) -> dict[str, Any]:
+        """转换为 checkpoint 可序列化结构。"""
+        return {
+            "ticks_covered": {
+                "start": self.ticks_covered.start,
+                "stop": self.ticks_covered.stop,
+                "step": self.ticks_covered.step,
+            },
+            "key_implementation_decisions": list(
+                self.key_implementation_decisions
+            ),
+            "files_created_modified": dict(self.files_created_modified),
+            "major_history": list(self.major_history),
+            "unresolved_issues": list(self.unresolved_issues),
+            "generated_at_tick": self.generated_at_tick,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> SessionSummary:
+        """从 checkpoint 结构恢复滚动摘要。"""
+        ticks = data.get("ticks_covered", {})
+        return cls(
+            ticks_covered=range(
+                int(ticks.get("start", 1)),
+                int(ticks.get("stop", 1)),
+                int(ticks.get("step", 1)),
+            ),
+            key_implementation_decisions=list(
+                data.get("key_implementation_decisions", [])
+            ),
+            files_created_modified=dict(
+                data.get("files_created_modified", {})
+            ),
+            major_history=list(data.get("major_history", [])),
+            unresolved_issues=list(data.get("unresolved_issues", [])),
+            generated_at_tick=int(data.get("generated_at_tick", 0)),
+        )
+
 
 class SessionSummarizer:
     """Rolling summarizer for cross-tick developer context.
 
-    Two modes:
+    Two implementation modes:
     - **LLM mode** (llm_provider is set): calls Haiku to compress conversation
-      history into a structured summary.  Standalone 已于 Phase 40 移除，LLM 模式当前无消费者（保留备用）。
+      history into a structured summary. This optional injection point currently
+      has no production consumer.
     - **Structured mode** (llm_provider is None): generates summary from
       state metadata (test results, files changed, gate results) without
-      any LLM call.  Used in AgentDriver (engine has no API key).
+      any LLM call. This is the host-neutral Core path.
 
     Usage::
 
-        # StandaloneDriver — real LLM summarization
+        # Optional injected LLM summarization
         summarizer = SessionSummarizer(anthropic_provider)
         if summarizer.should_summarize(tick):
             summary = await summarizer.summarize(messages, prev_summary, tick)
             prompt_prefix = summarizer.inject_into_prompt(summary)
 
-        # AgentDriver — structured fallback (no LLM in engine)
+        # Host-neutral structured summary (no LLM in Core)
         summarizer = SessionSummarizer()
         if summarizer.should_summarize(tick):
             summary = summarizer.summarize_structured(
@@ -179,7 +218,7 @@ class SessionSummarizer:
     ) -> SessionSummary:
         """Generate summary from state metadata — no LLM call.
 
-        This is the AgentDriver path: the engine does not have an LLM
+        This is the host-neutral Core path: the engine does not have an LLM
         provider, but it has structured data from the result JSON.
         Produces a SessionSummary with the same shape as the LLM path
         so downstream consumers (inject_into_prompt, offload) are

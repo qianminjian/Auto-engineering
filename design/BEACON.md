@@ -1,4 +1,4 @@
-> 创建：2026-06-24 | 更新：2026-07-25 | 阶段：Phase 42 — v5.7 审计待办消化
+> 创建：2026-06-24 | 更新：2026-07-27 | 阶段：Phase 49 — 跨 Agent 宿主适配
 > ⚠️ **决策状态翻转管控**：status 列 ✅→❌ 或 ❌→✅ 必须经用户审批。AI 不得自行翻转。详见 `.claude/rules/design-document-inviolability.md` §2。
 
 ## 目标与成功标准
@@ -13,8 +13,8 @@
 
 ## 范围边界
 
-**做：** `/ae:dev-loop` Skill 为唯一 dev-loop 入口（`commands/dev-loop.md` driving loop）；Tick-Based Discrete Invocation 协议（文件桥接，Python 每次 tick 独立进程，`--init/--tick/--result/--resume` 为 Skill 内部调用协议）；5 层验证架构（critic → component_verifier → plate_deep_audit → system_verifier → system_deep_audit）；StageRouter T1-T22 + GuardrailChain + 7+1 Gates + ConvergenceJudge + BatchState + SQLite checkpoint；Init-Loop 接口契约；`ae doctor`（环境诊断）+ `ae status`（进度查询）
-**做：** `/ae:dev-loop` Skill 为唯一 dev-loop 入口；Tick 协议（文件桥接）；5 层验证；Guardrail + Gates + ConvergenceJudge + BatchState + SQLite checkpoint；`ae.toml` 项目配置文件（18 功能开关集中管理）；`ae doctor`（环境诊断 + 可观测性生命周期管理 + `--wizard` 交互式配置 + `--init-config` 生成模板）；`ae dev-loop --init` 启动闸门（`ae.toml` 缺失时强制确认）；`ae status --verbose`（进度查询）；OTLP tracing（docker compose 一键部署 Jaeger collector）
+**历史范围（v5.6 基线）：** `/ae:dev-loop` Skill 驱动 Tick-Based Discrete Invocation；5 层验证；StageRouter T1-T22 + GuardrailChain + 7+1 Gates + ConvergenceJudge + BatchState + SQLite checkpoint；Init-Loop 接口契约。
+**做：** `/ae:dev-loop` Skill 为唯一 dev-loop 入口；Tick 协议（文件桥接）；5 层验证；Guardrail + Gates + ConvergenceJudge + BatchState + SQLite checkpoint；`ae.toml` 项目配置文件（FeatureManifest 集中管理）；`ae doctor`（环境诊断 + 可观测性生命周期管理 + `--wizard` 交互式配置 + `--init-config` 生成模板）；`ae dev-loop --init` 启动闸门（`ae.toml` 缺失时强制确认）；`ae status --verbose`（进度查询）；OTLP tracing（docker compose 一键部署 Jaeger collector）
 **不做：** Init Engineering（独立项目）；v5.5 legacy；`--standalone`（**Standalone/双驱动路径已于 Phase 40 删除**，决策 #54/#56/#57 为历史存档，当前仅余 Agent 驱动）；`ae progress`/`ae gate-check`/`ae agent`/`ae checkpoint`；多 LLM Provider；Web UI；SaaS 服务端；环境变量配置功能开关（改用 `ae.toml`）
 
 ## 设计决策
@@ -96,12 +96,12 @@
 | **98** | **v5.7 可观测性整合：OTLP 生命周期管理** | **决策**：(1) `ae doctor --setup-observability` 一键启动 Jaeger collecto；(2) `--teardown-observability` 停止；(3) `ae doctor` OTLP 连通性三态探测；(4) `ae dev-loop --init` 不可达时 stderr 引导；(5) `docker-compose.observability.yml` 内置模板。D52 | 2026-07-25 | ✅ |
 | **99** | **v5.7 配置管理统一：ae.toml + FeatureFlag 默认值 SSOT** | 当前 19 个功能开关通过 `export AE_XXX=1` 分散设置。三层默认值（FeatureFlag/RuntimeConfig 硬编码/_is_active 判定）互相不一致。**决策**：(1) 新增 `ae.toml` 项目配置文件，18 个功能开关集中管理，环境变量仅保留 `ANTHROPIC_API_KEY`；(2) FeatureFlag 增加 `default_value` 字段，成为全项目唯一默认值来源；(3) RuntimeConfig 18 个 property 硬编码默认值改为从 FeatureFlag 读取；(4) `ae doctor --init-config` 从 FeatureManifest 生成 `ae.toml` 模板；(5) 优先级：环境变量 > ae.toml > FeatureFlag.default_value；(6) `ae.toml` 可 git 版本控制。D53 | 2026-07-25 | ✅ |
 | **100** | **v5.7 配置向导 + 启动闸门：ae doctor --wizard + --init 强制确认** | ae.toml 不存在时 ae dev-loop --init 必须暂停确认，不能静默用默认值启动。**决策**：(1) ae doctor --wizard 交互式配置向导，逐 category 引导，回显保存值；(2) ae dev-loop --init 检测 ae.toml 不存在 → 输出检查清单（当前生效功能 + 缺失功能影响 + 三个选项：wizard/模板/继续）；(3) AE_SKIP_CONFIG_CHECK=1 跳过（CI）；(4) ae.toml 存在时直接启动。D54 | 2026-07-25 | ✅ |
-| **101** | **Host-neutral Core + Host Adapter 跨 Agent 架构** | Auto-Engineering 从“Claude Code Plugin 为中心”演进为“平台无关循环核心 + 可插拔宿主适配器”。① Core 仅拥有 TickOrchestrator、action/result schema、Gate、Guardrail、Checkpoint、Prompt 角色语义，不感知 Claude/Codex/CodeBuddy、模型名、Skill/Command 语法、Hook 事件或 transcript 路径；② Host Adapter 统一暴露 `detect/capabilities/invoke_role/normalize_event/resolve_cli/usage_source` 能力，Claude Code、Codex、CodeBuddy 分别实现，未知宿主显式降级；③ Plugin manifest、Hooks、Skill/Command、安装方式属于 Adapter/Packaging 层；④ action/result 协议保持宿主中立，spawn 仅表达角色、提示词、并发和结果契约，不携带平台工具名；⑤ 新增 Agent 平台只允许增加适配器、能力矩阵和契约测试，不复制循环引擎；⑥ 当前附录 D 的 v8.0 三平台设计作为历史基线保留，其中 Commands 通用、裸 `ae`、Standalone/Provider 等失效假设由 D.14 演进规格替代；⑦ Git commit/push/PR 等外部副作用由 Capability + 用户授权共同控制，不得由宿主适配器默认执行。D55 | 2026-07-27 | 📝 设计确认，Phase 49 待实施 |
+| **101** | **Host-neutral Core + Host Adapter 跨 Agent 架构** | Auto-Engineering 从“Claude Code Plugin 为中心”演进为“平台无关循环核心 + 可插拔宿主适配器”。① Core 仅拥有 TickOrchestrator、action/result schema、Gate、Guardrail、Checkpoint、Prompt 角色语义，不感知 Claude/Codex/CodeBuddy、模型名、Skill/Command 语法、Hook 事件或 transcript 路径；② Host Adapter 统一暴露 `detect/capabilities/invoke_role/normalize_event/resolve_cli/usage_source` 能力，Claude Code、Codex、CodeBuddy 分别实现，未知宿主显式降级；③ Plugin manifest、Hooks、Skill/Command、安装方式属于 Adapter/Packaging 层；④ action/result 协议保持宿主中立，spawn 仅表达角色、提示词、并发和结果契约，不携带平台工具名；⑤ 新增 Agent 平台只允许增加适配器、能力矩阵和契约测试，不复制循环引擎；⑥ 当前附录 D 的 v8.0 三平台设计作为历史基线保留，其中 Commands 通用、裸 `ae`、Standalone/Provider 等失效假设由 D.14 演进规格替代；⑦ Git commit/push/PR 等外部副作用由 Capability + 用户授权共同控制，不得由宿主适配器默认执行。D55 | 2026-07-27 | ✅ Phase 49 完成，双宿主发布后验收通过 |
 
 
 ## 当前状态
 
-**阶段：** Phase 49 实施中 — P0 主路径 T217-T223、T135 已完成，下一项 T136 cross-tick summarization E2E。Claude Code → Codex 迁移按“Host-neutral Core + Host Adapter”推进；Phase 1-48 已完成。
+**阶段：** Phase 49 已完成 — Claude Code → Codex 迁移按“Host-neutral Core + Host Adapter”落地；Phase 1-49 待办清零。
 
 **v5.7 变更总结 (2026-07-25)**：
 
@@ -115,23 +115,33 @@
 | **44** | **配置管理统一** | ae.toml + FeatureFlag SSOT + RuntimeConfig 重构 |
 | **46** | **独立复审 + 审计修复** | P0×3 清零（metrics 接线 ×2 + 死代码删除）+ P1/P2×19 修复 + 9 回归测试 |
 | **47** | **mypy 清零 + collector 拆分** | collector 三文件拆分（API 零变化）+ mypy 95 文件 0 errors + 顺带修复 2 个潜伏 bug |
+| **48** | **真跑验证 + 故障修复** | voice_clone 69 tick 达到 GOAL_ACHIEVED；9 项缺陷与提示词问题修复 |
+| **49** | **跨 Agent 宿主适配（完成）** | 22/22；Claude/Codex 发布包安装、doctor、最小 Tick 验收通过 |
 
-**项目规模**：95 源文件 / ~19,800 行 / 94 测试文件 / **1772 tests passed**（2026-07-27 T135 基准；1 skipped，mypy 97 文件全绿）
+**项目规模**：99 源文件 / ~20,000 行 / 98 测试文件 / **1800 tests passed**（2026-07-27 Phase 49 基准；1 skipped，mypy 99 文件全绿）
 
 **关键决策**：#97（入口统一）、#98（可观测性整合）、#99（配置管理统一）、#101（跨 Agent 宿主架构）
 
 **剩余已知问题**（Phase 48 真跑盘点）：
-- `.claude/rules/*.md` 关键红线未进入 Codex 可稳定加载的规则链；`AGENTS.md` 中 Claude `@include` 语义对 Codex 无效
-- T54 cross-tick summarization 真跑未充分触发（代码层 2 潜伏 bug Phase 47 已修，真跑摘要注入未验证）
-- T50 research 阶段 web search 实际调用真跑未触发（F9 路由已修，端到端搜索未验证）
-- 1 个 flaky test（OTel 全局状态隔离）
-- God Class: tick_orchestrator 1910行 / action_builder ~750行（BEACON #86 暂缓）
+- God Class 仍需长期演进：tick_orchestrator 1937 行；ActionBuilder 已降至 732 行，prompt logging 与 Ratchet 编排已独立
 
 **阻塞项**：无
 
 
 | 日期 | 变更 | 原因 |
 |------|------|------|
+| 2026-07-27 | **T231-T232 Phase 49 收口完成** | 清除无效 mypy 模块、旧 Provider 配置/错误码与双 Driver 描述；新增发布后验收器并接入双宿主 CI matrix。Claude/Codex 均从 Release 压缩包隔离安装后通过 doctor + 最小 Tick；全量 1800 passed / 1 skipped |
+| 2026-07-27 | **T138 God Class 职责拆分完成** | ActionBuilder 的 prompt 文件写入抽至 `prompt_logger`，TickOrchestrator 的 Ratchet/阈值/回滚编排抽至 `ratchet_runner`；外部方法签名不变，原内联路径删除。全量 1797 passed / 1 skipped |
+| 2026-07-27 | **T137 Research Web Search E2E 完成** | HostCapabilities 增加 web_search；research action 声明能力要求与 used/unavailable/failed 契约；Python 官方来源经真实搜索后进入 Tick archive，能力缺失回 gap_review。全量 1795 passed / 1 skipped |
+| 2026-07-27 | **T140 当前文档能力收口完成** | README 移除退役命令/Standalone 文件，用户指南/API/培训手册开篇统一为单核心 + Claude/Codex 适配；历史内容保留并标明不可执行。全量 1793 passed / 1 skipped |
+| 2026-07-27 | **T139 OTel flaky 收口完成** | 复核既有显式 NoOpTracer 修复，新增“预配置全局 provider 也不得影响无 endpoint 路径”回归；不同顺序累计 17 轮稳定，全量 1792 passed / 1 skipped |
+| 2026-07-27 | **T230 双平台 CI matrix 完成** | Claude/Codex 独立运行宿主契约，构建 Release 后从解压目录校验平台资产、创建全新环境并运行 CLI smoke；任一平台漂移独立失败。全量 1791 passed / 1 skipped |
+| 2026-07-27 | **T229 metrics usage source 宿主适配完成** | Claude Code 映射 `claude-transcript/anthropic`；Codex/未知宿主无稳定来源时不创建 parser；注入的无来源 usage 明确记录为 `provider=None/unsupported`。3 回归测试；全量 1790 passed / 1 skipped |
+| 2026-07-27 | **T228 双平台文档入口完成** | README、用户指南、API Reference、培训手册顶部统一 Claude Code `/ae:dev-loop` 与 Codex `$auto-engineering`，并给出 doctor + 最小 Tick；8 个读者契约测试；全量 1787 passed / 1 skipped |
+| 2026-07-27 | **T227 版本与测试基线 SSOT 完成** | `pyproject.toml` 成为版本和测试基线权威源；检查器核对 Claude/Codex Plugin、Marketplace、README 并接入 CI。4 个契约测试；全量 1779 passed / 1 skipped |
+| 2026-07-27 | **T226 设计状态收敛完成** | BEACON 标头、当前阶段、Phase 汇总、范围边界和 Tracker 进度统一到 Phase 49；历史真跑待办中的已完成 T135/T136 移除；未翻转任何 ✅/❌ 架构决策状态 |
+| 2026-07-27 | **T224-T225 双平台规则链完成** | 规则生成拆为公共模板 + Claude/Codex adapter；Codex adapter 直接内嵌测试内存、Agent 超时、设计不可降级和操作纪律，AGENTS.md 不再含 Claude `@include`。新增 2 个契约测试；全量 1775 passed / 1 skipped |
+| 2026-07-27 | **T136 cross-tick summarization E2E 完成** | `SessionSummary` 增加 checkpoint 序列化契约，EngineState 持久化滚动摘要；developer action 生成摘要后立即保存，restore 后继续合并历史与当前文件。1 个真实 SQLite save→restore→action 回归测试；全量 1773 passed / 1 skipped |
 | 2026-07-27 | **T135 offload 摘要质量完成** | 修复 architect 在 `_advance_stage` 清理字段后才 offload 导致 `no batches`；developer 在缺失显式 total 时按 passed/failed/errors/skipped 汇总。新增 2 个真实状态回归测试，验证 decisions/files/gates 均保留；全量 1772 passed / 1 skipped |
 | 2026-07-27 | **T223 Codex 真实集成测试完成** | 从实际 Release tar 解压后串联验证 `.codex-plugin` manifest 路径、Codex 宿主识别、stdin Hook dispatcher、CLI resolver 和最小 `dev-loop --init` action；同时回补 T222 遗漏的 Codex plugin manifest。1 条跨进程集成链路，全量 1770 passed / 1 skipped |
 | 2026-07-27 | **T222 双平台 Release 包完成** | 新增 fail-fast 跨宿主打包器，完整包含 Claude/Codex manifests、commands、skills、hooks、resolver、Core 与双规则文件；Release workflow 移除 `2>/dev/null \|\| true`。3 新测试并完成真实 tar 内容 smoke；全量 1769 passed / 1 skipped |

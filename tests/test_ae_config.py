@@ -16,7 +16,7 @@ class TestSectionKeyMapSSOT:
     def test_covers_full_feature_manifest(self) -> None:
         """SECTION_KEY_MAP 必须覆盖 FEATURE_MANIFEST 全部 key (防漏配).
 
-        历史 bug: AE_LLM_PROVIDER / AE_AUDIT_LOG_DIR 不在映射中 →
+        历史 bug: AE_AUDIT_LOG_DIR 不在映射中 →
         即使写进 ae.toml 也读不到。
         """
         from auto_engineering.config.ae_config import SECTION_KEY_MAP
@@ -47,7 +47,7 @@ class TestInitConfigTemplateContract:
         assert not bad, f"模板含 AE_UPPER key (读取器不识别): {bad}"
 
     def test_template_emits_expected_kebab_keys(self, tmp_path) -> None:
-        """模板含代表性 kebab-case key (含曾丢失的 llm-provider)。"""
+        """模板含代表性 kebab-case key，且不暴露已退役的 Provider 配置。"""
         from auto_engineering.cli.doctor import _init_config
 
         _init_config(tmp_path)
@@ -55,19 +55,32 @@ class TestInitConfigTemplateContract:
         for kebab in (
             "audit-log", "metrics", "otlp-endpoint", "token-tracking",
             "debug", "pii-enabled", "max-tool-calls", "gate-timeout",
-            "audit-log-dir", "llm-provider",
+            "audit-log-dir",
         ):
             assert re.search(rf"^# {re.escape(kebab)} = ", text, re.MULTILINE), (
                 f"模板缺少 kebab key: {kebab}"
             )
+        assert "llm-provider" not in text
+
+    def test_retired_llm_provider_is_not_configurable(self) -> None:
+        """宿主负责模型选择，Core 不再声明 AE_LLM_PROVIDER。"""
+        from auto_engineering.config.ae_config import SECTION_KEY_MAP
+        from auto_engineering.config.feature_flags import FEATURE_MANIFEST
+
+        assert all(
+            ae_key != "AE_LLM_PROVIDER"
+            for mapping in SECTION_KEY_MAP.values()
+            for ae_key in mapping.values()
+        )
+        assert all(flag.key != "AE_LLM_PROVIDER" for flag in FEATURE_MANIFEST)
 
     def test_template_roundtrip_readable(self, tmp_path) -> None:
         """把模板每个 key 取消注释并赋值后, AeConfig 必须全部读到。
 
         这是核心回归: 模拟用户照模板"取消注释所需功能"的真实路径。
         """
-        from auto_engineering.config.ae_config import SECTION_KEY_MAP, AeConfig
         from auto_engineering.cli.doctor import _init_config
+        from auto_engineering.config.ae_config import SECTION_KEY_MAP, AeConfig
 
         _init_config(tmp_path)
         template = (tmp_path / "ae.toml").read_text(encoding="utf-8")
@@ -198,7 +211,8 @@ class TestFeatureStatusActionAeToml:
             "[observability]\nmetrics = \"1\"\n[debugging]\ndebug = \"1\"\n",
             encoding="utf-8")
         from auto_engineering.config.feature_flags import (
-            feature_status_for_action)
+            feature_status_for_action,
+        )
         from auto_engineering.config.runtime_config import RuntimeConfig
         cfg = RuntimeConfig.from_project(tmp_path)
         status = feature_status_for_action(cfg.environ)

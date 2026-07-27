@@ -13,6 +13,50 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  host-contract:
+    name: Host contract (${{ matrix.host }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - host: claude-code
+            tests: >-
+              tests/test_sync_agent_instructions.py
+              tests/test_v8_platform.py
+              tests/test_release_package.py
+          - host: codex
+            tests: >-
+              tests/test_host_adapter.py
+              tests/test_codex_hooks.py
+              tests/test_codex_integration.py
+              tests/test_documentation_contract.py
+              tests/test_release_package.py
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - name: Sync dependencies
+        run: uv sync --extra dev
+      - name: Check generated agent rules
+        run: python3 scripts/sync_agent_instructions.py --check
+      - name: Run host contract tests
+        run: uv run pytest ${{ matrix.tests }} --no-cov --timeout=60 -q
+      - name: Build and extract release package
+        run: |
+          uv run python scripts/build_release.py \
+            --root . --output "${RUNNER_TEMP}/auto-engineering.tar.gz"
+          mkdir -p "${RUNNER_TEMP}/auto-engineering"
+          tar -xzf "${RUNNER_TEMP}/auto-engineering.tar.gz" \
+            -C "${RUNNER_TEMP}/auto-engineering"
+      - name: Validate installed host
+        run: >-
+          uv run python scripts/install_acceptance.py
+          --archive "${RUNNER_TEMP}/auto-engineering.tar.gz"
+          --host "${{ matrix.host }}"
+
   lint-and-test:
     runs-on: ubuntu-latest
     steps:
@@ -25,6 +69,8 @@ jobs:
           python-version: "3.12"
       - name: "Sync deps (含 dev: ruff/pytest 插件)"
         run: uv sync --extra dev
+      - name: Check project metadata
+        run: uv run python scripts/check_project_metadata.py
       - name: Lint (ruff)
         run: uv run ruff check .
       - name: Test + coverage gate (pytest, ≥90%)

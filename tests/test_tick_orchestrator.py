@@ -1482,6 +1482,59 @@ class TestPhase0Research:
         assert fmt["source_tier"] == "tier0|tier1|tier2|tier3"
         assert fmt["confidence"] == "high|medium|low"
         assert "recommended_design" in fmt
+        assert action["required_capabilities"] == ["web_search"]
+        assert fmt["search_status"] == "used|unavailable|failed|not_needed"
+
+    def test_research_web_sources_are_archived_end_to_end(
+        self, tmp_path
+    ) -> None:
+        """Research→supplement 时仍须保留可审计的 Web 来源。"""
+        o = _orchestrator()
+        self._drive_to_research(o, tmp_path, "research")
+
+        action = o.tick(_make_result_file({
+            "stage": "research",
+            "findings": "官方规范确认 checkpoint 语义",
+            "sources": [{
+                "tier": "tier3",
+                "ref": "https://docs.python.org/3.12/library/sqlite3.html",
+                "note": "Python 官方 sqlite3 transaction control 文档",
+            }],
+            "source_tier": "tier3",
+            "confidence": "high",
+            "recommended_design": "采用规范中的恢复边界",
+            "search_status": "used",
+        }))
+
+        assert action["stage"] == "architect"
+        archived = o._state.research_archive["gap-B2"]
+        assert archived["search_status"] == "used"
+        assert archived["sources"][0]["ref"] == (
+            "https://docs.python.org/3.12/library/sqlite3.html"
+        )
+
+    def test_research_search_unavailable_degrades_to_rereview(
+        self, tmp_path
+    ) -> None:
+        """宿主无搜索能力时保存失败证据并回到复审，不伪造 findings。"""
+        o = _orchestrator()
+        self._drive_to_research(o, tmp_path, "research")
+
+        action = o.tick(_make_result_file({
+            "stage": "research",
+            "findings": "",
+            "sources": [],
+            "source_tier": "tier3",
+            "confidence": "low",
+            "recommended_design": "",
+            "search_status": "unavailable",
+            "search_error": "HOST_CAPABILITY_UNAVAILABLE",
+        }))
+
+        assert action["stage"] == "gap_review"
+        archived = o._state.research_archive["gap-B2"]
+        assert archived["search_error"] == "HOST_CAPABILITY_UNAVAILABLE"
+        assert "gap-B2" not in o._design_doc.supplements
 
 
 # ── #30 / DS-10 (C.2.6): tick 延迟打点 (超预算告警不中断) ──
@@ -1696,6 +1749,47 @@ class TestA3WriteSide:
         assert data["current_plate_idx"] == o._batch_state.current_plate_idx
         assert data["total_batches"] == o._batch_state.total_batches
         verify.close()
+        store.close()
+
+    def test_session_summary_survives_checkpoint_restore(
+        self, tmp_path
+    ) -> None:
+        """T136: 独立 tick 恢复后 developer prompt 保留滚动摘要历史。"""
+        from auto_engineering.context.summarization import SessionSummarizer
+        from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
+
+        db = tmp_path / "cp.db"
+        store = SQLiteCheckpointStore(db)
+        summarizer = SessionSummarizer()
+        o = TickOrchestrator(
+            project_root=tmp_path,
+            gate_runner=_pass_gate_runner,
+            guardrail=_pass_guardrail(),
+            checkpoint_store=store,
+            session_summarizer=summarizer,
+        )
+        o.init("跨 tick 摘要")
+        o.tick(_architect_result_file())
+        o._state.tick = 6
+        o._state.files_changed = ["history.py"]
+        first_action = o.build_action()
+        assert "history.py" in first_action["session_summary"]
+
+        restored = TickOrchestrator.restore(
+            tmp_path,
+            store,
+            gate_runner=_pass_gate_runner,
+            guardrail=_pass_guardrail(),
+            session_summarizer=SessionSummarizer(),
+        )
+        restored._state.tick = 7
+        restored._state.files_changed = ["current.py"]
+        action = restored.build_action()
+
+        assert action["action"] == "developer"
+        assert "session_summary" in action
+        assert "history.py" in action["session_summary"]
+        assert "current.py" in action["session_summary"]
         store.close()
 
 
@@ -3477,7 +3571,8 @@ class TestT105MetricsConvergence:
             o._transcript_parser = SimpleNamespace(collect=lambda: {
                 "input_tokens": 120, "output_tokens": 34,
                 "model": "claude-test", "message_count": 3,
-                "source": "transcript",
+                "source": "claude-transcript",
+                "provider": "anthropic",
             })
 
             o._collect_token_usage()
@@ -3491,9 +3586,52 @@ class TestT105MetricsConvergence:
             assert token_events[0]["payload"]["input_tokens"] == 120
             assert token_events[0]["payload"]["output_tokens"] == 34
             assert token_events[0]["payload"]["model"] == "claude-test"
+            assert token_events[0]["payload"]["provider"] == "anthropic"
         finally:
             os.environ.pop("AE_METRICS", None)
             from auto_engineering.metrics.collector import set_collector
+            set_collector(None)
+
+    def test_collect_token_usage_does_not_invent_anthropic_provider(
+        self,
+    ) -> None:
+        """未知 usage source 必须明确 unsupported，不能伪造成 Anthropic。"""
+        import os
+        from types import SimpleNamespace
+
+        os.environ["AE_METRICS"] = "1"
+        try:
+            from auto_engineering.metrics.collector import (
+                MetricsCollector,
+                set_collector,
+            )
+
+            collector = MetricsCollector(project_root=Path.cwd())
+            set_collector(collector)
+            orchestrator = _orchestrator()
+            orchestrator.init("Codex token source")
+            orchestrator._transcript_parser = SimpleNamespace(collect=lambda: {
+                "input_tokens": 20,
+                "output_tokens": 5,
+                "model": "unknown",
+            })
+
+            orchestrator._collect_token_usage()
+
+            events = [
+                event for event in collector._events
+                if event.get("event_type") == "token_usage"
+            ]
+            assert events[0]["payload"]["provider"] == "unsupported"
+            assert orchestrator._state.tick_token_usage["provider"] is None
+            assert (
+                orchestrator._state.tick_token_usage["usage_source"]
+                == "unsupported"
+            )
+        finally:
+            os.environ.pop("AE_METRICS", None)
+            from auto_engineering.metrics.collector import set_collector
+
             set_collector(None)
 
     def test_offload_passes_non_empty_batch_progress_to_summarizer(

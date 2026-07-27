@@ -107,10 +107,6 @@ class RuntimeConfig:
         return val if val else None
 
     @property
-    def llm_provider(self) -> str:
-        return self.get("AE_LLM_PROVIDER", _default("AE_LLM_PROVIDER"))
-
-    @property
     def max_tool_calls(self) -> int | None:
         val = self.get("AE_MAX_TOOL_CALLS", _default("AE_MAX_TOOL_CALLS")).strip()
         return int(val) if val else None

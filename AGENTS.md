@@ -1,5 +1,5 @@
 <!--
-此文件由 agent-rules/instructions.md.tmpl 自动生成，请勿直接修改。
+此文件由 agent-rules/ 公共模板与平台适配模板自动生成，请勿直接修改。
 修改模板后运行：python3 scripts/sync_agent_instructions.py
 -->
 
@@ -9,7 +9,8 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 
 ## 跨 Agent 规则同步
 
-- 修改项目 Agent 规则时，只编辑 `agent-rules/instructions.md.tmpl`。
+- 公共规则编辑 `agent-rules/instructions.md.tmpl`，平台差异编辑对应的
+  `agent-rules/claude.md.tmpl` 或 `agent-rules/codex.md.tmpl`。
 - 禁止直接编辑生成的 `CLAUDE.md` 和 `AGENTS.md`。
 - 修改模板后必须运行 `python3 scripts/sync_agent_instructions.py`，并用 `--check` 校验无漂移。
 
@@ -118,10 +119,6 @@ python3 scripts/atdo_smoke.py       # Runtime smoke (7 维度)
 
 - tests/ 下测试，覆盖率 ≥ 90%（用户硬指标）
 - 全量 1702 passed / 1 skipped（2026-07-26 基准，含审计回归测试；死测试已随 tools/ 删除，OTel flaky 已修复）
-- 测试运行遵守 `@.claude/rules/pytest-memory-management.md`（16G 内存约束）
-- **Agent tool spawn 遵守 `@.claude/rules/agent-spawn-timeout.md`（3 层超时防护）**
-- **设计文档修改遵守 `@.claude/rules/design-document-inviolability.md`（🚨 2026-07-08 事故确立：BEACON决策翻转须审批、设计优先于代码）**
-- **每次操作遵守「先记录→再执行→再更新」纪律**（memory `feedback-record-before-execute.md`）
 - 参考源码（`$AE_REFS_DIR/`）为只读，不修改
 - Init Engineering 是独立项目——本项目通过 Init-Loop 接口契约（IL.1-IL.6）消费 Init 产物，不包含 Init 实现
 
@@ -129,3 +126,23 @@ python3 scripts/atdo_smoke.py       # Runtime smoke (7 维度)
 
 - **语言约定**：用户可见字符串（CLI 输出、错误消息）用中文；error_code / 日志 key / 变量名 / 代码标识符用英文。禁止同一消息中英混杂。
 - **命名约定**：Guardrail 后缀统一 (`XxxGuardrail`)，Gate 后缀统一 (`XxxGate`)；REDGuardrail / FreshGuardrail / RegressionGuardrail 均使用 `Guardrail` 后缀。
+
+## Codex 平台适配
+
+- Codex 通过 `AGENTS.md` 层级加载本规则，不解析 Claude Code 的 `@include` 语义。
+- Skill 与 Plugin 资产位于 `.codex-plugin/`；共享循环必须通过 `scripts/ae-run` 调用。
+- 子代理调用使用 Codex 当前原生协作能力，但仍须遵守公共并发和内存边界。
+
+### Codex 必载关键规则
+
+- **测试内存**：本机按 16G 物理内存约束执行。优先运行单文件或关键字测试，
+  必须带 `--no-cov --timeout=60`；全量测试仅在开发节点串行运行，
+  禁止并发运行多个 pytest 进程，禁止后台运行 pytest。覆盖率只可显式启用。
+- **Agent 超时**：调用前展示阶段、步骤和超时阈值；调用期间执行
+  5 / 10 / 15 分钟心跳，15 分钟无进展时停止等待、报告状态并按授权边界处理，
+  不得无限等待或静默重试。
+- **设计不可降级**：设计与代码不一致时默认补齐代码，禁止通过降低设计标准消除差异。
+  BEACON 决策状态翻转必须先获得用户审批；涉及架构约束的删除、废弃、降级或替代同样
+  必须先审批。引用 BEACON 决策编号前须确认编号真实存在。
+- **操作纪律**：所有实施遵守“先记录 → 再执行 → 再更新”；先在跟踪表记录进行中，
+  再执行代码或文档变更，验证后更新状态与证据。

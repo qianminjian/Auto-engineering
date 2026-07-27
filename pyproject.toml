@@ -73,6 +73,10 @@ ignore = ["RUF001", "RUF002", "RUF003"]
 testpaths = ["tests"]
 addopts = ["--timeout=60", "-p no:cacheprovider"]
 
+[tool.auto-engineering.baseline]
+passed = 1800
+skipped = 1
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
@@ -95,7 +99,7 @@ ignore_missing_imports = true
 # json.loads()/dict.get() 的 Any 值声明为具体类型是惯用法（9 处 benign，无真 bug 信号）。
 
 # 循环引擎 Optional 字段 narrowing 抑制（documented，非设计降级）：
-# TickOrchestrator/Orchestrator 采用 construct-then-init 模型 —
+# TickOrchestrator 采用 construct-then-init 模型 —
 # _state/_batch_state/_plan/_design_doc/_progress_tree 声明 T|None，在 init()/restore()
 # 后运行时恒非 None（invariant 由 init/restore 保证 + 1968 测试覆盖）。mypy 无法跨
 # method-call 边界收窄 self._X 成员访问 → 142+ union-attr/arg-type 假阳。全量 narrowing
@@ -104,15 +108,12 @@ ignore_missing_imports = true
 [[tool.mypy.overrides]]
 module = [
     "auto_engineering.loop.tick_orchestrator",
-    "auto_engineering.loop.orchestrator",
 ]
 disable_error_code = ["union-attr", "arg-type"]
 
 [[tool.mypy.overrides]]
 module = [
     "auto_engineering.cli.dev_loop",
-    "auto_engineering.agents.base",
-    "auto_engineering.loop.semantic_evaluator",
 ]
 disable_error_code = ["union-attr"]
 

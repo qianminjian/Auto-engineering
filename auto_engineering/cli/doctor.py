@@ -119,7 +119,15 @@ def _check_api_key() -> tuple[bool, str]:
 
 
 def _check_openai_api_key() -> tuple[bool, str]:
-    """检查 OpenAI API key (v8.0 多平台 Provider 抽象需要)."""
+    """检查 OpenAI API key；宿主 Agent 模式不要求 Core 持有凭据。"""
+    from auto_engineering.host import HostPlatform, detect_host
+
+    detection = detect_host()
+    if detection.platform is not HostPlatform.UNKNOWN:
+        return True, (
+            f"宿主 Agent 连接 ({detection.platform.display_name}) — "
+            "Python 引擎无需单独配置 OpenAI 凭据"
+        )
     from auto_engineering.config.runtime_config import get_default_config
     key = get_default_config().openai_api_key
     if key and key.startswith("sk-"):
