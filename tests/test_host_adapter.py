@@ -155,6 +155,34 @@ def test_adapter_rejects_hosts_without_an_implementation() -> None:
         adapter_for(HostPlatform.UNKNOWN)
 
 
+def test_cli_resolution_falls_back_to_global_ae_and_reports_missing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import auto_engineering.host.adapters as adapters
+    from auto_engineering.host import HostPlatform
+
+    adapter = adapters.adapter_for(HostPlatform.CODEX)
+    monkeypatch.setattr(
+        adapters.shutil,
+        "which",
+        lambda executable: "/usr/local/bin/ae" if executable == "ae" else None,
+    )
+    assert adapter.resolve_cli(tmp_path) == ("/usr/local/bin/ae",)
+
+    monkeypatch.setattr(adapters.shutil, "which", lambda executable: None)
+    with pytest.raises(FileNotFoundError, match="AE_CLI_NOT_FOUND"):
+        adapter.resolve_cli(tmp_path)
+
+
+def test_adapters_return_none_for_invalid_host_events() -> None:
+    from auto_engineering.host import HostPlatform
+    from auto_engineering.host.adapters import adapter_for
+
+    assert adapter_for(HostPlatform.CODEX).normalize_event({}) is None
+    assert adapter_for(HostPlatform.CLAUDE_CODE).normalize_event({}) is None
+
+
 def test_unknown_host_has_no_assumed_capabilities() -> None:
     from auto_engineering.host import HostPlatform, capabilities_for
 

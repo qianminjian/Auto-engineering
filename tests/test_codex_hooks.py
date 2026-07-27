@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import json
 import subprocess
+from io import StringIO
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).parents[1]
 EVENTS = {"SessionStart", "PreToolUse", "PostToolUse", "Stop"}
@@ -79,6 +82,34 @@ def test_normalizes_codex_file_path(tmp_path: Path) -> None:
 
     assert event.event == "post_tool"
     assert event.file_path == "src/app.py"
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {},
+        {"hook_event_name": "Unknown", "cwd": "/tmp"},
+        {"hook_event_name": "Stop"},
+    ],
+)
+def test_normalizer_rejects_incomplete_or_unknown_events(
+    payload: dict[str, object],
+) -> None:
+    from auto_engineering.host.codex_hooks import normalize_codex_event
+
+    with pytest.raises(ValueError):
+        normalize_codex_event(payload)
+
+
+@pytest.mark.parametrize("payload", ["[]", "{not-json"])
+def test_hook_main_safely_reports_invalid_stdin(payload: str) -> None:
+    from auto_engineering.host.codex_hooks import main
+
+    output = StringIO()
+
+    assert main(StringIO(payload), output) == 0
+    response = json.loads(output.getvalue())
+    assert "安全跳过" in response["systemMessage"]
 
 
 def test_codex_hook_handler_reads_valid_json_from_stdin(tmp_path: Path) -> None:

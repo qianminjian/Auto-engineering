@@ -32,10 +32,13 @@ from auto_engineering.loop.checkpoint.store import (
 class TestWithConn:
     def test_memory_mode_yields_shared_conn(self):
         shared = sqlite3.connect(":memory:")
-        shared.row_factory = sqlite3.Row
-        lock = threading.Lock()
-        with _with_conn(":memory:", is_memory=True, lock=lock, shared_conn=shared) as conn:
-            assert conn is shared
+        try:
+            shared.row_factory = sqlite3.Row
+            lock = threading.Lock()
+            with _with_conn(":memory:", is_memory=True, lock=lock, shared_conn=shared) as conn:
+                assert conn is shared
+        finally:
+            shared.close()
 
     def test_file_mode_one_shot_connects_and_closes(self, tmp_path: Path):
         db = str(tmp_path / "test.db")
@@ -54,10 +57,13 @@ class TestWithConn:
         db = str(tmp_path / "test.db")
         lock = threading.Lock()
         cached = sqlite3.connect(db, check_same_thread=False)
-        cached.row_factory = sqlite3.Row
-        _ensure_schema(cached)
-        with _with_conn(db, is_memory=False, lock=lock, shared_conn=None, file_conn=cached) as conn:
-            assert conn is cached
+        try:
+            cached.row_factory = sqlite3.Row
+            _ensure_schema(cached)
+            with _with_conn(db, is_memory=False, lock=lock, shared_conn=None, file_conn=cached) as conn:
+                assert conn is cached
+        finally:
+            cached.close()
 
     def test_file_mode_schema_created_on_first_use(self, tmp_path: Path):
         db = str(tmp_path / "test.db")
@@ -77,25 +83,31 @@ class TestWithConn:
 class TestAtomic:
     def test_commit_on_success(self):
         conn = sqlite3.connect(":memory:")
-        conn.execute("CREATE TABLE t (x int)")
-        with _atomic(conn):
-            conn.execute("INSERT INTO t VALUES (42)")
-        rows = conn.execute("SELECT * FROM t").fetchall()
-        assert len(rows) == 1
+        try:
+            conn.execute("CREATE TABLE t (x int)")
+            with _atomic(conn):
+                conn.execute("INSERT INTO t VALUES (42)")
+            rows = conn.execute("SELECT * FROM t").fetchall()
+            assert len(rows) == 1
+        finally:
+            conn.close()
 
     def test_rollback_on_sqlite_error(self):
         conn = sqlite3.connect(":memory:")
-        conn.execute("CREATE TABLE t (x int PRIMARY KEY)")
-        conn.execute("INSERT INTO t VALUES (1)")
-        conn.commit()
         try:
-            with _atomic(conn):
-                conn.execute("INSERT INTO t VALUES (2)")
-                conn.execute("INSERT INTO t VALUES (2)")  # duplicate key
-        except sqlite3.IntegrityError:
-            pass
-        rows = conn.execute("SELECT x FROM t").fetchall()
-        assert [r[0] for r in rows] == [1]  # value 2 was rolled back
+            conn.execute("CREATE TABLE t (x int PRIMARY KEY)")
+            conn.execute("INSERT INTO t VALUES (1)")
+            conn.commit()
+            try:
+                with _atomic(conn):
+                    conn.execute("INSERT INTO t VALUES (2)")
+                    conn.execute("INSERT INTO t VALUES (2)")  # duplicate key
+            except sqlite3.IntegrityError:
+                pass
+            rows = conn.execute("SELECT x FROM t").fetchall()
+            assert [r[0] for r in rows] == [1]  # value 2 was rolled back
+        finally:
+            conn.close()
 
 
 # ============================================================
@@ -116,6 +128,28 @@ class TestInitFileConn:
         assert len(tables) == 1
         conn.close()
 
+    def test_closes_connection_when_initialization_fails(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """初始化 PRAGMA 或 schema 失败时不得泄漏已创建的连接."""
+        class FailingConnection:
+            closed = False
+            row_factory = None
+
+            def execute(self, _sql: str) -> None:
+                raise sqlite3.DatabaseError("corrupted database")
+
+            def close(self) -> None:
+                self.closed = True
+
+        conn = FailingConnection()
+        monkeypatch.setattr(sqlite3, "connect", lambda *_args, **_kwargs: conn)
+
+        with pytest.raises(sqlite3.DatabaseError, match="corrupted database"):
+            init_file_conn("corrupt.db", threading.Lock())
+
+        assert conn.closed is True
+
 
 # ============================================================
 # Group 4: SQLiteCheckpointStore
@@ -125,7 +159,10 @@ class TestInitFileConn:
 @pytest.fixture
 def store():
     s = SQLiteCheckpointStore[dict](":memory:")
-    return s
+    try:
+        yield s
+    finally:
+        s.close()
 
 
 def _fake_state(round_num: int = 0, step: int | str = 0) -> dict:

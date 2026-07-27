@@ -128,13 +128,13 @@ def test_status_recent_history_max_5(tmp_cwd: Path) -> None:
     cp_dir = tmp_cwd / ".ae-state"
     cp_dir.mkdir()
     db_path = cp_dir / "test.db"
-    store = SQLiteCheckpointStore[CheckpointEnvelope](str(db_path))
     env = CheckpointEnvelope(round=8, step=1, status="running")
     history = [
         RoundHistory(round_id=i, files_changed=i, lines_added=i * 2)
         for i in range(1, 9)  # 8 条
     ]
-    store.save(env, round=8, history=history)
+    with SQLiteCheckpointStore[CheckpointEnvelope](str(db_path)) as store:
+        store.save(env, round=8, history=history)
 
     data = _collect_status_json(tmp_cwd)
     assert isinstance(data["recent_history"], list)
@@ -152,14 +152,14 @@ def test_status_recent_history_round_id_desc(tmp_cwd: Path) -> None:
     cp_dir = tmp_cwd / ".ae-state"
     cp_dir.mkdir()
     db_path = cp_dir / "test.db"
-    store = SQLiteCheckpointStore[CheckpointEnvelope](str(db_path))
     env = CheckpointEnvelope(round=3, step=1, status="running")
     history = [
         RoundHistory(round_id=1, files_changed=1),
         RoundHistory(round_id=2, files_changed=2),
         RoundHistory(round_id=3, files_changed=3),
     ]
-    store.save(env, round=3, history=history)
+    with SQLiteCheckpointStore[CheckpointEnvelope](str(db_path)) as store:
+        store.save(env, round=3, history=history)
 
     data = _collect_status_json(tmp_cwd)
     round_ids = [h["round_id"] for h in data["recent_history"]]
@@ -302,6 +302,24 @@ def test_status_command_closes_checkpoint_stores(
         "status 命令 checkpoint 计数路径未显式关闭 SQLiteCheckpointStore"
         "(P1-6: 连接泄漏回归)"
     )
+
+
+def test_collect_status_json_closes_checkpoint_stores(
+    tmp_cwd: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """回归: JSON 状态收集路径用后应显式关闭每个 checkpoint store."""
+    checkpoint_mod, real_store, spy_store, _created, closed = _make_spy_store()
+
+    ae_state = tmp_cwd / ".ae-state"
+    ae_state.mkdir(exist_ok=True)
+    with real_store(str(ae_state / "thread.db")):
+        pass
+
+    monkeypatch.setattr(checkpoint_mod, "SQLiteCheckpointStore", spy_store)
+
+    _collect_status_json(tmp_cwd)
+
+    assert closed, "_collect_status_json 未显式关闭 SQLiteCheckpointStore"
 
 
 def test_load_progress_summary_parses_progress_tree_json(tmp_cwd: Path) -> None:

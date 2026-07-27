@@ -100,11 +100,15 @@ def init_file_conn(db_path: str, lock: threading.Lock) -> sqlite3.Connection:
     """
     with lock:
         conn = sqlite3.connect(db_path, check_same_thread=False)
-        conn.row_factory = sqlite3.Row
-        # WAL: 写并发不阻塞读, 提升 dev-loop 期间的多 round 吞吐
-        # (round 1 写 checkpoint 时 round 2 还能读)
-        conn.execute("PRAGMA journal_mode=WAL")
-        _ensure_schema(conn)
+        try:
+            conn.row_factory = sqlite3.Row
+            # WAL: 写并发不阻塞读, 提升 dev-loop 期间的多 round 吞吐
+            # (round 1 写 checkpoint 时 round 2 还能读)
+            conn.execute("PRAGMA journal_mode=WAL")
+            _ensure_schema(conn)
+        except BaseException:
+            conn.close()
+            raise
     return conn
 
 

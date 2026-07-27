@@ -48,14 +48,15 @@ def _collect_status_json(cwd: Path) -> dict:
     if not cp_dir.exists():
         return payload
 
-    from auto_engineering.loop.checkpoint import SQLiteCheckpointStore
+    from auto_engineering.loop.checkpoint import Checkpoint, SQLiteCheckpointStore
 
     # 找到 latest checkpoint (跨所有 db)
     latest_ckpt = None
     for db_file in cp_dir.glob("*.db"):
         try:
-            store: SQLiteCheckpointStore[EngineState] = SQLiteCheckpointStore(str(db_file))
-            ckpt = store.load_latest()
+            store: SQLiteCheckpointStore[EngineState]
+            with SQLiteCheckpointStore(str(db_file)) as store:
+                ckpt: Checkpoint[EngineState] | None = store.load_latest()
             if ckpt is not None and (latest_ckpt is None or ckpt.round > latest_ckpt.round):
                 latest_ckpt = ckpt
         except (OSError, sqlite3.Error):
