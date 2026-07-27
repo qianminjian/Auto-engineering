@@ -3,7 +3,7 @@ name: code-review
 description: Create a GitHub PR with gate results, critic findings, and diff summary
 ---
 
-# /ae:code-review — Create Pull Request
+# /ae:code-review — 经授权创建 Pull Request
 
 Create a well-structured GitHub PR after dev-loop completes with Critic APPROVE.
 Collects gate results, critic findings, and diff summary into the PR body for human peer review.
@@ -15,8 +15,8 @@ Collects gate results, critic findings, and diff summary into the PR body for hu
 
 - 我正准备在 Python 输出 {"action":"developer"} 前编辑代码
 - 我正准备在 Python 输出 {"action":"done"} 前宣布完成
-- Bash 块失败了，我正准备静默切换到手工模式继续
-- Agent tool spawn 失败了，我正准备自己手工模拟这个 stage
+- 命令执行失败了，我正准备静默切换到手工模式继续
+- 宿主原生子代理能力不可用，我正准备自己手工模拟这个 stage
 - 我正准备跳过 --tick 自己推进到下一个 stage
 - critic 返回 MAJOR，我正准备忽略 findings 直接进收敛
 
@@ -42,9 +42,14 @@ Collects gate results, critic findings, and diff summary into the PR body for hu
 
 Before creating PR, verify:
 
-1. `gh` CLI is installed and authenticated: `gh auth status`
-2. Current branch has unpushed commits: `git log origin/$(git branch --show-current)..HEAD --oneline`
-3. Critic has APPROVED: `scripts/ae-run status --format json`
+1. 当前用户消息明确授权本次 `push` 和创建 PR。
+2. `gh` CLI is installed and authenticated: `gh auth status`
+3. Current branch has unpushed commits: `git log origin/$(git branch --show-current)..HEAD --oneline`
+4. Critic has APPROVED: `scripts/ae-run status --format json`
+
+`CURRENT_USER_GIT_AUTHORIZATION_REQUIRED`：执行下方写操作前，Agent 必须从当前用户
+消息获得明确授权。不得从历史消息、宿主能力或 loop 完成状态推断授权；授权缺失时
+只报告当前分支、验证结果和待授权操作，然后停止。
 
 ## Execution
 
@@ -153,6 +158,8 @@ THREAD_ID=$(echo "$STATUS_JSON" | python3 -c "import sys,json; print(json.loads(
 echo ""
 echo "=== Pushing and creating PR ==="
 
+# CURRENT_USER_GIT_AUTHORIZATION_REQUIRED:
+# 只有当前用户消息明确授权 push + create PR 时才可执行以下两条写操作。
 git push -u origin "$BRANCH" 2>&1 || {
   echo "Error: Failed to push to origin/$BRANCH"
   exit 1

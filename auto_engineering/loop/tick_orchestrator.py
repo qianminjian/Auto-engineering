@@ -953,8 +953,9 @@ class TickOrchestrator:
             else:
                 self._progress_tree.sync_from_batch_plan(batches)
 
-        self._advance_stage("developer")
+        # T135: architect 字段会在 advance_stage 中清理，必须先持久化。
         self._offload_stage("architect")
+        self._advance_stage("developer")
         return self.build_action()
 
     # ── _after_developer ──
@@ -1040,7 +1041,14 @@ class TickOrchestrator:
             # DS-14 (T152 L2): extract actual test stats from batch_state for richer summary
             tr = s.test_results or {}
             passed = tr.get("passed", 0)
-            total = tr.get("total", 0)
+            total = tr.get("total")
+            if total is None:
+                total = (
+                    int(tr.get("passed", 0) or 0)
+                    + int(tr.get("failed", 0) or 0)
+                    + int(tr.get("errors", 0) or 0)
+                    + int(tr.get("skipped", 0) or 0)
+                )
             if self._batch_state is not None:
                 try:
                     comp = self._batch_state.current_component()

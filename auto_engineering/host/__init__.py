@@ -30,6 +30,26 @@ class HostPlatform(StrEnum):
         }[self]
 
 
+class GitOperation(StrEnum):
+    """需要分别授权的 Git 外部副作用。"""
+
+    COMMIT = "commit"
+    PUSH = "push"
+    CREATE_PR = "create_pr"
+
+
+@dataclass(frozen=True)
+class GitAuthorization:
+    """Git 能力与当前用户授权的交集；默认拒绝所有写操作。"""
+
+    capability: bool
+    authorized: frozenset[GitOperation] = frozenset()
+
+    def allows(self, operation: GitOperation) -> bool:
+        """仅当宿主具备能力且用户明确授权该操作时允许。"""
+        return self.capability and operation in self.authorized
+
+
 @dataclass(frozen=True)
 class HostCapabilities:
     """宿主提供的能力；能力存在不等于用户已经授权使用。"""
@@ -124,6 +144,8 @@ def detect_host(environ: Mapping[str, str] | None = None) -> HostDetection:
 
 
 __all__ = [
+    "GitAuthorization",
+    "GitOperation",
     "HostAdapter",
     "HostCapabilities",
     "HostDetection",

@@ -101,7 +101,7 @@
 
 ## 当前状态
 
-**阶段：** Phase 49 实施中 — T217 CLI resolver、T218 HostPlatform、T219 Codex Hooks 已完成，下一项 T220 Codex Skill。Claude Code → Codex 迁移按“Host-neutral Core + Host Adapter”推进；Phase 1-48 已完成。
+**阶段：** Phase 49 实施中 — P0 主路径 T217-T223、T135 已完成，下一项 T136 cross-tick summarization E2E。Claude Code → Codex 迁移按“Host-neutral Core + Host Adapter”推进；Phase 1-48 已完成。
 
 **v5.7 变更总结 (2026-07-25)**：
 
@@ -116,14 +116,12 @@
 | **46** | **独立复审 + 审计修复** | P0×3 清零（metrics 接线 ×2 + 死代码删除）+ P1/P2×19 修复 + 9 回归测试 |
 | **47** | **mypy 清零 + collector 拆分** | collector 三文件拆分（API 零变化）+ mypy 95 文件 0 errors + 顺带修复 2 个潜伏 bug |
 
-**项目规模**：95 源文件 / ~19,800 行 / 90 测试文件 / **1756 tests passed**（2026-07-27 T219 基准；1 skipped，mypy 97 文件全绿）
+**项目规模**：95 源文件 / ~19,800 行 / 94 测试文件 / **1772 tests passed**（2026-07-27 T135 基准；1 skipped，mypy 97 文件全绿）
 
 **关键决策**：#97（入口统一）、#98（可观测性整合）、#99（配置管理统一）、#101（跨 Agent 宿主架构）
 
 **剩余已知问题**（Phase 48 真跑盘点）：
-- Phase 49 P0：Codex Skill、Git 授权、发布包和真实集成测试尚未按 Host Adapter 契约实现
 - `.claude/rules/*.md` 关键红线未进入 Codex 可稳定加载的规则链；`AGENTS.md` 中 Claude `@include` 语义对 Codex 无效
-- T53 offload 摘要质量贫瘠（T152 未完全修复：architect offload "no batches"、key_decisions 空；BEACON#65 已重定位为执行存档，内容贫瘠待改善）
 - T54 cross-tick summarization 真跑未充分触发（代码层 2 潜伏 bug Phase 47 已修，真跑摘要注入未验证）
 - T50 research 阶段 web search 实际调用真跑未触发（F9 路由已修，端到端搜索未验证）
 - 1 个 flaky test（OTel 全局状态隔离）
@@ -134,6 +132,11 @@
 
 | 日期 | 变更 | 原因 |
 |------|------|------|
+| 2026-07-27 | **T135 offload 摘要质量完成** | 修复 architect 在 `_advance_stage` 清理字段后才 offload 导致 `no batches`；developer 在缺失显式 total 时按 passed/failed/errors/skipped 汇总。新增 2 个真实状态回归测试，验证 decisions/files/gates 均保留；全量 1772 passed / 1 skipped |
+| 2026-07-27 | **T223 Codex 真实集成测试完成** | 从实际 Release tar 解压后串联验证 `.codex-plugin` manifest 路径、Codex 宿主识别、stdin Hook dispatcher、CLI resolver 和最小 `dev-loop --init` action；同时回补 T222 遗漏的 Codex plugin manifest。1 条跨进程集成链路，全量 1770 passed / 1 skipped |
+| 2026-07-27 | **T222 双平台 Release 包完成** | 新增 fail-fast 跨宿主打包器，完整包含 Claude/Codex manifests、commands、skills、hooks、resolver、Core 与双规则文件；Release workflow 移除 `2>/dev/null \|\| true`。3 新测试并完成真实 tar 内容 smoke；全量 1769 passed / 1 skipped |
+| 2026-07-27 | **T221 Git 授权与 checkpoint 策略完成** | 新增默认拒绝的 `GitAuthorization`（capability ∩ 当前用户逐操作授权）；checkpoint 明确为循环恢复边界且不要求 commit；默认链移除 `GitClean`，G3 认可未提交工作树变更；code-review 在 push/PR 前要求当前消息明确授权。5 新测试，全量 1766 passed / 1 skipped |
+| 2026-07-27 | **T220 Codex Skill 入口完成** | `$auto-engineering` 和 dev-loop 手册改为宿主无关 Tick 协议；spawn 由 `HostCapabilities` 显式校验，能力不足返回 `HOST_CAPABILITY_UNAVAILABLE`；移除模型名、平台工具名、强制 commit/PR 和淘汰命令；共享 Iron Law/Red Flags 同步更新。5 新测试，全量 1761 passed / 1 skipped |
 | 2026-07-27 | **T219 Codex Hooks 完成** | `hooks-codex.json` 和项目 `.codex/hooks.json` 使用 Codex matcher/command handler schema；新增 stdin dispatcher 和 HostEvent 归一化，非法输入安全跳过。6 新测试，全量 1756 passed / 1 skipped；新 Hook 下一 Codex 会话加载 |
 | 2026-07-27 | **T218 HostPlatform + Capability 契约完成** | 新增 host-neutral 平台枚举、检测证据和能力矩阵；Codex 原生信号优先于 Claude 兼容变量；RuntimeConfig/legacy plugin mode 接入；doctor 在 Codex 下不再要求 Anthropic 凭据。9 新测试，全量 1750 passed / 1 skipped |
 | 2026-07-27 | **T217 平台无关 CLI resolver 完成** | 新增 `scripts/ae-run`，按插件 venv → `uv run --project` → PATH 解析 CLI；活跃 Skill/Command 使用共享入口；删除 PostToolUse 对已移除 `gate-check` 的调用。6 新测试，全量 1741 passed / 1 skipped |

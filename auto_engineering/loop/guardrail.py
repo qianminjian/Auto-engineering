@@ -152,9 +152,8 @@ class PlanExists(Guardrail):
 class GitDiffExists(Guardrail):
     """G3: 验证 developer 实际写入了代码 (§B5.1).
 
-    post/developer: 用 `git diff HEAD~1..HEAD --numstat` 验证
-    上一轮 Stage 产出导致源码变更. 新仓库 (无 HEAD~1) 降级到
-    `git diff --cached --numstat` (v5.0 §附录 C R-5).
+    post/developer: 依次检查未暂存、已暂存和最近 commit 的 diff。
+    developer 无需为了通过 Guardrail 自动 commit。
 
     失败 action=retry (developer 可重写).
     """
@@ -171,7 +170,16 @@ class GitDiffExists(Guardrail):
     ) -> GuardrailResult:
         resolved_root = project_root if project_root is not None else Path.cwd()
 
-        # 先试 HEAD~1..HEAD (有 commit 的仓库)
+        # T221: checkpoint 是循环边界，先认可未提交的真实工作树变更。
+        rc0, stdout0 = _run_git_diff(resolved_root, [])
+        if rc0 == 0 and stdout0.strip():
+            return GuardrailResult()
+
+        rc_cached, stdout_cached = _run_git_diff(resolved_root, ["--cached"])
+        if rc_cached == 0 and stdout_cached.strip():
+            return GuardrailResult()
+
+        # 兼容用户已明确授权 commit 的工作流。
         rc1, stdout1 = _run_git_diff(resolved_root, ["HEAD~1..HEAD"])
         if rc1 == 0:
             if stdout1.strip():
@@ -181,13 +189,7 @@ class GitDiffExists(Guardrail):
                 message="git diff HEAD~1..HEAD 为空,developer 未产生代码变更",
             )
 
-        # 降级: HEAD~1 不存在 (新仓库), 用 --cached
-        rc2, stdout2 = _run_git_diff(resolved_root, ["--cached"])
-        if rc2 == 0 and stdout2.strip():
-            return GuardrailResult()  # pass via cached
-
-        # 降级: --cached 也为空, 但 HEAD 存在 → StandaloneDriver auto_commit 路径
-        # developer 已通过 _auto_commit() 提交, 检查 HEAD 是否包含文件变更
+        # HEAD~1 不存在但 HEAD 存在：root commit 仍可作为已有变更证据。
         rc3, _ = _run_git(resolved_root, "rev-parse", "HEAD")
         if rc3 == 0:
             rc4, stdout4 = _run_git(resolved_root, "diff-tree", "--no-commit-id", "-r", "HEAD")
@@ -201,7 +203,7 @@ class GitDiffExists(Guardrail):
 
         return GuardrailResult(
             action="retry",
-            message="新仓库且无变更 (staged/committed),developer 需先 git add/commit",
+            message="未检测到 developer 产生的工作树、暂存区或已授权 commit 变更",
         )
 
 
@@ -462,8 +464,7 @@ class GuardrailChain:
 
     @classmethod
     def default(cls) -> GuardrailChain:
-        """工厂方法: 默认链 (G1-G9 基线 + G10 PIIGuardrail + G11 FileAccessGuardrail
-        + G12 AuditTimingGuardrail, §B3 + T112)."""
+        """工厂方法：默认链不以 clean working tree 强制隐式 commit。"""
         from auto_engineering.pii.guardrail import PIIGuardrail
 
         return cls([
@@ -471,7 +472,6 @@ class GuardrailChain:
             PlanExists(),
             GitDiffExists(),
             TestsPass(),
-            GitClean(),
             NoDeferredBlockingGap(),
             REDGuardrail(),
             FreshGuardrail(),

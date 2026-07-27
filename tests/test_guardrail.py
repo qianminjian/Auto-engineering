@@ -653,16 +653,16 @@ class TestGuardrailChain:
         # post/developer → G3 + G4 + G5
         assert len([g for g in chain.guardrails if g.timing == "post" and "developer" in g.applies_to_stages]) == 3
 
-    def test_default_factory_returns_12_guardrails(self) -> None:
-        """GuardrailChain.default() 返回 12 Guardrail (G1-G12)."""
+    def test_default_factory_returns_11_guardrails(self) -> None:
+        """默认链不以 GitClean 强制未授权 commit。"""
         chain = GuardrailChain.default()
-        assert len(chain.guardrails) == 12
+        assert len(chain.guardrails) == 11
         names = [type(g).__name__ for g in chain.guardrails]
         assert "RequirementValid" in names
         assert "PlanExists" in names
         assert "GitDiffExists" in names
         assert "TestsPass" in names
-        assert "GitClean" in names
+        assert "GitClean" not in names
         assert "NoDeferredBlockingGap" in names
         assert "REDGuardrail" in names
         assert "FreshGuardrail" in names
@@ -680,7 +680,6 @@ class TestGuardrailChain:
             PlanExists(),
             GitDiffExists(),
             TestsPass(),
-            GitClean(),
             NoDeferredBlockingGap(),
             REDGuardrail(),
             FreshGuardrail(),

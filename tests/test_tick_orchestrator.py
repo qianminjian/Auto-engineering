@@ -3396,8 +3396,7 @@ class TestT105MetricsConvergence:
 
         os.environ["AE_METRICS"] = "1"
         try:
-            from auto_engineering.metrics.collector import (
-                MetricsCollector, set_collector)
+            from auto_engineering.metrics.collector import MetricsCollector, set_collector
             collector = MetricsCollector(project_root=Path.cwd())
             set_collector(collector)
 
@@ -3469,8 +3468,7 @@ class TestT105MetricsConvergence:
 
         os.environ["AE_METRICS"] = "1"
         try:
-            from auto_engineering.metrics.collector import (
-                MetricsCollector, set_collector)
+            from auto_engineering.metrics.collector import MetricsCollector, set_collector
             collector = MetricsCollector(project_root=Path.cwd())
             set_collector(collector)
 
@@ -3542,6 +3540,62 @@ class TestT105MetricsConvergence:
             "batch_progress 应非空 (T166 回归: done_count/total_count 不存在 bug)"
         )
         assert "batches done" in captured["batch_progress"]
+
+    def test_architect_offload_keeps_plan_before_stage_cleanup(
+        self, tmp_path
+    ) -> None:
+        """T135: architect offload 必须在 advance 清理字段前保存结构化计划。"""
+        from auto_engineering.context.offloading import ContextOffloader
+
+        o = _orchestrator()
+        o.init("architect offload 质量")
+        offloader = ContextOffloader(tmp_path / "offload")
+        o._context_offloader = offloader
+        o._apply_result_to_state({
+            "stage": "architect",
+            "plan": "先实现核心契约，再补集成测试",
+            "batch_plan": [{
+                "batch_id": "batch-H-1",
+                "component": "Host",
+                "tasks": [{"id": "T1", "description": "实现契约",
+                           "file_targets": ["host.py"]}],
+            }],
+            "file_list": ["host.py"],
+        })
+
+        o._after_architect()
+
+        artifact = offloader.load_summary("architect")
+        assert artifact is not None
+        assert "no batches" not in artifact.summary
+        assert "1 batches, 1 files" in artifact.summary
+        assert "batch_count=1" in artifact.key_decisions
+        assert "file_count=1" in artifact.key_decisions
+
+    def test_developer_offload_has_files_gates_and_real_test_total(
+        self, tmp_path
+    ) -> None:
+        """T135: developer offload 使用本轮文件、Gate 与 passed/failed 总数。"""
+        from auto_engineering.context.offloading import ContextOffloader
+
+        o = _orchestrator()
+        o.init("developer offload 质量")
+        offloader = ContextOffloader(tmp_path / "offload")
+        o._context_offloader = offloader
+        o._state.files_changed = ["host.py"]
+        o._state.test_results = {"passed": 2, "failed": 0, "errors": 0}
+        o._state.gate_results = {
+            "test": {"passed": True, "message": "2 passed"},
+        }
+
+        o._offload_stage("developer")
+
+        artifact = offloader.load_summary("developer")
+        assert artifact is not None
+        assert "2/2 tests passed" in artifact.summary
+        assert artifact.files_changed == ["host.py"]
+        assert artifact.gate_results["test"]["passed"] is True
+        assert "files_changed_count=1" in artifact.key_decisions
 
     def test_metrics_collector_not_initialized_without_env_var(self) -> None:
         """T105f: AE_METRICS 未设置时 get_collector() 返回 None."""

@@ -2427,11 +2427,11 @@ ae dev-loop --init "需求"
 | 1 | **T217** | CLI 解析统一 | 新增 `scripts/ae-run`：插件 venv → `uv run --project` → PATH；活跃 Skill/Command 使用 resolver；PostToolUse 移除已删除的 `gate-check` | ✅ 6 新测试；相关平台测试 28 passed；全量 1741 passed / 1 skipped；mypy 95 文件 0 errors | — | ✅ |
 | 2 | **T218** | HostPlatform + Capability 契约 | 新增 `auto_engineering.host` 平台枚举、检测证据、能力矩阵；RuntimeConfig/plugin mode/doctor 接入，凭据不再用于识别宿主 | ✅ 9 新测试；Codex doctor 真跑正确；全量 1750 passed / 1 skipped；mypy 96 文件 0 errors；相关 Ruff 全绿；Core 零宿主反向依赖 | T217 | ✅ |
 | 3 | **T219** | Codex Hooks 重建 | Plugin/项目两套 Codex schema；stdin dispatcher；`HostEvent` 归一化；无运行环境或非法 JSON 时安全降级 | ✅ 6 新测试；真实 stdin handler 零输出成功；全量 1756 passed / 1 skipped；mypy 97 文件 0 errors；相关 Ruff 全绿 | T218 | ✅ |
-| 4 | **T220** | Codex Skill 入口 | `$auto-engineering` 主入口；平台无关 Tick 驱动说明；清除模型名和 Claude Tool 假设 | While 用户在 Codex 调用 Skill, when action 要求 inline/spawn, the Skill shall 使用当前宿主原生能力执行 | T217-T219 | ☐ |
-| 5 | **T221** | Git 授权与 checkpoint 策略 | 区分 capability/authorization；未授权时不自动 commit/push/PR | While 用户未授权 Git 写操作, when batch 或 loop 完成, the system shall 不执行外部 Git 写入 | T220 | ☐ |
-| 6 | **T222** | 双平台 Release 包修复 | 完整打包 manifests、skills、commands、hooks、脚本、Core；移除掩盖失败的 `|| true` | While 构建 release, when 校验 manifest paths, the package shall 不存在缺失文件 | T219-T221 | ☐ |
-| 7 | **T223** | Codex 真实集成测试 | Hook schema/stdin、宿主识别、CLI、Skill 最小 Tick、发布包 smoke | While 旧适配实现存在, when 运行新增测试, tests shall 先失败；修复后全绿 | T217-T222 | ☐ |
-| 8 | **T135** | offload 摘要质量 | 修复 T152 时序和结构化摘要，补真实 Tick 回归 | While stage 完成, when 写 offload, the summary shall 含有效 decisions/files/gates 而非空占位 | T223 | ☐ |
+| 4 | **T220** | Codex Skill 入口 | `$auto-engineering` 主入口；平台无关 Tick 驱动说明；清除模型名和 Claude Tool 假设 | ✅ 5 新测试；共享 Iron Law/Red Flags 无漂移；全量 1761 passed / 1 skipped；mypy 97 文件 0 errors；相关 Ruff 全绿 | T217-T219 | ✅ |
+| 5 | **T221** | Git 授权与 checkpoint 策略 | 区分 capability/authorization；未授权时不自动 commit/push/PR | ✅ 5 新测试；默认链不再强制 commit；全量 1766 passed / 1 skipped；mypy 97 文件 0 errors；相关 Ruff 全绿 | T220 | ✅ |
+| 6 | **T222** | 双平台 Release 包修复 | 完整打包 manifests、skills、commands、hooks、脚本、Core；移除掩盖失败的 `|| true` | ✅ 3 新测试；真实 tar 内容 smoke；全量 1769 passed / 1 skipped；mypy 97 文件 0 errors；相关 Ruff 全绿 | T219-T221 | ✅ |
+| 7 | **T223** | Codex 真实集成测试 | Hook schema/stdin、宿主识别、CLI、Skill 最小 Tick、发布包 smoke | ✅ Release 解压后跨进程链路 1 条；回补 Codex manifest 漏包 RED→GREEN；全量 1770 passed / 1 skipped；mypy 97 文件 0 errors；相关 Ruff 全绿 | T217-T222 | ✅ |
+| 8 | **T135** | offload 摘要质量 | 修复 T152 时序和结构化摘要，补真实 Tick 回归 | ✅ 2 新回归测试；architect decisions + developer files/gates/total 保真；全量 1772 passed / 1 skipped；mypy 97 文件 0 errors；相关 Ruff 全绿 | T223 | ✅ |
 
 ### P1 — 双平台可维护性与现有待办
 
@@ -2439,7 +2439,7 @@ ae dev-loop --init "需求"
 |---:|---|---|---|---|---|:---:|
 | 9 | **T224** | 双平台规则生成 | `core + claude adapter + codex adapter` 模板；生成 CLAUDE.md/AGENTS.md | While 公共规则变化, when 运行同步脚本, both outputs shall 同步公共规则且保留平台差异 | T220 | ☐ |
 | 10 | **T225** | Codex 关键规则加载 | 将内存、设计不可降级、Agent 超时等红线纳入 Codex 可稳定加载链 | While 新 Codex 会话启动, when 读取 AGENTS/Skill, the agent shall 获得关键红线且不依赖 Claude `@include` | T224 | ☐ |
-| 11 | **T136** | cross-tick summarization E2E | 构造真实触发场景，验证摘要进入后续 developer prompt | While 跨 tick 上下文超过阈值, when 下一 developer 开始, the prompt shall 含结构化摘要 | T135 | ☐ |
+| 11 | **T136** | cross-tick summarization E2E | 构造真实触发场景，验证摘要进入后续 developer prompt | While 跨 tick 上下文超过阈值, when 下一 developer 开始, the prompt shall 含结构化摘要 | T135 | ◐ |
 | 12 | **T226** | BEACON/Tracker 状态收敛 | 修正历史与当前状态边界、Phase 汇总和待办映射 | While 查看任一设计入口, when 对照当前代码, the phase/status shall 一致 | — | ☐ |
 | 13 | **T227** | 版本与测试基线 SSOT | 统一 Python 包、Plugin、README 版本和测试基线检查 | While 版本或基线漂移, when CI 运行, the check shall 失败并指出来源 | T222,T226 | ☐ |
 | 14 | **T228** | 双平台文档重写 | README、USER_GUIDE、API/培训文档的 Claude/Codex 使用路径 | While 新用户只阅读文档, when 安装任一平台, the user shall 完成 doctor 和最小 Tick | T217-T223 | ☐ |
