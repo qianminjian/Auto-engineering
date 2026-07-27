@@ -1,60 +1,63 @@
 # Auto-Engineering BEACON
 
-> 创建：2026-06-24｜更新：2026-07-27｜阶段：Phase 50 已完成
+> 创建：2026-06-24｜更新：2026-07-27｜阶段：v5.7 设计完成，Phase 52 待实施
 > 决策状态翻转（✅↔❌）或架构降级必须先获用户批准。
 
 ## 目标与成功标准
 
-1. 以 `TickOrchestrator` 为唯一 Core 状态机，通过离散 Tick 驱动工程循环。
-2. Claude Code 与 Codex 只在 Host Adapter 层体现差异，Core 不感知宿主。
-3. Guardrail、Gate、五层验证、Checkpoint 与 Init-Loop 契约保持可测试。
-4. 当前设计、运行配置、测试基线和发布验收均有唯一事实源。
-5. Claude Code 使用 `/ae:dev-loop`，Codex 使用 `$auto-engineering`；二者共用 `scripts/ae-run`。
+1. 定位为跨 Agent 宿主的确定性工程治理内核。
+2. 宿主负责推理与工具执行；Core 负责协议、状态、验证、安全和审计。
+3. 所有跨宿主消息使用版本化协议，并具有消息身份与因果关系。
+4. 状态可由 append-only 事件重放，重复 Result 不重复推进。
+5. Claude Code 与 Codex 对同一黄金轨迹产生等价 Core 结果。
 
 ## 范围边界
 
-**做：** Tick 协议、Host Adapter、双宿主资产、配置 SSOT、Release 双层验收、当前文档。
+**做：** Protocol Envelope、Event Store、Tick Kernel、StageHandler、Host SPI、
+Gate/Guardrail、五层验证、审计、v5.6 兼容迁移和双宿主验收。
 
-**不做：** 在 Python Core 内调用 LLM；恢复已退役 CLI；实现 Init Engineering；把模拟宿主信号冒充真实产品安装；修改外部参考源码。
+**不做：** Core 内调用 LLM；复制宿主 Agent Runtime；恢复退役 CLI；实现 Init
+Engineering；把 archive smoke 冒充真实产品安装；修改外部参考源码。
 
 ## 当前设计决策
 
 | ID | 决策 | 状态 |
 |---|---|:---:|
-| D1 | Core 只做确定性状态转换，Agent 在 Tick 之间完成推理与工具调用 | ✅ |
-| D2 | `HostAdapter` 统一检测、能力、事件、CLI 和 usage source | ✅ |
+| D1 | Core 只做确定性治理，Agent 在 Tick 之间推理和执行工具 | ✅ |
+| D2 | Host Adapter 隔离宿主差异，Core 不感知 Claude/Codex | ✅ |
 | D3 | Claude/Codex 共用规则模板、Skill 协议和 `scripts/ae-run` | ✅ |
-| D4 | `FeatureManifest` 是 `AE_*` 默认值唯一事实源；Provider SDK 可选 | ✅ |
-| D5 | Release 报告分开记录 archive smoke 与真实 product install | ✅ |
-| D6 | 历史设计只读归档，当前入口保持短小且可追溯 | ✅ |
+| D4 | `FeatureManifest` 是 `AE_*` 默认值唯一事实源 | ✅ |
+| D5 | archive smoke 与真实 product install 分开报告 | ✅ |
+| D6 | 当前资产短小可追溯，详细历史由 Git 和 `HISTORY.md` 保留 | ✅ |
+| D7 | 采用双基线：v5.6 是当前实现，v5.7 是已批准目标 | ✅ |
+| D8 | v5.7 采用渐进协议内核重构，不建立双内核 | ✅ |
+| D9 | 事件是事实源，EngineState 是可重建投影 | ✅ |
 
 ## 当前状态
 
-- Phase 49：22/22，双宿主基础适配完成。
-- Phase 50：8/8；T233-T240 完成。
-- 当前基线：1889 passed / 1 skipped；全量覆盖率 90.15%。
-- 下一步：在真实 Claude Code/Codex 产品内按需执行 product install 验收。
-- 阻塞：无；真实产品安装状态保持 `not_run`，不可由 archive smoke 代替。
+- Phase 1-51 已完成；最近基线为 1889 passed / 1 skipped，覆盖率 90.15%。
+- v5.7 目标设计与 Phase 52-56 实施计划已完成。
+- 当前实施入口：Phase 52 / T242，先以 RED 测试锁定协议盲区。
+- v5.6 checkpoint 和调用入口在迁移期保持兼容。
+- 阻塞：无；真实产品安装状态保持 `not_run`。
 
 ## 最近演进
 
 | 日期 | 变更 |
 |---|---|
-| 2026-07-27 | T237 将 archive smoke 与 product install 状态分离 |
-| 2026-07-27 | T240 新增 74 项行为/回归测试，覆盖率 84.51% → 90.15%，并清零 SQLite 资源泄漏告警 |
-| 2026-07-27 | T236 完成 manifest、依赖与配置 SSOT |
-| 2026-07-27 | T235 落地 Claude/Codex `HostAdapter` 完整契约 |
-| 2026-07-27 | T233-T234 修复测试真实性并同步跨 Agent 规则 |
-| 2026-07-27 | Phase 49 完成 Host-neutral Core 与双宿主 Release 基础验收 |
+| 2026-07-27 | 批准 v5.7 渐进式协议内核重构与双基线策略 |
+| 2026-07-27 | Phase 51 收口兼容性告警，全量测试输出零告警 |
+| 2026-07-27 | Phase 50 完成 Codex 迁移、配置 SSOT 和双层发布验收 |
+| 2026-07-27 | Phase 49 完成 Host-neutral Core 与双宿主基础适配 |
 
 ## 待解决问题
 
-- T238：完成归档索引及当前设计入口验证。
-- T239：移除 README、用户指南、API 与培训手册中的退役能力宣称。
-- T240：sync、metadata、Ruff、mypy、1889 tests、90.15% coverage 与双宿主
-  archive smoke 已通过；真实产品安装仍为 `not_run`。
-- 真实 Claude Code/Codex 产品安装验收由用户在对应产品中执行，自动报告保持 `not_run`。
+- T242-T246：Protocol Envelope v1.1 与幂等 Result。
+- T247-T252：Event Store、投影、事务和 checkpoint 导入。
+- T253-T270：StageHandler、Host SPI 2.0、黄金轨迹和发布收口。
 
 ## 引用文件
 
-`design/v5.6-Design-Loop.md` · `design/IMPLEMENTATION-TRACKER.md` · `design/phase50-codex-migration-closure-design.md` · `design/archive/INDEX.md`
+`design/v5.6-Design-Loop.md` · `design/v5.7-Protocol-Kernel-Design.md` ·
+`design/v5.7-Protocol-Kernel-PLAN.md` · `design/IMPLEMENTATION-TRACKER.md` ·
+`design/HISTORY.md`

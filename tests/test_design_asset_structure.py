@@ -1,4 +1,4 @@
-"""当前设计入口与历史归档的结构契约。"""
+"""当前设计入口、双基线与历史摘要的结构契约。"""
 
 from __future__ import annotations
 
@@ -16,21 +16,31 @@ def test_current_design_entrypoints_are_compact_and_traceable() -> None:
 
     assert len(beacon.splitlines()) <= 80
     assert len(tracker.splitlines()) <= 160
-    assert "design/archive/INDEX.md" in beacon
-    assert "design/archive/INDEX.md" in tracker
-    assert "archive/INDEX.md" in index
+    for entrypoint in (
+        "design/v5.6-Design-Loop.md",
+        "design/v5.7-Protocol-Kernel-Design.md",
+        "design/v5.7-Protocol-Kernel-PLAN.md",
+        "design/IMPLEMENTATION-TRACKER.md",
+        "design/HISTORY.md",
+    ):
+        assert entrypoint in beacon
+    assert "v5.6-Design-Loop.md" in index
+    assert "v5.7-Protocol-Kernel-Design.md" in index
+    assert "HISTORY.md" in tracker
 
 
-def test_complete_pre_refactor_history_is_archived() -> None:
+def test_current_design_assets_exist() -> None:
     expected = (
-        ROOT / "design/archive/legacy/BEACON-pre-phase50.md",
-        ROOT
-        / "design/archive/legacy/IMPLEMENTATION-TRACKER-pre-phase50.md",
-        ROOT / "design/archive/legacy/v5.6-Design-Loop-full-history.md",
+        ROOT / "design/BEACON.md",
+        ROOT / "design/v5.6-Design-Loop.md",
+        ROOT / "design/v5.7-Protocol-Kernel-Design.md",
+        ROOT / "design/v5.7-Protocol-Kernel-PLAN.md",
+        ROOT / "design/IMPLEMENTATION-TRACKER.md",
+        ROOT / "design/HISTORY.md",
     )
 
     for path in expected:
-        assert path.is_file(), f"缺少历史归档: {path}"
+        assert path.is_file(), f"缺少当前设计资产: {path}"
 
 
 def test_current_loop_design_keeps_authoritative_contracts() -> None:

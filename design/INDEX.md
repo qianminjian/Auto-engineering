@@ -1,33 +1,28 @@
-# design/ 当前资产索引
+# design/ 资产索引
 
-> 更新：2026-07-27｜当前与历史严格分层
+> 更新：2026-07-27｜双基线：v5.6 当前实现 + v5.7 已批准目标
 
 ## 当前权威资产
 
 | 文件 | 用途 |
 |---|---|
-| `BEACON.md` | 北方之星、范围、当前决策与下一步（≤80 行） |
-| `v5.6-Design-Loop.md` | 当前 Tick、Host Adapter、验证、配置与 Release 契约 |
-| `IMPLEMENTATION-TRACKER.md` | 当前里程碑与验证证据 |
-| `phase50-codex-migration-closure-design.md` | Phase 50 已批准定型设计 |
-| `phase50-codex-migration-closure-PLAN.md` | Phase 50 实施步骤 |
+| `BEACON.md` | 北方之星、范围、批准决策与下一步（≤80 行） |
+| `v5.6-Design-Loop.md` | 当前已实现行为与兼容基线 |
+| `v5.7-Protocol-Kernel-Design.md` | 已批准的协议内核目标设计 |
+| `v5.7-Protocol-Kernel-PLAN.md` | Phase 52-56 可执行实施计划 |
+| `IMPLEMENTATION-TRACKER.md` | 当前任务状态、优先级与 EARS 验收 |
+| `HISTORY.md` | 历史里程碑与 Git 追溯入口 |
 
-## 辅助资产
+## 解释顺序
 
-- `discussion/`：设计推理和对标记录，不作为当前运行契约。
-- `reference/`：小型示例规格。
-- `2026-07-26-真跑验证-PLAN.md`：已执行真跑计划，待随 Phase 50 收口归档。
-
-## 历史资产
-
-统一入口：`design/archive/INDEX.md`。
-
-历史文件不得作为新增能力的唯一依据；如需恢复历史设计，必须先与当前 BEACON、
-代码和测试核对，涉及决策翻转时取得用户批准。
+1. 当前运行行为以 v5.6 设计、代码和新鲜测试证据为准。
+2. 尚未实现的目标行为以 v5.7 设计为准，不得伪装为已交付。
+3. 实施顺序和任务状态以 PLAN 与 Tracker 为准。
+4. 历史争议以 Git 记录追溯，不把旧报告继续保存在活动工作区。
 
 ## 维护规则
 
-1. 当前行为只写入当前权威资产。
-2. 完成态计划和被替代规格迁入 `design/archive/`，保留追溯关系。
-3. 不在当前文档中宣称退役 CLI、standalone driver 或真实产品安装已经可用。
+1. 修改架构前同步 BEACON、目标设计、计划和 Tracker。
+2. 完成任务后记录新鲜验证，不用历史通过替代。
+3. 被替代设计、测试报告和临时分析删除后由 Git 或外部备份承担恢复。
 4. 设计与代码不一致时默认补齐代码，不通过降低设计标准消除差异。

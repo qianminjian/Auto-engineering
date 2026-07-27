@@ -117,4 +117,4 @@ Provider SDK 按需安装，不改变 Core 的宿主中立性。
 5. 配置默认值的唯一事实源在哪里？
 
 答案见 `design/v5.6-Design-Loop.md`、`docs/USER_GUIDE.md` 和
-`docs/api-reference.md`。历史培训材料位于 `docs/his_bak/phase50/`。
+`docs/api-reference.md`。历史里程碑与恢复方式见 `design/HISTORY.md`。

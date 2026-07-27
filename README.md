@@ -67,8 +67,10 @@ Host-neutral Core (auto_engineering/)
 |------|------|
 | `design/BEACON.md` | 当前目标、范围、决策和下一步（≤80 行） |
 | `design/v5.6-Design-Loop.md` | 当前 Tick、Host Adapter、验证与 Release 契约 |
+| `design/v5.7-Protocol-Kernel-Design.md` | 已批准的协议内核目标设计 |
+| `design/v5.7-Protocol-Kernel-PLAN.md` | Phase 52-56 实施计划 |
 | `design/IMPLEMENTATION-TRACKER.md` | 当前里程碑和新鲜验证证据 |
-| `design/archive/INDEX.md` | 完整历史设计与决策索引 |
+| `design/HISTORY.md` | 历史里程碑与 Git 追溯入口 |
 
 ## 测试
 

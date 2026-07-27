@@ -107,6 +107,7 @@ scripts/ae-run dev-loop --resume
 ## 9. 更多资料
 
 - 当前设计：`design/v5.6-Design-Loop.md`
+- 目标设计：`design/v5.7-Protocol-Kernel-Design.md`
 - 当前跟踪：`design/IMPLEMENTATION-TRACKER.md`
 - API：`docs/api-reference.md`
-- 历史：`design/archive/INDEX.md`
+- 历史：`design/HISTORY.md`

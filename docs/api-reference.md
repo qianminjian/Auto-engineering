@@ -108,4 +108,5 @@ uv sync --extra openai
 - Git 写操作同时受 capability 与用户授权约束。
 - 路径输入必须归一化并执行白名单检查。
 
-当前设计见 `design/v5.6-Design-Loop.md`，历史规格见 `design/archive/INDEX.md`。
+当前实现见 `design/v5.6-Design-Loop.md`，已批准目标见
+`design/v5.7-Protocol-Kernel-Design.md`，历史摘要见 `design/HISTORY.md`。
