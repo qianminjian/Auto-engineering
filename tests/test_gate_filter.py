@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 # ============================================================
 # Group 2: Gate 基类扩展
 # ============================================================
@@ -50,8 +52,10 @@ class TestGateVerdictRename:
 
     def test_verdict_alias_to_gate_verdict(self):
         """Verdict 应当作为 GateVerdict 的别名 (向后兼容)."""
-        from auto_engineering.gates.base import GateVerdict, Verdict
+        from auto_engineering.gates.base import GateVerdict
 
+        with pytest.warns(DeprecationWarning, match="请使用 GateVerdict"):
+            from auto_engineering.gates.base import Verdict
         assert Verdict is GateVerdict
 
 

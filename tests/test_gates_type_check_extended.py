@@ -21,6 +21,8 @@ import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 # ============================================================
 # 1. TypeCheckGate 基础
 # ============================================================
@@ -60,7 +62,8 @@ class TestTypeCheckGateBasics:
 
         gate = TypeCheckGate(type_checker_bin="custom-mypy")
         # 旧名 mypy_bin 通过 @property getter 访问 (DeprecationWarning)
-        assert gate.mypy_bin == "custom-mypy"
+        with pytest.warns(DeprecationWarning, match="use .type_checker_bin instead"):
+            assert gate.mypy_bin == "custom-mypy"
         assert gate.type_checker_bin == "custom-mypy"
 
     def test_class_attributes(self):
@@ -484,5 +487,4 @@ class TestTypeCheckRun:
                 verdict = gate.run(tmp_path)
         assert verdict.passed is False
         assert "..." in verdict.message
-
 

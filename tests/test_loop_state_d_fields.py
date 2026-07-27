@@ -281,7 +281,8 @@ def test_task_construct_with_all_10_fields():
     assert task.validation is validation
     assert task.output is outcome
     # 保留旧字段
-    assert task.agent_type == "developer"
+    with pytest.warns(FutureWarning, match="use role instead"):
+        assert task.agent_type == "developer"
     assert task.depends_on == ["t0"]
 
 
