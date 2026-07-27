@@ -135,6 +135,25 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
         ON checkpoints(round)
         """
     )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS protocol_actions (
+            message_id TEXT PRIMARY KEY,
+            thread_id TEXT NOT NULL,
+            action_json TEXT NOT NULL,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            result_hash TEXT,
+            response_json TEXT,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_protocol_actions_thread_active
+        ON protocol_actions(thread_id, is_active)
+        """
+    )
     conn.commit()
 
 

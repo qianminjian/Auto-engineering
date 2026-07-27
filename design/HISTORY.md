@@ -10,7 +10,8 @@
 | Phase 49 | 完成 Host-neutral Core、Claude Code/Codex Adapter 和双宿主发布基础验收 |
 | Phase 50 | 完成 Codex 迁移收口、跨 Agent 规则同步、配置 SSOT、发布双层报告、文档重写与覆盖率提升 |
 | Phase 51 | 将兼容性弃用告警纳入显式测试契约；基线 1889 passed / 1 skipped、覆盖率 90.15% |
-| Phase 52-56 | 已批准但尚未实施：Protocol Envelope、Event Store、Tick Kernel、Host SPI 2.0 与黄金轨迹 |
+| Phase 52 | 完成 Protocol Envelope v1.1、闭合 schema、Action/Result 因果身份、进程内与跨进程幂等、v1.0 受限兼容；基线 1913 passed / 1 skipped、覆盖率 90.21% |
+| Phase 53-56 | 已批准但尚未实施：Event Store、Tick Kernel、Host SPI 2.0 与黄金轨迹 |
 
 ## 持续有效的决策
 

@@ -20,6 +20,11 @@ from auto_engineering.loop.actions import (
     ErrorResponse,
     validate_result_format,
 )
+from auto_engineering.loop.protocol import (
+    ProtocolErrorCode,
+    ProtocolValidationError,
+    validate_result_envelope,
+)
 
 
 class TestActionDone:
@@ -179,3 +184,49 @@ class TestValidateResultFormat:
     def test_unknown_stage_returns_error(self) -> None:
         errs = validate_result_format({"stage": "bogus"}, "bogus")
         assert errs != []
+
+
+class TestProtocolResultValidation:
+    def test_missing_causation_has_stable_error_code(self) -> None:
+        result = {
+            "schema_version": "1.1",
+            "message_type": "result",
+            "message_id": "result-1",
+            "thread_id": "thread-1",
+            "tick": 1,
+            "stage": "critic",
+            "correlation_id": "thread-1",
+            "extensions": {},
+            "verdict": "APPROVE",
+            "findings": [],
+        }
+
+        try:
+            validate_result_envelope(result)
+        except ProtocolValidationError as exc:
+            assert exc.code is ProtocolErrorCode.INVALID_ENVELOPE
+        else:
+            raise AssertionError("缺少 causation_id 的 v1.1 Result 必须被拒绝")
+
+    def test_unknown_top_level_field_has_stable_error_code(self) -> None:
+        result = {
+            "schema_version": "1.1",
+            "message_type": "result",
+            "message_id": "result-1",
+            "thread_id": "thread-1",
+            "tick": 1,
+            "stage": "critic",
+            "causation_id": "action-1",
+            "correlation_id": "thread-1",
+            "extensions": {},
+            "verdict": "APPROVE",
+            "findings": [],
+            "unexpected": "not allowed",
+        }
+
+        try:
+            validate_result_envelope(result)
+        except ProtocolValidationError as exc:
+            assert exc.code is ProtocolErrorCode.INVALID_ENVELOPE
+        else:
+            raise AssertionError("v1.1 Result 的未知顶层字段必须被拒绝")

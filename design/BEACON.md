@@ -1,6 +1,6 @@
 # Auto-Engineering BEACON
 
-> 创建：2026-06-24｜更新：2026-07-27｜阶段：v5.7 设计完成，Phase 52 待实施
+> 创建：2026-06-24｜更新：2026-07-27｜阶段：Phase 52 已完成，Phase 53 待实施
 > 决策状态翻转（✅↔❌）或架构降级必须先获用户批准。
 
 ## 目标与成功标准
@@ -35,9 +35,9 @@ Engineering；把 archive smoke 冒充真实产品安装；修改外部参考源
 
 ## 当前状态
 
-- Phase 1-51 已完成；最近基线为 1889 passed / 1 skipped，覆盖率 90.15%。
-- v5.7 目标设计与 Phase 52-56 实施计划已完成。
-- 当前实施入口：Phase 52 / T242，先以 RED 测试锁定协议盲区。
+- Phase 1-52 已完成；当前基线为 1913 passed / 1 skipped，覆盖率 90.21%。
+- Protocol Envelope v1.1、严格 schema、Result 因果幂等和 v1.0 兼容入口已落地。
+- 当前实施入口：Phase 53 / T247，先定义不可变 LoopEvent 契约。
 - v5.6 checkpoint 和调用入口在迁移期保持兼容。
 - 阻塞：无；真实产品安装状态保持 `not_run`。
 
@@ -45,6 +45,7 @@ Engineering；把 archive smoke 冒充真实产品安装；修改外部参考源
 
 | 日期 | 变更 |
 |---|---|
+| 2026-07-27 | Phase 52 完成 Protocol Envelope v1.1、跨进程幂等与受限兼容入口 |
 | 2026-07-27 | 批准 v5.7 渐进式协议内核重构与双基线策略 |
 | 2026-07-27 | Phase 51 收口兼容性告警，全量测试输出零告警 |
 | 2026-07-27 | Phase 50 完成 Codex 迁移、配置 SSOT 和双层发布验收 |
@@ -52,7 +53,6 @@ Engineering；把 archive smoke 冒充真实产品安装；修改外部参考源
 
 ## 待解决问题
 
-- T242-T246：Protocol Envelope v1.1 与幂等 Result。
 - T247-T252：Event Store、投影、事务和 checkpoint 导入。
 - T253-T270：StageHandler、Host SPI 2.0、黄金轨迹和发布收口。
 

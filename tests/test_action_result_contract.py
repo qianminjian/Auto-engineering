@@ -20,12 +20,14 @@ from unittest.mock import MagicMock
 import pytest
 from jsonschema import Draft202012Validator
 
+from auto_engineering.engine.state import EngineState
 from auto_engineering.loop.actions import (
     RESULT_SCHEMA,
     ActionDone,
     ActionError,
     validate_result_format,
 )
+from auto_engineering.loop.protocol import action_envelope
 from auto_engineering.loop.tick_orchestrator import TickOrchestrator
 
 _SCHEMA_DIR = Path(__file__).resolve().parent.parent / "auto_engineering" / "loop"
@@ -95,7 +97,17 @@ def _valid_result(stage: str) -> dict:
             "diverged_count": 0,
         },
     }
-    return fixtures[stage]
+    return {
+        "schema_version": "1.1",
+        "message_type": "result",
+        "message_id": f"result-{stage}",
+        "thread_id": "thread-1",
+        "tick": 1,
+        "causation_id": f"action-{stage}",
+        "correlation_id": "thread-1",
+        "extensions": {},
+        **fixtures[stage],
+    }
 
 
 class TestSchemaFilesVersionedAndValid:
@@ -108,9 +120,22 @@ class TestSchemaFilesVersionedAndValid:
     def test_both_schemas_versioned_have_id(self):
         assert _ACTION_SCHEMA["$id"].endswith("action.schema.json")
         assert _RESULT_SCHEMA_JSON["$id"].endswith("stage-result.schema.json")
-        # 版本化: $comment 声明 contract 版本号 (vN.N.N)
-        assert "v1.0.0" in _ACTION_SCHEMA["$comment"]
-        assert "v1.0.0" in _RESULT_SCHEMA_JSON["$comment"]
+        assert "v1.1" in _ACTION_SCHEMA["$comment"]
+        assert "v1.1" in _RESULT_SCHEMA_JSON["$comment"]
+
+    @pytest.mark.parametrize("schema", [_ACTION_SCHEMA, _RESULT_SCHEMA_JSON])
+    def test_protocol_envelope_fields_are_required(self, schema):
+        for field in (
+            "schema_version",
+            "message_type",
+            "message_id",
+            "thread_id",
+            "tick",
+            "stage",
+            "correlation_id",
+            "extensions",
+        ):
+            assert field in schema["required"]
 
 
 class TestResultSchemaMirrorsRuntimeSSOT:
@@ -148,14 +173,75 @@ class TestActionSchemaStagesMirrorSSOT:
         return set(_ACTION_SCHEMA["properties"]["action"]["enum"])
 
     def test_intermediate_stages_match_ssot(self):
-        intermediate = self._enum() - {"done", "error"}
+        intermediate = self._enum() - {"gate", "skip", "done", "error"}
         expected = set(RESULT_SCHEMA) | set(_PHASE0_STAGES)
         assert intermediate == expected, (
             f"action enum 中间 stage 漂移: {intermediate} vs {expected}"
         )
 
     def test_terminal_actions_present(self):
-        assert {"done", "error"} <= self._enum()
+        assert {"gate", "skip", "done", "error"} <= self._enum()
+
+
+class TestControlActionContract:
+    def _envelope(self, **payload) -> dict:
+        return {
+            "schema_version": "1.1",
+            "message_type": "action",
+            "message_id": "action-1",
+            "thread_id": "thread-1",
+            "tick": 1,
+            "stage": "architect",
+            "correlation_id": "thread-1",
+            "extensions": {},
+            **payload,
+        }
+
+    def test_gate_action_is_declared(self):
+        action = self._envelope(
+            action="gate",
+            gate={
+                "id": "checkpoint_architect",
+                "type": "stage_checkpoint",
+                "question": "是否继续？",
+                "options": ["继续", "终止 loop"],
+            },
+        )
+        _action_validator.validate(action)
+
+    def test_skip_action_is_declared(self):
+        action = self._envelope(
+            action="skip",
+            reason="没有可验证的设计项",
+            next_transition="plate_deep_audit",
+        )
+        _action_validator.validate(action)
+
+    def test_unknown_top_level_field_is_rejected(self):
+        action = self._envelope(action="architect", unexpected="not allowed")
+        assert not _action_validator.is_valid(action)
+
+    def test_real_checkpoint_gate_conforms(self):
+        orchestrator = _orchestrator()
+        orchestrator.set_pause_at_stages(["architect"])
+        action = orchestrator.init("实现协议")
+
+        assert action["action"] == "gate"
+        _action_validator.validate(action)
+
+    def test_real_skip_declares_next_transition(self):
+        orchestrator = _orchestrator()
+        state = EngineState(
+            requirement="实现协议",
+            current_stage="component_verifier",
+            thread_id="thread-1",
+        )
+        raw = orchestrator.action_builder.build_action(state)
+        action = action_envelope(raw)
+
+        assert action["action"] == "skip"
+        assert action["next_transition"] == "plate_deep_audit"
+        _action_validator.validate(action)
 
 
 class TestActionRoundTrip:
@@ -178,11 +264,26 @@ class TestActionRoundTrip:
         _action_validator.validate(action)
 
     def test_done_action_conforms(self):
-        action = ActionDone("GOAL_ACHIEVED", reason="all gates pass", tick=5).to_dict()
+        action = action_envelope(
+            ActionDone(
+                "GOAL_ACHIEVED",
+                reason="all gates pass",
+                tick=5,
+                thread_id="thread-1",
+            ).to_dict()
+        )
         _action_validator.validate(action)
 
     def test_error_action_conforms(self):
-        action = ActionError(error_code="STAGE_MISMATCH", message="bad stage").to_dict()
+        action = action_envelope(
+            ActionError(
+                error_code="STAGE_MISMATCH",
+                message="bad stage",
+            ).to_dict(),
+            thread_id="thread-1",
+            tick=1,
+            stage=None,
+        )
         _action_validator.validate(action)
 
     def test_error_action_missing_code_rejected(self):
@@ -218,3 +319,45 @@ class TestResultRoundTrip:
         r["coverage_map"] = [{"design_item": "x", "status": "BOGUS"}]
         assert not _result_validator.is_valid(r)
         assert validate_result_format(r, "component_verifier") != []
+
+
+class TestResultEnvelopeContract:
+    def _result(self, **overrides) -> dict:
+        result = {
+            "schema_version": "1.1",
+            "message_type": "result",
+            "message_id": "result-1",
+            "thread_id": "thread-1",
+            "tick": 1,
+            "stage": "critic",
+            "causation_id": "action-1",
+            "correlation_id": "thread-1",
+            "extensions": {},
+            "verdict": "APPROVE",
+            "findings": [],
+        }
+        result.update(overrides)
+        return result
+
+    def test_v11_result_is_valid(self):
+        _result_validator.validate(self._result())
+
+    def test_result_without_causation_is_rejected(self):
+        result = self._result()
+        del result["causation_id"]
+        assert not _result_validator.is_valid(result)
+
+    def test_unsupported_schema_version_is_rejected(self):
+        assert not _result_validator.is_valid(
+            self._result(schema_version="9.9")
+        )
+
+    def test_wrong_message_type_is_rejected(self):
+        assert not _result_validator.is_valid(
+            self._result(message_type="action")
+        )
+
+    def test_unknown_top_level_field_is_rejected(self):
+        assert not _result_validator.is_valid(
+            self._result(unexpected="not allowed")
+        )

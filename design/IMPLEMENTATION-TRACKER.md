@@ -11,7 +11,7 @@
 | Phase 49 Host-neutral Core | ✅ 22/22 | 双宿主基础适配与发布验收 |
 | Phase 50 Codex 迁移收口 | ✅ 8/8 | T233-T240；覆盖率 90.15% |
 | Phase 51 质量收口 | ✅ 1/1 | T241；1889 passed / 1 skipped，零告警 |
-| Phase 52 Protocol Envelope | ☐ 0/5 | T242-T246 |
+| Phase 52 Protocol Envelope | ✅ 5/5 | T242-T246；1913 passed / 1 skipped |
 | Phase 53 Event Store | ☐ 0/6 | T247-T252 |
 | Phase 54 Tick Kernel | ☐ 0/8 | T253-T260 |
 | Phase 55 Host SPI 2.0 | ☐ 0/5 | T261-T265 |
@@ -21,11 +21,11 @@
 
 | 优先级 | ID | 任务 | EARS 验收 | 状态 |
 |---:|---|---|---|:---:|
-| P0 | T242 | 锁定 action/result 契约盲区 | While Core 发出控制 Action, when schema 校验, the validator shall 接受 gate/skip 且拒绝未声明字段 | ☐ |
-| P0 | T243 | Envelope 与闭合 schema | While 宿主交换消息, when 消息进入 Core, the protocol shall 校验版本、身份、因果与扩展边界 | ☐ |
-| P0 | T244 | Result 因果与幂等 | While Action 已处理, when 相同 Result 重复提交, the Core shall 返回同一后继且只推进一次 | ☐ |
-| P0 | T245 | v1.0 兼容入口 | While 旧 payload 可唯一对齐, when 转换, the adapter shall 生成 v1.1；歧义时 fail closed | ☐ |
-| P0 | T246 | Phase 52 验收 | While 协议迁移完成, when 契约与回归门禁运行, the suite shall 全部通过 | ☐ |
+| P0 | T242 | 锁定 action/result 契约盲区 | While Core 发出控制 Action, when schema 校验, the validator shall 接受 gate/skip 且拒绝未声明字段 | ✅ RED 11 failed；GREEN 合并见 T243 |
+| P0 | T243 | Envelope 与闭合 schema | While 宿主交换消息, when 消息进入 Core, the protocol shall 校验版本、身份、因果与扩展边界 | ✅ 60 passed；Action/Result schema v1.1 |
+| P0 | T244 | Result 因果与幂等 | While Action 已处理, when 相同 Result 重复提交, the Core shall 返回同一后继且只推进一次 | ✅ 29 passed；进程内/跨进程重放与冲突 |
+| P0 | T245 | v1.0 兼容入口 | While 旧 payload 可唯一对齐, when 转换, the adapter shall 生成 v1.1；歧义时 fail closed | ✅ 10 passed；结构化兼容日志；stage mismatch fail closed |
+| P0 | T246 | Phase 52 验收 | While 协议迁移完成, when 契约与回归门禁运行, the suite shall 全部通过 | ✅ 专项 262 passed；全量 1913 passed / 1 skipped；coverage 90.21%；Ruff/mypy/sync/metadata pass |
 
 ## Phase 53：Event Store 与可重放状态
 

@@ -634,7 +634,8 @@ class ActionBuilder:
         if self._batch_state is None:
             return {**base, "action": "skip",
                     "reason": "no batch state for component_verifier",
-                    "stage": "component_verifier"}
+                    "stage": "component_verifier",
+                    "next_transition": "plate_deep_audit"}
         comp = self._batch_state.current_component()
         # Fix B: collect implementation_files from batch_plan file_targets
         impl_files: list[str] = []
@@ -649,7 +650,8 @@ class ActionBuilder:
         design_spec = comp.design_spec_summary()
         if not design_spec and not impl_files:
             return {**base, "action": "skip", "reason": "no design items or implementation files for component",
-                    "stage": "component_verifier"}
+                    "stage": "component_verifier",
+                    "next_transition": "plate_deep_audit"}
         # DS-15: subagent reads design doc + impl files itself.
         # F8 修复 (2026-07-26 真跑): 注入 component/design_section/design_spec/
         # implementation_files 到 context —— 此前 context 为空，verifier subagent 不知

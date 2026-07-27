@@ -566,7 +566,7 @@ class TestErrorHandling:
         r = _make_result_file({"stage": "developer", "files_changed": ["x.py"]})
         action = o.tick(r)
         assert action["action"] == "error"
-        assert action["error_code"] == "STAGE_MISMATCH"
+        assert action["error_code"] == "ACTION_NOT_ACTIVE"
 
     def test_invalid_json_returns_parse_error(self) -> None:
         o = _orchestrator()
@@ -2500,6 +2500,9 @@ class TestTickVsTickDictIdenticalActions:
         stripped = dict(action)
         stripped.pop("thread_id", None)
         stripped.pop("spawn_proof_token", None)
+        stripped.pop("message_id", None)
+        stripped.pop("correlation_id", None)
+        stripped.pop("causation_id", None)
         stripped.pop("subagent_prompt", None)  # DS-15: file-based, may differ
         # DS-15: instruction contains proof_token which is UUID → strip it
         if "instruction" in stripped:

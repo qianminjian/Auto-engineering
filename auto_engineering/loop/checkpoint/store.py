@@ -99,6 +99,21 @@ class SQLiteCheckpointStore[T]:
                     "CREATE INDEX IF NOT EXISTS idx_checkpoints_round "
                     "ON checkpoints(round)"
                 )
+                self._shared_conn.execute(
+                    """CREATE TABLE IF NOT EXISTS protocol_actions (
+                        message_id TEXT PRIMARY KEY,
+                        thread_id TEXT NOT NULL,
+                        action_json TEXT NOT NULL,
+                        is_active INTEGER NOT NULL DEFAULT 1,
+                        result_hash TEXT,
+                        response_json TEXT,
+                        created_at TEXT NOT NULL
+                    )"""
+                )
+                self._shared_conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_protocol_actions_thread_active "
+                    "ON protocol_actions(thread_id, is_active)"
+                )
                 self._shared_conn.commit()
         else:
             # v2.5 P2-D-3: file 模式初始化缓存连接 (WAL + schema 一次)
@@ -358,6 +373,94 @@ class SQLiteCheckpointStore[T]:
         """
         with self._conn() as conn, _atomic(conn):
             conn.execute("DELETE FROM checkpoints")
+            conn.execute("DELETE FROM protocol_actions")
+
+    def record_protocol_action(self, action: dict[str, Any]) -> None:
+        """保存线程当前 active Action，供跨进程因果校验。"""
+
+        message_id = action.get("message_id")
+        thread_id = action.get("thread_id")
+        if not isinstance(message_id, str) or not isinstance(thread_id, str):
+            raise ValueError("protocol action 缺少 message_id/thread_id")
+        action_json = json.dumps(
+            action, ensure_ascii=False, sort_keys=True, default=str
+        )
+        now = datetime.now(UTC).isoformat()
+        with self._conn() as conn, _atomic(conn):
+            conn.execute(
+                "UPDATE protocol_actions SET is_active = 0 "
+                "WHERE thread_id = ? AND is_active = 1",
+                (thread_id,),
+            )
+            conn.execute(
+                """
+                INSERT INTO protocol_actions
+                (message_id, thread_id, action_json, is_active, created_at)
+                VALUES (?, ?, ?, 1, ?)
+                ON CONFLICT(message_id) DO UPDATE SET
+                    action_json = excluded.action_json,
+                    is_active = 1
+                """,
+                (message_id, thread_id, action_json, now),
+            )
+
+    def load_active_protocol_action(self, thread_id: str) -> dict[str, Any] | None:
+        """读取线程当前 active Action。"""
+
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT action_json FROM protocol_actions "
+                "WHERE thread_id = ? AND is_active = 1 "
+                "ORDER BY created_at DESC LIMIT 1",
+                (thread_id,),
+            ).fetchone()
+        return json.loads(row["action_json"]) if row else None
+
+    def record_protocol_result(
+        self,
+        thread_id: str,
+        causation_id: str,
+        result_hash: str,
+        response: dict[str, Any],
+    ) -> None:
+        """将 Result 摘要与已生成响应绑定到原 Action。"""
+
+        response_json = json.dumps(
+            response, ensure_ascii=False, sort_keys=True, default=str
+        )
+        with self._conn() as conn, _atomic(conn), contextlib.closing(
+            conn.execute(
+                """
+                UPDATE protocol_actions
+                SET result_hash = ?, response_json = ?, is_active = 0
+                WHERE thread_id = ? AND message_id = ?
+                """,
+                (result_hash, response_json, thread_id, causation_id),
+            )
+        ) as cursor:
+            if cursor.rowcount != 1:
+                raise ValueError("Result causation_id 未指向已保存 Action")
+
+    def load_protocol_result(
+        self,
+        thread_id: str,
+        causation_id: str,
+    ) -> tuple[str, dict[str, Any]] | None:
+        """读取已处理 Result 的摘要与响应 Action。"""
+
+        with self._conn() as conn:
+            row = conn.execute(
+                """
+                SELECT result_hash, response_json
+                FROM protocol_actions
+                WHERE thread_id = ? AND message_id = ?
+                  AND result_hash IS NOT NULL AND response_json IS NOT NULL
+                """,
+                (thread_id, causation_id),
+            ).fetchone()
+        if row is None:
+            return None
+        return row["result_hash"], json.loads(row["response_json"])
 
     def count(self) -> int:
         """返回 Checkpoint 总数."""

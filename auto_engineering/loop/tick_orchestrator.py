@@ -62,6 +62,14 @@ from auto_engineering.loop.escalation_handler import (
 )
 from auto_engineering.loop.guardrail import GuardrailChain
 from auto_engineering.loop.plan import Plan
+from auto_engineering.loop.protocol import (
+    ProtocolErrorCode,
+    ProtocolValidationError,
+    action_envelope,
+    payload_digest,
+    validate_result_envelope,
+)
+from auto_engineering.loop.protocol_compat import upgrade_legacy_result
 from auto_engineering.loop.refine import build_refine_request
 from auto_engineering.loop.stage_router import (
     StageRouter,
@@ -226,6 +234,11 @@ class TickOrchestrator:
         # T64: Stage Checkpoint Gate (DecisionGate 形态 3)
         self._pause_at_stages: set[str] = set()
         self._passed_checkpoints: set[str] = set()
+        # Protocol v1.1: 当前待处理 Action 与已完成 Result 的进程内幂等索引。
+        # SQLite 跨进程持久化由同阶段的 checkpoint store 兼容表承载。
+        self._active_action: dict[str, Any] | None = None
+        self._result_replays: dict[str, tuple[str, dict[str, Any]]] = {}
+        self._current_result_message_id: str | None = None
         self._action_builder = ActionBuilder(
             self.project_root,
             pii_enabled=self._pii_enabled,
@@ -423,6 +436,9 @@ class TickOrchestrator:
             state = EngineState.from_dict(state)
         self._state = state
         self._round_history = list(ck.history or [])
+        self._active_action = checkpoint_store.load_active_protocol_action(
+            state.thread_id
+        )
 
         # 协作组件 (无状态 / 从 store 重建)
         self._router = StageRouter()
@@ -510,6 +526,55 @@ class TickOrchestrator:
         tick_no = self._state.tick
         stage_in = self._state.current_stage
 
+        try:
+            result = upgrade_legacy_result(result, self._active_action)
+        except ProtocolValidationError as exc:
+            self._record_tick_latency(t_start, tick_no)
+            return self._protocol_error(exc.code, str(exc))
+
+        native_result = True
+        result_causation: str | None = None
+        result_hash: str | None = None
+        if native_result:
+            try:
+                envelope = validate_result_envelope(result)
+            except ProtocolValidationError as exc:
+                self._record_tick_latency(t_start, tick_no)
+                return self._protocol_error(exc.code, str(exc))
+            result_causation = envelope.causation_id
+            result_hash = payload_digest(result)
+            replay = self._result_replays.get(result_causation or "")
+            if (
+                replay is None
+                and result_causation
+                and self._checkpoint_store is not None
+            ):
+                replay = self._checkpoint_store.load_protocol_result(
+                    self._state.thread_id,
+                    result_causation,
+                )
+            if replay is not None:
+                previous_hash, previous_action = replay
+                if previous_hash == result_hash:
+                    return previous_action
+                return self._protocol_error(
+                    ProtocolErrorCode.RESULT_CONFLICT,
+                    "同一 causation_id 已提交不同 Result payload",
+                    causation_id=result_causation,
+                )
+            if (
+                envelope.thread_id != self._state.thread_id
+                or self._active_action is None
+                or result_causation != self._active_action.get("message_id")
+            ):
+                self._record_tick_latency(t_start, tick_no)
+                return self._protocol_error(
+                    ProtocolErrorCode.ACTION_NOT_ACTIVE,
+                    "Result 指向的 Action 不是当前 active action",
+                    causation_id=result_causation,
+                )
+            self._current_result_message_id = envelope.message_id
+
         # T75: OTLP tracing span per tick
         tick_span = None
         if self._tracer is None:
@@ -519,6 +584,25 @@ class TickOrchestrator:
                 f"tick.{stage_in}", attributes={"tick": tick_no, "stage": stage_in})
 
         action = self._tick_body_dict(result)
+        if "schema_version" not in action:
+            action = action_envelope(
+                action,
+                thread_id=self._state.thread_id,
+                tick=action.get("tick", self._state.tick + 1),
+                stage=action.get("stage", self._state.current_stage),
+                causation_id=self._current_result_message_id,
+            )
+        result_accepted = action.get("action") != "error"
+        if native_result and result_causation and result_hash and result_accepted:
+            self._result_replays[result_causation] = (result_hash, action)
+            if self._checkpoint_store is not None:
+                self._checkpoint_store.record_protocol_result(
+                    self._state.thread_id,
+                    result_causation,
+                    result_hash,
+                    action,
+                )
+        self._current_result_message_id = None
         duration_ms = int((time.perf_counter() - t_start) * 1000)
 
         if tick_span is not None:
@@ -615,6 +699,29 @@ class TickOrchestrator:
                     )
 
         return action
+
+    def _protocol_error(
+        self,
+        code: ProtocolErrorCode,
+        message: str,
+        *,
+        causation_id: str | None = None,
+    ) -> dict[str, Any]:
+        """构建不替换 active action 的结构化协议错误。"""
+
+        state = self._state
+        payload = ErrorResponse(
+            error_code=code.value,
+            message=message,
+            current_state=state.to_dict() if state else None,
+        ).to_dict()
+        return action_envelope(
+            payload,
+            thread_id=state.thread_id if state else "unknown",
+            tick=(state.tick + 1) if state else 0,
+            stage=state.current_stage if state else None,
+            causation_id=causation_id,
+        )
 
     def _tick_body_dict(self, result: dict) -> dict:
         """tick 核心逻辑 (dict 版本): Gate resolution → 验证 → Guardrail → Gate → 路由 → action."""
@@ -1605,6 +1712,14 @@ class TickOrchestrator:
                 # 下一次独立 --tick 进程能恢复刚注入的滚动摘要。
                 self._save_checkpoint()
         # P2-4: log final action JSON AFTER all injections (session_summary etc.)
+        action = action_envelope(
+            action,
+            causation_id=self._current_result_message_id,
+        )
+        if action.get("action") != "error":
+            self._active_action = action
+            if self._checkpoint_store is not None:
+                self._checkpoint_store.record_protocol_action(action)
         self.action_builder.log_prompt(self.project_root, action)
         return action
 

@@ -1,68 +1,87 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://auto-engineering.dev/schemas/action.schema.json",
-  "$comment": "Internal identifier — $id is NOT a resolvable URL (T135m)",
-  "title": "Tick Action",
-  "description": "Core-to-host contract (v7.0 T33a). Shape of the action JSON emitted each tick by TickOrchestrator._build_action / ActionDone / ActionError. This is the stable coupling point between the host-neutral loop engine and any host adapter.",
-  "$comment": "action contract schema v1.0.0 — SSOT for engine->driver. Kept in sync with tick_orchestrator._build_action + actions.ActionDone/ActionError by tests/test_action_result_contract.py.",
+  "$comment": "action contract schema v1.1 — Core-to-host Protocol Envelope SSOT.",
+  "title": "Tick Action Envelope",
   "type": "object",
-  "required": ["action"],
+  "required": [
+    "schema_version", "message_type", "message_id", "thread_id", "tick",
+    "stage", "correlation_id", "extensions", "action"
+  ],
   "properties": {
-    "message_type": {
-      "type": "string",
-      "enum": ["action", "result", "event", "error"],
-      "description": "Message type discriminator for action/result schema extension (T97)."
-    },
+    "schema_version": {"const": "1.1"},
+    "message_type": {"const": "action"},
+    "message_id": {"type": "string", "minLength": 1},
+    "thread_id": {"type": "string", "minLength": 1},
+    "tick": {"type": "integer", "minimum": 0},
+    "stage": {"type": ["string", "null"]},
+    "causation_id": {"type": "string", "minLength": 1},
+    "correlation_id": {"type": "string", "minLength": 1},
+    "extensions": {"type": "object"},
     "action": {
       "type": "string",
       "enum": [
         "gap_scan", "gap_review", "research", "architect", "developer",
         "critic", "component_verifier", "plate_deep_audit",
-        "system_verifier", "system_deep_audit", "done", "error"
-      ],
-      "description": "Discriminator: the stage to run, or a terminal action (done/error)."
+        "system_verifier", "system_deep_audit", "gate", "skip", "done", "error"
+      ]
     },
-    "tick": {"type": "integer", "minimum": 0, "description": "1-based tick sequence for the requested action."},
-    "stage": {"type": ["string", "null"], "description": "Current engine stage (null on done)."},
-    "thread_id": {"type": "string", "description": "Stable loop thread id across ticks."},
-    "gate_summary": {"type": "object", "description": "Per-gate results snapshot {gate: {passed, message, ...}}."},
-    "feedback": {
-      "type": ["string", "object", "null"],
-      "description": "Free feedback string, or PLAN_REFINE object {mode, refine_request} for architect refine."
-    },
-    "progress_summary": {"type": ["object", "null"], "description": "ProgressTree.summary() or null."},
-    "context": {"type": "object", "description": "Stage-specific input context for the driver."},
-    "expected_format": {"type": "object", "description": "Human-readable shape hint for the driver's result."},
-    "recheck": {"type": "object", "description": "Verifier Sonnet-recheck protocol config (verifier stages)."},
-    "error_code": {"type": "string", "description": "Machine error code (error action)."},
-    "message": {"type": "string", "description": "Human-readable error message (error action)."},
-    "verdict": {"type": "string", "description": "Terminal verdict level name (done action)."},
-    "verdict_level": {"type": ["integer", "null"], "description": "Numeric verdict level (done action)."},
-    "verdict_reason": {"type": ["string", "null"], "description": "Why the loop terminated (done action)."}
+    "gate_summary": {"type": "object"},
+    "feedback": {"type": ["string", "object", "null"]},
+    "requirement": {"type": "string"},
+    "feature_status": {"type": "object"},
+    "progress_summary": {"type": ["string", "object", "null"]},
+    "context": {"type": "object"},
+    "expected_format": {"type": "object"},
+    "gaps": {"type": "array"},
+    "has_blocking": {"type": "boolean"},
+    "is_rereview": {"type": "boolean"},
+    "research_findings": {"type": "object"},
+    "required_capabilities": {"type": "array"},
+    "gap": {"type": "object"},
+    "knowledge_sources": {"type": "object"},
+    "component": {"type": ["string", "null"]},
+    "batch_id": {"type": ["string", "null"]},
+    "tasks": {"type": "array"},
+    "plan": {"type": "string"},
+    "instruction": {"type": "string"},
+    "subagent_prompt": {"type": "string"},
+    "session_summary": {"type": "string"},
+    "spawn": {"type": "object"},
+    "spawn_proof_token": {"type": "string"},
+    "recheck": {"type": "object"},
+    "gate": {"type": "object"},
+    "reason": {"type": ["string", "null"]},
+    "next_transition": {"type": "string"},
+    "error_code": {"type": "string"},
+    "message": {"type": "string"},
+    "suggestion": {"type": "string"},
+    "current_state": {"type": "object"},
+    "verdict": {"type": "string"},
+    "verdict_level": {"type": ["integer", "null"]},
+    "verdict_reason": {"type": ["string", "null"]},
+    "rounds": {"type": "integer"},
+    "checkpoint_id": {"type": "string"}
+    ,"metrics": {"type": "object"}
+    ,"ratchet": {"type": ["object", "null"]}
   },
   "allOf": [
     {
-      "if": {
-        "properties": {
-          "action": {
-            "enum": [
-              "gap_scan", "gap_review", "research", "architect", "developer",
-              "critic", "component_verifier", "plate_deep_audit",
-              "system_verifier", "system_deep_audit"
-            ]
-          }
-        }
-      },
-      "then": {"required": ["tick", "stage", "thread_id", "action"]}
+      "if": {"properties": {"action": {"const": "gate"}}},
+      "then": {"required": ["gate"]}
+    },
+    {
+      "if": {"properties": {"action": {"const": "skip"}}},
+      "then": {"required": ["reason", "next_transition"]}
     },
     {
       "if": {"properties": {"action": {"const": "error"}}},
-      "then": {"required": ["action", "error_code", "message"]}
+      "then": {"required": ["error_code", "message"]}
     },
     {
       "if": {"properties": {"action": {"const": "done"}}},
-      "then": {"required": ["action", "verdict"]}
+      "then": {"required": ["verdict"]}
     }
   ],
-  "additionalProperties": true
+  "additionalProperties": false
 }
