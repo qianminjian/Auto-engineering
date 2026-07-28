@@ -20,14 +20,47 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - name: Resolve and validate release version
+        id: version
+        env:
+          RELEASE_VERSION: ${{ inputs.version || github.ref_name }}
+        run: |
+          VERSION="${RELEASE_VERSION#v}"
+          PROJECT_VERSION="$(python3 -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+          test "${VERSION}" = "${PROJECT_VERSION}"
+          echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
+      - name: Check project metadata
+        run: uv run python scripts/check_project_metadata.py
       - name: Create plugin tarball
         run: |
           python3 scripts/build_release.py \
             --root . \
-            --output "release/auto-engineering-${{ inputs.version || github.ref_name }}.tar.gz"
+            --output "release/auto-engineering-v${{ steps.version.outputs.version }}.tar.gz"
+      - name: Validate Claude Code archive
+        run: >-
+          uv run python scripts/install_acceptance.py
+          --archive "release/auto-engineering-v${{ steps.version.outputs.version }}.tar.gz"
+          --host claude-code
+      - name: Validate Codex archive
+        run: >-
+          uv run python scripts/install_acceptance.py
+          --archive "release/auto-engineering-v${{ steps.version.outputs.version }}.tar.gz"
+          --host codex
+      - name: Create SHA-256 manifest
+        run: |
+          cd release
+          shasum -a 256 "auto-engineering-v${{ steps.version.outputs.version }}.tar.gz" \
+            > "auto-engineering-v${{ steps.version.outputs.version }}.tar.gz.sha256"
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: release/*.tar.gz
+          tag_name: v${{ steps.version.outputs.version }}
+          files: |
+            release/*.tar.gz
+            release/*.sha256
           generate_release_notes: true
           draft: false

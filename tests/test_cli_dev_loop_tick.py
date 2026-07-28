@@ -58,6 +58,30 @@ class TestTickMode:
 
 
 class TestStatusMode:
+    def test_status_accepts_documented_json_format(self, tmp_path) -> None:
+        """Skill 文档中的 --format json 调用必须保持兼容。"""
+        runner = CliRunner()
+        init = runner.invoke(
+            main,
+            ["dev-loop", "--init", "实现 X", "--project-root", str(tmp_path)],
+        )
+        assert init.exit_code == 0, init.output
+
+        status = runner.invoke(
+            main,
+            [
+                "dev-loop",
+                "--status",
+                "--format",
+                "json",
+                "--project-root",
+                str(tmp_path),
+            ],
+        )
+
+        assert status.exit_code == 0, status.output
+        assert _last_json_line(status.output)["current_stage"] == "architect"
+
     def test_init_then_status_roundtrip(self, tmp_path) -> None:
         """--init 落 checkpoint → 独立 --status 调用 restore 并输出状态."""
         runner = CliRunner()

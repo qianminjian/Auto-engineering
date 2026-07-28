@@ -6,8 +6,80 @@ import json
 import sys
 import tarfile
 from pathlib import Path
+from subprocess import CompletedProcess
 
 import pytest
+
+
+def test_verify_checkpoint_lifecycle_checks_status_and_resume(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts import install_acceptance
+
+    commands: list[list[str]] = []
+    responses = iter(
+        [
+            CompletedProcess(
+                args=[],
+                returncode=0,
+                stdout=json.dumps(
+                    {"thread_id": "thread-1", "stage": "architect"},
+                    ensure_ascii=False,
+                ),
+                stderr="",
+            ),
+            CompletedProcess(
+                args=[],
+                returncode=0,
+                stdout=json.dumps(
+                    {"thread_id": "thread-1", "stage": "architect"},
+                    ensure_ascii=False,
+                ),
+                stderr="",
+            ),
+        ]
+    )
+
+    def fake_run(
+        command: list[str],
+        *,
+        cwd: Path,
+        env: dict[str, str],
+        timeout: int = 120,
+    ) -> CompletedProcess[str]:
+        commands.append(command)
+        return next(responses)
+
+    monkeypatch.setattr(install_acceptance, "_run", fake_run)
+
+    evidence = install_acceptance._verify_checkpoint_lifecycle(
+        "scripts/ae-run",
+        tmp_path,
+        {},
+        '{"thread_id": "thread-1", "stage": "architect"}\n',
+    )
+
+    assert evidence == ["status", "resume"]
+    assert commands == [
+        [
+            "scripts/ae-run",
+            "dev-loop",
+            "--status",
+            "--format",
+            "json",
+            "--project-root",
+            str(tmp_path),
+        ],
+        [
+            "scripts/ae-run",
+            "dev-loop",
+            "--resume",
+            "thread-1",
+            "--project-root",
+            str(tmp_path),
+        ],
+    ]
 
 
 def test_safe_extract_archive_extracts_regular_member(tmp_path: Path) -> None:

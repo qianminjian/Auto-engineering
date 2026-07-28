@@ -103,6 +103,8 @@ def main():
               help="[内部协议] --tick 的 stage-result.json 路径")
 @click.option("--status", "status_flag", is_flag=True,
               help="[内部协议] 查询当前 tick 状态")
+@click.option("--format", "output_format", type=click.Choice(["json"]), default="json",
+              help="--status 输出格式（当前仅支持 json）")
 @click.option("--verbose", "-v", "verbose_flag", is_flag=True,
               help="--status 时输出 batch 级进度明细")
 @click.option("--resume", "resume_id", help="[内部协议] 从指定 checkpoint 恢复")
@@ -124,6 +126,7 @@ def dev_loop(
     tick_flag: bool,
     result_file: str | None,
     status_flag: bool,
+    output_format: str,
     resume_id: str | None,
     design_doc: str | None,
     max_rounds: int,
@@ -178,6 +181,7 @@ def dev_loop(
                        debug_dir=debug_dir_opt)
         return
     if status_flag:
+        del output_format  # 当前 status 契约固定为 JSON；参数用于兼容文档化调用。
         run_tick_status(root, verbose=verbose_flag)
         return
     if resume_id:

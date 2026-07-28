@@ -21,6 +21,7 @@
 | Phase 59 真实宿主兼容性加固 | ✅ 5/5 | T275-T279；v5.7.0 双宿主真实安装验收通过 |
 | Phase 60 Prompt Contract 重构 | ✅ 8/8 | T280-T287；2019 passed / 1 skipped，coverage 90.27% |
 | Phase 61 v5.7.1 发布收口 | ✅ 7/7 | T288-T294；2021 passed / 1 skipped，coverage 90.27% |
+| Phase 62 v5.7.1 正式发布 | ◐ 5/6 | T295-T300；正式 Release 进行中 |
 
 ## Phase 52：Protocol Envelope v1.1
 
@@ -124,6 +125,17 @@
 | P0 | T292 | 双宿主真实安装 | While v5.7.1 安装到真实宿主, when version/status 调用, both shall 返回有效结果 | ✅ r3 installed/enabled；双缓存 version/doctor/status pass；Claude validate 零告警 |
 | P0 | T293 | Prompt Contract 真实链路 | While 宿主执行新 Action, when prompt/receipt 被检查, context and worker receipts shall 完整 | ✅ 双缓存 5 Worker、唯一 receipt、缺口上下文完整；Codex 新进程加载安装缓存 |
 | P0 | T294 | 发布门禁与推送 | While T288-T293 完成, when 全量门禁运行, tests/coverage/static shall 通过并提交推送 | ✅ 2021 passed / 1 skipped；90.27%；Ruff/mypy/sync/metadata/diff pass；提交推送见 Git |
+
+## Phase 62：v5.7.1 正式发布
+
+| 优先级 | ID | 任务 | EARS 验收 | 状态 |
+|---:|---|---|---|:---:|
+| P0 | T295 | Claude 非交互输出诊断 | While 插件已真实安装, when 新 Claude 进程执行 `-p`, the host shall 返回有效输出或形成可复现的宿主侧根因证据 | ✅ 插件/认证/doctor 正常；普通与 Skill `-p` 同样无输出；双安装 + 自定义 endpoint，定位宿主环境层 |
+| P1 | T296 | 计划状态去漂移 | While Phase 60 已完成, when 读取 Prompt Contract PLAN, all implementation checkboxes shall 与 Tracker 一致 | ✅ 43 个实施检查项全部同步为 `[x]` |
+| P0 | T297 | 独立环境双宿主回归 | While 候选包在隔离目录安装, when init/tick/status/resume 运行, both hosts shall 通过且不依赖源码工作区 | ✅ 修复 `dev-loop --format json` 契约；r5 双宿主 package/sync/doctor/init/status/resume pass |
+| P1 | T298 | 发布自动化加固 | While release workflow 构建制品, when CI 执行, it shall 校验版本、双宿主 archive、载荷与 SHA-256 | ✅ workflow 校验版本/metadata/双宿主验收并上传 `.sha256`；专项 18 passed |
+| P0 | T299 | Phase 62 发布门禁 | While T295-T298 完成, when 全量门禁运行, tests/coverage/static shall 通过且设计证据完整 | ✅ 2023 passed / 1 skipped；90.28%；Ruff/mypy/sync/metadata/diff pass |
+| P0 | T300 | v5.7.1 正式发布 | While 发布门禁通过, when tag workflow 完成, GitHub Release shall 包含可验证制品与 SHA-256 | ◐ 等待提交、tag workflow 与远端制品核验 |
 
 ## 执行纪律
 

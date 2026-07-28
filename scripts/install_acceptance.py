@@ -88,6 +88,65 @@ def _write_init_manifest(project: Path) -> None:
     )
 
 
+def _last_json_object(output: str) -> dict[str, object]:
+    """提取 CLI 输出中的最后一个 JSON 对象。"""
+    objects = [
+        json.loads(line)
+        for line in output.splitlines()
+        if line.startswith("{") and line.endswith("}")
+    ]
+    if not objects or not isinstance(objects[-1], dict):
+        raise RuntimeError("CLI 未返回有效 JSON 对象")
+    return objects[-1]
+
+
+def _verify_checkpoint_lifecycle(
+    resolver: str,
+    project: Path,
+    environment: dict[str, str],
+    init_output: str,
+) -> list[str]:
+    """验证隔离项目的 status 与 thread_id resume 生命周期。"""
+    action = _last_json_object(init_output)
+    thread_id = action.get("thread_id")
+    if not isinstance(thread_id, str) or not thread_id:
+        raise RuntimeError("最小 Tick 未生成有效 thread_id")
+
+    status = _run(
+        [
+            resolver,
+            "dev-loop",
+            "--status",
+            "--format",
+            "json",
+            "--project-root",
+            str(project),
+        ],
+        cwd=project,
+        env=environment,
+    )
+    status_payload = _last_json_object(status.stdout)
+    if status_payload.get("thread_id") != thread_id:
+        raise RuntimeError("status 返回的 thread_id 与初始化结果不一致")
+
+    resumed = _run(
+        [
+            resolver,
+            "dev-loop",
+            "--resume",
+            thread_id,
+            "--project-root",
+            str(project),
+        ],
+        cwd=project,
+        env=environment,
+    )
+    resumed_action = _last_json_object(resumed.stdout)
+    if resumed_action.get("thread_id") != thread_id:
+        raise RuntimeError("resume 返回的 thread_id 与初始化结果不一致")
+    return ["status", "resume"]
+
+
 def accept_archive(
     archive: Path,
     host: str,
@@ -142,13 +201,12 @@ def accept_archive(
         cwd=project,
         env=environment,
     )
-    actions = [
-        json.loads(line)
-        for line in tick.stdout.splitlines()
-        if line.startswith("{") and line.endswith("}")
-    ]
-    if not actions or not actions[-1].get("thread_id"):
-        raise RuntimeError("最小 Tick 未生成有效 action")
+    lifecycle_evidence = _verify_checkpoint_lifecycle(
+        resolver,
+        project,
+        environment,
+        tick.stdout,
+    )
 
     return {
         "host": host,
@@ -159,6 +217,7 @@ def accept_archive(
                 "isolated_uv_sync",
                 "doctor",
                 "minimal_tick",
+                *lifecycle_evidence,
             ],
         },
         "product_install": {

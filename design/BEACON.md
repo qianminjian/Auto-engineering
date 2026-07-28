@@ -1,6 +1,6 @@
 # Auto-Engineering BEACON
 
-> 创建：2026-06-24｜更新：2026-07-28｜阶段：Phase 61 v5.7.1 发布收口完成
+> 创建：2026-06-24｜更新：2026-07-28｜阶段：Phase 62 v5.7.1 正式发布实施中
 > 决策状态翻转（✅↔❌）或架构降级必须先获用户批准。
 
 ## 目标与成功标准
@@ -37,7 +37,7 @@ Engineering；把 archive smoke 冒充真实产品安装；修改外部参考源
 
 ## 当前状态
 
-- Phase 1-61 已完成；当前基线为 2021 passed / 1 skipped，覆盖率 90.27%。
+- Phase 1-61 已完成；Phase 62 完成 5/6，基线 2023 passed / 1 skipped，覆盖率 90.28%。
 - LoopEvent、SQLite EventStore、EngineState Projector 和单 Tick 原子事务已落地。
 - 11 个 Stage 已全部唯一注册 Handler；旧 stage-specific `_after_*` 已移除。
 - Host SPI 2.0、十类黄金轨迹、故障恢复和跨宿主语义等价已验收。
@@ -50,13 +50,14 @@ Engineering；把 archive smoke 冒充真实产品安装；修改外部参考源
   release 安全解压兼容；v5.7.0 release 已在两个真实宿主中安装并识别。
 - Phase 60 已完成 Prompt Contract、全阶段上下文编译、多 Agent 独立 receipt、
   Result 兼容警告和不可覆盖 rendered 日志。
-- Phase 61 已完成 v5.7.1 制品、双宿主 archive/真实安装缓存、Prompt Contract
-  链路和零告警插件载荷验收；阻塞：无。
+- Phase 62 已完成宿主诊断、计划同步、双宿主隔离生命周期和发布自动化加固；
+  正在执行 v5.7.1 tag workflow 与远端制品核验，阻塞：无。
 
 ## 最近演进
 
 | 日期 | 变更 |
 |---|---|
+| 2026-07-28 | Phase 62 启动 v5.7.1 正式发布，T295-T300 进行中 |
 | 2026-07-28 | Phase 61 完成 v5.7.1 发布收口，T288-T294 全部验证 |
 | 2026-07-28 | Phase 60 完成 T280-T287；2019 passed / 1 skipped，coverage 90.27% |
 | 2026-07-28 | 批准 Phase 60 兼容式 Prompt Contract Compiler 与多 Agent 交付完整性重构 |
@@ -68,12 +69,10 @@ Engineering；把 archive smoke 冒充真实产品安装；修改外部参考源
 | 2026-07-28 | Phase 55 完成 Host SPI 2.0、双宿主映射与能力 fail closed |
 | 2026-07-28 | Phase 54 完成无状态 ActionBuilder、全 StageHandler 与统一终态 |
 | 2026-07-27 | 批准 v5.7 渐进式协议内核重构与双基线策略 |
-| 2026-07-27 | Phase 49 完成 Host-neutral Core 与双宿主基础适配 |
 
 ## 待解决问题
 
-- Claude Code 非交互 `-p` 两次返回空输出；安装、validate、缓存 runner 与契约链路
-  均通过，后续单独排查宿主输出通道，不阻断确定性内核发布候选。
+- Phase 62：完成 v5.7.1 GitHub Release 与 SHA-256 远端核验。
 
 ## 引用文件
 

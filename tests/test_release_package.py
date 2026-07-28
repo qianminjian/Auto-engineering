@@ -76,6 +76,11 @@ def test_release_workflow_uses_validated_builder_without_swallowing_errors() -> 
     content = (ROOT / ".github" / "workflows" / "release.yml").read_text()
 
     assert "python3 scripts/build_release.py" in content
+    assert "scripts/check_project_metadata.py" in content
+    assert "--host claude-code" in content
+    assert "--host codex" in content
+    assert "shasum -a 256" in content
+    assert "release/*.sha256" in content
     assert "|| true" not in content
     assert "2>/dev/null" not in content
 
