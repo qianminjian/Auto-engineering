@@ -10,7 +10,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 
 class HostPlatform(StrEnum):
@@ -98,11 +98,39 @@ class HostEvent:
     raw: dict[str, object]
 
 
+@dataclass(frozen=True)
+class MappedHostAction:
+    """已映射到具体宿主、但保持 Core 语义的 Action。"""
+
+    platform: HostPlatform
+    message_id: str
+    payload: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class HostExecutionReport:
+    """宿主执行结果的归一化回报，Core 不消费原始 payload。"""
+
+    platform: HostPlatform
+    message_id: str
+    status: str
+    result: dict[str, Any]
+
+
 class HostAdapter(Protocol):
     """宿主差异不得越过的完整边界契约。"""
 
     platform: HostPlatform
     capabilities: HostCapabilities
+
+    def probe(
+        self,
+        *,
+        detected: HostCapabilities,
+        authorized: HostCapabilities,
+    ) -> object:
+        """生成当前会话的四层能力 Profile。"""
+        ...
 
     def normalize_event(self, raw: Mapping[str, object]) -> HostEvent | None:
         """把宿主事件归一化；不支持的事件返回 None。"""
@@ -114,6 +142,22 @@ class HostAdapter(Protocol):
 
     def usage_source(self, project_root: Path) -> UsageSource | None:
         """返回宿主可信 usage 来源；不可用时返回 None。"""
+        ...
+
+    def map_action(
+        self,
+        action: Mapping[str, Any],
+        *,
+        profile: object,
+    ) -> MappedHostAction:
+        """把 Core Action 映射为宿主可执行 Action。"""
+        ...
+
+    def report_execution(
+        self,
+        raw: Mapping[str, Any],
+    ) -> HostExecutionReport:
+        """把宿主执行回报归一化为 Core 输入。"""
         ...
 
 
@@ -197,7 +241,9 @@ __all__ = [
     "HostCapabilities",
     "HostDetection",
     "HostEvent",
+    "HostExecutionReport",
     "HostPlatform",
+    "MappedHostAction",
     "UsageSource",
     "capabilities_for",
     "detect_host",

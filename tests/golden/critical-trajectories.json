@@ -1,0 +1,62 @@
+[
+  {
+    "name": "normal_completion",
+    "input": {"schema_version": "1.1", "message_id": "in-1", "payload": {"stage": "system_deep_audit"}},
+    "actual": {"events": [{"event_id": "e-1", "event_type": "LoopCompleted"}], "projection": {"current_stage": "system_deep_audit"}, "action": {"message_id": "a-1", "action": "done"}, "verdict": "GOAL_ACHIEVED"},
+    "expected": {"events": [{"event_type": "LoopCompleted"}], "projection": {"current_stage": "system_deep_audit"}, "action": {"action": "done"}, "verdict": "GOAL_ACHIEVED"}
+  },
+  {
+    "name": "gate_pause_resume",
+    "input": {"schema_version": "1.1", "message_id": "in-2", "payload": {"decision": "continue"}},
+    "actual": {"events": [{"timestamp": "now", "event_type": "GateResolved", "payload": {"decision": "continue"}}], "projection": {"current_stage": "developer"}, "action": {"action": "developer"}, "verdict": null},
+    "expected": {"events": [{"event_type": "GateResolved", "payload": {"decision": "continue"}}], "projection": {"current_stage": "developer"}, "action": {"action": "developer"}, "verdict": null}
+  },
+  {
+    "name": "skip",
+    "input": {"schema_version": "1.1", "message_id": "in-3", "payload": {"decision": "skip"}},
+    "actual": {"events": [{"event_id": "e-3", "event_type": "StageSkipped"}], "projection": {"current_stage": "critic"}, "action": {"action": "critic"}, "verdict": null},
+    "expected": {"events": [{"event_type": "StageSkipped"}], "projection": {"current_stage": "critic"}, "action": {"action": "critic"}, "verdict": null}
+  },
+  {
+    "name": "guardrail_block",
+    "input": {"schema_version": "1.1", "message_id": "in-4", "payload": {"stage": "developer"}},
+    "actual": {"events": [{"created_at": "now", "event_type": "GuardrailBlocked"}], "projection": {"current_stage": "developer"}, "action": {"action": "error", "error_code": "GUARDRAIL_BLOCKED"}, "verdict": null},
+    "expected": {"events": [{"event_type": "GuardrailBlocked"}], "projection": {"current_stage": "developer"}, "action": {"action": "error", "error_code": "GUARDRAIL_BLOCKED"}, "verdict": null}
+  },
+  {
+    "name": "verification_refine",
+    "input": {"schema_version": "1.1", "message_id": "in-5", "payload": {"missing_count": 1}},
+    "actual": {"events": [{"event_id": "e-5", "event_type": "StageAdvanced", "payload": {"to": "architect"}}], "projection": {"current_stage": "architect", "plan_refine_count": 1}, "action": {"action": "architect"}, "verdict": null},
+    "expected": {"events": [{"event_type": "StageAdvanced", "payload": {"to": "architect"}}], "projection": {"current_stage": "architect", "plan_refine_count": 1}, "action": {"action": "architect"}, "verdict": null}
+  },
+  {
+    "name": "duplicate_result",
+    "input": {"schema_version": "1.1", "message_id": "in-6", "payload": {"stage": "developer"}},
+    "actual": {"events": [{"event_id": "e-6", "event_type": "ResultReplayed"}], "projection": {"tick": 3}, "action": {"message_id": "cached", "action": "critic"}, "verdict": null},
+    "expected": {"events": [{"event_type": "ResultReplayed"}], "projection": {"tick": 3}, "action": {"action": "critic"}, "verdict": null}
+  },
+  {
+    "name": "conflicting_result",
+    "input": {"schema_version": "1.1", "message_id": "in-7", "payload": {"stage": "developer"}},
+    "actual": {"events": [{"timestamp": "now", "event_type": "ResultConflict"}], "projection": {"tick": 3}, "action": {"action": "error", "error_code": "RESULT_MESSAGE_CONFLICT"}, "verdict": null},
+    "expected": {"events": [{"event_type": "ResultConflict"}], "projection": {"tick": 3}, "action": {"action": "error", "error_code": "RESULT_MESSAGE_CONFLICT"}, "verdict": null}
+  },
+  {
+    "name": "checkpoint_import",
+    "input": {"schema_version": "1.1", "message_id": "in-8", "payload": {"checkpoint_version": "5.6"}},
+    "actual": {"events": [{"created_at": "now", "event_type": "CheckpointImported"}], "projection": {"current_stage": "developer"}, "action": {"action": "developer"}, "verdict": null},
+    "expected": {"events": [{"event_type": "CheckpointImported"}], "projection": {"current_stage": "developer"}, "action": {"action": "developer"}, "verdict": null}
+  },
+  {
+    "name": "crash_recovery",
+    "input": {"schema_version": "1.1", "message_id": "in-9", "payload": {"resume": true}},
+    "actual": {"events": [{"event_id": "e-9", "event_type": "ActionRecovered"}], "projection": {"tick": 4}, "action": {"action": "developer"}, "verdict": null},
+    "expected": {"events": [{"event_type": "ActionRecovered"}], "projection": {"tick": 4}, "action": {"action": "developer"}, "verdict": null}
+  },
+  {
+    "name": "terminal_replay",
+    "input": {"schema_version": "1.1", "message_id": "in-10", "payload": {"replay": true}},
+    "actual": {"events": [{"event_id": "e-10", "event_type": "LoopCompleted"}], "projection": {"terminal": true}, "action": {"message_id": "cached", "action": "done"}, "verdict": "GOAL_ACHIEVED"},
+    "expected": {"events": [{"event_type": "LoopCompleted"}], "projection": {"terminal": true}, "action": {"action": "done"}, "verdict": "GOAL_ACHIEVED"}
+  }
+]

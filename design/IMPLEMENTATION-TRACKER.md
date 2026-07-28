@@ -14,8 +14,8 @@
 | Phase 52 Protocol Envelope | ✅ 5/5 | T242-T246；1913 passed / 1 skipped |
 | Phase 53 Event Store | ✅ 6/6 | T247-T252；1945 passed / 1 skipped |
 | Phase 54 Tick Kernel | ✅ 8/8 | T253-T260 |
-| Phase 55 Host SPI 2.0 | ☐ 0/5 | T261-T265 |
-| Phase 56 黄金轨迹与收口 | ☐ 0/5 | T266-T270 |
+| Phase 55 Host SPI 2.0 | ✅ 5/5 | T261-T265 |
+| Phase 56 黄金轨迹与收口 | ✅ 5/5 | T266-T270；1996 passed / 1 skipped |
 
 ## Phase 52：Protocol Envelope v1.1
 
@@ -56,20 +56,20 @@
 | 优先级 | ID | 任务 | EARS 验收 | 状态 |
 |---:|---|---|---|:---:|
 | P1 | T261 | 四层能力模型 | While 能力已声明和探测, when 授权应用, effective shall 为三者安全交集 | ✅ RED 2 failed；GREEN 2 profile tests；Host/Git/Hook 回归 33 passed；Ruff/mypy pass |
-| P1 | T262 | Adapter 2.0 契约 | While 宿主接入, when 实现 SPI, the adapter shall 归一化事件、映射 Action 并报告执行 | ◐ SPI 契约测试待建立 |
-| P1 | T263 | Claude/Codex Profile | While 相同 Action 被映射, when 双宿主执行, the normalized result shall 语义等价 | ☐ |
-| P1 | T264 | 未知宿主 fail closed | While 能力只声明未探测, when 请求高风险动作, the profile shall 拒绝执行 | ☐ |
-| P1 | T265 | Phase 55 双宿主验收 | While archive smoke 通过, when product install 未跑, the report shall 仍显示 not_run | ☐ |
+| P1 | T262 | Adapter 2.0 契约 | While 宿主接入, when 实现 SPI, the adapter shall 归一化事件、映射 Action 并报告执行 | ✅ RED 3 failed；GREEN probe/map/report 契约；Host 专项 20 passed |
+| P1 | T263 | Claude/Codex Profile | While 相同 Action 被映射, when 双宿主执行, the normalized result shall 语义等价 | ✅ 双宿主相同 payload 映射语义等价；平台身份独立保留 |
+| P1 | T264 | 未知宿主 fail closed | While 能力只声明未探测, when 请求高风险动作, the profile shall 拒绝执行 | ✅ RED 未拒绝 web_search；GREEN effective capability 映射前拒绝；未知宿主无 Adapter |
+| P1 | T265 | Phase 55 双宿主验收 | While archive smoke 通过, when product install 未跑, the report shall 仍显示 not_run | ✅ 105 passed / 1 skipped；Ruff/mypy/sync/metadata pass；真实 product install 保持 not_run |
 
 ## Phase 56：黄金轨迹与发布收口
 
 | 优先级 | ID | 任务 | EARS 验收 | 状态 |
 |---:|---|---|---|:---:|
-| P1 | T266 | 黄金轨迹格式与 runner | While fixture 被执行, when 比较结果, the runner shall 忽略非语义字段并验证事件、投影与 verdict | ☐ |
-| P1 | T267 | 十类关键轨迹 | While 关键正常和异常路径运行, when 验收, all ten trajectories shall 通过 | ☐ |
-| P1 | T268 | 故障注入与重放 | While 边界失败发生, when 重试, the Core shall 不重复业务推进且审计链完整 | ☐ |
-| P1 | T269 | 跨宿主语义等价 | While 相同轨迹经过双 Adapter, when 规范化, Core events/state/verdict shall 等价 | ☐ |
-| P1 | T270 | v5.7 全量收口 | While Phase 52-56 完成, when 全部门禁运行, tests shall 通过且覆盖率不低于 90% | ☐ |
+| P1 | T266 | 黄金轨迹格式与 runner | While fixture 被执行, when 比较结果, the runner shall 忽略非语义字段并验证事件、投影与 verdict | ✅ RED import error；GREEN 2 runner tests；仅忽略随机 ID、时间与 host 展示扩展；Ruff/mypy pass |
+| P1 | T267 | 十类关键轨迹 | While 关键正常和异常路径运行, when 验收, all ten trajectories shall 通过 | ✅ 十类 fixture 齐备；黄金/真实 Tick/事务/重放/迁移/Guardrail 专项 305 passed |
+| P1 | T268 | 故障注入与重放 | While 边界失败发生, when 重试, the Core shall 不重复业务推进且审计链完整 | ✅ 三点事务故障重试仅提交一次；宿主回报无效后安全恢复；35 passed |
+| P1 | T269 | 跨宿主语义等价 | While 相同轨迹经过双 Adapter, when 规范化, Core events/state/verdict shall 等价 | ✅ RED import error；GREEN 双 Adapter 黄金轨迹；Host/Hook/Golden 38 passed |
+| P1 | T270 | v5.7 全量收口 | While Phase 52-56 完成, when 全部门禁运行, tests shall 通过且覆盖率不低于 90% | ✅ 1996 passed / 1 skipped；coverage 90.35%；Ruff/mypy/sync/metadata/diff pass；双宿主 archive smoke pass、product install not_run；atdo smoke 7/7 |
 
 ## 执行纪律
 

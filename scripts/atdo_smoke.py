@@ -96,8 +96,9 @@ def _check_init_manifest() -> DimensionResult:
                 str(PROJECT_ROOT / ".venv" / "bin" / "python"),
                 "-c",
                 "import sys; sys.path.insert(0, '" + str(PROJECT_ROOT) + "'); "
+                "from pathlib import Path; "
                 "from auto_engineering.loop.init_contract import load_init_manifest; "
-                "print(load_init_manifest('/nonexistent'))",
+                "print(load_init_manifest(Path('/nonexistent')))",
             ],
             capture_output=True, text=True, timeout=30,
         )
@@ -207,7 +208,7 @@ def _check_gate_pass() -> DimensionResult:
 def _check_orchestrator_12_steps() -> DimensionResult:
     """Smoke 3: Orchestrator 12 步主循环可调用 (v5.0 §B7.1).
 
-    通过 pytest tests/test_loop_orchestrator.py 验证 12 步主循环.
+    通过当前 TickOrchestrator 完整 LEAF 收敛测试验证主循环.
     """
     import subprocess
 
@@ -215,9 +216,9 @@ def _check_orchestrator_12_steps() -> DimensionResult:
         result = subprocess.run(
             [
                 str(PROJECT_ROOT / ".venv" / "bin" / "pytest"),
-                "tests/test_loop_orchestrator.py",
+                "tests/test_tick_orchestrator.py",
                 "-v", "--no-cov", "--timeout=120",
-                "-k", "TestOrchestratorV5MainLoop",
+                "-k", "TestFullLeafConvergence",
             ],
             capture_output=True,
             text=True,
@@ -227,17 +228,17 @@ def _check_orchestrator_12_steps() -> DimensionResult:
         if result.returncode != 0:
             return DimensionResult(
                 "orchestrator_12_steps", False,
-                f"pytest TestOrchestratorV5MainLoop FAILED (rc={result.returncode})\n"
+                f"pytest TestFullLeafConvergence FAILED (rc={result.returncode})\n"
                 f"stdout tail: {result.stdout[-500:]}",
             )
         return DimensionResult(
             "orchestrator_12_steps", True,
-            "TestOrchestratorV5MainLoop 12 步主循环测试 PASS",
+            "TickOrchestrator 完整 LEAF 收敛测试 PASS",
         )
 
     return _run_check(
         "orchestrator_12_steps", _check,
-        timeout_msg="pytest TestOrchestratorV5MainLoop 超时 (180s)",
+        timeout_msg="pytest TestFullLeafConvergence 超时 (180s)",
         fnf_msg="pytest not found: {e}",
     )
 
@@ -319,7 +320,7 @@ def _check_guardrail_3_states() -> DimensionResult:
 
 
 def _check_cli_doctor() -> DimensionResult:
-    """Smoke 6: CLI doctor 7 项检查 (P2-1)."""
+    """Smoke 6: CLI doctor 11 项检查。"""
     import os
     import subprocess
 
@@ -345,16 +346,16 @@ def _check_cli_doctor() -> DimensionResult:
             )
 
         check_marks = result.stdout.count("✓")
-        if check_marks != 7:
+        if check_marks != 11:
             return DimensionResult(
                 "cli_doctor", False,
-                f"ae doctor 输出 {check_marks} ✓, expected 7\n"
+                f"ae doctor 输出 {check_marks} ✓, expected 11\n"
                 f"stdout tail: {result.stdout[-300:]}",
             )
 
         return DimensionResult(
             "cli_doctor", True,
-            f"ae doctor 7/7 ✓ ({check_marks} checks PASS)",
+            f"ae doctor 11/11 ✓ ({check_marks} checks PASS)",
         )
 
     return _run_check(

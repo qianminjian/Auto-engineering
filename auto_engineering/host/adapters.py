@@ -11,7 +11,9 @@ from typing import ClassVar
 from auto_engineering.host import (
     HostCapabilities,
     HostEvent,
+    HostExecutionReport,
     HostPlatform,
+    MappedHostAction,
     UsageSource,
     capabilities_for,
     usage_source_for,
@@ -25,6 +27,80 @@ _EVENT_NAMES = {
     "PostToolUse": "post_tool",
     "Stop": "stop",
 }
+
+
+class _Adapter2Mixin:
+    platform: ClassVar[HostPlatform]
+    capabilities: ClassVar[HostCapabilities]
+
+    def probe(
+        self,
+        *,
+        detected: HostCapabilities,
+        authorized: HostCapabilities,
+    ) -> HostProfile:
+        return HostProfile(self.platform, self.capabilities, detected, authorized)
+
+    def profile(
+        self,
+        *,
+        detected: HostCapabilities,
+        authorized: HostCapabilities,
+    ) -> HostProfile:
+        return self.probe(detected=detected, authorized=authorized)
+
+    def map_action(
+        self,
+        action: Mapping[str, object],
+        *,
+        profile: HostProfile,
+    ) -> MappedHostAction:
+        if profile.platform is not self.platform:
+            raise ValueError("HOST_PROFILE_PLATFORM_MISMATCH")
+        message_id = action.get("message_id")
+        if not isinstance(message_id, str) or not message_id:
+            raise ValueError("HOST_ACTION_INVALID: 缺少 message_id")
+        requirements = action.get("capability_requirements", {})
+        if not isinstance(requirements, Mapping):
+            raise ValueError("HOST_ACTION_INVALID: 能力需求必须为 object")
+        effective = profile.effective
+        for name, required in requirements.items():
+            if not required:
+                continue
+            capability_name = (
+                "git_mutation" if name == "git_operations" else name
+            )
+            available = getattr(effective, capability_name, None)
+            if available is not True:
+                raise ValueError(
+                    f"HOST_CAPABILITY_UNAVAILABLE: {name}"
+                )
+        return MappedHostAction(
+            platform=self.platform,
+            message_id=message_id,
+            payload=dict(action),
+        )
+
+    def report_execution(
+        self,
+        raw: Mapping[str, object],
+    ) -> HostExecutionReport:
+        message_id = raw.get("message_id")
+        status = raw.get("status")
+        result = raw.get("result")
+        if (
+            not isinstance(message_id, str)
+            or not message_id
+            or status not in {"completed", "failed", "cancelled"}
+            or not isinstance(result, Mapping)
+        ):
+            raise ValueError("HOST_EXECUTION_REPORT_INVALID")
+        return HostExecutionReport(
+            platform=self.platform,
+            message_id=message_id,
+            status=status,
+            result=dict(result),
+        )
 
 
 def _resolve_cli(plugin_root: Path) -> tuple[str, ...]:
@@ -79,19 +155,11 @@ def _normalize_claude_event(raw: Mapping[str, object]) -> HostEvent | None:
     )
 
 
-class CodexHostAdapter:
+class CodexHostAdapter(_Adapter2Mixin):
     """Codex 原生 Hook 与能力适配。"""
 
     platform: ClassVar[HostPlatform] = HostPlatform.CODEX
     capabilities: ClassVar[HostCapabilities] = capabilities_for(HostPlatform.CODEX)
-
-    def profile(
-        self,
-        *,
-        detected: HostCapabilities,
-        authorized: HostCapabilities,
-    ) -> HostProfile:
-        return HostProfile(self.platform, self.capabilities, detected, authorized)
 
     def normalize_event(self, raw: Mapping[str, object]) -> HostEvent | None:
         try:
@@ -107,21 +175,13 @@ class CodexHostAdapter:
         return usage_source_for(self.platform)
 
 
-class ClaudeCodeHostAdapter:
+class ClaudeCodeHostAdapter(_Adapter2Mixin):
     """Claude Code 原生 Hook、CLI 与 transcript usage 适配。"""
 
     platform: ClassVar[HostPlatform] = HostPlatform.CLAUDE_CODE
     capabilities: ClassVar[HostCapabilities] = capabilities_for(
         HostPlatform.CLAUDE_CODE,
     )
-
-    def profile(
-        self,
-        *,
-        detected: HostCapabilities,
-        authorized: HostCapabilities,
-    ) -> HostProfile:
-        return HostProfile(self.platform, self.capabilities, detected, authorized)
 
     def normalize_event(self, raw: Mapping[str, object]) -> HostEvent | None:
         return _normalize_claude_event(raw)

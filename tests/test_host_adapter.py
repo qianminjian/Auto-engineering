@@ -58,6 +58,112 @@ def test_adapter_builds_profile_from_declared_detected_and_authorized() -> None:
     assert profile.effective.web_search is False
 
 
+@pytest.mark.parametrize("platform_name", ["CLAUDE_CODE", "CODEX"])
+def test_adapter_2_contract_normalizes_all_core_boundaries(
+    platform_name: str,
+) -> None:
+    from auto_engineering.host import HostCapabilities, HostPlatform
+    from auto_engineering.host.adapters import adapter_for
+
+    platform = HostPlatform[platform_name]
+    adapter = adapter_for(platform)
+    profile = adapter.probe(
+        detected=adapter.capabilities,
+        authorized=adapter.capabilities,
+    )
+    mapped = adapter.map_action(
+        {"action": "developer", "message_id": "msg-1"},
+        profile=profile,
+    )
+    report = adapter.report_execution(
+        {
+            "message_id": "msg-1",
+            "status": "completed",
+            "result": {"stage": "developer"},
+        }
+    )
+
+    assert profile.platform is platform
+    assert mapped.platform is platform
+    assert mapped.message_id == "msg-1"
+    assert mapped.payload["action"] == "developer"
+    assert report.platform is platform
+    assert report.message_id == "msg-1"
+    assert report.status == "completed"
+    assert report.result == {"stage": "developer"}
+    assert isinstance(profile.effective, HostCapabilities)
+
+
+def test_execution_report_rejects_unstructured_host_payload() -> None:
+    from auto_engineering.host import HostPlatform
+    from auto_engineering.host.adapters import adapter_for
+
+    adapter = adapter_for(HostPlatform.CODEX)
+
+    with pytest.raises(ValueError, match="HOST_EXECUTION_REPORT_INVALID"):
+        adapter.report_execution({"status": "completed"})
+
+
+def test_host_report_boundary_recovers_without_retaining_invalid_payload() -> None:
+    from auto_engineering.host import HostPlatform
+    from auto_engineering.host.adapters import adapter_for
+
+    adapter = adapter_for(HostPlatform.CODEX)
+    with pytest.raises(ValueError, match="HOST_EXECUTION_REPORT_INVALID"):
+        adapter.report_execution({"message_id": "msg-1", "status": "completed"})
+
+    report = adapter.report_execution({
+        "message_id": "msg-1",
+        "status": "completed",
+        "result": {"stage": "developer"},
+    })
+
+    assert report.result == {"stage": "developer"}
+
+
+def test_claude_and_codex_map_same_core_action_semantics() -> None:
+    from auto_engineering.host import HostPlatform
+    from auto_engineering.host.adapters import adapter_for
+
+    action = {"action": "critic", "message_id": "msg-2", "tick": 8}
+    mapped = []
+    for platform in (HostPlatform.CLAUDE_CODE, HostPlatform.CODEX):
+        adapter = adapter_for(platform)
+        profile = adapter.probe(
+            detected=adapter.capabilities,
+            authorized=adapter.capabilities,
+        )
+        mapped.append(adapter.map_action(action, profile=profile))
+
+    assert mapped[0].payload == mapped[1].payload == action
+    assert mapped[0].platform is HostPlatform.CLAUDE_CODE
+    assert mapped[1].platform is HostPlatform.CODEX
+
+
+def test_map_action_fails_closed_when_capability_is_not_effective() -> None:
+    from auto_engineering.host import HostCapabilities, HostPlatform
+    from auto_engineering.host.adapters import adapter_for
+
+    adapter = adapter_for(HostPlatform.CODEX)
+    profile = adapter.probe(
+        detected=HostCapabilities(skills=True),
+        authorized=HostCapabilities(skills=True),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"HOST_CAPABILITY_UNAVAILABLE.*web_search",
+    ):
+        adapter.map_action(
+            {
+                "action": "research",
+                "message_id": "msg-3",
+                "capability_requirements": {"web_search": True},
+            },
+            profile=profile,
+        )
+
+
 def test_detects_codex_before_claude_compatibility_signals() -> None:
     from auto_engineering.host import HostPlatform, detect_host
 

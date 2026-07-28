@@ -72,6 +72,33 @@ def test_failure_at_any_write_rolls_back_whole_tick(failure_point: str) -> None:
         assert store.load_action_snapshot("thread-1") is None
 
 
+@pytest.mark.parametrize(
+    "failure_point",
+    ["after_events", "after_projection", "after_action"],
+)
+def test_retry_after_injected_failure_commits_exactly_once(
+    failure_point: str,
+) -> None:
+    armed = True
+
+    def fail_once(point: str) -> None:
+        nonlocal armed
+        if armed and point == failure_point:
+            armed = False
+            raise RuntimeError(f"fault:{point}")
+
+    state = _state()
+    with SQLiteEventStore(":memory:", fault_injector=fail_once) as store:
+        with pytest.raises(RuntimeError, match=f"fault:{failure_point}"):
+            store.commit_tick(events=[_event()], state=state, action=_action())
+
+        store.commit_tick(events=[_event()], state=state, action=_action())
+
+        assert len(store.load_stream("thread-1")) == 1
+        assert store.load_projection("thread-1").to_dict() == state.to_dict()
+        assert store.load_action_snapshot("thread-1") == _action()
+
+
 def test_commit_rejects_cross_thread_projection_and_action() -> None:
     with SQLiteEventStore(":memory:") as store:
         with pytest.raises(ValueError, match="thread_id"):
