@@ -92,6 +92,7 @@ def test_ci_has_independent_claude_and_codex_contract_matrix() -> None:
 
     assert content.count("actions/checkout@v7") == 2
     assert content.count("astral-sh/setup-uv@v9.0.0") == 2
+    assert content.count("enable-cache: false") == 2
     assert "host-contract:" in content
     assert "host: claude-code" in content
     assert "host: codex" in content

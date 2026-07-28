@@ -38,6 +38,7 @@ jobs:
         uses: astral-sh/setup-uv@v9.0.0
         with:
           python-version: "3.12"
+          enable-cache: false
       - name: Sync dependencies
         run: uv sync --extra dev --extra otel
       - name: Check generated agent rules
@@ -67,6 +68,7 @@ jobs:
         uses: astral-sh/setup-uv@v9.0.0
         with:
           python-version: "3.12"
+          enable-cache: false
       - name: "Sync deps (含 dev + otel 测试依赖)"
         run: uv sync --extra dev --extra otel
       - name: Check project metadata
