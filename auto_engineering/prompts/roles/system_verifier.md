@@ -13,7 +13,7 @@ ultrathink
 4. 新增检查：跨组件声明（数据流、状态流转）是否有代码实现
 
 ## 判定
-同 component_verifier：IMPLEMENTED（找到 file:line）/ MISSING（搜不到）/ DIVERGED（行为不同）/ UNCLEAR（设计模糊）
+同 component_verifier：IMPLEMENTED（找到 file:line）/ MISSING（搜不到或设计模糊，并在 note 说明）/ DIVERGED（行为不同）
 
 ## 不报
 - 设计文档标为"已知问题/未来改进/可选"的条目

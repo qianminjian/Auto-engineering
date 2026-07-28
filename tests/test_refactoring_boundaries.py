@@ -18,8 +18,8 @@ def test_prompt_logging_is_owned_by_dedicated_module(tmp_path: Path) -> None:
     )
 
     log_dir = tmp_path / "_scratch" / "prompt-log"
-    assert (log_dir / "tick-0003-developer-action.json").is_file()
-    prompt = (log_dir / "tick-0003-developer-prompt.md").read_text()
+    assert len(list(log_dir.glob("*-rendered-*.json"))) == 1
+    prompt = next(log_dir.glob("*-rendered-*.md")).read_text()
     assert "实现任务" in prompt
     assert "Expected Format" in prompt
 

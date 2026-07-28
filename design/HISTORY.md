@@ -12,7 +12,9 @@
 | Phase 51 | 将兼容性弃用告警纳入显式测试契约；基线 1889 passed / 1 skipped、覆盖率 90.15% |
 | Phase 52 | 完成 Protocol Envelope v1.1、闭合 schema、Action/Result 因果身份、进程内与跨进程幂等、v1.0 受限兼容；基线 1913 passed / 1 skipped、覆盖率 90.21% |
 | Phase 53 | 完成不可变 LoopEvent、SQLite EventStore、可重放 EngineState 投影、单 Tick 原子事务和 v5.6 checkpoint 一次性导入；基线 1945 passed / 1 skipped、覆盖率 90.14% |
-| Phase 54-56 | 已批准待实施：Tick Kernel、Host SPI 2.0 与黄金轨迹 |
+| Phase 54-56 | 完成 Tick Kernel、全 StageHandler、Host SPI 2.0、十类黄金轨迹与跨宿主语义等价 |
+| Phase 57-59 | 完成质量收口、双宿主真实安装和 release 自包含兼容加固；基线 2001 passed / 1 skipped |
+| Phase 60 | 完成兼容式 Prompt Contract Compiler、全阶段上下文交付、多 Agent 独立 receipt、输出兼容警告和不可覆盖 rendered 日志；基线 2019 passed / 1 skipped、覆盖率 90.27% |
 
 ## 持续有效的决策
 

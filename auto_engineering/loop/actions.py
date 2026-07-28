@@ -25,6 +25,7 @@ __all__ = [
     "ActionDone",
     "ActionError",
     "ErrorResponse",
+    "result_contract_warnings",
     "validate_result_format",
 ]
 
@@ -148,6 +149,34 @@ RESULT_SCHEMA: dict[str, dict] = {
 
 # Phase 0 stage: 结构自由, 由各 _after_* handler 自行取值 (无强制 schema)
 _PHASE0_STAGES = frozenset({"gap_scan", "gap_review", "research"})
+
+_CONSUMED_OPTIONAL_FIELDS: dict[str, tuple[str, ...]] = {
+    "architect": ("contracts",),
+    "developer": ("commit_hash", "red_evidence"),
+    "critic": ("critic_feedback",),
+    "component_verifier": ("recheck_log",),
+    "system_verifier": ("recheck_log",),
+    "system_deep_audit": (
+        "design_docs_stale",
+        "design_doc_suggestions",
+        "missing_count",
+        "diverged_count",
+    ),
+}
+
+
+def result_contract_warnings(result: dict, stage: str) -> list[dict[str, str]]:
+    """报告 Handler 会消费、但兼容期尚未提升为必填的缺失字段。"""
+
+    return [
+        {
+            "code": "RESULT_OPTIONAL_FIELD_MISSING",
+            "stage": stage,
+            "field": field,
+        }
+        for field in _CONSUMED_OPTIONAL_FIELDS.get(stage, ())
+        if field not in result
+    ]
 
 
 def validate_result_format(result: dict, stage: str) -> list[str]:

@@ -19,6 +19,7 @@
 | Phase 57 收口质量加固 | ✅ 2/2 | T271-T272 |
 | Phase 58 真实产品安装验收 | ✅ 2/2 | T273-T274；Claude Code/Codex 真实宿主调用通过 |
 | Phase 59 真实宿主兼容性加固 | ✅ 5/5 | T275-T279；v5.7.0 双宿主真实安装验收通过 |
+| Phase 60 Prompt Contract 重构 | ✅ 8/8 | T280-T287；2019 passed / 1 skipped，coverage 90.27% |
 
 ## Phase 52：Protocol Envelope v1.1
 
@@ -97,6 +98,19 @@
 | P1 | T277 | Manifest 零告警 | While Claude 校验 release marketplace, when plugin manifest 被解析, the validator shall 不报告未知字段或缺 description | ✅ 移除未知 metadata、补 description；Claude validator 零告警 |
 | P0 | T278 | 双宿主 release 重装验收 | While 新 release 已构建, when Claude/Codex 从该 release 安装并调用 status, both hosts shall 返回真实 checkpoint | ✅ v5.7.0 双宿主 installed/enabled；Claude/Codex 返回同一非空 thread；双缓存 `ae --version` 均为 5.7.0 |
 | P0 | T279 | Release 安全解压兼容 | While 系统 Python 不支持 tar filter 参数, when archive smoke 解压, the runner shall 安全拒绝路径穿越并完成正常解压 | ✅ RED ImportError；GREEN 兼容安全解压，路径穿越拒绝；双宿主 archive smoke pass |
+
+## Phase 60：Prompt Contract 与多 Agent 交付完整性
+
+| 优先级 | ID | 任务 | EARS 验收 | 状态 |
+|---:|---|---|---|:---:|
+| P0 | T280 | 契约模型与静态一致性 | While prompt stage 被注册, when 静态校验运行, the system shall 验证执行模式、Worker 数量和输出契约一致 | ✅ Contract registry + layout tests |
+| P0 | T281 | Compiler 与单 Agent 上下文 | While Worker prompt 被构建, when requirement/feedback 存在, the system shall 将关键上下文交付给实际 Worker | ✅ Architect/Critic/Verifier/Gap/Research 接入 |
+| P0 | T282 | Inline Developer 契约化 | While Developer 进入实现或返工, when instruction 被渲染, the system shall 包含 tasks、反馈和授权边界 | ✅ 中央角色生效；Git 默认未授权 |
+| P0 | T283 | 多 Agent 独立提示词 | While 3/5 个 Worker 被创建, when prompt 被渲染, each worker shall 有完整上下文、唯一角色和输出契约 | ✅ 3/5 Worker 独立 role/context/hash |
+| P0 | T284 | 逐 Worker receipt | While 多 Agent 声明完成, when proof 被验证, the system shall 验证每个 Worker 的独立 receipt | ✅ 缺失返回 WORKER_RECEIPT_MISSING |
+| P1 | T285 | 输出契约与兼容警告 | While 旧合法 Result 被提交, when 增强字段缺失, the system shall 兼容接受并产生结构化警告 | ✅ extensions.contract_warnings |
+| P1 | T286 | 不可覆盖 Prompt 日志 | While 同 tick/stage 重试, when rendered log 写入, the system shall 按 message/audience/hash 保留全部版本 | ✅ rendered 日志不可覆盖且不冒充投递 |
+| P0 | T287 | Phase 60 收口 | While T280-T286 完成, when 全部门禁运行, tests shall 通过且覆盖率不低于权威基线 | ✅ 2019 passed / 1 skipped；90.27%；Ruff/mypy/sync pass |
 
 ## 执行纪律
 

@@ -19,7 +19,7 @@ think hard
 | 缺参数/多参数 | DIVERGED |
 | 返回值结构不同 | DIVERGED |
 | 搜不到 | MISSING |
-| 设计声明模糊无法判定 | UNCLEAR |
+| 设计声明模糊无法判定 | MISSING，并在 note 标注“设计声明模糊” |
 
 ## 硬约束
 - 文件存在 ≠ 实现覆盖。必须找到具体 file:line

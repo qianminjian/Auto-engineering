@@ -19,6 +19,8 @@ import time
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import pytest
+
 from auto_engineering.engine.state import EngineState
 from auto_engineering.engine.verification_layers import VerificationLayers
 from auto_engineering.loop.guardrail import GuardrailChain
@@ -85,6 +87,8 @@ class TestInit:
         assert action["action"] == "gap_scan"
         assert "gaps" in action["expected_format"]
         assert o._design_doc is not None
+        assert "设计模糊性扫描者" in action["instruction"]
+        assert '"requirement": "req"' in action["instruction"]
 
 
 # ── tick: architect → developer ──
@@ -950,6 +954,7 @@ class TestBuildActionContexts:
         a = o.init("req")
         assert "expected_format" in a
         assert "batch_plan" in a["expected_format"]
+        assert '"requirement": "req"' in a["subagent_prompt"]
 
     def test_developer_action_has_tasks(self) -> None:
         o = _orchestrator()
@@ -967,6 +972,17 @@ class TestBuildActionContexts:
         assert o._plan is not None
         devs = o._plan.get_tasks_by_stage("developer")
         assert len(devs) == 2
+
+    def test_developer_instruction_uses_central_role_and_feedback(self) -> None:
+        o = _orchestrator()
+        o.init("修复恢复流程")
+        o._state.current_stage = "developer"
+
+        action = o.build_action(feedback="P0：重复 Result 会推进两次")
+
+        assert "你是 Developer" in action["instruction"]
+        assert "重复 Result 会推进两次" in action["instruction"]
+        assert '"git_authorized": false' in action["instruction"]
 
     def test_critic_action_has_context_fields(self) -> None:
         o = _orchestrator()
@@ -988,6 +1004,23 @@ class TestBuildActionContexts:
         assert action["action"] == "critic"
         assert action["stage"] == "critic"
         assert action["context"]["files_changed"] == ["x.py"]
+        assert '"files_changed": [' in action["subagent_prompt"]
+        assert '"x.py"' in action["subagent_prompt"]
+
+    def test_system_verifier_receives_global_context(self) -> None:
+        o = _orchestrator()
+        o.init("验证全量设计")
+        o._state.current_stage = "system_verifier"
+        o._state.design_doc_path = "design/spec.md"
+        o._state.file_list = ["auto_engineering/events/store.py"]
+        o._state.coverage_map = [{"design_item": "幂等", "status": "IMPLEMENTED"}]
+
+        action = o.build_action()
+
+        prompt = action["subagent_prompt"]
+        assert "design/spec.md" in prompt
+        assert "auto_engineering/events/store.py" in prompt
+        assert '"design_item": "幂等"' in prompt
 
 
 # ── T7: _apply_result_to_state (result → EngineState) ──
@@ -4060,7 +4093,15 @@ class TestF8ActionContextInjection:
     def _builder(self, tmp_path, monkeypatch):
         from auto_engineering.loop.action_builder import ActionBuilder
         b = ActionBuilder(tmp_path)
-        monkeypatch.setattr(b, "_load_prompt", lambda stage: "test prompt")
+        monkeypatch.setattr(
+            b,
+            "_load_prompt",
+            lambda stage: (
+                "coordinator\n***\nworker-1\n***\nworker-2\n***\nworker-3"
+                if stage == "plate_deep_audit"
+                else "test prompt"
+            ),
+        )
         monkeypatch.setattr(b, "_write_spawn_proof_file", lambda *a, **k: None)
         return b
 
@@ -4094,12 +4135,17 @@ class TestF8ActionContextInjection:
         action = b.build_action(state, batch_state=bs)
         assert action["context"]["plate"] == "工具模块"
         assert action["context"]["components"] == ["voice-id.ts — Voice ID 校验"]
+        agents = action["spawn"]["agents"]
+        assert len({a["receipt_token"] for a in agents}) == 3
+        assert all(a["receipt_path"].endswith(".json") for a in agents)
 
     def test_plate_deep_audit_no_batch_state_no_context(self, tmp_path, monkeypatch):
+        from auto_engineering.prompts.compiler import PromptContextError
+
         b = self._builder(tmp_path, monkeypatch)
         state = EngineState(thread_id="t", current_stage="plate_deep_audit")
-        action = b.build_action(state)
-        assert action.get("context") is None  # 无 batch_state 时不注入（优雅降级）
+        with pytest.raises(PromptContextError, match="plate, components"):
+            b.build_action(state)
 
 
 class TestF7SpawnProofForgery:
@@ -4161,6 +4207,50 @@ class TestF7SpawnProofForgery:
         resp = o._validate_result_dict(self._critic_result())
         assert not (isinstance(resp, ErrorResponse)
                     and resp.error_code == "SPAWN_PROOF_INCOMPLETE")
+
+    def test_multi_agent_missing_worker_receipt_blocks(self, tmp_path):
+        from auto_engineering.loop.actions import ErrorResponse
+
+        o = _orchestrator()
+        o.init("req")
+        o._state.current_stage = "plate_deep_audit"
+        o._state.expected_stage = "plate_deep_audit"
+        o.project_root = tmp_path
+        proof_dir = tmp_path / ".ae-state" / "spawn-proofs"
+        proof_dir.mkdir(parents=True, exist_ok=True)
+        (proof_dir / "total.json").write_text(
+            json.dumps({"status": "completed", "stage": "plate_deep_audit"})
+        )
+        for token in ("worker-0", "worker-1"):
+            (proof_dir / f"{token}.json").write_text(
+                json.dumps({"status": "completed", "stage": "plate_deep_audit"})
+            )
+        o._active_action = {
+            "spawn": {
+                "agents": [
+                    {"index": 0, "receipt_token": "worker-0"},
+                    {"index": 1, "receipt_token": "worker-1"},
+                    {"index": 2, "receipt_token": "worker-2"},
+                ],
+            },
+        }
+        result = {
+            "stage": "plate_deep_audit",
+            "spawned": True,
+            "spawn_proof_token": "total",
+            "plate": "协议层",
+            "findings": [],
+            "p0_count": 0,
+            "p1_count": 0,
+            "p2_count": 0,
+            "cross_component_issues": [],
+        }
+
+        response = o._validate_result_dict(result)
+
+        assert isinstance(response, ErrorResponse)
+        assert response.error_code == "WORKER_RECEIPT_MISSING"
+        assert "worker-2" in response.message
 
 
 class TestDeveloperInstruction:

@@ -2,24 +2,55 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
+import re
 from pathlib import Path
 
 _logger = logging.getLogger(__name__)
 
 
+def _safe_segment(value: object, fallback: str) -> str:
+    text = str(value or fallback)
+    return re.sub(r"[^A-Za-z0-9_.-]+", "-", text)[:80]
+
+
+def _unique_stem(log_dir: Path, stem: str) -> str:
+    candidate = stem
+    suffix = 2
+    while (
+        (log_dir / f"{candidate}.json").exists()
+        or (log_dir / f"{candidate}.md").exists()
+    ):
+        candidate = f"{stem}-{suffix}"
+        suffix += 1
+    return candidate
+
+
 def write_action_prompt_log(project_root: Path, action: dict) -> None:
-    """将 action JSON 与人类可读 prompt 写入 `_scratch/prompt-log/`。"""
+    """记录内核渲染的 Action/Prompt；该日志不代表宿主已经投递。"""
 
     stage = action.get("stage", action.get("action", "unknown"))
     try:
         log_dir = project_root / "_scratch" / "prompt-log"
         log_dir.mkdir(parents=True, exist_ok=True)
         tick = action.get("tick", 0)
-        stem = f"tick-{tick:04d}-{stage}"
-        (log_dir / f"{stem}-action.json").write_text(
-            json.dumps(action, indent=2, ensure_ascii=False),
+        action_json = json.dumps(
+            action, indent=2, ensure_ascii=False, sort_keys=True
+        )
+        action_hash = hashlib.sha256(
+            action_json.encode("utf-8")
+        ).hexdigest()[:12]
+        base_stem = (
+            f"{_safe_segment(action.get('thread_id'), 'no-thread')}-"
+            f"tick-{tick:04d}-{_safe_segment(stage, 'unknown')}-"
+            f"{_safe_segment(action.get('message_id'), 'no-message')}-"
+            f"rendered-{action_hash}"
+        )
+        stem = _unique_stem(log_dir, base_stem)
+        (log_dir / f"{stem}.json").write_text(
+            action_json,
             encoding="utf-8",
         )
 
@@ -28,9 +59,13 @@ def write_action_prompt_log(project_root: Path, action: dict) -> None:
         expected_format = action.get("expected_format", {})
         spawn = action.get("spawn", {})
         lines = [
-            f"# Tick {tick} — {stage}",
+            f"# 内核渲染提示词 — Tick {tick} — {stage}",
+            "",
+            "> 这是 Core 生成的 rendered 诊断记录，未证明宿主已投递或 LLM 已接收。",
             "",
             f"- action: `{action.get('action', '?')}`",
+            f"- message id: `{action.get('message_id', 'N/A')}`",
+            f"- rendered hash: `{action_hash}`",
             f"- spawn stage: {bool(spawn)}",
         ]
         if spawn:
@@ -67,7 +102,12 @@ def write_action_prompt_log(project_root: Path, action: dict) -> None:
                 prompt = agent.get("prompt", "")
                 lines.extend([
                     "",
-                    f"### Agent [{agent['index']}] — {len(prompt)} chars",
+                    (
+                        f"### Agent [{agent['index']}]"
+                        f" — role `{agent.get('role', 'unspecified')}`"
+                        f" — hash `{agent.get('prompt_hash', 'N/A')}`"
+                        f" — {len(prompt)} chars"
+                    ),
                     "",
                     "```markdown",
                     prompt.strip(),
@@ -109,7 +149,7 @@ def write_action_prompt_log(project_root: Path, action: dict) -> None:
                     f"- {name}: {mark} — {verdict.get('message', '')[:120]}"
                 )
 
-        (log_dir / f"{stem}-prompt.md").write_text(
+        (log_dir / f"{stem}.md").write_text(
             "\n".join(lines),
             encoding="utf-8",
         )

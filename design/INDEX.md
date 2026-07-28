@@ -1,6 +1,6 @@
 # design/ 资产索引
 
-> 更新：2026-07-27｜双基线：v5.6 当前实现 + v5.7 已批准目标
+> 更新：2026-07-28｜双基线：v5.6 兼容行为 + v5.7 已批准目标
 
 ## 当前权威资产
 
@@ -10,6 +10,8 @@
 | `v5.6-Design-Loop.md` | 当前已实现行为与兼容基线 |
 | `v5.7-Protocol-Kernel-Design.md` | 已批准的协议内核目标设计 |
 | `v5.7-Protocol-Kernel-PLAN.md` | Phase 52-56 可执行实施计划 |
+| `v5.7-Prompt-Contract-Design.md` | Phase 60 Prompt Contract 与多 Agent 交付设计 |
+| `v5.7-Prompt-Contract-PLAN.md` | Phase 60 T280-T287 TDD 实施计划 |
 | `IMPLEMENTATION-TRACKER.md` | 当前任务状态、优先级与 EARS 验收 |
 | `HISTORY.md` | 历史里程碑与 Git 追溯入口 |
 

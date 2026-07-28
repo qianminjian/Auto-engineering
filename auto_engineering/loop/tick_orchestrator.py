@@ -48,7 +48,13 @@ from auto_engineering.loop.action_builder import (
     _STAGE_CHECKPOINT_REVIEW_FEEDBACK,
     ActionBuilder,
 )
-from auto_engineering.loop.actions import ActionDone, ActionError, ErrorResponse, validate_result_format
+from auto_engineering.loop.actions import (
+    ActionDone,
+    ActionError,
+    ErrorResponse,
+    result_contract_warnings,
+    validate_result_format,
+)
 from auto_engineering.loop.checkpoint.manager import CheckpointManager
 from auto_engineering.loop.checkpoint.records import CheckpointNotFoundError
 from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
@@ -941,6 +947,19 @@ class TickOrchestrator:
                 message="; ".join(errors),
                 current_state=self._state.to_dict())
 
+        contract_warnings = result_contract_warnings(
+            result, self._state.current_stage
+        )
+        if contract_warnings:
+            extensions = result.setdefault("extensions", {})
+            if isinstance(extensions, dict):
+                extensions["contract_warnings"] = contract_warnings
+            _logger.warning(
+                "result_contract_warning stage=%s fields=%s",
+                self._state.current_stage,
+                ",".join(w["field"] for w in contract_warnings),
+            )
+
         # T142: spawn stages — enforce subagent execution via G2 retry.
         # Checks "spawned" field in result: must be True for spawn stages.
         # P1-4: side-channel proof verification — checks that subagent wrote
@@ -1008,6 +1027,48 @@ class TickOrchestrator:
                         ),
                         current_state=self._state.to_dict(),
                     )
+
+                active_spawn = (
+                    self._active_action.get("spawn", {})
+                    if self._active_action is not None else {}
+                )
+                active_agents = active_spawn.get("agents", [])
+                if isinstance(active_agents, list) and len(active_agents) > 1:
+                    missing_receipts: list[str] = []
+                    for agent in active_agents:
+                        if not isinstance(agent, dict):
+                            continue
+                        receipt_token = agent.get("receipt_token")
+                        if not isinstance(receipt_token, str):
+                            missing_receipts.append(
+                                f"agent-{agent.get('index', '?')}:token-missing"
+                            )
+                            continue
+                        receipt_file = (
+                            self.project_root / ".ae-state" / "spawn-proofs"
+                            / f"{receipt_token}.json"
+                        )
+                        try:
+                            receipt = json.loads(
+                                receipt_file.read_text(encoding="utf-8")
+                            )
+                            receipt_ok = (
+                                receipt.get("status") == "completed"
+                                and receipt.get("stage") == stage
+                            )
+                        except (OSError, json.JSONDecodeError):
+                            receipt_ok = False
+                        if not receipt_ok:
+                            missing_receipts.append(receipt_token)
+                    if missing_receipts:
+                        return ErrorResponse(
+                            error_code="WORKER_RECEIPT_MISSING",
+                            message=(
+                                f"Stage '{stage}' 未收齐 Worker receipt: "
+                                + ", ".join(missing_receipts)
+                            ),
+                            current_state=self._state.to_dict(),
+                        )
 
         return result
 

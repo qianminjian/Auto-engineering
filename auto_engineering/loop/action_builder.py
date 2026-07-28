@@ -17,6 +17,8 @@ from typing import TYPE_CHECKING
 
 from auto_engineering.config.constants import _SPAWN_CONFIG
 from auto_engineering.config.feature_flags import feature_status_for_action
+from auto_engineering.prompts.compiler import compile_prompt_bundle
+from auto_engineering.prompts.contracts import default_prompt_contracts
 from auto_engineering.prompts.registry import default_registry
 
 # DS-15: spawn instruction. For multi-agent stages (count>1), each agent gets
@@ -28,13 +30,18 @@ _SPAWN_INSTRUCTION = (
     "Collect all outputs → merge into one result per expected_format → "
     "write result: {{\"stage\":\"{stage}\",\"spawned\":true,"
     "\"spawn_proof_token\":\"{proof_token}\", ...merged}}.\n"
-    "Proof: tell each subagent to OVERWRITE .ae-state/spawn-proofs/{proof_token}.json with exactly one JSON object "
+    "Proof: for a single agent, tell it to OVERWRITE "
+    ".ae-state/spawn-proofs/{proof_token}.json with exactly one JSON object "
     "{{\"status\":\"completed\",\"stage\":\"{stage}\",\"completed_at\":\"<ISO timestamp>\"}} "
     "(do NOT append a second object — appending corrupts the file and fails verification).\n"
     "On failure: {{\"stage\":\"{stage}\",\"spawned\":false,\"spawn_error\":\"<reason>\"}}."
 )
 _SPAWN_MULTI_INSTRUCTION = (
     "Each agent has its own prompt in spawn.agents[] — give agent[i] spawn.agents[i].prompt.\n"
+    "Each agent must OVERWRITE only its own spawn.agents[i].receipt_path with "
+    "{\"status\":\"completed\",\"stage\":\"<stage>\",\"completed_at\":\"<ISO timestamp>\"}. "
+    "After all worker receipts are completed, Team Lead must OVERWRITE the total proof file; "
+    "workers must not write the shared total proof.\n"
 )
 _SPAWN_SINGLE_INSTRUCTION = (
     "Use subagent_prompt below.\n"
@@ -432,6 +439,7 @@ class ActionBuilder:
         the path.  Token is never embedded in instruction text → PII-safe.
         """
         result: dict = {**base, "action": action}
+        compiled_prompt = False
         spawn = _SPAWN_CONFIG.get(action)
         if spawn is not None:
             result["spawn"] = spawn
@@ -456,33 +464,61 @@ class ActionBuilder:
 
             # DS-15: read prompt from file
             full_prompt = self._load_prompt(action)
+            worker_expected_format = (
+                {
+                    "spawned": "bool — MUST be true after spawning subagent",
+                    **(expected_format or {}),
+                }
+            )
 
             if is_multi:
-                # Split by "***" into N+1 sections.
-                # Section 0 = merge instructions (Phase 1+3), Sections 1..N = agent prompts
-                sections = full_prompt.split("\n***\n")
-                if len(sections) >= count + 1:
-                    merge_prompt = sections[0].strip()
-                    agent_prompts = [s.strip() for s in sections[1:count+1]]
-                else:
-                    # Fallback: single prompt replicated to all agents
-                    merge_prompt = full_prompt
-                    agent_prompts = [full_prompt] * count
-
-                result["subagent_prompt"] = merge_prompt  # merge instructions for Team Lead
-                result["spawn"]["agents"] = [
-                    {"index": i, "prompt": p}
-                    for i, p in enumerate(agent_prompts)
-                ]
+                contract = default_prompt_contracts()[action]
+                bundle = compile_prompt_bundle(
+                    contract=contract,
+                    role_prompt=full_prompt,
+                    context=dict(context or {}),
+                    expected_format=worker_expected_format,
+                )
+                result["subagent_prompt"] = bundle.coordinator_prompt
+                agents: list[dict] = []
+                for worker in bundle.worker_prompts:
+                    receipt_token = uuid.uuid4().hex
+                    self._write_spawn_proof_file(receipt_token, action)
+                    agents.append({
+                        "index": worker.index,
+                        "role": worker.role,
+                        "prompt": worker.prompt,
+                        "prompt_hash": worker.prompt_hash,
+                        "receipt_token": receipt_token,
+                        "receipt_path": (
+                            f".ae-state/spawn-proofs/{receipt_token}.json"
+                        ),
+                    })
+                result["spawn"]["agents"] = agents
+                compiled_prompt = True
             else:
-                result["subagent_prompt"] = full_prompt
+                single_contract = default_prompt_contracts().get(action)
+                if single_contract is not None and action in {
+                    "architect", "critic", "component_verifier",
+                    "system_verifier",
+                }:
+                    prompt_context = dict(context or {})
+                    prompt_context.setdefault("requirement", base.get("requirement"))
+                    prompt_context.setdefault("feedback", base.get("feedback"))
+                    bundle = compile_prompt_bundle(
+                        contract=single_contract,
+                        role_prompt=full_prompt,
+                        context=prompt_context,
+                        expected_format=worker_expected_format,
+                    )
+                    result["subagent_prompt"] = bundle.worker_prompts[0].prompt
+                    compiled_prompt = True
+                else:
+                    result["subagent_prompt"] = full_prompt
 
             # T141: spawned field in expected_format (for Team Lead, NOT subagent)
             if expected_format is not None:
-                expected_format = {
-                    "spawned": "bool — MUST be true after spawning subagent",
-                    **expected_format,
-                }
+                expected_format = worker_expected_format
         else:
             # Non-spawn stage — inline instruction
             if action not in ("developer",):  # developer has custom instruction
@@ -492,7 +528,7 @@ class ActionBuilder:
             # P1 优化 (2026-07-26 提示词分析): 把任务上下文直接拼进 subagent_prompt 头部，
             # 让 subagent 第一时间看到聚焦对象（哪个组件/板块/文件），减少推断成本。
             # （F8 已注入 action.context，本优化进一步拼进 subagent 实际收到的 prompt。）
-            if result.get("subagent_prompt"):
+            if result.get("subagent_prompt") and not compiled_prompt:
                 ctx_lines = []
                 for k, v in context.items():
                     if not v:
@@ -556,30 +592,18 @@ class ActionBuilder:
     # ── stage builders ──
 
     def _build_action_gap_scan(self, base: dict) -> dict:
-        # DS-15: gap_scan prompt is self-contained — subagent uses Read to explore design doc.
-        # P1 优化 (2026-07-26 提示词分析): 补 gap 识别方法论 + grade 分级标准 + 示例
-        # （原仅泛化指令 "Do the work..."，Team Lead 无方法论指引）。
-        return self._build_stage_action(base, "gap_scan", context={
+        action = self._build_stage_action(base, "gap_scan", context={
             "design_doc_path": (
                 self._design_doc.path if self._design_doc else None),
             "project_root": str(self.project_root),
-        }, instruction=(
-            "扫描设计文档识别实现前的模糊点（gap）。逐章 Read 设计文档，对每个实现单元判定清晰度。\n"
-            "grade 分级标准:\n"
-            "- architectural: 跨组件架构未定（通信协议/数据流/分层边界缺失）→ 通常 has_blocking=true\n"
-            "- component: 单组件接口未定（Props/函数签名/返回值缺失）\n"
-            "- module: 模块实现细节未定（算法/边界条件/错误处理缺失）\n"
-            "每个 gap 输出 {id, design_section_ref(章节号), grade, clarity(high/medium/low), "
-            "summary, depends_on}。architectural gap 标 has_blocking=true（阻塞需先解决）；"
-            "无模糊点则 gaps=[]、has_blocking=false。\n"
-            "示例: {id:G1, design_section_ref:§5, grade:component, clarity:low, "
-            "summary:'MiniMax API 错误响应结构未定义', depends_on:[]}"),
-        expected_format={
+            "requirement": self._state.requirement,
+        }, expected_format={
             "gaps": ("[{id, design_section_ref, grade, clarity, "
                      "summary, depends_on}]"),
             "scanned_sections": "int",
             "has_blocking": "bool",
         })
+        return self._compile_inline_action(action, "gap_scan")
 
     def _build_action_gap_review(self, base: dict) -> dict:
         report = json.loads(self._state.gap_report_json or '{"gaps": []}')
@@ -607,20 +631,27 @@ class ActionBuilder:
             self._state.pending_research_ids[0]
             if self._state.pending_research_ids else None)
         gap = by_id.get(current_id, {}) if current_id else {}
-        return self._build_stage_action(base, "research",
+        research_gap = {
+            "id": gap.get("id"),
+            "design_section_ref": gap.get("design_section_ref"),
+            "grade": gap.get("grade"),
+            "summary": gap.get("summary"),
+        }
+        knowledge_sources = {
+            "tier_order": [
+                "tier0", "tier1_ref_code", "tier2_doc_kb", "tier3_web"],
+            "memory_constraint": (
+                "grep 定位 → 50-200 行 Read → 丢弃; 禁止批量/并行扫描"),
+        }
+        action = self._build_stage_action(base, "research",
+            context={
+                "gap": research_gap,
+                "knowledge_sources": knowledge_sources,
+                "requirement": self._state.requirement,
+            },
             required_capabilities=["web_search"],
-            gap={
-                "id": gap.get("id"),
-                "design_section_ref": gap.get("design_section_ref"),
-                "grade": gap.get("grade"),
-                "summary": gap.get("summary"),
-            },
-            knowledge_sources={
-                "tier_order": [
-                    "tier0", "tier1_ref_code", "tier2_doc_kb", "tier3_web"],
-                "memory_constraint": (
-                    "grep 定位 → 50-200 行 Read → 丢弃; 禁止批量/并行扫描"),
-            },
+            gap=research_gap,
+            knowledge_sources=knowledge_sources,
             expected_format={
                 "findings": "string",
                 "sources": "[{tier, ref, note}]",
@@ -630,6 +661,19 @@ class ActionBuilder:
                 "search_status": "used|unavailable|failed|not_needed",
                 "search_error": "string|null",
             })
+        return self._compile_inline_action(action, "research")
+
+    def _compile_inline_action(self, action: dict, stage: str) -> dict:
+        """用中央角色和契约替换 inline stage 的重复硬编码指令。"""
+
+        bundle = compile_prompt_bundle(
+            contract=default_prompt_contracts()[stage],
+            role_prompt=self._load_prompt(stage),
+            context=action["context"],
+            expected_format=action["expected_format"],
+        )
+        action["instruction"] = bundle.coordinator_prompt
+        return action
 
     def _build_component_map(self) -> dict[str, str]:
         """Build design_section → component_name mapping from design doc.
@@ -654,7 +698,13 @@ class ActionBuilder:
                 "mode": "PLAN_REFINE",
                 "refine_request": json.loads(self._state.refine_request_json),
             }
-        return self._build_stage_action(base, "architect", expected_format={
+        return self._build_stage_action(base, "architect", context={
+            "requirement": self._state.requirement,
+            "design_doc_path": (
+                self._design_doc.path if self._design_doc else None
+            ),
+            "feedback": extra.get("feedback", base.get("feedback")),
+        }, expected_format={
             "plan": "string (markdown, min 50 chars)",
             "batch_plan": (
                 "[{batch_id, design_section, component, "
@@ -685,40 +735,41 @@ class ActionBuilder:
             for t in raw_tasks
         ]
         action = self._build_stage_action(base, "developer",
+            context={
+                "requirement": self._state.requirement,
+                "feedback": base.get("feedback"),
+                "batch_id": batch_id,
+                "component": component,
+                "tasks": task_dicts,
+                "task_guidance": (
+                    "按列出的 task 逐项执行"
+                    if task_dicts else
+                    "无 task 明细；不得虚构任务，先依据 plan 和设计文档确认范围"
+                ),
+                "toolchain": self._context.init_manifest or {},
+                "git_authorized": False,
+            },
+            expected_format={
+                "stage": "developer",
+                "batch_id": "string",
+                "files_changed": "[string]",
+                "commit_hash": "string (仅实际获授权提交时填写，否则为空)",
+                "test_results": "{passed:int, failed:0, total:int}",
+                "red_evidence": (
+                    "[{task_id, command, failure_summary, description}]"
+                ),
+            },
             component=component, batch_id=batch_id, tasks=task_dicts,
             plan=self._state.plan)
-        # P0 修复 (2026-07-26 真跑): developer 是最核心的编码环节，旧版无 instruction
-        # （prompt-log 显示 "no instruction — inline stage"），Team Lead 无标准化驱动指引。
-        # 渲染 inline instruction：当前 batch/组件/tasks + TDD 铁律 + 项目约定 + result 格式。
-        action["instruction"] = self._build_developer_instruction(
-            component, batch_id, task_dicts)
-        return action
-
-    def _build_developer_instruction(
-        self, component: str | None, batch_id: str | None,
-        task_dicts: list[dict],
-    ) -> str:
-        """Render developer inline instruction (P0 修复, 2026-07-26)."""
-        lines: list[str] = []
-        for t in task_dicts:
-            deps = t.get("depends_on") or []
-            dep_text = f"（依赖 {', '.join(deps)}）" if deps else ""
-            files = ", ".join(t.get("file_targets", []))
-            lines.append(f"  - [{t.get('id')}] {t.get('description', '')} → {files}{dep_text}")
-        tasks_text = "\n".join(lines) if lines else "  （无 task 明细，依设计文档与 batch_plan 推断）"
-        return (
-            "你（Team Lead）亲自执行 developer 阶段（inline TDD），不 spawn subagent。\n"
-            f"当前 batch: {batch_id or '?'} | 组件: {component or '?'}\n"
-            "Tasks（按 TDD 顺序执行）:\n"
-            f"{tasks_text}\n"
-            "TDD 铁律: 每个 task 先写会失败的测试（RED commit）→ 写最小实现使其通过"
-            "（GREEN commit）→ 重构；test task 先于其所依赖的 implement task（先红后绿）。\n"
-            "项目约定: 读 .ae-state/init-manifest.json 取 language / test_runner / "
-            "source_root / test_root，按其工具链开发与测试。\n"
-            '完成后写 result: {"stage":"developer","batch_id":"<batch_id>",'
-            '"files_changed":[...],"commit_hash":"<hash>",'
-            '"test_results":{"passed":N,"failed":0},"red_evidence":[...]}。'
+        contract = default_prompt_contracts()["developer"]
+        bundle = compile_prompt_bundle(
+            contract=contract,
+            role_prompt=self._load_prompt("developer"),
+            context=action["context"],
+            expected_format=action["expected_format"],
         )
+        action["instruction"] = bundle.coordinator_prompt
+        return action
 
     def _build_action_critic(self, base: dict) -> dict:
         # DS-15: subagent reads changed files itself via Read/Grep.
@@ -728,6 +779,8 @@ class ActionBuilder:
             "files_changed": snap.get("files_changed", self._state.files_changed),
             "test_results": snap.get("test_results", self._state.test_results),
             "commit_hash": snap.get("commit_hash", self._state.commit_hash),
+            "requirement": self._state.requirement,
+            "design_scope": self._state.plan,
         }, expected_format={
             "stage": "critic",
             "verdict": "APPROVE | MAJOR",
@@ -807,8 +860,11 @@ class ActionBuilder:
         })
 
     def _build_action_system_verifier(self, base: dict) -> dict:
-        # DS-15: subagent reads design doc itself.
-        return self._build_stage_action(base, "system_verifier", expected_format={
+        return self._build_stage_action(base, "system_verifier", context={
+            "design_doc_path": self._state.design_doc_path,
+            "file_list": list(self._state.file_list),
+            "component_coverage": self._state.coverage_map or [],
+        }, expected_format={
             "stage": "system_verifier",
             "full_coverage_map": (
                 "[{design_section, design_item, status, "
@@ -823,8 +879,13 @@ class ActionBuilder:
         }, recheck=dict(_VERIFIER_RECHECK))
 
     def _build_action_system_deep_audit(self, base: dict) -> dict:
-        # DS-15: subagent reads project + coverage_map itself.
-        return self._build_stage_action(base, "system_deep_audit", expected_format={
+        return self._build_stage_action(base, "system_deep_audit", context={
+            "coverage_map": self._state.coverage_map or [],
+            "audit_scope": {
+                "project_root": str(self.project_root),
+                "files": list(self._state.file_list),
+            },
+        }, expected_format={
             "stage": "system_deep_audit",
             "findings": (
                 "[{severity, dimension, file, line, description, "

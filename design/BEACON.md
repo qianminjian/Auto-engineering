@@ -1,6 +1,6 @@
 # Auto-Engineering BEACON
 
-> 创建：2026-06-24｜更新：2026-07-28｜阶段：Phase 59 真实宿主兼容性加固完成
+> 创建：2026-06-24｜更新：2026-07-28｜阶段：Phase 60 Prompt Contract 重构完成
 > 决策状态翻转（✅↔❌）或架构降级必须先获用户批准。
 
 ## 目标与成功标准
@@ -32,10 +32,12 @@ Engineering；把 archive smoke 冒充真实产品安装；修改外部参考源
 | D7 | 采用双基线：v5.6 是当前实现，v5.7 是已批准目标 | ✅ |
 | D8 | v5.7 采用渐进协议内核重构，不建立双内核 | ✅ |
 | D9 | 事件是事实源，EngineState 是可重建投影 | ✅ |
+| D10 | Prompt Contract 采用兼容式编译，不改变 Action/Result v1.1 核心语义 | ✅ |
+| D11 | 多 Agent 必须逐 Worker 交付上下文并提供独立完成回执 | ✅ |
 
 ## 当前状态
 
-- Phase 1-59 已完成；当前基线为 2001 passed / 1 skipped，覆盖率 90.36%。
+- Phase 1-60 已完成；当前基线为 2019 passed / 1 skipped，覆盖率 90.27%。
 - LoopEvent、SQLite EventStore、EngineState Projector 和单 Tick 原子事务已落地。
 - 11 个 Stage 已全部唯一注册 Handler；旧 stage-specific `_after_*` 已移除。
 - Host SPI 2.0、十类黄金轨迹、故障恢复和跨宿主语义等价已验收。
@@ -46,12 +48,16 @@ Engineering；把 archive smoke 冒充真实产品安装；修改外部参考源
 - v5.6 checkpoint 可一次性只读导入；旧调用入口在迁移期保持兼容。
 - Phase 59 已完成只读 SQLite、双宿主自包含 marketplace、manifest 零告警和
   release 安全解压兼容；v5.7.0 release 已在两个真实宿主中安装并识别。
+- Phase 60 已完成 Prompt Contract、全阶段上下文编译、多 Agent 独立 receipt、
+  Result 兼容警告和不可覆盖 rendered 日志。
 - 阻塞：无。
 
 ## 最近演进
 
 | 日期 | 变更 |
 |---|---|
+| 2026-07-28 | Phase 60 完成 T280-T287；2019 passed / 1 skipped，coverage 90.27% |
+| 2026-07-28 | 批准 Phase 60 兼容式 Prompt Contract Compiler 与多 Agent 交付完整性重构 |
 | 2026-07-28 | Phase 59 完成 T275-T279，release-v3 双宿主真实安装调用通过 |
 | 2026-07-28 | Codex CLI 升级至 0.145.0，关闭 T274，登记只读 SQLite 兼容问题 T275 |
 | 2026-07-28 | Phase 58 Claude Code 真实安装通过；Codex 安装通过、端到端调用环境阻塞 |
@@ -62,16 +68,13 @@ Engineering；把 archive smoke 冒充真实产品安装；修改外部参考源
 | 2026-07-28 | Phase 53 完成 Event Store、可重放投影、原子事务和 checkpoint 导入 |
 | 2026-07-27 | Phase 52 完成 Protocol Envelope v1.1、跨进程幂等与受限兼容入口 |
 | 2026-07-27 | 批准 v5.7 渐进式协议内核重构与双基线策略 |
-| 2026-07-27 | Phase 51 收口兼容性告警，全量测试输出零告警 |
-| 2026-07-27 | Phase 50 完成 Codex 迁移、配置 SSOT 和双层发布验收 |
 | 2026-07-27 | Phase 49 完成 Host-neutral Core 与双宿主基础适配 |
 
 ## 待解决问题
 
-- 当前候选版本为 v5.7.0；等待提交后再决定是否推送和正式发布。
+- 当前改动待用户决定是否提交；提交后再决定是否构建 v5.7.1 候选版本。
 
 ## 引用文件
 
-`design/v5.6-Design-Loop.md` · `design/v5.7-Protocol-Kernel-Design.md` ·
-`design/v5.7-Protocol-Kernel-PLAN.md` · `design/IMPLEMENTATION-TRACKER.md` ·
-`design/HISTORY.md`
+`design/v5.6-Design-Loop.md` · `design/v5.7-Protocol-Kernel-Design.md` · `design/v5.7-Protocol-Kernel-PLAN.md` ·
+`design/v5.7-Prompt-Contract-Design.md` · `design/v5.7-Prompt-Contract-PLAN.md` · `design/IMPLEMENTATION-TRACKER.md` · `design/HISTORY.md`
