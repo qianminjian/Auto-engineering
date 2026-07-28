@@ -37,7 +37,7 @@ Engineering；把 archive smoke 冒充真实产品安装；修改外部参考源
 
 ## 当前状态
 
-- Phase 1-61 已完成；Phase 62 完成 5/6，基线 2023 passed / 1 skipped，覆盖率 90.28%。
+- Phase 1-61 已完成；Phase 62 完成 4/6，基线 2023 passed / 1 skipped，覆盖率 90.28%。
 - LoopEvent、SQLite EventStore、EngineState Projector 和单 Tick 原子事务已落地。
 - 11 个 Stage 已全部唯一注册 Handler；旧 stage-specific `_after_*` 已移除。
 - Host SPI 2.0、十类黄金轨迹、故障恢复和跨宿主语义等价已验收。
@@ -51,7 +51,7 @@ Engineering；把 archive smoke 冒充真实产品安装；修改外部参考源
 - Phase 60 已完成 Prompt Contract、全阶段上下文编译、多 Agent 独立 receipt、
   Result 兼容警告和不可覆盖 rendered 日志。
 - Phase 62 已完成宿主诊断、计划同步、双宿主隔离生命周期和发布自动化加固；
-  正在执行 v5.7.1 tag workflow 与远端制品核验，阻塞：无。
+  正在复验补齐 otel extra 后的远端 CI，再执行 v5.7.1 tag workflow，阻塞：无。
 
 ## 最近演进
 

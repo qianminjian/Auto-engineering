@@ -39,7 +39,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Sync dependencies
-        run: uv sync --extra dev
+        run: uv sync --extra dev --extra otel
       - name: Check generated agent rules
         run: python3 scripts/sync_agent_instructions.py --check
       - name: Run host contract tests
@@ -67,8 +67,8 @@ jobs:
         uses: astral-sh/setup-uv@v5
         with:
           python-version: "3.12"
-      - name: "Sync deps (含 dev: ruff/pytest 插件)"
-        run: uv sync --extra dev
+      - name: "Sync deps (含 dev + otel 测试依赖)"
+        run: uv sync --extra dev --extra otel
       - name: Check project metadata
         run: uv run python scripts/check_project_metadata.py
       - name: Lint (ruff)

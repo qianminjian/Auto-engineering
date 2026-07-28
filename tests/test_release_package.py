@@ -94,6 +94,7 @@ def test_ci_has_independent_claude_and_codex_contract_matrix() -> None:
     assert "scripts/build_release.py" in content
     assert "scripts/install_acceptance.py" in content
     assert "scripts/sync_agent_instructions.py --check" in content
+    assert content.count("uv sync --extra dev --extra otel") == 2
     acceptance = (ROOT / "scripts" / "install_acceptance.py").read_text()
     assert "check_host_package" in acceptance
 
