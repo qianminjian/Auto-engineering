@@ -1,7 +1,7 @@
 [project]
 name = "auto-engineering"
-version = "5.6.0"
-description = "Auto-Engineering v5.6 — 跨宿主 Tick 驱动工程循环与分层验证"
+version = "5.7.0"
+description = "Auto-Engineering v5.7 — 跨宿主确定性协议内核与分层验证"
 readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "MIT" }
@@ -79,7 +79,7 @@ addopts = ["--timeout=60", "-p no:cacheprovider"]
 patch = ["subprocess"]
 
 [tool.auto-engineering.baseline]
-passed = 1996
+passed = 2001
 skipped = 1
 
 [build-system]

@@ -16,6 +16,9 @@
 | Phase 54 Tick Kernel | ✅ 8/8 | T253-T260 |
 | Phase 55 Host SPI 2.0 | ✅ 5/5 | T261-T265 |
 | Phase 56 黄金轨迹与收口 | ✅ 5/5 | T266-T270；1996 passed / 1 skipped |
+| Phase 57 收口质量加固 | ✅ 2/2 | T271-T272 |
+| Phase 58 真实产品安装验收 | ✅ 2/2 | T273-T274；Claude Code/Codex 真实宿主调用通过 |
+| Phase 59 真实宿主兼容性加固 | ✅ 5/5 | T275-T279；v5.7.0 双宿主真实安装验收通过 |
 
 ## Phase 52：Protocol Envelope v1.1
 
@@ -70,6 +73,30 @@
 | P1 | T268 | 故障注入与重放 | While 边界失败发生, when 重试, the Core shall 不重复业务推进且审计链完整 | ✅ 三点事务故障重试仅提交一次；宿主回报无效后安全恢复；35 passed |
 | P1 | T269 | 跨宿主语义等价 | While 相同轨迹经过双 Adapter, when 规范化, Core events/state/verdict shall 等价 | ✅ RED import error；GREEN 双 Adapter 黄金轨迹；Host/Hook/Golden 38 passed |
 | P1 | T270 | v5.7 全量收口 | While Phase 52-56 完成, when 全部门禁运行, tests shall 通过且覆盖率不低于 90% | ✅ 1996 passed / 1 skipped；coverage 90.35%；Ruff/mypy/sync/metadata/diff pass；双宿主 archive smoke pass、product install not_run；atdo smoke 7/7 |
+
+## Phase 57：收口质量加固
+
+| 优先级 | ID | 任务 | EARS 验收 | 状态 |
+|---:|---|---|---|:---:|
+| P1 | T271 | SQLite 与 smoke 告警归零 | While 全量门禁运行, when 资源被释放, the suite shall 不产生 ResourceWarning 或兼容别名告警 | ✅ 根因定位 raw sqlite context 不关闭；专项 5 passed；全量 1996 passed / 1 skipped，零 warnings；atdo smoke 7/7 |
+| P1 | T272 | 验收文档命令去漂移 | While 用户按文档执行验收, when 复制命令, the scripts shall 存在且参数符合当前 CLI | ✅ 移除退役脚本引用；统一 build_release + 双宿主 install_acceptance；Doctor 11 项与动态测试基线 |
+
+## Phase 58：真实产品安装验收
+
+| 优先级 | ID | 任务 | EARS 验收 | 状态 |
+|---:|---|---|---|:---:|
+| P0 | T273 | Claude Code 真实安装 | While release 已安装到真实 Claude Code, when 新宿主进程调用插件命令, the host shall 加载 Skill 并返回有效状态 | ✅ Claude Code 2.1.220；user scope enabled；安装缓存 Skill/runner 完整；`/auto-engineering:status` 实际调用成功 |
+| P0 | T274 | Codex 真实安装 | While release 已安装到真实 Codex, when 新宿主进程调用 `$auto-engineering`, the host shall 加载 Skill 并返回有效状态 | ✅ Codex 0.145.0；插件 installed/enabled；`gpt-5.6-sol` 新进程加载安装缓存 Skill 并执行 status；普通执行返回现有 checkpoint |
+
+## Phase 59：真实宿主兼容性加固
+
+| 优先级 | ID | 任务 | EARS 验收 | 状态 |
+|---:|---|---|---|:---:|
+| P1 | T275 | 只读 status SQLite 访问 | While Codex 使用 read-only 沙箱, when `status --format json` 读取已有 checkpoint, the command shall 不设置写入型 PRAGMA 且返回真实状态 | ✅ RED WAL/临时目录两类失败；GREEN 快照 + immutable 双路径；100 passed；真实 Codex 返回非空 thread |
+| P0 | T276 | 自包含双宿主 marketplace | While release 被解压, when 任一宿主从 marketplace 安装, the plugin root shall 包含完整 Core、Skill、hooks 与 runner | ✅ RED 缺少 plugin payload；GREEN 构建时生成自包含插件目录；安装缓存完整 |
+| P1 | T277 | Manifest 零告警 | While Claude 校验 release marketplace, when plugin manifest 被解析, the validator shall 不报告未知字段或缺 description | ✅ 移除未知 metadata、补 description；Claude validator 零告警 |
+| P0 | T278 | 双宿主 release 重装验收 | While 新 release 已构建, when Claude/Codex 从该 release 安装并调用 status, both hosts shall 返回真实 checkpoint | ✅ v5.7.0 双宿主 installed/enabled；Claude/Codex 返回同一非空 thread；双缓存 `ae --version` 均为 5.7.0 |
+| P0 | T279 | Release 安全解压兼容 | While 系统 Python 不支持 tar filter 参数, when archive smoke 解压, the runner shall 安全拒绝路径穿越并完成正常解压 | ✅ RED ImportError；GREEN 兼容安全解压，路径穿越拒绝；双宿主 archive smoke pass |
 
 ## 执行纪律
 

@@ -3,9 +3,10 @@
   "owner": {
     "name": "qianminjian"
   },
+  "description": "Auto-Engineering 双宿主确定性工程治理内核",
   "metadata": {
-    "description": "Claude Code Plugin marketplace for Auto-Engineering v5.6",
-    "version": "5.6.0"
+    "description": "Claude Code Plugin marketplace for Auto-Engineering v5.7",
+    "version": "5.7.0"
   },
   "plugins": [
     {
@@ -13,7 +14,7 @@
       "description": "Loop Engineering 调度脚手架: v5.6 Tick-Based Discrete Invocation + 5-layer verification + 7 Gate 质量门 + Init-Loop 接口契约",
       "source": "./",
       "homepage": "https://github.com/qianminjian/Auto-engineering",
-      "version": "5.6.0",
+      "version": "5.7.0",
       "category": "development"
     }
   ]

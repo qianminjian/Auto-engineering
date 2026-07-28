@@ -208,6 +208,62 @@ def test_collect_status_json_corrupted_plus_valid_db(tmp_path: Path) -> None:
     assert data["round"] == 7
 
 
+def test_collect_status_json_reads_checkpoint_from_read_only_state_dir(
+    tmp_path: Path,
+) -> None:
+    """status 在宿主只读沙箱中不得以 WAL 写初始化打开 checkpoint."""
+    from auto_engineering.engine.state import EngineState
+    from auto_engineering.loop.checkpoint import SQLiteCheckpointStore
+
+    cp_dir = tmp_path / ".ae-state"
+    cp_dir.mkdir()
+    db_path = cp_dir / "readonly.db"
+    state = EngineState(thread_id="readonly-thread", round=3)
+    with SQLiteCheckpointStore[EngineState](str(db_path)) as store:
+        store.save(state, round=3)
+
+    db_path.chmod(0o444)
+    cp_dir.chmod(0o555)
+    try:
+        data = _collect_status_json(tmp_path)
+    finally:
+        cp_dir.chmod(0o755)
+        db_path.chmod(0o644)
+
+    assert data["thread_id"] == "readonly-thread"
+    assert data["round"] == 3
+
+
+def test_collect_status_json_falls_back_when_temp_directory_is_unavailable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """完全不可写的宿主沙箱应回退读取已 checkpoint 的主数据库."""
+    from auto_engineering.engine.state import EngineState
+    from auto_engineering.loop.checkpoint import SQLiteCheckpointStore
+    from auto_engineering.loop.checkpoint import store as store_module
+
+    cp_dir = tmp_path / ".ae-state"
+    cp_dir.mkdir()
+    db_path = cp_dir / "readonly.db"
+    with SQLiteCheckpointStore[EngineState](str(db_path)) as store:
+        store.save(EngineState(thread_id="immutable-thread", round=4), round=4)
+
+    def _no_temp_directory(*args, **kwargs):
+        raise FileNotFoundError("no writable temporary directory")
+
+    monkeypatch.setattr(
+        store_module.tempfile,
+        "TemporaryDirectory",
+        _no_temp_directory,
+    )
+
+    data = _collect_status_json(tmp_path)
+
+    assert data["thread_id"] == "immutable-thread"
+    assert data["round"] == 4
+
+
 # ============================================================
 # Group 5: _collect_status_json — recent_history field defaults
 # ============================================================

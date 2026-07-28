@@ -1,7 +1,7 @@
 {
   "name": "auto-engineering",
-  "version": "5.6.0",
-  "description": "Auto-Engineering v5.6 — Tick-Based Discrete Invocation loop with 5-layer verification, Gate quality system, and Init-Loop contract.",
+  "version": "5.7.0",
+  "description": "Auto-Engineering v5.7 — Deterministic protocol kernel with replayable state and cross-host verification.",
   "author": {
     "name": "Qian Minjian (钱敏健)"
   },
@@ -17,14 +17,5 @@
     "claude-code-plugin"
   ],
   "commands": "./commands/",
-  "skills": "./skills/",
-  "metadata": {
-    "min_claude_code_version": "1.0.0",
-    "requirements": {
-      "python": ">=3.12",
-      "uv": ">=0.5.0",
-      "git": ">=2.30",
-      "sqlite3": ">=3.35"
-    }
-  }
+  "skills": "./skills/"
 }

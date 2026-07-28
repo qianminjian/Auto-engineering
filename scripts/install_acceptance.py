@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import inspect
 import json
 import os
 import subprocess
@@ -20,6 +21,23 @@ _HOST_ENV = {
     "claude-code": ("CLAUDE_CODE", "1"),
     "codex": ("CODEX_THREAD_ID", "release-acceptance"),
 }
+
+
+def _safe_extract_archive(package: tarfile.TarFile, destination: Path) -> None:
+    """兼容旧 Python 的安全 tar 解压，拒绝路径穿越和链接成员。"""
+    resolved_destination = destination.resolve()
+    for member in package.getmembers():
+        target = (resolved_destination / member.name).resolve()
+        if (
+            not target.is_relative_to(resolved_destination)
+            or member.issym()
+            or member.islnk()
+        ):
+            raise ValueError(f"不安全的归档路径: {member.name}")
+        if "filter" in inspect.signature(package.extract).parameters:
+            package.extract(member, resolved_destination, filter="data")
+        else:
+            package.extract(member, resolved_destination)
 
 
 def _run(
@@ -82,7 +100,7 @@ def accept_archive(
     install_root = workspace / "plugin"
     install_root.mkdir(parents=True)
     with tarfile.open(archive, "r:gz") as package:
-        package.extractall(install_root, filter="data")
+        _safe_extract_archive(package, install_root)
 
     errors = check_host_package(install_root, host)
     if errors:

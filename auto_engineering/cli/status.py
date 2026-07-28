@@ -55,7 +55,7 @@ def _collect_status_json(cwd: Path) -> dict:
     for db_file in cp_dir.glob("*.db"):
         try:
             store: SQLiteCheckpointStore[EngineState]
-            with SQLiteCheckpointStore(str(db_file)) as store:
+            with SQLiteCheckpointStore(str(db_file), read_only=True) as store:
                 ckpt: Checkpoint[EngineState] | None = store.load_latest()
             if ckpt is not None and (latest_ckpt is None or ckpt.round > latest_ckpt.round):
                 latest_ckpt = ckpt
@@ -185,7 +185,7 @@ def register_status_command(main_group: click.Group) -> None:
                 try:
                     # 2026-07-25 审计修复 (P1-6): with 确保 _file_conn/WAL 句柄关闭
                     store: SQLiteCheckpointStore[EngineState]
-                    with SQLiteCheckpointStore(str(db_file)) as store:
+                    with SQLiteCheckpointStore(str(db_file), read_only=True) as store:
                         total_v2 += store.count()
                 except (OSError, sqlite3.Error):
                     _logger.warning("checkpoint count 失败, 跳过: %s", db_file, exc_info=True)
@@ -205,7 +205,7 @@ def _load_progress_summary(cwd: Path) -> dict:
         try:
             # 2026-07-25 审计修复 (P1-6): with 确保 _file_conn/WAL 句柄关闭
             store: SQLiteCheckpointStore[EngineState]
-            with SQLiteCheckpointStore(str(db_file)) as store:
+            with SQLiteCheckpointStore(str(db_file), read_only=True) as store:
                 ckpt: Checkpoint[EngineState] | None = store.load_latest()
                 if ckpt is not None and (latest_ckpt is None or ckpt.round > latest_ckpt.round):
                     latest_ckpt = ckpt

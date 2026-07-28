@@ -11,7 +11,9 @@ from __future__ import annotations
 
 import contextlib
 import json
+import shutil
 import sqlite3
+import tempfile
 import threading
 import uuid
 from datetime import UTC, datetime
@@ -65,16 +67,21 @@ class SQLiteCheckpointStore[T]:
         )
     """
 
-    def __init__(self, db_path: str | Path) -> None:
+    def __init__(self, db_path: str | Path, *, read_only: bool = False) -> None:
         """初始化.
 
         Args:
             db_path: SQLite 数据库文件路径. ":memory:" 用于测试
+            read_only: 只读打开现有 file 数据库，不初始化 schema 或 WAL
         """
         self.db_path = str(db_path)
         self._is_memory = self.db_path == ":memory:"
+        if read_only and self._is_memory:
+            raise ValueError("read_only 不支持 :memory: 数据库")
+        self._read_only = read_only
         self._lock = threading.Lock()
         self._shared_conn: sqlite3.Connection | None = None
+        self._snapshot_dir: tempfile.TemporaryDirectory[str] | None = None
         # v2.5 P2-D-3: file 模式缓存连接 + WAL, 避免每操作 connect/close
         self._file_conn: sqlite3.Connection | None = None
         if self._is_memory:
@@ -117,7 +124,42 @@ class SQLiteCheckpointStore[T]:
                 self._shared_conn.commit()
         else:
             # v2.5 P2-D-3: file 模式初始化缓存连接 (WAL + schema 一次)
-            self._file_conn = init_file_conn(self.db_path, self._lock)
+            connection_path = self.db_path
+            if self._read_only:
+                try:
+                    self._snapshot_dir = tempfile.TemporaryDirectory(
+                        prefix="ae-checkpoint-readonly-"
+                    )
+                    source = Path(self.db_path)
+                    snapshot = Path(self._snapshot_dir.name) / source.name
+                    for suffix in ("", "-wal", "-shm"):
+                        candidate = Path(f"{source}{suffix}")
+                        if candidate.exists():
+                            shutil.copy2(
+                                candidate,
+                                Path(f"{snapshot}{suffix}"),
+                            )
+                    connection_path = str(snapshot)
+                    self._file_conn = init_file_conn(
+                        connection_path,
+                        self._lock,
+                        read_only=True,
+                    )
+                except OSError:
+                    if self._snapshot_dir is not None:
+                        self._snapshot_dir.cleanup()
+                        self._snapshot_dir = None
+                    self._file_conn = init_file_conn(
+                        self.db_path,
+                        self._lock,
+                        read_only=True,
+                        immutable=True,
+                    )
+            else:
+                self._file_conn = init_file_conn(
+                    connection_path,
+                    self._lock,
+                )
 
     def _conn(self) -> Any:
         """获取连接的上下文管理器 (内部辅助, 让 save/load 等方法少 4 行样板).
@@ -145,6 +187,9 @@ class SQLiteCheckpointStore[T]:
         if self._shared_conn is not None:
             self._shared_conn.close()
             self._shared_conn = None
+        if self._snapshot_dir is not None:
+            self._snapshot_dir.cleanup()
+            self._snapshot_dir = None
 
     def __del__(self) -> None:
         """P2-31: GC safety net — close connections if not explicitly closed."""

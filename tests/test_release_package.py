@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import tarfile
 from pathlib import Path
 
@@ -20,8 +21,42 @@ def test_release_archive_contains_both_host_adapters(tmp_path: Path) -> None:
         members = {member.name.rstrip("/") for member in package.getmembers()}
 
     assert ".codex-plugin/plugin.json" in members
+    assert ".agents/plugins/marketplace.json" in members
+    assert "plugins/auto-engineering/.codex-plugin/plugin.json" in members
     for required in REQUIRED_PATHS:
         assert required.as_posix() in members
+
+
+def test_release_archive_is_self_contained_dual_host_marketplace(
+    tmp_path: Path,
+) -> None:
+    from scripts.build_release import build_archive
+
+    archive = tmp_path / "auto-engineering-marketplace.tar.gz"
+    build_archive(ROOT, archive)
+
+    with tarfile.open(archive, "r:gz") as package:
+        members = {member.name.rstrip("/") for member in package.getmembers()}
+        claude_file = package.extractfile(".claude-plugin/marketplace.json")
+        codex_file = package.extractfile(".agents/plugins/marketplace.json")
+        assert claude_file is not None
+        assert codex_file is not None
+        claude_marketplace = json.load(claude_file)
+        codex_marketplace = json.load(codex_file)
+
+    plugin_root = "plugins/auto-engineering"
+    assert f"{plugin_root}/.claude-plugin/plugin.json" in members
+    assert f"{plugin_root}/.codex-plugin/plugin.json" in members
+    assert f"{plugin_root}/skills/auto-engineering/SKILL.md" in members
+    assert f"{plugin_root}/scripts/ae-run" in members
+    assert f"{plugin_root}/hooks-codex.json" in members
+    assert f"{plugin_root}/auto_engineering" in members
+    assert claude_marketplace["description"]
+    assert claude_marketplace["plugins"][0]["source"] == "./plugins/auto-engineering"
+    assert (
+        codex_marketplace["plugins"][0]["source"]["path"]
+        == "./plugins/auto-engineering"
+    )
 
 
 def test_release_build_fails_when_required_path_is_missing(

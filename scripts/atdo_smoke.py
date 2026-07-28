@@ -168,8 +168,14 @@ def _check_init_manifest_old() -> DimensionResult:
 def _check_gate_pass() -> DimensionResult:
     """Smoke 2: 7 Gate 列表 + Stage 过滤 (v5.6: safety/lint/type_check/audit/contract/test/build)."""
     try:
+        import warnings
+
         from auto_engineering.gates import DEFAULT_GATES
-        from auto_engineering.gates.base import GateVerdict, Verdict
+        from auto_engineering.gates.base import GateVerdict
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            from auto_engineering.gates.base import Verdict
 
         # Test 1: DEFAULT_GATES 7 道实例 (v5.6: coverage 删除, audit 新增)
         if len(DEFAULT_GATES) != 7:

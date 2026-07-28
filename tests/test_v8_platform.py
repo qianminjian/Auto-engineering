@@ -166,6 +166,7 @@ class TestV8_6_MarketplaceInstall:
         assert "name" in data
         assert "version" in data
         assert "description" in data
+        assert "metadata" not in data
 
     def test_codex_plugin_json_has_marketplace_fields(self) -> None:
         """.codex-plugin/plugin.json 含 marketplace 所需字段."""

@@ -14,6 +14,7 @@ import sqlite3
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
+from pathlib import Path
 
 
 @contextmanager
@@ -88,10 +89,17 @@ def _atomic(conn: sqlite3.Connection) -> Iterator[sqlite3.Connection]:
         raise
 
 
-def init_file_conn(db_path: str, lock: threading.Lock) -> sqlite3.Connection:
+def init_file_conn(
+    db_path: str,
+    lock: threading.Lock,
+    *,
+    read_only: bool = False,
+    immutable: bool = False,
+) -> sqlite3.Connection:
     """初始化 file 模式缓存连接 (v2.5 P2-D-3).
 
-    - 设 PRAGMA journal_mode=WAL — 写并发不互斥读
+    - 写模式设 PRAGMA journal_mode=WAL — 写并发不互斥读
+    - 只读模式使用 SQLite URI mode=ro，不创建 schema、不改变 journal mode
     - check_same_thread=False + threading.Lock 保护 — 多线程共享同一连接安全
     - 幂等创建 schema
     - 返回连接供 _with_conn 复用 (不关闭)
@@ -99,13 +107,29 @@ def init_file_conn(db_path: str, lock: threading.Lock) -> sqlite3.Connection:
     调用方负责在 store 生命周期结束时 close().
     """
     with lock:
-        conn = sqlite3.connect(db_path, check_same_thread=False)
+        if read_only:
+            if immutable:
+                uri = f"{Path(db_path).resolve().as_uri()}?mode=ro&immutable=1"
+                conn = sqlite3.connect(
+                    uri,
+                    uri=True,
+                    check_same_thread=False,
+                )
+            else:
+                # 调用方已把 DB/WAL/SHM 复制到临时目录；允许 SQLite 在
+                # 快照旁管理共享内存，但 query_only 阻止业务 SQL 修改快照。
+                conn = sqlite3.connect(db_path, check_same_thread=False)
+        else:
+            conn = sqlite3.connect(db_path, check_same_thread=False)
         try:
             conn.row_factory = sqlite3.Row
-            # WAL: 写并发不阻塞读, 提升 dev-loop 期间的多 round 吞吐
-            # (round 1 写 checkpoint 时 round 2 还能读)
-            conn.execute("PRAGMA journal_mode=WAL")
-            _ensure_schema(conn)
+            if read_only:
+                conn.execute("PRAGMA query_only=ON")
+            else:
+                # WAL: 写并发不阻塞读, 提升 dev-loop 期间的多 round 吞吐
+                # (round 1 写 checkpoint 时 round 2 还能读)
+                conn.execute("PRAGMA journal_mode=WAL")
+                _ensure_schema(conn)
         except BaseException:
             conn.close()
             raise

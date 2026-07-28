@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -87,7 +88,7 @@ def test_deleted_projection_rebuilds_to_last_committed_state(tmp_path: Path) -> 
             action=_action("action-2", 1, "developer"),
         )
 
-    with sqlite3.connect(db_path) as conn:
+    with closing(sqlite3.connect(db_path)) as conn:
         conn.execute(
             "DELETE FROM engine_state_projections WHERE thread_id = ?",
             ("thread-1",),
@@ -110,7 +111,7 @@ def test_payload_tampering_is_detected_before_replay(tmp_path: Path) -> None:
     with SQLiteEventStore(db_path) as store:
         store.import_checkpoint(checkpoint_id="cp-1", state=state)
 
-    with sqlite3.connect(db_path) as conn:
+    with closing(sqlite3.connect(db_path)) as conn:
         conn.execute(
             "UPDATE loop_events SET payload_json = ? WHERE thread_id = ?",
             ('{"checkpoint_id":"cp-1","state":{"thread_id":"tampered"}}', "thread-1"),

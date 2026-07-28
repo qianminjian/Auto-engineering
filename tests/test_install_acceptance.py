@@ -4,9 +4,44 @@ from __future__ import annotations
 
 import json
 import sys
+import tarfile
 from pathlib import Path
 
 import pytest
+
+
+def test_safe_extract_archive_extracts_regular_member(tmp_path: Path) -> None:
+    from scripts.install_acceptance import _safe_extract_archive
+
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "asset.txt").write_text("ok", encoding="utf-8")
+    archive = tmp_path / "release.tar.gz"
+    with tarfile.open(archive, "w:gz") as package:
+        package.add(source / "asset.txt", arcname="plugin/asset.txt")
+
+    destination = tmp_path / "destination"
+    destination.mkdir()
+    with tarfile.open(archive, "r:gz") as package:
+        _safe_extract_archive(package, destination)
+
+    assert (destination / "plugin/asset.txt").read_text(encoding="utf-8") == "ok"
+
+
+def test_safe_extract_archive_rejects_path_traversal(tmp_path: Path) -> None:
+    from scripts.install_acceptance import _safe_extract_archive
+
+    source = tmp_path / "escape.txt"
+    source.write_text("blocked", encoding="utf-8")
+    archive = tmp_path / "malicious.tar.gz"
+    with tarfile.open(archive, "w:gz") as package:
+        package.add(source, arcname="../escape.txt")
+
+    destination = tmp_path / "destination"
+    destination.mkdir()
+    with tarfile.open(archive, "r:gz") as package:
+        with pytest.raises(ValueError, match="不安全的归档路径"):
+            _safe_extract_archive(package, destination)
 
 
 def test_main_reports_product_install_as_not_run(

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -61,7 +62,7 @@ def test_new_event_thread_does_not_create_legacy_tables(tmp_path: Path) -> None:
             **event_payload,
         }
 
-    with sqlite3.connect(event_path) as conn:
+    with closing(sqlite3.connect(event_path)) as conn:
         names = {
             row[0]
             for row in conn.execute(

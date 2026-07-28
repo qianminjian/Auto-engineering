@@ -7,7 +7,7 @@ description: >
   dev-loop, check loop status, resume a checkpoint, or run gated development.
 ---
 
-# Auto-Engineering v5.6 — 跨宿主 Tick 协议
+# Auto-Engineering v5.7 — 跨宿主 Tick 协议
 
 Auto-Engineering 将职责拆成两层：
 
