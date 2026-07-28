@@ -29,6 +29,7 @@ class TransitionContext:
 
     thread_id: str
     tick: int
+    event_sequence: int = 0
     extensions: Mapping[str, Any] = field(default_factory=dict)
 
 

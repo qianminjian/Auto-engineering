@@ -4019,7 +4019,7 @@ class TestGapReviewResearchRouting:
         o = self._setup("Research")  # 首字母大写，如 prompt 指示
         monkeypatch.setattr(o, "build_action", lambda: {"action": "research"})
         monkeypatch.setattr(o, "_save_checkpoint", lambda: None)
-        o._after_gap_review({})
+        o._after_tick({})
         assert o._state.current_stage == "research"
         assert o._state.pending_research_ids == ["G1"]
 
@@ -4027,7 +4027,7 @@ class TestGapReviewResearchRouting:
         o = self._setup("Defer+Research")  # 带 + 格式
         monkeypatch.setattr(o, "build_action", lambda: {"action": "research"})
         monkeypatch.setattr(o, "_save_checkpoint", lambda: None)
-        o._after_gap_review({})
+        o._after_tick({})
         assert o._state.current_stage == "research"
         assert o._state.pending_research_ids == ["G1"]
 
@@ -4035,7 +4035,7 @@ class TestGapReviewResearchRouting:
         o = self._setup("Defer")  # Defer → 留 architect，不进 research
         monkeypatch.setattr(o, "build_action", lambda: {"action": "architect"})
         monkeypatch.setattr(o, "_save_checkpoint", lambda: None)
-        o._after_gap_review({})
+        o._after_tick({})
         assert o._state.current_stage == "architect"
         assert o._state.pending_research_ids == []
 
@@ -4043,7 +4043,7 @@ class TestGapReviewResearchRouting:
         o = self._setup("research")  # 原小写形式不受影响
         monkeypatch.setattr(o, "build_action", lambda: {"action": "research"})
         monkeypatch.setattr(o, "_save_checkpoint", lambda: None)
-        o._after_gap_review({})
+        o._after_tick({})
         assert o._state.current_stage == "research"
 
 

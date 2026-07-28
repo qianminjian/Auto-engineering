@@ -37,7 +37,7 @@ Engineering；把 archive smoke 冒充真实产品安装；修改外部参考源
 
 - Phase 1-53 已完成；当前基线为 1945 passed / 1 skipped，覆盖率 90.14%。
 - LoopEvent、SQLite EventStore、EngineState Projector 和单 Tick 原子事务已落地。
-- Phase 54 已完成 T253-T254；当前实施入口为 T255 Gap/Research Handler 迁移。
+- Phase 54 已完成 T253-T255；当前实施入口为 T256 五层验证 Handler 迁移。
 - v5.6 checkpoint 可一次性只读导入；旧调用入口在迁移期保持兼容。
 - 阻塞：无；真实产品安装状态保持 `not_run`。
 

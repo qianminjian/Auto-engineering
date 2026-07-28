@@ -78,6 +78,13 @@ from auto_engineering.loop.stage_router import (
     clear_stage_fields,
     update_majors_count,
 )
+from auto_engineering.loop.stages.base import TransitionContext, TransitionDecision
+from auto_engineering.loop.stages.gap import (
+    GapReviewHandler,
+    GapScanHandler,
+    ResearchHandler,
+)
+from auto_engineering.loop.stages.registry import StageHandlerRegistry
 from auto_engineering.loop.task_factory import tasks_from_batch_plan
 from auto_engineering.loop.tick_gate_runner import TickGateRunner
 from auto_engineering.metrics.collector import AIOrigin, get_collector
@@ -243,6 +250,10 @@ class TickOrchestrator:
         self._active_action: dict[str, Any] | None = None
         self._result_replays: dict[str, tuple[str, dict[str, Any]]] = {}
         self._current_result_message_id: str | None = None
+        self._pending_domain_events: list[LoopEvent] = []
+        self._stage_handlers = StageHandlerRegistry(
+            [GapScanHandler(), GapReviewHandler(), ResearchHandler()]
+        )
         self._action_builder = ActionBuilder(
             self.project_root,
             pii_enabled=self._pii_enabled,
@@ -1008,10 +1019,24 @@ class TickOrchestrator:
 
     def _after_tick(self, result: dict) -> dict:
         stage = self._state.current_stage
+        if stage in self._stage_handlers.stages:
+            stage_handler = self._stage_handlers.get(stage)
+            event_sequence = (
+                self._event_store.next_sequence(self._state.thread_id)
+                if self._event_store is not None
+                else self._state.tick
+            )
+            decision = stage_handler.apply(
+                self._state.to_dict(),
+                result,
+                TransitionContext(
+                    thread_id=self._state.thread_id,
+                    tick=self._state.tick,
+                    event_sequence=event_sequence,
+                ),
+            )
+            return self._apply_stage_decision(decision)
         handlers: dict[str, Callable[[], dict]] = {
-            "gap_scan": lambda: self._after_gap_scan(result),
-            "gap_review": lambda: self._after_gap_review(result),
-            "research": lambda: self._after_research(result),
             "architect": lambda: self._after_architect(),
             "developer": lambda: self._after_developer(),
             "critic": lambda: self._after_critic(result),
@@ -1020,11 +1045,39 @@ class TickOrchestrator:
             "system_verifier": lambda: self._after_system_verifier(result),
             "system_deep_audit": lambda: self._after_system_deep_audit(result),
         }
-        handler = handlers.get(stage)
-        if handler:
-            return handler()
+        legacy_handler = handlers.get(stage)
+        if legacy_handler:
+            return legacy_handler()
         return ActionError(error_code="UNKNOWN_STAGE",
                            message=f"Unknown stage: {stage}").to_dict()
+
+    def _apply_stage_decision(self, decision: TransitionDecision) -> dict:
+        """应用纯 Handler 决策；副作用集中保留在 Kernel façade。"""
+
+        action_context = decision.action_context
+        patch = action_context.get("state_patch", {})
+        if isinstance(patch, dict):
+            self._state.set_channels(patch)
+        supplements = action_context.get("supplements", ())
+        if isinstance(supplements, (list, tuple)):
+            for supplement in supplements:
+                if isinstance(supplement, dict):
+                    self._inject_supplement(**supplement)
+        pause_stages = action_context.get("pause_stages", ())
+        if isinstance(pause_stages, (list, tuple, set, frozenset)):
+            self._pause_at_stages.update(pause_stages)
+        fuzzy_sections = action_context.get("fuzzy_sections", ())
+        if self._progress_tree is not None and isinstance(
+            fuzzy_sections, (list, tuple)
+        ):
+            for section in fuzzy_sections:
+                node = self._progress_tree.find_by_design_section(section)
+                if node is not None:
+                    node.design_status = "fuzzy"
+        if self._event_store is not None:
+            self._pending_domain_events.extend(decision.events)
+        self._advance_stage(decision.next_stage)
+        return self.build_action()
 
     # ── _after_architect ──
 
@@ -1391,117 +1444,6 @@ class TickOrchestrator:
 
         return self._convergence_check(
             design_coverage_ok=True, system_deep_audit_ok=True)
-
-    # ── Phase 0 handlers (Pre-flight Gap Analysis, 仅 --design-doc 模式) ──
-
-    def _after_gap_scan(self, result: dict) -> dict:
-        """T0.2/T0.3: gap_scan → gap_review (有 gap) / architect (无 gap)."""
-        report = json.loads(self._state.gap_report_json or '{"gaps": []}')
-        gaps = report.get("gaps", [])
-        if self._progress_tree:
-            for g in gaps:
-                node = self._progress_tree.find_by_design_section(
-                    g.get("design_section_ref", ""))
-                if node:
-                    node.design_status = "fuzzy"
-        if gaps:
-            self._advance_stage("gap_review")
-        else:
-            self._advance_stage("architect")
-        return self.build_action()
-
-    def _after_gap_review(self, result: dict) -> dict:
-        """T0.4/T0.5: gap_review → research (有待研究) / architect (全 Fill/Defer).
-
-        兼顾初审与 T0.7 复审: 复审时 (gap 已在 research_archive) 用户据 findings 做
-        补充设计 — Fill→Supplement(消费存档), Defer→留 architect; 已研究 gap 不再入队
-        (防重复研究/死循环). G6 NoDeferredBlockingGap (post/gap_review) 已在 tick()
-        Guardrail 链拦截 architectural gap 被 Defer/Defer+Research (§B10.5), 到此处
-        决策已满足阻塞约束.
-        """
-        decisions = self._state.pending_gap_decisions
-        report = json.loads(self._state.gap_report_json or '{"gaps": []}')
-        by_id = {g["id"]: g for g in report.get("gaps", [])}
-        pending_research: list[str] = []
-        for d in decisions:
-            gap_id = d.get("gap_id")
-            g = by_id.get(gap_id)
-            if not g:
-                continue
-            # F9 修复 (2026-07-26 真跑): normalize resolution。gap_review prompt 指示
-            # Team Lead 用 "Fill/Research/Defer/Defer+Research"（首字母大写、Defer+Research
-            # 带 +），须归一化为小写下划线形式才匹配下方路由分支，否则 research 阶段被静默
-            # 跳过、T50 搜索通路永不触发。
-            resolution = (d.get("resolution") or "").strip().lower().replace(" ", "").replace("+", "_")
-            already_researched = gap_id in self._state.research_archive
-            g["resolution"] = resolution
-            g["user_note"] = d.get("user_note")
-            if resolution == "fill":
-                self._inject_supplement(
-                    g, d.get("fill_content", ""),
-                    source="user", source_tier=None, confidence="high")
-                self._state.research_archive.pop(gap_id, None)
-            elif resolution in ("research", "defer_research"):
-                if already_researched:
-                    # 复审后仍想研究/延后 → 已有存档, 归 defer 留 architect (防重复研究)
-                    g["resolution"] = "defer"
-                else:
-                    pending_research.append(g["id"])
-            # defer → node fuzzy, architect in-loop 细化
-        self._state.gap_report_json = json.dumps(report, ensure_ascii=False)
-        self._state.pending_research_ids = pending_research
-        # T107: has_blocking → auto-pause before architect via T64 Stage Checkpoint Gate
-        if report.get("has_blocking"):
-            self._pause_at_stages.add("architect")
-        if pending_research:
-            self._advance_stage("research")
-        else:
-            self._advance_stage("architect")
-        return self.build_action()
-
-    def _after_research(self, result: dict) -> dict:
-        """T0.6/T0.7/T0.8: research → research (队列未空) / gap_review (复审) / architect.
-
-        `research` resolution → 直接落 Supplement (node stable); `defer_research` → findings
-        存档待复审. 队列清空后若有 defer_research 已存档未复审 → 回 gap_review 复审 (T0.7,
-        用户据研究发现做补充设计); 否则 → architect (T0.8).
-        """
-        report = json.loads(self._state.gap_report_json or '{"gaps": []}')
-        by_id = {g["id"]: g for g in report.get("gaps", [])}
-        if not self._state.pending_research_ids:
-            self._advance_stage("architect")
-            return self.build_action()
-        current_id = self._state.pending_research_ids.pop(0)
-        g = by_id.get(current_id, {})
-        self._state.research_archive[current_id] = result
-        search_status = result.get("search_status", "not_needed")
-        search_failed = search_status in {"unavailable", "failed"}
-        if search_failed:
-            # 宿主能力缺失/搜索失败时保留完整证据，回到 gap_review 由用户
-            # 补充或显式 defer；不得把空 findings 注入成稳定设计。
-            g["resolution"] = "defer_research"
-        elif g.get("resolution") == "research":
-            self._inject_supplement(
-                g, result.get("recommended_design", ""),
-                source="research_agent",
-                source_tier=result.get("source_tier"),
-                confidence=result.get("confidence", "medium"))
-        self._state.gap_report_json = json.dumps(report, ensure_ascii=False)
-
-        if self._state.pending_research_ids:
-            self._advance_stage("research")          # T0.6
-        elif self._has_pending_rereview(report):
-            self._advance_stage("gap_review")        # T0.7 复审 (补充设计)
-        else:
-            self._advance_stage("architect")         # T0.8
-        return self.build_action()
-
-    def _has_pending_rereview(self, report: dict) -> bool:
-        """T0.7: 存在 defer_research gap 已研究存档但未复审 (resolution 仍 defer_research)."""
-        return any(
-            g.get("resolution") == "defer_research"
-            and g["id"] in self._state.research_archive
-            for g in report.get("gaps", []))
 
     def _inject_supplement(self, gap: dict, content: str, source: str,
                            source_tier: str | None, confidence: str) -> None:
@@ -2058,6 +2000,18 @@ class TickOrchestrator:
                 )
             )
             sequence += 1
+        for pending in self._pending_domain_events:
+            events.append(
+                LoopEvent.create(
+                    thread_id=self._state.thread_id,
+                    sequence=sequence,
+                    event_type=pending.event_type,
+                    payload=pending.to_dict()["payload"],
+                    causation_id=pending.causation_id,
+                    correlation_id=self._state.thread_id,
+                )
+            )
+            sequence += 1
         events.append(
             LoopEvent.create(
                 thread_id=self._state.thread_id,
@@ -2074,6 +2028,7 @@ class TickOrchestrator:
                 state=self._state,
                 action=action,
             )
+            self._pending_domain_events.clear()
         except BaseException:
             restored = self._event_store.load_projection(self._state.thread_id)
             if restored is not None:
