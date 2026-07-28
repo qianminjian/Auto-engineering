@@ -75,6 +75,8 @@ def test_release_build_fails_when_required_path_is_missing(
 def test_release_workflow_uses_validated_builder_without_swallowing_errors() -> None:
     content = (ROOT / ".github" / "workflows" / "release.yml").read_text()
 
+    assert "actions/checkout@v7" in content
+    assert "astral-sh/setup-uv@v9.0.0" in content
     assert "python3 scripts/build_release.py" in content
     assert "scripts/check_project_metadata.py" in content
     assert "--host claude-code" in content
@@ -88,6 +90,8 @@ def test_release_workflow_uses_validated_builder_without_swallowing_errors() -> 
 def test_ci_has_independent_claude_and_codex_contract_matrix() -> None:
     content = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
 
+    assert content.count("actions/checkout@v7") == 2
+    assert content.count("astral-sh/setup-uv@v9.0.0") == 2
     assert "host-contract:" in content
     assert "host: claude-code" in content
     assert "host: codex" in content

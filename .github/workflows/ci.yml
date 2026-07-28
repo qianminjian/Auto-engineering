@@ -33,9 +33,9 @@ jobs:
               tests/test_documentation_contract.py
               tests/test_release_package.py
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v9.0.0
         with:
           python-version: "3.12"
       - name: Sync dependencies
@@ -60,11 +60,11 @@ jobs:
   lint-and-test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Check agent instruction sync
         run: python3 scripts/sync_agent_instructions.py --check
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v9.0.0
         with:
           python-version: "3.12"
       - name: "Sync deps (含 dev + otel 测试依赖)"
