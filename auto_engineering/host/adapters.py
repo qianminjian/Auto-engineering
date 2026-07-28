@@ -17,6 +17,7 @@ from auto_engineering.host import (
     usage_source_for,
 )
 from auto_engineering.host.codex_hooks import normalize_codex_event
+from auto_engineering.host.profile import HostProfile
 
 _EVENT_NAMES = {
     "SessionStart": "session_start",
@@ -84,6 +85,14 @@ class CodexHostAdapter:
     platform: ClassVar[HostPlatform] = HostPlatform.CODEX
     capabilities: ClassVar[HostCapabilities] = capabilities_for(HostPlatform.CODEX)
 
+    def profile(
+        self,
+        *,
+        detected: HostCapabilities,
+        authorized: HostCapabilities,
+    ) -> HostProfile:
+        return HostProfile(self.platform, self.capabilities, detected, authorized)
+
     def normalize_event(self, raw: Mapping[str, object]) -> HostEvent | None:
         try:
             return normalize_codex_event(raw)
@@ -105,6 +114,14 @@ class ClaudeCodeHostAdapter:
     capabilities: ClassVar[HostCapabilities] = capabilities_for(
         HostPlatform.CLAUDE_CODE,
     )
+
+    def profile(
+        self,
+        *,
+        detected: HostCapabilities,
+        authorized: HostCapabilities,
+    ) -> HostProfile:
+        return HostProfile(self.platform, self.capabilities, detected, authorized)
 
     def normalize_event(self, raw: Mapping[str, object]) -> HostEvent | None:
         return _normalize_claude_event(raw)

@@ -7,6 +7,57 @@ from pathlib import Path
 import pytest
 
 
+def test_host_profile_effective_capabilities_are_safe_intersection() -> None:
+    from auto_engineering.host import HostCapabilities, HostPlatform
+    from auto_engineering.host.profile import HostProfile
+
+    profile = HostProfile(
+        platform=HostPlatform.CODEX,
+        declared=HostCapabilities(
+            skills=True,
+            hooks=frozenset({"pre_tool", "post_tool"}),
+            subagents=True,
+            parallel_subagents=True,
+            git_mutation=True,
+        ),
+        detected=HostCapabilities(
+            skills=True,
+            hooks=frozenset({"pre_tool"}),
+            subagents=True,
+            parallel_subagents=True,
+            git_mutation=True,
+        ),
+        authorized=HostCapabilities(
+            skills=True,
+            hooks=frozenset({"pre_tool", "stop"}),
+            subagents=False,
+            parallel_subagents=True,
+            git_mutation=False,
+        ),
+    )
+
+    assert profile.effective.skills is True
+    assert profile.effective.hooks == frozenset({"pre_tool"})
+    assert profile.effective.subagents is False
+    assert profile.effective.parallel_subagents is False
+    assert profile.effective.git_mutation is False
+
+
+def test_adapter_builds_profile_from_declared_detected_and_authorized() -> None:
+    from auto_engineering.host import HostCapabilities, HostPlatform
+    from auto_engineering.host.adapters import adapter_for
+
+    profile = adapter_for(HostPlatform.CODEX).profile(
+        detected=HostCapabilities(skills=True, web_search=True),
+        authorized=HostCapabilities(skills=True, web_search=False),
+    )
+
+    assert profile.platform is HostPlatform.CODEX
+    assert profile.declared is adapter_for(HostPlatform.CODEX).capabilities
+    assert profile.effective.skills is True
+    assert profile.effective.web_search is False
+
+
 def test_detects_codex_before_claude_compatibility_signals() -> None:
     from auto_engineering.host import HostPlatform, detect_host
 

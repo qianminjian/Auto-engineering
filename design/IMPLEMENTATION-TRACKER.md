@@ -13,7 +13,7 @@
 | Phase 51 质量收口 | ✅ 1/1 | T241；1889 passed / 1 skipped，零告警 |
 | Phase 52 Protocol Envelope | ✅ 5/5 | T242-T246；1913 passed / 1 skipped |
 | Phase 53 Event Store | ✅ 6/6 | T247-T252；1945 passed / 1 skipped |
-| Phase 54 Tick Kernel | ◐ 0/8 | T253-T260 |
+| Phase 54 Tick Kernel | ✅ 8/8 | T253-T260 |
 | Phase 55 Host SPI 2.0 | ☐ 0/5 | T261-T265 |
 | Phase 56 黄金轨迹与收口 | ☐ 0/5 | T266-T270 |
 
@@ -45,18 +45,18 @@
 | P1 | T253 | ActionBuilder 无状态化 | While 构建调用交错, when 输入不同 context, the builder shall 不泄漏上次字段 | ✅ RED 1 failed；GREEN 专项 2 passed；相关回归 228 passed；Ruff/mypy pass |
 | P1 | T254 | Handler 契约与注册表 | While Kernel 分派 stage, when 查询 registry, the system shall 恰好返回一个 handler | ✅ RED import error；GREEN 5 passed；Ruff/mypy pass |
 | P1 | T255 | Gap/Research handlers | While 迁移两组 stage, when 跑特征测试, the trajectory shall 与 v5.6 等价 | ✅ RED import error + registry missing；GREEN 7 handler tests；相关回归 196 passed；Ruff/mypy pass |
-| P1 | T256 | 五层验证 handlers | While 进入验证层, when 应用结果, the Core shall 保留 Gate、Guardrail 与升级语义 | ◐ 特征测试待建立 |
-| P1 | T257 | Architect/Critic handlers | While 设计审查回退, when handlers 执行, the trajectory shall 保持等价 | ☐ |
-| P1 | T258 | Developer handler | While batch 开发推进, when handler 应用结果, checkpoint 与验证触发 shall 保持等价 | ☐ |
-| P1 | T259 | 终态与 façade 收窄 | While handlers 已迁移, when Kernel 执行, it shall 只承担通用编排职责 | ☐ |
-| P1 | T260 | Phase 54 结构验收 | While 全 stage 注册, when 运行结构测试, each stage shall 恰有一个 handler | ☐ |
+| P1 | T256 | 五层验证 handlers | While 进入验证层, when 应用结果, the Core shall 保留 Gate、Guardrail 与升级语义 | ✅ RED import error + registry missing；GREEN 8 handler tests；Gate/Guardrail/Tick 回归 315 passed；Ruff/mypy pass |
+| P1 | T257 | Architect/Critic handlers | While 设计审查回退, when handlers 执行, the trajectory shall 保持等价 | ✅ RED import error；GREEN 7 handler tests；Tick 回归 196 passed；Ruff/mypy pass |
+| P1 | T258 | Developer handler | While batch 开发推进, when handler 应用结果, checkpoint 与验证触发 shall 保持等价 | ✅ RED import error；GREEN 3 handler tests；Tick/Checkpoint/Offload 回归 218 passed；Ruff/mypy pass |
+| P1 | T259 | 终态与 façade 收窄 | While handlers 已迁移, when Kernel 执行, it shall 只承担通用编排职责 | ✅ RED import error；GREEN 3 terminal tests；仅保留 `_after_tick`；相关回归 236 passed；Ruff/mypy pass |
+| P1 | T260 | Phase 54 结构验收 | While 全 stage 注册, when 运行结构测试, each stage shall 恰有一个 handler | ✅ 11/11 stage 唯一注册；相关轨迹 394 passed；全量 1981 passed / 1 skipped；coverage 90.33%；Ruff/mypy/sync/metadata pass；Orchestrator 2077→2048 行 |
 
 ## Phase 55：Host SPI 2.0
 
 | 优先级 | ID | 任务 | EARS 验收 | 状态 |
 |---:|---|---|---|:---:|
-| P1 | T261 | 四层能力模型 | While 能力已声明和探测, when 授权应用, effective shall 为三者安全交集 | ☐ |
-| P1 | T262 | Adapter 2.0 契约 | While 宿主接入, when 实现 SPI, the adapter shall 归一化事件、映射 Action 并报告执行 | ☐ |
+| P1 | T261 | 四层能力模型 | While 能力已声明和探测, when 授权应用, effective shall 为三者安全交集 | ✅ RED 2 failed；GREEN 2 profile tests；Host/Git/Hook 回归 33 passed；Ruff/mypy pass |
+| P1 | T262 | Adapter 2.0 契约 | While 宿主接入, when 实现 SPI, the adapter shall 归一化事件、映射 Action 并报告执行 | ◐ SPI 契约测试待建立 |
 | P1 | T263 | Claude/Codex Profile | While 相同 Action 被映射, when 双宿主执行, the normalized result shall 语义等价 | ☐ |
 | P1 | T264 | 未知宿主 fail closed | While 能力只声明未探测, when 请求高风险动作, the profile shall 拒绝执行 | ☐ |
 | P1 | T265 | Phase 55 双宿主验收 | While archive smoke 通过, when product install 未跑, the report shall 仍显示 not_run | ☐ |

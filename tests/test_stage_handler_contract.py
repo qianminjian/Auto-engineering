@@ -17,6 +17,7 @@ from auto_engineering.loop.stages.registry import (
     MissingStageHandlerError,
     StageHandlerRegistry,
 )
+from auto_engineering.loop.tick_orchestrator import TickOrchestrator
 
 
 class _Handler:
@@ -79,3 +80,16 @@ def test_all_stage_names_match_current_engine_contract() -> None:
         "system_deep_audit",
         "plan_refine",
     }
+
+
+def test_orchestrator_registers_exactly_one_handler_for_every_stage(
+    tmp_path,
+) -> None:
+    orchestrator = TickOrchestrator(tmp_path)
+
+    assert orchestrator._stage_handlers.stages == frozenset(StageName.__args__)
+    assert [
+        name
+        for name in vars(TickOrchestrator)
+        if name.startswith("_after_")
+    ] == ["_after_tick"]

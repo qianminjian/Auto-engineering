@@ -100,7 +100,8 @@ class TestContextOffloaderWiring:
         orch._state.plan = _VALID_PLAN
         orch._state.file_list = ["auto_engineering/loop/stage_router.py"]
 
-        orch._after_architect()
+        orch._state.current_stage = "architect"
+        orch._after_tick({})
 
         loaded = offloader.load_summary("architect")
         assert loaded is not None, (
@@ -121,11 +122,11 @@ class TestContextOffloaderWiring:
         orch._state.batch_plan = _VALID_BATCH_PLAN
         orch._state.plan = _VALID_PLAN
         orch._state.file_list = ["auto_engineering/loop/stage_router.py"]
-        orch._state.current_stage = "developer"
-        orch._after_architect()  # sets up batch_state
+        orch._state.current_stage = "architect"
+        orch._after_tick({})  # sets up batch_state
         orch._state.test_results = {"passed": 5, "failed": 0, "errors": 0}
 
-        orch._after_developer()
+        orch._after_tick({})
 
         loaded = offloader.load_summary("developer")
         assert loaded is not None, (
@@ -148,21 +149,21 @@ class TestContextOffloaderWiring:
         orch._state.batch_plan = _VALID_BATCH_PLAN
         orch._state.plan = _VALID_PLAN
         orch._state.file_list = ["auto_engineering/loop/stage_router.py"]
-        orch._after_architect()
+        orch._state.current_stage = "architect"
+        orch._after_tick({})
         assert offloader.load_summary("architect") is not None
 
         # developer
         orch._state.test_results = {"passed": 5, "failed": 0, "errors": 0}
-        orch._after_developer()
+        orch._after_tick({})
         assert offloader.load_summary("developer") is not None
 
         # critic
         orch._state.critic_verdict = "APPROVE"
         orch._state.findings = []
-        orch._after_critic({"verdict": "APPROVE", "findings": []})
+        orch._after_tick({"verdict": "APPROVE", "findings": []})
         assert offloader.load_summary("critic") is not None, (
             "T73 NOT WIRED: _after_critic did not call offloader.offload()"
         )
-
 
 

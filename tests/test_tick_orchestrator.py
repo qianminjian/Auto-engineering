@@ -1073,8 +1073,9 @@ class TestApplyResultToState:
         })
         # state 被写入（原始值）
         assert o._state.critic_verdict == "INVALID"
-        # _after_critic 捕获非法 verdict 并返回 ActionError
-        result = o._after_critic({
+        # CriticHandler 捕获非法 verdict 并返回 ActionError
+        o._state.current_stage = "critic"
+        result = o._after_tick({
             "stage": "critic", "spawned": True, "verdict": "INVALID",
             "findings": [], "critic_feedback": "",
         })
@@ -3673,7 +3674,8 @@ class TestT105MetricsConvergence:
         }]
         o._state.plan = _VALID_PLAN
         o._state.file_list = ["foo.py"]
-        o._after_architect()
+        o._state.current_stage = "architect"
+        o._after_tick({})
 
         o._offload_stage("developer")
 
@@ -3704,7 +3706,8 @@ class TestT105MetricsConvergence:
             "file_list": ["host.py"],
         })
 
-        o._after_architect()
+        o._state.current_stage = "architect"
+        o._after_tick({})
 
         artifact = offloader.load_summary("architect")
         assert artifact is not None

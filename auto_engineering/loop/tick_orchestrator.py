@@ -43,7 +43,6 @@ from auto_engineering.engine.verification_layers import (
     VerificationLayers,
     determine_verification_layers,
 )
-from auto_engineering.gates.deep_audit import recount_findings
 from auto_engineering.loop.action_builder import (
     _STAGE_CHECKPOINT_OPTIONS,
     _STAGE_CHECKPOINT_REVIEW_FEEDBACK,
@@ -76,15 +75,27 @@ from auto_engineering.loop.refine import build_refine_request
 from auto_engineering.loop.stage_router import (
     StageRouter,
     clear_stage_fields,
-    update_majors_count,
 )
 from auto_engineering.loop.stages.base import TransitionContext, TransitionDecision
+from auto_engineering.loop.stages.design import (
+    ArchitectHandler,
+    CriticHandler,
+    PlanRefineHandler,
+)
+from auto_engineering.loop.stages.developer import DeveloperHandler
 from auto_engineering.loop.stages.gap import (
     GapReviewHandler,
     GapScanHandler,
     ResearchHandler,
 )
 from auto_engineering.loop.stages.registry import StageHandlerRegistry
+from auto_engineering.loop.stages.terminal import resolve_terminal_action
+from auto_engineering.loop.stages.verification import (
+    ComponentVerifierHandler,
+    PlateDeepAuditHandler,
+    SystemDeepAuditHandler,
+    SystemVerifierHandler,
+)
 from auto_engineering.loop.task_factory import tasks_from_batch_plan
 from auto_engineering.loop.tick_gate_runner import TickGateRunner
 from auto_engineering.metrics.collector import AIOrigin, get_collector
@@ -252,7 +263,19 @@ class TickOrchestrator:
         self._current_result_message_id: str | None = None
         self._pending_domain_events: list[LoopEvent] = []
         self._stage_handlers = StageHandlerRegistry(
-            [GapScanHandler(), GapReviewHandler(), ResearchHandler()]
+            [
+                GapScanHandler(),
+                GapReviewHandler(),
+                ResearchHandler(),
+                ArchitectHandler(),
+                DeveloperHandler(),
+                CriticHandler(),
+                PlanRefineHandler(),
+                ComponentVerifierHandler(),
+                PlateDeepAuditHandler(),
+                SystemVerifierHandler(),
+                SystemDeepAuditHandler(),
+            ]
         )
         self._action_builder = ActionBuilder(
             self.project_root,
@@ -1033,31 +1056,84 @@ class TickOrchestrator:
                     thread_id=self._state.thread_id,
                     tick=self._state.tick,
                     event_sequence=event_sequence,
+                    extensions=self._transition_extensions(stage),
                 ),
             )
             return self._apply_stage_decision(decision)
-        handlers: dict[str, Callable[[], dict]] = {
-            "architect": lambda: self._after_architect(),
-            "developer": lambda: self._after_developer(),
-            "critic": lambda: self._after_critic(result),
-            "component_verifier": lambda: self._after_component_verifier(result),
-            "plate_deep_audit": lambda: self._after_plate_deep_audit(result),
-            "system_verifier": lambda: self._after_system_verifier(result),
-            "system_deep_audit": lambda: self._after_system_deep_audit(result),
-        }
-        legacy_handler = handlers.get(stage)
-        if legacy_handler:
-            return legacy_handler()
         return ActionError(error_code="UNKNOWN_STAGE",
                            message=f"Unknown stage: {stage}").to_dict()
+
+    def _transition_extensions(self, stage: str) -> dict[str, object]:
+        """为纯 Handler 生成只读路由快照。"""
+
+        extensions: dict[str, object] = {
+            "verification_layers": (
+                self._verification_layers.value
+                if self._verification_layers is not None
+                else VerificationLayers.LEAF.value
+            )
+        }
+        batch_state = self._batch_state
+        if batch_state is not None and stage == "component_verifier":
+            extensions["has_more_components"] = (
+                batch_state.current_component_idx + 1
+                < len(batch_state.current_plate().components)
+            )
+        if batch_state is not None and stage == "plate_deep_audit":
+            extensions["has_more_plates"] = (
+                batch_state.current_plate_idx + 1 < len(batch_state.plates)
+            )
+        if stage in {"plate_deep_audit", "system_deep_audit"}:
+            extensions["p1_threshold"] = self._get_p1_threshold()
+        if stage == "critic":
+            extensions["max_majors_in_a_row"] = (
+                self._router.max_majors_in_a_row
+            )
+            extensions["max_total_majors"] = self._router.max_total_majors
+            if batch_state is not None:
+                component = batch_state.current_component()
+                extensions["has_more_batches"] = (
+                    batch_state.has_more_batches_for(component)
+                )
+        if stage == "developer" and batch_state is not None:
+            component = batch_state.current_component()
+            batches = batch_state.batches_for(component)
+            current_index = batch_state.current_batch_idx
+            completed = batches[current_index]
+            next_index = current_index + 1
+            has_more = next_index < len(batches)
+            extensions.update(
+                {
+                    "has_more_batches_after_advance": has_more,
+                    "completed_batch_id": completed.get("batch_id"),
+                    "completed_task_count": len(completed.get("tasks", [])),
+                    "design_section": component.design_section,
+                    "next_task": (
+                        batches[next_index]["tasks"][0]["description"]
+                        if has_more and batches[next_index].get("tasks")
+                        else None
+                    ),
+                    "next_pre_gate": (
+                        batches[next_index].get("gate") if has_more else None
+                    ),
+                }
+            )
+        return extensions
 
     def _apply_stage_decision(self, decision: TransitionDecision) -> dict:
         """应用纯 Handler 决策；副作用集中保留在 Kernel façade。"""
 
         action_context = decision.action_context
+        if action_context.get("collect_token_usage"):
+            self._collect_token_usage()
         patch = action_context.get("state_patch", {})
         if isinstance(patch, dict):
             self._state.set_channels(patch)
+        if action_context.get("initialize_architecture"):
+            self._initialize_architecture()
+        critic_progress = action_context.get("critic_progress")
+        if isinstance(critic_progress, str):
+            self._apply_critic_progress(critic_progress)
         supplements = action_context.get("supplements", ())
         if isinstance(supplements, (list, tuple)):
             for supplement in supplements:
@@ -1076,30 +1152,123 @@ class TickOrchestrator:
                     node.design_status = "fuzzy"
         if self._event_store is not None:
             self._pending_domain_events.extend(decision.events)
-        self._advance_stage(decision.next_stage)
-        return self.build_action()
-
-    # ── _after_architect ──
-
-    def _after_architect(self) -> dict:
-        batches = BatchState.flatten_batch_plan(self._state.batch_plan)
-        if not batches:
-            return ActionError(error_code="EMPTY_BATCH_PLAN",
-                               message="architect 输出 batch_plan 为空").to_dict()
-
-        if self._batch_state is None:
-            self._batch_state = (
-                BatchState.from_design_doc(self._design_doc, batches)
-                if self._design_doc
-                else BatchState.from_batch_plan(batches)
-            )
+        self._apply_verification_progress(action_context.get("progress_update"))
+        refine_source = action_context.get("refine_source")
+        if isinstance(refine_source, str):
+            return self._handle_plan_refine(refine_source)
+        cursor_operation = action_context.get("cursor_operation")
+        if cursor_operation == "advance_component" and self._batch_state is not None:
+            self._batch_state.advance_component()
+        elif cursor_operation == "advance_plate" and self._batch_state is not None:
+            self._batch_state.advance_plate()
+        elif (
+            cursor_operation == "rollback_batch"
+            and self._batch_state is not None
+            and self._batch_state.current_batch_idx > 0
+        ):
+            self._batch_state.current_batch_idx -= 1
+        elif cursor_operation == "advance_batch" and self._batch_state is not None:
+            self._batch_state.advance_batch()
+        completed_batch_id = action_context.get("completed_batch_id")
+        if isinstance(completed_batch_id, str):
+            self._last_batch_id = completed_batch_id
+        self._apply_developer_progress(action_context.get("developer_progress"))
+        if action_context.get("snapshot_developer_output"):
+            self._snapshot_developer_output()
+        if action_context.get("save_checkpoint"):
+            self._save_checkpoint()
+        offload_stage = action_context.get("offload_stage")
+        if isinstance(offload_stage, str):
+            self._offload_stage(offload_stage)
+        terminal_action = resolve_terminal_action(action_context)
+        if terminal_action is not None:
+            return terminal_action
+        convergence = action_context.get("convergence")
+        if isinstance(convergence, dict):
+            counts = action_context.get("audit_counts", (0, 0, 0))
+            if isinstance(counts, (list, tuple)) and len(counts) == 3:
+                self._write_audit_history(
+                    int(counts[0]),
+                    int(counts[1]),
+                    int(counts[2]),
+                    False,
+                )
+            if action_context.get("display_progress"):
+                self._display_progress()
+            return self._convergence_check(**convergence)
+        if not action_context.get("stay_in_stage"):
+            self._advance_stage(decision.next_stage)
+        feedback = action_context.get("feedback")
+        if isinstance(feedback, (list, dict)):
+            action = self.build_action(feedback=json.dumps(feedback))
         else:
-            # plan_refine: 重建 BatchState (游标可能越界)
-            self._batch_state = (
-                BatchState.from_design_doc(self._design_doc, batches)
-                if self._design_doc
-                else BatchState.from_batch_plan(batches)
+            pre_gate = action_context.get("pre_gate")
+            action = self.build_action(
+                pre_gate=pre_gate if isinstance(pre_gate, dict) else None
+            ) if pre_gate is not None else self.build_action()
+        if action_context.get("display_progress"):
+            self._display_progress()
+        return action
+
+    def _apply_verification_progress(self, update: object) -> None:
+        if self._progress_tree is None or self._batch_state is None:
+            return
+        if not isinstance(update, dict):
+            return
+        kind = update.get("kind")
+        if kind == "component_verifier":
+            component = self._batch_state.current_component()
+            node = self._progress_tree.find_by_design_section(
+                component.design_section
             )
+            if node is not None:
+                missing = int(update.get("missing", 0))
+                diverged = int(update.get("diverged", 0))
+                node.verifier_status = "failed" if missing or diverged else "pass"
+                node.verifier_missing = missing
+                node.verifier_diverged = diverged
+                self._progress_tree.recalculate_parents(node.id)
+        elif kind == "plate_deep_audit":
+            p0, p1, p2 = update.get("counts", (0, 0, 0))
+            threshold = int(update.get("threshold", 10))
+            plate = self._batch_state.current_plate()
+            for component in plate.components:
+                node = self._progress_tree.find_by_design_section(
+                    component.design_section
+                )
+                if node is not None:
+                    node.deep_audit_status = (
+                        "failed" if p0 or p1 > threshold else "pass"
+                    )
+                    node.deep_audit_p0 = p0
+                    node.deep_audit_p1 = p1
+                    node.deep_audit_p2 = p2
+            self._progress_tree.recalculate_parents(
+                f"sys/{self._batch_state.current_plate_idx}"
+            )
+
+    def _apply_developer_progress(self, update: object) -> None:
+        if self._progress_tree is None or not isinstance(update, dict):
+            return
+        section = update.get("design_section")
+        if not isinstance(section, str):
+            return
+        node = self._progress_tree.find_by_design_section(section)
+        if node is None:
+            return
+        node.done_tasks += int(update.get("completed_task_count", 0))
+        next_task = update.get("next_task")
+        node.current_task = next_task if isinstance(next_task, str) else None
+        self._progress_tree.recalculate_parents(node.id)
+
+    def _initialize_architecture(self) -> None:
+        """将 Architect 的纯决策物化为执行游标与进度树。"""
+        batches = BatchState.flatten_batch_plan(self._state.batch_plan)
+        self._batch_state = (
+            BatchState.from_design_doc(self._design_doc, batches)
+            if self._design_doc
+            else BatchState.from_batch_plan(batches)
+        )
 
         self._plan = tasks_from_batch_plan(batches, self._state.requirement)
 
@@ -1120,53 +1289,6 @@ class TickOrchestrator:
                 self._progress_tree.sync_from_design_doc(self._design_doc)
             else:
                 self._progress_tree.sync_from_batch_plan(batches)
-
-        # T135: architect 字段会在 advance_stage 中清理，必须先持久化。
-        self._offload_stage("architect")
-        self._advance_stage("developer")
-        return self.build_action()
-
-    # ── _after_developer ──
-
-    def _after_developer(self) -> dict:
-        self._collect_token_usage()  # T110b: 采集 Agent 本 tick 的 token 消耗
-
-        comp = self._batch_state.current_component()
-        # 缓存刚完成的 batch_id (advance_batch 后组件 complete → current_batch_id 不可用)
-        prev_batch = self._batch_state.current_batch()
-        self._last_batch_id = prev_batch.get("batch_id") if prev_batch else None
-
-        self._batch_state.advance_batch()
-
-        if self._progress_tree:
-            node = self._progress_tree.find_by_design_section(comp.design_section)
-            if node:
-                prev_batches = self._batch_state.batches_for(comp)
-                done_idx = self._batch_state.current_batch_idx - 1
-                if 0 <= done_idx < len(prev_batches):
-                    node.done_tasks += len(prev_batches[done_idx].get("tasks", []))
-                node.current_task = None
-                self._progress_tree.recalculate_parents(node.id)
-
-        if self._batch_state.has_more_batches_for(comp):
-            if self._progress_tree:
-                node = self._progress_tree.find_by_design_section(comp.design_section)
-                if node:
-                    next_batch = self._batch_state.current_batch()
-                    if next_batch.get("tasks"):
-                        node.current_task = next_batch["tasks"][0]["description"]
-            self._save_checkpoint()
-            self._offload_stage("developer")
-            # P1-5: T94 PrePlannedGate — 检查下一 batch 是否声明了 gate
-            pending_gate = self._batch_state._get_pending_gate()
-            if pending_gate:
-                return self.build_action(pre_gate=pending_gate)
-            return self.build_action()
-
-        self._snapshot_developer_output()
-        self._offload_stage("developer")
-        self._advance_stage("critic")
-        return self.build_action()
 
     def _snapshot_developer_output(self) -> None:
         """保存 developer 产出快照 (advance_stage 会 clear_stage_fields)."""
@@ -1289,15 +1411,8 @@ class TickOrchestrator:
             gate_results=dict(s.gate_results or {}),
         )
 
-    # ── _after_critic ──
-
-    def _after_critic(self, result: dict) -> dict:
-        self._collect_token_usage()  # T110b: 采集 Agent 本 tick 的 token 消耗
-
-        verdict = result.get("verdict", "")
-        update_majors_count(self._state, verdict)
-        self._offload_stage("critic")
-
+    def _apply_critic_progress(self, verdict: str) -> None:
+        """更新 Critic gate 的展示进度；协议决策由 Handler 负责。"""
         if self._progress_tree:
             comp = self._batch_state.current_component()
             node = self._progress_tree.find_by_design_section(comp.design_section)
@@ -1305,145 +1420,6 @@ class TickOrchestrator:
                 node.gate_run_count += 1
                 if verdict == "APPROVE":
                     node.gate_pass_count += 1
-
-        if verdict == "MAJOR":
-            decision = self._router.next(
-                "critic", "MAJOR",
-                self._state.majors_in_a_row, self._state.total_majors)
-            if decision.should_stop:
-                return ActionDone(verdict="HARD_LIMIT",
-                                  reason=decision.stop_reason).to_dict()
-            # 回退 batch_idx (重做刚被 MAJOR 的 batch)
-            if self._batch_state.current_batch_idx > 0:
-                self._batch_state.current_batch_idx -= 1
-            self._advance_stage("developer")
-            return self.build_action(
-                feedback=json.dumps(result.get("findings", [])))
-
-        if verdict == "APPROVE":
-            comp = self._batch_state.current_component()
-            if self._batch_state.has_more_batches_for(comp):
-                self._advance_stage("developer")
-                return self.build_action()
-            self._advance_stage("component_verifier")
-            return self.build_action()
-
-        return ActionError(error_code="INVALID_VERDICT",
-                           message=f"非法 verdict: {verdict!r}, "
-                                   f"期望值: MAJOR 或 APPROVE").to_dict()
-
-    # ── _after_component_verifier ──
-
-    def _after_component_verifier(self, result: dict) -> dict:
-        missing = result.get("missing_count", 0)
-        diverged = result.get("diverged_count", 0)
-
-        if self._progress_tree:
-            comp = self._batch_state.current_component()
-            node = self._progress_tree.find_by_design_section(comp.design_section)
-            if node:
-                node.verifier_status = "failed" if (missing > 0 or diverged > 0) else "pass"
-                node.verifier_missing = missing
-                node.verifier_diverged = diverged
-                self._progress_tree.recalculate_parents(node.id)
-
-        if missing > 0 or diverged > 0:
-            self._state.audit_findings = result.get("coverage_map", [])
-            return self._handle_plan_refine("component_verifier")
-
-        self._batch_state.advance_component()
-        if self._batch_state.has_more_components_in_plate():
-            self._advance_stage("developer")
-            return self.build_action()
-
-        if self._verification_layers == VerificationLayers.LEAF:
-            self._advance_stage("system_deep_audit")
-        else:
-            self._advance_stage("plate_deep_audit")
-        return self.build_action()
-
-    # ── _after_plate_deep_audit ──
-
-    def _after_plate_deep_audit(self, result: dict) -> dict:
-        # B6.7a: Agent 报的 count 仅参考 — Python 去重重算为路由权威计数
-        deduped, p0, p1, p2 = recount_findings(result.get("findings", []))
-        p1_threshold = self._get_p1_threshold()
-
-        if self._progress_tree:
-            plate = self._batch_state.current_plate()
-            for comp in plate.components:
-                node = self._progress_tree.find_by_design_section(comp.design_section)
-                if node:
-                    node.deep_audit_status = "failed" if (p0 > 0 or p1 > p1_threshold) else "pass"
-                    node.deep_audit_p0 = p0
-                    node.deep_audit_p1 = p1
-                    node.deep_audit_p2 = p2
-            self._progress_tree.recalculate_parents(
-                f"sys/{self._batch_state.current_plate_idx}")
-
-        if p0 > 0 or p1 > p1_threshold:
-            self._state.audit_findings = deduped
-            return self._handle_plan_refine("plate_deep_audit")
-
-        self._batch_state.advance_plate()
-        if self._batch_state.has_more_plates():
-            self._advance_stage("developer")
-            return self.build_action()
-
-        if self._verification_layers == VerificationLayers.PLATE:
-            self._advance_stage("system_deep_audit")
-        else:
-            self._advance_stage("system_verifier")
-        action = self.build_action()
-        self._display_progress()
-        return action
-
-    # ── _after_system_verifier ──
-
-    def _after_system_verifier(self, result: dict) -> dict:
-        self._state.coverage_map = result.get("full_coverage_map", [])
-        missing = result.get("missing_count", 0)
-        diverged = result.get("diverged_count", 0)
-
-        if missing > 0 or diverged > 0:
-            self._state.audit_findings = self._state.coverage_map
-            return self._handle_plan_refine("system_verifier")
-
-        self._advance_stage("system_deep_audit")
-        action = self.build_action()
-        self._display_progress()
-        return action
-
-    # ── _after_system_deep_audit ──
-
-    def _after_system_deep_audit(self, result: dict) -> dict:
-        # B6.7a: Agent 报的 count 仅参考 — Python 去重重算为路由权威计数
-        deduped, p0, p1, p2 = recount_findings(result.get("findings", []))
-        p1_threshold = self._get_p1_threshold()
-
-        if result.get("design_docs_stale"):
-            self._state.critic_feedback = (
-                (self._state.critic_feedback or "") + "\n"
-                + "[Design Doc Sync] " + result.get("design_doc_suggestions", ""))
-
-        if p0 > 0 or p1 > p1_threshold:
-            self._state.audit_findings = deduped
-            return self._handle_plan_refine("system_deep_audit")
-
-        self._write_audit_history(p0, p1, p2, False)
-        self._display_progress()
-
-        # 审计无 P0/P1 但设计覆盖有缺口 (MISSING/DIVERGED) → 回 architect 做
-        # 补充设计 + 计划表调整 (对齐 component/system_verifier 同款回路,
-        # 由 _handle_plan_refine 的 REFINE_LIMIT 提供防循环保护).
-        missing = result.get("missing_count", 0)
-        diverged = result.get("diverged_count", 0)
-        if missing > 0 or diverged > 0:
-            self._state.audit_findings = deduped
-            return self._handle_plan_refine("system_deep_audit")
-
-        return self._convergence_check(
-            design_coverage_ok=True, system_deep_audit_ok=True)
 
     def _inject_supplement(self, gap: dict, content: str, source: str,
                            source_tier: str | None, confidence: str) -> None:
