@@ -22,6 +22,7 @@
 | Phase 60 Prompt Contract 重构 | ✅ 8/8 | T280-T287；2019 passed / 1 skipped，coverage 90.27% |
 | Phase 61 v5.7.1 发布收口 | ✅ 7/7 | T288-T294；2021 passed / 1 skipped，coverage 90.27% |
 | Phase 62 v5.7.1 正式发布 | ✅ 6/6 | T295-T300；GitHub Release 与 SHA-256 已核验 |
+| Phase 63 非交互配置治理 | ☐ 0/1 | T301；待启动 |
 
 ## Phase 52：Protocol Envelope v1.1
 
@@ -136,6 +137,12 @@
 | P1 | T298 | 发布自动化加固 | While release workflow 构建制品, when CI 执行, it shall 校验版本、双宿主 archive、载荷与 SHA-256 | ✅ workflow 校验版本/metadata/双宿主验收并上传 `.sha256`；专项 18 passed |
 | P0 | T299 | Phase 62 发布门禁 | While T295-T298 完成, when 全量门禁运行, tests/coverage/static shall 通过且设计证据完整 | ✅ 本地 2023 passed / 1 skipped、90.28%；CI `30373176093` 三 job pass、annotations 0/0/0 |
 | P0 | T300 | v5.7.1 正式发布 | While 发布门禁通过, when tag workflow 完成, GitHub Release shall 包含可验证制品与 SHA-256 | ✅ tag `v5.7.1`；workflow `30373283948` pass；远端 SHA-256 `fae483df…86c99` 校验通过 |
+
+## Phase 63：非交互配置治理
+
+| 优先级 | ID | 任务 | EARS 验收 | 状态 |
+|---:|---|---|---|:---:|
+| P1 | T301 | `ae.toml` 首次配置闸门重构 | While `ae.toml` 缺失且宿主无 TTY, when `dev-loop --init` 启动, the system shall 通过显式配置策略继续或暂停，准确报告 env/file/default 来源，且不得通过管道模拟交互输入 | ☐ |
 
 ## 执行纪律
 
