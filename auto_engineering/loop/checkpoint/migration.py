@@ -13,9 +13,12 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from auto_engineering.engine.state import EngineState
 from auto_engineering.loop.checkpoint import SQLiteCheckpointStore
 from auto_engineering.loop.checkpoint._serialization import LastValueChannel
 from auto_engineering.loop.checkpoint.records import RoundHistory
+from auto_engineering.loop.event_store import SQLiteEventStore
+from auto_engineering.loop.events import LoopEvent
 from auto_engineering.loop.state import CheckpointEnvelope
 from auto_engineering.utils.file_utils import safe_json_load
 
@@ -46,6 +49,27 @@ _MIGRATE_0_9_DEFAULTS: dict[str, Any] = {
     "metrics": {"values": {}},
     "channel_versions": {},
 }
+
+
+def import_v56_checkpoint(
+    checkpoint_store: SQLiteCheckpointStore[Any],
+    event_store: SQLiteEventStore,
+    checkpoint_id: str,
+) -> LoopEvent:
+    """把 v5.6 checkpoint 一次性导入 v5.7 Event Store。
+
+    源 checkpoint 只读；无法确定性恢复为 EngineState 时 fail closed。
+    """
+
+    checkpoint = checkpoint_store.load(checkpoint_id)
+    if not isinstance(checkpoint.state, EngineState):
+        raise ValueError("v5.6 checkpoint 状态损坏或不是 EngineState")
+    action = checkpoint_store.load_active_protocol_action(checkpoint.state.thread_id)
+    return event_store.import_checkpoint(
+        checkpoint_id=checkpoint.id,
+        state=checkpoint.state,
+        action=action,
+    )
 
 
 def _parse_version(version: str) -> tuple[int, ...]:
@@ -333,6 +357,7 @@ def migrate_v1_to_v2(src_json: Path, dst_sqlite: Path) -> str:
 
 __all__ = [
     "ENVELOPE_SCHEMA_VERSION",
+    "import_v56_checkpoint",
     "load_v1_checkpoint",
     "migrate_envelope",
     "migrate_v1_to_v2",

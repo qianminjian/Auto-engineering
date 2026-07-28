@@ -470,6 +470,17 @@ class SQLiteCheckpointStore[T]:
             ).fetchone()
             return row["cnt"]
 
+    def import_to_event_store(
+        self,
+        event_store: Any,
+        checkpoint_id: str,
+    ) -> Any:
+        """兼容 façade：将指定 v5.6 checkpoint 只读导入 v5.7 EventStore。"""
+
+        from auto_engineering.loop.checkpoint.migration import import_v56_checkpoint
+
+        return import_v56_checkpoint(self, event_store, checkpoint_id)
+
 
 def _row_to_checkpoint(row: Any) -> Checkpoint[T]:
     """将 sqlite Row 转 Checkpoint (校验 schema_version)."""

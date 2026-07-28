@@ -60,6 +60,8 @@ from auto_engineering.loop.escalation_handler import (
     EscalationHandler,
     detect_project_language,
 )
+from auto_engineering.loop.event_store import SQLiteEventStore
+from auto_engineering.loop.events import LoopEvent, LoopEventType
 from auto_engineering.loop.guardrail import GuardrailChain
 from auto_engineering.loop.plan import Plan
 from auto_engineering.loop.protocol import (
@@ -175,6 +177,7 @@ class TickOrchestrator:
         gate_runner: GateRunner | None = None,
         guardrail: GuardrailChain | None = None,
         checkpoint_store: SQLiteCheckpointStore | None = None,
+        event_store: SQLiteEventStore | None = None,
         context_offloader: TickContextOffloader | None = None,
         session_summarizer: TickSessionSummarizer | None = None,
         tracer: _TracerLike | None = None,  # T135c: typed Protocol
@@ -191,6 +194,7 @@ class TickOrchestrator:
         self._escalate = escalate
         self._guardrail = guardrail
         self._checkpoint_store = checkpoint_store
+        self._event_store = event_store
         self._context_offloader = context_offloader
         self._session_summarizer = session_summarizer
         self._cached_session_summary: Any = None  # T54: 跨 tick 滚动摘要缓存
@@ -1717,8 +1721,10 @@ class TickOrchestrator:
             causation_id=self._current_result_message_id,
         )
         if action.get("action") != "error":
+            if self._event_store is not None:
+                self._commit_event_action(action)
             self._active_action = action
-            if self._checkpoint_store is not None:
+            if self._checkpoint_store is not None and self._event_store is None:
                 self._checkpoint_store.record_protocol_action(action)
         self.action_builder.log_prompt(self.project_root, action)
         return action
@@ -2003,12 +2009,76 @@ class TickOrchestrator:
             p0, p1, p2, triggered)
 
     def _save_checkpoint(self) -> str | None:
+        # v5.7 新线程由 EventStore 的单 Tick 事务持久化；旧 checkpoint 仅作兼容读取。
+        if self._event_store is not None:
+            self._populate_serialized_state()
+            return None
         if self._checkpoint_mgr is None:
             return None
         self._populate_serialized_state()
         return self._checkpoint_mgr.save(
             self._state, self._state.round, step=self._state.tick,
             history=self._round_history)
+
+    def _commit_event_action(self, action: dict[str, Any]) -> None:
+        """将当前状态与出站 Action 作为一个 EventStore Tick 原子提交。"""
+
+        if self._event_store is None or self._state is None:
+            return
+        sequence = self._event_store.next_sequence(self._state.thread_id)
+        events: list[LoopEvent] = []
+        if sequence == 0:
+            events.append(
+                LoopEvent.create(
+                    thread_id=self._state.thread_id,
+                    sequence=sequence,
+                    event_type=LoopEventType.LOOP_INITIALIZED,
+                    payload={"state": self._state.to_dict()},
+                    correlation_id=self._state.thread_id,
+                )
+            )
+            sequence += 1
+        elif self._current_result_message_id is not None:
+            causation_id = (
+                self._active_action.get("message_id")
+                if self._active_action is not None
+                else None
+            )
+            events.append(
+                LoopEvent.create(
+                    thread_id=self._state.thread_id,
+                    sequence=sequence,
+                    event_type=LoopEventType.RESULT_ACCEPTED,
+                    payload={
+                        "result_message_id": self._current_result_message_id,
+                        "state_patch": self._state.to_dict(),
+                    },
+                    causation_id=causation_id,
+                    correlation_id=self._state.thread_id,
+                )
+            )
+            sequence += 1
+        events.append(
+            LoopEvent.create(
+                thread_id=self._state.thread_id,
+                sequence=sequence,
+                event_type=LoopEventType.ACTION_ISSUED,
+                payload={"action": action},
+                causation_id=self._current_result_message_id,
+                correlation_id=self._state.thread_id,
+            )
+        )
+        try:
+            self._event_store.commit_tick(
+                events=events,
+                state=self._state,
+                action=action,
+            )
+        except BaseException:
+            restored = self._event_store.load_projection(self._state.thread_id)
+            if restored is not None:
+                self._state = restored
+            raise
 
     def _populate_serialized_state(self) -> None:
         """save 前把 in-memory 派生状态序列化回 EngineState (A3 写侧, T9b).

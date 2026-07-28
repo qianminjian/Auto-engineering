@@ -10,6 +10,8 @@ import json
 import logging
 import time
 from collections.abc import Callable
+from contextvars import ContextVar
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -66,6 +68,28 @@ _STAGE_CHECKPOINT_REVIEW_FEEDBACK = (
 
 _STAGE_CHECKPOINT_OPTIONS = ["继续", "审查当前产出", "终止 loop"]  # P1-23: SSOT
 
+
+@dataclass(frozen=True, slots=True)
+class ActionBuildContext:
+    """一次 Action 构建所需的不可变依赖快照。"""
+
+    state: EngineState
+    design_doc: DesignDoc | None = None
+    init_manifest: dict | None = None
+    batch_state: BatchState | None = None
+    plan: Plan | None = None
+    dev_snapshot: dict[str, object] | None = None
+    progress_tree: ProgressTree | None = None
+    pause_at_stages: frozenset[str] = frozenset()
+    passed_checkpoints: frozenset[str] = frozenset()
+    last_batch_id: str | None = None
+
+
+_CURRENT_CONTEXT: ContextVar[ActionBuildContext] = ContextVar(
+    "action_build_context"
+)
+
+
 class ActionBuilder:
     """Build per-tick action JSON for each stage.
 
@@ -121,23 +145,45 @@ class ActionBuilder:
         (_build_action_<stage>), making individual stages independently testable
         and the dispatcher ~25 lines instead of ~300.
         """
-        # Stash deps for internal builder methods
-        self._state = state
-        self._design_doc = design_doc
-        self._init_manifest = init_manifest
-        self._batch_state = batch_state
-        self._plan = plan
-        self._dev_snapshot = dev_snapshot
-        self._progress_tree = progress_tree
-        self._pause_at_stages = pause_at_stages or set()
-        self._passed_checkpoints = passed_checkpoints or set()
-        self._last_batch_id = last_batch_id
+        context = ActionBuildContext(
+            state=state,
+            design_doc=design_doc,
+            init_manifest=init_manifest,
+            batch_state=batch_state,
+            plan=plan,
+            dev_snapshot=dev_snapshot,
+            progress_tree=progress_tree,
+            pause_at_stages=frozenset(pause_at_stages or ()),
+            passed_checkpoints=frozenset(passed_checkpoints or ()),
+            last_batch_id=last_batch_id,
+        )
         # Per-call PII overrides (local copies — do NOT mutate instance state
         # to avoid cross-tick leakage, P1-12)
         _pi_enabled = pii_enabled if pii_enabled is not None else self._pii_enabled
         _pi_redactor = pii_redactor if pii_redactor is not None else self._pii_redactor
         _pi_outbound = pii_outbound if pii_outbound is not None else self._pii_outbound
+        token = _CURRENT_CONTEXT.set(context)
+        try:
+            return self._build_with_context(
+                feedback=feedback,
+                pre_gate=pre_gate,
+                pii_enabled=_pi_enabled,
+                pii_redactor=_pi_redactor,
+                pii_outbound=_pi_outbound,
+            )
+        finally:
+            _CURRENT_CONTEXT.reset(token)
 
+    def _build_with_context(
+        self,
+        *,
+        feedback: str | None,
+        pre_gate: dict | None,
+        pii_enabled: bool,
+        pii_redactor: PIIRedactor | None,
+        pii_outbound: str,
+    ) -> dict:
+        state = self._state
         stage = state.current_stage
         state.action_timestamp = time.time()
 
@@ -195,8 +241,53 @@ class ActionBuilder:
                       "error_code": "UNKNOWN_STAGE",
                       "message": f"Unknown stage: {stage}"}
 
-        action = self._apply_pii_outbound(action, _pi_enabled, _pi_redactor, _pi_outbound)
+        action = self._apply_pii_outbound(
+            action,
+            pii_enabled,
+            pii_redactor,
+            pii_outbound,
+        )
         return action
+
+    @property
+    def _context(self) -> ActionBuildContext:
+        return _CURRENT_CONTEXT.get()
+
+    @property
+    def _state(self) -> EngineState:
+        return self._context.state
+
+    @property
+    def _design_doc(self) -> DesignDoc | None:
+        return self._context.design_doc
+
+    @property
+    def _batch_state(self) -> BatchState | None:
+        return self._context.batch_state
+
+    @property
+    def _plan(self) -> Plan | None:
+        return self._context.plan
+
+    @property
+    def _dev_snapshot(self) -> dict[str, object] | None:
+        return self._context.dev_snapshot
+
+    @property
+    def _progress_tree(self) -> ProgressTree | None:
+        return self._context.progress_tree
+
+    @property
+    def _pause_at_stages(self) -> frozenset[str]:
+        return self._context.pause_at_stages
+
+    @property
+    def _passed_checkpoints(self) -> frozenset[str]:
+        return self._context.passed_checkpoints
+
+    @property
+    def _last_batch_id(self) -> str | None:
+        return self._context.last_batch_id
 
     @staticmethod
     def log_prompt(project_root: Path, action: dict) -> None:
@@ -213,6 +304,22 @@ class ActionBuilder:
         from auto_engineering.loop.prompt_logger import write_action_prompt_log
 
         write_action_prompt_log(project_root, action)
+
+    def progress_summary(
+        self,
+        state: EngineState,
+        *,
+        batch_state: BatchState | None = None,
+    ) -> str:
+        """以显式输入生成进度摘要，不依赖上一次 build_action 调用。"""
+
+        token = _CURRENT_CONTEXT.set(
+            ActionBuildContext(state=state, batch_state=batch_state)
+        )
+        try:
+            return self._progress_summary()
+        finally:
+            _CURRENT_CONTEXT.reset(token)
 
     # ── helpers ──
 
@@ -731,4 +838,4 @@ class ActionBuilder:
         })
 
 
-__all__ = ["ActionBuilder"]
+__all__ = ["ActionBuildContext", "ActionBuilder"]

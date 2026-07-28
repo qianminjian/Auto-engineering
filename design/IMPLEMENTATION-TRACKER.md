@@ -1,6 +1,6 @@
 # Auto-Engineering 当前实施跟踪表
 
-> 更新：2026-07-27｜目标版本：v5.7｜历史摘要见 `design/HISTORY.md`
+> 更新：2026-07-28｜目标版本：v5.7｜历史摘要见 `design/HISTORY.md`
 > 状态：`☐` 未开始｜`◐` 进行中｜`✅` 已验证
 
 ## 基线与阶段
@@ -12,8 +12,8 @@
 | Phase 50 Codex 迁移收口 | ✅ 8/8 | T233-T240；覆盖率 90.15% |
 | Phase 51 质量收口 | ✅ 1/1 | T241；1889 passed / 1 skipped，零告警 |
 | Phase 52 Protocol Envelope | ✅ 5/5 | T242-T246；1913 passed / 1 skipped |
-| Phase 53 Event Store | ☐ 0/6 | T247-T252 |
-| Phase 54 Tick Kernel | ☐ 0/8 | T253-T260 |
+| Phase 53 Event Store | ✅ 6/6 | T247-T252；1945 passed / 1 skipped |
+| Phase 54 Tick Kernel | ◐ 0/8 | T253-T260 |
 | Phase 55 Host SPI 2.0 | ☐ 0/5 | T261-T265 |
 | Phase 56 黄金轨迹与收口 | ☐ 0/5 | T266-T270 |
 
@@ -31,20 +31,20 @@
 
 | 优先级 | ID | 任务 | EARS 验收 | 状态 |
 |---:|---|---|---|:---:|
-| P0 | T247 | LoopEvent 契约 | While 状态转换发生, when 记录事实, the event shall 有单调序列、因果 ID 与 payload hash | ☐ |
-| P0 | T248 | SQLite EventStore | While 单 Tick 追加事件, when transaction 提交, the store shall 原子写入并执行唯一约束 | ☐ |
-| P0 | T249 | EngineState Projector | While event log 完整, when 重放, the projector shall 重建语义等价状态 | ☐ |
-| P0 | T250 | 单 Tick 原子事务 | While 任一步写入失败, when 回滚, the repository shall 不留下半事件或孤立 Action | ☐ |
-| P0 | T251 | v5.6 checkpoint 导入 | While 旧线程首次恢复, when 导入, the system shall 追加一次导入事件且不改写原记录 | ☐ |
-| P0 | T252 | Phase 53 重放验收 | While 投影被删除, when 从事件重建, the resulting state shall 与提交前等价 | ☐ |
+| P0 | T247 | LoopEvent 契约 | While 状态转换发生, when 记录事实, the event shall 有单调序列、因果 ID 与 payload hash | ✅ RED import error；GREEN 8 passed |
+| P0 | T248 | SQLite EventStore | While 单 Tick 追加事件, when transaction 提交, the store shall 原子写入并执行唯一约束 | ✅ RED import error；GREEN 7 passed |
+| P0 | T249 | EngineState Projector | While event log 完整, when 重放, the projector shall 重建语义等价状态 | ✅ RED import error；GREEN 5 passed |
+| P0 | T250 | 单 Tick 原子事务 | While 任一步写入失败, when 回滚, the repository shall 不留下半事件或孤立 Action | ✅ RED 6 failed；GREEN 6 passed，三点故障注入 |
+| P0 | T251 | v5.6 checkpoint 导入 | While 旧线程首次恢复, when 导入, the system shall 追加一次导入事件且不改写原记录 | ✅ RED API 缺失；GREEN 3 passed |
+| P0 | T252 | Phase 53 重放验收 | While 投影被删除, when 从事件重建, the resulting state shall 与提交前等价 | ✅ 新增 32 passed；核心回归 306 passed；全量 1945 passed / 1 skipped；coverage 90.14%；Ruff/mypy/sync/metadata pass |
 
 ## Phase 54：Tick Kernel 与 StageHandler
 
 | 优先级 | ID | 任务 | EARS 验收 | 状态 |
 |---:|---|---|---|:---:|
-| P1 | T253 | ActionBuilder 无状态化 | While 构建调用交错, when 输入不同 context, the builder shall 不泄漏上次字段 | ☐ |
-| P1 | T254 | Handler 契约与注册表 | While Kernel 分派 stage, when 查询 registry, the system shall 恰好返回一个 handler | ☐ |
-| P1 | T255 | Gap/Research handlers | While 迁移两组 stage, when 跑特征测试, the trajectory shall 与 v5.6 等价 | ☐ |
+| P1 | T253 | ActionBuilder 无状态化 | While 构建调用交错, when 输入不同 context, the builder shall 不泄漏上次字段 | ✅ RED 1 failed；GREEN 专项 2 passed；相关回归 228 passed；Ruff/mypy pass |
+| P1 | T254 | Handler 契约与注册表 | While Kernel 分派 stage, when 查询 registry, the system shall 恰好返回一个 handler | ✅ RED import error；GREEN 5 passed；Ruff/mypy pass |
+| P1 | T255 | Gap/Research handlers | While 迁移两组 stage, when 跑特征测试, the trajectory shall 与 v5.6 等价 | ◐ 特征测试待建立 |
 | P1 | T256 | 五层验证 handlers | While 进入验证层, when 应用结果, the Core shall 保留 Gate、Guardrail 与升级语义 | ☐ |
 | P1 | T257 | Architect/Critic handlers | While 设计审查回退, when handlers 执行, the trajectory shall 保持等价 | ☐ |
 | P1 | T258 | Developer handler | While batch 开发推进, when handler 应用结果, checkpoint 与验证触发 shall 保持等价 | ☐ |

@@ -4071,9 +4071,8 @@ class TestF8ActionContextInjection:
         bs.current_component.return_value = comp
         bs.batches_for.return_value = [
             {"tasks": [{"file_targets": ["src/components/ApiKeyInput.tsx"]}]}]
-        b._batch_state = bs
-        action = b._build_action_component_verifier(
-            {"tick": 1, "stage": "component_verifier"})
+        state = EngineState(thread_id="t", current_stage="component_verifier")
+        action = b.build_action(state, batch_state=bs)
         assert action["context"]["component"] == "ApiKeyInput"
         assert action["context"]["design_section"] == "§6.2"
         assert action["context"]["design_spec"] == "密码输入框 + Show/Hide"
@@ -4088,17 +4087,15 @@ class TestF8ActionContextInjection:
         plate.components = [c1]
         bs = MagicMock()
         bs.current_plate.return_value = plate
-        b._batch_state = bs
-        action = b._build_action_plate_deep_audit(
-            {"tick": 1, "stage": "plate_deep_audit"})
+        state = EngineState(thread_id="t", current_stage="plate_deep_audit")
+        action = b.build_action(state, batch_state=bs)
         assert action["context"]["plate"] == "工具模块"
         assert action["context"]["components"] == ["voice-id.ts — Voice ID 校验"]
 
     def test_plate_deep_audit_no_batch_state_no_context(self, tmp_path, monkeypatch):
         b = self._builder(tmp_path, monkeypatch)
-        b._batch_state = None
-        action = b._build_action_plate_deep_audit(
-            {"tick": 1, "stage": "plate_deep_audit"})
+        state = EngineState(thread_id="t", current_stage="plate_deep_audit")
+        action = b.build_action(state)
         assert action.get("context") is None  # 无 batch_state 时不注入（优雅降级）
 
 
@@ -4183,11 +4180,9 @@ class TestDeveloperInstruction:
         task.target_files = ["src/components/ApiKeyInput.tsx"]
         task.depends_on = []
         bs.current_batch_tasks.return_value = [task]
-        b._batch_state = bs
-        b._plan = MagicMock()
-        b._state = MagicMock()
-        b._state.plan = "plan"
-        action = b._build_action_developer({"tick": 1, "stage": "developer"})
+        plan = MagicMock()
+        state = EngineState(thread_id="t", current_stage="developer", plan="plan")
+        action = b.build_action(state, batch_state=bs, plan=plan)
         instr = action["instruction"]
         assert "inline TDD" in instr
         assert "B7" in instr
@@ -4200,9 +4195,6 @@ class TestDeveloperInstruction:
     def test_developer_instruction_no_tasks_graceful(self, tmp_path):
         from auto_engineering.loop.action_builder import ActionBuilder
         b = ActionBuilder(tmp_path)
-        b._batch_state = None  # 无 batch_state
-        b._plan = None
-        b._state = MagicMock()
-        b._state.plan = "plan"
-        action = b._build_action_developer({"tick": 1, "stage": "developer"})
+        state = EngineState(thread_id="t", current_stage="developer", plan="plan")
+        action = b.build_action(state)
         assert "无 task 明细" in action["instruction"]  # 优雅降级

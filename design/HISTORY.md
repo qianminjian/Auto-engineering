@@ -1,6 +1,6 @@
 # Auto-Engineering 历史摘要
 
-> 更新：2026-07-27｜本文件只保留里程碑和追溯入口；详细差异以 Git 为准。
+> 更新：2026-07-28｜本文件只保留里程碑和追溯入口；详细差异以 Git 为准。
 
 ## 里程碑
 
@@ -11,7 +11,8 @@
 | Phase 50 | 完成 Codex 迁移收口、跨 Agent 规则同步、配置 SSOT、发布双层报告、文档重写与覆盖率提升 |
 | Phase 51 | 将兼容性弃用告警纳入显式测试契约；基线 1889 passed / 1 skipped、覆盖率 90.15% |
 | Phase 52 | 完成 Protocol Envelope v1.1、闭合 schema、Action/Result 因果身份、进程内与跨进程幂等、v1.0 受限兼容；基线 1913 passed / 1 skipped、覆盖率 90.21% |
-| Phase 53-56 | 已批准但尚未实施：Event Store、Tick Kernel、Host SPI 2.0 与黄金轨迹 |
+| Phase 53 | 完成不可变 LoopEvent、SQLite EventStore、可重放 EngineState 投影、单 Tick 原子事务和 v5.6 checkpoint 一次性导入；基线 1945 passed / 1 skipped、覆盖率 90.14% |
+| Phase 54-56 | 已批准待实施：Tick Kernel、Host SPI 2.0 与黄金轨迹 |
 
 ## 持续有效的决策
 

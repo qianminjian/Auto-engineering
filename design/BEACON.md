@@ -1,6 +1,6 @@
 # Auto-Engineering BEACON
 
-> 创建：2026-06-24｜更新：2026-07-27｜阶段：Phase 52 已完成，Phase 53 待实施
+> 创建：2026-06-24｜更新：2026-07-28｜阶段：Phase 53 已完成，Phase 54 待实施
 > 决策状态翻转（✅↔❌）或架构降级必须先获用户批准。
 
 ## 目标与成功标准
@@ -35,16 +35,17 @@ Engineering；把 archive smoke 冒充真实产品安装；修改外部参考源
 
 ## 当前状态
 
-- Phase 1-52 已完成；当前基线为 1913 passed / 1 skipped，覆盖率 90.21%。
-- Protocol Envelope v1.1、严格 schema、Result 因果幂等和 v1.0 兼容入口已落地。
-- 当前实施入口：Phase 53 / T247，先定义不可变 LoopEvent 契约。
-- v5.6 checkpoint 和调用入口在迁移期保持兼容。
+- Phase 1-53 已完成；当前基线为 1945 passed / 1 skipped，覆盖率 90.14%。
+- LoopEvent、SQLite EventStore、EngineState Projector 和单 Tick 原子事务已落地。
+- Phase 54 已完成 T253-T254；当前实施入口为 T255 Gap/Research Handler 迁移。
+- v5.6 checkpoint 可一次性只读导入；旧调用入口在迁移期保持兼容。
 - 阻塞：无；真实产品安装状态保持 `not_run`。
 
 ## 最近演进
 
 | 日期 | 变更 |
 |---|---|
+| 2026-07-28 | Phase 53 完成 Event Store、可重放投影、原子事务和 checkpoint 导入 |
 | 2026-07-27 | Phase 52 完成 Protocol Envelope v1.1、跨进程幂等与受限兼容入口 |
 | 2026-07-27 | 批准 v5.7 渐进式协议内核重构与双基线策略 |
 | 2026-07-27 | Phase 51 收口兼容性告警，全量测试输出零告警 |
@@ -53,8 +54,8 @@ Engineering；把 archive smoke 冒充真实产品安装；修改外部参考源
 
 ## 待解决问题
 
-- T247-T252：Event Store、投影、事务和 checkpoint 导入。
-- T253-T270：StageHandler、Host SPI 2.0、黄金轨迹和发布收口。
+- T253-T260：Tick Kernel、StageHandler 和 façade 收窄。
+- T261-T270：Host SPI 2.0、黄金轨迹和发布收口。
 
 ## 引用文件
 
