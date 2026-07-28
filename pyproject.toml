@@ -1,6 +1,6 @@
 [project]
 name = "auto-engineering"
-version = "5.7.0"
+version = "5.7.1"
 description = "Auto-Engineering v5.7 — 跨宿主确定性协议内核与分层验证"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -79,7 +79,7 @@ addopts = ["--timeout=60", "-p no:cacheprovider"]
 patch = ["subprocess"]
 
 [tool.auto-engineering.baseline]
-passed = 2019
+passed = 2021
 skipped = 1
 
 [build-system]

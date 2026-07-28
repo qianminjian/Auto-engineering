@@ -23,6 +23,10 @@ def test_release_archive_contains_both_host_adapters(tmp_path: Path) -> None:
     assert ".codex-plugin/plugin.json" in members
     assert ".agents/plugins/marketplace.json" in members
     assert "plugins/auto-engineering/.codex-plugin/plugin.json" in members
+    assert "CLAUDE.md" in members
+    assert "AGENTS.md" in members
+    assert "plugins/auto-engineering/CLAUDE.md" not in members
+    assert "plugins/auto-engineering/AGENTS.md" not in members
     for required in REQUIRED_PATHS:
         assert required.as_posix() in members
 

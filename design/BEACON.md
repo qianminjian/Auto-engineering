@@ -1,6 +1,6 @@
 # Auto-Engineering BEACON
 
-> 创建：2026-06-24｜更新：2026-07-28｜阶段：Phase 60 Prompt Contract 重构完成
+> 创建：2026-06-24｜更新：2026-07-28｜阶段：Phase 61 v5.7.1 发布收口完成
 > 决策状态翻转（✅↔❌）或架构降级必须先获用户批准。
 
 ## 目标与成功标准
@@ -37,7 +37,7 @@ Engineering；把 archive smoke 冒充真实产品安装；修改外部参考源
 
 ## 当前状态
 
-- Phase 1-60 已完成；当前基线为 2019 passed / 1 skipped，覆盖率 90.27%。
+- Phase 1-61 已完成；当前基线为 2021 passed / 1 skipped，覆盖率 90.27%。
 - LoopEvent、SQLite EventStore、EngineState Projector 和单 Tick 原子事务已落地。
 - 11 个 Stage 已全部唯一注册 Handler；旧 stage-specific `_after_*` 已移除。
 - Host SPI 2.0、十类黄金轨迹、故障恢复和跨宿主语义等价已验收。
@@ -50,12 +50,14 @@ Engineering；把 archive smoke 冒充真实产品安装；修改外部参考源
   release 安全解压兼容；v5.7.0 release 已在两个真实宿主中安装并识别。
 - Phase 60 已完成 Prompt Contract、全阶段上下文编译、多 Agent 独立 receipt、
   Result 兼容警告和不可覆盖 rendered 日志。
-- 阻塞：无。
+- Phase 61 已完成 v5.7.1 制品、双宿主 archive/真实安装缓存、Prompt Contract
+  链路和零告警插件载荷验收；阻塞：无。
 
 ## 最近演进
 
 | 日期 | 变更 |
 |---|---|
+| 2026-07-28 | Phase 61 完成 v5.7.1 发布收口，T288-T294 全部验证 |
 | 2026-07-28 | Phase 60 完成 T280-T287；2019 passed / 1 skipped，coverage 90.27% |
 | 2026-07-28 | 批准 Phase 60 兼容式 Prompt Contract Compiler 与多 Agent 交付完整性重构 |
 | 2026-07-28 | Phase 59 完成 T275-T279，release-v3 双宿主真实安装调用通过 |
@@ -65,16 +67,14 @@ Engineering；把 archive smoke 冒充真实产品安装；修改外部参考源
 | 2026-07-28 | Phase 56 完成黄金轨迹、故障恢复、跨宿主等价与 v5.7 收口 |
 | 2026-07-28 | Phase 55 完成 Host SPI 2.0、双宿主映射与能力 fail closed |
 | 2026-07-28 | Phase 54 完成无状态 ActionBuilder、全 StageHandler 与统一终态 |
-| 2026-07-28 | Phase 53 完成 Event Store、可重放投影、原子事务和 checkpoint 导入 |
-| 2026-07-27 | Phase 52 完成 Protocol Envelope v1.1、跨进程幂等与受限兼容入口 |
 | 2026-07-27 | 批准 v5.7 渐进式协议内核重构与双基线策略 |
 | 2026-07-27 | Phase 49 完成 Host-neutral Core 与双宿主基础适配 |
 
 ## 待解决问题
 
-- 当前改动待用户决定是否提交；提交后再决定是否构建 v5.7.1 候选版本。
+- Claude Code 非交互 `-p` 两次返回空输出；安装、validate、缓存 runner 与契约链路
+  均通过，后续单独排查宿主输出通道，不阻断确定性内核发布候选。
 
 ## 引用文件
 
-`design/v5.6-Design-Loop.md` · `design/v5.7-Protocol-Kernel-Design.md` · `design/v5.7-Protocol-Kernel-PLAN.md` ·
-`design/v5.7-Prompt-Contract-Design.md` · `design/v5.7-Prompt-Contract-PLAN.md` · `design/IMPLEMENTATION-TRACKER.md` · `design/HISTORY.md`
+`design/v5.6-Design-Loop.md` · `design/v5.7-Protocol-Kernel-Design.md` · `design/v5.7-Protocol-Kernel-PLAN.md` · `design/v5.7-Prompt-Contract-Design.md` · `design/v5.7-Prompt-Contract-PLAN.md` · `design/IMPLEMENTATION-TRACKER.md` · `design/HISTORY.md`

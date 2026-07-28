@@ -31,6 +31,10 @@ REQUIRED_PATHS = (
 )
 
 _PLUGIN_ROOT = Path("plugins/auto-engineering")
+_PLUGIN_EXCLUDED_PATHS = frozenset({
+    Path("CLAUDE.md"),
+    Path("AGENTS.md"),
+})
 
 _EXCLUDED_PARTS = frozenset({
     "__pycache__",
@@ -117,12 +121,13 @@ def build_archive(root: Path, output: Path) -> Path:
                 recursive=True,
                 filter=_archive_filter,
             )
-            package.add(
-                resolved_root / relative,
-                arcname=(_PLUGIN_ROOT / relative).as_posix(),
-                recursive=True,
-                filter=_archive_filter,
-            )
+            if relative not in _PLUGIN_EXCLUDED_PATHS:
+                package.add(
+                    resolved_root / relative,
+                    arcname=(_PLUGIN_ROOT / relative).as_posix(),
+                    recursive=True,
+                    filter=_archive_filter,
+                )
         claude_marketplace, codex_marketplace = _marketplace_manifests(resolved_root)
         _add_json(
             package,

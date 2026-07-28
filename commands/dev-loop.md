@@ -39,7 +39,12 @@ Violating the letter of this rule is violating the spirit of this rule.
      read action.instruction
      if action.spawn exists:
          validate HostCapabilities against action.spawn
-         invoke native subagent capability with action.subagent_prompt verbatim
+         if action.spawn.count == 1:
+             invoke one worker with action.subagent_prompt
+         else:
+             invoke worker[i] with action.spawn.agents[i].prompt
+             require worker[i] to overwrite action.spawn.agents[i].receipt_path
+             collect all receipts, then merge using action.subagent_prompt
          collect real output and build result using action.expected_format
      else:
          execute developer work inline
@@ -66,10 +71,14 @@ Violating the letter of this rule is violating the spirit of this rule.
    推理控制；默认使用最低够用的经济档，复杂架构、安全或跨模块故障才提高。
 3. 检查 `HostCapabilities.subagents`；并行任务还需检查
    `HostCapabilities.parallel_subagents`。
-4. 能力满足时，使用宿主原生子代理能力，将 `action.subagent_prompt` 原样传递。
-5. 能力不足时，报告 `HOST_CAPABILITY_UNAVAILABLE` 并停止，不得 inline 替代
+4. 能力满足时：单 Worker 使用 `action.subagent_prompt`；多 Worker 必须逐个使用
+   `action.spawn.agents[i].prompt`，并让每个 Worker 覆写自己的
+   `action.spawn.agents[i].receipt_path`。
+5. 多 Worker 的 `action.subagent_prompt` 仅供 Team Lead 合并输出；全部 receipt
+   有效后才可覆写共享总 proof，Worker 不得竞争写共享 proof。
+6. 能力不足时，报告 `HOST_CAPABILITY_UNAVAILABLE` 并停止，不得 inline 替代
    强制 spawn，也不得把 `"spawned"` 伪造为 true。
-6. 按 `action.expected_format` 从真实输出提取字段；只有真实 spawn 完成后才写
+7. 按 `action.expected_format` 从真实输出提取字段；只有真实 spawn 完成后才写
    `"spawned": true`。
 
 ## 上下文交接

@@ -68,10 +68,16 @@ action 明确要求时才提高。若 `HostCapabilities.subagents` 不可用，�
 
 能力满足时，使用宿主原生子代理能力：
 
-1. 将 `action.subagent_prompt` 原样传递给每个子代理。
-2. 按 `action.spawn.count` 和 `action.spawn.parallel` 创建隔离执行。
-3. 从真实输出中提取 `action.expected_format` 要求的字段。
-4. 只有实际完成 spawn 后，result 才能写 `"spawned": true`。
+1. 单 Worker：将 `action.subagent_prompt` 原样交给该 Worker。
+2. 多 Worker：逐个将 `action.spawn.agents[i].prompt` 交给对应 Worker；不得把
+   Coordinator 的 `action.subagent_prompt` 复制给所有 Worker。
+3. 按 `action.spawn.count` 和 `action.spawn.parallel` 创建隔离执行。
+4. 多 Worker 完成后，每个 Worker 必须以单个 JSON 覆写自己的
+   `action.spawn.agents[i].receipt_path`；workers must not write the shared total proof。
+5. Team Lead 收齐并验证全部 receipt 后，按 `action.subagent_prompt` 合并输出，
+   再覆写 `action.spawn_proof_token` 对应的总 proof。
+6. 从真实输出中提取 `action.expected_format` 要求的字段。只有全部要求的 Worker
+   实际完成后，result 才能写 `"spawned": true`。
 
 ## 角色边界
 

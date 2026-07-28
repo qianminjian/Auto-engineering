@@ -20,6 +20,7 @@
 | Phase 58 真实产品安装验收 | ✅ 2/2 | T273-T274；Claude Code/Codex 真实宿主调用通过 |
 | Phase 59 真实宿主兼容性加固 | ✅ 5/5 | T275-T279；v5.7.0 双宿主真实安装验收通过 |
 | Phase 60 Prompt Contract 重构 | ✅ 8/8 | T280-T287；2019 passed / 1 skipped，coverage 90.27% |
+| Phase 61 v5.7.1 发布收口 | ✅ 7/7 | T288-T294；2021 passed / 1 skipped，coverage 90.27% |
 
 ## Phase 52：Protocol Envelope v1.1
 
@@ -111,6 +112,18 @@
 | P1 | T285 | 输出契约与兼容警告 | While 旧合法 Result 被提交, when 增强字段缺失, the system shall 兼容接受并产生结构化警告 | ✅ extensions.contract_warnings |
 | P1 | T286 | 不可覆盖 Prompt 日志 | While 同 tick/stage 重试, when rendered log 写入, the system shall 按 message/audience/hash 保留全部版本 | ✅ rendered 日志不可覆盖且不冒充投递 |
 | P0 | T287 | Phase 60 收口 | While T280-T286 完成, when 全部门禁运行, tests shall 通过且覆盖率不低于权威基线 | ✅ 2019 passed / 1 skipped；90.27%；Ruff/mypy/sync pass |
+
+## Phase 61：v5.7.1 发布收口
+
+| 优先级 | ID | 任务 | EARS 验收 | 状态 |
+|---:|---|---|---|:---:|
+| P0 | T288 | 版本与发布元数据 | While v5.7.1 被构建, when metadata 校验, all version sources shall 一致 | ✅ runtime/plugin/marketplace/README/lock 一致；metadata pass |
+| P0 | T289 | 发布专项回归 | While Phase 60 已合入, when release/prompt/host tests 运行, the suite shall 全部通过 | ✅ 初始 139 passed / 1 skipped；最终专项 37 passed / 1 skipped |
+| P0 | T290 | 候选制品与哈希 | While release archive 被构建, when 检查内容, it shall 自包含新 Compiler/Contract 并记录 SHA-256 | ✅ r3 SHA-256 `4870ae905a17c740682027b053bdfc9e3b2ea127d5b27350786052387a97e101` |
+| P0 | T291 | 双宿主 archive acceptance | While 候选包被解压验收, when Claude/Codex smoke 运行, both shall 通过 | ✅ r3 Claude/Codex package_contract、isolated_uv_sync、doctor、minimal_tick pass |
+| P0 | T292 | 双宿主真实安装 | While v5.7.1 安装到真实宿主, when version/status 调用, both shall 返回有效结果 | ✅ r3 installed/enabled；双缓存 version/doctor/status pass；Claude validate 零告警 |
+| P0 | T293 | Prompt Contract 真实链路 | While 宿主执行新 Action, when prompt/receipt 被检查, context and worker receipts shall 完整 | ✅ 双缓存 5 Worker、唯一 receipt、缺口上下文完整；Codex 新进程加载安装缓存 |
+| P0 | T294 | 发布门禁与推送 | While T288-T293 完成, when 全量门禁运行, tests/coverage/static shall 通过并提交推送 | ✅ 2021 passed / 1 skipped；90.27%；Ruff/mypy/sync/metadata/diff pass；提交推送见 Git |
 
 ## 执行纪律
 
