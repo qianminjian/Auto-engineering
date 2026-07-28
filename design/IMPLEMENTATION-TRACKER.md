@@ -21,7 +21,7 @@
 | Phase 59 真实宿主兼容性加固 | ✅ 5/5 | T275-T279；v5.7.0 双宿主真实安装验收通过 |
 | Phase 60 Prompt Contract 重构 | ✅ 8/8 | T280-T287；2019 passed / 1 skipped，coverage 90.27% |
 | Phase 61 v5.7.1 发布收口 | ✅ 7/7 | T288-T294；2021 passed / 1 skipped，coverage 90.27% |
-| Phase 62 v5.7.1 正式发布 | ◐ 4/6 | T295-T300；远端发布门禁复验中 |
+| Phase 62 v5.7.1 正式发布 | ✅ 6/6 | T295-T300；GitHub Release 与 SHA-256 已核验 |
 
 ## Phase 52：Protocol Envelope v1.1
 
@@ -134,8 +134,8 @@
 | P1 | T296 | 计划状态去漂移 | While Phase 60 已完成, when 读取 Prompt Contract PLAN, all implementation checkboxes shall 与 Tracker 一致 | ✅ 43 个实施检查项全部同步为 `[x]` |
 | P0 | T297 | 独立环境双宿主回归 | While 候选包在隔离目录安装, when init/tick/status/resume 运行, both hosts shall 通过且不依赖源码工作区 | ✅ 修复 `dev-loop --format json` 契约；r5 双宿主 package/sync/doctor/init/status/resume pass |
 | P1 | T298 | 发布自动化加固 | While release workflow 构建制品, when CI 执行, it shall 校验版本、双宿主 archive、载荷与 SHA-256 | ✅ workflow 校验版本/metadata/双宿主验收并上传 `.sha256`；专项 18 passed |
-| P0 | T299 | Phase 62 发布门禁 | While T295-T298 完成, when 全量门禁运行, tests/coverage/static shall 通过且设计证据完整 | ◐ 本地 2023 passed / 1 skipped、90.28%；首轮 CI 暴露缺少 otel extra，已 TDD 修复并等待复验 |
-| P0 | T300 | v5.7.1 正式发布 | While 发布门禁通过, when tag workflow 完成, GitHub Release shall 包含可验证制品与 SHA-256 | ◐ 等待提交、tag workflow 与远端制品核验 |
+| P0 | T299 | Phase 62 发布门禁 | While T295-T298 完成, when 全量门禁运行, tests/coverage/static shall 通过且设计证据完整 | ✅ 本地 2023 passed / 1 skipped、90.28%；CI `30373176093` 三 job pass、annotations 0/0/0 |
+| P0 | T300 | v5.7.1 正式发布 | While 发布门禁通过, when tag workflow 完成, GitHub Release shall 包含可验证制品与 SHA-256 | ✅ tag `v5.7.1`；workflow `30373283948` pass；远端 SHA-256 `fae483df…86c99` 校验通过 |
 
 ## 执行纪律
 

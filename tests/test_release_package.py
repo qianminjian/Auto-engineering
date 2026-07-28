@@ -77,6 +77,7 @@ def test_release_workflow_uses_validated_builder_without_swallowing_errors() -> 
 
     assert "actions/checkout@v7" in content
     assert "astral-sh/setup-uv@v9.0.0" in content
+    assert "softprops/action-gh-release@v3" in content
     assert "python3 scripts/build_release.py" in content
     assert "scripts/check_project_metadata.py" in content
     assert "--host claude-code" in content

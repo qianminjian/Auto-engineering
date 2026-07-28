@@ -1,6 +1,6 @@
 # Auto-Engineering BEACON
 
-> 创建：2026-06-24｜更新：2026-07-28｜阶段：Phase 62 v5.7.1 正式发布实施中
+> 创建：2026-06-24｜更新：2026-07-28｜阶段：Phase 62 v5.7.1 正式发布完成
 > 决策状态翻转（✅↔❌）或架构降级必须先获用户批准。
 
 ## 目标与成功标准
@@ -37,7 +37,7 @@ Engineering；把 archive smoke 冒充真实产品安装；修改外部参考源
 
 ## 当前状态
 
-- Phase 1-61 已完成；Phase 62 完成 4/6，基线 2023 passed / 1 skipped，覆盖率 90.28%。
+- Phase 1-62 已完成；当前基线为 2023 passed / 1 skipped，覆盖率 90.28%。
 - LoopEvent、SQLite EventStore、EngineState Projector 和单 Tick 原子事务已落地。
 - 11 个 Stage 已全部唯一注册 Handler；旧 stage-specific `_after_*` 已移除。
 - Host SPI 2.0、十类黄金轨迹、故障恢复和跨宿主语义等价已验收。
@@ -50,13 +50,14 @@ Engineering；把 archive smoke 冒充真实产品安装；修改外部参考源
   release 安全解压兼容；v5.7.0 release 已在两个真实宿主中安装并识别。
 - Phase 60 已完成 Prompt Contract、全阶段上下文编译、多 Agent 独立 receipt、
   Result 兼容警告和不可覆盖 rendered 日志。
-- Phase 62 已完成宿主诊断、计划同步、双宿主隔离生命周期和发布自动化加固；
-  正在复验补齐 otel extra 后的远端 CI，再执行 v5.7.1 tag workflow，阻塞：无。
+- Phase 62 已完成宿主诊断、计划同步、双宿主隔离生命周期、零告警 CI 加固和
+  v5.7.1 GitHub Release；远端制品 SHA-256 已核验，阻塞：无。
 
 ## 最近演进
 
 | 日期 | 变更 |
 |---|---|
+| 2026-07-28 | Phase 62 完成 T295-T300，v5.7.1 GitHub Release 正式发布 |
 | 2026-07-28 | Phase 62 启动 v5.7.1 正式发布，T295-T300 进行中 |
 | 2026-07-28 | Phase 61 完成 v5.7.1 发布收口，T288-T294 全部验证 |
 | 2026-07-28 | Phase 60 完成 T280-T287；2019 passed / 1 skipped，coverage 90.27% |
@@ -67,12 +68,11 @@ Engineering；把 archive smoke 冒充真实产品安装；修改外部参考源
 | 2026-07-28 | Phase 57 完成资源告警归零与验收文档命令去漂移 |
 | 2026-07-28 | Phase 56 完成黄金轨迹、故障恢复、跨宿主等价与 v5.7 收口 |
 | 2026-07-28 | Phase 55 完成 Host SPI 2.0、双宿主映射与能力 fail closed |
-| 2026-07-28 | Phase 54 完成无状态 ActionBuilder、全 StageHandler 与统一终态 |
 | 2026-07-27 | 批准 v5.7 渐进式协议内核重构与双基线策略 |
 
 ## 待解决问题
 
-- Phase 62：完成 v5.7.1 GitHub Release 与 SHA-256 远端核验。
+- 无发布阻断项；Claude `-p` 空输出已定位为双安装/自定义 endpoint 宿主环境问题。
 
 ## 引用文件
 
