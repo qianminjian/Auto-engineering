@@ -1,6 +1,6 @@
 # Auto-Engineering 历史摘要
 
-> 更新：2026-07-28｜本文件只保留里程碑和追溯入口；详细差异以 Git 为准。
+> 更新：2026-07-29｜本文件只保留里程碑和追溯入口；详细差异以 Git 为准。
 
 ## 里程碑
 
@@ -17,6 +17,7 @@
 | Phase 60 | 完成兼容式 Prompt Contract Compiler、全阶段上下文交付、多 Agent 独立 receipt、输出兼容警告和不可覆盖 rendered 日志；基线 2019 passed / 1 skipped、覆盖率 90.27% |
 | Phase 61 | 发布 v5.7.1 候选包，补齐宿主逐 Worker 提示词执行协议与插件载荷零告警；双宿主 archive、真实安装缓存和 Prompt Contract 链路通过；基线 2021 passed / 1 skipped、覆盖率 90.27% |
 | Phase 62 | 完成 Claude 宿主输出诊断、计划去漂移、双宿主隔离 init/status/resume、Node 24 与 OTEL 发布门禁加固；正式发布 v5.7.1 并核验远端 SHA-256；基线 2023 passed / 1 skipped、覆盖率 90.28% |
+| v5.8 设计批准 | 基于 Claude Code 146-Tick 真实运行事故，批准确定性状态与宿主会话解耦；登记 Phase 64-67、T302-T321，实施尚未启动 |
 
 ## 持续有效的决策
 
@@ -25,7 +26,7 @@
 - Claude Code 与 Codex 共用生成规则、Skill 协议和 `scripts/ae-run`。
 - Init Engineering 是独立项目，本项目只消费其 manifest。
 - archive smoke 与真实产品安装验收必须分开报告。
-- v5.6 是当前实现基线，v5.7 是已批准目标基线。
+- v5.7.1 是当前发布实现；v5.8 是已批准但尚未实现的会话解耦目标。
 
 ## 已清理资产
 

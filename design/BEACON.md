@@ -1,6 +1,6 @@
 # Auto-Engineering BEACON
 
-> 创建：2026-06-24｜更新：2026-07-29｜阶段：Phase 62 完成，Phase 63 待启动
+> 创建：2026-06-24｜更新：2026-07-29｜阶段：v5.8 设计批准，Phase 64 待启动
 > 决策状态翻转（✅↔❌）或架构降级必须先获用户批准。
 
 ## 目标与成功标准
@@ -34,10 +34,14 @@ Engineering；把 archive smoke 冒充真实产品安装；修改外部参考源
 | D9 | 事件是事实源，EngineState 是可重建投影 | ✅ |
 | D10 | Prompt Contract 采用兼容式编译，不改变 Action/Result v1.1 核心语义 | ✅ |
 | D11 | 多 Agent 必须逐 Worker 交付上下文并提供独立完成回执 | ✅ |
+| D12 | 工程 Thread 与宿主 ExecutionSession 分离，聊天历史不是恢复事实源 | ✅ |
+| D13 | Core 按 ContextBudget 发出 rollover；新会话仅消费 ResumeCapsule | ✅ |
+| D14 | 修复计划使用 PlanPatch；完成事实不可由普通计划更新重新激活 | ✅ |
+| D15 | runner 错配、零测试、空快照和证据失配全部 fail-closed | ✅ |
 
 ## 当前状态
 
-- Phase 1-62 已完成；当前基线为 2023 passed / 1 skipped，覆盖率 90.28%。
+- Phase 1-62 已完成；当前发布基线为 v5.7.1、2023 passed / 1 skipped、覆盖率 90.28%。
 - LoopEvent、SQLite EventStore、EngineState Projector 和单 Tick 原子事务已落地。
 - 11 个 Stage 已全部唯一注册 Handler；旧 stage-specific `_after_*` 已移除。
 - Host SPI 2.0、十类黄金轨迹、故障恢复和跨宿主语义等价已验收。
@@ -52,29 +56,25 @@ Engineering；把 archive smoke 冒充真实产品安装；修改外部参考源
   Result 兼容警告和不可覆盖 rendered 日志。
 - Phase 62 已完成宿主诊断、计划同步、双宿主隔离生命周期、零告警 CI 加固和
   v5.7.1 GitHub Release；远端制品 SHA-256 已核验，阻塞：无。
+- Claude Code 146-Tick 真跑暴露上下文超限、计划回退、runner/空快照假通过；
+  v5.8 会话解耦设计与 Phase 64-67、T302-T321 已登记，代码尚未实施。
 
 ## 最近演进
 
 | 日期 | 变更 |
 |---|---|
+| 2026-07-29 | 批准 v5.8 确定性状态与宿主会话解耦，登记 Phase 64-67 |
 | 2026-07-28 | Phase 62 完成 T295-T300，v5.7.1 GitHub Release 正式发布 |
 | 2026-07-28 | Phase 62 启动 v5.7.1 正式发布，T295-T300 进行中 |
 | 2026-07-28 | Phase 61 完成 v5.7.1 发布收口，T288-T294 全部验证 |
-| 2026-07-28 | Phase 60 完成 T280-T287；2019 passed / 1 skipped，coverage 90.27% |
-| 2026-07-28 | 批准 Phase 60 兼容式 Prompt Contract Compiler 与多 Agent 交付完整性重构 |
-| 2026-07-28 | Phase 59 完成 T275-T279，release-v3 双宿主真实安装调用通过 |
-| 2026-07-28 | Codex CLI 升级至 0.145.0，关闭 T274，登记只读 SQLite 兼容问题 T275 |
-| 2026-07-28 | Phase 58 Claude Code 真实安装通过；Codex 安装通过、端到端调用环境阻塞 |
-| 2026-07-28 | Phase 57 完成资源告警归零与验收文档命令去漂移 |
-| 2026-07-28 | Phase 56 完成黄金轨迹、故障恢复、跨宿主等价与 v5.7 收口 |
-| 2026-07-28 | Phase 55 完成 Host SPI 2.0、双宿主映射与能力 fail closed |
-| 2026-07-27 | 批准 v5.7 渐进式协议内核重构与双基线策略 |
 
 ## 待解决问题
 
 - T301：重构 `ae.toml` 首次配置闸门，使非交互宿主显式选择配置策略、准确报告
   环境变量/文件/默认值来源，并禁止通过管道模拟交互输入。
+- T303-T307：先完成真实运行可信度 P0 止血；在此之前不把中等规模无人值守真跑
+  作为发布证据。
 
 ## 引用文件
 
-`design/v5.6-Design-Loop.md` · `design/v5.7-Protocol-Kernel-Design.md` · `design/v5.7-Protocol-Kernel-PLAN.md` · `design/v5.7-Prompt-Contract-Design.md` · `design/v5.7-Prompt-Contract-PLAN.md` · `design/IMPLEMENTATION-TRACKER.md` · `design/HISTORY.md`
+`design/v5.7-Protocol-Kernel-Design.md` · `design/v5.8-Session-Decoupling-Design.md` · `design/v5.8-Session-Decoupling-PLAN.md` · `design/IMPLEMENTATION-TRACKER.md` · `design/HISTORY.md`
