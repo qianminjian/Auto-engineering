@@ -13,7 +13,8 @@
 | `v5.7-Prompt-Contract-Design.md` | Phase 60 Prompt Contract 与多 Agent 交付设计 |
 | `v5.7-Prompt-Contract-PLAN.md` | Phase 60 T280-T287 TDD 实施计划 |
 | `v5.8-Session-Decoupling-Design.md` | Phase 64-67 确定性状态、宿主会话、上下文预算与验证可信度设计 |
-| `v5.8-Session-Decoupling-PLAN.md` | Phase 64-67 T302-T321 可执行实施计划 |
+| `v5.8-Session-Decoupling-PLAN.md` | Phase 64-67 T302-T324 可执行实施计划 |
+| `incidents/2026-07-29-claude-146-tick-long-run.md` | 146-Tick 真跑事故事实、根因、任务映射与关闭标准 |
 | `IMPLEMENTATION-TRACKER.md` | 当前任务状态、优先级与 EARS 验收 |
 | `HISTORY.md` | 历史里程碑与 Git 追溯入口 |
 

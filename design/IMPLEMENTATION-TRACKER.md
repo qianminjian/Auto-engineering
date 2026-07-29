@@ -152,12 +152,13 @@
 
 | 优先级 | ID | 任务 | EARS 验收 | 状态 |
 |---:|---|---|---|:---:|
-| P0 | T302 | 会话解耦设计资产 | While 真实运行事故已形成证据, when 设计评审, the specification shall 覆盖状态、会话、预算、计划补丁、验证、审计、恢复和双宿主验收 | ✅ v5.8 Design/PLAN + BEACON/INDEX/HISTORY/v5.7 交叉引用；T303-T321 已登记 |
+| P0 | T302 | 会话解耦设计资产 | While 真实运行事故已形成证据, when 设计评审, the specification shall 覆盖状态、会话、预算、计划补丁、验证、审计、恢复和双宿主验收 | ✅ v5.8 Design/PLAN + BEACON/INDEX/HISTORY/v5.7 交叉引用；T303-T324 已登记 |
 | P0 | T303 | 真实运行故障黄金轨迹 | While 146-Tick 故障被抽象为 fixture, when 旧实现运行, the suite shall 稳定复现批次回退、状态计数异常和验证假通过 | ☐ |
 | P0 | T304 | 工具链验证 fail-closed | While manifest 声明 TypeScript/Vitest, when TestGate 执行, the system shall 调用匹配工具链，并在命令非零或收集零测试时失败 | ☐ |
 | P0 | T305 | 文件快照可信绑定 | While Gate 产生结论, when 文件集为空、快照不完整或结果与快照不匹配, the system shall 拒绝通过并返回稳定错误 | ☐ |
 | P0 | T306 | 计划补丁与进度不变量 | While 已完成批次存在, when Architect 追加修复批次, the Core shall 只激活新增工作，保留完成集合，并拒绝 `done_tasks > total_tasks` 等非法投影 | ☐ |
 | P0 | T307 | Phase 64 止血验收 | While T303-T306 完成, when 故障轨迹与相关回归运行, the suite shall 证明不会重启已完成批次、不会把零测试或空快照判为通过 | ☐ |
+| P0 | T322 | 146-Tick 真跑事故报告 | While 真跑证据分散在外部 `_scratch` 与会话中, when 永久报告建立, it shall 区分事实与推断、映射全部修复任务并提供脱敏证据索引 | ✅ 永久报告 11 节；事实/推断分离；T303-T321/T323-T324 追踪矩阵与关闭标准 |
 
 ## Phase 65：确定性状态与宿主会话解耦
 
@@ -178,7 +179,9 @@
 | P0 | T315 | ArtifactRef 与精简 Worker Receipt | While 多 Agent 或深度审计产生大结果, when 结果交付主宿主, the system shall 持久化完整产物并只传递带哈希的引用和有界摘要 | ☐ |
 | P1 | T316 | 逐 Tick Usage Ledger | While 宿主可提供 usage, when Action/Result 完成, the system shall 按 thread/session/tick/stage/worker 记录 input、cache read/write、output 和估算来源 | ☐ |
 | P1 | T317 | Checkpoint 与审计保留策略 | While 长轨迹持续运行, when 快照、Prompt 和产物超过保留阈值, the system shall 保留事件事实与审计引用并安全压缩可重建副本 | ☐ |
-| P0 | T318 | Phase 66 成本与完整性验收 | While 同一黄金轨迹分别以旧式单会话基准和有界会话执行, when 比较结果, semantic verdict shall 等价且输入放大率、单会话峰值与审计缺口满足预算 | ☐ |
+| P0 | T323 | 状态锚点与摘要隔离 | While BEACON 或自动摘要过期、重复或矛盾, when Action/Capsule 被构建, the Core shall 仅依赖事件投影推进，并显式报告信息性上下文漂移 | ☐ |
+| P0 | T324 | 修复循环与 Agent 预算 | While repair、Worker 或 Deep Audit 达到策略上限, when 下一 Action 被选择, the system shall 确定性暂停或 rollover，禁止无限追加批次或 Agent | ☐ |
+| P0 | T318 | Phase 66 成本与完整性验收 | While T314-T317、T323-T324 完成, when 单/多会话轨迹比较, semantic verdict shall 等价且输入放大率、单会话峰值、摘要隔离、循环上限与审计缺口满足预算 | ☐ |
 
 ## Phase 67：双宿主真实项目发布门禁
 
@@ -186,7 +189,7 @@
 |---:|---|---|---|:---:|
 | P0 | T319 | 中等规模双宿主真实验收 | While 候选版本安装到 Claude Code 与 Codex, when 运行包含返工、深审计和至少一次 rollover 的真实项目, both hosts shall 完成且无批次回退、验证假通过或输入超限 | ☐ |
 | P0 | T320 | 故障恢复与成本基线 | While 宿主在 rollover 前后异常退出, when 从事件与 capsule 恢复, the run shall 收敛到等价终态并输出可归因成本报告 | ☐ |
-| P0 | T321 | v5.8 发布收口 | While T303-T320 全部完成, when 全量测试、覆盖率、静态检查、双宿主安装与真实运行门禁执行, all required checks shall 通过后才允许发布 | ☐ |
+| P0 | T321 | v5.8 发布收口 | While T303-T320、T323-T324 全部完成, when 全量测试、覆盖率、静态检查、双宿主安装与真实运行门禁执行, all required checks shall 通过后才允许发布 | ☐ |
 
 ## 执行纪律
 

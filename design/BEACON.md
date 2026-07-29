@@ -29,12 +29,12 @@ Engineering；把 archive smoke 冒充真实产品安装；修改外部参考源
 | D4 | `FeatureManifest` 是 `AE_*` 默认值唯一事实源 | ✅ |
 | D5 | archive smoke 与真实 product install 分开报告 | ✅ |
 | D6 | 当前资产短小可追溯，详细历史由 Git 和 `HISTORY.md` 保留 | ✅ |
-| D7 | 采用双基线：v5.6 是当前实现，v5.7 是已批准目标 | ✅ |
+| D7 | 采用双基线：v5.7.1 是当前发布实现，v5.8 是已批准目标 | ✅ |
 | D8 | v5.7 采用渐进协议内核重构，不建立双内核 | ✅ |
 | D9 | 事件是事实源，EngineState 是可重建投影 | ✅ |
 | D10 | Prompt Contract 采用兼容式编译，不改变 Action/Result v1.1 核心语义 | ✅ |
 | D11 | 多 Agent 必须逐 Worker 交付上下文并提供独立完成回执 | ✅ |
-| D12 | 工程 Thread 与宿主 ExecutionSession 分离，聊天历史不是恢复事实源 | ✅ |
+| D12 | Thread 与 ExecutionSession 分离；聊天历史、BEACON 和自动摘要不是状态事实源 | ✅ |
 | D13 | Core 按 ContextBudget 发出 rollover；新会话仅消费 ResumeCapsule | ✅ |
 | D14 | 修复计划使用 PlanPatch；完成事实不可由普通计划更新重新激活 | ✅ |
 | D15 | runner 错配、零测试、空快照和证据失配全部 fail-closed | ✅ |
@@ -57,15 +57,15 @@ Engineering；把 archive smoke 冒充真实产品安装；修改外部参考源
 - Phase 62 已完成宿主诊断、计划同步、双宿主隔离生命周期、零告警 CI 加固和
   v5.7.1 GitHub Release；远端制品 SHA-256 已核验，阻塞：无。
 - Claude Code 146-Tick 真跑暴露上下文超限、计划回退、runner/空快照假通过；
-  v5.8 会话解耦设计与 Phase 64-67、T302-T321 已登记，代码尚未实施。
+  永久事故报告及 Phase 64-67、T302-T324 已登记，代码尚未实施。
 
 ## 最近演进
 
 | 日期 | 变更 |
 |---|---|
 | 2026-07-29 | 批准 v5.8 确定性状态与宿主会话解耦，登记 Phase 64-67 |
+| 2026-07-29 | 归档 146-Tick 真跑事故报告，补充摘要隔离与循环预算 |
 | 2026-07-28 | Phase 62 完成 T295-T300，v5.7.1 GitHub Release 正式发布 |
-| 2026-07-28 | Phase 62 启动 v5.7.1 正式发布，T295-T300 进行中 |
 | 2026-07-28 | Phase 61 完成 v5.7.1 发布收口，T288-T294 全部验证 |
 
 ## 待解决问题
@@ -77,4 +77,4 @@ Engineering；把 archive smoke 冒充真实产品安装；修改外部参考源
 
 ## 引用文件
 
-`design/v5.7-Protocol-Kernel-Design.md` · `design/v5.8-Session-Decoupling-Design.md` · `design/v5.8-Session-Decoupling-PLAN.md` · `design/IMPLEMENTATION-TRACKER.md` · `design/HISTORY.md`
+`design/v5.8-Session-Decoupling-Design.md` · `design/v5.8-Session-Decoupling-PLAN.md` · `design/incidents/2026-07-29-claude-146-tick-long-run.md` · `design/IMPLEMENTATION-TRACKER.md` · `design/HISTORY.md`
