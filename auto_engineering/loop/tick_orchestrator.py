@@ -782,7 +782,7 @@ class TickOrchestrator:
         gate_snapshot = self._state.gate_results if self._state else {}
         if self._require("_debug_tracer", "debug tracing disabled") is not None:
             self._debug_tracer.record_tick(
-                tick_num=tick_no,
+                tick_num=tick_no + 1,
                 stage_in=stage_in,
                 action=action,
                 state_snapshot=state_snapshot,
@@ -1460,6 +1460,7 @@ class TickOrchestrator:
         if self._progress_tree is None:
             if self._design_doc:
                 self._progress_tree = ProgressTree.from_design_doc(self._design_doc)
+                self._progress_tree.apply_batch_plan_totals(batches)
             else:
                 self._progress_tree = ProgressTree.from_batch_plan(
                     batches, self._state.requirement)

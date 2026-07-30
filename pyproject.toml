@@ -1,6 +1,6 @@
 [project]
 name = "auto-engineering"
-version = "5.8.0-rc.2"
+version = "5.8.0-rc.3"
 description = "Auto-Engineering v5.8 — 确定性状态与宿主会话解耦治理内核"
 readme = "README.md"
 requires-python = ">=3.12"

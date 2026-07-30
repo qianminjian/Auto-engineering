@@ -181,6 +181,22 @@ class TestT84TickNumbering:
                 )
                 break
 
+    def test_debug_tracer_call_site_passes_one_based(self) -> None:
+        """Debug 与 metrics 必须使用同一 1-based Tick 编号。"""
+        import inspect as _inspect
+
+        import auto_engineering.loop.tick_orchestrator as tmod
+
+        source = _inspect.getsource(tmod.TickOrchestrator.tick_dict)
+        lines = source.split("\n")
+        in_snapshot_call = False
+        for line in lines:
+            if "self._debug_tracer.record_tick(" in line:
+                in_snapshot_call = True
+            elif in_snapshot_call and "tick_num=" in line:
+                assert "tick_no + 1" in line or "tick_no+1" in line
+                break
+
 
 # =============================================================================
 # T85 — resume_events restore category from metadata

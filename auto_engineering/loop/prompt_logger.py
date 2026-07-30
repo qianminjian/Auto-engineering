@@ -8,6 +8,9 @@ import logging
 import re
 from pathlib import Path
 
+from auto_engineering import __version__
+from auto_engineering.loop.protocol import SCHEMA_VERSION
+
 _logger = logging.getLogger(__name__)
 
 
@@ -49,8 +52,24 @@ def write_action_prompt_log(project_root: Path, action: dict) -> None:
             f"rendered-{action_hash}"
         )
         stem = _unique_stem(log_dir, base_stem)
+        diagnostic_payload = {
+            **action,
+            "_diagnostics": {
+                "engine_version": __version__,
+                "protocol_version": action.get(
+                    "schema_version", SCHEMA_VERSION
+                ),
+                "artifact_kind": "core_rendered_action",
+                "host_delivery_proven": False,
+            },
+        }
         (log_dir / f"{stem}.json").write_text(
-            action_json,
+            json.dumps(
+                diagnostic_payload,
+                indent=2,
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
             encoding="utf-8",
         )
 
@@ -66,6 +85,11 @@ def write_action_prompt_log(project_root: Path, action: dict) -> None:
             f"- action: `{action.get('action', '?')}`",
             f"- message id: `{action.get('message_id', 'N/A')}`",
             f"- rendered hash: `{action_hash}`",
+            f"- engine version: `{__version__}`",
+            (
+                "- protocol version: "
+                f"`{action.get('schema_version', SCHEMA_VERSION)}`"
+            ),
             f"- spawn stage: {bool(spawn)}",
         ]
         if spawn:
@@ -100,19 +124,28 @@ def write_action_prompt_log(project_root: Path, action: dict) -> None:
             ])
             for agent in agents:
                 prompt = agent.get("prompt", "")
+                prompt_ref = agent.get("prompt_ref", "")
+                delivery = (
+                    f"prompt ref: `{prompt_ref}`"
+                    if prompt_ref
+                    else f"{len(prompt)} chars"
+                )
                 lines.extend([
                     "",
                     (
                         f"### Agent [{agent['index']}]"
                         f" — role `{agent.get('role', 'unspecified')}`"
                         f" — hash `{agent.get('prompt_hash', 'N/A')}`"
-                        f" — {len(prompt)} chars"
+                        f" — {delivery}"
                     ),
-                    "",
-                    "```markdown",
-                    prompt.strip(),
-                    "```",
                 ])
+                if prompt:
+                    lines.extend([
+                        "",
+                        "```markdown",
+                        prompt.strip(),
+                        "```",
+                    ])
         elif subagent_prompt:
             lines.extend([
                 "---",

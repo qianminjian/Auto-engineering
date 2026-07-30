@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from auto_engineering.loop.prompt_logger import write_action_prompt_log
@@ -58,3 +59,57 @@ def test_rendered_log_does_not_claim_host_delivery(tmp_path: Path) -> None:
     assert "未证明宿主已投递" in text
     assert "architecture" in text
     assert "abc123" in text
+
+
+def test_rendered_artifacts_declare_engine_and_protocol_versions(
+    tmp_path: Path,
+) -> None:
+    write_action_prompt_log(
+        tmp_path,
+        {
+            "action": "developer",
+            "stage": "developer",
+            "thread_id": "thread-123",
+            "message_id": "msg-1",
+            "tick": 2,
+            "schema_version": "1.1",
+            "instruction": "implement",
+        },
+    )
+
+    log_dir = tmp_path / "_scratch" / "prompt-log"
+    payload = json.loads(next(log_dir.glob("*.json")).read_text(encoding="utf-8"))
+    markdown = next(log_dir.glob("*.md")).read_text(encoding="utf-8")
+    assert payload["_diagnostics"]["engine_version"]
+    assert payload["_diagnostics"]["protocol_version"] == "1.1"
+    assert "engine version:" in markdown
+    assert "protocol version: `1.1`" in markdown
+
+
+def test_worker_prompt_reference_is_visible_without_reinlining_body(
+    tmp_path: Path,
+) -> None:
+    write_action_prompt_log(
+        tmp_path,
+        {
+            "action": "system_deep_audit",
+            "stage": "system_deep_audit",
+            "thread_id": "thread-123",
+            "message_id": "msg-2",
+            "tick": 3,
+            "spawn": {
+                "agents": [{
+                    "index": 0,
+                    "role": "security",
+                    "prompt_ref": ".ae-state/prompt-artifacts/abc.md",
+                    "prompt_hash": "abc",
+                }],
+            },
+        },
+    )
+
+    markdown = next(
+        (tmp_path / "_scratch" / "prompt-log").glob("*.md")
+    ).read_text(encoding="utf-8")
+    assert "prompt ref: `.ae-state/prompt-artifacts/abc.md`" in markdown
+    assert "0 chars" not in markdown

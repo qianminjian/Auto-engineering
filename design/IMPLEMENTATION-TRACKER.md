@@ -75,7 +75,7 @@
 |---:|---|---|---|:---:|
 | P0 | T319 | 中等规模双宿主真实验收 | While 候选版本安装到 Claude Code 与 Codex, when 运行包含返工、深审计和自动 compaction 的真实项目, both hosts shall 无人工交接完成且无批次回退、验证假通过或输入超限 | ◐ archive smoke 已通过；真实产品门禁并入 T350 |
 | P0 | T320 | 故障恢复与成本基线 | While 宿主在 rollover 前后异常退出, when 从事件与 capsule 恢复, the run shall 收敛到等价终态并输出可归因成本报告 | ✅ SQLite 重启/重复 claim 等价恢复 + 双 session Usage 聚合；32 tests passed |
-| P0 | T321 | v5.8 发布收口 | While T303-T320、T323-T324 全部完成, when 全量测试、覆盖率、静态检查、双宿主安装与真实运行门禁执行, all required checks shall 通过后才允许发布 | ◐ `5.8.0-rc.2` 候选包就绪；2095 passed/1 skipped、coverage 90%、Ruff/mypy/sync/metadata 与 Claude archive smoke pass；真实产品 LLM 门禁未执行 |
+| P0 | T321 | v5.8 发布收口 | While T303-T320、T323-T324 全部完成, when 全量测试、覆盖率、静态检查、双宿主安装与真实运行门禁执行, all required checks shall 通过后才允许发布 | ◐ `5.8.0-rc.3` 自动门禁通过；真实产品 LLM 门禁未执行 |
 | P1 | T325 | Claude 命令命名空间校准 | While 插件名为 `auto-engineering`, when 用户查看或启动 Claude Code slash command, all active guidance shall 使用宿主实际注册的 `/auto-engineering:dev-loop`，不得继续宣传不存在的 `/ae:*` 别名 | ✅ 当前文档、CLI 提示、设计契约和生成规则已统一；RED 4 failed，GREEN 81 passed/1 skipped；Ruff/mypy/sync/metadata 与 rc.2 Claude archive smoke pass |
 
 ## Phase 68：rc.1 真跑缺陷修复
@@ -117,6 +117,15 @@
 | P0 | T348 | 成本基准与回归 Harness | While 同 fixture/宿主/模型运行, when before/after 比较, the report shall 给出可归因增量、重复块和 measurement completeness | ✅ 同 fixture/host/model 按完成工作归一化；缺失测量 fail-closed |
 | P1 | T349 | 恢复协议收口 | While 真实执行实例中断, when 恢复, the system shall 幂等消费 Capsule；正常 compaction 不触发恢复协议 | ✅ Capsule 原子 claim 保留；恢复原因收口为退出/压缩失败/跨宿主 |
 | P0 | T350 | 真实长跑发布门禁 | While 双宿主运行 150 Tick 轨迹, when 宿主管理上下文, both runs shall 零人工交接、零输入超限、零重复块并保持终态等价；不可观测 compaction 标 unknown | ◐ 自动测试与双宿主 archive smoke 通过；待真实产品 150 Tick |
+
+## Phase 71：9-Tick 真跑证据链修复
+
+| 优先级 | ID | 任务 | EARS 验收 | 状态 |
+|---:|---|---|---|:---:|
+| P0 | T351 | Debug Tick 审计编号 | While Core 完成第 N 次 Tick, when DebugTracer 写快照, the file and payload shall 使用同一 1-based N，且与 Action tick 的因果关系可追溯 | ✅ Debug 与 metrics 统一 `tick_no + 1` |
+| P0 | T352 | 首次计划进度物化 | While Architect 为设计组件生成 batch plan, when 进度树初始化, every planned task shall 计入对应组件与父节点，禁止 `done_tasks > total_tasks` | ✅ 保留设计层次并聚合 batch task totals；非法完成数 fail-closed |
+| P1 | T353 | 运行制品版本溯源 | While prompt/debug 诊断制品生成, when 事故审计读取单个制品, it shall 显式声明 engine version 与 protocol version | ✅ JSON/Markdown 声明版本；Worker `prompt_ref` 可审计且不重内联 |
+| P0 | T354 | Phase 71 收口验收 | While T351-T353 完成, when 专项、全量与双宿主 archive 运行, all evidence shall 编号一致、进度守恒且版本可辨识 | ✅ 2121 passed/1 skipped；coverage 90%；静态检查与双宿主 archive pass |
 
 ## 执行纪律
 

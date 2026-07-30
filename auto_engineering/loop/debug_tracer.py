@@ -13,6 +13,9 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 
+from auto_engineering import __version__
+from auto_engineering.loop.protocol import SCHEMA_VERSION
+
 _ISO_FMT = "%Y-%m-%dT%H:%M:%S.%fZ"
 
 
@@ -58,6 +61,8 @@ class DebugTracer:
         snapshot = {
             "tick": tick_num,
             "timestamp": now_iso(),
+            "engine_version": __version__,
+            "protocol_version": SCHEMA_VERSION,
             "stage_in": stage_in,
             "stage_out": stage_out,
             "action": action,

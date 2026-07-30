@@ -1,6 +1,6 @@
 # design/ 资产索引
 
-> 更新：2026-07-30｜当前实现：v5.8.0-rc.2；Phase 70 上下文治理设计完成
+> 更新：2026-07-30｜当前实现：v5.8.0-rc.3；Phase 71 自动门禁完成
 
 ## 当前权威资产
 
@@ -17,6 +17,7 @@
 | `v5.8-Session-Decoupling-PLAN.md` | Phase 64-70 T302-T350 可执行实施计划 |
 | `incidents/2026-07-29-claude-146-tick-long-run.md` | 146-Tick 真跑事故事实、根因、任务映射与关闭标准 |
 | `incidents/2026-07-30-claude-rc1-partial-run.md` | rc.1 部分真跑的跨进程状态、Gate、Usage 与成本缺陷 |
+| `incidents/2026-07-30-claude-9-tick-evidence-chain.md` | 9-Tick 真跑的旧版本识别、Debug 编号、进度与版本溯源缺陷 |
 | `IMPLEMENTATION-TRACKER.md` | 当前任务状态、优先级与 EARS 验收 |
 | `HISTORY.md` | 历史里程碑与 Git 追溯入口 |
 

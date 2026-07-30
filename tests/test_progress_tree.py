@@ -97,6 +97,27 @@ class TestBuildFromDesignDoc:
         plate = sys_children[0]
         assert len(tree.children(plate.id)) == 2
 
+    def test_materializes_first_architect_plan_totals_without_flattening_tree(
+        self,
+    ) -> None:
+        doc = _doc({"PlateA": [("CompX", "§B1"), ("CompY", "§B2")]})
+        tree = ProgressTree.from_design_doc(doc)
+
+        tree.apply_batch_plan_totals([
+            _batch("bx1", "CompX", "§B1", 2),
+            _batch("bx2", "CompX", "§B1", 1),
+            _batch("by1", "CompY", "§B2", 4),
+        ])
+
+        comp_x = tree.find_by_design_section("B1")
+        comp_y = tree.find_by_design_section("B2")
+        assert comp_x is not None
+        assert comp_y is not None
+        assert comp_x.total_tasks == 3
+        assert comp_y.total_tasks == 4
+        assert tree.nodes["sys"].total_tasks == 7
+        assert tree.nodes["§PlateA"].design_status == "stable"
+
 
 class TestBuildFromBatchPlan:
     def test_builds_component_nodes_with_task_counts(self) -> None:

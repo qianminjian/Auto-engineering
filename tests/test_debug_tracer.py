@@ -45,6 +45,8 @@ class TestRecordTick:
         assert data["guardrail_results"]["REDGuardrail"] == "pass"
         assert data["gate_results"]["safety"]["passed"] is True
         assert data["timing_ms"]["t_orchestration"] == 45
+        assert data["engine_version"]
+        assert data["protocol_version"] == "1.1"
         assert "timestamp" in data
 
     def test_tick_files_numbered_sequentially(self, tmp_path: Path) -> None:

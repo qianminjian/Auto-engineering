@@ -244,6 +244,51 @@ class ProgressTree:
         ]
         return self._apply_sync(targets, structural=False)
 
+    def apply_batch_plan_totals(self, batch_plan: list[dict]) -> None:
+        """把首次 Architect 计划的任务数物化到既有设计层次，不改变树结构。"""
+        counts: dict[str, int] = {}
+        names: dict[str, str] = {}
+        for batch in batch_plan:
+            ref = _normalize_ref(batch.get("design_section", ""))
+            key = ref or f"name:{batch['component']}"
+            counts[key] = counts.get(key, 0) + len(batch.get("tasks", []))
+            names[key] = str(batch["component"])
+
+        component_nodes = [
+            node for node in self.nodes.values()
+            if node.level == "component" and node.design_status != "removed"
+        ]
+        for node in component_nodes:
+            key = (
+                node.design_section_ref
+                if node.design_section_ref in counts
+                else f"name:{node.name}"
+            )
+            total = counts.get(key, 0)
+            if node.done_tasks > total:
+                raise ValueError(
+                    "STATE_INVARIANT_VIOLATION: "
+                    f"done_tasks={node.done_tasks} > total_tasks={total} "
+                    f"for {node.id}"
+                )
+            node.total_tasks = total
+
+        unresolved = [
+            names[key]
+            for key in counts
+            if not any(
+                node.design_section_ref == key
+                or (key.startswith("name:") and node.name == names[key])
+                for node in component_nodes
+            )
+        ]
+        if unresolved:
+            raise ValueError(
+                "BATCH_PLAN_COMPONENT_UNRESOLVED: " + ", ".join(unresolved)
+            )
+        for node in component_nodes:
+            self.recalculate_parents(node.id)
+
     def _apply_sync(
         self,
         targets: list[tuple[str, str | None, str, str, str, int]],
