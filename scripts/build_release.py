@@ -18,6 +18,7 @@ REQUIRED_PATHS = (
     Path("commands"),
     Path("skills"),
     Path("hooks"),
+    Path("bin/ae-run"),
     Path("scripts/ae-run"),
     Path("scripts/build_release.py"),
     Path("scripts/check_host_package.py"),

@@ -1,6 +1,6 @@
 # Auto-Engineering BEACON
 
-> 创建：2026-06-24｜更新：2026-07-30｜阶段：v5.8.0-rc.3 待真实长跑
+> 创建：2026-06-24｜更新：2026-07-31｜阶段：v5.8.0-rc.4 待真实复验
 > 决策状态翻转（✅↔❌）或架构降级必须先获用户批准。
 
 ## 目标与成功标准
@@ -61,7 +61,7 @@ Engineering；把 archive smoke 冒充真实产品安装；修改外部参考源
 - Phase 68 T326-T335 已完成：快照、线程租约、Gate/Findings、Usage、Result、
   稳定身份、checkpoint 与成本治理已修复；T336 等待 Claude Code 真实复验。
 - Phase 69 已完成：标准 Profile、强制首次配置与双宿主 archive smoke 通过。
-- Phase 71 已完成 Debug 编号、首次计划进度与制品版本溯源修复；rc.3 自动门禁通过。
+- Phase 72 已修复插件 runner 误解析到目标项目；rc.4 自动门禁通过。
 
 ## 最近演进
 | 日期 | 变更 |

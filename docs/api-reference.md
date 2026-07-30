@@ -10,18 +10,18 @@
 共同的预检与最小 Tick：
 
 ```bash
-scripts/ae-run doctor
-scripts/ae-run dev-loop --init "需求"
+ae-run doctor
+ae-run dev-loop --init "需求"
 ```
 
 ## CLI
 
 ```bash
-scripts/ae-run doctor [--project-root PATH]
-scripts/ae-run dev-loop --init "需求"
-scripts/ae-run dev-loop --tick --result result.json
-scripts/ae-run status --format json
-scripts/ae-run dev-loop --resume
+ae-run doctor [--project-root PATH]
+ae-run dev-loop --init "需求"
+ae-run dev-loop --tick --result result.json
+ae-run status --format json
+ae-run dev-loop --resume
 ```
 
 - `doctor`：检查依赖、宿主、Init manifest 和可选功能。

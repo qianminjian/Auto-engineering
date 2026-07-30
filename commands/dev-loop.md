@@ -15,7 +15,7 @@ description: Auto-Engineering v5.8 宿主无关确定性会话 Tick-Based 开发
 
 <!-- FRAGMENT:iron_law_gatekeeper START -->
 IRON LAW: PYTHON IS THE GATEKEEPER.
-NO STAGE ADVANCEMENT WITHOUT `scripts/ae-run dev-loop --tick` VALIDATION.
+NO STAGE ADVANCEMENT WITHOUT `ae-run dev-loop --tick` VALIDATION.
 You may NOT edit code before Python outputs {"action":"developer"}.
 You may NOT declare done before Python outputs {"action":"done"}.
 Violating the letter of this rule is violating the spirit of this rule.
@@ -27,14 +27,14 @@ Violating the letter of this rule is violating the spirit of this rule.
 ## 驱动循环
 
 ```text
-1. action = scripts/ae-run dev-loop --init "<requirement>" [--design-doc <path>]
+1. action = ae-run dev-loop --init "<requirement>" [--design-doc <path>]
 2. while action.action != "done":
      print "[Tick N | stage <action.stage>] ..."
      if action.action == "error":
          report action.error_code + action.message
          STOP
      if action.action in {"gate", "skip"}:
-         action = scripts/ae-run dev-loop --tick
+         action = ae-run dev-loop --tick
          continue
      if action.action == "session_rollover":
          stop all work in the old session
@@ -56,11 +56,11 @@ Violating the letter of this rule is violating the spirit of this rule.
      else:
          execute developer work inline
      ensure result.stage == action.stage
-     validation = scripts/ae-run dev-loop --validate-result <result-file>
+     validation = ae-run dev-loop --validate-result <result-file>
      if validation.action == "error":
          repair the same result file; do not advance or create another Action
          continue
-     action = scripts/ae-run dev-loop --tick --result <result-file>
+     action = ae-run dev-loop --tick --result <result-file>
 3. report action.verdict and fresh verification evidence
 ```
 
@@ -68,12 +68,12 @@ Violating the letter of this rule is violating the spirit of this rule.
 
 | 命令 | 输出 |
 |---|---|
-| `scripts/ae-run dev-loop --init "req" [--design-doc <path>]` | 首个 action JSON |
-| `scripts/ae-run dev-loop --validate-result <file>` | 无副作用 Result 预校验 |
-| `scripts/ae-run dev-loop --tick --result <file>` | 下一个 action JSON |
-| `scripts/ae-run dev-loop --status --format json` | 状态 JSON |
-| `scripts/ae-run dev-loop --resume <id>` | 恢复后的 action JSON |
-| `scripts/ae-run status --format json` | 统一状态 JSON |
+| `ae-run dev-loop --init "req" [--design-doc <path>]` | 首个 action JSON |
+| `ae-run dev-loop --validate-result <file>` | 无副作用 Result 预校验 |
+| `ae-run dev-loop --tick --result <file>` | 下一个 action JSON |
+| `ae-run dev-loop --status --format json` | 状态 JSON |
+| `ae-run dev-loop --resume <id>` | 恢复后的 action JSON |
+| `ae-run status --format json` | 统一状态 JSON |
 
 ## Spawn 纪律
 
@@ -122,7 +122,7 @@ developer 开始前读取 architect offload，critic 开始前读取 developer o
 
 - 命令非零退出：读取并报告错误，不静默降级。
 - `action == "error"`：报告 `error_code` 和 `message`。
-- 连续两次不可恢复错误：停止并建议运行 `scripts/ae-run doctor`。
+- 连续两次不可恢复错误：停止并建议运行 `ae-run doctor`。
 
 <!-- FRAGMENT:red_flags START -->
 ## Red Flags — STOP，不要继续，向用户报告

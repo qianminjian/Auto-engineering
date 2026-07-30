@@ -18,8 +18,8 @@ Auto-Engineering 是跨 Claude Code 与 Codex 的工程循环调度器：宿主 
 演示前执行：
 
 ```bash
-scripts/ae-run doctor
-scripts/ae-run dev-loop --init "需求"
+ae-run doctor
+ae-run dev-loop --init "需求"
 ```
 
 第二条命令只产生 action，不在 Python 内调用 LLM。
@@ -54,19 +54,19 @@ Agent 的“完成声明”不等于流程完成；只有 Core 接受 result、�
 ## 5. 标准演示
 
 1. 确认 `.ae-state/init-manifest.json` 存在。
-2. 运行 `scripts/ae-run doctor`，解释宿主、依赖和功能面板。
+2. 运行 `ae-run doctor`，解释宿主、依赖和功能面板。
 3. 从宿主入口提交小需求。
 4. 展示 action/result 离散交互。
-5. 展示 `scripts/ae-run status --format json` 和恢复。
+5. 展示 `ae-run status --format json` 和恢复。
 6. 展示测试、Gate 与 review 证据。
 
 手工协议：
 
 ```bash
-scripts/ae-run dev-loop --init "需求"
-scripts/ae-run dev-loop --tick --result result.json
-scripts/ae-run status --format json
-scripts/ae-run dev-loop --resume
+ae-run dev-loop --init "需求"
+ae-run dev-loop --tick --result result.json
+ae-run status --format json
+ae-run dev-loop --resume
 ```
 
 ## 6. 质量与金融科技边界
@@ -84,7 +84,7 @@ build；五层验证从 diff 级逐步扩大到系统深审。必需验证不能
 ## 7. 配置与 Provider
 
 `FeatureManifest` 是全部 `AE_*` 默认值唯一事实源，`RuntimeConfig` 是访问层。培训时
-用 `scripts/ae-run doctor` 展示，不复制另一套默认值。
+用 `ae-run doctor` 展示，不复制另一套默认值。
 
 ```bash
 uv sync --extra anthropic

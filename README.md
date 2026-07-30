@@ -1,4 +1,4 @@
-# Auto-Engineering v5.8.0-rc.3
+# Auto-Engineering v5.8.0-rc.4
 
 跨 Claude Code / Codex 的 Tick-Based Discrete Invocation Loop Engineering 调度脚手架。
 

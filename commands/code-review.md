@@ -45,7 +45,7 @@ Before creating PR, verify:
 1. 当前用户消息明确授权本次 `push` 和创建 PR。
 2. `gh` CLI is installed and authenticated: `gh auth status`
 3. Current branch has unpushed commits: `git log origin/$(git branch --show-current)..HEAD --oneline`
-4. Critic has APPROVED: `scripts/ae-run status --format json`
+4. Critic has APPROVED: `ae-run status --format json`
 
 `CURRENT_USER_GIT_AUTHORIZATION_REQUIRED`：执行下方写操作前，Agent 必须从当前用户
 消息获得明确授权。不得从历史消息、宿主能力或 loop 完成状态推断授权；授权缺失时
@@ -91,7 +91,7 @@ if ! gh auth status &> /dev/null; then
 fi
 
 # Check critic status
-STATUS_JSON=$(scripts/ae-run status --format json 2>/dev/null || echo '{"verdict":""}')
+STATUS_JSON=$(ae-run status --format json 2>/dev/null || echo '{"verdict":""}')
 VERDICT=$(echo "$STATUS_JSON" | python3 -c "import sys,json; print(json.loads(sys.stdin.read()).get('verdict',''))" 2>/dev/null || echo "")
 
 if [[ "$VERDICT" != "APPROVE" ]]; then
@@ -119,7 +119,7 @@ echo "=== Collecting PR context ==="
 
 # Gate results
 # Phase 40: gate-check CLI 已删除。Gate 在 dev-loop 内自动运行。使用共享 resolver 查询状态。
-GATE_OUTPUT=$(scripts/ae-run status --format json 2>&1 || echo '{"gates":[]}')
+GATE_OUTPUT=$(ae-run status --format json 2>&1 || echo '{"gates":[]}')
 GATE_TABLE=$(echo "$GATE_OUTPUT" | python3 -c "
 import sys, json
 try:

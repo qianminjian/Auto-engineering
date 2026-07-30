@@ -1,0 +1,9 @@
+#!/bin/sh
+# 宿主 PATH 入口：只负责定位插件根，业务解析委托 scripts/ae-run。
+
+set -u
+
+BIN_DIR=$(CDPATH= cd -- "${0%/*}" && pwd -P)
+PLUGIN_ROOT=$(CDPATH= cd -- "$BIN_DIR/.." && pwd -P)
+
+exec "$PLUGIN_ROOT/scripts/ae-run" "$@"

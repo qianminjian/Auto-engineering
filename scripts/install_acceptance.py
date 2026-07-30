@@ -179,7 +179,7 @@ def accept_archive(
     _run(["git", "init", "-q"], cwd=project, env=environment)
     _write_init_manifest(project)
 
-    resolver = str(install_root / "scripts" / "ae-run")
+    resolver = str(install_root / "bin" / "ae-run")
     doctor = _run(
         [resolver, "doctor", "--project-root", str(project)],
         cwd=project,

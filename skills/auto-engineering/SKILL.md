@@ -15,14 +15,14 @@ Auto-Engineering 将职责拆成两层：
 - 当前 Agent 宿主是执行器，负责推理、编辑、验证，并按 action 调用宿主原生子代理能力。
 
 `$auto-engineering` 是 Codex 的显式入口；其他 Agent 平台使用各自的 Skill 或
-Command 适配层进入同一协议。所有平台都必须通过 `scripts/ae-run` 调用共享核心，
+Command 适配层进入同一协议。所有平台都必须通过 bundled `ae-run` 调用共享核心，
 不得复制或分叉业务逻辑。
 
 ## 铁律
 
 <!-- FRAGMENT:iron_law_gatekeeper START -->
 IRON LAW: PYTHON IS THE GATEKEEPER.
-NO STAGE ADVANCEMENT WITHOUT `scripts/ae-run dev-loop --tick` VALIDATION.
+NO STAGE ADVANCEMENT WITHOUT `ae-run dev-loop --tick` VALIDATION.
 You may NOT edit code before Python outputs {"action":"developer"}.
 You may NOT declare done before Python outputs {"action":"done"}.
 Violating the letter of this rule is violating the spirit of this rule.
@@ -40,11 +40,11 @@ checkpoint 是循环恢复边界，checkpoint 不要求 commit。普通 develope
 
 | 用户意图 | 共享命令 |
 |---|---|
-| 启动开发循环 | `scripts/ae-run dev-loop --init "<requirement>"` |
-| 预校验 Result | `scripts/ae-run dev-loop --validate-result <file>` |
-| 推进一个 Tick | `scripts/ae-run dev-loop --tick --result <file>` |
-| 查看循环状态 | `scripts/ae-run status --format json` |
-| 恢复 checkpoint | `scripts/ae-run dev-loop --resume <id>` |
+| 启动开发循环 | `ae-run dev-loop --init "<requirement>"` |
+| 预校验 Result | `ae-run dev-loop --validate-result <file>` |
+| 推进一个 Tick | `ae-run dev-loop --tick --result <file>` |
+| 查看循环状态 | `ae-run status --format json` |
+| 恢复 checkpoint | `ae-run dev-loop --resume <id>` |
 
 ## Action 执行协议
 

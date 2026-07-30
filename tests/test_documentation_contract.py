@@ -28,8 +28,8 @@ def test_current_docs_explain_both_host_entries(relative: str) -> None:
 def test_current_docs_include_doctor_and_minimal_tick(relative: str) -> None:
     content = (_ROOT / relative).read_text(encoding="utf-8")
 
-    assert "scripts/ae-run doctor" in content
-    assert 'scripts/ae-run dev-loop --init "需求"' in content
+    assert "ae-run doctor" in content
+    assert 'ae-run dev-loop --init "需求"' in content
 
 
 def test_current_capability_sections_do_not_advertise_retired_paths() -> None:

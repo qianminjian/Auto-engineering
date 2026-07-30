@@ -12,7 +12,7 @@ Auto-Engineering 通过离散 Tick 协议，让宿主 Agent 执行推理与工�
 | Claude Code | `/auto-engineering:dev-loop "需求"` | slash command |
 | Codex | `$auto-engineering`，随后描述需求 | Skill |
 
-两种入口最终都调用 `scripts/ae-run`。Python Core 不直接调用 LLM，也不要求 Core
+两种入口最终都调用插件自带的 `ae-run`。Python Core 不直接调用 LLM，也不要求 Core
 安装某个特定 Provider SDK。
 
 ## 2. 安装与预检
@@ -31,7 +31,7 @@ Codex 安装 Release 中的 `.codex-plugin/`、`skills/` 与 Hook 资产；安�
 
 ```bash
 uv sync
-scripts/ae-run doctor
+ae-run doctor
 ```
 
 如需可选 Provider SDK：
@@ -46,16 +46,16 @@ uv sync --extra openai
 ## 3. 最小 Tick 工作流
 
 ```bash
-scripts/ae-run dev-loop --init "需求"
+ae-run dev-loop --init "需求"
 ```
 
 stdout 返回首个 action JSON。宿主 Agent 按 action 完成工作，生成符合 schema 的
 `result.json`，再推进：
 
 ```bash
-scripts/ae-run dev-loop --tick --result result.json
-scripts/ae-run status --format json
-scripts/ae-run dev-loop --resume
+ae-run dev-loop --tick --result result.json
+ae-run status --format json
+ae-run dev-loop --resume
 ```
 
 循环结束时 action 为 `done`。诊断信息写 stderr，便于脚本安全消费 stdout JSON。
@@ -75,7 +75,7 @@ scripts/ae-run dev-loop --resume
 - `FeatureManifest`：全部 `AE_*` 功能默认值的唯一事实源。
 - `RuntimeConfig`：业务代码的类型化配置访问层。
 
-通过 `scripts/ae-run doctor` 查看功能。安全相关包括 `AE_PII_ENABLED`、
+通过 `ae-run doctor` 查看功能。安全相关包括 `AE_PII_ENABLED`、
 `AE_PRODUCTION`、`AE_STRICT_RED`；可观测性包括 `AE_AUDIT_LOG`、`AE_METRICS`、
 `AE_OTLP_ENDPOINT`。
 
@@ -99,12 +99,12 @@ scripts/ae-run dev-loop --resume
 ## 8. 常见问题
 
 **找不到 CLI**：确认项目 `.venv/bin/ae` 可执行，或系统能找到 `uv`，然后运行
-`scripts/ae-run doctor`。
+`ae-run doctor`。
 
 **宿主未识别**：从 Claude Code 的 `/auto-engineering:dev-loop` 或 Codex 的
 `$auto-engineering` 进入，不要手工伪造宿主状态。
 
-**Tick 无法恢复**：先查看 `scripts/ae-run status --format json`；保留
+**Tick 无法恢复**：先查看 `ae-run status --format json`；保留
 `.ae-state/` 供诊断，不直接编辑 checkpoint 数据库。
 
 ## 9. 更多资料

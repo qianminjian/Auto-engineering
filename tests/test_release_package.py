@@ -52,6 +52,7 @@ def test_release_archive_is_self_contained_dual_host_marketplace(
     assert f"{plugin_root}/.claude-plugin/plugin.json" in members
     assert f"{plugin_root}/.codex-plugin/plugin.json" in members
     assert f"{plugin_root}/skills/auto-engineering/SKILL.md" in members
+    assert f"{plugin_root}/bin/ae-run" in members
     assert f"{plugin_root}/scripts/ae-run" in members
     assert f"{plugin_root}/hooks-codex.json" in members
     assert f"{plugin_root}/auto_engineering" in members
@@ -109,3 +110,4 @@ def test_release_includes_install_acceptance_runner() -> None:
     from scripts.build_release import REQUIRED_PATHS
 
     assert Path("scripts/install_acceptance.py") in REQUIRED_PATHS
+    assert Path("bin/ae-run") in REQUIRED_PATHS

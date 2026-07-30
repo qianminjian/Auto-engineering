@@ -13,8 +13,9 @@ def test_skill_declares_codex_entry_and_current_cli_surface() -> None:
     content = SKILL.read_text()
 
     assert "$auto-engineering" in content
-    assert "scripts/ae-run dev-loop" in content
-    assert "scripts/ae-run status" in content
+    assert "ae-run dev-loop" in content
+    assert "ae-run status" in content
+    assert "scripts/ae-run" not in content
     for removed_command in (
         "/checkpoint",
         "/project-tdd",

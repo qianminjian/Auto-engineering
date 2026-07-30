@@ -18,6 +18,18 @@ def _copy_launcher(tmp_path: Path) -> Path:
     return target
 
 
+def _copy_bundled_entrypoint(tmp_path: Path) -> Path:
+    root = Path(__file__).parents[1]
+    plugin = tmp_path / "plugin"
+    scripts_launcher = _copy_launcher(tmp_path)
+    entrypoint = plugin / "bin" / "ae-run"
+    entrypoint.parent.mkdir(parents=True)
+    shutil.copy2(root / "bin" / "ae-run", entrypoint)
+    entrypoint.chmod(0o755)
+    assert scripts_launcher.is_file()
+    return entrypoint
+
+
 def _write_executable(path: Path, output: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(f'#!/bin/sh\nprintf \'%s\' "{output}:$*"\n')
@@ -85,6 +97,30 @@ def test_reports_actionable_error_when_cli_is_unavailable(tmp_path: Path) -> Non
     assert "uv sync" in result.stderr
 
 
+def test_bundled_entrypoint_resolves_plugin_from_unrelated_project_cwd(
+    tmp_path: Path,
+) -> None:
+    entrypoint = _copy_bundled_entrypoint(tmp_path)
+    _write_executable(
+        tmp_path / "plugin" / ".venv" / "bin" / "ae",
+        "bundled",
+    )
+    target_project = tmp_path / "target-project"
+    target_project.mkdir()
+
+    result = subprocess.run(
+        [str(entrypoint), "status", "--format", "json"],
+        cwd=target_project,
+        env={**os.environ, "PATH": "/usr/bin:/bin"},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert result.stdout == "bundled:status --format json"
+
+
 def test_active_agent_entrypoints_use_shared_launcher() -> None:
     root = Path(__file__).parents[1]
 
@@ -95,7 +131,10 @@ def test_active_agent_entrypoints_use_shared_launcher() -> None:
         "commands/code-review.md",
     ):
         content = (root / relative_path).read_text()
-        assert "scripts/ae-run" in content, f"{relative_path} 未使用共享 CLI resolver"
+        assert "ae-run" in content, f"{relative_path} 未使用共享 CLI resolver"
+        assert "scripts/ae-run" not in content, (
+            f"{relative_path} 不得把 runner 解析到目标项目"
+        )
 
 
 def test_post_edit_hook_does_not_call_deleted_gate_check() -> None:

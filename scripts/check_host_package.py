@@ -13,6 +13,7 @@ _HOST_PATHS = {
         "CLAUDE.md",
         "commands/dev-loop.md",
         "hooks-cc.json",
+        "bin/ae-run",
         "scripts/ae-run",
     ),
     "codex": (
@@ -20,6 +21,7 @@ _HOST_PATHS = {
         "AGENTS.md",
         "skills/auto-engineering/SKILL.md",
         "hooks-codex.json",
+        "bin/ae-run",
         "scripts/ae-run",
     ),
 }
@@ -48,7 +50,7 @@ def check_host_package(root: Path, host: str) -> list[str]:
 
     if host == "claude-code":
         command = (root / "commands/dev-loop.md").read_text(encoding="utf-8")
-        if "scripts/ae-run" not in command:
+        if "ae-run" not in command or "scripts/ae-run" in command:
             errors.append("Claude Command 未使用共享 CLI resolver")
     else:
         agents = (root / "AGENTS.md").read_text(encoding="utf-8")
@@ -57,7 +59,11 @@ def check_host_package(root: Path, host: str) -> list[str]:
         ).read_text(encoding="utf-8")
         if "@.claude/rules/" in agents:
             errors.append("Codex AGENTS.md 仍依赖 Claude include")
-        if "$auto-engineering" not in skill or "scripts/ae-run" not in skill:
+        if (
+            "$auto-engineering" not in skill
+            or "ae-run" not in skill
+            or "scripts/ae-run" in skill
+        ):
             errors.append("Codex Skill 缺少入口或共享 CLI resolver")
     return errors
 
