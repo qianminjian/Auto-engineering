@@ -102,6 +102,8 @@ def main():
               help="[内部协议] 处理一个 tick (需 --result)")
 @click.option("--result", "result_file", type=click.Path(exists=True),
               help="[内部协议] --tick 的 stage-result.json 路径")
+@click.option("--validate-result", "validate_result_file", type=click.Path(exists=True),
+              help="[内部协议] 无副作用预校验 stage-result.json")
 @click.option("--status", "status_flag", is_flag=True,
               help="[内部协议] 查询当前 tick 状态")
 @click.option("--format", "output_format", type=click.Choice(["json"]), default="json",
@@ -131,6 +133,7 @@ def dev_loop(
     init_flag: bool,
     tick_flag: bool,
     result_file: str | None,
+    validate_result_file: str | None,
     status_flag: bool,
     output_format: str,
     resume_id: str | None,
@@ -167,9 +170,15 @@ def dev_loop(
     _debug = debug_flag or get_default_config().debug_enabled
 
     # ── 内部协议: tick 模式分派 ──
-    tick_modes = [init_flag, tick_flag, status_flag, bool(resume_id)]
+    tick_modes = [
+        init_flag, tick_flag, status_flag, bool(resume_id),
+        bool(validate_result_file),
+    ]
     if sum(bool(m) for m in tick_modes) > 1:
-        click.echo("错误: --init/--tick/--status/--resume 互斥, 仅可指定一个。", err=True)
+        click.echo(
+            "错误: --init/--tick/--validate-result/--status/--resume 互斥, 仅可指定一个。",
+            err=True,
+        )
         raise SystemExit(1)
 
     if init_flag:
@@ -186,6 +195,11 @@ def dev_loop(
             raise SystemExit(1)
         run_tick_step(Path(result_file), root, debug=_debug,
                        debug_dir=debug_dir_opt)
+        return
+    if validate_result_file:
+        from auto_engineering.cli.dev_loop import run_tick_validate
+
+        run_tick_validate(Path(validate_result_file), root)
         return
     if status_flag:
         del output_format  # 当前 status 契约固定为 JSON；参数用于兼容文档化调用。

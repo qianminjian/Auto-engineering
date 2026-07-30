@@ -182,6 +182,23 @@ class TestAggregation:
 
 
 class TestSync:
+    def test_heading_title_changes_keep_same_stable_component_id(self) -> None:
+        """章节编号是稳定身份，Markdown 标记和标题文字不是。"""
+        before = [_batch("b1", "Audio", "## §B6.1 录音组件", 2)]
+        tree = ProgressTree.from_batch_plan(before, requirement="r")
+        node = tree.find_by_design_section("B6.1")
+        assert node is not None
+        node.done_tasks = 1
+
+        result = tree.sync_from_batch_plan([
+            _batch("b1", "Audio Recorder", "`§B6.1` — 录音与重置", 2)
+        ])
+
+        assert result.added == []
+        assert result.removed == []
+        assert tree.find_by_design_section("§B6.1") is node
+        assert node.done_tasks == 1
+
     def test_modified_preserves_done_tasks_and_bumps_version(self) -> None:
         bp1 = [_batch("bx1", "CompX", "§B1", 2)]
         tree = ProgressTree.from_batch_plan(bp1, requirement="r")

@@ -74,21 +74,23 @@ class TestContractGateChecks:
 
     实现策略: 静态文本匹配 (不做 AST).
     搜索范围: project_root/src/ 或 project_root/, 限 .py/.ts/.js/.go/.rs
-    contracts=None/空 → passed("无契约定义, 跳过")
+    contracts=None/空 → not_applicable（不计为通过）
     """
 
-    def test_contract_gate_no_contracts_passes(self, tmp_path: Path):
-        """contracts=None 或空 → passed(skip)."""
+    def test_contract_gate_no_contracts_are_not_applicable(self, tmp_path: Path):
+        """contracts=None 或空 → not_applicable。"""
         from auto_engineering.gates.contract import ContractGate
 
         gate = ContractGate()
         verdict = gate.run(tmp_path)
-        assert verdict.passed is True
+        assert verdict.passed is False
+        assert verdict.not_applicable is True
 
         gate2 = ContractGate()
         gate2.contracts = {}
         verdict2 = gate2.run(tmp_path)
-        assert verdict2.passed is True
+        assert verdict2.passed is False
+        assert verdict2.not_applicable is True
 
     def test_contract_gate_finds_route_in_source(self, tmp_path: Path):
         """契约声明的 path 在源码 .py 中可找到 → passed."""

@@ -49,6 +49,9 @@ class GateVerdict:
     # 返回 ok（passed=True）报 ✓，使 skip 被误当通过（test/lint/type_check 对 TS 项目
     # 大面积静默 skip 却报 ✓）。skipped=True 表示未真正执行（不阻断，但区别于真通过）。
     skipped: bool = False
+    # 仅用于系统可证明当前 Gate 不适用的场景。not_applicable 不等于通过，
+    # runner 对外序列化为 passed=null，且不计入通过或失败。
+    not_applicable: bool = False
 
     # 注: passed 布尔字段与 GateVerdict.ok() 类方法不冲突.
     # 字段访问走 v.passed (bool), 工厂方法走 GateVerdict.ok().
@@ -78,6 +81,22 @@ class GateVerdict:
         """构造一个跳过的 GateVerdict（未真正执行，不阻断，区别于通过）."""
         return cls(gate_name=gate_name, passed=True, skipped=True, message=msg,
                    details=details, suggestions=suggestions)
+
+    @classmethod
+    def not_applicable_verdict(
+        cls, msg: str, gate_name: str = "",
+        details: dict | None = None, suggestions: list[str] | None = None,
+    ) -> GateVerdict:
+        """构造机器可证明不适用的 GateVerdict。"""
+        return cls(
+            gate_name=gate_name,
+            passed=False,
+            skipped=True,
+            not_applicable=True,
+            message=msg,
+            details=details,
+            suggestions=suggestions,
+        )
 
 
 # v5.4 P2-2: Verdict 别名保留向后兼容, 通过 __getattr__ 触发 DeprecationWarning.

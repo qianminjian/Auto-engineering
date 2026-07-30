@@ -10,6 +10,7 @@ v2.5 P1-D 二次拆分: store.py 609 行 → store.py + _connection.py + _serial
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import json
 import shutil
 import sqlite3
@@ -133,6 +134,20 @@ class SQLiteCheckpointStore[T]:
                         claim_token TEXT NOT NULL UNIQUE,
                         claimed_session_id TEXT,
                         claimed_host TEXT,
+                        created_at TEXT NOT NULL
+                    )"""
+                )
+                self._shared_conn.execute(
+                    """CREATE TABLE IF NOT EXISTS project_runtime (
+                        singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+                        active_thread_id TEXT,
+                        updated_at TEXT NOT NULL
+                    )"""
+                )
+                self._shared_conn.execute(
+                    """CREATE TABLE IF NOT EXISTS checkpoint_blobs (
+                        content_sha256 TEXT PRIMARY KEY,
+                        payload_json TEXT NOT NULL,
                         created_at TEXT NOT NULL
                     )"""
                 )
@@ -289,6 +304,7 @@ class SQLiteCheckpointStore[T]:
         now = datetime.now(UTC).isoformat()
 
         with self._conn() as conn, _atomic(conn):
+            state_json = _externalize_large_state_fields(conn, state_json, now)
             conn.execute(
                 """
                 INSERT INTO checkpoints
@@ -325,7 +341,7 @@ class SQLiteCheckpointStore[T]:
                 raise CheckpointNotFoundError(
                     f"Checkpoint '{checkpoint_id}' not found"
                 )
-            return _row_to_checkpoint(row)
+            return _row_to_checkpoint(row, conn)
 
     def load_latest(self) -> Checkpoint[T] | None:
         """加载最新 Checkpoint (按 created_at DESC)."""
@@ -334,7 +350,7 @@ class SQLiteCheckpointStore[T]:
                 "SELECT * FROM checkpoints "
                 "ORDER BY created_at DESC LIMIT 1"
             ).fetchone()
-            return _row_to_checkpoint(row) if row else None
+            return _row_to_checkpoint(row, conn) if row else None
 
     def load_by_round(self, round: int) -> Checkpoint[T] | None:
         """加载指定轮次的 Checkpoint (返回该轮最近一条)."""
@@ -344,7 +360,7 @@ class SQLiteCheckpointStore[T]:
                 "ORDER BY created_at DESC LIMIT 1",
                 (round,),
             ).fetchone()
-            return _row_to_checkpoint(row) if row else None
+            return _row_to_checkpoint(row, conn) if row else None
 
     def list_all(self) -> list[CheckpointMeta]:
         """列出所有 Checkpoint (按 round ASC, created_at ASC).
@@ -394,6 +410,69 @@ class SQLiteCheckpointStore[T]:
             except (json.JSONDecodeError, TypeError):
                 continue
         return sorted(thread_ids)
+
+    def reserve_project_thread(self, candidate: str) -> str | None:
+        """原子占用项目唯一 active thread；冲突时返回现有 thread_id。"""
+        if not candidate:
+            raise ValueError("candidate thread_id 必须非空")
+        now = datetime.now(UTC).isoformat()
+        with self._conn() as conn, _atomic(conn):
+            row = conn.execute(
+                "SELECT active_thread_id FROM project_runtime WHERE singleton = 1"
+            ).fetchone()
+            if row is not None and row["active_thread_id"]:
+                return str(row["active_thread_id"])
+
+            active_rows = conn.execute(
+                "SELECT DISTINCT thread_id FROM protocol_actions "
+                "WHERE is_active = 1 ORDER BY thread_id"
+            ).fetchall()
+            active_threads = [str(item["thread_id"]) for item in active_rows]
+            if len(active_threads) > 1:
+                raise ValueError(
+                    "PROJECT_THREAD_AMBIGUOUS: 检测到多个 active thread: "
+                    + ", ".join(active_threads)
+                )
+            if active_threads:
+                existing = active_threads[0]
+                conn.execute(
+                    """
+                    INSERT INTO project_runtime(singleton, active_thread_id, updated_at)
+                    VALUES (1, ?, ?)
+                    ON CONFLICT(singleton) DO UPDATE SET
+                        active_thread_id = excluded.active_thread_id,
+                        updated_at = excluded.updated_at
+                    """,
+                    (existing, now),
+                )
+                return existing
+
+            conn.execute(
+                """
+                INSERT INTO project_runtime(singleton, active_thread_id, updated_at)
+                VALUES (1, ?, ?)
+                ON CONFLICT(singleton) DO UPDATE SET
+                    active_thread_id = excluded.active_thread_id,
+                    updated_at = excluded.updated_at
+                """,
+                (candidate, now),
+            )
+        return None
+
+    def release_project_thread(self, thread_id: str) -> bool:
+        """仅释放匹配的项目 active thread，防止旧线程清除新占用。"""
+        now = datetime.now(UTC).isoformat()
+        with self._conn() as conn, _atomic(conn), contextlib.closing(
+            conn.execute(
+                """
+                UPDATE project_runtime
+                SET active_thread_id = NULL, updated_at = ?
+                WHERE singleton = 1 AND active_thread_id = ?
+                """,
+                (now, thread_id),
+            )
+        ) as cursor:
+            return cursor.rowcount == 1
 
     def find_by_thread_id(self, candidate: str) -> str | None:
         """按 thread_id 反查 checkpoint id (CLI resume 回退, T160).
@@ -639,14 +718,92 @@ class SQLiteCheckpointStore[T]:
         return import_v56_checkpoint(self, event_store, checkpoint_id)
 
 
-def _row_to_checkpoint(row: Any) -> Checkpoint[T]:
+_CONTENT_ADDRESSED_FIELDS = (
+    "batch_plan",
+    "batch_state_json",
+    "progress_tree_json",
+    "gap_report_json",
+    "design_supplements_json",
+)
+_BLOB_REF_KEY = "__ae_blob_ref__"
+_MIN_BLOB_BYTES = 1024
+
+
+def _externalize_large_state_fields(
+    conn: sqlite3.Connection,
+    state_json: str,
+    created_at: str,
+) -> str:
+    """把重复的大状态字段替换为内容哈希引用。"""
+    payload = json.loads(state_json)
+    if not isinstance(payload, dict):
+        return state_json
+    changed = False
+    for field_name in _CONTENT_ADDRESSED_FIELDS:
+        value = payload.get(field_name)
+        encoded = json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+        if value in (None, "", [], {}) or len(encoded.encode("utf-8")) < _MIN_BLOB_BYTES:
+            continue
+        content_sha = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO checkpoint_blobs
+            (content_sha256, payload_json, created_at) VALUES (?, ?, ?)
+            """,
+            (content_sha, encoded, created_at),
+        )
+        payload[field_name] = {_BLOB_REF_KEY: content_sha}
+        changed = True
+    return (
+        json.dumps(payload, ensure_ascii=False, default=str)
+        if changed else state_json
+    )
+
+
+def _hydrate_large_state_fields(
+    conn: sqlite3.Connection,
+    state_json: str,
+) -> str:
+    """解析内容寻址引用；旧版内联 checkpoint 原样兼容。"""
+    payload = json.loads(state_json)
+    if not isinstance(payload, dict):
+        return state_json
+    changed = False
+    for field_name in _CONTENT_ADDRESSED_FIELDS:
+        ref = payload.get(field_name)
+        if not isinstance(ref, dict) or set(ref) != {_BLOB_REF_KEY}:
+            continue
+        row = conn.execute(
+            "SELECT payload_json FROM checkpoint_blobs WHERE content_sha256 = ?",
+            (ref[_BLOB_REF_KEY],),
+        ).fetchone()
+        if row is None:
+            raise ValueError(
+                f"CHECKPOINT_BLOB_MISSING: {field_name}={ref[_BLOB_REF_KEY]}"
+            )
+        payload[field_name] = json.loads(row["payload_json"])
+        changed = True
+    return (
+        json.dumps(payload, ensure_ascii=False, default=str)
+        if changed else state_json
+    )
+
+
+def _row_to_checkpoint(
+    row: Any,
+    conn: sqlite3.Connection | None = None,
+) -> Checkpoint[T]:
     """将 sqlite Row 转 Checkpoint (校验 schema_version)."""
     schema_version = row["schema_version"]
     if schema_version != DB_SCHEMA_VERSION:
         raise CheckpointSchemaMismatchError(
             found=schema_version, expected=DB_SCHEMA_VERSION
         )
-    state = deserialize_state(row["state_json"])
+    state_json = (
+        _hydrate_large_state_fields(conn, row["state_json"])
+        if conn is not None else row["state_json"]
+    )
+    state = deserialize_state(state_json)
     history = json.loads(row["history_json"])
     created_at = datetime.fromisoformat(row["created_at"])
     return Checkpoint(

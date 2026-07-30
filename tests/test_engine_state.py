@@ -15,7 +15,7 @@ import pytest
 
 from auto_engineering.engine.state import EngineState, LoopState
 
-# v5.8 状态字段（含 #43-46 ExecutionSession 预算锚点）。
+# v5.8 状态字段（含 #43-47 会话预算与 Developer 证据锚点）。
 _EXPECTED_V58_FIELDS = {
     "requirement", "current_stage", "round",
     "thread_id", "majors_in_a_row", "total_majors",
@@ -45,6 +45,12 @@ _EXPECTED_V58_FIELDS = {
     # #43-46 v5.8 ExecutionSession 与 ContextBudget
     "execution_session_id", "session_start_tick",
     "session_started_at", "session_input_units",
+    # #47 最近一次已接受 Developer 证据
+    "developer_snapshot",
+    # #48 已执行 Deep Audit 的内容修订
+    "audit_revision_fingerprints",
+    # #49 尚未关闭的 P0/P1
+    "open_findings",
     # 内部写入审计日志
     "_write_log",
     # P1-28: 运行时句柄 (不进 checkpoint)
@@ -310,11 +316,11 @@ class TestEngineStateBoundary:
         assert not hasattr(state, "nonexistent")
 
     def test_to_dict_contains_all_fields(self) -> None:
-        """to_dict 输出含全部 48 字段（不含内部字段）。"""
+        """to_dict 输出含全部 51 字段（不含内部字段）。"""
         state = EngineState()
         d = state.to_dict()
-        assert len(d) == 48, (
-            f"to_dict 应含 48 字段, 实际 {len(d)}: "
+        assert len(d) == 51, (
+            f"to_dict 应含 51 字段, 实际 {len(d)}: "
             f"{sorted(d.keys())}"
         )
         assert "suggested_fix" in d, "to_dict 必须包含 suggested_fix (Self-Refine 深化)"
@@ -431,8 +437,8 @@ class TestV55EngineStateFields:
         state.audit_findings = None
         assert state.audit_findings is None
 
-    def test_field_count_is_42(self) -> None:
-        """v5.6: 字段总数 22 → 42 (#20-36 共 17 + #37 + #38-39 debug)."""
+    def test_field_count_matches_v58_contract(self) -> None:
+        """v5.8：字段集合包含跨进程 Developer 证据锚点。"""
         from dataclasses import fields
 
         EngineState()

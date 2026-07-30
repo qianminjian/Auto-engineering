@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
+from uuid import uuid4
 
 from auto_engineering.config.runtime_config import RuntimeConfig, get_default_config
 from auto_engineering.engine.state import EngineState
@@ -267,7 +268,14 @@ def run_tick_init(
     from auto_engineering.loop.tick_orchestrator import TickOrchestrator
 
     store: SQLiteCheckpointStore[EngineState] = SQLiteCheckpointStore(_ensure_checkpoint_db_path(root))
+    reserved_thread_id = str(uuid4())
     try:
+        existing_thread_id = store.reserve_project_thread(reserved_thread_id)
+        if existing_thread_id is not None:
+            raise click.ClickException(
+                "PROJECT_THREAD_ACTIVE: 项目已有未完成 thread；"
+                f"请运行 scripts/ae-run dev-loop --resume {existing_thread_id}"
+            )
         inj = _build_injectables(root)
         orch = TickOrchestrator(root, checkpoint_store=store,
                                 context_offloader=inj["context_offloader"],
@@ -280,7 +288,11 @@ def run_tick_init(
             stages = [s.strip() for s in pause_at_stage.split(",") if s.strip()]
             orch.set_pause_at_stages(stages)
         action = orch.init(
-            requirement, design_doc_path=design_doc_path, max_rounds=max_rounds)
+            requirement,
+            design_doc_path=design_doc_path,
+            max_rounds=max_rounds,
+            thread_id=reserved_thread_id,
+        )
 
         # T69a: Activate metrics collector when AE_METRICS=1
         if get_default_config().metrics_enabled:
@@ -315,6 +327,9 @@ def run_tick_init(
             click.echo(f"  [WARN] {w}", err=True)
 
         click.echo(json.dumps(action, ensure_ascii=False))
+    except Exception:
+        store.release_project_thread(reserved_thread_id)
+        raise
     finally:
         store.close()
 
@@ -349,6 +364,11 @@ def run_tick_step(result_file: Path, root: Path,
             collector.resume_events(orch._state.thread_id)
 
         action = orch.tick(result_file)
+        if (
+            action.get("action") == "done"
+            and orch._state is not None
+        ):
+            store.release_project_thread(orch._state.thread_id)
 
         # T69a: Flush metrics events after tick, end requirement if terminal
         if get_default_config().metrics_enabled:
@@ -363,6 +383,28 @@ def run_tick_step(result_file: Path, root: Path,
                     mc._flush()
 
         click.echo(json.dumps(action, ensure_ascii=False))
+    finally:
+        store.close()
+
+
+def run_tick_validate(result_file: Path, root: Path) -> None:
+    """预校验 Result；不推进状态，也不生成新的协议记录。"""
+    import json
+
+    import click
+
+    from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
+    from auto_engineering.loop.tick_orchestrator import TickOrchestrator
+
+    store: SQLiteCheckpointStore[EngineState] = SQLiteCheckpointStore(
+        _ensure_checkpoint_db_path(root)
+    )
+    try:
+        orch = TickOrchestrator.restore(root, store)
+        result = orch.validate_result_file(result_file)
+        click.echo(json.dumps(result, ensure_ascii=False))
+        if result.get("action") == "error":
+            raise SystemExit(1)
     finally:
         store.close()
 

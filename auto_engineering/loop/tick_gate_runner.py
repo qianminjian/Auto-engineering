@@ -100,6 +100,14 @@ class TickGateRunner:
                     v.get("message", "") if isinstance(v, dict)
                     else getattr(v, "message", "") or ""
                 ),
+                "status": (
+                    v.get("status", "") if isinstance(v, dict)
+                    else ""
+                ),
+                "not_applicable": (
+                    bool(v.get("not_applicable", False)) if isinstance(v, dict)
+                    else bool(getattr(v, "not_applicable", False))
+                ),
                 "files_snapshot_sha": snapshot_sha,
                 "selected_files": sorted(files_changed),
                 "ran_at": ran_at,
@@ -128,7 +136,10 @@ class TickGateRunner:
 
         # T75: close gate tracing span + T76: audit log gate results
         if gate_span is not None:
-            passed = all(v.get("passed") for v in gate_results.values())
+            passed = all(
+                v.get("not_applicable") or v.get("passed")
+                for v in gate_results.values()
+            )
             gate_span.set_attribute("all_passed", passed)
             gate_span.set_attribute("gate_count", len(gate_results))
             gate_span.end()

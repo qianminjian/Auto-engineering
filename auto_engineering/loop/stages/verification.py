@@ -91,10 +91,10 @@ class PlateDeepAuditHandler:
         threshold = int(context.extensions.get("p1_threshold", 10))
         counts = (p0, p1, p2)
         progress = {"kind": self.stage, "counts": counts, "threshold": threshold}
-        if p0 or p1 > threshold:
+        if p0 or p1:
             return _refine(
                 self.stage,
-                {"audit_findings": deduped},
+                {"audit_findings": deduped, "open_findings": deduped},
                 audit_counts=counts,
                 progress_update=progress,
             )
@@ -108,6 +108,7 @@ class PlateDeepAuditHandler:
             events=_advanced(self.stage, target, context),
             next_stage=target,
             action_context={
+                "state_patch": {"open_findings": []},
                 "cursor_operation": "advance_plate",
                 "audit_counts": counts,
                 "progress_update": progress,
@@ -152,7 +153,6 @@ class SystemDeepAuditHandler:
         if not isinstance(state, Mapping):
             raise TypeError("state 必须为 Mapping")
         deduped, p0, p1, p2 = recount_findings(result.get("findings", []))
-        threshold = int(context.extensions.get("p1_threshold", 10))
         counts = (p0, p1, p2)
         patch: dict[str, Any] = {}
         if result.get("design_docs_stale"):
@@ -163,16 +163,18 @@ class SystemDeepAuditHandler:
             )
         if (
             p0
-            or p1 > threshold
+            or p1
             or int(result.get("missing_count", 0))
             or int(result.get("diverged_count", 0))
         ):
             patch["audit_findings"] = deduped
+            patch["open_findings"] = deduped
             return _refine(
                 self.stage,
                 patch,
                 audit_counts=counts,
             )
+        patch["open_findings"] = []
         return TransitionDecision(
             terminal=True,
             action_context={

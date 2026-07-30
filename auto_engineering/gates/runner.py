@@ -78,6 +78,7 @@ def run_gates(
         # 解析 verdict
         ok = bool(getattr(verdict, "passed", False))
         skipped = bool(getattr(verdict, "skipped", False))
+        not_applicable = bool(getattr(verdict, "not_applicable", False))
         message = str(getattr(verdict, "message", "") or "")
         gate_name = getattr(verdict, "gate_name", "") or name
         # P0 修复 (2026-07-26 真跑): 区分 skip 与 pass。skipped gate（工具缺失/无测试）
@@ -92,8 +93,9 @@ def run_gates(
             status = "pass" if ok else "fail"
         summary[name] = {
             "status": status,
-            "passed": ok,
+            "passed": None if not_applicable else ok,
             "skipped": skipped,
+            "not_applicable": not_applicable,
             "message": message,
             "gate_name": gate_name,
         }

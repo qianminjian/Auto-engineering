@@ -49,12 +49,17 @@ Violating the letter of this rule is violating the spirit of this rule.
              invoke one worker with action.subagent_prompt
          else:
              invoke worker[i] with action.spawn.agents[i].prompt
-             require worker[i] to overwrite action.spawn.agents[i].receipt_path
+             require worker[i] to overwrite action.spawn.agents[i].receipt_path,
+             recording requested_effort and actual_model (or "unknown")
              collect all receipts, then merge using action.subagent_prompt
          collect real output and build result using action.expected_format
      else:
          execute developer work inline
      ensure result.stage == action.stage
+     validation = scripts/ae-run dev-loop --validate-result <result-file>
+     if validation.action == "error":
+         repair the same result file; do not advance or create another Action
+         continue
      action = scripts/ae-run dev-loop --tick --result <result-file>
 3. report action.verdict and fresh verification evidence
 ```
@@ -64,6 +69,7 @@ Violating the letter of this rule is violating the spirit of this rule.
 | 命令 | 输出 |
 |---|---|
 | `scripts/ae-run dev-loop --init "req" [--design-doc <path>]` | 首个 action JSON |
+| `scripts/ae-run dev-loop --validate-result <file>` | 无副作用 Result 预校验 |
 | `scripts/ae-run dev-loop --tick --result <file>` | 下一个 action JSON |
 | `scripts/ae-run dev-loop --status --format json` | 状态 JSON |
 | `scripts/ae-run dev-loop --resume <id>` | 恢复后的 action JSON |

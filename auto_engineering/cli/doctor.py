@@ -621,6 +621,11 @@ def register_doctor_command(main: click.Group) -> None:
         help="Phase 44: 生成 ae.toml 配置文件模板",
     )
     @click.option(
+        "--acceptance-profile",
+        is_flag=True,
+        help="真实产品验收前置门禁（度量、审计、Token 证据）",
+    )
+    @click.option(
         "--setup-observability",
         is_flag=True,
         help="Phase 43: 启动 observability 栈 (Jaeger collector)",
@@ -632,12 +637,14 @@ def register_doctor_command(main: click.Group) -> None:
     )
     def doctor(
         project_root: str, wizard: bool, init_config: bool,
-        setup_observability: bool, teardown_observability: bool,
+        acceptance_profile: bool, setup_observability: bool,
+        teardown_observability: bool,
     ) -> None:
         """环境预检 — Python/uv/git/sqlite3/.ae-state + init-manifest (IL-AC-01).
 
         --wizard: 交互式配置向导
         --init-config: 生成 ae.toml 配置文件模板
+        --acceptance-profile: 校验真实产品验收所需证据开关
         --setup-observability: 一键启动 OTLP collector (Jaeger)
         --teardown-observability: 停止 OTLP collector
         """
@@ -650,6 +657,25 @@ def register_doctor_command(main: click.Group) -> None:
         if init_config:
             root = Path(project_root).resolve() if project_root else Path.cwd()
             _init_config(root)
+            return
+        if acceptance_profile:
+            from auto_engineering.config.runtime_config import RuntimeConfig
+
+            root = Path(project_root).resolve() if project_root else Path.cwd()
+            config = RuntimeConfig.from_project(root)
+            checks = (
+                (config.metrics_enabled, "AE_METRICS=1（度量证据）"),
+                (config.audit_log_enabled, "AE_AUDIT_LOG=1（审计证据）"),
+                (config.token_tracking_enabled, "AE_TOKEN_TRACKING=1（Token 用量证据）"),
+            )
+            failed = False
+            for ok, description in checks:
+                click.echo(f"{'✓' if ok else '✗'} {description}")
+                failed = failed or not ok
+            if failed:
+                click.echo("真实产品验收前置条件不完整，已停止启动。", err=True)
+                raise SystemExit(1)
+            click.echo("✓ 真实产品验收前置条件已满足")
             return
         # Phase 43: 可观测性生命周期管理
         if setup_observability:

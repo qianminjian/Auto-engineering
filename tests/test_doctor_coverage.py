@@ -362,3 +362,41 @@ def test_doctor_command_dispatches_maintenance_options(
 
     assert result.exit_code == 0
     assert called
+
+
+def test_doctor_acceptance_profile_fails_without_token_tracking(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from auto_engineering.cli import main
+
+    monkeypatch.setenv("AE_METRICS", "1")
+    monkeypatch.setenv("AE_AUDIT_LOG", "1")
+    monkeypatch.setenv("AE_TOKEN_TRACKING", "0")
+
+    result = CliRunner().invoke(
+        main,
+        ["doctor", "--acceptance-profile", "--project-root", str(tmp_path)],
+    )
+
+    assert result.exit_code == 1
+    assert "AE_TOKEN_TRACKING=1" in result.output
+
+
+def test_doctor_acceptance_profile_passes_with_complete_evidence_flags(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from auto_engineering.cli import main
+
+    monkeypatch.setenv("AE_METRICS", "1")
+    monkeypatch.setenv("AE_AUDIT_LOG", "1")
+    monkeypatch.setenv("AE_TOKEN_TRACKING", "1")
+
+    result = CliRunner().invoke(
+        main,
+        ["doctor", "--acceptance-profile", "--project-root", str(tmp_path)],
+    )
+
+    assert result.exit_code == 0
+    assert "真实产品验收前置条件已满足" in result.output

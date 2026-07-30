@@ -1,6 +1,6 @@
 # design/ 资产索引
 
-> 更新：2026-07-29｜当前实现：v5.7.1；已批准目标：v5.8 会话解耦
+> 更新：2026-07-30｜当前实现：v5.8.0-rc.2；Phase 68 真跑缺陷修复中
 
 ## 当前权威资产
 
@@ -15,6 +15,7 @@
 | `v5.8-Session-Decoupling-Design.md` | Phase 64-67 确定性状态、宿主会话、上下文预算与验证可信度设计 |
 | `v5.8-Session-Decoupling-PLAN.md` | Phase 64-67 T302-T324 可执行实施计划 |
 | `incidents/2026-07-29-claude-146-tick-long-run.md` | 146-Tick 真跑事故事实、根因、任务映射与关闭标准 |
+| `incidents/2026-07-30-claude-rc1-partial-run.md` | rc.1 部分真跑的跨进程状态、Gate、Usage 与成本缺陷 |
 | `IMPLEMENTATION-TRACKER.md` | 当前任务状态、优先级与 EARS 验收 |
 | `HISTORY.md` | 历史里程碑与 Git 追溯入口 |
 

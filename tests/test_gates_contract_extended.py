@@ -182,14 +182,36 @@ def test_check_contract_in_source_oserror_handled(tmp_path: Path) -> None:
 # ============================================================
 
 
-def test_run_with_contracts_dict_skip_empty(tmp_path: Path) -> None:
-    """run() with empty contracts dict → skip Verdict."""
+def test_run_with_contracts_dict_not_applicable_when_empty(tmp_path: Path) -> None:
+    """空契约集合是机器可判定的不适用，而不是通过。"""
     gate = ContractGate()
     gate.contracts = {}
     verdict = gate.run(tmp_path)
-    assert verdict.passed is True
-    assert "skip" in verdict.message.lower()
+    assert verdict.passed is False
+    assert verdict.not_applicable is True
     assert "空" in verdict.message
+
+
+def test_run_single_agent_is_not_applicable(tmp_path: Path) -> None:
+    """没有 spawn proof 的单 Agent 项目不需要跨 Agent 契约检查。"""
+    verdict = ContractGate().run(tmp_path)
+    assert verdict.passed is False
+    assert verdict.not_applicable is True
+    assert verdict.skipped is True
+
+
+def test_run_multi_agent_without_contract_checker_fails_closed(tmp_path: Path) -> None:
+    """检测到多 Agent 却没有可执行契约校验时不得伪装通过。"""
+    proofs = tmp_path / ".ae-state" / "spawn-proofs"
+    proofs.mkdir(parents=True)
+    (proofs / "proof.json").write_text("{}", encoding="utf-8")
+
+    verdict = ContractGate().run(tmp_path)
+
+    assert verdict.passed is False
+    assert verdict.skipped is False
+    assert verdict.not_applicable is False
+    assert "CONTRACT_CHECK_UNAVAILABLE" in verdict.message
 
 
 def test_run_with_contracts_non_dict(tmp_path: Path) -> None:
@@ -286,11 +308,11 @@ def test_check_contracts_mixed_pass_fail(tmp_path: Path) -> None:
 
 
 def test_run_single_agent_no_contracts(tmp_path: Path) -> None:
-    """run() with single agent, no contracts → skip (backward compat)."""
+    """run() with single agent, no contracts → not applicable."""
     gate = ContractGate()
     verdict = gate.run(tmp_path)
-    assert verdict.passed is True
-    assert "skip" in verdict.message.lower()
+    assert verdict.passed is False
+    assert verdict.not_applicable is True
 
 
 def test_contract_gate_default_constructor(tmp_path: Path) -> None:

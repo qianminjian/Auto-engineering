@@ -209,8 +209,9 @@ class TestContractGate:
 
         gate = ContractGate()
         verdict = gate.run(tmp_path)
-        assert verdict.passed is True
-        assert "skip" in verdict.message.lower() or "single" in verdict.message.lower()
+        assert verdict.passed is False
+        assert verdict.not_applicable is True
+        assert "单 Agent" in verdict.message
 
 
 # ============================================================

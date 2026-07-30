@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from auto_engineering.engine.state import EngineState
 from auto_engineering.loop.checkpoint._connection import (
     _atomic,
     _ensure_schema,
@@ -176,6 +177,37 @@ def _fake_history(item_count: int = 1) -> list[dict]:
 
 
 class TestStoreSaveLoad:
+    def test_large_state_fields_are_content_addressed_and_reused(self, store):
+        shared_plan = [{"batch_id": "B1", "payload": "x" * 4096}]
+        first = EngineState(
+            thread_id="thread-1",
+            batch_plan=shared_plan,
+            progress_tree_json="y" * 4096,
+            tick=1,
+        )
+        second = EngineState(
+            thread_id="thread-1",
+            batch_plan=shared_plan,
+            progress_tree_json="y" * 4096,
+            tick=2,
+        )
+
+        first_id = store.save(first, round=1)
+        second_id = store.save(second, round=2)
+
+        with store._conn() as conn:
+            blobs = conn.execute(
+                "SELECT COUNT(*) AS count FROM checkpoint_blobs"
+            ).fetchone()["count"]
+            persisted = conn.execute(
+                "SELECT state_json FROM checkpoints WHERE id = ?",
+                (second_id,),
+            ).fetchone()["state_json"]
+        assert blobs == 2
+        assert len(persisted) < 2000
+        assert store.load(first_id).state == first
+        assert store.load(second_id).state == second
+
     def test_save_and_load_roundtrip(self, store):
         state = _fake_state(1, "developer")
         history = _fake_history(2)

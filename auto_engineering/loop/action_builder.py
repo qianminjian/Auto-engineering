@@ -39,7 +39,8 @@ _SPAWN_INSTRUCTION = (
 _SPAWN_MULTI_INSTRUCTION = (
     "Each agent has its own prompt in spawn.agents[] — give agent[i] spawn.agents[i].prompt.\n"
     "Each agent must OVERWRITE only its own spawn.agents[i].receipt_path with "
-    "{\"status\":\"completed\",\"stage\":\"<stage>\",\"completed_at\":\"<ISO timestamp>\"}. "
+    "{\"status\":\"completed\",\"stage\":\"<stage>\",\"completed_at\":\"<ISO timestamp>\","
+    "\"requested_effort\":\"<spawn effort>\",\"actual_model\":\"<host model or unknown>\"}. "
     "After all worker receipts are completed, Team Lead must OVERWRITE the total proof file; "
     "workers must not write the shared total proof.\n"
 )
@@ -493,6 +494,7 @@ class ActionBuilder:
                         "receipt_path": (
                             f".ae-state/spawn-proofs/{receipt_token}.json"
                         ),
+                        "requested_effort": spawn.get("effort", "high"),
                     })
                 result["spawn"]["agents"] = agents
                 compiled_prompt = True
@@ -737,7 +739,7 @@ class ActionBuilder:
         action = self._build_stage_action(base, "developer",
             context={
                 "requirement": self._state.requirement,
-                "feedback": base.get("feedback"),
+                "feedback": base.get("feedback") or self._state.open_findings,
                 "batch_id": batch_id,
                 "component": component,
                 "tasks": task_dicts,

@@ -28,8 +28,9 @@ think hard
 以下不报：git blame 显示本次 diff 前存在、Linter/typechecker 可发现、不在本轮修改行、"另一种写法更好"（当前写法正确）、需求覆盖不全（Verifier 的事）。
 
 ## 判定
-- APPROVE = 0 P0 且 ≤2 P1
-- MAJOR = ≥1 P0 或 ≥3 P1
+- APPROVE = 0 P0 且 0 P1
+- MAJOR = ≥1 P0 或 ≥1 P1
+- P2 可随 APPROVE 记录，但不得把 P0/P1 降级成 P2 来推进流程
 
 ## 产出
 - verdict：APPROVE | MAJOR

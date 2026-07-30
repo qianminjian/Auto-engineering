@@ -137,6 +137,9 @@ _WRITE_OWNERS: dict[str, frozenset[str]] = {
     "session_start_tick":      frozenset({"orchestrator"}),
     "session_started_at":      frozenset({"orchestrator"}),
     "session_input_units":     frozenset({"orchestrator"}),
+    "developer_snapshot":      frozenset({"orchestrator"}),
+    "audit_revision_fingerprints": frozenset({"orchestrator"}),
+    "open_findings":            frozenset({"orchestrator"}),
 }
 
 # 合法 verdict 值
@@ -243,6 +246,9 @@ class EngineState:
     session_start_tick: int = 0  # #44 当前宿主会话开始时的业务 Tick
     session_started_at: str = ""  # #45 UTC ISO 时间；跨进程预算基准
     session_input_units: int = 0  # #46 当前宿主会话累计 input/cache usage
+    developer_snapshot: dict[str, Any] | None = None  # #47 最近一次已接受 Developer 证据
+    audit_revision_fingerprints: dict[str, str] = field(default_factory=dict)  # #48 已审修订
+    open_findings: list[dict[str, Any]] = field(default_factory=list)  # #49 未关闭 P0/P1
 
     # v5.5 P1-5: 写入审计日志 (repr=False 避免污染输出, 不参与序列化)
     _write_log: list[WriteRecord] = field(default_factory=list, repr=False, init=False)

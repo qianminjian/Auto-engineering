@@ -41,6 +41,7 @@ checkpoint 是循环恢复边界，checkpoint 不要求 commit。普通 develope
 | 用户意图 | 共享命令 |
 |---|---|
 | 启动开发循环 | `scripts/ae-run dev-loop --init "<requirement>"` |
+| 预校验 Result | `scripts/ae-run dev-loop --validate-result <file>` |
 | 推进一个 Tick | `scripts/ae-run dev-loop --tick --result <file>` |
 | 查看循环状态 | `scripts/ae-run status --format json` |
 | 恢复 checkpoint | `scripts/ae-run dev-loop --resume <id>` |
@@ -78,7 +79,8 @@ action 明确要求时才提高。若 `HostCapabilities.subagents` 不可用，�
    Coordinator 的 `action.subagent_prompt` 复制给所有 Worker。
 3. 按 `action.spawn.count` 和 `action.spawn.parallel` 创建隔离执行。
 4. 多 Worker 完成后，每个 Worker 必须以单个 JSON 覆写自己的
-   `action.spawn.agents[i].receipt_path`；workers must not write the shared total proof。
+   `action.spawn.agents[i].receipt_path`，记录 `requested_effort` 与宿主可见的
+   `actual_model`（不可见时写 `unknown`）；workers must not write the shared total proof。
    Receipt 超过 Action 策略声明的上限时必须将完整结果写入内容寻址 Artifact
    Store，receipt 只保留策略允许的有界摘要与带 SHA-256 的 `artifact_ref`；
    Skill 不复制策略默认数字。

@@ -40,8 +40,9 @@ def test_run_gates_reports_pass_fail_skip_and_missing(
             gate_name="test",
         )),
         "skip": _Gate(SimpleNamespace(
-            passed=True,
+            passed=False,
             skipped=True,
+            not_applicable=True,
             message="not applicable",
             gate_name="build",
         )),
@@ -65,6 +66,8 @@ def test_run_gates_reports_pass_fail_skip_and_missing(
     assert result["gate_summary"]["pass"]["status"] == "pass"
     assert result["gate_summary"]["fail"]["status"] == "fail"
     assert result["gate_summary"]["skip"]["status"] == "skipped"
+    assert result["gate_summary"]["skip"]["passed"] is None
+    assert result["gate_summary"]["skip"]["not_applicable"] is True
     assert result["gate_summary"]["missing"]["message"] == "no such gate"
     assert gates["pass"].files_changed == ["src/app.py"]
 

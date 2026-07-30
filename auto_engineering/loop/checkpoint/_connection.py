@@ -193,6 +193,24 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
         )
         """
     )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS project_runtime (
+            singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+            active_thread_id TEXT,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS checkpoint_blobs (
+            content_sha256 TEXT PRIMARY KEY,
+            payload_json TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
     conn.commit()
 
 

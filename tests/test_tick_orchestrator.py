@@ -76,6 +76,25 @@ class TestInit:
         o.init("req")
         assert o._state.expected_stage == "architect"
 
+    def test_unchanged_revision_blocks_duplicate_deep_audit(
+        self, tmp_path: Path
+    ) -> None:
+        o = _orchestrator()
+        o.project_root = tmp_path
+        o.init("req")
+        o._state.current_stage = "system_deep_audit"
+        revision = o._audit_revision_fingerprint("system_deep_audit")
+        o._state.audit_revision_fingerprints["system_deep_audit"] = revision
+
+        action = o._apply_loop_budget({
+            "action": "system_deep_audit",
+            "stage": "system_deep_audit",
+            "spawn": {"count": 3},
+        })
+
+        assert action["action"] == "error"
+        assert action["error_code"] == "AUDIT_REVISION_UNCHANGED"
+
     def test_init_with_design_doc_starts_gap_scan(self, tmp_path) -> None:
         (tmp_path / ".ae-state").mkdir(parents=True, exist_ok=True)
         design = tmp_path / "design.md"
@@ -742,8 +761,8 @@ class TestRefineSourcesAndLimits:
         assert req["gaps"][0]["kind"] == "AUDIT_FINDING"
         assert req["gaps"][0]["severity"] == "P0"
 
-    def test_plate_audit_recounts_not_trusting_inflated_agent_count(self) -> None:
-        """B6.7a: Agent 自报 p1_count 膨胀但去重后 ≤ 阈值 → 不误触发 plan_refine."""
+    def test_plate_audit_recounts_and_closes_even_one_real_p1(self) -> None:
+        """Agent 自报计数不可信；去重后的单个真实 P1 仍必须进入修复。"""
         o = _orchestrator(max_rounds=30)
         self._seed_two_component_plate(o)
         TestPlateConvergence._approve_component(o, "Foo", "b-Foo")
@@ -760,8 +779,9 @@ class TestRefineSourcesAndLimits:
             "p0_count": 0, "p1_count": 99,  # Agent 膨胀自报
             "p2_count": 0, "total_audited_files": 2, "cross_component_issues": [],
         }))
-        # 去重后仅 1 条 P1 ≤ 阈值 6 → 推进到 system_deep_audit (非 architect refine)
-        assert a["stage"] == "system_deep_audit"
+        # 自报 99 被忽略，但去重后的 1 条真实 P1 仍不能放行。
+        assert a["stage"] == "architect"
+        assert o._state.open_findings
 
     def test_plate_audit_recount_detects_p0_despite_agent_zero_count(self) -> None:
         """B6.7a: Agent 漏报 p0_count=0 但 findings 含 P0 → Python 重算触发 plan_refine."""
@@ -1879,6 +1899,32 @@ class TestCrossProcessRestore:
         assert len(restored._plan.get_tasks_by_stage("developer")) == 2
         assert restored._progress_tree is not None
         store2.close()
+
+    def test_restore_rehydrates_developer_snapshot_for_next_process(
+        self, tmp_path
+    ) -> None:
+        from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
+
+        db = tmp_path / "cp.db"
+        store = SQLiteCheckpointStore(db)
+        orchestrator = _store_orchestrator(store)
+        orchestrator.init("实现 X")
+        orchestrator._state.files_changed = ["src/example.ts"]
+        orchestrator._state.commit_hash = "abc123"
+        orchestrator._state.test_results = {"passed": 2, "failed": 0}
+        orchestrator._snapshot_developer_output()
+        orchestrator._save_checkpoint()
+        store.close()
+
+        restored_store = SQLiteCheckpointStore(db)
+        restored = TickOrchestrator.restore(tmp_path, restored_store)
+
+        assert restored._dev_snapshot == {
+            "files_changed": ["src/example.ts"],
+            "commit_hash": "abc123",
+            "test_results": {"passed": 2, "failed": 0},
+        }
+        restored_store.close()
 
     def test_restore_missing_checkpoint_raises(self, tmp_path) -> None:
         from auto_engineering.loop.checkpoint.records import CheckpointNotFoundError

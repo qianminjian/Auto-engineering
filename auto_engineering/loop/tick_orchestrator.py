@@ -375,6 +375,7 @@ class TickOrchestrator:
         requirement: str,
         design_doc_path: str | None = None,
         max_rounds: int = 5,
+        thread_id: str | None = None,
     ) -> dict:
         """初始化 loop。有设计文档时解析层次并进入 gap_scan; 否则直接 architect.
 
@@ -396,7 +397,7 @@ class TickOrchestrator:
 
         self._state = EngineState(
             requirement=requirement,
-            thread_id=str(uuid4()),
+            thread_id=thread_id or str(uuid4()),
             prompt_registry_hash=default_registry().registry_hash(),  # B12.5 版本锁
             execution_session_id=str(uuid4()),
             session_started_at=datetime.now().astimezone().isoformat(),
@@ -498,6 +499,11 @@ class TickOrchestrator:
             state = EngineState.from_dict(state)
         self._state = state
         self._round_history = list(ck.history or [])
+        self._dev_snapshot = (
+            dict(state.developer_snapshot)
+            if state.developer_snapshot is not None
+            else None
+        )
         self._active_action = checkpoint_store.load_active_protocol_action(
             state.thread_id
         )
@@ -569,6 +575,39 @@ class TickOrchestrator:
         except (json.JSONDecodeError, OSError) as e:
             return ErrorResponse("RESULT_PARSE_ERROR", f"无法解析 result 文件: {e}",
                                 self._state.to_dict() if self._state else None).to_dict()
+
+    def validate_result_file(self, result_file: Path) -> dict:
+        """无副作用预校验 Result，不推进 Tick、不写 protocol action/result。"""
+        if self._state is None:
+            return ErrorResponse("NO_STATE", "请先调用 --init 初始化").to_dict()
+        try:
+            result = json.loads(result_file.read_text(encoding="utf-8"))
+            result = upgrade_legacy_result(result, self._active_action)
+            envelope = validate_result_envelope(result)
+        except (json.JSONDecodeError, OSError) as exc:
+            return ErrorResponse(
+                "RESULT_PARSE_ERROR", f"无法解析 result 文件: {exc}"
+            ).to_dict()
+        except ProtocolValidationError as exc:
+            return ErrorResponse(exc.code, str(exc)).to_dict()
+        if (
+            envelope.thread_id != self._state.thread_id
+            or self._active_action is None
+            or envelope.causation_id != self._active_action.get("message_id")
+        ):
+            return ErrorResponse(
+                ProtocolErrorCode.ACTION_NOT_ACTIVE,
+                "Result 指向的 Action 不是当前 active action",
+            ).to_dict()
+        validated = self._validate_result_dict(result)
+        if isinstance(validated, ErrorResponse):
+            return validated.to_dict()
+        return {
+            "action": "validation_passed",
+            "stage": self._state.current_stage,
+            "thread_id": self._state.thread_id,
+            "causation_id": envelope.causation_id,
+        }
 
     def tick_dict(self, result: dict) -> dict:
         """处理一个 tick — 直接接受 result dict (Driver B standalone 模式).
@@ -1116,6 +1155,12 @@ class TickOrchestrator:
                                 summary_limit=(
                                     self._runtime_config.max_receipt_summary_bytes
                                 ),
+                                expected_effort=str(
+                                    agent.get(
+                                        "requested_effort",
+                                        active_spawn.get("effort", "high"),
+                                    )
+                                ),
                             )
                         except (OSError, json.JSONDecodeError, ArtifactError):
                             receipt_ok = False
@@ -1429,11 +1474,13 @@ class TickOrchestrator:
 
     def _snapshot_developer_output(self) -> None:
         """保存 developer 产出快照 (advance_stage 会 clear_stage_fields)."""
-        self._dev_snapshot = {
+        snapshot = {
             "files_changed": self._state.files_changed,
             "commit_hash": self._state.commit_hash,
             "test_results": self._state.test_results,
         }
+        self._dev_snapshot = snapshot
+        self._state.developer_snapshot = snapshot
 
     def _offload_stage(self, stage: str) -> None:
         """Persist stage context summary via ContextOffloader (T73).
@@ -1814,6 +1861,21 @@ class TickOrchestrator:
         state = self._state
         if state is None:
             return candidate
+        candidate_stage = str(candidate.get("action", ""))
+        if candidate_stage in {"plate_deep_audit", "system_deep_audit"}:
+            revision_key = self._audit_revision_key(candidate_stage)
+            revision = self._audit_revision_fingerprint(candidate_stage)
+            if state.audit_revision_fingerprints.get(revision_key) == revision:
+                return action_envelope(
+                    ActionError(
+                        "AUDIT_REVISION_UNCHANGED",
+                        "代码与审计范围修订未变化，已阻止重复 Deep Audit",
+                    ).to_dict(),
+                    thread_id=state.thread_id,
+                    tick=state.tick + 1,
+                    stage=state.current_stage,
+                    causation_id=self._current_result_message_id,
+                )
         spawn = candidate.get("spawn")
         requested_workers = (
             int(spawn.get("count", 0)) if isinstance(spawn, dict) else 0
@@ -1853,6 +1915,35 @@ class TickOrchestrator:
             stage=state.current_stage,
             causation_id=self._current_result_message_id,
         )
+
+    def _audit_revision_key(self, stage: str) -> str:
+        if stage == "plate_deep_audit" and self._batch_state is not None:
+            try:
+                return f"{stage}:{self._batch_state.current_plate().name}"
+            except (AssertionError, IndexError):
+                pass
+        return stage
+
+    def _audit_revision_fingerprint(self, stage: str) -> str:
+        """对代码快照与审计范围生成稳定修订指纹。"""
+        import hashlib
+
+        snapshot = self._state.developer_snapshot or {}
+        files = snapshot.get("files_changed") or self._state.files_changed
+        from auto_engineering.loop.guardrails.stateful import aggregate_files_sha
+
+        files_sha = aggregate_files_sha(list(files or []), self.project_root)
+        scope = {
+            "stage": stage,
+            "key": self._audit_revision_key(stage),
+            "files_sha": files_sha,
+            "plan_refine_count": self._state.plan_refine_count,
+            "coverage_map": self._state.coverage_map or [],
+        }
+        encoded = json.dumps(
+            scope, ensure_ascii=False, sort_keys=True, default=str
+        ).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
 
     def _apply_context_budget(self, candidate: dict[str, Any]) -> dict[str, Any]:
         """达到会话边界时只发控制 Action；候选工作 Action进入 Capsule。"""
@@ -2127,6 +2218,10 @@ class TickOrchestrator:
             self._state.coverage_map = result.get("coverage_map", [])
         elif stage == "system_verifier":
             self._state.coverage_map = result.get("full_coverage_map", [])
+        elif stage in {"plate_deep_audit", "system_deep_audit"}:
+            self._state.audit_revision_fingerprints[
+                self._audit_revision_key(stage)
+            ] = self._audit_revision_fingerprint(stage)
         # research / plate_deep_audit / system_deep_audit: _after_* 中直接读 result
 
     # ── 辅助 ──

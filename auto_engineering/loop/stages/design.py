@@ -87,10 +87,23 @@ class CriticHandler:
         if not isinstance(state, Mapping):
             raise TypeError("state 必须为 Mapping")
         verdict = result.get("verdict", "")
+        findings = list(result.get("findings", []))
+        blocking_findings = [
+            finding for finding in findings
+            if isinstance(finding, Mapping)
+            and str(finding.get("severity", "")).upper() in {"P0", "P1"}
+        ]
+        # Critic 的自然语言 verdict 不是授权边界。只要结构化 findings 中仍有
+        # P0/P1，内核就按 MAJOR 处理，防止 “APPROVE + P1” 绕过修复循环。
+        effective_verdict = (
+            "MAJOR"
+            if verdict == "APPROVE" and blocking_findings
+            else verdict
+        )
         common: dict[str, Any] = {
             "collect_token_usage": True,
             "offload_stage": self.stage,
-            "critic_progress": verdict,
+            "critic_progress": effective_verdict,
         }
         if verdict not in {"MAJOR", "APPROVE"}:
             common["error"] = {
@@ -103,10 +116,11 @@ class CriticHandler:
 
         in_a_row = int(state.get("majors_in_a_row", 0))
         total = int(state.get("total_majors", 0))
-        if verdict == "APPROVE":
+        if effective_verdict == "APPROVE":
             common["state_patch"] = {
                 "majors_in_a_row": 0,
                 "total_majors": total,
+                "open_findings": [],
             }
             target: StageName = (
                 "developer"
@@ -126,6 +140,8 @@ class CriticHandler:
         common["state_patch"] = {
             "majors_in_a_row": in_a_row,
             "total_majors": total,
+            "critic_verdict": effective_verdict,
+            "open_findings": blocking_findings,
         }
         max_in_a_row = int(context.extensions.get("max_majors_in_a_row", 3))
         max_total = int(context.extensions.get("max_total_majors", 4))
@@ -141,7 +157,7 @@ class CriticHandler:
 
         target = "developer"
         common["cursor_operation"] = "rollback_batch"
-        common["feedback"] = list(result.get("findings", []))
+        common["feedback"] = findings
         return TransitionDecision(
             events=(_advanced(source=self.stage, target=target, context=context),),
             next_stage=target,

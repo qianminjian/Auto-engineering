@@ -120,7 +120,7 @@ class ContractGate(Gate):
         - 静态文本匹配, 不做 AST
         - 搜索范围: project_root/src/ (若存在) → 否则 project_root/
         - 仅扫描 .py/.ts/.js/.go/.rs 文件
-        - contracts=None 或空 → passed("无契约定义, 跳过")
+            - contracts 为空 → not_applicable（不计为通过）
 
     向后兼容:
         - v5.0+ 路径: 传入 contracts=dict → 走 4 项检查 (path/status_code/request/response)
@@ -150,8 +150,8 @@ class ContractGate(Gate):
                     gate_name=self.name,
                 )
             if not self.contracts:
-                return GateVerdict.ok(
-                    "skip: 无契约定义, 跳过 (contracts 为空)",
+                return GateVerdict.not_applicable_verdict(
+                    "无契约定义，不适用 (contracts 为空)",
                     gate_name=self.name,
                 )
             return self._check_contracts(project_root)
@@ -160,14 +160,14 @@ class ContractGate(Gate):
         # 非空 = 有 subagent spawn → 多 agent 模式，不应 skip
         spawn_proofs_dir = Path(project_root) / ".ae-state" / "spawn-proofs"
         if spawn_proofs_dir.is_dir() and any(spawn_proofs_dir.iterdir()):
-            return GateVerdict.ok(
-                "skip: multi-agent mode detected (spawn-proofs present), "
-                "cross-agent contract 检查待实现",
+            return GateVerdict.failed(
+                "CONTRACT_CHECK_UNAVAILABLE: 已检测到多 Agent 执行证据，"
+                "但未提供可执行的跨 Agent 契约定义",
                 gate_name=self.name,
             )
 
-        return GateVerdict.ok(
-            "skip: single agent mode, no cross-agent contract",
+        return GateVerdict.not_applicable_verdict(
+            "单 Agent 模式，不适用跨 Agent 契约检查",
             gate_name=self.name,
         )
 

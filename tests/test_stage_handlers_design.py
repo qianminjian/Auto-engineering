@@ -71,6 +71,29 @@ def test_critic_major_rolls_back_batch_and_returns_findings() -> None:
     assert decision.action_context["feedback"] == findings
 
 
+def test_critic_approve_with_blocking_finding_is_forced_to_repair() -> None:
+    """Agent 的 APPROVE 不能覆盖内核对 P0/P1 的确定性阻断。"""
+    findings = [{
+        "severity": "P1",
+        "file": "src/app.ts",
+        "line": 12,
+        "issue": "reset race",
+    }]
+
+    decision = CriticHandler().apply(
+        {"majors_in_a_row": 0, "total_majors": 0},
+        {"verdict": "APPROVE", "findings": findings},
+        _context(max_majors_in_a_row=3, max_total_majors=4),
+    )
+
+    assert decision.next_stage == "developer"
+    assert decision.action_context["critic_progress"] == "MAJOR"
+    assert decision.action_context["cursor_operation"] == "rollback_batch"
+    assert decision.action_context["feedback"] == findings
+    assert decision.action_context["state_patch"]["majors_in_a_row"] == 1
+    assert decision.action_context["state_patch"]["open_findings"] == findings
+
+
 def test_critic_approve_routes_by_remaining_batches() -> None:
     more = CriticHandler().apply(
         {"majors_in_a_row": 1, "total_majors": 2},

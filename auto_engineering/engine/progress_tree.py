@@ -91,11 +91,18 @@ def _now() -> str:
 
 
 def _normalize_ref(ref: str) -> str:
-    """归一化: strip 空白 + 统一 § 前缀. 'B6.1'/' §B6.1 ' → '§B6.1'; '' → ''."""
-    s = ref.strip()
+    """提取稳定章节编号并统一 § 前缀；标题文本变化不改变节点身份。"""
+    s = ref.strip().lstrip("#").strip().replace("`", "")
     if not s:
         return ""
     s = s.lstrip("§").strip()
+    section_match = re.match(
+        r"(?P<section>(?:[A-Za-z]+\d+|\d+)(?:\.\d+)*(?:[A-Za-z])?)"
+        r"(?=$|[\s:：—–-])",
+        s,
+    )
+    if section_match is not None:
+        s = section_match.group("section")
     return f"§{s}"
 
 

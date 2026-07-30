@@ -78,6 +78,22 @@
 | P0 | T321 | v5.8 发布收口 | While T303-T320、T323-T324 全部完成, when 全量测试、覆盖率、静态检查、双宿主安装与真实运行门禁执行, all required checks shall 通过后才允许发布 | ◐ `5.8.0-rc.2` 候选包就绪；2095 passed/1 skipped、coverage 90%、Ruff/mypy/sync/metadata 与 Claude archive smoke pass；真实产品 LLM 门禁未执行 |
 | P1 | T325 | Claude 命令命名空间校准 | While 插件名为 `auto-engineering`, when 用户查看或启动 Claude Code slash command, all active guidance shall 使用宿主实际注册的 `/auto-engineering:dev-loop`，不得继续宣传不存在的 `/ae:*` 别名 | ✅ 当前文档、CLI 提示、设计契约和生成规则已统一；RED 4 failed，GREEN 81 passed/1 skipped；Ruff/mypy/sync/metadata 与 rc.2 Claude archive smoke pass |
 
+## Phase 68：rc.1 真跑缺陷修复
+
+| 优先级 | ID | 任务 | EARS 验收 | 状态 |
+|---:|---|---|---|:---:|
+| P0 | T326 | 第二次真跑事故归档 | While rc.1 真跑证据位于外部项目, when 新会话恢复修复, the report shall 保留事实、根因、任务映射和关闭标准且不复制敏感日志 | ✅ 事故报告与任务矩阵已归档 |
+| P0 | T327 | Developer Snapshot 跨进程恢复 | While Developer Result 已被接受且下一 Tick 在新进程运行, when critic/verifier Gate 读取文件证据, the Core shall 从持久化事实重建同一非空 snapshot，不依赖进程内 `_dev_snapshot` | ✅ EngineState 持久化并恢复 |
+| P0 | T328 | 项目级 active thread 唯一性 | While 项目存在非终态 thread, when 重复 `--init` 或 init/resume 竞争, the Core shall fail-closed 并返回唯一合法恢复入口，不创建 stray active thread | ✅ SQLite 原子租约与唯一 resume |
+| P0 | T329 | Gate 三态与 skip 可信语义 | While Gate 未实现、不可执行或缺少证据, when verdict 聚合, the Gate shall 返回 fail；只有机器可证的不适用项才可返回 `not_applicable`，不得以 `passed=true` 表示 skip | ✅ pass/fail/not_applicable 已分离 |
+| P0 | T330 | P1 Findings 闭环 | While critic 以 APPROVE 返回 P1, when batch/phase 推进, the Core shall 持久化 finding、绑定修复任务并在最终 Gate 前要求全部关闭 | ✅ open_findings 持久化且零 P1 放行 |
+| P1 | T331 | Phase 67 Usage 与 rollover 门禁 | While 真实宿主验收启动, when usage 来源可用, the harness shall 强制启用 Usage Ledger、输出 input/cache/output 归因并至少触发一次 rollover | ✅ doctor acceptance profile + Phase 67 rollover 轨迹 |
+| P1 | T332 | Result Builder 与提交前预检 | While Agent 形成 Result, when 提交 Tick, the host protocol shall 以 schema 构建并本地预检 JSON，降低引号、扩展字段和枚举错误导致的重复 Action | ✅ `--validate-result` 无副作用预检 |
+| P1 | T333 | 稳定设计组件身份 | While batch 引用设计章节, when Markdown 标题格式变化, the Core shall 通过规范化稳定 ID 匹配，不依赖反引号或展示文本完全相等 | ✅ 章节编号稳定身份 |
+| P1 | T334 | Checkpoint 大对象分层 | While 长轨迹保存 checkpoint, when batch plan、progress tree 或产物重复, the store shall 内容寻址复用大对象并保持恢复等价 | ✅ SHA-256 blob 复用与兼容恢复 |
+| P1 | T335 | Agent 成本与审计频率治理 | While plate revision 未变化或 Worker 预算接近上限, when deep audit 被考虑, the Core shall 避免重复审计并记录 requested effort、actual model 与跳过原因 | ✅ 修订去重、预算硬限与模型 receipt |
+| P0 | T336 | Phase 68 收口验收 | While T327-T335 完成, when 多进程黄金轨迹、故障注入、全量测试和双宿主 archive 运行, all regressions shall 通过后才允许生成新 rc 并重启真实 LLM 门禁 | ◐ 自动验收通过；待真实 Claude Code 重跑 |
+
 ## 执行纪律
 
 1. 先把任务标为 `◐`，再修改代码或文档；验证后更新证据。

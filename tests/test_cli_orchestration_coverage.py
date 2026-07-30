@@ -25,6 +25,14 @@ class _Store:
     def find_by_thread_id(self, candidate: str) -> str | None:
         return self.thread_checkpoint
 
+    def reserve_project_thread(self, candidate: str) -> str | None:
+        self.reserved_thread_id = candidate
+        return None
+
+    def release_project_thread(self, thread_id: str) -> bool:
+        self.released_thread_id = thread_id
+        return True
+
 
 class _Orchestrator:
     restore_calls: list[str | None] = []
@@ -55,10 +63,11 @@ class _Orchestrator:
         *,
         design_doc_path: str | None,
         max_rounds: int,
+        thread_id: str | None = None,
     ) -> dict[str, object]:
         return {
             "action": "architect",
-            "thread_id": "thread-1",
+            "thread_id": thread_id or "thread-1",
             "requirement": requirement,
         }
 

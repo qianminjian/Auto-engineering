@@ -113,3 +113,40 @@ def test_receipt_validator_accepts_verified_artifact_ref(tmp_path) -> None:
         expected_stage="audit",
         store=store,
     )
+
+
+def test_receipt_records_requested_effort_and_actual_model(tmp_path) -> None:
+    receipt = compact_worker_receipt(
+        store=ArtifactStore(tmp_path / "artifacts"),
+        stage="system_deep_audit",
+        worker="security",
+        payload={"findings": []},
+        summary="通过",
+        inline_limit=512,
+        requested_effort="high",
+        actual_model="claude-opus",
+    )
+
+    assert validate_worker_receipt(
+        receipt,
+        expected_stage="system_deep_audit",
+        expected_effort="high",
+        store=ArtifactStore(tmp_path / "artifacts"),
+    )
+    assert receipt["actual_model"] == "claude-opus"
+
+
+def test_receipt_effort_mismatch_fails_closed(tmp_path) -> None:
+    with pytest.raises(ArtifactError, match="requested_effort"):
+        validate_worker_receipt(
+            {
+                "status": "completed",
+                "stage": "audit",
+                "requested_effort": "low",
+                "actual_model": "unknown",
+                "payload": {},
+            },
+            expected_stage="audit",
+            expected_effort="high",
+            store=ArtifactStore(tmp_path / "artifacts"),
+        )

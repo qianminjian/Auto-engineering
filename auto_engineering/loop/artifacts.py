@@ -94,6 +94,8 @@ def compact_worker_receipt(
     summary: str,
     inline_limit: int,
     summary_limit: int = 2048,
+    requested_effort: str = "",
+    actual_model: str = "unknown",
 ) -> dict[str, Any]:
     """小结果 inline；大结果只返回有界摘要与可校验引用。"""
     encoded = _canonical_bytes(payload)
@@ -102,6 +104,8 @@ def compact_worker_receipt(
             "status": "completed",
             "stage": stage,
             "worker": worker,
+            "requested_effort": requested_effort,
+            "actual_model": actual_model or "unknown",
             "payload": payload,
         }
     if len(summary.encode("utf-8")) > summary_limit:
@@ -111,6 +115,8 @@ def compact_worker_receipt(
         "status": "completed",
         "stage": stage,
         "worker": worker,
+        "requested_effort": requested_effort,
+        "actual_model": actual_model or "unknown",
         "summary": summary,
         "artifact_ref": ref.to_dict(),
     }
@@ -123,9 +129,16 @@ def validate_worker_receipt(
     store: ArtifactStore,
     receipt_limit: int = 4096,
     summary_limit: int = 2048,
+    expected_effort: str | None = None,
 ) -> bool:
     if receipt.get("status") != "completed" or receipt.get("stage") != expected_stage:
         raise ArtifactError("worker receipt 状态或 stage 无效")
+    if expected_effort is not None:
+        if receipt.get("requested_effort") != expected_effort:
+            raise ArtifactError("worker receipt requested_effort 与 Action 不一致")
+        actual_model = receipt.get("actual_model")
+        if not isinstance(actual_model, str) or not actual_model.strip():
+            raise ArtifactError("worker receipt 缺少 actual_model")
     encoded = _canonical_bytes(receipt)
     artifact_ref = receipt.get("artifact_ref")
     if artifact_ref is None:

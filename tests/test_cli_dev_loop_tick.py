@@ -47,6 +47,26 @@ class TestInitMode:
             main, ["dev-loop", "--init", "--project-root", str(tmp_path)])
         assert result.exit_code != 0
 
+    def test_second_init_fails_with_unique_resume_instruction(
+        self, tmp_path
+    ) -> None:
+        runner = CliRunner()
+        first = runner.invoke(
+            main,
+            ["dev-loop", "--init", "实现 X", "--project-root", str(tmp_path)],
+        )
+        assert first.exit_code == 0, first.output
+        thread_id = _last_json_line(first.output)["thread_id"]
+
+        second = runner.invoke(
+            main,
+            ["dev-loop", "--init", "实现 Y", "--project-root", str(tmp_path)],
+        )
+
+        assert second.exit_code != 0
+        assert "PROJECT_THREAD_ACTIVE" in second.output
+        assert f"--resume {thread_id}" in second.output
+
 
 class TestTickMode:
     def test_tick_requires_result(self, tmp_path) -> None:
@@ -55,6 +75,41 @@ class TestTickMode:
             main, ["dev-loop", "--tick", "--project-root", str(tmp_path)])
         assert result.exit_code == 1
         assert "result" in result.output.lower()
+
+    def test_validate_result_is_non_mutating_and_rejects_invalid_json(
+        self, tmp_path
+    ) -> None:
+        runner = CliRunner()
+        init = runner.invoke(
+            main,
+            ["dev-loop", "--init", "实现 X", "--project-root", str(tmp_path)],
+        )
+        assert init.exit_code == 0, init.output
+        before = runner.invoke(
+            main,
+            ["dev-loop", "--status", "--project-root", str(tmp_path)],
+        )
+        result_file = tmp_path / "invalid-result.json"
+        result_file.write_text("{", encoding="utf-8")
+
+        validation = runner.invoke(
+            main,
+            [
+                "dev-loop",
+                "--validate-result",
+                str(result_file),
+                "--project-root",
+                str(tmp_path),
+            ],
+        )
+        after = runner.invoke(
+            main,
+            ["dev-loop", "--status", "--project-root", str(tmp_path)],
+        )
+
+        assert validation.exit_code == 1
+        assert _last_json_line(validation.output)["error_code"] == "RESULT_PARSE_ERROR"
+        assert _last_json_line(after.output) == _last_json_line(before.output)
 
 
 class TestStatusMode:

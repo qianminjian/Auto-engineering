@@ -68,6 +68,28 @@ def test_plate_audit_recounts_findings_and_requests_refine() -> None:
     assert decision.action_context["audit_counts"] == (1, 0, 0)
 
 
+def test_single_p1_cannot_pass_final_deep_audit() -> None:
+    finding = {
+        "severity": "P1",
+        "dimension": "correctness",
+        "file": "app.py",
+        "line": 2,
+        "description": "race",
+    }
+
+    decision = SystemDeepAuditHandler().apply(
+        {},
+        {"findings": [finding]},
+        _context(p1_threshold=10),
+    )
+
+    assert decision.terminal is False
+    assert decision.action_context["refine_source"] == "system_deep_audit"
+    open_finding = decision.action_context["state_patch"]["open_findings"][0]
+    assert open_finding["severity"] == "P1"
+    assert open_finding["description"] == "race"
+
+
 def test_plate_pass_routes_to_next_plate_or_cropped_layer() -> None:
     more = PlateDeepAuditHandler().apply(
         {},
