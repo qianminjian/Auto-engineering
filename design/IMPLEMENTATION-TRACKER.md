@@ -1,6 +1,6 @@
 # Auto-Engineering 当前实施跟踪表
 
-> 更新：2026-07-30｜目标版本：v5.8｜Phase 1-62 明细见 `design/HISTORY.md`
+> 更新：2026-07-31｜目标版本：v5.8｜Phase 1-62 明细见 `design/HISTORY.md`
 > 状态：`☐` 未开始｜`◐` 进行中｜`✅` 已验证
 
 ## 基线与阶段
@@ -136,6 +136,23 @@
 | P0 | T357 | 发布与宿主契约 | While release archive 构建, when Claude/Codex 隔离安装验收, both packages shall 包含可执行 `bin/ae-run` 并从外部 cwd 启动 | ✅ archive 含 0755 bin；双宿主从目标 cwd smoke pass |
 | P0 | T358 | Phase 72 收口验收 | While T355-T357 完成, when 专项、全量、静态检查与双宿主 archive 运行, all runner paths shall 位置无关且不复制 Core 逻辑 | ✅ 2122 passed/1 skipped；coverage 90%；静态检查与双宿主 archive pass |
 
+## Phase 73：Init Engineering 运行时解耦
+
+> 设计见 `design/v5.8-Init-Runtime-Decoupling-Design.md`。本阶段解除运行时前置依赖，
+> 不把 Init Engineering 的问答、模板和脚手架实现并入 Core。
+
+| 优先级 | ID | 任务 | EARS 验收 | 状态 |
+|---:|---|---|---|:---:|
+| P0 | T359 | ProjectProfile 契约与负向测试 | While Profile schema、命令、路径或证据非法, when Core 校验输入, the system shall 以稳定错误码 fail-closed，且相同规范化事实产生相同 profile_id | ☐ |
+| P0 | T360 | Provider SPI 与确定性 Resolver | While 项目存在 AE 显式配置、本地工程事实或 legacy manifest, when Resolver 运行, the system shall 按权威等级合并全部证据、补全缺失字段并显式报告冲突 | ☐ |
+| P0 | T361 | 有限本地项目探测 | While 项目属于首期支持生态且缺少 Init manifest, when dev-loop 启动, the system shall 只读取白名单入口文件解析语言、路径和已声明命令，不递归扫描、不猜测命令 | ☐ |
+| P0 | T362 | 空项目 setup Action/Result | While 项目只有设计文档且能力不足, when dev-loop 启动或恢复, the system shall 幂等发出 project_setup_required；宿主提交完成后必须重新探测通过才继续 | ☐ |
+| P0 | T363 | Gate 与状态恢复解耦 | While Profile 已解析或跨进程恢复, when Gate Registry 构建验证链, the system shall 只消费持久化 ProjectProfile，不读取 Init 专用文件且不回退 Python 默认工具 | ☐ |
+| P1 | T364 | Prompt Contract 有界 Profile 上下文 | While Architect、Developer 或 Verifier 编译 Prompt, when Profile 未变化, each consumer shall 只接收角色所需摘要或 ArtifactRef，不直接读取或重复内联 Init manifest | ☐ |
+| P1 | T365 | Doctor、CLI 与配置语义迁移 | While manifest 缺失、项目待搭建或 legacy 输入存在, when doctor/CLI 诊断, the system shall 分别报告 resolved、setup_required、conflict 或 legacy，不把缺少 Init 产物误报为安装故障 | ☐ |
+| P0 | T366 | Legacy Init 只读兼容 Adapter | While 旧项目仅提供有效 init-manifest.json, when Resolver 和现有兼容 API 运行, the system shall 生成等价 Profile、保持 manifest mtime 不变并给出非阻断迁移提示 | ☐ |
+| P0 | T367 | Phase 73 双宿主收口验收 | While T359-T366 完成, when 已有项目、空项目、冲突、恢复和 legacy 黄金轨迹在 Claude/Codex 执行, both hosts shall 产生等价终态且全量测试、覆盖率、静态检查和真实产品轨迹通过 | ☐ |
+
 ## 执行纪律
 
 1. 先把任务标为 `◐`，再修改代码或文档；验证后更新证据。
@@ -145,4 +162,5 @@
    T321 执行。
 5. 未经授权不提交、不推送、不发布。
 
-详细文件、测试步骤与命令见 `design/v5.7-Protocol-Kernel-PLAN.md`。
+Phase 73 的边界与验收见 `design/v5.8-Init-Runtime-Decoupling-Design.md`；既有阶段详细
+步骤见对应 Design/PLAN 文件。

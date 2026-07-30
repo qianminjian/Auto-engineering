@@ -1,6 +1,6 @@
 # Auto-Engineering BEACON
 
-> 创建：2026-06-24｜更新：2026-07-31｜阶段：v5.8.0-rc.4 待真实复验
+> 创建：2026-06-24｜更新：2026-07-31｜阶段：v5.8.0-rc.4 待真实复验；Phase 73 待实施
 > 决策状态翻转（✅↔❌）或架构降级必须先获用户批准。
 
 ## 目标与成功标准
@@ -17,7 +17,7 @@
 Gate/Guardrail、五层验证、审计、v5.6 兼容迁移和双宿主验收。
 
 **不做：** Core 内调用 LLM；复制宿主 Agent Runtime；恢复退役 CLI；实现 Init
-Engineering；把 archive smoke 冒充真实产品安装；修改外部参考源码。
+Engineering 的问答、模板或脚手架；把 archive smoke 冒充真实产品安装；修改外部参考源码。
 
 ## 当前设计决策
 
@@ -38,6 +38,7 @@ Engineering；把 archive smoke 冒充真实产品安装；修改外部参考源
 | D13 | 宿主自动 compaction；固定 Tick 不换会话；Capsule 仅用于异常恢复 | ✅ |
 | D14 | 修复计划使用 PlanPatch；完成事实不可由普通计划更新重新激活 | ✅ |
 | D15 | runner 错配、零测试、空快照和证据失配全部 fail-closed | ✅ |
+| D16 | Core 以 ProjectProfile 消费项目能力；本地确定性探测为默认 Provider，Init Engineering 仅是可选兼容 Provider | ✅ |
 
 ## 当前状态
 
@@ -62,10 +63,12 @@ Engineering；把 archive smoke 冒充真实产品安装；修改外部参考源
   稳定身份、checkpoint 与成本治理已修复；T336 等待 Claude Code 真实复验。
 - Phase 69 已完成：标准 Profile、强制首次配置与双宿主 archive smoke 通过。
 - Phase 72 已修复插件 runner 误解析到目标项目；rc.4 自动门禁通过。
+- Phase 73 已完成运行时解耦设计并登记 T359-T367，代码尚未实施。
 
 ## 最近演进
 | 日期 | 变更 |
 |---|---|
+| 2026-07-31 | 批准 D16：解除 Init Engineering 运行时前置依赖，保留只读兼容 Provider |
 | 2026-07-30 | 批准 Phase 70：撤销固定 Tick rollover，改为宿主自动 compaction |
 | 2026-07-29 | 批准 v5.8 确定性状态与宿主会话解耦，登记 Phase 64-67 |
 | 2026-07-29 | 归档 146-Tick 真跑事故报告，补充摘要隔离与循环预算 |
@@ -74,7 +77,8 @@ Engineering；把 archive smoke 冒充真实产品安装；修改外部参考源
 ## 待解决问题
 
 - T336/T350：用发布候选版执行 Claude Code/Codex 真实产品 150 Tick 长跑。
+- T359-T367：实施 ProjectProfile、Resolver、空项目 setup 协议及 Init 兼容迁移。
 
 ## 引用文件
 
-`design/v5.8-Automatic-Context-Governance.md` · `design/v5.8-Session-Decoupling-Design.md` · `design/v5.8-Session-Decoupling-PLAN.md` · `design/incidents/2026-07-29-claude-146-tick-long-run.md` · `design/IMPLEMENTATION-TRACKER.md` · `design/HISTORY.md`
+`design/v5.8-Automatic-Context-Governance.md` · `design/v5.8-Session-Decoupling-Design.md` · `design/v5.8-Init-Runtime-Decoupling-Design.md` · `design/incidents/2026-07-29-claude-146-tick-long-run.md` · `design/IMPLEMENTATION-TRACKER.md` · `design/HISTORY.md`
