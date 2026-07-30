@@ -3,7 +3,8 @@
 从 cli.py 拆分 (Plan P1-B): helpers.py + dev_loop.py + checkpoint.py + __init__.py.
 
 入口 (BEACON 决策 #97, Phase 40):
-    /ae:dev-loop Skill  → commands/dev-loop.md driving loop → ae dev-loop --init/--tick/--result/--resume (内部协议)
+    /auto-engineering:dev-loop Skill → commands/dev-loop.md driving loop
+    → ae dev-loop --init/--tick/--result/--resume (内部协议)
     ae doctor           首次环境诊断 (Python/uv/git/sqlite3/API key)
     ae status           跨会话进度查询
 
@@ -145,7 +146,7 @@ def dev_loop(
 ):
     """内部协议 — `commands/dev-loop.md` Skill driving loop 调用.
 
-    /ae:dev-loop Skill 为唯一启动入口。本命令的 --init/--tick/--result/--status/--resume
+    /auto-engineering:dev-loop Skill 为唯一启动入口。本命令的 --init/--tick/--result/--status/--resume
     flag 是 Skill 内部调用协议，不直接对用户暴露。
 
     辅助命令: ae doctor (环境诊断), ae status (进度查询)
@@ -196,8 +197,8 @@ def dev_loop(
 
     # 无参数且无 flag → 显示帮助
     click.echo(
-        "ae dev-loop 是 /ae:dev-loop Skill 的内部协议。\n"
-        "请使用 /ae:dev-loop Skill 启动开发循环。\n"
+        "ae dev-loop 是 /auto-engineering:dev-loop Skill 的内部协议。\n"
+        "请使用 /auto-engineering:dev-loop Skill 启动开发循环。\n"
         "辅助命令: ae doctor (环境诊断), ae status (进度查询)",
         err=True,
     )

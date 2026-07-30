@@ -12,7 +12,7 @@ Auto-Engineering 是跨 Claude Code 与 Codex 的工程循环调度器：宿主 
 
 | 宿主 | 演示入口 |
 |---|---|
-| Claude Code | `/ae:dev-loop "需求"` |
+| Claude Code | `/auto-engineering:dev-loop "需求"` |
 | Codex | `$auto-engineering`，随后描述需求 |
 
 演示前执行：

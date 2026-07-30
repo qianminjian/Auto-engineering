@@ -14,14 +14,14 @@
 
 | AC | 描述 | EARS | Phase 实现 | 测试覆盖 | 状态 | 备注 |
 |----|------|------|-----------|---------|------|------|
-| AC-01 | `/dev-loop "实现登录"` → 3 Stage + JSON 输出 | When 用户启动 /ae:dev-loop, the Orchestrator shall 跑完 architect→developer→critic 3 Stage 并输出 6 字段 JSON | Phase 01-11 | `test_loop_orchestrator.py` (4 测试) | **PASS** | `tests/test_loop_orchestrator.py` 验证 3 Stage 转换 + JSON 契约 |
+| AC-01 | `/dev-loop "实现登录"` → 3 Stage + JSON 输出 | When 用户启动 `/auto-engineering:dev-loop`, the Orchestrator shall 跑完 architect→developer→critic 3 Stage 并输出 6 字段 JSON | Phase 01-11 | `test_loop_orchestrator.py` (4 测试) | **PASS** | `tests/test_loop_orchestrator.py` 验证 3 Stage 转换 + JSON 契约 |
 | AC-02 | `/dev-loop "需求" --tasks FILE` → 预定义 Task | When 用户传 --tasks FILE, the Orchestrator shall 跳过 architect Stage 直接用预定义 Task DAG | Phase 03 | `test_task_factory.py` | **PASS** | `_tasks_from_batch_plan` 解析 tasks.yml + 追加 critic |
 | AC-03 | critic 连续 max_majors_in_a_row 次 (默认 3, Self-Refine 原则 3) MAJOR → StageRouter should_stop=True | When critic verdict=MAJOR 连续 3 次, the StageRouter shall 设置 should_stop=True | Phase 01 | `test_stage_router.py` (T6 测试) | **PASS** | `test_stage_router.py::test_t6_two_consecutive_majors_stops` (2026-07-04: 默认值 2→3, Self-Refine 原则 3 最优) |
 | AC-04 | Stage 推进后 checkpoint | When Stage 推进完成, the Orchestrator shall 写 SQLite checkpoint 含 stage + round_index | Phase 04 | `test_checkpoint_envelope.py` | **PASS** | `_save_checkpoint` 在 step 10 调用 |
 | AC-05 | GitDiffExists 过滤 (post/developer) | When developer Stage 完成, the GuardrailChain shall 跑 G3 GitDiffExists 验证 diff 非空 | Phase 02 | `test_guardrail.py` | **PASS** | `test_guardrail.py::test_git_diff_exists` (新仓库降级 --cached) |
 | AC-06 | `--no-gates` → 3 级收敛 | When 用户传 --no-gates, the Orchestrator shall 跳过 7 Gates 用 3 级收敛 (gate PASS / no-gates / max-round / stop) | Phase 07 | `test_plugin_contract.py` | **PASS** | `AE_NO_GATES=true` → convergence._three_level_check |
 | AC-07 | LLM timeout → BaseAgent retry×3 | When AnthropicProvider 超时, the BaseAgent shall 重试 3 次后抛 LLM_MAX_RETRIES | existing | `test_anthropic_provider.py` | **PASS** | `test_anthropic_provider.py::test_timeout_retry` |
-| AC-08 | checkpoint resume → retry_counters | When 用户 /ae:dev-loop --resume, the Orchestrator shall 注入 envelope.retry_counters 到 state | Phase 04 | `test_checkpoint_envelope.py` | **PASS** | `resume()` → 重建 state + 注入 retry_counters |
+| AC-08 | checkpoint resume → retry_counters | When 用户通过 `/auto-engineering:dev-loop` 恢复, the Orchestrator shall 注入 envelope.retry_counters 到 state | Phase 04 | `test_checkpoint_envelope.py` | **PASS** | `resume()` → 重建 state + 注入 retry_counters |
 | AC-09 | ANTHROPIC_API_KEY NOT_APPLICABLE | When ANTHROPIC_API_KEY 未设, Plugin 模式不报错 (SDK 自动从 env 读 key, Claude Code Agent 提供) | Phase 07+08 | `test_plugin_contract.py` | **PASS** | `test_plugin_contract.py::test_missing_api_key_exit_2` |
 | AC-10 | Ctrl-C → checkpoint + exit 130 | When 用户按 Ctrl-C, the Orchestrator shall 写 interrupted checkpoint 且 exit 130 | Phase 07 | `test_plugin_contract.py` | **PASS** | `test_plugin_contract.py::test_ctrl_c_exit_130` |
 | AC-11 | Plugin → Engine + Agent 展示 JSON | When Plugin 调 ae dev-loop, the Engine shall 输出 6 字段 JSON 供 Plugin 解析展示 | Phase 09 | `tests/test_plugin_contract.py` + archive smoke | **PASS** | 双宿主 archive smoke 验证最小 Tick |
@@ -127,7 +127,7 @@ uv run pytest tests/ --cov=auto_engineering --cov-report=term-missing --timeout=
 | 场景 | 步骤 | 期望 | 关联 AC |
 |------|------|------|---------|
 | **AC-12** Plugin 注册 | 安装 release，确认 enabled，在新进程调用 `/auto-engineering:status` | 4 个当前命令可见且 status 返回有效状态 | AC-12 |
-| **端到端 dev-loop** | 在 Claude Code 内运行 `/ae:dev-loop "实现 hello world" --max-rounds 3` | 3 Stage + APPROVE + exit 0 + 6 字段 JSON | AC-01 |
+| **端到端 dev-loop** | 在 Claude Code 内运行 `/auto-engineering:dev-loop "实现 hello world"` | 3 Stage + APPROVE + exit 0 + 6 字段 JSON | AC-01 |
 | **Ctrl-C 优雅退出** | dev-loop 运行时按 Ctrl-C | 写 interrupted checkpoint + exit 130 | AC-10 |
 | **缺 API key** | N/A — Plugin 模式 SDK 自动读 env, 不需用户设置 | AC-09 |
 

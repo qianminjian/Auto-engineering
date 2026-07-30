@@ -1,4 +1,4 @@
-# Auto-Engineering v5.8.0-rc.1
+# Auto-Engineering v5.8.0-rc.2
 
 跨 Claude Code / Codex 的 Tick-Based Discrete Invocation Loop Engineering 调度脚手架。
 
@@ -10,7 +10,7 @@ Auto-Engineering 只有一套 Host-neutral Tick 核心，两个宿主仅入口�
 
 | 平台 | 用户入口 |
 |------|---------|
-| Claude Code | `/ae:dev-loop "需求"` |
+| Claude Code | `/auto-engineering:dev-loop "需求"` |
 | Codex | `$auto-engineering`，随后描述需求 |
 
 从源码安装后的最小验证：

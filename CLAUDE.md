@@ -62,7 +62,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 # 宿主入口
-# Claude Code: /ae:dev-loop "需求"
+# Claude Code: /auto-engineering:dev-loop "需求"
 # Codex: $auto-engineering
 
 # v5.6 Tick 内部协议（由宿主 Skill/Command 驱动）

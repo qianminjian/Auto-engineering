@@ -3,7 +3,7 @@ name: audit
 description: 深度审计 — 架构/代码质量/工程化/协作/虚化度 5 维度扫描，含本项目参考项目对比
 ---
 
-# /ae:audit — Auto-Engineering 项目深度审计
+# /auto-engineering:audit — Auto-Engineering 项目深度审计
 
 自含审计流程 — 委托项目自有 AuditGate + system_deep_audit 方法论，
 **不依赖任何外部 `/audit` 运行时**（B14：零外部运行时依赖）。

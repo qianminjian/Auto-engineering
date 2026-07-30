@@ -3,7 +3,7 @@ name: code-review
 description: Create a GitHub PR with gate results, critic findings, and diff summary
 ---
 
-# /ae:code-review — 经授权创建 Pull Request
+# /auto-engineering:code-review — 经授权创建 Pull Request
 
 Create a well-structured GitHub PR after dev-loop completes with Critic APPROVE.
 Collects gate results, critic findings, and diff summary into the PR body for human peer review.
@@ -26,9 +26,9 @@ Collects gate results, critic findings, and diff summary into the PR body for hu
 ## Usage
 
 ```
-/ae:code-review
-/ae:code-review --base main
-/ae:code-review --draft
+/auto-engineering:code-review
+/auto-engineering:code-review --base main
+/auto-engineering:code-review --draft
 ```
 
 ## Flags
@@ -96,7 +96,7 @@ VERDICT=$(echo "$STATUS_JSON" | python3 -c "import sys,json; print(json.loads(sy
 
 if [[ "$VERDICT" != "APPROVE" ]]; then
   echo "Error: Critic has not APPROVED yet (verdict=$VERDICT)."
-  echo "Run /ae:dev-loop first, or check /ae:status for details."
+  echo "Run /auto-engineering:dev-loop first, or check /auto-engineering:status for details."
   exit 1
 fi
 

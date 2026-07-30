@@ -19,7 +19,8 @@ def test_current_docs_explain_both_host_entries(relative: str) -> None:
 
     assert "Claude Code" in content
     assert "Codex" in content
-    assert "/ae:dev-loop" in content
+    assert "/auto-engineering:dev-loop" in content
+    assert "/ae:" not in content
     assert "$auto-engineering" in content
 
 
@@ -64,6 +65,6 @@ def test_current_docs_contain_no_retired_command_examples(relative: str) -> None
         "ae checkpoint",
         "ae progress",
         "--standalone",
-        "//ae:dev-loop",
+        "//auto-engineering:dev-loop",
     ):
         assert retired not in content

@@ -58,7 +58,7 @@ Engineering；把 archive smoke 冒充真实产品安装；修改外部参考源
   原子接管与双宿主适配落地；150 Tick/3 sessions 验收通过。
 - Phase 66 已完成有界 Prompt、ArtifactRef、Usage Ledger、摘要隔离与循环预算；
   全量 2095 passed / 1 skipped，Ruff/mypy/sync 通过。
-- Phase 67 已生成 `5.8.0-rc.1` 候选包并通过 Claude archive smoke；真实产品 LLM
+- Phase 67 已生成 `5.8.0-rc.2` 候选包并通过 Claude archive smoke；真实产品 LLM
   项目仍为 `not_run`，不得发布正式版。
 
 ## 最近演进

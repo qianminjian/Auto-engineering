@@ -4,7 +4,7 @@
 
 ## 宿主入口
 
-- Claude Code：`/ae:dev-loop "需求"`
+- Claude Code：`/auto-engineering:dev-loop "需求"`
 - Codex：`$auto-engineering`
 
 共同的预检与最小 Tick：

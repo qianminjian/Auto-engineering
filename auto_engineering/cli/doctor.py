@@ -461,7 +461,7 @@ def _init_config(project_root: Path) -> None:
         "# 生成: ae doctor --init-config",
         "# 优先级: 环境变量 > ae.toml > 内置默认值",
         "# key 为 kebab-case（与读取器 AeConfig.SECTION_KEY_MAP 同源）；括号内为对应环境变量名",
-        "# 编辑此文件取消注释所需功能，然后运行 /ae:dev-loop",
+        "# 编辑此文件取消注释所需功能，然后运行 /auto-engineering:dev-loop",
         "",
     ]
 
@@ -597,7 +597,7 @@ def _run_wizard(project_root: Path) -> None:
 
     toml_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     click.echo(f"✓ 配置已保存 ({active_count}/{len(FEATURE_MANIFEST)} features active)")
-    click.echo("  现在运行 /ae:dev-loop 即可自动加载")
+    click.echo("  现在运行 /auto-engineering:dev-loop 即可自动加载")
 
 
 def register_doctor_command(main: click.Group) -> None:

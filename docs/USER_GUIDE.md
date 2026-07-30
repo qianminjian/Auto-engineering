@@ -9,7 +9,7 @@ Auto-Engineering 通过离散 Tick 协议，让宿主 Agent 执行推理与工�
 
 | 宿主 | 入口 | 说明 |
 |---|---|---|
-| Claude Code | `/ae:dev-loop "需求"` | slash command |
+| Claude Code | `/auto-engineering:dev-loop "需求"` | slash command |
 | Codex | `$auto-engineering`，随后描述需求 | Skill |
 
 两种入口最终都调用 `scripts/ae-run`。Python Core 不直接调用 LLM，也不要求 Core
@@ -98,7 +98,7 @@ scripts/ae-run dev-loop --resume
 **找不到 CLI**：确认项目 `.venv/bin/ae` 可执行，或系统能找到 `uv`，然后运行
 `scripts/ae-run doctor`。
 
-**宿主未识别**：从 Claude Code 的 `/ae:dev-loop` 或 Codex 的
+**宿主未识别**：从 Claude Code 的 `/auto-engineering:dev-loop` 或 Codex 的
 `$auto-engineering` 进入，不要手工伪造宿主状态。
 
 **Tick 无法恢复**：先查看 `scripts/ae-run status --format json`；保留
