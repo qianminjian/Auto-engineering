@@ -1,7 +1,7 @@
 {
   "name": "auto-engineering",
-  "version": "5.7.1",
-  "description": "Auto-Engineering v5.7 — Deterministic protocol kernel for Codex",
+  "version": "5.8.0-rc.1",
+  "description": "Auto-Engineering v5.8 — Deterministic session-decoupled governance kernel for Codex",
   "author": {
     "name": "Qian Minjian"
   },

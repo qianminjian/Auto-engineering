@@ -101,7 +101,7 @@ wheels = [
 
 [[package]]
 name = "auto-engineering"
-version = "5.7.1"
+version = "5.8.0rc1"
 source = { editable = "." }
 dependencies = [
     { name = "click" },

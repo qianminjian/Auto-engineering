@@ -1,7 +1,7 @@
 [project]
 name = "auto-engineering"
-version = "5.7.1"
-description = "Auto-Engineering v5.7 — 跨宿主确定性协议内核与分层验证"
+version = "5.8.0-rc.1"
+description = "Auto-Engineering v5.8 — 确定性状态与宿主会话解耦治理内核"
 readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "MIT" }
@@ -79,7 +79,7 @@ addopts = ["--timeout=60", "-p no:cacheprovider"]
 patch = ["subprocess"]
 
 [tool.auto-engineering.baseline]
-passed = 2023
+passed = 2095
 skipped = 1
 
 [build-system]

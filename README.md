@@ -1,4 +1,4 @@
-# Auto-Engineering v5.7.1
+# Auto-Engineering v5.8.0-rc.1
 
 跨 Claude Code / Codex 的 Tick-Based Discrete Invocation Loop Engineering 调度脚手架。
 
@@ -76,7 +76,7 @@ Host-neutral Core (auto_engineering/)
 
 ```bash
 uv run pytest tests/ --no-cov --timeout=120 -q
-<!-- test-baseline --> 2023 passed / 1 skipped
+<!-- test-baseline --> 2095 passed / 1 skipped
 ```
 
 ## 环境变量

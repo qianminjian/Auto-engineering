@@ -73,9 +73,9 @@
 
 | 优先级 | ID | 任务 | EARS 验收 | 状态 |
 |---:|---|---|---|:---:|
-| P0 | T319 | 中等规模双宿主真实验收 | While 候选版本安装到 Claude Code 与 Codex, when 运行包含返工、深审计和至少一次 rollover 的真实项目, both hosts shall 完成且无批次回退、验证假通过或输入超限 | ◐ 双宿主隔离 archive install/doctor/init/status/resume pass；真实产品 LLM 项目仍 not_run |
+| P0 | T319 | 中等规模双宿主真实验收 | While 候选版本安装到 Claude Code 与 Codex, when 运行包含返工、深审计和至少一次 rollover 的真实项目, both hosts shall 完成且无批次回退、验证假通过或输入超限 | ◐ `5.8.0-rc.1` Claude archive install/doctor/init/status/resume pass；SHA-256 `53b51d5b…f949`；真实产品 LLM 项目仍 not_run |
 | P0 | T320 | 故障恢复与成本基线 | While 宿主在 rollover 前后异常退出, when 从事件与 capsule 恢复, the run shall 收敛到等价终态并输出可归因成本报告 | ✅ SQLite 重启/重复 claim 等价恢复 + 双 session Usage 聚合；32 tests passed |
-| P0 | T321 | v5.8 发布收口 | While T303-T320、T323-T324 全部完成, when 全量测试、覆盖率、静态检查、双宿主安装与真实运行门禁执行, all required checks shall 通过后才允许发布 | ☐ |
+| P0 | T321 | v5.8 发布收口 | While T303-T320、T323-T324 全部完成, when 全量测试、覆盖率、静态检查、双宿主安装与真实运行门禁执行, all required checks shall 通过后才允许发布 | ◐ `5.8.0-rc.1` 候选包就绪；2095 passed/1 skipped、coverage 90%、Ruff/mypy/sync/metadata 与 Claude archive smoke pass；真实产品 LLM 门禁未执行 |
 
 ## 执行纪律
 

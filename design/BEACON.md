@@ -57,7 +57,9 @@ Engineering；把 archive smoke 冒充真实产品安装；修改外部参考源
 - Phase 65 已完成会话解耦：ContextBudget、ResumeCapsule、rollover/claim、SQLite
   原子接管与双宿主适配落地；150 Tick/3 sessions 验收通过。
 - Phase 66 已完成有界 Prompt、ArtifactRef、Usage Ledger、摘要隔离与循环预算；
-  全量 2089 passed / 1 skipped，Ruff/mypy/sync 通过。
+  全量 2095 passed / 1 skipped，Ruff/mypy/sync 通过。
+- Phase 67 已生成 `5.8.0-rc.1` 候选包并通过 Claude archive smoke；真实产品 LLM
+  项目仍为 `not_run`，不得发布正式版。
 
 ## 最近演进
 
@@ -71,8 +73,6 @@ Engineering；把 archive smoke 冒充真实产品安装；修改外部参考源
 
 ## 待解决问题
 
-- T301：重构 `ae.toml` 首次配置闸门，使非交互宿主显式选择配置策略、准确报告
-  环境变量/文件/默认值来源，并禁止通过管道模拟交互输入。
 - T319-T321：完成双宿主真实项目、故障恢复与发布收口门禁。
 
 ## 引用文件

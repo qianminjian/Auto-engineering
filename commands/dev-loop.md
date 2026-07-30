@@ -1,6 +1,6 @@
 ---
 name: dev-loop
-description: Auto-Engineering v5.7 宿主无关 Tick-Based 开发循环
+description: Auto-Engineering v5.8 宿主无关确定性会话 Tick-Based 开发循环
 ---
 
 # Auto-Engineering dev-loop — 组长执行手册
