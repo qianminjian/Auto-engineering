@@ -178,7 +178,6 @@ def accept_archive(
     project.mkdir()
     _run(["git", "init", "-q"], cwd=project, env=environment)
     _write_init_manifest(project)
-    (project / "ae.toml").write_text("", encoding="utf-8")
 
     resolver = str(install_root / "scripts" / "ae-run")
     doctor = _run(
@@ -207,6 +206,11 @@ def accept_archive(
         environment,
         tick.stdout,
     )
+    generated_config = project / "ae.toml"
+    if not generated_config.is_file() or "metrics = \"1\"" not in generated_config.read_text(
+        encoding="utf-8"
+    ):
+        raise RuntimeError("首次启动未生成有效 standard profile")
 
     return {
         "host": host,

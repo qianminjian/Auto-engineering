@@ -29,7 +29,7 @@ def test_below_budget_continues() -> None:
     ).decision is BudgetDecision.CONTINUE
 
 
-def test_soft_and_hard_limits_rollover() -> None:
+def test_host_usage_thresholds_do_not_trigger_rollover() -> None:
     soft = evaluate_budget(
         POLICY,
         ContextUsage(ticks=10, wall_seconds=100, input_units=600, prompt_bytes=500),
@@ -39,10 +39,8 @@ def test_soft_and_hard_limits_rollover() -> None:
         ContextUsage(ticks=10, wall_seconds=100, input_units=700, prompt_bytes=500),
     )
 
-    assert soft.decision is BudgetDecision.ROLLOVER
-    assert soft.reason == "context_soft_limit"
-    assert hard.decision is BudgetDecision.ROLLOVER
-    assert hard.reason == "context_hard_limit"
+    assert soft.decision is BudgetDecision.CONTINUE
+    assert hard.decision is BudgetDecision.CONTINUE
 
 
 def test_single_prompt_over_limit_fails_instead_of_truncating() -> None:
@@ -55,7 +53,7 @@ def test_single_prompt_over_limit_fails_instead_of_truncating() -> None:
     assert outcome.error_code == "ACTION_CONTEXT_TOO_LARGE"
 
 
-def test_unknown_input_uses_tick_and_byte_limits() -> None:
+def test_unknown_input_and_tick_count_do_not_trigger_rollover() -> None:
     outcome = evaluate_budget(
         POLICY,
         ContextUsage(
@@ -67,8 +65,7 @@ def test_unknown_input_uses_tick_and_byte_limits() -> None:
         ),
     )
 
-    assert outcome.decision is BudgetDecision.ROLLOVER
-    assert outcome.reason == "tick_limit"
+    assert outcome.decision is BudgetDecision.CONTINUE
 
 
 def test_runtime_config_builds_policy_from_manifest_defaults() -> None:
@@ -110,7 +107,7 @@ def _orchestrator(config: RuntimeConfig) -> TickOrchestrator:
     )
 
 
-def test_tick_kernel_emits_rollover_instead_of_next_work_action() -> None:
+def test_tick_kernel_does_not_rollover_at_fixed_tick_count() -> None:
     config = RuntimeConfig(environ={
         "AE_SESSION_MAX_TICKS": "1",
         "AE_SESSION_MAX_SECONDS": "3600",
@@ -124,9 +121,7 @@ def test_tick_kernel_emits_rollover_instead_of_next_work_action() -> None:
 
     action = orchestrator.build_action()
 
-    assert action["action"] == "session_rollover"
-    assert action["reason"] == "tick_limit"
-    assert action["capsule"]["schema_version"] == "1.0"
+    assert action["action"] == "architect"
 
 
 def test_tick_kernel_rejects_oversized_candidate_without_truncation() -> None:
@@ -144,33 +139,13 @@ def test_tick_kernel_rejects_oversized_candidate_without_truncation() -> None:
     assert action["error_code"] == "ACTION_CONTEXT_TOO_LARGE"
 
 
-def test_claim_result_restores_original_active_action() -> None:
-    config = RuntimeConfig(environ={
-        "AE_SESSION_MAX_TICKS": "1",
-        "AE_SESSION_MAX_SECONDS": "3600",
-        "AE_CONTEXT_SOFT_INPUT": "600000",
-        "AE_CONTEXT_HARD_INPUT": "700000",
-        "AE_MAX_PROMPT_BYTES": "200000",
-    })
-    orchestrator = _orchestrator(config)
-    orchestrator.init("实现功能")
-    orchestrator._state.tick = 1
-    rollover = orchestrator.build_action()
-
-    restored = orchestrator.tick_dict({
-        "schema_version": "1.1",
-        "message_type": "result",
-        "message_id": "claim-result-1",
-        "thread_id": rollover["thread_id"],
-        "tick": rollover["tick"],
-        "stage": "session_claimed",
-        "causation_id": rollover["message_id"],
-        "correlation_id": rollover["thread_id"],
-        "extensions": {},
-        "claim_token": rollover["claim_token"],
-        "session_id": "session-2",
-        "host": "codex",
-    })
-
-    assert restored["action"] == "architect"
-    assert orchestrator._state.execution_session_id == "session-2"
+def test_cache_usage_does_not_change_context_decision() -> None:
+    low = evaluate_budget(
+        POLICY,
+        ContextUsage(ticks=1, wall_seconds=1, input_units=1, prompt_bytes=100),
+    )
+    high = evaluate_budget(
+        POLICY,
+        ContextUsage(ticks=999, wall_seconds=99999, input_units=999999, prompt_bytes=100),
+    )
+    assert low == high

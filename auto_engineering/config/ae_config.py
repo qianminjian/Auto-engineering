@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import os as _os
+from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -70,6 +71,68 @@ SECTION_KEY_MAP: dict[str, dict[str, str]] = {
     },
 }
 
+# 首次启动的宿主无关标准 Profile。未列出的项目沿用 FeatureManifest 默认值。
+# 这里仅表达治理层推荐值，不改变内置 fallback；环境变量仍保持最高优先级。
+STANDARD_PROFILE_OVERRIDES: dict[str, str] = {
+    "AE_AUDIT_LOG": "1",
+    "AE_METRICS": "1",
+    "AE_TOKEN_TRACKING": "1",
+    "AE_PRODUCTION": "1",
+}
+
+_DEPRECATED_PROFILE_KEYS = frozenset({
+    "AE_SESSION_MAX_TICKS",
+    "AE_SESSION_MAX_SECONDS",
+})
+
+
+def standard_profile_values() -> dict[str, str]:
+    """返回覆盖全部 FeatureManifest 项的标准 Profile。"""
+    from auto_engineering.config.feature_flags import FEATURE_MANIFEST
+
+    return {
+        flag.key: STANDARD_PROFILE_OVERRIDES.get(flag.key, flag.default_value)
+        for flag in FEATURE_MANIFEST
+    }
+
+
+def render_ae_toml(
+    values: Mapping[str, str],
+    *,
+    generated_by: str,
+) -> str:
+    """按 SECTION_KEY_MAP 渲染可被 AeConfig 无损读取的 TOML。"""
+    import json
+
+    from auto_engineering.config.feature_flags import FEATURE_MANIFEST
+
+    descriptions = {flag.key: flag.description for flag in FEATURE_MANIFEST}
+    lines = [
+        "# Auto-Engineering 项目配置",
+        f"# 生成: {generated_by}",
+        "# 优先级: 环境变量 > ae.toml > 内置默认值",
+        "# key 使用 kebab-case；括号内为可覆盖它的环境变量名",
+        "",
+    ]
+    for section, mapping in SECTION_KEY_MAP.items():
+        lines.append(f"[{section}]")
+        for toml_key, ae_key in mapping.items():
+            if ae_key in _DEPRECATED_PROFILE_KEYS:
+                continue
+            value = values.get(ae_key, "")
+            description = descriptions.get(ae_key, "")
+            if value == "":
+                lines.append(
+                    f"# {toml_key} = \"\"  # {description} ({ae_key})，按需配置"
+                )
+            else:
+                lines.append(
+                    f"{toml_key} = {json.dumps(str(value), ensure_ascii=False)}"
+                    f"  # {description} ({ae_key})"
+                )
+        lines.append("")
+    return "\n".join(lines) + "\n"
+
 
 class AeConfig:
     """Project configuration reader.
@@ -81,6 +144,8 @@ class AeConfig:
     def __init__(self, project_root: str | Path) -> None:
         self._project_root = Path(project_root)
         self._toml_data: dict[str, str] = {}
+        self._load_error: str | None = None
+        self._migration_warnings: list[str] = []
         self._load_toml()
 
     def _load_toml(self) -> None:
@@ -103,6 +168,7 @@ class AeConfig:
             data = tomllib.loads(toml_path.read_text(encoding="utf-8"))
         except (ValueError, OSError) as e:
             _logger.warning("ae.toml parse failed: %s", e)
+            self._load_error = str(e)
             return
 
         # Flatten [section] → AE_UPPER key mapping
@@ -115,6 +181,11 @@ class AeConfig:
                 for toml_key, ae_key in mapping.items():
                     if toml_key in section_data:
                         val = section_data[toml_key]
+                        if ae_key in _DEPRECATED_PROFILE_KEYS:
+                            self._migration_warnings.append(
+                                f"{section}.{toml_key} 已弃用且不再控制正常续跑，"
+                                "请删除该配置；会话连续性由宿主压缩与持久状态自动管理"
+                            )
                         if isinstance(val, bool):
                             val = "1" if val else "0"
                         elif isinstance(val, (int, float)):
@@ -122,6 +193,25 @@ class AeConfig:
                         self._toml_data[ae_key] = str(val)
 
         _logger.debug("ae.toml loaded: %d keys from %s", len(self._toml_data), toml_path)
+
+    @property
+    def load_error(self) -> str | None:
+        """返回解析错误；成功或文件不存在时为 None。"""
+        return self._load_error
+
+    @property
+    def migration_warnings(self) -> tuple[str, ...]:
+        """返回需要向用户显式展示的旧配置迁移提示。"""
+        return tuple(self._migration_warnings)
+
+    @property
+    def is_configured(self) -> bool:
+        """文件存在、可解析且至少包含一个受支持的显式配置项。"""
+        return (
+            (self._project_root / "ae.toml").is_file()
+            and self._load_error is None
+            and bool(self._toml_data)
+        )
 
     def source_for(self, key: str) -> str:
         """返回最终配置来源，不暴露配置值。"""

@@ -331,7 +331,8 @@ def test_wizard_enables_categories_and_saves(
 
     content = (tmp_path / "ae.toml").read_text()
     assert "[observability]" in content
-    assert 'AE_METRICS = "1"' in content
+    assert 'metrics = "1"' in content
+    assert "AE_METRICS" in content
 
 
 @pytest.mark.parametrize(

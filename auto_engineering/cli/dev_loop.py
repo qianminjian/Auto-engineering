@@ -143,19 +143,23 @@ def _check_config_gate(
     policy: str | None = None,
     interactive: bool | None = None,
 ) -> bool:
-    """Phase 45 T214: ae.toml 不存在时强制暂停确认配置。
-
-    Returns:
-        True  — 继续启动
-        False — 用户选择退出（wizard 后需重新启动）
-    """
+    """确保项目存在有效 ae.toml；交互向导或非交互标准 Profile 后继续。"""
     import os as _os
 
     import click as _click
 
     toml_path = root / "ae.toml"
     if toml_path.exists():
-        return True
+        from auto_engineering.config.ae_config import AeConfig
+        existing = AeConfig(root)
+        if existing.load_error is not None:
+            raise _click.ClickException(
+                f"CONFIG_INVALID: ae.toml 解析失败: {existing.load_error}"
+            )
+        for warning in existing.migration_warnings:
+            _click.echo(f"⚠  CONFIG_DEPRECATED: {warning}", err=True)
+        if existing.is_configured:
+            return True
 
     from auto_engineering.config.ae_config import AeConfig
     from auto_engineering.config.feature_flags import FEATURE_MANIFEST, get_feature_status
@@ -176,7 +180,8 @@ def _check_config_gate(
         interactive = sys.stdin.isatty()
 
     _click.echo("", err=True)
-    _click.echo("⚠  ae.toml 未配置", err=True)
+    state = "未配置" if not toml_path.exists() else "未包含有效配置"
+    _click.echo(f"⚠  ae.toml {state}", err=True)
     _click.echo(
         "[配置来源] "
         f"env={source_counts['env']} file={source_counts['file']} "
@@ -195,25 +200,21 @@ def _check_config_gate(
     for m in missing:
         _click.echo(f"  - {m}", err=True)
     _click.echo("", err=True)
-    _click.echo("选择:", err=True)
-    _click.echo("  [1] 运行 ae doctor --wizard 配置后重新启动", err=True)
-    _click.echo("  [2] 运行 ae doctor --init-config 生成模板后自行编辑", err=True)
-    _click.echo("  [3] 使用当前默认值继续 (不推荐)", err=True)
-    _click.echo("", err=True)
-
     if selected_policy:
-        if selected_policy == "defaults":
+        if selected_policy in {"defaults", "create"}:
+            from auto_engineering.cli.doctor import _init_config
+            if toml_path.exists():
+                raise _click.ClickException(
+                    "CONFIG_REQUIRED: 现有 ae.toml 未包含有效配置，请运行 "
+                    "ae doctor --wizard 修复"
+                )
+            if not _init_config(root):
+                raise _click.ClickException("CONFIG_CREATE_FAILED: ae.toml 创建失败")
             _click.echo(
-                f"[配置] policy=defaults，显式接受 env/default 合并配置；"
-                f"{len(active)}/{len(FEATURE_MANIFEST)} 项激活",
+                f"[配置] policy={selected_policy}，已写入 standard profile",
                 err=True,
             )
             return True
-        if selected_policy == "create":
-            from auto_engineering.cli.doctor import _init_config
-            _init_config(root)
-            _click.echo("已生成 ae.toml；编辑后重新运行", err=True)
-            return False
         if selected_policy == "require":
             raise _click.ClickException(
                 "CONFIG_POLICY_REQUIRED: policy=require 且 ae.toml 不存在"
@@ -223,28 +224,19 @@ def _check_config_gate(
         )
 
     if not interactive:
-        raise _click.ClickException(
-            "CONFIG_POLICY_REQUIRED: 非交互宿主必须使用 "
-            "--config-policy require|defaults|create 或 AE_CONFIG_POLICY"
-        )
-
-    choice = _click.prompt("输入 1/2/3", type=int, default=3, err=True)
-    if choice == 1:
-        _click.echo("→ 启动配置向导...", err=True)
-        from auto_engineering.cli.doctor import _run_wizard
-        _run_wizard(root)
-        if (root / "ae.toml").exists():
-            _click.echo("✓ ae.toml 已保存，请重新运行 ae dev-loop --init", err=True)
-        return False
-    elif choice == 2:
-        _click.echo("→ 生成 ae.toml 模板...", err=True)
         from auto_engineering.cli.doctor import _init_config
-        _init_config(root)
-        _click.echo("编辑 ae.toml 后重新运行", err=True)
-        return False
-    else:
-        _click.echo(f"[配置] 用户接受默认配置, {len(active)}/{len(FEATURE_MANIFEST)} 项激活", err=True)
+        if toml_path.exists() or not _init_config(root):
+            raise _click.ClickException(
+                "CONFIG_REQUIRED: ae.toml 无有效配置，请运行 ae doctor --wizard"
+            )
+        _click.echo("[配置] 非交互宿主已写入 standard profile", err=True)
         return True
+
+    _click.echo("→ 首次启动必须完成配置，正在启动向导...", err=True)
+    from auto_engineering.cli.doctor import _run_wizard
+    if not _run_wizard(root):
+        raise _click.ClickException("CONFIG_REQUIRED: 配置未保存，启动已取消")
+    return True
 
 
 def run_tick_init(

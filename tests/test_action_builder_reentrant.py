@@ -53,5 +53,8 @@ def test_sequential_optional_dependencies_do_not_leak(tmp_path) -> None:
     )
     second_action = builder.build_action(second)
 
-    assert first_action["context"]["files_changed"] == ["snapshot.py"]
-    assert second_action["context"]["files_changed"] == []
+    assert '"snapshot.py"' in first_action["subagent_prompt"]
+    assert '"snapshot.py"' not in second_action["subagent_prompt"]
+    assert '"files_changed": []' in second_action["subagent_prompt"]
+    assert "context" not in first_action
+    assert "context" not in second_action

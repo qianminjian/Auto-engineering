@@ -52,7 +52,7 @@
 |---:|---|---|---|:---:|
 | P0 | T308 | ExecutionSession 与事件契约 | While 一个工程线程跨多个宿主会话运行, when 会话开始、续接或结束, the Core shall 以不可变事件记录 session identity、原因和状态边界且不改变业务进度语义 | ✅ 12 类事件 + 不可变 Session/独立投影；双 active 拒绝；23 passed；Ruff/mypy pass |
 | P0 | T309 | ResumeCapsule 最小恢复契约 | While 新宿主会话接管线程, when capsule 被构建, it shall 只包含 active Action、状态摘要、必要证据引用和预算，不包含完整历史对话 | ✅ 严格 Capsule/hash/active Action/ArtifactRef；历史字段禁入；17 passed；Ruff/mypy pass |
-| P0 | T310 | ContextBudget 与 rollover 决策 | While 宿主报告或估算的上下文达到阈值, when Tick Kernel 选择下一 Action, the system shall 确定性发出 `session_rollover` 而不是继续扩张请求 | ✅ `context_budget.py` + FeatureManifest/RuntimeConfig SSOT；29 tests passed；Ruff/mypy passed |
+| P0 | T310 | ContextBudget 与 rollover 决策（历史） | While 宿主报告或估算的上下文达到阈值, when Tick Kernel 选择下一 Action, the system shall 确定性发出 `session_rollover` 而不是继续扩张请求 | ✅ 历史实现；该日常语义由 T341-T349 纠偏 |
 | P0 | T311 | Rollover Action/Result 幂等恢复 | While rollover 已发出, when 原会话重试或新会话重复接管, the Core shall 只建立一个有效 successor session，并返回同一 active Action | ✅ `session_handoff.py` + SQLite 原子 handoff/claim + Protocol schemas；64 tests passed；Ruff/mypy passed |
 | P1 | T312 | Claude/Codex 会话适配 | While 双宿主收到 rollover, when 宿主创建新会话并提交接管回执, both adapters shall 产生语义等价的 Core 事件和恢复状态 | ✅ 双宿主 `host_control` 等价映射 + Skill/Command fail-closed；26 tests passed |
 | P0 | T313 | Phase 65 会话边界验收 | While 长轨迹跨至少三个宿主会话运行, when 任一边界发生中断、重复或延迟, the final projection and verdict shall 与单进程黄金轨迹等价 | ✅ 150 Tick/3 sessions + replay/late-result；Phase 65 suite 301 passed；Ruff/mypy passed |
@@ -66,14 +66,14 @@
 | P1 | T316 | 逐 Tick Usage Ledger | While 宿主可提供 usage, when Action/Result 完成, the system shall 按 thread/session/tick/stage/worker 记录 input、cache read/write、output 和估算来源 | ✅ SQLite Ledger + cache read/write 真实采集 + null unknown；11 targeted tests passed；Ruff/mypy passed |
 | P1 | T317 | Checkpoint 与审计保留策略 | While 长轨迹持续运行, when 快照、Prompt 和产物超过保留阈值, the system shall 保留事件事实与审计引用并安全压缩可重建副本 | ✅ 永久事实隔离 + dry-run 候选 + Artifact 引用完整性；3 tests passed；无用户数据删除 |
 | P0 | T323 | 状态锚点与摘要隔离 | While BEACON 或自动摘要过期、重复或矛盾, when Action/Capsule 被构建, the Core shall 仅依赖事件投影推进，并显式报告信息性上下文漂移 | ✅ 信息性 authority + anchor drift；冲突摘要不改 stage/tick；5 targeted tests passed |
-| P0 | T324 | 修复循环与 Agent 预算 | While repair、Worker 或 Deep Audit 达到策略上限, when 下一 Action 被选择, the system shall 确定性暂停或 rollover，禁止无限追加批次或 Agent | ✅ FeatureManifest/RuntimeConfig 策略 + Kernel fail-closed + Action policy snapshot；234 tests passed |
+| P0 | T324 | 修复循环与 Agent 预算 | While repair、Worker 或 Deep Audit 达到策略上限, when 下一 Action 被选择, the system shall 确定性停止扩张并诊断，禁止新增批次或借换会话绕过 | ✅ 扩张预算已实现；rollover 分支由 T341-T349 移除 |
 | P0 | T318 | Phase 66 成本与完整性验收 | While T314-T317、T323-T324 完成, when 单/多会话轨迹比较, semantic verdict shall 等价且输入放大率、单会话峰值、摘要隔离、循环上限与审计缺口满足预算 | ✅ 专项 252 passed；最终全量 2095 passed/1 skipped；Ruff 0；mypy 125 files；sync pass |
 
 ## Phase 67：双宿主真实项目发布门禁
 
 | 优先级 | ID | 任务 | EARS 验收 | 状态 |
 |---:|---|---|---|:---:|
-| P0 | T319 | 中等规模双宿主真实验收 | While 候选版本安装到 Claude Code 与 Codex, when 运行包含返工、深审计和至少一次 rollover 的真实项目, both hosts shall 完成且无批次回退、验证假通过或输入超限 | ◐ `5.8.0-rc.2` Claude archive install/doctor/init/status/resume pass；SHA-256 `f9e79ea1…f2f9`；真实产品 LLM 项目仍 not_run |
+| P0 | T319 | 中等规模双宿主真实验收 | While 候选版本安装到 Claude Code 与 Codex, when 运行包含返工、深审计和自动 compaction 的真实项目, both hosts shall 无人工交接完成且无批次回退、验证假通过或输入超限 | ◐ archive smoke 已通过；真实产品门禁并入 T350 |
 | P0 | T320 | 故障恢复与成本基线 | While 宿主在 rollover 前后异常退出, when 从事件与 capsule 恢复, the run shall 收敛到等价终态并输出可归因成本报告 | ✅ SQLite 重启/重复 claim 等价恢复 + 双 session Usage 聚合；32 tests passed |
 | P0 | T321 | v5.8 发布收口 | While T303-T320、T323-T324 全部完成, when 全量测试、覆盖率、静态检查、双宿主安装与真实运行门禁执行, all required checks shall 通过后才允许发布 | ◐ `5.8.0-rc.2` 候选包就绪；2095 passed/1 skipped、coverage 90%、Ruff/mypy/sync/metadata 与 Claude archive smoke pass；真实产品 LLM 门禁未执行 |
 | P1 | T325 | Claude 命令命名空间校准 | While 插件名为 `auto-engineering`, when 用户查看或启动 Claude Code slash command, all active guidance shall 使用宿主实际注册的 `/auto-engineering:dev-loop`，不得继续宣传不存在的 `/ae:*` 别名 | ✅ 当前文档、CLI 提示、设计契约和生成规则已统一；RED 4 failed，GREEN 81 passed/1 skipped；Ruff/mypy/sync/metadata 与 rc.2 Claude archive smoke pass |
@@ -87,12 +87,36 @@
 | P0 | T328 | 项目级 active thread 唯一性 | While 项目存在非终态 thread, when 重复 `--init` 或 init/resume 竞争, the Core shall fail-closed 并返回唯一合法恢复入口，不创建 stray active thread | ✅ SQLite 原子租约与唯一 resume |
 | P0 | T329 | Gate 三态与 skip 可信语义 | While Gate 未实现、不可执行或缺少证据, when verdict 聚合, the Gate shall 返回 fail；只有机器可证的不适用项才可返回 `not_applicable`，不得以 `passed=true` 表示 skip | ✅ pass/fail/not_applicable 已分离 |
 | P0 | T330 | P1 Findings 闭环 | While critic 以 APPROVE 返回 P1, when batch/phase 推进, the Core shall 持久化 finding、绑定修复任务并在最终 Gate 前要求全部关闭 | ✅ open_findings 持久化且零 P1 放行 |
-| P1 | T331 | Phase 67 Usage 与 rollover 门禁 | While 真实宿主验收启动, when usage 来源可用, the harness shall 强制启用 Usage Ledger、输出 input/cache/output 归因并至少触发一次 rollover | ✅ doctor acceptance profile + Phase 67 rollover 轨迹 |
+| P1 | T331 | Phase 67 Usage 与 rollover 门禁（历史） | While 真实宿主验收启动, when usage 来源可用, the harness shall 强制启用 Usage Ledger、输出 input/cache/output 归因 | ✅ Usage 基础已实现；强制 rollover 验收由 T347-T350 替代 |
 | P1 | T332 | Result Builder 与提交前预检 | While Agent 形成 Result, when 提交 Tick, the host protocol shall 以 schema 构建并本地预检 JSON，降低引号、扩展字段和枚举错误导致的重复 Action | ✅ `--validate-result` 无副作用预检 |
 | P1 | T333 | 稳定设计组件身份 | While batch 引用设计章节, when Markdown 标题格式变化, the Core shall 通过规范化稳定 ID 匹配，不依赖反引号或展示文本完全相等 | ✅ 章节编号稳定身份 |
 | P1 | T334 | Checkpoint 大对象分层 | While 长轨迹保存 checkpoint, when batch plan、progress tree 或产物重复, the store shall 内容寻址复用大对象并保持恢复等价 | ✅ SHA-256 blob 复用与兼容恢复 |
 | P1 | T335 | Agent 成本与审计频率治理 | While plate revision 未变化或 Worker 预算接近上限, when deep audit 被考虑, the Core shall 避免重复审计并记录 requested effort、actual model 与跳过原因 | ✅ 修订去重、预算硬限与模型 receipt |
 | P0 | T336 | Phase 68 收口验收 | While T327-T335 完成, when 多进程黄金轨迹、故障注入、全量测试和双宿主 archive 运行, all regressions shall 通过后才允许生成新 rc 并重启真实 LLM 门禁 | ◐ 自动验收通过；待真实 Claude Code 重跑 |
+
+## Phase 69：项目配置强制初始化
+
+| 优先级 | ID | 任务 | EARS 验收 | 状态 |
+|---:|---|---|---|:---:|
+| P0 | T337 | 统一 ae.toml schema 与标准 Profile | While Core 生成项目配置, when 文件被 RuntimeConfig 读取, the effective values shall 与生成值逐项一致且环境变量保持最高优先级 | ✅ `render_ae_toml` 与 `SECTION_KEY_MAP` 同源；逐项 roundtrip |
+| P0 | T338 | 首次启动强制配置 | While 项目缺少 ae.toml, when dev-loop 启动, the Core shall 创建或要求完成显式配置，禁止无文件继续 | ✅ 缺失自动/向导落盘；空、注释、损坏配置 fail-closed |
+| P1 | T339 | 向导推荐默认值与非交互初始化 | While 配置交互可用或宿主无 TTY, when 首次配置, the Core shall 分别提供可确认推荐值或确定性 standard Profile | ✅ 推荐审计/度量/Token/PII/生产安全；env 最高优先级 |
+| P0 | T340 | 配置初始化收口验收 | While T337-T339 完成, when 配置专项、全量、双宿主 archive 运行, all generated profiles shall 可读、可覆盖且无静默回退 | ✅ 2110 passed/1 skipped；Ruff/mypy；Claude/Codex archive smoke pass |
+
+## Phase 70：自动上下文与成本治理纠偏
+
+| 优先级 | ID | 任务 | EARS 验收 | 状态 |
+|---:|---|---|---|:---:|
+| P0 | T341 | 决策与负向契约 | While 旧固定 Tick/人工交接行为存在, when 契约测试运行, the suite shall 先稳定失败并锁定纠偏边界 | ✅ 6 个 RED 失败后 GREEN；固定 Tick/input 不再 rollover |
+| P0 | T342 | 配置语义迁移 | While standard Profile 被生成, when 配置读取, the system shall 不设置低位 session Tick 阈值，并对旧配置告警迁移 | ✅ standard Profile 不生成旧阈值；旧文件显式 `CONFIG_DEPRECATED` |
+| P0 | T343 | 宿主自动 compaction 适配 | While 宿主压缩上下文, when 下一 Tick 运行, the system shall 无人工交接继续且不改变业务投影 | ✅ 正常路径不再生成 Capsule/rollover；999 Tick 契约保持原 Stage |
+| P0 | T344 | ContextManifest 与块级去重 | While Action 编译, when 相同事实跨字段重复, the compiler shall 在模型调用前拒绝并报告重复 hash | ✅ Prompt bundle 携带块 hash/bytes/source；重复正文 fail-closed |
+| P0 | T345 | Stage 增量上下文与 Worker 隔离 | While Stage/Worker 获取上下文, when prompt 构建, each consumer shall 只接收最小字段或专属 ArtifactRef | ✅ compiled prompt 不重复顶层 context；Worker 改用独立 `prompt_ref` |
+| P0 | T346 | Prompt 与工具输出入口门禁 | While 大型日志/diff/MCP/Worker 输出产生, when 进入主上下文, the system shall 摘要引用化或 fail-closed | ✅ 延续 ArtifactRef/receipt 字节门禁；Worker prompt 正文引用化 |
+| P0 | T347 | Usage 语义与测量完整性 | While 宿主报告部分 usage, when ledger 写入, the system shall 区分各指标、保留 null 并记录估算来源 | ✅ input/cache read/write 分列；新增 Core payload、重复块和 estimator |
+| P0 | T348 | 成本基准与回归 Harness | While 同 fixture/宿主/模型运行, when before/after 比较, the report shall 给出可归因增量、重复块和 measurement completeness | ✅ 同 fixture/host/model 按完成工作归一化；缺失测量 fail-closed |
+| P1 | T349 | 恢复协议收口 | While 真实执行实例中断, when 恢复, the system shall 幂等消费 Capsule；正常 compaction 不触发恢复协议 | ✅ Capsule 原子 claim 保留；恢复原因收口为退出/压缩失败/跨宿主 |
+| P0 | T350 | 真实长跑发布门禁 | While 双宿主运行 150 Tick 轨迹, when 宿主管理上下文, both runs shall 零人工交接、零输入超限、零重复块并保持终态等价；不可观测 compaction 标 unknown | ◐ 自动测试与双宿主 archive smoke 通过；待真实产品 150 Tick |
 
 ## 执行纪律
 

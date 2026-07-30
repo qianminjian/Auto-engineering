@@ -205,3 +205,41 @@ def test_context_selector_rejects_selected_context_over_budget() -> None:
             },
             expected_format={"files_changed": "array"},
         )
+
+
+def test_context_manifest_has_unique_block_hashes() -> None:
+    contract = default_prompt_contracts()["developer"]
+    bundle = compile_prompt_bundle(
+        contract=contract,
+        role_prompt="Developer",
+        context={
+            "requirement": "req",
+            "feedback": None,
+            "batch_id": "B1",
+            "component": "Kernel",
+            "tasks": [{"id": "T1"}],
+            "toolchain": {"runner": "pytest"},
+        },
+        expected_format={"status": "string"},
+    )
+    manifest = bundle.context_manifest
+    assert manifest["duplicate_block_bytes"] == 0
+    assert manifest["total_inline_bytes"] > 0
+
+
+def test_duplicate_nonempty_context_blocks_fail_closed() -> None:
+    contract = default_prompt_contracts()["developer"]
+    with pytest.raises(PromptContextError, match="PROMPT_CONTEXT_DUPLICATE"):
+        compile_prompt_bundle(
+            contract=contract,
+            role_prompt="Developer",
+            context={
+                "requirement": "same",
+                "feedback": "same",
+                "batch_id": "B1",
+                "component": "Kernel",
+                "tasks": [{"id": "T1"}],
+                "toolchain": {},
+            },
+            expected_format={"status": "string"},
+        )

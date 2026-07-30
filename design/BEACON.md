@@ -1,6 +1,6 @@
 # Auto-Engineering BEACON
 
-> 创建：2026-06-24｜更新：2026-07-30｜阶段：v5.8 Phase 68 真跑缺陷修复中
+> 创建：2026-06-24｜更新：2026-07-30｜阶段：v5.8 Phase 70 实施完成，待真实长跑
 > 决策状态翻转（✅↔❌）或架构降级必须先获用户批准。
 
 ## 目标与成功标准
@@ -35,7 +35,7 @@ Engineering；把 archive smoke 冒充真实产品安装；修改外部参考源
 | D10 | Prompt Contract 采用兼容式编译，不改变 Action/Result v1.1 核心语义 | ✅ |
 | D11 | 多 Agent 必须逐 Worker 交付上下文并提供独立完成回执 | ✅ |
 | D12 | Thread 与 ExecutionSession 分离；聊天历史、BEACON 和自动摘要不是状态事实源 | ✅ |
-| D13 | Core 按 ContextBudget 发出 rollover；新会话仅消费 ResumeCapsule | ✅ |
+| D13 | 宿主自动 compaction；固定 Tick 不换会话；Capsule 仅用于异常恢复 | ✅ |
 | D14 | 修复计划使用 PlanPatch；完成事实不可由普通计划更新重新激活 | ✅ |
 | D15 | runner 错配、零测试、空快照和证据失配全部 fail-closed | ✅ |
 
@@ -60,21 +60,21 @@ Engineering；把 archive smoke 冒充真实产品安装；修改外部参考源
   全量 2095 passed / 1 skipped，Ruff/mypy/sync 通过。
 - Phase 68 T326-T335 已完成：快照、线程租约、Gate/Findings、Usage、Result、
   稳定身份、checkpoint 与成本治理已修复；T336 等待 Claude Code 真实复验。
+- Phase 69 已完成：标准 Profile、强制首次配置与双宿主 archive smoke 通过。
+- Phase 70 T341-T349 已完成：固定 Tick 不换会话、块去重、Worker 引用隔离、Usage/成本归因与异常恢复收口；T350 自动门禁通过，待真实产品 150 Tick。
 
 ## 最近演进
-
 | 日期 | 变更 |
 |---|---|
-| 2026-07-30 | Claude rc.1 真跑失败，登记 Phase 68 T326-T336 修复 |
+| 2026-07-30 | 批准 Phase 70：撤销固定 Tick rollover，改为宿主自动 compaction |
 | 2026-07-29 | 批准 v5.8 确定性状态与宿主会话解耦，登记 Phase 64-67 |
 | 2026-07-29 | 归档 146-Tick 真跑事故报告，补充摘要隔离与循环预算 |
 | 2026-07-28 | Phase 62 完成 T295-T300，v5.7.1 GitHub Release 正式发布 |
-| 2026-07-28 | Phase 61 完成 v5.7.1 发布收口，T288-T294 全部验证 |
 
 ## 待解决问题
 
-- T336：用新候选包完成 Claude Code 无人工 SQL 真跑，再恢复 T319-T321。
+- T336/T350：用发布候选版执行 Claude Code/Codex 真实产品 150 Tick 长跑。
 
 ## 引用文件
 
-`design/v5.8-Session-Decoupling-Design.md` · `design/v5.8-Session-Decoupling-PLAN.md` · `design/incidents/2026-07-29-claude-146-tick-long-run.md` · `design/incidents/2026-07-30-claude-rc1-partial-run.md` · `design/IMPLEMENTATION-TRACKER.md` · `design/HISTORY.md`
+`design/v5.8-Automatic-Context-Governance.md` · `design/v5.8-Session-Decoupling-Design.md` · `design/v5.8-Session-Decoupling-PLAN.md` · `design/incidents/2026-07-29-claude-146-tick-long-run.md` · `design/IMPLEMENTATION-TRACKER.md` · `design/HISTORY.md`

@@ -481,6 +481,9 @@ class ActionBuilder:
                     expected_format=worker_expected_format,
                 )
                 result["subagent_prompt"] = bundle.coordinator_prompt
+                result.setdefault("extensions", {})[
+                    "context_manifest"
+                ] = bundle.context_manifest
                 agents: list[dict] = []
                 for worker in bundle.worker_prompts:
                     receipt_token = uuid.uuid4().hex
@@ -488,7 +491,9 @@ class ActionBuilder:
                     agents.append({
                         "index": worker.index,
                         "role": worker.role,
-                        "prompt": worker.prompt,
+                        "prompt_ref": self._write_prompt_artifact(
+                            worker.prompt, worker.prompt_hash
+                        ),
                         "prompt_hash": worker.prompt_hash,
                         "receipt_token": receipt_token,
                         "receipt_path": (
@@ -514,6 +519,9 @@ class ActionBuilder:
                         expected_format=worker_expected_format,
                     )
                     result["subagent_prompt"] = bundle.worker_prompts[0].prompt
+                    result.setdefault("extensions", {})[
+                        "context_manifest"
+                    ] = bundle.context_manifest
                     compiled_prompt = True
                 else:
                     result["subagent_prompt"] = full_prompt
@@ -525,7 +533,7 @@ class ActionBuilder:
             # Non-spawn stage — inline instruction
             if action not in ("developer",):  # developer has custom instruction
                 result["instruction"] = _INLINE_INSTRUCTION.format(stage=action)
-        if context:
+        if context and not compiled_prompt:
             result["context"] = context
             # P1 优化 (2026-07-26 提示词分析): 把任务上下文直接拼进 subagent_prompt 头部，
             # 让 subagent 第一时间看到聚焦对象（哪个组件/板块/文件），减少推断成本。
@@ -546,6 +554,18 @@ class ActionBuilder:
             result["expected_format"] = expected_format
         result.update(extra)
         return result
+
+    def _write_prompt_artifact(self, prompt: str, prompt_hash: str) -> str:
+        """内容寻址保存 Worker prompt，避免全部正文进入 Coordinator Action。"""
+        root = self.project_root / ".ae-state" / "prompt-artifacts"
+        root.mkdir(parents=True, exist_ok=True)
+        path = root / f"{prompt_hash}.md"
+        if path.exists():
+            if path.read_text(encoding="utf-8") != prompt:
+                raise ValueError("PROMPT_ARTIFACT_HASH_CONFLICT")
+        else:
+            path.write_text(prompt, encoding="utf-8")
+        return str(path.relative_to(self.project_root))
 
     # ── DS-15 helpers ──
 

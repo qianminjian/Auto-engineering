@@ -1,6 +1,6 @@
 # design/ 资产索引
 
-> 更新：2026-07-30｜当前实现：v5.8.0-rc.2；Phase 68 真跑缺陷修复中
+> 更新：2026-07-30｜当前实现：v5.8.0-rc.2；Phase 70 上下文治理设计完成
 
 ## 当前权威资产
 
@@ -12,8 +12,9 @@
 | `v5.7-Protocol-Kernel-PLAN.md` | Phase 52-56 可执行实施计划 |
 | `v5.7-Prompt-Contract-Design.md` | Phase 60 Prompt Contract 与多 Agent 交付设计 |
 | `v5.7-Prompt-Contract-PLAN.md` | Phase 60 T280-T287 TDD 实施计划 |
-| `v5.8-Session-Decoupling-Design.md` | Phase 64-67 确定性状态、宿主会话、上下文预算与验证可信度设计 |
-| `v5.8-Session-Decoupling-PLAN.md` | Phase 64-67 T302-T324 可执行实施计划 |
+| `v5.8-Automatic-Context-Governance.md` | Phase 70 自动 compaction、有界增量上下文与成本治理权威设计 |
+| `v5.8-Session-Decoupling-Design.md` | Phase 64-67 状态恢复设计；日常 rollover 已由 Phase 70 纠偏 |
+| `v5.8-Session-Decoupling-PLAN.md` | Phase 64-70 T302-T350 可执行实施计划 |
 | `incidents/2026-07-29-claude-146-tick-long-run.md` | 146-Tick 真跑事故事实、根因、任务映射与关闭标准 |
 | `incidents/2026-07-30-claude-rc1-partial-run.md` | rc.1 部分真跑的跨进程状态、Gate、Usage 与成本缺陷 |
 | `IMPLEMENTATION-TRACKER.md` | 当前任务状态、优先级与 EARS 验收 |
@@ -22,7 +23,8 @@
 ## 解释顺序
 
 1. 当前运行行为以 v5.6 设计、代码和新鲜测试证据为准。
-2. 尚未实现的目标行为以 v5.8 设计为准，不得伪装为已交付。
+2. 上下文与日常会话行为以 Automatic Context Governance 为准；恢复语义再读取
+   Session Decoupling，冲突时前者优先。
 3. 实施顺序和任务状态以 PLAN 与 Tracker 为准。
 4. 历史争议以 Git 记录追溯，不把旧报告继续保存在活动工作区。
 

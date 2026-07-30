@@ -48,7 +48,7 @@ Violating the letter of this rule is violating the spirit of this rule.
          if action.spawn.count == 1:
              invoke one worker with action.subagent_prompt
          else:
-             invoke worker[i] with action.spawn.agents[i].prompt
+             read prompt_ref, verify prompt_hash, invoke worker[i]
              require worker[i] to overwrite action.spawn.agents[i].receipt_path,
              recording requested_effort and actual_model (or "unknown")
              collect all receipts, then merge using action.subagent_prompt
@@ -84,7 +84,8 @@ Violating the letter of this rule is violating the spirit of this rule.
 3. 检查 `HostCapabilities.subagents`；并行任务还需检查
    `HostCapabilities.parallel_subagents`。
 4. 能力满足时：单 Worker 使用 `action.subagent_prompt`；多 Worker 必须逐个使用
-   `action.spawn.agents[i].prompt`，并让每个 Worker 覆写自己的
+   `action.spawn.agents[i].prompt_ref`（读取后校验 `prompt_hash`），并让每个
+   Worker 覆写自己的
    `action.spawn.agents[i].receipt_path`。
    Receipt 超过 Action 策略声明的上限时完整结果进入内容寻址 Artifact Store，
    receipt 仅传有界摘要和 SHA-256 `artifact_ref`；本手册不复制策略默认数字。
@@ -101,7 +102,8 @@ Violating the letter of this rule is violating the spirit of this rule.
 developer 开始前读取 architect offload，critic 开始前读取 developer offload；
 具体路径以 `action.instruction` 为准。
 
-`session_rollover` 是控制 Action，不是自由文本 recap。旧会话不得继续执行工作；
+`session_rollover` 只用于异常恢复，不是正常 compaction 或自由文本 recap。旧执行
+实例不得继续执行工作；
 新会话只读取可校验 ResumeCapsule，提交 `session_claimed` 后才能恢复。宿主无原生
 会话创建/接管能力时必须返回 `HOST_SESSION_HANDOFF_UNAVAILABLE`，不得把完整历史
 复制到新会话，也不得在旧会话继续。

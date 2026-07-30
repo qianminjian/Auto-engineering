@@ -137,33 +137,24 @@ def test_requirement_category_inference(
     assert _infer_category(requirement) == expected
 
 
-@pytest.mark.parametrize(("choice", "expected"), [(1, False), (2, False), (3, True)])
-def test_config_gate_handles_all_user_choices(
+def test_interactive_config_gate_runs_mandatory_wizard(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    choice: int,
-    expected: bool,
 ) -> None:
-    import click
     dev_loop = import_module("auto_engineering.cli.dev_loop")
     doctor = import_module("auto_engineering.cli.doctor")
 
     monkeypatch.delenv("AE_SKIP_CONFIG_CHECK", raising=False)
-    monkeypatch.setattr(click, "prompt", lambda *args, **kwargs: choice)
     monkeypatch.setattr(
         doctor,
         "_run_wizard",
-        lambda root: (root / "ae.toml").write_text(""),
-    )
-    monkeypatch.setattr(
-        doctor,
-        "_init_config",
-        lambda root: (root / "ae.toml").write_text(""),
+        lambda root: bool((root / "ae.toml").write_text(
+            '[safety]\npii-enabled = "1"\n'
+        ) or True),
     )
 
-    assert dev_loop._check_config_gate(
-        tmp_path, interactive=True,
-    ) is expected
+    assert dev_loop._check_config_gate(tmp_path, interactive=True)
+    assert (tmp_path / "ae.toml").is_file()
 
 
 def test_config_gate_short_circuits_for_env_or_file(
@@ -172,10 +163,7 @@ def test_config_gate_short_circuits_for_env_or_file(
 ) -> None:
     from auto_engineering.cli.dev_loop import _check_config_gate
 
-    monkeypatch.setenv("AE_SKIP_CONFIG_CHECK", "1")
-    assert _check_config_gate(tmp_path) is True
-    monkeypatch.delenv("AE_SKIP_CONFIG_CHECK")
-    (tmp_path / "ae.toml").write_text("")
+    (tmp_path / "ae.toml").write_text('[safety]\npii-enabled = "1"\n')
     assert _check_config_gate(tmp_path) is True
 
 
@@ -196,17 +184,16 @@ def test_noninteractive_config_gate_never_reads_piped_choice(
         lambda *args, **kwargs: pytest.fail("非交互宿主不得读取 stdin/pipeline"),
     )
 
-    with pytest.raises(click.ClickException, match="CONFIG_POLICY_REQUIRED"):
-        _check_config_gate(tmp_path, interactive=False)
-    assert "ae.toml 未配置" in capsys.readouterr().err
+    assert _check_config_gate(tmp_path, interactive=False)
+    assert (tmp_path / "ae.toml").is_file()
+    assert "非交互宿主已写入 standard profile" in capsys.readouterr().err
 
 
-@pytest.mark.parametrize(("policy", "expected"), [("defaults", True), ("create", False)])
+@pytest.mark.parametrize("policy", ["defaults", "create"])
 def test_noninteractive_config_policies_are_explicit(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     policy: str,
-    expected: bool,
 ) -> None:
     from auto_engineering.cli.dev_loop import _check_config_gate
 
@@ -215,9 +202,8 @@ def test_noninteractive_config_policies_are_explicit(
         tmp_path,
         policy=policy,
         interactive=False,
-    ) is expected
-    if policy == "create":
-        assert (tmp_path / "ae.toml").is_file()
+    )
+    assert (tmp_path / "ae.toml").is_file()
 
 
 def test_noninteractive_require_policy_pauses_with_error(
@@ -235,6 +221,24 @@ def test_noninteractive_require_policy_pauses_with_error(
             policy="require",
             interactive=False,
         )
+
+
+def test_invalid_or_empty_existing_config_never_silently_continues(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import click
+
+    from auto_engineering.cli.dev_loop import _check_config_gate
+
+    monkeypatch.delenv("AE_SKIP_CONFIG_CHECK", raising=False)
+    (tmp_path / "ae.toml").write_text("# old commented template\n")
+    with pytest.raises(click.ClickException, match="CONFIG_REQUIRED"):
+        _check_config_gate(tmp_path, interactive=False)
+
+    (tmp_path / "ae.toml").write_text("[broken\n")
+    with pytest.raises(click.ClickException, match="CONFIG_INVALID"):
+        _check_config_gate(tmp_path, interactive=False)
 
 
 def test_config_gate_reports_env_file_default_sources(

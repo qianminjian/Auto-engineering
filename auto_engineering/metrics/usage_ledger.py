@@ -22,6 +22,11 @@ class UsageRecord:
     model: str
     usage_source: str
     estimated: bool
+    core_payload_bytes: int | None = None
+    inline_unique_bytes: int | None = None
+    duplicate_block_bytes: int | None = None
+    host_context_window_units: int | None = None
+    estimator_version: str = ""
 
 
 class UsageLedger:
@@ -45,10 +50,32 @@ class UsageLedger:
                 provider TEXT NOT NULL,
                 model TEXT NOT NULL,
                 usage_source TEXT NOT NULL,
-                estimated INTEGER NOT NULL
+                estimated INTEGER NOT NULL,
+                core_payload_bytes INTEGER,
+                inline_unique_bytes INTEGER,
+                duplicate_block_bytes INTEGER,
+                host_context_window_units INTEGER,
+                estimator_version TEXT NOT NULL DEFAULT ''
             )
             """
         )
+        existing = {
+            row[1] for row in self._conn.execute(
+                "PRAGMA table_info(usage_ledger)"
+            ).fetchall()
+        }
+        migrations = {
+            "core_payload_bytes": "INTEGER",
+            "inline_unique_bytes": "INTEGER",
+            "duplicate_block_bytes": "INTEGER",
+            "host_context_window_units": "INTEGER",
+            "estimator_version": "TEXT NOT NULL DEFAULT ''",
+        }
+        for column, declaration in migrations.items():
+            if column not in existing:
+                self._conn.execute(
+                    f"ALTER TABLE usage_ledger ADD COLUMN {column} {declaration}"
+                )
         self._conn.commit()
 
     def append(self, record: UsageRecord) -> None:
@@ -67,8 +94,10 @@ class UsageLedger:
             INSERT INTO usage_ledger
             (thread_id, session_id, tick, stage, worker, input_units,
              cache_read_units, cache_write_units, output_units, provider,
-             model, usage_source, estimated)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             model, usage_source, estimated, core_payload_bytes,
+             inline_unique_bytes, duplicate_block_bytes,
+             host_context_window_units, estimator_version)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 record.thread_id,
@@ -84,6 +113,11 @@ class UsageLedger:
                 record.model,
                 record.usage_source,
                 int(record.estimated),
+                record.core_payload_bytes,
+                record.inline_unique_bytes,
+                record.duplicate_block_bytes,
+                record.host_context_window_units,
+                record.estimator_version,
             ),
         )
         self._conn.commit()
@@ -108,6 +142,11 @@ class UsageLedger:
                 model=row["model"],
                 usage_source=row["usage_source"],
                 estimated=bool(row["estimated"]),
+                core_payload_bytes=row["core_payload_bytes"],
+                inline_unique_bytes=row["inline_unique_bytes"],
+                duplicate_block_bytes=row["duplicate_block_bytes"],
+                host_context_window_units=row["host_context_window_units"],
+                estimator_version=row["estimator_version"],
             )
             for row in rows
         ]
@@ -139,10 +178,18 @@ class UsageLedger:
             "cache_read_units": total("cache_read_units"),
             "cache_write_units": total("cache_write_units"),
             "output_units": total("output_units"),
+            "core_payload_bytes": total("core_payload_bytes"),
+            "inline_unique_bytes": total("inline_unique_bytes"),
+            "duplicate_block_bytes": total("duplicate_block_bytes"),
             "records": len(records),
             "attributed_records": attributed,
             "unknown_records": unknown,
             "attribution_rate": attributed / len(records) if records else 1.0,
+            "measurement_complete": (
+                bool(records)
+                and unknown == 0
+                and all(record.core_payload_bytes is not None for record in records)
+            ),
         }
 
     def close(self) -> None:

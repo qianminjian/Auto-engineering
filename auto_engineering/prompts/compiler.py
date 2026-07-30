@@ -39,6 +39,7 @@ class CompiledPromptBundle:
     coordinator_prompt: str
     worker_prompts: tuple[CompiledWorkerPrompt, ...]
     expected_format: dict[str, Any]
+    context_manifest: dict[str, Any]
 
 
 def _stable_json(value: Any) -> str:
@@ -73,6 +74,45 @@ def select_stage_context(
             f"{size}>{contract.max_context_bytes}"
         )
     return selected
+
+
+def build_context_manifest(
+    stage: str,
+    context: dict[str, Any],
+) -> dict[str, Any]:
+    """生成块级清单并拒绝同一非空值跨字段重复内联。"""
+    blocks: list[dict[str, Any]] = []
+    seen: dict[str, str] = {}
+    total = 0
+    for key, value in context.items():
+        encoded = json.dumps(
+            value, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+        ).encode("utf-8")
+        if value not in (None, "", [], {}):
+            digest = hashlib.sha256(encoded).hexdigest()
+            if digest in seen:
+                raise PromptContextError(
+                    f"PROMPT_CONTEXT_DUPLICATE stage={stage}: "
+                    f"{seen[digest]},{key} hash={digest}"
+                )
+            seen[digest] = key
+        else:
+            digest = hashlib.sha256(encoded).hexdigest()
+        total += len(encoded)
+        blocks.append({
+            "id": key,
+            "sha256": digest,
+            "bytes": len(encoded),
+            "mode": "inline",
+            "authority": "stage_contract",
+        })
+    return {
+        "schema_version": "1.0",
+        "stage": stage,
+        "blocks": blocks,
+        "total_inline_bytes": total,
+        "duplicate_block_bytes": 0,
+    }
 
 
 def _render_prompt(
@@ -112,6 +152,7 @@ def compile_prompt_bundle(
         )
 
     selected_context = select_stage_context(contract, context)
+    context_manifest = build_context_manifest(contract.stage, selected_context)
 
     if contract.execution_mode is ExecutionMode.INLINE:
         return CompiledPromptBundle(
@@ -124,6 +165,7 @@ def compile_prompt_bundle(
             ),
             worker_prompts=(),
             expected_format=dict(expected_format),
+            context_manifest=context_manifest,
         )
 
     role_sections = [role_prompt]
@@ -168,6 +210,7 @@ def compile_prompt_bundle(
         coordinator_prompt=coordinator_prompt,
         worker_prompts=tuple(workers),
         expected_format=dict(expected_format),
+        context_manifest=context_manifest,
     )
 
 
@@ -176,6 +219,7 @@ __all__ = [
     "CompiledWorkerPrompt",
     "PromptContextError",
     "PromptLayoutError",
+    "build_context_manifest",
     "compile_prompt_bundle",
     "select_stage_context",
 ]

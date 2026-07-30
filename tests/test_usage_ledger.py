@@ -34,6 +34,7 @@ def test_usage_ledger_preserves_all_attribution_dimensions(tmp_path) -> None:
     assert totals["cache_read_units"] == 300
     assert totals["cache_write_units"] == 20
     assert totals["output_units"] == 10
+    assert totals["measurement_complete"] is False
     assert totals["attributed_records"] == 1
     ledger.close()
 
@@ -127,5 +128,6 @@ def test_tick_usage_is_written_with_session_and_cache_attribution(tmp_path) -> N
     assert record.session_id == "session-2"
     assert record.cache_read_units == 30
     assert record.cache_write_units == 4
-    assert orchestrator._state.session_input_units == 44
+    assert record.core_payload_bytes == 2
+    assert orchestrator._state.session_input_units == 10
     ledger.close()

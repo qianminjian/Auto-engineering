@@ -90,7 +90,6 @@ from auto_engineering.loop.protocol import (
 )
 from auto_engineering.loop.protocol_compat import upgrade_legacy_result
 from auto_engineering.loop.refine import build_refine_request
-from auto_engineering.loop.resume_capsule import ResumeCapsule
 from auto_engineering.loop.session_handoff import SessionHandoff
 from auto_engineering.loop.stage_router import (
     StageRouter,
@@ -1946,30 +1945,23 @@ class TickOrchestrator:
         return hashlib.sha256(encoded).hexdigest()
 
     def _apply_context_budget(self, candidate: dict[str, Any]) -> dict[str, Any]:
-        """达到会话边界时只发控制 Action；候选工作 Action进入 Capsule。"""
+        """仅执行单 Action payload 门禁；正常上下文压缩由宿主管理。"""
         if candidate.get("action") in {"done", "error", "session_rollover"}:
             return candidate
         state = self._state
         if state is None or not state.execution_session_id:
             return candidate
-        try:
-            started = datetime.fromisoformat(state.session_started_at)
-            wall_seconds = max(
-                0, int((datetime.now().astimezone() - started).total_seconds())
-            )
-        except (TypeError, ValueError):
-            wall_seconds = self._runtime_config.session_max_seconds
         prompt_bytes = len(json.dumps(
             candidate, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
         ).encode("utf-8"))
         outcome = evaluate_budget(
             self._runtime_config.context_budget_policy,
             ContextUsage(
-                ticks=max(0, state.tick - state.session_start_tick),
-                wall_seconds=wall_seconds,
-                input_units=state.session_input_units or None,
+                ticks=0,
+                wall_seconds=0,
+                input_units=None,
                 prompt_bytes=prompt_bytes,
-                estimated=state.session_input_units == 0,
+                estimated=False,
             ),
         )
         if outcome.decision is BudgetDecision.CONTINUE:
@@ -1986,47 +1978,7 @@ class TickOrchestrator:
                 causation_id=self._current_result_message_id,
             )
 
-        capsule = ResumeCapsule.create(
-            thread_id=state.thread_id,
-            source_session_id=state.execution_session_id,
-            projection_sequence=state.tick,
-            active_action=candidate,
-            state_digest={
-                "stage": state.current_stage,
-                "tick": state.tick,
-                "active_batch_id": self._last_batch_id,
-                "plan_revision": state.plan_refine_count,
-            },
-            policy_snapshot=asdict(self._runtime_config.context_budget_policy),
-            budget={
-                "ticks": state.tick - state.session_start_tick,
-                "wall_seconds": wall_seconds,
-                "input_units": state.session_input_units,
-                "prompt_bytes": prompt_bytes,
-            },
-        )
-        if self._checkpoint_store is not None:
-            rollover = self._checkpoint_store.record_session_rollover(
-                thread_id=state.thread_id,
-                source_session_id=state.execution_session_id,
-                reason=outcome.reason or "manual",
-                capsule=capsule,
-                claim_token=str(uuid4()),
-                artifact_id=str(uuid4()),
-            )
-        else:
-            rollover = self._session_handoff.request_rollover(
-                current_session_id=state.execution_session_id,
-                reason=outcome.reason or "manual",
-                capsule=capsule,
-            )
-        return action_envelope(
-            rollover,
-            thread_id=state.thread_id,
-            tick=state.tick + 1,
-            stage=state.current_stage,
-            causation_id=self._current_result_message_id,
-        )
+        return candidate
 
     # ── T110b: Token 采集 ──
 
@@ -2044,10 +1996,19 @@ class TickOrchestrator:
                 self._state.tick_token_usage = usage
                 self._state.session_input_units += int(
                     usage.get("input_tokens", 0)
-                    + usage.get("cache_read_tokens", 0)
-                    + usage.get("cache_write_tokens", 0)
                 )
                 if self._runtime_config.token_tracking_enabled:
+                    active_action = self._active_action or {}
+                    payload_bytes = len(json.dumps(
+                        active_action,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode("utf-8"))
+                    manifest = (
+                        active_action.get("extensions", {})
+                        .get("context_manifest", {})
+                    )
                     ledger = UsageLedger(
                         self.project_root / ".ae-state" / "usage-ledger.db"
                     )
@@ -2068,6 +2029,19 @@ class TickOrchestrator:
                             model=usage.get("model") or "unknown",
                             usage_source=usage_source,
                             estimated=bool(usage.get("estimated", False)),
+                            core_payload_bytes=payload_bytes,
+                            inline_unique_bytes=manifest.get(
+                                "total_inline_bytes"
+                            ),
+                            duplicate_block_bytes=manifest.get(
+                                "duplicate_block_bytes"
+                            ),
+                            host_context_window_units=usage.get(
+                                "host_context_window_units"
+                            ),
+                            estimator_version=usage.get(
+                                "estimator_version", ""
+                            ),
                         ))
                     finally:
                         ledger.close()

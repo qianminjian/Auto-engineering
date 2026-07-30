@@ -126,7 +126,7 @@ def main():
 @click.option(
     "--config-policy",
     type=click.Choice(["require", "defaults", "create"]),
-    help="ae.toml 缺失时的显式策略；非交互宿主必须指定",
+    help="ae.toml 缺失策略：require 阻断；defaults/create 写入标准配置",
 )
 def dev_loop(
     requirement: str | None,

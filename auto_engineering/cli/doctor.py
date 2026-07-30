@@ -436,71 +436,54 @@ def _teardown_observability() -> None:
         click.echo(f"✗ docker compose 执行失败: {e}")
 
 
-def _init_config(project_root: Path) -> None:
-    """Generate ae.toml template from SECTION_KEY_MAP (与读取器同源).
-
-    Phase 44 T211: 读取 FeatureManifest → 按 category 分组 → 生成 TOML 模板。
-    2026-07-26 真跑修复: 模板 key 改为 kebab-case，从 AeConfig.SECTION_KEY_MAP
-    派生（此前用 f.key 即 AE_UPPER，读取器只认 kebab-case → 模板不可用、开关假启用）。
-    描述/默认值仍从 FEATURE_MANIFEST 按 AE_UPPER key 关联。
-    """
-    from auto_engineering.config.ae_config import SECTION_KEY_MAP
-    from auto_engineering.config.feature_flags import FEATURE_MANIFEST
+def _init_config(project_root: Path) -> bool:
+    """创建可立即运行的宿主无关标准 Profile。"""
+    from auto_engineering.config.ae_config import (
+        render_ae_toml,
+        standard_profile_values,
+    )
 
     toml_path = project_root / "ae.toml"
     if toml_path.exists():
         click.echo(f"ae.toml 已存在: {toml_path}")
         click.echo("如需重新生成，请先删除已有文件")
-        return
+        return False
 
-    # AE_UPPER → (description, default_value)，用于注释说明
-    flag_info = {f.key: (f.description, f.default_value) for f in FEATURE_MANIFEST}
-
-    lines: list[str] = [
-        "# Auto-Engineering 项目配置",
-        "# 生成: ae doctor --init-config",
-        "# 优先级: 环境变量 > ae.toml > 内置默认值",
-        "# key 为 kebab-case（与读取器 AeConfig.SECTION_KEY_MAP 同源）；括号内为对应环境变量名",
-        "# 编辑此文件取消注释所需功能，然后运行 /auto-engineering:dev-loop",
-        "",
-    ]
-
-    count = 0
-    for section, mapping in SECTION_KEY_MAP.items():
-        lines.append(f"[{section}]")
-        for toml_key, ae_key in mapping.items():
-            desc, default = flag_info.get(ae_key, ("", ""))
-            if default:
-                lines.append(f"# {toml_key} = \"{default}\"  # {desc} ({ae_key})")
-            else:
-                lines.append(f"# {toml_key} = \"\"  # {desc} ({ae_key}) (无默认值)")
-            count += 1
-        lines.append("")
-
-    toml_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    click.echo(f"✓ ae.toml 已生成: {toml_path}")
-    click.echo(f"  共 {count} 个功能开关，默认全部注释")
-    click.echo("  编辑此文件取消注释所需功能，保存后生效")
+    toml_path.write_text(
+        render_ae_toml(
+            standard_profile_values(),
+            generated_by="ae doctor --init-config（standard profile）",
+        ),
+        encoding="utf-8",
+    )
+    click.echo(f"✓ ae.toml 标准配置已生成: {toml_path}")
+    click.echo("  已启用审计、度量、Token、PII 与生产安全；环境变量可覆盖")
+    return True
 
 
-def _run_wizard(project_root: Path) -> None:
+def _run_wizard(project_root: Path) -> bool:
     """Interactive configuration wizard (Phase 45 T213).
 
     Reads current ae.toml as defaults, guides user through category-level
     feature selection, saves to ae.toml.
     """
 
+    from auto_engineering.config.ae_config import (
+        AeConfig,
+        render_ae_toml,
+        standard_profile_values,
+    )
     from auto_engineering.config.feature_flags import FEATURE_MANIFEST
 
     # Load current values as defaults
-    current: dict[str, str] = {}
+    current = standard_profile_values()
     toml_path = project_root / "ae.toml"
     if toml_path.exists():
         try:
-            from auto_engineering.config.ae_config import AeConfig
             ae = AeConfig(project_root)
-            for f in FEATURE_MANIFEST:
-                current[f.key] = ae.get(f.key)
+            if ae.is_configured:
+                for f in FEATURE_MANIFEST:
+                    current[f.key] = ae.get(f.key)
         except (ImportError, ValueError, OSError):
             pass
 
@@ -531,13 +514,13 @@ def _run_wizard(project_root: Path) -> None:
         click.echo("")
 
         choice = click.prompt(
-            "  全部启用? [y=全部启用 / N=全部跳过 / e=逐项选择]",
-            default="N", show_default=False,
+            "  如何配置? [y=采用推荐值 / N=全部禁用 / e=逐项选择]",
+            default="e", show_default=False,
         ).strip().lower()
 
         if choice == "y":
-            for key, _desc, _default in features:
-                selected[key] = "1"
+            for key, _desc, default in features:
+                selected[key] = current.get(key, default)
         elif choice == "e":
             for key, desc, default in features:
                 cur = current.get(key, default)
@@ -569,35 +552,21 @@ def _run_wizard(project_root: Path) -> None:
     save = click.confirm("保存到 ae.toml?", default=True)
     if not save:
         click.echo("已取消，未保存")
-        return
+        return False
 
-    # Write ae.toml
-    cat_feature_map: dict[str, list[tuple[str, str, str]]] = {}
-    for f in FEATURE_MANIFEST:
-        if f.category not in cat_feature_map:
-            cat_feature_map[f.category] = []
-        cat_feature_map[f.category].append((f.key, f.description, selected.get(f.key, "0")))
-
-    lines = [
-        "# Auto-Engineering 项目配置",
-        f"# 生成: ae doctor --wizard ({active_count}/{len(FEATURE_MANIFEST)} features active)",
-        "# 优先级: 环境变量 > ae.toml > 内置默认值",
-        "",
-    ]
-    for cat in cat_order:
-        if cat not in cat_feature_map:
-            continue
-        lines.append(f"[{cat}]")
-        for key, desc, val in cat_feature_map[cat]:
-            if val and val != "0":
-                lines.append(f"{key} = \"{val}\"  # {desc}")
-            else:
-                lines.append(f"# {key} = \"\"  # {desc} (已禁用)")
-        lines.append("")
-
-    toml_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    toml_path.write_text(
+        render_ae_toml(
+            selected,
+            generated_by=(
+                f"ae doctor --wizard "
+                f"({active_count}/{len(FEATURE_MANIFEST)} features active)"
+            ),
+        ),
+        encoding="utf-8",
+    )
     click.echo(f"✓ 配置已保存 ({active_count}/{len(FEATURE_MANIFEST)} features active)")
     click.echo("  现在运行 /auto-engineering:dev-loop 即可自动加载")
+    return True
 
 
 def register_doctor_command(main: click.Group) -> None:
@@ -618,7 +587,7 @@ def register_doctor_command(main: click.Group) -> None:
     @click.option(
         "--init-config",
         is_flag=True,
-        help="Phase 44: 生成 ae.toml 配置文件模板",
+        help="生成可立即运行的 ae.toml 标准配置",
     )
     @click.option(
         "--acceptance-profile",
@@ -643,7 +612,7 @@ def register_doctor_command(main: click.Group) -> None:
         """环境预检 — Python/uv/git/sqlite3/.ae-state + init-manifest (IL-AC-01).
 
         --wizard: 交互式配置向导
-        --init-config: 生成 ae.toml 配置文件模板
+        --init-config: 生成可立即运行的 ae.toml 标准配置
         --acceptance-profile: 校验真实产品验收所需证据开关
         --setup-observability: 一键启动 OTLP collector (Jaeger)
         --teardown-observability: 停止 OTLP collector

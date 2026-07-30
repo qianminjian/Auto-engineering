@@ -216,7 +216,7 @@ e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
 | Token 无法归因 | T316 | thread/session/tick/stage/worker Usage Ledger |
 | Checkpoint/Prompt 存储膨胀 | T317 | 永久事实与可重建副本分层 |
 | recap/BEACON 漂移 | T323 | 摘要仅信息性，状态锚点漂移显式告警 |
-| 修复循环、Worker、Deep Audit 无上限 | T324 | 达预算后确定性暂停或 rollover |
+| 修复循环、Worker、Deep Audit 无上限 | T324/T342 | 达预算后停止扩张并诊断，不用换会话绕过 |
 | 成本改善无法证明 | T318、T320 | 单/多会话对照和可归因成本报告 |
 | 双宿主真实链路风险 | T319-T321 | Claude/Codex 真实项目门禁通过 |
 
@@ -238,7 +238,7 @@ e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
 - 每个 Stage 的 Worker 数量上限及总 Worker 预算；
 - Plate/System Deep Audit 的触发频率和重跑条件；
 - 单次 Worker receipt、Artifact 和 Prompt 字节上限；
-- 达 soft/hard limit 后选择 pause、rollover 或请求用户决策；
+- 达流程 hard limit 后停止扩张并生成不收敛诊断；正常上下文交由宿主自动 compaction；
 - 禁止 Architect 无上限追加修复批次。
 
 达到上限必须产生结构化事件和原因，不得静默降低验证标准。
@@ -275,7 +275,8 @@ e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
 
 - T303-T321 与 T323-T324 全部完成；
 - 146-Tick 故障 fixture 全部通过；
-- Claude Code 与 Codex 的真实项目均至少发生一次 rollover 并完成；
+- Claude Code 与 Codex 的真实项目均在宿主自动 compaction 下无人工交接完成；
+- input/cache read-write/output、活动窗口和 Core payload 分项可归因，测量不得缺失；
 - 没有批次回退、非法进度、错误 runner、零测试或空快照假通过；
 - 成本报告可以解释至少 95% 的宿主已报告 usage；
 - 自动摘要和过期 BEACON 的负向测试证明不会影响 Core 状态；

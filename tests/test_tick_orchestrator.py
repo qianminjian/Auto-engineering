@@ -1020,12 +1020,13 @@ class TestBuildActionContexts:
             "files_changed": ["x.py"],
             "test_results": {"passed": 1, "failed": 0},
         }))
-        # DS-15: developer 完成后进入 critic, context 含 code 快照
+        # Phase 70: context 只在编译后的 worker prompt 中出现一次。
         assert action["action"] == "critic"
         assert action["stage"] == "critic"
-        assert action["context"]["files_changed"] == ["x.py"]
+        assert "context" not in action
         assert '"files_changed": [' in action["subagent_prompt"]
         assert '"x.py"' in action["subagent_prompt"]
+        assert action["extensions"]["context_manifest"]["duplicate_block_bytes"] == 0
 
     def test_system_verifier_receives_global_context(self) -> None:
         o = _orchestrator()
@@ -4182,10 +4183,11 @@ class TestF8ActionContextInjection:
             {"tasks": [{"file_targets": ["src/components/ApiKeyInput.tsx"]}]}]
         state = EngineState(thread_id="t", current_stage="component_verifier")
         action = b.build_action(state, batch_state=bs)
-        assert action["context"]["component"] == "ApiKeyInput"
-        assert action["context"]["design_section"] == "§6.2"
-        assert action["context"]["design_spec"] == "密码输入框 + Show/Hide"
-        assert action["context"]["implementation_files"] == ["src/components/ApiKeyInput.tsx"]
+        assert "context" not in action
+        assert '"ApiKeyInput"' in action["subagent_prompt"]
+        assert '"§6.2"' in action["subagent_prompt"]
+        assert "密码输入框 + Show/Hide" in action["subagent_prompt"]
+        assert "ApiKeyInput.tsx" in action["subagent_prompt"]
 
     def test_plate_deep_audit_action_has_plate_context(self, tmp_path, monkeypatch):
         b = self._builder(tmp_path, monkeypatch)
@@ -4198,9 +4200,12 @@ class TestF8ActionContextInjection:
         bs.current_plate.return_value = plate
         state = EngineState(thread_id="t", current_stage="plate_deep_audit")
         action = b.build_action(state, batch_state=bs)
-        assert action["context"]["plate"] == "工具模块"
-        assert action["context"]["components"] == ["voice-id.ts — Voice ID 校验"]
+        assert "context" not in action
         agents = action["spawn"]["agents"]
+        prompt = (tmp_path / agents[0]["prompt_ref"]).read_text(encoding="utf-8")
+        assert "工具模块" in prompt
+        assert "voice-id.ts — Voice ID 校验" in prompt
+        assert "prompt" not in agents[0]
         assert len({a["receipt_token"] for a in agents}) == 3
         assert all(a["receipt_path"].endswith(".json") for a in agents)
 

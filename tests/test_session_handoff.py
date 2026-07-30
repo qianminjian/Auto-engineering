@@ -45,6 +45,16 @@ def test_rollover_retry_returns_same_control_action() -> None:
     assert first["capsule"]["sha256"] == _capsule().payload_sha256
 
 
+def test_compaction_failure_is_a_valid_recovery_reason() -> None:
+    handoff = SessionHandoff(token_factory=lambda: "claim-1")
+    action = handoff.request_rollover(
+        current_session_id="session-1",
+        reason="context_compaction_failed",
+        capsule=_capsule(),
+    )
+    assert action["reason"] == "context_compaction_failed"
+
+
 def test_claim_is_idempotent_and_returns_original_active_action() -> None:
     handoff = SessionHandoff(
         token_factory=lambda: "claim-1",

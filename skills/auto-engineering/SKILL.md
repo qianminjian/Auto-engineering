@@ -52,7 +52,9 @@ checkpoint 是循环恢复边界，checkpoint 不要求 commit。普通 develope
 
 - `action == "error"`：报告 `error_code` 和 `message`，停止。
 - `action == "gate"` 或 `"skip"`：不写 result，直接执行下一次 tick。
-- `action == "session_rollover"`：旧会话立即停止所有工作 Action；通过宿主原生能力
+- `action == "session_rollover"`：仅表示进程退出、compaction 失败或跨宿主接管等
+  异常恢复；正常宿主 compaction 不产生该 Action。旧执行实例停止所有工作 Action；
+  通过宿主原生能力
   创建全新会话，只加载 `action.capsule` 指向的 ResumeCapsule，不携带完整聊天历史；
   新会话提交 `{stage:"session_claimed", claim_token, session_id, host}` 后，才可继续
   Core 返回的原 active Action。宿主不能创建/接管新会话时报告
@@ -75,8 +77,9 @@ action 明确要求时才提高。若 `HostCapabilities.subagents` 不可用，�
 能力满足时，使用宿主原生子代理能力：
 
 1. 单 Worker：将 `action.subagent_prompt` 原样交给该 Worker。
-2. 多 Worker：逐个将 `action.spawn.agents[i].prompt` 交给对应 Worker；不得把
-   Coordinator 的 `action.subagent_prompt` 复制给所有 Worker。
+2. 多 Worker：逐个读取并校验 `action.spawn.agents[i].prompt_ref` 与
+   `prompt_hash`，将对应正文交给 Worker；不得把 Coordinator 的
+   `action.subagent_prompt` 复制给所有 Worker。
 3. 按 `action.spawn.count` 和 `action.spawn.parallel` 创建隔离执行。
 4. 多 Worker 完成后，每个 Worker 必须以单个 JSON 覆写自己的
    `action.spawn.agents[i].receipt_path`，记录 `requested_effort` 与宿主可见的

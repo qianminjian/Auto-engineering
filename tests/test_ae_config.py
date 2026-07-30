@@ -46,8 +46,8 @@ class TestInitConfigTemplateContract:
         bad = re.findall(r"^\s*#?\s*AE_[A-Z_]+\s*=", text, re.MULTILINE)
         assert not bad, f"模板含 AE_UPPER key (读取器不识别): {bad}"
 
-    def test_template_emits_expected_kebab_keys(self, tmp_path) -> None:
-        """模板含代表性 kebab-case key，且不暴露已退役的 Provider 配置。"""
+    def test_standard_profile_emits_expected_kebab_keys(self, tmp_path) -> None:
+        """标准 Profile 含可读键、推荐治理值且不暴露退役配置。"""
         from auto_engineering.cli.doctor import _init_config
 
         _init_config(tmp_path)
@@ -57,9 +57,13 @@ class TestInitConfigTemplateContract:
             "debug", "pii-enabled", "max-tool-calls", "gate-timeout",
             "audit-log-dir",
         ):
-            assert re.search(rf"^# {re.escape(kebab)} = ", text, re.MULTILINE), (
-                f"模板缺少 kebab key: {kebab}"
+            assert re.search(rf"^#? ?{re.escape(kebab)} = ", text, re.MULTILINE), (
+                f"标准 Profile 缺少 kebab key: {kebab}"
             )
+        assert re.search(r'^metrics = "1"', text, re.MULTILINE)
+        assert re.search(r'^audit-log = "1"', text, re.MULTILINE)
+        assert re.search(r'^token-tracking = "1"', text, re.MULTILINE)
+        assert not re.search(r'^session-max-ticks = ', text, re.MULTILINE)
         assert "llm-provider" not in text
 
     def test_retired_llm_provider_is_not_configurable(self) -> None:
@@ -74,37 +78,43 @@ class TestInitConfigTemplateContract:
         )
         assert all(flag.key != "AE_LLM_PROVIDER" for flag in FEATURE_MANIFEST)
 
-    def test_template_roundtrip_readable(self, tmp_path) -> None:
-        """把模板每个 key 取消注释并赋值后, AeConfig 必须全部读到。
-
-        这是核心回归: 模拟用户照模板"取消注释所需功能"的真实路径。
-        """
+    def test_standard_profile_roundtrip_readable(self, tmp_path) -> None:
+        """生成值必须被 AeConfig 逐项无损读回。"""
         from auto_engineering.cli.doctor import _init_config
-        from auto_engineering.config.ae_config import SECTION_KEY_MAP, AeConfig
+        from auto_engineering.config.ae_config import AeConfig, standard_profile_values
 
         _init_config(tmp_path)
-        template = (tmp_path / "ae.toml").read_text(encoding="utf-8")
-
-        # 逐行转换: 保留 [section]; 把 "# key = ..." 转为 'key = "1"'
-        active_lines: list[str] = []
-        for line in template.splitlines():
-            stripped = line.strip()
-            if stripped.startswith("["):
-                active_lines.append(stripped)
-                continue
-            m = re.match(r"^# ([a-z][a-z0-9-]*) = ", stripped)
-            if m:
-                active_lines.append(f'{m.group(1)} = "1"')
-        (tmp_path / "ae.toml").write_text(
-            "\n".join(active_lines) + "\n", encoding="utf-8")
-
         cfg = AeConfig(tmp_path)
-        for mapping in SECTION_KEY_MAP.values():
-            for ae_key in mapping.values():
-                assert cfg.get(ae_key) == "1", (
-                    f"模板取消注释后 AeConfig 读不到 {ae_key} "
-                    f"(实际={cfg.get(ae_key)!r}) — 模板/读取器 key 格式不一致"
-                )
+        assert cfg.is_configured
+        for ae_key, expected in standard_profile_values().items():
+            assert cfg.get(ae_key) == expected
+
+    def test_empty_and_commented_files_are_not_configured(self, tmp_path) -> None:
+        from auto_engineering.config.ae_config import AeConfig
+
+        (tmp_path / "ae.toml").write_text("# only comments\n", encoding="utf-8")
+        assert not AeConfig(tmp_path).is_configured
+
+    def test_parse_error_is_exposed(self, tmp_path) -> None:
+        from auto_engineering.config.ae_config import AeConfig
+
+        (tmp_path / "ae.toml").write_text("[broken\n", encoding="utf-8")
+        cfg = AeConfig(tmp_path)
+        assert cfg.load_error
+        assert not cfg.is_configured
+
+    def test_deprecated_session_thresholds_emit_migration_warning(
+        self, tmp_path
+    ) -> None:
+        from auto_engineering.config.ae_config import AeConfig
+
+        (tmp_path / "ae.toml").write_text(
+            '[threshold]\nsession-max-ticks = "8"\n',
+            encoding="utf-8",
+        )
+        cfg = AeConfig(tmp_path)
+        assert cfg.migration_warnings
+        assert "不再控制正常续跑" in cfg.migration_warnings[0]
 
 
 class TestAeConfigKebabContract:

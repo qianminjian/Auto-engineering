@@ -57,22 +57,17 @@ def evaluate_budget(
     policy: ContextBudgetPolicy,
     usage: ContextUsage,
 ) -> BudgetOutcome:
-    """对相同策略和观测产生相同决策；未知 input 使用其他硬边界。"""
+    """只约束 Core 单次 Action；宿主上下文与流程保险丝由各自边界管理。
+
+    ``ticks``、``wall_seconds`` 和 ``input_units`` 为迁移期观测字段，不再触发
+    日常 session rollover。宿主负责活动上下文窗口和自动 compaction。
+    """
     if usage.prompt_bytes > policy.max_prompt_bytes:
         return BudgetOutcome(
             BudgetDecision.REJECT,
             reason="prompt_hard_limit",
             error_code="ACTION_CONTEXT_TOO_LARGE",
         )
-    if usage.input_units is not None:
-        if usage.input_units >= policy.hard_input_units:
-            return BudgetOutcome(BudgetDecision.ROLLOVER, "context_hard_limit")
-        if usage.input_units >= policy.soft_input_units:
-            return BudgetOutcome(BudgetDecision.ROLLOVER, "context_soft_limit")
-    if usage.ticks >= policy.max_session_ticks:
-        return BudgetOutcome(BudgetDecision.ROLLOVER, "tick_limit")
-    if usage.wall_seconds >= policy.max_session_wall_seconds:
-        return BudgetOutcome(BudgetDecision.ROLLOVER, "time_limit")
     return BudgetOutcome(BudgetDecision.CONTINUE)
 
 
