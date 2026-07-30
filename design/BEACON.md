@@ -1,6 +1,6 @@
 # Auto-Engineering BEACON
 
-> 创建：2026-06-24｜更新：2026-07-29｜阶段：v5.8 设计批准，Phase 64 待启动
+> 创建：2026-06-24｜更新：2026-07-30｜阶段：v5.8 Phase 66 完成，Phase 67 验收中
 > 决策状态翻转（✅↔❌）或架构降级必须先获用户批准。
 
 ## 目标与成功标准
@@ -45,24 +45,25 @@ Engineering；把 archive smoke 冒充真实产品安装；修改外部参考源
 - LoopEvent、SQLite EventStore、EngineState Projector 和单 Tick 原子事务已落地。
 - 11 个 Stage 已全部唯一注册 Handler；旧 stage-specific `_after_*` 已移除。
 - Host SPI 2.0、十类黄金轨迹、故障恢复和跨宿主语义等价已验收。
-- 双宿主 archive smoke 通过；Claude Code 真实安装与命令调用通过。
-- Phase 57 已完成告警归零与验收文档去漂移。
-- Codex CLI 已从 0.135.0 升级到 0.145.0；真实安装、启用、安装缓存
-  `doctor`、`gpt-5.6-sol` 新进程 Skill 加载和 status 调用均已通过。
+- 双宿主 archive smoke、Claude Code/Codex 真实安装、命令与 `doctor` 已通过。
 - v5.6 checkpoint 可一次性只读导入；旧调用入口在迁移期保持兼容。
-- Phase 59 已完成只读 SQLite、双宿主自包含 marketplace、manifest 零告警和
-  release 安全解压兼容；v5.7.0 release 已在两个真实宿主中安装并识别。
+- Phase 59 已完成只读 SQLite、自包含 marketplace、manifest 与 release 安全解压。
 - Phase 60 已完成 Prompt Contract、全阶段上下文编译、多 Agent 独立 receipt、
   Result 兼容警告和不可覆盖 rendered 日志。
 - Phase 62 已完成宿主诊断、计划同步、双宿主隔离生命周期、零告警 CI 加固和
   v5.7.1 GitHub Release；远端制品 SHA-256 已核验，阻塞：无。
-- Claude Code 146-Tick 真跑暴露上下文超限、计划回退、runner/空快照假通过；
-  永久事故报告及 Phase 64-67、T302-T324 已登记，代码尚未实施。
+- Phase 64 已完成真实运行可信度止血：计划增量、Gate runner、空快照与状态不变量
+  均 fail-closed。
+- Phase 65 已完成会话解耦：ContextBudget、ResumeCapsule、rollover/claim、SQLite
+  原子接管与双宿主适配落地；150 Tick/3 sessions 验收通过。
+- Phase 66 已完成有界 Prompt、ArtifactRef、Usage Ledger、摘要隔离与循环预算；
+  全量 2089 passed / 1 skipped，Ruff/mypy/sync 通过。
 
 ## 最近演进
 
 | 日期 | 变更 |
 |---|---|
+| 2026-07-30 | Phase 64-66 完成，开始 Phase 67 双宿主真实项目门禁 |
 | 2026-07-29 | 批准 v5.8 确定性状态与宿主会话解耦，登记 Phase 64-67 |
 | 2026-07-29 | 归档 146-Tick 真跑事故报告，补充摘要隔离与循环预算 |
 | 2026-07-28 | Phase 62 完成 T295-T300，v5.7.1 GitHub Release 正式发布 |
@@ -72,8 +73,7 @@ Engineering；把 archive smoke 冒充真实产品安装；修改外部参考源
 
 - T301：重构 `ae.toml` 首次配置闸门，使非交互宿主显式选择配置策略、准确报告
   环境变量/文件/默认值来源，并禁止通过管道模拟交互输入。
-- T303-T307：先完成真实运行可信度 P0 止血；在此之前不把中等规模无人值守真跑
-  作为发布证据。
+- T319-T321：完成双宿主真实项目、故障恢复与发布收口门禁。
 
 ## 引用文件
 

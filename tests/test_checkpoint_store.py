@@ -23,6 +23,8 @@ from auto_engineering.loop.checkpoint.store import (
     DB_SCHEMA_VERSION,
     SQLiteCheckpointStore,
 )
+from auto_engineering.loop.resume_capsule import ResumeCapsule
+from auto_engineering.loop.session_handoff import SessionHandoffError
 
 # ============================================================
 # Group 1: _with_conn
@@ -284,3 +286,72 @@ class TestStoreMemoryVsFile:
         assert ck.state["round"] == 42
         s1.close()
         s2.close()
+
+
+class TestSessionHandoffPersistence:
+    @staticmethod
+    def _capsule() -> ResumeCapsule:
+        return ResumeCapsule.create(
+            thread_id="thread-1",
+            source_session_id="session-1",
+            projection_sequence=5,
+            active_action={"message_id": "action-5", "action": "developer"},
+            state_digest={"stage": "developer"},
+            issued_at="2026-07-30T00:00:00+00:00",
+        )
+
+    def test_rollover_and_claim_survive_store_reopen(self, tmp_path: Path):
+        db = tmp_path / "handoff.db"
+        first = SQLiteCheckpointStore[dict](db)
+        action = first.record_session_rollover(
+            thread_id="thread-1",
+            source_session_id="session-1",
+            reason="tick_limit",
+            capsule=self._capsule(),
+            claim_token="claim-1",
+            artifact_id="capsule-1",
+        )
+        first.close()
+
+        second = SQLiteCheckpointStore[dict](db)
+        replay = second.record_session_rollover(
+            thread_id="thread-1",
+            source_session_id="session-1",
+            reason="tick_limit",
+            capsule=self._capsule(),
+            claim_token="different-ignored",
+            artifact_id="different-ignored",
+        )
+        claimed = second.claim_session(
+            claim_token="claim-1",
+            session_id="session-2",
+            host="codex",
+        )
+
+        assert replay == action
+        assert claimed == {"message_id": "action-5", "action": "developer"}
+        second.close()
+
+    def test_competing_persistent_claim_is_rejected(self, store):
+        store.record_session_rollover(
+            thread_id="thread-1",
+            source_session_id="session-1",
+            reason="manual",
+            capsule=self._capsule(),
+            claim_token="claim-1",
+            artifact_id="capsule-1",
+        )
+        store.claim_session(
+            claim_token="claim-1",
+            session_id="session-2",
+            host="claude_code",
+        )
+
+        with pytest.raises(SessionHandoffError) as exc:
+            store.claim_session(
+                claim_token="claim-1",
+                session_id="session-3",
+                host="codex",
+            )
+
+        assert exc.value.error_code == "SESSION_CLAIM_CONFLICT"

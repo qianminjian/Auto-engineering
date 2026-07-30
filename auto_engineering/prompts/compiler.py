@@ -45,6 +45,36 @@ def _stable_json(value: Any) -> str:
     return json.dumps(value, indent=2, ensure_ascii=False, sort_keys=True)
 
 
+_FORBIDDEN_HISTORY_FIELDS = frozenset({
+    "messages",
+    "transcript",
+    "conversation_history",
+    "action_history",
+})
+
+
+def select_stage_context(
+    contract: StagePromptContract,
+    context: dict[str, Any],
+) -> dict[str, Any]:
+    """只选择契约声明字段，并对历史与字节预算 fail-closed。"""
+    forbidden = _FORBIDDEN_HISTORY_FIELDS.intersection(context)
+    if forbidden:
+        raise PromptContextError(
+            "PROMPT_HISTORY_FORBIDDEN stage="
+            f"{contract.stage}: {', '.join(sorted(forbidden))}"
+        )
+    allowed = (*contract.required_context, *contract.optional_context)
+    selected = {key: context[key] for key in allowed if key in context}
+    size = len(_stable_json(selected).encode("utf-8"))
+    if size > contract.max_context_bytes:
+        raise PromptContextError(
+            f"PROMPT_CONTEXT_TOO_LARGE stage={contract.stage}: "
+            f"{size}>{contract.max_context_bytes}"
+        )
+    return selected
+
+
 def _render_prompt(
     *,
     role_prompt: str,
@@ -81,13 +111,15 @@ def compile_prompt_bundle(
             + ", ".join(missing)
         )
 
+    selected_context = select_stage_context(contract, context)
+
     if contract.execution_mode is ExecutionMode.INLINE:
         return CompiledPromptBundle(
             stage=contract.stage,
             coordinator_prompt=_render_prompt(
                 role_prompt=role_prompt,
                 role=contract.stage,
-                context=context,
+                context=selected_context,
                 expected_format=expected_format,
             ),
             worker_prompts=(),
@@ -107,7 +139,7 @@ def compile_prompt_bundle(
         coordinator_prompt = _render_prompt(
             role_prompt=role_sections[0],
             role=f"{contract.stage}_coordinator",
-            context=context,
+            context=selected_context,
             expected_format=expected_format,
         )
 
@@ -121,7 +153,7 @@ def compile_prompt_bundle(
         prompt = _render_prompt(
             role_prompt=worker_role_prompt,
             role=role,
-            context=context,
+            context=selected_context,
             expected_format=expected_format,
         )
         workers.append(CompiledWorkerPrompt(
@@ -145,4 +177,5 @@ __all__ = [
     "PromptContextError",
     "PromptLayoutError",
     "compile_prompt_bundle",
+    "select_stage_context",
 ]

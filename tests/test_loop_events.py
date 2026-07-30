@@ -86,6 +86,18 @@ def test_all_planned_event_types_are_explicit() -> None:
         "CheckpointImported",
         "LoopCompleted",
         "LoopFailed",
+        "ExecutionSessionStarted",
+        "SessionBudgetObserved",
+        "SessionRolloverRequested",
+        "ResumeCapsuleCreated",
+        "ExecutionSessionClaimed",
+        "ExecutionSessionClosed",
+        "ExecutionSessionAbandoned",
+        "UsageRecorded",
+        "ArtifactRegistered",
+        "PlanPatched",
+        "StateInvariantRejected",
+        "VerificationEvidenceBound",
     }
 
 

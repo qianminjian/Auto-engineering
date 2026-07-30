@@ -26,9 +26,9 @@ class TestGateSkipFirstClass:
         assert v.skipped is False
 
 
-class TestTestGateNoTestsIsSkip:
-    def test_no_tests_collected_is_skip_not_pass(self, tmp_path, monkeypatch):
-        """vitest exit=4（未收集到测试）→ skip，不再被误当通过。"""
+class TestTestGateNoTestsFailsClosed:
+    def test_no_tests_collected_fails_closed(self, tmp_path, monkeypatch):
+        """vitest exit=4（未收集到测试）→ fail，不得作为验证通过。"""
         import auto_engineering.gates.test_gate as tg
         from auto_engineering.gates.base import SubprocessResult
         from auto_engineering.gates.test_gate import TestGate
@@ -39,8 +39,46 @@ class TestTestGateNoTestsIsSkip:
                 returncode=4, stdout="No test files found", stderr=""))
         gate = TestGate(test_runner_bin="vitest")
         verdict = gate.run(tmp_path)
-        assert verdict.skipped is True
+        assert verdict.skipped is False
+        assert verdict.passed is False
+
+    def test_default_gate_uses_vitest_command_for_typescript_project(
+        self, tmp_path, monkeypatch
+    ):
+        """自动检测到 TypeScript 后，实际命令也必须是 vitest，不能仍执行 pytest。"""
+        import auto_engineering.gates.test_gate as tg
+        from auto_engineering.gates.base import SubprocessResult
+        from auto_engineering.gates.test_gate import TestGate
+
+        (tmp_path / "package.json").write_text('{"scripts":{"test":"vitest"}}')
+        captured: list[list[str]] = []
+
+        def fake_run(cmd, _cwd, _timeout):
+            captured.append(cmd)
+            return SubprocessResult(returncode=0, stdout="1 passed", stderr="")
+
+        monkeypatch.setattr(tg, "run_gate_command", fake_run)
+        verdict = TestGate().run(tmp_path)
+
         assert verdict.passed is True
+        assert captured == [["npx", "vitest", "run", "tests"]]
+
+    def test_unknown_runner_fails_without_execution(self, tmp_path, monkeypatch):
+        import auto_engineering.gates.test_gate as tg
+        from auto_engineering.gates.test_gate import TestGate
+
+        monkeypatch.setattr(
+            tg,
+            "run_gate_command",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                AssertionError("未知 runner 不得执行")
+            ),
+        )
+
+        verdict = TestGate(test_runner_bin="unknown-runner").run(tmp_path)
+
+        assert verdict.passed is False
+        assert "不支持" in verdict.message
 
 
 class TestLintGateTsSupport:

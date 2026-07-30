@@ -112,7 +112,7 @@ class ErrorResponse:
 # ── §C.3.4 各 Stage Result 验证规则 ──
 RESULT_SCHEMA: dict[str, dict] = {
     "architect": {
-        "required": ["stage", "plan", "batch_plan", "file_list"],
+        "required": ["stage", "plan", "file_list"],
         "batch_plan_min_batches": 1,
         "plan_min_length": 50,
     },
@@ -144,6 +144,9 @@ RESULT_SCHEMA: dict[str, dict] = {
         "required": ["stage", "findings", "p0_count", "p1_count", "p2_count",
                      "total_audited_files"],
         "severity_values": ["P0", "P1", "P2"],
+    },
+    "session_claimed": {
+        "required": ["stage", "claim_token", "session_id", "host"],
     },
 }
 
@@ -210,8 +213,22 @@ def validate_result_format(result: dict, stage: str) -> list[str]:
             errors.append(
                 f"plan 过短 ({len(plan)} < {schema['plan_min_length']})")
         batch_plan = result.get("batch_plan")
+        plan_patch = result.get("plan_patch")
+        if batch_plan is None and plan_patch is None:
+            errors.append("batch_plan 或 plan_patch 至少提供一个")
         if isinstance(batch_plan, list) and len(batch_plan) < schema["batch_plan_min_batches"]:
             errors.append("batch_plan 至少需 1 个 batch")
+        if plan_patch is not None:
+            if not isinstance(plan_patch, dict):
+                errors.append("plan_patch 必须为 object")
+            else:
+                if not isinstance(plan_patch.get("base_revision"), int):
+                    errors.append("plan_patch.base_revision 必须为 integer")
+                additions = plan_patch.get("add_batches")
+                if not isinstance(additions, list) or not additions:
+                    errors.append("plan_patch.add_batches 至少需 1 个 batch")
+                if plan_patch.get("reopen_completed"):
+                    errors.append("普通 plan_patch 不得重新打开已完成工作")
 
     # developer: test_results.failed==0 + files_changed 非空
     elif stage == "developer":

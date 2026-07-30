@@ -133,6 +133,10 @@ _WRITE_OWNERS: dict[str, frozenset[str]] = {
     "plan_refine_by_source":    frozenset({"orchestrator"}),
     "debug_enabled":           frozenset({"orchestrator"}),
     "debug_dir":               frozenset({"orchestrator"}),
+    "execution_session_id":    frozenset({"orchestrator"}),
+    "session_start_tick":      frozenset({"orchestrator"}),
+    "session_started_at":      frozenset({"orchestrator"}),
+    "session_input_units":     frozenset({"orchestrator"}),
 }
 
 # 合法 verdict 值
@@ -235,6 +239,10 @@ class EngineState:
     action_timestamp: float = 0.0  # #40 T112: _build_action() 出站时间戳 (跨 tick 计时)
     tick_token_usage: dict | None = None  # #41 T110b: 当前 tick 的 token 消耗 (JSONL 采集)
     session_summary: dict[str, Any] | None = None  # #42 T136: 跨进程滚动摘要 checkpoint
+    execution_session_id: str = ""  # #43 v5.8 当前宿主会话 identity
+    session_start_tick: int = 0  # #44 当前宿主会话开始时的业务 Tick
+    session_started_at: str = ""  # #45 UTC ISO 时间；跨进程预算基准
+    session_input_units: int = 0  # #46 当前宿主会话累计 input/cache usage
 
     # v5.5 P1-5: 写入审计日志 (repr=False 避免污染输出, 不参与序列化)
     _write_log: list[WriteRecord] = field(default_factory=list, repr=False, init=False)

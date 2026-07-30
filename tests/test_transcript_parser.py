@@ -80,6 +80,35 @@ class TestSessionTranscriptParserCollect:
         assert "claude-sonnet-4-6" in result["model"]
         assert result["message_count"] == 1
 
+    def test_collect_preserves_cache_read_and_write_usage(self, tmp_path, monkeypatch):
+        encoded = _encode_cwd(str(tmp_path))
+        session_dir = Path.home() / ".claude" / "projects" / encoded
+        session_dir.mkdir(parents=True, exist_ok=True)
+        jsonl_file = session_dir / "cache-session.jsonl"
+        jsonl_file.write_text(json.dumps({
+            "type": "assistant",
+            "message": {
+                "id": "cache-1",
+                "model": "claude",
+                "usage": {
+                    "input_tokens": 10,
+                    "output_tokens": 5,
+                    "cache_read_input_tokens": 300,
+                    "cache_creation_input_tokens": 40,
+                },
+            },
+        }) + "\n")
+        monkeypatch.setattr(
+            SessionTranscriptParser,
+            "_find_latest_session",
+            lambda self: jsonl_file,
+        )
+
+        result = SessionTranscriptParser(tmp_path).collect()
+
+        assert result["cache_read_tokens"] == 300
+        assert result["cache_write_tokens"] == 40
+
     def test_collect_skips_non_assistant(self, tmp_path, monkeypatch):
         """Only type=='assistant' lines are parsed."""
         encoded = _encode_cwd(str(tmp_path))

@@ -32,7 +32,19 @@
         "StageAdvanced",
         "CheckpointImported",
         "LoopCompleted",
-        "LoopFailed"
+        "LoopFailed",
+        "ExecutionSessionStarted",
+        "SessionBudgetObserved",
+        "SessionRolloverRequested",
+        "ResumeCapsuleCreated",
+        "ExecutionSessionClaimed",
+        "ExecutionSessionClosed",
+        "ExecutionSessionAbandoned",
+        "UsageRecorded",
+        "ArtifactRegistered",
+        "PlanPatched",
+        "StateInvariantRejected",
+        "VerificationEvidenceBound"
       ]
     },
     "causation_id": {"type": ["string", "null"], "minLength": 1},

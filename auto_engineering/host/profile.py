@@ -68,6 +68,11 @@ class HostProfile:
                 and self.detected.git_mutation
                 and self.authorized.git_mutation
             ),
+            session_handoff=(
+                self.declared.session_handoff
+                and self.detected.session_handoff
+                and self.authorized.session_handoff
+            ),
         )
 
 

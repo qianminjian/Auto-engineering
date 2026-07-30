@@ -152,7 +152,9 @@ def test_config_gate_handles_all_user_choices(
         lambda root: (root / "ae.toml").write_text(""),
     )
 
-    assert dev_loop._check_config_gate(tmp_path) is expected
+    assert dev_loop._check_config_gate(
+        tmp_path, interactive=True,
+    ) is expected
 
 
 def test_config_gate_short_circuits_for_env_or_file(
@@ -168,6 +170,86 @@ def test_config_gate_short_circuits_for_env_or_file(
     assert _check_config_gate(tmp_path) is True
 
 
+def test_noninteractive_config_gate_never_reads_piped_choice(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    import click
+
+    from auto_engineering.cli.dev_loop import _check_config_gate
+
+    monkeypatch.delenv("AE_SKIP_CONFIG_CHECK", raising=False)
+    monkeypatch.delenv("AE_CONFIG_POLICY", raising=False)
+    monkeypatch.setattr(
+        click,
+        "prompt",
+        lambda *args, **kwargs: pytest.fail("非交互宿主不得读取 stdin/pipeline"),
+    )
+
+    with pytest.raises(click.ClickException, match="CONFIG_POLICY_REQUIRED"):
+        _check_config_gate(tmp_path, interactive=False)
+    assert "ae.toml 未配置" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(("policy", "expected"), [("defaults", True), ("create", False)])
+def test_noninteractive_config_policies_are_explicit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    policy: str,
+    expected: bool,
+) -> None:
+    from auto_engineering.cli.dev_loop import _check_config_gate
+
+    monkeypatch.delenv("AE_SKIP_CONFIG_CHECK", raising=False)
+    assert _check_config_gate(
+        tmp_path,
+        policy=policy,
+        interactive=False,
+    ) is expected
+    if policy == "create":
+        assert (tmp_path / "ae.toml").is_file()
+
+
+def test_noninteractive_require_policy_pauses_with_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import click
+
+    from auto_engineering.cli.dev_loop import _check_config_gate
+
+    monkeypatch.delenv("AE_SKIP_CONFIG_CHECK", raising=False)
+    with pytest.raises(click.ClickException, match="CONFIG_POLICY_REQUIRED"):
+        _check_config_gate(
+            tmp_path,
+            policy="require",
+            interactive=False,
+        )
+
+
+def test_config_gate_reports_env_file_default_sources(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from auto_engineering.cli.dev_loop import _check_config_gate
+
+    monkeypatch.delenv("AE_SKIP_CONFIG_CHECK", raising=False)
+    monkeypatch.setenv("AE_METRICS", "1")
+
+    assert _check_config_gate(
+        tmp_path,
+        policy="defaults",
+        interactive=False,
+    )
+    output = capsys.readouterr().err
+    assert "[配置来源]" in output
+    assert "env=" in output
+    assert "file=0" in output
+    assert "default=" in output
+
+
 def test_tick_init_emits_action_and_closes_store(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -177,7 +259,11 @@ def test_tick_init_emits_action_and_closes_store(
     dev_loop = import_module("auto_engineering.cli.dev_loop")
 
     (tmp_path / "ae.toml").write_text("")
-    monkeypatch.setattr(dev_loop, "_check_config_gate", lambda root: True)
+    monkeypatch.setattr(
+        dev_loop,
+        "_check_config_gate",
+        lambda root, **kwargs: True,
+    )
     monkeypatch.setattr(dev_loop, "_build_injectables", lambda root: {
         "context_offloader": object(),
         "session_summarizer": object(),

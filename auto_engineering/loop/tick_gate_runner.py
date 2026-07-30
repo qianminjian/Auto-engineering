@@ -58,6 +58,16 @@ class TickGateRunner:
         tick: int = 0,
     ) -> tuple[dict[str, Any], float]:
         """Run all gates. Returns (gate_results_dict, duration_ms)."""
+        if not files_changed and any(
+            path.is_file()
+            and not {".git", ".ae-state", "_scratch"}.intersection(
+                path.relative_to(self._project_root).parts
+            )
+            for path in self._project_root.rglob("*")
+        ):
+            raise ValueError("GATE_SNAPSHOT_EMPTY: 非空项目的验证文件快照为空")
+        from auto_engineering.loop.guardrails.stateful import aggregate_files_sha
+        snapshot_sha = aggregate_files_sha(files_changed, self._project_root)
         gate_names = tuple(g.name for g in self._gates)
 
         gate_span = None
@@ -75,8 +85,9 @@ class TickGateRunner:
         per_gate = raw.get("gate_summary", raw)
         duration_ms = (time.perf_counter() - t_g) * 1000
 
-        from auto_engineering.loop.guardrails.stateful import aggregate_files_sha
-        snapshot_sha = aggregate_files_sha(files_changed, self._project_root)
+        after_snapshot_sha = aggregate_files_sha(files_changed, self._project_root)
+        if after_snapshot_sha != snapshot_sha:
+            raise ValueError("GATE_SNAPSHOT_CHANGED: 验证期间文件内容发生变化")
         ran_at = datetime.now(UTC).isoformat()
 
         gate_results: dict[str, Any] = {
@@ -90,6 +101,7 @@ class TickGateRunner:
                     else getattr(v, "message", "") or ""
                 ),
                 "files_snapshot_sha": snapshot_sha,
+                "selected_files": sorted(files_changed),
                 "ran_at": ran_at,
             }
             for name, v in per_gate.items()

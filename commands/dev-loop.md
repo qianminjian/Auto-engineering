@@ -36,6 +36,12 @@ Violating the letter of this rule is violating the spirit of this rule.
      if action.action in {"gate", "skip"}:
          action = scripts/ae-run dev-loop --tick
          continue
+     if action.action == "session_rollover":
+         stop all work in the old session
+         create a fresh host session and load only action.capsule
+         submit {stage:"session_claimed", claim_token, session_id, host}
+         if native session handoff is unavailable: fail closed
+         continue with the original active Action returned by Core
      read action.instruction
      if action.spawn exists:
          validate HostCapabilities against action.spawn
@@ -74,6 +80,8 @@ Violating the letter of this rule is violating the spirit of this rule.
 4. 能力满足时：单 Worker 使用 `action.subagent_prompt`；多 Worker 必须逐个使用
    `action.spawn.agents[i].prompt`，并让每个 Worker 覆写自己的
    `action.spawn.agents[i].receipt_path`。
+   Receipt 超过 Action 策略声明的上限时完整结果进入内容寻址 Artifact Store，
+   receipt 仅传有界摘要和 SHA-256 `artifact_ref`；本手册不复制策略默认数字。
 5. 多 Worker 的 `action.subagent_prompt` 仅供 Team Lead 合并输出；全部 receipt
    有效后才可覆写共享总 proof，Worker 不得竞争写共享 proof。
 6. 能力不足时，报告 `HOST_CAPABILITY_UNAVAILABLE` 并停止，不得 inline 替代
@@ -86,6 +94,11 @@ Violating the letter of this rule is violating the spirit of this rule.
 引擎会在 architect、developer、critic 完成后写入 `.ae-state/offload/`。
 developer 开始前读取 architect offload，critic 开始前读取 developer offload；
 具体路径以 `action.instruction` 为准。
+
+`session_rollover` 是控制 Action，不是自由文本 recap。旧会话不得继续执行工作；
+新会话只读取可校验 ResumeCapsule，提交 `session_claimed` 后才能恢复。宿主无原生
+会话创建/接管能力时必须返回 `HOST_SESSION_HANDOFF_UNAVAILABLE`，不得把完整历史
+复制到新会话，也不得在旧会话继续。
 
 ## 完成状态
 

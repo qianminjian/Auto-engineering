@@ -1,0 +1,15 @@
+{
+  "name": "claude_146_tick_plan_patch",
+  "source_tick": 146,
+  "base_revision": 3,
+  "completed_batch_range": [1, 26],
+  "completed_task_count": 85,
+  "patch_batch_range": [27, 32],
+  "expected_active_batch": "B27",
+  "failure_signatures": [
+    "active_batch_reset_to_B1",
+    "done_tasks_exceeds_total_tasks",
+    "wrong_test_runner_zero_tests_passed",
+    "empty_snapshot_passed"
+  ]
+}

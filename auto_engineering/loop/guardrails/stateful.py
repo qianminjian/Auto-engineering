@@ -160,12 +160,15 @@ def aggregate_files_sha(files_changed: list[str], project_root: Path) -> str:
     (代码被删除也是一种变更, 应影响哈希). files_changed 为空 → 空内容哈希.
     """
     h = hashlib.sha256()
-    root = Path(project_root)
+    root = Path(project_root).resolve()
     for f in sorted(files_changed or []):
+        candidate = (root / f).resolve(strict=False)
+        if not candidate.is_relative_to(root):
+            raise ValueError(f"SNAPSHOT_PATH_ESCAPE: 文件路径逃逸项目根: {f}")
         h.update(str(f).encode("utf-8"))
         h.update(b"\0")
         try:
-            h.update((root / f).read_bytes())
+            h.update(candidate.read_bytes())
         except OSError:
             h.update(b"<missing>")
         h.update(b"\0")

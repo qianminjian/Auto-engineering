@@ -55,9 +55,20 @@ from auto_engineering.loop.actions import (
     result_contract_warnings,
     validate_result_format,
 )
+from auto_engineering.loop.artifacts import (
+    ArtifactError,
+    ArtifactStore,
+    validate_worker_receipt,
+)
 from auto_engineering.loop.checkpoint.manager import CheckpointManager
 from auto_engineering.loop.checkpoint.records import CheckpointNotFoundError
 from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
+from auto_engineering.loop.context_authority import informational_drift
+from auto_engineering.loop.context_budget import (
+    BudgetDecision,
+    ContextUsage,
+    evaluate_budget,
+)
 from auto_engineering.loop.convergence import ConvergenceConfig, ConvergenceJudge, RoundHistory
 from auto_engineering.loop.debug_tracer import DebugTracer, now_iso
 from auto_engineering.loop.escalation_handler import (
@@ -68,6 +79,7 @@ from auto_engineering.loop.escalation_handler import (
 from auto_engineering.loop.event_store import SQLiteEventStore
 from auto_engineering.loop.events import LoopEvent, LoopEventType
 from auto_engineering.loop.guardrail import GuardrailChain
+from auto_engineering.loop.loop_budget import LoopUsage, evaluate_loop_budget
 from auto_engineering.loop.plan import Plan
 from auto_engineering.loop.protocol import (
     ProtocolErrorCode,
@@ -78,6 +90,8 @@ from auto_engineering.loop.protocol import (
 )
 from auto_engineering.loop.protocol_compat import upgrade_legacy_result
 from auto_engineering.loop.refine import build_refine_request
+from auto_engineering.loop.resume_capsule import ResumeCapsule
+from auto_engineering.loop.session_handoff import SessionHandoff
 from auto_engineering.loop.stage_router import (
     StageRouter,
     clear_stage_fields,
@@ -107,6 +121,7 @@ from auto_engineering.loop.tick_gate_runner import TickGateRunner
 from auto_engineering.metrics.collector import AIOrigin, get_collector
 from auto_engineering.metrics.enrichment import compute_metrics_signals
 from auto_engineering.metrics.transcript_parser import create_parser
+from auto_engineering.metrics.usage_ledger import UsageLedger, UsageRecord
 from auto_engineering.observability.audit_log import AuditLogger
 from auto_engineering.observability.tracing import _TracerLike
 from auto_engineering.pii.redactor import PIIRedactor
@@ -268,6 +283,7 @@ class TickOrchestrator:
         self._result_replays: dict[str, tuple[str, dict[str, Any]]] = {}
         self._current_result_message_id: str | None = None
         self._pending_domain_events: list[LoopEvent] = []
+        self._session_handoff = SessionHandoff()
         self._stage_handlers = StageHandlerRegistry(
             [
                 GapScanHandler(),
@@ -382,6 +398,8 @@ class TickOrchestrator:
             requirement=requirement,
             thread_id=str(uuid4()),
             prompt_registry_hash=default_registry().registry_hash(),  # B12.5 版本锁
+            execution_session_id=str(uuid4()),
+            session_started_at=datetime.now().astimezone().isoformat(),
         )
         if design_doc_path:
             # 持久化路径 — 跨进程 restore 据此重 parse 设计文档 (T9a)
@@ -627,7 +645,41 @@ class TickOrchestrator:
             tick_span = self._tracer.start_span(
                 f"tick.{stage_in}", attributes={"tick": tick_no, "stage": stage_in})
 
-        action = self._tick_body_dict(result)
+        if result.get("stage") == "session_claimed":
+            errors = validate_result_format(result, "session_claimed")
+            if errors:
+                action = ErrorResponse(
+                    "RESULT_VALIDATION_ERROR",
+                    "; ".join(errors),
+                    self._state.to_dict(),
+                ).to_dict()
+            else:
+                try:
+                    if self._checkpoint_store is not None:
+                        action = self._checkpoint_store.claim_session(
+                            claim_token=result["claim_token"],
+                            session_id=result["session_id"],
+                            host=result["host"],
+                        )
+                    else:
+                        action = self._session_handoff.claim(result)
+                    self._state.execution_session_id = result["session_id"]
+                    self._state.session_start_tick = self._state.tick
+                    self._state.session_started_at = datetime.now().astimezone().isoformat()
+                    self._state.session_input_units = 0
+                    self._active_action = action
+                    self._save_checkpoint()
+                    if self._checkpoint_store is not None:
+                        self._checkpoint_store.record_protocol_action(action)
+                except (KeyError, ValueError) as exc:
+                    error_code = getattr(exc, "error_code", "SESSION_CLAIM_INVALID")
+                    action = ErrorResponse(
+                        error_code,
+                        str(exc),
+                        self._state.to_dict(),
+                    ).to_dict()
+        else:
+            action = self._tick_body_dict(result)
         if "schema_version" not in action:
             action = action_envelope(
                 action,
@@ -1052,11 +1104,20 @@ class TickOrchestrator:
                             receipt = json.loads(
                                 receipt_file.read_text(encoding="utf-8")
                             )
-                            receipt_ok = (
-                                receipt.get("status") == "completed"
-                                and receipt.get("stage") == stage
+                            receipt_ok = validate_worker_receipt(
+                                receipt,
+                                expected_stage=stage,
+                                store=ArtifactStore(
+                                    self.project_root / ".ae-state" / "artifacts"
+                                ),
+                                receipt_limit=(
+                                    self._runtime_config.max_worker_receipt_bytes
+                                ),
+                                summary_limit=(
+                                    self._runtime_config.max_receipt_summary_bytes
+                                ),
                             )
-                        except (OSError, json.JSONDecodeError):
+                        except (OSError, json.JSONDecodeError, ArtifactError):
                             receipt_ok = False
                         if not receipt_ok:
                             missing_receipts.append(receipt_token)
@@ -1325,11 +1386,26 @@ class TickOrchestrator:
     def _initialize_architecture(self) -> None:
         """将 Architect 的纯决策物化为执行游标与进度树。"""
         batches = BatchState.flatten_batch_plan(self._state.batch_plan)
-        self._batch_state = (
-            BatchState.from_design_doc(self._design_doc, batches)
-            if self._design_doc
-            else BatchState.from_batch_plan(batches)
-        )
+        if self._batch_state is not None and self._state.plan_refine_count > 0:
+            completed = self._batch_state.completed_batch_ids()
+            base_revision = self._state._runtime_ctx.pop(
+                "plan_patch_base_revision",
+                self._state.plan_refine_count,
+            )
+            self._batch_state = self._batch_state.apply_plan_patch(
+                base_revision=int(base_revision),
+                active_revision=self._state.plan_refine_count,
+                add_batches=batches,
+                completed_batch_ids=completed,
+                design_doc=self._design_doc,
+            )
+            batches = self._batch_state.batch_plan
+        else:
+            self._batch_state = (
+                BatchState.from_design_doc(self._design_doc, batches)
+                if self._design_doc
+                else BatchState.from_batch_plan(batches)
+            )
 
         self._plan = tasks_from_batch_plan(batches, self._state.requirement)
 
@@ -1694,11 +1770,35 @@ class TickOrchestrator:
                 # build_action 发生在 stage checkpoint 之后；立即持久化，确保
                 # 下一次独立 --tick 进程能恢复刚注入的滚动摘要。
                 self._save_checkpoint()
-        # P2-4: log final action JSON AFTER all injections (session_summary etc.)
+        # v5.8: 先编译候选工作 Action，再以确定性预算决定是否改发 rollover。
         action = action_envelope(
             action,
             causation_id=self._current_result_message_id,
         )
+        action["extensions"]["policy_snapshot"] = {
+            **asdict(self._runtime_config.loop_budget_policy),
+            "max_worker_receipt_bytes": (
+                self._runtime_config.max_worker_receipt_bytes
+            ),
+            "max_receipt_summary_bytes": (
+                self._runtime_config.max_receipt_summary_bytes
+            ),
+        }
+        action = self._apply_loop_budget(action)
+        action = self._apply_context_budget(action)
+        if self._state.session_summary:
+            drift = informational_drift(
+                projection={
+                    "stage": self._state.current_stage,
+                    "tick": self._state.tick,
+                    "active_batch_id": self._last_batch_id,
+                    "plan_revision": self._state.plan_refine_count,
+                },
+                informational=self._state.session_summary,
+                source="session_summary",
+            )
+            if drift:
+                action.setdefault("extensions", {})["informational_drift"] = drift
         if action.get("action") != "error":
             if self._event_store is not None:
                 self._commit_event_action(action)
@@ -1707,6 +1807,135 @@ class TickOrchestrator:
                 self._checkpoint_store.record_protocol_action(action)
         self.action_builder.log_prompt(self.project_root, action)
         return action
+
+    def _apply_loop_budget(self, candidate: dict[str, Any]) -> dict[str, Any]:
+        if candidate.get("action") in {"done", "error", "session_rollover", "gate"}:
+            return candidate
+        state = self._state
+        if state is None:
+            return candidate
+        spawn = candidate.get("spawn")
+        requested_workers = (
+            int(spawn.get("count", 0)) if isinstance(spawn, dict) else 0
+        )
+        completed_workers = 0
+        for item in state.action_history:
+            if isinstance(item, dict):
+                completed_workers += int(
+                    _SPAWN_CONFIG.get(item.get("stage"), {}).get("count", 0)
+                )
+        outcome = evaluate_loop_budget(
+            self._runtime_config.loop_budget_policy,
+            LoopUsage(
+                repair_cycles=state.plan_refine_count,
+                requested_workers=requested_workers,
+                completed_workers=completed_workers,
+                plate_audits=sum(
+                    item.get("stage") == "plate_deep_audit"
+                    for item in state.action_history if isinstance(item, dict)
+                ),
+                system_audits=sum(
+                    item.get("stage") == "system_deep_audit"
+                    for item in state.action_history if isinstance(item, dict)
+                ),
+                next_stage=str(candidate.get("action", "")),
+            ),
+        )
+        if outcome.allowed:
+            return candidate
+        return action_envelope(
+            ActionError(
+                outcome.error_code or "LOOP_BUDGET_EXCEEDED",
+                "循环或 Agent 已达到策略硬上限，已停止继续扩张",
+            ).to_dict(),
+            thread_id=state.thread_id,
+            tick=state.tick + 1,
+            stage=state.current_stage,
+            causation_id=self._current_result_message_id,
+        )
+
+    def _apply_context_budget(self, candidate: dict[str, Any]) -> dict[str, Any]:
+        """达到会话边界时只发控制 Action；候选工作 Action进入 Capsule。"""
+        if candidate.get("action") in {"done", "error", "session_rollover"}:
+            return candidate
+        state = self._state
+        if state is None or not state.execution_session_id:
+            return candidate
+        try:
+            started = datetime.fromisoformat(state.session_started_at)
+            wall_seconds = max(
+                0, int((datetime.now().astimezone() - started).total_seconds())
+            )
+        except (TypeError, ValueError):
+            wall_seconds = self._runtime_config.session_max_seconds
+        prompt_bytes = len(json.dumps(
+            candidate, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+        ).encode("utf-8"))
+        outcome = evaluate_budget(
+            self._runtime_config.context_budget_policy,
+            ContextUsage(
+                ticks=max(0, state.tick - state.session_start_tick),
+                wall_seconds=wall_seconds,
+                input_units=state.session_input_units or None,
+                prompt_bytes=prompt_bytes,
+                estimated=state.session_input_units == 0,
+            ),
+        )
+        if outcome.decision is BudgetDecision.CONTINUE:
+            return candidate
+        if outcome.decision is BudgetDecision.REJECT:
+            return action_envelope(
+                ActionError(
+                    outcome.error_code or "ACTION_CONTEXT_TOO_LARGE",
+                    "候选 Action 超过单请求上下文硬限制，已拒绝且未截断",
+                ).to_dict(),
+                thread_id=state.thread_id,
+                tick=state.tick + 1,
+                stage=state.current_stage,
+                causation_id=self._current_result_message_id,
+            )
+
+        capsule = ResumeCapsule.create(
+            thread_id=state.thread_id,
+            source_session_id=state.execution_session_id,
+            projection_sequence=state.tick,
+            active_action=candidate,
+            state_digest={
+                "stage": state.current_stage,
+                "tick": state.tick,
+                "active_batch_id": self._last_batch_id,
+                "plan_revision": state.plan_refine_count,
+            },
+            policy_snapshot=asdict(self._runtime_config.context_budget_policy),
+            budget={
+                "ticks": state.tick - state.session_start_tick,
+                "wall_seconds": wall_seconds,
+                "input_units": state.session_input_units,
+                "prompt_bytes": prompt_bytes,
+            },
+        )
+        if self._checkpoint_store is not None:
+            rollover = self._checkpoint_store.record_session_rollover(
+                thread_id=state.thread_id,
+                source_session_id=state.execution_session_id,
+                reason=outcome.reason or "manual",
+                capsule=capsule,
+                claim_token=str(uuid4()),
+                artifact_id=str(uuid4()),
+            )
+        else:
+            rollover = self._session_handoff.request_rollover(
+                current_session_id=state.execution_session_id,
+                reason=outcome.reason or "manual",
+                capsule=capsule,
+            )
+        return action_envelope(
+            rollover,
+            thread_id=state.thread_id,
+            tick=state.tick + 1,
+            stage=state.current_stage,
+            causation_id=self._current_result_message_id,
+        )
 
     # ── T110b: Token 采集 ──
 
@@ -1722,6 +1951,35 @@ class TickOrchestrator:
                 usage["provider"] = provider
                 usage["usage_source"] = usage_source
                 self._state.tick_token_usage = usage
+                self._state.session_input_units += int(
+                    usage.get("input_tokens", 0)
+                    + usage.get("cache_read_tokens", 0)
+                    + usage.get("cache_write_tokens", 0)
+                )
+                if self._runtime_config.token_tracking_enabled:
+                    ledger = UsageLedger(
+                        self.project_root / ".ae-state" / "usage-ledger.db"
+                    )
+                    try:
+                        ledger.append(UsageRecord(
+                            thread_id=self._state.thread_id,
+                            session_id=(
+                                self._state.execution_session_id or "legacy-session"
+                            ),
+                            tick=self._state.tick,
+                            stage=self._state.current_stage or "unknown",
+                            worker=self._state.current_stage or "main",
+                            input_units=usage.get("input_tokens"),
+                            cache_read_units=usage.get("cache_read_tokens"),
+                            cache_write_units=usage.get("cache_write_tokens"),
+                            output_units=usage.get("output_tokens"),
+                            provider=provider or "unknown",
+                            model=usage.get("model") or "unknown",
+                            usage_source=usage_source,
+                            estimated=bool(usage.get("estimated", False)),
+                        ))
+                    finally:
+                        ledger.close()
                 _logger.debug(
                     "Token collect: tick=%d input=%d output=%d model=%s",
                     self._state.tick, usage["input_tokens"],
@@ -1843,7 +2101,15 @@ class TickOrchestrator:
             self._state.pending_gap_decisions = result.get("decisions", [])
         elif stage == "architect":
             self._state.plan = result.get("plan", "")
-            self._state.batch_plan = result.get("batch_plan", [])
+            plan_patch = result.get("plan_patch")
+            if isinstance(plan_patch, dict):
+                self._state.batch_plan = plan_patch.get("add_batches", [])
+                self._state._runtime_ctx["plan_patch_base_revision"] = (
+                    plan_patch.get("base_revision")
+                )
+            else:
+                self._state.batch_plan = result.get("batch_plan", [])
+                self._state._runtime_ctx.pop("plan_patch_base_revision", None)
             self._state.file_list = result.get("file_list", [])
             self._state.contracts = result.get("contracts", {})
         elif stage == "developer":
@@ -1945,8 +2211,13 @@ class TickOrchestrator:
 
     def _run_developer_gates(self) -> None:
         """Run all gates via TickGateRunner delegate (P0-1)."""
+        snapshot_files = (
+            self._dev_snapshot.get("files_changed", [])
+            if self._dev_snapshot and not self._state.files_changed
+            else self._state.files_changed
+        )
         results, duration_ms = self._tick_gate_runner.run(
-            self._state.files_changed,
+            snapshot_files,
             stage=self._state.current_stage,
             tick=self._state.tick)
         self._state.gate_results = results

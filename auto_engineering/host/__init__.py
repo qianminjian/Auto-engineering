@@ -64,6 +64,7 @@ class HostCapabilities:
     transcript_usage: bool = False
     web_search: bool = False
     git_mutation: bool = False
+    session_handoff: bool = False
 
 
 @dataclass(frozen=True)
@@ -174,10 +175,12 @@ _CAPABILITIES = {
         transcript_usage=True,
         web_search=True,
         git_mutation=True,
+        session_handoff=True,
     ),
     HostPlatform.CODEX: HostCapabilities(
         skills=True,
         hooks=_COMMON_HOOKS,
+        session_handoff=True,
         subagents=True,
         parallel_subagents=True,
         web_search=True,

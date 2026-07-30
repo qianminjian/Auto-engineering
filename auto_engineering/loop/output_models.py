@@ -27,6 +27,10 @@ class ArchitectOutput(BaseModel):
             "tasks:[{id, description, module_ref, file_targets}], depends_on}]"
         ),
     )
+    plan_patch: dict[str, Any] | None = Field(
+        default=None,
+        description="修复轮增量计划 {base_revision, add_batches}",
+    )
     contracts: dict = Field(default_factory=dict, description="跨模块契约")
 
 

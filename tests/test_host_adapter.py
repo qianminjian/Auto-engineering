@@ -104,6 +104,58 @@ def test_execution_report_rejects_unstructured_host_payload() -> None:
         adapter.report_execution({"status": "completed"})
 
 
+@pytest.mark.parametrize("platform_name", ["CLAUDE_CODE", "CODEX"])
+def test_rollover_maps_to_same_fail_closed_host_protocol(platform_name: str) -> None:
+    from auto_engineering.host import HostPlatform
+    from auto_engineering.host.adapters import adapter_for
+
+    adapter = adapter_for(HostPlatform[platform_name])
+    profile = adapter.profile(
+        detected=adapter.capabilities,
+        authorized=adapter.capabilities,
+    )
+    mapped = adapter.map_action({
+        "action": "session_rollover",
+        "message_id": "rollover-1",
+        "claim_token": "claim-1",
+        "capsule": {
+            "artifact_id": "capsule-1",
+            "sha256": "a" * 64,
+            "schema_version": "1.0",
+        },
+    }, profile=profile)
+
+    control = mapped.payload["host_control"]
+    assert control["operation"] == "create_fresh_session"
+    assert control["load_capsule"]["artifact_id"] == "capsule-1"
+    assert control["submit_result"]["stage"] == "session_claimed"
+    assert control["submit_result"]["claim_token"] == "claim-1"
+    assert control["fail_closed"] is True
+
+
+def test_rollover_fails_when_host_cannot_handoff_session() -> None:
+    from auto_engineering.host import HostCapabilities, HostPlatform
+    from auto_engineering.host.adapters import adapter_for
+
+    adapter = adapter_for(HostPlatform.CODEX)
+    profile = adapter.profile(
+        detected=HostCapabilities(skills=True, session_handoff=False),
+        authorized=adapter.capabilities,
+    )
+
+    with pytest.raises(ValueError, match="HOST_SESSION_HANDOFF_UNAVAILABLE"):
+        adapter.map_action({
+            "action": "session_rollover",
+            "message_id": "rollover-1",
+            "claim_token": "claim-1",
+            "capsule": {
+                "artifact_id": "capsule-1",
+                "sha256": "a" * 64,
+                "schema_version": "1.0",
+            },
+        }, profile=profile)
+
+
 def test_host_report_boundary_recovers_without_retaining_invalid_payload() -> None:
     from auto_engineering.host import HostPlatform
     from auto_engineering.host.adapters import adapter_for

@@ -64,6 +64,23 @@ class _Adapter2Mixin:
         if not isinstance(requirements, Mapping):
             raise ValueError("HOST_ACTION_INVALID: 能力需求必须为 object")
         effective = profile.effective
+        mapped_payload = dict(action)
+        if action.get("action") == "session_rollover":
+            if not effective.session_handoff:
+                raise ValueError("HOST_SESSION_HANDOFF_UNAVAILABLE")
+            claim_token = action.get("claim_token")
+            capsule = action.get("capsule")
+            if not isinstance(claim_token, str) or not isinstance(capsule, Mapping):
+                raise ValueError("HOST_ACTION_INVALID: rollover 契约不完整")
+            mapped_payload["host_control"] = {
+                "operation": "create_fresh_session",
+                "load_capsule": dict(capsule),
+                "submit_result": {
+                    "stage": "session_claimed",
+                    "claim_token": claim_token,
+                },
+                "fail_closed": True,
+            }
         for name, required in requirements.items():
             if not required:
                 continue
@@ -78,7 +95,7 @@ class _Adapter2Mixin:
         return MappedHostAction(
             platform=self.platform,
             message_id=message_id,
-            payload=dict(action),
+            payload=mapped_payload,
         )
 
     def report_execution(

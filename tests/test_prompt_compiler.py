@@ -142,3 +142,66 @@ def test_system_audit_workers_receive_coverage_map() -> None:
 
     assert len(bundle.worker_prompts) == 5
     assert all('"status": "MISSING"' in w.prompt for w in bundle.worker_prompts)
+
+
+def test_context_selector_drops_undeclared_completed_batch_history() -> None:
+    contract = default_prompt_contracts()["developer"]
+    history = [{"batch_id": f"B{i}", "result": "done"} for i in range(100)]
+
+    bundle = compile_prompt_bundle(
+        contract=contract,
+        role_prompt="你是 Developer。",
+        context={
+            "requirement": "实现当前批次",
+            "feedback": "修复当前问题",
+            "batch_id": "B101",
+            "component": "Kernel",
+            "tasks": [{"id": "T101"}],
+            "toolchain": {"test_runner": "pytest"},
+            "completed_batches": history,
+        },
+        expected_format={"files_changed": "array"},
+    )
+
+    assert "B101" in bundle.coordinator_prompt
+    assert "B99" not in bundle.coordinator_prompt
+    assert "completed_batches" not in bundle.coordinator_prompt
+
+
+def test_context_selector_rejects_conversation_history_even_if_extra() -> None:
+    contract = default_prompt_contracts()["developer"]
+
+    with pytest.raises(PromptContextError, match="PROMPT_HISTORY_FORBIDDEN"):
+        compile_prompt_bundle(
+            contract=contract,
+            role_prompt="你是 Developer。",
+            context={
+                "requirement": "实现当前批次",
+                "feedback": None,
+                "batch_id": "B1",
+                "component": "Kernel",
+                "tasks": [{"id": "T1"}],
+                "toolchain": {},
+                "action_history": [{"tick": i} for i in range(100)],
+            },
+            expected_format={"files_changed": "array"},
+        )
+
+
+def test_context_selector_rejects_selected_context_over_budget() -> None:
+    contract = default_prompt_contracts()["developer"]
+
+    with pytest.raises(PromptContextError, match="PROMPT_CONTEXT_TOO_LARGE"):
+        compile_prompt_bundle(
+            contract=contract,
+            role_prompt="你是 Developer。",
+            context={
+                "requirement": "x" * 70_000,
+                "feedback": None,
+                "batch_id": "B1",
+                "component": "Kernel",
+                "tasks": [{"id": "T1"}],
+                "toolchain": {},
+            },
+            expected_format={"files_changed": "array"},
+        )

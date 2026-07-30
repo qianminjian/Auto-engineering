@@ -23,7 +23,8 @@
       "enum": [
         "gap_scan", "gap_review", "research", "architect", "developer",
         "critic", "component_verifier", "plate_deep_audit",
-        "system_verifier", "system_deep_audit", "gate", "skip", "done", "error"
+        "system_verifier", "system_deep_audit", "gate", "skip",
+        "session_rollover", "done", "error"
       ]
     },
     "gate_summary": {"type": "object"},
@@ -61,7 +62,20 @@
     "verdict_level": {"type": ["integer", "null"]},
     "verdict_reason": {"type": ["string", "null"]},
     "rounds": {"type": "integer"},
-    "checkpoint_id": {"type": "string"}
+    "checkpoint_id": {"type": "string"},
+    "current_session_id": {"type": "string", "minLength": 1},
+    "capsule": {
+      "type": "object",
+      "required": ["artifact_id", "sha256", "schema_version"],
+      "properties": {
+        "artifact_id": {"type": "string", "minLength": 1},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "schema_version": {"const": "1.0"}
+      },
+      "additionalProperties": false
+    },
+    "claim_token": {"type": "string", "minLength": 1},
+    "expires_at": {"type": ["string", "null"]}
     ,"metrics": {"type": "object"}
     ,"ratchet": {"type": ["object", "null"]}
   },
@@ -81,6 +95,22 @@
     {
       "if": {"properties": {"action": {"const": "done"}}},
       "then": {"required": ["verdict"]}
+    },
+    {
+      "if": {"properties": {"action": {"const": "session_rollover"}}},
+      "then": {
+        "required": [
+          "reason", "current_session_id", "capsule", "claim_token", "expires_at"
+        ],
+        "properties": {
+          "reason": {
+            "enum": [
+              "context_soft_limit", "context_hard_limit", "tick_limit",
+              "time_limit", "manual"
+            ]
+          }
+        }
+      }
     }
   ],
   "additionalProperties": false

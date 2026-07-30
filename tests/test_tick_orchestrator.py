@@ -894,7 +894,7 @@ class TestPlanRefineProgressSync:
         }))
         foo_nodes = [n for n in o._progress_tree.nodes.values() if n.name == "Foo"]
         assert len(foo_nodes) == 1  # 未删除
-        assert foo_nodes[0].design_status == "removed"  # 标记 removed
+        assert foo_nodes[0].design_status == "stable"  # 已完成事实不可由普通 patch 删除
 
 
 class TestVerifierRecheck:
@@ -2073,10 +2073,12 @@ class TestTwoRoundDesignDocE2E:
     """
 
     @staticmethod
-    def _dev_critic_approve(o: TickOrchestrator) -> dict:
+    def _dev_critic_approve(
+        o: TickOrchestrator, batch_id: str = "b-Foo"
+    ) -> dict:
         """developer → critic APPROVE → 返回 component_verifier action."""
         o.tick(_make_result_file({
-            "stage": "developer", "batch_id": "b-Foo", "files_changed": ["foo.py"],
+            "stage": "developer", "batch_id": batch_id, "files_changed": ["foo.py"],
             "test_results": {"passed": 1, "failed": 0},
         }))
         return o.tick(_make_result_file({
@@ -2117,10 +2119,27 @@ class TestTwoRoundDesignDocE2E:
         assert o._state.plan_refine_count == 1
 
         # ── 轮 2: architect 重排 → dev → critic → component_verifier(clean) → audit → done
-        a = o.tick(_make_result_file(_LEAF_ARCH_RESULT))
+        repair_plan = {
+            **_LEAF_ARCH_RESULT,
+            "batch_plan": [
+                *_LEAF_ARCH_RESULT["batch_plan"],
+                {
+                    "batch_id": "b-Foo-fix",
+                    "design_section": "B2",
+                    "component": "Foo",
+                    "tasks": [{
+                        "id": "T2",
+                        "description": "修复 Foo 覆盖缺口",
+                        "module_ref": "§B2",
+                        "file_targets": ["foo.py"],
+                    }],
+                },
+            ],
+        }
+        a = o.tick(_make_result_file(repair_plan))
         assert a["stage"] == "developer"  # refine 后重回开发
 
-        a = self._dev_critic_approve(o)
+        a = self._dev_critic_approve(o, "b-Foo-fix")
         assert a["stage"] == "component_verifier"
 
         a = o.tick(_make_result_file({

@@ -15,8 +15,8 @@ import pytest
 
 from auto_engineering.engine.state import EngineState, LoopState
 
-# v5.6 状态字段（含 #42 T136 跨进程摘要）。
-_EXPECTED_V56_FIELDS = {
+# v5.8 状态字段（含 #43-46 ExecutionSession 预算锚点）。
+_EXPECTED_V58_FIELDS = {
     "requirement", "current_stage", "round",
     "thread_id", "majors_in_a_row", "total_majors",
     "plan", "file_list", "batch_plan", "contracts",
@@ -42,6 +42,9 @@ _EXPECTED_V56_FIELDS = {
     "tick_token_usage",
     # #42 T136: checkpoint 持久化滚动摘要
     "session_summary",
+    # #43-46 v5.8 ExecutionSession 与 ContextBudget
+    "execution_session_id", "session_start_tick",
+    "session_started_at", "session_input_units",
     # 内部写入审计日志
     "_write_log",
     # P1-28: 运行时句柄 (不进 checkpoint)
@@ -159,9 +162,9 @@ class TestEngineStateFieldDefaults:
 
         EngineState()
         field_names = {f.name for f in fields(EngineState)}
-        expected = _EXPECTED_V56_FIELDS
+        expected = _EXPECTED_V58_FIELDS
         assert field_names == expected, (
-            f"EngineState 字段不匹配 v5.6. "
+            f"EngineState 字段不匹配 v5.8. "
             f"缺失: {expected - field_names}, 多余: {field_names - expected}"
         )
 
@@ -307,11 +310,11 @@ class TestEngineStateBoundary:
         assert not hasattr(state, "nonexistent")
 
     def test_to_dict_contains_all_fields(self) -> None:
-        """to_dict 输出含全部 44 字段（不含内部字段）。"""
+        """to_dict 输出含全部 48 字段（不含内部字段）。"""
         state = EngineState()
         d = state.to_dict()
-        assert len(d) == 44, (
-            f"to_dict 应含 44 字段, 实际 {len(d)}: "
+        assert len(d) == 48, (
+            f"to_dict 应含 48 字段, 实际 {len(d)}: "
             f"{sorted(d.keys())}"
         )
         assert "suggested_fix" in d, "to_dict 必须包含 suggested_fix (Self-Refine 深化)"
@@ -434,10 +437,10 @@ class TestV55EngineStateFields:
 
         EngineState()
         field_names = {f.name for f in fields(EngineState)}
-        assert field_names == _EXPECTED_V56_FIELDS, (
-            f"EngineState 字段不匹配 v5.6. "
-            f"缺失: {_EXPECTED_V56_FIELDS - field_names}, "
-            f"多余: {field_names - _EXPECTED_V56_FIELDS}"
+        assert field_names == _EXPECTED_V58_FIELDS, (
+            f"EngineState 字段不匹配 v5.8. "
+            f"缺失: {_EXPECTED_V58_FIELDS - field_names}, "
+            f"多余: {field_names - _EXPECTED_V58_FIELDS}"
         )
 
 

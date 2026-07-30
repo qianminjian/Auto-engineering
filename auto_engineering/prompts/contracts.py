@@ -30,6 +30,9 @@ class StagePromptContract:
     execution_mode: ExecutionMode
     required_context: tuple[str, ...]
     worker_roles: tuple[str, ...] = ()
+    optional_context: tuple[str, ...] = ()
+    artifact_kinds: tuple[str, ...] = ()
+    max_context_bytes: int = 65_536
 
 
 _CONTRACTS: Mapping[str, StagePromptContract] = MappingProxyType({
@@ -48,35 +51,44 @@ _CONTRACTS: Mapping[str, StagePromptContract] = MappingProxyType({
         ExecutionMode.SINGLE_WORKER,
         ("requirement", "design_doc_path"),
         ("architect",),
+        ("feedback",),
+        ("design_document",),
     ),
     "developer": StagePromptContract(
         "developer",
         ExecutionMode.INLINE,
         ("requirement", "feedback", "batch_id", "component", "tasks", "toolchain"),
+        optional_context=("task_guidance", "git_authorized"),
+        artifact_kinds=("design_document", "test_evidence"),
     ),
     "critic": StagePromptContract(
         "critic",
         ExecutionMode.SINGLE_WORKER,
         ("requirement", "files_changed", "test_results", "design_scope"),
         ("critic",),
+        ("commit_hash",),
+        ("diff", "test_evidence"),
     ),
     "component_verifier": StagePromptContract(
         "component_verifier",
         ExecutionMode.SINGLE_WORKER,
         ("component", "design_section", "design_spec", "implementation_files"),
         ("component_verifier",),
+        artifact_kinds=("design_document", "source_snapshot"),
     ),
     "plate_deep_audit": StagePromptContract(
         "plate_deep_audit",
         ExecutionMode.MULTI_WORKER,
         ("plate", "components"),
         ("contract_dataflow", "architecture", "code_quality_virtualization"),
+        artifact_kinds=("audit_report", "source_snapshot"),
     ),
     "system_verifier": StagePromptContract(
         "system_verifier",
         ExecutionMode.SINGLE_WORKER,
         ("design_doc_path", "file_list", "component_coverage"),
         ("system_verifier",),
+        artifact_kinds=("design_document", "coverage_report"),
     ),
     "system_deep_audit": StagePromptContract(
         "system_deep_audit",
@@ -89,6 +101,7 @@ _CONTRACTS: Mapping[str, StagePromptContract] = MappingProxyType({
             "virtualization",
             "team_design_coverage",
         ),
+        artifact_kinds=("audit_report", "coverage_report", "source_snapshot"),
     ),
 })
 

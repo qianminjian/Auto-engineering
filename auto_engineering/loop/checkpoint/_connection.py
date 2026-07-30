@@ -84,7 +84,7 @@ def _atomic(conn: sqlite3.Connection) -> Iterator[sqlite3.Connection]:
     try:
         yield conn
         conn.commit()
-    except sqlite3.Error:
+    except BaseException:
         conn.rollback()
         raise
 
@@ -176,6 +176,21 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
         """
         CREATE INDEX IF NOT EXISTS idx_protocol_actions_thread_active
         ON protocol_actions(thread_id, is_active)
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS session_handoffs (
+            thread_id TEXT PRIMARY KEY,
+            source_session_id TEXT NOT NULL,
+            reason TEXT NOT NULL,
+            rollover_action_json TEXT NOT NULL,
+            capsule_json TEXT NOT NULL,
+            claim_token TEXT NOT NULL UNIQUE,
+            claimed_session_id TEXT,
+            claimed_host TEXT,
+            created_at TEXT NOT NULL
+        )
         """
     )
     conn.commit()

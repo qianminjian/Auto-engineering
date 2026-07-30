@@ -120,6 +120,11 @@ def main():
               help="T64: 指定 stage 前暂停 (逗号分隔, 如 architect,critic)")
 @click.option("--escalate", "escalate_flag", is_flag=True,
               help="T95: 触发 escalation gate — 将当前 batch 升级为人工决策")
+@click.option(
+    "--config-policy",
+    type=click.Choice(["require", "defaults", "create"]),
+    help="ae.toml 缺失时的显式策略；非交互宿主必须指定",
+)
 def dev_loop(
     requirement: str | None,
     init_flag: bool,
@@ -136,6 +141,7 @@ def dev_loop(
     pause_at_stage: str | None = None,
     escalate_flag: bool = False,
     verbose_flag: bool = False,
+    config_policy: str | None = None,
 ):
     """内部协议 — `commands/dev-loop.md` Skill driving loop 调用.
 
@@ -171,7 +177,7 @@ def dev_loop(
             raise SystemExit(1)
         run_tick_init(requirement, design_doc, root, max_rounds, debug=_debug,
                        debug_dir=debug_dir_opt, pause_at_stage=pause_at_stage,
-                       escalate=escalate_flag)
+                       escalate=escalate_flag, config_policy=config_policy)
         return
     if tick_flag:
         if not result_file:

@@ -51,6 +51,11 @@ checkpoint 是循环恢复边界，checkpoint 不要求 commit。普通 develope
 
 - `action == "error"`：报告 `error_code` 和 `message`，停止。
 - `action == "gate"` 或 `"skip"`：不写 result，直接执行下一次 tick。
+- `action == "session_rollover"`：旧会话立即停止所有工作 Action；通过宿主原生能力
+  创建全新会话，只加载 `action.capsule` 指向的 ResumeCapsule，不携带完整聊天历史；
+  新会话提交 `{stage:"session_claimed", claim_token, session_id, host}` 后，才可继续
+  Core 返回的原 active Action。宿主不能创建/接管新会话时报告
+  `HOST_SESSION_HANDOFF_UNAVAILABLE` 并停止，禁止在旧会话降级继续。
 - `action.spawn` 存在：检查当前 `HostCapabilities`，再按以下规则执行。
 - 无 `action.spawn`：仅 developer 阶段可由主 Agent inline 执行。
 
@@ -74,6 +79,9 @@ action 明确要求时才提高。若 `HostCapabilities.subagents` 不可用，�
 3. 按 `action.spawn.count` 和 `action.spawn.parallel` 创建隔离执行。
 4. 多 Worker 完成后，每个 Worker 必须以单个 JSON 覆写自己的
    `action.spawn.agents[i].receipt_path`；workers must not write the shared total proof。
+   Receipt 超过 Action 策略声明的上限时必须将完整结果写入内容寻址 Artifact
+   Store，receipt 只保留策略允许的有界摘要与带 SHA-256 的 `artifact_ref`；
+   Skill 不复制策略默认数字。
 5. Team Lead 收齐并验证全部 receipt 后，按 `action.subagent_prompt` 合并输出，
    再覆写 `action.spawn_proof_token` 对应的总 proof。
 6. 从真实输出中提取 `action.expected_format` 要求的字段。只有全部要求的 Worker

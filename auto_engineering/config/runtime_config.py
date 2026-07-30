@@ -15,8 +15,13 @@ from __future__ import annotations
 import os as _os
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from auto_engineering.host import HostPlatform, detect_host
+
+if TYPE_CHECKING:
+    from auto_engineering.loop.context_budget import ContextBudgetPolicy
+    from auto_engineering.loop.loop_budget import LoopBudgetPolicy
 
 
 def _default(key: str) -> str:
@@ -75,6 +80,10 @@ class RuntimeConfig:
         return self.get("AE_STRICT_RED", _default("AE_STRICT_RED")).strip() == "1"
 
     @property
+    def config_policy(self) -> str:
+        return self.get("AE_CONFIG_POLICY", _default("AE_CONFIG_POLICY")).strip()
+
+    @property
     def production_mode(self) -> bool:
         """Phase 44: AE_PRODUCTION duplicate. Alias for production_enabled."""
         return self.production_enabled
@@ -110,6 +119,81 @@ class RuntimeConfig:
     def max_tool_calls(self) -> int | None:
         val = self.get("AE_MAX_TOOL_CALLS", _default("AE_MAX_TOOL_CALLS")).strip()
         return int(val) if val else None
+
+    @property
+    def session_max_ticks(self) -> int:
+        return int(self.get("AE_SESSION_MAX_TICKS", _default("AE_SESSION_MAX_TICKS")).strip())
+
+    @property
+    def session_max_seconds(self) -> int:
+        return int(self.get("AE_SESSION_MAX_SECONDS", _default("AE_SESSION_MAX_SECONDS")).strip())
+
+    @property
+    def context_soft_input(self) -> int:
+        return int(self.get("AE_CONTEXT_SOFT_INPUT", _default("AE_CONTEXT_SOFT_INPUT")).strip())
+
+    @property
+    def context_hard_input(self) -> int:
+        return int(self.get("AE_CONTEXT_HARD_INPUT", _default("AE_CONTEXT_HARD_INPUT")).strip())
+
+    @property
+    def max_prompt_bytes(self) -> int:
+        return int(self.get("AE_MAX_PROMPT_BYTES", _default("AE_MAX_PROMPT_BYTES")).strip())
+
+    @property
+    def context_budget_policy(self) -> ContextBudgetPolicy:
+        """Build the versioned session budget policy from the manifest SSOT."""
+        from auto_engineering.loop.context_budget import ContextBudgetPolicy
+
+        return ContextBudgetPolicy(
+            policy_id="context-budget-v1",
+            max_session_ticks=self.session_max_ticks,
+            max_session_wall_seconds=self.session_max_seconds,
+            soft_input_units=self.context_soft_input,
+            hard_input_units=self.context_hard_input,
+            max_prompt_bytes=self.max_prompt_bytes,
+        )
+
+    @property
+    def max_worker_receipt_bytes(self) -> int:
+        return int(self.get("AE_MAX_WORKER_RECEIPT_BYTES", _default("AE_MAX_WORKER_RECEIPT_BYTES")).strip())
+
+    @property
+    def max_receipt_summary_bytes(self) -> int:
+        return int(self.get("AE_MAX_RECEIPT_SUMMARY_BYTES", _default("AE_MAX_RECEIPT_SUMMARY_BYTES")).strip())
+
+    @property
+    def max_repair_cycles(self) -> int:
+        return int(self.get("AE_MAX_REPAIR_CYCLES", _default("AE_MAX_REPAIR_CYCLES")))
+
+    @property
+    def max_workers_per_stage(self) -> int:
+        return int(self.get("AE_MAX_WORKERS_PER_STAGE", _default("AE_MAX_WORKERS_PER_STAGE")))
+
+    @property
+    def max_workers_per_thread(self) -> int:
+        return int(self.get("AE_MAX_WORKERS_PER_THREAD", _default("AE_MAX_WORKERS_PER_THREAD")))
+
+    @property
+    def max_plate_audits(self) -> int:
+        return int(self.get("AE_MAX_PLATE_AUDITS", _default("AE_MAX_PLATE_AUDITS")))
+
+    @property
+    def max_system_audits(self) -> int:
+        return int(self.get("AE_MAX_SYSTEM_AUDITS", _default("AE_MAX_SYSTEM_AUDITS")))
+
+    @property
+    def loop_budget_policy(self) -> LoopBudgetPolicy:
+        from auto_engineering.loop.loop_budget import LoopBudgetPolicy
+
+        return LoopBudgetPolicy(
+            policy_id="loop-budget-v1",
+            max_repair_cycles=self.max_repair_cycles,
+            max_workers_per_stage=self.max_workers_per_stage,
+            max_workers_per_thread=self.max_workers_per_thread,
+            max_plate_audits=self.max_plate_audits,
+            max_system_audits=self.max_system_audits,
+        )
 
     # ── provider credentials (NOT feature flags — secrets) ──
 

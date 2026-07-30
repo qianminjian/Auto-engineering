@@ -136,7 +136,12 @@ def _build_injectables(
     return result
 
 
-def _check_config_gate(root: Path) -> bool:
+def _check_config_gate(
+    root: Path,
+    *,
+    policy: str | None = None,
+    interactive: bool | None = None,
+) -> bool:
     """Phase 45 T214: ae.toml 不存在时强制暂停确认配置。
 
     Returns:
@@ -147,20 +152,36 @@ def _check_config_gate(root: Path) -> bool:
 
     import click as _click
 
-    if _os.environ.get("AE_SKIP_CONFIG_CHECK") == "1":
-        return True
-
     toml_path = root / "ae.toml"
     if toml_path.exists():
         return True
 
+    from auto_engineering.config.ae_config import AeConfig
     from auto_engineering.config.feature_flags import FEATURE_MANIFEST, get_feature_status
 
     status = get_feature_status()
     active = [k for k, v in status.items() if v.get("active")]
+    config = AeConfig(root)
+    source_counts = {"env": 0, "file": 0, "default": 0}
+    for feature in FEATURE_MANIFEST:
+        source_counts[config.source_for(feature.key)] += 1
+    selected_policy = (
+        policy
+        or _os.environ.get("AE_CONFIG_POLICY", "").strip()
+        or ("defaults" if _os.environ.get("AE_SKIP_CONFIG_CHECK") == "1" else "")
+    )
+    if interactive is None:
+        import sys
+        interactive = sys.stdin.isatty()
 
     _click.echo("", err=True)
-    _click.echo("⚠  ae.toml 未配置 — 将使用内置默认值启动", err=True)
+    _click.echo("⚠  ae.toml 未配置", err=True)
+    _click.echo(
+        "[配置来源] "
+        f"env={source_counts['env']} file={source_counts['file']} "
+        f"default={source_counts['default']}",
+        err=True,
+    )
     _click.echo("", err=True)
     _click.echo(f"当前生效的功能 (仅内置默认值, {len(active)}/{len(FEATURE_MANIFEST)} active):", err=True)
     for f in FEATURE_MANIFEST:
@@ -178,6 +199,33 @@ def _check_config_gate(root: Path) -> bool:
     _click.echo("  [2] 运行 ae doctor --init-config 生成模板后自行编辑", err=True)
     _click.echo("  [3] 使用当前默认值继续 (不推荐)", err=True)
     _click.echo("", err=True)
+
+    if selected_policy:
+        if selected_policy == "defaults":
+            _click.echo(
+                f"[配置] policy=defaults，显式接受 env/default 合并配置；"
+                f"{len(active)}/{len(FEATURE_MANIFEST)} 项激活",
+                err=True,
+            )
+            return True
+        if selected_policy == "create":
+            from auto_engineering.cli.doctor import _init_config
+            _init_config(root)
+            _click.echo("已生成 ae.toml；编辑后重新运行", err=True)
+            return False
+        if selected_policy == "require":
+            raise _click.ClickException(
+                "CONFIG_POLICY_REQUIRED: policy=require 且 ae.toml 不存在"
+            )
+        raise _click.ClickException(
+            f"CONFIG_POLICY_INVALID: {selected_policy}"
+        )
+
+    if not interactive:
+        raise _click.ClickException(
+            "CONFIG_POLICY_REQUIRED: 非交互宿主必须使用 "
+            "--config-policy require|defaults|create 或 AE_CONFIG_POLICY"
+        )
 
     choice = _click.prompt("输入 1/2/3", type=int, default=3, err=True)
     if choice == 1:
@@ -203,12 +251,13 @@ def run_tick_init(
     debug: bool = False, debug_dir: str | None = None,
     pause_at_stage: str | None = None,
     escalate: bool = False,
+    config_policy: str | None = None,
 ) -> None:
     """ae dev-loop --init: 初始化 tick loop, 输出第一个 action JSON (stdout 契约)."""
     import click
 
     # Phase 45: 配置闸门
-    if not _check_config_gate(root):
+    if not _check_config_gate(root, policy=config_policy):
         return
 
     import hashlib

@@ -66,21 +66,26 @@ class TestGate(Gate):
         self.test_paths = test_paths if test_paths is not None else ["tests"]
         self.files_changed = files_changed
 
-    def _resolve_test_cmd(self) -> list[str] | None:
+    def _resolve_test_cmd(self, runner: str) -> list[str] | None:
         """解析 test_runner 命令.
 
         v5.0 §IL-AC-02 兼容 5 语言 test_runner:
             - pytest / vitest / go test / cargo test / bats
         """
-        if self.test_runner_bin == "vitest":
+        if runner == "vitest":
             return ["npx", "vitest", "run"]
-        if self.test_runner_bin:
-            return [self.test_runner_bin]
-        if shutil.which(self.test_runner_bin):
-            return [self.test_runner_bin]
-        # 兜底: python -m pytest (仅 Python 生态)
-        if self.test_runner_bin == "pytest" and shutil.which("python"):
-            return ["python", "-m", "pytest"]
+        if runner == "pytest":
+            if shutil.which("pytest"):
+                return ["pytest"]
+            if shutil.which("python"):
+                return ["python", "-m", "pytest"]
+            return None
+        if runner == "go test":
+            return ["go", "test"]
+        if runner == "cargo test":
+            return ["cargo", "test"]
+        if runner == "bats":
+            return ["bats"]
         return None
 
     def _files_to_pytest_k(self) -> str | None:
@@ -118,7 +123,7 @@ class TestGate(Gate):
             - 兼容无 pyproject.toml 的临时目录: 检测不到 inifile 时不强制加 --timeout
         """
         runner = runner or self.test_runner_bin
-        cmd_base = self._resolve_test_cmd()
+        cmd_base = self._resolve_test_cmd(runner)
         if cmd_base is None:
             return []
 
@@ -168,7 +173,7 @@ class TestGate(Gate):
         cmd = self._build_cmd(project_root, runner)
         if not cmd:
             return GateVerdict.failed(
-                f"{runner} 命令未找到 (PATH 也无 python)",
+                f"不支持或未找到 test runner: {runner}",
                 gate_name=self.name,
             )
 
@@ -193,11 +198,10 @@ class TestGate(Gate):
             )
 
         if result.returncode in (4, 5):
-            # P0 修复 (2026-07-26 真跑): exit=4/5 = 未收集到测试 → skip（非通过）。
-            # 旧版报 ok（✓）使「没测到」被误当「通过」，TS 项目测试门禁形同虚设。
+            # v5.8 T304: 未收集到测试不是可信验证，必须 fail-closed。
             output = result.stdout + result.stderr
             snippet = output[-300:] if len(output) > 300 else output
-            return GateVerdict.skip(
+            return GateVerdict.failed(
                 f"{runner} 未收集到测试 (exit={result.returncode})\n{snippet}",
                 gate_name=self.name,
             )

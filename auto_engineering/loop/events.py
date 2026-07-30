@@ -28,6 +28,18 @@ class LoopEventType(StrEnum):
     CHECKPOINT_IMPORTED = "CheckpointImported"
     LOOP_COMPLETED = "LoopCompleted"
     LOOP_FAILED = "LoopFailed"
+    EXECUTION_SESSION_STARTED = "ExecutionSessionStarted"
+    SESSION_BUDGET_OBSERVED = "SessionBudgetObserved"
+    SESSION_ROLLOVER_REQUESTED = "SessionRolloverRequested"
+    RESUME_CAPSULE_CREATED = "ResumeCapsuleCreated"
+    EXECUTION_SESSION_CLAIMED = "ExecutionSessionClaimed"
+    EXECUTION_SESSION_CLOSED = "ExecutionSessionClosed"
+    EXECUTION_SESSION_ABANDONED = "ExecutionSessionAbandoned"
+    USAGE_RECORDED = "UsageRecorded"
+    ARTIFACT_REGISTERED = "ArtifactRegistered"
+    PLAN_PATCHED = "PlanPatched"
+    STATE_INVARIANT_REJECTED = "StateInvariantRejected"
+    VERIFICATION_EVIDENCE_BOUND = "VerificationEvidenceBound"
 
 
 class LoopEventValidationError(ValueError):

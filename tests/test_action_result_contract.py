@@ -173,8 +173,10 @@ class TestActionSchemaStagesMirrorSSOT:
         return set(_ACTION_SCHEMA["properties"]["action"]["enum"])
 
     def test_intermediate_stages_match_ssot(self):
-        intermediate = self._enum() - {"gate", "skip", "done", "error"}
-        expected = set(RESULT_SCHEMA) | set(_PHASE0_STAGES)
+        intermediate = self._enum() - {
+            "gate", "skip", "session_rollover", "done", "error",
+        }
+        expected = (set(RESULT_SCHEMA) - {"session_claimed"}) | set(_PHASE0_STAGES)
         assert intermediate == expected, (
             f"action enum 中间 stage 漂移: {intermediate} vs {expected}"
         )

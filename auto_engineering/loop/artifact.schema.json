@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://auto-engineering.dev/schemas/artifact.schema.json",
+  "title": "ArtifactRef",
+  "type": "object",
+  "required": [
+    "artifact_id", "kind", "sha256", "size_bytes", "media_type", "schema_version"
+  ],
+  "properties": {
+    "artifact_id": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "kind": {"type": "string", "minLength": 1},
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "size_bytes": {"type": "integer", "minimum": 0},
+    "media_type": {"const": "application/json"},
+    "schema_version": {"const": "1.0"}
+  },
+  "additionalProperties": false
+}

@@ -237,6 +237,79 @@ class BatchState:
         task_ids = {t["id"] for t in batch.get("tasks", [])}
         return [t for t in plan.get_tasks_by_stage("developer") if t.id in task_ids]
 
+    def completed_batch_ids(self) -> set[str]:
+        """根据确定性游标返回已经越过的 batch ID。"""
+        completed: set[str] = set()
+        for plate_idx, plate in enumerate(self.plates):
+            for component_idx, component in enumerate(plate.components):
+                batches = self.batches_for(component)
+                if plate_idx < self.current_plate_idx:
+                    completed.update(str(batch["batch_id"]) for batch in batches)
+                    continue
+                if plate_idx > self.current_plate_idx:
+                    continue
+                if component_idx < self.current_component_idx:
+                    completed.update(str(batch["batch_id"]) for batch in batches)
+                    continue
+                if component_idx == self.current_component_idx:
+                    completed.update(
+                        str(batch["batch_id"])
+                        for batch in batches[: self.current_batch_idx]
+                    )
+        return completed
+
+    def apply_plan_patch(
+        self,
+        *,
+        base_revision: int,
+        active_revision: int,
+        add_batches: list[dict],
+        completed_batch_ids: set[str],
+        design_doc: DesignDoc | None = None,
+    ) -> BatchState:
+        """追加修复批次并定位首个未完成工作，禁止覆盖完成事实。"""
+        if base_revision != active_revision:
+            raise ValueError(
+                f"PLAN_REVISION_CONFLICT: base={base_revision}, active={active_revision}"
+            )
+        existing = {str(batch["batch_id"]): batch for batch in self.batch_plan}
+        combined = list(self.batch_plan)
+        for batch in self.flatten_batch_plan(add_batches):
+            batch_id = str(batch["batch_id"])
+            if batch_id in existing:
+                if existing[batch_id] != batch:
+                    raise ValueError(f"PLAN_BATCH_CONFLICT: {batch_id}")
+                continue
+            existing[batch_id] = batch
+            combined.append(batch)
+
+        patched = (
+            self.from_design_doc(design_doc, combined)
+            if design_doc is not None
+            else self.from_batch_plan(combined)
+        )
+        pending_id = next(
+            (
+                str(batch["batch_id"])
+                for batch in combined
+                if str(batch["batch_id"]) not in completed_batch_ids
+            ),
+            None,
+        )
+        if pending_id is None:
+            patched.current_plate_idx = len(patched.plates)
+            return patched
+
+        for plate_idx, plate in enumerate(patched.plates):
+            for component_idx, component in enumerate(plate.components):
+                for batch_idx, batch in enumerate(patched.batches_for(component)):
+                    if str(batch["batch_id"]) == pending_id:
+                        patched.current_plate_idx = plate_idx
+                        patched.current_component_idx = component_idx
+                        patched.current_batch_idx = batch_idx
+                        return patched
+        raise ValueError(f"PLAN_ACTIVE_BATCH_MISSING: {pending_id}")
+
     # ------------------------------------------------------------------
     # 推进方法 (有副作用, 仅 Orchestrator 调用)
     # ------------------------------------------------------------------

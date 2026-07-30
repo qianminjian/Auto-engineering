@@ -17,9 +17,9 @@ def test_current_design_entrypoints_are_compact_and_traceable() -> None:
     assert len(beacon.splitlines()) <= 80
     assert len(tracker.splitlines()) <= 160
     for entrypoint in (
-        "design/v5.6-Design-Loop.md",
-        "design/v5.7-Protocol-Kernel-Design.md",
-        "design/v5.7-Protocol-Kernel-PLAN.md",
+        "design/v5.8-Session-Decoupling-Design.md",
+        "design/v5.8-Session-Decoupling-PLAN.md",
+        "design/incidents/2026-07-29-claude-146-tick-long-run.md",
         "design/IMPLEMENTATION-TRACKER.md",
         "design/HISTORY.md",
     ):

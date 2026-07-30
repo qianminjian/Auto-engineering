@@ -48,12 +48,25 @@ SECTION_KEY_MAP: dict[str, dict[str, str]] = {
         "pii-guardrail-mode": "AE_PII_GUARDRAIL_MODE",
         "production": "AE_PRODUCTION",
         "strict-red": "AE_STRICT_RED",
+        "config-policy": "AE_CONFIG_POLICY",
     },
     "performance": {
         "max-tool-calls": "AE_MAX_TOOL_CALLS",
     },
     "threshold": {
         "gate-timeout": "AE_GATE_TIMEOUT",
+        "session-max-ticks": "AE_SESSION_MAX_TICKS",
+        "session-max-seconds": "AE_SESSION_MAX_SECONDS",
+        "context-soft-input": "AE_CONTEXT_SOFT_INPUT",
+        "context-hard-input": "AE_CONTEXT_HARD_INPUT",
+        "max-prompt-bytes": "AE_MAX_PROMPT_BYTES",
+        "max-repair-cycles": "AE_MAX_REPAIR_CYCLES",
+        "max-workers-per-stage": "AE_MAX_WORKERS_PER_STAGE",
+        "max-workers-per-thread": "AE_MAX_WORKERS_PER_THREAD",
+        "max-plate-audits": "AE_MAX_PLATE_AUDITS",
+        "max-system-audits": "AE_MAX_SYSTEM_AUDITS",
+        "max-worker-receipt-bytes": "AE_MAX_WORKER_RECEIPT_BYTES",
+        "max-receipt-summary-bytes": "AE_MAX_RECEIPT_SUMMARY_BYTES",
     },
 }
 
@@ -109,6 +122,14 @@ class AeConfig:
                         self._toml_data[ae_key] = str(val)
 
         _logger.debug("ae.toml loaded: %d keys from %s", len(self._toml_data), toml_path)
+
+    def source_for(self, key: str) -> str:
+        """返回最终配置来源，不暴露配置值。"""
+        if key in _os.environ:
+            return "env"
+        if key in self._toml_data:
+            return "file"
+        return "default"
 
     def get(self, key: str) -> str:
         """Return value for *key* using priority: os.environ > ae.toml > default_value.

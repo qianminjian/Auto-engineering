@@ -33,6 +33,8 @@ from auto_engineering.loop.checkpoint.records import (
     CheckpointSchemaMismatchError,
     T,
 )
+from auto_engineering.loop.resume_capsule import ResumeCapsule
+from auto_engineering.loop.session_handoff import SessionHandoffError
 
 # SQLite 表结构 Schema 版本号 (变更时 +1, 用于未来兼容)
 DB_SCHEMA_VERSION = 1
@@ -120,6 +122,19 @@ class SQLiteCheckpointStore[T]:
                 self._shared_conn.execute(
                     "CREATE INDEX IF NOT EXISTS idx_protocol_actions_thread_active "
                     "ON protocol_actions(thread_id, is_active)"
+                )
+                self._shared_conn.execute(
+                    """CREATE TABLE IF NOT EXISTS session_handoffs (
+                        thread_id TEXT PRIMARY KEY,
+                        source_session_id TEXT NOT NULL,
+                        reason TEXT NOT NULL,
+                        rollover_action_json TEXT NOT NULL,
+                        capsule_json TEXT NOT NULL,
+                        claim_token TEXT NOT NULL UNIQUE,
+                        claimed_session_id TEXT,
+                        claimed_host TEXT,
+                        created_at TEXT NOT NULL
+                    )"""
                 )
                 self._shared_conn.commit()
         else:
@@ -506,6 +521,103 @@ class SQLiteCheckpointStore[T]:
         if row is None:
             return None
         return row["result_hash"], json.loads(row["response_json"])
+
+    def record_session_rollover(
+        self,
+        *,
+        thread_id: str,
+        source_session_id: str,
+        reason: str,
+        capsule: ResumeCapsule,
+        claim_token: str,
+        artifact_id: str,
+    ) -> dict[str, Any]:
+        """原子保存 rollover 与 Capsule；同一 thread 重试返回原 Action。"""
+        with self._conn() as conn, _atomic(conn):
+            row = conn.execute(
+                "SELECT source_session_id, reason, rollover_action_json, capsule_json "
+                "FROM session_handoffs WHERE thread_id = ?",
+                (thread_id,),
+            ).fetchone()
+            if row is not None:
+                if (
+                    row["source_session_id"] != source_session_id
+                    or row["reason"] != reason
+                    or json.loads(row["capsule_json"]) != capsule.to_dict()
+                ):
+                    raise SessionHandoffError(
+                        "SESSION_HANDOFF_PENDING", "已有不同的 session handoff"
+                    )
+                return json.loads(row["rollover_action_json"])
+
+            action = {
+                "action": "session_rollover",
+                "reason": reason,
+                "current_session_id": source_session_id,
+                "capsule": {
+                    "artifact_id": artifact_id,
+                    "sha256": capsule.payload_sha256,
+                    "schema_version": capsule.schema_version,
+                },
+                "claim_token": claim_token,
+                "expires_at": None,
+            }
+            conn.execute(
+                """
+                INSERT INTO session_handoffs
+                (thread_id, source_session_id, reason, rollover_action_json,
+                 capsule_json, claim_token, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    thread_id,
+                    source_session_id,
+                    reason,
+                    json.dumps(action, ensure_ascii=False, sort_keys=True),
+                    json.dumps(capsule.to_dict(), ensure_ascii=False, sort_keys=True),
+                    claim_token,
+                    datetime.now(UTC).isoformat(),
+                ),
+            )
+            return action
+
+    def claim_session(
+        self,
+        *,
+        claim_token: str,
+        session_id: str,
+        host: str,
+    ) -> dict[str, Any]:
+        """以条件更新原子消费 claim token；完全重复请求幂等。"""
+        with self._conn() as conn, _atomic(conn):
+            row = conn.execute(
+                """
+                SELECT capsule_json, claimed_session_id, claimed_host
+                FROM session_handoffs WHERE claim_token = ?
+                """,
+                (claim_token,),
+            ).fetchone()
+            if row is None:
+                raise SessionHandoffError("SESSION_CLAIM_INVALID", "claim token 无效")
+            if row["claimed_session_id"] is not None:
+                if (
+                    row["claimed_session_id"] != session_id
+                    or row["claimed_host"] != host
+                ):
+                    raise SessionHandoffError(
+                        "SESSION_CLAIM_CONFLICT", "claim token 已由其他 session 使用"
+                    )
+            else:
+                conn.execute(
+                    """
+                    UPDATE session_handoffs
+                    SET claimed_session_id = ?, claimed_host = ?
+                    WHERE claim_token = ? AND claimed_session_id IS NULL
+                    """,
+                    (session_id, host, claim_token),
+                )
+            capsule = ResumeCapsule.from_dict(json.loads(row["capsule_json"]))
+            return dict(capsule.active_action)
 
     def count(self) -> int:
         """返回 Checkpoint 总数."""

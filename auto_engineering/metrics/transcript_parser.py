@@ -68,16 +68,20 @@ class SessionTranscriptParser:
 
         total_input = 0
         total_output = 0
+        total_cache_read = 0
+        total_cache_write = 0
         models: set[str] = set()
         message_count = 0
 
         # Main session file — incremental read
         try:
-            new_offset, input_t, output_t, models_set, msg_count = (
+            new_offset, input_t, output_t, cache_read, cache_write, models_set, msg_count = (
                 self._read_incremental(session_file, self._offset))
             self._offset = new_offset
             total_input += input_t
             total_output += output_t
+            total_cache_read += cache_read
+            total_cache_write += cache_write
             models.update(models_set)
             message_count += msg_count
         except (json.JSONDecodeError, OSError):
@@ -91,11 +95,16 @@ class SessionTranscriptParser:
                     fkey = str(agent_file)
                     sub_off = self._subagent_offset.get(fkey, 0)
                     try:
-                        new_off, input_t, output_t, models_set, msg_count = (
+                        (
+                            new_off, input_t, output_t, cache_read,
+                            cache_write, models_set, msg_count,
+                        ) = (
                             self._read_incremental(agent_file, sub_off))
                         self._subagent_offset[fkey] = new_off
                         total_input += input_t
                         total_output += output_t
+                        total_cache_read += cache_read
+                        total_cache_write += cache_write
                         models.update(models_set)
                         message_count += msg_count
                     except (OSError, UnicodeDecodeError, ValueError):
@@ -108,6 +117,8 @@ class SessionTranscriptParser:
         return {
             "input_tokens": total_input,
             "output_tokens": total_output,
+            "cache_read_tokens": total_cache_read,
+            "cache_write_tokens": total_cache_write,
             "model": ", ".join(sorted(models)) if models else "unknown",
             "message_count": message_count,
             "source": "transcript",
@@ -138,7 +149,7 @@ class SessionTranscriptParser:
 
     def _read_incremental(
         self, filepath: Path, offset: int,
-    ) -> tuple[int, int, int, set[str], int]:
+    ) -> tuple[int, int, int, int, int, set[str], int]:
         """Read new lines from *filepath* starting at *offset*.
 
         Returns (new_offset, input_tokens, output_tokens, models_set, msg_count).
@@ -146,11 +157,11 @@ class SessionTranscriptParser:
         try:
             stat = filepath.stat()
         except OSError:
-            return offset, 0, 0, set(), 0
+            return offset, 0, 0, 0, 0, set(), 0
 
         file_size = stat.st_size
         if offset >= file_size:
-            return offset, 0, 0, set(), 0
+            return offset, 0, 0, 0, 0, set(), 0
 
         with open(filepath, encoding="utf-8") as fh:
             fh.seek(offset)
@@ -159,6 +170,8 @@ class SessionTranscriptParser:
         new_offset = offset + len(raw.encode("utf-8"))
         total_input = 0
         total_output = 0
+        total_cache_read = 0
+        total_cache_write = 0
         models: set[str] = set()
         msg_count = 0
 
@@ -182,17 +195,29 @@ class SessionTranscriptParser:
             if usage:
                 total_input += usage.get("input_tokens", 0)
                 total_output += usage.get("output_tokens", 0)
+                total_cache_read += usage.get("cache_read_input_tokens", 0)
+                total_cache_write += usage.get("cache_creation_input_tokens", 0)
                 msg_count += 1
             model = msg.get("model", "")
             if model:
                 models.add(model)
 
-        return new_offset, total_input, total_output, models, msg_count
+        return (
+            new_offset,
+            total_input,
+            total_output,
+            total_cache_read,
+            total_cache_write,
+            models,
+            msg_count,
+        )
 
     def _empty_result(self) -> dict[str, Any]:
         return {
             "input_tokens": 0,
             "output_tokens": 0,
+            "cache_read_tokens": 0,
+            "cache_write_tokens": 0,
             "model": "unknown",
             "message_count": 0,
             "source": "transcript",

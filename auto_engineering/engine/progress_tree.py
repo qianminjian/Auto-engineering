@@ -249,6 +249,12 @@ class ProgressTree:
             if nid in self.nodes:  # ref 命中
                 node = self.nodes[nid]
                 changed = False
+                if not structural and node.done_tasks > total:
+                    raise ValueError(
+                        "STATE_INVARIANT_VIOLATION: "
+                        f"done_tasks={node.done_tasks} > total_tasks={total} "
+                        f"for {nid}"
+                    )
                 if not structural and total != node.total_tasks:
                     node.total_tasks = total  # 保留 done_tasks
                     # T40 D1: plan_refine 后旧 verifier 结果已失效, 重置为 pending
