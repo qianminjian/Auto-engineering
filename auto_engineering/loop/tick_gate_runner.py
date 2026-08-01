@@ -11,6 +11,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from auto_engineering.gates.profile import ProfileCommandGate
+from auto_engineering.project_profile.models import ProjectProfile
+
 
 class TickGateRunner:
     """Gate execution subsystem — runs all gates and returns structured results.
@@ -24,7 +27,7 @@ class TickGateRunner:
         self,
         project_root: Path,
         *,
-        init_manifest: dict[str, Any] | None = None,
+        project_profile: ProjectProfile | None = None,
         gate_runner: Any = None,  # GateRunner Callable | None (T135c)
         tracer: Any = None,  # _TracerLike | None (T135c: avoid circular import)
         audit_logger: Any = None,  # AuditLogger | None (T135c)
@@ -33,20 +36,23 @@ class TickGateRunner:
         self._injected_runner = gate_runner
         self._tracer = tracer
         self._audit_logger = audit_logger
-        self._gates = self._load_gates(init_manifest)
+        self._gates = self._load_gates(project_profile)
 
     # ── Gate selection ──
 
     @staticmethod
-    def _load_gates(init_manifest: dict[str, Any] | None) -> list:
-        from auto_engineering.gates.registry import DEFAULT_GATES, build_gates_from_manifest
-        if init_manifest:
-            return build_gates_from_manifest(init_manifest)
-        return DEFAULT_GATES
+    def _load_gates(project_profile: ProjectProfile | None) -> list:
+        from auto_engineering.gates.registry import build_gates_from_profile
+        if project_profile is not None:
+            return build_gates_from_profile(project_profile)
+        return [
+            ProfileCommandGate(name, None)
+            for name in ("lint", "type_check", "test", "build")
+        ]
 
-    def reload(self, init_manifest: dict[str, Any] | None = None) -> None:
-        """Reload gate list after manifest change (system escalation, resume)."""
-        self._gates = self._load_gates(init_manifest)
+    def reload(self, project_profile: ProjectProfile | None = None) -> None:
+        """Reload gate list from the normalized ProjectProfile."""
+        self._gates = self._load_gates(project_profile)
 
     # ── Execution ──
 

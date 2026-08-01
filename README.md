@@ -76,7 +76,7 @@ Host-neutral Core (auto_engineering/)
 
 ```bash
 uv run pytest tests/ --no-cov --timeout=120 -q
-<!-- test-baseline --> 2095 passed / 1 skipped
+<!-- test-baseline --> 2153 passed / 1 skipped
 ```
 
 ## 环境变量

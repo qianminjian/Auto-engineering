@@ -51,12 +51,16 @@ def test_default_contract_registry_is_statically_consistent() -> None:
 def test_contracts_declare_context_needed_by_known_loss_paths() -> None:
     contracts = default_prompt_contracts()
 
-    assert {"requirement", "design_doc_path"} <= set(
+    assert {"requirement", "design_doc_path", "project_profile_summary"} <= set(
         contracts["architect"].required_context
     )
-    assert {"requirement", "feedback", "tasks"} <= set(
+    assert {"requirement", "feedback", "tasks", "project_profile_summary"} <= set(
         contracts["developer"].required_context
     )
+    assert "project_profile_summary" in (
+        contracts["component_verifier"].required_context
+    )
+    assert "project_profile_summary" in contracts["system_verifier"].required_context
     assert {"plate", "components"} <= set(
         contracts["plate_deep_audit"].required_context
     )

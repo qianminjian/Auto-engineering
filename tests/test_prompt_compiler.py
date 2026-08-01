@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import pytest
 
+from auto_engineering.engine.state import EngineState
+from auto_engineering.loop.action_builder import ActionBuilder
 from auto_engineering.prompts.compiler import (
     PromptContextError,
     PromptLayoutError,
@@ -11,6 +13,13 @@ from auto_engineering.prompts.compiler import (
 )
 from auto_engineering.prompts.contracts import default_prompt_contracts
 from auto_engineering.prompts.registry import default_registry
+
+_PROFILE_SUMMARY = {
+    "profile_id": "sha256:test",
+    "project": {"type": "python", "languages": ["python"]},
+    "paths": {"source_roots": ["auto_engineering"], "test_roots": ["tests"]},
+    "commands": {"test": ["uv", "run", "pytest"]},
+}
 
 
 def test_architect_worker_receives_requirement_and_refine_feedback() -> None:
@@ -22,6 +31,7 @@ def test_architect_worker_receives_requirement_and_refine_feedback() -> None:
         context={
             "requirement": "实现跨宿主确定性治理内核",
             "design_doc_path": "design/spec.md",
+            "project_profile_summary": {"profile_id": "sha256:test"},
             "feedback": {"mode": "PLAN_REFINE", "reason": "补齐失败恢复"},
         },
         expected_format={"plan": "string"},
@@ -46,6 +56,7 @@ def test_single_worker_receives_dynamic_context_in_actual_prompt() -> None:
             "design_section": "B3",
             "design_spec": ["事件只追加", "重复 Result 幂等"],
             "implementation_files": ["auto_engineering/events/store.py"],
+            "project_profile_summary": {"profile_id": "sha256:test"},
         },
         expected_format={"coverage_map": "array"},
     )
@@ -80,7 +91,10 @@ def test_inline_developer_receives_feedback_without_forcing_git_commit() -> None
             "batch_id": "B1",
             "component": "EventStore",
             "tasks": [{"id": "T1", "description": "补幂等测试"}],
-            "toolchain": {"test_runner": "pytest"},
+            "project_profile_summary": {
+                "profile_id": "sha256:test",
+                "commands": {"test": ["pytest"]},
+            },
             "git_authorized": False,
         },
         expected_format={"files_changed": "array", "test_results": "object"},
@@ -157,7 +171,7 @@ def test_context_selector_drops_undeclared_completed_batch_history() -> None:
             "batch_id": "B101",
             "component": "Kernel",
             "tasks": [{"id": "T101"}],
-            "toolchain": {"test_runner": "pytest"},
+            "project_profile_summary": {"profile_id": "sha256:test"},
             "completed_batches": history,
         },
         expected_format={"files_changed": "array"},
@@ -181,7 +195,7 @@ def test_context_selector_rejects_conversation_history_even_if_extra() -> None:
                 "batch_id": "B1",
                 "component": "Kernel",
                 "tasks": [{"id": "T1"}],
-                "toolchain": {},
+                "project_profile_summary": {"profile_id": "sha256:test"},
                 "action_history": [{"tick": i} for i in range(100)],
             },
             expected_format={"files_changed": "array"},
@@ -201,7 +215,7 @@ def test_context_selector_rejects_selected_context_over_budget() -> None:
                 "batch_id": "B1",
                 "component": "Kernel",
                 "tasks": [{"id": "T1"}],
-                "toolchain": {},
+                "project_profile_summary": {"profile_id": "sha256:test"},
             },
             expected_format={"files_changed": "array"},
         )
@@ -218,7 +232,7 @@ def test_context_manifest_has_unique_block_hashes() -> None:
             "batch_id": "B1",
             "component": "Kernel",
             "tasks": [{"id": "T1"}],
-            "toolchain": {"runner": "pytest"},
+            "project_profile_summary": {"profile_id": "sha256:test"},
         },
         expected_format={"status": "string"},
     )
@@ -239,7 +253,31 @@ def test_duplicate_nonempty_context_blocks_fail_closed() -> None:
                 "batch_id": "B1",
                 "component": "Kernel",
                 "tasks": [{"id": "T1"}],
-                "toolchain": {},
+                "project_profile_summary": {"profile_id": "sha256:test"},
             },
             expected_format={"status": "string"},
         )
+
+
+def test_project_profile_summary_is_bounded_and_identifiable(tmp_path) -> None:
+    profile = {
+        **_PROFILE_SUMMARY,
+        "evidence": [{"source": "pyproject.toml", "digest": "secret-digest"}],
+        "resolution": {"providers": ["local_probe"], "confidence": "confirmed"},
+    }
+    state = EngineState(
+        thread_id="t",
+        current_stage="developer",
+        plan="plan",
+        project_profile=profile,
+        project_profile_id="sha256:test",
+    )
+
+    action = ActionBuilder(tmp_path).build_action(state)
+
+    summary = action["context"]["project_profile_summary"]
+    assert summary == _PROFILE_SUMMARY
+    assert "evidence" not in summary
+    assert "resolution" not in summary
+    assert "secret-digest" not in action["instruction"]
+    assert "sha256:test" in action["instruction"]

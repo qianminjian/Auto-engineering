@@ -74,7 +74,6 @@ from auto_engineering.loop.debug_tracer import DebugTracer, now_iso
 from auto_engineering.loop.escalation_handler import (
     EscalationContext,
     EscalationHandler,
-    detect_project_language,
 )
 from auto_engineering.loop.event_store import SQLiteEventStore
 from auto_engineering.loop.events import LoopEvent, LoopEventType
@@ -124,6 +123,14 @@ from auto_engineering.metrics.usage_ledger import UsageLedger, UsageRecord
 from auto_engineering.observability.audit_log import AuditLogger
 from auto_engineering.observability.tracing import _TracerLike
 from auto_engineering.pii.redactor import PIIRedactor
+from auto_engineering.project_profile import (
+    AeConfigProvider,
+    LegacyInitProvider,
+    LocalProbeProvider,
+    ProjectProfileResolution,
+    ProjectProfileResolver,
+    ResolutionStatus,
+)
 from auto_engineering.prompts.registry import default_registry
 
 
@@ -258,7 +265,12 @@ class TickOrchestrator:
         self._judge: ConvergenceJudge | None = None
         self._plan: Plan | None = None
         self._checkpoint_mgr: CheckpointManager | None = None
-        self._init_manifest: dict | None = None
+        self._project_profile_resolver = ProjectProfileResolver((
+            AeConfigProvider(),
+            LocalProbeProvider(),
+            LegacyInitProvider(),
+        ))
+        self._project_profile_resolution: ProjectProfileResolution | None = None
         self._design_doc: DesignDoc | None = None
         self._batch_state: BatchState | None = None
         self._progress_tree: ProgressTree | None = None
@@ -307,7 +319,7 @@ class TickOrchestrator:
         # P0-1: TickGateRunner delegate — gate selection, execution, metrics, tracing
         self._tick_gate_runner = TickGateRunner(
             self.project_root,
-            init_manifest=None,
+            project_profile=None,
             gate_runner=gate_runner,
             tracer=tracer,
             audit_logger=audit_logger,
@@ -321,12 +333,8 @@ class TickOrchestrator:
         """Lazily-created EscalationHandler — reads current mutable state (P1-9)."""
         if self._escalation is None or self._escalation._ctx is None:
             self._escalation = EscalationHandler(EscalationContext(
-                project_root=self.project_root,
                 state=self._state,
                 batch_state=self._batch_state,
-                design_doc=self._design_doc,
-                init_manifest=self._init_manifest,
-                tick_gate_runner=self._tick_gate_runner,
                 build_action=self.build_action,
                 save_checkpoint=self._save_checkpoint,
             ))
@@ -378,13 +386,8 @@ class TickOrchestrator:
     ) -> dict:
         """初始化 loop。有设计文档时解析层次并进入 gap_scan; 否则直接 architect.
 
-        System-Initiated Escalation: 当 init-manifest.json 缺失且项目非 Python 时,
-        不静默降级到 Python 默认工具, 而是输出 action: "gate" 提示用户决策工具链配置.
+        ProjectProfile 不完整时发出 project_setup_required，由宿主补齐后重新探测。
         """
-        manifest_path = self.project_root / ".ae-state" / "init-manifest.json"
-        if manifest_path.exists():
-            self._init_manifest = json.loads(manifest_path.read_text())
-
         if design_doc_path:
             self._design_doc = DesignDoc.parse(design_doc_path)
 
@@ -415,22 +418,25 @@ class TickOrchestrator:
 
         self._router = StageRouter()
         self._judge = ConvergenceJudge(ConvergenceConfig(max_iterations=max_rounds))
-        self._tick_gate_runner.reload(self._init_manifest)
         self._checkpoint_mgr = CheckpointManager(self._checkpoint_store)
 
         if self._guardrail is None:
             self._guardrail = GuardrailChain.default()
 
-        # System-Initiated Escalation: manifest 缺失 + 明确非 Python → 人工决策.
-        # detected is None (空目录/未知项目) 静默回退 Python 默认 (维持现有行为).
-        if self._init_manifest is None:
-            detected = detect_project_language(self.project_root)
-            if detected is not None and detected != "python":
-                self._state.current_stage = "init"
-                self._state.expected_stage = "init"
-                self._state.tick = 0
+        self._project_profile_resolution = self._project_profile_resolver.resolve(self.project_root)
+        setup_required = self._project_profile_resolution.status is ResolutionStatus.SETUP_REQUIRED
+        if setup_required:
+            self._state.current_stage = "project_setup"
+            self._state.expected_stage = "project_setup"
+            self._state.missing_project_capabilities = list(
+                self._project_profile_resolution.missing_capabilities
+            )
+            self._state.tick = 0
+            if not self._escalate:
                 self._save_checkpoint()
-                return self.build_action(pre_gate=self.escalation.build_init_manifest_gate(detected))
+                return self.build_action()
+        else:
+            self._apply_project_profile_resolution(self._project_profile_resolution)
 
         # T95 Agent-Initiated Escalation: --escalate flag → 启动时立即暂停
         if self._escalate:
@@ -514,13 +520,19 @@ class TickOrchestrator:
         if self._guardrail is None:
             self._guardrail = GuardrailChain.default()
 
-        manifest_path = project_root / ".ae-state" / "init-manifest.json"
-        if manifest_path.exists():
-            self._init_manifest = json.loads(manifest_path.read_text())
+        if state.project_profile is not None:
+            from auto_engineering.project_profile import ProjectProfile
 
-        # T136x: reload MUST be after manifest load — otherwise gates
-        # use stale/None manifest and fall back to Python defaults (pytest/mypy).
-        self._tick_gate_runner.reload(self._init_manifest)
+            profile = ProjectProfile.from_dict(
+                state.project_profile,
+                project_root=project_root,
+            )
+            self._project_profile_resolution = ProjectProfileResolution(
+                status=ResolutionStatus.RESOLVED,
+                profile=profile,
+                missing_capabilities=tuple(state.missing_project_capabilities),
+            )
+            self._tick_gate_runner.reload(profile)
 
         # design_doc: design-doc 模式每 tick 重 parse (确定性无漂移)
         if state.design_doc_path:
@@ -859,6 +871,12 @@ class TickOrchestrator:
 
     def _tick_body_dict(self, result: dict) -> dict:
         """tick 核心逻辑 (dict 版本): Gate resolution → 验证 → Guardrail → Gate → 路由 → action."""
+        if self._state.current_stage == "project_setup":
+            validated = self._validate_result_dict(result)
+            if isinstance(validated, ErrorResponse):
+                return validated.to_dict()
+            return self._complete_project_setup()
+
         # T95: Agent mid-loop escalation — Agent 在 result 中置 escalate=true
         if result.get("escalate") is True:
             return self.build_action(pre_gate=self.escalation.build_agent_escalation_gate({
@@ -909,19 +927,6 @@ class TickOrchestrator:
         if gate_resolution and isinstance(gate_resolution, dict):
             gate_id = gate_resolution.get("gate_id", "")
             resolution = gate_resolution.get("resolution", "")
-
-            # System-Initiated Escalation: init_manifest_missing
-            if gate_id == "init_manifest_missing":
-                if resolution == "终止 loop":
-                    return {
-                        "action": "done",
-                        "verdict": "TERMINATED",
-                        "message": "用户终止 loop（拒绝配置 init-manifest）",
-                        "stage": self._state.current_stage,
-                        "tick": self._state.tick + 1,
-                        "thread_id": self._state.thread_id,
-                    }
-                return self.escalation.resolve_init_manifest(gate_resolution)
 
             # T95 Agent-Initiated Escalation
             if gate_id == "agent_escalation":
@@ -1012,6 +1017,34 @@ class TickOrchestrator:
             self._run_developer_gates()
 
         return self._after_tick(result)
+
+    def _complete_project_setup(self) -> dict:
+        """重新探测宿主搭建结果；未满足能力时保持原 active Action。"""
+        resolution = self._project_profile_resolver.resolve(self.project_root)
+        self._project_profile_resolution = resolution
+        if resolution.status is not ResolutionStatus.RESOLVED:
+            self._state.missing_project_capabilities = list(resolution.missing_capabilities)
+            self._save_checkpoint()
+            return ErrorResponse(
+                "PROJECT_SETUP_UNVERIFIED",
+                "项目搭建结果未通过本地证据验证",
+                self._state.to_dict(),
+            ).to_dict()
+        self._apply_project_profile_resolution(resolution)
+        self._state.current_stage = "gap_scan" if self._design_doc else "architect"
+        self._state.expected_stage = self._state.current_stage
+        self._state.tick += 1
+        self._save_checkpoint()
+        return self.build_action()
+
+    def _apply_project_profile_resolution(self, resolution: ProjectProfileResolution) -> None:
+        profile = resolution.profile
+        if profile is None:
+            return
+        self._state.project_profile = profile.to_dict()
+        self._state.project_profile_id = profile.profile_id
+        self._state.missing_project_capabilities = list(resolution.missing_capabilities)
+        self._tick_gate_runner.reload(profile)
 
     def _validate_result_dict(self, result: dict) -> dict | ErrorResponse:
         """验证 result dict (不读文件, Driver B standalone 用)."""
@@ -1760,7 +1793,6 @@ class TickOrchestrator:
         action = self.action_builder.build_action(
             self._state,
             design_doc=self._design_doc,
-            init_manifest=self._init_manifest,
             batch_state=self._batch_state,
             plan=self._plan,
             dev_snapshot=self._dev_snapshot,

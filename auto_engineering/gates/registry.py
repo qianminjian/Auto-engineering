@@ -13,6 +13,7 @@ v5.5 P1-1: LANGUAGE_TOOLS + get_gate_tools_from_manifest 提取到 _tools.py,
 from __future__ import annotations
 
 from functools import lru_cache
+from typing import TYPE_CHECKING
 
 from auto_engineering.gates._tools import LANGUAGE_TOOLS, get_gate_tools_from_manifest
 from auto_engineering.gates.audit import AuditGate
@@ -21,13 +22,18 @@ from auto_engineering.gates.build import BuildGate
 from auto_engineering.gates.contract import ContractGate
 from auto_engineering.gates.deep_audit import DeepAuditGate
 from auto_engineering.gates.lint import LintGate
+from auto_engineering.gates.profile import ProfileCommandGate
 from auto_engineering.gates.safety import SafetyGate
 from auto_engineering.gates.test_gate import TestGate
 from auto_engineering.gates.type_check import TypeCheckGate
 
+if TYPE_CHECKING:
+    from auto_engineering.project_profile.models import ProjectProfile
+
 __all__ = [
     "LANGUAGE_TOOLS",
     "build_gates_from_manifest",
+    "build_gates_from_profile",
     "get_default_gate_names",
     "get_default_gates",
     "get_gate_by_name",
@@ -96,6 +102,20 @@ def build_gates_from_manifest(manifest: dict) -> list[Gate]:
     conventions 映射为具体 Gate 实例 (linter/type_checker/test_runner).
     """
     return _build_default_gates(manifest=manifest)
+
+
+def build_gates_from_profile(profile: ProjectProfile) -> list[Gate]:
+    """只按 ProjectProfile 参数数组构建 Gate，不做语言或 Python 默认回退。"""
+    commands = profile.commands
+    return [
+        SafetyGate(use_gitleaks=False),
+        ProfileCommandGate("lint", commands.get("lint")),
+        ProfileCommandGate("type_check", commands.get("type_check")),
+        AuditGate(),
+        ContractGate(),
+        ProfileCommandGate("test", commands.get("test")),
+        ProfileCommandGate("build", commands.get("build")),
+    ]
 
 
 def reset_default_gates_cache() -> None:

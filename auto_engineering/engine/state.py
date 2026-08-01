@@ -140,6 +140,9 @@ _WRITE_OWNERS: dict[str, frozenset[str]] = {
     "developer_snapshot":      frozenset({"orchestrator"}),
     "audit_revision_fingerprints": frozenset({"orchestrator"}),
     "open_findings":            frozenset({"orchestrator"}),
+    "project_profile":          frozenset({"orchestrator"}),
+    "project_profile_id":       frozenset({"orchestrator"}),
+    "missing_project_capabilities": frozenset({"orchestrator"}),
 }
 
 # 合法 verdict 值
@@ -147,7 +150,7 @@ _VALID_VERDICTS = frozenset({"", "APPROVE", "MAJOR"})
 
 # 合法 stage 值 (v5.6 §C.10: 扩展到 12 值 — Pre-flight + 5 层验证阶段)
 _VALID_STAGES = frozenset({
-    "", "gap_scan", "gap_review", "research", "architect",
+    "", "project_setup", "gap_scan", "gap_review", "research", "architect",
     "developer", "critic", "component_verifier", "plate_deep_audit",
     "system_verifier", "system_deep_audit", "plan_refine",
 })
@@ -249,6 +252,9 @@ class EngineState:
     developer_snapshot: dict[str, Any] | None = None  # #47 最近一次已接受 Developer 证据
     audit_revision_fingerprints: dict[str, str] = field(default_factory=dict)  # #48 已审修订
     open_findings: list[dict[str, Any]] = field(default_factory=list)  # #49 未关闭 P0/P1
+    project_profile: dict[str, Any] | None = None  # #50 当前规范化 ProjectProfile
+    project_profile_id: str = ""  # #51 当前 Profile 内容摘要
+    missing_project_capabilities: list[str] = field(default_factory=list)  # #52 setup 缺失能力
 
     # v5.5 P1-5: 写入审计日志 (repr=False 避免污染输出, 不参与序列化)
     _write_log: list[WriteRecord] = field(default_factory=list, repr=False, init=False)

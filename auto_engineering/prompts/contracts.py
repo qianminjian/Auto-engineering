@@ -49,7 +49,7 @@ _CONTRACTS: Mapping[str, StagePromptContract] = MappingProxyType({
     "architect": StagePromptContract(
         "architect",
         ExecutionMode.SINGLE_WORKER,
-        ("requirement", "design_doc_path"),
+        ("requirement", "design_doc_path", "project_profile_summary"),
         ("architect",),
         ("feedback",),
         ("design_document",),
@@ -57,7 +57,10 @@ _CONTRACTS: Mapping[str, StagePromptContract] = MappingProxyType({
     "developer": StagePromptContract(
         "developer",
         ExecutionMode.INLINE,
-        ("requirement", "feedback", "batch_id", "component", "tasks", "toolchain"),
+        (
+            "requirement", "feedback", "batch_id", "component", "tasks",
+            "project_profile_summary",
+        ),
         optional_context=("task_guidance", "git_authorized"),
         artifact_kinds=("design_document", "test_evidence"),
     ),
@@ -72,7 +75,10 @@ _CONTRACTS: Mapping[str, StagePromptContract] = MappingProxyType({
     "component_verifier": StagePromptContract(
         "component_verifier",
         ExecutionMode.SINGLE_WORKER,
-        ("component", "design_section", "design_spec", "implementation_files"),
+        (
+            "component", "design_section", "design_spec", "implementation_files",
+            "project_profile_summary",
+        ),
         ("component_verifier",),
         artifact_kinds=("design_document", "source_snapshot"),
     ),
@@ -86,7 +92,10 @@ _CONTRACTS: Mapping[str, StagePromptContract] = MappingProxyType({
     "system_verifier": StagePromptContract(
         "system_verifier",
         ExecutionMode.SINGLE_WORKER,
-        ("design_doc_path", "file_list", "component_coverage"),
+        (
+            "design_doc_path", "file_list", "component_coverage",
+            "project_profile_summary",
+        ),
         ("system_verifier",),
         artifact_kinds=("design_document", "coverage_report"),
     ),

@@ -52,6 +52,12 @@ def _make_result_file(data: dict) -> Path:
     return f
 
 
+def _prepare_existing_project(project_root: Path) -> None:
+    """创建可由有界 Probe 确认的最小现有 Python 项目。"""
+    (project_root / "pyproject.toml").write_text("[project]\nname='demo'\n")
+    (project_root / "demo").mkdir(exist_ok=True)
+
+
 # 满足 architect RESULT_SCHEMA plan_min_length=50 的有效计划 (内容对路由无影响)
 _VALID_PLAN = (
     "实现组件, 包含完整的 TDD Red-Green-Refactor 循环 + Gate 验证流程, 确保文件隔离检查通过"
@@ -99,6 +105,8 @@ class TestInit:
         (tmp_path / ".ae-state").mkdir(parents=True, exist_ok=True)
         design = tmp_path / "design.md"
         design.write_text("## B2 StageRouter\n\ncontent\n", encoding="utf-8")
+        (tmp_path / "pyproject.toml").write_text("[project]\nname='demo'")
+        (tmp_path / "demo").mkdir()
         o = _orchestrator()
         o.project_root = tmp_path
         action = o.init("req", design_doc_path=str(design))
@@ -220,6 +228,7 @@ class TestTickDeveloperToCritic:
         """BUG-03: batch 间切换必须保存 checkpoint, 否则跨进程 batch_idx 归零."""
         from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
 
+        _prepare_existing_project(tmp_path)
         db = tmp_path / "cp.db"
         store = SQLiteCheckpointStore(db)
         o = TickOrchestrator(
@@ -1255,6 +1264,7 @@ def _init_design(o: TickOrchestrator, tmp_path) -> None:
     (tmp_path / ".ae-state").mkdir(parents=True, exist_ok=True)
     design = tmp_path / "design.md"
     design.write_text("## §B2 StageRouter\n\ncontent\n", encoding="utf-8")
+    _prepare_existing_project(tmp_path)
     o.project_root = tmp_path
     o.init("req", design_doc_path=str(design))
 
@@ -1813,6 +1823,7 @@ class TestA3WriteSide:
         from auto_engineering.context.summarization import SessionSummarizer
         from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
 
+        _prepare_existing_project(tmp_path)
         db = tmp_path / "cp.db"
         store = SQLiteCheckpointStore(db)
         summarizer = SessionSummarizer()
@@ -2025,6 +2036,7 @@ class TestCrossTickE2E:
     def test_full_leaf_cycle_through_restore_each_tick(self, tmp_path) -> None:
         from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
 
+        _prepare_existing_project(tmp_path)
         store = SQLiteCheckpointStore(tmp_path / "cp.db")
 
         def _fresh() -> TickOrchestrator:
@@ -2134,6 +2146,7 @@ class TestTwoRoundDesignDocE2E:
         }))
 
     def test_two_round_design_doc_refine_then_converge(self, tmp_path) -> None:
+        _prepare_existing_project(tmp_path)
         o = _orchestrator(max_rounds=20)
         o.project_root = tmp_path
         o.init("实现登录", design_doc_path=_write_leaf_design(tmp_path))
@@ -2211,6 +2224,7 @@ class TestTwoRoundDesignDocE2E:
 
 def _real_guardrail_orch(tmp_path) -> TickOrchestrator:
     """带真实 GuardrailChain.default() (含 G6) 的 orchestrator — 用于 G6 端到端."""
+    _prepare_existing_project(tmp_path)
     o = TickOrchestrator(
         gate_runner=_pass_gate_runner,
         guardrail=GuardrailChain.default(),
@@ -2850,24 +2864,23 @@ class TestDetectProjectLanguage:
         assert detect_project_language(tmp_path) == "python"
 
 
-class TestInitManifestEscalation:
-    """init() 在 manifest 缺失时的 escalation 行为."""
+class TestProjectProfileStartup:
+    """init() 通过 ProjectProfile 启动，不要求 Init manifest。"""
 
     def test_init_escalates_for_typescript_project(self, tmp_path: Path) -> None:
-        """TypeScript 项目无 manifest → gate action."""
+        """缺源码根的 TypeScript 项目 → setup action。"""
         (tmp_path / "package.json").write_text(
             json.dumps({"devDependencies": {"typescript": "^5.0"}}))
         o = _orchestrator()
         o.project_root = tmp_path
         action = o.init("build a button")
-        assert action["action"] == "gate"
-        assert action["gate"]["id"] == "init_manifest_missing"
-        assert action["gate"]["type"] == "system_escalation"
-        assert "typescript" in action["gate"]["default"]
+        assert action["action"] == "project_setup_required"
+        assert "source_roots" in action["missing_capabilities"]
 
     def test_init_no_escalation_for_python_project(self, tmp_path: Path) -> None:
-        """Python 项目无 manifest → 静默回退, 正常 architect."""
+        """有确定性语言和源码证据的 Python 项目直接进入 architect。"""
         (tmp_path / "pyproject.toml").write_text("[project]\nname='test'")
+        (tmp_path / "test").mkdir()
         o = _orchestrator()
         o.project_root = tmp_path
         action = o.init("build a thing")
@@ -2875,12 +2888,12 @@ class TestInitManifestEscalation:
         assert action["stage"] == "architect"
 
     def test_init_no_escalation_for_empty_dir(self, tmp_path: Path) -> None:
-        """空目录无 manifest → 静默回退 Python 默认."""
+        """空目录不再回退 Python，进入 setup。"""
         o = _orchestrator()
         o.project_root = tmp_path
         action = o.init("build a thing")
-        assert action["action"] != "gate"
-        assert action["stage"] == "architect"
+        assert action["action"] == "project_setup_required"
+        assert action["stage"] == "project_setup"
 
     def test_init_no_escalation_when_manifest_exists(self, tmp_path: Path) -> None:
         """有 manifest → 正常流程, 不 escalation."""
@@ -2900,10 +2913,10 @@ class TestInitManifestEscalation:
         assert action["stage"] == "architect"
 
 
-class TestResolveInitManifestEscalation:
-    """System escalation resolution: 用户选择 → 创建 manifest → 继续 loop."""
+class TestProjectSetupReplacesManifestEscalation:
+    """宿主搭建项目后重新探测，不创建 Init manifest。"""
 
-    def _setup_escalated(self, tmp_path: Path) -> TickOrchestrator:
+    def _setup_required(self, tmp_path: Path) -> TickOrchestrator:
         (tmp_path / "package.json").write_text(
             json.dumps({"devDependencies": {"typescript": "^5.0"}}))
         o = _orchestrator()
@@ -2911,63 +2924,24 @@ class TestResolveInitManifestEscalation:
         o.init("build a button")
         return o
 
-    def test_resolve_typescript_creates_manifest(self, tmp_path: Path) -> None:
-        o = self._setup_escalated(tmp_path)
+    def test_setup_creates_no_init_manifest(self, tmp_path: Path) -> None:
+        o = self._setup_required(tmp_path)
+        (tmp_path / "src").mkdir()
+        (tmp_path / "package.json").write_text(json.dumps({
+            "scripts": {"test": "vitest run"},
+            "devDependencies": {"typescript": "^5.0"},
+        }))
         result = {
-            "gate_resolution": {
-                "gate_id": "init_manifest_missing",
-                "resolution": "typescript: eslint/tsc/vitest",
-            }
-        }
-        action = o.tick_dict(result)
-        # 应该继续到 architect
-        assert action["action"] != "gate"
-        assert action["stage"] == "architect"
-        # manifest 已创建
-        manifest_path = tmp_path / ".ae-state" / "init-manifest.json"
-        assert manifest_path.exists()
-        manifest = json.loads(manifest_path.read_text())
-        assert manifest["language"] == "typescript"
-        assert manifest["conventions"]["linter"] == "eslint"
-        assert manifest["conventions"]["test_runner"] == "vitest"
-
-    def test_resolve_custom_creates_manifest(self, tmp_path: Path) -> None:
-        o = self._setup_escalated(tmp_path)
-        result = {
-            "gate_resolution": {
-                "gate_id": "init_manifest_missing",
-                "resolution": "自定义（在 resolution_detail 中指定）",
-                "resolution_detail": {
-                    "language": "go",
-                    "linter": "golangci-lint",
-                    "type_checker": "go vet",
-                    "test_runner": "go test",
-                },
-            }
+            "stage": "project_setup",
+            "result_type": "project_setup_completed",
+            "artifacts": ["package.json", "src"],
         }
         action = o.tick_dict(result)
         assert action["stage"] == "architect"
-        manifest = json.loads(
-            (tmp_path / ".ae-state" / "init-manifest.json").read_text())
-        assert manifest["language"] == "go"
-        assert manifest["conventions"]["linter"] == "golangci-lint"
-
-    def test_resolve_terminate_stops_loop(self, tmp_path: Path) -> None:
-        o = self._setup_escalated(tmp_path)
-        result = {
-            "gate_resolution": {
-                "gate_id": "init_manifest_missing",
-                "resolution": "终止 loop",
-            }
-        }
-        action = o.tick_dict(result)
-        assert action["action"] == "done"
-        assert action["verdict"] == "TERMINATED"
-        # manifest 不应创建
         assert not (tmp_path / ".ae-state" / "init-manifest.json").exists()
 
-    def test_load_default_gates_uses_manifest(self, tmp_path: Path) -> None:
-        """验证 _load_default_gates 在 manifest 存在时使用其工具配置."""
+    def test_legacy_profile_builds_exact_command_gates(self, tmp_path: Path) -> None:
+        """Legacy Adapter 转换后，Gate 只执行 Profile 中的精确参数。"""
         (tmp_path / ".ae-state").mkdir(parents=True)
         manifest = {
             "schema_version": "1.0",
@@ -2984,13 +2958,11 @@ class TestResolveInitManifestEscalation:
             json.dumps(manifest))
         o = _orchestrator()
         o.project_root = tmp_path
-        # init 加载 manifest → _load_default_gates 应使用 biome/swc/vitest
         o.init("build a thing")
-        # 找到 LintGate 实例验证 linter 是 biome
         lint_gate = next(
             (g for g in o._tick_gate_runner._gates if g.name == "lint"), None)
         assert lint_gate is not None
-        assert lint_gate.linter_bin == "biome"
+        assert lint_gate.command == ("biome",)
 
 
 # ============================================================
@@ -3000,6 +2972,11 @@ class TestResolveInitManifestEscalation:
 
 class TestAgentEscalation:
     """Agent 发起 escalation (--init --escalate + mid-loop escalate)."""
+
+    @staticmethod
+    def _make_project(tmp_path: Path) -> None:
+        (tmp_path / "pyproject.toml").write_text("[project]\nname='demo'")
+        (tmp_path / "demo").mkdir()
 
     def test_init_with_escalate_outputs_gate(self, tmp_path: Path) -> None:
         """--init --escalate → 立即输出 agent escalation gate."""
@@ -3012,6 +2989,7 @@ class TestAgentEscalation:
 
     def test_tick_with_escalate_flag_outputs_gate(self, tmp_path: Path) -> None:
         """result 中 escalate=true → 输出 agent escalation gate."""
+        self._make_project(tmp_path)
         o = _orchestrator()
         o.project_root = tmp_path
         o.init("build a feature")
@@ -3024,6 +3002,7 @@ class TestAgentEscalation:
 
     def test_resolve_approve_continues(self, tmp_path: Path) -> None:
         """批准继续 → 正常推进."""
+        self._make_project(tmp_path)
         o = _orchestrator()
         o.project_root = tmp_path
         o.init("build a feature")
@@ -3037,6 +3016,7 @@ class TestAgentEscalation:
 
     def test_resolve_rollback_to_architect(self, tmp_path: Path) -> None:
         """回退重设计 → 回到 architect."""
+        self._make_project(tmp_path)
         o = _orchestrator()
         o.project_root = tmp_path
         o.init("build a feature")
@@ -3061,6 +3041,7 @@ class TestAgentEscalation:
 
     def test_resolve_terminate(self, tmp_path: Path) -> None:
         """终止 loop."""
+        self._make_project(tmp_path)
         o = _orchestrator()
         o.project_root = tmp_path
         o.init("build a feature")
@@ -3102,6 +3083,7 @@ class TestPrePlannedGate:
 
     def test_pending_gate_triggers_after_developer_batch(self, tmp_path: Path) -> None:
         """batch 中有 gate → developer batch 完成后输出 gate action."""
+        _prepare_existing_project(tmp_path)
         o = _orchestrator()
         o.project_root = tmp_path
         o.init("build a feature")
@@ -3133,6 +3115,7 @@ class TestPrePlannedGate:
 
     def test_resolve_pre_planned_gate_accepts_custom_option(self, tmp_path: Path) -> None:
         """PrePlannedGate 接受自定义 resolution → 作为 feedback."""
+        _prepare_existing_project(tmp_path)
         o = _orchestrator()
         o.project_root = tmp_path
         o.init("build a feature")
@@ -3148,6 +3131,7 @@ class TestPrePlannedGate:
 
     def test_resolve_pre_planned_gate_terminate(self, tmp_path: Path) -> None:
         """PrePlannedGate 也可以终止 loop."""
+        _prepare_existing_project(tmp_path)
         o = _orchestrator()
         o.project_root = tmp_path
         o.init("build a feature")
@@ -3273,6 +3257,7 @@ class TestT105RoundHistory:
         # Now run _append_round_history manually via _advance_stage call
         o = _orchestrator()
         (repo / ".ae-state").mkdir(exist_ok=True)
+        _prepare_existing_project(repo)
         o.project_root = repo
         o.init("req")
         # architect tick to get files_changed
@@ -4352,7 +4337,8 @@ class TestDeveloperInstruction:
         assert "ApiKeyInput" in instr
         assert "B7-T1" in instr
         assert "TDD 铁律" in instr
-        assert "init-manifest" in instr
+        assert "project_profile_summary" in instr
+        assert "init-manifest" not in instr
         assert "test_results" in instr  # result 格式指引
 
     def test_developer_instruction_no_tasks_graceful(self, tmp_path):

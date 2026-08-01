@@ -107,7 +107,8 @@ def test_codex_release_minimal_tick_chain(tmp_path: Path) -> None:
     assert actions[-1]["action"] in {
         "gap_scan",
         "architect",
-        "developer",
-        "gate",
-    }
+            "developer",
+            "gate",
+            "project_setup_required",
+        }
     assert actions[-1]["thread_id"]

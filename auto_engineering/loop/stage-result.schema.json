@@ -19,7 +19,7 @@
       "enum": [
         "gap_scan", "gap_review", "research", "architect", "developer",
         "critic", "component_verifier", "plate_deep_audit",
-        "system_verifier", "system_deep_audit", "session_claimed"
+        "system_verifier", "system_deep_audit", "project_setup", "session_claimed"
       ]
     },
     "causation_id": {"type": "string", "minLength": 1},
@@ -86,8 +86,17 @@
     "claim_token": {"type": "string", "minLength": 1},
     "session_id": {"type": "string", "minLength": 1},
     "host": {"type": "string", "minLength": 1}
+    ,"result_type": {"type": "string"}
+    ,"artifacts": {"type": "array", "items": {"type": "string"}}
   },
   "allOf": [
+    {
+      "if": {"properties": {"stage": {"const": "project_setup"}}},
+      "then": {
+        "required": ["stage", "result_type", "artifacts"],
+        "properties": {"result_type": {"const": "project_setup_completed"}}
+      }
+    },
     {
       "if": {"properties": {"stage": {"const": "architect"}}},
       "then": {

@@ -83,7 +83,6 @@ class ActionBuildContext:
 
     state: EngineState
     design_doc: DesignDoc | None = None
-    init_manifest: dict | None = None
     batch_state: BatchState | None = None
     plan: Plan | None = None
     dev_snapshot: dict[str, object] | None = None
@@ -133,7 +132,6 @@ class ActionBuilder:
         state: EngineState,
         *,
         design_doc: DesignDoc | None = None,
-        init_manifest: dict | None = None,
         batch_state: BatchState | None = None,
         plan: Plan | None = None,
         dev_snapshot: dict[str, object] | None = None,
@@ -156,7 +154,6 @@ class ActionBuilder:
         context = ActionBuildContext(
             state=state,
             design_doc=design_doc,
-            init_manifest=init_manifest,
             batch_state=batch_state,
             plan=plan,
             dev_snapshot=dev_snapshot,
@@ -229,6 +226,7 @@ class ActionBuilder:
         base = self._build_action_base(feedback)
 
         _dispatch: dict[str, Callable[[dict], dict]] = {
+            "project_setup": self._build_action_project_setup,
             "gap_scan": self._build_action_gap_scan,
             "gap_review": self._build_action_gap_review,
             "research": self._build_action_research,
@@ -256,6 +254,30 @@ class ActionBuilder:
             pii_outbound,
         )
         return action
+
+    def _build_action_project_setup(self, base: dict) -> dict:
+        """项目能力不足时让宿主完成搭建；Core 不生成脚手架。"""
+        return {
+            **base,
+            "action": "project_setup_required",
+            "stage": "project_setup",
+            "reason_code": "insufficient_project_evidence",
+            "missing_capabilities": list(self._state.missing_project_capabilities),
+            "constraints": {
+                "must_follow_design": self._design_doc is not None,
+                "must_not_assume_framework": True,
+            },
+            "instruction": (
+                "根据需求与设计文档建立缺失的项目工程能力。完成后提交 "
+                "stage='project_setup'、result_type='project_setup_completed' 和 artifacts；"
+                "Core 将重新探测文件，不采信文字声明。"
+            ),
+            "expected_format": {
+                "stage": "project_setup",
+                "result_type": "project_setup_completed",
+                "artifacts": ["创建或确认的项目入口文件与源码目录"],
+            },
+        }
 
     @property
     def _context(self) -> ActionBuildContext:
@@ -711,6 +733,28 @@ class ActionBuilder:
                     cmap[comp.design_section] = comp.name
         return cmap
 
+    def _project_profile_summary(self, *, verifier: bool = False) -> dict:
+        """Return the bounded, role-facing subset of the normalized profile.
+
+        Evidence digests, provider diagnostics and schema internals intentionally
+        stay in engine state; repeating them in every prompt wastes context and
+        invites workers to reinterpret the resolver's decision.
+        """
+        profile = self._state.project_profile or {}
+        commands = profile.get("commands", {})
+        if verifier and isinstance(commands, dict):
+            commands = {
+                name: command
+                for name, command in commands.items()
+                if name in {"lint", "type_check", "test", "build"}
+            }
+        return {
+            "profile_id": self._state.project_profile_id,
+            "project": profile.get("project", {}),
+            "paths": profile.get("paths", {}),
+            "commands": commands if isinstance(commands, dict) else {},
+        }
+
     def _build_action_architect(self, base: dict) -> dict:
         # DS-15: subagent reads design doc + project structure itself.
         # Only pass refine_request if present (cross-tick data).
@@ -725,6 +769,7 @@ class ActionBuilder:
             "design_doc_path": (
                 self._design_doc.path if self._design_doc else None
             ),
+            "project_profile_summary": self._project_profile_summary(),
             "feedback": extra.get("feedback", base.get("feedback")),
         }, expected_format={
             "plan": "string (markdown, min 50 chars)",
@@ -768,7 +813,7 @@ class ActionBuilder:
                     if task_dicts else
                     "无 task 明细；不得虚构任务，先依据 plan 和设计文档确认范围"
                 ),
-                "toolchain": self._context.init_manifest or {},
+                "project_profile_summary": self._project_profile_summary(),
                 "git_authorized": False,
             },
             expected_format={
@@ -843,6 +888,7 @@ class ActionBuilder:
             "design_section": comp.design_section,
             "design_spec": design_spec,
             "implementation_files": impl_files,
+            "project_profile_summary": self._project_profile_summary(verifier=True),
         }, expected_format={
             "stage": "component_verifier",
             "component": "string (组件名称, 必填)",
@@ -886,6 +932,7 @@ class ActionBuilder:
             "design_doc_path": self._state.design_doc_path,
             "file_list": list(self._state.file_list),
             "component_coverage": self._state.coverage_map or [],
+            "project_profile_summary": self._project_profile_summary(verifier=True),
         }, expected_format={
             "stage": "system_verifier",
             "full_coverage_map": (

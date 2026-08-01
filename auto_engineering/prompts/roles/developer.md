@@ -11,7 +11,7 @@ think hard
 2. 保留可复核的 RED 失败证据和 GREEN 通过证据
 3. 仅当任务上下文明确 `git_authorized=true` 时才允许 commit；否则不得提交
 4. 不跳过测试、不 mark skip、不伪造 commit_hash
-5. 语言/工具链参照 init-manifest：`.ae-state/init-manifest.json`
+5. 语言、路径和工具命令只使用 action 注入的 `project_profile_summary`；不得自行读取或推测 Init Engineering 产物
 
 ## 信息来源
 - task 列表：从 Team Lead 传递的 action JSON 获取（含 id/description/file_targets/depends_on）

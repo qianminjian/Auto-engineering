@@ -111,6 +111,9 @@ class ErrorResponse:
 
 # ── §C.3.4 各 Stage Result 验证规则 ──
 RESULT_SCHEMA: dict[str, dict] = {
+    "project_setup": {
+        "required": ["stage", "result_type", "artifacts"],
+    },
     "architect": {
         "required": ["stage", "plan", "file_list"],
         "batch_plan_min_batches": 1,
@@ -205,6 +208,13 @@ def validate_result_format(result: dict, stage: str) -> list[str]:
     for req in schema["required"]:
         if req not in result or result[req] is None:
             errors.append(f"缺少必填字段 '{req}'")
+
+    if stage == "project_setup":
+        if result.get("result_type") != "project_setup_completed":
+            errors.append("result_type 必须为 'project_setup_completed'")
+        artifacts = result.get("artifacts")
+        if not isinstance(artifacts, list):
+            errors.append("artifacts 必须为数组")
 
     # architect: plan 长度 + batch_plan 非空
     if stage == "architect":

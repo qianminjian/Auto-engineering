@@ -1,13 +1,13 @@
-"""CLI doctor 命令 — 环境预检 (v5.0 §PE.6).
+"""CLI doctor 命令 — 环境与 ProjectProfile 预检。
 
-检查项 (多行 ✓/✗ 输出, IL-AC-01 init-manifest 集成):
+检查项 (多行 ✓/✗ 输出):
     1. Python ≥ 3.12
     2. uv ≥ 0.5 (包管理工具)
     3. git ≥ 2.40
     4. sqlite3 ≥ 3.42 (用于 SQLiteCheckpointStore)
     5. N/A (SDK 自动从 env 读 key, Plugin 模式无需设置)
     6. .ae-state/ 可读写 (项目状态目录)
-    7. init-manifest.json 存在 (IL-AC-01)
+    7. ProjectProfile 可解析，或明确报告 setup_required
 
 Exit codes:
     0 = 全部 ✓
@@ -174,47 +174,53 @@ def _check_plugin_mode() -> tuple[bool, str]:
     )
 
 
-def _check_init_manifest(project_root: Path) -> tuple[bool, str]:
-    """检查 init-manifest.json (IL-AC-01~05, v5.0 §IL.4).
-
-    校验流程:
-        1. 文件不存在 → ✗ + 提示运行 Init (IL-AC-01)
-        2. 调 init_contract.load_init_manifest 读取
-        3. 调 init_contract.validate_init_manifest 校验
-            - schema_version < 1.0 → ✗ (IL-AC-04)
-            - schema_version > 9.9 → WARN (forward-compat)
-            - 必需字段缺失 → ✗ (列字段名)
-            - language/project_type 不在 enum → ✗ (列支持值)
-            - 未知字段 → WARN (IL-AC-03, 静默忽略)
-        4. 任一 ✗ → 整体 ✗, 拼接 messages
-    """
-    # 惰性 import 避免循环 (init_contract → 不依赖 cli, 但保险起见)
-    from auto_engineering.loop.init_contract import (
-        load_init_manifest,
-        validate_init_manifest,
+def _check_project_profile(project_root: Path) -> tuple[bool, str]:
+    """诊断规范化项目能力；Init manifest 仅作为最低优先级兼容输入。"""
+    from auto_engineering.project_profile import (
+        AeConfigProvider,
+        LegacyInitProvider,
+        LocalProbeProvider,
+        ProjectProfileError,
+        ProjectProfileErrorCode,
+        ProjectProfileResolver,
+        ResolutionStatus,
     )
 
-    manifest = project_root / ".ae-state" / "init-manifest.json"
-    # IL-AC-01: 文件缺失
-    if not manifest.exists():
-        return False, (
-            "init-manifest.json 不存在 — 未找到 .ae-state/init-manifest.json, "
-            "请先运行 Init Engineering 项目初始化"
+    resolver = ProjectProfileResolver((
+        AeConfigProvider(),
+        LocalProbeProvider(),
+        LegacyInitProvider(),
+    ))
+    try:
+        resolution = resolver.resolve(project_root)
+    except ProjectProfileError as exc:
+        status = (
+            "legacy"
+            if exc.code is ProjectProfileErrorCode.LEGACY_PROFILE_INVALID
+            else "conflict"
         )
-    # 调 init_contract 读取 (load 失败 → ✗)
-    data = load_init_manifest(project_root)
-    if data is None:
-        return False, f"init-manifest.json 读取/解析失败: {manifest}"
-    # 调 init_contract 校验
-    result = validate_init_manifest(data)
-    if not result.ok:
-        # 拼接 errors
-        joined = "; ".join(result.errors)
-        return False, f"init-manifest.json 校验失败: {joined}"
-    # 通过, 拼接 schema_version + warnings
-    schema_version = data.get("schema_version", "?")
-    warn_str = " [WARN: " + "; ".join(result.warnings) + "]" if result.warnings else ""
-    return True, f"init-manifest.json 存在 (schema_version {schema_version}){warn_str}"
+        return False, f"ProjectProfile {status}: {exc.code.value} — {exc}"
+
+    if resolution.status is ResolutionStatus.SETUP_REQUIRED:
+        missing = ", ".join(resolution.missing_capabilities)
+        return True, (
+            "ProjectProfile setup_required — 宿主将在 dev-loop 内执行项目搭建；"
+            f"缺少能力: {missing}"
+        )
+
+    profile = resolution.profile
+    if profile is None:  # 防御性保护；resolver 的 resolved 契约要求 profile 非空
+        return False, "ProjectProfile conflict: resolved 状态缺少 profile"
+    status = "legacy" if "legacy_init" in profile.resolution.providers else "resolved"
+    return True, (
+        f"ProjectProfile {status} — {profile.profile_id}; "
+        f"providers={','.join(profile.resolution.providers)}"
+    )
+
+
+def _check_init_manifest(project_root: Path) -> tuple[bool, str]:
+    """兼容旧内部调用；新代码应使用 :func:`_check_project_profile`."""
+    return _check_project_profile(project_root)
 
 
 def _check_pr_backend() -> tuple[bool, str]:
@@ -245,7 +251,7 @@ def run_doctor_checks(project_root: Path) -> tuple[int, list[tuple[bool, str]]]:
     results.append(_check_api_key())
     results.append(_check_openai_api_key())
     results.append(_check_ae_state(project_root))
-    results.append(_check_init_manifest(project_root))
+    results.append(_check_project_profile(project_root))
     results.append(_check_pr_backend())
     failed = sum(1 for ok, _ in results if not ok)
     return (1 if failed > 0 else 0), results
@@ -609,7 +615,7 @@ def register_doctor_command(main: click.Group) -> None:
         acceptance_profile: bool, setup_observability: bool,
         teardown_observability: bool,
     ) -> None:
-        """环境预检 — Python/uv/git/sqlite3/.ae-state + init-manifest (IL-AC-01).
+        """环境预检 — Python/uv/git/sqlite3/.ae-state + ProjectProfile。
 
         --wizard: 交互式配置向导
         --init-config: 生成可立即运行的 ae.toml 标准配置

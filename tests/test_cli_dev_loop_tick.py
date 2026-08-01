@@ -35,8 +35,8 @@ class TestInitMode:
         )
         assert result.exit_code == 0, result.output
         action = _last_json_line(result.output)
-        assert action["action"] == "architect"
-        assert action["stage"] == "architect"
+        assert action["action"] == "project_setup_required"
+        assert action["stage"] == "project_setup"
         assert "thread_id" in action
         # checkpoint 落盘 → .ae-state/checkpoints.db 存在
         assert (tmp_path / ".ae-state" / "checkpoints.db").exists()
@@ -135,7 +135,7 @@ class TestStatusMode:
         )
 
         assert status.exit_code == 0, status.output
-        assert _last_json_line(status.output)["current_stage"] == "architect"
+        assert _last_json_line(status.output)["current_stage"] == "project_setup"
 
     def test_init_then_status_roundtrip(self, tmp_path) -> None:
         """--init 落 checkpoint → 独立 --status 调用 restore 并输出状态."""
@@ -153,7 +153,7 @@ class TestStatusMode:
         assert status.exit_code == 0, status.output
         summary = _last_json_line(status.output)
         assert summary["thread_id"] == thread_id
-        assert summary["current_stage"] == "architect"
+        assert summary["current_stage"] == "project_setup"
 
     def test_status_without_checkpoint_errors(self, tmp_path) -> None:
         """无 checkpoint → restore raise → 非零退出 (不静默假成功)."""

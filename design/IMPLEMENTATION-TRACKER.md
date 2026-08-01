@@ -1,6 +1,6 @@
 # Auto-Engineering 当前实施跟踪表
 
-> 更新：2026-07-31｜目标版本：v5.8｜Phase 1-62 明细见 `design/HISTORY.md`
+> 更新：2026-08-01｜目标版本：v5.8｜Phase 1-62 明细见 `design/HISTORY.md`
 > 状态：`☐` 未开始｜`◐` 进行中｜`✅` 已验证
 
 ## 基线与阶段
@@ -23,12 +23,6 @@
 | Phase 61 v5.7.1 发布收口 | ✅ 7/7 | T288-T294；2021 passed / 1 skipped，coverage 90.27% |
 | Phase 62 v5.7.1 正式发布 | ✅ 6/6 | T295-T300；GitHub Release 与 SHA-256 已核验 |
 | Phase 63 非交互配置治理 | ✅ 1/1 | T301；非交互显式策略与来源报告 |
-
-## Phase 63：非交互配置治理
-
-| 优先级 | ID | 任务 | EARS 验收 | 状态 |
-|---:|---|---|---|:---:|
-| P1 | T301 | `ae.toml` 首次配置闸门重构 | While `ae.toml` 缺失且宿主无 TTY, when `dev-loop --init` 启动, the system shall 通过显式配置策略继续或暂停，准确报告 env/file/default 来源，且不得通过管道模拟交互输入 | ✅ `--config-policy`/`AE_CONFIG_POLICY`；require/defaults/create；真实 CLI + 53 tests；全量 2095 passed/1 skipped |
 
 ## Phase 64：真实运行可信度止血
 
@@ -143,15 +137,15 @@
 
 | 优先级 | ID | 任务 | EARS 验收 | 状态 |
 |---:|---|---|---|:---:|
-| P0 | T359 | ProjectProfile 契约与负向测试 | While Profile schema、命令、路径或证据非法, when Core 校验输入, the system shall 以稳定错误码 fail-closed，且相同规范化事实产生相同 profile_id | ☐ |
-| P0 | T360 | Provider SPI 与确定性 Resolver | While 项目存在 AE 显式配置、本地工程事实或 legacy manifest, when Resolver 运行, the system shall 按权威等级合并全部证据、补全缺失字段并显式报告冲突 | ☐ |
-| P0 | T361 | 有限本地项目探测 | While 项目属于首期支持生态且缺少 Init manifest, when dev-loop 启动, the system shall 只读取白名单入口文件解析语言、路径和已声明命令，不递归扫描、不猜测命令 | ☐ |
-| P0 | T362 | 空项目 setup Action/Result | While 项目只有设计文档且能力不足, when dev-loop 启动或恢复, the system shall 幂等发出 project_setup_required；宿主提交完成后必须重新探测通过才继续 | ☐ |
-| P0 | T363 | Gate 与状态恢复解耦 | While Profile 已解析或跨进程恢复, when Gate Registry 构建验证链, the system shall 只消费持久化 ProjectProfile，不读取 Init 专用文件且不回退 Python 默认工具 | ☐ |
-| P1 | T364 | Prompt Contract 有界 Profile 上下文 | While Architect、Developer 或 Verifier 编译 Prompt, when Profile 未变化, each consumer shall 只接收角色所需摘要或 ArtifactRef，不直接读取或重复内联 Init manifest | ☐ |
-| P1 | T365 | Doctor、CLI 与配置语义迁移 | While manifest 缺失、项目待搭建或 legacy 输入存在, when doctor/CLI 诊断, the system shall 分别报告 resolved、setup_required、conflict 或 legacy，不把缺少 Init 产物误报为安装故障 | ☐ |
-| P0 | T366 | Legacy Init 只读兼容 Adapter | While 旧项目仅提供有效 init-manifest.json, when Resolver 和现有兼容 API 运行, the system shall 生成等价 Profile、保持 manifest mtime 不变并给出非阻断迁移提示 | ☐ |
-| P0 | T367 | Phase 73 双宿主收口验收 | While T359-T366 完成, when 已有项目、空项目、冲突、恢复和 legacy 黄金轨迹在 Claude/Codex 执行, both hosts shall 产生等价终态且全量测试、覆盖率、静态检查和真实产品轨迹通过 | ☐ |
+| P0 | T359 | ProjectProfile 契约与负向测试 | While Profile schema、命令、路径或证据非法, when Core 校验输入, the system shall 以稳定错误码 fail-closed，且相同规范化事实产生相同 profile_id | ✅ 11 tests；Ruff/mypy 通过 |
+| P0 | T360 | Provider SPI 与确定性 Resolver | While 项目存在 AE 显式配置、本地工程事实或 legacy manifest, when Resolver 运行, the system shall 按权威等级合并全部证据、补全缺失字段并显式报告冲突 | ✅ Provider 权威合并/冲突/显式配置；21 tests；Ruff/mypy 通过 |
+| P0 | T361 | 有限本地项目探测 | While 项目属于首期支持生态且缺少 Init manifest, when dev-loop 启动, the system shall 只读取白名单入口文件解析语言、路径和已声明命令，不递归扫描、不猜测命令 | ✅ Python/Node/Go/Rust 固定入口探测与 1MiB 门禁；21 tests |
+| P0 | T362 | 空项目 setup Action/Result | While 项目只有设计文档且能力不足, when dev-loop 启动或恢复, the system shall 幂等发出 project_setup_required；宿主提交完成后必须重新探测通过才继续 | ✅ setup Action/Result、重新探测、虚假完成拒绝；相关 102 tests |
+| P0 | T363 | Gate 与状态恢复解耦 | While Profile 已解析或跨进程恢复, when Gate Registry 构建验证链, the system shall 只消费持久化 ProjectProfile，不读取 Init 专用文件且不回退 Python 默认工具 | ✅ 精确命令 Gate、缺失 fail-closed、checkpoint Profile 恢复；78 tests |
+| P1 | T364 | Prompt Contract 有界 Profile 上下文 | While Architect、Developer 或 Verifier 编译 Prompt, when Profile 未变化, each consumer shall 只接收角色所需摘要或 ArtifactRef，不直接读取或重复内联 Init manifest | ✅（19 tests；Ruff；移除 prompt 侧 manifest 依赖） |
+| P1 | T365 | Doctor、CLI 与配置语义迁移 | While manifest 缺失、项目待搭建或 legacy 输入存在, when doctor/CLI 诊断, the system shall 分别报告 resolved、setup_required、conflict 或 legacy，不把缺少 Init 产物误报为安装故障 | ✅（76 tests；Ruff/mypy；四态诊断） |
+| P0 | T366 | Legacy Init 只读兼容 Adapter | While 旧项目仅提供有效 init-manifest.json, when Resolver 和现有兼容 API 运行, the system shall 生成等价 Profile、保持 manifest mtime 不变并给出非阻断迁移提示 | ✅（legacy 等价转换、mtime、稳定错误；68 tests；Ruff/mypy） |
+| P0 | T367 | Phase 73 双宿主收口验收 | While T359-T366 完成, when 已有项目、空项目、冲突、恢复和 legacy 黄金轨迹在 Claude/Codex 执行, both hosts shall 产生等价终态且全量测试、覆盖率、静态检查和真实产品轨迹通过 | ◐ 自动门禁完成：2153 passed/1 skipped、coverage 90%、Ruff/mypy/sync、双宿主 archive install；待 Claude Code/Codex 真实 LLM 轨迹 |
 
 ## 执行纪律
 

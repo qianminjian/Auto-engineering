@@ -117,6 +117,8 @@ def test_result_for_different_thread_is_not_active() -> None:
 
 
 def test_duplicate_result_replays_across_process_restore(tmp_path) -> None:
+    (tmp_path / "pyproject.toml").write_text("[project]\nname='demo'\n")
+    (tmp_path / "demo").mkdir()
     db_path = tmp_path / "checkpoints.db"
     first_store = SQLiteCheckpointStore[EngineState](db_path)
     first = TickOrchestrator(

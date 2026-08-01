@@ -176,6 +176,9 @@ class TestActionSchemaStagesMirrorSSOT:
         intermediate = self._enum() - {
             "gate", "skip", "session_rollover", "done", "error",
         }
+        if "project_setup_required" in intermediate:
+            intermediate.remove("project_setup_required")
+            intermediate.add("project_setup")
         expected = (set(RESULT_SCHEMA) - {"session_claimed"}) | set(_PHASE0_STAGES)
         assert intermediate == expected, (
             f"action enum 中间 stage 漂移: {intermediate} vs {expected}"
@@ -257,6 +260,8 @@ class TestActionRoundTrip:
 
     def test_real_gap_scan_action_conforms(self, tmp_path):
         (tmp_path / ".ae-state").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "pyproject.toml").write_text("[project]\nname='demo'\n")
+        (tmp_path / "demo").mkdir()
         design = tmp_path / "design.md"
         design.write_text("## B2 StageRouter\n\ncontent\n", encoding="utf-8")
         o = _orchestrator()

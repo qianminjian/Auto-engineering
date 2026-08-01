@@ -49,47 +49,48 @@ def test_version_checks_report_missing_old_and_failed_tools(
     assert doctor._check_sqlite3()[0] is False
 
 
-def test_ae_state_and_manifest_failure_paths(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_ae_state_and_project_profile_statuses(tmp_path: Path) -> None:
     import auto_engineering.cli.doctor as doctor
-    import auto_engineering.loop.init_contract as init_contract
 
     assert doctor._check_ae_state(tmp_path)[0] is False
-    assert doctor._check_init_manifest(tmp_path)[0] is False
+    ok, message = doctor._check_project_profile(tmp_path)
+    assert ok is True
+    assert "setup_required" in message
 
     state = tmp_path / ".ae-state"
     state.mkdir()
     (state / "init-manifest.json").write_text("{broken")
-    assert "读取/解析失败" in doctor._check_init_manifest(tmp_path)[1]
+    ok, message = doctor._check_project_profile(tmp_path)
+    assert ok is False
+    assert "ProjectProfile legacy" in message
+    assert "LEGACY_PROFILE_INVALID" in message
 
-    monkeypatch.setattr(init_contract, "load_init_manifest", lambda root: {
-        "schema_version": "1.0",
-    })
-    monkeypatch.setattr(
-        init_contract,
-        "validate_init_manifest",
-        lambda data: SimpleNamespace(
-            ok=False,
-            errors=["缺少 language"],
-            warnings=[],
-        ),
-    )
-    assert "缺少 language" in doctor._check_init_manifest(tmp_path)[1]
 
-    monkeypatch.setattr(
-        init_contract,
-        "validate_init_manifest",
-        lambda data: SimpleNamespace(
-            ok=True,
-            errors=[],
-            warnings=["未知字段 ignored"],
-        ),
+def test_project_profile_doctor_reports_resolved(tmp_path: Path) -> None:
+    import auto_engineering.cli.doctor as doctor
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "demo"\nversion = "1.0.0"\n',
     )
-    ok, message = doctor._check_init_manifest(tmp_path)
+
+    ok, message = doctor._check_project_profile(tmp_path)
+
     assert ok is True
-    assert "WARN" in message
+    assert "ProjectProfile resolved" in message
+    assert "sha256:" in message
+
+
+def test_project_profile_doctor_reports_config_conflict(tmp_path: Path) -> None:
+    import auto_engineering.cli.doctor as doctor
+
+    (tmp_path / "ae.toml").write_text("[project\n")
+
+    ok, message = doctor._check_project_profile(tmp_path)
+
+    assert ok is False
+    assert "ProjectProfile conflict" in message
+    assert "PROJECT_PROFILE_INVALID" in message
 
 
 def test_pr_backend_detects_available_and_missing_tools(

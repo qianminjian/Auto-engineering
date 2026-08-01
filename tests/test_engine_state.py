@@ -51,6 +51,8 @@ _EXPECTED_V58_FIELDS = {
     "audit_revision_fingerprints",
     # #49 尚未关闭的 P0/P1
     "open_findings",
+    # #50-52 Phase 73 ProjectProfile 与 setup 能力
+    "project_profile", "project_profile_id", "missing_project_capabilities",
     # 内部写入审计日志
     "_write_log",
     # P1-28: 运行时句柄 (不进 checkpoint)
@@ -316,11 +318,11 @@ class TestEngineStateBoundary:
         assert not hasattr(state, "nonexistent")
 
     def test_to_dict_contains_all_fields(self) -> None:
-        """to_dict 输出含全部 51 字段（不含内部字段）。"""
+        """to_dict 输出含全部 54 字段（不含内部字段）。"""
         state = EngineState()
         d = state.to_dict()
-        assert len(d) == 51, (
-            f"to_dict 应含 51 字段, 实际 {len(d)}: "
+        assert len(d) == 54, (
+            f"to_dict 应含 54 字段, 实际 {len(d)}: "
             f"{sorted(d.keys())}"
         )
         assert "suggested_fix" in d, "to_dict 必须包含 suggested_fix (Self-Refine 深化)"
@@ -564,11 +566,11 @@ class TestV56ValidStages:
     """v5.6 T1: _VALID_STAGES 扩展到 12 值 (C.10 line 3908)."""
 
     def test_valid_stages_full_set(self) -> None:
-        """_VALID_STAGES 含全部 12 个 v5.6 stage."""
+        """_VALID_STAGES 含 v5.6 stage 与 Phase 73 project_setup。"""
         from auto_engineering.engine.state import _VALID_STAGES
 
         expected = {
-            "", "gap_scan", "gap_review", "research", "architect",
+            "", "project_setup", "gap_scan", "gap_review", "research", "architect",
             "developer", "critic", "component_verifier", "plate_deep_audit",
             "system_verifier", "system_deep_audit", "plan_refine",
         }

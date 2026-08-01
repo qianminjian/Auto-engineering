@@ -87,13 +87,11 @@ class TestDoctor:
         for ln in lines[:7]:
             assert ln.startswith("✓") or ln.startswith("✗"), f"bad line: {ln!r}"
 
-    def test_ae_doctor_init_manifest_check(self, tmp_path: Path) -> None:
-        """tmp_path 无 .ae-state/init-manifest.json → 应报 ✗ (IL-AC-01)."""
+    def test_ae_doctor_project_profile_setup_required(self, tmp_path: Path) -> None:
+        """空项目应报告 setup_required，而不是缺失 Init 安装故障。"""
         result = _run_cli("doctor", cwd=tmp_path)
-        # 至少应有一行提到 init-manifest
-        assert "init-manifest" in result.stdout or "init_manifest" in result.stdout
-        # 缺少 manifest → 退出码应为 1
-        assert result.returncode == 1, f"expected exit 1 (missing init-manifest), got {result.returncode}"
+        assert "ProjectProfile setup_required" in result.stdout
+        assert "请先运行 Init Engineering" not in result.stdout
 
     def test_ae_doctor_init_manifest_present(self, tmp_path: Path) -> None:
         """当 .ae-state/init-manifest.json 存在 (完整 schema) → 应报 ✓ (mock)."""
@@ -122,10 +120,9 @@ class TestDoctor:
             )
         )
         result = _run_cli("doctor", cwd=tmp_path)
-        # 找 init-manifest 行
-        manifest_line = [ln for ln in result.stdout.splitlines() if "init-manifest" in ln]
-        assert len(manifest_line) == 1
-        assert manifest_line[0].startswith("✓"), f"manifest line should be ✓: {manifest_line[0]}"
+        profile_line = [ln for ln in result.stdout.splitlines() if "ProjectProfile legacy" in ln]
+        assert len(profile_line) == 1
+        assert profile_line[0].startswith("✓"), f"profile line should be ✓: {profile_line[0]}"
 
 
 # ============================================================

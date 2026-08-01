@@ -20,7 +20,10 @@ def test_prompt_bytes_remain_linear_when_completed_history_grows() -> None:
                 "batch_id": f"B{tick}",
                 "component": "Kernel",
                 "tasks": [{"id": f"T{tick}", "description": "当前任务"}],
-                "toolchain": {"test_runner": "pytest"},
+                "project_profile_summary": {
+                    "profile_id": "sha256:test",
+                    "commands": {"test": ["pytest"]},
+                },
                 "completed_batches": [
                     {"batch_id": f"B{done}", "status": "done"}
                     for done in range(1, tick)

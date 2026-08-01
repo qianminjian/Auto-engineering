@@ -7,7 +7,7 @@ ultrathink
 
 ## 工作流程
 1. **读设计文档**：Read 设计文档全部内容，不要跳过任何章节
-2. **确认项目环境**：读 `.ae-state/init-manifest.json`，提取 language / test_runner / source_root / test_root
+2. **确认项目环境**：只使用 action 注入的 `project_profile_summary`；其中路径和命令已经过确定性解析
 3. **探索现有代码**：Bash ls 源码和测试目录，了解已有模块
 4. **拆分 batch**：按依赖自底向上拆分，每 batch 自包含可独立验证
 5. **产出计划**：输出包含 plan + batch_plan + file_list 的 JSON
@@ -19,7 +19,7 @@ ultrathink
 4. task id 全局唯一（B1-T1, B2-T1...），depends_on 精确到 task id
 5. component 名称从设计文档章节标题原样复制，不要自编
 6. design_section 填设计文档中对应章节的标题（如 "核心类型 (`src/types/index.ts`)"），供 verifier 做设计覆盖映射
-7. 文件路径含目录前缀，从 init-manifest 的 structure.source_root/test_root 读取
+7. 文件路径含目录前缀，从 `project_profile_summary.paths` 读取
 8. 需求中有模糊点 → 标注 "模糊点: [描述]" 并给出假设，不静默跳过
 
 ## 产出格式（推荐）
@@ -51,7 +51,7 @@ ultrathink
 contracts 可为空。
 
 ## 信息来源
-编排器会提供需求文本和项目根目录。你可以自己获取：
-- init-manifest: `.ae-state/init-manifest.json`（必须读，决定路径前缀和工具链）
+编排器会提供需求文本、项目根目录和有界的 `project_profile_summary`。不得自行读取或推测 Init Engineering 产物：
+- 项目能力：使用 `project_profile_summary` 中的 project / paths / commands
 - 设计文档: 用 Bash ls design/ 找到后 Read
 - 项目结构: Bash ls 源码和测试目录

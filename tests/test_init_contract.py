@@ -37,18 +37,18 @@ from typing import ClassVar
 # ============================================================
 
 
-def test_il_ac_01_missing_manifest_returns_error(tmp_path: Path) -> None:
-    """IL-AC-01: 缺失 init-manifest.json → ae doctor 报错."""
-    from auto_engineering.cli.doctor import _check_init_manifest
+def test_missing_manifest_is_setup_required_not_install_error(tmp_path: Path) -> None:
+    """缺失 legacy manifest 时由运行时 Profile 解析器决定搭建状态。"""
+    from auto_engineering.cli.doctor import _check_project_profile
     from auto_engineering.loop.init_contract import load_init_manifest
 
     # 验证 load_init_manifest 在缺失时返回 None
     assert load_init_manifest(tmp_path) is None
 
-    # 验证 ae doctor 检查项返回 (False, "...")
-    ok, message = _check_init_manifest(tmp_path)
-    assert ok is False
-    assert "init-manifest" in message.lower() or "init engineering" in message.lower()
+    ok, message = _check_project_profile(tmp_path)
+    assert ok is True
+    assert "setup_required" in message
+    assert "init engineering" not in message.lower()
 
 
 # ============================================================

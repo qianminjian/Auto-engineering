@@ -1,6 +1,6 @@
 # Auto-Engineering BEACON
 
-> 创建：2026-06-24｜更新：2026-07-31｜阶段：v5.8.0-rc.4 待真实复验；Phase 73 待实施
+> 创建：2026-06-24｜更新：2026-08-01｜阶段：Phase 73 自动门禁通过，待真实宿主轨迹
 > 决策状态翻转（✅↔❌）或架构降级必须先获用户批准。
 
 ## 目标与成功标准
@@ -42,17 +42,8 @@ Engineering 的问答、模板或脚手架；把 archive smoke 冒充真实产�
 
 ## 当前状态
 
-- Phase 1-62 已完成；当前发布基线为 v5.7.1、2023 passed / 1 skipped、覆盖率 90.28%。
-- LoopEvent、SQLite EventStore、EngineState Projector 和单 Tick 原子事务已落地。
-- 11 个 Stage 已全部唯一注册 Handler；旧 stage-specific `_after_*` 已移除。
-- Host SPI 2.0、十类黄金轨迹、故障恢复和跨宿主语义等价已验收。
-- 双宿主 archive smoke、Claude Code/Codex 真实安装、命令与 `doctor` 已通过。
-- v5.6 checkpoint 可一次性只读导入；旧调用入口在迁移期保持兼容。
-- Phase 59 已完成只读 SQLite、自包含 marketplace、manifest 与 release 安全解压。
-- Phase 60 已完成 Prompt Contract、全阶段上下文编译、多 Agent 独立 receipt、
-  Result 兼容警告和不可覆盖 rendered 日志。
-- Phase 62 已完成宿主诊断、计划同步、双宿主隔离生命周期、零告警 CI 加固和
-  v5.7.1 GitHub Release；远端制品 SHA-256 已核验，阻塞：无。
+- Phase 1-62 已完成；协议、事件状态、11 个 StageHandler、Host SPI 2.0、Prompt
+  Contract、迁移兼容、双宿主黄金轨迹与 v5.7.1 Release 已验收。
 - Phase 64 已完成真实运行可信度止血：计划增量、Gate runner、空快照与状态不变量
   均 fail-closed。
 - Phase 65 已完成会话解耦：ContextBudget、ResumeCapsule、rollover/claim、SQLite
@@ -63,7 +54,8 @@ Engineering 的问答、模板或脚手架；把 archive smoke 冒充真实产�
   稳定身份、checkpoint 与成本治理已修复；T336 等待 Claude Code 真实复验。
 - Phase 69 已完成：标准 Profile、强制首次配置与双宿主 archive smoke 通过。
 - Phase 72 已修复插件 runner 误解析到目标项目；rc.4 自动门禁通过。
-- Phase 73 已完成运行时解耦设计并登记 T359-T367，代码尚未实施。
+- Phase 73 T359-T366 已完成；T367 自动门禁 2153 passed / 1 skipped、coverage
+  90%、静态检查与双宿主 archive install 通过，待真实 LLM 轨迹。
 
 ## 最近演进
 | 日期 | 变更 |
@@ -77,8 +69,8 @@ Engineering 的问答、模板或脚手架；把 archive smoke 冒充真实产�
 ## 待解决问题
 
 - T336/T350：用发布候选版执行 Claude Code/Codex 真实产品 150 Tick 长跑。
-- T359-T367：实施 ProjectProfile、Resolver、空项目 setup 协议及 Init 兼容迁移。
+- T367：完成 Phase 73 全量、覆盖率、双宿主制品与真实产品轨迹验收。
 
 ## 引用文件
 
-`design/v5.8-Automatic-Context-Governance.md` · `design/v5.8-Session-Decoupling-Design.md` · `design/v5.8-Init-Runtime-Decoupling-Design.md` · `design/incidents/2026-07-29-claude-146-tick-long-run.md` · `design/IMPLEMENTATION-TRACKER.md` · `design/HISTORY.md`
+`design/v5.8-Automatic-Context-Governance.md` · `design/v5.8-Session-Decoupling-Design.md` · `design/v5.8-Session-Decoupling-PLAN.md` · `design/v5.8-Init-Runtime-Decoupling-Design.md` · `design/incidents/2026-07-29-claude-146-tick-long-run.md` · `design/IMPLEMENTATION-TRACKER.md` · `design/HISTORY.md`

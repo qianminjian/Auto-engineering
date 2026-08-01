@@ -44,7 +44,7 @@ def test_orchestrator_keeps_stage_when_summary_claims_done(tmp_path) -> None:
 
     action = orchestrator.build_action()
 
-    assert action["action"] == "architect"
-    assert action["stage"] == "architect"
+    assert action["action"] == "project_setup_required"
+    assert action["stage"] == "project_setup"
     drift = action["extensions"]["informational_drift"]
     assert {item["field"] for item in drift} == {"stage", "tick"}

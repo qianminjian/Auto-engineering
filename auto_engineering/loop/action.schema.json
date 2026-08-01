@@ -24,7 +24,7 @@
         "gap_scan", "gap_review", "research", "architect", "developer",
         "critic", "component_verifier", "plate_deep_audit",
         "system_verifier", "system_deep_audit", "gate", "skip",
-        "session_rollover", "done", "error"
+        "project_setup_required", "session_rollover", "done", "error"
       ]
     },
     "gate_summary": {"type": "object"},
@@ -39,6 +39,9 @@
     "is_rereview": {"type": "boolean"},
     "research_findings": {"type": "object"},
     "required_capabilities": {"type": "array"},
+    "missing_capabilities": {"type": "array", "items": {"type": "string"}},
+    "reason_code": {"type": "string"},
+    "constraints": {"type": "object"},
     "gap": {"type": "object"},
     "knowledge_sources": {"type": "object"},
     "component": {"type": ["string", "null"]},
@@ -95,6 +98,10 @@
     {
       "if": {"properties": {"action": {"const": "done"}}},
       "then": {"required": ["verdict"]}
+    },
+    {
+      "if": {"properties": {"action": {"const": "project_setup_required"}}},
+      "then": {"required": ["reason_code", "missing_capabilities", "constraints"]}
     },
     {
       "if": {"properties": {"action": {"const": "session_rollover"}}},
