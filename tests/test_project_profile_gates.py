@@ -6,8 +6,11 @@ import json
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import pytest
+
 from auto_engineering.gates.profile import ProfileCommandGate
 from auto_engineering.gates.registry import build_gates_from_profile
+from auto_engineering.loop.checkpoint.records import CheckpointNotFoundError
 from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
 from auto_engineering.loop.tick_orchestrator import TickOrchestrator
 from auto_engineering.project_profile import ProjectProfile
@@ -80,7 +83,9 @@ def test_profile_test_gate_rejects_zero_tests(tmp_path: Path, monkeypatch) -> No
     assert "未收集到测试" in verdict.message
 
 
-def test_restore_uses_persisted_profile_without_legacy_manifest(tmp_path: Path) -> None:
+def test_restore_rejects_persisted_profile_when_local_evidence_disappears(
+    tmp_path: Path,
+) -> None:
     (tmp_path / "package.json").write_text(
         json.dumps({"scripts": {"test": "vitest run", "lint": "eslint ."}}),
         encoding="utf-8",
@@ -96,17 +101,13 @@ def test_restore_uses_persisted_profile_without_legacy_manifest(tmp_path: Path) 
         checkpoint_store=store,
     )
     orchestrator.init("实现功能")
-    profile_id = orchestrator._state.project_profile_id
     (tmp_path / "package.json").unlink()
 
-    restored = TickOrchestrator.restore(
-        tmp_path,
-        store,
-        gate_runner=lambda gate_names, project_root: {},
-        guardrail=guardrail,
-    )
-
-    assert restored._state.project_profile_id == profile_id
-    gates = {gate.name: gate for gate in restored._tick_gate_runner._gates}
-    assert gates["test"].command == ("npm", "run", "test")
+    with pytest.raises(CheckpointNotFoundError, match="REVALIDATION_REQUIRED"):
+        TickOrchestrator.restore(
+            tmp_path,
+            store,
+            gate_runner=lambda gate_names, project_root: {},
+            guardrail=guardrail,
+        )
     store.close()

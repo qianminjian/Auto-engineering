@@ -76,6 +76,9 @@ def upgrade_legacy_result(
         "correlation_id": active_action.get("correlation_id") or thread_id,
         "extensions": extensions,
     }
+    proof_token = active_action.get("spawn_proof_token")
+    if isinstance(proof_token, str) and "spawn_proof_token" not in upgraded:
+        upgraded["spawn_proof_token"] = proof_token
     validate_result_envelope(upgraded)
     _logger.warning(
         "legacy_result_upgraded",

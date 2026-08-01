@@ -278,6 +278,16 @@ class ProjectProfile:
                 "design_roots": list(self.design_roots),
             },
             "commands": {name: list(command) for name, command in sorted(self.commands.items())},
-            "evidence": [asdict(item) for item in self.evidence],
-            "resolution": asdict(self.resolution),
+            "evidence": [
+                {
+                    "source": item.source,
+                    "digest": item.digest,
+                    "facts": list(item.facts),
+                }
+                for item in self.evidence
+            ],
+            "resolution": {
+                "providers": list(self.resolution.providers),
+                "confidence": self.resolution.confidence,
+            },
         }

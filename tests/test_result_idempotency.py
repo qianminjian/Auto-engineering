@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from unittest.mock import MagicMock
 
 from auto_engineering.engine.state import EngineState
@@ -44,6 +45,7 @@ def _architect_result(action: dict, **overrides) -> dict:
         "correlation_id": action["correlation_id"],
         "extensions": {},
         "spawned": True,
+        "spawn_proof_token": action["spawn_proof_token"],
         "plan": _VALID_PLAN,
         "batch_plan": [
             {
@@ -65,9 +67,21 @@ def _architect_result(action: dict, **overrides) -> dict:
     return result
 
 
+def _complete_spawn_proof(orchestrator: TickOrchestrator, action: dict) -> None:
+    proof_path = (
+        orchestrator.project_root / ".ae-state" / "spawn-proofs"
+        / f"{action['spawn_proof_token']}.json"
+    )
+    proof = json.loads(proof_path.read_text(encoding="utf-8"))
+    proof["status"] = "completed"
+    proof["completed_at"] = "2026-08-01T00:00:00Z"
+    proof_path.write_text(json.dumps(proof), encoding="utf-8")
+
+
 def test_duplicate_result_returns_same_action_without_advancing_state() -> None:
     orchestrator = _orchestrator()
     action = orchestrator.init("实现协议")
+    _complete_spawn_proof(orchestrator, action)
     result = _architect_result(action)
 
     first = orchestrator.tick_dict(result)
@@ -81,6 +95,7 @@ def test_duplicate_result_returns_same_action_without_advancing_state() -> None:
 def test_same_causation_with_different_payload_is_conflict() -> None:
     orchestrator = _orchestrator()
     action = orchestrator.init("实现协议")
+    _complete_spawn_proof(orchestrator, action)
     result = _architect_result(action)
     orchestrator.tick_dict(result)
 
@@ -128,6 +143,7 @@ def test_duplicate_result_replays_across_process_restore(tmp_path) -> None:
         checkpoint_store=first_store,
     )
     action = first.init("实现协议")
+    _complete_spawn_proof(first, action)
     result = _architect_result(action)
     expected = first.tick_dict(result)
     first_store.close()

@@ -85,9 +85,12 @@ class TickGateRunner:
         if self._injected_runner:
             raw = self._injected_runner(gate_names, self._project_root)
         else:
-            from auto_engineering.gates.runner import run_gates
-            raw = run_gates(gate_names, self._project_root,
-                            files_changed=files_changed)
+            from auto_engineering.gates.runner import run_gate_instances
+            raw = run_gate_instances(
+                self._gates,
+                self._project_root,
+                files_changed=files_changed,
+            )
         per_gate = raw.get("gate_summary", raw)
         duration_ms = (time.perf_counter() - t_g) * 1000
 

@@ -26,6 +26,14 @@ from auto_engineering.engine.verification_layers import VerificationLayers
 from auto_engineering.loop.guardrail import GuardrailChain
 from auto_engineering.loop.tick_orchestrator import ORCH_BUDGET_MS, TickOrchestrator
 
+_TEST_RUNTIME_HANDLE = tempfile.TemporaryDirectory(prefix="ae-orchestrator-tests-")
+_TEST_RUNTIME_ROOT = Path(_TEST_RUNTIME_HANDLE.name)
+(_TEST_RUNTIME_ROOT / "demo").mkdir()
+(_TEST_RUNTIME_ROOT / "pyproject.toml").write_text(
+    "[project]\nname='demo'\n", encoding="utf-8"
+)
+_ACTIVE_TEST_ROOT = _TEST_RUNTIME_ROOT
+
 
 def _pass_gate_runner(gate_names, project_root):
     return {name: MagicMock(passed=True, message="ok") for name in gate_names}
@@ -38,7 +46,10 @@ def _pass_guardrail():
 
 
 def _orchestrator(max_rounds: int = 10, escalate: bool = False) -> TickOrchestrator:
+    global _ACTIVE_TEST_ROOT
+    _ACTIVE_TEST_ROOT = _TEST_RUNTIME_ROOT
     return TickOrchestrator(
+        project_root=_TEST_RUNTIME_ROOT,
         gate_runner=_pass_gate_runner,
         guardrail=_pass_guardrail(),
         checkpoint_store=None,
@@ -47,6 +58,36 @@ def _orchestrator(max_rounds: int = 10, escalate: bool = False) -> TickOrchestra
 
 
 def _make_result_file(data: dict) -> Path:
+    if data.get("spawned") is True:
+        proof_dir = _ACTIVE_TEST_ROOT / ".ae-state" / "spawn-proofs"
+        candidates = sorted(
+            proof_dir.glob("*.json") if proof_dir.exists() else (),
+            key=lambda path: path.stat().st_mtime_ns,
+            reverse=True,
+        )
+        for proof_path in candidates:
+            proof = json.loads(proof_path.read_text(encoding="utf-8"))
+            if (
+                proof.get("stage") != data.get("stage")
+                or proof.get("status") != "pending"
+                or proof.get("proof_role", "total") != "total"
+            ):
+                continue
+            proof["status"] = "completed"
+            proof["completed_at"] = "2026-08-01T00:00:00Z"
+            proof_path.write_text(json.dumps(proof), encoding="utf-8")
+            data["spawn_proof_token"] = proof["token"]
+            for worker_path in proof_dir.glob("*.json"):
+                worker = json.loads(worker_path.read_text(encoding="utf-8"))
+                if (
+                    worker.get("action_message_id") == proof.get("action_message_id")
+                    and worker.get("proof_role") == "worker"
+                ):
+                    worker["status"] = "completed"
+                    worker["completed_at"] = "2026-08-01T00:00:00Z"
+                    worker["actual_model"] = "test-model"
+                    worker_path.write_text(json.dumps(worker), encoding="utf-8")
+            break
     f = Path(tempfile.mktemp(suffix=".json"))
     f.write_text(json.dumps(data), encoding="utf-8")
     return f
@@ -231,7 +272,10 @@ class TestTickDeveloperToCritic:
         _prepare_existing_project(tmp_path)
         db = tmp_path / "cp.db"
         store = SQLiteCheckpointStore(db)
+        global _ACTIVE_TEST_ROOT
+        _ACTIVE_TEST_ROOT = tmp_path
         o = TickOrchestrator(
+            project_root=tmp_path,
             gate_runner=_pass_gate_runner,
             guardrail=_pass_guardrail(),
             checkpoint_store=store,
@@ -1649,6 +1693,7 @@ class TestTickLatencyInstrumentation:
             return {n: MagicMock(passed=True, message="ok") for n in gate_names}
 
         o = TickOrchestrator(
+            project_root=_TEST_RUNTIME_ROOT,
             gate_runner=slow_gate_runner,
             guardrail=_pass_guardrail(), checkpoint_store=None)
         o.init("req")
@@ -1694,6 +1739,7 @@ class TestTickLatencyInstrumentation:
             return {n: MagicMock(passed=True, message="ok") for n in gate_names}
 
         o = TickOrchestrator(
+            project_root=_TEST_RUNTIME_ROOT,
             gate_runner=very_slow_gate_runner,
             guardrail=_pass_guardrail(), checkpoint_store=None)
         o.init("req")
@@ -1779,7 +1825,11 @@ class TestOrchestrationP95Budget:
 
 def _store_orchestrator(store) -> TickOrchestrator:
     """带真实 checkpoint_store 的 orchestrator (跨进程 restore 测试用)."""
+    global _ACTIVE_TEST_ROOT
+    _ACTIVE_TEST_ROOT = Path(store.db_path).parent
+    _prepare_existing_project(_ACTIVE_TEST_ROOT)
     return TickOrchestrator(
+        project_root=_ACTIVE_TEST_ROOT,
         gate_runner=_pass_gate_runner,
         guardrail=_pass_guardrail(),
         checkpoint_store=store,
@@ -1826,6 +1876,8 @@ class TestA3WriteSide:
         _prepare_existing_project(tmp_path)
         db = tmp_path / "cp.db"
         store = SQLiteCheckpointStore(db)
+        global _ACTIVE_TEST_ROOT
+        _ACTIVE_TEST_ROOT = tmp_path
         summarizer = SessionSummarizer()
         o = TickOrchestrator(
             project_root=tmp_path,
@@ -1972,7 +2024,7 @@ class TestCrossProcessRestore:
 
 
 class TestPromptVersionLock:
-    """B12.5 版本锁: init 盖 registry hash, restore 校验漂移 (警告非致命)."""
+    """B12.5 版本锁: init 盖 registry hash, restore 漂移必须 fail-closed。"""
 
     def test_init_stamps_prompt_registry_hash(self) -> None:
         from auto_engineering.prompts.registry import default_registry
@@ -1996,7 +2048,8 @@ class TestPromptVersionLock:
         store2.close()
         assert "hash 不符" not in capsys.readouterr().err
 
-    def test_restore_mismatched_hash_warns(self, tmp_path, capsys) -> None:
+    def test_restore_mismatched_hash_is_rejected(self, tmp_path) -> None:
+        from auto_engineering.loop.checkpoint.records import CheckpointNotFoundError
         from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
 
         db = tmp_path / "cp.db"
@@ -2009,9 +2062,9 @@ class TestPromptVersionLock:
         store.close()
 
         store2 = SQLiteCheckpointStore(db)
-        TickOrchestrator.restore(tmp_path, store2)
+        with pytest.raises(CheckpointNotFoundError, match="PROMPT_REGISTRY_DRIFT"):
+            TickOrchestrator.restore(tmp_path, store2)
         store2.close()
-        assert "hash 不符" in capsys.readouterr().err
 
 
 class TestInitPersistsDesignDocPath:
@@ -2038,6 +2091,8 @@ class TestCrossTickE2E:
 
         _prepare_existing_project(tmp_path)
         store = SQLiteCheckpointStore(tmp_path / "cp.db")
+        global _ACTIVE_TEST_ROOT
+        _ACTIVE_TEST_ROOT = tmp_path
 
         def _fresh() -> TickOrchestrator:
             # 每 tick 一个全新实例 (无 in-memory 状态), 只从 store restore
@@ -2148,7 +2203,6 @@ class TestTwoRoundDesignDocE2E:
     def test_two_round_design_doc_refine_then_converge(self, tmp_path) -> None:
         _prepare_existing_project(tmp_path)
         o = _orchestrator(max_rounds=20)
-        o.project_root = tmp_path
         o.init("实现登录", design_doc_path=_write_leaf_design(tmp_path))
 
         # Phase 0: gap_scan (无缺口) → architect
@@ -2225,12 +2279,14 @@ class TestTwoRoundDesignDocE2E:
 def _real_guardrail_orch(tmp_path) -> TickOrchestrator:
     """带真实 GuardrailChain.default() (含 G6) 的 orchestrator — 用于 G6 端到端."""
     _prepare_existing_project(tmp_path)
+    global _ACTIVE_TEST_ROOT
+    _ACTIVE_TEST_ROOT = tmp_path
     o = TickOrchestrator(
+        project_root=tmp_path,
         gate_runner=_pass_gate_runner,
         guardrail=GuardrailChain.default(),
         checkpoint_store=None,
     )
-    o.project_root = tmp_path
     return o
 
 
@@ -2317,7 +2373,10 @@ class TestRunDeveloperGates:
 
     def test_gate_results_from_dict_runner(self) -> None:
         """gate_runner 返回 dict (含 passed/message) → gate_results 正确提取 passed/message."""
+        global _ACTIVE_TEST_ROOT
+        _ACTIVE_TEST_ROOT = _TEST_RUNTIME_ROOT
         o = TickOrchestrator(
+            project_root=_TEST_RUNTIME_ROOT,
             gate_runner=_dict_gate_runner,
             guardrail=_pass_guardrail(),
             checkpoint_store=None,
@@ -2364,7 +2423,10 @@ class TestRunDeveloperGates:
                 },
             }
 
+        global _ACTIVE_TEST_ROOT
+        _ACTIVE_TEST_ROOT = _TEST_RUNTIME_ROOT
         o = TickOrchestrator(
+            project_root=_TEST_RUNTIME_ROOT,
             gate_runner=_nested_runner,
             guardrail=_pass_guardrail(),
             checkpoint_store=None,
@@ -2434,7 +2496,10 @@ class TestFreshGuardrailAtCritic:
             return {name: {"passed": True, "message": "ok"}
                     for name in gate_names}
 
+        global _ACTIVE_TEST_ROOT
+        _ACTIVE_TEST_ROOT = _TEST_RUNTIME_ROOT
         o = TickOrchestrator(
+            project_root=_TEST_RUNTIME_ROOT,
             gate_runner=_counting_gate_runner,
             guardrail=gr,
             checkpoint_store=None,
@@ -2484,7 +2549,10 @@ class TestFreshGuardrailAtCritic:
         gr = MagicMock()
         gr.check.side_effect = _guardrail_side_effect
 
+        global _ACTIVE_TEST_ROOT
+        _ACTIVE_TEST_ROOT = _TEST_RUNTIME_ROOT
         o = TickOrchestrator(
+            project_root=_TEST_RUNTIME_ROOT,
             gate_runner=_pass_gate_runner,
             guardrail=gr,
             checkpoint_store=None,
@@ -2533,8 +2601,9 @@ class TestValidationConsistency:
                            "file_targets": ["x.py"]}],
             }], "file_list": ["x.py"], "contracts": {},
         }
+        result_file = _make_result_file(data)
         via_dict = o._validate_result_dict(data)
-        via_file = o._read_and_validate(_make_result_file(data))
+        via_file = o._read_and_validate(result_file)
         assert via_dict == via_file
 
     def test_stage_mismatch_consistent(self) -> None:
@@ -2643,12 +2712,16 @@ class TestTickVsTickDictIdenticalActions:
         # tick() 路径 (Driver A)
         o1 = _orchestrator()
         self._seed_to_developer(o1)
-        action_file = self._strip_nondeterministic(o1.tick(_make_result_file(result)))
+        action_file = self._strip_nondeterministic(
+            o1.tick(_make_result_file(dict(result)))
+        )
 
         # tick_dict() 路径 (Driver B)
         o2 = _orchestrator()
         self._seed_to_developer(o2)
-        action_dict = self._strip_nondeterministic(o2.tick_dict(result))
+        result_for_dict = dict(result)
+        _make_result_file(result_for_dict)
+        action_dict = self._strip_nondeterministic(o2.tick_dict(result_for_dict))
 
         assert action_file == action_dict, (
             f"tick() != tick_dict():\n"
@@ -2671,7 +2744,9 @@ class TestTickVsTickDictIdenticalActions:
             "files_changed": ["x.py"],
             "test_results": {"passed": 2, "failed": 0},
         }))
-        action_file = self._strip_nondeterministic(o1.tick(_make_result_file(result)))
+        action_file = self._strip_nondeterministic(
+            o1.tick(_make_result_file(dict(result)))
+        )
 
         o2 = _orchestrator()
         self._seed_to_developer(o2)
@@ -2680,7 +2755,9 @@ class TestTickVsTickDictIdenticalActions:
             "files_changed": ["x.py"],
             "test_results": {"passed": 2, "failed": 0},
         })
-        action_dict = self._strip_nondeterministic(o2.tick_dict(result))
+        result_for_dict = dict(result)
+        _make_result_file(result_for_dict)
+        action_dict = self._strip_nondeterministic(o2.tick_dict(result_for_dict))
 
         assert action_file == action_dict
 
@@ -3085,10 +3162,9 @@ class TestPrePlannedGate:
         """batch 中有 gate → developer batch 完成后输出 gate action."""
         _prepare_existing_project(tmp_path)
         o = _orchestrator()
-        o.project_root = tmp_path
         o.init("build a feature")
         # architect: 声明两个 batch, b2 带 gate
-        o.tick_dict({"stage": "architect", "spawned": True, "plan": _VALID_PLAN,
+        architect_result = {"stage": "architect", "spawned": True, "plan": _VALID_PLAN,
                      "file_list": ["x.py"],
                      "batch_plan": [{
             "plate": "p1", "component": "c1", "batches": [
@@ -3105,7 +3181,9 @@ class TestPrePlannedGate:
                      "options": ["批准部署", "暂缓部署", "终止 loop"],
                      "default": "暂缓部署",
                  }},
-            ]}]})
+            ]}]}
+        _make_result_file(architect_result)
+        o.tick_dict(architect_result)
         # developer: 完成 b1 → b2 有 gate → 输出 gate action
         action = o.tick_dict({"stage": "developer", "batch_id": "b1",
                               "files_changed": ["a.py"],
@@ -3116,8 +3194,14 @@ class TestPrePlannedGate:
     def test_resolve_pre_planned_gate_accepts_custom_option(self, tmp_path: Path) -> None:
         """PrePlannedGate 接受自定义 resolution → 作为 feedback."""
         _prepare_existing_project(tmp_path)
-        o = _orchestrator()
-        o.project_root = tmp_path
+        global _ACTIVE_TEST_ROOT
+        _ACTIVE_TEST_ROOT = tmp_path
+        o = TickOrchestrator(
+            project_root=tmp_path,
+            gate_runner=_pass_gate_runner,
+            guardrail=_pass_guardrail(),
+            checkpoint_store=None,
+        )
         o.init("build a feature")
         result = {"gate_resolution": {
             "gate_id": "deploy_approval",
@@ -3255,10 +3339,16 @@ class TestT105RoundHistory:
         # Modify foo.py: remove line2, add line4+line5 → 1 removed, 2 added
         (repo / "foo.py").write_text("line1\nline3\nline4\nline5\n")
         # Now run _append_round_history manually via _advance_stage call
-        o = _orchestrator()
         (repo / ".ae-state").mkdir(exist_ok=True)
         _prepare_existing_project(repo)
-        o.project_root = repo
+        global _ACTIVE_TEST_ROOT
+        _ACTIVE_TEST_ROOT = repo
+        o = TickOrchestrator(
+            project_root=repo,
+            gate_runner=_pass_gate_runner,
+            guardrail=_pass_guardrail(),
+            checkpoint_store=None,
+        )
         o.init("req")
         # architect tick to get files_changed
         o.tick(_make_result_file({
@@ -4225,14 +4315,25 @@ class TestF7SpawnProofForgery:
 
     def _setup_critic(self, tmp_path, proof_status):
         o = _orchestrator()
-        o.init("req")
+        action = o.init("req")
         o._state.current_stage = "critic"
         o._state.expected_stage = "critic"
         o.project_root = tmp_path
+        o._active_action = {
+            **action,
+            "stage": "critic",
+            "spawn_proof_token": "tok123",
+        }
         proof_dir = tmp_path / ".ae-state" / "spawn-proofs"
         proof_dir.mkdir(parents=True, exist_ok=True)
         (proof_dir / "tok123.json").write_text(
-            json.dumps({"status": proof_status, "stage": "critic"}))
+            json.dumps({
+                "token": "tok123",
+                "status": proof_status,
+                "stage": "critic",
+                "thread_id": o._state.thread_id,
+                "action_message_id": action["message_id"],
+            }))
         return o
 
     def _critic_result(self):
@@ -4263,6 +4364,45 @@ class TestF7SpawnProofForgery:
         assert not (isinstance(resp, ErrorResponse)
                     and resp.error_code == "SPAWN_PROOF_INCOMPLETE")
 
+    def test_missing_or_stale_proof_token_blocks(self, tmp_path):
+        from auto_engineering.loop.actions import ErrorResponse
+
+        o = self._setup_critic(tmp_path, "completed")
+        for token in (None, "stale-token"):
+            result = self._critic_result()
+            if token is None:
+                result.pop("spawn_proof_token")
+            else:
+                result["spawn_proof_token"] = token
+
+            response = o._validate_result_dict(result)
+
+            assert isinstance(response, ErrorResponse)
+            assert response.error_code == "SPAWN_PROOF_TOKEN_MISMATCH"
+
+    def test_init_binds_proof_to_protocol_action(self, tmp_path):
+        from auto_engineering.loop.action_builder import ActionBuilder
+
+        builder = ActionBuilder(tmp_path)
+        token = "proof-token"
+        builder._write_spawn_proof_file(token, "architect")
+        action = {
+            "spawn_proof_token": token,
+            "thread_id": "thread-1",
+            "message_id": "action-1",
+            "stage": "architect",
+        }
+        builder.bind_spawn_proofs(action)
+        proof = json.loads(
+            (tmp_path / ".ae-state" / "spawn-proofs" / f"{token}.json")
+            .read_text(encoding="utf-8")
+        )
+
+        assert proof["token"] == token
+        assert proof["thread_id"] == action["thread_id"]
+        assert proof["action_message_id"] == action["message_id"]
+        assert proof["stage"] == action["stage"]
+
     def test_multi_agent_missing_worker_receipt_blocks(self, tmp_path):
         from auto_engineering.loop.actions import ErrorResponse
 
@@ -4281,6 +4421,8 @@ class TestF7SpawnProofForgery:
                 json.dumps({"status": "completed", "stage": "plate_deep_audit"})
             )
         o._active_action = {
+            "spawn_proof_token": "total",
+            "message_id": "action-plate",
             "spawn": {
                 "agents": [
                     {"index": 0, "receipt_token": "worker-0"},
@@ -4289,6 +4431,14 @@ class TestF7SpawnProofForgery:
                 ],
             },
         }
+        total_proof = {
+            "token": "total",
+            "status": "completed",
+            "stage": "plate_deep_audit",
+            "thread_id": o._state.thread_id,
+            "action_message_id": "action-plate",
+        }
+        (proof_dir / "total.json").write_text(json.dumps(total_proof))
         result = {
             "stage": "plate_deep_audit",
             "spawned": True,

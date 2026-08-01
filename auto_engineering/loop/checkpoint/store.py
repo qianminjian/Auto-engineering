@@ -223,10 +223,8 @@ class SQLiteCheckpointStore[T]:
 
     def __del__(self) -> None:
         """P2-31: GC safety net — close connections if not explicitly closed."""
-        try:  # noqa: SIM105
+        with contextlib.suppress(Exception):
             self.close()
-        except Exception:
-            pass  # 析构期不抛异常
 
     def __enter__(self) -> SQLiteCheckpointStore[T]:
         return self
@@ -473,6 +471,16 @@ class SQLiteCheckpointStore[T]:
             )
         ) as cursor:
             return cursor.rowcount == 1
+
+    def active_project_thread(self) -> str | None:
+        """返回项目当前占用的 thread_id；无活动线程时返回 None。"""
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT active_thread_id FROM project_runtime WHERE singleton = 1"
+            ).fetchone()
+        if row is None or not row["active_thread_id"]:
+            return None
+        return str(row["active_thread_id"])
 
     def find_by_thread_id(self, candidate: str) -> str | None:
         """按 thread_id 反查 checkpoint id (CLI resume 回退, T160).

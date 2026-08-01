@@ -40,6 +40,11 @@ class LoopEventType(StrEnum):
     PLAN_PATCHED = "PlanPatched"
     STATE_INVARIANT_REJECTED = "StateInvariantRejected"
     VERIFICATION_EVIDENCE_BOUND = "VerificationEvidenceBound"
+    PROJECT_PROFILE_RESOLVED = "ProjectProfileResolved"
+    PROJECT_PROFILE_CHANGED = "ProjectProfileChanged"
+    PROJECT_PROFILE_CONFLICT = "ProjectProfileConflict"
+    PROJECT_SETUP_REQUIRED = "ProjectSetupRequired"
+    PROJECT_SETUP_COMPLETED = "ProjectSetupCompleted"
 
 
 class LoopEventValidationError(ValueError):

@@ -62,28 +62,14 @@ def _run(
     return result
 
 
-def _write_init_manifest(project: Path) -> None:
-    state_dir = project / ".ae-state"
-    state_dir.mkdir()
-    manifest = {
-        "schema_version": "1.0",
-        "project_type": "app-service",
-        "language": "python",
-        "structure": {
-            "source_root": "src/",
-            "test_root": "tests/",
-            "config_files": ["pyproject.toml"],
-            "entry_point": "src/main.py",
-        },
-        "conventions": {
-            "package_manager": "uv",
-            "linter": "ruff",
-            "type_checker": "mypy",
-            "test_runner": "pytest",
-        },
-    }
-    (state_dir / "init-manifest.json").write_text(
-        json.dumps(manifest, ensure_ascii=False),
+def _write_project_fixture(project: Path) -> None:
+    """只写标准工程入口，证明运行时不依赖 Init Engineering manifest。"""
+    (project / ".ae-state").mkdir()
+    (project / "src").mkdir()
+    (project / "src" / "main.py").write_text("VALUE = 1\n", encoding="utf-8")
+    (project / "pyproject.toml").write_text(
+        '[project]\nname = "acceptance-fixture"\nversion = "0.1.0"\n'
+        'requires-python = ">=3.12"\n',
         encoding="utf-8",
     )
 
@@ -177,7 +163,9 @@ def accept_archive(
     project = workspace / "project"
     project.mkdir()
     _run(["git", "init", "-q"], cwd=project, env=environment)
-    _write_init_manifest(project)
+    _write_project_fixture(project)
+    if (project / ".ae-state" / "init-manifest.json").exists():
+        raise RuntimeError("验收 fixture 不得依赖 init-manifest.json")
 
     resolver = str(install_root / "bin" / "ae-run")
     doctor = _run(
@@ -221,6 +209,7 @@ def accept_archive(
                 "isolated_uv_sync",
                 "doctor",
                 "minimal_tick",
+                "manifest_free_project_profile",
                 *lifecycle_evidence,
             ],
         },

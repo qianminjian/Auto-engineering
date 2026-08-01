@@ -98,6 +98,11 @@ def test_all_planned_event_types_are_explicit() -> None:
         "PlanPatched",
         "StateInvariantRejected",
         "VerificationEvidenceBound",
+        "ProjectProfileResolved",
+        "ProjectProfileChanged",
+        "ProjectProfileConflict",
+        "ProjectSetupRequired",
+        "ProjectSetupCompleted",
     }
 
 

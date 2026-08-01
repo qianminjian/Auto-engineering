@@ -27,10 +27,15 @@ def test_codex_release_minimal_tick_chain(tmp_path: Path) -> None:
     for key in ("hooks", "skills"):
         assert (install_root / manifest[key]).exists()
 
-    venv_bin = install_root / ".venv" / "bin"
-    venv_bin.mkdir(parents=True)
-    (venv_bin / "python").symlink_to(sys.executable)
-    (venv_bin / "ae").symlink_to(ROOT / ".venv" / "bin" / "ae")
+    sync = subprocess.run(
+        ["uv", "sync", "--frozen", "--project", str(install_root)],
+        cwd=install_root,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=120,
+    )
+    assert sync.returncode == 0, sync.stderr
 
     environment = os.environ.copy()
     environment.update({

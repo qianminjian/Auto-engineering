@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from auto_engineering.engine.state import EngineState
+from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
 from auto_engineering.loop.event_store import SQLiteEventStore
 from auto_engineering.loop.events import LoopEvent, LoopEventType
 from auto_engineering.loop.tick_orchestrator import TickOrchestrator
@@ -51,6 +52,41 @@ def test_commit_tick_atomically_writes_event_projection_and_action() -> None:
         assert len(store.load_stream("thread-1")) == 1
         assert store.load_projection("thread-1").to_dict() == state.to_dict()
         assert store.load_action_snapshot("thread-1") == _action()
+
+
+def test_commit_tick_atomically_writes_result_replay_receipt() -> None:
+    state = _state()
+    with SQLiteEventStore(":memory:") as store:
+        store.commit_tick(
+            events=[_event()],
+            state=state,
+            action=_action(),
+            result_causation_id="previous-action",
+            result_hash="a" * 64,
+        )
+
+        assert store.load_protocol_result(
+            "thread-1", "previous-action"
+        ) == ("a" * 64, _action())
+
+
+def test_result_replay_receipt_rolls_back_with_tick() -> None:
+    def fail_after_result(point: str) -> None:
+        if point == "after_result":
+            raise RuntimeError("fault:after_result")
+
+    with SQLiteEventStore(":memory:", fault_injector=fail_after_result) as store:
+        with pytest.raises(RuntimeError, match="after_result"):
+            store.commit_tick(
+                events=[_event()],
+                state=_state(),
+                action=_action(),
+                result_causation_id="previous-action",
+                result_hash="b" * 64,
+            )
+
+        assert store.load_protocol_result("thread-1", "previous-action") is None
+        assert store.load_stream("thread-1") == []
 
 
 @pytest.mark.parametrize(
@@ -138,9 +174,37 @@ def test_orchestrator_init_uses_event_transaction_without_checkpoint_write(
         stream = store.load_stream(action["thread_id"])
         assert [event.event_type for event in stream] == [
             LoopEventType.LOOP_INITIALIZED,
+            LoopEventType.PROJECT_SETUP_REQUIRED,
             LoopEventType.ACTION_ISSUED,
         ]
         assert store.load_projection(action["thread_id"]).to_dict() == (
             orchestrator._state.to_dict()
         )
         assert store.load_action_snapshot(action["thread_id"]) == action
+
+
+def test_orchestrator_restores_projection_and_active_action_from_event_store(
+    tmp_path,
+) -> None:
+    checkpoints = SQLiteCheckpointStore(tmp_path / "checkpoints.db")
+    try:
+        with SQLiteEventStore(tmp_path / "events.db") as events:
+            first = TickOrchestrator(
+                tmp_path,
+                checkpoint_store=checkpoints,
+                event_store=events,
+            )
+            action = first.init("事件恢复")
+
+            restored = TickOrchestrator.restore(
+                tmp_path,
+                checkpoints,
+                event_store=events,
+                thread_id=action["thread_id"],
+            )
+
+            assert restored._state.to_dict() == first._state.to_dict()
+            assert restored._active_action == action
+            assert restored._round_history == []
+    finally:
+        checkpoints.close()

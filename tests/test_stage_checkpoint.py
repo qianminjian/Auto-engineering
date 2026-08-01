@@ -63,8 +63,16 @@ def _architect_result() -> dict:
     }
 
 
-def _architect_result_file() -> Path:
-    return _make_result_file(_architect_result())
+def _architect_result_file(orch: TickOrchestrator) -> Path:
+    result = _architect_result()
+    token = orch._active_action["spawn_proof_token"]
+    proof_path = orch.project_root / ".ae-state" / "spawn-proofs" / f"{token}.json"
+    proof = json.loads(proof_path.read_text(encoding="utf-8"))
+    proof["status"] = "completed"
+    proof["completed_at"] = "2026-08-01T00:00:00Z"
+    proof_path.write_text(json.dumps(proof), encoding="utf-8")
+    result["spawn_proof_token"] = token
+    return _make_result_file(result)
 
 
 class TestStageCheckpoint:
@@ -90,7 +98,7 @@ class TestStageCheckpoint:
         orch.init("test requirement", max_rounds=5)
 
         # Simulate architect completion
-        action = orch.tick(_architect_result_file())
+        action = orch.tick(_architect_result_file(orch))
         assert action["action"] == "developer"
 
         # Simulate developer completion
@@ -146,7 +154,7 @@ class TestStageCheckpoint:
         assert action["action"] == "architect"
 
         # Simulate architect result → should go to developer
-        action = orch.tick(_architect_result_file())
+        action = orch.tick(_architect_result_file(orch))
         # Should go to developer, NOT gate again for architect
         assert action["action"] == "developer"
 

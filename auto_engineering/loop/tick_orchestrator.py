@@ -127,6 +127,7 @@ from auto_engineering.project_profile import (
     AeConfigProvider,
     LegacyInitProvider,
     LocalProbeProvider,
+    ProjectProfileError,
     ProjectProfileResolution,
     ProjectProfileResolver,
     ResolutionStatus,
@@ -293,6 +294,8 @@ class TickOrchestrator:
         self._active_action: dict[str, Any] | None = None
         self._result_replays: dict[str, tuple[str, dict[str, Any]]] = {}
         self._current_result_message_id: str | None = None
+        self._current_result_causation_id: str | None = None
+        self._current_result_hash: str | None = None
         self._pending_domain_events: list[LoopEvent] = []
         self._session_handoff = SessionHandoff()
         self._stage_handlers = StageHandlerRegistry(
@@ -423,7 +426,18 @@ class TickOrchestrator:
         if self._guardrail is None:
             self._guardrail = GuardrailChain.default()
 
-        self._project_profile_resolution = self._project_profile_resolver.resolve(self.project_root)
+        try:
+            self._project_profile_resolution = self._project_profile_resolver.resolve(self.project_root)
+        except ProjectProfileError as exc:
+            self._state.current_stage = "project_setup"
+            self._state.expected_stage = "project_setup"
+            self._state.missing_project_capabilities = ["project_profile_conflict"]
+            self._queue_domain_event(
+                LoopEventType.PROJECT_PROFILE_CONFLICT,
+                {"error_code": exc.code.value, "message": str(exc)},
+            )
+            self._save_checkpoint()
+            return self.build_action()
         setup_required = self._project_profile_resolution.status is ResolutionStatus.SETUP_REQUIRED
         if setup_required:
             self._state.current_stage = "project_setup"
@@ -432,11 +446,19 @@ class TickOrchestrator:
                 self._project_profile_resolution.missing_capabilities
             )
             self._state.tick = 0
+            self._queue_domain_event(
+                LoopEventType.PROJECT_SETUP_REQUIRED,
+                {"missing_capabilities": list(self._project_profile_resolution.missing_capabilities)},
+            )
             if not self._escalate:
                 self._save_checkpoint()
                 return self.build_action()
         else:
             self._apply_project_profile_resolution(self._project_profile_resolution)
+            self._queue_domain_event(
+                LoopEventType.PROJECT_PROFILE_RESOLVED,
+                {"profile_id": self._state.project_profile_id},
+            )
 
         # T95 Agent-Initiated Escalation: --escalate flag → 启动时立即暂停
         if self._escalate:
@@ -477,6 +499,8 @@ class TickOrchestrator:
         max_rounds: int = 5,
         debug: bool = False,
         debug_dir: str | None = None,
+        event_store: SQLiteEventStore | None = None,
+        thread_id: str | None = None,
     ) -> TickOrchestrator:
         """跨进程恢复 (§A.1: 每 tick 独立进程, 从 SQLite 重建全部 in-memory 状态)."""
         self = cls(
@@ -484,6 +508,7 @@ class TickOrchestrator:
             gate_runner=gate_runner,
             guardrail=guardrail,
             checkpoint_store=checkpoint_store,
+            event_store=event_store,
             context_offloader=context_offloader,
             session_summarizer=session_summarizer,
             tracer=tracer,
@@ -493,24 +518,40 @@ class TickOrchestrator:
             debug_dir=debug_dir,
         )
 
-        ck = (checkpoint_store.load(checkpoint_id) if checkpoint_id
-              else checkpoint_store.load_latest())
-        if ck is None:
-            raise CheckpointNotFoundError(
-                f"无 checkpoint 可恢复 (project_root={project_root})")
-
-        state = ck.state
+        ck = None
+        if event_store is not None:
+            resolved_thread_id = thread_id or checkpoint_store.active_project_thread()
+            if resolved_thread_id is None:
+                raise CheckpointNotFoundError("无 active EventStore thread 可恢复")
+            state = event_store.load_projection(resolved_thread_id)
+            if state is None:
+                raise CheckpointNotFoundError(
+                    f"EventStore 无状态投影 (thread_id={resolved_thread_id})"
+                )
+            from auto_engineering.loop.checkpoint.records import RoundHistory
+            self._round_history = [
+                RoundHistory(**item)
+                for item in event_store.load_round_history(resolved_thread_id)
+            ]
+            self._active_action = event_store.load_action_snapshot(resolved_thread_id)
+        else:
+            ck = (checkpoint_store.load(checkpoint_id) if checkpoint_id
+                  else checkpoint_store.load_latest())
+            if ck is None:
+                raise CheckpointNotFoundError(
+                    f"无 checkpoint 可恢复 (project_root={project_root})")
+            state = ck.state
+            self._round_history = list(ck.history or [])
+            self._active_action = checkpoint_store.load_active_protocol_action(
+                state.thread_id if not isinstance(state, dict) else state["thread_id"]
+            )
         if isinstance(state, dict):  # 防御: deserialize 未命中 EngineState 分派
             state = EngineState.from_dict(state)
         self._state = state
-        self._round_history = list(ck.history or [])
         self._dev_snapshot = (
             dict(state.developer_snapshot)
             if state.developer_snapshot is not None
             else None
-        )
-        self._active_action = checkpoint_store.load_active_protocol_action(
-            state.thread_id
         )
 
         # 协作组件 (无状态 / 从 store 重建)
@@ -520,19 +561,27 @@ class TickOrchestrator:
         if self._guardrail is None:
             self._guardrail = GuardrailChain.default()
 
-        if state.project_profile is not None:
-            from auto_engineering.project_profile import ProjectProfile
-
-            profile = ProjectProfile.from_dict(
-                state.project_profile,
-                project_root=project_root,
+        # 持久化 Profile 只作审计快照；恢复必须重新读取当前本地证据。
+        previous_profile_id = state.project_profile_id
+        resolution = self._project_profile_resolver.resolve(project_root)
+        if (
+            resolution.status is not ResolutionStatus.RESOLVED
+            and state.current_stage != "project_setup"
+        ):
+            raise CheckpointNotFoundError(
+                "PROJECT_PROFILE_REVALIDATION_REQUIRED: 当前项目证据不足，"
+                "不能继续使用 checkpoint 中的陈旧 Profile"
             )
-            self._project_profile_resolution = ProjectProfileResolution(
-                status=ResolutionStatus.RESOLVED,
-                profile=profile,
-                missing_capabilities=tuple(state.missing_project_capabilities),
+        self._project_profile_resolution = resolution
+        self._apply_project_profile_resolution(resolution)
+        if previous_profile_id != self._state.project_profile_id:
+            self._queue_domain_event(
+                LoopEventType.PROJECT_PROFILE_CHANGED,
+                {
+                    "previous_profile_id": previous_profile_id,
+                    "profile_id": self._state.project_profile_id,
+                },
             )
-            self._tick_gate_runner.reload(profile)
 
         # design_doc: design-doc 模式每 tick 重 parse (确定性无漂移)
         if state.design_doc_path:
@@ -565,16 +614,14 @@ class TickOrchestrator:
         if state.debug_enabled and state.debug_dir:
             self._debug_tracer = DebugTracer(Path(state.debug_dir))
 
-        # B12.5 版本锁: 运行中 prompt 文件被改 → hash 不符 → 警告 (非致命, §A.1 stderr)
+        # B12.5 版本锁: 同一确定性 loop 不允许在恢复时静默更换 prompt。
         stored_hash = state.prompt_registry_hash
         if stored_hash:
             current_hash = default_registry().registry_hash()
             if stored_hash != current_hash:
-                print(
-                    f"[warn] prompt registry hash 不符 "
-                    f"(checkpoint={stored_hash[:12]} 当前={current_hash[:12]}): "
-                    f"loop 运行中 prompt 已变更, 同一 loop 不应换 prompt (B12.5)。",
-                    file=sys.stderr,
+                raise CheckpointNotFoundError(
+                    "PROMPT_REGISTRY_DRIFT: checkpoint 与当前 prompt registry "
+                    f"不一致 ({stored_hash[:12]} != {current_hash[:12]})"
                 )
 
         return self
@@ -659,6 +706,15 @@ class TickOrchestrator:
             if (
                 replay is None
                 and result_causation
+                and self._event_store is not None
+            ):
+                replay = self._event_store.load_protocol_result(
+                    self._state.thread_id,
+                    result_causation,
+                )
+            if (
+                replay is None
+                and result_causation
                 and self._checkpoint_store is not None
             ):
                 replay = self._checkpoint_store.load_protocol_result(
@@ -686,6 +742,8 @@ class TickOrchestrator:
                     causation_id=result_causation,
                 )
             self._current_result_message_id = envelope.message_id
+            self._current_result_causation_id = result_causation
+            self._current_result_hash = result_hash
 
         # T75: OTLP tracing span per tick
         tick_span = None
@@ -741,7 +799,7 @@ class TickOrchestrator:
         result_accepted = action.get("action") != "error"
         if native_result and result_causation and result_hash and result_accepted:
             self._result_replays[result_causation] = (result_hash, action)
-            if self._checkpoint_store is not None:
+            if self._checkpoint_store is not None and self._event_store is None:
                 self._checkpoint_store.record_protocol_result(
                     self._state.thread_id,
                     result_causation,
@@ -749,6 +807,8 @@ class TickOrchestrator:
                     action,
                 )
         self._current_result_message_id = None
+        self._current_result_causation_id = None
+        self._current_result_hash = None
         duration_ms = int((time.perf_counter() - t_start) * 1000)
 
         if tick_span is not None:
@@ -1031,6 +1091,10 @@ class TickOrchestrator:
                 self._state.to_dict(),
             ).to_dict()
         self._apply_project_profile_resolution(resolution)
+        self._queue_domain_event(
+            LoopEventType.PROJECT_SETUP_COMPLETED,
+            {"profile_id": self._state.project_profile_id},
+        )
         self._state.current_stage = "gap_scan" if self._design_doc else "architect"
         self._state.expected_stage = self._state.current_stage
         self._state.tick += 1
@@ -1046,6 +1110,17 @@ class TickOrchestrator:
         self._state.missing_project_capabilities = list(resolution.missing_capabilities)
         self._tick_gate_runner.reload(profile)
 
+    def _queue_domain_event(self, event_type: LoopEventType, payload: dict[str, Any]) -> None:
+        """暂存领域事实，由下一次 EventStore Tick 事务统一分配序列。"""
+        if self._state is None:
+            return
+        self._pending_domain_events.append(
+            LoopEvent.create(
+                thread_id=self._state.thread_id, sequence=0,
+                event_type=event_type, payload=payload,
+                correlation_id=self._state.thread_id,
+            )
+        )
     def _validate_result_dict(self, result: dict) -> dict | ErrorResponse:
         """验证 result dict (不读文件, Driver B standalone 用)."""
         if not isinstance(result, dict):
@@ -1106,6 +1181,23 @@ class TickOrchestrator:
             # DS-15: verify spawn proof file was completed (engine pre-writes it,
             # subagent must update status to "completed")
             proof_token = result.get("spawn_proof_token")
+            expected_token = (
+                self._active_action.get("spawn_proof_token")
+                if self._active_action is not None else None
+            )
+            if (
+                not isinstance(proof_token, str)
+                or not isinstance(expected_token, str)
+                or proof_token != expected_token
+            ):
+                return ErrorResponse(
+                    error_code="SPAWN_PROOF_TOKEN_MISMATCH",
+                    message=(
+                        f"Stage '{stage}' 的 spawn_proof_token 缺失、失效或不属于"
+                        "当前 active Action"
+                    ),
+                    current_state=self._state.to_dict(),
+                )
             if proof_token:
                 proof_file = (
                     self.project_root / ".ae-state" / "spawn-proofs"
@@ -1115,7 +1207,15 @@ class TickOrchestrator:
                 if proof_file.exists():
                     try:
                         proof_data = json.loads(proof_file.read_text(encoding="utf-8"))
-                        proof_ok = proof_data.get("status") == "completed"
+                        proof_ok = (
+                            proof_data.get("status") == "completed"
+                            and proof_data.get("token") == proof_token
+                            and proof_data.get("stage") == stage
+                            and proof_data.get("thread_id") == self._state.thread_id
+                            and self._active_action is not None
+                            and proof_data.get("action_message_id")
+                            == self._active_action.get("message_id")
+                        )
                     except (json.JSONDecodeError, OSError) as e:
                         _logger.warning(
                             "Spawn proof file corrupted for stage=%s token=%s: %s",
@@ -1854,6 +1954,7 @@ class TickOrchestrator:
             action,
             causation_id=self._current_result_message_id,
         )
+        self.action_builder.bind_spawn_proofs(action)
         action["extensions"]["policy_snapshot"] = {
             **asdict(self._runtime_config.loop_budget_policy),
             "max_worker_receipt_bytes": (
@@ -2385,7 +2486,10 @@ class TickOrchestrator:
                     thread_id=self._state.thread_id,
                     sequence=sequence,
                     event_type=LoopEventType.LOOP_INITIALIZED,
-                    payload={"state": self._state.to_dict()},
+                    payload={
+                        "state": self._state.to_dict(),
+                        "round_history": [],
+                    },
                     correlation_id=self._state.thread_id,
                 )
             )
@@ -2404,6 +2508,7 @@ class TickOrchestrator:
                     payload={
                         "result_message_id": self._current_result_message_id,
                         "state_patch": self._state.to_dict(),
+                        "round_history": [asdict(item) for item in self._round_history],
                     },
                     causation_id=causation_id,
                     correlation_id=self._state.thread_id,
@@ -2437,6 +2542,8 @@ class TickOrchestrator:
                 events=events,
                 state=self._state,
                 action=action,
+                result_causation_id=self._current_result_causation_id,
+                result_hash=self._current_result_hash,
             )
             self._pending_domain_events.clear()
         except BaseException:
@@ -2479,8 +2586,6 @@ class TickOrchestrator:
         ts = datetime.now().strftime("%H:%M:%S")
         print(f"[{ts}] {self._progress_tree.display()}",
               file=sys.stderr, flush=True)
-
-
 __all__ = [
     "ORCH_BUDGET_MS",
     "TickOrchestrator",

@@ -1,6 +1,6 @@
 # Auto-Engineering BEACON
 
-> 创建：2026-06-24｜更新：2026-08-01｜阶段：Phase 73 自动门禁通过，待真实宿主轨迹
+> 创建：2026-06-24｜更新：2026-08-01｜阶段：Phase 74 自动门禁完成
 > 决策状态翻转（✅↔❌）或架构降级必须先获用户批准。
 
 ## 目标与成功标准
@@ -56,6 +56,8 @@ Engineering 的问答、模板或脚手架；把 archive smoke 冒充真实产�
 - Phase 72 已修复插件 runner 误解析到目标项目；rc.4 自动门禁通过。
 - Phase 73 T359-T366 已完成；T367 自动门禁 2153 passed / 1 skipped、coverage
   90%、静态检查与双宿主 archive install 通过，待真实 LLM 轨迹。
+- Phase 74 T368-T375 已完成；T376 自动门禁 2162 passed / 1 skipped、coverage
+  90.43%、Ruff/mypy/sync/check-gate 与双宿主 archive 通过，待真实 LLM 轨迹。
 
 ## 最近演进
 | 日期 | 变更 |
@@ -70,6 +72,7 @@ Engineering 的问答、模板或脚手架；把 archive smoke 冒充真实产�
 
 - T336/T350：用发布候选版执行 Claude Code/Codex 真实产品 150 Tick 长跑。
 - T367：完成 Phase 73 全量、覆盖率、双宿主制品与真实产品轨迹验收。
+- T376：用当前制品完成 Claude Code/Codex 真实 LLM 轨迹。
 
 ## 引用文件
 

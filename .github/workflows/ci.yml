@@ -15,17 +15,33 @@ concurrency:
 jobs:
   host-contract:
     name: Host contract (${{ matrix.host }})
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - host: claude-code
+            os: ubuntu-latest
             tests: >-
               tests/test_sync_agent_instructions.py
               tests/test_v8_platform.py
               tests/test_release_package.py
           - host: codex
+            os: ubuntu-latest
+            tests: >-
+              tests/test_host_adapter.py
+              tests/test_codex_hooks.py
+              tests/test_codex_integration.py
+              tests/test_documentation_contract.py
+              tests/test_release_package.py
+          - host: claude-code
+            os: macos-latest
+            tests: >-
+              tests/test_sync_agent_instructions.py
+              tests/test_v8_platform.py
+              tests/test_release_package.py
+          - host: codex
+            os: macos-latest
             tests: >-
               tests/test_host_adapter.py
               tests/test_codex_hooks.py
@@ -33,14 +49,14 @@ jobs:
               tests/test_documentation_contract.py
               tests/test_release_package.py
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Install uv
-        uses: astral-sh/setup-uv@v9.0.0
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           python-version: "3.12"
           enable-cache: false
       - name: Sync dependencies
-        run: uv sync --extra dev --extra otel
+        run: uv sync --frozen --extra dev --extra otel
       - name: Check generated agent rules
         run: python3 scripts/sync_agent_instructions.py --check
       - name: Run host contract tests
@@ -59,18 +75,22 @@ jobs:
           --host "${{ matrix.host }}"
 
   lint-and-test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Check agent instruction sync
         run: python3 scripts/sync_agent_instructions.py --check
       - name: Install uv
-        uses: astral-sh/setup-uv@v9.0.0
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           python-version: "3.12"
           enable-cache: false
       - name: "Sync deps (含 dev + otel 测试依赖)"
-        run: uv sync --extra dev --extra otel
+        run: uv sync --frozen --extra dev --extra otel
       - name: Check project metadata
         run: uv run python scripts/check_project_metadata.py
       - name: Lint (ruff)

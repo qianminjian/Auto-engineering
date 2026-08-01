@@ -44,7 +44,12 @@
         "ArtifactRegistered",
         "PlanPatched",
         "StateInvariantRejected",
-        "VerificationEvidenceBound"
+        "VerificationEvidenceBound",
+        "ProjectProfileResolved",
+        "ProjectProfileChanged",
+        "ProjectProfileConflict",
+        "ProjectSetupRequired",
+        "ProjectSetupCompleted"
       ]
     },
     "causation_id": {"type": ["string", "null"], "minLength": 1},

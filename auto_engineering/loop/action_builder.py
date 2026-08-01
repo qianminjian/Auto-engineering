@@ -30,9 +30,10 @@ _SPAWN_INSTRUCTION = (
     "Collect all outputs → merge into one result per expected_format → "
     "write result: {{\"stage\":\"{stage}\",\"spawned\":true,"
     "\"spawn_proof_token\":\"{proof_token}\", ...merged}}.\n"
-    "Proof: for a single agent, tell it to OVERWRITE "
-    ".ae-state/spawn-proofs/{proof_token}.json with exactly one JSON object "
-    "{{\"status\":\"completed\",\"stage\":\"{stage}\",\"completed_at\":\"<ISO timestamp>\"}} "
+    "Proof: for a single agent, tell it to read the existing proof JSON, preserve "
+    "token/thread_id/action_message_id/stage, then OVERWRITE "
+    ".ae-state/spawn-proofs/{proof_token}.json with exactly one JSON object, changing "
+    "only status to \"completed\" and adding completed_at=<ISO timestamp> "
     "(do NOT append a second object — appending corrupts the file and fails verification).\n"
     "On failure: {{\"stage\":\"{stage}\",\"spawned\":false,\"spawn_error\":\"<reason>\"}}."
 )
@@ -632,6 +633,46 @@ class ActionBuilder:
             "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         }
         proof_file.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+    def bind_spawn_proofs(self, action: dict) -> None:
+        """在 Action 获得协议身份后，把所有 proof 绑定到该 Action。"""
+        token_roles = [(action.get("spawn_proof_token"), "total", None)]
+        spawn = action.get("spawn")
+        if isinstance(spawn, dict):
+            agents = spawn.get("agents", [])
+            if isinstance(agents, list):
+                token_roles.extend(
+                    (
+                        agent.get("receipt_token"),
+                        "worker",
+                        agent.get("requested_effort"),
+                    )
+                    for agent in agents
+                    if isinstance(agent, dict)
+                )
+        for token, proof_role, requested_effort in token_roles:
+            if not isinstance(token, str) or not token:
+                continue
+            proof_file = (
+                self.project_root / ".ae-state" / "spawn-proofs"
+                / f"{token}.json"
+            )
+            try:
+                payload = json.loads(proof_file.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                raise ValueError(f"SPAWN_PROOF_BIND_FAILED: {token}") from exc
+            payload.update({
+                "token": token,
+                "thread_id": action["thread_id"],
+                "action_message_id": action["message_id"],
+                "stage": action["stage"],
+                "proof_role": proof_role,
+            })
+            if requested_effort is not None:
+                payload["requested_effort"] = requested_effort
+            proof_file.write_text(
+                json.dumps(payload, ensure_ascii=False), encoding="utf-8"
+            )
 
     # ── stage builders ──
 

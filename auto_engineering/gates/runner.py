@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from pathlib import Path
 
 from auto_engineering.gates.base import Gate
@@ -50,13 +51,38 @@ def run_gates(
         files_changed: 变更文件相对路径列表, 用于 Gate 增量扫描
                        (如 AuditGate 仅扫描变更文件而非全项目).
     """
+    resolved = [
+        (name, _instantiate_gate(name, project_root))
+        for name in gate_names
+    ]
+    return _run_resolved_gates(resolved, project_root, files_changed)
+
+
+def run_gate_instances(
+    gates: Sequence[Gate],
+    project_root: Path,
+    files_changed: list[str] | None = None,
+) -> dict:
+    """直接执行已配置的 Gate 实例，不丢失 Profile 命令等实例状态。"""
+    return _run_resolved_gates(
+        [(gate.name, gate) for gate in gates],
+        project_root,
+        files_changed,
+    )
+
+
+def _run_resolved_gates(
+    resolved_gates: Sequence[tuple[str, Gate | None]],
+    project_root: Path,
+    files_changed: list[str] | None,
+) -> dict:
+    """执行已解析 Gate；兼容名称入口中的未知 Gate。"""
     summary: dict[str, dict] = {}
     passed_count = 0
     failed_count = 0
     skipped_count = 0
 
-    for name in gate_names:
-        gate = _instantiate_gate(name, project_root)
+    for name, gate in resolved_gates:
         if gate is None:
             summary[name] = {"status": "skipped", "passed": None, "message": "no such gate"}
             skipped_count += 1
@@ -108,7 +134,7 @@ def run_gates(
 
     return {
         "project_root": str(project_root),
-        "gate_names": list(gate_names),
+        "gate_names": [name for name, _gate in resolved_gates],
         "passed": passed_count,
         "failed": failed_count,
         "skipped": skipped_count,

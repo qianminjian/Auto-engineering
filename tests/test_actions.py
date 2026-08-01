@@ -13,6 +13,8 @@ Agent 执行后写 stage-result.json, Python 读回验证. 本模块提供:
 
 from __future__ import annotations
 
+import pytest
+
 from auto_engineering.loop.actions import (
     RESULT_SCHEMA,
     ActionDone,
@@ -99,6 +101,58 @@ class TestResultSchema:
 
 
 class TestValidateResultFormat:
+    @pytest.mark.parametrize(
+        ("stage", "result", "field"),
+        [
+            (
+                "architect",
+                {
+                    "stage": "architect",
+                    "plan": ["not", "text"],
+                    "batch_plan": [{"batch_id": "b1"}],
+                    "file_list": "a.py",
+                },
+                "plan",
+            ),
+            (
+                "developer",
+                {
+                    "stage": "developer",
+                    "batch_id": "b1",
+                    "files_changed": "a.py",
+                    "test_results": {"passed": "5", "failed": False},
+                },
+                "files_changed",
+            ),
+            (
+                "critic",
+                {"stage": "critic", "verdict": "APPROVE", "findings": {}},
+                "findings",
+            ),
+            (
+                "system_deep_audit",
+                {
+                    "stage": "system_deep_audit",
+                    "findings": [],
+                    "p0_count": "0",
+                    "p1_count": 0,
+                    "p2_count": 0,
+                    "total_audited_files": 1,
+                },
+                "p0_count",
+            ),
+        ],
+    )
+    def test_rejects_required_fields_with_wrong_json_types(
+        self,
+        stage: str,
+        result: dict,
+        field: str,
+    ) -> None:
+        errors = validate_result_format(result, stage)
+
+        assert any(field in error and "类型" in error for error in errors)
+
     def test_valid_architect(self) -> None:
         result = {
             "stage": "architect",

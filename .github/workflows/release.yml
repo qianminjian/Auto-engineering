@@ -10,20 +10,41 @@ on:
         required: true
 
 permissions:
-  contents: write
-  issues: write
-  pull-requests: write
-  packages: write
+  contents: read
 
 jobs:
-  release:
+  verify:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Install uv
-        uses: astral-sh/setup-uv@v9.0.0
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           python-version: "3.12"
+          enable-cache: false
+      - name: Sync locked dependencies
+        run: uv sync --frozen --extra dev --extra otel
+      - name: Full quality gate
+        run: |
+          python3 scripts/sync_agent_instructions.py --check
+          uv run python scripts/check_project_metadata.py
+          uv run ruff check .
+          uv run pytest tests/ --cov=auto_engineering --cov-report=term-missing --cov-fail-under=90 -q --timeout=120
+
+  release:
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Install uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          python-version: "3.12"
+          enable-cache: false
+      - name: Sync locked dependencies
+        run: uv sync --frozen --extra dev --extra otel
       - name: Resolve and validate release version
         id: version
         env:
@@ -56,7 +77,7 @@ jobs:
           shasum -a 256 "auto-engineering-v${{ steps.version.outputs.version }}.tar.gz" \
             > "auto-engineering-v${{ steps.version.outputs.version }}.tar.gz.sha256"
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3
         with:
           tag_name: v${{ steps.version.outputs.version }}
           files: |

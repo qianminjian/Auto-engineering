@@ -9,7 +9,14 @@ import pytest
 
 
 class _Gate:
-    def __init__(self, verdict: object = None, error: Exception | None = None) -> None:
+    def __init__(
+        self,
+        verdict: object = None,
+        error: Exception | None = None,
+        *,
+        name: str = "test",
+    ) -> None:
+        self.name = name
         self.verdict = verdict
         self.error = error
         self.files_changed: list[str] = []
@@ -18,6 +25,37 @@ class _Gate:
         if self.error is not None:
             raise self.error
         return self.verdict
+
+
+def test_run_gate_instances_preserves_configured_gate_objects(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import auto_engineering.gates.runner as runner
+
+    configured = _Gate(
+        SimpleNamespace(
+            passed=True,
+            skipped=False,
+            message="exact command executed",
+            gate_name="lint",
+        ),
+        name="lint",
+    )
+    monkeypatch.setattr(
+        runner,
+        "_instantiate_gate",
+        lambda name, project_root: pytest.fail("不得重新实例化已配置 Gate"),
+    )
+
+    result = runner.run_gate_instances(
+        [configured],
+        tmp_path,
+        files_changed=["src/app.ts"],
+    )
+
+    assert result["gate_summary"]["lint"]["message"] == "exact command executed"
+    assert configured.files_changed == ["src/app.ts"]
 
 
 def test_run_gates_reports_pass_fail_skip_and_missing(

@@ -156,6 +156,46 @@ RESULT_SCHEMA: dict[str, dict] = {
 # Phase 0 stage: 结构自由, 由各 _after_* handler 自行取值 (无强制 schema)
 _PHASE0_STAGES = frozenset({"gap_scan", "gap_review", "research"})
 
+_RESULT_FIELD_TYPES: dict[str, dict[str, tuple[type, ...]]] = {
+    "project_setup": {
+        "stage": (str,), "result_type": (str,), "artifacts": (list,),
+    },
+    "architect": {
+        "stage": (str,), "plan": (str,), "file_list": (list,),
+    },
+    "developer": {
+        "stage": (str,), "batch_id": (str, type(None)),
+        "files_changed": (list,), "test_results": (dict,),
+    },
+    "critic": {
+        "stage": (str,), "verdict": (str,), "findings": (list,),
+    },
+    "component_verifier": {
+        "stage": (str,), "component": (str, type(None)),
+        "coverage_map": (list,), "missing_count": (int,),
+        "diverged_count": (int,),
+    },
+    "plate_deep_audit": {
+        "stage": (str,), "plate": (str,), "findings": (list,),
+        "p0_count": (int,), "p1_count": (int,), "p2_count": (int,),
+        "cross_component_issues": (list,),
+    },
+    "system_verifier": {
+        "stage": (str,), "full_coverage_map": (list,),
+        "total_design_items": (int,), "covered_count": (int,),
+        "missing_count": (int,), "diverged_count": (int,),
+    },
+    "system_deep_audit": {
+        "stage": (str,), "findings": (list,), "p0_count": (int,),
+        "p1_count": (int,), "p2_count": (int,),
+        "total_audited_files": (int,),
+    },
+    "session_claimed": {
+        "stage": (str,), "claim_token": (str,), "session_id": (str,),
+        "host": (str,),
+    },
+}
+
 _CONSUMED_OPTIONAL_FIELDS: dict[str, tuple[str, ...]] = {
     "architect": ("contracts",),
     "developer": ("commit_hash", "red_evidence"),
@@ -209,6 +249,27 @@ def validate_result_format(result: dict, stage: str) -> list[str]:
         if req not in result or result[req] is None:
             errors.append(f"缺少必填字段 '{req}'")
 
+    # JSON Schema 的字段类型约束必须在运行时同样生效。尤其排除 bool：
+    # Python 中 bool 是 int 子类，但 JSON Schema 不把 boolean 视为 integer。
+    for field, allowed_types in _RESULT_FIELD_TYPES[stage].items():
+        if field not in result or result[field] is None:
+            continue
+        value = result[field]
+        valid_type = (
+            False
+            if int in allowed_types and isinstance(value, bool)
+            else isinstance(value, allowed_types)
+        )
+        if not valid_type:
+            expected = " 或 ".join(t.__name__ for t in allowed_types)
+            errors.append(
+                f"字段 '{field}' 类型错误，应为 {expected}，"
+                f"当前为 {type(value).__name__}"
+            )
+
+    if result.get("stage") != stage:
+        errors.append(f"stage 必须为 '{stage}'")
+
     if stage == "project_setup":
         if result.get("result_type") != "project_setup_completed":
             errors.append("result_type 必须为 'project_setup_completed'")
@@ -244,9 +305,15 @@ def validate_result_format(result: dict, stage: str) -> list[str]:
     elif stage == "developer":
         tr = result.get("test_results") or {}
         if isinstance(tr, dict):
-            if tr.get("failed", 0) != schema["test_results_required_failed"]:
+            failed = tr.get("failed", 0)
+            passed = tr.get("passed", 0)
+            if not isinstance(failed, int) or isinstance(failed, bool):
+                errors.append("test_results.failed 类型错误，应为 integer")
+            elif failed != schema["test_results_required_failed"]:
                 errors.append(f"test_results.failed 必须为 0, 当前 {tr.get('failed')}")
-            if tr.get("passed", 0) < schema["test_results_min_passed"]:
+            if not isinstance(passed, int) or isinstance(passed, bool):
+                errors.append("test_results.passed 类型错误，应为 integer")
+            elif passed < schema["test_results_min_passed"]:
                 errors.append(
                     "test_results.passed 至少为 1 —— "
                     "纯配置/脚手架 batch 也需验证产出"

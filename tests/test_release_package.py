@@ -76,9 +76,11 @@ def test_release_build_fails_when_required_path_is_missing(
 def test_release_workflow_uses_validated_builder_without_swallowing_errors() -> None:
     content = (ROOT / ".github" / "workflows" / "release.yml").read_text()
 
-    assert "actions/checkout@v7" in content
-    assert "astral-sh/setup-uv@v9.0.0" in content
-    assert "softprops/action-gh-release@v3" in content
+    assert "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" in content
+    assert "astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9" in content
+    assert "softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228" in content
+    assert "needs: verify" in content
+    assert "uv sync --frozen" in content
     assert "python3 scripts/build_release.py" in content
     assert "scripts/check_project_metadata.py" in content
     assert "--host claude-code" in content
@@ -92,8 +94,8 @@ def test_release_workflow_uses_validated_builder_without_swallowing_errors() -> 
 def test_ci_has_independent_claude_and_codex_contract_matrix() -> None:
     content = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
 
-    assert content.count("actions/checkout@v7") == 2
-    assert content.count("astral-sh/setup-uv@v9.0.0") == 2
+    assert content.count("actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1") == 2
+    assert content.count("astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9") == 2
     assert content.count("enable-cache: false") == 2
     assert "host-contract:" in content
     assert "host: claude-code" in content
@@ -101,7 +103,8 @@ def test_ci_has_independent_claude_and_codex_contract_matrix() -> None:
     assert "scripts/build_release.py" in content
     assert "scripts/install_acceptance.py" in content
     assert "scripts/sync_agent_instructions.py --check" in content
-    assert content.count("uv sync --extra dev --extra otel") == 2
+    assert content.count("uv sync --frozen --extra dev --extra otel") == 2
+    assert "macos-latest" in content
     acceptance = (ROOT / "scripts" / "install_acceptance.py").read_text()
     assert "check_host_package" in acceptance
 
@@ -111,3 +114,4 @@ def test_release_includes_install_acceptance_runner() -> None:
 
     assert Path("scripts/install_acceptance.py") in REQUIRED_PATHS
     assert Path("bin/ae-run") in REQUIRED_PATHS
+    assert Path("uv.lock") in REQUIRED_PATHS

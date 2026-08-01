@@ -25,6 +25,7 @@ REQUIRED_PATHS = (
     Path("scripts/install_acceptance.py"),
     Path("auto_engineering"),
     Path("pyproject.toml"),
+    Path("uv.lock"),
     Path("README.md"),
     Path("CLAUDE.md"),
     Path("AGENTS.md"),

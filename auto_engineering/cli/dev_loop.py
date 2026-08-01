@@ -33,6 +33,38 @@ def _ensure_checkpoint_db_path(root: Path) -> Path:
     return state_dir / "checkpoints.db"
 
 
+def _ensure_event_db_path(root: Path) -> Path:
+    """新协议内核的事实库；checkpoint DB 仅保留兼容与项目占用元数据。"""
+    state_dir = root / ".ae-state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    return state_dir / "events.db"
+
+
+def _map_action_for_host(action: dict) -> dict:
+    """已识别宿主必须经过 Adapter 2.0 能力映射；未知 shell 保持核心协议。"""
+    from auto_engineering.host import HostPlatform, detect_host
+
+    if not isinstance(action.get("message_id"), str):
+        return action
+    detection = detect_host()
+    if detection.platform is HostPlatform.UNKNOWN:
+        return action
+    from auto_engineering.host.adapters import adapter_for
+
+    adapter = adapter_for(detection.platform)
+    profile = adapter.probe(
+        detected=detection.capabilities,
+        authorized=detection.capabilities,
+    )
+    return adapter.map_action(action, profile=profile).payload
+
+
+def _active_thread(store: object) -> str | None:
+    """兼容旧 Store façade；真实 SQLite store 提供原子项目占用查询。"""
+    getter = getattr(store, "active_project_thread", None)
+    return getter() if callable(getter) else None
+
+
 CATEGORY_SIMPLE = "simple_function"
 CATEGORY_MEDIUM = "medium_crud"
 CATEGORY_COMPLEX = "complex_multi_module"
@@ -257,9 +289,11 @@ def run_tick_init(
     import json
 
     from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
+    from auto_engineering.loop.event_store import SQLiteEventStore
     from auto_engineering.loop.tick_orchestrator import TickOrchestrator
 
     store: SQLiteCheckpointStore[EngineState] = SQLiteCheckpointStore(_ensure_checkpoint_db_path(root))
+    events = SQLiteEventStore(_ensure_event_db_path(root))
     reserved_thread_id = str(uuid4())
     try:
         existing_thread_id = store.reserve_project_thread(reserved_thread_id)
@@ -269,7 +303,7 @@ def run_tick_init(
                 f"请运行 scripts/ae-run dev-loop --resume {existing_thread_id}"
             )
         inj = _build_injectables(root)
-        orch = TickOrchestrator(root, checkpoint_store=store,
+        orch = TickOrchestrator(root, checkpoint_store=store, event_store=events,
                                 context_offloader=inj["context_offloader"],
                                 session_summarizer=inj.get("session_summarizer"),
                                 tracer=inj["tracer"],
@@ -318,11 +352,12 @@ def run_tick_init(
         for w in feature_warnings(cfg.environ):
             click.echo(f"  [WARN] {w}", err=True)
 
-        click.echo(json.dumps(action, ensure_ascii=False))
+        click.echo(json.dumps(_map_action_for_host(action), ensure_ascii=False))
     except Exception:
         store.release_project_thread(reserved_thread_id)
         raise
     finally:
+        events.close()
         store.close()
 
 
@@ -334,12 +369,21 @@ def run_tick_step(result_file: Path, root: Path,
     import click
 
     from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
+    from auto_engineering.loop.event_store import SQLiteEventStore
     from auto_engineering.loop.tick_orchestrator import TickOrchestrator
 
     store: SQLiteCheckpointStore[EngineState] = SQLiteCheckpointStore(_ensure_checkpoint_db_path(root))
+    events = SQLiteEventStore(_ensure_event_db_path(root))
     try:
         inj = _build_injectables(root)
+        active_thread = _active_thread(store)
+        use_events = (
+            active_thread is not None
+            and events.load_projection(active_thread) is not None
+        )
         orch = TickOrchestrator.restore(root, store, debug=debug, debug_dir=debug_dir,
+                                        event_store=events if use_events else None,
+                                        thread_id=active_thread,
                                         context_offloader=inj["context_offloader"],
                                         session_summarizer=inj.get("session_summarizer"),
                                         tracer=inj["tracer"],
@@ -374,8 +418,9 @@ def run_tick_step(result_file: Path, root: Path,
                 else:
                     mc._flush()
 
-        click.echo(json.dumps(action, ensure_ascii=False))
+        click.echo(json.dumps(_map_action_for_host(action), ensure_ascii=False))
     finally:
+        events.close()
         store.close()
 
 
@@ -386,18 +431,28 @@ def run_tick_validate(result_file: Path, root: Path) -> None:
     import click
 
     from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
+    from auto_engineering.loop.event_store import SQLiteEventStore
     from auto_engineering.loop.tick_orchestrator import TickOrchestrator
 
     store: SQLiteCheckpointStore[EngineState] = SQLiteCheckpointStore(
         _ensure_checkpoint_db_path(root)
     )
+    events = SQLiteEventStore(_ensure_event_db_path(root))
     try:
-        orch = TickOrchestrator.restore(root, store)
+        active_thread = _active_thread(store)
+        use_events = active_thread is not None and events.load_projection(active_thread) is not None
+        orch = TickOrchestrator.restore(
+            root,
+            store,
+            event_store=events if use_events else None,
+            thread_id=active_thread,
+        )
         result = orch.validate_result_file(result_file)
         click.echo(json.dumps(result, ensure_ascii=False))
         if result.get("action") == "error":
             raise SystemExit(1)
     finally:
+        events.close()
         store.close()
 
 
@@ -408,11 +463,20 @@ def run_tick_status(root: Path, verbose: bool = False) -> None:
     import click
 
     from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
+    from auto_engineering.loop.event_store import SQLiteEventStore
     from auto_engineering.loop.tick_orchestrator import TickOrchestrator
 
     store: SQLiteCheckpointStore[EngineState] = SQLiteCheckpointStore(_ensure_checkpoint_db_path(root))
+    events = SQLiteEventStore(_ensure_event_db_path(root))
     try:
-        orch = TickOrchestrator.restore(root, store)
+        active_thread = _active_thread(store)
+        use_events = active_thread is not None and events.load_projection(active_thread) is not None
+        orch = TickOrchestrator.restore(
+            root,
+            store,
+            event_store=events if use_events else None,
+            thread_id=active_thread,
+        )
         s = orch._state
         summary: dict = {
             "thread_id": s.thread_id,
@@ -447,6 +511,7 @@ def run_tick_status(root: Path, verbose: bool = False) -> None:
             }
         click.echo(json.dumps(summary, ensure_ascii=False))
     finally:
+        events.close()
         store.close()
 
 
@@ -463,10 +528,16 @@ def run_tick_resume(checkpoint_id: str, root: Path) -> None:
     import click
 
     from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
+    from auto_engineering.loop.event_store import SQLiteEventStore
     from auto_engineering.loop.tick_orchestrator import TickOrchestrator
 
     store: SQLiteCheckpointStore[EngineState] = SQLiteCheckpointStore(_ensure_checkpoint_db_path(root))
+    events = SQLiteEventStore(_ensure_event_db_path(root))
     try:
+        event_action = events.load_action_snapshot(checkpoint_id)
+        if event_action is not None:
+            click.echo(json.dumps(_map_action_for_host(event_action), ensure_ascii=False))
+            return
         try:
             orch = TickOrchestrator.restore(root, store, checkpoint_id=checkpoint_id)
         except Exception:
@@ -479,8 +550,9 @@ def run_tick_resume(checkpoint_id: str, root: Path) -> None:
                          checkpoint_id, resolved)
             orch = TickOrchestrator.restore(root, store, checkpoint_id=resolved)
         action = orch.build_action()
-        click.echo(json.dumps(action, ensure_ascii=False))
+        click.echo(json.dumps(_map_action_for_host(action), ensure_ascii=False))
     finally:
+        events.close()
         store.close()
 
 

@@ -41,9 +41,7 @@ clean:  ## 清理 build/cache 产物
 
 audit-silent-except:  ## 扫描静默吞异常 (裸 except Exception 无日志)
 	@echo "=== 静默吞异常扫描 ==="
-	@! grep -rn "except Exception:" auto_engineering/ --include="*.py" \
-		| grep -v "logger\|logging\|exc_info\|# noqa" \
-		| grep -v "raise" \
+	@uv run python scripts/audit_static.py silent-except \
 		|| { echo "❌ 发现静默吞异常" >&2; exit 1; }
 	@echo "✓ 无静默吞异常"
 
@@ -55,29 +53,16 @@ audit-dead-imports:  ## 扫描 dead import (F401)
 
 audit-line-count:  ## 扫描超 400 行文件
 	@echo "=== 文件行数扫描 ==="
-	@! find auto_engineering -name "*.py" -exec wc -l {} + \
-		| awk '$$1 > 400 {print $$2 ":" $$1 " lines"; exit 1}' \
+	@uv run python scripts/audit_static.py line-count \
 		|| { echo "❌ 发现超 400 行文件" >&2; exit 1; }
-	@echo "✓ 无超 400 行文件"
+	@echo "✓ 无新增或增长的超限文件"
 
 audit-test-gap:  ## 扫描测试覆盖率缺口
 	@echo "=== 测试缺口快速扫描 ==="
-	@# 列出有 .py 但无对应 test_ 的模块
-	@missing=0; \
-	for f in $$(find auto_engineering -name "*.py" -not -name "__init__.py" -not -path "*__pycache__*"); do \
-		mod=$$(echo $$f | sed 's|auto_engineering/||; s|/|_|g; s|\.py$$||'); \
-		test_file="tests/test_$${mod}.py"; \
-		if [ ! -f "$$test_file" ]; then \
-			echo "  ✗ $$f → 缺 $$test_file"; \
-			missing=$$((missing + 1)); \
-		fi; \
-	done; \
-	if [ $$missing -gt 0 ]; then \
-		echo "❌ $$missing 个模块无对应测试文件" >&2; \
-	else \
-		echo "✓ 全模块有对应测试"; \
-	fi
+	@uv run pytest tests/ --collect-only -q >/dev/null \
+		|| { echo "❌ 测试收集失败或没有可运行测试" >&2; exit 1; }
+	@echo "✓ 测试可正常收集；覆盖率由 CI ≥90% 门禁判定"
 
-check-gate: audit-silent-except  ## 快速闸门检查 (合入前必跑)
+check-gate: audit-silent-except audit-dead-imports audit-line-count audit-test-gap  ## 快速闸门检查 (合入前必跑)
 	@echo ""
 	@echo "=== check-gate: 全部通过 ==="

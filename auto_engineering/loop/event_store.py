@@ -75,6 +75,14 @@ class SQLiteEventStore:
                 action_json TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS protocol_result_replays (
+                thread_id TEXT NOT NULL,
+                causation_id TEXT NOT NULL,
+                result_hash TEXT NOT NULL,
+                response_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                PRIMARY KEY(thread_id, causation_id)
+            );
             CREATE TABLE IF NOT EXISTS checkpoint_imports (
                 checkpoint_id TEXT PRIMARY KEY,
                 thread_id TEXT NOT NULL UNIQUE,
@@ -164,6 +172,8 @@ class SQLiteEventStore:
         events: Iterable[LoopEvent],
         state: EngineState,
         action: Mapping[str, Any],
+        result_causation_id: str | None = None,
+        result_hash: str | None = None,
     ) -> None:
         """在一个事务内提交事实、状态投影和宿主 Action 快照。"""
 
@@ -178,6 +188,8 @@ class SQLiteEventStore:
             raise ValueError("Action 缺少有效 message_id")
         if any(event.thread_id != thread_id for event in batch):
             raise ValueError("单 Tick 事件必须属于同一 thread_id")
+        if (result_causation_id is None) != (result_hash is None):
+            raise ValueError("Result causation_id 与 hash 必须同时提供")
         self._validate_batch(batch)
 
         with self._lock:
@@ -232,6 +244,22 @@ class SQLiteEventStore:
                     (thread_id, message_id, last.sequence, action_json, last.created_at),
                 )
                 self._inject_fault("after_action")
+                if result_causation_id is not None and result_hash is not None:
+                    self._conn.execute(
+                        """
+                        INSERT INTO protocol_result_replays
+                            (thread_id, causation_id, result_hash, response_json, created_at)
+                        VALUES (?, ?, ?, ?, ?)
+                        """,
+                        (
+                            thread_id,
+                            result_causation_id,
+                            result_hash,
+                            action_json,
+                            last.created_at,
+                        ),
+                    )
+                    self._inject_fault("after_result")
                 self._conn.commit()
             except BaseException:
                 self._conn.rollback()
@@ -341,6 +369,48 @@ class SQLiteEventStore:
                 (thread_id,),
             ).fetchone()
         return json.loads(row["action_json"]) if row else None
+
+    def load_protocol_result(
+        self,
+        thread_id: str,
+        causation_id: str,
+    ) -> tuple[str, dict[str, Any]] | None:
+        """读取已原子提交的 Result 摘要及其响应 Action。"""
+        with self._lock:
+            self._ensure_open()
+            row = self._conn.execute(
+                """
+                SELECT result_hash, response_json
+                FROM protocol_result_replays
+                WHERE thread_id = ? AND causation_id = ?
+                """,
+                (thread_id, causation_id),
+            ).fetchone()
+        if row is None:
+            return None
+        return row["result_hash"], json.loads(row["response_json"])
+
+    def load_round_history(self, thread_id: str) -> list[dict[str, Any]]:
+        """读取最新状态事件携带的确定性轮次历史。"""
+        with self._lock:
+            self._ensure_open()
+            row = self._conn.execute(
+                """
+                SELECT payload_json FROM loop_events
+                WHERE thread_id = ? AND event_type IN (?, ?)
+                ORDER BY sequence DESC LIMIT 1
+                """,
+                (
+                    thread_id,
+                    LoopEventType.RESULT_ACCEPTED.value,
+                    LoopEventType.LOOP_INITIALIZED.value,
+                ),
+            ).fetchone()
+        if row is None:
+            return []
+        payload = json.loads(row["payload_json"])
+        history = payload.get("round_history", [])
+        return list(history) if isinstance(history, list) else []
 
     def import_checkpoint(
         self,

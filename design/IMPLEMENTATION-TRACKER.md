@@ -130,11 +130,7 @@
 | P0 | T357 | 发布与宿主契约 | While release archive 构建, when Claude/Codex 隔离安装验收, both packages shall 包含可执行 `bin/ae-run` 并从外部 cwd 启动 | ✅ archive 含 0755 bin；双宿主从目标 cwd smoke pass |
 | P0 | T358 | Phase 72 收口验收 | While T355-T357 完成, when 专项、全量、静态检查与双宿主 archive 运行, all runner paths shall 位置无关且不复制 Core 逻辑 | ✅ 2122 passed/1 skipped；coverage 90%；静态检查与双宿主 archive pass |
 
-## Phase 73：Init Engineering 运行时解耦
-
-> 设计见 `design/v5.8-Init-Runtime-Decoupling-Design.md`。本阶段解除运行时前置依赖，
-> 不把 Init Engineering 的问答、模板和脚手架实现并入 Core。
-
+## Phase 73：Init Engineering 运行时解耦（设计见 `design/v5.8-Init-Runtime-Decoupling-Design.md`）
 | 优先级 | ID | 任务 | EARS 验收 | 状态 |
 |---:|---|---|---|:---:|
 | P0 | T359 | ProjectProfile 契约与负向测试 | While Profile schema、命令、路径或证据非法, when Core 校验输入, the system shall 以稳定错误码 fail-closed，且相同规范化事实产生相同 profile_id | ✅ 11 tests；Ruff/mypy 通过 |
@@ -147,14 +143,13 @@
 | P0 | T366 | Legacy Init 只读兼容 Adapter | While 旧项目仅提供有效 init-manifest.json, when Resolver 和现有兼容 API 运行, the system shall 生成等价 Profile、保持 manifest mtime 不变并给出非阻断迁移提示 | ✅（legacy 等价转换、mtime、稳定错误；68 tests；Ruff/mypy） |
 | P0 | T367 | Phase 73 双宿主收口验收 | While T359-T366 完成, when 已有项目、空项目、冲突、恢复和 legacy 黄金轨迹在 Claude/Codex 执行, both hosts shall 产生等价终态且全量测试、覆盖率、静态检查和真实产品轨迹通过 | ◐ 自动门禁完成：2153 passed/1 skipped、coverage 90%、Ruff/mypy/sync、双宿主 archive install；待 Claude Code/Codex 真实 LLM 轨迹 |
 
+## Phase 74：深度审计修复（详见 `design/v5.8-Deep-Audit-Remediation-PLAN.md`）
+| 优先级 | ID | 任务 | 状态 |
+|---:|---|---|:---:|
+| P0 | T368-T373 | Gate、Result、Spawn、事务、EventStore、Host 与 Profile 恢复 | ✅ 专项与集成验证通过 |
+| P1 | T374-T375 | Release/CI、跨平台、审计门禁与验收去虚化 | ✅ check-gate 与双宿主 archive pass |
+| P0 | T376 | 全量自动门禁与双宿主 archive 收口 | ◐ 2162 passed/1 skipped、coverage 90.43%；待真实 LLM 轨迹 |
+
 ## 执行纪律
 
-1. 先把任务标为 `◐`，再修改代码或文档；验证后更新证据。
-2. 功能与缺陷使用 Red → Green → Refactor；不得并发运行多个 pytest。
-3. 设计与代码不一致时补齐代码，不降低 Gate、Guardrail 或验证标准。
-4. 每个 Phase 结束执行其专项门禁；Phase 64-67 的全量覆盖率和发布验收仅在
-   T321 执行。
-5. 未经授权不提交、不推送、不发布。
-
-Phase 73 的边界与验收见 `design/v5.8-Init-Runtime-Decoupling-Design.md`；既有阶段详细
-步骤见对应 Design/PLAN 文件。
+先记录再实施；使用 Red → Green → Refactor；pytest 串行；设计不降级；专项门禁后再收口；未经授权不提交、不推送、不发布。
