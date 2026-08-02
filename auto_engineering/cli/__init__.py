@@ -86,7 +86,7 @@ def main():
 
 @main.command(epilog="""
 内部协议 (Skill driving loop 调用):
-  ae dev-loop --init "需求" [--design-doc <path>]   初始化 tick loop
+  ae dev-loop --init ["范围"] [--design-doc <path>] 初始化 tick loop；仅设计文档时执行全文
   ae dev-loop --tick --result result.json            提交本轮 tick 结果
   ae dev-loop --status [--verbose] [--format json]   查看当前进度
   ae dev-loop --resume <checkpoint-id>               从 checkpoint 恢复
@@ -183,8 +183,11 @@ def dev_loop(
 
     if init_flag:
         if not requirement:
-            click.echo("错误: --init 需要 requirement 参数。", err=True)
-            raise SystemExit(1)
+            if design_doc:
+                requirement = "按照设计文档完成全部设计任务"
+            else:
+                click.echo("错误: --init 需要 requirement 参数，或提供 --design-doc。", err=True)
+                raise SystemExit(1)
         run_tick_init(requirement, design_doc, root, max_rounds, debug=_debug,
                        debug_dir=debug_dir_opt, pause_at_stage=pause_at_stage,
                        escalate=escalate_flag, config_policy=config_policy)

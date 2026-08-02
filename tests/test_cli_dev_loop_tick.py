@@ -47,6 +47,47 @@ class TestInitMode:
             main, ["dev-loop", "--init", "--project-root", str(tmp_path)])
         assert result.exit_code != 0
 
+    def test_init_uses_full_design_doc_when_requirement_omitted(self, tmp_path) -> None:
+        design = tmp_path / "design.md"
+        design.write_text("# Voice Clone\n## 页面\n", encoding="utf-8")
+        runner = CliRunner()
+
+        result = runner.invoke(
+            main,
+            [
+                "dev-loop",
+                "--init",
+                "--design-doc",
+                str(design),
+                "--project-root",
+                str(tmp_path),
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        action = _last_json_line(result.output)
+        assert action["action"] == "project_setup_required"
+
+    def test_init_rejects_existing_design_path_as_requirement(self, tmp_path) -> None:
+        design = tmp_path / "design.md"
+        design.write_text("# Design\n", encoding="utf-8")
+        runner = CliRunner()
+
+        result = runner.invoke(
+            main,
+            [
+                "dev-loop",
+                "--init",
+                "design.md",
+                "--project-root",
+                str(tmp_path),
+            ],
+        )
+
+        assert result.exit_code != 0
+        assert "DESIGN_DOC_REQUIRED" in result.output
+        assert "--design-doc design.md" in result.output
+
     def test_second_init_fails_with_unique_resume_instruction(
         self, tmp_path
     ) -> None:

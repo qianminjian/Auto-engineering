@@ -156,5 +156,10 @@
 | P2 | T378 | 测试失败缓存清零 | While 测试跨会话失败计数存在, when 同一测试随后通过, the diagnostic cache shall 删除该测试计数并不继续报告陈旧失败 | ✅ 2 回归测试；全量 2166 passed/1 skipped |
 | P1 | T379 | 历史秘密与依赖确认 | While 发布候选进入真跑或发布, when Git 历史扫描或依赖审计发现疑似风险, the release record shall 区分当前树、历史树和未验证项，未经人工确认不得宣称安全已闭环 | ◐ 当前 tracked files 无发现；历史 15 条与依赖审计待确认 |
 | P0 | T380 | 真实宿主 150 Tick 证据协议 | While Claude Code 与 Codex 执行候选制品, when 5-10 Tick、30-50 Tick 和 150 Tick 阶段完成, the evidence shall separately record product install, usage completeness, duplicate blocks, recovery and semantic equivalence | ◐ 协议已登记，待真实宿主执行 |
+## Phase 76：设计文档全量/范围入口
+| 优先级 | ID | 任务 | EARS 验收 | 状态 |
+|---:|---|---|---|:---:|
+| P0 | T381 | 设计文档默认全量入口 | While `--design-doc` 单独传入, when dev-loop 初始化, the system shall 自动生成全文需求并保留设计文档路径 | ✅ CLI、Skill 与回归测试通过 |
+| P1 | T382 | 设计文档范围约束 | While 自然语言 requirement 与 `--design-doc` 同时传入, when dev-loop 初始化, the system shall 将 requirement 解释为范围约束而非替代设计文档 | ✅ 保持兼容；宿主提示词已明确 |
 ## 执行纪律
 先记录再实施；使用 Red → Green → Refactor；pytest 串行；设计不降级；专项门禁后再收口；未经授权不提交、不推送、不发布。

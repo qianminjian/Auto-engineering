@@ -183,6 +183,24 @@ def test_collect_status_json_multiple_db_picks_highest_round(tmp_path: Path) -> 
     assert data["round"] == 10
 
 
+def test_collect_status_json_skips_event_store_database(tmp_path: Path) -> None:
+    """统一 status 不应把新协议 EventStore 当作旧 checkpoint DB 读取。"""
+    from auto_engineering.loop.checkpoint import SQLiteCheckpointStore
+    from auto_engineering.loop.event_store import SQLiteEventStore
+    from auto_engineering.loop.state import CheckpointEnvelope
+
+    cp_dir = tmp_path / ".ae-state"
+    cp_dir.mkdir()
+    with SQLiteEventStore(cp_dir / "events.db"):
+        pass
+    with SQLiteCheckpointStore[CheckpointEnvelope](str(cp_dir / "checkpoints.db")) as store:
+        store.save(CheckpointEnvelope(round=4, step=1, status="running"), round=4, step=1)
+
+    data = _collect_status_json(tmp_path)
+
+    assert data["round"] == 4
+
+
 # ============================================================
 # Group 4: _collect_status_json — corrupted + valid mixed
 # ============================================================

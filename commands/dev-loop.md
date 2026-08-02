@@ -64,6 +64,23 @@ Violating the letter of this rule is violating the spirit of this rule.
 3. report action.verdict and fresh verification evidence
 ```
 
+启动时不要把设计文档路径作为 requirement 传入。正确写法是：
+
+```bash
+ae-run dev-loop --init "实现 Voice Clone 页面" \
+  --design-doc design/V1.0-Design-VoiceClonePage.md
+```
+
+如果设计文档就是唯一需求，可省略 requirement；此时默认执行设计文档的全部内容：
+
+```bash
+ae-run dev-loop --init \
+  --design-doc design/V1.0-Design-VoiceClonePage.md
+```
+
+若 requirement 本身看起来是现有 Markdown 文件路径，宿主应停止并要求补充
+`--design-doc`，不得继续创建 `design_doc_path=null` 的 architect Action。
+
 ## CLI 契约
 
 | 命令 | 输出 |

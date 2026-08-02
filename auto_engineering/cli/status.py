@@ -27,6 +27,23 @@ from auto_engineering.engine.state import EngineState
 _logger = logging.getLogger("ae.cli.status")
 
 
+def _is_checkpoint_database(db_file: Path) -> bool:
+    """判断 SQLite 文件是否包含旧 checkpoint 表，跳过 EventStore 数据库。"""
+    try:
+        uri = f"file:{db_file.resolve()}?mode=ro"
+        with sqlite3.connect(uri, uri=True) as connection:
+            has_table = bool(
+                connection.execute(
+                    "SELECT 1 FROM sqlite_master "
+                    "WHERE type='table' AND name='checkpoints'"
+                ).fetchone()
+            )
+            return has_table or db_file.name != "events.db"
+    except (OSError, sqlite3.Error):
+        # 只读目录可能无法读取 WAL 中的 sqlite_master；文件职责仍可确定。
+        return db_file.name != "events.db"
+
+
 def _collect_status_json(cwd: Path) -> dict:
     """收集 status JSON 7 字段契约 (v5.0 §B13.2).
 
@@ -53,6 +70,8 @@ def _collect_status_json(cwd: Path) -> dict:
     # 找到 latest checkpoint (跨所有 db)
     latest_ckpt = None
     for db_file in cp_dir.glob("*.db"):
+        if not _is_checkpoint_database(db_file):
+            continue
         try:
             store: SQLiteCheckpointStore[EngineState]
             with SQLiteCheckpointStore(str(db_file), read_only=True) as store:

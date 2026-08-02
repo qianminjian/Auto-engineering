@@ -46,6 +46,23 @@ checkpoint 是循环恢复边界，checkpoint 不要求 commit。普通 develope
 | 查看循环状态 | `ae-run status --format json` |
 | 恢复 checkpoint | `ae-run dev-loop --resume <id>` |
 
+设计文档模式必须把自然语言需求和文档路径分开传入：
+
+```bash
+ae-run dev-loop --init "实现 Voice Clone 页面" \
+  --design-doc design/V1.0-Design-VoiceClonePage.md
+```
+
+若只按设计文档的全部内容开发，可省略自然语言 requirement：
+
+```bash
+ae-run dev-loop --init \
+  --design-doc design/V1.0-Design-VoiceClonePage.md
+```
+
+不得把 `design/*.md` 路径直接作为 requirement；启动后应核验首个 Action 的
+`design_doc_path` 非空。
+
 ## Action 执行协议
 
 每次先读取 `action.instruction`：

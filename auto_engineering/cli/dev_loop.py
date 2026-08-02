@@ -19,12 +19,10 @@ if TYPE_CHECKING:
 
 _logger = logging.getLogger(__name__)
 
-
 # ============================================================
 # v5.6 Tick 模式 CLI 处理器 (§A.1 Python 永不调 LLM — 不需 API key)
 # 每次调用是独立进程, 从 .ae-state/checkpoints.db 恢复/持久化状态。
 # ============================================================
-
 
 def _ensure_checkpoint_db_path(root: Path) -> Path:
     """.ae-state/checkpoints.db — 跨 tick 持久化 store (目录不存在则创建)."""
@@ -57,7 +55,6 @@ def _map_action_for_host(action: dict) -> dict:
         authorized=detection.capabilities,
     )
     return adapter.map_action(action, profile=profile).payload
-
 
 def _active_thread(store: object) -> str | None:
     """兼容旧 Store façade；真实 SQLite store 提供原子项目占用查询。"""
@@ -281,6 +278,9 @@ def run_tick_init(
     """ae dev-loop --init: 初始化 tick loop, 输出第一个 action JSON (stdout 契约)."""
     import click
 
+    if requirement.lower().endswith((".md", ".markdown")) and (root / requirement).is_file():
+        raise click.ClickException("DESIGN_DOC_REQUIRED: 请将设计文档路径通过 --design-doc 传入，"
+                                   f"requirement 请改为自然语言需求（--design-doc {requirement}）")
     # Phase 45: 配置闸门
     if not _check_config_gate(root, policy=config_policy):
         return
