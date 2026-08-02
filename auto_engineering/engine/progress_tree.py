@@ -246,25 +246,30 @@ class ProgressTree:
 
     def apply_batch_plan_totals(self, batch_plan: list[dict]) -> None:
         """把首次 Architect 计划的任务数物化到既有设计层次，不改变树结构。"""
-        counts: dict[str, int] = {}
-        names: dict[str, str] = {}
-        for batch in batch_plan:
-            ref = _normalize_ref(batch.get("design_section", ""))
-            key = ref or f"name:{batch['component']}"
-            counts[key] = counts.get(key, 0) + len(batch.get("tasks", []))
-            names[key] = str(batch["component"])
-
         component_nodes = [
             node for node in self.nodes.values()
             if node.level == "component" and node.design_status != "removed"
         ]
-        for node in component_nodes:
-            key = (
-                node.design_section_ref
-                if node.design_section_ref in counts
-                else f"name:{node.name}"
+        by_ref = {node.design_section_ref: node for node in component_nodes}
+        by_name = {node.name: node for node in component_nodes}
+        counts: dict[str, int] = {}
+        unresolved: list[str] = []
+        for batch in batch_plan:
+            ref = _normalize_ref(batch.get("design_section", ""))
+            component = str(batch["component"])
+            # Architect 可能把 design_section 填成 § 引用，也可能回填章节/组件标题。
+            node = by_ref.get(ref) or by_name.get(component) or by_name.get(ref)
+            if node is None:
+                unresolved.append(component)
+                continue
+            counts[node.id] = counts.get(node.id, 0) + len(batch.get("tasks", []))
+        if unresolved:
+            raise ValueError(
+                "BATCH_PLAN_COMPONENT_UNRESOLVED: "
+                + ", ".join(dict.fromkeys(unresolved))
             )
-            total = counts.get(key, 0)
+        for node in component_nodes:
+            total = counts.get(node.id, 0)
             if node.done_tasks > total:
                 raise ValueError(
                     "STATE_INVARIANT_VIOLATION: "
@@ -272,20 +277,6 @@ class ProgressTree:
                     f"for {node.id}"
                 )
             node.total_tasks = total
-
-        unresolved = [
-            names[key]
-            for key in counts
-            if not any(
-                node.design_section_ref == key
-                or (key.startswith("name:") and node.name == names[key])
-                for node in component_nodes
-            )
-        ]
-        if unresolved:
-            raise ValueError(
-                "BATCH_PLAN_COMPONENT_UNRESOLVED: " + ", ".join(unresolved)
-            )
         for node in component_nodes:
             self.recalculate_parents(node.id)
 

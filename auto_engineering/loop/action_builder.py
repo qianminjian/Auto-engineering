@@ -3,7 +3,6 @@
 封装 10 个 stage action builder + dispatch + PII outbound 过滤.
 TickOrchestrator 委托调用, 不再内联 stage action 构造逻辑.
 """
-
 from __future__ import annotations
 
 import json
@@ -17,6 +16,7 @@ from typing import TYPE_CHECKING
 
 from auto_engineering.config.constants import _SPAWN_CONFIG
 from auto_engineering.config.feature_flags import feature_status_for_action
+from auto_engineering.prompts.architect_context import build_architect_research_context
 from auto_engineering.prompts.compiler import compile_prompt_bundle
 from auto_engineering.prompts.contracts import default_prompt_contracts
 from auto_engineering.prompts.registry import default_registry
@@ -53,7 +53,6 @@ _INLINE_INSTRUCTION = (
     "Do the work for stage '{stage}' per expected_format. "
     "Write result JSON with stage='{stage}'."
 )
-
 if TYPE_CHECKING:
     from auto_engineering.engine.batch_state import BatchState
     from auto_engineering.engine.design_doc import DesignDoc
@@ -63,7 +62,6 @@ if TYPE_CHECKING:
     from auto_engineering.pii.redactor import PIIRedactor
 
 _logger = logging.getLogger("ae.loop.action_builder")
-
 # DS-9 (B6.6a): Haiku verifier 负判定 (MISSING/DIVERGED) → Sonnet 窄范围复核.
 _VERIFIER_RECHECK = {
     "enabled": True,
@@ -76,8 +74,6 @@ _STAGE_CHECKPOINT_REVIEW_FEEDBACK = (
 )
 
 _STAGE_CHECKPOINT_OPTIONS = ["继续", "审查当前产出", "终止 loop"]  # P1-23: SSOT
-
-
 @dataclass(frozen=True, slots=True)
 class ActionBuildContext:
     """一次 Action 构建所需的不可变依赖快照。"""
@@ -112,7 +108,6 @@ class ActionBuilder:
             progress_tree=pt, ...
         )
     """
-
     def __init__(
         self,
         project_root: Path,
@@ -127,7 +122,6 @@ class ActionBuilder:
         self._pii_outbound = pii_outbound
 
     # ── public API ──
-
     def build_action(
         self,
         state: EngineState,
@@ -805,6 +799,11 @@ class ActionBuilder:
                 "mode": "PLAN_REFINE",
                 "refine_request": json.loads(self._state.refine_request_json),
             }
+        research_context = build_architect_research_context(
+            self._state.design_supplements_json, self._state.research_archive
+        )
+        if research_context:
+            extra["research_and_design_context"] = research_context
         return self._build_stage_action(base, "architect", context={
             "requirement": self._state.requirement,
             "design_doc_path": (
@@ -812,6 +811,7 @@ class ActionBuilder:
             ),
             "project_profile_summary": self._project_profile_summary(),
             "feedback": extra.get("feedback", base.get("feedback")),
+            "research_and_design_context": research_context,
         }, expected_format={
             "plan": "string (markdown, min 50 chars)",
             "batch_plan": (

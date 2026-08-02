@@ -57,7 +57,7 @@ Engineering 的问答、模板或脚手架；把 archive smoke 冒充真实产�
 - Phase 74 T368-T375 已完成；T376 自动门禁 2166 passed / 1 skipped、coverage
   90.41%、Ruff/mypy/sync/check-gate 与双宿主 archive 通过，待真实 LLM 轨迹。
 - Phase 75 已完成 status 降级与失败缓存修复；历史秘密确认和宿主长跑证据仍须人工/真实产品完成。
-- Phase 76 已统一设计文档入口：省略范围时执行全文，显式范围时只执行指定范围。
+- Phase 76 已统一设计文档入口：省略范围时执行全文，显式范围时只执行指定范围；并修复 Architect component 标识映射、Research/Supplement 注入与 dry-run 结构门禁。
 ## 最近演进
 | 日期 | 变更 |
 |---|---|

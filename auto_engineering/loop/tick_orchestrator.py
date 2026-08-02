@@ -16,7 +16,6 @@
   - Python 绝不自调 LLM — Agent 在 tick 之间做 LLM 工作
   - gate_runner/guardrail/checkpoint_store 可注入 (单元测试 stub, 防挂死)
 """
-
 from __future__ import annotations
 
 import json
@@ -55,6 +54,7 @@ from auto_engineering.loop.actions import (
     result_contract_warnings,
     validate_result_format,
 )
+from auto_engineering.loop.architect_validation import dry_run_architect_plan
 from auto_engineering.loop.artifacts import (
     ArtifactError,
     ArtifactStore,
@@ -171,7 +171,6 @@ class TickContextOffloader(Protocol):
     files_changed, gate_results) -> StageContextOffload; this Protocol
     only documents the structural interface for isinstance checks.
     """
-
     def offload(self, stage: str, messages: list[dict], summary: str,
                 key_decisions: list[str], files_changed: list[str],
                 gate_results: dict) -> StageContextOffload: ...
@@ -184,9 +183,7 @@ class TickSessionSummarizer(Protocol):
     Generates a host-neutral structured summary from state metadata.
     Standalone 已于 Phase 40 移除；引擎调用 summarize_structured()（结构化模式）。
     """
-
     def should_summarize(self, current_tick: int, threshold: int = 5) -> bool: ...
-
     def summarize_structured(
         self, *, tick: int, test_results: dict | None = None,
         files_changed: list[str] | None = None, commit_hash: str = "",
@@ -196,14 +193,12 @@ class TickSessionSummarizer(Protocol):
         batch_progress: str = "",
         previous_summary: SessionSummary | None = None,
     ) -> SessionSummary: ...
-
     def inject_into_prompt(self, summary: SessionSummary) -> str: ...
 
 
 @runtime_checkable
 class _TranscriptParserLike(Protocol):
     """SessionTranscriptParser structural interface (T135c)."""
-
     def collect(self) -> dict[str, Any]: ...
 
 
@@ -215,7 +210,6 @@ class TickOrchestrator:
         guardrail:      替换 GuardrailChain (stub 跳过子进程)
         checkpoint_store: 替换 SQLiteCheckpointStore (None → no-op save)
     """
-
     def __init__(
         self,
         project_root: Path | None = None,
@@ -344,7 +338,6 @@ class TickOrchestrator:
         return self._escalation
 
     # ── T113 L2: Injectable access with visible None ──
-
     def _require(self, attr_name: str, reason: str = "") -> object:
         """Get injectable with debug-level log when None.
 
@@ -359,7 +352,6 @@ class TickOrchestrator:
         return val
 
     # ── T64: Stage Checkpoint Gate ──
-
     def set_pause_at_stages(self, stages: list[str]) -> None:
         """Set stages to pause at (T64 --pause-at-stage).
 
@@ -379,7 +371,6 @@ class TickOrchestrator:
     # _checkpoint_passed / _progress_summary — 已提取到 ActionBuilder (P0-1)
 
     # ── 公共入口 ──
-
     def init(
         self,
         requirement: str,
@@ -666,7 +657,6 @@ class TickOrchestrator:
             "thread_id": self._state.thread_id,
             "causation_id": envelope.causation_id,
         }
-
     def tick_dict(self, result: dict) -> dict:
         """处理一个 tick — 直接接受 result dict (Driver B standalone 模式).
 
@@ -1307,6 +1297,17 @@ class TickOrchestrator:
                             ),
                             current_state=self._state.to_dict(),
                         )
+
+        if stage == "architect":
+            dry_run_error = dry_run_architect_plan(
+                self._design_doc, result, self._state.requirement
+            )
+            if dry_run_error:
+                return ErrorResponse(
+                    error_code="ARCHITECT_PLAN_INVALID",
+                    message=f"Architect 计划无法初始化执行树: {dry_run_error}",
+                    current_state=self._state.to_dict(),
+                )
 
         return result
 

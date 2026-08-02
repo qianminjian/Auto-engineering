@@ -118,6 +118,17 @@ class TestBuildFromDesignDoc:
         assert tree.nodes["sys"].total_tasks == 7
         assert tree.nodes["§PlateA"].design_status == "stable"
 
+    def test_materializes_when_design_section_contains_component_title(self) -> None:
+        """Architect may echo the component title instead of the § reference."""
+        doc = _doc({"PlateA": [("CompX", "§B1")]})
+        tree = ProgressTree.from_design_doc(doc)
+
+        tree.apply_batch_plan_totals([_batch("bx1", "CompX", "CompX", 2)])
+
+        node = tree.find_by_design_section("B1")
+        assert node is not None
+        assert node.total_tasks == 2
+
 
 class TestBuildFromBatchPlan:
     def test_builds_component_nodes_with_task_counts(self) -> None:

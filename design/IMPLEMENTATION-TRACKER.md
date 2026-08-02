@@ -1,10 +1,7 @@
 # Auto-Engineering 当前实施跟踪表
-
 > 更新：2026-08-01｜目标版本：v5.8｜Phase 1-62 明细见 `design/HISTORY.md`
 > 状态：`☐` 未开始｜`◐` 进行中｜`✅` 已验证
-
 ## 基线与阶段
-
 | 里程碑 | 状态 | 证据 |
 |---|:---:|---|
 | Phase 1-48 | ✅ | Git 历史与 `design/HISTORY.md` |
@@ -25,7 +22,6 @@
 | Phase 63 非交互配置治理 | ✅ 1/1 | T301；非交互显式策略与来源报告 |
 
 ## Phase 64：真实运行可信度止血
-
 > Phase 64 是后续真实项目运行的 P0 前置条件，优先于 Phase 63 实施。详细设计与
 > 任务步骤见 `design/v5.8-Session-Decoupling-Design.md` 和
 > `design/v5.8-Session-Decoupling-PLAN.md`。
@@ -41,7 +37,6 @@
 | P0 | T322 | 146-Tick 真跑事故报告 | While 真跑证据分散在外部 `_scratch` 与会话中, when 永久报告建立, it shall 区分事实与推断、映射全部修复任务并提供脱敏证据索引 | ✅ 永久报告 11 节；事实/推断分离；T303-T321/T323-T324 追踪矩阵与关闭标准 |
 
 ## Phase 65：确定性状态与宿主会话解耦
-
 | 优先级 | ID | 任务 | EARS 验收 | 状态 |
 |---:|---|---|---|:---:|
 | P0 | T308 | ExecutionSession 与事件契约 | While 一个工程线程跨多个宿主会话运行, when 会话开始、续接或结束, the Core shall 以不可变事件记录 session identity、原因和状态边界且不改变业务进度语义 | ✅ 12 类事件 + 不可变 Session/独立投影；双 active 拒绝；23 passed；Ruff/mypy pass |
@@ -159,7 +154,7 @@
 ## Phase 76：设计文档全量/范围入口
 | 优先级 | ID | 任务 | EARS 验收 | 状态 |
 |---:|---|---|---|:---:|
-| P0 | T381 | 设计文档默认全量入口 | While `--design-doc` 单独传入, when dev-loop 初始化, the system shall 自动生成全文需求并保留设计文档路径 | ✅ CLI、Skill 与回归测试通过 |
-| P1 | T382 | 设计文档范围约束 | While 自然语言 requirement 与 `--design-doc` 同时传入, when dev-loop 初始化, the system shall 将 requirement 解释为范围约束而非替代设计文档 | ✅ 保持兼容；宿主提示词已明确 |
+| P0 | T381 | 设计文档入口与 Architect 执行树映射 | While `--design-doc` 单独传入或 Architect 回填组件标题, when dev-loop 初始化/校验计划, the system shall 保留全文需求并在 BatchState/ProgressTree 解析到同一节点 | ✅ CLI 入口、组件标题/§ 引用兼容、dry-run 门禁；2171 passed/1 skipped |
+| P1 | T382 | 范围约束与 Research/Supplement 注入 | While 自然语言 requirement 与 `--design-doc` 同时传入或 Research 已产出结论, when Architect 编译 Prompt, the system shall 将 requirement 作为范围并注入有界研究/补充摘要 | ✅ Skill/Prompt Contract/回归测试通过；16 条/4000 字符有界 |
 ## 执行纪律
 先记录再实施；使用 Red → Green → Refactor；pytest 串行；设计不降级；专项门禁后再收口；未经授权不提交、不推送、不发布。

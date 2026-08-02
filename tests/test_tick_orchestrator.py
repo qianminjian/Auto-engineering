@@ -23,6 +23,7 @@ import pytest
 
 from auto_engineering.engine.state import EngineState
 from auto_engineering.engine.verification_layers import VerificationLayers
+from auto_engineering.loop.architect_validation import dry_run_architect_plan
 from auto_engineering.loop.guardrail import GuardrailChain
 from auto_engineering.loop.tick_orchestrator import ORCH_BUDGET_MS, TickOrchestrator
 
@@ -157,6 +158,29 @@ class TestInit:
         assert o._design_doc is not None
         assert "设计模糊性扫描者" in action["instruction"]
         assert '"requirement": "req"' in action["instruction"]
+
+    def test_architect_dry_run_uses_component_title_or_section_ref(self, tmp_path) -> None:
+        design = tmp_path / "design.md"
+        design.write_text("## B1 页面\n### Button\n实现按钮\n", encoding="utf-8")
+        o = _orchestrator()
+        o.project_root = tmp_path
+        o.init("实现页面", design_doc_path=str(design))
+        valid = {
+            "stage": "architect",
+            "batch_plan": [{
+                "batch_id": "B1",
+                "component": "Button",
+                "design_section": "Button",
+                "tasks": [{"id": "B1-T1", "description": "实现按钮"}],
+            }],
+        }
+        assert dry_run_architect_plan(o._design_doc, valid, o._state.requirement) is None
+        invalid = {**valid, "batch_plan": [{
+            **valid["batch_plan"][0], "component": "Missing", "design_section": "Missing"
+        }]}
+        assert "Missing" in (
+            dry_run_architect_plan(o._design_doc, invalid, o._state.requirement) or ""
+        )
 
 
 # ── tick: architect → developer ──
@@ -1469,6 +1493,7 @@ class TestPhase0Research:
         assert supp.source_tier == "tier0"
         assert supp.content == "采用 tick/after_tick 分离"
         assert o._state.pending_research_ids == []
+        assert "采用 tick/after_tick 分离" in action["subagent_prompt"]
 
     def test_defer_research_routes_to_gap_review_for_rereview(self, tmp_path) -> None:
         """T0.7: defer_research 研究完成 → 回 gap_review 复审 (非直达 architect)."""
