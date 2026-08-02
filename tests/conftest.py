@@ -47,10 +47,13 @@ def _write_failures(data: dict[str, int]) -> None:
 
 
 def pytest_runtest_logreport(report):
-    """累积测试失败次数，供跨 session 诊断。"""
-    if report.when == "call" and report.failed:
+    """维护跨 session 失败计数，成功后清除陈旧诊断。"""
+    if report.when == "call" and (report.failed or report.passed):
         failures = _read_failures()
-        failures[report.nodeid] = failures.get(report.nodeid, 0) + 1
+        if report.failed:
+            failures[report.nodeid] = failures.get(report.nodeid, 0) + 1
+        else:
+            failures.pop(report.nodeid, None)
         _write_failures(failures)
 
 

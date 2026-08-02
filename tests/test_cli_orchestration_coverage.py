@@ -404,6 +404,38 @@ def test_tick_status_verbose_renders_batch_summary(
     assert _Store.instances[-1].closed is True
 
 
+def test_tick_status_verbose_degrades_when_batch_component_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    _patch_tick_types: None,
+) -> None:
+    dev_loop = import_module("auto_engineering.cli.dev_loop")
+
+    class BrokenBatchState:
+        current_batch_idx = 1
+        _seen_components: set[str] = set()
+
+        def current_component(self) -> SimpleNamespace:
+            raise RuntimeError("corrupt batch state")
+
+    original_restore = _Orchestrator.restore.__func__
+
+    def restore(cls: type[_Orchestrator], root: Path, store: _Store, **kwargs: object) -> _Orchestrator:
+        instance = original_restore(cls, root, store, **kwargs)
+        instance._batch_state = BrokenBatchState()
+        return instance
+
+    monkeypatch.setattr(_Orchestrator, "restore", classmethod(restore))
+
+    dev_loop.run_tick_status(tmp_path, verbose=True)
+    summary = json.loads(capsys.readouterr().out)
+
+    assert summary["batch_progress"]["current_component"] == "?"
+    assert summary["batch_progress"]["total_batches"] == 0
+    assert _Store.instances[-1].closed is True
+
+
 def test_tick_resume_falls_back_from_thread_id(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],

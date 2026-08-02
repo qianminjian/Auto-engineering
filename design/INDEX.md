@@ -1,6 +1,6 @@
 # design/ 资产索引
 
-> 更新：2026-07-31｜当前实现：v5.8.0-rc.4；Phase 72 runner 修复完成
+> 更新：2026-08-02｜当前实现：v5.8.0-rc.4；Phase 75 真跑准入加固完成
 
 ## 当前权威资产
 
@@ -15,6 +15,8 @@
 | `v5.8-Automatic-Context-Governance.md` | Phase 70 自动 compaction、有界增量上下文与成本治理权威设计 |
 | `v5.8-Session-Decoupling-Design.md` | Phase 64-67 状态恢复设计；日常 rollover 已由 Phase 70 纠偏 |
 | `v5.8-Session-Decoupling-PLAN.md` | Phase 64-70 T302-T350 可执行实施计划 |
+| `v5.8-Deep-Audit-Remediation-PLAN.md` | Phase 74 T368-T376 深度审计修复计划 |
+| `v5.8-Deep-Audit-Report-2026-08-02.md` | Phase 75 自动门禁、风险和真实宿主准入证据 |
 | `incidents/2026-07-29-claude-146-tick-long-run.md` | 146-Tick 真跑事故事实、根因、任务映射与关闭标准 |
 | `incidents/2026-07-30-claude-rc1-partial-run.md` | rc.1 部分真跑的跨进程状态、Gate、Usage 与成本缺陷 |
 | `incidents/2026-07-30-claude-9-tick-evidence-chain.md` | 9-Tick 真跑的旧版本识别、Debug 编号、进度与版本溯源缺陷 |
@@ -28,6 +30,7 @@
    Session Decoupling，冲突时前者优先。
 3. 实施顺序和任务状态以 PLAN 与 Tracker 为准。
 4. 历史争议以 Git 记录追溯，不把旧报告继续保存在活动工作区。
+5. 真实产品验收必须独立记录 `product_install`；archive smoke 通过不等于宿主产品通过。
 
 ## 维护规则
 

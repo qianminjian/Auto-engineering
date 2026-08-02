@@ -490,7 +490,7 @@ def run_tick_status(root: Path, verbose: bool = False) -> None:
         }
         if verbose and orch._batch_state is not None:
             bs = orch._batch_state
-            batches = []
+            batches, comp = [], None
             try:
                 comp = bs.current_component()
                 for b in bs.batches_for(comp):

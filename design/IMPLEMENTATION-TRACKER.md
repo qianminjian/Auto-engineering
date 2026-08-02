@@ -142,14 +142,19 @@
 | P1 | T365 | Doctor、CLI 与配置语义迁移 | While manifest 缺失、项目待搭建或 legacy 输入存在, when doctor/CLI 诊断, the system shall 分别报告 resolved、setup_required、conflict 或 legacy，不把缺少 Init 产物误报为安装故障 | ✅（76 tests；Ruff/mypy；四态诊断） |
 | P0 | T366 | Legacy Init 只读兼容 Adapter | While 旧项目仅提供有效 init-manifest.json, when Resolver 和现有兼容 API 运行, the system shall 生成等价 Profile、保持 manifest mtime 不变并给出非阻断迁移提示 | ✅（legacy 等价转换、mtime、稳定错误；68 tests；Ruff/mypy） |
 | P0 | T367 | Phase 73 双宿主收口验收 | While T359-T366 完成, when 已有项目、空项目、冲突、恢复和 legacy 黄金轨迹在 Claude/Codex 执行, both hosts shall 产生等价终态且全量测试、覆盖率、静态检查和真实产品轨迹通过 | ◐ 自动门禁完成：2153 passed/1 skipped、coverage 90%、Ruff/mypy/sync、双宿主 archive install；待 Claude Code/Codex 真实 LLM 轨迹 |
-
 ## Phase 74：深度审计修复（详见 `design/v5.8-Deep-Audit-Remediation-PLAN.md`）
 | 优先级 | ID | 任务 | 状态 |
 |---:|---|---|:---:|
 | P0 | T368-T373 | Gate、Result、Spawn、事务、EventStore、Host 与 Profile 恢复 | ✅ 专项与集成验证通过 |
 | P1 | T374-T375 | Release/CI、跨平台、审计门禁与验收去虚化 | ✅ check-gate 与双宿主 archive pass |
-| P0 | T376 | 全量自动门禁与双宿主 archive 收口 | ◐ 2162 passed/1 skipped、coverage 90.43%；待真实 LLM 轨迹 |
+| P0 | T376 | 全量自动门禁与双宿主 archive 收口 | ✅ 2166 passed/1 skipped、coverage 90.41%；真实 LLM 轨迹仍单独作为 T350/T367/T380 门禁 |
 
+## Phase 75：真跑准入审计收口
+| 优先级 | ID | 任务 | EARS 验收 | 状态 |
+|---:|---|---|---|:---:|
+| P1 | T377 | status 异常降级 | While batch state 读取失败, when `dev-loop --status --verbose` 生成摘要, the CLI shall 返回可用的降级摘要且不引用未初始化变量 | ✅ 20 回归测试；Ruff/mypy/check-gate 通过 |
+| P2 | T378 | 测试失败缓存清零 | While 测试跨会话失败计数存在, when 同一测试随后通过, the diagnostic cache shall 删除该测试计数并不继续报告陈旧失败 | ✅ 2 回归测试；全量 2166 passed/1 skipped |
+| P1 | T379 | 历史秘密与依赖确认 | While 发布候选进入真跑或发布, when Git 历史扫描或依赖审计发现疑似风险, the release record shall 区分当前树、历史树和未验证项，未经人工确认不得宣称安全已闭环 | ◐ 当前 tracked files 无发现；历史 15 条与依赖审计待确认 |
+| P0 | T380 | 真实宿主 150 Tick 证据协议 | While Claude Code 与 Codex 执行候选制品, when 5-10 Tick、30-50 Tick 和 150 Tick 阶段完成, the evidence shall separately record product install, usage completeness, duplicate blocks, recovery and semantic equivalence | ◐ 协议已登记，待真实宿主执行 |
 ## 执行纪律
-
 先记录再实施；使用 Red → Green → Refactor；pytest 串行；设计不降级；专项门禁后再收口；未经授权不提交、不推送、不发布。
