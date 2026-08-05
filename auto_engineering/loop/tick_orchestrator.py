@@ -371,6 +371,17 @@ class TickOrchestrator:
     # _checkpoint_passed / _progress_summary — 已提取到 ActionBuilder (P0-1)
 
     # ── 公共入口 ──
+    def _resolve_design_doc_path(self, path: str | Path) -> Path:
+        """按项目根解析设计文档，避免跨 cwd 恢复时丢失文档。
+
+        协议仍保存宿主提供的相对路径以保持兼容；所有实际读取统一经过
+        project_root 解析。绝对路径保持原样，便于旧 checkpoint 恢复。
+        """
+        candidate = Path(path)
+        if candidate.is_absolute():
+            return candidate
+        return self.project_root / candidate
+
     def init(
         self,
         requirement: str,
@@ -383,7 +394,8 @@ class TickOrchestrator:
         ProjectProfile 不完整时发出 project_setup_required，由宿主补齐后重新探测。
         """
         if design_doc_path:
-            self._design_doc = DesignDoc.parse(design_doc_path)
+            self._design_doc = DesignDoc.parse(
+                self._resolve_design_doc_path(design_doc_path))
 
         # T109b: L1 — requirement PII 扫描 (不阻断, 仅 WARN)
         if self._pii_enabled and self._pii_redactor:
@@ -576,7 +588,8 @@ class TickOrchestrator:
 
         # design_doc: design-doc 模式每 tick 重 parse (确定性无漂移)
         if state.design_doc_path:
-            self._design_doc = DesignDoc.parse(state.design_doc_path)
+            self._design_doc = DesignDoc.parse(
+                self._resolve_design_doc_path(state.design_doc_path))
 
         # batch_state: 自包含 (内嵌 batch_plan seed), plates 由 design_doc/seed 重建
         if state.batch_state_json:
@@ -2298,7 +2311,14 @@ class TickOrchestrator:
                 "has_blocking": result.get("has_blocking", False),
             }, ensure_ascii=False)
         elif stage == "gap_review":
-            self._state.pending_gap_decisions = result.get("decisions", [])
+            decisions = result.get("decisions", [])
+            # 旧宿主/旧 checkpoint 可继续提交批量 decisions；新 Action 明确要求
+            # 单项并会以 single_gap 模式推进。批量结果仅走兼容分支，不再由新宿主生成。
+            if result.get("interaction_mode") == "single_gap" and len(decisions) != 1:
+                raise ValueError(
+                    "GAP_REVIEW_DECISION_CARDINALITY: single_gap 必须恰好提交 1 项"
+                )
+            self._state.pending_gap_decisions = decisions
         elif stage == "architect":
             self._state.plan = result.get("plan", "")
             plan_patch = result.get("plan_patch")

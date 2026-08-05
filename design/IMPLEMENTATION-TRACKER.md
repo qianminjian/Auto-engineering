@@ -124,7 +124,6 @@
 | P0 | T356 | Bundled `bin/ae-run` | While 插件启用, when 宿主解析 PATH 中的 `ae-run`, the launcher shall 定位自身插件根并委托共享 `scripts/ae-run` | ✅ 位置无关薄包装，仅委托共享 resolver |
 | P0 | T357 | 发布与宿主契约 | While release archive 构建, when Claude/Codex 隔离安装验收, both packages shall 包含可执行 `bin/ae-run` 并从外部 cwd 启动 | ✅ archive 含 0755 bin；双宿主从目标 cwd smoke pass |
 | P0 | T358 | Phase 72 收口验收 | While T355-T357 完成, when 专项、全量、静态检查与双宿主 archive 运行, all runner paths shall 位置无关且不复制 Core 逻辑 | ✅ 2122 passed/1 skipped；coverage 90%；静态检查与双宿主 archive pass |
-
 ## Phase 73：Init Engineering 运行时解耦（设计见 `design/v5.8-Init-Runtime-Decoupling-Design.md`）
 | 优先级 | ID | 任务 | EARS 验收 | 状态 |
 |---:|---|---|---|:---:|
@@ -143,7 +142,6 @@
 | P0 | T368-T373 | Gate、Result、Spawn、事务、EventStore、Host 与 Profile 恢复 | ✅ 专项与集成验证通过 |
 | P1 | T374-T375 | Release/CI、跨平台、审计门禁与验收去虚化 | ✅ check-gate 与双宿主 archive pass |
 | P0 | T376 | 全量自动门禁与双宿主 archive 收口 | ✅ 2166 passed/1 skipped、coverage 90.41%；真实 LLM 轨迹仍单独作为 T350/T367/T380 门禁 |
-
 ## Phase 75：真跑准入审计收口
 | 优先级 | ID | 任务 | EARS 验收 | 状态 |
 |---:|---|---|---|:---:|
@@ -156,5 +154,7 @@
 |---:|---|---|---|:---:|
 | P0 | T381 | 设计文档入口与 Architect 执行树映射 | While `--design-doc` 单独传入或 Architect 回填组件标题, when dev-loop 初始化/校验计划, the system shall 保留全文需求并在 BatchState/ProgressTree 解析到同一节点 | ✅ CLI 入口、组件标题/§ 引用兼容、dry-run 门禁；2171 passed/1 skipped |
 | P1 | T382 | 范围约束与 Research/Supplement 注入 | While 自然语言 requirement 与 `--design-doc` 同时传入或 Research 已产出结论, when Architect 编译 Prompt, the system shall 将 requirement 作为范围并注入有界研究/补充摘要 | ✅ Skill/Prompt Contract/回归测试通过；16 条/4000 字符有界 |
+| P0 | T383-T384 | 真跑整改：路径、EventStore 状态与单 Gap Review | While 外部项目从任意 cwd 恢复或 gap_review 有多个未决 gap, when status/tick 或 host action 运行, the system shall 以 project-root 解析文档、优先读取 EventStore 且一次只呈现一个 gap | ✅ 2171 tests；外部项目两条 status 回归通过 |
+| P1 | T385-T386 | 真跑整改：Gate 可观测性、finding 覆盖与宿主续接 | While Gate 异常或 verifier 产生 finding, when runner/architect/host 继续, the system shall 保留结构化原因、要求 finding→task 覆盖并显式 continuation_required | ✅ Gate/Architect/Skill 回归；Ruff/mypy/sync 通过 |
 ## 执行纪律
 先记录再实施；使用 Red → Green → Refactor；pytest 串行；设计不降级；专项门禁后再收口；未经授权不提交、不推送、不发布。

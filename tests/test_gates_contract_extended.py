@@ -205,6 +205,7 @@ def test_run_multi_agent_without_contract_checker_fails_closed(tmp_path: Path) -
     proofs = tmp_path / ".ae-state" / "spawn-proofs"
     proofs.mkdir(parents=True)
     (proofs / "proof.json").write_text("{}", encoding="utf-8")
+    (tmp_path / ".ae-contracts-required").write_text("", encoding="utf-8")
 
     verdict = ContractGate().run(tmp_path)
 

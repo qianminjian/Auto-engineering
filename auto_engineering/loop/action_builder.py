@@ -687,20 +687,31 @@ class ActionBuilder:
     def _build_action_gap_review(self, base: dict) -> dict:
         report = json.loads(self._state.gap_report_json or '{"gaps": []}')
         is_rereview = bool(self._state.research_archive)
+        gaps = report.get("gaps", [])
+        unresolved = [
+            gap for gap in gaps
+            if gap.get("resolution") not in {"fill", "defer"}
+        ]
+        current = unresolved[0] if unresolved else {}
         return self._build_stage_action(base, "gap_review",
-            gaps=report.get("gaps", []),
+            gaps=[current] if current else [],
+            current_gap=current,
+            gap_index=len(gaps) - len(unresolved),
+            remaining_count=len(unresolved),
+            interaction_mode="single_gap",
             has_blocking=report.get("has_blocking", False),
             is_rereview=is_rereview,
             research_findings=dict(self._state.research_archive),
             instruction=(
-                "初审: 对每个 gap 用 AskUserQuestion 收集 Fill(用户补充) / "
+                "一次只处理 current_gap，用 AskUserQuestion 收集 Fill(用户补充) / "
                 "Research(检索) / Defer(留给architect) / Defer+Research. "
                 "has_blocking 的 architectural gap 禁止 Defer. "
                 "复审(is_rereview=true, research_findings 非空): 呈现 findings, "
                 "让用户据研究发现做补充设计 — Fill(写入细化内容→Supplement) "
                 "或 Defer(留给 architect in-loop 细化)."),
             expected_format={
-                "decisions": "[{gap_id, resolution, user_note, fill_content?}]",
+                "decisions": "[{gap_id, resolution, user_note, fill_content?}]（严格 1 项）",
+                "interaction_mode": "single_gap（新宿主应回显；旧 Result 可省略）",
             })
 
     def _build_action_research(self, base: dict) -> dict:

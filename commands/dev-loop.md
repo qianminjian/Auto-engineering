@@ -43,6 +43,9 @@ Violating the letter of this rule is violating the spirit of this rule.
          if native session handoff is unavailable: fail closed
          continue with the original active Action returned by Core
      read action.instruction
+     if action.stage == "gap_review" and action.interaction_mode == "single_gap":
+         show only action.current_gap and ask exactly one Fill/Research/Defer decision
+         submit decisions with exactly one item; never batch-write defaults
      if action.spawn exists:
          validate HostCapabilities against action.spawn
          if action.spawn.count == 1:
@@ -63,6 +66,10 @@ Violating the letter of this rule is violating the spirit of this rule.
      action = ae-run dev-loop --tick --result <result-file>
 3. report action.verdict and fresh verification evidence
 ```
+
+非终态 Action 都是 `continuation_required`：宿主必须提交当前 Result 后继续读取下一个
+Action。Core 不运行后台 daemon；若宿主暂时不能继续，应报告等待的 tick/stage 和恢复命令，
+不得把“已输出 Action”当作完成。
 
 启动时不要把设计文档路径作为 requirement 传入。正确写法是：
 

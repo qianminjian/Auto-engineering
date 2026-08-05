@@ -1,5 +1,5 @@
 # Auto-Engineering BEACON
-> 创建：2026-06-24｜更新：2026-08-02｜阶段：Phase 76 设计文档入口收口
+> 创建：2026-06-24｜更新：2026-08-05｜阶段：Phase 77 真跑整改设计与实现
 > 决策状态翻转（✅↔❌）或架构降级必须先获用户批准。
 
 ## 目标与成功标准
@@ -58,6 +58,7 @@ Engineering 的问答、模板或脚手架；把 archive smoke 冒充真实产�
   90.41%、Ruff/mypy/sync/check-gate 与双宿主 archive 通过，待真实 LLM 轨迹。
 - Phase 75 已完成 status 降级与失败缓存修复；历史秘密确认和宿主长跑证据仍须人工/真实产品完成。
 - Phase 76 已统一设计文档入口：省略范围时执行全文，显式范围时只执行指定范围；并修复 Architect component 标识映射、Research/Supplement 注入与 dry-run 结构门禁。
+- Phase 77 已完成 2026-08-05 真跑整改 Spec：路径恢复、EventStore-first status、单 Gap Review、Gate 可观测性、finding 覆盖和宿主续接；2171 passed / 1 skipped，仍待真实宿主重跑确认业务批次。
 ## 最近演进
 | 日期 | 变更 |
 |---|---|
@@ -67,7 +68,6 @@ Engineering 的问答、模板或脚手架；把 archive smoke 冒充真实产�
 | 2026-07-29 | 归档 146-Tick 真跑事故报告，补充摘要隔离与循环预算 |
 | 2026-07-28 | Phase 62 完成 T295-T300，v5.7.1 GitHub Release 正式发布 |
 | 2026-08-02 | 再次审计：自动门禁可进入受控真跑，真实 LLM 长跑仍是发布阻断项 |
-
 ## 待解决问题
 
 - T336/T350：用发布候选版执行 Claude Code/Codex 真实产品 150 Tick 长跑。

@@ -77,6 +77,8 @@ ae-run dev-loop --init \
   Core 返回的原 active Action。宿主不能创建/接管新会话时报告
   `HOST_SESSION_HANDOFF_UNAVAILABLE` 并停止，禁止在旧会话降级继续。
 - `action.spawn` 存在：检查当前 `HostCapabilities`，再按以下规则执行。
+- `action.stage == gap_review` 且 `action.interaction_mode == single_gap` 时，只展示
+  `current_gap` 并收集一个决策；Result 的 `decisions` 必须恰好一项，禁止批量默认值。
 - 无 `action.spawn`：仅 developer 阶段可由主 Agent inline 执行。
 
 Spawn action 必须读取：

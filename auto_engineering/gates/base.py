@@ -139,6 +139,8 @@ class SubprocessResult:
     stderr: str = ""
     timed_out: bool = False
     not_found: bool = False
+    command: tuple[str, ...] = ()
+    error: str = ""
 
 
 def run_gate_command(cmd: list[str], cwd: Path, timeout: float) -> SubprocessResult:
@@ -159,11 +161,22 @@ def run_gate_command(cmd: list[str], cwd: Path, timeout: float) -> SubprocessRes
             returncode=result.returncode,
             stdout=result.stdout or "",
             stderr=result.stderr or "",
+            command=tuple(cmd),
         )
     except subprocess.TimeoutExpired:
-        return SubprocessResult(returncode=-1, stdout="", stderr="", timed_out=True)
-    except FileNotFoundError:
-        return SubprocessResult(returncode=-1, stdout="", stderr="", not_found=True)
+        return SubprocessResult(
+            returncode=-1, timed_out=True, command=tuple(cmd),
+            error=f"timeout after {timeout}s",
+        )
+    except FileNotFoundError as exc:
+        return SubprocessResult(
+            returncode=-1, not_found=True, command=tuple(cmd), error=str(exc),
+        )
+    except OSError as exc:
+        # 保留启动失败的 errno/文本，避免上层只看到含义不明的 exit=-1。
+        return SubprocessResult(
+            returncode=-1, command=tuple(cmd), error=str(exc),
+        )
 
 
 class Gate:

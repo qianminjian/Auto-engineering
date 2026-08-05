@@ -65,6 +65,12 @@ def _collect_status_json(cwd: Path) -> dict:
     if not cp_dir.exists():
         return payload
 
+    # v5.8：EventStore 是新协议事实源。只有存在真实 events.db 且项目租约
+    # 指向可投影线程时才添加扩展字段，保持无状态/旧 checkpoint 的 7 字段契约。
+    event_payload = _collect_event_store_status(cwd)
+    if event_payload is not None:
+        return event_payload
+
     from auto_engineering.loop.checkpoint import Checkpoint, SQLiteCheckpointStore
 
     # 找到 latest checkpoint (跨所有 db)
@@ -119,6 +125,44 @@ def _collect_status_json(cwd: Path) -> dict:
         for h in sorted_hist
     ]
     return payload
+
+
+def _collect_event_store_status(cwd: Path) -> dict | None:
+    """读取 active EventStore projection；损坏或无租约时返回 None。"""
+    cp_dir = cwd / ".ae-state"
+    event_db = cp_dir / "events.db"
+    if not event_db.exists():
+        return None
+    try:
+        from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
+        from auto_engineering.loop.event_store import SQLiteEventStore
+
+        store: SQLiteCheckpointStore[EngineState]
+        with SQLiteCheckpointStore(str(cp_dir / "checkpoints.db"), read_only=True) as store:
+            thread_id = store.active_project_thread()
+        if not thread_id:
+            return None
+        with SQLiteEventStore(event_db) as events:
+            state = events.load_projection(thread_id)
+            action = events.load_action_snapshot(thread_id)
+        if state is None:
+            return None
+        return {
+            "thread_id": state.thread_id,
+            "round": state.round,
+            "stage": state.current_stage,
+            "verdict": state.critic_verdict,
+            "majors_in_a_row": state.majors_in_a_row,
+            "total_majors": state.total_majors,
+            "recent_history": [],
+            "source": "event_store",
+            "tick": state.tick,
+            "action": action.get("action") if action else None,
+            "expected_stage": state.expected_stage,
+        }
+    except (OSError, sqlite3.Error, ValueError, TypeError):
+        _logger.warning("EventStore status 读取失败，回退旧 checkpoint", exc_info=True)
+        return None
 
 
 # ============================================================

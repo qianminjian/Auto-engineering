@@ -178,7 +178,16 @@ class TypeCheckGate(Gate):
             )
         if result.not_found:
             return GateVerdict.skip(
-                f"{checker} 命令未找到（TS 建议项目内 `pnpm add -D typescript`）",
+                f"{checker} 命令未找到（TS 建议项目内 `pnpm add -D typescript`）；"
+                f"command={' '.join(result.command)}; error={result.error}",
+                gate_name=self.name,
+            )
+
+        if result.returncode < 0:
+            detail = result.error or "未提供子进程诊断"
+            return GateVerdict.failed(
+                f"{checker} 未产生有效退出码 (exit={result.returncode}); "
+                f"command={' '.join(result.command)}; {detail}",
                 gate_name=self.name,
             )
 

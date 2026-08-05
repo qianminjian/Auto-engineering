@@ -156,18 +156,27 @@ class ContractGate(Gate):
                 )
             return self._check_contracts(project_root)
 
-        # DS-14 (T154, 2026-07-23): 检测 .ae-state/spawn-proofs/ 目录 —
-        # 非空 = 有 subagent spawn → 多 agent 模式，不应 skip
+        # 多 Agent 本身不等于存在跨模块契约。只有项目显式声明契约边界
+        #（.ae-contracts/ 或 .ae-contracts-required）时才要求 executable
+        # checker；否则返回 N/A，避免普通并行 Research/Review 被反复 hard-fail。
         spawn_proofs_dir = Path(project_root) / ".ae-state" / "spawn-proofs"
-        if spawn_proofs_dir.is_dir() and any(spawn_proofs_dir.iterdir()):
+        contracts_dir = Path(project_root) / ".ae-contracts"
+        boundary_declared = contracts_dir.exists() or (
+            Path(project_root) / ".ae-contracts-required"
+        ).exists()
+        if (
+            spawn_proofs_dir.is_dir()
+            and any(spawn_proofs_dir.iterdir())
+            and boundary_declared
+        ):
             return GateVerdict.failed(
                 "CONTRACT_CHECK_UNAVAILABLE: 已检测到多 Agent 执行证据，"
-                "但未提供可执行的跨 Agent 契约定义",
+                "且项目声明了跨 Agent 契约边界，但未提供可执行定义",
                 gate_name=self.name,
             )
 
         return GateVerdict.not_applicable_verdict(
-            "单 Agent 模式，不适用跨 Agent 契约检查",
+            "单 Agent 或未声明可验证的跨 Agent 契约边界，不适用契约检查",
             gate_name=self.name,
         )
 

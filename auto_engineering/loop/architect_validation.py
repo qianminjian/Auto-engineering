@@ -9,6 +9,32 @@ from auto_engineering.engine.verification_layers import determine_verification_l
 from auto_engineering.loop.task_factory import tasks_from_batch_plan
 
 
+def _validate_refine_finding_coverage(result: dict, batches: list[dict]) -> str | None:
+    """确保 verifier findings 不会只出现在反馈里而未进入新任务。"""
+    feedback = result.get("feedback")
+    refine = feedback.get("refine_request") if isinstance(feedback, dict) else None
+    findings = refine.get("gaps", []) if isinstance(refine, dict) else []
+    if not findings:
+        return None
+    refs: set[str] = set()
+    for batch in batches:
+        for task in batch.get("tasks", []) if isinstance(batch, dict) else []:
+            raw = task.get("finding_ref", []) if isinstance(task, dict) else []
+            if isinstance(raw, str):
+                refs.add(raw)
+            elif isinstance(raw, list):
+                refs.update(str(item) for item in raw)
+    missing = [
+        str(item.get("design_ref", item.get("id", "")))
+        for item in findings
+        if str(item.get("design_ref", item.get("id", ""))) not in refs
+    ]
+    return (
+        "ARCHITECT_FINDING_UNCOVERED: " + ", ".join(missing)
+        if missing else None
+    )
+
+
 def dry_run_architect_plan(
     design_doc: DesignDoc | None,
     result: dict,
@@ -28,6 +54,8 @@ def dry_run_architect_plan(
         tree.apply_batch_plan_totals(normalized)
         tasks_from_batch_plan(normalized, requirement)
         determine_verification_layers(design_doc, normalized)
+        if error := _validate_refine_finding_coverage(result, normalized):
+            return error
     except (TypeError, KeyError, ValueError) as exc:
         return str(exc)
     return None
