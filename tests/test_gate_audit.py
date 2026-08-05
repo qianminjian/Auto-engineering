@@ -27,7 +27,7 @@ class TestAuditGateConstruction:
         gate = AuditGate()
         assert gate.max_p0 == 0
         assert gate.max_p1 == 3
-        assert gate.max_p2 == 10
+        assert gate.max_p2 == -1
 
     def test_custom_thresholds(self) -> None:
         gate = AuditGate(max_p0=2, max_p1=5, max_p2=20)
@@ -440,3 +440,14 @@ class TestAuditGateKnownAccepted:
         verdict = gate.run(tmp_path)
         assert verdict.passed is False
         assert "P0=1" in verdict.message
+def test_default_p2_findings_warn_without_blocking() -> None:
+    gate = AuditGate()
+    findings = [
+        AuditFinding("P2", "可读性", "src/app.ts", line, "行过长")
+        for line in range(1, 21)
+    ]
+
+    verdict = gate._build_verdict(findings, files_scanned=1)
+
+    assert verdict.passed is True
+    assert "P2=20" in verdict.message

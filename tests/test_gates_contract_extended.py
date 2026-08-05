@@ -200,19 +200,17 @@ def test_run_single_agent_is_not_applicable(tmp_path: Path) -> None:
     assert verdict.skipped is True
 
 
-def test_run_multi_agent_without_contract_checker_fails_closed(tmp_path: Path) -> None:
-    """检测到多 Agent 却没有可执行契约校验时不得伪装通过。"""
+def test_run_multi_agent_without_declared_contracts_is_not_applicable(tmp_path: Path) -> None:
+    """spawn proof 只证明执行过 Agent，不证明项目存在跨模块契约。"""
     proofs = tmp_path / ".ae-state" / "spawn-proofs"
     proofs.mkdir(parents=True)
     (proofs / "proof.json").write_text("{}", encoding="utf-8")
-    (tmp_path / ".ae-contracts-required").write_text("", encoding="utf-8")
 
     verdict = ContractGate().run(tmp_path)
 
     assert verdict.passed is False
-    assert verdict.skipped is False
-    assert verdict.not_applicable is False
-    assert "CONTRACT_CHECK_UNAVAILABLE" in verdict.message
+    assert verdict.skipped is True
+    assert verdict.not_applicable is True
 
 
 def test_run_with_contracts_non_dict(tmp_path: Path) -> None:

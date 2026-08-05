@@ -91,7 +91,7 @@ _MAX_FILES_PER_DIR = 12
 # 默认阈值
 DEFAULT_MAX_P0 = 0   # 任何 P0 → fail
 DEFAULT_MAX_P1 = 3   # ≥3 P1 → fail
-DEFAULT_MAX_P2 = 10  # ≥10 P2 → fail (warn)
+DEFAULT_MAX_P2 = -1  # 负值表示 P2 只告警；显式非负阈值才阻断
 
 
 # ── Pattern 定义 ──
@@ -450,7 +450,7 @@ class AuditGate(Gate):
         failed = (
             len(p0) > self.max_p0
             or len(p1) > self.max_p1
-            or len(p2) > self.max_p2
+            or (self.max_p2 >= 0 and len(p2) > self.max_p2)
         )
 
         suppressed_note = f", 已接受抑制={suppressed}" if suppressed else ""
@@ -458,7 +458,7 @@ class AuditGate(Gate):
             f"审计完成: {files_scanned} 文件扫描, "
             f"P0={len(p0)} (max={self.max_p0}), "
             f"P1={len(p1)} (max={self.max_p1}), "
-            f"P2={len(p2)} (max={self.max_p2})"
+            f"P2={len(p2)} (max={'warn-only' if self.max_p2 < 0 else self.max_p2})"
             + suppressed_note
             + (" ⚠ 零文件扫描 — 无可审计文件(全被排除/过大/空目录)" if files_scanned == 0 else ""),
         ]

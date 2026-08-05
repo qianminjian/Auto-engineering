@@ -8,6 +8,7 @@ from pathlib import Path
 from auto_engineering.engine.batch_state import BatchState
 from auto_engineering.engine.progress_tree import ProgressTree
 from auto_engineering.gates.base import SubprocessResult
+from auto_engineering.gates.contract import ContractGate
 from auto_engineering.gates.test_gate import TestGate as _TestGate
 from auto_engineering.loop.actions import validate_result_format
 from auto_engineering.loop.guardrails.stateful import aggregate_files_sha
@@ -139,6 +140,19 @@ def test_gate_result_declares_selected_files(tmp_path: Path) -> None:
     assert results["test"]["files_snapshot_sha"] != (
         "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     )
+
+
+def test_tick_gate_runner_injects_engine_contracts(tmp_path: Path) -> None:
+    source = tmp_path / "src.ts"
+    source.write_text("export const route = '/voice';\n", encoding="utf-8")
+    runner = TickGateRunner(tmp_path)
+    runner._gates = [ContractGate()]
+
+    results, _duration = runner.run(
+        ["src.ts"], contracts={"voice": {"path": "/voice"}}
+    )
+
+    assert results["contract"]["passed"] is True
 
 
 def test_architect_plan_patch_contract_accepts_additions_only() -> None:

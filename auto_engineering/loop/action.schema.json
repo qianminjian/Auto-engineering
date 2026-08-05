@@ -38,6 +38,7 @@
     "has_blocking": {"type": "boolean"},
     "is_rereview": {"type": "boolean"},
     "research_findings": {"type": "object"},
+    "research_and_design_context": {"type": "array", "items": {"type": "object"}},
     "required_capabilities": {"type": "array"},
     "missing_capabilities": {"type": "array", "items": {"type": "string"}},
     "reason_code": {"type": "string"},

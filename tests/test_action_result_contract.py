@@ -270,6 +270,25 @@ class TestActionRoundTrip:
         assert action["action"] == "gap_scan"
         _action_validator.validate(action)
 
+    def test_real_gap_review_action_conforms(self, tmp_path):
+        o = _orchestrator()
+        state = EngineState(
+            requirement="实现协议",
+            current_stage="gap_review",
+            thread_id="thread-1",
+            gap_report_json=json.dumps({
+                "gaps": [{
+                    "id": "gap-1", "design_section_ref": "§1",
+                    "grade": "component", "clarity": "vague",
+                    "summary": "需明确契约", "depends_on": [],
+                }],
+            }),
+        )
+        action = action_envelope(o.action_builder.build_action(state))
+
+        assert action["action"] == "gap_review"
+        _action_validator.validate(action)
+
     def test_done_action_conforms(self):
         action = action_envelope(
             ActionDone(

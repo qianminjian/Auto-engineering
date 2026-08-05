@@ -43,9 +43,10 @@ Violating the letter of this rule is violating the spirit of this rule.
          if native session handoff is unavailable: fail closed
          continue with the original active Action returned by Core
      read action.instruction
-     if action.stage == "gap_review" and action.interaction_mode == "single_gap":
-         show only action.current_gap and ask exactly one Fill/Research/Defer decision
-         submit decisions with exactly one item; never batch-write defaults
+     if action.stage == "gap_review":
+         ask Fill/Research/Defer for every item in action.gaps, in order
+         accumulate locally, then submit one complete decisions array for this Tick
+         never prefill defaults for gaps that the user has not reviewed
      if action.spawn exists:
          validate HostCapabilities against action.spawn
          if action.spawn.count == 1:

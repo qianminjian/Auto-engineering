@@ -64,7 +64,7 @@
 |---:|---|---|---|:---:|
 | P0 | T319 | 中等规模双宿主真实验收 | While 候选版本安装到 Claude Code 与 Codex, when 运行包含返工、深审计和自动 compaction 的真实项目, both hosts shall 无人工交接完成且无批次回退、验证假通过或输入超限 | ◐ archive smoke 已通过；真实产品门禁并入 T350 |
 | P0 | T320 | 故障恢复与成本基线 | While 宿主在 rollover 前后异常退出, when 从事件与 capsule 恢复, the run shall 收敛到等价终态并输出可归因成本报告 | ✅ SQLite 重启/重复 claim 等价恢复 + 双 session Usage 聚合；32 tests passed |
-| P0 | T321 | v5.8 发布收口 | While T303-T320、T323-T324 全部完成, when 全量测试、覆盖率、静态检查、双宿主安装与真实运行门禁执行, all required checks shall 通过后才允许发布 | ◐ `5.8.0-rc.4` 自动门禁通过；真实产品 LLM 门禁未执行 |
+| P0 | T321 | v5.8 发布收口 | While T303-T320、T323-T324 全部完成, when 全量测试、覆盖率、静态检查、双宿主安装与真实运行门禁执行, all required checks shall 通过后才允许发布 | ◐ `5.8.0-rc.5` 自动门禁通过；真实产品 LLM 门禁未执行 |
 | P1 | T325 | Claude 命令命名空间校准 | While 插件名为 `auto-engineering`, when 用户查看或启动 Claude Code slash command, all active guidance shall 使用宿主实际注册的 `/auto-engineering:dev-loop`，不得继续宣传不存在的 `/ae:*` 别名 | ✅ 当前文档、CLI 提示、设计契约和生成规则已统一；RED 4 failed，GREEN 81 passed/1 skipped；Ruff/mypy/sync/metadata 与 rc.2 Claude archive smoke pass |
 
 ## Phase 68：rc.1 真跑缺陷修复
@@ -154,7 +154,7 @@
 |---:|---|---|---|:---:|
 | P0 | T381 | 设计文档入口与 Architect 执行树映射 | While `--design-doc` 单独传入或 Architect 回填组件标题, when dev-loop 初始化/校验计划, the system shall 保留全文需求并在 BatchState/ProgressTree 解析到同一节点 | ✅ CLI 入口、组件标题/§ 引用兼容、dry-run 门禁；2171 passed/1 skipped |
 | P1 | T382 | 范围约束与 Research/Supplement 注入 | While 自然语言 requirement 与 `--design-doc` 同时传入或 Research 已产出结论, when Architect 编译 Prompt, the system shall 将 requirement 作为范围并注入有界研究/补充摘要 | ✅ Skill/Prompt Contract/回归测试通过；16 条/4000 字符有界 |
-| P0 | T383-T384 | 真跑整改：路径、EventStore 状态与单 Gap Review | While 外部项目从任意 cwd 恢复或 gap_review 有多个未决 gap, when status/tick 或 host action 运行, the system shall 以 project-root 解析文档、优先读取 EventStore 且一次只呈现一个 gap | ✅ 2171 tests；外部项目两条 status 回归通过 |
-| P1 | T385-T386 | 真跑整改：Gate 可观测性、finding 覆盖与宿主续接 | While Gate 异常或 verifier 产生 finding, when runner/architect/host 继续, the system shall 保留结构化原因、要求 finding→task 覆盖并显式 continuation_required | ✅ Gate/Architect/Skill 回归；Ruff/mypy/sync 通过 |
+| P0 | T383-T384 | 真跑纠偏：路径、EventStore 状态与批量 Gap Review | While 外部项目从任意 cwd 恢复或 gap_review 有多个未决 gap, when status/tick 或 host action 运行, the system shall 以 project-root 解析文档、保持 status 公共契约，并在一次 Action 中完整收集全部 gap 决策后推进 | ✅ rc.5 完整集合校验、Research 队列与 Action schema fail-closed；2178 passed/1 skipped |
+| P1 | T385-T386 | 真跑纠偏：Gate 可观测性、契约适用性与宿主续接 | While Gate 异常、契约为空或 verifier 产生 finding, when runner/architect/host 继续, the system shall 保留结构化原因、按真实 contracts 判定 N/A，并使用既有 PLAN_REFINE 契约续接 | ✅ ProfileCommandGate/P2/Contract/status/PLAN_REFINE 纠偏；Ruff/mypy/sync/metadata 通过 |
 ## 执行纪律
 先记录再实施；使用 Red → Green → Refactor；pytest 串行；设计不降级；专项门禁后再收口；未经授权不提交、不推送、不发布。

@@ -36,6 +36,15 @@ class ProfileCommandGate(Gate):
                 f"{rendered} 超时 (>{self.timeout}s)",
                 gate_name=self.name,
             )
+        if getattr(result, "not_found", False) is True or result.returncode < 0:
+            raw_error = getattr(result, "error", "")
+            reason = raw_error if isinstance(raw_error, str) and raw_error else (
+                result.stderr or "进程启动失败"
+            )
+            return GateVerdict.failed(
+                f"{rendered} 无法执行: {reason[-1000:]}",
+                gate_name=self.name,
+            )
         output = f"{result.stdout}\n{result.stderr}".strip()
         if result.returncode != 0:
             return GateVerdict.failed(

@@ -1,6 +1,6 @@
 # Auto-Engineering 历史摘要
 
-> 更新：2026-08-02｜本文件只保留里程碑和追溯入口；详细差异以 Git 为准。
+> 更新：2026-08-05｜本文件只保留里程碑和追溯入口；详细差异以 Git 为准。
 
 ## 里程碑
 
@@ -23,6 +23,7 @@
 | Phase 73 | 以 ProjectProfile 解除 Init Engineering 运行时前置依赖；T359-T366 已完成，T367 仅剩真实双宿主 LLM 轨迹 |
 | 146-Tick 事故归档 | 永久记录输入超限、批次回退、验证假通过和空快照证据；补充 T322-T324 |
 | Phase 74-75 | 深度审计修复与真跑准入加固完成；2166 passed / 1 skipped、coverage 90.41%、双宿主 archive smoke 通过；真实 LLM 长跑、历史秘密确认和依赖审计仍未闭环 |
+| Phase 76-77 | 统一设计文档入口；rc.4 真跑证伪后恢复原始批量 Gap Review、Action schema fail-closed、公共 status 与 Gate 语义；rc.5 基线 2178 passed / 1 skipped |
 
 ## 持续有效的决策
 
@@ -32,7 +33,7 @@
 - Init Engineering 是独立项目；Core 通过中立 ProjectProfile 消费项目能力，Init manifest
   仅作为迁移期只读兼容输入。
 - archive smoke 与真实产品安装验收必须分开报告。
-- v5.7.1 是当前正式发布实现；v5.8.0-rc.4 核心实现和自动门禁已完成，待双宿主真实 LLM 项目、历史秘密确认和依赖审计通过后发布。
+- v5.7.1 是当前正式发布实现；v5.8.0-rc.5 纠偏实现和自动门禁已完成，待双宿主真实 LLM 项目、历史秘密确认和依赖审计通过后发布。
 
 ## 已清理资产
 

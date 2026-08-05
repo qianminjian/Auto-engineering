@@ -144,7 +144,6 @@ def _collect_event_store_status(cwd: Path) -> dict | None:
             return None
         with SQLiteEventStore(event_db) as events:
             state = events.load_projection(thread_id)
-            action = events.load_action_snapshot(thread_id)
         if state is None:
             return None
         return {
@@ -155,10 +154,6 @@ def _collect_event_store_status(cwd: Path) -> dict | None:
             "majors_in_a_row": state.majors_in_a_row,
             "total_majors": state.total_majors,
             "recent_history": [],
-            "source": "event_store",
-            "tick": state.tick,
-            "action": action.get("action") if action else None,
-            "expected_stage": state.expected_stage,
         }
     except (OSError, sqlite3.Error, ValueError, TypeError):
         _logger.warning("EventStore status 读取失败，回退旧 checkpoint", exc_info=True)

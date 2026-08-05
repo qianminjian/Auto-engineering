@@ -1,6 +1,6 @@
 {
   "name": "auto-engineering",
-  "version": "5.8.0-rc.4",
+  "version": "5.8.0-rc.5",
   "description": "Auto-Engineering v5.8 — Deterministic session-decoupled governance kernel for Codex",
   "author": {
     "name": "Qian Minjian"

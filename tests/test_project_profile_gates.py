@@ -8,6 +8,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from auto_engineering.gates.base import SubprocessResult
 from auto_engineering.gates.profile import ProfileCommandGate
 from auto_engineering.gates.registry import build_gates_from_profile
 from auto_engineering.loop.checkpoint.records import CheckpointNotFoundError
@@ -81,6 +82,27 @@ def test_profile_test_gate_rejects_zero_tests(tmp_path: Path, monkeypatch) -> No
 
     assert verdict.passed is False
     assert "未收集到测试" in verdict.message
+
+
+def test_profile_gate_preserves_spawn_error_diagnostics(tmp_path: Path, monkeypatch) -> None:
+    from auto_engineering.gates import profile as profile_module
+
+    monkeypatch.setattr(
+        profile_module,
+        "run_gate_command",
+        lambda command, project_root, timeout: SubprocessResult(
+            returncode=-1,
+            command=tuple(command),
+            error="无法启动进程: 参数过长",
+        ),
+    )
+
+    verdict = ProfileCommandGate("type_check", ("npx", "tsc", "--noEmit")).run(tmp_path)
+
+    assert verdict.passed is False
+    assert "npx tsc --noEmit" in verdict.message
+    assert "无法启动进程: 参数过长" in verdict.message
+    assert "exit=-1" not in verdict.message
 
 
 def test_restore_rejects_persisted_profile_when_local_evidence_disappears(

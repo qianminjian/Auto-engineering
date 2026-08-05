@@ -62,6 +62,7 @@ class TickGateRunner:
         *,
         stage: str = "",
         tick: int = 0,
+        contracts: dict[str, Any] | None = None,
     ) -> tuple[dict[str, Any], float]:
         """Run all gates. Returns (gate_results_dict, duration_ms)."""
         if not files_changed and any(
@@ -85,6 +86,10 @@ class TickGateRunner:
         if self._injected_runner:
             raw = self._injected_runner(gate_names, self._project_root)
         else:
+            from auto_engineering.gates.contract import ContractGate
+            for gate in self._gates:
+                if isinstance(gate, ContractGate):
+                    gate.contracts = contracts
             from auto_engineering.gates.runner import run_gate_instances
             raw = run_gate_instances(
                 self._gates,

@@ -1382,6 +1382,54 @@ class TestPhase0GapScan:
 
 
 class TestPhase0GapReview:
+    def test_action_exposes_all_gaps_without_private_cursor_fields(self, tmp_path) -> None:
+        o = _orchestrator()
+        _init_design(o, tmp_path)
+        gap_a = {**_GAP_B2, "id": "gap-A"}
+        gap_b = {**_GAP_B2, "id": "gap-B"}
+
+        action = o.tick(_gap_scan_result([gap_a, gap_b]))
+
+        assert [gap["id"] for gap in action["gaps"]] == ["gap-A", "gap-B"]
+        assert not {
+            "current_gap", "gap_index", "remaining_count", "interaction_mode"
+        }.intersection(action)
+
+    def test_partial_decisions_are_rejected_without_advancing(self, tmp_path) -> None:
+        o = _orchestrator()
+        _init_design(o, tmp_path)
+        gap_a = {**_GAP_B2, "id": "gap-A"}
+        gap_b = {**_GAP_B2, "id": "gap-B"}
+        o.tick(_gap_scan_result([gap_a, gap_b]))
+
+        response = o.tick(_make_result_file({
+            "stage": "gap_review",
+            "decisions": [{"gap_id": "gap-A", "resolution": "fill",
+                           "fill_content": "明确 A"}],
+        }))
+
+        assert response["action"] == "error"
+        assert response["error_code"] == "GAP_REVIEW_DECISIONS_INCOMPLETE"
+        assert o._state.current_stage == "gap_review"
+
+    def test_duplicate_or_unknown_gap_decisions_are_rejected(self, tmp_path) -> None:
+        o = _orchestrator()
+        _init_design(o, tmp_path)
+        o.tick(_gap_scan_result([_GAP_B2]))
+
+        response = o.tick(_make_result_file({
+            "stage": "gap_review",
+            "decisions": [
+                {"gap_id": "gap-B2", "resolution": "fill", "fill_content": "a"},
+                {"gap_id": "gap-B2", "resolution": "defer"},
+                {"gap_id": "unknown", "resolution": "defer"},
+            ],
+        }))
+
+        assert response["action"] == "error"
+        assert response["error_code"] == "GAP_REVIEW_DECISIONS_INVALID_SET"
+        assert o._state.current_stage == "gap_review"
+
     def test_fill_injects_supplement_and_routes_architect(self, tmp_path) -> None:
         o = _orchestrator()
         _init_design(o, tmp_path)

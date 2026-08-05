@@ -85,6 +85,7 @@ from auto_engineering.loop.protocol import (
     ProtocolValidationError,
     action_envelope,
     payload_digest,
+    validate_action_envelope,
     validate_result_envelope,
 )
 from auto_engineering.loop.protocol_compat import upgrade_legacy_result
@@ -1148,6 +1149,9 @@ class TickOrchestrator:
                 message="; ".join(errors),
                 current_state=self._state.to_dict())
 
+        if gap_error := self._validate_gap_review_decisions(result):
+            return gap_error
+
         contract_warnings = result_contract_warnings(
             result, self._state.current_stage
         )
@@ -1993,6 +1997,7 @@ class TickOrchestrator:
             )
             if drift:
                 action.setdefault("extensions", {})["informational_drift"] = drift
+        validate_action_envelope(action)
         if action.get("action") != "error":
             if self._event_store is not None:
                 self._commit_event_action(action)
@@ -2250,8 +2255,40 @@ class TickOrchestrator:
                 message="; ".join(errors),
                 current_state=self._state.to_dict())
 
+        if gap_error := self._validate_gap_review_decisions(result):
+            return gap_error
+
         # T109d: L3 — inbound result JSON PII scan
         return self._scan_inbound_for_pii(result)
+
+    def _validate_gap_review_decisions(self, result: dict) -> ErrorResponse | None:
+        """Gap Review 必须原子提交当前全部未决 gap，避免部分状态误推进。"""
+        if self._state.current_stage != "gap_review":
+            return None
+        report = json.loads(self._state.gap_report_json or '{"gaps": []}')
+        expected = {
+            str(gap.get("id"))
+            for gap in report.get("gaps", [])
+            if gap.get("id") is not None
+            and gap.get("resolution") not in {"fill", "defer"}
+        }
+        decisions = result.get("decisions", [])
+        actual = [str(item.get("gap_id")) for item in decisions if isinstance(item, dict)]
+        actual_set = set(actual)
+        if len(actual) != len(actual_set) or not actual_set.issubset(expected):
+            return ErrorResponse(
+                error_code="GAP_REVIEW_DECISIONS_INVALID_SET",
+                message="decisions 含重复或未知 gap_id，必须严格对应当前 action.gaps",
+                current_state=self._state.to_dict(),
+            )
+        if actual_set != expected:
+            missing = sorted(expected - actual_set)
+            return ErrorResponse(
+                error_code="GAP_REVIEW_DECISIONS_INCOMPLETE",
+                message=f"decisions 未完整覆盖当前 gap: {', '.join(missing)}",
+                current_state=self._state.to_dict(),
+            )
+        return None
 
     def _scan_inbound_for_pii(self, result: dict) -> dict | ErrorResponse:
         """T109d L3: inbound result JSON PII scan/redact/block."""
@@ -2312,12 +2349,6 @@ class TickOrchestrator:
             }, ensure_ascii=False)
         elif stage == "gap_review":
             decisions = result.get("decisions", [])
-            # 旧宿主/旧 checkpoint 可继续提交批量 decisions；新 Action 明确要求
-            # 单项并会以 single_gap 模式推进。批量结果仅走兼容分支，不再由新宿主生成。
-            if result.get("interaction_mode") == "single_gap" and len(decisions) != 1:
-                raise ValueError(
-                    "GAP_REVIEW_DECISION_CARDINALITY: single_gap 必须恰好提交 1 项"
-                )
             self._state.pending_gap_decisions = decisions
         elif stage == "architect":
             self._state.plan = result.get("plan", "")
@@ -2443,7 +2474,8 @@ class TickOrchestrator:
         results, duration_ms = self._tick_gate_runner.run(
             snapshot_files,
             stage=self._state.current_stage,
-            tick=self._state.tick)
+            tick=self._state.tick,
+            contracts=self._state.contracts)
         self._state.gate_results = results
         self._t_gate_ms += duration_ms
 

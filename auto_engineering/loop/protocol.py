@@ -15,6 +15,8 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from jsonschema import Draft202012Validator
+
 SCHEMA_VERSION = "1.1"
 
 
@@ -73,6 +75,10 @@ _COMMON_REQUIRED = (
 _RESULT_SCHEMA = json.loads(
     Path(__file__).with_name("stage-result.schema.json").read_text(encoding="utf-8")
 )
+_ACTION_SCHEMA = json.loads(
+    Path(__file__).with_name("action.schema.json").read_text(encoding="utf-8")
+)
+_ACTION_VALIDATOR = Draft202012Validator(_ACTION_SCHEMA)
 _RESULT_ALLOWED_FIELDS = frozenset(_RESULT_SCHEMA["properties"])
 
 
@@ -119,6 +125,17 @@ def action_envelope(
     if causation_id is not None:
         envelope["causation_id"] = causation_id
     return envelope
+
+
+def validate_action_envelope(action: Mapping[str, Any]) -> None:
+    """按 v1.1 SSOT 校验 Core 输出；任何漂移都在持久化前 fail-closed。"""
+    errors = sorted(_ACTION_VALIDATOR.iter_errors(dict(action)), key=lambda item: list(item.path))
+    if errors:
+        detail = "; ".join(error.message for error in errors[:3])
+        raise ProtocolValidationError(
+            ProtocolErrorCode.INVALID_ENVELOPE,
+            f"Action 不符合 v1.1 schema: {detail}",
+        )
 
 
 def validate_result_envelope(result: Mapping[str, Any]) -> ResultEnvelope:

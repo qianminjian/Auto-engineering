@@ -85,7 +85,6 @@ class GapReviewHandler:
         pending: list[str] = []
         supplements: list[dict[str, Any]] = []
         decisions = list(state.get("pending_gap_decisions") or [])
-        # 新协议每个 Action 只允许一个决策；旧调用未带 mode 时保留批量兼容。
         for decision in decisions:
             gap_id = decision.get("gap_id")
             gap = by_id.get(gap_id)
@@ -117,13 +116,7 @@ class GapReviewHandler:
                     gap["resolution"] = "defer"
                 else:
                     pending.append(gap["id"])
-        unresolved = [
-            gap for gap in report.get("gaps", [])
-            if gap.get("resolution") not in {"fill", "defer"}
-        ]
-        target: StageName = (
-            "research" if pending else ("gap_review" if unresolved else "architect")
-        )
+        target: StageName = "research" if pending else "architect"
         patch = {
             "gap_report_json": json.dumps(report, ensure_ascii=False),
             "pending_research_ids": pending,
