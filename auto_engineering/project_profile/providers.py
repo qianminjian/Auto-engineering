@@ -144,7 +144,16 @@ class LocalProbeProvider:
             source_roots.extend(self._existing_roots(project_root, ("src", "app", "lib")))
             scripts = package.get("scripts", {})
             if isinstance(scripts, dict):
-                commands.update(self._node_commands(scripts, package_manager))
+                commands.update(
+                    self._node_commands(
+                        scripts,
+                        package_manager,
+                        has_tsconfig="tsconfig.json" in entries,
+                        has_local_typescript=self._has_node_dependency(
+                            package, "typescript"
+                        ),
+                    )
+                )
 
         if "pyproject.toml" in entries:
             try:
@@ -192,7 +201,21 @@ class LocalProbeProvider:
         return "npm"
 
     @staticmethod
-    def _node_commands(scripts: Mapping[object, object], package_manager: str) -> dict[str, tuple[str, ...]]:
+    def _has_node_dependency(package: Mapping[object, object], name: str) -> bool:
+        for field_name in ("dependencies", "devDependencies"):
+            dependencies = package.get(field_name)
+            if isinstance(dependencies, Mapping) and name in dependencies:
+                return True
+        return False
+
+    @staticmethod
+    def _node_commands(
+        scripts: Mapping[object, object],
+        package_manager: str,
+        *,
+        has_tsconfig: bool = False,
+        has_local_typescript: bool = False,
+    ) -> dict[str, tuple[str, ...]]:
         aliases = {
             "lint": ("lint",),
             "type_check": ("typecheck", "type-check", "check-types"),
@@ -209,6 +232,19 @@ class LocalProbeProvider:
                     break
             if script is not None:
                 commands[capability] = (package_manager, "run", script)
+        if (
+            "type_check" not in commands
+            and has_tsconfig
+            and has_local_typescript
+        ):
+            if package_manager == "npm":
+                commands["type_check"] = (
+                    "npm", "exec", "--", "tsc", "--noEmit"
+                )
+            else:
+                commands["type_check"] = (
+                    package_manager, "exec", "tsc", "--noEmit"
+                )
         return commands
 
     @staticmethod

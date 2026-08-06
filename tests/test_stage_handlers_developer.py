@@ -55,6 +55,37 @@ def test_developer_component_completion_routes_to_critic() -> None:
     assert decision.action_context["save_checkpoint"] is False
 
 
+def test_developer_required_gate_failure_stays_before_critic() -> None:
+    """required Gate hard-fail 必须阻止 batch 完成和 Developer→Critic。"""
+    failure = {
+        "gate_name": "type_check",
+        "status": "hard_fail",
+        "passed": False,
+        "message": "pnpm exec tsc 无法执行",
+    }
+
+    decision = DeveloperHandler().apply(
+        {},
+        {},
+        _context(
+            has_more_batches_after_advance=False,
+            completed_batch_id="B1",
+            completed_task_count=1,
+            design_section="§1",
+            blocking_gate_results=[failure],
+        ),
+    )
+
+    assert decision.next_stage == "developer"
+    assert decision.events == ()
+    assert decision.action_context["stay_in_stage"] is True
+    assert "cursor_operation" not in decision.action_context
+    assert decision.action_context["feedback"] == {
+        "reason": "required_gate_failed",
+        "gates": [failure],
+    }
+
+
 def test_orchestrator_dispatches_developer_via_registry(tmp_path) -> None:
     orchestrator = TickOrchestrator(tmp_path)
 

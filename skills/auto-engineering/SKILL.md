@@ -101,14 +101,16 @@ action 明确要求时才提高。若 `HostCapabilities.subagents` 不可用，�
    `prompt_hash`，将对应正文交给 Worker；不得把 Coordinator 的
    `action.subagent_prompt` 复制给所有 Worker。
 3. 按 `action.spawn.count` 和 `action.spawn.parallel` 创建隔离执行。
-4. 多 Worker 完成后，每个 Worker 必须以单个 JSON 覆写自己的
+4. 多 Worker 完成后，由宿主协调器为每个 Worker 以单个 JSON 写入
    `action.spawn.agents[i].receipt_path`，记录 `requested_effort` 与宿主可见的
-   `actual_model`（不可见时写 `unknown`）；workers must not write the shared total proof。
+   `actual_model`（不可见时写 `unknown`）；Worker 不得修改
+   `.ae-state/spawn-challenges/` 或 shared total receipt（workers must not write the shared total proof）。
    Receipt 超过 Action 策略声明的上限时必须将完整结果写入内容寻址 Artifact
    Store，receipt 只保留策略允许的有界摘要与带 SHA-256 的 `artifact_ref`；
    Skill 不复制策略默认数字。
 5. Team Lead 收齐并验证全部 receipt 后，按 `action.subagent_prompt` 合并输出，
-   再覆写 `action.spawn_proof_token` 对应的总 proof。
+   再由宿主协调器写入 `action.spawn_proof_token` 对应的总 receipt；Core challenge
+   保持不可变。
 6. 从真实输出中提取 `action.expected_format` 要求的字段。只有全部要求的 Worker
    实际完成后，result 才能写 `"spawned": true`。
 

@@ -273,7 +273,7 @@ def test_check_contracts_no_source_files(tmp_path: Path) -> None:
 
 
 def test_check_contracts_non_dict_entry(tmp_path: Path) -> None:
-    """_check_contracts: non-dict entries are skipped (safety net for metadata fields like files_changed)."""
+    """非对象契约必须失败，禁止全部跳过后形成假通过。"""
     src_dir = tmp_path / "src"
     src_dir.mkdir()
     (src_dir / "app.py").write_text("hello")
@@ -281,8 +281,24 @@ def test_check_contracts_non_dict_entry(tmp_path: Path) -> None:
     gate = ContractGate()
     gate.contracts = {"bad": "not a dict"}
     verdict = gate._check_contracts(tmp_path)
-    # Non-dict values are skipped, no valid contracts → all passed
-    assert verdict.passed is True
+    assert verdict.passed is False
+    assert "必须为 object" in verdict.message
+
+
+def test_contract_gate_checks_server_root_when_src_also_exists(tmp_path: Path) -> None:
+    """BFF 位于 server/ 时不能因 src/ 存在而漏扫服务端实现。"""
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "client.ts").write_text("export const client = true")
+    (tmp_path / "server").mkdir()
+    (tmp_path / "server" / "route.ts").write_text(
+        "router.post('/api/clone', () => ({voice_id: 'x'}))"
+    )
+    gate = ContractGate()
+    gate.contracts = {
+        "clone": {"path": "/api/clone", "response": {"voice_id": "string"}}
+    }
+
+    assert gate.run(tmp_path).passed is True
 
 
 def test_check_contracts_mixed_pass_fail(tmp_path: Path) -> None:

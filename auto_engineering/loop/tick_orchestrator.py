@@ -18,6 +18,7 @@
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import subprocess
@@ -1210,17 +1211,30 @@ class TickOrchestrator:
                     self.project_root / ".ae-state" / "spawn-proofs"
                     / f"{proof_token}.json"
                 )
+                challenge_file = (
+                    self.project_root / ".ae-state" / "spawn-challenges"
+                    / f"{proof_token}.json"
+                )
                 proof_ok = False
                 if proof_file.exists():
                     try:
                         proof_data = json.loads(proof_file.read_text(encoding="utf-8"))
+                        # 新 Action 使用不可变 challenge；旧线程没有 challenge 时
+                        # 只读兼容其 proof 内身份字段，不能用于新 Action 创建。
+                        challenge_data = (
+                            json.loads(challenge_file.read_text(encoding="utf-8"))
+                            if challenge_file.exists()
+                            else proof_data
+                        )
                         proof_ok = (
                             proof_data.get("status") == "completed"
                             and proof_data.get("token") == proof_token
-                            and proof_data.get("stage") == stage
-                            and proof_data.get("thread_id") == self._state.thread_id
+                            and proof_data.get("stage", stage) == stage
+                            and challenge_data.get("token") == proof_token
+                            and challenge_data.get("stage") == stage
+                            and challenge_data.get("thread_id") == self._state.thread_id
                             and self._active_action is not None
-                            and proof_data.get("action_message_id")
+                            and challenge_data.get("action_message_id")
                             == self._active_action.get("message_id")
                         )
                     except (json.JSONDecodeError, OSError) as e:
@@ -1257,6 +1271,10 @@ class TickOrchestrator:
                         ),
                         current_state=self._state.to_dict(),
                     )
+
+                self._bind_spawn_result_receipt(
+                    proof_token, result, challenge_data
+                )
 
                 active_spawn = (
                     self._active_action.get("spawn", {})
@@ -1317,7 +1335,10 @@ class TickOrchestrator:
 
         if stage == "architect":
             dry_run_error = dry_run_architect_plan(
-                self._design_doc, result, self._state.requirement
+                self._design_doc,
+                result,
+                self._state.requirement,
+                self._state.research_archive,
             )
             if dry_run_error:
                 return ErrorResponse(
@@ -1327,6 +1348,41 @@ class TickOrchestrator:
                 )
 
         return result
+
+    def _bind_spawn_result_receipt(
+        self,
+        token: str,
+        result: dict[str, Any],
+        challenge: dict[str, Any],
+    ) -> None:
+        """Core 生成确定性 acceptance receipt，绑定 challenge 与 Result 内容。"""
+        canonical = json.dumps(
+            result,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+        payload = {
+            "schema_version": "1.0",
+            "token": token,
+            "thread_id": challenge.get("thread_id"),
+            "action_message_id": challenge.get("action_message_id"),
+            "stage": challenge.get("stage"),
+            "result_sha256": hashlib.sha256(canonical).hexdigest(),
+        }
+        receipt_dir = self.project_root / ".ae-state" / "spawn-receipts"
+        receipt_dir.mkdir(parents=True, exist_ok=True)
+        receipt_path = receipt_dir / f"{token}.accepted.json"
+        encoded = json.dumps(
+            payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        # Result schema preflight 可在正式接受前重复运行；同一 active Action 的
+        # acceptance candidate 以最后一次通过校验的规范化内容为准。
+        receipt_path.write_text(encoded, encoding="utf-8")
 
     def _record_tick_latency(self, t_start: float, tick_no: int) -> None:
         """DS-10: 写 tick 延迟记录到 action_history, 超编排预算只告警不中断.
@@ -1403,16 +1459,29 @@ class TickOrchestrator:
         if stage in {"plate_deep_audit", "system_deep_audit"}:
             extensions["p1_threshold"] = self._get_p1_threshold()
         if stage == "critic":
-            extensions["max_majors_in_a_row"] = (
-                self._router.max_majors_in_a_row
+            extensions["max_repair_cycles"] = (
+                self._runtime_config.max_repair_cycles
             )
-            extensions["max_total_majors"] = self._router.max_total_majors
+            extensions["max_stagnation_cycles"] = 3
             if batch_state is not None:
                 component = batch_state.current_component()
+                current_batches = batch_state.batches_for(component)
+                current_index = batch_state.current_batch_idx
+                allowed_files: list[str] = []
+                if current_index < len(current_batches):
+                    for task in current_batches[current_index].get("tasks", []):
+                        if isinstance(task, dict):
+                            for path in task.get("file_targets", []):
+                                if isinstance(path, str) and path not in allowed_files:
+                                    allowed_files.append(path)
+                extensions["allowed_file_targets"] = allowed_files
                 extensions["has_more_batches"] = (
                     batch_state.has_more_batches_for(component)
                 )
         if stage == "developer" and batch_state is not None:
+            extensions["blocking_gate_results"] = (
+                self._blocking_gate_results(self._state.gate_results)
+            )
             component = batch_state.current_component()
             batches = batch_state.batches_for(component)
             current_index = batch_state.current_batch_idx
@@ -1436,6 +1505,30 @@ class TickOrchestrator:
                 }
             )
         return extensions
+
+    @staticmethod
+    def _blocking_gate_results(
+        gate_results: object,
+    ) -> list[dict[str, object]]:
+        """提取 required Gate 阻断结果，供纯 Handler 参与确定性转移。"""
+        if not isinstance(gate_results, dict):
+            return []
+        blocking: list[dict[str, object]] = []
+        for gate_name, raw in gate_results.items():
+            if not isinstance(raw, dict):
+                continue
+            status = str(raw.get("status", "")).lower()
+            not_applicable = bool(raw.get("not_applicable")) or status in {
+                "not_applicable",
+                "n/a",
+                "skip",
+                "skipped",
+            }
+            if not not_applicable and (
+                status == "hard_fail" or raw.get("passed") is False
+            ):
+                blocking.append({"gate_name": str(gate_name), **raw})
+        return blocking
 
     def _apply_stage_decision(self, decision: TransitionDecision) -> dict:
         """应用纯 Handler 决策；副作用集中保留在 Kernel façade。"""
@@ -1580,6 +1673,10 @@ class TickOrchestrator:
 
     def _initialize_architecture(self) -> None:
         """将 Architect 的纯决策物化为执行游标与进度树。"""
+        from auto_engineering.loop.architecture_baseline import (
+            build_architecture_baseline,
+        )
+
         batches = BatchState.flatten_batch_plan(self._state.batch_plan)
         if self._batch_state is not None and self._state.plan_refine_count > 0:
             completed = self._batch_state.completed_batch_ids()
@@ -1601,6 +1698,34 @@ class TickOrchestrator:
                 if self._design_doc
                 else BatchState.from_batch_plan(batches)
             )
+
+        design_path = self._state.design_doc_path or ""
+        design_digest = ""
+        if design_path:
+            path = Path(design_path)
+            if not path.is_absolute():
+                path = self.project_root / path
+            try:
+                design_digest = hashlib.sha256(path.read_bytes()).hexdigest()
+            except OSError:
+                design_digest = ""
+        baseline = build_architecture_baseline(
+            revision=max(1, self._state.plan_refine_count + 1),
+            design_doc_path=design_path,
+            design_doc_digest=design_digest,
+            plan=self._state.plan,
+            batch_plan=batches,
+            contracts=dict(self._state.contracts),
+            obligations=list(
+                self._state._runtime_ctx.pop("architect_obligations", [])
+            ),
+            accepted_at_tick=self._state.tick,
+        )
+        self._state.architecture_baseline = baseline
+        self._queue_domain_event(
+            LoopEventType.ARCHITECTURE_BASELINE_ACCEPTED,
+            {"baseline": baseline},
+        )
 
         self._plan = tasks_from_batch_plan(batches, self._state.requirement)
 
@@ -2363,8 +2488,15 @@ class TickOrchestrator:
                 self._state._runtime_ctx.pop("plan_patch_base_revision", None)
             self._state.file_list = result.get("file_list", [])
             self._state.contracts = result.get("contracts", {})
+            self._state._runtime_ctx["architect_obligations"] = result.get(
+                "obligations", []
+            )
         elif stage == "developer":
             self._state.files_changed = result.get("files_changed", [])
+            self._state.batch_changed_files = list(dict.fromkeys([
+                *self._state.batch_changed_files,
+                *self._state.files_changed,
+            ]))
             self._state.commit_hash = result.get("commit_hash", "")
             self._state.test_results = result.get("test_results", {})
             self._state.red_evidence = result.get("red_evidence", [])
@@ -2471,11 +2603,18 @@ class TickOrchestrator:
             if self._dev_snapshot and not self._state.files_changed
             else self._state.files_changed
         )
+        baseline = self._state.architecture_baseline or {}
+        baseline_contracts = baseline.get("contracts", {})
+        contracts = (
+            baseline_contracts
+            if isinstance(baseline_contracts, dict)
+            else self._state.contracts
+        )
         results, duration_ms = self._tick_gate_runner.run(
             snapshot_files,
             stage=self._state.current_stage,
             tick=self._state.tick,
-            contracts=self._state.contracts)
+            contracts=contracts)
         self._state.gate_results = results
         self._t_gate_ms += duration_ms
 

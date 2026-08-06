@@ -1,5 +1,5 @@
 # Auto-Engineering BEACON
-> 创建：2026-06-24｜更新：2026-08-05｜阶段：Phase 77 真跑整改设计与实现
+> 创建：2026-06-24｜更新：2026-08-06｜阶段：Phase 78 架构基线与 Gate 转移修复
 > 决策状态翻转（✅↔❌）或架构降级必须先获用户批准。
 
 ## 目标与成功标准
@@ -58,11 +58,11 @@ Engineering 的问答、模板或脚手架；把 archive smoke 冒充真实产�
   90.41%、Ruff/mypy/sync/check-gate 与双宿主 archive 通过，待真实 LLM 轨迹。
 - Phase 75 已完成 status 降级与失败缓存修复；历史秘密确认和宿主长跑证据仍须人工/真实产品完成。
 - Phase 76 已统一设计文档入口：省略范围时执行全文，显式范围时只执行指定范围；并修复 Architect component 标识映射、Research/Supplement 注入与 dry-run 结构门禁。
-- Phase 77 rc.5 纠偏代码与 Spec 已完成：恢复批量 Gap Review、公共状态契约及真实 Gate/PLAN_REFINE 语义；2178 passed/1 skipped，待双宿主产品重跑。
+- Phase 78 T387-T396 代码与自动门禁已完成：Gate、架构基线、义务覆盖、Critic、Profile 与 spawn receipt 已修复；待双宿主真实产品复验。
 ## 最近演进
 | 日期 | 变更 |
 |---|---|
-| 2026-07-31 | 批准 D16：解除 Init Engineering 运行时前置依赖，保留只读兼容 Provider |
+| 2026-08-06 | 归档 rc.5 15-Tick P0 事故；保持批量 Gap Review，启动 Phase 78 架构不变量修复 |
 | 2026-07-30 | 批准 Phase 70：撤销固定 Tick rollover，改为宿主自动 compaction |
 | 2026-07-29 | 批准 v5.8 确定性状态与宿主会话解耦，登记 Phase 64-67 |
 | 2026-07-29 | 归档 146-Tick 真跑事故报告，补充摘要隔离与循环预算 |
@@ -73,8 +73,8 @@ Engineering 的问答、模板或脚手架；把 archive smoke 冒充真实产�
 - T336/T350：用发布候选版执行 Claude Code/Codex 真实产品 150 Tick 长跑。
 - T367：完成 Phase 73 全量、覆盖率、双宿主制品与真实产品轨迹验收。
 - T376：用当前制品完成 Claude Code/Codex 真实 LLM 轨迹。
-- T377-T380：审计修复、历史秘密确认和真实宿主 150 Tick 证据验收。
+- T387-T396：自动修复完成；执行 Claude Code/Codex 真实产品复验后关闭 rc.5 事故。
 
 ## 引用文件
 
-`design/v5.8-Automatic-Context-Governance.md` · `design/v5.8-Session-Decoupling-Design.md` · `design/v5.8-Session-Decoupling-PLAN.md` · `design/v5.8-Init-Runtime-Decoupling-Design.md` · `design/incidents/2026-07-29-claude-146-tick-long-run.md` · `design/IMPLEMENTATION-TRACKER.md` · `design/HISTORY.md`
+`design/v5.8-Session-Decoupling-Design.md` · `design/v5.8-Session-Decoupling-PLAN.md` · `design/v5.8-Architecture-Baseline-and-Repair-Design.md` · `design/incidents/2026-07-29-claude-146-tick-long-run.md` · `design/incidents/2026-08-05-rc5-15-tick-architecture-gate-failure.md` · `design/IMPLEMENTATION-TRACKER.md` · `design/HISTORY.md`

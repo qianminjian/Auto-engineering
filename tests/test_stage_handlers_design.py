@@ -46,16 +46,42 @@ def test_critic_rejects_unknown_verdict() -> None:
     assert decision.action_context["error"]["error_code"] == "INVALID_VERDICT"
 
 
-def test_critic_major_stops_at_projected_hard_limit() -> None:
+def test_critic_major_stops_at_configured_repair_limit() -> None:
     decision = CriticHandler().apply(
-        {"majors_in_a_row": 2, "total_majors": 2},
-        {"verdict": "MAJOR"},
-        _context(max_majors_in_a_row=3, max_total_majors=4),
+        {"majors_in_a_row": 2, "total_majors": 2, "repair_cycle_count": 5},
+        {"verdict": "MAJOR", "findings": [{"severity": "P1", "issue": "fix"}]},
+        _context(max_repair_cycles=6, max_stagnation_cycles=3),
     )
 
     assert decision.terminal is True
-    assert decision.action_context["terminal_action"]["verdict"] == "HARD_LIMIT"
+    assert decision.action_context["terminal_action"]["verdict"] == "REPAIR_CYCLE_LIMIT"
     assert decision.action_context["state_patch"]["majors_in_a_row"] == 3
+
+
+def test_critic_unchanged_finding_stops_as_stagnant() -> None:
+    finding = {"severity": "P1", "file": "src/a.ts", "issue": "same"}
+    first = CriticHandler().apply(
+        {"majors_in_a_row": 0, "total_majors": 0},
+        {"verdict": "MAJOR", "findings": [finding]},
+        _context(
+            allowed_file_targets=["src/a.ts"],
+            max_repair_cycles=6,
+            max_stagnation_cycles=2,
+        ),
+    )
+    patch = first.action_context["state_patch"]
+    second = CriticHandler().apply(
+        {"majors_in_a_row": 1, "total_majors": 1, **patch},
+        {"verdict": "MAJOR", "findings": [finding]},
+        _context(
+            allowed_file_targets=["src/a.ts"],
+            max_repair_cycles=6,
+            max_stagnation_cycles=2,
+        ),
+    )
+
+    assert second.terminal is True
+    assert second.action_context["terminal_action"]["verdict"] == "STAGNANT"
 
 
 def test_critic_major_rolls_back_batch_and_returns_findings() -> None:
@@ -69,6 +95,44 @@ def test_critic_major_rolls_back_batch_and_returns_findings() -> None:
     assert decision.next_stage == "developer"
     assert decision.action_context["cursor_operation"] == "rollback_batch"
     assert decision.action_context["feedback"] == findings
+
+
+def test_critic_plan_gap_routes_to_architect_refine() -> None:
+    findings = [{
+        "severity": "P1",
+        "kind": "plan_gap",
+        "file": "server/routes/upload.ts",
+        "issue": "计划缺少上传路由",
+    }]
+
+    decision = CriticHandler().apply(
+        {"majors_in_a_row": 0, "total_majors": 0},
+        {"verdict": "MAJOR", "findings": findings},
+        _context(allowed_file_targets=["src/api/client.ts"]),
+    )
+
+    assert decision.next_stage == "architect"
+    assert decision.action_context["refine_source"] == "critic"
+    assert "cursor_operation" not in decision.action_context
+
+
+def test_critic_legacy_out_of_scope_finding_is_plan_gap() -> None:
+    """旧 Result 没有 kind 时，以文件边界确定性识别计划缺口。"""
+    decision = CriticHandler().apply(
+        {"majors_in_a_row": 0, "total_majors": 0},
+        {
+            "verdict": "MAJOR",
+            "findings": [{
+                "severity": "P1",
+                "file": "server/routes/upload.ts",
+                "issue": "缺少服务端路由",
+            }],
+        },
+        _context(allowed_file_targets=["src/api/client.ts"]),
+    )
+
+    assert decision.next_stage == "architect"
+    assert decision.action_context["refine_source"] == "critic"
 
 
 def test_critic_approve_with_blocking_finding_is_forced_to_repair() -> None:

@@ -143,6 +143,11 @@ _WRITE_OWNERS: dict[str, frozenset[str]] = {
     "project_profile":          frozenset({"orchestrator"}),
     "project_profile_id":       frozenset({"orchestrator"}),
     "missing_project_capabilities": frozenset({"orchestrator"}),
+    "architecture_baseline":      frozenset({"orchestrator"}),
+    "repair_cycle_count":         frozenset({"orchestrator"}),
+    "unchanged_finding_streak":   frozenset({"orchestrator"}),
+    "last_finding_fingerprint":   frozenset({"orchestrator"}),
+    "batch_changed_files":        frozenset({"orchestrator"}),
 }
 
 # 合法 verdict 值
@@ -255,6 +260,11 @@ class EngineState:
     project_profile: dict[str, Any] | None = None  # #50 当前规范化 ProjectProfile
     project_profile_id: str = ""  # #51 当前 Profile 内容摘要
     missing_project_capabilities: list[str] = field(default_factory=list)  # #52 setup 缺失能力
+    architecture_baseline: dict[str, Any] | None = None  # #53 已接受 Architect 事实投影
+    repair_cycle_count: int = 0  # #54 当前 Batch 局部返修次数
+    unchanged_finding_streak: int = 0  # #55 无证据增量的相同 Finding 次数
+    last_finding_fingerprint: str = ""  # #56 最近阻断 Finding 摘要
+    batch_changed_files: list[str] = field(default_factory=list)  # #57 当前 Batch 累积文件
 
     # v5.5 P1-5: 写入审计日志 (repr=False 避免污染输出, 不参与序列化)
     _write_log: list[WriteRecord] = field(default_factory=list, repr=False, init=False)
@@ -393,7 +403,10 @@ def _validate_field_value(name: str, value: object) -> None:
         )
     if name == "round" and not isinstance(value, int):
         raise ValueError(f"round 必须是 int, 收到 {type(value).__name__}")
-    if name in ("majors_in_a_row", "total_majors", "plan_refine_count", "tick"):
+    if name in (
+        "majors_in_a_row", "total_majors", "plan_refine_count", "tick",
+        "repair_cycle_count", "unchanged_finding_streak",
+    ):
         if not isinstance(value, int):
             raise ValueError(f"{name} 必须是 int, 收到 {type(value).__name__}")
         if value < 0:

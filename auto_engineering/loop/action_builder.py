@@ -30,11 +30,11 @@ _SPAWN_INSTRUCTION = (
     "Collect all outputs → merge into one result per expected_format → "
     "write result: {{\"stage\":\"{stage}\",\"spawned\":true,"
     "\"spawn_proof_token\":\"{proof_token}\", ...merged}}.\n"
-    "Proof: for a single agent, tell it to read the existing proof JSON, preserve "
-    "token/thread_id/action_message_id/stage, then OVERWRITE "
+    "Receipt: after the native spawn completes, OVERWRITE "
     ".ae-state/spawn-proofs/{proof_token}.json with exactly one JSON object, changing "
-    "only status to \"completed\" and adding completed_at=<ISO timestamp> "
-    "(do NOT append a second object — appending corrupts the file and fails verification).\n"
+    "status to \"completed\" and including token, stage and completed_at=<ISO timestamp>. "
+    "do NOT append a second JSON object. Do not modify "
+    ".ae-state/spawn-challenges/; it is immutable Core state.\n"
     "On failure: {{\"stage\":\"{stage}\",\"spawned\":false,\"spawn_error\":\"<reason>\"}}."
 )
 _SPAWN_MULTI_INSTRUCTION = (
@@ -627,6 +627,12 @@ class ActionBuilder:
             "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         }
         proof_file.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        challenge_dir = self.project_root / ".ae-state" / "spawn-challenges"
+        challenge_dir.mkdir(parents=True, exist_ok=True)
+        challenge = challenge_dir / f"{proof_token}.json"
+        challenge.write_text(
+            json.dumps(payload, ensure_ascii=False), encoding="utf-8"
+        )
 
     def bind_spawn_proofs(self, action: dict) -> None:
         """在 Action 获得协议身份后，把所有 proof 绑定到该 Action。"""
@@ -651,6 +657,10 @@ class ActionBuilder:
                 self.project_root / ".ae-state" / "spawn-proofs"
                 / f"{token}.json"
             )
+            challenge_file = (
+                self.project_root / ".ae-state" / "spawn-challenges"
+                / f"{token}.json"
+            )
             try:
                 payload = json.loads(proof_file.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError) as exc:
@@ -666,6 +676,25 @@ class ActionBuilder:
                 payload["requested_effort"] = requested_effort
             proof_file.write_text(
                 json.dumps(payload, ensure_ascii=False), encoding="utf-8"
+            )
+            try:
+                challenge_payload = json.loads(
+                    challenge_file.read_text(encoding="utf-8")
+                )
+            except (OSError, json.JSONDecodeError) as exc:
+                raise ValueError(f"SPAWN_CHALLENGE_BIND_FAILED: {token}") from exc
+            challenge_payload.update({
+                "token": token,
+                "thread_id": action["thread_id"],
+                "action_message_id": action["message_id"],
+                "stage": action["stage"],
+                "proof_role": proof_role,
+            })
+            if requested_effort is not None:
+                challenge_payload["requested_effort"] = requested_effort
+            challenge_file.write_text(
+                json.dumps(challenge_payload, ensure_ascii=False),
+                encoding="utf-8",
             )
 
     # ── stage builders ──
@@ -828,7 +857,15 @@ class ActionBuilder:
                 "tasks:[{id, description, module_ref, file_targets}], "
                 "depends_on}] (min 1 batch)"),
             "file_list": "[string] (min 1 file)",
-            "contracts": "object (may be empty)",
+            "contracts": (
+                "{name:{kind,path?,method?,request?,response?,status_codes?}}"
+                "（每个值必须为 object，可为空）"
+            ),
+            "obligations": (
+                "[{id,source_ref,summary,implementation_targets:[task_id],"
+                "verification_targets:[test_task_id],contract_refs:[name]}]；"
+                "research_and_design_context 非空时必须逐 source_ref 覆盖"
+            ),
         }, **extra)
 
     def _build_action_developer(self, base: dict) -> dict:
@@ -877,7 +914,10 @@ class ActionBuilder:
                 ),
             },
             component=component, batch_id=batch_id, tasks=task_dicts,
-            plan=self._state.plan)
+            plan=(
+                (self._state.architecture_baseline or {}).get("plan_summary", "")
+                or self._state.plan
+            ))
         contract = default_prompt_contracts()["developer"]
         bundle = compile_prompt_bundle(
             contract=contract,
@@ -892,16 +932,37 @@ class ActionBuilder:
         # DS-15: subagent reads changed files itself via Read/Grep.
         # Pass only the snapshot reference for Team Lead to relay.
         snap = self._dev_snapshot or {}
+        baseline = self._state.architecture_baseline or {}
         return self._build_stage_action(base, "critic", context={
-            "files_changed": snap.get("files_changed", self._state.files_changed),
+            "files_changed": (
+                self._state.batch_changed_files
+                or snap.get("files_changed", self._state.files_changed)
+            ),
             "test_results": snap.get("test_results", self._state.test_results),
             "commit_hash": snap.get("commit_hash", self._state.commit_hash),
             "requirement": self._state.requirement,
-            "design_scope": self._state.plan,
+            "design_scope": baseline.get("plan_summary", self._state.plan),
+            "architecture_baseline_ref": baseline.get("baseline_id", ""),
+            "plan_revision": baseline.get("revision", 0),
+            "obligation_ids": [
+                item.get("id") for item in baseline.get("obligations", [])
+                if isinstance(item, dict) and item.get("id")
+            ],
+            "contract_refs": sorted(
+                baseline.get("contracts", {})
+                if isinstance(baseline.get("contracts", {}), dict)
+                else {}
+            ),
+            "gate_results": dict(self._state.gate_results or {}),
+            "open_findings": list(self._state.open_findings),
         }, expected_format={
             "stage": "critic",
             "verdict": "APPROVE | MAJOR",
-            "findings": "[{file, line, severity, issue, suggestion}]",
+            "findings": (
+                "[{finding_id?, kind: implementation_defect|plan_gap|"
+                "contract_gap|project_capability, file, line, severity, issue, "
+                "suggestion, design_ref?, task_ref?, contract_ref?}]"
+            ),
             "critic_feedback": "string",
         })
 

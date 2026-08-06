@@ -1,6 +1,6 @@
 # design/ 资产索引
 
-> 更新：2026-08-05｜当前实现：v5.8.0-rc.5；Phase 77 真跑纠偏完成，待双宿主产品重跑
+> 更新：2026-08-06｜当前实现：v5.8.0-rc.5；Phase 78 架构不变量修复中
 
 ## 当前权威资产
 
@@ -17,9 +17,12 @@
 | `v5.8-Session-Decoupling-PLAN.md` | Phase 64-70 T302-T350 可执行实施计划 |
 | `v5.8-Deep-Audit-Remediation-PLAN.md` | Phase 74 T368-T376 深度审计修复计划 |
 | `v5.8-Deep-Audit-Report-2026-08-02.md` | Phase 75 自动门禁、风险和真实宿主准入证据 |
+| `v5.8-Architecture-Baseline-and-Repair-Design.md` | Phase 78 架构事实、Gate 转移、义务覆盖与修复控制权威设计 |
+| `v5.8-Architecture-Baseline-and-Repair-PLAN.md` | Phase 78 T387-T396 TDD 实施计划 |
 | `incidents/2026-07-29-claude-146-tick-long-run.md` | 146-Tick 真跑事故事实、根因、任务映射与关闭标准 |
 | `incidents/2026-07-30-claude-rc1-partial-run.md` | rc.1 部分真跑的跨进程状态、Gate、Usage 与成本缺陷 |
 | `incidents/2026-07-30-claude-9-tick-evidence-chain.md` | 9-Tick 真跑的旧版本识别、Debug 编号、进度与版本溯源缺陷 |
+| `incidents/2026-08-05-rc5-15-tick-architecture-gate-failure.md` | rc.5 15-Tick 的 Gate fail-open、架构事实丢失与错误修复路由事故 |
 | `IMPLEMENTATION-TRACKER.md` | 当前任务状态、优先级与 EARS 验收 |
 | `HISTORY.md` | 历史里程碑与 Git 追溯入口 |
 

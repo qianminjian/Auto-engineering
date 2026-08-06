@@ -45,6 +45,7 @@ class LoopEventType(StrEnum):
     PROJECT_PROFILE_CONFLICT = "ProjectProfileConflict"
     PROJECT_SETUP_REQUIRED = "ProjectSetupRequired"
     PROJECT_SETUP_COMPLETED = "ProjectSetupCompleted"
+    ARCHITECTURE_BASELINE_ACCEPTED = "ArchitectureBaselineAccepted"
 
 
 class LoopEventValidationError(ValueError):

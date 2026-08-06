@@ -4436,6 +4436,12 @@ class TestF7SpawnProofForgery:
         resp = o._validate_result_dict(self._critic_result())
         assert not (isinstance(resp, ErrorResponse)
                     and resp.error_code == "SPAWN_PROOF_INCOMPLETE")
+        accepted = json.loads(
+            (tmp_path / ".ae-state" / "spawn-receipts"
+             / "tok123.accepted.json").read_text(encoding="utf-8")
+        )
+        assert accepted["action_message_id"] == o._active_action["message_id"]
+        assert len(accepted["result_sha256"]) == 64
 
     def test_missing_or_stale_proof_token_blocks(self, tmp_path):
         from auto_engineering.loop.actions import ErrorResponse
@@ -4470,11 +4476,26 @@ class TestF7SpawnProofForgery:
             (tmp_path / ".ae-state" / "spawn-proofs" / f"{token}.json")
             .read_text(encoding="utf-8")
         )
+        challenge_path = (
+            tmp_path / ".ae-state" / "spawn-challenges" / f"{token}.json"
+        )
+        challenge_before = challenge_path.read_bytes()
+        (tmp_path / ".ae-state" / "spawn-proofs" / f"{token}.json").write_text(
+            json.dumps({
+                "token": token,
+                "stage": "architect",
+                "status": "completed",
+            }),
+            encoding="utf-8",
+        )
 
         assert proof["token"] == token
         assert proof["thread_id"] == action["thread_id"]
         assert proof["action_message_id"] == action["message_id"]
         assert proof["stage"] == action["stage"]
+        assert challenge_path.read_bytes() == challenge_before
+        challenge = json.loads(challenge_before)
+        assert challenge["action_message_id"] == action["message_id"]
 
     def test_multi_agent_missing_worker_receipt_blocks(self, tmp_path):
         from auto_engineering.loop.actions import ErrorResponse

@@ -20,12 +20,10 @@
 | Phase 61 v5.7.1 发布收口 | ✅ 7/7 | T288-T294；2021 passed / 1 skipped，coverage 90.27% |
 | Phase 62 v5.7.1 正式发布 | ✅ 6/6 | T295-T300；GitHub Release 与 SHA-256 已核验 |
 | Phase 63 非交互配置治理 | ✅ 1/1 | T301；非交互显式策略与来源报告 |
-
 ## Phase 64：真实运行可信度止血
 > Phase 64 是后续真实项目运行的 P0 前置条件，优先于 Phase 63 实施。详细设计与
 > 任务步骤见 `design/v5.8-Session-Decoupling-Design.md` 和
 > `design/v5.8-Session-Decoupling-PLAN.md`。
-
 | 优先级 | ID | 任务 | EARS 验收 | 状态 |
 |---:|---|---|---|:---:|
 | P0 | T302 | 会话解耦设计资产 | While 真实运行事故已形成证据, when 设计评审, the specification shall 覆盖状态、会话、预算、计划补丁、验证、审计、恢复和双宿主验收 | ✅ v5.8 Design/PLAN + BEACON/INDEX/HISTORY/v5.7 交叉引用；T303-T324 已登记 |
@@ -35,7 +33,6 @@
 | P0 | T306 | 计划补丁与进度不变量 | While 已完成批次存在, when Architect 追加修复批次, the Core shall 只激活新增工作，保留完成集合，并拒绝 `done_tasks > total_tasks` 等非法投影 | ✅ 显式 PlanPatch + 旧入口兼容；revision/ID/完成事实/进度不变量；相关回归 301 passed；Ruff/mypy pass |
 | P0 | T307 | Phase 64 止血验收 | While T303-T306 完成, when 故障轨迹与相关回归运行, the suite shall 证明不会重启已完成批次、不会把零测试或空快照判为通过 | ✅ 事故/Gate/Guardrail/Kernel/Projector/Golden 专项 447 passed |
 | P0 | T322 | 146-Tick 真跑事故报告 | While 真跑证据分散在外部 `_scratch` 与会话中, when 永久报告建立, it shall 区分事实与推断、映射全部修复任务并提供脱敏证据索引 | ✅ 永久报告 11 节；事实/推断分离；T303-T321/T323-T324 追踪矩阵与关闭标准 |
-
 ## Phase 65：确定性状态与宿主会话解耦
 | 优先级 | ID | 任务 | EARS 验收 | 状态 |
 |---:|---|---|---|:---:|
@@ -91,9 +88,7 @@
 | P0 | T338 | 首次启动强制配置 | While 项目缺少 ae.toml, when dev-loop 启动, the Core shall 创建或要求完成显式配置，禁止无文件继续 | ✅ 缺失自动/向导落盘；空、注释、损坏配置 fail-closed |
 | P1 | T339 | 向导推荐默认值与非交互初始化 | While 配置交互可用或宿主无 TTY, when 首次配置, the Core shall 分别提供可确认推荐值或确定性 standard Profile | ✅ 推荐审计/度量/Token/PII/生产安全；env 最高优先级 |
 | P0 | T340 | 配置初始化收口验收 | While T337-T339 完成, when 配置专项、全量、双宿主 archive 运行, all generated profiles shall 可读、可覆盖且无静默回退 | ✅ 2110 passed/1 skipped；Ruff/mypy；Claude/Codex archive smoke pass |
-
 ## Phase 70：自动上下文与成本治理纠偏
-
 | 优先级 | ID | 任务 | EARS 验收 | 状态 |
 |---:|---|---|---|:---:|
 | P0 | T341 | 决策与负向契约 | While 旧固定 Tick/人工交接行为存在, when 契约测试运行, the suite shall 先稳定失败并锁定纠偏边界 | ✅ 6 个 RED 失败后 GREEN；固定 Tick/input 不再 rollover |
@@ -156,5 +151,10 @@
 | P1 | T382 | 范围约束与 Research/Supplement 注入 | While 自然语言 requirement 与 `--design-doc` 同时传入或 Research 已产出结论, when Architect 编译 Prompt, the system shall 将 requirement 作为范围并注入有界研究/补充摘要 | ✅ Skill/Prompt Contract/回归测试通过；16 条/4000 字符有界 |
 | P0 | T383-T384 | 真跑纠偏：路径、EventStore 状态与批量 Gap Review | While 外部项目从任意 cwd 恢复或 gap_review 有多个未决 gap, when status/tick 或 host action 运行, the system shall 以 project-root 解析文档、保持 status 公共契约，并在一次 Action 中完整收集全部 gap 决策后推进 | ✅ rc.5 完整集合校验、Research 队列与 Action schema fail-closed；2178 passed/1 skipped |
 | P1 | T385-T386 | 真跑纠偏：Gate 可观测性、契约适用性与宿主续接 | While Gate 异常、契约为空或 verifier 产生 finding, when runner/architect/host 继续, the system shall 保留结构化原因、按真实 contracts 判定 N/A，并使用既有 PLAN_REFINE 契约续接 | ✅ ProfileCommandGate/P2/Contract/status/PLAN_REFINE 纠偏；Ruff/mypy/sync/metadata 通过 |
-## 执行纪律
-先记录再实施；使用 Red → Green → Refactor；pytest 串行；设计不降级；专项门禁后再收口；未经授权不提交、不推送、不发布。
+## Phase 78：架构基线、Gate 转移与确定性修复控制
+| 优先级 | ID | 任务 | EARS 验收 | 状态 |
+|---:|---|---|---|:---:|
+| P0 | T387-T390 | 事故归档、权威 Spec、Gate fail-closed、ProjectProfile 原生命令 | While required Gate 失败或 pnpm 项目无 typecheck script, when Core 转移或解析 Profile, the system shall 阻止 Critic 并选择已验证的包管理器命令 | ✅ 事故/Spec；Gate 转移与 pnpm 证据命令；自动门禁通过 |
+| P0 | T391-T393 | ArchitectureBaseline、结构化 Contract、Research 义务覆盖 | While Architect Result 被接受, when 后续 Stage 执行, the system shall 恢复同一基线并在开发前拒绝未覆盖义务 | ✅ Event/checkpoint 重放；义务矩阵与 Contract fail-closed |
+| P0 | T394-T395 | Critic 分类路由、修复/停滞预算、BatchReviewContext | While Finding 越界或重复无进展, when Core 路由, the system shall 分别 PLAN_REFINE 或 STAGNANT，并提供有界累积证据 | ✅ 分类路由、独立预算、有界累积上下文；2190 passed/1 skipped |
+| P1 | T396 | immutable spawn challenge 与 Host Receipt 语义绑定 | While 宿主派生 Worker 并提交 Result, when Core 校验 receipt, the system shall 绑定 Action/Worker/result digest 且不覆写 challenge | ✅ challenge/host receipt/Core result digest；待产品复验 |

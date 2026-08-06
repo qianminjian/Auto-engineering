@@ -54,6 +54,15 @@ class EngineStateProjector:
                 if not isinstance(target, str):
                     raise ProjectionError("StageAdvanced payload.to 必须为字符串")
                 state = self._apply_patch(state, {"current_stage": target})
+            if event.event_type is LoopEventType.ARCHITECTURE_BASELINE_ACCEPTED:
+                baseline = payload.get("baseline")
+                if not isinstance(baseline, Mapping):
+                    raise ProjectionError(
+                        "ArchitectureBaselineAccepted payload.baseline 必须为 object"
+                    )
+                state = self._apply_patch(
+                    state, {"architecture_baseline": dict(baseline)}
+                )
         return state
 
     @staticmethod

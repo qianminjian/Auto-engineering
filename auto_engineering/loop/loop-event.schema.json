@@ -49,7 +49,8 @@
         "ProjectProfileChanged",
         "ProjectProfileConflict",
         "ProjectSetupRequired",
-        "ProjectSetupCompleted"
+        "ProjectSetupCompleted",
+        "ArchitectureBaselineAccepted"
       ]
     },
     "causation_id": {"type": ["string", "null"], "minLength": 1},

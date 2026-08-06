@@ -175,6 +175,35 @@ def test_local_probe_reads_node_entry_files_and_declared_scripts(tmp_path: Path)
     }
 
 
+def test_local_probe_derives_pnpm_type_check_from_local_typescript(tmp_path: Path) -> None:
+    """无 typecheck script 时，只从本地 TypeScript 依赖推导 pnpm 原生命令。"""
+    (tmp_path / "pnpm-lock.yaml").write_text("lockfileVersion: '9.0'\n")
+    (tmp_path / "tsconfig.json").write_text("{}")
+    (tmp_path / "package.json").write_text(
+        json.dumps({"devDependencies": {"typescript": "^5.8.0"}, "scripts": {}}),
+        encoding="utf-8",
+    )
+
+    contribution = LocalProbeProvider().inspect(tmp_path)
+
+    assert contribution.commands["type_check"] == (
+        "pnpm", "exec", "tsc", "--noEmit",
+    )
+
+
+def test_local_probe_does_not_guess_tsc_without_local_dependency(tmp_path: Path) -> None:
+    """只有 tsconfig 不足以证明全局或本地 tsc 可执行。"""
+    (tmp_path / "pnpm-lock.yaml").write_text("lockfileVersion: '9.0'\n")
+    (tmp_path / "tsconfig.json").write_text("{}")
+    (tmp_path / "package.json").write_text(
+        json.dumps({"scripts": {}}), encoding="utf-8"
+    )
+
+    contribution = LocalProbeProvider().inspect(tmp_path)
+
+    assert "type_check" not in contribution.commands
+
+
 @pytest.mark.parametrize(
     ("entry", "content", "source_root", "language"),
     [

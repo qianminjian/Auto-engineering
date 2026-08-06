@@ -30,8 +30,8 @@ _logger = logging.getLogger("ae.gates.contract")
 # v5.0 §B6.1a — 扫描的源文件扩展名 (限静态文本匹配范围, 不扫描 README/配置)
 _SOURCE_EXTENSIONS = {".py", ".ts", ".js", ".go", ".rs"}
 
-# v5.0 §B6.1a — 搜索根目录优先级: project_root/src/ 优先, 否则 project_root/
-_SEARCH_ROOTS = ("src", "")
+# 有界源码根并集；服务端 BFF 常与 src/ 并列，不能找到 src/ 后提前停止。
+_SEARCH_ROOTS = ("src", "server", "app", "lib", "auto_engineering")
 
 
 def _collect_source_files(project_root: Path) -> list[Path]:
@@ -41,19 +41,25 @@ def _collect_source_files(project_root: Path) -> list[Path]:
     返回所有匹配 _SOURCE_EXTENSIONS 的文件路径.
     """
     files: list[Path] = []
-    # 按优先级找第一个存在的根
+    if not project_root.is_dir():
+        return files
+    found_root = False
     for sub in _SEARCH_ROOTS:
-        root = project_root / sub if sub else project_root
+        root = project_root / sub
         if not root.is_dir():
             continue
+        found_root = True
         for path in root.rglob("*"):
             if not path.is_file():
                 continue
             if path.suffix.lower() in _SOURCE_EXTENSIONS:
                 files.append(path)
-        # 找到第一个存在的根就返回 (不重复扫描根目录)
-        if files or sub == "":
-            return files
+    if found_root:
+        return files
+    # 兼容单文件项目；未知目录绝不递归，避免扫入 .venv/node_modules。
+    for path in project_root.iterdir():
+        if path.is_file() and path.suffix.lower() in _SOURCE_EXTENSIONS:
+            files.append(path)
     return files
 
 
@@ -175,10 +181,13 @@ class ContractGate(Gate):
             )
 
         contracts = self.contracts or {}
-        # 逐契约检查 — 跳过非 dict 值（如 runner 注入的元数据字段）
+        # 非对象契约是协议错误，禁止静默跳过形成假通过。
         for name, contract in contracts.items():
             if not isinstance(contract, dict):
-                continue
+                return GateVerdict.failed(
+                    f"contract '{name}' 必须为 object",
+                    gate_name=self.name,
+                )
             passed, msg = _check_contract_in_source(contract, source_files)
             if not passed:
                 return GateVerdict.failed(

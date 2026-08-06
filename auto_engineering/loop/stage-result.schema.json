@@ -39,6 +39,7 @@
     },
     "file_list": {"type": "array"},
     "contracts": {"type": "object"},
+    "obligations": {"type": "array"},
     "batch_id": {"type": ["string", "null"]},
     "files_changed": {"type": "array"},
     "commit_hash": {"type": "string"},

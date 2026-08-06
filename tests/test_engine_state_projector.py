@@ -119,3 +119,26 @@ def test_checkpoint_import_can_seed_projection() -> None:
     )
 
     assert EngineStateProjector().replay([event]).to_dict() == state.to_dict()
+
+
+def test_architecture_baseline_event_rebuilds_persistent_projection() -> None:
+    initial = EngineState(thread_id="thread-1", current_stage="architect")
+    baseline = {
+        "schema_version": "1.0",
+        "baseline_id": "a" * 64,
+        "revision": 1,
+        "batch_plan": [],
+        "contracts": {},
+        "obligations": [],
+    }
+
+    state = EngineStateProjector().replay([
+        _event(0, LoopEventType.LOOP_INITIALIZED, {"state": initial.to_dict()}),
+        _event(
+            1,
+            LoopEventType.ARCHITECTURE_BASELINE_ACCEPTED,
+            {"baseline": baseline},
+        ),
+    ])
+
+    assert state.architecture_baseline == baseline

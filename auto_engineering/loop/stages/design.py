@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -121,6 +123,10 @@ class CriticHandler:
                 "majors_in_a_row": 0,
                 "total_majors": total,
                 "open_findings": [],
+                "repair_cycle_count": 0,
+                "unchanged_finding_streak": 0,
+                "last_finding_fingerprint": "",
+                "batch_changed_files": [],
             }
             target: StageName = (
                 "developer"
@@ -143,17 +149,67 @@ class CriticHandler:
             "critic_verdict": effective_verdict,
             "open_findings": blocking_findings,
         }
-        max_in_a_row = int(context.extensions.get("max_majors_in_a_row", 3))
-        max_total = int(context.extensions.get("max_total_majors", 4))
-        if in_a_row >= max_in_a_row or total >= max_total:
+        allowed_raw = context.extensions.get("allowed_file_targets", ())
+        allowed = {
+            str(path) for path in allowed_raw
+        } if isinstance(allowed_raw, (list, tuple, set, frozenset)) else set()
+        requires_refine = any(
+            isinstance(finding, Mapping)
+            and (
+                finding.get("kind") in {"plan_gap", "contract_gap"}
+                or (
+                    bool(allowed)
+                    and isinstance(finding.get("file"), str)
+                    and bool(finding.get("file"))
+                    and finding.get("file") not in allowed
+                )
+            )
+            for finding in blocking_findings
+        )
+        if requires_refine:
+            common["refine_source"] = "critic"
+            common["feedback"] = findings
+            return TransitionDecision(
+                next_stage="architect",
+                action_context=common,
+            )
+        fingerprint = hashlib.sha256(
+            json.dumps(
+                blocking_findings,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        previous_fingerprint = str(state.get("last_finding_fingerprint", ""))
+        unchanged_streak = (
+            int(state.get("unchanged_finding_streak", 0)) + 1
+            if fingerprint == previous_fingerprint
+            else 1
+        )
+        repair_cycles = int(state.get("repair_cycle_count", 0)) + 1
+        common["state_patch"].update({
+            "repair_cycle_count": repair_cycles,
+            "unchanged_finding_streak": unchanged_streak,
+            "last_finding_fingerprint": fingerprint,
+        })
+        max_repairs = int(context.extensions.get("max_repair_cycles", 6))
+        max_stagnation = int(context.extensions.get("max_stagnation_cycles", 3))
+        if unchanged_streak >= max_stagnation:
             common["terminal_action"] = {
-                "verdict": "HARD_LIMIT",
-                "reason": f"MAJOR 超限: 连续{in_a_row}/累计{total}",
+                "verdict": "STAGNANT",
+                "reason": f"相同 Finding 无证据增量: {unchanged_streak}",
             }
             return TransitionDecision(
                 terminal=True,
                 action_context=common,
             )
+        if repair_cycles >= max_repairs:
+            common["terminal_action"] = {
+                "verdict": "REPAIR_CYCLE_LIMIT",
+                "reason": f"局部修复预算耗尽: {repair_cycles}/{max_repairs}",
+            }
+            return TransitionDecision(terminal=True, action_context=common)
 
         target = "developer"
         common["cursor_operation"] = "rollback_batch"

@@ -24,6 +24,23 @@ class DeveloperHandler:
     ) -> TransitionDecision:
         if not isinstance(state, Mapping):
             raise TypeError("state 必须为 Mapping")
+        blocking = context.extensions.get("blocking_gate_results", ())
+        if (
+            isinstance(blocking, (list, tuple))
+            and blocking
+        ):
+            return TransitionDecision(
+                next_stage="developer",
+                action_context={
+                    "collect_token_usage": True,
+                    "offload_stage": self.stage,
+                    "stay_in_stage": True,
+                    "feedback": {
+                        "reason": "required_gate_failed",
+                        "gates": list(blocking),
+                    },
+                },
+            )
         more = bool(
             context.extensions.get("has_more_batches_after_advance")
         )

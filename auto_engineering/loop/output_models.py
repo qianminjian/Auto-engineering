@@ -32,6 +32,10 @@ class ArchitectOutput(BaseModel):
         description="修复轮增量计划 {base_revision, add_batches}",
     )
     contracts: dict = Field(default_factory=dict, description="跨模块契约")
+    obligations: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="Research/设计义务到实现、验证任务与契约的覆盖矩阵",
+    )
 
 
 class DeveloperOutput(BaseModel):
