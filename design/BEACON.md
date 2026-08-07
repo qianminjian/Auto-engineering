@@ -1,5 +1,5 @@
 # Auto-Engineering BEACON
-> 创建：2026-06-24｜更新：2026-08-06｜阶段：Phase 78 架构基线与 Gate 转移修复
+> 创建：2026-06-24｜更新：2026-08-06｜阶段：Phase 79 PlanPatch 与 Contract 激活修复
 > 决策状态翻转（✅↔❌）或架构降级必须先获用户批准。
 
 ## 目标与成功标准
@@ -58,11 +58,11 @@ Engineering 的问答、模板或脚手架；把 archive smoke 冒充真实产�
   90.41%、Ruff/mypy/sync/check-gate 与双宿主 archive 通过，待真实 LLM 轨迹。
 - Phase 75 已完成 status 降级与失败缓存修复；历史秘密确认和宿主长跑证据仍须人工/真实产品完成。
 - Phase 76 已统一设计文档入口：省略范围时执行全文，显式范围时只执行指定范围；并修复 Architect component 标识映射、Research/Supplement 注入与 dry-run 结构门禁。
-- Phase 78 T387-T396 代码与自动门禁已完成：Gate、架构基线、义务覆盖、Critic、Profile 与 spawn receipt 已修复；待双宿主真实产品复验。
+- Phase 79 T397-T401 自动修复完成：refine 增量契约、revision 前置校验、基线合并与义务驱动 Contract 激活已通过 2194/1、90% 覆盖率及双宿主 archive；T402 待真实复验。
 ## 最近演进
 | 日期 | 变更 |
 |---|---|
-| 2026-08-06 | 归档 rc.5 15-Tick P0 事故；保持批量 Gap Review，启动 Phase 78 架构不变量修复 |
+| 2026-08-06 | 归档 Tick 19 PlanPatch 冲突；禁止 full-plan refine，按义务延迟激活 Contract |
 | 2026-07-30 | 批准 Phase 70：撤销固定 Tick rollover，改为宿主自动 compaction |
 | 2026-07-29 | 批准 v5.8 确定性状态与宿主会话解耦，登记 Phase 64-67 |
 | 2026-07-29 | 归档 146-Tick 真跑事故报告，补充摘要隔离与循环预算 |
@@ -73,8 +73,8 @@ Engineering 的问答、模板或脚手架；把 archive smoke 冒充真实产�
 - T336/T350：用发布候选版执行 Claude Code/Codex 真实产品 150 Tick 长跑。
 - T367：完成 Phase 73 全量、覆盖率、双宿主制品与真实产品轨迹验收。
 - T376：用当前制品完成 Claude Code/Codex 真实 LLM 轨迹。
-- T387-T396：自动修复完成；执行 Claude Code/Codex 真实产品复验后关闭 rc.5 事故。
+- T387-T402：自动修复完成；执行 Claude Code/Codex 真实产品复验后关闭 rc.5 两次事故。
 
 ## 引用文件
 
-`design/v5.8-Session-Decoupling-Design.md` · `design/v5.8-Session-Decoupling-PLAN.md` · `design/v5.8-Architecture-Baseline-and-Repair-Design.md` · `design/incidents/2026-07-29-claude-146-tick-long-run.md` · `design/incidents/2026-08-05-rc5-15-tick-architecture-gate-failure.md` · `design/IMPLEMENTATION-TRACKER.md` · `design/HISTORY.md`
+`design/v5.8-Session-Decoupling-Design.md` · `design/v5.8-Session-Decoupling-PLAN.md` · `design/v5.8-Architecture-Baseline-and-Repair-Design.md` · `design/incidents/2026-07-29-claude-146-tick-long-run.md` · `design/incidents/2026-08-05-rc5-15-tick-architecture-gate-failure.md` · `design/incidents/2026-08-06-rc5-plan-refine-conflict.md` · `design/IMPLEMENTATION-TRACKER.md` · `design/HISTORY.md`

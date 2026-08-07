@@ -956,22 +956,57 @@ class TestPlanRefineProgressSync:
         names_before = {n.name for n in o._progress_tree.nodes.values()}
         assert "Foo" in names_before and "Bar" not in names_before
 
-        # architect v2 (PLAN-REFINE): 保留 Foo + 新增 Bar
+        # architect v2 (PLAN-REFINE): 只新增 Bar，旧 Foo 由 Core 保留
         o.tick(_make_result_file({
-            "stage": "architect", "spawned": True, "plan": _VALID_PLAN, "batch_plan": [
-                {"batch_id": "b1", "design_section": "B2", "component": "Foo",
-                 "tasks": [{"id": "T1", "description": "d", "module_ref": "§B2",
-                            "file_targets": ["foo.py"]}]},
+            "stage": "architect", "spawned": True, "plan": _VALID_PLAN,
+            "plan_patch": {"base_revision": 1, "add_batches": [
                 {"batch_id": "b2", "design_section": "B3", "component": "Bar",
                  "tasks": [{"id": "T2", "description": "d2", "module_ref": "§B3",
                             "file_targets": ["bar.py"]}]},
-            ], "file_list": ["foo.py", "bar.py"], "contracts": {},
+            ]}, "file_list": ["bar.py"], "contracts": {},
         }))
         names_after = {n.name for n in o._progress_tree.nodes.values()}
         assert "Foo" in names_after  # 增量: 旧节点保留
         assert "Bar" in names_after  # added
 
-    def test_refine_marks_dropped_component_removed_not_deleted(self) -> None:
+    def test_refine_rejects_full_plan_before_mutating_execution_tree(self) -> None:
+        o = _orchestrator(max_rounds=20)
+        self._refine_to_architect(o, [
+            {"batch_id": "b1", "design_section": "B2", "component": "Foo",
+             "tasks": [{"id": "T1", "description": "d", "module_ref": "§B2",
+                        "file_targets": ["foo.py"]}]},
+        ])
+        baseline_before = o._state.architecture_baseline["baseline_id"]
+
+        result = o.tick(_make_result_file({
+            "stage": "architect", "spawned": True, "plan": _VALID_PLAN,
+            "batch_plan": [
+                {"batch_id": "b1", "design_section": "B2", "component": "Foo",
+                 "tasks": [{"id": "T1", "description": "changed",
+                            "module_ref": "§B2", "file_targets": ["foo.py"]}]},
+            ],
+            "file_list": ["foo.py"], "contracts": {},
+        }))
+
+        assert result["error_code"] == "ARCHITECT_PLAN_INVALID"
+        assert "plan_patch" in result["message"]
+        assert o._state.architecture_baseline["baseline_id"] == baseline_before
+        assert o._batch_state.batch_plan[0]["tasks"][0]["description"] == "d"
+
+    def test_refine_action_requests_incremental_plan_patch(self) -> None:
+        o = _orchestrator(max_rounds=20)
+        self._refine_to_architect(o, [
+            {"batch_id": "b1", "design_section": "B2", "component": "Foo",
+             "tasks": [{"id": "T1", "description": "d", "module_ref": "§B2",
+                        "file_targets": ["foo.py"]}]},
+        ])
+
+        action = o._active_action
+        assert action["expected_format"]["plan_patch"].startswith("{")
+        assert "batch_plan" not in action["expected_format"]
+        assert '"plan_revision": 1' in action["subagent_prompt"]
+
+    def test_refine_patch_cannot_delete_existing_component(self) -> None:
         o = _orchestrator(max_rounds=20)
         self._refine_to_architect(o, [
             {"batch_id": "b1", "design_section": "B2", "component": "Foo",
@@ -981,17 +1016,19 @@ class TestPlanRefineProgressSync:
              "tasks": [{"id": "T2", "description": "d2", "module_ref": "§B3",
                         "file_targets": ["bar.py"]}]},
         ])
-        # architect v2: 丢掉 Foo, 只剩 Bar
-        o.tick(_make_result_file({
-            "stage": "architect", "spawned": True, "plan": _VALID_PLAN, "batch_plan": [
-                {"batch_id": "b2", "design_section": "B3", "component": "Bar",
-                 "tasks": [{"id": "T2", "description": "d2", "module_ref": "§B3",
+        # architect v2 只能新增修复工作，旧组件不在 patch 中也不能被删除
+        result = o.tick(_make_result_file({
+            "stage": "architect", "spawned": True, "plan": _VALID_PLAN,
+            "plan_patch": {"base_revision": 1, "add_batches": [
+                {"batch_id": "b3", "design_section": "B3", "component": "Bar",
+                 "tasks": [{"id": "T3", "description": "fix", "module_ref": "§B3",
                             "file_targets": ["bar.py"]}]},
-            ], "file_list": ["bar.py"], "contracts": {},
+            ]}, "file_list": ["bar.py"], "contracts": {},
         }))
+        assert result["stage"] == "developer"
         foo_nodes = [n for n in o._progress_tree.nodes.values() if n.name == "Foo"]
         assert len(foo_nodes) == 1  # 未删除
-        assert foo_nodes[0].design_status == "stable"  # 已完成事实不可由普通 patch 删除
+        assert foo_nodes[0].design_status == "stable"
 
 
 class TestVerifierRecheck:
@@ -2307,9 +2344,12 @@ class TestTwoRoundDesignDocE2E:
 
         # ── 轮 2: architect 重排 → dev → critic → component_verifier(clean) → audit → done
         repair_plan = {
-            **_LEAF_ARCH_RESULT,
-            "batch_plan": [
-                *_LEAF_ARCH_RESULT["batch_plan"],
+            "stage": "architect",
+            "spawned": True,
+            "plan": _LEAF_ARCH_RESULT["plan"],
+            "plan_patch": {
+                "base_revision": 1,
+                "add_batches": [
                 {
                     "batch_id": "b-Foo-fix",
                     "design_section": "B2",
@@ -2320,8 +2360,10 @@ class TestTwoRoundDesignDocE2E:
                         "module_ref": "§B2",
                         "file_targets": ["foo.py"],
                     }],
-                },
-            ],
+                }],
+            },
+            "file_list": ["foo.py"],
+            "contracts": {},
         }
         a = o.tick(_make_result_file(repair_plan))
         assert a["stage"] == "developer"  # refine 后重回开发

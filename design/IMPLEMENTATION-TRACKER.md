@@ -42,9 +42,7 @@
 | P0 | T311 | Rollover Action/Result 幂等恢复 | While rollover 已发出, when 原会话重试或新会话重复接管, the Core shall 只建立一个有效 successor session，并返回同一 active Action | ✅ `session_handoff.py` + SQLite 原子 handoff/claim + Protocol schemas；64 tests passed；Ruff/mypy passed |
 | P1 | T312 | Claude/Codex 会话适配 | While 双宿主收到 rollover, when 宿主创建新会话并提交接管回执, both adapters shall 产生语义等价的 Core 事件和恢复状态 | ✅ 双宿主 `host_control` 等价映射 + Skill/Command fail-closed；26 tests passed |
 | P0 | T313 | Phase 65 会话边界验收 | While 长轨迹跨至少三个宿主会话运行, when 任一边界发生中断、重复或延迟, the final projection and verdict shall 与单进程黄金轨迹等价 | ✅ 150 Tick/3 sessions + replay/late-result；Phase 65 suite 301 passed；Ruff/mypy passed |
-
 ## Phase 66：有界上下文、产物引用与成本审计
-
 | 优先级 | ID | 任务 | EARS 验收 | 状态 |
 |---:|---|---|---|:---:|
 | P0 | T314 | Stage Context Selector | While Action 被编译, when 当前 Stage 请求上下文, the compiler shall 仅选择契约声明的必要字段和有界摘要，不拼接完整历史 | ✅ StageContract 字段/Artifact/64KiB 预算 + 历史禁入；208 tests passed；Ruff/mypy passed |
@@ -54,18 +52,14 @@
 | P0 | T323 | 状态锚点与摘要隔离 | While BEACON 或自动摘要过期、重复或矛盾, when Action/Capsule 被构建, the Core shall 仅依赖事件投影推进，并显式报告信息性上下文漂移 | ✅ 信息性 authority + anchor drift；冲突摘要不改 stage/tick；5 targeted tests passed |
 | P0 | T324 | 修复循环与 Agent 预算 | While repair、Worker 或 Deep Audit 达到策略上限, when 下一 Action 被选择, the system shall 确定性停止扩张并诊断，禁止新增批次或借换会话绕过 | ✅ 扩张预算已实现；rollover 分支由 T341-T349 移除 |
 | P0 | T318 | Phase 66 成本与完整性验收 | While T314-T317、T323-T324 完成, when 单/多会话轨迹比较, semantic verdict shall 等价且输入放大率、单会话峰值、摘要隔离、循环上限与审计缺口满足预算 | ✅ 专项 252 passed；最终全量 2095 passed/1 skipped；Ruff 0；mypy 125 files；sync pass |
-
 ## Phase 67：双宿主真实项目发布门禁
-
 | 优先级 | ID | 任务 | EARS 验收 | 状态 |
 |---:|---|---|---|:---:|
 | P0 | T319 | 中等规模双宿主真实验收 | While 候选版本安装到 Claude Code 与 Codex, when 运行包含返工、深审计和自动 compaction 的真实项目, both hosts shall 无人工交接完成且无批次回退、验证假通过或输入超限 | ◐ archive smoke 已通过；真实产品门禁并入 T350 |
 | P0 | T320 | 故障恢复与成本基线 | While 宿主在 rollover 前后异常退出, when 从事件与 capsule 恢复, the run shall 收敛到等价终态并输出可归因成本报告 | ✅ SQLite 重启/重复 claim 等价恢复 + 双 session Usage 聚合；32 tests passed |
 | P0 | T321 | v5.8 发布收口 | While T303-T320、T323-T324 全部完成, when 全量测试、覆盖率、静态检查、双宿主安装与真实运行门禁执行, all required checks shall 通过后才允许发布 | ◐ `5.8.0-rc.5` 自动门禁通过；真实产品 LLM 门禁未执行 |
 | P1 | T325 | Claude 命令命名空间校准 | While 插件名为 `auto-engineering`, when 用户查看或启动 Claude Code slash command, all active guidance shall 使用宿主实际注册的 `/auto-engineering:dev-loop`，不得继续宣传不存在的 `/ae:*` 别名 | ✅ 当前文档、CLI 提示、设计契约和生成规则已统一；RED 4 failed，GREEN 81 passed/1 skipped；Ruff/mypy/sync/metadata 与 rc.2 Claude archive smoke pass |
-
 ## Phase 68：rc.1 真跑缺陷修复
-
 | 优先级 | ID | 任务 | EARS 验收 | 状态 |
 |---:|---|---|---|:---:|
 | P0 | T326 | 第二次真跑事故归档 | While rc.1 真跑证据位于外部项目, when 新会话恢复修复, the report shall 保留事实、根因、任务映射和关闭标准且不复制敏感日志 | ✅ 事故报告与任务矩阵已归档 |
@@ -158,3 +152,9 @@
 | P0 | T391-T393 | ArchitectureBaseline、结构化 Contract、Research 义务覆盖 | While Architect Result 被接受, when 后续 Stage 执行, the system shall 恢复同一基线并在开发前拒绝未覆盖义务 | ✅ Event/checkpoint 重放；义务矩阵与 Contract fail-closed |
 | P0 | T394-T395 | Critic 分类路由、修复/停滞预算、BatchReviewContext | While Finding 越界或重复无进展, when Core 路由, the system shall 分别 PLAN_REFINE 或 STAGNANT，并提供有界累积证据 | ✅ 分类路由、独立预算、有界累积上下文；2190 passed/1 skipped |
 | P1 | T396 | immutable spawn challenge 与 Host Receipt 语义绑定 | While 宿主派生 Worker 并提交 Result, when Core 校验 receipt, the system shall 绑定 Action/Worker/result digest 且不覆写 challenge | ✅ challenge/host receipt/Core result digest；待产品复验 |
+## Phase 79：PlanPatch 与 Contract 激活修复
+| 优先级 | ID | 任务 | EARS 验收 | 状态 |
+|---:|---|---|---|:---:|
+| P0 | T397-T398 | 事故归档与 refine 上下文契约 | While Core 等待 PLAN_REFINE, when Architect 重发 full plan 或 revision 错误, the system shall 在状态变更前 fail-closed 并给出重试反馈 | ✅ 前置拒绝、revision 注入与新 ID patch Prompt |
+| P0 | T399-T400 | 增量执行树与 Contract 义务激活 | While patch 新增修复 batch 或 contract 跨 batch, when Core 物化计划/运行 Gate, the system shall 保留完成事实并只验证已到达契约 | ✅ 基线增量合并；义务驱动 contract 激活 |
+| P0 | T401-T402 | Prompt/spec 同步与收口验收 | While Phase 79 实现完成, when 自动门禁和双宿主制品运行, all regressions shall 通过后才进入真实产品复验 | ◐ 2194/1、coverage 90%、静态/同步/双宿主 archive pass；待真实复验 |

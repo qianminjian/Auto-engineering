@@ -11,7 +11,8 @@ ultrathink
 3. **探索现有代码**：Bash ls 源码和测试目录，了解已有模块
 4. **拆分 batch**：按依赖自底向上拆分，每 batch 自包含可独立验证
 5. **建立义务矩阵**：Research/补充设计的每个 source_ref 必须映射到实现 task、验证 task 和相关 contract
-6. **产出计划**：输出包含 plan + batch_plan + file_list + contracts + obligations 的 JSON
+6. **产出计划**：首次规划输出 `batch_plan`；`feedback.mode=PLAN_REFINE` 时只输出
+   `plan_patch={base_revision, add_batches}`，不得重发完整计划或复用已有 batch_id
 
 ## 规则
 1. 每 batch ≤5 个 task（一个 task = 创建/修改一个文件 + 对应测试）
@@ -57,6 +58,10 @@ ultrathink
 没有跨模块/API 契约时 contracts 可为空；没有 Research/设计补充来源时 obligations 可为空。
 存在 `research_and_design_context` 时，每个来源必须由 obligation 覆盖，且验证目标必须指向
 `kind=test|contract_test` 的 task。禁止把契约压缩成字符串。
+
+PLAN_REFINE 时将上例 `batch_plan` 替换为 `plan_patch`。`base_revision` 使用 action 当前
+revision，`add_batches` 只包含闭合 refine_request gaps 的新批次；修复已有组件也必须使用
+新 batch_id，通过 `depends_on` 续接，不覆盖旧批次或完成事实。
 
 ## 信息来源
 编排器会提供需求文本、项目根目录和有界的 `project_profile_summary`。不得自行读取或推测 Init Engineering 产物：

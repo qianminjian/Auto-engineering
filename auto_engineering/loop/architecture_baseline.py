@@ -52,4 +52,50 @@ def build_architecture_baseline(
     return payload
 
 
-__all__ = ["build_architecture_baseline"]
+def select_active_contracts(
+    baseline: dict[str, Any],
+    reached_batch_ids: set[str],
+) -> dict[str, Any]:
+    """只返回实现义务已到达的契约；无义务绑定的旧契约立即激活。"""
+    contracts = baseline.get("contracts", {})
+    if not isinstance(contracts, dict):
+        return {}
+    task_batches: dict[str, str] = {}
+    for batch in baseline.get("batch_plan", []):
+        if not isinstance(batch, dict):
+            continue
+        batch_id = batch.get("batch_id")
+        if not isinstance(batch_id, str):
+            continue
+        for task in batch.get("tasks", []):
+            if isinstance(task, dict) and isinstance(task.get("id"), str):
+                task_batches[task["id"]] = batch_id
+
+    required_targets: dict[str, set[str]] = {}
+    for obligation in baseline.get("obligations", []):
+        if not isinstance(obligation, dict):
+            continue
+        targets = {
+            target
+            for target in obligation.get("implementation_targets", [])
+            if isinstance(target, str)
+        }
+        for contract_ref in obligation.get("contract_refs", []):
+            if isinstance(contract_ref, str):
+                required_targets.setdefault(contract_ref, set()).update(targets)
+
+    active: dict[str, Any] = {}
+    for name, contract in contracts.items():
+        contract_targets = required_targets.get(name)
+        if not contract_targets:
+            active[name] = contract
+            continue
+        target_batches = {
+            task_batches.get(target) for target in contract_targets
+        }
+        if None not in target_batches and target_batches <= reached_batch_ids:
+            active[name] = contract
+    return active
+
+
+__all__ = ["build_architecture_baseline", "select_active_contracts"]

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from auto_engineering.engine.state import EngineState
+from auto_engineering.loop import architecture_baseline as baseline_module
 from auto_engineering.loop.architect_validation import validate_architect_obligations
 from auto_engineering.loop.architecture_baseline import build_architecture_baseline
 from auto_engineering.loop.stage_router import clear_stage_fields
@@ -87,3 +88,44 @@ def test_architect_contract_values_must_be_objects() -> None:
     }
 
     assert "api" in (validate_architect_obligations(result, {}) or "")
+
+
+def test_contract_activates_only_after_all_implementation_targets_reached() -> None:
+    select_active_contracts = getattr(
+        baseline_module, "select_active_contracts", None
+    )
+    assert callable(select_active_contracts), "缺少 contract 义务激活选择器"
+    baseline = build_architecture_baseline(
+        revision=1,
+        design_doc_path="design/spec.md",
+        design_doc_digest="a" * 64,
+        plan="先定义 DTO，再实现 HTTP route",
+        batch_plan=[
+            {"batch_id": "B1", "tasks": [{"id": "B1-T1"}]},
+            {"batch_id": "B2", "tasks": [{"id": "B2-T1"}]},
+        ],
+        contracts={"clone": {"kind": "http", "path": "/api/clone"}},
+        obligations=[{
+            "id": "O1",
+            "source_ref": "gap-1",
+            "implementation_targets": ["B1-T1", "B2-T1"],
+            "verification_targets": ["B2-T2"],
+            "contract_refs": ["clone"],
+        }],
+        accepted_at_tick=1,
+    )
+
+    assert select_active_contracts(baseline, {"B1"}) == {}
+    assert select_active_contracts(baseline, {"B1", "B2"}) == {
+        "clone": {"kind": "http", "path": "/api/clone"}
+    }
+
+
+def test_unbound_legacy_contract_remains_immediately_active() -> None:
+    select_active_contracts = getattr(
+        baseline_module, "select_active_contracts", None
+    )
+    assert callable(select_active_contracts), "缺少 contract 义务激活选择器"
+    baseline = _baseline()
+
+    assert select_active_contracts(baseline, set()) == baseline["contracts"]

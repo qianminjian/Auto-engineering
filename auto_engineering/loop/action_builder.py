@@ -842,20 +842,31 @@ class ActionBuilder:
         )
         if research_context:
             extra["research_and_design_context"] = research_context
+        is_refine = bool(self._state.refine_request_json)
+        expected_plan = {
+            "plan_patch": (
+                "{base_revision:int, add_batches:[{batch_id, design_section, "
+                "component, tasks:[...], depends_on}]}（只新增 revision 唯一 batch）"
+            )
+        } if is_refine else {
+            "batch_plan": (
+                "[{batch_id, design_section, component, "
+                "tasks:[{id, description, module_ref, file_targets}], "
+                "depends_on}] (min 1 batch)"
+            )
+        }
         return self._build_stage_action(base, "architect", context={
             "requirement": self._state.requirement,
             "design_doc_path": (
                 self._design_doc.path if self._design_doc else None
             ),
             "project_profile_summary": self._project_profile_summary(),
+            **({"plan_revision": self._state.plan_refine_count} if is_refine else {}),
             "feedback": extra.get("feedback", base.get("feedback")),
             "research_and_design_context": research_context,
         }, expected_format={
             "plan": "string (markdown, min 50 chars)",
-            "batch_plan": (
-                "[{batch_id, design_section, component, "
-                "tasks:[{id, description, module_ref, file_targets}], "
-                "depends_on}] (min 1 batch)"),
+            **expected_plan,
             "file_list": "[string] (min 1 file)",
             "contracts": (
                 "{name:{kind,path?,method?,request?,response?,status_codes?}}"

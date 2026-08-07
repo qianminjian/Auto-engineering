@@ -51,7 +51,7 @@ _CONTRACTS: Mapping[str, StagePromptContract] = MappingProxyType({
         ExecutionMode.SINGLE_WORKER,
         ("requirement", "design_doc_path", "project_profile_summary"),
         ("architect",),
-        ("feedback", "research_and_design_context"),
+        ("feedback", "research_and_design_context", "plan_revision"),
         ("design_document",),
     ),
     "developer": StagePromptContract(

@@ -1339,6 +1339,12 @@ class TickOrchestrator:
                 result,
                 self._state.requirement,
                 self._state.research_archive,
+                active_revision=(
+                    self._state.plan_refine_count
+                    if self._state.refine_request_json
+                    else 0
+                ),
+                current_baseline=self._state.architecture_baseline,
             )
             if dry_run_error:
                 return ErrorResponse(
@@ -1673,9 +1679,7 @@ class TickOrchestrator:
 
     def _initialize_architecture(self) -> None:
         """将 Architect 的纯决策物化为执行游标与进度树。"""
-        from auto_engineering.loop.architecture_baseline import (
-            build_architecture_baseline,
-        )
+        from auto_engineering.loop.architecture_baseline import build_architecture_baseline
 
         batches = BatchState.flatten_batch_plan(self._state.batch_plan)
         if self._batch_state is not None and self._state.plan_refine_count > 0:
@@ -1709,16 +1713,25 @@ class TickOrchestrator:
                 design_digest = hashlib.sha256(path.read_bytes()).hexdigest()
             except OSError:
                 design_digest = ""
+        previous_baseline = self._state.architecture_baseline or {}
+        contracts = dict(previous_baseline.get("contracts", {}))
+        contracts.update(self._state.contracts)
+        obligations_by_id = {
+            item.get("id"): item
+            for item in previous_baseline.get("obligations", [])
+            if isinstance(item, dict) and isinstance(item.get("id"), str)
+        }
+        for item in self._state._runtime_ctx.pop("architect_obligations", []):
+            if isinstance(item, dict) and isinstance(item.get("id"), str):
+                obligations_by_id[item["id"]] = item
         baseline = build_architecture_baseline(
             revision=max(1, self._state.plan_refine_count + 1),
             design_doc_path=design_path,
             design_doc_digest=design_digest,
             plan=self._state.plan,
             batch_plan=batches,
-            contracts=dict(self._state.contracts),
-            obligations=list(
-                self._state._runtime_ctx.pop("architect_obligations", [])
-            ),
+            contracts=contracts,
+            obligations=list(obligations_by_id.values()),
             accepted_at_tick=self._state.tick,
         )
         self._state.architecture_baseline = baseline
@@ -2604,12 +2617,19 @@ class TickOrchestrator:
             else self._state.files_changed
         )
         baseline = self._state.architecture_baseline or {}
-        baseline_contracts = baseline.get("contracts", {})
-        contracts = (
-            baseline_contracts
-            if isinstance(baseline_contracts, dict)
-            else self._state.contracts
+        from auto_engineering.loop.architecture_baseline import select_active_contracts
+
+        reached = (
+            self._batch_state.completed_batch_ids()
+            if self._batch_state
+            else set()
         )
+        if (
+            self._batch_state is not None
+            and not self._batch_state.is_component_complete()
+        ):
+            reached.add(self._batch_state.current_batch_id())
+        contracts = select_active_contracts(baseline, reached)
         results, duration_ms = self._tick_gate_runner.run(
             snapshot_files,
             stage=self._state.current_stage,
