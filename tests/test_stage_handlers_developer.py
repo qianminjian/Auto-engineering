@@ -34,7 +34,14 @@ def test_developer_advances_to_next_batch_with_checkpoint() -> None:
 
     assert decision.next_stage == "developer"
     assert decision.events[0].event_type is LoopEventType.BATCH_COMPLETED
-    assert decision.action_context["save_checkpoint"] is True
+    assert decision.lifecycle_effects.save_checkpoint is True
+    assert not {
+        "collect_token_usage",
+        "completed_batch_id",
+        "snapshot_developer_output",
+        "save_checkpoint",
+        "offload_stage",
+    } & decision.action_context.keys()
     assert decision.action_context["pre_gate"] == gate
     assert decision.action_context["developer_progress"]["next_task"] == "实现 B2"
 
@@ -52,8 +59,8 @@ def test_developer_component_completion_routes_to_critic() -> None:
     )
 
     assert decision.next_stage == "critic"
-    assert decision.action_context["snapshot_developer_output"] is True
-    assert decision.action_context["save_checkpoint"] is False
+    assert decision.lifecycle_effects.snapshot_developer_output is True
+    assert decision.lifecycle_effects.save_checkpoint is False
 
 
 def test_developer_required_gate_failure_stays_before_critic() -> None:

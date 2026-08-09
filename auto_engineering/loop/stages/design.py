@@ -10,6 +10,7 @@ from typing import Any
 from auto_engineering.loop.domain_events import channels_updated, transition_event
 from auto_engineering.loop.events import LoopEvent, LoopEventType
 from auto_engineering.loop.stages.base import (
+    LifecycleEffects,
     StageName,
     TransitionContext,
     TransitionDecision,
@@ -78,9 +79,7 @@ class ArchitectHandler:
                 _advanced(source=self.stage, target=target, context=context),
             ),
             next_stage=target,
-            action_context={
-                "offload_stage": self.stage,
-            },
+            lifecycle_effects=LifecycleEffects(offload_stage=self.stage),
         )
 
 
@@ -109,10 +108,11 @@ class CriticHandler:
             if verdict == "APPROVE" and blocking_findings
             else verdict
         )
-        common: dict[str, Any] = {
-            "collect_token_usage": True,
-            "offload_stage": self.stage,
-        }
+        common: dict[str, Any] = {}
+        lifecycle_effects = LifecycleEffects(
+            collect_token_usage=True,
+            offload_stage=self.stage,
+        )
         progress_event = transition_event(
             LoopEventType.CRITIC_PROGRESS_RECORDED,
             thread_id=context.thread_id,
@@ -126,7 +126,10 @@ class CriticHandler:
                     f"非法 verdict: {verdict!r}, 期望值: MAJOR 或 APPROVE"
                 ),
             }
-            return TransitionDecision(action_context=common)
+            return TransitionDecision(
+                action_context=common,
+                lifecycle_effects=lifecycle_effects,
+            )
 
         in_a_row = int(state.get("majors_in_a_row", 0))
         total = int(state.get("total_majors", 0))
@@ -158,6 +161,7 @@ class CriticHandler:
                 ),
                 next_stage=target,
                 action_context=common,
+                lifecycle_effects=lifecycle_effects,
             )
 
         in_a_row += 1
@@ -197,6 +201,7 @@ class CriticHandler:
                 )),
                 next_stage="architect",
                 action_context=common,
+                lifecycle_effects=lifecycle_effects,
             )
         fingerprint = hashlib.sha256(
             json.dumps(
@@ -234,6 +239,7 @@ class CriticHandler:
                 )),
                 terminal=True,
                 action_context=common,
+                lifecycle_effects=lifecycle_effects,
             )
         if repair_cycles >= max_repairs:
             common["terminal_action"] = {
@@ -249,6 +255,7 @@ class CriticHandler:
                 )),
                 terminal=True,
                 action_context=common,
+                lifecycle_effects=lifecycle_effects,
             )
 
         target = "developer"
@@ -271,6 +278,7 @@ class CriticHandler:
             ),
             next_stage=target,
             action_context=common,
+            lifecycle_effects=lifecycle_effects,
         )
 
 

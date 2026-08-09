@@ -1587,9 +1587,13 @@ class TickOrchestrator:
             self._activate_architecture_plan,
             self._record_critic_gate_progress,
             self._progress_tree,
+            self._collect_token_usage,
+            self._record_completed_batch,
+            self._snapshot_developer_output,
+            self._save_checkpoint,
+            self._offload_stage,
         )
-        if action_context.get("collect_token_usage"):
-            self._collect_token_usage()
+        transition_effects.apply_before_transition(decision.lifecycle_effects)
         reducer_registry = default_reducer_registry()
         for event in decision.events:
             # Stage 推进还需执行 round/history/checkpoint 生命周期，暂由 façade
@@ -1622,19 +1626,10 @@ class TickOrchestrator:
         refine_source = action_context.get("refine_source")
         if isinstance(refine_source, str):
             return self._handle_plan_refine(refine_source)
-        completed_batch_id = action_context.get("completed_batch_id")
-        if isinstance(completed_batch_id, str):
-            self._last_batch_id = completed_batch_id
         transition_effects.apply_developer_progress(
             action_context.get("developer_progress")
         )
-        if action_context.get("snapshot_developer_output"):
-            self._snapshot_developer_output()
-        if action_context.get("save_checkpoint"):
-            self._save_checkpoint()
-        offload_stage = action_context.get("offload_stage")
-        if isinstance(offload_stage, str):
-            self._offload_stage(offload_stage)
+        transition_effects.apply_after_progress(decision.lifecycle_effects)
         terminal_action = resolve_terminal_action(action_context)
         if terminal_action is not None:
             return terminal_action
@@ -1664,6 +1659,9 @@ class TickOrchestrator:
         if action_context.get("display_progress"):
             self._display_progress()
         return action
+
+    def _record_completed_batch(self, batch_id: str) -> None:
+        self._last_batch_id = batch_id
 
     def _activate_architecture_plan(self) -> None:
         """将 Architect 的纯决策物化为执行游标与进度树。"""

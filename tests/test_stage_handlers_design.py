@@ -47,7 +47,8 @@ def test_architect_initializes_plan_before_advancing() -> None:
     assert decision.events[0].event_type is (
         LoopEventType.ARCHITECTURE_PLAN_ACTIVATED
     )
-    assert decision.action_context["offload_stage"] == "architect"
+    assert decision.lifecycle_effects.offload_stage == "architect"
+    assert "offload_stage" not in decision.action_context
 
 
 def test_critic_rejects_unknown_verdict() -> None:

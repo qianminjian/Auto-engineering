@@ -24,6 +24,17 @@ StageName = Literal[
 
 
 @dataclass(frozen=True, slots=True)
+class LifecycleEffects:
+    """Stage 转换声明的进程内生命周期动作；不承载业务状态 patch。"""
+
+    collect_token_usage: bool = False
+    completed_batch_id: str | None = None
+    snapshot_developer_output: bool = False
+    save_checkpoint: bool = False
+    offload_stage: StageName | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class TransitionContext:
     """一次 Stage 转换所需的内核上下文。"""
 
@@ -42,6 +53,7 @@ class TransitionDecision:
     gate: Mapping[str, Any] | None = None
     terminal: bool = False
     action_context: Mapping[str, Any] = field(default_factory=dict)
+    lifecycle_effects: LifecycleEffects = field(default_factory=LifecycleEffects)
 
 
 @runtime_checkable
@@ -59,6 +71,7 @@ class StageHandler(Protocol):
 
 
 __all__ = [
+    "LifecycleEffects",
     "StageHandler",
     "StageName",
     "TransitionContext",

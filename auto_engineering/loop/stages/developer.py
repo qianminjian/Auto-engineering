@@ -8,6 +8,7 @@ from typing import Any
 from auto_engineering.loop.domain_events import transition_event
 from auto_engineering.loop.events import LoopEvent, LoopEventType
 from auto_engineering.loop.stages.base import (
+    LifecycleEffects,
     StageName,
     TransitionContext,
     TransitionDecision,
@@ -31,10 +32,12 @@ class DeveloperHandler:
             and blocking
         ):
             return TransitionDecision(
+                lifecycle_effects=LifecycleEffects(
+                    collect_token_usage=True,
+                    offload_stage=self.stage,
+                ),
                 next_stage="developer",
                 action_context={
-                    "collect_token_usage": True,
-                    "offload_stage": self.stage,
                     "stay_in_stage": True,
                     "feedback": {
                         "reason": "required_gate_failed",
@@ -54,19 +57,13 @@ class DeveloperHandler:
             "next_task": context.extensions.get("next_task"),
         }
         action_context = {
-            "collect_token_usage": True,
-            "completed_batch_id": context.extensions.get(
-                "completed_batch_id"
-            ),
             "developer_progress": progress,
-            "save_checkpoint": more,
-            "offload_stage": self.stage,
-            "snapshot_developer_output": not more,
             "stay_in_stage": more,
         }
         pre_gate = context.extensions.get("next_pre_gate")
         if more and isinstance(pre_gate, Mapping):
             action_context["pre_gate"] = dict(pre_gate)
+        completed_batch_id = context.extensions.get("completed_batch_id")
         events: tuple[LoopEvent, ...] = (
             transition_event(
                 LoopEventType.BATCH_COMPLETED,
@@ -88,6 +85,17 @@ class DeveloperHandler:
             events=events,
             next_stage=target,
             action_context=action_context,
+            lifecycle_effects=LifecycleEffects(
+                collect_token_usage=True,
+                completed_batch_id=(
+                    completed_batch_id
+                    if isinstance(completed_batch_id, str)
+                    else None
+                ),
+                save_checkpoint=more,
+                offload_stage=self.stage,
+                snapshot_developer_output=not more,
+            ),
         )
 
 

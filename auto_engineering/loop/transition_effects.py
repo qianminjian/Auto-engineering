@@ -7,6 +7,7 @@ from collections.abc import Callable, Sequence
 from auto_engineering.engine.batch_state import BatchState
 from auto_engineering.engine.progress_tree import ProgressTree
 from auto_engineering.loop.events import LoopEvent, LoopEventType
+from auto_engineering.loop.stages.base import LifecycleEffects
 
 
 class TransitionEffectExecutor:
@@ -18,11 +19,41 @@ class TransitionEffectExecutor:
         activate_architecture: Callable[[], None],
         record_critic_progress: Callable[[str], None],
         progress_tree: ProgressTree | None = None,
+        collect_token_usage: Callable[[], None] | None = None,
+        record_completed_batch: Callable[[str], None] | None = None,
+        snapshot_developer_output: Callable[[], None] | None = None,
+        save_checkpoint: Callable[[], None] | None = None,
+        offload_stage: Callable[[str], None] | None = None,
     ) -> None:
         self._batch_state = batch_state
         self._activate_architecture = activate_architecture
         self._record_critic_progress = record_critic_progress
         self._progress_tree = progress_tree
+        self._collect_token_usage = collect_token_usage
+        self._record_completed_batch = record_completed_batch
+        self._snapshot_developer_output = snapshot_developer_output
+        self._save_checkpoint = save_checkpoint
+        self._offload_stage = offload_stage
+
+    def apply_before_transition(self, effects: LifecycleEffects) -> None:
+        if effects.collect_token_usage and self._collect_token_usage is not None:
+            self._collect_token_usage()
+
+    def apply_after_progress(self, effects: LifecycleEffects) -> None:
+        if (
+            effects.completed_batch_id is not None
+            and self._record_completed_batch is not None
+        ):
+            self._record_completed_batch(effects.completed_batch_id)
+        if (
+            effects.snapshot_developer_output
+            and self._snapshot_developer_output is not None
+        ):
+            self._snapshot_developer_output()
+        if effects.save_checkpoint and self._save_checkpoint is not None:
+            self._save_checkpoint()
+        if effects.offload_stage is not None and self._offload_stage is not None:
+            self._offload_stage(effects.offload_stage)
 
     def apply_pre_progress(self, events: Sequence[LoopEvent]) -> None:
         for event in events:

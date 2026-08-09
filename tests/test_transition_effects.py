@@ -6,6 +6,7 @@ from unittest.mock import Mock
 
 from auto_engineering.engine.batch_state import BatchState
 from auto_engineering.loop.events import LoopEvent, LoopEventType
+from auto_engineering.loop.stages.base import LifecycleEffects
 from auto_engineering.loop.transition_effects import TransitionEffectExecutor
 
 
@@ -106,3 +107,35 @@ def test_component_verification_progress_is_applied_outside_orchestrator() -> No
     assert node.verifier_missing == 1
     assert node.verifier_diverged == 2
     progress_tree.recalculate_parents.assert_called_once_with("node-1")
+
+
+def test_declared_lifecycle_effects_run_in_stable_order() -> None:
+    calls: list[str] = []
+    executor = TransitionEffectExecutor(
+        _batch_state(),
+        Mock(),
+        Mock(),
+        collect_token_usage=lambda: calls.append("usage"),
+        record_completed_batch=lambda batch_id: calls.append(f"batch:{batch_id}"),
+        snapshot_developer_output=lambda: calls.append("snapshot"),
+        save_checkpoint=lambda: calls.append("checkpoint"),
+        offload_stage=lambda stage: calls.append(f"offload:{stage}"),
+    )
+    effects = LifecycleEffects(
+        collect_token_usage=True,
+        completed_batch_id="B1",
+        snapshot_developer_output=True,
+        save_checkpoint=True,
+        offload_stage="developer",
+    )
+
+    executor.apply_before_transition(effects)
+    executor.apply_after_progress(effects)
+
+    assert calls == [
+        "usage",
+        "batch:B1",
+        "snapshot",
+        "checkpoint",
+        "offload:developer",
+    ]
