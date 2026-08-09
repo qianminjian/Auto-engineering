@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import io
 import json
 import tarfile
@@ -67,6 +68,48 @@ def _add_json(
     info.size = len(content)
     info.mode = 0o644
     package.addfile(info, io.BytesIO(content))
+
+
+def _release_content_digest(root: Path) -> str:
+    """计算进入发布包的源资产摘要，不受 tar 元数据和输出路径影响。"""
+    digest = hashlib.sha256()
+    files: list[tuple[Path, Path]] = []
+    for required in REQUIRED_PATHS:
+        source = root / required
+        if source.is_dir():
+            for path in source.rglob("*"):
+                if not path.is_file():
+                    continue
+                relative = path.relative_to(root)
+                if any(part in _EXCLUDED_PARTS for part in relative.parts):
+                    continue
+                if path.name.endswith((".pyc", ".pyo")) or path.name == ".DS_Store":
+                    continue
+                files.append((relative, path))
+        else:
+            files.append((required, source))
+    for relative, path in sorted(files, key=lambda item: item[0].as_posix()):
+        digest.update(relative.as_posix().encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def _build_info(root: Path) -> dict[str, object]:
+    content_digest = _release_content_digest(root)
+    metadata = json.loads(
+        (root / ".codex-plugin/plugin.json").read_text(encoding="utf-8")
+    )
+    version = metadata.get("version")
+    if not isinstance(version, str) or not version:
+        raise ValueError(".codex-plugin/plugin.json version 必须为非空字符串")
+    return {
+        "schema_version": "1.0",
+        "version": version,
+        "content_sha256": content_digest,
+        "build_id": f"{version}+sha256.{content_digest[:16]}",
+    }
 
 
 def _marketplace_manifests(root: Path) -> tuple[dict[str, object], dict[str, object]]:
@@ -141,6 +184,9 @@ def build_archive(root: Path, output: Path) -> Path:
             Path(".agents/plugins/marketplace.json"),
             codex_marketplace,
         )
+        build_info = _build_info(resolved_root)
+        _add_json(package, Path("build-info.json"), build_info)
+        _add_json(package, _PLUGIN_ROOT / "build-info.json", build_info)
     return output
 
 

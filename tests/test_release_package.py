@@ -3,12 +3,26 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 import tarfile
 from pathlib import Path
 
 import pytest
 
 ROOT = Path(__file__).parents[1]
+
+
+def test_release_builder_runs_with_documented_plain_python_entrypoint() -> None:
+    result = subprocess.run(
+        [sys.executable, "scripts/build_release.py", "--help"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
 
 
 def test_release_archive_contains_both_host_adapters(tmp_path: Path) -> None:
@@ -29,6 +43,31 @@ def test_release_archive_contains_both_host_adapters(tmp_path: Path) -> None:
     assert "plugins/auto-engineering/AGENTS.md" not in members
     for required in REQUIRED_PATHS:
         assert required.as_posix() in members
+
+
+def test_release_embeds_one_content_addressed_build_identity(tmp_path: Path) -> None:
+    from auto_engineering import __version__
+    from scripts.build_release import build_archive
+
+    archive = tmp_path / "auto-engineering-build-id.tar.gz"
+    build_archive(ROOT, archive)
+
+    with tarfile.open(archive, "r:gz") as package:
+        root_file = package.extractfile("build-info.json")
+        plugin_file = package.extractfile(
+            "plugins/auto-engineering/build-info.json"
+        )
+        assert root_file is not None
+        assert plugin_file is not None
+        root_info = json.load(root_file)
+        plugin_info = json.load(plugin_file)
+
+    assert root_info == plugin_info
+    assert root_info["version"] == __version__
+    assert root_info["build_id"] != __version__
+    assert root_info["build_id"].endswith(
+        root_info["content_sha256"][:16]
+    )
 
 
 def test_release_archive_is_self_contained_dual_host_marketplace(

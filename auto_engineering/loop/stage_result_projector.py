@@ -7,6 +7,7 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 from auto_engineering.engine.state import EngineState
+from auto_engineering.loop.architecture_candidate import ArchitectureCandidateBuilder
 
 
 class StageResultProjector:
@@ -58,19 +59,30 @@ class StageResultProjector:
         state.plan = result.get("plan", "")
         plan_patch = result.get("plan_patch")
         if isinstance(plan_patch, Mapping):
+            candidate = ArchitectureCandidateBuilder().build(
+                result,
+                active_revision=state.plan_refine_count,
+                current_baseline=state.architecture_baseline,
+            )
             state.batch_plan = plan_patch.get("add_batches", [])
             state._runtime_ctx["plan_patch_base_revision"] = plan_patch.get(
                 "base_revision"
             )
+            state._runtime_ctx["architecture_candidate"] = candidate
+            state.contracts = candidate["contracts"]
+            state._runtime_ctx["architect_obligations"] = candidate[
+                "obligations"
+            ]
         else:
             state.batch_plan = result.get("batch_plan", [])
             state._runtime_ctx.pop("plan_patch_base_revision", None)
+            state._runtime_ctx.pop("architecture_candidate", None)
+            state.contracts = result.get("contracts", {})
+            state._runtime_ctx["architect_obligations"] = result.get(
+                "obligations",
+                [],
+            )
         state.file_list = result.get("file_list", [])
-        state.contracts = result.get("contracts", {})
-        state._runtime_ctx["architect_obligations"] = result.get(
-            "obligations",
-            [],
-        )
 
     @staticmethod
     def _apply_developer(

@@ -6,6 +6,10 @@ from auto_engineering.engine.batch_state import BatchState
 from auto_engineering.engine.design_doc import DesignDoc
 from auto_engineering.engine.progress_tree import ProgressTree
 from auto_engineering.engine.verification_layers import determine_verification_layers
+from auto_engineering.loop.architecture_candidate import (
+    ArchitectureCandidateBuilder,
+    ArchitectureCandidateError,
+)
 from auto_engineering.loop.task_factory import tasks_from_batch_plan
 
 
@@ -77,51 +81,14 @@ def dry_run_architect_plan(
     current_baseline: dict | None = None,
 ) -> str | None:
     """验证 Architect 计划能否初始化执行树，不修改现有状态。"""
-    candidate = dict(result)
-    patch = result.get("plan_patch")
-    if active_revision > 0:
-        if not isinstance(patch, dict):
-            return "PLAN_REFINE 必须提交 plan_patch，禁止重发完整 batch_plan"
-        if result.get("batch_plan") is not None:
-            return "PLAN_REFINE 不得同时提交 batch_plan 与 plan_patch"
-        if patch.get("base_revision") != active_revision:
-            return (
-                "PLAN_REVISION_CONFLICT: "
-                f"base={patch.get('base_revision')}, active={active_revision}"
-            )
-        baseline = current_baseline or {}
-        existing_batches = baseline.get("batch_plan", [])
-        additions = patch.get("add_batches", [])
-        existing_ids = {
-            str(batch.get("batch_id"))
-            for batch in existing_batches
-            if isinstance(batch, dict)
-        }
-        duplicate_ids = sorted({
-            str(batch.get("batch_id"))
-            for batch in additions
-            if isinstance(batch, dict)
-            and str(batch.get("batch_id")) in existing_ids
-        })
-        if duplicate_ids:
-            return f"PLAN_BATCH_CONFLICT: {', '.join(duplicate_ids)}"
-        contracts = dict(baseline.get("contracts", {}))
-        contracts.update(result.get("contracts", {}))
-        obligations_by_id = {
-            item.get("id"): item
-            for item in baseline.get("obligations", [])
-            if isinstance(item, dict) and isinstance(item.get("id"), str)
-        }
-        for item in result.get("obligations", []):
-            if not isinstance(item, dict) or not isinstance(item.get("id"), str):
-                continue
-            previous = obligations_by_id.get(item["id"])
-            if previous is not None and previous != item:
-                return f"obligation revision conflict: {item['id']}"
-            obligations_by_id[item["id"]] = item
-        candidate["batch_plan"] = [*existing_batches, *additions]
-        candidate["contracts"] = contracts
-        candidate["obligations"] = list(obligations_by_id.values())
+    try:
+        candidate = ArchitectureCandidateBuilder().build(
+            result,
+            active_revision=active_revision,
+            current_baseline=current_baseline,
+        )
+    except ArchitectureCandidateError as exc:
+        return str(exc)
 
     obligation_error = validate_architect_obligations(
         candidate, research_archive or {}

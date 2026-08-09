@@ -41,6 +41,9 @@ Engineering 的问答、模板或脚手架；把 archive smoke 冒充真实产�
 | D18 | Prompt/Policy 等运行时变化只在 Action 边界激活，活动 Action 不可变 | ✅ |
 | D19 | 新状态事实使用显式领域事件；完整 state patch 只作 legacy 读取 | ✅ |
 | D20 | ActionCompiler 纯化，TickOrchestrator 按 Stage 绞杀，不建立第二内核 | ✅ |
+| D21 | Legacy 兼容按 payload 能力适配全部旧事件类型；新写入在 EventStore 边界拒绝 `state_patch` | ✅ |
+| D22 | Baseline、PlanPatch、contracts、obligations 只物化一次 Architecture Candidate，校验与激活共享 | ✅ |
+| D23 | SemVer 表示发布版本，内容寻址 Build Identity 区分同版本的不同制品和源码 | ✅ |
 
 ## 当前状态
 
@@ -49,11 +52,14 @@ Engineering 的问答、模板或脚手架；把 archive smoke 冒充真实产�
   TickOrchestrator、全状态事件补丁、线程级 Prompt 锁和非机器化续跑仍在生产路径。
 - 方案 B 已批准；Phase 80 按 Runtime Vector、Execution Control、显式 Reducer、纯
   ActionCompiler 和 Stage-by-Stage strangling 统一收敛，完成前冻结新的点状真跑补丁。
-- T404-T410、T413 已通过自动门禁；TickOrchestrator 已无具体 Stage 分支，Codex
-  原生 spawn 能力已机器化绑定；当前发布阻断只剩 T411-T412 的真实双宿主产品长跑与发布证据收口。
+- T404-T410、T413-T420 已通过自动门禁；真实 rc.5 旧流已在隔离副本从 Architect
+  恢复到 Developer，TickOrchestrator 已无具体 Stage 分支。
+- 当前发布阻断只剩 T411-T412 的真实双宿主产品长跑与发布证据收口；自动门禁为
+  2266 passed/1 skipped、coverage 90%、Ruff/mypy、双宿主 archive smoke 通过。
 ## 最近演进
 | 日期 | 变更 |
 |---|---|
+| 2026-08-09 | 关闭 rc.5 旧事件重放、PlanPatch 候选分叉与 Build Identity 事故 |
 | 2026-08-09 | 修复 Codex Architect 对原生 `spawn_agent` 的错误能力判定 |
 | 2026-08-09 | 完成 T404-T410 协议内核收敛；façade 退出 Stage 专属分支 |
 | 2026-08-06 | 归档 Tick 19 PlanPatch 冲突；禁止 full-plan refine，按义务延迟激活 Contract |
@@ -65,6 +71,7 @@ Engineering 的问答、模板或脚手架；把 archive smoke 冒充真实产�
 ## 待解决问题
 
 - T411-T412：完成跨版本 150 Tick、双宿主真实产品门禁后再生成下一 RC。
+- T421：清理测试套件中 SQLite connection `ResourceWarning`，不阻断本次协议修复。
 
 ## 引用文件
 

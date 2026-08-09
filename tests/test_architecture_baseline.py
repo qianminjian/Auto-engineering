@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from auto_engineering.engine.state import EngineState
 from auto_engineering.loop import architecture_baseline as baseline_module
-from auto_engineering.loop.architect_validation import validate_architect_obligations
+from auto_engineering.loop.architect_validation import (
+    dry_run_architect_plan,
+    validate_architect_obligations,
+)
 from auto_engineering.loop.architecture_baseline import build_architecture_baseline
 from auto_engineering.loop.stage_router import clear_stage_fields
 
@@ -88,6 +91,83 @@ def test_architect_contract_values_must_be_objects() -> None:
     }
 
     assert "api" in (validate_architect_obligations(result, {}) or "")
+
+
+def _refine_baseline() -> dict:
+    return build_architecture_baseline(
+        revision=1,
+        design_doc_path="design/spec.md",
+        design_doc_digest="a" * 64,
+        plan="实现基础能力",
+        batch_plan=[{
+            "batch_id": "B1",
+            "tasks": [
+                {"id": "B1-T1", "kind": "implementation"},
+                {"id": "B1-T2", "kind": "test"},
+            ],
+        }],
+        contracts={},
+        obligations=[{
+            "id": "O1",
+            "source_ref": "gap-1",
+            "summary": "基础义务",
+            "implementation_targets": ["B1-T1"],
+            "verification_targets": ["B1-T2"],
+            "contract_refs": [],
+        }],
+        accepted_at_tick=1,
+    )
+
+
+def _refine_result() -> dict:
+    return {
+        "plan_patch": {
+            "base_revision": 1,
+            "add_batches": [{
+                "batch_id": "B2",
+                "tasks": [
+                    {"id": "B2-T1", "kind": "implementation"},
+                    {"id": "B2-T2", "kind": "test"},
+                ],
+            }],
+        },
+        "contracts": {},
+        "obligations": [],
+    }
+
+
+def test_refine_candidate_inherits_baseline_obligations() -> None:
+    error = dry_run_architect_plan(
+        None,
+        _refine_result(),
+        "修复差异",
+        {"gap-1": {}},
+        active_revision=1,
+        current_baseline=_refine_baseline(),
+    )
+
+    assert error is None
+
+
+def test_refine_candidate_explicitly_extends_obligation_by_source_ref() -> None:
+    result = _refine_result()
+    result["plan_patch"]["obligation_updates"] = [{
+        "source_ref": "gap-1",
+        "add_implementation_targets": ["B2-T1"],
+        "add_verification_targets": ["B2-T2"],
+        "add_contract_refs": [],
+    }]
+
+    error = dry_run_architect_plan(
+        None,
+        result,
+        "修复差异",
+        {"gap-1": {}},
+        active_revision=1,
+        current_baseline=_refine_baseline(),
+    )
+
+    assert error is None
 
 
 def test_contract_activates_only_after_all_implementation_targets_reached() -> None:

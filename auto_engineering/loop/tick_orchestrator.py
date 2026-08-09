@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 from uuid import uuid4
 
-from auto_engineering import __version__
+from auto_engineering.build_identity import current_build_identity
 from auto_engineering.config.constants import _SPAWN_CONFIG, DEFAULT_P1_THRESHOLD, STAGE_TO_ROLE
 from auto_engineering.config.runtime_config import RuntimeConfig, get_default_config
 from auto_engineering.context.offloading import StageContextOffload
@@ -1956,7 +1956,7 @@ class TickOrchestrator:
             action_contract_version="1.0",
             prompt_revision=default_registry().registry_hash(),
             policy_revision=policy_revision,
-            engine_build_id=__version__,
+            engine_build_id=current_build_identity(),
         )
 
     def _issued_runtime_revision(

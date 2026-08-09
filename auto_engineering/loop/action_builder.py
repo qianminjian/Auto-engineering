@@ -857,7 +857,12 @@ class ActionBuilder:
         expected_plan = {
             "plan_patch": (
                 "{base_revision:int, add_batches:[{batch_id, design_section, "
-                "component, tasks:[...], depends_on}]}（只新增 revision 唯一 batch）"
+                "component, tasks:[...], depends_on}], "
+                "obligation_updates?:[{source_ref, "
+                "add_implementation_targets?:[task_id], "
+                "add_verification_targets?:[test_task_id], "
+                "add_contract_refs?:[name]}]}"
+                "（只新增 revision 唯一 batch）"
             )
         } if is_refine else {
             "batch_plan": (
@@ -884,9 +889,14 @@ class ActionBuilder:
                 "（每个值必须为 object，可为空）"
             ),
             "obligations": (
-                "[{id,source_ref,summary,implementation_targets:[task_id],"
-                "verification_targets:[test_task_id],contract_refs:[name]}]；"
-                "research_and_design_context 非空时必须逐 source_ref 覆盖"
+                (
+                    "[] 表示历史 obligation 自动继承；只提交新 source_ref 的义务，"
+                    "已有 source_ref 的目标增量写入 plan_patch.obligation_updates"
+                ) if is_refine else (
+                    "[{id,source_ref,summary,implementation_targets:[task_id],"
+                    "verification_targets:[test_task_id],contract_refs:[name]}]；"
+                    "research_and_design_context 非空时必须逐 source_ref 覆盖"
+                )
             ),
         }, **extra)
 

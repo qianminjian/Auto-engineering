@@ -47,6 +47,8 @@ class ArchitectureActivationService:
         verification_layers: VerificationLayers | None,
         emit: EmitEvent,
     ) -> ArchitectureActivationResult:
+        raw_candidate = state._runtime_ctx.get("architecture_candidate")
+        candidate = raw_candidate if isinstance(raw_candidate, dict) else None
         batches = BatchState.flatten_batch_plan([
             dict(item) for item in state.batch_plan
         ])
@@ -71,6 +73,10 @@ class ArchitectureActivationService:
             )
             batches = batch_state.batch_plan
         else:
+            if candidate is not None:
+                batches = BatchState.flatten_batch_plan([
+                    dict(item) for item in candidate.get("batch_plan", [])
+                ])
             batch_state = (
                 BatchState.from_design_doc(design_doc, batches)
                 if design_doc is not None
@@ -122,19 +128,33 @@ class ArchitectureActivationService:
                 digest = hashlib.sha256(path.read_bytes()).hexdigest()
             except OSError:
                 digest = ""
-        previous = state.architecture_baseline or {}
-        contracts = dict(previous.get("contracts", {}))
-        contracts.update(state.contracts)
-        obligations = {
-            item.get("id"): item
-            for item in previous.get("obligations", [])
-            if isinstance(item, dict) and isinstance(item.get("id"), str)
-        }
-        raw_obligations = state._runtime_ctx.pop("architect_obligations", [])
-        if isinstance(raw_obligations, list):
-            for item in raw_obligations:
-                if isinstance(item, dict) and isinstance(item.get("id"), str):
-                    obligations[item["id"]] = item
+        raw_candidate = state._runtime_ctx.pop("architecture_candidate", None)
+        if isinstance(raw_candidate, dict):
+            candidate_batches = raw_candidate.get("batch_plan", [])
+            if candidate_batches != batches:
+                raise ValueError("ARCHITECTURE_CANDIDATE_DRIFT")
+            contracts = dict(raw_candidate.get("contracts", {}))
+            raw_obligations = raw_candidate.get("obligations", [])
+            obligations = list(raw_obligations) if isinstance(
+                raw_obligations,
+                list,
+            ) else []
+            state._runtime_ctx.pop("architect_obligations", None)
+        else:
+            previous = state.architecture_baseline or {}
+            contracts = dict(previous.get("contracts", {}))
+            contracts.update(state.contracts)
+            obligations_by_id = {
+                item.get("id"): item
+                for item in previous.get("obligations", [])
+                if isinstance(item, dict) and isinstance(item.get("id"), str)
+            }
+            raw_obligations = state._runtime_ctx.pop("architect_obligations", [])
+            if isinstance(raw_obligations, list):
+                for item in raw_obligations:
+                    if isinstance(item, dict) and isinstance(item.get("id"), str):
+                        obligations_by_id[item["id"]] = item
+            obligations = list(obligations_by_id.values())
         return build_architecture_baseline(
             revision=max(1, state.plan_refine_count + 1),
             design_doc_path=design_path,
@@ -142,7 +162,7 @@ class ArchitectureActivationService:
             plan=state.plan,
             batch_plan=batches,
             contracts=contracts,
-            obligations=list(obligations.values()),
+            obligations=obligations,
             accepted_at_tick=state.tick,
         )
 

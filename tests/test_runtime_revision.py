@@ -2,11 +2,27 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
+from auto_engineering.build_identity import source_build_identity
 from auto_engineering.loop.runtime_revision import (
     CompatibilityDecision,
     RuntimeRevision,
     evaluate_compatibility,
 )
+
+
+def test_source_build_identity_changes_with_runtime_content(tmp_path: Path) -> None:
+    package = tmp_path / "auto_engineering"
+    package.mkdir()
+    (package / "engine.py").write_text("VALUE = 1\n", encoding="utf-8")
+    first = source_build_identity(package, version="5.8.0-rc.5")
+
+    (package / "engine.py").write_text("VALUE = 2\n", encoding="utf-8")
+    second = source_build_identity(package, version="5.8.0-rc.5")
+
+    assert first != second
+    assert first.startswith("5.8.0-rc.5+source.sha256.")
 
 
 def _revision(*, prompt: str = "prompt-a", build: str = "rc.5") -> RuntimeRevision:

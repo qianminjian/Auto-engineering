@@ -20,3 +20,7 @@ refine_request:
 
 `suggested_action` 是每条 gap 的建议动作, 按需采纳。同一源第 2 次仍未解决即会被
 REFINE_LIMIT 中止 —— 本轮务必产出能实质闭合 gap 的计划, 不要空转。
+
+历史 `batch_plan`、contracts 和 obligations 由引擎按 `plan_revision` 自动继承。不得重复提交
+历史 obligation；只在 `obligations` 中提交新 source_ref。已有 source_ref 若需关联新增 task
+或 contract，使用 `plan_patch.obligation_updates` 的追加字段，不重写历史事实。

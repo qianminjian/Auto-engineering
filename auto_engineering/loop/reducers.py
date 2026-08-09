@@ -7,6 +7,10 @@ from typing import Any
 
 from auto_engineering.engine.state import EngineState
 from auto_engineering.loop.events import LoopEvent, LoopEventType
+from auto_engineering.loop.legacy_event_adapter import (
+    LegacyEventAdapter,
+    LegacyEventError,
+)
 
 
 class EventChannelViolation(ValueError):
@@ -248,25 +252,18 @@ class ReducerRegistry:
         self._reducers[event_type] = reducer
 
     def reduce(self, state: EngineState, event: LoopEvent) -> EngineState:
-        if event.event_type is LoopEventType.RESULT_ACCEPTED:
-            patch = _payload(event).get("state_patch")
-            if patch is not None:
-                return self._reduce_legacy_patch(state, patch)
+        try:
+            adapted = LegacyEventAdapter().adapt(state, event)
+        except LegacyEventError as exc:
+            raise EventChannelViolation(str(exc)) from exc
+        if adapted is not None:
+            self.legacy_patch_count += 1
+            state = adapted.state
+            event = adapted.event
         reducer = self._reducers.get(event.event_type)
         if reducer is None:
             raise EventChannelViolation(f"未注册事件 Reducer: {event.event_type.value}")
         return reducer(state, event)
-
-    def _reduce_legacy_patch(
-        self,
-        state: EngineState,
-        patch: object,
-    ) -> EngineState:
-        if not isinstance(patch, Mapping):
-            raise EventChannelViolation("legacy state_patch 必须为 object")
-        self.legacy_patch_count += 1
-        return _copy(state, **dict(patch))
-
 
 def default_reducer_registry() -> ReducerRegistry:
     registry = ReducerRegistry()

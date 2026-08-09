@@ -1003,8 +1003,11 @@ class TestPlanRefineProgressSync:
 
         action = o._active_action
         assert action["expected_format"]["plan_patch"].startswith("{")
+        assert "obligation_updates" in action["expected_format"]["plan_patch"]
         assert "batch_plan" not in action["expected_format"]
         assert '"plan_revision": 1' in action["subagent_prompt"]
+        assert "历史 obligation 自动继承" in action["subagent_prompt"]
+        assert "不得重复提交" in action["subagent_prompt"]
 
     def test_refine_patch_cannot_delete_existing_component(self) -> None:
         o = _orchestrator(max_rounds=20)

@@ -40,7 +40,7 @@ def test_stage_advanced_reducer_changes_only_stage() -> None:
     assert state.current_stage == "architect"
 
 
-def test_stage_event_rejects_cross_channel_state_patch() -> None:
+def test_legacy_adapter_does_not_hide_other_stage_event_cross_channel_fields() -> None:
     registry = default_reducer_registry()
 
     with pytest.raises(EventChannelViolation, match="StageAdvanced"):
@@ -48,9 +48,61 @@ def test_stage_event_rejects_cross_channel_state_patch() -> None:
             EngineState(thread_id="thread-1"),
             _event(
                 LoopEventType.STAGE_ADVANCED,
-                {"from": "architect", "to": "developer", "state_patch": {"tick": 9}},
+                {
+                    "from": "architect",
+                    "to": "developer",
+                    "state_patch": {"tick": 9},
+                    "unexpected_channel": True,
+                },
             ),
         )
+
+
+def test_legacy_stage_event_applies_patch_before_advancing_stage() -> None:
+    registry = default_reducer_registry()
+    state = EngineState(
+        thread_id="thread-1",
+        current_stage="gap_review",
+        pending_research_ids=["gap-1"],
+    )
+
+    reduced = registry.reduce(
+        state,
+        _event(
+            LoopEventType.STAGE_ADVANCED,
+            {
+                "from": "gap_review",
+                "to": "research",
+                "state_patch": {
+                    "pending_research_ids": [],
+                    "research_archive": {"gap-1": {"status": "complete"}},
+                },
+            },
+        ),
+    )
+
+    assert reduced.current_stage == "research"
+    assert reduced.pending_research_ids == []
+    assert reduced.research_archive == {"gap-1": {"status": "complete"}}
+    assert registry.legacy_patch_count == 1
+
+
+def test_event_store_rejects_new_stage_event_state_patch() -> None:
+    store = SQLiteEventStore(":memory:")
+    event = LoopEvent.create(
+        thread_id="thread-1",
+        sequence=0,
+        event_type=LoopEventType.STAGE_ADVANCED,
+        payload={
+            "from": "architect",
+            "to": "developer",
+            "state_patch": {"tick": 9},
+        },
+        correlation_id="thread-1",
+    )
+
+    with pytest.raises(ValueError, match="NEW_STATE_PATCH_FORBIDDEN"):
+        store.append([event])
 
 
 def test_runtime_revision_activation_is_explicit() -> None:
@@ -124,7 +176,7 @@ def test_event_store_rejects_new_complete_state_patch() -> None:
     )
     store = SQLiteEventStore(":memory:")
 
-    with pytest.raises(ValueError, match="FULL_STATE_PATCH_FORBIDDEN"):
+    with pytest.raises(ValueError, match="NEW_STATE_PATCH_FORBIDDEN"):
         store.append([event])
 
 

@@ -1,0 +1,36 @@
+[
+  {
+    "event_type": "StageAdvanced",
+    "payload": {
+      "from": "gap_review",
+      "to": "research",
+      "state_patch": {
+        "gap_report_json": "{\"gaps\": [{\"id\": \"gap-1\", \"resolution\": \"research\"}]}",
+        "pending_research_ids": ["gap-1"],
+        "research_archive": {}
+      }
+    }
+  },
+  {
+    "event_type": "ResultAccepted",
+    "payload": {
+      "state_patch": {
+        "tick": 2,
+        "round": 2
+      }
+    }
+  },
+  {
+    "event_type": "StageAdvanced",
+    "payload": {
+      "from": "research",
+      "to": "architect",
+      "state_patch": {
+        "pending_research_ids": [],
+        "research_archive": {
+          "gap-1": {"recommended_design": "采用服务端边界"}
+        }
+      }
+    }
+  }
+]

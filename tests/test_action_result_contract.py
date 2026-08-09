@@ -167,6 +167,22 @@ class TestResultSchemaMirrorsRuntimeSSOT:
                 f"vs RESULT_SCHEMA={sorted(spec['required'])}"
             )
 
+    def test_refine_schema_accepts_typed_obligation_updates(self):
+        result = _valid_result("architect")
+        result.pop("batch_plan")
+        result["plan_patch"] = {
+            "base_revision": 1,
+            "add_batches": [{"batch_id": "b2", "tasks": []}],
+            "obligation_updates": [{
+                "source_ref": "§1",
+                "add_implementation_targets": ["B2-T1"],
+                "add_verification_targets": ["B2-T2"],
+                "add_contract_refs": ["ExistingAPI"],
+            }],
+        }
+
+        assert list(_result_validator.iter_errors(result)) == []
+
 
 class TestActionSchemaStagesMirrorSSOT:
     def _enum(self) -> set[str]:

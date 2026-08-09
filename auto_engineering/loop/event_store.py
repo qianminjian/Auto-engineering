@@ -176,13 +176,12 @@ class SQLiteEventStore:
                 and event.causation_id is None
             ):
                 raise ValueError("ResultAccepted 必须包含 causation_id")
-            if event.event_type is LoopEventType.RESULT_ACCEPTED:
-                payload = event.to_dict()["payload"]
-                patch = payload.get("state_patch")
-                if isinstance(patch, Mapping):
-                    state_fields = set(EngineState(thread_id="validation").to_dict())
-                    if state_fields <= set(patch) and payload.get("legacy_import") is not True:
-                        raise ValueError("FULL_STATE_PATCH_FORBIDDEN")
+            payload = event.to_dict()["payload"]
+            patch = payload.get("state_patch")
+            if patch is not None and payload.get("legacy_import") is not True:
+                raise ValueError(
+                    f"NEW_STATE_PATCH_FORBIDDEN: {event.event_type.value}"
+                )
 
     def commit_tick(
         self,
