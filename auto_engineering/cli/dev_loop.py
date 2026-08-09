@@ -7,8 +7,9 @@ v5.5 Orchestrator 已退役 (T133b).
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterable, Mapping
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from auto_engineering.config.runtime_config import RuntimeConfig, get_default_config
@@ -16,6 +17,8 @@ from auto_engineering.engine.state import EngineState
 
 if TYPE_CHECKING:
     from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
+    from auto_engineering.loop.event_store import EffectReceipt
+    from auto_engineering.loop.events import LoopEvent
 
 _logger = logging.getLogger(__name__)
 
@@ -29,6 +32,17 @@ class _ActiveThreadStore(Protocol):
 class _ActiveThreadEvents(Protocol):
     def load_projection(self, thread_id: str) -> EngineState | None: ...
     def load_action_snapshot(self, thread_id: str) -> dict | None: ...
+    def next_sequence(self, thread_id: str) -> int: ...
+    def commit_tick(
+        self,
+        *,
+        events: Iterable[LoopEvent],
+        state: EngineState,
+        action: Mapping[str, Any],
+        result_causation_id: str | None = None,
+        result_hash: str | None = None,
+        effect_receipts: Iterable[EffectReceipt] = (),
+    ) -> None: ...
 
 # ============================================================
 # v5.6 Tick 模式 CLI 处理器 (§A.1 Python 永不调 LLM — 不需 API key)
@@ -164,6 +178,36 @@ def _resolve_active_thread_start(
         stage=state.current_stage,
         message_id=message_id,
     )
+    existing_reconciliation = state.state_reconciliation or {}
+    if existing_reconciliation.get("gate_message_id") != message_id:
+        from auto_engineering.loop.events import LoopEvent, LoopEventType
+        from auto_engineering.loop.reducers import default_reducer_registry
+
+        event = LoopEvent.create(
+            thread_id=thread_id,
+            sequence=events.next_sequence(thread_id),
+            event_type=LoopEventType.STATE_CONFLICT_DETECTED,
+            payload={
+                "changes": {
+                    "state_reconciliation": {
+                        "status": "waiting_user",
+                        "gate_message_id": message_id,
+                        "reason_codes": list(report.reason_codes),
+                        "missing_anchors": list(report.missing_anchors),
+                        "intent": {
+                            "mode": intent.mode,
+                            "design_doc_path": intent.design_doc_path,
+                            "design_doc_digest": intent.design_doc_digest,
+                            "scope": intent.scope,
+                        },
+                    }
+                }
+            },
+            correlation_id=thread_id,
+            causation_id=message_id,
+        )
+        projected = default_reducer_registry().reduce(state, event)
+        events.commit_tick(events=[event], state=projected, action=action)
     store.record_protocol_action(action)
     return action
 

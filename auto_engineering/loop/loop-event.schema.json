@@ -74,7 +74,12 @@
         "BatchCompleted",
         "ComponentCompleted",
         "PlateCompleted",
-        "WorkReopened"
+        "WorkReopened",
+        "StateConflictDetected",
+        "StateReconciliationSelected",
+        "ThreadSuperseded",
+        "PlanReconciled",
+        "TaskSuperseded"
       ]
     },
     "causation_id": {"type": ["string", "null"], "minLength": 1},

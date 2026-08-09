@@ -148,6 +148,10 @@ _WRITE_OWNERS: dict[str, frozenset[str]] = {
     "unchanged_finding_streak":   frozenset({"orchestrator"}),
     "last_finding_fingerprint":   frozenset({"orchestrator"}),
     "batch_changed_files":        frozenset({"orchestrator"}),
+    "state_reconciliation":       frozenset({"orchestrator"}),
+    "thread_status":              frozenset({"orchestrator"}),
+    "plan_reconciliation":        frozenset({"orchestrator"}),
+    "superseded_tasks":           frozenset({"orchestrator"}),
 }
 
 # 合法 verdict 值
@@ -267,6 +271,10 @@ class EngineState:
     batch_changed_files: list[str] = field(default_factory=list)  # #57 当前 Batch 累积文件
     active_runtime_revision: dict[str, str] | None = None  # Phase 80: 当前 Action 修订
     pending_runtime_revision: dict[str, str] | None = None  # Phase 80: Action 边界待激活修订
+    state_reconciliation: dict[str, Any] | None = None  # #58 状态冲突、Gate 与用户选择
+    thread_status: str = "active"  # #59 active | superseded | completed
+    plan_reconciliation: dict[str, Any] | None = None  # #60 旧新计划 revision 映射
+    superseded_tasks: list[dict[str, Any]] = field(default_factory=list)  # #61 只读历史任务
 
     # v5.5 P1-5: 写入审计日志 (repr=False 避免污染输出, 不参与序列化)
     _write_log: list[WriteRecord] = field(default_factory=list, repr=False, init=False)

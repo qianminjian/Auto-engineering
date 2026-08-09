@@ -106,6 +106,11 @@ EVENT_CHANNELS: dict[LoopEventType, frozenset[str]] = {
         "design_supplements_json",
         "pending_gap_decisions",
     }),
+    LoopEventType.STATE_CONFLICT_DETECTED: frozenset({"state_reconciliation"}),
+    LoopEventType.STATE_RECONCILIATION_SELECTED: frozenset({"state_reconciliation"}),
+    LoopEventType.THREAD_SUPERSEDED: frozenset({"thread_status"}),
+    LoopEventType.PLAN_RECONCILED: frozenset({"plan_reconciliation"}),
+    LoopEventType.TASK_SUPERSEDED: frozenset({"superseded_tasks"}),
 }
 
 
@@ -283,6 +288,11 @@ def default_reducer_registry() -> ReducerRegistry:
         LoopEventType.PROJECT_STATE_UPDATED: _registered_channels,
         LoopEventType.TELEMETRY_RECORDED: _registered_channels,
         LoopEventType.SUPPLEMENT_STATE_UPDATED: _registered_channels,
+        LoopEventType.STATE_CONFLICT_DETECTED: _registered_channels,
+        LoopEventType.STATE_RECONCILIATION_SELECTED: _registered_channels,
+        LoopEventType.THREAD_SUPERSEDED: _registered_channels,
+        LoopEventType.PLAN_RECONCILED: _registered_channels,
+        LoopEventType.TASK_SUPERSEDED: _registered_channels,
     }
     for event_type in LoopEventType:
         registry.register(event_type, special.get(event_type, _no_projection_change))

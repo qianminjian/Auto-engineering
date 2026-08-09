@@ -28,6 +28,7 @@ class _Events:
     def __init__(self, state: EngineState, action: dict | None = None) -> None:
         self.state = state
         self.action = action
+        self.committed: list[dict] = []
 
     def load_projection(self, thread_id: str) -> EngineState:
         assert thread_id == self.state.thread_id
@@ -36,6 +37,13 @@ class _Events:
     def load_action_snapshot(self, thread_id: str) -> dict | None:
         assert thread_id == self.state.thread_id
         return self.action
+
+    def next_sequence(self, thread_id: str) -> int:
+        assert thread_id == self.state.thread_id
+        return 1
+
+    def commit_tick(self, **commit: object) -> None:
+        self.committed.append(commit)
 
 
 def _intent_and_state(root: Path) -> tuple[InvocationIntent, EngineState]:
@@ -66,11 +74,12 @@ def test_conflicting_active_thread_returns_persisted_decision_gate(tmp_path: Pat
     old_action = {"action": "developer", "thread_id": state.thread_id}
     store = _Store(state.thread_id, old_action)
 
+    events = _Events(state, old_action)
     action = _resolve_active_thread_start(
         root=tmp_path,
         design_doc_path="design/feature.md",
         store=store,
-        events=_Events(state, old_action),
+        events=events,
     )
 
     assert action is not None
@@ -82,6 +91,10 @@ def test_conflicting_active_thread_returns_persisted_decision_gate(tmp_path: Pat
     ]
     assert action["extensions"]["ae"]["execution_control"]["disposition"] == "WAIT_USER"
     assert store.recorded == [action]
+    assert len(events.committed) == 1
+    committed_event = events.committed[0]["events"][0]
+    assert committed_event.causation_id == action["message_id"]
+    assert events.committed[0]["action"] == action
 
 
 def test_compatible_active_thread_returns_original_action(tmp_path: Path) -> None:
@@ -107,3 +120,32 @@ def test_compatible_active_thread_returns_original_action(tmp_path: Path) -> Non
 
     assert action == old_action
     assert store.recorded == []
+
+
+def test_repeated_conflict_reuses_gate_without_duplicate_event(tmp_path: Path) -> None:
+    _, state = _intent_and_state(tmp_path)
+    store = _Store(state.thread_id)
+    first_events = _Events(state)
+    first = _resolve_active_thread_start(
+        root=tmp_path,
+        design_doc_path="design/feature.md",
+        store=store,
+        events=first_events,
+    )
+    assert first is not None
+    state.state_reconciliation = {
+        "status": "waiting_user",
+        "gate_message_id": first["message_id"],
+    }
+    repeated_events = _Events(state)
+
+    repeated = _resolve_active_thread_start(
+        root=tmp_path,
+        design_doc_path="design/feature.md",
+        store=store,
+        events=repeated_events,
+    )
+
+    assert repeated is not None
+    assert repeated["message_id"] == first["message_id"]
+    assert repeated_events.committed == []
