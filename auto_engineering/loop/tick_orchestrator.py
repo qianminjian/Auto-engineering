@@ -113,6 +113,7 @@ from auto_engineering.loop.runtime_revision import (
 )
 from auto_engineering.loop.session_handoff import SessionHandoff
 from auto_engineering.loop.stage_offload import StageOffloadService
+from auto_engineering.loop.stage_result_projector import StageResultProjector
 from auto_engineering.loop.stage_router import (
     StageRouter,
     clear_stage_fields,
@@ -2364,73 +2365,13 @@ class TickOrchestrator:
         return result
 
     def _apply_result_to_state(self, result: dict) -> None:
-        """将本轮 agent result 写入 EngineState 对应字段.
-
-        受影响字段 (按 stage):
-          gap_scan          → gap_report_json
-          gap_review        → pending_gap_decisions
-          architect         → plan, batch_plan, file_list, contracts
-          developer         → files_changed, commit_hash, test_results, red_evidence
-          critic            → critic_verdict, findings, critic_feedback
-          component_verifier → coverage_map
-          plate_deep_audit  → deep_audit_result
-          system_verifier   → system_verdict, design_gaps
-          system_deep_audit → system_deep_audit_result
-
-        Returns:
-            None (mutates self._state in place). 调用者 (_after_tick) 在调用前
-            不知道哪些字段会变更 — 此方法为唯一写入口, 集中管理状态变更。
-        """
-        stage = result.get("stage", "")
-        if stage == "gap_scan":
-            self._state.gap_report_json = json.dumps({
-                "gaps": result.get("gaps", []),
-                "scanned_sections": result.get("scanned_sections", 0),
-                "has_blocking": result.get("has_blocking", False),
-            }, ensure_ascii=False)
-        elif stage == "gap_review":
-            decisions = result.get("decisions", [])
-            self._state.pending_gap_decisions = decisions
-        elif stage == "architect":
-            self._state.plan = result.get("plan", "")
-            plan_patch = result.get("plan_patch")
-            if isinstance(plan_patch, dict):
-                self._state.batch_plan = plan_patch.get("add_batches", [])
-                self._state._runtime_ctx["plan_patch_base_revision"] = (
-                    plan_patch.get("base_revision")
-                )
-            else:
-                self._state.batch_plan = result.get("batch_plan", [])
-                self._state._runtime_ctx.pop("plan_patch_base_revision", None)
-            self._state.file_list = result.get("file_list", [])
-            self._state.contracts = result.get("contracts", {})
-            self._state._runtime_ctx["architect_obligations"] = result.get(
-                "obligations", []
-            )
-        elif stage == "developer":
-            self._state.files_changed = result.get("files_changed", [])
-            self._state.batch_changed_files = list(dict.fromkeys([
-                *self._state.batch_changed_files,
-                *self._state.files_changed,
-            ]))
-            self._state.commit_hash = result.get("commit_hash", "")
-            self._state.test_results = result.get("test_results", {})
-            self._state.red_evidence = result.get("red_evidence", [])
-        elif stage == "critic":
-            # verdict 校验由 _after_critic() 统一执行 — _apply_result_to_state 只负责赋值
-            verdict = result.get("verdict", "")
-            self._state.critic_verdict = verdict
-            self._state.findings = result.get("findings", [])
-            self._state.critic_feedback = result.get("critic_feedback", "")
-        elif stage == "component_verifier":
-            self._state.coverage_map = result.get("coverage_map", [])
-        elif stage == "system_verifier":
-            self._state.coverage_map = result.get("full_coverage_map", [])
-        elif stage in {"plate_deep_audit", "system_deep_audit"}:
-            self._state.audit_revision_fingerprints[
-                self._audit_revision_key(stage)
-            ] = self._audit_revision_fingerprint(stage)
-        # research / plate_deep_audit / system_deep_audit: _after_* 中直接读 result
+        """兼容入口：委托独立 StageResultProjector。"""
+        StageResultProjector().apply(
+            self._state,
+            result,
+            audit_key=self._audit_revision_key,
+            audit_fingerprint=self._audit_revision_fingerprint,
+        )
 
     # ── 辅助 ──
 
