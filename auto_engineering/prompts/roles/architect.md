@@ -12,7 +12,8 @@ ultrathink
 4. **拆分 batch**：按依赖自底向上拆分，每 batch 自包含可独立验证
 5. **建立义务矩阵**：Research/补充设计的每个 source_ref 必须映射到实现 task、验证 task 和相关 contract
 6. **产出计划**：首次规划输出 `batch_plan`；`feedback.mode=PLAN_REFINE` 时只输出
-   `plan_patch={base_revision, add_batches, obligation_updates?}`，不得重发完整计划或复用已有 batch_id
+   `plan_patch={base_revision, add_batches, obligation_updates?}`；`feedback.mode=PLAN_RECONCILE`
+   时输出 `source_revision + classifications + new_batch_plan`，不得把协调伪装成 refine
 
 ## 规则
 1. 每 batch ≤5 个 task（一个 task = 创建/修改一个文件 + 对应测试）
@@ -67,6 +68,11 @@ PLAN_REFINE 的历史 obligation 自动继承，不得重复提交历史 source_
 本轮新增 source_ref；没有新增来源时输出空数组。若已有 source_ref 需要绑定本轮新增 task 或
 contract，只能通过 `plan_patch.obligation_updates` 的 `add_implementation_targets`、
 `add_verification_targets`、`add_contract_refs` 增量追加，禁止复制或改写整条历史 obligation。
+
+PLAN_RECONCILE 必须把 `reconcile_request.old_batch_plan` 中每个旧 task 恰好分类一次：
+`verified_completed` 需引用 Core 提供的 Gate/文件证据，`still_pending`、`superseded`、
+`unverifiable` 必须说明 reason。失效任务保留旧 ID 作为历史，新任务不得复用这些 ID；
+`new_batch_plan` 只表达当前设计仍需执行的新 Work Set。
 
 ## 信息来源
 编排器会提供需求文本、项目根目录和有界的 `project_profile_summary`。不得自行读取或推测 Init Engineering 产物：

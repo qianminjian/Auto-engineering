@@ -17,7 +17,7 @@ from auto_engineering.engine.state import EngineState
 
 if TYPE_CHECKING:
     from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
-    from auto_engineering.loop.event_store import EffectReceipt
+    from auto_engineering.loop.event_store import EffectReceipt, SQLiteEventStore
     from auto_engineering.loop.events import LoopEvent
 
 _logger = logging.getLogger(__name__)
@@ -535,6 +535,17 @@ def run_tick_step(result_file: Path, root: Path,
     store: SQLiteCheckpointStore[EngineState] = SQLiteCheckpointStore(_ensure_checkpoint_db_path(root))
     events = SQLiteEventStore(_ensure_event_db_path(root))
     try:
+        reconciled_action = _process_state_reconciliation_result(
+            result_file=result_file,
+            root=root,
+            store=store,
+            events=events,
+            debug=debug,
+            debug_dir=debug_dir,
+        )
+        if reconciled_action is not None:
+            click.echo(json.dumps(_map_action_for_host(reconciled_action), ensure_ascii=False))
+            return
         inj = _build_injectables(root)
         active_thread = _active_thread(store)
         use_events = (
@@ -582,6 +593,98 @@ def run_tick_step(result_file: Path, root: Path,
     finally:
         events.close()
         store.close()
+
+
+def _process_state_reconciliation_result(
+    *,
+    result_file: Path,
+    root: Path,
+    store: SQLiteCheckpointStore[EngineState],
+    events: SQLiteEventStore,
+    debug: bool = False,
+    debug_dir: str | None = None,
+) -> dict | None:
+    """处理协调 Gate Result；非协调 Result 返回 None 交回常规 Tick。"""
+    import json
+
+    try:
+        result = json.loads(result_file.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(result, dict):
+        return None
+    resolution = result.get("gate_resolution")
+    if not isinstance(resolution, dict) or resolution.get("gate_id") != "state_reconciliation":
+        return None
+    if resolution.get("resolution") == "reconcile":
+        return None
+
+    from auto_engineering.loop.protocol import payload_digest
+    from auto_engineering.loop.state_reconciliation import StateReconciliationService
+    from auto_engineering.loop.tick_orchestrator import TickOrchestrator
+
+    thread_id = result.get("thread_id")
+    causation_id = result.get("causation_id")
+    if isinstance(thread_id, str) and isinstance(causation_id, str):
+        replay = store.load_protocol_result(thread_id, causation_id)
+        if replay is not None:
+            previous_hash, response = replay
+            if previous_hash != payload_digest(result):
+                raise ValueError("RESULT_CONFLICT: 相同协调 Gate 已提交不同选择")
+            return response
+
+    old_state = events.load_projection(str(thread_id))
+    if old_state is None:
+        raise ValueError("STATE_CORRUPT: 协调 Result 对应的旧 thread 不存在")
+    outcome = StateReconciliationService(events).select(result)
+    if outcome.choice != "reinitialize":
+        return dict(outcome.response)
+
+    old_thread_id = old_state.thread_id
+    if isinstance(causation_id, str):
+        store.record_protocol_result(
+            old_thread_id,
+            causation_id,
+            payload_digest(result),
+            dict(outcome.response),
+        )
+    store.release_project_thread(old_thread_id)
+    new_thread_id = str(uuid4())
+    existing = store.reserve_project_thread(new_thread_id)
+    if existing is not None:
+        raise ValueError(f"PROJECT_THREAD_ACTIVE: {existing}")
+    try:
+        inj = _build_injectables(root)
+        orch = TickOrchestrator(
+            root,
+            checkpoint_store=store,
+            event_store=events,
+            context_offloader=inj["context_offloader"],
+            session_summarizer=inj.get("session_summarizer"),
+            tracer=inj["tracer"],
+            audit_logger=inj["audit_logger"],
+            debug=debug,
+            debug_dir=debug_dir,
+        )
+        design_doc_path = outcome.intent.get("design_doc_path")
+        if not isinstance(design_doc_path, str) or not design_doc_path:
+            raise ValueError("STATE_RECONCILIATION_INTENT_INVALID")
+        action = orch.init(
+            old_state.requirement,
+            design_doc_path=design_doc_path,
+            thread_id=new_thread_id,
+        )
+        if isinstance(causation_id, str):
+            store.record_protocol_result(
+                old_thread_id,
+                causation_id,
+                payload_digest(result),
+                action,
+            )
+        return action
+    except BaseException:
+        store.release_project_thread(new_thread_id)
+        raise
 
 
 def run_tick_validate(result_file: Path, root: Path) -> None:

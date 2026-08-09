@@ -81,6 +81,8 @@ while control.disposition == "CONTINUE":
 当 `reason_code == "STATE_RECONCILIATION_REQUIRED"` 时，宿主必须原样展示 Core
 返回的 `gate.options`：`reinitialize`（重新初始化）或 `reconcile`（修复状态并继续）。
 用户选择前禁止编辑项目文件；宿主不得自动恢复旧 Action、删除 `.ae-state` 或代替用户选择。
+提交 Result 时 `gate_resolution.gate_id` 必须为 `state_reconciliation`，`resolution`
+必须使用 option id（不是显示标签），并由 `causation_id` 绑定当前 Gate message。
 
 然后读取 `action.instruction`：
 

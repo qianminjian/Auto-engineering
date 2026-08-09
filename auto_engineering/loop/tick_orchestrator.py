@@ -1053,6 +1053,37 @@ class TickOrchestrator:
             if gate_id == "agent_escalation":
                 return self.escalation.resolve_agent_escalation(gate_resolution)
 
+            if gate_id == "state_reconciliation":
+                if resolution != "reconcile":
+                    return ErrorResponse(
+                        error_code="INVALID_GATE_RESOLUTION",
+                        message="state_reconciliation 仅由 CLI 处理 reinitialize，当前选择无效",
+                    ).to_dict()
+                reconciliation = self._state.state_reconciliation
+                if not isinstance(reconciliation, dict):
+                    return ErrorResponse(
+                        error_code="STATE_RECONCILIATION_MISSING",
+                        message="状态协调投影缺失",
+                    ).to_dict()
+                selected = {
+                    **reconciliation,
+                    "status": "selected",
+                    "choice": "reconcile",
+                }
+                self._state.state_reconciliation = selected
+                self._queue_domain_event(
+                    LoopEventType.STATE_RECONCILIATION_SELECTED,
+                    {"changes": {"state_reconciliation": selected}},
+                )
+                previous_stage = self._state.current_stage
+                self._state.current_stage = "architect"
+                self._state.expected_stage = "architect"
+                self._queue_domain_event(
+                    LoopEventType.STAGE_ADVANCED,
+                    {"from": previous_stage, "to": "architect"},
+                )
+                return self.build_action()
+
             # Stage Checkpoint Gate (T64) — gate_id starts with "checkpoint_"
             if gate_id.startswith("checkpoint_"):
                 if resolution == "终止 loop":

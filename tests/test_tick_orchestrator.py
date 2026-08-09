@@ -3037,6 +3037,8 @@ class TestDetectProjectLanguage:
     def test_detect_typescript_by_tsconfig(self, tmp_path: Path) -> None:
         from auto_engineering.loop.escalation_handler import detect_project_language
         (tmp_path / "package.json").write_text("{}")
+        (tmp_path / "src").mkdir()
+        (tmp_path / "tests").mkdir()
         (tmp_path / "tsconfig.json").write_text("{}")
         assert detect_project_language(tmp_path) == "typescript"
 
@@ -3116,6 +3118,8 @@ class TestProjectProfileStartup:
             "conventions": {"linter": "eslint", "type_checker": "tsc", "test_runner": "vitest"},
         }))
         (tmp_path / "package.json").write_text("{}")
+        (tmp_path / "src").mkdir()
+        (tmp_path / "tests").mkdir()
         o = _orchestrator()
         o.project_root = tmp_path
         action = o.init("build a button")
@@ -3166,6 +3170,8 @@ class TestProjectSetupReplacesManifestEscalation:
         }
         (tmp_path / ".ae-state" / "init-manifest.json").write_text(
             json.dumps(manifest))
+        (tmp_path / "src").mkdir()
+        (tmp_path / "tests").mkdir()
         o = _orchestrator()
         o.project_root = tmp_path
         o.init("build a thing")

@@ -843,7 +843,29 @@ class ActionBuilder:
         # DS-15: subagent reads design doc + project structure itself.
         # Only pass refine_request if present (cross-tick data).
         extra: dict = {}
-        if self._state.refine_request_json:
+        reconciliation = self._state.state_reconciliation or {}
+        is_reconcile = (
+            reconciliation.get("status") == "selected"
+            and reconciliation.get("choice") == "reconcile"
+        )
+        if is_reconcile:
+            baseline = self._state.architecture_baseline or {}
+            extra["feedback"] = {
+                "mode": "PLAN_RECONCILE",
+                "reconcile_request": {
+                    "source_revision": baseline.get("revision", 1),
+                    "old_batch_plan": list(self._state.batch_plan),
+                    "gate_results": dict(self._state.gate_results),
+                    "intent": reconciliation.get("intent", {}),
+                    "allowed_statuses": [
+                        "verified_completed",
+                        "still_pending",
+                        "superseded",
+                        "unverifiable",
+                    ],
+                },
+            }
+        elif self._state.refine_request_json:
             extra["feedback"] = {
                 "mode": "PLAN_REFINE",
                 "refine_request": json.loads(self._state.refine_request_json),
@@ -853,8 +875,16 @@ class ActionBuilder:
         )
         if research_context:
             extra["research_and_design_context"] = research_context
-        is_refine = bool(self._state.refine_request_json)
-        expected_plan = {
+        is_refine = bool(self._state.refine_request_json) and not is_reconcile
+        expected_plan = ({
+            "source_revision": "integer (等于 reconcile_request.source_revision)",
+            "classifications": (
+                "[{task_id,status,evidence_ref?或reason?}]（旧任务逐项且仅一次）"
+            ),
+            "new_batch_plan": (
+                "[{batch_id,design_section,component,tasks:[...],depends_on}]"
+            ),
+        } if is_reconcile else {
             "plan_patch": (
                 "{base_revision:int, add_batches:[{batch_id, design_section, "
                 "component, tasks:[...], depends_on}], "
@@ -870,7 +900,7 @@ class ActionBuilder:
                 "tasks:[{id, description, module_ref, file_targets}], "
                 "depends_on}] (min 1 batch)"
             )
-        }
+        })
         return self._build_stage_action(base, "architect", context={
             "requirement": self._state.requirement,
             "design_doc_path": (
