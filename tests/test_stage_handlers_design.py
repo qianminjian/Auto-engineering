@@ -45,7 +45,7 @@ def test_architect_initializes_plan_before_advancing() -> None:
 
     assert decision.next_stage == "developer"
     assert decision.events[0].event_type is (
-        LoopEventType.ARCHITECTURE_INITIALIZATION_REQUESTED
+        LoopEventType.ARCHITECTURE_PLAN_ACTIVATED
     )
     assert decision.action_context["offload_stage"] == "architect"
 
@@ -105,7 +105,7 @@ def test_critic_major_rolls_back_batch_and_returns_findings() -> None:
 
     assert decision.next_stage == "developer"
     assert any(
-        event.event_type is LoopEventType.BATCH_CURSOR_ROLLED_BACK
+        event.event_type is LoopEventType.WORK_REOPENED
         for event in decision.events
     )
     assert decision.action_context["feedback"] == findings
@@ -128,7 +128,7 @@ def test_critic_plan_gap_routes_to_architect_refine() -> None:
     assert decision.next_stage == "architect"
     assert decision.action_context["refine_source"] == "critic"
     assert all(
-        event.event_type is not LoopEventType.BATCH_CURSOR_ROLLED_BACK
+        event.event_type is not LoopEventType.WORK_REOPENED
         for event in decision.events
     )
 
@@ -173,7 +173,7 @@ def test_critic_approve_with_blocking_finding_is_forced_to_repair() -> None:
         for event in decision.events
     )
     assert any(
-        event.event_type is LoopEventType.BATCH_CURSOR_ROLLED_BACK
+        event.event_type is LoopEventType.WORK_REOPENED
         for event in decision.events
     )
     assert decision.action_context["feedback"] == findings

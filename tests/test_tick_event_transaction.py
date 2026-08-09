@@ -6,6 +6,7 @@ import pytest
 
 from auto_engineering.engine.state import EngineState
 from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
+from auto_engineering.loop.effects import EffectReceipt
 from auto_engineering.loop.event_store import SQLiteEventStore
 from auto_engineering.loop.events import LoopEvent, LoopEventType
 from auto_engineering.loop.tick_orchestrator import TickOrchestrator
@@ -86,6 +87,67 @@ def test_result_replay_receipt_rolls_back_with_tick() -> None:
             )
 
         assert store.load_protocol_result("thread-1", "previous-action") is None
+        assert store.load_stream("thread-1") == []
+
+
+def test_effect_receipts_commit_with_action_snapshot() -> None:
+    receipt = EffectReceipt(
+        kind="prompt",
+        relative_path=".ae-state/effects/prompt/a.txt",
+        sha256="a" * 64,
+        bytes=12,
+    )
+    with SQLiteEventStore(":memory:") as store:
+        store.commit_tick(
+            events=[_event()],
+            state=_state(),
+            action=_action(),
+            effect_receipts=[receipt],
+        )
+
+        assert store.load_effect_receipts("thread-1", "action-1") == [receipt]
+
+
+def test_effect_receipts_roll_back_with_tick() -> None:
+    def fail_after_effects(point: str) -> None:
+        if point == "after_effects":
+            raise RuntimeError("fault:after_effects")
+
+    receipt = EffectReceipt(
+        kind="json",
+        relative_path=".ae-state/spawn-proofs/p.json",
+        sha256="b" * 64,
+        bytes=10,
+    )
+    with SQLiteEventStore(":memory:", fault_injector=fail_after_effects) as store:
+        with pytest.raises(RuntimeError, match="after_effects"):
+            store.commit_tick(
+                events=[_event()],
+                state=_state(),
+                action=_action(),
+                effect_receipts=[receipt],
+            )
+
+        assert store.load_effect_receipts("thread-1", "action-1") == []
+        assert store.load_stream("thread-1") == []
+
+
+def test_effect_receipt_path_and_digest_are_fail_closed() -> None:
+    invalid = EffectReceipt(
+        kind="json",
+        relative_path="../outside.json",
+        sha256="not-a-digest",
+        bytes=1,
+    )
+    with SQLiteEventStore(":memory:") as store:
+        with pytest.raises(ValueError, match="EFFECT_RECEIPT_INVALID"):
+            store.commit_tick(
+                events=[_event()],
+                state=_state(),
+                action=_action(),
+                effect_receipts=[invalid],
+            )
+
         assert store.load_stream("thread-1") == []
 
 

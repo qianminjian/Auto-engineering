@@ -58,6 +58,18 @@ class LoopEventType(StrEnum):
     BATCH_CURSOR_ROLLED_BACK = "BatchCursorRolledBack"
     COMPONENT_CURSOR_ADVANCED = "ComponentCursorAdvanced"
     PLATE_CURSOR_ADVANCED = "PlateCursorAdvanced"
+    LIFECYCLE_STATE_UPDATED = "LifecycleStateUpdated"
+    RESULT_EVIDENCE_RECORDED = "ResultEvidenceRecorded"
+    SESSION_STATE_UPDATED = "SessionStateUpdated"
+    PLAN_STATE_UPDATED = "PlanStateUpdated"
+    PROJECT_STATE_UPDATED = "ProjectStateUpdated"
+    TELEMETRY_RECORDED = "TelemetryRecorded"
+    SUPPLEMENT_STATE_UPDATED = "SupplementStateUpdated"
+    ARCHITECTURE_PLAN_ACTIVATED = "ArchitecturePlanActivated"
+    BATCH_COMPLETED = "BatchCompleted"
+    COMPONENT_COMPLETED = "ComponentCompleted"
+    PLATE_COMPLETED = "PlateCompleted"
+    WORK_REOPENED = "WorkReopened"
 
 
 class LoopEventValidationError(ValueError):

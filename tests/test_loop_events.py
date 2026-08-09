@@ -116,6 +116,18 @@ def test_all_planned_event_types_are_explicit() -> None:
         "BatchCursorRolledBack",
         "ComponentCursorAdvanced",
         "PlateCursorAdvanced",
+        "LifecycleStateUpdated",
+        "ResultEvidenceRecorded",
+        "SessionStateUpdated",
+        "PlanStateUpdated",
+        "ProjectStateUpdated",
+        "TelemetryRecorded",
+        "SupplementStateUpdated",
+        "ArchitecturePlanActivated",
+        "BatchCompleted",
+        "ComponentCompleted",
+        "PlateCompleted",
+        "WorkReopened",
     }
 
 

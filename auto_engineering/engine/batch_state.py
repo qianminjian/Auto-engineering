@@ -317,6 +317,11 @@ class BatchState:
     def advance_batch(self) -> None:
         self.current_batch_idx += 1
 
+    def reopen_previous_batch(self) -> None:
+        """重新激活当前组件的前一批次，且永不产生负游标。"""
+
+        self.current_batch_idx = max(0, self.current_batch_idx - 1)
+
     def advance_component(self) -> None:
         self.current_component_idx += 1
         self.current_batch_idx = 0

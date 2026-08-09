@@ -55,7 +55,7 @@ def test_component_pass_routes_by_remaining_scope() -> None:
 
     assert more.next_stage == "developer"
     assert any(
-        event.event_type is LoopEventType.COMPONENT_CURSOR_ADVANCED
+        event.event_type is LoopEventType.COMPONENT_COMPLETED
         for event in more.events
     )
     assert leaf.next_stage == "system_deep_audit"
@@ -116,7 +116,7 @@ def test_plate_pass_routes_to_next_plate_or_cropped_layer() -> None:
 
     assert more.next_stage == "developer"
     assert any(
-        event.event_type is LoopEventType.PLATE_CURSOR_ADVANCED
+        event.event_type is LoopEventType.PLATE_COMPLETED
         for event in more.events
     )
     assert cropped.next_stage == "system_deep_audit"

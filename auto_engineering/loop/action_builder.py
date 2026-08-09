@@ -18,6 +18,8 @@ from auto_engineering.config.constants import _SPAWN_CONFIG
 from auto_engineering.config.feature_flags import feature_status_for_action
 from auto_engineering.loop.effects import (
     EffectExecutor,
+    EffectIntent,
+    EffectReceipt,
     WriteContentAddressedArtifact,
     WriteJsonArtifact,
 )
@@ -115,11 +117,15 @@ class ActionBuilder:
         pii_enabled: bool = False,
         pii_redactor: PIIRedactor | None = None,
         pii_outbound: str = "redact",
+        effect_sink: Callable[[EffectReceipt], None] | None = None,
+        effect_intent_sink: Callable[[EffectIntent], None] | None = None,
     ) -> None:
         self.project_root = project_root
         self._pii_enabled = pii_enabled
         self._pii_redactor = pii_redactor
         self._pii_outbound = pii_outbound
+        self._effect_sink = effect_sink
+        self._effect_intent_sink = effect_intent_sink
         self._bound_context: ActionBuildContext | None = None
 
     # ── public API ──
@@ -573,7 +579,7 @@ class ActionBuilder:
 
     def _write_prompt_artifact(self, prompt: str, prompt_hash: str) -> str:
         """内容寻址保存 Worker prompt，避免全部正文进入 Coordinator Action。"""
-        receipt = EffectExecutor(self.project_root).execute(
+        receipt = self._execute_effect(
             WriteContentAddressedArtifact(
                 kind="prompt",
                 content=prompt,
@@ -581,6 +587,14 @@ class ActionBuilder:
             )
         )
         return receipt.relative_path
+
+    def _execute_effect(self, intent: EffectIntent) -> EffectReceipt:
+        if self._effect_intent_sink is not None:
+            self._effect_intent_sink(intent)
+        receipt = EffectExecutor(self.project_root).execute(intent)
+        if self._effect_sink is not None:
+            self._effect_sink(receipt)
+        return receipt
 
     # ── DS-15 helpers ──
 
@@ -621,12 +635,11 @@ class ActionBuilder:
             "status": "pending",
             "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         }
-        executor = EffectExecutor(self.project_root)
-        executor.execute(WriteJsonArtifact(
+        self._execute_effect(WriteJsonArtifact(
             relative_path=f"spawn-proofs/{proof_token}.json",
             payload=payload,
         ))
-        executor.execute(WriteJsonArtifact(
+        self._execute_effect(WriteJsonArtifact(
             relative_path=f"spawn-challenges/{proof_token}.json",
             payload=payload,
         ))
@@ -671,8 +684,7 @@ class ActionBuilder:
             })
             if requested_effort is not None:
                 payload["requested_effort"] = requested_effort
-            executor = EffectExecutor(self.project_root)
-            executor.execute(WriteJsonArtifact(
+            self._execute_effect(WriteJsonArtifact(
                 relative_path=f"spawn-proofs/{token}.json",
                 payload=payload,
             ))
@@ -691,7 +703,7 @@ class ActionBuilder:
             })
             if requested_effort is not None:
                 challenge_payload["requested_effort"] = requested_effort
-            executor.execute(WriteJsonArtifact(
+            self._execute_effect(WriteJsonArtifact(
                 relative_path=f"spawn-challenges/{token}.json",
                 payload=challenge_payload,
             ))

@@ -71,7 +71,7 @@ class ArchitectHandler:
         return TransitionDecision(
             events=(
                 transition_event(
-                    LoopEventType.ARCHITECTURE_INITIALIZATION_REQUESTED,
+                    LoopEventType.ARCHITECTURE_PLAN_ACTIVATED,
                     thread_id=context.thread_id,
                     sequence=context.event_sequence,
                 ),
@@ -257,7 +257,7 @@ class CriticHandler:
             events=(
                 progress_event,
                 transition_event(
-                    LoopEventType.BATCH_CURSOR_ROLLED_BACK,
+                    LoopEventType.WORK_REOPENED,
                     thread_id=context.thread_id,
                     sequence=context.event_sequence,
                 ),

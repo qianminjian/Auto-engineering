@@ -35,25 +35,6 @@ def compile_domain_event(
     )
 
 
-def state_channels_changed(
-    changes: Mapping[str, Any],
-    *,
-    thread_id: str,
-    sequence: int,
-) -> LoopEvent:
-    """编译迁移期有界 Projection delta，避免 Handler 返回命令式 patch。"""
-
-    return compile_domain_event(
-        DomainEventSpec(
-            event_type=LoopEventType.STATE_CHANNELS_CHANGED,
-            payload={"changes": dict(changes), "writer": "stage_handler"},
-        ),
-        thread_id=thread_id,
-        sequence=sequence,
-        correlation_id=thread_id,
-    )
-
-
 def transition_event(
     event_type: LoopEventType,
     *,
@@ -92,6 +73,5 @@ __all__ = [
     "DomainEventSpec",
     "channels_updated",
     "compile_domain_event",
-    "state_channels_changed",
     "transition_event",
 ]

@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from auto_engineering.engine.state import EngineState
+from auto_engineering.loop.effects import EffectReceipt
 from auto_engineering.loop.events import LoopEvent, LoopEventType
 from auto_engineering.loop.projector import EngineStateProjector
 
@@ -82,6 +83,16 @@ class SQLiteEventStore:
                 response_json TEXT NOT NULL,
                 created_at TEXT NOT NULL,
                 PRIMARY KEY(thread_id, causation_id)
+            );
+            CREATE TABLE IF NOT EXISTS effect_receipts (
+                thread_id TEXT NOT NULL,
+                action_message_id TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                relative_path TEXT NOT NULL,
+                sha256 TEXT NOT NULL,
+                byte_count INTEGER NOT NULL CHECK (byte_count >= 0),
+                created_at TEXT NOT NULL,
+                PRIMARY KEY(thread_id, action_message_id, relative_path)
             );
             CREATE TABLE IF NOT EXISTS checkpoint_imports (
                 checkpoint_id TEXT PRIMARY KEY,
@@ -181,10 +192,12 @@ class SQLiteEventStore:
         action: Mapping[str, Any],
         result_causation_id: str | None = None,
         result_hash: str | None = None,
+        effect_receipts: Iterable[EffectReceipt] = (),
     ) -> None:
         """在一个事务内提交事实、状态投影和宿主 Action 快照。"""
 
         batch = list(events)
+        receipts = list(effect_receipts)
         if not batch:
             raise ValueError("单 Tick 至少包含一个事件")
         thread_id = batch[0].thread_id
@@ -198,6 +211,7 @@ class SQLiteEventStore:
         if (result_causation_id is None) != (result_hash is None):
             raise ValueError("Result causation_id 与 hash 必须同时提供")
         self._validate_batch(batch)
+        self._validate_effect_receipts(receipts)
 
         with self._lock:
             self._ensure_open()
@@ -251,6 +265,34 @@ class SQLiteEventStore:
                     (thread_id, message_id, last.sequence, action_json, last.created_at),
                 )
                 self._inject_fault("after_action")
+                if receipts:
+                    self._conn.executemany(
+                        """
+                        INSERT INTO effect_receipts (
+                            thread_id, action_message_id, kind, relative_path,
+                            sha256, byte_count, created_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(thread_id, action_message_id, relative_path)
+                        DO UPDATE SET
+                            kind = excluded.kind,
+                            sha256 = excluded.sha256,
+                            byte_count = excluded.byte_count,
+                            created_at = excluded.created_at
+                        """,
+                        [
+                            (
+                                thread_id,
+                                message_id,
+                                receipt.kind,
+                                receipt.relative_path,
+                                receipt.sha256,
+                                receipt.bytes,
+                                last.created_at,
+                            )
+                            for receipt in receipts
+                        ],
+                    )
+                self._inject_fault("after_effects")
                 if result_causation_id is not None and result_hash is not None:
                     self._conn.execute(
                         """
@@ -275,6 +317,31 @@ class SQLiteEventStore:
     def _inject_fault(self, point: str) -> None:
         if self._fault_injector is not None:
             self._fault_injector(point)
+
+    @staticmethod
+    def _validate_effect_receipts(receipts: list[EffectReceipt]) -> None:
+        seen: dict[str, EffectReceipt] = {}
+        for receipt in receipts:
+            relative = Path(receipt.relative_path)
+            valid_digest = (
+                len(receipt.sha256) == 64
+                and all(character in "0123456789abcdef" for character in receipt.sha256)
+            )
+            if (
+                not receipt.kind
+                or relative.is_absolute()
+                or ".." in relative.parts
+                or not relative.parts
+                or relative.parts[0] != ".ae-state"
+                or not valid_digest
+                or isinstance(receipt.bytes, bool)
+                or receipt.bytes < 0
+            ):
+                raise ValueError("EFFECT_RECEIPT_INVALID")
+            previous = seen.get(receipt.relative_path)
+            if previous is not None and previous != receipt:
+                raise ValueError("EFFECT_RECEIPT_CONFLICT")
+            seen[receipt.relative_path] = receipt
 
     def append_new(
         self,
@@ -396,6 +463,34 @@ class SQLiteEventStore:
         if row is None:
             return None
         return row["result_hash"], json.loads(row["response_json"])
+
+    def load_effect_receipts(
+        self,
+        thread_id: str,
+        action_message_id: str,
+    ) -> list[EffectReceipt]:
+        """读取与已提交 Action 原子绑定的 Effect receipts。"""
+
+        with self._lock:
+            self._ensure_open()
+            rows = self._conn.execute(
+                """
+                SELECT kind, relative_path, sha256, byte_count
+                FROM effect_receipts
+                WHERE thread_id = ? AND action_message_id = ?
+                ORDER BY relative_path
+                """,
+                (thread_id, action_message_id),
+            ).fetchall()
+        return [
+            EffectReceipt(
+                kind=row["kind"],
+                relative_path=row["relative_path"],
+                sha256=row["sha256"],
+                bytes=row["byte_count"],
+            )
+            for row in rows
+        ]
 
     def load_round_history(self, thread_id: str) -> list[dict[str, Any]]:
         """读取最新状态事件携带的确定性轮次历史。"""

@@ -158,6 +158,15 @@ class TestAdvance:
         assert bs.current_batch_idx == 1
         assert bs.current_component_idx == 0
 
+    def test_reopen_previous_batch_is_bounded(self) -> None:
+        bs = self._bs()
+        bs.advance_batch()
+        bs.reopen_previous_batch()
+        assert bs.current_batch_idx == 0
+
+        bs.reopen_previous_batch()
+        assert bs.current_batch_idx == 0
+
     def test_advance_component_resets_batch(self) -> None:
         bs = self._bs()
         bs.advance_batch()

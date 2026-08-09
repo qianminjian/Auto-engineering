@@ -69,7 +69,7 @@ class DeveloperHandler:
             action_context["pre_gate"] = dict(pre_gate)
         events: tuple[LoopEvent, ...] = (
             transition_event(
-                LoopEventType.BATCH_CURSOR_ADVANCED,
+                LoopEventType.BATCH_COMPLETED,
                 thread_id=context.thread_id,
                 sequence=context.event_sequence,
             ),

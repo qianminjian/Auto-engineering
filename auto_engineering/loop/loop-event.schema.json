@@ -62,7 +62,19 @@
         "BatchCursorAdvanced",
         "BatchCursorRolledBack",
         "ComponentCursorAdvanced",
-        "PlateCursorAdvanced"
+        "PlateCursorAdvanced",
+        "LifecycleStateUpdated",
+        "ResultEvidenceRecorded",
+        "SessionStateUpdated",
+        "PlanStateUpdated",
+        "ProjectStateUpdated",
+        "TelemetryRecorded",
+        "SupplementStateUpdated",
+        "ArchitecturePlanActivated",
+        "BatchCompleted",
+        "ComponentCompleted",
+        "PlateCompleted",
+        "WorkReopened"
       ]
     },
     "causation_id": {"type": ["string", "null"], "minLength": 1},

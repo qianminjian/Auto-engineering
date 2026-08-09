@@ -79,7 +79,7 @@ class ComponentVerifierHandler:
         return TransitionDecision(
             events=(
                 transition_event(
-                    LoopEventType.COMPONENT_CURSOR_ADVANCED,
+                    LoopEventType.COMPONENT_COMPLETED,
                     thread_id=context.thread_id,
                     sequence=context.event_sequence,
                 ),
@@ -122,7 +122,7 @@ class PlateDeepAuditHandler:
         return TransitionDecision(
             events=(
                 transition_event(
-                    LoopEventType.PLATE_CURSOR_ADVANCED,
+                    LoopEventType.PLATE_COMPLETED,
                     thread_id=context.thread_id,
                     sequence=context.event_sequence,
                 ),

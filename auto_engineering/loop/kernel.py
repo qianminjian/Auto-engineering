@@ -8,6 +8,28 @@ from typing import Any
 
 from auto_engineering.engine.state import EngineState
 from auto_engineering.loop.events import LoopEvent, LoopEventType
+from auto_engineering.loop.reducers import EVENT_CHANNELS
+
+FALLBACK_CHANNEL_EVENTS: dict[str, LoopEventType] = {}
+for _event_type in (
+    LoopEventType.LIFECYCLE_STATE_UPDATED,
+    LoopEventType.RESULT_EVIDENCE_RECORDED,
+    LoopEventType.SESSION_STATE_UPDATED,
+    LoopEventType.PLAN_STATE_UPDATED,
+    LoopEventType.PROJECT_STATE_UPDATED,
+    LoopEventType.TELEMETRY_RECORDED,
+    LoopEventType.SUPPLEMENT_STATE_UPDATED,
+    LoopEventType.GAP_STATE_UPDATED,
+    LoopEventType.CRITIC_STATE_UPDATED,
+):
+    FALLBACK_CHANNEL_EVENTS.update(
+        dict.fromkeys(EVENT_CHANNELS[_event_type], _event_type)
+    )
+FALLBACK_CHANNEL_EVENTS.update({
+    channel: LoopEventType.VERIFICATION_STATE_UPDATED
+    for channel in EVENT_CHANNELS[LoopEventType.VERIFICATION_STATE_UPDATED]
+    if channel not in {"critic_feedback", "open_findings"}
+})
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,15 +98,22 @@ class TickKernel:
                 for key, value in current_state.to_dict().items()
                 if previous.get(key) != value and key not in owned_channels
             }
-            if changes:
-                append(
-                    LoopEventType.STATE_CHANNELS_CHANGED,
-                    {
-                        "changes": changes,
-                        "writer": "tick_orchestrator_compat_facade",
-                    },
-                    causation_id=result_message_id,
-                )
+            grouped: dict[LoopEventType, dict[str, Any]] = {}
+            for channel, value in changes.items():
+                event_type = FALLBACK_CHANNEL_EVENTS.get(channel)
+                if event_type is None:
+                    raise ValueError(
+                        f"UNMAPPED_PROJECTION_CHANNEL: {channel}"
+                    )
+                grouped.setdefault(event_type, {})[channel] = value
+            for event_type in LoopEventType:
+                event_changes = grouped.get(event_type)
+                if event_changes:
+                    append(
+                        event_type,
+                        {"changes": event_changes},
+                        causation_id=result_message_id,
+                    )
 
         for pending in pending_events:
             append(
@@ -107,42 +136,9 @@ class TickKernel:
     def _owned_channels(pending_events: Sequence[LoopEvent]) -> frozenset[str]:
         """返回已由显式领域事件负责重放的 Projection channels。"""
 
-        ownership = {
-            LoopEventType.STAGE_ADVANCED: frozenset({"current_stage"}),
-            LoopEventType.ARCHITECTURE_BASELINE_ACCEPTED: frozenset(
-                {"architecture_baseline"}
-            ),
-            LoopEventType.RUNTIME_REVISION_DETECTED: frozenset(
-                {"pending_runtime_revision"}
-            ),
-            LoopEventType.RUNTIME_REVISION_ACTIVATED: frozenset(
-                {"active_runtime_revision", "pending_runtime_revision"}
-            ),
-            LoopEventType.GAP_STATE_UPDATED: frozenset({
-                "gap_report_json",
-                "pending_research_ids",
-                "research_archive",
-            }),
-            LoopEventType.CRITIC_STATE_UPDATED: frozenset({
-                "majors_in_a_row",
-                "total_majors",
-                "critic_verdict",
-                "open_findings",
-                "repair_cycle_count",
-                "unchanged_finding_streak",
-                "last_finding_fingerprint",
-                "batch_changed_files",
-            }),
-            LoopEventType.VERIFICATION_STATE_UPDATED: frozenset({
-                "audit_findings",
-                "open_findings",
-                "coverage_map",
-                "critic_feedback",
-            }),
-        }
         return frozenset().union(
-            *(ownership.get(event.event_type, frozenset()) for event in pending_events)
+            *(EVENT_CHANNELS.get(event.event_type, frozenset()) for event in pending_events)
         )
 
 
-__all__ = ["TickCommitCandidate", "TickKernel"]
+__all__ = ["FALLBACK_CHANNEL_EVENTS", "TickCommitCandidate", "TickKernel"]

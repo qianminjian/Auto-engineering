@@ -7,7 +7,9 @@ import pytest
 from auto_engineering.engine.state import EngineState
 from auto_engineering.loop.event_store import SQLiteEventStore
 from auto_engineering.loop.events import LoopEvent, LoopEventType
+from auto_engineering.loop.kernel import FALLBACK_CHANNEL_EVENTS
 from auto_engineering.loop.reducers import (
+    EVENT_CHANNELS,
     EventChannelViolation,
     ReducerRegistry,
     default_reducer_registry,
@@ -124,3 +126,19 @@ def test_event_store_rejects_new_complete_state_patch() -> None:
 
     with pytest.raises(ValueError, match="FULL_STATE_PATCH_FORBIDDEN"):
         store.append([event])
+
+
+def test_every_mutable_projection_channel_has_explicit_event_owner() -> None:
+    initial_only = {
+        "requirement",
+        "thread_id",
+        "design_doc_path",
+        "prompt_registry_hash",
+        "debug_enabled",
+        "debug_dir",
+    }
+    explicitly_owned = set().union(*EVENT_CHANNELS.values())
+    serialized = set(EngineState(thread_id="thread-1").to_dict())
+
+    assert serialized - initial_only <= explicitly_owned
+    assert set(FALLBACK_CHANNEL_EVENTS) <= explicitly_owned

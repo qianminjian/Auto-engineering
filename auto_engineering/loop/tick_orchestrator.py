@@ -77,7 +77,12 @@ from auto_engineering.loop.context_budget import (
 )
 from auto_engineering.loop.convergence import ConvergenceConfig, ConvergenceJudge, RoundHistory
 from auto_engineering.loop.debug_tracer import DebugTracer, now_iso
-from auto_engineering.loop.effects import EffectExecutor, WriteJsonArtifact
+from auto_engineering.loop.effects import (
+    EffectExecutor,
+    EffectIntent,
+    EffectReceipt,
+    WriteJsonArtifact,
+)
 from auto_engineering.loop.escalation_handler import (
     EscalationContext,
     EscalationHandler,
@@ -132,6 +137,7 @@ from auto_engineering.loop.stages.verification import (
 )
 from auto_engineering.loop.task_factory import tasks_from_batch_plan
 from auto_engineering.loop.tick_gate_runner import TickGateRunner
+from auto_engineering.loop.transition_effects import TransitionEffectExecutor
 from auto_engineering.metrics.collector import AIOrigin, get_collector
 from auto_engineering.metrics.enrichment import compute_metrics_signals
 from auto_engineering.metrics.transcript_parser import create_parser
@@ -307,6 +313,8 @@ class TickOrchestrator:
         self._current_result_causation_id: str | None = None
         self._current_result_hash: str | None = None
         self._pending_domain_events: list[LoopEvent] = []
+        self._pending_effect_receipts: list[EffectReceipt] = []
+        self._pending_effect_intents: list[EffectIntent] = []
         self._session_handoff = SessionHandoff()
         self._stage_handlers = StageHandlerRegistry(
             [
@@ -328,6 +336,8 @@ class TickOrchestrator:
             pii_enabled=self._pii_enabled,
             pii_redactor=self._pii_redactor,
             pii_outbound=self._runtime_config.pii_outbound,
+            effect_sink=self._pending_effect_receipts.append,
+            effect_intent_sink=self._pending_effect_intents.append,
         )
         # P0-1: TickGateRunner delegate — gate selection, execution, metrics, tracing
         self._tick_gate_runner = TickGateRunner(
@@ -1414,10 +1424,13 @@ class TickOrchestrator:
         }
         # Result schema preflight 可在正式接受前重复运行；同一 active Action 的
         # acceptance candidate 以最后一次通过校验的规范化内容为准。
-        EffectExecutor(self.project_root).execute(WriteJsonArtifact(
+        intent = WriteJsonArtifact(
             relative_path=f"spawn-receipts/{token}.accepted.json",
             payload=payload,
-        ))
+        )
+        self._pending_effect_intents.append(intent)
+        receipt = EffectExecutor(self.project_root).execute(intent)
+        self._pending_effect_receipts.append(receipt)
 
     def _record_tick_latency(self, t_start: float, tick_no: int) -> None:
         """DS-10: 写 tick 延迟记录到 action_history, 超编排预算只告警不中断.
@@ -1569,6 +1582,12 @@ class TickOrchestrator:
         """应用纯 Handler 决策；副作用集中保留在 Kernel façade。"""
 
         action_context = decision.action_context
+        transition_effects = TransitionEffectExecutor(
+            self._batch_state,
+            self._activate_architecture_plan,
+            self._record_critic_gate_progress,
+            self._progress_tree,
+        )
         if action_context.get("collect_token_usage"):
             self._collect_token_usage()
         reducer_registry = default_reducer_registry()
@@ -1577,11 +1596,7 @@ class TickOrchestrator:
             # 的 _advance_stage 负责；其余 Projection 变化统一走纯 Reducer。
             if event.event_type is not LoopEventType.STAGE_ADVANCED:
                 self._state = reducer_registry.reduce(self._state, event)
-            if event.event_type in {
-                LoopEventType.ARCHITECTURE_INITIALIZATION_REQUESTED,
-                LoopEventType.CRITIC_PROGRESS_RECORDED,
-            }:
-                self._apply_transition_event_effect(event)
+        transition_effects.apply_pre_progress(decision.events)
         supplements = action_context.get("supplements", ())
         if isinstance(supplements, (list, tuple)):
             for supplement in supplements:
@@ -1600,22 +1615,19 @@ class TickOrchestrator:
                     node.design_status = "fuzzy"
         if self._event_store is not None:
             self._pending_domain_events.extend(decision.events)
-        self._apply_verification_progress(action_context.get("progress_update"))
-        for event in decision.events:
-            if event.event_type in {
-                LoopEventType.BATCH_CURSOR_ADVANCED,
-                LoopEventType.BATCH_CURSOR_ROLLED_BACK,
-                LoopEventType.COMPONENT_CURSOR_ADVANCED,
-                LoopEventType.PLATE_CURSOR_ADVANCED,
-            }:
-                self._apply_transition_event_effect(event)
+        transition_effects.apply_verification_progress(
+            action_context.get("progress_update")
+        )
+        transition_effects.apply_post_progress(decision.events)
         refine_source = action_context.get("refine_source")
         if isinstance(refine_source, str):
             return self._handle_plan_refine(refine_source)
         completed_batch_id = action_context.get("completed_batch_id")
         if isinstance(completed_batch_id, str):
             self._last_batch_id = completed_batch_id
-        self._apply_developer_progress(action_context.get("developer_progress"))
+        transition_effects.apply_developer_progress(
+            action_context.get("developer_progress")
+        )
         if action_context.get("snapshot_developer_output"):
             self._snapshot_developer_output()
         if action_context.get("save_checkpoint"):
@@ -1652,81 +1664,6 @@ class TickOrchestrator:
         if action_context.get("display_progress"):
             self._display_progress()
         return action
-
-    def _apply_transition_event_effect(self, event: LoopEvent) -> None:
-        """迁移期执行非 Projection 领域事实，替代 Stage 专属命令字段。"""
-
-        event_type = event.event_type
-        if event_type is LoopEventType.ARCHITECTURE_INITIALIZATION_REQUESTED:
-            self._activate_architecture_plan()
-            return
-        elif event_type is LoopEventType.CRITIC_PROGRESS_RECORDED:
-            verdict = event.to_dict()["payload"].get("verdict")
-            if isinstance(verdict, str):
-                self._record_critic_gate_progress(verdict)
-            return
-        if self._batch_state is None:
-            return
-        if event_type is LoopEventType.BATCH_CURSOR_ADVANCED:
-            self._batch_state.advance_batch()
-        elif event_type is LoopEventType.BATCH_CURSOR_ROLLED_BACK:
-            if self._batch_state.current_batch_idx > 0:
-                self._batch_state.current_batch_idx -= 1
-        elif event_type is LoopEventType.COMPONENT_CURSOR_ADVANCED:
-            self._batch_state.advance_component()
-        elif event_type is LoopEventType.PLATE_CURSOR_ADVANCED:
-            self._batch_state.advance_plate()
-
-    def _apply_verification_progress(self, update: object) -> None:
-        if self._progress_tree is None or self._batch_state is None:
-            return
-        if not isinstance(update, dict):
-            return
-        kind = update.get("kind")
-        if kind == "component_verifier":
-            component = self._batch_state.current_component()
-            node = self._progress_tree.find_by_design_section(
-                component.design_section
-            )
-            if node is not None:
-                missing = int(update.get("missing", 0))
-                diverged = int(update.get("diverged", 0))
-                node.verifier_status = "failed" if missing or diverged else "pass"
-                node.verifier_missing = missing
-                node.verifier_diverged = diverged
-                self._progress_tree.recalculate_parents(node.id)
-        elif kind == "plate_deep_audit":
-            p0, p1, p2 = update.get("counts", (0, 0, 0))
-            threshold = int(update.get("threshold", 10))
-            plate = self._batch_state.current_plate()
-            for component in plate.components:
-                node = self._progress_tree.find_by_design_section(
-                    component.design_section
-                )
-                if node is not None:
-                    node.deep_audit_status = (
-                        "failed" if p0 or p1 > threshold else "pass"
-                    )
-                    node.deep_audit_p0 = p0
-                    node.deep_audit_p1 = p1
-                    node.deep_audit_p2 = p2
-            self._progress_tree.recalculate_parents(
-                f"sys/{self._batch_state.current_plate_idx}"
-            )
-
-    def _apply_developer_progress(self, update: object) -> None:
-        if self._progress_tree is None or not isinstance(update, dict):
-            return
-        section = update.get("design_section")
-        if not isinstance(section, str):
-            return
-        node = self._progress_tree.find_by_design_section(section)
-        if node is None:
-            return
-        node.done_tasks += int(update.get("completed_task_count", 0))
-        next_task = update.get("next_task")
-        node.current_task = next_task if isinstance(next_task, str) else None
-        self._progress_tree.recalculate_parents(node.id)
 
     def _activate_architecture_plan(self) -> None:
         """将 Architect 的纯决策物化为执行游标与进度树。"""
@@ -2097,6 +2034,9 @@ class TickOrchestrator:
 
     def build_action(self, feedback: str | None = None, pre_gate: dict | None = None) -> dict:
         """Build the action dict for the current stage — delegates to ActionBuilder."""
+        if self._event_store is None:
+            self._pending_effect_receipts.clear()
+            self._pending_effect_intents.clear()
         self._state.action_timestamp = time.time()
         action = self.action_builder.build_action(
             self._state,
@@ -2182,6 +2122,7 @@ class TickOrchestrator:
             ),
             runtime_revision=revision,
             issued_at=datetime.now().astimezone().isoformat(),
+            effects=tuple(self._pending_effect_intents),
         )
         action = dict(draft.payload)
         self.action_builder.bind_spawn_proofs(action)
@@ -2840,8 +2781,14 @@ class TickOrchestrator:
                 action=action,
                 result_causation_id=self._current_result_causation_id,
                 result_hash=self._current_result_hash,
+                effect_receipts=tuple({
+                    receipt.relative_path: receipt
+                    for receipt in self._pending_effect_receipts
+                }.values()),
             )
             self._pending_domain_events.clear()
+            self._pending_effect_receipts.clear()
+            self._pending_effect_intents.clear()
         except BaseException:
             restored = self._event_store.load_projection(self._state.thread_id)
             if restored is not None:

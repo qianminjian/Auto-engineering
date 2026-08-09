@@ -6,6 +6,8 @@ import hashlib
 
 import pytest
 
+from auto_engineering.engine.state import EngineState
+from auto_engineering.loop.action_builder import ActionBuilder
 from auto_engineering.loop.effects import (
     EffectExecutionError,
     EffectExecutor,
@@ -73,3 +75,19 @@ def test_named_json_effect_rejects_path_escape(tmp_path) -> None:
             relative_path="../outside.json",
             payload={"status": "pending"},
         ))
+
+
+def test_action_builder_reports_effect_receipts_without_embedding_them(tmp_path) -> None:
+    receipts = []
+    action = ActionBuilder(
+        tmp_path,
+        effect_sink=receipts.append,
+    ).build_action(EngineState(
+        thread_id="thread-1",
+        current_stage="architect",
+        requirement="实现功能",
+    ))
+
+    assert receipts
+    assert any("spawn-proofs" in item.relative_path for item in receipts)
+    assert "effect_receipts" not in action.get("extensions", {}).get("ae", {})

@@ -67,11 +67,42 @@ def test_result_commit_uses_bounded_delta_and_preserves_domain_event_order() -> 
 
     assert [event.event_type for event in candidate.events] == [
         LoopEventType.RESULT_ACCEPTED,
-        LoopEventType.STATE_CHANNELS_CHANGED,
+        LoopEventType.LIFECYCLE_STATE_UPDATED,
         LoopEventType.STAGE_ADVANCED,
         LoopEventType.ACTION_ISSUED,
     ]
     delta = candidate.events[1].to_dict()["payload"]["changes"]
     assert delta == {"tick": 2}
     assert len(delta) < len(current.to_dict())
-    assert [event.sequence for event in candidate.events] == [2, 3, 4, 5]
+
+
+def test_new_tick_never_emits_compatibility_state_delta() -> None:
+    previous = EngineState(thread_id="thread-1", tick=1)
+    current = EngineState.from_dict({
+        **previous.to_dict(),
+        "tick": 2,
+        "action_timestamp": 3.0,
+        "files_changed": ["src/app.py"],
+    })
+
+    candidate = TickKernel().compile_commit(
+        next_sequence=2,
+        previous_state=previous,
+        current_state=current,
+        action=_action("action-2", "developer"),
+        pending_events=(),
+        result_message_id="result-1",
+        result_causation_id="action-1",
+    )
+
+    assert LoopEventType.STATE_CHANNELS_CHANGED not in {
+        event.event_type for event in candidate.events
+    }
+    assert {
+        event.event_type for event in candidate.events
+    } >= {
+        LoopEventType.LIFECYCLE_STATE_UPDATED,
+        LoopEventType.RESULT_EVIDENCE_RECORDED,
+        LoopEventType.TELEMETRY_RECORDED,
+    }
+    assert [event.sequence for event in candidate.events] == [2, 3, 4, 5, 6]
