@@ -25,7 +25,7 @@
 | Phase 74-75 | 深度审计修复与真跑准入加固完成；2166 passed / 1 skipped、coverage 90.41%、双宿主 archive smoke 通过；真实 LLM 长跑、历史秘密确认和依赖审计仍未闭环 |
 | Phase 76-77 | 统一设计文档入口；rc.4 真跑证伪后恢复原始批量 Gap Review、Action schema fail-closed、公共 status 与 Gate 语义；rc.5 基线 2178 passed / 1 skipped |
 | Phase 78-79 | 修复架构基线、Gate 转移、PlanPatch 与 Contract 激活；自动门禁通过但真实产品复验未关闭 |
-| Phase 80 | 2026-08-09 协议内核收敛实施中；Runtime/Execution Control/显式 Stage 事件/纯 Compiler/TickKernel 已落地，真实双宿主产品长跑仍阻断发布 |
+| Phase 80 | 2026-08-09 T403-T410 协议内核收敛完成；Runtime/Execution Control/显式事件/纯 Compiler/TickKernel/无 Stage 分支 façade 已落地，真实双宿主产品长跑仍阻断发布 |
 
 ## 持续有效的决策
 

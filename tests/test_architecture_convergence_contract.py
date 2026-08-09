@@ -85,3 +85,25 @@ def test_stage_handlers_do_not_emit_legacy_imperative_commands() -> None:
         '"initialize_architecture"',
     ):
         assert prohibited not in source
+
+
+def test_tick_orchestrator_contains_no_stage_specific_branches() -> None:
+    source = (ROOT / "auto_engineering/loop/tick_orchestrator.py").read_text(
+        encoding="utf-8"
+    )
+
+    for stage in (
+        "gap_scan",
+        "gap_review",
+        "research",
+        "architect",
+        "developer",
+        "critic",
+        "component_verifier",
+        "plate_deep_audit",
+        "system_verifier",
+        "system_deep_audit",
+    ):
+        assert f'if stage == "{stage}"' not in source
+        assert f'elif stage == "{stage}"' not in source
+        assert f'current_stage == "{stage}"' not in source

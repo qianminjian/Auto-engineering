@@ -60,13 +60,13 @@ from auto_engineering.loop.actions import (
     result_contract_warnings,
     validate_result_format,
 )
-from auto_engineering.loop.architect_validation import dry_run_architect_plan
 from auto_engineering.loop.architecture_activation import ArchitectureActivationService
 from auto_engineering.loop.artifacts import (
     ArtifactError,
     ArtifactStore,
     validate_worker_receipt,
 )
+from auto_engineering.loop.audit_revision import AuditRevisionService
 from auto_engineering.loop.checkpoint.manager import CheckpointManager
 from auto_engineering.loop.checkpoint.records import CheckpointNotFoundError
 from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
@@ -78,6 +78,10 @@ from auto_engineering.loop.context_budget import (
 )
 from auto_engineering.loop.convergence import ConvergenceConfig, ConvergenceJudge, RoundHistory
 from auto_engineering.loop.debug_tracer import DebugTracer, now_iso
+from auto_engineering.loop.developer_gate_service import (
+    DeveloperGateService,
+    StageGateDispatcher,
+)
 from auto_engineering.loop.effects import (
     EffectExecutor,
     EffectIntent,
@@ -113,6 +117,7 @@ from auto_engineering.loop.runtime_revision import (
 )
 from auto_engineering.loop.session_handoff import SessionHandoff
 from auto_engineering.loop.stage_offload import StageOffloadService
+from auto_engineering.loop.stage_result_prevalidator import StageResultPrevalidator
 from auto_engineering.loop.stage_result_projector import StageResultProjector
 from auto_engineering.loop.stage_router import (
     StageRouter,
@@ -1018,8 +1023,10 @@ class TickOrchestrator:
             )
             self._apply_result_to_state(result)
             self._record_tick_latency(time.perf_counter(), self._state.tick)
-            if self._state.current_stage == "developer":
-                self._run_developer_gates()
+            StageGateDispatcher().dispatch(
+                self._state.current_stage,
+                self._run_developer_gates,
+            )
             return self.build_action()
 
         validated = self._validate_result_dict(result)
@@ -1112,8 +1119,11 @@ class TickOrchestrator:
             # FreshGuardrail 不清实现/不返错, 放行至 Gate 重跑刷新快照.
             # 非 FreshGuardrail 的 guardrail → 返回错误.
             if getattr(gr, "guardrail_name", "") == "FreshGuardrail":
-                if self._state.current_stage != "developer":
-                    self._run_developer_gates()
+                StageGateDispatcher().dispatch(
+                    self._state.current_stage,
+                    self._run_developer_gates,
+                    force=True,
+                )
             else:
                 if self._require("_debug_tracer", "debug tracing disabled") is not None:
                     self._debug_tracer.record_error(
@@ -1127,8 +1137,10 @@ class TickOrchestrator:
                     )
                 return self._handle_guardrail_result(gr)
 
-        if self._state.current_stage == "developer":
-            self._run_developer_gates()
+        StageGateDispatcher().dispatch(
+            self._state.current_stage,
+            self._run_developer_gates,
+        )
 
         return self._after_tick(result)
 
@@ -1382,25 +1394,25 @@ class TickOrchestrator:
                             current_state=self._state.to_dict(),
                         )
 
-        if stage == "architect":
-            dry_run_error = dry_run_architect_plan(
-                self._design_doc,
-                result,
-                self._state.requirement,
-                self._state.research_archive,
-                active_revision=(
-                    self._state.plan_refine_count
-                    if self._state.refine_request_json
-                    else 0
-                ),
-                current_baseline=self._state.architecture_baseline,
+        dry_run_error = StageResultPrevalidator().validate(
+            stage,
+            design_doc=self._design_doc,
+            result=result,
+            requirement=self._state.requirement,
+            research_archive=self._state.research_archive,
+            active_revision=(
+                self._state.plan_refine_count
+                if self._state.refine_request_json
+                else 0
+            ),
+            current_baseline=self._state.architecture_baseline,
+        )
+        if dry_run_error:
+            return ErrorResponse(
+                error_code="ARCHITECT_PLAN_INVALID",
+                message=f"Architect 计划无法初始化执行树: {dry_run_error}",
+                current_state=self._state.to_dict(),
             )
-            if dry_run_error:
-                return ErrorResponse(
-                    error_code="ARCHITECT_PLAN_INVALID",
-                    message=f"Architect 计划无法初始化执行树: {dry_run_error}",
-                    current_state=self._state.to_dict(),
-                )
 
         return result
 
@@ -2036,33 +2048,14 @@ class TickOrchestrator:
         )
 
     def _audit_revision_key(self, stage: str) -> str:
-        if stage == "plate_deep_audit" and self._batch_state is not None:
-            try:
-                return f"{stage}:{self._batch_state.current_plate().name}"
-            except (AssertionError, IndexError):
-                pass
-        return stage
+        return AuditRevisionService.key(stage, self._batch_state)
 
     def _audit_revision_fingerprint(self, stage: str) -> str:
-        """对代码快照与审计范围生成稳定修订指纹。"""
-        import hashlib
-
-        snapshot = self._state.developer_snapshot or {}
-        files = snapshot.get("files_changed") or self._state.files_changed
-        from auto_engineering.loop.guardrails.stateful import aggregate_files_sha
-
-        files_sha = aggregate_files_sha(list(files or []), self.project_root)
-        scope = {
-            "stage": stage,
-            "key": self._audit_revision_key(stage),
-            "files_sha": files_sha,
-            "plan_refine_count": self._state.plan_refine_count,
-            "coverage_map": self._state.coverage_map or [],
-        }
-        encoded = json.dumps(
-            scope, ensure_ascii=False, sort_keys=True, default=str
-        ).encode("utf-8")
-        return hashlib.sha256(encoded).hexdigest()
+        return AuditRevisionService(self.project_root).fingerprint(
+            stage,
+            self._state,
+            self._batch_state,
+        )
 
     def _apply_context_budget(self, candidate: dict[str, Any]) -> dict[str, Any]:
         """仅执行单 Action payload 门禁；正常上下文压缩由宿主管理。"""
@@ -2379,33 +2372,12 @@ class TickOrchestrator:
             return 0, 0
 
     def _run_developer_gates(self) -> None:
-        """Run all gates via TickGateRunner delegate (P0-1)."""
-        snapshot_files = (
-            self._dev_snapshot.get("files_changed", [])
-            if self._dev_snapshot and not self._state.files_changed
-            else self._state.files_changed
+        """兼容入口：委托独立 DeveloperGateService。"""
+        self._t_gate_ms += DeveloperGateService(self._tick_gate_runner).run(
+            state=self._state,
+            batch_state=self._batch_state,
+            developer_snapshot=self._dev_snapshot,
         )
-        baseline = self._state.architecture_baseline or {}
-        from auto_engineering.loop.architecture_baseline import select_active_contracts
-
-        reached = (
-            self._batch_state.completed_batch_ids()
-            if self._batch_state
-            else set()
-        )
-        if (
-            self._batch_state is not None
-            and not self._batch_state.is_component_complete()
-        ):
-            reached.add(self._batch_state.current_batch_id())
-        contracts = select_active_contracts(baseline, reached)
-        results, duration_ms = self._tick_gate_runner.run(
-            snapshot_files,
-            stage=self._state.current_stage,
-            tick=self._state.tick,
-            contracts=contracts)
-        self._state.gate_results = results
-        self._t_gate_ms += duration_ms
 
     def _handle_guardrail_result(self, gr) -> dict:
         action = getattr(gr, "action", "block")

@@ -49,10 +49,12 @@ Engineering 的问答、模板或脚手架；把 archive smoke 冒充真实产�
   TickOrchestrator、全状态事件补丁、线程级 Prompt 锁和非机器化续跑仍在生产路径。
 - 方案 B 已批准；Phase 80 按 Runtime Vector、Execution Control、显式 Reducer、纯
   ActionCompiler 和 Stage-by-Stage strangling 统一收敛，完成前冻结新的点状真跑补丁。
+- T404-T410 已通过自动门禁；TickOrchestrator 已无具体 Stage 分支，当前发布阻断只剩
+  T411-T412 的真实双宿主产品长跑与发布证据收口。
 ## 最近演进
 | 日期 | 变更 |
 |---|---|
-| 2026-08-09 | 批准 Phase 80 协议内核收敛重构，补齐宿主续跑与 Action 边界升级 |
+| 2026-08-09 | 完成 T404-T410 协议内核收敛；façade 退出 Stage 专属分支 |
 | 2026-08-06 | 归档 Tick 19 PlanPatch 冲突；禁止 full-plan refine，按义务延迟激活 Contract |
 | 2026-07-30 | 批准 Phase 70：撤销固定 Tick rollover，改为宿主自动 compaction |
 | 2026-07-29 | 批准 v5.8 确定性状态与宿主会话解耦，登记 Phase 64-67 |
@@ -61,7 +63,6 @@ Engineering 的问答、模板或脚手架；把 archive smoke 冒充真实产�
 | 2026-08-02 | 再次审计：自动门禁可进入受控真跑，真实 LLM 长跑仍是发布阻断项 |
 ## 待解决问题
 
-- T404-T410：完成协议内核收敛实现，禁止继续点状修复。
 - T411-T412：完成跨版本 150 Tick、双宿主真实产品门禁后再生成下一 RC。
 
 ## 引用文件
