@@ -14,6 +14,8 @@
 | `v5.7-Prompt-Contract-PLAN.md` | Phase 60 T280-T287 TDD 实施计划 |
 | `v5.8-Protocol-Kernel-Convergence-Design.md` | Phase 80 当前权威收敛设计；统一 Host/Core/Event/Prompt/Session 边界 |
 | `v5.8-Protocol-Kernel-Convergence-PLAN.md` | Phase 80 T403-T412 分波次 TDD 实施计划 |
+| `v5.8-State-Reconciliation-Design.md` | Phase 81 显式启动意图、状态冲突二选一、任务续作与验证证据设计 |
+| `v5.8-State-Reconciliation-PLAN.md` | Phase 81 T423-T430 逐步 TDD 实施计划 |
 | `v5.8-Automatic-Context-Governance.md` | Phase 70 自动 compaction、有界增量上下文与成本治理权威设计 |
 | `v5.8-Session-Decoupling-Design.md` | Phase 64-67 状态恢复设计；日常 rollover 已由 Phase 70 纠偏 |
 | `v5.8-Session-Decoupling-PLAN.md` | Phase 64-70 T302-T350 可执行实施计划 |
@@ -25,6 +27,7 @@
 | `incidents/2026-07-30-claude-rc1-partial-run.md` | rc.1 部分真跑的跨进程状态、Gate、Usage 与成本缺陷 |
 | `incidents/2026-07-30-claude-9-tick-evidence-chain.md` | 9-Tick 真跑的旧版本识别、Debug 编号、进度与版本溯源缺陷 |
 | `incidents/2026-08-05-rc5-15-tick-architecture-gate-failure.md` | rc.5 15-Tick 的 Gate fail-open、架构事实丢失与错误修复路由事故 |
+| `incidents/2026-08-09-hidden-state-stale-resume.md` | 隐藏 `.ae-state` 覆盖显式设计文档并错误恢复旧 B2 的事故 |
 | `IMPLEMENTATION-TRACKER.md` | 当前任务状态、优先级与 EARS 验收 |
 | `HISTORY.md` | 历史里程碑与 Git 追溯入口 |
 

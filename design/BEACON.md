@@ -44,6 +44,7 @@ Engineering 的问答、模板或脚手架；把 archive smoke 冒充真实产�
 | D21 | Legacy 兼容按 payload 能力适配全部旧事件类型；新写入在 EventStore 边界拒绝 `state_patch` | ✅ |
 | D22 | Baseline、PlanPatch、contracts、obligations 只物化一次 Architecture Candidate，校验与激活共享 | ✅ |
 | D23 | SemVer 表示发布版本，内容寻址 Build Identity 区分同版本的不同制品和源码 | ✅ |
+| D24 | 显式设计文档与旧状态冲突时先由用户选择重新初始化或修复续作；旧状态保留审计 | ✅ |
 
 ## 当前状态
 
@@ -56,9 +57,12 @@ Engineering 的问答、模板或脚手架；把 archive smoke 冒充真实产�
   恢复到 Developer，TickOrchestrator 已无具体 Stage 分支。
 - 当前发布阻断只剩 T411-T412 的真实双宿主产品长跑与发布证据收口；自动门禁为
   2266 passed/1 skipped、coverage 90%、Ruff/mypy、双宿主 archive smoke 通过。
+- 最新真跑证明隐藏 `.ae-state` 可覆盖本次显式设计文档；Phase 81 在任何新 RC 前完成
+  InvocationIntent、状态协调 Gate、可恢复重开、计划协调和可信验证证据。
 ## 最近演进
 | 日期 | 变更 |
 |---|---|
+| 2026-08-09 | 批准状态冲突二选一：重新初始化或修复状态续作 |
 | 2026-08-09 | 关闭 rc.5 旧事件重放、PlanPatch 候选分叉与 Build Identity 事故 |
 | 2026-08-09 | 修复 Codex Architect 对原生 `spawn_agent` 的错误能力判定 |
 | 2026-08-09 | 完成 T404-T410 协议内核收敛；façade 退出 Stage 专属分支 |
@@ -70,7 +74,7 @@ Engineering 的问答、模板或脚手架；把 archive smoke 冒充真实产�
 | 2026-08-02 | 再次审计：自动门禁可进入受控真跑，真实 LLM 长跑仍是发布阻断项 |
 ## 待解决问题
 
-- T411-T412：完成跨版本 150 Tick、双宿主真实产品门禁后再生成下一 RC。
+- T411-T412、T422-T430：Phase 81 完成后重做跨版本与双宿主真实产品门禁。
 - T421：清理测试套件中 SQLite connection `ResourceWarning`，不阻断本次协议修复。
 
 ## 引用文件

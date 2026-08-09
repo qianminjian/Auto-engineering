@@ -152,3 +152,19 @@
 | P0 | T419 | 不可混淆 Build Identity | While SemVer 相同但提交或制品不同, when Runtime/Action/报告生成, the build identities shall 不同且可追溯 | ✅ Release/source 内容摘要；双宿主同制品身份一致；裸 Python builder 回归 |
 | P0 | T420 | 方案 B 全门禁与原地恢复验收 | While T415-T419 完成, when 全量质量与隔离旧 thread 恢复执行, all checks shall 通过且不得改写真实项目历史 | ✅ 2266/1、coverage 90%、Ruff/mypy/sync、隔离恢复、双宿主 archive smoke |
 | P1 | T421 | SQLite 测试资源释放 | While CLI/status/Codex integration 测试打开 checkpoint DB, when 测试结束, all connections shall 显式关闭且 coverage run 不产生 ResourceWarning | ◐ 本次 coverage 记录 20 条 warning；不阻断协议修复，后续独立治理 |
+
+## Phase 81：状态冲突协调与任务续作
+> 权威设计：`design/v5.8-State-Reconciliation-Design.md`。本阶段完成前冻结新的真跑点状
+> 补丁；当前 rc.5 不再用于真实项目续跑。
+
+| 优先级 | ID | 任务 | EARS 验收 | 状态 |
+|---:|---|---|---|:---:|
+| P0 | T422 | 事故与状态协调设计资产 | While 隐藏状态错误续作已复现, when 会话切换, the project shall 保留事实、根因、用户决策和关闭标准 | ✓ 用户已批准；事故、Design、Plan、BEACON、Tracker 已建立 |
+| P0 | T423 | InvocationIntent 与有界兼容检查 | While 用户显式提交设计文档且 active thread 存在, when 启动选择运行, the Core shall 比较设计摘要、项目锚点、Profile roots 和 active Action 后判定 compatible/conflict/corrupt | ✓ 有界 Inspector、真实 Baseline 摘要兼容、legacy roots 复核；29 项定向测试通过 |
+| P0 | T424 | 跨宿主状态协调 Gate | While 状态为 conflict, when Action 编译, both hosts shall 在任何项目写入前展示重新初始化/修复续作且不得代选 | ◐ Core Gate/WAIT_USER/CLI 分流与宿主规则已实现；待 Gate Result 事件化 |
+| P0 | T425 | 可恢复重新初始化 | While 用户选择 reinitialize, when Result 提交, the Core shall 逻辑关闭旧 thread、保留审计并从当前设计创建新 thread | ◐ 待实施 |
+| P0 | T426 | PLAN_RECONCILE 与任务重建 | While 用户选择 reconcile, when 当前设计、代码和旧计划比较, the Core shall 保留可验证完成项、supersede 失效任务并生成新 Work Set | ◐ 待实施 |
+| P0 | T427 | 状态跟踪投影与 status | While plan 已协调, when status/进度生成, the system shall 仅统计当前 Work Set并展示旧新 revision、保留与 superseded 数量 | ◐ 待实施 |
+| P0 | T428 | task-aware 验证证据 | While 业务 task 提交 smoke 或自报 passed, when Result/Gate 校验, the Core shall 拒绝替代业务测试并按 task kind 接受真实证据 | ◐ 待实施 |
+| P1 | T429 | Contract Gate 可信语义 | While contract 仅以字符串出现在源码, when Gate 运行, the result shall 只作辅助 finding；权威 pass 需要可执行 contract test | ◐ 待实施 |
+| P0 | T430 | Phase 81 全门禁与真实产品复验 | While T423-T429 完成, when 隐藏状态、双路径、幂等、跨宿主和产品安装轨迹执行, all checks shall 通过后才允许生成下一 RC | ◐ 待实施 |

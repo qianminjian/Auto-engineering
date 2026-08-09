@@ -34,6 +34,9 @@ Violating the letter of this rule is violating the spirit of this rule.
      if control.disposition == "ERROR":
          report action.error_code + action.message
          STOP
+     if action.action == "gate" and control.disposition == "WAIT_USER":
+         ask only the options returned by Core, submit the selected gate result
+         continue
      if action.action in {"gate", "skip"}:
          action = ae-run dev-loop --tick
          continue
@@ -74,6 +77,10 @@ Violating the letter of this rule is violating the spirit of this rule.
 Result 后立即读取下一 Action；`WAIT_USER` 只询问 `reason_code` 对应的真实决策；只有
 `TERMINAL`、`ERROR` 或 `HANDOFF_REQUIRED` 可结束当前自动驱动。Core 不运行后台
 daemon，不得把“已输出一个 Action”当作完成。
+
+`STATE_RECONCILIATION_REQUIRED` 是旧状态与本次显式设计文档冲突的用户决策点。
+只展示 Core 给出的“重新初始化 / 修复状态并继续”，用户选择前不编辑项目；不得自动
+恢复旧 Action、物理删除 `.ae-state` 或替用户选择。
 
 启动时不要把设计文档路径作为 requirement 传入。正确写法是：
 

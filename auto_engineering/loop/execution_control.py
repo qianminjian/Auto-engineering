@@ -114,6 +114,13 @@ def control_for_action(action: Mapping[str, Any]) -> ExecutionControl:
     elif name == "gap_review":
         disposition = ExecutionDisposition.WAIT_USER
         reason = "gap_decisions_required"
+    elif (
+        name == "gate"
+        and isinstance(action.get("gate"), Mapping)
+        and action["gate"].get("id") == "state_reconciliation"
+    ):
+        disposition = ExecutionDisposition.WAIT_USER
+        reason = "STATE_RECONCILIATION_REQUIRED"
     elif name == "gate" and isinstance(action.get("gate"), Mapping) and (
         action["gate"].get("type") in {"stage_checkpoint", "manual", "user"}
     ):

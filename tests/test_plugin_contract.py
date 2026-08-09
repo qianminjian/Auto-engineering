@@ -97,6 +97,8 @@ class TestDoctor:
         """当 .ae-state/init-manifest.json 存在 (完整 schema) → 应报 ✓ (mock)."""
         ae_state = tmp_path / ".ae-state"
         ae_state.mkdir()
+        (tmp_path / "src").mkdir()
+        (tmp_path / "tests").mkdir()
         manifest = ae_state / "init-manifest.json"
         # v5.0 §IL.2 完整 manifest (含 structure + conventions 必需字段)
         manifest.write_text(

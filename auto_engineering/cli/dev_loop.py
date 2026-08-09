@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING
-from uuid import uuid4
+from typing import TYPE_CHECKING, Protocol
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from auto_engineering.config.runtime_config import RuntimeConfig, get_default_config
 from auto_engineering.engine.state import EngineState
@@ -18,6 +18,17 @@ if TYPE_CHECKING:
     from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
 
 _logger = logging.getLogger(__name__)
+
+
+class _ActiveThreadStore(Protocol):
+    def active_project_thread(self) -> str | None: ...
+    def load_active_protocol_action(self, thread_id: str) -> dict | None: ...
+    def record_protocol_action(self, action: dict) -> None: ...
+
+
+class _ActiveThreadEvents(Protocol):
+    def load_projection(self, thread_id: str) -> EngineState | None: ...
+    def load_action_snapshot(self, thread_id: str) -> dict | None: ...
 
 # ============================================================
 # v5.6 Tick 模式 CLI 处理器 (§A.1 Python 永不调 LLM — 不需 API key)
@@ -60,6 +71,101 @@ def _active_thread(store: object) -> str | None:
     """兼容旧 Store façade；真实 SQLite store 提供原子项目占用查询。"""
     getter = getattr(store, "active_project_thread", None)
     return getter() if callable(getter) else None
+
+
+def _resolve_active_thread_start(
+    *,
+    root: Path,
+    design_doc_path: str,
+    store: _ActiveThreadStore,
+    events: _ActiveThreadEvents,
+) -> dict | None:
+    """显式设计文档启动时，在恢复旧 Action 前完成只读一致性决策。"""
+    thread_id = _active_thread(store)
+    if thread_id is None:
+        return None
+
+    from auto_engineering.loop.invocation_intent import InvocationIntent
+    from auto_engineering.loop.protocol import action_envelope
+    from auto_engineering.loop.state_compatibility import (
+        CompatibilityStatus,
+        StateCompatibilityInspector,
+    )
+    from auto_engineering.project_profile import (
+        AeConfigProvider,
+        LegacyInitProvider,
+        LocalProbeProvider,
+        ProjectProfileResolver,
+    )
+
+    state = events.load_projection(thread_id)
+    if state is None:
+        return action_envelope(
+            {
+                "action": "error",
+                "error_code": "STATE_CORRUPT",
+                "message": "活动 thread 缺少可重放状态投影",
+            },
+            thread_id=thread_id,
+            tick=0,
+            stage=None,
+        )
+    active_action = (
+        events.load_action_snapshot(thread_id)
+        or store.load_active_protocol_action(thread_id)
+    )
+    intent = InvocationIntent.from_design_doc(root, design_doc_path)
+    resolution = ProjectProfileResolver((
+        AeConfigProvider(),
+        LocalProbeProvider(),
+        LegacyInitProvider(),
+    )).resolve(root)
+    report = StateCompatibilityInspector(root).inspect(
+        intent=intent,
+        state=state,
+        profile_resolution=resolution,
+        active_action=active_action,
+    )
+    if report.status is CompatibilityStatus.COMPATIBLE:
+        return active_action
+    if report.status is CompatibilityStatus.CORRUPT:
+        return action_envelope(
+            {
+                "action": "error",
+                "error_code": "STATE_CORRUPT",
+                "message": "旧状态缺少设计基线，不能自动恢复",
+            },
+            thread_id=thread_id,
+            tick=state.tick + 1,
+            stage=state.current_stage,
+        )
+
+    message_id = str(uuid5(
+        NAMESPACE_URL,
+        f"state-reconciliation:{thread_id}:{intent.design_doc_digest}",
+    ))
+    action = action_envelope(
+        {
+            "action": "gate",
+            "gate": {
+                "id": "state_reconciliation",
+                "type": "decision",
+                "prompt": "检测到旧开发状态与当前项目不一致，请选择处理方式。",
+                "options": [
+                    {"id": "reinitialize", "label": "重新初始化"},
+                    {"id": "reconcile", "label": "修复状态并继续"},
+                ],
+                "reason_codes": list(report.reason_codes),
+                "missing_anchors": list(report.missing_anchors),
+            },
+        },
+        thread_id=thread_id,
+        tick=state.tick + 1,
+        stage=state.current_stage,
+        message_id=message_id,
+    )
+    store.record_protocol_action(action)
+    return action
 
 
 CATEGORY_SIMPLE = "simple_function"
@@ -296,6 +402,16 @@ def run_tick_init(
     events = SQLiteEventStore(_ensure_event_db_path(root))
     reserved_thread_id = str(uuid4())
     try:
+        if design_doc_path:
+            existing_action = _resolve_active_thread_start(
+                root=root,
+                design_doc_path=design_doc_path,
+                store=store,
+                events=events,
+            )
+            if existing_action is not None:
+                click.echo(json.dumps(_map_action_for_host(existing_action), ensure_ascii=False))
+                return
         existing_thread_id = store.reserve_project_thread(reserved_thread_id)
         if existing_thread_id is not None:
             raise click.ClickException(

@@ -95,7 +95,7 @@ def test_resolver_returns_setup_required_for_empty_project(tmp_path: Path) -> No
     )
 
 
-def test_legacy_manifest_is_read_only_profile_input(tmp_path: Path) -> None:
+def test_legacy_manifest_without_current_roots_requires_setup(tmp_path: Path) -> None:
     state_dir = tmp_path / ".ae-state"
     state_dir.mkdir()
     manifest_path = state_dir / "init-manifest.json"
@@ -114,13 +114,9 @@ def test_legacy_manifest_is_read_only_profile_input(tmp_path: Path) -> None:
 
     result = ProjectProfileResolver((LegacyInitProvider(),)).resolve(tmp_path)
 
-    assert result.status is ResolutionStatus.RESOLVED
-    assert result.profile is not None
-    assert result.profile.languages == ("python",)
-    assert result.profile.source_roots == ("src",)
-    assert result.profile.commands["test"] == ("pytest", "-q")
-    assert result.profile.resolution.providers == ("legacy_init",)
-    assert result.profile.evidence[0].facts == ("compat:legacy_init",)
+    assert result.status is ResolutionStatus.SETUP_REQUIRED
+    assert result.profile is None
+    assert "source_roots" in result.missing_capabilities
     assert manifest_path.stat().st_mtime_ns == before
 
 

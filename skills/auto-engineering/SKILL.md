@@ -78,10 +78,16 @@ while control.disposition == "CONTINUE":
 `TERMINAL`、`ERROR`、`HANDOFF_REQUIRED` 分别表示正常终态、稳定错误和异常接管。
 不得根据 stage 名、自然语言 recap 或“已经输出 Action”自行停止。
 
+当 `reason_code == "STATE_RECONCILIATION_REQUIRED"` 时，宿主必须原样展示 Core
+返回的 `gate.options`：`reinitialize`（重新初始化）或 `reconcile`（修复状态并继续）。
+用户选择前禁止编辑项目文件；宿主不得自动恢复旧 Action、删除 `.ae-state` 或代替用户选择。
+
 然后读取 `action.instruction`：
 
 - `action == "error"`：报告 `error_code` 和 `message`，停止。
-- `action == "gate"` 或 `"skip"`：不写 result，直接执行下一次 tick。
+- `action == "gate"`：若 execution control 为 `WAIT_USER`，先取得用户选择并按 Gate
+  Result 契约提交；不得跳过。仅无需用户输入的自动 Gate 才可直接执行下一次 tick。
+- `action == "skip"`：直接执行下一次 tick。
 - `action == "session_rollover"`：仅表示进程退出、compaction 失败或跨宿主接管等
   异常恢复；正常宿主 compaction 不产生该 Action。旧执行实例停止所有工作 Action；
   通过宿主原生能力

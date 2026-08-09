@@ -52,13 +52,23 @@ class LegacyInitProvider:
         source_root = structure.get("source_root") if isinstance(structure, dict) else None
         test_root = structure.get("test_root") if isinstance(structure, dict) else None
         design_root = structure.get("design_root") if isinstance(structure, dict) else None
+        source_roots = (
+            (str(source_root).rstrip("/"),)
+            if source_root and (project_root / str(source_root)).is_dir()
+            else ()
+        )
+        test_roots = (
+            (str(test_root).rstrip("/"),)
+            if test_root and (project_root / str(test_root)).is_dir()
+            else ()
+        )
         return ProfileContribution(
             provider=self.name,
             priority=self.priority,
             project_type=str(manifest.get("project_type") or "application"),
             languages=(str(manifest["language"]),),
-            source_roots=(str(source_root).rstrip("/"),) if source_root else (),
-            test_roots=(str(test_root).rstrip("/"),) if test_root else (),
+            source_roots=source_roots,
+            test_roots=test_roots,
             design_roots=(str(design_root).rstrip("/"),) if design_root else (),
             commands=commands,
             evidence=(
