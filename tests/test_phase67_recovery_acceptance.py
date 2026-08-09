@@ -25,7 +25,7 @@ def test_crash_after_rollover_recovers_action_and_attributed_cost(tmp_path) -> N
     rollover = before_crash.record_session_rollover(
         thread_id="thread-1",
         source_session_id="session-1",
-        reason="tick_limit",
+        reason="host_process_lost",
         capsule=capsule,
         claim_token="claim-50",
         artifact_id="capsule-50",

@@ -1,6 +1,6 @@
 # Auto-Engineering 历史摘要
 
-> 更新：2026-08-05｜本文件只保留里程碑和追溯入口；详细差异以 Git 为准。
+> 更新：2026-08-09｜本文件只保留里程碑和追溯入口；详细差异以 Git 为准。
 
 ## 里程碑
 
@@ -24,6 +24,8 @@
 | 146-Tick 事故归档 | 永久记录输入超限、批次回退、验证假通过和空快照证据；补充 T322-T324 |
 | Phase 74-75 | 深度审计修复与真跑准入加固完成；2166 passed / 1 skipped、coverage 90.41%、双宿主 archive smoke 通过；真实 LLM 长跑、历史秘密确认和依赖审计仍未闭环 |
 | Phase 76-77 | 统一设计文档入口；rc.4 真跑证伪后恢复原始批量 Gap Review、Action schema fail-closed、公共 status 与 Gate 语义；rc.5 基线 2178 passed / 1 skipped |
+| Phase 78-79 | 修复架构基线、Gate 转移、PlanPatch 与 Contract 激活；自动门禁通过但真实产品复验未关闭 |
+| Phase 80 | 2026-08-09 协议内核收敛实施中；Runtime/Execution Control/显式 Stage 事件/纯 Compiler/TickKernel 已落地，真实双宿主产品长跑仍阻断发布 |
 
 ## 持续有效的决策
 
@@ -34,6 +36,8 @@
   仅作为迁移期只读兼容输入。
 - archive smoke 与真实产品安装验收必须分开报告。
 - v5.7.1 是当前正式发布实现；v5.8.0-rc.5 纠偏实现和自动门禁已完成，待双宿主真实 LLM 项目、历史秘密确认和依赖审计通过后发布。
+- Phase 80 完成前冻结新的点状真跑补丁；活动 Action 边界升级、机器化宿主续跑、显式
+  领域 Reducer 和纯 ActionCompiler 必须作为一个架构闭环实施。
 
 ## 已清理资产
 

@@ -17,6 +17,11 @@ from uuid import uuid4
 
 from jsonschema import Draft202012Validator
 
+from auto_engineering.loop.execution_control import (
+    ExecutionControl,
+    control_for_action,
+)
+
 SCHEMA_VERSION = "1.1"
 
 
@@ -111,6 +116,20 @@ def action_envelope(
             "Action 缺少有效 tick",
         )
 
+    extensions = dict(payload.get("extensions") or {})
+    ae_extension = dict(extensions.get("ae") or {})
+    raw_control = ae_extension.get("execution_control")
+    if raw_control is None:
+        ae_extension["execution_control"] = control_for_action(payload).to_dict()
+    elif isinstance(raw_control, Mapping):
+        ExecutionControl.from_dict(raw_control)
+    else:
+        raise ProtocolValidationError(
+            ProtocolErrorCode.INVALID_ENVELOPE,
+            "Action execution_control 必须为 object",
+        )
+    extensions["ae"] = ae_extension
+
     envelope: dict[str, Any] = {
         **payload,
         "schema_version": SCHEMA_VERSION,
@@ -120,7 +139,7 @@ def action_envelope(
         "tick": resolved_tick,
         "stage": resolved_stage,
         "correlation_id": resolved_thread,
-        "extensions": dict(payload.get("extensions") or {}),
+        "extensions": extensions,
     }
     if causation_id is not None:
         envelope["causation_id"] = causation_id

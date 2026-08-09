@@ -2158,8 +2158,9 @@ class TestPromptVersionLock:
         store2.close()
         assert "hash 不符" not in capsys.readouterr().err
 
-    def test_restore_mismatched_hash_is_rejected(self, tmp_path) -> None:
-        from auto_engineering.loop.checkpoint.records import CheckpointNotFoundError
+    def test_restore_ignores_thread_hash_when_active_action_has_revision(
+        self, tmp_path
+    ) -> None:
         from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
 
         db = tmp_path / "cp.db"
@@ -2172,8 +2173,13 @@ class TestPromptVersionLock:
         store.close()
 
         store2 = SQLiteCheckpointStore(db)
-        with pytest.raises(CheckpointNotFoundError, match="PROMPT_REGISTRY_DRIFT"):
-            TickOrchestrator.restore(tmp_path, store2)
+        restored = TickOrchestrator.restore(tmp_path, store2)
+        assert restored._active_action is not None
+        assert restored._state.pending_runtime_revision is None
+        assert (
+            restored._state.active_runtime_revision["prompt_revision"]
+            != "0" * 64
+        )
         store2.close()
 
 
@@ -2802,6 +2808,15 @@ class TestTickVsTickDictIdenticalActions:
         stripped.pop("correlation_id", None)
         stripped.pop("causation_id", None)
         stripped.pop("subagent_prompt", None)  # DS-15: file-based, may differ
+        extensions = stripped.get("extensions")
+        if isinstance(extensions, dict):
+            extensions = dict(extensions)
+            ae = extensions.get("ae")
+            if isinstance(ae, dict):
+                ae = dict(ae)
+                ae.pop("issued_at", None)
+                extensions["ae"] = ae
+            stripped["extensions"] = extensions
         # DS-15: instruction contains proof_token which is UUID → strip it
         if "instruction" in stripped:
             import re

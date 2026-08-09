@@ -9,13 +9,18 @@ import json
 import logging
 import time
 from collections.abc import Callable
-from contextvars import ContextVar
+from copy import copy
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from auto_engineering.config.constants import _SPAWN_CONFIG
 from auto_engineering.config.feature_flags import feature_status_for_action
+from auto_engineering.loop.effects import (
+    EffectExecutor,
+    WriteContentAddressedArtifact,
+    WriteJsonArtifact,
+)
 from auto_engineering.prompts.architect_context import build_architect_research_context
 from auto_engineering.prompts.compiler import compile_prompt_bundle
 from auto_engineering.prompts.contracts import default_prompt_contracts
@@ -89,11 +94,6 @@ class ActionBuildContext:
     last_batch_id: str | None = None
 
 
-_CURRENT_CONTEXT: ContextVar[ActionBuildContext] = ContextVar(
-    "action_build_context"
-)
-
-
 class ActionBuilder:
     """Build per-tick action JSON for each stage.
 
@@ -120,6 +120,7 @@ class ActionBuilder:
         self._pii_enabled = pii_enabled
         self._pii_redactor = pii_redactor
         self._pii_outbound = pii_outbound
+        self._bound_context: ActionBuildContext | None = None
 
     # ── public API ──
     def build_action(
@@ -162,17 +163,15 @@ class ActionBuilder:
         _pi_enabled = pii_enabled if pii_enabled is not None else self._pii_enabled
         _pi_redactor = pii_redactor if pii_redactor is not None else self._pii_redactor
         _pi_outbound = pii_outbound if pii_outbound is not None else self._pii_outbound
-        token = _CURRENT_CONTEXT.set(context)
-        try:
-            return self._build_with_context(
-                feedback=feedback,
-                pre_gate=pre_gate,
-                pii_enabled=_pi_enabled,
-                pii_redactor=_pi_redactor,
-                pii_outbound=_pi_outbound,
-            )
-        finally:
-            _CURRENT_CONTEXT.reset(token)
+        invocation = copy(self)
+        invocation._bound_context = context
+        return invocation._build_with_context(
+            feedback=feedback,
+            pre_gate=pre_gate,
+            pii_enabled=_pi_enabled,
+            pii_redactor=_pi_redactor,
+            pii_outbound=_pi_outbound,
+        )
 
     def _build_with_context(
         self,
@@ -185,7 +184,6 @@ class ActionBuilder:
     ) -> dict:
         state = self._state
         stage = state.current_stage
-        state.action_timestamp = time.time()
 
         if pre_gate:
             return {
@@ -276,7 +274,9 @@ class ActionBuilder:
 
     @property
     def _context(self) -> ActionBuildContext:
-        return _CURRENT_CONTEXT.get()
+        if self._bound_context is None:
+            raise RuntimeError("ActionBuilder 缺少 invocation context")
+        return self._bound_context
 
     @property
     def _state(self) -> EngineState:
@@ -338,13 +338,12 @@ class ActionBuilder:
     ) -> str:
         """以显式输入生成进度摘要，不依赖上一次 build_action 调用。"""
 
-        token = _CURRENT_CONTEXT.set(
-            ActionBuildContext(state=state, batch_state=batch_state)
+        invocation = copy(self)
+        invocation._bound_context = ActionBuildContext(
+            state=state,
+            batch_state=batch_state,
         )
-        try:
-            return self._progress_summary()
-        finally:
-            _CURRENT_CONTEXT.reset(token)
+        return invocation._progress_summary()
 
     # ── helpers ──
 
@@ -574,15 +573,14 @@ class ActionBuilder:
 
     def _write_prompt_artifact(self, prompt: str, prompt_hash: str) -> str:
         """内容寻址保存 Worker prompt，避免全部正文进入 Coordinator Action。"""
-        root = self.project_root / ".ae-state" / "prompt-artifacts"
-        root.mkdir(parents=True, exist_ok=True)
-        path = root / f"{prompt_hash}.md"
-        if path.exists():
-            if path.read_text(encoding="utf-8") != prompt:
-                raise ValueError("PROMPT_ARTIFACT_HASH_CONFLICT")
-        else:
-            path.write_text(prompt, encoding="utf-8")
-        return str(path.relative_to(self.project_root))
+        receipt = EffectExecutor(self.project_root).execute(
+            WriteContentAddressedArtifact(
+                kind="prompt",
+                content=prompt,
+                sha256=prompt_hash,
+            )
+        )
+        return receipt.relative_path
 
     # ── DS-15 helpers ──
 
@@ -617,22 +615,21 @@ class ActionBuilder:
         Engine writes the initial file with status='pending'.  Subagent
         appends stage + timestamp after completing its work.
         """
-        proof_dir = self.project_root / ".ae-state" / "spawn-proofs"
-        proof_dir.mkdir(parents=True, exist_ok=True)
-        proof_file = proof_dir / f"{proof_token}.json"
         payload = {
             "token": proof_token,
             "stage": stage,
             "status": "pending",
             "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         }
-        proof_file.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
-        challenge_dir = self.project_root / ".ae-state" / "spawn-challenges"
-        challenge_dir.mkdir(parents=True, exist_ok=True)
-        challenge = challenge_dir / f"{proof_token}.json"
-        challenge.write_text(
-            json.dumps(payload, ensure_ascii=False), encoding="utf-8"
-        )
+        executor = EffectExecutor(self.project_root)
+        executor.execute(WriteJsonArtifact(
+            relative_path=f"spawn-proofs/{proof_token}.json",
+            payload=payload,
+        ))
+        executor.execute(WriteJsonArtifact(
+            relative_path=f"spawn-challenges/{proof_token}.json",
+            payload=payload,
+        ))
 
     def bind_spawn_proofs(self, action: dict) -> None:
         """在 Action 获得协议身份后，把所有 proof 绑定到该 Action。"""
@@ -674,9 +671,11 @@ class ActionBuilder:
             })
             if requested_effort is not None:
                 payload["requested_effort"] = requested_effort
-            proof_file.write_text(
-                json.dumps(payload, ensure_ascii=False), encoding="utf-8"
-            )
+            executor = EffectExecutor(self.project_root)
+            executor.execute(WriteJsonArtifact(
+                relative_path=f"spawn-proofs/{token}.json",
+                payload=payload,
+            ))
             try:
                 challenge_payload = json.loads(
                     challenge_file.read_text(encoding="utf-8")
@@ -692,10 +691,10 @@ class ActionBuilder:
             })
             if requested_effort is not None:
                 challenge_payload["requested_effort"] = requested_effort
-            challenge_file.write_text(
-                json.dumps(challenge_payload, ensure_ascii=False),
-                encoding="utf-8",
-            )
+            executor.execute(WriteJsonArtifact(
+                relative_path=f"spawn-challenges/{token}.json",
+                payload=challenge_payload,
+            ))
 
     # ── stage builders ──
 

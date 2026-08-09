@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 from uuid import uuid4
 
+from auto_engineering import __version__
 from auto_engineering.config.constants import _SPAWN_CONFIG, DEFAULT_P1_THRESHOLD, STAGE_TO_ROLE
 from auto_engineering.config.runtime_config import RuntimeConfig, get_default_config
 from auto_engineering.context.offloading import StageContextOffload
@@ -47,6 +48,10 @@ from auto_engineering.loop.action_builder import (
     _STAGE_CHECKPOINT_OPTIONS,
     _STAGE_CHECKPOINT_REVIEW_FEEDBACK,
     ActionBuilder,
+)
+from auto_engineering.loop.action_compiler import (
+    ActionCompiler,
+    ActionIdentity,
 )
 from auto_engineering.loop.actions import (
     ActionDone,
@@ -72,16 +77,19 @@ from auto_engineering.loop.context_budget import (
 )
 from auto_engineering.loop.convergence import ConvergenceConfig, ConvergenceJudge, RoundHistory
 from auto_engineering.loop.debug_tracer import DebugTracer, now_iso
+from auto_engineering.loop.effects import EffectExecutor, WriteJsonArtifact
 from auto_engineering.loop.escalation_handler import (
     EscalationContext,
     EscalationHandler,
 )
 from auto_engineering.loop.event_store import SQLiteEventStore
-from auto_engineering.loop.events import LoopEvent, LoopEventType
+from auto_engineering.loop.events import EVENT_SCHEMA_VERSION, LoopEvent, LoopEventType
 from auto_engineering.loop.guardrail import GuardrailChain
+from auto_engineering.loop.kernel import TickKernel
 from auto_engineering.loop.loop_budget import LoopUsage, evaluate_loop_budget
 from auto_engineering.loop.plan import Plan
 from auto_engineering.loop.protocol import (
+    SCHEMA_VERSION,
     ProtocolErrorCode,
     ProtocolValidationError,
     action_envelope,
@@ -90,7 +98,13 @@ from auto_engineering.loop.protocol import (
     validate_result_envelope,
 )
 from auto_engineering.loop.protocol_compat import upgrade_legacy_result
+from auto_engineering.loop.reducers import default_reducer_registry
 from auto_engineering.loop.refine import build_refine_request
+from auto_engineering.loop.runtime_revision import (
+    CompatibilityDecision,
+    RuntimeRevision,
+    evaluate_compatibility,
+)
 from auto_engineering.loop.session_handoff import SessionHandoff
 from auto_engineering.loop.stage_router import (
     StageRouter,
@@ -412,6 +426,7 @@ class TickOrchestrator:
             execution_session_id=str(uuid4()),
             session_started_at=datetime.now().astimezone().isoformat(),
         )
+        self._state.active_runtime_revision = self._current_runtime_revision().to_dict()
         if design_doc_path:
             # 持久化路径 — 跨进程 restore 据此重 parse 设计文档 (T9a)
             self._state.design_doc_path = design_doc_path
@@ -620,15 +635,35 @@ class TickOrchestrator:
         if state.debug_enabled and state.debug_dir:
             self._debug_tracer = DebugTracer(Path(state.debug_dir))
 
-        # B12.5 版本锁: 同一确定性 loop 不允许在恢复时静默更换 prompt。
-        stored_hash = state.prompt_registry_hash
-        if stored_hash:
-            current_hash = default_registry().registry_hash()
-            if stored_hash != current_hash:
-                raise CheckpointNotFoundError(
-                    "PROMPT_REGISTRY_DRIFT: checkpoint 与当前 prompt registry "
-                    f"不一致 ({stored_hash[:12]} != {current_hash[:12]})"
-                )
+        current_revision = self._current_runtime_revision()
+        issued_revision = self._issued_runtime_revision(current_revision)
+        compatibility = evaluate_compatibility(
+            issued=issued_revision,
+            current=current_revision,
+            has_active_action=self._active_action is not None,
+        )
+        if compatibility is CompatibilityDecision.INCOMPATIBLE:
+            raise CheckpointNotFoundError(
+                "RUNTIME_REVISION_INCOMPATIBLE: active Action 协议无法由当前运行时消费"
+            )
+        if compatibility is CompatibilityDecision.MIGRATION_REQUIRED:
+            raise CheckpointNotFoundError(
+                "RUNTIME_MIGRATION_REQUIRED: Event/Projection 版本需要确定性迁移器"
+            )
+        self._state.active_runtime_revision = issued_revision.to_dict()
+        if compatibility is CompatibilityDecision.ACTIVATE_AFTER_ACTION:
+            self._state.pending_runtime_revision = current_revision.to_dict()
+            self._queue_domain_event(
+                LoopEventType.RUNTIME_REVISION_DETECTED,
+                {
+                    "active": issued_revision.to_dict(),
+                    "pending": current_revision.to_dict(),
+                    "activation": "after_active_action",
+                },
+            )
+        else:
+            self._state.active_runtime_revision = current_revision.to_dict()
+            self._state.pending_runtime_revision = None
 
         return self
 
@@ -1377,18 +1412,12 @@ class TickOrchestrator:
             "stage": challenge.get("stage"),
             "result_sha256": hashlib.sha256(canonical).hexdigest(),
         }
-        receipt_dir = self.project_root / ".ae-state" / "spawn-receipts"
-        receipt_dir.mkdir(parents=True, exist_ok=True)
-        receipt_path = receipt_dir / f"{token}.accepted.json"
-        encoded = json.dumps(
-            payload,
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-        )
         # Result schema preflight 可在正式接受前重复运行；同一 active Action 的
         # acceptance candidate 以最后一次通过校验的规范化内容为准。
-        receipt_path.write_text(encoded, encoding="utf-8")
+        EffectExecutor(self.project_root).execute(WriteJsonArtifact(
+            relative_path=f"spawn-receipts/{token}.accepted.json",
+            payload=payload,
+        ))
 
     def _record_tick_latency(self, t_start: float, tick_no: int) -> None:
         """DS-10: 写 tick 延迟记录到 action_history, 超编排预算只告警不中断.
@@ -1542,14 +1571,17 @@ class TickOrchestrator:
         action_context = decision.action_context
         if action_context.get("collect_token_usage"):
             self._collect_token_usage()
-        patch = action_context.get("state_patch", {})
-        if isinstance(patch, dict):
-            self._state.set_channels(patch)
-        if action_context.get("initialize_architecture"):
-            self._initialize_architecture()
-        critic_progress = action_context.get("critic_progress")
-        if isinstance(critic_progress, str):
-            self._apply_critic_progress(critic_progress)
+        reducer_registry = default_reducer_registry()
+        for event in decision.events:
+            # Stage 推进还需执行 round/history/checkpoint 生命周期，暂由 façade
+            # 的 _advance_stage 负责；其余 Projection 变化统一走纯 Reducer。
+            if event.event_type is not LoopEventType.STAGE_ADVANCED:
+                self._state = reducer_registry.reduce(self._state, event)
+            if event.event_type in {
+                LoopEventType.ARCHITECTURE_INITIALIZATION_REQUESTED,
+                LoopEventType.CRITIC_PROGRESS_RECORDED,
+            }:
+                self._apply_transition_event_effect(event)
         supplements = action_context.get("supplements", ())
         if isinstance(supplements, (list, tuple)):
             for supplement in supplements:
@@ -1569,22 +1601,17 @@ class TickOrchestrator:
         if self._event_store is not None:
             self._pending_domain_events.extend(decision.events)
         self._apply_verification_progress(action_context.get("progress_update"))
+        for event in decision.events:
+            if event.event_type in {
+                LoopEventType.BATCH_CURSOR_ADVANCED,
+                LoopEventType.BATCH_CURSOR_ROLLED_BACK,
+                LoopEventType.COMPONENT_CURSOR_ADVANCED,
+                LoopEventType.PLATE_CURSOR_ADVANCED,
+            }:
+                self._apply_transition_event_effect(event)
         refine_source = action_context.get("refine_source")
         if isinstance(refine_source, str):
             return self._handle_plan_refine(refine_source)
-        cursor_operation = action_context.get("cursor_operation")
-        if cursor_operation == "advance_component" and self._batch_state is not None:
-            self._batch_state.advance_component()
-        elif cursor_operation == "advance_plate" and self._batch_state is not None:
-            self._batch_state.advance_plate()
-        elif (
-            cursor_operation == "rollback_batch"
-            and self._batch_state is not None
-            and self._batch_state.current_batch_idx > 0
-        ):
-            self._batch_state.current_batch_idx -= 1
-        elif cursor_operation == "advance_batch" and self._batch_state is not None:
-            self._batch_state.advance_batch()
         completed_batch_id = action_context.get("completed_batch_id")
         if isinstance(completed_batch_id, str):
             self._last_batch_id = completed_batch_id
@@ -1625,6 +1652,30 @@ class TickOrchestrator:
         if action_context.get("display_progress"):
             self._display_progress()
         return action
+
+    def _apply_transition_event_effect(self, event: LoopEvent) -> None:
+        """迁移期执行非 Projection 领域事实，替代 Stage 专属命令字段。"""
+
+        event_type = event.event_type
+        if event_type is LoopEventType.ARCHITECTURE_INITIALIZATION_REQUESTED:
+            self._activate_architecture_plan()
+            return
+        elif event_type is LoopEventType.CRITIC_PROGRESS_RECORDED:
+            verdict = event.to_dict()["payload"].get("verdict")
+            if isinstance(verdict, str):
+                self._record_critic_gate_progress(verdict)
+            return
+        if self._batch_state is None:
+            return
+        if event_type is LoopEventType.BATCH_CURSOR_ADVANCED:
+            self._batch_state.advance_batch()
+        elif event_type is LoopEventType.BATCH_CURSOR_ROLLED_BACK:
+            if self._batch_state.current_batch_idx > 0:
+                self._batch_state.current_batch_idx -= 1
+        elif event_type is LoopEventType.COMPONENT_CURSOR_ADVANCED:
+            self._batch_state.advance_component()
+        elif event_type is LoopEventType.PLATE_CURSOR_ADVANCED:
+            self._batch_state.advance_plate()
 
     def _apply_verification_progress(self, update: object) -> None:
         if self._progress_tree is None or self._batch_state is None:
@@ -1677,7 +1728,7 @@ class TickOrchestrator:
         node.current_task = next_task if isinstance(next_task, str) else None
         self._progress_tree.recalculate_parents(node.id)
 
-    def _initialize_architecture(self) -> None:
+    def _activate_architecture_plan(self) -> None:
         """将 Architect 的纯决策物化为执行游标与进度树。"""
         from auto_engineering.loop.architecture_baseline import build_architecture_baseline
 
@@ -1884,7 +1935,7 @@ class TickOrchestrator:
             gate_results=dict(s.gate_results or {}),
         )
 
-    def _apply_critic_progress(self, verdict: str) -> None:
+    def _record_critic_gate_progress(self, verdict: str) -> None:
         """更新 Critic gate 的展示进度；协议决策由 Handler 负责。"""
         if self._progress_tree:
             comp = self._batch_state.current_component()
@@ -2046,6 +2097,7 @@ class TickOrchestrator:
 
     def build_action(self, feedback: str | None = None, pre_gate: dict | None = None) -> dict:
         """Build the action dict for the current stage — delegates to ActionBuilder."""
+        self._state.action_timestamp = time.time()
         action = self.action_builder.build_action(
             self._state,
             design_doc=self._design_doc,
@@ -2106,10 +2158,32 @@ class TickOrchestrator:
                 # 下一次独立 --tick 进程能恢复刚注入的滚动摘要。
                 self._save_checkpoint()
         # v5.8: 先编译候选工作 Action，再以确定性预算决定是否改发 rollover。
-        action = action_envelope(
-            action,
-            causation_id=self._current_result_message_id,
+        if (
+            self._current_result_message_id is not None
+            and self._state.pending_runtime_revision is not None
+        ):
+            activated = dict(self._state.pending_runtime_revision)
+            self._state.active_runtime_revision = activated
+            self._state.pending_runtime_revision = None
+            self._queue_domain_event(
+                LoopEventType.RUNTIME_REVISION_ACTIVATED,
+                {"runtime_revision": activated},
+            )
+        revision = RuntimeRevision.from_dict(
+            self._state.active_runtime_revision
+            or self._current_runtime_revision().to_dict()
         )
+        draft = ActionCompiler().compile(
+            payload=action,
+            identity=ActionIdentity(
+                message_id=str(uuid4()),
+                correlation_id=self._state.thread_id,
+                causation_id=self._current_result_message_id,
+            ),
+            runtime_revision=revision,
+            issued_at=datetime.now().astimezone().isoformat(),
+        )
+        action = dict(draft.payload)
         self.action_builder.bind_spawn_proofs(action)
         action["extensions"]["policy_snapshot"] = {
             **asdict(self._runtime_config.loop_budget_policy),
@@ -2144,6 +2218,58 @@ class TickOrchestrator:
                 self._checkpoint_store.record_protocol_action(action)
         self.action_builder.log_prompt(self.project_root, action)
         return action
+
+    def _current_runtime_revision(self) -> RuntimeRevision:
+        """由当前 Prompt 与确定性策略构建 Action 级运行时修订。"""
+
+        policy_payload = {
+            "loop_budget": asdict(self._runtime_config.loop_budget_policy),
+            "context_budget": asdict(self._runtime_config.context_budget_policy),
+        }
+        policy_revision = hashlib.sha256(
+            json.dumps(
+                policy_payload,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        return RuntimeRevision(
+            protocol_version=SCHEMA_VERSION,
+            event_schema_version=EVENT_SCHEMA_VERSION,
+            projection_schema_version="1.0",
+            action_contract_version="1.0",
+            prompt_revision=default_registry().registry_hash(),
+            policy_revision=policy_revision,
+            engine_build_id=__version__,
+        )
+
+    def _issued_runtime_revision(
+        self,
+        current: RuntimeRevision,
+    ) -> RuntimeRevision:
+        """读取 active Action 修订；旧线程只把 Prompt hash 转换为 legacy 修订。"""
+
+        if self._active_action is not None:
+            raw = (
+                self._active_action.get("extensions", {})
+                .get("ae", {})
+                .get("runtime_revision")
+            )
+            if isinstance(raw, dict):
+                return RuntimeRevision.from_dict(raw)
+        if self._state.active_runtime_revision is not None:
+            return RuntimeRevision.from_dict(self._state.active_runtime_revision)
+        legacy_prompt = self._state.prompt_registry_hash or current.prompt_revision
+        return RuntimeRevision(
+            protocol_version=current.protocol_version,
+            event_schema_version=current.event_schema_version,
+            projection_schema_version=current.projection_schema_version,
+            action_contract_version=current.action_contract_version,
+            prompt_revision=legacy_prompt,
+            policy_revision=current.policy_revision,
+            engine_build_id=current.engine_build_id,
+        )
 
     def _apply_loop_budget(self, candidate: dict[str, Any]) -> dict[str, Any]:
         if candidate.get("action") in {"done", "error", "session_rollover", "gate"}:
@@ -2691,67 +2817,25 @@ class TickOrchestrator:
         if self._event_store is None or self._state is None:
             return
         sequence = self._event_store.next_sequence(self._state.thread_id)
-        events: list[LoopEvent] = []
-        if sequence == 0:
-            events.append(
-                LoopEvent.create(
-                    thread_id=self._state.thread_id,
-                    sequence=sequence,
-                    event_type=LoopEventType.LOOP_INITIALIZED,
-                    payload={
-                        "state": self._state.to_dict(),
-                        "round_history": [],
-                    },
-                    correlation_id=self._state.thread_id,
-                )
-            )
-            sequence += 1
-        elif self._current_result_message_id is not None:
-            causation_id = (
-                self._active_action.get("message_id")
-                if self._active_action is not None
-                else None
-            )
-            events.append(
-                LoopEvent.create(
-                    thread_id=self._state.thread_id,
-                    sequence=sequence,
-                    event_type=LoopEventType.RESULT_ACCEPTED,
-                    payload={
-                        "result_message_id": self._current_result_message_id,
-                        "state_patch": self._state.to_dict(),
-                        "round_history": [asdict(item) for item in self._round_history],
-                    },
-                    causation_id=causation_id,
-                    correlation_id=self._state.thread_id,
-                )
-            )
-            sequence += 1
-        for pending in self._pending_domain_events:
-            events.append(
-                LoopEvent.create(
-                    thread_id=self._state.thread_id,
-                    sequence=sequence,
-                    event_type=pending.event_type,
-                    payload=pending.to_dict()["payload"],
-                    causation_id=pending.causation_id,
-                    correlation_id=self._state.thread_id,
-                )
-            )
-            sequence += 1
-        events.append(
-            LoopEvent.create(
-                thread_id=self._state.thread_id,
-                sequence=sequence,
-                event_type=LoopEventType.ACTION_ISSUED,
-                payload={"action": action},
-                causation_id=self._current_result_message_id,
-                correlation_id=self._state.thread_id,
-            )
+        previous = self._event_store.load_projection(self._state.thread_id)
+        result_causation_id = (
+            self._active_action.get("message_id")
+            if self._active_action is not None
+            else None
+        )
+        candidate = TickKernel().compile_commit(
+            next_sequence=sequence,
+            previous_state=previous,
+            current_state=self._state,
+            action=action,
+            pending_events=tuple(self._pending_domain_events),
+            result_message_id=self._current_result_message_id,
+            result_causation_id=result_causation_id,
+            round_history=tuple(asdict(item) for item in self._round_history),
         )
         try:
             self._event_store.commit_tick(
-                events=events,
+                events=candidate.events,
                 state=self._state,
                 action=action,
                 result_causation_id=self._current_result_causation_id,

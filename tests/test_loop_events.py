@@ -104,6 +104,18 @@ def test_all_planned_event_types_are_explicit() -> None:
         "ProjectSetupRequired",
         "ProjectSetupCompleted",
         "ArchitectureBaselineAccepted",
+        "RuntimeRevisionDetected",
+        "RuntimeRevisionActivated",
+        "StateChannelsChanged",
+        "GapStateUpdated",
+        "CriticStateUpdated",
+        "VerificationStateUpdated",
+        "ArchitectureInitializationRequested",
+        "CriticProgressRecorded",
+        "BatchCursorAdvanced",
+        "BatchCursorRolledBack",
+        "ComponentCursorAdvanced",
+        "PlateCursorAdvanced",
     }
 
 

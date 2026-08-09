@@ -1,6 +1,6 @@
 # design/ 资产索引
 
-> 更新：2026-08-06｜当前实现：v5.8.0-rc.5；Phase 78 架构不变量修复中
+> 更新：2026-08-09｜当前实现：v5.8.0-rc.5；Phase 80 协议内核收敛实施中
 
 ## 当前权威资产
 
@@ -12,6 +12,8 @@
 | `v5.7-Protocol-Kernel-PLAN.md` | Phase 52-56 可执行实施计划 |
 | `v5.7-Prompt-Contract-Design.md` | Phase 60 Prompt Contract 与多 Agent 交付设计 |
 | `v5.7-Prompt-Contract-PLAN.md` | Phase 60 T280-T287 TDD 实施计划 |
+| `v5.8-Protocol-Kernel-Convergence-Design.md` | Phase 80 当前权威收敛设计；统一 Host/Core/Event/Prompt/Session 边界 |
+| `v5.8-Protocol-Kernel-Convergence-PLAN.md` | Phase 80 T403-T412 分波次 TDD 实施计划 |
 | `v5.8-Automatic-Context-Governance.md` | Phase 70 自动 compaction、有界增量上下文与成本治理权威设计 |
 | `v5.8-Session-Decoupling-Design.md` | Phase 64-67 状态恢复设计；日常 rollover 已由 Phase 70 纠偏 |
 | `v5.8-Session-Decoupling-PLAN.md` | Phase 64-70 T302-T350 可执行实施计划 |
@@ -28,7 +30,8 @@
 
 ## 解释顺序
 
-1. 当前运行行为以 v5.6 设计、代码和新鲜测试证据为准。
+1. Phase 80 目标架构与迁移边界以 Protocol Kernel Convergence 为准；当前剩余未迁移行为
+   仍以 v5.6 设计、代码和新鲜测试证据为准，不得把目标误称为已实现。
 2. 上下文与日常会话行为以 Automatic Context Governance 为准；恢复语义再读取
    Session Decoupling，冲突时前者优先。
 3. 实施顺序和任务状态以 PLAN 与 Tracker 为准。

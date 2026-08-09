@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from auto_engineering.gates.deep_audit import recount_findings
+from auto_engineering.loop.domain_events import channels_updated, transition_event
 from auto_engineering.loop.events import LoopEvent, LoopEventType
 from auto_engineering.loop.stages.base import (
     StageName,
@@ -32,12 +33,18 @@ def _advanced(
 
 def _refine(
     source: StageName,
-    state_patch: Mapping[str, Any],
+    changes: Mapping[str, Any],
+    context: TransitionContext,
     **action_context: Any,
 ) -> TransitionDecision:
     return TransitionDecision(
+        events=(channels_updated(
+            LoopEventType.VERIFICATION_STATE_UPDATED,
+            changes,
+            thread_id=context.thread_id,
+            sequence=context.event_sequence,
+        ),),
         action_context={
-            "state_patch": dict(state_patch),
             "refine_source": source,
             **action_context,
         }
@@ -60,6 +67,7 @@ class ComponentVerifierHandler:
             return _refine(
                 self.stage,
                 {"audit_findings": list(result.get("coverage_map", []))},
+                context,
                 progress_update=progress,
             )
         if context.extensions.get("has_more_components"):
@@ -69,10 +77,16 @@ class ComponentVerifierHandler:
         else:
             target = "plate_deep_audit"
         return TransitionDecision(
-            events=_advanced(self.stage, target, context),
+            events=(
+                transition_event(
+                    LoopEventType.COMPONENT_CURSOR_ADVANCED,
+                    thread_id=context.thread_id,
+                    sequence=context.event_sequence,
+                ),
+                *_advanced(self.stage, target, context),
+            ),
             next_stage=target,
             action_context={
-                "cursor_operation": "advance_component",
                 "progress_update": progress,
             },
         )
@@ -95,6 +109,7 @@ class PlateDeepAuditHandler:
             return _refine(
                 self.stage,
                 {"audit_findings": deduped, "open_findings": deduped},
+                context,
                 audit_counts=counts,
                 progress_update=progress,
             )
@@ -105,11 +120,22 @@ class PlateDeepAuditHandler:
         else:
             target = "system_verifier"
         return TransitionDecision(
-            events=_advanced(self.stage, target, context),
+            events=(
+                transition_event(
+                    LoopEventType.PLATE_CURSOR_ADVANCED,
+                    thread_id=context.thread_id,
+                    sequence=context.event_sequence,
+                ),
+                channels_updated(
+                    LoopEventType.VERIFICATION_STATE_UPDATED,
+                    {"open_findings": []},
+                    thread_id=context.thread_id,
+                    sequence=context.event_sequence,
+                ),
+                *_advanced(self.stage, target, context),
+            ),
             next_stage=target,
             action_context={
-                "state_patch": {"open_findings": []},
-                "cursor_operation": "advance_plate",
                 "audit_counts": counts,
                 "progress_update": progress,
                 "display_progress": not context.extensions.get("has_more_plates"),
@@ -132,12 +158,20 @@ class SystemVerifierHandler:
             result.get("diverged_count", 0)
         ):
             patch["audit_findings"] = coverage
-            return _refine(self.stage, patch)
+            return _refine(self.stage, patch, context)
         target: StageName = "system_deep_audit"
         return TransitionDecision(
-            events=_advanced(self.stage, target, context),
+            events=(
+                channels_updated(
+                    LoopEventType.VERIFICATION_STATE_UPDATED,
+                    patch,
+                    thread_id=context.thread_id,
+                    sequence=context.event_sequence,
+                ),
+                *_advanced(self.stage, target, context),
+            ),
             next_stage=target,
-            action_context={"state_patch": patch, "display_progress": True},
+            action_context={"display_progress": True},
         )
 
 
@@ -172,13 +206,19 @@ class SystemDeepAuditHandler:
             return _refine(
                 self.stage,
                 patch,
+                context,
                 audit_counts=counts,
             )
         patch["open_findings"] = []
         return TransitionDecision(
+            events=(channels_updated(
+                LoopEventType.VERIFICATION_STATE_UPDATED,
+                patch,
+                thread_id=context.thread_id,
+                sequence=context.event_sequence,
+            ),),
             terminal=True,
             action_context={
-                "state_patch": patch,
                 "audit_counts": counts,
                 "display_progress": True,
                 "convergence": {

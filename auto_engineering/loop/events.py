@@ -46,6 +46,18 @@ class LoopEventType(StrEnum):
     PROJECT_SETUP_REQUIRED = "ProjectSetupRequired"
     PROJECT_SETUP_COMPLETED = "ProjectSetupCompleted"
     ARCHITECTURE_BASELINE_ACCEPTED = "ArchitectureBaselineAccepted"
+    RUNTIME_REVISION_DETECTED = "RuntimeRevisionDetected"
+    RUNTIME_REVISION_ACTIVATED = "RuntimeRevisionActivated"
+    STATE_CHANNELS_CHANGED = "StateChannelsChanged"
+    GAP_STATE_UPDATED = "GapStateUpdated"
+    CRITIC_STATE_UPDATED = "CriticStateUpdated"
+    VERIFICATION_STATE_UPDATED = "VerificationStateUpdated"
+    ARCHITECTURE_INITIALIZATION_REQUESTED = "ArchitectureInitializationRequested"
+    CRITIC_PROGRESS_RECORDED = "CriticProgressRecorded"
+    BATCH_CURSOR_ADVANCED = "BatchCursorAdvanced"
+    BATCH_CURSOR_ROLLED_BACK = "BatchCursorRolledBack"
+    COMPONENT_CURSOR_ADVANCED = "ComponentCursorAdvanced"
+    PLATE_CURSOR_ADVANCED = "PlateCursorAdvanced"
 
 
 class LoopEventValidationError(ValueError):

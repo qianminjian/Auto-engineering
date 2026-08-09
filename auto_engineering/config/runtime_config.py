@@ -142,15 +142,15 @@ class RuntimeConfig:
 
     @property
     def context_budget_policy(self) -> ContextBudgetPolicy:
-        """Build the versioned session budget policy from the manifest SSOT."""
+        """构建 Action 大小策略；旧会话阈值只保留兼容观测，不参与决策。"""
         from auto_engineering.loop.context_budget import ContextBudgetPolicy
 
         return ContextBudgetPolicy(
-            policy_id="context-budget-v1",
-            max_session_ticks=self.session_max_ticks,
-            max_session_wall_seconds=self.session_max_seconds,
-            soft_input_units=self.context_soft_input,
-            hard_input_units=self.context_hard_input,
+            policy_id="context-budget-v2",
+            max_session_ticks=int(_default("AE_SESSION_MAX_TICKS")),
+            max_session_wall_seconds=int(_default("AE_SESSION_MAX_SECONDS")),
+            soft_input_units=int(_default("AE_CONTEXT_SOFT_INPUT")),
+            hard_input_units=int(_default("AE_CONTEXT_HARD_INPUT")),
             max_prompt_bytes=self.max_prompt_bytes,
         )
 

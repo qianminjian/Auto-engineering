@@ -17,7 +17,20 @@
     "stage": {"type": ["string", "null"]},
     "causation_id": {"type": "string", "minLength": 1},
     "correlation_id": {"type": "string", "minLength": 1},
-    "extensions": {"type": "object"},
+    "extensions": {
+      "type": "object",
+      "properties": {
+        "ae": {
+          "type": "object",
+          "properties": {
+            "execution_control": {"$ref": "#/$defs/executionControl"},
+            "runtime_revision": {"$ref": "#/$defs/runtimeRevision"}
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true
+    },
     "action": {
       "type": "string",
       "enum": [
@@ -113,13 +126,58 @@
         "properties": {
           "reason": {
             "enum": [
-              "context_soft_limit", "context_hard_limit", "tick_limit",
-              "time_limit", "manual"
+              "host_process_lost", "context_compaction_failed", "cross_host",
+              "manual_recovery"
             ]
           }
         }
       }
     }
   ],
+  "$defs": {
+    "executionControl": {
+      "type": "object",
+      "required": [
+        "schema_version", "disposition", "continuation_required",
+        "yield_allowed", "allowed_stop_reasons"
+      ],
+      "properties": {
+        "schema_version": {"const": "1.0"},
+        "disposition": {
+          "enum": [
+            "CONTINUE", "WAIT_USER", "TERMINAL", "ERROR",
+            "HANDOFF_REQUIRED"
+          ]
+        },
+        "continuation_required": {"type": "boolean"},
+        "yield_allowed": {"type": "boolean"},
+        "allowed_stop_reasons": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1},
+          "uniqueItems": true
+        },
+        "reason_code": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "runtimeRevision": {
+      "type": "object",
+      "required": [
+        "protocol_version", "event_schema_version",
+        "projection_schema_version", "action_contract_version",
+        "prompt_revision", "policy_revision", "engine_build_id"
+      ],
+      "properties": {
+        "protocol_version": {"type": "string", "minLength": 1},
+        "event_schema_version": {"type": "string", "minLength": 1},
+        "projection_schema_version": {"type": "string", "minLength": 1},
+        "action_contract_version": {"type": "string", "minLength": 1},
+        "prompt_revision": {"type": "string", "minLength": 1},
+        "policy_revision": {"type": "string", "minLength": 1},
+        "engine_build_id": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    }
+  },
   "additionalProperties": false
 }

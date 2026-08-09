@@ -13,12 +13,7 @@ _ROLLOVER_REASONS = frozenset({
     "host_process_lost",
     "context_compaction_failed",
     "cross_host",
-    # 以下原因仅为旧 checkpoint 兼容，不再由正常运行产生。
-    "context_soft_limit",
-    "context_hard_limit",
-    "tick_limit",
-    "time_limit",
-    "manual",
+    "manual_recovery",
 })
 
 

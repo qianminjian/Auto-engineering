@@ -28,15 +28,16 @@ Violating the letter of this rule is violating the spirit of this rule.
 
 ```text
 1. action = ae-run dev-loop --init "<requirement>" [--design-doc <path>]
-2. while action.action != "done":
+2. while action.extensions.ae.execution_control.disposition == "CONTINUE":
      print "[Tick N | stage <action.stage>] ..."
-     if action.action == "error":
+     control = action.extensions.ae.execution_control
+     if control.disposition == "ERROR":
          report action.error_code + action.message
          STOP
      if action.action in {"gate", "skip"}:
          action = ae-run dev-loop --tick
          continue
-     if action.action == "session_rollover":
+     if control.disposition == "HANDOFF_REQUIRED":
          stop all work in the old session
          create a fresh host session and load only action.capsule
          submit {stage:"session_claimed", claim_token, session_id, host}
@@ -65,12 +66,14 @@ Violating the letter of this rule is violating the spirit of this rule.
          repair the same result file; do not advance or create another Action
          continue
      action = ae-run dev-loop --tick --result <result-file>
-3. report action.verdict and fresh verification evidence
+3. if control.disposition == "WAIT_USER": ask only for control.reason_code
+4. if control.disposition == "TERMINAL": report action.verdict and fresh evidence
 ```
 
-非终态 Action 都是 `continuation_required`：宿主必须提交当前 Result 后继续读取下一个
-Action。Core 不运行后台 daemon；若宿主暂时不能继续，应报告等待的 tick/stage 和恢复命令，
-不得把“已输出 Action”当作完成。
+宿主只按 `extensions.ae.execution_control` 决定继续或停止：`CONTINUE` 必须在提交当前
+Result 后立即读取下一 Action；`WAIT_USER` 只询问 `reason_code` 对应的真实决策；只有
+`TERMINAL`、`ERROR` 或 `HANDOFF_REQUIRED` 可结束当前自动驱动。Core 不运行后台
+daemon，不得把“已输出一个 Action”当作完成。
 
 启动时不要把设计文档路径作为 requirement 传入。正确写法是：
 

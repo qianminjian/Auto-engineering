@@ -30,12 +30,12 @@ def test_rollover_retry_returns_same_control_action() -> None:
 
     first = handoff.request_rollover(
         current_session_id="session-1",
-        reason="context_soft_limit",
+        reason="host_process_lost",
         capsule=_capsule(),
     )
     replay = handoff.request_rollover(
         current_session_id="session-1",
-        reason="context_soft_limit",
+        reason="host_process_lost",
         capsule=_capsule(),
     )
 
@@ -62,7 +62,7 @@ def test_claim_is_idempotent_and_returns_original_active_action() -> None:
     )
     rollover = handoff.request_rollover(
         current_session_id="session-1",
-        reason="tick_limit",
+        reason="cross_host",
         capsule=_capsule(),
     )
 
@@ -87,7 +87,7 @@ def test_competing_claim_fails_closed() -> None:
     )
     handoff.request_rollover(
         current_session_id="session-1",
-        reason="time_limit",
+        reason="cross_host",
         capsule=_capsule(),
     )
     handoff.claim({
@@ -115,7 +115,7 @@ def test_old_session_late_result_is_rejected() -> None:
     )
     handoff.request_rollover(
         current_session_id="session-1",
-        reason="context_hard_limit",
+        reason="context_compaction_failed",
         capsule=_capsule(),
     )
 
@@ -132,7 +132,7 @@ def test_invalid_claim_token_is_rejected() -> None:
     )
     handoff.request_rollover(
         current_session_id="session-1",
-        reason="manual",
+        reason="manual_recovery",
         capsule=_capsule(),
     )
 

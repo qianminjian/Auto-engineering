@@ -71,7 +71,7 @@ def test_unknown_input_and_tick_count_do_not_trigger_rollover() -> None:
 def test_runtime_config_builds_policy_from_manifest_defaults() -> None:
     policy = RuntimeConfig(environ={}).context_budget_policy
 
-    assert policy.policy_id == "context-budget-v1"
+    assert policy.policy_id == "context-budget-v2"
     assert policy.max_session_ticks == 50
     assert policy.max_session_wall_seconds == 3600
     assert policy.soft_input_units == 600_000
@@ -79,7 +79,7 @@ def test_runtime_config_builds_policy_from_manifest_defaults() -> None:
     assert policy.max_prompt_bytes == 200_000
 
 
-def test_runtime_config_allows_host_profile_overrides() -> None:
+def test_deprecated_session_thresholds_do_not_change_runtime_decision() -> None:
     policy = RuntimeConfig(environ={
         "AE_SESSION_MAX_TICKS": "12",
         "AE_SESSION_MAX_SECONDS": "900",
@@ -88,10 +88,10 @@ def test_runtime_config_allows_host_profile_overrides() -> None:
         "AE_MAX_PROMPT_BYTES": "4096",
     }).context_budget_policy
 
-    assert policy.max_session_ticks == 12
-    assert policy.max_session_wall_seconds == 900
-    assert policy.soft_input_units == 1000
-    assert policy.hard_input_units == 1200
+    assert policy.max_session_ticks == 50
+    assert policy.max_session_wall_seconds == 3600
+    assert policy.soft_input_units == 600_000
+    assert policy.hard_input_units == 700_000
     assert policy.max_prompt_bytes == 4096
 
 

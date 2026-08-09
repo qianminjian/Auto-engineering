@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from auto_engineering.loop.events import LoopEventType
 from auto_engineering.loop.stages.base import TransitionContext
 from auto_engineering.loop.stages.verification import (
     ComponentVerifierHandler,
@@ -21,13 +22,21 @@ def _context(**extensions: object) -> TransitionContext:
     )
 
 
+def _changes(decision) -> dict:
+    return next(
+        event.to_dict()["payload"]["changes"]
+        for event in decision.events
+        if event.event_type is LoopEventType.VERIFICATION_STATE_UPDATED
+    )
+
+
 def test_component_gap_requests_refine() -> None:
     result = {"missing_count": 1, "coverage_map": [{"item": "x"}]}
 
     decision = ComponentVerifierHandler().apply({}, result, _context())
 
     assert decision.action_context["refine_source"] == "component_verifier"
-    assert decision.action_context["state_patch"]["audit_findings"] == [
+    assert _changes(decision)["audit_findings"] == [
         {"item": "x"}
     ]
 
@@ -45,7 +54,10 @@ def test_component_pass_routes_by_remaining_scope() -> None:
     )
 
     assert more.next_stage == "developer"
-    assert more.action_context["cursor_operation"] == "advance_component"
+    assert any(
+        event.event_type is LoopEventType.COMPONENT_CURSOR_ADVANCED
+        for event in more.events
+    )
     assert leaf.next_stage == "system_deep_audit"
 
 
@@ -64,7 +76,7 @@ def test_plate_audit_recounts_findings_and_requests_refine() -> None:
     )
 
     assert decision.action_context["refine_source"] == "plate_deep_audit"
-    assert len(decision.action_context["state_patch"]["audit_findings"]) == 1
+    assert len(_changes(decision)["audit_findings"]) == 1
     assert decision.action_context["audit_counts"] == (1, 0, 0)
 
 
@@ -85,7 +97,7 @@ def test_single_p1_cannot_pass_final_deep_audit() -> None:
 
     assert decision.terminal is False
     assert decision.action_context["refine_source"] == "system_deep_audit"
-    open_finding = decision.action_context["state_patch"]["open_findings"][0]
+    open_finding = _changes(decision)["open_findings"][0]
     assert open_finding["severity"] == "P1"
     assert open_finding["description"] == "race"
 
@@ -103,7 +115,10 @@ def test_plate_pass_routes_to_next_plate_or_cropped_layer() -> None:
     )
 
     assert more.next_stage == "developer"
-    assert more.action_context["cursor_operation"] == "advance_plate"
+    assert any(
+        event.event_type is LoopEventType.PLATE_CURSOR_ADVANCED
+        for event in more.events
+    )
     assert cropped.next_stage == "system_deep_audit"
 
 
@@ -131,7 +146,7 @@ def test_system_deep_audit_preserves_stale_design_feedback() -> None:
     )
 
     assert "同步接口章节" in (
-        decision.action_context["state_patch"]["critic_feedback"]
+        _changes(decision)["critic_feedback"]
     )
     assert decision.terminal is True
     assert decision.action_context["convergence"] == {

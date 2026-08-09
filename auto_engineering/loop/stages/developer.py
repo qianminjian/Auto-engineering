@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from auto_engineering.loop.domain_events import transition_event
 from auto_engineering.loop.events import LoopEvent, LoopEventType
 from auto_engineering.loop.stages.base import (
     StageName,
@@ -54,7 +55,6 @@ class DeveloperHandler:
         }
         action_context = {
             "collect_token_usage": True,
-            "cursor_operation": "advance_batch",
             "completed_batch_id": context.extensions.get(
                 "completed_batch_id"
             ),
@@ -67,9 +67,15 @@ class DeveloperHandler:
         pre_gate = context.extensions.get("next_pre_gate")
         if more and isinstance(pre_gate, Mapping):
             action_context["pre_gate"] = dict(pre_gate)
-        events: tuple[LoopEvent, ...] = ()
+        events: tuple[LoopEvent, ...] = (
+            transition_event(
+                LoopEventType.BATCH_CURSOR_ADVANCED,
+                thread_id=context.thread_id,
+                sequence=context.event_sequence,
+            ),
+        )
         if not more:
-            events = (
+            events += (
                 LoopEvent.create(
                     thread_id=context.thread_id,
                     sequence=context.event_sequence,

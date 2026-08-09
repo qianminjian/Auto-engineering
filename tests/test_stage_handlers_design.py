@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from auto_engineering.loop.events import LoopEventType
 from auto_engineering.loop.stages.base import TransitionContext
 from auto_engineering.loop.stages.design import ArchitectHandler, CriticHandler
 from auto_engineering.loop.tick_orchestrator import TickOrchestrator
@@ -13,6 +14,14 @@ def _context(**extensions: object) -> TransitionContext:
         tick=5,
         event_sequence=10,
         extensions=extensions,
+    )
+
+
+def _changes(decision) -> dict:
+    return next(
+        event.to_dict()["payload"]["changes"]
+        for event in decision.events
+        if event.event_type is LoopEventType.CRITIC_STATE_UPDATED
     )
 
 
@@ -35,7 +44,9 @@ def test_architect_initializes_plan_before_advancing() -> None:
     )
 
     assert decision.next_stage == "developer"
-    assert decision.action_context["initialize_architecture"] is True
+    assert decision.events[0].event_type is (
+        LoopEventType.ARCHITECTURE_INITIALIZATION_REQUESTED
+    )
     assert decision.action_context["offload_stage"] == "architect"
 
 
@@ -55,7 +66,7 @@ def test_critic_major_stops_at_configured_repair_limit() -> None:
 
     assert decision.terminal is True
     assert decision.action_context["terminal_action"]["verdict"] == "REPAIR_CYCLE_LIMIT"
-    assert decision.action_context["state_patch"]["majors_in_a_row"] == 3
+    assert _changes(decision)["majors_in_a_row"] == 3
 
 
 def test_critic_unchanged_finding_stops_as_stagnant() -> None:
@@ -69,7 +80,7 @@ def test_critic_unchanged_finding_stops_as_stagnant() -> None:
             max_stagnation_cycles=2,
         ),
     )
-    patch = first.action_context["state_patch"]
+    patch = _changes(first)
     second = CriticHandler().apply(
         {"majors_in_a_row": 1, "total_majors": 1, **patch},
         {"verdict": "MAJOR", "findings": [finding]},
@@ -93,7 +104,10 @@ def test_critic_major_rolls_back_batch_and_returns_findings() -> None:
     )
 
     assert decision.next_stage == "developer"
-    assert decision.action_context["cursor_operation"] == "rollback_batch"
+    assert any(
+        event.event_type is LoopEventType.BATCH_CURSOR_ROLLED_BACK
+        for event in decision.events
+    )
     assert decision.action_context["feedback"] == findings
 
 
@@ -113,7 +127,10 @@ def test_critic_plan_gap_routes_to_architect_refine() -> None:
 
     assert decision.next_stage == "architect"
     assert decision.action_context["refine_source"] == "critic"
-    assert "cursor_operation" not in decision.action_context
+    assert all(
+        event.event_type is not LoopEventType.BATCH_CURSOR_ROLLED_BACK
+        for event in decision.events
+    )
 
 
 def test_critic_legacy_out_of_scope_finding_is_plan_gap() -> None:
@@ -151,11 +168,17 @@ def test_critic_approve_with_blocking_finding_is_forced_to_repair() -> None:
     )
 
     assert decision.next_stage == "developer"
-    assert decision.action_context["critic_progress"] == "MAJOR"
-    assert decision.action_context["cursor_operation"] == "rollback_batch"
+    assert any(
+        event.event_type is LoopEventType.CRITIC_PROGRESS_RECORDED
+        for event in decision.events
+    )
+    assert any(
+        event.event_type is LoopEventType.BATCH_CURSOR_ROLLED_BACK
+        for event in decision.events
+    )
     assert decision.action_context["feedback"] == findings
-    assert decision.action_context["state_patch"]["majors_in_a_row"] == 1
-    assert decision.action_context["state_patch"]["open_findings"] == findings
+    assert _changes(decision)["majors_in_a_row"] == 1
+    assert _changes(decision)["open_findings"] == findings
 
 
 def test_critic_approve_routes_by_remaining_batches() -> None:
@@ -172,8 +195,8 @@ def test_critic_approve_routes_by_remaining_batches() -> None:
 
     assert more.next_stage == "developer"
     assert complete.next_stage == "component_verifier"
-    assert more.action_context["state_patch"]["majors_in_a_row"] == 0
-    assert more.action_context["state_patch"]["total_majors"] == 2
+    assert _changes(more)["majors_in_a_row"] == 0
+    assert _changes(more)["total_majors"] == 2
 
 
 def test_orchestrator_dispatches_design_stages_via_registry(tmp_path) -> None:

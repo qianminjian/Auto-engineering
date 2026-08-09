@@ -265,6 +265,8 @@ class EngineState:
     unchanged_finding_streak: int = 0  # #55 无证据增量的相同 Finding 次数
     last_finding_fingerprint: str = ""  # #56 最近阻断 Finding 摘要
     batch_changed_files: list[str] = field(default_factory=list)  # #57 当前 Batch 累积文件
+    active_runtime_revision: dict[str, str] | None = None  # Phase 80: 当前 Action 修订
+    pending_runtime_revision: dict[str, str] | None = None  # Phase 80: Action 边界待激活修订
 
     # v5.5 P1-5: 写入审计日志 (repr=False 避免污染输出, 不参与序列化)
     _write_log: list[WriteRecord] = field(default_factory=list, repr=False, init=False)

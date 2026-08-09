@@ -21,18 +21,18 @@ def test_interleaved_build_keeps_outer_context(tmp_path, monkeypatch) -> None:
     builder = ActionBuilder(tmp_path)
     outer = _state("outer", "outer-source")
     inner = _state("inner", "inner-source")
-    original = builder._build_action_architect
+    original = ActionBuilder._build_action_architect
     nested = False
 
-    def interleave(base: dict) -> dict:
+    def interleave(invocation: ActionBuilder, base: dict) -> dict:
         nonlocal nested
         if not nested:
             nested = True
             inner_action = builder.build_action(inner)
             assert inner_action["thread_id"] == "inner"
-        return original(base)
+        return original(invocation, base)
 
-    monkeypatch.setattr(builder, "_build_action_architect", interleave)
+    monkeypatch.setattr(ActionBuilder, "_build_action_architect", interleave)
 
     outer_action = builder.build_action(outer)
 

@@ -65,7 +65,20 @@ ae-run dev-loop --init \
 
 ## Action 执行协议
 
-每次先读取 `action.instruction`：
+每次先读取 `action.extensions.ae.execution_control`。宿主必须在同一次用户启动中执行：
+
+```text
+while control.disposition == "CONTINUE":
+  execute current Action
+  validate and submit Result
+  read next Action and its execution_control
+```
+
+`CONTINUE` 不允许向用户交回控制；`WAIT_USER` 只询问 `reason_code` 对应的真实决策；
+`TERMINAL`、`ERROR`、`HANDOFF_REQUIRED` 分别表示正常终态、稳定错误和异常接管。
+不得根据 stage 名、自然语言 recap 或“已经输出 Action”自行停止。
+
+然后读取 `action.instruction`：
 
 - `action == "error"`：报告 `error_code` 和 `message`，停止。
 - `action == "gate"` 或 `"skip"`：不写 result，直接执行下一次 tick。

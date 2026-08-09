@@ -1,5 +1,5 @@
 # Auto-Engineering 当前实施跟踪表
-> 更新：2026-08-01｜目标版本：v5.8｜Phase 1-62 明细见 `design/HISTORY.md`
+> 更新：2026-08-09｜目标阶段：Phase 80 协议内核收敛｜Phase 1-62 明细见 `design/HISTORY.md`
 > 状态：`☐` 未开始｜`◐` 进行中｜`✅` 已验证
 ## 基线与阶段
 | 里程碑 | 状态 | 证据 |
@@ -73,46 +73,13 @@
 | P1 | T334 | Checkpoint 大对象分层 | While 长轨迹保存 checkpoint, when batch plan、progress tree 或产物重复, the store shall 内容寻址复用大对象并保持恢复等价 | ✅ SHA-256 blob 复用与兼容恢复 |
 | P1 | T335 | Agent 成本与审计频率治理 | While plate revision 未变化或 Worker 预算接近上限, when deep audit 被考虑, the Core shall 避免重复审计并记录 requested effort、actual model 与跳过原因 | ✅ 修订去重、预算硬限与模型 receipt |
 | P0 | T336 | Phase 68 收口验收 | While T327-T335 完成, when 多进程黄金轨迹、故障注入、全量测试和双宿主 archive 运行, all regressions shall 通过后才允许生成新 rc 并重启真实 LLM 门禁 | ◐ 自动验收通过；待真实 Claude Code 重跑 |
-
-## Phase 69：项目配置强制初始化
-
-| 优先级 | ID | 任务 | EARS 验收 | 状态 |
-|---:|---|---|---|:---:|
-| P0 | T337 | 统一 ae.toml schema 与标准 Profile | While Core 生成项目配置, when 文件被 RuntimeConfig 读取, the effective values shall 与生成值逐项一致且环境变量保持最高优先级 | ✅ `render_ae_toml` 与 `SECTION_KEY_MAP` 同源；逐项 roundtrip |
-| P0 | T338 | 首次启动强制配置 | While 项目缺少 ae.toml, when dev-loop 启动, the Core shall 创建或要求完成显式配置，禁止无文件继续 | ✅ 缺失自动/向导落盘；空、注释、损坏配置 fail-closed |
-| P1 | T339 | 向导推荐默认值与非交互初始化 | While 配置交互可用或宿主无 TTY, when 首次配置, the Core shall 分别提供可确认推荐值或确定性 standard Profile | ✅ 推荐审计/度量/Token/PII/生产安全；env 最高优先级 |
-| P0 | T340 | 配置初始化收口验收 | While T337-T339 完成, when 配置专项、全量、双宿主 archive 运行, all generated profiles shall 可读、可覆盖且无静默回退 | ✅ 2110 passed/1 skipped；Ruff/mypy；Claude/Codex archive smoke pass |
-## Phase 70：自动上下文与成本治理纠偏
-| 优先级 | ID | 任务 | EARS 验收 | 状态 |
-|---:|---|---|---|:---:|
-| P0 | T341 | 决策与负向契约 | While 旧固定 Tick/人工交接行为存在, when 契约测试运行, the suite shall 先稳定失败并锁定纠偏边界 | ✅ 6 个 RED 失败后 GREEN；固定 Tick/input 不再 rollover |
-| P0 | T342 | 配置语义迁移 | While standard Profile 被生成, when 配置读取, the system shall 不设置低位 session Tick 阈值，并对旧配置告警迁移 | ✅ standard Profile 不生成旧阈值；旧文件显式 `CONFIG_DEPRECATED` |
-| P0 | T343 | 宿主自动 compaction 适配 | While 宿主压缩上下文, when 下一 Tick 运行, the system shall 无人工交接继续且不改变业务投影 | ✅ 正常路径不再生成 Capsule/rollover；999 Tick 契约保持原 Stage |
-| P0 | T344 | ContextManifest 与块级去重 | While Action 编译, when 相同事实跨字段重复, the compiler shall 在模型调用前拒绝并报告重复 hash | ✅ Prompt bundle 携带块 hash/bytes/source；重复正文 fail-closed |
-| P0 | T345 | Stage 增量上下文与 Worker 隔离 | While Stage/Worker 获取上下文, when prompt 构建, each consumer shall 只接收最小字段或专属 ArtifactRef | ✅ compiled prompt 不重复顶层 context；Worker 改用独立 `prompt_ref` |
-| P0 | T346 | Prompt 与工具输出入口门禁 | While 大型日志/diff/MCP/Worker 输出产生, when 进入主上下文, the system shall 摘要引用化或 fail-closed | ✅ 延续 ArtifactRef/receipt 字节门禁；Worker prompt 正文引用化 |
-| P0 | T347 | Usage 语义与测量完整性 | While 宿主报告部分 usage, when ledger 写入, the system shall 区分各指标、保留 null 并记录估算来源 | ✅ input/cache read/write 分列；新增 Core payload、重复块和 estimator |
-| P0 | T348 | 成本基准与回归 Harness | While 同 fixture/宿主/模型运行, when before/after 比较, the report shall 给出可归因增量、重复块和 measurement completeness | ✅ 同 fixture/host/model 按完成工作归一化；缺失测量 fail-closed |
-| P1 | T349 | 恢复协议收口 | While 真实执行实例中断, when 恢复, the system shall 幂等消费 Capsule；正常 compaction 不触发恢复协议 | ✅ Capsule 原子 claim 保留；恢复原因收口为退出/压缩失败/跨宿主 |
-| P0 | T350 | 真实长跑发布门禁 | While 双宿主运行 150 Tick 轨迹, when 宿主管理上下文, both runs shall 零人工交接、零输入超限、零重复块并保持终态等价；不可观测 compaction 标 unknown | ◐ 自动测试与双宿主 archive smoke 通过；待真实产品 150 Tick |
-
-## Phase 71：9-Tick 真跑证据链修复
-
-| 优先级 | ID | 任务 | EARS 验收 | 状态 |
-|---:|---|---|---|:---:|
-| P0 | T351 | Debug Tick 审计编号 | While Core 完成第 N 次 Tick, when DebugTracer 写快照, the file and payload shall 使用同一 1-based N，且与 Action tick 的因果关系可追溯 | ✅ Debug 与 metrics 统一 `tick_no + 1` |
-| P0 | T352 | 首次计划进度物化 | While Architect 为设计组件生成 batch plan, when 进度树初始化, every planned task shall 计入对应组件与父节点，禁止 `done_tasks > total_tasks` | ✅ 保留设计层次并聚合 batch task totals；非法完成数 fail-closed |
-| P1 | T353 | 运行制品版本溯源 | While prompt/debug 诊断制品生成, when 事故审计读取单个制品, it shall 显式声明 engine version 与 protocol version | ✅ JSON/Markdown 声明版本；Worker `prompt_ref` 可审计且不重内联 |
-| P0 | T354 | Phase 71 收口验收 | While T351-T353 完成, when 专项、全量与双宿主 archive 运行, all evidence shall 编号一致、进度守恒且版本可辨识 | ✅ 2121 passed/1 skipped；coverage 90%；静态检查与双宿主 archive pass |
-
-## Phase 72：插件 Runner 位置无关启动
-
-| 优先级 | ID | 任务 | EARS 验收 | 状态 |
-|---:|---|---|---|:---:|
-| P0 | T355 | 任意项目目录启动契约 | While 插件安装在宿主缓存且 cwd 是目标项目, when Command/Skill 启动 dev-loop, the host shall 调用 bundled runner，不查找目标项目的 `scripts/ae-run` | ✅ 外部 cwd 回归测试通过；Agent 入口统一调用 `ae-run` |
-| P0 | T356 | Bundled `bin/ae-run` | While 插件启用, when 宿主解析 PATH 中的 `ae-run`, the launcher shall 定位自身插件根并委托共享 `scripts/ae-run` | ✅ 位置无关薄包装，仅委托共享 resolver |
-| P0 | T357 | 发布与宿主契约 | While release archive 构建, when Claude/Codex 隔离安装验收, both packages shall 包含可执行 `bin/ae-run` 并从外部 cwd 启动 | ✅ archive 含 0755 bin；双宿主从目标 cwd smoke pass |
-| P0 | T358 | Phase 72 收口验收 | While T355-T357 完成, when 专项、全量、静态检查与双宿主 archive 运行, all runner paths shall 位置无关且不复制 Core 逻辑 | ✅ 2122 passed/1 skipped；coverage 90%；静态检查与双宿主 archive pass |
+## Phase 69-72：配置、上下文治理、证据链与 Runner
+| 范围 | 状态 | 当前证据 |
+|---|:---:|---|
+| T337-T340 配置初始化 | ✅ | schema/standard profile/首次配置/双宿主 archive 已验收 |
+| T341-T350 上下文与成本治理 | ◐ | 固定 Tick rollover 已退役；真实双宿主 150 Tick 仍归 T411/T412 |
+| T351-T354 真跑证据链 | ✅ | Tick 编号、进度守恒、制品版本已验收 |
+| T355-T358 位置无关 Runner | ✅ | bundled `ae-run` 与双宿主外部 cwd smoke 已验收；明细见 HISTORY/Git |
 ## Phase 73：Init Engineering 运行时解耦（设计见 `design/v5.8-Init-Runtime-Decoupling-Design.md`）
 | 优先级 | ID | 任务 | EARS 验收 | 状态 |
 |---:|---|---|---|:---:|
@@ -158,3 +125,21 @@
 | P0 | T397-T398 | 事故归档与 refine 上下文契约 | While Core 等待 PLAN_REFINE, when Architect 重发 full plan 或 revision 错误, the system shall 在状态变更前 fail-closed 并给出重试反馈 | ✅ 前置拒绝、revision 注入与新 ID patch Prompt |
 | P0 | T399-T400 | 增量执行树与 Contract 义务激活 | While patch 新增修复 batch 或 contract 跨 batch, when Core 物化计划/运行 Gate, the system shall 保留完成事实并只验证已到达契约 | ✅ 基线增量合并；义务驱动 contract 激活 |
 | P0 | T401-T402 | Prompt/spec 同步与收口验收 | While Phase 79 实现完成, when 自动门禁和双宿主制品运行, all regressions shall 通过后才进入真实产品复验 | ◐ 2194/1、coverage 90%、静态/同步/双宿主 archive pass；待真实复验 |
+
+## Phase 80：协议内核收敛重构
+> 权威设计：`design/v5.8-Protocol-Kernel-Convergence-Design.md`；实施计划：
+> `design/v5.8-Protocol-Kernel-Convergence-PLAN.md`。Phase 80 完成前冻结新的点状
+> 真跑补丁；紧急 P0 只能先映射到本阶段不变量和任务后实施。
+
+| 优先级 | ID | 任务 | EARS 验收 | 状态 |
+|---:|---|---|---|:---:|
+| P0 | T403 | 协议内核收敛设计资产 | While 方案 B 已获批准, when 实施开始, the specification shall 统一定义 Core/Host/Event/Prompt/Session 边界、迁移顺序、禁止项和发布门禁 | ✅ Spec/PLAN + BEACON/INDEX/HISTORY/Tracker 已同步；T404-T412 已登记 |
+| P0 | T404 | 架构特征与负向契约 | While 旧 façade、全状态事件补丁和线程级 Prompt 锁仍存在, when Phase 80 测试运行, the suite shall 稳定暴露这些偏差且不改变现有生产状态 | ✅ 5 项 RED 均按预期失败；GREEN 后与相关回归 209 passed |
+| P0 | T405 | Runtime Compatibility Vector 与 Action 边界升级 | While 活动 Action 使用旧运行时修订, when 新版本恢复并接收其因果 Result, the Core shall 完成旧 Action 后只对下一 Action 激活新修订 | ✅ Vector、Action Snapshot/恢复判定及第 76 Tick 边界升级轨迹通过 |
+| P0 | T406 | Host Execution Control 与连续驱动契约 | While Action 非终态且无需用户输入, when 宿主提交 Result, the host shall 按机器处置自动执行下一 Action，不把单个 Action 输出当作完成 | ✅ Action 扩展、Driver 状态机、Command/Skill 连续驱动合同与双宿主语义测试通过 |
+| P0 | T407 | 领域事件 Reducer 与 legacy replay | While 新线程推进状态, when Event Stream 重放, the projection shall 由显式领域事件重建且新路径不得写逐 Tick 完整 EngineState；旧流仍可兼容读取 | ◐ Stage/Gap/Critic/Verification/Runtime 显式事件、通道白名单和 legacy reducer 已接入；待 façade 剩余通道全部退出兼容 delta |
+| P0 | T408 | 纯 ActionCompiler 与 Effect Executor | While 相同输入、identity 和 clock 被提供, when Action 重复编译, the compiler shall 生成字节等价草案且不写文件，副作用由独立执行器原子处理 | ◐ 纯 Compiler 与 prompt/spawn/challenge/receipt Effect 写入已接入；待 EffectReceipt 与事件事务绑定 |
+| P0 | T409 | TickKernel 收敛与旧 façade 绞杀 | While StageHandler 返回 TransitionDecision, when Kernel 应用转换, it shall 不解释 Stage 专属命令式字段，并逐阶段退役旧可变写入路径 | ◐ TickKernel 已接管事件提交；四类 Stage 专属命令已清零，待 façade 剩余生命周期副作用迁出 |
+| P1 | T410 | 协议与恢复遗留语义清理 | While rollover、Prompt、Policy 或 Schema 发生迁移, when 契约校验, the system shall 只保留异常恢复原因并给出稳定兼容或退役诊断 | ✅ handoff 原因已收口；固定 Tick/时间/输入阈值只保留弃用诊断且不参与 Runtime decision |
+| P0 | T411 | 跨版本、长轨迹与双宿主验收 | While 线程跨运行时升级、自动 compaction 和故障恢复运行至少 150 Tick, when Claude/Codex 完成轨迹, both hosts shall 产生等价终态、零非预期停顿且成本门禁完整 | ◐ 150 Tick 双宿主确定性轨迹及 Claude/Codex archive smoke 通过；真实产品长跑仍 not_run |
+| P0 | T412 | Phase 80 发布收口 | While T404-T411 完成, when 全量、覆盖率、静态、replay、fault injection、archive 和真实产品门禁执行, all required evidence shall 通过后才允许生成下一 RC | ◐ 全量 2227 passed/1 skipped/3 契约漂移（均已定向修复复验），coverage 90%；Ruff/mypy/sync/archive pass；待 clean full 与真实产品门禁，不生成下一 RC |

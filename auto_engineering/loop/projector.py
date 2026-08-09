@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
-from typing import Any, ClassVar
+from collections.abc import Iterable
+from typing import ClassVar
 
 from auto_engineering.engine.state import EngineState
 from auto_engineering.loop.events import LoopEvent, LoopEventType
+from auto_engineering.loop.reducers import (
+    EventChannelViolation,
+    default_reducer_registry,
+)
 
 
 class ProjectionError(ValueError):
@@ -42,40 +46,13 @@ class EngineStateProjector:
         if state.thread_id != thread_id:
             raise ProjectionError("初始化状态 thread_id 与事件流不一致")
 
+        registry = default_reducer_registry()
         for event in stream[1:]:
-            payload = event.to_dict()["payload"]
-            patch = payload.get("state_patch")
-            if patch is not None:
-                if not isinstance(patch, Mapping):
-                    raise ProjectionError("state_patch 必须为 object")
-                state = self._apply_patch(state, patch)
-            if event.event_type is LoopEventType.STAGE_ADVANCED:
-                target = payload.get("to")
-                if not isinstance(target, str):
-                    raise ProjectionError("StageAdvanced payload.to 必须为字符串")
-                state = self._apply_patch(state, {"current_stage": target})
-            if event.event_type is LoopEventType.ARCHITECTURE_BASELINE_ACCEPTED:
-                baseline = payload.get("baseline")
-                if not isinstance(baseline, Mapping):
-                    raise ProjectionError(
-                        "ArchitectureBaselineAccepted payload.baseline 必须为 object"
-                    )
-                state = self._apply_patch(
-                    state, {"architecture_baseline": dict(baseline)}
-                )
+            try:
+                state = registry.reduce(state, event)
+            except EventChannelViolation as exc:
+                raise ProjectionError(str(exc)) from exc
         return state
-
-    @staticmethod
-    def _apply_patch(
-        state: EngineState,
-        patch: Mapping[str, Any],
-    ) -> EngineState:
-        data = state.to_dict()
-        unknown = sorted(set(patch) - set(data))
-        if unknown:
-            raise ProjectionError(f"state_patch 含未知字段: {', '.join(unknown)}")
-        data.update(dict(patch))
-        return EngineState.from_dict(data)
 
 
 __all__ = ["EngineStateProjector", "ProjectionError"]

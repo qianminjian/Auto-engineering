@@ -338,7 +338,7 @@ class TestSessionHandoffPersistence:
         action = first.record_session_rollover(
             thread_id="thread-1",
             source_session_id="session-1",
-            reason="tick_limit",
+            reason="host_process_lost",
             capsule=self._capsule(),
             claim_token="claim-1",
             artifact_id="capsule-1",
@@ -349,7 +349,7 @@ class TestSessionHandoffPersistence:
         replay = second.record_session_rollover(
             thread_id="thread-1",
             source_session_id="session-1",
-            reason="tick_limit",
+            reason="host_process_lost",
             capsule=self._capsule(),
             claim_token="different-ignored",
             artifact_id="different-ignored",
@@ -368,7 +368,7 @@ class TestSessionHandoffPersistence:
         store.record_session_rollover(
             thread_id="thread-1",
             source_session_id="session-1",
-            reason="manual",
+            reason="manual_recovery",
             capsule=self._capsule(),
             claim_token="claim-1",
             artifact_id="capsule-1",

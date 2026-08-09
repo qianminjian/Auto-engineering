@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from copy import deepcopy
 from typing import Any
 
+from auto_engineering.loop.domain_events import channels_updated
 from auto_engineering.loop.events import LoopEvent, LoopEventType
 from auto_engineering.loop.stages.base import (
     StageName,
@@ -28,16 +29,12 @@ def _advanced(
     source: StageName,
     target: StageName,
     context: TransitionContext,
-    state_patch: Mapping[str, Any] | None = None,
 ) -> LoopEvent:
-    payload: dict[str, Any] = {"from": source, "to": target}
-    if state_patch:
-        payload["state_patch"] = dict(state_patch)
     return LoopEvent.create(
         thread_id=context.thread_id,
         sequence=context.event_sequence,
         event_type=LoopEventType.STAGE_ADVANCED,
-        payload=payload,
+        payload={"from": source, "to": target},
         correlation_id=context.thread_id,
     )
 
@@ -124,16 +121,20 @@ class GapReviewHandler:
         }
         return TransitionDecision(
             events=(
+                channels_updated(
+                    LoopEventType.GAP_STATE_UPDATED,
+                    patch,
+                    thread_id=context.thread_id,
+                    sequence=context.event_sequence,
+                ),
                 _advanced(
                     source=self.stage,
                     target=target,
                     context=context,
-                    state_patch=patch,
                 ),
             ),
             next_stage=target,
             action_context={
-                "state_patch": patch,
                 "supplements": tuple(supplements),
                 "pause_stages": ("architect",) if report.get("has_blocking") else (),
             },
@@ -196,16 +197,24 @@ class ResearchHandler:
                 target = "architect"
         return TransitionDecision(
             events=(
+                *(
+                    (channels_updated(
+                        LoopEventType.GAP_STATE_UPDATED,
+                        patch,
+                        thread_id=context.thread_id,
+                        sequence=context.event_sequence,
+                    ),)
+                    if patch
+                    else ()
+                ),
                 _advanced(
                     source=self.stage,
                     target=target,
                     context=context,
-                    state_patch=patch,
                 ),
             ),
             next_stage=target,
             action_context={
-                "state_patch": patch,
                 "supplements": tuple(supplements),
             },
         )

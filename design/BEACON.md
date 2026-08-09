@@ -1,5 +1,5 @@
 # Auto-Engineering BEACON
-> 创建：2026-06-24｜更新：2026-08-06｜阶段：Phase 79 PlanPatch 与 Contract 激活修复
+> 创建：2026-06-24｜更新：2026-08-09｜阶段：Phase 80 协议内核收敛重构
 > 决策状态翻转（✅↔❌）或架构降级必须先获用户批准。
 
 ## 目标与成功标准
@@ -37,31 +37,22 @@ Engineering 的问答、模板或脚手架；把 archive smoke 冒充真实产�
 | D14 | 修复计划使用 PlanPatch；完成事实不可由普通计划更新重新激活 | ✅ |
 | D15 | runner 错配、零测试、空快照和证据失配全部 fail-closed | ✅ |
 | D16 | Core 以 ProjectProfile 消费项目能力；本地确定性探测为默认 Provider，Init Engineering 仅是可选兼容 Provider | ✅ |
+| D17 | Core 保持单 Tick；宿主按 Execution Control 在一次启动内连续驱动 | ✅ |
+| D18 | Prompt/Policy 等运行时变化只在 Action 边界激活，活动 Action 不可变 | ✅ |
+| D19 | 新状态事实使用显式领域事件；完整 state patch 只作 legacy 读取 | ✅ |
+| D20 | ActionCompiler 纯化，TickOrchestrator 按 Stage 绞杀，不建立第二内核 | ✅ |
 
 ## 当前状态
 
-- Phase 1-62 已完成；协议、事件状态、11 个 StageHandler、Host SPI 2.0、Prompt
-  Contract、迁移兼容、双宿主黄金轨迹与 v5.7.1 Release 已验收。
-- Phase 64 已完成真实运行可信度止血：计划增量、Gate runner、空快照与状态不变量
-  均 fail-closed。
-- Phase 65 已完成会话解耦：ContextBudget、ResumeCapsule、rollover/claim、SQLite
-  原子接管与双宿主适配落地；150 Tick/3 sessions 验收通过。
-- Phase 66 已完成有界 Prompt、ArtifactRef、Usage Ledger、摘要隔离与循环预算；
-  全量 2095 passed / 1 skipped，Ruff/mypy/sync 通过。
-- Phase 68 T326-T335 已完成：快照、线程租约、Gate/Findings、Usage、Result、
-  稳定身份、checkpoint 与成本治理已修复；T336 等待 Claude Code 真实复验。
-- Phase 69 已完成：标准 Profile、强制首次配置与双宿主 archive smoke 通过。
-- Phase 72 已修复插件 runner 误解析到目标项目；rc.4 自动门禁通过。
-- Phase 73 T359-T366 已完成；T367 自动门禁 2153 passed / 1 skipped、coverage
-  90%、静态检查与双宿主 archive install 通过，待真实 LLM 轨迹。
-- Phase 74 T368-T375 已完成；T376 自动门禁 2166 passed / 1 skipped、coverage
-  90.41%、Ruff/mypy/sync/check-gate 与双宿主 archive 通过，待真实 LLM 轨迹。
-- Phase 75 已完成 status 降级与失败缓存修复；历史秘密确认和宿主长跑证据仍须人工/真实产品完成。
-- Phase 76 已统一设计文档入口：省略范围时执行全文，显式范围时只执行指定范围；并修复 Architect component 标识映射、Research/Supplement 注入与 dry-run 结构门禁。
-- Phase 79 T397-T401 自动修复完成：refine 增量契约、revision 前置校验、基线合并与义务驱动 Contract 激活已通过 2194/1、90% 覆盖率及双宿主 archive；T402 待真实复验。
+- Phase 1-79 的功能与自动门禁历史见 Tracker/HISTORY；v5.8.0-rc.5 仍未通过真实产品长跑门禁。
+- 2026-08-09 架构审计确认 Phase 54/55 的目标出口未完全成立：旧可变
+  TickOrchestrator、全状态事件补丁、线程级 Prompt 锁和非机器化续跑仍在生产路径。
+- 方案 B 已批准；Phase 80 按 Runtime Vector、Execution Control、显式 Reducer、纯
+  ActionCompiler 和 Stage-by-Stage strangling 统一收敛，完成前冻结新的点状真跑补丁。
 ## 最近演进
 | 日期 | 变更 |
 |---|---|
+| 2026-08-09 | 批准 Phase 80 协议内核收敛重构，补齐宿主续跑与 Action 边界升级 |
 | 2026-08-06 | 归档 Tick 19 PlanPatch 冲突；禁止 full-plan refine，按义务延迟激活 Contract |
 | 2026-07-30 | 批准 Phase 70：撤销固定 Tick rollover，改为宿主自动 compaction |
 | 2026-07-29 | 批准 v5.8 确定性状态与宿主会话解耦，登记 Phase 64-67 |
@@ -70,11 +61,9 @@ Engineering 的问答、模板或脚手架；把 archive smoke 冒充真实产�
 | 2026-08-02 | 再次审计：自动门禁可进入受控真跑，真实 LLM 长跑仍是发布阻断项 |
 ## 待解决问题
 
-- T336/T350：用发布候选版执行 Claude Code/Codex 真实产品 150 Tick 长跑。
-- T367：完成 Phase 73 全量、覆盖率、双宿主制品与真实产品轨迹验收。
-- T376：用当前制品完成 Claude Code/Codex 真实 LLM 轨迹。
-- T387-T402：自动修复完成；执行 Claude Code/Codex 真实产品复验后关闭 rc.5 两次事故。
+- T404-T410：完成协议内核收敛实现，禁止继续点状修复。
+- T411-T412：完成跨版本 150 Tick、双宿主真实产品门禁后再生成下一 RC。
 
 ## 引用文件
 
-`design/v5.8-Session-Decoupling-Design.md` · `design/v5.8-Session-Decoupling-PLAN.md` · `design/v5.8-Architecture-Baseline-and-Repair-Design.md` · `design/incidents/2026-07-29-claude-146-tick-long-run.md` · `design/incidents/2026-08-05-rc5-15-tick-architecture-gate-failure.md` · `design/incidents/2026-08-06-rc5-plan-refine-conflict.md` · `design/IMPLEMENTATION-TRACKER.md` · `design/HISTORY.md`
+`design/v5.8-Protocol-Kernel-Convergence-Design.md` · `design/v5.8-Protocol-Kernel-Convergence-PLAN.md` · `design/v5.8-Automatic-Context-Governance.md` · `design/v5.8-Session-Decoupling-Design.md` · `design/v5.8-Session-Decoupling-PLAN.md` · `design/incidents/2026-07-29-claude-146-tick-long-run.md` · `design/IMPLEMENTATION-TRACKER.md` · `design/HISTORY.md`

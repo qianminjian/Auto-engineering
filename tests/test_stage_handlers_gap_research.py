@@ -18,6 +18,15 @@ def _context() -> TransitionContext:
     return TransitionContext(thread_id="thread-1", tick=3, event_sequence=7)
 
 
+def _changes(decision) -> dict:
+    event = next(
+        item
+        for item in decision.events
+        if item.event_type is LoopEventType.GAP_STATE_UPDATED
+    )
+    return event.to_dict()["payload"]["changes"]
+
+
 def test_gap_scan_routes_by_gap_presence_and_emits_stage_advance() -> None:
     state = {
         "gap_report_json": json.dumps(
@@ -54,7 +63,7 @@ def test_gap_review_normalizes_resolution_and_queues_research() -> None:
     }
 
     decision = GapReviewHandler().apply(state, {}, _context())
-    patch = decision.action_context["state_patch"]
+    patch = _changes(decision)
 
     assert decision.next_stage == "research"
     assert patch["pending_research_ids"] == ["G1"]
@@ -82,7 +91,7 @@ def test_gap_review_fill_requests_supplement_without_mutating_input() -> None:
 
     assert decision.next_stage == "architect"
     assert decision.action_context["supplements"][0]["content"] == "明确设计"
-    assert decision.action_context["state_patch"]["research_archive"] == {}
+    assert _changes(decision)["research_archive"] == {}
     assert json.loads(state["gap_report_json"]) == report
 
 
@@ -104,7 +113,7 @@ def test_research_success_injects_supplement_and_advances() -> None:
 
     assert decision.next_stage == "architect"
     assert decision.action_context["supplements"][0]["source"] == "research_agent"
-    assert decision.action_context["state_patch"]["pending_research_ids"] == []
+    assert _changes(decision)["pending_research_ids"] == []
 
 
 def test_research_failure_returns_to_review_with_evidence() -> None:
@@ -117,7 +126,7 @@ def test_research_failure_returns_to_review_with_evidence() -> None:
     }
 
     decision = ResearchHandler().apply(state, result, _context())
-    patch = decision.action_context["state_patch"]
+    patch = _changes(decision)
 
     assert decision.next_stage == "gap_review"
     assert patch["research_archive"]["G1"] == result

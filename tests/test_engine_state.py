@@ -57,6 +57,8 @@ _EXPECTED_V58_FIELDS = {
     "architecture_baseline", "repair_cycle_count",
     "unchanged_finding_streak", "last_finding_fingerprint",
     "batch_changed_files",
+    # Phase 80 Action 边界运行时修订
+    "active_runtime_revision", "pending_runtime_revision",
     # 内部写入审计日志
     "_write_log",
     # P1-28: 运行时句柄 (不进 checkpoint)
@@ -322,11 +324,11 @@ class TestEngineStateBoundary:
         assert not hasattr(state, "nonexistent")
 
     def test_to_dict_contains_all_fields(self) -> None:
-        """to_dict 输出含全部 59 字段（不含内部字段）。"""
+        """to_dict 输出含全部 61 字段（不含内部字段）。"""
         state = EngineState()
         d = state.to_dict()
-        assert len(d) == 59, (
-            f"to_dict 应含 59 字段, 实际 {len(d)}: "
+        assert len(d) == 61, (
+            f"to_dict 应含 61 字段, 实际 {len(d)}: "
             f"{sorted(d.keys())}"
         )
         assert "suggested_fix" in d, "to_dict 必须包含 suggested_fix (Self-Refine 深化)"

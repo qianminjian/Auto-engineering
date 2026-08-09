@@ -50,7 +50,19 @@
         "ProjectProfileConflict",
         "ProjectSetupRequired",
         "ProjectSetupCompleted",
-        "ArchitectureBaselineAccepted"
+        "ArchitectureBaselineAccepted",
+        "RuntimeRevisionDetected",
+        "RuntimeRevisionActivated",
+        "StateChannelsChanged",
+        "GapStateUpdated",
+        "CriticStateUpdated",
+        "VerificationStateUpdated",
+        "ArchitectureInitializationRequested",
+        "CriticProgressRecorded",
+        "BatchCursorAdvanced",
+        "BatchCursorRolledBack",
+        "ComponentCursorAdvanced",
+        "PlateCursorAdvanced"
       ]
     },
     "causation_id": {"type": ["string", "null"], "minLength": 1},

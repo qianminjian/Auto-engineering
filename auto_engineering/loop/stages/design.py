@@ -7,6 +7,7 @@ import json
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from auto_engineering.loop.domain_events import channels_updated, transition_event
 from auto_engineering.loop.events import LoopEvent, LoopEventType
 from auto_engineering.loop.stages.base import (
     StageName,
@@ -68,10 +69,16 @@ class ArchitectHandler:
             )
         target: StageName = "developer"
         return TransitionDecision(
-            events=(_advanced(source=self.stage, target=target, context=context),),
+            events=(
+                transition_event(
+                    LoopEventType.ARCHITECTURE_INITIALIZATION_REQUESTED,
+                    thread_id=context.thread_id,
+                    sequence=context.event_sequence,
+                ),
+                _advanced(source=self.stage, target=target, context=context),
+            ),
             next_stage=target,
             action_context={
-                "initialize_architecture": True,
                 "offload_stage": self.stage,
             },
         )
@@ -105,8 +112,13 @@ class CriticHandler:
         common: dict[str, Any] = {
             "collect_token_usage": True,
             "offload_stage": self.stage,
-            "critic_progress": effective_verdict,
         }
+        progress_event = transition_event(
+            LoopEventType.CRITIC_PROGRESS_RECORDED,
+            thread_id=context.thread_id,
+            sequence=context.event_sequence,
+            payload={"verdict": effective_verdict},
+        )
         if verdict not in {"MAJOR", "APPROVE"}:
             common["error"] = {
                 "error_code": "INVALID_VERDICT",
@@ -119,7 +131,7 @@ class CriticHandler:
         in_a_row = int(state.get("majors_in_a_row", 0))
         total = int(state.get("total_majors", 0))
         if effective_verdict == "APPROVE":
-            common["state_patch"] = {
+            changes = {
                 "majors_in_a_row": 0,
                 "total_majors": total,
                 "open_findings": [],
@@ -135,6 +147,13 @@ class CriticHandler:
             )
             return TransitionDecision(
                 events=(
+                    progress_event,
+                    channels_updated(
+                        LoopEventType.CRITIC_STATE_UPDATED,
+                        changes,
+                        thread_id=context.thread_id,
+                        sequence=context.event_sequence,
+                    ),
                     _advanced(source=self.stage, target=target, context=context),
                 ),
                 next_stage=target,
@@ -143,7 +162,7 @@ class CriticHandler:
 
         in_a_row += 1
         total += 1
-        common["state_patch"] = {
+        changes = {
             "majors_in_a_row": in_a_row,
             "total_majors": total,
             "critic_verdict": effective_verdict,
@@ -170,6 +189,12 @@ class CriticHandler:
             common["refine_source"] = "critic"
             common["feedback"] = findings
             return TransitionDecision(
+                events=(progress_event, channels_updated(
+                    LoopEventType.CRITIC_STATE_UPDATED,
+                    changes,
+                    thread_id=context.thread_id,
+                    sequence=context.event_sequence,
+                )),
                 next_stage="architect",
                 action_context=common,
             )
@@ -188,7 +213,7 @@ class CriticHandler:
             else 1
         )
         repair_cycles = int(state.get("repair_cycle_count", 0)) + 1
-        common["state_patch"].update({
+        changes.update({
             "repair_cycle_count": repair_cycles,
             "unchanged_finding_streak": unchanged_streak,
             "last_finding_fingerprint": fingerprint,
@@ -201,6 +226,12 @@ class CriticHandler:
                 "reason": f"相同 Finding 无证据增量: {unchanged_streak}",
             }
             return TransitionDecision(
+                events=(progress_event, channels_updated(
+                    LoopEventType.CRITIC_STATE_UPDATED,
+                    changes,
+                    thread_id=context.thread_id,
+                    sequence=context.event_sequence,
+                )),
                 terminal=True,
                 action_context=common,
             )
@@ -209,13 +240,35 @@ class CriticHandler:
                 "verdict": "REPAIR_CYCLE_LIMIT",
                 "reason": f"局部修复预算耗尽: {repair_cycles}/{max_repairs}",
             }
-            return TransitionDecision(terminal=True, action_context=common)
+            return TransitionDecision(
+                events=(progress_event, channels_updated(
+                    LoopEventType.CRITIC_STATE_UPDATED,
+                    changes,
+                    thread_id=context.thread_id,
+                    sequence=context.event_sequence,
+                )),
+                terminal=True,
+                action_context=common,
+            )
 
         target = "developer"
-        common["cursor_operation"] = "rollback_batch"
         common["feedback"] = findings
         return TransitionDecision(
-            events=(_advanced(source=self.stage, target=target, context=context),),
+            events=(
+                progress_event,
+                transition_event(
+                    LoopEventType.BATCH_CURSOR_ROLLED_BACK,
+                    thread_id=context.thread_id,
+                    sequence=context.event_sequence,
+                ),
+                channels_updated(
+                    LoopEventType.CRITIC_STATE_UPDATED,
+                    changes,
+                    thread_id=context.thread_id,
+                    sequence=context.event_sequence,
+                ),
+                _advanced(source=self.stage, target=target, context=context),
+            ),
             next_stage=target,
             action_context=common,
         )

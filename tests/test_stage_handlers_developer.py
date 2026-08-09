@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from auto_engineering.loop.events import LoopEventType
 from auto_engineering.loop.stages.base import TransitionContext
 from auto_engineering.loop.stages.developer import DeveloperHandler
 from auto_engineering.loop.tick_orchestrator import TickOrchestrator
@@ -32,7 +33,7 @@ def test_developer_advances_to_next_batch_with_checkpoint() -> None:
     )
 
     assert decision.next_stage == "developer"
-    assert decision.action_context["cursor_operation"] == "advance_batch"
+    assert decision.events[0].event_type is LoopEventType.BATCH_CURSOR_ADVANCED
     assert decision.action_context["save_checkpoint"] is True
     assert decision.action_context["pre_gate"] == gate
     assert decision.action_context["developer_progress"]["next_task"] == "实现 B2"
@@ -79,7 +80,10 @@ def test_developer_required_gate_failure_stays_before_critic() -> None:
     assert decision.next_stage == "developer"
     assert decision.events == ()
     assert decision.action_context["stay_in_stage"] is True
-    assert "cursor_operation" not in decision.action_context
+    assert all(
+        event.event_type is not LoopEventType.BATCH_CURSOR_ADVANCED
+        for event in decision.events
+    )
     assert decision.action_context["feedback"] == {
         "reason": "required_gate_failed",
         "gates": [failure],

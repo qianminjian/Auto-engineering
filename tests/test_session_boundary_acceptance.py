@@ -38,12 +38,12 @@ def test_150_tick_projection_is_equivalent_across_three_sessions() -> None:
         )
         rollover = handoff.request_rollover(
             current_session_id=current_session,
-            reason="tick_limit",
+            reason="host_process_lost",
             capsule=capsule,
         )
         assert handoff.request_rollover(
             current_session_id=current_session,
-            reason="tick_limit",
+            reason="host_process_lost",
             capsule=capsule,
         ) == rollover
 

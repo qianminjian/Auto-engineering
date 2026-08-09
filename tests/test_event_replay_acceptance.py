@@ -67,10 +67,11 @@ def test_deleted_projection_rebuilds_to_last_committed_state(tmp_path: Path) -> 
             thread_id="thread-1",
             sequence=2,
             event_type=LoopEventType.RESULT_ACCEPTED,
-            payload={
-                "result_message_id": "result-1",
-                "state_patch": final.to_dict(),
-            },
+                payload={
+                    "result_message_id": "result-1",
+                    "state_patch": final.to_dict(),
+                    "legacy_import": True,
+                },
             causation_id="action-1",
             correlation_id="thread-1",
         )
