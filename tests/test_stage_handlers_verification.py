@@ -35,7 +35,10 @@ def test_component_gap_requests_refine() -> None:
 
     decision = ComponentVerifierHandler().apply({}, result, _context())
 
-    assert decision.action_context["refine_source"] == "component_verifier"
+    assert decision.refine_source == "component_verifier"
+    assert "refine_source" not in decision.action_context
+    assert decision.lifecycle_effects.verification_progress["missing"] == 1
+    assert "progress_update" not in decision.action_context
     assert _changes(decision)["audit_findings"] == [
         {"item": "x"}
     ]
@@ -75,9 +78,11 @@ def test_plate_audit_recounts_findings_and_requests_refine() -> None:
         _context(p1_threshold=10),
     )
 
-    assert decision.action_context["refine_source"] == "plate_deep_audit"
+    assert decision.refine_source == "plate_deep_audit"
+    assert "refine_source" not in decision.action_context
     assert len(_changes(decision)["audit_findings"]) == 1
-    assert decision.action_context["audit_counts"] == (1, 0, 0)
+    assert decision.audit_counts == (1, 0, 0)
+    assert "audit_counts" not in decision.action_context
 
 
 def test_single_p1_cannot_pass_final_deep_audit() -> None:
@@ -96,7 +101,8 @@ def test_single_p1_cannot_pass_final_deep_audit() -> None:
     )
 
     assert decision.terminal is False
-    assert decision.action_context["refine_source"] == "system_deep_audit"
+    assert decision.refine_source == "system_deep_audit"
+    assert "refine_source" not in decision.action_context
     open_finding = _changes(decision)["open_findings"][0]
     assert open_finding["severity"] == "P1"
     assert open_finding["description"] == "race"
@@ -130,9 +136,11 @@ def test_system_verifier_refines_or_advances_to_deep_audit() -> None:
     )
     passed = SystemVerifierHandler().apply({}, {}, _context())
 
-    assert failed.action_context["refine_source"] == "system_verifier"
+    assert failed.refine_source == "system_verifier"
+    assert "refine_source" not in failed.action_context
     assert passed.next_stage == "system_deep_audit"
-    assert passed.action_context["display_progress"] is True
+    assert passed.display_progress is True
+    assert "display_progress" not in passed.action_context
 
 
 def test_system_deep_audit_preserves_stale_design_feedback() -> None:
@@ -149,10 +157,11 @@ def test_system_deep_audit_preserves_stale_design_feedback() -> None:
         _changes(decision)["critic_feedback"]
     )
     assert decision.terminal is True
-    assert decision.action_context["convergence"] == {
+    assert decision.convergence == {
         "design_coverage_ok": True,
         "system_deep_audit_ok": True,
     }
+    assert "convergence" not in decision.action_context
 
 
 def test_system_deep_audit_coverage_gap_requests_refine() -> None:
@@ -162,7 +171,8 @@ def test_system_deep_audit_coverage_gap_requests_refine() -> None:
         _context(p1_threshold=10),
     )
 
-    assert decision.action_context["refine_source"] == "system_deep_audit"
+    assert decision.refine_source == "system_deep_audit"
+    assert "refine_source" not in decision.action_context
 
 
 def test_orchestrator_dispatches_verification_stages_via_registry(

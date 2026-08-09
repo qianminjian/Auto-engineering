@@ -9,6 +9,7 @@ from auto_engineering.gates.deep_audit import recount_findings
 from auto_engineering.loop.domain_events import channels_updated, transition_event
 from auto_engineering.loop.events import LoopEvent, LoopEventType
 from auto_engineering.loop.stages.base import (
+    LifecycleEffects,
     StageName,
     TransitionContext,
     TransitionDecision,
@@ -35,6 +36,8 @@ def _refine(
     source: StageName,
     changes: Mapping[str, Any],
     context: TransitionContext,
+    audit_counts: tuple[int, int, int] | None = None,
+    progress_update: Mapping[str, Any] | None = None,
     **action_context: Any,
 ) -> TransitionDecision:
     return TransitionDecision(
@@ -44,10 +47,12 @@ def _refine(
             thread_id=context.thread_id,
             sequence=context.event_sequence,
         ),),
-        action_context={
-            "refine_source": source,
-            **action_context,
-        }
+        refine_source=source,
+        audit_counts=audit_counts,
+        action_context=action_context,
+        lifecycle_effects=LifecycleEffects(
+            verification_progress=progress_update,
+        ),
     )
 
 
@@ -86,9 +91,9 @@ class ComponentVerifierHandler:
                 *_advanced(self.stage, target, context),
             ),
             next_stage=target,
-            action_context={
-                "progress_update": progress,
-            },
+            lifecycle_effects=LifecycleEffects(
+                verification_progress=progress,
+            ),
         )
 
 
@@ -135,11 +140,11 @@ class PlateDeepAuditHandler:
                 *_advanced(self.stage, target, context),
             ),
             next_stage=target,
-            action_context={
-                "audit_counts": counts,
-                "progress_update": progress,
-                "display_progress": not context.extensions.get("has_more_plates"),
-            },
+            audit_counts=counts,
+            display_progress=not context.extensions.get("has_more_plates"),
+            lifecycle_effects=LifecycleEffects(
+                verification_progress=progress,
+            ),
         )
 
 
@@ -171,7 +176,7 @@ class SystemVerifierHandler:
                 *_advanced(self.stage, target, context),
             ),
             next_stage=target,
-            action_context={"display_progress": True},
+            display_progress=True,
         )
 
 
@@ -218,13 +223,11 @@ class SystemDeepAuditHandler:
                 sequence=context.event_sequence,
             ),),
             terminal=True,
-            action_context={
-                "audit_counts": counts,
-                "display_progress": True,
-                "convergence": {
-                    "design_coverage_ok": True,
-                    "system_deep_audit_ok": True,
-                },
+            audit_counts=counts,
+            display_progress=True,
+            convergence={
+                "design_coverage_ok": True,
+                "system_deep_audit_ok": True,
             },
         )
 

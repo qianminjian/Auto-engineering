@@ -66,7 +66,8 @@ def test_critic_major_stops_at_configured_repair_limit() -> None:
     )
 
     assert decision.terminal is True
-    assert decision.action_context["terminal_action"]["verdict"] == "REPAIR_CYCLE_LIMIT"
+    assert decision.terminal_action["verdict"] == "REPAIR_CYCLE_LIMIT"
+    assert "terminal_action" not in decision.action_context
     assert _changes(decision)["majors_in_a_row"] == 3
 
 
@@ -93,7 +94,8 @@ def test_critic_unchanged_finding_stops_as_stagnant() -> None:
     )
 
     assert second.terminal is True
-    assert second.action_context["terminal_action"]["verdict"] == "STAGNANT"
+    assert second.terminal_action["verdict"] == "STAGNANT"
+    assert "terminal_action" not in second.action_context
 
 
 def test_critic_major_rolls_back_batch_and_returns_findings() -> None:
@@ -127,7 +129,8 @@ def test_critic_plan_gap_routes_to_architect_refine() -> None:
     )
 
     assert decision.next_stage == "architect"
-    assert decision.action_context["refine_source"] == "critic"
+    assert decision.refine_source == "critic"
+    assert "refine_source" not in decision.action_context
     assert all(
         event.event_type is not LoopEventType.WORK_REOPENED
         for event in decision.events
@@ -150,7 +153,8 @@ def test_critic_legacy_out_of_scope_finding_is_plan_gap() -> None:
     )
 
     assert decision.next_stage == "architect"
-    assert decision.action_context["refine_source"] == "critic"
+    assert decision.refine_source == "critic"
+    assert "refine_source" not in decision.action_context
 
 
 def test_critic_approve_with_blocking_finding_is_forced_to_repair() -> None:

@@ -37,8 +37,8 @@ class DeveloperHandler:
                     offload_stage=self.stage,
                 ),
                 next_stage="developer",
+                advance_stage=False,
                 action_context={
-                    "stay_in_stage": True,
                     "feedback": {
                         "reason": "required_gate_failed",
                         "gates": list(blocking),
@@ -56,10 +56,7 @@ class DeveloperHandler:
             ),
             "next_task": context.extensions.get("next_task"),
         }
-        action_context = {
-            "developer_progress": progress,
-            "stay_in_stage": more,
-        }
+        action_context: dict[str, Any] = {}
         pre_gate = context.extensions.get("next_pre_gate")
         if more and isinstance(pre_gate, Mapping):
             action_context["pre_gate"] = dict(pre_gate)
@@ -84,6 +81,7 @@ class DeveloperHandler:
         return TransitionDecision(
             events=events,
             next_stage=target,
+            advance_stage=not more,
             action_context=action_context,
             lifecycle_effects=LifecycleEffects(
                 collect_token_usage=True,
@@ -95,6 +93,7 @@ class DeveloperHandler:
                 save_checkpoint=more,
                 offload_stage=self.stage,
                 snapshot_developer_output=not more,
+                developer_progress=progress,
             ),
         )
 

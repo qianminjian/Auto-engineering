@@ -190,7 +190,6 @@ class CriticHandler:
             for finding in blocking_findings
         )
         if requires_refine:
-            common["refine_source"] = "critic"
             common["feedback"] = findings
             return TransitionDecision(
                 events=(progress_event, channels_updated(
@@ -200,6 +199,7 @@ class CriticHandler:
                     sequence=context.event_sequence,
                 )),
                 next_stage="architect",
+                refine_source=self.stage,
                 action_context=common,
                 lifecycle_effects=lifecycle_effects,
             )
@@ -226,7 +226,7 @@ class CriticHandler:
         max_repairs = int(context.extensions.get("max_repair_cycles", 6))
         max_stagnation = int(context.extensions.get("max_stagnation_cycles", 3))
         if unchanged_streak >= max_stagnation:
-            common["terminal_action"] = {
+            terminal_action = {
                 "verdict": "STAGNANT",
                 "reason": f"相同 Finding 无证据增量: {unchanged_streak}",
             }
@@ -238,11 +238,12 @@ class CriticHandler:
                     sequence=context.event_sequence,
                 )),
                 terminal=True,
+                terminal_action=terminal_action,
                 action_context=common,
                 lifecycle_effects=lifecycle_effects,
             )
         if repair_cycles >= max_repairs:
-            common["terminal_action"] = {
+            terminal_action = {
                 "verdict": "REPAIR_CYCLE_LIMIT",
                 "reason": f"局部修复预算耗尽: {repair_cycles}/{max_repairs}",
             }
@@ -254,6 +255,7 @@ class CriticHandler:
                     sequence=context.event_sequence,
                 )),
                 terminal=True,
+                terminal_action=terminal_action,
                 action_context=common,
                 lifecycle_effects=lifecycle_effects,
             )

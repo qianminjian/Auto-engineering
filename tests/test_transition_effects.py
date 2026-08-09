@@ -139,3 +139,26 @@ def test_declared_lifecycle_effects_run_in_stable_order() -> None:
         "checkpoint",
         "offload:developer",
     ]
+
+
+def test_gap_lifecycle_effects_run_in_stable_order() -> None:
+    calls: list[str] = []
+    executor = TransitionEffectExecutor(
+        _batch_state(),
+        Mock(),
+        Mock(),
+        inject_supplement=lambda supplement: calls.append(
+            f"supplement:{supplement['content']}"
+        ),
+        pause_stage=lambda stage: calls.append(f"pause:{stage}"),
+        mark_fuzzy_section=lambda section: calls.append(f"fuzzy:{section}"),
+    )
+    effects = LifecycleEffects(
+        supplements=({"content": "设计补充"},),
+        pause_stages=("architect",),
+        fuzzy_sections=("§1",),
+    )
+
+    executor.apply_after_reducers(effects)
+
+    assert calls == ["supplement:设计补充", "pause:architect", "fuzzy:§1"]

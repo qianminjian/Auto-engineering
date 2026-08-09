@@ -24,7 +24,7 @@ import logging
 import subprocess
 import sys
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
@@ -1592,6 +1592,9 @@ class TickOrchestrator:
             self._snapshot_developer_output,
             self._save_checkpoint,
             self._offload_stage,
+            self._apply_supplement_effect,
+            self._pause_stage,
+            self._mark_fuzzy_section,
         )
         transition_effects.apply_before_transition(decision.lifecycle_effects)
         reducer_registry = default_reducer_registry()
@@ -1601,41 +1604,28 @@ class TickOrchestrator:
             if event.event_type is not LoopEventType.STAGE_ADVANCED:
                 self._state = reducer_registry.reduce(self._state, event)
         transition_effects.apply_pre_progress(decision.events)
-        supplements = action_context.get("supplements", ())
-        if isinstance(supplements, (list, tuple)):
-            for supplement in supplements:
-                if isinstance(supplement, dict):
-                    self._inject_supplement(**supplement)
-        pause_stages = action_context.get("pause_stages", ())
-        if isinstance(pause_stages, (list, tuple, set, frozenset)):
-            self._pause_at_stages.update(pause_stages)
-        fuzzy_sections = action_context.get("fuzzy_sections", ())
-        if self._progress_tree is not None and isinstance(
-            fuzzy_sections, (list, tuple)
-        ):
-            for section in fuzzy_sections:
-                node = self._progress_tree.find_by_design_section(section)
-                if node is not None:
-                    node.design_status = "fuzzy"
+        transition_effects.apply_after_reducers(decision.lifecycle_effects)
         if self._event_store is not None:
             self._pending_domain_events.extend(decision.events)
         transition_effects.apply_verification_progress(
-            action_context.get("progress_update")
+            decision.lifecycle_effects.verification_progress
         )
         transition_effects.apply_post_progress(decision.events)
-        refine_source = action_context.get("refine_source")
-        if isinstance(refine_source, str):
-            return self._handle_plan_refine(refine_source)
+        if decision.refine_source is not None:
+            return self._handle_plan_refine(decision.refine_source)
         transition_effects.apply_developer_progress(
-            action_context.get("developer_progress")
+            decision.lifecycle_effects.developer_progress
         )
         transition_effects.apply_after_progress(decision.lifecycle_effects)
-        terminal_action = resolve_terminal_action(action_context)
+        terminal_action = resolve_terminal_action(
+            action_context,
+            terminal_action=decision.terminal_action,
+        )
         if terminal_action is not None:
             return terminal_action
-        convergence = action_context.get("convergence")
+        convergence = decision.convergence
         if isinstance(convergence, dict):
-            counts = action_context.get("audit_counts", (0, 0, 0))
+            counts = decision.audit_counts or (0, 0, 0)
             if isinstance(counts, (list, tuple)) and len(counts) == 3:
                 self._write_audit_history(
                     int(counts[0]),
@@ -1643,10 +1633,10 @@ class TickOrchestrator:
                     int(counts[2]),
                     False,
                 )
-            if action_context.get("display_progress"):
+            if decision.display_progress:
                 self._display_progress()
             return self._convergence_check(**convergence)
-        if not action_context.get("stay_in_stage"):
+        if decision.advance_stage:
             self._advance_stage(decision.next_stage)
         feedback = action_context.get("feedback")
         if isinstance(feedback, (list, dict)):
@@ -1656,12 +1646,25 @@ class TickOrchestrator:
             action = self.build_action(
                 pre_gate=pre_gate if isinstance(pre_gate, dict) else None
             ) if pre_gate is not None else self.build_action()
-        if action_context.get("display_progress"):
+        if decision.display_progress:
             self._display_progress()
         return action
 
     def _record_completed_batch(self, batch_id: str) -> None:
         self._last_batch_id = batch_id
+
+    def _apply_supplement_effect(self, supplement: Mapping[str, Any]) -> None:
+        self._inject_supplement(**dict(supplement))
+
+    def _pause_stage(self, stage: str) -> None:
+        self._pause_at_stages.add(stage)
+
+    def _mark_fuzzy_section(self, section: str) -> None:
+        if self._progress_tree is None:
+            return
+        node = self._progress_tree.find_by_design_section(section)
+        if node is not None:
+            node.design_status = "fuzzy"
 
     def _activate_architecture_plan(self) -> None:
         """将 Architect 的纯决策物化为执行游标与进度树。"""

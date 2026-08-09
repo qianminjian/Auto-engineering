@@ -10,6 +10,7 @@ from typing import Any
 from auto_engineering.loop.domain_events import channels_updated
 from auto_engineering.loop.events import LoopEvent, LoopEventType
 from auto_engineering.loop.stages.base import (
+    LifecycleEffects,
     StageName,
     TransitionContext,
     TransitionDecision,
@@ -55,13 +56,13 @@ class GapScanHandler:
         return TransitionDecision(
             events=(_advanced(source=self.stage, target=target, context=context),),
             next_stage=target,
-            action_context={
-                "fuzzy_sections": tuple(
+            lifecycle_effects=LifecycleEffects(
+                fuzzy_sections=tuple(
                     gap["design_section_ref"]
                     for gap in gaps
                     if gap.get("design_section_ref")
-                )
-            },
+                ),
+            ),
         )
 
 
@@ -134,10 +135,10 @@ class GapReviewHandler:
                 ),
             ),
             next_stage=target,
-            action_context={
-                "supplements": tuple(supplements),
-                "pause_stages": ("architect",) if report.get("has_blocking") else (),
-            },
+            lifecycle_effects=LifecycleEffects(
+                supplements=tuple(supplements),
+                pause_stages=("architect",) if report.get("has_blocking") else (),
+            ),
         )
 
 
@@ -214,9 +215,7 @@ class ResearchHandler:
                 ),
             ),
             next_stage=target,
-            action_context={
-                "supplements": tuple(supplements),
-            },
+            lifecycle_effects=LifecycleEffects(supplements=tuple(supplements)),
         )
 
 

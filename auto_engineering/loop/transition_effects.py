@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
+from typing import Any
 
 from auto_engineering.engine.batch_state import BatchState
 from auto_engineering.engine.progress_tree import ProgressTree
@@ -24,6 +25,9 @@ class TransitionEffectExecutor:
         snapshot_developer_output: Callable[[], None] | None = None,
         save_checkpoint: Callable[[], None] | None = None,
         offload_stage: Callable[[str], None] | None = None,
+        inject_supplement: Callable[[Mapping[str, Any]], None] | None = None,
+        pause_stage: Callable[[str], None] | None = None,
+        mark_fuzzy_section: Callable[[str], None] | None = None,
     ) -> None:
         self._batch_state = batch_state
         self._activate_architecture = activate_architecture
@@ -34,6 +38,20 @@ class TransitionEffectExecutor:
         self._snapshot_developer_output = snapshot_developer_output
         self._save_checkpoint = save_checkpoint
         self._offload_stage = offload_stage
+        self._inject_supplement = inject_supplement
+        self._pause_stage = pause_stage
+        self._mark_fuzzy_section = mark_fuzzy_section
+
+    def apply_after_reducers(self, effects: LifecycleEffects) -> None:
+        if self._inject_supplement is not None:
+            for supplement in effects.supplements:
+                self._inject_supplement(supplement)
+        if self._pause_stage is not None:
+            for stage in effects.pause_stages:
+                self._pause_stage(stage)
+        if self._mark_fuzzy_section is not None:
+            for section in effects.fuzzy_sections:
+                self._mark_fuzzy_section(section)
 
     def apply_before_transition(self, effects: LifecycleEffects) -> None:
         if effects.collect_token_usage and self._collect_token_usage is not None:

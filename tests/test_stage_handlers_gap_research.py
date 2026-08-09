@@ -40,7 +40,8 @@ def test_gap_scan_routes_by_gap_presence_and_emits_stage_advance() -> None:
     assert decision.events[0].event_type is LoopEventType.STAGE_ADVANCED
     assert decision.events[0].sequence == 7
     assert decision.events[0].to_dict()["payload"]["to"] == "gap_review"
-    assert decision.action_context["fuzzy_sections"] == ("§1",)
+    assert decision.lifecycle_effects.fuzzy_sections == ("§1",)
+    assert "fuzzy_sections" not in decision.action_context
 
 
 def test_gap_scan_without_gaps_routes_to_architect() -> None:
@@ -70,7 +71,8 @@ def test_gap_review_normalizes_resolution_and_queues_research() -> None:
     assert json.loads(patch["gap_report_json"])["gaps"][0]["resolution"] == (
         "defer_research"
     )
-    assert decision.action_context["pause_stages"] == ("architect",)
+    assert decision.lifecycle_effects.pause_stages == ("architect",)
+    assert "pause_stages" not in decision.action_context
 
 
 def test_gap_review_fill_requests_supplement_without_mutating_input() -> None:
@@ -90,7 +92,8 @@ def test_gap_review_fill_requests_supplement_without_mutating_input() -> None:
     decision = GapReviewHandler().apply(state, {}, _context())
 
     assert decision.next_stage == "architect"
-    assert decision.action_context["supplements"][0]["content"] == "明确设计"
+    assert decision.lifecycle_effects.supplements[0]["content"] == "明确设计"
+    assert "supplements" not in decision.action_context
     assert _changes(decision)["research_archive"] == {}
     assert json.loads(state["gap_report_json"]) == report
 
@@ -112,7 +115,8 @@ def test_research_success_injects_supplement_and_advances() -> None:
     decision = ResearchHandler().apply(state, result, _context())
 
     assert decision.next_stage == "architect"
-    assert decision.action_context["supplements"][0]["source"] == "research_agent"
+    assert decision.lifecycle_effects.supplements[0]["source"] == "research_agent"
+    assert "supplements" not in decision.action_context
     assert _changes(decision)["pending_research_ids"] == []
 
 

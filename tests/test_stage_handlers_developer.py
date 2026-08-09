@@ -43,7 +43,8 @@ def test_developer_advances_to_next_batch_with_checkpoint() -> None:
         "offload_stage",
     } & decision.action_context.keys()
     assert decision.action_context["pre_gate"] == gate
-    assert decision.action_context["developer_progress"]["next_task"] == "实现 B2"
+    assert decision.lifecycle_effects.developer_progress["next_task"] == "实现 B2"
+    assert "developer_progress" not in decision.action_context
 
 
 def test_developer_component_completion_routes_to_critic() -> None:
@@ -86,7 +87,8 @@ def test_developer_required_gate_failure_stays_before_critic() -> None:
 
     assert decision.next_stage == "developer"
     assert decision.events == ()
-    assert decision.action_context["stay_in_stage"] is True
+    assert decision.advance_stage is False
+    assert "stay_in_stage" not in decision.action_context
     assert all(
         event.event_type is not LoopEventType.BATCH_COMPLETED
         for event in decision.events
