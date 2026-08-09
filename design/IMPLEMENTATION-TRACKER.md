@@ -133,7 +133,7 @@
 
 | 优先级 | ID | 任务 | EARS 验收 | 状态 |
 |---:|---|---|---|:---:|
-| P0 | T403 | 协议内核收敛设计资产 | While 方案 B 已获批准, when 实施开始, the specification shall 统一定义 Core/Host/Event/Prompt/Session 边界、迁移顺序、禁止项和发布门禁 | ✅ Spec/PLAN + BEACON/INDEX/HISTORY/Tracker 已同步；T404-T412 已登记 |
+| P0 | T403 | 协议内核收敛设计资产 | While 方案 B 已获批准, when 实施开始, the specification shall 统一定义 Core/Host/Event/Prompt/Session 边界、迁移顺序、禁止项和发布门禁 | ✅ Spec/PLAN + BEACON/INDEX/HISTORY/Tracker 已同步；T404-T413 已登记 |
 | P0 | T404 | 架构特征与负向契约 | While 旧 façade、全状态事件补丁和线程级 Prompt 锁仍存在, when Phase 80 测试运行, the suite shall 稳定暴露这些偏差且不改变现有生产状态 | ✅ 5 项 RED 均按预期失败；GREEN 后与相关回归 209 passed |
 | P0 | T405 | Runtime Compatibility Vector 与 Action 边界升级 | While 活动 Action 使用旧运行时修订, when 新版本恢复并接收其因果 Result, the Core shall 完成旧 Action 后只对下一 Action 激活新修订 | ✅ Vector、Action Snapshot/恢复判定及第 76 Tick 边界升级轨迹通过 |
 | P0 | T406 | Host Execution Control 与连续驱动契约 | While Action 非终态且无需用户输入, when 宿主提交 Result, the host shall 按机器处置自动执行下一 Action，不把单个 Action 输出当作完成 | ✅ Action 扩展、Driver 状态机、Command/Skill 连续驱动合同与双宿主语义测试通过 |
@@ -142,4 +142,5 @@
 | P0 | T409 | TickKernel 收敛与旧 façade 绞杀 | While StageHandler 返回 TransitionDecision, when Kernel 应用转换, it shall 不解释 Stage 专属命令式字段，并逐阶段退役旧可变写入路径 | ✅ façade 已无 Stage 专属分支；Architecture/Offload/Result/Context/Prevalidation/Gate/Audit 均由独立服务承载；2254 passed/1 skipped |
 | P1 | T410 | 协议与恢复遗留语义清理 | While rollover、Prompt、Policy 或 Schema 发生迁移, when 契约校验, the system shall 只保留异常恢复原因并给出稳定兼容或退役诊断 | ✅ handoff 原因已收口；固定 Tick/时间/输入阈值只保留弃用诊断且不参与 Runtime decision |
 | P0 | T411 | 跨版本、长轨迹与双宿主验收 | While 线程跨运行时升级、自动 compaction 和故障恢复运行至少 150 Tick, when Claude/Codex 完成轨迹, both hosts shall 产生等价终态、零非预期停顿且成本门禁完整 | ◐ 150 Tick 双宿主确定性轨迹及 Claude/Codex archive smoke 通过；真实产品长跑仍 not_run |
-| P0 | T412 | Phase 80 发布收口 | While T404-T411 完成, when 全量、覆盖率、静态、replay、fault injection、archive 和真实产品门禁执行, all required evidence shall 通过后才允许生成下一 RC | ◐ clean full 2254 passed/1 skipped；最近 coverage 90%、Ruff/mypy 通过；待真实产品门禁，不生成下一 RC |
+| P0 | T412 | Phase 80 发布收口 | While T404-T411、T413 完成, when 全量、覆盖率、静态、replay、fault injection、archive 和真实产品门禁执行, all required checks shall 通过后才允许生成下一 RC | ◐ clean full 2255 passed/1 skipped；最近 coverage 90%、Ruff/mypy 通过；待真实产品门禁，不生成下一 RC |
+| P0 | T413 | Codex 原生子代理能力绑定 | While Codex 暴露 `collaboration.spawn_agent`, when spawn Action 要求单个或并行 Worker, the host Skill shall 显式映射 `reasoning_effort` 并先调用真实工具，禁止在工具调用失败前主观报告 `HOST_CAPABILITY_UNAVAILABLE` | ✅ RED 契约复现；Skill/Command 显式绑定工具清单、`reasoning_effort=xhigh` 与 CONTINUE；专项 69 passed/1 skipped、全量 2255 passed/1 skipped |

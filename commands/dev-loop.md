@@ -124,6 +124,13 @@ ae-run dev-loop --init \
 7. 按 `action.expected_format` 从真实输出提取字段；只有真实 spawn 完成后才写
    `"spawned": true`。
 
+Codex 宿主必须使用当前会话的实际工具清单完成能力绑定：存在
+`collaboration.spawn_agent` 即表示单 Worker 原生能力可用；将 `action.spawn.effort`
+传给 `reasoning_effort`，其中 `xhigh` 不得静默降级。并行 Action 按
+`action.spawn.count` 创建独立 Agent。不得因为当前回复尚未调用子代理就判定能力不存在；
+工具已暴露时，只有真实调用明确失败后才可报告 `HOST_CAPABILITY_UNAVAILABLE`。当
+`execution_control.disposition == "CONTINUE"` 时，不得在调用前向用户交回控制。
+
 ## 上下文交接
 
 引擎会在 architect、developer、critic 完成后写入 `.ae-state/offload/`。

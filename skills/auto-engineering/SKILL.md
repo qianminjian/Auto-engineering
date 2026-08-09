@@ -107,6 +107,22 @@ action 明确要求时才提高。若 `HostCapabilities.subagents` 不可用，�
 `HOST_CAPABILITY_UNAVAILABLE`，停止该阶段。不得伪造子代理已经启动、并行执行或
 已经生成证据。
 
+### Codex 原生能力绑定
+
+Codex 适配层以当前会话实际暴露的工具清单为能力事实源：
+
+- 工具清单存在 `collaboration.spawn_agent` 时，必须将
+  `HostCapabilities.subagents` 视为可用并调用该工具；不得因为当前回复尚未调用子代理就判定能力不存在。
+- `action.spawn.effort` 映射到 `collaboration.spawn_agent` 的
+  `reasoning_effort`；例如 `xhigh` 必须按 `xhigh` 传入，并选择允许该推理参数的
+  `fork_turns`，不得因需要高推理强度而降级为 unavailable。
+- `action.spawn.parallel=true` 时，只要当前会话允许创建所需数量的独立 Agent，必须按
+  `action.spawn.count` 发起原生调用；不能用“本轮尚未创建”为由报告并行能力缺失。
+- 当上述工具已经暴露时，工具调用明确失败前，不得报告 `HOST_CAPABILITY_UNAVAILABLE`；
+  调用失败后必须保留原始错误证据，不能用主 Agent inline 模拟。
+- `execution_control.disposition == "CONTINUE"` 时，能力满足的 spawn Action 必须在同一
+  次用户启动中继续驱动，不得先向用户输出终态消息或请求无关确认。
+
 能力满足时，使用宿主原生子代理能力：
 
 1. 单 Worker：将 `action.subagent_prompt` 原样交给该 Worker。

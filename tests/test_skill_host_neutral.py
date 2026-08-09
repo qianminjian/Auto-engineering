@@ -52,6 +52,15 @@ def test_skill_handles_unavailable_subagent_capability_explicitly() -> None:
     assert "action.spawn.effort" in content
 
 
+def test_codex_skill_binds_native_spawn_tool_before_reporting_unavailable() -> None:
+    content = SKILL.read_text()
+
+    assert "collaboration.spawn_agent" in content
+    assert "reasoning_effort" in content
+    assert "工具调用明确失败前，不得报告 `HOST_CAPABILITY_UNAVAILABLE`" in content
+    assert "不得因为当前回复尚未调用子代理就判定能力不存在" in content
+
+
 def test_skill_does_not_assume_git_authorization() -> None:
     content = SKILL.read_text()
 
