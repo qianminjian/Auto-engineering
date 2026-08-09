@@ -61,6 +61,7 @@ from auto_engineering.loop.actions import (
     validate_result_format,
 )
 from auto_engineering.loop.architect_validation import dry_run_architect_plan
+from auto_engineering.loop.architecture_activation import ArchitectureActivationService
 from auto_engineering.loop.artifacts import (
     ArtifactError,
     ArtifactStore,
@@ -111,6 +112,7 @@ from auto_engineering.loop.runtime_revision import (
     evaluate_compatibility,
 )
 from auto_engineering.loop.session_handoff import SessionHandoff
+from auto_engineering.loop.stage_offload import StageOffloadService
 from auto_engineering.loop.stage_router import (
     StageRouter,
     clear_stage_fields,
@@ -1667,88 +1669,19 @@ class TickOrchestrator:
             node.design_status = "fuzzy"
 
     def _activate_architecture_plan(self) -> None:
-        """将 Architect 的纯决策物化为执行游标与进度树。"""
-        from auto_engineering.loop.architecture_baseline import build_architecture_baseline
-
-        batches = BatchState.flatten_batch_plan(self._state.batch_plan)
-        if self._batch_state is not None and self._state.plan_refine_count > 0:
-            completed = self._batch_state.completed_batch_ids()
-            base_revision = self._state._runtime_ctx.pop(
-                "plan_patch_base_revision",
-                self._state.plan_refine_count,
-            )
-            self._batch_state = self._batch_state.apply_plan_patch(
-                base_revision=int(base_revision),
-                active_revision=self._state.plan_refine_count,
-                add_batches=batches,
-                completed_batch_ids=completed,
-                design_doc=self._design_doc,
-            )
-            batches = self._batch_state.batch_plan
-        else:
-            self._batch_state = (
-                BatchState.from_design_doc(self._design_doc, batches)
-                if self._design_doc
-                else BatchState.from_batch_plan(batches)
-            )
-
-        design_path = self._state.design_doc_path or ""
-        design_digest = ""
-        if design_path:
-            path = Path(design_path)
-            if not path.is_absolute():
-                path = self.project_root / path
-            try:
-                design_digest = hashlib.sha256(path.read_bytes()).hexdigest()
-            except OSError:
-                design_digest = ""
-        previous_baseline = self._state.architecture_baseline or {}
-        contracts = dict(previous_baseline.get("contracts", {}))
-        contracts.update(self._state.contracts)
-        obligations_by_id = {
-            item.get("id"): item
-            for item in previous_baseline.get("obligations", [])
-            if isinstance(item, dict) and isinstance(item.get("id"), str)
-        }
-        for item in self._state._runtime_ctx.pop("architect_obligations", []):
-            if isinstance(item, dict) and isinstance(item.get("id"), str):
-                obligations_by_id[item["id"]] = item
-        baseline = build_architecture_baseline(
-            revision=max(1, self._state.plan_refine_count + 1),
-            design_doc_path=design_path,
-            design_doc_digest=design_digest,
-            plan=self._state.plan,
-            batch_plan=batches,
-            contracts=contracts,
-            obligations=list(obligations_by_id.values()),
-            accepted_at_tick=self._state.tick,
+        """兼容入口：委托独立 ArchitectureActivationService。"""
+        result = ArchitectureActivationService(self.project_root).activate(
+            state=self._state,
+            design_doc=self._design_doc,
+            batch_state=self._batch_state,
+            progress_tree=self._progress_tree,
+            verification_layers=self._verification_layers,
+            emit=self._queue_domain_event,
         )
-        self._state.architecture_baseline = baseline
-        self._queue_domain_event(
-            LoopEventType.ARCHITECTURE_BASELINE_ACCEPTED,
-            {"baseline": baseline},
-        )
-
-        self._plan = tasks_from_batch_plan(batches, self._state.requirement)
-
-        if self._verification_layers is None:
-            self._verification_layers = determine_verification_layers(
-                self._design_doc, batches)
-
-        if self._progress_tree is None:
-            if self._design_doc:
-                self._progress_tree = ProgressTree.from_design_doc(self._design_doc)
-                self._progress_tree.apply_batch_plan_totals(batches)
-            else:
-                self._progress_tree = ProgressTree.from_batch_plan(
-                    batches, self._state.requirement)
-        elif self._state.plan_refine_count > 0 and self._progress_tree:
-            self._verification_layers = determine_verification_layers(
-                self._design_doc, batches)
-            if self._design_doc:
-                self._progress_tree.sync_from_design_doc(self._design_doc)
-            else:
-                self._progress_tree.sync_from_batch_plan(batches)
+        self._batch_state = result.batch_state
+        self._plan = result.plan
+        self._verification_layers = result.verification_layers
+        self._progress_tree = result.progress_tree
 
     def _snapshot_developer_output(self) -> None:
         """保存 developer 产出快照 (advance_stage 会 clear_stage_fields)."""
@@ -1761,116 +1694,18 @@ class TickOrchestrator:
         self._state.developer_snapshot = snapshot
 
     def _offload_stage(self, stage: str) -> None:
-        """Persist stage context summary via ContextOffloader (T73).
-
-        Note: messages are NOT available at the TickOrchestrator level —
-        the orchestrator only sees action/result JSON, not Agent-level
-        conversation history. Offloading is summary-only; full context
-        backtracking would require the Agent to include message history
-        in its result file.
-
-        (P1-2 fix: documented limitation instead of pretending full_context works.)
-        """
+        """兼容入口：委托独立 StageOffloadService。"""
         if self._context_offloader is None:
             _logger.debug("Injectable '_context_offloader' is None — stage context will not be persisted")
             return
-        offloader = self._context_offloader
-        s = self._state
-        summary = f"{stage} stage completed at tick {s.tick}/{s.round}"
-        key_decisions: list[str] = []
-        files_changed: list[str] = list(s.files_changed) if s.files_changed else []
-        if stage == "architect":
-            plan_preview = (s.plan[:120] + "...") if (s.plan and len(s.plan) > 120) else (s.plan or "")
-            batch_info = f"{len(s.batch_plan)} batches, {len(s.file_list or [])} files" if s.batch_plan else "no batches"  # noqa: E501
-            summary = f"Architect: {batch_info}" + (f" — {plan_preview}" if plan_preview else "")
-            if s.batch_plan:
-                key_decisions = [
-                    f"batch_count={len(s.batch_plan)}",
-                    f"file_count={len(s.file_list or [])}",
-                    f"plan_first_line={plan_preview[:80] if plan_preview else 'N/A'}",
-                ]
-        elif stage == "developer":
-            # DS-14 (T152 L2): extract actual test stats from batch_state for richer summary
-            tr = s.test_results or {}
-            passed = tr.get("passed", 0)
-            total = tr.get("total")
-            if total is None:
-                total = (
-                    int(tr.get("passed", 0) or 0)
-                    + int(tr.get("failed", 0) or 0)
-                    + int(tr.get("errors", 0) or 0)
-                    + int(tr.get("skipped", 0) or 0)
-                )
-            if self._batch_state is not None:
-                try:
-                    comp = self._batch_state.current_component()
-                    batch_id = self._batch_state.current_batch_id()
-                    summary = f"Developer: {comp.name if comp else '?'} batch={batch_id} — {passed}/{total} tests passed"  # noqa: E501
-                except (AssertionError, AttributeError, TypeError, ValueError) as exc:
-                    _logger.warning("batch_state component/batch access failed, using degraded summary: %s", exc)
-                    summary = f"Developer: {passed}/{total} tests passed"
-            else:
-                summary = f"Developer: {passed}/{total} tests passed"
-            if s.commit_hash:
-                key_decisions.append(f"commit={s.commit_hash[:8]}")
-            if s.critic_feedback:
-                key_decisions.append(f"critic_feedback={s.critic_feedback[:120]}")
-            if s.files_changed:
-                key_decisions.append(f"files_changed_count={len(s.files_changed)}")
-            # T54: use SessionSummarizer for structured summary when tick > threshold
-            if (self._session_summarizer is not None
-                    and self._session_summarizer.should_summarize(s.tick)):
-                try:
-                    # DS-14 (T166): pass richer state for structured summary
-                    batch_progress_str = ""
-                    if self._batch_state is not None:
-                        try:
-                            done = self._batch_state.current_batch_idx
-                            total_b = self._batch_state.total_batches
-                            batch_progress_str = f"{done}/{total_b} batches done"
-                        except Exception:
-                            _logger.warning("batch_state done/total count failed", exc_info=True)
-                            batch_progress_str = ""
-                    sess_summary = self._session_summarizer.summarize_structured(
-                        tick=s.tick, test_results=tr,
-                        files_changed=list(s.files_changed or []),
-                        commit_hash=s.commit_hash or "",
-                        gate_results=dict(s.gate_results or {}),
-                        critic_verdict=s.critic_verdict or "",
-                        total_majors=s.total_majors,
-                        batch_progress=batch_progress_str,
-                        previous_summary=self._cached_session_summary,
-                    )
-                    injected = self._session_summarizer.inject_into_prompt(sess_summary)
-                    if injected:
-                        summary = injected[:200]
-                        key_decisions.append("summarized=true")
-                        self._cached_session_summary = sess_summary
-                except Exception:
-                    _logger.warning("SessionSummarizer failed for offload", exc_info=True)
-        elif stage == "critic":
-            findings = s.findings or []
-            p0 = sum(1 for f in findings if f.get("severity") == "P0")
-            p1 = sum(1 for f in findings if f.get("severity") == "P1")
-            p2 = sum(1 for f in findings if f.get("severity") == "P2")
-            verdict = s.critic_verdict or "N/A"
-            summary = f"Critic: {verdict} | P0={p0} P1={p1} P2={p2}"
-            if s.critic_feedback:
-                key_decisions.append(f"feedback={s.critic_feedback[:200]}")
-        # Build context from cached session summary (accumulated tick history)
-        context_msgs: list[dict] = []
-        cached = getattr(self, "_cached_session_summary", None)
-        if cached is not None:
-            ctx_text = self._session_summarizer.inject_into_prompt(cached) if self._session_summarizer else ""
-            if ctx_text:
-                context_msgs = [{"role": "system", "content": ctx_text}]
-        offloader.offload(
-            stage=stage,
-            messages=context_msgs,
-            summary=summary,
-            key_decisions=key_decisions,
-            files_changed=files_changed,
-            gate_results=dict(s.gate_results or {}),
+        self._cached_session_summary = StageOffloadService(
+            offloader=self._context_offloader,
+            summarizer=self._session_summarizer,
+        ).offload(
+            stage,
+            state=self._state,
+            batch_state=self._batch_state,
+            cached_summary=self._cached_session_summary,
         )
 
     def _record_critic_gate_progress(self, verdict: str) -> None:
