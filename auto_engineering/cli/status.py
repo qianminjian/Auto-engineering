@@ -146,7 +146,7 @@ def _collect_event_store_status(cwd: Path) -> dict | None:
             state = events.load_projection(thread_id)
         if state is None:
             return None
-        return {
+        payload = {
             "thread_id": state.thread_id,
             "round": state.round,
             "stage": state.current_stage,
@@ -155,6 +155,20 @@ def _collect_event_store_status(cwd: Path) -> dict | None:
             "total_majors": state.total_majors,
             "recent_history": [],
         }
+        from auto_engineering.engine.batch_state import BatchState
+        from auto_engineering.loop.status_projection import reconciliation_status
+
+        batch_state = None
+        if state.batch_state_json:
+            batch_state = BatchState.from_json(
+                state.batch_state_json,
+                design_doc=None,
+                batch_plan=[dict(item) for item in state.batch_plan],
+            )
+        reconciliation = reconciliation_status(state, batch_state)
+        if reconciliation is not None:
+            payload["plan_reconciliation"] = reconciliation
+        return payload
     except (OSError, sqlite3.Error, ValueError, TypeError):
         _logger.warning("EventStore status 读取失败，回退旧 checkpoint", exc_info=True)
         return None

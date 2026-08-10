@@ -101,6 +101,7 @@ EVENT_CHANNELS: dict[LoopEventType, frozenset[str]] = {
         "action_timestamp",
         "tick_token_usage",
         "audit_revision_fingerprints",
+        "task_verification_evidence",
     }),
     LoopEventType.SUPPLEMENT_STATE_UPDATED: frozenset({
         "design_supplements_json",
@@ -109,7 +110,10 @@ EVENT_CHANNELS: dict[LoopEventType, frozenset[str]] = {
     LoopEventType.STATE_CONFLICT_DETECTED: frozenset({"state_reconciliation"}),
     LoopEventType.STATE_RECONCILIATION_SELECTED: frozenset({"state_reconciliation"}),
     LoopEventType.THREAD_SUPERSEDED: frozenset({"thread_status"}),
-    LoopEventType.PLAN_RECONCILED: frozenset({"plan_reconciliation"}),
+    LoopEventType.PLAN_RECONCILED: frozenset({
+        "plan_reconciliation",
+        "state_reconciliation",
+    }),
     LoopEventType.TASK_SUPERSEDED: frozenset({"superseded_tasks"}),
 }
 

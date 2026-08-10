@@ -1437,12 +1437,28 @@ class TickOrchestrator:
                 else 0
             ),
             current_baseline=self._state.architecture_baseline,
+            project_root=self.project_root,
+            old_batch_plan=[dict(item) for item in self._state.batch_plan],
+            reconciliation_evidence=self._state.task_verification_evidence,
         )
         if dry_run_error:
             return ErrorResponse(
                 error_code="ARCHITECT_PLAN_INVALID",
                 message=f"Architect 计划无法初始化执行树: {dry_run_error}",
                 current_state=self._state.to_dict(),
+            )
+
+        if result.get("result_type") == "plan_reconciliation":
+            from auto_engineering.loop.plan_reconciliation import (
+                PlanReconciliationValidator,
+            )
+
+            self._state._runtime_ctx["plan_reconciliation_candidate"] = (
+                PlanReconciliationValidator(self.project_root).validate(
+                    old_batch_plan=[dict(item) for item in self._state.batch_plan],
+                    candidate=result,
+                    evidence=self._state.task_verification_evidence,
+                )
             )
 
         return result

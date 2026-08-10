@@ -102,7 +102,9 @@ class TransitionContextFactory:
                 "n/a",
                 "skip",
                 "skipped",
+                "advisory",
             }
+            not_applicable = not_applicable or bool(raw.get("advisory"))
             if not not_applicable and (
                 status == "hard_fail" or raw.get("passed") is False
             ):

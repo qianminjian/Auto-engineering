@@ -52,6 +52,7 @@ class GateVerdict:
     # 仅用于系统可证明当前 Gate 不适用的场景。not_applicable 不等于通过，
     # runner 对外序列化为 passed=null，且不计入通过或失败。
     not_applicable: bool = False
+    advisory: bool = False
 
     # 注: passed 布尔字段与 GateVerdict.ok() 类方法不冲突.
     # 字段访问走 v.passed (bool), 工厂方法走 GateVerdict.ok().
@@ -96,6 +97,20 @@ class GateVerdict:
             message=msg,
             details=details,
             suggestions=suggestions,
+        )
+
+    @classmethod
+    def advisory_verdict(
+        cls, msg: str, gate_name: str = "", details: dict | None = None,
+    ) -> GateVerdict:
+        """构造辅助 finding；不阻断，也绝不表示权威通过。"""
+        return cls(
+            gate_name=gate_name,
+            passed=False,
+            skipped=True,
+            advisory=True,
+            message=msg,
+            details=details,
         )
 
 

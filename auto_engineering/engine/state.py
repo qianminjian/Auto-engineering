@@ -152,6 +152,7 @@ _WRITE_OWNERS: dict[str, frozenset[str]] = {
     "thread_status":              frozenset({"orchestrator"}),
     "plan_reconciliation":        frozenset({"orchestrator"}),
     "superseded_tasks":           frozenset({"orchestrator"}),
+    "task_verification_evidence": frozenset({"orchestrator"}),
 }
 
 # 合法 verdict 值
@@ -275,6 +276,7 @@ class EngineState:
     thread_status: str = "active"  # #59 active | superseded | completed
     plan_reconciliation: dict[str, Any] | None = None  # #60 旧新计划 revision 映射
     superseded_tasks: list[dict[str, Any]] = field(default_factory=list)  # #61 只读历史任务
+    task_verification_evidence: dict[str, dict[str, Any]] = field(default_factory=dict)  # #62 Core Gate 任务证据
 
     # v5.5 P1-5: 写入审计日志 (repr=False 避免污染输出, 不参与序列化)
     _write_log: list[WriteRecord] = field(default_factory=list, repr=False, init=False)

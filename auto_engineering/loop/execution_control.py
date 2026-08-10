@@ -115,6 +115,15 @@ def control_for_action(action: Mapping[str, Any]) -> ExecutionControl:
         disposition = ExecutionDisposition.WAIT_USER
         reason = "gap_decisions_required"
     elif (
+        name == "developer"
+        and isinstance(action.get("gate_summary"), Mapping)
+        and isinstance(action["gate_summary"].get("task_evidence"), Mapping)
+        and action["gate_summary"]["task_evidence"].get("status")
+        == "environment_failure"
+    ):
+        disposition = ExecutionDisposition.WAIT_USER
+        reason = "environment_failure"
+    elif (
         name == "gate"
         and isinstance(action.get("gate"), Mapping)
         and action["gate"].get("id") == "state_reconciliation"

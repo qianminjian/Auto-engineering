@@ -8,6 +8,7 @@ from typing import Any, Protocol
 from auto_engineering.engine.batch_state import BatchState
 from auto_engineering.engine.state import EngineState
 from auto_engineering.loop.architecture_baseline import select_active_contracts
+from auto_engineering.loop.task_evidence_policy import TaskEvidencePolicy
 
 
 class GateRunner(Protocol):
@@ -62,6 +63,46 @@ class DeveloperGateService:
             tick=state.tick,
             contracts=contracts,
         )
+        if batch_state is not None and not batch_state.is_component_complete():
+            current_batch = batch_state.current_batch()
+            raw_tasks = current_batch.get("tasks", [])
+            tasks = [task for task in raw_tasks if isinstance(task, Mapping)]
+            task_verdict = TaskEvidencePolicy().evaluate(
+                tasks=tasks,
+                gate_results=results,
+                test_results_claim=(
+                    state.test_results
+                    if isinstance(state.test_results, Mapping)
+                    else None
+                ),
+            )
+            results["task_evidence"] = task_verdict
+            if task_verdict.get("passed") is True:
+                source_gate = results.get("test")
+                if task_verdict.get("evidence_kind") == "core_smoke":
+                    source_gate = next(
+                        (
+                            results[name]
+                            for name in task_verdict.get("gates", [])
+                            if name in results
+                        ),
+                        None,
+                    )
+                if isinstance(source_gate, Mapping):
+                    selected = source_gate.get("selected_files", [])
+                    snapshot = source_gate.get("files_snapshot_sha")
+                    for task in tasks:
+                        task_id = task.get("id")
+                        if not isinstance(task_id, str):
+                            continue
+                        state.task_verification_evidence[task_id] = {
+                            "task_id": task_id,
+                            "gate_passed": True,
+                            "evidence_kind": task_verdict.get("evidence_kind"),
+                            "selected_files": list(selected) if isinstance(selected, list) else [],
+                            "files_snapshot_sha": snapshot,
+                            "ran_at": source_gate.get("ran_at"),
+                        }
         state.gate_results = results
         return duration_ms
 

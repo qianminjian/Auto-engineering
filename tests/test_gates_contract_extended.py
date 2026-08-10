@@ -243,8 +243,9 @@ def test_run_with_contracts_valid_v5_path(tmp_path: Path) -> None:
         }
     }
     verdict = gate.run(tmp_path)
-    assert verdict.passed is True
-    assert "通过" in verdict.message
+    assert verdict.passed is False
+    assert verdict.advisory is True
+    assert "权威通过仍需" in verdict.message
 
 
 # ============================================================
@@ -269,6 +270,7 @@ def test_check_contracts_no_source_files(tmp_path: Path) -> None:
     gate.contracts = {"api": {"path": "/x"}}
     verdict = gate._check_contracts(tmp_path)
     assert verdict.passed is False
+    assert verdict.advisory is True
     assert "未找到源文件" in verdict.message
 
 
@@ -298,7 +300,9 @@ def test_contract_gate_checks_server_root_when_src_also_exists(tmp_path: Path) -
         "clone": {"path": "/api/clone", "response": {"voice_id": "string"}}
     }
 
-    assert gate.run(tmp_path).passed is True
+    verdict = gate.run(tmp_path)
+    assert verdict.passed is False
+    assert verdict.advisory is True
 
 
 def test_check_contracts_mixed_pass_fail(tmp_path: Path) -> None:

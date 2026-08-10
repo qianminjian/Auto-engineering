@@ -60,6 +60,9 @@
       },
       "additionalProperties": false
     },
+    "source_revision": {"type": "integer", "minimum": 1},
+    "classifications": {"type": "array", "items": {"type": "object"}},
+    "new_batch_plan": {"type": "array"},
     "file_list": {"type": "array"},
     "contracts": {"type": "object"},
     "obligations": {"type": "array"},
@@ -127,7 +130,11 @@
         "required": ["stage", "plan", "file_list"],
         "anyOf": [
           {"required": ["batch_plan"]},
-          {"required": ["plan_patch"]}
+          {"required": ["plan_patch"]},
+          {
+            "required": ["result_type", "source_revision", "classifications", "new_batch_plan"],
+            "properties": {"result_type": {"const": "plan_reconciliation"}}
+          }
         ]
       }
     },

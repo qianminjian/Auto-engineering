@@ -7,10 +7,12 @@ import pytest
 
 from auto_engineering.engine.state import EngineState
 from auto_engineering.loop.action_builder import ActionBuilder
+from auto_engineering.loop.architecture_activation import ArchitectureActivationService
 from auto_engineering.loop.plan_reconciliation import (
     PlanReconciliationError,
     PlanReconciliationValidator,
 )
+from auto_engineering.loop.stage_result_projector import StageResultProjector
 from auto_engineering.loop.tick_orchestrator import TickOrchestrator
 
 
@@ -18,6 +20,9 @@ def _old_plan() -> list[dict]:
     return [
         {
             "batch_id": "B1",
+            "component": "Core",
+            "design_section": "§B1",
+            "depends_on": [],
             "tasks": [
                 {"id": "B1-T1", "description": "类型定义", "file_targets": ["src/types.ts"]},
                 {"id": "B1-T2", "description": "API 实现", "file_targets": ["src/api.ts"]},
@@ -102,6 +107,36 @@ def test_stale_or_agent_claim_only_evidence_is_rejected(tmp_path: Path) -> None:
         )
 
 
+def test_core_snapshot_evidence_can_preserve_completed_task(tmp_path: Path) -> None:
+    from auto_engineering.loop.guardrails.stateful import aggregate_files_sha
+
+    target = tmp_path / "src/types.ts"
+    target.parent.mkdir()
+    target.write_text("done\n", encoding="utf-8")
+    candidate = {
+        "source_revision": 2,
+        "classifications": [
+            {"task_id": "B1-T1", "status": "verified_completed", "evidence_ref": "B1-T1"},
+            {"task_id": "B1-T2", "status": "still_pending", "reason": "待完成"},
+        ],
+        "new_batch_plan": [],
+    }
+    evidence = {
+        "B1-T1": {
+            "task_id": "B1-T1",
+            "gate_passed": True,
+            "selected_files": ["src/types.ts"],
+            "files_snapshot_sha": aggregate_files_sha(["src/types.ts"], tmp_path),
+        }
+    }
+
+    result = PlanReconciliationValidator(tmp_path).validate(
+        old_batch_plan=_old_plan(), candidate=candidate, evidence=evidence
+    )
+
+    assert result.verified_completed == ("B1-T1",)
+
+
 def test_new_tasks_cannot_reuse_superseded_task_ids(tmp_path: Path) -> None:
     candidate = {
         "source_revision": 2,
@@ -167,3 +202,62 @@ def test_reconcile_gate_routes_to_architect_without_plan_refine(tmp_path: Path) 
     assert action["feedback"]["mode"] == "PLAN_RECONCILE"
     assert orchestrator._state.current_stage == "architect"
     assert orchestrator._state.refine_request_json is None
+
+
+def test_validated_candidate_activates_only_current_work_set(tmp_path: Path) -> None:
+    state = EngineState(
+        thread_id="thread-old",
+        requirement="继续当前设计",
+        current_stage="architect",
+        batch_plan=_old_plan(),
+        architecture_baseline={"revision": 2},
+        state_reconciliation={"status": "selected", "choice": "reconcile"},
+    )
+    result = {
+        "stage": "architect",
+        "result_type": "plan_reconciliation",
+        "plan": "协调后的当前工作计划，保留仍有效任务并淘汰已经失效的旧任务。" * 2,
+        "file_list": ["src/types.ts"],
+        "contracts": {},
+        "obligations": [],
+        "source_revision": 2,
+        "classifications": [
+            {"task_id": "B1-T1", "status": "still_pending", "reason": "仍有效"},
+            {"task_id": "B1-T2", "status": "superseded", "reason": "接口已删除"},
+        ],
+        "new_batch_plan": [],
+    }
+    candidate = PlanReconciliationValidator(tmp_path).validate(
+        old_batch_plan=state.batch_plan,
+        candidate=result,
+        evidence={},
+    )
+    state._runtime_ctx["plan_reconciliation_candidate"] = candidate
+
+    StageResultProjector().apply(state, result)
+    emitted = []
+    activated = ArchitectureActivationService(tmp_path).activate(
+        state=state,
+        design_doc=None,
+        batch_state=None,
+        progress_tree=None,
+        verification_layers=None,
+        emit=lambda event_type, payload: emitted.append((event_type, payload)),
+    )
+
+    assert [task["id"] for task in state.batch_plan[0]["tasks"]] == ["B1-T1"]
+    assert state.superseded_tasks == [
+        {"task_id": "B1-T2", "status": "superseded"}
+    ]
+    assert state.architecture_baseline["revision"] == 3
+    assert activated.batch_state.current_batch_id() == "B1"
+    assert {event_type.value for event_type, _ in emitted} >= {
+        "PlanReconciled",
+        "TaskSuperseded",
+    }
+    reconciled_payload = next(
+        payload
+        for event_type, payload in emitted
+        if event_type.value == "PlanReconciled"
+    )
+    assert reconciled_payload["changes"]["state_reconciliation"]["status"] == "reconciled"

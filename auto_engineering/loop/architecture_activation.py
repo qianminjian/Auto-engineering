@@ -49,10 +49,11 @@ class ArchitectureActivationService:
     ) -> ArchitectureActivationResult:
         raw_candidate = state._runtime_ctx.get("architecture_candidate")
         candidate = raw_candidate if isinstance(raw_candidate, dict) else None
+        is_reconcile = bool(candidate and candidate.get("reconciled") is True)
         batches = BatchState.flatten_batch_plan([
             dict(item) for item in state.batch_plan
         ])
-        if batch_state is not None and state.plan_refine_count > 0:
+        if batch_state is not None and state.plan_refine_count > 0 and not is_reconcile:
             completed = batch_state.completed_batch_ids()
             raw_base_revision = state._runtime_ctx.pop(
                 "plan_patch_base_revision",
@@ -83,9 +84,34 @@ class ArchitectureActivationService:
                 else BatchState.from_batch_plan(batches)
             )
 
+        if is_reconcile:
+            verification_layers = determine_verification_layers(design_doc, batches)
+            progress_tree = (
+                ProgressTree.from_design_doc(design_doc)
+                if design_doc is not None
+                else ProgressTree.from_batch_plan(batches, state.requirement)
+            )
+            if design_doc is not None:
+                progress_tree.apply_batch_plan_totals(batches)
+
         baseline = self._build_baseline(state, batches)
         state.architecture_baseline = baseline
         emit(LoopEventType.ARCHITECTURE_BASELINE_ACCEPTED, {"baseline": baseline})
+        if is_reconcile and state.plan_reconciliation is not None:
+            emit(
+                LoopEventType.PLAN_RECONCILED,
+                {
+                    "changes": {
+                        "plan_reconciliation": state.plan_reconciliation,
+                        "state_reconciliation": state.state_reconciliation,
+                    }
+                },
+            )
+            if state.superseded_tasks:
+                emit(
+                    LoopEventType.TASK_SUPERSEDED,
+                    {"changes": {"superseded_tasks": state.superseded_tasks}},
+                )
 
         plan = tasks_from_batch_plan(batches, state.requirement)
         if verification_layers is None:
@@ -155,8 +181,17 @@ class ArchitectureActivationService:
                     if isinstance(item, dict) and isinstance(item.get("id"), str):
                         obligations_by_id[item["id"]] = item
             obligations = list(obligations_by_id.values())
+        reconciled_revision = (
+            state.plan_reconciliation.get("current_revision")
+            if isinstance(state.plan_reconciliation, dict)
+            else None
+        )
         return build_architecture_baseline(
-            revision=max(1, state.plan_refine_count + 1),
+            revision=(
+                reconciled_revision
+                if isinstance(reconciled_revision, int)
+                else max(1, state.plan_refine_count + 1)
+            ),
             design_doc_path=design_path,
             design_doc_digest=digest,
             plan=state.plan,

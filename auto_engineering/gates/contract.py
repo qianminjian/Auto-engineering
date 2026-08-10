@@ -175,9 +175,10 @@ class ContractGate(Gate):
         root = Path(project_root)
         source_files = _collect_source_files(root)
         if not source_files:
-            return GateVerdict.failed(
-                f"未找到源文件 (扫描 _SOURCE_EXTENSIONS={sorted(_SOURCE_EXTENSIONS)})",
+            return GateVerdict.advisory_verdict(
+                f"辅助扫描未找到源文件 (扫描 _SOURCE_EXTENSIONS={sorted(_SOURCE_EXTENSIONS)})",
                 gate_name=self.name,
+                details={"authoritative": False, "findings": ["source_not_found"]},
             )
 
         contracts = self.contracts or {}
@@ -190,12 +191,14 @@ class ContractGate(Gate):
                 )
             passed, msg = _check_contract_in_source(contract, source_files)
             if not passed:
-                return GateVerdict.failed(
-                    f"contract '{name}': {msg}",
+                return GateVerdict.advisory_verdict(
+                    f"辅助 finding：contract '{name}': {msg}",
                     gate_name=self.name,
+                    details={"authoritative": False, "findings": [msg]},
                 )
 
-        return GateVerdict.ok(
-            f"所有 {len(contracts)} 个契约 4 项检查通过",
+        return GateVerdict.advisory_verdict(
+            f"辅助扫描匹配 {len(contracts)} 个契约；权威通过仍需可执行 contract test",
             gate_name=self.name,
+            details={"authoritative": False, "findings": []},
         )

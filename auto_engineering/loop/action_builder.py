@@ -877,6 +877,7 @@ class ActionBuilder:
             extra["research_and_design_context"] = research_context
         is_refine = bool(self._state.refine_request_json) and not is_reconcile
         expected_plan = ({
+            "result_type": "plan_reconciliation",
             "source_revision": "integer (等于 reconcile_request.source_revision)",
             "classifications": (
                 "[{task_id,status,evidence_ref?或reason?}]（旧任务逐项且仅一次）"

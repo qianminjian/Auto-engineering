@@ -44,6 +44,18 @@ def test_gap_review_waits_for_real_user_decision() -> None:
     assert control.reason_code == "gap_decisions_required"
 
 
+def test_environment_failure_waits_instead_of_reentering_code_repair() -> None:
+    control = control_for_action({
+        "action": "developer",
+        "gate_summary": {
+            "task_evidence": {"status": "environment_failure", "passed": False}
+        },
+    })
+
+    assert control.disposition is ExecutionDisposition.WAIT_USER
+    assert control.reason_code == "environment_failure"
+
+
 @pytest.mark.parametrize(
     ("action", "expected"),
     [

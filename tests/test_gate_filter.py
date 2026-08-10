@@ -111,7 +111,8 @@ class TestContractGateChecks:
             }
         }
         verdict = gate.run(tmp_path)
-        assert verdict.passed is True
+        assert verdict.passed is False
+        assert verdict.advisory is True
 
     def test_contract_gate_missing_route_fails(self, tmp_path: Path):
         """契约声明的 path 在源码中找不到 → failed."""
@@ -132,7 +133,8 @@ class TestContractGateChecks:
         gate = ContractGate()
         gate.contracts = {"api_endpoint": {"status_code": 200}}
         verdict = gate.run(tmp_path)
-        assert verdict.passed is True
+        assert verdict.passed is False
+        assert verdict.advisory is True
 
     def test_contract_gate_only_scans_source_extensions(self, tmp_path: Path):
         """扫描仅限 .py/.ts/.js/.go/.rs 文件."""

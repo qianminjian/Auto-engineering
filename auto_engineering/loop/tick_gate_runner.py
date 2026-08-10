@@ -122,6 +122,10 @@ class TickGateRunner:
                     bool(v.get("not_applicable", False)) if isinstance(v, dict)
                     else bool(getattr(v, "not_applicable", False))
                 ),
+                "advisory": (
+                    bool(v.get("advisory", False)) if isinstance(v, dict)
+                    else bool(getattr(v, "advisory", False))
+                ),
                 "files_snapshot_sha": snapshot_sha,
                 "selected_files": sorted(files_changed),
                 "ran_at": ran_at,

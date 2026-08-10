@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Mapping
-from typing import Any
+from typing import Any, cast
 
-from auto_engineering.engine.state import EngineState
+from auto_engineering.engine.state import BatchPlanItem, EngineState
 from auto_engineering.loop.architecture_candidate import ArchitectureCandidateBuilder
+from auto_engineering.loop.plan_reconciliation import PlanReconciliationResult
 
 
 class StageResultProjector:
@@ -57,6 +58,52 @@ class StageResultProjector:
         result: Mapping[str, Any],
     ) -> None:
         state.plan = result.get("plan", "")
+        if result.get("result_type") == "plan_reconciliation":
+            reconciliation = state._runtime_ctx.pop(
+                "plan_reconciliation_candidate",
+                None,
+            )
+            if reconciliation is None:
+                raise ValueError("PLAN_RECONCILE 候选未经 Core 校验")
+            if not isinstance(reconciliation, PlanReconciliationResult):
+                raise TypeError("PLAN_RECONCILE 候选类型无效")
+            old_batch_plan = [dict(item) for item in state.batch_plan]
+            current = reconciliation.current_batch_plan(old_batch_plan)
+            state.batch_plan = cast(list[BatchPlanItem], current)
+            state.plan_reconciliation = {
+                "source_revision": reconciliation.source_revision,
+                "current_revision": reconciliation.current_revision,
+                "verified_completed": len(reconciliation.verified_completed),
+                "still_pending": len(reconciliation.still_pending),
+                "superseded": len(reconciliation.superseded),
+                "unverifiable": len(reconciliation.unverifiable),
+            }
+            retired = [
+                {"task_id": task_id, "status": status}
+                for status, task_ids in (
+                    ("superseded", reconciliation.superseded),
+                    ("unverifiable", reconciliation.unverifiable),
+                )
+                for task_id in task_ids
+            ]
+            state.superseded_tasks = retired
+            state.state_reconciliation = {
+                **(state.state_reconciliation or {}),
+                "status": "reconciled",
+                "choice": "reconcile",
+            }
+            state._runtime_ctx["architecture_candidate"] = {
+                "reconciled": True,
+                "batch_plan": current,
+                "contracts": dict(result.get("contracts", {})),
+                "obligations": list(result.get("obligations", [])),
+            }
+            state.contracts = dict(result.get("contracts", {}))
+            state._runtime_ctx["architect_obligations"] = list(
+                result.get("obligations", [])
+            )
+            state.file_list = list(result.get("file_list", []))
+            return
         plan_patch = result.get("plan_patch")
         if isinstance(plan_patch, Mapping):
             candidate = ArchitectureCandidateBuilder().build(

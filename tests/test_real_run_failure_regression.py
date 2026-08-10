@@ -152,7 +152,9 @@ def test_tick_gate_runner_injects_engine_contracts(tmp_path: Path) -> None:
         ["src.ts"], contracts={"voice": {"path": "/voice"}}
     )
 
-    assert results["contract"]["passed"] is True
+    assert results["contract"]["passed"] is False
+    assert results["contract"]["advisory"] is True
+    assert results["contract"]["status"] == "advisory"
 
 
 def test_architect_plan_patch_contract_accepts_additions_only() -> None:

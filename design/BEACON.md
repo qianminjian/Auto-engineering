@@ -13,9 +13,7 @@
 
 **做：** Protocol Envelope、Event Store、Tick Kernel、StageHandler、Host SPI、
 Gate/Guardrail、五层验证、审计、v5.6 兼容迁移和双宿主验收。
-
-**不做：** Core 内调用 LLM；复制宿主 Agent Runtime；恢复退役 CLI；实现 Init
-Engineering 的问答、模板或脚手架；把 archive smoke 冒充真实产品安装；修改外部参考源码。
+**不做：** Core 内调用 LLM；复制宿主 Agent Runtime；恢复退役 CLI；实现 Init Engineering 的问答、模板或脚手架；把 archive smoke 冒充真实产品安装；修改外部参考源码。
 
 ## 当前设计决策
 

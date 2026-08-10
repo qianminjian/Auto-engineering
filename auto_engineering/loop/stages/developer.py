@@ -31,6 +31,23 @@ class DeveloperHandler:
             isinstance(blocking, (list, tuple))
             and blocking
         ):
+            environment_failures = [
+                item
+                for item in blocking
+                if isinstance(item, Mapping)
+                and item.get("status") == "environment_failure"
+            ]
+            if environment_failures:
+                return TransitionDecision(
+                    next_stage="developer",
+                    advance_stage=False,
+                    action_context={
+                        "feedback": {
+                            "reason": "environment_failure",
+                            "gates": environment_failures,
+                        }
+                    },
+                )
             return TransitionDecision(
                 lifecycle_effects=LifecycleEffects(
                     collect_token_usage=True,

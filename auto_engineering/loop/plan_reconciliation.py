@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Mapping, Sequence
+from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -22,6 +23,28 @@ class PlanReconciliationResult:
     superseded: tuple[str, ...]
     unverifiable: tuple[str, ...]
     new_batch_plan: tuple[Mapping[str, Any], ...]
+
+    def current_batch_plan(
+        self,
+        old_batch_plan: Sequence[Mapping[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """只保留 still_pending 旧任务，再追加使用新 ID 的当前任务。"""
+        pending = set(self.still_pending)
+        current: list[dict[str, Any]] = []
+        for raw_batch in old_batch_plan:
+            batch = deepcopy(dict(raw_batch))
+            tasks = batch.get("tasks", [])
+            if not isinstance(tasks, list):
+                continue
+            batch["tasks"] = [
+                deepcopy(dict(task))
+                for task in tasks
+                if isinstance(task, Mapping) and task.get("id") in pending
+            ]
+            if batch["tasks"]:
+                current.append(batch)
+        current.extend(deepcopy(dict(batch)) for batch in self.new_batch_plan)
+        return current
 
 
 class PlanReconciliationValidator:
@@ -81,10 +104,9 @@ class PlanReconciliationValidator:
         if not isinstance(raw_new_plan, list):
             raise PlanReconciliationError("new_batch_plan 必须为数组")
         new_tasks = self._flatten_tasks(raw_new_plan)
-        retired_ids = set(grouped["superseded"]) | set(grouped["unverifiable"])
-        reused = sorted(set(new_tasks) & retired_ids)
+        reused = sorted(set(new_tasks) & set(old_tasks))
         if reused:
-            raise PlanReconciliationError("新任务不得复用已失效任务 ID: " + ", ".join(reused))
+            raise PlanReconciliationError("新任务不得复用旧任务 ID: " + ", ".join(reused))
 
         return PlanReconciliationResult(
             source_revision=source_revision,
@@ -126,11 +148,14 @@ class PlanReconciliationValidator:
         item = evidence.get(evidence_ref) if isinstance(evidence_ref, str) else None
         if item is None or item.get("task_id") != task_id or item.get("gate_passed") is not True:
             raise PlanReconciliationError(f"{task_id} 缺少 Core Gate 完成证据")
-        files = item.get("files")
-        if not isinstance(files, Mapping) or not files:
-            raise PlanReconciliationError(f"{task_id} 缺少文件证据")
         targets = task.get("file_targets", [])
-        if not isinstance(targets, list) or not set(targets) <= set(files):
+        if not isinstance(targets, list):
+            raise PlanReconciliationError(f"{task_id} 文件证据未覆盖任务目标")
+        files = item.get("files")
+        if not isinstance(files, Mapping):
+            self._validate_snapshot_evidence(task_id, targets, item)
+            return
+        if not files or not set(targets) <= set(files):
             raise PlanReconciliationError(f"{task_id} 文件证据未覆盖任务目标")
         for relative, expected in files.items():
             if not isinstance(relative, str) or not isinstance(expected, str):
@@ -141,6 +166,27 @@ class PlanReconciliationValidator:
             actual = hashlib.sha256(path.read_bytes()).hexdigest()
             if actual != expected:
                 raise PlanReconciliationError(f"{task_id} 文件证据已失效")
+
+    def _validate_snapshot_evidence(
+        self,
+        task_id: str,
+        targets: list[Any],
+        item: Mapping[str, Any],
+    ) -> None:
+        from auto_engineering.loop.guardrails.stateful import aggregate_files_sha
+
+        selected = item.get("selected_files")
+        expected = item.get("files_snapshot_sha")
+        if (
+            not isinstance(selected, list)
+            or not all(isinstance(path, str) for path in selected)
+            or not isinstance(expected, str)
+            or not set(targets) <= set(selected)
+        ):
+            raise PlanReconciliationError(f"{task_id} 文件证据未覆盖任务目标")
+        actual = aggregate_files_sha(selected, self._project_root)
+        if actual != expected:
+            raise PlanReconciliationError(f"{task_id} 文件证据已失效")
 
 
 __all__ = [

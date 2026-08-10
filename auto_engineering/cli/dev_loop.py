@@ -751,6 +751,11 @@ def run_tick_status(root: Path, verbose: bool = False) -> None:
             "total_majors": s.total_majors,
             "plan_refine_count": s.plan_refine_count,
         }
+        from auto_engineering.loop.status_projection import reconciliation_status
+
+        reconciliation = reconciliation_status(s, orch._batch_state)
+        if reconciliation is not None:
+            summary["plan_reconciliation"] = reconciliation
         if verbose and orch._batch_state is not None:
             bs = orch._batch_state
             batches, comp = [], None

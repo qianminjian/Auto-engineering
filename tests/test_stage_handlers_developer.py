@@ -99,6 +99,26 @@ def test_developer_required_gate_failure_stays_before_critic() -> None:
     }
 
 
+def test_developer_environment_failure_pauses_code_repair_route() -> None:
+    failure = {
+        "gate_name": "task_evidence",
+        "status": "environment_failure",
+        "passed": False,
+        "reason_code": "missing_toolchain_or_manifest",
+    }
+
+    decision = DeveloperHandler().apply(
+        {},
+        {},
+        _context(blocking_gate_results=[failure]),
+    )
+
+    assert decision.next_stage == "developer"
+    assert decision.advance_stage is False
+    assert decision.action_context["feedback"]["reason"] == "environment_failure"
+    assert decision.events == ()
+
+
 def test_orchestrator_dispatches_developer_via_registry(tmp_path) -> None:
     orchestrator = TickOrchestrator(tmp_path)
 
