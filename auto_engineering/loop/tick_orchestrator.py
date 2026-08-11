@@ -369,6 +369,7 @@ class TickOrchestrator:
                 batch_state=self._batch_state,
                 build_action=self.build_action,
                 save_checkpoint=self._save_checkpoint,
+                queue_domain_event=self._queue_domain_event,
             ))
         return self._escalation
 
@@ -1192,8 +1193,13 @@ class TickOrchestrator:
             LoopEventType.PROJECT_SETUP_COMPLETED,
             {"profile_id": self._state.project_profile_id},
         )
+        previous_stage = self._state.current_stage
         self._state.current_stage = "gap_scan" if self._design_doc else "architect"
         self._state.expected_stage = self._state.current_stage
+        self._queue_domain_event(
+            LoopEventType.STAGE_ADVANCED,
+            {"from": previous_stage, "to": self._state.current_stage},
+        )
         self._state.tick += 1
         self._save_checkpoint()
         return self.build_action()
@@ -2343,7 +2349,8 @@ class TickOrchestrator:
     def _advance_stage(self, next_stage: str | None) -> None:
         if next_stage is None:
             return
-        self._last_completed_stage = self._state.current_stage  # E2: 在推进前记录
+        previous_stage = self._state.current_stage
+        self._last_completed_stage = previous_stage  # E2: 在推进前记录
         self._append_round_history()
         clear_stage_fields(self._state, self._state.current_stage)
         self._state.current_stage = next_stage
@@ -2351,6 +2358,17 @@ class TickOrchestrator:
         self._state.round += 1
         self._state.tick += 1
         self._state.guardrail_retry_counters[next_stage] = 0
+        has_transition_fact = any(
+            event.event_type is LoopEventType.STAGE_ADVANCED
+            and event.to_dict()["payload"].get("from") == previous_stage
+            and event.to_dict()["payload"].get("to") == next_stage
+            for event in self._pending_domain_events
+        )
+        if self._event_store is not None and not has_transition_fact:
+            self._queue_domain_event(
+                LoopEventType.STAGE_ADVANCED,
+                {"from": previous_stage, "to": next_stage},
+            )
         self._save_checkpoint()
 
     def _append_round_history(self) -> None:
@@ -2485,17 +2503,17 @@ class TickOrchestrator:
             if self._active_action is not None
             else None
         )
-        candidate = TickKernel().compile_commit(
-            next_sequence=sequence,
-            previous_state=previous,
-            current_state=self._state,
-            action=action,
-            pending_events=tuple(self._pending_domain_events),
-            result_message_id=self._current_result_message_id,
-            result_causation_id=result_causation_id,
-            round_history=tuple(asdict(item) for item in self._round_history),
-        )
         try:
+            candidate = TickKernel().compile_commit(
+                next_sequence=sequence,
+                previous_state=previous,
+                current_state=self._state,
+                action=action,
+                pending_events=tuple(self._pending_domain_events),
+                result_message_id=self._current_result_message_id,
+                result_causation_id=result_causation_id,
+                round_history=tuple(asdict(item) for item in self._round_history),
+            )
             self._event_store.commit_tick(
                 events=candidate.events,
                 state=self._state,

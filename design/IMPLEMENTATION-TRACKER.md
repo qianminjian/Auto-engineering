@@ -20,7 +20,6 @@
 | Phase 62 v5.7.1 正式发布 | ✅ 6/6 | T295-T300；GitHub Release 与 SHA-256 已核验 |
 | Phase 63 非交互配置治理 | ✅ 1/1 | T301；非交互显式策略与来源报告 |
 ## Phase 64：真实运行可信度止血
-> P0 前置；详见 `design/v5.8-Session-Decoupling-Design.md` 与 `design/v5.8-Session-Decoupling-PLAN.md`。
 | 优先级 | ID | 任务 | EARS 验收 | 状态 |
 |---:|---|---|---|:---:|
 | P0 | T302 | 会话解耦设计资产 | While 真实运行事故已形成证据, when 设计评审, the specification shall 覆盖状态、会话、预算、计划补丁、验证、审计、恢复和双宿主验收 | ✅ v5.8 Design/PLAN + BEACON/INDEX/HISTORY/v5.7 交叉引用；T303-T324 已登记 |
@@ -158,3 +157,4 @@
 | P0 | T428 | task-aware 验证证据 | While 业务 task 提交 smoke 或自报 passed, when Result/Gate 校验, the Core shall 拒绝替代业务测试并按 task kind 接受真实证据 | ✓ 业务任务强制 Core test，setup/config/docs 限定 Core smoke；任务证据账本、快照 freshness 和 environment_failure 路由已实现，278 项相关回归通过 |
 | P1 | T429 | Contract Gate 可信语义 | While contract 仅以字符串出现在源码, when Gate 运行, the result shall 只作辅助 finding；权威 pass 需要可执行 contract test | ✓ 静态命中/缺失统一为非阻断 advisory；`contract_test` 权威完成绑定 Core test Gate，307 项相关回归通过 |
 | P0 | T430 | Phase 81 全门禁与真实产品复验 | While T423-T429 完成, when 隐藏状态、双路径、幂等、跨宿主和产品安装轨迹执行, all checks shall 通过后才允许生成下一 RC | ◐ 2301/1、coverage 90%、Ruff/mypy/sync、Claude/Codex archive smoke 通过；真实 product install/长跑仍 `not_run`，不得生成下一 RC |
+| P0 | T431 | 自动续跑阶段事件所有权 | While setup/escalation 改变当前 Stage, when EventStore 编译并提交下一 Action, the Core shall 发出唯一 `StageAdvanced`、可重放到相同下一 Stage，且不得以 fallback 掩盖无所有权变化 | ✓ 统一所有权与失败恢复；2305/1、90% coverage、Ruff/mypy/sync、双宿主 archive smoke 通过；产品真跑待验 |

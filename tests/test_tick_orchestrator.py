@@ -24,6 +24,8 @@ import pytest
 from auto_engineering.engine.state import EngineState
 from auto_engineering.engine.verification_layers import VerificationLayers
 from auto_engineering.loop.architect_validation import dry_run_architect_plan
+from auto_engineering.loop.escalation_handler import EscalationContext, EscalationHandler
+from auto_engineering.loop.events import LoopEventType
 from auto_engineering.loop.guardrail import GuardrailChain
 from auto_engineering.loop.tick_orchestrator import ORCH_BUDGET_MS, TickOrchestrator
 
@@ -3254,6 +3256,51 @@ class TestAgentEscalation:
         action = o.tick_dict(result)
         assert action["stage"] == "architect"
         assert "回退重设计" in action.get("feedback", "")
+
+    @pytest.mark.parametrize(
+        ("initial_stage", "profile", "missing", "resolution", "expected_stage"),
+        [
+            ("developer", {}, [], "回退重设计", "architect"),
+            ("architect", None, ["test_runner"], "继续（批准当前方向）", "project_setup"),
+        ],
+    )
+    def test_stage_changing_resolution_emits_owned_event(
+        self,
+        initial_stage: str,
+        profile: dict | None,
+        missing: list[str],
+        resolution: str,
+        expected_stage: str,
+    ) -> None:
+        """升级决议改变阶段时必须同时产生唯一 StageAdvanced 事实。"""
+        state = EngineState(
+            thread_id="thread-escalation",
+            current_stage=initial_stage,
+            expected_stage=initial_stage,
+            project_profile=profile,
+            missing_project_capabilities=missing,
+        )
+        emitted: list[tuple[LoopEventType, dict]] = []
+        handler = EscalationHandler(EscalationContext(
+            state=state,
+            batch_state=None,
+            build_action=lambda **kwargs: {
+                "stage": state.current_stage,
+                **kwargs,
+            },
+            save_checkpoint=lambda: None,
+            queue_domain_event=lambda event_type, payload: emitted.append(
+                (event_type, payload)
+            ),
+        ))
+
+        action = handler.resolve_agent_escalation({"resolution": resolution})
+
+        assert action["stage"] == expected_stage
+        assert emitted == [(
+            LoopEventType.STAGE_ADVANCED,
+            {"from": initial_stage, "to": expected_stage},
+        )]
 
     def test_resolve_terminate(self, tmp_path: Path) -> None:
         """终止 loop."""

@@ -15,7 +15,9 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
+
+from auto_engineering.loop.events import LoopEventType
 
 if TYPE_CHECKING:
     from auto_engineering.engine.batch_state import BatchState
@@ -66,6 +68,7 @@ class EscalationContext:
     batch_state: BatchState | None
     build_action: Callable[..., dict]
     save_checkpoint: Callable[[], str | None]
+    queue_domain_event: Callable[[LoopEventType, dict[str, Any]], None]
 
 
 class EscalationHandler:
@@ -120,8 +123,14 @@ class EscalationHandler:
             }
 
         if "回退" in resolution:
+            previous_stage = state.current_stage
             state.current_stage = "architect"
             state.expected_stage = "architect"
+            if previous_stage != state.current_stage:
+                self._ctx.queue_domain_event(
+                    LoopEventType.STAGE_ADVANCED,
+                    {"from": previous_stage, "to": state.current_stage},
+                )
             state.round += 1
             self._ctx.save_checkpoint()
             note = detail.get("note", "")
@@ -136,7 +145,13 @@ class EscalationHandler:
 
         # 默认: "批准继续" / "继续（批准当前方向）"
         if state.project_profile is None and state.missing_project_capabilities:
+            previous_stage = state.current_stage
             state.current_stage = "project_setup"
             state.expected_stage = "project_setup"
+            if previous_stage != state.current_stage:
+                self._ctx.queue_domain_event(
+                    LoopEventType.STAGE_ADVANCED,
+                    {"from": previous_stage, "to": state.current_stage},
+                )
         self._ctx.save_checkpoint()
         return self._ctx.build_action()

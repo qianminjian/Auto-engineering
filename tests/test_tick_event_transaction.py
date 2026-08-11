@@ -9,6 +9,7 @@ from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
 from auto_engineering.loop.effects import EffectReceipt
 from auto_engineering.loop.event_store import SQLiteEventStore
 from auto_engineering.loop.events import LoopEvent, LoopEventType
+from auto_engineering.loop.kernel import TickKernel
 from auto_engineering.loop.tick_orchestrator import TickOrchestrator
 
 
@@ -270,3 +271,29 @@ def test_orchestrator_restores_projection_and_active_action_from_event_store(
             assert restored._round_history == []
     finally:
         checkpoints.close()
+
+
+def test_orchestrator_restores_projection_when_commit_compilation_fails(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    """提交候选编译失败也不得留下半推进的内存投影。"""
+    with SQLiteEventStore(tmp_path / "events.db") as events:
+        orchestrator = TickOrchestrator(
+            tmp_path,
+            checkpoint_store=None,
+            event_store=events,
+        )
+        action = orchestrator.init("事件恢复")
+        persisted = events.load_projection(action["thread_id"])
+        orchestrator._state.current_stage = "developer"
+
+        def reject_compile(*args, **kwargs):
+            raise ValueError("UNMAPPED_PROJECTION_CHANNEL: current_stage")
+
+        monkeypatch.setattr(TickKernel, "compile_commit", reject_compile)
+
+        with pytest.raises(ValueError, match="UNMAPPED_PROJECTION_CHANNEL"):
+            orchestrator._commit_event_action(action)
+
+        assert orchestrator._state.to_dict() == persisted.to_dict()
