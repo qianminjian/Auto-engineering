@@ -241,6 +241,28 @@ class TestValidateResultFormat:
 
 
 class TestProtocolResultValidation:
+    def test_critic_output_fields_are_accepted_by_envelope_ssot(self) -> None:
+        """Critic prompt/output model 合法字段必须与 Result 白名单同源。"""
+        result = {
+            "schema_version": "1.1",
+            "message_type": "result",
+            "message_id": "result-critic-1",
+            "thread_id": "thread-1",
+            "tick": 3,
+            "stage": "critic",
+            "causation_id": "action-critic-1",
+            "correlation_id": "thread-1",
+            "extensions": {},
+            "verdict": "MAJOR",
+            "findings": [],
+            "strengths": [{"description": "边界清晰"}],
+            "assessment": "Needs rework",
+        }
+
+        envelope = validate_result_envelope(result)
+
+        assert envelope.stage == "critic"
+
     def test_missing_causation_has_stable_error_code(self) -> None:
         result = {
             "schema_version": "1.1",

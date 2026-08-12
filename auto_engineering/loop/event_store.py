@@ -17,6 +17,17 @@ from auto_engineering.loop.events import LoopEvent, LoopEventType
 from auto_engineering.loop.projector import EngineStateProjector
 
 
+class StateProjectionMismatchError(ValueError):
+    """待提交状态与事件重放不一致；只暴露 channel 名，不包含敏感值。"""
+
+    def __init__(self, channels: list[str]) -> None:
+        self.channels = tuple(channels)
+        super().__init__(
+            "待提交 EngineState 与事件重放投影不一致; channels="
+            + ",".join(channels[:10])
+        )
+
+
 class SQLiteEventStore:
     """按 thread_id 分流、按 sequence 严格连续的事件存储。"""
 
@@ -217,7 +228,13 @@ class SQLiteEventStore:
             existing = self._load_stream_unlocked(thread_id)
             replayed = EngineStateProjector().replay([*existing, *batch])
             if replayed.to_dict() != state.to_dict():
-                raise ValueError("待提交 EngineState 与事件重放投影不一致")
+                replayed_dict = replayed.to_dict()
+                state_dict = state.to_dict()
+                channels = sorted(
+                    key for key in set(replayed_dict) | set(state_dict)
+                    if replayed_dict.get(key) != state_dict.get(key)
+                )
+                raise StateProjectionMismatchError(channels)
             self._conn.execute("BEGIN IMMEDIATE")
             try:
                 self._append_in_transaction(batch)
@@ -643,4 +660,4 @@ class SQLiteEventStore:
         self.close()
 
 
-__all__ = ["SQLiteEventStore"]
+__all__ = ["SQLiteEventStore", "StateProjectionMismatchError"]

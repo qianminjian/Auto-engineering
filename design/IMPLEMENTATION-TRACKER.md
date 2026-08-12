@@ -1,5 +1,5 @@
 # Auto-Engineering 当前实施跟踪表
-> 更新：2026-08-10｜目标阶段：Phase 81 状态协调｜Phase 1-62 明细见 `design/HISTORY.md`｜状态：`☐` 未开始／`◐` 进行中／`✅` 已验证
+> 更新：2026-08-12｜目标阶段：Phase 81 状态协调｜Phase 1-62 明细见 `design/HISTORY.md`｜状态：`☐` 未开始／`◐` 进行中／`✅` 已验证
 ## 基线与阶段
 | 里程碑 | 状态 | 证据 |
 |---|:---:|---|
@@ -12,8 +12,7 @@
 | Phase 54 Tick Kernel | ✅ 8/8 | T253-T260 |
 | Phase 55 Host SPI 2.0 | ✅ 5/5 | T261-T265 |
 | Phase 56 黄金轨迹与收口 | ✅ 5/5 | T266-T270；1996 passed / 1 skipped |
-| Phase 57 收口质量加固 | ✅ 2/2 | T271-T272 |
-| Phase 58 真实产品安装验收 | ✅ 2/2 | T273-T274；Claude Code/Codex 真实宿主调用通过 |
+| Phase 57-58 质量与安装验收 | ✅ 4/4 | T271-T274；Claude Code/Codex 真实宿主调用通过 |
 | Phase 59 真实宿主兼容性加固 | ✅ 5/5 | T275-T279；v5.7.0 双宿主真实安装验收通过 |
 | Phase 60 Prompt Contract 重构 | ✅ 8/8 | T280-T287；2019 passed / 1 skipped，coverage 90.27% |
 | Phase 61 v5.7.1 发布收口 | ✅ 7/7 | T288-T294；2021 passed / 1 skipped，coverage 90.27% |
@@ -158,3 +157,4 @@
 | P1 | T429 | Contract Gate 可信语义 | While contract 仅以字符串出现在源码, when Gate 运行, the result shall 只作辅助 finding；权威 pass 需要可执行 contract test | ✓ 静态命中/缺失统一为非阻断 advisory；`contract_test` 权威完成绑定 Core test Gate，307 项相关回归通过 |
 | P0 | T430 | Phase 81 全门禁与真实产品复验 | While T423-T429 完成, when 隐藏状态、双路径、幂等、跨宿主和产品安装轨迹执行, all checks shall 通过后才允许生成下一 RC | ◐ 2301/1、coverage 90%、Ruff/mypy/sync、Claude/Codex archive smoke 通过；真实 product install/长跑仍 `not_run`，不得生成下一 RC |
 | P0 | T431 | 自动续跑阶段事件所有权 | While setup/escalation 改变当前 Stage, when EventStore 编译并提交下一 Action, the Core shall 发出唯一 `StageAdvanced`、可重放到相同下一 Stage，且不得以 fallback 掩盖无所有权变化 | ✓ 统一所有权与失败恢复；2305/1、90% coverage、Ruff/mypy/sync、双宿主 archive smoke 通过；产品真跑待验 |
+| P0 | T432 | Gap Review 向导与主链路真跑修复 | While gap/plan/critic/new-project 协议缺陷已由真跑复现, when Core 生成或接收消息, the system shall 逐项持久化决策、分离展示与路由标识、保持 Schema SSOT，并可由事件重放安全续作 | ✅ AE-01~10 关闭；全量 100%（1 skipped）、coverage 90%、Ruff/mypy/sync、Claude/Codex archive smoke 通过 |

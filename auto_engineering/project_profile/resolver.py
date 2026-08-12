@@ -98,7 +98,20 @@ class ProjectProfileResolver:
             missing.append("source_roots")
         if not commands.get("test"):
             missing.append("test_command")
-        if missing and (not languages or not source_roots):
+        missing.extend(
+            capability
+            for item in active
+            for capability in item.missing_capabilities
+            if capability not in missing
+        )
+        if missing and (
+            not languages
+            or not source_roots
+            or any(
+                capability in {"eslint_flat_config", "jsdom_dependency"}
+                for capability in missing
+            )
+        ):
             return ProjectProfileResolution(
                 status=ResolutionStatus.SETUP_REQUIRED,
                 profile=None,

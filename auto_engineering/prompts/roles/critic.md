@@ -35,7 +35,7 @@ think hard
 ## 产出
 - verdict：APPROVE | MAJOR
 - findings：[{severity, file, line, issue, suggested_fix}]，每条 P0/P1 附证据片段
-- strengths：[≥2 条具体做得好的]
+- strengths：[{description, location?}]，至少 2 条具体做得好的
 - critic_feedback：总体反馈
 - assessment：Ready to merge | With fixes | Needs rework
 

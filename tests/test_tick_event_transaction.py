@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+from unittest.mock import MagicMock
+
 import pytest
 
 from auto_engineering.engine.state import EngineState
@@ -218,7 +221,7 @@ def test_commit_rejects_cross_thread_projection_and_action() -> None:
 def test_commit_rejects_projection_that_does_not_match_replay() -> None:
     with SQLiteEventStore(":memory:") as store:
         divergent = EngineState(thread_id="thread-1", requirement="不一致")
-        with pytest.raises(ValueError, match="投影"):
+        with pytest.raises(ValueError, match=r"channels=.*requirement"):
             store.commit_tick(events=[_event()], state=divergent, action=_action())
 
 
@@ -297,3 +300,179 @@ def test_orchestrator_restores_projection_when_commit_compilation_fails(
             orchestrator._commit_event_action(action)
 
         assert orchestrator._state.to_dict() == persisted.to_dict()
+
+
+def test_gap_wizard_restores_at_first_undecided_gap(tmp_path) -> None:
+    """跨进程恢复必须依赖 Core 投影，而不是宿主聊天内存中的批量选择。"""
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\nname='wizard-test'\n[tool.pytest.ini_options]\ntestpaths=['tests']\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "wizard_test").mkdir()
+    design = tmp_path / "design.md"
+    design.write_text("## §1 接口边界\n", encoding="utf-8")
+    gap_base = {
+        "design_section_ref": "§1",
+        "grade": "component",
+        "clarity": "vague",
+        "summary": "接口边界不清",
+        "depends_on": [],
+        "evidence": ["§1 未定义输入输出"],
+        "problem_statement": "接口无法唯一实现",
+        "impact": ["影响契约测试"],
+        "dependencies": [],
+        "recommendation": {
+            "resolution": "Fill",
+            "reason": "用户可直接明确契约",
+            "confidence": "high",
+        },
+        "options": [{
+            "resolution": "Fill",
+            "meaning": "补充设计",
+            "enabled": True,
+        }],
+        "blocking_rule": "component gap 可 Fill",
+    }
+    checkpoints = SQLiteCheckpointStore(tmp_path / "checkpoints.db")
+    try:
+        with SQLiteEventStore(tmp_path / "events.db") as events:
+            guardrail = MagicMock()
+            guardrail.check.return_value = MagicMock(action="pass")
+            orchestrator = TickOrchestrator(
+                tmp_path,
+                gate_runner=lambda names, root: {
+                    name: MagicMock(passed=True, message="ok") for name in names
+                },
+                guardrail=guardrail,
+                checkpoint_store=checkpoints,
+                event_store=events,
+            )
+            initial = orchestrator.init("实现接口", design_doc_path=str(design))
+            orchestrator.tick_dict({
+                "stage": "gap_scan",
+                "gaps": [
+                    {**gap_base, "id": "gap-A"},
+                    {**gap_base, "id": "gap-B"},
+                ],
+                "scanned_sections": 1,
+                "has_blocking": False,
+            })
+            action = orchestrator.tick_dict({
+                "stage": "gap_review",
+                "decision": {
+                    "gap_id": "gap-A",
+                    "resolution": "Fill",
+                    "fill_content": "输入 string，输出 Result",
+                    "decision_source": "user",
+                },
+            })
+
+            restored = TickOrchestrator.restore(
+                tmp_path,
+                checkpoints,
+                event_store=events,
+                thread_id=initial["thread_id"],
+            )
+
+            assert action.get("action") == "gap_review", action
+            assert action["current_gap"]["id"] == "gap-B"
+            assert restored._active_action == action
+            assert restored._state.pending_gap_decisions[0]["gap_id"] == "gap-A"
+            assert events.load_projection(initial["thread_id"]).to_dict() == (
+                restored._state.to_dict()
+            )
+    finally:
+        checkpoints.close()
+
+
+def test_critic_major_replays_to_developer_without_projection_drift(tmp_path) -> None:
+    """真跑 Critic MAJOR 返工必须原子进入 developer 且可事件重放。"""
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\nname='critic-retry'\n[tool.pytest.ini_options]\ntestpaths=['tests']\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "critic_retry").mkdir()
+    (tmp_path / "tests").mkdir()
+    guardrail = MagicMock()
+    guardrail.check.return_value = MagicMock(action="pass")
+
+    def complete_spawn(action: dict) -> str:
+        token = action["spawn_proof_token"]
+        proof_path = tmp_path / ".ae-state" / "spawn-proofs" / f"{token}.json"
+        proof = json.loads(proof_path.read_text(encoding="utf-8"))
+        proof.update({
+            "status": "completed",
+            "completed_at": "2026-08-11T00:00:00Z",
+            "actual_model": "test-model",
+        })
+        proof_path.write_text(json.dumps(proof), encoding="utf-8")
+        return token
+
+    checkpoints = SQLiteCheckpointStore(tmp_path / "checkpoints.db")
+    try:
+        with SQLiteEventStore(tmp_path / "events.db") as events:
+            orchestrator = TickOrchestrator(
+                tmp_path,
+                gate_runner=lambda names, root: {
+                    name: MagicMock(passed=True, message="ok") for name in names
+                },
+                guardrail=guardrail,
+                checkpoint_store=checkpoints,
+                event_store=events,
+            )
+            architect = orchestrator.init("实现功能")
+            architect_token = complete_spawn(architect)
+            developer = orchestrator.tick_dict({
+                "stage": "architect",
+                "spawned": True,
+                "spawn_proof_token": architect_token,
+                "plan": (
+                    "实现完整功能并执行 Red Green Refactor、静态检查、单元测试、"
+                    "契约验证和构建验收，保留可重放证据。"
+                ),
+                "batch_plan": [{
+                    "batch_id": "B01",
+                    "component": "核心组件",
+                    "tasks": [{
+                        "id": "B01-T1",
+                        "description": "实现核心功能",
+                        "file_targets": ["critic_retry/core.py"],
+                    }],
+                }],
+                "file_list": ["critic_retry/core.py"],
+                "contracts": {},
+            })
+            assert developer.get("action") == "developer", developer
+            critic = orchestrator.tick_dict({
+                "stage": "developer",
+                "batch_id": "B01",
+                "files_changed": ["critic_retry/core.py"],
+                "test_results": {"passed": 1, "failed": 0},
+            })
+            critic_token = complete_spawn(critic)
+
+            retry = orchestrator.tick_dict({
+                "stage": "critic",
+                "spawned": True,
+                "spawn_proof_token": critic_token,
+                "verdict": "MAJOR",
+                "findings": [{
+                    "file": "critic_retry/core.py",
+                    "line": 1,
+                    "severity": "P1",
+                    "issue": "缺少边界处理",
+                    "suggestion": "补充异常分支",
+                }],
+                "strengths": [{"description": "接口边界清晰"}],
+                "assessment": "Needs rework",
+            })
+
+            projection = events.load_projection(architect["thread_id"])
+            assert retry["action"] == "developer"
+            assert projection.current_stage == "developer"
+            assert projection.strengths is None
+            assert projection.assessment is None
+            assert events.load_action_snapshot(architect["thread_id"]) == retry
+    finally:
+        checkpoints.close()

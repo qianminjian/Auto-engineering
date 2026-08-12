@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from auto_engineering.engine.design_doc import Component, DesignDoc, Plate
 from auto_engineering.engine.state import EngineState
 from auto_engineering.loop import architecture_baseline as baseline_module
 from auto_engineering.loop.architect_validation import (
@@ -91,6 +92,48 @@ def test_architect_contract_values_must_be_objects() -> None:
     }
 
     assert "api" in (validate_architect_obligations(result, {}) or "")
+
+
+def test_architect_accepts_custom_title_with_multiple_valid_plate_keys() -> None:
+    doc = DesignDoc(
+        plates=[Plate(
+            name="核心",
+            design_section="§1",
+            components=[
+                Component(name="类型系统", design_section="§4"),
+                Component(name="工具模块", design_section="§8"),
+            ],
+        )],
+        supplements={},
+    )
+    result = {
+        "plan": "以类型系统和工具模块作为基础批次，先建立共享契约与验证边界，再供后续业务组件稳定复用。",
+        "file_list": ["src/base.ts", "tests/base.test.ts"],
+        "batch_plan": [{
+            "batch_id": "B1",
+            "batch_title": "自定义基础能力批次",
+            "plate_keys": ["类型系统", "工具模块"],
+            "design_sections": ["§4", "§8"],
+            "tasks": [
+                {
+                    "id": "B1-T1", "description": "实现基础能力",
+                    "kind": "implementation", "module_ref": "§4",
+                    "file_targets": ["src/base.ts"], "depends_on": [],
+                },
+                {
+                    "id": "B1-T2", "description": "验证基础能力",
+                    "kind": "test", "module_ref": "§4",
+                    "file_targets": ["tests/base.test.ts"],
+                    "depends_on": ["B1-T1"],
+                },
+            ],
+            "depends_on": [],
+        }],
+        "contracts": {},
+        "obligations": [],
+    }
+
+    assert dry_run_architect_plan(doc, result, "实现基础能力") is None
 
 
 def _refine_baseline() -> dict:

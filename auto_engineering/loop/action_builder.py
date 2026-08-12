@@ -265,11 +265,15 @@ class ActionBuilder:
             "constraints": {
                 "must_follow_design": self._design_doc is not None,
                 "must_not_assume_framework": True,
+                "git_is_optional_evidence_provider": True,
+                "must_not_run_git_init_or_stage_without_user_authorization": True,
             },
             "instruction": (
                 "根据需求与设计文档建立缺失的项目工程能力。完成后提交 "
                 "stage='project_setup'、result_type='project_setup_completed' 和 artifacts；"
-                "Core 将重新探测文件，不采信文字声明。"
+                "Core 将重新探测文件，不采信文字声明。若缺失 eslint_flat_config，"
+                "为 ESLint 9 创建 flat config；若缺失 jsdom_dependency，补齐测试环境的"
+                "直接开发依赖。Git 仅是可选证据源，未经用户授权不得执行 git init/add/commit。"
             ),
             "expected_format": {
                 "stage": "project_setup",
@@ -717,8 +721,13 @@ class ActionBuilder:
             "project_root": str(self.project_root),
             "requirement": self._state.requirement,
         }, expected_format={
-            "gaps": ("[{id, design_section_ref, grade, clarity, "
-                     "summary, depends_on}]"),
+            "gaps": (
+                "[{id, design_section_ref, grade, clarity, summary, depends_on, "
+                "evidence, problem_statement, impact, dependencies, "
+                "recommendation:{resolution,reason,confidence}, "
+                "options:[{resolution,meaning,enabled,disabled_reason?}], "
+                "blocking_rule}]"
+            ),
             "scanned_sections": "int",
             "has_blocking": "bool",
         })
@@ -732,24 +741,37 @@ class ActionBuilder:
             gap for gap in gaps
             if gap.get("resolution") not in {"fill", "defer"}
         ]
+        current_gap = unresolved[0] if unresolved else {}
+        current_index = next(
+            (
+                index for index, gap in enumerate(gaps)
+                if gap.get("id") == current_gap.get("id")
+            ),
+            len(gaps),
+        )
         return self._build_stage_action(base, "gap_review",
-            gaps=unresolved,
+            mode="wizard",
+            current_gap_index=current_index,
+            total_gaps=len(gaps),
+            current_gap=current_gap,
+            decisions_so_far=list(self._state.pending_gap_decisions),
             has_blocking=report.get("has_blocking", False),
             is_rereview=is_rereview,
             research_findings=dict(self._state.research_archive),
             instruction=(
-                "按 gaps 顺序逐项询问用户并在宿主本地累积决策；全部 gap 决策完成后，"
-                "一次提交完整 decisions。每项可选 Fill(用户补充) / Research(检索) / "
-                "Defer(留给architect) / Defer+Research。"
-                "has_blocking 的 architectural gap 禁止 Defer. "
-                "复审(is_rereview=true, research_findings 非空): 呈现 findings, "
-                "让用户据研究发现做补充设计 — Fill(写入细化内容→Supplement) "
-                "或 Defer(留给 architect in-loop 细化)."),
+                "Gap Review 单项向导：当前只处理 current_gap，不展示或询问其他缺口。"
+                "依次向用户说明问题、设计依据、影响、Loop 推荐及理由、合法选项；"
+                "只提交一个 decision，禁止代用户选择或填默认值。"
+                "Fill 必须包含可写入设计的 fill_content；Research 必须说明查证目标；"
+                "architectural blocking gap 禁止纯 Defer。复审时呈现该 gap 的研究发现。"),
             expected_format={
-                "decisions": (
-                    "[{gap_id, resolution, user_note, fill_content?}]"
-                    "（必须无重复地完整覆盖 action.gaps）"
-                ),
+                "decision": {
+                    "gap_id": "必须等于 action.current_gap.id",
+                    "resolution": "Fill|Research|Defer|Defer+Research",
+                    "user_note": "用户原始判断",
+                    "fill_content": "Fill 时必填",
+                    "decision_source": "user",
+                },
             })
 
     def _build_action_research(self, base: dict) -> dict:
@@ -817,6 +839,16 @@ class ActionBuilder:
                     cmap[comp.design_section] = comp.name
         return cmap
 
+    def _valid_plate_keys(self) -> list[str]:
+        """Architect 可选择的稳定组件路由键，顺序遵循设计文档。"""
+        if self._design_doc is None:
+            return []
+        return [
+            component.name
+            for plate in self._design_doc.plates
+            for component in plate.components
+        ]
+
     def _project_profile_summary(self, *, verifier: bool = False) -> dict:
         """Return the bounded, role-facing subset of the normalized profile.
 
@@ -883,12 +915,14 @@ class ActionBuilder:
                 "[{task_id,status,evidence_ref?或reason?}]（旧任务逐项且仅一次）"
             ),
             "new_batch_plan": (
-                "[{batch_id,design_section,component,tasks:[...],depends_on}]"
+                "[{batch_id,batch_title,plate_keys:[valid_plate_key],"
+                "design_sections:[string],tasks:[...],depends_on}]"
             ),
         } if is_reconcile else {
             "plan_patch": (
-                "{base_revision:int, add_batches:[{batch_id, design_section, "
-                "component, tasks:[...], depends_on}], "
+                "{base_revision:int, add_batches:[{batch_id, batch_title, "
+                "plate_keys:[valid_plate_key], design_sections:[string], "
+                "tasks:[...], depends_on}], "
                 "obligation_updates?:[{source_ref, "
                 "add_implementation_targets?:[task_id], "
                 "add_verification_targets?:[test_task_id], "
@@ -897,7 +931,8 @@ class ActionBuilder:
             )
         } if is_refine else {
             "batch_plan": (
-                "[{batch_id, design_section, component, "
+                "[{batch_id, batch_title, plate_keys:[valid_plate_key], "
+                "design_sections:[string], "
                 "tasks:[{id, description, module_ref, file_targets}], "
                 "depends_on}] (min 1 batch)"
             )
@@ -929,7 +964,7 @@ class ActionBuilder:
                     "research_and_design_context 非空时必须逐 source_ref 覆盖"
                 )
             ),
-        }, **extra)
+        }, valid_plate_keys=self._valid_plate_keys(), **extra)
 
     def _build_action_developer(self, base: dict) -> dict:
         raw_tasks = (
@@ -1026,7 +1061,9 @@ class ActionBuilder:
                 "contract_gap|project_capability, file, line, severity, issue, "
                 "suggestion, design_ref?, task_ref?, contract_ref?}]"
             ),
+            "strengths": "[{description:string, location?:string}]",
             "critic_feedback": "string",
+            "assessment": "Ready to merge | With fixes | Needs rework",
         })
 
     def _build_action_component_verifier(self, base: dict) -> dict:
@@ -1038,9 +1075,28 @@ class ActionBuilder:
                     "stage": "component_verifier",
                     "next_transition": "plate_deep_audit"}
         comp = self._batch_state.current_component()
+        component_batches = self._batch_state.batches_for(comp)
+        plate_keys = list(dict.fromkeys(
+            key
+            for batch in component_batches
+            for key in batch.get("plate_keys", [comp.name])
+            if isinstance(key, str)
+        ))
+        routed_components = [comp]
+        if self._design_doc is not None and isinstance(plate_keys, list):
+            by_name = {
+                item.name: item
+                for plate in self._design_doc.plates
+                for item in plate.components
+            }
+            routed_components = [
+                by_name[key]
+                for key in plate_keys
+                if isinstance(key, str) and key in by_name
+            ] or [comp]
         # Fix B: collect implementation_files from batch_plan file_targets
         impl_files: list[str] = []
-        for b in self._batch_state.batches_for(comp):
+        for b in component_batches:
             for t in b.get("tasks", []):
                 for ft in t.get("file_targets", []):
                     if ft not in impl_files:
@@ -1048,7 +1104,11 @@ class ActionBuilder:
         # Fix C: when design_spec is empty and no impl files, skip verification.
         # DS-14 (T151): 原 `and not impl_files` 逻辑保留 — design_spec 由 T150
         # (fence code block→DesignItem) 保证非空。双空时才 skip，避免过度跳过。
-        design_spec = comp.design_spec_summary()
+        design_spec = "\n\n".join(
+            summary
+            for routed in routed_components
+            if (summary := routed.design_spec_summary())
+        )
         if not design_spec and not impl_files:
             return {**base, "action": "skip", "reason": "no design items or implementation files for component",
                     "stage": "component_verifier",
@@ -1059,7 +1119,11 @@ class ActionBuilder:
         # 验哪个组件，须 Team Lead 手动查 batch_state 补上下文（驱动摩擦大）。
         return self._build_stage_action(base, "component_verifier", context={
             "component": comp.name,
-            "design_section": comp.design_section,
+            "plate_keys": [item.name for item in routed_components],
+            "design_sections": [item.design_section for item in routed_components],
+            "design_section": ", ".join(
+                item.design_section for item in routed_components if item.design_section
+            ),
             "design_spec": design_spec,
             "implementation_files": impl_files,
             "project_profile_summary": self._project_profile_summary(verifier=True),
@@ -1074,7 +1138,8 @@ class ActionBuilder:
             "recheck_log": (
                 "[{design_item, haiku_status, sonnet_verdict, final_status}] "
                 "(仅负判定经 Sonnet 复核后填, 无负判定则空)"),
-        }, recheck=dict(_VERIFIER_RECHECK))
+        }, plate_keys=[item.name for item in routed_components],
+           recheck=dict(_VERIFIER_RECHECK))
 
     def _build_action_plate_deep_audit(self, base: dict) -> dict:
         # DS-15: subagent reads plate components + contracts itself.

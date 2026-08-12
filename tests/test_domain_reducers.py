@@ -26,18 +26,31 @@ def _event(event_type: LoopEventType, payload: dict[str, object]) -> LoopEvent:
     )
 
 
-def test_stage_advanced_reducer_changes_only_stage() -> None:
-    state = EngineState(thread_id="thread-1", current_stage="architect", tick=3)
+def test_stage_advanced_reducer_clears_source_stage_transient_fields() -> None:
+    state = EngineState(
+        thread_id="thread-1",
+        current_stage="critic",
+        tick=3,
+        critic_verdict="MAJOR",
+        findings=[{"severity": "P1"}],
+        strengths=[{"description": "清晰"}],
+        assessment="Needs rework",
+    )
     registry = default_reducer_registry()
 
     reduced = registry.reduce(
         state,
-        _event(LoopEventType.STAGE_ADVANCED, {"from": "architect", "to": "developer"}),
+        _event(LoopEventType.STAGE_ADVANCED, {"from": "critic", "to": "developer"}),
     )
 
     assert reduced.current_stage == "developer"
     assert reduced.tick == 3
-    assert state.current_stage == "architect"
+    assert reduced.critic_verdict == ""
+    assert reduced.findings == []
+    assert reduced.strengths is None
+    assert reduced.assessment is None
+    assert state.current_stage == "critic"
+    assert state.critic_verdict == "MAJOR"
 
 
 def test_legacy_adapter_does_not_hide_other_stage_event_cross_channel_fields() -> None:

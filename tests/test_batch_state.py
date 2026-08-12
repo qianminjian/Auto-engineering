@@ -91,6 +91,22 @@ class TestConstruction:
         assert "CompY" in msg
         assert "CompZ" in msg
 
+    def test_batch_title_is_independent_from_multi_component_routing(self) -> None:
+        doc = _design_doc({"PlateA": ["CompX", "CompY"]})
+        plan = [{
+            "batch_id": "b-group",
+            "batch_title": "自定义聚合批次",
+            "plate_keys": ["CompX", "CompY"],
+            "design_sections": ["§CompX", "§CompY"],
+            "tasks": [],
+        }]
+
+        state = BatchState.from_design_doc(doc, plan)
+
+        assert state.current_batch()["batch_title"] == "自定义聚合批次"
+        assert state.current_batch()["plate_keys"] == ["CompX", "CompY"]
+        assert state.current_batch()["component"] == "CompX"
+
     def test_from_design_doc_zero_batch_component_warns(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:

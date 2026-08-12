@@ -83,6 +83,7 @@ class ArchitectureActivationService:
                 if design_doc is not None
                 else BatchState.from_batch_plan(batches)
             )
+            batches = batch_state.batch_plan
 
         if is_reconcile:
             verification_layers = determine_verification_layers(design_doc, batches)

@@ -17,8 +17,10 @@ think hard
 ## 扫描方法
 
 1. 用 read_file 读设计文档,逐 plate → 逐 component 检查设计声明是否足以实现
-2. 对每个模糊点产出一个 gap,判定 grade + clarity
-3. 若解析层次为空 (plates=[] 或 parse_warnings 报"无可识别层次") → 报一个 architectural gap 兜底
+2. 对每个模糊点产出一个 gap,判定 grade + clarity，并引用设计证据、说明影响与依赖
+3. 给出一个可解释推荐：resolution、reason、confidence；推荐不是用户决策
+4. 为每个选项声明含义和 enabled；architectural gap 必须禁用纯 Defer
+5. 若解析层次为空 (plates=[] 或 parse_warnings 报"无可识别层次") → 报一个 architectural gap 兜底
 
 ## grade 分级 rubric (模糊的 scope,驱动阻塞约束)
 
@@ -54,7 +56,15 @@ think hard
 输出必须包含以下 JSON 字段:
 
 1. `gaps`: list[dict] — 识别出的模糊点
-   格式: [{"id": "gap-N", "design_section_ref": "§引用", "grade": "architectural|component|module", "clarity": "missing|vague|partial", "summary": "模糊点描述", "depends_on": ["依赖的其他 gap id"]}]
+   每项必须包含：`id`、`design_section_ref`、`grade`、`clarity`、`summary`、
+   `depends_on`、`evidence`、`problem_statement`、`impact`、`dependencies`、
+   `recommendation`、`options` 和 `blocking_rule`。
+
+   `recommendation` 格式：
+   `{"resolution":"Fill|Research|Defer|Defer+Research","reason":"理由","confidence":"low|medium|high"}`。
+
+   `options` 格式：
+   `[{"resolution":"Fill","meaning":"适用情况","enabled":true,"disabled_reason":"可选"}]`。
 2. `scanned_sections`: int — 本次扫描的章节数
 3. `has_blocking`: bool — 是否存在 architectural gap
 

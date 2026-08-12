@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 
+from auto_engineering.engine.batch_state import BatchState
+from auto_engineering.engine.design_doc import Component, DesignDoc, Plate
 from auto_engineering.engine.state import EngineState
 from auto_engineering.loop.action_builder import ActionBuilder
 
@@ -58,3 +60,59 @@ def test_sequential_optional_dependencies_do_not_leak(tmp_path) -> None:
     assert '"files_changed": []' in second_action["subagent_prompt"]
     assert "context" not in first_action
     assert "context" not in second_action
+
+
+def test_architect_action_exposes_valid_machine_routing_keys(tmp_path) -> None:
+    design_doc = DesignDoc(
+        path="design/spec.md",
+        supplements={},
+        plates=[Plate(
+            name="核心",
+            design_section="§1",
+            components=[
+                Component(name="类型系统", design_section="§1.1"),
+                Component(name="工具模块", design_section="§1.2"),
+            ],
+        )],
+    )
+
+    action = ActionBuilder(tmp_path).build_action(
+        EngineState(thread_id="routing", current_stage="architect"),
+        design_doc=design_doc,
+    )
+
+    assert action["valid_plate_keys"] == ["类型系统", "工具模块"]
+    expected = action["expected_format"]["batch_plan"]
+    assert "batch_title" in expected
+    assert "plate_keys" in expected
+    assert "component" not in expected
+
+
+def test_component_verifier_receives_all_batch_plate_keys(tmp_path) -> None:
+    design_doc = DesignDoc(
+        path="design/spec.md",
+        supplements={},
+        plates=[Plate(
+            name="核心",
+            design_section="§1",
+            components=[
+                Component(name="类型系统", design_section="§1.1"),
+                Component(name="工具模块", design_section="§1.2"),
+            ],
+        )],
+    )
+    batch_state = BatchState.from_design_doc(design_doc, [{
+        "batch_id": "B1",
+        "batch_title": "基础能力",
+        "plate_keys": ["类型系统", "工具模块"],
+        "design_sections": ["§1.1", "§1.2"],
+        "tasks": [{"id": "T1", "file_targets": ["src/base.py"]}],
+    }])
+
+    action = ActionBuilder(tmp_path).build_action(
+        EngineState(thread_id="verify", current_stage="component_verifier"),
+        design_doc=design_doc,
+        batch_state=batch_state,
+    )
+
+    assert action["plate_keys"] == ["类型系统", "工具模块"]

@@ -30,7 +30,30 @@ class StageResultProjector:
                 "has_blocking": result.get("has_blocking", False),
             }, ensure_ascii=False)
         elif stage == "gap_review":
-            state.pending_gap_decisions = result.get("decisions", [])
+            if isinstance(result.get("decision"), Mapping):
+                decision = dict(result["decision"])
+                report = json.loads(state.gap_report_json or '{"gaps": []}')
+                gap: dict[str, Any] = next((
+                    item for item in report.get("gaps", [])
+                    if item.get("id") == decision.get("gap_id")
+                ), {})
+                recommendation = gap.get("recommendation") or {}
+                recommended_resolution = recommendation.get("resolution")
+                decision["assistant_recommendation"] = recommended_resolution
+                decision["recommendation_accepted"] = (
+                    str(decision.get("resolution", "")).lower()
+                    == str(recommended_resolution or "").lower()
+                )
+                decision["evidence_refs"] = list(gap.get("evidence") or [])
+                state.pending_gap_decisions = [
+                    *(
+                        item for item in state.pending_gap_decisions
+                        if item.get("gap_id") != decision.get("gap_id")
+                    ),
+                    decision,
+                ]
+            else:
+                state.pending_gap_decisions = result.get("decisions", [])
         elif stage == "architect":
             self._apply_architect(state, result)
         elif stage == "developer":
@@ -39,6 +62,8 @@ class StageResultProjector:
             state.critic_verdict = result.get("verdict", "")
             state.findings = result.get("findings", [])
             state.critic_feedback = result.get("critic_feedback", "")
+            state.strengths = result.get("strengths")
+            state.assessment = result.get("assessment")
         elif stage == "component_verifier":
             state.coverage_map = result.get("coverage_map", [])
         elif stage == "system_verifier":

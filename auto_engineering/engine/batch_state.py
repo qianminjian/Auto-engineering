@@ -79,7 +79,47 @@ class BatchState:
                         batch.setdefault("design_section", design_section)
                     flat.append(batch)
             return flat
-        return batch_plan
+        return [dict(batch) for batch in batch_plan]
+
+    @staticmethod
+    def _normalize_routing(
+        batch_plan: list[dict], valid_keys: set[str] | None = None
+    ) -> list[dict]:
+        """把公开的多 key 路由契约投影为旧执行游标的主 component。
+
+        `component` 只保留为内部主游标兼容字段；完整覆盖关系始终保留在
+        `plate_keys`，不得用 batch_title 参与机器路由。
+        """
+        normalized: list[dict] = []
+        for raw in batch_plan:
+            batch = dict(raw)
+            raw_keys = batch.get("plate_keys")
+            uses_new_contract = raw_keys is not None
+            if raw_keys is None:
+                component = batch.get("component")
+                raw_keys = [component] if isinstance(component, str) else []
+            if (
+                not isinstance(raw_keys, list)
+                or not raw_keys
+                or any(not isinstance(key, str) or not key for key in raw_keys)
+            ):
+                raise ValueError(
+                    f"batch {batch.get('batch_id', '?')} 的 plate_keys 必须为非空字符串数组"
+                )
+            keys = list(dict.fromkeys(raw_keys))
+            if valid_keys is not None and uses_new_contract:
+                invalid = [key for key in keys if key not in valid_keys]
+                if invalid:
+                    raise ValueError(
+                        f"batch {batch.get('batch_id', '?')} 含非法 plate_keys {invalid}; "
+                        f"有效 plate_keys: {sorted(valid_keys)}"
+                    )
+            if uses_new_contract:
+                batch["plate_keys"] = keys
+                batch.setdefault("batch_title", str(batch.get("batch_id", "")))
+            batch["component"] = keys[0]
+            normalized.append(batch)
+        return normalized
 
     @classmethod
     def from_design_doc(cls, doc: DesignDoc, batch_plan: list[dict]) -> BatchState:
@@ -88,6 +128,7 @@ class BatchState:
         plate_component_names = {
             c.name for plate in doc.plates for c in plate.components
         }
+        batch_plan = cls._normalize_routing(batch_plan, plate_component_names)
         # Build design_section → name lookup (LLM uses section IDs like "§6.1")
         section_to_name: dict[str, str] = {}
         for plate in doc.plates:
@@ -184,7 +225,7 @@ class BatchState:
     @classmethod
     def from_batch_plan(cls, batch_plan: list[dict]) -> BatchState:
         """batch_plan 模式 — 按出现顺序提取 distinct component → 单一合成 plate."""
-        batch_plan = cls.flatten_batch_plan(batch_plan)
+        batch_plan = cls._normalize_routing(cls.flatten_batch_plan(batch_plan))
         names = list(dict.fromkeys(b["component"] for b in batch_plan))
         comps = [
             Component(name=n, design_section="", design_items=[], source_marker="batch_plan")

@@ -11,6 +11,7 @@ from auto_engineering.loop.legacy_event_adapter import (
     LegacyEventAdapter,
     LegacyEventError,
 )
+from auto_engineering.loop.task_factory import ROLE_FIELD_DEFAULTS, ROLE_FIELD_MAP
 
 
 class EventChannelViolation(ValueError):
@@ -137,9 +138,17 @@ def _no_projection_change(state: EngineState, event: LoopEvent) -> EngineState:
 
 def _stage_advanced(state: EngineState, event: LoopEvent) -> EngineState:
     payload = _payload(event)
-    if set(payload) != {"from", "to"} or not isinstance(payload.get("to"), str):
+    if (
+        set(payload) != {"from", "to"}
+        or not isinstance(payload.get("from"), str)
+        or not isinstance(payload.get("to"), str)
+    ):
         raise EventChannelViolation("StageAdvanced 只能包含 from/to 字符串")
-    return _copy(state, current_stage=payload["to"])
+    changes: dict[str, Any] = {"current_stage": payload["to"]}
+    for field_name in ROLE_FIELD_MAP.get(payload["from"], []):
+        if field_name in ROLE_FIELD_DEFAULTS:
+            changes[field_name] = ROLE_FIELD_DEFAULTS[field_name]
+    return _copy(state, **changes)
 
 
 def _architecture_baseline(state: EngineState, event: LoopEvent) -> EngineState:

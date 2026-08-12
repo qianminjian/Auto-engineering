@@ -48,9 +48,9 @@ Violating the letter of this rule is violating the spirit of this rule.
          continue with the original active Action returned by Core
      read action.instruction
      if action.stage == "gap_review":
-         ask Fill/Research/Defer for every item in action.gaps, in order
-         accumulate locally, then submit one complete decisions array for this Tick
-         never prefill defaults for gaps that the user has not reviewed
+         present only action.current_gap: problem, evidence, impact, recommendation, rationale, options
+         ask one user decision and submit exactly one result.decision for this Tick
+         never cache later decisions locally, prefill defaults, or change current_gap.id
      if action.spawn exists:
          validate HostCapabilities against action.spawn
          if action.spawn.count == 1:

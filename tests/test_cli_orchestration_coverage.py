@@ -38,6 +38,7 @@ class _Orchestrator:
     restore_calls: list[str | None] = []
     fail_first_restore = False
     action: dict[str, object] = {"action": "developer", "tick": 2}
+    tick_error: Exception | None = None
 
     def __init__(self, root: Path, **kwargs: object) -> None:
         self.root = root
@@ -86,6 +87,8 @@ class _Orchestrator:
         return cls(root)
 
     def tick(self, result_file: Path) -> dict[str, object]:
+        if self.tick_error is not None:
+            raise self.tick_error
         return dict(self.action)
 
     def build_action(self) -> dict[str, object]:
@@ -98,6 +101,7 @@ def _reset_fakes() -> None:
     _Orchestrator.restore_calls.clear()
     _Orchestrator.fail_first_restore = False
     _Orchestrator.action = {"action": "developer", "tick": 2}
+    _Orchestrator.tick_error = None
 
 
 @pytest.fixture
@@ -360,6 +364,38 @@ def test_tick_step_updates_metrics_and_closes_store(
         assert Collector.ended[-1] == ("PASS", 9)
     else:
         assert Collector.flushed == 1
+    assert _Store.instances[-1].closed is True
+
+
+def test_tick_step_returns_structured_projection_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    _patch_tick_types: None,
+) -> None:
+    """已知投影异常必须成为 ERROR Action，不能向宿主泄露 traceback。"""
+    from auto_engineering.loop.event_store import StateProjectionMismatchError
+
+    dev_loop = import_module("auto_engineering.cli.dev_loop")
+    monkeypatch.setattr(dev_loop, "_build_injectables", lambda root: {
+        "context_offloader": object(),
+        "session_summarizer": object(),
+        "tracer": None,
+        "audit_logger": None,
+    })
+    monkeypatch.setattr(dev_loop, "get_default_config", lambda: _config())
+    _Orchestrator.tick_error = StateProjectionMismatchError(["critic_verdict"])
+    result_file = tmp_path / "result.json"
+    result_file.write_text("{}", encoding="utf-8")
+
+    dev_loop.run_tick_step(result_file, tmp_path)
+
+    captured = capsys.readouterr()
+    action = json.loads(captured.out)
+    assert action["action"] == "error"
+    assert action["error_code"] == "STATE_PROJECTION_MISMATCH"
+    assert action["extensions"]["ae"]["execution_control"]["disposition"] == "ERROR"
+    assert "Traceback" not in captured.out
     assert _Store.instances[-1].closed is True
 
 

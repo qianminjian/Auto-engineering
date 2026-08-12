@@ -31,6 +31,7 @@ class ProfileContribution:
     test_roots: tuple[str, ...] = ()
     design_roots: tuple[str, ...] = ()
     commands: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
+    missing_capabilities: tuple[str, ...] = ()
     evidence: tuple[ProfileEvidence, ...] = ()
 
     def __post_init__(self) -> None:
@@ -85,6 +86,14 @@ class LocalProbeProvider:
         "tsconfig.json",
         "uv.lock",
         "yarn.lock",
+        "eslint.config.js",
+        "eslint.config.mjs",
+        "eslint.config.cjs",
+        "eslint.config.ts",
+        "vitest.config.js",
+        "vitest.config.ts",
+        "vitest.config.mjs",
+        "vitest.config.mts",
     )
 
     def _read_entry(self, project_root: Path, name: str) -> tuple[bytes, ProfileEvidence] | None:
@@ -124,6 +133,7 @@ class LocalProbeProvider:
         test_roots = list(self._existing_roots(project_root, ("tests", "test", "__tests__")))
         design_roots = list(self._existing_roots(project_root, ("design", "docs")))
         commands: dict[str, tuple[str, ...]] = {}
+        missing_capabilities: list[str] = []
 
         if "package.json" in entries:
             try:
@@ -154,6 +164,20 @@ class LocalProbeProvider:
                         ),
                     )
                 )
+            dependencies = {
+                **(package.get("dependencies", {}) if isinstance(package.get("dependencies"), dict) else {}),
+                **(package.get("devDependencies", {}) if isinstance(package.get("devDependencies"), dict) else {}),
+            }
+            eslint_version = str(dependencies.get("eslint", ""))
+            has_flat_config = any(name.startswith("eslint.config.") for name in entries)
+            if re.search(r"(?:^|[^0-9])9(?:\.|$)", eslint_version) and not has_flat_config:
+                missing_capabilities.append("eslint_flat_config")
+            vitest_config = b"\n".join(
+                content for name, content in entries.items()
+                if name.startswith("vitest.config.")
+            ).decode("utf-8", errors="replace")
+            if re.search(r"environment\s*:\s*['\"]jsdom['\"]", vitest_config) and "jsdom" not in dependencies:
+                missing_capabilities.append("jsdom_dependency")
 
         if "pyproject.toml" in entries:
             try:
@@ -189,6 +213,7 @@ class LocalProbeProvider:
             test_roots=tuple(test_roots),
             design_roots=tuple(design_roots),
             commands=commands,
+            missing_capabilities=tuple(missing_capabilities),
             evidence=tuple(evidence),
         )
 

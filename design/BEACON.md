@@ -1,5 +1,5 @@
 # Auto-Engineering BEACON
-> 创建：2026-06-24｜更新：2026-08-09｜阶段：Phase 80 协议内核收敛重构
+> 创建：2026-06-24｜更新：2026-08-12｜阶段：Phase 81 状态协调与真跑修复
 > 决策状态翻转（✅↔❌）或架构降级必须先获用户批准。
 
 ## 目标与成功标准
@@ -43,6 +43,7 @@ Gate/Guardrail、五层验证、审计、v5.6 兼容迁移和双宿主验收。
 | D22 | Baseline、PlanPatch、contracts、obligations 只物化一次 Architecture Candidate，校验与激活共享 | ✅ |
 | D23 | SemVer 表示发布版本，内容寻址 Build Identity 区分同版本的不同制品和源码 | ✅ |
 | D24 | 显式设计文档与旧状态冲突时先由用户选择重新初始化或修复续作；旧状态保留审计 | ✅ |
+| D25 | Gap 决策由 Core 单项持久化；batch 展示标题与多组件路由键分离；Git 仅是可选证据源 | ✅ |
 
 ## 当前状态
 
@@ -57,18 +58,17 @@ Gate/Guardrail、五层验证、审计、v5.6 兼容迁移和双宿主验收。
   2266 passed/1 skipped、coverage 90%、Ruff/mypy、双宿主 archive smoke 通过。
 - 最新真跑证明隐藏 `.ae-state` 可覆盖本次显式设计文档；Phase 81 在任何新 RC 前完成
   InvocationIntent、状态协调 Gate、可恢复重开、计划协调和可信验证证据。
+- T432 已关闭 Gap wizard、计划路由、Critic replay、Result SSOT、新项目证据和 setup 预检缺陷；真实产品长跑仍独立阻断发布。
 ## 最近演进
 | 日期 | 变更 |
 |---|---|
+| 2026-08-12 | 关闭 T432 真跑差距：单项 Gap wizard、多 key 路由、Critic replay 与新项目证据 |
 | 2026-08-09 | 批准状态冲突二选一：重新初始化或修复状态续作 |
 | 2026-08-09 | 关闭 rc.5 旧事件重放、PlanPatch 候选分叉与 Build Identity 事故 |
 | 2026-08-09 | 修复 Codex Architect 对原生 `spawn_agent` 的错误能力判定 |
 | 2026-08-09 | 完成 T404-T410 协议内核收敛；façade 退出 Stage 专属分支 |
 | 2026-08-06 | 归档 Tick 19 PlanPatch 冲突；禁止 full-plan refine，按义务延迟激活 Contract |
 | 2026-07-30 | 批准 Phase 70：撤销固定 Tick rollover，改为宿主自动 compaction |
-| 2026-07-29 | 批准 v5.8 确定性状态与宿主会话解耦，登记 Phase 64-67 |
-| 2026-07-29 | 归档 146-Tick 真跑事故报告，补充摘要隔离与循环预算 |
-| 2026-07-28 | Phase 62 完成 T295-T300，v5.7.1 GitHub Release 正式发布 |
 | 2026-08-02 | 再次审计：自动门禁可进入受控真跑，真实 LLM 长跑仍是发布阻断项 |
 ## 待解决问题
 
@@ -77,4 +77,4 @@ Gate/Guardrail、五层验证、审计、v5.6 兼容迁移和双宿主验收。
 
 ## 引用文件
 
-`design/v5.8-Protocol-Kernel-Convergence-Design.md` · `design/v5.8-Protocol-Kernel-Convergence-PLAN.md` · `design/v5.8-Automatic-Context-Governance.md` · `design/v5.8-Session-Decoupling-Design.md` · `design/v5.8-Session-Decoupling-PLAN.md` · `design/incidents/2026-07-29-claude-146-tick-long-run.md` · `design/IMPLEMENTATION-TRACKER.md` · `design/HISTORY.md`
+`design/v5.8-Session-Decoupling-Design.md` · `design/v5.8-Session-Decoupling-PLAN.md` · `design/incidents/2026-07-29-claude-146-tick-long-run.md` · `design/v5.8-State-Reconciliation-Design.md` · `design/v5.8-Gap-Review-Wizard-Design.md` · `design/incidents/2026-08-11-gap-review-wizard-real-run.md` · `design/IMPLEMENTATION-TRACKER.md` · `design/HISTORY.md`

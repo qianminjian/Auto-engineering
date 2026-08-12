@@ -82,7 +82,16 @@ class GapReviewHandler:
         archive = deepcopy(dict(state.get("research_archive") or {}))
         pending: list[str] = []
         supplements: list[dict[str, Any]] = []
-        decisions = list(state.get("pending_gap_decisions") or [])
+        submitted = result.get("decision")
+        decisions = (
+            [submitted]
+            if isinstance(submitted, Mapping)
+            else list(
+                result.get("decisions")
+                or state.get("pending_gap_decisions")
+                or []
+            )
+        )
         for decision in decisions:
             gap_id = decision.get("gap_id")
             gap = by_id.get(gap_id)
@@ -114,7 +123,15 @@ class GapReviewHandler:
                     gap["resolution"] = "defer"
                 else:
                     pending.append(gap["id"])
-        target: StageName = "research" if pending else "architect"
+        unresolved = [
+            gap for gap in report.get("gaps", [])
+            if gap.get("resolution") not in {"fill", "defer"}
+        ]
+        target: StageName = (
+            "research" if pending
+            else "gap_review" if unresolved
+            else "architect"
+        )
         patch = {
             "gap_report_json": json.dumps(report, ensure_ascii=False),
             "pending_research_ids": pending,
@@ -128,13 +145,17 @@ class GapReviewHandler:
                     thread_id=context.thread_id,
                     sequence=context.event_sequence,
                 ),
-                _advanced(
-                    source=self.stage,
-                    target=target,
-                    context=context,
+                *(
+                    (_advanced(
+                        source=self.stage,
+                        target=target,
+                        context=context,
+                    ),)
+                    if target != self.stage else ()
                 ),
             ),
             next_stage=target,
+            advance_stage=target != self.stage,
             lifecycle_effects=LifecycleEffects(
                 supplements=tuple(supplements),
                 pause_stages=("architect",) if report.get("has_blocking") else (),

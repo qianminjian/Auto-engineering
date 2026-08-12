@@ -66,6 +66,48 @@ def test_uncommitted_tracked_change_satisfies_developer_diff_guardrail(
     assert result.action == "pass"
 
 
+def test_declared_untracked_file_satisfies_developer_diff_guardrail(
+    tmp_path: Path,
+) -> None:
+    repo = _committed_repo(tmp_path)
+    (repo / "src").mkdir()
+    (repo / "src" / "new.py").write_text("VALUE = 1\n")
+
+    result = GitDiffExists().check(
+        "developer",
+        EngineState(files_changed=["src/new.py"]),
+        project_root=repo,
+    )
+
+    assert result.action == "pass"
+
+
+def test_unrelated_untracked_file_is_not_developer_evidence(tmp_path: Path) -> None:
+    repo = _committed_repo(tmp_path)
+    (repo / "unrelated.txt").write_text("not this batch\n")
+
+    result = GitDiffExists().check(
+        "developer",
+        EngineState(files_changed=["src/expected.py"]),
+        project_root=repo,
+    )
+
+    assert result.action == "retry"
+
+
+def test_declared_real_file_is_evidence_without_git_repository(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "new.py").write_text("VALUE = 1\n")
+
+    result = GitDiffExists().check(
+        "developer",
+        EngineState(files_changed=["src/new.py"]),
+        project_root=tmp_path,
+    )
+
+    assert result.action == "pass"
+
+
 def test_default_guardrails_do_not_require_git_commit() -> None:
     names = [guardrail.name for guardrail in GuardrailChain.default().guardrails]
 

@@ -102,7 +102,7 @@ def dry_run_architect_plan(
         return "batch_plan 不能为空"
     try:
         normalized = BatchState.flatten_batch_plan(batches)
-        BatchState.from_design_doc(design_doc, normalized)
+        normalized = BatchState.from_design_doc(design_doc, normalized).batch_plan
         tree = ProgressTree.from_design_doc(design_doc)
         tree.apply_batch_plan_totals(normalized)
         tasks_from_batch_plan(normalized, requirement)

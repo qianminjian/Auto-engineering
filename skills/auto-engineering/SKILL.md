@@ -98,9 +98,10 @@ while control.disposition == "CONTINUE":
   Core 返回的原 active Action。宿主不能创建/接管新会话时报告
   `HOST_SESSION_HANDOFF_UNAVAILABLE` 并停止，禁止在旧会话降级继续。
 - `action.spawn` 存在：检查当前 `HostCapabilities`，再按以下规则执行。
-- `action.stage == gap_review` 时，必须按 `action.gaps` 顺序逐项询问用户，宿主本地累积
-  每项 Fill/Research/Defer 决策；所有项完成后一次提交完整 `decisions`，禁止遗漏、重复、
-  未询问即批量填默认值，Core 会校验 gap_id 集合完全一致。
+- `action.stage == gap_review` 时，只展示 `action.current_gap`：按问题、证据、影响、推荐、
+  理由、合法选项的顺序说明，并只询问当前项。用户回答后立即按 `expected_format.decision`
+  提交单项 Result；累计决策与游标由 Core 持久化，宿主禁止本地批量缓存、提前询问其他
+  gap、代选默认值或改写 `gap_id`。
 - 无 `action.spawn`：仅 developer 阶段可由主 Agent inline 执行。
 
 Spawn action 必须读取：

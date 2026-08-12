@@ -1388,24 +1388,79 @@ def _gap_scan_result(gaps: list[dict]) -> Path:
 
 def _blocking_gap_scan_result(gaps: list[dict]) -> Path:
     """gap_scan result with has_blocking=True (T107)."""
+    blocking_gaps = []
+    for gap in gaps:
+        options = [
+            {
+                **option,
+                "enabled": False,
+                "disabled_reason": "architectural gap 不允许纯 Defer",
+            }
+            if option.get("resolution") == "Defer" else dict(option)
+            for option in gap.get("options", [])
+        ]
+        blocking_gaps.append({
+            **gap,
+            "grade": "architectural",
+            "options": options,
+            "blocking_rule": "architectural gap 禁止纯 Defer",
+        })
     return _make_result_file({
-        "stage": "gap_scan", "gaps": gaps,
+        "stage": "gap_scan", "gaps": blocking_gaps,
         "scanned_sections": len(gaps), "has_blocking": True,
     })
 
 
-_GAP_B2 = {"id": "gap-B2", "design_section_ref": "§B2", "grade": "component",
-           "clarity": "vague", "summary": "边界未定义", "depends_on": []}
+_GAP_B2 = {
+    "id": "gap-B2",
+    "design_section_ref": "§B2",
+    "grade": "component",
+    "clarity": "vague",
+    "summary": "边界未定义",
+    "depends_on": [],
+    "evidence": ["§B2 只描述职责，未定义输入输出"],
+    "problem_statement": "组件边界无法唯一实现",
+    "impact": ["影响接口契约与测试边界"],
+    "dependencies": [],
+    "recommendation": {
+        "resolution": "Research",
+        "reason": "需要先确认调用方约束",
+        "confidence": "medium",
+    },
+    "options": [
+        {"resolution": "Fill", "meaning": "用户补充最终设计", "enabled": True},
+        {"resolution": "Research", "meaning": "先查证约束", "enabled": True},
+        {"resolution": "Defer", "meaning": "交 Architect 细化", "enabled": True},
+    ],
+    "blocking_rule": "component gap 可 Defer",
+}
 
 
 class TestPhase0GapScan:
+    def test_incomplete_gap_analysis_is_rejected_before_review(self, tmp_path) -> None:
+        o = _orchestrator()
+        _init_design(o, tmp_path)
+        incomplete = {
+            "id": "gap-incomplete",
+            "design_section_ref": "§B2",
+            "grade": "component",
+            "clarity": "vague",
+            "summary": "边界未定义",
+            "depends_on": [],
+        }
+
+        action = o.tick(_gap_scan_result([incomplete]))
+
+        assert action["action"] == "error"
+        assert action["error_code"] == "GAP_ANALYSIS_INCOMPLETE"
+
     def test_gap_scan_with_gaps_routes_to_gap_review(self, tmp_path) -> None:
         o = _orchestrator()
         _init_design(o, tmp_path)
         action = o.tick(_gap_scan_result([_GAP_B2]))
         assert action["stage"] == "gap_review"
         assert action["action"] == "gap_review"
-        assert action["gaps"][0]["id"] == "gap-B2"
+        assert action["current_gap"]["id"] == "gap-B2"
 
     def test_gap_scan_no_gaps_routes_to_architect(self, tmp_path) -> None:
         o = _orchestrator()
@@ -1424,7 +1479,57 @@ class TestPhase0GapScan:
 
 
 class TestPhase0GapReview:
-    def test_action_exposes_all_gaps_without_private_cursor_fields(self, tmp_path) -> None:
+    def test_action_is_core_persisted_single_gap_wizard(self, tmp_path) -> None:
+        """用户每次只判断一个 gap，累计状态不能留在宿主聊天内存。"""
+        o = _orchestrator()
+        _init_design(o, tmp_path)
+        gaps = [
+            {**_GAP_B2, "id": "gap-A"},
+            {**_GAP_B2, "id": "gap-B"},
+        ]
+
+        action = o.tick(_gap_scan_result(gaps))
+
+        assert action["mode"] == "wizard"
+        assert action["current_gap_index"] == 0
+        assert action["total_gaps"] == 2
+        assert action["current_gap"]["id"] == "gap-A"
+        assert "gaps" not in action
+        assert action["decisions_so_far"] == []
+        assert "decision" in action["expected_format"]
+
+    def test_single_decision_is_persisted_before_next_gap(self, tmp_path) -> None:
+        o = _orchestrator()
+        _init_design(o, tmp_path)
+        gaps = [
+            {**_GAP_B2, "id": "gap-A"},
+            {**_GAP_B2, "id": "gap-B"},
+        ]
+        o.tick(_gap_scan_result(gaps))
+
+        action = o.tick(_make_result_file({
+            "stage": "gap_review",
+            "decision": {
+                "gap_id": "gap-A",
+                "resolution": "fill",
+                "fill_content": "明确 A 的输入输出契约",
+                "decision_source": "user",
+            },
+        }))
+
+        assert action["stage"] == "gap_review"
+        assert action["current_gap"]["id"] == "gap-B"
+        assert [item["gap_id"] for item in action["decisions_so_far"]] == [
+            "gap-A"
+        ]
+        saved = action["decisions_so_far"][0]
+        assert saved["assistant_recommendation"] == "Research"
+        assert saved["recommendation_accepted"] is False
+        assert saved["evidence_refs"] == gaps[0]["evidence"]
+        assert saved["decision_source"] == "user"
+        assert o._state.current_stage == "gap_review"
+
+    def test_action_exposes_only_current_gap_with_core_cursor(self, tmp_path) -> None:
         o = _orchestrator()
         _init_design(o, tmp_path)
         gap_a = {**_GAP_B2, "id": "gap-A"}
@@ -1432,10 +1537,10 @@ class TestPhase0GapReview:
 
         action = o.tick(_gap_scan_result([gap_a, gap_b]))
 
-        assert [gap["id"] for gap in action["gaps"]] == ["gap-A", "gap-B"]
-        assert not {
-            "current_gap", "gap_index", "remaining_count", "interaction_mode"
-        }.intersection(action)
+        assert action["current_gap"]["id"] == "gap-A"
+        assert action["current_gap_index"] == 0
+        assert action["total_gaps"] == 2
+        assert "gaps" not in action
 
     def test_partial_decisions_are_rejected_without_advancing(self, tmp_path) -> None:
         o = _orchestrator()
@@ -1660,10 +1765,8 @@ class TestPhase0Research:
     def test_two_research_gaps_stay_research_then_architect(self, tmp_path) -> None:
         o = _orchestrator()
         _init_design(o, tmp_path)
-        gap_a = {"id": "gap-A", "design_section_ref": "§B2", "grade": "component",
-                 "clarity": "vague", "summary": "a", "depends_on": []}
-        gap_b = {"id": "gap-B", "design_section_ref": "§B3", "grade": "component",
-                 "clarity": "vague", "summary": "b", "depends_on": []}
+        gap_a = {**_GAP_B2, "id": "gap-A", "summary": "a"}
+        gap_b = {**_GAP_B2, "id": "gap-B", "design_section_ref": "§B3", "summary": "b"}
         o.tick(_gap_scan_result([gap_a, gap_b]))
         o.tick(_make_result_file({
             "stage": "gap_review",
@@ -2432,7 +2535,32 @@ class TestPhase0BlockingGapGuardrail:
         o.tick(_make_result_file({
             "stage": "gap_scan",
             "gaps": [{"id": "g1", "design_section_ref": "§B2", "grade": grade,
-                      "clarity": "missing", "summary": "契约缺失", "depends_on": []}],
+                      "clarity": "missing", "summary": "契约缺失",
+                      "evidence": ["§B2 未定义契约"],
+                      "problem_statement": "组件契约缺失",
+                      "impact": ["实现边界无法验证"],
+                      "dependencies": [],
+                      "recommendation": {"resolution": "fill", "reason": "需补齐契约", "confidence": "high"},
+                      "options": [
+                          {"resolution": "fill", "meaning": "补齐设计", "enabled": True},
+                          {"resolution": "research", "meaning": "查证后补齐", "enabled": True},
+                          {
+                              "resolution": "defer", "meaning": "交由架构师",
+                              "enabled": grade != "architectural",
+                              "disabled_reason": (
+                                  "架构阻塞项不可延后" if grade == "architectural" else ""
+                              ),
+                          },
+                          {
+                              "resolution": "defer_research",
+                              "meaning": "研究后交由架构师",
+                              "enabled": grade != "architectural",
+                              "disabled_reason": (
+                                  "架构阻塞项不可延后" if grade == "architectural" else ""
+                              ),
+                          },
+                      ],
+                      "blocking_rule": "architectural gap 禁止 defer"}],
             "scanned_sections": 1,
             "has_blocking": grade == "architectural",
         }))

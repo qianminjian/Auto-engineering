@@ -570,7 +570,33 @@ def run_tick_step(result_file: Path, root: Path,
             set_collector(collector)
             collector.resume_events(orch._state.thread_id)
 
-        action = orch.tick(result_file)
+        try:
+            action = orch.tick(result_file)
+        except Exception as exc:
+            # 已知的事件投影一致性故障必须以协议错误返回，让宿主停止当前
+            # action 并保留可恢复 checkpoint；未知异常仍 fail-closed 抛出。
+            from auto_engineering.loop.event_store import StateProjectionMismatchError
+
+            if not isinstance(exc, StateProjectionMismatchError):
+                raise
+            from auto_engineering.loop.actions import ActionError
+            from auto_engineering.loop.protocol import action_envelope
+
+            channels = ", ".join(exc.channels) or "unknown"
+            _logger.error("事件投影一致性校验失败；channels=%s", channels)
+            state = orch._state
+            action = action_envelope(
+                ActionError(
+                    error_code="STATE_PROJECTION_MISMATCH",
+                    message=f"事件投影与当前状态不一致；冲突通道：{channels}",
+                    suggestion="请保留 .ae-state 并在升级或修复引擎后重新执行恢复命令。",
+                ).to_dict(),
+                thread_id=state.thread_id,
+                tick=state.tick,
+                stage=state.current_stage,
+            )
+            click.echo(json.dumps(_map_action_for_host(action), ensure_ascii=False))
+            return
         if (
             action.get("action") == "done"
             and orch._state is not None

@@ -20,10 +20,11 @@ ultrathink
 2. TDD 排序：测试 task 的 depends_on 指向实现 task，测试 task 在前
 3. 依赖方向：工具层 → Hook/API 层 → 简单组件 → 复杂组件 → 容器集成
 4. task id 全局唯一（B1-T1, B2-T1...），depends_on 精确到 task id
-5. component 名称从设计文档章节标题原样复制，不要自编
-6. design_section 填设计文档中对应章节的标题（如 "核心类型 (`src/types/index.ts`)"），供 verifier 做设计覆盖映射
-7. 文件路径含目录前缀，从 `project_profile_summary.paths` 读取
-8. 需求中有模糊点 → 标注 "模糊点: [描述]" 并给出假设，不静默跳过
+5. `batch_title` 是可自由命名的人类可读聚合标题，不参与机器路由
+6. `plate_keys` 只能从 action 的 `valid_plate_keys` 原样选择；一个 batch 可覆盖多个 key
+7. `design_sections` 逐项列出覆盖的设计章节，供 verifier 做覆盖映射
+8. 文件路径含目录前缀，从 `project_profile_summary.paths` 读取
+9. 需求中有模糊点 → 标注 "模糊点: [描述]" 并给出假设，不静默跳过
 
 ## 产出格式（推荐）
 以下是建议的 JSON 结构，按此格式输出便于 Team Lead 提取字段：
@@ -33,8 +34,9 @@ ultrathink
   "batch_plan": [
     {
       "batch_id": "B1",
-      "component": "组件名（从设计文档章节标题原样复制）",
-      "design_section": "对应设计文档章节标题",
+      "batch_title": "可自由命名的聚合批次标题",
+      "plate_keys": ["从 valid_plate_keys 选择的精确标识"],
+      "design_sections": ["对应设计文档章节标题"],
       "description": "本 batch 的目标和范围",
       "tasks": [
         {

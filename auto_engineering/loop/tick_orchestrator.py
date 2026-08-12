@@ -1248,6 +1248,9 @@ class TickOrchestrator:
                 message="; ".join(errors),
                 current_state=self._state.to_dict())
 
+        if gap_error := self._validate_gap_analysis(result):
+            return gap_error
+
         if gap_error := self._validate_gap_review_decisions(result):
             return gap_error
 
@@ -2268,23 +2271,107 @@ class TickOrchestrator:
                 message="; ".join(errors),
                 current_state=self._state.to_dict())
 
+        if gap_error := self._validate_gap_analysis(result):
+            return gap_error
+
         if gap_error := self._validate_gap_review_decisions(result):
             return gap_error
 
         # T109d: L3 — inbound result JSON PII scan
         return self._scan_inbound_for_pii(result)
 
+    def _validate_gap_analysis(self, result: dict) -> ErrorResponse | None:
+        """Gap Scan 必须提供足以让用户判断的完整分析，不接受空洞摘要。"""
+        if self._state.current_stage != "gap_scan":
+            return None
+        required = {
+            "evidence", "problem_statement", "impact", "dependencies",
+            "recommendation", "options", "blocking_rule",
+        }
+        gaps = result.get("gaps", [])
+        for index, gap in enumerate(gaps):
+            if not isinstance(gap, dict):
+                return ErrorResponse(
+                    "GAP_ANALYSIS_INCOMPLETE",
+                    f"gaps[{index}] 必须是 object",
+                    self._state.to_dict(),
+                )
+            missing = sorted(required - set(gap))
+            recommendation = gap.get("recommendation")
+            options = gap.get("options")
+            invalid = (
+                missing
+                or not isinstance(gap.get("evidence"), list)
+                or not gap.get("evidence")
+                or not isinstance(gap.get("impact"), list)
+                or not gap.get("impact")
+                or not isinstance(recommendation, dict)
+                or not {"resolution", "reason", "confidence"}.issubset(
+                    recommendation or {}
+                )
+                or not isinstance(options, list)
+                or not options
+            )
+            if invalid:
+                gap_id = gap.get("id", f"index-{index}")
+                return ErrorResponse(
+                    "GAP_ANALYSIS_INCOMPLETE",
+                    f"gap {gap_id!r} 缺少可审计的证据、影响、推荐或选项",
+                    self._state.to_dict(),
+                )
+            if gap.get("grade") == "architectural" and any(
+                isinstance(option, dict)
+                and str(option.get("resolution", "")).lower() == "defer"
+                and option.get("enabled", True)
+                for option in options
+            ):
+                return ErrorResponse(
+                    "GAP_ANALYSIS_BLOCKING_RULE_INVALID",
+                    f"architectural gap {gap.get('id')!r} 不得启用纯 Defer",
+                    self._state.to_dict(),
+                )
+        expected_blocking = any(
+            isinstance(gap, dict) and gap.get("grade") == "architectural"
+            for gap in gaps
+        )
+        if bool(result.get("has_blocking")) != expected_blocking:
+            return ErrorResponse(
+                "GAP_ANALYSIS_BLOCKING_FLAG_MISMATCH",
+                "has_blocking 必须由 architectural gap 集合确定",
+                self._state.to_dict(),
+            )
+        return None
+
     def _validate_gap_review_decisions(self, result: dict) -> ErrorResponse | None:
-        """Gap Review 必须原子提交当前全部未决 gap，避免部分状态误推进。"""
+        """新 Action 接受当前单项决定；旧 active Action 兼容完整 decisions。"""
         if self._state.current_stage != "gap_review":
             return None
         report = json.loads(self._state.gap_report_json or '{"gaps": []}')
-        expected = {
+        unresolved = [
             str(gap.get("id"))
             for gap in report.get("gaps", [])
             if gap.get("id") is not None
             and gap.get("resolution") not in {"fill", "defer"}
-        }
+        ]
+        decision = result.get("decision")
+        if isinstance(decision, dict):
+            current_id = unresolved[0] if unresolved else None
+            if decision.get("gap_id") != current_id:
+                return ErrorResponse(
+                    error_code="GAP_REVIEW_DECISION_OUT_OF_ORDER",
+                    message=(
+                        f"当前只能处理 gap {current_id!r}，不得跳项或重复提交"
+                    ),
+                    current_state=self._state.to_dict(),
+                )
+            if decision.get("decision_source") != "user":
+                return ErrorResponse(
+                    error_code="GAP_REVIEW_USER_DECISION_REQUIRED",
+                    message="Gap Review 决策必须来自用户，禁止宿主代选",
+                    current_state=self._state.to_dict(),
+                )
+            return None
+        expected = set(unresolved)
         decisions = result.get("decisions", [])
         actual = [str(item.get("gap_id")) for item in decisions if isinstance(item, dict)]
         actual_set = set(actual)

@@ -162,6 +162,25 @@ class GitDiffExists(Guardrail):
     timing = "post"
     applies_to_stages = ("developer",)
 
+    @staticmethod
+    def _declared_real_files(state: EngineState, root: Path) -> set[str]:
+        """返回位于项目内且真实存在的声明文件，拒绝路径穿越。"""
+        resolved_root = root.resolve()
+        evidence: set[str] = set()
+        for raw in getattr(state, "files_changed", []) or []:
+            if not isinstance(raw, str) or not raw.strip():
+                continue
+            candidate = Path(raw)
+            candidate = candidate if candidate.is_absolute() else resolved_root / candidate
+            try:
+                resolved = candidate.resolve(strict=True)
+                relative = resolved.relative_to(resolved_root)
+            except (OSError, ValueError):
+                continue
+            if resolved.is_file():
+                evidence.add(relative.as_posix())
+        return evidence
+
     def check(
         self,
         stage: str,
@@ -169,6 +188,7 @@ class GitDiffExists(Guardrail):
         project_root: Path | None = None,
     ) -> GuardrailResult:
         resolved_root = project_root if project_root is not None else Path.cwd()
+        declared_files = self._declared_real_files(state, resolved_root)
 
         # T221: checkpoint 是循环边界，先认可未提交的真实工作树变更。
         rc0, stdout0 = _run_git_diff(resolved_root, [])
@@ -177,6 +197,25 @@ class GitDiffExists(Guardrail):
 
         rc_cached, stdout_cached = _run_git_diff(resolved_root, ["--cached"])
         if rc_cached == 0 and stdout_cached.strip():
+            return GuardrailResult()
+
+        # 未跟踪文件不会出现在 git diff；只认可 Result 明确声明且位于项目内的文件。
+        rc_status, stdout_status = _run_git(
+            resolved_root, "status", "--porcelain", "--untracked-files=all"
+        )
+        if rc_status == 0:
+            untracked = {
+                line[3:]
+                for line in stdout_status.splitlines()
+                if line.startswith("?? ")
+            }
+            if declared_files & untracked:
+                return GuardrailResult()
+
+        # Git 是可选 evidence provider。无仓库时，范围内真实文件由后续 Core
+        # lint/test/build Gate 继续验证；Loop 不要求宿主擅自 git init/add。
+        rc_repo, _ = _run_git(resolved_root, "rev-parse", "--is-inside-work-tree")
+        if rc_repo != 0 and declared_files:
             return GuardrailResult()
 
         # 兼容用户已明确授权 commit 的工作流。
