@@ -97,6 +97,7 @@ class ErrorResponse:
     error_code: str
     message: str
     current_state: dict | None = None
+    suggestion: str | None = None
 
     def to_dict(self) -> dict:
         d: dict = {
@@ -106,6 +107,8 @@ class ErrorResponse:
         }
         if self.current_state is not None:
             d["current_state"] = self.current_state
+        if self.suggestion is not None:
+            d["suggestion"] = self.suggestion
         return d
 
 

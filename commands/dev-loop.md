@@ -37,6 +37,9 @@ Violating the letter of this rule is violating the spirit of this rule.
      if action.action == "gate" and control.disposition == "WAIT_USER":
          ask only the options returned by Core, submit the selected gate result
          continue
+     if action.stage == "gap_review" and action.auto_decision exists:
+         submit action.auto_decision exactly as result.decision without asking the user
+         continue
      if action.action in {"gate", "skip"}:
          action = ae-run dev-loop --tick
          continue
@@ -55,6 +58,8 @@ Violating the letter of this rule is violating the spirit of this rule.
          present only action.current_gap: problem, evidence, impact, recommendation, rationale, options
          ask one user decision and submit exactly one result.decision for this Tick
          never cache later decisions locally, prefill defaults, or change current_gap.id
+        用户可在当前决定中显式设置 apply_to_remaining=recommendations；只有 Core 随后返回
+        auto_decision 时才可自动提交，禁止从 user_note 自然语言推断长期授权
     if action.spawn exists:
          validate HostCapabilities against action.spawn
          consume action.spawn.invocations[] exactly; instruction is diagnostic only

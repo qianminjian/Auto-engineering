@@ -1549,6 +1549,47 @@ class TestPhase0GapReview:
         assert saved["decision_source"] == "user"
         assert o._state.current_stage == "gap_review"
 
+    def test_structured_policy_applies_recommendation_to_remaining_gaps(
+        self, tmp_path,
+    ) -> None:
+        o = _orchestrator()
+        _init_design(o, tmp_path)
+        gaps = [
+            {**_GAP_B2, "id": "gap-A"},
+            {**_GAP_B2, "id": "gap-B"},
+        ]
+        o.tick(_gap_scan_result(gaps))
+
+        action = o.tick(_make_result_file({
+            "stage": "gap_review",
+            "decision": {
+                "gap_id": "gap-A",
+                "resolution": "Fill",
+                "fill_content": "用户明确补齐 gap-A",
+                "decision_source": "user",
+                "apply_to_remaining": "recommendations",
+            },
+        }))
+
+        assert o._state.gap_decision_policy == "remaining_recommendations"
+        assert action["extensions"]["ae"]["execution_control"]["disposition"] == "CONTINUE"
+        assert action["auto_decision"] == {
+            "gap_id": "gap-B",
+            "resolution": "Research",
+            "decision_source": "thread_policy",
+            "policy": "remaining_recommendations",
+        }
+
+        next_action = o.tick(_make_result_file({
+            "stage": "gap_review",
+            "decision": action["auto_decision"],
+        }))
+
+        assert next_action["stage"] == "research"
+        assert o._state.pending_gap_decisions[-1]["decision_source"] == (
+            "thread_policy"
+        )
+
     def test_action_exposes_only_current_gap_with_core_cursor(self, tmp_path) -> None:
         o = _orchestrator()
         _init_design(o, tmp_path)
@@ -4818,6 +4859,43 @@ class TestF7SpawnProofForgery:
         assert action["extensions"]["ae"]["execution_control"]["disposition"] == "WAIT_RESOURCE"
         assert o._active_action["message_id"] == active_message_id
         assert o._state.tick == tick_before
+
+    def test_worker_role_failure_is_not_reported_as_missing_host_capability(
+        self, tmp_path,
+    ):
+        o = self._setup_critic(tmp_path, "pending")
+        active_message_id = o._active_action["message_id"]
+        tick_before = o._state.tick
+
+        action = o.tick_dict({
+            "stage": "critic",
+            "spawned": False,
+            "spawn_error_code": "HOST_CAPABILITY_UNAVAILABLE",
+            "spawn_error": "collaboration.spawn_agent 未暴露",
+        })
+
+        assert action["error_code"] == "WORKER_ROLE_VIOLATION"
+        assert active_message_id in action["message"]
+        assert "不得给 Worker 开放" in action["suggestion"]
+        assert o._active_action["message_id"] == active_message_id
+        assert o._state.tick == tick_before
+
+    def test_unknown_worker_failure_preserves_action_with_recovery_guidance(
+        self, tmp_path,
+    ):
+        o = self._setup_critic(tmp_path, "pending")
+        active_message_id = o._active_action["message_id"]
+
+        action = o.tick_dict({
+            "stage": "critic",
+            "spawned": False,
+            "spawn_error": "native worker terminated unexpectedly",
+        })
+
+        assert action["error_code"] == "HOST_WORKER_FAILED"
+        assert active_message_id in action["message"]
+        assert "重新执行原 active Action" in action["suggestion"]
+        assert o._active_action["message_id"] == active_message_id
 
     def test_init_binds_proof_to_protocol_action(self, tmp_path):
         from auto_engineering.loop.action_builder import ActionBuilder

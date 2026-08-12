@@ -52,6 +52,8 @@ class StageResultProjector:
                     ),
                     decision,
                 ]
+                if decision.get("apply_to_remaining") == "recommendations":
+                    state.gap_decision_policy = "remaining_recommendations"
             else:
                 state.pending_gap_decisions = result.get("decisions", [])
         elif stage == "architect":

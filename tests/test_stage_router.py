@@ -381,11 +381,11 @@ class TestNewEngineStateFields:
         assert isinstance(state.batch_plan, list)
 
     def test_field_count_includes_session_summary(self) -> None:
-        """字段总数 = 68（含 Phase 81 状态协调与任务证据）。"""
+        """字段总数 = 69（含线程级 Gap 决策策略）。"""
         state = EngineState()
         fields = list(state.__dataclass_fields__.keys())
-        assert len(fields) == 68, (
-            f"Expected 68 fields, got {len(fields)}: {fields}"
+        assert len(fields) == 69, (
+            f"Expected 69 fields, got {len(fields)}: {fields}"
         )
 
 

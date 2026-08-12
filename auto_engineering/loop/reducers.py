@@ -107,6 +107,7 @@ EVENT_CHANNELS: dict[LoopEventType, frozenset[str]] = {
     LoopEventType.SUPPLEMENT_STATE_UPDATED: frozenset({
         "design_supplements_json",
         "pending_gap_decisions",
+        "gap_decision_policy",
     }),
     LoopEventType.STATE_CONFLICT_DETECTED: frozenset({"state_reconciliation"}),
     LoopEventType.STATE_RECONCILIATION_SELECTED: frozenset({"state_reconciliation"}),

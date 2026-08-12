@@ -115,7 +115,7 @@ def control_for_action(action: Mapping[str, Any]) -> ExecutionControl:
     elif name == "session_rollover":
         disposition = ExecutionDisposition.HANDOFF_REQUIRED
         reason = str(action.get("reason") or "recovery_required")
-    elif name == "gap_review":
+    elif name == "gap_review" and action.get("auto_decision") is None:
         disposition = ExecutionDisposition.WAIT_USER
         reason = "gap_decisions_required"
     elif name == "resource_wait":

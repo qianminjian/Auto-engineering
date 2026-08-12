@@ -30,6 +30,7 @@ _EXPECTED_V58_FIELDS = {
     "guardrail_retry_counters", "coverage_map", "batch_state_json",
     "progress_tree_json", "gap_report_json", "design_supplements_json",
     "pending_research_ids", "research_archive", "pending_gap_decisions",
+    "gap_decision_policy",
     "red_evidence", "design_doc_path", "refine_request_json",
     "plan_refine_by_source",
     # #37 B12.5 版本锁
@@ -327,11 +328,11 @@ class TestEngineStateBoundary:
         assert not hasattr(state, "nonexistent")
 
     def test_to_dict_contains_all_fields(self) -> None:
-        """to_dict 输出含全部 66 字段（不含内部字段）。"""
+        """to_dict 输出含全部 67 字段（不含内部字段）。"""
         state = EngineState()
         d = state.to_dict()
-        assert len(d) == 66, (
-            f"to_dict 应含 66 字段, 实际 {len(d)}: "
+        assert len(d) == 67, (
+            f"to_dict 应含 67 字段, 实际 {len(d)}: "
             f"{sorted(d.keys())}"
         )
         assert "suggested_fix" in d, "to_dict 必须包含 suggested_fix (Self-Refine 深化)"

@@ -44,6 +44,19 @@ def test_gap_review_waits_for_real_user_decision() -> None:
     assert control.reason_code == "gap_decisions_required"
 
 
+def test_gap_review_with_core_auto_decision_continues() -> None:
+    control = control_for_action({
+        "action": "gap_review",
+        "auto_decision": {
+            "gap_id": "gap-2",
+            "resolution": "Fill",
+            "decision_source": "thread_policy",
+        },
+    })
+
+    assert control.disposition is ExecutionDisposition.CONTINUE
+
+
 def test_environment_failure_waits_instead_of_reentering_code_repair() -> None:
     control = control_for_action({
         "action": "developer",

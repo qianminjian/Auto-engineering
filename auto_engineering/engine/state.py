@@ -127,6 +127,7 @@ _WRITE_OWNERS: dict[str, frozenset[str]] = {
     "pending_research_ids":     frozenset({"orchestrator"}),
     "research_archive":         frozenset({"orchestrator"}),
     "pending_gap_decisions":    frozenset({"orchestrator"}),
+    "gap_decision_policy":      frozenset({"orchestrator"}),
     "red_evidence":             frozenset({"orchestrator", "developer"}),
     "design_doc_path":          frozenset({"orchestrator"}),
     "refine_request_json":      frozenset({"orchestrator"}),
@@ -243,6 +244,7 @@ class EngineState:
     pending_research_ids: list[str] = field(default_factory=list)  # #30 待 research 的 gap id 队列
     research_archive: dict[str, dict] = field(default_factory=dict)  # #31 Defer+Research findings 存档
     pending_gap_decisions: list[dict] = field(default_factory=list)  # #32 gap_review 决策
+    gap_decision_policy: str = ""  # 当前线程显式授权的 Gap 决策策略
     red_evidence: list[dict] = field(default_factory=list)        # #33 TDD RED 证据 (G7 REDGuardrail)
     design_doc_path: str | None = None                            # #34 设计文档路径 (design-doc 模式)
     refine_request_json: str | None = None                        # #35 plan_refine 输入 (RefineRequest)

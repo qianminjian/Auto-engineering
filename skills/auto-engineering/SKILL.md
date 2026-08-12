@@ -172,6 +172,11 @@ Codex 适配层以当前会话实际暴露的工具清单为能力事实源：
 Core 返回 `resource_wait` / `WAIT_RESOURCE` 时，宿主继续执行上述资源回收流程，并在
 容量可用后重新执行原 active Action；不得提交 `resource_wait` 为 Result，也不得推进 Tick。
 
+Gap Review 默认仍是用户决策。用户可通过结构化字段
+`apply_to_remaining=recommendations` 授权当前线程后续 Gap 采用 Core 推荐；宿主不得从
+`user_note` 自然语言推断授权。授权生效后，Core 会在 Gap Action 返回 `auto_decision`，
+宿主必须原样提交该决定并继续，不再次询问，也不得自行构造或扩展授权范围。
+
 ## 角色边界
 
 | 角色 | 执行方式 | 职责 |

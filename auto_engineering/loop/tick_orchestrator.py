@@ -351,6 +351,7 @@ class TickOrchestrator:
             pii_enabled=self._pii_enabled,
             pii_redactor=self._pii_redactor,
             pii_outbound=self._runtime_config.pii_outbound,
+            runtime_config=self._runtime_config,
             effect_sink=self._pending_effect_receipts.append,
             effect_intent_sink=self._pending_effect_intents.append,
         )
@@ -1042,6 +1043,36 @@ class TickOrchestrator:
                 error_code="HOST_WORKER_TIMEOUT",
                 message="宿主 Worker 执行超时；Core 保留当前 Action，禁止自动假定完成。",
                 current_state=self._state.to_dict(),
+            ).to_dict()
+        if self._state.current_stage in _SPAWN_CONFIG and result.get("spawned") is False:
+            active_message_id = str((self._active_action or {}).get("message_id", ""))
+            spawn_error = str(result.get("spawn_error") or "")
+            if (
+                result.get("spawn_error_code") == "HOST_CAPABILITY_UNAVAILABLE"
+                and "spawn_agent" in spawn_error
+            ):
+                return ErrorResponse(
+                    error_code="WORKER_ROLE_VIOLATION",
+                    message=(
+                        "Worker 错误检查了 Coordinator 专属派生能力；"
+                        f"active Action={active_message_id} 保持不变。"
+                    ),
+                    current_state=self._state.to_dict(),
+                    suggestion=(
+                        "不得给 Worker 开放递归派生能力；Coordinator 应按 "
+                        "spawn.invocations[] 重新启动隔离 Worker。"
+                    ),
+                ).to_dict()
+            return ErrorResponse(
+                error_code="HOST_WORKER_FAILED",
+                message=(
+                    f"宿主 Worker 未完成；active Action={active_message_id} 保持不变。"
+                ),
+                current_state=self._state.to_dict(),
+                suggestion=(
+                    "保留原始宿主错误证据，修复宿主调用后重新执行原 active Action；"
+                    "不得生成新 Action 或伪造 Worker 结果。"
+                ),
             ).to_dict()
 
         # T64: handle gate_resolution before validation (no stage field)
@@ -2487,7 +2518,32 @@ class TickOrchestrator:
                     ),
                     current_state=self._state.to_dict(),
                 )
-            if decision.get("decision_source") != "user":
+            decision_source = decision.get("decision_source")
+            if decision_source == "thread_policy":
+                current_gap: dict[str, Any] = next(
+                    (
+                        gap for gap in report.get("gaps", [])
+                        if str(gap.get("id")) == current_id
+                    ),
+                    {},
+                )
+                recommended = (current_gap.get("recommendation") or {}).get(
+                    "resolution"
+                )
+                if (
+                    self._state.gap_decision_policy
+                    != "remaining_recommendations"
+                    or decision.get("policy") != "remaining_recommendations"
+                    or str(decision.get("resolution", "")).lower()
+                    != str(recommended or "").lower()
+                ):
+                    return ErrorResponse(
+                        error_code="GAP_REVIEW_POLICY_DECISION_INVALID",
+                        message="自动 Gap 决策必须匹配当前线程的结构化授权与 Core 推荐",
+                        current_state=self._state.to_dict(),
+                    )
+                return None
+            if decision_source != "user":
                 return ErrorResponse(
                     error_code="GAP_REVIEW_USER_DECISION_REQUIRED",
                     message="Gap Review 决策必须来自用户，禁止宿主代选",

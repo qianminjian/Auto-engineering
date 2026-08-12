@@ -27,6 +27,7 @@
 | Phase 78-79 | 修复架构基线、Gate 转移、PlanPatch 与 Contract 激活；自动门禁通过但真实产品复验未关闭 |
 | Phase 80 | 2026-08-09 T403-T410 协议内核收敛完成；T413 显式绑定 Codex `spawn_agent` 与推理强度，禁止工具调用前主观判定能力缺失；真实双宿主产品长跑仍阻断发布 |
 | Phase 81-82 | 状态协调与 Gap/Repair 完成；T440-T444 已闭合严格 Host 合同、设计批准链、真实 EventStore 故障矩阵和双宿主黄金生命周期，T445 已建立 Hermetic/同 Build 证据门禁，真实产品 L3/L4 仍阻断发布 |
+| Phase 82 T447-T450 | 持久化旧 Build Worker 角色误判事故；补齐 spawn 失败恢复、线程级结构化 Gap 推荐授权和 RuntimeConfig→Action 配置事实链 |
 
 ## 持续有效的决策
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 
+from auto_engineering.config.runtime_config import RuntimeConfig
 from auto_engineering.engine.batch_state import BatchState
 from auto_engineering.engine.design_doc import Component, DesignDoc, Plate
 from auto_engineering.engine.state import EngineState
@@ -86,6 +87,24 @@ def test_architect_action_exposes_valid_machine_routing_keys(tmp_path) -> None:
     assert "batch_title" in expected
     assert "plate_keys" in expected
     assert "component" not in expected
+
+
+def test_action_feature_status_uses_injected_project_config(tmp_path) -> None:
+    config = RuntimeConfig.from_environ({
+        "AE_METRICS": "1",
+        "AE_AUDIT_LOG": "1",
+        "AE_PII_ENABLED": "1",
+    })
+
+    action = ActionBuilder(tmp_path, runtime_config=config).build_action(
+        EngineState(thread_id="configured", current_stage="architect"),
+    )
+
+    assert action["feature_status"] == {
+        "AE_AUDIT_LOG": True,
+        "AE_METRICS": True,
+        "AE_PII_ENABLED": True,
+    }
 
 
 def test_component_verifier_receives_all_batch_plate_keys(tmp_path) -> None:

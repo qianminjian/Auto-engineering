@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 
 from auto_engineering.config.constants import _SPAWN_CONFIG
 from auto_engineering.config.feature_flags import feature_status_for_action
+from auto_engineering.config.runtime_config import RuntimeConfig, get_default_config
 from auto_engineering.host.runtime_identity import ExecutionIdentity
 from auto_engineering.host.spawn_contract import WorkerInvocationSpec
 from auto_engineering.loop.design_authority import DesignAuthorityPolicy
@@ -126,6 +127,7 @@ class ActionBuilder:
         pii_enabled: bool = False,
         pii_redactor: PIIRedactor | None = None,
         pii_outbound: str = "redact",
+        runtime_config: RuntimeConfig | None = None,
         effect_sink: Callable[[EffectReceipt], None] | None = None,
         effect_intent_sink: Callable[[EffectIntent], None] | None = None,
     ) -> None:
@@ -133,6 +135,9 @@ class ActionBuilder:
         self._pii_enabled = pii_enabled
         self._pii_redactor = pii_redactor
         self._pii_outbound = pii_outbound
+        self._runtime_config = (
+            runtime_config if runtime_config is not None else get_default_config()
+        )
         self._effect_sink = effect_sink
         self._effect_intent_sink = effect_intent_sink
         self._bound_context: ActionBuildContext | None = None
@@ -452,7 +457,9 @@ class ActionBuilder:
             "gate_summary": self._state.gate_results,
             "feedback": feedback,
             "requirement": self._state.requirement,
-            "feature_status": feature_status_for_action(),
+            "feature_status": feature_status_for_action(
+                self._runtime_config.environ,
+            ),
             "progress_summary": (
                 self._progress_tree.summary() if self._progress_tree else None
             ),
@@ -840,6 +847,19 @@ class ActionBuilder:
             ),
             len(gaps),
         )
+        auto_decision = None
+        recommendation = current_gap.get("recommendation")
+        if (
+            self._state.gap_decision_policy == "remaining_recommendations"
+            and isinstance(recommendation, dict)
+            and recommendation.get("resolution")
+        ):
+            auto_decision = {
+                "gap_id": current_gap.get("id"),
+                "resolution": recommendation["resolution"],
+                "decision_source": "thread_policy",
+                "policy": "remaining_recommendations",
+            }
         return self._build_stage_action(base, "gap_review",
             mode="wizard",
             current_gap_index=current_index,
@@ -849,6 +869,7 @@ class ActionBuilder:
             has_blocking=report.get("has_blocking", False),
             is_rereview=is_rereview,
             research_findings=dict(self._state.research_archive),
+            auto_decision=auto_decision,
             instruction=(
                 "Gap Review 单项向导：当前只处理 current_gap，不展示或询问其他缺口。"
                 "依次向用户说明问题、设计依据、影响、Loop 推荐及理由、合法选项；"
@@ -862,6 +883,7 @@ class ActionBuilder:
                     "user_note": "用户原始判断",
                     "fill_content": "Fill 时必填",
                     "decision_source": "user",
+                    "apply_to_remaining": "可选 recommendations；仅当前线程后续 Gap",
                 },
             })
 
