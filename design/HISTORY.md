@@ -26,7 +26,7 @@
 | Phase 76-77 | 统一设计文档入口；rc.4 真跑证伪后恢复原始批量 Gap Review、Action schema fail-closed、公共 status 与 Gate 语义；rc.5 基线 2178 passed / 1 skipped |
 | Phase 78-79 | 修复架构基线、Gate 转移、PlanPatch 与 Contract 激活；自动门禁通过但真实产品复验未关闭 |
 | Phase 80 | 2026-08-09 T403-T410 协议内核收敛完成；T413 显式绑定 Codex `spawn_agent` 与推理强度，禁止工具调用前主观判定能力缺失；真实双宿主产品长跑仍阻断发布 |
-| Phase 81-82 | 状态协调、Gap/Repair 基础与身份/权威定向测试已具备；2026-08-12 审计发现 Worker/Coordinator 结果污染、生产 Host 合同未绑定、决策账本和完整轨迹缺失，新增 T440-T446 后再做真实产品验收 |
+| Phase 81-82 | 状态协调与 Gap/Repair 完成；T440-T444 已闭合严格 Host 合同、设计批准链、真实 EventStore 故障矩阵和双宿主黄金生命周期，T445 已建立 Hermetic/同 Build 证据门禁，真实产品 L3/L4 仍阻断发布 |
 
 ## 持续有效的决策
 

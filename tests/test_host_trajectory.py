@@ -9,6 +9,7 @@ import pytest
 
 from auto_engineering.engine.state import EngineState
 from auto_engineering.host import HostPlatform
+from auto_engineering.host.capabilities import HostCapabilities, HostCapabilityError
 from auto_engineering.loop.action_builder import ActionBuilder
 from auto_engineering.loop.event_store import SQLiteEventStore
 from auto_engineering.loop.tick_orchestrator import TickOrchestrator
@@ -150,4 +151,87 @@ def test_crash_after_worker_receipt_keeps_core_action_active(tmp_path: Path) -> 
                 fail_after_receipt=True,
             )
 
+        assert events.load_action_snapshot(action["thread_id"]) == action
+
+
+@pytest.mark.parametrize("attempt", [1, 2])
+def test_capacity_exhaustion_waits_without_advancing_core(
+    tmp_path: Path, attempt: int,
+) -> None:
+    with SQLiteEventStore(tmp_path / f"events-{attempt}.db") as events:
+        core, action = _core(tmp_path, events)
+        runner = HostTrajectoryRunner(
+            tmp_path, HostPlatform.CODEX, core=core, event_store=events
+        )
+
+        response = runner.submit_host_failure(
+            action, error_code="HOST_AGENT_CAPACITY", message="capacity exhausted"
+        )
+
+        assert response["action"] == "resource_wait"
+        assert response["extensions"]["ae"]["execution_control"]["disposition"] == "WAIT_RESOURCE"
+        assert events.load_action_snapshot(action["thread_id"]) == action
+
+
+def test_worker_timeout_is_error_and_keeps_action_for_explicit_retry(
+    tmp_path: Path,
+) -> None:
+    with SQLiteEventStore(tmp_path / "events.db") as events:
+        core, action = _core(tmp_path, events)
+        response = HostTrajectoryRunner(
+            tmp_path, HostPlatform.CODEX, core=core, event_store=events
+        ).submit_host_failure(
+            action, error_code="HOST_WORKER_TIMEOUT", message="worker timed out"
+        )
+
+        assert response["action"] == "error"
+        assert response["error_code"] == "HOST_WORKER_TIMEOUT"
+        assert events.load_action_snapshot(action["thread_id"]) == action
+
+
+def test_malformed_worker_output_fails_before_core_submission(tmp_path: Path) -> None:
+    with SQLiteEventStore(tmp_path / "events.db") as events:
+        core, action = _core(tmp_path, events)
+        with pytest.raises(Exception, match="WORKER_OUTCOME_PRIVILEGE_ESCALATION"):
+            HostTrajectoryRunner(
+                tmp_path, HostPlatform.CODEX, core=core, event_store=events
+            ).run(action, workers=[lambda invocation: {"spawned": True}])
+        assert events.load_action_snapshot(action["thread_id"]) == action
+
+
+def test_recovered_action_fails_closed_when_host_capability_changes(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    with SQLiteEventStore(tmp_path / "events.db") as events:
+        core, action = _core(tmp_path, events)
+        monkeypatch.setattr(
+            "auto_engineering.host.worker_invocation.capabilities_for",
+            lambda platform: HostCapabilities(
+                native_subagents=True, isolated_worker_invocation=False
+            ),
+        )
+
+        with pytest.raises(HostCapabilityError, match="ISOLATED_WORKER_INVOCATION_REQUIRED"):
+            HostTrajectoryRunner(
+                tmp_path, HostPlatform.CODEX, core=core, event_store=events
+            ).run(action, workers=[lambda invocation: {}])
+        assert events.load_action_snapshot(action["thread_id"]) == action
+
+
+def test_late_result_for_non_active_action_is_rejected(tmp_path: Path) -> None:
+    with SQLiteEventStore(tmp_path / "events.db") as events:
+        core, action = _core(tmp_path, events)
+        late = {
+            "schema_version": "1.1", "message_type": "result",
+            "message_id": "late-result", "thread_id": action["thread_id"],
+            "tick": action["tick"], "stage": action["stage"],
+            "causation_id": "retired-action", "correlation_id": action["correlation_id"],
+            "extensions": {}, "spawned": False,
+            "spawn_error_code": "HOST_WORKER_TIMEOUT", "spawn_error": "late",
+        }
+
+        response = core.tick_dict(late)
+
+        assert response["action"] == "error"
+        assert response["error_code"] == "ACTION_NOT_ACTIVE"
         assert events.load_action_snapshot(action["thread_id"]) == action

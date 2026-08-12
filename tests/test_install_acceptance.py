@@ -106,6 +106,33 @@ def test_verify_runtime_semantic_contract_executes_installed_modules(
     assert "DesignAuthorityPolicy.default" in commands[0][-1]
 
 
+def test_hermetic_sync_requires_controlled_cache(tmp_path: Path) -> None:
+    from scripts.install_acceptance import _hermetic_sync
+
+    with pytest.raises(RuntimeError, match="HERMETIC_CACHE_REQUIRED"):
+        _hermetic_sync(tmp_path, {}, None)
+
+
+def test_hermetic_sync_is_frozen_and_offline(tmp_path: Path, monkeypatch) -> None:
+    from scripts import install_acceptance
+
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    commands = []
+    monkeypatch.setattr(
+        install_acceptance, "_run",
+        lambda command, **kwargs: commands.append((command, kwargs))
+        or CompletedProcess(command, 0, "", ""),
+    )
+
+    install_acceptance._hermetic_sync(tmp_path, {}, cache)
+
+    assert commands[0][0] == [
+        "uv", "sync", "--frozen", "--offline", "--project", str(tmp_path),
+    ]
+    assert commands[0][1]["env"]["UV_CACHE_DIR"] == str(cache.resolve())
+
+
 def test_safe_extract_archive_extracts_regular_member(tmp_path: Path) -> None:
     from scripts.install_acceptance import _safe_extract_archive
 
@@ -152,7 +179,7 @@ def test_main_reports_product_install_as_not_run(
     monkeypatch.setattr(
         install_acceptance,
         "accept_archive",
-        lambda archive, host, workspace: {
+        lambda archive, host, workspace, wheel_cache=None: {
             "host": host,
             "archive_smoke": {
                 "status": "pass",

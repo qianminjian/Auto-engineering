@@ -7,6 +7,7 @@ import pytest
 from scripts.product_acceptance import (
     ProductAcceptanceError,
     evaluate_product_evidence,
+    evaluate_release_evidence,
 )
 
 
@@ -19,6 +20,7 @@ def _evidence() -> dict[str, object]:
         "usage_status": "complete",
         "unexpected_stops": 0,
         "unapproved_changes": 0,
+        "installation": {"status": "pass", "discovered": True},
         "canary": {
             "status": "pass",
             "stages": ["architect", "developer", "critic"],
@@ -59,3 +61,45 @@ def test_not_run_canary_cannot_be_reported_as_product_pass() -> None:
 
     with pytest.raises(ProductAcceptanceError, match="CANARY_NOT_PASSED"):
         evaluate_product_evidence(evidence)
+
+
+def test_release_requires_both_hosts_on_same_build(tmp_path) -> None:
+    artifact = tmp_path / "codex.jsonl"
+    artifact.write_text("real transcript evidence", encoding="utf-8")
+    import hashlib
+    digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
+    codex = {**_evidence(), "evidence_artifact": {
+        "path": artifact.name, "sha256": digest,
+    }}
+    claude = {**codex, "host": "claude-code"}
+
+    verdict = evaluate_release_evidence([codex, claude], evidence_root=tmp_path)
+
+    assert verdict["status"] == "pass"
+    assert verdict["hosts"] == ["claude-code", "codex"]
+
+
+def test_release_rejects_duplicate_host_evidence(tmp_path) -> None:
+    artifact = tmp_path / "evidence.jsonl"
+    artifact.write_text("evidence", encoding="utf-8")
+    import hashlib
+    digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
+    codex = {**_evidence(), "evidence_artifact": {
+        "path": artifact.name, "sha256": digest,
+    }}
+    claude = {**codex, "host": "claude-code"}
+
+    with pytest.raises(ProductAcceptanceError, match="BOTH_HOSTS_REQUIRED"):
+        evaluate_release_evidence([codex, claude, codex], evidence_root=tmp_path)
+
+
+def test_release_rejects_artifact_hash_or_build_mismatch(tmp_path) -> None:
+    artifact = tmp_path / "evidence.jsonl"
+    artifact.write_text("evidence", encoding="utf-8")
+    base = {**_evidence(), "evidence_artifact": {
+        "path": artifact.name, "sha256": "0" * 64,
+    }}
+    with pytest.raises(ProductAcceptanceError, match="EVIDENCE_ARTIFACT_MISMATCH"):
+        evaluate_release_evidence(
+            [base, {**base, "host": "claude-code"}], evidence_root=tmp_path,
+        )

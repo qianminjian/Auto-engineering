@@ -156,10 +156,32 @@ def _verify_runtime_semantic_contract(
     return ["runtime_identity", "design_authority"]
 
 
+def _hermetic_sync(
+    install_root: Path,
+    environment: dict[str, str],
+    wheel_cache: Path | None,
+) -> None:
+    """只使用显式受控缓存和锁文件安装，禁止验收时临时联网解析。"""
+
+    if wheel_cache is None or not wheel_cache.is_dir():
+        raise RuntimeError("HERMETIC_CACHE_REQUIRED")
+    hermetic_env = dict(environment)
+    hermetic_env["UV_CACHE_DIR"] = str(wheel_cache.resolve())
+    _run(
+        [
+            "uv", "sync", "--frozen", "--offline",
+            "--project", str(install_root),
+        ],
+        cwd=install_root,
+        env=hermetic_env,
+    )
+
+
 def accept_archive(
     archive: Path,
     host: str,
     workspace: Path,
+    wheel_cache: Path | None = None,
 ) -> dict[str, object]:
     """执行可自动化的归档 smoke；不冒充真实宿主产品安装。"""
     if host not in _HOST_ENV:
@@ -181,7 +203,7 @@ def accept_archive(
     environment[host_key] = host_value
     environment["AE_SKIP_CONFIG_CHECK"] = "1"
 
-    _run(["uv", "sync", "--project", str(install_root)], cwd=install_root, env=environment)
+    _hermetic_sync(install_root, environment, wheel_cache)
 
     project = workspace / "project"
     project.mkdir()
@@ -256,6 +278,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--archive", type=Path, required=True)
     parser.add_argument("--host", choices=sorted(_HOST_ENV), required=True)
+    parser.add_argument("--wheel-cache", type=Path)
     args = parser.parse_args()
 
     with tempfile.TemporaryDirectory(prefix=f"ae-{args.host}-") as temporary:
@@ -263,6 +286,7 @@ def main() -> int:
             args.archive.resolve(),
             args.host,
             Path(temporary),
+            args.wheel_cache,
         )
     print(json.dumps(report, ensure_ascii=False))
     return 0

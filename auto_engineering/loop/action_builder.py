@@ -1229,6 +1229,11 @@ class ActionBuilder:
             return {**base, "action": "skip", "reason": "no design items or implementation files for component",
                     "stage": "component_verifier",
                     "next_transition": "plate_deep_audit"}
+        joined_design_section = ", ".join(
+            item.design_section for item in routed_components if item.design_section
+        )
+        if joined_design_section == comp.name:
+            joined_design_section = ""
         # DS-15: subagent reads design doc + impl files itself.
         # F8 修复 (2026-07-26 真跑): 注入 component/design_section/design_spec/
         # implementation_files 到 context —— 此前 context 为空，verifier subagent 不知
@@ -1237,9 +1242,7 @@ class ActionBuilder:
             "component": comp.name,
             "plate_keys": [item.name for item in routed_components],
             "design_sections": [item.design_section for item in routed_components],
-            "design_section": ", ".join(
-                item.design_section for item in routed_components if item.design_section
-            ),
+            "design_section": joined_design_section,
             "design_spec": design_spec,
             "implementation_files": impl_files,
             "project_profile_summary": self._project_profile_summary(verifier=True),

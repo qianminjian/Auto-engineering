@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -28,6 +29,13 @@ def evaluate_product_evidence(evidence: dict[str, Any]) -> dict[str, Any]:
         raise ProductAcceptanceError("UNEXPECTED_STOP")
     if evidence.get("unapproved_changes") != 0:
         raise ProductAcceptanceError("UNAPPROVED_DESIGN_CHANGE")
+    installation = evidence.get("installation")
+    if (
+        not isinstance(installation, dict)
+        or installation.get("status") != "pass"
+        or installation.get("discovered") is not True
+    ):
+        raise ProductAcceptanceError("PRODUCT_INSTALL_NOT_VERIFIED")
 
     canary = evidence.get("canary")
     if not isinstance(canary, dict) or canary.get("status") != "pass":
@@ -54,14 +62,60 @@ def evaluate_product_evidence(evidence: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def evaluate_release_evidence(
+    evidences: list[dict[str, Any]],
+    *,
+    evidence_root: Path,
+) -> dict[str, Any]:
+    """验证同一候选制品的双宿主证据和内容寻址 artifact。"""
+
+    if (
+        len(evidences) != 2
+        or {item.get("host") for item in evidences} != {"claude-code", "codex"}
+    ):
+        raise ProductAcceptanceError("BOTH_HOSTS_REQUIRED")
+    build_ids = {item.get("build_id") for item in evidences}
+    if len(build_ids) != 1:
+        raise ProductAcceptanceError("BUILD_ID_MISMATCH")
+    results = []
+    root = evidence_root.resolve()
+    for evidence in evidences:
+        artifact = evidence.get("evidence_artifact")
+        if not isinstance(artifact, dict):
+            raise ProductAcceptanceError("EVIDENCE_ARTIFACT_MISSING")
+        relative = artifact.get("path")
+        expected = artifact.get("sha256")
+        if not isinstance(relative, str) or not isinstance(expected, str):
+            raise ProductAcceptanceError("EVIDENCE_ARTIFACT_INVALID")
+        path = (root / relative).resolve()
+        if not path.is_relative_to(root) or not path.is_file():
+            raise ProductAcceptanceError("EVIDENCE_ARTIFACT_INVALID")
+        actual = hashlib.sha256(path.read_bytes()).hexdigest()
+        if actual != expected:
+            raise ProductAcceptanceError("EVIDENCE_ARTIFACT_MISMATCH")
+        results.append(evaluate_product_evidence(evidence))
+    return {
+        "status": "pass",
+        "build_id": next(iter(build_ids)),
+        "hosts": sorted(item["host"] for item in results),
+        "levels": {"L3": "pass", "L4": "pass"},
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--evidence", type=Path, required=True)
+    parser.add_argument("--evidence", type=Path, required=True, action="append")
+    parser.add_argument("--evidence-root", type=Path, default=Path.cwd())
     args = parser.parse_args()
-    payload = json.loads(args.evidence.read_text(encoding="utf-8"))
-    if not isinstance(payload, dict):
+    payloads = [json.loads(path.read_text(encoding="utf-8")) for path in args.evidence]
+    if not all(isinstance(payload, dict) for payload in payloads):
         raise ProductAcceptanceError("EVIDENCE_INVALID")
-    print(json.dumps(evaluate_product_evidence(payload), ensure_ascii=False))
+    verdict = (
+        evaluate_product_evidence(payloads[0])
+        if len(payloads) == 1
+        else evaluate_release_evidence(payloads, evidence_root=args.evidence_root)
+    )
+    print(json.dumps(verdict, ensure_ascii=False))
     return 0
 
 

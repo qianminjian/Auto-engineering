@@ -153,8 +153,8 @@
 > 权威设计/计划：`design/v5.8-Real-Host-Closure-Design.md`、`design/v5.8-Real-Host-Closure-PLAN.md`。
 | 优先级 | ID | 任务 | EARS 验收 | 状态 |
 |---:|---|---|---|:---:|
-| P0 | T434 | 真实宿主闭环总体验收 | While 内部自动门禁无法覆盖真实宿主, when Phase 82 完成, L1-L4 shall 分别证明协议、轨迹、Canary 和完整黄金项目，不以 archive 或测试数量冒充 product install | ◐ 回归基线 2391/1、90%；真实双宿主 L3/L4 未运行，发布阻断 |
+| P0 | T434 | 真实宿主闭环总体验收 | While 内部自动门禁无法覆盖真实宿主, when Phase 82 完成, L1-L4 shall 分别证明协议、轨迹、Canary 和完整黄金项目，不以 archive 或测试数量冒充 product install | ◐ 回归基线 2404/1、90%；真实双宿主 L3/L4 未运行，发布阻断 |
 | P0 | T435-T439 | 身份、Invocation、Authority、Fake Host 与黄金语义基础 | While 基础模块已有定向测试, when 审计生产链, the evidence shall 区分参考实现与真实宿主强制路径 | ◐ 模块/定向测试已完成；审计发现结果污染、生产绑定、完整轨迹和语义门禁缺口 |
 | P0 | T440-T441 | 严格 SpawnPlan、结果分离、Host Attestation 与版本协商 | While 任一 spawn Action 被真实宿主执行, when Worker 返回, the host shall 只消费机器 invocation 并提交与 Action/Prompt/能力绑定的证明 | ✅ Core 按 active Action 强制严格证明；平台隔离、Prompt、effort、能力摘要和 Worker 集合均 fail-closed；旧合同仅按旧 Action 兼容 |
 | P0 | T442 | Design Decision Ledger、全阶段权威与上下文去重 | While 显式决策、future 项和 Research 并存, when 计划或修复激活, the Core shall 拒绝未批准变更并只传递去重后的相关义务 | ✅ design intake 原子持久化来源绑定账本且不臆造自然语言决策；source drift、future promotion、未批准变更和批准因果链均 fail-closed，无决策时明确 partial |
-| P0 | T443-T446 | 完整轨迹、黄金场景、Hermetic Release 与双宿主收口 | While 候选制品进入验收, when 故障矩阵、Canary 和完整项目执行, both hosts shall 产生等价语义、完整 usage 和零非预期停顿 | ◐ T443 已接入真实 TickOrchestrator/EventStore、严格 receipt、重复 Result 与 receipt 后崩溃；容量/timeout/迟到 Result/能力变化矩阵仍待补齐 |
+| P0 | T443-T446 | 完整轨迹、黄金场景、Hermetic Release 与双宿主收口 | While 候选制品进入验收, when 故障矩阵、Canary 和完整项目执行, both hosts shall 产生等价语义、完整 usage 和零非预期停顿 | ◐ T443-T444 完成；同一归档 Claude/Codex frozen/offline L2 通过，T445 已强制安装发现、artifact hash 和同 Build 双宿主证据；真实 L3/L4 仍 not_run |

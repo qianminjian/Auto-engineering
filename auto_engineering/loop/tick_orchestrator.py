@@ -1033,6 +1033,16 @@ class TickOrchestrator:
                 "message": "宿主 Agent 容量暂时不足；保留当前 Action，等待资源后重试。",
                 "suggestion": "回收已完成的 Agent；容量释放后重新执行当前 Action。",
             }
+        if (
+            self._state.current_stage in _SPAWN_CONFIG
+            and result.get("spawned") is False
+            and result.get("spawn_error_code") == "HOST_WORKER_TIMEOUT"
+        ):
+            return ErrorResponse(
+                error_code="HOST_WORKER_TIMEOUT",
+                message="宿主 Worker 执行超时；Core 保留当前 Action，禁止自动假定完成。",
+                current_state=self._state.to_dict(),
+            ).to_dict()
 
         # T64: handle gate_resolution before validation (no stage field)
         gate_resolution = result.get("gate_resolution")

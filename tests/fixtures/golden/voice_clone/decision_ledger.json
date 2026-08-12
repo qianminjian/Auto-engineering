@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0",
-  "source_sha256": "fa39826538efc274884d58c0f8fa7b1501bcd90e97b731ba1762547a305fbf76",
+  "source_sha256": "88ce94702f9a2da2c65ed2c5248f52db38938f9dab11b624abb024a4b522c1c3",
   "decisions": [
     {
       "decision_id": "VC-ARCH-001",

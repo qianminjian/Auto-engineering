@@ -6,7 +6,9 @@
     "developer",
     "critic",
     "component_verifier",
+    "plate_deep_audit",
     "system_verifier",
+    "system_deep_audit",
     "done"
   ],
   "business_gates": ["typecheck", "unit_test", "build"],

@@ -50,6 +50,27 @@ class HostTrajectoryRunner:
     def _load_prompt(self, ref: str) -> str:
         return (self.project_root / ref).read_text(encoding="utf-8")
 
+    def submit_host_failure(
+        self,
+        action: Mapping[str, Any],
+        *,
+        error_code: str,
+        message: str,
+    ) -> dict[str, Any]:
+        active = self.event_store.load_action_snapshot(str(action.get("thread_id", "")))
+        if active is None or active.get("message_id") != action.get("message_id"):
+            raise HostTrajectoryError("CORE_ACTIVE_ACTION_REQUIRED")
+        result = {
+            "schema_version": "1.1", "message_type": "result",
+            "message_id": f"failure-{error_code}-{action.get('message_id')}",
+            "thread_id": action.get("thread_id"), "tick": action.get("tick"),
+            "stage": action.get("stage"), "causation_id": action.get("message_id"),
+            "correlation_id": action.get("correlation_id"), "extensions": {},
+            "spawned": False, "spawn_error_code": error_code,
+            "spawn_error": message,
+        }
+        return dict(self.core.tick_dict(result))
+
     def run(
         self,
         action: Mapping[str, Any],
