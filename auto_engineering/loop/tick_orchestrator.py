@@ -120,6 +120,7 @@ from auto_engineering.loop.runtime_revision import (
     CompatibilityDecision,
     RuntimeRevision,
     evaluate_compatibility,
+    incompatible_fields,
 )
 from auto_engineering.loop.session_handoff import SessionHandoff
 from auto_engineering.loop.stage_offload import StageOffloadService
@@ -570,6 +571,7 @@ class TickOrchestrator:
         )
 
         ck = None
+        resolved_thread_id = thread_id
         if event_store is not None:
             resolved_thread_id = thread_id or checkpoint_store.active_project_thread()
             if resolved_thread_id is None:
@@ -598,6 +600,7 @@ class TickOrchestrator:
             )
         if isinstance(state, dict):  # 防御: deserialize 未命中 EngineState 分派
             state = EngineState.from_dict(state)
+        resolved_thread_id = state.thread_id
         self._state = state
         self._dev_snapshot = (
             dict(state.developer_snapshot)
@@ -678,8 +681,15 @@ class TickOrchestrator:
             has_active_action=self._active_action is not None,
         )
         if compatibility is CompatibilityDecision.INCOMPATIBLE:
+            differences = incompatible_fields(
+                issued=issued_revision,
+                current=current_revision,
+            )
             raise CheckpointNotFoundError(
-                "RUNTIME_REVISION_INCOMPATIBLE: active Action 协议无法由当前运行时消费"
+                "RUNTIME_REVISION_INCOMPATIBLE: EventStore projection 与 active "
+                f"ActionSnapshot 已恢复；thread_id={resolved_thread_id}, "
+                f"action_message_id={(self._active_action or {}).get('message_id')}, "
+                f"differences={json.dumps(differences, ensure_ascii=False, sort_keys=True)}"
             )
         if compatibility is CompatibilityDecision.MIGRATION_REQUIRED:
             raise CheckpointNotFoundError(

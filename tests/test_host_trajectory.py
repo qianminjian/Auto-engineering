@@ -19,6 +19,21 @@ from tests.host_runtime.trajectory_runner import (
 )
 
 
+def _inline_result(action: dict, **payload: object) -> dict:
+    return {
+        "schema_version": "1.1",
+        "message_type": "result",
+        "message_id": f"result-{action['message_id']}",
+        "thread_id": action["thread_id"],
+        "tick": action["tick"],
+        "stage": action["stage"],
+        "causation_id": action["message_id"],
+        "correlation_id": action["correlation_id"],
+        "extensions": {},
+        **payload,
+    }
+
+
 def _core(root: Path, events: SQLiteEventStore) -> tuple[TickOrchestrator, dict]:
     (root / "pyproject.toml").write_text("[project]\nname='trajectory'\n")
     (root / "trajectory").mkdir()
@@ -77,6 +92,90 @@ def test_trajectory_binds_invocation_receipt_result_and_next_action(
         assert "ResultAccepted" in trajectory.events
         assert "ActionIssued" in trajectory.events
         assert trajectory.next_action["action"] == "developer"
+
+
+def test_three_worker_plate_audit_uses_templates_through_core_tick(
+    tmp_path: Path,
+) -> None:
+    """复现真跑的三 Worker 边界，并走完真实 EventStore 因果链。"""
+
+    with SQLiteEventStore(tmp_path / "events.db") as events:
+        core, architect = _core(tmp_path, events)
+        runner = HostTrajectoryRunner(
+            tmp_path, HostPlatform.CODEX, core=core, event_store=events
+        )
+        action = runner.run(
+            architect,
+            workers=[lambda invocation: {
+                "plan": (
+                    "按原设计完成两个组件的实现、测试、审查、契约验证、"
+                    "类型检查和最终构建验收，并保留确定性状态、失败恢复、"
+                    "跨宿主一致性与完整审计证据。"
+                ),
+                "batch_plan": [
+                    {
+                        "batch_id": "B1", "component": "Foo",
+                        "tasks": [{
+                            "id": "B1-T1", "description": "实现 Foo",
+                            "file_targets": ["trajectory/foo.py"],
+                        }],
+                    },
+                    {
+                        "batch_id": "B2", "component": "Bar",
+                        "tasks": [{
+                            "id": "B2-T1", "description": "实现 Bar",
+                            "file_targets": ["trajectory/bar.py"],
+                        }],
+                    },
+                ],
+                "file_list": ["trajectory/foo.py", "trajectory/bar.py"],
+                "contracts": {},
+            }],
+        ).next_action
+
+        for batch_id, component in (("B1", "Foo"), ("B2", "Bar")):
+            action = dict(core.tick_dict(_inline_result(
+                action,
+                batch_id=batch_id,
+                files_changed=[f"trajectory/{component.lower()}.py"],
+                test_results={"passed": 1, "failed": 0},
+            )))
+            action = runner.run(
+                action,
+                workers=[lambda invocation: {
+                    "verdict": "APPROVE", "findings": [],
+                    "critic_feedback": "验证通过",
+                }],
+            ).next_action
+            action = runner.run(
+                action,
+                workers=[lambda invocation, name=component: {
+                    "component": name,
+                    "coverage_map": [{
+                        "design_item": f"{name}-1", "status": "IMPLEMENTED",
+                        "file": f"trajectory/{name.lower()}.py", "line": 1,
+                        "note": "",
+                    }],
+                    "missing_count": 0,
+                    "diverged_count": 0,
+                }],
+            ).next_action
+
+        assert action["stage"] == "plate_deep_audit"
+        assert action["spawn"]["count"] == 3
+        trajectory = runner.run(
+            action,
+            workers=[lambda invocation: {
+                "plate": "(single)", "findings": [],
+                "p0_count": 0, "p1_count": 0, "p2_count": 0,
+                "cross_component_issues": [], "total_audited_files": 2,
+            }] * 3,
+        )
+
+        assert len(trajectory.result["worker_attestations"]) == 3
+        assert trajectory.next_action["stage"] == "system_deep_audit"
+        assert events.load_action_snapshot(action["thread_id"]) == trajectory.next_action
+        assert "ResultAccepted" in trajectory.events
 
 
 def test_partial_multi_worker_completion_fails_closed(tmp_path: Path) -> None:

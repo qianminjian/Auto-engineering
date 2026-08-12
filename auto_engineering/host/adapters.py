@@ -65,6 +65,38 @@ class _Adapter2Mixin:
             raise ValueError("HOST_ACTION_INVALID: 能力需求必须为 object")
         effective = profile.effective
         mapped_payload = dict(action)
+        spawn = action.get("spawn")
+        if isinstance(spawn, Mapping) and isinstance(spawn.get("invocations"), list):
+            from auto_engineering.host.spawn_contract import SpawnPlan
+            from auto_engineering.host.worker_attestation import attestation_template
+
+            plan = SpawnPlan.from_action(action)
+            stage = str(action.get("stage") or "")
+            mapped_payload["host_execution"] = {
+                "schema_version": "1.0",
+                "platform": self.platform.value,
+                "workers": [
+                    {
+                        "worker_id": invocation.worker_id,
+                        "native_worker_handle": None,
+                        "prompt_ref": invocation.prompt_ref,
+                        "receipt_path": invocation.receipt_path,
+                        "receipt": {
+                            "status": "pending",
+                            "stage": stage,
+                            "worker": invocation.worker_id,
+                            "requested_effort": invocation.requested_effort,
+                            "actual_model": "unknown",
+                        },
+                        "attestation": attestation_template(
+                            platform=self.platform,
+                            action_message_id=message_id,
+                            invocation=invocation,
+                        ),
+                    }
+                    for invocation in plan.invocations
+                ],
+            }
         if action.get("action") == "session_rollover":
             if not effective.session_handoff:
                 raise ValueError("HOST_SESSION_HANDOFF_UNAVAILABLE")

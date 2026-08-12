@@ -118,3 +118,23 @@ def test_spawn_result_requires_exact_attestation_set() -> None:
             invocations=(_spec(),),
             attestations=[],
         )
+
+
+def test_native_worker_handle_cannot_replace_canonical_worker_id() -> None:
+    attestation = WorkerAttestation.completed(
+        platform=HostPlatform.CODEX,
+        action_message_id="action-1",
+        invocation=_spec(),
+        effective_effort="xhigh",
+        isolation_evidence="fork_turns=none",
+        visible_capabilities=("may_drive_loop", "may_spawn_workers"),
+        actual_model="gpt-test",
+    ).to_dict()
+    attestation["worker_id"] = "019ff132-5b1d-7f44-native-handle"
+
+    with pytest.raises(WorkerAttestationError, match="ATTESTATION_WORKER_MISMATCH"):
+        validate_attestations(
+            action_message_id="action-1",
+            invocations=(_spec(),),
+            attestations=[attestation],
+        )

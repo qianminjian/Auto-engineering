@@ -63,6 +63,8 @@ Violating the letter of this rule is violating the spirit of this rule.
     if action.spawn exists:
          validate HostCapabilities against action.spawn
          consume action.spawn.invocations[] exactly; instruction is diagnostic only
+         consume action.host_execution.workers[] as the evidence-template SSOT
+         keep native agent/thread IDs only as native_worker_handle; never replace worker_id
          原生 Agent 容量耗尽时，回收/等待后重试一次
          if still exhausted, submit spawned=false with
          spawn_error_code=HOST_AGENT_CAPACITY and the original spawn_error
@@ -71,10 +73,13 @@ Violating the letter of this rule is violating the spirit of this rule.
              for Codex use fork_turns="none"; the worker must not drive Loop or spawn
          else:
              read prompt_ref, verify prompt_hash, invoke worker[i]
-             require worker[i] to overwrite action.spawn.agents[i].receipt_path,
-             recording requested_effort and actual_model (or "unknown")
-             collect all receipts, then merge using action.subagent_prompt
-         collect WorkerOutcome without coordinator-only fields, write worker_attestations,
+         coordinator overwrites each host_execution.workers[i].receipt_path from its
+         pending receipt template; only after native completion set status=completed
+         and fill actual_model/completion/output evidence
+         collect all receipts, then merge using action.subagent_prompt
+         collect WorkerOutcome without coordinator-only fields; build worker_attestations
+         from pending host_execution templates, mark completed only after native success,
+         without re-deriving canonical fields,
          and build coordinator result using action.expected_format
      else:
          execute developer work inline

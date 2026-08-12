@@ -71,8 +71,25 @@ def evaluate_compatibility(
     return CompatibilityDecision.COMPATIBLE
 
 
+def incompatible_fields(
+    *, issued: RuntimeRevision, current: RuntimeRevision,
+) -> dict[str, dict[str, str]]:
+    """返回会阻断 active Action 的协议字段差异。"""
+
+    fields = ("protocol_version", "action_contract_version")
+    return {
+        field: {
+            "expected": getattr(current, field),
+            "actual": getattr(issued, field),
+        }
+        for field in fields
+        if getattr(issued, field) != getattr(current, field)
+    }
+
+
 __all__ = [
     "CompatibilityDecision",
     "RuntimeRevision",
     "evaluate_compatibility",
+    "incompatible_fields",
 ]

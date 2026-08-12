@@ -89,6 +89,22 @@ def test_unknown_protocol_without_migrator_is_incompatible() -> None:
     ) is CompatibilityDecision.INCOMPATIBLE
 
 
+def test_runtime_revision_diff_names_incompatible_fields() -> None:
+    from auto_engineering.loop.runtime_revision import incompatible_fields
+
+    issued = _revision()
+    current = RuntimeRevision.from_dict({
+        **issued.to_dict(),
+        "protocol_version": "1.2",
+        "action_contract_version": "1.2",
+    })
+
+    assert incompatible_fields(issued=issued, current=current) == {
+        "protocol_version": {"expected": "1.2", "actual": "1.1"},
+        "action_contract_version": {"expected": "1.2", "actual": "1.1"},
+    }
+
+
 def test_restore_activates_new_prompt_revision_only_after_active_action(
     tmp_path, monkeypatch
 ) -> None:
@@ -129,3 +145,38 @@ def test_restore_activates_new_prompt_revision_only_after_active_action(
     ] == "new-prompt-revision"
     assert restored._state.pending_runtime_revision is None
     restored_store.close()
+
+
+def test_event_store_restore_does_not_require_legacy_checkpoint(tmp_path) -> None:
+    from unittest.mock import MagicMock
+
+    from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
+    from auto_engineering.loop.event_store import SQLiteEventStore
+    from auto_engineering.loop.tick_orchestrator import TickOrchestrator
+
+    (tmp_path / "pyproject.toml").write_text("[project]\nname='event-only'\n")
+    (tmp_path / "event_only").mkdir()
+    checkpoint_store = SQLiteCheckpointStore(tmp_path / "checkpoints.db")
+    guardrail = MagicMock()
+    guardrail.check.return_value = MagicMock(action="pass")
+    with SQLiteEventStore(tmp_path / "events.db") as events:
+        original = TickOrchestrator(
+            tmp_path,
+            checkpoint_store=checkpoint_store,
+            event_store=events,
+            guardrail=guardrail,
+        )
+        action = original.init("验证纯事件恢复")
+
+        assert checkpoint_store.load_latest() is None
+        restored = TickOrchestrator.restore(
+            tmp_path,
+            checkpoint_store,
+            event_store=events,
+            thread_id=action["thread_id"],
+            guardrail=guardrail,
+        )
+
+        assert restored._state.thread_id == action["thread_id"]
+        assert restored._active_action == action
+    checkpoint_store.close()

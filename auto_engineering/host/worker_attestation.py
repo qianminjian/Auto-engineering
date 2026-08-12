@@ -155,6 +155,34 @@ def validate_attestations(
     return parsed
 
 
+def attestation_template(
+    *,
+    platform: HostPlatform,
+    action_message_id: str,
+    invocation: WorkerInvocationSpec,
+) -> dict[str, Any]:
+    """由宿主适配层物化证明固定字段，避免 Coordinator 手工推导。"""
+
+    isolation = {
+        HostPlatform.CODEX: "fork_turns=none",
+        HostPlatform.CLAUDE_CODE: "fresh_context",
+    }.get(platform)
+    if isolation is None:
+        raise WorkerAttestationError("ATTESTATION_PLATFORM_UNSUPPORTED")
+    template = WorkerAttestation.completed(
+        platform=platform,
+        action_message_id=action_message_id,
+        invocation=invocation,
+        effective_effort=invocation.requested_effort,
+        isolation_evidence=isolation,
+        visible_capabilities=tuple(sorted(invocation.capabilities)),
+        actual_model="unknown",
+    ).to_dict()
+    template["status"] = "pending"
+    return template
+
+
 __all__ = [
-    "WorkerAttestation", "WorkerAttestationError", "validate_attestations",
+    "WorkerAttestation", "WorkerAttestationError", "attestation_template",
+    "validate_attestations",
 ]

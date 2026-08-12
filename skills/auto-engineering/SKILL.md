@@ -148,13 +148,19 @@ Codex 适配层以当前会话实际暴露的工具清单为能力事实源：
 
 1. 当前严格合同：无论单/多 Worker，都逐个读取并校验
    `action.spawn.invocations[i].prompt_ref` 与 `prompt_sha256`，并原样使用该 invocation
-   的 effort、isolation、capabilities 和 receipt_path。
+   的 effort、isolation、capabilities 和 `action.spawn.invocations[i].receipt_path`。
+   宿主适配器已在
+   `action.host_execution.workers[i]` 物化同一 invocation 的证明模板；严格合同下必须
+   使用该模板，不得根据原生 Agent 返回值重新推导协议字段。
 2. 仅当 active Action 的 Runtime Vector 明确是旧合同且没有 `contract_version` 时，才按
    旧 `subagent_prompt` / `spawn.agents[]` 只读兼容；当前 Action 禁止混用旧字段推导执行。
 3. 按 `action.spawn.count` 和 `action.spawn.parallel` 创建隔离执行。
-4. Worker 完成后，由宿主协调器为每个 Worker 以单个 JSON 写入
-   `action.spawn.invocations[i].receipt_path`，记录 `requested_effort` 与宿主可见的
-   `actual_model`（不可见时写 `unknown`）；Worker 不得修改
+4. Worker 完成后，将宿主返回的线程/Agent ID 只写入对应
+   `action.host_execution.workers[i].native_worker_handle`，绝不能替换规范 `worker_id`。
+   宿主协调器基于 `host_execution.workers[i].receipt` 模板补充完成时间与输出证据，
+   仅在原生 Worker 成功返回后把 `status` 从 `pending` 改为 `completed`，并以单个 JSON
+   覆写模板指定的 `receipt_path`；只允许将宿主可见的 `actual_model`
+   （不可见时保留 `unknown`）写回模板。Worker 不得修改
    `.ae-state/spawn-challenges/` 或 shared total receipt（workers must not write the shared total proof）。
    Receipt 超过 Action 策略声明的上限时必须将完整结果写入内容寻址 Artifact
    Store，receipt 只保留策略允许的有界摘要与带 SHA-256 的 `artifact_ref`；
@@ -164,8 +170,10 @@ Codex 适配层以当前会话实际暴露的工具清单为能力事实源：
    保持不可变。
 6. 从真实输出中提取 `action.expected_format` 要求的字段。只有全部要求的 Worker
    实际完成后，result 才能写 `"spawned": true`。
-7. 每个 Worker 完成后由宿主生成 `worker_attestations[]`，绑定 Action message_id、worker_id、
-   prompt_sha256、requested/effective effort、实际模型、隔离证据和可见能力摘要。Worker
+7. 每个 Worker 完成后，宿主从 `host_execution.workers[i].attestation` 模板组装
+   `worker_attestations[]`；只允许补充真实 `actual_model`，不得替换模板中的 Action
+   message_id、worker_id、prompt_sha256、effort、隔离证据或能力摘要；只有对应 Worker
+   成功后才能将其 `status` 从 `pending` 改为 `completed`。Worker
    Outcome 不得包含 `spawned`、总 proof 或 Loop 控制字段；`fork_turns=none` 只证明会话
    turns 隔离，不得声明为完整工具沙箱。
 

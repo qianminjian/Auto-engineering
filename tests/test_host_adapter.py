@@ -104,6 +104,68 @@ def test_execution_report_rejects_unstructured_host_payload() -> None:
         adapter.report_execution({"status": "completed"})
 
 
+@pytest.mark.parametrize(
+    ("platform_name", "isolation"),
+    [("CODEX", "fork_turns=none"), ("CLAUDE_CODE", "fresh_context")],
+)
+def test_adapter_materializes_strict_worker_evidence_templates(
+    tmp_path, platform_name: str, isolation: str,
+) -> None:
+    from auto_engineering.host import HostPlatform
+    from auto_engineering.host.adapters import adapter_for
+    action = {
+        "action": "plate_deep_audit",
+        "stage": "plate_deep_audit",
+        "message_id": "action-multi",
+        "thread_id": "multi-evidence",
+        "tick": 1,
+        "spawn": {
+            "contract_version": "1.0",
+            "count": 3,
+            "effort": "xhigh",
+            "parallel": True,
+            "invocations": [
+                {
+                    "worker_id": f"plate_deep_audit-{index}",
+                    "role": role,
+                    "prompt_ref": f".ae-state/effects/prompt/{index}.txt",
+                    "prompt_sha256": str(index) * 64,
+                    "requested_effort": "xhigh",
+                    "isolation": "fresh_context",
+                    "capabilities": {
+                        "may_drive_loop": False,
+                        "may_spawn_workers": False,
+                    },
+                    "receipt_path": f".ae-state/spawn-proofs/{index}.json",
+                }
+                for index, role in enumerate(("contract", "architecture", "quality"), 1)
+            ],
+        },
+    }
+    adapter = adapter_for(HostPlatform[platform_name])
+    profile = adapter.profile(
+        detected=adapter.capabilities,
+        authorized=adapter.capabilities,
+    )
+
+    mapped = adapter.map_action(action, profile=profile).payload
+    executions = mapped["host_execution"]["workers"]
+
+    assert len(executions) == 3
+    for index, execution in enumerate(executions):
+        invocation = action["spawn"]["invocations"][index]
+        assert execution["worker_id"] == invocation["worker_id"]
+        assert execution["native_worker_handle"] is None
+        assert execution["receipt_path"] == invocation["receipt_path"]
+        assert execution["receipt"]["worker"] == invocation["worker_id"]
+        assert execution["receipt"]["status"] == "pending"
+        assert execution["attestation"]["worker_id"] == invocation["worker_id"]
+        assert execution["attestation"]["status"] == "pending"
+        assert execution["attestation"]["prompt_sha256"] == invocation["prompt_sha256"]
+        assert execution["attestation"]["isolation_evidence"] == isolation
+        assert len(execution["attestation"]["visible_capabilities_sha256"]) == 64
+
+
 @pytest.mark.parametrize("platform_name", ["CLAUDE_CODE", "CODEX"])
 def test_rollover_maps_to_same_fail_closed_host_protocol(platform_name: str) -> None:
     from auto_engineering.host import HostPlatform
