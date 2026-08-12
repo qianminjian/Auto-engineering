@@ -129,6 +129,9 @@ Codex 适配层以当前会话实际暴露的工具清单为能力事实源：
 - `action.spawn.effort` 映射到 `collaboration.spawn_agent` 的
   `reasoning_effort`；例如 `xhigh` 必须按 `xhigh` 传入，并选择允许该推理参数的
   `fork_turns`，不得因需要高推理强度而降级为 unavailable。
+- Codex 创建 Worker 必须使用 `fork_turns="none"`，只传当前 Worker Prompt；Worker
+  不继承 Coordinator 聊天和 Loop Skill 驱动职责，不得再次调用 `$auto-engineering`、
+  `dev-loop` 或 `collaboration.spawn_agent`。
 - `action.spawn.parallel=true` 时，只要当前会话允许创建所需数量的独立 Agent，必须按
   `action.spawn.count` 发起原生调用；不能用“本轮尚未创建”为由报告并行能力缺失。
 - 当上述工具已经暴露时，工具调用明确失败前，不得报告 `HOST_CAPABILITY_UNAVAILABLE`；

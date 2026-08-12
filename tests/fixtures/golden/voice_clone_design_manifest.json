@@ -1,0 +1,18 @@
+{
+  "fixture_version": "1.0",
+  "source_sha256": "d9deec7142d86bed9d6fd782bb8f752db2bf8b677c90ff39a1550b5512f8ef5f",
+  "design_title": "V1.0 语音克隆页面",
+  "binding_decisions": {
+    "product_architecture": "pure_frontend_react_spa",
+    "api_key_storage": "react_memory_only",
+    "direct_minimax_api": "v1_current_design",
+    "bff": "future_improvement",
+    "tdd": "red_green_refactor"
+  },
+  "required_layers": [
+    "entry", "container", "component", "hook", "api", "utility", "type", "style"
+  ],
+  "required_components": 11,
+  "planned_test_files": 17,
+  "planned_test_cases": 127
+}

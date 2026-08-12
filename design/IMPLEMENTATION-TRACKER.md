@@ -1,11 +1,10 @@
 # Auto-Engineering 当前实施跟踪表
-> 更新：2026-08-12｜目标阶段：Phase 81 状态协调｜Phase 1-62 明细见 `design/HISTORY.md`｜状态：`☐` 未开始／`◐` 进行中／`✅` 已验证
+> 更新：2026-08-12｜目标阶段：Phase 82 真实宿主闭环｜Phase 1-62 明细见 `design/HISTORY.md`｜状态：`☐` 未开始／`◐` 进行中／`✅` 已验证
 ## 基线与阶段
 | 里程碑 | 状态 | 证据 |
 |---|:---:|---|
 | Phase 1-48 | ✅ | Git 历史与 `design/HISTORY.md` |
-| Phase 49 Host-neutral Core | ✅ 22/22 | 双宿主基础适配与发布验收 |
-| Phase 50 Codex 迁移收口 | ✅ 8/8 | T233-T240；覆盖率 90.15% |
+| Phase 49-50 Host-neutral Core/Codex 收口 | ✅ 30/30 | 双宿主基础适配；T233-T240；覆盖率 90.15% |
 | Phase 51 质量收口 | ✅ 1/1 | T241；1889 passed / 1 skipped，零告警 |
 | Phase 52 Protocol Envelope | ✅ 5/5 | T242-T246；1913 passed / 1 skipped |
 | Phase 53 Event Store | ✅ 6/6 | T247-T252；1945 passed / 1 skipped |
@@ -71,7 +70,7 @@
 | 范围 | 状态 | 当前证据 |
 |---|:---:|---|
 | T337-T340 配置初始化 | ✅ | schema/standard profile/首次配置/双宿主 archive 已验收 |
-| T341-T350 上下文与成本治理 | ◐ | 固定 Tick rollover 已退役；真实双宿主 150 Tick 仍归 T411/T412 |
+| T341-T350 上下文与成本治理 | ◐ | 固定 Tick rollover 已退役；无 LLM 压测与真实场景/成本门禁归 T411/T412 |
 | T351-T354 真跑证据链 | ✅ | Tick 编号、进度守恒、制品版本已验收 |
 | T355-T358 位置无关 Runner | ✅ | bundled `ae-run` 与双宿主外部 cwd smoke 已验收；明细见 HISTORY/Git |
 ## Phase 73：Init Engineering 运行时解耦（设计见 `design/v5.8-Init-Runtime-Decoupling-Design.md`）
@@ -98,7 +97,7 @@
 | P1 | T377 | status 异常降级 | While batch state 读取失败, when `dev-loop --status --verbose` 生成摘要, the CLI shall 返回可用的降级摘要且不引用未初始化变量 | ✅ 20 回归测试；Ruff/mypy/check-gate 通过 |
 | P2 | T378 | 测试失败缓存清零 | While 测试跨会话失败计数存在, when 同一测试随后通过, the diagnostic cache shall 删除该测试计数并不继续报告陈旧失败 | ✅ 2 回归测试；全量 2166 passed/1 skipped |
 | P1 | T379 | 历史秘密与依赖确认 | While 发布候选进入真跑或发布, when Git 历史扫描或依赖审计发现疑似风险, the release record shall 区分当前树、历史树和未验证项，未经人工确认不得宣称安全已闭环 | ◐ 当前 tracked files 无发现；历史 15 条与依赖审计待确认 |
-| P0 | T380 | 真实宿主 150 Tick 证据协议 | While Claude Code 与 Codex 执行候选制品, when 5-10 Tick、30-50 Tick 和 150 Tick 阶段完成, the evidence shall separately record product install, usage completeness, duplicate blocks, recovery and semantic equivalence | ◐ 协议已登记，待真实宿主执行 |
+| P0 | T380 | 真实宿主分层证据协议 | While Claude Code 与 Codex 执行候选制品, when Canary 与完整黄金项目完成, the evidence shall separately record product install, usage completeness, duplicate blocks, recovery and semantic equivalence | ◐ 协议已登记，按 T445 补齐场景/成本门禁后执行 |
 ## Phase 76：设计文档全量/范围入口
 | 优先级 | ID | 任务 | EARS 验收 | 状态 |
 |---:|---|---|---|:---:|
@@ -131,7 +130,7 @@
 | P0 | T408 | 纯 ActionCompiler 与 Effect Executor | While 相同输入、identity 和 clock 被提供, when Action 重复编译, the compiler shall 生成字节等价草案且不写文件，副作用由独立执行器原子处理 | ✅ Prompt/proof/challenge 通过 EffectIntent 执行；EffectReceipt 与 Event/Projection/Action 同 Tick 事务提交并覆盖回滚；304 项第二批矩阵通过 |
 | P0 | T409 | TickKernel 收敛与旧 façade 绞杀 | While StageHandler 返回 TransitionDecision, when Kernel 应用转换, it shall 不解释 Stage 专属命令式字段，并逐阶段退役旧可变写入路径 | ✅ façade 已无 Stage 专属分支；Architecture/Offload/Result/Context/Prevalidation/Gate/Audit 均由独立服务承载；2254 passed/1 skipped |
 | P1 | T410 | 协议与恢复遗留语义清理 | While rollover、Prompt、Policy 或 Schema 发生迁移, when 契约校验, the system shall 只保留异常恢复原因并给出稳定兼容或退役诊断 | ✅ handoff 原因已收口；固定 Tick/时间/输入阈值只保留弃用诊断且不参与 Runtime decision |
-| P0 | T411 | 跨版本、长轨迹与双宿主验收 | While 线程跨运行时升级、自动 compaction 和故障恢复运行至少 150 Tick, when Claude/Codex 完成轨迹, both hosts shall 产生等价终态、零非预期停顿且成本门禁完整 | ◐ 150 Tick 双宿主确定性轨迹及 Claude/Codex archive smoke 通过；真实产品长跑仍 not_run |
+| P0 | T411 | 跨版本、长轨迹与双宿主验收 | While 确定性 150 Tick 压测与真实业务场景分别运行, when Claude/Codex 完成产品轨迹, both hosts shall 产生等价语义、零非预期停顿且成本门禁完整 | ◐ 无 LLM 150 Tick 轨迹及 archive smoke 通过；真实产品 L3/L4 仍 not_run |
 | P0 | T412 | Phase 80 发布收口 | While T404-T411、T413 完成, when 全量、覆盖率、静态、replay、fault injection、archive 和真实产品门禁执行, all required checks shall 通过后才允许生成下一 RC | ◐ 自动门禁 2266 passed/1 skipped、coverage 90%、Ruff/mypy、双宿主 archive pass；待真实产品门禁，不生成下一 RC |
 | P0 | T413 | Codex 原生子代理能力绑定 | While Codex 暴露 `collaboration.spawn_agent`, when spawn Action 要求单个或并行 Worker, the host Skill shall 显式映射 `reasoning_effort` 并先调用真实工具，禁止在工具调用失败前主观报告 `HOST_CAPABILITY_UNAVAILABLE` | ✅ RED 契约复现；Skill/Command 显式绑定工具清单、`reasoning_effort=xhigh` 与 CONTINUE；专项 69 passed/1 skipped、全量 2255 passed/1 skipped |
 | P0 | T414 | 旧流/PlanPatch 事故持久化 | While 外部真跑报告与事件证据已确认, when 修复会话变化, the project shall 保留脱敏事实、根因、不变量和关闭标准 | ✅ 事故资产已回填根因、不变量、关闭标准与验证证据 |
@@ -146,15 +145,16 @@
 > 权威设计：`design/v5.8-State-Reconciliation-Design.md`；完成前冻结点状补丁，rc.5 不再续跑真实项目。
 | 优先级 | ID | 任务 | EARS 验收 | 状态 |
 |---:|---|---|---|:---:|
-| P0 | T422 | 事故与状态协调设计资产 | While 隐藏状态错误续作已复现, when 会话切换, the project shall 保留事实、根因、用户决策和关闭标准 | ✓ 用户已批准；事故、Design、Plan、BEACON、Tracker 已建立 |
-| P0 | T423 | InvocationIntent 与有界兼容检查 | While 用户显式提交设计文档且 active thread 存在, when 启动选择运行, the Core shall 比较设计摘要、项目锚点、Profile roots 和 active Action 后判定 compatible/conflict/corrupt | ✓ 有界 Inspector、真实 Baseline 摘要兼容、legacy roots 复核；29 项定向测试通过 |
-| P0 | T424 | 跨宿主状态协调 Gate | While 状态为 conflict, when Action 编译, both hosts shall 在任何项目写入前展示重新初始化/修复续作且不得代选 | ✓ Gate/WAIT_USER、双宿主规则、选择事件与 EventStore 原子快照已实现 |
-| P0 | T425 | 可恢复重新初始化 | While 用户选择 reinitialize, when Result 提交, the Core shall 逻辑关闭旧 thread、保留审计并从当前设计创建新 thread | ✓ 旧 thread supersede、审计保留、lease 切换、新 thread 与幂等回放；35 项相关回归通过 |
-| P0 | T426 | PLAN_RECONCILE 与任务重建 | While 用户选择 reconcile, when 当前设计、代码和旧计划比较, the Core shall 保留可验证完成项、supersede 失效任务并生成新 Work Set | ✓ 候选校验、Current Work Set 激活、历史隔离、重放及 Core 证据复核已闭环 |
-| P0 | T427 | 状态跟踪投影与 status | While plan 已协调, when status/进度生成, the system shall 仅统计当前 Work Set并展示旧新 revision、保留与 superseded 数量 | ✓ dev-loop/status 投影 revision、四类统计、只读历史和真实 next task；74 项相关回归通过 |
-| P0 | T428 | task-aware 验证证据 | While 业务 task 提交 smoke 或自报 passed, when Result/Gate 校验, the Core shall 拒绝替代业务测试并按 task kind 接受真实证据 | ✓ 业务任务强制 Core test，setup/config/docs 限定 Core smoke；任务证据账本、快照 freshness 和 environment_failure 路由已实现，278 项相关回归通过 |
-| P1 | T429 | Contract Gate 可信语义 | While contract 仅以字符串出现在源码, when Gate 运行, the result shall 只作辅助 finding；权威 pass 需要可执行 contract test | ✓ 静态命中/缺失统一为非阻断 advisory；`contract_test` 权威完成绑定 Core test Gate，307 项相关回归通过 |
+| P0 | T422-T427 | 状态冲突协调与任务续作 | While 显式设计与隐藏状态冲突, when 用户选择重开或协调, the Core shall 保留审计、重建当前 Work Set 并只投影有效 revision | ✅ Inspector、Gate、reinitialize/reconcile、投影和重放已闭环 |
+| P0 | T428-T429 | task-aware 证据与 Contract Gate | While 业务任务提交证据, when Gate 校验, the Core shall 拒绝 smoke 冒充业务测试并要求可执行 contract test | ✅ 307 项相关回归通过 |
 | P0 | T430 | Phase 81 全门禁与真实产品复验 | While T423-T429 完成, when 隐藏状态、双路径、幂等、跨宿主和产品安装轨迹执行, all checks shall 通过后才允许生成下一 RC | ◐ 2301/1、coverage 90%、Ruff/mypy/sync、Claude/Codex archive smoke 通过；真实 product install/长跑仍 `not_run`，不得生成下一 RC |
-| P0 | T431 | 自动续跑阶段事件所有权 | While setup/escalation 改变当前 Stage, when EventStore 编译并提交下一 Action, the Core shall 发出唯一 `StageAdvanced`、可重放到相同下一 Stage，且不得以 fallback 掩盖无所有权变化 | ✓ 统一所有权与失败恢复；2305/1、90% coverage、Ruff/mypy/sync、双宿主 archive smoke 通过；产品真跑待验 |
-| P0 | T432 | Gap Review 向导与主链路真跑修复 | While gap/plan/critic/new-project 协议缺陷已由真跑复现, when Core 生成或接收消息, the system shall 逐项持久化决策、分离展示与路由标识、保持 Schema SSOT，并可由事件重放安全续作 | ✅ AE-01~10 关闭；全量 100%（1 skipped）、coverage 90%、Ruff/mypy/sync、Claude/Codex archive smoke 通过 |
-| P0 | T433 | Agent 资源恢复与 Repair 契约收敛 | While Worker 容量不足或 Architect refine 运行, when 宿主/Core 处理失败与计划, the system shall 保持 active Action 可恢复、有限回收重试，并由 Core 注入 revision 与 repair 模板 | ✅ 279 项定向、2327/1 全量、90% coverage、Ruff/mypy/sync、双宿主 archive smoke 通过；真实产品长跑独立验收 |
+| P0 | T431-T433 | 自动续跑、Gap 主链路与 Agent 资源/Repair 收敛 | While setup/gap/worker/refine 主链路运行, when Core/Host 处理状态与失败, the system shall 保持事件、Action、设计路由和恢复语义一致 | ✅ 2327/1、90% coverage、静态/sync/archive；后续真跑又证伪 Worker 身份与设计权威，转 T434-T439 |
+## Phase 82：真实宿主闭环与设计权威（审计收敛）
+> 权威设计/计划：`design/v5.8-Real-Host-Closure-Design.md`、`design/v5.8-Real-Host-Closure-PLAN.md`。
+| 优先级 | ID | 任务 | EARS 验收 | 状态 |
+|---:|---|---|---|:---:|
+| P0 | T434 | 真实宿主闭环总体验收 | While 内部自动门禁无法覆盖真实宿主, when Phase 82 完成, L1-L4 shall 分别证明协议、轨迹、Canary 和完整黄金项目，不以 archive 或测试数量冒充 product install | ◐ 回归基线 2344/1、90%；真实双宿主 L3/L4 未运行，发布阻断 |
+| P0 | T435-T439 | 身份、Invocation、Authority、Fake Host 与黄金语义基础 | While 基础模块已有定向测试, when 审计生产链, the evidence shall 区分参考实现与真实宿主强制路径 | ◐ 模块/定向测试已完成；审计发现结果污染、生产绑定、完整轨迹和语义门禁缺口 |
+| P0 | T440-T441 | 严格 SpawnPlan、结果分离、Host Attestation 与版本协商 | While 任一 spawn Action 被真实宿主执行, when Worker 返回, the host shall 只消费机器 invocation 并提交与 Action/Prompt/能力绑定的证明 | ☐ 先修复 Worker 收到 Coordinator `spawned` 字段的 P0 契约错误 |
+| P0 | T442 | Design Decision Ledger、全阶段权威与上下文去重 | While 显式决策、future 项和 Research 并存, when 计划或修复激活, the Core shall 拒绝未批准变更并只传递去重后的相关义务 | ☐ 来源标签升级为可验证决策账本；无账本明确 partial enforcement |
+| P0 | T443-T446 | 完整轨迹、黄金场景、Hermetic Release 与双宿主收口 | While 候选制品进入验收, when 故障矩阵、Canary 和完整项目执行, both hosts shall 产生等价语义、完整 usage 和零非预期停顿 | ☐ 150 Tick 限定为无 LLM 压测；真实运行按场景/成本门禁，不生成下一 RC |

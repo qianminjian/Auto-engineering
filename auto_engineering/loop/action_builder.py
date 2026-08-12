@@ -16,6 +16,8 @@ from typing import TYPE_CHECKING
 
 from auto_engineering.config.constants import _SPAWN_CONFIG
 from auto_engineering.config.feature_flags import feature_status_for_action
+from auto_engineering.host.runtime_identity import ExecutionIdentity
+from auto_engineering.loop.design_authority import DesignAuthorityPolicy
 from auto_engineering.loop.effects import (
     EffectExecutor,
     EffectIntent,
@@ -471,6 +473,9 @@ class ActionBuilder:
         the path.  Token is never embedded in instruction text → PII-safe.
         """
         result: dict = {**base, "action": action}
+        result["execution_identity"] = ExecutionIdentity.coordinator(
+            stage=action,
+        ).to_dict()
         compiled_prompt = False
         spawn = _SPAWN_CONFIG.get(action)
         if spawn is not None:
@@ -531,6 +536,7 @@ class ActionBuilder:
                             f".ae-state/spawn-proofs/{receipt_token}.json"
                         ),
                         "requested_effort": spawn.get("effort", "high"),
+                        "execution_identity": worker.execution_identity,
                     })
                 result["spawn"]["agents"] = agents
                 compiled_prompt = True
@@ -550,6 +556,9 @@ class ActionBuilder:
                         expected_format=worker_expected_format,
                     )
                     result["subagent_prompt"] = bundle.worker_prompts[0].prompt
+                    result["worker_execution_identity"] = (
+                        bundle.worker_prompts[0].execution_identity
+                    )
                     result.setdefault("extensions", {})[
                         "context_manifest"
                     ] = bundle.context_manifest
@@ -725,6 +734,7 @@ class ActionBuilder:
                 self._design_doc.path if self._design_doc else None),
             "project_root": str(self.project_root),
             "requirement": self._state.requirement,
+            "design_authority": DesignAuthorityPolicy.default().to_dict(),
         }, expected_format={
             "gaps": (
                 "[{id, design_section_ref, grade, clarity, summary, depends_on, "
@@ -803,6 +813,7 @@ class ActionBuilder:
                 "gap": research_gap,
                 "knowledge_sources": knowledge_sources,
                 "requirement": self._state.requirement,
+                "design_authority": DesignAuthorityPolicy.default().to_dict(),
             },
             required_capabilities=["web_search"],
             gap=research_gap,
@@ -912,6 +923,7 @@ class ActionBuilder:
         )
         if research_context:
             extra["research_and_design_context"] = research_context
+        extra["design_authority"] = DesignAuthorityPolicy.default().to_dict()
         is_refine = bool(self._state.refine_request_json) and not is_reconcile
         if is_refine:
             baseline = self._state.architecture_baseline or {}
@@ -973,6 +985,7 @@ class ActionBuilder:
             **({"plan_revision": self._state.plan_refine_count} if is_refine else {}),
             "feedback": extra.get("feedback", base.get("feedback")),
             "research_and_design_context": research_context,
+            "design_authority": extra["design_authority"],
         }, expected_format={
             "plan": "string (markdown, min 50 chars)",
             **expected_plan,

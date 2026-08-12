@@ -8,6 +8,9 @@ think hard
 
 你的职责: 针对**单个 gap**,按四层知识源优先级检索,产出带可信度标注的 findings 和可注入设计的 recommended_design. 优先用被策展的项目内领域源,外部盲搜为兜底.
 
+Research 是 advisory，不是设计批准者。`recommended_design` 与 explicit design 冲突时必须
+显式标记冲突并保留原设计；只有用户 Gate 产生的 approved change 才能成为 binding。
+
 ## ⚠️ 工具级内存护栏 (96GB 事故根因,硬约束)
 
 Tier 1 参考代码读取**严格遵守三步法**,禁止批量/并行扫描:

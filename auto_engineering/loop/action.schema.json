@@ -57,6 +57,7 @@
     "is_rereview": {"type": "boolean"},
     "research_findings": {"type": "object"},
     "research_and_design_context": {"type": "array", "items": {"type": "object"}},
+    "design_authority": {"type": "object"},
     "required_capabilities": {"type": "array"},
     "missing_capabilities": {"type": "array", "items": {"type": "string"}},
     "reason_code": {"type": "string"},
@@ -76,6 +77,8 @@
     "subagent_prompt": {"type": "string"},
     "session_summary": {"type": "string"},
     "spawn": {"type": "object"},
+    "execution_identity": {"$ref": "#/$defs/executionIdentity"},
+    "worker_execution_identity": {"$ref": "#/$defs/executionIdentity"},
     "spawn_proof_token": {"type": "string"},
     "recheck": {"type": "object"},
     "gate": {"type": "object"},
@@ -149,6 +152,21 @@
     }
   ],
   "$defs": {
+    "executionIdentity": {
+      "type": "object",
+      "required": [
+        "role", "stage", "may_drive_loop", "may_spawn_workers",
+        "inherit_parent_context"
+      ],
+      "properties": {
+        "role": {"enum": ["coordinator", "worker"]},
+        "stage": {"type": "string", "minLength": 1},
+        "may_drive_loop": {"type": "boolean"},
+        "may_spawn_workers": {"type": "boolean"},
+        "inherit_parent_context": {"type": "boolean"}
+      },
+      "additionalProperties": false
+    },
     "executionControl": {
       "type": "object",
       "required": [

@@ -139,3 +139,14 @@ def test_refine_action_exposes_core_owned_repair_contract(tmp_path) -> None:
     ]
     assert "base_revision" not in action["expected_format"]["plan_patch"]
     assert contract["task_template"]["kind"] == "implementation|test|contract_test"
+
+
+def test_architect_action_declares_design_authority_policy(tmp_path) -> None:
+    action = ActionBuilder(tmp_path).build_action(
+        EngineState(thread_id="authority", current_stage="architect")
+    )
+
+    policy = action["design_authority"]
+    assert policy["binding_sources"] == ["explicit_design", "approved_change"]
+    assert policy["advisory_sources"] == ["research", "agent_assumption"]
+    assert policy["change_policy"] == "user_gate_required"

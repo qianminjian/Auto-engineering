@@ -21,6 +21,8 @@ think hard
 3. 给出一个可解释推荐：resolution、reason、confidence；推荐不是用户决策
 4. 为每个选项声明含义和 enabled；architectural gap 必须禁用纯 Defer
 5. 若解析层次为空 (plates=[] 或 parse_warnings 报"无可识别层次") → 报一个 architectural gap 兜底
+6. 明确设计决策不是 gap；“未来改进”不得提升为当前版本阻断项。最佳实践与设计冲突时，
+   只记录 advisory 风险，未经用户 Gate 不得改变 explicit design
 
 ## grade 分级 rubric (模糊的 scope,驱动阻塞约束)
 

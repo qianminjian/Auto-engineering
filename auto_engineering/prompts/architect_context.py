@@ -24,6 +24,8 @@ def build_architect_research_context(
                         "gap_id": str(gap_id),
                         "source": str(item.get("source", "supplement")),
                         "content": str(item.get("content", ""))[:4000],
+                        "authority": "advisory",
+                        "change_policy": "user_gate_required",
                     })
     for gap_id, item in research_archive.items():
         if isinstance(item, dict):
@@ -31,5 +33,7 @@ def build_architect_research_context(
                 "gap_id": str(gap_id),
                 "source": "research_archive",
                 "content": str(item.get("recommended_design") or item.get("findings") or "")[:4000],
+                "authority": "advisory",
+                "change_policy": "user_gate_required",
             })
     return entries[:16]

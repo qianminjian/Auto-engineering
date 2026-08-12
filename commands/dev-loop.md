@@ -61,7 +61,8 @@ Violating the letter of this rule is violating the spirit of this rule.
          if still exhausted, submit spawned=false with
          spawn_error_code=HOST_AGENT_CAPACITY and the original spawn_error
          if action.spawn.count == 1:
-             invoke one worker with action.subagent_prompt
+             invoke one isolated worker with action.subagent_prompt
+             for Codex use fork_turns="none"; the worker must not drive Loop or spawn
          else:
              read prompt_ref, verify prompt_hash, invoke worker[i]
              require worker[i] to overwrite action.spawn.agents[i].receipt_path,

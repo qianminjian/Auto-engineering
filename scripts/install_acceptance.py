@@ -133,6 +133,29 @@ def _verify_checkpoint_lifecycle(
     return ["status", "resume"]
 
 
+def _verify_runtime_semantic_contract(
+    install_root: Path,
+    environment: dict[str, str],
+) -> list[str]:
+    """在解压制品内执行身份与设计权威的最小语义契约。"""
+
+    program = (
+        "from auto_engineering.host.runtime_identity import ExecutionIdentity;"
+        "from auto_engineering.loop.design_authority import DesignAuthorityPolicy;"
+        "w=ExecutionIdentity.worker(stage='architect');"
+        "p=DesignAuthorityPolicy.default();"
+        "assert not w.may_drive_loop and not w.may_spawn_workers;"
+        "assert p.authority_for('research').value == 'advisory';"
+        "print('semantic-contract-ok')"
+    )
+    _run(
+        ["uv", "run", "--project", str(install_root), "python", "-c", program],
+        cwd=install_root,
+        env=environment,
+    )
+    return ["runtime_identity", "design_authority"]
+
+
 def accept_archive(
     archive: Path,
     host: str,
@@ -194,6 +217,10 @@ def accept_archive(
         environment,
         tick.stdout,
     )
+    semantic_evidence = _verify_runtime_semantic_contract(
+        install_root,
+        environment,
+    )
     generated_config = project / "ae.toml"
     if not generated_config.is_file() or "metrics = \"1\"" not in generated_config.read_text(
         encoding="utf-8"
@@ -211,6 +238,7 @@ def accept_archive(
                 "minimal_tick",
                 "manifest_free_project_profile",
                 *lifecycle_evidence,
+                *semantic_evidence,
             ],
         },
         "product_install": {

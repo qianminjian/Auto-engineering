@@ -43,6 +43,11 @@ def test_architect_worker_receives_requirement_and_refine_feedback() -> None:
     assert "PLAN_REFINE" in prompt
     assert "补齐失败恢复" in prompt
     assert '"plan": "string"' in prompt
+    assert '"role": "worker"' in prompt
+    assert '"may_drive_loop": false' in prompt
+    assert '"may_spawn_workers": false' in prompt
+    assert "不得调用 Auto-Engineering Loop" in prompt
+    assert bundle.worker_prompts[0].execution_identity["role"] == "worker"
 
 
 def test_single_worker_receives_dynamic_context_in_actual_prompt() -> None:

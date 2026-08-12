@@ -82,6 +82,30 @@ def test_verify_checkpoint_lifecycle_checks_status_and_resume(
     ]
 
 
+def test_verify_runtime_semantic_contract_executes_installed_modules(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts import install_acceptance
+
+    commands: list[list[str]] = []
+
+    def fake_run(command, *, cwd, env, timeout=120):
+        commands.append(command)
+        return CompletedProcess(command, 0, "semantic-contract-ok\n", "")
+
+    monkeypatch.setattr(install_acceptance, "_run", fake_run)
+
+    evidence = install_acceptance._verify_runtime_semantic_contract(
+        tmp_path, {},
+    )
+
+    assert evidence == ["runtime_identity", "design_authority"]
+    assert commands[0][:4] == ["uv", "run", "--project", str(tmp_path)]
+    assert "ExecutionIdentity.worker" in commands[0][-1]
+    assert "DesignAuthorityPolicy.default" in commands[0][-1]
+
+
 def test_safe_extract_archive_extracts_regular_member(tmp_path: Path) -> None:
     from scripts.install_acceptance import _safe_extract_archive
 

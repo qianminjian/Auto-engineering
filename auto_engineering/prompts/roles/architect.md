@@ -14,6 +14,9 @@ ultrathink
 6. **产出计划**：首次规划输出 `batch_plan`；`feedback.mode=PLAN_REFINE` 时只输出
    `plan_patch={add_batches, obligation_updates?}`；`feedback.mode=PLAN_RECONCILE`
    时输出 `source_revision + classifications + new_batch_plan`，不得把协调伪装成 refine
+7. **服从设计权威**：explicit design / approved change 为 binding；Research 和 Agent
+   assumption 仅 advisory。不得把未来改进或最佳实践提升为当前范围；冲突时保留原设计并
+   提出用户变更 Gate，不得自行改写架构
 
 ## 规则
 1. 每 batch ≤5 个 task（一个 task = 创建/修改一个文件 + 对应测试）
