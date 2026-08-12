@@ -46,6 +46,10 @@ Violating the letter of this rule is violating the spirit of this rule.
          submit {stage:"session_claimed", claim_token, session_id, host}
          if native session handoff is unavailable: fail closed
          continue with the original active Action returned by Core
+     if control.disposition == "WAIT_RESOURCE":
+         reclaim completed native worker handles when supported
+         wait for known running workers to reach terminal state
+         重试一次，然后继续执行 Core 返回的原 active Action
      read action.instruction
      if action.stage == "gap_review":
          present only action.current_gap: problem, evidence, impact, recommendation, rationale, options
@@ -53,6 +57,9 @@ Violating the letter of this rule is violating the spirit of this rule.
          never cache later decisions locally, prefill defaults, or change current_gap.id
      if action.spawn exists:
          validate HostCapabilities against action.spawn
+         原生 Agent 容量耗尽时，回收/等待后重试一次
+         if still exhausted, submit spawned=false with
+         spawn_error_code=HOST_AGENT_CAPACITY and the original spawn_error
          if action.spawn.count == 1:
              invoke one worker with action.subagent_prompt
          else:
@@ -69,13 +76,16 @@ Violating the letter of this rule is violating the spirit of this rule.
          repair the same result file; do not advance or create another Action
          continue
      action = ae-run dev-loop --tick --result <result-file>
-3. if control.disposition == "WAIT_USER": ask only for control.reason_code
-4. if control.disposition == "TERMINAL": report action.verdict and fresh evidence
+3. if control.disposition == "WAIT_RESOURCE": do not ask the user; recover capacity and
+   re-execute the original active Action without advancing the Tick
+4. if control.disposition == "WAIT_USER": ask only for control.reason_code
+5. if control.disposition == "TERMINAL": report action.verdict and fresh evidence
 ```
 
 宿主只按 `extensions.ae.execution_control` 决定继续或停止：`CONTINUE` 必须在提交当前
 Result 后立即读取下一 Action；`WAIT_USER` 只询问 `reason_code` 对应的真实决策；只有
-`TERMINAL`、`ERROR` 或 `HANDOFF_REQUIRED` 可结束当前自动驱动。Core 不运行后台
+`WAIT_RESOURCE` 自动回收/等待后重试原 active Action；`resource_wait` 不得作为 Result
+提交。只有 `TERMINAL`、`ERROR` 或 `HANDOFF_REQUIRED` 可结束当前自动驱动。Core 不运行后台
 daemon，不得把“已输出一个 Action”当作完成。
 
 `STATE_RECONCILIATION_REQUIRED` 是旧状态与本次显式设计文档冲突的用户决策点。

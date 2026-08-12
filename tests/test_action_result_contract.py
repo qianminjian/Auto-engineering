@@ -190,7 +190,7 @@ class TestActionSchemaStagesMirrorSSOT:
 
     def test_intermediate_stages_match_ssot(self):
         intermediate = self._enum() - {
-            "gate", "skip", "session_rollover", "done", "error",
+            "gate", "skip", "resource_wait", "session_rollover", "done", "error",
         }
         if "project_setup_required" in intermediate:
             intermediate.remove("project_setup_required")

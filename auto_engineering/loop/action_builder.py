@@ -42,7 +42,12 @@ _SPAWN_INSTRUCTION = (
     "status to \"completed\" and including token, stage and completed_at=<ISO timestamp>. "
     "do NOT append a second JSON object. Do not modify "
     ".ae-state/spawn-challenges/; it is immutable Core state.\n"
-    "On failure: {{\"stage\":\"{stage}\",\"spawned\":false,\"spawn_error\":\"<reason>\"}}."
+    "If native spawn reports capacity exhaustion, first wait for known workers to finish "
+    "and reclaim their handles when the host supports it, then retry once. If capacity is "
+    "still unavailable, write {{\"stage\":\"{stage}\",\"spawned\":false,"
+    "\"spawn_error_code\":\"HOST_AGENT_CAPACITY\",\"spawn_error\":\"<reason>\"}}. "
+    "For other failures write {{\"stage\":\"{stage}\",\"spawned\":false,"
+    "\"spawn_error\":\"<reason>\"}}."
 )
 _SPAWN_MULTI_INSTRUCTION = (
     "Each agent has its own prompt in spawn.agents[] — give agent[i] spawn.agents[i].prompt.\n"
@@ -908,6 +913,28 @@ class ActionBuilder:
         if research_context:
             extra["research_and_design_context"] = research_context
         is_refine = bool(self._state.refine_request_json) and not is_reconcile
+        if is_refine:
+            baseline = self._state.architecture_baseline or {}
+            extra["repair_contract"] = {
+                "active_revision": self._state.plan_refine_count,
+                "inherited_obligations": list(baseline.get("obligations", [])),
+                "valid_plate_keys": self._valid_plate_keys(),
+                "batch_template": {
+                    "batch_id": "B<n>",
+                    "batch_title": "string",
+                    "plate_keys": ["valid_plate_key"],
+                    "design_sections": ["string"],
+                    "tasks": ["task_template"],
+                    "depends_on": [],
+                },
+                "task_template": {
+                    "id": "B<n>-T<n>",
+                    "description": "string",
+                    "kind": "implementation|test|contract_test",
+                    "module_ref": "string",
+                    "file_targets": ["path"],
+                },
+            }
         expected_plan = ({
             "result_type": "plan_reconciliation",
             "source_revision": "integer (等于 reconcile_request.source_revision)",
@@ -920,7 +947,7 @@ class ActionBuilder:
             ),
         } if is_reconcile else {
             "plan_patch": (
-                "{base_revision:int, add_batches:[{batch_id, batch_title, "
+                "{add_batches:[{batch_id, batch_title, "
                 "plate_keys:[valid_plate_key], design_sections:[string], "
                 "tasks:[...], depends_on}], "
                 "obligation_updates?:[{source_ref, "

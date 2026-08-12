@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from auto_engineering.engine.design_doc import Component, DesignDoc, Plate
 from auto_engineering.engine.state import EngineState
 from auto_engineering.loop import architecture_baseline as baseline_module
@@ -7,7 +9,13 @@ from auto_engineering.loop.architect_validation import (
     dry_run_architect_plan,
     validate_architect_obligations,
 )
-from auto_engineering.loop.architecture_baseline import build_architecture_baseline
+from auto_engineering.loop.architecture_baseline import (
+    build_architecture_baseline,
+)
+from auto_engineering.loop.architecture_candidate import (
+    ArchitectureCandidateBuilder,
+    ArchitectureCandidateError,
+)
 from auto_engineering.loop.stage_router import clear_stage_fields
 
 
@@ -190,6 +198,31 @@ def test_refine_candidate_inherits_baseline_obligations() -> None:
     )
 
     assert error is None
+
+
+def test_refine_candidate_injects_missing_active_revision() -> None:
+    result = _refine_result()
+    result["plan_patch"].pop("base_revision")
+
+    candidate = ArchitectureCandidateBuilder().build(
+        result,
+        active_revision=1,
+        current_baseline=_refine_baseline(),
+    )
+
+    assert candidate["batch_plan"][-1]["batch_id"] == "B2"
+
+
+def test_refine_candidate_rejects_explicit_stale_revision() -> None:
+    result = _refine_result()
+    result["plan_patch"]["base_revision"] = 0
+
+    with pytest.raises(ArchitectureCandidateError, match="PLAN_REVISION_CONFLICT"):
+        ArchitectureCandidateBuilder().build(
+            result,
+            active_revision=1,
+            current_baseline=_refine_baseline(),
+        )
 
 
 def test_refine_candidate_explicitly_extends_obligation_by_source_ref() -> None:

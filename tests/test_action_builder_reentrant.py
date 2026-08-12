@@ -116,3 +116,26 @@ def test_component_verifier_receives_all_batch_plate_keys(tmp_path) -> None:
     )
 
     assert action["plate_keys"] == ["类型系统", "工具模块"]
+
+
+def test_refine_action_exposes_core_owned_repair_contract(tmp_path) -> None:
+    state = EngineState(
+        thread_id="repair",
+        current_stage="architect",
+        plan_refine_count=2,
+        refine_request_json=json.dumps({"source": "critic", "gaps": []}),
+        architecture_baseline={
+            "revision": 2,
+            "obligations": [{"id": "O1", "source_ref": "gap-1"}],
+        },
+    )
+
+    action = ActionBuilder(tmp_path).build_action(state)
+
+    contract = action["repair_contract"]
+    assert contract["active_revision"] == 2
+    assert contract["inherited_obligations"] == [
+        {"id": "O1", "source_ref": "gap-1"}
+    ]
+    assert "base_revision" not in action["expected_format"]["plan_patch"]
+    assert contract["task_template"]["kind"] == "implementation|test|contract_test"

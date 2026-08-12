@@ -14,6 +14,7 @@ class ExecutionControlError(ValueError):
 
 class ExecutionDisposition(StrEnum):
     CONTINUE = "CONTINUE"
+    WAIT_RESOURCE = "WAIT_RESOURCE"
     WAIT_USER = "WAIT_USER"
     TERMINAL = "TERMINAL"
     ERROR = "ERROR"
@@ -38,8 +39,11 @@ class ExecutionControl:
             raise ExecutionControlError(
                 "CONTINUE 必须 continuation_required=true 且 yield_allowed=false"
             )
-        if self.disposition is ExecutionDisposition.WAIT_USER and not self.reason_code:
-            raise ExecutionControlError("WAIT_USER 必须包含 reason_code")
+        if self.disposition in {
+            ExecutionDisposition.WAIT_RESOURCE,
+            ExecutionDisposition.WAIT_USER,
+        } and not self.reason_code:
+            raise ExecutionControlError("等待处置必须包含 reason_code")
         if self.disposition is not ExecutionDisposition.CONTINUE and self.continuation_required:
             raise ExecutionControlError("非 CONTINUE 不得要求自动续接")
 
@@ -114,6 +118,9 @@ def control_for_action(action: Mapping[str, Any]) -> ExecutionControl:
     elif name == "gap_review":
         disposition = ExecutionDisposition.WAIT_USER
         reason = "gap_decisions_required"
+    elif name == "resource_wait":
+        disposition = ExecutionDisposition.WAIT_RESOURCE
+        reason = str(action.get("reason_code") or "resource_unavailable")
     elif (
         name == "developer"
         and isinstance(action.get("gate_summary"), Mapping)

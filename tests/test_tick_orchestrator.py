@@ -4700,6 +4700,25 @@ class TestF7SpawnProofForgery:
             assert isinstance(response, ErrorResponse)
             assert response.error_code == "SPAWN_PROOF_TOKEN_MISMATCH"
 
+    def test_agent_capacity_failure_preserves_active_action_for_retry(self, tmp_path):
+        o = self._setup_critic(tmp_path, "pending")
+        active_message_id = o._active_action["message_id"]
+        tick_before = o._state.tick
+
+        action = o.tick_dict({
+            "stage": "critic",
+            "spawned": False,
+            "spawn_error_code": "HOST_AGENT_CAPACITY",
+            "spawn_error": "agent thread limit reached",
+        })
+
+        assert action["action"] == "resource_wait"
+        assert action["resource"] == "agent_slot"
+        assert action["retry_stage"] == "critic"
+        assert action["extensions"]["ae"]["execution_control"]["disposition"] == "WAIT_RESOURCE"
+        assert o._active_action["message_id"] == active_message_id
+        assert o._state.tick == tick_before
+
     def test_init_binds_proof_to_protocol_action(self, tmp_path):
         from auto_engineering.loop.action_builder import ActionBuilder
 

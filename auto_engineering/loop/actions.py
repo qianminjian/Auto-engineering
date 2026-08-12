@@ -293,7 +293,8 @@ def validate_result_format(result: dict, stage: str) -> list[str]:
             if not isinstance(plan_patch, dict):
                 errors.append("plan_patch 必须为 object")
             else:
-                if not isinstance(plan_patch.get("base_revision"), int):
+                base_revision = plan_patch.get("base_revision")
+                if base_revision is not None and not isinstance(base_revision, int):
                     errors.append("plan_patch.base_revision 必须为 integer")
                 additions = plan_patch.get("add_batches")
                 if not isinstance(additions, list) or not additions:

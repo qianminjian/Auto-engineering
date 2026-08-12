@@ -33,10 +33,11 @@ class ArchitectureCandidateBuilder:
             raise ArchitectureCandidateError(
                 "PLAN_REFINE 不得同时提交 batch_plan 与 plan_patch"
             )
-        if patch.get("base_revision") != active_revision:
+        submitted_revision = patch.get("base_revision")
+        if submitted_revision is not None and submitted_revision != active_revision:
             raise ArchitectureCandidateError(
                 "PLAN_REVISION_CONFLICT: "
-                f"base={patch.get('base_revision')}, active={active_revision}"
+                f"base={submitted_revision}, active={active_revision}"
             )
 
         baseline = dict(current_baseline or {})

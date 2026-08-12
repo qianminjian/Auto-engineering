@@ -74,7 +74,8 @@ while control.disposition == "CONTINUE":
   read next Action and its execution_control
 ```
 
-`CONTINUE` 不允许向用户交回控制；`WAIT_USER` 只询问 `reason_code` 对应的真实决策；
+`CONTINUE` 不允许向用户交回控制；`WAIT_RESOURCE` 由宿主回收已完成 Worker、等待容量
+变化后自动重试原 active Action，不询问用户；`WAIT_USER` 只询问 `reason_code` 对应的真实决策；
 `TERMINAL`、`ERROR`、`HANDOFF_REQUIRED` 分别表示正常终态、稳定错误和异常接管。
 不得根据 stage 名、自然语言 recap 或“已经输出 Action”自行停止。
 
@@ -97,6 +98,9 @@ while control.disposition == "CONTINUE":
   新会话提交 `{stage:"session_claimed", claim_token, session_id, host}` 后，才可继续
   Core 返回的原 active Action。宿主不能创建/接管新会话时报告
   `HOST_SESSION_HANDOFF_UNAVAILABLE` 并停止，禁止在旧会话降级继续。
+- `action == "resource_wait"`：不得把该 Action 当作业务 Result。回收已完成 Worker 的
+  原生句柄（宿主提供时），或等待已知运行中 Worker 进入终态；容量变化后重新执行 Core
+  保留的原 active Action。该状态不是用户决策点。
 - `action.spawn` 存在：检查当前 `HostCapabilities`，再按以下规则执行。
 - `action.stage == gap_review` 时，只展示 `action.current_gap`：按问题、证据、影响、推荐、
   理由、合法选项的顺序说明，并只询问当前项。用户回答后立即按 `expected_format.decision`
@@ -129,6 +133,9 @@ Codex 适配层以当前会话实际暴露的工具清单为能力事实源：
   `action.spawn.count` 发起原生调用；不能用“本轮尚未创建”为由报告并行能力缺失。
 - 当上述工具已经暴露时，工具调用明确失败前，不得报告 `HOST_CAPABILITY_UNAVAILABLE`；
   调用失败后必须保留原始错误证据，不能用主 Agent inline 模拟。
+- 原生调用返回 Agent 线程/并发容量耗尽时，先等待已知 Worker 完成并通过宿主原生能力
+  回收其句柄，再重试一次。仍失败时提交 `spawned=false`、
+  `spawn_error_code=HOST_AGENT_CAPACITY` 和原始 `spawn_error`；不得伪造 Worker。
 - `execution_control.disposition == "CONTINUE"` 时，能力满足的 spawn Action 必须在同一
   次用户启动中继续驱动，不得先向用户输出终态消息或请求无关确认。
 
@@ -151,6 +158,9 @@ Codex 适配层以当前会话实际暴露的工具清单为能力事实源：
    保持不可变。
 6. 从真实输出中提取 `action.expected_format` 要求的字段。只有全部要求的 Worker
    实际完成后，result 才能写 `"spawned": true`。
+
+Core 返回 `resource_wait` / `WAIT_RESOURCE` 时，宿主继续执行上述资源回收流程，并在
+容量可用后重新执行原 active Action；不得提交 `resource_wait` 为 Result，也不得推进 Tick。
 
 ## 角色边界
 

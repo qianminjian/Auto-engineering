@@ -10,8 +10,7 @@
 | Phase 52 Protocol Envelope | ✅ 5/5 | T242-T246；1913 passed / 1 skipped |
 | Phase 53 Event Store | ✅ 6/6 | T247-T252；1945 passed / 1 skipped |
 | Phase 54 Tick Kernel | ✅ 8/8 | T253-T260 |
-| Phase 55 Host SPI 2.0 | ✅ 5/5 | T261-T265 |
-| Phase 56 黄金轨迹与收口 | ✅ 5/5 | T266-T270；1996 passed / 1 skipped |
+| Phase 55-56 Host SPI 与黄金轨迹 | ✅ 10/10 | T261-T270；1996 passed / 1 skipped |
 | Phase 57-58 质量与安装验收 | ✅ 4/4 | T271-T274；Claude Code/Codex 真实宿主调用通过 |
 | Phase 59 真实宿主兼容性加固 | ✅ 5/5 | T275-T279；v5.7.0 双宿主真实安装验收通过 |
 | Phase 60 Prompt Contract 重构 | ✅ 8/8 | T280-T287；2019 passed / 1 skipped，coverage 90.27% |
@@ -158,3 +157,4 @@
 | P0 | T430 | Phase 81 全门禁与真实产品复验 | While T423-T429 完成, when 隐藏状态、双路径、幂等、跨宿主和产品安装轨迹执行, all checks shall 通过后才允许生成下一 RC | ◐ 2301/1、coverage 90%、Ruff/mypy/sync、Claude/Codex archive smoke 通过；真实 product install/长跑仍 `not_run`，不得生成下一 RC |
 | P0 | T431 | 自动续跑阶段事件所有权 | While setup/escalation 改变当前 Stage, when EventStore 编译并提交下一 Action, the Core shall 发出唯一 `StageAdvanced`、可重放到相同下一 Stage，且不得以 fallback 掩盖无所有权变化 | ✓ 统一所有权与失败恢复；2305/1、90% coverage、Ruff/mypy/sync、双宿主 archive smoke 通过；产品真跑待验 |
 | P0 | T432 | Gap Review 向导与主链路真跑修复 | While gap/plan/critic/new-project 协议缺陷已由真跑复现, when Core 生成或接收消息, the system shall 逐项持久化决策、分离展示与路由标识、保持 Schema SSOT，并可由事件重放安全续作 | ✅ AE-01~10 关闭；全量 100%（1 skipped）、coverage 90%、Ruff/mypy/sync、Claude/Codex archive smoke 通过 |
+| P0 | T433 | Agent 资源恢复与 Repair 契约收敛 | While Worker 容量不足或 Architect refine 运行, when 宿主/Core 处理失败与计划, the system shall 保持 active Action 可恢复、有限回收重试，并由 Core 注入 revision 与 repair 模板 | ✅ 279 项定向、2327/1 全量、90% coverage、Ruff/mypy/sync、双宿主 archive smoke 通过；真实产品长跑独立验收 |

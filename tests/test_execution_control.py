@@ -56,6 +56,18 @@ def test_environment_failure_waits_instead_of_reentering_code_repair() -> None:
     assert control.reason_code == "environment_failure"
 
 
+def test_agent_capacity_waits_for_resource_without_user_decision() -> None:
+    control = control_for_action({
+        "action": "resource_wait",
+        "reason_code": "HOST_AGENT_CAPACITY",
+    })
+
+    assert control.disposition is ExecutionDisposition.WAIT_RESOURCE
+    assert control.continuation_required is False
+    assert control.yield_allowed is True
+    assert control.reason_code == "HOST_AGENT_CAPACITY"
+
+
 @pytest.mark.parametrize(
     ("action", "expected"),
     [
@@ -64,6 +76,10 @@ def test_environment_failure_waits_instead_of_reentering_code_repair() -> None:
         ({"action": "done"}, HostDriverDecision.FINISH),
         ({"action": "error"}, HostDriverDecision.FAIL),
         ({"action": "session_rollover"}, HostDriverDecision.HANDOFF),
+        (
+            {"action": "resource_wait", "reason_code": "HOST_AGENT_CAPACITY"},
+            HostDriverDecision.RETRY_RESOURCE,
+        ),
     ],
 )
 def test_host_driver_uses_only_machine_disposition(

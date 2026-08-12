@@ -29,7 +29,7 @@
     "batch_plan": {"type": "array"},
     "plan_patch": {
       "type": "object",
-      "required": ["base_revision", "add_batches"],
+      "required": ["add_batches"],
       "properties": {
         "base_revision": {"type": "integer", "minimum": 0},
         "add_batches": {"type": "array", "minItems": 1},
@@ -108,6 +108,7 @@
     "spawned": {"type": "boolean"},
     "spawn_proof_token": {"type": "string"},
     "spawn_error": {"type": "string"},
+    "spawn_error_code": {"type": "string"},
     "gate_resolution": {"type": "object"},
     "escalate": {"type": "boolean"},
     "escalation_question": {"type": "string"},

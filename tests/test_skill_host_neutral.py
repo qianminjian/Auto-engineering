@@ -61,6 +61,15 @@ def test_codex_skill_binds_native_spawn_tool_before_reporting_unavailable() -> N
     assert "不得因为当前回复尚未调用子代理就判定能力不存在" in content
 
 
+def test_host_contract_recovers_transient_agent_capacity_without_forgery() -> None:
+    for content in (SKILL.read_text(), DEV_LOOP.read_text()):
+        assert "HOST_AGENT_CAPACITY" in content
+        assert "WAIT_RESOURCE" in content
+        assert "resource_wait" in content
+        assert "重试一次" in content
+        assert "原 active Action" in content
+
+
 def test_skill_does_not_assume_git_authorization() -> None:
     content = SKILL.read_text()
 

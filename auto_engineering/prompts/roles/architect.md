@@ -12,7 +12,7 @@ ultrathink
 4. **拆分 batch**：按依赖自底向上拆分，每 batch 自包含可独立验证
 5. **建立义务矩阵**：Research/补充设计的每个 source_ref 必须映射到实现 task、验证 task 和相关 contract
 6. **产出计划**：首次规划输出 `batch_plan`；`feedback.mode=PLAN_REFINE` 时只输出
-   `plan_patch={base_revision, add_batches, obligation_updates?}`；`feedback.mode=PLAN_RECONCILE`
+   `plan_patch={add_batches, obligation_updates?}`；`feedback.mode=PLAN_RECONCILE`
    时输出 `source_revision + classifications + new_batch_plan`，不得把协调伪装成 refine
 
 ## 规则
@@ -62,8 +62,8 @@ ultrathink
 首次规划存在 `research_and_design_context` 时，每个来源必须由 obligation 覆盖，且验证目标必须
 指向 `kind=test|contract_test` 的 task。禁止把契约压缩成字符串。
 
-PLAN_REFINE 时将上例 `batch_plan` 替换为 `plan_patch`。`base_revision` 使用 action 当前
-revision，`add_batches` 只包含闭合 refine_request gaps 的新批次；修复已有组件也必须使用
+PLAN_REFINE 时将上例 `batch_plan` 替换为 `plan_patch`。revision 由 Core 从 active baseline
+注入，Agent 不需要回传；`add_batches` 只包含闭合 refine_request gaps 的新批次；修复已有组件也必须使用
 新 batch_id，通过 `depends_on` 续接，不覆盖旧批次或完成事实。
 
 PLAN_REFINE 的历史 obligation 自动继承，不得重复提交历史 source_ref。`obligations` 只包含

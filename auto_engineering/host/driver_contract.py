@@ -14,6 +14,7 @@ from auto_engineering.loop.execution_control import (
 
 class HostDriverDecision(StrEnum):
     EXECUTE_NEXT = "execute_next"
+    RETRY_RESOURCE = "retry_resource"
     WAIT = "wait"
     FINISH = "finish"
     FAIL = "fail"
@@ -35,6 +36,7 @@ def decide_host_step(action: Mapping[str, Any]) -> HostDriverDecision:
     control = ExecutionControl.from_dict(raw)
     return {
         ExecutionDisposition.CONTINUE: HostDriverDecision.EXECUTE_NEXT,
+        ExecutionDisposition.WAIT_RESOURCE: HostDriverDecision.RETRY_RESOURCE,
         ExecutionDisposition.WAIT_USER: HostDriverDecision.WAIT,
         ExecutionDisposition.TERMINAL: HostDriverDecision.FINISH,
         ExecutionDisposition.ERROR: HostDriverDecision.FAIL,

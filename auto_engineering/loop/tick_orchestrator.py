@@ -856,7 +856,7 @@ class TickOrchestrator:
                 stage=action.get("stage", self._state.current_stage),
                 causation_id=self._current_result_message_id,
             )
-        result_accepted = action.get("action") != "error"
+        result_accepted = action.get("action") not in {"error", "resource_wait"}
         if native_result and result_causation and result_hash and result_accepted:
             self._result_replays[result_causation] = (result_hash, action)
             if self._checkpoint_store is not None and self._event_store is None:
@@ -1004,6 +1004,21 @@ class TickOrchestrator:
                 "options": result.get("escalation_options"),
                 "default": result.get("escalation_default"),
             }))
+
+        if (
+            self._state.current_stage in _SPAWN_CONFIG
+            and result.get("spawned") is False
+            and result.get("spawn_error_code") == "HOST_AGENT_CAPACITY"
+        ):
+            return {
+                "action": "resource_wait",
+                "stage": self._state.current_stage,
+                "resource": "agent_slot",
+                "retry_stage": self._state.current_stage,
+                "reason_code": "HOST_AGENT_CAPACITY",
+                "message": "宿主 Agent 容量暂时不足；保留当前 Action，等待资源后重试。",
+                "suggestion": "回收已完成的 Agent；容量释放后重新执行当前 Action。",
+            }
 
         # T64: handle gate_resolution before validation (no stage field)
         gate_resolution = result.get("gate_resolution")

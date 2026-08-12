@@ -138,7 +138,7 @@ class StageResultProjector:
             )
             state.batch_plan = plan_patch.get("add_batches", [])
             state._runtime_ctx["plan_patch_base_revision"] = plan_patch.get(
-                "base_revision"
+                "base_revision", state.plan_refine_count
             )
             state._runtime_ctx["architecture_candidate"] = candidate
             state.contracts = candidate["contracts"]
