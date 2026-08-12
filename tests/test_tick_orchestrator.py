@@ -23,6 +23,9 @@ import pytest
 
 from auto_engineering.engine.state import EngineState
 from auto_engineering.engine.verification_layers import VerificationLayers
+from auto_engineering.host import HostPlatform
+from auto_engineering.host.spawn_contract import SpawnPlan
+from auto_engineering.host.worker_attestation import WorkerAttestation
 from auto_engineering.loop.architect_validation import dry_run_architect_plan
 from auto_engineering.loop.escalation_handler import EscalationContext, EscalationHandler
 from auto_engineering.loop.events import LoopEventType
@@ -36,6 +39,21 @@ _TEST_RUNTIME_ROOT = Path(_TEST_RUNTIME_HANDLE.name)
     "[project]\nname='demo'\n", encoding="utf-8"
 )
 _ACTIVE_TEST_ROOT = _TEST_RUNTIME_ROOT
+_ACTIVE_ORCHESTRATOR: TickOrchestrator | None = None
+
+
+@pytest.fixture(autouse=True)
+def _track_active_orchestrator(monkeypatch):
+    """让旧文件式 Result 夹具绑定当前严格 Action，而非伪造 Core 证明。"""
+    original = TickOrchestrator.init
+
+    def tracked(orchestrator, *args, **kwargs):
+        global _ACTIVE_ORCHESTRATOR, _ACTIVE_TEST_ROOT
+        _ACTIVE_ORCHESTRATOR = orchestrator
+        _ACTIVE_TEST_ROOT = orchestrator.project_root
+        return original(orchestrator, *args, **kwargs)
+
+    monkeypatch.setattr(TickOrchestrator, "init", tracked)
 
 
 def _pass_gate_runner(gate_names, project_root):
@@ -49,15 +67,16 @@ def _pass_guardrail():
 
 
 def _orchestrator(max_rounds: int = 10, escalate: bool = False) -> TickOrchestrator:
-    global _ACTIVE_TEST_ROOT
+    global _ACTIVE_ORCHESTRATOR, _ACTIVE_TEST_ROOT
     _ACTIVE_TEST_ROOT = _TEST_RUNTIME_ROOT
-    return TickOrchestrator(
+    _ACTIVE_ORCHESTRATOR = TickOrchestrator(
         project_root=_TEST_RUNTIME_ROOT,
         gate_runner=_pass_gate_runner,
         guardrail=_pass_guardrail(),
         checkpoint_store=None,
         escalate=escalate,
     )
+    return _ACTIVE_ORCHESTRATOR
 
 
 def _make_result_file(data: dict) -> Path:
@@ -91,6 +110,21 @@ def _make_result_file(data: dict) -> Path:
                     worker["actual_model"] = "test-model"
                     worker_path.write_text(json.dumps(worker), encoding="utf-8")
             break
+        active = _ACTIVE_ORCHESTRATOR._active_action if _ACTIVE_ORCHESTRATOR else None
+        if isinstance(active, dict) and active.get("stage") == data.get("stage"):
+            plan = SpawnPlan.from_action(active)
+            data["worker_attestations"] = [
+                WorkerAttestation.completed(
+                    platform=HostPlatform.CODEX,
+                    action_message_id=active["message_id"],
+                    invocation=spec,
+                    effective_effort=spec.requested_effort,
+                    isolation_evidence="fork_turns=none",
+                    visible_capabilities=tuple(sorted(spec.capabilities)),
+                    actual_model="test-model",
+                ).to_dict()
+                for spec in plan.invocations
+            ]
     f = Path(tempfile.mktemp(suffix=".json"))
     f.write_text(json.dumps(data), encoding="utf-8")
     return f
@@ -2320,9 +2354,12 @@ class TestCrossTickE2E:
 
         def _fresh() -> TickOrchestrator:
             # 每 tick 一个全新实例 (无 in-memory 状态), 只从 store restore
-            return TickOrchestrator.restore(
+            restored = TickOrchestrator.restore(
                 tmp_path, store,
                 gate_runner=_pass_gate_runner, guardrail=_pass_guardrail())
+            global _ACTIVE_ORCHESTRATOR
+            _ACTIVE_ORCHESTRATOR = restored
+            return restored
 
         # init (第一个"进程")
         o0 = TickOrchestrator(
@@ -2956,6 +2993,17 @@ class TestTickVsTickDictIdenticalActions:
             inst = stripped["instruction"]
             inst = re.sub(r'[0-9a-f]{32}', '<TOKEN>', inst)
             stripped["instruction"] = inst
+        spawn = stripped.get("spawn")
+        if isinstance(spawn, dict):
+            spawn = dict(spawn)
+            invocations = spawn.get("invocations")
+            if isinstance(invocations, list):
+                spawn["invocations"] = [
+                    {**item, "receipt_path": "<RECEIPT_PATH>"}
+                    if isinstance(item, dict) else item
+                    for item in invocations
+                ]
+            stripped["spawn"] = spawn
         if "gate_summary" in stripped:
             gs = {}
             for k, v in stripped["gate_summary"].items():
@@ -4648,10 +4696,21 @@ class TestF7SpawnProofForgery:
                 "thread_id": o._state.thread_id,
                 "action_message_id": action["message_id"],
             }))
+        self._current_orchestrator = o
         return o
 
     def _critic_result(self):
+        action = self._current_orchestrator._active_action
+        plan = SpawnPlan.from_action(action)
         return {"stage": "critic", "spawned": True, "spawn_proof_token": "tok123",
+                "worker_attestations": [WorkerAttestation.completed(
+                    platform=HostPlatform.CODEX,
+                    action_message_id=action["message_id"], invocation=spec,
+                    effective_effort=spec.requested_effort,
+                    isolation_evidence="fork_turns=none",
+                    visible_capabilities=tuple(sorted(spec.capabilities)),
+                    actual_model="test-model",
+                ).to_dict() for spec in plan.invocations],
                 "verdict": "APPROVE", "findings": [], "critic_feedback": "ok"}
 
     def test_proof_incomplete_blocks(self, tmp_path):
@@ -4683,6 +4742,38 @@ class TestF7SpawnProofForgery:
         )
         assert accepted["action_message_id"] == o._active_action["message_id"]
         assert len(accepted["result_sha256"]) == 64
+
+    def test_native_v11_result_requires_worker_attestation(self, tmp_path):
+        from auto_engineering.loop.actions import ErrorResponse
+
+        o = self._setup_critic(tmp_path, "completed")
+        result = {
+            **self._critic_result(),
+            "schema_version": "1.1",
+            "extensions": {},
+        }
+        result.pop("worker_attestations")
+
+        response = o._validate_result_dict(result)
+
+        assert isinstance(response, ErrorResponse)
+        assert response.error_code == "WORKER_ATTESTATION_INVALID"
+
+    def test_strict_action_rejects_result_claiming_legacy_schema(self, tmp_path):
+        from auto_engineering.loop.actions import ErrorResponse
+
+        o = self._setup_critic(tmp_path, "completed")
+        result = {
+            **self._critic_result(),
+            "schema_version": "1.1",
+            "extensions": {"compat": {"source_schema_version": "1.0"}},
+        }
+        result.pop("worker_attestations")
+
+        response = o._validate_result_dict(result)
+
+        assert isinstance(response, ErrorResponse)
+        assert response.error_code == "WORKER_ATTESTATION_INVALID"
 
     def test_missing_or_stale_proof_token_blocks(self, tmp_path):
         from auto_engineering.loop.actions import ErrorResponse

@@ -1,0 +1,33 @@
+{
+  "schema_version": "1.0",
+  "source_sha256": "fa39826538efc274884d58c0f8fa7b1501bcd90e97b731ba1762547a305fbf76",
+  "decisions": [
+    {
+      "decision_id": "VC-ARCH-001",
+      "source_ref": "design_excerpt.md#当前版本架构",
+      "scope": "current",
+      "statement": "V1 是纯前端 React SPA，浏览器直接调用 MiniMax API",
+      "classification": "binding",
+      "change_policy": "explicit_user_approval",
+      "prohibited_promotions": ["future_bff_to_v1_requirement"]
+    },
+    {
+      "decision_id": "VC-SEC-001",
+      "source_ref": "design_excerpt.md#当前版本架构",
+      "scope": "current",
+      "statement": "API Key 只保存在 React 运行时内存",
+      "classification": "binding",
+      "change_policy": "explicit_user_approval",
+      "prohibited_promotions": []
+    },
+    {
+      "decision_id": "VC-FUTURE-001",
+      "source_ref": "design_excerpt.md#后续改进",
+      "scope": "future",
+      "statement": "同源 BFF 是未来安全改进",
+      "classification": "advisory",
+      "change_policy": "explicit_user_approval",
+      "prohibited_promotions": ["future_bff_to_v1_requirement"]
+    }
+  ]
+}

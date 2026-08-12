@@ -55,20 +55,22 @@ Violating the letter of this rule is violating the spirit of this rule.
          present only action.current_gap: problem, evidence, impact, recommendation, rationale, options
          ask one user decision and submit exactly one result.decision for this Tick
          never cache later decisions locally, prefill defaults, or change current_gap.id
-     if action.spawn exists:
+    if action.spawn exists:
          validate HostCapabilities against action.spawn
+         consume action.spawn.invocations[] exactly; instruction is diagnostic only
          原生 Agent 容量耗尽时，回收/等待后重试一次
          if still exhausted, submit spawned=false with
          spawn_error_code=HOST_AGENT_CAPACITY and the original spawn_error
          if action.spawn.count == 1:
-             invoke one isolated worker with action.subagent_prompt
+             invoke one isolated worker with action.spawn.invocations[0]
              for Codex use fork_turns="none"; the worker must not drive Loop or spawn
          else:
              read prompt_ref, verify prompt_hash, invoke worker[i]
              require worker[i] to overwrite action.spawn.agents[i].receipt_path,
              recording requested_effort and actual_model (or "unknown")
              collect all receipts, then merge using action.subagent_prompt
-         collect real output and build result using action.expected_format
+         collect WorkerOutcome without coordinator-only fields, write worker_attestations,
+         and build coordinator result using action.expected_format
      else:
          execute developer work inline
      ensure result.stage == action.stage

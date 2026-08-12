@@ -8,6 +8,9 @@ from unittest.mock import MagicMock
 import pytest
 
 from auto_engineering.engine.state import EngineState
+from auto_engineering.host import HostPlatform
+from auto_engineering.host.spawn_contract import SpawnPlan
+from auto_engineering.host.worker_attestation import WorkerAttestation
 from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
 from auto_engineering.loop.effects import EffectReceipt
 from auto_engineering.loop.event_store import SQLiteEventStore
@@ -33,6 +36,18 @@ def _state() -> EngineState:
         requirement="原子提交",
         current_stage="architect",
     )
+
+
+def _attestations(action: dict) -> list[dict]:
+    return [WorkerAttestation.completed(
+        platform=HostPlatform.CODEX,
+        action_message_id=action["message_id"],
+        invocation=spec,
+        effective_effort=spec.requested_effort,
+        isolation_evidence="fork_turns=none",
+        visible_capabilities=tuple(sorted(spec.capabilities)),
+        actual_model="test-model",
+    ).to_dict() for spec in SpawnPlan.from_action(action).invocations]
 
 
 def _action() -> dict[str, object]:
@@ -427,6 +442,7 @@ def test_critic_major_replays_to_developer_without_projection_drift(tmp_path) ->
                 "stage": "architect",
                 "spawned": True,
                 "spawn_proof_token": architect_token,
+                "worker_attestations": _attestations(architect),
                 "plan": (
                     "实现完整功能并执行 Red Green Refactor、静态检查、单元测试、"
                     "契约验证和构建验收，保留可重放证据。"
@@ -456,6 +472,7 @@ def test_critic_major_replays_to_developer_without_projection_drift(tmp_path) ->
                 "stage": "critic",
                 "spawned": True,
                 "spawn_proof_token": critic_token,
+                "worker_attestations": _attestations(critic),
                 "verdict": "MAJOR",
                 "findings": [{
                     "file": "critic_retry/core.py",

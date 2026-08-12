@@ -44,6 +44,11 @@ from auto_engineering.engine.verification_layers import (
     VerificationLayers,
     determine_verification_layers,
 )
+from auto_engineering.host.spawn_contract import SpawnContractError, SpawnPlan
+from auto_engineering.host.worker_attestation import (
+    WorkerAttestationError,
+    validate_attestations,
+)
 from auto_engineering.loop.action_builder import (
     _STAGE_CHECKPOINT_OPTIONS,
     _STAGE_CHECKPOINT_REVIEW_FEEDBACK,
@@ -78,6 +83,7 @@ from auto_engineering.loop.context_budget import (
 )
 from auto_engineering.loop.convergence import ConvergenceConfig, ConvergenceJudge, RoundHistory
 from auto_engineering.loop.debug_tracer import DebugTracer, now_iso
+from auto_engineering.loop.design_decision_ledger import DesignDecisionLedger
 from auto_engineering.loop.developer_gate_service import (
     DeveloperGateService,
     StageGateDispatcher,
@@ -1065,6 +1071,34 @@ class TickOrchestrator:
             gate_id = gate_resolution.get("gate_id", "")
             resolution = gate_resolution.get("resolution", "")
 
+            if gate_id.startswith("design_change:"):
+                decision_id = gate_id.removeprefix("design_change:")
+                if resolution != "批准变更" or not decision_id:
+                    return ErrorResponse(
+                        error_code="INVALID_GATE_RESOLUTION",
+                        message="设计变更 Gate 只接受显式的‘批准变更’决议",
+                    ).to_dict()
+                approval_id = self._current_result_message_id
+                causation_id = self._current_result_causation_id
+                if not approval_id or not causation_id:
+                    return ErrorResponse(
+                        error_code="DESIGN_APPROVAL_CAUSATION_MISSING",
+                        message="设计变更批准缺少 Core 协议因果身份",
+                    ).to_dict()
+                self._queue_domain_event(
+                    LoopEventType.GATE_RESOLVED,
+                    {
+                        "gate_id": gate_id,
+                        "resolution": resolution,
+                        "approval_id": approval_id,
+                        "decision_id": decision_id,
+                        "status": "approved",
+                    },
+                )
+                return self.build_action(
+                    feedback=f"设计变更 {decision_id} 已由用户显式批准"
+                )
+
             # T95 Agent-Initiated Escalation
             if gate_id == "agent_escalation":
                 return self.escalation.resolve_agent_escalation(gate_resolution)
@@ -1294,8 +1328,8 @@ class TickOrchestrator:
                     error_code="SPAWN_REQUIRED",
                     message=(
                         f"Stage '{stage}' requires spawning an agent. "
-                        f"Read the action.instruction — spawn the agent with "
-                        f"the action.subagent_prompt, collect its output, and set "
+                        f"Read action.spawn.invocations[] — execute each worker, "
+                        f"collect attestations and set "
                         f"'\"spawned\": true' in the result. "
                         f"Re-run this tick with actual agent spawn."
                     ),
@@ -1388,66 +1422,83 @@ class TickOrchestrator:
                         current_state=self._state.to_dict(),
                     )
 
-                self._bind_spawn_result_receipt(
-                    proof_token, result, challenge_data
-                )
+            active_spawn = (
+                self._active_action.get("spawn")
+                if self._active_action is not None else None
+            )
+            if (
+                isinstance(active_spawn, dict)
+                and "invocations" in active_spawn
+            ):
+                try:
+                    plan = SpawnPlan.from_action(self._active_action or {})
+                    raw_attestations = result.get("worker_attestations")
+                    if not isinstance(raw_attestations, list):
+                        raise WorkerAttestationError("ATTESTATION_COUNT_MISMATCH")
+                    validate_attestations(
+                        action_message_id=str(
+                            (self._active_action or {}).get("message_id", "")
+                        ),
+                        invocations=plan.invocations,
+                        attestations=raw_attestations,
+                    )
+                except (SpawnContractError, WorkerAttestationError) as exc:
+                    return ErrorResponse(
+                        error_code="WORKER_ATTESTATION_INVALID",
+                        message=str(exc),
+                        current_state=self._state.to_dict(),
+                    )
 
-                active_spawn = (
-                    self._active_action.get("spawn", {})
-                    if self._active_action is not None else {}
-                )
-                active_agents = active_spawn.get("agents", [])
-                if isinstance(active_agents, list) and len(active_agents) > 1:
-                    missing_receipts: list[str] = []
-                    for agent in active_agents:
-                        if not isinstance(agent, dict):
-                            continue
-                        receipt_token = agent.get("receipt_token")
-                        if not isinstance(receipt_token, str):
-                            missing_receipts.append(
-                                f"agent-{agent.get('index', '?')}:token-missing"
-                            )
-                            continue
-                        receipt_file = (
-                            self.project_root / ".ae-state" / "spawn-proofs"
-                            / f"{receipt_token}.json"
+            self._bind_spawn_result_receipt(proof_token, result, challenge_data)
+
+            active_spawn = (
+                self._active_action.get("spawn", {})
+                if self._active_action is not None else {}
+            )
+            active_agents = active_spawn.get("agents", [])
+            if isinstance(active_agents, list) and len(active_agents) > 1:
+                missing_receipts: list[str] = []
+                for agent in active_agents:
+                    if not isinstance(agent, dict):
+                        continue
+                    receipt_token = agent.get("receipt_token")
+                    if not isinstance(receipt_token, str):
+                        missing_receipts.append(
+                            f"agent-{agent.get('index', '?')}:token-missing"
                         )
-                        try:
-                            receipt = json.loads(
-                                receipt_file.read_text(encoding="utf-8")
-                            )
-                            receipt_ok = validate_worker_receipt(
-                                receipt,
-                                expected_stage=stage,
-                                store=ArtifactStore(
-                                    self.project_root / ".ae-state" / "artifacts"
-                                ),
-                                receipt_limit=(
-                                    self._runtime_config.max_worker_receipt_bytes
-                                ),
-                                summary_limit=(
-                                    self._runtime_config.max_receipt_summary_bytes
-                                ),
-                                expected_effort=str(
-                                    agent.get(
-                                        "requested_effort",
-                                        active_spawn.get("effort", "high"),
-                                    )
-                                ),
-                            )
-                        except (OSError, json.JSONDecodeError, ArtifactError):
-                            receipt_ok = False
-                        if not receipt_ok:
-                            missing_receipts.append(receipt_token)
-                    if missing_receipts:
-                        return ErrorResponse(
-                            error_code="WORKER_RECEIPT_MISSING",
-                            message=(
-                                f"Stage '{stage}' 未收齐 Worker receipt: "
-                                + ", ".join(missing_receipts)
+                        continue
+                    receipt_file = (
+                        self.project_root / ".ae-state" / "spawn-proofs"
+                        / f"{receipt_token}.json"
+                    )
+                    try:
+                        receipt = json.loads(receipt_file.read_text(encoding="utf-8"))
+                        receipt_ok = validate_worker_receipt(
+                            receipt,
+                            expected_stage=stage,
+                            store=ArtifactStore(
+                                self.project_root / ".ae-state" / "artifacts"
                             ),
-                            current_state=self._state.to_dict(),
+                            receipt_limit=self._runtime_config.max_worker_receipt_bytes,
+                            summary_limit=self._runtime_config.max_receipt_summary_bytes,
+                            expected_effort=str(agent.get(
+                                "requested_effort",
+                                active_spawn.get("effort", "high"),
+                            )),
                         )
+                    except (OSError, json.JSONDecodeError, ArtifactError):
+                        receipt_ok = False
+                    if not receipt_ok:
+                        missing_receipts.append(receipt_token)
+                if missing_receipts:
+                    return ErrorResponse(
+                        error_code="WORKER_RECEIPT_MISSING",
+                        message=(
+                            f"Stage '{stage}' 未收齐 Worker receipt: "
+                            + ", ".join(missing_receipts)
+                        ),
+                        current_state=self._state.to_dict(),
+                    )
 
         dry_run_error = StageResultPrevalidator().validate(
             stage,
@@ -1464,10 +1515,18 @@ class TickOrchestrator:
             project_root=self.project_root,
             old_batch_plan=[dict(item) for item in self._state.batch_plan],
             reconciliation_evidence=self._state.task_verification_evidence,
+            approved_changes=(
+                DesignDecisionLedger.project_approved_changes(
+                    self._event_store.load_stream(self._state.thread_id)
+                )
+                if self._event_store is not None else {}
+            ),
         )
         if dry_run_error:
             return ErrorResponse(
-                error_code="ARCHITECT_PLAN_INVALID",
+                error_code={
+                    "gap_scan": "DESIGN_SCOPE_PROMOTION",
+                }.get(stage, "ARCHITECT_PLAN_INVALID"),
                 message=f"Architect 计划无法初始化执行树: {dry_run_error}",
                 current_state=self._state.to_dict(),
             )
@@ -2024,7 +2083,7 @@ class TickOrchestrator:
             protocol_version=SCHEMA_VERSION,
             event_schema_version=EVENT_SCHEMA_VERSION,
             projection_schema_version="1.0",
-            action_contract_version="1.0",
+            action_contract_version="1.1",
             prompt_revision=default_registry().registry_hash(),
             policy_revision=policy_revision,
             engine_build_id=current_build_identity(),

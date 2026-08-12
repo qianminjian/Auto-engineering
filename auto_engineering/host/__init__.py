@@ -39,6 +39,10 @@ class GitOperation(StrEnum):
     CREATE_PR = "create_pr"
 
 
+class HostCapabilityError(ValueError):
+    """宿主无法满足 Action 的必需执行能力。"""
+
+
 @dataclass(frozen=True)
 class GitAuthorization:
     """Git 能力与当前用户授权的交集；默认拒绝所有写操作。"""
@@ -65,6 +69,15 @@ class HostCapabilities:
     web_search: bool = False
     git_mutation: bool = False
     session_handoff: bool = False
+    isolated_worker_invocation: bool = False
+    native_subagents: bool | None = None
+
+    def require_spawn(self) -> None:
+        native = self.subagents if self.native_subagents is None else self.native_subagents
+        if not native:
+            raise HostCapabilityError("NATIVE_SUBAGENTS_REQUIRED")
+        if not self.isolated_worker_invocation:
+            raise HostCapabilityError("ISOLATED_WORKER_INVOCATION_REQUIRED")
 
 
 @dataclass(frozen=True)
@@ -176,6 +189,7 @@ _CAPABILITIES = {
         web_search=True,
         git_mutation=True,
         session_handoff=True,
+        isolated_worker_invocation=True,
     ),
     HostPlatform.CODEX: HostCapabilities(
         skills=True,
@@ -185,6 +199,7 @@ _CAPABILITIES = {
         parallel_subagents=True,
         web_search=True,
         git_mutation=True,
+        isolated_worker_invocation=True,
     ),
     HostPlatform.CODEBUDDY: HostCapabilities(
         skills=True,

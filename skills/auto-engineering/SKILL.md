@@ -101,7 +101,9 @@ while control.disposition == "CONTINUE":
 - `action == "resource_wait"`：不得把该 Action 当作业务 Result。回收已完成 Worker 的
   原生句柄（宿主提供时），或等待已知运行中 Worker 进入终态；容量变化后重新执行 Core
   保留的原 active Action。该状态不是用户决策点。
-- `action.spawn` 存在：检查当前 `HostCapabilities`，再按以下规则执行。
+- `action.spawn` 存在：检查当前 `HostCapabilities`，并逐项原样消费
+  `action.spawn.invocations[]`；`instruction` 与旧 `subagent_prompt` 只作兼容诊断，禁止据此
+  重新推导 prompt、effort、隔离方式或 receipt path。
 - `action.stage == gap_review` 时，只展示 `action.current_gap`：按问题、证据、影响、推荐、
   理由、合法选项的顺序说明，并只询问当前项。用户回答后立即按 `expected_format.decision`
   提交单项 Result；累计决策与游标由 Core 持久化，宿主禁止本地批量缓存、提前询问其他
@@ -129,7 +131,7 @@ Codex 适配层以当前会话实际暴露的工具清单为能力事实源：
 - `action.spawn.effort` 映射到 `collaboration.spawn_agent` 的
   `reasoning_effort`；例如 `xhigh` 必须按 `xhigh` 传入，并选择允许该推理参数的
   `fork_turns`，不得因需要高推理强度而降级为 unavailable。
-- Codex 创建 Worker 必须使用 `fork_turns="none"`，只传当前 Worker Prompt；Worker
+- Codex 创建 Worker 必须使用 invocation 声明的 Prompt 且 `fork_turns="none"`；Worker
   不继承 Coordinator 聊天和 Loop Skill 驱动职责，不得再次调用 `$auto-engineering`、
   `dev-loop` 或 `collaboration.spawn_agent`。
 - `action.spawn.parallel=true` 时，只要当前会话允许创建所需数量的独立 Agent，必须按
@@ -144,13 +146,14 @@ Codex 适配层以当前会话实际暴露的工具清单为能力事实源：
 
 能力满足时，使用宿主原生子代理能力：
 
-1. 单 Worker：将 `action.subagent_prompt` 原样交给该 Worker。
-2. 多 Worker：逐个读取并校验 `action.spawn.agents[i].prompt_ref` 与
-   `prompt_hash`，将对应正文交给 Worker；不得把 Coordinator 的
-   `action.subagent_prompt` 复制给所有 Worker。
+1. 当前严格合同：无论单/多 Worker，都逐个读取并校验
+   `action.spawn.invocations[i].prompt_ref` 与 `prompt_sha256`，并原样使用该 invocation
+   的 effort、isolation、capabilities 和 receipt_path。
+2. 仅当 active Action 的 Runtime Vector 明确是旧合同且没有 `contract_version` 时，才按
+   旧 `subagent_prompt` / `spawn.agents[]` 只读兼容；当前 Action 禁止混用旧字段推导执行。
 3. 按 `action.spawn.count` 和 `action.spawn.parallel` 创建隔离执行。
-4. 多 Worker 完成后，由宿主协调器为每个 Worker 以单个 JSON 写入
-   `action.spawn.agents[i].receipt_path`，记录 `requested_effort` 与宿主可见的
+4. Worker 完成后，由宿主协调器为每个 Worker 以单个 JSON 写入
+   `action.spawn.invocations[i].receipt_path`，记录 `requested_effort` 与宿主可见的
    `actual_model`（不可见时写 `unknown`）；Worker 不得修改
    `.ae-state/spawn-challenges/` 或 shared total receipt（workers must not write the shared total proof）。
    Receipt 超过 Action 策略声明的上限时必须将完整结果写入内容寻址 Artifact
@@ -161,6 +164,10 @@ Codex 适配层以当前会话实际暴露的工具清单为能力事实源：
    保持不可变。
 6. 从真实输出中提取 `action.expected_format` 要求的字段。只有全部要求的 Worker
    实际完成后，result 才能写 `"spawned": true`。
+7. 每个 Worker 完成后由宿主生成 `worker_attestations[]`，绑定 Action message_id、worker_id、
+   prompt_sha256、requested/effective effort、实际模型、隔离证据和可见能力摘要。Worker
+   Outcome 不得包含 `spawned`、总 proof 或 Loop 控制字段；`fork_turns=none` 只证明会话
+   turns 隔离，不得声明为完整工具沙箱。
 
 Core 返回 `resource_wait` / `WAIT_RESOURCE` 时，宿主继续执行上述资源回收流程，并在
 容量可用后重新执行原 active Action；不得提交 `resource_wait` 为 Result，也不得推进 Tick。

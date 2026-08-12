@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from auto_engineering.host import HostPlatform
+from auto_engineering.host.spawn_contract import WorkerOutcome
 from auto_engineering.host.worker_invocation import (
     WorkerInvocation,
     compile_worker_invocation,
@@ -50,7 +51,9 @@ class FakeHostRuntime:
                     raise
                 self.reclaimed_count += 1
 
-        result = validate_worker_outcome(raw, stage=str(action.get("stage", "")))
+        validated = validate_worker_outcome(raw, stage=str(action.get("stage", "")))
+        outcome = WorkerOutcome.from_dict(validated)
+        result = {**outcome.payload, "spawned": True}
         receipt = {
             "status": "completed",
             "action_message_id": invocation.action_message_id,

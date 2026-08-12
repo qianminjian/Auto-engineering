@@ -1,6 +1,7 @@
 {
   "fixture_version": "1.0",
-  "source_sha256": "d9deec7142d86bed9d6fd782bb8f752db2bf8b677c90ff39a1550b5512f8ef5f",
+  "source_sha256": "fa39826538efc274884d58c0f8fa7b1501bcd90e97b731ba1762547a305fbf76",
+  "binding_decision_ids": ["VC-ARCH-001", "VC-SEC-001"],
   "design_title": "V1.0 语音克隆页面",
   "binding_decisions": {
     "product_architecture": "pure_frontend_react_spa",

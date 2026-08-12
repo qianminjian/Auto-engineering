@@ -1,0 +1,20 @@
+{
+  "schema_version": "1.0",
+  "scenario_id": "voice-clone-v1",
+  "required_stages": [
+    "architect",
+    "developer",
+    "critic",
+    "component_verifier",
+    "system_verifier",
+    "done"
+  ],
+  "business_gates": ["typecheck", "unit_test", "build"],
+  "semantic_equivalence": [
+    "binding_decisions",
+    "business_artifacts",
+    "final_verdict",
+    "unapproved_changes"
+  ],
+  "forbidden_equivalence": ["natural_language_plan", "batch_count"]
+}

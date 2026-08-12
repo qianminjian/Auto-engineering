@@ -2,18 +2,26 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
+
+import pytest
 
 from auto_engineering.engine.state import EngineState
 from auto_engineering.host import HostPlatform
 from auto_engineering.loop.action_builder import ActionBuilder
+from auto_engineering.loop.design_decision_ledger import (
+    DesignDecisionError,
+    DesignDecisionLedger,
+)
 from tests.host_runtime.fake_host import FakeHostRuntime
 
 FIXTURE = (
     Path(__file__).parent / "fixtures" / "golden"
     / "voice_clone_design_manifest.json"
 )
+SCENARIO_ROOT = Path(__file__).parent / "fixtures" / "golden" / "voice_clone"
 
 
 def test_voice_clone_manifest_preserves_original_v1_authority() -> None:
@@ -30,6 +38,52 @@ def test_voice_clone_manifest_preserves_original_v1_authority() -> None:
     assert manifest["required_components"] == 11
     assert manifest["planned_test_files"] == 17
     assert manifest["planned_test_cases"] == 127
+    excerpt = (SCENARIO_ROOT / "design_excerpt.md").read_bytes()
+    assert hashlib.sha256(excerpt).hexdigest() == manifest["source_sha256"]
+    ledger = DesignDecisionLedger.from_dict(json.loads(
+        (SCENARIO_ROOT / "decision_ledger.json").read_text()
+    ))
+    ledger.validate_source_binding(
+        source_sha256=manifest["source_sha256"],
+        binding_decision_ids=manifest["binding_decision_ids"],
+    )
+
+
+def test_voice_clone_source_binding_detects_tampered_ledger() -> None:
+    value = json.loads((SCENARIO_ROOT / "decision_ledger.json").read_text())
+    value["source_sha256"] = "0" * 64
+    ledger = DesignDecisionLedger.from_dict(value)
+    manifest = json.loads(FIXTURE.read_text(encoding="utf-8"))
+
+    with pytest.raises(DesignDecisionError, match="DESIGN_LEDGER_SOURCE_MISMATCH"):
+        ledger.validate_source_binding(
+            source_sha256=manifest["source_sha256"],
+            binding_decision_ids=manifest["binding_decision_ids"],
+        )
+
+
+def test_voice_clone_decision_ledger_rejects_bff_promotion() -> None:
+    ledger = DesignDecisionLedger.from_dict(json.loads(
+        (SCENARIO_ROOT / "decision_ledger.json").read_text()
+    ))
+
+    with pytest.raises(DesignDecisionError, match="FUTURE_SCOPE_PROMOTION"):
+        ledger.validate_gap({
+            "decision_id": "VC-FUTURE-001",
+            "scope": "current",
+            "blocking": True,
+        })
+
+
+def test_voice_clone_scenario_requires_full_business_lifecycle() -> None:
+    scenario = json.loads((SCENARIO_ROOT / "scenario.json").read_text())
+
+    assert scenario["required_stages"] == [
+        "architect", "developer", "critic", "component_verifier",
+        "system_verifier", "done",
+    ]
+    assert scenario["business_gates"] == ["typecheck", "unit_test", "build"]
+    assert "natural_language_plan" in scenario["forbidden_equivalence"]
 
 
 def test_bff_research_remains_advisory_in_architect_action(tmp_path) -> None:
@@ -64,7 +118,6 @@ def test_voice_clone_architect_action_runs_in_isolated_fake_host(tmp_path) -> No
     host = FakeHostRuntime(HostPlatform.CODEX)
 
     execution = host.execute(action, lambda invocation: {
-        "spawned": True,
         "plan": "保留纯前端 V1 设计并按八层架构实施。",
         "batch_plan": [{"batch_id": "B1"}],
     })

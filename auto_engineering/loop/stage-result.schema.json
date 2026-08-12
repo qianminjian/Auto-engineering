@@ -66,6 +66,7 @@
     "file_list": {"type": "array"},
     "contracts": {"type": "object"},
     "obligations": {"type": "array"},
+    "decision_impacts": {"type": "array", "items": {"type": "object"}},
     "batch_id": {"type": ["string", "null"]},
     "files_changed": {"type": "array"},
     "commit_hash": {"type": "string"},
@@ -109,6 +110,10 @@
     "spawn_proof_token": {"type": "string"},
     "spawn_error": {"type": "string"},
     "spawn_error_code": {"type": "string"},
+    "worker_attestations": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/workerAttestation"}
+    },
     "gate_resolution": {"type": "object"},
     "escalate": {"type": "boolean"},
     "escalation_question": {"type": "string"},
@@ -119,6 +124,31 @@
     "host": {"type": "string", "minLength": 1}
     ,"result_type": {"type": "string"}
     ,"artifacts": {"type": "array", "items": {"type": "string"}}
+  },
+  "$defs": {
+    "workerAttestation": {
+      "type": "object",
+      "required": [
+        "platform", "action_message_id", "worker_id", "prompt_sha256",
+        "requested_effort", "effective_effort", "isolation_evidence",
+        "visible_capabilities_sha256", "actual_model", "status",
+        "sandbox_guaranteed"
+      ],
+      "properties": {
+        "platform": {"enum": ["claude-code", "codex"]},
+        "action_message_id": {"type": "string", "minLength": 1},
+        "worker_id": {"type": "string", "minLength": 1},
+        "prompt_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "requested_effort": {"type": "string", "minLength": 1},
+        "effective_effort": {"type": "string", "minLength": 1},
+        "isolation_evidence": {"type": "string", "minLength": 1},
+        "visible_capabilities_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "actual_model": {"type": "string", "minLength": 1},
+        "status": {"const": "completed"},
+        "sandbox_guaranteed": {"const": false}
+      },
+      "additionalProperties": false
+    }
   },
   "allOf": [
     {

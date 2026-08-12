@@ -243,6 +243,7 @@ def accept_archive(
         },
         "product_install": {
             "status": "not_run",
+            "evidence_validator": "scripts/product_acceptance.py",
             "reason": (
                 "自动验收仅模拟宿主信号；"
                 "需要在真实 Claude Code 或 Codex 产品内完成安装验收"

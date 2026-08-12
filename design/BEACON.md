@@ -54,12 +54,13 @@ Gate/Guardrail、五层验证、审计、v5.6 兼容迁移和双宿主验收。
   ActionCompiler 和 Stage-by-Stage strangling 统一收敛，完成前冻结新的点状真跑补丁。
 - T404-T410、T413-T420 已通过自动门禁；真实 rc.5 旧流已在隔离副本从 Architect
   恢复到 Developer，TickOrchestrator 已无具体 Stage 分支。
-- 当前发布阻断只剩 T411-T412 的真实双宿主产品长跑与发布证据收口；自动门禁为
-  2266 passed/1 skipped、coverage 90%、Ruff/mypy、双宿主 archive smoke 通过。
+- 当前自动门禁为 2384 passed/1 skipped、coverage 90%、Ruff/mypy；archive smoke
+  只证明制品结构，不替代 T411-T412 的真实双宿主产品长跑与发布证据。
 - 最新真跑证明隐藏 `.ae-state` 可覆盖本次显式设计文档；Phase 81 在任何新 RC 前完成
   InvocationIntent、状态协调 Gate、可恢复重开、计划协调和可信验证证据。
 - T432-T433 已关闭 Gap 主链路、Agent 容量和 Repair 契约；新真跑证伪 Worker 身份隔离与设计权威，Phase 82 按 T434-T439 重建真实宿主验收。
 - Phase 82 审计确认 T435-T439 只是基础实现；T440-T446 按严格 SpawnPlan、Host Attestation、Decision Ledger、完整轨迹和 L1-L4 产品门禁收敛，完成前不再真跑碰运气。
+- T440-T441 已关闭严格 SpawnPlan/Attestation 绕过；T442 已建立 EventStore 批准投影但通用设计 intake 建账仍为 partial；T443-T446 继续阻断发布。
 ## 最近演进
 | 日期 | 变更 |
 |---|---|
@@ -70,7 +71,6 @@ Gate/Guardrail、五层验证、审计、v5.6 兼容迁移和双宿主验收。
 | 2026-08-09 | 关闭 rc.5 旧事件重放、PlanPatch 候选分叉与 Build Identity 事故 |
 | 2026-08-09 | 修复 Codex Architect 对原生 `spawn_agent` 的错误能力判定 |
 | 2026-08-09 | 完成 T404-T410 协议内核收敛；façade 退出 Stage 专属分支 |
-| 2026-07-30 | 批准 Phase 70：撤销固定 Tick rollover，改为宿主自动 compaction |
 ## 待解决问题
 - T411-T412、T430、T434-T446：先闭合生产 Host 合同，再重做双宿主真实产品门禁。
 - T421：清理测试套件中 SQLite connection `ResourceWarning`，不阻断本次协议修复。

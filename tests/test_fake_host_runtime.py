@@ -26,7 +26,7 @@ def test_fake_host_executes_isolated_worker_without_loop_reentry() -> None:
         assert invocation.fork_turns == "none"
         assert invocation.execution_identity["may_drive_loop"] is False
         assert invocation.execution_identity["may_spawn_workers"] is False
-        return {"spawned": True, "plan": "按原设计实现", "batch_plan": []}
+        return {"plan": "按原设计实现", "batch_plan": []}
 
     execution = host.execute(_action(), worker)
 
@@ -45,7 +45,7 @@ def test_fake_host_reclaims_capacity_and_retries_same_action_once() -> None:
         calls += 1
         if calls == 1:
             raise AgentCapacityError("agent thread limit reached")
-        return {"spawned": True, "plan": "恢复后完成", "batch_plan": []}
+        return {"plan": "恢复后完成", "batch_plan": []}
 
     execution = host.execute(_action(), worker)
 

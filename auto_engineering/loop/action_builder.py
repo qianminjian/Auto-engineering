@@ -9,7 +9,7 @@ import json
 import logging
 import time
 from collections.abc import Callable
-from copy import copy
+from copy import copy, deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -17,7 +17,9 @@ from typing import TYPE_CHECKING
 from auto_engineering.config.constants import _SPAWN_CONFIG
 from auto_engineering.config.feature_flags import feature_status_for_action
 from auto_engineering.host.runtime_identity import ExecutionIdentity
+from auto_engineering.host.spawn_contract import WorkerInvocationSpec
 from auto_engineering.loop.design_authority import DesignAuthorityPolicy
+from auto_engineering.loop.design_decision_ledger import DesignDecisionLedger
 from auto_engineering.loop.effects import (
     EffectExecutor,
     EffectIntent,
@@ -473,13 +475,25 @@ class ActionBuilder:
         the path.  Token is never embedded in instruction text → PII-safe.
         """
         result: dict = {**base, "action": action}
+        authority = DesignAuthorityPolicy.default().to_dict()
+        ledger = DesignDecisionLedger.from_project(self.project_root).to_dict()
+        result["design_authority"] = authority
+        result["design_decision_ledger"] = ledger
         result["execution_identity"] = ExecutionIdentity.coordinator(
             stage=action,
         ).to_dict()
         compiled_prompt = False
+        contract = default_prompt_contracts().get(action)
+        if contract is not None:
+            context = dict(context or {})
+            if "design_authority" in contract.optional_context:
+                context.setdefault("design_authority", authority)
+            if "design_decision_ledger" in contract.optional_context:
+                context.setdefault("design_decision_ledger", ledger)
         spawn = _SPAWN_CONFIG.get(action)
         if spawn is not None:
-            result["spawn"] = spawn
+            result["spawn"] = deepcopy(spawn)
+            result["spawn"]["contract_version"] = "1.0"
             # DS-15: spawn proof — pre-write file, reference path in instruction
             import uuid
             proof_token = uuid.uuid4().hex
@@ -501,12 +515,11 @@ class ActionBuilder:
 
             # DS-15: read prompt from file
             full_prompt = self._load_prompt(action)
-            worker_expected_format = (
-                {
-                    "spawned": "bool — MUST be true after spawning subagent",
-                    **(expected_format or {}),
-                }
-            )
+            worker_expected_format = dict(expected_format or {})
+            coordinator_expected_format = {
+                "spawned": "bool — true only after all native workers complete",
+                **worker_expected_format,
+            }
 
             if is_multi:
                 contract = default_prompt_contracts()[action]
@@ -539,6 +552,22 @@ class ActionBuilder:
                         "execution_identity": worker.execution_identity,
                     })
                 result["spawn"]["agents"] = agents
+                result["spawn"]["invocations"] = [
+                    WorkerInvocationSpec(
+                        worker_id=f"{action}-{worker['index']}",
+                        role=str(worker["role"]),
+                        prompt_ref=str(worker["prompt_ref"]),
+                        prompt_sha256=str(worker["prompt_hash"]),
+                        requested_effort=str(worker["requested_effort"]),
+                        isolation="fresh_context",
+                        capabilities={
+                            "may_drive_loop": False,
+                            "may_spawn_workers": False,
+                        },
+                        receipt_path=str(worker["receipt_path"]),
+                    ).to_dict()
+                    for worker in agents
+                ]
                 compiled_prompt = True
             else:
                 single_contract = default_prompt_contracts().get(action)
@@ -559,16 +588,63 @@ class ActionBuilder:
                     result["worker_execution_identity"] = (
                         bundle.worker_prompts[0].execution_identity
                     )
+                    worker = bundle.worker_prompts[0]
+                    receipt_token = uuid.uuid4().hex
+                    self._write_spawn_proof_file(receipt_token, action)
+                    prompt_ref = self._write_prompt_artifact(
+                        worker.prompt, worker.prompt_hash,
+                    )
+                    result["spawn"]["invocations"] = [
+                        WorkerInvocationSpec(
+                            worker_id=f"{action}-0",
+                            role=worker.role,
+                            prompt_ref=prompt_ref,
+                            prompt_sha256=worker.prompt_hash,
+                            requested_effort=str(spawn.get("effort", "high")),
+                            isolation="fresh_context",
+                            capabilities={
+                                "may_drive_loop": False,
+                                "may_spawn_workers": False,
+                            },
+                            receipt_path=(
+                                f".ae-state/spawn-proofs/{receipt_token}.json"
+                            ),
+                        ).to_dict()
+                    ]
                     result.setdefault("extensions", {})[
                         "context_manifest"
                     ] = bundle.context_manifest
                     compiled_prompt = True
                 else:
                     result["subagent_prompt"] = full_prompt
+                    prompt_hash = __import__("hashlib").sha256(
+                        full_prompt.encode("utf-8")
+                    ).hexdigest()
+                    receipt_token = uuid.uuid4().hex
+                    self._write_spawn_proof_file(receipt_token, action)
+                    result["spawn"]["invocations"] = [
+                        WorkerInvocationSpec(
+                            worker_id=f"{action}-0",
+                            role=action,
+                            prompt_ref=self._write_prompt_artifact(
+                                full_prompt, prompt_hash,
+                            ),
+                            prompt_sha256=prompt_hash,
+                            requested_effort=str(spawn.get("effort", "high")),
+                            isolation="fresh_context",
+                            capabilities={
+                                "may_drive_loop": False,
+                                "may_spawn_workers": False,
+                            },
+                            receipt_path=(
+                                f".ae-state/spawn-proofs/{receipt_token}.json"
+                            ),
+                        ).to_dict()
+                    ]
 
             # T141: spawned field in expected_format (for Team Lead, NOT subagent)
             if expected_format is not None:
-                expected_format = worker_expected_format
+                expected_format = coordinator_expected_format
         else:
             # Non-spawn stage — inline instruction
             if action not in ("developer",):  # developer has custom instruction

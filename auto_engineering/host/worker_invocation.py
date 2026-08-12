@@ -7,8 +7,9 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from auto_engineering.host import HostPlatform
+from auto_engineering.host import HostPlatform, capabilities_for
 from auto_engineering.host.runtime_identity import ExecutionIdentity
+from auto_engineering.host.spawn_contract import SpawnPlan
 
 
 class WorkerInvocationError(ValueError):
@@ -24,7 +25,9 @@ class WorkerInvocation:
     platform: HostPlatform
     action_message_id: str
     worker_index: int
+    worker_id: str
     prompt: str
+    prompt_sha256: str
     reasoning_effort: str
     fork_turns: str | None
     execution_identity: dict[str, Any]
@@ -55,8 +58,29 @@ def compile_worker_invocation(
         raise WorkerInvocationError("WORKER_INDEX_INVALID")
 
     prompt = action.get("subagent_prompt")
+    worker_id = f"{stage}-{worker_index}"
+    prompt_sha256 = ""
+    strict_invocations = spawn.get("invocations")
+    if isinstance(strict_invocations, list):
+        capabilities_for(platform).require_spawn()
+        plan = SpawnPlan.from_action(action)
+        spec = plan.invocations[worker_index]
+        if prompt_loader is not None:
+            prompt = prompt_loader(spec.prompt_ref)
+        elif isinstance(prompt, str) and (
+            hashlib.sha256(prompt.encode("utf-8")).hexdigest()
+            == spec.prompt_sha256
+        ):
+            # v1.1 双写兼容：单 Worker Action 仍可携带相同 inline prompt。
+            pass
+        else:
+            raise WorkerInvocationError("WORKER_PROMPT_LOADER_REQUIRED")
+        if hashlib.sha256(prompt.encode("utf-8")).hexdigest() != spec.prompt_sha256:
+            raise WorkerInvocationError("WORKER_PROMPT_HASH_MISMATCH")
+        worker_id = spec.worker_id
+        prompt_sha256 = spec.prompt_sha256
     agents = spawn.get("agents")
-    if isinstance(agents, list):
+    if not isinstance(strict_invocations, list) and isinstance(agents, list):
         try:
             worker = agents[worker_index]
         except IndexError as exc:
@@ -79,8 +103,11 @@ def compile_worker_invocation(
             prompt = prompt_loader(prompt_ref)
             if hashlib.sha256(prompt.encode("utf-8")).hexdigest() != prompt_hash:
                 raise WorkerInvocationError("WORKER_PROMPT_HASH_MISMATCH")
+            prompt_sha256 = prompt_hash
     if not isinstance(prompt, str) or not prompt:
         raise WorkerInvocationError("WORKER_PROMPT_MISSING")
+    if not prompt_sha256:
+        prompt_sha256 = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
 
     effort = spawn.get("effort", "high")
     if not isinstance(effort, str) or not effort:
@@ -90,7 +117,9 @@ def compile_worker_invocation(
         platform=platform,
         action_message_id=message_id,
         worker_index=worker_index,
+        worker_id=worker_id,
         prompt=prompt,
+        prompt_sha256=prompt_sha256,
         reasoning_effort=effort,
         fork_turns="none" if platform is HostPlatform.CODEX else None,
         execution_identity=identity.to_dict(),

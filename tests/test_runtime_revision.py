@@ -30,7 +30,7 @@ def _revision(*, prompt: str = "prompt-a", build: str = "rc.5") -> RuntimeRevisi
         protocol_version="1.1",
         event_schema_version="1.0",
         projection_schema_version="1.0",
-        action_contract_version="1.0",
+        action_contract_version="1.1",
         prompt_revision=prompt,
         policy_revision="policy-a",
         engine_build_id=build,

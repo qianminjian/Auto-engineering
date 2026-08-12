@@ -24,6 +24,7 @@ REQUIRED_PATHS = (
     Path("scripts/build_release.py"),
     Path("scripts/check_host_package.py"),
     Path("scripts/install_acceptance.py"),
+    Path("scripts/product_acceptance.py"),
     Path("auto_engineering"),
     Path("pyproject.toml"),
     Path("uv.lock"),

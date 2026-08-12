@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from typing import Any
 
@@ -36,4 +37,19 @@ def build_architect_research_context(
                 "authority": "advisory",
                 "change_policy": "user_gate_required",
             })
-    return entries[:16]
+    deduplicated: dict[tuple[str, str], dict[str, str]] = {}
+    for entry in entries:
+        digest = hashlib.sha256(entry["content"].encode("utf-8")).hexdigest()
+        key = (entry["gap_id"], digest)
+        existing = deduplicated.get(key)
+        if existing is None:
+            deduplicated[key] = {
+                **entry,
+                "sources": entry["source"],
+                "content_sha256": digest,
+            }
+        else:
+            sources = existing["sources"].split(",")
+            if entry["source"] not in sources:
+                existing["sources"] = ",".join((*sources, entry["source"]))
+    return list(deduplicated.values())[:16]

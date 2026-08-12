@@ -6,6 +6,9 @@ import json
 from unittest.mock import MagicMock
 
 from auto_engineering.engine.state import EngineState
+from auto_engineering.host import HostPlatform
+from auto_engineering.host.spawn_contract import SpawnPlan
+from auto_engineering.host.worker_attestation import WorkerAttestation
 from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
 from auto_engineering.loop.tick_orchestrator import TickOrchestrator
 
@@ -34,6 +37,19 @@ def _orchestrator() -> TickOrchestrator:
 
 
 def _architect_result(action: dict, **overrides) -> dict:
+    plan = SpawnPlan.from_action(action)
+    attestations = [
+        WorkerAttestation.completed(
+            platform=HostPlatform.CODEX,
+            action_message_id=action["message_id"],
+            invocation=invocation,
+            effective_effort=invocation.requested_effort,
+            isolation_evidence="fork_turns=none",
+            visible_capabilities=tuple(sorted(invocation.capabilities)),
+            actual_model="test-model",
+        ).to_dict()
+        for invocation in plan.invocations
+    ]
     result = {
         "schema_version": "1.1",
         "message_type": "result",
@@ -46,6 +62,7 @@ def _architect_result(action: dict, **overrides) -> dict:
         "extensions": {},
         "spawned": True,
         "spawn_proof_token": action["spawn_proof_token"],
+        "worker_attestations": attestations,
         "plan": _VALID_PLAN,
         "batch_plan": [
             {

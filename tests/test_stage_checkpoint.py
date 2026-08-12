@@ -7,6 +7,9 @@ import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock
 
+from auto_engineering.host import HostPlatform
+from auto_engineering.host.spawn_contract import SpawnPlan
+from auto_engineering.host.worker_attestation import WorkerAttestation
 from auto_engineering.loop.tick_orchestrator import TickOrchestrator
 
 _VALID_PLAN = (
@@ -72,6 +75,19 @@ def _architect_result_file(orch: TickOrchestrator) -> Path:
     proof["completed_at"] = "2026-08-01T00:00:00Z"
     proof_path.write_text(json.dumps(proof), encoding="utf-8")
     result["spawn_proof_token"] = token
+    plan = SpawnPlan.from_action(orch._active_action)
+    result["worker_attestations"] = [
+        WorkerAttestation.completed(
+            platform=HostPlatform.CODEX,
+            action_message_id=orch._active_action["message_id"],
+            invocation=spec,
+            effective_effort=spec.requested_effort,
+            isolation_evidence="fork_turns=none",
+            visible_capabilities=tuple(sorted(spec.capabilities)),
+            actual_model="test-model",
+        ).to_dict()
+        for spec in plan.invocations
+    ]
     return _make_result_file(result)
 
 

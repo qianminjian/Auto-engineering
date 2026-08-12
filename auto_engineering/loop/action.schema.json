@@ -58,6 +58,7 @@
     "research_findings": {"type": "object"},
     "research_and_design_context": {"type": "array", "items": {"type": "object"}},
     "design_authority": {"type": "object"},
+    "design_decision_ledger": {"type": "object"},
     "required_capabilities": {"type": "array"},
     "missing_capabilities": {"type": "array", "items": {"type": "string"}},
     "reason_code": {"type": "string"},
@@ -76,7 +77,7 @@
     "instruction": {"type": "string"},
     "subagent_prompt": {"type": "string"},
     "session_summary": {"type": "string"},
-    "spawn": {"type": "object"},
+    "spawn": {"$ref": "#/$defs/spawnPlan"},
     "execution_identity": {"$ref": "#/$defs/executionIdentity"},
     "worker_execution_identity": {"$ref": "#/$defs/executionIdentity"},
     "spawn_proof_token": {"type": "string"},
@@ -152,6 +153,55 @@
     }
   ],
   "$defs": {
+    "spawnPlan": {
+      "type": "object",
+      "required": ["count", "effort", "parallel"],
+      "properties": {
+        "contract_version": {"const": "1.0"},
+        "count": {"type": "integer", "minimum": 1},
+        "effort": {"type": "string", "minLength": 1},
+        "parallel": {"type": "boolean"},
+        "agents": {"type": "array", "items": {"type": "object"}},
+        "invocations": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/workerInvocation"}
+        }
+      },
+      "allOf": [
+        {
+          "if": {"required": ["contract_version"]},
+          "then": {"required": ["invocations"]}
+        }
+      ],
+      "additionalProperties": false
+    },
+    "workerInvocation": {
+      "type": "object",
+      "required": [
+        "worker_id", "role", "prompt_ref", "prompt_sha256",
+        "requested_effort", "isolation", "capabilities", "receipt_path"
+      ],
+      "properties": {
+        "worker_id": {"type": "string", "minLength": 1},
+        "role": {"type": "string", "minLength": 1},
+        "prompt_ref": {"type": "string", "minLength": 1},
+        "prompt_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "requested_effort": {"type": "string", "minLength": 1},
+        "isolation": {"const": "fresh_context"},
+        "capabilities": {
+          "type": "object",
+          "required": ["may_drive_loop", "may_spawn_workers"],
+          "properties": {
+            "may_drive_loop": {"const": false},
+            "may_spawn_workers": {"const": false}
+          },
+          "additionalProperties": false
+        },
+        "receipt_path": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
     "executionIdentity": {
       "type": "object",
       "required": [
