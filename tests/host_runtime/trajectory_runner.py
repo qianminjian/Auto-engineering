@@ -16,6 +16,8 @@ from auto_engineering.host.worker_invocation import (
     WorkerInvocation,
     compile_worker_invocation,
 )
+from auto_engineering.loop.event_store import SQLiteEventStore
+from auto_engineering.loop.tick_orchestrator import TickOrchestrator
 
 
 class HostTrajectoryError(RuntimeError):
@@ -30,11 +32,20 @@ class HostTrajectory:
 
 
 class HostTrajectoryRunner:
-    """执行 Action→Invocation→Proof→Result→下一 Action 的合同轨迹。"""
+    """经生产 Core/EventStore 执行完整因果轨迹。"""
 
-    def __init__(self, project_root: Path, platform: HostPlatform) -> None:
+    def __init__(
+        self,
+        project_root: Path,
+        platform: HostPlatform,
+        *,
+        core: TickOrchestrator,
+        event_store: SQLiteEventStore,
+    ) -> None:
         self.project_root = project_root
         self.platform = platform
+        self.core = core
+        self.event_store = event_store
 
     def _load_prompt(self, ref: str) -> str:
         return (self.project_root / ref).read_text(encoding="utf-8")
@@ -44,10 +55,11 @@ class HostTrajectoryRunner:
         action: Mapping[str, Any],
         *,
         workers: Sequence[Callable[[WorkerInvocation], Mapping[str, Any]]],
-        submit_result: Callable[[dict[str, Any]], Mapping[str, Any]] | None,
+        fail_after_receipt: bool = False,
     ) -> HostTrajectory:
-        if submit_result is None:
-            raise HostTrajectoryError("CORE_RESULT_SUBMITTER_REQUIRED")
+        active = self.event_store.load_action_snapshot(str(action.get("thread_id", "")))
+        if active is None or active.get("message_id") != action.get("message_id"):
+            raise HostTrajectoryError("CORE_ACTIVE_ACTION_REQUIRED")
         plan = SpawnPlan.from_action(action)
         if len(workers) != len(plan.invocations):
             raise HostTrajectoryError("WORKER_COUNT_MISMATCH")
@@ -96,6 +108,9 @@ class HostTrajectoryRunner:
             }, ensure_ascii=False), encoding="utf-8")
             events.append("attestation_recorded")
 
+        if fail_after_receipt:
+            raise HostTrajectoryError("FAULT_AFTER_RECEIPT")
+
         merged: dict[str, Any] = {}
         for outcome in outcomes:
             merged.update(outcome.payload)
@@ -113,14 +128,26 @@ class HostTrajectoryRunner:
 
         result = {
             **merged,
+            "schema_version": "1.1",
+            "message_type": "result",
+            "message_id": f"result-{action.get('message_id')}",
+            "thread_id": action.get("thread_id"),
+            "tick": action.get("tick"),
             "stage": action.get("stage"),
+            "causation_id": action.get("message_id"),
+            "correlation_id": action.get("correlation_id"),
+            "extensions": {},
             "spawned": True,
             "spawn_proof_token": total_token,
             "worker_attestations": [item.to_dict() for item in attestations],
         }
-        next_action = dict(submit_result(result))
-        events.extend(("result_submitted", "next_action_received"))
-        return HostTrajectory(result, next_action, tuple(events))
+        next_action = self.core.tick_dict(result)
+        stream = self.event_store.load_stream(str(action.get("thread_id")))
+        event_names = tuple(event.event_type.value for event in stream)
+        if "ResultAccepted" not in event_names or "ActionIssued" not in event_names:
+            raise HostTrajectoryError("CORE_CAUSAL_CHAIN_INCOMPLETE")
+        events.extend(("result_submitted", *event_names, "next_action_received"))
+        return HostTrajectory(result, dict(next_action), tuple(events))
 
 
 __all__ = ["HostTrajectory", "HostTrajectoryError", "HostTrajectoryRunner"]

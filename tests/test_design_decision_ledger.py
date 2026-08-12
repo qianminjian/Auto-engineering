@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
+
 import pytest
 
 from auto_engineering.loop.design_decision_ledger import (
@@ -11,6 +14,7 @@ from auto_engineering.loop.design_decision_ledger import (
     DesignDecisionLedger,
 )
 from auto_engineering.loop.events import LoopEvent, LoopEventType
+from auto_engineering.loop.tick_orchestrator import TickOrchestrator
 from auto_engineering.prompts.architect_context import build_architect_research_context
 
 
@@ -121,3 +125,59 @@ def test_research_context_deduplicates_same_gap_and_content() -> None:
 def test_empty_ledger_reports_partial_semantic_enforcement() -> None:
     assert DesignDecisionLedger(()).enforcement_status == "partial"
     assert _ledger().enforcement_status == "full"
+
+
+def test_design_intake_persists_source_bound_partial_ledger(tmp_path) -> None:
+    design = tmp_path / "design" / "feature.md"
+    design.parent.mkdir()
+    design.write_text("# Feature\n\n任意自然语言设计。\n", encoding="utf-8")
+
+    ledger = DesignDecisionLedger.ensure_intake(tmp_path, design)
+
+    persisted = json.loads(
+        (tmp_path / ".ae-state" / "design-decision-ledger.json").read_text()
+    )
+    assert ledger.enforcement_status == "partial"
+    assert ledger.source_sha256 == hashlib.sha256(design.read_bytes()).hexdigest()
+    assert persisted["semantic_enforcement"] == "partial"
+    assert persisted["source_ref"] == "design/feature.md"
+    assert persisted["decisions"] == []
+
+
+def test_design_intake_rejects_ledger_bound_to_other_source(tmp_path) -> None:
+    design = tmp_path / "design.md"
+    design.write_text("# Current", encoding="utf-8")
+    state = tmp_path / ".ae-state"
+    state.mkdir()
+    (state / "design-decision-ledger.json").write_text(json.dumps({
+        "schema_version": "1.0",
+        "semantic_enforcement": "partial",
+        "source_sha256": "0" * 64,
+        "source_ref": "design.md",
+        "decisions": [],
+    }))
+
+    with pytest.raises(DesignDecisionError, match="DESIGN_LEDGER_SOURCE_MISMATCH"):
+        DesignDecisionLedger.ensure_intake(tmp_path, design)
+
+
+def test_loop_init_creates_design_intake_ledger(tmp_path) -> None:
+    design = tmp_path / "design.md"
+    design.write_text("## 产品\n### 页面\n必须实现页面。\n", encoding="utf-8")
+    orchestrator = TickOrchestrator(tmp_path)
+
+    orchestrator.init("按设计实现", design_doc_path="design.md")
+
+    ledger = DesignDecisionLedger.from_project(tmp_path)
+    assert ledger.source_ref == "design.md"
+    assert ledger.enforcement_status == "partial"
+
+
+def test_design_intake_detects_source_drift_on_second_intake(tmp_path) -> None:
+    design = tmp_path / "design.md"
+    design.write_text("# V1", encoding="utf-8")
+    DesignDecisionLedger.ensure_intake(tmp_path, design)
+    design.write_text("# V2", encoding="utf-8")
+
+    with pytest.raises(DesignDecisionError, match="DESIGN_LEDGER_SOURCE_MISMATCH"):
+        DesignDecisionLedger.ensure_intake(tmp_path, design)

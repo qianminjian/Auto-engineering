@@ -436,8 +436,12 @@ class TickOrchestrator:
         ProjectProfile 不完整时发出 project_setup_required，由宿主补齐后重新探测。
         """
         if design_doc_path:
-            self._design_doc = DesignDoc.parse(
-                self._resolve_design_doc_path(design_doc_path))
+            resolved_design_doc = self._resolve_design_doc_path(design_doc_path)
+            self._design_doc = DesignDoc.parse(resolved_design_doc)
+            DesignDecisionLedger.ensure_intake(
+                self.project_root,
+                resolved_design_doc,
+            )
 
         # T109b: L1 — requirement PII 扫描 (不阻断, 仅 WARN)
         if self._pii_enabled and self._pii_redactor:
@@ -631,8 +635,12 @@ class TickOrchestrator:
 
         # design_doc: design-doc 模式每 tick 重 parse (确定性无漂移)
         if state.design_doc_path:
-            self._design_doc = DesignDoc.parse(
-                self._resolve_design_doc_path(state.design_doc_path))
+            resolved_design_doc = self._resolve_design_doc_path(state.design_doc_path)
+            self._design_doc = DesignDoc.parse(resolved_design_doc)
+            DesignDecisionLedger.ensure_intake(
+                self.project_root,
+                resolved_design_doc,
+            )
 
         # batch_state: 自包含 (内嵌 batch_plan seed), plates 由 design_doc/seed 重建
         if state.batch_state_json:
@@ -1442,6 +1450,37 @@ class TickOrchestrator:
                         invocations=plan.invocations,
                         attestations=raw_attestations,
                     )
+                    strict_missing_receipts: list[str] = []
+                    for invocation in plan.invocations:
+                        receipt_file = self.project_root / invocation.receipt_path
+                        try:
+                            receipt = json.loads(
+                                receipt_file.read_text(encoding="utf-8")
+                            )
+                            validate_worker_receipt(
+                                receipt,
+                                expected_stage=stage,
+                                store=ArtifactStore(
+                                    self.project_root / ".ae-state" / "artifacts"
+                                ),
+                                receipt_limit=(
+                                    self._runtime_config.max_worker_receipt_bytes
+                                ),
+                                summary_limit=(
+                                    self._runtime_config.max_receipt_summary_bytes
+                                ),
+                                expected_effort=invocation.requested_effort,
+                            )
+                        except (OSError, json.JSONDecodeError, ArtifactError):
+                            strict_missing_receipts.append(invocation.worker_id)
+                    if strict_missing_receipts:
+                        return ErrorResponse(
+                            error_code="WORKER_RECEIPT_MISSING",
+                            message="未收齐严格 Worker receipt: " + ", ".join(
+                                strict_missing_receipts
+                            ),
+                            current_state=self._state.to_dict(),
+                        )
                 except (SpawnContractError, WorkerAttestationError) as exc:
                     return ErrorResponse(
                         error_code="WORKER_ATTESTATION_INVALID",

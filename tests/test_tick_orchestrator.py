@@ -81,38 +81,24 @@ def _orchestrator(max_rounds: int = 10, escalate: bool = False) -> TickOrchestra
 
 def _make_result_file(data: dict) -> Path:
     if data.get("spawned") is True:
-        proof_dir = _ACTIVE_TEST_ROOT / ".ae-state" / "spawn-proofs"
-        candidates = sorted(
-            proof_dir.glob("*.json") if proof_dir.exists() else (),
-            key=lambda path: path.stat().st_mtime_ns,
-            reverse=True,
-        )
-        for proof_path in candidates:
+        active = _ACTIVE_ORCHESTRATOR._active_action if _ACTIVE_ORCHESTRATOR else None
+        if isinstance(active, dict) and active.get("stage") == data.get("stage"):
+            proof_path = (
+                _ACTIVE_TEST_ROOT / ".ae-state" / "spawn-proofs"
+                / f"{active['spawn_proof_token']}.json"
+            )
             proof = json.loads(proof_path.read_text(encoding="utf-8"))
-            if (
-                proof.get("stage") != data.get("stage")
-                or proof.get("status") != "pending"
-                or proof.get("proof_role", "total") != "total"
-            ):
-                continue
             proof["status"] = "completed"
             proof["completed_at"] = "2026-08-01T00:00:00Z"
             proof_path.write_text(json.dumps(proof), encoding="utf-8")
-            data["spawn_proof_token"] = proof["token"]
-            for worker_path in proof_dir.glob("*.json"):
-                worker = json.loads(worker_path.read_text(encoding="utf-8"))
-                if (
-                    worker.get("action_message_id") == proof.get("action_message_id")
-                    and worker.get("proof_role") == "worker"
-                ):
-                    worker["status"] = "completed"
-                    worker["completed_at"] = "2026-08-01T00:00:00Z"
-                    worker["actual_model"] = "test-model"
-                    worker_path.write_text(json.dumps(worker), encoding="utf-8")
-            break
-        active = _ACTIVE_ORCHESTRATOR._active_action if _ACTIVE_ORCHESTRATOR else None
-        if isinstance(active, dict) and active.get("stage") == data.get("stage"):
+            data["spawn_proof_token"] = active["spawn_proof_token"]
             plan = SpawnPlan.from_action(active)
+            for spec in plan.invocations:
+                (_ACTIVE_TEST_ROOT / spec.receipt_path).write_text(json.dumps({
+                    "status": "completed", "stage": active["stage"],
+                    "requested_effort": spec.requested_effort,
+                    "actual_model": "test-model",
+                }), encoding="utf-8")
             data["worker_attestations"] = [
                 WorkerAttestation.completed(
                     platform=HostPlatform.CODEX,
@@ -2463,7 +2449,10 @@ class TestTwoRoundDesignDocE2E:
 
     def test_two_round_design_doc_refine_then_converge(self, tmp_path) -> None:
         _prepare_existing_project(tmp_path)
-        o = _orchestrator(max_rounds=20)
+        o = TickOrchestrator(
+            tmp_path, gate_runner=_pass_gate_runner,
+            guardrail=_pass_guardrail(), checkpoint_store=None,
+        )
         o.init("实现登录", design_doc_path=_write_leaf_design(tmp_path))
 
         # Phase 0: gap_scan (无缺口) → architect
@@ -4697,6 +4686,13 @@ class TestF7SpawnProofForgery:
                 "action_message_id": action["message_id"],
             }))
         self._current_orchestrator = o
+        for spec in SpawnPlan.from_action(o._active_action).invocations:
+            receipt_path = tmp_path / spec.receipt_path
+            receipt_path.write_text(json.dumps({
+                "status": "completed", "stage": "critic",
+                "requested_effort": spec.requested_effort,
+                "actual_model": "test-model",
+            }), encoding="utf-8")
         return o
 
     def _critic_result(self):
@@ -4758,6 +4754,19 @@ class TestF7SpawnProofForgery:
 
         assert isinstance(response, ErrorResponse)
         assert response.error_code == "WORKER_ATTESTATION_INVALID"
+
+    def test_strict_action_requires_each_worker_receipt(self, tmp_path):
+        from auto_engineering.loop.actions import ErrorResponse
+
+        o = self._setup_critic(tmp_path, "completed")
+        result = self._critic_result()
+        for spec in SpawnPlan.from_action(o._active_action).invocations:
+            (tmp_path / spec.receipt_path).unlink(missing_ok=True)
+
+        response = o._validate_result_dict(result)
+
+        assert isinstance(response, ErrorResponse)
+        assert response.error_code == "WORKER_RECEIPT_MISSING"
 
     def test_strict_action_rejects_result_claiming_legacy_schema(self, tmp_path):
         from auto_engineering.loop.actions import ErrorResponse

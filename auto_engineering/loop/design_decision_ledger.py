@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
+import tempfile
 from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import StrEnum
@@ -59,6 +62,7 @@ class DesignDecision:
 class DesignDecisionLedger:
     decisions: tuple[DesignDecision, ...]
     source_sha256: str = ""
+    source_ref: str = ""
 
     def __post_init__(self) -> None:
         ids = [item.decision_id for item in self.decisions]
@@ -92,7 +96,7 @@ class DesignDecisionLedger:
                     prohibited_promotions=tuple(item.get("prohibited_promotions", ())),
                 )
                 for item in raw
-            ), source_sha256=source_sha256)
+            ), source_sha256=source_sha256, source_ref=str(value.get("source_ref", "")))
         except (KeyError, TypeError, ValueError) as exc:
             raise DesignDecisionError("DESIGN_LEDGER_INVALID") from exc
 
@@ -108,6 +112,52 @@ class DesignDecisionLedger:
         if not isinstance(value, dict):
             raise DesignDecisionError("DESIGN_LEDGER_INVALID")
         return cls.from_dict(value)
+
+    @classmethod
+    def ensure_intake(
+        cls,
+        project_root: Path,
+        design_doc_path: Path,
+    ) -> DesignDecisionLedger:
+        """为显式设计输入建立来源绑定；不从自然语言臆造语义决策。"""
+
+        root = project_root.resolve()
+        source = design_doc_path.resolve()
+        try:
+            source_ref = source.relative_to(root).as_posix()
+        except ValueError as exc:
+            raise DesignDecisionError("DESIGN_LEDGER_SOURCE_OUTSIDE_PROJECT") from exc
+        if not source.is_file():
+            raise DesignDecisionError("DESIGN_LEDGER_SOURCE_MISSING")
+        source_sha256 = hashlib.sha256(source.read_bytes()).hexdigest()
+        path = root / ".ae-state" / "design-decision-ledger.json"
+        if path.is_file():
+            ledger = cls.from_project(root)
+            ledger.validate_source_binding(
+                source_sha256=source_sha256,
+                binding_decision_ids=(
+                    item.decision_id for item in ledger.decisions
+                    if item.classification == "binding"
+                ),
+            )
+            if ledger.source_ref and ledger.source_ref != source_ref:
+                raise DesignDecisionError("DESIGN_LEDGER_SOURCE_MISMATCH")
+            return ledger
+
+        ledger = cls((), source_sha256=source_sha256, source_ref=source_ref)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = json.dumps(ledger.to_dict(), ensure_ascii=False, indent=2) + "\n"
+        fd, temporary = tempfile.mkstemp(prefix=".ledger-", dir=path.parent)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                handle.write(payload)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, path)
+        except BaseException:
+            Path(temporary).unlink(missing_ok=True)
+            raise
+        return ledger
 
     def validate_impacts(
         self,
@@ -219,6 +269,7 @@ class DesignDecisionLedger:
             "schema_version": "1.0",
             "semantic_enforcement": self.enforcement_status,
             "source_sha256": self.source_sha256,
+            "source_ref": self.source_ref,
             "decisions": [item.to_dict() for item in self.decisions],
         }
 

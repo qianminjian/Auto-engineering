@@ -93,6 +93,13 @@ def _complete_spawn_proof(orchestrator: TickOrchestrator, action: dict) -> None:
     proof["status"] = "completed"
     proof["completed_at"] = "2026-08-01T00:00:00Z"
     proof_path.write_text(json.dumps(proof), encoding="utf-8")
+    for spec in SpawnPlan.from_action(action).invocations:
+        receipt_path = orchestrator.project_root / spec.receipt_path
+        receipt_path.write_text(json.dumps({
+            "status": "completed", "stage": action["stage"],
+            "requested_effort": spec.requested_effort,
+            "actual_model": "test-model",
+        }), encoding="utf-8")
 
 
 def test_duplicate_result_returns_same_action_without_advancing_state() -> None:

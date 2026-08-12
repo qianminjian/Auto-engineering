@@ -54,13 +54,13 @@ Gate/Guardrail、五层验证、审计、v5.6 兼容迁移和双宿主验收。
   ActionCompiler 和 Stage-by-Stage strangling 统一收敛，完成前冻结新的点状真跑补丁。
 - T404-T410、T413-T420 已通过自动门禁；真实 rc.5 旧流已在隔离副本从 Architect
   恢复到 Developer，TickOrchestrator 已无具体 Stage 分支。
-- 当前自动门禁为 2384 passed/1 skipped、coverage 90%、Ruff/mypy；archive smoke
+- 当前自动门禁为 2391 passed/1 skipped、coverage 90%、Ruff/mypy；archive smoke
   只证明制品结构，不替代 T411-T412 的真实双宿主产品长跑与发布证据。
 - 最新真跑证明隐藏 `.ae-state` 可覆盖本次显式设计文档；Phase 81 在任何新 RC 前完成
   InvocationIntent、状态协调 Gate、可恢复重开、计划协调和可信验证证据。
 - T432-T433 已关闭 Gap 主链路、Agent 容量和 Repair 契约；新真跑证伪 Worker 身份隔离与设计权威，Phase 82 按 T434-T439 重建真实宿主验收。
 - Phase 82 审计确认 T435-T439 只是基础实现；T440-T446 按严格 SpawnPlan、Host Attestation、Decision Ledger、完整轨迹和 L1-L4 产品门禁收敛，完成前不再真跑碰运气。
-- T440-T441 已关闭严格 SpawnPlan/Attestation 绕过；T442 已建立 EventStore 批准投影但通用设计 intake 建账仍为 partial；T443-T446 继续阻断发布。
+- T440-T442 已关闭严格 SpawnPlan、Attestation、设计 intake 和 EventStore 批准链；T443 已接入真实 Core/EventStore 轨迹但故障矩阵未完，T444-T446 继续阻断发布。
 ## 最近演进
 | 日期 | 变更 |
 |---|---|

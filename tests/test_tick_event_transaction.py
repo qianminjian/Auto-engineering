@@ -422,6 +422,12 @@ def test_critic_major_replays_to_developer_without_projection_drift(tmp_path) ->
             "actual_model": "test-model",
         })
         proof_path.write_text(json.dumps(proof), encoding="utf-8")
+        for spec in SpawnPlan.from_action(action).invocations:
+            (tmp_path / spec.receipt_path).write_text(json.dumps({
+                "status": "completed", "stage": action["stage"],
+                "requested_effort": spec.requested_effort,
+                "actual_model": "test-model",
+            }), encoding="utf-8")
         return token
 
     checkpoints = SQLiteCheckpointStore(tmp_path / "checkpoints.db")
