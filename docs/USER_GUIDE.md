@@ -27,6 +27,17 @@ Claude Code Marketplace 安装：
 Codex 安装 Release 中的 `.codex-plugin/`、`skills/` 与 Hook 资产；安装后从
 `$auto-engineering` 进入。
 
+本仓库开发机不得直接把源码目录注册成 Codex Marketplace。标准本机安装入口为：
+
+```bash
+uv run python scripts/install_codex_local.py --root .
+```
+
+该命令先构建自包含 Release，按 `build_id` 暂存到
+`~/.local/share/auto-engineering/releases/`，再从该目录卸载并重装插件。安装后会实际运行
+`doctor`，并校验 Marketplace、插件路径、Python import origin 和独立运行时入口均不访问
+开发目录。测试项目运行期间可以移动或删除开发工作区，不影响已安装插件。
+
 源码安装与预检：
 
 ```bash

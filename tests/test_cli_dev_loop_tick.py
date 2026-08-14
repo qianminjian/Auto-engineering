@@ -152,6 +152,72 @@ class TestTickMode:
         assert _last_json_line(validation.output)["error_code"] == "RESULT_PARSE_ERROR"
         assert _last_json_line(after.output) == _last_json_line(before.output)
 
+    def test_project_setup_completion_commits_profile_stage_and_next_action(
+        self, tmp_path
+    ) -> None:
+        """真跑回归：独立 CLI 进程恢复后必须原子进入 gap_scan。"""
+
+        design = tmp_path / "design.md"
+        design.write_text("# 产品设计\n## 页面\n实现页面。\n", encoding="utf-8")
+        runner = CliRunner()
+        initialized = runner.invoke(
+            main,
+            [
+                "dev-loop", "--init", "--design-doc", str(design),
+                "--project-root", str(tmp_path),
+            ],
+        )
+        assert initialized.exit_code == 0, initialized.output
+        action = _last_json_line(initialized.output)
+        assert action["stage"] == "project_setup"
+
+        (tmp_path / "src").mkdir()
+        (tmp_path / "tests").mkdir()
+        (tmp_path / "package.json").write_text(json.dumps({
+            "scripts": {
+                "test": "vitest run",
+                "lint": "eslint .",
+                "typecheck": "tsc --noEmit",
+                "build": "vite build",
+            },
+            "devDependencies": {"typescript": "^5.0.0"},
+        }), encoding="utf-8")
+        result_file = tmp_path / "project-setup-result.json"
+        result_file.write_text(json.dumps({
+            "schema_version": "1.1",
+            "message_type": "result",
+            "message_id": "result-project-setup",
+            "thread_id": action["thread_id"],
+            "tick": action["tick"],
+            "stage": "project_setup",
+            "causation_id": action["message_id"],
+            "correlation_id": action["correlation_id"],
+            "extensions": {},
+            "result_type": "project_setup_completed",
+            "artifacts": ["package.json", "src", "tests"],
+        }), encoding="utf-8")
+
+        validation = runner.invoke(
+            main,
+            [
+                "dev-loop", "--validate-result", str(result_file),
+                "--project-root", str(tmp_path),
+            ],
+        )
+        assert validation.exit_code == 0, validation.output
+
+        ticked = runner.invoke(
+            main,
+            [
+                "dev-loop", "--tick", "--result", str(result_file),
+                "--project-root", str(tmp_path),
+            ],
+        )
+
+        assert ticked.exit_code == 0, ticked.output
+        next_action = _last_json_line(ticked.output)
+        assert next_action["stage"] == "gap_scan"
+
 
 class TestStatusMode:
     def test_status_accepts_documented_json_format(self, tmp_path) -> None:

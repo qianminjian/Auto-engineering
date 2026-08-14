@@ -36,6 +36,17 @@ def _write_executable(path: Path, output: str) -> None:
     path.chmod(0o755)
 
 
+def _write_plugin_venv_executable(plugin: Path, output: str) -> None:
+    interpreter = plugin / ".venv" / "bin" / "python"
+    interpreter.parent.mkdir(parents=True, exist_ok=True)
+    interpreter.symlink_to("/bin/sh")
+    entrypoint = plugin / ".venv" / "bin" / "ae"
+    entrypoint.write_text(
+        f"#!{interpreter}\nprintf '%s' \"{output}:$*\"\n"
+    )
+    entrypoint.chmod(0o755)
+
+
 def _run(launcher: Path, path: str, *args: str) -> subprocess.CompletedProcess[str]:
     environ = os.environ.copy()
     environ["PATH"] = path
@@ -51,7 +62,7 @@ def _run(launcher: Path, path: str, *args: str) -> subprocess.CompletedProcess[s
 
 def test_prefers_plugin_virtualenv_ae(tmp_path: Path) -> None:
     launcher = _copy_launcher(tmp_path)
-    _write_executable(tmp_path / "plugin" / ".venv" / "bin" / "ae", "venv")
+    _write_plugin_venv_executable(tmp_path / "plugin", "venv")
     bin_dir = tmp_path / "bin"
     _write_executable(bin_dir / "uv", "uv")
     _write_executable(bin_dir / "ae", "path")
@@ -62,6 +73,28 @@ def test_prefers_plugin_virtualenv_ae(tmp_path: Path) -> None:
     assert result.stdout == "venv:status --format json"
 
 
+def test_rejects_copied_virtualenv_entrypoint_that_escapes_plugin(
+    tmp_path: Path,
+) -> None:
+    launcher = _copy_launcher(tmp_path)
+    _write_executable(tmp_path / "plugin" / ".venv" / "bin" / "ae", "escaped")
+    bin_dir = tmp_path / "bin"
+    uv = bin_dir / "uv"
+    uv.parent.mkdir(parents=True)
+    uv.write_text(
+        "#!/bin/sh\nprintf '%s' \"uv:${UV_PROJECT_ENVIRONMENT}:$*\"\n"
+    )
+    uv.chmod(0o755)
+
+    result = _run(launcher, str(bin_dir), "status")
+
+    assert result.returncode == 0
+    assert result.stdout == (
+        "uv:" + str(tmp_path / "plugin" / ".ae-runtime")
+        + ":run --frozen --project " + str(tmp_path / "plugin") + " ae status"
+    )
+
+
 def test_falls_back_to_uv_run_ae(tmp_path: Path) -> None:
     launcher = _copy_launcher(tmp_path)
     bin_dir = tmp_path / "bin"
@@ -70,18 +103,21 @@ def test_falls_back_to_uv_run_ae(tmp_path: Path) -> None:
     result = _run(launcher, str(bin_dir), "doctor")
 
     assert result.returncode == 0
-    assert result.stdout == "uv:run --project " + str(tmp_path / "plugin") + " ae doctor"
+    assert result.stdout == (
+        "uv:run --frozen --project " + str(tmp_path / "plugin") + " ae doctor"
+    )
 
 
-def test_falls_back_to_ae_on_path(tmp_path: Path) -> None:
+def test_rejects_untrusted_global_ae_fallback(tmp_path: Path) -> None:
     launcher = _copy_launcher(tmp_path)
     bin_dir = tmp_path / "bin"
     _write_executable(bin_dir / "ae", "path")
 
     result = _run(launcher, str(bin_dir), "status")
 
-    assert result.returncode == 0
-    assert result.stdout == "path:status"
+    assert result.returncode == 127
+    assert result.stdout == ""
+    assert "AE_CLI_UNTRUSTED" in result.stderr
 
 
 def test_reports_actionable_error_when_cli_is_unavailable(tmp_path: Path) -> None:
@@ -93,18 +129,15 @@ def test_reports_actionable_error_when_cli_is_unavailable(tmp_path: Path) -> Non
 
     assert result.returncode == 127
     assert result.stdout == ""
-    assert "AE_CLI_NOT_FOUND" in result.stderr
-    assert "uv sync" in result.stderr
+    assert "AE_CLI_UNTRUSTED" in result.stderr
+    assert "uv" in result.stderr
 
 
 def test_bundled_entrypoint_resolves_plugin_from_unrelated_project_cwd(
     tmp_path: Path,
 ) -> None:
     entrypoint = _copy_bundled_entrypoint(tmp_path)
-    _write_executable(
-        tmp_path / "plugin" / ".venv" / "bin" / "ae",
-        "bundled",
-    )
+    _write_plugin_venv_executable(tmp_path / "plugin", "bundled")
     target_project = tmp_path / "target-project"
     target_project.mkdir()
 

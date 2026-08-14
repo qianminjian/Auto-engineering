@@ -29,6 +29,8 @@
 | Phase 81-82 | 状态协调与 Gap/Repair 完成；T440-T444 已闭合严格 Host 合同、设计批准链、真实 EventStore 故障矩阵和双宿主黄金生命周期，T445 已建立 Hermetic/同 Build 证据门禁，真实产品 L3/L4 仍阻断发布 |
 | Phase 82 T447-T450 | 持久化旧 Build Worker 角色误判事故；补齐 spawn 失败恢复、线程级结构化 Gap 推荐授权和 RuntimeConfig→Action 配置事实链 |
 | Phase 82 T451-T453 | 真跑证伪宿主手工拼接 Worker 证明；补齐平台化证明模板、原生句柄/协议身份分离、纯 EventStore 恢复诊断和三 Worker 生产 Tick 轨迹 |
+| Phase 82 T454-T456 | 真跑证伪同版本插件的运行时来源：拒绝缓存外部 shebang 与全局旧 CLI，按插件锁文件创建隔离环境，并补齐 project_setup 跨进程 EventStore 轨迹 |
+| Phase 82 T457-T459 | Codex 安装由源码 Marketplace 改为开发目录外的内容寻址 Release；安装事务与 doctor/import/launcher 来源形成自动证明 |
 
 ## 持续有效的决策
 

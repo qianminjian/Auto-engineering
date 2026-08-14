@@ -1,5 +1,5 @@
 # Auto-Engineering BEACON
-> 创建：2026-06-24｜更新：2026-08-12｜阶段：Phase 82 真实宿主闭环与设计权威
+> 创建：2026-06-24｜更新：2026-08-14｜阶段：Phase 82 真实宿主闭环与设计权威
 > 决策状态翻转（✅↔❌）或架构降级必须先获用户批准。
 
 ## 目标与成功标准
@@ -44,6 +44,7 @@ Gate/Guardrail、五层验证、审计、v5.6 兼容迁移和双宿主验收。
 | D23 | SemVer 表示发布版本，内容寻址 Build Identity 区分同版本的不同制品和源码 | ✅ |
 | D24 | 显式设计文档与旧状态冲突时先由用户选择重新初始化或修复续作；旧状态保留审计 | ✅ |
 | D25 | Gap 决策由 Core 单项持久化；batch 展示标题与多组件路由键分离；Git 仅是可选证据源 | ✅ |
+| D26 | 本机产品安装只注册开发目录之外的内容寻址 Release；运行时来源不得反向访问源码工作区 | ✅ |
 
 ## 当前状态
 
@@ -54,22 +55,21 @@ Gate/Guardrail、五层验证、审计、v5.6 兼容迁移和双宿主验收。
   ActionCompiler 和 Stage-by-Stage strangling 统一收敛，完成前冻结新的点状真跑补丁。
 - T404-T410、T413-T420 已通过自动门禁；真实 rc.5 旧流已在隔离副本从 Architect
   恢复到 Developer，TickOrchestrator 已无具体 Stage 分支。
-- 当前自动门禁为 2415 passed/1 skipped、coverage 90%、Ruff/mypy；同一候选归档的
+- 当前自动门禁为 2417 passed/1 skipped、coverage 90%、Ruff/mypy；同一候选归档的
   Claude/Codex frozen/offline L2 均通过，但不替代 T411-T412 真实产品长跑与发布证据。
 - 最新真跑证明隐藏 `.ae-state` 可覆盖本次显式设计文档；Phase 81 在任何新 RC 前完成
   InvocationIntent、状态协调 Gate、可恢复重开、计划协调和可信验证证据。
 - T432-T433 已关闭 Gap 主链路、Agent 容量和 Repair 契约；新真跑证伪 Worker 身份隔离与设计权威，Phase 82 按 T434-T439 重建真实宿主验收。
 - Phase 82 审计确认 T435-T439 只是基础实现；T440-T446 按严格 SpawnPlan、Host Attestation、Decision Ledger、完整轨迹和 L1-L4 产品门禁收敛，完成前不再真跑碰运气。
-- T440-T444、T447-T453 已关闭严格 Host 合同、Worker 失败恢复、证明模板、纯 EventStore 恢复诊断和三 Worker 因果轨迹；T445-T446 的真实 L3/L4 证据继续阻断发布。
+- T440-T444、T447-T456 已关闭严格 Host 合同、Worker 证明、事件恢复、插件运行时来源隔离和 project_setup CLI 轨迹；T445-T446 的真实 L3/L4 证据继续阻断发布。
+- T457-T459 已建立独立 Release Marketplace 安装与零开发目录来源校验；本机 Codex 安装通过，Claude 产品长跑仍阻断发布。
 ## 最近演进
 | 日期 | 变更 |
 |---|---|
 | 2026-08-12 | Phase 82 审计将基础单测与生产闭环分离，补充 T440-T446 验收架构 |
+| 2026-08-14 | Codex 本机安装改为内容寻址 Release，禁止 Marketplace、运行时和 import origin 回指开发目录 |
 | 2026-08-12 | 关闭 T433：Agent 资源等待/回收契约与 Core-owned repair revision/template |
 | 2026-08-12 | 关闭 T432 真跑差距：单项 Gap wizard、多 key 路由、Critic replay 与新项目证据 |
-| 2026-08-09 | 批准状态冲突二选一：重新初始化或修复状态续作 |
-| 2026-08-09 | 关闭 rc.5 旧事件重放、PlanPatch 候选分叉与 Build Identity 事故 |
-| 2026-08-09 | 修复 Codex Architect 对原生 `spawn_agent` 的错误能力判定 |
 | 2026-08-09 | 完成 T404-T410 协议内核收敛；façade 退出 Stage 专属分支 |
 ## 待解决问题
 - T411-T412、T430、T434-T446：自动 Host 合同已闭合，下一步重做双宿主真实产品 L3/L4 门禁。

@@ -7,19 +7,28 @@ SCRIPT_DIR=$(CDPATH= cd -- "${0%/*}" && pwd -P)
 PLUGIN_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd -P)
 VENV_AE="$PLUGIN_ROOT/.venv/bin/ae"
 
-if [ -x "$VENV_AE" ]; then
+is_plugin_local_venv() {
+    [ -x "$VENV_AE" ] || return 1
+    IFS= read -r AE_SHEBANG < "$VENV_AE" || return 1
+    case "$AE_SHEBANG" in
+        "#!$PLUGIN_ROOT/.venv/"*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+if is_plugin_local_venv; then
     exec "$VENV_AE" "$@"
 fi
 
 if command -v uv >/dev/null 2>&1; then
-    exec uv run --project "$PLUGIN_ROOT" ae "$@"
-fi
-
-if command -v ae >/dev/null 2>&1; then
-    exec ae "$@"
+    # 本地 Marketplace 可能把源码 .venv 复制进插件缓存；其 entrypoint shebang
+    # 仍指向源码目录。使用独立环境，禁止安装缓存反向依赖可变源码运行时。
+    UV_PROJECT_ENVIRONMENT="$PLUGIN_ROOT/.ae-runtime"
+    export UV_PROJECT_ENVIRONMENT
+    exec uv run --frozen --project "$PLUGIN_ROOT" ae "$@"
 fi
 
 printf '%s\n' \
-    "AE_CLI_NOT_FOUND: 未找到 Auto-Engineering CLI。" \
-    "请在插件目录运行：uv sync" >&2
+    "AE_CLI_UNTRUSTED: 插件本地运行时不可用，已拒绝调用全局 ae。" \
+    "请安装 uv；插件将按自身 uv.lock 创建隔离运行时。" >&2
 exit 127
