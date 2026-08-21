@@ -217,9 +217,15 @@ class DesignDecisionLedger:
                 continue
             decision_id = payload.get("decision_id")
             approval_id = payload.get("approval_id")
+            source_ref = payload.get("source_ref")
+            proposed_change_sha256 = payload.get("proposed_change_sha256")
             if (
                 not isinstance(decision_id, str)
                 or not isinstance(approval_id, str)
+                or not isinstance(source_ref, str)
+                or not source_ref
+                or not isinstance(proposed_change_sha256, str)
+                or len(proposed_change_sha256) != 64
                 or payload.get("gate_id") != f"design_change:{decision_id}"
                 or approval_id in projected
             ):
@@ -228,6 +234,8 @@ class DesignDecisionLedger:
                 "decision_id": decision_id,
                 "status": "approved",
                 "causation_id": event.causation_id,
+                "source_ref": source_ref,
+                "proposed_change_sha256": proposed_change_sha256,
             }
         return projected
 
@@ -247,6 +255,44 @@ class DesignDecisionLedger:
             raise DesignDecisionError(
                 f"FUTURE_SCOPE_PROMOTION: {decision.decision_id}"
             )
+
+    def validate_advisory_promotions(
+        self,
+        *,
+        obligations: Iterable[dict[str, Any]],
+        research_archive: dict[str, dict],
+        approved_changes: dict[str, dict[str, Any]],
+    ) -> None:
+        """partial 账本只能保守执行；Research 实现义务必须有真实批准。"""
+
+        if self.enforcement_status != "partial":
+            return
+        approved_sources = {
+            str(item.get("source_ref"))
+            for item in approved_changes.values()
+            if (
+                isinstance(item, dict)
+                and item.get("status") == "approved"
+                and isinstance(item.get("source_ref"), str)
+                and isinstance(item.get("causation_id"), str)
+                and item.get("causation_id")
+                and isinstance(item.get("proposed_change_sha256"), str)
+                and len(item["proposed_change_sha256"]) == 64
+            )
+        }
+        research_sources = set(research_archive)
+        for obligation in obligations:
+            if not isinstance(obligation, dict):
+                continue
+            source_ref = obligation.get("source_ref")
+            if (
+                isinstance(source_ref, str)
+                and source_ref in research_sources
+                and source_ref not in approved_sources
+            ):
+                raise DesignDecisionError(
+                    f"DESIGN_CHANGE_APPROVAL_REQUIRED: {source_ref}"
+                )
 
     def validate_source_binding(
         self,

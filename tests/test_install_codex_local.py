@@ -3,17 +3,55 @@
 from __future__ import annotations
 
 import json
+import stat
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
 from scripts.install_codex_local import (
     CommandRunner,
+    _seal_runtime_tree,
     install_codex_release,
     stage_release,
     verify_runtime_paths,
 )
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_sealed_release_is_read_only_except_dedicated_runtime(tmp_path: Path) -> None:
+    release = tmp_path / "release"
+    plugin = release / "plugins" / "auto-engineering"
+    runtime = plugin / ".ae-runtime"
+    runtime.mkdir(parents=True)
+    launcher = plugin / "bin" / "ae-run"
+    launcher.parent.mkdir()
+    launcher.write_text("#!/bin/sh\n", encoding="utf-8")
+    launcher.chmod(0o755)
+
+    _seal_runtime_tree(release)
+
+    assert stat.S_IMODE(release.stat().st_mode) == 0o555
+    assert stat.S_IMODE(plugin.stat().st_mode) == 0o555
+    assert stat.S_IMODE(launcher.stat().st_mode) == 0o555
+    assert stat.S_IMODE(runtime.stat().st_mode) & stat.S_IWUSR
+
+
+def test_direct_script_entrypoint_loads_without_repository_pythonpath(
+    tmp_path: Path,
+) -> None:
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "scripts/install_codex_local.py"), "--help"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "--staging-root" in result.stdout
 
 
 def _minimal_release(root: Path) -> None:

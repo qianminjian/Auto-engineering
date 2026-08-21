@@ -25,6 +25,7 @@ REQUIRED_PATHS = (
     Path("scripts/check_host_package.py"),
     Path("scripts/install_acceptance.py"),
     Path("scripts/install_codex_local.py"),
+    Path("scripts/install_claude_local.py"),
     Path("scripts/product_acceptance.py"),
     Path("auto_engineering"),
     Path("pyproject.toml"),

@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 
 import click
@@ -31,14 +32,16 @@ def _is_checkpoint_database(db_file: Path) -> bool:
     """判断 SQLite 文件是否包含旧 checkpoint 表，跳过 EventStore 数据库。"""
     try:
         uri = f"file:{db_file.resolve()}?mode=ro"
-        with sqlite3.connect(uri, uri=True) as connection:
+        # sqlite3.Connection 的 context manager 只提交/回滚事务，并不 close。
+        # status 会枚举多个数据库，必须显式关闭只读探测连接。
+        with closing(sqlite3.connect(uri, uri=True)) as connection:
             has_table = bool(
                 connection.execute(
                     "SELECT 1 FROM sqlite_master "
                     "WHERE type='table' AND name='checkpoints'"
                 ).fetchone()
             )
-            return has_table or db_file.name != "events.db"
+            return has_table
     except (OSError, sqlite3.Error):
         # 只读目录可能无法读取 WAL 中的 sqlite_master；文件职责仍可确定。
         return db_file.name != "events.db"
@@ -140,10 +143,17 @@ def _collect_event_store_status(cwd: Path) -> dict | None:
         store: SQLiteCheckpointStore[EngineState]
         with SQLiteCheckpointStore(str(cp_dir / "checkpoints.db"), read_only=True) as store:
             thread_id = store.active_project_thread()
+        lease = None
+        if not thread_id:
+            from auto_engineering.host.runtime_driver import HostRunLeaseStore
+
+            lease = HostRunLeaseStore(cwd).load()
+            thread_id = lease.thread_id if lease is not None else None
         if not thread_id:
             return None
         with SQLiteEventStore(event_db) as events:
             state = events.load_projection(thread_id)
+            stream = events.load_stream(thread_id)
         if state is None:
             return None
         payload = {
@@ -155,6 +165,8 @@ def _collect_event_store_status(cwd: Path) -> dict | None:
             "total_majors": state.total_majors,
             "recent_history": [],
         }
+        if lease is not None and lease.disposition == "TERMINAL":
+            payload["stage"] = "done"
         from auto_engineering.engine.batch_state import BatchState
         from auto_engineering.loop.status_projection import reconciliation_status
 
@@ -168,6 +180,19 @@ def _collect_event_store_status(cwd: Path) -> dict | None:
         reconciliation = reconciliation_status(state, batch_state)
         if reconciliation is not None:
             payload["plan_reconciliation"] = reconciliation
+        from auto_engineering.metrics.event_projection import project_event_metrics
+
+        usage_records = []
+        usage_path = cp_dir / "usage-ledger.db"
+        if usage_path.exists():
+            from auto_engineering.metrics.usage_ledger import UsageLedger
+
+            usage_ledger = UsageLedger(usage_path)
+            try:
+                usage_records = usage_ledger.list_records(thread_id)
+            finally:
+                usage_ledger.close()
+        payload["event_metrics"] = project_event_metrics(stream, usage_records)
         return payload
     except (OSError, sqlite3.Error, ValueError, TypeError):
         _logger.warning("EventStore status 读取失败，回退旧 checkpoint", exc_info=True)

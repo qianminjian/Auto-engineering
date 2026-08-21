@@ -17,6 +17,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
 
@@ -88,6 +89,10 @@ def main():
 内部协议 (Skill driving loop 调用):
   ae dev-loop --init ["范围"] [--design-doc <path>] 初始化 tick loop；仅设计文档时执行全文
   ae dev-loop --tick --result result.json            提交本轮 tick 结果
+  ae dev-loop --finalize-result payload.json --output-result result.json
+                                                     非 spawn Action 生成完整 Result
+  ae dev-loop --finalize-result outcomes.json --coordinator-result result.json
+                                                     spawn Action 生成证明与完整 Result
   ae dev-loop --status [--verbose] [--format json]   查看当前进度
   ae dev-loop --resume <checkpoint-id>               从 checkpoint 恢复
 
@@ -100,10 +105,16 @@ def main():
               help="[内部协议] 初始化 tick loop, 输出第一个 action JSON")
 @click.option("--tick", "tick_flag", is_flag=True,
               help="[内部协议] 处理一个 tick (需 --result)")
-@click.option("--result", "result_file", type=click.Path(exists=True),
+@click.option("--result", "result_file", type=click.Path(),
               help="[内部协议] --tick 的 stage-result.json 路径")
-@click.option("--validate-result", "validate_result_file", type=click.Path(exists=True),
+@click.option("--validate-result", "validate_result_file", type=click.Path(),
               help="[内部协议] 无副作用预校验 stage-result.json")
+@click.option("--finalize-result", "finalize_result_file", type=click.Path(),
+              help="[内部协议] 从原生 Worker outcomes 原子终结完整 Result")
+@click.option("--coordinator-result", "coordinator_result_file", type=click.Path(),
+              help="[内部协议] --finalize-result 的 Coordinator payload")
+@click.option("--output-result", "output_result_file", type=click.Path(),
+              help="[内部协议] 原子写入完整 Result，供 validate/tick 直接消费")
 @click.option("--status", "status_flag", is_flag=True,
               help="[内部协议] 查询当前 tick 状态")
 @click.option("--format", "output_format", type=click.Choice(["json"]), default="json",
@@ -134,6 +145,9 @@ def dev_loop(
     tick_flag: bool,
     result_file: str | None,
     validate_result_file: str | None,
+    finalize_result_file: str | None,
+    coordinator_result_file: str | None,
+    output_result_file: str | None,
     status_flag: bool,
     output_format: str,
     resume_id: str | None,
@@ -172,11 +186,11 @@ def dev_loop(
     # ── 内部协议: tick 模式分派 ──
     tick_modes = [
         init_flag, tick_flag, status_flag, bool(resume_id),
-        bool(validate_result_file),
+        bool(validate_result_file), bool(finalize_result_file),
     ]
     if sum(bool(m) for m in tick_modes) > 1:
         click.echo(
-            "错误: --init/--tick/--validate-result/--status/--resume 互斥, 仅可指定一个。",
+            "错误: --init/--tick/--validate-result/--finalize-result/--status/--resume 互斥, 仅可指定一个。",
             err=True,
         )
         raise SystemExit(1)
@@ -194,7 +208,13 @@ def dev_loop(
         return
     if tick_flag:
         if not result_file:
-            click.echo("错误: --tick 必须带 --result <file>。", err=True)
+            from auto_engineering.cli.dev_loop import active_resume_operation
+
+            click.echo(json.dumps({
+                "error_code": "TICK_RESULT_REQUIRED",
+                "message": "--tick 必须带 --result <file>；禁止扫描状态目录推测 Action。",
+                "next_operation": active_resume_operation(root),
+            }, ensure_ascii=False), err=True)
             raise SystemExit(1)
         run_tick_step(Path(result_file), root, debug=_debug,
                        debug_dir=debug_dir_opt)
@@ -203,6 +223,22 @@ def dev_loop(
         from auto_engineering.cli.dev_loop import run_tick_validate
 
         run_tick_validate(Path(validate_result_file), root)
+        return
+    if finalize_result_file:
+        from auto_engineering.cli.dev_loop import run_tick_finalize
+
+        run_tick_finalize(
+            (
+                Path(finalize_result_file)
+                if coordinator_result_file
+                else None
+            ),
+            Path(coordinator_result_file or finalize_result_file),
+            root,
+            output_result_file=(
+                Path(output_result_file) if output_result_file else None
+            ),
+        )
         return
     if status_flag:
         del output_format  # 当前 status 契约固定为 JSON；参数用于兼容文档化调用。

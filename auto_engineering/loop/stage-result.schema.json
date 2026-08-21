@@ -67,6 +67,29 @@
     "contracts": {"type": "object"},
     "obligations": {"type": "array"},
     "decision_impacts": {"type": "array", "items": {"type": "object"}},
+    "design_change_requests": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "source", "source_ref", "requested_authority",
+          "change_summary", "affected_design_refs"
+        ],
+        "properties": {
+          "source": {"enum": ["research", "agent_assumption"]},
+          "source_ref": {"type": "string", "minLength": 1},
+          "requested_authority": {"const": "binding"},
+          "change_summary": {"type": "string", "minLength": 1},
+          "affected_design_refs": {
+            "type": "array", "minItems": 1,
+            "items": {"type": "string", "minLength": 1}
+          }
+        },
+        "additionalProperties": false
+      }
+    },
     "batch_id": {"type": ["string", "null"]},
     "files_changed": {"type": "array"},
     "commit_hash": {"type": "string"},
@@ -110,6 +133,7 @@
     "spawn_proof_token": {"type": "string"},
     "spawn_error": {"type": "string"},
     "spawn_error_code": {"type": "string"},
+    "spawn_retry_attempt": {"type": "integer", "minimum": 1},
     "worker_attestations": {
       "type": "array",
       "items": {"$ref": "#/$defs/workerAttestation"}
@@ -161,13 +185,19 @@
     {
       "if": {"properties": {"stage": {"const": "architect"}}},
       "then": {
-        "required": ["stage", "plan", "file_list"],
-        "anyOf": [
-          {"required": ["batch_plan"]},
-          {"required": ["plan_patch"]},
+        "required": ["stage"],
+        "oneOf": [
+          {"required": ["design_change_requests"]},
           {
-            "required": ["result_type", "source_revision", "classifications", "new_batch_plan"],
-            "properties": {"result_type": {"const": "plan_reconciliation"}}
+            "required": ["plan", "file_list"],
+            "anyOf": [
+              {"required": ["batch_plan"]},
+              {"required": ["plan_patch"]},
+              {
+                "required": ["result_type", "source_revision", "classifications", "new_batch_plan"],
+                "properties": {"result_type": {"const": "plan_reconciliation"}}
+              }
+            ]
           }
         ]
       }
@@ -212,7 +242,12 @@
             "type": "array",
             "items": {
               "type": "object",
-              "properties": {"severity": {"enum": ["P0", "P1", "P2"]}},
+              "properties": {
+                "severity": {"enum": ["P0", "P1", "P2"]},
+                "authority_class": {
+                  "enum": ["binding_violation", "objective_defect", "advisory", "out_of_scope"]
+                }
+              },
               "required": ["severity"]
             }
           }

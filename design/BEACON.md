@@ -1,5 +1,5 @@
 # Auto-Engineering BEACON
-> 创建：2026-06-24｜更新：2026-08-14｜阶段：Phase 82 真实宿主闭环与设计权威
+> 创建：2026-06-24｜更新：2026-08-21｜阶段：Phase 83 Host Runtime 产品闭环收敛
 > 决策状态翻转（✅↔❌）或架构降级必须先获用户批准。
 
 ## 目标与成功标准
@@ -45,36 +45,36 @@ Gate/Guardrail、五层验证、审计、v5.6 兼容迁移和双宿主验收。
 | D24 | 显式设计文档与旧状态冲突时先由用户选择重新初始化或修复续作；旧状态保留审计 | ✅ |
 | D25 | Gap 决策由 Core 单项持久化；batch 展示标题与多组件路由键分离；Git 仅是可选证据源 | ✅ |
 | D26 | 本机产品安装只注册开发目录之外的内容寻址 Release；运行时来源不得反向访问源码工作区 | ✅ |
+| D27 | Host Runtime 属于插件产品层；Core 保持单 Tick，用户不承担 continue/supervisor 管理命令 | ✅ |
+| D28 | Worker outcome 由宿主 Assembler 原子固化为 receipt、attestation、total proof 和 Result | ✅ |
+| D29 | partial 设计权威只允许保守执行原设计；advisory 架构变化必须显式用户批准 | ✅ |
+| D30 | 宿主临时交接文件按 Action identity 隔离；固定根目录文件不得跨 Tick 复用 | ✅ |
+| D31 | Core 状态目录必须从宿主工作区 diff 隔离，但不得隐藏业务源码或改写用户根忽略策略 | ✅ |
+| D32-D36 | Tick 后清理临时交接并有界等待；自动 Gap 决策双重重绑；已批准 Fill 保持 binding；Gate 使用独立 Result 契约 | ✅ |
+| D37 | Worker 失败写 `worker_failed` 尝试并由 Core 返回 WAIT_RESOURCE；只有成功 journal 才禁止重复 spawn | ✅ |
+| D38 | Finalizer 以 active Action 的工作文件为唯一事实源；宿主传入陈旧路径时自动续接当前文件，禁止跨 Action 误提交 | ✅ |
+| D39 | 系统审计覆盖维度固定、执行 fan-out 按 Core 计算的项目规模伸缩；小项目不重复发送五份上下文 | ✅ |
 
 ## 当前状态
 
 - Phase 1-79 的功能与自动门禁历史见 Tracker/HISTORY；v5.8.0-rc.5 仍未通过真实产品长跑门禁。
-- 2026-08-09 架构审计确认 Phase 54/55 的目标出口未完全成立：旧可变
-  TickOrchestrator、全状态事件补丁、线程级 Prompt 锁和非机器化续跑仍在生产路径。
-- 方案 B 已批准；Phase 80 按 Runtime Vector、Execution Control、显式 Reducer、纯
-  ActionCompiler 和 Stage-by-Stage strangling 统一收敛，完成前冻结新的点状真跑补丁。
-- T404-T410、T413-T420 已通过自动门禁；真实 rc.5 旧流已在隔离副本从 Architect
-  恢复到 Developer，TickOrchestrator 已无具体 Stage 分支。
-- 当前自动门禁为 2417 passed/1 skipped、coverage 90%、Ruff/mypy；同一候选归档的
-  Claude/Codex frozen/offline L2 均通过，但不替代 T411-T412 真实产品长跑与发布证据。
-- 最新真跑证明隐藏 `.ae-state` 可覆盖本次显式设计文档；Phase 81 在任何新 RC 前完成
-  InvocationIntent、状态协调 Gate、可恢复重开、计划协调和可信验证证据。
+- Phase 80-82 已关闭旧可变 Stage 分支、显式设计与隐藏状态冲突、严格 Host 合同、Worker 证明、事件恢复和安装来源隔离。
+- 当前候选的自动门禁、双宿主 frozen/offline L2 和内容寻址安装可验证；这些证据不替代真实产品 L3/L4 长跑。
 - T432-T433 已关闭 Gap 主链路、Agent 容量和 Repair 契约；新真跑证伪 Worker 身份隔离与设计权威，Phase 82 按 T434-T439 重建真实宿主验收。
 - Phase 82 审计确认 T435-T439 只是基础实现；T440-T446 按严格 SpawnPlan、Host Attestation、Decision Ledger、完整轨迹和 L1-L4 产品门禁收敛，完成前不再真跑碰运气。
-- T440-T444、T447-T456 已关闭严格 Host 合同、Worker 证明、事件恢复、插件运行时来源隔离和 project_setup CLI 轨迹；T445-T446 的真实 L3/L4 证据继续阻断发布。
-- T457-T459 已建立独立 Release Marketplace 安装与零开发目录来源校验；本机 Codex 安装通过，Claude 产品长跑仍阻断发布。
+- T440-T459 已关闭严格 Host 合同、Worker 证明、事件恢复、project_setup 轨迹和独立 Release 安装；Claude 产品长跑仍阻断发布。
+- 第 20 次真跑暴露的手工证据、续跑中断和 140% 进度已由 Phase 83 统一修复；2457/1、90%、静态、CI hermetic 与双宿主 L2 已通过，L3/L4 仍阻断发布。
+- 双宿主 L3 均已到 TERMINAL；L4 揭示的 Gap 恢复、运行时激活、自动决策、补充权威、Gate 校验与在途迁移缺口已由 T505-T511 闭合。
+- T512-T523 已闭合跨会话恢复、陈旧路径重绑、未提交 outcome 复用和审计 fan-out 伸缩；2519/1、Ruff、mypy 通过。完整 L3/L4 终态仍未完成。
 ## 最近演进
 | 日期 | 变更 |
 |---|---|
-| 2026-08-12 | Phase 82 审计将基础单测与生产闭环分离，补充 T440-T446 验收架构 |
-| 2026-08-14 | Codex 本机安装改为内容寻址 Release，禁止 Marketplace、运行时和 import origin 回指开发目录 |
-| 2026-08-12 | 关闭 T433：Agent 资源等待/回收契约与 Core-owned repair revision/template |
-| 2026-08-12 | 关闭 T432 真跑差距：单项 Gap wizard、多 key 路由、Critic replay 与新项目证据 |
-| 2026-08-09 | 完成 T404-T410 协议内核收敛；façade 退出 Stage 专属分支 |
+| 2026-08-21 | T512-T518 关闭重复 spawn、错误恢复、计划校验终止、Worker 超时伪成功与无限重启链路 |
+| 2026-08-21 | T519-T523 关闭旧路径误提交、未提交 outcome 重跑与小项目固定 5×xhigh 审计成本 |
 ## 待解决问题
-- T411-T412、T430、T434-T446：自动 Host 合同已闭合，下一步重做双宿主真实产品 L3/L4 门禁。
-- T421：清理测试套件中 SQLite connection `ResourceWarning`，不阻断本次协议修复。
+- T467-T469：用包含 T523 的同一 Build 重跑双宿主 L3 与 Voice Clone L4；完成前保持发布阻断。
+- Token 成本虽已可观测，但 L3 仍消耗大量缓存输入；发布结论必须同时给出成本事实，不得以功能通过替代效率验收。
 
 ## 引用文件
 
-`design/v5.8-Real-Host-Closure-Design.md` · `design/v5.8-Real-Host-Closure-PLAN.md` · `design/v5.8-Session-Decoupling-Design.md` · `design/v5.8-Session-Decoupling-PLAN.md` · `design/incidents/2026-07-29-claude-146-tick-long-run.md` · `design/IMPLEMENTATION-TRACKER.md` · `design/HISTORY.md`
+`design/v5.8-Host-Runtime-Convergence-Analysis.md` · `design/v5.8-Host-Runtime-Convergence-Design.md` · `design/v5.8-Host-Runtime-Convergence-PLAN.md` · `design/v5.8-Session-Decoupling-Design.md` · `design/v5.8-Session-Decoupling-PLAN.md` · `design/incidents/2026-07-29-claude-146-tick-long-run.md` · `design/IMPLEMENTATION-TRACKER.md` · `design/HISTORY.md`

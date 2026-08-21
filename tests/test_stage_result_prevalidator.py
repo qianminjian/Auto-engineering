@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from auto_engineering.loop.design_decision_ledger import DesignDecisionLedger
 from auto_engineering.loop.stage_result_prevalidator import StageResultPrevalidator
 
 
@@ -54,3 +55,35 @@ def test_plan_reconcile_candidate_uses_distinct_validator(tmp_path) -> None:
     )
 
     assert error is None
+
+
+def test_partial_design_authority_rejects_research_promotion(tmp_path) -> None:
+    state_dir = tmp_path / ".ae-state"
+    state_dir.mkdir()
+    (state_dir / "design-decision-ledger.json").write_text(
+        __import__("json").dumps(DesignDecisionLedger(()).to_dict()),
+        encoding="utf-8",
+    )
+
+    error = StageResultPrevalidator().validate(
+        "architect",
+        design_doc=None,
+        result={
+            "plan": "x" * 60,
+            "batch_plan": [{
+                "batch_id": "B1",
+                "component": "Core",
+                "tasks": [{"id": "B1-T1", "description": "增加 BFF"}],
+            }],
+            "file_list": ["server/bff.py"],
+            "contracts": {},
+            "obligations": [{"source_ref": "gap-1"}],
+        },
+        requirement="按原设计实现",
+        research_archive={"gap-1": {"recommended_design": "增加 BFF"}},
+        active_revision=0,
+        current_baseline=None,
+        project_root=tmp_path,
+    )
+
+    assert error == "DESIGN_CHANGE_APPROVAL_REQUIRED: gap-1"

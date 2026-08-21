@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import shutil
 from collections.abc import Mapping
@@ -27,6 +28,19 @@ _EVENT_NAMES = {
     "PostToolUse": "post_tool",
     "Stop": "stop",
 }
+
+_CODEX_NATIVE_WORKER_TOOL_FAMILIES = [
+    {
+        "spawn": "collaboration.spawn_agent",
+        "wait": "collaboration.wait_agent",
+        "close": "collaboration.interrupt_agent",
+    },
+    {
+        "spawn": "multi_agent_v1__spawn_agent",
+        "wait": "multi_agent_v1__wait_agent",
+        "close": "multi_agent_v1__close_agent",
+    },
+]
 
 
 class _Adapter2Mixin:
@@ -65,6 +79,18 @@ class _Adapter2Mixin:
             raise ValueError("HOST_ACTION_INVALID: 能力需求必须为 object")
         effective = profile.effective
         mapped_payload = dict(action)
+        action_key = hashlib.sha256(message_id.encode("utf-8")).hexdigest()[:24]
+        work_root = f".ae-state/host-runtime/work/{action_key}"
+        host_execution: dict[str, object] = {
+            "schema_version": "1.0",
+            "platform": self.platform.value,
+            "action_message_id": message_id,
+            "work_files": {
+                "outcomes": f"{work_root}/outcomes.json",
+                "coordinator_result": f"{work_root}/coordinator-result.json",
+                "result": f"{work_root}/result.json",
+            },
+        }
         spawn = action.get("spawn")
         if isinstance(spawn, Mapping) and isinstance(spawn.get("invocations"), list):
             from auto_engineering.host.spawn_contract import SpawnPlan
@@ -72,31 +98,36 @@ class _Adapter2Mixin:
 
             plan = SpawnPlan.from_action(action)
             stage = str(action.get("stage") or "")
-            mapped_payload["host_execution"] = {
-                "schema_version": "1.0",
-                "platform": self.platform.value,
-                "workers": [
-                    {
-                        "worker_id": invocation.worker_id,
-                        "native_worker_handle": None,
-                        "prompt_ref": invocation.prompt_ref,
-                        "receipt_path": invocation.receipt_path,
-                        "receipt": {
-                            "status": "pending",
-                            "stage": stage,
-                            "worker": invocation.worker_id,
-                            "requested_effort": invocation.requested_effort,
-                            "actual_model": "unknown",
-                        },
-                        "attestation": attestation_template(
-                            platform=self.platform,
-                            action_message_id=message_id,
-                            invocation=invocation,
-                        ),
-                    }
-                    for invocation in plan.invocations
-                ],
-            }
+            host_execution["workers"] = [
+                {
+                    "worker_id": invocation.worker_id,
+                    "native_worker_handle": None,
+                    "prompt_ref": invocation.prompt_ref,
+                    "receipt_path": invocation.receipt_path,
+                    "receipt": {
+                        "status": "pending",
+                        "stage": stage,
+                        "worker": invocation.worker_id,
+                        "requested_effort": invocation.requested_effort,
+                        "actual_model": "unknown",
+                    },
+                    "attestation": attestation_template(
+                        platform=self.platform,
+                        action_message_id=message_id,
+                        invocation=invocation,
+                    ),
+                }
+                for invocation in plan.invocations
+            ]
+            if self.platform is HostPlatform.CODEX:
+                host_execution["native_worker_tools"] = {
+                    "selection": "first_complete_exposed_family",
+                    "families": [
+                        dict(family)
+                        for family in _CODEX_NATIVE_WORKER_TOOL_FAMILIES
+                    ],
+                }
+        mapped_payload["host_execution"] = host_execution
         if action.get("action") == "session_rollover":
             if not effective.session_handoff:
                 raise ValueError("HOST_SESSION_HANDOFF_UNAVAILABLE")

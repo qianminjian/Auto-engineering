@@ -21,12 +21,17 @@ def build_architect_research_context(
         if isinstance(supplements, dict):
             for gap_id, item in supplements.items():
                 if isinstance(item, dict):
+                    source = str(item.get("source", "supplement"))
+                    approved = source in {"user", "thread_policy"}
                     entries.append({
                         "gap_id": str(gap_id),
-                        "source": str(item.get("source", "supplement")),
+                        "source": source,
                         "content": str(item.get("content", ""))[:4000],
-                        "authority": "advisory",
-                        "change_policy": "user_gate_required",
+                        "authority": "binding" if approved else "advisory",
+                        "change_policy": (
+                            "already_approved" if approved
+                            else "user_gate_required"
+                        ),
                     })
     for gap_id, item in research_archive.items():
         if isinstance(item, dict):

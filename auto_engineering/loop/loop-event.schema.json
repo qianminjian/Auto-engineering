@@ -91,5 +91,39 @@
     },
     "created_at": {"type": "string", "format": "date-time"}
   },
+  "allOf": [
+    {
+      "if": {"properties": {"event_type": {"const": "BatchCompleted"}}},
+      "then": {"properties": {"payload": {
+        "type": "object",
+        "required": ["batch_id", "task_ids", "completed_task_count", "design_section", "progress_node_id", "next_task"],
+        "properties": {
+          "batch_id": {"type": "string", "minLength": 1},
+          "task_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+          "completed_task_count": {"type": "integer", "minimum": 0},
+          "design_section": {"type": "string"},
+          "progress_node_id": {"type": "string", "minLength": 1},
+          "next_task": {"type": ["string", "null"]}
+        },
+        "additionalProperties": false
+      }}}
+    },
+    {
+      "if": {"properties": {"event_type": {"const": "ComponentCompleted"}}},
+      "then": {"properties": {"payload": {
+        "type": "object", "required": ["component"],
+        "properties": {"component": {"type": "string", "minLength": 1}},
+        "additionalProperties": false
+      }}}
+    },
+    {
+      "if": {"properties": {"event_type": {"const": "PlateCompleted"}}},
+      "then": {"properties": {"payload": {
+        "type": "object", "required": ["plate"],
+        "properties": {"plate": {"type": "string", "minLength": 1}},
+        "additionalProperties": false
+      }}}
+    }
+  ],
   "additionalProperties": false
 }

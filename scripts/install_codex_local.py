@@ -12,8 +12,12 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from scripts.build_release import _release_content_digest, build_archive
-from scripts.install_acceptance import _safe_extract_archive
+if __package__:
+    from .build_release import _release_content_digest, build_archive
+    from .install_acceptance import _safe_extract_archive
+else:  # 支持文档中的 `python scripts/install_codex_local.py` 直接入口。
+    from build_release import _release_content_digest, build_archive
+    from install_acceptance import _safe_extract_archive
 
 PLUGIN_ID = "auto-engineering@auto-engineering"
 MARKETPLACE_NAME = "auto-engineering"
@@ -37,6 +41,27 @@ class CommandRunner:
 
 def _is_within(path: Path, parent: Path) -> bool:
     return path.resolve().is_relative_to(parent.resolve())
+
+
+def _seal_runtime_tree(root: Path) -> None:
+    """Seal installed product bytes; only dedicated `.ae-runtime` stays mutable."""
+
+    root = root.resolve()
+    paths = list(root.rglob("*"))
+    for path in paths:
+        relative = path.relative_to(root)
+        if ".ae-runtime" in relative.parts:
+            continue
+        if path.is_symlink():
+            raise RuntimeError("安装制品在专属运行时之外包含符号链接")
+        if path.is_file():
+            executable = bool(path.stat().st_mode & 0o111)
+            path.chmod(0o555 if executable else 0o444)
+    for path in sorted(paths, key=lambda item: len(item.parts), reverse=True):
+        relative = path.relative_to(root)
+        if ".ae-runtime" not in relative.parts and path.is_dir():
+            path.chmod(0o555)
+    root.chmod(0o555)
 
 
 def _read_build_info(root: Path) -> StagedRelease:
@@ -226,6 +251,7 @@ def verify_codex_install(release: StagedRelease, development_root: Path) -> None
         module_origin=module_origin,
         launcher_shebang=launcher,
     )
+    _seal_runtime_tree(release.root)
 
 
 def main() -> int:

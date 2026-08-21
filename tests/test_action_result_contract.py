@@ -123,6 +123,22 @@ class TestSchemaFilesVersionedAndValid:
         assert "v1.1" in _ACTION_SCHEMA["$comment"]
         assert "v1.1" in _RESULT_SCHEMA_JSON["$comment"]
 
+    def test_architect_may_return_only_a_design_change_request(self):
+        result = _valid_result("architect")
+        result.pop("plan")
+        result.pop("batch_plan")
+        result.pop("file_list")
+        result["design_change_requests"] = [{
+            "source": "research",
+            "source_ref": "gap-1",
+            "requested_authority": "binding",
+            "change_summary": "由纯前端改为 BFF",
+            "affected_design_refs": ["§4.1"],
+        }]
+
+        assert validate_result_format(result, "architect") == []
+        assert list(_result_validator.iter_errors(result)) == []
+
     @pytest.mark.parametrize("schema", [_ACTION_SCHEMA, _RESULT_SCHEMA_JSON])
     def test_protocol_envelope_fields_are_required(self, schema):
         for field in (
@@ -284,6 +300,8 @@ class TestActionRoundTrip:
         o.project_root = tmp_path
         action = o.init("req", design_doc_path=str(design))  # 真实 _build_action(gap_scan)
         assert action["action"] == "gap_scan"
+        assert action["context"]["project_profile_summary"]["profile_id"]
+        assert "project_profile_summary" in action["instruction"]
         _action_validator.validate(action)
 
     def test_real_gap_review_action_conforms(self, tmp_path):

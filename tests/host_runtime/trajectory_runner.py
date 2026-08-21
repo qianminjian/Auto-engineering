@@ -2,17 +2,18 @@
 
 from __future__ import annotations
 
-import json
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from auto_engineering.host import HostPlatform
 from auto_engineering.host.adapters import adapter_for
+from auto_engineering.host.execution_assembler import (
+    HostExecutionAssembler,
+    NativeWorkerOutcome,
+)
 from auto_engineering.host.spawn_contract import SpawnPlan, WorkerOutcome
-from auto_engineering.host.worker_attestation import WorkerAttestation
 from auto_engineering.host.worker_invocation import (
     WorkerInvocation,
     compile_worker_invocation,
@@ -57,6 +58,7 @@ class HostTrajectoryRunner:
         *,
         error_code: str,
         message: str,
+        extra: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         active = self.event_store.load_action_snapshot(str(action.get("thread_id", "")))
         if active is None or active.get("message_id") != action.get("message_id"):
@@ -69,6 +71,7 @@ class HostTrajectoryRunner:
             "correlation_id": action.get("correlation_id"), "extensions": {},
             "spawned": False, "spawn_error_code": error_code,
             "spawn_error": message,
+            **dict(extra or {}),
         }
         return dict(self.core.tick_dict(result))
 
@@ -97,7 +100,7 @@ class HostTrajectoryRunner:
 
         events = ["action_received", "evidence_templates_materialized"]
         outcomes: list[WorkerOutcome] = []
-        attestations: list[WorkerAttestation] = []
+        native_outcomes: list[NativeWorkerOutcome] = []
         for index, (spec, worker) in enumerate(zip(plan.invocations, workers, strict=True)):
             host_worker = host_workers[index]
             if not isinstance(host_worker, Mapping):
@@ -111,28 +114,20 @@ class HostTrajectoryRunner:
             events.append("worker_invoked")
             outcome = WorkerOutcome.from_dict(worker(invocation))
             outcomes.append(outcome)
-            raw_attestation = dict(host_worker["attestation"])
-            raw_attestation["actual_model"] = "fake-host-model"
-            raw_attestation["status"] = "completed"
-            attestation = WorkerAttestation.from_dict(raw_attestation)
-            attestation.validate(
-                action_message_id=invocation.action_message_id,
-                invocation=spec,
-            )
-            attestations.append(attestation)
-            receipt_path = self.project_root / str(host_worker["receipt_path"])
-            receipt_path.parent.mkdir(parents=True, exist_ok=True)
-            receipt = dict(host_worker["receipt"])
-            receipt.update({
-                "status": "completed",
-                "completed_at": datetime.now(UTC).isoformat(),
-                "actual_model": attestation.actual_model,
-                "attestation": attestation.to_dict(),
-            })
-            receipt_path.write_text(
-                json.dumps(receipt, ensure_ascii=False), encoding="utf-8"
-            )
-            events.append("attestation_recorded")
+            native_outcomes.append(NativeWorkerOutcome(
+                worker_id=spec.worker_id,
+                native_worker_handle=f"{self.platform.value}-worker-{index}",
+                status="completed",
+                payload=dict(outcome.payload),
+                summary=f"{spec.worker_id} completed",
+                actual_model="fake-host-model",
+                isolation_evidence=(
+                    "fork_context=false"
+                    if self.platform is HostPlatform.CODEX
+                    else "fresh_context"
+                ),
+            ))
+            events.append("native_outcome_recorded")
 
         if fail_after_receipt:
             raise HostTrajectoryError("FAULT_AFTER_RECEIPT")
@@ -140,40 +135,18 @@ class HostTrajectoryRunner:
         merged: dict[str, Any] = {}
         for outcome in outcomes:
             merged.update(outcome.payload)
-        total_token = action.get("spawn_proof_token")
-        if not isinstance(total_token, str) or not total_token:
-            raise HostTrajectoryError("TOTAL_PROOF_TOKEN_MISSING")
-        total_path = self.project_root / ".ae-state" / "spawn-proofs" / f"{total_token}.json"
-        total_path.write_text(json.dumps({
-            "status": "completed",
-            "token": total_token,
-            "stage": action.get("stage"),
-            "completed_at": datetime.now(UTC).isoformat(),
-        }), encoding="utf-8")
-        events.append("proof_completed")
-
-        result = {
-            **merged,
-            "schema_version": "1.1",
-            "message_type": "result",
-            "message_id": f"result-{action.get('message_id')}",
-            "thread_id": action.get("thread_id"),
-            "tick": action.get("tick"),
-            "stage": action.get("stage"),
-            "causation_id": action.get("message_id"),
-            "correlation_id": action.get("correlation_id"),
-            "extensions": {},
-            "spawned": True,
-            "spawn_proof_token": total_token,
-            "worker_attestations": [item.to_dict() for item in attestations],
-        }
+        result = HostExecutionAssembler(self.project_root).finalize(
+            action=mapped,
+            outcomes=native_outcomes,
+            coordinator_payload=merged,
+        )
+        events.append("evidence_transaction_committed")
         next_action = self.core.tick_dict(result)
         stream = self.event_store.load_stream(str(action.get("thread_id")))
         event_names = tuple(event.event_type.value for event in stream)
         if "ResultAccepted" not in event_names or "ActionIssued" not in event_names:
             raise HostTrajectoryError(
-                "CORE_CAUSAL_CHAIN_INCOMPLETE: "
-                + json.dumps(dict(next_action), ensure_ascii=False, sort_keys=True)
+                "CORE_CAUSAL_CHAIN_INCOMPLETE: " + str(dict(next_action))
             )
         events.extend(("result_submitted", *event_names, "next_action_received"))
         return HostTrajectory(result, dict(next_action), tuple(events))

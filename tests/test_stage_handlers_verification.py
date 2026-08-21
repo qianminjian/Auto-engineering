@@ -108,6 +108,28 @@ def test_single_p1_cannot_pass_final_deep_audit() -> None:
     assert open_finding["description"] == "race"
 
 
+def test_out_of_scope_p1_is_audited_but_does_not_trigger_refine() -> None:
+    finding = {
+        "severity": "P1",
+        "dimension": "virtualization",
+        "file": "src/library.py",
+        "line": 1,
+        "description": "独立库函数没有运行时调用方",
+        "authority_class": "out_of_scope",
+    }
+
+    decision = SystemDeepAuditHandler().apply(
+        {},
+        {"findings": [finding]},
+        _context(p1_threshold=0),
+    )
+
+    assert decision.terminal is True
+    assert decision.refine_source is None
+    assert decision.audit_counts == (0, 0, 0)
+    assert _changes(decision)["audit_findings"][0]["authority_class"] == "out_of_scope"
+
+
 def test_plate_pass_routes_to_next_plate_or_cropped_layer() -> None:
     more = PlateDeepAuditHandler().apply(
         {},

@@ -1,6 +1,6 @@
 # design/ 资产索引
 
-> 更新：2026-08-12｜当前实现：v5.8.0-rc.5；Phase 82 审计收敛中，真实产品门禁未通过
+> 更新：2026-08-16｜当前实现：v5.8.0-rc.5；Phase 83 Host Runtime 收敛中，真实产品门禁未通过
 
 ## 当前权威资产
 
@@ -19,6 +19,9 @@
 | `v5.8-Gap-Review-Wizard-Design.md` | T432 单项 Gap 向导、计划路由、事件恢复与新项目证据设计 |
 | `v5.8-Real-Host-Closure-Design.md` | Phase 82 严格 SpawnPlan、设计决策账本、四层验收与发布门禁 |
 | `v5.8-Real-Host-Closure-PLAN.md` | T434-T446 实施计划；T435-T439 为基础，T440-T446 闭合生产路径 |
+| `v5.8-Host-Runtime-Convergence-Analysis.md` | Phase 83 根因、目标架构、实现映射、证据分层与防退化分析附件 |
+| `v5.8-Host-Runtime-Convergence-Design.md` | Phase 83 Host Runtime、原子证据、事件投影与设计权威目标设计 |
+| `v5.8-Host-Runtime-Convergence-PLAN.md` | Phase 83 T460-T469 实施与产品验收计划 |
 | `v5.8-Automatic-Context-Governance.md` | Phase 70 自动 compaction、有界增量上下文与成本治理权威设计 |
 | `v5.8-Session-Decoupling-Design.md` | Phase 64-67 状态恢复设计；日常 rollover 已由 Phase 70 纠偏 |
 | `v5.8-Session-Decoupling-PLAN.md` | Phase 64-70 T302-T350 可执行实施计划 |

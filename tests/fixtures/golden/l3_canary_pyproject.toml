@@ -1,0 +1,21 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ae-canary"
+version = "0.1.0"
+requires-python = ">=3.12"
+
+[dependency-groups]
+dev = ["build>=1.2", "hatchling>=1.27,<2", "mypy>=1.17", "pytest>=8", "ruff>=0.12"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/canary_math"]
+
+[tool.hatch.build.targets.sdist]
+exclude = ["/.ae-state", "/_scratch", "/.venv", "/dist", "/**/__pycache__"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

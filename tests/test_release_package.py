@@ -124,6 +124,7 @@ def test_release_workflow_uses_validated_builder_without_swallowing_errors() -> 
     assert "scripts/check_project_metadata.py" in content
     assert "--host claude-code" in content
     assert "--host codex" in content
+    assert content.count('--wheel-cache "$(uv cache dir)"') == 2
     assert "shasum -a 256" in content
     assert "release/*.sha256" in content
     assert "|| true" not in content
@@ -141,6 +142,7 @@ def test_ci_has_independent_claude_and_codex_contract_matrix() -> None:
     assert "host: codex" in content
     assert "scripts/build_release.py" in content
     assert "scripts/install_acceptance.py" in content
+    assert '--wheel-cache "$(uv cache dir)"' in content
     assert "scripts/sync_agent_instructions.py --check" in content
     assert content.count("uv sync --frozen --extra dev --extra otel") == 2
     assert "macos-latest" in content

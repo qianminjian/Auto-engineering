@@ -68,6 +68,7 @@ class DeveloperHandler:
         target: StageName = "developer" if more else "critic"
         progress = {
             "design_section": context.extensions.get("design_section", ""),
+            "progress_node_id": context.extensions.get("progress_node_id", ""),
             "completed_task_count": int(
                 context.extensions.get("completed_task_count", 0)
             ),
@@ -78,11 +79,25 @@ class DeveloperHandler:
         if more and isinstance(pre_gate, Mapping):
             action_context["pre_gate"] = dict(pre_gate)
         completed_batch_id = context.extensions.get("completed_batch_id")
+        raw_task_ids = context.extensions.get("completed_task_ids", ())
+        task_ids = (
+            [str(item) for item in raw_task_ids]
+            if isinstance(raw_task_ids, (list, tuple))
+            else []
+        )
         events: tuple[LoopEvent, ...] = (
             transition_event(
                 LoopEventType.BATCH_COMPLETED,
                 thread_id=context.thread_id,
                 sequence=context.event_sequence,
+                payload={
+                    "batch_id": completed_batch_id,
+                    "task_ids": task_ids,
+                    "completed_task_count": progress["completed_task_count"],
+                    "design_section": progress["design_section"],
+                    "progress_node_id": progress["progress_node_id"],
+                    "next_task": progress["next_task"],
+                },
             ),
         )
         if not more:

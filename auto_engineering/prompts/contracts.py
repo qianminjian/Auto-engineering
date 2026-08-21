@@ -39,7 +39,10 @@ _CONTRACTS: Mapping[str, StagePromptContract] = MappingProxyType({
     "gap_scan": StagePromptContract(
         "gap_scan",
         ExecutionMode.INLINE,
-        ("design_doc_path", "project_root", "requirement"),
+        (
+            "design_doc_path", "project_root", "requirement",
+            "project_profile_summary",
+        ),
         optional_context=("design_authority", "design_decision_ledger"),
     ),
     "research": StagePromptContract(
@@ -51,7 +54,10 @@ _CONTRACTS: Mapping[str, StagePromptContract] = MappingProxyType({
     "architect": StagePromptContract(
         "architect",
         ExecutionMode.SINGLE_WORKER,
-        ("requirement", "design_doc_path", "project_profile_summary"),
+        (
+            "requirement", "design_doc_path", "valid_plate_keys",
+            "project_profile_summary",
+        ),
         ("architect",),
         (
             "feedback", "research_and_design_context", "plan_revision",

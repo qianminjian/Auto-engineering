@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+import shlex
 import time
 from collections.abc import Callable
 from copy import copy, deepcopy
@@ -29,47 +30,59 @@ from auto_engineering.loop.effects import (
     WriteJsonArtifact,
 )
 from auto_engineering.prompts.architect_context import build_architect_research_context
-from auto_engineering.prompts.compiler import compile_prompt_bundle
+from auto_engineering.prompts.compiler import (
+    CORE_OWNED_OUTPUT_FIELDS,
+    compile_prompt_bundle,
+)
 from auto_engineering.prompts.contracts import default_prompt_contracts
 from auto_engineering.prompts.registry import default_registry
 
-# DS-15: spawn instruction. For multi-agent stages (count>1), each agent gets
-# its own prompt from spawn.agents[]. Team Lead spawns all N, collects outputs,
-# merges into one result JSON.
+# 严格 spawn Action 只描述原生执行事实；证明与 Result 由 Assembler 独占生成。
 _SPAWN_INSTRUCTION = (
-    "Spawn {count} agent{parallel} with effort={effort}.\n"
+    "Execute exactly {count} native worker{parallel} from spawn.invocations[] "
+    "with requested effort={effort}.\n"
+    "Execute every project tool and launch every worker with working directory "
+    "{project_root}; never use the plugin or prompt-artifact directory as cwd.\n"
     "{multi_instruction}"
-    "Collect all outputs → merge into one result per expected_format → "
-    "write result: {{\"stage\":\"{stage}\",\"spawned\":true,"
-    "\"spawn_proof_token\":\"{proof_token}\", ...merged}}.\n"
-    "Receipt: after the native spawn completes, OVERWRITE "
-    ".ae-state/spawn-proofs/{proof_token}.json with exactly one JSON object, changing "
-    "status to \"completed\" and including token, stage and completed_at=<ISO timestamp>. "
-    "do NOT append a second JSON object. Do not modify "
-    ".ae-state/spawn-challenges/; it is immutable Core state.\n"
+    "Write only native facts to action.host_execution.work_files.outcomes "
+    "using the exact wrapper "
+    "{{\"outcomes\":[{{worker_id,native_worker_handle,status,payload,summary,"
+    "actual_model,isolation_evidence}}]}}. Write only expected_format business fields to "
+    "action.host_execution.work_files.coordinator_result. Do not write receipt, "
+    "attestation, proof, spawned, "
+    "spawn_proof_token, or protocol identity fields.\n"
+    "Run ae-run dev-loop --finalize-result <work_files.outcomes> "
+    "--coordinator-result <work_files.coordinator_result> "
+    "--output-result <work_files.result>. Never reuse files from another Action. "
+    "The Assembler is the "
+    "only proof and Result writer. Always append --project-root {project_root} "
+    "to this and every other internal ae-run dev-loop command.\n"
+    "After tick returns the next Action, discard every prior Action object, work-file "
+    "path, worker handle and command argument. Do not print full diffs, prior outcomes "
+    "or historical Action JSON during recovery; consume only the structured error and "
+    "the active Action.\n"
     "If native spawn reports capacity exhaustion, first wait for known workers to finish "
     "and reclaim their handles when the host supports it, then retry once. If capacity is "
-    "still unavailable, write {{\"stage\":\"{stage}\",\"spawned\":false,"
-    "\"spawn_error_code\":\"HOST_AGENT_CAPACITY\",\"spawn_error\":\"<reason>\"}}. "
-    "For other failures write {{\"stage\":\"{stage}\",\"spawned\":false,"
-    "\"spawn_error\":\"<reason>\"}}."
+    "still unavailable, report HOST_AGENT_CAPACITY without fabricating a worker result."
+    " If any native worker times out or fails, record that native failure in outcomes, "
+    "write an empty coordinator payload, and call the same Finalizer; never fabricate "
+    "business fields or success evidence."
+    " After recording every completed outcome, immediately close or reclaim that native "
+    "worker handle before advancing to another Action."
 )
 _SPAWN_MULTI_INSTRUCTION = (
-    "Each agent has its own prompt in spawn.agents[] — give agent[i] spawn.agents[i].prompt.\n"
-    "Each agent must OVERWRITE only its own spawn.agents[i].receipt_path with "
-    "{\"status\":\"completed\",\"stage\":\"<stage>\",\"completed_at\":\"<ISO timestamp>\","
-    "\"requested_effort\":\"<spawn effort>\",\"actual_model\":\"<host model or unknown>\"}. "
-    "After all worker receipts are completed, Team Lead must OVERWRITE the total proof file; "
-    "workers must not write the shared total proof.\n"
+    "Use each invocation's prompt_ref, prompt_sha256, isolation and receipt_path; "
+    "workers return native outcomes only and never write shared state.\n"
 )
 _SPAWN_SINGLE_INSTRUCTION = (
-    "Use subagent_prompt below.\n"
+    "Use spawn.invocations[0] as the only execution contract.\n"
 )
 # Non-spawn stages (developer, gap_scan inline) use this:
 _INLINE_INSTRUCTION = (
     "Do the work for stage '{stage}' per expected_format. "
     "Write result JSON with stage='{stage}'."
 )
+_CORE_OWNED_RESULT_FIELDS = CORE_OWNED_OUTPUT_FIELDS
 if TYPE_CHECKING:
     from auto_engineering.engine.batch_state import BatchState
     from auto_engineering.engine.design_doc import DesignDoc
@@ -283,6 +296,7 @@ class ActionBuilder:
                 "must_not_run_git_init_or_stage_without_user_authorization": True,
             },
             "instruction": (
+                f"所有项目工具以 {self.project_root.resolve()} 为工作目录；不得在插件目录执行。"
                 "根据需求与设计文档建立缺失的项目工程能力。完成后提交 "
                 "stage='project_setup'、result_type='project_setup_completed' 和 artifacts；"
                 "Core 将重新探测文件，不采信文字声明。若缺失 eslint_flat_config，"
@@ -454,6 +468,8 @@ class ActionBuilder:
             "tick": self._state.tick + 1,
             "stage": self._state.current_stage,
             "thread_id": self._state.thread_id,
+            # Host tools may change cwd. Protocol execution must not inherit it.
+            "project_root": str(self.project_root.resolve()),
             "gate_summary": self._state.gate_results,
             "feedback": feedback,
             "requirement": self._state.requirement,
@@ -497,9 +513,34 @@ class ActionBuilder:
                 context.setdefault("design_authority", authority)
             if "design_decision_ledger" in contract.optional_context:
                 context.setdefault("design_decision_ledger", ledger)
-        spawn = _SPAWN_CONFIG.get(action)
-        if spawn is not None:
-            result["spawn"] = deepcopy(spawn)
+        spawn_template = _SPAWN_CONFIG.get(action)
+        if spawn_template is not None:
+            spawn = deepcopy(spawn_template)
+            audit_files = (
+                context.get("audit_scope", {}).get("files", [])
+                if isinstance(context, dict)
+                and isinstance(context.get("audit_scope"), dict)
+                else []
+            )
+            compact_system_audit = (
+                action == "system_deep_audit"
+                and isinstance(audit_files, list)
+                and len(audit_files) <= 20
+            )
+            if compact_system_audit:
+                spawn.update({"count": 1, "parallel": False, "effort": "high"})
+                result["audit_execution_profile"] = {
+                    "profile": "compact",
+                    "audited_file_count": len(audit_files),
+                    "dimension_count": 5,
+                }
+            elif action == "system_deep_audit":
+                result["audit_execution_profile"] = {
+                    "profile": "specialist",
+                    "audited_file_count": len(audit_files),
+                    "dimension_count": 5,
+                }
+            result["spawn"] = spawn
             result["spawn"]["contract_version"] = "1.0"
             # DS-15: spawn proof — pre-write file, reference path in instruction
             import uuid
@@ -518,15 +559,13 @@ class ActionBuilder:
                 stage=action,
                 effort=spawn.get("effort", "high"),
                 proof_token=proof_token,
+                project_root=shlex.quote(str(self.project_root.resolve())),
             )
 
             # DS-15: read prompt from file
             full_prompt = self._load_prompt(action)
             worker_expected_format = dict(expected_format or {})
-            coordinator_expected_format = {
-                "spawned": "bool — true only after all native workers complete",
-                **worker_expected_format,
-            }
+            coordinator_expected_format = dict(worker_expected_format)
 
             if is_multi:
                 contract = default_prompt_contracts()[action]
@@ -578,7 +617,66 @@ class ActionBuilder:
                 compiled_prompt = True
             else:
                 single_contract = default_prompt_contracts().get(action)
-                if single_contract is not None and action in {
+                if compact_system_audit and single_contract is not None:
+                    from auto_engineering.prompts.contracts import (
+                        ExecutionMode,
+                        StagePromptContract,
+                    )
+
+                    role_sections = full_prompt.split("\n***\n")
+                    compact_role_prompt = (
+                        "你是小型项目五维系统审计 Worker。必须在同一个隔离上下文中完成："
+                        "架构合理性、代码质量、工程化规范、虚化实现、团队与设计覆盖。"
+                        "逐维执行下列清单，最后合并去重并直接按输出契约返回；不得遗漏维度。\n\n"
+                        + "\n\n".join(role_sections[1:])
+                    )
+                    compact_contract = StagePromptContract(
+                        stage=single_contract.stage,
+                        execution_mode=ExecutionMode.SINGLE_WORKER,
+                        required_context=single_contract.required_context,
+                        worker_roles=("system_audit_compact",),
+                        optional_context=single_contract.optional_context,
+                        artifact_kinds=single_contract.artifact_kinds,
+                        max_context_bytes=single_contract.max_context_bytes,
+                    )
+                    bundle = compile_prompt_bundle(
+                        contract=compact_contract,
+                        role_prompt=compact_role_prompt,
+                        context=dict(context or {}),
+                        expected_format=worker_expected_format,
+                    )
+                    result["subagent_prompt"] = bundle.worker_prompts[0].prompt
+                    result["worker_execution_identity"] = (
+                        bundle.worker_prompts[0].execution_identity
+                    )
+                    worker = bundle.worker_prompts[0]
+                    receipt_token = uuid.uuid4().hex
+                    self._write_spawn_proof_file(receipt_token, action)
+                    prompt_ref = self._write_prompt_artifact(
+                        worker.prompt, worker.prompt_hash,
+                    )
+                    result["spawn"]["invocations"] = [
+                        WorkerInvocationSpec(
+                            worker_id=f"{action}-0",
+                            role=worker.role,
+                            prompt_ref=prompt_ref,
+                            prompt_sha256=worker.prompt_hash,
+                            requested_effort=str(spawn.get("effort", "high")),
+                            isolation="fresh_context",
+                            capabilities={
+                                "may_drive_loop": False,
+                                "may_spawn_workers": False,
+                            },
+                            receipt_path=(
+                                f".ae-state/spawn-proofs/{receipt_token}.json"
+                            ),
+                        ).to_dict()
+                    ]
+                    result.setdefault("extensions", {})[
+                        "context_manifest"
+                    ] = bundle.context_manifest
+                    compiled_prompt = True
+                elif single_contract is not None and action in {
                     "architect", "critic", "component_verifier",
                     "system_verifier",
                 }:
@@ -674,7 +772,11 @@ class ActionBuilder:
                         + "\n".join(ctx_lines) + "\n\n")
                     result["subagent_prompt"] = preamble + result["subagent_prompt"]
         if expected_format is not None:
-            result["expected_format"] = expected_format
+            result["expected_format"] = {
+                key: value
+                for key, value in expected_format.items()
+                if key not in _CORE_OWNED_RESULT_FIELDS
+            }
         result.update(extra)
         return result
 
@@ -817,6 +919,7 @@ class ActionBuilder:
                 self._design_doc.path if self._design_doc else None),
             "project_root": str(self.project_root),
             "requirement": self._state.requirement,
+            "project_profile_summary": self._project_profile_summary(),
             "design_authority": DesignAuthorityPolicy.default().to_dict(),
         }, expected_format={
             "gaps": (
@@ -937,6 +1040,12 @@ class ActionBuilder:
             expected_format=action["expected_format"],
         )
         action["instruction"] = bundle.coordinator_prompt
+        action["instruction"] = (
+            "Execute every project tool with working directory "
+            f"{shlex.quote(str(self.project_root.resolve()))}; never use the plugin "
+            "or prompt-artifact directory as cwd.\n\n"
+            + action["instruction"]
+        )
         return action
 
     def _build_component_map(self) -> dict[str, str]:
@@ -1016,6 +1125,17 @@ class ActionBuilder:
                 "mode": "PLAN_REFINE",
                 "refine_request": json.loads(self._state.refine_request_json),
             }
+        incoming_feedback = base.get("feedback")
+        if isinstance(incoming_feedback, str) and incoming_feedback.startswith(
+            "RESULT_REPAIR："
+        ):
+            if isinstance(extra.get("feedback"), dict):
+                extra["feedback"]["validation_error"] = incoming_feedback
+            else:
+                extra["feedback"] = {
+                    "mode": "RESULT_REPAIR",
+                    "validation_error": incoming_feedback,
+                }
         research_context = build_architect_research_context(
             self._state.design_supplements_json, self._state.research_archive
         )
@@ -1079,12 +1199,19 @@ class ActionBuilder:
             "design_doc_path": (
                 self._design_doc.path if self._design_doc else None
             ),
+            "valid_plate_keys": self._valid_plate_keys(),
             "project_profile_summary": self._project_profile_summary(),
             **({"plan_revision": self._state.plan_refine_count} if is_refine else {}),
             "feedback": extra.get("feedback", base.get("feedback")),
             "research_and_design_context": research_context,
             "design_authority": extra["design_authority"],
         }, expected_format={
+            "design_change_requests": (
+                "仅当 advisory 必须改变 binding design 时，只输出 1 项："
+                "[{source:research|agent_assumption,source_ref,"
+                "requested_authority:binding,change_summary,affected_design_refs:[string]}]；"
+                "该分支不同时输出 plan/batch_plan/plan_patch"
+            ),
             "plan": "string (markdown, min 50 chars)",
             **expected_plan,
             "file_list": "[string] (min 1 file)",
@@ -1101,6 +1228,10 @@ class ActionBuilder:
                     "verification_targets:[test_task_id],contract_refs:[name]}]；"
                     "research_and_design_context 非空时必须逐 source_ref 覆盖"
                 )
+            ),
+            "decision_impacts": (
+                "[{decision_id,impact:preserve|approved_change,"
+                "approved_change_id?}]（ledger 有 binding decision 时逐项提交）"
             ),
         }, valid_plate_keys=self._valid_plate_keys(), **extra)
 
@@ -1161,7 +1292,12 @@ class ActionBuilder:
             context=action["context"],
             expected_format=action["expected_format"],
         )
-        action["instruction"] = bundle.coordinator_prompt
+        action["instruction"] = (
+            "Execute every project tool with working directory "
+            f"{shlex.quote(str(self.project_root.resolve()))}; never use the plugin "
+            "or prompt-artifact directory as cwd.\n\n"
+            + bundle.coordinator_prompt
+        )
         return action
 
     def _build_action_critic(self, base: dict) -> dict:

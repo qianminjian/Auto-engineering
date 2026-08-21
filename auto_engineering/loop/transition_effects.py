@@ -83,17 +83,13 @@ class TransitionEffectExecutor:
                     self._record_critic_progress(verdict)
 
     def apply_post_progress(self, events: Sequence[LoopEvent]) -> None:
+        # 新协议的 batch/component/plate 游标只由领域 Reducer 推进。
+        # 这里仅保留 WORK_REOPENED 的旧在途兼容副作用。
         if self._batch_state is None:
             return
         for event in events:
-            if event.event_type is LoopEventType.BATCH_COMPLETED:
-                self._batch_state.advance_batch()
-            elif event.event_type is LoopEventType.WORK_REOPENED:
+            if event.event_type is LoopEventType.WORK_REOPENED:
                 self._batch_state.reopen_previous_batch()
-            elif event.event_type is LoopEventType.COMPONENT_COMPLETED:
-                self._batch_state.advance_component()
-            elif event.event_type is LoopEventType.PLATE_COMPLETED:
-                self._batch_state.advance_plate()
 
     def apply_verification_progress(self, update: object) -> None:
         if self._progress_tree is None or self._batch_state is None:

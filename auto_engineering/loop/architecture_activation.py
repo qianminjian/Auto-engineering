@@ -131,6 +131,9 @@ class ArchitectureActivationService:
             verification_layers = determine_verification_layers(design_doc, batches)
             if design_doc is not None:
                 progress_tree.sync_from_design_doc(design_doc)
+                # 结构同步只处理设计层次；PlanPatch 的完整合并计划才是任务总量
+                # 权威。必须在同一激活中重算 totals，并保留既有 done facts。
+                progress_tree.apply_batch_plan_totals(batches)
             else:
                 progress_tree.sync_from_batch_plan(batches)
         return ArchitectureActivationResult(

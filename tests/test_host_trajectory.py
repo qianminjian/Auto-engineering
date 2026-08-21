@@ -11,6 +11,7 @@ from auto_engineering.engine.state import EngineState
 from auto_engineering.host import HostPlatform
 from auto_engineering.host.capabilities import HostCapabilities, HostCapabilityError
 from auto_engineering.loop.action_builder import ActionBuilder
+from auto_engineering.loop.design_decision_ledger import DesignDecisionLedger
 from auto_engineering.loop.event_store import SQLiteEventStore
 from auto_engineering.loop.tick_orchestrator import TickOrchestrator
 from tests.host_runtime.trajectory_runner import (
@@ -92,6 +93,43 @@ def test_trajectory_binds_invocation_receipt_result_and_next_action(
         assert "ResultAccepted" in trajectory.events
         assert "ActionIssued" in trajectory.events
         assert trajectory.next_action["action"] == "developer"
+
+
+def test_architect_design_conflict_uses_core_user_gate_and_approval_event(
+    tmp_path: Path,
+) -> None:
+    with SQLiteEventStore(tmp_path / "events.db") as events:
+        core, action = _core(tmp_path, events)
+        trajectory = HostTrajectoryRunner(
+            tmp_path, HostPlatform.CODEX, core=core, event_store=events
+        ).run(action, workers=[lambda invocation: {
+            "design_change_requests": [{
+                "source": "agent_assumption",
+                "source_ref": "architect-assumption-1",
+                "requested_authority": "binding",
+                "change_summary": "将原设计改为新架构",
+                "affected_design_refs": ["§4.1"],
+            }],
+        }])
+
+        gate = trajectory.next_action
+        assert gate["action"] == "gate"
+        assert gate["gate"]["reason_code"] == "DESIGN_CHANGE_APPROVAL_REQUIRED"
+        approved = core.tick_dict(_inline_result(
+            gate,
+            gate_resolution={
+                "gate_id": gate["gate"]["id"],
+                "resolution": "批准变更",
+            },
+        ))
+
+        assert approved["action"] == "architect"
+        projected = DesignDecisionLedger.project_approved_changes(
+            events.load_stream(action["thread_id"])
+        )
+        assert len(projected) == 1
+        approval = next(iter(projected.values()))
+        assert approval["source_ref"] == "architect-assumption-1"
 
 
 def test_three_worker_plate_audit_uses_templates_through_core_tick(
@@ -272,7 +310,7 @@ def test_capacity_exhaustion_waits_without_advancing_core(
         assert events.load_action_snapshot(action["thread_id"]) == action
 
 
-def test_worker_timeout_is_error_and_keeps_action_for_explicit_retry(
+def test_worker_timeout_waits_and_keeps_action_for_automatic_retry(
     tmp_path: Path,
 ) -> None:
     with SQLiteEventStore(tmp_path / "events.db") as events:
@@ -280,11 +318,13 @@ def test_worker_timeout_is_error_and_keeps_action_for_explicit_retry(
         response = HostTrajectoryRunner(
             tmp_path, HostPlatform.CODEX, core=core, event_store=events
         ).submit_host_failure(
-            action, error_code="HOST_WORKER_TIMEOUT", message="worker timed out"
+            action, error_code="HOST_WORKER_TIMEOUT", message="worker timed out",
+            extra={"spawn_retry_attempt": 1},
         )
 
-        assert response["action"] == "error"
-        assert response["error_code"] == "HOST_WORKER_TIMEOUT"
+        assert response["action"] == "resource_wait"
+        assert response["reason_code"] == "HOST_WORKER_TIMEOUT"
+        assert response["extensions"]["ae"]["execution_control"]["disposition"] == "WAIT_RESOURCE"
         assert events.load_action_snapshot(action["thread_id"]) == action
 
 

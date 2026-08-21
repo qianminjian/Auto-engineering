@@ -1,0 +1,25 @@
+[observability]
+audit-log = "1"
+metrics = "1"
+token-tracking = "1"
+
+[safety]
+pii-enabled = "1"
+production = "1"
+
+[runtime]
+profile = "production"
+
+[project]
+type = "library"
+languages = ["python"]
+package_manager = "uv"
+source_roots = ["src"]
+test_roots = ["tests"]
+design_roots = ["design"]
+
+[project.commands]
+lint = ["uv", "run", "ruff", "check", "src", "tests"]
+type_check = ["uv", "run", "mypy", "src", "tests"]
+test = ["uv", "run", "pytest", "-q"]
+build = ["uv", "build"]

@@ -1,25 +1,25 @@
-#!/bin/bash
-# stop.sh — Auto-Engineering session-stop checkpoint save (v5.0 §PE.3)
-# Triggered: Stop hook (user interrupt or completion)
-# Behavior: if latest checkpoint is "running", mark as "interrupted"
+#!/bin/sh
+# Claude Code Stop Hook：只执行 Host Runtime 租约门禁，不直接修改 Core 状态。
 
 set -u
 
-# Skip if ae CLI not available
-[[ ! -x "ae" ]] && exit 0
+SCRIPT_DIR=$(CDPATH= cd -- "${0%/*}" && pwd -P)
+PLUGIN_DIR=${PLUGIN_ROOT:-$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd -P)}
+RUNTIME_PYTHON="$PLUGIN_DIR/.ae-runtime/bin/python"
 
-# Check for checkpoints.db
-DB_PATH="${AE_DB_PATH:-.ae-state/checkpoints.db}"
-[[ ! -f "$DB_PATH" ]] && exit 0
-
-# Query latest checkpoint status
-LATEST_STATUS=$(sqlite3 "$DB_PATH" "SELECT status FROM checkpoints ORDER BY id DESC LIMIT 1;" 2>/dev/null || echo "")
-
-if [[ "$LATEST_STATUS" == "running" ]]; then
-  # Mark as interrupted
-  sqlite3 "$DB_PATH" "UPDATE checkpoints SET status='interrupted', interrupted_at=CURRENT_TIMESTAMP WHERE status='running';" 2>/dev/null || true
-  echo '{"decision":"allow","info":"marked running checkpoint as interrupted"}'
-else
-  echo '{"decision":"allow"}'
+if [ -x "$RUNTIME_PYTHON" ]; then
+    PYTHONDONTWRITEBYTECODE=1
+    export PYTHONDONTWRITEBYTECODE
+    exec "$RUNTIME_PYTHON" -m auto_engineering.host.claude_hooks
 fi
+
+if command -v uv >/dev/null 2>&1; then
+    UV_PROJECT_ENVIRONMENT="$PLUGIN_DIR/.ae-runtime"
+    PYTHONDONTWRITEBYTECODE=1
+    export UV_PROJECT_ENVIRONMENT PYTHONDONTWRITEBYTECODE
+    exec uv run --frozen --project "$PLUGIN_DIR" python -m auto_engineering.host.claude_hooks
+fi
+
+printf '%s\n' \
+    '{"decision":"block","reason_code":"AE_HOST_RUNTIME_UNAVAILABLE","systemMessage":"Auto-Engineering Hook 运行环境不可用，已阻止不安全停止"}'
 exit 0

@@ -7,6 +7,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
+import pytest
+
 
 def _copy_launcher(tmp_path: Path) -> Path:
     source = Path(__file__).parents[1] / "scripts" / "ae-run"
@@ -60,17 +62,26 @@ def _run(launcher: Path, path: str, *args: str) -> subprocess.CompletedProcess[s
     )
 
 
-def test_prefers_plugin_virtualenv_ae(tmp_path: Path) -> None:
+def test_ignores_mutable_plugin_virtualenv_and_uses_dedicated_runtime(tmp_path: Path) -> None:
     launcher = _copy_launcher(tmp_path)
     _write_plugin_venv_executable(tmp_path / "plugin", "venv")
     bin_dir = tmp_path / "bin"
-    _write_executable(bin_dir / "uv", "uv")
+    uv = bin_dir / "uv"
+    uv.parent.mkdir(parents=True)
+    uv.write_text(
+        "#!/bin/sh\nprintf '%s' \"uv:${UV_PROJECT_ENVIRONMENT}:$*\"\n"
+    )
+    uv.chmod(0o755)
     _write_executable(bin_dir / "ae", "path")
 
     result = _run(launcher, str(bin_dir), "status", "--format", "json")
 
     assert result.returncode == 0
-    assert result.stdout == "venv:status --format json"
+    assert result.stdout == (
+        "uv:" + str(tmp_path / "plugin" / ".ae-runtime")
+        + ":run --frozen --project " + str(tmp_path / "plugin")
+        + " ae status --format json"
+    )
 
 
 def test_rejects_copied_virtualenv_entrypoint_that_escapes_plugin(
@@ -133,7 +144,7 @@ def test_reports_actionable_error_when_cli_is_unavailable(tmp_path: Path) -> Non
     assert "uv" in result.stderr
 
 
-def test_bundled_entrypoint_resolves_plugin_from_unrelated_project_cwd(
+def test_bundled_entrypoint_rejects_mutable_venv_when_uv_unavailable(
     tmp_path: Path,
 ) -> None:
     entrypoint = _copy_bundled_entrypoint(tmp_path)
@@ -150,8 +161,41 @@ def test_bundled_entrypoint_resolves_plugin_from_unrelated_project_cwd(
         check=False,
     )
 
+    assert result.returncode == 127
+    assert result.stdout == ""
+    assert "AE_CLI_UNTRUSTED" in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("host_dir", "expected"),
+    [(".claude", "claude-code"), (".codex", "codex")],
+)
+def test_bundled_entrypoint_marks_host_from_installed_plugin_path(
+    tmp_path: Path,
+    host_dir: str,
+    expected: str,
+) -> None:
+    root = Path(__file__).parents[1]
+    plugin = tmp_path / host_dir / "plugins" / "cache" / "auto-engineering"
+    entrypoint = plugin / "bin" / "ae-run"
+    delegated = plugin / "scripts" / "ae-run"
+    entrypoint.parent.mkdir(parents=True)
+    delegated.parent.mkdir(parents=True)
+    shutil.copy2(root / "bin" / "ae-run", entrypoint)
+    entrypoint.chmod(0o755)
+    delegated.write_text("#!/bin/sh\nprintf '%s' \"${AE_HOST_PLATFORM:-missing}\"\n")
+    delegated.chmod(0o755)
+
+    result = subprocess.run(
+        [str(entrypoint), "status"],
+        env={**os.environ, "CODEX_THREAD_ID": "outer-codex"},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
     assert result.returncode == 0
-    assert result.stdout == "bundled:status --format json"
+    assert result.stdout == expected
 
 
 def test_active_agent_entrypoints_use_shared_launcher() -> None:

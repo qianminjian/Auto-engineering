@@ -83,6 +83,8 @@ def test_approval_projection_only_accepts_core_gate_event() -> None:
             "gate_id": "design_change:VC-ARCH-001",
             "resolution": "批准变更", "approval_id": "approval-1",
             "decision_id": "VC-ARCH-001", "status": "approved",
+            "source_ref": "gap-1",
+            "proposed_change_sha256": "a" * 64,
         },
     )
 
@@ -90,6 +92,8 @@ def test_approval_projection_only_accepts_core_gate_event() -> None:
         "approval-1": {
             "decision_id": "VC-ARCH-001", "status": "approved",
             "causation_id": "gate-action-1",
+            "source_ref": "gap-1",
+            "proposed_change_sha256": "a" * 64,
         }
     }
 
@@ -181,3 +185,30 @@ def test_design_intake_detects_source_drift_on_second_intake(tmp_path) -> None:
 
     with pytest.raises(DesignDecisionError, match="DESIGN_LEDGER_SOURCE_MISMATCH"):
         DesignDecisionLedger.ensure_intake(tmp_path, design)
+
+
+def test_partial_ledger_blocks_research_obligation_without_real_approval() -> None:
+    ledger = DesignDecisionLedger(())
+
+    with pytest.raises(
+        DesignDecisionError,
+        match="DESIGN_CHANGE_APPROVAL_REQUIRED: gap-1",
+    ):
+        ledger.validate_advisory_promotions(
+            obligations=[{"source_ref": "gap-1"}],
+            research_archive={"gap-1": {"recommended_design": "增加 BFF"}},
+            approved_changes={},
+        )
+
+    ledger.validate_advisory_promotions(
+        obligations=[{"source_ref": "gap-1"}],
+        research_archive={"gap-1": {"recommended_design": "增加 BFF"}},
+        approved_changes={
+            "approval-1": {
+                "status": "approved",
+                "source_ref": "gap-1",
+                "proposed_change_sha256": "a" * 64,
+                "causation_id": "gate-action-1",
+            }
+        },
+    )

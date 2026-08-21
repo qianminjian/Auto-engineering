@@ -31,6 +31,7 @@ def test_architect_worker_receives_requirement_and_refine_feedback() -> None:
         context={
             "requirement": "实现跨宿主确定性治理内核",
             "design_doc_path": "design/spec.md",
+            "valid_plate_keys": ["协议内核"],
             "project_profile_summary": {"profile_id": "sha256:test"},
             "feedback": {"mode": "PLAN_REFINE", "reason": "补齐失败恢复"},
         },
@@ -244,6 +245,24 @@ def test_context_manifest_has_unique_block_hashes() -> None:
     manifest = bundle.context_manifest
     assert manifest["duplicate_block_bytes"] == 0
     assert manifest["total_inline_bytes"] > 0
+
+
+def test_worker_output_contract_excludes_core_owned_identity_fields() -> None:
+    contract = default_prompt_contracts()["critic"]
+    bundle = compile_prompt_bundle(
+        contract=contract,
+        role_prompt="Critic",
+        context={
+            "requirement": "review",
+            "files_changed": ["src/example.py"],
+            "test_results": {"passed": 1, "failed": 0},
+            "design_scope": "A1",
+        },
+        expected_format={"stage": "critic", "verdict": "APPROVE | MAJOR"},
+    )
+
+    assert bundle.expected_format == {"verdict": "APPROVE | MAJOR"}
+    assert '"stage"' not in bundle.worker_prompts[0].prompt.split("## 输出契约", 1)[1]
 
 
 def test_duplicate_nonempty_context_blocks_fail_closed() -> None:

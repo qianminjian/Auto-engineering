@@ -30,6 +30,9 @@ FALLBACK_CHANNEL_EVENTS.update({
     for channel in EVENT_CHANNELS[LoopEventType.VERIFICATION_STATE_UPDATED]
     if channel not in {"critic_feedback", "open_findings"}
 })
+FALLBACK_CHANNEL_EVENTS["active_runtime_revision"] = (
+    LoopEventType.RUNTIME_REVISION_ACTIVATED
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,6 +112,18 @@ class TickKernel:
             for event_type in LoopEventType:
                 event_changes = grouped.get(event_type)
                 if event_changes:
+                    if event_type is LoopEventType.RUNTIME_REVISION_ACTIVATED:
+                        revision = event_changes.get("active_runtime_revision")
+                        if not isinstance(revision, Mapping):
+                            raise ValueError(
+                                "RUNTIME_REVISION_ACTIVATION_INVALID"
+                            )
+                        append(
+                            event_type,
+                            {"runtime_revision": dict(revision)},
+                            causation_id=result_message_id,
+                        )
+                        continue
                     append(
                         event_type,
                         {"changes": event_changes},
@@ -119,7 +134,7 @@ class TickKernel:
             append(
                 pending.event_type,
                 pending.to_dict()["payload"],
-                causation_id=pending.causation_id,
+                causation_id=pending.causation_id or result_message_id,
             )
         append(
             LoopEventType.ACTION_ISSUED,

@@ -106,3 +106,34 @@ def test_new_tick_never_emits_compatibility_state_delta() -> None:
         LoopEventType.TELEMETRY_RECORDED,
     }
     assert [event.sequence for event in candidate.events] == [2, 3, 4, 5, 6]
+
+
+def test_runtime_revision_activation_has_deterministic_fallback_event() -> None:
+    previous = EngineState(
+        thread_id="thread-1",
+        active_runtime_revision={"engine_build_id": "old-build"},
+    )
+    activated = {"engine_build_id": "new-build"}
+    current = EngineState.from_dict({
+        **previous.to_dict(),
+        "active_runtime_revision": activated,
+    })
+
+    candidate = TickKernel().compile_commit(
+        next_sequence=2,
+        previous_state=previous,
+        current_state=current,
+        action=_action("action-2", "gap_review"),
+        pending_events=(),
+        result_message_id="result-1",
+        result_causation_id="action-1",
+    )
+
+    runtime_events = [
+        event for event in candidate.events
+        if event.event_type is LoopEventType.RUNTIME_REVISION_ACTIVATED
+    ]
+    assert len(runtime_events) == 1
+    assert runtime_events[0].to_dict()["payload"] == {
+        "runtime_revision": activated,
+    }

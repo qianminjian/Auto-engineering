@@ -97,6 +97,8 @@ def _complete_spawn_proof(orchestrator: TickOrchestrator, action: dict) -> None:
         receipt_path = orchestrator.project_root / spec.receipt_path
         receipt_path.write_text(json.dumps({
             "status": "completed", "stage": action["stage"],
+            "worker": spec.worker_id,
+            "native_worker_handle": f"test-{spec.worker_id}",
             "requested_effort": spec.requested_effort,
             "actual_model": "test-model",
         }), encoding="utf-8")

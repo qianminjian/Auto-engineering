@@ -122,6 +122,35 @@ def test_compatible_active_thread_returns_original_action(tmp_path: Path) -> Non
     assert store.recorded == []
 
 
+def test_pre_architect_gap_thread_resumes_from_init_digest(tmp_path: Path) -> None:
+    intent, state = _intent_and_state(tmp_path)
+    (tmp_path / "src").mkdir()
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "package.json").write_text(
+        '{"scripts":{"test":"vitest"}}', encoding="utf-8",
+    )
+    state.current_stage = "gap_review"
+    state.architecture_baseline = None
+    state.design_doc_digest = intent.design_doc_digest
+    old_action = {
+        "action": "gap_review",
+        "stage": "gap_review",
+        "thread_id": state.thread_id,
+        "message_id": "gap-action",
+    }
+    store = _Store(state.thread_id, old_action)
+
+    action = _resolve_active_thread_start(
+        root=tmp_path,
+        design_doc_path="design/feature.md",
+        store=store,
+        events=_Events(state, old_action),
+    )
+
+    assert action == old_action
+    assert store.recorded == []
+
+
 def test_repeated_conflict_reuses_gate_without_duplicate_event(tmp_path: Path) -> None:
     _, state = _intent_and_state(tmp_path)
     store = _Store(state.thread_id)

@@ -45,7 +45,11 @@ class StateCompatibilityInspector:
         active_action: Mapping[str, Any] | None,
     ) -> CompatibilityReport:
         baseline = state.architecture_baseline
-        old_digest = self._baseline_design_digest(baseline)
+        old_digest = (
+            self._baseline_design_digest(baseline)
+            or state.design_doc_digest
+            or self._active_action_design_digest(active_action)
+        )
         if not isinstance(old_digest, str) or not old_digest:
             return self._report(
                 CompatibilityStatus.CORRUPT,
@@ -95,6 +99,18 @@ class StateCompatibilityInspector:
                 return digest
         legacy_digest = baseline.get("design_doc_digest")
         return legacy_digest if isinstance(legacy_digest, str) else None
+
+    @staticmethod
+    def _active_action_design_digest(
+        active_action: Mapping[str, Any] | None,
+    ) -> str | None:
+        if not isinstance(active_action, Mapping):
+            return None
+        ledger = active_action.get("design_decision_ledger")
+        if not isinstance(ledger, Mapping):
+            return None
+        digest = ledger.get("source_sha256")
+        return digest if isinstance(digest, str) and digest else None
 
     @staticmethod
     def _normalize_digest(value: str) -> str:

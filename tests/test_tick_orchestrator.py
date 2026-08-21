@@ -96,6 +96,8 @@ def _make_result_file(data: dict) -> Path:
             for spec in plan.invocations:
                 (_ACTIVE_TEST_ROOT / spec.receipt_path).write_text(json.dumps({
                     "status": "completed", "stage": active["stage"],
+                    "worker": spec.worker_id,
+                    "native_worker_handle": f"test-{spec.worker_id}",
                     "requested_effort": spec.requested_effort,
                     "actual_model": "test-model",
                 }), encoding="utf-8")
@@ -176,6 +178,7 @@ class TestInit:
         action = o.init("req", design_doc_path=str(design))
         assert action["stage"] == "gap_scan"
         assert action["action"] == "gap_scan"
+        assert o._state.design_doc_digest.startswith("sha256:")
         assert "gaps" in action["expected_format"]
         assert o._design_doc is not None
         assert "设计模糊性扫描者" in action["instruction"]
@@ -419,6 +422,10 @@ class TestFullLeafConvergence:
         }))
         assert a_audit["action"] == "done"
         assert a_audit["verdict"] == "GOAL_ACHIEVED"
+        assert (
+            a_audit["extensions"]["ae"]["runtime_revision"]["engine_build_id"]
+            != "unknown"
+        )
 
 
 class TestPlateConvergence:
@@ -1010,10 +1017,30 @@ class TestPlanRefineProgressSync:
             "file_list": ["foo.py"], "contracts": {},
         }))
 
-        assert result["error_code"] == "ARCHITECT_PLAN_INVALID"
-        assert "plan_patch" in result["message"]
+        assert result["action"] == "architect"
+        assert result["feedback"]["mode"] == "PLAN_REFINE"
+        assert "RESULT_REPAIR" in result["feedback"]["validation_error"]
+        assert "plan_patch" in result["feedback"]["validation_error"]
+        assert o._state.guardrail_retry_counters[
+            "architect_result_validation"
+        ] == 1
         assert o._state.architecture_baseline["baseline_id"] == baseline_before
         assert o._batch_state.batch_plan[0]["tasks"][0]["description"] == "d"
+
+        from auto_engineering.loop.actions import ErrorResponse
+
+        invalid = ErrorResponse(
+            "ARCHITECT_PLAN_INVALID",
+            "Architect 计划无法初始化执行树: invalid",
+        )
+        second = o._tick_process_result(invalid)
+        assert second["action"] == "architect"
+        assert o._state.guardrail_retry_counters[
+            "architect_result_validation"
+        ] == 2
+
+        third = o._tick_process_result(invalid)
+        assert third["error_code"] == "ARCHITECT_PLAN_INVALID"
 
     def test_refine_action_requests_incremental_plan_patch(self) -> None:
         o = _orchestrator(max_rounds=20)
@@ -1589,6 +1616,52 @@ class TestPhase0GapReview:
         assert o._state.pending_gap_decisions[-1]["decision_source"] == (
             "thread_policy"
         )
+
+    def test_tick_rebinds_core_auto_decision_when_old_result_bypasses_finalizer(
+        self, tmp_path,
+    ) -> None:
+        """恢复旧 checkpoint 时，直接重放的旧 Result 也不能绕过 Core 权威。"""
+
+        o = _orchestrator()
+        _init_design(o, tmp_path)
+        gaps = [
+            {**_GAP_B2, "id": "gap-A"},
+            {**_GAP_B2, "id": "gap-B"},
+        ]
+        o.tick(_gap_scan_result(gaps))
+        action = o.tick(_make_result_file({
+            "stage": "gap_review",
+            "decision": {
+                "gap_id": "gap-A",
+                "resolution": "Fill",
+                "fill_content": "用户明确补齐 gap-A",
+                "decision_source": "user",
+                "apply_to_remaining": "recommendations",
+            },
+        }))
+
+        next_action = o.tick(_make_result_file({
+            "stage": "gap_review",
+            "decision": {
+                "gap_id": "stale-gap",
+                "resolution": "Defer",
+                "decision_source": "thread_policy",
+                "fill_content": "沿用旧宿主已经生成的补充内容",
+            },
+        }))
+
+        assert action["auto_decision"]["policy"] == "remaining_recommendations"
+        assert next_action["stage"] == "research"
+        assert o._state.pending_gap_decisions[-1] == {
+            "gap_id": "gap-B",
+            "resolution": "Research",
+            "fill_content": "沿用旧宿主已经生成的补充内容",
+            "decision_source": "thread_policy",
+            "policy": "remaining_recommendations",
+            "assistant_recommendation": "Research",
+            "recommendation_accepted": True,
+            "evidence_refs": _GAP_B2["evidence"],
+        }
 
     def test_action_exposes_only_current_gap_with_core_cursor(self, tmp_path) -> None:
         o = _orchestrator()
@@ -3438,6 +3511,38 @@ class TestAgentEscalation:
         assert action["action"] != "gate"
         assert action["stage"] == "architect"
 
+    def test_active_stage_checkpoint_result_does_not_require_architect_plan(
+        self, tmp_path: Path,
+    ) -> None:
+        """Gate 回执不是 Architect 业务结果，预校验不得要求 plan。"""
+
+        o = _orchestrator()
+        o.project_root = tmp_path
+        o._state = EngineState(
+            thread_id="thread-1",
+            current_stage="architect",
+            expected_stage="architect",
+        )
+        o._active_action = {
+            "message_id": "gate-action-1",
+            "stage": "architect",
+            "gate": {
+                "id": "checkpoint_architect",
+                "options": ["继续", "审查当前产出", "终止 loop"],
+            },
+        }
+
+        validated = o._validate_result_dict({
+            "stage": "architect",
+            "gate_resolution": {
+                "gate_id": "checkpoint_architect",
+                "resolution": "继续",
+            },
+        })
+
+        assert isinstance(validated, dict)
+        assert validated["gate_resolution"]["resolution"] == "继续"
+
     def test_resolve_rollback_to_architect(self, tmp_path: Path) -> None:
         """回退重设计 → 回到 architect."""
         self._make_project(tmp_path)
@@ -4690,20 +4795,20 @@ class TestF7SpawnProofForgery:
 
     旧问题: ① spawn 指令未让 result 带 spawn_proof_token → gate 校验被整体跳过；
     ② 指令让 subagent「追加」proof（损坏 JSON）且未写 status=completed；
-    ③ gate 即使发现 proof 不合格也只告警不拦截。修复后: result 带 token + subagent
-    覆写 status=completed + gate 在 token 存在但 proof 未完成时拦截（SPAWN_PROOF_INCOMPLETE）。
+    ③ gate 即使发现 proof 不合格也只告警不拦截。当前严格合同由 Assembler 独占写入
+    token、receipt、attestation 与 proof；Action instruction 不再诱导宿主手工覆盖。
     """
 
-    def test_instruction_includes_proof_token_and_overwrite(self):
+    def test_instruction_delegates_proof_writes_to_assembler(self):
         from auto_engineering.loop.action_builder import _SPAWN_INSTRUCTION
         rendered = _SPAWN_INSTRUCTION.format(
             count=1, parallel="", effort="high", multi_instruction="",
-            stage="critic", proof_token="abc123")
-        assert "spawn_proof_token" in rendered   # result 须带 token
-        assert "abc123" in rendered
-        assert "OVERWRITE" in rendered           # 覆写而非追加
-        assert "completed" in rendered
-        assert "do NOT append" in rendered
+            stage="critic", proof_token="abc123", project_root="/tmp/project")
+        assert "spawn.invocations[]" in rendered
+        assert '"outcomes"' in rendered
+        assert "--finalize-result" in rendered
+        assert "abc123" not in rendered
+        assert "OVERWRITE" not in rendered
 
     def _setup_critic(self, tmp_path, proof_status):
         o = _orchestrator()
@@ -4726,11 +4831,20 @@ class TestF7SpawnProofForgery:
                 "thread_id": o._state.thread_id,
                 "action_message_id": action["message_id"],
             }))
+        challenge_dir = tmp_path / ".ae-state" / "spawn-challenges"
+        challenge_dir.mkdir(parents=True, exist_ok=True)
+        (challenge_dir / "tok123.json").write_text(json.dumps({
+            "token": "tok123", "status": "pending", "stage": "critic",
+            "thread_id": o._state.thread_id,
+            "action_message_id": action["message_id"],
+        }))
         self._current_orchestrator = o
         for spec in SpawnPlan.from_action(o._active_action).invocations:
             receipt_path = tmp_path / spec.receipt_path
             receipt_path.write_text(json.dumps({
                 "status": "completed", "stage": "critic",
+                "worker": spec.worker_id,
+                "native_worker_handle": f"test-{spec.worker_id}",
                 "requested_effort": spec.requested_effort,
                 "actual_model": "test-model",
             }), encoding="utf-8")
@@ -4755,7 +4869,8 @@ class TestF7SpawnProofForgery:
         o = self._setup_critic(tmp_path, "pending")
         resp = o._validate_result_dict(self._critic_result())
         assert isinstance(resp, ErrorResponse)
-        assert resp.error_code == "SPAWN_PROOF_INCOMPLETE"
+        assert resp.error_code == "HOST_EVIDENCE_INVALID"
+        assert "SPAWN_PROOF_INCOMPLETE" in resp.message
 
     def test_proof_corrupted_blocks(self, tmp_path):
         from auto_engineering.loop.actions import ErrorResponse
@@ -4765,7 +4880,8 @@ class TestF7SpawnProofForgery:
             '{"status":"pending"}{"status":"done"}')
         resp = o._validate_result_dict(self._critic_result())
         assert isinstance(resp, ErrorResponse)
-        assert resp.error_code == "SPAWN_PROOF_INCOMPLETE"
+        assert resp.error_code == "HOST_EVIDENCE_INVALID"
+        assert "SPAWN_PROOF_INCOMPLETE" in resp.message
 
     def test_proof_completed_passes(self, tmp_path):
         from auto_engineering.loop.actions import ErrorResponse
@@ -4794,7 +4910,8 @@ class TestF7SpawnProofForgery:
         response = o._validate_result_dict(result)
 
         assert isinstance(response, ErrorResponse)
-        assert response.error_code == "WORKER_ATTESTATION_INVALID"
+        assert response.error_code == "HOST_EVIDENCE_INVALID"
+        assert "WORKER_ATTESTATIONS_MISSING" in response.message
 
     def test_strict_action_requires_each_worker_receipt(self, tmp_path):
         from auto_engineering.loop.actions import ErrorResponse
@@ -4807,7 +4924,8 @@ class TestF7SpawnProofForgery:
         response = o._validate_result_dict(result)
 
         assert isinstance(response, ErrorResponse)
-        assert response.error_code == "WORKER_RECEIPT_MISSING"
+        assert response.error_code == "HOST_EVIDENCE_INVALID"
+        assert "WORKER_RECEIPT_MISSING" in response.message
 
     def test_strict_action_rejects_result_claiming_legacy_schema(self, tmp_path):
         from auto_engineering.loop.actions import ErrorResponse
@@ -4823,7 +4941,8 @@ class TestF7SpawnProofForgery:
         response = o._validate_result_dict(result)
 
         assert isinstance(response, ErrorResponse)
-        assert response.error_code == "WORKER_ATTESTATION_INVALID"
+        assert response.error_code == "HOST_EVIDENCE_INVALID"
+        assert "WORKER_ATTESTATIONS_MISSING" in response.message
 
     def test_missing_or_stale_proof_token_blocks(self, tmp_path):
         from auto_engineering.loop.actions import ErrorResponse
@@ -4839,7 +4958,8 @@ class TestF7SpawnProofForgery:
             response = o._validate_result_dict(result)
 
             assert isinstance(response, ErrorResponse)
-            assert response.error_code == "SPAWN_PROOF_TOKEN_MISMATCH"
+            assert response.error_code == "HOST_EVIDENCE_INVALID"
+            assert "SPAWN_PROOF_TOKEN_MISMATCH" in response.message
 
     def test_agent_capacity_failure_preserves_active_action_for_retry(self, tmp_path):
         o = self._setup_critic(tmp_path, "pending")
@@ -4859,6 +4979,50 @@ class TestF7SpawnProofForgery:
         assert action["extensions"]["ae"]["execution_control"]["disposition"] == "WAIT_RESOURCE"
         assert o._active_action["message_id"] == active_message_id
         assert o._state.tick == tick_before
+
+    def test_worker_timeout_waits_for_retry_without_consuming_business_budget(
+        self, tmp_path,
+    ):
+        o = self._setup_critic(tmp_path, "pending")
+        active_message_id = o._active_action["message_id"]
+        tick_before = o._state.tick
+        counters_before = dict(o._state.guardrail_retry_counters)
+
+        result = {
+            "stage": "critic",
+            "spawned": False,
+            "spawn_error_code": "HOST_WORKER_TIMEOUT",
+            "spawn_error": "native worker wait deadline exceeded",
+            "spawn_retry_attempt": 1,
+        }
+        assert o._validate_result_dict(result) == result
+
+        action = o.tick_dict(result)
+
+        assert action["action"] == "resource_wait"
+        assert action["reason_code"] == "HOST_WORKER_TIMEOUT"
+        assert action["extensions"]["ae"]["execution_control"]["disposition"] == "WAIT_RESOURCE"
+        assert o._active_action["message_id"] == active_message_id
+        assert o._state.tick == tick_before
+        assert o._state.guardrail_retry_counters == counters_before
+
+    def test_second_worker_timeout_exhausts_retry_without_replacing_action(
+        self, tmp_path,
+    ):
+        o = self._setup_critic(tmp_path, "pending")
+        active_message_id = o._active_action["message_id"]
+
+        action = o.tick_dict({
+            "stage": "critic",
+            "spawned": False,
+            "spawn_error_code": "HOST_WORKER_TIMEOUT",
+            "spawn_error": "native worker wait deadline exceeded",
+            "spawn_retry_attempt": 2,
+        })
+
+        assert action["action"] == "error"
+        assert action["error_code"] == "HOST_WORKER_TIMEOUT_EXHAUSTED"
+        assert o._active_action["message_id"] == active_message_id
 
     def test_worker_role_failure_is_not_reported_as_missing_host_capability(
         self, tmp_path,

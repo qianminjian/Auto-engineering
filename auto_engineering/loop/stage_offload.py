@@ -135,13 +135,30 @@ class StageOffloadService:
         summary = f"Developer: {passed}/{total} tests passed"
         if batch_state is not None:
             try:
-                component = batch_state.current_component()
-                batch_id = batch_state.current_batch_id()
-                name = component.name if component else "?"
-                summary = (
-                    f"Developer: {name} batch={batch_id} — "
-                    f"{passed}/{total} tests passed"
-                )
+                if batch_state.is_all_complete():
+                    summary = (
+                        "Developer: all batches completed — "
+                        f"{passed}/{total} tests passed"
+                    )
+                elif batch_state.is_plate_complete():
+                    summary = (
+                        "Developer: plate completed — "
+                        f"{passed}/{total} tests passed"
+                    )
+                elif batch_state.is_component_complete():
+                    name = batch_state.current_component().name
+                    summary = (
+                        f"Developer: {name} completed — "
+                        f"{passed}/{total} tests passed"
+                    )
+                else:
+                    component = batch_state.current_component()
+                    batch_id = batch_state.current_batch_id()
+                    name = component.name if component else "?"
+                    summary = (
+                        f"Developer: {name} batch={batch_id} — "
+                        f"{passed}/{total} tests passed"
+                    )
             except (AssertionError, AttributeError, TypeError, ValueError) as exc:
                 _logger.warning(
                     "batch_state component/batch access failed, using degraded summary: %s",

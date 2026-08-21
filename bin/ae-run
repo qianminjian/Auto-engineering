@@ -6,4 +6,17 @@ set -u
 BIN_DIR=$(CDPATH= cd -- "${0%/*}" && pwd -P)
 PLUGIN_ROOT=$(CDPATH= cd -- "$BIN_DIR/.." && pwd -P)
 
+# The bundled entrypoint path is the one host fact that cannot be inherited
+# from an outer CLI. Bind it before delegating to the shared runtime.
+case "$PLUGIN_ROOT" in
+    */.claude/plugins/*)
+        AE_HOST_PLATFORM="claude-code"
+        export AE_HOST_PLATFORM
+        ;;
+    */.codex/plugins/*)
+        AE_HOST_PLATFORM="codex"
+        export AE_HOST_PLATFORM
+        ;;
+esac
+
 exec "$PLUGIN_ROOT/scripts/ae-run" "$@"

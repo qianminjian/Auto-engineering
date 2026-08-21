@@ -210,7 +210,7 @@ class TestM5EfficiencyComputation:
             c.begin_requirement("thread-1", "abc123")
             return c
 
-    def test_m5_efficiency_zero_when_loc_added_is_zero(self, collector):
+    def test_m5_efficiency_marks_missing_loc_measurement_incomplete(self, collector):
         origin = AIOrigin(level="led", agent_role="developer",
                           model_name="m1", driver_type="agent")
         collector.record_token_usage(
@@ -219,6 +219,7 @@ class TestM5EfficiencyComputation:
         )
         summary = collector.end_requirement("GOAL_ACHIEVED", total_ticks=3)
         assert summary["M5_token_efficiency"]["efficiency_ratio"] == 0.0
+        assert summary["M5_token_efficiency"]["measurement_incomplete"] is True
 
     def test_m5_efficiency_ratio_with_loc_added(self, collector):
         origin = AIOrigin(level="led", agent_role="developer",
@@ -236,6 +237,7 @@ class TestM5EfficiencyComputation:
         summary = collector.end_requirement("GOAL_ACHIEVED", total_ticks=1, loc_added=100)
         assert summary["M5_token_efficiency"]["efficiency_ratio"] == 0.0
         assert summary["M5_token_efficiency"]["total_tokens"] == 0
+        assert summary["M5_token_efficiency"]["measurement_incomplete"] is True
 
 
 class TestFlushBehavior:

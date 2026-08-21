@@ -44,12 +44,12 @@ def test_pre_progress_effects_do_not_advance_cursor() -> None:
     assert batch_state.current_batch_idx == 0
 
 
-def test_post_progress_effects_apply_semantic_cursor_facts() -> None:
+def test_post_progress_effects_do_not_reapply_batch_projection_fact() -> None:
     batch_state = _batch_state()
     executor = TransitionEffectExecutor(batch_state, Mock(), Mock())
 
     executor.apply_post_progress((_event(LoopEventType.BATCH_COMPLETED),))
-    assert batch_state.current_batch_idx == 1
+    assert batch_state.current_batch_idx == 0
 
     executor.apply_post_progress((_event(LoopEventType.WORK_REOPENED),))
     assert batch_state.current_batch_idx == 0

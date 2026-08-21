@@ -2,21 +2,19 @@
 
 from __future__ import annotations
 
-import json
 from unittest.mock import MagicMock
 
 import pytest
 
 from auto_engineering.engine.state import EngineState
 from auto_engineering.host import HostPlatform
-from auto_engineering.host.spawn_contract import SpawnPlan
-from auto_engineering.host.worker_attestation import WorkerAttestation
 from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
 from auto_engineering.loop.effects import EffectReceipt
 from auto_engineering.loop.event_store import SQLiteEventStore
 from auto_engineering.loop.events import LoopEvent, LoopEventType
 from auto_engineering.loop.kernel import TickKernel
 from auto_engineering.loop.tick_orchestrator import TickOrchestrator
+from tests.host_runtime.trajectory_runner import HostTrajectoryRunner
 
 
 def _event() -> LoopEvent:
@@ -36,18 +34,6 @@ def _state() -> EngineState:
         requirement="原子提交",
         current_stage="architect",
     )
-
-
-def _attestations(action: dict) -> list[dict]:
-    return [WorkerAttestation.completed(
-        platform=HostPlatform.CODEX,
-        action_message_id=action["message_id"],
-        invocation=spec,
-        effective_effort=spec.requested_effort,
-        isolation_evidence="fork_turns=none",
-        visible_capabilities=tuple(sorted(spec.capabilities)),
-        actual_model="test-model",
-    ).to_dict() for spec in SpawnPlan.from_action(action).invocations]
 
 
 def _action() -> dict[str, object]:
@@ -412,24 +398,6 @@ def test_critic_major_replays_to_developer_without_projection_drift(tmp_path) ->
     guardrail = MagicMock()
     guardrail.check.return_value = MagicMock(action="pass")
 
-    def complete_spawn(action: dict) -> str:
-        token = action["spawn_proof_token"]
-        proof_path = tmp_path / ".ae-state" / "spawn-proofs" / f"{token}.json"
-        proof = json.loads(proof_path.read_text(encoding="utf-8"))
-        proof.update({
-            "status": "completed",
-            "completed_at": "2026-08-11T00:00:00Z",
-            "actual_model": "test-model",
-        })
-        proof_path.write_text(json.dumps(proof), encoding="utf-8")
-        for spec in SpawnPlan.from_action(action).invocations:
-            (tmp_path / spec.receipt_path).write_text(json.dumps({
-                "status": "completed", "stage": action["stage"],
-                "requested_effort": spec.requested_effort,
-                "actual_model": "test-model",
-            }), encoding="utf-8")
-        return token
-
     checkpoints = SQLiteCheckpointStore(tmp_path / "checkpoints.db")
     try:
         with SQLiteEventStore(tmp_path / "events.db") as events:
@@ -443,12 +411,10 @@ def test_critic_major_replays_to_developer_without_projection_drift(tmp_path) ->
                 event_store=events,
             )
             architect = orchestrator.init("实现功能")
-            architect_token = complete_spawn(architect)
-            developer = orchestrator.tick_dict({
-                "stage": "architect",
-                "spawned": True,
-                "spawn_proof_token": architect_token,
-                "worker_attestations": _attestations(architect),
+            runner = HostTrajectoryRunner(
+                tmp_path, HostPlatform.CODEX, core=orchestrator, event_store=events
+            )
+            developer = runner.run(architect, workers=[lambda invocation: {
                 "plan": (
                     "实现完整功能并执行 Red Green Refactor、静态检查、单元测试、"
                     "契约验证和构建验收，保留可重放证据。"
@@ -464,7 +430,7 @@ def test_critic_major_replays_to_developer_without_projection_drift(tmp_path) ->
                 }],
                 "file_list": ["critic_retry/core.py"],
                 "contracts": {},
-            })
+            }]).next_action
             assert developer.get("action") == "developer", developer
             critic = orchestrator.tick_dict({
                 "stage": "developer",
@@ -472,13 +438,7 @@ def test_critic_major_replays_to_developer_without_projection_drift(tmp_path) ->
                 "files_changed": ["critic_retry/core.py"],
                 "test_results": {"passed": 1, "failed": 0},
             })
-            critic_token = complete_spawn(critic)
-
-            retry = orchestrator.tick_dict({
-                "stage": "critic",
-                "spawned": True,
-                "spawn_proof_token": critic_token,
-                "worker_attestations": _attestations(critic),
+            retry = runner.run(critic, workers=[lambda invocation: {
                 "verdict": "MAJOR",
                 "findings": [{
                     "file": "critic_retry/core.py",
@@ -489,7 +449,7 @@ def test_critic_major_replays_to_developer_without_projection_drift(tmp_path) ->
                 }],
                 "strengths": [{"description": "接口边界清晰"}],
                 "assessment": "Needs rework",
-            })
+            }]).next_action
 
             projection = events.load_projection(architect["thread_id"])
             assert retry["action"] == "developer"

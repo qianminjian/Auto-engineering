@@ -68,3 +68,38 @@ def test_current_docs_contain_no_retired_command_examples(relative: str) -> None
         "//auto-engineering:dev-loop",
     ):
         assert retired not in content
+
+
+def test_skill_and_command_use_one_strict_spawn_algorithm() -> None:
+    skill = (_ROOT / "skills/auto-engineering/SKILL.md").read_text(encoding="utf-8")
+    command = (_ROOT / "commands/dev-loop.md").read_text(encoding="utf-8")
+
+    for content in (skill, command):
+        assert "action.spawn.invocations[]" in content
+        assert "action.host_execution.workers" in content
+        assert "action.host_execution.work_files" in content
+        assert "--finalize-result" in content
+        assert "work_files.outcomes" in content
+        assert "丢弃上一 Action" in content
+        assert "禁止重复输出全量 diff" in content
+    assert "单 Worker 使用 `action.subagent_prompt`" not in command
+    assert "action.spawn.agents[i].prompt_ref" not in command
+    assert "action.spawn.agents[i].receipt_path" not in command
+
+
+def test_skill_and_command_finalize_every_result_and_resolve_bundled_runner() -> None:
+    skill = (_ROOT / "skills/auto-engineering/SKILL.md").read_text(encoding="utf-8")
+    command = (_ROOT / "commands/dev-loop.md").read_text(encoding="utf-8")
+
+    for content in (skill, command):
+        assert "非 spawn" in content
+        assert "--finalize-result <work_files.coordinator_result>" in content or (
+            "--finalize-result work_files.coordinator_result" in content
+        )
+        assert "--output-result <work_files.result>" in content or (
+            "--output-result work_files.result" in content
+        )
+        assert "不得调用裸 `ae-run`" in content
+        assert "bundled runner" in content
+    assert "AE_HOST_PLATFORM=codex" in skill
+    assert "AE_HOST_PLATFORM=claude-code" in command

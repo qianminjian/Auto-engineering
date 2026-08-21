@@ -39,3 +39,32 @@ def test_developer_offload_contains_batch_and_test_evidence(tmp_path) -> None:
     assert "2/3 tests passed" in artifact.summary
     assert artifact.files_changed == ["src/core.py"]
     assert artifact.gate_results["test"]["passed"] is False
+
+
+def test_developer_offload_handles_completed_batch_cursor_without_warning(
+    tmp_path, caplog,
+) -> None:
+    state = EngineState(thread_id="thread-complete")
+    state.tick = 3
+    state.round = 1
+    state.test_results = {"passed": 4, "failed": 0}
+    batch_state = BatchState.from_batch_plan([{
+        "batch_id": "B1",
+        "component": "Core",
+        "design_section": "§1",
+        "tasks": [],
+    }])
+    batch_state.advance_batch()
+    offloader = ContextOffloader(tmp_path / "offload")
+
+    StageOffloadService(offloader=offloader).offload(
+        "developer",
+        state=state,
+        batch_state=batch_state,
+        cached_summary=None,
+    )
+
+    artifact = offloader.load_summary("developer")
+    assert artifact is not None
+    assert "completed" in artifact.summary
+    assert "degraded summary" not in caplog.text

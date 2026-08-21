@@ -11,6 +11,10 @@ ultrathink
 4. 重新统计 p0/p1/p2（不信任 agent 自报）
 5. 对照 coverage_map 判断设计文档是否脱节
 6. 判定：P0=0 且 P1≤阈值 → GOAL_ACHIEVED。否则 → Architect(plan_refine)
+7. 每条 finding 必须给出 `authority_class`：`binding_violation` 表示违反显式设计，
+   `objective_defect` 表示不依赖设计偏好的正确性/安全性缺陷，`advisory` 表示非阻断建议，
+   `out_of_scope` 表示超出当前设计范围。后两类保留证据但不得计入 P0/P1/P2 或触发 refine。
+   “当前设计无需修改”与 P0/P1 阻断分类互斥。
 
 ## Phase 1 — 快速扫描
 ```bash
@@ -23,7 +27,7 @@ find $SRC -name "*.py" -o -name "*.ts" | xargs wc -l 2>/dev/null | awk '$1 > 400
 
 ## Phase 3 — 汇总
 收集 5 agent 输出 + coverage_map → merge → recount → 输出:
-{"stage":"system_deep_audit","findings":[...],"p0_count":0,"p1_count":0,"p2_count":0,"total_audited_files":0,"design_docs_stale":false,"design_doc_suggestions":[]}
+{"stage":"system_deep_audit","findings":[{"severity":"P1","authority_class":"binding_violation","dimension":"design-coverage","file":"src/example.py","line":1,"description":"...","evidence":"...","suggested_fix":"..."}],"p0_count":0,"p1_count":1,"p2_count":0,"total_audited_files":1,"design_docs_stale":false,"design_doc_suggestions":[]}
 
 **纪律**: 每条 finding 附 file:line + evidence。设计-代码不一致 → 代码补齐设计。P0/P1 不延后。
 
@@ -86,7 +90,7 @@ role: system_audit_agent
 ultrathink
 
 审计全项目逻辑虚化度。"Build-then-Wire"反模式。
-- [ ] grep 导出函数/类 → grep 调用方(排除 test_) → 零调用 = P1
+- [ ] grep 导出函数/类 → grep 调用方(排除 test_)；仅当绑定设计要求运行时接线时，零调用才是 `binding_violation` P1；独立库/纯函数 API 标为 `out_of_scope`
 - [ ] grep class.*(Protocol|ABC)/interface → grep implements → 零实现 = P1
 - [ ] grep 配置文件字段 → grep 代码消费 → 无消费 = P2
 - [ ] grep 事件/回调注册 → grep emit/dispatch → 注册但未触发 = P1

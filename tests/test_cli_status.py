@@ -12,6 +12,7 @@ RED marker 测试 — 验证 status 命令输出 7 字段 JSON 契约 + 边界�
 from __future__ import annotations
 
 import json
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -216,6 +217,19 @@ def test_status_handles_corrupted_state_db(runner: CliRunner, tmp_cwd: Path) -> 
     # 没有有效 checkpoint → 默认值
     assert data["recent_history"] == []
     assert data["round"] == 0
+
+
+def test_status_does_not_probe_usage_ledger_as_checkpoint(
+    tmp_cwd: Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    state_dir = tmp_cwd / ".ae-state"
+    state_dir.mkdir()
+    with sqlite3.connect(state_dir / "usage-ledger.db") as connection:
+        connection.execute("CREATE TABLE usage_records (id TEXT)")
+
+    _collect_status_json(tmp_cwd)
+
+    assert "usage-ledger.db" not in caplog.text
 
 
 # ============================================================

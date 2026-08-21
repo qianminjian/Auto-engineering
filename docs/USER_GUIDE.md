@@ -1,6 +1,6 @@
 # Auto-Engineering 用户指南
 
-> 适用版本：5.6.0｜更新：2026-07-27
+> 适用版本：5.8.0-rc.5｜更新：2026-08-16
 
 Auto-Engineering 通过离散 Tick 协议，让宿主 Agent 执行推理与工具调用，让 Python Core
 负责状态、门禁、验证和恢复。Claude Code 与 Codex 共用同一 Core。
@@ -25,15 +25,15 @@ Claude Code Marketplace 安装：
 ```
 
 Codex 安装 Release 中的 `.codex-plugin/`、`skills/` 与 Hook 资产；安装后从
-`$auto-engineering` 进入。
-
-本仓库开发机不得直接把源码目录注册成 Codex Marketplace。标准本机安装入口为：
+`$auto-engineering` 进入。本仓库开发机不得直接把源码目录注册成任一宿主 Marketplace。
+标准内容寻址本机安装入口为：
 
 ```bash
 uv run python scripts/install_codex_local.py --root .
+uv run python scripts/install_claude_local.py --root .
 ```
 
-该命令先构建自包含 Release，按 `build_id` 暂存到
+两个命令均先构建自包含 Release，按 `build_id` 暂存到
 `~/.local/share/auto-engineering/releases/`，再从该目录卸载并重装插件。安装后会实际运行
 `doctor`，并校验 Marketplace、插件路径、Python import origin 和独立运行时入口均不访问
 开发目录。测试项目运行期间可以移动或删除开发工作区，不影响已安装插件。

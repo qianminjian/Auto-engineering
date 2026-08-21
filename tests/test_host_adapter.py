@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 
 import pytest
@@ -149,7 +150,18 @@ def test_adapter_materializes_strict_worker_evidence_templates(
     )
 
     mapped = adapter.map_action(action, profile=profile).payload
-    executions = mapped["host_execution"]["workers"]
+    host_execution = mapped["host_execution"]
+    executions = host_execution["workers"]
+
+    action_key = hashlib.sha256(b"action-multi").hexdigest()[:24]
+    assert host_execution["action_message_id"] == "action-multi"
+    assert host_execution["work_files"] == {
+        "outcomes": f".ae-state/host-runtime/work/{action_key}/outcomes.json",
+        "coordinator_result": (
+            f".ae-state/host-runtime/work/{action_key}/coordinator-result.json"
+        ),
+        "result": f".ae-state/host-runtime/work/{action_key}/result.json",
+    }
 
     assert len(executions) == 3
     for index, execution in enumerate(executions):
@@ -164,6 +176,54 @@ def test_adapter_materializes_strict_worker_evidence_templates(
         assert execution["attestation"]["prompt_sha256"] == invocation["prompt_sha256"]
         assert execution["attestation"]["isolation_evidence"] == isolation
         assert len(execution["attestation"]["visible_capabilities_sha256"]) == 64
+
+
+def test_codex_adapter_advertises_semantic_native_worker_tool_families() -> None:
+    from auto_engineering.host import HostPlatform
+    from auto_engineering.host.adapters import adapter_for
+
+    action = {
+        "action": "architect",
+        "stage": "architect",
+        "message_id": "action-native-tools",
+        "spawn": {
+            "contract_version": "1.0",
+            "count": 1,
+            "effort": "xhigh",
+            "parallel": False,
+            "invocations": [{
+                "worker_id": "architect-0",
+                "role": "architect",
+                "prompt_ref": ".ae-state/effects/prompt/architect.txt",
+                "prompt_sha256": "a" * 64,
+                "requested_effort": "xhigh",
+                "isolation": "fresh_context",
+                "capabilities": {"may_drive_loop": False, "may_spawn_workers": False},
+                "receipt_path": ".ae-state/spawn-proofs/architect.json",
+            }],
+        },
+    }
+    adapter = adapter_for(HostPlatform.CODEX)
+    profile = adapter.profile(
+        detected=adapter.capabilities,
+        authorized=adapter.capabilities,
+    )
+
+    native_tools = adapter.map_action(action, profile=profile).payload["host_execution"]["native_worker_tools"]
+
+    assert native_tools["selection"] == "first_complete_exposed_family"
+    assert native_tools["families"] == [
+        {
+            "spawn": "collaboration.spawn_agent",
+            "wait": "collaboration.wait_agent",
+            "close": "collaboration.interrupt_agent",
+        },
+        {
+            "spawn": "multi_agent_v1__spawn_agent",
+            "wait": "multi_agent_v1__wait_agent",
+            "close": "multi_agent_v1__close_agent",
+        },
+    ]
 
 
 @pytest.mark.parametrize("platform_name", ["CLAUDE_CODE", "CODEX"])
@@ -249,7 +309,13 @@ def test_claude_and_codex_map_same_core_action_semantics() -> None:
         )
         mapped.append(adapter.map_action(action, profile=profile))
 
-    assert mapped[0].payload == mapped[1].payload == action
+    for item in mapped:
+        assert {key: item.payload[key] for key in action} == action
+        assert item.payload["host_execution"]["action_message_id"] == "msg-2"
+    assert (
+        mapped[0].payload["host_execution"]["work_files"]
+        == mapped[1].payload["host_execution"]["work_files"]
+    )
     assert mapped[0].platform is HostPlatform.CLAUDE_CODE
     assert mapped[1].platform is HostPlatform.CODEX
 
@@ -278,17 +344,43 @@ def test_map_action_fails_closed_when_capability_is_not_effective() -> None:
         )
 
 
-def test_detects_codex_before_claude_compatibility_signals() -> None:
+def test_current_claude_plugin_root_overrides_inherited_codex_session() -> None:
     from auto_engineering.host import HostPlatform, detect_host
 
     detection = detect_host({
         "CODEX_THREAD_ID": "thread-1",
-        "CLAUDE_PLUGIN_ROOT": "/compat/path",
-        "ANTHROPIC_AUTH_TOKEN": "compat-token",
+        "CLAUDE_PLUGIN_ROOT": "/current/claude/plugin",
+        "CLAUDE_CODE_ENTRYPOINT": "cli",
+    })
+
+    assert detection.platform is HostPlatform.CLAUDE_CODE
+    assert detection.signal == "CLAUDE_PLUGIN_ROOT"
+
+
+def test_current_codex_plugin_root_overrides_inherited_claude_session() -> None:
+    from auto_engineering.host import HostPlatform, detect_host
+
+    detection = detect_host({
+        "CODEX_PLUGIN_ROOT": "/current/codex/plugin",
+        "CLAUDE_CODE_ENTRYPOINT": "cli",
+        "CLAUDE_CODE_SESSION_ID": "outer-claude",
     })
 
     assert detection.platform is HostPlatform.CODEX
-    assert detection.signal == "CODEX_THREAD_ID"
+    assert detection.signal == "CODEX_PLUGIN_ROOT"
+
+
+def test_explicit_launcher_platform_overrides_all_inherited_host_signals() -> None:
+    from auto_engineering.host import HostPlatform, detect_host
+
+    detection = detect_host({
+        "AE_HOST_PLATFORM": "claude-code",
+        "CODEX_PLUGIN_ROOT": "/outer/codex/plugin",
+        "CODEX_THREAD_ID": "outer-codex",
+    })
+
+    assert detection.platform is HostPlatform.CLAUDE_CODE
+    assert detection.signal == "AE_HOST_PLATFORM"
 
 
 def test_detects_codebuddy_before_claude_signals() -> None:
@@ -330,7 +422,7 @@ def test_codex_capabilities_are_explicit() -> None:
     assert capabilities.commands is False
     assert capabilities.subagents is True
     assert capabilities.parallel_subagents is True
-    assert capabilities.transcript_usage is False
+    assert capabilities.transcript_usage is True
     assert capabilities.web_search is True
     assert capabilities.hooks == frozenset({
         "session_start",
@@ -348,7 +440,10 @@ def test_usage_source_is_explicit_per_host() -> None:
     assert claude is not None
     assert claude.name == "claude-transcript"
     assert claude.provider == "anthropic"
-    assert usage_source_for(HostPlatform.CODEX) is None
+    codex = usage_source_for(HostPlatform.CODEX)
+    assert codex is not None
+    assert codex.name == "codex-rollout"
+    assert codex.provider == "openai"
     assert usage_source_for(HostPlatform.UNKNOWN) is None
 
 
@@ -386,7 +481,9 @@ def test_codex_adapter_exposes_complete_host_contract(
         str(tmp_path.resolve()),
         "ae",
     )
-    assert adapter.usage_source(tmp_path) is None
+    usage_source = adapter.usage_source(tmp_path)
+    assert usage_source is not None
+    assert usage_source.name == "codex-rollout"
 
 
 def test_claude_adapter_prefers_local_cli_and_exposes_usage(

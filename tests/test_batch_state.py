@@ -274,11 +274,11 @@ class TestBoundaryGuards:
 
 
 class TestSerialization:
-    def test_to_json_stores_cursors_and_batch_plan_no_plates(self) -> None:
-        """T9a: 序列化含游标 + batch_plan (seed), 但不存 plates (重嵌套树).
+    def test_to_json_stores_cursors_batch_plan_and_minimal_routing(self) -> None:
+        """序列化含游标、batch_plan 与最小路由，但不复制 DesignItem 深层树。
 
         batch_plan 内嵌使 batch_state_json 自包含 (#6 跨 tick 被清空, 不可依赖);
-        plates 仍从 seed 重建, 不持久化 Plate/Component/DesignItem 深层树.
+        Reducer 可脱离 DesignDoc 重放真实拓扑。
         """
         bp = [_batch("b1", "CompX"), _batch("b2", "CompY")]
         bs = BatchState.from_batch_plan(bp)
@@ -287,7 +287,18 @@ class TestSerialization:
         assert set(data.keys()) == {
             "current_plate_idx", "current_component_idx",
             "current_batch_idx", "total_batches", "batch_plan",
+            "completed_batch_ids", "active_batch_id",
+            "routing_plates",
         }
+        assert data["routing_plates"] == [{
+            "name": "(single)",
+            "design_section": "",
+            "components": [
+                {"name": "CompX", "design_section": ""},
+                {"name": "CompY", "design_section": ""},
+            ],
+        }]
+        assert data["completed_batch_ids"] == ["b1"]
         assert data["current_batch_idx"] == 1
         assert data["total_batches"] == 2
         assert "plates" not in data  # 重嵌套树不持久化 (主设计决策保留)

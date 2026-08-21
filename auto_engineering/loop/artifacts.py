@@ -96,30 +96,32 @@ def compact_worker_receipt(
     summary_limit: int = 2048,
     requested_effort: str = "",
     actual_model: str = "unknown",
+    native_worker_handle: str | None = None,
 ) -> dict[str, Any]:
-    """小结果 inline；大结果只返回有界摘要与可校验引用。"""
-    encoded = _canonical_bytes(payload)
-    if len(encoded) <= inline_limit:
-        return {
-            "status": "completed",
-            "stage": stage,
-            "worker": worker,
-            "requested_effort": requested_effort,
-            "actual_model": actual_model or "unknown",
-            "payload": payload,
-        }
-    if len(summary.encode("utf-8")) > summary_limit:
-        raise ArtifactError("worker receipt summary 超过字节上限")
-    ref = store.put(kind="worker_report", payload=payload)
-    return {
+    """完整 receipt envelope 可容纳时 inline，否则使用 ArtifactRef。"""
+    common = {
         "status": "completed",
         "stage": stage,
         "worker": worker,
         "requested_effort": requested_effort,
         "actual_model": actual_model or "unknown",
+    }
+    if native_worker_handle is not None:
+        common["native_worker_handle"] = native_worker_handle
+    inline_receipt = {**common, "payload": payload}
+    if len(_canonical_bytes(inline_receipt)) <= inline_limit:
+        return inline_receipt
+    if len(summary.encode("utf-8")) > summary_limit:
+        raise ArtifactError("worker receipt summary 超过字节上限")
+    ref = store.put(kind="worker_report", payload=payload)
+    artifact_receipt = {
+        **common,
         "summary": summary,
         "artifact_ref": ref.to_dict(),
     }
+    if len(_canonical_bytes(artifact_receipt)) > inline_limit:
+        raise ArtifactError("worker receipt envelope 超过字节上限")
+    return artifact_receipt
 
 
 def validate_worker_receipt(

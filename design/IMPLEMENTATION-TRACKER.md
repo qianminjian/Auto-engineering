@@ -1,21 +1,9 @@
 # Auto-Engineering 当前实施跟踪表
-> 更新：2026-08-12｜目标阶段：Phase 82 真实宿主闭环｜Phase 1-62 明细见 `design/HISTORY.md`｜状态：`☐` 未开始／`◐` 进行中／`✅` 已验证
+> 更新：2026-08-16｜目标阶段：Phase 83 Host Runtime 产品闭环｜Phase 1-79 明细见 `design/HISTORY.md`｜状态：`☐` 未开始／`◐` 进行中／`✅` 已验证
 ## 基线与阶段
 | 里程碑 | 状态 | 证据 |
 |---|:---:|---|
-| Phase 1-48 | ✅ | Git 历史与 `design/HISTORY.md` |
-| Phase 49-50 Host-neutral Core/Codex 收口 | ✅ 30/30 | 双宿主基础适配；T233-T240；覆盖率 90.15% |
-| Phase 51 质量收口 | ✅ 1/1 | T241；1889 passed / 1 skipped，零告警 |
-| Phase 52 Protocol Envelope | ✅ 5/5 | T242-T246；1913 passed / 1 skipped |
-| Phase 53 Event Store | ✅ 6/6 | T247-T252；1945 passed / 1 skipped |
-| Phase 54 Tick Kernel | ✅ 8/8 | T253-T260 |
-| Phase 55-56 Host SPI 与黄金轨迹 | ✅ 10/10 | T261-T270；1996 passed / 1 skipped |
-| Phase 57-58 质量与安装验收 | ✅ 4/4 | T271-T274；Claude Code/Codex 真实宿主调用通过 |
-| Phase 59 真实宿主兼容性加固 | ✅ 5/5 | T275-T279；v5.7.0 双宿主真实安装验收通过 |
-| Phase 60 Prompt Contract 重构 | ✅ 8/8 | T280-T287；2019 passed / 1 skipped，coverage 90.27% |
-| Phase 61 v5.7.1 发布收口 | ✅ 7/7 | T288-T294；2021 passed / 1 skipped，coverage 90.27% |
-| Phase 62 v5.7.1 正式发布 | ✅ 6/6 | T295-T300；GitHub Release 与 SHA-256 已核验 |
-| Phase 63 非交互配置治理 | ✅ 1/1 | T301；非交互显式策略与来源报告 |
+| Phase 1-63 | ✅ | Git 历史与 `design/HISTORY.md`；v5.7.1 已发布，双宿主基础协议与安装验收完成 |
 ## Phase 64：真实运行可信度止血
 | 优先级 | ID | 任务 | EARS 验收 | 状态 |
 |---:|---|---|---|:---:|
@@ -125,7 +113,7 @@
 | P0 | T403 | 协议内核收敛设计资产 | While 方案 B 已获批准, when 实施开始, the specification shall 统一定义 Core/Host/Event/Prompt/Session 边界、迁移顺序、禁止项和发布门禁 | ✅ Spec/PLAN + BEACON/INDEX/HISTORY/Tracker 已同步；T404-T413 已登记 |
 | P0 | T404 | 架构特征与负向契约 | While 旧 façade、全状态事件补丁和线程级 Prompt 锁仍存在, when Phase 80 测试运行, the suite shall 稳定暴露这些偏差且不改变现有生产状态 | ✅ 5 项 RED 均按预期失败；GREEN 后与相关回归 209 passed |
 | P0 | T405 | Runtime Compatibility Vector 与 Action 边界升级 | While 活动 Action 使用旧运行时修订, when 新版本恢复并接收其因果 Result, the Core shall 完成旧 Action 后只对下一 Action 激活新修订 | ✅ Vector、Action Snapshot/恢复判定及第 76 Tick 边界升级轨迹通过 |
-| P0 | T406 | Host Execution Control 与连续驱动契约 | While Action 非终态且无需用户输入, when 宿主提交 Result, the host shall 按机器处置自动执行下一 Action，不把单个 Action 输出当作完成 | ✅ Action 扩展、Driver 状态机、Command/Skill 连续驱动合同与双宿主语义测试通过 |
+| P0 | T406 | Host Execution Control 与连续驱动契约 | While Action 非终态且无需用户输入, when 宿主提交 Result, the host shall 按机器处置自动执行下一 Action，不把单个 Action 输出当作完成 | ◐ ExecutionControl 与决策映射已完成；第 20 次真跑证明生产 Host Driver/StopGuard 未闭合，转 T461 |
 | P0 | T407 | 领域事件 Reducer 与 legacy replay | While 新线程推进状态, when Event Stream 重放, the projection shall 由显式领域事件重建且新路径不得写逐 Tick 完整 EngineState；旧流仍可兼容读取 | ✅ 统一 LegacyEventAdapter + EventStore 新写入隔离；真实 rc.5 fixture 与隔离恢复通过 |
 | P0 | T408 | 纯 ActionCompiler 与 Effect Executor | While 相同输入、identity 和 clock 被提供, when Action 重复编译, the compiler shall 生成字节等价草案且不写文件，副作用由独立执行器原子处理 | ✅ Prompt/proof/challenge 通过 EffectIntent 执行；EffectReceipt 与 Event/Projection/Action 同 Tick 事务提交并覆盖回滚；304 项第二批矩阵通过 |
 | P0 | T409 | TickKernel 收敛与旧 façade 绞杀 | While StageHandler 返回 TransitionDecision, when Kernel 应用转换, it shall 不解释 Stage 专属命令式字段，并逐阶段退役旧可变写入路径 | ✅ façade 已无 Stage 专属分支；Architecture/Offload/Result/Context/Prevalidation/Gate/Audit 均由独立服务承载；2254 passed/1 skipped |
@@ -140,7 +128,7 @@
 | P0 | T418 | 真实旧 payload 跨版本黄金轨迹 | While 脱敏 rc.5 前序事件流恢复, when 新 Runtime 接受 patch, the projection shall 等价且进入 Developer | ✅ 固定 fixture 回归；隔离旧 thread 从 Architect 进入 Developer，原项目未写入 |
 | P0 | T419 | 不可混淆 Build Identity | While SemVer 相同但提交或制品不同, when Runtime/Action/报告生成, the build identities shall 不同且可追溯 | ✅ Release/source 内容摘要；双宿主同制品身份一致；裸 Python builder 回归 |
 | P0 | T420 | 方案 B 全门禁与原地恢复验收 | While T415-T419 完成, when 全量质量与隔离旧 thread 恢复执行, all checks shall 通过且不得改写真实项目历史 | ✅ 2266/1、coverage 90%、Ruff/mypy/sync、隔离恢复、双宿主 archive smoke |
-| P1 | T421 | SQLite 测试资源释放 | While CLI/status/Codex integration 测试打开 checkpoint DB, when 测试结束, all connections shall 显式关闭且 coverage run 不产生 ResourceWarning | ◐ 本次 coverage 记录 20 条 warning；不阻断协议修复，后续独立治理 |
+| P1 | T421 | SQLite 测试资源释放 | While CLI/status/Codex integration 测试打开 checkpoint DB, when 测试结束, all connections shall 显式关闭且 coverage run 不产生 ResourceWarning | ✅ sqlite 只读探测显式 close；全量以 ResourceWarning 为 error：2457 passed/1 skipped |
 ## Phase 81：状态冲突协调与任务续作
 > 权威设计：`design/v5.8-State-Reconciliation-Design.md`；完成前冻结点状补丁，rc.5 不再续跑真实项目。
 | 优先级 | ID | 任务 | EARS 验收 | 状态 |
@@ -150,11 +138,23 @@
 | P0 | T430 | Phase 81 全门禁与真实产品复验 | While T423-T429 完成, when 隐藏状态、双路径、幂等、跨宿主和产品安装轨迹执行, all checks shall 通过后才允许生成下一 RC | ◐ 2301/1、coverage 90%、Ruff/mypy/sync、Claude/Codex archive smoke 通过；真实 product install/长跑仍 `not_run`，不得生成下一 RC |
 | P0 | T431-T433 | 自动续跑、Gap 主链路与 Agent 资源/Repair 收敛 | While setup/gap/worker/refine 主链路运行, when Core/Host 处理状态与失败, the system shall 保持事件、Action、设计路由和恢复语义一致 | ✅ 2327/1、90% coverage、静态/sync/archive；后续真跑又证伪 Worker 身份与设计权威，转 T434-T439 |
 ## Phase 82：真实宿主闭环与设计权威（审计收敛）
-> 权威设计/计划：`design/v5.8-Real-Host-Closure-Design.md`、`design/v5.8-Real-Host-Closure-PLAN.md`。
 | 优先级 | ID | 任务 | EARS 验收 | 状态 |
 |---:|---|---|---|:---:|
 | P0 | T434 | 真实宿主闭环总体验收 | While 内部自动门禁无法覆盖真实宿主, when Phase 82 完成, L1-L4 shall 分别证明协议、轨迹、Canary 和完整黄金项目，不以 archive 或测试数量冒充 product install | ◐ 回归基线 2417/1、90%；真实双宿主 L3/L4 未运行，发布阻断 |
 | P0 | T435-T439 | 身份、Invocation、Authority、Fake Host 与黄金语义基础 | While 基础模块已有定向测试, when 审计生产链, the evidence shall 区分参考实现与真实宿主强制路径 | ◐ 模块/定向测试已完成；审计发现结果污染、生产绑定、完整轨迹和语义门禁缺口 |
-| P0 | T440-T441 | 严格 SpawnPlan、结果分离、Host Attestation 与版本协商 | While 任一 spawn Action 被真实宿主执行, when Worker 返回, the host shall 只消费机器 invocation 并提交与 Action/Prompt/能力绑定的证明 | ✅ Core 按 active Action 强制严格证明；平台隔离、Prompt、effort、能力摘要和 Worker 集合均 fail-closed；旧合同仅按旧 Action 兼容 |
-| P0 | T442 | Design Decision Ledger、全阶段权威与上下文去重 | While 显式决策、future 项和 Research 并存, when 计划或修复激活, the Core shall 拒绝未批准变更并只传递去重后的相关义务 | ✅ design intake 原子持久化来源绑定账本且不臆造自然语言决策；source drift、future promotion、未批准变更和批准因果链均 fail-closed，无决策时明确 partial |
+| P0 | T440-T441 | 严格 SpawnPlan、结果分离、Host Attestation 与版本协商 | While 任一 spawn Action 被真实宿主执行, when Worker 返回, the host shall 只消费机器 invocation 并提交与 Action/Prompt/能力绑定的证明 | ◐ Core 验证已完成；第 20 次真跑证明宿主仍手工拼装三类证明且 Command 仍含 legacy 指令，转 T461-T462 |
+| P0 | T442 | Design Decision Ledger、全阶段权威与上下文去重 | While 显式决策、future 项和 Research 并存, when 计划或修复激活, the Core shall 拒绝未批准变更并只传递去重后的相关义务 | ◐ 来源绑定与批准投影已完成；partial ledger 尚未阻止 advisory 架构变化，转 T465 |
 | P0 | T443-T459 | 完整轨迹、黄金场景、Hermetic Release 与真跑恢复收口 | While 候选制品进入验收, when 故障矩阵、Canary、完整项目或 Worker 失败执行, both hosts shall 使用严格 Invocation、Core 生成的证明模板和真实配置快照，产生确定恢复语义 | ◐ T443-T459 自动门禁完成；Codex 已从独立内容寻址 Release 安装并通过零开发目录来源验收（Build `5.8.0-rc.5+sha256.32e2f80e47b0399a`）；新 Build 双宿主 L3/L4 长跑仍 not_run |
+## Phase 83：Host Runtime 产品闭环收敛
+| 优先级 | ID | 任务 | EARS 验收 | 状态 |
+|---|---|---|---|---|
+| P0 | T460 | 第 20 次真跑根因与统一规格 | While 真跑与组件测试结论冲突, when 规划修复, the design shall 以产品链路证据纠正假绿任务并冻结点状补丁 | ✅ 设计与计划已记录；产品未闭合任务已纠正 |
+| P0 | T461 | HostRuntimeDriver、RunLease 与 StopGuard | While active Action 为 CONTINUE, when 宿主准备停止, the plugin shall 自动继续或在启动前因能力不足 fail-closed | ✅ Driver/Lease/双宿主 StopGuard 与发布资产验证通过 |
+| P0 | T462 | Worker outcome 到 Result 的原子证据事务 | While Worker 已真实完成, when Coordinator finalize, the assembler shall 一次生成全部绑定证明且中断恢复不重新 spawn | ✅ 原子 Assembler、完整 violations 与幂等 journal 已通过生产轨迹 |
+| P0 | T463-T464 | BatchCompleted 领域事件与进度单一投影 | While Plan refine 改变计划, when candidate 激活和事件重放, progress shall 按稳定 ID 保留完成事实且永不超过 100% | ✅ 稳定完成事件、最小路由拓扑及 replay 不变量通过 |
+| P0 | T465 | partial 设计权威与架构变更批准 Gate | While advisory 与设计冲突, when ledger 非 full, the Core shall 保守执行原设计并要求显式用户批准 | ✅ ChangeRequest/Gate/Approval Event 因果投影通过 |
+| P1 | T466 | EventStore 指标事实投影 | While 项目产生 MAJOR/refine/usage 事件, when summary 生成, metrics shall 与重放事实一致或标记 measurement_incomplete | ✅ EventStore replay 指标与 incomplete 语义通过 |
+| P0 | T467-T469 | L2 产品轨迹、双宿主 L3 与 Voice Clone L4 | While 候选版本准备真跑或发布, when 任一层证据缺失, the release gate shall 保持阻断 | ◐ L2、2457/1、90%、零 ResourceWarning、CI hermetic、双宿主安装器与 archive 通过；Build 写外部验收报告；L3/L4 not_run，发布阻断 |
+| P0 | T470/T472/T473 | 全类型 Action 的确定性 Result 终结与单一宿主合同 | While 任一 active Action 需要宿主提交 Result, when Action 不含 spawn 或含严格 spawn, the host shall 只提交业务 payload/原生 outcome，由同一 Core assembler 绑定 active Action 并生成完整 v1.1 Result；Action instruction/expected_format 不得要求 Core-owned identity 或手工 proof | ◐ L3 已验证非 spawn 原子文件链与 strict outcomes；随后发现 Developer expected_format 要求 `stage` 却被 Finalizer禁止，RED→GREEN 已在 ActionBuilder 统一剔除 Core-owned 字段，待新 Build L3 |
+| P0 | T471 | Architect 合法路由键的执行上下文闭包 | While Architect Gate 要求每个 batch 绑定非空 `plate_keys`, when Core 编译隔离 Worker Prompt, the Action shall 同时在机器字段和 Worker context 中提供同一 `valid_plate_keys` 集合，禁止 Worker 猜测或提交空路由 | ◐ 首轮 Codex L3 因 Worker Prompt 未携带合法集合而以 `ARCHITECT_PLAN_INVALID` 终止；RED→GREEN 已补齐 Prompt Contract 与 ActionBuilder，待新 Build L3 验证 |
+| P0 | T474-T523 | 深审计权威、宿主身份、恢复边界与成本伸缩 | While active Action 已有 thread/journal 事实, when 宿主跨会话/Build 恢复、误传旧路径或审计小项目, the product shall 自动重绑/复用当前事实，并按规模合并五维审计上下文 | ✅ T519 真跑已从旧路径错误推进至下一 Action；T522 禁止未提交 outcome 重跑；T523 小项目 1×high、大项目 5×xhigh。2519/1、Ruff、mypy 通过；L3/L4 仍归 T467-T469 |

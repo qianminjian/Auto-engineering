@@ -73,6 +73,7 @@ jobs:
           uv run python scripts/install_acceptance.py
           --archive "${RUNNER_TEMP}/auto-engineering.tar.gz"
           --host "${{ matrix.host }}"
+          --wheel-cache "$(uv cache dir)"
 
   lint-and-test:
     runs-on: ${{ matrix.os }}

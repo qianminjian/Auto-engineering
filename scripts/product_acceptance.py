@@ -93,6 +93,24 @@ def evaluate_release_evidence(
         actual = hashlib.sha256(path.read_bytes()).hexdigest()
         if actual != expected:
             raise ProductAcceptanceError("EVIDENCE_ARTIFACT_MISMATCH")
+        try:
+            artifact_payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ProductAcceptanceError("EVIDENCE_ARTIFACT_INVALID") from exc
+        if not isinstance(artifact_payload, dict):
+            raise ProductAcceptanceError("EVIDENCE_ARTIFACT_INVALID")
+        required_events = {"ActionIssued", "ResultAccepted"}
+        if (
+            artifact_payload.get("schema_version") != "1.0"
+            or artifact_payload.get("host") != evidence.get("host")
+            or artifact_payload.get("build_id") != evidence.get("build_id")
+            or artifact_payload.get("installed_build_id") != evidence.get("build_id")
+            or artifact_payload.get("plugin_discovered") is not True
+            or not required_events.issubset(
+                set(artifact_payload.get("event_types", []))
+            )
+        ):
+            raise ProductAcceptanceError("EVIDENCE_ARTIFACT_CLAIMS_INVALID")
         results.append(evaluate_product_evidence(evidence))
     return {
         "status": "pass",

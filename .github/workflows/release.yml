@@ -66,11 +66,13 @@ jobs:
           uv run python scripts/install_acceptance.py
           --archive "release/auto-engineering-v${{ steps.version.outputs.version }}.tar.gz"
           --host claude-code
+          --wheel-cache "$(uv cache dir)"
       - name: Validate Codex archive
         run: >-
           uv run python scripts/install_acceptance.py
           --archive "release/auto-engineering-v${{ steps.version.outputs.version }}.tar.gz"
           --host codex
+          --wheel-cache "$(uv cache dir)"
       - name: Create SHA-256 manifest
         run: |
           cd release

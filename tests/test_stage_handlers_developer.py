@@ -26,7 +26,9 @@ def test_developer_advances_to_next_batch_with_checkpoint() -> None:
             has_more_batches_after_advance=True,
             completed_batch_id="B1",
             completed_task_count=2,
+            completed_task_ids=["B1-T1", "B1-T2"],
             design_section="§1",
+            progress_node_id="§1",
             next_task="实现 B2",
             next_pre_gate=gate,
         ),
@@ -34,6 +36,14 @@ def test_developer_advances_to_next_batch_with_checkpoint() -> None:
 
     assert decision.next_stage == "developer"
     assert decision.events[0].event_type is LoopEventType.BATCH_COMPLETED
+    assert decision.events[0].to_dict()["payload"] == {
+        "batch_id": "B1",
+        "task_ids": ["B1-T1", "B1-T2"],
+        "completed_task_count": 2,
+        "design_section": "§1",
+        "progress_node_id": "§1",
+        "next_task": "实现 B2",
+    }
     assert decision.lifecycle_effects.save_checkpoint is True
     assert not {
         "collect_token_usage",

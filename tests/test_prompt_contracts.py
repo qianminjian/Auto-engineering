@@ -51,6 +51,7 @@ def test_default_contract_registry_is_statically_consistent() -> None:
 def test_contracts_declare_context_needed_by_known_loss_paths() -> None:
     contracts = default_prompt_contracts()
 
+    assert "project_profile_summary" in contracts["gap_scan"].required_context
     assert {"requirement", "design_doc_path", "project_profile_summary"} <= set(
         contracts["architect"].required_context
     )
@@ -67,6 +68,14 @@ def test_contracts_declare_context_needed_by_known_loss_paths() -> None:
     assert {"coverage_map"} <= set(
         contracts["system_deep_audit"].required_context
     )
+
+
+def test_gap_scan_prompt_excludes_resolved_project_mechanics_from_user_gates() -> None:
+    prompt = default_registry().get("gap_scan")
+
+    assert "project_profile_summary" in prompt
+    assert "已确定的工程事实" in prompt
+    assert "不得升级为用户设计缺口" in prompt
 
 
 def test_verifier_prompts_only_offer_result_schema_status_values() -> None:

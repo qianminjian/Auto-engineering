@@ -93,6 +93,7 @@ def test_multi_worker_plan_has_unique_invocations(tmp_path: Path) -> None:
         thread_id="multi-plan",
         current_stage="system_deep_audit",
         requirement="审计协议层",
+        file_list=[f"src/module_{index}.py" for index in range(21)],
     ))
     plan = SpawnPlan.from_action(action)
 
@@ -100,6 +101,33 @@ def test_multi_worker_plan_has_unique_invocations(tmp_path: Path) -> None:
     assert len({item.worker_id for item in plan.invocations}) == 5
     assert len({item.prompt_sha256 for item in plan.invocations}) == 5
     assert all(item.isolation == "fresh_context" for item in plan.invocations)
+
+
+def test_small_system_audit_merges_five_dimensions_into_one_worker(
+    tmp_path: Path,
+) -> None:
+    action = ActionBuilder(tmp_path).build_action(EngineState(
+        thread_id="compact-audit",
+        current_stage="system_deep_audit",
+        requirement="审计小型项目",
+        file_list=["src/counter.py", "tests/test_counter.py"],
+    ))
+    plan = SpawnPlan.from_action(action)
+
+    assert action["audit_execution_profile"] == {
+        "profile": "compact",
+        "audited_file_count": 2,
+        "dimension_count": 5,
+    }
+    assert len(plan.invocations) == 1
+    assert action["spawn"]["parallel"] is False
+    assert action["spawn"]["effort"] == "high"
+    assert plan.invocations[0].role == "system_audit_compact"
+    prompt = (tmp_path / plan.invocations[0].prompt_ref).read_text(encoding="utf-8")
+    for dimension in (
+        "架构合理性", "代码质量", "工程化规范", "虚化实现", "团队与设计覆盖",
+    ):
+        assert dimension in prompt
 
 
 def test_worker_outcome_rejects_coordinator_fields() -> None:

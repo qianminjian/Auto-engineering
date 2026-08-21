@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable, Mapping
 from typing import Any
 
+from auto_engineering.engine.batch_state import BatchState
+from auto_engineering.engine.progress_tree import ProgressTree
 from auto_engineering.engine.state import EngineState
 from auto_engineering.loop.events import LoopEvent, LoopEventType
 from auto_engineering.loop.legacy_event_adapter import (
@@ -117,6 +120,12 @@ EVENT_CHANNELS: dict[LoopEventType, frozenset[str]] = {
         "state_reconciliation",
     }),
     LoopEventType.TASK_SUPERSEDED: frozenset({"superseded_tasks"}),
+    LoopEventType.BATCH_COMPLETED: frozenset({
+        "batch_state_json",
+        "progress_tree_json",
+    }),
+    LoopEventType.COMPONENT_COMPLETED: frozenset({"batch_state_json"}),
+    LoopEventType.PLATE_COMPLETED: frozenset({"batch_state_json"}),
 }
 
 
@@ -251,6 +260,124 @@ def _verification_state_updated(state: EngineState, event: LoopEvent) -> EngineS
     )
 
 
+def _batch_completed(state: EngineState, event: LoopEvent) -> EngineState:
+    """按稳定 batch/task 身份推进机器游标与人视角进度。"""
+
+    payload = _payload(event)
+    required = {
+        "batch_id",
+        "task_ids",
+        "completed_task_count",
+        "design_section",
+        "progress_node_id",
+        "next_task",
+    }
+    if set(payload) != required:
+        raise EventChannelViolation("BATCH_COMPLETED_PAYLOAD_INVALID")
+    batch_id = payload.get("batch_id")
+    task_ids = payload.get("task_ids")
+    count = payload.get("completed_task_count")
+    section = payload.get("design_section")
+    progress_node_id = payload.get("progress_node_id")
+    next_task = payload.get("next_task")
+    if (
+        not isinstance(batch_id, str)
+        or not batch_id
+        or not isinstance(task_ids, list)
+        or any(not isinstance(item, str) or not item for item in task_ids)
+        or len(set(task_ids)) != len(task_ids)
+        or not isinstance(count, int)
+        or isinstance(count, bool)
+        or count < 0
+        or count != len(task_ids)
+        or not isinstance(section, str)
+        or not isinstance(progress_node_id, str)
+        or not progress_node_id
+        or (next_task is not None and not isinstance(next_task, str))
+        or not isinstance(state.batch_state_json, str)
+        or not isinstance(state.progress_tree_json, str)
+    ):
+        raise EventChannelViolation("BATCH_COMPLETED_PAYLOAD_INVALID")
+    try:
+        batch_state = BatchState.from_json(state.batch_state_json, None)
+        progress_tree = ProgressTree.from_dict(
+            json.loads(state.progress_tree_json)
+        )
+    except (ValueError, TypeError, KeyError, json.JSONDecodeError) as exc:
+        raise EventChannelViolation("BATCH_PROJECTION_INVALID") from exc
+    if batch_state.is_component_complete() or batch_state.current_batch_id() != batch_id:
+        raise EventChannelViolation("BATCH_IDENTITY_MISMATCH")
+    active_batch = batch_state.current_batch()
+    expected_task_ids = [
+        str(item.get("id"))
+        for item in active_batch.get("tasks", [])
+        if isinstance(item, Mapping) and item.get("id")
+    ]
+    if task_ids != expected_task_ids:
+        raise EventChannelViolation("TASK_IDENTITY_MISMATCH")
+    node = progress_tree.nodes.get(progress_node_id)
+    component = batch_state.current_component()
+    if (
+        node is None
+        or node.level != "component"
+        or node.name != component.name
+        or node.design_section_ref != section
+    ):
+        raise EventChannelViolation("PROGRESS_COMPONENT_MISSING")
+    if node.done_tasks + count > node.total_tasks:
+        raise EventChannelViolation("STATE_INVARIANT_VIOLATION")
+    node.done_tasks += count
+    node.current_task = next_task
+    progress_tree.recalculate_parents(node.id)
+    batch_state.advance_batch()
+    return _copy(
+        state,
+        batch_state_json=batch_state.to_json(),
+        progress_tree_json=json.dumps(
+            progress_tree.to_dict(),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ),
+    )
+
+
+def _component_completed(state: EngineState, event: LoopEvent) -> EngineState:
+    payload = _payload(event)
+    if set(payload) != {"component"} or not isinstance(
+        payload.get("component"), str
+    ):
+        raise EventChannelViolation("COMPONENT_COMPLETED_PAYLOAD_INVALID")
+    try:
+        batch_state = BatchState.from_json(state.batch_state_json or "", None)
+        component = batch_state.current_component()
+        if component.name != payload["component"] or not batch_state.is_component_complete():
+            raise EventChannelViolation("COMPONENT_IDENTITY_MISMATCH")
+        batch_state.advance_component()
+    except EventChannelViolation:
+        raise
+    except (ValueError, TypeError, KeyError, json.JSONDecodeError) as exc:
+        raise EventChannelViolation("BATCH_PROJECTION_INVALID") from exc
+    return _copy(state, batch_state_json=batch_state.to_json())
+
+
+def _plate_completed(state: EngineState, event: LoopEvent) -> EngineState:
+    payload = _payload(event)
+    if set(payload) != {"plate"} or not isinstance(payload.get("plate"), str):
+        raise EventChannelViolation("PLATE_COMPLETED_PAYLOAD_INVALID")
+    try:
+        batch_state = BatchState.from_json(state.batch_state_json or "", None)
+        plate = batch_state.current_plate()
+        if plate.name != payload["plate"] or not batch_state.is_plate_complete():
+            raise EventChannelViolation("PLATE_IDENTITY_MISMATCH")
+        batch_state.advance_plate()
+    except EventChannelViolation:
+        raise
+    except (ValueError, TypeError, KeyError, json.JSONDecodeError) as exc:
+        raise EventChannelViolation("BATCH_PROJECTION_INVALID") from exc
+    return _copy(state, batch_state_json=batch_state.to_json())
+
+
 def _registered_channels(state: EngineState, event: LoopEvent) -> EngineState:
     allowed = EVENT_CHANNELS.get(event.event_type)
     if allowed is None:
@@ -304,9 +431,12 @@ def default_reducer_registry() -> ReducerRegistry:
         LoopEventType.SUPPLEMENT_STATE_UPDATED: _registered_channels,
         LoopEventType.STATE_CONFLICT_DETECTED: _registered_channels,
         LoopEventType.STATE_RECONCILIATION_SELECTED: _registered_channels,
+        LoopEventType.COMPONENT_COMPLETED: _component_completed,
+        LoopEventType.PLATE_COMPLETED: _plate_completed,
         LoopEventType.THREAD_SUPERSEDED: _registered_channels,
         LoopEventType.PLAN_RECONCILED: _registered_channels,
         LoopEventType.TASK_SUPERSEDED: _registered_channels,
+        LoopEventType.BATCH_COMPLETED: _batch_completed,
     }
     for event_type in LoopEventType:
         registry.register(event_type, special.get(event_type, _no_projection_change))

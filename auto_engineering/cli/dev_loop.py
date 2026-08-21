@@ -6,8 +6,10 @@ v5.5 Orchestrator 已退役 (T133b).
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from collections.abc import Iterable, Mapping
+from contextlib import suppress
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 from uuid import NAMESPACE_URL, uuid4, uuid5
@@ -21,6 +23,7 @@ if TYPE_CHECKING:
     from auto_engineering.loop.events import LoopEvent
 
 _logger = logging.getLogger(__name__)
+_STATE_GITIGNORE = "*\n!.gitignore\n"
 
 
 class _ActiveThreadStore(Protocol):
@@ -49,18 +52,76 @@ class _ActiveThreadEvents(Protocol):
 # 每次调用是独立进程, 从 .ae-state/checkpoints.db 恢复/持久化状态。
 # ============================================================
 
-def _ensure_checkpoint_db_path(root: Path) -> Path:
-    """.ae-state/checkpoints.db — 跨 tick 持久化 store (目录不存在则创建)."""
+def _ensure_state_dir(root: Path) -> Path:
+    """创建 Core 状态目录并阻止宿主把内部事实重复注入工作区 diff。"""
+
     state_dir = root / ".ae-state"
     state_dir.mkdir(parents=True, exist_ok=True)
+    ignore_file = state_dir / ".gitignore"
+    if not ignore_file.exists():
+        try:
+            with ignore_file.open("x", encoding="utf-8") as handle:
+                handle.write(_STATE_GITIGNORE)
+        except FileExistsError:
+            pass
+    return state_dir
+
+
+def _ensure_checkpoint_db_path(root: Path) -> Path:
+    """.ae-state/checkpoints.db — 跨 tick 持久化 store (目录不存在则创建)."""
+    state_dir = _ensure_state_dir(root)
     return state_dir / "checkpoints.db"
 
 
 def _ensure_event_db_path(root: Path) -> Path:
     """新协议内核的事实库；checkpoint DB 仅保留兼容与项目占用元数据。"""
-    state_dir = root / ".ae-state"
-    state_dir.mkdir(parents=True, exist_ok=True)
+    state_dir = _ensure_state_dir(root)
     return state_dir / "events.db"
+
+
+def _root_bound_path(path: Path, root: Path) -> Path:
+    """Resolve relative protocol artifacts against the explicit project root.
+
+    Host tools are free to change their working directory between calls.  A
+    relative Result/outcome path therefore belongs to the Action project, not
+    to the ambient shell process.
+    """
+
+    return path.resolve() if path.is_absolute() else (root / path).resolve()
+
+
+def _cleanup_completed_action_work_files(
+    *,
+    root: Path,
+    result_file: Path,
+    completed_action: Mapping[str, object] | None,
+    next_action: Mapping[str, object],
+) -> None:
+    """删除已提交 Action 的三个临时交接文件，保留 journal 与未知文件。"""
+
+    if completed_action is None:
+        return
+    message_id = completed_action.get("message_id")
+    if not isinstance(message_id, str) or not message_id:
+        return
+    if next_action.get("message_id") == message_id:
+        return
+    action_key = hashlib.sha256(message_id.encode("utf-8")).hexdigest()[:24]
+    work_dir = (
+        root.resolve()
+        / ".ae-state"
+        / "host-runtime"
+        / "work"
+        / action_key
+    )
+    if result_file.parent != work_dir:
+        return
+    for name in ("outcomes.json", "coordinator-result.json", "result.json"):
+        with suppress(FileNotFoundError):
+            (work_dir / name).unlink()
+    # 未知文件不是本协议的清理目标；保留目录供审计。
+    with suppress(OSError):
+        work_dir.rmdir()
 
 
 def _map_action_for_host(action: dict) -> dict:
@@ -81,10 +142,185 @@ def _map_action_for_host(action: dict) -> dict:
     )
     return adapter.map_action(action, profile=profile).payload
 
+
+def _prepare_action_for_host(action: dict, root: Path) -> dict:
+    """映射 Action，并为当前原生宿主会话原子记录执行义务。"""
+
+    mapped = _map_action_for_host(action)
+    host_execution = mapped.get("host_execution")
+    if isinstance(action.get("spawn"), Mapping) and isinstance(
+        host_execution, dict
+    ):
+        from auto_engineering.host.execution_assembler import (
+            HostEvidenceValidationError,
+            HostExecutionAssembler,
+        )
+
+        work_files = host_execution.get("work_files")
+        result_ref = (
+            work_files.get("result")
+            if isinstance(work_files, Mapping)
+            else None
+        )
+        outcomes_ref = (
+            work_files.get("outcomes")
+            if isinstance(work_files, Mapping)
+            else None
+        )
+        coordinator_ref = (
+            work_files.get("coordinator_result")
+            if isinstance(work_files, Mapping)
+            else None
+        )
+        if all(
+            isinstance(value, str) and value
+            for value in (result_ref, outcomes_ref, coordinator_ref)
+        ):
+            try:
+                committed = HostExecutionAssembler(root).restore_committed_result_to_file(
+                    action=action,
+                    result_path=Path(str(result_ref)),
+                    outcomes_path=Path(str(outcomes_ref)),
+                )
+            except HostEvidenceValidationError as exc:
+                import click
+
+                raise click.ClickException(str(exc)) from exc
+            if committed is not None:
+                # Core Action 快照保持不变；宿主投影只暴露唯一合法恢复动作。
+                mapped.pop("spawn", None)
+                host_execution.pop("workers", None)
+                host_execution.pop("native_worker_tools", None)
+                host_execution["recovery"] = {
+                    "schema_version": "1.0",
+                    "status": "worker_outcomes_committed",
+                    "spawn_permitted": False,
+                    "required_operation": "validate_then_submit_or_repair",
+                    "result_ref": result_ref,
+                    "outcomes_ref": outcomes_ref,
+                    "coordinator_result_ref": coordinator_ref,
+                }
+                mapped["instruction"] = (
+                    "当前 Action 已有 Core 绑定的 Worker outcomes。"
+                    "禁止启动 Worker；先验证并提交已固化 Result。"
+                    "若业务预检失败，只修复 coordinator payload，"
+                    "并使用已恢复 outcomes 重新 finalize。"
+                )
+            else:
+                # Worker 已完成、原生事实已落盘，但进程可能在 Finalizer 提交前
+                # 中断。此时重新 spawn 会重复付费且改变事实；只投影 finalize 恢复。
+                import json
+
+                outcomes_path = _root_bound_path(Path(str(outcomes_ref)), root)
+                coordinator_path = _root_bound_path(
+                    Path(str(coordinator_ref)), root
+                )
+                native_ready = False
+                try:
+                    raw_outcomes = json.loads(
+                        outcomes_path.read_text(encoding="utf-8")
+                    )
+                    raw_coordinator = json.loads(
+                        coordinator_path.read_text(encoding="utf-8")
+                    )
+                    outcome_items = (
+                        raw_outcomes.get("outcomes")
+                        if isinstance(raw_outcomes, dict)
+                        else None
+                    )
+                    invocations = action["spawn"]["invocations"]
+                    expected_workers = {
+                        item["worker_id"] for item in invocations
+                        if isinstance(item, Mapping)
+                        and isinstance(item.get("worker_id"), str)
+                    }
+                    actual_workers = {
+                        item["worker_id"] for item in outcome_items
+                        if isinstance(item, Mapping)
+                        and isinstance(item.get("worker_id"), str)
+                    } if isinstance(outcome_items, list) else set()
+                    native_ready = (
+                        isinstance(raw_coordinator, dict)
+                        and isinstance(outcome_items, list)
+                        and bool(expected_workers)
+                        and actual_workers == expected_workers
+                        and all(
+                            isinstance(item, Mapping)
+                            and item.get("status") == "completed"
+                            for item in outcome_items
+                        )
+                    )
+                except (KeyError, OSError, json.JSONDecodeError, TypeError):
+                    native_ready = False
+                if native_ready:
+                    mapped.pop("spawn", None)
+                    host_execution.pop("workers", None)
+                    host_execution.pop("native_worker_tools", None)
+                    host_execution["recovery"] = {
+                        "schema_version": "1.0",
+                        "status": "native_outcomes_ready",
+                        "spawn_permitted": False,
+                        "required_operation": "finalize_current_native_outcomes",
+                        "result_ref": result_ref,
+                        "outcomes_ref": outcomes_ref,
+                        "coordinator_result_ref": coordinator_ref,
+                    }
+                    mapped["instruction"] = (
+                        "当前 Action 的原生 Worker outcomes 与 Coordinator payload "
+                        "已经完整落盘但尚未提交。禁止重新启动 Worker；立即使用当前 "
+                        "outcomes 和 coordinator_result 调用 Finalizer，再 validate/tick。"
+                    )
+    from auto_engineering.host import HostPlatform, detect_host
+    from auto_engineering.host.runtime_driver import (
+        HostRunLease,
+        HostRunLeaseStore,
+        host_session_id_from_environ,
+    )
+
+    detection = detect_host()
+    session_id = host_session_id_from_environ(detection.platform)
+    if (
+        detection.platform is not HostPlatform.UNKNOWN
+        and session_id is not None
+        and isinstance(mapped.get("message_id"), str)
+    ):
+        lease = HostRunLease.from_action(
+            mapped,
+            platform=detection.platform.value,
+            host_session_id=session_id,
+        )
+        HostRunLeaseStore(root).save(lease)
+    return mapped
+
 def _active_thread(store: object) -> str | None:
     """兼容旧 Store façade；真实 SQLite store 提供原子项目占用查询。"""
     getter = getattr(store, "active_project_thread", None)
     return getter() if callable(getter) else None
+
+
+def _resume_operation(thread_id: str) -> dict[str, object]:
+    """生成唯一的 active Action 恢复操作，禁止宿主推导命令。"""
+
+    return {
+        "operation": "resume_active_action",
+        "thread_id": thread_id,
+        "argv": ["dev-loop", "--resume", thread_id],
+    }
+
+
+def active_resume_operation(root: Path) -> dict[str, object] | None:
+    """只读查询当前项目占用；不编译 Action，不推进 Tick。"""
+
+    from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
+
+    store: SQLiteCheckpointStore[EngineState] = SQLiteCheckpointStore(
+        _ensure_checkpoint_db_path(root)
+    )
+    try:
+        thread_id = _active_thread(store)
+        return _resume_operation(thread_id) if thread_id is not None else None
+    finally:
+        store.close()
 
 
 def _resolve_active_thread_start(
@@ -454,7 +690,7 @@ def run_tick_init(
                 events=events,
             )
             if existing_action is not None:
-                click.echo(json.dumps(_map_action_for_host(existing_action), ensure_ascii=False))
+                click.echo(json.dumps(_prepare_action_for_host(existing_action, root), ensure_ascii=False))
                 return
         existing_thread_id = store.reserve_project_thread(reserved_thread_id)
         if existing_thread_id is not None:
@@ -512,7 +748,7 @@ def run_tick_init(
         for w in feature_warnings(cfg.environ):
             click.echo(f"  [WARN] {w}", err=True)
 
-        click.echo(json.dumps(_map_action_for_host(action), ensure_ascii=False))
+        click.echo(json.dumps(_prepare_action_for_host(action, root), ensure_ascii=False))
     except Exception:
         store.release_project_thread(reserved_thread_id)
         raise
@@ -532,6 +768,7 @@ def run_tick_step(result_file: Path, root: Path,
     from auto_engineering.loop.event_store import SQLiteEventStore
     from auto_engineering.loop.tick_orchestrator import TickOrchestrator
 
+    result_file = _root_bound_path(result_file, root)
     store: SQLiteCheckpointStore[EngineState] = SQLiteCheckpointStore(_ensure_checkpoint_db_path(root))
     events = SQLiteEventStore(_ensure_event_db_path(root))
     try:
@@ -544,10 +781,17 @@ def run_tick_step(result_file: Path, root: Path,
             debug_dir=debug_dir,
         )
         if reconciled_action is not None:
-            click.echo(json.dumps(_map_action_for_host(reconciled_action), ensure_ascii=False))
+            click.echo(json.dumps(_prepare_action_for_host(reconciled_action, root), ensure_ascii=False))
             return
         inj = _build_injectables(root)
         active_thread = _active_thread(store)
+        completed_action = (
+            events.load_action_snapshot(active_thread)
+            if active_thread is not None
+            else None
+        )
+        if completed_action is None and active_thread is not None:
+            completed_action = store.load_active_protocol_action(active_thread)
         use_events = (
             active_thread is not None
             and events.load_projection(active_thread) is not None
@@ -595,8 +839,14 @@ def run_tick_step(result_file: Path, root: Path,
                 tick=state.tick,
                 stage=state.current_stage,
             )
-            click.echo(json.dumps(_map_action_for_host(action), ensure_ascii=False))
+            click.echo(json.dumps(_prepare_action_for_host(action, root), ensure_ascii=False))
             return
+        _cleanup_completed_action_work_files(
+            root=root,
+            result_file=result_file,
+            completed_action=completed_action,
+            next_action=action,
+        )
         if (
             action.get("action") == "done"
             and orch._state is not None
@@ -615,7 +865,7 @@ def run_tick_step(result_file: Path, root: Path,
                 else:
                     mc._flush()
 
-        click.echo(json.dumps(_map_action_for_host(action), ensure_ascii=False))
+        click.echo(json.dumps(_prepare_action_for_host(action, root), ensure_ascii=False))
     finally:
         events.close()
         store.close()
@@ -723,6 +973,7 @@ def run_tick_validate(result_file: Path, root: Path) -> None:
     from auto_engineering.loop.event_store import SQLiteEventStore
     from auto_engineering.loop.tick_orchestrator import TickOrchestrator
 
+    result_file = _root_bound_path(result_file, root)
     store: SQLiteCheckpointStore[EngineState] = SQLiteCheckpointStore(
         _ensure_checkpoint_db_path(root)
     )
@@ -745,6 +996,133 @@ def run_tick_validate(result_file: Path, root: Path) -> None:
         store.close()
 
 
+def run_tick_finalize(
+    outcomes_file: Path | None,
+    coordinator_result_file: Path,
+    root: Path,
+    *,
+    output_result_file: Path | None = None,
+) -> None:
+    """从宿主原生 outcome 原子生成可直接提交 Tick 的完整 Result。"""
+
+    import json
+
+    import click
+
+    from auto_engineering.host.execution_assembler import (
+        HostEvidenceValidationError,
+        HostExecutionAssembler,
+        NativeWorkerOutcome,
+    )
+    from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
+    from auto_engineering.loop.event_store import SQLiteEventStore
+
+    supplied_outcomes_file = (
+        _root_bound_path(outcomes_file, root)
+        if outcomes_file is not None else None
+    )
+    supplied_coordinator_file = _root_bound_path(coordinator_result_file, root)
+    supplied_output_file = (
+        _root_bound_path(output_result_file, root)
+        if output_result_file is not None else None
+    )
+
+    store: SQLiteCheckpointStore[EngineState] = SQLiteCheckpointStore(
+        _ensure_checkpoint_db_path(root)
+    )
+    events = SQLiteEventStore(_ensure_event_db_path(root))
+    try:
+        thread_id = _active_thread(store)
+        if thread_id is None:
+            raise click.ClickException("PROJECT_THREAD_NOT_ACTIVE")
+        action = events.load_action_snapshot(thread_id)
+        if action is None:
+            action = store.load_active_protocol_action(thread_id)
+        if action is None:
+            raise click.ClickException("ACTIVE_ACTION_MISSING")
+        mapped_action = _map_action_for_host(action)
+        outcomes_path = supplied_outcomes_file
+        coordinator_path = supplied_coordinator_file
+        result_path = supplied_output_file
+        host_execution = mapped_action.get("host_execution")
+        work_files = (
+            host_execution.get("work_files")
+            if isinstance(host_execution, Mapping)
+            else None
+        )
+        if isinstance(work_files, Mapping):
+            current_coordinator_ref = work_files.get("coordinator_result")
+            current_outcomes_ref = work_files.get("outcomes")
+            current_result_ref = work_files.get("result")
+            if isinstance(current_coordinator_ref, str):
+                current_coordinator = _root_bound_path(
+                    Path(current_coordinator_ref), root
+                )
+                # 兼容旧调用者自定义文件；但当前 Action 的隔离工作文件已经存在时，
+                # 它是唯一事实源，陈旧的上一 Action 参数不得再次进入 Assembler。
+                if (
+                    coordinator_path != current_coordinator
+                    and current_coordinator.is_file()
+                ):
+                    coordinator_path = current_coordinator
+                    if isinstance(current_result_ref, str):
+                        result_path = _root_bound_path(
+                            Path(current_result_ref), root
+                        )
+                    if (
+                        supplied_outcomes_file is not None
+                        and isinstance(current_outcomes_ref, str)
+                    ):
+                        outcomes_path = _root_bound_path(
+                            Path(current_outcomes_ref), root
+                        )
+        try:
+            raw_outcomes = (
+                json.loads(outcomes_path.read_text(encoding="utf-8"))
+                if outcomes_path is not None
+                else []
+            )
+            coordinator_payload = json.loads(
+                coordinator_path.read_text(encoding="utf-8")
+            )
+        except (OSError, json.JSONDecodeError) as exc:
+            raise click.ClickException("HOST_OUTCOME_INPUT_INVALID") from exc
+        outcome_items = (
+            raw_outcomes.get("outcomes")
+            if isinstance(raw_outcomes, dict)
+            else raw_outcomes
+        )
+        if not isinstance(outcome_items, list) or not isinstance(
+            coordinator_payload, dict
+        ):
+            raise click.ClickException("HOST_OUTCOME_INPUT_INVALID")
+        try:
+            outcomes = [NativeWorkerOutcome(**item) for item in outcome_items]
+        except (TypeError, ValueError) as exc:
+            raise click.ClickException("HOST_OUTCOME_INPUT_INVALID") from exc
+        try:
+            assembler = HostExecutionAssembler(root)
+            if result_path is None:
+                result = assembler.finalize(
+                    action=mapped_action,
+                    outcomes=outcomes,
+                    coordinator_payload=coordinator_payload,
+                )
+            else:
+                result = assembler.finalize_to_file(
+                    action=mapped_action,
+                    outcomes=outcomes,
+                    coordinator_payload=coordinator_payload,
+                    result_path=result_path,
+                )
+        except HostEvidenceValidationError as exc:
+            raise click.ClickException(str(exc)) from exc
+        click.echo(json.dumps(result, ensure_ascii=False))
+    finally:
+        events.close()
+        store.close()
+
+
 def run_tick_status(root: Path, verbose: bool = False) -> None:
     """ae dev-loop --status: restore → 输出当前 tick 状态摘要 JSON."""
     import json
@@ -759,6 +1137,13 @@ def run_tick_status(root: Path, verbose: bool = False) -> None:
     events = SQLiteEventStore(_ensure_event_db_path(root))
     try:
         active_thread = _active_thread(store)
+        lease = None
+        if active_thread is None:
+            from auto_engineering.host.runtime_driver import HostRunLeaseStore
+
+            lease = HostRunLeaseStore(root).load()
+            if lease is not None and events.load_projection(lease.thread_id) is not None:
+                active_thread = lease.thread_id
         use_events = active_thread is not None and events.load_projection(active_thread) is not None
         orch = TickOrchestrator.restore(
             root,
@@ -777,6 +1162,13 @@ def run_tick_status(root: Path, verbose: bool = False) -> None:
             "total_majors": s.total_majors,
             "plan_refine_count": s.plan_refine_count,
         }
+        if active_thread is not None and (
+            lease is None or lease.disposition != "TERMINAL"
+        ):
+            summary["next_operation"] = _resume_operation(active_thread)
+        if lease is not None and lease.disposition == "TERMINAL":
+            summary["current_stage"] = "done"
+            summary["expected_stage"] = "done"
         from auto_engineering.loop.status_projection import reconciliation_status
 
         reconciliation = reconciliation_status(s, orch._batch_state)
@@ -830,7 +1222,7 @@ def run_tick_resume(checkpoint_id: str, root: Path) -> None:
     try:
         event_action = events.load_action_snapshot(checkpoint_id)
         if event_action is not None:
-            click.echo(json.dumps(_map_action_for_host(event_action), ensure_ascii=False))
+            click.echo(json.dumps(_prepare_action_for_host(event_action, root), ensure_ascii=False))
             return
         try:
             orch = TickOrchestrator.restore(root, store, checkpoint_id=checkpoint_id)
@@ -844,7 +1236,7 @@ def run_tick_resume(checkpoint_id: str, root: Path) -> None:
                          checkpoint_id, resolved)
             orch = TickOrchestrator.restore(root, store, checkpoint_id=resolved)
         action = orch.build_action()
-        click.echo(json.dumps(_map_action_for_host(action), ensure_ascii=False))
+        click.echo(json.dumps(_prepare_action_for_host(action, root), ensure_ascii=False))
     finally:
         events.close()
         store.close()

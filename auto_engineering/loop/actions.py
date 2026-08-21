@@ -118,7 +118,10 @@ RESULT_SCHEMA: dict[str, dict] = {
         "required": ["stage", "result_type", "artifacts"],
     },
     "architect": {
-        "required": ["stage", "plan", "file_list"],
+        # Architect 有两种互斥结果：可执行计划，或设计变更请求。
+        # 共同必填项只有 stage，分支必填项由 validate_result_format
+        # 与 JSON Schema 的 oneOf 同步强制。
+        "required": ["stage"],
         "batch_plan_min_batches": 1,
         "plan_min_length": 50,
     },
@@ -247,8 +250,19 @@ def validate_result_format(result: dict, stage: str) -> list[str]:
 
     errors: list[str] = []
 
+    design_change_only = (
+        stage == "architect"
+        and isinstance(result.get("design_change_requests"), list)
+        and bool(result["design_change_requests"])
+    )
+    required_fields = (
+        ["stage", "design_change_requests"]
+        if design_change_only
+        else (["stage", "plan", "file_list"] if stage == "architect" else schema["required"])
+    )
+
     # 必填字段存在性
-    for req in schema["required"]:
+    for req in required_fields:
         if req not in result or result[req] is None:
             errors.append(f"缺少必填字段 '{req}'")
 
@@ -281,7 +295,7 @@ def validate_result_format(result: dict, stage: str) -> list[str]:
             errors.append("artifacts 必须为数组")
 
     # architect: plan 长度 + batch_plan 非空
-    if stage == "architect":
+    if stage == "architect" and not design_change_only:
         plan = result.get("plan")
         if isinstance(plan, str) and len(plan) < schema["plan_min_length"]:
             errors.append(

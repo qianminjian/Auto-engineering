@@ -13,6 +13,7 @@
     "message_type": {"const": "action"},
     "message_id": {"type": "string", "minLength": 1},
     "thread_id": {"type": "string", "minLength": 1},
+    "project_root": {"type": "string", "minLength": 1},
     "tick": {"type": "integer", "minimum": 0},
     "stage": {"type": ["string", "null"]},
     "causation_id": {"type": "string", "minLength": 1},
@@ -45,6 +46,16 @@
     "requirement": {"type": "string"},
     "feature_status": {"type": "object"},
     "progress_summary": {"type": ["string", "object", "null"]},
+    "audit_execution_profile": {
+      "type": "object",
+      "required": ["profile", "audited_file_count", "dimension_count"],
+      "properties": {
+        "profile": {"enum": ["compact", "specialist"]},
+        "audited_file_count": {"type": "integer", "minimum": 0},
+        "dimension_count": {"const": 5}
+      },
+      "additionalProperties": false
+    },
     "context": {"type": "object"},
     "expected_format": {"type": "object"},
     "gaps": {"type": "array"},
@@ -63,6 +74,8 @@
     "required_capabilities": {"type": "array"},
     "missing_capabilities": {"type": "array", "items": {"type": "string"}},
     "reason_code": {"type": "string"},
+    "retry_attempt": {"type": "integer", "minimum": 1},
+    "retry_limit": {"type": "integer", "minimum": 1},
     "constraints": {"type": "object"},
     "gap": {"type": "object"},
     "knowledge_sources": {"type": "object"},

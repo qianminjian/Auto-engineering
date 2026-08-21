@@ -91,6 +91,8 @@ def _architect_result_file(orch: TickOrchestrator) -> Path:
     for spec in plan.invocations:
         (orch.project_root / spec.receipt_path).write_text(json.dumps({
             "status": "completed", "stage": orch._active_action["stage"],
+            "worker": spec.worker_id,
+            "native_worker_handle": f"test-{spec.worker_id}",
             "requested_effort": spec.requested_effort,
             "actual_model": "test-model",
         }), encoding="utf-8")

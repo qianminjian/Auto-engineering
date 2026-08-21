@@ -70,6 +70,33 @@ def test_small_worker_result_stays_inline(tmp_path) -> None:
     assert "artifact_ref" not in receipt
 
 
+def test_inline_decision_uses_complete_receipt_envelope_budget(tmp_path) -> None:
+    store = ArtifactStore(tmp_path / "artifacts")
+    receipt = compact_worker_receipt(
+        store=store,
+        stage="component_verifier",
+        worker="component_verifier-0",
+        payload={"notes": "x" * 3950},
+        summary="完整结果见 ArtifactRef",
+        inline_limit=4096,
+        requested_effort="high",
+        actual_model="claude-opus",
+        native_worker_handle="worker-handle-123",
+    )
+
+    assert "payload" not in receipt
+    assert receipt["artifact_ref"]["kind"] == "worker_report"
+    assert receipt["native_worker_handle"] == "worker-handle-123"
+    assert len(json.dumps(receipt, ensure_ascii=False).encode("utf-8")) <= 4096
+    assert validate_worker_receipt(
+        receipt,
+        expected_stage="component_verifier",
+        expected_effort="high",
+        store=store,
+        receipt_limit=4096,
+    )
+
+
 def test_summary_over_limit_fails_instead_of_silent_truncation(tmp_path) -> None:
     with pytest.raises(ArtifactError, match="summary"):
         compact_worker_receipt(
@@ -105,7 +132,7 @@ def test_receipt_validator_accepts_verified_artifact_ref(tmp_path) -> None:
         worker="worker",
         payload={"report": "x" * 5000},
         summary="完整报告见引用",
-        inline_limit=128,
+        inline_limit=512,
     )
 
     assert validate_worker_receipt(

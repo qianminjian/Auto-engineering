@@ -197,6 +197,7 @@ _CAPABILITIES = {
         session_handoff=True,
         subagents=True,
         parallel_subagents=True,
+        transcript_usage=True,
         web_search=True,
         git_mutation=True,
         isolated_worker_invocation=True,
@@ -227,6 +228,11 @@ def usage_source_for(platform: HostPlatform) -> UsageSource | None:
             name="claude-transcript",
             provider="anthropic",
         )
+    if platform is HostPlatform.CODEX:
+        return UsageSource(
+            name="codex-rollout",
+            provider="openai",
+        )
     return None
 
 
@@ -234,8 +240,23 @@ def detect_host(environ: Mapping[str, str] | None = None) -> HostDetection:
     """从进程环境识别宿主，兼容变量不得覆盖原生平台信号。"""
     env = environ if environ is not None else os.environ
 
+    explicit_platform = env.get("AE_HOST_PLATFORM")
+    if explicit_platform:
+        try:
+            platform = HostPlatform(explicit_platform)
+        except ValueError:
+            return HostDetection(HostPlatform.UNKNOWN, "invalid AE_HOST_PLATFORM")
+        if platform is not HostPlatform.UNKNOWN:
+            return HostDetection(platform, "AE_HOST_PLATFORM")
     if env.get("CODEBUDDY_PLUGIN_ROOT"):
         return HostDetection(HostPlatform.CODEBUDDY, "CODEBUDDY_PLUGIN_ROOT")
+    # Plugin root is scoped to the command currently executing. Session and
+    # entrypoint variables may be inherited when one supported CLI launches
+    # another, so they must not override this nearest-host signal.
+    if env.get("CLAUDE_PLUGIN_ROOT"):
+        return HostDetection(HostPlatform.CLAUDE_CODE, "CLAUDE_PLUGIN_ROOT")
+    if env.get("CODEX_PLUGIN_ROOT"):
+        return HostDetection(HostPlatform.CODEX, "CODEX_PLUGIN_ROOT")
     if env.get("CODEX_THREAD_ID"):
         return HostDetection(HostPlatform.CODEX, "CODEX_THREAD_ID")
     if env.get("CODEX_SANDBOX"):

@@ -151,3 +151,20 @@ def test_loop_event_schema_is_strict_and_accepts_real_event() -> None:
     assert not list(validator.iter_errors(raw))
     raw["unknown"] = True
     assert list(validator.iter_errors(raw))
+
+
+def test_loop_event_schema_rejects_incomplete_batch_completion() -> None:
+    schema_path = (
+        Path(__file__).parents[1]
+        / "auto_engineering"
+        / "loop"
+        / "loop-event.schema.json"
+    )
+    validator = Draft202012Validator(json.loads(schema_path.read_text()))
+    raw = LoopEvent.create(
+        thread_id="thread-1", sequence=1,
+        event_type=LoopEventType.BATCH_COMPLETED,
+        payload={"batch_id": "B1"}, correlation_id="thread-1",
+    ).to_dict()
+
+    assert list(validator.iter_errors(raw))

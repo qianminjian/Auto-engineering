@@ -83,6 +83,9 @@ class _MetricsAggregator:
             "total_tokens": total_tokens,
             "loc_added": loc_added,
             "efficiency_ratio": round(efficiency, 2),
+            "measurement_incomplete": (
+                not bool(token_events) or (total_tokens > 0 and loc_added <= 0)
+            ),
         }
 
         # T109f: PII 事件统计

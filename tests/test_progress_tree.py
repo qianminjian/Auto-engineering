@@ -15,6 +15,8 @@ ProgressTree 是人视角进度仪表盘 (与 BatchState 机器视角互补):
 
 from __future__ import annotations
 
+import pytest
+
 from auto_engineering.engine.design_doc import Component, DesignDoc, Plate
 from auto_engineering.engine.progress_tree import (
     ProgressNode,
@@ -63,6 +65,22 @@ class TestProgressNode:
                             sort_order=0, design_section_ref="§X", design_status="stable",
                             total_tasks=4, done_tasks=1)
         assert node.completion_pct == 25.0
+
+    def test_completion_pct_rejects_done_greater_than_total(self) -> None:
+        node = ProgressNode(
+            id="x",
+            name="X",
+            level="component",
+            parent_id="sys",
+            sort_order=0,
+            design_section_ref="§X",
+            design_status="stable",
+            total_tasks=10,
+            done_tasks=14,
+        )
+
+        with pytest.raises(ValueError, match="STATE_INVARIANT_VIOLATION"):
+            _ = node.completion_pct
 
     def test_defaults(self) -> None:
         node = ProgressNode(id="x", name="X", level="component", parent_id="sys",

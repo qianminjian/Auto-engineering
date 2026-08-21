@@ -1,0 +1,16 @@
+{
+  "description": "Auto-Engineering Claude Code runtime hooks",
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/stop.sh\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

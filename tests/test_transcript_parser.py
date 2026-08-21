@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 
 from auto_engineering.metrics.transcript_parser import (
+    CodexSessionTranscriptParser,
     SessionTranscriptParser,
     _encode_cwd,
     create_parser,
@@ -16,7 +17,7 @@ from auto_engineering.metrics.transcript_parser import (
 class TestEncodeCwd:
     def test_encode_simple_path(self):
         result = _encode_cwd("/Users/test/project")
-        assert result == "Users-test-project"
+        assert result == "-Users-test-project"
 
     def test_encode_no_leading_slash(self):
         result = _encode_cwd("home/user/project")
@@ -24,7 +25,11 @@ class TestEncodeCwd:
 
     def test_encode_single_dir(self):
         result = _encode_cwd("/tmp")
-        assert result == "tmp"
+        assert result == "-tmp"
+
+    def test_encode_matches_claude_for_dots_underscores_and_spaces(self):
+        result = _encode_cwd("/private/tmp/demo.build/voice_clone app")
+        assert result == "-private-tmp-demo-build-voice-clone-app"
 
 
 class TestSessionTranscriptParserCollect:
@@ -164,6 +169,46 @@ class TestSessionTranscriptParserCollect:
         assert r2["input_tokens"] == 0
         assert r2["message_count"] == 0
 
+    def test_collect_counts_positive_usage_delta_for_streamed_message(
+        self, tmp_path, monkeypatch
+    ):
+        encoded = _encode_cwd(str(tmp_path))
+        session_dir = Path.home() / ".claude" / "projects" / encoded
+        session_dir.mkdir(parents=True, exist_ok=True)
+        jsonl_file = session_dir / "streamed.jsonl"
+        records = [
+            {
+                "type": "assistant",
+                "message": {
+                    "id": "stream-1",
+                    "model": "claude",
+                    "usage": {"input_tokens": 100, "output_tokens": 0},
+                },
+            },
+            {
+                "type": "assistant",
+                "message": {
+                    "id": "stream-1",
+                    "model": "claude",
+                    "usage": {"input_tokens": 100, "output_tokens": 25},
+                },
+            },
+        ]
+        jsonl_file.write_text(
+            "\n".join(json.dumps(record) for record in records) + "\n"
+        )
+        monkeypatch.setattr(
+            SessionTranscriptParser,
+            "_find_latest_session",
+            lambda self: jsonl_file,
+        )
+
+        result = SessionTranscriptParser(tmp_path).collect()
+
+        assert result["input_tokens"] == 100
+        assert result["output_tokens"] == 25
+        assert result["message_count"] == 1
+
     def test_collect_incremental(self, tmp_path, monkeypatch):
         """Second call with new lines reads only new data."""
         encoded = _encode_cwd(str(tmp_path))
@@ -236,10 +281,9 @@ class TestSessionTranscriptParserCollect:
         """Subagent agent-*.jsonl files are also read."""
         encoded = _encode_cwd(str(tmp_path))
         session_dir = Path.home() / ".claude" / "projects" / encoded
-        subagent_dir = session_dir / "subagents"
-        subagent_dir.mkdir(parents=True, exist_ok=True)
-
         main_file = session_dir / "session.jsonl"
+        subagent_dir = session_dir / main_file.stem / "subagents"
+        subagent_dir.mkdir(parents=True, exist_ok=True)
         main_file.write_text("")
 
         agent_file = subagent_dir / "agent-explore.jsonl"
@@ -328,7 +372,7 @@ class TestCreateParser:
         assert parser is not None
         assert isinstance(parser, SessionTranscriptParser)
 
-    def test_returns_none_for_codex_without_usage_source(
+    def test_returns_codex_parser_for_native_thread(
         self, tmp_path, monkeypatch
     ):
         monkeypatch.setenv("AE_METRICS", "1")
@@ -336,4 +380,5 @@ class TestCreateParser:
         monkeypatch.setenv("CODEX_THREAD_ID", "thread-1")
         monkeypatch.delenv("CLAUDE_CODE", raising=False)
 
-        assert create_parser(tmp_path) is None
+        parser = create_parser(tmp_path)
+        assert isinstance(parser, CodexSessionTranscriptParser)

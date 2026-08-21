@@ -87,6 +87,9 @@ class ComponentVerifierHandler:
                     LoopEventType.COMPONENT_COMPLETED,
                     thread_id=context.thread_id,
                     sequence=context.event_sequence,
+                    payload={
+                        "component": context.extensions.get("completed_component")
+                    },
                 ),
                 *_advanced(self.stage, target, context),
             ),
@@ -130,6 +133,7 @@ class PlateDeepAuditHandler:
                     LoopEventType.PLATE_COMPLETED,
                     thread_id=context.thread_id,
                     sequence=context.event_sequence,
+                    payload={"plate": context.extensions.get("completed_plate")},
                 ),
                 channels_updated(
                     LoopEventType.VERIFICATION_STATE_UPDATED,
@@ -192,8 +196,16 @@ class SystemDeepAuditHandler:
         if not isinstance(state, Mapping):
             raise TypeError("state 必须为 Mapping")
         deduped, p0, p1, p2 = recount_findings(result.get("findings", []))
+        blocking = [
+            finding for finding in deduped
+            if finding.get("authority_class", "objective_defect")
+            in {"binding_violation", "objective_defect"}
+        ]
+        advisory = [finding for finding in deduped if finding not in blocking]
         counts = (p0, p1, p2)
         patch: dict[str, Any] = {}
+        if advisory:
+            patch["audit_findings"] = advisory
         if result.get("design_docs_stale"):
             patch["critic_feedback"] = (
                 (state.get("critic_feedback") or "")
@@ -206,8 +218,8 @@ class SystemDeepAuditHandler:
             or int(result.get("missing_count", 0))
             or int(result.get("diverged_count", 0))
         ):
-            patch["audit_findings"] = deduped
-            patch["open_findings"] = deduped
+            patch["audit_findings"] = blocking
+            patch["open_findings"] = blocking
             return _refine(
                 self.stage,
                 patch,

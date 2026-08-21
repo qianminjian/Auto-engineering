@@ -83,10 +83,37 @@ def test_architect_action_exposes_valid_machine_routing_keys(tmp_path) -> None:
     )
 
     assert action["valid_plate_keys"] == ["类型系统", "工具模块"]
+    assert '"valid_plate_keys": [' in action["subagent_prompt"]
+    assert '"类型系统"' in action["subagent_prompt"]
+    assert '"工具模块"' in action["subagent_prompt"]
+    assert "action.host_execution.work_files.outcomes" in action["instruction"]
+    assert "Never reuse files from another Action" in action["instruction"]
+    assert '"outcomes"' in action["instruction"]
+    assert "isolation_evidence" in action["instruction"]
+    assert "--finalize-result" in action["instruction"]
+    assert "OVERWRITE" not in action["instruction"]
+    assert '"spawn_proof_token":"' not in action["instruction"]
     expected = action["expected_format"]["batch_plan"]
     assert "batch_title" in expected
     assert "plate_keys" in expected
     assert "component" not in expected
+
+
+def test_action_binds_internal_commands_to_immutable_project_root(tmp_path) -> None:
+    project_root = tmp_path.resolve()
+
+    action = ActionBuilder(project_root).build_action(
+        EngineState(thread_id="root-bound", current_stage="architect"),
+    )
+
+    assert action["project_root"] == str(project_root)
+    assert f"--project-root {project_root}" in action["instruction"]
+
+    developer = ActionBuilder(project_root).build_action(
+        EngineState(thread_id="root-bound-dev", current_stage="developer"),
+    )
+    assert str(project_root) in developer["instruction"]
+    assert "working directory" in developer["instruction"]
 
 
 def test_action_feature_status_uses_injected_project_config(tmp_path) -> None:
@@ -105,6 +132,15 @@ def test_action_feature_status_uses_injected_project_config(tmp_path) -> None:
         "AE_METRICS": True,
         "AE_PII_ENABLED": True,
     }
+
+
+def test_coordinator_expected_format_excludes_core_owned_identity(tmp_path) -> None:
+    action = ActionBuilder(tmp_path).build_action(
+        EngineState(thread_id="developer", current_stage="developer"),
+    )
+
+    assert "stage" not in action["expected_format"]
+    assert "spawned" not in action["expected_format"]
 
 
 def test_component_verifier_receives_all_batch_plate_keys(tmp_path) -> None:

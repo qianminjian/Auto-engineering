@@ -62,6 +62,18 @@ class ProgressNode:
 
     @property
     def completion_pct(self) -> float:
+        if (
+            isinstance(self.total_tasks, bool)
+            or isinstance(self.done_tasks, bool)
+            or self.total_tasks < 0
+            or self.done_tasks < 0
+            or self.done_tasks > self.total_tasks
+        ):
+            raise ValueError(
+                "STATE_INVARIANT_VIOLATION: "
+                f"done_tasks={self.done_tasks}, total_tasks={self.total_tasks} "
+                f"for {self.id}"
+            )
         if self.total_tasks == 0:
             return 0.0
         return self.done_tasks / self.total_tasks * 100
@@ -388,6 +400,12 @@ class ProgressTree:
     def completion_pct(self, node_id: str = "sys") -> float:
         return self.nodes[node_id].completion_pct if node_id in self.nodes else 0.0
 
+    def validate_invariants(self) -> None:
+        """序列化或编译前验证所有节点，不允许损坏进度继续传播。"""
+
+        for node in self.nodes.values():
+            _ = node.completion_pct
+
     def find_by_design_section(self, section_ref: str) -> ProgressNode | None:
         target = _normalize_ref(section_ref)
         for node in self.nodes.values():
@@ -440,6 +458,7 @@ class ProgressTree:
     # ---------- 序列化 ----------
 
     def to_dict(self) -> dict:
+        self.validate_invariants()
         return {
             "system_id": self.system_id,
             "system_name": self.system_name,
@@ -462,4 +481,5 @@ class ProgressTree:
         )
         for nid, nd in d.get("nodes", {}).items():
             tree.nodes[nid] = ProgressNode(**nd)
+        tree.validate_invariants()
         return tree

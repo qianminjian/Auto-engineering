@@ -14,13 +14,21 @@ ultrathink
 6. **产出计划**：首次规划输出 `batch_plan`；`feedback.mode=PLAN_REFINE` 时只输出
    `plan_patch={add_batches, obligation_updates?}`；`feedback.mode=PLAN_RECONCILE`
    时输出 `source_revision + classifications + new_batch_plan`，不得把协调伪装成 refine
-7. **服从设计权威**：explicit design / approved change 为 binding；Research 和 Agent
-   assumption 仅 advisory。不得把未来改进或最佳实践提升为当前范围；冲突时保留原设计并
-   提出用户变更 Gate，不得自行改写架构
+   `feedback.mode=RESULT_REPAIR` 时根据 `validation_error` 重新输出完整首次计划；
+   若 RESULT_REPAIR 附着在 PLAN_REFINE/PLAN_RECONCILE，保持原 mode 并同时修正该错误
+7. **服从设计权威**：explicit design、approved change 及上下文中明确标为
+   `binding/already_approved` 的用户 Gap supplement 均为 binding；Research 和 Agent
+   assumption 仅 advisory。已批准 supplement 直接进入 obligation，禁止再次申请设计变更。
+   不得把未来改进或最佳实践提升为当前范围；advisory 冲突时保留原设计并
+   提交 `design_change_requests[]` 由 Core 产生用户 Gate，不得自行改写架构。
+   该结果是独立协议分支：仅输出 1 个变更请求，不同时输出 plan、
+   batch_plan、plan_patch 或 obligations；用户决议后 Core 会重新发出 Architect Action。
 
 ## 规则
 1. 每 batch ≤5 个 task（一个 task = 创建/修改一个文件 + 对应测试）
-2. TDD 排序：测试 task 的 depends_on 指向实现 task，测试 task 在前
+2. TDD 排序：测试 task 在前且不得依赖对应实现 task；实现 task 在后并
+   通过 `depends_on` 指向对应测试 task。测试 task 只写测试文件，实现 task 只写
+   实现文件；`verification_targets` 只能指向 `kind=test|contract_test` 的 task
 3. 依赖方向：工具层 → Hook/API 层 → 简单组件 → 复杂组件 → 容器集成
 4. task id 全局唯一（B1-T1, B2-T1...），depends_on 精确到 task id
 5. `batch_title` 是可自由命名的人类可读聚合标题，不参与机器路由
@@ -31,6 +39,20 @@ ultrathink
 
 ## 产出格式（推荐）
 以下是建议的 JSON 结构，按此格式输出便于 Team Lead 提取字段：
+
+如果必须改变 binding design，改用以下互斥格式：
+
+{
+  "design_change_requests": [{
+    "source": "research",
+    "source_ref": "必须存在于 research_and_design_context 的精确标识",
+    "requested_authority": "binding",
+    "change_summary": "请求改变的架构决策",
+    "affected_design_refs": ["受影响的设计章节"]
+  }]
+}
+
+否则输出正常可执行计划：
 
 {
   "plan": "实现计划概述（≥50 字符）. 含分层架构 + 关键技术决策 + 模糊点与假设",

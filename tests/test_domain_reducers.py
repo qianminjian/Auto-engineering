@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
+from auto_engineering.engine.batch_state import BatchState
+from auto_engineering.engine.progress_tree import ProgressTree
 from auto_engineering.engine.state import EngineState
 from auto_engineering.loop.event_store import SQLiteEventStore
 from auto_engineering.loop.events import LoopEvent, LoopEventType
@@ -51,6 +55,26 @@ def test_stage_advanced_reducer_clears_source_stage_transient_fields() -> None:
     assert reduced.assessment is None
     assert state.current_stage == "critic"
     assert state.critic_verdict == "MAJOR"
+
+
+def test_lifecycle_event_replays_architect_repair_counter() -> None:
+    state = EngineState(thread_id="thread-1", current_stage="architect")
+
+    reduced = default_reducer_registry().reduce(
+        state,
+        _event(
+            LoopEventType.LIFECYCLE_STATE_UPDATED,
+            {"changes": {
+                "guardrail_retry_counters": {
+                    "architect_result_validation": 1,
+                },
+            }},
+        ),
+    )
+
+    assert reduced.guardrail_retry_counters == {
+        "architect_result_validation": 1,
+    }
 
 
 def test_legacy_adapter_does_not_hide_other_stage_event_cross_channel_fields() -> None:
@@ -197,7 +221,8 @@ def test_every_mutable_projection_channel_has_explicit_event_owner() -> None:
     initial_only = {
         "requirement",
         "thread_id",
-        "design_doc_path",
+            "design_doc_path",
+            "design_doc_digest",
         "prompt_registry_hash",
         "debug_enabled",
         "debug_dir",
@@ -207,3 +232,83 @@ def test_every_mutable_projection_channel_has_explicit_event_owner() -> None:
 
     assert serialized - initial_only <= explicitly_owned
     assert set(FALLBACK_CHANNEL_EVENTS) <= explicitly_owned
+
+
+def test_batch_completed_reducer_updates_cursor_and_progress_by_stable_ids() -> None:
+    batches = [
+        {
+            "batch_id": "B1",
+            "component": "Core",
+            "design_section": "§1",
+            "tasks": [{"id": "B1-T1"}, {"id": "B1-T2"}],
+        },
+        {
+            "batch_id": "B2",
+            "component": "Core",
+            "design_section": "§1",
+            "tasks": [{"id": "B2-T1"}],
+        },
+    ]
+    batch_state = BatchState.from_batch_plan(batches)
+    progress = ProgressTree.from_batch_plan(batches, "Core")
+    state = EngineState(
+        thread_id="thread-1",
+        batch_state_json=batch_state.to_json(),
+        progress_tree_json=json.dumps(progress.to_dict()),
+    )
+
+    reduced = default_reducer_registry().reduce(
+        state,
+        _event(
+            LoopEventType.BATCH_COMPLETED,
+            {
+                "batch_id": "B1",
+                "task_ids": ["B1-T1", "B1-T2"],
+                "completed_task_count": 2,
+                "design_section": "§1",
+                "progress_node_id": "§1",
+                "next_task": "B2",
+            },
+        ),
+    )
+
+    restored_batch = BatchState.from_json(reduced.batch_state_json, None)
+    restored_progress = ProgressTree.from_dict(
+        json.loads(reduced.progress_tree_json)
+    )
+    assert restored_batch.current_batch_id() == "B2"
+    assert restored_batch.completed_batch_ids() == {"B1"}
+    assert restored_progress.nodes["§1"].done_tasks == 2
+    assert restored_progress.nodes["§1"].current_task == "B2"
+
+
+def test_batch_completed_reducer_rejects_task_identity_mismatch() -> None:
+    batches = [{
+        "batch_id": "B1",
+        "component": "Core",
+        "design_section": "§1",
+        "tasks": [{"id": "B1-T1"}],
+    }]
+    state = EngineState(
+        thread_id="thread-1",
+        batch_state_json=BatchState.from_batch_plan(batches).to_json(),
+        progress_tree_json=json.dumps(
+            ProgressTree.from_batch_plan(batches, "Core").to_dict()
+        ),
+    )
+
+    with pytest.raises(EventChannelViolation, match="TASK_IDENTITY_MISMATCH"):
+        default_reducer_registry().reduce(
+            state,
+            _event(
+                LoopEventType.BATCH_COMPLETED,
+                {
+                    "batch_id": "B1",
+                    "task_ids": ["wrong"],
+                    "completed_task_count": 1,
+                    "design_section": "§1",
+                    "progress_node_id": "§1",
+                    "next_task": None,
+                },
+            ),
+        )

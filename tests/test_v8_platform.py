@@ -92,6 +92,12 @@ class TestV8_2_HookRegistrationSplitting:
         root = _project_root()
         assert (root / "hooks-cc.json").is_file()
 
+    def test_claude_native_hook_manifest_registers_stop_guard(self) -> None:
+        root = _project_root()
+        manifest = json.loads((root / "hooks/hooks.json").read_text())
+        stop_hooks = manifest["hooks"]["Stop"]
+        assert "hooks/stop.sh" in json.dumps(stop_hooks)
+
     def test_hooks_codex_json_exists(self) -> None:
         """hooks-codex.json (Codex) 存在."""
         root = _project_root()

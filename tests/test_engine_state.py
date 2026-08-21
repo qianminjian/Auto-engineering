@@ -31,7 +31,7 @@ _EXPECTED_V58_FIELDS = {
     "progress_tree_json", "gap_report_json", "design_supplements_json",
     "pending_research_ids", "research_archive", "pending_gap_decisions",
     "gap_decision_policy",
-    "red_evidence", "design_doc_path", "refine_request_json",
+    "red_evidence", "design_doc_path", "design_doc_digest", "refine_request_json",
     "plan_refine_by_source",
     # #37 B12.5 版本锁
     "prompt_registry_hash",
@@ -328,11 +328,11 @@ class TestEngineStateBoundary:
         assert not hasattr(state, "nonexistent")
 
     def test_to_dict_contains_all_fields(self) -> None:
-        """to_dict 输出含全部 67 字段（不含内部字段）。"""
+        """to_dict 输出含全部 68 字段（不含内部字段）。"""
         state = EngineState()
         d = state.to_dict()
-        assert len(d) == 67, (
-            f"to_dict 应含 67 字段, 实际 {len(d)}: "
+        assert len(d) == 68, (
+            f"to_dict 应含 68 字段, 实际 {len(d)}: "
             f"{sorted(d.keys())}"
         )
         assert "suggested_fix" in d, "to_dict 必须包含 suggested_fix (Self-Refine 深化)"

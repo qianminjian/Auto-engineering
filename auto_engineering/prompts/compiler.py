@@ -55,6 +55,12 @@ _FORBIDDEN_HISTORY_FIELDS = frozenset({
     "action_history",
 })
 
+CORE_OWNED_OUTPUT_FIELDS = frozenset({
+    "schema_version", "message_type", "message_id", "causation_id",
+    "thread_id", "tick", "stage", "correlation_id", "extensions",
+    "spawned", "spawn_proof_token", "worker_attestations",
+})
+
 
 def select_stage_context(
     contract: StagePromptContract,
@@ -152,6 +158,12 @@ def compile_prompt_bundle(
 ) -> CompiledPromptBundle:
     """编译单阶段提示词；关键上下文缺失时 fail closed。"""
 
+    expected_format = {
+        key: value
+        for key, value in expected_format.items()
+        if key not in CORE_OWNED_OUTPUT_FIELDS
+    }
+
     missing = [
         key for key in contract.required_context
         if key not in context
@@ -231,6 +243,7 @@ def compile_prompt_bundle(
 
 
 __all__ = [
+    "CORE_OWNED_OUTPUT_FIELDS",
     "CompiledPromptBundle",
     "CompiledWorkerPrompt",
     "PromptContextError",

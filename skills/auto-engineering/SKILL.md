@@ -18,6 +18,13 @@ Auto-Engineering 将职责拆成两层：
 Command 适配层进入同一协议。所有平台都必须通过 bundled `ae-run` 调用共享核心，
 不得复制或分叉业务逻辑。
 
+启动时先从当前已加载 `SKILL.md` 的绝对安装路径向上解析插件根目录，并固定 bundled runner。
+本文后续每个 `ae-run` 都是
+`env AE_HOST_PLATFORM=codex <plugin-root>/bin/ae-run` 的缩写；实际工具调用必须保留该环境
+前缀和绝对路径，不得把文中缩写当成实际命令；不得调用裸 `ae-run` 或另一宿主传入的 runner，不得依赖 PATH，
+也不得搜索开发工作区或插件缓存来猜测入口。解析出的 runner 不存在或不可执行时，
+以 `HOST_RUNNER_UNAVAILABLE` fail-closed。
+
 ## 铁律
 
 <!-- FRAGMENT:iron_law_gatekeeper START -->
@@ -65,6 +72,13 @@ ae-run dev-loop --init \
 
 ## Action 执行协议
 
+每次用户启动 Skill 的首个 Core 命令必须是带用户原始参数的
+`dev-loop --init`；该入口会自动检测已有 thread 并返回 active Action，
+禁止先用 `status`、`find`、`rg` 或扫描 `.ae-state` 推测 Action。若仅执行
+状态查询，必须原样消费 `status.next_operation`：其 operation 为
+`resume_active_action` 时立即执行其 `argv`，不得自行改用无 Result 的 Tick。
+若误调 Tick，只允许执行错误返回的同一 `next_operation`。
+
 每次先读取 `action.extensions.ae.execution_control`。宿主必须在同一次用户启动中执行：
 
 ```text
@@ -87,6 +101,15 @@ while control.disposition == "CONTINUE":
 
 然后读取 `action.instruction`：
 
+- `action.host_execution.recovery.status == "worker_outcomes_committed"`：这是恢复分支，
+  必须在任何 `action.spawn` 或 Worker 执行判断之前处理。确认
+  `spawn_permitted == false` 且
+  `required_operation == "validate_then_submit_or_repair"`。先对 `result_ref`
+  执行 `--validate-result`：通过则直接 `--tick --result`；业务预检失败则
+  仅按 active Action `expected_format` 修复 `coordinator_result_ref`，使用
+  Core 恢复的 `outcomes_ref` 重新 `--finalize-result` 到 `result_ref`，再验证和提交。
+  禁止创建、等待或回收新 Worker，禁止改写 outcomes；恢复合同不完整则
+  fail-closed。
 - `action == "error"`：报告 `error_code` 和 `message`，停止。
 - `action == "gate"`：若 execution control 为 `WAIT_USER`，先取得用户选择并按 Gate
   Result 契约提交；不得跳过。仅无需用户输入的自动 Gate 才可直接执行下一次 tick。
@@ -116,6 +139,11 @@ Spawn action 必须读取：
 - `action.spawn.parallel`：是否要求并行隔离执行。
 - `action.spawn.effort`：抽象推理强度，由适配层映射到宿主支持的控制项。
 
+在判断 `action.spawn` 之前先处理 `action.host_execution.recovery`：若状态为
+`native_outcomes_ready`，说明当前 Action 的原生 Worker 事实已经落盘，只是 Finalizer 尚未
+提交。此时必须禁止重新启动 Worker，直接按 recovery 中的当前 `outcomes_ref`、
+`coordinator_result_ref` 和 `result_ref` 调用 Finalizer，再 validate/tick。
+
 默认使用满足任务的最低经济推理强度；只有复杂架构、安全问题、跨模块失败或
 action 明确要求时才提高。若 `HostCapabilities.subagents` 不可用，或要求并行但
 `HostCapabilities.parallel_subagents` 不可用，必须返回并报告
@@ -126,12 +154,18 @@ action 明确要求时才提高。若 `HostCapabilities.subagents` 不可用，�
 
 Codex 适配层以当前会话实际暴露的工具清单为能力事实源：
 
-- 工具清单存在 `collaboration.spawn_agent` 时，必须将
-  `HostCapabilities.subagents` 视为可用并调用该工具；不得因为当前回复尚未调用子代理就判定能力不存在。
-- `action.spawn.effort` 映射到 `collaboration.spawn_agent` 的
+- 先读取 `action.host_execution.native_worker_tools`，按
+  `first_complete_exposed_family` 选择当前工具清单中任一完整工具族。当前支持
+  `collaboration.spawn_agent / collaboration.wait_agent / collaboration.interrupt_agent`
+  与 `multi_agent_v1__spawn_agent / multi_agent_v1__wait_agent /
+  multi_agent_v1__close_agent`。任一完整工具族存在时，必须将
+  `HostCapabilities.subagents` 视为可用并调用该族；命名空间不同不构成能力缺失，且
+  不得因为当前回复尚未调用子代理就判定能力不存在。
+- `action.spawn.effort` 映射到所选工具族 spawn 操作的
   `reasoning_effort`；例如 `xhigh` 必须按 `xhigh` 传入，并选择允许该推理参数的
   `fork_turns`，不得因需要高推理强度而降级为 unavailable。
-- Codex 创建 Worker 必须使用 invocation 声明的 Prompt 且 `fork_turns="none"`；Worker
+- Codex 创建 Worker 必须使用 invocation 声明的 Prompt，并按所选族使用
+  `fork_turns="none"` 或 `fork_context=false`；Worker
   不继承 Coordinator 聊天和 Loop Skill 驱动职责，不得再次调用 `$auto-engineering`、
   `dev-loop` 或 `collaboration.spawn_agent`。
 - `action.spawn.parallel=true` 时，只要当前会话允许创建所需数量的独立 Agent，必须按
@@ -141,10 +175,32 @@ Codex 适配层以当前会话实际暴露的工具清单为能力事实源：
 - 原生调用返回 Agent 线程/并发容量耗尽时，先等待已知 Worker 完成并通过宿主原生能力
   回收其句柄，再重试一次。仍失败时提交 `spawned=false`、
   `spawn_error_code=HOST_AGENT_CAPACITY` 和原始 `spawn_error`；不得伪造 Worker。
+- 每个 Worker 完成且 outcome 已记录后立即回收其原生句柄；不得把已完成句柄保留到下一 Action。
+  并行调用先收齐本 Action 的原生事实，再逐个调用宿主的 close/reclaim 能力，最后 finalize。
+- 并行 Worker 启动后使用宿主一次批量/长等待覆盖全部未完成句柄；禁止 30 秒轮询。
+  等待仅允许在 5 / 10 / 15 分钟心跳边界重新评估，宿主原生 wait 能在 Worker 完成时提前返回。
+  等待期间不得重复读取 diff、状态文件或项目树；完成通知到达后再收集 outcome。
+  Codex 必须显式调用 `collaboration.wait_agent({"timeout_ms":300000})`，或
+  `multi_agent_v1__wait_agent({"targets":["<agent-id>"],"timeout_ms":300000})`，不得省略
+  timeout 使用宿主默认 30 秒；未完成时最多再调用两次相同的 300000ms 等待。
+- 三次长等待后 Worker 仍未完成时，不得拼装空业务结果或调用成功证据路径。必须把原生
+  handle、失败状态（只用 `timeout` 或 `timed_out`）和超时摘要如实写入当前
+  `work_files.outcomes`，Coordinator 结果写空对象，
+  再调用同一个 `--finalize-result`。Assembler 独占生成规范的
+  `spawned=false/HOST_WORKER_TIMEOUT` Result；随后 validate/tick，并按 Core 返回的
+  `WAIT_RESOURCE` 重试原 active Action，不计入业务修复次数、不要求用户重启。Core 仅允许
+  一次 Worker 重启；若返回 `HOST_WORKER_TIMEOUT_EXHAUSTED`，不得再次 spawn。
 - `execution_control.disposition == "CONTINUE"` 时，能力满足的 spawn Action 必须在同一
   次用户启动中继续驱动，不得先向用户输出终态消息或请求无关确认。
 
 能力满足时，使用宿主原生子代理能力：
+
+Core 返回 Action 后，立即把 `action.project_root` 视为本次 Loop 唯一的项目根目录事实源。
+后续不读取或推断 shell 当前目录；每条 `ae-run dev-loop` 内部命令（包括 finalize、
+validate、tick、status、resume）都必须显式附加
+`--project-root <action.project_root>`。即使宿主工具调用改变了 `cwd`，也不得省略或改写该值。
+所有项目读取、编辑、测试、lint、type check 与 build 工具也必须以 `action.project_root`
+作为工作目录；禁止在插件 Release、prompt artifact 或任意上一次工具目录执行项目命令。
 
 1. 当前严格合同：无论单/多 Worker，都逐个读取并校验
    `action.spawn.invocations[i].prompt_ref` 与 `prompt_sha256`，并原样使用该 invocation
@@ -155,27 +211,36 @@ Codex 适配层以当前会话实际暴露的工具清单为能力事实源：
 2. 仅当 active Action 的 Runtime Vector 明确是旧合同且没有 `contract_version` 时，才按
    旧 `subagent_prompt` / `spawn.agents[]` 只读兼容；当前 Action 禁止混用旧字段推导执行。
 3. 按 `action.spawn.count` 和 `action.spawn.parallel` 创建隔离执行。
-4. Worker 完成后，将宿主返回的线程/Agent ID 只写入对应
-   `action.host_execution.workers[i].native_worker_handle`，绝不能替换规范 `worker_id`。
-   宿主协调器基于 `host_execution.workers[i].receipt` 模板补充完成时间与输出证据，
-   仅在原生 Worker 成功返回后把 `status` 从 `pending` 改为 `completed`，并以单个 JSON
-   覆写模板指定的 `receipt_path`；只允许将宿主可见的 `actual_model`
-   （不可见时保留 `unknown`）写回模板。Worker 不得修改
-   `.ae-state/spawn-challenges/` 或 shared total receipt（workers must not write the shared total proof）。
-   Receipt 超过 Action 策略声明的上限时必须将完整结果写入内容寻址 Artifact
-   Store，receipt 只保留策略允许的有界摘要与带 SHA-256 的 `artifact_ref`；
-   Skill 不复制策略默认数字。
-5. Team Lead 收齐并验证全部 receipt 后，按 `action.subagent_prompt` 合并输出，
-   再由宿主协调器写入 `action.spawn_proof_token` 对应的总 receipt；Core challenge
-   保持不可变。
-6. 从真实输出中提取 `action.expected_format` 要求的字段。只有全部要求的 Worker
-   实际完成后，result 才能写 `"spawned": true`。
-7. 每个 Worker 完成后，宿主从 `host_execution.workers[i].attestation` 模板组装
-   `worker_attestations[]`；只允许补充真实 `actual_model`，不得替换模板中的 Action
-   message_id、worker_id、prompt_sha256、effort、隔离证据或能力摘要；只有对应 Worker
-   成功后才能将其 `status` 从 `pending` 改为 `completed`。Worker
-   Outcome 不得包含 `spawned`、总 proof 或 Loop 控制字段；`fork_turns=none` 只证明会话
-   turns 隔离，不得声明为完整工具沙箱。
+4. 每个 Action 只使用 `action.host_execution.work_files` 给出的三个绝对绑定工作文件
+   （相对 `action.project_root`）：`outcomes`、`coordinator_result`、`result`。这些路径由
+   `message_id` 的安全摘要隔离；不得改回根目录固定文件，也不得复用上一 Action 的文件。
+5. Worker 完成后，Coordinator 只把原生事实写入当前 Action 的 `work_files.outcomes`：
+   `worker_id`、`native_worker_handle`、`status`、`payload`、`summary`、
+   `actual_model` 和所选工具族的 `isolation_evidence`（`fork_turns=none` 或
+   `fork_context=false`）。Worker 不得写 receipt、attestation、challenge 或 total proof
+   （workers must not write the shared total proof）。
+6. 全部 Worker completed 时，Coordinator 从真实输出合并 `action.expected_format` 要求的业务字段，
+   只写入当前 Action 的 `work_files.coordinator_result`；设计冲突写 `design_change_requests[]`，
+   不伪造可执行计划。任一 Worker 超时/失败时写 `{}`，不得补业务字段或假装成功。
+7. 调用 `ae-run dev-loop --finalize-result <work_files.outcomes> --coordinator-result <work_files.coordinator_result> --output-result <work_files.result> --project-root <action.project_root>`。
+   该内部命令原子生成 Worker receipt、attestation、total proof 和完整 Result，
+   并一次性返回全部证据问题。宿主禁止手工重建这些字段。
+8. 直接对原子生成的 `work_files.result` 执行 `--validate-result` 和 `--tick --result`；
+   禁止复制 stdout 或继续把 coordinator payload 当成完整 Result。已提交 outcome journal
+   必须通过 `host_execution.recovery` 幂等复用，不得重新 spawn。
+9. `--tick` 返回下一 Action 后，立即丢弃上一 Action 的对象、工作路径、Worker handle 与
+   命令参数，只以新 Action 重新开始本节算法。错误恢复只保留结构化错误码和当前 Action
+   摘要；禁止重复输出全量 diff、旧 `outcomes`、旧 `coordinator_result` 或历史 Action JSON。
+   若误用了旧路径，Finalizer 会以 active Action 的已存在工作文件自动重绑；宿主随后仍须
+   替换本地变量，不能把自动重绑当作跨 Tick 缓存机制。
+
+非 spawn Action（包括 gap_scan、project_setup、inline developer 与用户决定回执）同样禁止
+手工拼装 Result Envelope。宿主只按 `action.expected_format` 写
+`work_files.coordinator_result`，再调用
+`ae-run dev-loop --finalize-result <work_files.coordinator_result> --output-result <work_files.result> --project-root <action.project_root>`；
+Core 从 active Action 绑定
+message identity、causation、thread、tick、stage 与 correlation。之后使用相同的
+`--validate-result`、`--tick --result` 流程。
 
 Core 返回 `resource_wait` / `WAIT_RESOURCE` 时，宿主继续执行上述资源回收流程，并在
 容量可用后重新执行原 active Action；不得提交 `resource_wait` 为 Result，也不得推进 Tick。
@@ -183,7 +248,9 @@ Core 返回 `resource_wait` / `WAIT_RESOURCE` 时，宿主继续执行上述资�
 Gap Review 默认仍是用户决策。用户可通过结构化字段
 `apply_to_remaining=recommendations` 授权当前线程后续 Gap 采用 Core 推荐；宿主不得从
 `user_note` 自然语言推断授权。授权生效后，Core 会在 Gap Action 返回 `auto_decision`，
-宿主必须原样提交该决定并继续，不再次询问，也不得自行构造或扩展授权范围。
+宿主必须原样写入该决定，仅按 expected_format 补充 `fill_content` 等说明性字段并继续，
+不再次询问，也不得自行构造或扩展授权范围。Finalizer 必须从 active Action 重新绑定
+`gap_id`、`resolution`、`decision_source` 和 `policy`，不能信任宿主二次抄写这些机器字段。
 
 ## 角色边界
 

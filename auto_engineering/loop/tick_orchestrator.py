@@ -44,6 +44,9 @@ from auto_engineering.engine.verification_layers import (
     VerificationLayers,
     determine_verification_layers,
 )
+from auto_engineering.host.execution_assembler import (
+    collect_host_evidence_violations,
+)
 from auto_engineering.host.spawn_contract import SpawnContractError, SpawnPlan
 from auto_engineering.host.worker_attestation import (
     WorkerAttestationError,
@@ -83,6 +86,10 @@ from auto_engineering.loop.context_budget import (
 )
 from auto_engineering.loop.convergence import ConvergenceConfig, ConvergenceJudge, RoundHistory
 from auto_engineering.loop.debug_tracer import DebugTracer, now_iso
+from auto_engineering.loop.design_authority import (
+    DesignAuthorityError,
+    DesignChangeRequest,
+)
 from auto_engineering.loop.design_decision_ledger import DesignDecisionLedger
 from auto_engineering.loop.developer_gate_service import (
     DeveloperGateService,
@@ -181,6 +188,9 @@ class _GateRunner(Protocol):
 GateRunner = _GateRunner  # backward-compat alias
 
 _MAX_PER_SOURCE = 2
+_RESULT_REPAIR_STAGE_BY_ERROR = {
+    "ARCHITECT_PLAN_INVALID": "architect",
+}
 _MAX_GLOBAL = 4
 _ISO_FMT = "%Y-%m-%dT%H:%M:%SZ"
 
@@ -462,6 +472,9 @@ class TickOrchestrator:
         if design_doc_path:
             # 持久化路径 — 跨进程 restore 据此重 parse 设计文档 (T9a)
             self._state.design_doc_path = design_doc_path
+            self._state.design_doc_digest = (
+                "sha256:" + hashlib.sha256(resolved_design_doc.read_bytes()).hexdigest()
+            )
 
         # DebugTracer 激活 (--debug 或 AE_DEBUG=1)
         if self._debug_enabled:
@@ -727,6 +740,7 @@ class TickOrchestrator:
         try:
             result = json.loads(result_file.read_text(encoding="utf-8"))
             result = upgrade_legacy_result(result, self._active_action)
+            result = self._bind_active_auto_decision(result)
             envelope = validate_result_envelope(result)
         except (json.JSONDecodeError, OSError) as exc:
             return ErrorResponse(
@@ -772,6 +786,7 @@ class TickOrchestrator:
 
         try:
             result = upgrade_legacy_result(result, self._active_action)
+            result = self._bind_active_auto_decision(result)
         except ProtocolValidationError as exc:
             self._record_tick_latency(t_start, tick_no)
             return self._protocol_error(exc.code, str(exc))
@@ -874,13 +889,27 @@ class TickOrchestrator:
         else:
             action = self._tick_body_dict(result)
         if "schema_version" not in action:
-            action = action_envelope(
-                action,
-                thread_id=self._state.thread_id,
-                tick=action.get("tick", self._state.tick + 1),
-                stage=action.get("stage", self._state.current_stage),
-                causation_id=self._current_result_message_id,
+            action = {
+                **action,
+                "thread_id": self._state.thread_id,
+                "tick": action.get("tick", self._state.tick + 1),
+                "stage": action.get("stage", self._state.current_stage),
+            }
+            revision = RuntimeRevision.from_dict(
+                self._state.active_runtime_revision
+                or self._current_runtime_revision().to_dict()
             )
+            action = dict(ActionCompiler().compile(
+                payload=action,
+                identity=ActionIdentity(
+                    message_id=str(uuid4()),
+                    correlation_id=self._state.thread_id,
+                    causation_id=self._current_result_message_id,
+                ),
+                runtime_revision=revision,
+                issued_at=datetime.now().astimezone().isoformat(),
+                effects=(),
+            ).payload)
         result_accepted = action.get("action") not in {"error", "resource_wait"}
         if native_result and result_causation and result_hash and result_accepted:
             self._result_replays[result_causation] = (result_hash, action)
@@ -1049,11 +1078,31 @@ class TickOrchestrator:
             and result.get("spawned") is False
             and result.get("spawn_error_code") == "HOST_WORKER_TIMEOUT"
         ):
-            return ErrorResponse(
-                error_code="HOST_WORKER_TIMEOUT",
-                message="宿主 Worker 执行超时；Core 保留当前 Action，禁止自动假定完成。",
-                current_state=self._state.to_dict(),
-            ).to_dict()
+            retry_attempt = result.get("spawn_retry_attempt", 1)
+            if not isinstance(retry_attempt, int) or isinstance(retry_attempt, bool):
+                return ErrorResponse(
+                    error_code="HOST_WORKER_RETRY_ATTEMPT_INVALID",
+                    message="Worker 超时 Result 的 spawn_retry_attempt 无效。",
+                    current_state=self._state.to_dict(),
+                ).to_dict()
+            if retry_attempt >= 2:
+                return ErrorResponse(
+                    error_code="HOST_WORKER_TIMEOUT_EXHAUSTED",
+                    message="宿主 Worker 连续两次执行超时；已停止自动重启以避免无限 token 消耗。",
+                    current_state=self._state.to_dict(),
+                    suggestion="保留当前 Action；待宿主模型服务恢复后重新启动 Loop。",
+                ).to_dict()
+            return {
+                "action": "resource_wait",
+                "stage": self._state.current_stage,
+                "resource": "worker_completion",
+                "retry_stage": self._state.current_stage,
+                "reason_code": "HOST_WORKER_TIMEOUT",
+                "retry_attempt": retry_attempt,
+                "retry_limit": 1,
+                "message": "宿主 Worker 执行超时；保留当前 Action，等待资源后有界重试。",
+                "suggestion": "按同一 active Action 重新启动隔离 Worker；不得伪造业务结果。",
+            }
         if self._state.current_stage in _SPAWN_CONFIG and result.get("spawned") is False:
             active_message_id = str((self._active_action or {}).get("message_id", ""))
             spawn_error = str(result.get("spawn_error") or "")
@@ -1116,6 +1165,30 @@ class TickOrchestrator:
     def _tick_process_result(self, result: dict | ErrorResponse) -> dict:
         """tick 公共处理逻辑: Gate resolution → Guardrail → Gate → 路由 → action."""
         if isinstance(result, ErrorResponse):
+            if (
+                _RESULT_REPAIR_STAGE_BY_ERROR.get(result.error_code)
+                == self._state.current_stage
+            ):
+                retry_key = "architect_result_validation"
+                attempt = self._state.guardrail_retry_counters.get(
+                    retry_key, 0
+                ) + 1
+                if attempt <= 2:
+                    counters = dict(self._state.guardrail_retry_counters)
+                    counters[retry_key] = attempt
+                    self._state.guardrail_retry_counters = counters
+                    if self._event_store is not None:
+                        self._queue_domain_event(
+                            LoopEventType.LIFECYCLE_STATE_UPDATED,
+                            {"changes": {
+                                "guardrail_retry_counters": counters,
+                            }},
+                        )
+                    return self.build_action(feedback=(
+                        "RESULT_REPAIR：上一份 Architect 计划未被激活。"
+                        f"第 {attempt}/2 次修复；必须重新输出完整计划。"
+                        f"确定性校验错误：{result.message}"
+                    ))
             if self._require("_debug_tracer", "debug tracing disabled") is not None:
                 self._debug_tracer.record_error(
                     tick=self._state.tick,
@@ -1123,6 +1196,44 @@ class TickOrchestrator:
                     detail={"message": result.message},
                 )
             return result.to_dict()
+
+        change_requests = result.get("design_change_requests")
+        if isinstance(change_requests, list) and change_requests:
+            try:
+                if len(change_requests) != 1 or not isinstance(change_requests[0], dict):
+                    raise DesignAuthorityError("DESIGN_CHANGE_REQUEST_COUNT_INVALID")
+                request = DesignChangeRequest.from_dict(change_requests[0])
+                if (
+                    request.source == "research"
+                    and request.source_ref not in self._state.research_archive
+                ):
+                    try:
+                        supplements = json.loads(
+                            self._state.design_supplements_json or "{}"
+                        )
+                    except json.JSONDecodeError:
+                        supplements = {}
+                    supplement = (
+                        supplements.get(request.source_ref)
+                        if isinstance(supplements, dict)
+                        else None
+                    )
+                    if (
+                        isinstance(supplement, dict)
+                        and supplement.get("source") in {"user", "thread_policy"}
+                    ):
+                        return self.build_action(feedback=(
+                            f"设计补充 {request.source_ref} 已经批准为 binding；"
+                            "禁止重复申请变更，请直接生成覆盖该补充的可执行计划与义务"
+                        ))
+                    raise DesignAuthorityError("DESIGN_CHANGE_SOURCE_UNKNOWN")
+            except DesignAuthorityError as exc:
+                return ErrorResponse(
+                    error_code="DESIGN_CHANGE_REQUEST_INVALID",
+                    message=str(exc),
+                    current_state=self._state.to_dict(),
+                ).to_dict()
+            return self.build_action(pre_gate=request.to_gate())
 
         # T64+T95: handle gate_resolution — dispatch by gate type
         gate_resolution = result.get("gate_resolution")
@@ -1132,10 +1243,28 @@ class TickOrchestrator:
 
             if gate_id.startswith("design_change:"):
                 decision_id = gate_id.removeprefix("design_change:")
-                if resolution != "批准变更" or not decision_id:
+                active_gate = (self._active_action or {}).get("gate", {})
+                change = active_gate.get("change", {}) if isinstance(active_gate, dict) else {}
+                if (
+                    not decision_id
+                    or active_gate.get("id") != gate_id
+                    or change.get("request_id") != decision_id
+                ):
                     return ErrorResponse(
                         error_code="INVALID_GATE_RESOLUTION",
-                        message="设计变更 Gate 只接受显式的‘批准变更’决议",
+                        message="设计变更 Gate 不是当前 active Action",
+                    ).to_dict()
+                if resolution == "保留原设计":
+                    return self.build_action(
+                        feedback=(
+                            f"设计变更 {decision_id} 已被用户拒绝；"
+                            "必须保留原设计并重新生成可执行计划"
+                        )
+                    )
+                if resolution != "批准变更":
+                    return ErrorResponse(
+                        error_code="INVALID_GATE_RESOLUTION",
+                        message="设计变更 Gate 只接受‘批准变更’或‘保留原设计’",
                     ).to_dict()
                 approval_id = self._current_result_message_id
                 causation_id = self._current_result_causation_id
@@ -1152,6 +1281,10 @@ class TickOrchestrator:
                         "approval_id": approval_id,
                         "decision_id": decision_id,
                         "status": "approved",
+                        "source_ref": change.get("source_ref"),
+                        "proposed_change_sha256": change.get(
+                            "proposed_change_sha256"
+                        ),
                     },
                 )
                 return self.build_action(
@@ -1349,6 +1482,60 @@ class TickOrchestrator:
                         f"(stage 是角色名如 'developer'/'architect', 不是 batch_id 如 'B4')",
                 current_state=self._state.to_dict())
 
+        active_gate = (
+            self._active_action.get("gate")
+            if isinstance(self._active_action, dict)
+            else None
+        )
+        if isinstance(active_gate, dict):
+            gate_resolution = result.get("gate_resolution")
+            if not isinstance(gate_resolution, dict):
+                return ErrorResponse(
+                    error_code="GATE_RESOLUTION_REQUIRED",
+                    message="当前 active Action 是 Gate，必须提交 gate_resolution",
+                    current_state=self._state.to_dict(),
+                )
+            if gate_resolution.get("gate_id") != active_gate.get("id"):
+                return ErrorResponse(
+                    error_code="INVALID_GATE_RESOLUTION",
+                    message="gate_resolution 未绑定当前 active Gate",
+                    current_state=self._state.to_dict(),
+                )
+            return result
+
+        if self._state.current_stage in _SPAWN_CONFIG and result.get("spawned") is False:
+            spawn_error_code = result.get("spawn_error_code")
+            spawn_error = result.get("spawn_error")
+            if spawn_error_code not in {
+                "HOST_AGENT_CAPACITY",
+                "HOST_CAPABILITY_UNAVAILABLE",
+                "HOST_WORKER_TIMEOUT",
+                "HOST_WORKER_FAILED",
+            }:
+                return ErrorResponse(
+                    error_code="SPAWN_FAILURE_CODE_INVALID",
+                    message="spawned=false 必须包含受支持的宿主失败码",
+                    current_state=self._state.to_dict(),
+                )
+            if not isinstance(spawn_error, str) or not spawn_error.strip():
+                return ErrorResponse(
+                    error_code="SPAWN_FAILURE_DETAIL_REQUIRED",
+                    message="spawned=false 必须包含非空 spawn_error",
+                    current_state=self._state.to_dict(),
+                )
+            retry_attempt = result.get("spawn_retry_attempt")
+            if spawn_error_code == "HOST_WORKER_TIMEOUT" and (
+                not isinstance(retry_attempt, int)
+                or isinstance(retry_attempt, bool)
+                or retry_attempt < 1
+            ):
+                return ErrorResponse(
+                    error_code="HOST_WORKER_RETRY_ATTEMPT_INVALID",
+                    message="HOST_WORKER_TIMEOUT 必须包含正整数 spawn_retry_attempt",
+                    current_state=self._state.to_dict(),
+                )
+            return result
+
         errors = validate_result_format(result, self._state.current_stage)
         if errors:
             return ErrorResponse(
@@ -1394,6 +1581,34 @@ class TickOrchestrator:
                     ),
                     current_state=self._state.to_dict(),
                 )
+
+            active_spawn_for_preflight = (
+                self._active_action.get("spawn")
+                if self._active_action is not None else None
+            )
+            if (
+                isinstance(active_spawn_for_preflight, dict)
+                and "invocations" in active_spawn_for_preflight
+                and self._active_action is not None
+            ):
+                violations = collect_host_evidence_violations(
+                    project_root=self.project_root,
+                    action=self._active_action,
+                    result=result,
+                    receipt_limit=self._runtime_config.max_worker_receipt_bytes,
+                    summary_limit=self._runtime_config.max_receipt_summary_bytes,
+                )
+                if violations:
+                    return ErrorResponse(
+                        error_code="HOST_EVIDENCE_INVALID",
+                        message=(
+                            "严格宿主证据未完成："
+                            + "; ".join(violations)
+                            + "。请由宿主使用 --finalize-result 原子终结当前真实 "
+                            "Worker outcome；若 Worker 已完成，禁止重新 spawn。"
+                        ),
+                        current_state=self._state.to_dict(),
+                    )
 
             # DS-15: verify spawn proof file was completed (engine pre-writes it,
             # subagent must update status to "completed")
@@ -1590,6 +1805,12 @@ class TickOrchestrator:
                         current_state=self._state.to_dict(),
                     )
 
+        # 设计冲突是一个独立的 Core 协议结果，不是尚未完成的
+        # 可执行计划。上方已完成宿主证据验证；具体请求由
+        # _tick_process_result 解析并发出用户 Gate，不进入 plan dry-run。
+        if result.get("design_change_requests"):
+            return result
+
         dry_run_error = StageResultPrevalidator().validate(
             stage,
             design_doc=self._design_doc,
@@ -1636,6 +1857,29 @@ class TickOrchestrator:
 
         return result
 
+    def _bind_active_auto_decision(self, result: dict) -> dict:
+        """在 Tick 信任边界绑定 Core 生成的自动 Gap 决策。
+
+        Finalizer 是正常产品路径，但恢复时宿主可能直接提交旧 Result。active Action
+        仍是唯一权威，不能让提交者通过漏字段或改字段改变线程策略。
+        """
+
+        active_action = self._active_action or {}
+        auto_decision = active_action.get("auto_decision")
+        if (
+            self._state.current_stage != "gap_review"
+            or not isinstance(auto_decision, dict)
+        ):
+            return result
+        bound = dict(result)
+        raw_decision = bound.get("decision")
+        decision = dict(raw_decision) if isinstance(raw_decision, dict) else {}
+        for key in ("gap_id", "resolution", "decision_source", "policy"):
+            if key in auto_decision:
+                decision[key] = auto_decision[key]
+        bound["decision"] = decision
+        return bound
+
     def _bind_spawn_result_receipt(
         self,
         token: str,
@@ -1680,9 +1924,20 @@ class TickOrchestrator:
         t_gate_ms = self._t_gate_ms
         t_guard_sub_ms = self._t_guard_sub_ms
         t_orch_ms = t_total_ms - t_gate_ms - t_guard_sub_ms
+        active_spawn = (
+            self._active_action.get("spawn")
+            if isinstance(self._active_action, dict)
+            else None
+        )
+        spawn_count = (
+            active_spawn.get("count")
+            if isinstance(active_spawn, dict)
+            else 0
+        )
         self._state.action_history.append({
             "tick": tick_no,
             "stage": self._state.current_stage,
+            "spawn_count": spawn_count if isinstance(spawn_count, int) else 0,
             "t_total_ms": round(t_total_ms, 2),
             "t_gate_ms": round(t_gate_ms, 2),
             "t_guard_sub_ms": round(t_guard_sub_ms, 2),
@@ -1725,6 +1980,7 @@ class TickOrchestrator:
         return TransitionContextFactory().build(
             stage,
             batch_state=self._batch_state,
+            progress_tree=self._progress_tree,
             verification_layers=self._verification_layers,
             max_repair_cycles=self._runtime_config.max_repair_cycles,
             p1_threshold=self._get_p1_threshold(),
@@ -1758,11 +2014,30 @@ class TickOrchestrator:
         )
         transition_effects.apply_before_transition(decision.lifecycle_effects)
         reducer_registry = default_reducer_registry()
+        cursor_fact_applied = False
         for event in decision.events:
             # Stage 推进还需执行 round/history/checkpoint 生命周期，暂由 façade
             # 的 _advance_stage 负责；其余 Projection 变化统一走纯 Reducer。
             if event.event_type is not LoopEventType.STAGE_ADVANCED:
                 self._state = reducer_registry.reduce(self._state, event)
+            if event.event_type in {
+                LoopEventType.BATCH_COMPLETED,
+                LoopEventType.COMPONENT_COMPLETED,
+                LoopEventType.PLATE_COMPLETED,
+            }:
+                cursor_fact_applied = True
+        if cursor_fact_applied:
+            if self._state.batch_state_json is None:
+                raise ValueError("BATCH_PROJECTION_MISSING")
+            self._batch_state = BatchState.from_json(
+                self._state.batch_state_json,
+                self._design_doc,
+            )
+            if self._state.progress_tree_json is None:
+                raise ValueError("PROGRESS_PROJECTION_MISSING")
+            self._progress_tree = ProgressTree.from_dict(
+                json.loads(self._state.progress_tree_json)
+            )
         transition_effects.apply_pre_progress(decision.events)
         transition_effects.apply_after_reducers(decision.lifecycle_effects)
         if self._event_store is not None:
@@ -1773,9 +2048,12 @@ class TickOrchestrator:
         transition_effects.apply_post_progress(decision.events)
         if decision.refine_source is not None:
             return self._handle_plan_refine(decision.refine_source)
-        transition_effects.apply_developer_progress(
-            decision.lifecycle_effects.developer_progress
-        )
+        if not cursor_fact_applied:
+            # 只读兼容没有稳定身份 payload 的旧在途决策；新写入必须由
+            # BATCH_COMPLETED Reducer 更新投影。
+            transition_effects.apply_developer_progress(
+                decision.lifecycle_effects.developer_progress
+            )
         transition_effects.apply_after_progress(decision.lifecycle_effects)
         terminal_action = resolve_terminal_action(
             action_context,
@@ -2234,9 +2512,10 @@ class TickOrchestrator:
         completed_workers = 0
         for item in state.action_history:
             if isinstance(item, dict):
-                completed_workers += int(
-                    _SPAWN_CONFIG.get(item.get("stage"), {}).get("count", 0)
-                )
+                completed_workers += int(item.get(
+                    "spawn_count",
+                    _SPAWN_CONFIG.get(item.get("stage"), {}).get("count", 0),
+                ))
         outcome = evaluate_loop_budget(
             self._runtime_config.loop_budget_policy,
             LoopUsage(
@@ -2823,7 +3102,11 @@ class TickOrchestrator:
             self._state.batch_state_json = self._batch_state.to_json()
         if self._progress_tree is not None:
             self._state.progress_tree_json = json.dumps(
-                self._progress_tree.to_dict(), ensure_ascii=False)
+                self._progress_tree.to_dict(),
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
         if self._cached_session_summary is not None:
             self._state.session_summary = (
                 self._cached_session_summary.to_dict()
@@ -2840,7 +3123,11 @@ class TickOrchestrator:
         self._progress_tree.last_displayed_tick = self._state.tick
         self._progress_tree.updated_at = datetime.now().isoformat()
         self._state.progress_tree_json = json.dumps(
-            self._progress_tree.to_dict(), ensure_ascii=False)
+            self._progress_tree.to_dict(),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
         ts = datetime.now().strftime("%H:%M:%S")
         print(f"[{ts}] {self._progress_tree.display()}",
               file=sys.stderr, flush=True)

@@ -130,6 +130,7 @@ _WRITE_OWNERS: dict[str, frozenset[str]] = {
     "gap_decision_policy":      frozenset({"orchestrator"}),
     "red_evidence":             frozenset({"orchestrator", "developer"}),
     "design_doc_path":          frozenset({"orchestrator"}),
+    "design_doc_digest":        frozenset({"orchestrator"}),
     "refine_request_json":      frozenset({"orchestrator"}),
     "plan_refine_by_source":    frozenset({"orchestrator"}),
     "debug_enabled":           frozenset({"orchestrator"}),
@@ -247,6 +248,7 @@ class EngineState:
     gap_decision_policy: str = ""  # 当前线程显式授权的 Gap 决策策略
     red_evidence: list[dict] = field(default_factory=list)        # #33 TDD RED 证据 (G7 REDGuardrail)
     design_doc_path: str | None = None                            # #34 设计文档路径 (design-doc 模式)
+    design_doc_digest: str = ""  # init 即持久化；pre-Architect 跨会话兼容锚点
     refine_request_json: str | None = None                        # #35 plan_refine 输入 (RefineRequest)
     plan_refine_by_source: dict[str, int] = field(default_factory=dict)  # #36 分源 refine 计数 (DS-8)
     _runtime_ctx: dict[str, object] = field(  # P1-28: 跨 tick 运行时句柄, 不进 checkpoint

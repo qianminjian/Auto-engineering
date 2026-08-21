@@ -9,8 +9,8 @@
 访问方法确定性无副作用 (越界加断言兜底, 仅在对应 is_*_complete() 为 False 时调用);
 推进方法有副作用 (仅 Orchestrator 调用).
 
-序列化不存 plates (重嵌套树), 只存游标 + batch_plan (轻量 seed) —— plates 每次
-从 seed 重建, 避免持久化 Plate/Component/DesignItem 深层树:
+序列化只存游标、batch_plan 与最小 routing_plates，不复制 DesignItem 深层树：
+Reducer 可据此独立重放，运行时仍可从设计文档重建完整 plates：
   design-doc 模式: plates 由 design_doc_path (#34) 每 tick 重 parse (确定性无漂移);
   batch_plan 模式: plates 由内嵌 batch_plan 重新合成.
 batch_plan 内嵌 (不依赖 EngineState.batch_plan #6): #6 被 clear_stage_fields 在
@@ -45,6 +45,7 @@ class BatchState:
     current_plate_idx: int = 0
     current_component_idx: int = 0
     current_batch_idx: int = 0
+    _completed_batch_ids: set[str] | None = None
 
     # 已警告过的零 batch 组件集合 — 类级别 (防重复警告, T39 B9/D2)
     _warned_zero_batch: ClassVar[set[str]] = set()
@@ -280,7 +281,7 @@ class BatchState:
 
     def completed_batch_ids(self) -> set[str]:
         """根据确定性游标返回已经越过的 batch ID。"""
-        completed: set[str] = set()
+        completed: set[str] = set(self._completed_batch_ids or ())
         for plate_idx, plate in enumerate(self.plates):
             for component_idx, component in enumerate(plate.components):
                 batches = self.batches_for(component)
@@ -356,6 +357,10 @@ class BatchState:
     # ------------------------------------------------------------------
 
     def advance_batch(self) -> None:
+        if not self.is_component_complete():
+            if self._completed_batch_ids is None:
+                self._completed_batch_ids = set()
+            self._completed_batch_ids.add(self.current_batch_id())
         self.current_batch_idx += 1
 
     def reopen_previous_batch(self) -> None:
@@ -413,7 +418,28 @@ class BatchState:
             "current_component_idx": self.current_component_idx,
             "current_batch_idx": self.current_batch_idx,
             "total_batches": self.total_batches,
-            "batch_plan": self.batch_plan,  # 轻量 seed; plates 仍不存 (从此重建)
+            "batch_plan": self.batch_plan,
+            # Reducer 重放不能依赖进程内 DesignDoc。仅持久化路由所需的
+            # plate/component 身份与章节，不复制 design items 或正文。
+            "routing_plates": [
+                {
+                    "name": plate.name,
+                    "design_section": plate.design_section,
+                    "components": [
+                        {
+                            "name": component.name,
+                            "design_section": component.design_section,
+                        }
+                        for component in plate.components
+                    ],
+                }
+                for plate in self.plates
+            ],
+            "completed_batch_ids": sorted(self.completed_batch_ids()),
+            "active_batch_id": (
+                None if self.is_all_complete() or self.is_component_complete()
+                else self.current_batch_id()
+            ),
         })
 
     # ------------------------------------------------------------------
@@ -429,7 +455,7 @@ class BatchState:
 
     # ------------------------------------------------------------------
     # ------------------------------------------------------------------
-    # 序列化 (只存游标; plates 每 tick 重建)
+    # 序列化（游标 + 最小路由拓扑；完整设计内容不持久化）
     # ------------------------------------------------------------------
 
     @classmethod
@@ -444,9 +470,82 @@ class BatchState:
         """
         data = json.loads(s)
         bp = data.get("batch_plan") or batch_plan or []
-        bs = cls.from_design_doc(design_doc, bp) if design_doc is not None else cls.from_batch_plan(bp)
+        routing_plates = data.get("routing_plates")
+        if design_doc is not None:
+            bs = cls.from_design_doc(design_doc, bp)
+        elif isinstance(routing_plates, list) and routing_plates:
+            plates: list[Plate] = []
+            for raw_plate in routing_plates:
+                if not isinstance(raw_plate, dict):
+                    raise ValueError("BATCH_ROUTING_TOPOLOGY_INVALID")
+                raw_components = raw_plate.get("components")
+                if not isinstance(raw_components, list) or not raw_components:
+                    raise ValueError("BATCH_ROUTING_TOPOLOGY_INVALID")
+                components = []
+                for raw_component in raw_components:
+                    if not isinstance(raw_component, dict):
+                        raise ValueError("BATCH_ROUTING_TOPOLOGY_INVALID")
+                    name = raw_component.get("name")
+                    section = raw_component.get("design_section", "")
+                    if not isinstance(name, str) or not name or not isinstance(section, str):
+                        raise ValueError("BATCH_ROUTING_TOPOLOGY_INVALID")
+                    components.append(Component(
+                        name=name,
+                        design_section=section,
+                        design_items=[],
+                        source_marker="batch_state",
+                    ))
+                plate_name = raw_plate.get("name")
+                plate_section = raw_plate.get("design_section", "")
+                if (
+                    not isinstance(plate_name, str)
+                    or not plate_name
+                    or not isinstance(plate_section, str)
+                ):
+                    raise ValueError("BATCH_ROUTING_TOPOLOGY_INVALID")
+                plates.append(Plate(
+                    name=plate_name,
+                    design_section=plate_section,
+                    components=components,
+                    cross_component_contracts_raw=[],
+                ))
+            bs = cls(
+                plates=plates,
+                batch_plan=cls._normalize_routing(cls.flatten_batch_plan(bp)),
+                total_batches=len(bp),
+            )
+        else:
+            bs = cls.from_batch_plan(bp)
         bs.current_plate_idx = data["current_plate_idx"]
         bs.current_component_idx = data["current_component_idx"]
         bs.current_batch_idx = data["current_batch_idx"]
         bs.total_batches = data["total_batches"]
+        completed = data.get("completed_batch_ids")
+        if isinstance(completed, list) and all(
+            isinstance(item, str) for item in completed
+        ):
+            bs._completed_batch_ids = set(completed)
+        if "active_batch_id" in data:
+            active_batch_id = data.get("active_batch_id")
+            # None 只表示当前 component 的开发 batch 已完成，后续仍需
+            # component/plate verifier 按原游标运行；不得提前跳到 all-complete。
+            if isinstance(active_batch_id, str):
+                found = False
+                for plate_idx, plate in enumerate(bs.plates):
+                    for component_idx, component in enumerate(plate.components):
+                        for batch_idx, batch in enumerate(bs.batches_for(component)):
+                            if str(batch.get("batch_id")) == active_batch_id:
+                                bs.current_plate_idx = plate_idx
+                                bs.current_component_idx = component_idx
+                                bs.current_batch_idx = batch_idx
+                                found = True
+                                break
+                        if found:
+                            break
+                    if found:
+                        break
+                if not found:
+                    raise ValueError(
+                        f"PLAN_ACTIVE_BATCH_MISSING: {active_batch_id}"
+                    )
         return bs

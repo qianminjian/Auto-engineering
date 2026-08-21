@@ -51,6 +51,12 @@ class StageResultPrevalidator:
                         result.get("decision_impacts", []),
                         approved_changes=approved_changes or {},
                     )
+                else:
+                    ledger.validate_advisory_promotions(
+                        obligations=result.get("obligations", []),
+                        research_archive=research_archive,
+                        approved_changes=approved_changes or {},
+                    )
             except DesignDecisionError as exc:
                 return str(exc)
         if result.get("result_type") == "plan_reconciliation":

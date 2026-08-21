@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from auto_engineering.engine.batch_state import BatchState
+from auto_engineering.engine.progress_tree import ProgressTree
 from auto_engineering.engine.verification_layers import VerificationLayers
 
 
@@ -12,6 +13,7 @@ class TransitionContextFactory:
         stage: str,
         *,
         batch_state: BatchState | None,
+        progress_tree: ProgressTree | None = None,
         verification_layers: VerificationLayers | None,
         max_repair_cycles: int,
         p1_threshold: int,
@@ -25,11 +27,13 @@ class TransitionContextFactory:
             )
         }
         if batch_state is not None and stage == "component_verifier":
+            extensions["completed_component"] = batch_state.current_component().name
             extensions["has_more_components"] = (
                 batch_state.current_component_idx + 1
                 < len(batch_state.current_plate().components)
             )
         if batch_state is not None and stage == "plate_deep_audit":
+            extensions["completed_plate"] = batch_state.current_plate().name
             extensions["has_more_plates"] = (
                 batch_state.current_plate_idx + 1 < len(batch_state.plates)
             )
@@ -59,11 +63,20 @@ class TransitionContextFactory:
             completed = batches[index]
             next_index = index + 1
             has_more = next_index < len(batches)
+            progress_node_id, canonical_section = self._progress_identity(
+                progress_tree, component.name, component.design_section
+            )
             extensions.update({
                 "has_more_batches_after_advance": has_more,
                 "completed_batch_id": completed.get("batch_id"),
                 "completed_task_count": len(completed.get("tasks", [])),
-                "design_section": component.design_section,
+                "completed_task_ids": [
+                    str(task.get("id"))
+                    for task in completed.get("tasks", [])
+                    if isinstance(task, dict) and task.get("id")
+                ],
+                "design_section": canonical_section,
+                "progress_node_id": progress_node_id,
                 "next_task": (
                     batches[next_index]["tasks"][0]["description"]
                     if has_more and batches[next_index].get("tasks")
@@ -74,6 +87,30 @@ class TransitionContextFactory:
                 ),
             })
         return extensions
+
+    @staticmethod
+    def _progress_identity(
+        tree: ProgressTree | None,
+        component_name: str,
+        design_section: str,
+    ) -> tuple[str, str]:
+        if tree is None:
+            return "", design_section
+        matches = [
+            node.id for node in tree.nodes.values()
+            if node.level == "component"
+            and node.name == component_name
+            and node.design_section_ref == design_section
+        ]
+        if len(matches) != 1:
+            matches = [
+                node.id for node in tree.nodes.values()
+                if node.level == "component" and node.name == component_name
+            ]
+        if len(matches) != 1:
+            return "", design_section
+        node = tree.nodes[matches[0]]
+        return node.id, node.design_section_ref
 
     @staticmethod
     def _allowed_files(batches: list[dict], index: int) -> list[str]:

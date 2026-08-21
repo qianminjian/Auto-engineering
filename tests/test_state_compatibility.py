@@ -121,6 +121,59 @@ def test_missing_state_design_digest_is_corrupt(tmp_path: Path) -> None:
     assert "state_design_digest_missing" in report.reason_codes
 
 
+def test_pre_architect_design_digest_is_compatible_without_baseline(
+    tmp_path: Path,
+) -> None:
+    intent = _intent(tmp_path)
+    state = EngineState(
+        thread_id="gap-thread",
+        current_stage="gap_review",
+        design_doc_path=intent.design_doc_path,
+        design_doc_digest=intent.design_doc_digest,
+    )
+
+    report = StateCompatibilityInspector(tmp_path).inspect(
+        intent=intent,
+        state=state,
+        profile_resolution=ProjectProfileResolution(
+            status=ResolutionStatus.RESOLVED,
+            profile=None,
+        ),
+        active_action={"action": "gap_review", "stage": "gap_review"},
+    )
+
+    assert report.status is CompatibilityStatus.COMPATIBLE
+    assert report.old_design_digest == intent.design_doc_digest
+
+
+def test_legacy_pre_architect_action_ledger_recovers_missing_state_digest(
+    tmp_path: Path,
+) -> None:
+    intent = _intent(tmp_path)
+    state = EngineState(
+        thread_id="legacy-gap-thread",
+        current_stage="gap_review",
+        design_doc_path=intent.design_doc_path,
+    )
+
+    report = StateCompatibilityInspector(tmp_path).inspect(
+        intent=intent,
+        state=state,
+        profile_resolution=ProjectProfileResolution(
+            status=ResolutionStatus.RESOLVED,
+            profile=None,
+        ),
+        active_action={
+            "action": "gap_review",
+            "design_decision_ledger": {
+                "source_sha256": intent.design_doc_digest.removeprefix("sha256:"),
+            },
+        },
+    )
+
+    assert report.status is CompatibilityStatus.COMPATIBLE
+
+
 def test_state_reconciliation_decision_gate_waits_for_user() -> None:
     control = control_for_action({
         "action": "gate",

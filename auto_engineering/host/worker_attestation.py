@@ -101,13 +101,13 @@ class WorkerAttestation:
             raise WorkerAttestationError("ATTESTATION_EFFORT_MISMATCH")
         if self.status != "completed" or not self.isolation_evidence:
             raise WorkerAttestationError("ATTESTATION_INCOMPLETE")
-        required_isolation = {
-            HostPlatform.CODEX: "fork_turns=none",
-            HostPlatform.CLAUDE_CODE: "fresh_context",
+        allowed_isolation = {
+            HostPlatform.CODEX: {"fork_turns=none", "fork_context=false"},
+            HostPlatform.CLAUDE_CODE: {"fresh_context"},
         }.get(self.platform)
-        if required_isolation is None:
+        if allowed_isolation is None:
             raise WorkerAttestationError("ATTESTATION_PLATFORM_UNSUPPORTED")
-        if self.isolation_evidence != required_isolation:
+        if self.isolation_evidence not in allowed_isolation:
             raise WorkerAttestationError("ATTESTATION_ISOLATION_MISMATCH")
         expected_capabilities = tuple(sorted(invocation.capabilities))
         if (

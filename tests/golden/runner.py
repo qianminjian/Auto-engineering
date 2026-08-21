@@ -77,7 +77,24 @@ def compare_host_trajectories(
 ) -> None:
     """比较两个宿主产生的 Core 轨迹，仅容许已声明的展示差异。"""
 
-    compare_trajectory(left, right)
+    def without_platform_label(value: Any) -> Any:
+        if isinstance(value, Mapping):
+            return {
+                str(key): without_platform_label({
+                    nested_key: nested_value
+                    for nested_key, nested_value in item.items()
+                    if nested_key != "platform"
+                } if key == "host_execution" and isinstance(item, Mapping) else item)
+                for key, item in value.items()
+            }
+        if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+            return [without_platform_label(item) for item in value]
+        return value
+
+    compare_trajectory(
+        without_platform_label(left),
+        without_platform_label(right),
+    )
 
 
 __all__ = [

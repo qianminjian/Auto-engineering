@@ -37,13 +37,18 @@ def test_shared_skill_describes_multi_worker_prompt_and_receipt_protocol() -> No
     assert "spawn.invocations[i].receipt_path" in text
     assert "workers must not write the shared total proof" in text
     assert "action.subagent_prompt` 原样传递给每个子代理" not in text
+    assert "action.project_root" in text
+    assert "每条 `ae-run dev-loop` 内部命令" in text
 
 
 def test_claude_command_uses_same_multi_worker_protocol() -> None:
     text = (REPO_ROOT / "commands" / "dev-loop.md").read_text(encoding="utf-8")
 
     assert "spawn.invocations[]" in text
-    assert "spawn.agents[i].receipt_path" in text
+    assert "spawn.agents[i].receipt_path" not in text
+    assert "--finalize-result" in text
+    assert "action.project_root" in text
+    assert "每条 `ae-run dev-loop` 内部命令" in text
 
 
 def _run_cli(*args: str, cwd: Path | None = None, timeout: int = 30) -> subprocess.CompletedProcess:

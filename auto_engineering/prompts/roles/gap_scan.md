@@ -13,6 +13,7 @@ think hard
 - `design_doc_path`: 设计文档路径
 - `plates`: 板块层次 [{id, name, components}]
 - `project_root`: 项目根目录
+- `project_profile_summary`: Core 已确定的有界工程事实，仅含 profile id、项目类型、路径与命令
 
 ## 扫描方法
 
@@ -23,6 +24,11 @@ think hard
 5. 若解析层次为空 (plates=[] 或 parse_warnings 报"无可识别层次") → 报一个 architectural gap 兜底
 6. 明确设计决策不是 gap；“未来改进”不得提升为当前版本阻断项。最佳实践与设计冲突时，
    只记录 advisory 风险，未经用户 Gate 不得改变 explicit design
+7. `project_profile_summary` 是已确定的工程事实。路径、命令、项目类型或现有配置已经解决的
+   package metadata、工具依赖、目录约定等实现机制，不得升级为用户设计缺口。只有在这些事实
+   仍不足以实现显式设计，或必须选择会改变外部行为/公共契约的方案时，才允许产出 gap。
+8. 不得为了“让文档更完整”而要求用户重复确认现有工程事实；也不得读取完整依赖树后把版本
+   偏好重新包装成设计决策。
 
 ## grade 分级 rubric (模糊的 scope,驱动阻塞约束)
 

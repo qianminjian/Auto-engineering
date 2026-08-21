@@ -13,6 +13,8 @@ _HOST_PATHS = {
         "CLAUDE.md",
         "commands/dev-loop.md",
         "hooks-cc.json",
+        "hooks/hooks.json",
+        "hooks/stop.sh",
         "bin/ae-run",
         "scripts/ae-run",
     ),
@@ -52,6 +54,12 @@ def check_host_package(root: Path, host: str) -> list[str]:
         command = (root / "commands/dev-loop.md").read_text(encoding="utf-8")
         if "ae-run" not in command or "scripts/ae-run" in command:
             errors.append("Claude Command 未使用共享 CLI resolver")
+        hook_manifest = json.loads(
+            (root / "hooks/hooks.json").read_text(encoding="utf-8")
+        )
+        stop_hooks = hook_manifest.get("hooks", {}).get("Stop", [])
+        if not stop_hooks or "hooks/stop.sh" not in json.dumps(stop_hooks):
+            errors.append("Claude Plugin 未注册 Host Runtime StopGuard")
     else:
         agents = (root / "AGENTS.md").read_text(encoding="utf-8")
         skill = (

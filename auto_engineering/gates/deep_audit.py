@@ -79,6 +79,7 @@ def _finding_from_dict(d: dict) -> DeepAuditFinding:
         suggested_fix=d.get("suggested_fix", ""),
         design_section=d.get("design_section") or d.get("section") or "",
         agent_source=_normalize_agent_source(d.get("agent_source")),
+        authority_class=d.get("authority_class", "objective_defect"),
     )
 
 
@@ -89,6 +90,7 @@ def _finding_to_dict(f: DeepAuditFinding) -> dict:
         "suggested_fix": f.suggested_fix,
         "design_section": f.design_section,
         "agent_source": f.agent_source,
+        "authority_class": f.authority_class,
     }
 
 
@@ -107,9 +109,13 @@ def recount_findings(raw_findings: list) -> tuple[list[dict], int, int, int]:
         elif isinstance(f, dict):
             parsed.append(_finding_from_dict(f))
     deduped = _dedup_findings(parsed)
-    p0 = sum(1 for f in deduped if f.severity == "P0")
-    p1 = sum(1 for f in deduped if f.severity == "P1")
-    p2 = sum(1 for f in deduped if f.severity == "P2")
+    blocking = [
+        f for f in deduped
+        if f.authority_class in {"binding_violation", "objective_defect"}
+    ]
+    p0 = sum(1 for f in blocking if f.severity == "P0")
+    p1 = sum(1 for f in blocking if f.severity == "P1")
+    p2 = sum(1 for f in blocking if f.severity == "P2")
     return [_finding_to_dict(f) for f in deduped], p0, p1, p2
 
 
@@ -130,6 +136,7 @@ class DeepAuditFinding:
     suggested_fix: str
     design_section: str = ""  # 关联设计章节 (refine 路由使用)
     agent_source: list[str] = field(default_factory=list)  # 命中的 agent role 列表
+    authority_class: str = "objective_defect"
 
 
 @dataclass

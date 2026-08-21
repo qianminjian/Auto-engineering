@@ -152,3 +152,106 @@ def test_codex_hook_handler_safely_skips_invalid_json() -> None:
     response = json.loads(result.stdout)
     assert "systemMessage" in response
     assert "安全跳过" in response["systemMessage"]
+
+
+def test_stop_hook_blocks_same_session_with_continue_lease(tmp_path: Path) -> None:
+    from auto_engineering.host.runtime_driver import HostRunLease, HostRunLeaseStore
+
+    HostRunLeaseStore(tmp_path).save(HostRunLease(
+        schema_version="1.0",
+        thread_id="thread-1",
+        action_message_id="action-1",
+        platform="codex",
+        host_session_id="session-1",
+        build_id="build-1",
+        disposition="CONTINUE",
+        continuation_required=True,
+        yield_allowed=False,
+    ))
+    output = StringIO()
+    payload = {
+        "hook_event_name": "Stop",
+        "cwd": str(tmp_path),
+        "session_id": "session-1",
+    }
+
+    from auto_engineering.host.codex_hooks import main
+
+    assert main(StringIO(json.dumps(payload)), output) == 0
+    response = json.loads(output.getvalue())
+    assert response["decision"] == "block"
+    assert response["reason_code"] == "AE_CONTINUATION_REQUIRED"
+    assert response["action_message_id"] == "action-1"
+
+
+def test_claude_stop_hook_blocks_same_session_with_continue_lease(
+    tmp_path: Path,
+) -> None:
+    from auto_engineering.host.runtime_driver import HostRunLease, HostRunLeaseStore
+
+    HostRunLeaseStore(tmp_path).save(HostRunLease(
+        schema_version="1.0",
+        thread_id="thread-1",
+        action_message_id="action-1",
+        platform="claude-code",
+        host_session_id="session-1",
+        build_id="build-1",
+        disposition="CONTINUE",
+        continuation_required=True,
+        yield_allowed=False,
+    ))
+    output = StringIO()
+    payload = {
+        "hook_event_name": "Stop",
+        "cwd": str(tmp_path),
+        "session_id": "session-1",
+    }
+
+    from auto_engineering.host.claude_hooks import main
+
+    assert main(StringIO(json.dumps(payload)), output) == 0
+    response = json.loads(output.getvalue())
+    assert response["decision"] == "block"
+    assert response["reason_code"] == "AE_CONTINUATION_REQUIRED"
+
+
+def test_claude_stop_shell_uses_plugin_runtime(tmp_path: Path) -> None:
+    from auto_engineering.host.runtime_driver import HostRunLease, HostRunLeaseStore
+
+    HostRunLeaseStore(tmp_path).save(HostRunLease(
+        schema_version="1.0",
+        thread_id="thread-1",
+        action_message_id="action-1",
+        platform="claude-code",
+        host_session_id="session-1",
+        build_id="build-1",
+        disposition="CONTINUE",
+        continuation_required=True,
+        yield_allowed=False,
+    ))
+    payload = json.dumps({
+        "hook_event_name": "Stop",
+        "cwd": str(tmp_path),
+        "session_id": "session-1",
+    })
+
+    result = subprocess.run(
+        [str(ROOT / "hooks" / "stop.sh")],
+        input=payload,
+        env={"PLUGIN_ROOT": str(ROOT), "PATH": "/usr/bin:/bin"},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert json.loads(result.stdout)["decision"] == "block"
+
+
+def test_claude_stop_shell_uses_only_dedicated_runtime_contract() -> None:
+    source = (ROOT / "hooks" / "stop.sh").read_text(encoding="utf-8")
+
+    assert '"$PLUGIN_DIR/.ae-runtime/bin/python"' in source
+    assert '"$PLUGIN_DIR/.venv/bin/python"' not in source
+    assert 'UV_PROJECT_ENVIRONMENT="$PLUGIN_DIR/.ae-runtime"' in source
+    assert "uv run --frozen" in source
