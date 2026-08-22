@@ -20,7 +20,7 @@ Command 适配层进入同一协议。所有平台都必须通过 bundled `ae-ru
 
 启动时先从当前已加载 `SKILL.md` 的绝对安装路径向上解析插件根目录，并固定 bundled runner。
 本文后续每个 `ae-run` 都是
-`env AE_HOST_PLATFORM=codex <plugin-root>/bin/ae-run` 的缩写；实际工具调用必须保留该环境
+`env AE_HOST_PLATFORM=codex AE_HOST_ACTION_VIEW=compact <plugin-root>/bin/ae-run` 的缩写；实际工具调用必须保留该环境
 前缀和绝对路径，不得把文中缩写当成实际命令；不得调用裸 `ae-run` 或另一宿主传入的 runner，不得依赖 PATH，
 也不得搜索开发工作区或插件缓存来猜测入口。解析出的 runner 不存在或不可执行时，
 以 `HOST_RUNNER_UNAVAILABLE` fail-closed。
@@ -72,6 +72,13 @@ ae-run dev-loop --init \
 
 ## Action 执行协议
 
+产品入口必须设置 `AE_HOST_ACTION_VIEW=compact`。CLI stdout 返回的 compact envelope 是
+当前执行控制视图；完整 Canonical Action 仍由 Core 持久化。若存在
+`coordinator_prompt_ref`，只读取其 `path` 一次并核验 `sha256`，不得扫描 Action Store，
+不得要求 CLI 重新内联 `instruction`、`context` 或 `subagent_prompt`。spawn Action 只把
+`spawn.invocations[i].prompt_ref` 交给对应 fresh Worker；Coordinator 不再读取兼容字段
+`subagent_prompt` 正文。
+
 每次用户启动 Skill 的首个 Core 命令必须是带用户原始参数的
 `dev-loop --init`；该入口会自动检测已有 thread 并返回 active Action，
 禁止先用 `status`、`find`、`rg` 或扫描 `.ae-state` 推测 Action。若仅执行
@@ -99,7 +106,7 @@ while control.disposition == "CONTINUE":
 提交 Result 时 `gate_resolution.gate_id` 必须为 `state_reconciliation`，`resolution`
 必须使用 option id（不是显示标签），并由 `causation_id` 绑定当前 Gate message。
 
-然后读取 `action.instruction`：
+然后读取并核验 `action.coordinator_prompt_ref` 指向的当前 Coordinator Prompt：
 
 - `action.host_execution.recovery.status == "worker_outcomes_committed"`：这是恢复分支，
   必须在任何 `action.spawn` 或 Worker 执行判断之前处理。确认

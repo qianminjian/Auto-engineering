@@ -259,6 +259,125 @@ def test_cli_host_mapping_persists_lease_for_current_session(
     assert lease.host_session_id == "session-1"
 
 
+def test_compact_host_view_uses_prompt_ref_without_inlining_action_context(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    from auto_engineering.cli.dev_loop import _prepare_action_for_host
+
+    monkeypatch.setenv("CODEX_THREAD_ID", "compact-session")
+    monkeypatch.setenv("AE_HOST_ACTION_VIEW", "compact")
+    instruction = "developer instruction with bounded current context"
+    action = {
+        "schema_version": "1.1",
+        "message_type": "action",
+        "action": "developer",
+        "stage": "developer",
+        "message_id": "compact-action",
+        "thread_id": "compact-thread",
+        "tick": 3,
+        "project_root": str(tmp_path),
+        "instruction": instruction,
+        "subagent_prompt": "duplicated worker prompt body",
+        "context": {"large": "context body must not reach stdout"},
+        "tasks": [{"id": "T1", "description": "large task body"}],
+        "expected_format": {"files_changed": "[string]"},
+        "extensions": {
+            "ae": {
+                "execution_control": ExecutionControl(
+                    schema_version="1.0",
+                    disposition=ExecutionDisposition.CONTINUE,
+                    continuation_required=True,
+                    yield_allowed=False,
+                    allowed_stop_reasons=(),
+                ).to_dict(),
+                "runtime_revision": {"engine_build_id": "build-1"},
+            }
+        },
+    }
+
+    compact = _prepare_action_for_host(action, tmp_path)
+
+    assert compact["view"] == "compact"
+    assert compact["action"] == "developer"
+    assert compact["message_id"] == "compact-action"
+    assert compact["extensions"] == action["extensions"]
+    assert compact["expected_format"] == action["expected_format"]
+    assert "instruction" not in compact
+    assert "subagent_prompt" not in compact
+    assert "context" not in compact
+    assert "tasks" not in compact
+    prompt_ref = compact["coordinator_prompt_ref"]
+    prompt_path = tmp_path / prompt_ref["path"]
+    assert prompt_path.read_text(encoding="utf-8") == instruction
+    assert prompt_ref["sha256"] == hashlib.sha256(
+        instruction.encode("utf-8")
+    ).hexdigest()
+    assert action["instruction"] == instruction
+    assert action["context"] == {"large": "context body must not reach stdout"}
+
+
+@pytest.mark.parametrize(
+    ("action_name", "control_fields"),
+    [
+        (
+            "gap_review",
+            {
+                "current_gap_index": 1,
+                "total_gaps": 2,
+                "auto_decision": {"gap_id": "gap-2", "resolution": "Fill"},
+            },
+        ),
+        (
+            "project_setup_required",
+            {
+                "reason_code": "PROJECT_SETUP_REQUIRED",
+                "missing_capabilities": ["source_roots"],
+                "constraints": {"source_roots": ["src"]},
+            },
+        ),
+        (
+            "resource_wait",
+            {
+                "resource": "native_worker",
+                "retry_stage": "architect",
+                "reason_code": "HOST_AGENT_CAPACITY",
+                "retry_attempt": 1,
+                "retry_limit": 2,
+            },
+        ),
+        (
+            "session_rollover",
+            {
+                "reason": "context_compaction_failed",
+                "current_session_id": "session-old",
+                "capsule": {"artifact_id": "capsule-1", "sha256": "a" * 64},
+                "claim_token": "claim-1",
+                "expires_at": None,
+            },
+        ),
+    ],
+)
+def test_compact_host_view_preserves_action_specific_control_fields(
+    tmp_path,
+    action_name,
+    control_fields,
+) -> None:
+    from auto_engineering.cli.dev_loop import _compact_host_action
+
+    action = {
+        "action": action_name,
+        "message_id": f"{action_name}-action",
+        "thread_id": "thread-1",
+        **control_fields,
+    }
+
+    compact = _compact_host_action(action, tmp_path)
+
+    for key, value in control_fields.items():
+        assert compact[key] == value
+
+
 def test_cli_lease_uses_inner_claude_identity_when_launched_from_codex(
     tmp_path,
     monkeypatch,

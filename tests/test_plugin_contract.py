@@ -39,6 +39,8 @@ def test_shared_skill_describes_multi_worker_prompt_and_receipt_protocol() -> No
     assert "action.subagent_prompt` 原样传递给每个子代理" not in text
     assert "action.project_root" in text
     assert "每条 `ae-run dev-loop` 内部命令" in text
+    assert "AE_HOST_ACTION_VIEW=compact" in text
+    assert "coordinator_prompt_ref" in text
 
 
 def test_claude_command_uses_same_multi_worker_protocol() -> None:
@@ -49,6 +51,8 @@ def test_claude_command_uses_same_multi_worker_protocol() -> None:
     assert "--finalize-result" in text
     assert "action.project_root" in text
     assert "每条 `ae-run dev-loop` 内部命令" in text
+    assert "AE_HOST_ACTION_VIEW=compact" in text
+    assert "coordinator_prompt_ref" in text
 
 
 def _run_cli(*args: str, cwd: Path | None = None, timeout: int = 30) -> subprocess.CompletedProcess:

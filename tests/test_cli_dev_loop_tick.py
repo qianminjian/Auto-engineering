@@ -45,6 +45,30 @@ class TestInitMode:
             "*\n!.gitignore\n"
         )
 
+    def test_product_compact_view_omits_inline_prompt_from_stdout(
+        self, tmp_path
+    ) -> None:
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            ["dev-loop", "--init", "实现登录功能",
+             "--project-root", str(tmp_path)],
+            env={"AE_HOST_ACTION_VIEW": "compact"},
+        )
+
+        assert result.exit_code == 0, result.output
+        action = _last_json_line(result.output)
+        assert action["view"] == "compact"
+        assert "instruction" not in action
+        assert "context" not in action
+        assert "subagent_prompt" not in action
+        prompt_ref = action["coordinator_prompt_ref"]
+        prompt_path = tmp_path / prompt_ref["path"]
+        assert prompt_path.is_file()
+        assert hashlib.sha256(prompt_path.read_bytes()).hexdigest() == (
+            prompt_ref["sha256"]
+        )
+
     def test_init_requires_requirement(self, tmp_path) -> None:
         runner = CliRunner()
         result = runner.invoke(

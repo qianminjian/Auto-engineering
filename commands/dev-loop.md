@@ -25,12 +25,19 @@ Violating the letter of this rule is violating the spirit of this rule.
 明确授权后才能执行。
 
 启动时必须固定 bundled runner。本文后续每个 `ae-run` 都是以下完整调用的缩写：
-`env AE_HOST_PLATFORM=claude-code "${CLAUDE_PLUGIN_ROOT}/bin/ae-run"`。实际 Bash 调用必须保留
+`env AE_HOST_PLATFORM=claude-code AE_HOST_ACTION_VIEW=compact "${CLAUDE_PLUGIN_ROOT}/bin/ae-run"`。实际 Bash 调用必须保留
 该环境前缀和绝对路径，不得只执行文中的缩写；不得调用裸 `ae-run` 或另一宿主传入的 runner；不得
 依赖 PATH，也不得搜索开发目录或缓存目录猜测入口。runner 不存在或不可执行时以
 `HOST_RUNNER_UNAVAILABLE` fail-closed。
 
 ## 驱动循环
+
+产品入口必须设置 `AE_HOST_ACTION_VIEW=compact`。CLI stdout 返回的 compact envelope 是
+当前执行控制视图；完整 Canonical Action 仍由 Core 持久化。若存在
+`coordinator_prompt_ref`，只读取其 `path` 一次并核验 `sha256`，不得扫描 Action Store，
+不得要求 CLI 重新内联 `instruction`、`context` 或 `subagent_prompt`。spawn Action 只把
+`spawn.invocations[i].prompt_ref` 交给对应 fresh Worker；Coordinator 不再读取兼容字段
+`subagent_prompt` 正文。
 
 ```text
 1. project_root = 宿主启动时解析的绝对项目目录
@@ -83,7 +90,7 @@ Violating the letter of this rule is violating the spirit of this rule.
          never retain completed handles into the next Action
          wait for known running workers to reach terminal state
          重试一次，然后继续执行 Core 返回的原 active Action
-     read action.instruction
+     read and verify action.coordinator_prompt_ref.path once
      if action.stage == "gap_review":
          present only action.current_gap: problem, evidence, impact, recommendation, rationale, options
          ask one user decision and submit exactly one result.decision for this Tick
@@ -191,7 +198,7 @@ ae-run dev-loop --init \
 
 ## Spawn 纪律
 
-1. 先读取 `action.instruction`，再读取 `action.spawn.count`、
+1. 先读取并核验 `action.coordinator_prompt_ref`，再读取 `action.spawn.count`、
    `action.spawn.parallel` 和 `action.spawn.effort`。
 2. 将 `action.spawn.effort` 视为抽象推理强度。适配层将其映射为宿主支持的
    推理控制；默认使用最低够用的经济档，复杂架构、安全或跨模块故障才提高。
@@ -231,7 +238,7 @@ multi_agent_v1__close_agent`。任一完整工具族即表示 Worker 原生能�
 
 引擎会在 architect、developer、critic 完成后写入 `.ae-state/offload/`。
 developer 开始前读取 architect offload，critic 开始前读取 developer offload；
-具体路径以 `action.instruction` 为准。
+具体路径以当前 Coordinator Prompt 为准。
 
 `session_rollover` 只用于异常恢复，不是正常 compaction 或自由文本 recap。旧执行
 实例不得继续执行工作；

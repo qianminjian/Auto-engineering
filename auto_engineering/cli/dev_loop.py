@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
 from collections.abc import Iterable, Mapping
 from contextlib import suppress
 from pathlib import Path
@@ -290,7 +291,93 @@ def _prepare_action_for_host(action: dict, root: Path) -> dict:
             host_session_id=session_id,
         )
         HostRunLeaseStore(root).save(lease)
+    if os.environ.get("AE_HOST_ACTION_VIEW", "").strip().lower() == "compact":
+        return _compact_host_action(mapped, root)
     return mapped
+
+
+def _compact_host_action(action: Mapping[str, Any], root: Path) -> dict[str, Any]:
+    """为产品宿主生成有界控制视图；Canonical Action 保持不变。"""
+
+    compact_keys = (
+        "schema_version",
+        "message_type",
+        "message_id",
+        "correlation_id",
+        "causation_id",
+        "thread_id",
+        "tick",
+        "stage",
+        "action",
+        "project_root",
+        "extensions",
+        "host_execution",
+        "spawn",
+        "expected_format",
+        "gate",
+        "current_gap",
+        "current_gap_index",
+        "total_gaps",
+        "auto_decision",
+        "mode",
+        "has_blocking",
+        "audit_execution_profile",
+        "required_capabilities",
+        "missing_capabilities",
+        "constraints",
+        "resource",
+        "retry_stage",
+        "reason_code",
+        "retry_attempt",
+        "retry_limit",
+        "reason",
+        "next_transition",
+        "current_session_id",
+        "capsule",
+        "claim_token",
+        "expires_at",
+        "verdict",
+        "verdict_level",
+        "verdict_reason",
+        "error_code",
+        "message",
+        "suggestion",
+        "next_operation",
+    )
+    compact = {
+        key: action[key]
+        for key in compact_keys
+        if key in action
+    }
+    compact["view"] = "compact"
+    instruction = action.get("instruction")
+    if isinstance(instruction, str) and instruction:
+        encoded = instruction.encode("utf-8")
+        digest = hashlib.sha256(encoded).hexdigest()
+        relative = Path(".ae-state/effects/prompt") / f"coordinator-{digest}.txt"
+        prompt_path = (root.resolve() / relative).resolve()
+        if not prompt_path.is_relative_to(root.resolve()):
+            raise ValueError("HOST_PROMPT_PATH_ESCAPE")
+        prompt_path.parent.mkdir(parents=True, exist_ok=True)
+        if prompt_path.exists():
+            if prompt_path.read_bytes() != encoded:
+                raise ValueError("HOST_PROMPT_CONTENT_ADDRESS_CONFLICT")
+        else:
+            try:
+                with prompt_path.open("xb") as handle:
+                    handle.write(encoded)
+            except FileExistsError:
+                if prompt_path.read_bytes() != encoded:
+                    raise ValueError(
+                        "HOST_PROMPT_CONTENT_ADDRESS_CONFLICT"
+                    ) from None
+        compact["coordinator_prompt_ref"] = {
+            "path": relative.as_posix(),
+            "sha256": digest,
+            "size_bytes": len(encoded),
+            "media_type": "text/plain; charset=utf-8",
+        }
+    return compact
 
 def _active_thread(store: object) -> str | None:
     """兼容旧 Store façade；真实 SQLite store 提供原子项目占用查询。"""
