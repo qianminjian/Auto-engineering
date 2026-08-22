@@ -3406,6 +3406,7 @@ class TestProjectProfileStartup:
         action = o.init("build a button")
         assert action["action"] != "gate"
         assert action["stage"] == "architect"
+        assert o._state.project_anchor_baseline == ["src", "tests"]
 
 
 class TestProjectSetupReplacesManifestEscalation:

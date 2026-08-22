@@ -83,12 +83,14 @@ def test_changed_design_is_a_conflict(tmp_path: Path) -> None:
 
 def test_missing_roots_conflict_even_when_legacy_manifest_still_exists(tmp_path: Path) -> None:
     intent = _intent(tmp_path)
+    state = _state(intent)
+    state.project_anchor_baseline = ["src", "tests"]
     (tmp_path / ".ae-state").mkdir()
     (tmp_path / ".ae-state" / "init-manifest.json").write_text("{}")
 
     report = StateCompatibilityInspector(tmp_path).inspect(
         intent=intent,
-        state=_state(intent),
+        state=state,
         profile_resolution=ProjectProfileResolution(
             status=ResolutionStatus.SETUP_REQUIRED,
             profile=None,
@@ -100,6 +102,28 @@ def test_missing_roots_conflict_even_when_legacy_manifest_still_exists(tmp_path:
     assert report.status is CompatibilityStatus.CONFLICT
     assert report.missing_anchors == ("src", "tests")
     assert "project_anchors_missing" in report.reason_codes
+
+
+def test_declared_future_roots_do_not_conflict_before_they_are_witnessed(
+    tmp_path: Path,
+) -> None:
+    intent = _intent(tmp_path)
+    state = _state(intent)
+    state.current_stage = "architect"
+
+    report = StateCompatibilityInspector(tmp_path).inspect(
+        intent=intent,
+        state=state,
+        profile_resolution=ProjectProfileResolution(
+            status=ResolutionStatus.RESOLVED,
+            profile=None,
+        ),
+        active_action={"action": "agent", "stage": "architect"},
+    )
+
+    assert report.status is CompatibilityStatus.COMPATIBLE
+    assert report.missing_anchors == ()
+    assert "project_anchors_missing" not in report.reason_codes
 
 
 def test_missing_state_design_digest_is_corrupt(tmp_path: Path) -> None:

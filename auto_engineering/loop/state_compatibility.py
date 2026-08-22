@@ -65,7 +65,9 @@ class StateCompatibilityInspector:
         ):
             reasons.append("design_doc_changed")
 
-        roots = self._declared_roots(state.project_profile)
+        # Profile 路径是期望能力，可能要到 Developer 才创建；只有 Core 先前
+        # 实际见证并持久化的目录，才构成“后来被删除”的恢复冲突证据。
+        roots = tuple(state.project_anchor_baseline)
         missing = tuple(
             root for root in roots if not (self._project_root / root).is_dir()
         )
@@ -76,6 +78,7 @@ class StateCompatibilityInspector:
             and profile_resolution.missing_capabilities
             and "project_profile_unresolved" not in reasons
             and not missing
+            and state.project_profile is None
         ):
             reasons.append("project_profile_unresolved")
 
@@ -115,20 +118,6 @@ class StateCompatibilityInspector:
     @staticmethod
     def _normalize_digest(value: str) -> str:
         return value.removeprefix("sha256:")
-
-    @staticmethod
-    def _declared_roots(profile: object) -> tuple[str, ...]:
-        if not isinstance(profile, Mapping):
-            return ()
-        paths = profile.get("paths")
-        if not isinstance(paths, Mapping):
-            return ()
-        values: list[str] = []
-        for key in ("source_roots", "test_roots"):
-            roots = paths.get(key)
-            if isinstance(roots, list):
-                values.extend(root for root in roots if isinstance(root, str) and root)
-        return tuple(dict.fromkeys(values))
 
     @staticmethod
     def _report(

@@ -63,6 +63,8 @@ _EXPECTED_V58_FIELDS = {
     # Phase 81 状态协调、历史隔离与任务级 Core 证据
     "state_reconciliation", "thread_status", "plan_reconciliation",
     "superseded_tasks", "task_verification_evidence",
+    # #63 已由 Core 见证存在的项目根目录
+    "project_anchor_baseline",
     # 内部写入审计日志
     "_write_log",
     # P1-28: 运行时句柄 (不进 checkpoint)
@@ -328,11 +330,11 @@ class TestEngineStateBoundary:
         assert not hasattr(state, "nonexistent")
 
     def test_to_dict_contains_all_fields(self) -> None:
-        """to_dict 输出含全部 68 字段（不含内部字段）。"""
+        """to_dict 输出含全部 69 字段（不含内部字段）。"""
         state = EngineState()
         d = state.to_dict()
-        assert len(d) == 68, (
-            f"to_dict 应含 68 字段, 实际 {len(d)}: "
+        assert len(d) == 69, (
+            f"to_dict 应含 69 字段, 实际 {len(d)}: "
             f"{sorted(d.keys())}"
         )
         assert "suggested_fix" in d, "to_dict 必须包含 suggested_fix (Self-Refine 深化)"

@@ -99,6 +99,9 @@ EVENT_CHANNELS: dict[LoopEventType, frozenset[str]] = {
         "project_profile_id",
         "missing_project_capabilities",
     }),
+    LoopEventType.PROJECT_ANCHORS_WITNESSED: frozenset({
+        "project_anchor_baseline",
+    }),
     LoopEventType.TELEMETRY_RECORDED: frozenset({
         "action_history",
         "gate_results",
@@ -427,6 +430,7 @@ def default_reducer_registry() -> ReducerRegistry:
         LoopEventType.SESSION_STATE_UPDATED: _registered_channels,
         LoopEventType.PLAN_STATE_UPDATED: _registered_channels,
         LoopEventType.PROJECT_STATE_UPDATED: _registered_channels,
+        LoopEventType.PROJECT_ANCHORS_WITNESSED: _registered_channels,
         LoopEventType.TELEMETRY_RECORDED: _registered_channels,
         LoopEventType.SUPPLEMENT_STATE_UPDATED: _registered_channels,
         LoopEventType.STATE_CONFLICT_DETECTED: _registered_channels,

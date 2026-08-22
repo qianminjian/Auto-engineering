@@ -103,6 +103,7 @@ def test_all_planned_event_types_are_explicit() -> None:
         "ProjectProfileConflict",
         "ProjectSetupRequired",
         "ProjectSetupCompleted",
+        "ProjectAnchorsWitnessed",
         "ArchitectureBaselineAccepted",
         "RuntimeRevisionDetected",
         "RuntimeRevisionActivated",

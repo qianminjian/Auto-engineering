@@ -1452,6 +1452,16 @@ class TickOrchestrator:
         self._state.project_profile = profile.to_dict()
         self._state.project_profile_id = profile.profile_id
         self._state.missing_project_capabilities = list(resolution.missing_capabilities)
+        witnessed = list(self._state.project_anchor_baseline)
+        for root in (*profile.source_roots, *profile.test_roots):
+            if root not in witnessed and (self.project_root / root).is_dir():
+                witnessed.append(root)
+        if witnessed != self._state.project_anchor_baseline:
+            self._state.project_anchor_baseline = witnessed
+            self._queue_domain_event(
+                LoopEventType.PROJECT_ANCHORS_WITNESSED,
+                {"changes": {"project_anchor_baseline": witnessed}},
+            )
         self._tick_gate_runner.reload(profile)
 
     def _queue_domain_event(self, event_type: LoopEventType, payload: dict[str, Any]) -> None:

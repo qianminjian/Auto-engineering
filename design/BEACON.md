@@ -54,18 +54,18 @@ Gate/Guardrail、五层验证、审计、v5.6 兼容迁移和双宿主验收。
 | D37 | Worker 失败写 `worker_failed` 尝试并由 Core 返回 WAIT_RESOURCE；只有成功 journal 才禁止重复 spawn | ✅ |
 | D38 | Finalizer 以 active Action 的工作文件为唯一事实源；宿主传入陈旧路径时自动续接当前文件，禁止跨 Action 误提交 | ✅ |
 | D39 | 系统审计覆盖维度固定、执行 fan-out 按 Core 计算的项目规模伸缩；小项目不重复发送五份上下文 | ✅ |
+| D40 | ProjectProfile 只声明期望能力；项目锚点删除判断只依据 Core 已持久化见证的目录事实，不从未来目录声明反推历史存在 | ✅ |
 
 ## 当前状态
 
 - Phase 1-79 的功能与自动门禁历史见 Tracker/HISTORY；v5.8.0-rc.5 仍未通过真实产品长跑门禁。
 - Phase 80-82 已关闭旧可变 Stage 分支、显式设计与隐藏状态冲突、严格 Host 合同、Worker 证明、事件恢复和安装来源隔离。
 - 当前候选的自动门禁、双宿主 frozen/offline L2 和内容寻址安装可验证；这些证据不替代真实产品 L3/L4 长跑。
-- T432-T433 已关闭 Gap 主链路、Agent 容量和 Repair 契约；新真跑证伪 Worker 身份隔离与设计权威，Phase 82 按 T434-T439 重建真实宿主验收。
-- Phase 82 审计确认 T435-T439 只是基础实现；T440-T446 按严格 SpawnPlan、Host Attestation、Decision Ledger、完整轨迹和 L1-L4 产品门禁收敛，完成前不再真跑碰运气。
 - T440-T459 已关闭严格 Host 合同、Worker 证明、事件恢复、project_setup 轨迹和独立 Release 安装；Claude 产品长跑仍阻断发布。
 - 第 20 次真跑暴露的手工证据、续跑中断和 140% 进度已由 Phase 83 统一修复；2457/1、90%、静态、CI hermetic 与双宿主 L2 已通过，L3/L4 仍阻断发布。
 - 双宿主 L3 均已到 TERMINAL；L4 揭示的 Gap 恢复、运行时激活、自动决策、补充权威、Gate 校验与在途迁移缺口已由 T505-T511 闭合。
 - T512-T523 已闭合跨会话恢复、陈旧路径重绑、未提交 outcome 复用和审计 fan-out 伸缩；2519/1、Ruff、mypy 通过。完整 L3/L4 终态仍未完成。
+- T524 已用显式见证事件闭合 pre-developer 恢复误报；2521/1、Ruff、mypy 通过，L3/L4 与发布仍保持阻断。
 ## 最近演进
 | 日期 | 变更 |
 |---|---|

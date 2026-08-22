@@ -71,6 +71,7 @@ def _intent_and_state(root: Path) -> tuple[InvocationIntent, EngineState]:
 
 def test_conflicting_active_thread_returns_persisted_decision_gate(tmp_path: Path) -> None:
     _, state = _intent_and_state(tmp_path)
+    state.project_anchor_baseline = ["src", "tests"]
     old_action = {"action": "developer", "thread_id": state.thread_id}
     store = _Store(state.thread_id, old_action)
 
@@ -153,6 +154,7 @@ def test_pre_architect_gap_thread_resumes_from_init_digest(tmp_path: Path) -> No
 
 def test_repeated_conflict_reuses_gate_without_duplicate_event(tmp_path: Path) -> None:
     _, state = _intent_and_state(tmp_path)
+    state.project_anchor_baseline = ["src", "tests"]
     store = _Store(state.thread_id)
     first_events = _Events(state)
     first = _resolve_active_thread_start(
@@ -178,3 +180,28 @@ def test_repeated_conflict_reuses_gate_without_duplicate_event(tmp_path: Path) -
     assert repeated is not None
     assert repeated["message_id"] == first["message_id"]
     assert repeated_events.committed == []
+
+
+def test_interrupted_architect_resumes_when_declared_roots_never_existed(
+    tmp_path: Path,
+) -> None:
+    _, state = _intent_and_state(tmp_path)
+    state.current_stage = "architect"
+    state.project_anchor_baseline = []
+    old_action = {
+        "action": "agent",
+        "stage": "architect",
+        "thread_id": state.thread_id,
+        "message_id": "architect-action",
+    }
+    store = _Store(state.thread_id, old_action)
+
+    action = _resolve_active_thread_start(
+        root=tmp_path,
+        design_doc_path="design/feature.md",
+        store=store,
+        events=_Events(state, old_action),
+    )
+
+    assert action == old_action
+    assert store.recorded == []

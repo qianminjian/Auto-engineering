@@ -17,6 +17,7 @@ for _event_type in (
     LoopEventType.SESSION_STATE_UPDATED,
     LoopEventType.PLAN_STATE_UPDATED,
     LoopEventType.PROJECT_STATE_UPDATED,
+    LoopEventType.PROJECT_ANCHORS_WITNESSED,
     LoopEventType.TELEMETRY_RECORDED,
     LoopEventType.SUPPLEMENT_STATE_UPDATED,
     LoopEventType.GAP_STATE_UPDATED,
