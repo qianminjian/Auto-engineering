@@ -367,6 +367,63 @@ class TestTickDeveloperToCritic:
 
 
 class TestFullLeafConvergence:
+    def test_clean_leaf_assurance_bundle_reaches_goal_without_more_workers(self) -> None:
+        o = _orchestrator()
+        o.init("实现单个组件")
+        o.tick(_make_result_file({
+            "stage": "architect", "spawned": True,
+            "plan": _VALID_PLAN,
+            "batch_plan": [{
+                "batch_id": "batch-F-1", "design_section": "B2", "component": "Foo",
+                "tasks": [{"id": "T1", "description": "实现 foo", "module_ref": "§B2",
+                           "file_targets": ["foo.py"]}],
+            }],
+            "file_list": ["foo.py"], "contracts": {},
+        }))
+        critic = o.tick(_make_result_file({
+            "stage": "developer", "batch_id": "batch-F-1",
+            "files_changed": ["foo.py"],
+            "test_results": {"passed": 2, "failed": 0},
+        }))
+        assert "assurance_bundle" in critic["expected_format"]
+
+        done = o.tick(_make_result_file({
+            "stage": "critic", "spawned": True,
+            "verdict": "APPROVE", "findings": [],
+            "critic_feedback": "LGTM",
+            "assurance_bundle": {
+                "component_verification": {
+                    "component": "Foo",
+                    "coverage_map": [{
+                        "design_item": "B2-1", "status": "IMPLEMENTED",
+                        "file": "foo.py", "line": 1, "note": "",
+                    }],
+                    "missing_count": 0,
+                    "diverged_count": 0,
+                    "recheck_log": [],
+                },
+                "system_audit": {
+                    "dimensions": [
+                        "architecture", "code_quality", "engineering",
+                        "virtualization", "team_design_coverage",
+                    ],
+                    "findings": [],
+                    "p0_count": 0,
+                    "p1_count": 0,
+                    "p2_count": 0,
+                    "total_audited_files": 1,
+                    "design_docs_stale": False,
+                    "design_doc_suggestions": [],
+                    "missing_count": 0,
+                    "diverged_count": 0,
+                },
+            },
+        }))
+
+        assert done["action"] == "done"
+        assert done["verdict"] == "GOAL_ACHIEVED"
+        assert o._state.coverage_map[0]["status"] == "IMPLEMENTED"
+
     def test_full_leaf_cycle_reaches_goal_achieved(self) -> None:
         """LEAF: architect→dev→critic→comp_verifier→system_deep_audit→GOAL_ACHIEVED."""
         o = _orchestrator()

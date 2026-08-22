@@ -99,6 +99,42 @@
     "critic_feedback": {"type": "string"},
     "strengths": {"type": "array", "items": {"type": "object"}},
     "assessment": {"type": "string"},
+    "assurance_bundle": {
+      "type": "object",
+      "required": ["component_verification", "system_audit"],
+      "properties": {
+        "component_verification": {
+          "type": "object",
+          "required": ["component", "coverage_map", "missing_count", "diverged_count", "recheck_log"],
+          "properties": {
+            "component": {"type": "string", "minLength": 1},
+            "coverage_map": {"type": "array"},
+            "missing_count": {"type": "integer", "minimum": 0},
+            "diverged_count": {"type": "integer", "minimum": 0},
+            "recheck_log": {"type": "array"}
+          },
+          "additionalProperties": false
+        },
+        "system_audit": {
+          "type": "object",
+          "required": ["dimensions", "findings", "p0_count", "p1_count", "p2_count", "total_audited_files", "design_docs_stale", "design_doc_suggestions", "missing_count", "diverged_count"],
+          "properties": {
+            "dimensions": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+            "findings": {"type": "array"},
+            "p0_count": {"type": "integer", "minimum": 0},
+            "p1_count": {"type": "integer", "minimum": 0},
+            "p2_count": {"type": "integer", "minimum": 0},
+            "total_audited_files": {"type": "integer", "minimum": 0},
+            "design_docs_stale": {"type": "boolean"},
+            "design_doc_suggestions": {"type": ["array", "string"]},
+            "missing_count": {"type": "integer", "minimum": 0},
+            "diverged_count": {"type": "integer", "minimum": 0}
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
     "component": {"type": ["string", "null"]},
     "coverage_map": {"type": "array"},
     "full_coverage_map": {"type": "array"},

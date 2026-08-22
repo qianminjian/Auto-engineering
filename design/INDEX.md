@@ -22,6 +22,10 @@
 | `v5.8-Host-Runtime-Convergence-Analysis.md` | Phase 83 根因、目标架构、实现映射、证据分层与防退化分析附件 |
 | `v5.8-Host-Runtime-Convergence-Design.md` | Phase 83 Host Runtime、原子证据、事件投影与设计权威目标设计 |
 | `v5.8-Host-Runtime-Convergence-PLAN.md` | Phase 83 T460-T469 实施与产品验收计划 |
+| `v5.8-Compact-Host-Control-Plane-Design.md` | T525 Canonical Action 与 compact 宿主控制视图 |
+| `v5.8-Digest-Bound-Worker-Launch-Design.md` | T528 只传路径/摘要/权限的原生 Worker 启动合同 |
+| `v5.8-Small-Project-Assurance-Fusion-Design.md` | T529 LEAF 小项目独立验收 Worker 融合设计 |
+| `v5.8-Action-Scoped-Host-Context-Spec.md` | T530 待批准的 Action-scoped Supervisor 与成本验收 Spec |
 | `v5.8-Automatic-Context-Governance.md` | Phase 70 自动 compaction、有界增量上下文与成本治理权威设计 |
 | `v5.8-Session-Decoupling-Design.md` | Phase 64-67 状态恢复设计；日常 rollover 已由 Phase 70 纠偏 |
 | `v5.8-Session-Decoupling-PLAN.md` | Phase 64-70 T302-T350 可执行实施计划 |

@@ -54,3 +54,34 @@ Core usage 为 370,682 input、3,070,976 cache read、35,878 output，外层为
 结论：compact envelope 消除了 Action 正文重复，但无法删除宿主聊天历史；继续压缩字段只能边际
 优化，不能从机制上消除每回合重放。下一步必须在“每 Action 自动新建宿主执行会话，Thread 状态
 仍完全留在 Core”与“接受长会话百万级成本”之间作架构决策；前者会翻转 D13，需用户批准。
+
+## T528 Digest-Bound Launcher 复验
+
+Build `5.8.0-rc.5+sha256.d51c7397bc9bdc8d` 的 Codex frozen Canary 再次到达 `done`；
+四次 native `spawn_agent` 的 prompt 均为 533 bytes，只包含 root/ref/hash/权限，完整 Worker
+Prompt 未进入 Coordinator 工具调用，证明第二条正文复制通道已经闭合。
+
+但最终外层 usage 为 4,718,497 input（4,591,616 cached）和 17,982 output；Core 聚合
+480,775 input、10,483,456 cache read、81,153 output。原因已从 Prompt 重复转为每个 fresh
+Worker 都加载完整宿主基础上下文：Architect、Critic、Component Verifier、System Audit 共四次
+独立基线。T526 继续失败，Claude/L4 不启动。
+
+后续先按 D39 的规模伸缩原则实施“小项目独立 Assurance Worker 合并 Critic、组件覆盖和五维
+系统审计”，保持与 Developer 隔离且不减少任何审计维度，将四个 Worker 降为两个；若仍超预算，
+再申请翻转 D13。禁止把更换便宜模型当作 token 根治。
+
+## T529 Assurance Fusion 复验
+
+Build `5.8.0-rc.5+sha256.ad1c63a0a975fe40` 的 Codex frozen Canary 在 Critic 后直接
+`done`；只有 Architect 与 Assurance 两个 Worker，两次 launcher 均为 533 bytes。Assurance
+一次交付 Critic、组件 coverage 和固定五维审计，Core 重计数后收敛，未启动 Component/System
+Worker。19 tests、Ruff、mypy、build 均通过。
+
+外层 usage 为 3,785,090 input（3,568,640 cached）和 16,239 output；相对 T528 下降
+19.8%/22.3%，但仍是百万级。Core usage 为 686,981 input、6,109,440 cache read、54,795
+output。非翻转优化已依次排除 Action 内联、Worker Prompt 复制和重复验收 Worker，剩余主因是
+固定宿主会话在每个 LLM/tool 回合重放此前聊天历史。T526 继续失败，Claude/L4 不启动。
+
+下一步 T530 必须把“Core ExecutionSession”与“宿主模型上下文”进一步解耦：用户只启动一次，
+确定性 supervisor 为每个 Action 创建 fresh host context，只传 compact envelope/ref，并以 Core
+thread/action identity 自动续接。这会翻转 D13 的固定会话部分，未获用户批准前不得实施。

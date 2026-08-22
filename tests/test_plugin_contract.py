@@ -41,6 +41,9 @@ def test_shared_skill_describes_multi_worker_prompt_and_receipt_protocol() -> No
     assert "每条 `ae-run dev-loop` 内部命令" in text
     assert "AE_HOST_ACTION_VIEW=compact" in text
     assert "coordinator_prompt_ref" in text
+    assert "native_launch_prompt" in text
+    assert "不得先读取" in text
+    assert "读取每个 invocation 的 `prompt_ref`" not in text
 
 
 def test_claude_command_uses_same_multi_worker_protocol() -> None:
@@ -53,6 +56,8 @@ def test_claude_command_uses_same_multi_worker_protocol() -> None:
     assert "每条 `ae-run dev-loop` 内部命令" in text
     assert "AE_HOST_ACTION_VIEW=compact" in text
     assert "coordinator_prompt_ref" in text
+    assert "native_launch_prompt" in text
+    assert "不得先读取" in text
 
 
 def _run_cli(*args: str, cwd: Path | None = None, timeout: int = 30) -> subprocess.CompletedProcess:

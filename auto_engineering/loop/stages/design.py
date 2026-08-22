@@ -7,6 +7,7 @@ import json
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from auto_engineering.gates.deep_audit import recount_findings
 from auto_engineering.loop.domain_events import channels_updated, transition_event
 from auto_engineering.loop.events import LoopEvent, LoopEventType
 from auto_engineering.loop.stages.base import (
@@ -148,6 +149,18 @@ class CriticHandler:
                 if bool(context.extensions.get("has_more_batches"))
                 else "component_verifier"
             )
+            assurance = result.get("assurance_bundle")
+            if (
+                not context.extensions.get("has_more_batches")
+                and isinstance(assurance, Mapping)
+            ):
+                return self._apply_assurance_bundle(
+                    assurance=assurance,
+                    context=context,
+                    progress_event=progress_event,
+                    critic_changes=changes,
+                    lifecycle_effects=lifecycle_effects,
+                )
             return TransitionDecision(
                 events=(
                     progress_event,
@@ -281,6 +294,152 @@ class CriticHandler:
             next_stage=target,
             action_context=common,
             lifecycle_effects=lifecycle_effects,
+        )
+
+    @staticmethod
+    def _apply_assurance_bundle(
+        *,
+        assurance: Mapping[str, Any],
+        context: TransitionContext,
+        progress_event: LoopEvent,
+        critic_changes: Mapping[str, Any],
+        lifecycle_effects: LifecycleEffects,
+    ) -> TransitionDecision:
+        component = assurance.get("component_verification")
+        audit = assurance.get("system_audit")
+        if not isinstance(component, Mapping) or not isinstance(audit, Mapping):
+            return TransitionDecision(action_context={"error": {
+                "error_code": "ASSURANCE_BUNDLE_INVALID",
+                "message": "assurance bundle 缺少组件覆盖或系统审计分区",
+            }})
+        coverage = component.get("coverage_map")
+        findings = audit.get("findings")
+        if not isinstance(coverage, list) or not isinstance(findings, list):
+            return TransitionDecision(action_context={"error": {
+                "error_code": "ASSURANCE_BUNDLE_INVALID",
+                "message": "assurance bundle 的 coverage/findings 必须为数组",
+            }})
+        required_dimensions = {
+            "architecture",
+            "code_quality",
+            "engineering",
+            "virtualization",
+            "team_design_coverage",
+        }
+        dimensions = audit.get("dimensions")
+        if not isinstance(dimensions, list) or set(dimensions) != required_dimensions:
+            return TransitionDecision(action_context={"error": {
+                "error_code": "ASSURANCE_DIMENSIONS_INCOMPLETE",
+                "message": "Assurance Worker 未完整覆盖固定五维系统审计",
+            }})
+        missing = sum(
+            item.get("status") == "MISSING"
+            for item in coverage
+            if isinstance(item, Mapping)
+        )
+        diverged = sum(
+            item.get("status") == "DIVERGED"
+            for item in coverage
+            if isinstance(item, Mapping)
+        )
+        if (
+            component.get("missing_count") != missing
+            or component.get("diverged_count") != diverged
+        ):
+            return TransitionDecision(action_context={"error": {
+                "error_code": "ASSURANCE_COVERAGE_COUNT_MISMATCH",
+                "message": "Assurance 覆盖计数与 coverage_map 不一致",
+            }})
+        deduped, p0, p1, p2 = recount_findings(findings)
+        if (
+            audit.get("p0_count") != p0
+            or audit.get("p1_count") != p1
+            or audit.get("p2_count") != p2
+        ):
+            return TransitionDecision(action_context={"error": {
+                "error_code": "ASSURANCE_AUDIT_COUNT_MISMATCH",
+                "message": "Assurance 审计计数与 findings 不一致",
+            }})
+        common_events = (
+            progress_event,
+            channels_updated(
+                LoopEventType.CRITIC_STATE_UPDATED,
+                dict(critic_changes),
+                thread_id=context.thread_id,
+                sequence=context.event_sequence,
+            ),
+        )
+        if missing or diverged:
+            return TransitionDecision(
+                events=(*common_events, channels_updated(
+                    LoopEventType.VERIFICATION_STATE_UPDATED,
+                    {"coverage_map": coverage, "audit_findings": coverage},
+                    thread_id=context.thread_id,
+                    sequence=context.event_sequence,
+                )),
+                next_stage="architect",
+                refine_source="component_verifier",
+                lifecycle_effects=lifecycle_effects,
+            )
+        blocking = [
+            item for item in deduped
+            if item.get("authority_class", "objective_defect")
+            in {"binding_violation", "objective_defect"}
+            and str(item.get("severity", "")).upper() in {"P0", "P1"}
+        ]
+        if blocking or int(audit.get("missing_count", 0)) or int(
+            audit.get("diverged_count", 0)
+        ):
+            return TransitionDecision(
+                events=(*common_events, channels_updated(
+                    LoopEventType.VERIFICATION_STATE_UPDATED,
+                    {"coverage_map": coverage, "open_findings": blocking},
+                    thread_id=context.thread_id,
+                    sequence=context.event_sequence,
+                )),
+                next_stage="architect",
+                refine_source="system_deep_audit",
+                audit_counts=(p0, p1, p2),
+                lifecycle_effects=lifecycle_effects,
+            )
+        advisory = [item for item in deduped if item not in blocking]
+        component_name = str(component.get("component") or "")
+        return TransitionDecision(
+            events=(
+                *common_events,
+                transition_event(
+                    LoopEventType.COMPONENT_COMPLETED,
+                    thread_id=context.thread_id,
+                    sequence=context.event_sequence,
+                    payload={"component": component_name},
+                ),
+                channels_updated(
+                    LoopEventType.VERIFICATION_STATE_UPDATED,
+                    {
+                        "coverage_map": coverage,
+                        "audit_findings": advisory,
+                        "open_findings": [],
+                    },
+                    thread_id=context.thread_id,
+                    sequence=context.event_sequence,
+                ),
+            ),
+            terminal=True,
+            audit_counts=(p0, p1, p2),
+            display_progress=True,
+            convergence={
+                "design_coverage_ok": True,
+                "system_deep_audit_ok": True,
+            },
+            lifecycle_effects=LifecycleEffects(
+                collect_token_usage=lifecycle_effects.collect_token_usage,
+                offload_stage=lifecycle_effects.offload_stage,
+                verification_progress={
+                    "kind": "component_verifier",
+                    "missing": 0,
+                    "diverged": 0,
+                },
+            ),
         )
 
 

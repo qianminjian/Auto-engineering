@@ -378,6 +378,53 @@ def test_compact_host_view_preserves_action_specific_control_fields(
         assert compact[key] == value
 
 
+def test_compact_host_view_projects_only_runtime_control_and_native_launcher(
+    tmp_path,
+) -> None:
+    from auto_engineering.cli.dev_loop import _compact_host_action
+
+    action = {
+        "action": "architect",
+        "message_id": "compact-spawn-action",
+        "thread_id": "thread-1",
+        "extensions": {
+            "context_manifest": {"blocks": [{"id": "large-context"}]},
+            "policy_snapshot": {"max_workers_per_thread": 50},
+            "ae": {
+                "execution_control": {"disposition": "CONTINUE"},
+                "runtime_revision": {"engine_build_id": "build-1"},
+                "issued_at": "not-required-by-host",
+            },
+        },
+        "host_execution": {
+            "schema_version": "1.0",
+            "platform": "codex",
+            "action_message_id": "compact-spawn-action",
+            "work_files": {"outcomes": "outcomes.json"},
+            "native_worker_tools": {"selection": "first"},
+            "workers": [{
+                "worker_id": "architect-0",
+                "native_launch_prompt": "bounded-launcher",
+                "receipt": {"large": "duplicate"},
+                "attestation": {"large": "duplicate"},
+                "prompt_ref": "prompt.txt",
+            }],
+        },
+    }
+
+    compact = _compact_host_action(action, tmp_path)
+
+    assert compact["extensions"] == {"ae": {
+        "execution_control": {"disposition": "CONTINUE"},
+        "runtime_revision": {"engine_build_id": "build-1"},
+    }}
+    assert compact["host_execution"]["workers"] == [{
+        "worker_id": "architect-0",
+        "native_launch_prompt": "bounded-launcher",
+    }]
+    assert compact["host_execution"]["work_files"] == {"outcomes": "outcomes.json"}
+
+
 def test_cli_lease_uses_inner_claude_identity_when_launched_from_codex(
     tmp_path,
     monkeypatch,
@@ -425,6 +472,7 @@ def test_cli_recovery_projection_forbids_duplicate_worker_spawn(
         "message_id": "recovery-action",
         "thread_id": "recovery-thread",
         "tick": 7,
+        "project_root": str(tmp_path),
         "extensions": {"ae": {"execution_control": ExecutionControl(
             schema_version="1.0",
             disposition=ExecutionDisposition.CONTINUE,
@@ -500,6 +548,7 @@ def test_cli_recovery_finalizes_complete_native_files_before_respawn(
         "message_id": "native-ready-action",
         "thread_id": "native-ready-thread",
         "tick": 5,
+        "project_root": str(tmp_path),
         "extensions": {"ae": {"execution_control": ExecutionControl(
             schema_version="1.0",
             disposition=ExecutionDisposition.CONTINUE,

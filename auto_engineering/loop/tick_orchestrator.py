@@ -2156,7 +2156,11 @@ class TickOrchestrator:
 
     def _record_critic_gate_progress(self, verdict: str) -> None:
         """更新 Critic gate 的展示进度；协议决策由 Handler 负责。"""
-        if self._progress_tree:
+        if (
+            self._progress_tree
+            and self._batch_state is not None
+            and not self._batch_state.is_plate_complete()
+        ):
             comp = self._batch_state.current_component()
             node = self._progress_tree.find_by_design_section(comp.design_section)
             if node:

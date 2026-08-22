@@ -83,7 +83,10 @@ _CONTRACTS: Mapping[str, StagePromptContract] = MappingProxyType({
         ExecutionMode.SINGLE_WORKER,
         ("requirement", "files_changed", "test_results", "design_scope"),
         ("critic",),
-        ("commit_hash", "design_authority", "design_decision_ledger"),
+        (
+            "commit_hash", "design_authority", "design_decision_ledger",
+            "assurance_scope",
+        ),
         ("diff", "test_evidence"),
     ),
     "component_verifier": StagePromptContract(

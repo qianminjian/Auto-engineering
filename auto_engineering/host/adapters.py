@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import shutil
 from collections.abc import Mapping
@@ -41,6 +42,30 @@ _CODEX_NATIVE_WORKER_TOOL_FAMILIES = [
         "close": "multi_agent_v1__close_agent",
     },
 ]
+
+
+def _native_worker_launch_prompt(
+    *,
+    project_root: str,
+    prompt_ref: str,
+    prompt_sha256: str,
+) -> str:
+    """生成不含 Worker 正文的有界原生启动合同。"""
+
+    contract = {
+        "schema_version": "1.0",
+        "project_root": project_root,
+        "prompt_ref": prompt_ref,
+        "prompt_sha256": prompt_sha256,
+        "may_drive_loop": False,
+        "may_spawn_workers": False,
+    }
+    return (
+        "AUTO_ENGINEERING_NATIVE_WORKER_LAUNCH_V1\n"
+        "切换到 project_root；只读取 prompt_ref 指定文件，先校验 SHA-256，"
+        "匹配后严格执行正文。不得驱动 Auto-Engineering Loop，不得创建子代理。\n"
+        + json.dumps(contract, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    )
 
 
 class _Adapter2Mixin:
@@ -98,11 +123,20 @@ class _Adapter2Mixin:
 
             plan = SpawnPlan.from_action(action)
             stage = str(action.get("stage") or "")
+            raw_project_root = action.get("project_root")
+            if not isinstance(raw_project_root, str) or not raw_project_root:
+                raise ValueError("HOST_ACTION_PROJECT_ROOT_MISSING")
+            project_root = raw_project_root
             host_execution["workers"] = [
                 {
                     "worker_id": invocation.worker_id,
                     "native_worker_handle": None,
                     "prompt_ref": invocation.prompt_ref,
+                    "native_launch_prompt": _native_worker_launch_prompt(
+                        project_root=project_root,
+                        prompt_ref=invocation.prompt_ref,
+                        prompt_sha256=invocation.prompt_sha256,
+                    ),
                     "receipt_path": invocation.receipt_path,
                     "receipt": {
                         "status": "pending",

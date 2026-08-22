@@ -79,6 +79,12 @@ ae-run dev-loop --init \
 `spawn.invocations[i].prompt_ref` 交给对应 fresh Worker；Coordinator 不再读取兼容字段
 `subagent_prompt` 正文。
 
+对每个 spawn invocation，Coordinator 必须把对应
+`action.host_execution.workers[i].native_launch_prompt` **原样**作为原生 Worker 工具的
+prompt/message。不得先读取、`sed`、复制、总结或拼接 `prompt_ref` 正文；只允许在主会话
+用摘要命令校验文件 SHA-256。Worker 在 fresh context 内切换到机器指定 `project_root`，
+自行读取并校验 Prompt Artifact 后执行。launcher 中只有路径、摘要和权限，不是业务 Prompt。
+
 每次用户启动 Skill 的首个 Core 命令必须是带用户原始参数的
 `dev-loop --init`；该入口会自动检测已有 thread 并返回 active Action，
 禁止先用 `status`、`find`、`rg` 或扫描 `.ae-state` 推测 Action。若仅执行
@@ -133,7 +139,8 @@ while control.disposition == "CONTINUE":
   保留的原 active Action。该状态不是用户决策点。
 - `action.spawn` 存在：检查当前 `HostCapabilities`，并逐项原样消费
   `action.spawn.invocations[]`；`instruction` 与旧 `subagent_prompt` 只作兼容诊断，禁止据此
-  重新推导 prompt、effort、隔离方式或 receipt path。
+  重新推导 prompt、effort、隔离方式或 receipt path。原生 spawn 工具输入只能是对应
+  `host_execution.workers[i].native_launch_prompt`，不得先读取 Worker Prompt 正文。
 - `action.stage == gap_review` 时，只展示 `action.current_gap`：按问题、证据、影响、推荐、
   理由、合法选项的顺序说明，并只询问当前项。用户回答后立即按 `expected_format.decision`
   提交单项 Result；累计决策与游标由 Core 持久化，宿主禁止本地批量缓存、提前询问其他

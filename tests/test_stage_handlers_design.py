@@ -204,6 +204,65 @@ def test_critic_approve_routes_by_remaining_batches() -> None:
     assert _changes(more)["total_majors"] == 2
 
 
+def test_assurance_bundle_fails_closed_when_audit_dimensions_are_incomplete() -> None:
+    decision = CriticHandler().apply(
+        {"majors_in_a_row": 0, "total_majors": 0},
+        {
+            "verdict": "APPROVE",
+            "findings": [],
+            "assurance_bundle": {
+                "component_verification": {
+                    "coverage_map": [], "missing_count": 0, "diverged_count": 0,
+                },
+                "system_audit": {
+                    "dimensions": ["architecture"],
+                    "findings": [], "p0_count": 0, "p1_count": 0, "p2_count": 0,
+                    "missing_count": 0, "diverged_count": 0,
+                },
+            },
+        },
+        _context(has_more_batches=False),
+    )
+
+    assert decision.terminal is False
+    assert decision.action_context["error"]["error_code"] == (
+        "ASSURANCE_DIMENSIONS_INCOMPLETE"
+    )
+
+
+def test_assurance_bundle_recounts_findings_instead_of_trusting_worker() -> None:
+    decision = CriticHandler().apply(
+        {"majors_in_a_row": 0, "total_majors": 0},
+        {
+            "verdict": "APPROVE",
+            "findings": [],
+            "assurance_bundle": {
+                "component_verification": {
+                    "coverage_map": [], "missing_count": 0, "diverged_count": 0,
+                },
+                "system_audit": {
+                    "dimensions": [
+                        "architecture", "code_quality", "engineering",
+                        "virtualization", "team_design_coverage",
+                    ],
+                    "findings": [{
+                        "severity": "P1", "authority_class": "objective_defect",
+                        "description": "缺陷",
+                    }],
+                    "p0_count": 0, "p1_count": 0, "p2_count": 0,
+                    "missing_count": 0, "diverged_count": 0,
+                },
+            },
+        },
+        _context(has_more_batches=False),
+    )
+
+    assert decision.terminal is False
+    assert decision.action_context["error"]["error_code"] == (
+        "ASSURANCE_AUDIT_COUNT_MISMATCH"
+    )
+
+
 def test_orchestrator_dispatches_design_stages_via_registry(tmp_path) -> None:
     orchestrator = TickOrchestrator(tmp_path)
 

@@ -39,6 +39,19 @@ think hard
 - critic_feedback：总体反馈
 - assessment：Ready to merge | With fixes | Needs rework
 
+## LEAF 小项目 Assurance Bundle
+
+当上下文含 `assurance_scope.mode=leaf_small_project` 时，你仍是独立于 Developer 的同一个
+审查 Worker，但必须在一次读取中同时完成三项互不省略的检查：现有 Critic、组件设计覆盖、
+五维系统深审计。除上述 Critic 字段外，按 `expected_format` 输出 `assurance_bundle`：
+
+- `component_verification` 逐设计项给出 IMPLEMENTED/MISSING/DIVERGED 和 file:line；
+- `system_audit.dimensions` 必须原样覆盖 assurance_scope 的五个维度；
+- findings 必须包含 severity、authority_class、dimension 和证据；
+- 负覆盖或 P0/P1 不得因合并调用而降级，仍按真实结果输出。
+
+这只是减少重复宿主启动，不是减少审查范围。没有 `assurance_scope` 时保持原 Critic 输出。
+
 ## 信息来源
 - Developer 修改的文件：用 Read 审查
 - 测试结果 + commit：从上下文获取

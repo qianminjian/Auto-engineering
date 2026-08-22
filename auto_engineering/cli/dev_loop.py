@@ -349,6 +349,44 @@ def _compact_host_action(action: Mapping[str, Any], root: Path) -> dict[str, Any
         for key in compact_keys
         if key in action
     }
+    extensions = action.get("extensions")
+    if isinstance(extensions, Mapping):
+        raw_ae = extensions.get("ae")
+        if isinstance(raw_ae, Mapping):
+            ae = {
+                key: raw_ae[key]
+                for key in ("execution_control", "runtime_revision", "runtime")
+                if key in raw_ae
+            }
+            compact["extensions"] = {"ae": ae}
+        else:
+            compact.pop("extensions", None)
+    host_execution = action.get("host_execution")
+    if isinstance(host_execution, Mapping):
+        projected_host = {
+            key: host_execution[key]
+            for key in (
+                "schema_version",
+                "platform",
+                "action_message_id",
+                "work_files",
+                "recovery",
+                "native_worker_tools",
+            )
+            if key in host_execution
+        }
+        workers = host_execution.get("workers")
+        if isinstance(workers, list):
+            projected_host["workers"] = [
+                {
+                    key: worker[key]
+                    for key in ("worker_id", "native_launch_prompt")
+                    if key in worker
+                }
+                for worker in workers
+                if isinstance(worker, Mapping)
+            ]
+        compact["host_execution"] = projected_host
     compact["view"] = "compact"
     instruction = action.get("instruction")
     if isinstance(instruction, str) and instruction:

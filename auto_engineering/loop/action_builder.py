@@ -1305,7 +1305,16 @@ class ActionBuilder:
         # Pass only the snapshot reference for Team Lead to relay.
         snap = self._dev_snapshot or {}
         baseline = self._state.architecture_baseline or {}
-        return self._build_stage_action(base, "critic", context={
+        batch_state = self._batch_state
+        assurance_enabled = (
+            len(self._state.file_list) <= 20
+            and batch_state is not None
+            and sum(len(plate.components) for plate in batch_state.plates) == 1
+            and not batch_state.has_more_batches_for(
+                batch_state.current_component()
+            )
+        )
+        context = {
             "files_changed": (
                 self._state.batch_changed_files
                 or snap.get("files_changed", self._state.files_changed)
@@ -1327,7 +1336,8 @@ class ActionBuilder:
             ),
             "gate_results": dict(self._state.gate_results or {}),
             "open_findings": list(self._state.open_findings),
-        }, expected_format={
+        }
+        expected_format = {
             "stage": "critic",
             "verdict": "APPROVE | MAJOR",
             "findings": (
@@ -1338,7 +1348,42 @@ class ActionBuilder:
             "strengths": "[{description:string, location?:string}]",
             "critic_feedback": "string",
             "assessment": "Ready to merge | With fixes | Needs rework",
-        })
+        }
+        if assurance_enabled:
+            assert batch_state is not None
+            component = batch_state.current_component()
+            context["assurance_scope"] = {
+                "mode": "leaf_small_project",
+                "component": component.name,
+                "design_section": component.design_section,
+                "design_doc_path": self._state.design_doc_path,
+                "implementation_files": list(self._state.file_list),
+                "project_profile_summary": self._project_profile_summary(
+                    verifier=True
+                ),
+                "required_audit_dimensions": [
+                    "architecture",
+                    "code_quality",
+                    "engineering",
+                    "virtualization",
+                    "team_design_coverage",
+                ],
+            }
+            expected_format["assurance_bundle"] = (
+                "{component_verification:{component,coverage_map:[{design_item,"
+                "status:IMPLEMENTED|MISSING|DIVERGED,file,line,note}],missing_count,"
+                "diverged_count,recheck_log:[]},system_audit:{dimensions:[architecture,"
+                "code_quality,engineering,virtualization,team_design_coverage],findings:"
+                "[{severity,authority_class,dimension,file,line,description,evidence,"
+                "suggested_fix}],p0_count,p1_count,p2_count,total_audited_files,"
+                "design_docs_stale,design_doc_suggestions,missing_count,diverged_count}}"
+            )
+        return self._build_stage_action(
+            base,
+            "critic",
+            context=context,
+            expected_format=expected_format,
+        )
 
     def _build_action_component_verifier(self, base: dict) -> dict:
         # 2026-07-25 审计修复: batch_state 为 None 时原代码 AttributeError 崩溃,

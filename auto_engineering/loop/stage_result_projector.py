@@ -66,6 +66,11 @@ class StageResultProjector:
             state.critic_feedback = result.get("critic_feedback", "")
             state.strengths = result.get("strengths")
             state.assessment = result.get("assessment")
+            assurance = result.get("assurance_bundle")
+            if isinstance(assurance, Mapping):
+                component = assurance.get("component_verification")
+                if isinstance(component, Mapping):
+                    state.coverage_map = list(component.get("coverage_map", []))
         elif stage == "component_verifier":
             state.coverage_map = result.get("coverage_map", [])
         elif stage == "system_verifier":

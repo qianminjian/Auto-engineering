@@ -39,6 +39,11 @@ Violating the letter of this rule is violating the spirit of this rule.
 `spawn.invocations[i].prompt_ref` 交给对应 fresh Worker；Coordinator 不再读取兼容字段
 `subagent_prompt` 正文。
 
+对每个 spawn invocation，把对应
+`action.host_execution.workers[i].native_launch_prompt` 原样作为原生 Worker 工具输入。
+Coordinator 不得先读取、`sed`、复制、总结或重新拼接 `prompt_ref` 正文；主会话只允许
+校验文件 SHA-256。由 fresh Worker 切换到机器指定 `project_root`，读取并验证 Artifact。
+
 ```text
 1. project_root = 宿主启动时解析的绝对项目目录
    action = ae-run dev-loop --init "<requirement>" [--design-doc <path>]
@@ -105,15 +110,18 @@ Violating the letter of this rule is violating the spirit of this rule.
          validate HostCapabilities against action.spawn
          consume action.spawn.invocations[] exactly; instruction is diagnostic only
          consume action.host_execution.workers[] as the evidence-template SSOT
+         pass workers[i].native_launch_prompt verbatim to the native spawn tool;
+             不得先读取 prompt_ref 正文，也不得把正文复制进 tool call
          keep native agent/thread IDs only as native_worker_handle; never replace worker_id
          原生 Agent 容量耗尽时，回收/等待后重试一次
          if still exhausted, submit spawned=false with
          spawn_error_code=HOST_AGENT_CAPACITY and the original spawn_error
          if action.spawn.count == 1:
-             invoke one isolated worker with action.spawn.invocations[0]
+             invoke one isolated worker with workers[0].native_launch_prompt
              for Codex use fork_turns="none"; the worker must not drive Loop or spawn
          else:
-             read prompt_ref, verify prompt_hash, invoke worker[i]
+             verify each prompt_ref hash without reading its body, then invoke each worker
+             with workers[i].native_launch_prompt
          wait for all outstanding workers with one bounded native wait; 禁止 30 秒轮询，
              只在 5 / 10 / 15 分钟心跳边界重新评估，等待期间不得重复读取 diff 或状态文件
              Codex 使用 collaboration.wait_agent({"timeout_ms":300000})，或
@@ -205,9 +213,10 @@ ae-run dev-loop --init \
 3. 检查 `HostCapabilities.subagents`；并行任务还需检查
    `HostCapabilities.parallel_subagents`。
 4. 能力满足时：无论单 Worker 或多 Worker，都必须逐项消费
-   `action.spawn.invocations[]`。读取每个 invocation 的 `prompt_ref` 后校验
-   `prompt_sha256`，使用其 `requested_effort`、`isolation` 和 `receipt_path`，并以
-   `action.host_execution.workers[i]` 的 pending 模板作为 Core 终结时的证明事实源。
+   `action.spawn.invocations[]`。在主会话只用摘要命令核对每个 invocation 的
+   `prompt_ref`/`prompt_sha256`，不得读取正文；把对应 `native_launch_prompt` 原样交给
+   Worker，并使用 invocation 的 `requested_effort`、`isolation`、`receipt_path`。以
+   `action.host_execution.workers[i]` 的机器字段作为当前 Worker 映射事实源。
    宿主只收集原生 WorkerOutcome，不直接修改模板或证明文件。
 5. `action.subagent_prompt` 只允许 Coordinator 合并真实 Worker 的业务输出，
    绝不能作为 Worker invocation prompt；证据只能由 `--finalize-result`

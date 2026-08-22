@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
 
 import pytest
@@ -120,6 +121,7 @@ def test_adapter_materializes_strict_worker_evidence_templates(
         "message_id": "action-multi",
         "thread_id": "multi-evidence",
         "tick": 1,
+        "project_root": str(tmp_path),
         "spawn": {
             "contract_version": "1.0",
             "count": 3,
@@ -176,6 +178,14 @@ def test_adapter_materializes_strict_worker_evidence_templates(
         assert execution["attestation"]["prompt_sha256"] == invocation["prompt_sha256"]
         assert execution["attestation"]["isolation_evidence"] == isolation
         assert len(execution["attestation"]["visible_capabilities_sha256"]) == 64
+        launcher = execution["native_launch_prompt"]
+        assert action["project_root"] in launcher
+        assert invocation["prompt_ref"] in launcher
+        assert invocation["prompt_sha256"] in launcher
+        launch_contract = json.loads(launcher.splitlines()[-1])
+        assert launch_contract["may_drive_loop"] is False
+        assert launch_contract["may_spawn_workers"] is False
+        assert len(launcher.encode("utf-8")) < 1024
 
 
 def test_codex_adapter_advertises_semantic_native_worker_tool_families() -> None:
@@ -186,6 +196,7 @@ def test_codex_adapter_advertises_semantic_native_worker_tool_families() -> None
         "action": "architect",
         "stage": "architect",
         "message_id": "action-native-tools",
+        "project_root": "/tmp/project",
         "spawn": {
             "contract_version": "1.0",
             "count": 1,
@@ -224,6 +235,44 @@ def test_codex_adapter_advertises_semantic_native_worker_tool_families() -> None
             "close": "multi_agent_v1__close_agent",
         },
     ]
+
+
+def test_spawn_action_without_project_root_fails_closed() -> None:
+    from auto_engineering.host import HostPlatform
+    from auto_engineering.host.adapters import adapter_for
+
+    adapter = adapter_for(HostPlatform.CODEX)
+    profile = adapter.profile(
+        detected=adapter.capabilities,
+        authorized=adapter.capabilities,
+    )
+    action = {
+        "action": "architect",
+        "stage": "architect",
+        "message_id": "missing-root",
+        "spawn": {
+            "contract_version": "1.0",
+            "count": 1,
+            "effort": "high",
+            "parallel": False,
+            "invocations": [{
+                "worker_id": "architect-0",
+                "role": "architect",
+                "prompt_ref": ".ae-state/effects/prompt/architect.txt",
+                "prompt_sha256": "a" * 64,
+                "requested_effort": "high",
+                "isolation": "fresh_context",
+                "capabilities": {
+                    "may_drive_loop": False,
+                    "may_spawn_workers": False,
+                },
+                "receipt_path": ".ae-state/spawn-proofs/architect.json",
+            }],
+        },
+    }
+
+    with pytest.raises(ValueError, match="HOST_ACTION_PROJECT_ROOT_MISSING"):
+        adapter.map_action(action, profile=profile)
 
 
 @pytest.mark.parametrize("platform_name", ["CLAUDE_CODE", "CODEX"])
