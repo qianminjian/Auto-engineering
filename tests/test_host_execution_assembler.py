@@ -416,6 +416,45 @@ def test_restore_committed_result_binds_active_action_and_materializes_file(
     ) == expected
 
 
+def test_restore_prepared_journal_materializes_authoritative_outcomes(
+    tmp_path: Path,
+) -> None:
+    action = _action(tmp_path)
+    original = NativeWorkerOutcome(
+        worker_id="critic-0",
+        native_worker_handle="agent-123",
+        status="completed",
+        payload={"verdict": "PASS"},
+        summary="通过",
+        actual_model="gpt-5.6-sol",
+        isolation_evidence="fork_context=false",
+    ).to_dict()
+    journal = tmp_path / ".ae-state/host-runtime/outcomes/action-1.json"
+    journal.parent.mkdir(parents=True)
+    journal.write_text(json.dumps({
+        "schema_version": "1.0",
+        "status": "prepared",
+        "action_message_id": "action-1",
+        "outcomes": [original],
+    }))
+    work_copy = Path(".ae-state/host-runtime/work/recovery/outcomes.json")
+    target = tmp_path / work_copy
+    target.parent.mkdir(parents=True)
+    target.write_text(json.dumps({"outcomes": [{
+        **original,
+        "isolation_evidence": "fork_turns=none",
+    }]}))
+
+    restored = HostExecutionAssembler(tmp_path).restore_committed_result_to_file(
+        action=action,
+        result_path=Path("result.json"),
+        outcomes_path=work_copy,
+    )
+
+    assert restored is None
+    assert json.loads(target.read_text()) == {"outcomes": [original]}
+
+
 def test_restore_committed_result_rejects_mismatched_causation(
     tmp_path: Path,
 ) -> None:

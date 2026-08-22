@@ -110,7 +110,36 @@ class HostExecutionAssembler:
             / f"{message_id}.json"
         )
         journal = self._read_json(journal_path)
-        if journal is None or journal.get("status") != "committed":
+        if journal is None:
+            return None
+        if journal.get("status") == "prepared":
+            outcomes = journal.get("outcomes")
+            if (
+                journal.get("schema_version") != "1.0"
+                or journal.get("action_message_id") != message_id
+                or not isinstance(outcomes, list)
+            ):
+                raise HostEvidenceValidationError(
+                    ("OUTCOME_JOURNAL_PREPARED_INVALID",)
+                )
+            if outcomes_path is not None:
+                outcomes_target = (
+                    outcomes_path.resolve()
+                    if outcomes_path.is_absolute()
+                    else (self.project_root / outcomes_path).resolve()
+                )
+                if (
+                    outcomes_target != self.project_root
+                    and self.project_root not in outcomes_target.parents
+                ):
+                    raise HostEvidenceValidationError(
+                        ("OUTCOMES_OUTPUT_PATH_OUTSIDE_PROJECT",)
+                    )
+                # prepared journal 已在 Worker 完成后原子落盘，是 outcome
+                # 的权威恢复点；宿主工作副本只能由它重建，不能反向改写事实。
+                _atomic_write_json(outcomes_target, {"outcomes": outcomes})
+            return None
+        if journal.get("status") != "committed":
             return None
         result = journal.get("result")
         # 早期 T517 build 曾把失败尝试误写为 committed；失败不是成功证据，

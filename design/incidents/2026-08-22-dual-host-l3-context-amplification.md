@@ -40,3 +40,17 @@ Codex 还出现一次 Architect Worker 已完成后 Coordinator 先漏传 outcom
 4. L3/L4 除业务终态外必须校验成本，功能通过不能覆盖效率失败。
 5. 若 compact control plane 仍不达阈值，自动 fresh session 属于 D13 状态翻转，必须另行审批。
 
+## T525-T527 复验（Build `5.8.0-rc.5+sha256.41f2b07e39187219`）
+
+Codex frozen Canary 到达 `done`，17 tests、Ruff、mypy、build、组件覆盖和系统审计均通过；
+Core usage 为 370,682 input、3,070,976 cache read、35,878 output，外层为
+3,292,465 input（3,048,448 cached）和 18,326 output。相对旧 Build，外层 input/cache
+仅下降约 34.2%/37.2%，仍为百万级重放，因此 T526 失败；Claude 与 L4 按门禁未启动。
+
+首次受控运行被验收编排的未消费 JSON pipe 反压中断；恢复时又发现 prepared outcome journal
+与宿主可写 work copy 漂移。T527 已改为由 Core 以 prepared journal 原文原子重建 outcomes，
+2528/1、Ruff、mypy 通过；全新 Canary 未再出现 `OUTCOME_JOURNAL_CONFLICT`。
+
+结论：compact envelope 消除了 Action 正文重复，但无法删除宿主聊天历史；继续压缩字段只能边际
+优化，不能从机制上消除每回合重放。下一步必须在“每 Action 自动新建宿主执行会话，Thread 状态
+仍完全留在 Core”与“接受长会话百万级成本”之间作架构决策；前者会翻转 D13，需用户批准。
