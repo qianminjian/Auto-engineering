@@ -224,6 +224,128 @@ class ProductEvidenceArtifactJournal:
         return records
 
 
+class LoopStopReportJournal:
+    """从机器 Action/Receipt 生成有界停止报告，不调用模型。"""
+
+    def __init__(self, project_root: Path) -> None:
+        self._root = project_root.resolve()
+
+    @staticmethod
+    def _line(value: object, *, limit: int = 500) -> str:
+        text = str(value or "").replace("\r", " ").replace("\n", " ").strip()
+        return text[:limit]
+
+    def _latest_receipt(self, thread_id: str) -> dict[str, Any] | None:
+        directory = self._root / ".ae-state/host-runtime/receipts"
+        records: list[dict[str, Any]] = []
+        for path in sorted(directory.glob("*.json")):
+            try:
+                value = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+                continue
+            if (
+                isinstance(value, dict)
+                and value.get("thread_id") == thread_id
+            ):
+                records.append(value)
+        if not records:
+            return None
+        return max(records, key=lambda item: (
+            int(item.get("tick", -1)),
+            str(item.get("action_message_id", "")),
+        ))
+
+    @staticmethod
+    def _disposition(action: Mapping[str, Any]) -> str:
+        extensions = action.get("extensions")
+        ae = extensions.get("ae") if isinstance(extensions, Mapping) else None
+        control = (
+            ae.get("execution_control") if isinstance(ae, Mapping) else None
+        )
+        value = control.get("disposition") if isinstance(control, Mapping) else None
+        return str(value or "UNKNOWN")
+
+    @staticmethod
+    def _next_step(action: Mapping[str, Any], disposition: str) -> str:
+        stage = str(action.get("retry_stage") or action.get("stage") or "当前阶段")
+        if disposition == "WAIT_RESOURCE":
+            return f"等待资源恢复后重试 {stage}"
+        if disposition == "WAIT_USER":
+            return "按 Core 返回的 Gate 选项取得用户决策"
+        if disposition == "TERMINAL":
+            return "循环已到确定性终态，无后续 Action"
+        if disposition == "HANDOFF_REQUIRED":
+            return "按 ResumeCapsule 创建新的宿主执行实例"
+        return "修复阻断错误后重新执行同一 active Action"
+
+    def record(
+        self,
+        *,
+        thread_id: str,
+        final_action: Mapping[str, Any],
+    ) -> Path:
+        disposition = self._disposition(final_action)
+        receipt = self._latest_receipt(thread_id)
+        action_id = self._line(final_action.get("message_id"))
+        reason = self._line(
+            final_action.get("reason_code") or final_action.get("error_code")
+        )
+        message = self._line(final_action.get("message"))
+        lines = [
+            "# Auto-Engineering Loop 停止报告",
+            "",
+            f"- Thread：`{self._line(thread_id)}`",
+            f"- Disposition：`{disposition}`",
+            f"- 当前 Action：`{action_id}`",
+            f"- Stage：`{self._line(final_action.get('stage'))}`",
+            f"- Tick：`{self._line(final_action.get('tick'))}`",
+            f"- 原因码：`{reason}`",
+            f"- 说明：{message or '无额外说明'}",
+            "",
+            "## 最近宿主回执",
+            "",
+        ]
+        if receipt is None:
+            lines.append("- 无已持久化宿主回执。")
+        else:
+            lines.extend([
+                f"- Action：`{self._line(receipt.get('action_message_id'))}`",
+                f"- Context：`{self._line(receipt.get('host_context_id'))}`",
+                f"- Stage：`{self._line(receipt.get('stage'))}`",
+                f"- Status：`{self._line(receipt.get('status'))}`",
+                f"- Error：`{self._line(receipt.get('error_code'))}`",
+            ])
+        lines.extend([
+            "",
+            "## 下一步",
+            "",
+            f"- {self._next_step(final_action, disposition)}。",
+            "",
+            "> 本报告由 Action、Execution Control 与 Receipt 机器事实确定性生成。",
+            "",
+        ])
+        directory = self._root / ".ae-state/reports"
+        directory.mkdir(parents=True, exist_ok=True)
+        identity = hashlib.sha256(
+            f"{thread_id}:{action_id}:{disposition}".encode()
+        ).hexdigest()[:24]
+        target = directory / f"loop-stop-{identity}.md"
+        encoded = "\n".join(lines)
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=".loop-stop-", suffix=".md", dir=directory, text=True,
+        )
+        try:
+            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                handle.write(encoded)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary_name, target)
+        finally:
+            if os.path.exists(temporary_name):
+                os.unlink(temporary_name)
+        return target
+
+
 class MachineOperationExecutor:
     """原样执行 Core 下发的三段 argv；不使用 Shell、不推断参数。"""
 
@@ -487,6 +609,7 @@ __all__ = [
     "ActionScopedProductResult",
     "HostSupervisor",
     "HostSupervisorResult",
+    "LoopStopReportJournal",
     "MachineOperationExecutor",
     "ProductEvidenceArtifactJournal",
 ]

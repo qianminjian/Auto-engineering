@@ -20,6 +20,7 @@ from auto_engineering.config.feature_flags import feature_status_for_action
 from auto_engineering.config.runtime_config import RuntimeConfig, get_default_config
 from auto_engineering.host.runtime_identity import ExecutionIdentity
 from auto_engineering.host.spawn_contract import WorkerInvocationSpec
+from auto_engineering.loop.actions import business_result_contract
 from auto_engineering.loop.design_authority import DesignAuthorityPolicy
 from auto_engineering.loop.design_decision_ledger import DesignDecisionLedger
 from auto_engineering.loop.effects import (
@@ -288,6 +289,10 @@ class ActionBuilder:
 
     def _build_action_project_setup(self, base: dict) -> dict:
         """项目能力不足时让宿主完成搭建；Core 不生成脚手架。"""
+        expected_format = {
+            "result_type": "project_setup_completed",
+            "artifacts": ["创建或确认的项目入口文件与源码目录"],
+        }
         return {
             **base,
             "action": "project_setup_required",
@@ -308,10 +313,11 @@ class ActionBuilder:
                 "为 ESLint 9 创建 flat config；若缺失 jsdom_dependency，补齐测试环境的"
                 "直接开发依赖。Git 仅是可选证据源，未经用户授权不得执行 git init/add/commit。"
             ),
-            "expected_format": {
-                "result_type": "project_setup_completed",
-                "artifacts": ["创建或确认的项目入口文件与源码目录"],
-            },
+            "expected_format": expected_format,
+            "result_contract": business_result_contract(
+                "project_setup",
+                expected_format,
+            ),
         }
 
     @property
@@ -423,7 +429,7 @@ class ActionBuilder:
     # contain real user PII.  Scanning them causes false positives (e.g. spawn
     # proof tokens matching api_key patterns → ***REDACTED*** → broken mechanism).
     _PII_SKIP_FIELDS: frozenset[str] = frozenset({
-        "instruction", "subagent_prompt", "expected_format",
+        "instruction", "subagent_prompt", "expected_format", "result_contract",
         "spawn", "spawn_proof_token", "gate_summary", "feature_status",
         "progress_summary", "feedback",
     })
@@ -781,6 +787,12 @@ class ActionBuilder:
                 for key, value in expected_format.items()
                 if key not in _CORE_OWNED_RESULT_FIELDS
             }
+            result_contract = business_result_contract(
+                action,
+                result["expected_format"],
+            )
+            if result_contract is not None:
+                result["result_contract"] = result_contract
         result.update(extra)
         return result
 

@@ -751,6 +751,175 @@ def test_stale_coordinator_payload_is_rejected_before_journal_commit(
     ).exists()
 
 
+def test_finalize_recovers_once_from_json_stringified_array_field(
+    tmp_path: Path,
+) -> None:
+    action = _action(tmp_path)
+    action["expected_format"] = {
+        "verdict": "APPROVE | MAJOR",
+        "findings": "array",
+    }
+    action["result_contract"] = {
+        "schema_version": "1.0",
+        "required": ["verdict", "findings"],
+        "properties": {
+            "verdict": {"type": "string"},
+            "findings": {"type": "array"},
+        },
+        "additionalProperties": False,
+    }
+    findings = [{
+        "severity": "P1",
+        "file": "src/example.ts",
+        "issue": "缺少边界校验",
+    }]
+    outcome = NativeWorkerOutcome(
+        worker_id="critic-0",
+        native_worker_handle="agent-123",
+        status="completed",
+        payload={"verdict": "MAJOR", "findings": findings},
+        summary="发现一个主要问题",
+        actual_model="gpt-5.6-sol",
+    )
+
+    result = HostExecutionAssembler(tmp_path).finalize(
+        action=action,
+        outcomes=[outcome],
+        coordinator_payload={
+            "verdict": "MAJOR",
+            "findings": json.dumps(findings, ensure_ascii=False),
+        },
+    )
+
+    assert result["findings"] == findings
+    journal = json.loads((
+        tmp_path / ".ae-state/host-runtime/outcomes/action-1.json"
+    ).read_text())
+    assert journal["result"]["findings"] == findings
+
+
+def test_finalize_rejects_unrecoverable_business_type_before_journal(
+    tmp_path: Path,
+) -> None:
+    action = _action(tmp_path)
+    action["expected_format"] = {
+        "verdict": "APPROVE | MAJOR",
+        "findings": "array",
+    }
+    action["result_contract"] = {
+        "schema_version": "1.0",
+        "required": ["verdict", "findings"],
+        "properties": {
+            "verdict": {"type": "string"},
+            "findings": {"type": "array"},
+        },
+        "additionalProperties": False,
+    }
+    outcome = NativeWorkerOutcome(
+        worker_id="critic-0",
+        native_worker_handle="agent-123",
+        status="completed",
+        payload={"verdict": "MAJOR", "findings": []},
+        summary="审查完成",
+        actual_model="gpt-5.6-sol",
+    )
+
+    with pytest.raises(HostEvidenceValidationError) as caught:
+        HostExecutionAssembler(tmp_path).finalize(
+            action=action,
+            outcomes=[outcome],
+            coordinator_payload={
+                "verdict": "MAJOR",
+                "findings": "not-json",
+            },
+        )
+
+    assert caught.value.violations == (
+        "COORDINATOR_FIELD_TYPE_INVALID:findings:array",
+    )
+    assert not (
+        tmp_path / ".ae-state/host-runtime/outcomes/action-1.json"
+    ).exists()
+
+
+def test_finalize_rejects_invalid_stage_semantics_before_journal(
+    tmp_path: Path,
+) -> None:
+    action = _action(tmp_path)
+    action["expected_format"] = {
+        "verdict": "APPROVE | MAJOR",
+        "findings": "array",
+    }
+    action["result_contract"] = {
+        "schema_version": "1.0",
+        "required": ["verdict", "findings"],
+        "properties": {
+            "verdict": {"type": "string"},
+            "findings": {"type": "array"},
+        },
+        "additionalProperties": False,
+    }
+    outcome = NativeWorkerOutcome(
+        worker_id="critic-0",
+        native_worker_handle="agent-123",
+        status="completed",
+        payload={"verdict": "MAYBE", "findings": []},
+        summary="审查完成",
+        actual_model="gpt-5.6-sol",
+    )
+
+    with pytest.raises(HostEvidenceValidationError) as caught:
+        HostExecutionAssembler(tmp_path).finalize(
+            action=action,
+            outcomes=[outcome],
+            coordinator_payload={"verdict": "MAYBE", "findings": []},
+        )
+
+    assert caught.value.violations[0].startswith(
+        "COORDINATOR_RESULT_INVALID:verdict 非法",
+    )
+    assert not (
+        tmp_path / ".ae-state/host-runtime/outcomes/action-1.json"
+    ).exists()
+
+
+def test_inline_finalize_rejects_field_outside_strict_result_contract(
+    tmp_path: Path,
+) -> None:
+    action = _action(tmp_path)
+    action.pop("spawn")
+    action.pop("host_execution")
+    action.pop("spawn_proof_token")
+    action["tick"] = 1
+    action["result_contract"] = {
+        "schema_version": "1.0",
+        "required": ["verdict", "findings"],
+        "properties": {
+            "verdict": {"type": "string"},
+            "findings": {"type": "array"},
+        },
+        "additionalProperties": False,
+    }
+
+    with pytest.raises(HostEvidenceValidationError) as caught:
+        HostExecutionAssembler(tmp_path).finalize(
+            action=action,
+            outcomes=[],
+            coordinator_payload={
+                "verdict": "APPROVE",
+                "findings": [],
+                "untyped_details": {"hidden": "value"},
+            },
+        )
+
+    assert caught.value.violations == (
+        "COORDINATOR_FIELD_UNEXPECTED:untyped_details",
+    )
+    assert not (
+        tmp_path / ".ae-state/host-runtime/outcomes/action-1.json"
+    ).exists()
+
+
 def test_completed_evidence_preflight_reports_all_missing_artifacts(
     tmp_path: Path,
 ) -> None:

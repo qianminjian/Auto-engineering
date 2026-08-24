@@ -282,6 +282,12 @@ def test_compact_host_view_uses_prompt_ref_without_inlining_action_context(
         "context": {"large": "context body must not reach stdout"},
         "tasks": [{"id": "T1", "description": "large task body"}],
         "expected_format": {"files_changed": "[string]"},
+        "result_contract": {
+            "schema_version": "1.0",
+            "required": ["files_changed"],
+            "properties": {"files_changed": {"type": "array"}},
+            "additionalProperties": False,
+        },
         "extensions": {
             "ae": {
                 "execution_control": ExecutionControl(
@@ -303,6 +309,7 @@ def test_compact_host_view_uses_prompt_ref_without_inlining_action_context(
     assert compact["message_id"] == "compact-action"
     assert compact["extensions"] == action["extensions"]
     assert compact["expected_format"] == action["expected_format"]
+    assert compact["result_contract"] == action["result_contract"]
     assert "instruction" not in compact
     assert "subagent_prompt" not in compact
     assert "context" not in compact

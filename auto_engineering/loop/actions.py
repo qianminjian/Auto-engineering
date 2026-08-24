@@ -25,6 +25,7 @@ __all__ = [
     "ActionDone",
     "ActionError",
     "ErrorResponse",
+    "business_result_contract",
     "result_contract_warnings",
     "validate_result_format",
 ]
@@ -163,44 +164,124 @@ RESULT_SCHEMA: dict[str, dict] = {
 _PHASE0_STAGES = frozenset({"gap_scan", "gap_review", "research"})
 
 _RESULT_FIELD_TYPES: dict[str, dict[str, tuple[type, ...]]] = {
+    "gap_scan": {
+        "gaps": (list,), "scanned_sections": (int,), "has_blocking": (bool,),
+    },
+    "gap_review": {"decision": (dict,)},
+    "research": {
+        "findings": (str,), "sources": (list,), "source_tier": (str,),
+        "confidence": (str,), "recommended_design": (str,),
+        "search_status": (str,), "search_error": (str,),
+    },
     "project_setup": {
         "stage": (str,), "result_type": (str,), "artifacts": (list,),
     },
     "architect": {
         "stage": (str,), "plan": (str,), "file_list": (list,),
+        "batch_plan": (list,), "plan_patch": (dict,),
+        "result_type": (str,), "source_revision": (int,),
+        "classifications": (list,), "new_batch_plan": (list,),
+        "contracts": (dict,), "obligations": (list,),
+        "design_change_requests": (list,), "decision_impacts": (list,),
     },
     "developer": {
         "stage": (str,), "batch_id": (str, type(None)),
         "files_changed": (list,), "test_results": (dict,),
+        "commit_hash": (str,), "red_evidence": (list,),
     },
     "critic": {
         "stage": (str,), "verdict": (str,), "findings": (list,),
+        "strengths": (list,), "critic_feedback": (str,),
+        "assessment": (str,), "assurance_bundle": (dict,),
     },
     "component_verifier": {
         "stage": (str,), "component": (str, type(None)),
         "coverage_map": (list,), "missing_count": (int,),
-        "diverged_count": (int,),
+        "diverged_count": (int,), "recheck_log": (list,),
     },
     "plate_deep_audit": {
         "stage": (str,), "plate": (str,), "findings": (list,),
         "p0_count": (int,), "p1_count": (int,), "p2_count": (int,),
-        "cross_component_issues": (list,),
+        "cross_component_issues": (list,), "total_audited_files": (int,),
     },
     "system_verifier": {
         "stage": (str,), "full_coverage_map": (list,),
         "total_design_items": (int,), "covered_count": (int,),
         "missing_count": (int,), "diverged_count": (int,),
+        "recheck_log": (list,),
     },
     "system_deep_audit": {
         "stage": (str,), "findings": (list,), "p0_count": (int,),
         "p1_count": (int,), "p2_count": (int,),
         "total_audited_files": (int,),
+        "design_docs_stale": (bool,), "design_doc_suggestions": (str, list),
+        "missing_count": (int,), "diverged_count": (int,),
     },
     "session_claimed": {
         "stage": (str,), "claim_token": (str,), "session_id": (str,),
         "host": (str,),
     },
 }
+
+
+def business_result_contract(
+    stage: str,
+    expected_fields: object,
+) -> dict[str, object] | None:
+    """把 Stage 类型事实投影为宿主可执行的业务 payload 合同。
+
+    `expected_format` 继续只负责人类/模型说明；这里不解析其描述文本，只用
+    RESULT_SCHEMA 与运行时字段类型表，因此宿主不会从示例字符串猜测类型。
+    """
+
+    field_types = _RESULT_FIELD_TYPES.get(stage)
+    schema = RESULT_SCHEMA.get(stage)
+    if (
+        field_types is None
+        or not isinstance(expected_fields, dict)
+    ):
+        return None
+    undeclared = sorted(
+        str(field) for field in expected_fields if field not in field_types
+    )
+    if undeclared:
+        raise ValueError(
+            f"RESULT_FIELD_TYPE_UNDECLARED:{stage}:{','.join(undeclared)}"
+        )
+    properties: dict[str, dict[str, object]] = {}
+    for field in expected_fields:
+        allowed = field_types.get(field)
+        if allowed is None:
+            continue
+        names = [
+            {
+                str: "string",
+                list: "array",
+                dict: "object",
+                int: "integer",
+                bool: "boolean",
+                type(None): "null",
+            }[item]
+            for item in allowed
+        ]
+        properties[field] = {
+            "type": names[0] if len(names) == 1 else names,
+        }
+    required = (
+        [
+            field
+            for field in schema.get("required", [])
+            if field != "stage" and field in properties
+        ]
+        if schema is not None
+        else list(properties)
+    )
+    return {
+        "schema_version": "1.0",
+        "required": required,
+        "properties": properties,
+        "additionalProperties": False,
+    }
 
 _CONSUMED_OPTIONAL_FIELDS: dict[str, tuple[str, ...]] = {
     "architect": ("contracts",),
@@ -255,10 +336,21 @@ def validate_result_format(result: dict, stage: str) -> list[str]:
         and isinstance(result.get("design_change_requests"), list)
         and bool(result["design_change_requests"])
     )
+    plan_reconciliation = (
+        stage == "architect"
+        and result.get("result_type") == "plan_reconciliation"
+    )
     required_fields = (
         ["stage", "design_change_requests"]
         if design_change_only
-        else (["stage", "plan", "file_list"] if stage == "architect" else schema["required"])
+        else (
+            [
+                "stage", "plan", "file_list", "result_type",
+                "source_revision", "classifications", "new_batch_plan",
+            ]
+            if plan_reconciliation
+            else (["stage", "plan", "file_list"] if stage == "architect" else schema["required"])
+        )
     )
 
     # 必填字段存在性
@@ -269,7 +361,7 @@ def validate_result_format(result: dict, stage: str) -> list[str]:
     # JSON Schema 的字段类型约束必须在运行时同样生效。尤其排除 bool：
     # Python 中 bool 是 int 子类，但 JSON Schema 不把 boolean 视为 integer。
     for field, allowed_types in _RESULT_FIELD_TYPES[stage].items():
-        if field not in result or result[field] is None:
+        if field not in result:
             continue
         value = result[field]
         valid_type = (
@@ -302,8 +394,20 @@ def validate_result_format(result: dict, stage: str) -> list[str]:
                 f"plan 过短 ({len(plan)} < {schema['plan_min_length']})")
         batch_plan = result.get("batch_plan")
         plan_patch = result.get("plan_patch")
-        if batch_plan is None and plan_patch is None:
+        if (
+            batch_plan is None
+            and plan_patch is None
+            and not plan_reconciliation
+        ):
             errors.append("batch_plan 或 plan_patch 至少提供一个")
+        if plan_reconciliation:
+            source_revision = result.get("source_revision")
+            if (
+                isinstance(source_revision, int)
+                and not isinstance(source_revision, bool)
+                and source_revision < 1
+            ):
+                errors.append("source_revision 必须大于等于 1")
         if isinstance(batch_plan, list) and len(batch_plan) < schema["batch_plan_min_batches"]:
             errors.append("batch_plan 至少需 1 个 batch")
         if plan_patch is not None:

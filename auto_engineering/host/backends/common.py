@@ -150,6 +150,7 @@ def launcher_prompt(request: ActionExecutionRequest) -> str:
         "SHA-256 后读取并严格执行；只写 request.work_files 指定文件。不得调用 dev-loop "
         "init/tick/resume，不得驱动下一 Action，不得读取或总结旧聊天记录。最终只返回 "
         "ActionContextOutcome。coordinator_result 顶层只包含 expected_format 业务字段；"
+        "result_contract 是机器类型事实源，数组和对象必须写为原生 JSON，不得再次序列化为字符串；"
         "不得包装在 result 中，不得复制 action/stage/tick/thread_id 等 Core 身份。\n"
         + payload
     )
@@ -176,6 +177,62 @@ def existing_work_file_digests(request: ActionExecutionRequest) -> dict[str, str
             continue
         digests[name] = hashlib.sha256(path.read_bytes()).hexdigest()
     return digests
+
+
+def normalize_coordinator_work_output(
+    request: ActionExecutionRequest,
+) -> None:
+    """在 context 成功回执前按 compact Action 合同规范化业务输出。"""
+
+    from auto_engineering.host.execution_assembler import (
+        HostEvidenceValidationError,
+        HostExecutionAssembler,
+    )
+
+    root = Path(request.project_root).resolve()
+    envelope_path = (root / request.compact_envelope_ref).resolve()
+    coordinator_path = (
+        root / request.work_files["coordinator_result"]
+    ).resolve()
+    if not envelope_path.is_relative_to(root) or not coordinator_path.is_relative_to(root):
+        raise HostEvidenceValidationError(("ACTION_OUTPUT_PATH_INVALID",))
+    # 旧测试/旧 Request 没有物化 compact envelope 时保持读取兼容；产品编译器始终写入。
+    if not envelope_path.is_file() or not coordinator_path.is_file():
+        return
+    try:
+        action = json.loads(envelope_path.read_text(encoding="utf-8"))
+        payload = json.loads(coordinator_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise HostEvidenceValidationError(("HOST_OUTCOME_INPUT_INVALID",)) from exc
+    if not isinstance(action, Mapping) or not isinstance(payload, Mapping):
+        raise HostEvidenceValidationError(("HOST_OUTCOME_INPUT_INVALID",))
+    normalized = HostExecutionAssembler._normalize_business_payload(
+        action=action,
+        coordinator_payload=payload,
+    )
+    if normalized == payload:
+        return
+    encoded = json.dumps(
+        normalized,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{coordinator_path.name}.",
+        suffix=".tmp",
+        dir=coordinator_path.parent,
+        text=True,
+    )
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(encoded)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary_name, coordinator_path)
+    finally:
+        if os.path.exists(temporary_name):
+            os.unlink(temporary_name)
 
 
 def non_negative_number(value: object) -> int | float | None:
@@ -261,5 +318,6 @@ __all__ = [
     "jsonl_events",
     "launcher_prompt",
     "non_negative_number",
+    "normalize_coordinator_work_output",
     "write_invocation_diagnostic",
 ]

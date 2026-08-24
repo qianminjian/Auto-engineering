@@ -532,6 +532,7 @@ class TestMutexAndLegacy:
         assert _last_json_line(result.output)["message_id"] == "terminal-1"
         assert evidence_calls[0]["host"] == "codex"
         assert evidence_calls[0]["thread_id"]
+        assert list((tmp_path / ".ae-state/reports").glob("loop-stop-*.md"))
 
     def test_supervise_reports_stable_error_without_python_traceback(
         self, tmp_path, monkeypatch,
@@ -552,6 +553,82 @@ class TestMutexAndLegacy:
         assert "HOST_OPERATION_FINALIZE_FAILED" in result.output
         assert "Traceback" not in result.output
 
+    def test_supervise_persists_stop_report_when_host_operation_raises(
+        self, tmp_path, monkeypatch,
+    ) -> None:
+        from auto_engineering.host import backends
+        from auto_engineering.host import supervisor as supervisor_module
+        from auto_engineering.host.invocation import (
+            ActionExecutionContractError,
+            ActionExecutionReceipt,
+            HostInvocationProbe,
+        )
+
+        initialized = CliRunner().invoke(
+            main,
+            ["dev-loop", "--init", "实现 X", "--project-root", str(tmp_path)],
+        )
+        assert initialized.exit_code == 0, initialized.output
+
+        class FakeBackend:
+            def __init__(self, **kwargs):
+                pass
+
+            def probe(self):
+                return HostInvocationProbe.available("codex")
+
+            def execute(self, request):
+                return ActionExecutionReceipt.from_dict({
+                    "schema_version": "1.0",
+                    "thread_id": request.thread_id,
+                    "action_message_id": request.action_message_id,
+                    "build_id": request.build_id,
+                    "host_context_id": "failed-context-1",
+                    "backend": "codex",
+                    "status": "completed",
+                    "exit_code": 0,
+                    "work_file_digests": {},
+                    "usage": {
+                        "input_tokens": 1,
+                        "cached_input_tokens": 0,
+                        "output_tokens": 1,
+                    },
+                })
+
+            def cancel(self, host_context_id):
+                raise AssertionError(host_context_id)
+
+        class FakeOperations:
+            def __init__(self, **kwargs):
+                pass
+
+            def run(self, operations):
+                raise ActionExecutionContractError(
+                    "HOST_OPERATION_FINALIZE_FAILED"
+                )
+
+        monkeypatch.setattr(backends, "CodexInvocationBackend", FakeBackend)
+        monkeypatch.setattr(
+            supervisor_module, "MachineOperationExecutor", FakeOperations,
+        )
+
+        result = CliRunner().invoke(
+            main,
+            ["dev-loop", "--supervise", "--project-root", str(tmp_path)],
+            env={"AE_HOST_PLATFORM": "codex"},
+        )
+
+        assert result.exit_code != 0
+        assert "HOST_OPERATION_FINALIZE_FAILED" in result.output
+        reports = list(
+            (tmp_path / ".ae-state/reports").glob("loop-stop-*.md")
+        )
+        assert len(reports) == 1
+        report = reports[0].read_text(encoding="utf-8")
+        assert "`ERROR`" in report
+        assert "HOST_OPERATION_FINALIZE_FAILED" in report
+        assert "failed-context-1" in report
+
     def test_finalize_result_accepts_non_spawn_coordinator_payload(
         self, tmp_path
     ) -> None:
@@ -564,7 +641,10 @@ class TestMutexAndLegacy:
         action = _last_json_line(initialized.output)
         payload = tmp_path / "coordinator-result.json"
         payload.write_text(
-            json.dumps({"setup_completed": False, "missing": ["pyproject.toml"]}),
+            json.dumps({
+                "result_type": "project_setup_completed",
+                "artifacts": ["pyproject.toml"],
+            }),
             encoding="utf-8",
         )
 
@@ -586,7 +666,8 @@ class TestMutexAndLegacy:
         assert finalized["message_type"] == "result"
         assert finalized["causation_id"] == action["message_id"]
         assert finalized["stage"] == action["stage"]
-        assert finalized["setup_completed"] is False
+        assert finalized["result_type"] == "project_setup_completed"
+        assert finalized["artifacts"] == ["pyproject.toml"]
         assert json.loads(
             (tmp_path / "result.json").read_text(encoding="utf-8")
         ) == finalized

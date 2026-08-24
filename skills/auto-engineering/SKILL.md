@@ -257,6 +257,9 @@ validate、tick、status、resume）都必须显式附加
 6. 全部 Worker completed 时，Coordinator 从真实输出合并 `action.expected_format` 要求的业务字段，
    只写入当前 Action 的 `work_files.coordinator_result`；设计冲突写 `design_change_requests[]`，
    不伪造可执行计划。任一 Worker 超时/失败时写 `{}`，不得补业务字段或假装成功。
+   `action.result_contract` 是机器类型事实源：数组和对象必须写为原生 JSON，禁止再次
+   序列化成字符串。Backend/Finalizer 只对合法 JSON 字符串执行一次确定性恢复；
+   解码后仍不匹配时以 `HOST_ACTION_OUTPUT_INVALID` fail-closed，不得手工绕过。
 7. 原样执行 `action.host_execution.operations.finalize.argv`：只把首项
    `__AE_BUNDLED_RUNNER__` 替换为启动时固定的 bundled runner，禁止重建、重排或手抄其余参数。
    该内部命令原子生成 Worker receipt、attestation、total proof 和完整 Result，
@@ -277,6 +280,9 @@ validate、tick、status、resume）都必须显式附加
 Core 从 active Action 绑定
 message identity、causation、thread、tick、stage 与 correlation。之后使用相同的
 `--validate-result`、`--tick --result` 流程。
+
+Supervisor 返回 WAIT/ERROR/HANDOFF/TERMINAL 时会在 `.ae-state/reports/` 生成确定性
+`loop-stop-*.md`，只记录 Action、Receipt、原因码与下一步。不得用自由文本 recap 覆盖该报告。
 
 Core 返回 `resource_wait` / `WAIT_RESOURCE` 时，宿主继续执行上述资源回收流程，并在
 容量可用后重新执行原 active Action；不得提交 `resource_wait` 为 Result，也不得推进 Tick。

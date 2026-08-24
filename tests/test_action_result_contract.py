@@ -25,6 +25,7 @@ from auto_engineering.loop.actions import (
     RESULT_SCHEMA,
     ActionDone,
     ActionError,
+    business_result_contract,
     validate_result_format,
 )
 from auto_engineering.loop.protocol import action_envelope
@@ -41,6 +42,31 @@ _result_validator = Draft202012Validator(_RESULT_SCHEMA_JSON)
 _PHASE0_STAGES = ("gap_scan", "gap_review", "research")
 
 _VALID_PLAN = "实现组件, 包含完整的 TDD Red-Green-Refactor 循环 + Gate 验证流程, 确保文件隔离检查通过"
+
+
+def test_business_result_contract_rejects_undeclared_field_type() -> None:
+    with pytest.raises(
+        ValueError,
+        match="RESULT_FIELD_TYPE_UNDECLARED:critic:future_payload",
+    ):
+        business_result_contract(
+            "critic",
+            {"verdict": "APPROVE | MAJOR", "future_payload": "object"},
+        )
+
+
+def test_optional_result_field_must_be_omitted_instead_of_null() -> None:
+    errors = validate_result_format(
+        {
+            "stage": "critic",
+            "verdict": "APPROVE",
+            "findings": [],
+            "strengths": None,
+        },
+        "critic",
+    )
+
+    assert any("strengths" in error and "list" in error for error in errors)
 
 
 # ── 快速 stub helper (复用 test_tick_orchestrator 模式, 无真实 LLM/子进程) ──

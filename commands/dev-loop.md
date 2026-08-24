@@ -237,6 +237,9 @@ ae-run dev-loop --init \
    强制 spawn，也不得把 `"spawned"` 伪造为 true。
 7. 按 `action.expected_format` 提取业务字段到 `coordinator-result.json`，
    原生执行事实写入 `outcomes.json`，再调用 `--finalize-result`。
+   `action.result_contract` 是机器类型事实源：数组和对象必须写为原生 JSON，禁止再次
+   序列化成字符串。Backend/Finalizer 只会对合法 JSON 字符串执行一次确定性恢复；
+   解码后仍不匹配时以 `HOST_ACTION_OUTPUT_INVALID` fail-closed，不得手工绕过。
 
 非 spawn Action 只写业务 payload，并调用
 `ae-run dev-loop --finalize-result coordinator-result.json --output-result result.json`。
@@ -244,6 +247,9 @@ ae-run dev-loop --init \
 均由 Core 绑定 active Action 后生成；宿主不得复制 message_id、thread_id、tick、stage、
 causation_id 或 correlation_id。
    只有该命令可产生 `"spawned": true`。
+
+Supervisor 返回 WAIT/ERROR/HANDOFF/TERMINAL 时会在 `.ae-state/reports/` 生成确定性
+`loop-stop-*.md`，只记录 Action、Receipt、原因码与下一步。不得用自由文本 recap 覆盖该报告。
 
 Codex 宿主必须读取 `action.host_execution.native_worker_tools`，按
 `first_complete_exposed_family` 从当前会话实际工具清单选择任一完整工具族：

@@ -165,6 +165,22 @@ def test_coordinator_expected_format_excludes_core_owned_identity(tmp_path) -> N
     assert "spawned" not in action["expected_format"]
 
 
+def test_critic_action_exposes_machine_readable_business_result_contract(
+    tmp_path,
+) -> None:
+    action = ActionBuilder(tmp_path).build_action(
+        EngineState(thread_id="critic-contract", current_stage="critic"),
+    )
+
+    contract = action["result_contract"]
+    assert contract["schema_version"] == "1.0"
+    assert contract["required"] == ["verdict", "findings"]
+    assert contract["properties"]["verdict"] == {"type": "string"}
+    assert contract["properties"]["findings"] == {"type": "array"}
+    assert contract["properties"]["strengths"] == {"type": "array"}
+    assert contract["additionalProperties"] is False
+
+
 def test_component_verifier_receives_all_batch_plate_keys(tmp_path) -> None:
     design_doc = DesignDoc(
         path="design/spec.md",

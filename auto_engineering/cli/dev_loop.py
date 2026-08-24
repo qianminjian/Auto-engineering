@@ -324,6 +324,7 @@ def _compact_host_action(action: Mapping[str, Any], root: Path) -> dict[str, Any
         "host_execution",
         "spawn",
         "expected_format",
+        "result_contract",
         "valid_plate_keys",
         "gate",
         "current_gap",
@@ -1404,13 +1405,17 @@ def run_action_supervisor(root: Path) -> None:
         ClaudeInvocationBackend,
         CodexInvocationBackend,
     )
-    from auto_engineering.host.invocation import HostInvocationBackend
+    from auto_engineering.host.invocation import (
+        ActionExecutionContractError,
+        HostInvocationBackend,
+    )
     from auto_engineering.host.request_compiler import (
         compile_action_execution_request,
     )
     from auto_engineering.host.supervisor import (
         ActionReceiptJournal,
         ActionScopedProductDriver,
+        LoopStopReportJournal,
         MachineOperationExecutor,
         ProductEvidenceArtifactJournal,
     )
@@ -1528,13 +1533,45 @@ def run_action_supervisor(root: Path) -> None:
         os.replace(temporary, result_path)
         return operation_executor.validate_and_submit(operations)
 
-    result = ActionScopedProductDriver(
-        backend,
-        compile_request=compile_request,
-        execute_operations=operation_executor.run,
-        submit_failure=submit_failure,
-        receipt_sink=record_receipt,
-    ).run(action)
+    try:
+        result = ActionScopedProductDriver(
+            backend,
+            compile_request=compile_request,
+            execute_operations=operation_executor.run,
+            submit_failure=submit_failure,
+            receipt_sink=record_receipt,
+        ).run(action)
+    except ActionExecutionContractError as exc:
+        error_code = str(exc).partition(":")[0] or type(exc).__name__
+        extensions = dict(action.get("extensions") or {})
+        ae_extension = dict(extensions.get("ae") or {})
+        ae_extension["execution_control"] = {
+            "schema_version": "1.0",
+            "disposition": "ERROR",
+            "continuation_required": False,
+            "yield_allowed": True,
+            "allowed_stop_reasons": ["fatal_error"],
+            "reason_code": error_code,
+        }
+        extensions["ae"] = ae_extension
+        failure_action = {
+            **action,
+            "action": "error",
+            "error_code": error_code,
+            "message": error_code,
+            "extensions": extensions,
+        }
+        stop_report = LoopStopReportJournal(root).record(
+            thread_id=thread_id,
+            final_action=failure_action,
+        )
+        click.echo(f"Loop 停止报告已生成: {stop_report}", err=True)
+        raise
+    stop_report = LoopStopReportJournal(root).record(
+        thread_id=thread_id,
+        final_action=result.final_action,
+    )
+    click.echo(f"Loop 停止报告已生成: {stop_report}", err=True)
     if result.final_action.get("action") == "done":
         terminal_events = SQLiteEventStore(_ensure_event_db_path(root))
         try:

@@ -16,6 +16,7 @@ from auto_engineering.host.backends.common import (
     jsonl_events,
     launcher_prompt,
     non_negative_number,
+    normalize_coordinator_work_output,
     write_invocation_diagnostic,
 )
 from auto_engineering.host.invocation import (
@@ -156,9 +157,15 @@ class CodexInvocationBackend:
                     ),
                     "output_tokens": non_negative_number(raw_usage.get("output_tokens")),
                 }
+        output_invalid = False
+        if process.returncode == 0:
+            try:
+                normalize_coordinator_work_output(request)
+            except ValueError:
+                output_invalid = True
         digests = existing_work_file_digests(request)
         output_missing = "coordinator_result" not in digests
-        failed = process.returncode != 0 or output_missing
+        failed = process.returncode != 0 or output_missing or output_invalid
         usage_limited = process.returncode != 0 and _is_usage_limit(
             process.stdout,
             process.stderr,
@@ -185,6 +192,8 @@ class CodexInvocationBackend:
             "error_code": (
                 "HOST_CODEX_USAGE_LIMIT"
                 if usage_limited
+                else "HOST_ACTION_OUTPUT_INVALID"
+                if output_invalid
                 else "HOST_CODEX_EXECUTION_FAILED"
                 if process.returncode != 0
                 else ("HOST_ACTION_OUTPUT_MISSING" if output_missing else None)

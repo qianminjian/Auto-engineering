@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -224,7 +225,7 @@ def test_status_does_not_probe_usage_ledger_as_checkpoint(
 ) -> None:
     state_dir = tmp_cwd / ".ae-state"
     state_dir.mkdir()
-    with sqlite3.connect(state_dir / "usage-ledger.db") as connection:
+    with closing(sqlite3.connect(state_dir / "usage-ledger.db")) as connection:
         connection.execute("CREATE TABLE usage_records (id TEXT)")
 
     _collect_status_json(tmp_cwd)

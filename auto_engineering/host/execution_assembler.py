@@ -19,6 +19,7 @@ from auto_engineering.host.worker_attestation import (
     WorkerAttestationError,
     validate_attestations,
 )
+from auto_engineering.loop.actions import validate_result_format
 from auto_engineering.loop.artifacts import (
     ArtifactError,
     ArtifactStore,
@@ -198,6 +199,10 @@ class HostExecutionAssembler:
         coordinator_payload: Mapping[str, Any],
     ) -> dict[str, Any]:
         coordinator_payload = self._normalize_echoed_identity(
+            action=action,
+            coordinator_payload=coordinator_payload,
+        )
+        coordinator_payload = self._normalize_business_payload(
             action=action,
             coordinator_payload=coordinator_payload,
         )
@@ -473,6 +478,99 @@ class HostExecutionAssembler:
         if "stage" in normalized and normalized["stage"] == action.get("stage"):
             del normalized["stage"]
         return normalized
+
+    @staticmethod
+    def _normalize_business_payload(
+        *,
+        action: Mapping[str, Any],
+        coordinator_payload: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        """按 Core 下发合同恢复一次二次序列化，并在写证据前校验。"""
+
+        contract = action.get("result_contract")
+        if contract is None:
+            return dict(coordinator_payload)
+        if not isinstance(contract, Mapping):
+            raise HostEvidenceValidationError(("RESULT_CONTRACT_INVALID",))
+        required = contract.get("required")
+        properties = contract.get("properties")
+        if (
+            contract.get("schema_version") != "1.0"
+            or not isinstance(required, list)
+            or any(not isinstance(item, str) for item in required)
+            or not isinstance(properties, Mapping)
+            or contract.get("additionalProperties") is not False
+        ):
+            raise HostEvidenceValidationError(("RESULT_CONTRACT_INVALID",))
+        normalized = dict(coordinator_payload)
+        violations: list[str] = [
+            f"COORDINATOR_FIELD_UNEXPECTED:{field}"
+            for field in sorted(str(item) for item in normalized)
+            if field not in properties
+        ]
+        for field in required:
+            if field not in normalized:
+                violations.append(f"COORDINATOR_FIELD_REQUIRED:{field}")
+        for field, value in tuple(normalized.items()):
+            declaration = properties.get(field)
+            if not isinstance(declaration, Mapping):
+                continue
+            raw_types = declaration.get("type")
+            expected = (
+                [raw_types]
+                if isinstance(raw_types, str)
+                else raw_types
+                if isinstance(raw_types, list)
+                else []
+            )
+            if (
+                isinstance(value, str)
+                and "string" not in expected
+                and any(item in expected for item in ("array", "object"))
+            ):
+                try:
+                    decoded = json.loads(value)
+                except json.JSONDecodeError:
+                    decoded = value
+                if decoded is not value:
+                    value = decoded
+                    normalized[field] = decoded
+            if not HostExecutionAssembler._matches_json_type(value, expected):
+                violations.append(
+                    f"COORDINATOR_FIELD_TYPE_INVALID:{field}:"
+                    f"{'|'.join(str(item) for item in expected)}"
+                )
+        if violations:
+            raise HostEvidenceValidationError(violations)
+        stage = action.get("stage")
+        if isinstance(stage, str):
+            semantic_errors = validate_result_format(
+                {"stage": stage, **normalized},
+                stage,
+            )
+            if semantic_errors:
+                raise HostEvidenceValidationError(tuple(
+                    f"COORDINATOR_RESULT_INVALID:{error}"
+                    for error in semantic_errors
+                ))
+        return normalized
+
+    @staticmethod
+    def _matches_json_type(value: object, expected: Sequence[object]) -> bool:
+        checks = {
+            "string": lambda item: isinstance(item, str),
+            "array": lambda item: isinstance(item, list),
+            "object": lambda item: isinstance(item, dict),
+            "integer": lambda item: isinstance(item, int) and not isinstance(item, bool),
+            "boolean": lambda item: isinstance(item, bool),
+            "null": lambda item: item is None,
+        }
+        return any(
+            isinstance(kind, str)
+            and kind in checks
+            and checks[kind](value)
+            for kind in expected
+        )
 
     def _finalize_worker_failure(
         self,

@@ -17,6 +17,7 @@ from auto_engineering.host.backends.common import (
     jsonl_events,
     launcher_prompt,
     non_negative_number,
+    normalize_coordinator_work_output,
     write_invocation_diagnostic,
 )
 from auto_engineering.host.invocation import (
@@ -218,6 +219,12 @@ class ClaudeInvocationBackend:
         actual_cost = usage.get("cost_usd")
         if isinstance(actual_cost, (int, float)):
             self._spent_budget_usd += float(actual_cost)
+        output_invalid = False
+        if not is_error:
+            try:
+                normalize_coordinator_work_output(request)
+            except ValueError:
+                output_invalid = True
         digests = existing_work_file_digests(request)
         output_missing = "coordinator_result" not in digests
         execution_failed = is_error
@@ -229,7 +236,7 @@ class ClaudeInvocationBackend:
             execution_failed
             and "invalid mcp configuration" in process.stderr.lower()
         )
-        is_error = is_error or output_missing
+        is_error = is_error or output_missing or output_invalid
         if is_error:
             write_invocation_diagnostic(
                 request,
@@ -256,6 +263,8 @@ class ClaudeInvocationBackend:
                 if budget_exhausted
                 else "HOST_CLAUDE_EXECUTION_FAILED"
                 if execution_failed
+                else "HOST_ACTION_OUTPUT_INVALID"
+                if output_invalid
                 else ("HOST_ACTION_OUTPUT_MISSING" if output_missing else None)
             ),
             "work_file_digests": digests,

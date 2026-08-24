@@ -61,6 +61,8 @@ def test_launcher_forbids_identity_and_result_wrappers(tmp_path: Path) -> None:
     prompt = launcher_prompt(_request(tmp_path))
 
     assert "只包含 expected_format 业务字段" in prompt
+    assert "result_contract" in prompt
+    assert "数组和对象必须写为原生 JSON" in prompt
     assert "不得包装在 result" in prompt
     assert "不得复制 action/stage/tick/thread_id" in prompt
 
@@ -215,6 +217,88 @@ def test_codex_execute_builds_receipt_from_cli_events_not_model_claim(
     assert receipt.work_file_digests["coordinator_result"]
     assert "host_context_id" not in str(calls[0]["input"])
     assert "transcript" not in str(calls[0]["input"]).lower()
+
+
+def test_codex_backend_normalizes_stringified_business_array_before_receipt(
+    tmp_path: Path,
+) -> None:
+    from auto_engineering.host.backends.codex import CodexInvocationBackend
+
+    request = _request(tmp_path)
+    envelope = tmp_path / request.compact_envelope_ref
+    envelope.parent.mkdir(parents=True)
+    envelope.write_text(json.dumps({
+        "stage": "critic",
+        "expected_format": {"verdict": "APPROVE | MAJOR", "findings": "array"},
+        "result_contract": {
+            "schema_version": "1.0",
+            "required": ["verdict", "findings"],
+            "properties": {
+                "verdict": {"type": "string"},
+                "findings": {"type": "array"},
+            },
+            "additionalProperties": False,
+        },
+    }), encoding="utf-8")
+    coordinator = tmp_path / request.work_files["coordinator_result"]
+    coordinator.parent.mkdir(parents=True, exist_ok=True)
+    coordinator.write_text(json.dumps({
+        "verdict": "MAJOR",
+        "findings": '[{"severity":"P1","issue":"bug"}]',
+    }), encoding="utf-8")
+
+    def run(command: tuple[str, ...], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    receipt = CodexInvocationBackend(
+        executable="/opt/bin/codex",
+        runner=run,
+    ).execute(request)
+
+    assert receipt.status == "completed"
+    assert json.loads(coordinator.read_text())["findings"] == [
+        {"severity": "P1", "issue": "bug"},
+    ]
+
+
+def test_codex_backend_routes_invalid_business_output_as_context_failure(
+    tmp_path: Path,
+) -> None:
+    from auto_engineering.host.backends.codex import CodexInvocationBackend
+
+    request = _request(tmp_path)
+    envelope = tmp_path / request.compact_envelope_ref
+    envelope.parent.mkdir(parents=True)
+    envelope.write_text(json.dumps({
+        "stage": "critic",
+        "expected_format": {"verdict": "APPROVE | MAJOR", "findings": "array"},
+        "result_contract": {
+            "schema_version": "1.0",
+            "required": ["verdict", "findings"],
+            "properties": {
+                "verdict": {"type": "string"},
+                "findings": {"type": "array"},
+            },
+            "additionalProperties": False,
+        },
+    }), encoding="utf-8")
+    coordinator = tmp_path / request.work_files["coordinator_result"]
+    coordinator.parent.mkdir(parents=True, exist_ok=True)
+    coordinator.write_text(
+        '{"verdict":"MAJOR","findings":"not-json"}',
+        encoding="utf-8",
+    )
+
+    def run(command: tuple[str, ...], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    receipt = CodexInvocationBackend(
+        executable="/opt/bin/codex",
+        runner=run,
+    ).execute(request)
+
+    assert receipt.status == "failed"
+    assert receipt.error_code == "HOST_ACTION_OUTPUT_INVALID"
 
 
 def test_claude_execute_preserves_cli_usage_and_session_identity(

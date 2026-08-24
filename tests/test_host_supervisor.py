@@ -556,3 +556,49 @@ def test_product_driver_submits_context_failure_to_core_wait_state() -> None:
     ).run(action)
     assert failures == ["HOST_CODEX_EXECUTION_FAILED"]
     assert result.final_action["message_id"] == "wait-1"
+
+
+def test_stop_report_uses_action_and_receipt_facts_without_transcript(
+    tmp_path: Path,
+) -> None:
+    from auto_engineering.host.supervisor import (
+        ActionReceiptJournal,
+        LoopStopReportJournal,
+    )
+
+    request = _request("action-1", 7)
+    receipt = _receipt(request, "context-1")
+    ActionReceiptJournal(tmp_path).record(request, receipt)
+    final_action = {
+        "schema_version": "1.1",
+        "message_type": "action",
+        "message_id": "wait-1",
+        "thread_id": request.thread_id,
+        "tick": 7,
+        "stage": "critic",
+        "action": "resource_wait",
+        "reason_code": "HOST_ACTION_CONTEXT_FAILED",
+        "message": "结果协议无效",
+        "retry_stage": "critic",
+        "extensions": {"ae": {"execution_control": {
+            "schema_version": "1.0",
+            "disposition": "WAIT_RESOURCE",
+            "continuation_required": False,
+            "yield_allowed": True,
+            "reason_code": "HOST_ACTION_CONTEXT_FAILED",
+        }}},
+    }
+
+    path = LoopStopReportJournal(tmp_path).record(
+        thread_id=request.thread_id,
+        final_action=final_action,
+    )
+    report = path.read_text(encoding="utf-8")
+
+    assert "WAIT_RESOURCE" in report
+    assert "HOST_ACTION_CONTEXT_FAILED" in report
+    assert "action-1" in report
+    assert "context-1" in report
+    assert "等待资源恢复后重试 critic" in report
+    assert "transcript" not in report.lower()
+    assert "prompt" not in report.lower()

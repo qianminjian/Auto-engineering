@@ -7,6 +7,7 @@ import pytest
 
 from auto_engineering.engine.state import EngineState
 from auto_engineering.loop.action_builder import ActionBuilder
+from auto_engineering.loop.actions import validate_result_format
 from auto_engineering.loop.architecture_activation import ArchitectureActivationService
 from auto_engineering.loop.plan_reconciliation import (
     PlanReconciliationError,
@@ -175,6 +176,18 @@ def test_selected_reconcile_builds_distinct_architect_contract(tmp_path: Path) -
     assert "classifications" in action["expected_format"]
     assert "new_batch_plan" in action["expected_format"]
     assert "plan_patch" not in action["expected_format"]
+    assert action["result_contract"]["properties"] == {
+        "design_change_requests": {"type": "array"},
+        "plan": {"type": "string"},
+        "result_type": {"type": "string"},
+        "source_revision": {"type": "integer"},
+        "classifications": {"type": "array"},
+        "new_batch_plan": {"type": "array"},
+        "file_list": {"type": "array"},
+        "contracts": {"type": "object"},
+        "obligations": {"type": "array"},
+        "decision_impacts": {"type": "array"},
+    }
 
 
 def test_reconcile_gate_routes_to_architect_without_plan_refine(tmp_path: Path) -> None:
@@ -227,6 +240,7 @@ def test_validated_candidate_activates_only_current_work_set(tmp_path: Path) -> 
         ],
         "new_batch_plan": [],
     }
+    assert validate_result_format(result, "architect") == []
     candidate = PlanReconciliationValidator(tmp_path).validate(
         old_batch_plan=state.batch_plan,
         candidate=result,

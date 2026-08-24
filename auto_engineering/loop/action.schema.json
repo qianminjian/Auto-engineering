@@ -58,6 +58,41 @@
     },
     "context": {"type": "object"},
     "expected_format": {"type": "object"},
+    "result_contract": {
+      "type": "object",
+      "required": ["schema_version", "required", "properties", "additionalProperties"],
+      "properties": {
+        "schema_version": {"const": "1.0"},
+        "required": {
+          "type": "array",
+          "items": {"type": "string"},
+          "uniqueItems": true
+        },
+        "properties": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "required": ["type"],
+            "properties": {
+              "type": {
+                "oneOf": [
+                  {"enum": ["string", "array", "object", "integer", "boolean", "null"]},
+                  {
+                    "type": "array",
+                    "items": {"enum": ["string", "array", "object", "integer", "boolean", "null"]},
+                    "minItems": 1,
+                    "uniqueItems": true
+                  }
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": {"const": false}
+      },
+      "additionalProperties": false
+    },
     "gaps": {"type": "array"},
     "mode": {"type": "string"},
     "current_gap_index": {"type": "integer", "minimum": 0},

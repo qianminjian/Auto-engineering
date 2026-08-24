@@ -42,6 +42,7 @@
 | `incidents/2026-08-05-rc5-15-tick-architecture-gate-failure.md` | rc.5 15-Tick 的 Gate fail-open、架构事实丢失与错误修复路由事故 |
 | `incidents/2026-08-09-hidden-state-stale-resume.md` | 隐藏 `.ae-state` 覆盖显式设计文档并错误恢复旧 B2 的事故 |
 | `incidents/2026-08-11-gap-review-wizard-real-run.md` | Gap 批量决策、计划标识、Critic replay 与新项目证据事故及关闭证据 |
+| `incidents/2026-08-24-critic-result-double-serialization.md` | Critic 嵌套字段二次序列化、宿主类型边界与停止报告缺口 |
 | `IMPLEMENTATION-TRACKER.md` | 当前任务状态、优先级与 EARS 验收 |
 | `HISTORY.md` | 历史里程碑与 Git 追溯入口 |
 

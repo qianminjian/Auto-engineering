@@ -342,6 +342,56 @@ def test_malformed_worker_output_fails_before_core_submission(tmp_path: Path) ->
         assert events.load_action_snapshot(action["thread_id"]) == action
 
 
+def test_stringified_critic_findings_are_normalized_before_core_submission(
+    tmp_path: Path,
+) -> None:
+    """复现 2026-08-24 真跑：嵌套数组被二次序列化仍在当前 Action 闭环。"""
+
+    with SQLiteEventStore(tmp_path / "events.db") as events:
+        core, action = _core(tmp_path, events)
+        runner = HostTrajectoryRunner(
+            tmp_path, HostPlatform.CODEX, core=core, event_store=events,
+        )
+        action = runner.run(action, workers=[lambda invocation: {
+                "plan": (
+                    "按原设计完成实现、测试、审查和构建验证，并保持类型契约、"
+                    "状态恢复、安全门禁及跨宿主结果完全一致，同时补齐故障注入和回归证据。"
+                ),
+            "batch_plan": [{
+                "batch_id": "B1", "component": "core",
+                "tasks": [{
+                    "id": "B1-T1", "description": "实现核心",
+                    "file_targets": ["trajectory/core.py"],
+                }],
+            }],
+            "file_list": ["trajectory/core.py"], "contracts": {},
+        }]).next_action
+        action = runner.run(action, workers=[lambda invocation: {
+            "batch_id": "B1",
+            "files_changed": ["trajectory/core.py"],
+            "commit_hash": "",
+            "test_results": {"passed": 1, "failed": 0, "total": 1},
+            "red_evidence": [],
+        }]).next_action
+
+        trajectory = runner.run(action, workers=[lambda invocation: {
+            "verdict": "MAJOR",
+            "findings": '[{"severity":"P1","file":"trajectory/core.py",'
+                        '"issue":"缺少边界校验","suggestion":"补充验证"}]',
+            "critic_feedback": "需要修复",
+        }])
+
+        assert trajectory.result["findings"] == [{
+            "severity": "P1",
+            "file": "trajectory/core.py",
+            "issue": "缺少边界校验",
+            "suggestion": "补充验证",
+        }]
+        assert trajectory.next_action["action"] == "developer"
+        assert trajectory.next_action["feedback"]
+        assert "ResultAccepted" in trajectory.events
+
+
 def test_recovered_action_fails_closed_when_host_capability_changes(
     tmp_path: Path, monkeypatch,
 ) -> None:
