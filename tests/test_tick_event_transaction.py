@@ -432,12 +432,13 @@ def test_critic_major_replays_to_developer_without_projection_drift(tmp_path) ->
                 "contracts": {},
             }]).next_action
             assert developer.get("action") == "developer", developer
-            critic = orchestrator.tick_dict({
-                "stage": "developer",
+            critic = runner.run(developer, workers=[lambda invocation: {
                 "batch_id": "B01",
                 "files_changed": ["critic_retry/core.py"],
-                "test_results": {"passed": 1, "failed": 0},
-            })
+                "commit_hash": "",
+                "test_results": {"passed": 1, "failed": 0, "total": 1},
+                "red_evidence": [],
+            }]).next_action
             retry = runner.run(critic, workers=[lambda invocation: {
                 "verdict": "MAJOR",
                 "findings": [{

@@ -106,6 +106,28 @@ def test_execution_report_rejects_unstructured_host_payload() -> None:
         adapter.report_execution({"status": "completed"})
 
 
+def test_inline_action_uses_machine_finalizer_operation(tmp_path: Path) -> None:
+    from auto_engineering.host import HostPlatform
+    from auto_engineering.host.adapters import adapter_for
+
+    adapter = adapter_for(HostPlatform.CODEX)
+    profile = adapter.profile(
+        detected=adapter.capabilities,
+        authorized=adapter.capabilities,
+    )
+    mapped = adapter.map_action({
+        "action": "gap_scan",
+        "message_id": "inline-1",
+        "project_root": str(tmp_path),
+    }, profile=profile).payload
+
+    work_files = mapped["host_execution"]["work_files"]
+    argv = mapped["host_execution"]["operations"]["finalize"]["argv"]
+    assert work_files["coordinator_result"] in argv
+    assert work_files["outcomes"] not in argv
+    assert argv[-2:] == ["--project-root", str(tmp_path)]
+
+
 @pytest.mark.parametrize(
     ("platform_name", "isolation"),
     [("CODEX", "fork_turns=none"), ("CLAUDE_CODE", "fresh_context")],
@@ -164,6 +186,33 @@ def test_adapter_materializes_strict_worker_evidence_templates(
         ),
         "result": f".ae-state/host-runtime/work/{action_key}/result.json",
     }
+    assert host_execution["operations"] == {
+        "finalize": {
+            "argv": [
+                "__AE_BUNDLED_RUNNER__", "dev-loop", "--finalize-result",
+                f".ae-state/host-runtime/work/{action_key}/outcomes.json",
+                "--coordinator-result",
+                f".ae-state/host-runtime/work/{action_key}/coordinator-result.json",
+                "--output-result",
+                f".ae-state/host-runtime/work/{action_key}/result.json",
+                "--project-root", action["project_root"],
+            ],
+        },
+        "validate": {
+            "argv": [
+                "__AE_BUNDLED_RUNNER__", "dev-loop", "--validate-result",
+                f".ae-state/host-runtime/work/{action_key}/result.json",
+                "--project-root", action["project_root"],
+            ],
+        },
+        "submit": {
+            "argv": [
+                "__AE_BUNDLED_RUNNER__", "dev-loop", "--tick", "--result",
+                f".ae-state/host-runtime/work/{action_key}/result.json",
+                "--project-root", action["project_root"],
+            ],
+        },
+    }
 
     assert len(executions) == 3
     for index, execution in enumerate(executions):
@@ -177,14 +226,17 @@ def test_adapter_materializes_strict_worker_evidence_templates(
         assert execution["attestation"]["status"] == "pending"
         assert execution["attestation"]["prompt_sha256"] == invocation["prompt_sha256"]
         assert execution["attestation"]["isolation_evidence"] == isolation
+        assert execution["expected_isolation_evidence"] == isolation
         assert len(execution["attestation"]["visible_capabilities_sha256"]) == 64
         launcher = execution["native_launch_prompt"]
         assert action["project_root"] in launcher
         assert invocation["prompt_ref"] in launcher
         assert invocation["prompt_sha256"] in launcher
+        assert "不得返回完整 diff、日志或报告正文" in launcher
         launch_contract = json.loads(launcher.splitlines()[-1])
         assert launch_contract["may_drive_loop"] is False
         assert launch_contract["may_spawn_workers"] is False
+        assert launch_contract["required_isolation_evidence"] == isolation
         assert len(launcher.encode("utf-8")) < 1024
 
 

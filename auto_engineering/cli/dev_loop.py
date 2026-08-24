@@ -144,7 +144,12 @@ def _map_action_for_host(action: dict) -> dict:
     return adapter.map_action(action, profile=profile).payload
 
 
-def _prepare_action_for_host(action: dict, root: Path) -> dict:
+def _prepare_action_for_host(
+    action: dict,
+    root: Path,
+    *,
+    compact_view: bool | None = None,
+) -> dict:
     """映射 Action，并为当前原生宿主会话原子记录执行义务。"""
 
     mapped = _map_action_for_host(action)
@@ -291,7 +296,12 @@ def _prepare_action_for_host(action: dict, root: Path) -> dict:
             host_session_id=session_id,
         )
         HostRunLeaseStore(root).save(lease)
-    if os.environ.get("AE_HOST_ACTION_VIEW", "").strip().lower() == "compact":
+    use_compact = (
+        os.environ.get("AE_HOST_ACTION_VIEW", "").strip().lower() == "compact"
+        if compact_view is None
+        else compact_view
+    )
+    if use_compact:
         return _compact_host_action(mapped, root)
     return mapped
 
@@ -314,6 +324,7 @@ def _compact_host_action(action: Mapping[str, Any], root: Path) -> dict[str, Any
         "host_execution",
         "spawn",
         "expected_format",
+        "valid_plate_keys",
         "gate",
         "current_gap",
         "current_gap_index",
@@ -380,7 +391,11 @@ def _compact_host_action(action: Mapping[str, Any], root: Path) -> dict[str, Any
             projected_host["workers"] = [
                 {
                     key: worker[key]
-                    for key in ("worker_id", "native_launch_prompt")
+                    for key in (
+                        "worker_id",
+                        "native_launch_prompt",
+                        "expected_isolation_evidence",
+                    )
                     if key in worker
                 }
                 for worker in workers
@@ -779,6 +794,16 @@ def _check_config_gate(
     return True
 
 
+def _activate_project_config(root: Path) -> None:
+    """在配置闸门可能创建 ae.toml 后刷新本进程的不可变配置快照。"""
+    from auto_engineering.config.runtime_config import (
+        RuntimeConfig,
+        set_default_config,
+    )
+
+    set_default_config(RuntimeConfig.from_project(root))
+
+
 def run_tick_init(
     requirement: str, design_doc_path: str | None, root: Path, max_rounds: int,
     debug: bool = False, debug_dir: str | None = None,
@@ -795,6 +820,7 @@ def run_tick_init(
     # Phase 45: 配置闸门
     if not _check_config_gate(root, policy=config_policy):
         return
+    _activate_project_config(root)
 
     import hashlib
     import json
@@ -1365,6 +1391,182 @@ def run_tick_resume(checkpoint_id: str, root: Path) -> None:
     finally:
         events.close()
         store.close()
+
+
+def run_action_supervisor(root: Path) -> None:
+    """以一次用户启动自动驱动 active thread 到等待或终态。"""
+    import json
+
+    import click
+
+    from auto_engineering.host import HostPlatform, detect_host
+    from auto_engineering.host.backends import (
+        ClaudeInvocationBackend,
+        CodexInvocationBackend,
+    )
+    from auto_engineering.host.invocation import HostInvocationBackend
+    from auto_engineering.host.request_compiler import (
+        compile_action_execution_request,
+    )
+    from auto_engineering.host.supervisor import (
+        ActionReceiptJournal,
+        ActionScopedProductDriver,
+        MachineOperationExecutor,
+        ProductEvidenceArtifactJournal,
+    )
+    from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
+    from auto_engineering.loop.event_store import SQLiteEventStore
+
+    root = root.resolve()
+    store: SQLiteCheckpointStore[EngineState] = SQLiteCheckpointStore(
+        _ensure_checkpoint_db_path(root)
+    )
+    events = SQLiteEventStore(_ensure_event_db_path(root))
+    try:
+        thread_id = _active_thread(store)
+        if thread_id is None:
+            raise click.ClickException("PROJECT_THREAD_NOT_ACTIVE")
+        canonical = events.load_action_snapshot(thread_id)
+        if canonical is None:
+            canonical = store.load_active_protocol_action(thread_id)
+        if canonical is None:
+            raise click.ClickException("ACTIVE_ACTION_MISSING")
+        action = _prepare_action_for_host(canonical, root, compact_view=False)
+    finally:
+        events.close()
+        store.close()
+
+    receipt_journal = ActionReceiptJournal(root)
+    detection = detect_host()
+    def report_context_progress(elapsed_seconds: float) -> None:
+        click.echo(
+            f"[宿主心跳] 当前 Action context 已运行 {int(elapsed_seconds)} 秒",
+            err=True,
+        )
+
+    if detection.platform is HostPlatform.CODEX:
+        backend: HostInvocationBackend = CodexInvocationBackend(
+            progress_callback=report_context_progress,
+        )
+    elif detection.platform is HostPlatform.CLAUDE_CODE:
+        backend = ClaudeInvocationBackend(
+            spent_budget_usd=receipt_journal.total_cost_usd(thread_id),
+            progress_callback=report_context_progress,
+        )
+    else:
+        raise click.ClickException("HOST_ACTION_CONTEXT_UNAVAILABLE: HOST_UNKNOWN")
+    bundled_runner = Path(__file__).resolve().parents[2] / "scripts" / "ae-run"
+    child_environment = dict(os.environ)
+    child_environment["AE_HOST_ACTION_VIEW"] = "full"
+    operation_executor = MachineOperationExecutor(
+        project_root=root,
+        bundled_runner=bundled_runner,
+        environ=child_environment,
+    )
+    def record_receipt(request: Any, receipt: Any) -> None:
+        receipt_journal.record(request, receipt)
+
+    def compile_request(mapped_action: Mapping[str, Any]):
+        compact = _compact_host_action(mapped_action, root)
+        return compile_action_execution_request(
+            mapped_action,
+            compact_envelope=compact,
+            project_root=root,
+            allowed_tools=("read", "edit", "shell", "native_subagents"),
+        )
+
+    def submit_failure(
+        mapped_action: Mapping[str, Any],
+        receipt: Any,
+    ) -> dict[str, Any]:
+        host_execution = mapped_action.get("host_execution")
+        operations = (
+            host_execution.get("operations")
+            if isinstance(host_execution, Mapping)
+            else None
+        )
+        work_files = (
+            host_execution.get("work_files")
+            if isinstance(host_execution, Mapping)
+            else None
+        )
+        result_ref = (
+            work_files.get("result")
+            if isinstance(work_files, Mapping)
+            else None
+        )
+        if not isinstance(operations, Mapping) or not isinstance(result_ref, str):
+            raise click.ClickException("HOST_FAILURE_SUBMISSION_CONTRACT_MISSING")
+        failure_code = _host_context_failure_code(
+            receipt.status,
+            receipt.error_code,
+        )
+        result_payload: dict[str, Any] = {
+            "schema_version": "1.1",
+            "message_type": "result",
+            "message_id": f"failure-{receipt.host_context_id}",
+            "thread_id": mapped_action.get("thread_id"),
+            "tick": mapped_action.get("tick"),
+            "stage": mapped_action.get("stage"),
+            "causation_id": mapped_action.get("message_id"),
+            "correlation_id": mapped_action.get("correlation_id"),
+            "extensions": {},
+            "spawned": False,
+            "spawn_error_code": failure_code,
+            "spawn_error": receipt.error_code or failure_code,
+        }
+        result_path = _root_bound_path(Path(result_ref), root)
+        result_path.parent.mkdir(parents=True, exist_ok=True)
+        encoded = json.dumps(
+            result_payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        temporary = result_path.with_suffix(result_path.suffix + ".failure.tmp")
+        temporary.write_text(encoded, encoding="utf-8")
+        os.replace(temporary, result_path)
+        return operation_executor.validate_and_submit(operations)
+
+    result = ActionScopedProductDriver(
+        backend,
+        compile_request=compile_request,
+        execute_operations=operation_executor.run,
+        submit_failure=submit_failure,
+        receipt_sink=record_receipt,
+    ).run(action)
+    if result.final_action.get("action") == "done":
+        terminal_events = SQLiteEventStore(_ensure_event_db_path(root))
+        try:
+            event_types = tuple(
+                event.event_type.value
+                for event in terminal_events.load_stream(thread_id)
+            )
+        finally:
+            terminal_events.close()
+        artifact = ProductEvidenceArtifactJournal(
+            root,
+            runtime_root=Path(__file__).resolve().parents[2],
+        ).record_terminal(
+            host=detection.platform.value,
+            thread_id=thread_id,
+            final_action=result.final_action,
+            event_types=event_types,
+        )
+        click.echo(f"产品证据已生成: {artifact}", err=True)
+    click.echo(json.dumps(result.final_action, ensure_ascii=False))
+
+
+def _host_context_failure_code(status: str, error_code: str | None) -> str:
+    """把宿主实现细节归一化为 Core 可判定的控制结果。"""
+    if status == "timed_out":
+        return "HOST_ACTION_CONTEXT_TIMEOUT"
+    if error_code in {
+        "HOST_CODEX_USAGE_LIMIT",
+        "HOST_CLAUDE_BUDGET_EXHAUSTED",
+    }:
+        return "HOST_ACTION_CONTEXT_RESOURCE_EXHAUSTED"
+    return "HOST_ACTION_CONTEXT_FAILED"
 
 
 def _resolve_checkpoint_by_thread_id(

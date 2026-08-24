@@ -70,6 +70,7 @@ class HostCapabilities:
     git_mutation: bool = False
     session_handoff: bool = False
     isolated_worker_invocation: bool = False
+    action_scoped_invocation: bool = False
     native_subagents: bool | None = None
 
     def require_spawn(self) -> None:
@@ -190,6 +191,7 @@ _CAPABILITIES = {
         git_mutation=True,
         session_handoff=True,
         isolated_worker_invocation=True,
+        action_scoped_invocation=True,
     ),
     HostPlatform.CODEX: HostCapabilities(
         skills=True,
@@ -201,6 +203,7 @@ _CAPABILITIES = {
         web_search=True,
         git_mutation=True,
         isolated_worker_invocation=True,
+        action_scoped_invocation=True,
     ),
     HostPlatform.CODEBUDDY: HostCapabilities(
         skills=True,

@@ -66,8 +66,8 @@ def _architect_result() -> dict:
     }
 
 
-def _architect_result_file(orch: TickOrchestrator) -> Path:
-    result = _architect_result()
+def _strict_result_file(orch: TickOrchestrator, result: dict) -> Path:
+    result["spawned"] = True
     token = orch._active_action["spawn_proof_token"]
     proof_path = orch.project_root / ".ae-state" / "spawn-proofs" / f"{token}.json"
     proof = json.loads(proof_path.read_text(encoding="utf-8"))
@@ -99,6 +99,10 @@ def _architect_result_file(orch: TickOrchestrator) -> Path:
     return _make_result_file(result)
 
 
+def _architect_result_file(orch: TickOrchestrator) -> Path:
+    return _strict_result_file(orch, _architect_result())
+
+
 class TestStageCheckpoint:
     """Stage Checkpoint Gate: --pause-at-stage behavior (T64)."""
 
@@ -126,7 +130,7 @@ class TestStageCheckpoint:
         assert action["action"] == "developer"
 
         # Simulate developer completion
-        dev_result = _make_result_file({
+        dev_result = _strict_result_file(orch, {
             "stage": "developer",
             "batch_id": "B1",
             "files_changed": ["test.py"],

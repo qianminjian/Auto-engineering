@@ -61,17 +61,18 @@ _CONTRACTS: Mapping[str, StagePromptContract] = MappingProxyType({
         ("architect",),
         (
             "feedback", "research_and_design_context", "plan_revision",
-            "design_authority", "design_decision_ledger",
+            "design_authority", "design_decision_ledger", "batch_id_policy",
         ),
         ("design_document",),
     ),
     "developer": StagePromptContract(
         "developer",
-        ExecutionMode.INLINE,
+        ExecutionMode.SINGLE_WORKER,
         (
             "requirement", "feedback", "batch_id", "component", "tasks",
             "project_profile_summary",
         ),
+        ("developer",),
         optional_context=(
             "task_guidance", "git_authorized", "design_authority",
             "design_decision_ledger",

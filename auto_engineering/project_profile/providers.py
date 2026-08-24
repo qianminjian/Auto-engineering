@@ -191,6 +191,9 @@ class LocalProbeProvider:
             project_type = project_type or "application"
             package_manager = package_manager or ("uv" if "uv.lock" in entries else None)
             source_roots.extend(self._python_roots(project_root, pyproject))
+            tool = pyproject.get("tool")
+            if isinstance(tool, dict) and isinstance(tool.get("pytest"), dict):
+                commands["test"] = ("python", "-m", "pytest")
 
         if "go.mod" in entries:
             languages.append("go")

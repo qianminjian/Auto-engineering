@@ -383,6 +383,175 @@ class TestStatusMode:
 
 
 class TestMutexAndLegacy:
+    def test_relative_design_doc_resolves_against_explicit_project_root(
+        self, tmp_path, monkeypatch,
+    ) -> None:
+        project = tmp_path / "target"
+        launcher = tmp_path / "launcher"
+        (project / "design").mkdir(parents=True)
+        launcher.mkdir()
+        (project / "design/spec.md").write_text(
+            "# 设计\n## 模块\n实现模块。\n", encoding="utf-8",
+        )
+        monkeypatch.chdir(launcher)
+
+        result = CliRunner().invoke(main, [
+            "dev-loop", "--init", "按设计实现",
+            "--design-doc", "design/spec.md",
+            "--project-root", str(project),
+        ])
+
+        assert result.exit_code == 0, result.output
+
+    def test_supervisor_normalizes_host_resource_exhaustion(self) -> None:
+        from auto_engineering.cli.dev_loop import _host_context_failure_code
+
+        assert _host_context_failure_code(
+            "failed", "HOST_CODEX_USAGE_LIMIT"
+        ) == "HOST_ACTION_CONTEXT_RESOURCE_EXHAUSTED"
+        assert _host_context_failure_code(
+            "failed", "HOST_CLAUDE_BUDGET_EXHAUSTED"
+        ) == "HOST_ACTION_CONTEXT_RESOURCE_EXHAUSTED"
+        assert _host_context_failure_code(
+            "failed", "HOST_CODEX_EXECUTION_FAILED"
+        ) == "HOST_ACTION_CONTEXT_FAILED"
+
+    def test_supervise_is_internal_mutually_exclusive_mode(
+        self, tmp_path, monkeypatch,
+    ) -> None:
+        import auto_engineering.cli as cli_module
+
+        calls: list[object] = []
+        monkeypatch.setattr(
+            cli_module,
+            "run_action_supervisor",
+            lambda root: calls.append(root),
+            raising=False,
+        )
+        runner = CliRunner()
+
+        result = runner.invoke(
+            main,
+            ["dev-loop", "--supervise", "--project-root", str(tmp_path)],
+        )
+        assert result.exit_code == 0, result.output
+        assert calls == [tmp_path.resolve()]
+
+        conflict = runner.invoke(
+            main,
+            [
+                "dev-loop", "--supervise", "--status",
+                "--project-root", str(tmp_path),
+            ],
+        )
+        assert conflict.exit_code != 0
+        assert "互斥" in conflict.output
+
+    def test_supervise_drives_real_active_action_to_terminal(
+        self, tmp_path, monkeypatch,
+    ) -> None:
+        from auto_engineering.host import backends
+        from auto_engineering.host import supervisor as supervisor_module
+        from auto_engineering.host.invocation import (
+            ActionExecutionReceipt,
+            HostInvocationProbe,
+        )
+
+        runner = CliRunner()
+        initialized = runner.invoke(
+            main,
+            ["dev-loop", "--init", "实现 X", "--project-root", str(tmp_path)],
+        )
+        assert initialized.exit_code == 0, initialized.output
+
+        class FakeBackend:
+            def __init__(self, **kwargs):
+                pass
+
+            def probe(self):
+                return HostInvocationProbe.available("codex")
+
+            def execute(self, request):
+                return ActionExecutionReceipt.from_dict({
+                    "schema_version": "1.0",
+                    "thread_id": request.thread_id,
+                    "action_message_id": request.action_message_id,
+                    "build_id": request.build_id,
+                    "host_context_id": "fresh-context-1",
+                    "backend": "codex",
+                    "status": "completed",
+                    "exit_code": 0,
+                    "work_file_digests": {},
+                    "usage": {"input_tokens": 1, "cached_input_tokens": 0, "output_tokens": 1},
+                })
+
+            def cancel(self, host_context_id):
+                raise AssertionError(host_context_id)
+
+        class FakeOperations:
+            def __init__(self, **kwargs):
+                pass
+
+            def run(self, operations):
+                return {
+                    "message_id": "terminal-1",
+                    "action": "done",
+                    "extensions": {"ae": {"execution_control": {
+                        "schema_version": "1.0",
+                        "disposition": "TERMINAL",
+                        "continuation_required": False,
+                        "yield_allowed": True,
+                        "allowed_stop_reasons": ["goal_achieved"],
+                        "reason_code": "GOAL_ACHIEVED",
+                    }}},
+                }
+
+        evidence_calls: list[dict[str, object]] = []
+
+        class FakeEvidence:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def record_terminal(self, **kwargs):
+                evidence_calls.append(kwargs)
+                return tmp_path / ".ae-state/reports/evidence.json"
+
+        monkeypatch.setattr(backends, "CodexInvocationBackend", FakeBackend)
+        monkeypatch.setattr(
+            supervisor_module, "MachineOperationExecutor", FakeOperations,
+        )
+        monkeypatch.setattr(
+            supervisor_module, "ProductEvidenceArtifactJournal", FakeEvidence,
+        )
+        result = runner.invoke(
+            main,
+            ["dev-loop", "--supervise", "--project-root", str(tmp_path)],
+            env={"AE_HOST_PLATFORM": "codex"},
+        )
+        assert result.exit_code == 0, result.output
+        assert _last_json_line(result.output)["message_id"] == "terminal-1"
+        assert evidence_calls[0]["host"] == "codex"
+        assert evidence_calls[0]["thread_id"]
+
+    def test_supervise_reports_stable_error_without_python_traceback(
+        self, tmp_path, monkeypatch,
+    ) -> None:
+        import auto_engineering.cli as cli_module
+        from auto_engineering.host.invocation import ActionExecutionContractError
+
+        def fail(_root):
+            raise ActionExecutionContractError("HOST_OPERATION_FINALIZE_FAILED")
+
+        monkeypatch.setattr(cli_module, "run_action_supervisor", fail)
+        result = CliRunner().invoke(
+            main,
+            ["dev-loop", "--supervise", "--project-root", str(tmp_path)],
+        )
+
+        assert result.exit_code != 0
+        assert "HOST_OPERATION_FINALIZE_FAILED" in result.output
+        assert "Traceback" not in result.output
+
     def test_finalize_result_accepts_non_spawn_coordinator_payload(
         self, tmp_path
     ) -> None:

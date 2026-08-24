@@ -160,9 +160,21 @@ class TestResultSchemaMirrorsRuntimeSSOT:
     @staticmethod
     def _schema_required_map() -> dict[str, list[str]]:
         out: dict[str, list[str]] = {}
-        for clause in _RESULT_SCHEMA_JSON["allOf"]:
-            const = clause["if"]["properties"]["stage"]["const"]
-            out[const] = clause["then"]["required"]
+
+        def collect(clauses: list[dict]) -> None:
+            for clause in clauses:
+                condition = clause.get("if", {})
+                properties = condition.get("properties", {})
+                stage = properties.get("stage", {})
+                const = stage.get("const")
+                then = clause.get("then", {})
+                if isinstance(const, str):
+                    out[const] = then["required"]
+                nested = then.get("allOf")
+                if isinstance(nested, list):
+                    collect(nested)
+
+        collect(_RESULT_SCHEMA_JSON["allOf"])
         return out
 
     def test_every_runtime_stage_covered_by_schema(self):
@@ -182,6 +194,40 @@ class TestResultSchemaMirrorsRuntimeSSOT:
                 f"stage '{stage}' required 漂移: schema={sorted(m[stage])} "
                 f"vs RESULT_SCHEMA={sorted(spec['required'])}"
             )
+
+    def test_context_failure_bypasses_business_success_fields(self):
+        result = {
+            "schema_version": "1.1",
+            "message_type": "result",
+            "message_id": "failure-1",
+            "thread_id": "thread-1",
+            "tick": 1,
+            "stage": "project_setup",
+            "causation_id": "action-1",
+            "correlation_id": "thread-1",
+            "extensions": {},
+            "spawned": False,
+            "spawn_error_code": "HOST_ACTION_CONTEXT_FAILED",
+            "spawn_error": "HOST_CODEX_EXECUTION_FAILED",
+        }
+        _result_validator.validate(result)
+
+    def test_context_resource_exhaustion_bypasses_business_success_fields(self):
+        result = {
+            "schema_version": "1.1",
+            "message_type": "result",
+            "message_id": "resource-1",
+            "thread_id": "thread-1",
+            "tick": 1,
+            "stage": "critic",
+            "causation_id": "action-1",
+            "correlation_id": "thread-1",
+            "extensions": {},
+            "spawned": False,
+            "spawn_error_code": "HOST_ACTION_CONTEXT_RESOURCE_EXHAUSTED",
+            "spawn_error": "HOST_CODEX_USAGE_LIMIT",
+        }
+        _result_validator.validate(result)
 
     def test_refine_schema_accepts_typed_obligation_updates(self):
         result = _valid_result("architect")

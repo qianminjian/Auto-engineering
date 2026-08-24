@@ -387,6 +387,7 @@ def test_compact_host_view_projects_only_runtime_control_and_native_launcher(
         "action": "architect",
         "message_id": "compact-spawn-action",
         "thread_id": "thread-1",
+        "valid_plate_keys": ["counter"],
         "extensions": {
             "context_manifest": {"blocks": [{"id": "large-context"}]},
             "policy_snapshot": {"max_workers_per_thread": 50},
@@ -405,6 +406,7 @@ def test_compact_host_view_projects_only_runtime_control_and_native_launcher(
             "workers": [{
                 "worker_id": "architect-0",
                 "native_launch_prompt": "bounded-launcher",
+                "expected_isolation_evidence": "fork_turns=none",
                 "receipt": {"large": "duplicate"},
                 "attestation": {"large": "duplicate"},
                 "prompt_ref": "prompt.txt",
@@ -421,8 +423,10 @@ def test_compact_host_view_projects_only_runtime_control_and_native_launcher(
     assert compact["host_execution"]["workers"] == [{
         "worker_id": "architect-0",
         "native_launch_prompt": "bounded-launcher",
+        "expected_isolation_evidence": "fork_turns=none",
     }]
     assert compact["host_execution"]["work_files"] == {"outcomes": "outcomes.json"}
+    assert compact["valid_plate_keys"] == ["counter"]
 
 
 def test_cli_lease_uses_inner_claude_identity_when_launched_from_codex(

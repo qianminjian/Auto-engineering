@@ -49,6 +49,7 @@ def _native_worker_launch_prompt(
     project_root: str,
     prompt_ref: str,
     prompt_sha256: str,
+    required_isolation_evidence: str,
 ) -> str:
     """生成不含 Worker 正文的有界原生启动合同。"""
 
@@ -59,11 +60,14 @@ def _native_worker_launch_prompt(
         "prompt_sha256": prompt_sha256,
         "may_drive_loop": False,
         "may_spawn_workers": False,
+        "required_isolation_evidence": required_isolation_evidence,
     }
     return (
         "AUTO_ENGINEERING_NATIVE_WORKER_LAUNCH_V1\n"
         "切换到 project_root；只读取 prompt_ref 指定文件，先校验 SHA-256，"
-        "匹配后严格执行正文。不得驱动 Auto-Engineering Loop，不得创建子代理。\n"
+        "匹配后严格执行正文。不得驱动 Auto-Engineering Loop，不得创建子代理。"
+        "最终只返回输出契约要求的结构化字段和短摘要；不得返回完整 diff、日志或报告正文，"
+        "大型正文写入任务指定 Artifact。\n"
         + json.dumps(contract, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     )
 
@@ -106,27 +110,65 @@ class _Adapter2Mixin:
         mapped_payload = dict(action)
         action_key = hashlib.sha256(message_id.encode("utf-8")).hexdigest()[:24]
         work_root = f".ae-state/host-runtime/work/{action_key}"
+        raw_project_root = action.get("project_root")
+        project_root = (
+            raw_project_root
+            if isinstance(raw_project_root, str) and raw_project_root
+            else None
+        )
+        work_files = {
+            "outcomes": f"{work_root}/outcomes.json",
+            "coordinator_result": f"{work_root}/coordinator-result.json",
+            "result": f"{work_root}/result.json",
+        }
         host_execution: dict[str, object] = {
             "schema_version": "1.0",
             "platform": self.platform.value,
             "action_message_id": message_id,
-            "work_files": {
-                "outcomes": f"{work_root}/outcomes.json",
-                "coordinator_result": f"{work_root}/coordinator-result.json",
-                "result": f"{work_root}/result.json",
-            },
+            "work_files": work_files,
         }
+        if project_root is not None:
+            finalize_argv = [
+                "__AE_BUNDLED_RUNNER__", "dev-loop", "--finalize-result",
+                (
+                    work_files["outcomes"]
+                    if isinstance(action.get("spawn"), Mapping)
+                    else work_files["coordinator_result"]
+                ),
+            ]
+            if isinstance(action.get("spawn"), Mapping):
+                finalize_argv.extend([
+                    "--coordinator-result", work_files["coordinator_result"],
+                ])
+            finalize_argv.extend([
+                "--output-result", work_files["result"],
+                "--project-root", project_root,
+            ])
+            host_execution["operations"] = {
+                "finalize": {"argv": finalize_argv},
+                "validate": {"argv": [
+                    "__AE_BUNDLED_RUNNER__", "dev-loop", "--validate-result",
+                    work_files["result"], "--project-root", project_root,
+                ]},
+                "submit": {"argv": [
+                    "__AE_BUNDLED_RUNNER__", "dev-loop", "--tick", "--result",
+                    work_files["result"], "--project-root", project_root,
+                ]},
+            }
         spawn = action.get("spawn")
         if isinstance(spawn, Mapping) and isinstance(spawn.get("invocations"), list):
             from auto_engineering.host.spawn_contract import SpawnPlan
             from auto_engineering.host.worker_attestation import attestation_template
 
+            if project_root is None:
+                raise ValueError("HOST_ACTION_PROJECT_ROOT_MISSING")
+
             plan = SpawnPlan.from_action(action)
             stage = str(action.get("stage") or "")
-            raw_project_root = action.get("project_root")
-            if not isinstance(raw_project_root, str) or not raw_project_root:
-                raise ValueError("HOST_ACTION_PROJECT_ROOT_MISSING")
-            project_root = raw_project_root
+            expected_isolation = {
+                HostPlatform.CODEX: "fork_turns=none",
+                HostPlatform.CLAUDE_CODE: "fresh_context",
+            }[self.platform]
             host_execution["workers"] = [
                 {
                     "worker_id": invocation.worker_id,
@@ -136,7 +178,9 @@ class _Adapter2Mixin:
                         project_root=project_root,
                         prompt_ref=invocation.prompt_ref,
                         prompt_sha256=invocation.prompt_sha256,
+                        required_isolation_evidence=expected_isolation,
                     ),
+                    "expected_isolation_evidence": expected_isolation,
                     "receipt_path": invocation.receipt_path,
                     "receipt": {
                         "status": "pending",

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from auto_engineering.engine.state import EngineState
 from auto_engineering.loop.execution_control import (
     ExecutionDisposition,
@@ -42,6 +44,18 @@ def _state(intent: InvocationIntent) -> EngineState:
         }
     }
     return state
+
+
+def test_design_document_relative_path_cannot_escape_project_root(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    outside = tmp_path / "outside.md"
+    outside.write_text("# Other project\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="设计文档必须位于项目目录内"):
+        InvocationIntent.from_design_doc(project, "../outside.md")
 
 
 def test_same_design_and_existing_declared_roots_are_compatible(tmp_path: Path) -> None:

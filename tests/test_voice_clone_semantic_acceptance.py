@@ -187,15 +187,13 @@ def test_voice_clone_golden_reaches_done_through_real_core(
                 continue
             if stage == "developer":
                 batch_index += 1
-                action = core.tick_dict(_native_result(
-                    action, batch_id=action["batch_id"],
-                    files_changed=[f"voice_clone/part_{batch_index}.py"],
-                    test_results={"passed": 127, "failed": 0},
-                    red_evidence=["先失败后通过"],
-                ))
-                continue
 
-            def worker(invocation, current_stage=stage):
+            def worker(
+                invocation,
+                current_stage=stage,
+                current_action=action,
+                current_batch=batch_index,
+            ):
                 if current_stage == "architect":
                     return {
                         "plan": (
@@ -216,6 +214,14 @@ def test_voice_clone_golden_reaches_done_through_real_core(
                             {"decision_id": "VC-ARCH-001", "impact": "preserve"},
                             {"decision_id": "VC-SEC-001", "impact": "preserve"},
                         ],
+                    }
+                if current_stage == "developer":
+                    return {
+                        "batch_id": current_action["batch_id"],
+                        "files_changed": [f"voice_clone/part_{current_batch}.py"],
+                        "commit_hash": "",
+                        "test_results": {"passed": 127, "failed": 0, "total": 127},
+                        "red_evidence": ["先失败后通过"],
                     }
                 if current_stage == "critic":
                     return {"verdict": "APPROVE", "findings": [],

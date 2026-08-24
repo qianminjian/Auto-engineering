@@ -31,7 +31,8 @@ def test_prompt_bytes_remain_linear_when_completed_history_grows() -> None:
             },
             expected_format={"files_changed": "array"},
         )
-        sizes.append(len(bundle.coordinator_prompt.encode("utf-8")))
+        assert bundle.coordinator_prompt == ""
+        sizes.append(len(bundle.worker_prompts[0].prompt.encode("utf-8")))
 
     assert max(sizes) < min(sizes) * 1.10
     assert sum(sizes) < sizes[0] * 150 * 1.10

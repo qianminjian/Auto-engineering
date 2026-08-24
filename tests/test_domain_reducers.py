@@ -312,3 +312,34 @@ def test_batch_completed_reducer_rejects_task_identity_mismatch() -> None:
                 },
             ),
         )
+
+
+def test_work_repair_completed_heals_cursor_without_recounting_progress() -> None:
+    batches = [
+        {"batch_id": "B1", "component": "Core", "design_section": "§1",
+         "tasks": [{"id": "B1-T1"}]},
+        {"batch_id": "B2", "component": "Core", "design_section": "§1",
+         "tasks": [{"id": "B2-T1"}]},
+    ]
+    batch_state = BatchState.from_batch_plan(batches)
+    batch_state.advance_batch()
+    batch_state.advance_batch()
+    batch_state.current_batch_idx = 0  # 模拟旧版连续返修把游标错误回退到 B1
+    progress = ProgressTree.from_batch_plan(batches, "Core")
+    progress.nodes["§1"].done_tasks = 2
+    state = EngineState(
+        thread_id="thread-1",
+        batch_state_json=batch_state.to_json(),
+        progress_tree_json=json.dumps(progress.to_dict()),
+    )
+
+    reduced = default_reducer_registry().reduce(
+        state,
+        _event(LoopEventType.WORK_REPAIR_COMPLETED, {"batch_id": "B1"}),
+    )
+
+    restored = BatchState.from_json(reduced.batch_state_json, None)
+    restored_progress = ProgressTree.from_dict(json.loads(reduced.progress_tree_json))
+    assert restored.is_component_complete()
+    assert restored.completed_batch_ids() == {"B1", "B2"}
+    assert restored_progress.nodes["§1"].done_tasks == 2

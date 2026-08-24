@@ -51,7 +51,11 @@ class TransitionContextFactory:
                     index,
                 )
                 extensions["has_more_batches"] = (
-                    batch_state.has_more_batches_for(component)
+                    any(
+                        str(batch.get("batch_id"))
+                        not in batch_state.completed_batch_ids()
+                        for batch in batches
+                    )
                 )
         if stage == "developer" and batch_state is not None:
             extensions["blocking_gate_results"] = self.blocking_gate_results(
@@ -69,6 +73,10 @@ class TransitionContextFactory:
             extensions.update({
                 "has_more_batches_after_advance": has_more,
                 "completed_batch_id": completed.get("batch_id"),
+                "batch_already_completed": (
+                    str(completed.get("batch_id"))
+                    in batch_state.completed_batch_ids()
+                ),
                 "completed_task_count": len(completed.get("tasks", [])),
                 "completed_task_ids": [
                     str(task.get("id"))

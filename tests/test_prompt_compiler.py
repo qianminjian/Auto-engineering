@@ -33,6 +33,11 @@ def test_architect_worker_receives_requirement_and_refine_feedback() -> None:
             "design_doc_path": "design/spec.md",
             "valid_plate_keys": ["协议内核"],
             "project_profile_summary": {"profile_id": "sha256:test"},
+            "batch_id_policy": {
+                "reserved_batch_ids": ["B1"],
+                "next_numeric_id": 2,
+                "allocation_rule": "从 B2 起连续分配，禁止复用 reserved_batch_ids",
+            },
             "feedback": {"mode": "PLAN_REFINE", "reason": "补齐失败恢复"},
         },
         expected_format={"plan": "string"},
@@ -85,7 +90,7 @@ def test_missing_required_context_fails_closed() -> None:
         )
 
 
-def test_inline_developer_receives_feedback_without_forcing_git_commit() -> None:
+def test_developer_worker_receives_feedback_without_forcing_git_commit() -> None:
     contract = default_prompt_contracts()["developer"]
 
     bundle = compile_prompt_bundle(
@@ -106,7 +111,8 @@ def test_inline_developer_receives_feedback_without_forcing_git_commit() -> None
         expected_format={"files_changed": "array", "test_results": "object"},
     )
 
-    prompt = bundle.coordinator_prompt
+    assert bundle.coordinator_prompt == ""
+    prompt = bundle.worker_prompts[0].prompt
     assert "重复推进" in prompt
     assert "RED → GREEN → REFACTOR" in prompt
     assert '"git_authorized": false' in prompt
@@ -183,9 +189,11 @@ def test_context_selector_drops_undeclared_completed_batch_history() -> None:
         expected_format={"files_changed": "array"},
     )
 
-    assert "B101" in bundle.coordinator_prompt
-    assert "B99" not in bundle.coordinator_prompt
-    assert "completed_batches" not in bundle.coordinator_prompt
+    assert bundle.coordinator_prompt == ""
+    prompt = bundle.worker_prompts[0].prompt
+    assert "B101" in prompt
+    assert "B99" not in prompt
+    assert "completed_batches" not in prompt
 
 
 def test_context_selector_rejects_conversation_history_even_if_extra() -> None:
@@ -299,9 +307,9 @@ def test_project_profile_summary_is_bounded_and_identifiable(tmp_path) -> None:
 
     action = ActionBuilder(tmp_path).build_action(state)
 
-    summary = action["context"]["project_profile_summary"]
-    assert summary == _PROFILE_SUMMARY
-    assert "evidence" not in summary
-    assert "resolution" not in summary
-    assert "secret-digest" not in action["instruction"]
-    assert "sha256:test" in action["instruction"]
+    prompt = action["subagent_prompt"]
+    assert action["extensions"]["context_manifest"]["total_inline_bytes"] > 0
+    assert '"evidence":' not in prompt
+    assert '"resolution":' not in prompt
+    assert "secret-digest" not in prompt
+    assert "sha256:test" in prompt

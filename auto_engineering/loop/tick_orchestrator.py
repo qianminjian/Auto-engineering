@@ -1045,6 +1045,36 @@ class TickOrchestrator:
 
     def _tick_body_dict(self, result: dict) -> dict:
         """tick 核心逻辑 (dict 版本): Gate resolution → 验证 → Guardrail → Gate → 路由 → action."""
+        context_failure = result.get("spawn_error_code")
+        if result.get("spawned") is False and context_failure in {
+            "HOST_ACTION_CONTEXT_TIMEOUT",
+            "HOST_ACTION_CONTEXT_RESOURCE_EXHAUSTED",
+            "HOST_ACTION_CONTEXT_FAILED",
+        }:
+            if context_failure in {
+                "HOST_ACTION_CONTEXT_TIMEOUT",
+                "HOST_ACTION_CONTEXT_RESOURCE_EXHAUSTED",
+            }:
+                message = (
+                    "宿主 Action context 超时；active Action 保持不变。"
+                    if context_failure == "HOST_ACTION_CONTEXT_TIMEOUT"
+                    else "宿主 Action context 资源额度不足；active Action 保持不变。"
+                )
+                return {
+                    "action": "resource_wait",
+                    "stage": self._state.current_stage,
+                    "resource": "host_action_context",
+                    "retry_stage": self._state.current_stage,
+                    "reason_code": context_failure,
+                    "message": message,
+                    "suggestion": "宿主资源恢复后重新执行同一 active Action。",
+                }
+            return ErrorResponse(
+                error_code="HOST_ACTION_CONTEXT_FAILED",
+                message="宿主 Action context 执行失败；active Action 保持不变。",
+                current_state=self._state.to_dict(),
+                suggestion="检查宿主失败证据后重新执行同一 active Action。",
+            ).to_dict()
         if self._state.current_stage == "project_setup":
             validated = self._validate_result_dict(result)
             if isinstance(validated, ErrorResponse):
@@ -1491,6 +1521,21 @@ class TickOrchestrator:
                         f"expected={self._state.current_stage!r} "
                         f"(stage 是角色名如 'developer'/'architect', 不是 batch_id 如 'B4')",
                 current_state=self._state.to_dict())
+
+        context_failure = result.get("spawn_error_code")
+        if result.get("spawned") is False and context_failure in {
+            "HOST_ACTION_CONTEXT_TIMEOUT",
+            "HOST_ACTION_CONTEXT_RESOURCE_EXHAUSTED",
+            "HOST_ACTION_CONTEXT_FAILED",
+        }:
+            detail = result.get("spawn_error")
+            if not isinstance(detail, str) or not detail.strip():
+                return ErrorResponse(
+                    error_code="HOST_ACTION_CONTEXT_DETAIL_REQUIRED",
+                    message="Action context 失败必须包含非空错误详情。",
+                    current_state=self._state.to_dict(),
+                )
+            return result
 
         active_gate = (
             self._active_action.get("gate")
@@ -2034,6 +2079,8 @@ class TickOrchestrator:
                 LoopEventType.BATCH_COMPLETED,
                 LoopEventType.COMPONENT_COMPLETED,
                 LoopEventType.PLATE_COMPLETED,
+                LoopEventType.WORK_REOPENED,
+                LoopEventType.WORK_REPAIR_COMPLETED,
             }:
                 cursor_fact_applied = True
         if cursor_fact_applied:

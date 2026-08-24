@@ -97,6 +97,14 @@ def test_host_contract_uses_action_scoped_work_files() -> None:
         assert "不得复用上一 Action" in content
 
 
+def test_host_contract_locks_startup_project_root_before_init() -> None:
+    for content in (SKILL.read_text(), DEV_LOOP.read_text()):
+        assert "invocation_project_root" in content
+        assert "HOST_PROJECT_ROOT_DRIFT" in content
+        assert "禁止搜索父目录" in content
+        assert "禁止改写 `--project-root`" in content
+
+
 def test_skill_does_not_assume_git_authorization() -> None:
     content = SKILL.read_text()
 

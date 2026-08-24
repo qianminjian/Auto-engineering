@@ -129,6 +129,7 @@ def test_all_planned_event_types_are_explicit() -> None:
         "ComponentCompleted",
         "PlateCompleted",
         "WorkReopened",
+        "WorkRepairCompleted",
         "StateConflictDetected",
         "StateReconciliationSelected",
         "ThreadSuperseded",

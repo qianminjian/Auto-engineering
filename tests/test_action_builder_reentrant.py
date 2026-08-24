@@ -8,6 +8,7 @@ from auto_engineering.config.runtime_config import RuntimeConfig
 from auto_engineering.engine.batch_state import BatchState
 from auto_engineering.engine.design_doc import Component, DesignDoc, Plate
 from auto_engineering.engine.state import EngineState
+from auto_engineering.host.spawn_contract import SpawnPlan
 from auto_engineering.loop.action_builder import ActionBuilder
 
 
@@ -90,7 +91,9 @@ def test_architect_action_exposes_valid_machine_routing_keys(tmp_path) -> None:
     assert "Never reuse files from another Action" in action["instruction"]
     assert '"outcomes"' in action["instruction"]
     assert "isolation_evidence" in action["instruction"]
-    assert "--finalize-result" in action["instruction"]
+    assert "actual_model='unreported'" in action["instruction"]
+    assert "expected_isolation_evidence" in action["instruction"]
+    assert "host_execution.operations.finalize.argv" in action["instruction"]
     assert "OVERWRITE" not in action["instruction"]
     assert '"spawn_proof_token":"' not in action["instruction"]
     expected = action["expected_format"]["batch_plan"]
@@ -107,13 +110,32 @@ def test_action_binds_internal_commands_to_immutable_project_root(tmp_path) -> N
     )
 
     assert action["project_root"] == str(project_root)
-    assert f"--project-root {project_root}" in action["instruction"]
+    assert str(project_root) in action["instruction"]
 
     developer = ActionBuilder(project_root).build_action(
         EngineState(thread_id="root-bound-dev", current_stage="developer"),
     )
     assert str(project_root) in developer["instruction"]
     assert "working directory" in developer["instruction"]
+
+
+def test_developer_action_uses_one_isolated_worker(tmp_path) -> None:
+    action = ActionBuilder(tmp_path).build_action(
+        EngineState(thread_id="developer-worker", current_stage="developer"),
+    )
+
+    plan = SpawnPlan.from_action(action)
+
+    assert len(plan.invocations) == 1
+    invocation = plan.invocations[0]
+    assert invocation.role == "developer"
+    assert invocation.isolation == "fresh_context"
+    assert invocation.capabilities == {
+        "may_drive_loop": False,
+        "may_spawn_workers": False,
+    }
+    assert "Execute exactly 1 native worker" in action["instruction"]
+    assert "Do the work for stage 'developer'" not in action["instruction"]
 
 
 def test_action_feature_status_uses_injected_project_config(tmp_path) -> None:
@@ -182,7 +204,17 @@ def test_refine_action_exposes_core_owned_repair_contract(tmp_path) -> None:
         architecture_baseline={
             "revision": 2,
             "obligations": [{"id": "O1", "source_ref": "gap-1"}],
+            "batch_plan": [
+                {"batch_id": "B1", "tasks": []},
+                {"batch_id": "B2", "tasks": []},
+                {"batch_id": "B3", "tasks": []},
+            ],
         },
+        batch_plan=[
+            {"batch_id": "B1", "tasks": []},
+            {"batch_id": "B2", "tasks": []},
+            {"batch_id": "B3", "tasks": []},
+        ],
     )
 
     action = ActionBuilder(tmp_path).build_action(state)
@@ -194,6 +226,13 @@ def test_refine_action_exposes_core_owned_repair_contract(tmp_path) -> None:
     ]
     assert "base_revision" not in action["expected_format"]["plan_patch"]
     assert contract["task_template"]["kind"] == "implementation|test|contract_test"
+    assert action["batch_id_policy"] == {
+        "reserved_batch_ids": ["B1", "B2", "B3"],
+        "next_numeric_id": 4,
+        "allocation_rule": "从 B4 起连续分配，禁止复用 reserved_batch_ids",
+    }
+    assert '"next_numeric_id": 4' in action["subagent_prompt"]
+    assert "batch_id_policy" in action["expected_format"]["plan_patch"]
 
 
 def test_architect_action_declares_design_authority_policy(tmp_path) -> None:

@@ -171,6 +171,23 @@ def test_local_probe_reads_node_entry_files_and_declared_scripts(tmp_path: Path)
     }
 
 
+def test_local_probe_derives_pytest_command_from_pyproject_contract(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\nname = \"sample\"\nversion = \"0.1.0\"\n"
+        "[tool.pytest.ini_options]\ntestpaths = [\"tests\"]\n",
+        encoding="utf-8",
+    )
+
+    contribution = LocalProbeProvider().inspect(tmp_path)
+
+    assert contribution.source_roots == ("src",)
+    assert contribution.commands["test"] == ("python", "-m", "pytest")
+
+
 def test_node_toolchain_gaps_require_setup_before_developer(tmp_path: Path) -> None:
     (tmp_path / "src").mkdir()
     (tmp_path / "package.json").write_text(json.dumps({

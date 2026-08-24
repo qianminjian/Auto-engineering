@@ -212,6 +212,24 @@
   },
   "allOf": [
     {
+      "if": {
+        "not": {
+          "properties": {
+            "spawned": {"const": false},
+            "spawn_error_code": {
+              "enum": [
+                "HOST_ACTION_CONTEXT_TIMEOUT",
+                "HOST_ACTION_CONTEXT_RESOURCE_EXHAUSTED",
+                "HOST_ACTION_CONTEXT_FAILED"
+              ]
+            }
+          },
+          "required": ["spawned", "spawn_error_code"]
+        }
+      },
+      "then": {
+        "allOf": [
+    {
       "if": {"properties": {"stage": {"const": "project_setup"}}},
       "then": {
         "required": ["stage", "result_type", "artifacts"],
@@ -326,6 +344,9 @@
     {
       "if": {"properties": {"stage": {"const": "session_claimed"}}},
       "then": {"required": ["stage", "claim_token", "session_id", "host"]}
+    }
+        ]
+      }
     }
   ],
   "additionalProperties": false

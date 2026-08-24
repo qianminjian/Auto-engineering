@@ -7,7 +7,7 @@ import json
 import os
 import tempfile
 from collections.abc import Mapping, Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -197,6 +197,10 @@ class HostExecutionAssembler:
         outcomes: Sequence[NativeWorkerOutcome],
         coordinator_payload: Mapping[str, Any],
     ) -> dict[str, Any]:
+        coordinator_payload = self._normalize_echoed_identity(
+            action=action,
+            coordinator_payload=coordinator_payload,
+        )
         if not isinstance(action.get("spawn"), Mapping):
             return self._finalize_inline(
                 action=action,
@@ -216,13 +220,88 @@ class HostExecutionAssembler:
         if violations:
             raise HostEvidenceValidationError(violations)
 
+        plan: SpawnPlan = context["plan"]
         message_id = context["message_id"]
         journal_path = (
             self.project_root
             / ".ae-state/host-runtime/outcomes"
             / f"{message_id}.json"
         )
-        serialized_outcomes = [item.to_dict() for item in outcomes]
+        existing = self._read_json(journal_path)
+        outcome_by_worker = {item.worker_id: item for item in outcomes}
+        normalized: dict[str, NativeWorkerOutcome] = {}
+        for worker_id, outcome in outcome_by_worker.items():
+            evidence = outcome.isolation_evidence
+            canonical_evidence: str | None = None
+            if evidence in (
+                {"fork_context": False},
+                {"fork_context": False, "fork_turns": "none"},
+            ):
+                canonical_evidence = "fork_context=false"
+            elif evidence == {"fork_turns": "none"}:
+                canonical_evidence = "fork_turns=none"
+            normalized[worker_id] = (
+                replace(outcome, isolation_evidence=canonical_evidence)
+                if canonical_evidence is not None
+                else outcome
+            )
+        outcome_by_worker = normalized
+        config = get_default_config()
+        receipts: dict[str, dict[str, Any]] = {}
+        for invocation in plan.invocations:
+            outcome = outcome_by_worker[invocation.worker_id]
+            try:
+                receipts[invocation.worker_id] = compact_worker_receipt(
+                    store=ArtifactStore(
+                        self.project_root / ".ae-state" / "artifacts"
+                    ),
+                    stage=context["stage"],
+                    worker=invocation.worker_id,
+                    payload=outcome.payload,
+                    summary=outcome.summary,
+                    inline_limit=config.max_worker_receipt_bytes,
+                    summary_limit=config.max_receipt_summary_bytes,
+                    requested_effort=invocation.requested_effort,
+                    actual_model=outcome.actual_model,
+                    native_worker_handle=outcome.native_worker_handle,
+                )
+            except ArtifactError as exc:
+                raise HostEvidenceValidationError((
+                    f"WORKER_RECEIPT_TOO_LARGE:{invocation.worker_id}",
+                )) from exc
+
+        worker_templates: dict[str, Mapping[str, Any]] = context["worker_templates"]
+
+        def validated_attestations(
+            candidates: Mapping[str, NativeWorkerOutcome],
+        ) -> list[dict[str, Any]]:
+            built: list[dict[str, Any]] = []
+            for invocation in plan.invocations:
+                outcome = candidates[invocation.worker_id]
+                template = worker_templates[invocation.worker_id]
+                raw_attestation = template.get("attestation")
+                assert isinstance(raw_attestation, Mapping)
+                attestation = dict(raw_attestation)
+                attestation["status"] = "completed"
+                attestation["actual_model"] = outcome.actual_model
+                if outcome.isolation_evidence is not None:
+                    attestation["isolation_evidence"] = outcome.isolation_evidence
+                built.append(attestation)
+            validate_attestations(
+                action_message_id=context["message_id"],
+                invocations=plan.invocations,
+                attestations=built,
+            )
+            return built
+
+        try:
+            attestations = validated_attestations(outcome_by_worker)
+        except WorkerAttestationError as exc:
+            raise HostEvidenceValidationError((str(exc),)) from exc
+
+        serialized_outcomes = [
+            outcome_by_worker[item.worker_id].to_dict() for item in plan.invocations
+        ]
         outcomes_fingerprint = hashlib.sha256(
             _canonical_bytes({
                 "action_message_id": message_id,
@@ -235,7 +314,42 @@ class HostExecutionAssembler:
             "coordinator_payload": dict(coordinator_payload),
         }
         fingerprint = hashlib.sha256(_canonical_bytes(fingerprint_payload)).hexdigest()
-        existing = self._read_json(journal_path)
+        if existing is not None and existing.get("status") == "prepared":
+            rejection_reason: str | None = None
+            try:
+                raw_existing_outcomes = existing.get("outcomes")
+                if not isinstance(raw_existing_outcomes, list):
+                    raise ValueError("PREPARED_OUTCOME_SCHEMA_INVALID")
+                parsed_existing = [
+                    NativeWorkerOutcome(**dict(item))
+                    for item in raw_existing_outcomes
+                    if isinstance(item, Mapping)
+                ]
+                if len(parsed_existing) != len(raw_existing_outcomes):
+                    raise ValueError("PREPARED_OUTCOME_SCHEMA_INVALID")
+                validated_attestations({
+                    item.worker_id: item for item in parsed_existing
+                })
+            except WorkerAttestationError as exc:
+                rejection_reason = str(exc)
+            except (KeyError, TypeError, ValueError):
+                rejection_reason = "PREPARED_OUTCOME_SCHEMA_INVALID"
+            if rejection_reason is not None:
+                rejected_digest = hashlib.sha256(
+                    _canonical_bytes(existing)
+                ).hexdigest()[:16]
+                rejected_path = (
+                    self.project_root
+                    / ".ae-state/host-runtime/rejected-outcomes"
+                    / f"{message_id}-{rejected_digest}.json"
+                )
+                _atomic_write_json(rejected_path, {
+                    "schema_version": "1.0",
+                    "status": "rejected",
+                    "reason": rejection_reason,
+                    "journal": existing,
+                })
+                existing = None
         if existing is not None:
             existing_result = existing.get("result")
             retryable_failure = (
@@ -283,44 +397,9 @@ class HostExecutionAssembler:
             "outcomes": serialized_outcomes,
         })
 
-        plan: SpawnPlan = context["plan"]
-        worker_templates: dict[str, Mapping[str, Any]] = context["worker_templates"]
-        outcome_by_worker = {item.worker_id: item for item in outcomes}
-        attestations: list[dict[str, Any]] = []
-        config = get_default_config()
         for invocation in plan.invocations:
-            outcome = outcome_by_worker[invocation.worker_id]
-            receipt = compact_worker_receipt(
-                store=ArtifactStore(
-                    self.project_root / ".ae-state" / "artifacts"
-                ),
-                stage=context["stage"],
-                worker=invocation.worker_id,
-                payload=outcome.payload,
-                summary=outcome.summary,
-                inline_limit=config.max_worker_receipt_bytes,
-                summary_limit=config.max_receipt_summary_bytes,
-                requested_effort=invocation.requested_effort,
-                actual_model=outcome.actual_model,
-                native_worker_handle=outcome.native_worker_handle,
-            )
+            receipt = receipts[invocation.worker_id]
             _atomic_write_json(self.project_root / invocation.receipt_path, receipt)
-
-            template = worker_templates[invocation.worker_id]
-            raw_attestation = template.get("attestation")
-            assert isinstance(raw_attestation, Mapping)
-            attestation = dict(raw_attestation)
-            attestation["status"] = "completed"
-            attestation["actual_model"] = outcome.actual_model
-            if outcome.isolation_evidence is not None:
-                attestation["isolation_evidence"] = outcome.isolation_evidence
-            attestations.append(attestation)
-
-        validate_attestations(
-            action_message_id=message_id,
-            invocations=plan.invocations,
-            attestations=attestations,
-        )
         challenge: dict[str, Any] = context["challenge"]
         total_proof = {
             **challenge,
@@ -370,6 +449,30 @@ class HostExecutionAssembler:
             "result": result,
         })
         return result
+
+    @staticmethod
+    def _normalize_echoed_identity(
+        *,
+        action: Mapping[str, Any],
+        coordinator_payload: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        """只归一化身份完全一致的已知宿主包装；身份仍由 Core 写入。"""
+        normalized = dict(coordinator_payload)
+        wrapper_keys = {"action", "stage", "tick", "thread_id", "status", "result"}
+        wrapped_result = normalized.get("result")
+        if (
+            isinstance(wrapped_result, Mapping)
+            and set(normalized) == wrapper_keys
+            and normalized.get("action") == action.get("action")
+            and normalized.get("stage") == action.get("stage")
+            and normalized.get("tick") == action.get("tick")
+            and normalized.get("thread_id") == action.get("thread_id")
+            and normalized.get("status") in {"ok", "success", "completed"}
+        ):
+            return dict(wrapped_result)
+        if "stage" in normalized and normalized["stage"] == action.get("stage"):
+            del normalized["stage"]
+        return normalized
 
     def _finalize_worker_failure(
         self,

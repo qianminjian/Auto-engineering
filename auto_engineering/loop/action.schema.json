@@ -80,6 +80,7 @@
     "gap": {"type": "object"},
     "knowledge_sources": {"type": "object"},
     "valid_plate_keys": {"type": "array", "items": {"type": "string"}},
+    "batch_id_policy": {"type": "object"},
     "repair_contract": {"type": "object"},
     "resource": {"type": "string"},
     "retry_stage": {"type": "string"},

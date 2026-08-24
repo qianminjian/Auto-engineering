@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://auto-engineering.local/schema/action-execution-receipt.schema.json",
+  "title": "ActionExecutionReceipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "thread_id",
+    "action_message_id",
+    "build_id",
+    "host_context_id",
+    "backend",
+    "status",
+    "exit_code",
+    "work_file_digests",
+    "usage"
+  ],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "thread_id": {"type": "string", "minLength": 1},
+    "action_message_id": {"type": "string", "minLength": 1},
+    "build_id": {"type": "string", "minLength": 1},
+    "host_context_id": {"type": "string", "minLength": 1},
+    "backend": {"enum": ["codex", "claude"]},
+    "status": {"enum": ["completed", "failed", "cancelled", "timed_out"]},
+    "exit_code": {"type": ["integer", "null"]},
+    "error_code": {"type": "string", "minLength": 1},
+    "work_file_digests": {
+      "type": "object",
+      "additionalProperties": {"$ref": "#/$defs/sha256"}
+    },
+    "usage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["input_tokens", "cached_input_tokens", "output_tokens"],
+      "properties": {
+        "input_tokens": {"type": ["integer", "null"], "minimum": 0},
+        "cached_input_tokens": {"type": ["integer", "null"], "minimum": 0},
+        "output_tokens": {"type": ["integer", "null"], "minimum": 0},
+        "cost_usd": {"type": ["number", "null"], "minimum": 0}
+      }
+    }
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  }
+}

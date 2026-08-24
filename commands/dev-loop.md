@@ -45,17 +45,28 @@ Coordinator 不得先读取、`sed`、复制、总结或重新拼接 `prompt_ref
 校验文件 SHA-256。由 fresh Worker 切换到机器指定 `project_root`，读取并验证 Artifact。
 
 ```text
-1. project_root = 宿主启动时解析的绝对项目目录
+1. invocation_project_root = 宿主启动 cwd 的真实绝对路径（本次启动不可变）
+   project_root = invocation_project_root
    action = ae-run dev-loop --init "<requirement>" [--design-doc <path>]
-       --project-root project_root
+       --project-root invocation_project_root
    # --init 自动恢复 active thread；禁止先调 status 或扫描 .ae-state 推测 Action。
+   # 设计文档不存在、越界或 init 失败时立即停止；禁止搜索父目录、/tmp、其他项目或同名文件，
+   # 禁止改写 `--project-root` 后重试，也禁止用绝对设计路径切换项目。
    # 若仅查询 status，必须原样执行 status.next_operation.argv。
+   assert realpath(action.project_root) == invocation_project_root
+   # 不相等时报告 HOST_PROJECT_ROOT_DRIFT 并停止，禁止在新根初始化或继续。
    project_root = action.project_root
    # 此后 project_root 是不可变机器事实；每条 `ae-run dev-loop` 内部命令都显式传入，
    # 禁止依赖宿主 shell 的当前目录。
    # 所有项目编辑、测试、lint、type check、build 和 Worker 启动同样固定 cwd=project_root；
    # 禁止在插件 Release 或 prompt artifact 目录执行项目命令。
-2. while action.extensions.ae.execution_control.disposition == "CONTINUE":
+2. if action.extensions.ae.execution_control.disposition == "CONTINUE":
+     final_action = ae-run dev-loop --supervise --project-root project_root
+     # Supervisor 内部为每个 Action 创建一次性 context 并执行机器 argv；外层不再逐 Tick。
+     # probe 失败必须 fail-closed，禁止退回长期主会话或要求用户手工 continue。
+     action = final_action
+3. 以下 while 合同只供 Supervisor 创建的一次性 Action context 执行，外层宿主禁止直接运行：
+   while action.extensions.ae.execution_control.disposition == "CONTINUE":
      print "[Tick N | stage <action.stage>] ..."
      control = action.extensions.ae.execution_control
      if control.disposition == "ERROR":
@@ -130,32 +141,33 @@ Coordinator 不得先读取、`sed`、复制、总结或重新拼接 `prompt_ref
              不得复用上一 Action 的文件
          write only native WorkerOutcome facts to work_files.outcomes, including the selected
              tool family's isolation_evidence (`fork_turns=none` or `fork_context=false`)
+             and actual_model reported by the native API; if unavailable use exact `unreported`,
+             never null and never infer a model name
          if any worker timed out or failed:
              write the native failure fact with status timeout|timed_out to work_files.outcomes
              and write {} to coordinator_result;
              never fabricate a plan, proof, attestation, or spawned field
          else merge business fields required by action.expected_format into work_files.coordinator_result
-         run ae-run dev-loop --finalize-result work_files.outcomes
-             --coordinator-result work_files.coordinator_result --output-result work_files.result
-             --project-root project_root
+         execute action.host_execution.operations.finalize.argv verbatim;
+             replace only __AE_BUNDLED_RUNNER__ with the fixed bundled runner
          use work_files.result as the complete Result; never hand-build receipt, attestation,
              spawned, or total proof fields
          after tick returns the next Action, 丢弃上一 Action 的对象、work_files、Worker handle
              与命令参数，只保留新 Action；错误恢复禁止重复输出全量 diff、旧工作文件或
              历史 Action JSON，只消费结构化错误码和 active Action 摘要
      else:
-         execute developer work inline
+         execute only the explicit non-business inline control/configuration action;
+             never execute architect, developer, critic, verifier, or audit work inline
          read action.host_execution.work_files；不得复用上一 Action 的文件
          write only fields required by action.expected_format to work_files.coordinator_result
-         run ae-run dev-loop --finalize-result work_files.coordinator_result
-             --output-result work_files.result --project-root project_root
+         execute action.host_execution.operations.finalize.argv verbatim
          use work_files.result as the complete Result; never copy stdout or hand-build identity
      ensure result.stage == action.stage
-     validation = ae-run dev-loop --validate-result <result-file> --project-root project_root
+     validation = execute action.host_execution.operations.validate.argv verbatim
      if validation.action == "error":
          repair the same result file; do not advance or create another Action
          continue
-     action = ae-run dev-loop --tick --result <result-file> --project-root project_root
+     action = execute action.host_execution.operations.submit.argv verbatim
 3. if control.disposition == "WAIT_RESOURCE": do not ask the user; recover capacity and
    re-execute the original active Action without advancing the Tick
 4. if control.disposition == "WAIT_USER": ask only for control.reason_code

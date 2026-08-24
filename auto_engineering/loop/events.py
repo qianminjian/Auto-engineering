@@ -71,6 +71,7 @@ class LoopEventType(StrEnum):
     COMPONENT_COMPLETED = "ComponentCompleted"
     PLATE_COMPLETED = "PlateCompleted"
     WORK_REOPENED = "WorkReopened"
+    WORK_REPAIR_COMPLETED = "WorkRepairCompleted"
     STATE_CONFLICT_DETECTED = "StateConflictDetected"
     STATE_RECONCILIATION_SELECTED = "StateReconciliationSelected"
     THREAD_SUPERSEDED = "ThreadSuperseded"

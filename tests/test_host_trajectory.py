@@ -172,12 +172,16 @@ def test_three_worker_plate_audit_uses_templates_through_core_tick(
         ).next_action
 
         for batch_id, component in (("B1", "Foo"), ("B2", "Bar")):
-            action = dict(core.tick_dict(_inline_result(
+            action = runner.run(
                 action,
-                batch_id=batch_id,
-                files_changed=[f"trajectory/{component.lower()}.py"],
-                test_results={"passed": 1, "failed": 0},
-            )))
+                workers=[lambda invocation, batch=batch_id, name=component: {
+                    "batch_id": batch,
+                    "files_changed": [f"trajectory/{name.lower()}.py"],
+                    "commit_hash": "",
+                    "test_results": {"passed": 1, "failed": 0, "total": 1},
+                    "red_evidence": [],
+                }],
+            ).next_action
             action = runner.run(
                 action,
                 workers=[lambda invocation: {

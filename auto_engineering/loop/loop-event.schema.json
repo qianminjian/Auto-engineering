@@ -75,6 +75,7 @@
         "ComponentCompleted",
         "PlateCompleted",
         "WorkReopened",
+        "WorkRepairCompleted",
         "StateConflictDetected",
         "StateReconciliationSelected",
         "ThreadSuperseded",

@@ -31,7 +31,7 @@ Gate/Guardrail、五层验证、审计、v5.6 兼容迁移和双宿主验收。
 | D10 | Prompt Contract 采用兼容式编译，不改变 Action/Result v1.1 核心语义 | ✅ |
 | D11 | 多 Agent 必须逐 Worker 交付上下文并提供独立完成回执 | ✅ |
 | D12 | Thread 与 ExecutionSession 分离；聊天历史、BEACON 和自动摘要不是状态事实源 | ✅ |
-| D13 | 宿主自动 compaction；固定 Tick 不换会话；Capsule 仅用于异常恢复 | ✅ |
+| D13 | 工程线程连续；宿主模型上下文按 Action 隔离且自动续作；Capsule 仅用于异常恢复 | ✅ |
 | D14 | 修复计划使用 PlanPatch；完成事实不可由普通计划更新重新激活 | ✅ |
 | D15 | runner 错配、零测试、空快照和证据失配全部 fail-closed | ✅ |
 | D16 | Core 以 ProjectProfile 消费项目能力；本地确定性探测为默认 Provider，Init Engineering 仅是可选兼容 Provider | ✅ |
@@ -64,16 +64,16 @@ Gate/Guardrail、五层验证、审计、v5.6 兼容迁移和双宿主验收。
 - 当前候选的自动门禁、双宿主 frozen/offline L2 和内容寻址安装可验证；这些证据不替代真实产品 L3/L4 长跑。
 - 双宿主 L3 均已到 TERMINAL；L4 揭示的 Gap 恢复、运行时激活、自动决策、补充权威、Gate 校验与在途迁移缺口已由 T505-T511 闭合。
 - T512-T523 已闭合跨会话恢复、陈旧路径重绑、未提交 outcome 复用和审计 fan-out 伸缩；2519/1、Ruff、mypy 通过。完整 L3/L4 终态仍未完成。
-- T529 已将小项目 Worker 4→2 并闭合三类验收；2533/1 通过，但固定宿主历史仍使成本失败，L4/发布阻断。
+- T530-T543、资源/证据/预算闭环完成；2615/1、静态、双宿主 capability/archive 通过；Claude 成本失败，双宿主 terminal 与 T544 仍阻断。
 ## 最近演进
 | 日期 | 变更 |
 |---|---|
 | 2026-08-21 | T512-T518 关闭重复 spawn、错误恢复、计划校验终止、Worker 超时伪成功与无限重启链路 |
 | 2026-08-21 | T519-T523 关闭旧路径误提交、未提交 outcome 重跑与小项目固定 5×xhigh 审计成本 |
 | 2026-08-22 | T524 关闭未来目录误报；双宿主 L3 暴露百万级 cache read，启动 T525-T526 |
-| 2026-08-22 | T525-T528 关闭正文重复、journal 漂移与 Worker Prompt 复制；定位为四个 fresh Worker 重复加载宿主基线 |
+| 2026-08-23 | T533 获批修订 D13：工程线程连续，模型上下文按 Action 隔离且由 Supervisor 自动续作 |
 ## 待解决问题
-- T530 待审批：以 Action-scoped fresh host context 翻转 D13 固定模型上下文；用户仍只启动一次。
+- T544：证据门禁已加固；待同一内容寻址 Build 的 Codex/Claude 真实 terminal 与数值预算通过，任一缺失不得发布。
 
 ## 引用文件
 

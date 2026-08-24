@@ -63,7 +63,6 @@ class ArchitectureCandidateBuilder:
             raise ArchitectureCandidateError(
                 f"PLAN_BATCH_CONFLICT: {', '.join(duplicate_ids)}"
             )
-
         contracts = dict(baseline.get("contracts", {}))
         raw_contracts = result.get("contracts", {})
         if not isinstance(raw_contracts, Mapping):

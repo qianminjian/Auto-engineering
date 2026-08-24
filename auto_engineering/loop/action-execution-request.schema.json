@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://auto-engineering.local/schema/action-execution-request.schema.json",
+  "title": "ActionExecutionRequest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "thread_id",
+    "action_message_id",
+    "tick",
+    "stage",
+    "build_id",
+    "project_root",
+    "compact_envelope_ref",
+    "compact_envelope_sha256",
+    "coordinator_ref",
+    "coordinator_sha256",
+    "work_files",
+    "allowed_tools"
+  ],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "thread_id": {"type": "string", "minLength": 1},
+    "action_message_id": {"type": "string", "minLength": 1},
+    "tick": {"type": "integer", "minimum": 0},
+    "stage": {"type": "string", "minLength": 1},
+    "build_id": {"type": "string", "minLength": 1},
+    "project_root": {"type": "string", "pattern": "^/"},
+    "compact_envelope_ref": {"$ref": "#/$defs/projectRelativePath"},
+    "compact_envelope_sha256": {"$ref": "#/$defs/sha256"},
+    "coordinator_ref": {"$ref": "#/$defs/projectRelativePath"},
+    "coordinator_sha256": {"$ref": "#/$defs/sha256"},
+    "work_files": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["outcomes", "coordinator_result", "result"],
+      "properties": {
+        "outcomes": {"$ref": "#/$defs/projectRelativePath"},
+        "coordinator_result": {"$ref": "#/$defs/projectRelativePath"},
+        "result": {"$ref": "#/$defs/projectRelativePath"}
+      }
+    },
+    "allowed_tools": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1},
+      "uniqueItems": true
+    }
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "projectRelativePath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
+    }
+  }
+}

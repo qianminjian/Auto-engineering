@@ -129,6 +129,8 @@ EVENT_CHANNELS: dict[LoopEventType, frozenset[str]] = {
     }),
     LoopEventType.COMPONENT_COMPLETED: frozenset({"batch_state_json"}),
     LoopEventType.PLATE_COMPLETED: frozenset({"batch_state_json"}),
+    LoopEventType.WORK_REOPENED: frozenset({"batch_state_json"}),
+    LoopEventType.WORK_REPAIR_COMPLETED: frozenset({"batch_state_json"}),
 }
 
 
@@ -364,6 +366,30 @@ def _component_completed(state: EngineState, event: LoopEvent) -> EngineState:
     return _copy(state, batch_state_json=batch_state.to_json())
 
 
+def _work_reopened(state: EngineState, event: LoopEvent) -> EngineState:
+    if _payload(event):
+        raise EventChannelViolation("WORK_REOPENED_PAYLOAD_INVALID")
+    try:
+        batch_state = BatchState.from_json(state.batch_state_json or "", None)
+        batch_state.reopen_previous_batch()
+    except (ValueError, TypeError, KeyError, json.JSONDecodeError) as exc:
+        raise EventChannelViolation("BATCH_PROJECTION_INVALID") from exc
+    return _copy(state, batch_state_json=batch_state.to_json())
+
+
+def _work_repair_completed(state: EngineState, event: LoopEvent) -> EngineState:
+    payload = _payload(event)
+    batch_id = payload.get("batch_id")
+    if set(payload) != {"batch_id"} or not isinstance(batch_id, str) or not batch_id:
+        raise EventChannelViolation("WORK_REPAIR_COMPLETED_PAYLOAD_INVALID")
+    try:
+        batch_state = BatchState.from_json(state.batch_state_json or "", None)
+        batch_state.complete_repair(batch_id)
+    except (ValueError, TypeError, KeyError, json.JSONDecodeError) as exc:
+        raise EventChannelViolation(str(exc)) from exc
+    return _copy(state, batch_state_json=batch_state.to_json())
+
+
 def _plate_completed(state: EngineState, event: LoopEvent) -> EngineState:
     payload = _payload(event)
     if set(payload) != {"plate"} or not isinstance(payload.get("plate"), str):
@@ -441,6 +467,8 @@ def default_reducer_registry() -> ReducerRegistry:
         LoopEventType.PLAN_RECONCILED: _registered_channels,
         LoopEventType.TASK_SUPERSEDED: _registered_channels,
         LoopEventType.BATCH_COMPLETED: _batch_completed,
+        LoopEventType.WORK_REOPENED: _work_reopened,
+        LoopEventType.WORK_REPAIR_COMPLETED: _work_repair_completed,
     }
     for event_type in LoopEventType:
         registry.register(event_type, special.get(event_type, _no_projection_change))

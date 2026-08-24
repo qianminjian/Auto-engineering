@@ -89,7 +89,9 @@ ultrathink
 
 PLAN_REFINE 时将上例 `batch_plan` 替换为 `plan_patch`。revision 由 Core 从 active baseline
 注入，Agent 不需要回传；`add_batches` 只包含闭合 refine_request gaps 的新批次；修复已有组件也必须使用
-新 batch_id，通过 `depends_on` 续接，不覆盖旧批次或完成事实。
+新 batch_id，通过 `depends_on` 续接，不覆盖旧批次或完成事实。必须读取 action 注入的
+`batch_id_policy`：不得使用 `reserved_batch_ids` 中任何 ID；第一个新 batch 必须使用
+`B<next_numeric_id>`，同一 patch 的后续 batch 按数字连续递增，不得自行猜测或复用历史 ID。
 
 PLAN_REFINE 的历史 obligation 自动继承，不得重复提交历史 source_ref。`obligations` 只包含
 本轮新增 source_ref；没有新增来源时输出空数组。若已有 source_ref 需要绑定本轮新增 task 或

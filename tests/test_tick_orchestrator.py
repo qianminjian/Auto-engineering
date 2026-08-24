@@ -80,39 +80,44 @@ def _orchestrator(max_rounds: int = 10, escalate: bool = False) -> TickOrchestra
 
 
 def _make_result_file(data: dict) -> Path:
-    if data.get("spawned") is True:
-        active = _ACTIVE_ORCHESTRATOR._active_action if _ACTIVE_ORCHESTRATOR else None
-        if isinstance(active, dict) and active.get("stage") == data.get("stage"):
-            proof_path = (
-                _ACTIVE_TEST_ROOT / ".ae-state" / "spawn-proofs"
-                / f"{active['spawn_proof_token']}.json"
-            )
-            proof = json.loads(proof_path.read_text(encoding="utf-8"))
-            proof["status"] = "completed"
-            proof["completed_at"] = "2026-08-01T00:00:00Z"
-            proof_path.write_text(json.dumps(proof), encoding="utf-8")
-            data["spawn_proof_token"] = active["spawn_proof_token"]
-            plan = SpawnPlan.from_action(active)
-            for spec in plan.invocations:
-                (_ACTIVE_TEST_ROOT / spec.receipt_path).write_text(json.dumps({
-                    "status": "completed", "stage": active["stage"],
-                    "worker": spec.worker_id,
-                    "native_worker_handle": f"test-{spec.worker_id}",
-                    "requested_effort": spec.requested_effort,
-                    "actual_model": "test-model",
-                }), encoding="utf-8")
-            data["worker_attestations"] = [
-                WorkerAttestation.completed(
-                    platform=HostPlatform.CODEX,
-                    action_message_id=active["message_id"],
-                    invocation=spec,
-                    effective_effort=spec.requested_effort,
-                    isolation_evidence="fork_turns=none",
-                    visible_capabilities=tuple(sorted(spec.capabilities)),
-                    actual_model="test-model",
-                ).to_dict()
-                for spec in plan.invocations
-            ]
+    active = _ACTIVE_ORCHESTRATOR._active_action if _ACTIVE_ORCHESTRATOR else None
+    active_spawn = active.get("spawn") if isinstance(active, dict) else None
+    if (
+        data.get("spawned") is not False
+        and isinstance(active_spawn, dict)
+        and active.get("stage") == data.get("stage")
+    ):
+        data["spawned"] = True
+        proof_path = (
+            _ACTIVE_TEST_ROOT / ".ae-state" / "spawn-proofs"
+            / f"{active['spawn_proof_token']}.json"
+        )
+        proof = json.loads(proof_path.read_text(encoding="utf-8"))
+        proof["status"] = "completed"
+        proof["completed_at"] = "2026-08-01T00:00:00Z"
+        proof_path.write_text(json.dumps(proof), encoding="utf-8")
+        data["spawn_proof_token"] = active["spawn_proof_token"]
+        plan = SpawnPlan.from_action(active)
+        for spec in plan.invocations:
+            (_ACTIVE_TEST_ROOT / spec.receipt_path).write_text(json.dumps({
+                "status": "completed", "stage": active["stage"],
+                "worker": spec.worker_id,
+                "native_worker_handle": f"test-{spec.worker_id}",
+                "requested_effort": spec.requested_effort,
+                "actual_model": "test-model",
+            }), encoding="utf-8")
+        data["worker_attestations"] = [
+            WorkerAttestation.completed(
+                platform=HostPlatform.CODEX,
+                action_message_id=active["message_id"],
+                invocation=spec,
+                effective_effort=spec.requested_effort,
+                isolation_evidence="fork_turns=none",
+                visible_capabilities=tuple(sorted(spec.capabilities)),
+                actual_model="test-model",
+            ).to_dict()
+            for spec in plan.invocations
+        ]
     f = Path(tempfile.mktemp(suffix=".json"))
     f.write_text(json.dumps(data), encoding="utf-8")
     return f
@@ -718,6 +723,83 @@ class TestCriticMajorLoop:
         assert action["stage"] == "developer"
         assert action["feedback"] is not None  # findings 注入
 
+    def test_developer_repair_does_not_complete_the_same_batch_twice(self) -> None:
+        """Critic 返修只重开工作，不得再次推进已完成的 Batch 游标。"""
+        o = _orchestrator()
+        o.init("req")
+        o.tick(_make_result_file({
+            "stage": "architect", "spawned": True,
+            "plan": _VALID_PLAN, "batch_plan": [{
+                "batch_id": "b1", "design_section": "B2", "component": "C",
+                "tasks": [{"id": "T1", "description": "d", "module_ref": "§B2",
+                           "file_targets": ["x.py"]}],
+            }], "file_list": ["x.py"], "contracts": {},
+        }))
+        o.tick(_make_result_file({
+            "stage": "developer", "batch_id": "b1",
+            "files_changed": ["x.py"],
+            "test_results": {"passed": 1, "failed": 0},
+        }))
+        o.tick(_make_result_file({
+            "stage": "critic", "spawned": True, "verdict": "MAJOR",
+            "findings": [{"file": "x.py", "line": 1, "severity": "P0",
+                          "issue": "bug", "suggestion": "fix"}],
+        }))
+
+        action = o.tick(_make_result_file({
+            "stage": "developer", "batch_id": "b1",
+            "files_changed": ["x.py"],
+            "test_results": {"passed": 2, "failed": 0},
+        }))
+
+        assert action["action"] == "critic"
+        assert o._progress_tree is not None
+        component = o._progress_tree.find_by_design_section("B2")
+        assert component is not None
+        assert component.done_tasks == component.total_tasks == 1
+
+    def test_two_critic_repairs_preserve_completed_batch_cursor(self) -> None:
+        """连续 MAJOR 返修后 APPROVE 必须进入验证，不得倒退重做已完成批次。"""
+        o = _orchestrator()
+        o.init("req")
+        o.tick(_make_result_file({
+            "stage": "architect", "spawned": True,
+            "plan": _VALID_PLAN, "batch_plan": [{
+                "batch_id": "b1", "design_section": "B2", "component": "C",
+                "tasks": [{"id": "T1", "description": "d", "module_ref": "§B2",
+                           "file_targets": ["x.py"]}],
+            }], "file_list": ["x.py"], "contracts": {},
+        }))
+        o.tick(_make_result_file({
+            "stage": "developer", "batch_id": "b1",
+            "files_changed": ["x.py"],
+            "test_results": {"passed": 1, "failed": 0},
+        }))
+        for issue in ("first defect", "second defect"):
+            o.tick(_make_result_file({
+                "stage": "critic", "spawned": True, "verdict": "MAJOR",
+                "findings": [{"file": "x.py", "line": 1, "severity": "P0",
+                              "issue": issue, "suggestion": "fix"}],
+            }))
+            o.tick(_make_result_file({
+                "stage": "developer", "batch_id": "b1",
+                "files_changed": ["x.py"],
+                "test_results": {"passed": 2, "failed": 0},
+            }))
+
+        action = o.tick(_make_result_file({
+            "stage": "critic", "spawned": True, "verdict": "APPROVE",
+            "findings": [],
+        }))
+
+        assert action["action"] == "component_verifier"
+        assert o._batch_state is not None
+        assert o._batch_state.is_component_complete()
+        assert o._progress_tree is not None
+        component = o._progress_tree.find_by_design_section("B2")
+        assert component is not None
+        assert component.done_tasks == component.total_tasks == 1
+
     def test_critic_major_invalid_verdict_returns_error(self) -> None:
         o = _orchestrator()
         o.init("req")
@@ -1223,9 +1305,9 @@ class TestBuildActionContexts:
 
         action = o.build_action(feedback="P0：重复 Result 会推进两次")
 
-        assert "你是 Developer" in action["instruction"]
-        assert "重复 Result 会推进两次" in action["instruction"]
-        assert '"git_authorized": false' in action["instruction"]
+        assert "你是 Developer" in action["subagent_prompt"]
+        assert "重复 Result 会推进两次" in action["subagent_prompt"]
+        assert '"git_authorized": false' in action["subagent_prompt"]
 
     def test_critic_action_has_context_fields(self) -> None:
         o = _orchestrator()
@@ -3221,11 +3303,13 @@ class TestTickVsTickDictIdenticalActions:
 
         o2 = _orchestrator()
         self._seed_to_developer(o2)
-        o2.tick_dict({
+        developer_for_dict = {
             "stage": "developer", "batch_id": "b1",
             "files_changed": ["x.py"],
             "test_results": {"passed": 2, "failed": 0},
-        })
+        }
+        _make_result_file(developer_for_dict)
+        o2.tick_dict(developer_for_dict)
         result_for_dict = dict(result)
         _make_result_file(result_for_dict)
         action_dict = self._strip_nondeterministic(o2.tick_dict(result_for_dict))
@@ -3740,9 +3824,11 @@ class TestPrePlannedGate:
         _make_result_file(architect_result)
         o.tick_dict(architect_result)
         # developer: 完成 b1 → b2 有 gate → 输出 gate action
-        action = o.tick_dict({"stage": "developer", "batch_id": "b1",
-                              "files_changed": ["a.py"],
-                              "commit_hash": "abc", "test_results": {"passed": 1}})
+        developer_result = {"stage": "developer", "batch_id": "b1",
+                            "files_changed": ["a.py"],
+                            "commit_hash": "abc", "test_results": {"passed": 1}}
+        _make_result_file(developer_result)
+        action = o.tick_dict(developer_result)
         assert action["action"] == "gate"
         assert action["gate"]["id"] == "deploy_approval"
 
@@ -4864,7 +4950,8 @@ class TestF7SpawnProofForgery:
             stage="critic", proof_token="abc123", project_root="/tmp/project")
         assert "spawn.invocations[]" in rendered
         assert '"outcomes"' in rendered
-        assert "--finalize-result" in rendered
+        assert "host_execution.operations.finalize.argv" in rendered
+        assert "__AE_BUNDLED_RUNNER__" in rendered
         assert "abc123" not in rendered
         assert "OVERWRITE" not in rendered
 
@@ -5064,6 +5151,26 @@ class TestF7SpawnProofForgery:
         assert o._state.tick == tick_before
         assert o._state.guardrail_retry_counters == counters_before
 
+    def test_host_context_resource_exhaustion_preserves_active_action(self, tmp_path):
+        o = self._setup_critic(tmp_path, "pending")
+        active_message_id = o._active_action["message_id"]
+        tick_before = o._state.tick
+        result = {
+            "stage": "critic",
+            "spawned": False,
+            "spawn_error_code": "HOST_ACTION_CONTEXT_RESOURCE_EXHAUSTED",
+            "spawn_error": "HOST_CODEX_USAGE_LIMIT",
+        }
+
+        assert o._validate_result_dict(result) == result
+        action = o.tick_dict(result)
+
+        assert action["action"] == "resource_wait"
+        assert action["reason_code"] == "HOST_ACTION_CONTEXT_RESOURCE_EXHAUSTED"
+        assert action["extensions"]["ae"]["execution_control"]["disposition"] == "WAIT_RESOURCE"
+        assert o._active_action["message_id"] == active_message_id
+        assert o._state.tick == tick_before
+
     def test_second_worker_timeout_exhausts_retry_without_replacing_action(
         self, tmp_path,
     ):
@@ -5235,19 +5342,19 @@ class TestDeveloperInstruction:
         plan = MagicMock()
         state = EngineState(thread_id="t", current_stage="developer", plan="plan")
         action = b.build_action(state, batch_state=bs, plan=plan)
-        instr = action["instruction"]
-        assert "inline TDD" in instr
-        assert "B7" in instr
-        assert "ApiKeyInput" in instr
-        assert "B7-T1" in instr
-        assert "TDD 铁律" in instr
-        assert "project_profile_summary" in instr
-        assert "init-manifest" not in instr
-        assert "test_results" in instr  # result 格式指引
+        prompt = action["subagent_prompt"]
+        assert action["spawn"]["count"] == 1
+        assert "B7" in prompt
+        assert "ApiKeyInput" in prompt
+        assert "B7-T1" in prompt
+        assert "TDD 铁律" in prompt
+        assert "project_profile_summary" in prompt
+        assert "init-manifest" not in prompt
+        assert "test_results" in prompt  # result 格式指引
 
     def test_developer_instruction_no_tasks_graceful(self, tmp_path):
         from auto_engineering.loop.action_builder import ActionBuilder
         b = ActionBuilder(tmp_path)
         state = EngineState(thread_id="t", current_stage="developer", plan="plan")
         action = b.build_action(state)
-        assert "无 task 明细" in action["instruction"]  # 优雅降级
+        assert "无 task 明细" in action["subagent_prompt"]  # 优雅降级

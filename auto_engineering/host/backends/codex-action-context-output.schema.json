@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://auto-engineering.local/schema/codex-action-context-output.schema.json",
+  "title": "CodexActionContextOutput",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["status", "summary", "error_code"],
+  "properties": {
+    "status": {"enum": ["completed", "failed"]},
+    "summary": {"type": "string", "maxLength": 1000},
+    "error_code": {"type": ["string", "null"]}
+  }
+}

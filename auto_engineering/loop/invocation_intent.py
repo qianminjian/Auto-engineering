@@ -22,16 +22,13 @@ class InvocationIntent:
         *,
         scope: str | None = None,
     ) -> InvocationIntent:
+        root = project_root.resolve()
         relative = Path(design_doc_path)
-        if relative.is_absolute():
-            path = relative.resolve()
-            try:
-                normalized = path.relative_to(project_root.resolve()).as_posix()
-            except ValueError as exc:
-                raise ValueError("设计文档必须位于项目目录内") from exc
-        else:
-            path = (project_root / relative).resolve()
-            normalized = relative.as_posix()
+        path = relative.resolve() if relative.is_absolute() else (root / relative).resolve()
+        try:
+            normalized = path.relative_to(root).as_posix()
+        except ValueError as exc:
+            raise ValueError("设计文档必须位于项目目录内") from exc
         if not path.is_file():
             raise ValueError(f"设计文档不存在: {design_doc_path}")
         digest = hashlib.sha256(path.read_bytes()).hexdigest()

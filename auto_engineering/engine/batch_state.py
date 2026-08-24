@@ -366,7 +366,29 @@ class BatchState:
     def reopen_previous_batch(self) -> None:
         """重新激活当前组件的前一批次，且永不产生负游标。"""
 
-        self.current_batch_idx = max(0, self.current_batch_idx - 1)
+        if (
+            self.is_component_complete()
+            or self.current_batch_id() not in self.completed_batch_ids()
+        ):
+            self.current_batch_idx = max(0, self.current_batch_idx - 1)
+
+    def complete_repair(self, batch_id: str) -> None:
+        """关闭已完成批次的返修，不重复增加业务进度。"""
+
+        if self.is_component_complete() or self.current_batch_id() != batch_id:
+            raise ValueError("REPAIR_BATCH_IDENTITY_MISMATCH")
+        completed = self.completed_batch_ids()
+        if batch_id not in completed:
+            raise ValueError("REPAIR_BATCH_NOT_COMPLETED")
+        batches = self.batches_for(self.current_component())
+        self.current_batch_idx = next(
+            (
+                index
+                for index, batch in enumerate(batches)
+                if str(batch["batch_id"]) not in completed
+            ),
+            len(batches),
+        )
 
     def advance_component(self) -> None:
         self.current_component_idx += 1

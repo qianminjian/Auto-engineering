@@ -62,6 +62,34 @@ class DeveloperHandler:
                     },
                 },
             )
+        if (
+            int(state.get("repair_cycle_count", 0)) > 0
+            or context.extensions.get("batch_already_completed") is True
+        ):
+            completed_batch_id = context.extensions.get("completed_batch_id")
+            return TransitionDecision(
+                events=(
+                    transition_event(
+                        LoopEventType.WORK_REPAIR_COMPLETED,
+                        thread_id=context.thread_id,
+                        sequence=context.event_sequence,
+                        payload={"batch_id": completed_batch_id},
+                    ),
+                    LoopEvent.create(
+                        thread_id=context.thread_id,
+                        sequence=context.event_sequence,
+                        event_type=LoopEventType.STAGE_ADVANCED,
+                        payload={"from": self.stage, "to": "critic"},
+                        correlation_id=context.thread_id,
+                    ),
+                ),
+                next_stage="critic",
+                lifecycle_effects=LifecycleEffects(
+                    collect_token_usage=True,
+                    snapshot_developer_output=True,
+                    offload_stage=self.stage,
+                ),
+            )
         more = bool(
             context.extensions.get("has_more_batches_after_advance")
         )

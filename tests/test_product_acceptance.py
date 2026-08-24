@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from scripts.product_acceptance import (
     ProductAcceptanceError,
+    evaluate_host_evidence,
     evaluate_product_evidence,
     evaluate_release_evidence,
 )
@@ -49,7 +52,12 @@ def test_l3_canary_engineering_baseline_is_explicit_and_versioned() -> None:
     }
 
 
-def _evidence() -> dict[str, object]:
+def _evidence(tmp_path=None) -> dict[str, object]:
+    runtime_root = (tmp_path / "installed") if tmp_path else "/opt/ae-release"
+    development_root = (tmp_path / "development") if tmp_path else "/src/auto-engineering"
+    if tmp_path:
+        runtime_root.mkdir(parents=True, exist_ok=True)
+        development_root.mkdir(parents=True, exist_ok=True)
     return {
         "host": "codex",
         "build_id": "5.8.0-rc.5+sha256.abc",
@@ -58,7 +66,19 @@ def _evidence() -> dict[str, object]:
         "usage_status": "complete",
         "unexpected_stops": 0,
         "unapproved_changes": 0,
-        "installation": {"status": "pass", "discovered": True},
+        "installation": {
+            "status": "pass",
+            "discovered": True,
+            "runtime_root": str(runtime_root),
+            "development_root": str(development_root),
+            "source_isolated": True,
+        },
+        "usage": {
+            "input_tokens": 900_000,
+            "cached_input_tokens": 800_001,
+            "output_tokens": 9_999,
+            "cost_usd": None,
+        },
         "canary": {
             "status": "pass",
             "stages": ["architect", "developer", "critic"],
@@ -72,8 +92,36 @@ def _evidence() -> dict[str, object]:
     }
 
 
-def test_complete_product_evidence_passes() -> None:
-    assert evaluate_product_evidence(_evidence())["status"] == "pass"
+def test_complete_product_evidence_passes(tmp_path) -> None:
+    assert evaluate_product_evidence(
+        _evidence(tmp_path), evidence_root=tmp_path
+    )["status"] == "pass"
+
+
+def test_product_evidence_rejects_claim_only_usage(tmp_path) -> None:
+    evidence = _evidence(tmp_path)
+    evidence.pop("usage")
+    with pytest.raises(ProductAcceptanceError, match="USAGE_NUMERIC_EVIDENCE_MISSING"):
+        evaluate_product_evidence(evidence, evidence_root=tmp_path)
+
+
+def test_product_evidence_enforces_host_budget(tmp_path) -> None:
+    evidence = _evidence(tmp_path)
+    evidence["usage"]["input_tokens"] = 1_000_001
+    with pytest.raises(ProductAcceptanceError, match="CODEX_INPUT_BUDGET_EXCEEDED"):
+        evaluate_product_evidence(evidence, evidence_root=tmp_path)
+
+
+def test_product_evidence_resolves_runtime_source_isolation(tmp_path) -> None:
+    evidence = _evidence(tmp_path)
+    evidence["installation"]["development_root"] = evidence["installation"]["runtime_root"]
+    with pytest.raises(ProductAcceptanceError, match="RUNTIME_SOURCE_NOT_ISOLATED"):
+        evaluate_product_evidence(evidence, evidence_root=tmp_path)
+
+
+def test_single_host_release_gate_cannot_bypass_artifact(tmp_path) -> None:
+    with pytest.raises(ProductAcceptanceError, match="EVIDENCE_ARTIFACT_MISSING"):
+        evaluate_host_evidence(_evidence(tmp_path), evidence_root=tmp_path)
 
 
 @pytest.mark.parametrize(("field", "value", "code"), [
@@ -106,16 +154,41 @@ def test_release_requires_both_hosts_on_same_build(tmp_path) -> None:
     import json
     evidences = []
     for host in ("codex", "claude-code"):
+        evidence = {**_evidence(tmp_path / host), "host": host}
+        if host == "claude-code":
+            evidence["usage"] = {
+                "input_tokens": 99_999,
+                "cached_input_tokens": 80_001,
+                "output_tokens": 5_001,
+                "cost_usd": 1.5,
+            }
+        usage = evidence["usage"]
         artifact = tmp_path / f"{host}.json"
         artifact.write_text(json.dumps({
-            "schema_version": "1.0", "host": host,
-            "build_id": _evidence()["build_id"],
-            "installed_build_id": _evidence()["build_id"],
+            "schema_version": "1.1", "host": host,
+            "build_id": evidence["build_id"],
+            "installed_build_id": evidence["build_id"],
             "plugin_discovered": True,
-            "event_types": ["ActionIssued", "ResultAccepted"],
+            "runtime_root": evidence["installation"]["runtime_root"],
+            "event_types": ["ActionIssued", "ResultAccepted", "LoopCompleted"],
+            "terminal_action": {"action": "done", "reason_code": "GOAL_ACHIEVED"},
+            "action_receipts": [
+                {
+                    "action_message_id": f"action-{index}",
+                    "host_context_id": f"context-{index}",
+                    "stage": ("architect", "developer", "critic")[index],
+                    "build_id": evidence["build_id"],
+                    "status": "completed",
+                    "usage": {
+                        key: (value // 3 if isinstance(value, int) else value / 3)
+                        for key, value in usage.items() if value is not None
+                    },
+                }
+                for index in range(3)
+            ],
         }), encoding="utf-8")
         digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
-        evidences.append({**_evidence(), "host": host, "evidence_artifact": {
+        evidences.append({**evidence, "evidence_artifact": {
             "path": artifact.name, "sha256": digest,
         }})
 
@@ -123,6 +196,39 @@ def test_release_requires_both_hosts_on_same_build(tmp_path) -> None:
 
     assert verdict["status"] == "pass"
     assert verdict["hosts"] == ["claude-code", "codex"]
+
+
+def test_release_rejects_reused_action_context(tmp_path) -> None:
+    evidence = _evidence(tmp_path)
+    artifact = tmp_path / "codex.json"
+    artifact.write_text(json.dumps({
+        "schema_version": "1.1",
+        "host": "codex",
+        "build_id": evidence["build_id"],
+        "installed_build_id": evidence["build_id"],
+        "plugin_discovered": True,
+        "runtime_root": evidence["installation"]["runtime_root"],
+        "event_types": ["ActionIssued", "ResultAccepted", "LoopCompleted"],
+        "terminal_action": {"action": "done"},
+        "action_receipts": [
+            {"action_message_id": f"a-{i}", "host_context_id": "reused",
+             "stage": ("architect", "developer", "critic")[i],
+             "build_id": evidence["build_id"], "status": "completed", "usage": {
+                 "input_tokens": 300_000,
+                 "cached_input_tokens": 266_667,
+                 "output_tokens": 3_333,
+             }}
+            for i in range(3)
+        ],
+    }), encoding="utf-8")
+    import hashlib
+    digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
+    evidence["evidence_artifact"] = {"path": artifact.name, "sha256": digest}
+    with pytest.raises(ProductAcceptanceError, match="ACTION_CONTEXT_REUSED"):
+        evaluate_release_evidence(
+            [evidence, {**evidence, "host": "claude-code"}],
+            evidence_root=tmp_path,
+        )
 
 
 def test_release_rejects_duplicate_host_evidence(tmp_path) -> None:

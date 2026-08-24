@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://auto-engineering.local/schema/action-context-outcome.schema.json",
+  "title": "ActionContextOutcome",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["status", "summary"],
+  "properties": {
+    "status": {"enum": ["completed", "failed"]},
+    "summary": {"type": "string", "maxLength": 1000},
+    "error_code": {"type": "string", "minLength": 1}
+  }
+}

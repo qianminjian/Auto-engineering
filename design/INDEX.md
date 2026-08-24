@@ -25,7 +25,10 @@
 | `v5.8-Compact-Host-Control-Plane-Design.md` | T525 Canonical Action 与 compact 宿主控制视图 |
 | `v5.8-Digest-Bound-Worker-Launch-Design.md` | T528 只传路径/摘要/权限的原生 Worker 启动合同 |
 | `v5.8-Small-Project-Assurance-Fusion-Design.md` | T529 LEAF 小项目独立验收 Worker 融合设计 |
-| `v5.8-Action-Scoped-Host-Context-Spec.md` | T530 待批准的 Action-scoped Supervisor 与成本验收 Spec |
+| `v5.8-Thin-Coordinator-and-Developer-Worker-Design.md` | T530-T532 薄协调器、Developer Worker 与成本验收设计 |
+| `v5.8-Thin-Coordinator-and-Developer-Worker-PLAN.md` | T530-T533 TDD 实施与条件决策计划 |
+| `v5.8-T533-Architecture-Decision-Review.md` | T533 审批前架构决策包与 T537-T544 待办 |
+| `v5.8-Action-Scoped-Host-Context-Spec.md` | T533 条件后备的 Action-scoped Supervisor Spec |
 | `v5.8-Automatic-Context-Governance.md` | Phase 70 自动 compaction、有界增量上下文与成本治理权威设计 |
 | `v5.8-Session-Decoupling-Design.md` | Phase 64-67 状态恢复设计；日常 rollover 已由 Phase 70 纠偏 |
 | `v5.8-Session-Decoupling-PLAN.md` | Phase 64-70 T302-T350 可执行实施计划 |

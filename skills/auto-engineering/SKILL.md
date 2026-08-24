@@ -85,12 +85,31 @@ prompt/message。不得先读取、`sed`、复制、总结或拼接 `prompt_ref`
 用摘要命令校验文件 SHA-256。Worker 在 fresh context 内切换到机器指定 `project_root`，
 自行读取并校验 Prompt Artifact 后执行。launcher 中只有路径、摘要和权限，不是业务 Prompt。
 
-每次用户启动 Skill 的首个 Core 命令必须是带用户原始参数的
+每次用户启动 Skill 时，先把宿主启动 `cwd` 的真实绝对路径固定为
+`invocation_project_root`。首个 Core 命令必须是带用户原始参数的
 `dev-loop --init`；该入口会自动检测已有 thread 并返回 active Action，
 禁止先用 `status`、`find`、`rg` 或扫描 `.ae-state` 推测 Action。若仅执行
 状态查询，必须原样消费 `status.next_operation`：其 operation 为
 `resume_active_action` 时立即执行其 `argv`，不得自行改用无 Result 的 Tick。
 若误调 Tick，只允许执行错误返回的同一 `next_operation`。
+
+首个 `--init` 必须显式使用 `--project-root <invocation_project_root>`；相对设计文档只在
+该根内解析。设计文档不存在、越界或 init 失败时立即报告并停止：禁止搜索父目录、`/tmp`、
+其他项目或同名文件，禁止改写 `--project-root` 后重试，也禁止通过绝对路径切换项目。
+取得首个 Action 后必须校验其 `project_root` 与 `invocation_project_root` 的真实路径完全相同；
+不一致时报告 `HOST_PROJECT_ROOT_DRIFT` 并停止，禁止在新根初始化或继续。
+
+若首个 Action 的 disposition 为 `CONTINUE`，外层宿主必须立即且只调用一次：
+
+```text
+ae-run dev-loop --supervise --project-root <invocation_project_root>
+```
+
+`--supervise` 是插件内部产品协议，不是用户管理命令。它由确定性 Supervisor 为每个 Action
+创建全新宿主 context，并在 context 退出后执行 Core 下发的 finalize/validate/submit argv；
+返回值是最终 WAIT/TERMINAL/ERROR Action。外层宿主不得再逐 Tick 执行下面的 Action 合同，
+不得在 probe 失败时退回长期主会话。`HOST_ACTION_CONTEXT_UNAVAILABLE` 必须按
+`WAIT_RESOURCE`/稳定阻断原样报告。下文循环仅描述一次性 Action context 内的执行义务。
 
 每次先读取 `action.extensions.ae.execution_control`。宿主必须在同一次用户启动中执行：
 
@@ -118,9 +137,9 @@ while control.disposition == "CONTINUE":
   必须在任何 `action.spawn` 或 Worker 执行判断之前处理。确认
   `spawn_permitted == false` 且
   `required_operation == "validate_then_submit_or_repair"`。先对 `result_ref`
-  执行 `--validate-result`：通过则直接 `--tick --result`；业务预检失败则
+  原样执行 `operations.validate.argv`：通过则执行 `operations.submit.argv`；业务预检失败则
   仅按 active Action `expected_format` 修复 `coordinator_result_ref`，使用
-  Core 恢复的 `outcomes_ref` 重新 `--finalize-result` 到 `result_ref`，再验证和提交。
+  Core 恢复的 `outcomes_ref` 并原样执行 `operations.finalize.argv`，再验证和提交。
   禁止创建、等待或回收新 Worker，禁止改写 outcomes；恢复合同不完整则
   fail-closed。
 - `action == "error"`：报告 `error_code` 和 `message`，停止。
@@ -145,7 +164,8 @@ while control.disposition == "CONTINUE":
   理由、合法选项的顺序说明，并只询问当前项。用户回答后立即按 `expected_format.decision`
   提交单项 Result；累计决策与游标由 Core 持久化，宿主禁止本地批量缓存、提前询问其他
   gap、代选默认值或改写 `gap_id`。
-- 无 `action.spawn`：仅 developer 阶段可由主 Agent inline 执行。
+- 无 `action.spawn`：只允许执行显式声明的控制/配置类 inline Action；Architect、Developer、
+  Critic 与各层 Verifier/Audit 均不得由 Coordinator inline 执行业务工作。
 
 Spawn action 必须读取：
 
@@ -231,15 +251,17 @@ validate、tick、status、resume）都必须显式附加
 5. Worker 完成后，Coordinator 只把原生事实写入当前 Action 的 `work_files.outcomes`：
    `worker_id`、`native_worker_handle`、`status`、`payload`、`summary`、
    `actual_model` 和所选工具族的 `isolation_evidence`（`fork_turns=none` 或
-   `fork_context=false`）。Worker 不得写 receipt、attestation、challenge 或 total proof
+   `fork_context=false`）。`actual_model` 使用原生 API 报告值；若 API 不暴露模型标识，
+   必须写稳定值 `unreported`，不得填 `null` 或猜测模型名。Worker 不得写 receipt、attestation、challenge 或 total proof
    （workers must not write the shared total proof）。
 6. 全部 Worker completed 时，Coordinator 从真实输出合并 `action.expected_format` 要求的业务字段，
    只写入当前 Action 的 `work_files.coordinator_result`；设计冲突写 `design_change_requests[]`，
    不伪造可执行计划。任一 Worker 超时/失败时写 `{}`，不得补业务字段或假装成功。
-7. 调用 `ae-run dev-loop --finalize-result <work_files.outcomes> --coordinator-result <work_files.coordinator_result> --output-result <work_files.result> --project-root <action.project_root>`。
+7. 原样执行 `action.host_execution.operations.finalize.argv`：只把首项
+   `__AE_BUNDLED_RUNNER__` 替换为启动时固定的 bundled runner，禁止重建、重排或手抄其余参数。
    该内部命令原子生成 Worker receipt、attestation、total proof 和完整 Result，
    并一次性返回全部证据问题。宿主禁止手工重建这些字段。
-8. 直接对原子生成的 `work_files.result` 执行 `--validate-result` 和 `--tick --result`；
+8. 随后依次原样执行 `operations.validate.argv` 与 `operations.submit.argv`；
    禁止复制 stdout 或继续把 coordinator payload 当成完整 Result。已提交 outcome journal
    必须通过 `host_execution.recovery` 幂等复用，不得重新 spawn。
 9. `--tick` 返回下一 Action 后，立即丢弃上一 Action 的对象、工作路径、Worker handle 与
@@ -248,10 +270,10 @@ validate、tick、status、resume）都必须显式附加
    若误用了旧路径，Finalizer 会以 active Action 的已存在工作文件自动重绑；宿主随后仍须
    替换本地变量，不能把自动重绑当作跨 Tick 缓存机制。
 
-非 spawn Action（包括 gap_scan、project_setup、inline developer 与用户决定回执）同样禁止
+非 spawn Action（包括 gap_scan、project_setup 与用户决定回执）同样禁止
 手工拼装 Result Envelope。宿主只按 `action.expected_format` 写
-`work_files.coordinator_result`，再调用
-`ae-run dev-loop --finalize-result <work_files.coordinator_result> --output-result <work_files.result> --project-root <action.project_root>`；
+`work_files.coordinator_result`，再原样执行同一 Action 的
+`operations.finalize.argv`、`operations.validate.argv` 与 `operations.submit.argv`；
 Core 从 active Action 绑定
 message identity、causation、thread、tick、stage 与 correlation。之后使用相同的
 `--validate-result`、`--tick --result` 流程。
@@ -271,7 +293,7 @@ Gap Review 默认仍是用户决策。用户可通过结构化字段
 | 角色 | 执行方式 | 职责 |
 |---|---|---|
 | architect | 隔离子代理 | 设计与 batch plan |
-| developer | 主 Agent inline | TDD 实现与本地验证 |
+| developer | 1 个 fresh Worker | 按 active batch 执行 TDD 实现与本地验证 |
 | critic | 隔离子代理 | diff 审查与门禁结论 |
 | component_verifier | 隔离子代理 | 组件设计覆盖验证 |
 | plate_deep_audit | 多个隔离子代理 | 板块多维审计 |

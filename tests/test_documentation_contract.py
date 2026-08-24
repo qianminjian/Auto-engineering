@@ -93,12 +93,10 @@ def test_skill_and_command_finalize_every_result_and_resolve_bundled_runner() ->
 
     for content in (skill, command):
         assert "非 spawn" in content
-        assert "--finalize-result <work_files.coordinator_result>" in content or (
-            "--finalize-result work_files.coordinator_result" in content
-        )
-        assert "--output-result <work_files.result>" in content or (
-            "--output-result work_files.result" in content
-        )
+        assert "operations.finalize.argv" in content
+        assert "__AE_BUNDLED_RUNNER__" in content
+        assert "operations.validate.argv" in content
+        assert "operations.submit.argv" in content
         assert "不得调用裸 `ae-run`" in content
         assert "bundled runner" in content
     assert "AE_HOST_PLATFORM=codex" in skill

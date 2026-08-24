@@ -48,15 +48,20 @@ _SPAWN_INSTRUCTION = (
     "using the exact wrapper "
     "{{\"outcomes\":[{{worker_id,native_worker_handle,status,payload,summary,"
     "actual_model,isolation_evidence}}]}}. Write only expected_format business fields to "
+    "Use the model identifier reported by the native worker API for actual_model; if "
+    "that API exposes no model identifier, write actual_model='unreported' exactly, "
+    "never null and never infer a model name. "
+    "Copy each host_execution.workers[] expected_isolation_evidence exactly into its "
+    "outcome; do not copy spawn.invocations[].isolation and do not invent evidence. "
     "action.host_execution.work_files.coordinator_result. Do not write receipt, "
     "attestation, proof, spawned, "
     "spawn_proof_token, or protocol identity fields.\n"
-    "Run ae-run dev-loop --finalize-result <work_files.outcomes> "
-    "--coordinator-result <work_files.coordinator_result> "
-    "--output-result <work_files.result>. Never reuse files from another Action. "
+    "Execute action.host_execution.operations.finalize.argv, validate.argv and "
+    "submit.argv in order; replace only __AE_BUNDLED_RUNNER__ with the fixed bundled "
+    "runner and never rebuild, reorder or copy their path arguments. "
+    "Never reuse files from another Action. "
     "The Assembler is the "
-    "only proof and Result writer. Always append --project-root {project_root} "
-    "to this and every other internal ae-run dev-loop command.\n"
+    "only proof and Result writer.\n"
     "After tick returns the next Action, discard every prior Action object, work-file "
     "path, worker handle and command argument. Do not print full diffs, prior outcomes "
     "or historical Action JSON during recovery; consume only the structured error and "
@@ -298,13 +303,12 @@ class ActionBuilder:
             "instruction": (
                 f"所有项目工具以 {self.project_root.resolve()} 为工作目录；不得在插件目录执行。"
                 "根据需求与设计文档建立缺失的项目工程能力。完成后提交 "
-                "stage='project_setup'、result_type='project_setup_completed' 和 artifacts；"
+                "result_type='project_setup_completed' 和 artifacts；stage 等消息身份由 Core 写入；"
                 "Core 将重新探测文件，不采信文字声明。若缺失 eslint_flat_config，"
                 "为 ESLint 9 创建 flat config；若缺失 jsdom_dependency，补齐测试环境的"
                 "直接开发依赖。Git 仅是可选证据源，未经用户授权不得执行 git init/add/commit。"
             ),
             "expected_format": {
-                "stage": "project_setup",
                 "result_type": "project_setup_completed",
                 "artifacts": ["创建或确认的项目入口文件与源码目录"],
             },
@@ -677,7 +681,7 @@ class ActionBuilder:
                     ] = bundle.context_manifest
                     compiled_prompt = True
                 elif single_contract is not None and action in {
-                    "architect", "critic", "component_verifier",
+                    "architect", "developer", "critic", "component_verifier",
                     "system_verifier",
                 }:
                     prompt_context = dict(context or {})
@@ -1072,6 +1076,34 @@ class ActionBuilder:
             for component in plate.components
         ]
 
+    def _batch_id_policy(self) -> dict[str, object]:
+        """Return the deterministic batch ID allocation facts for Architect."""
+        baseline = self._state.architecture_baseline or {}
+        raw_batches = [
+            *list(baseline.get("batch_plan", [])),
+            *list(self._state.batch_plan),
+        ]
+        reserved = sorted({
+            batch_id
+            for item in raw_batches
+            if isinstance(item, dict)
+            and isinstance((batch_id := item.get("batch_id")), str)
+            and batch_id
+        })
+        numeric_ids = [
+            int(batch_id[1:])
+            for batch_id in reserved
+            if batch_id.startswith("B") and batch_id[1:].isdigit()
+        ]
+        next_numeric_id = max(numeric_ids, default=0) + 1
+        return {
+            "reserved_batch_ids": reserved,
+            "next_numeric_id": next_numeric_id,
+            "allocation_rule": (
+                f"从 B{next_numeric_id} 起连续分配，禁止复用 reserved_batch_ids"
+            ),
+        }
+
     def _project_profile_summary(self, *, verifier: bool = False) -> dict:
         """Return the bounded, role-facing subset of the normalized profile.
 
@@ -1143,12 +1175,15 @@ class ActionBuilder:
             extra["research_and_design_context"] = research_context
         extra["design_authority"] = DesignAuthorityPolicy.default().to_dict()
         is_refine = bool(self._state.refine_request_json) and not is_reconcile
+        batch_id_policy = self._batch_id_policy()
+        extra["batch_id_policy"] = batch_id_policy
         if is_refine:
             baseline = self._state.architecture_baseline or {}
             extra["repair_contract"] = {
                 "active_revision": self._state.plan_refine_count,
                 "inherited_obligations": list(baseline.get("obligations", [])),
                 "valid_plate_keys": self._valid_plate_keys(),
+                "batch_id_policy": batch_id_policy,
                 "batch_template": {
                     "batch_id": "B<n>",
                     "batch_title": "string",
@@ -1184,7 +1219,7 @@ class ActionBuilder:
                 "add_implementation_targets?:[task_id], "
                 "add_verification_targets?:[test_task_id], "
                 "add_contract_refs?:[name]}]}"
-                "（只新增 revision 唯一 batch）"
+                "（只新增 revision 唯一 batch；batch_id 必须服从 batch_id_policy）"
             )
         } if is_refine else {
             "batch_plan": (
@@ -1200,6 +1235,7 @@ class ActionBuilder:
                 self._design_doc.path if self._design_doc else None
             ),
             "valid_plate_keys": self._valid_plate_keys(),
+            "batch_id_policy": batch_id_policy,
             "project_profile_summary": self._project_profile_summary(),
             **({"plan_revision": self._state.plan_refine_count} if is_refine else {}),
             "feedback": extra.get("feedback", base.get("feedback")),
@@ -1285,19 +1321,6 @@ class ActionBuilder:
                 (self._state.architecture_baseline or {}).get("plan_summary", "")
                 or self._state.plan
             ))
-        contract = default_prompt_contracts()["developer"]
-        bundle = compile_prompt_bundle(
-            contract=contract,
-            role_prompt=self._load_prompt("developer"),
-            context=action["context"],
-            expected_format=action["expected_format"],
-        )
-        action["instruction"] = (
-            "Execute every project tool with working directory "
-            f"{shlex.quote(str(self.project_root.resolve()))}; never use the plugin "
-            "or prompt-artifact directory as cwd.\n\n"
-            + bundle.coordinator_prompt
-        )
         return action
 
     def _build_action_critic(self, base: dict) -> dict:

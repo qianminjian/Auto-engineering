@@ -25,6 +25,7 @@ import click
 
 from auto_engineering import __version__
 from auto_engineering.cli.dev_loop import (
+    run_action_supervisor,
     run_tick_init,
     run_tick_resume,
     run_tick_status,
@@ -122,7 +123,9 @@ def main():
 @click.option("--verbose", "-v", "verbose_flag", is_flag=True,
               help="--status 时输出 batch 级进度明细")
 @click.option("--resume", "resume_id", help="[内部协议] 从指定 checkpoint 恢复")
-@click.option("--design-doc", "design_doc", type=click.Path(exists=True),
+@click.option("--supervise", "supervise_flag", is_flag=True,
+              help="[内部协议] 以 Action-scoped context 自动驱动 active thread")
+@click.option("--design-doc", "design_doc", type=click.Path(),
               help="[内部协议] --init 的设计文档路径 (design-doc 模式)")
 @click.option("--max-rounds", type=int, default=3, help="最大 Round 数")
 @click.option("--project-root", type=click.Path(exists=True), help="项目根目录 (默认 cwd)")
@@ -151,6 +154,7 @@ def dev_loop(
     status_flag: bool,
     output_format: str,
     resume_id: str | None,
+    supervise_flag: bool,
     design_doc: str | None,
     max_rounds: int,
     project_root: str | None = None,
@@ -169,6 +173,22 @@ def dev_loop(
     辅助命令: ae doctor (环境诊断), ae status (进度查询)
     """
     root = Path(project_root).resolve() if project_root else Path.cwd()
+    if design_doc:
+        design_candidate = Path(design_doc)
+        resolved_design = (
+            design_candidate.resolve()
+            if design_candidate.is_absolute()
+            else (root / design_candidate).resolve()
+        )
+        if not resolved_design.is_file():
+            raise click.BadParameter(
+                f"设计文档不存在: {design_doc}（按项目根 {root} 解析）",
+                param_hint="--design-doc",
+            )
+    # Click group 初始化发生在解析 --project-root 之前；这里按真实项目根刷新，
+    # 防止从插件目录或任意 cwd 启动时读取错误项目的 ae.toml。
+    from auto_engineering.cli.dev_loop import _activate_project_config
+    _activate_project_config(root)
     # P1-19: uv run --directory changes cwd to auto-eng source — detect and warn.
     _ae_src_indicator = root / "auto_engineering" / "loop" / "tick_orchestrator.py"
     if _ae_src_indicator.exists() and not project_root:
@@ -187,6 +207,7 @@ def dev_loop(
     tick_modes = [
         init_flag, tick_flag, status_flag, bool(resume_id),
         bool(validate_result_file), bool(finalize_result_file),
+        supervise_flag,
     ]
     if sum(bool(m) for m in tick_modes) > 1:
         click.echo(
@@ -246,6 +267,14 @@ def dev_loop(
         return
     if resume_id:
         run_tick_resume(resume_id, root)
+        return
+    if supervise_flag:
+        from auto_engineering.host.invocation import ActionExecutionContractError
+
+        try:
+            run_action_supervisor(root)
+        except ActionExecutionContractError as exc:
+            raise click.ClickException(str(exc)) from None
         return
 
     # 无参数且无 flag → 显示帮助

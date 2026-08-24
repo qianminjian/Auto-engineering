@@ -193,6 +193,37 @@ def test_noninteractive_config_gate_never_reads_piped_choice(
     assert "非交互宿主已写入 standard profile" in capsys.readouterr().err
 
 
+def test_project_config_is_reloaded_after_first_run_generation(
+    tmp_path: Path,
+) -> None:
+    from auto_engineering.cli.dev_loop import _activate_project_config
+    from auto_engineering.config.ae_config import (
+        render_ae_toml,
+        standard_profile_values,
+    )
+    from auto_engineering.config.runtime_config import (
+        RuntimeConfig,
+        get_default_config,
+        set_default_config,
+    )
+
+    set_default_config(RuntimeConfig.from_environ({}))
+    (tmp_path / "ae.toml").write_text(
+        render_ae_toml(
+            standard_profile_values(),
+            generated_by="test",
+        ),
+        encoding="utf-8",
+    )
+
+    _activate_project_config(tmp_path)
+
+    config = get_default_config()
+    assert config.audit_log_enabled is True
+    assert config.metrics_enabled is True
+    assert config.token_tracking_enabled is True
+
+
 @pytest.mark.parametrize("policy", ["defaults", "create"])
 def test_noninteractive_config_policies_are_explicit(
     tmp_path: Path,
