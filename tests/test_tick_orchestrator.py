@@ -965,6 +965,143 @@ class TestRefineRequestDelivery:
         assert req["source"] == "component_verifier"
         assert req["trigger_tick"] >= 0
 
+    def test_critic_plan_gap_is_delivered_to_architect_without_loss(self) -> None:
+        o = _orchestrator(max_rounds=20)
+        o.init("req")
+        o.tick(_make_result_file({
+            "stage": "architect", "spawned": True, "plan": _VALID_PLAN,
+            "batch_plan": [{
+                "batch_id": "b1", "design_section": "B2", "component": "Foo",
+                "tasks": [{"id": "T1", "description": "d", "module_ref": "§B2",
+                           "file_targets": ["foo.py"]}],
+            }],
+            "file_list": ["foo.py"], "contracts": {},
+        }))
+        o.tick(_make_result_file({
+            "stage": "developer", "batch_id": "b1", "files_changed": ["foo.py"],
+            "test_results": {"passed": 1, "failed": 0},
+        }))
+
+        action = o.tick(_make_result_file({
+            "stage": "critic", "spawned": True, "verdict": "MAJOR",
+            "findings": [{
+                "finding_id": "F-001", "severity": "P1",
+                "kind": "contract_gap", "design_ref": "§11.3",
+                "file": "foo.py", "line": 7,
+                "issue": "契约缺失", "suggestion": "补实现与回归测试",
+            }],
+        }))
+
+        assert action["stage"] == "architect"
+        request = action["feedback"]["refine_request"]
+        assert request["source"] == "critic"
+        assert request["gaps"] == [{
+            "kind": "CRITIC_FINDING",
+            "design_ref": "§11.3",
+            "detail": "契约缺失",
+            "suggested_action": "补实现与回归测试",
+            "severity": "P1",
+            "location": "foo.py:7",
+            "source_ref": "F-001",
+        }]
+
+    def test_empty_refine_input_fails_before_architect_transition(self) -> None:
+        o = _orchestrator(max_rounds=20)
+        o.init("req")
+        stage_before = o._state.current_stage
+
+        action = o._handle_plan_refine("critic")
+
+        assert action["action"] == "error"
+        assert action["error_code"] == "REFINE_INPUT_EMPTY"
+        assert o._state.current_stage == stage_before
+        assert o._state.plan_refine_count == 0
+
+    def test_real_run_critic_findings_close_into_a_new_repair_batch(self) -> None:
+        o = _orchestrator(max_rounds=20)
+        o.init("req")
+        o.tick(_make_result_file({
+            "stage": "architect", "spawned": True, "plan": _VALID_PLAN,
+            "batch_plan": [{
+                "batch_id": "b1", "design_section": "B1", "component": "Setup",
+                "tasks": [{"id": "b1-t1", "description": "initial",
+                           "module_ref": "§11", "file_targets": ["setup.ts"]}],
+            }],
+            "file_list": ["setup.ts"], "contracts": {},
+        }))
+        o.tick(_make_result_file({
+            "stage": "developer", "batch_id": "b1",
+            "files_changed": ["setup.ts"],
+            "test_results": {"passed": 1, "failed": 0},
+        }))
+        findings = [
+            {
+                "finding_id": finding_id,
+                "severity": "P1",
+                "kind": kind,
+                "file": file,
+                "issue": issue,
+                "suggestion": suggestion,
+            }
+            for finding_id, kind, file, issue, suggestion in (
+                ("F-001", "contract_gap", "vitest.setup.ts", "缺少 cleanup", "补 cleanup"),
+                ("F-002", "contract_gap", "vitest.setup.ts", "缺少 media mock", "补 mock"),
+                ("F-003", "project_capability", "eslint.config.js", "lint 为空", "补规则"),
+            )
+        ]
+        refine = o.tick(_make_result_file({
+            "stage": "critic", "spawned": True,
+            "verdict": "MAJOR", "findings": findings,
+        }))
+        assert [
+            gap["source_ref"]
+            for gap in refine["feedback"]["refine_request"]["gaps"]
+        ] == ["F-001", "F-002", "F-003"]
+
+        tasks = []
+        obligations = []
+        for index, finding_id in enumerate(("F-001", "F-002", "F-003"), 1):
+            implementation_id = f"b2-t{index * 2 - 1}"
+            verification_id = f"b2-t{index * 2}"
+            tasks.extend([
+                {
+                    "id": implementation_id,
+                    "kind": "implementation",
+                    "description": f"修复 {finding_id}",
+                    "module_ref": "§11",
+                    "file_targets": ["vitest.setup.ts"],
+                },
+                {
+                    "id": verification_id,
+                    "kind": "test",
+                    "description": f"验证 {finding_id}",
+                    "module_ref": "§11",
+                    "file_targets": ["tests/setup.test.ts"],
+                },
+            ])
+            obligations.append({
+                "id": f"O-{finding_id}",
+                "source_ref": finding_id,
+                "summary": f"关闭 {finding_id}",
+                "implementation_targets": [implementation_id],
+                "verification_targets": [verification_id],
+                "contract_refs": [],
+            })
+
+        developer = o.tick(_make_result_file({
+            "stage": "architect", "spawned": True, "plan": _VALID_PLAN,
+            "plan_patch": {"add_batches": [{
+                "batch_id": "b2", "design_section": "B1",
+                "component": "Setup Repair", "tasks": tasks,
+            }]},
+            "file_list": ["vitest.setup.ts", "eslint.config.js"],
+            "contracts": {}, "obligations": obligations,
+        }))
+
+        assert developer["action"] == "developer"
+        assert developer["batch_id"] == "b2"
+        assert o._state.open_findings == findings
+
 
 class TestRefineSourcesAndLimits:
     """T20: 多回源触发 plan_refine + 分源≤2/全局≤4 上限 (§B6.10/DS-8)."""
@@ -1566,9 +1703,30 @@ def _init_design(o: TickOrchestrator, tmp_path) -> None:
 
 
 def _gap_scan_result(gaps: list[dict]) -> Path:
+    orchestrator = _ACTIVE_ORCHESTRATOR
+    assert orchestrator is not None
+    design_doc = orchestrator._design_doc
+    assert design_doc is not None
+    sections = design_doc.sections_summary() or [
+        {"design_section": plate.design_section}
+        for plate in design_doc.plates
+    ]
+    coverage = [
+        {
+            "design_section_ref": item["design_section"],
+            "verdict": "gap" if any(
+                gap.get("design_section_ref") == item["design_section"]
+                for gap in gaps
+            ) else "clear",
+            "evidence": [f"已检查 {item['design_section']} 的实现充分性"],
+        }
+        for item in sections
+    ]
     return _make_result_file({
         "stage": "gap_scan", "gaps": gaps,
-        "scanned_sections": len(gaps), "has_blocking": False,
+        "scanned_sections": len(coverage), "has_blocking": False,
+        "design_doc_digest": orchestrator._state.design_doc_digest,
+        "scan_coverage": coverage,
     })
 
 
@@ -1591,9 +1749,26 @@ def _blocking_gap_scan_result(gaps: list[dict]) -> Path:
             "options": options,
             "blocking_rule": "architectural gap 禁止纯 Defer",
         })
+    orchestrator = _ACTIVE_ORCHESTRATOR
+    assert orchestrator is not None
+    design_doc = orchestrator._design_doc
+    assert design_doc is not None
+    sections = design_doc.sections_summary() or [
+        {"design_section": plate.design_section}
+        for plate in design_doc.plates
+    ]
     return _make_result_file({
         "stage": "gap_scan", "gaps": blocking_gaps,
-        "scanned_sections": len(gaps), "has_blocking": True,
+        "scanned_sections": len(sections), "has_blocking": True,
+        "design_doc_digest": orchestrator._state.design_doc_digest,
+        "scan_coverage": [
+            {
+                "design_section_ref": item["design_section"],
+                "verdict": "gap",
+                "evidence": ["该章节存在 architectural gap"],
+            }
+            for item in sections
+        ],
     })
 
 
@@ -1623,6 +1798,42 @@ _GAP_B2 = {
 
 
 class TestPhase0GapScan:
+    def test_zero_gap_without_section_evidence_is_rejected(self, tmp_path) -> None:
+        o = _orchestrator()
+        _init_design(o, tmp_path)
+        result = _make_result_file({
+            "stage": "gap_scan",
+            "gaps": [],
+            "scanned_sections": 1,
+            "has_blocking": False,
+        })
+
+        action = o.tick(result)
+
+        assert action["action"] == "error"
+        assert action["error_code"] == "GAP_SCAN_EVIDENCE_INCOMPLETE"
+
+    def test_zero_gap_with_wrong_design_digest_is_rejected(self, tmp_path) -> None:
+        o = _orchestrator()
+        _init_design(o, tmp_path)
+        result = _make_result_file({
+            "stage": "gap_scan",
+            "gaps": [],
+            "scanned_sections": 1,
+            "has_blocking": False,
+            "design_doc_digest": "sha256:stale",
+            "scan_coverage": [{
+                "design_section_ref": "§B2",
+                "verdict": "clear",
+                "evidence": ["已检查职责与输入输出"],
+            }],
+        })
+
+        action = o.tick(result)
+
+        assert action["action"] == "error"
+        assert action["error_code"] == "GAP_SCAN_DESIGN_MISMATCH"
+
     def test_incomplete_gap_analysis_is_rejected_before_review(self, tmp_path) -> None:
         o = _orchestrator()
         _init_design(o, tmp_path)
@@ -1654,6 +1865,13 @@ class TestPhase0GapScan:
         action = o.tick(_gap_scan_result([]))
         assert action["stage"] == "architect"
         assert action["action"] == "architect"
+        assert action["gap_scan_summary"] == {
+            "design_doc_digest": o._state.design_doc_digest,
+            "scanned_sections": 1,
+            "gap_count": 0,
+            "has_blocking": False,
+            "outcome": "no_gaps_auto_continue",
+        }
 
     def test_gap_scan_writes_gap_report_json(self, tmp_path) -> None:
         o = _orchestrator()
@@ -2709,10 +2927,7 @@ class TestTwoRoundDesignDocE2E:
         o.init("实现登录", design_doc_path=_write_leaf_design(tmp_path))
 
         # Phase 0: gap_scan (无缺口) → architect
-        a = o.tick(_make_result_file({
-            "stage": "gap_scan", "gaps": [], "scanned_sections": 1,
-            "has_blocking": False,
-        }))
+        a = o.tick(_gap_scan_result([]))
         assert a["stage"] == "architect"
 
         # ── 轮 1: architect → dev → critic → component_verifier(MISSING) → plan_refine
@@ -2811,9 +3026,7 @@ class TestPhase0BlockingGapGuardrail:
         design = tmp_path / "design.md"
         design.write_text("## A1 板块\n\n### B2 Foo\n\ncontent\n", encoding="utf-8")
         o.init("req", design_doc_path=str(design))
-        o.tick(_make_result_file({
-            "stage": "gap_scan",
-            "gaps": [{"id": "g1", "design_section_ref": "§B2", "grade": grade,
+        gap = {"id": "g1", "design_section_ref": "§B2", "grade": grade,
                       "clarity": "missing", "summary": "契约缺失",
                       "evidence": ["§B2 未定义契约"],
                       "problem_statement": "组件契约缺失",
@@ -2839,10 +3052,12 @@ class TestPhase0BlockingGapGuardrail:
                               ),
                           },
                       ],
-                      "blocking_rule": "architectural gap 禁止 defer"}],
-            "scanned_sections": 1,
-            "has_blocking": grade == "architectural",
-        }))
+                      "blocking_rule": "architectural gap 禁止 defer"}
+        result = (
+            _blocking_gap_scan_result([gap])
+            if grade == "architectural" else _gap_scan_result([gap])
+        )
+        o.tick(result)
 
     def test_architectural_defer_blocks_via_guardrail(self, tmp_path) -> None:
         o = _real_guardrail_orch(tmp_path)

@@ -358,6 +358,12 @@ def test_gap_wizard_restores_at_first_undecided_gap(tmp_path) -> None:
                 ],
                 "scanned_sections": 1,
                 "has_blocking": False,
+                "design_doc_digest": orchestrator._state.design_doc_digest,
+                "scan_coverage": [{
+                    "design_section_ref": "§1 接口边界",
+                    "verdict": "gap",
+                    "evidence": ["§1 未定义输入输出"],
+                }],
             })
             action = orchestrator.tick_dict({
                 "stage": "gap_review",

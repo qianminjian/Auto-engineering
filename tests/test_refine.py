@@ -139,6 +139,78 @@ class TestAuditSource:
         assert req.gaps[0].severity == "P0"
 
 
+class TestCriticSource:
+    def test_p0_and_p1_findings_become_traceable_repair_gaps(self) -> None:
+        req = build_refine_request(
+            source="critic", trigger_tick=6,
+            scope_plate=None, scope_component=None,
+            critic_findings=[
+                {
+                    "finding_id": "F-001",
+                    "severity": "P1",
+                    "kind": "contract_gap",
+                    "design_ref": "§11.3",
+                    "file": "vitest.setup.ts",
+                    "line": 1,
+                    "issue": "缺少 cleanup",
+                    "suggestion": "注册 afterEach(cleanup)",
+                },
+                {
+                    "finding_id": "F-002",
+                    "severity": "P2",
+                    "issue": "仅风格问题",
+                },
+            ],
+        )
+
+        assert len(req.gaps) == 1
+        gap = req.gaps[0]
+        assert gap.kind == "CRITIC_FINDING"
+        assert gap.source_ref == "F-001"
+        assert gap.design_ref == "§11.3"
+        assert gap.detail == "缺少 cleanup"
+        assert gap.suggested_action == "注册 afterEach(cleanup)"
+        assert gap.location == "vitest.setup.ts:1"
+
+    def test_missing_finding_id_gets_deterministic_source_ref(self) -> None:
+        finding = {
+            "severity": "P1",
+            "kind": "plan_gap",
+            "file": "src/a.ts",
+            "issue": "计划遗漏",
+            "suggestion": "补充任务",
+        }
+        first = build_refine_request(
+            source="critic", trigger_tick=1,
+            scope_plate=None, scope_component=None,
+            critic_findings=[finding],
+        )
+        second = build_refine_request(
+            source="critic", trigger_tick=99,
+            scope_plate=None, scope_component=None,
+            critic_findings=[finding],
+        )
+
+        assert first.gaps[0].source_ref.startswith("critic:")
+        assert first.gaps[0].source_ref == second.gaps[0].source_ref
+
+    def test_legacy_critic_field_names_are_preserved(self) -> None:
+        req = build_refine_request(
+            source="critic", trigger_tick=1,
+            scope_plate=None, scope_component=None,
+            critic_findings=[{
+                "severity": "P1",
+                "description": "旧字段问题",
+                "suggested_fix": "旧字段修复",
+                "design_section": "§5",
+            }],
+        )
+
+        assert req.gaps[0].detail == "旧字段问题"
+        assert req.gaps[0].suggested_action == "旧字段修复"
+        assert req.gaps[0].design_ref == "§5"
+
+
 class TestScopeAndSerialization:
     def test_scope_fields_preserved(self) -> None:
         req = build_refine_request(

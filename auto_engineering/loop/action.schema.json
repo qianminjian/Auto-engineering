@@ -101,6 +101,26 @@
     "auto_decision": {"type": ["object", "null"]},
     "decisions_so_far": {"type": "array"},
     "has_blocking": {"type": "boolean"},
+    "gap_scan_summary": {
+      "type": "object",
+      "required": [
+        "design_doc_digest", "scanned_sections", "gap_count",
+        "has_blocking", "outcome"
+      ],
+      "properties": {
+        "design_doc_digest": {"type": "string", "minLength": 1},
+        "scanned_sections": {"type": "integer", "minimum": 0},
+        "gap_count": {"type": "integer", "minimum": 0},
+        "has_blocking": {"type": "boolean"},
+        "outcome": {
+          "enum": [
+            "no_gaps_auto_continue", "user_decision_required",
+            "research_in_progress", "gaps_resolved"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
     "is_rereview": {"type": "boolean"},
     "research_findings": {"type": "object"},
     "research_and_design_context": {"type": "array", "items": {"type": "object"}},

@@ -75,9 +75,15 @@ think hard
    `[{"resolution":"Fill","meaning":"适用情况","enabled":true,"disabled_reason":"可选"}]`。
 2. `scanned_sections`: int — 本次扫描的章节数
 3. `has_blocking`: bool — 是否存在 architectural gap
+4. `design_doc_digest`: string — 原样返回 context.design_doc_digest，证明结论绑定当前设计版本
+5. `scan_coverage`: list[dict] — 必须与 context.design_sections 一一对应；每项包含
+   `design_section_ref`、`verdict`（clear/gap）和非空 `evidence`。不得用总数或空数组代替。
 
 ### 值域 (枚举)
 
 - grade: 仅 "architectural" / "component" / "module"
 - clarity: 仅 "missing" / "vague" / "partial"
-- 无模糊点时 gaps=[] + has_blocking=false (设计足够清晰,直接进 architect).
+- 无模糊点时也必须提交完整 `scan_coverage`；只有 Core 验证逐章节覆盖和设计摘要一致后，
+  才允许 gaps=[] + has_blocking=false 自动进入 architect。
+- 工作文件丢失、上下文不足或无法完成逐章节扫描时不得提交空 gaps；应报告当前执行失败，
+  由宿主恢复同一 active Action。

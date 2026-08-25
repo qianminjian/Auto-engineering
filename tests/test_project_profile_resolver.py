@@ -207,6 +207,33 @@ def test_node_toolchain_gaps_require_setup_before_developer(tmp_path: Path) -> N
     }
 
 
+def test_latest_eslint_requires_flat_config(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "package.json").write_text(json.dumps({
+        "scripts": {"lint": "eslint .", "test": "vitest run"},
+        "devDependencies": {"eslint": "latest", "vitest": "latest"},
+    }))
+
+    result = ProjectProfileResolver((LocalProbeProvider(),)).resolve(tmp_path)
+
+    assert result.status is ResolutionStatus.SETUP_REQUIRED
+    assert "eslint_flat_config" in result.missing_capabilities
+
+
+def test_noop_eslint_flat_config_is_not_a_verified_capability(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "package.json").write_text(json.dumps({
+        "scripts": {"lint": "eslint .", "test": "vitest run"},
+        "devDependencies": {"eslint": "latest", "vitest": "latest"},
+    }))
+    (tmp_path / "eslint.config.js").write_text("export default [{}];\n")
+
+    result = ProjectProfileResolver((LocalProbeProvider(),)).resolve(tmp_path)
+
+    assert result.status is ResolutionStatus.SETUP_REQUIRED
+    assert "eslint_effective_config" in result.missing_capabilities
+
+
 def test_local_probe_derives_pnpm_type_check_from_local_typescript(tmp_path: Path) -> None:
     """无 typecheck script 时，只从本地 TypeScript 依赖推导 pnpm 原生命令。"""
     (tmp_path / "pnpm-lock.yaml").write_text("lockfileVersion: '9.0'\n")

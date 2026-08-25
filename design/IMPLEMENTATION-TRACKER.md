@@ -1,9 +1,5 @@
 # Auto-Engineering 当前实施跟踪表
-> 更新：2026-08-16｜目标阶段：Phase 83 Host Runtime 产品闭环｜Phase 1-79 明细见 `design/HISTORY.md`｜状态：`☐` 未开始／`◐` 进行中／`✅` 已验证
-## 基线与阶段
-| 里程碑 | 状态 | 证据 |
-|---|:---:|---|
-| Phase 1-63 | ✅ | Git 历史与 `design/HISTORY.md`；v5.7.1 已发布，双宿主基础协议与安装验收完成 |
+> 更新：2026-08-25｜目标阶段：Phase 83 Host Runtime 产品闭环｜Phase 1-63 已完成，Phase 1-79 明细见 `design/HISTORY.md`｜状态：`☐` 未开始／`◐` 进行中／`✅` 已验证
 ## Phase 64：真实运行可信度止血
 | 优先级 | ID | 任务 | EARS 验收 | 状态 |
 |---:|---|---|---|:---:|
@@ -157,4 +153,5 @@
 | P0 | T467-T469 | L2 产品轨迹、双宿主 L3 与 Voice Clone L4 | While 候选版本准备真跑或发布, when 任一层证据缺失, the release gate shall 保持阻断 | ◐ L2、2457/1、90%、零 ResourceWarning、CI hermetic、双宿主安装器与 archive 通过；Build 写外部验收报告；L3/L4 not_run，发布阻断 |
 | P0 | T470/T472/T473 | 全类型 Action 的确定性 Result 终结与单一宿主合同 | While 任一 active Action 需要宿主提交 Result, when Action 不含 spawn 或含严格 spawn, the host shall 只提交业务 payload/原生 outcome，由同一 Core assembler 绑定 active Action 并生成完整 v1.1 Result；Action instruction/expected_format 不得要求 Core-owned identity 或手工 proof | ◐ L3 已验证非 spawn 原子文件链与 strict outcomes；随后发现 Developer expected_format 要求 `stage` 却被 Finalizer禁止，RED→GREEN 已在 ActionBuilder 统一剔除 Core-owned 字段，待新 Build L3 |
 | P0 | T471 | Architect 合法路由键的执行上下文闭包 | While Architect Gate 要求每个 batch 绑定非空 `plate_keys`, when Core 编译隔离 Worker Prompt, the Action shall 同时在机器字段和 Worker context 中提供同一 `valid_plate_keys` 集合，禁止 Worker 猜测或提交空路由 | ◐ 首轮 Codex L3 因 Worker Prompt 未携带合法集合而以 `ARCHITECT_PLAN_INVALID` 终止；RED→GREEN 已补齐 Prompt Contract 与 ActionBuilder，待新 Build L3 验证 |
-| P0 | T474-T545 | 深审计权威、薄协调器、Action-scoped 成本与强类型 Result 边界 | While active Action 进入业务执行, when Core 输出下一动作并接收宿主业务 payload, the product shall 以 fresh Worker 承担业务 Stage，由无业务历史的 Supervisor 自动驱动，并在 journal 写入前完成机器类型校验与确定性二次序列化恢复 | ◐ T545 类型合同、Backend/Finalizer 校验、Architect 变体、Critic 产品轨迹与全停止路径 Stop Report 已实现；2627 passed/1 skipped、coverage 90%、Ruff/mypy/sync 与双宿主 archive smoke 通过；待新 Build 真实双宿主 terminal，继续阻断发布 |
+| P0 | T474-T549 | 强类型宿主边界、Critic 修复闭环与 Setup 实证续作 | While Critic P0/P1 回源或 Project Setup 声明工程能力, when Core 编译修复计划或重新探测, the product shall 无损传递 findings、逐项绑定实现/验证任务，实际执行全部 Profile Gate，并以新 CONTINUE Action 自动修复可恢复失败 | ◐ T546-T549 已实现；同形 3-P1 修复轨迹及全量 2640/1、coverage 90%、Ruff/mypy/sync、双宿主 hermetic archive smoke 通过；新 Build 真实 terminal 待复验，继续阻断发布 |
+| P0 | T550-T553 | Gap Scan 可证明零结论与可见确认分流 | While 设计驱动 Loop 执行或恢复 Gap Scan, when Result 声称零缺口、产物丢失或发现设计决策, the product shall 校验逐章节覆盖与设计摘要绑定、始终展示有界扫描摘要、仅对真实设计决策进入 WAIT_USER，并禁止用空结果替代丢失产物 | ◐ RED/GREEN、2643/1、coverage 90%、Ruff/mypy/sync 与双宿主 hermetic archive 通过；真实 L4 前台摘要与确认分流待复验 |

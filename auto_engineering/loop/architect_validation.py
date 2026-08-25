@@ -79,6 +79,7 @@ def dry_run_architect_plan(
     *,
     active_revision: int = 0,
     current_baseline: dict | None = None,
+    refine_request: dict | None = None,
 ) -> str | None:
     """验证 Architect 计划能否初始化执行树，不修改现有状态。"""
     try:
@@ -95,6 +96,24 @@ def dry_run_architect_plan(
     )
     if obligation_error:
         return obligation_error
+    if isinstance(refine_request, dict) and refine_request.get("source") == "critic":
+        required_refs: set[str] = set()
+        for gap in refine_request.get("gaps", []):
+            if not isinstance(gap, dict):
+                continue
+            source_ref = gap.get("source_ref")
+            if isinstance(source_ref, str) and source_ref:
+                required_refs.add(source_ref)
+        mapped_refs: set[str] = set()
+        for obligation in candidate.get("obligations", []):
+            if not isinstance(obligation, dict):
+                continue
+            source_ref = obligation.get("source_ref")
+            if isinstance(source_ref, str) and source_ref:
+                mapped_refs.add(source_ref)
+        missing_refs = sorted(required_refs - mapped_refs)
+        if missing_refs:
+            return "Critic finding 缺少修复义务映射: " + ", ".join(missing_refs)
     if design_doc is None:
         return None
     batches = candidate.get("batch_plan", [])

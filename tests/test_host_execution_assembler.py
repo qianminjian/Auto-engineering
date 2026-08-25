@@ -1003,6 +1003,52 @@ def test_finalize_non_spawn_action_builds_protocol_envelope(tmp_path: Path) -> N
     assert repaired["message_id"] != result["message_id"]
 
 
+def test_gap_scan_contract_rejects_empty_substitute_when_work_result_is_lost(
+    tmp_path: Path,
+) -> None:
+    """丢失 Action-scoped 产物时不得用 gaps=[] 绕过逐章节扫描。"""
+    action = {
+        "schema_version": "1.1",
+        "message_type": "action",
+        "message_id": "gap-action-strict-1",
+        "thread_id": "thread-1",
+        "tick": 7,
+        "stage": "gap_scan",
+        "correlation_id": "correlation-1",
+        "result_contract": {
+            "schema_version": "1.0",
+            "required": [
+                "gaps", "scanned_sections", "has_blocking",
+                "design_doc_digest", "scan_coverage",
+            ],
+            "properties": {
+                "gaps": {"type": "array"},
+                "scanned_sections": {"type": "integer"},
+                "has_blocking": {"type": "boolean"},
+                "design_doc_digest": {"type": "string"},
+                "scan_coverage": {"type": "array"},
+            },
+            "additionalProperties": False,
+        },
+    }
+
+    with pytest.raises(HostEvidenceValidationError) as caught:
+        HostExecutionAssembler(tmp_path).finalize(
+            action=action,
+            outcomes=[],
+            coordinator_payload={
+                "gaps": [],
+                "scanned_sections": 0,
+                "has_blocking": False,
+            },
+        )
+
+    assert set(caught.value.violations) == {
+        "COORDINATOR_FIELD_REQUIRED:design_doc_digest",
+        "COORDINATOR_FIELD_REQUIRED:scan_coverage",
+    }
+
+
 def test_finalize_gap_auto_decision_rebinds_core_owned_fields(tmp_path: Path) -> None:
     """线程策略是 Core 事实，宿主只能补充 Fill 的具体内容。"""
 

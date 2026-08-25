@@ -28,6 +28,8 @@ class StageResultProjector:
                 "gaps": result.get("gaps", []),
                 "scanned_sections": result.get("scanned_sections", 0),
                 "has_blocking": result.get("has_blocking", False),
+                "design_doc_digest": result.get("design_doc_digest", ""),
+                "scan_coverage": result.get("scan_coverage", []),
             }, ensure_ascii=False)
         elif stage == "gap_review":
             if isinstance(result.get("decision"), Mapping):

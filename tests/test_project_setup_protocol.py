@@ -41,7 +41,7 @@ def test_empty_project_emits_structured_setup_action(tmp_path: Path) -> None:
 
 def test_unverified_setup_result_keeps_setup_stage(tmp_path: Path) -> None:
     orchestrator = _orchestrator(tmp_path)
-    orchestrator.init("实现一个页面")
+    initial = orchestrator.init("实现一个页面")
 
     action = orchestrator.tick_dict({
         "stage": "project_setup",
@@ -49,8 +49,14 @@ def test_unverified_setup_result_keeps_setup_stage(tmp_path: Path) -> None:
         "artifacts": ["package.json"],
     })
 
-    assert action["action"] == "error"
-    assert action["error_code"] == "PROJECT_SETUP_UNVERIFIED"
+    assert action["action"] == "project_setup_required"
+    assert action["stage"] == "project_setup"
+    assert action["feedback"].startswith("PROJECT_SETUP_UNVERIFIED")
+    assert action["message_id"] != initial["message_id"]
+    assert action["tick"] > initial["tick"]
+    assert action["extensions"]["ae"]["execution_control"]["disposition"] == (
+        "CONTINUE"
+    )
     assert orchestrator._state.current_stage == "project_setup"
 
 
@@ -122,6 +128,49 @@ def test_verified_setup_commits_stage_transition_with_event_store(
         )
 
 
+def test_failed_setup_commits_only_new_setup_action_without_stage_advance(
+    tmp_path: Path,
+) -> None:
+    with SQLiteEventStore(tmp_path / "events.db") as events:
+        orchestrator = TickOrchestrator(
+            project_root=tmp_path,
+            gate_runner=lambda gate_names, project_root: {
+                name: MagicMock(
+                    passed=True,
+                    message="ok",
+                    not_applicable=False,
+                    advisory=False,
+                )
+                for name in gate_names
+            },
+            checkpoint_store=None,
+            event_store=events,
+        )
+        initial = orchestrator.init("实现一个页面")
+
+        action = orchestrator.tick_dict({
+            "stage": "project_setup",
+            "result_type": "project_setup_completed",
+            "artifacts": ["package.json"],
+        })
+
+        assert action["action"] == "project_setup_required"
+        stream = events.load_stream(initial["thread_id"])
+        assert sum(
+            event.event_type is LoopEventType.ACTION_ISSUED for event in stream
+        ) == 2
+        assert not any(
+            event.event_type in {
+                LoopEventType.PROJECT_SETUP_COMPLETED,
+                LoopEventType.STAGE_ADVANCED,
+            }
+            for event in stream
+        )
+        assert events.load_projection(initial["thread_id"]).current_stage == (
+            "project_setup"
+        )
+
+
 def test_setup_result_requires_expected_result_type(tmp_path: Path) -> None:
     orchestrator = _orchestrator(tmp_path)
     orchestrator.init("实现一个页面")
@@ -134,3 +183,52 @@ def test_setup_result_requires_expected_result_type(tmp_path: Path) -> None:
 
     assert action["action"] == "error"
     assert action["error_code"] == "RESULT_VALIDATION_ERROR"
+
+
+def test_setup_does_not_complete_when_declared_quality_gate_fails(
+    tmp_path: Path,
+) -> None:
+    def gate_runner(gate_names, project_root):
+        return {
+            name: MagicMock(
+                passed=name != "lint",
+                message="lint config ineffective" if name == "lint" else "ok",
+                not_applicable=False,
+                advisory=False,
+            )
+            for name in gate_names
+        }
+
+    orchestrator = TickOrchestrator(
+        project_root=tmp_path,
+        gate_runner=gate_runner,
+        guardrail=MagicMock(check=MagicMock(return_value=MagicMock(action="pass"))),
+        checkpoint_store=None,
+    )
+    orchestrator.init("实现一个页面")
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src/main.ts").write_text("export {};\n")
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests/setup.test.ts").write_text("export {};\n")
+    (tmp_path / "package-lock.json").write_text("{}")
+    (tmp_path / "package.json").write_text(json.dumps({
+        "scripts": {
+            "lint": "eslint .",
+            "typecheck": "tsc --noEmit",
+            "test": "vitest run",
+            "build": "vite build",
+        },
+        "devDependencies": {"eslint": "^8.0.0", "typescript": "^5.0.0"},
+    }))
+
+    action = orchestrator.tick_dict({
+        "stage": "project_setup",
+        "result_type": "project_setup_completed",
+        "artifacts": ["package.json", "src", "tests"],
+    })
+
+    assert action["action"] == "project_setup_required"
+    assert action["feedback"].startswith("PROJECT_SETUP_GATE_FAILED")
+    assert orchestrator._state.current_stage == "project_setup"
+    assert orchestrator._state.missing_project_capabilities == ["setup_gate:lint"]
+    assert orchestrator._state.gate_results["lint"]["passed"] is False

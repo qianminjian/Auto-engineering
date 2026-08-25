@@ -166,6 +166,7 @@ _PHASE0_STAGES = frozenset({"gap_scan", "gap_review", "research"})
 _RESULT_FIELD_TYPES: dict[str, dict[str, tuple[type, ...]]] = {
     "gap_scan": {
         "gaps": (list,), "scanned_sections": (int,), "has_blocking": (bool,),
+        "design_doc_digest": (str,), "scan_coverage": (list,),
     },
     "gap_review": {"decision": (dict,)},
     "research": {

@@ -201,6 +201,24 @@ class SystemDeepAuditHandler:
             if finding.get("authority_class", "objective_defect")
             in {"binding_violation", "objective_defect"}
         ]
+        missing_count = int(result.get("missing_count", 0))
+        diverged_count = int(result.get("diverged_count", 0))
+        if missing_count or diverged_count:
+            blocking.append({
+                "severity": "P1",
+                "dimension": "design_coverage",
+                "file": "",
+                "line": None,
+                "description": (
+                    "系统深审计报告聚合覆盖缺口："
+                    f"missing={missing_count}, diverged={diverged_count}"
+                ),
+                "evidence": "system_deep_audit aggregate coverage counts",
+                "suggested_fix": "补充对应实现与回归验证，并在复审时输出逐项覆盖证据",
+                "design_section": "",
+                "agent_source": ["system_deep_audit"],
+                "authority_class": "objective_defect",
+            })
         advisory = [finding for finding in deduped if finding not in blocking]
         counts = (p0, p1, p2)
         patch: dict[str, Any] = {}
@@ -215,8 +233,8 @@ class SystemDeepAuditHandler:
         if (
             p0
             or p1
-            or int(result.get("missing_count", 0))
-            or int(result.get("diverged_count", 0))
+            or missing_count
+            or diverged_count
         ):
             patch["audit_findings"] = blocking
             patch["open_findings"] = blocking

@@ -172,6 +172,7 @@ from auto_engineering.project_profile import (
     AeConfigProvider,
     LegacyInitProvider,
     LocalProbeProvider,
+    ProjectProfile,
     ProjectProfileError,
     ProjectProfileResolution,
     ProjectProfileResolver,
@@ -1448,18 +1449,42 @@ class TickOrchestrator:
         return self._after_tick(result)
 
     def _complete_project_setup(self) -> dict:
-        """重新探测宿主搭建结果；未满足能力时保持原 active Action。"""
+        """重新探测并执行工程门禁；未满足能力时保持原 active Action。"""
         resolution = self._project_profile_resolver.resolve(self.project_root)
         self._project_profile_resolution = resolution
         if resolution.status is not ResolutionStatus.RESOLVED:
-            self._state.missing_project_capabilities = list(resolution.missing_capabilities)
-            self._save_checkpoint()
-            return ErrorResponse(
-                "PROJECT_SETUP_UNVERIFIED",
-                "项目搭建结果未通过本地证据验证",
-                self._state.to_dict(),
-            ).to_dict()
+            return self._retry_project_setup(
+                "PROJECT_SETUP_UNVERIFIED: 项目搭建结果未通过本地证据验证",
+                list(resolution.missing_capabilities),
+            )
         self._apply_project_profile_resolution(resolution)
+        profile = resolution.profile
+        if profile is None:
+            raise RuntimeError("RESOLVED ProjectProfile 缺少 profile")
+        snapshot_files = self._project_setup_snapshot_files(profile)
+        try:
+            gate_results, duration_ms = self._tick_gate_runner.run(
+                snapshot_files,
+                stage="project_setup",
+                tick=self._state.tick,
+            )
+            self._t_gate_ms += duration_ms
+        except ValueError as exc:
+            return self._retry_project_setup(
+                f"PROJECT_SETUP_GATE_FAILED: 项目搭建工程门禁无法执行: {exc}",
+                ["setup_gate:snapshot"],
+            )
+        self._state.gate_results = gate_results
+        failed_gates = sorted(
+            name for name, result in gate_results.items()
+            if not result.get("not_applicable") and result.get("passed") is not True
+        )
+        if failed_gates:
+            return self._retry_project_setup(
+                "PROJECT_SETUP_GATE_FAILED: 项目搭建工程门禁失败: "
+                + ", ".join(failed_gates),
+                [f"setup_gate:{name}" for name in failed_gates],
+            )
         self._queue_domain_event(
             LoopEventType.PROJECT_SETUP_COMPLETED,
             {"profile_id": self._state.project_profile_id},
@@ -1474,6 +1499,39 @@ class TickOrchestrator:
         self._state.tick += 1
         self._save_checkpoint()
         return self.build_action()
+
+    def _retry_project_setup(self, feedback: str, missing: list[str]) -> dict:
+        """把可修复 setup 失败转换为下一 Action，而不是终止 Product Driver。"""
+        self._state.missing_project_capabilities = missing
+        self._state.tick += 1
+        self._save_checkpoint()
+        return self.build_action(feedback=feedback)
+
+    def _project_setup_snapshot_files(self, profile: ProjectProfile) -> list[str]:
+        """为 setup Gate 构造有界、项目内的确定性文件快照。"""
+        excluded = {".git", ".ae-state", "_scratch", "node_modules"}
+        root = self.project_root.resolve()
+        selected: set[str] = set()
+        for evidence in profile.evidence:
+            candidate = self.project_root / evidence.source
+            if (
+                candidate.is_file()
+                and not excluded.intersection(Path(evidence.source).parts)
+                and candidate.resolve().is_relative_to(root)
+            ):
+                selected.add(candidate.relative_to(self.project_root).as_posix())
+        for root_name in (*profile.source_roots, *profile.test_roots):
+            source_root = self.project_root / root_name
+            if not source_root.is_dir() or not source_root.resolve().is_relative_to(root):
+                continue
+            for candidate in source_root.rglob("*"):
+                if candidate.is_file() and not candidate.is_symlink():
+                    selected.add(candidate.relative_to(self.project_root).as_posix())
+                    if len(selected) > 10_000:
+                        raise ValueError("PROJECT_SETUP_SNAPSHOT_TOO_LARGE: 超过 10000 个文件")
+        if not selected:
+            raise ValueError("PROJECT_SETUP_SNAPSHOT_EMPTY: 无可验证项目文件")
+        return sorted(selected)
 
     def _apply_project_profile_resolution(self, resolution: ProjectProfileResolution) -> None:
         profile = resolution.profile
@@ -1887,6 +1945,11 @@ class TickOrchestrator:
                 )
                 if self._event_store is not None else {}
             ),
+            refine_request=(
+                json.loads(self._state.refine_request_json)
+                if self._state.refine_request_json
+                else None
+            ),
         )
         if dry_run_error:
             return ErrorResponse(
@@ -2236,6 +2299,16 @@ class TickOrchestrator:
     # ── plan_refine 回路 ──
 
     def _handle_plan_refine(self, source: str) -> dict:
+        refine_request = self._build_refine_request(source)
+        if not refine_request.get("gaps"):
+            return ErrorResponse(
+                error_code="REFINE_INPUT_EMPTY",
+                message=(
+                    f"回源 '{source}' 请求重规划，但 Core 未生成任何 refine gap；"
+                    "已保持当前阶段，禁止进入无法完成的 Architect Action"
+                ),
+                current_state=self._state.to_dict(),
+            ).to_dict()
         src_count = self._state.plan_refine_by_source.get(source, 0)
         if (src_count >= _MAX_PER_SOURCE
                 or self._state.plan_refine_count >= _MAX_GLOBAL):
@@ -2253,8 +2326,7 @@ class TickOrchestrator:
         self._state.plan_refine_by_source[source] = src_count + 1
         self._state.plan_refine_count += 1
 
-        self._state.refine_request_json = json.dumps(
-            self._build_refine_request(source))
+        self._state.refine_request_json = json.dumps(refine_request)
         clear_stage_fields(self._state, self._state.current_stage)
         self._advance_stage("architect")
         return self.build_action()
@@ -2286,6 +2358,9 @@ class TickOrchestrator:
             scope_component=scope_component,
             coverage_map=self._state.coverage_map,
             audit_findings=self._state.audit_findings,
+            critic_findings=(
+                self._state.open_findings if source == "critic" else None
+            ),
         )
         return asdict(req)
 
@@ -2788,6 +2863,63 @@ class TickOrchestrator:
         """Gap Scan 必须提供足以让用户判断的完整分析，不接受空洞摘要。"""
         if self._state.current_stage != "gap_scan":
             return None
+        coverage = result.get("scan_coverage")
+        if not isinstance(coverage, list) or not coverage:
+            return ErrorResponse(
+                "GAP_SCAN_EVIDENCE_INCOMPLETE",
+                "Gap Scan 必须逐项提供 Core 解析章节的覆盖结论与非空证据",
+                self._state.to_dict(),
+            )
+        if result.get("design_doc_digest") != self._state.design_doc_digest:
+            return ErrorResponse(
+                "GAP_SCAN_DESIGN_MISMATCH",
+                "Gap Scan 结果未绑定当前 active design digest",
+                self._state.to_dict(),
+            )
+        expected_sections = {
+            str(item["design_section"])
+            for item in (
+                self._design_doc.sections_summary()
+                if self._design_doc is not None else []
+            )
+        }
+        if not expected_sections and self._design_doc is not None:
+            expected_sections = {
+                str(plate.design_section) for plate in self._design_doc.plates
+                if plate.design_section
+            }
+        if not expected_sections and self._design_doc is not None:
+            expected_sections = {"document"}
+        actual_sections: list[str] = []
+        for index, item in enumerate(coverage):
+            valid = (
+                isinstance(item, dict)
+                and isinstance(item.get("design_section_ref"), str)
+                and item.get("verdict") in {"clear", "gap"}
+                and isinstance(item.get("evidence"), list)
+                and bool(item.get("evidence"))
+                and all(
+                    isinstance(evidence, str) and evidence.strip()
+                    for evidence in item.get("evidence", [])
+                )
+            )
+            if not valid:
+                return ErrorResponse(
+                    "GAP_SCAN_EVIDENCE_INCOMPLETE",
+                    f"scan_coverage[{index}] 缺少章节、结论或非空证据",
+                    self._state.to_dict(),
+                )
+            actual_sections.append(str(item["design_section_ref"]))
+        if (
+            len(actual_sections) != len(set(actual_sections))
+            or set(actual_sections) != expected_sections
+            or result.get("scanned_sections") != len(actual_sections)
+        ):
+            return ErrorResponse(
+                "GAP_SCAN_COVERAGE_MISMATCH",
+                "Gap Scan 覆盖必须与 Core 解析章节一一对应且计数一致",
+                self._state.to_dict(),
+            )
         required = {
             "evidence", "problem_statement", "impact", "dependencies",
             "recommendation", "options", "blocking_rule",

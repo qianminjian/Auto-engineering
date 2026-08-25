@@ -170,8 +170,23 @@ class LocalProbeProvider:
             }
             eslint_version = str(dependencies.get("eslint", ""))
             has_flat_config = any(name.startswith("eslint.config.") for name in entries)
-            if re.search(r"(?:^|[^0-9])9(?:\.|$)", eslint_version) and not has_flat_config:
+            requires_flat_config = bool(
+                re.search(r"(?:^|[^0-9])9(?:\.|$)", eslint_version)
+                or eslint_version.strip().lower() in {"latest", "next"}
+            )
+            if requires_flat_config and not has_flat_config:
                 missing_capabilities.append("eslint_flat_config")
+            elif requires_flat_config and has_flat_config:
+                flat_config = b"\n".join(
+                    content for name, content in entries.items()
+                    if name.startswith("eslint.config.")
+                ).decode("utf-8", errors="replace")
+                compact_config = re.sub(r"\s+", "", flat_config)
+                if re.fullmatch(
+                    r"exportdefault(?:\[\]|\[\{\}\]);?",
+                    compact_config,
+                ):
+                    missing_capabilities.append("eslint_effective_config")
             vitest_config = b"\n".join(
                 content for name, content in entries.items()
                 if name.startswith("vitest.config.")

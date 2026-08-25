@@ -32,6 +32,77 @@ def test_architect_refine_rejects_missing_plan_patch() -> None:
     assert error == "PLAN_REFINE 必须提交 plan_patch，禁止重发完整 batch_plan"
 
 
+def test_critic_refine_requires_finding_to_implementation_and_test_mapping() -> None:
+    error = StageResultPrevalidator().validate(
+        "architect",
+        design_doc=None,
+        result={
+            "plan": "x" * 60,
+            "plan_patch": {
+                "add_batches": [{
+                    "batch_id": "B2",
+                    "tasks": [
+                        {"id": "B2-T1", "kind": "implementation"},
+                        {"id": "B2-T2", "kind": "test"},
+                    ],
+                }],
+            },
+            "contracts": {},
+            "obligations": [],
+        },
+        requirement="修复 Critic findings",
+        research_archive={},
+        active_revision=1,
+        current_baseline={"batch_plan": [], "obligations": []},
+        refine_request={
+            "source": "critic",
+            "gaps": [{"source_ref": "F-001"}],
+        },
+    )
+
+    assert error == "Critic finding 缺少修复义务映射: F-001"
+
+
+def test_critic_refine_accepts_complete_finding_mapping() -> None:
+    result = {
+        "plan": "x" * 60,
+        "plan_patch": {
+            "add_batches": [{
+                "batch_id": "B2",
+                "tasks": [
+                    {"id": "B2-T1", "kind": "implementation"},
+                    {"id": "B2-T2", "kind": "test"},
+                ],
+            }],
+        },
+        "contracts": {},
+        "obligations": [{
+            "id": "O-F-001",
+            "source_ref": "F-001",
+            "summary": "修复 Critic finding",
+            "implementation_targets": ["B2-T1"],
+            "verification_targets": ["B2-T2"],
+            "contract_refs": [],
+        }],
+    }
+
+    error = StageResultPrevalidator().validate(
+        "architect",
+        design_doc=None,
+        result=result,
+        requirement="修复 Critic findings",
+        research_archive={},
+        active_revision=1,
+        current_baseline={"batch_plan": [], "obligations": []},
+        refine_request={
+            "source": "critic",
+            "gaps": [{"source_ref": "F-001"}],
+        },
+    )
+
+    assert error is None
+
+
 def test_plan_reconcile_candidate_uses_distinct_validator(tmp_path) -> None:
     error = StageResultPrevalidator().validate(
         "architect",

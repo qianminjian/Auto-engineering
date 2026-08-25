@@ -1,5 +1,5 @@
 # Auto-Engineering BEACON
-> 创建：2026-06-24｜更新：2026-08-21｜阶段：Phase 83 Host Runtime 产品闭环收敛
+> 创建：2026-06-24｜更新：2026-08-25｜阶段：Phase 83 Host Runtime 产品闭环收敛
 > 决策状态翻转（✅↔❌）或架构降级必须先获用户批准。
 
 ## 目标与成功标准
@@ -54,8 +54,8 @@ Gate/Guardrail、五层验证、审计、v5.6 兼容迁移和双宿主验收。
 | D37 | Worker 失败写 `worker_failed` 尝试并由 Core 返回 WAIT_RESOURCE；只有成功 journal 才禁止重复 spawn | ✅ |
 | D38 | Finalizer 以 active Action 的工作文件为唯一事实源；宿主传入陈旧路径时自动续接当前文件，禁止跨 Action 误提交 | ✅ |
 | D39 | 系统审计覆盖维度固定、执行 fan-out 按 Core 计算的项目规模伸缩；小项目不重复发送五份上下文 | ✅ |
-| D40 | ProjectProfile 只声明期望能力；项目锚点删除判断只依据 Core 已持久化见证的目录事实，不从未来目录声明反推历史存在 | ✅ |
-| D41 | Canonical Action 与宿主控制视图分离；产品宿主只接收内容寻址的 compact envelope，完整 Prompt 不进入每 Tick stdout | ✅ |
+| D40-D43 | ProjectProfile 以真实 Gate 证明能力且可修复失败自动续作；Canonical Action 与 compact 宿主视图分离；五类 refine 信号无损归一并强制修复映射 | ✅ |
+| D44 | Gap Scan 始终输出有界可见摘要；零缺口必须逐章节可证明并自动续作，真实设计决策才进入用户确认，丢失产物不得降级为空结果 | ✅ |
 
 ## 当前状态
 
@@ -64,16 +64,16 @@ Gate/Guardrail、五层验证、审计、v5.6 兼容迁移和双宿主验收。
 - 当前候选的自动门禁、双宿主 frozen/offline L2 和内容寻址安装可验证；这些证据不替代真实产品 L3/L4 长跑。
 - 双宿主 L3 均已到 TERMINAL；L4 揭示的 Gap 恢复、运行时激活、自动决策、补充权威、Gate 校验与在途迁移缺口已由 T505-T511 闭合。
 - T512-T523 已闭合跨会话恢复、陈旧路径重绑、未提交 outcome 复用和审计 fan-out 伸缩；2519/1、Ruff、mypy 通过。完整 L3/L4 终态仍未完成。
-- T530-T545 已补齐资源/证据/预算及强类型 Result 边界；2627/1、90% 覆盖率、静态与双宿主 archive 通过；待真实双宿主 terminal，Claude 成本仍阻断。
+- T530-T553 已补齐强类型 Result、Critic 修复映射、Setup 实证续作与 Gap 可证明结论/可见确认分流；2643/1、90% 和双宿主 archive 通过，真实 terminal 仍阻断发布。
 ## 最近演进
 | 日期 | 变更 |
 |---|---|
+| 2026-08-25 | T546-T549 修复 Critic finding 丢失、空 refine、Setup 假能力及可恢复失败终止 |
 | 2026-08-21 | T512-T518 关闭重复 spawn、错误恢复、计划校验终止、Worker 超时伪成功与无限重启链路 |
-| 2026-08-21 | T519-T523 关闭旧路径误提交、未提交 outcome 重跑与小项目固定 5×xhigh 审计成本 |
 | 2026-08-22 | T524 关闭未来目录误报；双宿主 L3 暴露百万级 cache read，启动 T525-T526 |
 | 2026-08-23 | T533 获批修订 D13：工程线程连续，模型上下文按 Action 隔离且由 Supervisor 自动续作 |
 ## 待解决问题
-- T544-T545：待新 Build 的 Codex/Claude 真实 terminal 与数值预算通过；自动门禁已通过，真跑任一缺失仍不得发布。
+- 待全量自动门禁及新 Build 的 Codex/Claude 真实 terminal 与数值预算通过；真跑任一缺失仍不得发布。
 
 ## 引用文件
 

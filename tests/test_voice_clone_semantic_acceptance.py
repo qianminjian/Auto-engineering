@@ -181,8 +181,18 @@ def test_voice_clone_golden_reaches_done_through_real_core(
             assert isinstance(stage, str)
             stages.append(stage)
             if stage == "gap_scan":
+                design_sections = action["context"]["design_sections"]
                 action = core.tick_dict(_native_result(
-                    action, gaps=[], scanned_sections=2, has_blocking=False,
+                    action,
+                    gaps=[],
+                    scanned_sections=len(design_sections),
+                    has_blocking=False,
+                    design_doc_digest=action["context"]["design_doc_digest"],
+                    scan_coverage=[{
+                        "design_section_ref": item["design_section"],
+                        "verdict": "clear",
+                        "evidence": ["黄金设计已明确该章节契约"],
+                    } for item in design_sections],
                 ))
                 continue
             if stage == "developer":

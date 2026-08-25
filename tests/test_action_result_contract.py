@@ -374,6 +374,14 @@ class TestActionRoundTrip:
         assert action["action"] == "gap_scan"
         assert action["context"]["project_profile_summary"]["profile_id"]
         assert "project_profile_summary" in action["instruction"]
+        assert action["context"]["design_doc_digest"].startswith("sha256:")
+        assert action["result_contract"]["required"] == [
+            "gaps",
+            "scanned_sections",
+            "has_blocking",
+            "design_doc_digest",
+            "scan_coverage",
+        ]
         _action_validator.validate(action)
 
     def test_real_gap_review_action_conforms(self, tmp_path):

@@ -1,7 +1,7 @@
 """refine.py — B6.10/DS-7 plan_refine 输入契约 (RefineRequest 归一).
 
-4 个回源 (component_verifier / plate_deep_audit / system_verifier /
-system_deep_audit) 路由回 architect 重规划时, 把两类信号 —— 验证覆盖缺口
+5 个回源 (critic / component_verifier / plate_deep_audit / system_verifier /
+system_deep_audit) 路由回 architect 重规划时, 把三类信号 —— Critic 发现、验证覆盖缺口
 (coverage_map MISSING/DIVERGED) 与审计发现 (deep_audit P0/P1 finding) —— 归一为
 统一结构 RefineRequest(gaps=[RefineGap]), 供 architect PLAN-REFINE 模式消费.
 
@@ -11,6 +11,8 @@ system_deep_audit) 路由回 architect 重规划时, 把两类信号 —— 验�
 
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import dataclass, field
 
 from auto_engineering.gates.deep_audit import recount_findings
@@ -19,9 +21,11 @@ from auto_engineering.gates.deep_audit import recount_findings
 _MISSING_ACTION = "补充实现：新增覆盖该设计条目的 batch/task"
 _DIVERGED_ACTION = "判定方向：修正代码回归设计意图，或（若代码更优）更新设计文档（走 C.11）"
 _AUDIT_ACTION_DEFAULT = "修复该 finding"
+_CRITIC_ACTION_DEFAULT = "修复该 Critic finding 并增加回归验证"
 
 _COVERAGE_SOURCES = frozenset({"component_verifier", "system_verifier"})
 _AUDIT_SOURCES = frozenset({"plate_deep_audit", "system_deep_audit"})
+_CRITIC_SOURCES = frozenset({"critic"})
 
 @dataclass
 class RefineGap:
@@ -32,6 +36,7 @@ class RefineGap:
     suggested_action: str         # 建议动作 (见归一映射表)
     severity: str | None = None   # audit: P0/P1/P2; coverage gap = None (视为必修)
     location: str | None = None   # DIVERGED/finding = "file:line"; MISSING = None
+    source_ref: str | None = None # Critic finding_id；缺失时由内容确定性派生
 
 
 @dataclass
@@ -59,6 +64,7 @@ def build_refine_request(
     scope_component: str | None,
     coverage_map: list[dict] | None = None,
     audit_findings: list[dict] | None = None,
+    critic_findings: list[dict] | None = None,
 ) -> RefineRequest:
     """按源确定性归一 coverage_map / audit_findings → RefineRequest.
 
@@ -99,6 +105,53 @@ def build_refine_request(
                 suggested_action=f.get("suggested_fix") or _AUDIT_ACTION_DEFAULT,
                 severity=severity,
                 location=_fmt_location(f.get("file"), f.get("line"))))
+
+    elif source in _CRITIC_SOURCES:
+        seen: set[str] = set()
+        for finding in critic_findings or []:
+            severity = str(finding.get("severity", "")).upper()
+            if severity not in {"P0", "P1"}:
+                continue
+            source_ref = finding.get("finding_id")
+            if not isinstance(source_ref, str) or not source_ref.strip():
+                canonical = json.dumps(
+                    {
+                        "kind": finding.get("kind"),
+                        "file": finding.get("file"),
+                        "line": finding.get("line"),
+                        "issue": finding.get("issue") or finding.get("description"),
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+                source_ref = "critic:" + hashlib.sha256(
+                    canonical.encode("utf-8")
+                ).hexdigest()[:16]
+            if source_ref in seen:
+                continue
+            seen.add(source_ref)
+            gaps.append(RefineGap(
+                kind="CRITIC_FINDING",
+                design_ref=str(
+                    finding.get("design_ref")
+                    or finding.get("design_section")
+                    or ""
+                ),
+                detail=str(
+                    finding.get("issue") or finding.get("description") or ""
+                ),
+                suggested_action=str(
+                    finding.get("suggestion")
+                    or finding.get("suggested_fix")
+                    or _CRITIC_ACTION_DEFAULT
+                ),
+                severity=severity,
+                location=_fmt_location(
+                    finding.get("file"), finding.get("line")
+                ),
+                source_ref=source_ref,
+            ))
 
     return RefineRequest(
         source=source, trigger_tick=trigger_tick,

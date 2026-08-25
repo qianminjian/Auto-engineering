@@ -333,6 +333,7 @@ def _compact_host_action(action: Mapping[str, Any], root: Path) -> dict[str, Any
         "auto_decision",
         "mode",
         "has_blocking",
+        "gap_scan_summary",
         "audit_execution_profile",
         "required_capabilities",
         "missing_capabilities",

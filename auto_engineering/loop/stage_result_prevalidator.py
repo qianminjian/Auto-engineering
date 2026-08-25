@@ -31,6 +31,7 @@ class StageResultPrevalidator:
         old_batch_plan: list[dict] | None = None,
         reconciliation_evidence: dict[str, dict] | None = None,
         approved_changes: dict[str, dict] | None = None,
+        refine_request: dict | None = None,
     ) -> str | None:
         if stage == "gap_scan" and project_root is not None:
             try:
@@ -78,6 +79,7 @@ class StageResultPrevalidator:
             research_archive,
             active_revision=active_revision,
             current_baseline=current_baseline,
+            refine_request=refine_request,
         )
 
 

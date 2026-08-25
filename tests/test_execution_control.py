@@ -333,6 +333,13 @@ def test_compact_host_view_uses_prompt_ref_without_inlining_action_context(
                 "current_gap_index": 1,
                 "total_gaps": 2,
                 "auto_decision": {"gap_id": "gap-2", "resolution": "Fill"},
+                "gap_scan_summary": {
+                    "design_doc_digest": "sha256:" + "a" * 64,
+                    "scanned_sections": 14,
+                    "gap_count": 2,
+                    "has_blocking": True,
+                    "outcome": "user_decision_required",
+                },
             },
         ),
         (

@@ -239,10 +239,10 @@ class TestTickMode:
         (tmp_path / "tests").mkdir()
         (tmp_path / "package.json").write_text(json.dumps({
             "scripts": {
-                "test": "vitest run",
-                "lint": "eslint .",
-                "typecheck": "tsc --noEmit",
-                "build": "vite build",
+                "test": "node -e \"console.log('1 test passed')\"",
+                "lint": "node -e \"console.log('lint passed')\"",
+                "typecheck": "node -e \"console.log('typecheck passed')\"",
+                "build": "node -e \"console.log('build passed')\"",
             },
             "devDependencies": {"typescript": "^5.0.0"},
         }), encoding="utf-8")
@@ -755,10 +755,10 @@ class TestMutexAndLegacy:
         (tmp_path / "package.json").write_text(
             json.dumps({
                 "scripts": {
-                    "test": "vitest run",
-                    "lint": "eslint .",
-                    "typecheck": "tsc --noEmit",
-                    "build": "vite build",
+                    "test": "node -e \"console.log('1 test passed')\"",
+                    "lint": "node -e \"console.log('lint passed')\"",
+                    "typecheck": "node -e \"console.log('typecheck passed')\"",
+                    "build": "node -e \"console.log('build passed')\"",
                 },
                 "devDependencies": {"typescript": "^5.0.0"},
             }),
@@ -801,6 +801,12 @@ class TestMutexAndLegacy:
                 "gaps": [],
                 "scanned_sections": 1,
                 "has_blocking": False,
+                "design_doc_digest": current["context"]["design_doc_digest"],
+                "scan_coverage": [{
+                    "design_section_ref": "document",
+                    "verdict": "clear",
+                    "evidence": ["已核对完整设计文档"],
+                }],
             }),
             encoding="utf-8",
         )

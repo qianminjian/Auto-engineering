@@ -108,7 +108,11 @@ class ProjectProfileResolver:
             not languages
             or not source_roots
             or any(
-                capability in {"eslint_flat_config", "jsdom_dependency"}
+                capability in {
+                    "eslint_flat_config",
+                    "eslint_effective_config",
+                    "jsdom_dependency",
+                }
                 for capability in missing
             )
         ):

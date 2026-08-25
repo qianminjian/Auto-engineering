@@ -108,6 +108,26 @@ def test_single_p1_cannot_pass_final_deep_audit() -> None:
     assert open_finding["description"] == "race"
 
 
+def test_aggregate_coverage_count_becomes_structured_refine_evidence() -> None:
+    decision = SystemDeepAuditHandler().apply(
+        {},
+        {
+            "findings": [],
+            "missing_count": 2,
+            "diverged_count": 1,
+        },
+        _context(),
+    )
+
+    findings = _changes(decision)["audit_findings"]
+    assert decision.refine_source == "system_deep_audit"
+    assert len(findings) == 1
+    assert findings[0]["severity"] == "P1"
+    assert findings[0]["dimension"] == "design_coverage"
+    assert "missing=2" in findings[0]["description"]
+    assert "diverged=1" in findings[0]["description"]
+
+
 def test_out_of_scope_p1_is_audited_but_does_not_trigger_refine() -> None:
     finding = {
         "severity": "P1",

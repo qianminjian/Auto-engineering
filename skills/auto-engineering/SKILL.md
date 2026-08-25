@@ -125,6 +125,11 @@ while control.disposition == "CONTINUE":
 `TERMINAL`、`ERROR`、`HANDOFF_REQUIRED` 分别表示正常终态、稳定错误和异常接管。
 不得根据 stage 名、自然语言 recap 或“已经输出 Action”自行停止。
 
+每次取得下一 Action 后，若存在 `action.gap_scan_summary`，必须先向前台输出一次有界扫描摘要：
+已核对的设计章节数、缺口数、是否存在阻断项及 `outcome`。`no_gaps_auto_continue`
+只展示摘要并继续，不询问用户；`user_decision_required` 必须随后展示当前
+`action.current_gap` 并等待用户决定。禁止用自由文本“未发现问题”替代机器摘要。
+
 当 `reason_code == "STATE_RECONCILIATION_REQUIRED"` 时，宿主必须原样展示 Core
 返回的 `gate.options`：`reinitialize`（重新初始化）或 `reconcile`（修复状态并继续）。
 用户选择前禁止编辑项目文件；宿主不得自动恢复旧 Action、删除 `.ae-state` 或代替用户选择。

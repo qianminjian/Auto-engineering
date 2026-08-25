@@ -310,7 +310,9 @@ class ActionBuilder:
                 "根据需求与设计文档建立缺失的项目工程能力。完成后提交 "
                 "result_type='project_setup_completed' 和 artifacts；stage 等消息身份由 Core 写入；"
                 "Core 将重新探测文件，不采信文字声明。若缺失 eslint_flat_config，"
-                "为 ESLint 9 创建 flat config；若缺失 jsdom_dependency，补齐测试环境的"
+                "为 ESLint 9 创建 flat config；若缺失 eslint_effective_config，"
+                "必须配置至少一组实际生效的推荐规则，禁止用空配置绕过 lint；"
+                "若缺失 jsdom_dependency，补齐测试环境的"
                 "直接开发依赖。Git 仅是可选证据源，未经用户授权不得执行 git init/add/commit。"
             ),
             "expected_format": expected_format,
@@ -474,7 +476,7 @@ class ActionBuilder:
     # ── base ──
 
     def _build_action_base(self, feedback: str | None = None) -> dict:
-        return {
+        base = {
             "tick": self._state.tick + 1,
             "stage": self._state.current_stage,
             "thread_id": self._state.thread_id,
@@ -489,6 +491,37 @@ class ActionBuilder:
             "progress_summary": (
                 self._progress_tree.summary() if self._progress_tree else None
             ),
+        }
+        summary = self._gap_scan_summary()
+        if summary is not None:
+            base["gap_scan_summary"] = summary
+        return base
+
+    def _gap_scan_summary(self) -> dict[str, object] | None:
+        """把已接受的 Gap Scan 结论作为有界前台事实投影到相邻 Action。"""
+        if self._state.current_stage not in {"gap_review", "research", "architect"}:
+            return None
+        raw = self._state.gap_report_json
+        if not raw:
+            return None
+        report = json.loads(raw)
+        if not report.get("design_doc_digest"):
+            return None
+        gaps = report.get("gaps", [])
+        if self._state.current_stage == "gap_review":
+            outcome = "user_decision_required"
+        elif self._state.current_stage == "research":
+            outcome = "research_in_progress"
+        elif gaps:
+            outcome = "gaps_resolved"
+        else:
+            outcome = "no_gaps_auto_continue"
+        return {
+            "design_doc_digest": report.get("design_doc_digest", ""),
+            "scanned_sections": report.get("scanned_sections", 0),
+            "gap_count": len(gaps),
+            "has_blocking": bool(report.get("has_blocking", False)),
+            "outcome": outcome,
         }
 
     # ── helper: data-driven stage action builder ──
@@ -930,6 +963,22 @@ class ActionBuilder:
     # ── stage builders ──
 
     def _build_action_gap_scan(self, base: dict) -> dict:
+        design_sections = (
+            self._design_doc.sections_summary() if self._design_doc else []
+        )
+        if self._design_doc and not design_sections:
+            design_sections = [
+                {
+                    "plate": plate.name,
+                    "component": None,
+                    "design_section": plate.design_section,
+                }
+                for plate in self._design_doc.plates
+            ] or [{
+                "plate": None,
+                "component": None,
+                "design_section": "document",
+            }]
         action = self._build_stage_action(base, "gap_scan", context={
             "design_doc_path": (
                 self._design_doc.path if self._design_doc else None),
@@ -937,6 +986,8 @@ class ActionBuilder:
             "requirement": self._state.requirement,
             "project_profile_summary": self._project_profile_summary(),
             "design_authority": DesignAuthorityPolicy.default().to_dict(),
+            "design_doc_digest": self._state.design_doc_digest,
+            "design_sections": design_sections,
         }, expected_format={
             "gaps": (
                 "[{id, design_section_ref, grade, clarity, summary, depends_on, "
@@ -947,6 +998,11 @@ class ActionBuilder:
             ),
             "scanned_sections": "int",
             "has_blocking": "bool",
+            "design_doc_digest": "必须等于 context.design_doc_digest",
+            "scan_coverage": (
+                "[{design_section_ref, verdict:clear|gap, evidence:[非空证据]}]；"
+                "必须逐项覆盖 context.design_sections"
+            ),
         })
         return self._compile_inline_action(action, "gap_scan")
 
@@ -1191,9 +1247,22 @@ class ActionBuilder:
         extra["batch_id_policy"] = batch_id_policy
         if is_refine:
             baseline = self._state.architecture_baseline or {}
+            refine_request = json.loads(self._state.refine_request_json or "{}")
+            required_source_refs = [
+                gap["source_ref"]
+                for gap in refine_request.get("gaps", [])
+                if isinstance(gap, dict)
+                and isinstance(gap.get("source_ref"), str)
+                and gap["source_ref"]
+            ]
             extra["repair_contract"] = {
                 "active_revision": self._state.plan_refine_count,
                 "inherited_obligations": list(baseline.get("obligations", [])),
+                "required_source_refs": required_source_refs,
+                "mapping_policy": (
+                    "逐项映射 required_source_refs：每项必须建立 obligation，"
+                    "同时绑定 implementation target 与 test/contract_test target"
+                ),
                 "valid_plate_keys": self._valid_plate_keys(),
                 "batch_id_policy": batch_id_policy,
                 "batch_template": {
@@ -1269,7 +1338,9 @@ class ActionBuilder:
             ),
             "obligations": (
                 (
-                    "[] 表示历史 obligation 自动继承；只提交新 source_ref 的义务，"
+                    "逐项映射 repair_contract.required_source_refs；每项必须同时绑定"
+                    "实现任务与 test/contract_test 任务。[] 仅表示没有新增义务；"
+                    "历史 obligation 自动继承；只提交新 source_ref 的义务，"
                     "已有 source_ref 的目标增量写入 plan_patch.obligation_updates"
                 ) if is_refine else (
                     "[{id,source_ref,summary,implementation_targets:[task_id],"

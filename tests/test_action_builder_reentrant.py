@@ -216,7 +216,10 @@ def test_refine_action_exposes_core_owned_repair_contract(tmp_path) -> None:
         thread_id="repair",
         current_stage="architect",
         plan_refine_count=2,
-        refine_request_json=json.dumps({"source": "critic", "gaps": []}),
+        refine_request_json=json.dumps({
+            "source": "critic",
+            "gaps": [{"source_ref": "F-001"}, {"source_ref": "F-002"}],
+        }),
         architecture_baseline={
             "revision": 2,
             "obligations": [{"id": "O1", "source_ref": "gap-1"}],
@@ -242,6 +245,8 @@ def test_refine_action_exposes_core_owned_repair_contract(tmp_path) -> None:
     ]
     assert "base_revision" not in action["expected_format"]["plan_patch"]
     assert contract["task_template"]["kind"] == "implementation|test|contract_test"
+    assert contract["required_source_refs"] == ["F-001", "F-002"]
+    assert "逐项映射" in action["subagent_prompt"]
     assert action["batch_id_policy"] == {
         "reserved_batch_ids": ["B1", "B2", "B3"],
         "next_numeric_id": 4,
