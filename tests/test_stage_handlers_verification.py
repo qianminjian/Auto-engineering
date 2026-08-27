@@ -64,6 +64,22 @@ def test_component_pass_routes_by_remaining_scope() -> None:
     assert leaf.next_stage == "system_deep_audit"
 
 
+def test_component_pass_persists_coverage_for_event_replay() -> None:
+    decision = ComponentVerifierHandler().apply(
+        {},
+        {
+            "missing_count": 0,
+            "diverged_count": 0,
+            "coverage_map": [{"design_item": "B1-T1", "status": "IMPLEMENTED"}],
+        },
+        _context(has_more_components=False, verification_layers="leaf"),
+    )
+
+    assert _changes(decision)["coverage_map"] == [
+        {"design_item": "B1-T1", "status": "IMPLEMENTED"}
+    ]
+
+
 def test_plate_audit_recounts_findings_and_requests_refine() -> None:
     finding = {
         "severity": "P0",

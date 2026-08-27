@@ -83,6 +83,12 @@ class ComponentVerifierHandler:
             target = "plate_deep_audit"
         return TransitionDecision(
             events=(
+                channels_updated(
+                    LoopEventType.VERIFICATION_STATE_UPDATED,
+                    {"coverage_map": list(result.get("coverage_map", []))},
+                    thread_id=context.thread_id,
+                    sequence=context.event_sequence,
+                ),
                 transition_event(
                     LoopEventType.COMPONENT_COMPLETED,
                     thread_id=context.thread_id,
