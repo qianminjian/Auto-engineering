@@ -1,5 +1,5 @@
 # Auto-Engineering 当前实施跟踪表
-> 更新：2026-08-25｜唯一产品任务：P0-E2E 单命令运行到 TERMINAL｜历史 Phase/T 项为支撑证据，不能替代产品完成｜状态：`☐` 未开始／`◐` 进行中／`✅` 已验证
+> 更新：2026-08-27｜唯一产品任务：P0-E2E 单命令运行到 TERMINAL｜历史 Phase/T 项为支撑证据，不能替代产品完成｜状态：`☐` 未开始／`◐` 进行中／`✅` 已验证
 
 ## 唯一 P0：端到端产品闭环
 
@@ -7,7 +7,7 @@
 
 | 优先级 | ID | 唯一交付任务 | EARS 验收 | 状态 |
 |---:|---|---|---|:---:|
-| P0 | P0-E2E | 独立安装后的单命令设计开发闭环 | While 同一内容寻址 Build 已分别安装到 Codex 与 Claude Code, when 用户在空项目执行一次设计驱动命令, both hosts shall 自动完成设计扫描、规划、开发、审查、修复和验证并到达等价 `TERMINAL`，零非预期人工续接、零手工协议修复、零旧计划误续作 | ◐ 候选 Build `5.8.0-rc.5+sha256.d8d39031e8e3be5d` 已通过 2666/1、90%、静态检查与双宿主 hermetic archive；待独立安装及真实双宿主 L4 终态验收 |
+| P0 | P0-E2E | 独立安装后的单命令设计开发闭环 | While 同一内容寻址 Build 已分别安装到 Codex 与 Claude Code, when 用户在空项目执行一次设计驱动命令, both hosts shall 自动完成设计扫描、规划、开发、审查、修复和验证并到达等价 `TERMINAL`，零非预期人工续接、零手工协议修复、零旧计划误续作 | ◐ Build `5.8.0-rc.5+sha256.3927b1f572df8ece` 已通过 `2676 passed, 1 skipped`、90% coverage、静态检查、双宿主安装与 Codex L4；Claude Code L4 仍待真实终态验收 |
 
 ### 不可独立关闭的四个工作面
 
@@ -152,7 +152,7 @@ Phase 64–66 的真实运行止血、会话解耦、上下文预算、ArtifactR
 | P0 | T463-T464 | BatchCompleted 领域事件与进度单一投影 | While Plan refine 改变计划, when candidate 激活和事件重放, progress shall 按稳定 ID 保留完成事实且永不超过 100% | ✅ 稳定完成事件、最小路由拓扑及 replay 不变量通过 |
 | P0 | T465 | partial 设计权威与架构变更批准 Gate | While advisory 与设计冲突, when ledger 非 full, the Core shall 保守执行原设计并要求显式用户批准 | ✅ ChangeRequest/Gate/Approval Event 因果投影通过 |
 | P1 | T466 | EventStore 指标事实投影 | While 项目产生 MAJOR/refine/usage 事件, when summary 生成, metrics shall 与重放事实一致或标记 measurement_incomplete | ✅ EventStore replay 指标与 incomplete 语义通过 |
-| P0 | T467-T469 | L2 产品轨迹、双宿主 L3 与 Voice Clone L4 | While 候选版本准备真跑或发布, when 任一层证据缺失, the release gate shall 保持阻断 | ◐ L2、2672/1、静态与双宿主 archive 通过；Build `5.8.0-rc.5+sha256.6a6b2e6aff9c53f3` 已完成全新隔离 Codex L4 `GOAL_ACHIEVED` 并生成产品证据；Claude Code L4 仍待真实复验，发布继续阻断 |
+| P0 | T467-T469 | L2 产品轨迹、双宿主 L3 与 Voice Clone L4 | While 候选版本准备真跑或发布, when 任一层证据缺失, the release gate shall 保持阻断 | ◐ L2、2676/1、静态与双宿主 archive 通过；Build `5.8.0-rc.5+sha256.3927b1f572df8ece` 已安装并完成 Codex L4；Claude Code L4 仍待真实复验，发布继续阻断 |
 | P0 | T470/T472/T473 | 全类型 Action 的确定性 Result 终结与单一宿主合同 | While 任一 active Action 需要宿主提交 Result, when Action 不含 spawn 或含严格 spawn, the host shall 只提交业务 payload/原生 outcome，由同一 Core assembler 绑定 active Action 并生成完整 v1.1 Result；Action instruction/expected_format 不得要求 Core-owned identity 或手工 proof | ◐ L3 已验证非 spawn 原子文件链与 strict outcomes；随后发现 Developer expected_format 要求 `stage` 却被 Finalizer禁止，RED→GREEN 已在 ActionBuilder 统一剔除 Core-owned 字段，待新 Build L3 |
 | P0 | T471 | Architect 合法路由键的执行上下文闭包 | While Architect Gate 要求每个 batch 绑定非空 `plate_keys`, when Core 编译隔离 Worker Prompt, the Action shall 同时在机器字段和 Worker context 中提供同一 `valid_plate_keys` 集合，禁止 Worker 猜测或提交空路由 | ◐ 首轮 Codex L3 因 Worker Prompt 未携带合法集合而以 `ARCHITECT_PLAN_INVALID` 终止；RED→GREEN 已补齐 Prompt Contract 与 ActionBuilder，待新 Build L3 验证 |
 | P0 | T474-T553 | 强类型宿主边界、Critic/Result 修复闭环与 Setup 实证续作 | While Critic P0/P1 回源、Result 被 Assembler/Core 拒绝或 Project Setup 声明工程能力, when Runtime 继续驱动, the product shall 保持同一业务 Action、启用全新宿主上下文并自动修复，不把内部失败交还用户 | ◐ Section 双身份与完整 Result 修复事务已实现；2661 passed/1 skipped、Ruff/mypy/sync 通过；全阶段黑盒终态及新 Build 真实 terminal 待复验，继续阻断发布 |

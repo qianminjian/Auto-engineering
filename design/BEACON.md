@@ -62,7 +62,7 @@ Gate/Guardrail、五层验证、审计、v5.6 兼容迁移和双宿主验收。
 
 - `P0-E2E` 是唯一产品交付任务；既有 Phase/T 项仅作为能力与回归证据。
 - v5.8.0-rc.5 的 L1/L2、覆盖率和 archive 安装不能替代真实 L4。
-- Section 双身份、公开执行包离线终态已补齐；新 Build `5.8.0-rc.5+sha256.6a6b2e6aff9c53f3` 已在全新隔离项目完成 Codex L4 `GOAL_ACHIEVED`，并生成终态产品证据；Claude Code L4 仍待真实宿主复验。
+- Section 双身份、公开执行包离线终态已补齐；最新 Build `5.8.0-rc.5+sha256.3927b1f572df8ece` 已重新安装到 Codex/Claude，覆盖回放一致性修复后回归为 `2676 passed, 1 skipped`；Codex L4 已通过，Claude Code L4 仍待真实宿主复验。
 - 后续冻结无关治理和点状补丁，按设计模型、连续 Runtime、Agent 边界、真实验收四个工作面纵向闭环。
 ## 最近演进
 | 日期 | 变更 |
@@ -73,6 +73,7 @@ Gate/Guardrail、五层验证、审计、v5.6 兼容迁移和双宿主验收。
 | 2026-08-25 | D45 获批：实施战略翻转为唯一 `P0-E2E`，L4 终态成为产品完成定义 |
 | 2026-08-21 | T512-T518 关闭重复 spawn、错误恢复、计划校验终止、Worker 超时伪成功与无限重启链路 |
 | 2026-08-23 | T533 获批修订 D13：工程线程连续，模型上下文按 Action 隔离且由 Supervisor 自动续作 |
+| 2026-08-27 | 修复 component_verifier 成功路径遗漏 coverage_map 领域事件；真实 Claude 不再触发 STATE_PROJECTION_MISMATCH |
 ## 待解决问题
 - 完成 `P0-E2E`：同一 Build 在 Codex/Claude 从单次设计命令连续运行到等价 `TERMINAL`；当前剩余 Claude Code 真实 L4。
 
