@@ -157,8 +157,9 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["design_section_ref", "verdict", "evidence"],
+        "required": ["section_id", "design_section_ref", "verdict", "evidence"],
         "properties": {
+          "section_id": {"type": "string", "pattern": "^section:[0-9a-f]{16}$"},
           "design_section_ref": {"type": "string", "minLength": 1},
           "verdict": {"enum": ["clear", "gap"]},
           "evidence": {

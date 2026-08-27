@@ -22,6 +22,33 @@ _PROFILE_SUMMARY = {
 }
 
 
+def test_gap_scan_prompt_contains_agent_owned_section_refs() -> None:
+    """Gap Agent 必须仅凭交付提示词就能形成合法章节覆盖结果。"""
+
+    bundle = compile_prompt_bundle(
+        contract=default_prompt_contracts()["gap_scan"],
+        role_prompt=default_registry().get("gap_scan"),
+        context={
+            "design_doc_path": "design/spec.md",
+            "project_root": "/project",
+            "requirement": "按设计开发",
+            "project_profile_summary": _PROFILE_SUMMARY,
+            "host_design_sections": [
+                {"section_ref": "§C1", "title": "上传"},
+            ],
+        },
+        expected_format={
+            "gaps": "array",
+            "section_findings": "[{section_ref, verdict, evidence}]",
+        },
+    )
+
+    prompt = bundle.coordinator_prompt
+    assert '"section_ref": "§C1"' in prompt
+    assert '"title": "上传"' in prompt
+    assert "section_id" not in prompt
+
+
 def test_architect_worker_receives_requirement_and_refine_feedback() -> None:
     contract = default_prompt_contracts()["architect"]
 

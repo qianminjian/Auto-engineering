@@ -13,6 +13,7 @@ from auto_engineering.host.execution_assembler import (
     HostExecutionAssembler,
     NativeWorkerOutcome,
 )
+from auto_engineering.host.outcome_journal import OutcomeJournal
 from auto_engineering.host.spawn_contract import SpawnPlan, WorkerOutcome
 from auto_engineering.host.worker_invocation import (
     WorkerInvocation,
@@ -142,13 +143,23 @@ class HostTrajectoryRunner:
         )
         events.append("evidence_transaction_committed")
         next_action = self.core.tick_dict(result)
+        repair_required = OutcomeJournal(self.project_root).complete_from_core(
+            result, next_action
+        )
+        if repair_required:
+            raise HostTrajectoryError("CORE_RESULT_REPAIR_REQUIRED")
         stream = self.event_store.load_stream(str(action.get("thread_id")))
         event_names = tuple(event.event_type.value for event in stream)
         if "ResultAccepted" not in event_names or "ActionIssued" not in event_names:
             raise HostTrajectoryError(
                 "CORE_CAUSAL_CHAIN_INCOMPLETE: " + str(dict(next_action))
             )
-        events.extend(("result_submitted", *event_names, "next_action_received"))
+        events.extend((
+            "result_submitted",
+            "outcome_journal_accepted",
+            *event_names,
+            "next_action_received",
+        ))
         return HostTrajectory(result, dict(next_action), tuple(events))
 
 

@@ -19,6 +19,7 @@
 | Phase 62 | 完成 Claude 宿主输出诊断、计划去漂移、双宿主隔离 init/status/resume、Node 24 与 OTEL 发布门禁加固；正式发布 v5.7.1 并核验远端 SHA-256；基线 2023 passed / 1 skipped、覆盖率 90.28% |
 | Phase 63 | 完成非交互配置治理；`require/defaults/create` 策略与配置来源报告通过真实 CLI 和回归测试 |
 | Phase 64-66 | 完成真实运行可信度止血、确定性状态与宿主会话解耦、有界 Prompt、ArtifactRef、Usage Ledger、摘要隔离与循环预算；基线 2095 passed / 1 skipped |
+| Phase 64-66 任务索引 | T302-T318、T322-T324 的详细 EARS、验证数字与历史状态由 `design/IMPLEMENTATION-TRACKER.md` 于 2026-08-25 压缩；完整内容通过 Git 追溯 |
 | Phase 67 | 故障恢复与成本基线已通过；双宿主真实 LLM 项目与 v5.8 发布收口验收中 |
 | Phase 73 | 以 ProjectProfile 解除 Init Engineering 运行时前置依赖；T359-T366 已完成，T367 仅剩真实双宿主 LLM 轨迹 |
 | 146-Tick 事故归档 | 永久记录输入超限、批次回退、验证假通过和空快照证据；补充 T322-T324 |

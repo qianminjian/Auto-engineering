@@ -6,6 +6,7 @@ import os
 import shutil
 import subprocess
 from collections.abc import Callable, Mapping
+from contextlib import suppress
 from pathlib import Path
 from uuid import uuid4
 
@@ -45,7 +46,8 @@ class ClaudeInvocationBackend:
         *,
         executable: str | None = None,
         environ: Mapping[str, str] | None = None,
-        max_budget_usd: float = 2.0,
+        max_budget_usd: float = 10.0,
+        max_invocation_budget_usd: float = 2.0,
         spent_budget_usd: float = 0.0,
         budget_reserve_usd: float = 0.2,
         runner: ProcessRunner | None = None,
@@ -55,6 +57,7 @@ class ClaudeInvocationBackend:
         self.executable = executable or shutil.which("claude") or "claude"
         self._environ = dict(os.environ if environ is None else environ)
         self.max_budget_usd = max_budget_usd
+        self.max_invocation_budget_usd = max(0.0, max_invocation_budget_usd)
         self._spent_budget_usd = max(0.0, spent_budget_usd)
         self.budget_reserve_usd = max(0.0, budget_reserve_usd)
         self._runner = runner or CancellableProcessRunner(
@@ -74,7 +77,10 @@ class ClaudeInvocationBackend:
     @property
     def invocation_budget_usd(self) -> float:
         """扣除一次推理单元超调预留后的可调用额度。"""
-        return max(0.0, self.remaining_budget_usd - self.budget_reserve_usd)
+        return min(
+            self.max_invocation_budget_usd,
+            max(0.0, self.remaining_budget_usd - self.budget_reserve_usd),
+        )
 
     def child_environment(self) -> dict[str, str]:
         """原样继承宿主保护变量，禁止通过删除变量绕过嵌套限制。"""
@@ -100,9 +106,10 @@ class ClaudeInvocationBackend:
             (str(resolved), "--help"),
             frozenset({
                 "--no-session-persistence", "--output-format",
-                "--max-budget-usd", "--permission-mode", "--setting-sources",
+                "--max-budget-usd", "--permission-mode",
                 "--strict-mcp-config", "--mcp-config",
                 "--disable-slash-commands", "--no-chrome", "--effort",
+                "--safe-mode",
             }),
         ):
             return HostInvocationProbe.unsupported(
@@ -116,8 +123,9 @@ class ClaudeInvocationBackend:
             self.executable,
             "-p",
             "--no-session-persistence",
-            "--setting-sources",
-            "project",
+            # safe-mode 同时保留用户认证并禁用 CLAUDE.md、hooks、plugins、
+            # skills 与自定义 Agent；project-only settings 会连 OAuth 一起排除。
+            "--safe-mode",
             "--strict-mcp-config",
             "--mcp-config",
             '{"mcpServers":{}}',
@@ -219,12 +227,10 @@ class ClaudeInvocationBackend:
         actual_cost = usage.get("cost_usd")
         if isinstance(actual_cost, (int, float)):
             self._spent_budget_usd += float(actual_cost)
-        output_invalid = False
         if not is_error:
-            try:
+            # 业务拒绝由 Assembler/Core 返回可执行的同 Action repair。
+            with suppress(ValueError):
                 normalize_coordinator_work_output(request)
-            except ValueError:
-                output_invalid = True
         digests = existing_work_file_digests(request)
         output_missing = "coordinator_result" not in digests
         execution_failed = is_error
@@ -236,7 +242,7 @@ class ClaudeInvocationBackend:
             execution_failed
             and "invalid mcp configuration" in process.stderr.lower()
         )
-        is_error = is_error or output_missing or output_invalid
+        is_error = is_error or output_missing
         if is_error:
             write_invocation_diagnostic(
                 request,
@@ -263,8 +269,6 @@ class ClaudeInvocationBackend:
                 if budget_exhausted
                 else "HOST_CLAUDE_EXECUTION_FAILED"
                 if execution_failed
-                else "HOST_ACTION_OUTPUT_INVALID"
-                if output_invalid
                 else ("HOST_ACTION_OUTPUT_MISSING" if output_missing else None)
             ),
             "work_file_digests": digests,

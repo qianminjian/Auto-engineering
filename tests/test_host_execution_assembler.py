@@ -132,7 +132,7 @@ def test_finalize_atomically_builds_all_worker_evidence(tmp_path: Path) -> None:
     journal = json.loads(
         (tmp_path / ".ae-state/host-runtime/outcomes/action-1.json").read_text()
     )
-    assert journal["status"] == "committed"
+    assert journal["status"] == "prepared"
 
 
 def test_finalize_worker_timeout_builds_failure_transaction_without_success_evidence(
@@ -210,7 +210,7 @@ def test_successful_retry_replaces_worker_failure_without_journal_conflict(
     journal = json.loads(
         (tmp_path / ".ae-state/host-runtime/outcomes/action-1.json").read_text()
     )
-    assert journal["status"] == "committed"
+    assert journal["status"] == "prepared"
 
 
 def test_repeated_worker_timeout_increments_core_visible_attempt(tmp_path: Path) -> None:
@@ -322,7 +322,7 @@ def test_finalize_routes_boundary_payload_to_artifact_before_journal_commit(
     journal = json.loads(
         (tmp_path / ".ae-state/host-runtime/outcomes/action-1.json").read_text()
     )
-    assert journal["status"] == "committed"
+    assert journal["status"] == "prepared"
 
 
 def test_finalize_rejects_oversized_summary_before_writing_journal(
@@ -715,7 +715,7 @@ def test_finalize_archives_invalid_legacy_prepared_outcome_before_repair(
     rejected = json.loads(archived[0].read_text())
     assert rejected["reason"] == "ATTESTATION_ISOLATION_MISMATCH"
     assert rejected["journal"]["fingerprint"] == "legacy-invalid"
-    assert json.loads(journal.read_text())["status"] == "committed"
+    assert json.loads(journal.read_text())["status"] == "prepared"
 
 
 def test_stale_coordinator_payload_is_rejected_before_journal_commit(
@@ -1088,6 +1088,117 @@ def test_finalize_gap_auto_decision_rebinds_core_owned_fields(tmp_path: Path) ->
         "policy": "remaining_recommendations",
         "fill_content": "补齐设计所需的错误状态与恢复行为。",
     }
+
+
+def test_gap_semantic_findings_report_all_identity_violations_before_journal(
+    tmp_path: Path,
+) -> None:
+    action = {
+        "schema_version": "1.1",
+        "message_id": "gap-scan-action-1",
+        "thread_id": "thread-1",
+        "tick": 1,
+        "stage": "gap_scan",
+        "correlation_id": "thread-1",
+        "context": {
+            "design_doc_digest": "sha256:" + "1" * 64,
+            "design_sections": [
+                {
+                    "section_id": "section:1111111111111111",
+                    "design_section": "§1.1",
+                },
+                {
+                    "section_id": "section:2222222222222222",
+                    "design_section": "§1.2",
+                },
+            ],
+        },
+        "result_contract": {
+            "schema_version": "1.0",
+            "required": ["gaps", "section_findings"],
+            "properties": {
+                "gaps": {"type": "array"},
+                "section_findings": {"type": "array"},
+            },
+            "additionalProperties": False,
+        },
+    }
+
+    with pytest.raises(HostEvidenceValidationError) as caught:
+        HostExecutionAssembler(tmp_path).finalize(
+            action=action,
+            outcomes=[],
+            coordinator_payload={
+                "gaps": [],
+                "section_findings": [
+                    {
+                        "section_id": "section:ffffffffffffffff",
+                        "verdict": "clear",
+                        "evidence": ["未知章节"],
+                    },
+                    {
+                        "section_id": "section:1111111111111111",
+                        "verdict": "clear",
+                        "evidence": [],
+                    },
+                ],
+            },
+        )
+
+    assert set(caught.value.violations) == {
+        "SECTION_FINDING_UNKNOWN:section:ffffffffffffffff",
+        "SECTION_FINDING_INVALID:1",
+        "SECTION_FINDING_MISSING:section:1111111111111111",
+        "SECTION_FINDING_MISSING:section:2222222222222222",
+    }
+    journal = (
+        tmp_path
+        / ".ae-state/host-runtime/outcomes/gap-scan-action-1.json"
+    )
+    assert not journal.exists()
+
+
+def test_gap_assembler_normalizes_legacy_string_impact(tmp_path: Path) -> None:
+    action = {
+        "schema_version": "1.1", "message_id": "gap-impact-action",
+        "thread_id": "thread-1", "tick": 1, "stage": "gap_scan",
+        "correlation_id": "thread-1",
+        "context": {
+            "design_doc_digest": "sha256:" + "1" * 64,
+            "design_sections": [{
+                "section_id": "section:1111111111111111",
+                "design_section": "§1.1",
+            }],
+        },
+        "result_contract": {
+            "schema_version": "1.0", "required": ["gaps", "section_findings"],
+            "properties": {"gaps": {"type": "array"},
+                           "section_findings": {"type": "array"}},
+            "additionalProperties": False,
+        },
+    }
+    gap = {
+        "id": "GAP-1", "design_section_ref": "§1.1",
+        "grade": "component", "clarity": "partial", "summary": "契约不完整",
+        "depends_on": [], "evidence": ["缺少错误语义"],
+        "problem_statement": "无法实现", "impact": "影响接口和测试",
+        "dependencies": [], "recommendation": {
+            "resolution": "Fill", "reason": "补齐契约", "confidence": "high",
+        },
+        "options": [{"resolution": "Fill", "meaning": "补齐", "enabled": True}],
+        "blocking_rule": "可在实现前补齐",
+    }
+
+    result = HostExecutionAssembler(tmp_path).finalize(
+        action=action, outcomes=[], coordinator_payload={
+            "gaps": [gap],
+            "section_findings": [{
+                "section_ref": "§1.1", "verdict": "gap", "evidence": ["存在缺口"],
+            }],
+        },
+    )
+
+    assert result["gaps"][0]["impact"] == ["影响接口和测试"]
 
 
 def test_finalize_non_spawn_rejects_worker_outcomes(tmp_path: Path) -> None:

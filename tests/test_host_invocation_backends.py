@@ -51,6 +51,10 @@ def test_codex_backend_builds_ephemeral_non_resuming_command(tmp_path: Path) -> 
     ] == ("-s", "workspace-write")
     assert "--output-schema" in command
     assert "--ignore-user-config" in command
+    assert "--skip-git-repo-check" in command
+    assert command.count("--disable") == 3
+    assert {"plugins", "skill_search", "apps"} <= set(command)
+    assert "sandbox_workspace_write.network_access=true" in command
     assert "resume" not in command
     assert "--continue" not in command
 
@@ -65,6 +69,26 @@ def test_launcher_forbids_identity_and_result_wrappers(tmp_path: Path) -> None:
     assert "数组和对象必须写为原生 JSON" in prompt
     assert "不得包装在 result" in prompt
     assert "不得复制 action/stage/tick/thread_id" in prompt
+    assert "允许按 Prompt 要求修改 project_root 内业务文件" in prompt
+    assert "不得修改执行包、Core 状态或 result 文件" in prompt
+    assert "必须把业务 JSON 原子写入" in prompt
+    assert "绝不写 request.work_files.result" in prompt
+
+
+def test_launcher_keeps_audit_action_project_read_only(tmp_path: Path) -> None:
+    from dataclasses import replace
+
+    from auto_engineering.host.backends.common import launcher_prompt
+
+    request = replace(_request(tmp_path), allowed_tools=("read", "shell"))
+
+    assert "不允许修改项目业务文件" in launcher_prompt(request)
+    from auto_engineering.host.backends.codex import CodexInvocationBackend
+
+    command = CodexInvocationBackend(executable="/opt/bin/codex").build_command(
+        request
+    )
+    assert "sandbox_workspace_write.network_access=true" not in command
 
 
 def test_codex_output_schema_requires_every_declared_property(
@@ -120,9 +144,7 @@ def test_claude_backend_builds_non_persistent_bounded_command(tmp_path: Path) ->
 
     assert command[:2] == ("/opt/bin/claude", "-p")
     assert "--no-session-persistence" in command
-    assert command[
-        command.index("--setting-sources") : command.index("--setting-sources") + 2
-    ] == ("--setting-sources", "project")
+    assert "--setting-sources" not in command
     assert command[
         command.index("--mcp-config") : command.index("--mcp-config") + 2
     ] == ("--mcp-config", '{"mcpServers":{}}')
@@ -133,7 +155,7 @@ def test_claude_backend_builds_non_persistent_bounded_command(tmp_path: Path) ->
         command.index("--effort") : command.index("--effort") + 2
     ] == ("--effort", "low")
     assert "--bare" not in command
-    assert "--safe-mode" not in command
+    assert "--safe-mode" in command
     assert command[
         command.index("--output-format") : command.index("--output-format") + 2
     ] == ("--output-format", "stream-json")
@@ -143,6 +165,25 @@ def test_claude_backend_builds_non_persistent_bounded_command(tmp_path: Path) ->
     ] == ("--max-budget-usd", "1.8")
     assert "--resume" not in command
     assert "--continue" not in command
+
+
+def test_claude_backend_separates_thread_and_action_budgets(
+    tmp_path: Path,
+) -> None:
+    from auto_engineering.host.backends.claude import ClaudeInvocationBackend
+
+    backend = ClaudeInvocationBackend(
+        executable="/opt/bin/claude",
+        environ={},
+        max_budget_usd=10.0,
+        max_invocation_budget_usd=2.0,
+    )
+
+    command = backend.build_command(_request(tmp_path))
+
+    assert command[
+        command.index("--max-budget-usd") : command.index("--max-budget-usd") + 2
+    ] == ("--max-budget-usd", "2.0")
 
 
 def test_claude_probe_fails_closed_inside_claude_code(tmp_path: Path) -> None:
@@ -261,7 +302,7 @@ def test_codex_backend_normalizes_stringified_business_array_before_receipt(
     ]
 
 
-def test_codex_backend_routes_invalid_business_output_as_context_failure(
+def test_codex_backend_defers_invalid_business_output_to_result_repair(
     tmp_path: Path,
 ) -> None:
     from auto_engineering.host.backends.codex import CodexInvocationBackend
@@ -297,8 +338,54 @@ def test_codex_backend_routes_invalid_business_output_as_context_failure(
         runner=run,
     ).execute(request)
 
-    assert receipt.status == "failed"
-    assert receipt.error_code == "HOST_ACTION_OUTPUT_INVALID"
+    assert receipt.status == "completed"
+    assert receipt.error_code is None
+
+
+def test_claude_backend_defers_invalid_business_output_to_result_repair(
+    tmp_path: Path,
+) -> None:
+    from auto_engineering.host.backends.claude import ClaudeInvocationBackend
+
+    request = _request(tmp_path)
+    envelope = tmp_path / request.compact_envelope_ref
+    envelope.parent.mkdir(parents=True)
+    envelope.write_text(json.dumps({
+        "stage": "critic",
+        "result_contract": {
+            "schema_version": "1.0",
+            "required": ["verdict", "findings"],
+            "properties": {
+                "verdict": {"type": "string"},
+                "findings": {"type": "array"},
+            },
+            "additionalProperties": False,
+        },
+    }), encoding="utf-8")
+    coordinator = tmp_path / request.work_files["coordinator_result"]
+    coordinator.parent.mkdir(parents=True, exist_ok=True)
+    coordinator.write_text(
+        '{"verdict":"MAJOR","findings":"not-json"}',
+        encoding="utf-8",
+    )
+    output = json.dumps({
+        "type": "result",
+        "session_id": "context-claude-repair",
+        "is_error": False,
+        "usage": {"input_tokens": 1, "output_tokens": 1},
+    })
+
+    def run(command: tuple[str, ...], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(command, 0, stdout=output, stderr="")
+
+    receipt = ClaudeInvocationBackend(
+        executable="/opt/bin/claude",
+        environ={},
+        runner=run,
+    ).execute(request)
+
+    assert receipt.status == "completed"
+    assert receipt.error_code is None
 
 
 def test_claude_execute_preserves_cli_usage_and_session_identity(

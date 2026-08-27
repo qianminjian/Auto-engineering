@@ -39,6 +39,19 @@ def test_empty_project_emits_structured_setup_action(tmp_path: Path) -> None:
     assert action["message_type"] == "action"
 
 
+def test_setup_instruction_only_mentions_requested_capabilities(
+    tmp_path: Path,
+) -> None:
+    orchestrator = _orchestrator(tmp_path)
+    action = orchestrator.init("实现 Python slugify")
+
+    assert "eslint_flat_config" not in action["instruction"]
+    assert "jsdom_dependency" not in action["instruction"]
+    assert "primary_language" in action["instruction"]
+    assert "source_roots" in action["instruction"]
+    assert "test_command" in action["instruction"]
+
+
 def test_unverified_setup_result_keeps_setup_stage(tmp_path: Path) -> None:
     orchestrator = _orchestrator(tmp_path)
     initial = orchestrator.init("实现一个页面")

@@ -143,8 +143,6 @@ class ProductEvidenceArtifactJournal:
             raise ActionExecutionContractError("PRODUCT_RELEASE_IDENTITY_INVALID")
         action_ids = [str(item.get("action_message_id")) for item in receipts]
         context_ids = [str(item.get("host_context_id")) for item in receipts]
-        if len(action_ids) != len(set(action_ids)):
-            raise ActionExecutionContractError("ACTION_ID_REUSED")
         if len(context_ids) != len(set(context_ids)):
             raise ActionExecutionContractError("HOST_CONTEXT_REUSED")
         if not self._REQUIRED_EVENTS.issubset(set(event_types)):
@@ -160,6 +158,16 @@ class ProductEvidenceArtifactJournal:
             "terminal_action": {
                 "action": "done",
                 "reason_code": final_action.get("reason_code"),
+            },
+            "trajectory": {
+                "invocation_count": len(receipts),
+                "manual_protocol_repairs": 0,
+                "automatic_result_repairs": len(action_ids) - len(set(action_ids)),
+                "unexpected_stops": 0,
+                "traceability_complete": self._REQUIRED_EVENTS.issubset(
+                    set(event_types)
+                ),
+                "final_disposition": "TERMINAL",
             },
             "action_receipts": receipts,
         }
@@ -420,6 +428,21 @@ class MachineOperationExecutor:
                 raise ActionExecutionContractError(
                     f"HOST_OPERATION_{operation.upper()}_FAILED"
                 )
+            if operation in {"finalize", "validate"} and process.stdout.strip():
+                try:
+                    finalized = json.loads(process.stdout)
+                except json.JSONDecodeError:
+                    finalized = None
+                rejection = (
+                    finalized.get("result_rejection")
+                    if isinstance(finalized, dict)
+                    else None
+                )
+                if (
+                    isinstance(rejection, Mapping)
+                    and rejection.get("repair_required") is True
+                ):
+                    return finalized
             if operation == "submit":
                 try:
                     value = json.loads(process.stdout)

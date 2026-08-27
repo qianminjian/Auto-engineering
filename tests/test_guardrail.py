@@ -1311,8 +1311,8 @@ class TestAuditTimingGuardrail:
         result = g.check("plate_deep_audit", state)
         assert result.action == "pass"
 
-    def test_fast_empty_findings_triggers_retry(self) -> None:
-        """E1(快) + E2(空) → effective=2 → retry."""
+    def test_fast_empty_findings_is_observation_only(self) -> None:
+        """快速零发现不代表低质量，禁止因此重复付费调用。"""
         g = self._make_guardrail()
         # action_timestamp 设在 0.1s 前 → elapsed ≈ 0.1s < 10s (plate_deep_audit)
         import time
@@ -1322,10 +1322,10 @@ class TestAuditTimingGuardrail:
             p0_count=0, p1_count=0,
         )
         result = g.check("plate_deep_audit", state)
-        assert result.action == "retry"
+        assert result.action == "pass"
 
-    def test_fast_zero_p0_p1_triggers_retry(self) -> None:
-        """E1(快) + E3(p0/p1零) → effective=2 → retry (findings=None 但 p0/p1=0)."""
+    def test_fast_zero_p0_p1_is_observation_only(self) -> None:
+        """P0/P1 为零是合法审计结论，不触发时间型重试。"""
         g = self._make_guardrail()
         import time
         state = self._make_state(
@@ -1334,7 +1334,7 @@ class TestAuditTimingGuardrail:
             p0_count=0, p1_count=0,
         )
         result = g.check("system_deep_audit", state)
-        assert result.action == "retry"
+        assert result.action == "pass"
 
     def test_normal_speed_with_empty_findings_is_warn_only(self) -> None:
         """场景 E: 正常耗时 + 空 findings → effective=1 (仅内容空) → pass (WARN log)."""
@@ -1377,7 +1377,7 @@ class TestAuditTimingGuardrail:
         # component_verifier: elapsed=4s < 5s → E1=1
         state_cv = self._make_state(action_timestamp=ts, findings=[], p0_count=0, p1_count=0)
         result_cv = g.check("component_verifier", state_cv)
-        assert result_cv.action == "retry"  # E1+E2 = 2
+        assert result_cv.action == "pass"
         # critic: elapsed=4s > 3s → E1=0
         state_c = self._make_state(action_timestamp=ts, findings=[], p0_count=0, p1_count=0)
         result_c = g.check("critic", state_c)

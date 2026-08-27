@@ -41,7 +41,7 @@ _CONTRACTS: Mapping[str, StagePromptContract] = MappingProxyType({
         ExecutionMode.INLINE,
         (
             "design_doc_path", "project_root", "requirement",
-            "project_profile_summary",
+            "project_profile_summary", "host_design_sections",
         ),
         optional_context=("design_authority", "design_decision_ledger"),
     ),
@@ -62,6 +62,7 @@ _CONTRACTS: Mapping[str, StagePromptContract] = MappingProxyType({
         (
             "feedback", "research_and_design_context", "plan_revision",
             "design_authority", "design_decision_ledger", "batch_id_policy",
+            "engineering_sections",
         ),
         ("design_document",),
     ),
@@ -75,7 +76,7 @@ _CONTRACTS: Mapping[str, StagePromptContract] = MappingProxyType({
         ("developer",),
         optional_context=(
             "task_guidance", "git_authorized", "design_authority",
-            "design_decision_ledger",
+            "design_decision_ledger", "engineering_sections",
         ),
         artifact_kinds=("design_document", "test_evidence"),
     ),
@@ -86,7 +87,7 @@ _CONTRACTS: Mapping[str, StagePromptContract] = MappingProxyType({
         ("critic",),
         (
             "commit_hash", "design_authority", "design_decision_ledger",
-            "assurance_scope",
+            "assurance_scope", "engineering_sections",
         ),
         ("diff", "test_evidence"),
     ),
@@ -98,7 +99,7 @@ _CONTRACTS: Mapping[str, StagePromptContract] = MappingProxyType({
             "project_profile_summary",
         ),
         ("component_verifier",),
-        ("design_authority", "design_decision_ledger"),
+        ("design_authority", "design_decision_ledger", "engineering_sections"),
         artifact_kinds=("design_document", "source_snapshot"),
     ),
     "plate_deep_audit": StagePromptContract(
@@ -106,7 +107,7 @@ _CONTRACTS: Mapping[str, StagePromptContract] = MappingProxyType({
         ExecutionMode.MULTI_WORKER,
         ("plate", "components"),
         ("contract_dataflow", "architecture", "code_quality_virtualization"),
-        ("design_authority", "design_decision_ledger"),
+        ("design_authority", "design_decision_ledger", "engineering_sections"),
         artifact_kinds=("audit_report", "source_snapshot"),
     ),
     "system_verifier": StagePromptContract(
@@ -117,7 +118,7 @@ _CONTRACTS: Mapping[str, StagePromptContract] = MappingProxyType({
             "project_profile_summary",
         ),
         ("system_verifier",),
-        ("design_authority", "design_decision_ledger"),
+        ("design_authority", "design_decision_ledger", "engineering_sections"),
         artifact_kinds=("design_document", "coverage_report"),
     ),
     "system_deep_audit": StagePromptContract(

@@ -1,34 +1,36 @@
 # Auto-Engineering 当前实施跟踪表
-> 更新：2026-08-25｜目标阶段：Phase 83 Host Runtime 产品闭环｜Phase 1-63 已完成，Phase 1-79 明细见 `design/HISTORY.md`｜状态：`☐` 未开始／`◐` 进行中／`✅` 已验证
-## Phase 64：真实运行可信度止血
-| 优先级 | ID | 任务 | EARS 验收 | 状态 |
+> 更新：2026-08-25｜唯一产品任务：P0-E2E 单命令运行到 TERMINAL｜历史 Phase/T 项为支撑证据，不能替代产品完成｜状态：`☐` 未开始／`◐` 进行中／`✅` 已验证
+
+## 唯一 P0：端到端产品闭环
+
+> 权威设计：`design/v5.8-End-to-End-Product-Closure-Design.md`；统一实施计划：`design/v5.8-End-to-End-Product-Closure-PLAN.md`。在本任务关闭前冻结与主链无关的新治理能力、用户管理命令和点状控制补丁。
+
+| 优先级 | ID | 唯一交付任务 | EARS 验收 | 状态 |
 |---:|---|---|---|:---:|
-| P0 | T302 | 会话解耦设计资产 | While 真实运行事故已形成证据, when 设计评审, the specification shall 覆盖状态、会话、预算、计划补丁、验证、审计、恢复和双宿主验收 | ✅ v5.8 Design/PLAN + BEACON/INDEX/HISTORY/v5.7 交叉引用；T303-T324 已登记 |
-| P0 | T303 | 真实运行故障黄金轨迹 | While 146-Tick 故障被抽象为 fixture, when 旧实现运行, the suite shall 稳定复现批次回退、状态计数异常和验证假通过 | ✅ RED 4 failed；GREEN 事故 fixture 4 passed；相关回归 61 passed；Ruff pass |
-| P0 | T304 | 工具链验证 fail-closed | While manifest 声明 TypeScript/Vitest, when TestGate 执行, the system shall 调用匹配工具链，并在命令非零或收集零测试时失败 | ✅ TypeScript 自动路由 Vitest；未知 runner/零测试/非零退出 fail；相关回归 70 passed；Ruff pass |
-| P0 | T305 | 文件快照可信绑定 | While Gate 产生结论, when 文件集为空、快照不完整或结果与快照不匹配, the system shall 拒绝通过并返回稳定错误 | ✅ Gate 前后 hash/selected_files；空快照、变化、路径逃逸 fail；相关回归 111 passed；Ruff pass |
-| P0 | T306 | 计划补丁与进度不变量 | While 已完成批次存在, when Architect 追加修复批次, the Core shall 只激活新增工作，保留完成集合，并拒绝 `done_tasks > total_tasks` 等非法投影 | ✅ 显式 PlanPatch + 旧入口兼容；revision/ID/完成事实/进度不变量；相关回归 301 passed；Ruff/mypy pass |
-| P0 | T307 | Phase 64 止血验收 | While T303-T306 完成, when 故障轨迹与相关回归运行, the suite shall 证明不会重启已完成批次、不会把零测试或空快照判为通过 | ✅ 事故/Gate/Guardrail/Kernel/Projector/Golden 专项 447 passed |
-| P0 | T322 | 146-Tick 真跑事故报告 | While 真跑证据分散在外部 `_scratch` 与会话中, when 永久报告建立, it shall 区分事实与推断、映射全部修复任务并提供脱敏证据索引 | ✅ 永久报告 11 节；事实/推断分离；T303-T321/T323-T324 追踪矩阵与关闭标准 |
-## Phase 65：确定性状态与宿主会话解耦
-| 优先级 | ID | 任务 | EARS 验收 | 状态 |
-|---:|---|---|---|:---:|
-| P0 | T308 | ExecutionSession 与事件契约 | While 一个工程线程跨多个宿主会话运行, when 会话开始、续接或结束, the Core shall 以不可变事件记录 session identity、原因和状态边界且不改变业务进度语义 | ✅ 12 类事件 + 不可变 Session/独立投影；双 active 拒绝；23 passed；Ruff/mypy pass |
-| P0 | T309 | ResumeCapsule 最小恢复契约 | While 新宿主会话接管线程, when capsule 被构建, it shall 只包含 active Action、状态摘要、必要证据引用和预算，不包含完整历史对话 | ✅ 严格 Capsule/hash/active Action/ArtifactRef；历史字段禁入；17 passed；Ruff/mypy pass |
-| P0 | T310 | ContextBudget 与 rollover 决策（历史） | While 宿主报告或估算的上下文达到阈值, when Tick Kernel 选择下一 Action, the system shall 确定性发出 `session_rollover` 而不是继续扩张请求 | ✅ 历史实现；该日常语义由 T341-T349 纠偏 |
-| P0 | T311 | Rollover Action/Result 幂等恢复 | While rollover 已发出, when 原会话重试或新会话重复接管, the Core shall 只建立一个有效 successor session，并返回同一 active Action | ✅ `session_handoff.py` + SQLite 原子 handoff/claim + Protocol schemas；64 tests passed；Ruff/mypy passed |
-| P1 | T312 | Claude/Codex 会话适配 | While 双宿主收到 rollover, when 宿主创建新会话并提交接管回执, both adapters shall 产生语义等价的 Core 事件和恢复状态 | ✅ 双宿主 `host_control` 等价映射 + Skill/Command fail-closed；26 tests passed |
-| P0 | T313 | Phase 65 会话边界验收 | While 长轨迹跨至少三个宿主会话运行, when 任一边界发生中断、重复或延迟, the final projection and verdict shall 与单进程黄金轨迹等价 | ✅ 150 Tick/3 sessions + replay/late-result；Phase 65 suite 301 passed；Ruff/mypy passed |
-## Phase 66：有界上下文、产物引用与成本审计
-| 优先级 | ID | 任务 | EARS 验收 | 状态 |
-|---:|---|---|---|:---:|
-| P0 | T314 | Stage Context Selector | While Action 被编译, when 当前 Stage 请求上下文, the compiler shall 仅选择契约声明的必要字段和有界摘要，不拼接完整历史 | ✅ StageContract 字段/Artifact/64KiB 预算 + 历史禁入；208 tests passed；Ruff/mypy passed |
-| P0 | T315 | ArtifactRef 与精简 Worker Receipt | While 多 Agent 或深度审计产生大结果, when 结果交付主宿主, the system shall 持久化完整产物并只传递带哈希的引用和有界摘要 | ✅ 内容寻址 ArtifactStore/schema + 4096B receipt/2048B summary 门禁；13 targeted tests passed；Ruff/mypy passed |
-| P1 | T316 | 逐 Tick Usage Ledger | While 宿主可提供 usage, when Action/Result 完成, the system shall 按 thread/session/tick/stage/worker 记录 input、cache read/write、output 和估算来源 | ✅ SQLite Ledger + cache read/write 真实采集 + null unknown；11 targeted tests passed；Ruff/mypy passed |
-| P1 | T317 | Checkpoint 与审计保留策略 | While 长轨迹持续运行, when 快照、Prompt 和产物超过保留阈值, the system shall 保留事件事实与审计引用并安全压缩可重建副本 | ✅ 永久事实隔离 + dry-run 候选 + Artifact 引用完整性；3 tests passed；无用户数据删除 |
-| P0 | T323 | 状态锚点与摘要隔离 | While BEACON 或自动摘要过期、重复或矛盾, when Action/Capsule 被构建, the Core shall 仅依赖事件投影推进，并显式报告信息性上下文漂移 | ✅ 信息性 authority + anchor drift；冲突摘要不改 stage/tick；5 targeted tests passed |
-| P0 | T324 | 修复循环与 Agent 预算 | While repair、Worker 或 Deep Audit 达到策略上限, when 下一 Action 被选择, the system shall 确定性停止扩张并诊断，禁止新增批次或借换会话绕过 | ✅ 扩张预算已实现；rollover 分支由 T341-T349 移除 |
-| P0 | T318 | Phase 66 成本与完整性验收 | While T314-T317、T323-T324 完成, when 单/多会话轨迹比较, semantic verdict shall 等价且输入放大率、单会话峰值、摘要隔离、循环上限与审计缺口满足预算 | ✅ 专项 252 passed；最终全量 2095 passed/1 skipped；Ruff 0；mypy 125 files；sync pass |
+| P0 | P0-E2E | 独立安装后的单命令设计开发闭环 | While 同一内容寻址 Build 已分别安装到 Codex 与 Claude Code, when 用户在空项目执行一次设计驱动命令, both hosts shall 自动完成设计扫描、规划、开发、审查、修复和验证并到达等价 `TERMINAL`，零非预期人工续接、零手工协议修复、零旧计划误续作 | ◐ 候选 Build `5.8.0-rc.5+sha256.d8d39031e8e3be5d` 已通过 2666/1、90%、静态检查与双宿主 hermetic archive；待独立安装及真实双宿主 L4 终态验收 |
+
+### 不可独立关闭的四个工作面
+
+| 工作面 | 目标 | 当前判断 |
+|---|---|---|
+| 设计工程模型 | 设计—缺口—任务—代码—验证使用同一稳定模型追溯 | ✅ 稳定 section 身份已接入公开执行包与内部模型，Agent/Core 双身份闭合 |
+| 连续 Host Runtime | Core 单 Tick，Runtime 在一次用户启动内自动运行到合法退出 | ✅ Codex/Claude package-only 离线宿主经真实 finalize/validate/tick operations 连续到 `TERMINAL` |
+| Agent 与机器边界 | Agent 只提交推理语义，Core/Runtime 自动生成机器事实 | ✅ Gap Agent 输出可读 `section_ref`；Assembler 确定性绑定内部 ID，旧 `section_id` 仅保留读取兼容 |
+| 宿主执行包闭包 | 合法 Result 所需信息全部来自真实宿主可见执行包 | ✅ Coordinator/Worker Prompt 结构化引用及 recovery `semantic_context_refs` 已由双宿主公开包终态轨迹证明 |
+| Section 双身份 | Agent 使用可读引用，Core 独占稳定内部 ID 与覆盖事实 | ✅ `host_design_sections.section_ref → design_sections.section_id` 已由 Core 模型与 Assembler 单一解析 |
+| Result 接受事务 | Assembler/预校验/Core 任一拒绝均在同一 Action 自动修复 | ◐ 已修复重复 Worker、outcome 覆盖及“计划接受后下一 Action 引用崩溃”；统一章节标签解析与未来 Action 预校验通过 249 项回归，待全量与新 Build L4 |
+| 离线生产终态 | 同一生产资产覆盖 Gap、规划、开发、Critic 返工、验证、恢复并到 `TERMINAL` | ✅ package-only Codex/Claude 轨迹不读 Canonical 状态、不用 FakeOperations，均以 9 次 Action context 到 `TERMINAL` |
+| 双宿主真实验收 | 独立制品完成 Codex/Claude L4 且语义等价 | ◐ 独立 Build 已证明零开发目录来源；Codex 真跑已暴露跨阶段章节解析、Worker 重复及 Python Profile 能力缺口，均已修复并通过回归；新 Build 双宿主终态仍待执行 |
+
+### 完成纪律
+
+- 既有 Phase/T 项继续保留为历史能力和回归证据，不再据此计算产品完成度。
+- 每次真跑故障先归属上述工作面，再修复完整生产链；禁止只修最终报错点。
+- 只有 `P0-E2E` 的全部退出证据齐备时才标记完成并允许发布。
+
+## 历史能力证据
+
+Phase 64–66 的真实运行止血、会话解耦、上下文预算、ArtifactRef、Usage Ledger 与恢复证据已归档至 `design/HISTORY.md` 和 Git；当前表只保留仍影响 `P0-E2E` 发布判断的任务。
 ## Phase 67：双宿主真实项目发布门禁
 | 优先级 | ID | 任务 | EARS 验收 | 状态 |
 |---:|---|---|---|:---:|
@@ -150,8 +152,8 @@
 | P0 | T463-T464 | BatchCompleted 领域事件与进度单一投影 | While Plan refine 改变计划, when candidate 激活和事件重放, progress shall 按稳定 ID 保留完成事实且永不超过 100% | ✅ 稳定完成事件、最小路由拓扑及 replay 不变量通过 |
 | P0 | T465 | partial 设计权威与架构变更批准 Gate | While advisory 与设计冲突, when ledger 非 full, the Core shall 保守执行原设计并要求显式用户批准 | ✅ ChangeRequest/Gate/Approval Event 因果投影通过 |
 | P1 | T466 | EventStore 指标事实投影 | While 项目产生 MAJOR/refine/usage 事件, when summary 生成, metrics shall 与重放事实一致或标记 measurement_incomplete | ✅ EventStore replay 指标与 incomplete 语义通过 |
-| P0 | T467-T469 | L2 产品轨迹、双宿主 L3 与 Voice Clone L4 | While 候选版本准备真跑或发布, when 任一层证据缺失, the release gate shall 保持阻断 | ◐ L2、2457/1、90%、零 ResourceWarning、CI hermetic、双宿主安装器与 archive 通过；Build 写外部验收报告；L3/L4 not_run，发布阻断 |
+| P0 | T467-T469 | L2 产品轨迹、双宿主 L3 与 Voice Clone L4 | While 候选版本准备真跑或发布, when 任一层证据缺失, the release gate shall 保持阻断 | ◐ L2、2672/1、静态与双宿主 archive 通过；Build `5.8.0-rc.5+sha256.6a6b2e6aff9c53f3` 已完成全新隔离 Codex L4 `GOAL_ACHIEVED` 并生成产品证据；Claude Code L4 仍待真实复验，发布继续阻断 |
 | P0 | T470/T472/T473 | 全类型 Action 的确定性 Result 终结与单一宿主合同 | While 任一 active Action 需要宿主提交 Result, when Action 不含 spawn 或含严格 spawn, the host shall 只提交业务 payload/原生 outcome，由同一 Core assembler 绑定 active Action 并生成完整 v1.1 Result；Action instruction/expected_format 不得要求 Core-owned identity 或手工 proof | ◐ L3 已验证非 spawn 原子文件链与 strict outcomes；随后发现 Developer expected_format 要求 `stage` 却被 Finalizer禁止，RED→GREEN 已在 ActionBuilder 统一剔除 Core-owned 字段，待新 Build L3 |
 | P0 | T471 | Architect 合法路由键的执行上下文闭包 | While Architect Gate 要求每个 batch 绑定非空 `plate_keys`, when Core 编译隔离 Worker Prompt, the Action shall 同时在机器字段和 Worker context 中提供同一 `valid_plate_keys` 集合，禁止 Worker 猜测或提交空路由 | ◐ 首轮 Codex L3 因 Worker Prompt 未携带合法集合而以 `ARCHITECT_PLAN_INVALID` 终止；RED→GREEN 已补齐 Prompt Contract 与 ActionBuilder，待新 Build L3 验证 |
-| P0 | T474-T549 | 强类型宿主边界、Critic 修复闭环与 Setup 实证续作 | While Critic P0/P1 回源或 Project Setup 声明工程能力, when Core 编译修复计划或重新探测, the product shall 无损传递 findings、逐项绑定实现/验证任务，实际执行全部 Profile Gate，并以新 CONTINUE Action 自动修复可恢复失败 | ◐ T546-T549 已实现；同形 3-P1 修复轨迹及全量 2640/1、coverage 90%、Ruff/mypy/sync、双宿主 hermetic archive smoke 通过；新 Build 真实 terminal 待复验，继续阻断发布 |
+| P0 | T474-T553 | 强类型宿主边界、Critic/Result 修复闭环与 Setup 实证续作 | While Critic P0/P1 回源、Result 被 Assembler/Core 拒绝或 Project Setup 声明工程能力, when Runtime 继续驱动, the product shall 保持同一业务 Action、启用全新宿主上下文并自动修复，不把内部失败交还用户 | ◐ Section 双身份与完整 Result 修复事务已实现；2661 passed/1 skipped、Ruff/mypy/sync 通过；全阶段黑盒终态及新 Build 真实 terminal 待复验，继续阻断发布 |
 | P0 | T550-T553 | Gap Scan 可证明零结论与可见确认分流 | While 设计驱动 Loop 执行或恢复 Gap Scan, when Result 声称零缺口、产物丢失或发现设计决策, the product shall 校验逐章节覆盖与设计摘要绑定、始终展示有界扫描摘要、仅对真实设计决策进入 WAIT_USER，并禁止用空结果替代丢失产物 | ◐ RED/GREEN、2643/1、coverage 90%、Ruff/mypy/sync 与双宿主 hermetic archive 通过；真实 L4 前台摘要与确认分流待复验 |

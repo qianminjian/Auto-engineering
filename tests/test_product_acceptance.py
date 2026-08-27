@@ -172,6 +172,11 @@ def test_release_requires_both_hosts_on_same_build(tmp_path) -> None:
             "runtime_root": evidence["installation"]["runtime_root"],
             "event_types": ["ActionIssued", "ResultAccepted", "LoopCompleted"],
             "terminal_action": {"action": "done", "reason_code": "GOAL_ACHIEVED"},
+            "trajectory": {
+                "invocation_count": 3, "manual_protocol_repairs": 0,
+                "unexpected_stops": 0, "traceability_complete": True,
+                "final_disposition": "TERMINAL",
+            },
             "action_receipts": [
                 {
                     "action_message_id": f"action-{index}",
@@ -210,6 +215,11 @@ def test_release_rejects_reused_action_context(tmp_path) -> None:
         "runtime_root": evidence["installation"]["runtime_root"],
         "event_types": ["ActionIssued", "ResultAccepted", "LoopCompleted"],
         "terminal_action": {"action": "done"},
+        "trajectory": {
+            "invocation_count": 3, "manual_protocol_repairs": 0,
+            "unexpected_stops": 0, "traceability_complete": True,
+            "final_disposition": "TERMINAL",
+        },
         "action_receipts": [
             {"action_message_id": f"a-{i}", "host_context_id": "reused",
              "stage": ("architect", "developer", "critic")[i],

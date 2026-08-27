@@ -30,6 +30,7 @@ from auto_engineering.loop.effects import (
     WriteContentAddressedArtifact,
     WriteJsonArtifact,
 )
+from auto_engineering.loop.engineering_model import EngineeringModel
 from auto_engineering.prompts.architect_context import build_architect_research_context
 from auto_engineering.prompts.compiler import (
     CORE_OWNED_OUTPUT_FIELDS,
@@ -289,6 +290,18 @@ class ActionBuilder:
 
     def _build_action_project_setup(self, base: dict) -> dict:
         """项目能力不足时让宿主完成搭建；Core 不生成脚手架。"""
+        missing_capabilities = list(self._state.missing_project_capabilities)
+        capability_hints = [
+            "仅处理以下缺失能力：" + "、".join(missing_capabilities) + "。"
+        ]
+        if "eslint_flat_config" in missing_capabilities:
+            capability_hints.append("为 ESLint 9 创建 flat config。")
+        if "eslint_effective_config" in missing_capabilities:
+            capability_hints.append(
+                "配置至少一组实际生效的推荐规则，禁止用空配置绕过 lint。"
+            )
+        if "jsdom_dependency" in missing_capabilities:
+            capability_hints.append("补齐测试环境的直接 jsdom 开发依赖。")
         expected_format = {
             "result_type": "project_setup_completed",
             "artifacts": ["创建或确认的项目入口文件与源码目录"],
@@ -298,7 +311,7 @@ class ActionBuilder:
             "action": "project_setup_required",
             "stage": "project_setup",
             "reason_code": "insufficient_project_evidence",
-            "missing_capabilities": list(self._state.missing_project_capabilities),
+            "missing_capabilities": missing_capabilities,
             "constraints": {
                 "must_follow_design": self._design_doc is not None,
                 "must_not_assume_framework": True,
@@ -309,11 +322,9 @@ class ActionBuilder:
                 f"所有项目工具以 {self.project_root.resolve()} 为工作目录；不得在插件目录执行。"
                 "根据需求与设计文档建立缺失的项目工程能力。完成后提交 "
                 "result_type='project_setup_completed' 和 artifacts；stage 等消息身份由 Core 写入；"
-                "Core 将重新探测文件，不采信文字声明。若缺失 eslint_flat_config，"
-                "为 ESLint 9 创建 flat config；若缺失 eslint_effective_config，"
-                "必须配置至少一组实际生效的推荐规则，禁止用空配置绕过 lint；"
-                "若缺失 jsdom_dependency，补齐测试环境的"
-                "直接开发依赖。Git 仅是可选证据源，未经用户授权不得执行 git init/add/commit。"
+                "Core 将重新探测文件，不采信文字声明。"
+                + "".join(capability_hints)
+                + "Git 仅是可选证据源，未经用户授权不得执行 git init/add/commit。"
             ),
             "expected_format": expected_format,
             "result_contract": business_result_contract(
@@ -335,6 +346,54 @@ class ActionBuilder:
     @property
     def _design_doc(self) -> DesignDoc | None:
         return self._context.design_doc
+
+    def _engineering_model(self) -> EngineeringModel | None:
+        if (
+            self._design_doc is None
+            or not self._state.design_doc_digest.startswith("sha256:")
+        ):
+            return None
+        return EngineeringModel.from_design_doc(
+            self._design_doc,
+            design_digest=self._state.design_doc_digest,
+        )
+
+    def _engineering_sections(
+        self,
+        references: list[str] | None = None,
+    ) -> list[dict[str, str | None]]:
+        model = self._engineering_model()
+        if model is None:
+            return []
+        if references is None:
+            return model.action_sections()
+        selected_ids = {
+            section.section_id for section in model.select_sections(references)
+        }
+        return [
+            section
+            for section in model.action_sections()
+            if section["section_id"] in selected_ids
+        ]
+
+    def _last_batch_design_references(self) -> list[str]:
+        if self._batch_state is None:
+            return []
+        batch = next(
+            (
+                item
+                for item in self._batch_state.batch_plan
+                if item.get("batch_id") == self._last_batch_id
+            ),
+            None,
+        )
+        if batch is None:
+            return []
+        return [
+            str(reference)
+            for reference in batch.get("design_sections", [])
+            if isinstance(reference, str)
+        ]
 
     @property
     def _batch_state(self) -> BatchState | None:
@@ -963,22 +1022,17 @@ class ActionBuilder:
     # ── stage builders ──
 
     def _build_action_gap_scan(self, base: dict) -> dict:
+        engineering_model = self._engineering_model()
         design_sections = (
-            self._design_doc.sections_summary() if self._design_doc else []
+            engineering_model.action_sections()
+            if engineering_model is not None
+            else []
         )
-        if self._design_doc and not design_sections:
-            design_sections = [
-                {
-                    "plate": plate.name,
-                    "component": None,
-                    "design_section": plate.design_section,
-                }
-                for plate in self._design_doc.plates
-            ] or [{
-                "plate": None,
-                "component": None,
-                "design_section": "document",
-            }]
+        host_design_sections = (
+            engineering_model.host_sections()
+            if engineering_model is not None
+            else []
+        )
         action = self._build_stage_action(base, "gap_scan", context={
             "design_doc_path": (
                 self._design_doc.path if self._design_doc else None),
@@ -988,6 +1042,7 @@ class ActionBuilder:
             "design_authority": DesignAuthorityPolicy.default().to_dict(),
             "design_doc_digest": self._state.design_doc_digest,
             "design_sections": design_sections,
+            "host_design_sections": host_design_sections,
         }, expected_format={
             "gaps": (
                 "[{id, design_section_ref, grade, clarity, summary, depends_on, "
@@ -996,12 +1051,9 @@ class ActionBuilder:
                 "options:[{resolution,meaning,enabled,disabled_reason?}], "
                 "blocking_rule}]"
             ),
-            "scanned_sections": "int",
-            "has_blocking": "bool",
-            "design_doc_digest": "必须等于 context.design_doc_digest",
-            "scan_coverage": (
-                "[{design_section_ref, verdict:clear|gap, evidence:[非空证据]}]；"
-                "必须逐项覆盖 context.design_sections"
+            "section_findings": (
+                "[{section_ref, verdict:clear|gap, evidence:[非空证据]}]；"
+                "section_ref 必须逐项覆盖 host_design_sections"
             ),
         })
         return self._compile_inline_action(action, "gap_scan")
@@ -1316,6 +1368,7 @@ class ActionBuilder:
                 self._design_doc.path if self._design_doc else None
             ),
             "valid_plate_keys": self._valid_plate_keys(),
+            "engineering_sections": self._engineering_sections(),
             "batch_id_policy": batch_id_policy,
             "project_profile_summary": self._project_profile_summary(),
             **({"plan_revision": self._state.plan_refine_count} if is_refine else {}),
@@ -1367,6 +1420,10 @@ class ActionBuilder:
         batch_id = (
             self._batch_state.current_batch_id()
             if self._batch_state else None)
+        design_references = (
+            list(self._batch_state.current_batch().get("design_sections", []))
+            if self._batch_state else []
+        )
         task_dicts = [
             {"id": t.id, "description": t.description,
              "expected_output": t.expected_output,
@@ -1381,6 +1438,9 @@ class ActionBuilder:
                 "batch_id": batch_id,
                 "component": component,
                 "tasks": task_dicts,
+                "engineering_sections": self._engineering_sections(
+                    design_references
+                ) if design_references else [],
                 "task_guidance": (
                     "按列出的 task 逐项执行"
                     if task_dicts else
@@ -1442,6 +1502,9 @@ class ActionBuilder:
             ),
             "gate_results": dict(self._state.gate_results or {}),
             "open_findings": list(self._state.open_findings),
+            "engineering_sections": self._engineering_sections(
+                self._last_batch_design_references()
+            ) if self._last_batch_design_references() else [],
         }
         expected_format = {
             "stage": "critic",
@@ -1551,6 +1614,9 @@ class ActionBuilder:
             "component": comp.name,
             "plate_keys": [item.name for item in routed_components],
             "design_sections": [item.design_section for item in routed_components],
+            "engineering_sections": self._engineering_sections(
+                [item.design_section for item in routed_components]
+            ),
             "design_section": joined_design_section,
             "design_spec": design_spec,
             "implementation_files": impl_files,
@@ -1599,6 +1665,7 @@ class ActionBuilder:
             "design_doc_path": self._state.design_doc_path,
             "file_list": list(self._state.file_list),
             "component_coverage": self._state.coverage_map or [],
+            "engineering_sections": self._engineering_sections(),
             "project_profile_summary": self._project_profile_summary(verifier=True),
         }, expected_format={
             "stage": "system_verifier",

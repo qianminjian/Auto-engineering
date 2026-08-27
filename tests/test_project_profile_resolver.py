@@ -188,6 +188,58 @@ def test_local_probe_derives_pytest_command_from_pyproject_contract(
     assert contribution.commands["test"] == ("python", "-m", "pytest")
 
 
+def test_local_probe_derives_configured_python_quality_commands(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\nname = 'sample'\nversion = '0.1.0'\n"
+        "[tool.pytest.ini_options]\ntestpaths = ['tests']\n"
+        "[tool.ruff]\ntarget-version = 'py311'\n"
+        "[tool.mypy]\nfiles = ['src']\n",
+        encoding="utf-8",
+    )
+
+    contribution = LocalProbeProvider().inspect(tmp_path)
+
+    assert contribution.commands == {
+        "build": ("python", "-m", "compileall", "-q", "src"),
+        "lint": ("uv", "run", "ruff", "check", "src", "tests"),
+        "test": ("python", "-m", "pytest"),
+        "type_check": ("uv", "run", "mypy"),
+    }
+
+
+def test_local_probe_accepts_standard_python_root_layout_package(
+    tmp_path: Path,
+) -> None:
+    package = tmp_path / "slugify"
+    package.mkdir()
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\nname = 'slugify-product'\nversion = '0.1.0'\n"
+        "[tool.pytest.ini_options]\ntestpaths = ['tests']\n"
+        "[tool.ruff]\nline-length = 88\n"
+        "[tool.mypy]\nstrict = true\n",
+        encoding="utf-8",
+    )
+
+    contribution = LocalProbeProvider().inspect(tmp_path)
+
+    assert contribution.source_roots == ("slugify",)
+    assert contribution.commands["build"] == (
+        "python", "-m", "compileall", "-q", "slugify",
+    )
+    assert contribution.commands["lint"] == (
+        "uv", "run", "ruff", "check", "slugify", "tests",
+    )
+    assert contribution.commands["type_check"] == (
+        "uv", "run", "mypy", "slugify",
+    )
+
+
 def test_node_toolchain_gaps_require_setup_before_developer(tmp_path: Path) -> None:
     (tmp_path / "src").mkdir()
     (tmp_path / "package.json").write_text(json.dumps({

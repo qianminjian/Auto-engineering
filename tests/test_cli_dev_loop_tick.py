@@ -799,11 +799,38 @@ class TestMutexAndLegacy:
         current_payload.write_text(
             json.dumps({
                 "gaps": [],
-                "scanned_sections": 1,
-                "has_blocking": False,
-                "design_doc_digest": current["context"]["design_doc_digest"],
-                "scan_coverage": [{
-                    "design_section_ref": "document",
+                "section_findings": [{
+                    "section_ref": "1",
+                    "verdict": "clear",
+                    "evidence": ["使用了报告中的错误章节编号"],
+                }],
+            }),
+            encoding="utf-8",
+        )
+        rejected = runner.invoke(
+            main,
+            [
+                "dev-loop", "--finalize-result", str(current_payload),
+                "--output-result", str(tmp_path / current_files["result"]),
+                "--project-root", str(tmp_path),
+            ],
+            env={"AE_HOST_ACTION_VIEW": "compact"},
+        )
+        assert rejected.exit_code == 0, rejected.output
+        repair = _last_json_line(rejected.output)
+        assert repair["message_id"] == current["message_id"]
+        assert repair["result_rejection"]["repair_required"] is True
+        assert repair["result_rejection"]["violations"] == [
+            "SECTION_FINDING_UNKNOWN:1",
+            f"SECTION_FINDING_MISSING:{current['context']['design_sections'][0]['section_id']}",
+        ]
+        assert not (tmp_path / current_files["result"]).exists()
+
+        current_payload.write_text(
+            json.dumps({
+                "gaps": [],
+                "section_findings": [{
+                    "section_ref": current["context"]["host_design_sections"][0]["section_ref"],
                     "verdict": "clear",
                     "evidence": ["已核对完整设计文档"],
                 }],

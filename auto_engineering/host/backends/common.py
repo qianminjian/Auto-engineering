@@ -144,14 +144,22 @@ def launcher_prompt(request: ActionExecutionRequest) -> str:
         sort_keys=True,
         separators=(",", ":"),
     )
+    write_policy = (
+        "本 Action 允许按 Prompt 要求修改 project_root 内业务文件；"
+        "不得修改执行包、Core 状态或 result 文件。"
+        if "edit" in request.allowed_tools
+        else "本 Action 不允许修改项目业务文件；只可写 coordinator_result 和 outcomes。"
+    )
     return (
         "AUTO_ENGINEERING_ACTION_CONTEXT_V1\n"
         "你只执行下面绑定的一个 Action。校验 compact envelope 与 coordinator ref 的 "
-        "SHA-256 后读取并严格执行；只写 request.work_files 指定文件。不得调用 dev-loop "
+        f"SHA-256 后读取并严格执行；{write_policy}不得调用 dev-loop "
         "init/tick/resume，不得驱动下一 Action，不得读取或总结旧聊天记录。最终只返回 "
         "ActionContextOutcome。coordinator_result 顶层只包含 expected_format 业务字段；"
         "result_contract 是机器类型事实源，数组和对象必须写为原生 JSON，不得再次序列化为字符串；"
-        "不得包装在 result 中，不得复制 action/stage/tick/thread_id 等 Core 身份。\n"
+        "不得包装在 result 中，不得复制 action/stage/tick/thread_id 等 Core 身份。"
+        "在返回 completed 前必须把业务 JSON 原子写入 request.work_files.coordinator_result；"
+        "需要 Worker 时同时写 outcomes；绝不写 request.work_files.result。\n"
         + payload
     )
 

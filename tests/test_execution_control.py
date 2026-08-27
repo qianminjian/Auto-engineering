@@ -422,8 +422,9 @@ def test_compact_host_view_projects_only_runtime_control_and_native_launcher(
                 "native_launch_prompt": "bounded-launcher",
                 "expected_isolation_evidence": "fork_turns=none",
                 "receipt": {"large": "duplicate"},
-                "attestation": {"large": "duplicate"},
-                "prompt_ref": "prompt.txt",
+                    "attestation": {"large": "duplicate"},
+                    "prompt_ref": "prompt.txt",
+                    "prompt_sha256": "a" * 64,
             }],
         },
     }
@@ -435,8 +436,10 @@ def test_compact_host_view_projects_only_runtime_control_and_native_launcher(
         "runtime_revision": {"engine_build_id": "build-1"},
     }}
     assert compact["host_execution"]["workers"] == [{
-        "worker_id": "architect-0",
-        "native_launch_prompt": "bounded-launcher",
+            "worker_id": "architect-0",
+            "prompt_ref": "prompt.txt",
+            "prompt_sha256": "a" * 64,
+            "native_launch_prompt": "bounded-launcher",
         "expected_isolation_evidence": "fork_turns=none",
     }]
     assert compact["host_execution"]["work_files"] == {"outcomes": "outcomes.json"}

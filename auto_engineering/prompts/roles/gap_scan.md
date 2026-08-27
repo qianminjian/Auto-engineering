@@ -68,22 +68,23 @@ think hard
    `depends_on`、`evidence`、`problem_statement`、`impact`、`dependencies`、
    `recommendation`、`options` 和 `blocking_rule`。
 
+   `evidence`、`impact`、`dependencies` 和 `depends_on` 均为字符串数组；不得用单个字符串
+   代替数组。
+
    `recommendation` 格式：
    `{"resolution":"Fill|Research|Defer|Defer+Research","reason":"理由","confidence":"low|medium|high"}`。
 
    `options` 格式：
    `[{"resolution":"Fill","meaning":"适用情况","enabled":true,"disabled_reason":"可选"}]`。
-2. `scanned_sections`: int — 本次扫描的章节数
-3. `has_blocking`: bool — 是否存在 architectural gap
-4. `design_doc_digest`: string — 原样返回 context.design_doc_digest，证明结论绑定当前设计版本
-5. `scan_coverage`: list[dict] — 必须与 context.design_sections 一一对应；每项包含
-   `design_section_ref`、`verdict`（clear/gap）和非空 `evidence`。不得用总数或空数组代替。
+2. `section_findings`: list[dict] — 必须与 `host_design_sections` 一一对应；每项只包含
+   `section_ref`、`verdict`（clear/gap）和非空 `evidence`。不得返回 digest、计数、coverage、
+   Action 身份或证明字段；这些机器事实由 Core/Host Runtime 自动生成。
 
 ### 值域 (枚举)
 
 - grade: 仅 "architectural" / "component" / "module"
 - clarity: 仅 "missing" / "vague" / "partial"
-- 无模糊点时也必须提交完整 `scan_coverage`；只有 Core 验证逐章节覆盖和设计摘要一致后，
-  才允许 gaps=[] + has_blocking=false 自动进入 architect。
+- 无模糊点时也必须提交完整 `section_findings`；只有 Runtime 验证稳定 section ID 逐项覆盖后，
+  才允许 Core 自动进入 architect。
 - 工作文件丢失、上下文不足或无法完成逐章节扫描时不得提交空 gaps；应报告当前执行失败，
   由宿主恢复同一 active Action。

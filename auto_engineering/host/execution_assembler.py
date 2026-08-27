@@ -14,6 +14,7 @@ from typing import Any
 from uuid import NAMESPACE_URL, uuid5
 
 from auto_engineering.config.runtime_config import get_default_config
+from auto_engineering.host.outcome_journal import OutcomeJournal
 from auto_engineering.host.spawn_contract import SpawnContractError, SpawnPlan
 from auto_engineering.host.worker_attestation import (
     WorkerAttestationError,
@@ -113,7 +114,9 @@ class HostExecutionAssembler:
         journal = self._read_json(journal_path)
         if journal is None:
             return None
-        if journal.get("status") == "prepared":
+        if journal.get("status") == "prepared" and not isinstance(
+            journal.get("result"), dict
+        ):
             outcomes = journal.get("outcomes")
             if (
                 journal.get("schema_version") != "1.0"
@@ -140,7 +143,7 @@ class HostExecutionAssembler:
                 # 的权威恢复点；宿主工作副本只能由它重建，不能反向改写事实。
                 _atomic_write_json(outcomes_target, {"outcomes": outcomes})
             return None
-        if journal.get("status") != "committed":
+        if journal.get("status") not in {"prepared", "accepted", "committed"}:
             return None
         result = journal.get("result")
         # 早期 T517 build 曾把失败尝试误写为 committed；失败不是成功证据，
@@ -148,7 +151,7 @@ class HostExecutionAssembler:
         if isinstance(result, dict) and result.get("spawned") is False:
             return None
         if (
-            journal.get("schema_version") != "1.0"
+            journal.get("schema_version") not in {"1.0", "1.1"}
             or journal.get("action_message_id") != message_id
             or not isinstance(result, dict)
             or result.get("message_type") != "result"
@@ -380,7 +383,7 @@ class HostExecutionAssembler:
                 committed_result = existing.get("result")
                 if (
                     existing.get("fingerprint") == fingerprint
-                    and existing.get("status") == "committed"
+                    and existing.get("status") in {"accepted", "committed"}
                     and isinstance(committed_result, dict)
                 ):
                     return dict(committed_result)
@@ -392,15 +395,16 @@ class HostExecutionAssembler:
         )
         if not isinstance(completed_at, str):
             completed_at = datetime.now(UTC).isoformat()
-        _atomic_write_json(journal_path, {
-            "schema_version": "1.0",
-            "status": "prepared",
-            "fingerprint": fingerprint,
-            "outcomes_fingerprint": outcomes_fingerprint,
-            "action_message_id": message_id,
-            "completed_at": completed_at,
-            "outcomes": serialized_outcomes,
-        })
+        if existing is None or existing.get("status") != "rejected":
+            _atomic_write_json(journal_path, {
+                "schema_version": "1.0",
+                "status": "prepared",
+                "fingerprint": fingerprint,
+                "outcomes_fingerprint": outcomes_fingerprint,
+                "action_message_id": message_id,
+                "completed_at": completed_at,
+                "outcomes": serialized_outcomes,
+            })
 
         for invocation in plan.invocations:
             receipt = receipts[invocation.worker_id]
@@ -443,16 +447,16 @@ class HostExecutionAssembler:
             "spawn_proof_token": context["proof_token"],
             "worker_attestations": attestations,
         }
-        _atomic_write_json(journal_path, {
-            "schema_version": "1.0",
-            "status": "committed",
-            "fingerprint": fingerprint,
-            "outcomes_fingerprint": outcomes_fingerprint,
-            "action_message_id": message_id,
-            "completed_at": completed_at,
-            "outcomes": serialized_outcomes,
-            "result": result,
-        })
+        OutcomeJournal(self.project_root).prepare(
+            message_id,
+            result,
+            fingerprint=fingerprint,
+            extra={
+                "outcomes_fingerprint": outcomes_fingerprint,
+                "completed_at": completed_at,
+                "outcomes": serialized_outcomes,
+            },
+        )
         return result
 
     @staticmethod
@@ -744,6 +748,10 @@ class HostExecutionAssembler:
             action=action,
             coordinator_payload=coordinator_payload,
         )
+        effective_payload = self._bind_core_stage_fields(
+            action=action,
+            coordinator_payload=effective_payload,
+        )
         violations: list[str] = []
         if outcomes:
             violations.append("UNEXPECTED_WORKER_OUTCOMES")
@@ -777,6 +785,7 @@ class HostExecutionAssembler:
             violations.append("COORDINATOR_IDENTITY_OVERRIDE")
         if violations:
             raise HostEvidenceValidationError(violations)
+        assert isinstance(message_id, str)
 
         fingerprint_payload = {
             "action_message_id": message_id,
@@ -795,7 +804,7 @@ class HostExecutionAssembler:
             committed_result = existing.get("result")
             if (
                 existing.get("fingerprint") == fingerprint
-                and existing.get("status") == "committed"
+                and existing.get("status") in {"prepared", "accepted", "committed"}
                 and isinstance(
                 committed_result, dict
                 )
@@ -822,14 +831,12 @@ class HostExecutionAssembler:
             "extensions": {},
             **effective_payload,
         }
-        _atomic_write_json(journal_path, {
-            "schema_version": "1.0",
-            "status": "committed",
-            "fingerprint": fingerprint,
-            "action_message_id": message_id,
-            "outcomes": [],
-            "result": result,
-        })
+        OutcomeJournal(self.project_root).prepare(
+            message_id,
+            result,
+            fingerprint=fingerprint,
+            extra={"outcomes": []},
+        )
         return result
 
     @staticmethod
@@ -856,6 +863,131 @@ class HostExecutionAssembler:
             if key in auto_decision:
                 decision[key] = auto_decision[key]
         payload["decision"] = decision
+        return payload
+
+    @staticmethod
+    def _bind_core_stage_fields(
+        *,
+        action: Mapping[str, Any],
+        coordinator_payload: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        """由 active Action 绑定阶段机器事实，Agent 只提供推理语义。"""
+
+        payload = dict(coordinator_payload)
+        if action.get("stage") != "gap_scan":
+            return payload
+        raw_gaps = payload.get("gaps")
+        if isinstance(raw_gaps, list):
+            payload["gaps"] = [
+                {
+                    **dict(gap),
+                    "impact": [gap["impact"]],
+                }
+                if isinstance(gap, Mapping)
+                and isinstance(gap.get("impact"), str)
+                and gap["impact"].strip()
+                else gap
+                for gap in raw_gaps
+            ]
+        context = action.get("context")
+        context_mapping: Mapping[str, Any] = (
+            context if isinstance(context, Mapping) else {}
+        )
+        sections = context_mapping.get("design_sections")
+        findings = payload.pop("section_findings", None)
+        if not isinstance(sections, list) or not sections:
+            # 旧 Action 没有稳定工程模型；只读兼容其既有 payload。
+            return dict(coordinator_payload)
+        if not isinstance(findings, list):
+            raise HostEvidenceValidationError(("SECTION_FINDINGS_REQUIRED",))
+
+        expected: dict[str, Mapping[str, Any]] = {}
+        expected_by_ref: dict[str, str] = {}
+        violations: list[str] = []
+        for section in sections:
+            if not isinstance(section, Mapping):
+                violations.append("CORE_DESIGN_SECTION_INVALID")
+                continue
+            section_id = section.get("section_id")
+            if not isinstance(section_id, str) or not section_id:
+                violations.append("CORE_DESIGN_SECTION_ID_MISSING")
+                continue
+            if section_id in expected:
+                violations.append(f"CORE_DESIGN_SECTION_DUPLICATE:{section_id}")
+            expected[section_id] = section
+            section_ref = section.get("design_section")
+            if not isinstance(section_ref, str) or not section_ref:
+                violations.append("CORE_DESIGN_SECTION_REF_MISSING")
+            elif section_ref in expected_by_ref:
+                violations.append(
+                    f"CORE_DESIGN_SECTION_REF_DUPLICATE:{section_ref}"
+                )
+            else:
+                expected_by_ref[section_ref] = section_id
+
+        received: dict[str, Mapping[str, Any]] = {}
+        for index, finding in enumerate(findings):
+            if not isinstance(finding, Mapping):
+                violations.append(f"SECTION_FINDING_INVALID:{index}")
+                continue
+            raw_section_ref = finding.get("section_ref")
+            raw_section_id = finding.get("section_id")
+            section_id = (
+                expected_by_ref.get(raw_section_ref)
+                if isinstance(raw_section_ref, str)
+                else raw_section_id
+            )
+            evidence = finding.get("evidence")
+            identifier_valid = (
+                isinstance(raw_section_ref, str) and bool(raw_section_ref)
+            ) or (
+                isinstance(raw_section_id, str) and bool(raw_section_id)
+            )
+            if (
+                not identifier_valid
+                or finding.get("verdict") not in {"clear", "gap"}
+                or not isinstance(evidence, list)
+                or not evidence
+                or not all(
+                    isinstance(item, str) and item.strip() for item in evidence
+                )
+            ):
+                violations.append(f"SECTION_FINDING_INVALID:{index}")
+                continue
+            if section_id not in expected:
+                unknown = raw_section_ref if raw_section_ref is not None else raw_section_id
+                violations.append(f"SECTION_FINDING_UNKNOWN:{unknown}")
+                continue
+            if section_id in received:
+                violations.append(f"SECTION_FINDING_DUPLICATE:{section_id}")
+                continue
+            received[section_id] = finding
+        for section_id in sorted(set(expected) - set(received)):
+            violations.append(f"SECTION_FINDING_MISSING:{section_id}")
+        if violations:
+            raise HostEvidenceValidationError(violations)
+
+        coverage = [
+            {
+                "section_id": section_id,
+                "design_section_ref": str(expected[section_id]["design_section"]),
+                "verdict": str(received[section_id]["verdict"]),
+                "evidence": list(received[section_id]["evidence"]),
+            }
+            for section_id in expected
+        ]
+        gaps = payload.get("gaps", [])
+        payload.update({
+            "scanned_sections": len(coverage),
+            "has_blocking": any(
+                isinstance(gap, Mapping) and gap.get("grade") == "architectural"
+                for gap in gaps
+            ),
+            "design_doc_digest": str(
+                context_mapping.get("design_doc_digest", "")
+            ),
+            "scan_coverage": coverage,
+        })
         return payload
 
     def _preflight(

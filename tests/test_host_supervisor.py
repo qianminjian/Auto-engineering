@@ -214,6 +214,43 @@ def test_terminal_product_evidence_is_built_from_persisted_receipts(
     assert "prompt" not in artifact.read_text(encoding="utf-8").lower()
 
 
+def test_terminal_evidence_allows_same_action_repair_in_fresh_context(
+    tmp_path: Path,
+) -> None:
+    from auto_engineering.host.supervisor import (
+        ActionReceiptJournal,
+        ProductEvidenceArtifactJournal,
+    )
+
+    build_id = "5.8.0-rc.5+sha256.abcdef0123456789"
+    runtime_root = tmp_path / "installed-release"
+    runtime_root.mkdir()
+    (runtime_root / "build-info.json").write_text(
+        json.dumps({"build_id": build_id}), encoding="utf-8"
+    )
+    journal = ActionReceiptJournal(tmp_path)
+    for context_id in ("context-first", "context-repair"):
+        request = replace(
+            _request("action-gap", 1),
+            project_root=str(tmp_path),
+            stage="gap_scan",
+            build_id=build_id,
+        )
+        journal.record(request, _receipt(request, context_id))
+
+    artifact = ProductEvidenceArtifactJournal(
+        tmp_path, runtime_root=runtime_root
+    ).record_terminal(
+        host="codex",
+        thread_id="thread-1",
+        final_action={"action": "done"},
+        event_types=("ActionIssued", "ResultAccepted", "LoopCompleted"),
+    )
+
+    payload = json.loads(artifact.read_text(encoding="utf-8"))
+    assert payload["trajectory"]["automatic_result_repairs"] == 1
+
+
 def test_product_evidence_refuses_non_terminal_or_reused_context(
     tmp_path: Path,
 ) -> None:
@@ -333,6 +370,73 @@ def test_machine_operations_execute_exact_argv_without_shell(tmp_path: Path) -> 
     assert [call[0][0] for call in calls] == ["/release/scripts/ae-run"] * 3
     assert all(call[1]["cwd"] == str(tmp_path.resolve()) for call in calls)
     assert all("shell" not in call[1] for call in calls)
+
+
+def test_machine_operations_return_same_action_repair_after_assembly_rejection(
+    tmp_path: Path,
+) -> None:
+    from auto_engineering.host.supervisor import MachineOperationExecutor
+
+    calls: list[str] = []
+    repair_action = {
+        "message_id": "action-1",
+        "action": "gap_scan",
+        "result_rejection": {"repair_required": True},
+    }
+
+    def run(command: tuple[str, ...], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append("finalize")
+        return subprocess.CompletedProcess(
+            command, 0, stdout=json.dumps(repair_action), stderr=""
+        )
+
+    operations = {
+        "finalize": {"argv": ["__AE_BUNDLED_RUNNER__", "--finalize-result"]},
+        "validate": {"argv": ["__AE_BUNDLED_RUNNER__", "--validate-result"]},
+        "submit": {"argv": ["__AE_BUNDLED_RUNNER__", "--tick"]},
+    }
+    result = MachineOperationExecutor(
+        project_root=tmp_path,
+        bundled_runner=Path("/release/scripts/ae-run"),
+        runner=run,
+    ).run(operations)
+
+    assert result == repair_action
+    assert calls == ["finalize"]
+
+
+def test_machine_operations_return_same_action_repair_after_prevalidation(
+    tmp_path: Path,
+) -> None:
+    from auto_engineering.host.supervisor import MachineOperationExecutor
+
+    calls: list[str] = []
+    repair_action = {
+        "message_id": "action-gap",
+        "action": "gap_scan",
+        "result_rejection": {"repair_required": True},
+    }
+
+    def run(command: tuple[str, ...], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        operation = "validate" if "--validate-result" in command else "finalize"
+        calls.append(operation)
+        output = json.dumps(repair_action) if operation == "validate" else "{}"
+        return subprocess.CompletedProcess(command, 0, stdout=output, stderr="")
+
+    operations = {
+        "finalize": {"argv": ["__AE_BUNDLED_RUNNER__", "--finalize-result"]},
+        "validate": {"argv": ["__AE_BUNDLED_RUNNER__", "--validate-result"]},
+        "submit": {"argv": ["__AE_BUNDLED_RUNNER__", "--tick"]},
+    }
+
+    result = MachineOperationExecutor(
+        project_root=tmp_path,
+        bundled_runner=Path("/release/scripts/ae-run"),
+        runner=run,
+    ).run(operations)
+
+    assert result == repair_action
+    assert calls == ["finalize", "validate"]
 
 
 def test_machine_operations_stop_before_submit_on_validation_failure(

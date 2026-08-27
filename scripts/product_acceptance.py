@@ -172,8 +172,6 @@ def _validate_receipts(
             or receipt.get("status") != "completed"
         ):
             raise ProductAcceptanceError("ACTION_RECEIPTS_INVALID")
-        if action_id in action_ids:
-            raise ProductAcceptanceError("ACTION_ID_REUSED")
         if context_id in context_ids:
             raise ProductAcceptanceError("ACTION_CONTEXT_REUSED")
         action_ids.add(action_id)
@@ -235,6 +233,7 @@ def evaluate_host_evidence(
         raise ProductAcceptanceError("EVIDENCE_ARTIFACT_INVALID")
     required_events = {"ActionIssued", "ResultAccepted", "LoopCompleted"}
     terminal_action = artifact_payload.get("terminal_action")
+    trajectory = artifact_payload.get("trajectory")
     installation = evidence.get("installation")
     if (
         artifact_payload.get("schema_version") != "1.1"
@@ -248,6 +247,13 @@ def evaluate_host_evidence(
         or not isinstance(terminal_action, dict)
         or terminal_action.get("action") != "done"
         or not required_events.issubset(set(artifact_payload.get("event_types", [])))
+        or not isinstance(trajectory, dict)
+        or trajectory.get("final_disposition") != "TERMINAL"
+        or trajectory.get("unexpected_stops") != 0
+        or trajectory.get("manual_protocol_repairs") != 0
+        or trajectory.get("traceability_complete") is not True
+        or trajectory.get("invocation_count")
+        != len(artifact_payload.get("action_receipts", []))
     ):
         raise ProductAcceptanceError("EVIDENCE_ARTIFACT_CLAIMS_INVALID")
     _validate_receipts(artifact_payload, evidence)

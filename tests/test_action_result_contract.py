@@ -377,11 +377,12 @@ class TestActionRoundTrip:
         assert action["context"]["design_doc_digest"].startswith("sha256:")
         assert action["result_contract"]["required"] == [
             "gaps",
-            "scanned_sections",
-            "has_blocking",
-            "design_doc_digest",
-            "scan_coverage",
+            "section_findings",
         ]
+        assert all(
+            section["section_id"].startswith("section:")
+            for section in action["context"]["design_sections"]
+        )
         _action_validator.validate(action)
 
     def test_real_gap_review_action_conforms(self, tmp_path):

@@ -12,6 +12,8 @@ import pytest
 
 from auto_engineering.engine.state import EngineState
 from auto_engineering.host import HostPlatform
+from auto_engineering.host.execution_assembler import HostExecutionAssembler
+from auto_engineering.host.outcome_journal import OutcomeJournal
 from auto_engineering.loop.action_builder import ActionBuilder
 from auto_engineering.loop.design_decision_ledger import (
     DesignDecisionError,
@@ -27,6 +29,15 @@ FIXTURE = (
     / "voice_clone_design_manifest.json"
 )
 SCENARIO_ROOT = Path(__file__).parent / "fixtures" / "golden" / "voice_clone"
+
+
+def _prompt_context(prompt: str) -> dict[str, object]:
+    marker = "## 本次任务上下文（编排器注入，禁止自行虚构）"
+    section = prompt.split(marker, 1)[1]
+    encoded = section.split("```json", 1)[1].split("```", 1)[0]
+    value = json.loads(encoded)
+    assert isinstance(value, dict)
+    return value
 
 
 def test_voice_clone_manifest_preserves_original_v1_authority() -> None:
@@ -88,6 +99,10 @@ def test_voice_clone_scenario_requires_full_business_lifecycle() -> None:
         "plate_deep_audit", "system_verifier", "system_deep_audit", "done",
     ]
     assert scenario["business_gates"] == ["typecheck", "unit_test", "build"]
+    assert scenario["required_trajectory_evidence"] == [
+        "invocation_count", "manual_protocol_repairs", "unexpected_stops",
+        "traceability_complete", "final_disposition",
+    ]
     assert "natural_language_plan" in scenario["forbidden_equivalence"]
 
 
@@ -173,6 +188,9 @@ def test_voice_clone_golden_reaches_done_through_real_core(
         )
         stages: list[str] = []
         batch_index = 0
+        result_repairs = 0
+        process_recoveries = 0
+        critic_rework_injected = False
         for _ in range(30):
             stage = action.get("stage")
             if action.get("action") == "done":
@@ -181,19 +199,45 @@ def test_voice_clone_golden_reaches_done_through_real_core(
             assert isinstance(stage, str)
             stages.append(stage)
             if stage == "gap_scan":
-                design_sections = action["context"]["design_sections"]
-                action = core.tick_dict(_native_result(
-                    action,
-                    gaps=[],
-                    scanned_sections=len(design_sections),
-                    has_blocking=False,
-                    design_doc_digest=action["context"]["design_doc_digest"],
-                    scan_coverage=[{
-                        "design_section_ref": item["design_section"],
+                design_sections = action["context"]["host_design_sections"]
+                gap_result = HostExecutionAssembler(tmp_path).finalize(
+                    action=action,
+                    outcomes=[],
+                    coordinator_payload={
+                    "gaps": [],
+                    "section_findings": [{
+                        "section_ref": item["section_ref"],
                         "verdict": "clear",
                         "evidence": ["黄金设计已明确该章节契约"],
                     } for item in design_sections],
-                ))
+                    },
+                )
+                corrupted = {
+                    **gap_result,
+                    "scanned_sections": gap_result["scanned_sections"] + 1,
+                }
+                rejected = core.tick_dict(corrupted)
+                assert rejected["action"] == "error"
+                assert OutcomeJournal(tmp_path).complete_from_core(
+                    corrupted, rejected
+                ) is True
+                result_repairs += 1
+                # 模拟宿主进程在拒绝后重建；同一 Action 和语义结果必须可恢复。
+                gap_result = HostExecutionAssembler(tmp_path).finalize(
+                    action=action,
+                    outcomes=[],
+                    coordinator_payload={
+                        "gaps": [],
+                        "section_findings": [{
+                            "section_ref": item["section_ref"],
+                            "verdict": "clear",
+                            "evidence": ["黄金设计已明确该章节契约"],
+                        } for item in design_sections],
+                    },
+                )
+                process_recoveries += 1
+                action = core.tick_dict(gap_result)
+                OutcomeJournal(tmp_path).complete_from_core(gap_result, action)
                 continue
             if stage == "developer":
                 batch_index += 1
@@ -201,9 +245,10 @@ def test_voice_clone_golden_reaches_done_through_real_core(
             def worker(
                 invocation,
                 current_stage=stage,
-                current_action=action,
                 current_batch=batch_index,
+                rework_injected=critic_rework_injected,
             ):
+                context = _prompt_context(invocation.prompt)
                 if current_stage == "architect":
                     return {
                         "plan": (
@@ -227,24 +272,35 @@ def test_voice_clone_golden_reaches_done_through_real_core(
                     }
                 if current_stage == "developer":
                     return {
-                        "batch_id": current_action["batch_id"],
+                        "batch_id": context["batch_id"],
                         "files_changed": [f"voice_clone/part_{current_batch}.py"],
                         "commit_hash": "",
                         "test_results": {"passed": 127, "failed": 0, "total": 127},
                         "red_evidence": ["先失败后通过"],
+                    }
+                if current_stage == "critic" and not rework_injected:
+                    return {
+                        "verdict": "MAJOR",
+                        "findings": [{
+                            "severity": "P1",
+                            "file": "voice_clone/page.py",
+                            "issue": "缺少边界回归",
+                            "suggestion": "补齐回归测试",
+                        }],
+                        "critic_feedback": "修复后重新审查",
                     }
                 if current_stage == "critic":
                     return {"verdict": "APPROVE", "findings": [],
                             "critic_feedback": "设计保持一致"}
                 if current_stage == "component_verifier":
                     return {
-                        "component": core._batch_state.current_component().name,
+                        "component": context["component"],
                         "coverage_map": [{"design_item": "golden", "status": "IMPLEMENTED",
                                           "file": "voice_clone/page.py", "line": 1, "note": ""}],
                         "missing_count": 0, "diverged_count": 0,
                     }
                 if current_stage == "plate_deep_audit":
-                    return {"plate": core._batch_state.current_plate().name, "findings": [],
+                    return {"plate": context["plate"], "findings": [],
                             "p0_count": 0, "p1_count": 0, "p2_count": 0,
                             "cross_component_issues": [], "total_audited_files": 2}
                 if current_stage == "system_verifier":
@@ -264,12 +320,23 @@ def test_voice_clone_golden_reaches_done_through_real_core(
             action = HostTrajectoryRunner(
                 tmp_path, platform, core=core, event_store=events
             ).run(action, workers=[worker] * count).next_action
+            if stage == "critic" and not critic_rework_injected:
+                critic_rework_injected = True
 
         assert action["action"] == "done"
         assert action["verdict"] == "GOAL_ACHIEVED"
+        assert result_repairs == 1
+        assert process_recoveries == 1
+        assert critic_rework_injected is True
+        journals = list((
+            tmp_path / ".ae-state/host-runtime/outcomes"
+        ).glob("*.json"))
+        assert journals
+        assert all(json.loads(path.read_text())["status"] == "accepted" for path in journals)
         assert stages == [
             "gap_scan", "architect",
-            "developer", "critic", "component_verifier", "plate_deep_audit",
+            "developer", "critic", "developer", "critic",
+            "component_verifier", "plate_deep_audit",
             "developer", "critic", "component_verifier", "plate_deep_audit",
             "system_verifier", "system_deep_audit", "done",
         ]

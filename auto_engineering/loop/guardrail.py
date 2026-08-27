@@ -558,20 +558,11 @@ class GuardrailChain:
 
 
 class AuditTimingGuardrail(Guardrail):
-    """G12: 审计阶段 pass-through 检测 — 证据组合检测器 (T112).
+    """兼容保留的审计耗时观测器；耗时不参与正确性或重试决策。
 
-    三重证据：E1 耗时过短 + E2 findings 空 + E3 p0/p1 全零。
-    E2/E3 不独立（findings 空 → p0/p1 必零），合并为一个内容信号：
-        effective = E1 + max(E2, E3)
-        effective == 2 → retry（快 + 内容空，双重确认）
-        effective == 1 → pass（单维度触发，仅 WARN 日志）
-        effective == 0 → pass（正常）
-
-    冷启动（action_timestamp == 0.0）→ skip pass。
-    仅适用于 spawn 阶段：component_verifier, plate_deep_audit,
-    system_verifier, system_deep_audit, critic。
-
-    设计 ref: IMPLEMENTATION-TRACKER.md T112 详细 (2026-07-21 深度分析)。
+    模型、缓存和项目规模都会改变执行时间；用墙钟阈值拒绝合法零发现结果，
+    会让同一 Action 重复付费且无法产生新证据。结构、覆盖与追溯门禁负责质量，
+    本 Guardrail 只记录可观测告警。
     """
 
     name = "AuditTimingGuardrail"
@@ -617,23 +608,12 @@ class AuditTimingGuardrail(Guardrail):
 
         effective = e1 + max(e2, e3)
 
-        if effective >= 2:
-            return GuardrailResult(
-                action="retry",
-                message=(
-                    f"AuditTimingGuardrail: {stage} 疑似 pass-through "
-                    f"(elapsed={elapsed:.1f}s < {threshold}s, "
-                    f"findings={'空' if e2 else '有内容'}, "
-                    f"p0={p0}, p1={p1})"
-                ),
-            )
-
-        if effective == 1:
+        if effective >= 1:
             import logging
             _log = logging.getLogger(__name__)
             _log.warning(
-                "AuditTimingGuardrail: %s 单证据触发 (elapsed=%.1fs, "
-                "threshold=%.0fs, e1=%d, e2=%d, e3=%d) — WARN only",
+                "AuditTimingGuardrail: %s 观测信号 (elapsed=%.1fs, "
+                "threshold=%.0fs, e1=%d, e2=%d, e3=%d) — 不触发重试",
                 stage, elapsed, threshold, e1, e2, e3,
             )
 

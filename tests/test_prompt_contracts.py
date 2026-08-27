@@ -52,6 +52,7 @@ def test_contracts_declare_context_needed_by_known_loss_paths() -> None:
     contracts = default_prompt_contracts()
 
     assert "project_profile_summary" in contracts["gap_scan"].required_context
+    assert "host_design_sections" in contracts["gap_scan"].required_context
     assert {"requirement", "design_doc_path", "project_profile_summary"} <= set(
         contracts["architect"].required_context
     )

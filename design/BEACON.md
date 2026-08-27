@@ -1,13 +1,13 @@
 # Auto-Engineering BEACON
-> 创建：2026-06-24｜更新：2026-08-25｜阶段：Phase 83 Host Runtime 产品闭环收敛
+> 创建：2026-06-24｜更新：2026-08-25｜阶段：P0-E2E 端到端产品闭环
 > 决策状态翻转（✅↔❌）或架构降级必须先获用户批准。
 
 ## 目标与成功标准
-1. 定位为跨 Agent 宿主的确定性工程治理内核。
-2. 宿主负责推理与工具执行；Core 负责协议、状态、验证、安全和审计。
-3. 所有跨宿主消息使用版本化协议，并具有消息身份与因果关系。
-4. 状态可由 append-only 事件重放，重复 Result 不重复推进。
-5. Claude Code 与 Codex 对同一黄金轨迹产生等价 Core 结果。
+1. 用户执行一次设计驱动命令后，产品无非预期人工介入地运行到 `TERMINAL`。
+2. 定位为跨 Agent 宿主的确定性工程治理内核；宿主负责推理、工具和连续驱动。
+3. 设计、缺口、任务、代码和验证使用同一稳定工程模型全程追溯。
+4. Core 负责协议、状态、验证、安全和审计，Agent 不复制机器事实。
+5. Claude Code 与 Codex 的独立安装制品完成等价 L4 终态后才可发布。
 
 ## 范围边界
 
@@ -56,25 +56,25 @@ Gate/Guardrail、五层验证、审计、v5.6 兼容迁移和双宿主验收。
 | D39 | 系统审计覆盖维度固定、执行 fan-out 按 Core 计算的项目规模伸缩；小项目不重复发送五份上下文 | ✅ |
 | D40-D43 | ProjectProfile 以真实 Gate 证明能力且可修复失败自动续作；Canonical Action 与 compact 宿主视图分离；五类 refine 信号无损归一并强制修复映射 | ✅ |
 | D44 | Gap Scan 始终输出有界可见摘要；零缺口必须逐章节可证明并自动续作，真实设计决策才进入用户确认，丢失产物不得降级为空结果 | ✅ |
+| D45 | 后续唯一 P0 为单命令运行到 `TERMINAL`；局部能力只作支撑证据，L4 未通过不得关闭产品任务 | ✅ |
 
 ## 当前状态
 
-- Phase 1-79 的功能与自动门禁历史见 Tracker/HISTORY；v5.8.0-rc.5 仍未通过真实产品长跑门禁。
-- Phase 80-82 已关闭旧可变 Stage 分支、显式设计与隐藏状态冲突、严格 Host 合同、Worker 证明、事件恢复和安装来源隔离。
-- 当前候选的自动门禁、双宿主 frozen/offline L2 和内容寻址安装可验证；这些证据不替代真实产品 L3/L4 长跑。
-- 双宿主 L3 均已到 TERMINAL；L4 揭示的 Gap 恢复、运行时激活、自动决策、补充权威、Gate 校验与在途迁移缺口已由 T505-T511 闭合。
-- T512-T523 已闭合跨会话恢复、陈旧路径重绑、未提交 outcome 复用和审计 fan-out 伸缩；2519/1、Ruff、mypy 通过。完整 L3/L4 终态仍未完成。
-- T530-T553 已补齐强类型 Result、Critic 修复映射、Setup 实证续作与 Gap 可证明结论/可见确认分流；2643/1、90% 和双宿主 archive 通过，真实 terminal 仍阻断发布。
+- `P0-E2E` 是唯一产品交付任务；既有 Phase/T 项仅作为能力与回归证据。
+- v5.8.0-rc.5 的 L1/L2、覆盖率和 archive 安装不能替代真实 L4。
+- Section 双身份、公开执行包离线终态已补齐；新 Build `5.8.0-rc.5+sha256.6a6b2e6aff9c53f3` 已在全新隔离项目完成 Codex L4 `GOAL_ACHIEVED`，并生成终态产品证据；Claude Code L4 仍待真实宿主复验。
+- 后续冻结无关治理和点状补丁，按设计模型、连续 Runtime、Agent 边界、真实验收四个工作面纵向闭环。
 ## 最近演进
 | 日期 | 变更 |
 |---|---|
-| 2026-08-25 | T546-T549 修复 Critic finding 丢失、空 refine、Setup 假能力及可恢复失败终止 |
+| 2026-08-25 | 移除耗时型质量拒绝；公开执行包双宿主以 9 次 context 经真实 operations 到 TERMINAL |
+| 2026-08-25 | 真跑证实修复 Action 重启 Worker 会形成 outcome conflict；改为只修 Coordinator 并保留 Worker 完成事实 |
+| 2026-08-25 | Gap 执行包改用可读 section_ref；Assembler 拒绝纳入同 Action 自动修复事务，2661/1 回归通过 |
+| 2026-08-25 | D45 获批：实施战略翻转为唯一 `P0-E2E`，L4 终态成为产品完成定义 |
 | 2026-08-21 | T512-T518 关闭重复 spawn、错误恢复、计划校验终止、Worker 超时伪成功与无限重启链路 |
-| 2026-08-22 | T524 关闭未来目录误报；双宿主 L3 暴露百万级 cache read，启动 T525-T526 |
 | 2026-08-23 | T533 获批修订 D13：工程线程连续，模型上下文按 Action 隔离且由 Supervisor 自动续作 |
 ## 待解决问题
-- 待全量自动门禁及新 Build 的 Codex/Claude 真实 terminal 与数值预算通过；真跑任一缺失仍不得发布。
+- 完成 `P0-E2E`：同一 Build 在 Codex/Claude 从单次设计命令连续运行到等价 `TERMINAL`；当前剩余 Claude Code 真实 L4。
 
 ## 引用文件
-
-`design/v5.8-Host-Runtime-Convergence-Analysis.md` · `design/v5.8-Host-Runtime-Convergence-Design.md` · `design/v5.8-Host-Runtime-Convergence-PLAN.md` · `design/v5.8-Session-Decoupling-Design.md` · `design/v5.8-Session-Decoupling-PLAN.md` · `design/incidents/2026-07-29-claude-146-tick-long-run.md` · `design/IMPLEMENTATION-TRACKER.md` · `design/HISTORY.md`
+`design/v5.8-End-to-End-Product-Closure-Design.md` · `design/v5.8-Host-Runtime-Convergence-Design.md` · `design/v5.8-Session-Decoupling-Design.md` · `design/v5.8-Session-Decoupling-PLAN.md` · `design/incidents/2026-07-29-claude-146-tick-long-run.md` · `design/IMPLEMENTATION-TRACKER.md` · `design/HISTORY.md`

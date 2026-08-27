@@ -101,6 +101,7 @@ from auto_engineering.loop.effects import (
     EffectReceipt,
     WriteJsonArtifact,
 )
+from auto_engineering.loop.engineering_model import EngineeringModel
 from auto_engineering.loop.escalation_handler import (
     EscalationContext,
     EscalationHandler,
@@ -2876,25 +2877,31 @@ class TickOrchestrator:
                 "Gap Scan 结果未绑定当前 active design digest",
                 self._state.to_dict(),
             )
-        expected_sections = {
-            str(item["design_section"])
-            for item in (
-                self._design_doc.sections_summary()
-                if self._design_doc is not None else []
+        engineering_model = (
+            EngineeringModel.from_design_doc(
+                self._design_doc,
+                design_digest=self._state.design_doc_digest,
             )
+            if self._design_doc is not None
+            else None
+        )
+        expected_by_id = {
+            section.section_id: section.design_section
+            for section in engineering_model.sections
+        } if engineering_model is not None else {}
+        expected_id_by_ref = {
+            reference: section_id
+            for section_id, reference in expected_by_id.items()
         }
-        if not expected_sections and self._design_doc is not None:
-            expected_sections = {
-                str(plate.design_section) for plate in self._design_doc.plates
-                if plate.design_section
-            }
-        if not expected_sections and self._design_doc is not None:
-            expected_sections = {"document"}
-        actual_sections: list[str] = []
+        actual_section_ids: list[str] = []
         for index, item in enumerate(coverage):
+            section_id = item.get("section_id") if isinstance(item, dict) else None
+            design_section_ref = (
+                item.get("design_section_ref") if isinstance(item, dict) else None
+            )
             valid = (
                 isinstance(item, dict)
-                and isinstance(item.get("design_section_ref"), str)
+                and isinstance(design_section_ref, str)
                 and item.get("verdict") in {"clear", "gap"}
                 and isinstance(item.get("evidence"), list)
                 and bool(item.get("evidence"))
@@ -2909,11 +2916,26 @@ class TickOrchestrator:
                     f"scan_coverage[{index}] 缺少章节、结论或非空证据",
                     self._state.to_dict(),
                 )
-            actual_sections.append(str(item["design_section_ref"]))
+            resolved_id = (
+                section_id
+                if isinstance(section_id, str)
+                else expected_id_by_ref.get(str(design_section_ref))
+            )
+            if (
+                not isinstance(resolved_id, str)
+                or resolved_id not in expected_by_id
+                or expected_by_id[resolved_id] != design_section_ref
+            ):
+                return ErrorResponse(
+                    "GAP_SCAN_COVERAGE_MISMATCH",
+                    f"scan_coverage[{index}] 未绑定当前设计的稳定章节身份",
+                    self._state.to_dict(),
+                )
+            actual_section_ids.append(resolved_id)
         if (
-            len(actual_sections) != len(set(actual_sections))
-            or set(actual_sections) != expected_sections
-            or result.get("scanned_sections") != len(actual_sections)
+            len(actual_section_ids) != len(set(actual_section_ids))
+            or set(actual_section_ids) != set(expected_by_id)
+            or result.get("scanned_sections") != len(actual_section_ids)
         ):
             return ErrorResponse(
                 "GAP_SCAN_COVERAGE_MISMATCH",

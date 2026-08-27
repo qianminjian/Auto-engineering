@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
+from auto_engineering.engine.design_doc import DesignDoc
 from auto_engineering.loop.design_decision_ledger import DesignDecisionLedger
 from auto_engineering.loop.stage_result_prevalidator import StageResultPrevalidator
 
@@ -158,3 +161,44 @@ def test_partial_design_authority_rejects_research_promotion(tmp_path) -> None:
     )
 
     assert error == "DESIGN_CHANGE_APPROVAL_REQUIRED: gap-1"
+
+
+def test_architect_prevalidation_rejects_unknown_future_action_section(
+    tmp_path: Path,
+) -> None:
+    design_path = tmp_path / "design.md"
+    design_path.write_text(
+        "## 1 产品\n### 1.1 Slugify 函数\n明确契约。\n",
+        encoding="utf-8",
+    )
+    design_doc = DesignDoc.parse(design_path)
+    result = {
+        "plan": "按明确设计实现并验证 slugify 函数，保持公开接口和行为契约。",
+        "batch_plan": [{
+            "batch_id": "B1",
+            "plate_keys": ["Slugify 函数"],
+            "design_sections": ["§9.9 不存在"],
+            "tasks": [{
+                "id": "B1-T1",
+                "description": "实现并测试 slugify",
+                "kind": "implementation",
+                "module_ref": "slugify",
+                "file_targets": ["src/slugify/__init__.py"],
+            }],
+            "depends_on": [],
+        }],
+        "contracts": {},
+        "obligations": [],
+    }
+
+    error = StageResultPrevalidator().validate(
+        "architect",
+        design_doc=design_doc,
+        result=result,
+        requirement="实现 slugify",
+        research_archive={},
+        active_revision=0,
+        current_baseline=None,
+    )
+
+    assert error == "ENGINEERING_SECTION_UNKNOWN:§9.9 不存在"

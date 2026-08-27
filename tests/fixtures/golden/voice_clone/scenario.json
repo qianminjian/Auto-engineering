@@ -12,6 +12,13 @@
     "done"
   ],
   "business_gates": ["typecheck", "unit_test", "build"],
+  "required_trajectory_evidence": [
+    "invocation_count",
+    "manual_protocol_repairs",
+    "unexpected_stops",
+    "traceability_complete",
+    "final_disposition"
+  ],
   "semantic_equivalence": [
     "binding_decisions",
     "business_artifacts",

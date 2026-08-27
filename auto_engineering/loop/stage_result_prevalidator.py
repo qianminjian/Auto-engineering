@@ -10,6 +10,10 @@ from auto_engineering.loop.design_decision_ledger import (
     DesignDecisionError,
     DesignDecisionLedger,
 )
+from auto_engineering.loop.engineering_model import (
+    EngineeringModel,
+    EngineeringModelError,
+)
 from auto_engineering.loop.plan_reconciliation import (
     PlanReconciliationError,
     PlanReconciliationValidator,
@@ -72,7 +76,7 @@ class StageResultPrevalidator:
             except PlanReconciliationError as exc:
                 return str(exc)
             return None
-        return dry_run_architect_plan(
+        dry_run_error = dry_run_architect_plan(
             design_doc,
             result,
             requirement,
@@ -81,6 +85,30 @@ class StageResultPrevalidator:
             current_baseline=current_baseline,
             refine_request=refine_request,
         )
+        if dry_run_error is not None or design_doc is None:
+            return dry_run_error
+        try:
+            model = EngineeringModel.from_design_doc(
+                design_doc,
+                design_digest="sha256:" + "0" * 64,
+            )
+            raw_batches = result.get("batch_plan", [])
+            if isinstance(result.get("plan_patch"), dict):
+                raw_batches = result["plan_patch"].get("add_batches", [])
+            elif result.get("result_type") == "plan_reconciliation":
+                raw_batches = result.get("new_batch_plan", [])
+            if isinstance(raw_batches, list):
+                for batch in raw_batches:
+                    if not isinstance(batch, dict):
+                        continue
+                    references = batch.get("design_sections", [])
+                    if isinstance(references, list):
+                        model.select_sections(
+                            str(reference) for reference in references
+                        )
+        except EngineeringModelError as exc:
+            return str(exc)
+        return None
 
 
 __all__ = ["StageResultPrevalidator"]

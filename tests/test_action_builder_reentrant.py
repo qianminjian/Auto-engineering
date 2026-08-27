@@ -79,7 +79,11 @@ def test_architect_action_exposes_valid_machine_routing_keys(tmp_path) -> None:
     )
 
     action = ActionBuilder(tmp_path).build_action(
-        EngineState(thread_id="routing", current_stage="architect"),
+        EngineState(
+            thread_id="routing",
+            current_stage="architect",
+            design_doc_digest="sha256:" + "1" * 64,
+        ),
         design_doc=design_doc,
     )
 
@@ -87,6 +91,8 @@ def test_architect_action_exposes_valid_machine_routing_keys(tmp_path) -> None:
     assert '"valid_plate_keys": [' in action["subagent_prompt"]
     assert '"类型系统"' in action["subagent_prompt"]
     assert '"工具模块"' in action["subagent_prompt"]
+    assert '"engineering_sections"' in action["subagent_prompt"]
+    assert action["subagent_prompt"].count('"section_id"') == 2
     assert "action.host_execution.work_files.outcomes" in action["instruction"]
     assert "Never reuse files from another Action" in action["instruction"]
     assert '"outcomes"' in action["instruction"]
@@ -203,12 +209,18 @@ def test_component_verifier_receives_all_batch_plate_keys(tmp_path) -> None:
     }])
 
     action = ActionBuilder(tmp_path).build_action(
-        EngineState(thread_id="verify", current_stage="component_verifier"),
+        EngineState(
+            thread_id="verify",
+            current_stage="component_verifier",
+            design_doc_digest="sha256:" + "2" * 64,
+        ),
         design_doc=design_doc,
         batch_state=batch_state,
     )
 
     assert action["plate_keys"] == ["类型系统", "工具模块"]
+    assert '"engineering_sections"' in action["subagent_prompt"]
+    assert action["subagent_prompt"].count('"section_id"') == 2
 
 
 def test_refine_action_exposes_core_owned_repair_contract(tmp_path) -> None:

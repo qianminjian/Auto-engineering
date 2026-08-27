@@ -209,6 +209,27 @@ class LocalProbeProvider:
             tool = pyproject.get("tool")
             if isinstance(tool, dict) and isinstance(tool.get("pytest"), dict):
                 commands["test"] = ("python", "-m", "pytest")
+            ruff_config = tool.get("ruff") if isinstance(tool, dict) else None
+            python_roots = tuple(dict.fromkeys(source_roots))
+            if isinstance(ruff_config, dict):
+                lint_targets = (*python_roots, *tuple(test_roots))
+                commands["lint"] = (
+                    "uv", "run", "ruff", "check",
+                    *(lint_targets or (".",)),
+                )
+            mypy_config = tool.get("mypy") if isinstance(tool, dict) else None
+            if isinstance(mypy_config, dict):
+                has_explicit_targets = any(
+                    mypy_config.get(key) for key in ("files", "modules", "packages")
+                )
+                commands["type_check"] = (
+                    "uv", "run", "mypy",
+                    *(() if has_explicit_targets else python_roots),
+                )
+            if python_roots:
+                commands["build"] = (
+                    "python", "-m", "compileall", "-q", *python_roots,
+                )
 
         if "go.mod" in entries:
             languages.append("go")
@@ -300,6 +321,20 @@ class LocalProbeProvider:
                 package_name = re.sub(r"[-.]+", "_", name.strip())
                 if (project_root / package_name).is_dir():
                     roots.append(package_name)
+        # PEP 517 的 distribution 名称不要求等于 import package；标准 root
+        # layout 以顶层含 __init__.py 的包目录为确定性证据。
+        excluded = {
+            "build", "design", "dist", "docs", "examples", "scripts",
+            "test", "tests", "tools",
+        }
+        for candidate in sorted(project_root.iterdir(), key=lambda path: path.name):
+            if (
+                candidate.is_dir()
+                and not candidate.name.startswith(".")
+                and candidate.name not in excluded
+                and (candidate / "__init__.py").is_file()
+            ):
+                roots.append(candidate.name)
         return tuple(dict.fromkeys(roots))
 
 

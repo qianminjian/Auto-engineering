@@ -5,6 +5,7 @@ from __future__ import annotations
 import shutil
 import subprocess
 from collections.abc import Callable
+from contextlib import suppress
 from pathlib import Path
 from uuid import uuid4
 
@@ -73,7 +74,7 @@ class CodexInvocationBackend:
             (str(resolved), "exec", "--help"),
             frozenset({
                 "--ephemeral", "--ignore-user-config", "--output-schema",
-                "--json", "-C", "-s",
+                "--json", "--skip-git-repo-check", "--disable", "-c", "-C", "-s",
             }),
         ):
             return HostInvocationProbe.unsupported(
@@ -87,11 +88,18 @@ class CodexInvocationBackend:
             Path(__file__).resolve().parent
             / "codex-action-context-output.schema.json"
         )
-        return (
+        command = [
             self.executable,
             "exec",
             "--ephemeral",
             "--ignore-user-config",
+            "--skip-git-repo-check",
+            "--disable",
+            "plugins",
+            "--disable",
+            "skill_search",
+            "--disable",
+            "apps",
             "-C",
             request.project_root,
             "-s",
@@ -100,7 +108,13 @@ class CodexInvocationBackend:
             "--output-schema",
             str(schema),
             "-",
-        )
+        ]
+        if "edit" in request.allowed_tools:
+            project_root_flag = command.index("-C")
+            command[project_root_flag:project_root_flag] = [
+                "-c", "sandbox_workspace_write.network_access=true",
+            ]
+        return tuple(command)
 
     def execute(self, request: ActionExecutionRequest) -> ActionExecutionReceipt:
         invocation_id = f"codex-invocation-{uuid4()}"
@@ -157,15 +171,14 @@ class CodexInvocationBackend:
                     ),
                     "output_tokens": non_negative_number(raw_usage.get("output_tokens")),
                 }
-        output_invalid = False
         if process.returncode == 0:
-            try:
+            # 业务语义拒绝属于 Assembler/Core 的同 Action 修复事务；后端只证明
+            # 宿主进程与工作文件存在，不能提前改写为 context failure。
+            with suppress(ValueError):
                 normalize_coordinator_work_output(request)
-            except ValueError:
-                output_invalid = True
         digests = existing_work_file_digests(request)
         output_missing = "coordinator_result" not in digests
-        failed = process.returncode != 0 or output_missing or output_invalid
+        failed = process.returncode != 0 or output_missing
         usage_limited = process.returncode != 0 and _is_usage_limit(
             process.stdout,
             process.stderr,
@@ -192,8 +205,6 @@ class CodexInvocationBackend:
             "error_code": (
                 "HOST_CODEX_USAGE_LIMIT"
                 if usage_limited
-                else "HOST_ACTION_OUTPUT_INVALID"
-                if output_invalid
                 else "HOST_CODEX_EXECUTION_FAILED"
                 if process.returncode != 0
                 else ("HOST_ACTION_OUTPUT_MISSING" if output_missing else None)

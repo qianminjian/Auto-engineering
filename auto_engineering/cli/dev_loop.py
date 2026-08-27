@@ -182,6 +182,13 @@ def _prepare_action_for_host(
             isinstance(value, str) and value
             for value in (result_ref, outcomes_ref, coordinator_ref)
         ):
+            raw_workers = host_execution.get("workers")
+            semantic_context_refs = [
+                str(worker["prompt_ref"])
+                for worker in raw_workers
+                if isinstance(worker, Mapping)
+                and isinstance(worker.get("prompt_ref"), str)
+            ] if isinstance(raw_workers, list) else []
             try:
                 committed = HostExecutionAssembler(root).restore_committed_result_to_file(
                     action=action,
@@ -205,6 +212,7 @@ def _prepare_action_for_host(
                     "result_ref": result_ref,
                     "outcomes_ref": outcomes_ref,
                     "coordinator_result_ref": coordinator_ref,
+                    "semantic_context_refs": semantic_context_refs,
                 }
                 mapped["instruction"] = (
                     "当前 Action 已有 Core 绑定的 Worker outcomes。"
@@ -270,6 +278,7 @@ def _prepare_action_for_host(
                         "result_ref": result_ref,
                         "outcomes_ref": outcomes_ref,
                         "coordinator_result_ref": coordinator_ref,
+                        "semantic_context_refs": semantic_context_refs,
                     }
                     mapped["instruction"] = (
                         "当前 Action 的原生 Worker outcomes 与 Coordinator payload "
@@ -344,6 +353,7 @@ def _compact_host_action(action: Mapping[str, Any], root: Path) -> dict[str, Any
         "retry_attempt",
         "retry_limit",
         "reason",
+        "result_rejection",
         "next_transition",
         "current_session_id",
         "capsule",
@@ -395,6 +405,8 @@ def _compact_host_action(action: Mapping[str, Any], root: Path) -> dict[str, Any
                     key: worker[key]
                     for key in (
                         "worker_id",
+                        "prompt_ref",
+                        "prompt_sha256",
                         "native_launch_prompt",
                         "expected_isolation_evidence",
                     )
@@ -994,6 +1006,17 @@ def run_tick_step(result_file: Path, root: Path,
             )
             click.echo(json.dumps(_prepare_action_for_host(action, root), ensure_ascii=False))
             return
+        candidate_rejected = _record_outcome_acceptance(
+            root=root,
+            submitted_result_file=result_file,
+            core_response=action,
+        )
+        if (
+            candidate_rejected
+            and orch._active_action is not None
+            and action.get("action") == "error"
+        ):
+            action = _project_result_repair_action(orch._active_action, action)
         _cleanup_completed_action_work_files(
             root=root,
             result_file=result_file,
@@ -1005,6 +1028,25 @@ def run_tick_step(result_file: Path, root: Path,
             and orch._state is not None
         ):
             store.release_project_thread(orch._state.thread_id)
+            # 终态必须在事件流中留下机器事实，供产品证据门禁核验。
+            # append_new 具备严格序列分配；幂等检查避免宿主重复提交时重复记录。
+            if not any(
+                event.event_type.value == "LoopCompleted"
+                for event in events.load_stream(orch._state.thread_id)
+            ):
+                from auto_engineering.loop.events import LoopEventType
+
+                events.append_new(
+                    thread_id=orch._state.thread_id,
+                    event_type=LoopEventType.LOOP_COMPLETED,
+                    payload={
+                        "action": "done",
+                        "verdict": action.get("verdict"),
+                        "tick": action.get("tick", orch._state.tick),
+                    },
+                    correlation_id=orch._state.thread_id,
+                    causation_id=action.get("message_id"),
+                )
 
         # T69a: Flush metrics events after tick, end requirement if terminal
         if get_default_config().metrics_enabled:
@@ -1022,6 +1064,61 @@ def run_tick_step(result_file: Path, root: Path,
     finally:
         events.close()
         store.close()
+
+
+def _record_outcome_acceptance(
+    *,
+    root: Path,
+    submitted_result_file: Path,
+    core_response: Mapping[str, Any],
+) -> bool:
+    """用 Core 响应完成宿主候选 Result 事务；无 journal 时保持兼容。"""
+
+    import json
+
+    from auto_engineering.host.outcome_journal import (
+        OutcomeJournal,
+        OutcomeJournalTransitionError,
+    )
+
+    try:
+        submitted = json.loads(submitted_result_file.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    if not isinstance(submitted, Mapping):
+        return False
+    journal = OutcomeJournal(root)
+    try:
+        return journal.complete_from_core(submitted, core_response)
+    except OutcomeJournalTransitionError as exc:
+        raise RuntimeError(f"OUTCOME_ACCEPTANCE_RECORD_FAILED:{exc}") from exc
+
+
+def _project_result_repair_action(
+    active_action: Mapping[str, Any],
+    core_response: Mapping[str, Any],
+) -> dict[str, Any]:
+    """保持 Core active Action 身份，只附加本次候选拒绝事实。"""
+
+    projected = dict(active_action)
+    projected["result_rejection"] = {
+        "error_code": core_response.get("error_code", "RESULT_REJECTED"),
+        "message": core_response.get("message", "Result 未被 Core 接受"),
+        "violations": core_response.get("violations", []),
+        "repair_required": True,
+    }
+    original_instruction = active_action.get("instruction")
+    repair_instruction = (
+        "上一次候选 Result 未被 Core 接受。保持当前 Action 身份，"
+        "根据 result_rejection 修复语义产物后重新 finalize；"
+        "不得重做已完成的 Worker 工作。"
+    )
+    projected["instruction"] = (
+        f"{original_instruction}\n\n## Result 修复\n\n{repair_instruction}"
+        if isinstance(original_instruction, str) and original_instruction
+        else repair_instruction
+    )
+    return projected
 
 
 def _process_state_reconciliation_result(
@@ -1141,9 +1238,24 @@ def run_tick_validate(result_file: Path, root: Path) -> None:
             thread_id=active_thread,
         )
         result = orch.validate_result_file(result_file)
-        click.echo(json.dumps(result, ensure_ascii=False))
         if result.get("action") == "error":
+            candidate_rejected = _record_outcome_acceptance(
+                root=root,
+                submitted_result_file=result_file,
+                core_response=result,
+            )
+            if candidate_rejected and orch._active_action is not None:
+                repair = _project_result_repair_action(
+                    orch._active_action, result
+                )
+                click.echo(json.dumps(
+                    _prepare_action_for_host(repair, root),
+                    ensure_ascii=False,
+                ))
+                return
+            click.echo(json.dumps(result, ensure_ascii=False))
             raise SystemExit(1)
+        click.echo(json.dumps(result, ensure_ascii=False))
     finally:
         events.close()
         store.close()
@@ -1269,7 +1381,30 @@ def run_tick_finalize(
                     result_path=result_path,
                 )
         except HostEvidenceValidationError as exc:
-            raise click.ClickException(str(exc)) from exc
+            from auto_engineering.host.outcome_journal import OutcomeJournal
+
+            action_message_id = mapped_action.get("message_id")
+            if not isinstance(action_message_id, str) or not action_message_id:
+                raise click.ClickException(str(exc)) from exc
+            OutcomeJournal(root).reject_assembly(
+                action_message_id,
+                coordinator_payload=coordinator_payload,
+                error_code="HOST_EVIDENCE_INVALID",
+                violations=exc.violations,
+            )
+            repair_action = _project_result_repair_action(
+                mapped_action,
+                {
+                    "error_code": "HOST_EVIDENCE_INVALID",
+                    "message": "宿主语义产物无法组装为合法 Result",
+                    "violations": list(exc.violations),
+                },
+            )
+            click.echo(json.dumps(
+                _prepare_action_for_host(repair_action, root),
+                ensure_ascii=False,
+            ))
+            return
         click.echo(json.dumps(result, ensure_ascii=False))
     finally:
         events.close()
@@ -1474,11 +1609,14 @@ def run_action_supervisor(root: Path) -> None:
 
     def compile_request(mapped_action: Mapping[str, Any]):
         compact = _compact_host_action(mapped_action, root)
+        allowed_tools = ["read", "shell", "native_subagents"]
+        if mapped_action.get("stage") in {"project_setup", "developer"}:
+            allowed_tools.append("edit")
         return compile_action_execution_request(
             mapped_action,
             compact_envelope=compact,
             project_root=root,
-            allowed_tools=("read", "edit", "shell", "native_subagents"),
+            allowed_tools=allowed_tools,
         )
 
     def submit_failure(

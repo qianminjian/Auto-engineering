@@ -156,7 +156,16 @@ class _Adapter2Mixin:
                 ]},
             }
         spawn = action.get("spawn")
-        if isinstance(spawn, Mapping) and isinstance(spawn.get("invocations"), list):
+        rejection = action.get("result_rejection")
+        is_result_repair = (
+            isinstance(rejection, Mapping)
+            and rejection.get("repair_required") is True
+        )
+        if (
+            not is_result_repair
+            and isinstance(spawn, Mapping)
+            and isinstance(spawn.get("invocations"), list)
+        ):
             from auto_engineering.host.spawn_contract import SpawnPlan
             from auto_engineering.host.worker_attestation import attestation_template
 
@@ -174,6 +183,7 @@ class _Adapter2Mixin:
                     "worker_id": invocation.worker_id,
                     "native_worker_handle": None,
                     "prompt_ref": invocation.prompt_ref,
+                    "prompt_sha256": invocation.prompt_sha256,
                     "native_launch_prompt": _native_worker_launch_prompt(
                         project_root=project_root,
                         prompt_ref=invocation.prompt_ref,

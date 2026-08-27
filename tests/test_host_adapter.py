@@ -240,6 +240,54 @@ def test_adapter_materializes_strict_worker_evidence_templates(
         assert len(launcher.encode("utf-8")) < 1024
 
 
+@pytest.mark.parametrize("platform_name", ["CODEX", "CLAUDE_CODE"])
+def test_result_repair_reuses_worker_outcomes_without_respawn(
+    tmp_path, platform_name: str,
+) -> None:
+    from auto_engineering.host import HostPlatform
+    from auto_engineering.host.adapters import adapter_for
+
+    action = {
+        "action": "architect",
+        "stage": "architect",
+        "message_id": "architect-action",
+        "thread_id": "thread-1",
+        "tick": 2,
+        "project_root": str(tmp_path),
+        "result_rejection": {"repair_required": True},
+        "spawn": {
+            "contract_version": "1.0",
+            "count": 1,
+            "effort": "xhigh",
+            "parallel": False,
+            "invocations": [{
+                "worker_id": "architect-0",
+                "role": "architect",
+                "prompt_ref": ".ae-state/effects/prompt/architect.txt",
+                "prompt_sha256": "a" * 64,
+                "requested_effort": "xhigh",
+                "isolation": "fresh_context",
+                "capabilities": {
+                    "may_drive_loop": False,
+                    "may_spawn_workers": False,
+                },
+                "receipt_path": ".ae-state/spawn-proofs/architect.json",
+            }],
+        },
+    }
+    adapter = adapter_for(HostPlatform[platform_name])
+    profile = adapter.profile(
+        detected=adapter.capabilities,
+        authorized=adapter.capabilities,
+    )
+
+    mapped = adapter.map_action(action, profile=profile).payload
+
+    assert "workers" not in mapped["host_execution"]
+    finalize = mapped["host_execution"]["operations"]["finalize"]["argv"]
+    assert mapped["host_execution"]["work_files"]["outcomes"] in finalize
+
+
 def test_codex_adapter_advertises_semantic_native_worker_tool_families() -> None:
     from auto_engineering.host import HostPlatform
     from auto_engineering.host.adapters import adapter_for
