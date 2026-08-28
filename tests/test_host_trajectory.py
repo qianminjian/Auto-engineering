@@ -129,6 +129,10 @@ def test_architect_design_conflict_uses_core_user_gate_and_approval_event(
         gate = trajectory.next_action
         assert gate["action"] == "gate"
         assert gate["gate"]["reason_code"] == "DESIGN_CHANGE_APPROVAL_REQUIRED"
+        assert (
+            gate["extensions"]["ae"]["execution_control"]["disposition"]
+            == "WAIT_USER"
+        )
         approved = core.tick_dict(_inline_result(
             gate,
             gate_resolution={

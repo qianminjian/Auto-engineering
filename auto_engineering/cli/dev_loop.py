@@ -128,6 +128,11 @@ def _cleanup_completed_action_work_files(
 def _map_action_for_host(action: dict) -> dict:
     """已识别宿主必须经过 Adapter 2.0 能力映射；未知 shell 保持核心协议。"""
     from auto_engineering.host import HostPlatform, detect_host
+    from auto_engineering.loop.execution_control import project_execution_control
+
+    # Canonical Action 保持不可变；宿主投影仍需修复完整 Gate 分类落地前生成的旧快照，
+    # 否则旧人工 Gate 会被误判为 CONTINUE 并送入执行请求编译。
+    action = project_execution_control(action)
 
     if not isinstance(action.get("message_id"), str):
         return action

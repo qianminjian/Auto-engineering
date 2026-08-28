@@ -16,11 +16,17 @@ from auto_engineering.host.runtime_driver import (
     evaluate_stop,
     host_session_id_from_environ,
 )
+from auto_engineering.loop.design_authority import DesignChangeRequest
 from auto_engineering.loop.execution_control import (
     ExecutionControl,
     ExecutionControlError,
     ExecutionDisposition,
     control_for_action,
+    project_execution_control,
+)
+from auto_engineering.loop.protocol import (
+    ProtocolValidationError,
+    action_envelope,
 )
 
 
@@ -66,6 +72,119 @@ def test_gap_review_with_core_auto_decision_continues() -> None:
     })
 
     assert control.disposition is ExecutionDisposition.CONTINUE
+
+
+@pytest.mark.parametrize("gate_id,gate_type", [
+    ("gate-1", "decision"),
+    ("gate-1", "agent_escalation"),
+    ("state_reconciliation", "decision"),
+    ("gate-1", "stage_checkpoint"),
+    ("gate-1", "manual"),
+    ("gate-1", "user"),
+])
+def test_all_user_interactive_gate_types_wait_for_user(
+    gate_id: str,
+    gate_type: str,
+) -> None:
+    """任何真实用户 Gate 都不能被宿主误当作可自动执行 Action。"""
+    action = {"action": "gate", "gate": {"id": gate_id, "type": gate_type}}
+
+    control = control_for_action(action)
+
+    assert control.disposition is ExecutionDisposition.WAIT_USER
+    assert control.reason_code
+
+
+def test_design_change_gate_envelope_waits_before_host_compilation() -> None:
+    request = DesignChangeRequest.from_dict({
+        "source": "research",
+        "source_ref": "gap-001",
+        "requested_authority": "binding",
+        "change_summary": "补充一项需要用户批准的设计约束",
+        "affected_design_refs": ["§10.1"],
+    })
+
+    action = action_envelope(
+        {
+            "action": "gate",
+            "thread_id": "thread-1",
+            "tick": 1,
+            "stage": "architect",
+            "gate": request.to_gate(),
+        }
+    )
+
+    control = action["extensions"]["ae"]["execution_control"]
+    assert control["disposition"] == "WAIT_USER"
+    assert control["reason_code"] == "DESIGN_CHANGE_APPROVAL_REQUIRED"
+
+
+def test_legacy_gate_snapshot_is_safely_projected_as_wait_user() -> None:
+    legacy = {
+        "action": "gate",
+        "gate": {
+            "id": "design_change:change-1",
+            "type": "decision",
+            "reason_code": "DESIGN_CHANGE_APPROVAL_REQUIRED",
+        },
+        "extensions": {
+            "ae": {
+                "execution_control": {
+                    "schema_version": "1.0",
+                    "disposition": "CONTINUE",
+                    "continuation_required": True,
+                    "yield_allowed": False,
+                    "allowed_stop_reasons": [],
+                }
+            }
+        },
+    }
+
+    projected = project_execution_control(legacy)
+
+    assert (
+        projected["extensions"]["ae"]["execution_control"]["disposition"]
+        == "WAIT_USER"
+    )
+    assert projected["extensions"]["ae"]["execution_control"]["reason_code"] == (
+        "DESIGN_CHANGE_APPROVAL_REQUIRED"
+    )
+    # Safety projection must not mutate the persisted legacy object.
+    assert legacy["extensions"]["ae"]["execution_control"]["disposition"] == (
+        "CONTINUE"
+    )
+
+
+def test_new_action_rejects_execution_control_semantic_drift() -> None:
+    with pytest.raises(ProtocolValidationError, match="execution_control"):
+        action_envelope({
+            "action": "gate",
+            "thread_id": "thread-1",
+            "tick": 1,
+            "stage": "architect",
+            "gate": {"id": "gate-1", "type": "decision"},
+            "extensions": {
+                "ae": {
+                    "execution_control": {
+                        "schema_version": "1.0",
+                        "disposition": "CONTINUE",
+                        "continuation_required": True,
+                        "yield_allowed": False,
+                        "allowed_stop_reasons": [],
+                    }
+                }
+            },
+        })
+
+
+def test_unknown_gate_type_fails_closed_instead_of_continuing() -> None:
+    control = control_for_action({
+        "action": "gate",
+        "gate": {"id": "future-gate", "type": "future_interaction"},
+    })
+
+    assert control.disposition is ExecutionDisposition.ERROR
+    assert control.reason_code == "UNKNOWN_GATE_TYPE"
 
 
 def test_environment_failure_waits_instead_of_reentering_code_repair() -> None:

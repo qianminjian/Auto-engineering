@@ -1,5 +1,5 @@
 # Auto-Engineering 当前实施跟踪表
-> 更新：2026-08-27｜唯一产品任务：P0-E2E 单命令运行到 TERMINAL｜历史 Phase/T 项为支撑证据，不能替代产品完成｜状态：`☐` 未开始／`◐` 进行中／`✅` 已验证
+> 更新：2026-08-28｜唯一产品任务：P0-E2E 单命令运行到 TERMINAL｜历史 Phase/T 项为支撑证据，不能替代产品完成｜状态：`☐` 未开始／`◐` 进行中／`✅` 已验证
 
 ## 唯一 P0：端到端产品闭环
 
@@ -29,7 +29,6 @@
 - 只有 `P0-E2E` 的全部退出证据齐备时才标记完成并允许发布。
 
 ## 历史能力证据
-
 Phase 64–66 的真实运行止血、会话解耦、上下文预算、ArtifactRef、Usage Ledger 与恢复证据已归档至 `design/HISTORY.md` 和 Git；当前表只保留仍影响 `P0-E2E` 发布判断的任务。
 ## Phase 67：双宿主真实项目发布门禁
 | 优先级 | ID | 任务 | EARS 验收 | 状态 |
@@ -158,3 +157,4 @@ Phase 64–66 的真实运行止血、会话解耦、上下文预算、ArtifactR
 | P0 | T474-T553 | 强类型宿主边界、Critic/Result 修复闭环与 Setup 实证续作 | While Critic P0/P1 回源、Result 被 Assembler/Core 拒绝或 Project Setup 声明工程能力, when Runtime 继续驱动, the product shall 保持同一业务 Action、启用全新宿主上下文并自动修复，不把内部失败交还用户 | ◐ Section 双身份与完整 Result 修复事务已实现；2661 passed/1 skipped、Ruff/mypy/sync 通过；全阶段黑盒终态及新 Build 真实 terminal 待复验，继续阻断发布 |
 | P0 | T550-T553 | Gap Scan 可证明零结论与可见确认分流 | While 设计驱动 Loop 执行或恢复 Gap Scan, when Result 声称零缺口、产物丢失或发现设计决策, the product shall 校验逐章节覆盖与设计摘要绑定、始终展示有界扫描摘要、仅对真实设计决策进入 WAIT_USER，并禁止用空结果替代丢失产物 | ◐ RED/GREEN、2643/1、coverage 90%、Ruff/mypy/sync 与双宿主 hermetic archive 通过；真实 L4 前台摘要与确认分流待复验 |
 | P0 | T554-T557 | 设计批准到下一 Agent 的确定性闭环 | While Research advisory、静态 ledger 与用户批准并存, when Core 产生同 Tick 下一 Architect Action 并由全新 Agent 消费, the product shall 从单一有效权威投影传递 binding 批准、拒绝相同来源范围的语义等价重复申请并生成计划进入 Developer | ◐ 同 Tick 投影、Prompt 传递、新旧事件语义改写收敛、Research obligation、进程恢复后 fresh Architect 首次计划进入 Developer 已验证；2678 passed/1 skipped、coverage 90%、Ruff/mypy/sync 及 Codex/Claude 隔离 archive smoke 通过；待新 Build 真实双宿主 L4 |
+| P0 | T558 | 全类型 Gate → ExecutionControl 统一映射 | While Core 生成任一需要人工决策的 Gate（设计变更、状态协调、Agent escalation 或阶段检查点）, when Action 编译为宿主执行合同, the system shall 将其确定性映射为 `WAIT_USER`，包含稳定 `reason_code`，且 Supervisor 不得尝试执行该 Gate | ◐ 根因已修复；2688 passed/1 skipped、coverage 90%、Ruff/mypy/sync 通过，目标轨迹与旧快照兼容回归已覆盖；待新 Build 双宿主 L3/L4 验证 |

@@ -122,7 +122,13 @@ def action_envelope(
     if raw_control is None:
         ae_extension["execution_control"] = control_for_action(payload).to_dict()
     elif isinstance(raw_control, Mapping):
-        ExecutionControl.from_dict(raw_control)
+        parsed_control = ExecutionControl.from_dict(raw_control)
+        expected_control = control_for_action(payload)
+        if parsed_control != expected_control:
+            raise ProtocolValidationError(
+                ProtocolErrorCode.INVALID_ENVELOPE,
+                "Action execution_control 与 Action 语义不一致",
+            )
     else:
         raise ProtocolValidationError(
             ProtocolErrorCode.INVALID_ENVELOPE,
