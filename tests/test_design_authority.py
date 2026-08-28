@@ -146,6 +146,53 @@ def test_design_gate_approval_records_source_bound_event(tmp_path) -> None:
     assert event.event_type is LoopEventType.GATE_RESOLVED
     assert event.payload["source_ref"] == "gap-1"
     assert event.payload["proposed_change_sha256"] == request.proposed_change_sha256
+    approved_changes = action["design_decision_ledger"]["approved_changes"]
+    assert approved_changes == [{
+        "approval_id": "approval-result-1",
+        "authority_scope_key": request.authority_scope_key,
+        "decision_id": request.request_id,
+        "proposed_change_sha256": request.proposed_change_sha256,
+        "source_ref": "gap-1",
+        "status": "approved",
+    }]
+
+
+def test_approved_research_scope_does_not_reopen_gate_after_rewording(
+    tmp_path,
+) -> None:
+    original = DesignChangeRequest.from_dict({
+        "source": "research",
+        "source_ref": "gap-1",
+        "requested_authority": "binding",
+        "change_summary": "由纯前端改为 BFF",
+        "affected_design_refs": ["§4.2", "§4.1"],
+    })
+    orchestrator = _orchestrator_at_design_gate(tmp_path, original)
+    approved = orchestrator._tick_process_result({
+        "gate_resolution": {
+            "gate_id": f"design_change:{original.request_id}",
+            "resolution": "批准变更",
+        }
+    })
+    orchestrator._active_action = approved
+
+    reworded = {
+        "source": "research",
+        "source_ref": "gap-1",
+        "requested_authority": "binding",
+        "change_summary": "建议增加同源服务层来完成该架构",
+        "affected_design_refs": ["§4.1", "§4.2"],
+    }
+    reworded_request = DesignChangeRequest.from_dict(reworded)
+
+    assert reworded_request.request_id != original.request_id
+    assert reworded_request.authority_scope_key == original.authority_scope_key
+    action = orchestrator._tick_process_result({
+        "design_change_requests": [reworded],
+    })
+    assert action["action"] == "architect"
+    assert "gate" not in action
+    assert "已经批准" in action["feedback"]
 
 
 def test_design_gate_preserve_does_not_create_approval(tmp_path) -> None:

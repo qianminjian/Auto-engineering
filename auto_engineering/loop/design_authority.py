@@ -25,6 +25,7 @@ class DesignChangeRequest:
     requested_authority: str
     change_summary: str
     affected_design_refs: tuple[str, ...]
+    authority_scope_key: str
     request_id: str
     proposed_change_sha256: str
 
@@ -60,12 +61,23 @@ class DesignChangeRequest:
             separators=(",", ":"),
         ).encode("utf-8")
         digest = hashlib.sha256(canonical).hexdigest()
+        authority_scope = json.dumps(
+            {
+                "source": source,
+                "source_ref": source_ref,
+                "affected_design_refs": sorted(set(refs)),
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
         return cls(
             source=source,
             source_ref=source_ref,
             requested_authority=requested,
             change_summary=summary,
             affected_design_refs=tuple(refs),
+            authority_scope_key=hashlib.sha256(authority_scope).hexdigest(),
             request_id=f"change-{digest[:16]}",
             proposed_change_sha256=digest,
         )
@@ -90,6 +102,7 @@ class DesignChangeRequest:
                 "requested_authority": self.requested_authority,
                 "change_summary": self.change_summary,
                 "affected_design_refs": list(self.affected_design_refs),
+                "authority_scope_key": self.authority_scope_key,
                 "proposed_change_sha256": self.proposed_change_sha256,
             },
         }

@@ -13,7 +13,7 @@ from collections.abc import Callable
 from copy import copy, deepcopy
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from auto_engineering.config.constants import _SPAWN_CONFIG
 from auto_engineering.config.feature_flags import feature_status_for_action
@@ -161,12 +161,16 @@ class ActionBuilder:
         self._effect_sink = effect_sink
         self._effect_intent_sink = effect_intent_sink
         self._bound_context: ActionBuildContext | None = None
+        self._design_authority_projection: dict[str, Any] = (
+            DesignDecisionLedger(()).effective_projection(())
+        )
 
     # ── public API ──
     def build_action(
         self,
         state: EngineState,
         *,
+        design_authority_projection: dict[str, Any] | None = None,
         design_doc: DesignDoc | None = None,
         batch_state: BatchState | None = None,
         plan: Plan | None = None,
@@ -205,6 +209,11 @@ class ActionBuilder:
         _pi_outbound = pii_outbound if pii_outbound is not None else self._pii_outbound
         invocation = copy(self)
         invocation._bound_context = context
+        invocation._design_authority_projection = (
+            deepcopy(design_authority_projection)
+            if design_authority_projection is not None
+            else DesignDecisionLedger(()).effective_projection(())
+        )
         return invocation._build_with_context(
             feedback=feedback,
             pre_gate=pre_gate,
@@ -601,7 +610,7 @@ class ActionBuilder:
         """
         result: dict = {**base, "action": action}
         authority = DesignAuthorityPolicy.default().to_dict()
-        ledger = DesignDecisionLedger.from_project(self.project_root).to_dict()
+        ledger = deepcopy(self._design_authority_projection)
         result["design_authority"] = authority
         result["design_decision_ledger"] = ledger
         result["execution_identity"] = ExecutionIdentity.coordinator(

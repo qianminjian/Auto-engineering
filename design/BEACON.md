@@ -1,5 +1,5 @@
 # Auto-Engineering BEACON
-> 创建：2026-06-24｜更新：2026-08-25｜阶段：P0-E2E 端到端产品闭环
+> 创建：2026-06-24｜更新：2026-08-28｜阶段：P0-E2E 端到端产品闭环
 > 决策状态翻转（✅↔❌）或架构降级必须先获用户批准。
 
 ## 目标与成功标准
@@ -57,12 +57,11 @@ Gate/Guardrail、五层验证、审计、v5.6 兼容迁移和双宿主验收。
 | D40-D43 | ProjectProfile 以真实 Gate 证明能力且可修复失败自动续作；Canonical Action 与 compact 宿主视图分离；五类 refine 信号无损归一并强制修复映射 | ✅ |
 | D44 | Gap Scan 始终输出有界可见摘要；零缺口必须逐章节可证明并自动续作，真实设计决策才进入用户确认，丢失产物不得降级为空结果 | ✅ |
 | D45 | 后续唯一 P0 为单命令运行到 `TERMINAL`；局部能力只作支撑证据，L4 未通过不得关闭产品任务 | ✅ |
+| D46 | 运行态设计权威由 Core 统一投影；当前 Tick 的批准必须对同 Tick 下一 Action 可见，ActionBuilder 不得独立重读静态 ledger | ✅ |
 
 ## 当前状态
-
-- `P0-E2E` 是唯一产品交付任务；既有 Phase/T 项仅作为能力与回归证据。
-- v5.8.0-rc.5 的 L1/L2、覆盖率和 archive 安装不能替代真实 L4。
-- Section 双身份、公开执行包离线终态已补齐；最新 Build `5.8.0-rc.5+sha256.3927b1f572df8ece` 已重新安装到 Codex/Claude，覆盖回放一致性修复后回归为 `2676 passed, 1 skipped`；Codex L4 已通过，Claude Code L4 仍待真实宿主复验。
+- `P0-E2E` 是唯一产品交付任务；既有 Phase/T、L1/L2、覆盖率和 archive 安装仅作支撑证据，不能替代 L4。
+- 最新 Build `5.8.0-rc.5+sha256.3927b1f572df8ece` 的历史自动门禁不再足以证明可发布；2026-08-28 Claude 真跑证伪了设计批准向下一 Agent 的传递闭环，当前进入 T554-T557 修复，双宿主 L4 均需用新 Build 重新验收。
 - 后续冻结无关治理和点状补丁，按设计模型、连续 Runtime、Agent 边界、真实验收四个工作面纵向闭环。
 ## 最近演进
 | 日期 | 变更 |
@@ -71,11 +70,11 @@ Gate/Guardrail、五层验证、审计、v5.6 兼容迁移和双宿主验收。
 | 2026-08-25 | 真跑证实修复 Action 重启 Worker 会形成 outcome conflict；改为只修 Coordinator 并保留 Worker 完成事实 |
 | 2026-08-25 | Gap 执行包改用可读 section_ref；Assembler 拒绝纳入同 Action 自动修复事务，2661/1 回归通过 |
 | 2026-08-25 | D45 获批：实施战略翻转为唯一 `P0-E2E`，L4 终态成为产品完成定义 |
-| 2026-08-21 | T512-T518 关闭重复 spawn、错误恢复、计划校验终止、Worker 超时伪成功与无限重启链路 |
 | 2026-08-23 | T533 获批修订 D13：工程线程连续，模型上下文按 Action 隔离且由 Supervisor 自动续作 |
 | 2026-08-27 | 修复 component_verifier 成功路径遗漏 coverage_map 领域事件；真实 Claude 不再触发 STATE_PROJECTION_MISMATCH |
+| 2026-08-28 | 真跑证伪 T465 局部验收；D46 统一有效设计权威投影，收口 Research→Approval→Fresh Architect→Developer 因果轨迹 |
 ## 待解决问题
-- 完成 `P0-E2E`：同一 Build 在 Codex/Claude 从单次设计命令连续运行到等价 `TERMINAL`；当前剩余 Claude Code 真实 L4。
+- 完成 T554-T557 后继续 `P0-E2E`：以新隔离 Architect 进入 Developer 的轨迹证明批准闭环，再用同一新 Build 在 Codex/Claude 运行到等价 `TERMINAL`。
 
 ## 引用文件
-`design/v5.8-End-to-End-Product-Closure-Design.md` · `design/v5.8-Host-Runtime-Convergence-Design.md` · `design/v5.8-Session-Decoupling-Design.md` · `design/v5.8-Session-Decoupling-PLAN.md` · `design/incidents/2026-07-29-claude-146-tick-long-run.md` · `design/IMPLEMENTATION-TRACKER.md` · `design/HISTORY.md`
+`design/v5.8-Effective-Design-Authority-Projection.md` · `design/v5.8-Session-Decoupling-Design.md` · `design/v5.8-Session-Decoupling-PLAN.md` · `design/incidents/2026-07-29-claude-146-tick-long-run.md` · `design/IMPLEMENTATION-TRACKER.md` · `design/HISTORY.md`

@@ -7,6 +7,7 @@ import json
 
 import pytest
 
+from auto_engineering.loop.design_authority import DesignChangeRequest
 from auto_engineering.loop.design_decision_ledger import (
     DecisionScope,
     DesignDecision,
@@ -96,6 +97,55 @@ def test_approval_projection_only_accepts_core_gate_event() -> None:
             "proposed_change_sha256": "a" * 64,
         }
     }
+
+
+def test_legacy_approval_recovers_scope_key_from_issued_gate() -> None:
+    change = {
+        "source": "research",
+        "source_ref": "gap-legacy",
+        "requested_authority": "binding",
+        "change_summary": "采用服务层",
+        "affected_design_refs": ["§4.2", "§4.1"],
+    }
+    request = DesignChangeRequest.from_dict(change)
+    change = {
+        **change,
+        "request_id": request.request_id,
+        "proposed_change_sha256": request.proposed_change_sha256,
+    }
+    issued = LoopEvent.create(
+        thread_id="thread-1", sequence=1,
+        event_type=LoopEventType.ACTION_ISSUED,
+        correlation_id="thread-1", causation_id="architect-result",
+        payload={"action": {
+            "action": "gate",
+            "gate": {
+                "id": f"design_change:{request.request_id}",
+                "change": change,
+            },
+        }},
+    )
+    approved = LoopEvent.create(
+        thread_id="thread-1", sequence=2,
+        event_type=LoopEventType.GATE_RESOLVED,
+        correlation_id="thread-1", causation_id="approval-result",
+        payload={
+            "gate_id": f"design_change:{request.request_id}",
+            "resolution": "批准变更",
+            "approval_id": "approval-legacy",
+            "decision_id": request.request_id,
+            "status": "approved",
+            "source_ref": "gap-legacy",
+            "proposed_change_sha256": request.proposed_change_sha256,
+        },
+    )
+    expected_scope = request.authority_scope_key
+
+    projected = DesignDecisionLedger.project_approved_changes([
+        issued, approved,
+    ])
+
+    assert projected["approval-legacy"]["authority_scope_key"] == expected_scope
 
 
 def test_advisory_change_also_requires_approval() -> None:

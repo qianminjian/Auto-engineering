@@ -11,6 +11,7 @@ from auto_engineering.engine.state import EngineState
 from auto_engineering.host import HostPlatform
 from auto_engineering.host.capabilities import HostCapabilities, HostCapabilityError
 from auto_engineering.loop.action_builder import ActionBuilder
+from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
 from auto_engineering.loop.design_decision_ledger import DesignDecisionLedger
 from auto_engineering.loop.event_store import SQLiteEventStore
 from auto_engineering.loop.tick_orchestrator import TickOrchestrator
@@ -35,13 +36,18 @@ def _inline_result(action: dict, **payload: object) -> dict:
     }
 
 
-def _core(root: Path, events: SQLiteEventStore) -> tuple[TickOrchestrator, dict]:
+def _core(
+    root: Path,
+    events: SQLiteEventStore,
+    checkpoint_store: SQLiteCheckpointStore | None = None,
+) -> tuple[TickOrchestrator, dict]:
     (root / "pyproject.toml").write_text("[project]\nname='trajectory'\n")
     (root / "trajectory").mkdir()
     guardrail = MagicMock()
     guardrail.check.return_value = MagicMock(action="pass")
     core = TickOrchestrator(
         root,
+        checkpoint_store=checkpoint_store,
         event_store=events,
         guardrail=guardrail,
         gate_runner=lambda names, project: {
@@ -98,18 +104,26 @@ def test_trajectory_binds_invocation_receipt_result_and_next_action(
 def test_architect_design_conflict_uses_core_user_gate_and_approval_event(
     tmp_path: Path,
 ) -> None:
+    change_request = {
+        "source": "research",
+        "source_ref": "gap-research-1",
+        "requested_authority": "binding",
+        "change_summary": "将原设计改为新架构",
+        "affected_design_refs": ["§4.1"],
+    }
+    checkpoints = SQLiteCheckpointStore(tmp_path / "checkpoints.db")
     with SQLiteEventStore(tmp_path / "events.db") as events:
-        core, action = _core(tmp_path, events)
+        core, action = _core(tmp_path, events, checkpoints)
+        core._state.research_archive = {
+            "gap-research-1": {
+                "recommended_design": "将原设计改为新架构",
+                "evidence": ["研究证据"],
+            },
+        }
         trajectory = HostTrajectoryRunner(
             tmp_path, HostPlatform.CODEX, core=core, event_store=events
         ).run(action, workers=[lambda invocation: {
-            "design_change_requests": [{
-                "source": "agent_assumption",
-                "source_ref": "architect-assumption-1",
-                "requested_authority": "binding",
-                "change_summary": "将原设计改为新架构",
-                "affected_design_refs": ["§4.1"],
-            }],
+            "design_change_requests": [change_request],
         }])
 
         gate = trajectory.next_action
@@ -124,12 +138,66 @@ def test_architect_design_conflict_uses_core_user_gate_and_approval_event(
         ))
 
         assert approved["action"] == "architect"
+        assert len(approved["design_decision_ledger"]["approved_changes"]) == 1
+        assert change_request["source_ref"] in approved["subagent_prompt"]
+        assert "approved_changes" in approved["subagent_prompt"]
         projected = DesignDecisionLedger.project_approved_changes(
             events.load_stream(action["thread_id"])
         )
         assert len(projected) == 1
         approval = next(iter(projected.values()))
-        assert approval["source_ref"] == "architect-assumption-1"
+        assert approval["source_ref"] == "gap-research-1"
+
+        restored_guardrail = MagicMock()
+        restored_guardrail.check.return_value = MagicMock(action="pass")
+        core = TickOrchestrator.restore(
+            tmp_path,
+            checkpoints,
+            event_store=events,
+            thread_id=action["thread_id"],
+            guardrail=restored_guardrail,
+            gate_runner=lambda names, project: {
+                name: MagicMock(passed=True, message="ok") for name in names
+            },
+        )
+        approved = events.load_action_snapshot(action["thread_id"])
+        assert approved is not None
+        assert len(approved["design_decision_ledger"]["approved_changes"]) == 1
+
+        planned = HostTrajectoryRunner(
+            tmp_path, HostPlatform.CODEX, core=core, event_store=events
+        ).run(approved, workers=[lambda invocation: {
+            "plan": (
+                "按已批准的新架构完成实现、测试、审查、类型检查、"
+                "契约验证和最终构建验收，并保留设计决定、实现任务、"
+                "测试证据和最终交付之间的完整追溯关系。"
+            ),
+            "batch_plan": [{
+                "batch_id": "B1",
+                "component": "core",
+                "tasks": [{
+                    "id": "B1-T1",
+                    "description": "实现已批准的新架构",
+                    "file_targets": ["trajectory/core.py"],
+                }, {
+                    "id": "B1-T2",
+                    "description": "验证已批准的新架构",
+                    "kind": "test",
+                    "file_targets": ["tests/test_core.py"],
+                }],
+            }],
+            "file_list": ["trajectory/core.py", "tests/test_core.py"],
+            "contracts": {},
+            "obligations": [{
+                "id": "O-gap-research-1",
+                "source_ref": "gap-research-1",
+                "implementation_targets": ["B1-T1"],
+                "verification_targets": ["B1-T2"],
+                "contract_refs": [],
+            }],
+        }]).next_action
+        assert planned["action"] == "developer", planned.get("feedback")
+    checkpoints.close()
 
 
 def test_three_worker_plate_audit_uses_templates_through_core_tick(

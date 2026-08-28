@@ -1235,6 +1235,20 @@ class TickOrchestrator:
                 if len(change_requests) != 1 or not isinstance(change_requests[0], dict):
                     raise DesignAuthorityError("DESIGN_CHANGE_REQUEST_COUNT_INVALID")
                 request = DesignChangeRequest.from_dict(change_requests[0])
+                if any(
+                    (
+                        item.get("decision_id") == request.request_id
+                        and item.get("proposed_change_sha256")
+                        == request.proposed_change_sha256
+                    )
+                    or item.get("authority_scope_key")
+                    == request.authority_scope_key
+                    for item in self._approved_design_changes().values()
+                ):
+                    return self.build_action(feedback=(
+                        f"设计变更 {request.request_id} 已经批准；"
+                        "禁止重复申请，请直接生成覆盖该决定的可执行计划与义务"
+                    ))
                 if (
                     request.source == "research"
                     and request.source_ref not in self._state.research_archive
@@ -1316,6 +1330,9 @@ class TickOrchestrator:
                         "source_ref": change.get("source_ref"),
                         "proposed_change_sha256": change.get(
                             "proposed_change_sha256"
+                        ),
+                        "authority_scope_key": change.get(
+                            "authority_scope_key"
                         ),
                     },
                 )
@@ -1562,6 +1579,7 @@ class TickOrchestrator:
                 thread_id=self._state.thread_id, sequence=0,
                 event_type=event_type, payload=payload,
                 correlation_id=self._state.thread_id,
+                causation_id=self._current_result_message_id,
             )
         )
     def _validate_result_dict(self, result: dict) -> dict | ErrorResponse:
@@ -2441,14 +2459,32 @@ class TickOrchestrator:
         """Read-only access to the ActionBuilder delegate."""
         return self._action_builder
 
+    def _design_authority_events(self) -> list[LoopEvent]:
+        """合并已提交事实与当前 Tick candidate 事实。"""
+
+        events: list[LoopEvent] = []
+        if self._event_store is not None:
+            events.extend(self._event_store.load_stream(self._state.thread_id))
+        events.extend(self._pending_domain_events)
+        return events
+
+    def _approved_design_changes(self) -> dict[str, dict[str, Any]]:
+        return DesignDecisionLedger.project_approved_changes(
+            self._design_authority_events()
+        )
+
     def build_action(self, feedback: str | None = None, pre_gate: dict | None = None) -> dict:
         """Build the action dict for the current stage — delegates to ActionBuilder."""
         if self._event_store is None:
             self._pending_effect_receipts.clear()
             self._pending_effect_intents.clear()
         self._state.action_timestamp = time.time()
+        ledger = DesignDecisionLedger.from_project(self.project_root)
         action = self.action_builder.build_action(
             self._state,
+            design_authority_projection=ledger.effective_projection(
+                self._design_authority_events()
+            ),
             design_doc=self._design_doc,
             batch_state=self._batch_state,
             plan=self._plan,

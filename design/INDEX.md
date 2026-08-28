@@ -1,6 +1,6 @@
 # design/ 资产索引
 
-> 更新：2026-08-16｜当前实现：v5.8.0-rc.5；Phase 83 Host Runtime 收敛中，真实产品门禁未通过
+> 更新：2026-08-28｜当前实现：v5.8.0-rc.5；Effective Design Authority 收敛中，真实产品门禁未通过
 
 ## 当前权威资产
 
@@ -14,6 +14,7 @@
 | `v5.7-Prompt-Contract-PLAN.md` | Phase 60 T280-T287 TDD 实施计划 |
 | `v5.8-Protocol-Kernel-Convergence-Design.md` | Phase 80 当前权威收敛设计；统一 Host/Core/Event/Prompt/Session 边界 |
 | `v5.8-Protocol-Kernel-Convergence-PLAN.md` | Phase 80 T403-T412 分波次 TDD 实施计划 |
+| `v5.8-Effective-Design-Authority-Projection.md` | T554-T557 批准事务、单一权威投影、收敛不变量与四层验收 |
 | `v5.8-State-Reconciliation-Design.md` | Phase 81 显式启动意图、状态冲突二选一、任务续作与验证证据设计 |
 | `v5.8-State-Reconciliation-PLAN.md` | Phase 81 T423-T430 逐步 TDD 实施计划 |
 | `v5.8-Gap-Review-Wizard-Design.md` | T432 单项 Gap 向导、计划路由、事件恢复与新项目证据设计 |

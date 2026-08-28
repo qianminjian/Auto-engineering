@@ -6,12 +6,16 @@ import hashlib
 import json
 import os
 import tempfile
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
+from auto_engineering.loop.design_authority import (
+    DesignAuthorityError,
+    DesignChangeRequest,
+)
 from auto_engineering.loop.events import LoopEvent, LoopEventType
 
 
@@ -205,8 +209,30 @@ class DesignDecisionLedger:
     ) -> dict[str, dict[str, Any]]:
         """只从 Core EventStore 中已解决的设计变更 Gate 投影批准事实。"""
 
+        event_list = list(events)
+        legacy_scope_by_gate: dict[str, str] = {}
+        for event in event_list:
+            if event.event_type is not LoopEventType.ACTION_ISSUED:
+                continue
+            action = event.payload.get("action")
+            gate = action.get("gate") if isinstance(action, Mapping) else None
+            change = gate.get("change") if isinstance(gate, Mapping) else None
+            gate_id = gate.get("id") if isinstance(gate, Mapping) else None
+            if not isinstance(gate_id, str) or not isinstance(change, Mapping):
+                continue
+            raw_change = dict(change)
+            frozen_refs = raw_change.get("affected_design_refs")
+            if isinstance(frozen_refs, tuple):
+                raw_change["affected_design_refs"] = list(frozen_refs)
+            try:
+                request = DesignChangeRequest.from_dict(raw_change)
+            except DesignAuthorityError:
+                continue
+            if gate_id == f"design_change:{request.request_id}":
+                legacy_scope_by_gate[gate_id] = request.authority_scope_key
+
         projected: dict[str, dict[str, Any]] = {}
-        for event in events:
+        for event in event_list:
             payload = event.payload
             if (
                 event.event_type is not LoopEventType.GATE_RESOLVED
@@ -219,6 +245,14 @@ class DesignDecisionLedger:
             approval_id = payload.get("approval_id")
             source_ref = payload.get("source_ref")
             proposed_change_sha256 = payload.get("proposed_change_sha256")
+            authority_scope_key = payload.get("authority_scope_key")
+            if not (
+                isinstance(authority_scope_key, str)
+                and len(authority_scope_key) == 64
+            ):
+                authority_scope_key = legacy_scope_by_gate.get(
+                    str(payload.get("gate_id"))
+                )
             if (
                 not isinstance(decision_id, str)
                 or not isinstance(approval_id, str)
@@ -236,6 +270,12 @@ class DesignDecisionLedger:
                 "causation_id": event.causation_id,
                 "source_ref": source_ref,
                 "proposed_change_sha256": proposed_change_sha256,
+                **(
+                    {"authority_scope_key": authority_scope_key}
+                    if isinstance(authority_scope_key, str)
+                    and len(authority_scope_key) == 64
+                    else {}
+                ),
             }
         return projected
 
@@ -318,6 +358,31 @@ class DesignDecisionLedger:
             "source_ref": self.source_ref,
             "decisions": [item.to_dict() for item in self.decisions],
         }
+
+    def effective_projection(
+        self,
+        events: Iterable[LoopEvent],
+    ) -> dict[str, Any]:
+        """合并静态设计资产与运行态批准，供下一 Action 唯一消费。"""
+
+        projection = self.to_dict()
+        approved = self.project_approved_changes(events)
+        projection["approved_changes"] = [
+            {
+                "approval_id": approval_id,
+                "decision_id": item["decision_id"],
+                "proposed_change_sha256": item["proposed_change_sha256"],
+                "source_ref": item["source_ref"],
+                "status": item["status"],
+                **(
+                    {"authority_scope_key": item["authority_scope_key"]}
+                    if "authority_scope_key" in item
+                    else {}
+                ),
+            }
+            for approval_id, item in sorted(approved.items())
+        ]
+        return projection
 
 
 __all__ = [
