@@ -193,6 +193,32 @@ class ClaudeInvocationBackend:
                     "output_tokens": None,
                 },
             })
+        except OSError as exc:
+            write_invocation_diagnostic(
+                request,
+                backend="claude",
+                context_id=invocation_id,
+                status="launcher_error",
+                exit_code=None,
+                stderr=str(exc),
+            )
+            return ActionExecutionReceipt.from_dict({
+                "schema_version": "1.0",
+                "thread_id": request.thread_id,
+                "action_message_id": request.action_message_id,
+                "build_id": request.build_id,
+                "host_context_id": invocation_id,
+                "backend": "claude",
+                "status": "failed",
+                "exit_code": None,
+                "error_code": "HOST_CLAUDE_EXECUTION_FAILED",
+                "work_file_digests": existing_work_file_digests(request),
+                "usage": {
+                    "input_tokens": None,
+                    "cached_input_tokens": None,
+                    "output_tokens": None,
+                },
+            })
         finally:
             self._active_context_id = None
         context_id = invocation_id

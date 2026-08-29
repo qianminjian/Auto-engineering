@@ -751,11 +751,7 @@ class TickOrchestrator:
             ).to_dict()
         except ProtocolValidationError as exc:
             return ErrorResponse(exc.code, str(exc)).to_dict()
-        if (
-            envelope.thread_id != self._state.thread_id
-            or self._active_action is None
-            or envelope.causation_id != self._active_action.get("message_id")
-        ):
+        if not self._result_binds_active_action(envelope):
             return ErrorResponse(
                 ProtocolErrorCode.ACTION_NOT_ACTIVE,
                 "Result 指向的 Action 不是当前 active action",
@@ -833,11 +829,7 @@ class TickOrchestrator:
                     "同一 causation_id 已提交不同 Result payload",
                     causation_id=result_causation,
                 )
-            if (
-                envelope.thread_id != self._state.thread_id
-                or self._active_action is None
-                or result_causation != self._active_action.get("message_id")
-            ):
+            if not self._result_binds_active_action(envelope):
                 self._record_tick_latency(t_start, tick_no)
                 return self._protocol_error(
                     ProtocolErrorCode.ACTION_NOT_ACTIVE,
@@ -1589,6 +1581,21 @@ class TickOrchestrator:
                 causation_id=self._current_result_message_id,
             )
         )
+
+    def _result_binds_active_action(self, envelope: Any) -> bool:
+        """检查 Result 是否绑定当前 Action 的全部协议身份。"""
+        active = self._active_action
+        if not isinstance(active, Mapping):
+            return False
+        return (
+            envelope.thread_id == self._state.thread_id
+            and envelope.causation_id == active.get("message_id")
+            and envelope.correlation_id == active.get(
+                "correlation_id", self._state.thread_id,
+            )
+            and envelope.tick == active.get("tick", self._state.tick)
+        )
+
     def _validate_result_dict(self, result: dict) -> dict | ErrorResponse:
         """验证 result dict (不读文件, Driver B standalone 用)."""
         if not isinstance(result, dict):

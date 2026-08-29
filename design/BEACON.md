@@ -73,8 +73,8 @@ Gate/Guardrail、五层验证、审计、v5.6 兼容迁移和双宿主验收。
 | 2026-08-28 | 真跑证伪 T465 局部验收；D46 统一有效设计权威投影，收口 Research→Approval→Fresh Architect→Developer 因果轨迹 |
 | 2026-08-28 | 真跑发现人工 Gate 被错误映射为 CONTINUE；T558 收敛 Gate→ExecutionControl 单一判定并兼容旧快照 |
 | 2026-08-28 | 真跑发现 rejected journal 未恢复 Worker 事实，导致重复回执冲突和无终态停滞；T559 收敛 repair-only 恢复与冲突终止 |
-| 2026-08-29 | 真跑补齐终态验收边界、绑定 Gap 审批约束与浏览器 E2E 能力预检；T560-T562 |
+| 2026-08-29 | 全场景审计补齐跨平台路径、Lease、Phase 0、advisory、重试与清理边界；T563-T570 |
 ## 待解决问题
-- 完成 T560-T562 后继续 `P0-E2E`：新 Build 证明终态摘要、Gap 审批和浏览器预检，再用同一 Build 在 Codex/Claude 运行到等价 `TERMINAL`；L4 仍需真实业务证据。
+- 完成 T563-T570 后继续 `P0-E2E`：新 Build 证明终态摘要、Gap 审批和浏览器预检，再用同一 Build 在 Codex/Claude 运行到等价 `TERMINAL`；L4 仍需真实业务证据。
 ## 引用文件
 `design/v5.8-Effective-Design-Authority-Projection.md` · `design/v5.8-Session-Decoupling-Design.md` · `design/v5.8-Session-Decoupling-PLAN.md` · `design/incidents/2026-07-29-claude-146-tick-long-run.md` · `design/IMPLEMENTATION-TRACKER.md` · `design/HISTORY.md`

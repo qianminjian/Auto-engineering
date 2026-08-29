@@ -248,6 +248,35 @@
       "then": {
         "allOf": [
     {
+      "if": {"properties": {"stage": {"const": "gap_scan"}}},
+      "then": {
+        "required": ["stage", "gaps", "section_findings"],
+        "properties": {
+          "gaps": {"type": "array"},
+          "section_findings": {"type": "array", "minItems": 1}
+        }
+      }
+    },
+    {
+      "if": {"properties": {"stage": {"const": "gap_review"}}},
+      "then": {
+        "required": ["stage"],
+        "anyOf": [{"required": ["decision"]}, {"required": ["decisions"]}]
+      }
+    },
+    {
+      "if": {"properties": {"stage": {"const": "research"}}},
+      "then": {
+        "required": ["stage"],
+        "anyOf": [
+          {"required": ["findings"]},
+          {"required": ["recommended_design"]},
+          {"required": ["search_status"]},
+          {"required": ["search_error"]}
+        ]
+      }
+    },
+    {
       "if": {"properties": {"stage": {"const": "project_setup"}}},
       "then": {
         "required": ["stage", "result_type", "artifacts"],

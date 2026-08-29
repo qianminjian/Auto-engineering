@@ -203,7 +203,10 @@ def accept_archive(
     environment[host_key] = host_value
     environment["AE_SKIP_CONFIG_CHECK"] = "1"
 
-    _hermetic_sync(install_root, environment, wheel_cache)
+    plugin_root = (install_root / "plugins" / "auto-engineering").resolve()
+    if not (plugin_root / "bin" / "ae-run").is_file():
+        raise RuntimeError("安装制品缺少嵌套插件入口 plugins/auto-engineering/bin/ae-run")
+    _hermetic_sync(plugin_root, environment, wheel_cache)
 
     project = workspace / "project"
     project.mkdir()
@@ -212,7 +215,7 @@ def accept_archive(
     if (project / ".ae-state" / "init-manifest.json").exists():
         raise RuntimeError("验收 fixture 不得依赖 init-manifest.json")
 
-    resolver = str(install_root / "bin" / "ae-run")
+    resolver = str(plugin_root / "bin" / "ae-run")
     doctor = _run(
         [resolver, "doctor", "--project-root", str(project)],
         cwd=project,
@@ -240,7 +243,7 @@ def accept_archive(
         tick.stdout,
     )
     semantic_evidence = _verify_runtime_semantic_contract(
-        install_root,
+        plugin_root,
         environment,
     )
     generated_config = project / "ae.toml"

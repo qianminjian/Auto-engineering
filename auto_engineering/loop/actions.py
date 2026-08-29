@@ -176,6 +176,9 @@ class ErrorResponse:
 
 # ── §C.3.4 各 Stage Result 验证规则 ──
 RESULT_SCHEMA: dict[str, dict] = {
+    "gap_scan": {"required": ["stage", "gaps", "section_findings"]},
+    "gap_review": {"required": ["stage"]},
+    "research": {"required": ["stage"]},
     "project_setup": {
         "required": ["stage", "result_type", "artifacts"],
     },
@@ -221,7 +224,8 @@ RESULT_SCHEMA: dict[str, dict] = {
     },
 }
 
-# Phase 0 stage: 结构自由, 由各 _after_* handler 自行取值 (无强制 schema)
+# Phase 0 仍允许按版本兼容扩展字段，但不能再接受只有 stage 的空结果。
+# 具体的章节覆盖/决策顺序由 TickOrchestrator 的领域校验继续负责。
 _PHASE0_STAGES = frozenset({"gap_scan", "gap_review", "research"})
 
 _RESULT_FIELD_TYPES: dict[str, dict[str, tuple[type, ...]]] = {
@@ -385,9 +389,6 @@ def validate_result_format(result: dict, stage: str) -> list[str]:
     Returns:
         list[str]: 每条违规一行人类可读消息. 空 = 校验通过.
     """
-    if stage in _PHASE0_STAGES:
-        return []
-
     schema = RESULT_SCHEMA.get(stage)
     if schema is None:
         return [f"未知 stage: '{stage}' (无 RESULT_SCHEMA)"]
@@ -412,7 +413,21 @@ def validate_result_format(result: dict, stage: str) -> list[str]:
                 "source_revision", "classifications", "new_batch_plan",
             ]
             if plan_reconciliation
-            else (["stage", "plan", "file_list"] if stage == "architect" else schema["required"])
+            else (
+                ["stage"]
+                if stage == "gap_scan"
+                else (
+                    ["stage", "plan", "file_list"]
+                    if stage == "architect"
+                    else (
+                    ["stage", "decisions"]
+                    if stage == "gap_review"
+                    and "decision" not in result
+                    and "decisions" in result
+                    else schema["required"]
+                    )
+                )
+            )
         )
     )
 
@@ -442,12 +457,71 @@ def validate_result_format(result: dict, stage: str) -> list[str]:
     if result.get("stage") != stage:
         errors.append(f"stage 必须为 '{stage}'")
 
+    # Phase 0 的领域校验需要保留更详细的错误码，因此这里只拦截“空壳”结果，
+    # 不把 gaps/coverage 的完整性重复搬到本层。
+    if stage == "gap_scan" and not any(
+        field in result for field in ("gaps", "section_findings", "scan_coverage")
+    ):
+        errors.append("gap_scan 至少需要 gaps、section_findings 或 scan_coverage 之一")
+    elif stage == "gap_review" and not any(
+        field in result for field in ("decision", "decisions")
+    ):
+        errors.append("gap_review 至少需要 decision 或 decisions")
+    elif stage == "research" and not any(
+        field in result for field in (
+            "findings", "recommended_design", "search_status", "search_error",
+        )
+    ):
+        errors.append("research 至少需要 findings、recommended_design 或搜索状态")
+
     if stage == "project_setup":
         if result.get("result_type") != "project_setup_completed":
             errors.append("result_type 必须为 'project_setup_completed'")
         artifacts = result.get("artifacts")
         if not isinstance(artifacts, list):
             errors.append("artifacts 必须为数组")
+
+    if stage == "architect" and design_change_only:
+        requests = result.get("design_change_requests")
+        if isinstance(requests, list):
+            for index, request in enumerate(requests):
+                if not isinstance(request, dict):
+                    errors.append(
+                        f"design_change_requests[{index}] 必须为 object"
+                    )
+                    continue
+                required_request_fields = {
+                    "source", "source_ref", "requested_authority",
+                    "change_summary", "affected_design_refs",
+                }
+                missing = sorted(required_request_fields - set(request))
+                if missing:
+                    errors.append(
+                        f"design_change_requests[{index}] 缺少: {', '.join(missing)}"
+                    )
+                if request.get("source") not in {"research", "agent_assumption"}:
+                    errors.append(
+                        f"design_change_requests[{index}].source 非法"
+                    )
+                if request.get("requested_authority") != "binding":
+                    errors.append(
+                        f"design_change_requests[{index}].requested_authority 必须为 binding"
+                    )
+                if not isinstance(request.get("source_ref"), str) or not request.get("source_ref", "").strip():
+                    errors.append(
+                        f"design_change_requests[{index}].source_ref 必须为非空字符串"
+                    )
+                if not isinstance(request.get("change_summary"), str) or not request.get("change_summary", "").strip():
+                    errors.append(
+                        f"design_change_requests[{index}].change_summary 必须为非空字符串"
+                    )
+                refs = request.get("affected_design_refs")
+                if not isinstance(refs, list) or not refs or not all(
+                    isinstance(ref, str) and ref.strip() for ref in refs
+                ):
+                    errors.append(
+                        f"design_change_requests[{index}].affected_design_refs 必须为非空字符串数组"
+                    )
 
     # architect: plan 长度 + batch_plan 非空
     if stage == "architect" and not design_change_only:

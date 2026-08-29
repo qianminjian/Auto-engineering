@@ -602,16 +602,13 @@ def test_usage_source_is_explicit_per_host() -> None:
 
 def test_codex_adapter_exposes_complete_host_contract(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import auto_engineering.host.adapters as adapters
     from auto_engineering.host import HostPlatform
 
-    monkeypatch.setattr(
-        adapters.shutil,
-        "which",
-        lambda executable: "/usr/bin/uv" if executable == "uv" else None,
-    )
+    bundled_cli = tmp_path / "bin" / "ae-run"
+    bundled_cli.parent.mkdir()
+    bundled_cli.touch(mode=0o755)
 
     adapter = adapters.adapter_for(HostPlatform.CODEX)
     event = adapter.normalize_event({
@@ -627,25 +624,19 @@ def test_codex_adapter_exposes_complete_host_contract(
     assert event.platform is HostPlatform.CODEX
     assert event.event == "pre_tool"
     assert event.file_path == "src/example.py"
-    assert adapter.resolve_cli(tmp_path) == (
-        "/usr/bin/uv",
-        "run",
-        "--project",
-        str(tmp_path.resolve()),
-        "ae",
-    )
+    assert adapter.resolve_cli(tmp_path) == (str(bundled_cli.resolve()),)
     usage_source = adapter.usage_source(tmp_path)
     assert usage_source is not None
     assert usage_source.name == "codex-rollout"
 
 
-def test_claude_adapter_prefers_local_cli_and_exposes_usage(
+def test_claude_adapter_uses_installed_runtime_cli_and_exposes_usage(
     tmp_path: Path,
 ) -> None:
     from auto_engineering.host import HostPlatform
     from auto_engineering.host.adapters import adapter_for
 
-    executable = tmp_path / ".venv" / "bin" / "ae"
+    executable = tmp_path / "bin" / "ae-run"
     executable.parent.mkdir(parents=True)
     executable.touch(mode=0o755)
 
@@ -676,22 +667,13 @@ def test_adapter_rejects_hosts_without_an_implementation() -> None:
         adapter_for(HostPlatform.UNKNOWN)
 
 
-def test_cli_resolution_falls_back_to_global_ae_and_reports_missing(
+def test_cli_resolution_rejects_development_and_global_fallbacks(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import auto_engineering.host.adapters as adapters
     from auto_engineering.host import HostPlatform
 
     adapter = adapters.adapter_for(HostPlatform.CODEX)
-    monkeypatch.setattr(
-        adapters.shutil,
-        "which",
-        lambda executable: "/usr/local/bin/ae" if executable == "ae" else None,
-    )
-    assert adapter.resolve_cli(tmp_path) == ("/usr/local/bin/ae",)
-
-    monkeypatch.setattr(adapters.shutil, "which", lambda executable: None)
     with pytest.raises(FileNotFoundError, match="AE_CLI_NOT_FOUND"):
         adapter.resolve_cli(tmp_path)
 

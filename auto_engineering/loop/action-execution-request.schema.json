@@ -26,7 +26,10 @@
     "tick": {"type": "integer", "minimum": 0},
     "stage": {"type": "string", "minLength": 1},
     "build_id": {"type": "string", "minLength": 1},
-    "project_root": {"type": "string", "pattern": "^/"},
+    "project_root": {
+      "type": "string",
+      "pattern": "^(?:/|[A-Za-z]:[\\\\/]|\\\\\\\\)"
+    },
     "compact_envelope_ref": {"$ref": "#/$defs/projectRelativePath"},
     "compact_envelope_sha256": {"$ref": "#/$defs/sha256"},
     "coordinator_ref": {"$ref": "#/$defs/projectRelativePath"},
@@ -52,7 +55,7 @@
     "projectRelativePath": {
       "type": "string",
       "minLength": 1,
-      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
+      "pattern": "^(?!/)(?![A-Za-z]:)(?!\\\\)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
     }
   }
 }

@@ -580,6 +580,37 @@ def test_machine_operation_timeout_stops_the_sequence(tmp_path: Path) -> None:
     assert calls == ["finalize", "validate"]
 
 
+def test_machine_operation_oserror_becomes_diagnosable_contract_failure(
+    tmp_path: Path,
+) -> None:
+    from auto_engineering.host.supervisor import MachineOperationExecutor
+
+    def run(command: tuple[str, ...], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        del kwargs
+        if "--validate-result" in command:
+            raise OSError("runner disappeared")
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    operations = {
+        "finalize": {"argv": ["__AE_BUNDLED_RUNNER__", "--finalize-result"]},
+        "validate": {"argv": ["__AE_BUNDLED_RUNNER__", "--validate-result"]},
+        "submit": {"argv": ["__AE_BUNDLED_RUNNER__", "--tick"]},
+    }
+    with pytest.raises(
+        ActionExecutionContractError,
+        match="HOST_OPERATION_VALIDATE_FAILED",
+    ):
+        MachineOperationExecutor(
+            project_root=tmp_path,
+            bundled_runner=Path("/release/scripts/ae-run"),
+            runner=run,
+        ).run(operations)
+
+    diagnostic = tmp_path / ".ae-state/host-runtime/diagnostics/machine-operation-validate.json"
+    assert diagnostic.is_file()
+    assert "runner disappeared" in diagnostic.read_text(encoding="utf-8")
+
+
 def test_product_driver_runs_actions_until_terminal_without_model_for_terminal() -> None:
     from auto_engineering.host.supervisor import ActionScopedProductDriver
 
@@ -650,6 +681,29 @@ def test_supervisor_routes_failed_receipt_to_deterministic_failure_handler() -> 
     )
     assert failures == ["HOST_CODEX_EXECUTION_TIMEOUT"]
     assert result.actions_completed == 0
+
+
+def test_supervisor_bounds_repeated_failure_recovery() -> None:
+    from auto_engineering.host.supervisor import HostSupervisor
+
+    request = _request("action-loop", 1)
+
+    class FailedBackend(_FakeBackend):
+        def execute(self, request):
+            self.executed.append(request.action_message_id)
+            return replace(
+                _receipt(request, f"context-{len(self.executed)}"),
+                status="failed", exit_code=1, error_code="HOST_FAIL",
+            )
+
+    with pytest.raises(ActionExecutionContractError, match="HOST_RETRY_LIMIT_EXCEEDED"):
+        HostSupervisor(
+            FailedBackend([]), max_failure_retries=2,
+        ).run(
+            request,
+            advance=lambda _: None,
+            on_failure=lambda current, _receipt: current,
+        )
 
 
 def test_product_driver_submits_context_failure_to_core_wait_state() -> None:

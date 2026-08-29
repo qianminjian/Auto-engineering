@@ -166,6 +166,30 @@ def test_out_of_scope_p1_is_audited_but_does_not_trigger_refine() -> None:
     assert _changes(decision)["audit_findings"][0]["authority_class"] == "out_of_scope"
 
 
+def test_advisory_p1_is_recorded_without_refine() -> None:
+    finding = {
+        "severity": "P1",
+        "dimension": "observability",
+        "file": "src/telemetry.py",
+        "line": 4,
+        "description": "可选指标缺少额外标签",
+        "authority_class": "advisory",
+    }
+
+    decision = SystemDeepAuditHandler().apply(
+        {}, {"findings": [finding]}, _context(p1_threshold=0),
+    )
+
+    assert decision.terminal is True
+    assert decision.refine_source is None
+    # audit_counts 是门禁计数，只统计会阻断收敛的 finding；advisory 仍保留在报告中。
+    assert decision.audit_counts == (0, 0, 0)
+    recorded = _changes(decision)["audit_findings"][0]
+    assert recorded["severity"] == finding["severity"]
+    assert recorded["authority_class"] == "advisory"
+    assert recorded["description"] == finding["description"]
+
+
 def test_plate_pass_routes_to_next_plate_or_cropped_layer() -> None:
     more = PlateDeepAuditHandler().apply(
         {},

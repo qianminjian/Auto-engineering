@@ -23,6 +23,7 @@
 | `v5.8-Host-Runtime-Convergence-Analysis.md` | Phase 83 根因、目标架构、实现映射、证据分层与防退化分析附件 |
 | `v5.8-Host-Runtime-Convergence-Design.md` | Phase 83 Host Runtime、原子证据、事件投影与设计权威目标设计 |
 | `v5.8-Host-Runtime-Convergence-PLAN.md` | Phase 83 T460-T469 实施与产品验收计划 |
+| `v5.8-Scenario-Audit-and-Resilience-Design.md` | 2026-08-29 全场景审计、跨边界不变量与剩余发布门禁 |
 | `v5.8-Compact-Host-Control-Plane-Design.md` | T525 Canonical Action 与 compact 宿主控制视图 |
 | `v5.8-Digest-Bound-Worker-Launch-Design.md` | T528 只传路径/摘要/权限的原生 Worker 启动合同 |
 | `v5.8-Small-Project-Assurance-Fusion-Design.md` | T529 LEAF 小项目独立验收 Worker 融合设计 |

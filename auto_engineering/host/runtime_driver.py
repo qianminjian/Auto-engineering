@@ -84,13 +84,15 @@ class HostRunLease:
         if not isinstance(build_id, str) or not build_id:
             runtime = ae.get("runtime") if isinstance(ae, Mapping) else None
             build_id = runtime.get("build_id") if isinstance(runtime, Mapping) else None
+        if not isinstance(build_id, str) or not build_id.strip():
+            raise HostRunLeaseError("HOST_RUN_LEASE_BUILD_ID_MISSING")
         return cls(
             schema_version="1.0",
             thread_id=thread_id,
             action_message_id=message_id,
             platform=platform,
             host_session_id=host_session_id,
-            build_id=build_id if isinstance(build_id, str) and build_id else "unknown",
+            build_id=build_id,
             disposition=control.disposition.value,
             continuation_required=control.continuation_required,
             yield_allowed=control.yield_allowed,

@@ -514,13 +514,21 @@ class SQLiteCheckpointStore[T]:
             return cursor.rowcount > 0
 
     def clear(self) -> None:
-        """清空所有 Checkpoint (主要用于测试).
+        """原子清空项目运行态（主要用于测试与显式 re-init）。
 
-        谨慎使用: 不可恢复.
+        谨慎使用：不可恢复。仅清理 checkpoints 会留下 active thread、handoff
+        和外置 blob，下一次启动仍可能恢复旧会话；因此这里必须作为一个事务
+        清理所有由本 store 管理的运行态表。
         """
         with self._conn() as conn, _atomic(conn):
-            conn.execute("DELETE FROM checkpoints")
-            conn.execute("DELETE FROM protocol_actions")
+            for table in (
+                "checkpoints",
+                "protocol_actions",
+                "session_handoffs",
+                "project_runtime",
+                "checkpoint_blobs",
+            ):
+                conn.execute(f"DELETE FROM {table}")
 
     def record_protocol_action(self, action: dict[str, Any]) -> None:
         """保存线程当前 active Action，供跨进程因果校验。"""

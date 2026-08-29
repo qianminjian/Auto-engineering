@@ -236,9 +236,14 @@ def test_public_execution_package_reaches_terminal_through_real_operations(
         lambda self, **kwargs: evidence,
     )
 
+    host_env = {
+        "AE_HOST_PLATFORM": "codex" if backend == "codex" else "claude-code",
+        "CODEX_THREAD_ID": "test-host-session" if backend == "codex" else "",
+        "CLAUDE_CODE_SESSION_ID": "test-host-session" if backend == "claude" else "",
+    }
     result = runner.invoke(main, [
         "dev-loop", "--supervise", "--project-root", str(tmp_path),
-    ], env={"AE_HOST_PLATFORM": "codex" if backend == "codex" else "claude-code"})
+    ], env=host_env)
 
     assert result.exit_code == 0, result.output
     final = json.loads([line for line in result.output.splitlines() if line.startswith("{")][-1])

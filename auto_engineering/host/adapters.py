@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import shutil
 from collections.abc import Mapping
 from pathlib import Path
 from typing import ClassVar
@@ -300,22 +299,14 @@ class _Adapter2Mixin:
 
 
 def _resolve_cli(plugin_root: Path) -> tuple[str, ...]:
-    """按共享 ae-run 的顺序解析 CLI，不启动任何进程。"""
+    """解析已安装插件自带的 ``bin/ae-run``，不回退到开发环境。"""
     root = plugin_root.resolve()
-    local_cli = root / ".venv" / "bin" / "ae"
-    if local_cli.is_file() and os.access(local_cli, os.X_OK):
-        return (str(local_cli),)
-
-    uv = shutil.which("uv")
-    if uv:
-        return (uv, "run", "--project", str(root), "ae")
-
-    ae = shutil.which("ae")
-    if ae:
-        return (ae,)
+    bundled_cli = root / "bin" / "ae-run"
+    if bundled_cli.is_file() and os.access(bundled_cli, os.X_OK):
+        return (str(bundled_cli),)
 
     raise FileNotFoundError(
-        "AE_CLI_NOT_FOUND: 未找到项目虚拟环境、uv 或全局 ae 命令",
+        "AE_CLI_NOT_FOUND: 未找到已安装插件的 bin/ae-run",
     )
 
 

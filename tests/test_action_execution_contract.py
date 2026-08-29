@@ -99,6 +99,32 @@ def test_request_value_object_rejects_path_escape_and_round_trips() -> None:
         ActionExecutionRequest.from_dict(escaped)
 
 
+@pytest.mark.parametrize(
+    "escaped_path",
+    [
+        r"..\\outside.json",
+        r"subdir\\..\\..\\outside.json",
+        r"C:\\outside.json",
+        r"\\\\server\\share\\outside.json",
+    ],
+)
+def test_request_value_object_rejects_windows_path_escape_on_all_hosts(
+    escaped_path: str,
+) -> None:
+    from auto_engineering.host.invocation import (
+        ActionExecutionContractError,
+        ActionExecutionRequest,
+    )
+
+    request = _request()
+    request["coordinator_ref"] = escaped_path
+    with pytest.raises(
+        ActionExecutionContractError,
+        match="ACTION_EXECUTION_PATH_INVALID",
+    ):
+        ActionExecutionRequest.from_dict(request)
+
+
 def test_receipt_must_bind_the_expected_request_identity() -> None:
     from auto_engineering.host.invocation import (
         ActionExecutionContractError,

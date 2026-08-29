@@ -113,6 +113,47 @@ class TestResultSchema:
 
 class TestValidateResultFormat:
     @pytest.mark.parametrize(
+        ("stage", "result", "expected"),
+        [
+            ("gap_scan", {"stage": "gap_scan"}, "gaps"),
+            ("gap_review", {"stage": "gap_review"}, "decision"),
+            ("research", {"stage": "research"}, "research 至少"),
+        ],
+    )
+    def test_phase0_results_cannot_be_empty(self, stage, result, expected):
+        errors = validate_result_format(result, stage)
+
+        assert errors
+        assert any(expected in error for error in errors)
+
+    def test_phase0_gap_review_accepts_legacy_decisions_array(self):
+        result = {
+            "stage": "gap_review",
+            "decisions": [{"gap_id": "gap-1", "resolution": "defer"}],
+        }
+
+        assert validate_result_format(result, "gap_review") == []
+
+    def test_phase0_research_accepts_search_failure_with_diagnostic(self):
+        result = {
+            "stage": "research",
+            "search_status": "unavailable",
+            "search_error": "provider timeout",
+        }
+
+        assert validate_result_format(result, "research") == []
+
+    def test_architect_design_change_request_has_complete_shape(self):
+        result = {
+            "stage": "architect",
+            "design_change_requests": [{"source": "research"}],
+        }
+
+        errors = validate_result_format(result, "architect")
+
+        assert any("design_change_requests[0]" in error for error in errors)
+
+    @pytest.mark.parametrize(
         ("stage", "result", "field"),
         [
             (

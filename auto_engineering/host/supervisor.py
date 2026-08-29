@@ -418,6 +418,16 @@ class MachineOperationExecutor:
                 raise ActionExecutionContractError(
                     f"HOST_OPERATION_{operation.upper()}_TIMEOUT"
                 ) from exc
+            except OSError as exc:
+                self._write_diagnostic(
+                    operation=operation,
+                    status="launcher_error",
+                    exit_code=None,
+                    stderr=str(exc),
+                )
+                raise ActionExecutionContractError(
+                    f"HOST_OPERATION_{operation.upper()}_FAILED"
+                ) from exc
             if process.returncode != 0:
                 self._write_diagnostic(
                     operation=operation,
@@ -509,8 +519,18 @@ class MachineOperationExecutor:
 class HostSupervisor:
     """保持 Core thread 连续，为每个 Action 创建全新宿主 context。"""
 
-    def __init__(self, backend: HostInvocationBackend) -> None:
+    def __init__(
+        self,
+        backend: HostInvocationBackend,
+        *,
+        max_actions: int = 256,
+        max_failure_retries: int = 2,
+    ) -> None:
+        if max_actions < 1 or max_failure_retries < 0:
+            raise ValueError("宿主监督边界必须为正数")
         self._backend = backend
+        self._max_actions = max_actions
+        self._max_failure_retries = max_failure_retries
 
     def run(
         self,
@@ -533,7 +553,12 @@ class HostSupervisor:
         request: ActionExecutionRequest | None = initial_request
         receipts: list[ActionExecutionReceipt] = []
         context_ids: set[str] = set()
+        action_count = 0
+        failure_retries = 0
         while request is not None:
+            action_count += 1
+            if action_count > self._max_actions:
+                raise ActionExecutionContractError("HOST_ACTION_LIMIT_EXCEEDED")
             receipt = self._backend.execute(request)
             receipt.validate_for(request)
             if receipt.host_context_id in context_ids:
@@ -542,11 +567,15 @@ class HostSupervisor:
             if on_receipt is not None:
                 on_receipt(request, receipt)
             if receipt.status != "completed" or receipt.exit_code != 0:
+                failure_retries += 1
+                if failure_retries > self._max_failure_retries:
+                    raise ActionExecutionContractError("HOST_RETRY_LIMIT_EXCEEDED")
                 if on_failure is not None:
                     request = on_failure(request, receipt)
                     continue
                 code = receipt.error_code or "HOST_ACTION_EXECUTION_FAILED"
                 raise ActionExecutionContractError(code)
+            failure_retries = 0
             receipts.append(receipt)
             request = advance(receipt)
         return HostSupervisorResult(tuple(receipts))

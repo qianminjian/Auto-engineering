@@ -236,12 +236,9 @@ class SystemDeepAuditHandler:
                 + "\n[Design Doc Sync] "
                 + str(result.get("design_doc_suggestions", ""))
             )
-        if (
-            p0
-            or p1
-            or missing_count
-            or diverged_count
-        ):
+        blocking_p0 = any(item.get("severity") == "P0" for item in blocking)
+        blocking_p1 = any(item.get("severity") == "P1" for item in blocking)
+        if blocking_p0 or blocking_p1 or missing_count or diverged_count:
             patch["audit_findings"] = blocking
             patch["open_findings"] = blocking
             return _refine(

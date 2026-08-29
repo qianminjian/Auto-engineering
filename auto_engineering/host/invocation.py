@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass
-from pathlib import Path, PurePosixPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Protocol
 
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
@@ -35,8 +35,20 @@ def _digest(value: object) -> str:
 
 def _relative_path(value: object) -> str:
     text = _text(value, "ACTION_EXECUTION_PATH_INVALID")
-    path = PurePosixPath(text)
-    if path.is_absolute() or ".." in path.parts:
+    posix_path = PurePosixPath(text)
+    windows_path = PureWindowsPath(text)
+    # Action refs are serialized with POSIX separators so the same envelope has
+    # identical semantics on macOS, Linux and Windows.  Treat any backslash as
+    # invalid instead of letting Windows normalize it into a parent traversal;
+    # also reject drive-relative paths (``C:foo``) and UNC paths.
+    if (
+        "\\" in text
+        or posix_path.is_absolute()
+        or ".." in posix_path.parts
+        or windows_path.is_absolute()
+        or bool(windows_path.drive)
+        or ".." in windows_path.parts
+    ):
         raise ActionExecutionContractError("ACTION_EXECUTION_PATH_INVALID")
     return text
 

@@ -836,6 +836,34 @@ class TestErrorHandling:
         assert action["action"] == "error"
         assert action["error_code"] == "ACTION_NOT_ACTIVE"
 
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [("correlation_id", "other-thread"), ("tick", 999)],
+    )
+    def test_native_result_must_bind_active_action_correlation_and_tick(
+        self, field: str, value: object,
+    ) -> None:
+        o = _orchestrator()
+        active = o.init("req")
+        result = {
+            "schema_version": "1.1",
+            "message_type": "result",
+            "message_id": "result-1",
+            "thread_id": active["thread_id"],
+            "tick": active["tick"],
+            "stage": active["stage"],
+            "causation_id": active["message_id"],
+            "correlation_id": active["correlation_id"],
+            "extensions": {},
+            "spawned": True,
+            field: value,
+        }
+
+        action = o.tick_dict(result)
+
+        assert action["action"] == "error"
+        assert action["error_code"] == "ACTION_NOT_ACTIVE"
+
     def test_invalid_json_returns_parse_error(self) -> None:
         o = _orchestrator()
         o.init("req")

@@ -295,6 +295,23 @@ def test_run_lease_binds_engine_build_from_current_runtime_revision() -> None:
     assert lease.build_id == "5.8.0-rc.5+sha256.current"
 
 
+def test_run_lease_rejects_action_without_engine_build() -> None:
+    action = {
+        "message_id": "action-missing-build",
+        "thread_id": "thread-missing-build",
+        "extensions": {
+            "ae": {
+                "execution_control": control_for_action({"action": "developer"}).to_dict(),
+            }
+        },
+    }
+
+    with pytest.raises(ValueError, match="HOST_RUN_LEASE_BUILD_ID_MISSING"):
+        HostRunLease.from_action(
+            action, platform="codex", host_session_id="session-missing-build"
+        )
+
+
 def test_stop_guard_does_not_block_other_session_or_terminal_action() -> None:
     continue_lease = HostRunLease(
         schema_version="1.0",
@@ -365,6 +382,7 @@ def test_cli_host_mapping_persists_lease_for_current_session(
                     yield_allowed=False,
                     allowed_stop_reasons=(),
                 ).to_dict(),
+                "runtime": {"build_id": "test-build"},
             }
         },
     }
@@ -376,6 +394,36 @@ def test_cli_host_mapping_persists_lease_for_current_session(
     assert lease is not None
     assert lease.action_message_id == "action-1"
     assert lease.host_session_id == "session-1"
+
+
+def test_cli_host_mapping_fails_closed_without_session_identity(
+    tmp_path, monkeypatch
+) -> None:
+    from auto_engineering.cli.dev_loop import _prepare_action_for_host
+    from auto_engineering.host import HostDetection
+
+    monkeypatch.delenv("CODEX_THREAD_ID", raising=False)
+    monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
+    monkeypatch.delenv("CLAUDE_SESSION_ID", raising=False)
+    monkeypatch.setattr(
+        "auto_engineering.host.detect_host",
+        lambda: HostDetection(HostPlatform.CODEX, "test"),
+    )
+
+    action = {
+        "action": "developer",
+        "message_id": "action-no-session",
+        "thread_id": "thread-1",
+        "extensions": {
+            "ae": {
+                "execution_control": control_for_action({"action": "developer"}).to_dict(),
+                "runtime": {"build_id": "test-build"},
+            }
+        },
+    }
+
+    with pytest.raises(ValueError, match="HOST_SESSION_ID_UNAVAILABLE"):
+        _prepare_action_for_host(action, tmp_path)
 
 
 def test_compact_host_view_uses_prompt_ref_without_inlining_action_context(
@@ -587,6 +635,7 @@ def test_cli_lease_uses_inner_claude_identity_when_launched_from_codex(
                     yield_allowed=False,
                     allowed_stop_reasons=(),
                 ).to_dict(),
+                "runtime": {"build_id": "test-build"},
             }
         },
     }
@@ -619,7 +668,7 @@ def test_cli_recovery_projection_forbids_duplicate_worker_spawn(
             continuation_required=True,
             yield_allowed=False,
             allowed_stop_reasons=(),
-        ).to_dict()}},
+        ).to_dict(), "runtime": {"build_id": "test-build"}}},
         "spawn": {
             "contract_version": "1.0",
             "count": 1,
@@ -700,7 +749,7 @@ def test_cli_result_repair_restores_rejected_outcomes_and_keeps_repair_mode(
             continuation_required=True,
             yield_allowed=False,
             allowed_stop_reasons=(),
-        ).to_dict()}},
+        ).to_dict(), "runtime": {"build_id": "test-build"}}},
         "spawn": {
             "contract_version": "1.0",
             "count": 1,
@@ -777,7 +826,7 @@ def test_cli_recovery_finalizes_complete_native_files_before_respawn(
             continuation_required=True,
             yield_allowed=False,
             allowed_stop_reasons=(),
-        ).to_dict()}},
+        ).to_dict(), "runtime": {"build_id": "test-build"}}},
         "spawn": {
             "contract_version": "1.0",
             "count": 1,

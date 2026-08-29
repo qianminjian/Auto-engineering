@@ -298,15 +298,31 @@ def _prepare_action_for_host(
     from auto_engineering.host import HostPlatform, detect_host
     from auto_engineering.host.runtime_driver import (
         HostRunLease,
+        HostRunLeaseError,
         HostRunLeaseStore,
         host_session_id_from_environ,
     )
 
     detection = detect_host()
     session_id = host_session_id_from_environ(detection.platform)
+    extensions = mapped.get("extensions")
+    ae = extensions.get("ae") if isinstance(extensions, Mapping) else None
+    control = ae.get("execution_control") if isinstance(ae, Mapping) else None
+    requires_continuous_lease = (
+        isinstance(control, Mapping)
+        and control.get("disposition") == "CONTINUE"
+    )
+    if (
+        detection.platform is not HostPlatform.UNKNOWN
+        and session_id is None
+        and requires_continuous_lease
+        and isinstance(mapped.get("message_id"), str)
+    ):
+        raise HostRunLeaseError("HOST_SESSION_ID_UNAVAILABLE")
     if (
         detection.platform is not HostPlatform.UNKNOWN
         and session_id is not None
+        and requires_continuous_lease
         and isinstance(mapped.get("message_id"), str)
     ):
         lease = HostRunLease.from_action(
@@ -1628,7 +1644,13 @@ def run_action_supervisor(root: Path) -> None:
     else:
         raise click.ClickException("HOST_ACTION_CONTEXT_UNAVAILABLE: HOST_UNKNOWN")
     bundled_runner = Path(__file__).resolve().parents[2] / "scripts" / "ae-run"
-    child_environment = dict(os.environ)
+    # Action 子进程必须只使用已安装运行时；清除开发会话注入的 Python 路径，
+    # 防止真跑时误加载当前源码目录或宿主虚拟环境。
+    child_environment = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in {"PYTHONPATH", "PYTHONHOME", "VIRTUAL_ENV"}
+    }
     child_environment["AE_HOST_ACTION_VIEW"] = "full"
     operation_executor = MachineOperationExecutor(
         project_root=root,

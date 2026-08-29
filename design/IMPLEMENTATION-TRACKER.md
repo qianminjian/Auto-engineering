@@ -1,5 +1,5 @@
 # Auto-Engineering 当前实施跟踪表
-> 更新：2026-08-28｜唯一产品任务：P0-E2E 单命令运行到 TERMINAL｜历史 Phase/T 项为支撑证据，不能替代产品完成｜状态：`☐` 未开始／`◐` 进行中／`✅` 已验证
+> 更新：2026-08-29｜唯一产品任务：P0-E2E 单命令运行到 TERMINAL｜历史 Phase/T 项为支撑证据，不能替代产品完成｜状态：`☐` 未开始／`◐` 进行中／`✅` 已验证
 
 ## 唯一 P0：端到端产品闭环
 
@@ -10,7 +10,6 @@
 | P0 | P0-E2E | 独立安装后的单命令设计开发闭环 | While 同一内容寻址 Build 已分别安装到 Codex 与 Claude Code, when 用户在空项目执行一次设计驱动命令, both hosts shall 自动完成设计扫描、规划、开发、审查、修复和验证并到达等价 `TERMINAL`，零非预期人工续接、零手工协议修复、零旧计划误续作 | ◐ Build `5.8.0-rc.5+sha256.3927b1f572df8ece` 已通过 `2676 passed, 1 skipped`、90% coverage、静态检查、双宿主安装与 Codex L4；Claude Code L4 仍待真实终态验收 |
 
 ### 不可独立关闭的四个工作面
-
 | 工作面 | 目标 | 当前判断 |
 |---|---|---|
 | 设计工程模型 | 设计—缺口—任务—代码—验证使用同一稳定模型追溯 | ✅ 稳定 section 身份已接入公开执行包与内部模型，Agent/Core 双身份闭合 |
@@ -21,13 +20,10 @@
 | Result 接受事务 | Assembler/预校验/Core 任一拒绝均在同一 Action 自动修复 | ◐ 已修复重复 Worker、outcome 覆盖及“计划接受后下一 Action 引用崩溃”；统一章节标签解析与未来 Action 预校验通过 249 项回归，待全量与新 Build L4 |
 | 离线生产终态 | 同一生产资产覆盖 Gap、规划、开发、Critic 返工、验证、恢复并到 `TERMINAL` | ✅ package-only Codex/Claude 轨迹不读 Canonical 状态、不用 FakeOperations，均以 9 次 Action context 到 `TERMINAL` |
 | 双宿主真实验收 | 独立制品完成 Codex/Claude L4 且语义等价 | ◐ 独立 Build 已证明零开发目录来源；Codex 真跑已暴露跨阶段章节解析、Worker 重复及 Python Profile 能力缺口，均已修复并通过回归；新 Build 双宿主终态仍待执行 |
-
 ### 完成纪律
-
 - 既有 Phase/T 项继续保留为历史能力和回归证据，不再据此计算产品完成度。
 - 每次真跑故障先归属上述工作面，再修复完整生产链；禁止只修最终报错点。
 - 只有 `P0-E2E` 的全部退出证据齐备时才标记完成并允许发布。
-
 ## 历史能力证据
 Phase 64–66 的真实运行止血、会话解耦、上下文预算、ArtifactRef、Usage Ledger 与恢复证据已归档至 `design/HISTORY.md` 和 Git；当前表只保留仍影响 `P0-E2E` 发布判断的任务。
 ## Phase 67：双宿主真实项目发布门禁
@@ -158,3 +154,7 @@ Phase 64–66 的真实运行止血、会话解耦、上下文预算、ArtifactR
 | P0 | T550-T553 | Gap Scan 可证明零结论与可见确认分流 | While 设计驱动 Loop 执行或恢复 Gap Scan, when Result 声称零缺口、产物丢失或发现设计决策, the product shall 校验逐章节覆盖与设计摘要绑定、始终展示有界扫描摘要、仅对真实设计决策进入 WAIT_USER，并禁止用空结果替代丢失产物 | ◐ RED/GREEN、2643/1、coverage 90%、Ruff/mypy/sync 与双宿主 hermetic archive 通过；真实 L4 前台摘要与确认分流待复验 |
 | P0 | T554-T557 | 设计批准到下一 Agent 的确定性闭环 | While Research advisory、静态 ledger 与用户批准并存, when Core 产生同 Tick 下一 Architect Action 并由全新 Agent 消费, the product shall 从单一有效权威投影传递 binding 批准、拒绝相同来源范围的语义等价重复申请并生成计划进入 Developer | ◐ 同 Tick 投影、Prompt 传递、新旧事件语义改写收敛、Research obligation、进程恢复后 fresh Architect 首次计划进入 Developer 已验证；2678 passed/1 skipped、coverage 90%、Ruff/mypy/sync 及 Codex/Claude 隔离 archive smoke 通过；待新 Build 真实双宿主 L4 |
 | P0 | T558-T562 | Gate、Outcome repair、终态边界与环境预检 | While Core 生成 Gate、拒绝含 Worker outcomes 的 Result、输出 `done` 或解析项目 E2E 能力, when Action 编译/恢复/验收, the system shall 映射 `WAIT_USER`、原子恢复 journal 权威 outcomes、携带 Core/产品未验证边界，并输出浏览器运行时预检；禁止错误执行、重复 spawn、替换事实或把环境缺失冒充产品失败 | ◐ T558-T562 代码与回归完成；当前自动门禁证据待刷新，新 Build 双宿主 L3/L4 与真实业务验收仍阻断发布 |
+## Phase 84：跨平台宿主边界与异常可续作
+| P1 | T563 | POSIX/Windows 路径越界 fail-closed | ◐ 回归已实现 |
+| P1 | T564 | Host/机器 OSError → 稳定 Stop Report | ◐ 回归已实现 |
+| P1 | T565-T570 | 真实成本、日志脱敏、事务故障注入、长轨迹、双宿主 L3-L4 与模块拆分 | ☐ 产品门禁待执行 |

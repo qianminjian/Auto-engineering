@@ -262,6 +262,43 @@ def test_codex_execute_builds_receipt_from_cli_events_not_model_claim(
     assert "transcript" not in str(calls[0]["input"]).lower()
 
 
+@pytest.mark.parametrize("backend_name", ["codex", "claude"])
+def test_host_backend_converts_launcher_oserror_to_stable_failure_receipt(
+    tmp_path: Path,
+    backend_name: str,
+) -> None:
+    if backend_name == "codex":
+        from auto_engineering.host.backends.codex import CodexInvocationBackend
+
+        backend = CodexInvocationBackend(
+            executable="/opt/bin/codex",
+            runner=lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                OSError("executable disappeared")
+            ),
+        )
+    else:
+        from auto_engineering.host.backends.claude import ClaudeInvocationBackend
+
+        backend = ClaudeInvocationBackend(
+            executable="/opt/bin/claude",
+            environ={},
+            runner=lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                OSError("executable disappeared")
+            ),
+        )
+
+    receipt = backend.execute(_request(tmp_path))
+
+    assert receipt.status == "failed"
+    assert receipt.error_code == (
+        "HOST_CODEX_EXECUTION_FAILED"
+        if backend_name == "codex"
+        else "HOST_CLAUDE_EXECUTION_FAILED"
+    )
+    assert receipt.exit_code is None
+    assert backend.active_context_id is None
+
+
 def test_codex_backend_normalizes_stringified_business_array_before_receipt(
     tmp_path: Path,
 ) -> None:
