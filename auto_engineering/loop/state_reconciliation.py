@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from auto_engineering.loop.actions import build_terminal_acceptance_summary
 from auto_engineering.loop.event_store import SQLiteEventStore
 from auto_engineering.loop.events import LoopEvent, LoopEventType
 from auto_engineering.loop.protocol import (
@@ -114,6 +115,9 @@ class StateReconciliationService:
                         }
                     }
                 },
+                "acceptance_summary": build_terminal_acceptance_summary(
+                    state, verdict="SUPERSEDED",
+                ),
             },
             thread_id=state.thread_id,
             tick=state.tick + 1,

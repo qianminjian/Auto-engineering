@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from auto_engineering.loop.actions import build_terminal_acceptance_summary
 from auto_engineering.loop.events import LoopEventType
 
 if TYPE_CHECKING:
@@ -120,6 +121,9 @@ class EscalationHandler:
                 "stage": state.current_stage,
                 "tick": state.tick + 1,
                 "thread_id": state.thread_id,
+                "acceptance_summary": build_terminal_acceptance_summary(
+                    state, verdict="TERMINATED",
+                ),
             }
 
         if "回退" in resolution:

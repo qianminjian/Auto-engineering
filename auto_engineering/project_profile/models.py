@@ -13,7 +13,9 @@ from typing import Any
 
 PROJECT_PROFILE_SCHEMA_VERSION = "1.0"
 _DIGEST_PATTERN = re.compile(r"^[0-9a-f]{64}$")
-_COMMAND_NAMES = frozenset({"install", "lint", "type_check", "test", "build"})
+_COMMAND_NAMES = frozenset({
+    "install", "lint", "type_check", "test", "build", "browser_e2e",
+})
 _CONFIDENCE_VALUES = frozenset({"confirmed", "partial"})
 
 

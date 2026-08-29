@@ -205,6 +205,32 @@ def _validate_receipts(
         raise ProductAcceptanceError("ACTION_USAGE_TOTAL_MISMATCH")
 
 
+def _validate_terminal_acceptance_summary(terminal_action: dict[str, Any]) -> None:
+    """终态必须携带 Core/产品验收边界，防止 done 被冒充发布完成。"""
+    summary = terminal_action.get("acceptance_summary")
+    if not isinstance(summary, dict):
+        raise ProductAcceptanceError("TERMINAL_ACCEPTANCE_SUMMARY_MISSING")
+    if (
+        summary.get("scope") != "core"
+        or summary.get("release_eligible") is not False
+        or summary.get("status") not in {
+            "core_verified_product_unverified", "core_incomplete",
+        }
+        or not isinstance(summary.get("verified_checks"), list)
+        or not isinstance(summary.get("unverified_items"), list)
+        or not summary["unverified_items"]
+        or not isinstance(summary.get("coverage"), dict)
+    ):
+        raise ProductAcceptanceError("TERMINAL_ACCEPTANCE_SUMMARY_INVALID")
+    coverage = summary["coverage"]
+    verified = summary["verified_checks"]
+    unverified = summary["unverified_items"]
+    if coverage.get("verified") != len(verified) or coverage.get("total") != (
+        len(verified) + len(unverified)
+    ):
+        raise ProductAcceptanceError("TERMINAL_ACCEPTANCE_SUMMARY_INVALID")
+
+
 def evaluate_host_evidence(
     evidence: dict[str, Any],
     *,
@@ -256,6 +282,7 @@ def evaluate_host_evidence(
         != len(artifact_payload.get("action_receipts", []))
     ):
         raise ProductAcceptanceError("EVIDENCE_ARTIFACT_CLAIMS_INVALID")
+    _validate_terminal_acceptance_summary(terminal_action)
     _validate_receipts(artifact_payload, evidence)
     return evaluate_product_evidence(evidence, evidence_root=root)
 

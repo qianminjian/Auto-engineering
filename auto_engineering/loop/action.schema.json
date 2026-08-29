@@ -162,6 +162,37 @@
     "verdict": {"type": "string"},
     "verdict_level": {"type": ["integer", "null"]},
     "verdict_reason": {"type": ["string", "null"]},
+    "acceptance_summary": {
+      "type": "object",
+      "required": [
+        "scope", "status", "verified_checks", "unverified_items",
+        "coverage", "release_eligible"
+      ],
+      "properties": {
+        "scope": {"const": "core"},
+        "status": {
+          "enum": ["core_verified_product_unverified", "core_incomplete"]
+        },
+        "verified_checks": {
+          "type": "array", "items": {"type": "string"}, "uniqueItems": true
+        },
+        "unverified_items": {
+          "type": "array", "items": {"type": "string"}, "minItems": 1,
+          "uniqueItems": true
+        },
+        "coverage": {
+          "type": "object",
+          "required": ["verified", "total"],
+          "properties": {
+            "verified": {"type": "integer", "minimum": 0},
+            "total": {"type": "integer", "minimum": 1}
+          },
+          "additionalProperties": false
+        },
+        "release_eligible": {"const": false}
+      },
+      "additionalProperties": false
+    },
     "rounds": {"type": "integer"},
     "checkpoint_id": {"type": "string"},
     "current_session_id": {"type": "string", "minLength": 1},
@@ -199,7 +230,7 @@
     },
     {
       "if": {"properties": {"action": {"const": "done"}}},
-      "then": {"required": ["verdict"]}
+      "then": {"required": ["verdict", "acceptance_summary"]}
     },
     {
       "if": {"properties": {"action": {"const": "project_setup_required"}}},

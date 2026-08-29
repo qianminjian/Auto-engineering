@@ -92,6 +92,16 @@ def _evidence(tmp_path=None) -> dict[str, object]:
     }
 
 
+_TERMINAL_ACCEPTANCE_SUMMARY = {
+    "scope": "core",
+    "status": "core_verified_product_unverified",
+    "verified_checks": ["design_coverage", "system_deep_audit"],
+    "unverified_items": ["product_business_acceptance"],
+    "coverage": {"verified": 2, "total": 3},
+    "release_eligible": False,
+}
+
+
 def test_complete_product_evidence_passes(tmp_path) -> None:
     assert evaluate_product_evidence(
         _evidence(tmp_path), evidence_root=tmp_path
@@ -171,7 +181,10 @@ def test_release_requires_both_hosts_on_same_build(tmp_path) -> None:
             "plugin_discovered": True,
             "runtime_root": evidence["installation"]["runtime_root"],
             "event_types": ["ActionIssued", "ResultAccepted", "LoopCompleted"],
-            "terminal_action": {"action": "done", "reason_code": "GOAL_ACHIEVED"},
+            "terminal_action": {
+                "action": "done", "reason_code": "GOAL_ACHIEVED",
+                "acceptance_summary": _TERMINAL_ACCEPTANCE_SUMMARY,
+            },
             "trajectory": {
                 "invocation_count": 3, "manual_protocol_repairs": 0,
                 "unexpected_stops": 0, "traceability_complete": True,
@@ -214,7 +227,10 @@ def test_release_rejects_reused_action_context(tmp_path) -> None:
         "plugin_discovered": True,
         "runtime_root": evidence["installation"]["runtime_root"],
         "event_types": ["ActionIssued", "ResultAccepted", "LoopCompleted"],
-        "terminal_action": {"action": "done"},
+        "terminal_action": {
+            "action": "done",
+            "acceptance_summary": _TERMINAL_ACCEPTANCE_SUMMARY,
+        },
         "trajectory": {
             "invocation_count": 3, "manual_protocol_repairs": 0,
             "unexpected_stops": 0, "traceability_complete": True,
@@ -268,6 +284,36 @@ def test_release_rejects_artifact_that_does_not_prove_its_claims(tmp_path) -> No
         evaluate_release_evidence(
             [base, {**base, "host": "claude-code"}], evidence_root=tmp_path,
         )
+
+
+def test_release_rejects_terminal_without_acceptance_boundary(tmp_path) -> None:
+    import hashlib
+
+    evidence = _evidence(tmp_path)
+    artifact = tmp_path / "codex.json"
+    payload = {
+        "schema_version": "1.1",
+        "host": "codex",
+        "build_id": evidence["build_id"],
+        "installed_build_id": evidence["build_id"],
+        "plugin_discovered": True,
+        "runtime_root": evidence["installation"]["runtime_root"],
+        "event_types": ["ActionIssued", "ResultAccepted", "LoopCompleted"],
+        "terminal_action": {"action": "done"},
+        "trajectory": {
+            "invocation_count": 3, "manual_protocol_repairs": 0,
+            "unexpected_stops": 0, "traceability_complete": True,
+            "final_disposition": "TERMINAL",
+        },
+        "action_receipts": [],
+    }
+    artifact.write_text(json.dumps(payload), encoding="utf-8")
+    evidence["evidence_artifact"] = {
+        "path": artifact.name,
+        "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest(),
+    }
+    with pytest.raises(ProductAcceptanceError, match="EVIDENCE_ARTIFACT_CLAIMS_INVALID"):
+        evaluate_host_evidence(evidence, evidence_root=tmp_path)
 
 
 def test_release_rejects_artifact_hash_or_build_mismatch(tmp_path) -> None:

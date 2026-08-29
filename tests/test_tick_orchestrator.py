@@ -1787,6 +1787,7 @@ _GAP_B2 = {
         "resolution": "Research",
         "reason": "需要先确认调用方约束",
         "confidence": "medium",
+        "requires_user_approval": False,
     },
     "options": [
         {"resolution": "Fill", "meaning": "用户补充最终设计", "enabled": True},
@@ -2019,6 +2020,37 @@ class TestPhase0GapReview:
             "recommendation_accepted": True,
             "evidence_refs": _GAP_B2["evidence"],
         }
+
+    def test_binding_gap_never_uses_remaining_recommendations_automatically(
+        self, tmp_path,
+    ) -> None:
+        """线程策略只覆盖已明确标注为非绑定的普通缺口。"""
+        o = _orchestrator()
+        _init_design(o, tmp_path)
+        binding_gap = {
+            **_GAP_B2,
+            "recommendation": {
+                **_GAP_B2["recommendation"],
+                "requires_user_approval": True,
+            },
+        }
+        o.tick(_gap_scan_result([binding_gap]))
+        o._state.gap_decision_policy = "remaining_recommendations"
+
+        action = o.build_action()
+
+        assert action["auto_decision"] is None
+        result = _make_result_file({
+            "stage": "gap_review",
+            "decision": {
+                "gap_id": binding_gap["id"],
+                "resolution": "Research",
+                "decision_source": "thread_policy",
+                "policy": "remaining_recommendations",
+            },
+        })
+        rejected = o.tick(result)
+        assert rejected["error_code"] == "GAP_REVIEW_POLICY_REQUIRES_APPROVAL"
 
     def test_action_exposes_only_current_gap_with_core_cursor(self, tmp_path) -> None:
         o = _orchestrator()
@@ -4289,6 +4321,14 @@ class TestT105ConvergenceCheck:
         assert action["action"] == "done"
         # GOAL_ACHIEVED maps to SEMANTIC level in judge, not HARD_LIMIT
         assert action["verdict"] == "GOAL_ACHIEVED"
+        assert action["acceptance_summary"] == {
+            "scope": "core",
+            "status": "core_verified_product_unverified",
+            "verified_checks": ["design_coverage", "system_deep_audit"],
+            "unverified_items": ["product_business_acceptance"],
+            "coverage": {"verified": 2, "total": 3},
+            "release_eligible": False,
+        }
 
     def test_fail_without_dual_pass_returns_hard_limit_at_limit(self) -> None:
         """T105c: 双通过不满足时, 达上限触发 HARD_LIMIT."""

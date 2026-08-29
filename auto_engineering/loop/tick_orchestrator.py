@@ -65,6 +65,7 @@ from auto_engineering.loop.actions import (
     ActionDone,
     ActionError,
     ErrorResponse,
+    build_terminal_acceptance_summary,
     result_contract_warnings,
     validate_result_format,
 )
@@ -1385,6 +1386,9 @@ class TickOrchestrator:
                         "stage": self._state.current_stage,
                         "tick": self._state.tick + 1,
                         "thread_id": self._state.thread_id,
+                        "acceptance_summary": build_terminal_acceptance_summary(
+                            self._state, verdict="TERMINATED",
+                        ),
                     }
                 if resolution == "继续":
                     self._passed_checkpoints.add(self._state.current_stage)
@@ -1407,6 +1411,9 @@ class TickOrchestrator:
                     "stage": self._state.current_stage,
                     "tick": self._state.tick + 1,
                     "thread_id": self._state.thread_id,
+                    "acceptance_summary": build_terminal_acceptance_summary(
+                        self._state, verdict="TERMINATED",
+                    ),
                 }
             detail = gate_resolution.get("resolution_detail", {})
             note = detail.get("note", "")
@@ -2340,7 +2347,13 @@ class TickOrchestrator:
                           f"{self._state.plan_refine_count}/{_MAX_GLOBAL}")
             reason += (" — 建议: 拆分需求为多个 Phase 分别处理, "
                        "或在 design_doc 中标注设计项为延后")
-            return ActionDone(verdict="REFINE_LIMIT", reason=reason).to_dict()
+            return ActionDone(
+                verdict="REFINE_LIMIT",
+                reason=reason,
+                acceptance_summary=build_terminal_acceptance_summary(
+                    self._state, verdict="REFINE_LIMIT",
+                ),
+            ).to_dict()
 
         self._state.plan_refine_by_source[source] = src_count + 1
         self._state.plan_refine_count += 1
@@ -2409,7 +2422,14 @@ class TickOrchestrator:
             self._save_checkpoint()
             action = ActionDone(
                 verdict=verdict.level_name, reason=verdict.reason,
-                verdict_level=verdict.level).to_dict()
+                verdict_level=verdict.level,
+                acceptance_summary=build_terminal_acceptance_summary(
+                    self._state,
+                    verdict=verdict.level_name,
+                    design_coverage_ok=design_coverage_ok,
+                    system_deep_audit_ok=system_deep_audit_ok,
+                ),
+            ).to_dict()
             if mc is not None:
                 # P0-2: DiagnosticRuleDiscoverer — trigger on requirement completion.
                 # 2026-07-25 审计修复(两层):
@@ -2435,7 +2455,11 @@ class TickOrchestrator:
         self._save_checkpoint()
         action = ActionDone(
             verdict="UNEXPECTED",
-            reason="ConvergenceJudge returned CONTINUE after full cycle").to_dict()
+            reason="ConvergenceJudge returned CONTINUE after full cycle",
+            acceptance_summary=build_terminal_acceptance_summary(
+                self._state, verdict="UNEXPECTED",
+            ),
+        ).to_dict()
         if mc is not None and enrichment:
             action["metrics"] = enrichment
         return action
@@ -3070,6 +3094,18 @@ class TickOrchestrator:
                 recommended = (current_gap.get("recommendation") or {}).get(
                     "resolution"
                 )
+                recommendation = current_gap.get("recommendation")
+                if not isinstance(recommendation, dict) or recommendation.get(
+                    "requires_user_approval"
+                ) is not False:
+                    return ErrorResponse(
+                        error_code="GAP_REVIEW_POLICY_REQUIRES_APPROVAL",
+                        message=(
+                            "当前 Gap 推荐可能改变绑定设计，不能由线程策略自动采用；"
+                            "必须单独提交用户 Gate 决策。"
+                        ),
+                        current_state=self._state.to_dict(),
+                    )
                 if (
                     self._state.gap_decision_policy
                     != "remaining_recommendations"

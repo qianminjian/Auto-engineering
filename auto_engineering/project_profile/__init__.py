@@ -14,6 +14,7 @@ from auto_engineering.project_profile.providers import (
     LocalProbeProvider,
     ProfileContribution,
     ProjectProfileProvider,
+    detect_browser_capability,
 )
 from auto_engineering.project_profile.resolver import (
     ProjectProfileResolution,
@@ -36,4 +37,5 @@ __all__ = [
     "ProjectProfileResolver",
     "ProjectResolution",
     "ResolutionStatus",
+    "detect_browser_capability",
 ]

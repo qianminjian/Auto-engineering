@@ -158,6 +158,7 @@ class ProductEvidenceArtifactJournal:
             "terminal_action": {
                 "action": "done",
                 "reason_code": final_action.get("reason_code"),
+                "acceptance_summary": final_action.get("acceptance_summary"),
             },
             "trajectory": {
                 "invocation_count": len(receipts),

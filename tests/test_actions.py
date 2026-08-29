@@ -59,6 +59,17 @@ class TestActionDone:
         assert "checkpoint_id" not in d
         assert "rounds" not in d
 
+    def test_done_always_declares_core_and_product_acceptance_boundary(self) -> None:
+        d = ActionDone(verdict="GOAL_ACHIEVED").to_dict()
+        assert d["acceptance_summary"] == {
+            "scope": "core",
+            "status": "core_verified_product_unverified",
+            "verified_checks": [],
+            "unverified_items": ["product_business_acceptance"],
+            "coverage": {"verified": 0, "total": 1},
+            "release_eligible": False,
+        }
+
 
 class TestActionError:
     def test_to_dict(self) -> None:

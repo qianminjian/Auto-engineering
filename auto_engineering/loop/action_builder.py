@@ -31,6 +31,7 @@ from auto_engineering.loop.effects import (
     WriteJsonArtifact,
 )
 from auto_engineering.loop.engineering_model import EngineeringModel
+from auto_engineering.project_profile.providers import detect_browser_capability
 from auto_engineering.prompts.architect_context import build_architect_research_context
 from auto_engineering.prompts.compiler import (
     CORE_OWNED_OUTPUT_FIELDS,
@@ -1056,7 +1057,7 @@ class ActionBuilder:
             "gaps": (
                 "[{id, design_section_ref, grade, clarity, summary, depends_on, "
                 "evidence, problem_statement, impact, dependencies, "
-                "recommendation:{resolution,reason,confidence}, "
+                "recommendation:{resolution,reason,confidence,requires_user_approval}, "
                 "options:[{resolution,meaning,enabled,disabled_reason?}], "
                 "blocking_rule}]"
             ),
@@ -1089,6 +1090,7 @@ class ActionBuilder:
             self._state.gap_decision_policy == "remaining_recommendations"
             and isinstance(recommendation, dict)
             and recommendation.get("resolution")
+            and recommendation.get("requires_user_approval") is False
         ):
             auto_decision = {
                 "gap_id": current_gap.get("id"),
@@ -1111,7 +1113,9 @@ class ActionBuilder:
                 "依次向用户说明问题、设计依据、影响、Loop 推荐及理由、合法选项；"
                 "只提交一个 decision，禁止代用户选择或填默认值。"
                 "Fill 必须包含可写入设计的 fill_content；Research 必须说明查证目标；"
-                "architectural blocking gap 禁止纯 Defer。复审时呈现该 gap 的研究发现。"),
+                "architectural blocking gap 禁止纯 Defer。只有 recommendation.requires_user_approval=false"
+                " 的普通缺口才可由 remaining_recommendations 自动采用；字段缺失或为 true 时"
+                "必须单独等待用户 Gate。复审时呈现该 gap 的研究发现。"),
             expected_format={
                 "decision": {
                     "gap_id": "必须等于 action.current_gap.id",
@@ -1242,6 +1246,12 @@ class ActionBuilder:
         """
         profile = self._state.project_profile or {}
         commands = profile.get("commands", {})
+        browser_command = (
+            tuple(commands["browser_e2e"])
+            if isinstance(commands, dict)
+            and isinstance(commands.get("browser_e2e"), list)
+            else None
+        )
         if verifier and isinstance(commands, dict):
             commands = {
                 name: command
@@ -1253,6 +1263,11 @@ class ActionBuilder:
             "project": profile.get("project", {}),
             "paths": profile.get("paths", {}),
             "commands": commands if isinstance(commands, dict) else {},
+            "browser_e2e_capability": detect_browser_capability(
+                self.project_root,
+                command=browser_command,
+            ),
+            "missing_capabilities": list(self._state.missing_project_capabilities),
         }
 
     def _build_action_architect(self, base: dict) -> dict:

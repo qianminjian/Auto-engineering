@@ -26,6 +26,11 @@ def resolve_terminal_action(
         return ActionDone(
             verdict=str(terminal.get("verdict", "DONE")),
             reason=str(terminal.get("reason", "")),
+            acceptance_summary=(
+                dict(terminal["acceptance_summary"])
+                if isinstance(terminal.get("acceptance_summary"), Mapping)
+                else None
+            ),
         ).to_dict()
     return None
 

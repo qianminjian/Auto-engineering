@@ -18,6 +18,7 @@ TickOrchestrator 离散调用模型的 I/O 契约:
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 __all__ = [
@@ -25,6 +26,7 @@ __all__ = [
     "ActionDone",
     "ActionError",
     "ErrorResponse",
+    "build_terminal_acceptance_summary",
     "business_result_contract",
     "result_contract_warnings",
     "validate_result_format",
@@ -48,6 +50,7 @@ class ActionDone:
     rounds: int | None = None
     gate_summary: dict | None = None
     checkpoint_id: str | None = None
+    acceptance_summary: dict | None = None
 
     def to_dict(self) -> dict:
         d: dict = {
@@ -58,6 +61,12 @@ class ActionDone:
             "verdict_reason": self.reason,
         }
         # 可选富字段: 仅在提供时出现
+        if self.acceptance_summary is not None:
+            d["acceptance_summary"] = self.acceptance_summary
+        else:
+            d["acceptance_summary"] = build_terminal_acceptance_summary(
+                None, verdict=self.verdict,
+            )
         for key in ("thread_id", "rounds", "gate_summary", "checkpoint_id"):
             val = getattr(self, key)
             if val is not None:
@@ -66,6 +75,58 @@ class ActionDone:
         if self.tick is None:
             del d["tick"]
         return d
+
+
+def build_terminal_acceptance_summary(
+    state: object | Mapping[str, object] | None,
+    *,
+    verdict: str,
+    design_coverage_ok: bool = False,
+    system_deep_audit_ok: bool = False,
+) -> dict[str, object]:
+    """区分 Core 收敛与真实产品验收，避免 ``done`` 被误读为发布完成。
+
+    Core 只能声明自己实际掌握的确定性证据；真实 API、浏览器、设备权限等
+    外部业务链路属于产品验收层，必须由独立的产品证据门禁确认。
+    """
+
+    def value(name: str, default: object = None) -> object:
+        if isinstance(state, Mapping):
+            return state.get(name, default)
+        return getattr(state, name, default) if state is not None else default
+
+    verified: list[str] = []
+    if design_coverage_ok:
+        verified.append("design_coverage")
+    if system_deep_audit_ok:
+        verified.append("system_deep_audit")
+    gate_results = value("gate_results", {})
+    if isinstance(gate_results, Mapping) and gate_results and all(
+        isinstance(item, Mapping)
+        and (item.get("not_applicable") is True or item.get("passed") is True)
+        for item in gate_results.values()
+    ):
+        verified.append("project_gates")
+    task_evidence = value("task_verification_evidence", {})
+    if isinstance(task_evidence, Mapping) and task_evidence:
+        verified.append("task_verification")
+
+    unverified = ["product_business_acceptance"]
+    if verdict != "GOAL_ACHIEVED":
+        unverified.insert(0, "core_completion")
+    total = len(verified) + len(unverified)
+    return {
+        "scope": "core",
+        "status": (
+            "core_verified_product_unverified"
+            if verdict == "GOAL_ACHIEVED"
+            else "core_incomplete"
+        ),
+        "verified_checks": verified,
+        "unverified_items": unverified,
+        "coverage": {"verified": len(verified), "total": total},
+        "release_eligible": False,
+    }
 
 
 @dataclass
