@@ -13,6 +13,7 @@ import pytest
 from scripts.install_codex_local import (
     CommandRunner,
     _seal_runtime_tree,
+    install_codex_marketplace,
     install_codex_release,
     stage_release,
     verify_runtime_paths,
@@ -132,6 +133,30 @@ def test_fresh_install_tolerates_only_missing_old_registration(tmp_path: Path) -
         runner=CommandRunner(runner),
     )
     assert calls == 4
+
+
+def test_standard_install_uses_host_managed_github_marketplace() -> None:
+    commands: list[list[str]] = []
+
+    def runner(command: list[str]) -> subprocess.CompletedProcess[str]:
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0, "{}", "")
+
+    install_codex_marketplace(
+        source="qianminjian/Auto-engineering",
+        ref="main",
+        runner=CommandRunner(runner),
+    )
+
+    assert commands == [
+        ["codex", "plugin", "remove", "auto-engineering@auto-engineering", "--json"],
+        ["codex", "plugin", "marketplace", "remove", "auto-engineering", "--json"],
+        [
+            "codex", "plugin", "marketplace", "add",
+            "qianminjian/Auto-engineering", "--ref", "main", "--json",
+        ],
+        ["codex", "plugin", "add", "auto-engineering@auto-engineering", "--json"],
+    ]
 
 
 def test_runtime_path_verification_rejects_development_origin(

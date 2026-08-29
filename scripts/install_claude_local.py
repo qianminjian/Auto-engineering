@@ -1,4 +1,4 @@
-"""从自包含 Release 安装 Claude Code 插件，禁止运行态依赖开发目录。"""
+"""通过 Claude Code 原生 Marketplace 安装 Auto-Engineering 插件。"""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ from pathlib import Path
 
 if __package__:
     from .install_codex_local import (
+        DEFAULT_MARKETPLACE_SOURCE,
         PLUGIN_ID,
         StagedRelease,
         _is_within,
@@ -22,6 +23,7 @@ if __package__:
     )
 else:
     from install_codex_local import (
+        DEFAULT_MARKETPLACE_SOURCE,
         PLUGIN_ID,
         StagedRelease,
         _is_within,
@@ -88,6 +90,34 @@ def install_claude_release(
         ],
         [
             "claude", "plugin", "marketplace", "add", str(release_root),
+            "--scope", "user",
+        ],
+        ["claude", "plugin", "install", PLUGIN_ID, "--scope", "user"],
+    ]
+    for index, command in enumerate(commands):
+        _run_required(execute, command, allow_missing=index < 2)
+
+
+def install_claude_marketplace(
+    *,
+    source: str = DEFAULT_MARKETPLACE_SOURCE,
+    runner: CommandRunner | None = None,
+) -> None:
+    """通过 Claude Code 原生 Marketplace 安装 GitHub 插件。"""
+    if not source.strip():
+        raise ValueError("Marketplace 来源不能为空")
+    execute = runner or CommandRunner(_default_runner)
+    commands = [
+        [
+            "claude", "plugin", "uninstall", PLUGIN_ID,
+            "--scope", "user", "--yes",
+        ],
+        [
+            "claude", "plugin", "marketplace", "remove", MARKETPLACE_NAME,
+            "--scope", "user",
+        ],
+        [
+            "claude", "plugin", "marketplace", "add", source,
             "--scope", "user",
         ],
         ["claude", "plugin", "install", PLUGIN_ID, "--scope", "user"],
@@ -289,23 +319,30 @@ def main() -> int:
         type=Path,
         default=Path.home() / ".local/share/auto-engineering/releases",
     )
+    parser.add_argument(
+        "--source",
+        default=DEFAULT_MARKETPLACE_SOURCE,
+        help="GitHub Marketplace 来源（默认 qianminjian/Auto-engineering）",
+    )
     parser.add_argument("--stage-only", action="store_true")
     args = parser.parse_args()
 
-    release = stage_release(args.root, args.staging_root)
-    if not args.stage_only:
-        prepare_existing_install_for_removal(
-            _json_command(["claude", "plugin", "list", "--json"]),
-        )
-        prepare_orphaned_version_cache_for_removal(version=release.version)
-        install_claude_release(release.root, development_root=args.root)
-        verify_claude_install(release, args.root)
-    print(json.dumps({
-        "status": "staged" if args.stage_only else "installed",
-        "version": release.version,
-        "build_id": release.build_id,
-        "release_root": str(release.root),
-    }, ensure_ascii=False))
+    if args.stage_only:
+        release = stage_release(args.root, args.staging_root)
+        payload = {
+            "status": "staged",
+            "version": release.version,
+            "build_id": release.build_id,
+            "release_root": str(release.root),
+        }
+    else:
+        install_claude_marketplace(source=args.source)
+        payload = {
+            "status": "installed",
+            "source": args.source,
+            "plugin": PLUGIN_ID,
+        }
+    print(json.dumps(payload, ensure_ascii=False))
     return 0
 
 

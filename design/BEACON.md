@@ -40,7 +40,7 @@ Gate/Guardrail、五层验证、审计、v5.6 兼容迁移和双宿主验收。
 | D23 | SemVer 表示发布版本，内容寻址 Build Identity 区分同版本的不同制品和源码 | ✅ |
 | D24 | 显式设计文档与旧状态冲突时先由用户选择重新初始化或修复续作；旧状态保留审计 | ✅ |
 | D25 | Gap 决策由 Core 单项持久化；batch 展示标题与多组件路由键分离；Git 仅是可选证据源 | ✅ |
-| D26 | 本机产品安装只注册开发目录之外的内容寻址 Release；运行时来源不得反向访问源码工作区 | ✅ |
+| D26 | 本机产品安装使用 Codex/Claude 原生 Marketplace；运行时不依赖插件源码工作区 | ✅ |
 | D27 | Host Runtime 属于插件产品层；Core 保持单 Tick，用户不承担 continue/supervisor 管理命令 | ✅ |
 | D28 | Worker outcome 由宿主 Assembler 原子固化为 receipt、attestation、total proof 和 Result | ✅ |
 | D29 | partial 设计权威只允许保守执行原设计；advisory 架构变化必须显式用户批准 | ✅ |

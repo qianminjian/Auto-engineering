@@ -1,6 +1,6 @@
 # Auto-Engineering 用户指南
 
-> 适用版本：5.8.0-rc.5｜更新：2026-08-16
+> 适用版本：5.8.0-rc.5｜更新：2026-08-29
 
 Auto-Engineering 通过离散 Tick 协议，让宿主 Agent 执行推理与工具调用，让 Python Core
 负责状态、门禁、验证和恢复。Claude Code 与 Codex 共用同一 Core。
@@ -24,19 +24,26 @@ Claude Code Marketplace 安装：
 /plugin install auto-engineering
 ```
 
-Codex 安装 Release 中的 `.codex-plugin/`、`skills/` 与 Hook 资产；安装后从
-`$auto-engineering` 进入。本仓库开发机不得直接把源码目录注册成任一宿主 Marketplace。
-标准内容寻址本机安装入口为：
+Codex 和 Claude Code 都由宿主原生 Marketplace 管理 `.codex-plugin/`、`.claude-plugin/`、
+`skills/` 与 Hook 资产；安装后从各自入口进入。本仓库开发机不得直接把源码目录注册成任一
+宿主 Marketplace。标准本机安装入口为：
 
 ```bash
-uv run python scripts/install_codex_local.py --root .
-uv run python scripts/install_claude_local.py --root .
+uv run python scripts/install_codex_local.py --source qianminjian/Auto-engineering
+uv run python scripts/install_claude_local.py --source qianminjian/Auto-engineering
 ```
 
-两个命令均先构建自包含 Release，按 `build_id` 暂存到
-`~/.local/share/auto-engineering/releases/`，再从该目录卸载并重装插件。安装后会实际运行
-`doctor`，并校验 Marketplace、插件路径、Python import origin 和独立运行时入口均不访问
-开发目录。测试项目运行期间可以移动或删除开发工作区，不影响已安装插件。
+两个命令均先卸载用户级旧插件和同名 Marketplace，再调用宿主原生 Git Marketplace 安装。
+Codex 可用 `--ref <git-ref>` 固定分支或标签；Claude Code 使用仓库默认分支。插件缓存、
+启用状态和安装路径由宿主管理，不由本项目另建 staging 目录。开发目录只用于执行安装
+脚本，不会被注册为运行时 Marketplace。
+
+直接使用宿主命令也可以：
+
+```bash
+codex plugin marketplace add qianminjian/Auto-engineering
+codex plugin add auto-engineering@auto-engineering
+```
 
 源码安装与预检：
 

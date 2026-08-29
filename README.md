@@ -13,7 +13,17 @@ Auto-Engineering 只有一套 Host-neutral Tick 核心，两个宿主仅入口�
 | Claude Code | `/auto-engineering:dev-loop "需求"` |
 | Codex | `$auto-engineering`，随后描述需求 |
 
-从源码安装后的最小验证：
+从 GitHub 安装插件（由宿主原生 Marketplace 管理缓存）：
+
+```bash
+codex plugin marketplace add qianminjian/Auto-engineering
+codex plugin add auto-engineering@auto-engineering
+
+claude plugin marketplace add qianminjian/Auto-engineering --scope user
+claude plugin install auto-engineering@auto-engineering --scope user
+```
+
+开发者需要运行本地门禁时，再执行源码安装后的最小验证：
 
 ```bash
 uv sync

@@ -1,4 +1,4 @@
-"""从自包含 Release 安装 Codex 插件，禁止运行态依赖开发目录。"""
+"""通过 Codex 原生 Marketplace 安装 Auto-Engineering 插件。"""
 
 from __future__ import annotations
 
@@ -21,6 +21,7 @@ else:  # 支持文档中的 `python scripts/install_codex_local.py` 直接入口
 
 PLUGIN_ID = "auto-engineering@auto-engineering"
 MARKETPLACE_NAME = "auto-engineering"
+DEFAULT_MARKETPLACE_SOURCE = "qianminjian/Auto-engineering"
 
 
 @dataclass(frozen=True)
@@ -162,6 +163,32 @@ def install_codex_release(
         _run_required(execute, command, allow_missing=index < 2)
 
 
+def install_codex_marketplace(
+    *,
+    source: str = DEFAULT_MARKETPLACE_SOURCE,
+    ref: str | None = None,
+    runner: CommandRunner | None = None,
+) -> None:
+    """通过 Codex 原生 Marketplace 安装 GitHub 插件。"""
+    if not source.strip():
+        raise ValueError("Marketplace 来源不能为空")
+    execute = runner or CommandRunner(_default_runner)
+    add_marketplace = [
+        "codex", "plugin", "marketplace", "add", source,
+    ]
+    if ref:
+        add_marketplace.extend(["--ref", ref])
+    add_marketplace.append("--json")
+    commands = [
+        ["codex", "plugin", "remove", PLUGIN_ID, "--json"],
+        ["codex", "plugin", "marketplace", "remove", MARKETPLACE_NAME, "--json"],
+        add_marketplace,
+        ["codex", "plugin", "add", PLUGIN_ID, "--json"],
+    ]
+    for index, command in enumerate(commands):
+        _run_required(execute, command, allow_missing=index < 2)
+
+
 def verify_runtime_paths(
     *,
     development_root: Path,
@@ -262,23 +289,37 @@ def main() -> int:
         type=Path,
         default=Path.home() / ".local/share/auto-engineering/releases",
     )
+    parser.add_argument(
+        "--source",
+        default=DEFAULT_MARKETPLACE_SOURCE,
+        help="GitHub Marketplace 来源（默认 qianminjian/Auto-engineering）",
+    )
+    parser.add_argument(
+        "--ref",
+        default=None,
+        help="Codex Git Marketplace 的 Git ref；不指定则使用远端默认分支",
+    )
     parser.add_argument("--stage-only", action="store_true")
     args = parser.parse_args()
 
-    release = stage_release(args.root, args.staging_root)
-    if not args.stage_only:
-        install_codex_release(release.root, development_root=args.root)
-        verify_codex_install(release, args.root)
+    if args.stage_only:
+        release = stage_release(args.root, args.staging_root)
+        payload = {
+            "status": "staged",
+            "version": release.version,
+            "build_id": release.build_id,
+            "release_root": str(release.root),
+        }
+    else:
+        install_codex_marketplace(source=args.source, ref=args.ref)
+        payload = {
+            "status": "installed",
+            "source": args.source,
+            "ref": args.ref,
+            "plugin": PLUGIN_ID,
+        }
     print(
-        json.dumps(
-            {
-                "status": "staged" if args.stage_only else "installed",
-                "version": release.version,
-                "build_id": release.build_id,
-                "release_root": str(release.root),
-            },
-            ensure_ascii=False,
-        )
+        json.dumps(payload, ensure_ascii=False)
     )
     return 0
 

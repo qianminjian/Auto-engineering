@@ -13,6 +13,7 @@ import pytest
 from scripts import install_claude_local
 from scripts.install_claude_local import (
     CommandRunner,
+    install_claude_marketplace,
     install_claude_release,
     prepare_existing_install_for_removal,
     prepare_orphaned_version_cache_for_removal,
@@ -136,6 +137,38 @@ def test_install_registers_only_staged_claude_marketplace(tmp_path: Path) -> Non
         ["claude", "plugin", "marketplace", "remove", "auto-engineering", "--scope", "user"],
         ["claude", "plugin", "marketplace", "add", str(staged_root), "--scope", "user"],
         ["claude", "plugin", "install", "auto-engineering@auto-engineering", "--scope", "user"],
+    ]
+
+
+def test_standard_install_uses_host_managed_github_marketplace() -> None:
+    commands: list[list[str]] = []
+
+    def runner(command: list[str]) -> subprocess.CompletedProcess[str]:
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0, "{}", "")
+
+    install_claude_marketplace(
+        source="qianminjian/Auto-engineering",
+        runner=CommandRunner(runner),
+    )
+
+    assert commands == [
+        [
+            "claude", "plugin", "uninstall", "auto-engineering@auto-engineering",
+            "--scope", "user", "--yes",
+        ],
+        [
+            "claude", "plugin", "marketplace", "remove", "auto-engineering",
+            "--scope", "user",
+        ],
+        [
+            "claude", "plugin", "marketplace", "add",
+            "qianminjian/Auto-engineering", "--scope", "user",
+        ],
+        [
+            "claude", "plugin", "install", "auto-engineering@auto-engineering",
+            "--scope", "user",
+        ],
     ]
 
 
