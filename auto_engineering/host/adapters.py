@@ -66,7 +66,8 @@ def _native_worker_launch_prompt(
         "切换到 project_root；只读取 prompt_ref 指定文件，先校验 SHA-256，"
         "匹配后严格执行正文。不得驱动 Auto-Engineering Loop，不得创建子代理。"
         "最终只返回输出契约要求的结构化字段和短摘要；不得返回完整 diff、日志或报告正文，"
-        "大型正文写入任务指定 Artifact。\n"
+        "大型正文写入任务指定 Artifact。若上层要求记录 outcome，文件必须保持原生 JSON object"
+        " {\"outcomes\":[...]}，不得写顶层数组或字符串化 JSON。\n"
         + json.dumps(contract, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     )
 
@@ -237,6 +238,11 @@ class _Adapter2Mixin:
                 "coordinator_result_ref": work_files["coordinator_result"],
                 "semantic_context_refs": semantic_context_refs,
             }
+            # 修复上下文是 Coordinator-only。保留 Canonical Action 中的
+            # spawn 仅供 Core 追溯，但不得把启动合同投影给宿主/模型，
+            # 否则“不得重启 Worker”会与实际执行包发生冲突。
+            mapped_payload.pop("spawn", None)
+            mapped_payload.pop("spawn_proof_token", None)
             mapped_payload["instruction"] = (
                 "当前是 Result repair：只修复 Coordinator 业务产物；"
                 "不得重新启动 Worker，必须复用 outcomes_ref 中的权威 Worker outcomes，"

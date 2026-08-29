@@ -161,7 +161,12 @@ def launcher_prompt(request: ActionExecutionRequest) -> str:
         "若 compact envelope 的 host_execution.recovery.spawn_permitted=false，"
         "不得重新启动 Worker，只修复 Coordinator 并复用 outcomes_ref。"
         "在返回 completed 前必须把业务 JSON 原子写入 request.work_files.coordinator_result；"
-        "需要 Worker 时同时写 outcomes；绝不写 request.work_files.result。\n"
+        "需要 Worker 时，必须将原生事实写成 request.work_files.outcomes 的 JSON object："
+        "{\"outcomes\":[{\"worker_id\":\"...\",\"native_worker_handle\":\"...\","
+        "\"status\":\"completed|failed|cancelled|timed_out\",\"payload\":{},"
+        "\"summary\":\"...\",\"actual_model\":\"...\","
+        "\"isolation_evidence\":\"...\"}]}；不得写顶层数组、单个 outcome 或字符串化 JSON。"
+        "绝不写 request.work_files.result。\n"
         + payload
     )
 

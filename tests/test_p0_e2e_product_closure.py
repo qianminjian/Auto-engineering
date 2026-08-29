@@ -8,6 +8,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from auto_engineering.cli.dev_loop import _compact_host_action
+from auto_engineering.host import HostPlatform
+from auto_engineering.host.adapters import adapter_for
 from auto_engineering.host.execution_assembler import (
     HostEvidenceValidationError,
     HostExecutionAssembler,
@@ -56,24 +59,34 @@ def test_single_invocation_gap_scan_accepts_semantic_output_without_machine_echo
         )
         assert action["stage"] == "gap_scan"
 
-        sections = action["context"]["host_design_sections"]
-        assert all("section_id" not in section for section in sections)
+        adapter = adapter_for(HostPlatform.CODEX)
+        profile = adapter.profile(
+            detected=adapter.capabilities,
+            authorized=adapter.capabilities,
+        )
+        mapped_action = adapter.map_action(action, profile=profile).payload
+        compact_action = _compact_host_action(mapped_action, tmp_path)
+        prompt_ref = compact_action["coordinator_prompt_ref"]
+        prompt_text = (tmp_path / prompt_ref["path"]).read_text(encoding="utf-8")
+        # 语义输入来自 Host Execution Package 的 Prompt Artifact，而不是
+        # Canonical Action 私有 context；测试本身必须遵守真实宿主边界。
+        assert "host_design_sections" in prompt_text
+        assert "section_id" not in prompt_text
         semantic_output = {
             "gaps": [],
             "section_findings": [
                 {
-                    "section_ref": section["section_ref"],
+                    "section_ref": "§C1",
                     "verdict": "clear",
                     "evidence": ["设计章节已给出可核验的上传契约。"],
                 }
-                for section in sections
             ],
         }
 
         assembler = HostExecutionAssembler(tmp_path)
         try:
             result = assembler.finalize(
-                action=action,
+                action=mapped_action,
                 outcomes=[],
                 coordinator_payload=semantic_output,
             )

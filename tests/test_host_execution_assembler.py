@@ -175,6 +175,93 @@ def test_finalize_worker_timeout_builds_failure_transaction_without_success_evid
     ) is None
 
 
+def test_worker_timeout_bypasses_architect_business_contract(
+    tmp_path: Path,
+) -> None:
+    """Worker 失败先落失败 Result，不能被空 Architect payload 的契约拦截。"""
+    action = _action(tmp_path)
+    action["stage"] = "architect"
+    action["result_contract"] = {
+        "schema_version": "1.0",
+        "required": ["plan", "file_list", "batch_plan"],
+        "properties": {
+            "plan": {"type": "string"},
+            "file_list": {"type": "array"},
+            "batch_plan": {"type": "array"},
+        },
+        "additionalProperties": False,
+    }
+    action["spawn"]["invocations"][0]["role"] = "architect"
+    outcome = NativeWorkerOutcome(
+        worker_id="critic-0",
+        native_worker_handle="agent-architect-timeout",
+        status="timed_out",
+        payload={},
+        summary="architect worker exceeded the allowed wait window",
+        actual_model="gpt-5.6-sol",
+    )
+
+    result_path = tmp_path / ".ae-state" / "host-runtime" / "work" / "result.json"
+    result = HostExecutionAssembler(tmp_path).finalize_to_file(
+        action=action,
+        outcomes=[outcome],
+        coordinator_payload={},
+        result_path=result_path,
+    )
+
+    assert result["spawned"] is False
+    assert result["spawn_error_code"] == "HOST_WORKER_TIMEOUT"
+    assert result["spawn_retry_attempt"] == 1
+    assert "plan" not in result
+    assert json.loads(result_path.read_text(encoding="utf-8")) == result
+
+
+@pytest.mark.parametrize(
+    ("status", "summary", "error_code"),
+    [
+        ("timed_out", "native worker deadline exceeded", "HOST_WORKER_TIMEOUT"),
+        ("failed", "native worker exited", "HOST_WORKER_FAILED"),
+        ("cancelled", "native worker cancelled", "HOST_WORKER_FAILED"),
+    ],
+)
+def test_all_worker_failure_states_precede_success_contract_validation(
+    tmp_path: Path,
+    status: str,
+    summary: str,
+    error_code: str,
+) -> None:
+    """所有失败态都必须走失败事务，不能被阶段成功字段拦截。"""
+    action = _action(tmp_path)
+    action["stage"] = "architect"
+    action["result_contract"] = {
+        "schema_version": "1.0",
+        "required": ["plan", "file_list", "batch_plan"],
+        "properties": {
+            "plan": {"type": "string"},
+            "file_list": {"type": "array"},
+            "batch_plan": {"type": "array"},
+        },
+        "additionalProperties": False,
+    }
+    action["spawn"]["invocations"][0]["role"] = "architect"
+    result = HostExecutionAssembler(tmp_path).finalize(
+        action=action,
+        outcomes=[NativeWorkerOutcome(
+            worker_id="critic-0",
+            native_worker_handle=f"agent-{status}",
+            status=status,
+            payload={},
+            summary=summary,
+            actual_model="gpt-5.6-sol",
+        )],
+        coordinator_payload={},
+    )
+
+    assert result["spawned"] is False
+    assert result["spawn_error_code"] == error_code
+    assert "plan" not in result
+
+
 def test_successful_retry_replaces_worker_failure_without_journal_conflict(
     tmp_path: Path,
 ) -> None:

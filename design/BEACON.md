@@ -59,7 +59,7 @@ Gate/Guardrail、五层验证、审计、v5.6 兼容迁移和双宿主验收。
 | D49 | `remaining_recommendations` 仅可自动采用明确标注 `requires_user_approval=false` 的普通 Gap；字段缺失或绑定设计影响必须等待用户 Gate | ✅ |
 ## 当前状态
 - `P0-E2E` 是唯一产品交付任务；既有 Phase/T、L1/L2、覆盖率和 archive 安装仅作支撑证据，不能替代 L4。
-- 最新 Codex candidate Build `5.8.0-rc.5+sha256.c45b430aba604080` 已完成隔离 archive smoke；本轮补齐有限数值、审计日志脱敏/轮转、宿主时间/成本/输出预算、Tick 事务内存回滚、显式协议白名单、Prompt registry fail-closed 和 Codex runtime hermetic 启动。真实产品 L3/L4 仍未执行，不得以 archive smoke 或自动测试替代。
+- 最新 Codex candidate Build `5.8.0-rc.5+sha256.6761fc1d58e2c46e` 已完成隔离 archive smoke；本轮补齐有限数值、审计日志脱敏/轮转、宿主时间/成本/输出预算、Tick 事务内存回滚、显式协议白名单、Prompt registry fail-closed 和 Codex runtime hermetic 启动，并修复 Worker 超时未落 Result 的纵向断点。真实产品 L3/L4 仍未执行，不得以 archive smoke 或自动测试替代。
 - 后续冻结无关治理和点状补丁，按设计模型、连续 Runtime、Agent 边界、真实验收四个工作面纵向闭环；终态不得把 Core 收敛冒充产品完成。
 ## 最近演进
 | 日期 | 变更 |
@@ -73,7 +73,7 @@ Gate/Guardrail、五层验证、审计、v5.6 兼容迁移和双宿主验收。
 | 2026-08-28 | 真跑证伪 T465 局部验收；D46 统一有效设计权威投影，收口 Research→Approval→Fresh Architect→Developer 因果轨迹 |
 | 2026-08-28 | 真跑发现人工 Gate 被错误映射为 CONTINUE；T558 收敛 Gate→ExecutionControl 单一判定并兼容旧快照 |
 | 2026-08-28 | 真跑发现 rejected journal 未恢复 Worker 事实，导致重复回执冲突和无终态停滞；T559 收敛 repair-only 恢复与冲突终止 |
-| 2026-08-29 | 全场景审计补齐跨平台路径、Lease、Phase 0、advisory、重试与清理边界（T563-T570）；Codex 加固 finite usage、bounded audit、Host Runtime budgets、Tick rollback、protocol/prompt fail-closed、`.ae-runtime` hermetic hooks；Build `5.8.0-rc.5+sha256.c45b430aba604080` archive smoke 通过 |
+| 2026-08-29 | 全场景审计补齐跨平台路径、Lease、Phase 0、advisory、重试与清理边界（T563-T570）；Codex 加固 finite usage、bounded audit、Host Runtime budgets、Tick rollback、protocol/prompt fail-closed、`.ae-runtime` hermetic hooks；T579-T580 修复 Worker 超时先终结失败 Result、统一 outcomes 合同、repair 隔离和纵向回归；Build `5.8.0-rc.5+sha256.6761fc1d58e2c46e` archive smoke 通过 |
 ## 待解决问题
 - T571-T577 已完成代码与自动门禁收口；下一步只剩按用户安排在 Codex/Claude 使用同一 Build 执行真实 L3/L4，验证独立宿主回执、成本完整性、Gap 审批和等价 `TERMINAL`，在此之前保持发布阻断。
 ## 引用文件

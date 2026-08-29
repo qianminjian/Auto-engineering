@@ -233,6 +233,8 @@ def test_adapter_materializes_strict_worker_evidence_templates(
         assert invocation["prompt_ref"] in launcher
         assert invocation["prompt_sha256"] in launcher
         assert "不得返回完整 diff、日志或报告正文" in launcher
+        assert '{"outcomes":[...]}' in launcher
+        assert "不得写顶层数组或字符串化 JSON" in launcher
         launch_contract = json.loads(launcher.splitlines()[-1])
         assert launch_contract["may_drive_loop"] is False
         assert launch_contract["may_spawn_workers"] is False
@@ -283,6 +285,8 @@ def test_result_repair_reuses_worker_outcomes_without_respawn(
 
     mapped = adapter.map_action(action, profile=profile).payload
 
+    assert "spawn" not in mapped
+    assert "spawn_proof_token" not in mapped
     assert "workers" not in mapped["host_execution"]
     recovery = mapped["host_execution"]["recovery"]
     assert recovery["status"] == "result_repair_worker_reuse"

@@ -274,6 +274,18 @@ class HostExecutionAssembler:
         outcomes: Sequence[NativeWorkerOutcome],
         coordinator_payload: Mapping[str, Any],
     ) -> dict[str, Any]:
+        # Worker 失败是一次独立的宿主事实，不依赖 Coordinator 业务字段。
+        # 必须先终结失败尝试，再校验 Architect/Developer 等成功 payload；
+        # 否则超时时的空 payload 会被误判为可修复的业务 Result，既无法
+        # 生成 result.json，也会错误进入“复用 Worker、禁止重启”的路径。
+        if (
+            isinstance(action.get("spawn"), Mapping)
+            and any(outcome.status != "completed" for outcome in outcomes)
+        ):
+            return self._finalize_worker_failure(
+                action=action,
+                outcomes=outcomes,
+            )
         coordinator_payload = self._normalize_echoed_identity(
             action=action,
             coordinator_payload=coordinator_payload,
@@ -287,11 +299,6 @@ class HostExecutionAssembler:
                 action=action,
                 outcomes=outcomes,
                 coordinator_payload=coordinator_payload,
-            )
-        if any(outcome.status != "completed" for outcome in outcomes):
-            return self._finalize_worker_failure(
-                action=action,
-                outcomes=outcomes,
             )
         violations, context = self._preflight(
             action=action,
