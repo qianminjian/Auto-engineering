@@ -175,11 +175,25 @@ class TestTickMode:
         )
 
         assert status.exit_code == 0, status.output
-        assert _last_json_line(status.output)["next_operation"] == {
+        summary = _last_json_line(status.output)
+        assert summary["next_operation"] == {
             "operation": "resume_active_action",
             "thread_id": thread_id,
             "argv": ["dev-loop", "--resume", thread_id],
         }
+        assert summary["active_action"]["stage"] == "project_setup"
+        assert "result" in summary["active_action"]["work_files"]
+
+        repeated = runner.invoke(
+            main,
+            ["dev-loop", "--status", "--project-root", str(tmp_path)],
+        )
+        assert repeated.exit_code == 0, repeated.output
+        repeated_summary = _last_json_line(repeated.output)
+        assert repeated_summary["tick"] == summary["tick"]
+        assert repeated_summary["active_action"]["message_id"] == (
+            summary["active_action"]["message_id"]
+        )
 
     def test_validate_result_is_non_mutating_and_rejects_invalid_json(
         self, tmp_path
@@ -284,6 +298,34 @@ class TestTickMode:
 
 
 class TestStatusMode:
+    def test_status_action_summary_exposes_current_gap_and_work_contract(
+        self,
+    ) -> None:
+        from auto_engineering.cli.dev_loop import _status_action_summary
+
+        summary = _status_action_summary({
+            "message_id": "action-7",
+            "action": "gap_review",
+            "stage": "gap_review",
+            "current_gap_index": 1,
+            "total_gaps": 3,
+            "current_gap": {"id": "gap-2", "summary": "缺少接口错误合同"},
+            "work_files": {"result": ".ae-state/work/action-7/result.json"},
+            "expected_format": {"decision": {"gap_id": "string"}},
+            "context": {"private": "must-not-leak"},
+        })
+
+        assert summary == {
+            "message_id": "action-7",
+            "action": "gap_review",
+            "stage": "gap_review",
+            "current_gap_index": 1,
+            "total_gaps": 3,
+            "current_gap": {"id": "gap-2", "summary": "缺少接口错误合同"},
+            "work_files": {"result": ".ae-state/work/action-7/result.json"},
+            "expected_format": {"decision": {"gap_id": "string"}},
+        }
+
     def test_status_accepts_documented_json_format(self, tmp_path) -> None:
         """Skill 文档中的 --format json 调用必须保持兼容。"""
         runner = CliRunner()
@@ -529,6 +571,7 @@ class TestMutexAndLegacy:
             env={"AE_HOST_PLATFORM": "codex"},
         )
         assert result.exit_code == 0, result.output
+        assert "[宿主监督] 已接管 Action" in result.output
         assert _last_json_line(result.output)["message_id"] == "terminal-1"
         assert evidence_calls[0]["host"] == "codex"
         assert evidence_calls[0]["thread_id"]

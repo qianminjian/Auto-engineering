@@ -157,4 +157,4 @@ Phase 64–66 的真实运行止血、会话解耦、上下文预算、ArtifactR
 ## Phase 84：跨平台宿主边界与异常可续作
 | P1 | T563 | POSIX/Windows 路径越界 fail-closed | ✅ 回归已实现；跨平台路径检查通过 |
 | P1 | T564 | Host/机器 OSError → 稳定 Stop Report | ✅ 回归已实现；稳定错误码与机器报告通过 |
-| P1 | T565-T580 | 真实成本、日志脱敏、事务故障注入、纵向回放、双宿主 L3-L4 与超时终结 | ◐ T571-T580 已补齐 Worker 超时先行终结、唯一 outcomes 合同、repair 投影隔离和 Host Execution Package 纵向回归；真实 Codex/Claude L3-L4 仍待执行 |
+| P1 | T565-T586 | 真实成本、日志脱敏、事务故障注入、纵向回放、双宿主 L3-L4、超时与状态可见性 | ◐ T571-T586 已补齐 Worker 超时先行终结、唯一 outcomes 合同、repair 投影隔离、Supervisor 即时心跳、只读 active Action 状态、Build 证据和事故回放；真实 Codex/Claude L3-L4 仍待执行 |

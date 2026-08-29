@@ -1437,6 +1437,27 @@ def run_tick_finalize(
         store.close()
 
 
+def _status_action_summary(action: Mapping[str, Any]) -> dict[str, Any]:
+    """投影当前 Action 的宿主所需字段，不泄漏 Canonical 私有 context。"""
+    host_execution = action.get("host_execution")
+    work_files = action.get("work_files")
+    if not isinstance(work_files, Mapping) and isinstance(host_execution, Mapping):
+        work_files = host_execution.get("work_files")
+    summary: dict[str, Any] = {}
+    for key in (
+        "message_id", "action", "stage", "current_gap_index", "total_gaps",
+        "current_gap", "expected_format",
+    ):
+        value = action.get(key)
+        if isinstance(value, Mapping):
+            summary[key] = dict(value)
+        elif value is not None:
+            summary[key] = value
+    if isinstance(work_files, Mapping):
+        summary["work_files"] = dict(work_files)
+    return summary
+
+
 def run_tick_status(root: Path, verbose: bool = False) -> None:
     """ae dev-loop --status: restore → 输出当前 tick 状态摘要 JSON."""
     import json
@@ -1483,6 +1504,32 @@ def run_tick_status(root: Path, verbose: bool = False) -> None:
         if lease is not None and lease.disposition == "TERMINAL":
             summary["current_stage"] = "done"
             summary["expected_stage"] = "done"
+        elif active_thread is not None:
+            # status 必须是纯读取；build_action() 可能提交新的 Action 事件，
+            # 在查询阶段会制造 action_timestamp 投影冲突。只读取 EventStore
+            # 已持久化的 Canonical Action，缺失时再读取兼容 checkpoint 快照。
+            active_action = events.load_action_snapshot(active_thread)
+            checkpoint_action = store.load_active_protocol_action(active_thread)
+            if (
+                isinstance(checkpoint_action, Mapping)
+                and not isinstance(
+                    active_action.get("host_execution")
+                    if isinstance(active_action, Mapping)
+                    else None,
+                    Mapping,
+                )
+            ):
+                # 旧 EventStore 快照可能只保存 Canonical 字段；宿主 work_files
+                # 仍从同一 active Action 的 checkpoint 投影读取，不能返回半份合同。
+                active_action = checkpoint_action
+            if active_action is None:
+                active_action = checkpoint_action
+            if isinstance(active_action, Mapping):
+                summary["active_action"] = _status_action_summary(
+                    _map_action_for_host(dict(active_action))
+                )
+            else:
+                summary["active_action_error"] = "ACTIVE_ACTION_UNAVAILABLE"
         from auto_engineering.loop.status_projection import reconciliation_status
 
         reconciliation = reconciliation_status(s, orch._batch_state)
@@ -1658,6 +1705,11 @@ def run_action_supervisor(root: Path) -> None:
         project_root=root,
         bundled_runner=bundled_runner,
         environ=child_environment,
+    )
+    click.echo(
+        f"[宿主监督] 已接管 Action {action.get('message_id', 'unknown')} "
+        f"(stage={action.get('stage', 'unknown')})",
+        err=True,
     )
     def record_receipt(request: Any, receipt: Any) -> None:
         receipt_journal.record(request, receipt)

@@ -921,6 +921,8 @@ def test_stop_report_uses_action_and_receipt_facts_without_transcript(
             "continuation_required": False,
             "yield_allowed": True,
             "reason_code": "HOST_ACTION_CONTEXT_FAILED",
+        }, "runtime_revision": {
+            "engine_build_id": "build-1",
         }}},
     }
 
@@ -932,8 +934,21 @@ def test_stop_report_uses_action_and_receipt_facts_without_transcript(
 
     assert "WAIT_RESOURCE" in report
     assert "HOST_ACTION_CONTEXT_FAILED" in report
+    assert "Build：`build-1`" in report
     assert "action-1" in report
     assert "context-1" in report
     assert "等待资源恢复后重试 critic" in report
     assert "transcript" not in report.lower()
     assert "prompt" not in report.lower()
+
+
+def test_stop_report_build_identity_follows_action_revision_sources() -> None:
+    from auto_engineering.host.supervisor import LoopStopReportJournal
+
+    assert LoopStopReportJournal._build_id({"build_id": "direct-build"}) == (
+        "direct-build"
+    )
+    assert LoopStopReportJournal._build_id({
+        "runtime_vector": {"engine_build_id": "vector-build"},
+    }) == "vector-build"
+    assert LoopStopReportJournal._build_id({}) == "unknown"

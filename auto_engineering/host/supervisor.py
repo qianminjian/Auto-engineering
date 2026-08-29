@@ -265,6 +265,28 @@ class LoopStopReportJournal:
         text = str(value or "").replace("\r", " ").replace("\n", " ").strip()
         return text[:limit]
 
+    @staticmethod
+    def _build_id(action: Mapping[str, Any]) -> str:
+        """从 Canonical Action 提取内容寻址 Build Identity。"""
+        direct = action.get("build_id")
+        if isinstance(direct, str) and direct:
+            return direct
+        for container_key in ("runtime_vector",):
+            container = action.get(container_key)
+            if isinstance(container, Mapping):
+                value = container.get("engine_build_id")
+                if isinstance(value, str) and value:
+                    return value
+        extensions = action.get("extensions")
+        ae = extensions.get("ae") if isinstance(extensions, Mapping) else None
+        for key in ("runtime_revision", "runtime"):
+            container = ae.get(key) if isinstance(ae, Mapping) else None
+            if isinstance(container, Mapping):
+                value = container.get("engine_build_id") or container.get("build_id")
+                if isinstance(value, str) and value:
+                    return value
+        return "unknown"
+
     def _latest_receipt(self, thread_id: str) -> dict[str, Any] | None:
         directory = self._root / ".ae-state/host-runtime/receipts"
         records: list[dict[str, Any]] = []
@@ -325,6 +347,7 @@ class LoopStopReportJournal:
             "# Auto-Engineering Loop 停止报告",
             "",
             f"- Thread：`{self._line(thread_id)}`",
+            f"- Build：`{self._line(self._build_id(final_action))}`",
             f"- Disposition：`{disposition}`",
             f"- 当前 Action：`{action_id}`",
             f"- Stage：`{self._line(final_action.get('stage'))}`",

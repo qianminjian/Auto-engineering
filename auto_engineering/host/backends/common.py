@@ -25,7 +25,7 @@ class CancellableProcessRunner:
         *,
         cancel_grace_seconds: float = 2.0,
         progress_callback: Callable[[float], None] | None = None,
-        heartbeat_seconds: float = 300.0,
+        heartbeat_seconds: float = 30.0,
     ) -> None:
         self._cancel_grace_seconds = cancel_grace_seconds
         self._progress_callback = progress_callback
@@ -90,9 +90,12 @@ class CancellableProcessRunner:
         heartbeat_stop = threading.Event()
         heartbeat_thread: threading.Thread | None = None
         progress_callback = self._progress_callback
+        started_at = time.monotonic()
+        if progress_callback is not None:
+            # 先报告 context 已启动，再进入可能持续数分钟的模型调用；否则
+            # 前台无法区分“尚未开始”和“正在等待宿主”。
+            progress_callback(0.0)
         if progress_callback is not None and self._heartbeat_seconds > 0:
-            started_at = time.monotonic()
-
             def emit_heartbeat() -> None:
                 while not heartbeat_stop.wait(self._heartbeat_seconds):
                     progress_callback(time.monotonic() - started_at)

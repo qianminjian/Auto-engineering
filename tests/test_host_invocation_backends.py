@@ -777,3 +777,23 @@ def test_cancellable_runner_emits_bounded_progress_heartbeat() -> None:
     assert result.returncode == 0
     assert len(heartbeats) >= 2
     assert heartbeats == sorted(heartbeats)
+
+
+def test_cancellable_runner_reports_context_start_before_waiting() -> None:
+    """宿主等待模型时，前台必须先收到 context 已启动的事实。"""
+    from auto_engineering.host.backends.common import CancellableProcessRunner
+
+    heartbeats: list[float] = []
+    result = CancellableProcessRunner(
+        progress_callback=heartbeats.append,
+        heartbeat_seconds=1.0,
+    )(
+        (sys.executable, "-c", "print('ready')"),
+        text=True,
+        capture_output=True,
+        timeout=1,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert heartbeats and heartbeats[0] == 0.0
