@@ -45,6 +45,7 @@
 | `incidents/2026-08-11-gap-review-wizard-real-run.md` | Gap 批量决策、计划标识、Critic replay 与新项目证据事故及关闭证据 |
 | `incidents/2026-08-24-critic-result-double-serialization.md` | Critic 嵌套字段二次序列化、宿主类型边界与停止报告缺口 |
 | `incidents/2026-08-28-gate-disposition-chain.md` | Gate 处置映射遗漏导致人工 Gate 被错误执行的跨阶段断链 |
+| `incidents/2026-08-28-outcome-journal-conflict-stall.md` | 同一 Action 重复回执、Outcome Journal 冲突与 Supervisor 停滞事故 |
 | `IMPLEMENTATION-TRACKER.md` | 当前任务状态、优先级与 EARS 验收 |
 | `HISTORY.md` | 历史里程碑与 Git 追溯入口 |
 

@@ -101,9 +101,13 @@ class HostExecutionAssembler:
         message_id = action.get("message_id")
         thread_id = action.get("thread_id")
         stage = action.get("stage")
-        if not all(
-            isinstance(value, str) and value
-            for value in (message_id, thread_id, stage)
+        if (
+            not isinstance(message_id, str)
+            or not message_id
+            or not isinstance(thread_id, str)
+            or not thread_id
+            or not isinstance(stage, str)
+            or not stage
         ):
             raise HostEvidenceValidationError(("ACTION_IDENTITY_INVALID",))
         journal_path = (
@@ -113,6 +117,35 @@ class HostExecutionAssembler:
         )
         journal = self._read_json(journal_path)
         if journal is None:
+            return None
+        if journal.get("status") == "rejected":
+            # Core 已拒绝候选 Result，但 Worker 事实仍是同一 Action 的权威事实；
+            # 修复上下文只能拿到这份原文，绝不能因 rejected 状态重新 spawn。
+            if outcomes_path is None:
+                raise HostEvidenceValidationError(
+                    ("OUTCOME_JOURNAL_OUTCOMES_PATH_MISSING",)
+                )
+            outcomes = self._authoritative_outcomes(
+                journal=journal,
+                action_message_id=message_id,
+                required=True,
+            )
+            if outcomes is None:
+                raise HostEvidenceValidationError(
+                    ("OUTCOME_JOURNAL_OUTCOMES_MISSING",)
+                )
+            self._write_outcomes_file(outcomes_path, outcomes)
+            return None
+        if journal.get("status") == "assembly_rejected":
+            # 语义组装拒绝通常保留已完成 Worker；有事实时恢复并复用，
+            # 没有事实则保持旧兼容路径，允许首次 Worker 执行。
+            outcomes = self._authoritative_outcomes(
+                journal=journal,
+                action_message_id=message_id,
+                required=False,
+            )
+            if outcomes is not None and outcomes_path is not None:
+                self._write_outcomes_file(outcomes_path, outcomes)
             return None
         if journal.get("status") == "prepared" and not isinstance(
             journal.get("result"), dict
@@ -127,21 +160,9 @@ class HostExecutionAssembler:
                     ("OUTCOME_JOURNAL_PREPARED_INVALID",)
                 )
             if outcomes_path is not None:
-                outcomes_target = (
-                    outcomes_path.resolve()
-                    if outcomes_path.is_absolute()
-                    else (self.project_root / outcomes_path).resolve()
-                )
-                if (
-                    outcomes_target != self.project_root
-                    and self.project_root not in outcomes_target.parents
-                ):
-                    raise HostEvidenceValidationError(
-                        ("OUTCOMES_OUTPUT_PATH_OUTSIDE_PROJECT",)
-                    )
                 # prepared journal 已在 Worker 完成后原子落盘，是 outcome
                 # 的权威恢复点；宿主工作副本只能由它重建，不能反向改写事实。
-                _atomic_write_json(outcomes_target, {"outcomes": outcomes})
+                self._write_outcomes_file(outcomes_path, outcomes)
             return None
         if journal.get("status") not in {"prepared", "accepted", "committed"}:
             return None
@@ -194,6 +215,58 @@ class HostExecutionAssembler:
             _atomic_write_json(outcomes_target, {"outcomes": outcomes})
         return dict(result)
 
+    def _write_outcomes_file(
+        self,
+        outcomes_path: Path,
+        outcomes: Sequence[Mapping[str, Any]],
+    ) -> None:
+        target = (
+            outcomes_path.resolve()
+            if outcomes_path.is_absolute()
+            else (self.project_root / outcomes_path).resolve()
+        )
+        if target == self.project_root or self.project_root not in target.parents:
+            raise HostEvidenceValidationError(
+                ("OUTCOMES_OUTPUT_PATH_OUTSIDE_PROJECT",)
+            )
+        _atomic_write_json(target, {"outcomes": [dict(item) for item in outcomes]})
+
+    @staticmethod
+    def _authoritative_outcomes(
+        *,
+        journal: Mapping[str, Any],
+        action_message_id: str,
+        required: bool,
+    ) -> list[dict[str, Any]] | None:
+        raw = journal.get("outcomes")
+        if journal.get("action_message_id") != action_message_id:
+            raise HostEvidenceValidationError(
+                ("OUTCOME_JOURNAL_ACTION_IDENTITY_MISMATCH",)
+            )
+        if not isinstance(raw, list):
+            if required:
+                raise HostEvidenceValidationError(
+                    ("OUTCOME_JOURNAL_OUTCOMES_MISSING",)
+                )
+            return None
+        if any(not isinstance(item, Mapping) for item in raw):
+            raise HostEvidenceValidationError(
+                ("OUTCOME_JOURNAL_OUTCOMES_INVALID",)
+            )
+        expected = journal.get("outcomes_fingerprint")
+        if isinstance(expected, str):
+            actual = hashlib.sha256(
+                _canonical_bytes({
+                    "action_message_id": action_message_id,
+                    "outcomes": raw,
+                })
+            ).hexdigest()
+            if actual != expected:
+                raise HostEvidenceValidationError(
+                    ("OUTCOME_JOURNAL_OUTCOMES_FINGERPRINT_MISMATCH",)
+                )
+        return [dict(item) for item in raw]
+
     def finalize(
         self,
         *,
@@ -237,6 +310,30 @@ class HostExecutionAssembler:
         )
         existing = self._read_json(journal_path)
         outcome_by_worker = {item.worker_id: item for item in outcomes}
+        if existing is not None and existing.get("status") in {
+            "rejected",
+            "assembly_rejected",
+        }:
+            authoritative = self._authoritative_outcomes(
+                journal=existing,
+                action_message_id=message_id,
+                required=existing.get("status") == "rejected",
+            )
+            if authoritative is not None:
+                try:
+                    # Result 修复只允许改变 Coordinator 语义；Worker outcome
+                    # 由首次事务固定，忽略后续宿主 context 传来的替代事实。
+                    outcome_by_worker = {
+                        item.worker_id: item
+                        for item in (
+                            NativeWorkerOutcome(**raw)
+                            for raw in authoritative
+                        )
+                    }
+                except (TypeError, ValueError) as exc:
+                    raise HostEvidenceValidationError((
+                        "OUTCOME_JOURNAL_OUTCOMES_INVALID",
+                    )) from exc
         normalized: dict[str, NativeWorkerOutcome] = {}
         for worker_id, outcome in outcome_by_worker.items():
             evidence = outcome.isolation_evidence

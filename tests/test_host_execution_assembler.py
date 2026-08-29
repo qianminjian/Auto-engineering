@@ -574,6 +574,49 @@ def test_restore_prepared_journal_materializes_authoritative_outcomes(
     assert json.loads(target.read_text()) == {"outcomes": [original]}
 
 
+def test_restore_rejected_journal_materializes_authoritative_outcomes(
+    tmp_path: Path,
+) -> None:
+    """Core 拒绝候选 Result 后，修复上下文仍只能复用首个 Worker 事实。"""
+    action = _action(tmp_path)
+    original = NativeWorkerOutcome(
+        worker_id="critic-0",
+        native_worker_handle="agent-123",
+        status="completed",
+        payload={"verdict": "PASS"},
+        summary="通过",
+        actual_model="gpt-5.6-sol",
+        isolation_evidence="fork_context=false",
+    ).to_dict()
+    journal = tmp_path / ".ae-state/host-runtime/outcomes/action-1.json"
+    journal.parent.mkdir(parents=True)
+    journal.write_text(json.dumps({
+        "schema_version": "1.1",
+        "status": "rejected",
+        "action_message_id": "action-1",
+        "outcomes": [original],
+            "outcomes_fingerprint": hashlib.sha256(
+                json.dumps({
+                    "action_message_id": "action-1",
+                    "outcomes": [original],
+                }, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest(),
+        "rejection": {"error_code": "RESULT_FIELD_MISSING"},
+    }))
+
+    work_copy = Path(".ae-state/host-runtime/work/recovery/outcomes.json")
+    restored = HostExecutionAssembler(tmp_path).restore_committed_result_to_file(
+        action=action,
+        result_path=Path("result.json"),
+        outcomes_path=work_copy,
+    )
+
+    assert restored is None
+    assert json.loads((tmp_path / work_copy).read_text()) == {
+        "outcomes": [original]
+    }
+
+
 def test_restore_committed_result_rejects_mismatched_causation(
     tmp_path: Path,
 ) -> None:
@@ -664,6 +707,50 @@ def test_finalize_rejects_changed_worker_outcome_during_payload_repair(
             outcomes=[changed],
             coordinator_payload={"verdict": "PASS", "findings": []},
         )
+
+
+def test_finalize_reuses_authoritative_worker_outcome_after_core_rejection(
+    tmp_path: Path,
+) -> None:
+    action = _action(tmp_path)
+    assembler = HostExecutionAssembler(tmp_path)
+    original = NativeWorkerOutcome(
+        worker_id="critic-0",
+        native_worker_handle="agent-123",
+        status="completed",
+        payload={"verdict": "PASS"},
+        summary="通过",
+        actual_model="gpt-5.6-sol",
+    )
+    first = assembler.finalize(
+        action=action,
+        outcomes=[original],
+        coordinator_payload={"verdict": "PASS"},
+    )
+    from auto_engineering.host.outcome_journal import OutcomeJournal
+
+    OutcomeJournal(tmp_path).reject(
+        "action-1", error_code="RESULT_FIELD_MISSING"
+    )
+    changed = NativeWorkerOutcome(
+        worker_id="critic-0",
+        native_worker_handle="different-context-worker",
+        status="completed",
+        payload={"verdict": "PASS"},
+        summary="通过",
+        actual_model="gpt-5.6-sol",
+    )
+
+    repaired = assembler.finalize(
+        action=action,
+        outcomes=[changed],
+        coordinator_payload={"verdict": "PASS", "findings": []},
+    )
+
+    assert repaired["findings"] == []
+    assert repaired["worker_attestations"][0]["worker_id"] == "critic-0"
+    assert repaired["worker_attestations"][0]["actual_model"] == "gpt-5.6-sol"
+    assert repaired["message_id"] != first["message_id"]
 
 
 def test_finalize_archives_invalid_legacy_prepared_outcome_before_repair(

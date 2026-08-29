@@ -674,6 +674,88 @@ def test_cli_recovery_projection_forbids_duplicate_worker_spawn(
     assert json.loads(outcomes_path.read_text()) == {"outcomes": []}
 
 
+def test_cli_result_repair_restores_rejected_outcomes_and_keeps_repair_mode(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    from auto_engineering.cli.dev_loop import _prepare_action_for_host
+
+    monkeypatch.setenv("CODEX_THREAD_ID", "result-repair-session")
+    action = {
+        "schema_version": "1.1",
+        "action": "architect",
+        "stage": "architect",
+        "message_id": "result-repair-action",
+        "thread_id": "result-repair-thread",
+        "tick": 8,
+        "project_root": str(tmp_path),
+        "result_rejection": {
+            "repair_required": True,
+            "error_code": "ACTION_EXECUTION_ACTION_INVALID",
+            "violations": ["RESULT_FIELD_MISSING"],
+        },
+        "extensions": {"ae": {"execution_control": ExecutionControl(
+            schema_version="1.0",
+            disposition=ExecutionDisposition.CONTINUE,
+            continuation_required=True,
+            yield_allowed=False,
+            allowed_stop_reasons=(),
+        ).to_dict()}},
+        "spawn": {
+            "contract_version": "1.0",
+            "count": 1,
+            "effort": "xhigh",
+            "parallel": False,
+            "invocations": [{
+                "worker_id": "architect-0",
+                "role": "architect",
+                "prompt_ref": ".ae-state/effects/architect.txt",
+                "prompt_sha256": "a" * 64,
+                "requested_effort": "xhigh",
+                "isolation": "fresh_context",
+                "capabilities": {
+                    "may_drive_loop": False,
+                    "may_spawn_workers": False,
+                },
+                "receipt_path": ".ae-state/spawn-proofs/architect.json",
+            }],
+        },
+    }
+    action_key = hashlib.sha256(action["message_id"].encode()).hexdigest()[:24]
+    work = tmp_path / ".ae-state/host-runtime/work" / action_key
+    work.mkdir(parents=True)
+    original = {
+        "worker_id": "architect-0",
+        "native_worker_handle": "agent-original",
+        "status": "completed",
+        "payload": {"plan": "original"},
+        "summary": "完成",
+        "actual_model": "gpt-5.6-sol",
+        "isolation_evidence": "fork_context=false",
+    }
+    (work / "coordinator-result.json").write_text(
+        json.dumps({"plan": "stale"}), encoding="utf-8"
+    )
+    journal = tmp_path / ".ae-state/host-runtime/outcomes" / f"{action['message_id']}.json"
+    journal.parent.mkdir(parents=True)
+    journal.write_text(json.dumps({
+        "schema_version": "1.1",
+        "status": "rejected",
+        "action_message_id": action["message_id"],
+        "outcomes": [original],
+    }))
+
+    mapped = _prepare_action_for_host(action, tmp_path)
+
+    recovery = mapped["host_execution"]["recovery"]
+    assert recovery["status"] == "result_repair_worker_reuse"
+    assert "workers" not in mapped["host_execution"]
+    assert "只修复 Coordinator" in mapped["instruction"]
+    assert json.loads((work / "outcomes.json").read_text()) == {
+        "outcomes": [original]
+    }
+
+
 def test_cli_recovery_finalizes_complete_native_files_before_respawn(
     tmp_path,
     monkeypatch,

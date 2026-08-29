@@ -284,6 +284,10 @@ def test_result_repair_reuses_worker_outcomes_without_respawn(
     mapped = adapter.map_action(action, profile=profile).payload
 
     assert "workers" not in mapped["host_execution"]
+    recovery = mapped["host_execution"]["recovery"]
+    assert recovery["status"] == "result_repair_worker_reuse"
+    assert recovery["spawn_permitted"] is False
+    assert recovery["required_operation"] == "repair_coordinator_then_finalize"
     finalize = mapped["host_execution"]["operations"]["finalize"]["argv"]
     assert mapped["host_execution"]["work_files"]["outcomes"] in finalize
 

@@ -8,7 +8,6 @@
 3. 设计、缺口、任务、代码和验证使用同一稳定工程模型全程追溯。
 4. Core 负责协议、状态、验证、安全和审计，Agent 不复制机器事实。
 5. Claude Code 与 Codex 的独立安装制品完成等价 L4 终态后才可发布。
-
 ## 范围边界
 
 **做：** Protocol Envelope、Event Store、Tick Kernel、StageHandler、Host SPI、
@@ -58,10 +57,10 @@ Gate/Guardrail、五层验证、审计、v5.6 兼容迁移和双宿主验收。
 | D44 | Gap Scan 始终输出有界可见摘要；零缺口必须逐章节可证明并自动续作，真实设计决策才进入用户确认，丢失产物不得降级为空结果 | ✅ |
 | D45 | 后续唯一 P0 为单命令运行到 `TERMINAL`；局部能力只作支撑证据，L4 未通过不得关闭产品任务 | ✅ |
 | D46 | 运行态设计权威由 Core 统一投影；当前 Tick 的批准必须对同 Tick 下一 Action 可见，ActionBuilder 不得独立重读静态 ledger | ✅ |
-
+| D47 | Core 拒绝后的同 Action repair 必须复用 journal 权威 Worker outcomes；修复包只允许 Coordinator，冲突在当前 Action fail-closed 并生成 Stop Report | ✅ |
 ## 当前状态
 - `P0-E2E` 是唯一产品交付任务；既有 Phase/T、L1/L2、覆盖率和 archive 安装仅作支撑证据，不能替代 L4。
-- 最新 Build `5.8.0-rc.5+sha256.3927b1f572df8ece` 的历史自动门禁不再足以证明可发布；2026-08-28 真跑先证伪设计批准传递闭环，后证伪人工 Gate 处置映射（T558），双宿主 L4 均需用新 Build 重新验收。
+- 最新 Build `5.8.0-rc.5+sha256.3927b1f572df8ece` 的历史自动门禁不再足以证明可发布；2026-08-28 真跑先证伪设计批准传递闭环，后证伪人工 Gate 与同 Action repair 处置（T558-T559），双宿主 L4 均需用新 Build 重新验收。
 - 后续冻结无关治理和点状补丁，按设计模型、连续 Runtime、Agent 边界、真实验收四个工作面纵向闭环。
 ## 最近演进
 | 日期 | 变更 |
@@ -74,7 +73,8 @@ Gate/Guardrail、五层验证、审计、v5.6 兼容迁移和双宿主验收。
 | 2026-08-27 | 修复 component_verifier 成功路径遗漏 coverage_map 领域事件；真实 Claude 不再触发 STATE_PROJECTION_MISMATCH |
 | 2026-08-28 | 真跑证伪 T465 局部验收；D46 统一有效设计权威投影，收口 Research→Approval→Fresh Architect→Developer 因果轨迹 |
 | 2026-08-28 | 真跑发现人工 Gate 被错误映射为 CONTINUE；T558 收敛 Gate→ExecutionControl 单一判定并兼容旧快照 |
+| 2026-08-28 | 真跑发现 rejected journal 未恢复 Worker 事实，导致重复回执冲突和无终态停滞；T559 收敛 repair-only 恢复与冲突终止 |
 ## 待解决问题
-- 完成 T554-T558 后继续 `P0-E2E`：证明 Gate 等待与批准闭环，再用同一新 Build 在 Codex/Claude 运行到等价 `TERMINAL`。
+- 完成 T554-T559 后继续 `P0-E2E`：证明 Gate 等待、同 Action repair 与冲突终止闭环，再用同一新 Build 在 Codex/Claude 运行到等价 `TERMINAL`。
 ## 引用文件
 `design/v5.8-Effective-Design-Authority-Projection.md` · `design/v5.8-Session-Decoupling-Design.md` · `design/v5.8-Session-Decoupling-PLAN.md` · `design/incidents/2026-07-29-claude-146-tick-long-run.md` · `design/IMPLEMENTATION-TRACKER.md` · `design/HISTORY.md`

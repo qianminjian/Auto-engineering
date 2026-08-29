@@ -188,6 +188,11 @@ def _prepare_action_for_host(
             for value in (result_ref, outcomes_ref, coordinator_ref)
         ):
             raw_workers = host_execution.get("workers")
+            rejection = action.get("result_rejection")
+            is_result_repair = (
+                isinstance(rejection, Mapping)
+                and rejection.get("repair_required") is True
+            )
             semantic_context_refs = [
                 str(worker["prompt_ref"])
                 for worker in raw_workers
@@ -271,7 +276,7 @@ def _prepare_action_for_host(
                     )
                 except (KeyError, OSError, json.JSONDecodeError, TypeError):
                     native_ready = False
-                if native_ready:
+                if native_ready and not is_result_repair:
                     mapped.pop("spawn", None)
                     host_execution.pop("workers", None)
                     host_execution.pop("native_worker_tools", None)
@@ -1577,7 +1582,28 @@ def run_action_supervisor(root: Path) -> None:
             canonical = store.load_active_protocol_action(thread_id)
         if canonical is None:
             raise click.ClickException("ACTIVE_ACTION_MISSING")
-        action = _prepare_action_for_host(canonical, root, compact_view=False)
+        try:
+            action = _prepare_action_for_host(canonical, root, compact_view=False)
+        except Exception as exc:
+            # 初始 Action 投影失败也必须留下机器可读的停止事实，不能让前台只看到
+            # Supervisor 进程退出而没有 ERROR Action 或可诊断报告。
+            message = str(exc)
+            error_code = (
+                "OUTCOME_JOURNAL_CONFLICT"
+                if "OUTCOME_JOURNAL_CONFLICT" in message
+                else "HOST_ACTION_PREPARATION_FAILED"
+            )
+            failure_action = _project_host_failure_action(
+                canonical,
+                error_code=error_code,
+                message=message or error_code,
+            )
+            stop_report = LoopStopReportJournal(root).record(
+                thread_id=thread_id,
+                final_action=failure_action,
+            )
+            click.echo(f"Loop 停止报告已生成: {stop_report}", err=True)
+            raise
     finally:
         events.close()
         store.close()
@@ -1687,24 +1713,11 @@ def run_action_supervisor(root: Path) -> None:
         ).run(action)
     except ActionExecutionContractError as exc:
         error_code = str(exc).partition(":")[0] or type(exc).__name__
-        extensions = dict(action.get("extensions") or {})
-        ae_extension = dict(extensions.get("ae") or {})
-        ae_extension["execution_control"] = {
-            "schema_version": "1.0",
-            "disposition": "ERROR",
-            "continuation_required": False,
-            "yield_allowed": True,
-            "allowed_stop_reasons": ["fatal_error"],
-            "reason_code": error_code,
-        }
-        extensions["ae"] = ae_extension
-        failure_action = {
-            **action,
-            "action": "error",
-            "error_code": error_code,
-            "message": error_code,
-            "extensions": extensions,
-        }
+        failure_action = _project_host_failure_action(
+            action,
+            error_code=error_code,
+            message=error_code,
+        )
         stop_report = LoopStopReportJournal(root).record(
             thread_id=thread_id,
             final_action=failure_action,
@@ -1736,6 +1749,34 @@ def run_action_supervisor(root: Path) -> None:
         )
         click.echo(f"产品证据已生成: {artifact}", err=True)
     click.echo(json.dumps(result.final_action, ensure_ascii=False))
+
+
+def _project_host_failure_action(
+    action: Mapping[str, Any],
+    *,
+    error_code: str,
+    message: str,
+) -> dict[str, Any]:
+    """把宿主边界异常投影为可持久化、可诊断的 ERROR Action。"""
+
+    extensions = dict(action.get("extensions") or {})
+    ae_extension = dict(extensions.get("ae") or {})
+    ae_extension["execution_control"] = {
+        "schema_version": "1.0",
+        "disposition": "ERROR",
+        "continuation_required": False,
+        "yield_allowed": True,
+        "allowed_stop_reasons": ["fatal_error"],
+        "reason_code": error_code,
+    }
+    extensions["ae"] = ae_extension
+    return {
+        **dict(action),
+        "action": "error",
+        "error_code": error_code,
+        "message": message,
+        "extensions": extensions,
+    }
 
 
 def _host_context_failure_code(status: str, error_code: str | None) -> str:

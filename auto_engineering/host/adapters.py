@@ -215,6 +215,34 @@ class _Adapter2Mixin:
                         for family in _CODEX_NATIVE_WORKER_TOOL_FAMILIES
                     ],
                 }
+        elif (
+            is_result_repair
+            and isinstance(spawn, Mapping)
+            and isinstance(spawn.get("invocations"), list)
+        ):
+            # Core 已拒绝同一 Action 的候选 Result；修复上下文只重做
+            # Coordinator，Worker 事实由 outcome journal 恢复，不再暴露 spawn。
+            semantic_context_refs = [
+                str(item["prompt_ref"])
+                for item in spawn["invocations"]
+                if isinstance(item, Mapping)
+                and isinstance(item.get("prompt_ref"), str)
+            ]
+            host_execution["recovery"] = {
+                "schema_version": "1.0",
+                "status": "result_repair_worker_reuse",
+                "spawn_permitted": False,
+                "required_operation": "repair_coordinator_then_finalize",
+                "result_ref": work_files["result"],
+                "outcomes_ref": work_files["outcomes"],
+                "coordinator_result_ref": work_files["coordinator_result"],
+                "semantic_context_refs": semantic_context_refs,
+            }
+            mapped_payload["instruction"] = (
+                "当前是 Result repair：只修复 Coordinator 业务产物；"
+                "不得重新启动 Worker，必须复用 outcomes_ref 中的权威 Worker outcomes，"
+                "完成后再调用 Finalizer、validate 和 submit。"
+            )
         mapped_payload["host_execution"] = host_execution
         if action.get("action") == "session_rollover":
             if not effective.session_handoff:

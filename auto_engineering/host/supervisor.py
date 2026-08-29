@@ -551,6 +551,19 @@ class HostSupervisor:
         return HostSupervisorResult(tuple(receipts))
 
 
+def _raise_on_fatal_result_rejection(action: Mapping[str, Any]) -> None:
+    """不可协调的 outcome 冲突必须在当前 Action 边界稳定失败。"""
+
+    rejection = action.get("result_rejection")
+    if not isinstance(rejection, Mapping):
+        return
+    violations = rejection.get("violations")
+    if isinstance(violations, list) and "OUTCOME_JOURNAL_CONFLICT" in violations:
+        raise ActionExecutionContractError("OUTCOME_JOURNAL_CONFLICT")
+    if rejection.get("error_code") == "OUTCOME_JOURNAL_CONFLICT":
+        raise ActionExecutionContractError("OUTCOME_JOURNAL_CONFLICT")
+
+
 @dataclass(frozen=True, slots=True)
 class ActionScopedProductResult:
     supervisor: HostSupervisorResult
@@ -600,6 +613,7 @@ class ActionScopedProductDriver:
             if not isinstance(operations, Mapping):
                 raise ActionExecutionContractError("HOST_OPERATIONS_MISSING")
             current_action = self._execute_operations(operations)
+            _raise_on_fatal_result_rejection(current_action)
             if decide_host_step(current_action) is HostDriverDecision.EXECUTE_NEXT:
                 return self._compile_request(current_action)
             return None

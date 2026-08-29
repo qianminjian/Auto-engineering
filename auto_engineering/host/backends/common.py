@@ -158,6 +158,8 @@ def launcher_prompt(request: ActionExecutionRequest) -> str:
         "ActionContextOutcome。coordinator_result 顶层只包含 expected_format 业务字段；"
         "result_contract 是机器类型事实源，数组和对象必须写为原生 JSON，不得再次序列化为字符串；"
         "不得包装在 result 中，不得复制 action/stage/tick/thread_id 等 Core 身份。"
+        "若 compact envelope 的 host_execution.recovery.spawn_permitted=false，"
+        "不得重新启动 Worker，只修复 Coordinator 并复用 outcomes_ref。"
         "在返回 completed 前必须把业务 JSON 原子写入 request.work_files.coordinator_result；"
         "需要 Worker 时同时写 outcomes；绝不写 request.work_files.result。\n"
         + payload

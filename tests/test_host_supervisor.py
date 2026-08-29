@@ -405,6 +405,42 @@ def test_machine_operations_return_same_action_repair_after_assembly_rejection(
     assert calls == ["finalize"]
 
 
+def test_product_driver_fails_closed_on_outcome_journal_conflict() -> None:
+    from auto_engineering.host.supervisor import ActionScopedProductDriver
+
+    request = _request("action-1", 1)
+    action = {
+        "message_id": "action-1",
+        "host_execution": {"operations": {"id": 1}},
+        "extensions": {"ae": {"execution_control": {
+            "schema_version": "1.0", "disposition": "CONTINUE",
+            "continuation_required": True, "yield_allowed": False,
+            "reason_code": "ACTION_REQUIRED",
+        }}},
+    }
+    conflict = {
+        **action,
+        "result_rejection": {
+            "repair_required": True,
+            "error_code": "HOST_EVIDENCE_INVALID",
+            "violations": ["OUTCOME_JOURNAL_CONFLICT"],
+        },
+    }
+    backend = _FakeBackend(["context-1", "context-2"])
+
+    with pytest.raises(
+        ActionExecutionContractError,
+        match="OUTCOME_JOURNAL_CONFLICT",
+    ):
+        ActionScopedProductDriver(
+            backend,
+            compile_request=lambda _: request,
+            execute_operations=lambda _: conflict,
+        ).run(action)
+
+    assert backend.executed == ["action-1"]
+
+
 def test_machine_operations_return_same_action_repair_after_prevalidation(
     tmp_path: Path,
 ) -> None:
