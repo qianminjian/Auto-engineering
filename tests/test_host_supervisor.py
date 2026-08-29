@@ -251,6 +251,59 @@ def test_terminal_evidence_allows_same_action_repair_in_fresh_context(
     assert payload["trajectory"]["automatic_result_repairs"] == 1
 
 
+def test_terminal_evidence_preserves_failed_attempts(tmp_path: Path) -> None:
+    from auto_engineering.host.supervisor import (
+        ActionReceiptJournal,
+        ProductEvidenceArtifactJournal,
+    )
+
+    build_id = "5.8.0-rc.5+sha256.abcdef0123456789"
+    runtime_root = tmp_path / "installed-release"
+    runtime_root.mkdir()
+    (runtime_root / "build-info.json").write_text(
+        json.dumps({"build_id": build_id}), encoding="utf-8"
+    )
+    journal = ActionReceiptJournal(tmp_path)
+    failed_request = replace(
+        _request("action-failed", 1),
+        project_root=str(tmp_path),
+        stage="architect",
+        build_id=build_id,
+    )
+    journal.record(
+        failed_request,
+        replace(
+            _receipt(failed_request, "context-failed"),
+            status="timed_out",
+            exit_code=None,
+            error_code="HOST_TIMEOUT",
+        ),
+    )
+    for tick, stage in enumerate(("architect", "developer", "critic"), start=2):
+        request = replace(
+            _request(f"action-{tick}", tick),
+            project_root=str(tmp_path),
+            stage=stage,
+            build_id=build_id,
+        )
+        journal.record(request, _receipt(request, f"context-{tick}"))
+
+    artifact = ProductEvidenceArtifactJournal(
+        tmp_path, runtime_root=runtime_root
+    ).record_terminal(
+        host="codex",
+        thread_id="thread-1",
+        final_action={"action": "done"},
+        event_types=("ActionIssued", "ResultAccepted", "LoopCompleted"),
+    )
+
+    payload = json.loads(artifact.read_text(encoding="utf-8"))
+    assert len(payload["action_receipts"]) == 3
+    assert len(payload["attempt_receipts"]) == 4
+    assert payload["trajectory"]["attempt_count"] == 4
+    assert payload["trajectory"]["failed_attempts"] == 1
+
+
 def test_product_evidence_refuses_non_terminal_or_reused_context(
     tmp_path: Path,
 ) -> None:
@@ -703,6 +756,94 @@ def test_supervisor_bounds_repeated_failure_recovery() -> None:
             request,
             advance=lambda _: None,
             on_failure=lambda current, _receipt: current,
+        )
+
+
+def test_supervisor_enforces_total_cost_budget() -> None:
+    from auto_engineering.host.supervisor import HostSupervisor
+
+    class CostBackend(_FakeBackend):
+        def execute(self, request):
+            return replace(
+                _receipt(request, "cost-context"),
+                usage={
+                    "input_tokens": 10,
+                    "cached_input_tokens": 0,
+                    "output_tokens": 2,
+                    "cost_usd": 1.25,
+                },
+            )
+
+    with pytest.raises(ActionExecutionContractError, match="HOST_COST_LIMIT_EXCEEDED"):
+        HostSupervisor(CostBackend([]), max_total_cost_usd=1.0).run(
+            _request("action-1", 1), advance=lambda _: _request("action-2", 2)
+        )
+
+
+def test_supervisor_enforces_total_output_budget() -> None:
+    from auto_engineering.host.supervisor import HostSupervisor
+
+    class OutputBackend(_FakeBackend):
+        def execute(self, request):
+            return replace(
+                _receipt(request, f"output-context-{len(self.executed)}"),
+                usage={
+                    "input_tokens": 10,
+                    "cached_input_tokens": 0,
+                    "output_tokens": 5,
+                },
+            )
+
+    with pytest.raises(ActionExecutionContractError, match="HOST_OUTPUT_LIMIT_EXCEEDED"):
+        HostSupervisor(OutputBackend([]), max_total_output_tokens=4).run(
+            _request("action-1", 1), advance=lambda _: None
+        )
+
+
+def test_supervisor_requires_cost_usage_when_cost_budget_is_configured() -> None:
+    from auto_engineering.host.supervisor import HostSupervisor
+
+    class NoCostBackend(_FakeBackend):
+        def execute(self, request):
+            return replace(
+                _receipt(request, "no-cost-context"),
+                usage={"input_tokens": 1, "cached_input_tokens": 0, "output_tokens": 1},
+            )
+
+    with pytest.raises(ActionExecutionContractError, match="HOST_USAGE_MISSING"):
+        HostSupervisor(NoCostBackend([]), max_total_cost_usd=1).run(
+            _request("action-1", 1), advance=lambda _: None
+        )
+
+
+def test_supervisor_requires_output_usage_when_output_budget_is_configured() -> None:
+    from auto_engineering.host.supervisor import HostSupervisor
+
+    class NoOutputBackend(_FakeBackend):
+        def execute(self, request):
+            return replace(
+                _receipt(request, "no-output-context"),
+                usage={"input_tokens": 1, "cached_input_tokens": 0, "cost_usd": 0.1},
+            )
+
+    with pytest.raises(ActionExecutionContractError, match="HOST_USAGE_MISSING"):
+        HostSupervisor(NoOutputBackend([]), max_total_output_tokens=1).run(
+            _request("action-1", 1), advance=lambda _: None
+        )
+
+
+def test_supervisor_enforces_wall_clock_budget(monkeypatch) -> None:
+    from auto_engineering.host import supervisor as supervisor_module
+    from auto_engineering.host.supervisor import HostSupervisor
+
+    clock = iter((0.0, 2.0))
+    monkeypatch.setattr(supervisor_module.time, "monotonic", lambda: next(clock))
+    backend = _FakeBackend(["context-1"])
+
+    with pytest.raises(ActionExecutionContractError, match="HOST_WALL_TIME_LIMIT_EXCEEDED"):
+        HostSupervisor(backend, max_elapsed_seconds=1.0).run(
+            _request("action-1", 1),
+            advance=lambda _: _request("action-2", 2),
         )
 
 

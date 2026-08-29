@@ -920,29 +920,15 @@ class ActionBuilder:
     # ── DS-15 helpers ──
 
     def _load_prompt(self, stage: str) -> str:
-        """Read prompts/roles/<stage>.md, preferring the PromptRegistry combination.
-
-        P2 优化 (2026-07-26 提示词分析): 优先用 PromptRegistry 的组合 prompt——
-        它剥离 frontmatter（否则 frontmatter 文本会原样发给 subagent）并注入 frontmatter
-        声明的共享 fragments（如 critic 的 severity_rubric / letter_vs_spirit）。此前直接读
-        原始文件，frontmatter 当正文发出、声明的 fragments 未注入。registry 失败回退读原文件。
-        """
-        # 优先: PromptRegistry 组合 prompt（fragments 注入 + frontmatter 剥离）
+        """加载唯一的 PromptRegistry 组合结果；注册表失败必须显式终止。"""
         try:
             combined = default_registry().get(stage)
-            if combined:
-                return combined
-        except Exception:
-            _logger.warning("PromptRegistry get failed for stage=%s, fallback to raw file",
-                            stage, exc_info=True)
-        # 回退: 读原始文件
-        prompt_path = Path(__file__).resolve().parent.parent / "prompts" / "roles" / f"{stage}.md"
-        if prompt_path.is_file():
-            try:
-                return prompt_path.read_text(encoding="utf-8")
-            except (OSError, UnicodeDecodeError) as e:
-                _logger.warning("Failed to read prompt file %s: %s", prompt_path, e)
-        return ""
+        except (KeyError, OSError, UnicodeDecodeError, ValueError) as exc:
+            _logger.error("PromptRegistry 加载失败，拒绝发送未编译提示词: stage=%s", stage)
+            raise RuntimeError("PROMPT_REGISTRY_UNAVAILABLE") from exc
+        if not combined.strip():
+            raise RuntimeError("PROMPT_REGISTRY_EMPTY")
+        return combined
 
     def _write_spawn_proof_file(self, proof_token: str, stage: str) -> None:
         """DS-15: pre-write spawn proof file so subagent can append to it.

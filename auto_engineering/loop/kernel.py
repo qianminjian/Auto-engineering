@@ -10,30 +10,65 @@ from auto_engineering.engine.state import EngineState
 from auto_engineering.loop.events import LoopEvent, LoopEventType
 from auto_engineering.loop.reducers import EVENT_CHANNELS
 
-FALLBACK_CHANNEL_EVENTS: dict[str, LoopEventType] = {}
-for _event_type in (
-    LoopEventType.LIFECYCLE_STATE_UPDATED,
-    LoopEventType.RESULT_EVIDENCE_RECORDED,
-    LoopEventType.SESSION_STATE_UPDATED,
-    LoopEventType.PLAN_STATE_UPDATED,
-    LoopEventType.PROJECT_STATE_UPDATED,
-    LoopEventType.PROJECT_ANCHORS_WITNESSED,
-    LoopEventType.TELEMETRY_RECORDED,
-    LoopEventType.SUPPLEMENT_STATE_UPDATED,
-    LoopEventType.GAP_STATE_UPDATED,
-    LoopEventType.CRITIC_STATE_UPDATED,
-):
-    FALLBACK_CHANNEL_EVENTS.update(
-        dict.fromkeys(EVENT_CHANNELS[_event_type], _event_type)
-    )
-FALLBACK_CHANNEL_EVENTS.update({
-    channel: LoopEventType.VERIFICATION_STATE_UPDATED
-    for channel in EVENT_CHANNELS[LoopEventType.VERIFICATION_STATE_UPDATED]
-    if channel not in {"critic_feedback", "open_findings"}
-})
-FALLBACK_CHANNEL_EVENTS["active_runtime_revision"] = (
-    LoopEventType.RUNTIME_REVISION_ACTIVATED
-)
+# 兼容性 delta 的显式白名单。不要从 EVENT_CHANNELS 动态派生：新增 State
+# channel 必须同时增加领域事件或明确登记，否则在新写入路径上 fail-closed。
+FALLBACK_CHANNEL_EVENTS: dict[str, LoopEventType] = {
+    "batch_state_json": LoopEventType.LIFECYCLE_STATE_UPDATED,
+    "expected_stage": LoopEventType.LIFECYCLE_STATE_UPDATED,
+    "guardrail_retry_counters": LoopEventType.LIFECYCLE_STATE_UPDATED,
+    "progress_tree_json": LoopEventType.LIFECYCLE_STATE_UPDATED,
+    "round": LoopEventType.LIFECYCLE_STATE_UPDATED,
+    "tick": LoopEventType.LIFECYCLE_STATE_UPDATED,
+    "batch_changed_files": LoopEventType.RESULT_EVIDENCE_RECORDED,
+    "batch_plan": LoopEventType.RESULT_EVIDENCE_RECORDED,
+    "commit_hash": LoopEventType.RESULT_EVIDENCE_RECORDED,
+    "contracts": LoopEventType.RESULT_EVIDENCE_RECORDED,
+    "developer_snapshot": LoopEventType.RESULT_EVIDENCE_RECORDED,
+    "file_list": LoopEventType.RESULT_EVIDENCE_RECORDED,
+    "files_changed": LoopEventType.RESULT_EVIDENCE_RECORDED,
+    "plan": LoopEventType.RESULT_EVIDENCE_RECORDED,
+    "red_evidence": LoopEventType.RESULT_EVIDENCE_RECORDED,
+    "test_results": LoopEventType.RESULT_EVIDENCE_RECORDED,
+    "execution_session_id": LoopEventType.SESSION_STATE_UPDATED,
+    "session_input_units": LoopEventType.SESSION_STATE_UPDATED,
+    "session_start_tick": LoopEventType.SESSION_STATE_UPDATED,
+    "session_started_at": LoopEventType.SESSION_STATE_UPDATED,
+    "session_summary": LoopEventType.SESSION_STATE_UPDATED,
+    "plan_refine_by_source": LoopEventType.PLAN_STATE_UPDATED,
+    "plan_refine_count": LoopEventType.PLAN_STATE_UPDATED,
+    "refine_request_json": LoopEventType.PLAN_STATE_UPDATED,
+    "missing_project_capabilities": LoopEventType.PROJECT_STATE_UPDATED,
+    "project_profile": LoopEventType.PROJECT_STATE_UPDATED,
+    "project_profile_id": LoopEventType.PROJECT_STATE_UPDATED,
+    "project_anchor_baseline": LoopEventType.PROJECT_ANCHORS_WITNESSED,
+    "action_history": LoopEventType.TELEMETRY_RECORDED,
+    "action_timestamp": LoopEventType.TELEMETRY_RECORDED,
+    "audit_revision_fingerprints": LoopEventType.TELEMETRY_RECORDED,
+    "gate_results": LoopEventType.TELEMETRY_RECORDED,
+    "task_verification_evidence": LoopEventType.TELEMETRY_RECORDED,
+    "tick_token_usage": LoopEventType.TELEMETRY_RECORDED,
+    "design_supplements_json": LoopEventType.SUPPLEMENT_STATE_UPDATED,
+    "gap_decision_policy": LoopEventType.SUPPLEMENT_STATE_UPDATED,
+    "pending_gap_decisions": LoopEventType.SUPPLEMENT_STATE_UPDATED,
+    "gap_report_json": LoopEventType.GAP_STATE_UPDATED,
+    "pending_research_ids": LoopEventType.GAP_STATE_UPDATED,
+    "research_archive": LoopEventType.GAP_STATE_UPDATED,
+    "majors_in_a_row": LoopEventType.CRITIC_STATE_UPDATED,
+    "total_majors": LoopEventType.CRITIC_STATE_UPDATED,
+    "critic_verdict": LoopEventType.CRITIC_STATE_UPDATED,
+    "findings": LoopEventType.CRITIC_STATE_UPDATED,
+    "critic_feedback": LoopEventType.CRITIC_STATE_UPDATED,
+    "suggested_fix": LoopEventType.CRITIC_STATE_UPDATED,
+    "strengths": LoopEventType.CRITIC_STATE_UPDATED,
+    "assessment": LoopEventType.CRITIC_STATE_UPDATED,
+    "open_findings": LoopEventType.CRITIC_STATE_UPDATED,
+    "repair_cycle_count": LoopEventType.CRITIC_STATE_UPDATED,
+    "unchanged_finding_streak": LoopEventType.CRITIC_STATE_UPDATED,
+    "last_finding_fingerprint": LoopEventType.CRITIC_STATE_UPDATED,
+    "audit_findings": LoopEventType.VERIFICATION_STATE_UPDATED,
+    "coverage_map": LoopEventType.VERIFICATION_STATE_UPDATED,
+    "active_runtime_revision": LoopEventType.RUNTIME_REVISION_ACTIVATED,
+}
 
 
 @dataclass(frozen=True, slots=True)

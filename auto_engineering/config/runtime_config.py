@@ -163,6 +163,21 @@ class RuntimeConfig:
         return int(self.get("AE_MAX_RECEIPT_SUMMARY_BYTES", _default("AE_MAX_RECEIPT_SUMMARY_BYTES")).strip())
 
     @property
+    def host_max_elapsed_seconds(self) -> float:
+        value = self.get("AE_HOST_MAX_ELAPSED_SECONDS", _default("AE_HOST_MAX_ELAPSED_SECONDS"))
+        return float(value.strip())
+
+    @property
+    def host_max_cost_usd(self) -> float | None:
+        value = self.get("AE_HOST_MAX_COST_USD", _default("AE_HOST_MAX_COST_USD")).strip()
+        return float(value) if value else None
+
+    @property
+    def host_max_output_tokens(self) -> int | None:
+        value = self.get("AE_HOST_MAX_OUTPUT_TOKENS", _default("AE_HOST_MAX_OUTPUT_TOKENS")).strip()
+        return int(value) if value else None
+
+    @property
     def max_repair_cycles(self) -> int:
         return int(self.get("AE_MAX_REPAIR_CYCLES", _default("AE_MAX_REPAIR_CYCLES")))
 

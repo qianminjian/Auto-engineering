@@ -7,6 +7,14 @@
 
 set -u
 
+SCRIPT_DIR=$(CDPATH= cd -- "${0%/*}" && pwd -P)
+PLUGIN_DIR=${PLUGIN_ROOT:-$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd -P)}
+RUNTIME_PYTHON="$PLUGIN_DIR/.ae-runtime/bin/python"
+if [[ ! -x "$RUNTIME_PYTHON" ]]; then
+  echo '{"decision":"block","reason":"Auto-Engineering 独立运行时不可用"}'
+  exit 0
+fi
+
 # Read tool input (Claude Code passes as $1 or stdin)
 TOOL_INPUT="${1:-${CLAUDE_TOOL_INPUT:-}}"
 
@@ -16,12 +24,12 @@ if [[ -z "$TOOL_INPUT" ]]; then
 fi
 
 # Extract tool name (best effort — JSON parse with python fallback)
-TOOL_NAME=$(echo "$TOOL_INPUT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('tool_name',''))" 2>/dev/null || echo "")
+TOOL_NAME=$(echo "$TOOL_INPUT" | "$RUNTIME_PYTHON" -c "import sys,json; d=json.load(sys.stdin); print(d.get('tool_name',''))" 2>/dev/null || echo "")
 
 # Extract command for Bash tool, or file path for Edit/Write
 extract_arg() {
   local key="$1"
-  echo "$TOOL_INPUT" | python3 -c "
+  echo "$TOOL_INPUT" | "$RUNTIME_PYTHON" -c "
 import sys,json
 try:
     d=json.load(sys.stdin)
@@ -97,7 +105,7 @@ check_sandbox() {
 
   # Resolve to absolute path (follows symlinks for proper check on macOS)
   local abs
-  abs=$(python3 -c "import os,sys; print(os.path.realpath(os.path.expanduser(sys.argv[1])))" "$target_path" 2>/dev/null) || abs="$target_path"
+  abs=$("$RUNTIME_PYTHON" -c "import os,sys; print(os.path.realpath(os.path.expanduser(sys.argv[1])))" "$target_path" 2>/dev/null) || abs="$target_path"
 
   # macOS: /tmp is a symlink to /private/tmp — normalize both forms
   case "$abs" in
@@ -107,7 +115,7 @@ check_sandbox() {
 
   # Allowed roots
   local project_root
-  project_root=$(python3 -c "import os; print(os.path.realpath('.'))")
+  project_root=$("$RUNTIME_PYTHON" -c "import os; print(os.path.realpath('.'))")
 
   local allowed=1
   case "$abs" in

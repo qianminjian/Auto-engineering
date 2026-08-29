@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass
@@ -171,6 +172,7 @@ class ActionExecutionReceipt:
             if item is not None and (
                 not isinstance(item, (int, float))
                 or isinstance(item, bool)
+                or not math.isfinite(item)
                 or item < 0
             ):
                 raise ActionExecutionContractError("ACTION_EXECUTION_USAGE_INVALID")

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from auto_engineering.config.runtime_config import RuntimeConfig
 from auto_engineering.engine.batch_state import BatchState
 from auto_engineering.engine.design_doc import Component, DesignDoc, Plate
@@ -169,6 +171,22 @@ def test_coordinator_expected_format_excludes_core_owned_identity(tmp_path) -> N
 
     assert "stage" not in action["expected_format"]
     assert "spawned" not in action["expected_format"]
+
+
+def test_prompt_registry_failure_is_explicit_and_does_not_fallback_to_raw_file(
+    tmp_path, monkeypatch
+) -> None:
+    from auto_engineering.loop import action_builder as module
+
+    class BrokenRegistry:
+        def get(self, _stage: str) -> str:
+            raise ValueError("fragment drift")
+
+    monkeypatch.setattr(module, "default_registry", lambda: BrokenRegistry())
+    builder = ActionBuilder(tmp_path)
+
+    with pytest.raises(RuntimeError, match="PROMPT_REGISTRY_UNAVAILABLE"):
+        builder._load_prompt("architect")
 
 
 def test_critic_action_exposes_machine_readable_business_result_contract(

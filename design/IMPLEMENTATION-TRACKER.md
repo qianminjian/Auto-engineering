@@ -155,6 +155,6 @@ Phase 64–66 的真实运行止血、会话解耦、上下文预算、ArtifactR
 | P0 | T554-T557 | 设计批准到下一 Agent 的确定性闭环 | While Research advisory、静态 ledger 与用户批准并存, when Core 产生同 Tick 下一 Architect Action 并由全新 Agent 消费, the product shall 从单一有效权威投影传递 binding 批准、拒绝相同来源范围的语义等价重复申请并生成计划进入 Developer | ◐ 同 Tick 投影、Prompt 传递、新旧事件语义改写收敛、Research obligation、进程恢复后 fresh Architect 首次计划进入 Developer 已验证；2678 passed/1 skipped、coverage 90%、Ruff/mypy/sync 及 Codex/Claude 隔离 archive smoke 通过；待新 Build 真实双宿主 L4 |
 | P0 | T558-T562 | Gate、Outcome repair、终态边界与环境预检 | While Core 生成 Gate、拒绝含 Worker outcomes 的 Result、输出 `done` 或解析项目 E2E 能力, when Action 编译/恢复/验收, the system shall 映射 `WAIT_USER`、原子恢复 journal 权威 outcomes、携带 Core/产品未验证边界，并输出浏览器运行时预检；禁止错误执行、重复 spawn、替换事实或把环境缺失冒充产品失败 | ◐ T558-T562 代码与回归完成；当前自动门禁证据待刷新，新 Build 双宿主 L3/L4 与真实业务验收仍阻断发布 |
 ## Phase 84：跨平台宿主边界与异常可续作
-| P1 | T563 | POSIX/Windows 路径越界 fail-closed | ◐ 回归已实现 |
-| P1 | T564 | Host/机器 OSError → 稳定 Stop Report | ◐ 回归已实现 |
-| P1 | T565-T570 | 真实成本、日志脱敏、事务故障注入、长轨迹、双宿主 L3-L4 与模块拆分 | ☐ 产品门禁待执行 |
+| P1 | T563 | POSIX/Windows 路径越界 fail-closed | ✅ 回归已实现；跨平台路径检查通过 |
+| P1 | T564 | Host/机器 OSError → 稳定 Stop Report | ✅ 回归已实现；稳定错误码与机器报告通过 |
+| P1 | T565-T570 | 真实成本、日志脱敏、事务故障注入、长轨迹、双宿主 L3-L4 与模块拆分 | ◐ T571-T577 的 Codex 代码/自动门禁已完成（finite usage、bounded audit、宿主预算、Tick 回滚、协议/Prompt fail-closed、`.ae-runtime` hermetic、Build `5.8.0-rc.5+sha256.c45b430aba604080` archive smoke）；T578 真实 Codex/Claude L3-L4 仍待执行 |

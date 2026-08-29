@@ -23,14 +23,13 @@ fi
 
 CHECKS_JSON=""
 
-# ── Auto-bootstrap: run uv sync if venv/ae not installed ──
+# ── 运行时隔离：只使用安装制品自带的 .ae-runtime/bin/python ──
+RUNTIME_ROOT="${AE_PLUGIN_ROOT}/.ae-runtime"
+RUNTIME_PYTHON="${RUNTIME_ROOT}/bin/python"
 _bootstrap() {
-  if [[ ! -x ".venv/bin/ae" ]] && command -v uv >/dev/null 2>&1; then
-    timeout 60 uv sync --quiet 2>/dev/null || uv sync --quiet 2>/dev/null || true
-  fi
-  # Ensure ae is on PATH for this session
-  if [[ -d ".venv/bin" ]]; then
-    export PATH="$PWD/.venv/bin:$PATH"
+  # Hook 不得在项目 cwd 安装依赖或把开发 .venv 放入 PATH。
+  if [[ -d "${RUNTIME_ROOT}/bin" ]]; then
+    export PATH="${RUNTIME_ROOT}/bin:$PATH"
   fi
 }
 
@@ -67,8 +66,8 @@ check_env() {
 # 0. Bootstrap Python environment before checking
 _bootstrap
 
-# 1. Python
-check_command "python" "python3"
+# 1. Python（安装制品独立运行时）
+check_command "python" "$RUNTIME_PYTHON"
 
 # 2. uv (package manager)
 check_command "uv" "uv"
@@ -123,15 +122,15 @@ else
   CHECKS_JSON="$CHECKS_JSON\"ae_state\":\"missing\","
 fi
 
-# 8. .venv
-if [[ -d ".venv" ]]; then
-  CHECKS_JSON="$CHECKS_JSON\"venv\":\"present\","
+# 8. Dedicated runtime
+if [[ -d "$RUNTIME_ROOT" ]]; then
+  CHECKS_JSON="$CHECKS_JSON\"runtime\":\"present\","
 else
-  CHECKS_JSON="$CHECKS_JSON\"venv\":\"missing\","
+  CHECKS_JSON="$CHECKS_JSON\"runtime\":\"missing\","
 fi
 
-# 9. ae (in .venv)
-if [[ -x ".venv/bin/ae" ]]; then
+# 9. bundled ae-run
+if [[ -x "${AE_PLUGIN_ROOT}/bin/ae-run" ]]; then
   CHECKS_JSON="$CHECKS_JSON\"ae_cli\":\"ok\","
 else
   CHECKS_JSON="$CHECKS_JSON\"ae_cli\":\"missing\","
@@ -144,7 +143,7 @@ CHECKS_JSON="{$CHECKS_JSON}"
 # Determine overall status (2026-07-04 P0-2: plugin mode 适配)
 # - plugin mode enabled → plugin_oauth → ANTHROPIC_API_KEY missing 不算 error
 # - plugin mode disabled → standalone → ANTHROPIC_API_KEY missing 算 degraded
-if echo "$CHECKS_JSON" | grep -q '"missing"' && echo "$CHECKS_JSON" | grep -qE '"(python|uv|ae_cli)":"missing"'; then
+if echo "$CHECKS_JSON" | grep -q '"missing"' && echo "$CHECKS_JSON" | grep -qE '"(python|ae_cli)":"missing"'; then
   STATUS="error"
 elif echo "$CHECKS_JSON" | grep -q '"missing"' && [[ "${PLUGIN_MODE}" == "false" ]]; then
   # CLI 模式 + 缺 key → degraded

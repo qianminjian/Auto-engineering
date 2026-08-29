@@ -303,6 +303,35 @@ def test_orchestrator_restores_projection_when_commit_compilation_fails(
         assert orchestrator._state.to_dict() == persisted.to_dict()
 
 
+def test_orchestrator_clears_uncommitted_effects_after_commit_failure(tmp_path) -> None:
+    """失败 Tick 不得把旧 pending effect 带入下一次重试。"""
+    armed = False
+
+    def fail_after_events(point: str) -> None:
+        if armed and point == "after_events":
+            raise RuntimeError("fault:after_events")
+
+    with SQLiteEventStore(
+        tmp_path / "events.db", fault_injector=fail_after_events
+    ) as events:
+        orchestrator = TickOrchestrator(
+            tmp_path, checkpoint_store=None, event_store=events
+        )
+        action = orchestrator.init("清理未提交副作用")
+        armed = True
+        orchestrator._pending_effect_receipts.append(EffectReceipt(
+            kind="prompt",
+            relative_path=".ae-state/effects/prompt/uncommitted.txt",
+            sha256="a" * 64,
+            bytes=1,
+        ))
+        with pytest.raises(RuntimeError, match="fault:after_events"):
+            orchestrator._commit_event_action(action)
+
+        assert orchestrator._pending_effect_receipts == []
+        assert orchestrator._pending_effect_intents == []
+
+
 def test_gap_wizard_restores_at_first_undecided_gap(tmp_path) -> None:
     """跨进程恢复必须依赖 Core 投影，而不是宿主聊天内存中的批量选择。"""
     (tmp_path / "pyproject.toml").write_text(

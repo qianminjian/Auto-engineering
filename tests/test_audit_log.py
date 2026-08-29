@@ -63,8 +63,8 @@ class TestAuditLogger:
         assert entry["request"]["messages_count"] == 1
         assert entry["request"]["tools_count"] == 0
 
-    def test_log_call_stores_full_request_messages(self, log_dir: Path) -> None:
-        """Request messages are stored in full, not truncated."""
+    def test_log_call_stores_request_summary_by_default(self, log_dir: Path) -> None:
+        """生产模式只保存请求摘要，不保存正文。"""
         logger = AuditLogger(log_dir / "audit")
         messages = [
             {"role": "user", "content": "A" * 1000},
@@ -80,11 +80,12 @@ class TestAuditLogger:
         )
         log_path = log_dir / "audit" / "llm-calls.jsonl"
         entry = json.loads(log_path.read_text().strip())
-        assert len(entry["request"]["messages"]) == 2
-        assert entry["request"]["messages"][0]["content"] == "A" * 1000
+        assert entry["request"]["messages_count"] == 2
+        assert entry["request"]["payload_bytes"] > 0
+        assert "A" * 1000 not in log_path.read_text()
 
-    def test_log_call_stores_full_response(self, log_dir: Path) -> None:
-        """Response is stored in full."""
+    def test_log_call_stores_response_summary_by_default(self, log_dir: Path) -> None:
+        """生产模式只保存响应摘要，不保存正文。"""
         logger = AuditLogger(log_dir / "audit")
         response = {
             "content": [{"type": "text", "text": "OK"}],
@@ -101,8 +102,9 @@ class TestAuditLogger:
         )
         log_path = log_dir / "audit" / "llm-calls.jsonl"
         entry = json.loads(log_path.read_text().strip())
-        assert entry["response"]["model"] == "gpt-4"
-        assert entry["response"]["usage"]["prompt_tokens"] == 10
+        assert "model" in entry["response"]["keys"]
+        assert entry["response"]["payload_bytes"] > 0
+        assert '"text":"OK"' not in log_path.read_text()
 
     def test_multiple_calls_append(self, log_dir: Path) -> None:
         """Multiple log_call() invocations append lines to the same file."""

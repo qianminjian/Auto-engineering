@@ -203,6 +203,20 @@ class TestRuntimeConfigAeTomlWiring:
         cfg = RuntimeConfig.from_project(tmp_path)  # 无 ae.toml
         assert cfg.metrics_enabled is False  # FeatureFlag 默认 "0"
 
+    def test_host_runtime_budgets_are_typed_and_overridable(
+        self, monkeypatch
+    ) -> None:
+        from auto_engineering.config.runtime_config import RuntimeConfig
+
+        cfg = RuntimeConfig(environ={
+            "AE_HOST_MAX_ELAPSED_SECONDS": "90",
+            "AE_HOST_MAX_COST_USD": "12.5",
+            "AE_HOST_MAX_OUTPUT_TOKENS": "4000",
+        })
+        assert cfg.host_max_elapsed_seconds == 90.0
+        assert cfg.host_max_cost_usd == 12.5
+        assert cfg.host_max_output_tokens == 4000
+
 
 class TestFeatureStatusActionAeToml:
     """P2#3 (2026-07-26 真跑): action.feature_status 必须反映 ae.toml 开关。

@@ -134,6 +134,12 @@ FEATURE_MANIFEST: list[FeatureFlag] = [
                 "threshold", default_value="4096", activation="AE_MAX_WORKER_RECEIPT_BYTES=4096"),
     FeatureFlag("AE_MAX_RECEIPT_SUMMARY_BYTES", "Worker Receipt 摘要最大字节数",
                 "threshold", default_value="2048", activation="AE_MAX_RECEIPT_SUMMARY_BYTES=2048"),
+    FeatureFlag("AE_HOST_MAX_ELAPSED_SECONDS", "单次宿主驱动最大持续秒数",
+                "threshold", default_value="3600", activation="AE_HOST_MAX_ELAPSED_SECONDS=3600"),
+    FeatureFlag("AE_HOST_MAX_COST_USD", "单次宿主驱动累计费用上限",
+                "threshold", default_value="", activation="AE_HOST_MAX_COST_USD=10"),
+    FeatureFlag("AE_HOST_MAX_OUTPUT_TOKENS", "单次宿主驱动输出 Token 上限",
+                "threshold", default_value="", activation="AE_HOST_MAX_OUTPUT_TOKENS=100000"),
 ]
 
 # PII sub-flags — disabled when AE_PII_ENABLED=0

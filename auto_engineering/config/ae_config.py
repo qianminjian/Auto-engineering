@@ -68,6 +68,9 @@ SECTION_KEY_MAP: dict[str, dict[str, str]] = {
         "max-system-audits": "AE_MAX_SYSTEM_AUDITS",
         "max-worker-receipt-bytes": "AE_MAX_WORKER_RECEIPT_BYTES",
         "max-receipt-summary-bytes": "AE_MAX_RECEIPT_SUMMARY_BYTES",
+        "host-max-elapsed-seconds": "AE_HOST_MAX_ELAPSED_SECONDS",
+        "host-max-cost-usd": "AE_HOST_MAX_COST_USD",
+        "host-max-output-tokens": "AE_HOST_MAX_OUTPUT_TOKENS",
     },
 }
 

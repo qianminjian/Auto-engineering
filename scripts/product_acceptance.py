@@ -22,7 +22,12 @@ class UsageEvidence(TypedDict):
 
 
 def _number(value: Any, code: str) -> int | float:
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(value)
+        or value < 0
+    ):
         raise ProductAcceptanceError(code)
     return value
 
@@ -205,6 +210,31 @@ def _validate_receipts(
         raise ProductAcceptanceError("ACTION_USAGE_TOTAL_MISMATCH")
 
 
+def _validate_attempt_receipts(
+    artifact: dict[str, Any],
+    evidence: dict[str, Any],
+) -> None:
+    """校验完整尝试流，不能只保留成功回执来隐藏失败历史。"""
+    attempts = artifact.get("attempt_receipts")
+    if attempts is None:
+        return  # v1.1 旧 artifact 兼容；新 journal 必须写入该字段
+    if not isinstance(attempts, list) or not attempts:
+        raise ProductAcceptanceError("ACTION_ATTEMPTS_INVALID")
+    contexts: set[str] = set()
+    for receipt in attempts:
+        if not isinstance(receipt, dict):
+            raise ProductAcceptanceError("ACTION_ATTEMPTS_INVALID")
+        context_id = receipt.get("host_context_id")
+        if (
+            not isinstance(context_id, str)
+            or context_id in contexts
+            or receipt.get("build_id") != evidence.get("build_id")
+            or receipt.get("status") not in {"completed", "failed", "cancelled", "timed_out"}
+        ):
+            raise ProductAcceptanceError("ACTION_ATTEMPTS_INVALID")
+        contexts.add(context_id)
+
+
 def _validate_terminal_acceptance_summary(terminal_action: dict[str, Any]) -> None:
     """终态必须携带 Core/产品验收边界，防止 done 被冒充发布完成。"""
     summary = terminal_action.get("acceptance_summary")
@@ -280,9 +310,15 @@ def evaluate_host_evidence(
         or trajectory.get("traceability_complete") is not True
         or trajectory.get("invocation_count")
         != len(artifact_payload.get("action_receipts", []))
+        or (
+            "attempt_receipts" in artifact_payload
+            and trajectory.get("attempt_count")
+            != len(artifact_payload.get("attempt_receipts", []))
+        )
     ):
         raise ProductAcceptanceError("EVIDENCE_ARTIFACT_CLAIMS_INVALID")
     _validate_terminal_acceptance_summary(terminal_action)
+    _validate_attempt_receipts(artifact_payload, evidence)
     _validate_receipts(artifact_payload, evidence)
     return evaluate_product_evidence(evidence, evidence_root=root)
 

@@ -25,6 +25,7 @@ import subprocess
 import sys
 import time
 from collections.abc import Callable, Mapping
+from copy import deepcopy
 from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
@@ -3347,6 +3348,13 @@ class TickOrchestrator:
             return
         sequence = self._event_store.next_sequence(self._state.thread_id)
         previous = self._event_store.load_projection(self._state.thread_id)
+        # EventStore 事务不能回滚 Python 内存对象；在编译/提交前保存所有可变派生状态，
+        # 避免失败重试携带半推进的 batch、进度、历史或 active Action。
+        state_snapshot = deepcopy(self._state)
+        batch_state_snapshot = deepcopy(self._batch_state)
+        progress_tree_snapshot = deepcopy(self._progress_tree)
+        round_history_snapshot = deepcopy(self._round_history)
+        active_action_snapshot = deepcopy(self._active_action)
         result_causation_id = (
             self._active_action.get("message_id")
             if self._active_action is not None
@@ -3381,6 +3389,16 @@ class TickOrchestrator:
             restored = self._event_store.load_projection(self._state.thread_id)
             if restored is not None:
                 self._state = restored
+            else:
+                self._state = state_snapshot
+            self._batch_state = batch_state_snapshot
+            self._progress_tree = progress_tree_snapshot
+            self._round_history = round_history_snapshot
+            self._active_action = active_action_snapshot
+            # 这些对象对应本次未提交 Tick；必须清空，避免下一次重试重复写入。
+            self._pending_domain_events.clear()
+            self._pending_effect_receipts.clear()
+            self._pending_effect_intents.clear()
             raise
 
     def _populate_serialized_state(self) -> None:

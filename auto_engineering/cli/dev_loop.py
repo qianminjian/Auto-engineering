@@ -1562,6 +1562,7 @@ def run_action_supervisor(root: Path) -> None:
 
     import click
 
+    from auto_engineering.config.runtime_config import RuntimeConfig
     from auto_engineering.host import HostPlatform, detect_host
     from auto_engineering.host.backends import (
         ClaudeInvocationBackend,
@@ -1585,6 +1586,7 @@ def run_action_supervisor(root: Path) -> None:
     from auto_engineering.loop.event_store import SQLiteEventStore
 
     root = root.resolve()
+    runtime_config = RuntimeConfig.from_project(root)
     store: SQLiteCheckpointStore[EngineState] = SQLiteCheckpointStore(
         _ensure_checkpoint_db_path(root)
     )
@@ -1732,6 +1734,9 @@ def run_action_supervisor(root: Path) -> None:
             execute_operations=operation_executor.run,
             submit_failure=submit_failure,
             receipt_sink=record_receipt,
+            max_elapsed_seconds=runtime_config.host_max_elapsed_seconds,
+            max_total_cost_usd=runtime_config.host_max_cost_usd,
+            max_total_output_tokens=runtime_config.host_max_output_tokens,
         ).run(action)
     except ActionExecutionContractError as exc:
         error_code = str(exc).partition(":")[0] or type(exc).__name__

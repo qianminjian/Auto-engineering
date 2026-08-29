@@ -136,6 +136,16 @@ class TestV8_2_HookRegistrationSplitting:
         )
         assert has_detection, "session-start.sh 应包含平台检测逻辑"
 
+    def test_claude_hooks_never_bootstrap_project_virtualenv(self) -> None:
+        """安装后的 Hook 不得通过项目 cwd 的 .venv 污染开发目录。"""
+        root = _project_root()
+        session_start = (root / "hooks" / "session-start.sh").read_text()
+        pre_tool = (root / "hooks" / "pre-tool.sh").read_text()
+        assert "uv sync --quiet" not in session_start
+        assert "$PWD/.venv/bin" not in session_start
+        assert ".ae-runtime/bin/python" in session_start
+        assert ".ae-runtime/bin/python" in pre_tool
+
 
 class TestV8_7_DoctorAndPyproject:
     """V8-7: ae doctor 加 OpenAI key 检查 + pyproject.toml openai 可选依赖."""

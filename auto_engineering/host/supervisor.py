@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import subprocess
 import tempfile
+import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -102,6 +104,7 @@ class ActionReceiptJournal:
             if (
                 isinstance(cost, bool)
                 or not isinstance(cost, (int, float))
+                or not math.isfinite(cost)
                 or cost < 0
             ):
                 raise ActionExecutionContractError("PRODUCT_RECEIPT_INVALID")
@@ -132,21 +135,30 @@ class ProductEvidenceArtifactJournal:
             raise ActionExecutionContractError("PRODUCT_HOST_INVALID")
         if final_action.get("action") != "done":
             raise ActionExecutionContractError("PRODUCT_TERMINAL_REQUIRED")
-        receipts = self._completed_receipts(thread_id)
+        attempts = self._all_receipts(thread_id)
+        receipts = [item for item in attempts if item.get("status") == "completed"]
         if not receipts:
             raise ActionExecutionContractError("PRODUCT_RECEIPTS_MISSING")
-        build_ids = {str(item.get("build_id")) for item in receipts}
+        build_ids = {str(item.get("build_id")) for item in attempts}
         if len(build_ids) != 1:
             raise ActionExecutionContractError("PRODUCT_BUILD_ID_MISMATCH")
         build_id = next(iter(build_ids))
         if self._packaged_build_id() != build_id or "+sha256." not in build_id:
             raise ActionExecutionContractError("PRODUCT_RELEASE_IDENTITY_INVALID")
-        action_ids = [str(item.get("action_message_id")) for item in receipts]
-        context_ids = [str(item.get("host_context_id")) for item in receipts]
+        action_ids = [str(item.get("action_message_id")) for item in attempts]
+        context_ids = [str(item.get("host_context_id")) for item in attempts]
         if len(context_ids) != len(set(context_ids)):
             raise ActionExecutionContractError("HOST_CONTEXT_REUSED")
         if not self._REQUIRED_EVENTS.issubset(set(event_types)):
             raise ActionExecutionContractError("PRODUCT_TERMINAL_EVENTS_INCOMPLETE")
+        manual_repairs = sum(
+            event in {"ManualProtocolRepair", "ManualResultRepair"}
+            for event in event_types
+        )
+        unexpected_stops = sum(
+            event in {"LoopFailed", "UnexpectedStop"}
+            for event in event_types
+        )
         payload = {
             "schema_version": "1.1",
             "host": host,
@@ -162,15 +174,20 @@ class ProductEvidenceArtifactJournal:
             },
             "trajectory": {
                 "invocation_count": len(receipts),
-                "manual_protocol_repairs": 0,
+                "attempt_count": len(attempts),
+                "failed_attempts": sum(
+                    item.get("status") != "completed" for item in attempts
+                ),
+                "manual_protocol_repairs": manual_repairs,
                 "automatic_result_repairs": len(action_ids) - len(set(action_ids)),
-                "unexpected_stops": 0,
+                "unexpected_stops": unexpected_stops,
                 "traceability_complete": self._REQUIRED_EVENTS.issubset(
                     set(event_types)
                 ),
                 "final_disposition": "TERMINAL",
             },
             "action_receipts": receipts,
+            "attempt_receipts": attempts,
         }
         directory = self._root / ".ae-state/reports"
         directory.mkdir(parents=True, exist_ok=True)
@@ -209,7 +226,7 @@ class ProductEvidenceArtifactJournal:
         value = payload.get("build_id") if isinstance(payload, dict) else None
         return value if isinstance(value, str) else None
 
-    def _completed_receipts(self, thread_id: str) -> list[dict[str, Any]]:
+    def _all_receipts(self, thread_id: str) -> list[dict[str, Any]]:
         directory = self._root / ".ae-state/host-runtime/receipts"
         records: list[dict[str, Any]] = []
         for path in sorted(directory.glob("*.json")):
@@ -221,16 +238,20 @@ class ProductEvidenceArtifactJournal:
                 ) from exc
             if not isinstance(value, dict):
                 raise ActionExecutionContractError("PRODUCT_RECEIPT_INVALID")
-            if (
-                value.get("thread_id") == thread_id
-                and value.get("status") == "completed"
-            ):
+            if value.get("thread_id") == thread_id:
                 records.append(value)
         records.sort(key=lambda item: (
             int(item.get("tick", -1)),
             str(item.get("action_message_id")),
         ))
         return records
+
+    def _completed_receipts(self, thread_id: str) -> list[dict[str, Any]]:
+        """兼容旧调用方，仅返回已完成回执。"""
+        return [
+            item for item in self._all_receipts(thread_id)
+            if item.get("status") == "completed"
+        ]
 
 
 class LoopStopReportJournal:
@@ -525,12 +546,25 @@ class HostSupervisor:
         *,
         max_actions: int = 256,
         max_failure_retries: int = 2,
+        max_elapsed_seconds: float | None = 3600.0,
+        max_total_cost_usd: float | None = None,
+        max_total_output_tokens: int | None = None,
     ) -> None:
         if max_actions < 1 or max_failure_retries < 0:
             raise ValueError("宿主监督边界必须为正数")
+        for limit in (max_elapsed_seconds, max_total_cost_usd):
+            if limit is not None and (
+                not math.isfinite(limit) or limit <= 0
+            ):
+                raise ValueError("宿主监督数值边界必须为有限正数")
+        if max_total_output_tokens is not None and max_total_output_tokens <= 0:
+            raise ValueError("宿主输出 Token 边界必须为正数")
         self._backend = backend
         self._max_actions = max_actions
         self._max_failure_retries = max_failure_retries
+        self._max_elapsed_seconds = max_elapsed_seconds
+        self._max_total_cost_usd = max_total_cost_usd
+        self._max_total_output_tokens = max_total_output_tokens
 
     def run(
         self,
@@ -555,7 +589,15 @@ class HostSupervisor:
         context_ids: set[str] = set()
         action_count = 0
         failure_retries = 0
+        started_at = time.monotonic()
+        total_cost_usd = 0.0
+        total_output_tokens = 0.0
         while request is not None:
+            if (
+                self._max_elapsed_seconds is not None
+                and time.monotonic() - started_at > self._max_elapsed_seconds
+            ):
+                raise ActionExecutionContractError("HOST_WALL_TIME_LIMIT_EXCEEDED")
             action_count += 1
             if action_count > self._max_actions:
                 raise ActionExecutionContractError("HOST_ACTION_LIMIT_EXCEEDED")
@@ -566,6 +608,21 @@ class HostSupervisor:
             context_ids.add(receipt.host_context_id)
             if on_receipt is not None:
                 on_receipt(request, receipt)
+            usage = receipt.usage
+            cost = usage.get("cost_usd")
+            if self._max_total_cost_usd is not None:
+                if cost is None:
+                    raise ActionExecutionContractError("HOST_USAGE_MISSING")
+                total_cost_usd += float(cost)
+                if total_cost_usd > self._max_total_cost_usd:
+                    raise ActionExecutionContractError("HOST_COST_LIMIT_EXCEEDED")
+            output_tokens = usage.get("output_tokens")
+            if self._max_total_output_tokens is not None:
+                if output_tokens is None:
+                    raise ActionExecutionContractError("HOST_USAGE_MISSING")
+                total_output_tokens += float(output_tokens)
+                if total_output_tokens > self._max_total_output_tokens:
+                    raise ActionExecutionContractError("HOST_OUTPUT_LIMIT_EXCEEDED")
             if receipt.status != "completed" or receipt.exit_code != 0:
                 failure_retries += 1
                 if failure_retries > self._max_failure_retries:
@@ -617,8 +674,16 @@ class ActionScopedProductDriver:
             [ActionExecutionRequest, ActionExecutionReceipt],
             None,
         ] | None = None,
+        max_elapsed_seconds: float | None = 3600.0,
+        max_total_cost_usd: float | None = None,
+        max_total_output_tokens: int | None = None,
     ) -> None:
-        self._supervisor = HostSupervisor(backend)
+        self._supervisor = HostSupervisor(
+            backend,
+            max_elapsed_seconds=max_elapsed_seconds,
+            max_total_cost_usd=max_total_cost_usd,
+            max_total_output_tokens=max_total_output_tokens,
+        )
         self._compile_request = compile_request
         self._execute_operations = execute_operations
         self._submit_failure = submit_failure

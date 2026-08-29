@@ -5,8 +5,8 @@
 #
 # 设计:
 #   - ruff lint + format: 每次 commit 前自动执行
-#   - pytest smoke: 跑核心模块快速测试(Phase 2 新增),无 coverage
-#   - 不阻塞本地 commit 失败(只 warning),由 make ci 完整验证
+#   - pytest smoke: 跑当前宿主合同与执行边界测试,无 coverage
+#   - 完整门禁由 make ci 执行
 
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
@@ -19,8 +19,8 @@ repos:
   - repo: local
     hooks:
       - id: pytest-smoke
-        name: pytest smoke (Phase 2 核心模块)
-        entry: .venv/bin/pytest tests/test_task.py tests/test_context.py tests/test_runtime.py tests/test_mock.py tests/test_guardrail.py tests/test_builtin.py --no-cov -q
+        name: pytest smoke (host contract)
+        entry: .venv/bin/pytest tests/test_action_execution_contract.py tests/test_host_supervisor.py --no-cov -q
         language: system
         pass_filenames: false
         always_run: true
