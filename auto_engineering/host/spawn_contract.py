@@ -27,6 +27,7 @@ class WorkerInvocationSpec:
     isolation: str
     capabilities: dict[str, bool]
     receipt_path: str
+    outcome_path: str | None = None
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> WorkerInvocationSpec:
@@ -40,6 +41,11 @@ class WorkerInvocationSpec:
                 isolation=str(value["isolation"]),
                 capabilities=dict(value["capabilities"]),
                 receipt_path=str(value["receipt_path"]),
+                outcome_path=(
+                    str(value["outcome_path"])
+                    if value.get("outcome_path") is not None
+                    else None
+                ),
             )
         except (KeyError, TypeError, ValueError) as exc:
             raise SpawnContractError("WORKER_INVOCATION_INVALID") from exc
@@ -60,6 +66,17 @@ class WorkerInvocationSpec:
             or not item.receipt_path.startswith(".ae-state/spawn-proofs/")
             or PurePosixPath(item.prompt_ref).is_absolute()
             or ".." in PurePosixPath(item.prompt_ref).parts
+            or (
+                item.outcome_path is not None
+                and (
+                    not item.outcome_path
+                    or PurePosixPath(item.outcome_path).is_absolute()
+                    or ".." in PurePosixPath(item.outcome_path).parts
+                    or not item.outcome_path.startswith(
+                        ".ae-state/host-runtime/worker-outcomes/"
+                    )
+                )
+            )
         ):
             raise SpawnContractError("WORKER_INVOCATION_INVALID")
         return item
@@ -74,6 +91,7 @@ class WorkerInvocationSpec:
             "isolation": self.isolation,
             "capabilities": dict(self.capabilities),
             "receipt_path": self.receipt_path,
+            **({"outcome_path": self.outcome_path} if self.outcome_path else {}),
         }
 
 

@@ -48,6 +48,9 @@ def test_single_worker_action_contains_strict_invocation(tmp_path: Path) -> None
     }
     assert invocation["prompt_sha256"]
     assert invocation["receipt_path"].startswith(".ae-state/spawn-proofs/")
+    assert invocation["outcome_path"].startswith(
+        ".ae-state/host-runtime/worker-outcomes/"
+    )
 
     schema = json.loads(
         (ROOT / "auto_engineering/loop/action.schema.json").read_text()

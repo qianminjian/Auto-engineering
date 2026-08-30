@@ -13,7 +13,9 @@ CliRunner + tmp .ae-state, 不跑真实 LLM/子进程 gate (只测 init/校验/s
 from __future__ import annotations
 
 import hashlib
+import importlib
 import json
+from pathlib import Path
 
 from click.testing import CliRunner
 
@@ -714,6 +716,104 @@ class TestMutexAndLegacy:
         assert json.loads(
             (tmp_path / "result.json").read_text(encoding="utf-8")
         ) == finalized
+
+    def test_finalize_missing_spawn_outputs_becomes_worker_failure(
+        self, tmp_path: Path, monkeypatch, capsys
+    ) -> None:
+        """真实 CLI Finalizer 不得把 spawn 空交接误报为输入错误。"""
+        dev_loop_module = importlib.import_module("auto_engineering.cli.dev_loop")
+        from auto_engineering.host.spawn_contract import WorkerInvocationSpec
+        from auto_engineering.loop import event_store as event_store_module
+        from auto_engineering.loop.checkpoint import store as checkpoint_store
+
+        prompt_ref = ".ae-state/effects/prompt/worker.txt"
+        invocation = WorkerInvocationSpec(
+            worker_id="architect-0",
+            role="architect",
+            prompt_ref=prompt_ref,
+            prompt_sha256="a" * 64,
+            requested_effort="xhigh",
+            isolation="fresh_context",
+            capabilities={
+                "may_drive_loop": False,
+                "may_spawn_workers": False,
+            },
+            receipt_path=".ae-state/spawn-proofs/architect-0.json",
+        )
+        action = {
+            "schema_version": "1.1",
+            "message_id": "architect-action-1",
+            "thread_id": "thread-1",
+            "stage": "architect",
+            "spawn": {
+                "contract_version": "1.0",
+                "count": 1,
+                "parallel": False,
+                "effort": "xhigh",
+                "invocations": [invocation.to_dict()],
+            },
+            "host_execution": {
+                "platform": "codex",
+                "work_files": {
+                    "outcomes": ".ae-state/host-runtime/work/a/outcomes.json",
+                    "coordinator_result": (
+                        ".ae-state/host-runtime/work/a/coordinator-result.json"
+                    ),
+                    "result": ".ae-state/host-runtime/work/a/result.json",
+                },
+            },
+        }
+
+        class FakeStore:
+            def __init__(self, *args, **kwargs) -> None:
+                del args, kwargs
+
+            def close(self) -> None:
+                pass
+
+        class FakeEvents:
+            def __init__(self, *args, **kwargs) -> None:
+                del args, kwargs
+
+            def load_action_snapshot(self, thread_id: str):
+                assert thread_id == "thread-1"
+                return action
+
+            def close(self) -> None:
+                pass
+
+        monkeypatch.setattr(checkpoint_store, "SQLiteCheckpointStore", FakeStore)
+        monkeypatch.setattr(event_store_module, "SQLiteEventStore", FakeEvents)
+        monkeypatch.setattr(dev_loop_module, "_active_thread", lambda store: "thread-1")
+        monkeypatch.setattr(dev_loop_module, "_map_action_for_host", lambda value: value)
+
+        from auto_engineering.cli.dev_loop import run_tick_finalize
+
+        run_tick_finalize(
+            tmp_path / "missing-outcomes.json",
+            tmp_path / "empty-coordinator.json",
+            tmp_path,
+            output_result_file=tmp_path / "result.json",
+        )
+
+        result = json.loads(capsys.readouterr().out.strip())
+        assert result["spawned"] is False
+        assert result["spawn_error_code"] == "HOST_WORKER_FAILED"
+        assert json.loads((tmp_path / "result.json").read_text()) == result
+
+        # 空 JSON 交接与缺文件必须共享同一失败类别，并按同类失败递增预算。
+        (tmp_path / "empty-coordinator.json").write_text("{}")
+        (tmp_path / "missing-outcomes.json").write_text('{"outcomes":[]}')
+        run_tick_finalize(
+            tmp_path / "missing-outcomes.json",
+            tmp_path / "empty-coordinator.json",
+            tmp_path,
+            output_result_file=tmp_path / "result.json",
+        )
+        repeated = json.loads(capsys.readouterr().out.strip())
+        assert repeated["spawned"] is False
+        assert repeated["spawn_error_code"] == "HOST_WORKER_FAILED"
+        assert repeated["spawn_retry_attempt"] == 2
 
     def test_internal_result_paths_are_bound_to_project_root_after_cwd_drift(
         self, tmp_path, monkeypatch

@@ -98,7 +98,7 @@ def _cleanup_completed_action_work_files(
     completed_action: Mapping[str, object] | None,
     next_action: Mapping[str, object],
 ) -> None:
-    """删除已提交 Action 的三个临时交接文件，保留 journal 与未知文件。"""
+    """删除已提交 Action 的临时交接文件，保留 journal 与未知文件。"""
 
     if completed_action is None:
         return
@@ -120,6 +120,22 @@ def _cleanup_completed_action_work_files(
     for name in ("outcomes.json", "coordinator-result.json", "result.json"):
         with suppress(FileNotFoundError):
             (work_dir / name).unlink()
+    # 严格 Worker 的私有产出不与 Action work_dir 同目录，按当前 Action
+    # invocation 精确清理，避免下次运行误读旧 artifact 或无限积累。
+    try:
+        from auto_engineering.host.spawn_contract import SpawnPlan
+
+        plan = SpawnPlan.from_action(completed_action)
+        for invocation in plan.invocations:
+            if invocation.outcome_path is None:
+                continue
+            private_path = _root_bound_path(Path(invocation.outcome_path), root)
+            if private_path.is_relative_to(root):
+                with suppress(FileNotFoundError):
+                    private_path.unlink()
+    except Exception:
+        # 清理不是状态提交的一部分；旧/损坏 Action 保留未知文件供审计。
+        _logger.debug("worker private artifact cleanup skipped", exc_info=True)
     # 未知文件不是本协议的清理目标；保留目录供审计。
     with suppress(OSError):
         work_dir.rmdir()
@@ -1304,6 +1320,7 @@ def run_tick_finalize(
         HostEvidenceValidationError,
         HostExecutionAssembler,
         NativeWorkerOutcome,
+        WorkerOutcomeCollectionError,
     )
     from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
     from auto_engineering.loop.event_store import SQLiteEventStore
@@ -1349,6 +1366,11 @@ def run_tick_finalize(
                 current_coordinator = _root_bound_path(
                     Path(current_coordinator_ref), root
                 )
+                # Result 始终属于当前 Action 的隔离工作目录。即使 Coordinator
+                # 文件缺失（正是 Worker 无产出的故障场景），也要准备 canonical
+                # result 路径，避免 Finalizer 只在 stdout 返回失败而没有交接文件。
+                if result_path is None and isinstance(current_result_ref, str):
+                    result_path = _root_bound_path(Path(current_result_ref), root)
                 # 兼容旧调用者自定义文件；但当前 Action 的隔离工作文件已经存在时，
                 # 它是唯一事实源，陈旧的上一 Action 参数不得再次进入 Assembler。
                 if (
@@ -1367,30 +1389,83 @@ def run_tick_finalize(
                         outcomes_path = _root_bound_path(
                             Path(current_outcomes_ref), root
                         )
+        input_error: str | None = None
+        raw_outcomes: object = []
+        coordinator_payload: object = {}
         try:
             raw_outcomes = (
                 json.loads(outcomes_path.read_text(encoding="utf-8"))
                 if outcomes_path is not None
                 else []
             )
+        except (OSError, json.JSONDecodeError) as exc:
+            input_error = f"Worker outcomes 不可读取或不是合法 JSON: {exc.__class__.__name__}"
+        try:
             coordinator_payload = json.loads(
                 coordinator_path.read_text(encoding="utf-8")
             )
         except (OSError, json.JSONDecodeError) as exc:
-            raise click.ClickException("HOST_OUTCOME_INPUT_INVALID") from exc
+            input_error = (
+                input_error
+                or f"Coordinator payload 不可读取或不是合法 JSON: {exc.__class__.__name__}"
+            )
         outcome_items = (
             raw_outcomes.get("outcomes")
             if isinstance(raw_outcomes, dict)
             else raw_outcomes
         )
-        if not isinstance(outcome_items, list) or not isinstance(
-            coordinator_payload, dict
-        ):
+        if not isinstance(outcome_items, list):
+            input_error = input_error or "Worker outcomes 顶层必须是 JSON object 或数组"
+        if not isinstance(coordinator_payload, dict):
+            input_error = input_error or "Coordinator payload 顶层必须是 JSON object"
+        is_spawn_action = isinstance(mapped_action.get("spawn"), Mapping)
+        if input_error is None and is_spawn_action and not outcome_items:
+            # 新版 Worker 先写自己的 outcome_path，Coordinator 只负责合并。
+            # 只有在共享 outcomes 缺失/为空时才触发采集，兼容旧宿主已写入
+            # 共享文件的路径，同时让真实宿主不再依赖 Coordinator 手工捏造事实。
+            try:
+                if outcomes_path is None:
+                    raise WorkerOutcomeCollectionError(
+                        "HOST_WORKER_OUTPUT_MISSING", "unknown", "outcomes_path_missing"
+                    )
+                collected_outcomes = HostExecutionAssembler(root).collect_worker_outcomes_from_artifacts(
+                    action=mapped_action,
+                    outcomes_path=outcomes_path,
+                )
+                outcome_items = [item.to_dict() for item in collected_outcomes]
+            except WorkerOutcomeCollectionError as exc:
+                input_error = str(exc)
+        if input_error is None and is_spawn_action and not outcome_items:
+            input_error = "Worker outcomes 为空"
+        outcomes: list[NativeWorkerOutcome] = []
+        if input_error is None:
+            try:
+                outcomes = [NativeWorkerOutcome(**item) for item in outcome_items]
+            except (TypeError, ValueError) as exc:
+                input_error = (
+                    "Worker outcome 字段不完整或类型错误: "
+                    f"{exc.__class__.__name__}"
+                )
+        if input_error is not None:
+            # Spawn Action 的空/损坏交接文件代表 Worker 失败，而不是 CLI
+            # 参数错误。生成带明确 unreported 哨兵的失败事务，让 Core 按
+            # 失败预算自动重试；inline Action 仍保持严格输入错误。
+            if isinstance(mapped_action.get("spawn"), Mapping):
+                assembler = HostExecutionAssembler(root)
+                result = assembler.finalize_missing_worker_output(
+                    action=mapped_action,
+                    reason_code=(
+                        "HOST_WORKER_OUTPUT_MISSING"
+                        if not outcomes
+                        else "HOST_WORKER_OUTPUT_INVALID"
+                    ),
+                    detail=input_error,
+                    result_path=result_path,
+                )
+                click.echo(json.dumps(result, ensure_ascii=False))
+                return
             raise click.ClickException("HOST_OUTCOME_INPUT_INVALID")
-        try:
-            outcomes = [NativeWorkerOutcome(**item) for item in outcome_items]
-        except (TypeError, ValueError) as exc:
-            raise click.ClickException("HOST_OUTCOME_INPUT_INVALID") from exc
+        assert isinstance(coordinator_payload, dict)
         try:
             assembler = HostExecutionAssembler(root)
             if result_path is None:

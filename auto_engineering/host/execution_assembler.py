@@ -37,6 +37,17 @@ class HostEvidenceValidationError(ValueError):
         super().__init__("HOST_EVIDENCE_INVALID: " + ",".join(self.violations))
 
 
+class WorkerOutcomeCollectionError(ValueError):
+    """Worker 私有产出无法汇总为 Action-scoped outcomes。"""
+
+    def __init__(self, code: str, worker_id: str, detail: str = "") -> None:
+        self.code = code
+        self.worker_id = worker_id
+        self.detail = detail
+        suffix = f":{detail}" if detail else ""
+        super().__init__(f"{code}:{worker_id}{suffix}")
+
+
 @dataclass(frozen=True, slots=True)
 class NativeWorkerOutcome:
     worker_id: str
@@ -84,6 +95,88 @@ class HostExecutionAssembler:
 
     def __init__(self, project_root: Path) -> None:
         self.project_root = project_root.resolve()
+
+    def collect_worker_outcomes_from_artifacts(
+        self,
+        *,
+        action: Mapping[str, Any],
+        outcomes_path: Path,
+    ) -> list[NativeWorkerOutcome]:
+        """汇总每个 Worker 的私有产出，形成唯一共享 outcomes 文件。
+
+        Coordinator 不再负责创造 Worker 事实；它只负责合并已存在的、按
+        invocation 绑定的 WorkerOutcome。旧 Action 没有 ``outcome_path`` 时
+        返回明确的兼容错误，由调用方继续使用旧共享文件路径。
+        """
+
+        try:
+            plan = SpawnPlan.from_action(action)
+        except SpawnContractError as exc:
+            raise WorkerOutcomeCollectionError(
+                "HOST_WORKER_OUTPUT_INVALID", "unknown", str(exc)
+            ) from exc
+        outcomes: list[NativeWorkerOutcome] = []
+        host_execution = action.get("host_execution")
+        worker_templates = (
+            host_execution.get("workers")
+            if isinstance(host_execution, Mapping)
+            else None
+        )
+        template_by_worker = {
+            item.get("worker_id"): item
+            for item in worker_templates
+            if isinstance(item, Mapping) and isinstance(item.get("worker_id"), str)
+        } if isinstance(worker_templates, list) else {}
+        for invocation in plan.invocations:
+            relative = invocation.outcome_path
+            if relative is None:
+                template = template_by_worker.get(invocation.worker_id)
+                candidate = template.get("outcome_path") if template else None
+                relative = candidate if isinstance(candidate, str) else None
+            if not relative:
+                raise WorkerOutcomeCollectionError(
+                    "HOST_WORKER_OUTPUT_INVALID", invocation.worker_id,
+                    "outcome_path_missing",
+                )
+            path = (self.project_root / relative).resolve()
+            if path == self.project_root or self.project_root not in path.parents:
+                raise WorkerOutcomeCollectionError(
+                    "HOST_WORKER_OUTPUT_INVALID", invocation.worker_id,
+                    "path_outside_project",
+                )
+            try:
+                raw = json.loads(path.read_text(encoding="utf-8"))
+            except FileNotFoundError as exc:
+                raise WorkerOutcomeCollectionError(
+                    "HOST_WORKER_OUTPUT_MISSING", invocation.worker_id
+                ) from exc
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+                raise WorkerOutcomeCollectionError(
+                    "HOST_WORKER_OUTPUT_INVALID", invocation.worker_id,
+                    exc.__class__.__name__,
+                ) from exc
+            if isinstance(raw, Mapping) and isinstance(raw.get("outcome"), Mapping):
+                raw = raw["outcome"]
+            if not isinstance(raw, Mapping):
+                raise WorkerOutcomeCollectionError(
+                    "HOST_WORKER_OUTPUT_INVALID", invocation.worker_id,
+                    "top_level_must_be_object",
+                )
+            try:
+                outcome = NativeWorkerOutcome(**dict(raw))
+            except (TypeError, ValueError) as exc:
+                raise WorkerOutcomeCollectionError(
+                    "HOST_WORKER_OUTPUT_INVALID", invocation.worker_id,
+                    exc.__class__.__name__,
+                ) from exc
+            if outcome.worker_id != invocation.worker_id:
+                raise WorkerOutcomeCollectionError(
+                    "HOST_WORKER_OUTPUT_INVALID", invocation.worker_id,
+                    "worker_id_mismatch",
+                )
+            outcomes.append(outcome)
+        _atomic_write_json(outcomes_path, {"outcomes": [item.to_dict() for item in outcomes]})
+        return outcomes
 
     def restore_committed_result_to_file(
         self,
@@ -855,6 +948,74 @@ class HostExecutionAssembler:
         })
         return result
 
+    def finalize_missing_worker_output(
+        self,
+        *,
+        action: Mapping[str, Any],
+        reason_code: str = "HOST_WORKER_OUTPUT_MISSING",
+        detail: str = "宿主未收到 Worker 的结构化输出",
+        result_path: Path | None = None,
+    ) -> dict[str, Any]:
+        """将“Worker 无输出/输出不可解析”转换为可重试的失败 Result。
+
+        这是宿主边界的恢复路径，不伪造 Worker 的业务结果。由于原生宿主
+        没有返回 outcome，句柄明确使用 ``unreported:`` 哨兵并把缺失原因
+        写入 payload；Core 因此可以按 ``HOST_WORKER_FAILED`` 自动重试，且
+        不会把空 Coordinator payload 当成 Architect/Developer 成功结果。
+        """
+
+        try:
+            plan = SpawnPlan.from_action(action)
+        except SpawnContractError as exc:
+            raise HostEvidenceValidationError((str(exc),)) from exc
+        message_id = action.get("message_id")
+        if not isinstance(message_id, str) or not message_id:
+            raise HostEvidenceValidationError(("ACTION_MESSAGE_ID_MISSING",))
+        platform = (
+            action.get("host_execution", {}).get("platform")
+            if isinstance(action.get("host_execution"), Mapping)
+            else None
+        )
+        isolation = (
+            "fork_context=false" if platform == "codex"
+            else "fresh_context" if platform == "claude-code"
+            else None
+        )
+        outcomes = [
+            NativeWorkerOutcome(
+                worker_id=invocation.worker_id,
+                native_worker_handle=(
+                    f"unreported:{message_id}:{invocation.worker_id}"
+                ),
+                status="failed",
+                payload={
+                    "error_code": reason_code,
+                    "detail": detail,
+                    "native_output_available": False,
+                },
+                summary=f"{reason_code}: {detail}",
+                actual_model="unreported",
+                isolation_evidence=isolation,
+            )
+            for invocation in plan.invocations
+        ]
+        result = self._finalize_worker_failure(
+            action=action,
+            outcomes=outcomes,
+        )
+        if result_path is not None:
+            target = (
+                result_path.resolve()
+                if result_path.is_absolute()
+                else (self.project_root / result_path).resolve()
+            )
+            if target == self.project_root or self.project_root not in target.parents:
+                raise HostEvidenceValidationError(
+                    ("RESULT_OUTPUT_PATH_OUTSIDE_PROJECT",)
+                )
+            _atomic_write_json(target, result)
+        return result
+
     def finalize_to_file(
         self,
         *,
@@ -1387,5 +1548,6 @@ __all__ = [
     "HostEvidenceValidationError",
     "HostExecutionAssembler",
     "NativeWorkerOutcome",
+    "WorkerOutcomeCollectionError",
     "collect_host_evidence_violations",
 ]

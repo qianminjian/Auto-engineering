@@ -43,11 +43,22 @@ _CODEX_NATIVE_WORKER_TOOL_FAMILIES = [
 ]
 
 
+def _worker_outcome_path(action_key: str, worker_id: str) -> str:
+    """Derive a stable fallback for legacy Actions without an explicit ref."""
+
+    safe_worker = "".join(
+        char if char.isalnum() or char in {"-", "_"} else "_"
+        for char in worker_id
+    )
+    return f".ae-state/host-runtime/worker-outcomes/{action_key}-{safe_worker}.json"
+
+
 def _native_worker_launch_prompt(
     *,
     project_root: str,
     prompt_ref: str,
     prompt_sha256: str,
+    outcome_path: str,
     required_isolation_evidence: str,
 ) -> str:
     """生成不含 Worker 正文的有界原生启动合同。"""
@@ -57,17 +68,17 @@ def _native_worker_launch_prompt(
         "project_root": project_root,
         "prompt_ref": prompt_ref,
         "prompt_sha256": prompt_sha256,
+        "outcome_path": outcome_path,
         "may_drive_loop": False,
         "may_spawn_workers": False,
         "required_isolation_evidence": required_isolation_evidence,
     }
     return (
         "AUTO_ENGINEERING_NATIVE_WORKER_LAUNCH_V1\n"
-        "切换到 project_root；只读取 prompt_ref 指定文件，先校验 SHA-256，"
-        "匹配后严格执行正文。不得驱动 Auto-Engineering Loop，不得创建子代理。"
-        "最终只返回输出契约要求的结构化字段和短摘要；不得返回完整 diff、日志或报告正文，"
-        "大型正文写入任务指定 Artifact。若上层要求记录 outcome，文件必须保持原生 JSON object"
-        " {\"outcomes\":[...]}，不得写顶层数组或字符串化 JSON。\n"
+        "切换 project_root，校验 prompt_ref 的 SHA-256 后执行；不得驱动 Loop 或创建子代理。"
+        "只返回结构化字段和短摘要；不得返回完整 diff、日志或报告正文。"
+        "必须把自己的 WorkerOutcome 原子写入 outcome_path；不得写共享文件。"
+        "共享文件必须是原生 JSON object {\"outcomes\":[...]}，不得写顶层数组或字符串化 JSON。\n"
         + json.dumps(contract, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     )
 
@@ -184,10 +195,16 @@ class _Adapter2Mixin:
                     "native_worker_handle": None,
                     "prompt_ref": invocation.prompt_ref,
                     "prompt_sha256": invocation.prompt_sha256,
+                    "outcome_path": invocation.outcome_path or _worker_outcome_path(
+                        action_key, invocation.worker_id
+                    ),
                     "native_launch_prompt": _native_worker_launch_prompt(
                         project_root=project_root,
                         prompt_ref=invocation.prompt_ref,
                         prompt_sha256=invocation.prompt_sha256,
+                        outcome_path=invocation.outcome_path or _worker_outcome_path(
+                            action_key, invocation.worker_id
+                        ),
                         required_isolation_evidence=expected_isolation,
                     ),
                     "expected_isolation_evidence": expected_isolation,

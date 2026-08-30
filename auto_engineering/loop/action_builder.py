@@ -5,6 +5,7 @@ TickOrchestrator 委托调用, 不再内联 stage action 构造逻辑.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import shlex
@@ -47,10 +48,11 @@ _SPAWN_INSTRUCTION = (
     "Execute every project tool and launch every worker with working directory "
     "{project_root}; never use the plugin or prompt-artifact directory as cwd.\n"
     "{multi_instruction}"
-    "Write only native facts to action.host_execution.work_files.outcomes "
-    "using the exact wrapper "
-    "{{\"outcomes\":[{{worker_id,native_worker_handle,status,payload,summary,"
-    "actual_model,isolation_evidence}}]}}. Write only expected_format business fields to "
+    "Each Worker must write its own native outcome JSON atomically to the invocation's "
+    "outcome_path before it returns. Do not write shared outcomes; Host Collector will "
+    "merge all private artifacts into the shared \"outcomes\" file at "
+    "action.host_execution.work_files.outcomes. "
+    "Write only expected_format business fields to "
     "Use the model identifier reported by the native worker API for actual_model; if "
     "that API exposes no model identifier, write actual_model='unreported' exactly, "
     "never null and never infer a model name. "
@@ -79,12 +81,19 @@ _SPAWN_INSTRUCTION = (
     "worker handle before advancing to another Action."
 )
 _SPAWN_MULTI_INSTRUCTION = (
-    "Use each invocation's prompt_ref, prompt_sha256, isolation and receipt_path; "
-    "workers return native outcomes only and never write shared state.\n"
+    "Use each invocation's prompt_ref, prompt_sha256, isolation, receipt_path and outcome_path; "
+    "each worker writes only its own outcome_path, never shared state.\n"
 )
 _SPAWN_SINGLE_INSTRUCTION = (
     "Use spawn.invocations[0] as the only execution contract.\n"
 )
+
+
+def _worker_outcome_path(action_identity: str) -> str:
+    """Return a deterministic, action-scoped handoff location for one Worker."""
+
+    digest = hashlib.sha256(action_identity.encode("utf-8")).hexdigest()
+    return f".ae-state/host-runtime/worker-outcomes/{digest}.json"
 # Non-spawn stages (developer, gap_scan inline) use this:
 _INLINE_INSTRUCTION = (
     "Do the work for stage '{stage}' per expected_format. "
@@ -723,6 +732,9 @@ class ActionBuilder:
                             "may_spawn_workers": False,
                         },
                         receipt_path=str(worker["receipt_path"]),
+                        outcome_path=_worker_outcome_path(
+                            f"{self.project_root.resolve()}:{self._state.tick}:{action}:{worker['index']}"
+                        ),
                     ).to_dict()
                     for worker in agents
                 ]
@@ -782,6 +794,9 @@ class ActionBuilder:
                             receipt_path=(
                                 f".ae-state/spawn-proofs/{receipt_token}.json"
                             ),
+                            outcome_path=_worker_outcome_path(
+                                f"{self.project_root.resolve()}:{self._state.tick}:{action}:0"
+                            ),
                         ).to_dict()
                     ]
                     result.setdefault("extensions", {})[
@@ -826,6 +841,9 @@ class ActionBuilder:
                             receipt_path=(
                                 f".ae-state/spawn-proofs/{receipt_token}.json"
                             ),
+                            outcome_path=_worker_outcome_path(
+                                f"{self.project_root.resolve()}:{self._state.tick}:{action}:0"
+                            ),
                         ).to_dict()
                     ]
                     result.setdefault("extensions", {})[
@@ -855,6 +873,9 @@ class ActionBuilder:
                             },
                             receipt_path=(
                                 f".ae-state/spawn-proofs/{receipt_token}.json"
+                            ),
+                            outcome_path=_worker_outcome_path(
+                                f"{self.project_root.resolve()}:{self._state.tick}:{action}:0"
                             ),
                         ).to_dict()
                     ]

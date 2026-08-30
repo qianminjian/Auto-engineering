@@ -310,7 +310,8 @@
           },
           "additionalProperties": false
         },
-        "receipt_path": {"type": "string", "minLength": 1}
+        "receipt_path": {"type": "string", "minLength": 1},
+        "outcome_path": {"type": "string", "minLength": 1}
       },
       "additionalProperties": false
     },

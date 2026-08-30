@@ -155,6 +155,6 @@ Phase 64–66 的真实运行止血、会话解耦、上下文预算、ArtifactR
 ## Phase 84：跨平台宿主边界与异常可续作
 | P1 | T563 | POSIX/Windows 路径越界 fail-closed | ✅ 回归已实现；跨平台路径检查通过 |
 | P1 | T564 | Host/机器 OSError → 稳定 Stop Report | ✅ 回归已实现；稳定错误码与机器报告通过 |
-| P1 | T565-T586 | 真实成本、日志脱敏、事务故障注入、纵向回放、双宿主 L3-L4、超时与状态可见性 | ◐ T571-T586 已补齐 Worker 超时先行终结、唯一 outcomes 合同、repair 投影隔离、Supervisor 即时心跳、只读 active Action 状态、Build 证据和事故回放；真实 Codex/Claude L3-L4 仍待执行 |
+| P1 | T565-T586、T596-T598 | 真实成本、日志脱敏、事务故障注入、纵向回放、双宿主 L3-L4、超时与 Worker 无产出恢复 | ◐ T571-T586 已补齐 Worker 超时先行终结、唯一 outcomes 合同、repair 投影隔离、Supervisor 即时心跳、只读 active Action 状态、Build 证据和事故回放；T596-T597 将缺失/空/畸形交接映射为失败；T598 增加逐 Worker `outcome_path`、统一 Collector 和部分产出回归，避免 Coordinator 手工创造 native outcome；真实 Codex/Claude L3-L4 仍待执行 |
 | P0/P1 | T587-T588 | 标准 Marketplace 安装与文档收敛 | ◐ T587 安装器与契约测试完成，待提交后从 GitHub 实际重装；T588 设计和用户指南已同步 |
 | P0 | T589-T595 | 2026-08-29 真跑链路收敛：失败类别隔离、Research 契约统一、宿主事务回放、晚到证据边界与批次设计条目范围 | While 宿主执行同一 Action, when setup、Result、Worker timeout、late outcome 或 verifier coverage 任一边界发生, the system shall 使用同一机器合同、按失败类别计数、严格限定当前 batch 并可重放恢复，不以孤立函数测试替代纵向证据 | ◐ 规格、代码、范围回归与 2770 项自动回归已完成；真实宿主 L3/L4 仍待安排 |

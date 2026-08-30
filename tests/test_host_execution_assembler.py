@@ -13,6 +13,7 @@ from auto_engineering.host.execution_assembler import (
     HostEvidenceValidationError,
     HostExecutionAssembler,
     NativeWorkerOutcome,
+    WorkerOutcomeCollectionError,
     collect_host_evidence_violations,
 )
 from auto_engineering.host.spawn_contract import WorkerInvocationSpec
@@ -38,6 +39,7 @@ def _action(tmp_path: Path) -> dict:
         isolation="fresh_context",
         capabilities={"may_drive_loop": False, "may_spawn_workers": False},
         receipt_path=".ae-state/spawn-proofs/worker-token.json",
+        outcome_path=".ae-state/host-runtime/worker-outcomes/worker-token.json",
     )
     challenge = {
         "token": "total-token",
@@ -71,6 +73,7 @@ def _action(tmp_path: Path) -> dict:
                 "native_worker_handle": None,
                 "prompt_ref": prompt_ref,
                 "receipt_path": invocation.receipt_path,
+                "outcome_path": invocation.outcome_path,
                 "receipt": {
                     "status": "pending",
                     "stage": "critic",
@@ -173,6 +176,65 @@ def test_finalize_worker_timeout_builds_failure_transaction_without_success_evid
         action=action,
         result_path=Path("retry-result.json"),
     ) is None
+
+
+def test_finalize_missing_worker_output_builds_deterministic_failure(
+    tmp_path: Path,
+) -> None:
+    """宿主没有写出任何 outcome 时，也必须形成可重试的失败事务。"""
+    action = _action(tmp_path)
+    result = HostExecutionAssembler(tmp_path).finalize_missing_worker_output(
+        action=action,
+        reason_code="HOST_WORKER_OUTPUT_MISSING",
+        detail="Worker 已结束，但未产生 outcomes 或 Coordinator payload",
+    )
+
+    assert result["spawned"] is False
+    assert result["spawn_error_code"] == "HOST_WORKER_FAILED"
+    assert result["spawn_retry_attempt"] == 1
+    assert "verdict" not in result
+    journal = json.loads(
+        (tmp_path / ".ae-state/host-runtime/outcomes/action-1.json").read_text()
+    )
+    assert journal["status"] == "worker_failed"
+    assert journal["outcomes"][0]["status"] == "failed"
+    assert journal["outcomes"][0]["payload"]["error_code"] == (
+        "HOST_WORKER_OUTPUT_MISSING"
+    )
+
+
+def test_collect_worker_outcomes_from_private_worker_artifact(tmp_path: Path) -> None:
+    action = _action(tmp_path)
+    private_path = tmp_path / action["spawn"]["invocations"][0]["outcome_path"]
+    private_path.parent.mkdir(parents=True, exist_ok=True)
+    private_path.write_text(json.dumps({
+        "worker_id": "critic-0",
+        "native_worker_handle": "native-1",
+        "status": "completed",
+        "payload": {"verdict": "APPROVE"},
+        "summary": "完成审查",
+        "actual_model": "deterministic-host",
+        "isolation_evidence": "fork_context=false",
+    }), encoding="utf-8")
+
+    outcomes_path = tmp_path / ".ae-state/host-runtime/work/outcomes.json"
+    outcomes = HostExecutionAssembler(tmp_path).collect_worker_outcomes_from_artifacts(
+        action=action,
+        outcomes_path=outcomes_path,
+    )
+
+    assert outcomes[0].worker_id == "critic-0"
+    assert json.loads(outcomes_path.read_text(encoding="utf-8"))["outcomes"][0][
+        "native_worker_handle"
+    ] == "native-1"
+
+
+def test_collect_worker_outcomes_reports_missing_private_artifact(tmp_path: Path) -> None:
+    with pytest.raises(WorkerOutcomeCollectionError, match="HOST_WORKER_OUTPUT_MISSING:critic-0"):
+        HostExecutionAssembler(tmp_path).collect_worker_outcomes_from_artifacts(
+            action=_action(tmp_path),
+            outcomes_path=tmp_path / "outcomes.json",
+        )
 
 
 def test_worker_timeout_bypasses_architect_business_contract(
