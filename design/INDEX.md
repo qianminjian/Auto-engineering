@@ -7,6 +7,8 @@
 | 文件 | 用途 |
 |---|---|
 | `BEACON.md` | 北方之星、范围、批准决策与下一步（≤80 行） |
+| `BEACON-HIS.md` | 从 BEACON 归档的设计演进摘要；不作为当前决策或运行状态源 |
+| `IMPLEMENTATION-TRACKER-HIS.md` | Phase 64–84 历史任务摘要；完整逐项状态由 Git 追溯 |
 | `v5.6-Design-Loop.md` | 当前已实现行为与兼容基线 |
 | `v5.7-Protocol-Kernel-Design.md` | 已批准的协议内核目标设计 |
 | `v5.7-Protocol-Kernel-PLAN.md` | Phase 52-56 可执行实施计划 |

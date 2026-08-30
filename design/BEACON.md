@@ -1,6 +1,14 @@
 # Auto-Engineering BEACON
 > 创建：2026-06-24｜更新：2026-08-30｜阶段：P0-E2E 端到端产品闭环
 > 决策状态翻转（✅↔❌）或架构降级必须先获用户批准。
+
+## 导航
+
+- 当前权威设计：[`v5.8-Main-Agent-Coordinator-Recovery-Design.md`](v5.8-Main-Agent-Coordinator-Recovery-Design.md)
+- 当前任务：[`IMPLEMENTATION-TRACKER.md`](IMPLEMENTATION-TRACKER.md)
+- BEACON 演进历史：[`BEACON-HIS.md`](BEACON-HIS.md)
+- 项目里程碑：[`HISTORY.md`](HISTORY.md)
+
 ## 目标与成功标准
 1. 用户执行一次设计驱动命令后，产品无非预期人工介入地运行到 `TERMINAL`。
 2. 定位为跨 Agent 宿主的确定性工程治理内核；宿主负责推理、工具和连续驱动。
@@ -65,16 +73,7 @@ Gate/Guardrail、五层验证、审计、v5.6 兼容迁移和双宿主验收。
 - `P0-E2E` 是唯一产品交付任务；既有 Phase/T、L1/L2、覆盖率和 archive 安装仅作支撑证据，不能替代 L4。
 - 上一候选 Build `5.8.0-rc.5+sha256.4f32a506f46b0f94` 仅作为历史 archive smoke 证据；本轮工作树已有未提交改动，旧 Build Identity 不适用于当前代码，必须重新构建制品后才能进行新的安装验收。本轮自动回归为 2779 passed/1 skipped、覆盖率 90%，新增 Supervisor 终态、租约清理、同 Action repair 和结果合同白名单回归已通过；真实产品 L3/L4 仍未执行，不得以 archive smoke 或自动测试替代。
 - Phase 85 进入主控权纠偏：默认主控返回当前主 Agent，业务角色继续独立 Worker 化；Python Supervisor 仅保留旁路兼容。预算默认软约束，先跑通再优化。T603-T621 已登记，等待用户命令启动开发。
-## 最近演进
-| 日期 | 变更 |
-|---|---|
-| 2026-08-23 | T533 获批修订 D13：工程线程连续，模型上下文按 Action 隔离且由 Supervisor 自动续作 |
-| 2026-08-28 | 真跑证伪 T465 局部验收；D46 统一有效设计权威投影，收口 Research→Approval→Fresh Architect→Developer 因果轨迹 |
-| 2026-08-28 | 真跑发现人工 Gate 被错误映射为 CONTINUE；T558 收敛 Gate→ExecutionControl 单一判定并兼容旧快照 |
-| 2026-08-28 | 真跑发现 rejected journal 未恢复 Worker 事实，导致重复回执冲突和无终态停滞；T559 收敛 repair-only 恢复与冲突终止 |
-| 2026-08-29/30 | 全场景审计补齐跨平台路径、Lease、Phase 0、advisory、重试与清理边界（T563-T570）；Codex 加固 finite usage、bounded audit、Host Runtime budgets、Tick rollback、protocol/prompt fail-closed、`.ae-runtime` hermetic hooks；T579-T586 收口 Worker 超时、outcomes 合同、repair 隔离、Supervisor 心跳、只读状态、Build 证据和事故回放；真跑回放进一步发现失败类别串扰、Research null 契约漂移、refine coverage 投影缺失和 Verifier 范围失控，纳入 T589-T595；Build `5.8.0-rc.5+sha256.4f32a506f46b0f94` archive smoke 通过；8-30 又修复 Worker 无结构化产出误报 `HOST_OUTCOME_INPUT_INVALID`，并改为私有 outcome artifact→Collector→Assembler 的统一生命周期，避免继续叠加 CLI 点状分支 |
-| 2026-08-30 | D13 原批准标记为存在争议；D53-D55 明确恢复主 Agent 协调权、Artifact 恢复边界、预算默认 soft 与 Supervisor 先旁路后退役 |
 ## 待解决问题
 - 等待用户命令启动 T609-T621；完成主控切换、异步故障回放和同一 Build 双宿主 L4 前保持发布阻断。
 ## 引用文件
-`design/v5.8-Main-Agent-Coordinator-Recovery-Design.md` · `design/v5.8-Session-Decoupling-Design.md` · `design/v5.8-Session-Decoupling-PLAN.md` · `design/incidents/2026-07-29-claude-146-tick-long-run.md` · `design/IMPLEMENTATION-TRACKER.md` · `design/HISTORY.md`
+`design/v5.8-Main-Agent-Coordinator-Recovery-Design.md` · `design/BEACON-HIS.md` · `design/v5.8-Session-Decoupling-Design.md` · `design/v5.8-Session-Decoupling-PLAN.md` · `design/incidents/2026-07-29-claude-146-tick-long-run.md` · `design/IMPLEMENTATION-TRACKER.md` · `design/HISTORY.md`
