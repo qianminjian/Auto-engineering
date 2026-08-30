@@ -57,9 +57,16 @@ class NativeWorkerOutcome:
     summary: str
     actual_model: str
     isolation_evidence: str | None = None
+    execution_generation: int | None = None
+    fencing_token: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        value = asdict(self)
+        if self.execution_generation is None:
+            value.pop("execution_generation")
+        if self.fencing_token is None:
+            value.pop("fencing_token")
+        return value
 
 
 def _canonical_bytes(value: object) -> bytes:
@@ -128,11 +135,20 @@ class HostExecutionAssembler:
             if isinstance(item, Mapping) and isinstance(item.get("worker_id"), str)
         } if isinstance(worker_templates, list) else {}
         for invocation in plan.invocations:
-            relative = invocation.outcome_path
-            if relative is None:
-                template = template_by_worker.get(invocation.worker_id)
-                candidate = template.get("outcome_path") if template else None
-                relative = candidate if isinstance(candidate, str) else None
+            template = template_by_worker.get(invocation.worker_id)
+            template_generation = (
+                template.get("execution_generation")
+                if isinstance(template, Mapping)
+                else None
+            )
+            # Generation-bound templates are authoritative. Legacy Actions keep
+            # the invocation path for backward compatibility.
+            candidate = template.get("outcome_path") if template else None
+            relative = (
+                candidate
+                if template_generation is not None and isinstance(candidate, str)
+                else invocation.outcome_path
+            )
             if not relative:
                 raise WorkerOutcomeCollectionError(
                     "HOST_WORKER_OUTPUT_INVALID", invocation.worker_id,
@@ -173,6 +189,31 @@ class HostExecutionAssembler:
                 raise WorkerOutcomeCollectionError(
                     "HOST_WORKER_OUTPUT_INVALID", invocation.worker_id,
                     "worker_id_mismatch",
+                )
+            expected_generation = (
+                template.get("execution_generation")
+                if isinstance(template, Mapping)
+                else None
+            )
+            expected_fence = (
+                template.get("fencing_token")
+                if isinstance(template, Mapping)
+                else None
+            )
+            if (
+                (expected_generation is not None or expected_fence is not None)
+                and (
+                    not isinstance(expected_generation, int)
+                    or expected_generation < 1
+                    or not isinstance(expected_fence, str)
+                    or len(expected_fence) != 64
+                    or outcome.execution_generation != expected_generation
+                    or outcome.fencing_token != expected_fence
+                )
+            ):
+                raise WorkerOutcomeCollectionError(
+                    "HOST_WORKER_OUTPUT_STALE", invocation.worker_id,
+                    "execution_fence_mismatch",
                 )
             outcomes.append(outcome)
         _atomic_write_json(outcomes_path, {"outcomes": [item.to_dict() for item in outcomes]})

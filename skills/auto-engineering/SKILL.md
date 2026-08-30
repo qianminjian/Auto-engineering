@@ -99,17 +99,9 @@ prompt/message。不得先读取、`sed`、复制、总结或拼接 `prompt_ref`
 取得首个 Action 后必须校验其 `project_root` 与 `invocation_project_root` 的真实路径完全相同；
 不一致时报告 `HOST_PROJECT_ROOT_DRIFT` 并停止，禁止在新根初始化或继续。
 
-若首个 Action 的 disposition 为 `CONTINUE`，外层宿主必须立即且只调用一次：
-
-```text
-ae-run dev-loop --supervise --project-root <invocation_project_root>
-```
-
-`--supervise` 是插件内部产品协议，不是用户管理命令。它由确定性 Supervisor 为每个 Action
-创建全新宿主 context，并在 context 退出后执行 Core 下发的 finalize/validate/submit argv；
-返回值是最终 WAIT/TERMINAL/ERROR Action。外层宿主不得再逐 Tick 执行下面的 Action 合同，
-不得在 probe 失败时退回长期主会话。`HOST_ACTION_CONTEXT_UNAVAILABLE` 必须按
-`WAIT_RESOURCE`/稳定阻断原样报告。下文循环仅描述一次性 Action context 内的执行义务。
+若首个 Action 的 disposition 为 `CONTINUE`，当前主 Agent 就是唯一 Coordinator，必须在本次
+会话内持续执行下面的 Action 合同。Python 不接管原生 Worker，也不替主 Agent 启动另一个
+临时主会话；`--supervise` 只保留为迁移期旁路兼容，不得作为默认入口。
 
 每次先读取 `action.extensions.ae.execution_control`。宿主必须在同一次用户启动中执行：
 
@@ -124,6 +116,10 @@ while control.disposition == "CONTINUE":
 变化后自动重试原 active Action，不询问用户；`WAIT_USER` 只询问 `reason_code` 对应的真实决策；
 `TERMINAL`、`ERROR`、`HANDOFF_REQUIRED` 分别表示正常终态、稳定错误和异常接管。
 不得根据 stage 名、自然语言 recap 或“已经输出 Action”自行停止。
+
+等待到期不是失败：一次 wait 未观察到完成只记录心跳并继续等待，不生成失败 Result、不消耗
+重试次数、不重启 Worker。只有宿主明确证明 Worker/owner 已终止时才可判定失败；无法确认旧
+Worker 已终止时必须进入 `WAIT_RESOURCE/WORKER_OWNERSHIP_UNCERTAIN`，禁止并发重跑。
 
 每次取得下一 Action 后，若存在 `action.gap_scan_summary`，必须先向前台输出一次有界扫描摘要：
 已核对的设计章节数、缺口数、是否存在阻断项及 `outcome`。`no_gaps_auto_continue`
@@ -222,15 +218,12 @@ Codex 适配层以当前会话实际暴露的工具清单为能力事实源：
   Codex 必须显式调用 `collaboration.wait_agent({"timeout_ms":300000})`，或
   `multi_agent_v1__wait_agent({"targets":["<agent-id>"],"timeout_ms":300000})`，不得省略
   timeout 使用宿主默认 30 秒；未完成时最多再调用两次相同的 300000ms 等待。
-- 三次长等待后 Worker 仍未完成时，不得拼装空业务结果或调用成功证据路径。必须把原生
-  handle、失败状态（只用 `timeout` 或 `timed_out`）和超时摘要如实写入当前
-  `work_files.outcomes`，Coordinator 结果写空对象，
-  再调用同一个 `--finalize-result`。Assembler 独占生成规范的
-  `spawned=false/HOST_WORKER_TIMEOUT` Result；随后 validate/tick，并按 Core 返回的
-  `WAIT_RESOURCE` 重试原 active Action，不计入业务修复次数、不要求用户重启。Core 仅允许
-  一次 Worker 重启；超时预算只统计连续的 `HOST_WORKER_TIMEOUT`，此前的 hash、能力或
-  启动合同失败不得消耗该预算。若返回 `HOST_WORKER_TIMEOUT_EXHAUSTED`，不得再次 spawn，
-  但必须保留 active Action、failure journal 和停止报告，便于模型服务恢复后按同一事实恢复。
+- 三次长等待后 Worker 仍未完成时，仍然只是观察事件：不得写失败 outcome、不得调用
+  `--finalize-result`、不得重启 Worker。主 Agent 查询原生 handle 状态并尝试正常取消；只有
+  原生宿主明确返回终态失败、确认取消成功或 owner 进程已结束，才写入 `failed`/`timed_out`
+  事实并进入 Core 失败重试。若无法确认旧 Worker 已终止，保留 active Action，报告
+  `WAIT_RESOURCE/WORKER_OWNERSHIP_UNCERTAIN` 并继续等待，禁止并发重跑和双写。只有宿主
+  原生 API 明确给出 `timed_out`，才允许使用 `HOST_WORKER_TIMEOUT`，普通 wait 返回不构成该证据。
 - `execution_control.disposition == "CONTINUE"` 时，能力满足的 spawn Action 必须在同一
   次用户启动中继续驱动，不得先向用户输出终态消息或请求无关确认。
 
@@ -260,7 +253,8 @@ validate、tick、status、resume）都必须显式附加
    `actual_model` 和所选工具族的 `isolation_evidence`（`fork_turns=none` 或
    `fork_context=false`）。`actual_model` 使用原生 API 报告值；若 API 不暴露模型标识，
    必须写稳定值 `unreported`，不得填 `null` 或猜测模型名。Worker 不得写 receipt、attestation、challenge 或 total proof
-   （workers must not write the shared total proof）。
+   （workers must not write the shared total proof）。同时必须原样复制启动契约中的
+   `execution_generation` 与 `fencing_token`；任一缺失或不匹配时不得猜测、不得提交 outcome。
 6. 全部 Worker completed 时，Coordinator 从真实输出合并 `action.expected_format` 要求的业务字段，
    只写入当前 Action 的 `work_files.coordinator_result`；设计冲突写 `design_change_requests[]`，
    不伪造可执行计划。任一 Worker 超时/失败时写 `{}`，不得补业务字段或假装成功。
@@ -288,7 +282,7 @@ Core 从 active Action 绑定
 message identity、causation、thread、tick、stage 与 correlation。之后使用相同的
 `--validate-result`、`--tick --result` 流程。
 
-Supervisor 返回 WAIT/ERROR/HANDOFF/TERMINAL 时会在 `.ae-state/reports/` 生成确定性
+协调入口返回 WAIT/ERROR/HANDOFF/TERMINAL 时会在 `.ae-state/reports/` 生成确定性
 `loop-stop-*.md`，只记录 Action、Receipt、原因码与下一步。不得用自由文本 recap 覆盖该报告。
 
 Core 返回 `resource_wait` / `WAIT_RESOURCE` 时，宿主继续执行上述资源回收流程，并在

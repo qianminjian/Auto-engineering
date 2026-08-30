@@ -13,7 +13,7 @@
 
 | 优先级 | ID | 唯一交付任务 | EARS 验收 | 状态 |
 |---:|---|---|---|:---:|
-| P0 | P0-E2E | 独立安装后的单命令设计开发闭环 | While 同一 Build 分别安装到 Codex 与 Claude Code, when 用户在空项目执行一次设计驱动命令, both hosts shall 自动完成设计扫描、规划、开发、审查、修复和验证并到达等价 `TERMINAL`，零非预期人工续接、零手工协议修复 | ◐ 自动回归和历史制品证据不能替代当前 Build 双宿主 L4；Phase 85 未实施，继续阻断发布 |
+| P0 | P0-E2E | 独立安装后的单命令设计开发闭环 | While 同一 Build 分别安装到 Codex 与 Claude Code, when 用户在空项目执行一次设计驱动命令, both hosts shall 自动完成设计扫描、规划、开发、审查、修复和验证并到达等价 `TERMINAL`，零非预期人工续接、零手工协议修复 | ◐ Phase 85 第一批已实现；自动回归不能替代当前 Build 双宿主 L4，继续阻断发布 |
 
 ### 当前工作面
 
@@ -21,9 +21,9 @@
 |---|---|
 | 设计工程模型 | ✅ section 身份、设计权威和任务追溯已有基础 |
 | Core 确定性协议 | ✅ Action/Result、EventStore、Finalizer、Journal 和 Gate 已有基础 |
-| 主 Agent 持续协调 | ☐ Phase 85 待实施；当前默认仍为旧 Supervisor 路径 |
-| Worker 生命周期 | ☐ wait、OWNER_LOST、generation 和 fencing 待实施 |
-| 预算 soft | ☐ 设计已批准，默认硬停机尚待移除 |
+| 主 Agent 持续协调 | ◐ 默认入口已切回主 Agent；真实宿主连续运行待验收 |
+| Worker 生命周期 | ◐ generation/fencing 与等待语义已落地；原生 liveness 待真实宿主验收 |
+| 预算 soft | ✅ 默认不硬停；显式 hard 仍可用 |
 | 真实异步验收 | ☐ Fake Host 不能关闭；Codex/Claude 同 Build L3/L4 待执行 |
 
 ### 完成纪律
@@ -34,7 +34,7 @@
 
 ## Phase 85：主 Agent 协调权恢复与宿主生命周期纠偏
 
-> 风险列表示决策对产品架构的影响。设计已批准，等待用户命令启动开发；旧 Supervisor 先旁路，双宿主 L4 通过后再退役。
+> 风险列表示决策对产品架构的影响。设计已批准并进入实施；旧 Supervisor 先旁路，双宿主 L4 通过后再退役。
 
 ### 设计与迁移合同
 
@@ -51,20 +51,20 @@
 
 | 优先级 | ID | 风险 | 任务 | 核心验收 | 状态 |
 |---:|---|:---:|---|---|:---:|
-| P0 | T609 | R4 | Skill/Command 恢复主 Agent 持续 Action 循环 | 一次命令连续到合法退出，不默认调用 `--supervise` | ☐ 等待启动开发 |
-| P0 | T610 | R3 | 接入现有 work files、Collector、Finalizer、Journal 和机器 argv | 不回滚到手工拼装机器事实 | ☐ 等待启动开发 |
-| P0 | T611 | R3 | 等待观察、liveness 探测和所有权不确定分流 | wait 不等于失败；无法确认终止时禁止并发重跑 | ☐ 等待启动开发 |
-| P0 | T612 | R3 | Worker 私有 outcome 先行与有界主会话摘要 | Worker 先原子落盘，主 Agent 只保留引用、摘要和 handle | ☐ 等待启动开发 |
-| P0 | T613 | R3 | OWNER_LOST、generation、lease 和 fencing 防双写 | Collector 只接受 active generation，旧结果只审计 | ☐ 等待启动开发 |
-| P0 | T614 | R3 | Coordinator-only repair 全链复用 | Assembler/Core 拒绝不重跑 Worker | ☐ 等待启动开发 |
-| P0 | T615 | R2 | 删除默认预算硬停机 | 缺省/soft 模式只记录指标并继续 | ☐ 等待启动开发 |
+| P0 | T609 | R4 | Skill/Command 恢复主 Agent 持续 Action 循环 | 一次命令连续到合法退出，不默认调用 `--supervise` | ✅ L1 文档回归；L3/L4 待验收 |
+| P0 | T610 | R3 | 接入现有 work files、Collector、Finalizer、Journal 和机器 argv | 不回滚到手工拼装机器事实 | ✅ L1 既有链路回归；L2 待补 |
+| P0 | T611 | R3 | 等待观察、liveness 探测和所有权不确定分流 | wait 不等于失败；无法确认终止时禁止并发重跑 | ◐ 等待语义已统一；L2/L3 待验收 |
+| P0 | T612 | R3 | Worker 私有 outcome 先行与有界主会话摘要 | Worker 先原子落盘，主 Agent 只保留引用、摘要和 handle | ✅ L1 合同回归；L3 待验收 |
+| P0 | T613 | R3 | OWNER_LOST、generation、lease 和 fencing 防双写 | Collector 只接受 active generation，旧结果只审计 | ◐ generation/fencing 已落地；跨会话 L2/L3 待验收 |
+| P0 | T614 | R3 | Coordinator-only repair 全链复用 | Assembler/Core 拒绝不重跑 Worker | ✅ 既有 L1 回归；L3 待验收 |
+| P0 | T615 | R2 | 删除默认预算硬停机 | 缺省/soft 模式只记录指标并继续 | ✅ L1 回归；显式 hard 兼容 |
 
 ### 真实验收与退役
 
 | 优先级 | ID | 风险 | 任务 | 核心验收 | 状态 |
 |---:|---|:---:|---|---|:---:|
-| P0 | T616 | R3 | 建立真实异步纵向宿主模拟器 | 第一次 wait 结束后 Worker 继续运行并最终推进 Tick | ☐ 等待启动开发 |
-| P0 | T617 | R3 | 历史真跑事故回放矩阵 | 覆盖 wait、owner 丢失、迟到、重复、部分成功和 Core 拒绝 | ☐ 等待启动开发 |
+| P0 | T616 | R3 | 建立真实异步纵向宿主模拟器 | 第一次 wait 结束后 Worker 继续运行并最终推进 Tick | ◐ 已加入真实异步进程回归；完整纵向 Tick 待补 |
+| P0 | T617 | R3 | 历史真跑事故回放矩阵 | 覆盖 wait、owner 丢失、迟到、重复、部分成功和 Core 拒绝 | ◐ wait/迟到/重复已有回归；完整事故矩阵待补 |
 | P0 | T618 | R3 | 安装制品公开入口契约测试 | 不读取开发目录或 Canonical 私有状态 | ☐ 等待启动开发 |
 | P0 | T619 | R3 | Codex L3/L4 单命令终态 | 覆盖多角色、wait、repair、零人工续接和 TERMINAL | ☐ 等待启动开发 |
 | P0 | T620 | R3 | Claude Code L3/L4 等价终态 | 不嵌套 `claude -p`，语义与 Codex 等价 | ☐ 等待启动开发 |

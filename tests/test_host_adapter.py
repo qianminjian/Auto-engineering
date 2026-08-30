@@ -144,6 +144,7 @@ def test_adapter_materializes_strict_worker_evidence_templates(
         "thread_id": "multi-evidence",
         "tick": 1,
         "project_root": str(tmp_path),
+        "execution_generation": 1,
         "spawn": {
             "contract_version": "1.0",
             "count": 3,
@@ -219,6 +220,7 @@ def test_adapter_materializes_strict_worker_evidence_templates(
         invocation = action["spawn"]["invocations"][index]
         assert execution["worker_id"] == invocation["worker_id"]
         assert execution["native_worker_handle"] is None
+        assert execution["outcome_path"].endswith("-g1.json")
         assert execution["receipt_path"] == invocation["receipt_path"]
         assert execution["receipt"]["worker"] == invocation["worker_id"]
         assert execution["receipt"]["status"] == "pending"
@@ -227,6 +229,10 @@ def test_adapter_materializes_strict_worker_evidence_templates(
         assert execution["attestation"]["prompt_sha256"] == invocation["prompt_sha256"]
         assert execution["attestation"]["isolation_evidence"] == isolation
         assert execution["expected_isolation_evidence"] == isolation
+        assert execution["execution_generation"] == 1
+        assert len(execution["fencing_token"]) == 64
+        assert '"execution_generation":1' in execution["native_launch_prompt"]
+        assert execution["fencing_token"] in execution["native_launch_prompt"]
         assert len(execution["attestation"]["visible_capabilities_sha256"]) == 64
         launcher = execution["native_launch_prompt"]
         assert action["project_root"] in launcher

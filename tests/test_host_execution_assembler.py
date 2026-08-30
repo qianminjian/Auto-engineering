@@ -237,6 +237,37 @@ def test_collect_worker_outcomes_reports_missing_private_artifact(tmp_path: Path
         )
 
 
+def test_collect_worker_outcomes_rejects_stale_execution_fence(
+    tmp_path: Path,
+) -> None:
+    action = _action(tmp_path)
+    action["host_execution"]["workers"][0].update({
+        "execution_generation": 2,
+        "fencing_token": "f" * 64,
+    })
+    private_path = tmp_path / action["spawn"]["invocations"][0]["outcome_path"]
+    private_path.parent.mkdir(parents=True, exist_ok=True)
+    private_path.write_text(json.dumps({
+        "worker_id": "critic-0",
+        "native_worker_handle": "late-agent",
+        "status": "completed",
+        "payload": {"verdict": "PASS"},
+        "summary": "late result",
+        "actual_model": "unreported",
+        "execution_generation": 1,
+        "fencing_token": "e" * 64,
+    }), encoding="utf-8")
+
+    with pytest.raises(
+        WorkerOutcomeCollectionError,
+        match="HOST_WORKER_OUTPUT_STALE:critic-0",
+    ):
+        HostExecutionAssembler(tmp_path).collect_worker_outcomes_from_artifacts(
+            action=action,
+            outcomes_path=tmp_path / "outcomes.json",
+        )
+
+
 def test_worker_timeout_bypasses_architect_business_contract(
     tmp_path: Path,
 ) -> None:

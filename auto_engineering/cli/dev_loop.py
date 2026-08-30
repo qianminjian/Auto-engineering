@@ -165,6 +165,44 @@ def _map_action_for_host(action: dict) -> dict:
     return adapter.map_action(action, profile=profile).payload
 
 
+def _bind_worker_execution_identity(action: dict, root: Path) -> dict:
+    """为当前宿主会话绑定 Action generation；普通重读保持幂等。"""
+
+    if not isinstance(action.get("spawn"), Mapping):
+        return action
+    message_id = action.get("message_id")
+    if not isinstance(message_id, str) or not message_id:
+        return action
+    from auto_engineering.host import HostPlatform, detect_host
+    from auto_engineering.host.runtime_driver import (
+        HostRunLeaseStore,
+        fencing_token_for,
+        host_session_id_from_environ,
+    )
+
+    detection = detect_host()
+    if detection.platform is HostPlatform.UNKNOWN:
+        return action
+    session_id = host_session_id_from_environ(detection.platform)
+    if not session_id:
+        return action
+    previous = HostRunLeaseStore(root).load()
+    if previous is not None and previous.action_message_id == message_id:
+        generation = (
+            previous.execution_generation
+            if previous.host_session_id == session_id
+            else previous.execution_generation + 1
+        )
+    else:
+        generation = 1
+    bound = dict(action)
+    bound["execution_generation"] = generation
+    bound["fencing_token"] = fencing_token_for(
+        message_id, session_id, generation
+    )
+    return bound
+
+
 def _prepare_action_for_host(
     action: dict,
     root: Path,
@@ -173,6 +211,7 @@ def _prepare_action_for_host(
 ) -> dict:
     """映射 Action，并为当前原生宿主会话原子记录执行义务。"""
 
+    action = _bind_worker_execution_identity(action, root)
     mapped = _map_action_for_host(action)
     host_execution = mapped.get("host_execution")
     if isinstance(action.get("spawn"), Mapping) and isinstance(
@@ -1759,6 +1798,7 @@ def run_action_supervisor(root: Path) -> None:
         )
 
     try:
+        hard_budget = runtime_config.host_budget_enforcement == "hard"
         if detection.platform is HostPlatform.CODEX:
             backend: HostInvocationBackend = CodexInvocationBackend(
                 progress_callback=report_context_progress,
@@ -1766,6 +1806,9 @@ def run_action_supervisor(root: Path) -> None:
         elif detection.platform is HostPlatform.CLAUDE_CODE:
             backend = ClaudeInvocationBackend(
                 spent_budget_usd=receipt_journal.total_cost_usd(thread_id),
+                max_budget_usd=(
+                    runtime_config.host_max_cost_usd if hard_budget else None
+                ),
                 progress_callback=report_context_progress,
             )
         else:
@@ -1869,9 +1912,15 @@ def run_action_supervisor(root: Path) -> None:
             execute_operations=operation_executor.run,
             submit_failure=submit_failure,
             receipt_sink=record_receipt,
-            max_elapsed_seconds=runtime_config.host_max_elapsed_seconds,
-            max_total_cost_usd=runtime_config.host_max_cost_usd,
-            max_total_output_tokens=runtime_config.host_max_output_tokens,
+            max_elapsed_seconds=(
+                runtime_config.host_max_elapsed_seconds if hard_budget else None
+            ),
+            max_total_cost_usd=(
+                runtime_config.host_max_cost_usd if hard_budget else None
+            ),
+            max_total_output_tokens=(
+                runtime_config.host_max_output_tokens if hard_budget else None
+            ),
         ).run(action)
     except ActionExecutionContractError as exc:
         error_code = str(exc).partition(":")[0] or type(exc).__name__

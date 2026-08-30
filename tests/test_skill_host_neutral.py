@@ -128,3 +128,32 @@ def test_dev_loop_reference_is_host_neutral() -> None:
     assert "宿主原生子代理能力" in content
     assert "HOST_CAPABILITY_UNAVAILABLE" in content
     assert "AE_HOST_PLATFORM=claude-code" in content
+
+
+def test_default_entry_keeps_coordination_in_current_host_agent() -> None:
+    """Phase 85 T609：默认入口不能把主控权交给 Python Supervisor。"""
+
+    for content in (SKILL.read_text(), DEV_LOOP.read_text()):
+        routing_start = (
+            content.index("## Action 执行协议")
+            if "## Action 执行协议" in content
+            else content.index("## 驱动循环")
+        )
+        routing_end = (
+            content.index("### Codex 原生能力绑定", routing_start)
+            if "### Codex 原生能力绑定" in content
+            else content.index("## CLI 契约", routing_start)
+        )
+        routing = content[routing_start:routing_end]
+        assert "主 Agent" in routing
+        assert "final_action = ae-run dev-loop --supervise" not in routing
+
+
+def test_default_contract_keeps_wait_as_observation() -> None:
+    """Phase 85 T611：等待未完成时不能直接制造失败结果或重启 Worker。"""
+
+    for content in (SKILL.read_text(), DEV_LOOP.read_text()):
+        assert "等待到期不是失败" in content
+        assert "无法确认旧\nWorker 已终止" in content
+        assert "禁止并发重跑" in content
+        assert "三次长等待后 Worker 仍未完成时，不得" not in content

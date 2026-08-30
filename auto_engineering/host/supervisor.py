@@ -569,7 +569,7 @@ class HostSupervisor:
         *,
         max_actions: int = 256,
         max_failure_retries: int = 2,
-        max_elapsed_seconds: float | None = 3600.0,
+        max_elapsed_seconds: float | None = None,
         max_total_cost_usd: float | None = None,
         max_total_output_tokens: int | None = None,
     ) -> None:
@@ -697,7 +697,7 @@ class ActionScopedProductDriver:
             [ActionExecutionRequest, ActionExecutionReceipt],
             None,
         ] | None = None,
-        max_elapsed_seconds: float | None = 3600.0,
+        max_elapsed_seconds: float | None = None,
         max_total_cost_usd: float | None = None,
         max_total_output_tokens: int | None = None,
     ) -> None:

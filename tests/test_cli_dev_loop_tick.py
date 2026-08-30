@@ -28,6 +28,54 @@ def _last_json_line(output: str) -> dict:
     return json.loads(lines[-1])
 
 
+def test_worker_execution_identity_reuses_same_session_and_rotates_on_takeover(
+    tmp_path, monkeypatch
+) -> None:
+    from auto_engineering.cli.dev_loop import _bind_worker_execution_identity
+    from auto_engineering.host.runtime_driver import (
+        HostRunLease,
+        HostRunLeaseStore,
+    )
+
+    monkeypatch.setenv("AE_HOST_PLATFORM", "codex")
+    monkeypatch.setenv("CODEX_THREAD_ID", "session-a")
+    action = {
+        "message_id": "action-fence",
+        "thread_id": "thread-fence",
+        "spawn": {"invocations": []},
+    }
+
+    first = _bind_worker_execution_identity(action, tmp_path)
+    lease_action = {
+        **first,
+        "extensions": {
+            "ae": {
+                "execution_control": {
+                    "schema_version": "1.0",
+                    "disposition": "CONTINUE",
+                    "continuation_required": True,
+                    "yield_allowed": False,
+                    "allowed_stop_reasons": [],
+                },
+                "runtime": {"build_id": "build-1"},
+            }
+        },
+    }
+    HostRunLeaseStore(tmp_path).save(HostRunLease.from_action(
+        lease_action,
+        platform="codex",
+        host_session_id="session-a",
+    ))
+
+    same_session = _bind_worker_execution_identity(action, tmp_path)
+    monkeypatch.setenv("CODEX_THREAD_ID", "session-b")
+    takeover = _bind_worker_execution_identity(action, tmp_path)
+
+    assert same_session["execution_generation"] == 1
+    assert takeover["execution_generation"] == 2
+    assert same_session["fencing_token"] != takeover["fencing_token"]
+
+
 class TestInitMode:
     def test_init_emits_architect_action(self, tmp_path) -> None:
         runner = CliRunner()

@@ -71,9 +71,9 @@ Gate/Guardrail、五层验证、审计、v5.6 兼容迁移和双宿主验收。
 | D56 | 同时修订 D37 与 D50 的失败路由：wait 到期不是失败；明确失败只重试失败 Worker，资源/所有权不确定才 WAIT_RESOURCE；generation + fencing token 阻止迟到双写 | ✅ |
 ## 当前状态
 - `P0-E2E` 是唯一产品交付任务；既有 Phase/T、L1/L2、覆盖率和 archive 安装仅作支撑证据，不能替代 L4。
-- 上一候选 Build `5.8.0-rc.5+sha256.4f32a506f46b0f94` 仅作为历史 archive smoke 证据；本轮工作树已有未提交改动，旧 Build Identity 不适用于当前代码，必须重新构建制品后才能进行新的安装验收。本轮自动回归为 2779 passed/1 skipped、覆盖率 90%，新增 Supervisor 终态、租约清理、同 Action repair 和结果合同白名单回归已通过；真实产品 L3/L4 仍未执行，不得以 archive smoke 或自动测试替代。
-- Phase 85 进入主控权纠偏：默认主控返回当前主 Agent，业务角色继续独立 Worker 化；Python Supervisor 仅保留旁路兼容。预算默认软约束，先跑通再优化。T603-T621 已登记，等待用户命令启动开发。
+- 上一候选 Build `5.8.0-rc.5+sha256.4f32a506f46b0f94` 仅作为历史 archive smoke 证据；本轮工作树已有未提交改动，旧 Build Identity 不适用于当前代码，必须重新构建制品后才能进行新的安装验收。本轮自动回归为 2788 passed/1 skipped，新增主 Agent 入口、软预算、异步等待和 generation/fencing 回归已通过；真实产品 L3/L4 仍未执行，不得以 archive smoke 或自动测试替代。
+- Phase 85 已进入主控权纠偏实施：默认主控返回当前主 Agent，业务角色继续独立 Worker 化；Python Supervisor 仅保留旁路兼容。预算默认软约束，先跑通再优化。T609-T615 已完成第一批实现，T616-T620 待真实验收。
 ## 待解决问题
-- 等待用户命令启动 T609-T621；完成主控切换、异步故障回放和同一 Build 双宿主 L4 前保持发布阻断。
+- 完成异步故障回放、安装后契约和同一 Build 双宿主 L4 前保持发布阻断；T621 仅在双宿主通过后退役 Supervisor。当前工作树尚未提交，新的 Build Identity 尚未生成。
 ## 引用文件
 `design/v5.8-Main-Agent-Coordinator-Recovery-Design.md` · `design/BEACON-HIS.md` · `design/v5.8-Session-Decoupling-Design.md` · `design/v5.8-Session-Decoupling-PLAN.md` · `design/incidents/2026-07-29-claude-146-tick-long-run.md` · `design/IMPLEMENTATION-TRACKER.md` · `design/HISTORY.md`

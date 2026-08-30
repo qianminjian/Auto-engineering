@@ -46,8 +46,8 @@ class ClaudeInvocationBackend:
         *,
         executable: str | None = None,
         environ: Mapping[str, str] | None = None,
-        max_budget_usd: float = 10.0,
-        max_invocation_budget_usd: float = 2.0,
+        max_budget_usd: float | None = None,
+        max_invocation_budget_usd: float | None = None,
         spent_budget_usd: float = 0.0,
         budget_reserve_usd: float = 0.2,
         runner: ProcessRunner | None = None,
@@ -56,8 +56,16 @@ class ClaudeInvocationBackend:
     ) -> None:
         self.executable = executable or shutil.which("claude") or "claude"
         self._environ = dict(os.environ if environ is None else environ)
+        if max_budget_usd is not None and max_budget_usd < 0:
+            raise ValueError("Claude 预算必须为非负数")
+        if max_invocation_budget_usd is not None and max_invocation_budget_usd < 0:
+            raise ValueError("Claude 单次预算必须为非负数")
         self.max_budget_usd = max_budget_usd
-        self.max_invocation_budget_usd = max(0.0, max_invocation_budget_usd)
+        self.max_invocation_budget_usd = (
+            max(0.0, max_invocation_budget_usd)
+            if max_invocation_budget_usd is not None
+            else None
+        )
         self._spent_budget_usd = max(0.0, spent_budget_usd)
         self.budget_reserve_usd = max(0.0, budget_reserve_usd)
         self._runner = runner or CancellableProcessRunner(
@@ -71,15 +79,24 @@ class ClaudeInvocationBackend:
         return self._active_context_id
 
     @property
-    def remaining_budget_usd(self) -> float:
+    def remaining_budget_usd(self) -> float | None:
+        if self.max_budget_usd is None:
+            return None
         return max(0.0, self.max_budget_usd - self._spent_budget_usd)
 
     @property
-    def invocation_budget_usd(self) -> float:
+    def invocation_budget_usd(self) -> float | None:
         """扣除一次推理单元超调预留后的可调用额度。"""
+        if self.max_budget_usd is None:
+            return None
+        remaining = self.remaining_budget_usd
+        assert remaining is not None
+        invocation_limit = self.max_invocation_budget_usd
+        if invocation_limit is None:
+            invocation_limit = remaining
         return min(
-            self.max_invocation_budget_usd,
-            max(0.0, self.remaining_budget_usd - self.budget_reserve_usd),
+            invocation_limit,
+            max(0.0, remaining - self.budget_reserve_usd),
         )
 
     def child_environment(self) -> dict[str, str]:
@@ -119,7 +136,7 @@ class ClaudeInvocationBackend:
         return HostInvocationProbe.available("claude")
 
     def build_command(self, request: ActionExecutionRequest) -> tuple[str, ...]:
-        return (
+        command = [
             self.executable,
             "-p",
             "--no-session-persistence",
@@ -136,15 +153,21 @@ class ClaudeInvocationBackend:
             "--output-format",
             "stream-json",
             "--verbose",
-            "--max-budget-usd",
-            str(self.invocation_budget_usd),
             "--permission-mode",
             "acceptEdits",
-        )
+        ]
+        if self.invocation_budget_usd is not None:
+            insert_at = command.index("--permission-mode")
+            command[insert_at:insert_at] = [
+                "--max-budget-usd",
+                str(self.invocation_budget_usd),
+            ]
+        return tuple(command)
 
     def execute(self, request: ActionExecutionRequest) -> ActionExecutionReceipt:
         invocation_id = f"claude-invocation-{uuid4()}"
-        if self.invocation_budget_usd <= 0:
+        invocation_budget = self.invocation_budget_usd
+        if invocation_budget is not None and invocation_budget <= 0:
             return ActionExecutionReceipt.from_dict({
                 "schema_version": "1.0",
                 "thread_id": request.thread_id,

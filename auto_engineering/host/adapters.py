@@ -53,6 +53,27 @@ def _worker_outcome_path(action_key: str, worker_id: str) -> str:
     return f".ae-state/host-runtime/worker-outcomes/{action_key}-{safe_worker}.json"
 
 
+def _worker_fencing_token(
+    action_message_id: str,
+    worker_id: str,
+    execution_generation: int,
+) -> str:
+    return hashlib.sha256(
+        f"{action_message_id}:{worker_id}:{execution_generation}".encode()
+    ).hexdigest()
+
+
+def _worker_outcome_path_for_generation(
+    action_key: str,
+    worker_id: str,
+    execution_generation: int,
+) -> str:
+    return _worker_outcome_path(
+        action_key,
+        f"{worker_id}-g{execution_generation}",
+    )
+
+
 def _native_worker_launch_prompt(
     *,
     project_root: str,
@@ -60,6 +81,8 @@ def _native_worker_launch_prompt(
     prompt_sha256: str,
     outcome_path: str,
     required_isolation_evidence: str,
+    execution_generation: int,
+    fencing_token: str,
 ) -> str:
     """生成不含 Worker 正文的有界原生启动合同。"""
 
@@ -69,6 +92,8 @@ def _native_worker_launch_prompt(
         "prompt_ref": prompt_ref,
         "prompt_sha256": prompt_sha256,
         "outcome_path": outcome_path,
+        "execution_generation": execution_generation,
+        "fencing_token": fencing_token,
         "may_drive_loop": False,
         "may_spawn_workers": False,
         "required_isolation_evidence": required_isolation_evidence,
@@ -77,7 +102,7 @@ def _native_worker_launch_prompt(
         "AUTO_ENGINEERING_NATIVE_WORKER_LAUNCH_V1\n"
         "切换 project_root，校验 prompt_ref 的 SHA-256 后执行；不得驱动 Loop 或创建子代理。"
         "只返回结构化字段和短摘要；不得返回完整 diff、日志或报告正文。"
-        "必须把自己的 WorkerOutcome 原子写入 outcome_path；不得写共享文件。"
+        "必须把 WorkerOutcome 原子写入 outcome_path；不得写共享文件。"
         "共享文件必须是原生 JSON object {\"outcomes\":[...]}，不得写顶层数组或字符串化 JSON。\n"
         + json.dumps(contract, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     )
@@ -185,6 +210,15 @@ class _Adapter2Mixin:
 
             plan = SpawnPlan.from_action(action)
             stage = str(action.get("stage") or "")
+            raw_generation = action.get("execution_generation", 1)
+            if (
+                not isinstance(raw_generation, int)
+                or isinstance(raw_generation, bool)
+                or raw_generation < 1
+            ):
+                raise ValueError("HOST_ACTION_EXECUTION_GENERATION_INVALID")
+            execution_generation = raw_generation
+            generation_bound_paths = "execution_generation" in action
             expected_isolation = {
                 HostPlatform.CODEX: "fork_turns=none",
                 HostPlatform.CLAUDE_CODE: "fresh_context",
@@ -195,17 +229,39 @@ class _Adapter2Mixin:
                     "native_worker_handle": None,
                     "prompt_ref": invocation.prompt_ref,
                     "prompt_sha256": invocation.prompt_sha256,
-                    "outcome_path": invocation.outcome_path or _worker_outcome_path(
-                        action_key, invocation.worker_id
+                    "outcome_path": (
+                        _worker_outcome_path_for_generation(
+                            action_key,
+                            invocation.worker_id,
+                            execution_generation,
+                        )
+                        if generation_bound_paths
+                        else invocation.outcome_path
+                        or _worker_outcome_path(action_key, invocation.worker_id)
+                    ),
+                    "execution_generation": execution_generation,
+                    "fencing_token": _worker_fencing_token(
+                        message_id, invocation.worker_id, execution_generation
                     ),
                     "native_launch_prompt": _native_worker_launch_prompt(
                         project_root=project_root,
                         prompt_ref=invocation.prompt_ref,
                         prompt_sha256=invocation.prompt_sha256,
-                        outcome_path=invocation.outcome_path or _worker_outcome_path(
-                            action_key, invocation.worker_id
+                        outcome_path=(
+                            _worker_outcome_path_for_generation(
+                                action_key,
+                                invocation.worker_id,
+                                execution_generation,
+                            )
+                            if generation_bound_paths
+                            else invocation.outcome_path
+                            or _worker_outcome_path(action_key, invocation.worker_id)
                         ),
                         required_isolation_evidence=expected_isolation,
+                        execution_generation=execution_generation,
+                        fencing_token=_worker_fencing_token(
+                            message_id, invocation.worker_id, execution_generation
+                        ),
                     ),
                     "expected_isolation_evidence": expected_isolation,
                     "receipt_path": invocation.receipt_path,

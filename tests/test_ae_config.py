@@ -217,6 +217,17 @@ class TestRuntimeConfigAeTomlWiring:
         assert cfg.host_max_cost_usd == 12.5
         assert cfg.host_max_output_tokens == 4000
 
+    def test_host_runtime_budget_defaults_are_soft_and_unbounded(self) -> None:
+        """Phase 85 T615：未显式配置 hard 时，宿主预算只观测不硬停。"""
+
+        from auto_engineering.config.runtime_config import RuntimeConfig
+
+        cfg = RuntimeConfig(environ={})
+        assert cfg.host_budget_enforcement == "soft"
+        assert cfg.host_max_elapsed_seconds is None
+        assert cfg.host_max_cost_usd is None
+        assert cfg.host_max_output_tokens is None
+
 
 class TestFeatureStatusActionAeToml:
     """P2#3 (2026-07-26 真跑): action.feature_status 必须反映 ae.toml 开关。

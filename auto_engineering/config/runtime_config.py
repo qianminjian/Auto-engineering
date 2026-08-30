@@ -129,6 +129,16 @@ class RuntimeConfig:
         return int(self.get("AE_SESSION_MAX_SECONDS", _default("AE_SESSION_MAX_SECONDS")).strip())
 
     @property
+    def host_budget_enforcement(self) -> str:
+        """宿主预算模式；默认 soft，只有显式 hard 才允许停机。"""
+
+        value = self.get("AE_HOST_BUDGET_ENFORCEMENT",
+                         _default("AE_HOST_BUDGET_ENFORCEMENT")).strip().lower()
+        if value not in {"soft", "hard"}:
+            raise ValueError("AE_HOST_BUDGET_ENFORCEMENT 必须为 soft 或 hard")
+        return value
+
+    @property
     def context_soft_input(self) -> int:
         return int(self.get("AE_CONTEXT_SOFT_INPUT", _default("AE_CONTEXT_SOFT_INPUT")).strip())
 
@@ -163,9 +173,9 @@ class RuntimeConfig:
         return int(self.get("AE_MAX_RECEIPT_SUMMARY_BYTES", _default("AE_MAX_RECEIPT_SUMMARY_BYTES")).strip())
 
     @property
-    def host_max_elapsed_seconds(self) -> float:
+    def host_max_elapsed_seconds(self) -> float | None:
         value = self.get("AE_HOST_MAX_ELAPSED_SECONDS", _default("AE_HOST_MAX_ELAPSED_SECONDS"))
-        return float(value.strip())
+        return float(value.strip()) if value.strip() else None
 
     @property
     def host_max_cost_usd(self) -> float | None:

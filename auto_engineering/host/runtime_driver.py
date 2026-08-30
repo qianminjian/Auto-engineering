@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import tempfile
@@ -27,6 +28,12 @@ class StopGuardDecision(StrEnum):
     BLOCK = "block"
 
 
+def fencing_token_for(action_message_id: str, host_session_id: str, generation: int) -> str:
+    return hashlib.sha256(
+        f"{action_message_id}:{host_session_id}:{generation}".encode()
+    ).hexdigest()
+
+
 @dataclass(frozen=True, slots=True)
 class HostRunLease:
     """绑定一次宿主会话与一个 active Action 的不可变执行义务。"""
@@ -40,6 +47,8 @@ class HostRunLease:
     disposition: str
     continuation_required: bool
     yield_allowed: bool
+    execution_generation: int = 1
+    fencing_token: str = ""
 
     @classmethod
     def from_action(
@@ -60,6 +69,19 @@ class HostRunLease:
             or not host_session_id
         ):
             raise HostRunLeaseError("HOST_RUN_LEASE_IDENTITY_INVALID")
+        generation = action.get("execution_generation", 1)
+        if (
+            not isinstance(generation, int)
+            or isinstance(generation, bool)
+            or generation < 1
+        ):
+            raise HostRunLeaseError("HOST_RUN_LEASE_GENERATION_INVALID")
+        supplied_fence = action.get("fencing_token")
+        fencing_token = (
+            supplied_fence
+            if isinstance(supplied_fence, str) and len(supplied_fence) == 64
+            else fencing_token_for(message_id, host_session_id, generation)
+        )
         extensions = action.get("extensions")
         ae = extensions.get("ae") if isinstance(extensions, Mapping) else None
         control_raw = ae.get("execution_control") if isinstance(ae, Mapping) else None
@@ -96,15 +118,35 @@ class HostRunLease:
             disposition=control.disposition.value,
             continuation_required=control.continuation_required,
             yield_allowed=control.yield_allowed,
+            execution_generation=generation,
+            fencing_token=fencing_token,
         )
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> HostRunLease:
         expected = set(cls.__dataclass_fields__)
-        if set(value) != expected:
+        optional = {"execution_generation", "fencing_token"}
+        if set(value) - expected or (set(value) | optional) < expected:
             raise HostRunLeaseError("HOST_RUN_LEASE_FIELDS_INVALID")
+        raw = dict(value)
+        raw.setdefault("execution_generation", 1)
+        generation = raw.get("execution_generation")
+        if (
+            not isinstance(generation, int)
+            or isinstance(generation, bool)
+            or generation < 1
+        ):
+            raise HostRunLeaseError("HOST_RUN_LEASE_GENERATION_INVALID")
+        if not isinstance(raw.get("fencing_token"), str) or len(
+            str(raw.get("fencing_token"))
+        ) != 64:
+            raw["fencing_token"] = fencing_token_for(
+                str(raw.get("action_message_id", "")),
+                str(raw.get("host_session_id", "")),
+                generation,
+            )
         try:
-            lease = cls(**dict(value))
+            lease = cls(**raw)
         except TypeError as exc:
             raise HostRunLeaseError("HOST_RUN_LEASE_INVALID") from exc
         if (
@@ -122,6 +164,11 @@ class HostRunLease:
             )
             or not isinstance(lease.continuation_required, bool)
             or not isinstance(lease.yield_allowed, bool)
+            or not isinstance(lease.execution_generation, int)
+            or isinstance(lease.execution_generation, bool)
+            or lease.execution_generation < 1
+            or not isinstance(lease.fencing_token, str)
+            or len(lease.fencing_token) != 64
         ):
             raise HostRunLeaseError("HOST_RUN_LEASE_INVALID")
         return lease
@@ -236,5 +283,6 @@ __all__ = [
     "HostRunLeaseStore",
     "StopGuardDecision",
     "evaluate_stop",
+    "fencing_token_for",
     "host_session_id_from_environ",
 ]

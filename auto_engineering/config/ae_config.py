@@ -55,6 +55,7 @@ SECTION_KEY_MAP: dict[str, dict[str, str]] = {
         "max-tool-calls": "AE_MAX_TOOL_CALLS",
     },
     "threshold": {
+        "host-budget-enforcement": "AE_HOST_BUDGET_ENFORCEMENT",
         "gate-timeout": "AE_GATE_TIMEOUT",
         "session-max-ticks": "AE_SESSION_MAX_TICKS",
         "session-max-seconds": "AE_SESSION_MAX_SECONDS",

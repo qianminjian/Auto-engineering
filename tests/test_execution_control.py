@@ -324,6 +324,59 @@ def test_run_lease_binds_engine_build_from_current_runtime_revision() -> None:
     assert lease.build_id == "5.8.0-rc.5+sha256.current"
 
 
+def test_run_lease_issues_stable_execution_fence() -> None:
+    action = {
+        "message_id": "action-fenced",
+        "thread_id": "thread-fenced",
+        "execution_generation": 2,
+        "extensions": {
+            "ae": {
+                "execution_control": control_for_action({"action": "developer"}).to_dict(),
+                "runtime": {"build_id": "build-fenced"},
+            }
+        },
+    }
+
+    lease = HostRunLease.from_action(
+        action,
+        platform="codex",
+        host_session_id="session-fenced",
+    )
+
+    assert lease.execution_generation == 2
+    assert len(lease.fencing_token) == 64
+    assert lease.fencing_token == HostRunLease.from_action(
+        action,
+        platform="codex",
+        host_session_id="session-fenced",
+    ).fencing_token
+
+
+def test_run_lease_reads_legacy_payload_without_execution_fence() -> None:
+    action = {
+        "message_id": "action-legacy",
+        "thread_id": "thread-legacy",
+        "extensions": {
+            "ae": {
+                "execution_control": control_for_action({"action": "developer"}).to_dict(),
+                "runtime": {"build_id": "build-legacy"},
+            }
+        },
+    }
+    legacy = HostRunLease.from_action(
+        action,
+        platform="codex",
+        host_session_id="session-legacy",
+    ).to_dict()
+    legacy.pop("execution_generation")
+    legacy.pop("fencing_token")
+
+    restored = HostRunLease.from_dict(legacy)
+
+    assert restored.execution_generation == 1
+    assert len(restored.fencing_token) == 64
+
+
 def test_run_lease_rejects_action_without_engine_build() -> None:
     action = {
         "message_id": "action-missing-build",

@@ -190,6 +190,20 @@ def test_claude_backend_separates_thread_and_action_budgets(
     ] == ("--max-budget-usd", "2.0")
 
 
+def test_claude_backend_omits_budget_flag_when_budget_is_soft(
+    tmp_path: Path,
+) -> None:
+    from auto_engineering.host.backends.claude import ClaudeInvocationBackend
+
+    command = ClaudeInvocationBackend(
+        executable="/opt/bin/claude",
+        environ={},
+        max_budget_usd=None,
+    ).build_command(_request(tmp_path))
+
+    assert "--max-budget-usd" not in command
+
+
 def test_claude_probe_fails_closed_inside_claude_code(tmp_path: Path) -> None:
     from auto_engineering.host.backends.claude import ClaudeInvocationBackend
 

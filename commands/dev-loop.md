@@ -61,11 +61,9 @@ Coordinator 不得先读取、`sed`、复制、总结或重新拼接 `prompt_ref
    # 所有项目编辑、测试、lint、type check、build 和 Worker 启动同样固定 cwd=project_root；
    # 禁止在插件 Release 或 prompt artifact 目录执行项目命令。
 2. if action.extensions.ae.execution_control.disposition == "CONTINUE":
-     final_action = ae-run dev-loop --supervise --project-root project_root
-     # Supervisor 内部为每个 Action 创建一次性 context 并执行机器 argv；外层不再逐 Tick。
-     # probe 失败必须 fail-closed，禁止退回长期主会话或要求用户手工 continue。
-     action = final_action
-3. 以下 while 合同只供 Supervisor 创建的一次性 Action context 执行，外层宿主禁止直接运行：
+     # 当前主 Agent 是唯一 Coordinator；在本次宿主会话内持续执行下方合同。
+     # Python Supervisor 仅作迁移期旁路，默认入口不得调用 --supervise。
+3. 主 Agent 在同一会话内持续执行：
    while action.extensions.ae.execution_control.disposition == "CONTINUE":
      print "[Tick N | stage <action.stage>] ..."
      control = action.extensions.ae.execution_control
@@ -137,16 +135,21 @@ Coordinator 不得先读取、`sed`、复制、总结或重新拼接 `prompt_ref
              只在 5 / 10 / 15 分钟心跳边界重新评估，等待期间不得重复读取 diff 或状态文件
              Codex 使用 collaboration.wait_agent({"timeout_ms":300000})，或
              multi_agent_v1__wait_agent({"targets":["<agent-id>"],"timeout_ms":300000})，最多三次
+         三次 wait 返回仍未完成时，这只是观察结果；查询原生 handle/owner liveness，不能直接
+             写 `timed_out`、提交失败 Result 或并发重跑。无法确认旧 Worker 已终止时保留当前
+             Action 并进入 `WAIT_RESOURCE/WORKER_OWNERSHIP_UNCERTAIN`。
          read action.host_execution.work_files and use only these Action-scoped paths;
              不得复用上一 Action 的文件
          write only native WorkerOutcome facts to work_files.outcomes, including the selected
              tool family's isolation_evidence (`fork_turns=none` or `fork_context=false`)
              and actual_model reported by the native API; if unavailable use exact `unreported`,
              never null and never infer a model name
-         if any worker timed out or failed:
-             write the native failure fact with status timeout|timed_out to work_files.outcomes
-             and write {} to coordinator_result;
-             never fabricate a plan, proof, attestation, or spawned field
+         copy `execution_generation` and `fencing_token` from the Worker launch contract unchanged;
+             if either is missing or mismatched, do not guess and do not submit the outcome
+         if a worker is explicitly reported failed/timed_out by the native host:
+             write that native failure fact to work_files.outcomes and write {} to coordinator_result;
+             never convert a wait timeout into this branch; never fabricate a plan, proof,
+             attestation, or spawned field
          else merge business fields required by action.expected_format into work_files.coordinator_result
          execute action.host_execution.operations.finalize.argv verbatim;
              replace only __AE_BUNDLED_RUNNER__ with the fixed bundled runner
@@ -173,6 +176,10 @@ Coordinator 不得先读取、`sed`、复制、总结或重新拼接 `prompt_ref
 4. if control.disposition == "WAIT_USER": ask only for control.reason_code
 5. if control.disposition == "TERMINAL": report action.verdict and fresh evidence
 ```
+
+等待到期不是失败：一次 wait 未观察到完成只记录心跳并继续等待，不生成失败 Result、不消耗
+重试次数、不重启 Worker。只有宿主明确证明 Worker/owner 已终止时才可判定失败；无法确认旧
+Worker 已终止时必须进入 `WAIT_RESOURCE/WORKER_OWNERSHIP_UNCERTAIN`，禁止并发重跑。
 
 宿主只按 `extensions.ae.execution_control` 决定继续或停止：`CONTINUE` 必须在提交当前
 Result 后立即读取下一 Action；`WAIT_USER` 只询问 `reason_code` 对应的真实决策；只有
@@ -253,7 +260,7 @@ causation_id 或 correlation_id。
 `--validate-result`，最后才可 `--tick --result`。若误提交旧 Result，必须读取返回的
 active Action 摘要并回到当前 Action 的 operation 顺序，不得继续重试旧 Result。
 
-Supervisor 返回 WAIT/ERROR/HANDOFF/TERMINAL 时会在 `.ae-state/reports/` 生成确定性
+协调入口返回 WAIT/ERROR/HANDOFF/TERMINAL 时会在 `.ae-state/reports/` 生成确定性
 `loop-stop-*.md`，只记录 Action、Receipt、原因码与下一步。不得用自由文本 recap 覆盖该报告。
 
 Codex 宿主必须读取 `action.host_execution.native_worker_tools`，按
