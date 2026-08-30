@@ -744,6 +744,10 @@ class HostExecutionAssembler:
             for item in outcomes
         )
         error_code = "HOST_WORKER_TIMEOUT" if is_timeout else "HOST_WORKER_FAILED"
+        # 重试预算按失败类别隔离。Prompt/hash/能力等宿主合同错误不能消耗
+        # Worker 超时预算，否则“第一次输入错误 + 第一次真实超时”会被错误
+        # 判定为连续两次超时并提前终止当前 Action。
+        failure_kind = "timeout" if is_timeout else "worker"
         fingerprint_payload = {
             "action_message_id": message_id,
             "outcomes": serialized_outcomes,
@@ -759,8 +763,10 @@ class HostExecutionAssembler:
         )
         existing = self._read_json(journal_path)
         failure_attempt = 1
+        attempt_history: list[dict[str, Any]] = []
         if existing is not None:
             committed_result = existing.get("result")
+            previous_result = committed_result
             if (
                 existing.get("fingerprint") == fingerprint
                 and existing.get("status") in {"committed", "worker_failed"}
@@ -775,10 +781,45 @@ class HostExecutionAssembler:
                 )
             ):
                 raise HostEvidenceValidationError(("OUTCOME_JOURNAL_CONFLICT",))
+            previous_kind = existing.get("failure_kind")
+            if previous_kind is None:
+                previous_result = existing.get("result")
+                previous_code = (
+                    previous_result.get("spawn_error_code")
+                    if isinstance(previous_result, Mapping)
+                    else None
+                )
+                previous_kind = (
+                    "timeout" if previous_code == "HOST_WORKER_TIMEOUT" else "worker"
+                )
             previous_attempt = existing.get("failure_attempt")
-            if not isinstance(previous_attempt, int) or isinstance(previous_attempt, bool):
-                previous_attempt = 1
-            failure_attempt = previous_attempt + 1
+            raw_history = existing.get("attempt_history")
+            if isinstance(raw_history, list):
+                attempt_history = [
+                    dict(item) for item in raw_history[-7:]
+                    if isinstance(item, Mapping)
+                ]
+            attempt_history.append({
+                "failure_kind": previous_kind,
+                "failure_attempt": (
+                    previous_attempt
+                    if isinstance(previous_attempt, int)
+                    and not isinstance(previous_attempt, bool)
+                    else 1
+                ),
+                "spawn_error_code": (
+                    previous_result.get("spawn_error_code")
+                    if isinstance(previous_result, Mapping)
+                    else None
+                ),
+                "fingerprint": existing.get("fingerprint"),
+            })
+            if (
+                previous_kind == failure_kind
+                and isinstance(previous_attempt, int)
+                and not isinstance(previous_attempt, bool)
+            ):
+                failure_attempt = previous_attempt + 1
 
         result_identity = hashlib.sha256(
             _canonical_bytes({
@@ -804,6 +845,8 @@ class HostExecutionAssembler:
         _atomic_write_json(journal_path, {
             "schema_version": "1.0",
             "status": "worker_failed",
+            "failure_kind": failure_kind,
+            "attempt_history": attempt_history,
             "fingerprint": fingerprint,
             "failure_attempt": failure_attempt,
             "action_message_id": message_id,

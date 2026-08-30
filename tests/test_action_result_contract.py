@@ -461,6 +461,24 @@ class TestResultRoundTrip:
         assert not _result_validator.is_valid(r)
         assert validate_result_format(r, "component_verifier") != []
 
+    def test_research_unavailable_may_carry_null_search_error(self):
+        """搜索未启用时，契约允许显式的 null 错误值并保持双校验一致。"""
+        result = {
+            "schema_version": "1.1",
+            "message_type": "result",
+            "message_id": "research-result-1",
+            "thread_id": "thread-1",
+            "tick": 1,
+            "stage": "research",
+            "causation_id": "research-action-1",
+            "correlation_id": "thread-1",
+            "extensions": {},
+            "search_status": "not_needed",
+            "search_error": None,
+        }
+        _result_validator.validate(result)
+        assert validate_result_format(result, "research") == []
+
 
 class TestResultEnvelopeContract:
     def _result(self, **overrides) -> dict:

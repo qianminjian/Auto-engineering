@@ -71,7 +71,10 @@ class ComponentVerifierHandler:
         if missing or diverged:
             return _refine(
                 self.stage,
-                {"audit_findings": list(result.get("coverage_map", []))},
+                {
+                    "coverage_map": list(result.get("coverage_map", [])),
+                    "audit_findings": list(result.get("coverage_map", [])),
+                },
                 context,
                 progress_update=progress,
             )

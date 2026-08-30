@@ -127,6 +127,18 @@ class EngineeringModel:
                 if normalized in self._reference_aliases(section)
             ]
             if not matches:
+                # 兼容 Agent 在章节展示标题后附加文件路径的写法，例如
+                # “§4.1 核心类型 (src/types/index.ts)”。章节编号仍是
+                # 确定性身份，后缀只作人类提示，不应触发整份计划重写。
+                prefix = re.match(r"^§?([A-Za-z]*\d+(?:\.\d+)*)\b", normalized)
+                if prefix:
+                    number = prefix.group(1)
+                    matches = [
+                        section for section in self.sections
+                        if _normalize_reference(section.design_section).lstrip("§")
+                        == number
+                    ]
+            if not matches:
                 raise EngineeringModelError(
                     f"ENGINEERING_SECTION_UNKNOWN:{reference}"
                 )
@@ -211,7 +223,7 @@ def _stable_section_id(design_section: str) -> str:
 
 
 def _normalize_reference(value: str) -> str:
-    return unicodedata.normalize("NFKC", value).strip().casefold()
+    return unicodedata.normalize("NFKC", value).replace("`", "").strip().casefold()
 
 
 __all__ = [

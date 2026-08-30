@@ -89,6 +89,15 @@ def test_select_sections_accepts_stable_id_and_legacy_display_ref(
     assert model.select_sections(["§C1 上传"]) == (section,)
 
 
+def test_select_sections_accepts_section_number_with_file_suffix(tmp_path: Path) -> None:
+    model = EngineeringModel.from_design_doc(
+        _parse(tmp_path, "design.md", "## B1 页面\n### C1 上传\n内容\n"),
+        design_digest="sha256:" + "f" * 64,
+    )
+
+    assert model.select_sections(["§C1 上传 (src/components/Upload.tsx)"])[0] == model.sections[0]
+
+
 def test_select_sections_rejects_unknown_ref(tmp_path: Path) -> None:
     model = EngineeringModel.from_design_doc(
         _parse(tmp_path, "design.md", "## B1 页面\n### C1 上传\n内容\n"),

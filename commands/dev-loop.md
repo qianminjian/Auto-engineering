@@ -248,6 +248,11 @@ ae-run dev-loop --init \
 causation_id 或 correlation_id。
    只有该命令可产生 `"spawned": true`。
 
+宿主不得直接把手写业务 JSON 交给 `--tick`。`--tick` 只接受当前 Action 的 Finalizer
+产物；任何业务 payload 都必须先经过同一 Action 的 `--finalize-result`，再
+`--validate-result`，最后才可 `--tick --result`。若误提交旧 Result，必须读取返回的
+active Action 摘要并回到当前 Action 的 operation 顺序，不得继续重试旧 Result。
+
 Supervisor 返回 WAIT/ERROR/HANDOFF/TERMINAL 时会在 `.ae-state/reports/` 生成确定性
 `loop-stop-*.md`，只记录 Action、Receipt、原因码与下一步。不得用自由文本 recap 覆盖该报告。
 

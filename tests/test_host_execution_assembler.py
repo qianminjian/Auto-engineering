@@ -216,6 +216,54 @@ def test_worker_timeout_bypasses_architect_business_contract(
     assert json.loads(result_path.read_text(encoding="utf-8")) == result
 
 
+def test_timeout_retry_budget_is_not_consumed_by_previous_non_timeout_failure(
+    tmp_path: Path,
+) -> None:
+    """不同失败类别不能串用同一个连续超时次数。"""
+    action = _action(tmp_path)
+    assembler = HostExecutionAssembler(tmp_path)
+    failed = NativeWorkerOutcome(
+        worker_id="critic-0",
+        native_worker_handle="agent-hash-mismatch",
+        status="failed",
+        payload={"error": "prompt hash mismatch"},
+        summary="WORKER_PROMPT_HASH_MISMATCH",
+        actual_model="unreported",
+    )
+    first = assembler.finalize(
+        action=action,
+        outcomes=[failed],
+        coordinator_payload={},
+    )
+    assert first["spawn_error_code"] == "HOST_WORKER_FAILED"
+    assert first["spawn_retry_attempt"] == 1
+
+    timed_out = NativeWorkerOutcome(
+        worker_id="critic-0",
+        native_worker_handle="agent-timeout-after-retry",
+        status="timed_out",
+        payload={},
+        summary="native worker timed out",
+        actual_model="unreported",
+    )
+    second = assembler.finalize(
+        action=action,
+        outcomes=[timed_out],
+        coordinator_payload={},
+    )
+    assert second["spawn_error_code"] == "HOST_WORKER_TIMEOUT"
+    assert second["spawn_retry_attempt"] == 1
+    journal = json.loads(
+        (tmp_path / ".ae-state/host-runtime/outcomes/action-1.json").read_text()
+    )
+    assert journal["failure_kind"] == "timeout"
+    assert len(journal["attempt_history"]) == 1
+    assert journal["attempt_history"][0]["failure_kind"] == "worker"
+    assert journal["attempt_history"][0]["failure_attempt"] == 1
+    assert journal["attempt_history"][0]["spawn_error_code"] == "HOST_WORKER_FAILED"
+    assert len(journal["attempt_history"][0]["fingerprint"]) == 64
+
+
 @pytest.mark.parametrize(
     ("status", "summary", "error_code"),
     [

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -499,4 +500,18 @@ def test_late_result_for_non_active_action_is_rejected(tmp_path: Path) -> None:
 
         assert response["action"] == "error"
         assert response["error_code"] == "ACTION_NOT_ACTIVE"
+        assert "不要继续提交旧 Result" in response["suggestion"]
         assert events.load_action_snapshot(action["thread_id"]) == action
+
+        stale_files = list(
+            (tmp_path / ".ae-state/host-runtime/stale-results").glob("*.json")
+        )
+        assert len(stale_files) == 1
+        stale = json.loads(stale_files[0].read_text(encoding="utf-8"))
+        assert stale["status"] == "stale"
+        assert stale["reason"] == "ACTION_NOT_ACTIVE"
+        assert stale["thread_id"] == action["thread_id"]
+        assert stale["causation_id"] == "retired-action"
+        assert stale["message_id"] == "late-result"
+        assert len(stale["payload_sha256"]) == 64
+        assert "spawn_error" not in stale

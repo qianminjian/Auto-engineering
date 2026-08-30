@@ -48,6 +48,7 @@ from auto_engineering.engine.verification_layers import (
 from auto_engineering.host.execution_assembler import (
     collect_host_evidence_violations,
 )
+from auto_engineering.host.outcome_journal import OutcomeJournal
 from auto_engineering.host.spawn_contract import SpawnContractError, SpawnPlan
 from auto_engineering.host.worker_attestation import (
     WorkerAttestationError,
@@ -831,6 +832,9 @@ class TickOrchestrator:
                     causation_id=result_causation,
                 )
             if not self._result_binds_active_action(envelope):
+                OutcomeJournal(self.project_root).record_stale_result(
+                    result, reason=ProtocolErrorCode.ACTION_NOT_ACTIVE
+                )
                 self._record_tick_latency(t_start, tick_no)
                 return self._protocol_error(
                     ProtocolErrorCode.ACTION_NOT_ACTIVE,
@@ -1026,10 +1030,20 @@ class TickOrchestrator:
         """构建不替换 active action 的结构化协议错误。"""
 
         state = self._state
+        suggestions = {
+            ProtocolErrorCode.ACTION_NOT_ACTIVE: (
+                "不要继续提交旧 Result；读取当前 active Action，按其 operations 先 finalize，"
+                "再 validate，最后 tick。"
+            ),
+            ProtocolErrorCode.RESULT_CONFLICT: (
+                "同一 Action 只允许一个不可变 Result；保留当前 journal 并恢复 active Action。"
+            ),
+        }
         payload = ErrorResponse(
             error_code=code.value,
             message=message,
             current_state=state.to_dict() if state else None,
+            suggestion=suggestions.get(code),
         ).to_dict()
         return action_envelope(
             payload,
@@ -1131,6 +1145,36 @@ class TickOrchestrator:
             }
         if self._state.current_stage in _SPAWN_CONFIG and result.get("spawned") is False:
             active_message_id = str((self._active_action or {}).get("message_id", ""))
+            if result.get("spawn_error_code") == "HOST_WORKER_FAILED":
+                retry_attempt = result.get("spawn_retry_attempt", 1)
+                if (
+                    not isinstance(retry_attempt, int)
+                    or isinstance(retry_attempt, bool)
+                    or retry_attempt < 1
+                ):
+                    return ErrorResponse(
+                        error_code="HOST_WORKER_RETRY_ATTEMPT_INVALID",
+                        message="HOST_WORKER_FAILED 必须包含正整数 spawn_retry_attempt",
+                        current_state=self._state.to_dict(),
+                    ).to_dict()
+                if retry_attempt >= 2:
+                    return ErrorResponse(
+                        error_code="HOST_WORKER_FAILURE_EXHAUSTED",
+                        message="宿主 Worker 连续两次合同失败；已停止自动重试以避免重复执行。",
+                        current_state=self._state.to_dict(),
+                        suggestion="修复宿主调用合同后，保留当前 Action 并从同一事实恢复。",
+                    ).to_dict()
+                return {
+                    "action": "resource_wait",
+                    "stage": self._state.current_stage,
+                    "resource": "worker_completion",
+                    "retry_stage": self._state.current_stage,
+                    "reason_code": "HOST_WORKER_FAILED",
+                    "retry_attempt": retry_attempt,
+                    "retry_limit": 1,
+                    "message": "宿主 Worker 合同执行失败；保留当前 Action，修复后自动重试。",
+                    "suggestion": "使用当前 Action 的原生启动合同，不得伪造业务结果。",
+                }
             spawn_error = str(result.get("spawn_error") or "")
             if (
                 result.get("spawn_error_code") == "HOST_CAPABILITY_UNAVAILABLE"
@@ -1689,6 +1733,9 @@ class TickOrchestrator:
                 error_code="RESULT_VALIDATION_ERROR",
                 message="; ".join(errors),
                 current_state=self._state.to_dict())
+
+        if scope_error := self._validate_component_verifier_scope(result):
+            return scope_error
 
         if gap_error := self._validate_gap_analysis(result):
             return gap_error
@@ -2919,6 +2966,9 @@ class TickOrchestrator:
                 message="; ".join(errors),
                 current_state=self._state.to_dict())
 
+        if scope_error := self._validate_component_verifier_scope(result):
+            return scope_error
+
         if gap_error := self._validate_gap_analysis(result):
             return gap_error
 
@@ -3064,6 +3114,65 @@ class TickOrchestrator:
             return ErrorResponse(
                 "GAP_ANALYSIS_BLOCKING_FLAG_MISMATCH",
                 "has_blocking 必须由 architectural gap 集合确定",
+                self._state.to_dict(),
+            )
+        return None
+
+    def _validate_component_verifier_scope(self, result: dict) -> ErrorResponse | None:
+        """Verifier 只能提交当前 Action 声明的批次设计条目。"""
+        if self._state.current_stage != "component_verifier":
+            return None
+        action = self._active_action or {}
+        scope = action.get("verification_scope")
+        if not isinstance(scope, dict):
+            return None
+        if scope.get("mode") != "batch_design_items":
+            return None
+        component = scope.get("component")
+        if result.get("component") != component:
+            return ErrorResponse(
+                "COMPONENT_VERIFICATION_SCOPE_INVALID",
+                "component_verifier 结果的 component 未绑定当前批次",
+                self._state.to_dict(),
+            )
+        expected = scope.get("design_item_ids")
+        if not isinstance(expected, list) or any(not isinstance(item, str) for item in expected):
+            return ErrorResponse(
+                "COMPONENT_VERIFICATION_SCOPE_INVALID",
+                "当前 Action 的 design_item_ids 非法，无法安全接收覆盖结果",
+                self._state.to_dict(),
+            )
+        coverage = result.get("coverage_map")
+        if not isinstance(coverage, list):
+            return None
+        actual: list[str] = []
+        for item in coverage:
+            if not isinstance(item, dict) or not isinstance(item.get("design_item"), str):
+                return ErrorResponse(
+                    "COMPONENT_VERIFICATION_SCOPE_INVALID",
+                    "coverage_map 每项必须绑定非空 design_item",
+                    self._state.to_dict(),
+                )
+            actual.append(item["design_item"])
+        if len(actual) != len(set(actual)):
+            return ErrorResponse(
+                "COMPONENT_VERIFICATION_SCOPE_INVALID",
+                "coverage_map 不得重复提交同一 design_item",
+                self._state.to_dict(),
+            )
+        expected_set = set(expected)
+        actual_set = set(actual)
+        missing = sorted(expected_set - actual_set)
+        unexpected = sorted(actual_set - expected_set)
+        if missing or unexpected:
+            detail = []
+            if missing:
+                detail.append("缺少=" + ",".join(missing))
+            if unexpected:
+                detail.append("越界=" + ",".join(unexpected))
+            return ErrorResponse(
+                "COMPONENT_VERIFICATION_SCOPE_INVALID",
+                "coverage_map 未完整且仅覆盖当前批次白名单（" + "; ".join(detail) + "）",
                 self._state.to_dict(),
             )
         return None

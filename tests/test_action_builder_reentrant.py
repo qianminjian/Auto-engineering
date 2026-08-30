@@ -8,7 +8,7 @@ import pytest
 
 from auto_engineering.config.runtime_config import RuntimeConfig
 from auto_engineering.engine.batch_state import BatchState
-from auto_engineering.engine.design_doc import Component, DesignDoc, Plate
+from auto_engineering.engine.design_doc import Component, DesignDoc, DesignItem, Plate
 from auto_engineering.engine.state import EngineState
 from auto_engineering.host.spawn_contract import SpawnPlan
 from auto_engineering.loop.action_builder import ActionBuilder
@@ -110,6 +110,29 @@ def test_architect_action_exposes_valid_machine_routing_keys(tmp_path) -> None:
     assert "component" not in expected
 
 
+def test_architect_prompt_carries_persisted_gap_decisions(tmp_path) -> None:
+    """Architect/REPAIR 必须看到已批准的 Gap 决策，不能只重读原设计文档。"""
+    state = EngineState(
+        thread_id="gap-decisions",
+        current_stage="architect",
+        refine_request_json=json.dumps({"source": "component_verifier"}),
+        pending_gap_decisions=[{
+            "gap_id": "GAP-1",
+            "resolution": "fill",
+            "fill_content": "CloneParams 必须包含 voiceId 与 sampleUrl",
+            "decision_source": "user",
+            "assistant_recommendation": "Research",
+            "recommendation_accepted": False,
+            "evidence_refs": ["§5.2"],
+        }],
+    )
+
+    action = ActionBuilder(tmp_path).build_action(state)
+
+    assert '"gap_decisions"' in action["subagent_prompt"]
+    assert "CloneParams 必须包含 voiceId 与 sampleUrl" in action["subagent_prompt"]
+
+
 def test_action_binds_internal_commands_to_immutable_project_root(tmp_path) -> None:
     project_root = tmp_path.resolve()
 
@@ -205,6 +228,28 @@ def test_critic_action_exposes_machine_readable_business_result_contract(
     assert contract["additionalProperties"] is False
 
 
+def test_research_action_contract_matches_nullable_search_error(
+    tmp_path,
+) -> None:
+    """Action 生成的机器合同必须与 Research Result 的可选 null 语义一致。"""
+    import json
+
+    state = EngineState(
+        thread_id="research-contract",
+        current_stage="research",
+        requirement="核对外部 API 研究结论",
+        gap_report_json=json.dumps({
+            "gaps": [{"id": "G1", "design_section_ref": "§1"}],
+        }),
+        pending_research_ids=["G1"],
+    )
+    action = ActionBuilder(tmp_path).build_action(state)
+
+    assert action["result_contract"]["properties"]["search_error"] == {
+        "type": ["string", "null"],
+    }
+
+
 def test_component_verifier_receives_all_batch_plate_keys(tmp_path) -> None:
     design_doc = DesignDoc(
         path="design/spec.md",
@@ -239,6 +284,106 @@ def test_component_verifier_receives_all_batch_plate_keys(tmp_path) -> None:
     assert action["plate_keys"] == ["类型系统", "工具模块"]
     assert '"engineering_sections"' in action["subagent_prompt"]
     assert action["subagent_prompt"].count('"section_id"') == 2
+
+
+def test_component_verifier_is_scoped_to_current_batch_design_items(tmp_path) -> None:
+    design_doc = DesignDoc(
+        path="design/spec.md",
+        supplements={},
+        plates=[Plate(
+            name="核心",
+            design_section="§1",
+            components=[Component(
+                name="类型系统",
+                design_section="§1.1",
+                design_items=[
+                    DesignItem("§1.1-1", "§1.1", "类型声明", ["字段约束"], "heading"),
+                    DesignItem("§1.1-2", "§1.1", "运行时校验", ["拒绝非法值"], "heading"),
+                ],
+            )],
+        )],
+    )
+    batch_state = BatchState.from_design_doc(design_doc, [{
+        "batch_id": "B1",
+        "component": "类型系统",
+        "design_sections": ["§1.1"],
+        "design_item_refs": ["§1.1-1"],
+        "tasks": [{"id": "T1", "file_targets": ["src/base.py"]}],
+    }])
+
+    action = ActionBuilder(tmp_path).build_action(
+        EngineState(
+            thread_id="verify-scope",
+            current_stage="component_verifier",
+            design_doc_digest="sha256:" + "3" * 64,
+        ),
+        design_doc=design_doc,
+        batch_state=batch_state,
+    )
+
+    assert action["verification_scope"]["design_item_ids"] == ["§1.1-1"]
+    assert '"design_item": "§1.1-1"' in action["subagent_prompt"]
+    assert '"design_item": "§1.1-2"' not in action["subagent_prompt"]
+
+
+def test_component_verifier_scope_moves_with_batch_cursor(tmp_path) -> None:
+    component = Component(
+        name="类型系统",
+        design_section="§1.1",
+        design_items=[
+            DesignItem("§1.1-1", "§1.1", "类型声明", [], "heading"),
+            DesignItem("§1.1-2", "§1.1", "运行时校验", [], "heading"),
+        ],
+    )
+    design_doc = DesignDoc(
+        path="design/spec.md", supplements={},
+        plates=[Plate(name="核心", design_section="§1", components=[component])],
+    )
+    batch_state = BatchState.from_design_doc(design_doc, [
+        {"batch_id": "B1", "component": "类型系统", "design_item_refs": ["§1.1-1"],
+         "tasks": [{"id": "T1", "file_targets": ["src/base.py"]}]},
+        {"batch_id": "B2", "component": "类型系统", "design_item_refs": ["§1.1-2"],
+         "tasks": [{"id": "T2", "file_targets": ["src/base.py"]}]},
+    ])
+    state = EngineState(
+        thread_id="verify-cursor", current_stage="component_verifier",
+        design_doc_digest="sha256:" + "4" * 64,
+    )
+    builder = ActionBuilder(tmp_path)
+
+    first = builder.build_action(state, design_doc=design_doc, batch_state=batch_state)
+    batch_state.current_batch_idx = 1
+    second = builder.build_action(state, design_doc=design_doc, batch_state=batch_state)
+
+    assert first["verification_scope"]["design_item_ids"] == ["§1.1-1"]
+    assert second["verification_scope"]["design_item_ids"] == ["§1.1-2"]
+
+
+def test_component_verifier_fails_closed_for_legacy_multi_batch_scope(tmp_path) -> None:
+    component = Component(
+        name="类型系统", design_section="§1.1",
+        design_items=[DesignItem("§1.1-1", "§1.1", "类型声明", [], "heading")],
+    )
+    design_doc = DesignDoc(
+        path="design/spec.md", supplements={},
+        plates=[Plate(name="核心", design_section="§1", components=[component])],
+    )
+    batch_state = BatchState.from_design_doc(design_doc, [
+        {"batch_id": "B1", "component": "类型系统", "tasks": []},
+        {"batch_id": "B2", "component": "类型系统", "tasks": []},
+    ])
+
+    action = ActionBuilder(tmp_path).build_action(
+        EngineState(
+            thread_id="legacy-scope", current_stage="component_verifier",
+            design_doc_digest="sha256:" + "5" * 64,
+        ),
+        design_doc=design_doc,
+        batch_state=batch_state,
+    )
+
+    assert action["action"] == "error"
+    assert action["error_code"] == "VERIFICATION_SCOPE_UNDECLARED"
 
 
 def test_refine_action_exposes_core_owned_repair_contract(tmp_path) -> None:

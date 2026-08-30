@@ -228,7 +228,9 @@ Codex 适配层以当前会话实际暴露的工具清单为能力事实源：
   再调用同一个 `--finalize-result`。Assembler 独占生成规范的
   `spawned=false/HOST_WORKER_TIMEOUT` Result；随后 validate/tick，并按 Core 返回的
   `WAIT_RESOURCE` 重试原 active Action，不计入业务修复次数、不要求用户重启。Core 仅允许
-  一次 Worker 重启；若返回 `HOST_WORKER_TIMEOUT_EXHAUSTED`，不得再次 spawn。
+  一次 Worker 重启；超时预算只统计连续的 `HOST_WORKER_TIMEOUT`，此前的 hash、能力或
+  启动合同失败不得消耗该预算。若返回 `HOST_WORKER_TIMEOUT_EXHAUSTED`，不得再次 spawn，
+  但必须保留 active Action、failure journal 和停止报告，便于模型服务恢复后按同一事实恢复。
 - `execution_control.disposition == "CONTINUE"` 时，能力满足的 spawn Action 必须在同一
   次用户启动中继续驱动，不得先向用户输出终态消息或请求无关确认。
 

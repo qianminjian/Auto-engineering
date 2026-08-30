@@ -114,10 +114,41 @@ def test_research_success_injects_supplement_and_advances() -> None:
 
     decision = ResearchHandler().apply(state, result, _context())
 
-    assert decision.next_stage == "architect"
+    assert decision.next_stage == "gap_review"
     assert decision.lifecycle_effects.supplements[0]["source"] == "research_agent"
     assert "supplements" not in decision.action_context
     assert _changes(decision)["pending_research_ids"] == []
+
+
+def test_research_success_returns_to_same_gap_for_user_review() -> None:
+    """Research 结论必须先回到原 Gap Review，不能绕过用户决策。"""
+    report = {
+        "gaps": [
+            {"id": "G1", "resolution": "research"},
+            {"id": "G2", "resolution": ""},
+        ]
+    }
+    state = {
+        "gap_report_json": json.dumps(report),
+        "pending_research_ids": ["G1"],
+        "research_archive": {},
+    }
+
+    decision = ResearchHandler().apply(
+        state,
+        {
+            "recommended_design": "采用明确协议",
+            "source_tier": "tier0",
+            "confidence": "high",
+            "search_status": "used",
+        },
+        _context(),
+    )
+
+    assert decision.next_stage == "gap_review"
+    assert json.loads(_changes(decision)["gap_report_json"])["gaps"][0][
+        "resolution"
+    ] == "research"
 
 
 def test_research_failure_returns_to_review_with_evidence() -> None:

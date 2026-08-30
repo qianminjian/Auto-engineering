@@ -62,7 +62,7 @@ _CONTRACTS: Mapping[str, StagePromptContract] = MappingProxyType({
         (
             "feedback", "research_and_design_context", "plan_revision",
             "design_authority", "design_decision_ledger", "batch_id_policy",
-            "engineering_sections",
+            "engineering_sections", "gap_decisions", "design_item_catalog",
         ),
         ("design_document",),
     ),
@@ -99,7 +99,8 @@ _CONTRACTS: Mapping[str, StagePromptContract] = MappingProxyType({
             "project_profile_summary",
         ),
         ("component_verifier",),
-        ("design_authority", "design_decision_ledger", "engineering_sections"),
+        ("design_authority", "design_decision_ledger", "engineering_sections",
+         "allowed_design_items"),
         artifact_kinds=("design_document", "source_snapshot"),
     ),
     "plate_deep_audit": StagePromptContract(

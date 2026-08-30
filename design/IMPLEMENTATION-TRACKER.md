@@ -1,13 +1,12 @@
 # Auto-Engineering 当前实施跟踪表
-> 更新：2026-08-29｜唯一产品任务：P0-E2E 单命令运行到 TERMINAL｜历史 Phase/T 项为支撑证据，不能替代产品完成｜状态：`☐` 未开始／`◐` 进行中／`✅` 已验证
-
+> 更新：2026-08-30｜唯一产品任务：P0-E2E 单命令运行到 TERMINAL｜历史 Phase/T 项为支撑证据，不能替代产品完成｜状态：`☐` 未开始／`◐` 进行中／`✅` 已验证
 ## 唯一 P0：端到端产品闭环
 
 > 权威设计：`design/v5.8-End-to-End-Product-Closure-Design.md`；统一实施计划：`design/v5.8-End-to-End-Product-Closure-PLAN.md`。在本任务关闭前冻结与主链无关的新治理能力、用户管理命令和点状控制补丁。
 
 | 优先级 | ID | 唯一交付任务 | EARS 验收 | 状态 |
 |---:|---|---|---|:---:|
-| P0 | P0-E2E | 独立安装后的单命令设计开发闭环 | While 同一宿主 Marketplace 已安装的 Build 已分别启用到 Codex 与 Claude Code, when 用户在空项目执行一次设计驱动命令, both hosts shall 自动完成设计扫描、规划、开发、审查、修复和验证并到达等价 `TERMINAL`，零非预期人工续接、零手工协议修复、零旧计划误续作 | ◐ Build `5.8.0-rc.5+sha256.3927b1f572df8ece` 已通过 `2676 passed, 1 skipped`、90% coverage、静态检查、双宿主 archive smoke 与 Codex L4；Claude Code L4 仍待真实终态验收 |
+| P0 | P0-E2E | 独立安装后的单命令设计开发闭环 | While 同一宿主 Marketplace 已安装的 Build 已分别启用到 Codex 与 Claude Code, when 用户在空项目执行一次设计驱动命令, both hosts shall 自动完成设计扫描、规划、开发、审查、修复和验证并到达等价 `TERMINAL`，零非预期人工续接、零手工协议修复、零旧计划误续作 | ◐ 当前工作树自动回归 `2770 passed, 1 skipped`、90% coverage、静态检查通过；既有 archive/Codex L4 仅为历史制品证据，当前改动尚未重建候选制品，Claude Code L4 仍待真实终态验收 |
 ### 不可独立关闭的四个工作面
 | 工作面 | 目标 | 当前判断 |
 |---|---|---|
@@ -158,3 +157,4 @@ Phase 64–66 的真实运行止血、会话解耦、上下文预算、ArtifactR
 | P1 | T564 | Host/机器 OSError → 稳定 Stop Report | ✅ 回归已实现；稳定错误码与机器报告通过 |
 | P1 | T565-T586 | 真实成本、日志脱敏、事务故障注入、纵向回放、双宿主 L3-L4、超时与状态可见性 | ◐ T571-T586 已补齐 Worker 超时先行终结、唯一 outcomes 合同、repair 投影隔离、Supervisor 即时心跳、只读 active Action 状态、Build 证据和事故回放；真实 Codex/Claude L3-L4 仍待执行 |
 | P0/P1 | T587-T588 | 标准 Marketplace 安装与文档收敛 | ◐ T587 安装器与契约测试完成，待提交后从 GitHub 实际重装；T588 设计和用户指南已同步 |
+| P0 | T589-T595 | 2026-08-29 真跑链路收敛：失败类别隔离、Research 契约统一、宿主事务回放、晚到证据边界与批次设计条目范围 | While 宿主执行同一 Action, when setup、Result、Worker timeout、late outcome 或 verifier coverage 任一边界发生, the system shall 使用同一机器合同、按失败类别计数、严格限定当前 batch 并可重放恢复，不以孤立函数测试替代纵向证据 | ◐ 规格、代码、范围回归与 2770 项自动回归已完成；真实宿主 L3/L4 仍待安排 |

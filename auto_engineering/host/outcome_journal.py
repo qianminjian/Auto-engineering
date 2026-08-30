@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import tempfile
@@ -49,6 +50,54 @@ class OutcomeJournal:
             / ".ae-state/host-runtime/outcomes"
             / f"{action_message_id}.json"
         )
+
+    def record_stale_result(
+        self,
+        result: Mapping[str, Any],
+        *,
+        reason: str,
+    ) -> dict[str, Any]:
+        """隔离晚到 Result 的身份元数据，不把业务 payload 写入审计区。
+
+        晚到消息必须保持 Core projection 不变，但仍需留下可追踪证据。
+        文件名由消息身份和 payload 摘要决定，因此重复投递是幂等的，
+        且日志不会泄露 worker 的结果正文或错误细节。
+        """
+
+        canonical = json.dumps(
+            dict(result),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+        payload_sha256 = hashlib.sha256(canonical).hexdigest()
+        identity = ":".join(
+            str(result.get(key, ""))
+            for key in ("thread_id", "message_id", "causation_id", "tick")
+        )
+        filename = hashlib.sha256(
+            f"{identity}:{payload_sha256}".encode()
+        ).hexdigest()[:32]
+        record = {
+            "schema_version": "1.0",
+            "status": "stale",
+            "reason": reason,
+            "thread_id": result.get("thread_id"),
+            "message_id": result.get("message_id"),
+            "causation_id": result.get("causation_id"),
+            "correlation_id": result.get("correlation_id"),
+            "tick": result.get("tick"),
+            "stage": result.get("stage"),
+            "payload_sha256": payload_sha256,
+        }
+        path = (
+            self._root
+            / ".ae-state/host-runtime/stale-results"
+            / f"{filename}.json"
+        )
+        _atomic_write(path, record)
+        return record
 
     def load(self, action_message_id: str) -> dict[str, Any] | None:
         path = self.path_for(action_message_id)

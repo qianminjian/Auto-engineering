@@ -250,6 +250,12 @@ def test_voice_clone_golden_reaches_done_through_real_core(
             ):
                 context = _prompt_context(invocation.prompt)
                 if current_stage == "architect":
+                    catalog = context.get("design_item_catalog", [])
+                    refs_by_component = {}
+                    for item in catalog:
+                        refs_by_component.setdefault(item.get("component"), []).append(
+                            item["design_item"]
+                        )
                     return {
                         "plan": (
                             "保留纯前端 SPA、内存 API Key 和 MiniMax 直连设计，"
@@ -257,9 +263,11 @@ def test_voice_clone_golden_reaches_done_through_real_core(
                         ),
                         "batch_plan": [
                             {"batch_id": "B1", "component": "VoiceClonePage",
+                             "design_item_refs": refs_by_component.get("VoiceClonePage", []),
                              "tasks": [{"id": "B1-T1", "description": "页面",
                                         "file_targets": ["voice_clone/page.py"]}]},
                             {"batch_id": "B2", "component": "AudioPipeline",
+                             "design_item_refs": refs_by_component.get("AudioPipeline", []),
                              "tasks": [{"id": "B2-T1", "description": "音频",
                                         "file_targets": ["voice_clone/audio.py"]}]},
                         ],
@@ -295,8 +303,11 @@ def test_voice_clone_golden_reaches_done_through_real_core(
                 if current_stage == "component_verifier":
                     return {
                         "component": context["component"],
-                        "coverage_map": [{"design_item": "golden", "status": "IMPLEMENTED",
-                                          "file": "voice_clone/page.py", "line": 1, "note": ""}],
+                        "coverage_map": [
+                            {"design_item": item["design_item"], "status": "IMPLEMENTED",
+                             "file": "voice_clone/page.py", "line": 1, "note": ""}
+                            for item in context["allowed_design_items"]
+                        ],
                         "missing_count": 0, "diverged_count": 0,
                     }
                 if current_stage == "plate_deep_audit":

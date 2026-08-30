@@ -209,6 +209,11 @@ class ResearchHandler:
             }
             if pending:
                 target = "research"
+            elif gap.get("resolution") == "research":
+                # Research only supplies evidence. The original gap remains
+                # unresolved until the user explicitly accepts Fill/Defer in
+                # the same Gap Review item.
+                target = "gap_review"
             elif any(
                 gap_item.get("resolution") == "defer_research"
                 and gap_item["id"] in archive

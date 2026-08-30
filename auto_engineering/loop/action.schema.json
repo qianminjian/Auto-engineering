@@ -140,6 +140,17 @@
     "resource": {"type": "string"},
     "retry_stage": {"type": "string"},
     "plate_keys": {"type": "array", "items": {"type": "string"}},
+    "verification_scope": {
+      "type": "object",
+      "required": ["mode", "component", "batch_id", "design_item_ids"],
+      "properties": {
+        "mode": {"enum": ["batch_design_items", "implementation_only"]},
+        "component": {"type": "string", "minLength": 1},
+        "batch_id": {"type": ["string", "null"]},
+        "design_item_ids": {"type": "array", "items": {"type": "string"}, "uniqueItems": true}
+      },
+      "additionalProperties": false
+    },
     "component": {"type": ["string", "null"]},
     "batch_id": {"type": ["string", "null"]},
     "tasks": {"type": "array"},

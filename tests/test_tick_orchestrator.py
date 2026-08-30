@@ -21,6 +21,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from auto_engineering.engine.design_doc import DesignDoc
 from auto_engineering.engine.state import EngineState
 from auto_engineering.engine.verification_layers import VerificationLayers
 from auto_engineering.host import HostPlatform
@@ -28,6 +29,7 @@ from auto_engineering.host.spawn_contract import SpawnPlan
 from auto_engineering.host.worker_attestation import WorkerAttestation
 from auto_engineering.loop.architect_validation import dry_run_architect_plan
 from auto_engineering.loop.escalation_handler import EscalationContext, EscalationHandler
+from auto_engineering.loop.event_store import SQLiteEventStore
 from auto_engineering.loop.events import LoopEventType
 from auto_engineering.loop.guardrail import GuardrailChain
 from auto_engineering.loop.tick_orchestrator import ORCH_BUDGET_MS, TickOrchestrator
@@ -201,6 +203,7 @@ class TestInit:
                 "batch_id": "B1",
                 "component": "Button",
                 "design_section": "Button",
+                "design_item_refs": ["Button-1"],
                 "tasks": [{"id": "B1-T1", "description": "实现按钮"}],
             }],
         }
@@ -211,6 +214,58 @@ class TestInit:
         assert "Missing" in (
             dry_run_architect_plan(o._design_doc, invalid, o._state.requirement) or ""
         )
+
+    def test_architect_plan_requires_design_item_refs_when_component_has_items(self, tmp_path) -> None:
+        design = tmp_path / "design.md"
+        design.write_text(
+            "## B1 页面\n### Button\n#### 行为\n必须可点击\n",
+            encoding="utf-8",
+        )
+        doc = DesignDoc.parse(design)
+        result = {
+            "stage": "architect",
+            "batch_plan": [{
+                "batch_id": "B1",
+                "component": "Button",
+                "design_section": "Button",
+                "tasks": [{"id": "T1", "description": "实现按钮"}],
+            }],
+        }
+
+        error = dry_run_architect_plan(doc, result, "实现页面")
+
+        assert error is not None
+        assert "BATCH_DESIGN_ITEM_SCOPE_REQUIRED" in error
+
+    @pytest.mark.parametrize("coverage_map", [
+        [{"design_item": "§1.1-2", "status": "IMPLEMENTED"}],
+        [],
+    ])
+    def test_component_verifier_rejects_scope_drift(self, coverage_map, tmp_path) -> None:
+        o = _orchestrator()
+        o.project_root = tmp_path
+        o.init("req")
+        o._state.current_stage = "component_verifier"
+        o._active_action = {
+            "stage": "component_verifier",
+            "verification_scope": {
+                "mode": "batch_design_items",
+                "component": "类型系统",
+                "batch_id": "B1",
+                "design_item_ids": ["§1.1-1"],
+            },
+        }
+        result_file = _make_result_file({
+            "stage": "component_verifier",
+            "component": "类型系统",
+            "coverage_map": coverage_map,
+            "missing_count": 0,
+            "diverged_count": 0,
+        })
+
+        result = o._read_and_validate(result_file)
+
+        assert result.error_code == "COMPONENT_VERIFICATION_SCOPE_INVALID"
 
 
 # ── tick: architect → developer ──
@@ -2223,7 +2278,7 @@ class TestPhase0Research:
             "decisions": [{"gap_id": "gap-B2", "resolution": resolution}],
         }))
 
-    def test_research_injects_supplement_and_routes_architect(self, tmp_path) -> None:
+    def test_research_injects_supplement_and_routes_review(self, tmp_path) -> None:
         o = _orchestrator()
         self._drive_to_research(o, tmp_path, "research")
         action = o.tick(_make_result_file({
@@ -2233,13 +2288,14 @@ class TestPhase0Research:
             "source_tier": "tier0", "confidence": "high",
             "recommended_design": "采用 tick/after_tick 分离",
         }))
-        assert action["stage"] == "architect"
+        assert action["stage"] == "gap_review"
+        assert action["is_rereview"] is True
         supp = o._design_doc.supplements["gap-B2"]
         assert supp.source == "research_agent"
         assert supp.source_tier == "tier0"
         assert supp.content == "采用 tick/after_tick 分离"
         assert o._state.pending_research_ids == []
-        assert "采用 tick/after_tick 分离" in action["subagent_prompt"]
+        assert "采用 tick/after_tick 分离" in o._state.design_supplements_json
 
     def test_defer_research_routes_to_gap_review_for_rereview(self, tmp_path) -> None:
         """T0.7: defer_research 研究完成 → 回 gap_review 复审 (非直达 architect)."""
@@ -2313,7 +2369,7 @@ class TestPhase0Research:
         assert action["stage"] == "architect"
         assert o._state.pending_research_ids == []
 
-    def test_two_research_gaps_stay_research_then_architect(self, tmp_path) -> None:
+    def test_two_research_gaps_return_to_review_before_architect(self, tmp_path) -> None:
         o = _orchestrator()
         _init_design(o, tmp_path)
         gap_a = {**_GAP_B2, "id": "gap-A", "summary": "a"}
@@ -2336,9 +2392,26 @@ class TestPhase0Research:
             "stage": "research", "recommended_design": "designB",
             "source_tier": "tier0", "confidence": "high",
         }))
-        assert a2["stage"] == "architect"
+        assert a2["stage"] == "gap_review"
+        assert a2["current_gap"]["id"] == "gap-A"
         assert "gap-A" in o._design_doc.supplements
         assert "gap-B" in o._design_doc.supplements
+
+        review_b = o.tick(_make_result_file({
+            "stage": "gap_review",
+            "decision": {
+                "gap_id": "gap-A", "resolution": "defer", "decision_source": "user",
+            },
+        }))
+        assert review_b["stage"] == "gap_review"
+        assert review_b["current_gap"]["id"] == "gap-B"
+        architect = o.tick(_make_result_file({
+            "stage": "gap_review",
+            "decision": {
+                "gap_id": "gap-B", "resolution": "defer", "decision_source": "user",
+            },
+        }))
+        assert architect["stage"] == "architect"
 
     def test_research_action_injects_four_tier_knowledge_contract(
             self, tmp_path) -> None:
@@ -2384,7 +2457,7 @@ class TestPhase0Research:
             "search_status": "used",
         }))
 
-        assert action["stage"] == "architect"
+        assert action["stage"] == "gap_review"
         archived = o._state.research_archive["gap-B2"]
         assert archived["search_status"] == "used"
         assert archived["sources"][0]["ref"] == (
@@ -2949,6 +3022,7 @@ _LEAF_ARCH_RESULT = {
     "stage": "architect", "spawned": True, "plan": _VALID_PLAN,
     "batch_plan": [{
         "batch_id": "b-Foo", "design_section": "B2", "component": "Foo",
+        "design_item_refs": ["B2-1"],
         "tasks": [{"id": "T1", "description": "实现 Foo", "module_ref": "§B2",
                    "file_targets": ["foo.py"]}],
     }],
@@ -3022,6 +3096,7 @@ class TestTwoRoundDesignDocE2E:
                     "batch_id": "b-Foo-fix",
                     "design_section": "B2",
                     "component": "Foo",
+                    "design_item_refs": ["B2-1"],
                     "tasks": [{
                         "id": "T2",
                         "description": "修复 Foo 覆盖缺口",
@@ -3055,9 +3130,40 @@ class TestTwoRoundDesignDocE2E:
         }))
         assert a["action"] == "done"
         assert a["verdict"] == "GOAL_ACHIEVED"
-        # 收敛前恰好经过 1 次 refine (2 轮 architect)
         assert o._state.plan_refine_count == 1
 
+    def test_event_store_plan_refine_projects_coverage_map(self, tmp_path) -> None:
+        """真实 EventStore 轨迹中，coverage 缺口回源不得触发投影不一致。"""
+        _prepare_existing_project(tmp_path)
+        design_doc = _write_leaf_design(tmp_path)
+        with SQLiteEventStore(tmp_path / "events.db") as events:
+            o = TickOrchestrator(
+                tmp_path,
+                gate_runner=_pass_gate_runner,
+                guardrail=_pass_guardrail(),
+                checkpoint_store=None,
+                event_store=events,
+            )
+            o.init("实现登录", design_doc_path=design_doc)
+            o.tick(_gap_scan_result([]))
+            o.tick(_make_result_file(_LEAF_ARCH_RESULT))
+            self._dev_critic_approve(o)
+
+            action = o.tick(_make_result_file({
+                "stage": "component_verifier", "spawned": True,
+                "component": "Foo",
+                "coverage_map": [{
+                    "design_item": "B2-1", "status": "MISSING",
+                    "file": None, "line": None, "note": "未实现",
+                }],
+                "missing_count": 1, "diverged_count": 0,
+            }))
+
+            assert action["action"] == "architect"
+            assert o._state.coverage_map[0]["status"] == "MISSING"
+            projection = events.load_projection(o._state.thread_id)
+            assert projection is not None
+            assert projection.coverage_map == o._state.coverage_map
 
 def _real_guardrail_orch(tmp_path) -> TickOrchestrator:
     """带真实 GuardrailChain.default() (含 G6) 的 orchestrator — 用于 G6 端到端."""
@@ -5491,6 +5597,41 @@ class TestF7SpawnProofForgery:
         assert "不得给 Worker 开放" in action["suggestion"]
         assert o._active_action["message_id"] == active_message_id
         assert o._state.tick == tick_before
+
+    def test_worker_failure_returns_resource_wait_for_automatic_retry(
+        self, tmp_path,
+    ):
+        o = self._setup_critic(tmp_path, "pending")
+        active_message_id = o._active_action["message_id"]
+
+        action = o.tick_dict({
+            "stage": "critic",
+            "spawned": False,
+            "spawn_error_code": "HOST_WORKER_FAILED",
+            "spawn_error": "prompt hash mismatch",
+            "spawn_retry_attempt": 1,
+        })
+
+        assert action["action"] == "resource_wait"
+        assert action["reason_code"] == "HOST_WORKER_FAILED"
+        assert action["retry_attempt"] == 1
+        assert o._active_action["message_id"] == active_message_id
+
+    def test_repeated_worker_failure_is_bounded(
+        self, tmp_path,
+    ):
+        o = self._setup_critic(tmp_path, "pending")
+
+        action = o.tick_dict({
+            "stage": "critic",
+            "spawned": False,
+            "spawn_error_code": "HOST_WORKER_FAILED",
+            "spawn_error": "prompt hash mismatch",
+            "spawn_retry_attempt": 2,
+        })
+
+        assert action["action"] == "error"
+        assert action["error_code"] == "HOST_WORKER_FAILURE_EXHAUSTED"
 
     def test_unknown_worker_failure_preserves_action_with_recovery_guidance(
         self, tmp_path,

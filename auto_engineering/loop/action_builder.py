@@ -1303,6 +1303,27 @@ class ActionBuilder:
         )
         if research_context:
             extra["research_and_design_context"] = research_context
+        gap_decisions_context: list[dict[str, object]] = []
+        if self._state.pending_gap_decisions:
+            gap_decisions_context = [
+                {
+                    key: (
+                        value[:2000]
+                        if isinstance(value, str)
+                        else value[:32]
+                        if isinstance(value, list)
+                        else value
+                    )
+                    for key, value in decision.items()
+                    if key in {
+                        "gap_id", "resolution", "fill_content", "decision_source",
+                        "assistant_recommendation", "recommendation_accepted",
+                        "evidence_refs",
+                    }
+                }
+                for decision in self._state.pending_gap_decisions[-32:]
+                if isinstance(decision, dict)
+            ]
         extra["design_authority"] = DesignAuthorityPolicy.default().to_dict()
         is_refine = bool(self._state.refine_request_json) and not is_reconcile
         batch_id_policy = self._batch_id_policy()
@@ -1351,12 +1372,14 @@ class ActionBuilder:
             ),
             "new_batch_plan": (
                 "[{batch_id,batch_title,plate_keys:[valid_plate_key],"
-                "design_sections:[string],tasks:[...],depends_on}]"
+                "design_sections:[string],design_item_refs:[design_item_id],"
+                "tasks:[...],depends_on}]"
             ),
         } if is_reconcile else {
             "plan_patch": (
                 "{add_batches:[{batch_id, batch_title, "
                 "plate_keys:[valid_plate_key], design_sections:[string], "
+                "design_item_refs:[design_item_id], "
                 "tasks:[...], depends_on}], "
                 "obligation_updates?:[{source_ref, "
                 "add_implementation_targets?:[task_id], "
@@ -1367,7 +1390,7 @@ class ActionBuilder:
         } if is_refine else {
             "batch_plan": (
                 "[{batch_id, batch_title, plate_keys:[valid_plate_key], "
-                "design_sections:[string], "
+                "design_sections:[string], design_item_refs:[design_item_id], "
                 "tasks:[{id, description, module_ref, file_targets}], "
                 "depends_on}] (min 1 batch)"
             )
@@ -1381,9 +1404,11 @@ class ActionBuilder:
             "engineering_sections": self._engineering_sections(),
             "batch_id_policy": batch_id_policy,
             "project_profile_summary": self._project_profile_summary(),
+            "design_item_catalog": self._design_item_catalog(),
             **({"plan_revision": self._state.plan_refine_count} if is_refine else {}),
             "feedback": extra.get("feedback", base.get("feedback")),
             "research_and_design_context": research_context,
+            "gap_decisions": gap_decisions_context,
             "design_authority": extra["design_authority"],
         }, expected_format={
             "design_change_requests": (
@@ -1616,6 +1641,92 @@ class ActionBuilder:
         )
         if joined_design_section == comp.name:
             joined_design_section = ""
+        current_batch: dict | None = None
+        if not self._batch_state.is_component_complete():
+            candidate = self._batch_state.current_batch()
+            if isinstance(candidate, dict):
+                current_batch = candidate
+        if current_batch is None:
+            current_batch = next(
+                (
+                    batch for batch in self._batch_state.batch_plan
+                    if isinstance(batch, dict)
+                    and batch.get("batch_id") == self._last_batch_id
+                ),
+                None,
+            )
+        if current_batch is None:
+            # Compatibility with lightweight injected BatchState doubles and
+            # old snapshots that expose only batches_for(current_component).
+            current_batch = next(
+                (batch for batch in component_batches if isinstance(batch, dict)),
+                None,
+            )
+        if current_batch is None:
+            return {**base, "action": "skip",
+                    "reason": "completed component has no verifiable batch",
+                    "stage": "component_verifier",
+                    "next_transition": "plate_deep_audit"}
+        requested_item_refs = current_batch.get("design_item_refs")
+        requested_ids = (
+            [ref for ref in requested_item_refs if isinstance(ref, str)]
+            if isinstance(requested_item_refs, list)
+            else []
+        )
+        items_by_id = {
+            item.item_id: item
+            for routed in routed_components
+            for item in routed.design_items
+        }
+        has_design_items = bool(items_by_id)
+        if requested_item_refs is None and has_design_items and len(component_batches) > 1:
+            return {
+                **base,
+                "action": "error",
+                "stage": "component_verifier",
+                "error_code": "VERIFICATION_SCOPE_UNDECLARED",
+                "message": (
+                    "历史 batch 未声明 design_item_refs，且同一组件存在多个 batch；"
+                    "必须先由 Architect 生成带条目范围的新计划，禁止全组件误审"
+                ),
+            }
+        if requested_ids and len(set(requested_ids)) != len(requested_ids):
+            return {
+                **base,
+                "action": "error",
+                "stage": "component_verifier",
+                "error_code": "VERIFICATION_SCOPE_INVALID",
+                "message": "当前 batch 的 design_item_refs 重复，不能生成验证 Action",
+            }
+        allowed_items = (
+            [items_by_id[item_id] for item_id in requested_ids if item_id in items_by_id]
+            if requested_ids
+            else [item for routed in routed_components for item in routed.design_items]
+        )
+        if requested_ids and len(allowed_items) != len(requested_ids):
+            return {
+                **base,
+                "action": "error",
+                "stage": "component_verifier",
+                "error_code": "VERIFICATION_SCOPE_INVALID",
+                "message": "当前 batch 的 design_item_refs 不属于其路由组件",
+            }
+        allowed_design_items = [
+            {
+                "design_item": item.item_id,
+                "design_section": item.design_section,
+                "title": item.title[:240],
+                "key_claims": [claim[:240] for claim in item.key_claims[:8]],
+            }
+            for item in allowed_items
+        ]
+        scoped_design_spec = "\n\n".join(
+            (
+                f"{item.title}: {'; '.join(item.key_claims)}"
+                if item.key_claims else item.title
+            )
+            for item in allowed_items
+        )
         # DS-15: subagent reads design doc + impl files itself.
         # F8 修复 (2026-07-26 真跑): 注入 component/design_section/design_spec/
         # implementation_files 到 context —— 此前 context 为空，verifier subagent 不知
@@ -1628,7 +1739,8 @@ class ActionBuilder:
                 [item.design_section for item in routed_components]
             ),
             "design_section": joined_design_section,
-            "design_spec": design_spec,
+            "design_spec": scoped_design_spec or design_spec,
+            "allowed_design_items": allowed_design_items,
             "implementation_files": impl_files,
             "project_profile_summary": self._project_profile_summary(verifier=True),
         }, expected_format={
@@ -1643,7 +1755,30 @@ class ActionBuilder:
                 "[{design_item, haiku_status, sonnet_verdict, final_status}] "
                 "(仅负判定经 Sonnet 复核后填, 无负判定则空)"),
         }, plate_keys=[item.name for item in routed_components],
-           recheck=dict(_VERIFIER_RECHECK))
+           recheck=dict(_VERIFIER_RECHECK),
+           verification_scope={
+               "mode": "batch_design_items" if allowed_design_items else "implementation_only",
+               "component": comp.name,
+               "batch_id": current_batch.get("batch_id"),
+               "design_item_ids": [item["design_item"] for item in allowed_design_items],
+           })
+
+    def _design_item_catalog(self) -> list[dict[str, object]]:
+        """Architect 可用的有界设计条目目录，避免 Worker 猜测批次范围。"""
+        if self._design_doc is None:
+            return []
+        return [
+            {
+                "design_item": item.item_id,
+                "design_section": item.design_section,
+                "component": component.name,
+                "title": item.title[:240],
+                "key_claims": [claim[:240] for claim in item.key_claims[:8]],
+            }
+            for plate in self._design_doc.plates
+            for component in plate.components
+            for item in component.design_items
+        ]
 
     def _build_action_plate_deep_audit(self, base: dict) -> dict:
         # DS-15: subagent reads plate components + contracts itself.

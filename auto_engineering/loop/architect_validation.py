@@ -10,6 +10,7 @@ from auto_engineering.loop.architecture_candidate import (
     ArchitectureCandidateBuilder,
     ArchitectureCandidateError,
 )
+from auto_engineering.loop.engineering_model import EngineeringModel
 from auto_engineering.loop.task_factory import tasks_from_batch_plan
 
 
@@ -122,6 +123,50 @@ def dry_run_architect_plan(
     try:
         normalized = BatchState.flatten_batch_plan(batches)
         normalized = BatchState.from_design_doc(design_doc, normalized).batch_plan
+        model = EngineeringModel.from_design_doc(
+            design_doc, design_digest="sha256:" + "0" * 64
+        )
+        for batch in normalized:
+            references = batch.get("design_sections", [])
+            if isinstance(references, list):
+                model.select_sections(
+                    str(reference) for reference in references
+                )
+        design_components = {
+            component.name: component
+            for plate in design_doc.plates
+            for component in plate.components
+        }
+        for batch in normalized:
+            raw_keys = batch.get("plate_keys")
+            target_names = (
+                [key for key in raw_keys if isinstance(key, str)]
+                if isinstance(raw_keys, list) and raw_keys
+                else [str(batch.get("component", ""))]
+            )
+            target_components = [
+                design_components[name] for name in target_names if name in design_components
+            ]
+            if not any(component.design_items for component in target_components):
+                continue
+            refs = batch.get("design_item_refs")
+            if not isinstance(refs, list) or not refs:
+                return (
+                    "BATCH_DESIGN_ITEM_SCOPE_REQUIRED: batch "
+                    f"{batch.get('batch_id', '?')} 必须声明非空 design_item_refs"
+                )
+            allowed = {
+                item.item_id
+                for component in target_components
+                for item in component.design_items
+            }
+            invalid = sorted({ref for ref in refs if ref not in allowed})
+            if invalid:
+                return (
+                    "BATCH_DESIGN_ITEM_SCOPE_INVALID: batch "
+                    f"{batch.get('batch_id', '?')} 含不属于组件的 design_item_refs "
+                    + ", ".join(invalid)
+                )
         tree = ProgressTree.from_design_doc(design_doc)
         tree.apply_batch_plan_totals(normalized)
         tasks_from_batch_plan(normalized, requirement)

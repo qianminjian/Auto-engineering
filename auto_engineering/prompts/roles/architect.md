@@ -33,6 +33,8 @@ ultrathink
 4. task id 全局唯一（B1-T1, B2-T1...），depends_on 精确到 task id
 5. `batch_title` 是可自由命名的人类可读聚合标题，不参与机器路由
 6. `plate_keys` 只能从 action 的 `valid_plate_keys` 原样选择；一个 batch 可覆盖多个 key
+7. 只要目标组件存在 `design_item_catalog` 条目，batch 必须声明 `design_item_refs`，并将每个
+   条目只分配给负责它的 batch；不得让 component_verifier 扫描整个组件或未来 batch。
 7. `design_sections` 逐项列出覆盖的设计章节，供 verifier 做覆盖映射
 8. 文件路径含目录前缀，从 `project_profile_summary.paths` 读取
 9. 需求中有模糊点 → 标注 "模糊点: [描述]" 并给出假设，不静默跳过
@@ -62,6 +64,7 @@ ultrathink
       "batch_title": "可自由命名的聚合批次标题",
       "plate_keys": ["从 valid_plate_keys 选择的精确标识"],
       "design_sections": ["对应设计文档章节标题"],
+      "design_item_refs": ["当前 batch 实际覆盖的设计条目 ID，必须从 design_item_catalog 选择"],
       "description": "本 batch 的目标和范围",
       "tasks": [
         {

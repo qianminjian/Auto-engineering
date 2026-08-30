@@ -238,7 +238,7 @@ _RESULT_FIELD_TYPES: dict[str, dict[str, tuple[type, ...]]] = {
     "research": {
         "findings": (str,), "sources": (list,), "source_tier": (str,),
         "confidence": (str,), "recommended_design": (str,),
-        "search_status": (str,), "search_error": (str,),
+        "search_status": (str,), "search_error": (str, type(None)),
     },
     "project_setup": {
         "stage": (str,), "result_type": (str,), "artifacts": (list,),

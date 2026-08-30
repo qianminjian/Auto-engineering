@@ -139,6 +139,11 @@ class _PackageOnlyBackend:
             } for item in context["host_design_sections"]]}
         if stage == "architect":
             plate = context["valid_plate_keys"][0]
+            design_item_refs = [
+                item["design_item"]
+                for item in context.get("design_item_catalog", [])
+                if item.get("component") == plate
+            ]
             return {
                 "plan": (
                     "严格保持设计中的页面职责、接口边界和验证要求，"
@@ -148,6 +153,7 @@ class _PackageOnlyBackend:
                 "batch_plan": [{
                     "batch_id": "B1", "batch_title": "实现页面",
                     "plate_keys": [plate], "design_sections": ["§C1"],
+                    "design_item_refs": design_item_refs,
                     "tasks": [{
                         "id": "B1-T1", "description": "实现页面",
                         "kind": "implementation", "module_ref": "src/page.ts",
@@ -178,8 +184,9 @@ class _PackageOnlyBackend:
             return {"verdict": "APPROVE", "findings": [],
                     "critic_feedback": "实现符合设计"}
         if stage == "component_verifier":
+            design_item = context["allowed_design_items"][0]["design_item"]
             return {"component": context["component"], "coverage_map": [{
-                "design_item": "§C1", "status": "IMPLEMENTED",
+                "design_item": design_item, "status": "IMPLEMENTED",
                 "file": "src/page.ts", "line": 1, "note": "",
             }], "missing_count": 0, "diverged_count": 0}
         if stage == "plate_deep_audit":

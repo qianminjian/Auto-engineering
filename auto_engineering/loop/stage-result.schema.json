@@ -177,7 +177,7 @@
     "confidence": {"type": "string"},
     "recommended_design": {"type": "string"},
     "search_status": {"type": "string"},
-    "search_error": {"type": "string"},
+    "search_error": {"type": ["string", "null"]},
     "design_docs_stale": {"type": "boolean"},
     "design_doc_suggestions": {"type": "string"},
     "design_doc_updated": {"type": "boolean"},
