@@ -46,7 +46,10 @@ def _resolve_fencing_token(
     """Return the identity-bound fence; reject explicit forged values."""
 
     expected = fencing_token_for(action_message_id, host_session_id, generation)
-    if not supplied_present:
+    # v1.0 callers could construct HostRunLease without the optional field,
+    # which serializes as an empty string. Treat that legacy sentinel like a
+    # missing value; any non-empty explicit value must still match exactly.
+    if not supplied_present or supplied == "":
         return expected
     if (
         not isinstance(supplied, str)
