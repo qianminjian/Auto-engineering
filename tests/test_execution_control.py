@@ -399,6 +399,28 @@ def test_run_lease_reads_legacy_payload_without_execution_fence() -> None:
     assert len(restored.fencing_token) == 64
 
 
+def test_run_lease_rejects_forged_persisted_fence() -> None:
+    action = {
+        "message_id": "action-persisted-fence-invalid",
+        "thread_id": "thread-persisted-fence-invalid",
+        "extensions": {
+            "ae": {
+                "execution_control": control_for_action({"action": "developer"}).to_dict(),
+                "runtime": {"build_id": "build-persisted-fence-invalid"},
+            }
+        },
+    }
+    persisted = HostRunLease.from_action(
+        action,
+        platform="codex",
+        host_session_id="session-persisted-fence-invalid",
+    ).to_dict()
+    persisted["fencing_token"] = "e" * 64
+
+    with pytest.raises(ValueError, match="HOST_RUN_LEASE_FENCE_INVALID"):
+        HostRunLease.from_dict(persisted)
+
+
 def test_run_lease_rejects_action_without_engine_build() -> None:
     action = {
         "message_id": "action-missing-build",
