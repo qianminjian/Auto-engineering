@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import os
 import tempfile
@@ -32,6 +33,28 @@ def fencing_token_for(action_message_id: str, host_session_id: str, generation: 
     return hashlib.sha256(
         f"{action_message_id}:{host_session_id}:{generation}".encode()
     ).hexdigest()
+
+
+def _resolve_fencing_token(
+    *,
+    action_message_id: str,
+    host_session_id: str,
+    generation: int,
+    supplied: object,
+    supplied_present: bool,
+) -> str:
+    """Return the identity-bound fence; reject explicit forged values."""
+
+    expected = fencing_token_for(action_message_id, host_session_id, generation)
+    if not supplied_present:
+        return expected
+    if (
+        not isinstance(supplied, str)
+        or len(supplied) != len(expected)
+        or not hmac.compare_digest(supplied, expected)
+    ):
+        raise HostRunLeaseError("HOST_RUN_LEASE_FENCE_INVALID")
+    return expected
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,11 +99,12 @@ class HostRunLease:
             or generation < 1
         ):
             raise HostRunLeaseError("HOST_RUN_LEASE_GENERATION_INVALID")
-        supplied_fence = action.get("fencing_token")
-        fencing_token = (
-            supplied_fence
-            if isinstance(supplied_fence, str) and len(supplied_fence) == 64
-            else fencing_token_for(message_id, host_session_id, generation)
+        fencing_token = _resolve_fencing_token(
+            action_message_id=message_id,
+            host_session_id=host_session_id,
+            generation=generation,
+            supplied=action.get("fencing_token"),
+            supplied_present="fencing_token" in action,
         )
         extensions = action.get("extensions")
         ae = extensions.get("ae") if isinstance(extensions, Mapping) else None
@@ -137,14 +161,19 @@ class HostRunLease:
             or generation < 1
         ):
             raise HostRunLeaseError("HOST_RUN_LEASE_GENERATION_INVALID")
-        if not isinstance(raw.get("fencing_token"), str) or len(
-            str(raw.get("fencing_token"))
-        ) != 64:
-            raw["fencing_token"] = fencing_token_for(
-                str(raw.get("action_message_id", "")),
-                str(raw.get("host_session_id", "")),
-                generation,
-            )
+        action_message_id = raw.get("action_message_id")
+        host_session_id = raw.get("host_session_id")
+        if not isinstance(action_message_id, str) or not isinstance(
+            host_session_id, str
+        ):
+            raise HostRunLeaseError("HOST_RUN_LEASE_INVALID")
+        raw["fencing_token"] = _resolve_fencing_token(
+            action_message_id=action_message_id,
+            host_session_id=host_session_id,
+            generation=generation,
+            supplied=raw.get("fencing_token"),
+            supplied_present="fencing_token" in raw,
+        )
         try:
             lease = cls(**raw)
         except TypeError as exc:

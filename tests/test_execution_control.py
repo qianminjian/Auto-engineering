@@ -352,6 +352,28 @@ def test_run_lease_issues_stable_execution_fence() -> None:
     ).fencing_token
 
 
+def test_run_lease_rejects_fencing_token_not_derived_from_action_identity() -> None:
+    action = {
+        "message_id": "action-fence-invalid",
+        "thread_id": "thread-fence-invalid",
+        "execution_generation": 2,
+        "fencing_token": "f" * 64,
+        "extensions": {
+            "ae": {
+                "execution_control": control_for_action({"action": "developer"}).to_dict(),
+                "runtime": {"build_id": "build-fence-invalid"},
+            }
+        },
+    }
+
+    with pytest.raises(ValueError, match="HOST_RUN_LEASE_FENCE_INVALID"):
+        HostRunLease.from_action(
+            action,
+            platform="codex",
+            host_session_id="session-fence-invalid",
+        )
+
+
 def test_run_lease_reads_legacy_payload_without_execution_fence() -> None:
     action = {
         "message_id": "action-legacy",
