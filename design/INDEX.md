@@ -1,6 +1,6 @@
 # design/ 资产索引
 
-> 更新：2026-08-30｜当前实现：v5.8.0-rc.5；Worker 无产出恢复已补齐，真实产品门禁未通过
+> 更新：2026-08-30｜当前实现：v5.8.0-rc.5；Phase 85 主控权纠偏设计已批准，等待开发
 
 ## 当前权威资产
 
@@ -31,6 +31,7 @@
 | `v5.8-Thin-Coordinator-and-Developer-Worker-PLAN.md` | T530-T533 TDD 实施与条件决策计划 |
 | `v5.8-T533-Architecture-Decision-Review.md` | T533 审批前架构决策包与 T537-T544 待办 |
 | `v5.8-Action-Scoped-Host-Context-Spec.md` | T533 条件后备的 Action-scoped Supervisor Spec |
+| `v5.8-Main-Agent-Coordinator-Recovery-Design.md` | Phase 85 权威设计：恢复主 Agent 协调权、Worker 所有权、异常恢复、预算 soft 和 Supervisor 迁移 |
 | `v5.8-Automatic-Context-Governance.md` | Phase 70 自动 compaction、有界增量上下文与成本治理权威设计 |
 | `v5.8-Session-Decoupling-Design.md` | Phase 64-67 状态恢复设计；日常 rollover 已由 Phase 70 纠偏 |
 | `v5.8-Session-Decoupling-PLAN.md` | Phase 64-70 T302-T350 可执行实施计划 |
@@ -55,13 +56,14 @@
 
 ## 解释顺序
 
-1. Phase 80 目标架构与迁移边界以 Protocol Kernel Convergence 为准；当前剩余未迁移行为
+1. Phase 85 的宿主主控权、Worker 生命周期、预算和 Supervisor 迁移以 Main Agent Coordinator Recovery Design 为准；与旧 T533 冲突时，本设计优先。
+2. Phase 80 目标架构与迁移边界以 Protocol Kernel Convergence 为准；当前剩余未迁移行为
    仍以 v5.6 设计、代码和新鲜测试证据为准，不得把目标误称为已实现。
-2. 上下文与日常会话行为以 Automatic Context Governance 为准；恢复语义再读取
+3. 上下文与日常会话行为以 Automatic Context Governance 为准；恢复语义再读取
    Session Decoupling，冲突时前者优先。
-3. 实施顺序和任务状态以 PLAN 与 Tracker 为准。
-4. 历史争议以 Git 记录追溯，不把旧报告继续保存在活动工作区。
-5. 真实产品验收必须独立记录 `product_install`；archive smoke 通过不等于宿主产品通过。
+4. 实施顺序和任务状态以 PLAN 与 Tracker 为准。
+5. 历史争议以 Git 记录追溯，不把旧报告继续保存在活动工作区。
+6. 真实产品验收必须独立记录 `product_install`；archive smoke 通过不等于宿主产品通过。
 
 ## 维护规则
 

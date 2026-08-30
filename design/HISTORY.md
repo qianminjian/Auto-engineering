@@ -1,6 +1,6 @@
 # Auto-Engineering 历史摘要
 
-> 更新：2026-08-12｜本文件只保留里程碑和追溯入口；详细差异以 Git 为准。
+> 更新：2026-08-30｜本文件只保留里程碑和追溯入口；详细差异以 Git 为准。
 
 ## 里程碑
 
@@ -32,6 +32,7 @@
 | Phase 82 T451-T453 | 真跑证伪宿主手工拼接 Worker 证明；补齐平台化证明模板、原生句柄/协议身份分离、纯 EventStore 恢复诊断和三 Worker 生产 Tick 轨迹 |
 | Phase 82 T454-T456 | 真跑证伪同版本插件的运行时来源：拒绝缓存外部 shebang 与全局旧 CLI，按插件锁文件创建隔离环境，并补齐 project_setup 跨进程 EventStore 轨迹 |
 | Phase 82 T457-T459 | Codex 安装由源码 Marketplace 改为开发目录外的内容寻址 Release；安装事务与 doctor/import/launcher 来源形成自动证明 |
+| Phase 85 设计纠偏 | 2026-08-30 明确 T533/D13 的批准范围存在争议；新批准 D53-D55 恢复当前主 Agent 协调权、限定 Artifact 恢复边界、预算默认 soft，旧 Supervisor 先旁路并待双宿主 L4 后退役 |
 
 ## 持续有效的决策
 
