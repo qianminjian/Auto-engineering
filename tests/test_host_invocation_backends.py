@@ -64,7 +64,7 @@ def test_launcher_forbids_identity_and_result_wrappers(tmp_path: Path) -> None:
 
     prompt = launcher_prompt(_request(tmp_path))
 
-    assert "只包含 expected_format 业务字段" in prompt
+    assert "只把 result_contract 声明的业务字段写入 coordinator_result" in prompt
     assert "result_contract" in prompt
     assert "数组和对象必须写为原生 JSON" in prompt
     assert "不得包装在 result" in prompt
@@ -72,7 +72,7 @@ def test_launcher_forbids_identity_and_result_wrappers(tmp_path: Path) -> None:
     assert "允许按 Prompt 要求修改 project_root 内业务文件" in prompt
     assert "不得修改执行包、Core 状态或 result 文件" in prompt
     assert "必须把业务 JSON 原子写入" in prompt
-    assert 'outcomes 的 JSON object：{"outcomes":[{' in prompt
+    assert 'outcomes 的 JSON object，例如：{"outcomes":[{' in prompt
     assert "不得写顶层数组、单个 outcome 或字符串化 JSON" in prompt
     assert "绝不写 request.work_files.result" in prompt
     assert "spawn_permitted=false" in prompt

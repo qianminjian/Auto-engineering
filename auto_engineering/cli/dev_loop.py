@@ -1697,6 +1697,7 @@ def run_action_supervisor(root: Path) -> None:
     from auto_engineering.host.request_compiler import (
         compile_action_execution_request,
     )
+    from auto_engineering.host.runtime_driver import HostRunLeaseStore
     from auto_engineering.host.supervisor import (
         ActionReceiptJournal,
         ActionScopedProductDriver,
@@ -1748,6 +1749,7 @@ def run_action_supervisor(root: Path) -> None:
         events.close()
         store.close()
 
+    lease_store = HostRunLeaseStore(root)
     receipt_journal = ActionReceiptJournal(root)
     detection = detect_host()
     def report_context_progress(elapsed_seconds: float) -> None:
@@ -1756,17 +1758,23 @@ def run_action_supervisor(root: Path) -> None:
             err=True,
         )
 
-    if detection.platform is HostPlatform.CODEX:
-        backend: HostInvocationBackend = CodexInvocationBackend(
-            progress_callback=report_context_progress,
-        )
-    elif detection.platform is HostPlatform.CLAUDE_CODE:
-        backend = ClaudeInvocationBackend(
-            spent_budget_usd=receipt_journal.total_cost_usd(thread_id),
-            progress_callback=report_context_progress,
-        )
-    else:
-        raise click.ClickException("HOST_ACTION_CONTEXT_UNAVAILABLE: HOST_UNKNOWN")
+    try:
+        if detection.platform is HostPlatform.CODEX:
+            backend: HostInvocationBackend = CodexInvocationBackend(
+                progress_callback=report_context_progress,
+            )
+        elif detection.platform is HostPlatform.CLAUDE_CODE:
+            backend = ClaudeInvocationBackend(
+                spent_budget_usd=receipt_journal.total_cost_usd(thread_id),
+                progress_callback=report_context_progress,
+            )
+        else:
+            raise click.ClickException("HOST_ACTION_CONTEXT_UNAVAILABLE: HOST_UNKNOWN")
+    except Exception:
+        # _prepare_action_for_host 已建立 CONTINUE lease；入口能力/构造失败时也必须
+        # 回收它，否则下一次宿主会被一个从未执行的旧 Action 锁死。
+        lease_store.clear()
+        raise
     bundled_runner = Path(__file__).resolve().parents[2] / "scripts" / "ae-run"
     # Action 子进程必须只使用已安装运行时；清除开发会话注入的 Python 路径，
     # 防止真跑时误加载当前源码目录或宿主虚拟环境。
@@ -1878,6 +1886,26 @@ def run_action_supervisor(root: Path) -> None:
         )
         click.echo(f"Loop 停止报告已生成: {stop_report}", err=True)
         raise
+    except Exception as exc:
+        # 未预期的宿主/协议异常也必须在边界被归一化。否则 CLI 会直接冒出
+        # Python traceback，且没有稳定 Stop Report，下一次恢复只能猜测现场。
+        failure_action = _project_host_failure_action(
+            action,
+            error_code="HOST_SUPERVISOR_PROTOCOL_ERROR",
+            message="HOST_SUPERVISOR_PROTOCOL_ERROR",
+        )
+        stop_report = LoopStopReportJournal(root).record(
+            thread_id=thread_id,
+            final_action=failure_action,
+        )
+        click.echo(f"Loop 停止报告已生成: {stop_report}", err=True)
+        raise ActionExecutionContractError(
+            "HOST_SUPERVISOR_PROTOCOL_ERROR"
+        ) from exc
+    finally:
+        # 只要本次 supervise 已结束，旧 CONTINUE lease 就不能继续阻断宿主。
+        # 下一次返回的 CONTINUE Action 会在 _prepare_action_for_host 中重新建立。
+        lease_store.clear()
     stop_report = LoopStopReportJournal(root).record(
         thread_id=thread_id,
         final_action=result.final_action,

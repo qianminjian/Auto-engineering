@@ -171,6 +171,14 @@ class HostRunLeaseStore:
             raise HostRunLeaseError("HOST_RUN_LEASE_INVALID")
         return HostRunLease.from_dict(raw)
 
+    def clear(self) -> None:
+        """关闭当前宿主执行义务，避免异常退出留下假活跃 lease。"""
+
+        try:
+            self.path.unlink()
+        except FileNotFoundError:
+            return
+
 
 def evaluate_stop(
     lease: HostRunLease | None,

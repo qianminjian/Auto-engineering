@@ -1,12 +1,10 @@
 # Auto-Engineering 当前实施跟踪表
 > 更新：2026-08-30｜唯一产品任务：P0-E2E 单命令运行到 TERMINAL｜历史 Phase/T 项为支撑证据，不能替代产品完成｜状态：`☐` 未开始／`◐` 进行中／`✅` 已验证
 ## 唯一 P0：端到端产品闭环
-
 > 权威设计：`design/v5.8-End-to-End-Product-Closure-Design.md`；统一实施计划：`design/v5.8-End-to-End-Product-Closure-PLAN.md`。在本任务关闭前冻结与主链无关的新治理能力、用户管理命令和点状控制补丁。
-
 | 优先级 | ID | 唯一交付任务 | EARS 验收 | 状态 |
 |---:|---|---|---|:---:|
-| P0 | P0-E2E | 独立安装后的单命令设计开发闭环 | While 同一宿主 Marketplace 已安装的 Build 已分别启用到 Codex 与 Claude Code, when 用户在空项目执行一次设计驱动命令, both hosts shall 自动完成设计扫描、规划、开发、审查、修复和验证并到达等价 `TERMINAL`，零非预期人工续接、零手工协议修复、零旧计划误续作 | ◐ 当前工作树自动回归 `2770 passed, 1 skipped`、90% coverage、静态检查通过；既有 archive/Codex L4 仅为历史制品证据，当前改动尚未重建候选制品，Claude Code L4 仍待真实终态验收 |
+| P0 | P0-E2E | 独立安装后的单命令设计开发闭环 | While 同一宿主 Marketplace 已安装的 Build 已分别启用到 Codex 与 Claude Code, when 用户在空项目执行一次设计驱动命令, both hosts shall 自动完成设计扫描、规划、开发、审查、修复和验证并到达等价 `TERMINAL`，零非预期人工续接、零手工协议修复、零旧计划误续作 | ◐ 当前工作树自动回归 `2779 passed, 1 skipped`、90% coverage、Ruff/mypy/sync 通过；新增 Supervisor/lease/repair 纵向回归已通过；既有 archive/Codex L4 仅为历史制品证据，当前改动尚未重建候选制品，Claude Code L4 仍待真实终态验收 |
 ### 不可独立关闭的四个工作面
 | 工作面 | 目标 | 当前判断 |
 |---|---|---|
@@ -158,3 +156,5 @@ Phase 64–66 的真实运行止血、会话解耦、上下文预算、ArtifactR
 | P1 | T565-T586、T596-T598 | 真实成本、日志脱敏、事务故障注入、纵向回放、双宿主 L3-L4、超时与 Worker 无产出恢复 | ◐ T571-T586 已补齐 Worker 超时先行终结、唯一 outcomes 合同、repair 投影隔离、Supervisor 即时心跳、只读 active Action 状态、Build 证据和事故回放；T596-T597 将缺失/空/畸形交接映射为失败；T598 增加逐 Worker `outcome_path`、统一 Collector 和部分产出回归，避免 Coordinator 手工创造 native outcome；真实 Codex/Claude L3-L4 仍待执行 |
 | P0/P1 | T587-T588 | 标准 Marketplace 安装与文档收敛 | ◐ T587 安装器与契约测试完成，待提交后从 GitHub 实际重装；T588 设计和用户指南已同步 |
 | P0 | T589-T595 | 2026-08-29 真跑链路收敛：失败类别隔离、Research 契约统一、宿主事务回放、晚到证据边界与批次设计条目范围 | While 宿主执行同一 Action, when setup、Result、Worker timeout、late outcome 或 verifier coverage 任一边界发生, the system shall 使用同一机器合同、按失败类别计数、严格限定当前 batch 并可重放恢复，不以孤立函数测试替代纵向证据 | ◐ 规格、代码、范围回归与 2770 项自动回归已完成；真实宿主 L3/L4 仍待安排 |
+| P0 | T599-T600 | Supervisor 终态/lease 清理与 Research Action-specific Result Contract | While `--supervise` 驱动 Action 或 Research payload 进入 Finalizer/validate/tick, when 内部循环退出、异常或字段漂移发生, the system shall 只返回 WAIT/TERMINAL/ERROR/HANDOFF、关闭旧 CONTINUE lease、以 `result_contract` 接受合法字段并拒绝身份污染 | ◐ 代码与回归已完成；待真实宿主纵向复验 |
+| P0/P1 | T601-T602 | Supervisor→Finalizer→Tick 纵向回放与宿主故障矩阵 | While Result 首次被 Core 拒绝或旧 Result/进程异常/lease 残留发生, when 同 Action 进入 fresh repair context, the system shall 复用 Worker journal、完成二次 finalize/validate/submit，并输出稳定错误码、Stop Report 和不变 Core projection | ◐ 黑盒修复轨迹与异常注入已完成；待真实宿主纵向复验 |

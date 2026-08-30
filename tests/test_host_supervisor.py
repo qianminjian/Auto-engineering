@@ -710,6 +710,45 @@ def test_product_driver_runs_actions_until_terminal_without_model_for_terminal()
     assert backend.executed == ["action-1", "action-2"]
 
 
+def test_product_driver_rejects_supervisor_returning_while_action_is_continue(
+    monkeypatch,
+) -> None:
+    """内部监督器提前结束时，不能把无人接管的 CONTINUE 交给宿主。"""
+    from auto_engineering.host import supervisor as supervisor_module
+    from auto_engineering.host.supervisor import (
+        ActionScopedProductDriver,
+        HostSupervisorResult,
+    )
+
+    action = {
+        "message_id": "action-continue",
+        "host_execution": {"operations": {"id": 1}},
+        "extensions": {"ae": {"execution_control": {
+            "schema_version": "1.0",
+            "disposition": "CONTINUE",
+            "continuation_required": True,
+            "yield_allowed": False,
+            "reason_code": "ACTION_REQUIRED",
+        }}},
+    }
+
+    def stop_before_advance(self, initial_request, **kwargs):
+        del self, initial_request, kwargs
+        return HostSupervisorResult(())
+
+    monkeypatch.setattr(supervisor_module.HostSupervisor, "run", stop_before_advance)
+
+    with pytest.raises(
+        ActionExecutionContractError,
+        match="HOST_SUPERVISOR_PROTOCOL_ERROR",
+    ):
+        ActionScopedProductDriver(
+            _FakeBackend(["unused"]),
+            compile_request=lambda _: _request("action-continue", 1),
+            execute_operations=lambda _: pytest.fail("operations must not run"),
+        ).run(action)
+
+
 def test_supervisor_routes_failed_receipt_to_deterministic_failure_handler() -> None:
     from auto_engineering.host.supervisor import HostSupervisor
 

@@ -266,6 +266,35 @@ def test_active_continue_lease_blocks_same_session_stop(tmp_path) -> None:
     assert decision is StopGuardDecision.BLOCK
 
 
+def test_finished_supervision_clears_active_continue_lease(tmp_path) -> None:
+    action = {
+        "message_id": "action-clear",
+        "thread_id": "thread-clear",
+        "extensions": {
+            "ae": {
+                "execution_control": ExecutionControl(
+                    schema_version="1.0",
+                    disposition=ExecutionDisposition.CONTINUE,
+                    continuation_required=True,
+                    yield_allowed=False,
+                    allowed_stop_reasons=(),
+                ).to_dict(),
+                "runtime": {"build_id": "build-clear"},
+            }
+        },
+    }
+    store = HostRunLeaseStore(tmp_path)
+    store.save(HostRunLease.from_action(
+        action,
+        platform="codex",
+        host_session_id="session-clear",
+    ))
+
+    store.clear()
+
+    assert store.load() is None
+
+
 def test_run_lease_binds_engine_build_from_current_runtime_revision() -> None:
     action = {
         "message_id": "action-current",

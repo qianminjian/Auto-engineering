@@ -1035,6 +1035,25 @@ def test_stale_coordinator_payload_is_rejected_before_journal_commit(
     ).exists()
 
 
+def test_coordinator_whitelist_comes_from_machine_result_contract() -> None:
+    action = {
+        "expected_format": {"findings": "array"},
+        "result_contract": {
+            "properties": {
+                "findings": {"type": "array"},
+                "sources": {"type": "array"},
+            },
+        },
+    }
+
+    violations = HostExecutionAssembler._coordinator_payload_violations(
+        action,
+        {"findings": [], "sources": []},
+    )
+
+    assert violations == []
+
+
 def test_finalize_recovers_once_from_json_stringified_array_field(
     tmp_path: Path,
 ) -> None:

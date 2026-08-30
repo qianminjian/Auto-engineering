@@ -59,8 +59,8 @@ Gate/Guardrail、五层验证、审计、v5.6 兼容迁移和双宿主验收。
 | D50-D52 | Worker 合同失败与 timeout 分离计数；首次同类失败返回 WAIT_RESOURCE 自动续作，第二次才有界停止。Component Verifier 以 batch 的 `design_item_refs` 为唯一覆盖范围；Core 拒绝越界、重复和漏项；严格 Worker 以私有 `outcome_path` 先行产出，Collector 统一汇总，禁止 Coordinator 手工创造 native outcome | ✅ |
 ## 当前状态
 - `P0-E2E` 是唯一产品交付任务；既有 Phase/T、L1/L2、覆盖率和 archive 安装仅作支撑证据，不能替代 L4。
-- 上一候选 Build `5.8.0-rc.5+sha256.4f32a506f46b0f94` 仅作为历史 archive smoke 证据；本轮工作树已有未提交改动，旧 Build Identity 不适用于当前代码，必须重新构建制品后才能进行新的安装验收。本轮自动回归基线为 2774 passed/1 skipped、覆盖率 90%，新增逐 Worker outcome artifact→Collector 回归已通过；真实产品 L3/L4 仍未执行，不得以 archive smoke 或自动测试替代。
-- 后续冻结无关治理和点状补丁，按设计模型、连续 Runtime、Agent 边界、真实验收四个工作面纵向闭环；状态查询不得写事件，终态不得把 Core 收敛冒充产品完成。
+- 上一候选 Build `5.8.0-rc.5+sha256.4f32a506f46b0f94` 仅作为历史 archive smoke 证据；本轮工作树已有未提交改动，旧 Build Identity 不适用于当前代码，必须重新构建制品后才能进行新的安装验收。本轮自动回归为 2779 passed/1 skipped、覆盖率 90%，新增 Supervisor 终态、租约清理、同 Action repair 和结果合同白名单回归已通过；真实产品 L3/L4 仍未执行，不得以 archive smoke 或自动测试替代。
+- 后续冻结无关治理和点状补丁，按设计模型、连续 Runtime、Agent 边界、真实验收四个工作面纵向闭环；本次事故新增重点是 Supervisor 明确终态、lease 清理和 Research rejection→repair→tick 纵向回放。状态查询不得写事件，终态不得把 Core 收敛冒充产品完成。
 ## 最近演进
 | 日期 | 变更 |
 |---|---|

@@ -579,6 +579,120 @@ class TestMutexAndLegacy:
         assert evidence_calls[0]["thread_id"]
         assert list((tmp_path / ".ae-state/reports").glob("loop-stop-*.md"))
 
+    def test_supervise_reopens_context_after_result_repair_and_clears_lease(
+        self, tmp_path, monkeypatch,
+    ) -> None:
+        """拒绝→修复→重试必须是完整闭环，不能留下假活跃 lease。"""
+        from auto_engineering.host import backends
+        from auto_engineering.host import supervisor as supervisor_module
+        from auto_engineering.host.invocation import (
+            ActionExecutionReceipt,
+            HostInvocationProbe,
+        )
+        from auto_engineering.host.runtime_driver import HostRunLeaseStore
+
+        runner = CliRunner()
+        initialized = runner.invoke(
+            main,
+            ["dev-loop", "--init", "实现 X", "--project-root", str(tmp_path)],
+        )
+        assert initialized.exit_code == 0, initialized.output
+        initial_action = _last_json_line(initialized.output)
+        contexts: list[str] = []
+        operation_calls = 0
+
+        class FakeBackend:
+            def __init__(self, **kwargs):
+                del kwargs
+
+            def probe(self):
+                return HostInvocationProbe.available("codex")
+
+            def execute(self, request):
+                context_id = f"fresh-context-{len(contexts) + 1}"
+                contexts.append(context_id)
+                return ActionExecutionReceipt.from_dict({
+                    "schema_version": "1.0",
+                    "thread_id": request.thread_id,
+                    "action_message_id": request.action_message_id,
+                    "build_id": request.build_id,
+                    "host_context_id": context_id,
+                    "backend": "codex",
+                    "status": "completed",
+                    "exit_code": 0,
+                    "work_file_digests": {},
+                    "usage": {
+                        "input_tokens": 1,
+                        "cached_input_tokens": 0,
+                        "output_tokens": 1,
+                    },
+                })
+
+            def cancel(self, host_context_id):
+                raise AssertionError(host_context_id)
+
+        class FakeOperations:
+            def __init__(self, **kwargs):
+                del kwargs
+
+            def run(self, operations):
+                nonlocal operation_calls
+                operation_calls += 1
+                if operation_calls == 1:
+                    return {
+                        **initial_action,
+                        "result_rejection": {
+                            "repair_required": True,
+                            "error_code": "HOST_EVIDENCE_INVALID",
+                        },
+                    }
+                return {
+                    "message_id": "terminal-after-repair",
+                    "action": "done",
+                    "reason_code": "GOAL_ACHIEVED",
+                    "extensions": {"ae": {"execution_control": {
+                        "schema_version": "1.0",
+                        "disposition": "TERMINAL",
+                        "continuation_required": False,
+                        "yield_allowed": True,
+                        "allowed_stop_reasons": ["goal_achieved"],
+                        "reason_code": "GOAL_ACHIEVED",
+                    }}},
+                }
+
+        class FakeEvidence:
+            def __init__(self, *args, **kwargs):
+                del args, kwargs
+
+            def record_terminal(self, **kwargs):
+                del kwargs
+                return tmp_path / ".ae-state/reports/evidence.json"
+
+        monkeypatch.setattr(backends, "CodexInvocationBackend", FakeBackend)
+        monkeypatch.setattr(
+            supervisor_module, "MachineOperationExecutor", FakeOperations,
+        )
+        monkeypatch.setattr(
+            supervisor_module, "ProductEvidenceArtifactJournal", FakeEvidence,
+        )
+
+        result = runner.invoke(
+            main,
+            ["dev-loop", "--supervise", "--project-root", str(tmp_path)],
+            env={
+                "AE_HOST_PLATFORM": "codex",
+                "CODEX_THREAD_ID": "real-session-1",
+            },
+        )
+
+        assert result.exit_code == 0, result.output
+        assert contexts == ["fresh-context-1", "fresh-context-2"]
+        assert operation_calls == 2
+        assert _last_json_line(result.output)["message_id"] == (
+            "terminal-after-repair"
+        )
+        assert HostRunLeaseStore(tmp_path).load() is None
+
     def test_supervise_reports_stable_error_without_python_traceback(
         self, tmp_path, monkeypatch,
     ) -> None:
@@ -608,6 +722,7 @@ class TestMutexAndLegacy:
             ActionExecutionReceipt,
             HostInvocationProbe,
         )
+        from auto_engineering.host.runtime_driver import HostRunLeaseStore
 
         initialized = CliRunner().invoke(
             main,
@@ -660,7 +775,10 @@ class TestMutexAndLegacy:
         result = CliRunner().invoke(
             main,
             ["dev-loop", "--supervise", "--project-root", str(tmp_path)],
-            env={"AE_HOST_PLATFORM": "codex"},
+            env={
+                "AE_HOST_PLATFORM": "codex",
+                "CODEX_THREAD_ID": "failed-session-1",
+            },
         )
 
         assert result.exit_code != 0
@@ -673,6 +791,79 @@ class TestMutexAndLegacy:
         assert "`ERROR`" in report
         assert "HOST_OPERATION_FINALIZE_FAILED" in report
         assert "failed-context-1" in report
+        assert HostRunLeaseStore(tmp_path).load() is None
+
+    def test_supervise_normalizes_unexpected_host_exception(
+        self, tmp_path, monkeypatch,
+    ) -> None:
+        from auto_engineering.host import backends
+        from auto_engineering.host import supervisor as supervisor_module
+        from auto_engineering.host.invocation import (
+            ActionExecutionReceipt,
+            HostInvocationProbe,
+        )
+        from auto_engineering.host.runtime_driver import HostRunLeaseStore
+
+        initialized = CliRunner().invoke(
+            main,
+            ["dev-loop", "--init", "实现 X", "--project-root", str(tmp_path)],
+        )
+        assert initialized.exit_code == 0, initialized.output
+
+        class FakeBackend:
+            def __init__(self, **kwargs):
+                del kwargs
+
+            def probe(self):
+                return HostInvocationProbe.available("codex")
+
+            def execute(self, request):
+                return ActionExecutionReceipt.from_dict({
+                    "schema_version": "1.0",
+                    "thread_id": request.thread_id,
+                    "action_message_id": request.action_message_id,
+                    "build_id": request.build_id,
+                    "host_context_id": "unexpected-context-1",
+                    "backend": "codex",
+                    "status": "completed",
+                    "exit_code": 0,
+                    "work_file_digests": {},
+                    "usage": {
+                        "input_tokens": 1,
+                        "cached_input_tokens": 0,
+                        "output_tokens": 1,
+                    },
+                })
+
+            def cancel(self, host_context_id):
+                raise AssertionError(host_context_id)
+
+        class FailingOperations:
+            def __init__(self, **kwargs):
+                del kwargs
+
+            def run(self, operations):
+                del operations
+                raise RuntimeError("unexpected operation failure")
+
+        monkeypatch.setattr(backends, "CodexInvocationBackend", FakeBackend)
+        monkeypatch.setattr(
+            supervisor_module, "MachineOperationExecutor", FailingOperations,
+        )
+        result = CliRunner().invoke(
+            main,
+            ["dev-loop", "--supervise", "--project-root", str(tmp_path)],
+            env={
+                "AE_HOST_PLATFORM": "codex",
+                "CODEX_THREAD_ID": "unexpected-session-1",
+            },
+        )
+
+        assert result.exit_code != 0
+        assert "HOST_SUPERVISOR_PROTOCOL_ERROR" in result.output
+        assert "Traceback" not in result.output
+        assert list((tmp_path / ".ae-state/reports").glob("loop-stop-*.md"))
+        assert HostRunLeaseStore(tmp_path).load() is None
 
     def test_finalize_result_accepts_non_spawn_coordinator_payload(
         self, tmp_path

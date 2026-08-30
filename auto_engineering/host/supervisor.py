@@ -755,6 +755,11 @@ class ActionScopedProductDriver:
             on_failure=on_failure,
             on_receipt=self._receipt_sink,
         )
+        # Supervisor 只能在明确等待/终态时把控制交回外层宿主。若内部循环
+        # 因实现错误在 CONTINUE 上提前结束，必须稳定失败，不能让 lease 继续
+        # 指向一个没人执行的 Action。
+        if decide_host_step(current_action) is HostDriverDecision.EXECUTE_NEXT:
+            raise ActionExecutionContractError("HOST_SUPERVISOR_PROTOCOL_ERROR")
         return ActionScopedProductResult(supervisor, current_action)
 
 

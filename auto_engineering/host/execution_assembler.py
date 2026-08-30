@@ -1442,10 +1442,18 @@ class HostExecutionAssembler:
         coordinator_payload: Mapping[str, Any],
     ) -> list[str]:
         """在任何 evidence/journal 写入前拒绝跨 Action 陈旧业务字段。"""
-        expected = action.get("expected_format")
-        if not isinstance(expected, Mapping):
+        contract = action.get("result_contract")
+        if isinstance(contract, Mapping) and isinstance(
+            contract.get("properties"), Mapping
+        ):
+            allowed = {str(key) for key in contract["properties"]}
+        else:
+            expected = action.get("expected_format")
+            if not isinstance(expected, Mapping):
+                return []
+            allowed = {str(key) for key in expected}
+        if not allowed:
             return []
-        allowed = {str(key) for key in expected}
         return [
             f"COORDINATOR_FIELD_UNEXPECTED:{key}"
             for key in sorted(str(key) for key in coordinator_payload)

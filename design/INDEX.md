@@ -49,6 +49,7 @@
 | `incidents/2026-08-28-outcome-journal-conflict-stall.md` | 同一 Action 重复回执、Outcome Journal 冲突与 Supervisor 停滞事故 |
 | `incidents/2026-08-29-product-acceptance-boundary.md` | 终态验收边界、Gap 审批策略与浏览器能力预检 |
 | `incidents/2026-08-30-worker-empty-output.md` | Worker 无结构化产出、失败映射与自动重试闭环 |
+| `incidents/2026-08-30-supervisor-research-closure.md` | Supervisor 终态、Research 结果契约与纵向恢复闭环事故 |
 | `IMPLEMENTATION-TRACKER.md` | 当前任务状态、优先级与 EARS 验收 |
 | `HISTORY.md` | 历史里程碑与 Git 追溯入口 |
 
