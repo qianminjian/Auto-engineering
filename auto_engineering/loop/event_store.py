@@ -422,6 +422,8 @@ class SQLiteEventStore:
         with self._lock:
             self._ensure_open()
             stream = self._load_stream_unlocked(thread_id)
+            if not stream:
+                raise ValueError("PROJECTION_STREAM_EMPTY")
             state = EngineStateProjector().replay(stream)
             last = stream[-1]
             state_json = json.dumps(

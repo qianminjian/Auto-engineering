@@ -17,6 +17,7 @@ import importlib
 import json
 from pathlib import Path
 
+import pytest
 from click.testing import CliRunner
 
 from auto_engineering.cli import main
@@ -74,6 +75,295 @@ def test_worker_execution_identity_reuses_same_session_and_rotates_on_takeover(
     assert same_session["execution_generation"] == 1
     assert takeover["execution_generation"] == 2
     assert same_session["fencing_token"] != takeover["fencing_token"]
+
+
+def test_prepare_and_finalize_mapping_share_the_same_worker_artifact_generation(
+    tmp_path, monkeypatch
+) -> None:
+    """宿主发起和 Finalizer 必须指向同一代 Worker 私有产物。"""
+
+    from auto_engineering.cli.dev_loop import (
+        _map_bound_action_for_host,
+        _prepare_action_for_host,
+    )
+    from auto_engineering.engine.state import EngineState
+    from auto_engineering.loop.action_builder import ActionBuilder
+
+    monkeypatch.setenv("AE_HOST_PLATFORM", "codex")
+    monkeypatch.setenv("CODEX_THREAD_ID", "session-a")
+    action = ActionBuilder(tmp_path).build_action(EngineState(
+        thread_id="thread-manifest",
+        current_stage="architect",
+        requirement="实现确定性治理内核",
+    ))
+    action.update({
+        "message_id": "action-manifest",
+        "correlation_id": "thread-manifest",
+        "causation_id": "thread-manifest",
+        "capability_requirements": {},
+        "extensions": {
+            "ae": {
+                "execution_control": {
+                    "schema_version": "1.0",
+                    "disposition": "CONTINUE",
+                    "continuation_required": True,
+                    "yield_allowed": False,
+                    "allowed_stop_reasons": [],
+                },
+                "runtime": {"build_id": "build-manifest"},
+            }
+        },
+    })
+
+    prepared = _prepare_action_for_host(action, tmp_path, compact_view=False)
+    remapped = _map_bound_action_for_host(action, tmp_path)
+
+    prepared_worker = prepared["host_execution"]["workers"][0]
+    remapped_worker = remapped["host_execution"]["workers"][0]
+    assert prepared_worker["outcome_path"] == remapped_worker["outcome_path"]
+
+
+def test_cleanup_removes_generation_bound_worker_artifact(
+    tmp_path, monkeypatch
+) -> None:
+    """完成 Action 后不能遗留上一代私有 outcome 诱发下次误读。"""
+
+    from auto_engineering.cli.dev_loop import (
+        _cleanup_completed_action_work_files,
+        _prepare_action_for_host,
+    )
+    from auto_engineering.engine.state import EngineState
+    from auto_engineering.loop.action_builder import ActionBuilder
+
+    monkeypatch.setenv("AE_HOST_PLATFORM", "codex")
+    monkeypatch.setenv("CODEX_THREAD_ID", "session-cleanup")
+    action = ActionBuilder(tmp_path).build_action(EngineState(
+        thread_id="thread-cleanup",
+        current_stage="architect",
+        requirement="实现确定性治理内核",
+    ))
+    action.update({
+        "message_id": "action-cleanup",
+        "correlation_id": "thread-cleanup",
+        "causation_id": "thread-cleanup",
+        "capability_requirements": {},
+        "extensions": {
+            "ae": {
+                "execution_control": {
+                    "schema_version": "1.0",
+                    "disposition": "CONTINUE",
+                    "continuation_required": True,
+                    "yield_allowed": False,
+                    "allowed_stop_reasons": [],
+                },
+                "runtime": {"build_id": "build-cleanup"},
+            }
+        },
+    })
+    prepared = _prepare_action_for_host(action, tmp_path, compact_view=False)
+    private_path = tmp_path / prepared["host_execution"]["workers"][0]["outcome_path"]
+    private_path.parent.mkdir(parents=True, exist_ok=True)
+    private_path.write_text("{}", encoding="utf-8")
+    # 以生产规则计算 Action 工作目录，避免把测试绑定到具体哈希字面量。
+    import hashlib
+    work_dir = tmp_path / ".ae-state/host-runtime/work/" / hashlib.sha256(
+        b"action-cleanup"
+    ).hexdigest()[:24]
+    work_dir.mkdir(parents=True)
+    result_file = work_dir / "result.json"
+    result_file.write_text("{}", encoding="utf-8")
+
+    _cleanup_completed_action_work_files(
+        root=tmp_path,
+        result_file=result_file,
+        completed_action=action,
+        next_action={"message_id": "next-action"},
+    )
+
+    assert not private_path.exists()
+
+
+def test_status_uses_bound_host_mapping_for_active_action(tmp_path, monkeypatch) -> None:
+    """status 展示的宿主 Action 必须与实际执行合同使用同一映射入口。"""
+
+    from auto_engineering.cli import main
+    dev_loop_module = importlib.import_module("auto_engineering.cli.dev_loop")
+
+    initialized = CliRunner().invoke(
+        main,
+        ["dev-loop", "--init", "实现 X", "--project-root", str(tmp_path)],
+    )
+    assert initialized.exit_code == 0, initialized.output
+    calls = []
+
+    def spy(action, root):
+        calls.append((action, root))
+        return action
+
+    monkeypatch.setattr(dev_loop_module, "_map_bound_action_for_host", spy)
+    dev_loop_module.run_tick_status(tmp_path)
+
+    assert calls
+
+
+def test_active_action_rejects_event_and_checkpoint_identity_conflict() -> None:
+    """两份运行事实指向不同 Action 时必须 fail-closed。"""
+
+    from auto_engineering.cli.dev_loop import _load_active_action
+
+    class Store:
+        def load_active_protocol_action(self, thread_id):
+            return {"message_id": "checkpoint-action", "thread_id": thread_id}
+
+    class Events:
+        def load_action_snapshot(self, thread_id):
+            return {"message_id": "event-action", "thread_id": thread_id}
+
+    with pytest.raises(ValueError, match="STATE_SOURCE_CONFLICT"):
+        _load_active_action("thread-1", Store(), Events())
+
+
+def test_active_event_action_is_authoritative_without_checkpoint_splicing() -> None:
+    """EventStore 有 Action 时不得从 checkpoint 补宿主字段。"""
+
+    from auto_engineering.cli.dev_loop import _load_active_action
+
+    event_action = {"message_id": "same-action", "thread_id": "thread-1"}
+    checkpoint_action = {
+        "message_id": "same-action",
+        "thread_id": "thread-1",
+        "host_execution": {"work_files": {"result": "stale.json"}},
+    }
+
+    class Store:
+        def load_active_protocol_action(self, thread_id):
+            return checkpoint_action
+
+    class Events:
+        def load_action_snapshot(self, thread_id):
+            return event_action
+
+    assert _load_active_action("thread-1", Store(), Events()) == event_action
+
+
+def test_state_source_conflict_is_returned_as_protocol_error_action(
+    tmp_path, monkeypatch
+) -> None:
+    """状态源分叉必须让宿主拿到稳定错误，而不是 Python traceback。"""
+
+    from auto_engineering.cli import main
+    dev_loop_module = importlib.import_module("auto_engineering.cli.dev_loop")
+
+    initialized = CliRunner().invoke(
+        main,
+        ["dev-loop", "--init", "实现 X", "--project-root", str(tmp_path)],
+    )
+    assert initialized.exit_code == 0, initialized.output
+    monkeypatch.setattr(
+        dev_loop_module,
+        "_load_active_action",
+        lambda *_args: (_ for _ in ()).throw(ValueError("STATE_SOURCE_CONFLICT")),
+    )
+
+    result = CliRunner().invoke(
+        main,
+        ["dev-loop", "--tick", "--result", "missing.json", "--project-root", str(tmp_path)],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = _last_json_line(result.output)
+    assert payload["action"] == "error"
+    assert payload["error_code"] == "STATE_SOURCE_CONFLICT"
+    assert "Traceback" not in result.output
+
+
+def test_status_reports_recovery_required_on_state_source_conflict(
+    tmp_path, monkeypatch
+) -> None:
+    """status 在状态分叉时只读报告恢复要求，不制造新 Action。"""
+
+    from auto_engineering.cli import main
+    dev_loop_module = importlib.import_module("auto_engineering.cli.dev_loop")
+
+    initialized = CliRunner().invoke(
+        main,
+        ["dev-loop", "--init", "实现 X", "--project-root", str(tmp_path)],
+    )
+    assert initialized.exit_code == 0, initialized.output
+    monkeypatch.setattr(
+        dev_loop_module,
+        "_load_active_action",
+        lambda *_args: (_ for _ in ()).throw(ValueError("STATE_SOURCE_CONFLICT")),
+    )
+
+    result = CliRunner().invoke(
+        main,
+        ["dev-loop", "--status", "--project-root", str(tmp_path)],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = _last_json_line(result.output)
+    assert payload["active_action_error"] == "STATE_SOURCE_CONFLICT"
+    assert payload["recovery_required"] is True
+
+
+def test_finalize_stops_with_stable_error_on_state_source_conflict(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    """Finalizer 遇到状态分叉时不能消费任何宿主产物。"""
+
+    from auto_engineering.cli import main
+    from auto_engineering.cli.dev_loop import run_tick_finalize
+    dev_loop_module = importlib.import_module("auto_engineering.cli.dev_loop")
+
+    initialized = CliRunner().invoke(
+        main,
+        ["dev-loop", "--init", "实现 X", "--project-root", str(tmp_path)],
+    )
+    assert initialized.exit_code == 0, initialized.output
+    monkeypatch.setattr(
+        dev_loop_module,
+        "_load_active_action",
+        lambda *_args: (_ for _ in ()).throw(ValueError("STATE_SOURCE_CONFLICT")),
+    )
+
+    run_tick_finalize(
+        tmp_path / "outcomes.json",
+        tmp_path / "coordinator.json",
+        tmp_path,
+    )
+
+    payload = _last_json_line(capsys.readouterr().out)
+    assert payload["error_code"] == "STATE_SOURCE_CONFLICT"
+
+
+def test_supervisor_stops_with_stable_error_on_state_source_conflict(
+    tmp_path, monkeypatch
+) -> None:
+    """Supervisor 入口遇到状态分叉时必须显式停止且无 traceback。"""
+
+    from auto_engineering.cli import main
+    dev_loop_module = importlib.import_module("auto_engineering.cli.dev_loop")
+
+    initialized = CliRunner().invoke(
+        main,
+        ["dev-loop", "--init", "实现 X", "--project-root", str(tmp_path)],
+    )
+    assert initialized.exit_code == 0, initialized.output
+    monkeypatch.setattr(
+        dev_loop_module,
+        "_load_active_action",
+        lambda *_args: (_ for _ in ()).throw(ValueError("STATE_SOURCE_CONFLICT")),
+    )
+
+    result = CliRunner().invoke(
+        main,
+        ["dev-loop", "--supervise", "--project-root", str(tmp_path)],
+    )
+
+    assert result.exit_code != 0
+    assert "STATE_SOURCE_CONFLICT" in result.output
+    assert "Traceback" not in result.output
 
 
 class TestInitMode:

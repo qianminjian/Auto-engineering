@@ -3510,6 +3510,14 @@ class TickOrchestrator:
             self._pending_effect_receipts.clear()
             self._pending_effect_intents.clear()
         except BaseException:
+            # EventStore 回滚后，命名 JSON 产物也必须回滚；内容寻址 prompt
+            # 由 EffectExecutor 保留，供后续相同 Action 安全复用。
+            try:
+                EffectExecutor(self.project_root).discard(
+                    tuple(self._pending_effect_receipts)
+                )
+            except Exception:
+                _logger.debug("uncommitted effect cleanup failed", exc_info=True)
             restored = self._event_store.load_projection(self._state.thread_id)
             if restored is not None:
                 self._state = restored

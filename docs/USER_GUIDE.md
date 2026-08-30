@@ -80,8 +80,10 @@ ae-run dev-loop --resume
 
 ## 4. 项目前置条件
 
-目标项目需要 Init Engineering 生成 `.ae-state/init-manifest.json`。manifest 描述语言、
-源码与测试根、入口及工具约定。Auto-Engineering 只读消费；缺失时先完成 Init。
+目标项目不强制依赖 Init Engineering。Auto-Engineering 默认通过本地确定性探测和
+`ae.toml` 解析项目语言、源码/测试根和工具命令；已有 `.ae-state/init-manifest.json`
+时，仅作为只读兼容输入消费。空项目或无法识别项目能力时，`doctor` 会明确提示缺失项，
+不会把缺少 Init manifest 误报成安装失败。
 
 ## 5. 配置与运行状态
 

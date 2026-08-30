@@ -156,3 +156,22 @@ def test_release_includes_install_acceptance_runner() -> None:
     assert Path("scripts/install_acceptance.py") in REQUIRED_PATHS
     assert Path("bin/ae-run") in REQUIRED_PATHS
     assert Path("uv.lock") in REQUIRED_PATHS
+
+
+def test_documented_archive_acceptance_is_hermetic() -> None:
+    """验收命令必须显式使用受控 uv 缓存，避免启动即联网解析。"""
+
+    expected = '--wheel-cache "$(uv cache dir)"'
+    for relative in (
+        "AGENTS.md",
+        "CLAUDE.md",
+        "docs/EARS-v5.0.md",
+        "design/v5.7-Protocol-Kernel-PLAN.md",
+        "design/v5.8-Protocol-Kernel-Convergence-PLAN.md",
+    ):
+        content = (ROOT / relative).read_text(encoding="utf-8")
+        assert expected in content, relative
+
+    for relative in ("AGENTS.md", "CLAUDE.md"):
+        content = (ROOT / relative).read_text(encoding="utf-8")
+        assert "uv run python scripts/sync_agent_instructions.py" in content

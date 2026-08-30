@@ -1,7 +1,6 @@
 # Auto-Engineering BEACON
 > 创建：2026-06-24｜更新：2026-08-30｜阶段：P0-E2E 端到端产品闭环
 > 决策状态翻转（✅↔❌）或架构降级必须先获用户批准。
-
 ## 导航
 
 - 当前权威设计：[`v5.8-Main-Agent-Coordinator-Recovery-Design.md`](v5.8-Main-Agent-Coordinator-Recovery-Design.md)
@@ -69,11 +68,13 @@ Gate/Guardrail、五层验证、审计、v5.6 兼容迁移和双宿主验收。
 | D54 | Worker handle 只在当前宿主会话内有效；跨会话恢复只信任原子落盘 outcome，未落盘 Worker 以新执行身份安全重跑 | ✅ |
 | D55 | 预算默认 soft，不因 token、费用、Action/Tick 数或时长停机；旧 Supervisor 先旁路，双宿主 L4 通过后再退役 | ✅ |
 | D56 | 同时修订 D37 与 D50 的失败路由：wait 到期不是失败；明确失败只重试失败 Worker，资源/所有权不确定才 WAIT_RESOURCE；generation + fencing token 阻止迟到双写 | ✅ |
+| D57-D58 | 统一 generation 绑定映射入口；EventStore 是唯一新协议事实源，checkpoint 仅兼容回退且禁止拼接 | ✅ |
+| D59-D63 | Tick 回滚撤销未提交命名 JSON effect；验收 artifact 由事件/回执推导 machine_claims 并交叉校验；跟踪按证据层级分层；L2 必须经过公开 CLI 轨迹；损坏 receipt/空事件流在边界稳定 fail-closed | ✅ |
 ## 当前状态
 - `P0-E2E` 是唯一产品交付任务；既有 Phase/T、L1/L2、覆盖率和 archive 安装仅作支撑证据，不能替代 L4。
-- 上一候选 Build `5.8.0-rc.5+sha256.4f32a506f46b0f94` 仅作为历史 archive smoke 证据；当前提交已重新构建为 `5.8.0-rc.5+sha256.22fd1e001b8af13e`，自动回归为 2797 passed/1 skipped，覆盖率 90%，Codex/Claude archive smoke 均通过。真实产品 L3/L4 仍未执行，不得以 archive smoke 或自动测试替代。
-- Phase 85 已进入主控权纠偏实施：默认主控返回当前主 Agent，业务角色继续独立 Worker 化；Python Supervisor 仅保留旁路兼容。预算默认软约束，先跑通再优化。T609-T618 已完成实现、回归与独立归档验收，T619-T620 仍待真实双宿主 L3/L4 验收。
+- 上一候选 Build `5.8.0-rc.5+sha256.e468abf942637a66` 仅作为历史 archive smoke 证据；当前候选 Build `5.8.0-rc.5+sha256.d524ccba699dc023` 的自动回归为 2820 passed/1 skipped，覆盖率严格达到 90%。真实产品 L3/L4 仍未执行，不得以 archive smoke 或自动测试替代。
+- Phase 85 已进入主控权纠偏实施：默认主控返回当前主 Agent，业务角色继续独立 Worker 化；Python Supervisor 仅保留旁路兼容。预算默认软约束，先跑通再优化。T609-T618 已完成实现、回归与独立归档验收；D63 的损坏 receipt/空事件流 fail-closed 已补齐，T619-T620 仍待真实双宿主 L3/L4 验收。
 ## 待解决问题
-- 完成同一 Build 双宿主 L4 前保持发布阻断；T621 仅在双宿主通过后退役 Supervisor。当前 Build Identity 为 `5.8.0-rc.5+sha256.22fd1e001b8af13e`，仅有 archive smoke 证据。
+- 完成同一 Build 双宿主 L4 前保持发布阻断；当前工作树已通过 Action 产物代际、状态源冲突、effect 清理、machine claims、损坏 receipt/空事件流和 CLI 错误归一回归测试；真实 Codex/Claude L3/L4 仍未执行。
 ## 引用文件
-`design/v5.8-Main-Agent-Coordinator-Recovery-Design.md` · `design/BEACON-HIS.md` · `design/v5.8-Session-Decoupling-Design.md` · `design/v5.8-Session-Decoupling-PLAN.md` · `design/incidents/2026-07-29-claude-146-tick-long-run.md` · `design/IMPLEMENTATION-TRACKER.md` · `design/HISTORY.md`
+`design/v5.8-Main-Agent-Coordinator-Recovery-Design.md` · `design/BEACON-HIS.md` · `design/v5.8-Session-Decoupling-Design.md` · `design/v5.8-Session-Decoupling-PLAN.md` · `design/incidents/2026-07-29-claude-146-tick-long-run.md` · `design/incidents/2026-08-30-architecture-audit-remediation.md` · `design/IMPLEMENTATION-TRACKER.md` · `design/HISTORY.md`

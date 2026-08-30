@@ -82,6 +82,21 @@ def test_receipt_journal_rejects_non_finite_persisted_cost(tmp_path: Path) -> No
         ActionReceiptJournal(tmp_path).total_cost_usd("thread-1")
 
 
+def test_receipt_journal_rejects_invalid_tick_without_raw_value_error(tmp_path: Path) -> None:
+    from auto_engineering.host.supervisor import ProductEvidenceArtifactJournal
+
+    directory = tmp_path / ".ae-state/host-runtime/receipts"
+    directory.mkdir(parents=True)
+    (directory / "invalid-tick.json").write_text(
+        json.dumps({"thread_id": "thread-1", "tick": "bad"}),
+        encoding="utf-8",
+    )
+    with pytest.raises(ActionExecutionContractError, match="PRODUCT_RECEIPT_INVALID"):
+        ProductEvidenceArtifactJournal(
+            tmp_path, runtime_root=tmp_path
+        )._all_receipts("thread-1")
+
+
 def test_receipt_rejects_non_finite_usage_values() -> None:
     with pytest.raises(ValueError, match="ACTION_EXECUTION_USAGE_INVALID"):
         ActionExecutionReceipt.from_dict({

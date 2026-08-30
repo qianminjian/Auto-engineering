@@ -8,10 +8,31 @@ import pytest
 
 from scripts.product_acceptance import (
     ProductAcceptanceError,
+    _validate_machine_claims,
     evaluate_host_evidence,
     evaluate_product_evidence,
     evaluate_release_evidence,
 )
+
+
+def test_machine_claims_reject_outer_usage_declaration_drift() -> None:
+    artifact = {
+        "trajectory": {
+            "manual_protocol_repairs": 0,
+            "traceability_complete": True,
+        },
+        "machine_claims": {
+            "usage_status": "complete",
+            "unexpected_stops": 0,
+            "manual_protocol_repairs": 0,
+            "traceability_complete": True,
+        },
+    }
+    with pytest.raises(ProductAcceptanceError, match="EVIDENCE_MACHINE_CLAIMS_MISMATCH"):
+        _validate_machine_claims(
+            artifact,
+            {"usage_status": "incomplete", "unexpected_stops": 0},
+        )
 
 
 def test_l3_canary_engineering_baseline_is_explicit_and_versioned() -> None:

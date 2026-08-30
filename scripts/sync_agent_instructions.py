@@ -16,7 +16,7 @@ _ROOT = Path(__file__).resolve().parents[1]
 _TEMPLATE_RELATIVE = Path("agent-rules/instructions.md.tmpl")
 _GENERATED_HEADER = """<!--
 此文件由 agent-rules/ 公共模板与平台适配模板自动生成，请勿直接修改。
-修改模板后运行：python3 scripts/sync_agent_instructions.py
+修改模板后运行：uv run python scripts/sync_agent_instructions.py
 -->
 
 """

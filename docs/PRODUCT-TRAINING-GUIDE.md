@@ -29,7 +29,7 @@ ae-run dev-loop --init "需求"
 1. **跨宿主复用**：一套 Core、一套 schema、一套验证语义。
 2. **过程可恢复**：每个 Tick 独立进程，状态进入 SQLite checkpoint。
 3. **质量确定性**：Guardrail、Gate 与五层验证不是提示词承诺。
-4. **边界清晰**：Init Engineering 独立，本项目只消费 manifest。
+4. **边界清晰**：Init Engineering 独立；本项目默认本地探测，旧 manifest 仅作只读兼容输入。
 5. **可审计**：设计、配置、测试基线与 Release 报告都有唯一事实源。
 
 ## 4. Tick 生命周期
@@ -53,7 +53,7 @@ Agent 的“完成声明”不等于流程完成；只有 Core 接受 result、�
 
 ## 5. 标准演示
 
-1. 确认 `.ae-state/init-manifest.json` 存在。
+1. 确认项目存在可识别的源码、测试或 `ae.toml`；若有 `.ae-state/init-manifest.json`，仅核对其只读兼容状态。
 2. 运行 `ae-run doctor`，解释宿主、依赖和功能面板。
 3. 从宿主入口提交小需求。
 4. 展示 action/result 离散交互。

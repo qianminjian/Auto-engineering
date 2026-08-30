@@ -56,3 +56,15 @@ def test_current_loop_design_keeps_authoritative_contracts() -> None:
         "Release 验收",
     ):
         assert contract in design
+
+
+def test_user_guide_does_not_reintroduce_init_runtime_dependency() -> None:
+    guide = (ROOT / "docs/USER_GUIDE.md").read_text(encoding="utf-8")
+
+    assert "不强制依赖 Init Engineering" in guide
+    assert "缺少 Init manifest 误报成安装失败" in guide
+
+    for relative in ("AGENTS.md", "CLAUDE.md"):
+        generated = (ROOT / relative).read_text(encoding="utf-8")
+        assert "默认使用本地 ProjectProfile 探测" in generated
+        assert "运行时不强制依赖 Init 实现" in generated

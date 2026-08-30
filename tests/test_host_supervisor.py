@@ -211,6 +211,12 @@ def test_terminal_product_evidence_is_built_from_persisted_receipts(
     assert len({
         item["host_context_id"] for item in payload["action_receipts"]
     }) == 3
+    assert payload["machine_claims"] == {
+        "usage_status": "complete",
+        "unexpected_stops": 0,
+        "manual_protocol_repairs": 0,
+        "traceability_complete": True,
+    }
     assert "prompt" not in artifact.read_text(encoding="utf-8").lower()
 
 

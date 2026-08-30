@@ -7,7 +7,7 @@ import json
 import os
 import re
 import tempfile
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
@@ -105,6 +105,40 @@ class EffectExecutor:
             sha256=hashlib.sha256(encoded).hexdigest(),
             bytes=len(encoded),
         )
+
+    def discard(self, receipts: Iterable[EffectReceipt]) -> None:
+        """撤销尚未提交到 EventStore 的可变 JSON 产物。
+
+        内容寻址 prompt 是跨 Action 可复用的不可变事实，不能因一次事务失败
+        删除；命名 JSON（spawn proof 等）只在对应 Action 提交后才有意义，且
+        仅在内容摘要仍匹配时删除，避免误伤后续已覆盖的文件。
+        """
+
+        root = self.project_root / ".ae-state"
+        for receipt in receipts:
+            if receipt.kind != "json":
+                continue
+            relative = Path(receipt.relative_path)
+            if (
+                relative.is_absolute()
+                or ".." in relative.parts
+                or not relative.parts
+                or relative.parts[0] != ".ae-state"
+            ):
+                continue
+            path = (self.project_root / relative).resolve()
+            if root.resolve() not in path.parents:
+                continue
+            try:
+                if (
+                    path.is_file()
+                    and hashlib.sha256(path.read_bytes()).hexdigest()
+                    == receipt.sha256
+                ):
+                    path.unlink()
+            except OSError:
+                # 清理是 best effort；事务失败本身不能被二次清理异常覆盖。
+                continue
 
     @staticmethod
     def _atomic_write(path: Path, content: bytes) -> None:

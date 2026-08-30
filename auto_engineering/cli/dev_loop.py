@@ -122,6 +122,27 @@ def _cleanup_completed_action_work_files(
             (work_dir / name).unlink()
     # 严格 Worker 的私有产出不与 Action work_dir 同目录，按当前 Action
     # invocation 精确清理，避免下次运行误读旧 artifact 或无限积累。
+    private_paths: set[Path] = set()
+    try:
+        # 同一 Action 的宿主投影包含当前 generation 的私有 outcome 路径。
+        # cleanup 不能只依赖 canonical invocation.outcome_path，否则会遗留
+        # `-gN` 文件，下一次恢复可能读到已完成 Action 的旧事实。
+        mapped = _map_bound_action_for_host(dict(completed_action), root)
+        host_execution = mapped.get("host_execution")
+        workers = (
+            host_execution.get("workers")
+            if isinstance(host_execution, Mapping)
+            else None
+        )
+        if isinstance(workers, list):
+            private_paths.update(
+                _root_bound_path(Path(str(worker["outcome_path"])), root)
+                for worker in workers
+                if isinstance(worker, Mapping)
+                and isinstance(worker.get("outcome_path"), str)
+            )
+    except Exception:
+        _logger.debug("generation-bound worker artifact cleanup skipped", exc_info=True)
     try:
         from auto_engineering.host.spawn_contract import SpawnPlan
 
@@ -129,13 +150,14 @@ def _cleanup_completed_action_work_files(
         for invocation in plan.invocations:
             if invocation.outcome_path is None:
                 continue
-            private_path = _root_bound_path(Path(invocation.outcome_path), root)
-            if private_path.is_relative_to(root):
-                with suppress(FileNotFoundError):
-                    private_path.unlink()
+            private_paths.add(_root_bound_path(Path(invocation.outcome_path), root))
     except Exception:
         # 清理不是状态提交的一部分；旧/损坏 Action 保留未知文件供审计。
         _logger.debug("worker private artifact cleanup skipped", exc_info=True)
+    for private_path in private_paths:
+        if private_path.is_relative_to(root):
+            with suppress(FileNotFoundError):
+                private_path.unlink()
     # 未知文件不是本协议的清理目标；保留目录供审计。
     with suppress(OSError):
         work_dir.rmdir()
@@ -201,6 +223,16 @@ def _bind_worker_execution_identity(action: dict, root: Path) -> dict:
         message_id, session_id, generation
     )
     return bound
+
+
+def _map_bound_action_for_host(action: dict, root: Path) -> dict:
+    """以同一宿主会话身份绑定后再生成宿主投影。
+
+    Worker 私有产物路径包含 execution_generation。所有会再次读取 Action 的
+    CLI 阶段必须走这个入口，否则会把同一 Action 映射成不同代的文件合同。
+    """
+
+    return _map_action_for_host(_bind_worker_execution_identity(action, root))
 
 
 def _prepare_action_for_host(
@@ -533,6 +565,59 @@ def _active_thread(store: object) -> str | None:
     return getter() if callable(getter) else None
 
 
+def _load_active_action(
+    thread_id: str,
+    store: _ActiveThreadStore,
+    events: _ActiveThreadEvents,
+) -> dict | None:
+    """从唯一优先级读取 active Action，禁止拼接两份状态快照。
+
+    EventStore 是新协议的事实源；checkpoint 仅作为旧状态兼容回退。两者
+    同时存在且 message_id 不同，说明恢复状态已分叉，继续执行会把错误的
+    prompt、worker 文件或 causation 组合到一起，因此必须 fail-closed。
+    """
+
+    event_action = events.load_action_snapshot(thread_id)
+    checkpoint_loader = getattr(store, "load_active_protocol_action", None)
+    checkpoint_action = (
+        checkpoint_loader(thread_id) if callable(checkpoint_loader) else None
+    )
+    if isinstance(event_action, Mapping) and isinstance(checkpoint_action, Mapping):
+        event_id = event_action.get("message_id")
+        checkpoint_id = checkpoint_action.get("message_id")
+        if (
+            isinstance(event_id, str)
+            and isinstance(checkpoint_id, str)
+            and event_id
+            and checkpoint_id
+            and event_id != checkpoint_id
+        ):
+            raise ValueError("STATE_SOURCE_CONFLICT")
+    if isinstance(event_action, Mapping):
+        return dict(event_action)
+    if isinstance(checkpoint_action, Mapping):
+        return dict(checkpoint_action)
+    return None
+
+
+def _state_source_conflict_action(thread_id: str) -> dict[str, Any]:
+    """把状态源分叉投影成宿主可处理的协议错误。"""
+
+    from auto_engineering.loop.actions import ActionError
+    from auto_engineering.loop.protocol import action_envelope
+
+    return action_envelope(
+        ActionError(
+            error_code="STATE_SOURCE_CONFLICT",
+            message="事件与兼容 checkpoint 指向不同的活动 Action，已停止继续执行。",
+            suggestion="保留 .ae-state，核对事件日志后使用正确的恢复操作；不要手工拼接两份状态。",
+        ).to_dict(),
+        thread_id=thread_id,
+        tick=0,
+        stage=None,
+    )
+
+
 def _resume_operation(thread_id: str) -> dict[str, object]:
     """生成唯一的 active Action 恢复操作，禁止宿主推导命令。"""
 
@@ -595,10 +680,7 @@ def _resolve_active_thread_start(
             tick=0,
             stage=None,
         )
-    active_action = (
-        events.load_action_snapshot(thread_id)
-        or store.load_active_protocol_action(thread_id)
-    )
+    active_action = _load_active_action(thread_id, store, events)
     intent = InvocationIntent.from_design_doc(root, design_doc_path)
     resolution = ProjectProfileResolver((
         AeConfigProvider(),
@@ -929,12 +1011,25 @@ def run_tick_init(
     reserved_thread_id = str(uuid4())
     try:
         if design_doc_path:
-            existing_action = _resolve_active_thread_start(
-                root=root,
-                design_doc_path=design_doc_path,
-                store=store,
-                events=events,
-            )
+            try:
+                existing_action = _resolve_active_thread_start(
+                    root=root,
+                    design_doc_path=design_doc_path,
+                    store=store,
+                    events=events,
+                )
+            except ValueError as exc:
+                if str(exc) != "STATE_SOURCE_CONFLICT":
+                    raise
+                click.echo(
+                    json.dumps(
+                        _state_source_conflict_action(
+                            _active_thread(store) or reserved_thread_id
+                        ),
+                        ensure_ascii=False,
+                    )
+                )
+                return
             if existing_action is not None:
                 click.echo(json.dumps(_prepare_action_for_host(existing_action, root), ensure_ascii=False))
                 return
@@ -1031,13 +1126,22 @@ def run_tick_step(result_file: Path, root: Path,
             return
         inj = _build_injectables(root)
         active_thread = _active_thread(store)
-        completed_action = (
-            events.load_action_snapshot(active_thread)
-            if active_thread is not None
-            else None
-        )
-        if completed_action is None and active_thread is not None:
-            completed_action = store.load_active_protocol_action(active_thread)
+        try:
+            completed_action = (
+                _load_active_action(active_thread, store, events)
+                if active_thread is not None
+                else None
+            )
+        except ValueError as exc:
+            if str(exc) != "STATE_SOURCE_CONFLICT" or active_thread is None:
+                raise
+            click.echo(
+                json.dumps(
+                    _state_source_conflict_action(active_thread),
+                    ensure_ascii=False,
+                )
+            )
+            return
         use_events = (
             active_thread is not None
             and events.load_projection(active_thread) is not None
@@ -1382,12 +1486,21 @@ def run_tick_finalize(
         thread_id = _active_thread(store)
         if thread_id is None:
             raise click.ClickException("PROJECT_THREAD_NOT_ACTIVE")
-        action = events.load_action_snapshot(thread_id)
-        if action is None:
-            action = store.load_active_protocol_action(thread_id)
+        try:
+            action = _load_active_action(thread_id, store, events)
+        except ValueError as exc:
+            if str(exc) != "STATE_SOURCE_CONFLICT":
+                raise
+            click.echo(
+                json.dumps(
+                    _state_source_conflict_action(thread_id),
+                    ensure_ascii=False,
+                )
+            )
+            return
         if action is None:
             raise click.ClickException("ACTIVE_ACTION_MISSING")
-        mapped_action = _map_action_for_host(action)
+        mapped_action = _map_bound_action_for_host(action, root)
         outcomes_path = supplied_outcomes_file
         coordinator_path = supplied_coordinator_file
         result_path = supplied_output_file
@@ -1622,25 +1735,18 @@ def run_tick_status(root: Path, verbose: bool = False) -> None:
             # status 必须是纯读取；build_action() 可能提交新的 Action 事件，
             # 在查询阶段会制造 action_timestamp 投影冲突。只读取 EventStore
             # 已持久化的 Canonical Action，缺失时再读取兼容 checkpoint 快照。
-            active_action = events.load_action_snapshot(active_thread)
-            checkpoint_action = store.load_active_protocol_action(active_thread)
-            if (
-                isinstance(checkpoint_action, Mapping)
-                and not isinstance(
-                    active_action.get("host_execution")
-                    if isinstance(active_action, Mapping)
-                    else None,
-                    Mapping,
-                )
-            ):
-                # 旧 EventStore 快照可能只保存 Canonical 字段；宿主 work_files
-                # 仍从同一 active Action 的 checkpoint 投影读取，不能返回半份合同。
-                active_action = checkpoint_action
-            if active_action is None:
-                active_action = checkpoint_action
+            try:
+                active_action = _load_active_action(active_thread, store, events)
+            except ValueError as exc:
+                if str(exc) != "STATE_SOURCE_CONFLICT":
+                    raise
+                summary["active_action_error"] = "STATE_SOURCE_CONFLICT"
+                summary["recovery_required"] = True
+                click.echo(json.dumps(summary, ensure_ascii=False))
+                return
             if isinstance(active_action, Mapping):
                 summary["active_action"] = _status_action_summary(
-                    _map_action_for_host(dict(active_action))
+                    _map_bound_action_for_host(dict(active_action), root)
                 )
             else:
                 summary["active_action_error"] = "ACTIVE_ACTION_UNAVAILABLE"
@@ -1757,9 +1863,12 @@ def run_action_supervisor(root: Path) -> None:
         thread_id = _active_thread(store)
         if thread_id is None:
             raise click.ClickException("PROJECT_THREAD_NOT_ACTIVE")
-        canonical = events.load_action_snapshot(thread_id)
-        if canonical is None:
-            canonical = store.load_active_protocol_action(thread_id)
+        try:
+            canonical = _load_active_action(thread_id, store, events)
+        except ValueError as exc:
+            if str(exc) != "STATE_SOURCE_CONFLICT":
+                raise
+            raise click.ClickException("STATE_SOURCE_CONFLICT") from None
         if canonical is None:
             raise click.ClickException("ACTIVE_ACTION_MISSING")
         try:

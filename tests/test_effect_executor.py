@@ -91,3 +91,22 @@ def test_action_builder_reports_effect_receipts_without_embedding_them(tmp_path)
     assert receipts
     assert any("spawn-proofs" in item.relative_path for item in receipts)
     assert "effect_receipts" not in action.get("extensions", {}).get("ae", {})
+
+
+def test_discard_removes_only_uncommitted_named_json_artifacts(tmp_path) -> None:
+    executor = EffectExecutor(tmp_path)
+    proof = executor.execute(WriteJsonArtifact(
+        relative_path="spawn-proofs/proof-1.json",
+        payload={"token": "proof-1", "status": "pending"},
+    ))
+    prompt_text = "shared prompt"
+    prompt = executor.execute(WriteContentAddressedArtifact(
+        kind="prompt",
+        content=prompt_text,
+        sha256=hashlib.sha256(prompt_text.encode()).hexdigest(),
+    ))
+
+    executor.discard([proof, prompt])
+
+    assert not (tmp_path / proof.relative_path).exists()
+    assert (tmp_path / prompt.relative_path).read_text() == prompt_text

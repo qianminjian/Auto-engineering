@@ -159,6 +159,17 @@ class ProductEvidenceArtifactJournal:
             event in {"LoopFailed", "UnexpectedStop"}
             for event in event_types
         )
+        usage_complete = all(
+            isinstance(item.get("usage"), Mapping)
+            and all(
+                isinstance(item["usage"].get(key), (int, float))
+                and not isinstance(item["usage"].get(key), bool)
+                and math.isfinite(float(item["usage"].get(key)))
+                and float(item["usage"].get(key)) >= 0
+                for key in ("input_tokens", "cached_input_tokens", "output_tokens")
+            )
+            for item in attempts
+        )
         payload = {
             "schema_version": "1.1",
             "host": host,
@@ -185,6 +196,16 @@ class ProductEvidenceArtifactJournal:
                     set(event_types)
                 ),
                 "final_disposition": "TERMINAL",
+            },
+            # 由持久化回执和事件集合直接推导，供验收器校验外层声明，
+            # 避免把 semantic/usage/stop 结论完全交给调用者自报。
+            "machine_claims": {
+                "usage_status": "complete" if usage_complete else "incomplete",
+                "unexpected_stops": unexpected_stops,
+                "manual_protocol_repairs": manual_repairs,
+                "traceability_complete": self._REQUIRED_EVENTS.issubset(
+                    set(event_types)
+                ),
             },
             "action_receipts": receipts,
             "attempt_receipts": attempts,
@@ -239,11 +260,16 @@ class ProductEvidenceArtifactJournal:
             if not isinstance(value, dict):
                 raise ActionExecutionContractError("PRODUCT_RECEIPT_INVALID")
             if value.get("thread_id") == thread_id:
+                # 先校验排序字段，避免损坏 receipt 在 int() 处泄漏裸 ValueError。
+                tick = value.get("tick")
+                if (
+                    not isinstance(tick, int)
+                    or isinstance(tick, bool)
+                    or tick < 0
+                ):
+                    raise ActionExecutionContractError("PRODUCT_RECEIPT_INVALID")
                 records.append(value)
-        records.sort(key=lambda item: (
-            int(item.get("tick", -1)),
-            str(item.get("action_message_id")),
-        ))
+        records.sort(key=lambda item: (item["tick"], str(item.get("action_message_id"))))
         return records
 
     def _completed_receipts(self, thread_id: str) -> list[dict[str, Any]]:

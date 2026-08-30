@@ -1,6 +1,6 @@
 <!--
 此文件由 agent-rules/ 公共模板与平台适配模板自动生成，请勿直接修改。
-修改模板后运行：python3 scripts/sync_agent_instructions.py
+修改模板后运行：uv run python scripts/sync_agent_instructions.py
 -->
 
 # CLAUDE.md
@@ -12,7 +12,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - 公共规则编辑 `agent-rules/instructions.md.tmpl`，平台差异编辑对应的
   `agent-rules/claude.md.tmpl` 或 `agent-rules/codex.md.tmpl`。
 - 禁止直接编辑生成的 `CLAUDE.md` 和 `AGENTS.md`。
-- 修改模板后必须运行 `python3 scripts/sync_agent_instructions.py`，并用 `--check` 校验无漂移。
+- 修改模板后必须运行 `uv run python scripts/sync_agent_instructions.py`，并用 `--check` 校验无漂移。
 
 ## ⚠️ 硬禁令（2026-06-24 96GB 内存爆炸事故后确立）
 
@@ -47,7 +47,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - Auto-Engineering — Python CLI + Claude Code Plugin，Loop Engineering 调度脚手架
 - 入口命令：`ae <subcommand>`，核心流程：`ae dev-loop --init → --tick → --result`
-- Init Engineering 是独立项目，本项目通过 `.ae-state/init-manifest.json` 消费其产物
+- Init Engineering 是独立项目；本项目默认使用本地 ProjectProfile 探测，`.ae-state/init-manifest.json` 仅作可选兼容输入
 
 ## 关键设计文档
 
@@ -81,7 +81,7 @@ uv run pytest tests/ --cov=auto_engineering --cov-report=term-missing --timeout=
 
 # 发布与宿主验收
 python3 scripts/build_release.py --root . --output <release.tar.gz>
-python3 scripts/install_acceptance.py --archive <release.tar.gz> --host codex
+python3 scripts/install_acceptance.py --archive <release.tar.gz> --host codex --wheel-cache "$(uv cache dir)"
 ```
 
 ## atdo 开发过程基本要求（2026-06-30 用户确立）
@@ -118,7 +118,7 @@ python3 scripts/install_acceptance.py --archive <release.tar.gz> --host codex
 - tests/ 下测试，覆盖率 ≥ 90%（用户硬指标）
 - 测试基线只以 `pyproject.toml [tool.auto-engineering.baseline]` 为权威源
 - 参考源码（`$AE_REFS_DIR/`）为只读，不修改
-- Init Engineering 是独立项目——本项目通过 Init-Loop 接口契约（IL.1-IL.6）消费 Init 产物，不包含 Init 实现
+- Init Engineering 是独立项目——本项目通过 Init-Loop 接口契约（IL.1-IL.6）兼容消费 Init 产物，但运行时不强制依赖 Init 实现
 
 ## 编码约定
 

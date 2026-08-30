@@ -235,6 +235,35 @@ def _validate_attempt_receipts(
         contexts.add(context_id)
 
 
+def _validate_machine_claims(
+    artifact: dict[str, Any],
+    evidence: dict[str, Any],
+) -> None:
+    """校验 Journal 从事件/回执推导的事实，防止外层声明自相矛盾。
+
+    旧版 1.1 artifact 没有该字段时保持读取兼容；当前 Journal 会始终写入，
+    新生成的真实验收报告因此不能只修改调用者提供的摘要字段来伪造通过。
+    """
+
+    claims = artifact.get("machine_claims")
+    if claims is None:
+        return
+    if not isinstance(claims, dict):
+        raise ProductAcceptanceError("EVIDENCE_MACHINE_CLAIMS_INVALID")
+    trajectory = artifact.get("trajectory")
+    if not isinstance(trajectory, dict):
+        raise ProductAcceptanceError("EVIDENCE_MACHINE_CLAIMS_INVALID")
+    if (
+        claims.get("usage_status") != evidence.get("usage_status")
+        or claims.get("unexpected_stops") != evidence.get("unexpected_stops")
+        or claims.get("manual_protocol_repairs")
+        != trajectory.get("manual_protocol_repairs")
+        or claims.get("traceability_complete")
+        != trajectory.get("traceability_complete")
+    ):
+        raise ProductAcceptanceError("EVIDENCE_MACHINE_CLAIMS_MISMATCH")
+
+
 def _validate_terminal_acceptance_summary(terminal_action: dict[str, Any]) -> None:
     """终态必须携带 Core/产品验收边界，防止 done 被冒充发布完成。"""
     summary = terminal_action.get("acceptance_summary")
@@ -318,6 +347,7 @@ def evaluate_host_evidence(
     ):
         raise ProductAcceptanceError("EVIDENCE_ARTIFACT_CLAIMS_INVALID")
     _validate_terminal_acceptance_summary(terminal_action)
+    _validate_machine_claims(artifact_payload, evidence)
     _validate_attempt_receipts(artifact_payload, evidence)
     _validate_receipts(artifact_payload, evidence)
     return evaluate_product_evidence(evidence, evidence_root=root)

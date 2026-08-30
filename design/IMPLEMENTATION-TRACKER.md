@@ -41,31 +41,50 @@
 | 优先级 | ID | 风险 | 任务 | 状态 |
 |---:|---|:---:|---|:---:|
 | P0 | T603 | R4 | 保留 D13 授权争议并由 D53–D56 取代 | ✅ 已登记 |
-| P0 | T604 | R4 | 定版当前主 Agent 唯一 Coordinator 边界 | ✅ 已定版，待实现 |
-| P0 | T605 | R3 | 定版 Worker 所有权、liveness、generation 与 Artifact 恢复 | ✅ 已定版，待实现 |
-| P0 | T606 | R3 | 定版 Codex/Claude 宿主差异合同 | ✅ 已定版，待实现 |
-| P0 | T607 | R2 | 预算默认 soft、外部限流分离 | ✅ 已定版，待实现 |
-| P0 | T608 | R3 | Supervisor 先旁路后退役迁移合同 | ✅ 已定版，待实现 |
+| P0 | T604 | R4 | 定版当前主 Agent 唯一 Coordinator 边界 | ✅ 已定版 |
+| P0 | T605 | R3 | 定版 Worker 所有权、liveness、generation 与 Artifact 恢复 | ✅ 已定版 |
+| P0 | T606 | R3 | 定版 Codex/Claude 宿主差异合同 | ✅ 已定版 |
+| P0 | T607 | R2 | 预算默认 soft、外部限流分离 | ✅ 已定版 |
+| P0 | T608 | R3 | Supervisor 先旁路后退役迁移合同 | ✅ 已定版 |
 
 ### 恢复正确主链
 
 | 优先级 | ID | 风险 | 任务 | 核心验收 | 状态 |
 |---:|---|:---:|---|---|:---:|
-| P0 | T609 | R4 | Skill/Command 恢复主 Agent 持续 Action 循环 | 一次命令连续到合法退出，不默认调用 `--supervise` | ✅ L1 文档回归；L3/L4 待验收 |
-| P0 | T610 | R3 | 接入现有 work files、Collector、Finalizer、Journal 和机器 argv | 不回滚到手工拼装机器事实 | ✅ L1 既有链路回归；L2 待补 |
+| P0 | T609 | R4 | Skill/Command 恢复主 Agent 持续 Action 循环 | 一次命令连续到合法退出，不默认调用 `--supervise` | ◐ L1 通过；L3/L4 待验收 |
+| P0 | T610 | R3 | 接入现有 work files、Collector、Finalizer、Journal 和机器 argv | 不回滚到手工拼装机器事实 | ◐ L1 通过；L2/L3 待验收 |
 | P0 | T611 | R3 | 等待观察、liveness 探测和所有权不确定分流 | wait 不等于失败；无法确认终止时禁止并发重跑 | ◐ 等待语义已统一；L2/L3 待验收 |
-| P0 | T612 | R3 | Worker 私有 outcome 先行与有界主会话摘要 | Worker 先原子落盘，主 Agent 只保留引用、摘要和 handle | ✅ L1 合同回归；L3 待验收 |
+| P0 | T612 | R3 | Worker 私有 outcome 先行与有界主会话摘要 | Worker 先原子落盘，主 Agent 只保留引用、摘要和 handle | ◐ L1 通过；L3 待验收 |
 | P0 | T613 | R3 | OWNER_LOST、generation、lease 和 fencing 防双写 | Collector 只接受 active generation，旧结果只审计 | ◐ generation/fencing 已落地；跨会话 L2/L3 待验收 |
-| P0 | T614 | R3 | Coordinator-only repair 全链复用 | Assembler/Core 拒绝不重跑 Worker | ✅ 既有 L1 回归；L3 待验收 |
-| P0 | T615 | R2 | 删除默认预算硬停机 | 缺省/soft 模式只记录指标并继续 | ✅ L1 回归；显式 hard 兼容 |
+| P0 | T614 | R3 | Coordinator-only repair 全链复用 | Assembler/Core 拒绝不重跑 Worker | ◐ L1 通过；L3 待验收 |
+| P0 | T615 | R2 | 删除默认预算硬停机 | 缺省/soft 模式只记录指标并继续 | ◐ L1 通过；显式 hard 兼容，L3 待验收 |
 
 ### 真实验收与退役
 
 | 优先级 | ID | 风险 | 任务 | 核心验收 | 状态 |
 |---:|---|:---:|---|---|:---:|
-| P0 | T616 | R3 | 建立真实异步纵向宿主模拟器 | 第一次 wait 结束后 Worker 继续运行并最终推进 Tick | ✅ 真实子进程 wait→outcome→Collector→Finalizer→Core Tick 回归通过 |
-| P0 | T617 | R3 | 历史真跑事故回放矩阵 | 覆盖 wait、owner 丢失、迟到、重复、部分成功和 Core 拒绝 | ✅ 统一回放矩阵覆盖 6 类故障，均验证保留 active Action/拒绝旧事实/只修复 Coordinator |
-| P0 | T618 | R3 | 安装制品公开入口契约测试 | 不读取开发目录或 Canonical 私有状态 | ✅ 当前 Build 的 Codex/Claude archive smoke 均通过；真实产品安装仍由 T619/T620 验收 |
-| P0 | T619 | R3 | Codex L3/L4 单命令终态 | 覆盖多角色、wait、repair、零人工续接和 TERMINAL | ☐ 等待启动开发 |
-| P0 | T620 | R3 | Claude Code L3/L4 等价终态 | 不嵌套 `claude -p`，语义与 Codex 等价 | ☐ 等待启动开发 |
+| P0 | T616 | R3 | 建立真实异步纵向宿主模拟器 | 第一次 wait 结束后 Worker 继续运行并最终推进 Tick | ◐ `test_public_cli_async_worker_trajectory_uses_current_action_artifacts` 与异步子进程回归通过；真实宿主待验收 |
+| P0 | T617 | R3 | 历史真跑事故回放矩阵 | 覆盖 wait、owner 丢失、迟到、重复、部分成功和 Core 拒绝 | ◐ 回放矩阵通过；真实宿主待验收 |
+| P0 | T618 | R3 | 安装制品公开入口契约测试 | 当前候选 Build `5.8.0-rc.5+sha256.d524ccba699dc023` 的 Codex/Claude Code archive smoke 通过；真实产品安装待验收 | ◐ |
+| P0 | T619 | R3 | Codex L3/L4 单命令终态 | 覆盖多角色、wait、repair、零人工续接和 TERMINAL | ☐ 待真实验收 |
+| P0 | T620 | R3 | Claude Code L3/L4 等价终态 | 不嵌套 `claude -p`，语义与 Codex 等价 | ☐ 待真实验收 |
 | P1 | T621 | R3 | 双宿主通过后退役旧 Supervisor | T619–T620 通过后删除旧默认主控，永久保留历史设计 | ☐ 前置未满足 |
+
+## 2026-08-30 架构审计修复批次
+
+| 优先级 | ID | 风险 | 任务 | 验证证据 | 状态 |
+|---:|---|:---:|---|---|:---:|
+| P0 | T622 | R4 | 统一 Action generation 绑定映射入口，修复 prepare/finalize/status/cleanup 路径分叉 | `test_prepare_and_finalize_mapping_share_the_same_worker_artifact_generation`、`test_status_uses_bound_host_mapping_for_active_action`、`test_cleanup_removes_generation_bound_worker_artifact` | ✅ |
+| P0 | T623 | R4 | EventStore 优先且冲突 fail-closed，禁止 checkpoint 与事件快照拼接 | `test_active_action_rejects_event_and_checkpoint_identity_conflict`、`test_active_event_action_is_authoritative_without_checkpoint_splicing` | ✅ |
+| P1 | T624 | R3 | Tick 事务失败清理未提交命名 JSON effect，保留内容寻址 prompt | `test_discard_removes_only_uncommitted_named_json_artifacts` | ✅ |
+| P1 | T625 | R3 | 产品验收 artifact 增加 machine claims 并交叉校验外层声明 | `test_machine_claims_reject_outer_usage_declaration_drift`、产品证据回归 | ✅ |
+| P0 | T626 | R3 | EventStore/checkpoint 状态分叉在 init/tick/finalize/status/supervisor 入口统一归一为 `STATE_SOURCE_CONFLICT` 协议错误，禁止宿主收到 Python traceback | `test_state_source_conflict_is_returned_as_protocol_error_action`、`test_status_reports_recovery_required_on_state_source_conflict`、`test_finalize_stops_with_stable_error_on_state_source_conflict`、`test_supervisor_stops_with_stable_error_on_state_source_conflict`；全量 2820 passed/1 skipped，覆盖率严格 90% | ✅ |
+| P1 | T627 | R2 | 跟踪表状态必须与证据层级一致：L1/L2 或 archive smoke 不能标记为产品完成 | 本表将未完成真实 L3/L4 的任务统一标为 `◐/☐`，保持发布门禁可见 | ✅ |
+| P0 | T628 | R4 | L2 异步纵向测试必须经过公开 CLI，不得只调用 Adapter/Assembler/Core 内部接口 | `test_public_cli_async_worker_trajectory_uses_current_action_artifacts` 覆盖 init→异步 Worker→finalize→validate→tick；目标是防止单测绕过真实衔接 | ✅ |
+| P1 | T629 | R2 | 安装验收文档命令必须显式传入受控 wheel 缓存，避免启动即因 `HERMETIC_CACHE_REQUIRED` 失败 | `test_documented_archive_acceptance_is_hermetic`、双宿主 archive smoke 通过 | ✅ |
+| P1 | T630 | R2 | 规则同步命令统一使用项目锁定解释器，避免宿主 Python 版本导致 `tomllib` 等基础依赖缺失 | `test_documented_archive_acceptance_is_hermetic`、`sync_agent_instructions.py --check` 通过 | ✅ |
+| P1 | T631 | R3 | 用户指南必须与 D16 保持一致：Init Engineering 为可选兼容 Provider，不得作为运行时硬前置 | `test_user_guide_does_not_reintroduce_init_runtime_dependency`、ProjectProfile 无 manifest 回归 | ✅ |
+| P1 | T632 | R3 | 生成规则、EARS 基线和培训指南统一标注 Init manifest 为可选兼容输入，消除跨文档运行时口径冲突 | `test_user_guide_does_not_reintroduce_init_runtime_dependency`、规则同步检查、全量回归 | ✅ |
+| P1 | T633 | R3 | 损坏宿主 receipt 与空事件流恢复必须稳定 fail-closed，禁止裸 `ValueError/IndexError` 破坏诊断链 | `test_receipt_journal_rejects_invalid_tick_without_raw_value_error`、`test_rebuild_projection_rejects_empty_event_stream`、全量 2820 passed/1 skipped | ✅ |
+
+> 本批次全量回归：`2820 passed, 1 skipped`；真实双宿主 L3/L4 仍属于 T619/T620，未因自动测试通过而宣称发布。

@@ -25,6 +25,39 @@ def test_source_build_identity_changes_with_runtime_content(tmp_path: Path) -> N
     assert first.startswith("5.8.0-rc.5+source.sha256.")
 
 
+def test_packaged_build_identity_requires_matching_metadata(tmp_path: Path) -> None:
+    from auto_engineering import __version__
+    from auto_engineering.build_identity import _read_packaged_build_identity
+
+    package_root = tmp_path / "bundle" / "auto_engineering"
+    package_root.mkdir(parents=True)
+    (package_root.parent / "build-info.json").write_text(
+        __import__("json").dumps({
+            "build_id": "5.8.0-rc.5+sha256.test",
+            "version": __version__,
+            "content_sha256": "a" * 64,
+        }),
+        encoding="utf-8",
+    )
+
+    assert _read_packaged_build_identity(package_root) == (
+        "5.8.0-rc.5+sha256.test"
+    )
+
+
+def test_packaged_build_identity_rejects_invalid_metadata(tmp_path: Path) -> None:
+    from auto_engineering.build_identity import _read_packaged_build_identity
+
+    package_root = tmp_path / "bundle" / "auto_engineering"
+    package_root.mkdir(parents=True)
+    (package_root.parent / "build-info.json").write_text(
+        '{"build_id":"bad","version":"wrong","content_sha256":"bad"}',
+        encoding="utf-8",
+    )
+
+    assert _read_packaged_build_identity(package_root) is None
+
+
 def _revision(*, prompt: str = "prompt-a", build: str = "rc.5") -> RuntimeRevision:
     return RuntimeRevision(
         protocol_version="1.1",

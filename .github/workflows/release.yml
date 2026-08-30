@@ -26,7 +26,7 @@ jobs:
         run: uv sync --frozen --extra dev --extra otel
       - name: Full quality gate
         run: |
-          python3 scripts/sync_agent_instructions.py --check
+          uv run python scripts/sync_agent_instructions.py --check
           uv run python scripts/check_project_metadata.py
           uv run ruff check .
           uv run pytest tests/ --cov=auto_engineering --cov-report=term-missing --cov-fail-under=90 -q --timeout=120

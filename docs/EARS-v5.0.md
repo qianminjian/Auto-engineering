@@ -8,6 +8,10 @@
 
 > **诚实标注原则** (per Phase 11 constraints): PASS / PARTIAL / 缺 必须如实标记，禁止全部 PASS。
 
+> **当前口径说明（D16）**：本节 IL-AC-01 是 v5.0 历史兼容基线。当前 v5.8 运行时以本地
+> ProjectProfile 探测和 `ae.toml` 为默认输入，缺少 Init manifest 不再是运行时硬阻断；旧
+> manifest 仍按只读兼容契约验证。
+
 ---
 
 ## 1. v5.0 15 AC 状态表 (v5.0 §B18)
@@ -106,8 +110,8 @@ uv run pytest tests/ --no-cov --timeout=120 -q
 
 # 2. 双宿主 archive smoke（真实产品安装状态仍单独报告）
 python3 scripts/build_release.py --root . --output _scratch/release.tar.gz
-python3 scripts/install_acceptance.py --archive _scratch/release.tar.gz --host claude-code
-python3 scripts/install_acceptance.py --archive _scratch/release.tar.gz --host codex
+python3 scripts/install_acceptance.py --archive _scratch/release.tar.gz --host claude-code --wheel-cache "$(uv cache dir)"
+python3 scripts/install_acceptance.py --archive _scratch/release.tar.gz --host codex --wheel-cache "$(uv cache dir)"
 
 # 3. 环境自检
 uv run ae doctor
