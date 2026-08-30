@@ -3,6 +3,13 @@
 > 从 `design/BEACON.md` 设计决策 + 演进日志回溯关键变更。
 > 详细设计决策见 BEACON 决策表（93 项），本文件仅列里程碑级变更。
 
+## v5.8.0-rc.5 — 主 Agent 协调与宿主恢复收敛（2026-08-30）
+
+- 默认入口由当前主 Agent 连续协调 Action，Python Core 仅负责确定性协议、状态、门禁和审计；旧 Supervisor 保留为旁路兼容。
+- Worker 支持异步等待、私有 outcome、generation/fencing 防迟到双写，以及所有权不确定时的 `WAIT_RESOURCE` 分流。
+- 增加真实子进程纵向回归、六类历史故障回放矩阵和 Codex/Claude archive smoke 验收；全量测试 `2797 passed / 1 skipped`，覆盖率 90%。
+- 本候选仍未完成真实 Codex/Claude L3/L4，不能据此宣称正式发布。
+
 ---
 
 ## v5.6 — Tick-Based Discrete Invocation (2026-07)
