@@ -23,6 +23,30 @@ _HOST_ENV = {
 }
 
 
+def _acceptance_environment(host: str) -> dict[str, str]:
+    """构造归档 smoke 的宿主事实，不改变真实运行时门禁。"""
+
+    if host not in _HOST_ENV:
+        raise ValueError(f"未知宿主: {host}")
+    environment = os.environ.copy()
+    for key in (
+        "CLAUDE_CODE",
+        "CLAUDE_CODE_ENTRYPOINT",
+        "CLAUDE_CODE_SESSION_ID",
+        "CODEX_THREAD_ID",
+        "CODEX_SANDBOX",
+    ):
+        environment.pop(key, None)
+    host_key, host_value = _HOST_ENV[host]
+    environment[host_key] = host_value
+    # 真实 Claude Code 会话会注入稳定 session id；归档 smoke 必须显式模拟
+    # 该宿主事实，否则运行时应当正确地拒绝无主 CONTINUE Action。
+    if host == "claude-code":
+        environment["CLAUDE_CODE_SESSION_ID"] = "release-acceptance"
+    environment["AE_SKIP_CONFIG_CHECK"] = "1"
+    return environment
+
+
 def _safe_extract_archive(package: tarfile.TarFile, destination: Path) -> None:
     """兼容旧 Python 的安全 tar 解压，拒绝路径穿越和链接成员。"""
     resolved_destination = destination.resolve()
@@ -196,12 +220,7 @@ def accept_archive(
     if errors:
         raise RuntimeError("; ".join(errors))
 
-    environment = os.environ.copy()
-    for key in ("CLAUDE_CODE", "CLAUDE_CODE_ENTRYPOINT", "CODEX_THREAD_ID", "CODEX_SANDBOX"):
-        environment.pop(key, None)
-    host_key, host_value = _HOST_ENV[host]
-    environment[host_key] = host_value
-    environment["AE_SKIP_CONFIG_CHECK"] = "1"
+    environment = _acceptance_environment(host)
 
     plugin_root = (install_root / "plugins" / "auto-engineering").resolve()
     if not (plugin_root / "bin" / "ae-run").is_file():

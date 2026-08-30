@@ -133,6 +133,18 @@ def test_hermetic_sync_is_frozen_and_offline(tmp_path: Path, monkeypatch) -> Non
     assert commands[0][1]["env"]["UV_CACHE_DIR"] == str(cache.resolve())
 
 
+def test_archive_smoke_supplies_host_session_identity() -> None:
+    """Claude 归档验收必须模拟真实宿主会话，否则 Lease 应拒绝执行。"""
+
+    from scripts import install_acceptance
+
+    claude = install_acceptance._acceptance_environment("claude-code")
+    codex = install_acceptance._acceptance_environment("codex")
+    assert claude["CLAUDE_CODE"] == "1"
+    assert claude["CLAUDE_CODE_SESSION_ID"] == "release-acceptance"
+    assert codex["CODEX_THREAD_ID"] == "release-acceptance"
+
+
 def test_safe_extract_archive_extracts_regular_member(tmp_path: Path) -> None:
     from scripts.install_acceptance import _safe_extract_archive
 

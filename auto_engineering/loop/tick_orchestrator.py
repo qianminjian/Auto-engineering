@@ -1116,6 +1116,20 @@ class TickOrchestrator:
         if (
             self._state.current_stage in _SPAWN_CONFIG
             and result.get("spawned") is False
+            and result.get("spawn_error_code") == "HOST_WORKER_OWNER_LOST"
+        ):
+            return {
+                "action": "resource_wait",
+                "stage": self._state.current_stage,
+                "resource": "worker_ownership",
+                "retry_stage": self._state.current_stage,
+                "reason_code": "HOST_WORKER_OWNER_LOST",
+                "message": "宿主无法确认旧 Worker 所有权；保留当前 Action，禁止并发重跑。",
+                "suggestion": "先确认旧 Worker 已终止；确认后再按同一 active Action 恢复。",
+            }
+        if (
+            self._state.current_stage in _SPAWN_CONFIG
+            and result.get("spawned") is False
             and result.get("spawn_error_code") == "HOST_WORKER_TIMEOUT"
         ):
             retry_attempt = result.get("spawn_retry_attempt", 1)
@@ -1700,6 +1714,7 @@ class TickOrchestrator:
             if spawn_error_code not in {
                 "HOST_AGENT_CAPACITY",
                 "HOST_CAPABILITY_UNAVAILABLE",
+                "HOST_WORKER_OWNER_LOST",
                 "HOST_WORKER_TIMEOUT",
                 "HOST_WORKER_FAILED",
             }:

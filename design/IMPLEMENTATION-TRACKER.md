@@ -63,9 +63,9 @@
 
 | 优先级 | ID | 风险 | 任务 | 核心验收 | 状态 |
 |---:|---|:---:|---|---|:---:|
-| P0 | T616 | R3 | 建立真实异步纵向宿主模拟器 | 第一次 wait 结束后 Worker 继续运行并最终推进 Tick | ◐ 已加入真实异步进程回归；完整纵向 Tick 待补 |
-| P0 | T617 | R3 | 历史真跑事故回放矩阵 | 覆盖 wait、owner 丢失、迟到、重复、部分成功和 Core 拒绝 | ◐ wait/迟到/重复已有回归；完整事故矩阵待补 |
-| P0 | T618 | R3 | 安装制品公开入口契约测试 | 不读取开发目录或 Canonical 私有状态 | ☐ 等待启动开发 |
+| P0 | T616 | R3 | 建立真实异步纵向宿主模拟器 | 第一次 wait 结束后 Worker 继续运行并最终推进 Tick | ✅ 真实子进程 wait→outcome→Collector→Finalizer→Core Tick 回归通过 |
+| P0 | T617 | R3 | 历史真跑事故回放矩阵 | 覆盖 wait、owner 丢失、迟到、重复、部分成功和 Core 拒绝 | ✅ 统一回放矩阵覆盖 6 类故障，均验证保留 active Action/拒绝旧事实/只修复 Coordinator |
+| P0 | T618 | R3 | 安装制品公开入口契约测试 | 不读取开发目录或 Canonical 私有状态 | ✅ 当前 Build 的 Codex/Claude archive smoke 均通过；真实产品安装仍由 T619/T620 验收 |
 | P0 | T619 | R3 | Codex L3/L4 单命令终态 | 覆盖多角色、wait、repair、零人工续接和 TERMINAL | ☐ 等待启动开发 |
 | P0 | T620 | R3 | Claude Code L3/L4 等价终态 | 不嵌套 `claude -p`，语义与 Codex 等价 | ☐ 等待启动开发 |
 | P1 | T621 | R3 | 双宿主通过后退役旧 Supervisor | T619–T620 通过后删除旧默认主控，永久保留历史设计 | ☐ 前置未满足 |
