@@ -74,6 +74,10 @@ def test_launcher_forbids_identity_and_result_wrappers(tmp_path: Path) -> None:
     assert "必须把业务 JSON 原子写入" in prompt
     assert 'outcomes 的 JSON object，例如：{"outcomes":[{' in prompt
     assert "不得写顶层数组、单个 outcome 或字符串化 JSON" in prompt
+    assert "业务产物只能包含 worker_id、status、payload、summary 四类字段" in prompt
+    assert "不得写 native_worker_handle、actual_model、isolation_evidence" in prompt
+    assert "若宿主无法提供实际隔离证据，必须报告失败" in prompt
+    assert "--isolation-evidence <evidence>" in prompt
     assert "绝不写 request.work_files.result" in prompt
     assert "spawn_permitted=false" in prompt
     assert "不得重新启动 Worker" in prompt

@@ -140,10 +140,12 @@ Coordinator 不得先读取、`sed`、复制、总结或重新拼接 `prompt_ref
              Action 并进入 `WAIT_RESOURCE/WORKER_OWNERSHIP_UNCERTAIN`。
          read action.host_execution.work_files and use only these Action-scoped paths;
              不得复用上一 Action 的文件
-         write only native WorkerOutcome facts to work_files.outcomes, including the selected
-             tool family's isolation_evidence (`fork_turns=none` or `fork_context=false`)
-             and actual_model reported by the native API; if unavailable use exact `unreported`,
-             never null and never infer a model name
+             Worker 只写业务产物（`worker_id/status/payload/summary`）到 invocation.outcome_path；
+             不得写 native handle、model、隔离证据或共享 outcomes。每个 Worker 返回后，主 Agent
+             必须按 `action.host_execution.workers[i].record_worker_outcome` 的
+             `argv_template` 和 `runtime_arguments` 原样调用 `--record-worker-outcome`；
+             只允许把原生 API 返回的 status/handle/model/isolation 填入占位值，不能自行
+             改 Worker ID、project-root 或参数顺序。Assembler 再从原生返回值补齐宿主事实并原子合并 outcomes。
          copy `execution_generation` and `fencing_token` from the Worker launch contract unchanged;
              if either is missing or mismatched, do not guess and do not submit the outcome
          if a worker is explicitly reported failed/timed_out by the native host:
@@ -218,6 +220,8 @@ ae-run dev-loop --init \
 | `ae-run dev-loop --validate-result <file>` | 无副作用 Result 预校验 |
 | `ae-run dev-loop --finalize-result <payload> --output-result <result>` | 非 spawn Action 原子生成完整 Result |
 | `ae-run dev-loop --finalize-result <outcomes> --coordinator-result <payload> --output-result <result>` | spawn Action 原子生成证明与完整 Result |
+| `action.host_execution.workers[i].record_worker_outcome` | 逐 Worker 的固定回写命令模板；宿主只填原生 status/handle/model/isolation |
+| `ae-run dev-loop --record-worker-outcome --worker-id <id> --worker-status <status> ...` | 按模板将 Worker 业务产物与宿主原生事实合并到当前 Action outcomes |
 | `ae-run dev-loop --tick --result <file>` | 下一个 action JSON |
 | `ae-run dev-loop --status --format json` | 状态 JSON |
 | `ae-run dev-loop --resume <id>` | 恢复后的 action JSON |
@@ -242,8 +246,9 @@ ae-run dev-loop --init \
    原子终结，宿主和 Worker 都不得手工写共享 proof。
 6. 能力不足时，报告 `HOST_CAPABILITY_UNAVAILABLE` 并停止，不得 inline 替代
    强制 spawn，也不得把 `"spawned"` 伪造为 true。
-7. 按 `action.expected_format` 提取业务字段到 `coordinator-result.json`，
-   原生执行事实写入 `outcomes.json`，再调用 `--finalize-result`。
+7. 按 `action.expected_format` 提取业务字段到 `coordinator-result.json`；每个原生 Worker
+   返回后先调用 `--record-worker-outcome`，由 Assembler 写入 `outcomes.json`，再调用
+   `--finalize-result`。不得手工编辑共享 outcomes。
    `action.result_contract` 是机器类型事实源：数组和对象必须写为原生 JSON，禁止再次
    序列化成字符串。Backend/Finalizer 只会对合法 JSON 字符串执行一次确定性恢复；
    解码后仍不匹配时以 `HOST_ACTION_OUTPUT_INVALID` fail-closed，不得手工绕过。

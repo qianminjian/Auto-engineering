@@ -229,9 +229,31 @@ def test_adapter_materializes_strict_worker_evidence_templates(
         assert execution["attestation"]["prompt_sha256"] == invocation["prompt_sha256"]
         assert execution["attestation"]["isolation_evidence"] == isolation
         assert execution["expected_isolation_evidence"] == isolation
+        bridge = execution["record_worker_outcome"]
+        assert bridge["schema_version"] == "1.0"
+        assert bridge["argv_template"][:6] == [
+            "__AE_BUNDLED_RUNNER__", "dev-loop", "--record-worker-outcome",
+            "--worker-id", invocation["worker_id"], "--worker-status",
+        ]
+        assert bridge["argv_template"][-2:] == [
+            "--project-root", action["project_root"],
+        ]
+        assert bridge["runtime_arguments"] == {
+            "worker_status": "--worker-status",
+            "native_worker_handle": "--native-worker-handle",
+            "actual_model": "--actual-model",
+            "isolation_evidence": "--isolation-evidence",
+        }
+        assert bridge["required_when_completed"] == [
+            "native_worker_handle", "isolation_evidence",
+        ]
         assert execution["execution_generation"] == 1
         assert len(execution["fencing_token"]) == 64
         assert '"execution_generation":1' in execution["native_launch_prompt"]
+        assert (
+            f'"worker_id":"{invocation["worker_id"]}"'
+            in execution["native_launch_prompt"]
+        )
         assert execution["fencing_token"] in execution["native_launch_prompt"]
         assert len(execution["attestation"]["visible_capabilities_sha256"]) == 64
         launcher = execution["native_launch_prompt"]
@@ -246,6 +268,55 @@ def test_adapter_materializes_strict_worker_evidence_templates(
         assert launch_contract["may_spawn_workers"] is False
         assert launch_contract["required_isolation_evidence"] == isolation
         assert len(launcher.encode("utf-8")) < 1024
+
+
+def test_generation_mapping_rewrites_invocation_and_host_template_to_one_path(
+    tmp_path,
+) -> None:
+    from auto_engineering.host import HostPlatform
+    from auto_engineering.host.adapters import adapter_for
+    from auto_engineering.host.path_contract import worker_outcome_path
+
+    action = {
+        "action": "architect",
+        "stage": "architect",
+        "message_id": "path-contract-action",
+        "thread_id": "thread-path-contract",
+        "tick": 1,
+        "project_root": str(tmp_path),
+        "execution_generation": 3,
+        "spawn": {
+            "contract_version": "1.0",
+            "count": 1,
+            "parallel": False,
+            "effort": "xhigh",
+            "invocations": [{
+                "worker_id": "architect-0",
+                "role": "architect",
+                "prompt_ref": ".ae-state/effects/prompt/a.txt",
+                "prompt_sha256": "a" * 64,
+                "requested_effort": "xhigh",
+                "isolation": "fresh_context",
+                "capabilities": {
+                    "may_drive_loop": False,
+                    "may_spawn_workers": False,
+                },
+                "receipt_path": ".ae-state/spawn-proofs/a.json",
+                "outcome_path": ".ae-state/host-runtime/worker-outcomes/old.json",
+            }],
+        },
+    }
+    adapter = adapter_for(HostPlatform.CODEX)
+    mapped = adapter.map_action(
+        action,
+        profile=adapter.profile(
+            detected=adapter.capabilities,
+            authorized=adapter.capabilities,
+        ),
+    ).payload
+    expected = worker_outcome_path("path-contract-action", "architect-0", 3)
+    assert mapped["spawn"]["invocations"][0]["outcome_path"] == expected
+    assert mapped["host_execution"]["workers"][0]["outcome_path"] == expected
 
 
 @pytest.mark.parametrize("platform_name", ["CODEX", "CLAUDE_CODE"])

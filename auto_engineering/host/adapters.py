@@ -20,6 +20,7 @@ from auto_engineering.host import (
     usage_source_for,
 )
 from auto_engineering.host.codex_hooks import normalize_codex_event
+from auto_engineering.host.path_contract import worker_outcome_path
 from auto_engineering.host.profile import HostProfile
 
 _EVENT_NAMES = {
@@ -63,20 +64,10 @@ def _worker_fencing_token(
     ).hexdigest()
 
 
-def _worker_outcome_path_for_generation(
-    action_key: str,
-    worker_id: str,
-    execution_generation: int,
-) -> str:
-    return _worker_outcome_path(
-        action_key,
-        f"{worker_id}-g{execution_generation}",
-    )
-
-
 def _native_worker_launch_prompt(
     *,
     project_root: str,
+    worker_id: str,
     prompt_ref: str,
     prompt_sha256: str,
     outcome_path: str,
@@ -89,6 +80,7 @@ def _native_worker_launch_prompt(
     contract = {
         "schema_version": "1.0",
         "project_root": project_root,
+        "worker_id": worker_id,
         "prompt_ref": prompt_ref,
         "prompt_sha256": prompt_sha256,
         "outcome_path": outcome_path,
@@ -100,10 +92,10 @@ def _native_worker_launch_prompt(
     }
     return (
         "AUTO_ENGINEERING_NATIVE_WORKER_LAUNCH_V1\n"
-        "切换 project_root，校验 prompt_ref 的 SHA-256 后执行；不得驱动 Loop 或创建子代理。"
-        "只返回结构化字段和短摘要；不得返回完整 diff、日志或报告正文。"
-        "必须把 WorkerOutcome 原子写入 outcome_path；不得写共享文件。"
-        "共享文件必须是原生 JSON object {\"outcomes\":[...]}，不得写顶层数组或字符串化 JSON。\n"
+        "校验 root/hash；禁 Loop/agents。Worker 原子写 outcome_path，仅含 worker_id/status/"
+        "payload/summary；禁 handle/model/isolation/attestation/receipt/共享文件。Host 从 API"
+        "补宿主事实；不得返回完整 diff、日志或报告正文。outcomes 必须 object {\"outcomes\":[...]}，"
+        "不得写顶层数组或字符串化 JSON。\n"
         + json.dumps(contract, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     )
 
@@ -202,7 +194,10 @@ class _Adapter2Mixin:
             and isinstance(spawn, Mapping)
             and isinstance(spawn.get("invocations"), list)
         ):
-            from auto_engineering.host.spawn_contract import SpawnPlan
+            from auto_engineering.host.spawn_contract import (
+                SpawnPlan,
+                WorkerInvocationSpec,
+            )
             from auto_engineering.host.worker_attestation import attestation_template
 
             if project_root is None:
@@ -219,44 +214,54 @@ class _Adapter2Mixin:
                 raise ValueError("HOST_ACTION_EXECUTION_GENERATION_INVALID")
             execution_generation = raw_generation
             generation_bound_paths = "execution_generation" in action
+            if generation_bound_paths:
+                # generation 绑定后，映射视图中的 invocation 也必须改成同一
+                # canonical 路径；否则 launch prompt 与 Collector 会各读一处。
+                mapped_spawn = dict(spawn)
+                mapped_spawn["invocations"] = [
+                    {
+                        **invocation.to_dict(),
+                        "outcome_path": worker_outcome_path(
+                            message_id,
+                            invocation.worker_id,
+                            execution_generation,
+                        ),
+                    }
+                    for invocation in plan.invocations
+                ]
+                mapped_payload["spawn"] = mapped_spawn
+                plan = SpawnPlan.from_action(mapped_payload)
+
             expected_isolation = {
                 HostPlatform.CODEX: "fork_turns=none",
                 HostPlatform.CLAUDE_CODE: "fresh_context",
             }[self.platform]
+            def resolved_outcome_path(invocation: WorkerInvocationSpec) -> str:
+                worker_id = invocation.worker_id
+                if generation_bound_paths:
+                    return worker_outcome_path(
+                        message_id, worker_id, execution_generation
+                    )
+                explicit = invocation.outcome_path
+                return explicit or _worker_outcome_path(action_key, worker_id)
+
             host_execution["workers"] = [
                 {
                     "worker_id": invocation.worker_id,
                     "native_worker_handle": None,
                     "prompt_ref": invocation.prompt_ref,
                     "prompt_sha256": invocation.prompt_sha256,
-                    "outcome_path": (
-                        _worker_outcome_path_for_generation(
-                            action_key,
-                            invocation.worker_id,
-                            execution_generation,
-                        )
-                        if generation_bound_paths
-                        else invocation.outcome_path
-                        or _worker_outcome_path(action_key, invocation.worker_id)
-                    ),
+                    "outcome_path": resolved_outcome_path(invocation),
                     "execution_generation": execution_generation,
                     "fencing_token": _worker_fencing_token(
                         message_id, invocation.worker_id, execution_generation
                     ),
                     "native_launch_prompt": _native_worker_launch_prompt(
                         project_root=project_root,
+                        worker_id=invocation.worker_id,
                         prompt_ref=invocation.prompt_ref,
                         prompt_sha256=invocation.prompt_sha256,
-                        outcome_path=(
-                            _worker_outcome_path_for_generation(
-                                action_key,
-                                invocation.worker_id,
-                                execution_generation,
-                            )
-                            if generation_bound_paths
-                            else invocation.outcome_path
-                            or _worker_outcome_path(action_key, invocation.worker_id)
-                        ),
+                        outcome_path=resolved_outcome_path(invocation),
                         required_isolation_evidence=expected_isolation,
                         execution_generation=execution_generation,
                         fencing_token=_worker_fencing_token(
@@ -277,6 +282,43 @@ class _Adapter2Mixin:
                         action_message_id=message_id,
                         invocation=invocation,
                     ),
+                    # Worker 返回后的宿主事实回写也必须有机器合同。状态、句柄、
+                    # 模型和隔离证据来自原生 API；宿主只能替换占位值，不能自行
+                    # 重新发明命令、Worker ID 或项目根路径。
+                    "record_worker_outcome": {
+                        "schema_version": "1.0",
+                        "argv_template": [
+                            "__AE_BUNDLED_RUNNER__",
+                            "dev-loop",
+                            "--record-worker-outcome",
+                            "--worker-id",
+                            invocation.worker_id,
+                            "--worker-status",
+                            "__WORKER_STATUS__",
+                            "--actual-model",
+                            "__ACTUAL_MODEL__",
+                            "--project-root",
+                            project_root,
+                        ],
+                        "runtime_arguments": {
+                            "worker_status": "--worker-status",
+                            "native_worker_handle": "--native-worker-handle",
+                            "actual_model": "--actual-model",
+                            "isolation_evidence": "--isolation-evidence",
+                        },
+                        "required_runtime_fields": [
+                            "worker_status",
+                            "actual_model",
+                        ],
+                        "required_when_completed": [
+                            "native_worker_handle",
+                            "isolation_evidence",
+                        ],
+                        "optional_when_failed": [
+                            "native_worker_handle",
+                            "isolation_evidence",
+                        ],
+                    },
                 }
                 for invocation in plan.invocations
             ]

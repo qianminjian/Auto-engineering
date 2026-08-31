@@ -248,13 +248,19 @@ validate、tick、status、resume）都必须显式附加
 4. 每个 Action 只使用 `action.host_execution.work_files` 给出的三个绝对绑定工作文件
    （相对 `action.project_root`）：`outcomes`、`coordinator_result`、`result`。这些路径由
    `message_id` 的安全摘要隔离；不得改回根目录固定文件，也不得复用上一 Action 的文件。
-5. Worker 完成后，Coordinator 只把原生事实写入当前 Action 的 `work_files.outcomes`：
-   `worker_id`、`native_worker_handle`、`status`、`payload`、`summary`、
-   `actual_model` 和所选工具族的 `isolation_evidence`（`fork_turns=none` 或
-   `fork_context=false`）。`actual_model` 使用原生 API 报告值；若 API 不暴露模型标识，
-   必须写稳定值 `unreported`，不得填 `null` 或猜测模型名。Worker 不得写 receipt、attestation、challenge 或 total proof
-   （workers must not write the shared total proof）。同时必须原样复制启动契约中的
-   `execution_generation` 与 `fencing_token`；任一缺失或不匹配时不得猜测、不得提交 outcome。
+5. Worker 完成后，只能把业务产物原子写入自己的 `invocation.outcome_path`，字段严格为
+   `worker_id`、`status`、`payload`、`summary`；不得写 `native_worker_handle`、
+   `actual_model`、`isolation_evidence`、receipt、attestation、challenge、total proof
+   或任何 Core 身份（workers must not write the shared total proof）。Host Driver 必须从原生 API 取得句柄、实际模型（不暴露时为
+   `unreported`）、调用状态和隔离证据，再由 Collector 合并成当前 Action 的
+   `work_files.outcomes`。共享 outcomes 必须是 `{"outcomes":[...]}`；不得让 Worker 猜测、
+   复制 `spawn.invocations[].isolation` 或伪造宿主事实。Host Driver 同时必须原样复制启动
+   契约中的 `execution_generation` 与 `fencing_token`；任一缺失或不匹配时不得提交 outcome。
+   主 Agent 不得手写共享 outcomes；每个 Worker 返回后必须按
+   `action.host_execution.workers[i].record_worker_outcome.argv_template` 和
+   `runtime_arguments` 原样调用 `--record-worker-outcome`。只允许填入原生 API
+   返回的 status、handle、model、isolation；不得改 Worker ID、project-root、参数顺序
+   或自行创建另一条回写命令，再执行 `operations.finalize/validate/submit`。
 6. 全部 Worker completed 时，Coordinator 从真实输出合并 `action.expected_format` 要求的业务字段，
    只写入当前 Action 的 `work_files.coordinator_result`；设计冲突写 `design_change_requests[]`，
    不伪造可执行计划。任一 Worker 超时/失败时写 `{}`，不得补业务字段或假装成功。

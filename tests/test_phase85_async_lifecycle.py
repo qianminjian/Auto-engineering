@@ -181,6 +181,7 @@ def test_public_cli_async_worker_trajectory_uses_current_action_artifacts(
     (tmp_path / "tests").mkdir()
     monkeypatch.setenv("AE_HOST_PLATFORM", "codex")
     monkeypatch.setenv("CODEX_THREAD_ID", "l2-public-cli")
+    monkeypatch.setenv("AE_HOST_ACTION_VIEW", "compact")
     runner = CliRunner()
 
     initialized = runner.invoke(
@@ -198,6 +199,10 @@ def test_public_cli_async_worker_trajectory_uses_current_action_artifacts(
     assert isinstance(work_files, dict)
     worker = workers[0]
     assert isinstance(worker, dict)
+    assert "record_worker_outcome" in worker
+    assert "outcome_path" in worker
+    assert "execution_generation" in worker
+    assert "fencing_token" in worker
 
     payload = {
         "plan": (
@@ -220,14 +225,9 @@ def test_public_cli_async_worker_trajectory_uses_current_action_artifacts(
     outcome_path.parent.mkdir(parents=True, exist_ok=True)
     delayed_outcome = {
         "worker_id": worker["worker_id"],
-        "native_worker_handle": "native-async-public",
         "status": "completed",
         "payload": payload,
         "summary": "async public CLI complete",
-        "actual_model": "deterministic-host",
-        "isolation_evidence": worker["expected_isolation_evidence"],
-        "execution_generation": worker["execution_generation"],
-        "fencing_token": worker["fencing_token"],
     }
     script = (
         "import json,time; time.sleep(0.15); "
@@ -239,12 +239,28 @@ def test_public_cli_async_worker_trajectory_uses_current_action_artifacts(
     assert process.poll() is None
     process.wait(timeout=2)
 
-    outcomes_path = tmp_path / str(work_files["outcomes"])
     coordinator_path = tmp_path / str(work_files["coordinator_result"])
     result_path = tmp_path / str(work_files["result"])
-    outcomes_path.parent.mkdir(parents=True, exist_ok=True)
-    outcomes_path.write_text('{"outcomes":[]}', encoding="utf-8")
+    coordinator_path.parent.mkdir(parents=True, exist_ok=True)
     coordinator_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    recorded = runner.invoke(
+        main,
+        [
+            "dev-loop", "--record-worker-outcome",
+            "--worker-id", str(worker["worker_id"]),
+            "--worker-status", "completed",
+            "--native-worker-handle", "native-async-public",
+            "--actual-model", "deterministic-host",
+            "--isolation-evidence", "fork_turns=none",
+            "--project-root", str(tmp_path),
+        ],
+    )
+    assert recorded.exit_code == 0, recorded.output
+    outcomes_path = tmp_path / str(work_files["outcomes"])
+    assert json.loads(outcomes_path.read_text(encoding="utf-8"))["outcomes"][0][
+        "native_worker_handle"
+    ] == "native-async-public"
 
     finalized = runner.invoke(
         main,

@@ -7,8 +7,10 @@ v5.5 Orchestrator 已退役 (T133b).
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import os
+import tempfile
 from collections.abc import Iterable, Mapping
 from contextlib import suppress
 from pathlib import Path
@@ -25,6 +27,30 @@ if TYPE_CHECKING:
 
 _logger = logging.getLogger(__name__)
 _STATE_GITIGNORE = "*\n!.gitignore\n"
+
+
+def _write_json_atomically(path: Path, payload: object) -> None:
+    """以同目录临时文件替换 Coordinator 产物，避免半写 JSON 被采集。"""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent,
+    )
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            json.dump(
+                payload,
+                handle,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary_name, path)
+    finally:
+        if os.path.exists(temporary_name):
+            os.unlink(temporary_name)
 
 
 class _ActiveThreadStore(Protocol):
@@ -217,6 +243,20 @@ def _bind_worker_execution_identity(action: dict, root: Path) -> dict:
         )
     else:
         generation = 1
+    # Worker 失败后仍保留同一个 Core Action，但下一次执行必须是新的
+    # generation。以 Outcome Journal 的已提交失败次数作为稳定提示，避免
+    # 每次 status/read 都无界递增，同时阻止重试复用旧 artifact/handle。
+    failure_journal = (
+        root / ".ae-state/host-runtime/outcomes" / f"{message_id}.json"
+    )
+    try:
+        journal = json.loads(failure_journal.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        journal = None
+    if isinstance(journal, Mapping) and journal.get("status") == "worker_failed":
+        failure_attempt = journal.get("failure_attempt")
+        if isinstance(failure_attempt, int) and not isinstance(failure_attempt, bool):
+            generation = max(generation, failure_attempt + 1)
     bound = dict(action)
     bound["execution_generation"] = generation
     bound["fencing_token"] = fencing_token_for(
@@ -513,21 +553,37 @@ def _compact_host_action(action: Mapping[str, Any], root: Path) -> dict[str, Any
         }
         workers = host_execution.get("workers")
         if isinstance(workers, list):
-            projected_host["workers"] = [
-                {
+            projected_workers = []
+            required_worker_contract = (
+                "worker_id",
+                "prompt_ref",
+                "prompt_sha256",
+                "native_launch_prompt",
+                "expected_isolation_evidence",
+                "outcome_path",
+                "execution_generation",
+                "fencing_token",
+                "receipt_path",
+                "record_worker_outcome",
+            )
+            for worker in workers:
+                if not isinstance(worker, Mapping):
+                    continue
+                if "native_launch_prompt" in worker:
+                    missing = [
+                        key for key in required_worker_contract if key not in worker
+                    ]
+                    if missing:
+                        raise ValueError(
+                            "HOST_ACTION_WORKER_CONTRACT_INVALID: "
+                            + ",".join(missing)
+                        )
+                projected_workers.append({
                     key: worker[key]
-                    for key in (
-                        "worker_id",
-                        "prompt_ref",
-                        "prompt_sha256",
-                        "native_launch_prompt",
-                        "expected_isolation_evidence",
-                    )
+                    for key in required_worker_contract
                     if key in worker
-                }
-                for worker in workers
-                if isinstance(worker, Mapping)
-            ]
+                })
+            projected_host["workers"] = projected_workers
         compact["host_execution"] = projected_host
     compact["view"] = "compact"
     instruction = action.get("instruction")
@@ -1523,11 +1579,15 @@ def run_tick_finalize(
                 # result 路径，避免 Finalizer 只在 stdout 返回失败而没有交接文件。
                 if result_path is None and isinstance(current_result_ref, str):
                     result_path = _root_bound_path(Path(current_result_ref), root)
-                # 兼容旧调用者自定义文件；但当前 Action 的隔离工作文件已经存在时，
-                # 它是唯一事实源，陈旧的上一 Action 参数不得再次进入 Assembler。
+                # 兼容旧调用者传入参数，但当前 Action 的隔离工作文件始终是
+                # 唯一事实源；不能以“文件暂时不存在”为由回退到上一 Action，
+                # 否则正是在 Worker 崩溃场景消费陈旧 Coordinator/Result。
                 if (
                     coordinator_path != current_coordinator
-                    and current_coordinator.is_file()
+                    and (
+                        isinstance(mapped_action.get("spawn"), Mapping)
+                        or current_coordinator.is_file()
+                    )
                 ):
                     coordinator_path = current_coordinator
                     if isinstance(current_result_ref, str):
@@ -1535,13 +1595,15 @@ def run_tick_finalize(
                             Path(current_result_ref), root
                         )
                     if (
-                        supplied_outcomes_file is not None
+                        isinstance(mapped_action.get("spawn"), Mapping)
                         and isinstance(current_outcomes_ref, str)
                     ):
                         outcomes_path = _root_bound_path(
                             Path(current_outcomes_ref), root
                         )
         input_error: str | None = None
+        outcomes_error: str | None = None
+        coordinator_error: str | None = None
         raw_outcomes: object = []
         coordinator_payload: object = {}
         try:
@@ -1551,27 +1613,36 @@ def run_tick_finalize(
                 else []
             )
         except (OSError, json.JSONDecodeError) as exc:
-            input_error = f"Worker outcomes 不可读取或不是合法 JSON: {exc.__class__.__name__}"
+            outcomes_error = (
+                "Worker outcomes 不可读取或不是合法 JSON: "
+                f"{exc.__class__.__name__}"
+            )
         try:
             coordinator_payload = json.loads(
                 coordinator_path.read_text(encoding="utf-8")
             )
         except (OSError, json.JSONDecodeError) as exc:
-            input_error = (
-                input_error
-                or f"Coordinator payload 不可读取或不是合法 JSON: {exc.__class__.__name__}"
+            coordinator_error = (
+                "Coordinator payload 不可读取或不是合法 JSON: "
+                f"{exc.__class__.__name__}"
             )
         outcome_items = (
             raw_outcomes.get("outcomes")
             if isinstance(raw_outcomes, dict)
             else raw_outcomes
         )
-        if not isinstance(outcome_items, list):
-            input_error = input_error or "Worker outcomes 顶层必须是 JSON object 或数组"
-        if not isinstance(coordinator_payload, dict):
-            input_error = input_error or "Coordinator payload 顶层必须是 JSON object"
         is_spawn_action = isinstance(mapped_action.get("spawn"), Mapping)
-        if input_error is None and is_spawn_action and not outcome_items:
+        if not isinstance(outcome_items, list):
+            outcomes_error = outcomes_error or (
+                "Worker outcomes 顶层必须是 JSON object 或数组"
+            )
+        if not isinstance(coordinator_payload, dict):
+            coordinator_error = coordinator_error or (
+                "Coordinator payload 顶层必须是 JSON object"
+            )
+        if is_spawn_action and (
+            not isinstance(outcome_items, list) or not outcome_items
+        ):
             # 新版 Worker 先写自己的 outcome_path，Coordinator 只负责合并。
             # 只有在共享 outcomes 缺失/为空时才触发采集，兼容旧宿主已写入
             # 共享文件的路径，同时让真实宿主不再依赖 Coordinator 手工捏造事实。
@@ -1585,10 +1656,35 @@ def run_tick_finalize(
                     outcomes_path=outcomes_path,
                 )
                 outcome_items = [item.to_dict() for item in collected_outcomes]
+                outcomes_error = None
             except WorkerOutcomeCollectionError as exc:
-                input_error = str(exc)
-        if input_error is None and is_spawn_action and not outcome_items:
-            input_error = "Worker outcomes 为空"
+                outcomes_error = str(exc)
+
+        # 单 Worker 的 Coordinator 可能在宿主上下文退出前尚未来得及写文件。
+        # 只在已收集到一个合法 completed WorkerArtifact 时从其业务 payload
+        # 恢复 Coordinator 输入；多 Worker 仍必须由 Coordinator 显式合并。
+        if (
+            is_spawn_action
+            and outcomes_error is None
+            and isinstance(outcome_items, list)
+            and len(outcome_items) == 1
+            and isinstance(outcome_items[0], Mapping)
+            and outcome_items[0].get("status") == "completed"
+            and coordinator_error is not None
+        ):
+            recovered_payload = outcome_items[0].get("payload")
+            if isinstance(recovered_payload, dict):
+                coordinator_payload = dict(recovered_payload)
+                coordinator_error = None
+                if coordinator_path is not None:
+                    _write_json_atomically(coordinator_path, coordinator_payload)
+
+        if not is_spawn_action:
+            input_error = coordinator_error or outcomes_error
+        else:
+            input_error = outcomes_error or coordinator_error
+            if input_error is None and not outcome_items:
+                input_error = "Worker outcomes 为空"
         outcomes: list[NativeWorkerOutcome] = []
         if input_error is None:
             try:
@@ -1604,14 +1700,21 @@ def run_tick_finalize(
             # 失败预算自动重试；inline Action 仍保持严格输入错误。
             if isinstance(mapped_action.get("spawn"), Mapping):
                 assembler = HostExecutionAssembler(root)
+                failure_detail = input_error
+                failure_code = (
+                    "HOST_WORKER_OUTPUT_MISSING"
+                    if not outcomes
+                    else "HOST_WORKER_OUTPUT_INVALID"
+                )
+                if failure_code == "HOST_WORKER_OUTPUT_MISSING":
+                    # 缺失/空交接是同一个可重试事实；不能因为首次是
+                    # FileNotFound、第二次是空 JSON 而生成不同 fingerprint，
+                    # 否则失败预算会永远从 1 开始。
+                    failure_detail = "Worker 未产生可验证的私有 outcome"
                 result = assembler.finalize_missing_worker_output(
                     action=mapped_action,
-                    reason_code=(
-                        "HOST_WORKER_OUTPUT_MISSING"
-                        if not outcomes
-                        else "HOST_WORKER_OUTPUT_INVALID"
-                    ),
-                    detail=input_error,
+                    reason_code=failure_code,
+                    detail=failure_detail,
                     result_path=result_path,
                 )
                 click.echo(json.dumps(result, ensure_ascii=False))
@@ -1659,6 +1762,67 @@ def run_tick_finalize(
             ))
             return
         click.echo(json.dumps(result, ensure_ascii=False))
+    finally:
+        events.close()
+        store.close()
+
+
+def run_record_worker_outcome(
+    *,
+    root: Path,
+    worker_id: str,
+    native_worker_handle: str | None,
+    worker_status: str,
+    actual_model: str,
+    isolation_evidence: str | None,
+) -> None:
+    """接收宿主原生 Worker 事实并原子写入当前 Action 的共享 outcomes。"""
+
+    import click
+
+    from auto_engineering.host.execution_assembler import (
+        HostEvidenceValidationError,
+        HostExecutionAssembler,
+    )
+    from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
+    from auto_engineering.loop.event_store import SQLiteEventStore
+
+    store: SQLiteCheckpointStore[EngineState] = SQLiteCheckpointStore(
+        _ensure_checkpoint_db_path(root)
+    )
+    events = SQLiteEventStore(_ensure_event_db_path(root))
+    try:
+        thread_id = _active_thread(store)
+        if thread_id is None:
+            raise click.ClickException("PROJECT_THREAD_NOT_ACTIVE")
+        try:
+            action = _load_active_action(thread_id, store, events)
+        except ValueError as exc:
+            if str(exc) != "STATE_SOURCE_CONFLICT":
+                raise
+            click.echo(json.dumps(
+                _state_source_conflict_action(thread_id), ensure_ascii=False
+            ))
+            return
+        if action is None:
+            raise click.ClickException("ACTIVE_ACTION_MISSING")
+        mapped_action = _map_bound_action_for_host(action, root)
+        try:
+            outcome = HostExecutionAssembler(root).record_worker_outcome(
+                action=mapped_action,
+                worker_id=worker_id,
+                native_worker_handle=native_worker_handle,
+                status=worker_status,
+                actual_model=actual_model,
+                isolation_evidence=isolation_evidence,
+            )
+        except HostEvidenceValidationError as exc:
+            raise click.ClickException(str(exc)) from exc
+        click.echo(json.dumps({
+            "status": "worker_outcome_recorded",
+            "worker_id": worker_id,
+            "outcome": outcome,
+        }, ensure_ascii=False))
     finally:
         events.close()
         store.close()

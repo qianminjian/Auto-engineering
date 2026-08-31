@@ -29,6 +29,63 @@ def _last_json_line(output: str) -> dict:
     return json.loads(lines[-1])
 
 
+def test_public_cli_records_host_worker_fact_without_manual_outcomes_json(
+    tmp_path: Path,
+) -> None:
+    """公开 CLI 入口完成业务产物到宿主 outcomes 的确定性合并。"""
+
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\nname='record-fixture'\n", encoding="utf-8"
+    )
+    (tmp_path / "src").mkdir()
+    (tmp_path / "tests").mkdir()
+    runner = CliRunner()
+    initialized = runner.invoke(
+        main,
+        ["dev-loop", "--init", "实现 X", "--project-root", str(tmp_path)],
+    )
+    assert initialized.exit_code == 0, initialized.output
+    action = _last_json_line(initialized.output)
+
+    from auto_engineering.host import HostPlatform
+    from auto_engineering.host.adapters import adapter_for
+
+    adapter = adapter_for(HostPlatform.CODEX)
+    profile = adapter.profile(
+        detected=adapter.capabilities,
+        authorized=adapter.capabilities,
+    )
+    mapped = adapter.map_action(action, profile=profile).payload
+    worker = mapped["host_execution"]["workers"][0]
+    private_path = tmp_path / worker["outcome_path"]
+    private_path.parent.mkdir(parents=True, exist_ok=True)
+    private_path.write_text(json.dumps({
+        "worker_id": worker["worker_id"],
+        "status": "completed",
+        "payload": {"plan": "按设计实现"},
+        "summary": "Architect 完成规划",
+    }), encoding="utf-8")
+
+    recorded = runner.invoke(
+        main,
+        [
+            "dev-loop", "--record-worker-outcome",
+            "--worker-id", worker["worker_id"],
+            "--worker-status", "completed",
+            "--native-worker-handle", "codex-native-1",
+            "--isolation-evidence", "fork_turns=none",
+            "--project-root", str(tmp_path),
+        ],
+    )
+    assert recorded.exit_code == 0, recorded.output
+    body = _last_json_line(recorded.output)
+    assert body["status"] == "worker_outcome_recorded"
+    shared_path = tmp_path / mapped["host_execution"]["work_files"]["outcomes"]
+    assert json.loads(shared_path.read_text(encoding="utf-8"))["outcomes"][0][
+        "native_worker_handle"
+    ] == "codex-native-1"
+
+
 def test_worker_execution_identity_reuses_same_session_and_rotates_on_takeover(
     tmp_path, monkeypatch
 ) -> None:
@@ -75,6 +132,34 @@ def test_worker_execution_identity_reuses_same_session_and_rotates_on_takeover(
     assert same_session["execution_generation"] == 1
     assert takeover["execution_generation"] == 2
     assert same_session["fencing_token"] != takeover["fencing_token"]
+
+
+def test_worker_retry_after_failure_journal_gets_new_stable_generation(
+    tmp_path, monkeypatch
+) -> None:
+    from auto_engineering.cli.dev_loop import _bind_worker_execution_identity
+
+    monkeypatch.setenv("AE_HOST_PLATFORM", "codex")
+    monkeypatch.setenv("CODEX_THREAD_ID", "session-a")
+    action = {
+        "message_id": "action-retry-generation",
+        "thread_id": "thread-retry-generation",
+        "spawn": {"invocations": []},
+    }
+    first = _bind_worker_execution_identity(action, tmp_path)
+    journal = tmp_path / ".ae-state/host-runtime/outcomes/action-retry-generation.json"
+    journal.parent.mkdir(parents=True, exist_ok=True)
+    journal.write_text(
+        json.dumps({"status": "worker_failed", "failure_attempt": 1}),
+        encoding="utf-8",
+    )
+
+    retry = _bind_worker_execution_identity(action, tmp_path)
+    retry_read = _bind_worker_execution_identity(action, tmp_path)
+    assert first["execution_generation"] == 1
+    assert retry["execution_generation"] == 2
+    assert retry_read["execution_generation"] == 2
+    assert retry["fencing_token"] != first["fencing_token"]
 
 
 def test_prepare_and_finalize_mapping_share_the_same_worker_artifact_generation(
@@ -1318,6 +1403,14 @@ class TestMutexAndLegacy:
 
         from auto_engineering.cli.dev_loop import run_tick_finalize
 
+        # 旧调用者传入的路径伪装成合法成功产物；当前 Action 的 work_files
+        # 缺失时也必须忽略它，不能把上一 Action 的结果投影进来。
+        (tmp_path / "missing-outcomes.json").write_text(
+            json.dumps({"outcomes": [{"stale": True}]}), encoding="utf-8"
+        )
+        (tmp_path / "empty-coordinator.json").write_text(
+            json.dumps({"stale": True}), encoding="utf-8"
+        )
         run_tick_finalize(
             tmp_path / "missing-outcomes.json",
             tmp_path / "empty-coordinator.json",
@@ -1328,9 +1421,13 @@ class TestMutexAndLegacy:
         result = json.loads(capsys.readouterr().out.strip())
         assert result["spawned"] is False
         assert result["spawn_error_code"] == "HOST_WORKER_FAILED"
-        assert json.loads((tmp_path / "result.json").read_text()) == result
+        canonical_result = (
+            tmp_path / ".ae-state/host-runtime/work/a/result.json"
+        )
+        assert json.loads(canonical_result.read_text()) == result
 
-        # 空 JSON 交接与缺文件必须共享同一失败类别，并按同类失败递增预算。
+        # 空 JSON 交接与缺文件必须共享同一失败事实；重复提交同一失败
+        # 应保持幂等，真正的重试由新的 execution_generation 触发。
         (tmp_path / "empty-coordinator.json").write_text("{}")
         (tmp_path / "missing-outcomes.json").write_text('{"outcomes":[]}')
         run_tick_finalize(
@@ -1342,7 +1439,7 @@ class TestMutexAndLegacy:
         repeated = json.loads(capsys.readouterr().out.strip())
         assert repeated["spawned"] is False
         assert repeated["spawn_error_code"] == "HOST_WORKER_FAILED"
-        assert repeated["spawn_retry_attempt"] == 2
+        assert repeated["spawn_retry_attempt"] == 1
 
     def test_internal_result_paths_are_bound_to_project_root_after_cwd_drift(
         self, tmp_path, monkeypatch

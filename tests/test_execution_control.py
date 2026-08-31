@@ -714,6 +714,14 @@ def test_compact_host_view_projects_only_runtime_control_and_native_launcher(
                 "worker_id": "architect-0",
                 "native_launch_prompt": "bounded-launcher",
                 "expected_isolation_evidence": "fork_turns=none",
+                "outcome_path": ".ae-state/host-runtime/worker-outcomes/a.json",
+                "execution_generation": 2,
+                "fencing_token": "fence-1",
+                "receipt_path": ".ae-state/spawn-proofs/receipt.json",
+                "record_worker_outcome": {
+                    "schema_version": "1.0",
+                    "argv_template": ["runner", "--record-worker-outcome"],
+                },
                 "receipt": {"large": "duplicate"},
                     "attestation": {"large": "duplicate"},
                     "prompt_ref": "prompt.txt",
@@ -734,9 +742,37 @@ def test_compact_host_view_projects_only_runtime_control_and_native_launcher(
             "prompt_sha256": "a" * 64,
             "native_launch_prompt": "bounded-launcher",
         "expected_isolation_evidence": "fork_turns=none",
+        "outcome_path": ".ae-state/host-runtime/worker-outcomes/a.json",
+        "execution_generation": 2,
+        "fencing_token": "fence-1",
+        "receipt_path": ".ae-state/spawn-proofs/receipt.json",
+        "record_worker_outcome": {
+            "schema_version": "1.0",
+            "argv_template": ["runner", "--record-worker-outcome"],
+        },
     }]
     assert compact["host_execution"]["work_files"] == {"outcomes": "outcomes.json"}
     assert compact["valid_plate_keys"] == ["counter"]
+
+
+def test_compact_host_view_rejects_strict_worker_without_handoff_contract(
+    tmp_path,
+) -> None:
+    from auto_engineering.cli.dev_loop import _compact_host_action
+
+    action = {
+        "action": "architect",
+        "message_id": "compact-invalid-worker",
+        "host_execution": {
+            "workers": [{
+                "worker_id": "architect-0",
+                "native_launch_prompt": "bounded-launcher",
+            }],
+        },
+    }
+
+    with pytest.raises(ValueError, match="HOST_ACTION_WORKER_CONTRACT_INVALID"):
+        _compact_host_action(action, tmp_path)
 
 
 def test_cli_lease_uses_inner_claude_identity_when_launched_from_codex(

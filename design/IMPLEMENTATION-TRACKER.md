@@ -1,6 +1,6 @@
 # Auto-Engineering 当前实施跟踪表
 
-> 更新：2026-08-30｜唯一产品任务：P0-E2E 单命令运行到 TERMINAL｜状态：`☐` 未开始／`◐` 进行中／`✅` 已验证
+> 更新：2026-08-31｜唯一产品任务：P0-E2E 单命令运行到 TERMINAL｜状态：`☐` 未开始／`◐` 进行中／`✅` 已验证
 
 ## 导航
 
@@ -65,7 +65,7 @@
 |---:|---|:---:|---|---|:---:|
 | P0 | T616 | R3 | 建立真实异步纵向宿主模拟器 | 第一次 wait 结束后 Worker 继续运行并最终推进 Tick | ◐ `test_public_cli_async_worker_trajectory_uses_current_action_artifacts` 与异步子进程回归通过；真实宿主待验收 |
 | P0 | T617 | R3 | 历史真跑事故回放矩阵 | 覆盖 wait、owner 丢失、迟到、重复、部分成功和 Core 拒绝 | ◐ 回放矩阵通过；真实宿主待验收 |
-| P0 | T618 | R3 | 安装制品公开入口契约测试 | 当前候选 Build `5.8.0-rc.5+sha256.d524ccba699dc023` 的 Codex/Claude Code archive smoke 通过；真实产品安装待验收 | ◐ |
+| P0 | T618 | R3 | 安装制品公开入口契约测试 | 最新工作树 release archive 在 Codex/Claude Code 两种宿主模式均通过 package、隔离安装、doctor、Worker 回写入口、minimal tick、status、resume、runtime identity 和 design authority smoke；真实产品安装待验收 | ◐ |
 | P0 | T619 | R3 | Codex L3/L4 单命令终态 | 覆盖多角色、wait、repair、零人工续接和 TERMINAL | ☐ 待真实验收 |
 | P0 | T620 | R3 | Claude Code L3/L4 等价终态 | 不嵌套 `claude -p`，语义与 Codex 等价 | ☐ 待真实验收 |
 | P1 | T621 | R3 | 双宿主通过后退役旧 Supervisor | T619–T620 通过后删除旧默认主控，永久保留历史设计 | ☐ 前置未满足 |
@@ -78,7 +78,7 @@
 | P0 | T623 | R4 | EventStore 优先且冲突 fail-closed，禁止 checkpoint 与事件快照拼接 | `test_active_action_rejects_event_and_checkpoint_identity_conflict`、`test_active_event_action_is_authoritative_without_checkpoint_splicing` | ✅ |
 | P1 | T624 | R3 | Tick 事务失败清理未提交命名 JSON effect，保留内容寻址 prompt | `test_discard_removes_only_uncommitted_named_json_artifacts` | ✅ |
 | P1 | T625 | R3 | 产品验收 artifact 增加 machine claims 并交叉校验外层声明 | `test_machine_claims_reject_outer_usage_declaration_drift`、产品证据回归 | ✅ |
-| P0 | T626 | R3 | EventStore/checkpoint 状态分叉在 init/tick/finalize/status/supervisor 入口统一归一为 `STATE_SOURCE_CONFLICT` 协议错误，禁止宿主收到 Python traceback | `test_state_source_conflict_is_returned_as_protocol_error_action`、`test_status_reports_recovery_required_on_state_source_conflict`、`test_finalize_stops_with_stable_error_on_state_source_conflict`、`test_supervisor_stops_with_stable_error_on_state_source_conflict`；全量 2820 passed/1 skipped，覆盖率严格 90% | ✅ |
+| P0 | T626 | R3 | EventStore/checkpoint 状态分叉在 init/tick/finalize/status/supervisor 入口统一归一为 `STATE_SOURCE_CONFLICT` 协议错误，禁止宿主收到 Python traceback | `test_state_source_conflict_is_returned_as_protocol_error_action`、`test_status_reports_recovery_required_on_state_source_conflict`、`test_finalize_stops_with_stable_error_on_state_source_conflict`、`test_supervisor_stops_with_stable_error_on_state_source_conflict`；历史批次全量 2820 passed/1 skipped，覆盖率严格 90% | ✅ |
 | P1 | T627 | R2 | 跟踪表状态必须与证据层级一致：L1/L2 或 archive smoke 不能标记为产品完成 | 本表将未完成真实 L3/L4 的任务统一标为 `◐/☐`，保持发布门禁可见 | ✅ |
 | P0 | T628 | R4 | L2 异步纵向测试必须经过公开 CLI，不得只调用 Adapter/Assembler/Core 内部接口 | `test_public_cli_async_worker_trajectory_uses_current_action_artifacts` 覆盖 init→异步 Worker→finalize→validate→tick；目标是防止单测绕过真实衔接 | ✅ |
 | P1 | T629 | R2 | 安装验收文档命令必须显式传入受控 wheel 缓存，避免启动即因 `HERMETIC_CACHE_REQUIRED` 失败 | `test_documented_archive_acceptance_is_hermetic`、双宿主 archive smoke 通过 | ✅ |
@@ -87,4 +87,51 @@
 | P1 | T632 | R3 | 生成规则、EARS 基线和培训指南统一标注 Init manifest 为可选兼容输入，消除跨文档运行时口径冲突 | `test_user_guide_does_not_reintroduce_init_runtime_dependency`、规则同步检查、全量回归 | ✅ |
 | P1 | T633 | R3 | 损坏宿主 receipt 与空事件流恢复必须稳定 fail-closed，禁止裸 `ValueError/IndexError` 破坏诊断链 | `test_receipt_journal_rejects_invalid_tick_without_raw_value_error`、`test_rebuild_projection_rejects_empty_event_stream`、全量 2820 passed/1 skipped | ✅ |
 
-> 本批次全量回归：`2820 passed, 1 skipped`；真实双宿主 L3/L4 仍属于 T619/T620，未因自动测试通过而宣称发布。
+> 本批次历史全量回归：`2820 passed, 1 skipped`；真实双宿主 L3/L4 仍属于 T619/T620，未因自动测试通过而宣称发布。
+
+## 2026-08-30 真跑首个 Architect 阻断（系统性修复）
+
+> 证据：Voice Clone 真跑中 Worker 已生成 `status=completed` 的私有 Architect 产物，
+> 但宿主写入路径与 Action 声明路径不一致；随后等待/关闭被误归类为失败，重试又复用旧
+> Result 路径。以下任务按一条完整交接链修复，不以增加等待时间或增加 fallback 路径代替。
+
+| 优先级 | ID | 风险 | 任务 | 核心验收 | 状态 |
+|---:|---|:---:|---|---|:---:|
+| P0 | T634 | R4 | 定版唯一 Worker Artifact 身份与路径：Core 生成，Host 原样转发，Collector 原样读取 | Action、Host 映射、Prompt、Collector、cleanup、retry 对同一 invocation 得到同一路径；路径漂移被明确拒绝 | ✅ 定向回归通过 |
+| P0 | T635 | R4 | 分离 Worker 业务 Artifact 与 Host Attestation | Worker 不再填写 handle/model/isolation 等宿主事实；Host 负责生成并校验 Attestation，completed 必须显式提交实际隔离证据且状态必须与业务产物一致，禁止 `unreported` 冒充真实事实 | ◐ 已改提示词/收集器/`--record-worker-outcome`；待真实宿主 |
+| P0 | T636 | R4 | 建立结果优先的完成/失败协调事务 | 失败提交前必重扫当前 generation 的 Artifact；合法完成结果优先，失败不能覆盖已提交成功 | ✅ 定向回归通过 |
+| P0 | T637 | R4 | 重试重新物化执行身份和工作文件 | 每次重试生成新 generation、invocation、outcome/result/receipt/fencing；禁止复用旧路径或旧 handle | ✅ generation/fencing 回归通过 |
+| P0 | T638 | R4 | 真实宿主公开入口 L3/L4 轨迹测试 | 原生 spawn/wait/close、迟到结果、宿主关闭、失败重试和最终 Tick 均经过 Codex/Claude 实际入口验证 | ☐ |
+
+## 2026-08-31 Worker 回写机器合同补强
+
+| 优先级 | ID | 风险 | 任务 | 核心验收 | 状态 |
+|---:|---|:---:|---|---|:---:|
+| P0 | T639 | R3 | 将逐 Worker `record-worker-outcome` 纳入 Host Action 机器操作模板 | 每个严格 invocation 都携带唯一回写 argv 模板；宿主只替换原生运行时事实，不能凭提示词重新拼装；模板与当前 Action/generation/path 绑定 | ✅ 已验证 |
+
+- 验证证据：`tests/test_host_adapter.py`、公开 CLI 异步轨迹及 Host/Assembler 回归；全量串行回归 `2835 passed, 1 skipped`，覆盖率 `90%`，Ruff/mypy/规则同步通过。
+
+### 2026-08-31 实施证据与边界
+
+- 已统一 generation-bound Worker 路径：`.ae-state/host-runtime/worker-outcomes/<action-key>-<worker>-g<generation>.json`；旧 rc.5 目录仅按当前 Action/Worker 的确定性路径迁移，不做目录扫描。
+- 私有 Worker 文件现在只允许业务字段；主 Agent 通过 `--record-worker-outcome` 把原生 handle、模型、状态和实际隔离证明交给确定性 Assembler；缺少宿主事实时返回 `HOST_WORKER_ATTESTATION_MISSING` 或 `NATIVE_ISOLATION_EVIDENCE_MISSING`，绝不把 `unreported:*` 句柄当成成功证据。
+- Finalizer 在失败事务前重新采集当前 generation；单 Worker 合法完成结果优先恢复 Coordinator，失败日志不能覆盖晚到成功。
+- 重试由失败 journal 驱动 `generation + 1`，重新绑定 invocation/outcome 路径和 fencing token；同一失败事实保持幂等，不靠变化错误文本消耗重试预算。
+- 验证：相关 Host/CLI/Prompt 回归已扩展并通过；本批次全量串行回归 `2835 passed, 1 skipped`，覆盖率 `90%`；公开 CLI 异步轨迹已改为业务私有产物→`--record-worker-outcome`→Finalizer→validate→tick，实际隔离证据缺失会稳定拒绝，状态不一致会稳定拒绝，真实 Codex/Claude L3/L4 仍未执行。
+- 安装验证：`/tmp/auto-engineering-final-release.tar.gz` 在 Codex 与 Claude Code 宿主模式下的归档 smoke 均通过；该结果只证明安装包和内部协议入口可用，不替代真实产品 L3/L4。
+
+### 2026-08-31 Compact 宿主视图闭环补强
+
+| 优先级 | ID | 风险 | 任务 | 验证证据 | 状态 |
+|---:|---|:---:|---|---|:---:|
+| P0 | T640 | R4 | compact Action 必须保留 Worker 完成回写所需的机器字段（结果路径、generation、fencing、回写 argv 模板和 receipt 路径），缺失时在投影阶段 fail-closed，避免为节省上下文而切断真实宿主衔接 | `test_compact_host_view_projects_only_runtime_control_and_native_launcher`、`test_compact_host_view_rejects_strict_worker_without_handoff_contract`、compact 公开 CLI 异步轨迹及全量回归 | ✅ 已验证 |
+
+- T640 验证：compact 视图保留回写合同与身份字段，继续省略 receipt/attestation 正文；定向回归通过。
+
+### 2026-08-31 Worker 启动身份合同补强
+
+| 优先级 | ID | 风险 | 任务 | 验证证据 | 状态 |
+|---:|---|:---:|---|---|:---:|
+| P0 | T641 | R4 | 原生 Worker 启动合同必须显式携带规范 `worker_id`，禁止仅从结果路径或自然语言推断身份 | Host Adapter 启动合同身份回归、68 个宿主回归及全量回归 | ✅ 已验证 |
+
+- T641 验证：启动合同显式携带规范 `worker_id`；为保持 1KB 上限压缩重复文字而非放宽提示词预算。

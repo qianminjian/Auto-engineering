@@ -94,6 +94,9 @@ def main():
                                                      非 spawn Action 生成完整 Result
   ae dev-loop --finalize-result outcomes.json --coordinator-result result.json
                                                      spawn Action 生成证明与完整 Result
+  ae dev-loop --record-worker-outcome --worker-id <id> --worker-status <status>
+       --native-worker-handle <handle> --actual-model <model> --isolation-evidence <evidence>
+                                                     记录宿主原生 Worker 事实
   ae dev-loop --status [--verbose] [--format json]   查看当前进度
   ae dev-loop --resume <checkpoint-id>               从 checkpoint 恢复
 
@@ -112,6 +115,16 @@ def main():
               help="[内部协议] 无副作用预校验 stage-result.json")
 @click.option("--finalize-result", "finalize_result_file", type=click.Path(),
               help="[内部协议] 从原生 Worker outcomes 原子终结完整 Result")
+@click.option("--record-worker-outcome", "record_worker_outcome_flag", is_flag=True,
+              help="[内部协议] 将一个 Worker 业务产物与宿主事实合并")
+@click.option("--worker-id", help="[内部协议] --record-worker-outcome 的 Worker ID")
+@click.option("--worker-status", type=click.Choice(
+    ["completed", "failed", "cancelled", "timeout", "timed_out", "errored"],
+), help="[内部协议] 原生 Worker 状态")
+@click.option("--native-worker-handle", help="[内部协议] 原生 Worker 句柄")
+@click.option("--actual-model", default="unreported", show_default=True,
+              help="[内部协议] 原生 API 报告的模型标识")
+@click.option("--isolation-evidence", help="[内部协议] 宿主实际隔离证据")
 @click.option("--coordinator-result", "coordinator_result_file", type=click.Path(),
               help="[内部协议] --finalize-result 的 Coordinator payload")
 @click.option("--output-result", "output_result_file", type=click.Path(),
@@ -149,6 +162,12 @@ def dev_loop(
     result_file: str | None,
     validate_result_file: str | None,
     finalize_result_file: str | None,
+    record_worker_outcome_flag: bool,
+    worker_id: str | None,
+    worker_status: str | None,
+    native_worker_handle: str | None,
+    actual_model: str,
+    isolation_evidence: str | None,
     coordinator_result_file: str | None,
     output_result_file: str | None,
     status_flag: bool,
@@ -207,11 +226,12 @@ def dev_loop(
     tick_modes = [
         init_flag, tick_flag, status_flag, bool(resume_id),
         bool(validate_result_file), bool(finalize_result_file),
-        supervise_flag,
+        supervise_flag, record_worker_outcome_flag,
     ]
     if sum(bool(m) for m in tick_modes) > 1:
         click.echo(
-            "错误: --init/--tick/--validate-result/--finalize-result/--status/--resume 互斥, 仅可指定一个。",
+            "错误: --init/--tick/--validate-result/--finalize-result/"
+            "--record-worker-outcome/--status/--resume 互斥, 仅可指定一个。",
             err=True,
         )
         raise SystemExit(1)
@@ -259,6 +279,22 @@ def dev_loop(
             output_result_file=(
                 Path(output_result_file) if output_result_file else None
             ),
+        )
+        return
+    if record_worker_outcome_flag:
+        if not worker_id or not worker_status:
+            raise click.UsageError(
+                "--record-worker-outcome 必须同时提供 --worker-id 和 --worker-status"
+            )
+        from auto_engineering.cli.dev_loop import run_record_worker_outcome
+
+        run_record_worker_outcome(
+            root=root,
+            worker_id=worker_id,
+            native_worker_handle=native_worker_handle,
+            worker_status=worker_status,
+            actual_model=actual_model,
+            isolation_evidence=isolation_evidence,
         )
         return
     if status_flag:

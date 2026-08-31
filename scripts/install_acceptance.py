@@ -242,6 +242,16 @@ def accept_archive(
     )
     if "宿主模式已启用" not in doctor.stdout:
         raise RuntimeError("doctor 未识别目标宿主")
+    cli_help = _run(
+        [resolver, "dev-loop", "--help"],
+        cwd=project,
+        env=environment,
+    )
+    if (
+        "--record-worker-outcome" not in cli_help.stdout
+        or "--isolation-evidence" not in cli_help.stdout
+    ):
+        raise RuntimeError("安装制品缺少 Worker 宿主事实回写入口")
 
     tick = _run(
         [
@@ -279,6 +289,7 @@ def accept_archive(
                 "package_contract",
                 "isolated_uv_sync",
                 "doctor",
+                "worker_outcome_bridge",
                 "minimal_tick",
                 "manifest_free_project_profile",
                 *lifecycle_evidence,

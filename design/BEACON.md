@@ -1,5 +1,5 @@
 # Auto-Engineering BEACON
-> 创建：2026-06-24｜更新：2026-08-30｜阶段：P0-E2E 端到端产品闭环
+> 创建：2026-06-24｜更新：2026-08-31｜阶段：P0-E2E 端到端产品闭环
 > 决策状态翻转（✅↔❌）或架构降级必须先获用户批准。
 ## 导航
 
@@ -69,12 +69,12 @@ Gate/Guardrail、五层验证、审计、v5.6 兼容迁移和双宿主验收。
 | D55 | 预算默认 soft，不因 token、费用、Action/Tick 数或时长停机；旧 Supervisor 先旁路，双宿主 L4 通过后再退役 | ✅ |
 | D56 | 同时修订 D37 与 D50 的失败路由：wait 到期不是失败；明确失败只重试失败 Worker，资源/所有权不确定才 WAIT_RESOURCE；generation + fencing token 阻止迟到双写 | ✅ |
 | D57-D58 | 统一 generation 绑定映射入口；EventStore 是唯一新协议事实源，checkpoint 仅兼容回退且禁止拼接 | ✅ |
-| D59-D63 | Tick 回滚撤销未提交命名 JSON effect；验收 artifact 由事件/回执推导 machine_claims 并交叉校验；跟踪按证据层级分层；L2 必须经过公开 CLI 轨迹；损坏 receipt/空事件流在边界稳定 fail-closed | ✅ |
+| D59-D65 | Tick 回滚撤销未提交命名 JSON effect；验收 artifact 由事件/回执推导 machine_claims 并交叉校验；跟踪按证据层级分层；L2 必须经过公开 CLI 轨迹；损坏 receipt/空事件流在边界稳定 fail-closed；Worker 原生事实回写随 Action 下发逐 Worker 机器模板；compact 视图不得丢失回写合同和代际身份 | ✅ |
 ## 当前状态
 - `P0-E2E` 是唯一产品交付任务；既有 Phase/T、L1/L2、覆盖率和 archive 安装仅作支撑证据，不能替代 L4。
-- 上一候选 Build `5.8.0-rc.5+sha256.e468abf942637a66` 仅作为历史 archive smoke 证据；当前候选 Build `5.8.0-rc.5+sha256.d524ccba699dc023` 的自动回归为 2820 passed/1 skipped，覆盖率严格达到 90%。真实产品 L3/L4 仍未执行，不得以 archive smoke 或自动测试替代。
-- Phase 85 已进入主控权纠偏实施：默认主控返回当前主 Agent，业务角色继续独立 Worker 化；Python Supervisor 仅保留旁路兼容。预算默认软约束，先跑通再优化。T609-T618 已完成实现、回归与独立归档验收；D63 的损坏 receipt/空事件流 fail-closed 已补齐，T619-T620 仍待真实双宿主 L3/L4 验收。
+- 当前候选版本为 `5.8.0-rc.5`；每次制品 hash 以随包 `build-info.json` 为准，避免设计文档自引用导致版本漂移。当前工作树已完成 Worker artifact 路径、结果优先恢复、代际重试、业务/宿主事实边界、compact 回写合同和显式 Worker 身份修复，全量串行回归 `2835 passed, 1 skipped`，覆盖率 `90%`。真实产品 L3/L4 仍未执行，不得以自动测试替代。
+- 当前工作树生成的 release archive 已分别在 Codex、Claude Code 宿主模式完成隔离归档 smoke；其仅证明安装制品和内部协议入口完整，不能替代真实产品 L3/L4。Phase 85 已进入主控权纠偏实施：默认主控返回当前主 Agent，业务角色继续独立 Worker 化；Python Supervisor 仅保留旁路兼容。预算默认软约束，先跑通再优化。T609-T618 已完成实现、回归与独立归档验收；D63 的损坏 receipt/空事件流 fail-closed、D64 的 Worker 回写机器模板与 D65 的 compact/Worker 身份合同已补齐，T619-T620 仍待真实双宿主 L3/L4 验收。
 ## 待解决问题
-- 完成同一 Build 双宿主 L4 前保持发布阻断；当前工作树已通过 Action 产物代际、状态源冲突、effect 清理、machine claims、损坏 receipt/空事件流和 CLI 错误归一回归测试；真实 Codex/Claude L3/L4 仍未执行。
+- 完成同一 Build 双宿主 L4 前保持发布阻断；当前工作树已通过 Action 产物代际、状态源冲突、effect 清理、machine claims、损坏 receipt/空事件流、Worker/Host 事实边界和结果优先恢复回归测试；真实 Codex/Claude L3/L4 仍未执行。
 ## 引用文件
 `design/v5.8-Main-Agent-Coordinator-Recovery-Design.md` · `design/BEACON-HIS.md` · `design/v5.8-Session-Decoupling-Design.md` · `design/v5.8-Session-Decoupling-PLAN.md` · `design/incidents/2026-07-29-claude-146-tick-long-run.md` · `design/incidents/2026-08-30-architecture-audit-remediation.md` · `design/IMPLEMENTATION-TRACKER.md` · `design/HISTORY.md`
