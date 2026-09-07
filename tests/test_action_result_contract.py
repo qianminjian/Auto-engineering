@@ -122,6 +122,14 @@ def _valid_result(stage: str) -> dict:
             "missing_count": 0,
             "diverged_count": 0,
         },
+        "project_setup": {
+            "stage": "project_setup",
+            "result_type": "project_setup_failed",
+            "artifacts": [],
+            "failure_code": "PROJECT_SETUP_BUILD_FAILED",
+            "failure_summary": "构建失败",
+            "attempts_in_action": 2,
+        },
     }
     return {
         "schema_version": "1.1",
@@ -221,39 +229,6 @@ class TestResultSchemaMirrorsRuntimeSSOT:
                 f"vs RESULT_SCHEMA={sorted(spec['required'])}"
             )
 
-    def test_context_failure_bypasses_business_success_fields(self):
-        result = {
-            "schema_version": "1.1",
-            "message_type": "result",
-            "message_id": "failure-1",
-            "thread_id": "thread-1",
-            "tick": 1,
-            "stage": "project_setup",
-            "causation_id": "action-1",
-            "correlation_id": "thread-1",
-            "extensions": {},
-            "spawned": False,
-            "spawn_error_code": "HOST_ACTION_CONTEXT_FAILED",
-            "spawn_error": "HOST_CODEX_EXECUTION_FAILED",
-        }
-        _result_validator.validate(result)
-
-    def test_context_resource_exhaustion_bypasses_business_success_fields(self):
-        result = {
-            "schema_version": "1.1",
-            "message_type": "result",
-            "message_id": "resource-1",
-            "thread_id": "thread-1",
-            "tick": 1,
-            "stage": "critic",
-            "causation_id": "action-1",
-            "correlation_id": "thread-1",
-            "extensions": {},
-            "spawned": False,
-            "spawn_error_code": "HOST_ACTION_CONTEXT_RESOURCE_EXHAUSTED",
-            "spawn_error": "HOST_CODEX_USAGE_LIMIT",
-        }
-        _result_validator.validate(result)
 
     def test_refine_schema_accepts_typed_obligation_updates(self):
         result = _valid_result("architect")
@@ -385,6 +360,13 @@ class TestActionRoundTrip:
         )
         _action_validator.validate(action)
 
+    def test_real_project_setup_action_conforms_with_attempt_policy(self, tmp_path):
+        o = _orchestrator()
+        o.project_root = tmp_path
+        action = o.init("req")
+        _action_validator.validate(action)
+        assert action["setup_attempt_policy"]["max_retries_in_action"] == 1
+
     def test_real_gap_review_action_conforms(self, tmp_path):
         o = _orchestrator()
         state = EngineState(
@@ -402,7 +384,23 @@ class TestActionRoundTrip:
         action = action_envelope(o.action_builder.build_action(state))
 
         assert action["action"] == "gap_review"
+        assert action["gap_review_contract"]["display_scope"] == "current_gap_only"
         _action_validator.validate(action)
+
+    def test_gap_review_schema_requires_single_item_host_contract(self):
+        action = {
+            "schema_version": "1.1",
+            "message_type": "action",
+            "message_id": "gap-review-contract",
+            "thread_id": "thread-1",
+            "tick": 1,
+            "stage": "gap_review",
+            "action": "gap_review",
+            "correlation_id": "correlation-1",
+            "extensions": {},
+        }
+
+        assert not _action_validator.is_valid(action)
 
     def test_done_action_conforms(self):
         action = action_envelope(
@@ -437,7 +435,7 @@ class TestActionRoundTrip:
 class TestResultRoundTrip:
     """result fixture 同时通过 JSON schema 与运行时 validate_result_format (双校验一致)."""
 
-    @pytest.mark.parametrize("stage", ["architect", "developer", "critic", "component_verifier"])
+    @pytest.mark.parametrize("stage", ["architect", "developer", "critic", "component_verifier", "project_setup"])
     def test_valid_result_passes_both_validators(self, stage):
         r = _valid_result(stage)
         _result_validator.validate(r)  # schema OK

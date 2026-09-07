@@ -14,6 +14,9 @@ from auto_engineering.loop.design_decision_ledger import (
     DesignDecisionError,
     DesignDecisionLedger,
 )
+from auto_engineering.loop.design_ledger_reinitialization import (
+    reinitialize_design_intake,
+)
 from auto_engineering.loop.events import LoopEvent, LoopEventType
 from auto_engineering.loop.tick_orchestrator import TickOrchestrator
 from auto_engineering.prompts.architect_context import build_architect_research_context
@@ -235,6 +238,22 @@ def test_design_intake_detects_source_drift_on_second_intake(tmp_path) -> None:
 
     with pytest.raises(DesignDecisionError, match="DESIGN_LEDGER_SOURCE_MISMATCH"):
         DesignDecisionLedger.ensure_intake(tmp_path, design)
+
+
+def test_reinitialize_intake_rotates_source_and_preserves_previous_ledger(tmp_path) -> None:
+    design = tmp_path / "design.md"
+    design.write_text("# V1", encoding="utf-8")
+    previous = DesignDecisionLedger.ensure_intake(tmp_path, design)
+    design.write_text("# V2", encoding="utf-8")
+
+    current = reinitialize_design_intake(tmp_path, design)
+
+    assert current.source_ref == "design.md"
+    assert current.source_sha256 != previous.source_sha256
+    history = list((tmp_path / ".ae-state" / "design-ledger-history").glob("*.json"))
+    assert len(history) == 1
+    assert json.loads(history[0].read_text(encoding="utf-8")) == previous.to_dict()
+    assert DesignDecisionLedger.from_project(tmp_path) == current
 
 
 def test_partial_ledger_blocks_research_obligation_without_real_approval() -> None:

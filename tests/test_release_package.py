@@ -154,8 +154,162 @@ def test_release_includes_install_acceptance_runner() -> None:
     from scripts.build_release import REQUIRED_PATHS
 
     assert Path("scripts/install_acceptance.py") in REQUIRED_PATHS
+    assert Path("scripts/collect_product_evidence.py") in REQUIRED_PATHS
+    assert Path("scripts/generate_business_evidence.py") in REQUIRED_PATHS
     assert Path("bin/ae-run") in REQUIRED_PATHS
     assert Path("uv.lock") in REQUIRED_PATHS
+
+
+def test_host_package_rejects_retired_runtime_surface(tmp_path: Path) -> None:
+    from scripts.check_host_package import check_host_package
+
+    (tmp_path / ".codex-plugin").mkdir()
+    (tmp_path / ".codex-plugin/plugin.json").write_text(
+        json.dumps({"name": "auto-engineering"}), encoding="utf-8"
+    )
+    for relative in (
+        "AGENTS.md",
+        "skills/auto-engineering/SKILL.md",
+        "hooks-codex.json",
+        "bin/ae-run",
+        "scripts/ae-run",
+    ):
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("ok", encoding="utf-8")
+    stop_report = tmp_path / "auto_engineering/host/stop_report.py"
+    stop_report.parent.mkdir(parents=True)
+    stop_report.write_text(
+        'reason_code = "HOST_SUPERVISOR_PROTOCOL_ERROR"\n',
+        encoding="utf-8",
+    )
+
+    errors = check_host_package(tmp_path, "codex")
+
+    assert any("退役运行时符号" in error for error in errors)
+
+
+def test_current_host_packages_have_no_retired_runtime_surface() -> None:
+    from scripts.check_host_package import check_host_package
+
+    assert check_host_package(ROOT, "claude-code") == []
+    assert check_host_package(ROOT, "codex") == []
+
+
+def test_host_package_rejects_retired_nested_plugin_surface(tmp_path: Path) -> None:
+    from scripts.check_host_package import check_host_package
+
+    (tmp_path / ".codex-plugin").mkdir()
+    (tmp_path / ".codex-plugin/plugin.json").write_text(
+        json.dumps({"name": "auto-engineering"}), encoding="utf-8"
+    )
+    for relative in (
+        "AGENTS.md",
+        "skills/auto-engineering/SKILL.md",
+        "hooks-codex.json",
+        "bin/ae-run",
+        "scripts/ae-run",
+    ):
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("ok", encoding="utf-8")
+    nested_supervisor = (
+        tmp_path
+        / "plugins/auto-engineering/auto_engineering/host/supervisor.py"
+    )
+    nested_supervisor.parent.mkdir(parents=True)
+    nested_supervisor.write_text("# retired", encoding="utf-8")
+
+    errors = check_host_package(tmp_path, "codex")
+
+    assert any("退役文件" in error for error in errors)
+
+
+def test_host_package_rejects_retired_runtime_content_marker(tmp_path: Path) -> None:
+    from scripts.check_host_package import check_host_package
+
+    (tmp_path / ".codex-plugin").mkdir()
+    (tmp_path / ".codex-plugin/plugin.json").write_text(
+        json.dumps({"name": "auto-engineering"}), encoding="utf-8"
+    )
+    for relative in (
+        "AGENTS.md",
+        "skills/auto-engineering/SKILL.md",
+        "hooks-codex.json",
+        "bin/ae-run",
+        "scripts/ae-run",
+    ):
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("ok", encoding="utf-8")
+    leaked = tmp_path / "auto_engineering/loop/legacy_entry.py"
+    leaked.parent.mkdir(parents=True)
+    leaked.write_text(
+        "from auto_engineering.host.supervisor import Supervisor\n",
+        encoding="utf-8",
+    )
+
+    errors = check_host_package(tmp_path, "codex")
+
+    assert any("已退役 Supervisor 导入" in error for error in errors)
+
+
+def test_host_package_rejects_retired_nested_backend_import(tmp_path: Path) -> None:
+    from scripts.check_host_package import check_host_package
+
+    (tmp_path / ".codex-plugin").mkdir()
+    (tmp_path / ".codex-plugin/plugin.json").write_text(
+        json.dumps({"name": "auto-engineering"}), encoding="utf-8"
+    )
+    for relative in (
+        "AGENTS.md",
+        "skills/auto-engineering/SKILL.md",
+        "hooks-codex.json",
+        "bin/ae-run",
+        "scripts/ae-run",
+    ):
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("ok", encoding="utf-8")
+    leaked = tmp_path / "auto_engineering/host/legacy_adapter.py"
+    leaked.parent.mkdir(parents=True)
+    leaked.write_text(
+        "from auto_engineering.host.backends import legacy\n",
+        encoding="utf-8",
+    )
+
+    errors = check_host_package(tmp_path, "codex")
+
+    assert any("已退役嵌套宿主后端导入" in error for error in errors)
+
+
+def test_host_package_does_not_exclude_nested_same_named_checker(tmp_path: Path) -> None:
+    from scripts.check_host_package import check_host_package
+
+    (tmp_path / ".codex-plugin").mkdir()
+    (tmp_path / ".codex-plugin/plugin.json").write_text(
+        json.dumps({"name": "auto-engineering"}), encoding="utf-8"
+    )
+    for relative in (
+        "AGENTS.md",
+        "skills/auto-engineering/SKILL.md",
+        "hooks-codex.json",
+        "bin/ae-run",
+        "scripts/ae-run",
+    ):
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("ok", encoding="utf-8")
+    nested_checker = tmp_path / "auto_engineering/legacy/check_host_package.py"
+    nested_checker.parent.mkdir(parents=True)
+    nested_checker.write_text(
+        "from auto_engineering.host.supervisor import Supervisor\n",
+        encoding="utf-8",
+    )
+
+    errors = check_host_package(tmp_path, "codex")
+
+    assert any("已退役 Supervisor 导入" in error for error in errors)
 
 
 def test_documented_archive_acceptance_is_hermetic() -> None:

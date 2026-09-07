@@ -27,22 +27,11 @@ def test_codex_release_minimal_tick_chain(tmp_path: Path) -> None:
     for key in ("hooks", "skills"):
         assert (install_root / manifest[key]).exists()
 
-    sync = subprocess.run(
-        ["uv", "sync", "--frozen", "--project", str(install_root)],
-        cwd=install_root,
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=120,
-    )
-    assert sync.returncode == 0, sync.stderr
-
     environment = os.environ.copy()
     environment.update({
         "CODEX_THREAD_ID": "integration-thread",
         "PLUGIN_ROOT": str(install_root),
         "PYTHONPATH": str(install_root),
-        "AE_SKIP_CONFIG_CHECK": "1",
     })
 
     detection = subprocess.run(
@@ -61,23 +50,6 @@ def test_codex_release_minimal_tick_chain(tmp_path: Path) -> None:
     assert detection.returncode == 0, detection.stderr
     assert detection.stdout.strip() == "codex"
 
-    hook_payload = json.dumps({
-        "hook_event_name": "SessionStart",
-        "cwd": str(install_root),
-        "session_id": "integration-session",
-    })
-    hook = subprocess.run(
-        [str(install_root / "hooks" / "codex-hook.sh")],
-        cwd=install_root,
-        env=environment,
-        input=hook_payload,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert hook.returncode == 0, hook.stderr
-    assert hook.stdout == ""
-
     project = tmp_path / "project"
     project.mkdir()
     subprocess.run(
@@ -86,6 +58,27 @@ def test_codex_release_minimal_tick_chain(tmp_path: Path) -> None:
         check=True,
         capture_output=True,
     )
+    for path in install_root.rglob("*"):
+        path.chmod(path.stat().st_mode & ~0o222)
+    assert all(path.stat().st_mode & 0o222 == 0 for path in install_root.rglob("*"))
+
+    hook_payload = json.dumps({
+        "hook_event_name": "SessionStart",
+        "cwd": str(project),
+        "session_id": "integration-session",
+    })
+    hook = subprocess.run(
+        [str(install_root / "hooks" / "codex-hook.sh")],
+        cwd=project,
+        env=environment,
+        input=hook_payload,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert hook.returncode == 0, hook.stderr
+    assert "安全跳过" in json.loads(hook.stdout)["systemMessage"]
+
     tick = subprocess.run(
         [
             str(install_root / "scripts" / "ae-run"),

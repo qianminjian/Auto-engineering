@@ -75,8 +75,8 @@ def finding_fingerprint(f: AuditFinding) -> str:
 # 跳过这些目录
 SKIP_DIRS = {
     ".git", ".venv", "venv", "node_modules", "__pycache__",
-    ".pytest_cache", ".ae-state", "dist", "build", ".eggs",
-    "_scratch", ".planning",
+    ".pytest_cache", ".ae-state", ".uv-cache", "dist", "build", ".eggs",
+    "_scratch", ".planning", ".ae-plugin",
 }
 
 # 单文件大小上限 (MB)

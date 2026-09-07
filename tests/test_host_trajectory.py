@@ -144,8 +144,11 @@ def test_architect_design_conflict_uses_core_user_gate_and_approval_event(
 
         assert approved["action"] == "architect"
         assert len(approved["design_decision_ledger"]["approved_changes"]) == 1
-        assert change_request["source_ref"] in approved["subagent_prompt"]
-        assert "approved_changes" in approved["subagent_prompt"]
+        approved_prompt = (
+            tmp_path / approved["spawn"]["invocations"][0]["prompt_ref"]
+        ).read_text(encoding="utf-8")
+        assert change_request["source_ref"] in approved_prompt
+        assert "approved_changes" in approved_prompt
         projected = DesignDecisionLedger.project_approved_changes(
             events.load_stream(action["thread_id"])
         )
@@ -155,7 +158,7 @@ def test_architect_design_conflict_uses_core_user_gate_and_approval_event(
 
         restored_guardrail = MagicMock()
         restored_guardrail.check.return_value = MagicMock(action="pass")
-        core = TickOrchestrator.restore(
+        core = TickOrchestrator.restore_from_event_store(
             tmp_path,
             checkpoints,
             event_store=events,

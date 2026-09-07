@@ -15,7 +15,6 @@ def test_same_tick_stage_keeps_each_message_version(tmp_path: Path) -> None:
         "thread_id": "thread-123",
         "tick": 1,
         "instruction": "spawn",
-        "subagent_prompt": "architect prompt",
         "expected_format": {"plan": "string"},
     }
 
@@ -38,14 +37,19 @@ def test_rendered_log_does_not_claim_host_delivery(tmp_path: Path) -> None:
             "message_id": "msg-1",
             "tick": 8,
             "instruction": "spawn",
-            "subagent_prompt": "merge",
+        "coordinator_prompt_ref": {
+            "path": ".ae-state/effects/prompt/merge.txt",
+            "sha256": "a" * 64,
+            "size_bytes": 5,
+            "media_type": "text/plain; charset=utf-8",
+        },
             "spawn": {
                 "count": 1,
-                "agents": [{
-                    "index": 0,
+                "invocations": [{
+                    "worker_id": "architecture-0",
                     "role": "architecture",
-                    "prompt": "worker prompt",
-                    "prompt_hash": "abc123",
+                    "prompt_ref": ".ae-state/prompt-artifacts/worker.md",
+                    "prompt_sha256": "abc123",
                 }],
             },
         },
@@ -98,11 +102,11 @@ def test_worker_prompt_reference_is_visible_without_reinlining_body(
             "message_id": "msg-2",
             "tick": 3,
             "spawn": {
-                "agents": [{
-                    "index": 0,
+                "invocations": [{
+                    "worker_id": "security-0",
                     "role": "security",
                     "prompt_ref": ".ae-state/prompt-artifacts/abc.md",
-                    "prompt_hash": "abc",
+                    "prompt_sha256": "abc",
                 }],
             },
         },

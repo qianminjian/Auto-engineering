@@ -60,7 +60,10 @@ def test_developer_advances_to_next_batch_with_checkpoint() -> None:
 def test_developer_component_completion_routes_to_critic() -> None:
     decision = DeveloperHandler().apply(
         {},
-        {},
+        {
+            "files_changed": ["src/a.py"],
+            "test_results": {"passed": 1, "failed": 0},
+        },
         _context(
             has_more_batches_after_advance=False,
             completed_batch_id="B1",
@@ -74,6 +77,41 @@ def test_developer_component_completion_routes_to_critic() -> None:
     assert decision.lifecycle_effects.save_checkpoint is False
 
 
+def test_developer_result_is_submitted_as_evidence_event() -> None:
+    result = {
+        "files_changed": ["src/a.py", "src/a.py"],
+        "commit_hash": "abc123",
+        "test_results": {"passed": 2, "failed": 0},
+        "red_evidence": [{"test": "first"}],
+    }
+
+    decision = DeveloperHandler().apply(
+        {"batch_changed_files": ["src/old.py"]},
+        result,
+        _context(
+            has_more_batches_after_advance=False,
+            completed_batch_id="B1",
+            completed_task_count=1,
+            design_section="§1",
+        ),
+    )
+
+    evidence = decision.events[0]
+    assert evidence.event_type is LoopEventType.RESULT_EVIDENCE_RECORDED
+    assert evidence.to_dict()["payload"]["changes"] == {
+        "files_changed": ["src/a.py", "src/a.py"],
+        "batch_changed_files": ["src/old.py", "src/a.py"],
+            "commit_hash": "abc123",
+            "test_results": {"passed": 2, "failed": 0},
+            "red_evidence": [{"test": "first"}],
+            "developer_snapshot": {
+                "files_changed": ["src/a.py", "src/a.py"],
+                "commit_hash": "abc123",
+                "test_results": {"passed": 2, "failed": 0},
+            },
+        }
+
+
 def test_developer_required_gate_failure_stays_before_critic() -> None:
     """required Gate hard-fail 必须阻止 batch 完成和 Developer→Critic。"""
     failure = {
@@ -85,7 +123,10 @@ def test_developer_required_gate_failure_stays_before_critic() -> None:
 
     decision = DeveloperHandler().apply(
         {},
-        {},
+        {
+            "files_changed": ["src/a.py"],
+            "test_results": {"passed": 1, "failed": 0},
+        },
         _context(
             has_more_batches_after_advance=False,
             completed_batch_id="B1",
@@ -96,7 +137,7 @@ def test_developer_required_gate_failure_stays_before_critic() -> None:
     )
 
     assert decision.next_stage == "developer"
-    assert decision.events == ()
+    assert decision.events[0].event_type is LoopEventType.RESULT_EVIDENCE_RECORDED
     assert decision.advance_stage is False
     assert "stay_in_stage" not in decision.action_context
     assert all(
@@ -119,14 +160,14 @@ def test_developer_environment_failure_pauses_code_repair_route() -> None:
 
     decision = DeveloperHandler().apply(
         {},
-        {},
+        {"files_changed": ["src/a.py"]},
         _context(blocking_gate_results=[failure]),
     )
 
     assert decision.next_stage == "developer"
     assert decision.advance_stage is False
     assert decision.action_context["feedback"]["reason"] == "environment_failure"
-    assert decision.events == ()
+    assert decision.events[0].event_type is LoopEventType.RESULT_EVIDENCE_RECORDED
 
 
 def test_orchestrator_dispatches_developer_via_registry(tmp_path) -> None:

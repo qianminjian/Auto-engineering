@@ -1,13 +1,9 @@
-"""Extended coverage tests for cli/status.py (77% → ≥85%).
+"""Extended contract tests for cli/status.py.
 
-Covers missed paths:
-- _collect_status_json with state as dict (triggered by deserialize_loop_state fallback)
-- _collect_status_json with state as object (CheckpointEnvelope with getattr defaults)
-- _collect_status_json with multiple db files (cross-db latest by round)
-- _collect_status_json with corrupted db + valid db mixed
-- _collect_status_json recent_history field defaults
-- register_status_command function
-- Text mode with .ae-state present and populated
+The old checkpoint-oriented cases remain as negative compatibility tests: a
+checkpoint-only directory must not be presented as the current loop state.
+Current-state reads are covered by EventStore projection tests in
+``tests/test_cli_status.py``.
 """
 
 from __future__ import annotations
@@ -37,18 +33,12 @@ def tmp_cwd(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 # ============================================================
-# Group 1: _collect_status_json — state as dict (trigger fallback path)
+# Group 1: checkpoint-only state must not be exposed
 # ============================================================
 
 
-def test_collect_status_json_state_as_dict_branch(tmp_path: Path) -> None:
-    """_collect_status_json with state as raw dict — status.py dict 分支.
-
-    Step 2 分派: dict 无 "channels" 且无 "thread_id" → deserialize_state 原样返回 dict.
-    (旧 fixture 用 channels="not_a_dict" 期望 raw-dict 降级, 但 channels-bearing dict
-    走 envelope 分支并 raise CheckpointError — 该降级从不存在, 是失效测试.)
-    此 fixture 用真正的 plain dict 覆盖 status.py 的 isinstance(state, dict) 分支.
-    """
+def test_collect_status_json_ignores_checkpoint_dict(tmp_path: Path) -> None:
+    """checkpoint 中的 raw dict 不能冒充 EventStore 当前状态。"""
     from auto_engineering.loop.checkpoint import SQLiteCheckpointStore
 
     cp_dir = tmp_path / ".ae-state"
@@ -67,27 +57,22 @@ def test_collect_status_json_state_as_dict_branch(tmp_path: Path) -> None:
     store.save(state=state_dict, round=5, step=1)
 
     data = _collect_status_json(tmp_path)
-    # thread_id 不在 raw dict (若在则会路由到 EngineState) → 默认 ""
+    # EventStore 不存在 → 始终返回空状态。
     assert data["thread_id"] == ""
-    assert data["round"] == 5
-    assert data["stage"] == "developer"
-    assert data["verdict"] == "APPROVE"
-    assert data["majors_in_a_row"] == 3
-    assert data["total_majors"] == 7
+    assert data["round"] == 0
+    assert data["stage"] == ""
+    assert data["verdict"] == ""
+    assert data["majors_in_a_row"] == 0
+    assert data["total_majors"] == 0
 
 
 # ============================================================
-# Group 2: _collect_status_json — state as object (CheckpointEnvelope path)
+# Group 2: checkpoint object must not be exposed
 # ============================================================
 
 
-def test_collect_status_json_enginestate_verdict_non_empty(tmp_path: Path) -> None:
-    """A1: production EngineState checkpoint → status.verdict 读 critic_verdict.
-
-    Step 2 后 EngineState checkpoint 反序列化为 EngineState 对象 (有 thread_id).
-    status.py object 分支须读 critic_verdict (EngineState 字段名), 否则恒空.
-    对外 JSON key 仍为 "verdict" (契约 §B13.2 不变).
-    """
+def test_collect_status_json_ignores_checkpoint_engine_state(tmp_path: Path) -> None:
+    """EngineState checkpoint 也不能绕过 EventStore 当前事实源。"""
     from auto_engineering.engine.state import EngineState
     from auto_engineering.loop.checkpoint import SQLiteCheckpointStore
 
@@ -105,16 +90,16 @@ def test_collect_status_json_enginestate_verdict_non_empty(tmp_path: Path) -> No
     store.save(state=state, round=4, step=1)
 
     data = _collect_status_json(tmp_path)
-    assert data["thread_id"] == "engine-thread-1"
-    assert data["stage"] == "critic"
-    assert data["round"] == 4
-    assert data["verdict"] == "APPROVE"
-    assert data["majors_in_a_row"] == 1
-    assert data["total_majors"] == 2
+    assert data["thread_id"] == ""
+    assert data["stage"] == ""
+    assert data["round"] == 0
+    assert data["verdict"] == ""
+    assert data["majors_in_a_row"] == 0
+    assert data["total_majors"] == 0
 
 
-def test_collect_status_json_state_as_checkpoint_envelope_round(tmp_path: Path) -> None:
-    """_collect_status_json with CheckpointEnvelope — round field is extracted."""
+def test_collect_status_json_ignores_checkpoint_envelope(tmp_path: Path) -> None:
+    """CheckpointEnvelope 不能提供当前 round。"""
     from auto_engineering.loop.checkpoint import SQLiteCheckpointStore
     from auto_engineering.loop.state import CheckpointEnvelope
 
@@ -126,10 +111,7 @@ def test_collect_status_json_state_as_checkpoint_envelope_round(tmp_path: Path) 
     store.save(env, round=3, step=1)
 
     data = _collect_status_json(tmp_path)
-    # CheckpointEnvelope has 'round' as a Pydantic field → 3
-    assert data["round"] == 3
-    # CheckpointEnvelope does NOT have thread_id/current_stage/verdict →
-    # getattr returns defaults
+    assert data["round"] == 0
     assert data["thread_id"] == ""
     assert data["stage"] == ""
     assert data["verdict"] == ""
@@ -150,19 +132,20 @@ def test_collect_status_json_state_object_default_fallback(tmp_path: Path) -> No
     store.save(env, round=1, step=0)
 
     data = _collect_status_json(tmp_path)
-    # All engine-level fields should be defaults on CheckpointEnvelope
+    # All fields remain defaults without an EventStore projection.
     assert data["thread_id"] == ""
+    assert data["round"] == 0
     assert data["verdict"] == ""
     assert data["majors_in_a_row"] == 0
 
 
 # ============================================================
-# Group 3: _collect_status_json — multiple db files
+# Group 3: checkpoint databases are not status sources
 # ============================================================
 
 
-def test_collect_status_json_multiple_db_picks_highest_round(tmp_path: Path) -> None:
-    """_collect_status_json picks latest checkpoint across multiple .db files."""
+def test_collect_status_json_ignores_multiple_checkpoint_dbs(tmp_path: Path) -> None:
+    """多个旧 checkpoint DB 也不能参与当前状态选择。"""
     from auto_engineering.loop.checkpoint import SQLiteCheckpointStore
     from auto_engineering.loop.state import CheckpointEnvelope
 
@@ -180,7 +163,7 @@ def test_collect_status_json_multiple_db_picks_highest_round(tmp_path: Path) -> 
     store2.save(env2, round=10, step=1)
 
     data = _collect_status_json(tmp_path)
-    assert data["round"] == 10
+    assert data["round"] == 0
 
 
 def test_collect_status_json_skips_event_store_database(tmp_path: Path) -> None:
@@ -198,7 +181,7 @@ def test_collect_status_json_skips_event_store_database(tmp_path: Path) -> None:
 
     data = _collect_status_json(tmp_path)
 
-    assert data["round"] == 4
+    assert data["round"] == 0
 
 
 # ============================================================
@@ -206,8 +189,8 @@ def test_collect_status_json_skips_event_store_database(tmp_path: Path) -> None:
 # ============================================================
 
 
-def test_collect_status_json_corrupted_plus_valid_db(tmp_path: Path) -> None:
-    """_collect_status_json skips corrupted db and reads valid one."""
+def test_collect_status_json_ignores_corrupted_plus_valid_checkpoint_db(tmp_path: Path) -> None:
+    """旧 checkpoint 的损坏或有效都不改变当前状态。"""
     from auto_engineering.loop.checkpoint import SQLiteCheckpointStore
     from auto_engineering.loop.state import CheckpointEnvelope
 
@@ -223,7 +206,7 @@ def test_collect_status_json_corrupted_plus_valid_db(tmp_path: Path) -> None:
     store.save(env, round=7, step=1)
 
     data = _collect_status_json(tmp_path)
-    assert data["round"] == 7
+    assert data["round"] == 0
 
 
 def test_collect_status_json_reads_checkpoint_from_read_only_state_dir(
@@ -248,15 +231,15 @@ def test_collect_status_json_reads_checkpoint_from_read_only_state_dir(
         cp_dir.chmod(0o755)
         db_path.chmod(0o644)
 
-    assert data["thread_id"] == "readonly-thread"
-    assert data["round"] == 3
+    assert data["thread_id"] == ""
+    assert data["round"] == 0
 
 
 def test_collect_status_json_falls_back_when_temp_directory_is_unavailable(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """完全不可写的宿主沙箱应回退读取已 checkpoint 的主数据库."""
+    """临时目录不可用时也不能回退读取 checkpoint。"""
     from auto_engineering.engine.state import EngineState
     from auto_engineering.loop.checkpoint import SQLiteCheckpointStore
     from auto_engineering.loop.checkpoint import store as store_module
@@ -278,22 +261,17 @@ def test_collect_status_json_falls_back_when_temp_directory_is_unavailable(
 
     data = _collect_status_json(tmp_path)
 
-    assert data["thread_id"] == "immutable-thread"
-    assert data["round"] == 4
+    assert data["thread_id"] == ""
+    assert data["round"] == 0
 
 
 # ============================================================
-# Group 5: _collect_status_json — recent_history field defaults
+# Group 5: checkpoint history must not be exposed
 # ============================================================
 
 
-def test_collect_status_json_history_defaults(tmp_path: Path) -> None:
-    """recent_history entries: fields present with int/expected types.
-
-    Note: history items are deserialized as dicts, and _collect_status_json
-    uses getattr which returns defaults for dicts (getattr does not find dict
-    keys).  The structural assertion verifies the output shape is correct.
-    """
+def test_collect_status_json_ignores_checkpoint_history(tmp_path: Path) -> None:
+    """旧 checkpoint history 不能出现在当前 status。"""
     from auto_engineering.loop.checkpoint import SQLiteCheckpointStore
     from auto_engineering.loop.convergence import RoundHistory
     from auto_engineering.loop.state import CheckpointEnvelope
@@ -307,19 +285,11 @@ def test_collect_status_json_history_defaults(tmp_path: Path) -> None:
     store.save(env, round=1, history=history)
 
     data = _collect_status_json(tmp_path)
-    assert len(data["recent_history"]) == 1
-    h = data["recent_history"][0]
-    # getattr on dict returns default (0), not the dict key value (42)
-    assert isinstance(h["round_id"], int)
-    assert isinstance(h["files_changed"], int)
-    assert isinstance(h["lines_added"], int)
-    assert isinstance(h["lines_removed"], int)
-    assert isinstance(h["tasks_run"], list)
-    assert isinstance(h["task_outcomes"], dict)
+    assert data["recent_history"] == []
 
 
-def test_collect_status_json_history_semantic_satisfied(tmp_path: Path) -> None:
-    """recent_history includes semantic_satisfied key (getattr on dict → None)."""
+def test_collect_status_json_ignores_checkpoint_history_semantics(tmp_path: Path) -> None:
+    """checkpoint history 的语义字段不能污染当前 status。"""
     from auto_engineering.loop.checkpoint import SQLiteCheckpointStore
     from auto_engineering.loop.convergence import RoundHistory
     from auto_engineering.loop.state import CheckpointEnvelope
@@ -333,10 +303,7 @@ def test_collect_status_json_history_semantic_satisfied(tmp_path: Path) -> None:
     store.save(env, round=1, history=history)
 
     data = _collect_status_json(tmp_path)
-    assert len(data["recent_history"]) == 1
-    h = data["recent_history"][0]
-    # getattr on dict returns default (None) for semantic_satisfied
-    assert "semantic_satisfied" in h
+    assert data["recent_history"] == []
 
 
 # ============================================================
@@ -377,7 +344,7 @@ def test_register_status_command_registers_on_group() -> None:
 
 
 # ============================================================
-# Group 8: Text mode with checkpoints present
+# Group 8: Text mode with checkpoint-only state
 # ============================================================
 
 
@@ -394,11 +361,11 @@ def test_status_text_mode_with_checkpoints(runner: CliRunner, tmp_cwd: Path) -> 
 
     result = runner.invoke(main, ["status"])
     assert result.exit_code == 0
-    assert "v2.0 Checkpoints" in result.output
+    assert "v2.0 Checkpoints" not in result.output
 
 
 def test_status_text_mode_with_multiple_checkpoints(runner: CliRunner, tmp_cwd: Path) -> None:
-    """Status text mode counts checkpoints across multiple db files."""
+    """Status text mode does not count checkpoint databases."""
     from auto_engineering.loop.checkpoint import SQLiteCheckpointStore
     from auto_engineering.loop.state import CheckpointEnvelope
 
@@ -413,6 +380,7 @@ def test_status_text_mode_with_multiple_checkpoints(runner: CliRunner, tmp_cwd: 
 
     result = runner.invoke(main, ["status"])
     assert result.exit_code == 0
+    assert "Checkpoints" not in result.output
 
 
 # ============================================================
@@ -421,7 +389,7 @@ def test_status_text_mode_with_multiple_checkpoints(runner: CliRunner, tmp_cwd: 
 
 
 def test_status_json_round_equal_in_different_dbs(tmp_path: Path) -> None:
-    """When two dbs have same round, first found is kept (latest_ckpt not None check)."""
+    """同 round 的旧 checkpoint 仍不参与当前状态。"""
     from auto_engineering.loop.checkpoint import SQLiteCheckpointStore
     from auto_engineering.loop.state import CheckpointEnvelope
 
@@ -435,7 +403,7 @@ def test_status_json_round_equal_in_different_dbs(tmp_path: Path) -> None:
     store2.save(env2, round=5, step=1)
 
     data = _collect_status_json(tmp_path)
-    assert data["round"] == 5
+    assert data["round"] == 0
 
 
 def test_status_json_empty_checkpoint_dir(tmp_path: Path) -> None:
@@ -472,7 +440,7 @@ def test_status_text_mode_env_resolve_exception(tmp_cwd: Path) -> None:
 
 
 def test_status_text_mode_corrupted_db_counting(tmp_cwd: Path) -> None:
-    """Status text mode: corrupted db during counting → continue (line 160)."""
+    """Status text mode ignores corrupted checkpoint databases."""
     from auto_engineering.loop.checkpoint import SQLiteCheckpointStore
     from auto_engineering.loop.state import CheckpointEnvelope
 

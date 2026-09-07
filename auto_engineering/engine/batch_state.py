@@ -22,13 +22,13 @@ architect→developer 过渡时清空, 跨 tick 不可依赖 → batch_state_jso
 from __future__ import annotations
 
 import difflib
-import json
 import logging
 import re
 import threading
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, ClassVar
 
+from auto_engineering.engine import batch_state_codec
 from auto_engineering.engine.design_doc import Component, DesignDoc, Plate
 
 if TYPE_CHECKING:
@@ -122,18 +122,35 @@ class BatchState:
             normalized.append(batch)
         return normalized
 
+    @staticmethod
+    def _routing_components(doc: DesignDoc) -> dict[str, Component]:
+        """返回设计文档的可执行路由单元，兼容无 H3 组件的扁平板块。"""
+        components: dict[str, Component] = {}
+        for plate in doc.plates:
+            source = plate.components or [Component(
+                name=plate.name,
+                design_section=plate.design_section,
+                design_items=[],
+                source_marker="implicit_plate",
+            )]
+            for component in source:
+                components[component.name] = component
+        return components
+
     @classmethod
     def from_design_doc(cls, doc: DesignDoc, batch_plan: list[dict]) -> BatchState:
         """design-doc 模式 — 用真实板块层次, 带一致性校验."""
         batch_plan = cls.flatten_batch_plan(batch_plan)
-        plate_component_names = {
-            c.name for plate in doc.plates for c in plate.components
-        }
+        routing_components = cls._routing_components(doc)
+        plate_component_names = set(routing_components)
         batch_plan = cls._normalize_routing(batch_plan, plate_component_names)
         # Build design_section → name lookup (LLM uses section IDs like "§6.1")
         section_to_name: dict[str, str] = {}
         for plate in doc.plates:
-            for comp in plate.components:
+            for comp in (
+                plate.components
+                or [routing_components[plate.name]]
+            ):
                 if comp.design_section:
                     section_to_name[comp.design_section] = comp.name
 
@@ -210,7 +227,8 @@ class BatchState:
 
         filtered_plates = []
         for plate in doc.plates:
-            active = [c for c in plate.components if c.name in batch_component_set]
+            source = plate.components or [routing_components[plate.name]]
+            active = [c for c in source if c.name in batch_component_set]
             if active:
                 # Sort components within plate by batch_plan appearance order
                 active.sort(key=lambda c: component_order.get(c.name, 999))
@@ -435,34 +453,7 @@ class BatchState:
     # ------------------------------------------------------------------
 
     def to_json(self) -> str:
-        return json.dumps({
-            "current_plate_idx": self.current_plate_idx,
-            "current_component_idx": self.current_component_idx,
-            "current_batch_idx": self.current_batch_idx,
-            "total_batches": self.total_batches,
-            "batch_plan": self.batch_plan,
-            # Reducer 重放不能依赖进程内 DesignDoc。仅持久化路由所需的
-            # plate/component 身份与章节，不复制 design items 或正文。
-            "routing_plates": [
-                {
-                    "name": plate.name,
-                    "design_section": plate.design_section,
-                    "components": [
-                        {
-                            "name": component.name,
-                            "design_section": component.design_section,
-                        }
-                        for component in plate.components
-                    ],
-                }
-                for plate in self.plates
-            ],
-            "completed_batch_ids": sorted(self.completed_batch_ids()),
-            "active_batch_id": (
-                None if self.is_all_complete() or self.is_component_complete()
-                else self.current_batch_id()
-            ),
-        })
+        return batch_state_codec.serialize_batch_state(self)
 
     # ------------------------------------------------------------------
     # T94: Pre-planned Gate (DecisionGate form 1)
@@ -485,89 +476,5 @@ class BatchState:
         cls, s: str, design_doc: DesignDoc | None,
         batch_plan: list[dict] | None = None,
     ) -> BatchState:
-        """重建 plates (design_doc 有→真实; 无→合成) 再恢复游标.
-
-        batch_plan 优先用 json 内嵌 (自包含, T9a); 无内嵌时回退传入参数
-        (兼容旧调用). #6 (EngineState.batch_plan) 跨 tick 被清空, 不能依赖.
-        """
-        data = json.loads(s)
-        bp = data.get("batch_plan") or batch_plan or []
-        routing_plates = data.get("routing_plates")
-        if design_doc is not None:
-            bs = cls.from_design_doc(design_doc, bp)
-        elif isinstance(routing_plates, list) and routing_plates:
-            plates: list[Plate] = []
-            for raw_plate in routing_plates:
-                if not isinstance(raw_plate, dict):
-                    raise ValueError("BATCH_ROUTING_TOPOLOGY_INVALID")
-                raw_components = raw_plate.get("components")
-                if not isinstance(raw_components, list) or not raw_components:
-                    raise ValueError("BATCH_ROUTING_TOPOLOGY_INVALID")
-                components = []
-                for raw_component in raw_components:
-                    if not isinstance(raw_component, dict):
-                        raise ValueError("BATCH_ROUTING_TOPOLOGY_INVALID")
-                    name = raw_component.get("name")
-                    section = raw_component.get("design_section", "")
-                    if not isinstance(name, str) or not name or not isinstance(section, str):
-                        raise ValueError("BATCH_ROUTING_TOPOLOGY_INVALID")
-                    components.append(Component(
-                        name=name,
-                        design_section=section,
-                        design_items=[],
-                        source_marker="batch_state",
-                    ))
-                plate_name = raw_plate.get("name")
-                plate_section = raw_plate.get("design_section", "")
-                if (
-                    not isinstance(plate_name, str)
-                    or not plate_name
-                    or not isinstance(plate_section, str)
-                ):
-                    raise ValueError("BATCH_ROUTING_TOPOLOGY_INVALID")
-                plates.append(Plate(
-                    name=plate_name,
-                    design_section=plate_section,
-                    components=components,
-                    cross_component_contracts_raw=[],
-                ))
-            bs = cls(
-                plates=plates,
-                batch_plan=cls._normalize_routing(cls.flatten_batch_plan(bp)),
-                total_batches=len(bp),
-            )
-        else:
-            bs = cls.from_batch_plan(bp)
-        bs.current_plate_idx = data["current_plate_idx"]
-        bs.current_component_idx = data["current_component_idx"]
-        bs.current_batch_idx = data["current_batch_idx"]
-        bs.total_batches = data["total_batches"]
-        completed = data.get("completed_batch_ids")
-        if isinstance(completed, list) and all(
-            isinstance(item, str) for item in completed
-        ):
-            bs._completed_batch_ids = set(completed)
-        if "active_batch_id" in data:
-            active_batch_id = data.get("active_batch_id")
-            # None 只表示当前 component 的开发 batch 已完成，后续仍需
-            # component/plate verifier 按原游标运行；不得提前跳到 all-complete。
-            if isinstance(active_batch_id, str):
-                found = False
-                for plate_idx, plate in enumerate(bs.plates):
-                    for component_idx, component in enumerate(plate.components):
-                        for batch_idx, batch in enumerate(bs.batches_for(component)):
-                            if str(batch.get("batch_id")) == active_batch_id:
-                                bs.current_plate_idx = plate_idx
-                                bs.current_component_idx = component_idx
-                                bs.current_batch_idx = batch_idx
-                                found = True
-                                break
-                        if found:
-                            break
-                    if found:
-                        break
-                if not found:
-                    raise ValueError(
-                        f"PLAN_ACTIVE_BATCH_MISSING: {active_batch_id}"
-                    )
-        return bs
+        """重建可恢复的最小路由状态；旧调用参数保持兼容。"""
+        return batch_state_codec.restore_batch_state(cls, s, design_doc, batch_plan)

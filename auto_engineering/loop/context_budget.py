@@ -15,8 +15,6 @@ class BudgetDecision(StrEnum):
 @dataclass(frozen=True, slots=True)
 class ContextBudgetPolicy:
     policy_id: str
-    max_session_ticks: int
-    max_session_wall_seconds: int
     soft_input_units: int
     hard_input_units: int
     max_prompt_bytes: int
@@ -25,8 +23,6 @@ class ContextBudgetPolicy:
         if not self.policy_id:
             raise ValueError("policy_id 必须为非空字符串")
         limits = (
-            self.max_session_ticks,
-            self.max_session_wall_seconds,
             self.soft_input_units,
             self.hard_input_units,
             self.max_prompt_bytes,
@@ -57,11 +53,7 @@ def evaluate_budget(
     policy: ContextBudgetPolicy,
     usage: ContextUsage,
 ) -> BudgetOutcome:
-    """只约束 Core 单次 Action；宿主上下文与流程保险丝由各自边界管理。
-
-    ``ticks``、``wall_seconds`` 和 ``input_units`` 为迁移期观测字段，不再触发
-    日常 session rollover。宿主负责活动上下文窗口和自动 compaction。
-    """
+    """只校验单个 Action 的 Prompt 大小；宿主会话生命周期不由 Core 切换。"""
     if usage.prompt_bytes > policy.max_prompt_bytes:
         return BudgetOutcome(
             BudgetDecision.REJECT,

@@ -113,7 +113,6 @@ def run_async(coro):
 # 2026-07-04 (v5.0 深度审计 P1-S-01): fail-CLOSED 是新默认行为.
 # 测试场景默认不期望走严格沙箱 (除非明确测沙箱, 如 test_tool_sandbox.py).
 # autouse fixture 自动设 ALLOW_NO_SANDBOX=true 旁路, 避免每个测试显式声明.
-# Phase 45: AE_SKIP_CONFIG_CHECK=1 跳过 ae.toml 配置闸门（测试环境无 ae.toml）
 @pytest.fixture(autouse=True)
 def _allow_no_sandbox_default(monkeypatch):
     """所有测试默认 ALLOW_NO_SANDBOX=true (fail-CLOSED 旁路).
@@ -122,7 +121,6 @@ def _allow_no_sandbox_default(monkeypatch):
     撤销此 fixture 的设值, 验证默认行为.
     """
     monkeypatch.setenv("ALLOW_NO_SANDBOX", "true")
-    monkeypatch.setenv("AE_SKIP_CONFIG_CHECK", "1")
     yield
 
 

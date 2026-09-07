@@ -40,10 +40,12 @@ FALLBACK_CHANNEL_EVENTS: dict[str, LoopEventType] = {
     "missing_project_capabilities": LoopEventType.PROJECT_STATE_UPDATED,
     "project_profile": LoopEventType.PROJECT_STATE_UPDATED,
     "project_profile_id": LoopEventType.PROJECT_STATE_UPDATED,
+    "project_setup_failure_streak": LoopEventType.PROJECT_STATE_UPDATED,
+    "project_setup_baseline_files": LoopEventType.PROJECT_STATE_UPDATED,
     "project_anchor_baseline": LoopEventType.PROJECT_ANCHORS_WITNESSED,
     "action_history": LoopEventType.TELEMETRY_RECORDED,
     "action_timestamp": LoopEventType.TELEMETRY_RECORDED,
-    "audit_revision_fingerprints": LoopEventType.TELEMETRY_RECORDED,
+    "audit_revision_fingerprints": LoopEventType.VERIFICATION_STATE_UPDATED,
     "gate_results": LoopEventType.TELEMETRY_RECORDED,
     "task_verification_evidence": LoopEventType.TELEMETRY_RECORDED,
     "tick_token_usage": LoopEventType.TELEMETRY_RECORDED,
@@ -186,10 +188,19 @@ class TickKernel:
     @staticmethod
     def _owned_channels(pending_events: Sequence[LoopEvent]) -> frozenset[str]:
         """返回已由显式领域事件负责重放的 Projection channels。"""
-
-        return frozenset().union(
-            *(EVENT_CHANNELS.get(event.event_type, frozenset()) for event in pending_events)
-        )
+        owned: set[str] = set()
+        for event in pending_events:
+            channels = EVENT_CHANNELS.get(event.event_type, frozenset())
+            payload = event.to_dict()["payload"]
+            changes = payload.get("changes")
+            if isinstance(changes, Mapping):
+                # 一个 delta 事件可能只更新所属 channel 的子集；不能让
+                # failure/retry 事件遮蔽同一 Tick 中尚未提交的其它字段。
+                owned.update(set(changes) & set(channels))
+            else:
+                # 直接 payload 事件由其专属 Reducer 完整计算 channel。
+                owned.update(channels)
+        return frozenset(owned)
 
 
 __all__ = ["FALLBACK_CHANNEL_EVENTS", "TickCommitCandidate", "TickKernel"]

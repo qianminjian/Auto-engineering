@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Callable
+from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 
 from auto_engineering.engine.batch_state import BatchState
 from auto_engineering.engine.design_doc import DesignDoc
+from auto_engineering.engine.models import Plan
 from auto_engineering.engine.progress_tree import ProgressTree
 from auto_engineering.engine.state import EngineState
 from auto_engineering.engine.verification_layers import (
@@ -17,7 +19,6 @@ from auto_engineering.engine.verification_layers import (
 )
 from auto_engineering.loop.architecture_baseline import build_architecture_baseline
 from auto_engineering.loop.events import LoopEventType
-from auto_engineering.loop.plan import Plan
 from auto_engineering.loop.task_factory import tasks_from_batch_plan
 
 EmitEvent = Callable[[LoopEventType, dict], None]
@@ -25,6 +26,7 @@ EmitEvent = Callable[[LoopEventType, dict], None]
 
 @dataclass(frozen=True, slots=True)
 class ArchitectureActivationResult:
+    baseline: dict
     batch_state: BatchState
     plan: Plan
     verification_layers: VerificationLayers
@@ -55,7 +57,7 @@ class ArchitectureActivationService:
         ])
         if batch_state is not None and state.plan_refine_count > 0 and not is_reconcile:
             completed = batch_state.completed_batch_ids()
-            raw_base_revision = state._runtime_ctx.pop(
+            raw_base_revision = state._runtime_ctx.get(
                 "plan_patch_base_revision",
                 state.plan_refine_count,
             )
@@ -95,24 +97,12 @@ class ArchitectureActivationService:
             if design_doc is not None:
                 progress_tree.apply_batch_plan_totals(batches)
 
-        baseline = self._build_baseline(state, batches)
-        state.architecture_baseline = baseline
+        baseline = self._build_baseline(
+            state,
+            batches,
+            design_doc=design_doc,
+        )
         emit(LoopEventType.ARCHITECTURE_BASELINE_ACCEPTED, {"baseline": baseline})
-        if is_reconcile and state.plan_reconciliation is not None:
-            emit(
-                LoopEventType.PLAN_RECONCILED,
-                {
-                    "changes": {
-                        "plan_reconciliation": state.plan_reconciliation,
-                        "state_reconciliation": state.state_reconciliation,
-                    }
-                },
-            )
-            if state.superseded_tasks:
-                emit(
-                    LoopEventType.TASK_SUPERSEDED,
-                    {"changes": {"superseded_tasks": state.superseded_tasks}},
-                )
 
         plan = tasks_from_batch_plan(batches, state.requirement)
         if verification_layers is None:
@@ -137,6 +127,7 @@ class ArchitectureActivationService:
             else:
                 progress_tree.sync_from_batch_plan(batches)
         return ArchitectureActivationResult(
+            baseline=baseline,
             batch_state=batch_state,
             plan=plan,
             verification_layers=verification_layers,
@@ -147,6 +138,8 @@ class ArchitectureActivationService:
         self,
         state: EngineState,
         batches: list[dict],
+        *,
+        design_doc: DesignDoc | None,
     ) -> dict:
         design_path = state.design_doc_path or ""
         digest = ""
@@ -158,9 +151,12 @@ class ArchitectureActivationService:
                 digest = hashlib.sha256(path.read_bytes()).hexdigest()
             except OSError:
                 digest = ""
-        raw_candidate = state._runtime_ctx.pop("architecture_candidate", None)
+        raw_candidate = state._runtime_ctx.get("architecture_candidate")
         if isinstance(raw_candidate, dict):
-            candidate_batches = raw_candidate.get("batch_plan", [])
+            candidate_batches = self._canonical_batches(
+                raw_candidate.get("batch_plan", []),
+                design_doc=design_doc,
+            )
             if candidate_batches != batches:
                 raise ValueError("ARCHITECTURE_CANDIDATE_DRIFT")
             contracts = dict(raw_candidate.get("contracts", {}))
@@ -169,7 +165,6 @@ class ArchitectureActivationService:
                 raw_obligations,
                 list,
             ) else []
-            state._runtime_ctx.pop("architect_obligations", None)
         else:
             previous = state.architecture_baseline or {}
             contracts = dict(previous.get("contracts", {}))
@@ -179,7 +174,7 @@ class ArchitectureActivationService:
                 for item in previous.get("obligations", [])
                 if isinstance(item, dict) and isinstance(item.get("id"), str)
             }
-            raw_obligations = state._runtime_ctx.pop("architect_obligations", [])
+            raw_obligations = state._runtime_ctx.get("architect_obligations", [])
             if isinstance(raw_obligations, list):
                 for item in raw_obligations:
                     if isinstance(item, dict) and isinstance(item.get("id"), str):
@@ -204,6 +199,23 @@ class ArchitectureActivationService:
             obligations=obligations,
             accepted_at_tick=state.tick,
         )
+
+    @staticmethod
+    def _canonical_batches(
+        batch_plan: object,
+        *,
+        design_doc: DesignDoc | None,
+    ) -> list[dict]:
+        """用执行游标的同一规则物化 Candidate，避免 raw/flat 形态误报漂移。"""
+
+        if not isinstance(batch_plan, list):
+            raise ValueError("ARCHITECTURE_CANDIDATE_BATCH_PLAN_INVALID")
+        copied = deepcopy(batch_plan)
+        if not all(isinstance(item, dict) for item in copied):
+            raise ValueError("ARCHITECTURE_CANDIDATE_BATCH_PLAN_INVALID")
+        if design_doc is not None:
+            return BatchState.from_design_doc(design_doc, copied).batch_plan
+        return BatchState.from_batch_plan(copied).batch_plan
 
 
 __all__ = ["ArchitectureActivationResult", "ArchitectureActivationService"]

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Mapping
 from functools import lru_cache
 from pathlib import Path
 
@@ -16,6 +17,32 @@ _IGNORED_PARTS = frozenset({
     ".ruff_cache",
     ".mypy_cache",
 })
+
+
+def validate_build_info(payload: object) -> dict[str, str]:
+    """校验并返回所有入口共用的 Release Build Identity。"""
+
+    version = payload.get("version") if isinstance(payload, Mapping) else None
+    build_id = payload.get("build_id") if isinstance(payload, Mapping) else None
+    content_sha256 = (
+        payload.get("content_sha256") if isinstance(payload, Mapping) else None
+    )
+    if (
+        not isinstance(version, str)
+        or not version
+        or not isinstance(build_id, str)
+        or not build_id.startswith(f"{version}+sha256.")
+        or not isinstance(content_sha256, str)
+        or len(content_sha256) != 64
+        or any(char not in "0123456789abcdef" for char in content_sha256)
+        or not build_id.endswith(content_sha256[:16])
+    ):
+        raise ValueError("build-info.json 身份无效")
+    return {
+        "version": version,
+        "build_id": build_id,
+        "content_sha256": content_sha256,
+    }
 
 
 def _content_digest(root: Path) -> str:
@@ -72,4 +99,4 @@ def current_build_identity() -> str:
     return source_build_identity(package_root, version=__version__)
 
 
-__all__ = ["current_build_identity", "source_build_identity"]
+__all__ = ["current_build_identity", "source_build_identity", "validate_build_info"]

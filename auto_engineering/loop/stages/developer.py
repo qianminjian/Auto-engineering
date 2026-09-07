@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from auto_engineering.loop.domain_events import transition_event
+from auto_engineering.loop.domain_events import channels_updated, transition_event
 from auto_engineering.loop.events import LoopEvent, LoopEventType
 from auto_engineering.loop.stages.base import (
     LifecycleEffects,
@@ -26,6 +26,7 @@ class DeveloperHandler:
     ) -> TransitionDecision:
         if not isinstance(state, Mapping):
             raise TypeError("state 必须为 Mapping")
+        evidence_event = _developer_evidence(state, result, context)
         blocking = context.extensions.get("blocking_gate_results", ())
         if (
             isinstance(blocking, (list, tuple))
@@ -39,6 +40,7 @@ class DeveloperHandler:
             ]
             if environment_failures:
                 return TransitionDecision(
+                    events=((evidence_event,) if evidence_event is not None else ()),
                     next_stage="developer",
                     advance_stage=False,
                     action_context={
@@ -49,6 +51,7 @@ class DeveloperHandler:
                     },
                 )
             return TransitionDecision(
+                events=((evidence_event,) if evidence_event is not None else ()),
                 lifecycle_effects=LifecycleEffects(
                     collect_token_usage=True,
                     offload_stage=self.stage,
@@ -68,7 +71,7 @@ class DeveloperHandler:
         ):
             completed_batch_id = context.extensions.get("completed_batch_id")
             return TransitionDecision(
-                events=(
+                events=((evidence_event,) if evidence_event is not None else ()) + (
                     transition_event(
                         LoopEventType.WORK_REPAIR_COMPLETED,
                         thread_id=context.thread_id,
@@ -114,6 +117,7 @@ class DeveloperHandler:
             else []
         )
         events: tuple[LoopEvent, ...] = (
+            *((evidence_event,) if evidence_event is not None else ()),
             transition_event(
                 LoopEventType.BATCH_COMPLETED,
                 thread_id=context.thread_id,
@@ -156,6 +160,39 @@ class DeveloperHandler:
                 developer_progress=progress,
             ),
         )
+
+
+def _developer_evidence(
+    state: Mapping[str, Any],
+    result: Mapping[str, Any],
+    context: TransitionContext,
+) -> LoopEvent | None:
+    """将 Developer 业务结果编译为唯一的 evidence Projection 事件。"""
+    fields = ("files_changed", "commit_hash", "test_results", "red_evidence")
+    if not any(field in result for field in fields):
+        return None
+    raw_files = result.get("files_changed", [])
+    files = list(raw_files) if isinstance(raw_files, list) else []
+    existing = state.get("batch_changed_files", [])
+    previous = list(existing) if isinstance(existing, list) else []
+    changes = {
+        "files_changed": files,
+        "batch_changed_files": list(dict.fromkeys([*previous, *files])),
+        "commit_hash": result.get("commit_hash", ""),
+        "test_results": result.get("test_results", {}),
+        "red_evidence": result.get("red_evidence", []),
+        "developer_snapshot": {
+            "files_changed": files,
+            "commit_hash": result.get("commit_hash", ""),
+            "test_results": result.get("test_results", {}),
+        },
+    }
+    return channels_updated(
+        LoopEventType.RESULT_EVIDENCE_RECORDED,
+        changes,
+        thread_id=context.thread_id,
+        sequence=context.event_sequence,
+    )
 
 
 __all__ = ["DeveloperHandler"]

@@ -88,10 +88,11 @@ ae-run dev-loop --resume
 ## 5. 配置与运行状态
 
 - `.ae-state/`：checkpoint、result、metrics 等本地状态。
-- `ae.toml`：项目配置。首次启动 `dev-loop` 时必须存在有效配置；交互终端会启动
-  向导，Claude Code/Codex 等非交互宿主会自动写入可立即运行的 standard
-  Profile。环境变量优先级高于文件，可在运行前逐项覆盖。也可提前执行
-  `ae doctor --init-config` 生成标准配置，或执行 `ae doctor --wizard` 自定义。
+- `ae.toml`：可选项目配置。`[project]` 用于显式提供 ProjectProfile，运行时 Feature
+  配置用于覆盖 `FeatureManifest` 默认值；两者缺失时仍可直接启动 Loop，不会被配置向导
+  或 `CONFIG_REQUIRED` 阻断。环境变量优先级高于文件，可在运行前逐项覆盖。需要显式
+  开启审计、度量等治理能力时，可执行 `ae doctor --init-config` 生成标准配置，或执行
+  `ae doctor --wizard` 自定义。
 - `FeatureManifest`：全部 `AE_*` 功能默认值的唯一事实源。
 - `RuntimeConfig`：业务代码的类型化配置访问层。
 

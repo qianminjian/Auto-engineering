@@ -19,13 +19,13 @@ from __future__ import annotations
 
 import pytest
 
-from auto_engineering.loop.checkpoint._serialization import LastValueChannel
-from auto_engineering.loop.plan import (
+from auto_engineering.engine.models import (
     Plan,
     Task,
     TaskOutcome,
     TaskStatus,
 )
+from auto_engineering.loop.checkpoint._serialization import LastValueChannel
 from auto_engineering.loop.state import (
     CheckpointEnvelope,
 )
@@ -256,7 +256,7 @@ def test_task_default_output_is_none():
 
 def test_task_construct_with_all_10_fields():
     """Task 可一次性构造 10 字段 (含 title/expected_output/role/context_files/validation/output)."""
-    from auto_engineering.loop.plan import TaskValidation
+    from auto_engineering.engine.models import TaskValidation
 
     validation = TaskValidation(required_files=["out.py"])
     outcome = TaskOutcome(task_id="t1", status="completed", output="done")

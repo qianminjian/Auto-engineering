@@ -30,6 +30,21 @@ STAGE_TO_ROLE: dict[str, str | None] = {
 
 DEFAULT_P1_THRESHOLD = 6  # P1 count threshold for deep audit pass/fail decisions. Clamped to [2, 8].
 
+# Setup 失败是可修复的宿主环境问题，但不能让宿主无限重建项目或消耗 token。
+# 达到阈值后 Core 进入 WAIT_RESOURCE；项目修复并通过验证后由 Core 清零。
+PROJECT_SETUP_MAX_FAILURE_STREAK = 3
+# 一个 Setup Action 允许一次就地修复重试；之后必须把失败交回 Core。
+PROJECT_SETUP_MAX_IN_ACTION_RETRIES = 1
+PROJECT_SETUP_FAILURE_SUMMARY_MAX_LENGTH = 512
+PROJECT_SETUP_FAILURE_CODES = frozenset({
+    "PROJECT_SETUP_COMMAND_FAILED",
+    "PROJECT_SETUP_BUILD_FAILED",
+    "PROJECT_SETUP_GATE_FAILED",
+    "PROJECT_SETUP_SCOPE_VIOLATION",
+    "PROJECT_SETUP_TOOLCHAIN_FAILED",
+    "PROJECT_SETUP_UNKNOWN_FAILURE",
+})
+
 # ── Subagent spawn requirements per stage (T108a) ──
 # Single source of truth — previously duplicated between action_builder.py and
 # tick_orchestrator.py with diverging system_deep_audit count (3 vs 5).

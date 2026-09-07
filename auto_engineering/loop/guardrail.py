@@ -18,7 +18,7 @@ v5.4 P2-8: drop 态已从类型系统和 handler 中完全移除.
     - Orchestrator 内联 _handle_guardrail_result: action 分发 (continue/stop/retry/rerun_gates)
 
 依赖:
-    - stage_router.clear_stage_fields (Stage 字段清理复用)
+    - state_lifecycle.clear_stage_fields (Stage 字段清理复用)
     - EngineState (任意对象, duck-typed)
 """
 
@@ -34,10 +34,17 @@ from typing import TYPE_CHECKING, ClassVar  # noqa: E402
 from auto_engineering.engine.gap_analysis import (  # noqa: E402
     _BLOCKING_FORBIDDEN as _BLOCKING_FORBIDDEN_RESOLUTIONS,
 )
+from auto_engineering.loop.change_evidence import (  # noqa: E402
+    declared_real_files,
+    verification_only_batch_ready,
+)
 from auto_engineering.loop.guardrails.stateful import (  # noqa: E402
     FreshGuardrail,
     REDGuardrail,
     RegressionGuardrail,
+)
+from auto_engineering.loop.guardrails.test_evidence import (  # noqa: E402
+    TestEvidenceIntegrityGuardrail,
 )
 from auto_engineering.shared.guardrail import (  # noqa: E402
     Action,
@@ -61,6 +68,7 @@ __all__ = [
     "REDGuardrail",
     "RegressionGuardrail",
     "RequirementValid",
+    "TestEvidenceIntegrityGuardrail",
     "TestsPass",
 ]
 
@@ -162,25 +170,6 @@ class GitDiffExists(Guardrail):
     timing = "post"
     applies_to_stages = ("developer",)
 
-    @staticmethod
-    def _declared_real_files(state: EngineState, root: Path) -> set[str]:
-        """返回位于项目内且真实存在的声明文件，拒绝路径穿越。"""
-        resolved_root = root.resolve()
-        evidence: set[str] = set()
-        for raw in getattr(state, "files_changed", []) or []:
-            if not isinstance(raw, str) or not raw.strip():
-                continue
-            candidate = Path(raw)
-            candidate = candidate if candidate.is_absolute() else resolved_root / candidate
-            try:
-                resolved = candidate.resolve(strict=True)
-                relative = resolved.relative_to(resolved_root)
-            except (OSError, ValueError):
-                continue
-            if resolved.is_file():
-                evidence.add(relative.as_posix())
-        return evidence
-
     def check(
         self,
         stage: str,
@@ -188,7 +177,7 @@ class GitDiffExists(Guardrail):
         project_root: Path | None = None,
     ) -> GuardrailResult:
         resolved_root = project_root if project_root is not None else Path.cwd()
-        declared_files = self._declared_real_files(state, resolved_root)
+        declared_files = declared_real_files(state, resolved_root)
 
         # T221: checkpoint 是循环边界，先认可未提交的真实工作树变更。
         rc0, stdout0 = _run_git_diff(resolved_root, [])
@@ -216,6 +205,11 @@ class GitDiffExists(Guardrail):
         # lint/test/build Gate 继续验证；Loop 不要求宿主擅自 git init/add。
         rc_repo, _ = _run_git(resolved_root, "rev-parse", "--is-inside-work-tree")
         if rc_repo != 0 and declared_files:
+            return GuardrailResult()
+
+        # 验证型 batch 可能只确认既有实现与测试满足设计，不应伪造 files_changed
+        # 或制造无意义 diff。所有当前 task 目标必须已存在，且 Core 测试证据已通过。
+        if verification_only_batch_ready(state, resolved_root):
             return GuardrailResult()
 
         # 兼容用户已明确授权 commit 的工作流。
@@ -515,6 +509,7 @@ class GuardrailChain:
             REDGuardrail(),
             FreshGuardrail(),
             RegressionGuardrail(),
+            TestEvidenceIntegrityGuardrail(),
             PIIGuardrail(),
             FileAccessGuardrail(),
             AuditTimingGuardrail(),

@@ -150,6 +150,20 @@
     "total_audited_files": {"type": "integer"},
     "recheck_log": {"type": "array"},
     "gaps": {"type": "array"},
+    "result_type": {"type": "string"},
+    "artifacts": {"type": "array"},
+    "failure_code": {
+      "enum": [
+        "PROJECT_SETUP_COMMAND_FAILED",
+        "PROJECT_SETUP_BUILD_FAILED",
+        "PROJECT_SETUP_GATE_FAILED",
+        "PROJECT_SETUP_SCOPE_VIOLATION",
+        "PROJECT_SETUP_TOOLCHAIN_FAILED",
+        "PROJECT_SETUP_UNKNOWN_FAILURE"
+      ]
+    },
+    "failure_summary": {"type": "string", "minLength": 1, "maxLength": 512},
+    "attempts_in_action": {"type": "integer", "minimum": 1, "maximum": 2},
     "scanned_sections": {"type": "integer"},
     "has_blocking": {"type": "boolean"},
     "design_doc_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
@@ -199,9 +213,9 @@
     "escalation_default": {"type": ["string", "null"]},
     "claim_token": {"type": "string", "minLength": 1},
     "session_id": {"type": "string", "minLength": 1},
-    "host": {"type": "string", "minLength": 1}
-    ,"result_type": {"type": "string"}
-    ,"artifacts": {"type": "array", "items": {"type": "string"}}
+    "host": {"type": "string", "minLength": 1},
+    "result_type": {"type": "string"},
+    "artifacts": {"type": "array", "items": {"type": "string"}}
   },
   "$defs": {
     "workerAttestation": {
@@ -229,24 +243,6 @@
     }
   },
   "allOf": [
-    {
-      "if": {
-        "not": {
-          "properties": {
-            "spawned": {"const": false},
-            "spawn_error_code": {
-              "enum": [
-                "HOST_ACTION_CONTEXT_TIMEOUT",
-                "HOST_ACTION_CONTEXT_RESOURCE_EXHAUSTED",
-                "HOST_ACTION_CONTEXT_FAILED"
-              ]
-            }
-          },
-          "required": ["spawned", "spawn_error_code"]
-        }
-      },
-      "then": {
-        "allOf": [
     {
       "if": {"properties": {"stage": {"const": "gap_scan"}}},
       "then": {
@@ -280,7 +276,25 @@
       "if": {"properties": {"stage": {"const": "project_setup"}}},
       "then": {
         "required": ["stage", "result_type", "artifacts"],
-        "properties": {"result_type": {"const": "project_setup_completed"}}
+        "properties": {
+          "result_type": {"enum": ["project_setup_completed", "project_setup_failed"]}
+        },
+        "oneOf": [
+          {
+            "properties": {"result_type": {"const": "project_setup_completed"}},
+            "not": {
+              "anyOf": [
+                {"required": ["failure_code"]},
+                {"required": ["failure_summary"]},
+                {"required": ["attempts_in_action"]}
+              ]
+            }
+          },
+          {
+            "required": ["failure_code", "failure_summary", "attempts_in_action"],
+            "properties": {"result_type": {"const": "project_setup_failed"}}
+          }
+        ]
       }
     },
     {
@@ -391,9 +405,6 @@
     {
       "if": {"properties": {"stage": {"const": "session_claimed"}}},
       "then": {"required": ["stage", "claim_token", "session_id", "host"]}
-    }
-        ]
-      }
     }
   ],
   "additionalProperties": false

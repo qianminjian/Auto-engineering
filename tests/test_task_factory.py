@@ -18,18 +18,25 @@ from __future__ import annotations
 
 import pytest
 
-from auto_engineering.engine.state import EngineState
-from auto_engineering.errors import AEError, ErrorCode
-from auto_engineering.loop.plan import (
+from auto_engineering.engine.models import (
     ConflictError,
     Plan,
     Task,
     TaskOutcome,
 )
+from auto_engineering.engine.state import EngineState
+from auto_engineering.engine.task_outcome import TaskOutcome as CanonicalTaskOutcome
+from auto_engineering.errors import AEError, ErrorCode
 from auto_engineering.loop.task_factory import (
     apply_outcome_to_state,
     tasks_from_batch_plan,
 )
+
+
+def test_task_outcome_has_one_canonical_model_module() -> None:
+    """执行回执不应与计划/DAG 模型重复定义。"""
+
+    assert TaskOutcome is CanonicalTaskOutcome
 
 # ============================================================
 # Plan.get_tasks_by_stage — 4 用例

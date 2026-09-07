@@ -4,7 +4,9 @@ Originally loop/plan.py (v2.0 Phase 03). Moved to engine/models.py (2026-07-21)
 to break engine → loop → engine cycle (P0-2). engine/batch_state.py depends on
 Plan/Task via TYPE_CHECKING — these are pure data models with no loop dependency.
 
-设计来源: design/v2.0-Analysis-Loop.md §4.3 文件隔离 + §4.5 多 Agent 并发.
+设计来源: design/v2.0-Analysis-Loop.md §4.3 文件隔离 + §4.5 多 Agent 并发；
+当前 v5.8 中本模块只负责确定性计划数据与文件隔离校验，Worker 生命周期由宿主
+Driver 管理，Python Core 不在此处启动任务或维持协调循环。
 
 核心组件:
     Task           — 单个任务 (id / role / target_files / depends_on)
@@ -27,6 +29,8 @@ from collections import defaultdict, deque
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from enum import StrEnum
+
+from auto_engineering.engine.task_outcome import TaskOutcome
 
 
 class TaskStatus(StrEnum):
@@ -418,8 +422,7 @@ class Plan:
 
         用法:
             groups = plan.parallelism_groups()
-            for group in groups:
-                await asyncio.gather(*[run_task(tid) for tid in group])
+            # 仅供宿主 Driver 读取确定性分组；Worker 启动与回收不在 Core 内完成。
 
         Raises:
             ConflictError: Plan DAG 含循环依赖时 (_topological_levels ValueError 转换).
@@ -438,9 +441,9 @@ class Plan:
         Returns:
             role == stage 的 Task 子集; 无匹配或空 Plan 返回 [].
 
-        用法 (Orchestrator v5.0 §B7.1 step 2c):
+        用法:
             tasks = plan.get_tasks_by_stage("architect")
-            await run_round(tasks, ...)
+            # 仅查询计划；实际 Worker 调度由宿主 Driver 负责。
         """
         return [t for t in self.tasks if t.role == stage]
 
@@ -450,30 +453,6 @@ class Plan:
             if task.id == task_id:
                 return task
         return None
-
-
-@dataclass
-class TaskOutcome:
-    """单个 task 的执行结果 (v2.0, 原 loop/round.py → engine/models.py P2-2).
-
-    消费方: task_factory.py / checkpoint_envelope.py / cli/agent.py
-
-    Attributes:
-        task_id: 任务 ID
-        status: completed | failed | cancelled
-        output: 任务输出 (成功时, dict 形式承载 stage-specific 字段)
-        error: 错误信息 (失败时)
-        duration: 耗时 (秒)
-        task_role: v5.0 M3 新增 — 对应 Task.role (architect/developer/critic),
-                   供 apply_outcome_to_state 分发写入 state 字段.
-    """
-
-    task_id: str
-    status: str  # completed | failed | cancelled
-    output: object = None
-    error: str | None = None
-    duration: float = 0.0
-    task_role: str | None = None
 
 
 __all__ = [

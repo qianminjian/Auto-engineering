@@ -113,7 +113,7 @@ class HostTrajectoryRunner:
                 prompt_loader=self._load_prompt,
             )
             events.append("worker_invoked")
-            outcome = WorkerOutcome.from_dict(worker(invocation))
+            outcome = WorkerOutcome.from_business_payload(worker(invocation))
             outcomes.append(outcome)
             native_outcomes.append(NativeWorkerOutcome(
                 worker_id=spec.worker_id,

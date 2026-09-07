@@ -118,6 +118,38 @@ def test_missing_roots_conflict_even_when_legacy_manifest_still_exists(tmp_path:
     assert "project_anchors_missing" in report.reason_codes
 
 
+def test_active_project_setup_action_is_compatible_while_profile_is_unresolved(
+    tmp_path: Path,
+) -> None:
+    """Setup Action 本身就是待补能力状态，不应触发二次协调 Gate。"""
+
+    intent = _intent(tmp_path)
+    state = EngineState(
+        thread_id="setup-thread",
+        current_stage="project_setup",
+        expected_stage="project_setup",
+        design_doc_path=intent.design_doc_path,
+        design_doc_digest=intent.design_doc_digest,
+        missing_project_capabilities=["test_command"],
+    )
+    report = StateCompatibilityInspector(tmp_path).inspect(
+        intent=intent,
+        state=state,
+        profile_resolution=ProjectProfileResolution(
+            status=ResolutionStatus.SETUP_REQUIRED,
+            profile=None,
+            missing_capabilities=("test_command",),
+        ),
+        active_action={
+            "action": "project_setup_required",
+            "stage": "project_setup",
+            "thread_id": state.thread_id,
+        },
+    )
+
+    assert report.status is CompatibilityStatus.COMPATIBLE
+
+
 def test_declared_future_roots_do_not_conflict_before_they_are_witnessed(
     tmp_path: Path,
 ) -> None:

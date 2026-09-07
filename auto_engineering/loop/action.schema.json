@@ -14,6 +14,8 @@
     "message_id": {"type": "string", "minLength": 1},
     "thread_id": {"type": "string", "minLength": 1},
     "project_root": {"type": "string", "minLength": 1},
+    "active_action_message_id": {"type": "string", "minLength": 1},
+    "setup_failure_streak": {"type": "integer", "minimum": 0},
     "tick": {"type": "integer", "minimum": 0},
     "stage": {"type": ["string", "null"]},
     "causation_id": {"type": "string", "minLength": 1},
@@ -84,6 +86,12 @@
                     "uniqueItems": true
                   }
                 ]
+              },
+              "enum": {
+                "type": "array",
+                "items": {"type": "string"},
+                "minItems": 1,
+                "uniqueItems": true
               }
             },
             "additionalProperties": false
@@ -98,6 +106,28 @@
     "current_gap_index": {"type": "integer", "minimum": 0},
     "total_gaps": {"type": "integer", "minimum": 0},
     "current_gap": {"type": "object"},
+    "gap_review_contract": {
+      "type": "object",
+      "required": [
+        "display_scope", "decision_count", "gap_id_source", "forbidden_context"
+      ],
+      "properties": {
+        "display_scope": {"const": "current_gap_only"},
+        "decision_count": {"const": 1},
+        "gap_id_source": {"const": "current_gap.id"},
+        "forbidden_context": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "historical_gap_scan_gaps", "future_gap_details", "batch_decisions"
+            ]
+          },
+          "minItems": 3,
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false
+    },
     "auto_decision": {"type": ["object", "null"]},
     "decisions_so_far": {"type": "array"},
     "has_blocking": {"type": "boolean"},
@@ -128,6 +158,16 @@
     "design_decision_ledger": {"type": "object"},
     "required_capabilities": {"type": "array"},
     "missing_capabilities": {"type": "array", "items": {"type": "string"}},
+    "setup_attempt_policy": {
+      "type": "object",
+      "required": ["max_retries_in_action", "failure_result_type", "max_failure_streak"],
+      "properties": {
+        "max_retries_in_action": {"const": 1},
+        "failure_result_type": {"const": "project_setup_failed"},
+        "max_failure_streak": {"const": 3}
+      },
+      "additionalProperties": false
+    },
     "reason_code": {"type": "string"},
     "retry_attempt": {"type": "integer", "minimum": 1},
     "retry_limit": {"type": "integer", "minimum": 1},
@@ -156,7 +196,17 @@
     "tasks": {"type": "array"},
     "plan": {"type": "string"},
     "instruction": {"type": "string"},
-    "subagent_prompt": {"type": "string"},
+    "coordinator_prompt_ref": {
+      "type": "object",
+      "required": ["path", "sha256", "size_bytes", "media_type"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "size_bytes": {"type": "integer", "minimum": 1},
+        "media_type": {"const": "text/plain; charset=utf-8"}
+      },
+      "additionalProperties": false
+    },
     "session_summary": {"type": "string"},
     "spawn": {"$ref": "#/$defs/spawnPlan"},
     "execution_identity": {"$ref": "#/$defs/executionIdentity"},
@@ -224,6 +274,10 @@
   },
   "allOf": [
     {
+      "if": {"properties": {"action": {"const": "gap_review"}}},
+      "then": {"required": ["gap_review_contract"]}
+    },
+    {
       "if": {"properties": {"action": {"const": "resource_wait"}}},
       "then": {"required": ["resource", "retry_stage", "reason_code"]}
     },
@@ -267,32 +321,27 @@
   "$defs": {
     "spawnPlan": {
       "type": "object",
-      "required": ["count", "effort", "parallel"],
+      "required": [
+        "count", "effort", "parallel", "contract_version", "invocations"
+      ],
       "properties": {
         "contract_version": {"const": "1.0"},
         "count": {"type": "integer", "minimum": 1},
         "effort": {"type": "string", "minLength": 1},
         "parallel": {"type": "boolean"},
-        "agents": {"type": "array", "items": {"type": "object"}},
         "invocations": {
           "type": "array",
           "minItems": 1,
           "items": {"$ref": "#/$defs/workerInvocation"}
         }
       },
-      "allOf": [
-        {
-          "if": {"required": ["contract_version"]},
-          "then": {"required": ["invocations"]}
-        }
-      ],
       "additionalProperties": false
     },
     "workerInvocation": {
       "type": "object",
       "required": [
         "worker_id", "role", "prompt_ref", "prompt_sha256",
-        "requested_effort", "isolation", "capabilities", "receipt_path"
+        "requested_effort", "isolation", "capabilities", "receipt_path", "outcome_path"
       ],
       "properties": {
         "worker_id": {"type": "string", "minLength": 1},

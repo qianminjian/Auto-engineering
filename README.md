@@ -31,6 +31,9 @@ scripts/ae-run doctor
 scripts/ae-run dev-loop --init "需求"
 ```
 
+Runner 会把唯一的 Python/uv 运行时创建在目标项目 `.ae-state/.ae-runtime`；已安装
+Marketplace 插件目录保持只读，不依赖插件缓存的写权限，也不调用全局旧 `ae`。
+
 `--init` 只产生首个 action JSON；当前宿主 Agent 按 action 执行后，使用
 `scripts/ae-run dev-loop --tick --result <result.json>` 推进，直到 Python 输出
 `{"action":"done"}`。Python 引擎不直接调用 LLM。
@@ -64,7 +67,9 @@ Host Adapter 层
 
 Host-neutral Core (auto_engineering/)
   loop/tick_orchestrator.py  — v5.6 Tick 主引擎
-  loop/stage_router.py       — T1-T22 转换表
+  loop/stages/               — 唯一 Stage Handler 路由
+  loop/state_lifecycle.py    — 跨阶段重试的状态清理
+  loop/event_store.py        — EventStore 事实源与恢复
   loop/guardrail.py          — 9 Guardrail (含 REDGuardrail/FreshGuardrail/RegressionGuardrail)
   loop/convergence.py        — 4 级收敛判定
   gates/                     — 7+1 道 Gate (safety→lint→type_check→audit→contract→test→build)
@@ -86,7 +91,7 @@ Host-neutral Core (auto_engineering/)
 
 ```bash
 uv run pytest tests/ --no-cov --timeout=120 -q
-<!-- test-baseline --> 2797 passed / 1 skipped; coverage gate currently 90.00% (达到 90% 自动门禁；真实双宿主终态仍需单独验收)
+<!-- test-baseline --> 2961 passed / 1 skipped; coverage gate currently 90.00% (达到 90% 自动门禁；真实双宿主终态仍需单独验收)
 ```
 
 ## 环境变量

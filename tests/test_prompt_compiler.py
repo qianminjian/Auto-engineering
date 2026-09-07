@@ -6,6 +6,7 @@ import pytest
 
 from auto_engineering.engine.state import EngineState
 from auto_engineering.loop.action_builder import ActionBuilder
+from auto_engineering.loop.effects import EffectExecutor
 from auto_engineering.prompts.compiler import (
     PromptContextError,
     PromptLayoutError,
@@ -47,6 +48,25 @@ def test_gap_scan_prompt_contains_agent_owned_section_refs() -> None:
     assert '"section_ref": "§C1"' in prompt
     assert '"title": "上传"' in prompt
     assert "section_id" not in prompt
+
+
+def test_gap_scan_prompt_keeps_precise_design_clear_when_source_is_missing() -> None:
+    bundle = compile_prompt_bundle(
+        contract=default_prompt_contracts()["gap_scan"],
+        role_prompt=default_registry().get("gap_scan"),
+        context={
+            "design_doc_path": "design/spec.md",
+            "project_root": "/project",
+            "requirement": "实现设计中的函数",
+            "project_profile_summary": _PROFILE_SUMMARY,
+            "host_design_sections": [{"section_ref": "§A1.1", "title": "函数"}],
+        },
+        expected_format={"gaps": "array", "section_findings": "array"},
+    )
+
+    prompt = bundle.coordinator_prompt
+    assert "代码尚未实现不是设计缺口" in prompt
+    assert "实现缺口必须留给 Architect/Developer" in prompt
 
 
 def test_architect_worker_receives_requirement_and_refine_feedback() -> None:
@@ -332,9 +352,14 @@ def test_project_profile_summary_is_bounded_and_identifiable(tmp_path) -> None:
         project_profile_id="sha256:test",
     )
 
-    action = ActionBuilder(tmp_path).build_action(state)
+    plan = ActionBuilder(tmp_path).build_plan(state)
+    for intent in plan.effect_intents:
+        EffectExecutor(tmp_path).execute(intent)
+    action = plan.payload
 
-    prompt = action["subagent_prompt"]
+    prompt = (
+        tmp_path / action["spawn"]["invocations"][0]["prompt_ref"]
+    ).read_text(encoding="utf-8")
     assert action["extensions"]["context_manifest"]["total_inline_bytes"] > 0
     assert '"evidence":' not in prompt
     assert '"resolution":' not in prompt

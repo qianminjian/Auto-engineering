@@ -13,7 +13,29 @@ from __future__ import annotations
 
 import pytest
 
-from auto_engineering.engine.state import EngineState, LoopState
+from auto_engineering.engine.state import EngineState, LoopState, _validate_field_value
+from auto_engineering.engine.state_validation import validate_field_value
+
+
+def test_engine_state_uses_one_canonical_field_validation_policy() -> None:
+    """状态写入和独立校验模块必须共享同一实现，不能形成第二份规则。"""
+
+    assert _validate_field_value is validate_field_value
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("critic_verdict", "INVALID"),
+        ("current_stage", "unknown_stage"),
+        ("round", "not-an-int"),
+    ],
+)
+def test_engine_state_validation_rejects_invalid_scalar_fields(
+    name: str, value: object,
+) -> None:
+    with pytest.raises(ValueError):
+        validate_field_value(name, value)
 
 # v5.8 状态字段（含 #43-47 会话预算与 Developer 证据锚点）。
 _EXPECTED_V58_FIELDS = {
@@ -54,6 +76,8 @@ _EXPECTED_V58_FIELDS = {
     "open_findings",
     # #50-52 Phase 73 ProjectProfile 与 setup 能力
     "project_profile", "project_profile_id", "missing_project_capabilities",
+    "project_setup_failure_streak",
+    "project_setup_baseline_files",
     # #53-57 Phase 78 架构事实与确定性修复控制
     "architecture_baseline", "repair_cycle_count",
     "unchanged_finding_streak", "last_finding_fingerprint",
@@ -330,11 +354,11 @@ class TestEngineStateBoundary:
         assert not hasattr(state, "nonexistent")
 
     def test_to_dict_contains_all_fields(self) -> None:
-        """to_dict 输出含全部 69 字段（不含内部字段）。"""
+        """to_dict 输出含全部 71 字段（不含内部字段）。"""
         state = EngineState()
         d = state.to_dict()
-        assert len(d) == 69, (
-            f"to_dict 应含 69 字段, 实际 {len(d)}: "
+        assert len(d) == 71, (
+            f"to_dict 应含 71 字段, 实际 {len(d)}: "
             f"{sorted(d.keys())}"
         )
         assert "suggested_fix" in d, "to_dict 必须包含 suggested_fix (Self-Refine 深化)"

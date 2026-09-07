@@ -73,12 +73,19 @@ class StateCompatibilityInspector:
         )
         if missing:
             reasons.append("project_anchors_missing")
+        active_setup = (
+            isinstance(active_action, Mapping)
+            and active_action.get("action") == "project_setup_required"
+            and active_action.get("stage") == "project_setup"
+        )
         if (
             profile_resolution.profile is None
             and profile_resolution.missing_capabilities
             and "project_profile_unresolved" not in reasons
             and not missing
             and state.project_profile is None
+            and state.current_stage != "project_setup"
+            and not active_setup
         ):
             reasons.append("project_profile_unresolved")
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from importlib import import_module
 from pathlib import Path
 from types import SimpleNamespace
@@ -24,6 +25,9 @@ class _Store:
 
     def find_by_thread_id(self, candidate: str) -> str | None:
         return self.thread_checkpoint
+
+    def active_project_thread(self) -> str | None:
+        return "thread-1"
 
     def reserve_project_thread(self, candidate: str) -> str | None:
         self.reserved_thread_id = candidate
@@ -86,6 +90,15 @@ class _Orchestrator:
             raise ValueError("not found")
         return cls(root)
 
+    @classmethod
+    def restore_from_event_store(
+        cls,
+        root: Path,
+        store: _Store,
+        **kwargs: object,
+    ) -> _Orchestrator:
+        return cls.restore(root, store, **kwargs)
+
     def tick(self, result_file: Path) -> dict[str, object]:
         if self.tick_error is not None:
             raise self.tick_error
@@ -93,6 +106,47 @@ class _Orchestrator:
 
     def build_action(self) -> dict[str, object]:
         return {"action": "resume", "thread_id": "thread-1"}
+
+    def state_snapshot(self) -> SimpleNamespace:
+        return SimpleNamespace(**vars(self._state))
+
+    def active_action_snapshot(self) -> dict[str, object] | None:
+        return None
+
+    def status_snapshot(self, *, verbose: bool = False) -> dict[str, object]:
+        summary: dict[str, object] = {
+            "thread_id": self._state.thread_id,
+            "current_stage": self._state.current_stage,
+            "expected_stage": self._state.expected_stage,
+            "tick": self._state.tick,
+            "round": self._state.round,
+            "verdict": self._state.critic_verdict,
+            "total_majors": self._state.total_majors,
+            "plan_refine_count": self._state.plan_refine_count,
+        }
+        if verbose and self._batch_state is not None:
+            batches = []
+            component = None
+            try:
+                component = self._batch_state.current_component()
+                batches = [
+                    {
+                        "batch_id": batch.get("batch_id", ""),
+                        "component": batch.get("component", ""),
+                        "task_count": len(batch.get("tasks", [])),
+                    }
+                    for batch in self._batch_state.batches_for(component)
+                ]
+            except Exception:
+                pass
+            summary["batch_progress"] = {
+                "current_component": component.name if component else "?",
+                "current_batch_idx": self._batch_state.current_batch_idx,
+                "total_batches": len(batches) if component else 0,
+                "batches": batches,
+                "total_components_seen": len(self._batch_state._seen_components),
+            }
+        return summary
 
 
 @pytest.fixture(autouse=True)
@@ -141,163 +195,6 @@ def test_requirement_category_inference(
     assert _infer_category(requirement) == expected
 
 
-def test_interactive_config_gate_runs_mandatory_wizard(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    dev_loop = import_module("auto_engineering.cli.dev_loop")
-    doctor = import_module("auto_engineering.cli.doctor")
-
-    monkeypatch.delenv("AE_SKIP_CONFIG_CHECK", raising=False)
-    monkeypatch.setattr(
-        doctor,
-        "_run_wizard",
-        lambda root: bool((root / "ae.toml").write_text(
-            '[safety]\npii-enabled = "1"\n'
-        ) or True),
-    )
-
-    assert dev_loop._check_config_gate(tmp_path, interactive=True)
-    assert (tmp_path / "ae.toml").is_file()
-
-
-def test_config_gate_short_circuits_for_env_or_file(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from auto_engineering.cli.dev_loop import _check_config_gate
-
-    (tmp_path / "ae.toml").write_text('[safety]\npii-enabled = "1"\n')
-    assert _check_config_gate(tmp_path) is True
-
-
-def test_noninteractive_config_gate_never_reads_piped_choice(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    import click
-
-    from auto_engineering.cli.dev_loop import _check_config_gate
-
-    monkeypatch.delenv("AE_SKIP_CONFIG_CHECK", raising=False)
-    monkeypatch.delenv("AE_CONFIG_POLICY", raising=False)
-    monkeypatch.setattr(
-        click,
-        "prompt",
-        lambda *args, **kwargs: pytest.fail("非交互宿主不得读取 stdin/pipeline"),
-    )
-
-    assert _check_config_gate(tmp_path, interactive=False)
-    assert (tmp_path / "ae.toml").is_file()
-    assert "非交互宿主已写入 standard profile" in capsys.readouterr().err
-
-
-def test_project_config_is_reloaded_after_first_run_generation(
-    tmp_path: Path,
-) -> None:
-    from auto_engineering.cli.dev_loop import _activate_project_config
-    from auto_engineering.config.ae_config import (
-        render_ae_toml,
-        standard_profile_values,
-    )
-    from auto_engineering.config.runtime_config import (
-        RuntimeConfig,
-        get_default_config,
-        set_default_config,
-    )
-
-    set_default_config(RuntimeConfig.from_environ({}))
-    (tmp_path / "ae.toml").write_text(
-        render_ae_toml(
-            standard_profile_values(),
-            generated_by="test",
-        ),
-        encoding="utf-8",
-    )
-
-    _activate_project_config(tmp_path)
-
-    config = get_default_config()
-    assert config.audit_log_enabled is True
-    assert config.metrics_enabled is True
-    assert config.token_tracking_enabled is True
-
-
-@pytest.mark.parametrize("policy", ["defaults", "create"])
-def test_noninteractive_config_policies_are_explicit(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    policy: str,
-) -> None:
-    from auto_engineering.cli.dev_loop import _check_config_gate
-
-    monkeypatch.delenv("AE_SKIP_CONFIG_CHECK", raising=False)
-    assert _check_config_gate(
-        tmp_path,
-        policy=policy,
-        interactive=False,
-    )
-    assert (tmp_path / "ae.toml").is_file()
-
-
-def test_noninteractive_require_policy_pauses_with_error(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import click
-
-    from auto_engineering.cli.dev_loop import _check_config_gate
-
-    monkeypatch.delenv("AE_SKIP_CONFIG_CHECK", raising=False)
-    with pytest.raises(click.ClickException, match="CONFIG_POLICY_REQUIRED"):
-        _check_config_gate(
-            tmp_path,
-            policy="require",
-            interactive=False,
-        )
-
-
-def test_invalid_or_empty_existing_config_never_silently_continues(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import click
-
-    from auto_engineering.cli.dev_loop import _check_config_gate
-
-    monkeypatch.delenv("AE_SKIP_CONFIG_CHECK", raising=False)
-    (tmp_path / "ae.toml").write_text("# old commented template\n")
-    with pytest.raises(click.ClickException, match="CONFIG_REQUIRED"):
-        _check_config_gate(tmp_path, interactive=False)
-
-    (tmp_path / "ae.toml").write_text("[broken\n")
-    with pytest.raises(click.ClickException, match="CONFIG_INVALID"):
-        _check_config_gate(tmp_path, interactive=False)
-
-
-def test_config_gate_reports_env_file_default_sources(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    from auto_engineering.cli.dev_loop import _check_config_gate
-
-    monkeypatch.delenv("AE_SKIP_CONFIG_CHECK", raising=False)
-    monkeypatch.setenv("AE_METRICS", "1")
-
-    assert _check_config_gate(
-        tmp_path,
-        policy="defaults",
-        interactive=False,
-    )
-    output = capsys.readouterr().err
-    assert "[配置来源]" in output
-    assert "env=" in output
-    assert "file=0" in output
-    assert "default=" in output
-
-
 def test_tick_init_emits_action_and_closes_store(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -306,12 +203,6 @@ def test_tick_init_emits_action_and_closes_store(
 ) -> None:
     dev_loop = import_module("auto_engineering.cli.dev_loop")
 
-    (tmp_path / "ae.toml").write_text("")
-    monkeypatch.setattr(
-        dev_loop,
-        "_check_config_gate",
-        lambda root, **kwargs: True,
-    )
     monkeypatch.setattr(dev_loop, "_build_injectables", lambda root: {
         "context_offloader": object(),
         "session_summarizer": object(),
@@ -454,14 +345,14 @@ def test_tick_status_verbose_renders_batch_summary(
                 "tasks": ["one", "two"],
             }]
 
-    original_restore = _Orchestrator.restore.__func__
+    original_restore = _Orchestrator.restore_from_event_store.__func__
 
     def restore(cls: type[_Orchestrator], root: Path, store: _Store, **kwargs: object) -> _Orchestrator:
         instance = original_restore(cls, root, store, **kwargs)
         instance._batch_state = BatchState()
         return instance
 
-    monkeypatch.setattr(_Orchestrator, "restore", classmethod(restore))
+    monkeypatch.setattr(_Orchestrator, "restore_from_event_store", classmethod(restore))
 
     dev_loop.run_tick_status(tmp_path, verbose=True)
     summary = json.loads(capsys.readouterr().out)
@@ -486,14 +377,14 @@ def test_tick_status_verbose_degrades_when_batch_component_fails(
         def current_component(self) -> SimpleNamespace:
             raise RuntimeError("corrupt batch state")
 
-    original_restore = _Orchestrator.restore.__func__
+    original_restore = _Orchestrator.restore_from_event_store.__func__
 
     def restore(cls: type[_Orchestrator], root: Path, store: _Store, **kwargs: object) -> _Orchestrator:
         instance = original_restore(cls, root, store, **kwargs)
         instance._batch_state = BrokenBatchState()
         return instance
 
-    monkeypatch.setattr(_Orchestrator, "restore", classmethod(restore))
+    monkeypatch.setattr(_Orchestrator, "restore_from_event_store", classmethod(restore))
 
     dev_loop.run_tick_status(tmp_path, verbose=True)
     summary = json.loads(capsys.readouterr().out)
@@ -503,27 +394,71 @@ def test_tick_status_verbose_degrades_when_batch_component_fails(
     assert _Store.instances[-1].closed is True
 
 
-def test_tick_resume_falls_back_from_thread_id(
+def test_tick_resume_does_not_fall_back_to_checkpoint(
     tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
     _patch_tick_types: None,
 ) -> None:
+    import click
+
     from auto_engineering.cli.dev_loop import run_tick_resume
 
-    _Orchestrator.fail_first_restore = True
-
-    run_tick_resume("thread-1", tmp_path)
-
-    assert _Orchestrator.restore_calls == ["thread-1", "resolved-checkpoint"]
-    assert json.loads(capsys.readouterr().out)["action"] == "resume"
-    assert _Store.instances[-1].closed is True
+    with pytest.raises(click.ClickException, match="EVENT_ACTION_NOT_FOUND"):
+        run_tick_resume("thread-1", tmp_path)
+    assert _Orchestrator.restore_calls == []
+    assert _Store.instances == []
 
 
-def test_thread_lookup_returns_none_for_store_errors() -> None:
-    from auto_engineering.cli.dev_loop import _resolve_checkpoint_by_thread_id
+def test_tick_resume_reuses_stop_report_host_platform(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """跨宿主父进程恢复时，Claude Action 不能漂移成 Codex 合同。"""
 
-    class BrokenStore:
-        def find_by_thread_id(self, candidate: str) -> str:
-            raise ValueError("broken")
+    dev_loop = import_module("auto_engineering.cli.dev_loop")
+    action = {
+        "action": "architect",
+        "thread_id": "thread-resume-platform",
+        "message_id": "action-resume-platform",
+    }
 
-    assert _resolve_checkpoint_by_thread_id("thread", BrokenStore()) is None
+    class _Events:
+        def __init__(self, path: Path) -> None:
+            self.path = path
+
+        def load_action_snapshot(self, thread_id: str) -> dict[str, object] | None:
+            assert thread_id == action["thread_id"]
+            return action
+
+        def close(self) -> None:
+            return None
+
+    reports = tmp_path / ".ae-state/host-runtime/stop-reports"
+    reports.mkdir(parents=True)
+    (reports / "resume.json").write_text(json.dumps({
+        "thread_id": action["thread_id"],
+        "action_message_id": action["message_id"],
+        "platform": "claude-code",
+        "disposition": "CONTINUE",
+        "lease_cleared": True,
+    }), encoding="utf-8")
+
+    captured: dict[str, str | None] = {}
+
+    def prepare(current: dict[str, object], root: Path) -> dict[str, object]:
+        assert current == action
+        assert root == tmp_path
+        captured["platform"] = os.environ.get("AE_HOST_PLATFORM")
+        return current
+
+    monkeypatch.setattr(
+        "auto_engineering.loop.event_store.SQLiteEventStore", _Events,
+    )
+    monkeypatch.setattr(dev_loop, "_prepare_action_for_host", prepare)
+    monkeypatch.setenv("AE_HOST_PLATFORM", "codex")
+
+    dev_loop.run_tick_resume(str(action["thread_id"]), tmp_path)
+
+    assert captured["platform"] == "claude-code"
+    assert os.environ["AE_HOST_PLATFORM"] == "codex"
+    assert json.loads(capsys.readouterr().out)["message_id"] == action["message_id"]

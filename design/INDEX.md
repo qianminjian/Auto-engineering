@@ -1,8 +1,19 @@
 # design/ 资产索引
 
-> 更新：2026-08-30｜当前实现：v5.8.0-rc.5；Phase 85 主控权纠偏设计已批准，等待开发
+> 更新：2026-09-03｜当前实现：v5.8.0-rc.5；Phase 85 主控权纠偏已实施，候选 Build 已通过双宿主 archive smoke，真实 L4 与发布 evidence artifact 仍待补齐
 
-## 当前权威资产
+## 当前唯一运行与实施权威
+
+以下文件组成当前唯一有效的设计闭环，优先级依次为：
+
+1. `BEACON.md`：北方之星、批准决策和发布阻断条件。
+2. `v5.8-Main-Agent-Coordinator-Recovery-Design.md`：主 Agent 唯一 Coordinator、Worker 所有权和恢复边界。
+3. `v5.8-Scheme-A-Convergence-Plan.md`：方案 A 的实现映射、EARS、公开 CLI 矩阵和 A008 发布门禁。
+4. `v5.6-Design-Loop.md`：当前已实现的协议与 CLI 基线；与上位设计冲突时以前三者为准。
+
+旧 Phase 设计、T533 Supervisor 方案和事故文档只用于理解演进与审计，不能作为运行时实现依据；它们统一保留在下面的索引中，不代表当前代码入口。
+
+## 设计资产索引（含历史）
 
 | 文件 | 用途 |
 |---|---|
@@ -14,7 +25,7 @@
 | `v5.7-Protocol-Kernel-PLAN.md` | Phase 52-56 可执行实施计划 |
 | `v5.7-Prompt-Contract-Design.md` | Phase 60 Prompt Contract 与多 Agent 交付设计 |
 | `v5.7-Prompt-Contract-PLAN.md` | Phase 60 T280-T287 TDD 实施计划 |
-| `v5.8-Protocol-Kernel-Convergence-Design.md` | Phase 80 当前权威收敛设计；统一 Host/Core/Event/Prompt/Session 边界 |
+| `v5.8-Protocol-Kernel-Convergence-Design.md` | Phase 80 历史目标设计；仅用于演进与审计，不作为当前规范 |
 | `v5.8-Protocol-Kernel-Convergence-PLAN.md` | Phase 80 T403-T412 分波次 TDD 实施计划 |
 | `v5.8-Effective-Design-Authority-Projection.md` | T554-T557 批准事务、单一权威投影、收敛不变量与四层验收 |
 | `v5.8-State-Reconciliation-Design.md` | Phase 81 显式启动意图、状态冲突二选一、任务续作与验证证据设计 |
@@ -22,18 +33,20 @@
 | `v5.8-Gap-Review-Wizard-Design.md` | T432 单项 Gap 向导、计划路由、事件恢复与新项目证据设计 |
 | `v5.8-Real-Host-Closure-Design.md` | Phase 82 严格 SpawnPlan、设计决策账本、四层验收与发布门禁 |
 | `v5.8-Real-Host-Closure-PLAN.md` | T434-T446 实施计划；T435-T439 为基础，T440-T446 闭合生产路径 |
+| `v5.8-Real-Host-Acceptance-Runbook.md` | 同一 archive 的双宿主 L3/L4 执行、证据和发布校验手册 |
 | `v5.8-Host-Runtime-Convergence-Analysis.md` | Phase 83 根因、目标架构、实现映射、证据分层与防退化分析附件 |
 | `v5.8-Host-Runtime-Convergence-Design.md` | Phase 83 Host Runtime、原子证据、事件投影与设计权威目标设计 |
-| `v5.8-Host-Runtime-Convergence-PLAN.md` | Phase 83 T460-T469 实施与产品验收计划 |
+| `v5.8-Host-Runtime-Convergence-PLAN.md` | Phase 83 历史实施与产品验收计划；主控权以 Phase 85 权威设计为准 |
 | `v5.8-Scenario-Audit-and-Resilience-Design.md` | 2026-08-29 全场景审计、跨边界不变量与剩余发布门禁 |
 | `v5.8-Compact-Host-Control-Plane-Design.md` | T525 Canonical Action 与 compact 宿主控制视图 |
 | `v5.8-Digest-Bound-Worker-Launch-Design.md` | T528 只传路径/摘要/权限的原生 Worker 启动合同 |
 | `v5.8-Small-Project-Assurance-Fusion-Design.md` | T529 LEAF 小项目独立验收 Worker 融合设计 |
-| `v5.8-Thin-Coordinator-and-Developer-Worker-Design.md` | T530-T532 薄协调器、Developer Worker 与成本验收设计 |
-| `v5.8-Thin-Coordinator-and-Developer-Worker-PLAN.md` | T530-T533 TDD 实施与条件决策计划 |
-| `v5.8-T533-Architecture-Decision-Review.md` | T533 审批前架构决策包与 T537-T544 待办 |
+| `v5.8-Thin-Coordinator-and-Developer-Worker-Design.md` | T530-T532 历史薄协调器、Developer Worker 与成本验收设计 |
+| `v5.8-Thin-Coordinator-and-Developer-Worker-PLAN.md` | T530-T533 历史 TDD 实施与条件决策计划；T533 后备路径已取消 |
+| `v5.8-T533-Architecture-Decision-Review.md` | T533 历史架构决策记录与 T537-T544 待办 |
 | `v5.8-Action-Scoped-Host-Context-Spec.md` | T533 条件后备的 Action-scoped Supervisor Spec |
-| `v5.8-Main-Agent-Coordinator-Recovery-Design.md` | Phase 85 权威设计：恢复主 Agent 协调权、Worker 所有权、异常恢复、预算 soft 和 Supervisor 迁移 |
+| `v5.8-Main-Agent-Coordinator-Recovery-Design.md` | Phase 85 权威设计：主 Agent 唯一协调、Worker 所有权、异常恢复、预算 soft 和旧 Supervisor 退役 |
+| `v5.8-Scheme-A-Convergence-Plan.md` | 方案 A 收敛设计：分层所有权、最佳实践映射、实施计划、EARS 与 E2E 发布门禁 |
 | `v5.8-Automatic-Context-Governance.md` | Phase 70 自动 compaction、有界增量上下文与成本治理权威设计 |
 | `v5.8-Session-Decoupling-Design.md` | Phase 64-67 状态恢复设计；日常 rollover 已由 Phase 70 纠偏 |
 | `v5.8-Session-Decoupling-PLAN.md` | Phase 64-70 T302-T350 可执行实施计划 |
@@ -53,12 +66,14 @@
 | `incidents/2026-08-29-product-acceptance-boundary.md` | 终态验收边界、Gap 审批策略与浏览器能力预检 |
 | `incidents/2026-08-30-worker-empty-output.md` | Worker 无结构化产出、失败映射与自动重试闭环 |
 | `incidents/2026-08-30-supervisor-research-closure.md` | Supervisor 终态、Research 结果契约与纵向恢复闭环事故 |
+| `incidents/2026-09-02-t719-native-result-bridge.md` | 原生 Worker 回包暂存、Build Identity 漂移与当前 L4 阻断证据 |
+| `incidents/2026-09-03-real-host-l4-closure.md` | 候选 Build 双宿主真实 L4 终态与发布 evidence artifact 待补记录 |
 | `IMPLEMENTATION-TRACKER.md` | 当前任务状态、优先级与 EARS 验收 |
 | `HISTORY.md` | 历史里程碑与 Git 追溯入口 |
 
 ## 解释顺序
 
-1. Phase 85 的宿主主控权、Worker 生命周期、预算和 Supervisor 迁移以 Main Agent Coordinator Recovery Design 为准；与旧 T533 冲突时，本设计优先。
+1. Phase 85 的宿主主控权、Worker 生命周期、预算和旧 Supervisor 退役以 Main Agent Coordinator Recovery Design 为准；与旧 T533 冲突时，本设计优先。
 2. Phase 80 目标架构与迁移边界以 Protocol Kernel Convergence 为准；当前剩余未迁移行为
    仍以 v5.6 设计、代码和新鲜测试证据为准，不得把目标误称为已实现。
 3. 上下文与日常会话行为以 Automatic Context Governance 为准；恢复语义再读取

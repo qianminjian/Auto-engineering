@@ -77,20 +77,62 @@ def test_named_json_effect_rejects_path_escape(tmp_path) -> None:
         ))
 
 
-def test_action_builder_reports_effect_receipts_without_embedding_them(tmp_path) -> None:
-    receipts = []
-    action = ActionBuilder(
-        tmp_path,
-        effect_sink=receipts.append,
-    ).build_action(EngineState(
+def test_action_builder_returns_explicit_action_plan(tmp_path) -> None:
+    plan = ActionBuilder(tmp_path).build_plan(EngineState(
         thread_id="thread-1",
         current_stage="architect",
         requirement="实现功能",
     ))
 
-    assert receipts
-    assert any("spawn-proofs" in item.relative_path for item in receipts)
-    assert "effect_receipts" not in action.get("extensions", {}).get("ae", {})
+    assert plan.effect_intents
+    assert plan.preview_receipts
+    assert any("spawn-proofs" in item.relative_path for item in plan.preview_receipts)
+    assert "effect_receipts" not in plan.payload.get("extensions", {}).get("ae", {})
+
+
+def test_action_plan_merges_identity_binding_effects(tmp_path) -> None:
+    plan = ActionBuilder(tmp_path).build_plan(EngineState(
+        thread_id="thread-1",
+        current_stage="architect",
+        requirement="实现功能",
+    ))
+
+    merged = plan.with_effects(
+        intents=plan.effect_intents[:1],
+        receipts=plan.preview_receipts[:1],
+    )
+
+    assert len(merged.effect_intents) == len(plan.effect_intents) + 1
+    assert len(merged.preview_receipts) == len(plan.preview_receipts) + 1
+    assert merged.payload is plan.payload
+
+
+def test_action_builder_plans_effects_without_writing_in_core_mode(tmp_path) -> None:
+    plan = ActionBuilder(tmp_path).build_plan(EngineState(
+        thread_id="thread-1",
+        current_stage="architect",
+        requirement="实现功能",
+    ))
+
+    assert plan.effect_intents
+    assert plan.preview_receipts
+    assert not (tmp_path / ".ae-state" / "spawn-proofs").exists()
+    assert not (tmp_path / ".ae-state" / "effects").exists()
+    assert "effect_receipts" not in plan.payload.get("extensions", {}).get("ae", {})
+
+
+def test_action_builder_effect_references_are_stable_for_same_snapshot(tmp_path) -> None:
+    state = EngineState(
+        thread_id="thread-1",
+        current_stage="architect",
+        requirement="实现功能",
+        tick=2,
+    )
+    first = ActionBuilder(tmp_path).build_action(state)
+    second = ActionBuilder(tmp_path).build_action(state)
+
+    assert first["spawn_proof_token"] == second["spawn_proof_token"]
+    assert first["spawn"]["invocations"] == second["spawn"]["invocations"]
 
 
 def test_discard_removes_only_uncommitted_named_json_artifacts(tmp_path) -> None:

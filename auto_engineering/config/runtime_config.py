@@ -80,10 +80,6 @@ class RuntimeConfig:
         return self.get("AE_STRICT_RED", _default("AE_STRICT_RED")).strip() == "1"
 
     @property
-    def config_policy(self) -> str:
-        return self.get("AE_CONFIG_POLICY", _default("AE_CONFIG_POLICY")).strip()
-
-    @property
     def production_mode(self) -> bool:
         """Phase 44: AE_PRODUCTION duplicate. Alias for production_enabled."""
         return self.production_enabled
@@ -121,24 +117,6 @@ class RuntimeConfig:
         return int(val) if val else None
 
     @property
-    def session_max_ticks(self) -> int:
-        return int(self.get("AE_SESSION_MAX_TICKS", _default("AE_SESSION_MAX_TICKS")).strip())
-
-    @property
-    def session_max_seconds(self) -> int:
-        return int(self.get("AE_SESSION_MAX_SECONDS", _default("AE_SESSION_MAX_SECONDS")).strip())
-
-    @property
-    def host_budget_enforcement(self) -> str:
-        """宿主预算模式；默认 soft，只有显式 hard 才允许停机。"""
-
-        value = self.get("AE_HOST_BUDGET_ENFORCEMENT",
-                         _default("AE_HOST_BUDGET_ENFORCEMENT")).strip().lower()
-        if value not in {"soft", "hard"}:
-            raise ValueError("AE_HOST_BUDGET_ENFORCEMENT 必须为 soft 或 hard")
-        return value
-
-    @property
     def context_soft_input(self) -> int:
         return int(self.get("AE_CONTEXT_SOFT_INPUT", _default("AE_CONTEXT_SOFT_INPUT")).strip())
 
@@ -157,8 +135,6 @@ class RuntimeConfig:
 
         return ContextBudgetPolicy(
             policy_id="context-budget-v2",
-            max_session_ticks=int(_default("AE_SESSION_MAX_TICKS")),
-            max_session_wall_seconds=int(_default("AE_SESSION_MAX_SECONDS")),
             soft_input_units=int(_default("AE_CONTEXT_SOFT_INPUT")),
             hard_input_units=int(_default("AE_CONTEXT_HARD_INPUT")),
             max_prompt_bytes=self.max_prompt_bytes,
@@ -171,21 +147,6 @@ class RuntimeConfig:
     @property
     def max_receipt_summary_bytes(self) -> int:
         return int(self.get("AE_MAX_RECEIPT_SUMMARY_BYTES", _default("AE_MAX_RECEIPT_SUMMARY_BYTES")).strip())
-
-    @property
-    def host_max_elapsed_seconds(self) -> float | None:
-        value = self.get("AE_HOST_MAX_ELAPSED_SECONDS", _default("AE_HOST_MAX_ELAPSED_SECONDS"))
-        return float(value.strip()) if value.strip() else None
-
-    @property
-    def host_max_cost_usd(self) -> float | None:
-        value = self.get("AE_HOST_MAX_COST_USD", _default("AE_HOST_MAX_COST_USD")).strip()
-        return float(value) if value else None
-
-    @property
-    def host_max_output_tokens(self) -> int | None:
-        value = self.get("AE_HOST_MAX_OUTPUT_TOKENS", _default("AE_HOST_MAX_OUTPUT_TOKENS")).strip()
-        return int(value) if value else None
 
     @property
     def max_repair_cycles(self) -> int:

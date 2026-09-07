@@ -15,14 +15,17 @@ BatchState 维护 plate → component → batch 三级游标 (机器视角路由
 
 from __future__ import annotations
 
+import inspect
 import json
 import logging
 
 import pytest
 
+from auto_engineering.engine import batch_state as batch_state_module
+from auto_engineering.engine import batch_state_codec
 from auto_engineering.engine.batch_state import BatchState
 from auto_engineering.engine.design_doc import Component, DesignDoc, Plate
-from auto_engineering.loop.plan import Plan, Task
+from auto_engineering.engine.models import Plan, Task
 
 
 def _batch(batch_id: str, component: str, section: str = "") -> dict:
@@ -48,6 +51,15 @@ def _design_doc(structure: dict[str, list[str]]) -> DesignDoc:
     return DesignDoc(plates=plates, supplements={})
 
 
+def test_batch_state_serialization_has_one_canonical_codec() -> None:
+    source = inspect.getsource(batch_state_module.BatchState)
+    assert "batch_state_codec" in source
+    assert "json.dumps" not in source
+    assert "json.loads" not in source
+    assert callable(batch_state_codec.serialize_batch_state)
+    assert callable(batch_state_codec.restore_batch_state)
+
+
 # ---------- 构造 ----------
 
 
@@ -71,6 +83,26 @@ class TestConstruction:
         bs = BatchState.from_design_doc(doc, bp)
         assert len(bs.plates) == 2
         assert bs.total_batches == 3
+
+    def test_from_design_doc_uses_plate_as_execution_unit_when_flat(self) -> None:
+        """无 H3 组件时，H2 板块本身是唯一确定性执行单元。"""
+        doc = DesignDoc(
+            plates=[Plate(name="Greeting API", design_section="§C1")],
+            supplements={},
+        )
+        plan = [{
+            "batch_id": "b1",
+            "plate_keys": ["Greeting API"],
+            "design_sections": ["§C1"],
+            "tasks": [],
+        }]
+
+        state = BatchState.from_design_doc(doc, plan)
+
+        assert [component.name for component in state.plates[0].components] == [
+            "Greeting API"
+        ]
+        assert state.current_component_name() == "Greeting API"
 
     def test_from_design_doc_orphan_batch_raises(self) -> None:
         """batch component 不在任何 plate → 构造抛错 (G2 retry), 含有效 component 名."""

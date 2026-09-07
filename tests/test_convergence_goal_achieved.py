@@ -5,7 +5,7 @@
 v5.6 终态成功判定 (GOAL_ACHIEVED, level=1=LEVEL_SEMANTIC):
   system_deep_audit 全部通过 + design_coverage_ok → stop(1, GOAL_ACHIEVED).
 
-正交性 (DS-8): Judge 只管收敛质量 + max_iterations 硬上限; plan_refine 环路耗尽
+正交性 (DS-8): Judge 只管收敛质量 + 显式兼容 max_iterations 上限; plan_refine 环路耗尽
 由 StageRouter 产出 (REFINE_LIMIT), 不经 Judge.
 
 两个新 kwarg 默认 False → 保留 Orchestrator (v5.5 debug 路径) evaluate(history)
@@ -59,7 +59,7 @@ class TestBackwardCompatible:
         v = _judge().evaluate([])
         assert v.should_stop is False
 
-    def test_defaults_hard_limit_still_fires(self) -> None:
-        """无 kwarg: 达 max_iterations → 仍触发硬上限停止."""
+    def test_explicit_compatibility_limit_still_fires(self) -> None:
+        """显式兼容上限仍可被旧调用使用，生产默认不启用。"""
         v = _judge(max_iter=2).evaluate(_hist(2))
         assert v.should_stop is True

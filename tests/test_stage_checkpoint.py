@@ -120,6 +120,39 @@ class TestStageCheckpoint:
         assert gate["default"] == "继续"
         assert gate["timeout_ms"] == 0
 
+    def test_stage_checkpoint_exposes_host_submission_contract(self, monkeypatch) -> None:
+        """真实宿主必须能提交 Gate，而不是只看到 WAIT_USER。"""
+        from auto_engineering.cli.dev_loop import _prepare_action_for_host
+        from auto_engineering.engine.state import EngineState
+        from auto_engineering.loop.action_builder import ActionBuilder
+
+        monkeypatch.setenv("AE_HOST_PLATFORM", "codex")
+        project_root = Path(tempfile.mkdtemp())
+        action = ActionBuilder(project_root).build_action(
+            EngineState(
+                thread_id="thread-gate-contract",
+                current_stage="architect",
+                requirement="test requirement",
+            ),
+            pause_at_stages=frozenset({"architect"}),
+            passed_checkpoints=frozenset(),
+        )
+        action["message_id"] = "gate-contract-action"
+        assert action["project_root"] == str(project_root.resolve())
+        assert action["expected_format"] == {
+            "gate_resolution": {
+                "gate_id": "checkpoint_architect",
+                "resolution": "继续 | 审查当前产出 | 终止 loop",
+            },
+        }
+        assert action["result_contract"]["required"] == ["gate_resolution"]
+
+        mapped = _prepare_action_for_host(action, project_root, compact_view=True)
+        operations = mapped["host_execution"]["operations"]
+        assert operations["finalize"]["argv"][-1] == str(project_root.resolve())
+        assert operations["validate"]["argv"][-1] == str(project_root.resolve())
+        assert operations["submit"]["argv"][-1] == str(project_root.resolve())
+
     def test_pause_at_critic_returns_gate_action_after_developer(self) -> None:
         """After developer completion with critic in pause-at-stage → gate action."""
         orch = _orchestrator(pause_at_stages=["critic"])

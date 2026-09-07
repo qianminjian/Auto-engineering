@@ -9,6 +9,8 @@ TDD protocol: 写测试 → 确认 FAIL → 写实现 → 确认 PASS.
 from __future__ import annotations
 
 import json
+import os
+import subprocess
 from pathlib import Path
 
 
@@ -87,16 +89,87 @@ class TestV8_2_HookRegistrationSplitting:
         data = json.loads(codex_json.read_text())
         assert "name" in data
 
-    def test_hooks_cc_json_exists(self) -> None:
-        """hooks-cc.json (Claude Code) 存在."""
-        root = _project_root()
-        assert (root / "hooks-cc.json").is_file()
-
     def test_claude_native_hook_manifest_registers_stop_guard(self) -> None:
         root = _project_root()
         manifest = json.loads((root / "hooks/hooks.json").read_text())
         stop_hooks = manifest["hooks"]["Stop"]
         assert "hooks/stop.sh" in json.dumps(stop_hooks)
+
+    def test_claude_native_hook_manifest_registers_session_end_boundary(self) -> None:
+        root = _project_root()
+        manifest = json.loads((root / "hooks/hooks.json").read_text())
+        session_end_hooks = manifest["hooks"]["SessionEnd"]
+        assert "hooks/stop.sh" in json.dumps(session_end_hooks)
+
+    def test_claude_native_hook_manifest_registers_stop_failure_boundary(self) -> None:
+        root = _project_root()
+        manifest = json.loads((root / "hooks/hooks.json").read_text())
+        stop_failure_hooks = manifest["hooks"]["StopFailure"]
+        assert "hooks/stop.sh" in json.dumps(stop_failure_hooks)
+
+    def test_claude_native_hook_manifest_registers_pre_tool_guard(self) -> None:
+        root = _project_root()
+        manifest = json.loads((root / "hooks/hooks.json").read_text())
+        pre_tool_hooks = manifest["hooks"]["PreToolUse"]
+        assert "hooks/pre-tool.sh" in json.dumps(pre_tool_hooks)
+
+    def test_pre_tool_guard_blocks_state_directory_deletion(self, tmp_path: Path) -> None:
+        root = _project_root()
+        handler = root / "hooks" / "pre-tool.sh"
+        payload = json.dumps({
+            "tool_name": "Bash",
+            "tool_input": {"command": f"rm -rf {tmp_path}/.ae-state"},
+        })
+        environ = os.environ.copy()
+        environ.update({
+            "PLUGIN_ROOT": str(root),
+            "AE_HOST_PLATFORM": "claude-code",
+            "CLAUDE_CODE_ENTRYPOINT": "cli",
+        })
+
+        result = subprocess.run(
+            [str(handler)],
+            input=payload,
+            env=environ,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        assert result.returncode == 0
+        response = json.loads(result.stdout)
+        assert response["decision"] == "block"
+        assert ".ae-state" in response["reason"]
+
+    def test_pre_tool_guard_allows_bootstrap_command_from_event_cwd(
+        self, tmp_path: Path
+    ) -> None:
+        root = _project_root()
+        handler = root / "hooks" / "pre-tool.sh"
+        payload = json.dumps({
+            "cwd": str(tmp_path),
+            "tool_name": "Bash",
+            "tool_input": {"command": "ls -la"},
+        })
+        environ = os.environ.copy()
+        environ.update({
+            "PLUGIN_ROOT": str(root),
+            "AE_HOST_PLATFORM": "claude-code",
+            "CLAUDE_CODE_ENTRYPOINT": "cli",
+        })
+
+        result = subprocess.run(
+            [str(handler)],
+            input=payload,
+            env=environ,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        assert result.returncode == 0
+        response = json.loads(result.stdout)
+        assert response["decision"] == "approve"
 
     def test_hooks_codex_json_exists(self) -> None:
         """hooks-codex.json (Codex) 存在."""
@@ -143,8 +216,10 @@ class TestV8_2_HookRegistrationSplitting:
         pre_tool = (root / "hooks" / "pre-tool.sh").read_text()
         assert "uv sync --quiet" not in session_start
         assert "$PWD/.venv/bin" not in session_start
-        assert ".ae-runtime/bin/python" in session_start
-        assert ".ae-runtime/bin/python" in pre_tool
+        assert "scripts/ae-run" in session_start
+        assert "scripts/ae-run" in pre_tool
+        assert "--print-runtime-root" in session_start
+        assert "--print-runtime-root" in pre_tool
 
 
 class TestV8_7_DoctorAndPyproject:

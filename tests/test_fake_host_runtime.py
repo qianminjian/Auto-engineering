@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+
 import pytest
 
 from auto_engineering.host import HostPlatform
@@ -10,12 +12,32 @@ from tests.host_runtime.fake_host import AgentCapacityError, FakeHostRuntime
 
 
 def _action() -> dict[str, object]:
+    prompt = "输出 batch_plan"
     return {
         "action": "architect",
         "stage": "architect",
         "message_id": "architect-action-1",
-        "subagent_prompt": "输出 batch_plan",
-        "spawn": {"count": 1, "effort": "xhigh", "parallel": False},
+        "worker_prompt": prompt,
+        "spawn": {
+            "count": 1,
+            "effort": "xhigh",
+            "parallel": False,
+            "contract_version": "1.0",
+            "invocations": [{
+                "worker_id": "architect-0",
+                "role": "architect",
+                "prompt_ref": ".ae-state/prompt-artifacts/architect.md",
+                "prompt_sha256": hashlib.sha256(prompt.encode()).hexdigest(),
+                "requested_effort": "xhigh",
+                "isolation": "fresh_context",
+                "capabilities": {
+                    "may_drive_loop": False,
+                    "may_spawn_workers": False,
+                },
+                "receipt_path": ".ae-state/spawn-proofs/architect.json",
+                "outcome_path": ".ae-state/host-runtime/worker-outcomes/architect.json",
+            }],
+        },
     }
 
 

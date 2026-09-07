@@ -81,3 +81,20 @@ def test_repair_projection_keeps_active_action_and_continue_control() -> None:
     assert projected["stage"] == "gap_scan"
     assert projected["extensions"] == active["extensions"]
     assert projected["result_rejection"]["repair_required"] is True
+
+
+def test_architect_design_item_repair_exposes_exact_machine_fix() -> None:
+    projected = _project_result_repair_action(
+        {"message_id": "action-1", "stage": "architect"},
+        {
+            "action": "error",
+            "error_code": "ARCHITECT_PLAN_INVALID",
+            "message": (
+                "Architect 计划无法初始化执行树: "
+                "BATCH_DESIGN_ITEM_SCOPE_INVALID；有效 design_item_refs: A1.1-1"
+            ),
+        },
+    )
+
+    assert "不需要用户输入或重新启动 Worker" in projected["instruction"]
+    assert "逐字复制" in projected["instruction"]

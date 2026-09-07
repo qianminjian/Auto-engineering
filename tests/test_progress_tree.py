@@ -17,6 +17,8 @@ from __future__ import annotations
 
 import pytest
 
+from auto_engineering.engine import progress_tree as progress_tree_module
+from auto_engineering.engine import progress_tree_helpers
 from auto_engineering.engine.design_doc import Component, DesignDoc, Plate
 from auto_engineering.engine.progress_tree import (
     ProgressNode,
@@ -49,6 +51,17 @@ def _batch(batch_id: str, component: str, section: str, n_tasks: int) -> dict:
         ],
         "depends_on": [],
     }
+
+
+def test_progress_tree_identity_helpers_have_one_canonical_module() -> None:
+    assert progress_tree_module._normalize_ref is progress_tree_helpers.normalize_ref
+    assert progress_tree_module._slug is progress_tree_helpers.slug
+    assert progress_tree_module._plate_id is progress_tree_helpers.plate_id
+    assert progress_tree_module._component_id is progress_tree_helpers.component_id
+    assert (
+        progress_tree_module._components_for_plate
+        is progress_tree_helpers.components_for_plate
+    )
 
 
 # ---------- B9.2 ProgressNode ----------
@@ -135,6 +148,44 @@ class TestBuildFromDesignDoc:
         assert comp_y.total_tasks == 4
         assert tree.nodes["sys"].total_tasks == 7
         assert tree.nodes["§PlateA"].design_status == "stable"
+
+    def test_flat_plate_is_materialized_as_implicit_component(self) -> None:
+        """纯 H2 设计的板块本身必须成为唯一可计数的执行单元。"""
+        doc = DesignDoc(
+            plates=[Plate(name="Greeting API", design_section="§C1")],
+            supplements={},
+        )
+        tree = ProgressTree.from_design_doc(doc)
+        batch_plan = [{
+            "batch_id": "B1",
+            "component": "Greeting API",
+            "plate_keys": ["Greeting API"],
+            "design_section": "§C1",
+            "tasks": [{"id": "B1-T1"}, {"id": "B1-T2"}],
+        }]
+
+        tree.apply_batch_plan_totals(batch_plan)
+
+        component = tree.nodes["comp/Greeting-API"]
+        assert component.level == "component"
+        assert component.parent_id == "§C1"
+        assert component.design_section_ref == "§C1"
+        assert component.total_tasks == 2
+        assert tree.nodes["§C1"].total_tasks == 2
+
+    def test_flat_plate_sync_preserves_implicit_component_identity(self) -> None:
+        """设计文档重解析后，隐式 component 的身份必须稳定。"""
+        doc = DesignDoc(
+            plates=[Plate(name="Greeting API", design_section="§C1")],
+            supplements={},
+        )
+        tree = ProgressTree.from_design_doc(doc)
+
+        result = tree.sync_from_design_doc(doc)
+
+        assert result.conflicts == []
+        assert "comp/Greeting-API" in tree.nodes
+        assert tree.nodes["comp/Greeting-API"].parent_id == "§C1"
 
     def test_materializes_when_design_section_contains_component_title(self) -> None:
         """Architect may echo the component title instead of the § reference."""

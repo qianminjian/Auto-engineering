@@ -95,6 +95,30 @@ def test_resolver_returns_setup_required_for_empty_project(tmp_path: Path) -> No
     )
 
 
+def test_python_profile_does_not_type_check_an_empty_source_root(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "src").mkdir()
+    tests_root = tmp_path / "tests"
+    tests_root.mkdir()
+    (tests_root / "test_smoke.py").write_text(
+        "def test_smoke() -> None:\n    assert True\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\nname = 'fresh-project'\nversion = '0.1.0'\n"
+        "[dependency-groups]\ndev = ['mypy']\n",
+        encoding="utf-8",
+    )
+
+    contribution = LocalProbeProvider().inspect(tmp_path)
+
+    assert contribution.source_roots == ("src",)
+    assert contribution.commands["type_check"] == (
+        "uv", "run", "mypy", "tests",
+    )
+
+
 def test_legacy_manifest_without_current_roots_requires_setup(tmp_path: Path) -> None:
     state_dir = tmp_path / ".ae-state"
     state_dir.mkdir()
@@ -171,6 +195,68 @@ def test_local_probe_reads_node_entry_files_and_declared_scripts(tmp_path: Path)
     }
 
 
+def test_local_probe_keeps_node_commands_when_python_metadata_is_also_present(
+    tmp_path: Path,
+) -> None:
+    """混合工程不能让 Python compileall 覆盖 Node 的业务门禁命令。"""
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tsconfig.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "package.json").write_text(
+        json.dumps({
+            "scripts": {
+                "test": "vitest run",
+                "lint": "eslint .",
+                "typecheck": "tsc --noEmit",
+                "build": "vite build",
+            },
+        }),
+        encoding="utf-8",
+    )
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "mixed-project"\nversion = "0.1.0"\n'
+        '[tool.pytest.ini_options]\ntestpaths = ["tests"]\n',
+        encoding="utf-8",
+    )
+
+    result = ProjectProfileResolver((LocalProbeProvider(),)).resolve(tmp_path)
+
+    assert result.status is ResolutionStatus.RESOLVED
+    assert result.profile is not None
+    assert result.profile.commands["build"] == ("npm", "run", "build")
+    assert result.profile.commands["test"] == ("npm", "run", "test")
+    assert result.profile.commands["lint"] == ("npm", "run", "lint")
+    assert result.profile.commands["type_check"] == (
+        "npm", "run", "typecheck",
+    )
+
+
+def test_local_probe_accepts_canonical_type_check_script_name(tmp_path: Path) -> None:
+    """Setup Action 使用的 canonical type_check 名称必须被 Node 探测器识别。"""
+    (tmp_path / "src").mkdir()
+    (tmp_path / "test").mkdir()
+    (tmp_path / "package.json").write_text(
+        json.dumps({
+            "scripts": {
+                "test": "node --test",
+                "lint": "node --check test/smoke.test.js",
+                "type_check": "node --check test/smoke.test.js",
+                "build": "node --version",
+            },
+        }),
+        encoding="utf-8",
+    )
+
+    result = ProjectProfileResolver((LocalProbeProvider(),)).resolve(tmp_path)
+
+    assert result.status is ResolutionStatus.RESOLVED
+    assert result.profile is not None
+    assert result.profile.commands["type_check"] == (
+        "npm", "run", "type_check",
+    )
+
+
 def test_local_probe_derives_pytest_command_from_pyproject_contract(
     tmp_path: Path,
 ) -> None:
@@ -185,7 +271,59 @@ def test_local_probe_derives_pytest_command_from_pyproject_contract(
     contribution = LocalProbeProvider().inspect(tmp_path)
 
     assert contribution.source_roots == ("src",)
-    assert contribution.commands["test"] == ("python", "-m", "pytest")
+    assert contribution.commands["test"] == (
+        "uv", "run", "python", "-m", "pytest",
+    )
+
+
+def test_missing_test_command_requires_setup_before_business_workers(
+    tmp_path: Path,
+) -> None:
+    """有源码但没有可验证测试入口时，不能直接发出 Developer Action。"""
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "sample"\nversion = "0.1.0"\n',
+        encoding="utf-8",
+    )
+
+    result = ProjectProfileResolver((LocalProbeProvider(),)).resolve(tmp_path)
+
+    assert result.status is ResolutionStatus.SETUP_REQUIRED
+    assert result.profile is None
+    assert result.missing_capabilities == ("test_command",)
+
+
+def test_binding_design_toolchain_must_match_project_profile(tmp_path: Path) -> None:
+    """设计声明 Vite/React/TS 时，不得用 Python 假能力进入业务阶段。"""
+
+    (tmp_path / "design.md").write_text(
+        """# Voice Clone
+
+## 当前版本架构
+
+### VoiceClonePage
+
+- V1 是 Vite、React、TypeScript 实现的纯前端 SPA。
+""",
+        encoding="utf-8",
+    )
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "wrong-toolchain"\nversion = "0.1.0"\n'
+        '[tool.pytest.ini_options]\ntestpaths = ["tests"]\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "src").mkdir()
+    (tmp_path / "tests").mkdir()
+
+    result = ProjectProfileResolver((LocalProbeProvider(),)).resolve(
+        tmp_path,
+        design_doc_path="design.md",
+    )
+
+    assert result.status is ResolutionStatus.SETUP_REQUIRED
+    assert "design_toolchain:node_typescript" in result.missing_capabilities
 
 
 def test_local_probe_derives_configured_python_quality_commands(
@@ -204,11 +342,38 @@ def test_local_probe_derives_configured_python_quality_commands(
     contribution = LocalProbeProvider().inspect(tmp_path)
 
     assert contribution.commands == {
-        "build": ("python", "-m", "compileall", "-q", "src"),
+        "build": ("uv", "run", "python", "-m", "compileall", "-q", "src"),
         "lint": ("uv", "run", "ruff", "check", "src", "tests"),
-        "test": ("python", "-m", "pytest"),
+        "test": ("uv", "run", "python", "-m", "pytest"),
         "type_check": ("uv", "run", "mypy"),
     }
+
+
+def test_local_probe_derives_python_quality_commands_from_dev_group(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "module.py").write_text(
+        "VALUE = 1\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\nname = 'sample'\nversion = '0.1.0'\n"
+        "[dependency-groups]\n"
+        "dev = ['pytest>=8', 'ruff>=0.4', 'mypy>=1.10']\n"
+        "[tool.pytest.ini_options]\ntestpaths = ['tests']\n",
+        encoding="utf-8",
+    )
+
+    contribution = LocalProbeProvider().inspect(tmp_path)
+
+    assert contribution.commands["lint"] == (
+        "uv", "run", "ruff", "check", "src", "tests",
+    )
+    assert contribution.commands["type_check"] == (
+        "uv", "run", "mypy", "src",
+    )
 
 
 def test_local_probe_accepts_standard_python_root_layout_package(
@@ -230,7 +395,7 @@ def test_local_probe_accepts_standard_python_root_layout_package(
 
     assert contribution.source_roots == ("slugify",)
     assert contribution.commands["build"] == (
-        "python", "-m", "compileall", "-q", "slugify",
+        "uv", "run", "python", "-m", "compileall", "-q", "slugify",
     )
     assert contribution.commands["lint"] == (
         "uv", "run", "ruff", "check", "slugify", "tests",

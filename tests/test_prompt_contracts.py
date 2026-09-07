@@ -79,6 +79,35 @@ def test_gap_scan_prompt_excludes_resolved_project_mechanics_from_user_gates() -
     assert "不得升级为用户设计缺口" in prompt
 
 
+def test_gap_scan_prompt_separates_design_ambiguity_from_implementation_work() -> None:
+    prompt = default_registry().get("gap_scan")
+
+    assert "代码尚未实现不是设计缺口" in prompt
+    assert "只判定设计文档是否足以实现" in prompt
+    assert "实现缺口必须留给 Architect/Developer" in prompt
+    assert "“未来改进”不得提升为当前版本阻断项" in prompt
+    assert "不得把未来改进章节" in prompt
+    assert "作为当前 gap 的 `design_section_ref` 或证据" in prompt
+
+
+def test_architect_prompt_binds_catalog_refs_to_components_and_tests() -> None:
+    prompt = default_registry().get("architect")
+
+    assert "design_item_refs" in prompt
+    assert "plate_keys" in prompt
+    assert "不能放入任意组件 batch" in prompt
+    assert "每条 obligation 必须同时提供非空的" in prompt
+    assert "只能指向 `kind=test|contract_test` 的 task" in prompt
+
+
+def test_architect_prompt_requires_canonical_design_section_refs() -> None:
+    prompt = default_registry().get("architect")
+
+    assert "action.host_design_sections[].section_ref" in prompt
+    assert "禁止填写板块标题、组件标题、章节标题全文" in prompt
+    assert "不能输出" in prompt
+
+
 def test_verifier_prompts_only_offer_result_schema_status_values() -> None:
     for stage in ("component_verifier", "system_verifier"):
         prompt = default_registry().get(stage)

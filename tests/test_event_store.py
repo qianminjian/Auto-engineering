@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import inspect
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
 
+from auto_engineering.loop import event_store as event_store_module
+from auto_engineering.loop import event_store_codec, event_store_schema
 from auto_engineering.loop.event_store import SQLiteEventStore
 from auto_engineering.loop.events import LoopEvent, LoopEventType
 
@@ -37,6 +40,18 @@ def test_append_batch_and_query_preserve_stream_order() -> None:
 
         assert [event.sequence for event in store.load_stream("thread-1")] == [0, 1]
         assert store.next_sequence("thread-1") == 2
+
+
+def test_latest_thread_for_event_uses_event_store_without_runtime_lease() -> None:
+    with SQLiteEventStore(":memory:") as store:
+        assert store.latest_thread_for_event(LoopEventType.LOOP_COMPLETED) is None
+        store.append([_event(
+            0,
+            thread_id="completed-thread",
+            event_type=LoopEventType.LOOP_COMPLETED,
+        )])
+
+        assert store.latest_thread_for_event("LoopCompleted") == "completed-thread"
 
 
 def test_duplicate_event_id_rolls_back_entire_batch() -> None:
@@ -96,3 +111,20 @@ def test_close_is_idempotent_and_rejects_further_use(tmp_path: Path) -> None:
 
     with pytest.raises(RuntimeError, match="已关闭"):
         store.load_stream("thread-1")
+
+
+def test_event_store_has_one_canonical_persistence_codec() -> None:
+    """持久化编解码必须集中在单一模块，避免 EventStore 再长出第二套逻辑。"""
+
+    assert event_store_module._json_dumps is event_store_codec.dumps
+    assert event_store_module._json_loads is event_store_codec.loads
+    assert SQLiteEventStore._row_to_event is event_store_codec.event_from_row
+    source = inspect.getsource(SQLiteEventStore)
+    assert "json.dumps" not in source
+    assert "json.loads" not in source
+
+
+def test_event_store_has_one_canonical_schema_initializer() -> None:
+    source = inspect.getsource(SQLiteEventStore)
+    assert event_store_module._ensure_schema is event_store_schema.ensure_schema
+    assert "CREATE TABLE" not in source

@@ -52,6 +52,29 @@ class EffectExecutor:
     def __init__(self, project_root: Path) -> None:
         self.project_root = project_root.resolve()
 
+    def preview(self, intent: EffectIntent) -> EffectReceipt:
+        """只校验并计算 receipt，不触碰文件系统。"""
+
+        if isinstance(intent, WriteJsonArtifact):
+            return self._json_receipt(intent)
+        if not self._KIND.fullmatch(intent.kind):
+            raise EffectExecutionError("effect kind 无效")
+        encoded = intent.content.encode("utf-8")
+        digest = hashlib.sha256(encoded).hexdigest()
+        if digest != intent.sha256:
+            raise EffectExecutionError("effect content hash 不匹配")
+        relative = Path(".ae-state") / "effects" / intent.kind / f"{digest}.txt"
+        path = (self.project_root / relative).resolve()
+        effect_root = (self.project_root / ".ae-state" / "effects").resolve()
+        if effect_root not in path.parents:
+            raise EffectExecutionError("effect path 逃逸")
+        return EffectReceipt(
+            kind=intent.kind,
+            relative_path=str(relative),
+            sha256=digest,
+            bytes=len(encoded),
+        )
+
     def execute(self, intent: EffectIntent) -> EffectReceipt:
         if isinstance(intent, WriteJsonArtifact):
             return self._write_json(intent)
@@ -79,6 +102,19 @@ class EffectExecutor:
         )
 
     def _write_json(self, intent: WriteJsonArtifact) -> EffectReceipt:
+        receipt = self._json_receipt(intent)
+        path = (self.project_root / receipt.relative_path).resolve()
+        encoded = json.dumps(
+            dict(intent.payload),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+        self._atomic_write(path, encoded)
+        return receipt
+
+    def _json_receipt(self, intent: WriteJsonArtifact) -> EffectReceipt:
         relative_input = Path(intent.relative_path)
         if (
             relative_input.is_absolute()
@@ -98,7 +134,6 @@ class EffectExecutor:
             separators=(",", ":"),
             allow_nan=False,
         ).encode("utf-8")
-        self._atomic_write(path, encoded)
         return EffectReceipt(
             kind="json",
             relative_path=str(relative),

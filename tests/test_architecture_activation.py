@@ -38,7 +38,8 @@ def test_activation_materializes_execution_structures(tmp_path) -> None:
     assert result.batch_state.current_batch_id() == "B1"
     assert result.plan is not None
     assert result.progress_tree is not None
-    assert state.architecture_baseline["batch_plan"][0]["batch_id"] == "B1"
+    assert result.baseline["batch_plan"][0]["batch_id"] == "B1"
+    assert state.architecture_baseline is None
     assert emitted[0][0] is LoopEventType.ARCHITECTURE_BASELINE_ACCEPTED
 
 
@@ -98,10 +99,57 @@ def test_activation_builds_baseline_from_projected_candidate(tmp_path) -> None:
         "B1",
         "B2",
     ]
-    assert state.architecture_baseline["contracts"] == {
+    assert result.baseline["contracts"] == {
         "ExistingAPI": {"version": "1"},
     }
-    assert state.architecture_baseline["obligations"][0]["id"] == "O1"
+    assert result.baseline["obligations"][0]["id"] == "O1"
+    assert "architecture_candidate" in state._runtime_ctx
+    assert "plan_patch_base_revision" in state._runtime_ctx
+
+
+def test_plan_patch_activation_compares_canonical_routed_batches(tmp_path) -> None:
+    old_batch = {
+        "batch_id": "B1",
+        "component": "Core",
+        "design_section": "§1",
+        "tasks": [{"id": "B1-T1", "description": "旧任务"}],
+    }
+    added_batch = {
+        "batch_id": "B2",
+        "plate_keys": ["VoiceClone"],
+        "design_sections": ["目标"],
+        "tasks": [{"id": "B2-T1", "description": "新任务"}],
+    }
+    state = EngineState(thread_id="thread-1", requirement="页面修复")
+    state.plan_refine_count = 1
+    state.batch_plan = [added_batch]
+    state.architecture_baseline = {
+        "batch_plan": [old_batch],
+        "contracts": {},
+        "obligations": [],
+    }
+    state._runtime_ctx["plan_patch_base_revision"] = 1
+    state._runtime_ctx["architecture_candidate"] = {
+        "plan": "补齐页面",
+        "batch_plan": [old_batch, added_batch],
+        "contracts": {},
+        "obligations": [],
+    }
+
+    result = ArchitectureActivationService(tmp_path).activate(
+        state=state,
+        design_doc=None,
+        batch_state=BatchState.from_batch_plan([old_batch]),
+        progress_tree=None,
+        verification_layers=None,
+        emit=lambda _event_type, _payload: None,
+    )
+
+    assert [batch["batch_id"] for batch in result.batch_state.batch_plan] == [
+        "B1",
+        "B2",
+    ]
+    assert result.baseline["batch_plan"] == result.batch_state.batch_plan
 
 
 def test_plan_refine_recomputes_totals_and_preserves_completed_tasks(

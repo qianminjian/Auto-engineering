@@ -1,0 +1,104 @@
+#!/bin/sh
+# 宿主进程边界适配器：执行指定宿主命令，退出后只记录退出事实。
+# 不创建 Action、不调用 Tick、不启动 Worker，也不重启宿主。
+
+set -u
+
+SCRIPT_DIR=$(CDPATH= cd -- "${0%/*}" && pwd -P)
+PLUGIN_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd -P)
+PROJECT_ROOT=
+OUTPUT=
+MAX_RUNTIME_SECONDS=
+
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --project-root)
+            [ "$#" -ge 2 ] || { printf '%s\n' '缺少 --project-root 参数' >&2; exit 2; }
+            PROJECT_ROOT=$2
+            shift 2
+            ;;
+        --output)
+            [ "$#" -ge 2 ] || { printf '%s\n' '缺少 --output 参数' >&2; exit 2; }
+            OUTPUT=$2
+            shift 2
+            ;;
+        --max-runtime-seconds)
+            [ "$#" -ge 2 ] || { printf '%s\n' '缺少 --max-runtime-seconds 参数' >&2; exit 2; }
+            MAX_RUNTIME_SECONDS=$2
+            shift 2
+            ;;
+        --)
+            shift
+            break
+            ;;
+        *)
+            printf '%s\n' '参数必须位于 -- 之前，宿主命令必须位于 -- 之后' >&2
+            exit 2
+            ;;
+    esac
+done
+
+if [ -z "$PROJECT_ROOT" ] || [ -z "$OUTPUT" ] || [ "$#" -eq 0 ]; then
+    printf '%s\n' '用法: ae-host-run --project-root <path> --output <file> [--max-runtime-seconds <n>] -- <host command ...>' >&2
+    exit 2
+fi
+
+case "$MAX_RUNTIME_SECONDS" in
+    '') ;;
+    *[!0-9]*|0)
+        printf '%s\n' '--max-runtime-seconds 必须是正整数' >&2
+        exit 2
+        ;;
+esac
+
+if ! CDPATH= cd -- "$PROJECT_ROOT"; then
+    printf '%s\n' '项目根目录不可用' >&2
+    exit 2
+fi
+PROJECT_ROOT=$(pwd -P)
+AE_INVOCATION_PROJECT_ROOT=$PROJECT_ROOT
+export AE_INVOCATION_PROJECT_ROOT
+
+TIMEOUT_MARKER="$OUTPUT.timeout"
+WATCHDOG_PID=
+rm -f "$TIMEOUT_MARKER"
+
+"$@" > "$OUTPUT" &
+HOST_PID=$!
+if [ -n "$MAX_RUNTIME_SECONDS" ]; then
+    (
+        sleep "$MAX_RUNTIME_SECONDS"
+        if kill -0 "$HOST_PID" 2>/dev/null; then
+            : > "$TIMEOUT_MARKER"
+            kill -TERM "$HOST_PID" 2>/dev/null || true
+        fi
+    ) &
+    WATCHDOG_PID=$!
+fi
+
+wait "$HOST_PID"
+HOST_EXIT=$?
+
+if [ -n "$WATCHDOG_PID" ]; then
+    kill "$WATCHDOG_PID" 2>/dev/null || true
+    wait "$WATCHDOG_PID" 2>/dev/null || true
+fi
+
+HOST_REASON_CODE=HOST_RUNTIME_PROTOCOL_ERROR
+if [ -f "$TIMEOUT_MARKER" ]; then
+    HOST_REASON_CODE=HOST_PROCESS_TIMEOUT
+    rm -f "$TIMEOUT_MARKER"
+fi
+
+if ! "$PLUGIN_ROOT/scripts/ae-run" --run-module auto_engineering.host.process_exit \
+    --project-root "$PROJECT_ROOT" \
+    --host-output "$OUTPUT" \
+    --exit-code "$HOST_EXIT" \
+    --reason-code "$HOST_REASON_CODE" > "${OUTPUT}.stop-report.json"; then
+    printf '%s\n' '宿主退出事实未能落盘，拒绝伪装为可验收运行' >&2
+    if [ "$HOST_EXIT" -eq 0 ]; then
+        exit 75
+    fi
+fi
+
+exit "$HOST_EXIT"

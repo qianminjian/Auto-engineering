@@ -54,6 +54,32 @@ class TestPIIGuardrailCheck:
         result = g.check(files_changed=["leak.py"])
         assert result.action == "block"
 
+    def test_pii_feedback_preserves_test_assertions(self, tmp_path: Path) -> None:
+        f = tmp_path / "tests" / "api.contract.test.ts"
+        f.parent.mkdir()
+        f.write_text("const value = 'api_key=sk-1234567890abcdef';\n")
+        g = PIIGuardrail(block_mode=False, project_root=tmp_path)
+
+        result = g.check(files_changed=["tests/api.contract.test.ts"])
+
+        assert result.action == "retry"
+        assert "测试夹具" in result.message
+        assert "不要修改断言" in result.message
+
+    def test_runtime_secret_identifier_is_not_a_credential_literal(
+        self, tmp_path: Path,
+    ) -> None:
+        f = tmp_path / "adapter.py"
+        f.write_text(
+            'runtime_secret = "fake-runtime-secret"\n'
+            'self._runtime_secret == "fake-runtime-secret"\n'
+        )
+        g = PIIGuardrail(block_mode=False, project_root=tmp_path)
+
+        result = g.check(files_changed=["adapter.py"])
+
+        assert result.action == "pass"
+
     def test_unreadable_file_is_skipped(self, tmp_path: Path) -> None:
         g = PIIGuardrail(block_mode=True, project_root=tmp_path)
         result = g.check(files_changed=["nonexistent.py"])

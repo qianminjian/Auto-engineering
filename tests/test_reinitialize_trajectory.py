@@ -110,6 +110,15 @@ def test_reinitialize_selection_is_idempotent(tmp_path: Path) -> None:
     assert len(events.load_stream("thread-old")) == 3
 
 
+def test_reinitialize_result_validation_is_read_only(tmp_path: Path) -> None:
+    events, _, gate = _seed(tmp_path)
+    before = events.load_stream("thread-old")
+
+    StateReconciliationService(events).validate(_result(gate))
+
+    assert events.load_stream("thread-old") == before
+
+
 def test_selection_must_bind_active_gate_message(tmp_path: Path) -> None:
     events, _, gate = _seed(tmp_path)
     result = _result(gate)
@@ -136,7 +145,6 @@ def test_cli_reinitialize_creates_new_thread_and_replays_new_action(tmp_path: Pa
     events, _, gate = _seed(tmp_path)
     checkpoints: SQLiteCheckpointStore[EngineState] = SQLiteCheckpointStore(":memory:")
     assert checkpoints.reserve_project_thread("thread-old") is None
-    checkpoints.record_protocol_action(gate)
     result = _result(gate)
     result_file = tmp_path / "result.json"
     result_file.write_text(json.dumps(result), encoding="utf-8")

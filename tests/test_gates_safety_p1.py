@@ -18,6 +18,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from auto_engineering.gates.safety import _scan_dir
+
 
 class TestSafetyGateNewPatterns:
     """SafetyGate P1-1 新增 5 种检测模式."""
@@ -29,6 +31,24 @@ class TestSafetyGateNewPatterns:
         target = tmp_path / "test.txt"
         target.write_text(content, encoding="utf-8")
         return _scan_file(target)
+
+    def test_skips_uv_dependency_cache(self, tmp_path: Path) -> None:
+        cache_dir = tmp_path / ".uv-cache" / "wheels"
+        cache_dir.mkdir(parents=True)
+        (cache_dir / "cached.txt").write_text(
+            'OPENAI_KEY = "sk-1234567890abcdef1234567890abcdef"\n',
+            encoding="utf-8",
+        )
+        assert _scan_dir(tmp_path) == []
+
+    def test_skips_installed_plugin_runtime(self, tmp_path: Path) -> None:
+        plugin_dir = tmp_path / ".ae-plugin" / "auto_engineering"
+        plugin_dir.mkdir(parents=True)
+        (plugin_dir / "bundled.py").write_text(
+            'OPENAI_KEY = "sk-1234567890abcdef1234567890abcdef"\n',
+            encoding="utf-8",
+        )
+        assert _scan_dir(tmp_path) == []
 
     # ============================================================
     # 1. Anthropic-style API Key (sk-...)

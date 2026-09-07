@@ -320,7 +320,7 @@ def test_validate_init_manifest_unsupported_language() -> None:
 
 def test_tasks_yaml_init_metadata_ignored() -> None:
     """tasks.yml 含 init_metadata + B1.3 未定义字段 → Plan.validate() 不报错."""
-    from auto_engineering.loop.plan import Plan, Task
+    from auto_engineering.engine.models import Plan, Task
 
     # tasks.yml 含 init_metadata 已知扩展字段 + 完全未知的字段
     task_with_unknown = Task(

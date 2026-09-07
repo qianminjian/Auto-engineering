@@ -39,6 +39,15 @@ think hard
 - critic_feedback：总体反馈
 - assessment：Ready to merge | With fixes | Needs rework
 
+### 机器回写合同（不可省略）
+
+最终响应必须是一个可直接 `json.loads` 解析的 JSON object，禁止 Markdown、表格、代码围栏、
+解释性前后缀或只输出自然语言审查报告。必须一次性包含上述字段；当上下文含
+`assurance_scope.mode=leaf_small_project` 时，还必须包含 `assurance_bundle`，其结构严格服从
+Action 的 `expected_format`。返回前先检查 JSON 的括号、引号、数组和对象均完整；不要把审查
+正文写成报告后再附加 JSON。该 JSON 是 Host Driver 唯一允许提取的业务结果，缺少它会被
+`record-worker-outcome` 拒绝并触发同 Action 恢复。
+
 ## LEAF 小项目 Assurance Bundle
 
 当上下文含 `assurance_scope.mode=leaf_small_project` 时，你仍是独立于 Developer 的同一个

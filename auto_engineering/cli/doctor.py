@@ -192,7 +192,10 @@ def _check_project_profile(project_root: Path) -> tuple[bool, str]:
         LegacyInitProvider(),
     ))
     try:
-        resolution = resolver.resolve(project_root)
+        # Doctor 只诊断已存在的工程能力；是否允许继续进入业务循环由
+        # dev-loop 的 Setup 门禁负责。否则只声明语言/源码根的工程会被
+        # Doctor 误报为“未配置测试命令”。
+        resolution = resolver.resolve(project_root, require_test_command=False)
     except ProjectProfileError as exc:
         status = (
             "legacy"

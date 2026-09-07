@@ -174,6 +174,26 @@ class TestAuditGateSkipDirs:
         verdict = gate.run(tmp_path)
         assert verdict.passed is True
 
+    def test_skips_uv_dependency_cache(self, tmp_path: Path) -> None:
+        cache_dir = tmp_path / ".uv-cache" / "wheels"
+        cache_dir.mkdir(parents=True)
+        (cache_dir / "cached.py").write_text(
+            'API_KEY = "sk-1234567890abcdef1234567890abcdef"\n'
+        )
+        gate = AuditGate()
+        verdict = gate.run(tmp_path)
+        assert verdict.passed is True
+
+    def test_skips_installed_plugin_runtime(self, tmp_path: Path) -> None:
+        plugin_dir = tmp_path / ".ae-plugin" / "auto_engineering"
+        plugin_dir.mkdir(parents=True)
+        (plugin_dir / "bundled.py").write_text(
+            'API_KEY = "sk-1234567890abcdef1234567890abcdef"\n'
+        )
+        gate = AuditGate()
+        verdict = gate.run(tmp_path)
+        assert verdict.passed is True
+
 
 class TestAuditGateLargeFiles:
     def test_large_file_p2_warning(self, tmp_path: Path) -> None:

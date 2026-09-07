@@ -19,6 +19,7 @@ from auto_engineering.loop.design_decision_ledger import (
     DesignDecisionError,
     DesignDecisionLedger,
 )
+from auto_engineering.loop.effects import EffectExecutor
 from auto_engineering.loop.event_store import SQLiteEventStore
 from auto_engineering.loop.tick_orchestrator import TickOrchestrator
 from tests.host_runtime.fake_host import FakeHostRuntime
@@ -119,21 +120,30 @@ def test_bff_research_remains_advisory_in_architect_action(tmp_path) -> None:
         }, ensure_ascii=False),
     )
 
-    action = ActionBuilder(tmp_path).build_action(state)
+    plan = ActionBuilder(tmp_path).build_plan(state)
+    for intent in plan.effect_intents:
+        EffectExecutor(tmp_path).execute(intent)
+    action = plan.payload
+    prompt = (tmp_path / action["spawn"]["invocations"][0]["prompt_ref"]).read_text(
+        encoding="utf-8"
+    )
 
     assert action["design_authority"]["change_policy"] == "user_gate_required"
     research = action["research_and_design_context"][0]
     assert research["authority"] == "advisory"
     assert research["change_policy"] == "user_gate_required"
-    assert "未来改进或最佳实践提升为当前范围" in action["subagent_prompt"]
+    assert "未来改进或最佳实践提升为当前范围" in prompt
 
 
 def test_voice_clone_architect_action_runs_in_isolated_fake_host(tmp_path) -> None:
-    action = ActionBuilder(tmp_path).build_action(EngineState(
+    plan = ActionBuilder(tmp_path).build_plan(EngineState(
         thread_id="voice-clone-worker",
         current_stage="architect",
         requirement="按照设计文档完成全部设计任务",
     ))
+    for intent in plan.effect_intents:
+        EffectExecutor(tmp_path).execute(intent)
+    action = plan.payload
     action["message_id"] = "voice-clone-architect-1"
     host = FakeHostRuntime(HostPlatform.CODEX)
 
@@ -172,6 +182,23 @@ def test_voice_clone_golden_reaches_done_through_real_core(
         state_dir / "design-decision-ledger.json",
     )
     (tmp_path / "pyproject.toml").write_text("[project]\nname='voice-clone'\n")
+    (tmp_path / "package.json").write_text(
+        json.dumps(
+            {
+                "name": "voice-clone",
+                "private": True,
+                "scripts": {
+                    "test": "node --test",
+                    "lint": "node --check src",
+                    "typecheck": "node --check src",
+                    "build": "node --check src",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "tsconfig.json").write_text("{}\n", encoding="utf-8")
+    (tmp_path / "src").mkdir()
     (tmp_path / "voice_clone").mkdir()
     guardrail = MagicMock()
     guardrail.check.return_value = MagicMock(action="pass")

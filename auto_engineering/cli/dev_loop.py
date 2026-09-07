@@ -10,6 +10,7 @@ import hashlib
 import json
 import logging
 import os
+import sys
 import tempfile
 from collections.abc import Iterable, Mapping
 from contextlib import suppress
@@ -17,6 +18,63 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
+from auto_engineering.cli.action_status import (
+    status_action_summary as _status_action_summary,
+)
+from auto_engineering.cli.active_action_source import (
+    active_thread as _active_thread_impl,
+)
+from auto_engineering.cli.active_action_source import (
+    load_active_action as _load_active_action_impl,
+)
+from auto_engineering.cli.compact_action_view import (
+    compact_host_action as _compact_host_action_impl,
+)
+from auto_engineering.cli.host_action_binding import (
+    map_bound_action_for_host as _map_bound_action_for_host_impl,
+)
+from auto_engineering.cli.host_action_runtime import (
+    bind_worker_execution_identity as _bind_worker_execution_identity_impl,
+)
+from auto_engineering.cli.host_action_runtime import (
+    map_action_for_host as _map_action_for_host_impl,
+)
+from auto_engineering.cli.host_action_runtime import (
+    prepare_action_for_host as _prepare_action_for_host_impl,
+)
+from auto_engineering.cli.host_action_runtime import (
+    resume_host_platform as _resume_host_platform_impl,
+)
+from auto_engineering.cli.host_action_runtime import (
+    resume_platform_scope as _resume_platform_scope,
+)
+from auto_engineering.cli.host_action_runtime import (
+    root_bound_path as _root_bound_path_impl,
+)
+from auto_engineering.cli.legacy_action_recovery import (
+    host_mapping_error_action as _host_mapping_error_action_impl,
+)
+from auto_engineering.cli.legacy_action_recovery import (
+    persist_legacy_action_recovery_gate as _persist_legacy_action_recovery_gate,
+)
+from auto_engineering.cli.legacy_action_recovery import (
+    persisted_reconciliation_gate_status as _persisted_reconciliation_gate_status,
+)
+from auto_engineering.cli.result_recovery_projection import (
+    process_state_reconciliation_result as _process_state_reconciliation_result_impl,
+)
+from auto_engineering.cli.result_recovery_projection import (
+    project_host_attestation_repair_action as _project_host_attestation_repair_action_impl,
+)
+from auto_engineering.cli.result_recovery_projection import (
+    project_result_repair_action as _project_result_repair_action_impl,
+)
+from auto_engineering.cli.result_recovery_projection import (
+    project_submitted_worker_failure_recovery as _project_submitted_worker_failure_recovery_impl,
+)
+from auto_engineering.cli.result_recovery_projection import (
+    record_outcome_acceptance as _record_outcome_acceptance_impl,
+)
 from auto_engineering.config.runtime_config import RuntimeConfig, get_default_config
 from auto_engineering.engine.state import EngineState
 
@@ -76,7 +134,7 @@ class _ActiveThreadEvents(Protocol):
 
 # ============================================================
 # v5.6 Tick 模式 CLI 处理器 (§A.1 Python 永不调 LLM — 不需 API key)
-# 每次调用是独立进程, 从 .ae-state/checkpoints.db 恢复/持久化状态。
+# 每次调用是独立进程；新运行从 .ae-state/events.db 恢复，checkpoint 仅作显式迁移输入。
 # ============================================================
 
 def _ensure_state_dir(root: Path) -> Path:
@@ -107,14 +165,7 @@ def _ensure_event_db_path(root: Path) -> Path:
 
 
 def _root_bound_path(path: Path, root: Path) -> Path:
-    """Resolve relative protocol artifacts against the explicit project root.
-
-    Host tools are free to change their working directory between calls.  A
-    relative Result/outcome path therefore belongs to the Action project, not
-    to the ambient shell process.
-    """
-
-    return path.resolve() if path.is_absolute() else (root / path).resolve()
+    return _root_bound_path_impl(path, root)
 
 
 def _cleanup_completed_action_work_files(
@@ -123,10 +174,11 @@ def _cleanup_completed_action_work_files(
     result_file: Path,
     completed_action: Mapping[str, object] | None,
     next_action: Mapping[str, object],
+    commit_confirmed: bool = True,
 ) -> None:
-    """删除已提交 Action 的临时交接文件，保留 journal 与未知文件。"""
+    """仅在 Core 确认提交后删除 Action 临时交接文件。"""
 
-    if completed_action is None:
+    if not commit_confirmed or completed_action is None:
         return
     message_id = completed_action.get("message_id")
     if not isinstance(message_id, str) or not message_id:
@@ -146,14 +198,12 @@ def _cleanup_completed_action_work_files(
     for name in ("outcomes.json", "coordinator-result.json", "result.json"):
         with suppress(FileNotFoundError):
             (work_dir / name).unlink()
-    # 严格 Worker 的私有产出不与 Action work_dir 同目录，按当前 Action
-    # invocation 精确清理，避免下次运行误读旧 artifact 或无限积累。
+    # 私有 Worker 产出按当前 Action/generation 精确清理；旧/未知文件保留审计。
     private_paths: set[Path] = set()
     try:
-        # 同一 Action 的宿主投影包含当前 generation 的私有 outcome 路径。
-        # cleanup 不能只依赖 canonical invocation.outcome_path，否则会遗留
-        # `-gN` 文件，下一次恢复可能读到已完成 Action 的旧事实。
-        mapped = _map_bound_action_for_host(dict(completed_action), root)
+        mapped = _map_bound_action_for_host(
+            dict(completed_action), root, include_failure_journal=False
+        )
         host_execution = mapped.get("host_execution")
         workers = (
             host_execution.get("workers")
@@ -174,105 +224,47 @@ def _cleanup_completed_action_work_files(
 
         plan = SpawnPlan.from_action(completed_action)
         for invocation in plan.invocations:
-            if invocation.outcome_path is None:
-                continue
             private_paths.add(_root_bound_path(Path(invocation.outcome_path), root))
     except Exception:
-        # 清理不是状态提交的一部分；旧/损坏 Action 保留未知文件供审计。
+        # 清理失败不影响状态提交；旧/损坏 Action 保留未知文件供审计。
         _logger.debug("worker private artifact cleanup skipped", exc_info=True)
     for private_path in private_paths:
         if private_path.is_relative_to(root):
             with suppress(FileNotFoundError):
                 private_path.unlink()
-    # 未知文件不是本协议的清理目标；保留目录供审计。
     with suppress(OSError):
         work_dir.rmdir()
 
-
 def _map_action_for_host(action: dict) -> dict:
-    """已识别宿主必须经过 Adapter 2.0 能力映射；未知 shell 保持核心协议。"""
-    from auto_engineering.host import HostPlatform, detect_host
-    from auto_engineering.loop.execution_control import project_execution_control
-
-    # Canonical Action 保持不可变；宿主投影仍需修复完整 Gate 分类落地前生成的旧快照，
-    # 否则旧人工 Gate 会被误判为 CONTINUE 并送入执行请求编译。
-    action = project_execution_control(action)
-
-    if not isinstance(action.get("message_id"), str):
-        return action
-    detection = detect_host()
-    if detection.platform is HostPlatform.UNKNOWN:
-        return action
-    from auto_engineering.host.adapters import adapter_for
-
-    adapter = adapter_for(detection.platform)
-    profile = adapter.probe(
-        detected=detection.capabilities,
-        authorized=detection.capabilities,
-    )
-    return adapter.map_action(action, profile=profile).payload
+    return _map_action_for_host_impl(action)
 
 
-def _bind_worker_execution_identity(action: dict, root: Path) -> dict:
-    """为当前宿主会话绑定 Action generation；普通重读保持幂等。"""
-
-    if not isinstance(action.get("spawn"), Mapping):
-        return action
-    message_id = action.get("message_id")
-    if not isinstance(message_id, str) or not message_id:
-        return action
-    from auto_engineering.host import HostPlatform, detect_host
-    from auto_engineering.host.runtime_driver import (
-        HostRunLeaseStore,
-        fencing_token_for,
-        host_session_id_from_environ,
+def _bind_worker_execution_identity(
+    action: dict,
+    root: Path,
+    *,
+    include_failure_journal: bool = True,
+) -> dict:
+    return _bind_worker_execution_identity_impl(
+        action,
+        root,
+        include_failure_journal=include_failure_journal,
     )
 
-    detection = detect_host()
-    if detection.platform is HostPlatform.UNKNOWN:
-        return action
-    session_id = host_session_id_from_environ(detection.platform)
-    if not session_id:
-        return action
-    previous = HostRunLeaseStore(root).load()
-    if previous is not None and previous.action_message_id == message_id:
-        generation = (
-            previous.execution_generation
-            if previous.host_session_id == session_id
-            else previous.execution_generation + 1
-        )
-    else:
-        generation = 1
-    # Worker 失败后仍保留同一个 Core Action，但下一次执行必须是新的
-    # generation。以 Outcome Journal 的已提交失败次数作为稳定提示，避免
-    # 每次 status/read 都无界递增，同时阻止重试复用旧 artifact/handle。
-    failure_journal = (
-        root / ".ae-state/host-runtime/outcomes" / f"{message_id}.json"
+
+def _map_bound_action_for_host(
+    action: dict,
+    root: Path,
+    *,
+    include_failure_journal: bool = True,
+) -> dict:
+    return _map_bound_action_for_host_impl(
+        action,
+        root,
+        include_failure_journal=include_failure_journal,
+        bind_worker_execution_identity_fn=_bind_worker_execution_identity,
+        map_action_fn=_map_action_for_host,
     )
-    try:
-        journal = json.loads(failure_journal.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        journal = None
-    if isinstance(journal, Mapping) and journal.get("status") == "worker_failed":
-        failure_attempt = journal.get("failure_attempt")
-        if isinstance(failure_attempt, int) and not isinstance(failure_attempt, bool):
-            generation = max(generation, failure_attempt + 1)
-    bound = dict(action)
-    bound["execution_generation"] = generation
-    bound["fencing_token"] = fencing_token_for(
-        message_id, session_id, generation
-    )
-    return bound
-
-
-def _map_bound_action_for_host(action: dict, root: Path) -> dict:
-    """以同一宿主会话身份绑定后再生成宿主投影。
-
-    Worker 私有产物路径包含 execution_generation。所有会再次读取 Action 的
-    CLI 阶段必须走这个入口，否则会把同一 Action 映射成不同代的文件合同。
-    """
-
-    return _map_action_for_host(_bind_worker_execution_identity(action, root))
 
 
 def _prepare_action_for_host(
@@ -280,345 +272,25 @@ def _prepare_action_for_host(
     root: Path,
     *,
     compact_view: bool | None = None,
+    include_failure_journal: bool = True,
 ) -> dict:
-    """映射 Action，并为当前原生宿主会话原子记录执行义务。"""
-
-    action = _bind_worker_execution_identity(action, root)
-    mapped = _map_action_for_host(action)
-    host_execution = mapped.get("host_execution")
-    if isinstance(action.get("spawn"), Mapping) and isinstance(
-        host_execution, dict
-    ):
-        from auto_engineering.host.execution_assembler import (
-            HostEvidenceValidationError,
-            HostExecutionAssembler,
-        )
-
-        work_files = host_execution.get("work_files")
-        result_ref = (
-            work_files.get("result")
-            if isinstance(work_files, Mapping)
-            else None
-        )
-        outcomes_ref = (
-            work_files.get("outcomes")
-            if isinstance(work_files, Mapping)
-            else None
-        )
-        coordinator_ref = (
-            work_files.get("coordinator_result")
-            if isinstance(work_files, Mapping)
-            else None
-        )
-        if all(
-            isinstance(value, str) and value
-            for value in (result_ref, outcomes_ref, coordinator_ref)
-        ):
-            raw_workers = host_execution.get("workers")
-            rejection = action.get("result_rejection")
-            is_result_repair = (
-                isinstance(rejection, Mapping)
-                and rejection.get("repair_required") is True
-            )
-            semantic_context_refs = [
-                str(worker["prompt_ref"])
-                for worker in raw_workers
-                if isinstance(worker, Mapping)
-                and isinstance(worker.get("prompt_ref"), str)
-            ] if isinstance(raw_workers, list) else []
-            try:
-                committed = HostExecutionAssembler(root).restore_committed_result_to_file(
-                    action=action,
-                    result_path=Path(str(result_ref)),
-                    outcomes_path=Path(str(outcomes_ref)),
-                )
-            except HostEvidenceValidationError as exc:
-                import click
-
-                raise click.ClickException(str(exc)) from exc
-            if committed is not None:
-                # Core Action 快照保持不变；宿主投影只暴露唯一合法恢复动作。
-                mapped.pop("spawn", None)
-                host_execution.pop("workers", None)
-                host_execution.pop("native_worker_tools", None)
-                host_execution["recovery"] = {
-                    "schema_version": "1.0",
-                    "status": "worker_outcomes_committed",
-                    "spawn_permitted": False,
-                    "required_operation": "validate_then_submit_or_repair",
-                    "result_ref": result_ref,
-                    "outcomes_ref": outcomes_ref,
-                    "coordinator_result_ref": coordinator_ref,
-                    "semantic_context_refs": semantic_context_refs,
-                }
-                mapped["instruction"] = (
-                    "当前 Action 已有 Core 绑定的 Worker outcomes。"
-                    "禁止启动 Worker；先验证并提交已固化 Result。"
-                    "若业务预检失败，只修复 coordinator payload，"
-                    "并使用已恢复 outcomes 重新 finalize。"
-                )
-            else:
-                # Worker 已完成、原生事实已落盘，但进程可能在 Finalizer 提交前
-                # 中断。此时重新 spawn 会重复付费且改变事实；只投影 finalize 恢复。
-                import json
-
-                outcomes_path = _root_bound_path(Path(str(outcomes_ref)), root)
-                coordinator_path = _root_bound_path(
-                    Path(str(coordinator_ref)), root
-                )
-                native_ready = False
-                try:
-                    raw_outcomes = json.loads(
-                        outcomes_path.read_text(encoding="utf-8")
-                    )
-                    raw_coordinator = json.loads(
-                        coordinator_path.read_text(encoding="utf-8")
-                    )
-                    outcome_items = (
-                        raw_outcomes.get("outcomes")
-                        if isinstance(raw_outcomes, dict)
-                        else None
-                    )
-                    invocations = action["spawn"]["invocations"]
-                    expected_workers = {
-                        item["worker_id"] for item in invocations
-                        if isinstance(item, Mapping)
-                        and isinstance(item.get("worker_id"), str)
-                    }
-                    actual_workers = {
-                        item["worker_id"] for item in outcome_items
-                        if isinstance(item, Mapping)
-                        and isinstance(item.get("worker_id"), str)
-                    } if isinstance(outcome_items, list) else set()
-                    native_ready = (
-                        isinstance(raw_coordinator, dict)
-                        and isinstance(outcome_items, list)
-                        and bool(expected_workers)
-                        and actual_workers == expected_workers
-                        and all(
-                            isinstance(item, Mapping)
-                            and item.get("status") == "completed"
-                            for item in outcome_items
-                        )
-                    )
-                except (KeyError, OSError, json.JSONDecodeError, TypeError):
-                    native_ready = False
-                if native_ready and not is_result_repair:
-                    mapped.pop("spawn", None)
-                    host_execution.pop("workers", None)
-                    host_execution.pop("native_worker_tools", None)
-                    host_execution["recovery"] = {
-                        "schema_version": "1.0",
-                        "status": "native_outcomes_ready",
-                        "spawn_permitted": False,
-                        "required_operation": "finalize_current_native_outcomes",
-                        "result_ref": result_ref,
-                        "outcomes_ref": outcomes_ref,
-                        "coordinator_result_ref": coordinator_ref,
-                        "semantic_context_refs": semantic_context_refs,
-                    }
-                    mapped["instruction"] = (
-                        "当前 Action 的原生 Worker outcomes 与 Coordinator payload "
-                        "已经完整落盘但尚未提交。禁止重新启动 Worker；立即使用当前 "
-                        "outcomes 和 coordinator_result 调用 Finalizer，再 validate/tick。"
-                    )
-    from auto_engineering.host import HostPlatform, detect_host
-    from auto_engineering.host.runtime_driver import (
-        HostRunLease,
-        HostRunLeaseError,
-        HostRunLeaseStore,
-        host_session_id_from_environ,
+    return _prepare_action_for_host_impl(
+        action,
+        root,
+        compact_view=compact_view,
+        include_failure_journal=include_failure_journal,
+        bind_worker_execution_identity_fn=_bind_worker_execution_identity,
+        map_action_fn=_map_action_for_host,
+        project_host_attestation_repair_action=_project_host_attestation_repair_action,
+        compact_action=_compact_host_action,
     )
-
-    detection = detect_host()
-    session_id = host_session_id_from_environ(detection.platform)
-    extensions = mapped.get("extensions")
-    ae = extensions.get("ae") if isinstance(extensions, Mapping) else None
-    control = ae.get("execution_control") if isinstance(ae, Mapping) else None
-    requires_continuous_lease = (
-        isinstance(control, Mapping)
-        and control.get("disposition") == "CONTINUE"
-    )
-    if (
-        detection.platform is not HostPlatform.UNKNOWN
-        and session_id is None
-        and requires_continuous_lease
-        and isinstance(mapped.get("message_id"), str)
-    ):
-        raise HostRunLeaseError("HOST_SESSION_ID_UNAVAILABLE")
-    if (
-        detection.platform is not HostPlatform.UNKNOWN
-        and session_id is not None
-        and requires_continuous_lease
-        and isinstance(mapped.get("message_id"), str)
-    ):
-        lease = HostRunLease.from_action(
-            mapped,
-            platform=detection.platform.value,
-            host_session_id=session_id,
-        )
-        HostRunLeaseStore(root).save(lease)
-    use_compact = (
-        os.environ.get("AE_HOST_ACTION_VIEW", "").strip().lower() == "compact"
-        if compact_view is None
-        else compact_view
-    )
-    if use_compact:
-        return _compact_host_action(mapped, root)
-    return mapped
 
 
 def _compact_host_action(action: Mapping[str, Any], root: Path) -> dict[str, Any]:
-    """为产品宿主生成有界控制视图；Canonical Action 保持不变。"""
-
-    compact_keys = (
-        "schema_version",
-        "message_type",
-        "message_id",
-        "correlation_id",
-        "causation_id",
-        "thread_id",
-        "tick",
-        "stage",
-        "action",
-        "project_root",
-        "extensions",
-        "host_execution",
-        "spawn",
-        "expected_format",
-        "result_contract",
-        "valid_plate_keys",
-        "gate",
-        "current_gap",
-        "current_gap_index",
-        "total_gaps",
-        "auto_decision",
-        "mode",
-        "has_blocking",
-        "gap_scan_summary",
-        "audit_execution_profile",
-        "required_capabilities",
-        "missing_capabilities",
-        "constraints",
-        "resource",
-        "retry_stage",
-        "reason_code",
-        "retry_attempt",
-        "retry_limit",
-        "reason",
-        "result_rejection",
-        "next_transition",
-        "current_session_id",
-        "capsule",
-        "claim_token",
-        "expires_at",
-        "verdict",
-        "verdict_level",
-        "verdict_reason",
-        "error_code",
-        "message",
-        "suggestion",
-        "next_operation",
-    )
-    compact = {
-        key: action[key]
-        for key in compact_keys
-        if key in action
-    }
-    extensions = action.get("extensions")
-    if isinstance(extensions, Mapping):
-        raw_ae = extensions.get("ae")
-        if isinstance(raw_ae, Mapping):
-            ae = {
-                key: raw_ae[key]
-                for key in ("execution_control", "runtime_revision", "runtime")
-                if key in raw_ae
-            }
-            compact["extensions"] = {"ae": ae}
-        else:
-            compact.pop("extensions", None)
-    host_execution = action.get("host_execution")
-    if isinstance(host_execution, Mapping):
-        projected_host = {
-            key: host_execution[key]
-            for key in (
-                "schema_version",
-                "platform",
-                "action_message_id",
-                "work_files",
-                "recovery",
-                "native_worker_tools",
-            )
-            if key in host_execution
-        }
-        workers = host_execution.get("workers")
-        if isinstance(workers, list):
-            projected_workers = []
-            required_worker_contract = (
-                "worker_id",
-                "prompt_ref",
-                "prompt_sha256",
-                "native_launch_prompt",
-                "expected_isolation_evidence",
-                "outcome_path",
-                "execution_generation",
-                "fencing_token",
-                "receipt_path",
-                "record_worker_outcome",
-            )
-            for worker in workers:
-                if not isinstance(worker, Mapping):
-                    continue
-                if "native_launch_prompt" in worker:
-                    missing = [
-                        key for key in required_worker_contract if key not in worker
-                    ]
-                    if missing:
-                        raise ValueError(
-                            "HOST_ACTION_WORKER_CONTRACT_INVALID: "
-                            + ",".join(missing)
-                        )
-                projected_workers.append({
-                    key: worker[key]
-                    for key in required_worker_contract
-                    if key in worker
-                })
-            projected_host["workers"] = projected_workers
-        compact["host_execution"] = projected_host
-    compact["view"] = "compact"
-    instruction = action.get("instruction")
-    if isinstance(instruction, str) and instruction:
-        encoded = instruction.encode("utf-8")
-        digest = hashlib.sha256(encoded).hexdigest()
-        relative = Path(".ae-state/effects/prompt") / f"coordinator-{digest}.txt"
-        prompt_path = (root.resolve() / relative).resolve()
-        if not prompt_path.is_relative_to(root.resolve()):
-            raise ValueError("HOST_PROMPT_PATH_ESCAPE")
-        prompt_path.parent.mkdir(parents=True, exist_ok=True)
-        if prompt_path.exists():
-            if prompt_path.read_bytes() != encoded:
-                raise ValueError("HOST_PROMPT_CONTENT_ADDRESS_CONFLICT")
-        else:
-            try:
-                with prompt_path.open("xb") as handle:
-                    handle.write(encoded)
-            except FileExistsError:
-                if prompt_path.read_bytes() != encoded:
-                    raise ValueError(
-                        "HOST_PROMPT_CONTENT_ADDRESS_CONFLICT"
-                    ) from None
-        compact["coordinator_prompt_ref"] = {
-            "path": relative.as_posix(),
-            "sha256": digest,
-            "size_bytes": len(encoded),
-            "media_type": "text/plain; charset=utf-8",
-        }
-    return compact
+    return _compact_host_action_impl(action, root)
 
 def _active_thread(store: object) -> str | None:
-    """兼容旧 Store façade；真实 SQLite store 提供原子项目占用查询。"""
-    getter = getattr(store, "active_project_thread", None)
-    return getter() if callable(getter) else None
+    return _active_thread_impl(store)
 
 
 def _load_active_action(
@@ -626,34 +298,7 @@ def _load_active_action(
     store: _ActiveThreadStore,
     events: _ActiveThreadEvents,
 ) -> dict | None:
-    """从唯一优先级读取 active Action，禁止拼接两份状态快照。
-
-    EventStore 是新协议的事实源；checkpoint 仅作为旧状态兼容回退。两者
-    同时存在且 message_id 不同，说明恢复状态已分叉，继续执行会把错误的
-    prompt、worker 文件或 causation 组合到一起，因此必须 fail-closed。
-    """
-
-    event_action = events.load_action_snapshot(thread_id)
-    checkpoint_loader = getattr(store, "load_active_protocol_action", None)
-    checkpoint_action = (
-        checkpoint_loader(thread_id) if callable(checkpoint_loader) else None
-    )
-    if isinstance(event_action, Mapping) and isinstance(checkpoint_action, Mapping):
-        event_id = event_action.get("message_id")
-        checkpoint_id = checkpoint_action.get("message_id")
-        if (
-            isinstance(event_id, str)
-            and isinstance(checkpoint_id, str)
-            and event_id
-            and checkpoint_id
-            and event_id != checkpoint_id
-        ):
-            raise ValueError("STATE_SOURCE_CONFLICT")
-    if isinstance(event_action, Mapping):
-        return dict(event_action)
-    if isinstance(checkpoint_action, Mapping):
-        return dict(checkpoint_action)
-    return None
+    return _load_active_action_impl(thread_id, store, events)
 
 
 def _state_source_conflict_action(thread_id: str) -> dict[str, Any]:
@@ -667,6 +312,48 @@ def _state_source_conflict_action(thread_id: str) -> dict[str, Any]:
             error_code="STATE_SOURCE_CONFLICT",
             message="事件与兼容 checkpoint 指向不同的活动 Action，已停止继续执行。",
             suggestion="保留 .ae-state，核对事件日志后使用正确的恢复操作；不要手工拼接两份状态。",
+        ).to_dict(),
+        thread_id=thread_id,
+        tick=0,
+        stage=None,
+    )
+
+
+def _state_reconciliation_result_contract() -> dict[str, Any]:
+    """返回状态协调 Gate 的唯一宿主 Result 合同。"""
+
+    return {
+        "schema_version": "1.0",
+        "required": ["gate_resolution"],
+        "properties": {"gate_resolution": {"type": "object"}},
+        "additionalProperties": False,
+    }
+
+
+def _state_reconciliation_expected_format() -> dict[str, Any]:
+    """返回供宿主/模型直接照抄的状态协调字段形状。"""
+
+    return {
+        "gate_resolution": {
+            "gate_id": "state_reconciliation",
+            "resolution": "reinitialize | reconcile",
+        },
+    }
+
+
+def _design_source_error_action(
+    thread_id: str, error: ValueError,
+) -> dict[str, Any]:
+    """把设计账本漂移投影成稳定协议错误，阻止恢复路径抛 traceback。"""
+
+    from auto_engineering.loop.actions import ActionError
+    from auto_engineering.loop.protocol import action_envelope
+
+    return action_envelope(
+        ActionError(
+            error_code=str(error) or "DESIGN_LEDGER_INVALID",
+            message="当前状态绑定的设计来源已变化，已停止继续执行。",
+            suggestion="请确认设计文档和状态版本后重新初始化，或通过显式迁移边界恢复。",
         ).to_dict(),
         thread_id=thread_id,
         tick=0,
@@ -742,7 +429,11 @@ def _resolve_active_thread_start(
         AeConfigProvider(),
         LocalProbeProvider(),
         LegacyInitProvider(),
-    )).resolve(root)
+    )).resolve(
+        root,
+        design_doc_path=design_doc_path,
+        require_test_command=False,
+    )
     report = StateCompatibilityInspector(root).inspect(
         intent=intent,
         state=state,
@@ -770,6 +461,7 @@ def _resolve_active_thread_start(
     action = action_envelope(
         {
             "action": "gate",
+            "project_root": str(root.resolve()),
             "gate": {
                 "id": "state_reconciliation",
                 "type": "decision",
@@ -781,6 +473,14 @@ def _resolve_active_thread_start(
                 "reason_codes": list(report.reason_codes),
                 "missing_anchors": list(report.missing_anchors),
             },
+            "instruction": (
+                "这是用户决策 Gate。必须原样展示 gate.options，等待用户选择后，"
+                "仅提交 gate_resolution 对象；禁止提交顶层 decision、gate_id 或 decision 字段。"
+                "gate_resolution.gate_id 必须为 state_reconciliation，"
+                "resolution 必须使用选项 id；Result 的 causation_id 必须绑定当前 Gate message_id。"
+            ),
+            "expected_format": _state_reconciliation_expected_format(),
+            "result_contract": _state_reconciliation_result_contract(),
         },
         thread_id=thread_id,
         tick=state.tick + 1,
@@ -817,7 +517,6 @@ def _resolve_active_thread_start(
         )
         projected = default_reducer_registry().reduce(state, event)
         events.commit_tick(events=[event], state=projected, action=action)
-    store.record_protocol_action(action)
     return action
 
 
@@ -925,110 +624,8 @@ def _build_injectables(
     return result
 
 
-def _check_config_gate(
-    root: Path,
-    *,
-    policy: str | None = None,
-    interactive: bool | None = None,
-) -> bool:
-    """确保项目存在有效 ae.toml；交互向导或非交互标准 Profile 后继续。"""
-    import os as _os
-
-    import click as _click
-
-    toml_path = root / "ae.toml"
-    if toml_path.exists():
-        from auto_engineering.config.ae_config import AeConfig
-        existing = AeConfig(root)
-        if existing.load_error is not None:
-            raise _click.ClickException(
-                f"CONFIG_INVALID: ae.toml 解析失败: {existing.load_error}"
-            )
-        for warning in existing.migration_warnings:
-            _click.echo(f"⚠  CONFIG_DEPRECATED: {warning}", err=True)
-        if existing.is_configured:
-            return True
-
-    from auto_engineering.config.ae_config import AeConfig
-    from auto_engineering.config.feature_flags import FEATURE_MANIFEST, get_feature_status
-
-    status = get_feature_status()
-    active = [k for k, v in status.items() if v.get("active")]
-    config = AeConfig(root)
-    source_counts = {"env": 0, "file": 0, "default": 0}
-    for feature in FEATURE_MANIFEST:
-        source_counts[config.source_for(feature.key)] += 1
-    selected_policy = (
-        policy
-        or _os.environ.get("AE_CONFIG_POLICY", "").strip()
-        or ("defaults" if _os.environ.get("AE_SKIP_CONFIG_CHECK") == "1" else "")
-    )
-    if interactive is None:
-        import sys
-        interactive = sys.stdin.isatty()
-
-    _click.echo("", err=True)
-    state = "未配置" if not toml_path.exists() else "未包含有效配置"
-    _click.echo(f"⚠  ae.toml {state}", err=True)
-    _click.echo(
-        "[配置来源] "
-        f"env={source_counts['env']} file={source_counts['file']} "
-        f"default={source_counts['default']}",
-        err=True,
-    )
-    _click.echo("", err=True)
-    _click.echo(f"当前生效的功能 (仅内置默认值, {len(active)}/{len(FEATURE_MANIFEST)} active):", err=True)
-    for f in FEATURE_MANIFEST:
-        if f.key in active:
-            _click.echo(f"  ✓ {f.description}", err=True)
-    _click.echo("", err=True)
-    _click.echo("以下功能未启用，开发过程将缺少:", err=True)
-    missing = ["无审计日志 → 无法回溯 LLM 调用", "无度量采集 → 无 AI Coding 信号数据",
-               "无 DebugTracer → 故障时缺少诊断信息", "无 Token 采集 → 无用量数据"]
-    for m in missing:
-        _click.echo(f"  - {m}", err=True)
-    _click.echo("", err=True)
-    if selected_policy:
-        if selected_policy in {"defaults", "create"}:
-            from auto_engineering.cli.doctor import _init_config
-            if toml_path.exists():
-                raise _click.ClickException(
-                    "CONFIG_REQUIRED: 现有 ae.toml 未包含有效配置，请运行 "
-                    "ae doctor --wizard 修复"
-                )
-            if not _init_config(root):
-                raise _click.ClickException("CONFIG_CREATE_FAILED: ae.toml 创建失败")
-            _click.echo(
-                f"[配置] policy={selected_policy}，已写入 standard profile",
-                err=True,
-            )
-            return True
-        if selected_policy == "require":
-            raise _click.ClickException(
-                "CONFIG_POLICY_REQUIRED: policy=require 且 ae.toml 不存在"
-            )
-        raise _click.ClickException(
-            f"CONFIG_POLICY_INVALID: {selected_policy}"
-        )
-
-    if not interactive:
-        from auto_engineering.cli.doctor import _init_config
-        if toml_path.exists() or not _init_config(root):
-            raise _click.ClickException(
-                "CONFIG_REQUIRED: ae.toml 无有效配置，请运行 ae doctor --wizard"
-            )
-        _click.echo("[配置] 非交互宿主已写入 standard profile", err=True)
-        return True
-
-    _click.echo("→ 首次启动必须完成配置，正在启动向导...", err=True)
-    from auto_engineering.cli.doctor import _run_wizard
-    if not _run_wizard(root):
-        raise _click.ClickException("CONFIG_REQUIRED: 配置未保存，启动已取消")
-    return True
-
-
 def _activate_project_config(root: Path) -> None:
-    """在配置闸门可能创建 ae.toml 后刷新本进程的不可变配置快照。"""
+    """刷新本进程配置快照；缺失或仅含 ProjectProfile 时使用默认值。"""
     from auto_engineering.config.runtime_config import (
         RuntimeConfig,
         set_default_config,
@@ -1038,11 +635,10 @@ def _activate_project_config(root: Path) -> None:
 
 
 def run_tick_init(
-    requirement: str, design_doc_path: str | None, root: Path, max_rounds: int,
+    requirement: str, design_doc_path: str | None, root: Path, max_rounds: int | None,
     debug: bool = False, debug_dir: str | None = None,
     pause_at_stage: str | None = None,
     escalate: bool = False,
-    config_policy: str | None = None,
 ) -> None:
     """ae dev-loop --init: 初始化 tick loop, 输出第一个 action JSON (stdout 契约)."""
     import click
@@ -1050,11 +646,9 @@ def run_tick_init(
     if requirement.lower().endswith((".md", ".markdown")) and (root / requirement).is_file():
         raise click.ClickException("DESIGN_DOC_REQUIRED: 请将设计文档路径通过 --design-doc 传入，"
                                    f"requirement 请改为自然语言需求（--design-doc {requirement}）")
-    # Phase 45: 配置闸门
-    if not _check_config_gate(root, policy=config_policy):
-        return
+    # RuntimeConfig 读取可选的 ae.toml 覆盖；缺失时直接使用 FeatureManifest 默认值。
+    # ProjectProfile 的 [project] 与运行时 Feature 配置共享文件但职责独立，不能互相阻断。
     _activate_project_config(root)
-
     import hashlib
     import json
 
@@ -1162,6 +756,7 @@ def run_tick_step(result_file: Path, root: Path,
     import click
 
     from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
+    from auto_engineering.loop.design_decision_ledger import DesignDecisionError
     from auto_engineering.loop.event_store import SQLiteEventStore
     from auto_engineering.loop.tick_orchestrator import TickOrchestrator
 
@@ -1198,17 +793,52 @@ def run_tick_step(result_file: Path, root: Path,
                 )
             )
             return
-        use_events = (
-            active_thread is not None
-            and events.load_projection(active_thread) is not None
-        )
-        orch = TickOrchestrator.restore(root, store, debug=debug, debug_dir=debug_dir,
-                                        event_store=events if use_events else None,
-                                        thread_id=active_thread,
-                                        context_offloader=inj["context_offloader"],
-                                        session_summarizer=inj.get("session_summarizer"),
-                                        tracer=inj["tracer"],
-                                        audit_logger=inj["audit_logger"])
+        # 宿主先提交 Worker 失败而漏掉 attestation 回写时，先检查当前 Action
+        # 的私有业务 artifact。合法产物意味着“回写缺失”，不是 Worker 失败；
+        # 在 Core tick 前投影修复 Action，避免错误消耗失败预算或重启 Worker。
+        if completed_action is not None:
+            try:
+                submitted_candidate = json.loads(
+                    result_file.read_text(encoding="utf-8")
+                )
+            except (OSError, json.JSONDecodeError):
+                submitted_candidate = None
+            if isinstance(submitted_candidate, Mapping):
+                attestation_recovery = _project_submitted_worker_failure_recovery(
+                    action=completed_action,
+                    submitted_result=submitted_candidate,
+                    root=root,
+                )
+                if attestation_recovery is not None:
+                    click.echo(
+                        json.dumps(attestation_recovery, ensure_ascii=False)
+                    )
+                    return
+        # 新运行始终通过 EventStore 恢复；事件投影缺失必须让 restore 明确失败，
+        # 不能退回 checkpoint 形成第二套事实源。
+        if active_thread is None:
+            raise click.ClickException(
+                "EVENT_THREAD_NOT_FOUND: 没有可恢复的 EventStore 活动 thread；"
+                "历史 checkpoint 必须先通过 --import-checkpoint 显式导入"
+            )
+        try:
+            orch = TickOrchestrator.restore_from_event_store(
+                root, store, debug=debug, debug_dir=debug_dir,
+                event_store=events,
+                thread_id=active_thread,
+                context_offloader=inj["context_offloader"],
+                session_summarizer=inj.get("session_summarizer"),
+                tracer=inj["tracer"],
+                audit_logger=inj["audit_logger"],
+            )
+        except DesignDecisionError as exc:
+            click.echo(json.dumps(
+                _prepare_action_for_host(
+                    _design_source_error_action(active_thread, exc), root
+                ),
+                ensure_ascii=False,
+            ))
+            return
 
         # T69a: Restore metrics collector from disk for cross-process continuity
         if get_default_config().metrics_enabled:
@@ -1218,7 +848,7 @@ def run_tick_step(result_file: Path, root: Path,
             )
             collector = MetricsCollector(root)
             set_collector(collector)
-            collector.resume_events(orch._state.thread_id)
+            collector.resume_events(orch.state_snapshot().thread_id)
 
         try:
             action = orch.tick(result_file)
@@ -1234,7 +864,7 @@ def run_tick_step(result_file: Path, root: Path,
 
             channels = ", ".join(exc.channels) or "unknown"
             _logger.error("事件投影一致性校验失败；channels=%s", channels)
-            state = orch._state
+            state = orch.state_snapshot()
             action = action_envelope(
                 ActionError(
                     error_code="STATE_PROJECTION_MISMATCH",
@@ -1252,40 +882,68 @@ def run_tick_step(result_file: Path, root: Path,
             submitted_result_file=result_file,
             core_response=action,
         )
+        active_action = orch.active_action_snapshot()
+        persisted_rejection = False
+        if active_action is not None and action.get("action") == "error":
+            # ``--validate-result`` 与 ``--tick`` 可能连续消费同一 Result。
+            # 前者已经把候选记录为 rejected，后者仍必须返回同一 Action 的
+            # repair 投影；不能因 journal 不再是 prepared 就把结构化错误
+            # 降级成宿主无法继续执行的裸 error。
+            from auto_engineering.host.outcome_journal import OutcomeJournal
+
+            journal_record = OutcomeJournal(root).load(
+                str(active_action.get("message_id", ""))
+            )
+            persisted_rejection = (
+                isinstance(journal_record, Mapping)
+                and journal_record.get("status") == "rejected"
+            )
         if (
-            candidate_rejected
-            and orch._active_action is not None
+            active_action is not None
             and action.get("action") == "error"
+            and (
+                candidate_rejected
+                or persisted_rejection
+                or (
+                    action.get("error_code") == "ARCHITECT_PLAN_INVALID"
+                    and active_action.get("stage") == "architect"
+                )
+            )
         ):
-            action = _project_result_repair_action(orch._active_action, action)
+            action = _project_result_repair_action(
+                active_action, action
+            )
         _cleanup_completed_action_work_files(
             root=root,
             result_file=result_file,
             completed_action=completed_action,
             next_action=action,
+            commit_confirmed=(
+                action.get("action") != "error" and not candidate_rejected
+            ),
         )
         if (
             action.get("action") == "done"
-            and orch._state is not None
         ):
-            store.release_project_thread(orch._state.thread_id)
+            state = orch.state_snapshot()
+            store.release_project_thread(state.thread_id)
             # 终态必须在事件流中留下机器事实，供产品证据门禁核验。
             # append_new 具备严格序列分配；幂等检查避免宿主重复提交时重复记录。
             if not any(
                 event.event_type.value == "LoopCompleted"
-                for event in events.load_stream(orch._state.thread_id)
+                for event in events.load_stream(state.thread_id)
             ):
                 from auto_engineering.loop.events import LoopEventType
 
                 events.append_new(
-                    thread_id=orch._state.thread_id,
+                    thread_id=state.thread_id,
                     event_type=LoopEventType.LOOP_COMPLETED,
                     payload={
                         "action": "done",
                         "verdict": action.get("verdict"),
-                        "tick": action.get("tick", orch._state.tick),
+                        "tick": action.get("tick", state.tick),
                     },
-                    correlation_id=orch._state.thread_id,
+                    correlation_id=state.thread_id,
                     causation_id=action.get("message_id"),
                 )
 
@@ -1296,16 +954,14 @@ def run_tick_step(result_file: Path, root: Path,
             if mc is not None:
                 if action.get("action") == "done":
                     verdict = action.get("verdict", "UNKNOWN")
-                    total_ticks = action.get("tick", orch._state.tick if orch._state else 0)
+                    total_ticks = action.get("tick", orch.state_snapshot().tick)
                     mc.end_requirement(verdict, total_ticks=total_ticks)
                 else:
                     mc._flush()
-
         click.echo(json.dumps(_prepare_action_for_host(action, root), ensure_ascii=False))
     finally:
         events.close()
         store.close()
-
 
 def _record_outcome_acceptance(
     *,
@@ -1313,53 +969,55 @@ def _record_outcome_acceptance(
     submitted_result_file: Path,
     core_response: Mapping[str, Any],
 ) -> bool:
-    """用 Core 响应完成宿主候选 Result 事务；无 journal 时保持兼容。"""
-
-    import json
-
-    from auto_engineering.host.outcome_journal import (
-        OutcomeJournal,
-        OutcomeJournalTransitionError,
+    return _record_outcome_acceptance_impl(
+        root=root,
+        submitted_result_file=submitted_result_file,
+        core_response=core_response,
     )
-
-    try:
-        submitted = json.loads(submitted_result_file.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return False
-    if not isinstance(submitted, Mapping):
-        return False
-    journal = OutcomeJournal(root)
-    try:
-        return journal.complete_from_core(submitted, core_response)
-    except OutcomeJournalTransitionError as exc:
-        raise RuntimeError(f"OUTCOME_ACCEPTANCE_RECORD_FAILED:{exc}") from exc
 
 
 def _project_result_repair_action(
     active_action: Mapping[str, Any],
     core_response: Mapping[str, Any],
 ) -> dict[str, Any]:
-    """保持 Core active Action 身份，只附加本次候选拒绝事实。"""
+    return _project_result_repair_action_impl(
+        active_action,
+        core_response,
+        state_reconciliation_expected_format=_state_reconciliation_expected_format,
+        state_reconciliation_result_contract=_state_reconciliation_result_contract,
+    )
 
-    projected = dict(active_action)
-    projected["result_rejection"] = {
-        "error_code": core_response.get("error_code", "RESULT_REJECTED"),
-        "message": core_response.get("message", "Result 未被 Core 接受"),
-        "violations": core_response.get("violations", []),
-        "repair_required": True,
-    }
-    original_instruction = active_action.get("instruction")
-    repair_instruction = (
-        "上一次候选 Result 未被 Core 接受。保持当前 Action 身份，"
-        "根据 result_rejection 修复语义产物后重新 finalize；"
-        "不得重做已完成的 Worker 工作。"
+
+def _project_host_attestation_repair_action(
+    mapped_action: Mapping[str, Any],
+    *,
+    worker_id: str,
+    detail: str,
+) -> dict[str, Any]:
+    return _project_host_attestation_repair_action_impl(
+        mapped_action,
+        worker_id=worker_id,
+        detail=detail,
+        project_result_repair_action_fn=_project_result_repair_action,
     )
-    projected["instruction"] = (
-        f"{original_instruction}\n\n## Result 修复\n\n{repair_instruction}"
-        if isinstance(original_instruction, str) and original_instruction
-        else repair_instruction
+
+
+def _project_submitted_worker_failure_recovery(
+    *,
+    action: Mapping[str, Any] | None,
+    submitted_result: Mapping[str, Any],
+    root: Path,
+) -> dict[str, Any] | None:
+    return _project_submitted_worker_failure_recovery_impl(
+        action=action,
+        submitted_result=submitted_result,
+        root=root,
+        map_bound_action_fn=_map_bound_action_for_host,
+        root_bound_path_fn=_root_bound_path,
+        project_host_attestation_repair_action_fn=(
+            _project_host_attestation_repair_action
+        ),
     )
-    return projected
 
 
 def _process_state_reconciliation_result(
@@ -1371,87 +1029,18 @@ def _process_state_reconciliation_result(
     debug: bool = False,
     debug_dir: str | None = None,
 ) -> dict | None:
-    """处理协调 Gate Result；非协调 Result 返回 None 交回常规 Tick。"""
-    import json
-
-    try:
-        result = json.loads(result_file.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    if not isinstance(result, dict):
-        return None
-    resolution = result.get("gate_resolution")
-    if not isinstance(resolution, dict) or resolution.get("gate_id") != "state_reconciliation":
-        return None
-    if resolution.get("resolution") == "reconcile":
-        return None
-
-    from auto_engineering.loop.protocol import payload_digest
-    from auto_engineering.loop.state_reconciliation import StateReconciliationService
     from auto_engineering.loop.tick_orchestrator import TickOrchestrator
 
-    thread_id = result.get("thread_id")
-    causation_id = result.get("causation_id")
-    if isinstance(thread_id, str) and isinstance(causation_id, str):
-        replay = store.load_protocol_result(thread_id, causation_id)
-        if replay is not None:
-            previous_hash, response = replay
-            if previous_hash != payload_digest(result):
-                raise ValueError("RESULT_CONFLICT: 相同协调 Gate 已提交不同选择")
-            return response
-
-    old_state = events.load_projection(str(thread_id))
-    if old_state is None:
-        raise ValueError("STATE_CORRUPT: 协调 Result 对应的旧 thread 不存在")
-    outcome = StateReconciliationService(events).select(result)
-    if outcome.choice != "reinitialize":
-        return dict(outcome.response)
-
-    old_thread_id = old_state.thread_id
-    if isinstance(causation_id, str):
-        store.record_protocol_result(
-            old_thread_id,
-            causation_id,
-            payload_digest(result),
-            dict(outcome.response),
-        )
-    store.release_project_thread(old_thread_id)
-    new_thread_id = str(uuid4())
-    existing = store.reserve_project_thread(new_thread_id)
-    if existing is not None:
-        raise ValueError(f"PROJECT_THREAD_ACTIVE: {existing}")
-    try:
-        inj = _build_injectables(root)
-        orch = TickOrchestrator(
-            root,
-            checkpoint_store=store,
-            event_store=events,
-            context_offloader=inj["context_offloader"],
-            session_summarizer=inj.get("session_summarizer"),
-            tracer=inj["tracer"],
-            audit_logger=inj["audit_logger"],
-            debug=debug,
-            debug_dir=debug_dir,
-        )
-        design_doc_path = outcome.intent.get("design_doc_path")
-        if not isinstance(design_doc_path, str) or not design_doc_path:
-            raise ValueError("STATE_RECONCILIATION_INTENT_INVALID")
-        action = orch.init(
-            old_state.requirement,
-            design_doc_path=design_doc_path,
-            thread_id=new_thread_id,
-        )
-        if isinstance(causation_id, str):
-            store.record_protocol_result(
-                old_thread_id,
-                causation_id,
-                payload_digest(result),
-                action,
-            )
-        return action
-    except BaseException:
-        store.release_project_thread(new_thread_id)
-        raise
+    return _process_state_reconciliation_result_impl(
+        result_file=result_file,
+        root=root,
+        store=store,
+        events=events,
+        debug=debug,
+        debug_dir=debug_dir,
+        build_injectables_fn=_build_injectables,
+        tick_orchestrator_cls=TickOrchestrator,
+    )
 
 
 def run_tick_validate(result_file: Path, root: Path) -> None:
@@ -1460,7 +1049,9 @@ def run_tick_validate(result_file: Path, root: Path) -> None:
 
     import click
 
+    from auto_engineering.cli.result_recovery_projection import validate_state_reconciliation_result_file
     from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
+    from auto_engineering.loop.design_decision_ledger import DesignDecisionError
     from auto_engineering.loop.event_store import SQLiteEventStore
     from auto_engineering.loop.tick_orchestrator import TickOrchestrator
 
@@ -1471,13 +1062,32 @@ def run_tick_validate(result_file: Path, root: Path) -> None:
     events = SQLiteEventStore(_ensure_event_db_path(root))
     try:
         active_thread = _active_thread(store)
-        use_events = active_thread is not None and events.load_projection(active_thread) is not None
-        orch = TickOrchestrator.restore(
-            root,
-            store,
-            event_store=events if use_events else None,
-            thread_id=active_thread,
-        )
+        # EventStore 是唯一运行事实源；checkpoint 只在显式 import 入口消费。
+        if active_thread is None:
+            raise click.ClickException(
+                "EVENT_THREAD_NOT_FOUND: 没有可恢复的 EventStore 活动 thread；"
+                "历史 checkpoint 必须先通过 --import-checkpoint 显式导入"
+            )
+        reconciliation_validation = validate_state_reconciliation_result_file(
+            result_file=result_file, active_thread=active_thread, events=events)
+        if reconciliation_validation is not None:
+            click.echo(json.dumps(reconciliation_validation, ensure_ascii=False))
+            if reconciliation_validation.get("action") == "error":
+                raise SystemExit(1)
+            return
+        try:
+            orch = TickOrchestrator.restore_from_event_store(
+                root,
+                store,
+                event_store=events,
+                thread_id=active_thread,
+            )
+        except DesignDecisionError as exc:
+            click.echo(json.dumps(
+                _design_source_error_action(active_thread, exc),
+                ensure_ascii=False,
+            ))
+            return
         result = orch.validate_result_file(result_file)
         if result.get("action") == "error":
             candidate_rejected = _record_outcome_acceptance(
@@ -1485,12 +1095,15 @@ def run_tick_validate(result_file: Path, root: Path) -> None:
                 submitted_result_file=result_file,
                 core_response=result,
             )
-            if candidate_rejected and orch._active_action is not None:
+            active_action = orch.active_action_snapshot()
+            if candidate_rejected and active_action is not None:
                 repair = _project_result_repair_action(
-                    orch._active_action, result
+                    active_action, result
                 )
                 click.echo(json.dumps(
-                    _prepare_action_for_host(repair, root),
+                    _prepare_action_for_host(
+                        repair, root, include_failure_journal=False
+                    ),
                     ensure_ascii=False,
                 ))
                 return
@@ -1556,7 +1169,9 @@ def run_tick_finalize(
             return
         if action is None:
             raise click.ClickException("ACTIVE_ACTION_MISSING")
-        mapped_action = _map_bound_action_for_host(action, root)
+        mapped_action = _map_bound_action_for_host(
+            action, root, include_failure_journal=False
+        )
         outcomes_path = supplied_outcomes_file
         coordinator_path = supplied_coordinator_file
         result_path = supplied_output_file
@@ -1574,36 +1189,36 @@ def run_tick_finalize(
                 current_coordinator = _root_bound_path(
                     Path(current_coordinator_ref), root
                 )
-                # Result 始终属于当前 Action 的隔离工作目录。即使 Coordinator
-                # 文件缺失（正是 Worker 无产出的故障场景），也要准备 canonical
-                # result 路径，避免 Finalizer 只在 stdout 返回失败而没有交接文件。
-                if result_path is None and isinstance(current_result_ref, str):
+                # 所有 Action 都只认当前 canonical work_files。即使文件尚未
+                # 创建，也不能以“兼容旧调用者”为由回退到宿主传入的旧路径；
+                # 缺文件必须进入当前 Action 的有界失败/输入错误分支。
+                coordinator_path = current_coordinator
+                if isinstance(current_result_ref, str):
                     result_path = _root_bound_path(Path(current_result_ref), root)
-                # 兼容旧调用者传入参数，但当前 Action 的隔离工作文件始终是
-                # 唯一事实源；不能以“文件暂时不存在”为由回退到上一 Action，
-                # 否则正是在 Worker 崩溃场景消费陈旧 Coordinator/Result。
                 if (
-                    coordinator_path != current_coordinator
-                    and (
-                        isinstance(mapped_action.get("spawn"), Mapping)
-                        or current_coordinator.is_file()
-                    )
+                    isinstance(mapped_action.get("spawn"), Mapping)
+                    and isinstance(current_outcomes_ref, str)
                 ):
-                    coordinator_path = current_coordinator
-                    if isinstance(current_result_ref, str):
-                        result_path = _root_bound_path(
-                            Path(current_result_ref), root
-                        )
-                    if (
-                        isinstance(mapped_action.get("spawn"), Mapping)
-                        and isinstance(current_outcomes_ref, str)
-                    ):
-                        outcomes_path = _root_bound_path(
-                            Path(current_outcomes_ref), root
-                        )
+                    outcomes_path = _root_bound_path(
+                        Path(current_outcomes_ref), root
+                    )
+            # Worker 的私有 outcome_path 与 Action 共享 outcomes 是两个不同边界。
+            # 宿主误把前者传给 Finalizer 时，仍必须以 active Action 的 canonical
+            # work_files 为唯一事实源，不能读取私有业务文件冒充已交接的宿主事实。
+            if isinstance(mapped_action.get("spawn"), Mapping):
+                if isinstance(current_outcomes_ref, str):
+                    outcomes_path = _root_bound_path(
+                        Path(current_outcomes_ref), root
+                    )
+                if isinstance(current_result_ref, str):
+                    result_path = _root_bound_path(
+                        Path(current_result_ref), root
+                    )
         input_error: str | None = None
         outcomes_error: str | None = None
         coordinator_error: str | None = None
+        collection_error_code: str | None = None
+        collection_error_worker_id: str | None = None
         raw_outcomes: object = []
         coordinator_payload: object = {}
         try:
@@ -1658,6 +1273,8 @@ def run_tick_finalize(
                 outcome_items = [item.to_dict() for item in collected_outcomes]
                 outcomes_error = None
             except WorkerOutcomeCollectionError as exc:
+                collection_error_code = exc.code
+                collection_error_worker_id = exc.worker_id
                 outcomes_error = str(exc)
 
         # 单 Worker 的 Coordinator 可能在宿主上下文退出前尚未来得及写文件。
@@ -1695,6 +1312,27 @@ def run_tick_finalize(
                     f"{exc.__class__.__name__}"
                 )
         if input_error is not None:
+            if (
+                is_spawn_action
+                and collection_error_code == "HOST_WORKER_ATTESTATION_MISSING"
+                and collection_error_worker_id is not None
+            ):
+                # 私有业务产物已经存在；这不是 Worker 的失败事实。保留
+                # active Action 并进入宿主事实修复态，防止 Core 推进失败
+                # 代际后重新 spawn，丢失仍可复用的原生 Worker 结果。
+                repair = _project_host_attestation_repair_action(
+                    mapped_action,
+                    worker_id=collection_error_worker_id,
+                    detail=outcomes_error or "private_business_artifact_only",
+                )
+                output = (
+                    _compact_host_action(repair, root)
+                    if os.environ.get("AE_HOST_ACTION_VIEW", "").strip().lower()
+                    == "compact"
+                    else repair
+                )
+                click.echo(json.dumps(output, ensure_ascii=False))
+                return
             # Spawn Action 的空/损坏交接文件代表 Worker 失败，而不是 CLI
             # 参数错误。生成带明确 unreported 哨兵的失败事务，让 Core 按
             # 失败预算自动重试；inline Action 仍保持严格输入错误。
@@ -1702,9 +1340,12 @@ def run_tick_finalize(
                 assembler = HostExecutionAssembler(root)
                 failure_detail = input_error
                 failure_code = (
-                    "HOST_WORKER_OUTPUT_MISSING"
-                    if not outcomes
-                    else "HOST_WORKER_OUTPUT_INVALID"
+                    collection_error_code
+                    or (
+                        "HOST_WORKER_OUTPUT_MISSING"
+                        if not outcomes
+                        else "HOST_WORKER_OUTPUT_INVALID"
+                    )
                 )
                 if failure_code == "HOST_WORKER_OUTPUT_MISSING":
                     # 缺失/空交接是同一个可重试事实；不能因为首次是
@@ -1747,6 +1388,7 @@ def run_tick_finalize(
                 coordinator_payload=coordinator_payload,
                 error_code="HOST_EVIDENCE_INVALID",
                 violations=exc.violations,
+                outcomes=[item.to_dict() for item in outcomes],
             )
             repair_action = _project_result_repair_action(
                 mapped_action,
@@ -1757,7 +1399,9 @@ def run_tick_finalize(
                 },
             )
             click.echo(json.dumps(
-                _prepare_action_for_host(repair_action, root),
+                _prepare_action_for_host(
+                    repair_action, root, include_failure_journal=False
+                ),
                 ensure_ascii=False,
             ))
             return
@@ -1772,6 +1416,8 @@ def run_record_worker_outcome(
     root: Path,
     worker_id: str,
     native_worker_handle: str | None,
+    native_result_file: Path | None,
+    native_result_stdin: bool,
     worker_status: str,
     actual_model: str,
     isolation_evidence: str | None,
@@ -1806,18 +1452,88 @@ def run_record_worker_outcome(
             return
         if action is None:
             raise click.ClickException("ACTIVE_ACTION_MISSING")
-        mapped_action = _map_bound_action_for_host(action, root)
+        mapped_action = _map_bound_action_for_host(
+            action, root, include_failure_journal=False
+        )
+        assembler = HostExecutionAssembler(root)
+        bound_native_result_file = (
+            _root_bound_path(native_result_file, root)
+            if native_result_file is not None else None
+        )
         try:
-            outcome = HostExecutionAssembler(root).record_worker_outcome(
+            if native_result_stdin and bound_native_result_file is not None:
+                # stdin 是宿主原生工具返回 envelope 的传输通道；不把它作为
+                # shell 参数解析，也不在这里重编码，避免真实回包丢失或漂移。
+                raw_envelope = b"" if sys.stdin.isatty() else sys.stdin.buffer.read()
+                if raw_envelope.strip():
+                    assembler.stage_native_result(
+                        action=mapped_action,
+                        worker_id=worker_id,
+                        native_result_file=bound_native_result_file,
+                        raw_envelope=raw_envelope,
+                    )
+            outcome = assembler.record_worker_outcome(
                 action=mapped_action,
                 worker_id=worker_id,
                 native_worker_handle=native_worker_handle,
+                native_result_file=bound_native_result_file,
                 status=worker_status,
                 actual_model=actual_model,
                 isolation_evidence=isolation_evidence,
             )
         except HostEvidenceValidationError as exc:
-            raise click.ClickException(str(exc)) from exc
+            invalid_business_artifact = any(
+                violation.startswith("WORKER_BUSINESS_ARTIFACT_INVALID:")
+                for violation in exc.violations
+            )
+            if invalid_business_artifact:
+                try:
+                    failure = assembler.record_invalid_worker_failure(
+                        action=mapped_action,
+                        worker_id=worker_id,
+                        native_worker_handle=native_worker_handle,
+                        actual_model=actual_model,
+                        isolation_evidence=isolation_evidence,
+                        detail=" | ".join(exc.violations),
+                        native_output_available=bound_native_result_file is not None,
+                    )
+                except HostEvidenceValidationError:
+                    # 只有业务私有文件非法可以转换为失败事实；代际、路径、
+                    # 原生句柄和共享 outcomes 冲突仍然必须停在宿主边界。
+                    pass
+                else:
+                    click.echo(json.dumps({
+                        "status": "worker_outcome_recorded",
+                        "worker_id": worker_id,
+                        "outcome": failure,
+                        "failure_code": "HOST_WORKER_OUTPUT_INVALID",
+                    }, ensure_ascii=False))
+                    return
+            missing_native_handle = any(
+                violation.startswith("NATIVE_WORKER_HANDLE_MISSING:")
+                for violation in exc.violations
+            )
+            click.echo(json.dumps({
+                "status": "error",
+                "error_code": (
+                    "HOST_WORKER_ATTESTATION_MISSING"
+                    if missing_native_handle
+                    else "HOST_EVIDENCE_INVALID"
+                ),
+                "message": (
+                    "缺少原生 Worker 句柄，已停止；未写入共享 outcomes。"
+                    if missing_native_handle
+                    else "宿主 Worker 事实未通过校验，已停止；未写入共享 outcomes。"
+                ),
+                "worker_id": worker_id,
+                "stop_reason": (
+                    "native_worker_handle_missing"
+                    if missing_native_handle
+                    else "host_evidence_invalid"
+                ),
+                "violations": list(exc.violations),
+            }, ensure_ascii=False))
+            raise click.exceptions.Exit(1) from exc
         click.echo(json.dumps({
             "status": "worker_outcome_recorded",
             "worker_id": worker_id,
@@ -1828,25 +1544,130 @@ def run_record_worker_outcome(
         store.close()
 
 
-def _status_action_summary(action: Mapping[str, Any]) -> dict[str, Any]:
-    """投影当前 Action 的宿主所需字段，不泄漏 Canonical 私有 context。"""
-    host_execution = action.get("host_execution")
-    work_files = action.get("work_files")
-    if not isinstance(work_files, Mapping) and isinstance(host_execution, Mapping):
-        work_files = host_execution.get("work_files")
-    summary: dict[str, Any] = {}
-    for key in (
-        "message_id", "action", "stage", "current_gap_index", "total_gaps",
-        "current_gap", "expected_format",
-    ):
-        value = action.get(key)
-        if isinstance(value, Mapping):
-            summary[key] = dict(value)
-        elif value is not None:
-            summary[key] = value
-    if isinstance(work_files, Mapping):
-        summary["work_files"] = dict(work_files)
-    return summary
+def run_record_worker_observation(
+    *,
+    root: Path,
+    worker_id: str,
+    native_status: str,
+    wait_attempt: int,
+    owner_known: bool,
+    native_worker_handle: str | None,
+    observed_at: str | None,
+) -> None:
+    """原子记录当前 Action 的宿主等待/所有权观察事实。
+
+    这是 Host Runtime 诊断面写入，不是 Result、Event 或重试请求；只有后续
+    原生宿主事实满足既有 outcome 合同，宿主才可以进入 Finalizer 链。
+    """
+
+    from datetime import UTC, datetime
+
+    import click
+
+    from auto_engineering.host.worker_observation import (
+        WorkerObservationContract,
+        WorkerObservationContractError,
+        WorkerObservationRecord,
+    )
+    from auto_engineering.host.worker_observation_store import WorkerObservationStore
+    from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
+    from auto_engineering.loop.event_store import SQLiteEventStore
+
+    store: SQLiteCheckpointStore[EngineState] = SQLiteCheckpointStore(
+        _ensure_checkpoint_db_path(root)
+    )
+    events = SQLiteEventStore(_ensure_event_db_path(root))
+    try:
+        thread_id = _active_thread(store)
+        if thread_id is None:
+            raise click.ClickException("PROJECT_THREAD_NOT_ACTIVE")
+        try:
+            action = _load_active_action(thread_id, store, events)
+        except ValueError as exc:
+            if str(exc) != "STATE_SOURCE_CONFLICT":
+                raise
+            click.echo(json.dumps(
+                _state_source_conflict_action(thread_id), ensure_ascii=False
+            ))
+            return
+        if action is None:
+            raise click.ClickException("ACTIVE_ACTION_MISSING")
+        mapped_action = _map_bound_action_for_host(
+            action, root, include_failure_journal=False
+        )
+        host_execution = mapped_action.get("host_execution")
+        if not isinstance(host_execution, Mapping):
+            raise click.ClickException("WORKER_OBSERVATION_ACTION_NOT_SPAWN")
+        try:
+            WorkerObservationContract.from_dict(
+                host_execution["worker_observation"]
+            )
+        except (KeyError, WorkerObservationContractError) as exc:
+            raise click.ClickException(
+                "WORKER_OBSERVATION_CONTRACT_INVALID"
+            ) from exc
+        workers = host_execution.get("workers")
+        worker = next(
+            (
+                item for item in workers
+                if isinstance(item, Mapping)
+                and item.get("worker_id") == worker_id
+            ),
+            None,
+        ) if isinstance(workers, list) else None
+        if not isinstance(worker, Mapping):
+            raise click.ClickException("WORKER_OBSERVATION_WORKER_NOT_FOUND")
+        action_message_id = mapped_action.get("message_id")
+        generation = worker.get("execution_generation")
+        fencing_token = worker.get("fencing_token")
+        if (
+            not isinstance(action_message_id, str)
+            or not isinstance(generation, int)
+            or isinstance(generation, bool)
+            or not isinstance(fencing_token, str)
+        ):
+            raise click.ClickException("WORKER_OBSERVATION_IDENTITY_INVALID")
+        record = WorkerObservationRecord(
+            schema_version="1.0",
+            action_message_id=action_message_id,
+            worker_id=worker_id,
+            execution_generation=generation,
+            fencing_token=fencing_token,
+            observed_at=(
+                observed_at
+                if observed_at is not None
+                else datetime.now(UTC).isoformat()
+            ),
+            native_status=native_status,
+            wait_attempt=wait_attempt,
+            owner_known=owner_known,
+            native_worker_handle=native_worker_handle,
+        )
+        path = WorkerObservationStore(root).save(record)
+        click.echo(json.dumps({
+            "status": "worker_observation_recorded",
+            "action_message_id": action_message_id,
+            "worker_id": worker_id,
+            "native_status": native_status,
+            "wait_attempt": wait_attempt,
+            "owner_known": owner_known,
+            "observation_path": str(path.relative_to(root.resolve())),
+        }, ensure_ascii=False))
+    finally:
+        events.close()
+        store.close()
+
+
+def _host_mapping_error_action(
+    action: Mapping[str, Any], error: ValueError,
+) -> dict[str, Any]:
+    """把旧/非法宿主映射转换为稳定错误 Action。"""
+    return _host_mapping_error_action_impl(
+        action,
+        error,
+        expected_format=_state_reconciliation_expected_format(),
+        result_contract=_state_reconciliation_result_contract(),
+    )
 
 
 def run_tick_status(root: Path, verbose: bool = False) -> None:
@@ -1856,6 +1677,7 @@ def run_tick_status(root: Path, verbose: bool = False) -> None:
     import click
 
     from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
+    from auto_engineering.loop.design_decision_ledger import DesignDecisionError
     from auto_engineering.loop.event_store import SQLiteEventStore
     from auto_engineering.loop.tick_orchestrator import TickOrchestrator
 
@@ -1870,35 +1692,68 @@ def run_tick_status(root: Path, verbose: bool = False) -> None:
             lease = HostRunLeaseStore(root).load()
             if lease is not None and events.load_projection(lease.thread_id) is not None:
                 active_thread = lease.thread_id
-        use_events = active_thread is not None and events.load_projection(active_thread) is not None
-        orch = TickOrchestrator.restore(
-            root,
-            store,
-            event_store=events if use_events else None,
-            thread_id=active_thread,
+        if active_thread is None:
+            active_thread = events.latest_thread_for_event("LoopCompleted")
+        # status 也必须从 EventStore 读取，不能因为事件缺失而展示 checkpoint 快照。
+        if active_thread is None:
+            raise click.ClickException(
+                "EVENT_THREAD_NOT_FOUND: 没有可查看的 EventStore 活动 thread；"
+                "历史 checkpoint 必须先通过 --import-checkpoint 显式导入"
+            )
+        try:
+            orch = TickOrchestrator.restore_from_event_store(
+                root,
+                store,
+                event_store=events,
+                thread_id=active_thread,
+            )
+        except DesignDecisionError as exc:
+            # 历史状态绑定的设计源可能已变更；status 仍必须可用，
+            # 但不能伪造可继续运行的投影或消费旧 Action。
+            persisted_action = _load_active_action(active_thread, store, events)
+            if isinstance(persisted_action, Mapping):
+                summary = _persisted_reconciliation_gate_status(
+                    persisted_action,
+                    events.load_projection(active_thread),
+                    status_action=_status_action_summary(persisted_action),
+                    next_operation=_resume_operation(active_thread),
+                )
+                if summary is not None:
+                    click.echo(json.dumps(summary, ensure_ascii=False))
+                    return
+            summary = {
+                "thread_id": active_thread,
+                "current_stage": "unknown",
+                "expected_stage": "unknown",
+                "tick": 0,
+                "round": 0,
+                "verdict": "",
+                "total_majors": 0,
+                "plan_refine_count": 0,
+                "active_action_error": str(exc) or "DESIGN_LEDGER_INVALID",
+                "recovery_required": True,
+            }
+            click.echo(json.dumps(summary, ensure_ascii=False))
+            return
+        summary = orch.status_snapshot(verbose=verbose)
+        loop_completed = any(
+            event.event_type.value == "LoopCompleted"
+            for event in events.load_stream(active_thread)
         )
-        s = orch._state
-        summary: dict = {
-            "thread_id": s.thread_id,
-            "current_stage": s.current_stage,
-            "expected_stage": s.expected_stage,
-            "tick": s.tick,
-            "round": s.round,
-            "verdict": s.critic_verdict,
-            "total_majors": s.total_majors,
-            "plan_refine_count": s.plan_refine_count,
-        }
         if active_thread is not None and (
-            lease is None or lease.disposition != "TERMINAL"
+            not loop_completed
+            and (lease is None or lease.disposition != "TERMINAL")
         ):
             summary["next_operation"] = _resume_operation(active_thread)
-        if lease is not None and lease.disposition == "TERMINAL":
+        if loop_completed or (
+            lease is not None and lease.disposition == "TERMINAL"
+        ):
             summary["current_stage"] = "done"
             summary["expected_stage"] = "done"
         elif active_thread is not None:
             # status 必须是纯读取；build_action() 可能提交新的 Action 事件，
             # 在查询阶段会制造 action_timestamp 投影冲突。只读取 EventStore
-            # 已持久化的 Canonical Action，缺失时再读取兼容 checkpoint 快照。
+            # 只读取 EventStore 持久化的 Canonical Action；缺失时不读取 checkpoint 快照。
             try:
                 active_action = _load_active_action(active_thread, store, events)
             except ValueError as exc:
@@ -1909,404 +1764,106 @@ def run_tick_status(root: Path, verbose: bool = False) -> None:
                 click.echo(json.dumps(summary, ensure_ascii=False))
                 return
             if isinstance(active_action, Mapping):
+                try:
+                    mapped_active_action = _map_bound_action_for_host(
+                        dict(active_action), root, include_failure_journal=False
+                    )
+                except ValueError as exc:
+                    # 旧在途 Action 不能进入当前严格 Host 合同，但 status
+                    # 必须仍可用，以便用户看到稳定的迁移/恢复信号。
+                    summary.pop("active_action", None)
+                    summary["active_action_error"] = str(exc) or "ACTION_INVALID"
+                    summary["recovery_required"] = True
+                    click.echo(json.dumps(summary, ensure_ascii=False))
+                    return
                 summary["active_action"] = _status_action_summary(
-                    _map_bound_action_for_host(dict(active_action), root)
+                    mapped_active_action
                 )
             else:
                 summary["active_action_error"] = "ACTIVE_ACTION_UNAVAILABLE"
-        from auto_engineering.loop.status_projection import reconciliation_status
-
-        reconciliation = reconciliation_status(s, orch._batch_state)
-        if reconciliation is not None:
-            summary["plan_reconciliation"] = reconciliation
-        if verbose and orch._batch_state is not None:
-            bs = orch._batch_state
-            batches, comp = [], None
-            try:
-                comp = bs.current_component()
-                for b in bs.batches_for(comp):
-                    batches.append({
-                        "batch_id": b.get("batch_id", ""),
-                        "component": b.get("component", ""),
-                        "task_count": len(b.get("tasks", [])),
-                    })
-            except Exception:
-                _logger.debug("batch summary build failed", exc_info=True)
-                pass
-            summary["batch_progress"] = {
-                "current_component": comp.name if comp else "?",
-                "current_batch_idx": bs.current_batch_idx,
-                "total_batches": len(bs.batches_for(comp)) if comp else 0,
-                "batches": batches,
-                "total_components_seen": len(getattr(bs, "_seen_components", [])),
-            }
         click.echo(json.dumps(summary, ensure_ascii=False))
     finally:
         events.close()
         store.close()
 
 
-def run_tick_resume(checkpoint_id: str, root: Path) -> None:
-    """ae dev-loop --resume <id>: 从指定 checkpoint 恢复 → 输出当前 action JSON.
-
-    DS-14 (T160, 2026-07-23): 支持 thread_id 作为回退查询。
-    用户常把 action JSON 中的 thread_id 当作 checkpoint_id 传入，
-    导致 CheckpointNotFoundError。当 checkpoint_id 未直接命中时，
-    在 checkpoints 表中搜索 state_json 包含该 ID 的记录。
-    """
+def run_tick_import_checkpoint(checkpoint_id: str, root: Path) -> None:
+    """显式把旧 checkpoint 导入 EventStore，并输出唯一活动 Action。"""
     import json
 
     import click
 
     from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
     from auto_engineering.loop.event_store import SQLiteEventStore
-    from auto_engineering.loop.tick_orchestrator import TickOrchestrator
 
-    store: SQLiteCheckpointStore[EngineState] = SQLiteCheckpointStore(_ensure_checkpoint_db_path(root))
-    events = SQLiteEventStore(_ensure_event_db_path(root))
-    try:
-        event_action = events.load_action_snapshot(checkpoint_id)
-        if event_action is not None:
-            click.echo(json.dumps(_prepare_action_for_host(event_action, root), ensure_ascii=False))
-            return
-        try:
-            orch = TickOrchestrator.restore(root, store, checkpoint_id=checkpoint_id)
-        except Exception:
-            # T160: checkpoint_id 未直接命中 → 尝试作为 thread_id 搜索
-            resolved = _resolve_checkpoint_by_thread_id(checkpoint_id, store)
-            if resolved is None:
-                raise
-            _logger = __import__("logging").getLogger("ae.cli")
-            _logger.info("resume: '%s' 未直接命中 checkpoint，通过 thread_id 回退到 %s",
-                         checkpoint_id, resolved)
-            orch = TickOrchestrator.restore(root, store, checkpoint_id=resolved)
-        action = orch.build_action()
-        click.echo(json.dumps(_prepare_action_for_host(action, root), ensure_ascii=False))
-    finally:
-        events.close()
-        store.close()
-
-
-def run_action_supervisor(root: Path) -> None:
-    """以一次用户启动自动驱动 active thread 到等待或终态。"""
-    import json
-
-    import click
-
-    from auto_engineering.config.runtime_config import RuntimeConfig
-    from auto_engineering.host import HostPlatform, detect_host
-    from auto_engineering.host.backends import (
-        ClaudeInvocationBackend,
-        CodexInvocationBackend,
-    )
-    from auto_engineering.host.invocation import (
-        ActionExecutionContractError,
-        HostInvocationBackend,
-    )
-    from auto_engineering.host.request_compiler import (
-        compile_action_execution_request,
-    )
-    from auto_engineering.host.runtime_driver import HostRunLeaseStore
-    from auto_engineering.host.supervisor import (
-        ActionReceiptJournal,
-        ActionScopedProductDriver,
-        LoopStopReportJournal,
-        MachineOperationExecutor,
-        ProductEvidenceArtifactJournal,
-    )
-    from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
-    from auto_engineering.loop.event_store import SQLiteEventStore
-
-    root = root.resolve()
-    runtime_config = RuntimeConfig.from_project(root)
     store: SQLiteCheckpointStore[EngineState] = SQLiteCheckpointStore(
         _ensure_checkpoint_db_path(root)
     )
     events = SQLiteEventStore(_ensure_event_db_path(root))
     try:
-        thread_id = _active_thread(store)
-        if thread_id is None:
-            raise click.ClickException("PROJECT_THREAD_NOT_ACTIVE")
         try:
-            canonical = _load_active_action(thread_id, store, events)
-        except ValueError as exc:
-            if str(exc) != "STATE_SOURCE_CONFLICT":
-                raise
-            raise click.ClickException("STATE_SOURCE_CONFLICT") from None
-        if canonical is None:
-            raise click.ClickException("ACTIVE_ACTION_MISSING")
-        try:
-            action = _prepare_action_for_host(canonical, root, compact_view=False)
+            checkpoint = store.load(checkpoint_id)
         except Exception as exc:
-            # 初始 Action 投影失败也必须留下机器可读的停止事实，不能让前台只看到
-            # Supervisor 进程退出而没有 ERROR Action 或可诊断报告。
-            message = str(exc)
-            error_code = (
-                "OUTCOME_JOURNAL_CONFLICT"
-                if "OUTCOME_JOURNAL_CONFLICT" in message
-                else "HOST_ACTION_PREPARATION_FAILED"
+            raise click.ClickException(
+                f"CHECKPOINT_IMPORT_FAILED: {exc}"
+            ) from exc
+        action = store.load_active_protocol_action(checkpoint.state.thread_id)
+        try:
+            store.import_to_event_store(events, checkpoint.id)
+        except (OSError, ValueError, TypeError) as exc:
+            raise click.ClickException(
+                f"CHECKPOINT_IMPORT_FAILED: {exc}"
+            ) from exc
+        if action is None:
+            raise click.ClickException(
+                "CHECKPOINT_IMPORT_ACTION_MISSING: 导入后请使用新的 --init 重新生成 Action"
             )
-            failure_action = _project_host_failure_action(
-                canonical,
-                error_code=error_code,
-                message=message or error_code,
-            )
-            stop_report = LoopStopReportJournal(root).record(
-                thread_id=thread_id,
-                final_action=failure_action,
-            )
-            click.echo(f"Loop 停止报告已生成: {stop_report}", err=True)
-            raise
+        try:
+            prepared = _prepare_action_for_host(action, root)
+        except ValueError as exc:
+            prepared = _host_mapping_error_action(action, exc)
+        click.echo(json.dumps(prepared, ensure_ascii=False))
     finally:
         events.close()
         store.close()
 
-    lease_store = HostRunLeaseStore(root)
-    receipt_journal = ActionReceiptJournal(root)
-    detection = detect_host()
-    def report_context_progress(elapsed_seconds: float) -> None:
-        click.echo(
-            f"[宿主心跳] 当前 Action context 已运行 {int(elapsed_seconds)} 秒",
-            err=True,
-        )
 
+def run_tick_resume(thread_id: str, root: Path) -> None:
+    """ae dev-loop --resume <thread_id>: 从 EventStore 恢复当前 Action。"""
+    import json
+
+    import click
+
+    from auto_engineering.loop.event_store import SQLiteEventStore
+
+    events = SQLiteEventStore(_ensure_event_db_path(root))
     try:
-        hard_budget = runtime_config.host_budget_enforcement == "hard"
-        if detection.platform is HostPlatform.CODEX:
-            backend: HostInvocationBackend = CodexInvocationBackend(
-                progress_callback=report_context_progress,
+        action = events.load_action_snapshot(thread_id)
+        if action is None:
+            raise click.ClickException(
+                "EVENT_ACTION_NOT_FOUND: EventStore 没有该 thread 的活动 Action；"
+                "历史 checkpoint 必须先通过 --import-checkpoint 显式导入"
             )
-        elif detection.platform is HostPlatform.CLAUDE_CODE:
-            backend = ClaudeInvocationBackend(
-                spent_budget_usd=receipt_journal.total_cost_usd(thread_id),
-                max_budget_usd=(
-                    runtime_config.host_max_cost_usd if hard_budget else None
-                ),
-                progress_callback=report_context_progress,
-            )
-        else:
-            raise click.ClickException("HOST_ACTION_CONTEXT_UNAVAILABLE: HOST_UNKNOWN")
-    except Exception:
-        # _prepare_action_for_host 已建立 CONTINUE lease；入口能力/构造失败时也必须
-        # 回收它，否则下一次宿主会被一个从未执行的旧 Action 锁死。
-        lease_store.clear()
-        raise
-    bundled_runner = Path(__file__).resolve().parents[2] / "scripts" / "ae-run"
-    # Action 子进程必须只使用已安装运行时；清除开发会话注入的 Python 路径，
-    # 防止真跑时误加载当前源码目录或宿主虚拟环境。
-    child_environment = {
-        key: value
-        for key, value in os.environ.items()
-        if key not in {"PYTHONPATH", "PYTHONHOME", "VIRTUAL_ENV"}
-    }
-    child_environment["AE_HOST_ACTION_VIEW"] = "full"
-    operation_executor = MachineOperationExecutor(
-        project_root=root,
-        bundled_runner=bundled_runner,
-        environ=child_environment,
-    )
-    click.echo(
-        f"[宿主监督] 已接管 Action {action.get('message_id', 'unknown')} "
-        f"(stage={action.get('stage', 'unknown')})",
-        err=True,
-    )
-    def record_receipt(request: Any, receipt: Any) -> None:
-        receipt_journal.record(request, receipt)
-
-    def compile_request(mapped_action: Mapping[str, Any]):
-        compact = _compact_host_action(mapped_action, root)
-        allowed_tools = ["read", "shell", "native_subagents"]
-        if mapped_action.get("stage") in {"project_setup", "developer"}:
-            allowed_tools.append("edit")
-        return compile_action_execution_request(
-            mapped_action,
-            compact_envelope=compact,
-            project_root=root,
-            allowed_tools=allowed_tools,
-        )
-
-    def submit_failure(
-        mapped_action: Mapping[str, Any],
-        receipt: Any,
-    ) -> dict[str, Any]:
-        host_execution = mapped_action.get("host_execution")
-        operations = (
-            host_execution.get("operations")
-            if isinstance(host_execution, Mapping)
-            else None
-        )
-        work_files = (
-            host_execution.get("work_files")
-            if isinstance(host_execution, Mapping)
-            else None
-        )
-        result_ref = (
-            work_files.get("result")
-            if isinstance(work_files, Mapping)
-            else None
-        )
-        if not isinstance(operations, Mapping) or not isinstance(result_ref, str):
-            raise click.ClickException("HOST_FAILURE_SUBMISSION_CONTRACT_MISSING")
-        failure_code = _host_context_failure_code(
-            receipt.status,
-            receipt.error_code,
-        )
-        result_payload: dict[str, Any] = {
-            "schema_version": "1.1",
-            "message_type": "result",
-            "message_id": f"failure-{receipt.host_context_id}",
-            "thread_id": mapped_action.get("thread_id"),
-            "tick": mapped_action.get("tick"),
-            "stage": mapped_action.get("stage"),
-            "causation_id": mapped_action.get("message_id"),
-            "correlation_id": mapped_action.get("correlation_id"),
-            "extensions": {},
-            "spawned": False,
-            "spawn_error_code": failure_code,
-            "spawn_error": receipt.error_code or failure_code,
-        }
-        result_path = _root_bound_path(Path(result_ref), root)
-        result_path.parent.mkdir(parents=True, exist_ok=True)
-        encoded = json.dumps(
-            result_payload,
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-        )
-        temporary = result_path.with_suffix(result_path.suffix + ".failure.tmp")
-        temporary.write_text(encoded, encoding="utf-8")
-        os.replace(temporary, result_path)
-        return operation_executor.validate_and_submit(operations)
-
-    try:
-        result = ActionScopedProductDriver(
-            backend,
-            compile_request=compile_request,
-            execute_operations=operation_executor.run,
-            submit_failure=submit_failure,
-            receipt_sink=record_receipt,
-            max_elapsed_seconds=(
-                runtime_config.host_max_elapsed_seconds if hard_budget else None
-            ),
-            max_total_cost_usd=(
-                runtime_config.host_max_cost_usd if hard_budget else None
-            ),
-            max_total_output_tokens=(
-                runtime_config.host_max_output_tokens if hard_budget else None
-            ),
-        ).run(action)
-    except ActionExecutionContractError as exc:
-        error_code = str(exc).partition(":")[0] or type(exc).__name__
-        failure_action = _project_host_failure_action(
-            action,
-            error_code=error_code,
-            message=error_code,
-        )
-        stop_report = LoopStopReportJournal(root).record(
-            thread_id=thread_id,
-            final_action=failure_action,
-        )
-        click.echo(f"Loop 停止报告已生成: {stop_report}", err=True)
-        raise
-    except Exception as exc:
-        # 未预期的宿主/协议异常也必须在边界被归一化。否则 CLI 会直接冒出
-        # Python traceback，且没有稳定 Stop Report，下一次恢复只能猜测现场。
-        failure_action = _project_host_failure_action(
-            action,
-            error_code="HOST_SUPERVISOR_PROTOCOL_ERROR",
-            message="HOST_SUPERVISOR_PROTOCOL_ERROR",
-        )
-        stop_report = LoopStopReportJournal(root).record(
-            thread_id=thread_id,
-            final_action=failure_action,
-        )
-        click.echo(f"Loop 停止报告已生成: {stop_report}", err=True)
-        raise ActionExecutionContractError(
-            "HOST_SUPERVISOR_PROTOCOL_ERROR"
-        ) from exc
-    finally:
-        # 只要本次 supervise 已结束，旧 CONTINUE lease 就不能继续阻断宿主。
-        # 下一次返回的 CONTINUE Action 会在 _prepare_action_for_host 中重新建立。
-        lease_store.clear()
-    stop_report = LoopStopReportJournal(root).record(
-        thread_id=thread_id,
-        final_action=result.final_action,
-    )
-    click.echo(f"Loop 停止报告已生成: {stop_report}", err=True)
-    if result.final_action.get("action") == "done":
-        terminal_events = SQLiteEventStore(_ensure_event_db_path(root))
+        resume_platform = _resume_host_platform_impl(root, action)
         try:
-            event_types = tuple(
-                event.event_type.value
-                for event in terminal_events.load_stream(thread_id)
-            )
-        finally:
-            terminal_events.close()
-        artifact = ProductEvidenceArtifactJournal(
-            root,
-            runtime_root=Path(__file__).resolve().parents[2],
-        ).record_terminal(
-            host=detection.platform.value,
-            thread_id=thread_id,
-            final_action=result.final_action,
-            event_types=event_types,
-        )
-        click.echo(f"产品证据已生成: {artifact}", err=True)
-    click.echo(json.dumps(result.final_action, ensure_ascii=False))
-
-
-def _project_host_failure_action(
-    action: Mapping[str, Any],
-    *,
-    error_code: str,
-    message: str,
-) -> dict[str, Any]:
-    """把宿主边界异常投影为可持久化、可诊断的 ERROR Action。"""
-
-    extensions = dict(action.get("extensions") or {})
-    ae_extension = dict(extensions.get("ae") or {})
-    ae_extension["execution_control"] = {
-        "schema_version": "1.0",
-        "disposition": "ERROR",
-        "continuation_required": False,
-        "yield_allowed": True,
-        "allowed_stop_reasons": ["fatal_error"],
-        "reason_code": error_code,
-    }
-    extensions["ae"] = ae_extension
-    return {
-        **dict(action),
-        "action": "error",
-        "error_code": error_code,
-        "message": message,
-        "extensions": extensions,
-    }
-
-
-def _host_context_failure_code(status: str, error_code: str | None) -> str:
-    """把宿主实现细节归一化为 Core 可判定的控制结果。"""
-    if status == "timed_out":
-        return "HOST_ACTION_CONTEXT_TIMEOUT"
-    if error_code in {
-        "HOST_CODEX_USAGE_LIMIT",
-        "HOST_CLAUDE_BUDGET_EXHAUSTED",
-    }:
-        return "HOST_ACTION_CONTEXT_RESOURCE_EXHAUSTED"
-    return "HOST_ACTION_CONTEXT_FAILED"
-
-
-def _resolve_checkpoint_by_thread_id(
-    candidate: str, store: SQLiteCheckpointStore[EngineState]
-) -> str | None:
-    """按 thread_id 反查 checkpoint id (T160 resume 回退).
-
-    2026-07-26 审计修复 (P1-10): 原实现 getattr(store, "_db") 访问私有属性,
-    内部属性改名即静默返回 None → 误导性 CheckpointNotFoundError。
-    改走公开 API SQLiteCheckpointStore.find_by_thread_id()。
-    """
-    try:
-        return store.find_by_thread_id(candidate)
-    except (OSError, ValueError, KeyError, TypeError) as e:
-        _logger = __import__("logging").getLogger("ae.cli")
-        _logger.debug("thread_id fallback lookup failed: %s", e)
-        return None
+            with _resume_platform_scope(resume_platform):
+                prepared = _prepare_action_for_host(action, root)
+        except ValueError as exc:
+            if str(exc) == "SPAWN_LEGACY_FIELD_REJECTED":
+                state = events.load_projection(thread_id)
+                if state is not None:
+                    prepared = _persist_legacy_action_recovery_gate(
+                        action,
+                        state,
+                        events,
+                        root,
+                        expected_format=_state_reconciliation_expected_format(),
+                        result_contract=_state_reconciliation_result_contract(),
+                    )
+                else:
+                    prepared = _host_mapping_error_action(action, exc)
+            else:
+                prepared = _host_mapping_error_action(action, exc)
+        click.echo(json.dumps(prepared, ensure_ascii=False))
+    finally:
+        events.close()

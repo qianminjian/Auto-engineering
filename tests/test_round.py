@@ -4,15 +4,14 @@ Test symbols that were deleted from loop/round.py in P0-1 audit (run_round,
 _build_per_task_ctx, _parse_git_numstat) have been removed.
 
 Design: v5.0 §B2.12b _topological_levels (Kahn BFS 分层).
-Imported via engine/models.py → loop/plan.py re-export.
+Imported from engine/models.py, the canonical Plan/Task model module.
 """
 
 from __future__ import annotations
 
 import pytest
 
-from auto_engineering.engine.models import _topological_levels
-from auto_engineering.loop.plan import ConflictError, Task
+from auto_engineering.engine.models import ConflictError, Task, _topological_levels
 
 
 def make_task(tid: str, depends_on: list[str] | None = None) -> Task:

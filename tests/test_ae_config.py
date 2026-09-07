@@ -95,6 +95,20 @@ class TestInitConfigTemplateContract:
         (tmp_path / "ae.toml").write_text("# only comments\n", encoding="utf-8")
         assert not AeConfig(tmp_path).is_configured
 
+    def test_project_profile_only_file_does_not_claim_runtime_configuration(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """ProjectProfile 输入与可选 Feature 覆盖不能互相误判。"""
+        from auto_engineering.config.ae_config import AeConfig
+        from auto_engineering.config.runtime_config import RuntimeConfig
+
+        monkeypatch.delenv("AE_METRICS", raising=False)
+        (tmp_path / "ae.toml").write_text(
+            '[project]\nname = "fixture"\n', encoding="utf-8"
+        )
+        assert not AeConfig(tmp_path).is_configured
+        assert RuntimeConfig.from_project(tmp_path).metrics_enabled is False
+
     def test_parse_error_is_exposed(self, tmp_path) -> None:
         from auto_engineering.config.ae_config import AeConfig
 
@@ -102,19 +116,6 @@ class TestInitConfigTemplateContract:
         cfg = AeConfig(tmp_path)
         assert cfg.load_error
         assert not cfg.is_configured
-
-    def test_deprecated_session_thresholds_emit_migration_warning(
-        self, tmp_path
-    ) -> None:
-        from auto_engineering.config.ae_config import AeConfig
-
-        (tmp_path / "ae.toml").write_text(
-            '[threshold]\nsession-max-ticks = "8"\n',
-            encoding="utf-8",
-        )
-        cfg = AeConfig(tmp_path)
-        assert cfg.migration_warnings
-        assert "不再控制正常续跑" in cfg.migration_warnings[0]
 
 
 class TestAeConfigKebabContract:
@@ -202,31 +203,6 @@ class TestRuntimeConfigAeTomlWiring:
         from auto_engineering.config.runtime_config import RuntimeConfig
         cfg = RuntimeConfig.from_project(tmp_path)  # 无 ae.toml
         assert cfg.metrics_enabled is False  # FeatureFlag 默认 "0"
-
-    def test_host_runtime_budgets_are_typed_and_overridable(
-        self, monkeypatch
-    ) -> None:
-        from auto_engineering.config.runtime_config import RuntimeConfig
-
-        cfg = RuntimeConfig(environ={
-            "AE_HOST_MAX_ELAPSED_SECONDS": "90",
-            "AE_HOST_MAX_COST_USD": "12.5",
-            "AE_HOST_MAX_OUTPUT_TOKENS": "4000",
-        })
-        assert cfg.host_max_elapsed_seconds == 90.0
-        assert cfg.host_max_cost_usd == 12.5
-        assert cfg.host_max_output_tokens == 4000
-
-    def test_host_runtime_budget_defaults_are_soft_and_unbounded(self) -> None:
-        """Phase 85 T615：未显式配置 hard 时，宿主预算只观测不硬停。"""
-
-        from auto_engineering.config.runtime_config import RuntimeConfig
-
-        cfg = RuntimeConfig(environ={})
-        assert cfg.host_budget_enforcement == "soft"
-        assert cfg.host_max_elapsed_seconds is None
-        assert cfg.host_max_cost_usd is None
-        assert cfg.host_max_output_tokens is None
 
 
 class TestFeatureStatusActionAeToml:

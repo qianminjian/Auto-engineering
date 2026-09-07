@@ -6,6 +6,63 @@ from auto_engineering.engine.batch_state import BatchState
 from auto_engineering.engine.progress_tree import ProgressTree
 from auto_engineering.engine.verification_layers import VerificationLayers
 
+_GATE_FEEDBACK_MESSAGE_BYTES = 2_048
+_GATE_FEEDBACK_SCALAR_FIELDS = (
+    "error_code",
+    "reason_code",
+    "returncode",
+    "exit_code",
+    "files_snapshot_sha",
+)
+
+
+def _bounded_text(value: object, limit: int) -> str:
+    """保留失败定位的头尾，避免工具日志回灌下一轮 Prompt。"""
+    text = value if isinstance(value, str) else str(value)
+    encoded = text.encode("utf-8")
+    if len(encoded) <= limit:
+        return text
+    marker = "\n...[日志已裁剪，完整证据留在 Gate 记录]...\n"
+    marker_bytes = len(marker.encode("utf-8"))
+    remaining = max(limit - marker_bytes, 2)
+    head_bytes = remaining * 3 // 4
+    tail_bytes = remaining - head_bytes
+    head = encoded[:head_bytes].decode("utf-8", errors="ignore")
+    tail = encoded[-tail_bytes:].decode("utf-8", errors="ignore")
+    return head + marker + tail
+
+
+def _gate_feedback(gate_name: object, raw: dict[str, object]) -> dict[str, object]:
+    """生成供 Developer 修复使用的最小 Gate 失败投影。"""
+    result: dict[str, object] = {
+        "gate_name": str(gate_name),
+        "status": str(raw.get("status", "")),
+        "passed": raw.get("passed"),
+    }
+    if "message" in raw:
+        result["message"] = _bounded_text(
+            raw.get("message", ""), _GATE_FEEDBACK_MESSAGE_BYTES
+        )
+    for field in _GATE_FEEDBACK_SCALAR_FIELDS:
+        value = raw.get(field)
+        if isinstance(value, (str, int, float, bool)) and value not in ("", None):
+            result[field] = value
+    return result
+
+
+def project_gate_results(gate_results: object) -> dict[str, dict[str, object]]:
+    """把 Gate 事实投影为可放入 Action 的有界摘要。"""
+    if not isinstance(gate_results, dict):
+        return {}
+    projected: dict[str, dict[str, object]] = {}
+    for gate_name, raw in gate_results.items():
+        if not isinstance(raw, dict):
+            continue
+        summary = _gate_feedback(gate_name, raw)
+        summary.pop("gate_name", None)
+        projected[str(gate_name)] = summary
+    return projected
+
 
 class TransitionContextFactory:
     def build(
@@ -44,6 +101,7 @@ class TransitionContextFactory:
             extensions["max_stagnation_cycles"] = 3
             if batch_state is not None:
                 component = batch_state.current_component()
+                extensions["assurance_component"] = component.name
                 batches = batch_state.batches_for(component)
                 index = batch_state.current_batch_idx
                 extensions["allowed_file_targets"] = self._allowed_files(
@@ -153,8 +211,8 @@ class TransitionContextFactory:
             if not not_applicable and (
                 status == "hard_fail" or raw.get("passed") is False
             ):
-                blocking.append({"gate_name": str(gate_name), **raw})
+                blocking.append(_gate_feedback(gate_name, raw))
         return blocking
 
 
-__all__ = ["TransitionContextFactory"]
+__all__ = ["TransitionContextFactory", "project_gate_results"]

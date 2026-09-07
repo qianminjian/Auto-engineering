@@ -160,6 +160,7 @@ class OutcomeJournal:
         coordinator_payload: Mapping[str, Any],
         error_code: str,
         violations: Sequence[str] = (),
+        outcomes: Sequence[Mapping[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """在 canonical Result 尚未生成时记录可修复的语义组装拒绝。"""
 
@@ -193,6 +194,21 @@ class OutcomeJournal:
             "rejection": rejection,
             "rejection_history": history,
         }
+        if outcomes is not None:
+            serialized_outcomes = [dict(item) for item in outcomes]
+            record["outcomes"] = serialized_outcomes
+            record["outcomes_fingerprint"] = hashlib.sha256(
+                json.dumps(
+                    {
+                        "action_message_id": action_message_id,
+                        "outcomes": serialized_outcomes,
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    allow_nan=False,
+                ).encode("utf-8")
+            ).hexdigest()
         if existing is not None:
             for key in ("outcomes_fingerprint", "outcomes", "completed_at"):
                 if key in existing:

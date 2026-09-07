@@ -29,25 +29,34 @@ def _changes(decision) -> dict:
 
 def test_gap_scan_routes_by_gap_presence_and_emits_stage_advance() -> None:
     state = {
-        "gap_report_json": json.dumps(
-            {"gaps": [{"id": "G1", "design_section_ref": "§1"}]}
-        )
+        "gap_report_json": json.dumps({"gaps": []})
     }
 
-    decision = GapScanHandler().apply(state, {}, _context())
+    decision = GapScanHandler().apply(
+        state,
+        {"gaps": [{"id": "G1", "design_section_ref": "§1"}]},
+        _context(),
+    )
 
     assert decision.next_stage == "gap_review"
-    assert decision.events[0].event_type is LoopEventType.STAGE_ADVANCED
-    assert decision.events[0].sequence == 7
-    assert decision.events[0].to_dict()["payload"]["to"] == "gap_review"
+    transition = next(
+        event
+        for event in decision.events
+        if event.event_type is LoopEventType.STAGE_ADVANCED
+    )
+    assert transition.sequence == 7
+    assert transition.to_dict()["payload"]["to"] == "gap_review"
+    assert json.loads(_changes(decision)["gap_report_json"])["gaps"][0]["id"] == "G1"
     assert decision.lifecycle_effects.fuzzy_sections == ("§1",)
     assert "fuzzy_sections" not in decision.action_context
 
 
 def test_gap_scan_without_gaps_routes_to_architect() -> None:
-    state = {"gap_report_json": json.dumps({"gaps": []})}
+    state = {"gap_report_json": json.dumps({"gaps": [{"id": "old"}]})}
 
-    assert GapScanHandler().apply(state, {}, _context()).next_stage == "architect"
+    assert GapScanHandler().apply(
+        state, {"gaps": []}, _context()
+    ).next_stage == "architect"
 
 
 def test_gap_review_normalizes_resolution_and_queues_research() -> None:

@@ -1,11 +1,10 @@
-"""T69a: MetricsCollector integration — stage_router, convergence, tick_orchestrator event wiring."""
+"""MetricsCollector integration — convergence and Tick event wiring."""
 import tempfile
 from pathlib import Path
 
 import pytest
 
 from auto_engineering.loop.convergence import ConvergenceJudge, RoundHistory
-from auto_engineering.loop.stage_router import StageDecision, StageRouter
 from auto_engineering.metrics.collector import (
     MetricsCollector,
     get_collector,
@@ -19,42 +18,6 @@ def _reset_collector():
     set_collector(None)
     yield
     set_collector(None)
-
-
-class TestStageRouterIntegration:
-    """StageRouter.next() → collector.record_stage_transition()."""
-
-    def test_next_records_stage_transition(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            collector = MetricsCollector(project_root=Path(tmp))
-            set_collector(collector)
-            router = StageRouter()
-
-            router.next("architect", "APPROVE", majors_in_a_row=0, total_majors=0)
-
-            assert len(collector._events) == 1
-            event = collector._events[0]
-            assert event["event_type"] == "stage_transition"
-            assert event["payload"]["from_stage"] == "architect"
-            assert event["payload"]["to_stage"] == "developer"
-
-    def test_next_no_collector_does_not_crash(self):
-        set_collector(None)
-        router = StageRouter()
-        decision = router.next("architect", "APPROVE", majors_in_a_row=0, total_majors=0)
-        assert isinstance(decision, StageDecision)
-
-    def test_next_unknown_stage_does_not_crash(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            collector = MetricsCollector(project_root=Path(tmp))
-            set_collector(collector)
-            router = StageRouter()
-
-            decision = router.next("unknown_stage", "", majors_in_a_row=0, total_majors=0)
-
-            assert decision.should_stop
-            assert len(collector._events) == 1
-            assert collector._events[0]["event_type"] == "stage_transition"
 
 
 class TestConvergenceIntegration:
@@ -81,7 +44,7 @@ class TestConvergenceIntegration:
         judge = ConvergenceJudge()
         history = [RoundHistory(round_id=1, files_changed=3, lines_added=50, lines_removed=10)]
         verdict = judge.evaluate(history)
-        assert not verdict.should_stop  # 1 round < default max_iterations
+        assert not verdict.should_stop  # 未满足终态条件，生产默认不按 Round 截断
 
     def test_evaluate_goal_achieved_records_success(self):
         with tempfile.TemporaryDirectory() as tmp:

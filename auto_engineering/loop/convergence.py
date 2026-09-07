@@ -2,8 +2,8 @@
 
 设计来源: design/v2.0-Analysis-Loop.md §4.7
 
-4 级判定(从硬到软):
-1. 硬上限 (level=4): max_iterations 达到 → 立即停止
+4 级判定（仅对显式兼容调用生效；生产默认由 Stage/验证事实决定终态）:
+1. 显式硬上限 (level=4): 仅在兼容调用显式提供 max_iterations 时生效
 2. 质量门 (level=3): 6 道 Gate 全 PASS → 停止
 3. 停滞检测 (level=2): N 轮产出无实质变化 → 停止
 4. 语义收敛 (level=1): LLM 评估"本轮产出满足需求" → 停止
@@ -17,10 +17,22 @@ API:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from auto_engineering.loop.checkpoint.records import RoundHistory  # P1-7: definition moved to records
+from auto_engineering.loop.convergence_models import (
+    DEFAULT_MAX_ITERATIONS,
+    DEFAULT_STAGNATION_DIFF_RATIO,
+    DEFAULT_STAGNATION_THRESHOLD,
+    LEVEL_CONTINUE,
+    LEVEL_HARD_LIMIT,
+    LEVEL_NAMES,
+    LEVEL_QUALITY,
+    LEVEL_SEMANTIC,
+    LEVEL_STAGNANT,
+    ConvergenceConfig,
+    ConvergenceVerdict,
+)
 
 if TYPE_CHECKING:
     from auto_engineering.gates.base import GateVerdict
@@ -46,77 +58,6 @@ __all__ = [
 # ============================================================
 # 常量: 4 级收敛 + 默认继续
 # ============================================================
-
-# 默认配置参数
-DEFAULT_MAX_ITERATIONS = 10
-DEFAULT_STAGNATION_THRESHOLD = 2  # 连续 N 轮无变化
-DEFAULT_STAGNATION_DIFF_RATIO = 0.05  # diff 变化率 < 5% 视为无变化
-
-# Verdict level 语义
-LEVEL_CONTINUE = 0  # 继续
-LEVEL_SEMANTIC = 1  # 语义收敛 (LLM 评估通过)
-LEVEL_STAGNANT = 2  # 停滞检测触发
-LEVEL_QUALITY = 3  # 质量门全通过
-LEVEL_HARD_LIMIT = 4  # 硬上限触发
-
-LEVEL_NAMES = {
-    LEVEL_CONTINUE: "CONTINUE",
-    LEVEL_SEMANTIC: "GOAL_ACHIEVED",
-    LEVEL_STAGNANT: "STAGNANT",
-    LEVEL_QUALITY: "QUALITY_PASS",
-    LEVEL_HARD_LIMIT: "MAX_ITERATIONS",
-}
-
-
-@dataclass
-class ConvergenceConfig:
-    """收敛判定配置参数.
-
-    Attributes:
-        max_iterations: 单会话最大迭代轮次 (硬上限)
-        stagnation_threshold: 连续多少轮无实质变化触发停滞检测
-        stagnation_diff_ratio: diff 变化率阈值 (低于此值视为无变化)
-    """
-
-    max_iterations: int = DEFAULT_MAX_ITERATIONS
-    stagnation_threshold: int = DEFAULT_STAGNATION_THRESHOLD
-    stagnation_diff_ratio: float = DEFAULT_STAGNATION_DIFF_RATIO
-
-
-@dataclass
-class ConvergenceVerdict:
-    """收敛判定结果.
-
-    Attributes:
-        should_stop: 是否应该停止循环
-        level: 触发的级别 (0=继续, 1=语义, 2=停滞, 3=质量, 4=硬上限)
-        reason: 触发原因描述
-    """
-
-    should_stop: bool
-    level: int
-    reason: str
-
-    @property
-    def level_name(self) -> str:
-        """人类可读的级别名."""
-        return LEVEL_NAMES.get(self.level, "UNKNOWN")
-
-    @classmethod
-    def continue_(cls) -> ConvergenceVerdict:
-        """继续执行的便捷构造."""
-        return cls(should_stop=False, level=LEVEL_CONTINUE, reason="继续迭代")
-
-    @classmethod
-    def stop(cls, level: int, reason: str) -> ConvergenceVerdict:
-        """停止执行的便捷构造 (level 校验)."""
-        if level not in LEVEL_NAMES:
-            raise ValueError(
-                f"Invalid level {level} (reason: {reason}). "
-                f"Must be one of {sorted(LEVEL_NAMES.keys())}"
-            )
-        return cls(should_stop=True, level=level, reason=reason)
-
 
 # ============================================================
 # 核心算法: 停滞检测
@@ -244,12 +185,12 @@ class ConvergenceJudge:
     """4 级收敛判定引擎.
 
     判定顺序 (从硬到软):
-        1. 硬上限 (level=4): current_round >= max_iterations
+        1. 显式硬上限 (level=4): current_round >= max_iterations
         2. 质量门 (level=3): 所有 6 道 Gate 全 PASS
         3. 停滞检测 (level=2): 连续 N 轮无实质变化
         4. 语义收敛 (level=1): LLM 评估通过
 
-    注意: 硬上限 > 质量门 > 停滞 > 语义
+    注意: 显式硬上限 > 质量门 > 停滞 > 语义；生产默认不启用显式硬上限
     (高优先级先检查, 一旦触发立即停止)
 
     Usage:
@@ -285,7 +226,7 @@ class ConvergenceJudge:
         自评), 改由 system_deep_audit + 设计覆盖双通过作为语义达成信号.
         两个 keyword-only 参数默认 False, 保持 v5.5 连续路径调用兼容.
 
-        终态成功优先级 (§C.5.5): 双通过的 GOAL_ACHIEVED 优先于硬上限 —
+        终态成功优先级 (§C.5.5): 双通过的 GOAL_ACHIEVED 优先于显式硬上限 —
         若恰在 max_iterations 那轮达成成功, 应报 GOAL_ACHIEVED 而非
         HARD_LIMIT (工作已完成, 报硬上限会误导).
 
@@ -297,7 +238,7 @@ class ConvergenceJudge:
         Returns:
             ConvergenceVerdict: 判定结果, should_stop=True 表示应停止
         """
-        # 0. 终态成功 (v5.6 §C.5): audit + 覆盖双通过 → GOAL_ACHIEVED, 优先于硬上限
+        # 0. 终态成功 (v5.6 §C.5): audit + 覆盖双通过 → GOAL_ACHIEVED, 优先于显式硬上限
         result: ConvergenceVerdict | None
         if system_deep_audit_ok and design_coverage_ok:
             result = ConvergenceVerdict.stop(
@@ -308,7 +249,7 @@ class ConvergenceJudge:
                 ),
             )
         else:
-            # 1. 硬上限检查
+            # 1. 仅兼容调用启用的显式硬上限检查；生产默认不启用。
             result = self._check_hard_limit(history)
             # 2. 质量门检查
             if result is None:
@@ -339,7 +280,7 @@ class ConvergenceJudge:
     def _check_hard_limit(
         self, history: list[RoundHistory]
     ) -> ConvergenceVerdict | None:
-        """硬上限检查: 当前轮次 >= max_iterations.
+        """显式硬上限检查；max_iterations=None 时永不因 Tick 数停止。
 
         Args:
             history: 历史轮次列表
@@ -347,7 +288,7 @@ class ConvergenceJudge:
         Returns:
             ConvergenceVerdict 或 None (None 表示未触发)
         """
-        if not history:
+        if not history or self.config.max_iterations is None:
             return None
 
         current_round = history[-1].round_id

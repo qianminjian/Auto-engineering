@@ -14,8 +14,6 @@ from auto_engineering.loop.tick_orchestrator import TickOrchestrator
 
 POLICY = ContextBudgetPolicy(
     policy_id="test-v1",
-    max_session_ticks=30,
-    max_session_wall_seconds=3600,
     soft_input_units=600,
     hard_input_units=700,
     max_prompt_bytes=1000,
@@ -72,24 +70,18 @@ def test_runtime_config_builds_policy_from_manifest_defaults() -> None:
     policy = RuntimeConfig(environ={}).context_budget_policy
 
     assert policy.policy_id == "context-budget-v2"
-    assert policy.max_session_ticks == 50
-    assert policy.max_session_wall_seconds == 3600
     assert policy.soft_input_units == 600_000
     assert policy.hard_input_units == 700_000
     assert policy.max_prompt_bytes == 200_000
 
 
-def test_deprecated_session_thresholds_do_not_change_runtime_decision() -> None:
+def test_host_session_thresholds_are_not_runtime_configuration() -> None:
     policy = RuntimeConfig(environ={
-        "AE_SESSION_MAX_TICKS": "12",
-        "AE_SESSION_MAX_SECONDS": "900",
         "AE_CONTEXT_SOFT_INPUT": "1000",
         "AE_CONTEXT_HARD_INPUT": "1200",
         "AE_MAX_PROMPT_BYTES": "4096",
     }).context_budget_policy
 
-    assert policy.max_session_ticks == 50
-    assert policy.max_session_wall_seconds == 3600
     assert policy.soft_input_units == 600_000
     assert policy.hard_input_units == 700_000
     assert policy.max_prompt_bytes == 4096
@@ -109,8 +101,6 @@ def _orchestrator(config: RuntimeConfig) -> TickOrchestrator:
 
 def test_tick_kernel_does_not_rollover_at_fixed_tick_count() -> None:
     config = RuntimeConfig(environ={
-        "AE_SESSION_MAX_TICKS": "1",
-        "AE_SESSION_MAX_SECONDS": "3600",
         "AE_CONTEXT_SOFT_INPUT": "600000",
         "AE_CONTEXT_HARD_INPUT": "700000",
         "AE_MAX_PROMPT_BYTES": "200000",
@@ -124,16 +114,39 @@ def test_tick_kernel_does_not_rollover_at_fixed_tick_count() -> None:
     assert action["action"] == "architect"
 
 
+def test_tick_orchestrator_production_default_has_no_round_cap() -> None:
+    """固定 Round 上限只能是显式兼容配置，不能成为当前生产默认。"""
+
+    orchestrator = _orchestrator(RuntimeConfig(environ={}))
+    orchestrator.init("实现长流程功能")
+
+    assert orchestrator._judge is not None
+    assert orchestrator._judge.config.max_iterations is None
+
+
 def test_tick_kernel_rejects_oversized_candidate_without_truncation() -> None:
     config = RuntimeConfig(environ={
-        "AE_SESSION_MAX_TICKS": "50",
-        "AE_SESSION_MAX_SECONDS": "3600",
         "AE_CONTEXT_SOFT_INPUT": "600000",
         "AE_CONTEXT_HARD_INPUT": "700000",
         "AE_MAX_PROMPT_BYTES": "10",
     })
 
     action = _orchestrator(config).init("实现功能")
+
+    assert action["action"] == "error"
+    assert action["error_code"] == "ACTION_CONTEXT_TOO_LARGE"
+
+
+def test_build_action_converts_prompt_overflow_to_structured_error(tmp_path) -> None:
+    """Prompt 编译超限必须返回协议错误，不能让 CLI 裸抛异常。"""
+    orchestrator = TickOrchestrator(project_root=tmp_path)
+    orchestrator.init("实现功能")
+    assert orchestrator._state is not None
+    orchestrator._state.current_stage = "developer"
+    orchestrator._state.expected_stage = "developer"
+    orchestrator._state.requirement = "x" * 70_000
+
+    action = orchestrator.build_action()
 
     assert action["action"] == "error"
     assert action["error_code"] == "ACTION_CONTEXT_TOO_LARGE"

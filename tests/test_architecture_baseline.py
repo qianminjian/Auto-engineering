@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from auto_engineering.engine.design_doc import Component, DesignDoc, Plate
+from auto_engineering.engine.design_doc import Component, DesignDoc, DesignItem, Plate
 from auto_engineering.engine.state import EngineState
 from auto_engineering.loop import architecture_baseline as baseline_module
 from auto_engineering.loop.architect_validation import (
@@ -16,7 +16,7 @@ from auto_engineering.loop.architecture_candidate import (
     ArchitectureCandidateBuilder,
     ArchitectureCandidateError,
 )
-from auto_engineering.loop.stage_router import clear_stage_fields
+from auto_engineering.loop.state_lifecycle import clear_stage_fields
 
 
 def _baseline() -> dict:
@@ -100,6 +100,100 @@ def test_architect_contract_values_must_be_objects() -> None:
     }
 
     assert "api" in (validate_architect_obligations(result, {}) or "")
+
+
+def test_architect_rejects_test_whose_implementation_is_in_a_future_batch() -> None:
+    result = {
+        "batch_plan": [
+            {
+                "batch_id": "B1",
+                "tasks": [{
+                    "id": "B1-T1",
+                    "kind": "test",
+                    "module_ref": "utility.download",
+                    "file_targets": ["tests/utility/download.test.ts"],
+                }],
+            },
+            {
+                "batch_id": "B2",
+                "tasks": [{
+                    "id": "B2-T1",
+                    "kind": "implementation",
+                    "module_ref": "utility.download",
+                    "file_targets": ["src/utility/download.ts"],
+                }],
+            },
+        ],
+        "contracts": {},
+        "obligations": [],
+    }
+
+    error = validate_architect_obligations(result, {})
+
+    assert error is not None
+    assert "ARCHITECT_TEST_IMPLEMENTATION_ORDER_INVALID" in error
+
+
+def test_architect_without_design_doc_rejects_empty_plate_keys() -> None:
+    result = {
+        "plan": "先建立可验证的最小领域契约，再逐步实现并验证核心能力。",
+        "file_list": ["src/core.py"],
+        "batch_plan": [{
+            "batch_id": "B1",
+            "plate_keys": [],
+            "tasks": [{
+                "id": "B1-T1",
+                "description": "实现核心契约",
+                "kind": "implementation",
+                "file_targets": ["src/core.py"],
+            }],
+        }],
+        "contracts": {},
+        "obligations": [],
+    }
+
+    error = dry_run_architect_plan(
+        None,
+        result,
+        "实现核心契约",
+    )
+
+    assert error == "batch B1 的 plate_keys 必须为非空字符串数组"
+
+
+def test_architect_scope_error_exposes_allowed_item_ids() -> None:
+    doc = DesignDoc(
+        plates=[Plate(
+            name="页面",
+            design_section="§1",
+            components=[Component(
+                name="核心",
+                design_section="§1.1",
+                design_items=[
+                    DesignItem("4.1-1", "§4.1", "类型", [], "heading"),
+                ],
+            )],
+        )],
+        supplements={},
+    )
+    result = {
+        "plan": "先建立类型层契约，再实现页面并覆盖核心行为测试。",
+        "file_list": ["src/types/index.ts"],
+        "batch_plan": [{
+            "batch_id": "B1",
+            "plate_keys": ["核心"],
+            "design_sections": ["§1.1"],
+            "design_item_refs": ["2.1-6"],
+            "tasks": [{"id": "B1-T1", "description": "实现类型"}],
+        }],
+        "contracts": {},
+        "obligations": [],
+    }
+
+    error = dry_run_architect_plan(doc, result, "实现类型")
+
+    assert error is not None
+    assert "有效 design_item_refs: 4.1-1" in error
 
 
 def test_architect_accepts_custom_title_with_multiple_valid_plate_keys() -> None:

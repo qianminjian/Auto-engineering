@@ -27,6 +27,7 @@ class UsageRecord:
     duplicate_block_bytes: int | None = None
     host_context_window_units: int | None = None
     estimator_version: str = ""
+    action_message_id: str | None = None
 
 
 class UsageLedger:
@@ -55,7 +56,8 @@ class UsageLedger:
                 inline_unique_bytes INTEGER,
                 duplicate_block_bytes INTEGER,
                 host_context_window_units INTEGER,
-                estimator_version TEXT NOT NULL DEFAULT ''
+                estimator_version TEXT NOT NULL DEFAULT '',
+                action_message_id TEXT
             )
             """
         )
@@ -70,6 +72,7 @@ class UsageLedger:
             "duplicate_block_bytes": "INTEGER",
             "host_context_window_units": "INTEGER",
             "estimator_version": "TEXT NOT NULL DEFAULT ''",
+            "action_message_id": "TEXT",
         }
         for column, declaration in migrations.items():
             if column not in existing:
@@ -96,8 +99,8 @@ class UsageLedger:
              cache_read_units, cache_write_units, output_units, provider,
              model, usage_source, estimated, core_payload_bytes,
              inline_unique_bytes, duplicate_block_bytes,
-             host_context_window_units, estimator_version)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             host_context_window_units, estimator_version, action_message_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 record.thread_id,
@@ -118,6 +121,7 @@ class UsageLedger:
                 record.duplicate_block_bytes,
                 record.host_context_window_units,
                 record.estimator_version,
+                record.action_message_id,
             ),
         )
         self._conn.commit()
@@ -147,6 +151,7 @@ class UsageLedger:
                 duplicate_block_bytes=row["duplicate_block_bytes"],
                 host_context_window_units=row["host_context_window_units"],
                 estimator_version=row["estimator_version"],
+                action_message_id=row["action_message_id"],
             )
             for row in rows
         ]
@@ -191,6 +196,14 @@ class UsageLedger:
                 and all(record.core_payload_bytes is not None for record in records)
             ),
         }
+
+    def records_for_action(self, thread_id: str) -> dict[str, list[UsageRecord]]:
+        """按真实 Action 绑定读取 usage；未绑定记录归入空键。"""
+
+        grouped: dict[str, list[UsageRecord]] = {}
+        for record in self.list_records(thread_id):
+            grouped.setdefault(record.action_message_id or "", []).append(record)
+        return grouped
 
     def close(self) -> None:
         self._conn.close()

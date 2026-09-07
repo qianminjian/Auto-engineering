@@ -1,13 +1,13 @@
 """CancellationToken — 协作式取消令牌 (Phase 03 整合到 runtime 模块).
 
-设计来源: design/v2.0-Analysis-Loop.md §4.6 L1 Inner Loop (max_iterations 硬上限)
-+ cli.py 原 CancellationToken 拆分到 runtime/ 模块避免循环引用.
+设计来源: v2.0 协作式取消契约；当前 v5.8 仅用于在 Tick 边界传播用户取消，
+不承担 Round/Iteration 上限或宿主主循环调度。
 
 借鉴 AutoGen _base_agent.py cancellation 支持.
 
 用法:
     token = CancellationToken()
-    token.cancel()                     # 用户 Ctrl-C / Orchestrator 超时触发
+    token.cancel()                     # 用户 Ctrl-C 或宿主取消信号触发
     if token.is_cancelled(): ...       # 软检查
     token.check()                       # 硬检查 + 抛 AEError(TASK_CANCELLED)
 """

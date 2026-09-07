@@ -18,8 +18,17 @@ TickOrchestrator 离散调用模型的 I/O 契约:
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from dataclasses import dataclass
+from auto_engineering.config.constants import (
+    PROJECT_SETUP_FAILURE_CODES,
+    PROJECT_SETUP_FAILURE_SUMMARY_MAX_LENGTH,
+    PROJECT_SETUP_MAX_IN_ACTION_RETRIES,
+)
+from auto_engineering.loop.action_responses import (
+    ActionDone,
+    ActionError,
+    ErrorResponse,
+    build_terminal_acceptance_summary,
+)
 
 __all__ = [
     "RESULT_SCHEMA",
@@ -31,147 +40,6 @@ __all__ = [
     "result_contract_warnings",
     "validate_result_format",
 ]
-
-
-@dataclass
-class ActionDone:
-    """循环终止 action (§C.3.1 done).
-
-    verdict 为 level 名 (GOAL_ACHIEVED/STAGNANT/QUALITY/HARD_LIMIT/REFINE_LIMIT),
-    reason 序列化为 "verdict_reason" 键 (与 done JSON 对齐). 其余字段可选,
-    未提供 (None) 则不出现在 to_dict 输出中 (保持 JSON 精简).
-    """
-
-    verdict: str
-    reason: str | None = None
-    verdict_level: int | None = None
-    tick: int | None = None
-    thread_id: str | None = None
-    rounds: int | None = None
-    gate_summary: dict | None = None
-    checkpoint_id: str | None = None
-    acceptance_summary: dict | None = None
-
-    def to_dict(self) -> dict:
-        d: dict = {
-            "action": "done",
-            "tick": self.tick,
-            "verdict": self.verdict,
-            "verdict_level": self.verdict_level,
-            "verdict_reason": self.reason,
-        }
-        # 可选富字段: 仅在提供时出现
-        if self.acceptance_summary is not None:
-            d["acceptance_summary"] = self.acceptance_summary
-        else:
-            d["acceptance_summary"] = build_terminal_acceptance_summary(
-                None, verdict=self.verdict,
-            )
-        for key in ("thread_id", "rounds", "gate_summary", "checkpoint_id"):
-            val = getattr(self, key)
-            if val is not None:
-                d[key] = val
-        # tick 恒定输出 (done JSON 含 tick), 但 None 时移除避免误导
-        if self.tick is None:
-            del d["tick"]
-        return d
-
-
-def build_terminal_acceptance_summary(
-    state: object | Mapping[str, object] | None,
-    *,
-    verdict: str,
-    design_coverage_ok: bool = False,
-    system_deep_audit_ok: bool = False,
-) -> dict[str, object]:
-    """区分 Core 收敛与真实产品验收，避免 ``done`` 被误读为发布完成。
-
-    Core 只能声明自己实际掌握的确定性证据；真实 API、浏览器、设备权限等
-    外部业务链路属于产品验收层，必须由独立的产品证据门禁确认。
-    """
-
-    def value(name: str, default: object = None) -> object:
-        if isinstance(state, Mapping):
-            return state.get(name, default)
-        return getattr(state, name, default) if state is not None else default
-
-    verified: list[str] = []
-    if design_coverage_ok:
-        verified.append("design_coverage")
-    if system_deep_audit_ok:
-        verified.append("system_deep_audit")
-    gate_results = value("gate_results", {})
-    if isinstance(gate_results, Mapping) and gate_results and all(
-        isinstance(item, Mapping)
-        and (item.get("not_applicable") is True or item.get("passed") is True)
-        for item in gate_results.values()
-    ):
-        verified.append("project_gates")
-    task_evidence = value("task_verification_evidence", {})
-    if isinstance(task_evidence, Mapping) and task_evidence:
-        verified.append("task_verification")
-
-    unverified = ["product_business_acceptance"]
-    if verdict != "GOAL_ACHIEVED":
-        unverified.insert(0, "core_completion")
-    total = len(verified) + len(unverified)
-    return {
-        "scope": "core",
-        "status": (
-            "core_verified_product_unverified"
-            if verdict == "GOAL_ACHIEVED"
-            else "core_incomplete"
-        ),
-        "verified_checks": verified,
-        "unverified_items": unverified,
-        "coverage": {"verified": len(verified), "total": total},
-        "release_eligible": False,
-    }
-
-
-@dataclass
-class ActionError:
-    """路由/内部错误 action (§C.3.3, 无 current_state)."""
-
-    error_code: str
-    message: str
-    suggestion: str | None = None  # P1-9: 告诉 Agent 如何恢复
-
-    def to_dict(self) -> dict:
-        d: dict = {
-            "action": "error",
-            "error_code": self.error_code,
-            "message": self.message,
-        }
-        if self.suggestion:
-            d["suggestion"] = self.suggestion
-        return d
-
-
-@dataclass
-class ErrorResponse:
-    """result 校验失败响应 (§C.3.3, 带 current_state).
-
-    _read_and_validate 校验 stage 不匹配 / 格式非法时返回本类型;
-    tick() 用 isinstance(result, ErrorResponse) 分流后 to_dict 输出.
-    """
-
-    error_code: str
-    message: str
-    current_state: dict | None = None
-    suggestion: str | None = None
-
-    def to_dict(self) -> dict:
-        d: dict = {
-            "action": "error",
-            "error_code": self.error_code,
-            "message": self.message,
-        }
-        if self.current_state is not None:
-            d["current_state"] = self.current_state
-        if self.suggestion is not None:
-            d["suggestion"] = self.suggestion
-        return d
 
 
 # ── §C.3.4 各 Stage Result 验证规则 ──
@@ -194,7 +62,6 @@ RESULT_SCHEMA: dict[str, dict] = {
         "required": ["stage", "batch_id", "files_changed", "test_results"],
         "test_results_min_passed": 1,
         "test_results_required_failed": 0,
-        "files_changed_min": 1,
     },
     "critic": {
         "required": ["stage", "verdict", "findings"],
@@ -242,6 +109,8 @@ _RESULT_FIELD_TYPES: dict[str, dict[str, tuple[type, ...]]] = {
     },
     "project_setup": {
         "stage": (str,), "result_type": (str,), "artifacts": (list,),
+        "failure_code": (str,), "failure_summary": (str,),
+        "attempts_in_action": (int,),
     },
     "architect": {
         "stage": (str,), "plan": (str,), "file_list": (list,),
@@ -334,6 +203,8 @@ def business_result_contract(
         properties[field] = {
             "type": names[0] if len(names) == 1 else names,
         }
+        if stage == "project_setup" and field == "failure_code":
+            properties[field]["enum"] = sorted(PROJECT_SETUP_FAILURE_CODES)
     required = (
         [
             field
@@ -475,11 +346,49 @@ def validate_result_format(result: dict, stage: str) -> list[str]:
         errors.append("research 至少需要 findings、recommended_design 或搜索状态")
 
     if stage == "project_setup":
-        if result.get("result_type") != "project_setup_completed":
-            errors.append("result_type 必须为 'project_setup_completed'")
+        result_type = result.get("result_type")
+        if result_type not in {"project_setup_completed", "project_setup_failed"}:
+            errors.append(
+                "result_type 必须为 'project_setup_completed' 或 "
+                "'project_setup_failed'"
+            )
         artifacts = result.get("artifacts")
         if not isinstance(artifacts, list):
             errors.append("artifacts 必须为数组")
+        if result_type == "project_setup_failed":
+            failure_code = result.get("failure_code")
+            if failure_code not in PROJECT_SETUP_FAILURE_CODES:
+                errors.append(
+                    "project_setup_failed 的 failure_code 必须是稳定的 Setup 错误码"
+                )
+            failure_summary = result.get("failure_summary")
+            if (
+                not isinstance(failure_summary, str)
+                or not failure_summary.strip()
+                or len(failure_summary) > PROJECT_SETUP_FAILURE_SUMMARY_MAX_LENGTH
+            ):
+                errors.append(
+                    "project_setup_failed 的 failure_summary 必须为非空且不超过 "
+                    f"{PROJECT_SETUP_FAILURE_SUMMARY_MAX_LENGTH} 个字符"
+                )
+            attempts = result.get("attempts_in_action")
+            if (
+                not isinstance(attempts, int)
+                or isinstance(attempts, bool)
+                or attempts < 1
+                or attempts > PROJECT_SETUP_MAX_IN_ACTION_RETRIES + 1
+            ):
+                errors.append(
+                    "project_setup_failed 的 attempts_in_action 必须为 1 或 "
+                    f"{PROJECT_SETUP_MAX_IN_ACTION_RETRIES + 1}"
+                )
+        elif any(
+            field in result
+            for field in ("failure_code", "failure_summary", "attempts_in_action")
+        ):
+            errors.append(
+                "project_setup_completed 不得携带 project_setup_failed 的失败字段"
+            )
 
     if stage == "architect" and design_change_only:
         requests = result.get("design_change_requests")
@@ -560,7 +469,9 @@ def validate_result_format(result: dict, stage: str) -> list[str]:
                 if plan_patch.get("reopen_completed"):
                     errors.append("普通 plan_patch 不得重新打开已完成工作")
 
-    # developer: test_results.failed==0 + files_changed 非空
+    # developer: test_results.failed==0; files_changed 允许为空。
+    # 验证型 batch 可能只需确认既有实现、配置或测试已满足设计，不能要求
+    # 宿主伪造文件变更；实际是否完成由 task evidence、Guardrail 和后续验证层判断。
     elif stage == "developer":
         tr = result.get("test_results") or {}
         if isinstance(tr, dict):
@@ -578,9 +489,6 @@ def validate_result_format(result: dict, stage: str) -> list[str]:
                     "纯配置/脚手架 batch 也需验证产出"
                     "（如文件是否存在、JSON 是否合法、配置项是否有效）"
                 )
-        fc = result.get("files_changed")
-        if isinstance(fc, list) and len(fc) < schema["files_changed_min"]:
-            errors.append("files_changed 至少 1 个文件")
 
     # critic: verdict 值域
     elif stage == "critic":

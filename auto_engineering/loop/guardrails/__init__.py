@@ -18,6 +18,9 @@ from auto_engineering.loop.guardrails.stateful import (
     REDGuardrail,
     RegressionGuardrail,
 )
+from auto_engineering.loop.guardrails.test_evidence import (
+    TestEvidenceIntegrityGuardrail,
+)
 from auto_engineering.shared.guardrail import (
     Action,
     Guardrail,
@@ -39,6 +42,7 @@ __all__ = [
     "REDGuardrail",
     "RegressionGuardrail",
     "RequirementValid",
+    "TestEvidenceIntegrityGuardrail",
     "TestsPass",
 ]
 

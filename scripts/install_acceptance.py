@@ -7,9 +7,17 @@ import inspect
 import json
 import os
 import subprocess
+import sys
 import tarfile
 import tempfile
 from pathlib import Path
+
+# 允许发布验收脚本通过系统 Python 直接启动；uv/安装后的入口不受影响。
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+
+from auto_engineering.build_identity import validate_build_info  # noqa: E402
 
 try:
     from scripts.check_host_package import check_host_package
@@ -43,7 +51,6 @@ def _acceptance_environment(host: str) -> dict[str, str]:
     # 该宿主事实，否则运行时应当正确地拒绝无主 CONTINUE Action。
     if host == "claude-code":
         environment["CLAUDE_CODE_SESSION_ID"] = "release-acceptance"
-    environment["AE_SKIP_CONFIG_CHECK"] = "1"
     return environment
 
 
@@ -62,6 +69,25 @@ def _safe_extract_archive(package: tarfile.TarFile, destination: Path) -> None:
             package.extract(member, resolved_destination, filter="data")
         else:
             package.extract(member, resolved_destination)
+
+
+def _read_archive_build_info(root: Path) -> dict[str, str]:
+    """读取并校验归档身份，避免 smoke 结果脱离候选制品。"""
+
+    try:
+        payload = json.loads(
+            (root / "build-info.json").read_text(encoding="utf-8")
+        )
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError("归档缺少有效 build-info.json") from exc
+    if (
+        not isinstance(payload, dict)
+    ):
+        raise RuntimeError("归档 build-info.json 身份无效")
+    try:
+        return validate_build_info(payload)
+    except ValueError as exc:
+        raise RuntimeError("归档 build-info.json 身份无效") from exc
 
 
 def _run(
@@ -157,6 +183,30 @@ def _verify_checkpoint_lifecycle(
     return ["status", "resume"]
 
 
+def _verify_build_identity_preflight(
+    resolver: str,
+    project: Path,
+    environment: dict[str, str],
+    expected_build_id: str,
+) -> list[str]:
+    """让归档 smoke 实际执行安装插件入口的 Build Identity 预检。"""
+
+    result = _run(
+        [resolver, "build-info", "--expect-build-id", expected_build_id],
+        cwd=project,
+        env=environment,
+    )
+    observed = _last_json_object(result.stdout)
+    expected_version = expected_build_id.split("+", 1)[0]
+    if (
+        observed.get("build_id") != expected_build_id
+        or observed.get("version") != expected_version
+        or observed.get("source_kind") != "packaged"
+    ):
+        raise RuntimeError("归档 smoke 的宿主 Build Identity 预检结果无效")
+    return ["build_identity_preflight"]
+
+
 def _verify_runtime_semantic_contract(
     install_root: Path,
     environment: dict[str, str],
@@ -189,8 +239,8 @@ def _hermetic_sync(
 
     if wheel_cache is None or not wheel_cache.is_dir():
         raise RuntimeError("HERMETIC_CACHE_REQUIRED")
+    environment["UV_CACHE_DIR"] = str(wheel_cache.resolve())
     hermetic_env = dict(environment)
-    hermetic_env["UV_CACHE_DIR"] = str(wheel_cache.resolve())
     _run(
         [
             "uv", "sync", "--frozen", "--offline",
@@ -216,6 +266,7 @@ def accept_archive(
     with tarfile.open(archive, "r:gz") as package:
         _safe_extract_archive(package, install_root)
 
+    build_info = _read_archive_build_info(install_root)
     errors = check_host_package(install_root, host)
     if errors:
         raise RuntimeError("; ".join(errors))
@@ -235,6 +286,12 @@ def accept_archive(
         raise RuntimeError("验收 fixture 不得依赖 init-manifest.json")
 
     resolver = str(plugin_root / "bin" / "ae-run")
+    build_identity_evidence = _verify_build_identity_preflight(
+        resolver,
+        project,
+        environment,
+        build_info["build_id"],
+    )
     doctor = _run(
         [resolver, "doctor", "--project-root", str(project)],
         cwd=project,
@@ -265,6 +322,11 @@ def accept_archive(
         cwd=project,
         env=environment,
     )
+    action = _last_json_object(tick.stdout)
+    if action.get("action") not in {"project_setup_required", "architect"}:
+        raise RuntimeError("无配置最小 Tick 未进入合法 Setup/Architect Action")
+    if (project / "ae.toml").exists():
+        raise RuntimeError("无配置最小 Tick 不得自动写入 ae.toml")
     lifecycle_evidence = _verify_checkpoint_lifecycle(
         resolver,
         project,
@@ -275,22 +337,21 @@ def accept_archive(
         plugin_root,
         environment,
     )
-    generated_config = project / "ae.toml"
-    if not generated_config.is_file() or "metrics = \"1\"" not in generated_config.read_text(
-        encoding="utf-8"
-    ):
-        raise RuntimeError("首次启动未生成有效 standard profile")
-
     return {
         "host": host,
         "archive_smoke": {
             "status": "pass",
+            "version": build_info["version"],
+            "build_id": build_info["build_id"],
+            "content_sha256": build_info["content_sha256"],
             "evidence": [
                 "package_contract",
                 "isolated_uv_sync",
+                *build_identity_evidence,
                 "doctor",
                 "worker_outcome_bridge",
                 "minimal_tick",
+                "feature_manifest_defaults",
                 "manifest_free_project_profile",
                 *lifecycle_evidence,
                 *semantic_evidence,

@@ -104,3 +104,17 @@ class TestDesignDocSectionsSummary:
 
     def test_empty_doc(self) -> None:
         assert DesignDoc(plates=[], supplements={}).sections_summary() == []
+
+    def test_advisory_section_refs_only_include_explicit_future_titles(self) -> None:
+        doc = DesignDoc(
+            plates=[Plate(
+                name="P1", design_section="§P1", components=[
+                    Component(name="当前版本约束", design_section="§B2"),
+                    Component(name="未来改进方向", design_section="§B3"),
+                    Component(name="Advisory notes", design_section="§B4"),
+                ],
+            )],
+            supplements={},
+        )
+
+        assert doc.advisory_section_refs() == frozenset({"§B3", "§B4"})

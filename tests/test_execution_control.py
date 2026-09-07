@@ -8,7 +8,6 @@ import json
 import pytest
 
 from auto_engineering.host import HostPlatform
-from auto_engineering.host.driver_contract import HostDriverDecision, decide_host_step
 from auto_engineering.host.runtime_driver import (
     HostRunLease,
     HostRunLeaseStore,
@@ -187,7 +186,7 @@ def test_unknown_gate_type_fails_closed_instead_of_continuing() -> None:
     assert control.reason_code == "UNKNOWN_GATE_TYPE"
 
 
-def test_environment_failure_waits_instead_of_reentering_code_repair() -> None:
+def test_environment_failure_waits_for_resource_instead_of_user_or_code_repair() -> None:
     control = control_for_action({
         "action": "developer",
         "gate_summary": {
@@ -195,7 +194,7 @@ def test_environment_failure_waits_instead_of_reentering_code_repair() -> None:
         },
     })
 
-    assert control.disposition is ExecutionDisposition.WAIT_USER
+    assert control.disposition is ExecutionDisposition.WAIT_RESOURCE
     assert control.reason_code == "environment_failure"
 
 
@@ -211,28 +210,117 @@ def test_agent_capacity_waits_for_resource_without_user_decision() -> None:
     assert control.reason_code == "HOST_AGENT_CAPACITY"
 
 
-@pytest.mark.parametrize(
-    ("action", "expected"),
-    [
-        ({"action": "developer"}, HostDriverDecision.EXECUTE_NEXT),
-        ({"action": "gap_review"}, HostDriverDecision.WAIT),
-        ({"action": "done"}, HostDriverDecision.FINISH),
-        ({"action": "error"}, HostDriverDecision.FAIL),
-        ({"action": "session_rollover"}, HostDriverDecision.HANDOFF),
-        (
-            {"action": "resource_wait", "reason_code": "HOST_AGENT_CAPACITY"},
-            HostDriverDecision.RETRY_RESOURCE,
-        ),
-    ],
-)
-def test_host_driver_uses_only_machine_disposition(
-    action: dict[str, str],
-    expected: HostDriverDecision,
-) -> None:
-    control = control_for_action(action)
-    payload = {"extensions": {"ae": {"execution_control": control.to_dict()}}}
+def test_host_action_exposes_post_return_continuation_contract(tmp_path) -> None:
+    """宿主返回不能被误报为成功；必须先回查 Core 的处置状态。"""
 
-    assert decide_host_step(payload) is expected
+    from auto_engineering.cli.dev_loop import _prepare_action_for_host
+
+    action = {
+        "action": "developer",
+        "stage": "developer",
+        "message_id": "action-continuation-contract",
+        "thread_id": "thread-continuation-contract",
+        "tick": 1,
+        "project_root": str(tmp_path),
+        "extensions": {
+            "ae": {
+                "execution_control": control_for_action(
+                    {"action": "developer"}
+                ).to_dict(),
+                "runtime": {"build_id": "build-1"},
+            }
+        },
+    }
+
+    mapped = _prepare_action_for_host(action, tmp_path, compact_view=False)
+    continuation = mapped["host_execution"]["continuation"]
+
+    assert continuation["after_host_return"] == "recheck_core_status"
+    assert continuation["must_resume_when"] == ["CONTINUE"]
+    assert continuation["forbidden_success_when"] == ["CONTINUE"]
+    assert continuation["resume_operation"] == "resume_active_action"
+    assert continuation["same_action_rule"] == "thread_id_and_message_id_equal"
+    assert continuation["action_identity"] == {
+        "message_id": "action-continuation-contract",
+        "thread_id": "thread-continuation-contract",
+        "tick": 1,
+        "stage": "developer",
+    }
+
+
+def test_same_stage_next_action_is_new_identity_and_must_be_executed(tmp_path) -> None:
+    """developer B1→B2 保持 stage 不变，但 message_id 变化即为新 Action。"""
+
+    from auto_engineering.cli.dev_loop import _prepare_action_for_host
+
+    common = {
+        "action": "developer",
+        "stage": "developer",
+        "thread_id": "same-stage-thread",
+        "tick": 5,
+        "project_root": str(tmp_path),
+        "extensions": {
+            "ae": {
+                "execution_control": ExecutionControl(
+                    schema_version="1.0",
+                    disposition=ExecutionDisposition.CONTINUE,
+                    continuation_required=True,
+                    yield_allowed=False,
+                    allowed_stop_reasons=(),
+                ).to_dict(),
+                "runtime": {"build_id": "build-1"},
+            }
+        },
+    }
+    first = _prepare_action_for_host(
+        {**common, "message_id": "developer-b1"}, tmp_path,
+        compact_view=False,
+    )
+    second = _prepare_action_for_host(
+        {**common, "message_id": "developer-b2"}, tmp_path,
+        compact_view=False,
+    )
+
+    first_identity = first["host_execution"]["continuation"]["action_identity"]
+    second_identity = second["host_execution"]["continuation"]["action_identity"]
+    assert first_identity["stage"] == second_identity["stage"] == "developer"
+    assert first_identity["message_id"] != second_identity["message_id"]
+    assert first["host_execution"]["action_message_id"] != (
+        second["host_execution"]["action_message_id"]
+    )
+
+
+def test_host_action_provisions_only_action_scoped_work_file_parents(tmp_path) -> None:
+    """宿主可直接按合同写入结果，且不会把路径解析到项目根之外。"""
+
+    from auto_engineering.cli.dev_loop import _prepare_action_for_host
+
+    action = {
+        "action": "project_setup_required",
+        "stage": "project_setup",
+        "message_id": "action-work-file-parent",
+        "thread_id": "thread-work-file-parent",
+        "tick": 1,
+        "project_root": str(tmp_path),
+        "extensions": {
+            "ae": {
+                "execution_control": control_for_action(
+                    {"action": "project_setup_required"}
+                ).to_dict(),
+                "runtime": {"build_id": "build-1"},
+            }
+        },
+    }
+
+    mapped = _prepare_action_for_host(action, tmp_path, compact_view=False)
+    work_files = mapped["host_execution"]["work_files"]
+
+    assert all(
+        (tmp_path / path).parent.is_dir()
+        for path in work_files.values()
+    )
+
+
 
 
 def test_active_continue_lease_blocks_same_session_stop(tmp_path) -> None:
@@ -522,6 +610,57 @@ def test_cli_host_mapping_persists_lease_for_current_session(
     assert lease.host_session_id == "session-1"
 
 
+def test_cli_host_mapping_clears_lease_when_action_allows_yield(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    from auto_engineering.cli.dev_loop import _prepare_action_for_host
+
+    monkeypatch.setenv("CODEX_THREAD_ID", "session-1")
+    continue_action = {
+        "action": "developer",
+        "message_id": "action-continue",
+        "thread_id": "thread-1",
+        "extensions": {
+            "ae": {
+                "execution_control": ExecutionControl(
+                    schema_version="1.0",
+                    disposition=ExecutionDisposition.CONTINUE,
+                    continuation_required=True,
+                    yield_allowed=False,
+                    allowed_stop_reasons=(),
+                ).to_dict(),
+                "runtime": {"build_id": "test-build"},
+            }
+        },
+    }
+    _prepare_action_for_host(continue_action, tmp_path)
+    assert HostRunLeaseStore(tmp_path).load() is not None
+
+    waiting_action = {
+        "action": "gap_review",
+        "message_id": "action-wait-user",
+        "thread_id": "thread-1",
+        "extensions": {
+            "ae": {
+                "execution_control": ExecutionControl(
+                    schema_version="1.0",
+                    disposition=ExecutionDisposition.WAIT_USER,
+                    continuation_required=False,
+                    yield_allowed=True,
+                    allowed_stop_reasons=(),
+                    reason_code="gap_decisions_required",
+                ).to_dict(),
+                "runtime": {"build_id": "test-build"},
+            }
+        },
+    }
+
+    _prepare_action_for_host(waiting_action, tmp_path)
+
+    assert HostRunLeaseStore(tmp_path).load() is None
+
+
 def test_cli_host_mapping_fails_closed_without_session_identity(
     tmp_path, monkeypatch
 ) -> None:
@@ -571,7 +710,6 @@ def test_compact_host_view_uses_prompt_ref_without_inlining_action_context(
         "tick": 3,
         "project_root": str(tmp_path),
         "instruction": instruction,
-        "subagent_prompt": "duplicated worker prompt body",
         "context": {"large": "context body must not reach stdout"},
         "tasks": [{"id": "T1", "description": "large task body"}],
         "expected_format": {"files_changed": "[string]"},
@@ -617,6 +755,24 @@ def test_compact_host_view_uses_prompt_ref_without_inlining_action_context(
     assert action["context"] == {"large": "context body must not reach stdout"}
 
 
+def test_compact_host_view_preserves_bounded_action_feedback(
+    tmp_path,
+) -> None:
+    from auto_engineering.cli.dev_loop import _compact_host_action
+
+    feedback = "PROJECT_SETUP_SCOPE_VIOLATION: " + ("x" * 3000)
+    compact = _compact_host_action(
+        {
+            "action": "project_setup_required",
+            "message_id": "compact-feedback-action",
+            "feedback": feedback,
+        },
+        tmp_path,
+    )
+
+    assert compact["feedback"] == feedback[:2000]
+
+
 @pytest.mark.parametrize(
     ("action_name", "control_fields"),
     [
@@ -625,6 +781,16 @@ def test_compact_host_view_uses_prompt_ref_without_inlining_action_context(
             {
                 "current_gap_index": 1,
                 "total_gaps": 2,
+                "gap_review_contract": {
+                    "display_scope": "current_gap_only",
+                    "decision_count": 1,
+                    "gap_id_source": "current_gap.id",
+                    "forbidden_context": [
+                        "historical_gap_scan_gaps",
+                        "future_gap_details",
+                        "batch_decisions",
+                    ],
+                },
                 "auto_decision": {"gap_id": "gap-2", "resolution": "Fill"},
                 "gap_scan_summary": {
                     "design_doc_digest": "sha256:" + "a" * 64,
@@ -709,18 +875,30 @@ def test_compact_host_view_projects_only_runtime_control_and_native_launcher(
             "platform": "codex",
             "action_message_id": "compact-spawn-action",
             "work_files": {"outcomes": "outcomes.json"},
+            "operations": {
+                "finalize": {"argv": ["runner", "--finalize-result"]},
+                "validate": {"argv": ["runner", "--validate-result"]},
+                "submit": {"argv": ["runner", "--tick"]},
+            },
             "native_worker_tools": {"selection": "first"},
             "workers": [{
                 "worker_id": "architect-0",
                 "native_launch_prompt": "bounded-launcher",
                 "expected_isolation_evidence": "fork_turns=none",
-                "outcome_path": ".ae-state/host-runtime/worker-outcomes/a.json",
-                "execution_generation": 2,
-                "fencing_token": "fence-1",
-                "receipt_path": ".ae-state/spawn-proofs/receipt.json",
-                "record_worker_outcome": {
-                    "schema_version": "1.0",
-                    "argv_template": ["runner", "--record-worker-outcome"],
+                        "outcome_path": ".ae-state/host-runtime/worker-outcomes/a.json",
+                        "native_result_path": ".ae-state/host-runtime/native-results/a.json",
+                        "observation_path": ".ae-state/host-runtime/worker-observations/a.json",
+                        "execution_generation": 2,
+                    "fencing_token": "fence-1",
+                    "receipt_path": ".ae-state/spawn-proofs/receipt.json",
+                    "host_fact_mapping": {
+                        "native_worker_handle": "native_agent_or_thread_id",
+                        "actual_model": "native_model_or_unreported",
+                        "isolation_evidence": "fork_turns=none",
+                    },
+                    "record_worker_outcome": {
+                        "schema_version": "1.0",
+                        "argv_template": ["runner", "--record-worker-outcome"],
                 },
                 "receipt": {"large": "duplicate"},
                     "attestation": {"large": "duplicate"},
@@ -741,18 +919,50 @@ def test_compact_host_view_projects_only_runtime_control_and_native_launcher(
             "prompt_ref": "prompt.txt",
             "prompt_sha256": "a" * 64,
             "native_launch_prompt": "bounded-launcher",
-        "expected_isolation_evidence": "fork_turns=none",
-        "outcome_path": ".ae-state/host-runtime/worker-outcomes/a.json",
-        "execution_generation": 2,
+            "expected_isolation_evidence": "fork_turns=none",
+            "outcome_path": ".ae-state/host-runtime/worker-outcomes/a.json",
+            "native_result_path": ".ae-state/host-runtime/native-results/a.json",
+            "observation_path": ".ae-state/host-runtime/worker-observations/a.json",
+            "execution_generation": 2,
         "fencing_token": "fence-1",
         "receipt_path": ".ae-state/spawn-proofs/receipt.json",
+        "host_fact_mapping": {
+            "native_worker_handle": "native_agent_or_thread_id",
+            "actual_model": "native_model_or_unreported",
+            "isolation_evidence": "fork_turns=none",
+        },
         "record_worker_outcome": {
             "schema_version": "1.0",
             "argv_template": ["runner", "--record-worker-outcome"],
         },
     }]
     assert compact["host_execution"]["work_files"] == {"outcomes": "outcomes.json"}
+    assert compact["host_execution"]["operations"] == action["host_execution"]["operations"]
     assert compact["valid_plate_keys"] == ["counter"]
+
+
+def test_compact_gap_scan_preserves_canonical_section_refs(tmp_path) -> None:
+    from auto_engineering.cli.dev_loop import _compact_host_action
+
+    action = {
+        "action": "gap_scan",
+        "stage": "gap_scan",
+        "message_id": "compact-gap-scan",
+        "thread_id": "thread-1",
+        "context": {
+            "host_design_sections": [
+                {"section_ref": "Goal", "title": "Goal"},
+                {"section_ref": "Contract", "title": "Contract"},
+            ],
+        },
+    }
+
+    compact = _compact_host_action(action, tmp_path)
+
+    assert compact["gap_scan_section_refs"] == [
+        {"section_id": None, "section_ref": "Goal"},
+        {"section_id": None, "section_ref": "Contract"},
+    ]
 
 
 def test_compact_host_view_rejects_strict_worker_without_handoff_contract(
@@ -772,6 +982,35 @@ def test_compact_host_view_rejects_strict_worker_without_handoff_contract(
     }
 
     with pytest.raises(ValueError, match="HOST_ACTION_WORKER_CONTRACT_INVALID"):
+        _compact_host_action(action, tmp_path)
+
+
+def test_compact_host_view_rejects_coordinator_prompt_symlink_escape(
+    tmp_path,
+) -> None:
+    from auto_engineering.cli.dev_loop import _compact_host_action
+
+    outside = tmp_path.parent / "coordinator-prompt-outside.txt"
+    prompt = "coordinator prompt outside project root"
+    outside.write_text(prompt, encoding="utf-8")
+    prompt_dir = tmp_path / ".ae-state" / "effects" / "prompt"
+    prompt_dir.mkdir(parents=True)
+    link = prompt_dir / "coordinator-link.txt"
+    link.symlink_to(outside)
+    relative = link.relative_to(tmp_path).as_posix()
+    action = {
+        "action": "architect",
+        "message_id": "compact-symlink-action",
+        "thread_id": "thread-1",
+        "coordinator_prompt_ref": {
+            "path": relative,
+            "sha256": hashlib.sha256(prompt.encode()).hexdigest(),
+            "size_bytes": len(prompt.encode()),
+            "media_type": "text/plain; charset=utf-8",
+        },
+    }
+
+    with pytest.raises(ValueError, match="HOST_PROMPT_PATH_ESCAPE"):
         _compact_host_action(action, tmp_path)
 
 
@@ -846,9 +1085,10 @@ def test_cli_recovery_projection_forbids_duplicate_worker_spawn(
                 "capabilities": {
                     "may_drive_loop": False,
                     "may_spawn_workers": False,
-                },
-                "receipt_path": ".ae-state/spawn-proofs/architect.json",
-            }],
+                    },
+                    "receipt_path": ".ae-state/spawn-proofs/architect.json",
+                    "outcome_path": ".ae-state/host-runtime/worker-outcomes/architect.json",
+                }],
         },
     }
     expected = {
@@ -875,7 +1115,10 @@ def test_cli_recovery_projection_forbids_duplicate_worker_spawn(
     recovery = mapped["host_execution"]["recovery"]
     assert recovery["status"] == "worker_outcomes_committed"
     assert recovery["spawn_permitted"] is False
-    assert recovery["required_operation"] == "validate_then_submit_or_repair"
+    assert recovery["forbidden_operations"] == [
+        "spawn_worker", "record_worker_outcome",
+    ]
+    assert recovery["required_operation"] == "repair_coordinator_then_finalize"
     assert "spawn" not in mapped
     assert "workers" not in mapped["host_execution"]
     assert "native_worker_tools" not in mapped["host_execution"]
@@ -927,9 +1170,10 @@ def test_cli_result_repair_restores_rejected_outcomes_and_keeps_repair_mode(
                 "capabilities": {
                     "may_drive_loop": False,
                     "may_spawn_workers": False,
-                },
-                "receipt_path": ".ae-state/spawn-proofs/architect.json",
-            }],
+                    },
+                    "receipt_path": ".ae-state/spawn-proofs/architect.json",
+                    "outcome_path": ".ae-state/host-runtime/worker-outcomes/architect.json",
+                }],
         },
     }
     action_key = hashlib.sha256(action["message_id"].encode()).hexdigest()[:24]
@@ -959,7 +1203,10 @@ def test_cli_result_repair_restores_rejected_outcomes_and_keeps_repair_mode(
     mapped = _prepare_action_for_host(action, tmp_path)
 
     recovery = mapped["host_execution"]["recovery"]
-    assert recovery["status"] == "result_repair_worker_reuse"
+    assert recovery["status"] == "worker_outcomes_committed"
+    assert recovery["forbidden_operations"] == [
+        "spawn_worker", "record_worker_outcome",
+    ]
     assert "workers" not in mapped["host_execution"]
     assert "只修复 Coordinator" in mapped["instruction"]
     assert json.loads((work / "outcomes.json").read_text()) == {
@@ -1004,9 +1251,10 @@ def test_cli_recovery_finalizes_complete_native_files_before_respawn(
                 "capabilities": {
                     "may_drive_loop": False,
                     "may_spawn_workers": False,
-                },
-                "receipt_path": ".ae-state/spawn-proofs/component.json",
-            }],
+                    },
+                    "receipt_path": ".ae-state/spawn-proofs/component.json",
+                    "outcome_path": ".ae-state/host-runtime/worker-outcomes/component.json",
+                }],
         },
     }
     action_key = hashlib.sha256(
@@ -1038,3 +1286,73 @@ def test_cli_recovery_finalizes_complete_native_files_before_respawn(
     assert recovery["status"] == "native_outcomes_ready"
     assert recovery["spawn_permitted"] is False
     assert recovery["required_operation"] == "finalize_current_native_outcomes"
+
+
+def test_cli_recovery_does_not_promote_host_only_outcomes_to_native_ready(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    """宿主事实半成品不能绕过 Worker 业务产物校验进入恢复态。"""
+
+    from auto_engineering.cli.dev_loop import _prepare_action_for_host
+
+    monkeypatch.setenv("CODEX_THREAD_ID", "host-only-outcome-session")
+    action = {
+        "schema_version": "1.1",
+        "action": "component_verifier",
+        "stage": "component_verifier",
+        "message_id": "host-only-outcome-action",
+        "thread_id": "host-only-outcome-thread",
+        "tick": 5,
+        "project_root": str(tmp_path),
+        "extensions": {"ae": {"execution_control": ExecutionControl(
+            schema_version="1.0",
+            disposition=ExecutionDisposition.CONTINUE,
+            continuation_required=True,
+            yield_allowed=False,
+            allowed_stop_reasons=(),
+        ).to_dict(), "runtime": {"build_id": "test-build"}}},
+        "spawn": {
+            "contract_version": "1.0",
+            "count": 1,
+            "effort": "high",
+            "parallel": False,
+            "invocations": [{
+                "worker_id": "component_verifier-0",
+                "role": "component_verifier",
+                "prompt_ref": ".ae-state/effects/component.txt",
+                "prompt_sha256": "b" * 64,
+                "requested_effort": "high",
+                "isolation": "fresh_context",
+                "capabilities": {
+                    "may_drive_loop": False,
+                    "may_spawn_workers": False,
+                },
+                "receipt_path": ".ae-state/spawn-proofs/component.json",
+                "outcome_path": (
+                    ".ae-state/host-runtime/worker-outcomes/component.json"
+                ),
+            }],
+        },
+    }
+    action_key = hashlib.sha256(
+        action["message_id"].encode("utf-8")
+    ).hexdigest()[:24]
+    work = tmp_path / ".ae-state/host-runtime/work" / action_key
+    work.mkdir(parents=True)
+    # This is the exact failure shape observed in the real Claude run:
+    # host facts exist, but Worker business payload and summary do not.
+    (work / "outcomes.json").write_text(json.dumps({"outcomes": [{
+        "worker_id": "component_verifier-0",
+        "native_worker_handle": "agent-complete",
+        "status": "completed",
+        "actual_model": "unreported",
+        "isolation_evidence": "fresh_context",
+        "execution_generation": 1,
+        "fencing_token": "a" * 64,
+    }]}), encoding="utf-8")
+
+    mapped = _prepare_action_for_host(action, tmp_path)
+
+    assert "spawn" in mapped
+    assert "recovery" not in mapped["host_execution"]

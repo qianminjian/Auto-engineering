@@ -85,13 +85,27 @@ def test_conflicting_active_thread_returns_persisted_decision_gate(tmp_path: Pat
 
     assert action is not None
     assert action["action"] == "gate"
+    assert action["project_root"] == str(tmp_path.resolve())
     assert action["gate"]["id"] == "state_reconciliation"
     assert [item["id"] for item in action["gate"]["options"]] == [
         "reinitialize",
         "reconcile",
     ]
     assert action["extensions"]["ae"]["execution_control"]["disposition"] == "WAIT_USER"
-    assert store.recorded == [action]
+    assert action["expected_format"] == {
+        "gate_resolution": {
+            "gate_id": "state_reconciliation",
+            "resolution": "reinitialize | reconcile",
+        },
+    }
+    assert action["result_contract"] == {
+        "schema_version": "1.0",
+        "required": ["gate_resolution"],
+        "properties": {"gate_resolution": {"type": "object"}},
+        "additionalProperties": False,
+    }
+    assert "禁止提交顶层 decision" in action["instruction"]
+    assert store.recorded == []
     assert len(events.committed) == 1
     committed_event = events.committed[0]["events"][0]
     assert committed_event.causation_id == action["message_id"]

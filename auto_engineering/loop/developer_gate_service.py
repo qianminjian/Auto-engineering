@@ -47,10 +47,17 @@ class DeveloperGateService:
         batch_state: BatchState | None,
         developer_snapshot: Mapping[str, Any] | None,
     ) -> float:
+        # A repair Worker may legitimately add no files.  In that case the
+        # current result is empty, while the Batch still has the files that
+        # must be re-verified.  Keep the newest non-empty evidence source.
         snapshot_files = (
-            developer_snapshot.get("files_changed", [])
-            if developer_snapshot and not state.files_changed
-            else state.files_changed
+            state.files_changed
+            or (
+                developer_snapshot.get("files_changed", [])
+                if developer_snapshot
+                else []
+            )
+            or state.batch_changed_files
         )
         baseline = state.architecture_baseline or {}
         reached = batch_state.completed_batch_ids() if batch_state else set()

@@ -19,4 +19,23 @@ case "$PLUGIN_ROOT" in
         ;;
 esac
 
+# A content-addressed staging root (used by release acceptance) has no
+# `.claude/plugins` or `.codex/plugins` path marker. Prefer the host's native
+# signal in that case so a Claude process launched from the Codex desktop does
+# not inherit `CODEX_THREAD_ID` and bind the Action to the wrong adapter.
+if [ -n "${CLAUDECODE:-}" ] || \
+   [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] || \
+   [ -n "${CLAUDE_CODE:-}" ] || \
+   [ -n "${CLAUDE_CODE_ENTRYPOINT:-}" ] || \
+   [ -n "${CLAUDE_PROJECT_DIR:-}" ]; then
+        AE_HOST_PLATFORM="claude-code"
+        export AE_HOST_PLATFORM
+elif [ -z "${AE_HOST_PLATFORM:-}" ] && \
+     { [ -n "${CODEX_PLUGIN_ROOT:-}" ] || \
+       [ -n "${CODEX_THREAD_ID:-}" ] || \
+       [ -n "${CODEX_SANDBOX:-}" ]; }; then
+        AE_HOST_PLATFORM="codex"
+        export AE_HOST_PLATFORM
+fi
+
 exec "$PLUGIN_ROOT/scripts/ae-run" "$@"

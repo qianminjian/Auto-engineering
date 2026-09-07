@@ -26,7 +26,7 @@ Result 被 Assembler/Core 拒绝后，恢复投影把“可修复的 Coordinator
 | 层 | 修复 | 验收 |
 |---|---|---|
 | Execution Assembler | rejected journal 恢复 outcomes；身份/fingerprint 校验；拒绝替换 Worker 事实 | 同 Action 的拒绝→修复只保留首次 outcomes |
-| Host Adapter/Backend | 生成 `result_repair_worker_reuse` recovery 包，`spawn_permitted=false` | 修复上下文只包含 Coordinator 操作和 outcomes 引用 |
+| Host Adapter/Backend | 生成 `worker_outcomes_committed` recovery 包，`spawn_permitted=false` | 修复上下文只包含 Coordinator 操作和 outcomes 引用 |
 | Supervisor/CLI | 冲突立即 fail-closed；准备失败也投影 ERROR/Stop Report | 不再出现无确认、无错误的前台停止 |
 | Regression tests | 覆盖 journal 恢复、替换事实、无重启、冲突终止和 CLI repair 投影 | 相关 Host/ExecutionControl 套件全部通过 |
 

@@ -63,6 +63,7 @@ _CONTRACTS: Mapping[str, StagePromptContract] = MappingProxyType({
             "feedback", "research_and_design_context", "plan_revision",
             "design_authority", "design_decision_ledger", "batch_id_policy",
             "engineering_sections", "gap_decisions", "design_item_catalog",
+            "canonical_design_item_refs",
         ),
         ("design_document",),
     ),

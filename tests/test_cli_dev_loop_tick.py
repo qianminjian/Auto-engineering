@@ -15,6 +15,8 @@ from __future__ import annotations
 import hashlib
 import importlib
 import json
+import os
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -45,6 +47,7 @@ def test_public_cli_records_host_worker_fact_without_manual_outcomes_json(
         ["dev-loop", "--init", "实现 X", "--project-root", str(tmp_path)],
     )
     assert initialized.exit_code == 0, initialized.output
+    assert not (tmp_path / "ae.toml").exists()
     action = _last_json_line(initialized.output)
 
     from auto_engineering.host import HostPlatform
@@ -84,6 +87,434 @@ def test_public_cli_records_host_worker_fact_without_manual_outcomes_json(
     assert json.loads(shared_path.read_text(encoding="utf-8"))["outcomes"][0][
         "native_worker_handle"
     ] == "codex-native-1"
+
+
+def test_public_cli_routes_invalid_worker_artifact_to_failure_outcome(
+    tmp_path: Path,
+) -> None:
+    """私有 Worker 产物非法时，公开 CLI 仍返回统一失败事实。"""
+
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\nname='invalid-worker-artifact-fixture'\n", encoding="utf-8"
+    )
+    (tmp_path / "src").mkdir()
+    (tmp_path / "tests").mkdir()
+    runner = CliRunner()
+    initialized = runner.invoke(
+        main,
+        ["dev-loop", "--init", "实现 X", "--project-root", str(tmp_path)],
+    )
+    assert initialized.exit_code == 0, initialized.output
+    action = _last_json_line(initialized.output)
+
+    from auto_engineering.host import HostPlatform
+    from auto_engineering.host.adapters import adapter_for
+
+    adapter = adapter_for(HostPlatform.CLAUDE_CODE)
+    profile = adapter.profile(
+        detected=adapter.capabilities,
+        authorized=adapter.capabilities,
+    )
+    mapped = adapter.map_action(action, profile=profile).payload
+    worker = mapped["host_execution"]["workers"][0]
+    private_path = tmp_path / worker["outcome_path"]
+    private_path.parent.mkdir(parents=True, exist_ok=True)
+    malformed_private = {"batch_id": "private-invalid"}
+    private_path.write_text(json.dumps(malformed_private), encoding="utf-8")
+
+    recorded = runner.invoke(
+        main,
+        [
+            "dev-loop", "--record-worker-outcome",
+            "--worker-id", worker["worker_id"],
+            "--worker-status", "completed",
+            "--native-worker-handle", "claude-native-1",
+            "--actual-model", "sonnet",
+            "--isolation-evidence", "fresh_context",
+            "--native-result-file", str(tmp_path / worker["native_result_path"]),
+            "--project-root", str(tmp_path),
+        ],
+    )
+
+    assert recorded.exit_code == 0, recorded.output
+    body = _last_json_line(recorded.output)
+    assert body["status"] == "worker_outcome_recorded"
+    assert body["failure_code"] == "HOST_WORKER_OUTPUT_INVALID"
+    assert body["outcome"]["status"] == "failed"
+    assert json.loads(private_path.read_text(encoding="utf-8")) == malformed_private
+    shared_path = tmp_path / mapped["host_execution"]["work_files"]["outcomes"]
+    assert json.loads(shared_path.read_text(encoding="utf-8"))["outcomes"][0][
+        "status"
+    ] == "failed"
+
+
+def test_public_cli_fails_closed_with_structured_error_when_native_handle_is_missing(
+    tmp_path: Path,
+) -> None:
+    """缺少原生句柄时停在宿主边界，不写共享 outcomes 或伪造完成事实。"""
+
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\nname='missing-handle-fixture'\n", encoding="utf-8"
+    )
+    (tmp_path / "src").mkdir()
+    (tmp_path / "tests").mkdir()
+    runner = CliRunner()
+    initialized = runner.invoke(
+        main,
+        ["dev-loop", "--init", "实现 X", "--project-root", str(tmp_path)],
+    )
+    assert initialized.exit_code == 0, initialized.output
+    action = _last_json_line(initialized.output)
+
+    from auto_engineering.host import HostPlatform
+    from auto_engineering.host.adapters import adapter_for
+
+    adapter = adapter_for(HostPlatform.CLAUDE_CODE)
+    profile = adapter.profile(
+        detected=adapter.capabilities,
+        authorized=adapter.capabilities,
+    )
+    mapped = adapter.map_action(action, profile=profile).payload
+    worker = mapped["host_execution"]["workers"][0]
+    private_path = tmp_path / worker["outcome_path"]
+    private_path.parent.mkdir(parents=True, exist_ok=True)
+    private_path.write_text(json.dumps({
+        "worker_id": worker["worker_id"],
+        "status": "completed",
+        "payload": {"plan": "按设计实现"},
+        "summary": "Architect 完成规划",
+    }), encoding="utf-8")
+
+    failed = runner.invoke(
+        main,
+        [
+            "dev-loop", "--record-worker-outcome",
+            "--worker-id", worker["worker_id"],
+            "--worker-status", "completed",
+            "--actual-model", "unreported",
+            "--isolation-evidence", "fresh_context",
+            "--project-root", str(tmp_path),
+        ],
+    )
+
+    assert failed.exit_code == 1, failed.output
+    body = _last_json_line(failed.output)
+    assert body["error_code"] == "HOST_WORKER_ATTESTATION_MISSING"
+    assert body["worker_id"] == worker["worker_id"]
+    assert body["stop_reason"] == "native_worker_handle_missing"
+    assert not (tmp_path / mapped["host_execution"]["work_files"]["outcomes"]).exists()
+
+
+def test_public_cli_records_native_result_when_worker_did_not_write_private_outcome(
+    tmp_path: Path,
+) -> None:
+    """原生返回漏写 outcome 时，公开 CLI 不应把可恢复问题升级为人工 Gate。"""
+
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\nname='native-result-fixture'\n", encoding="utf-8"
+    )
+    (tmp_path / "src").mkdir()
+    (tmp_path / "tests").mkdir()
+    runner = CliRunner()
+    initialized = runner.invoke(
+        main,
+        ["dev-loop", "--init", "实现 X", "--project-root", str(tmp_path)],
+    )
+    assert initialized.exit_code == 0, initialized.output
+    action = _last_json_line(initialized.output)
+
+    from auto_engineering.host import HostPlatform
+    from auto_engineering.host.adapters import adapter_for
+
+    adapter = adapter_for(HostPlatform.CLAUDE_CODE)
+    profile = adapter.profile(
+        detected=adapter.capabilities,
+        authorized=adapter.capabilities,
+    )
+    mapped = adapter.map_action(action, profile=profile).payload
+    worker = mapped["host_execution"]["workers"][0]
+    native_path = tmp_path / worker["native_result_path"]
+    native_path.parent.mkdir(parents=True, exist_ok=True)
+    native_path.write_text(json.dumps({
+        "agentId": "claude-native-1",
+        "content": [{
+            "type": "text",
+            "text": "```json\n{\"batch_id\":\"B1\","
+            "\"test_results\":{\"passed\":8}}\n```",
+        }],
+    }), encoding="utf-8")
+
+    recorded = runner.invoke(
+        main,
+        [
+            "dev-loop", "--record-worker-outcome",
+            "--worker-id", worker["worker_id"],
+            "--worker-status", "completed",
+            "--native-worker-handle", "claude-native-1",
+            "--native-result-file", str(native_path),
+            "--actual-model", "unreported",
+            "--isolation-evidence", "fresh_context",
+            "--project-root", str(tmp_path),
+        ],
+    )
+    assert recorded.exit_code == 0, recorded.output
+    private = json.loads(
+        (tmp_path / worker["outcome_path"]).read_text(encoding="utf-8")
+    )
+    assert private["worker_id"] == worker["worker_id"]
+    assert private["payload"]["batch_id"] == "B1"
+    assert _last_json_line(recorded.output)["status"] == "worker_outcome_recorded"
+
+
+def test_public_cli_can_stage_native_result_from_stdin(
+    tmp_path: Path,
+) -> None:
+    """宿主无需先用 shell 写临时文件即可完成同一回写边界。"""
+
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\nname='native-stdin-fixture'\n", encoding="utf-8"
+    )
+    (tmp_path / "src").mkdir()
+    (tmp_path / "tests").mkdir()
+    runner = CliRunner()
+    initialized = runner.invoke(
+        main,
+        ["dev-loop", "--init", "实现 X", "--project-root", str(tmp_path)],
+    )
+    assert initialized.exit_code == 0, initialized.output
+    action = _last_json_line(initialized.output)
+
+    from auto_engineering.host import HostPlatform
+    from auto_engineering.host.adapters import adapter_for
+
+    adapter = adapter_for(HostPlatform.CLAUDE_CODE)
+    profile = adapter.profile(
+        detected=adapter.capabilities,
+        authorized=adapter.capabilities,
+    )
+    mapped = adapter.map_action(action, profile=profile).payload
+    worker = mapped["host_execution"]["workers"][0]
+    native_result = {
+        "agentId": "claude-native-stdin-1",
+        "content": [{
+            "type": "text",
+            "text": "```json\n{\"batch_id\":\"B1\","
+            "\"test_results\":{\"passed\":9}}\n```",
+        }],
+    }
+
+    recorded = runner.invoke(
+        main,
+        [
+            "dev-loop", "--record-worker-outcome",
+            "--worker-id", worker["worker_id"],
+            "--worker-status", "completed",
+            "--native-worker-handle", "claude-native-stdin-1",
+            "--native-result-file", worker["native_result_path"],
+            "--native-result-stdin",
+            "--actual-model", "unreported",
+            "--isolation-evidence", "fresh_context",
+            "--project-root", str(tmp_path),
+        ],
+        input=json.dumps(native_result, ensure_ascii=False),
+    )
+
+    assert recorded.exit_code == 0, recorded.output
+    native_path = tmp_path / worker["native_result_path"]
+    assert json.loads(native_path.read_text(encoding="utf-8")) == native_result
+    private = json.loads(
+        (tmp_path / worker["outcome_path"]).read_text(encoding="utf-8")
+    )
+    assert private["payload"]["test_results"]["passed"] == 9
+
+
+def test_tick_preflight_projects_attestation_repair_before_worker_failure(
+    tmp_path: Path,
+) -> None:
+    """宿主漏回写不能先消耗 Core 的 Worker 失败预算。"""
+    from auto_engineering.cli.dev_loop import (
+        _project_submitted_worker_failure_recovery,
+    )
+    from auto_engineering.host.path_contract import worker_outcome_path
+    from auto_engineering.host.spawn_contract import WorkerInvocationSpec
+
+    invocation = WorkerInvocationSpec(
+        worker_id="architect-0",
+        role="architect",
+        prompt_ref=".ae-state/effects/prompt/worker.txt",
+        prompt_sha256="a" * 64,
+        requested_effort="xhigh",
+        isolation="fresh_context",
+        capabilities={
+            "may_drive_loop": False,
+            "may_spawn_workers": False,
+        },
+        receipt_path=".ae-state/spawn-proofs/architect-0.json",
+        outcome_path=".ae-state/host-runtime/worker-outcomes/architect-0.json",
+    )
+    invocation = WorkerInvocationSpec(
+        **{
+            **invocation.to_dict(),
+            "outcome_path": worker_outcome_path(
+                "architect-action-preflight", "architect-0", 1
+            ),
+        }
+    )
+    action = {
+        "schema_version": "1.1",
+        "message_id": "architect-action-preflight",
+        "thread_id": "thread-preflight",
+        "stage": "architect",
+        "action": "architect",
+        "project_root": str(tmp_path),
+        "execution_generation": 1,
+        "spawn": {
+            "contract_version": "1.0",
+            "count": 1,
+            "parallel": False,
+            "effort": "xhigh",
+            "invocations": [invocation.to_dict()],
+        },
+        "host_execution": {
+            "platform": "codex",
+            "workers": [{
+                "worker_id": invocation.worker_id,
+                "outcome_path": invocation.outcome_path,
+                "record_worker_outcome": {
+                    "argv_template": ["runner", "--record-worker-outcome"],
+                },
+            }],
+            "work_files": {
+                "outcomes": ".ae-state/host-runtime/work/a/outcomes.json",
+                "coordinator_result": (
+                    ".ae-state/host-runtime/work/a/coordinator-result.json"
+                ),
+                "result": ".ae-state/host-runtime/work/a/result.json",
+            },
+        },
+    }
+    private_path = tmp_path / invocation.outcome_path
+    private_path.parent.mkdir(parents=True, exist_ok=True)
+    private_path.write_text(json.dumps({
+        "worker_id": invocation.worker_id,
+        "status": "completed",
+        "payload": {"plan": "按设计实现"},
+        "summary": "Architect 已完成规划",
+    }), encoding="utf-8")
+    journal_path = (
+        tmp_path / ".ae-state/host-runtime/outcomes/"
+        / f"{action['message_id']}.json"
+    )
+    journal_path.parent.mkdir(parents=True, exist_ok=True)
+    journal_path.write_text(
+        json.dumps({"status": "worker_failed", "failure_attempt": 2}),
+        encoding="utf-8",
+    )
+
+    recovered = _project_submitted_worker_failure_recovery(
+        action=action,
+        submitted_result={
+            "spawned": False,
+            "spawn_error_code": "HOST_WORKER_FAILED",
+            "spawn_retry_attempt": 1,
+        },
+        root=tmp_path,
+    )
+
+    assert recovered is not None
+    assert recovered["host_execution"]["recovery"]["status"] == (
+        "worker_attestation_pending"
+    )
+    assert recovered["host_execution"]["recovery"]["spawn_permitted"] is False
+    assert "spawn" not in recovered
+
+
+def test_public_cli_requires_explicit_checkpoint_import_before_event_restore(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\nname='checkpoint-import-fixture'\n", encoding="utf-8"
+    )
+    (tmp_path / "src").mkdir()
+    from auto_engineering.engine.state import EngineState
+    from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
+
+    checkpoint_path = tmp_path / ".ae-state" / "checkpoints.db"
+    checkpoint_path.parent.mkdir()
+    with SQLiteCheckpointStore[EngineState](checkpoint_path) as store:
+        state = EngineState(thread_id="thread-import", current_stage="architect")
+        checkpoint_id = store.save(state, round=0, step=0)
+        store.record_protocol_action({
+            "message_id": "action-import",
+            "thread_id": "thread-import",
+            "action": "architect",
+        })
+        assert store.reserve_project_thread("thread-import") == "thread-import"
+
+    runner = CliRunner()
+    dev_loop_module = importlib.import_module("auto_engineering.cli.dev_loop")
+    monkeypatch.setattr(
+        dev_loop_module, "_prepare_action_for_host", lambda action, _root: action
+    )
+    imported = runner.invoke(
+        main,
+        [
+            "dev-loop", "--import-checkpoint", checkpoint_id,
+            "--project-root", str(tmp_path),
+        ],
+    )
+
+    assert imported.exit_code == 0, imported.output
+    assert _last_json_line(imported.output)["message_id"] == "action-import"
+    from auto_engineering.loop.event_store import SQLiteEventStore
+
+    with SQLiteEventStore(tmp_path / ".ae-state" / "events.db") as events:
+        assert events.load_projection("thread-import") is not None
+        assert events.load_action_snapshot("thread-import")["message_id"] == (
+            "action-import"
+        )
+
+
+def test_public_tick_rejects_checkpoint_only_runtime(
+    tmp_path: Path,
+) -> None:
+    """普通 tick 不能把 checkpoint-only 状态当作 EventStore 运行。"""
+
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\nname='checkpoint-only-tick'\n", encoding="utf-8"
+    )
+    (tmp_path / "src").mkdir()
+    from auto_engineering.engine.state import EngineState
+    from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
+
+    checkpoint_path = tmp_path / ".ae-state" / "checkpoints.db"
+    checkpoint_path.parent.mkdir()
+    with SQLiteCheckpointStore[EngineState](checkpoint_path) as store:
+        state = EngineState(
+            thread_id="checkpoint-only-thread",
+            current_stage="architect",
+            requirement="旧状态不应驱动新 loop",
+        )
+        store.save(state, round=0, step=0)
+        store.record_protocol_action({
+            "message_id": "checkpoint-only-action",
+            "thread_id": state.thread_id,
+            "action": "architect",
+        })
+        assert store.reserve_project_thread(state.thread_id) == state.thread_id
+
+    result_file = tmp_path / "result.json"
+    result_file.write_text("{}", encoding="utf-8")
+    result = CliRunner().invoke(
+        main,
+        [
+            "dev-loop", "--tick", "--result", str(result_file),
+            "--project-root", str(tmp_path),
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "EventStore 无状态投影" in str(result.exception)
 
 
 def test_worker_execution_identity_reuses_same_session_and_rotates_on_takeover(
@@ -134,6 +565,55 @@ def test_worker_execution_identity_reuses_same_session_and_rotates_on_takeover(
     assert same_session["fencing_token"] != takeover["fencing_token"]
 
 
+def test_worker_execution_identity_reuses_fact_generation_during_native_recovery(
+    tmp_path, monkeypatch
+) -> None:
+    """跨宿主接管时，已有 native-result 必须继续绑定原代路径。"""
+    from auto_engineering.cli.dev_loop import _bind_worker_execution_identity
+    from auto_engineering.host.path_contract import worker_native_result_path
+    from auto_engineering.host.runtime_driver import HostRunLease, HostRunLeaseStore
+
+    monkeypatch.setenv("AE_HOST_PLATFORM", "claude-code")
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "session-a")
+    action = {
+        "message_id": "action-native-recovery",
+        "thread_id": "thread-native-recovery",
+        "spawn": {"invocations": [{"worker_id": "architect-0"}]},
+    }
+    first = _bind_worker_execution_identity(action, tmp_path)
+    lease_action = {
+        **first,
+        "extensions": {
+            "ae": {
+                "execution_control": {
+                    "schema_version": "1.0",
+                    "disposition": "CONTINUE",
+                    "continuation_required": True,
+                    "yield_allowed": False,
+                    "allowed_stop_reasons": [],
+                },
+                "runtime": {"build_id": "build-1"},
+            }
+        },
+    }
+    HostRunLeaseStore(tmp_path).save(HostRunLease.from_action(
+        lease_action,
+        platform="claude-code",
+        host_session_id="session-a",
+    ))
+    native_path = tmp_path / worker_native_result_path(
+        action["message_id"], "architect-0", 1,
+    )
+    native_path.parent.mkdir(parents=True, exist_ok=True)
+    native_path.write_text("{}", encoding="utf-8")
+
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "session-b")
+    takeover = _bind_worker_execution_identity(action, tmp_path)
+
+    assert takeover["execution_generation"] == 1
+    assert takeover["fencing_token"] != first["fencing_token"]
+
+
 def test_worker_retry_after_failure_journal_gets_new_stable_generation(
     tmp_path, monkeypatch
 ) -> None:
@@ -156,9 +636,13 @@ def test_worker_retry_after_failure_journal_gets_new_stable_generation(
 
     retry = _bind_worker_execution_identity(action, tmp_path)
     retry_read = _bind_worker_execution_identity(action, tmp_path)
+    preflight = _bind_worker_execution_identity(
+        action, tmp_path, include_failure_journal=False
+    )
     assert first["execution_generation"] == 1
     assert retry["execution_generation"] == 2
     assert retry_read["execution_generation"] == 2
+    assert preflight["execution_generation"] == 1
     assert retry["fencing_token"] != first["fencing_token"]
 
 
@@ -207,6 +691,21 @@ def test_prepare_and_finalize_mapping_share_the_same_worker_artifact_generation(
     remapped_worker = remapped["host_execution"]["workers"][0]
     assert prepared_worker["outcome_path"] == remapped_worker["outcome_path"]
 
+    private_path = tmp_path / prepared_worker["outcome_path"]
+    private_path.parent.mkdir(parents=True, exist_ok=True)
+    private_path.write_text(json.dumps({
+        "worker_id": prepared_worker["worker_id"],
+        "status": "completed",
+        "payload": {"plan": "按设计实现"},
+        "summary": "Worker 已完成业务产出",
+    }), encoding="utf-8")
+    resumed = _prepare_action_for_host(action, tmp_path, compact_view=False)
+    assert "spawn" not in resumed
+    assert resumed["host_execution"]["recovery"]["status"] == (
+        "worker_attestation_pending"
+    )
+    assert resumed["host_execution"]["recovery"]["spawn_permitted"] is False
+
 
 def test_cleanup_removes_generation_bound_worker_artifact(
     tmp_path, monkeypatch
@@ -254,7 +753,7 @@ def test_cleanup_removes_generation_bound_worker_artifact(
     work_dir = tmp_path / ".ae-state/host-runtime/work/" / hashlib.sha256(
         b"action-cleanup"
     ).hexdigest()[:24]
-    work_dir.mkdir(parents=True)
+    work_dir.mkdir(parents=True, exist_ok=True)
     result_file = work_dir / "result.json"
     result_file.write_text("{}", encoding="utf-8")
 
@@ -266,6 +765,39 @@ def test_cleanup_removes_generation_bound_worker_artifact(
     )
 
     assert not private_path.exists()
+
+
+def test_cleanup_preserves_work_files_until_core_accepts_result(
+    tmp_path, monkeypatch
+) -> None:
+    """Core 拒绝候选 Result 时必须保留工作文件供同一 Action 修复。"""
+
+    from auto_engineering.cli.dev_loop import _cleanup_completed_action_work_files
+
+    monkeypatch.setenv("AE_HOST_PLATFORM", "codex")
+    monkeypatch.setenv("CODEX_THREAD_ID", "session-cleanup-repair")
+    message_id = "action-cleanup-repair"
+    import hashlib
+    work_dir = tmp_path / ".ae-state/host-runtime/work/" / hashlib.sha256(
+        message_id.encode()
+    ).hexdigest()[:24]
+    work_dir.mkdir(parents=True, exist_ok=True)
+    files = {
+        name: work_dir / name
+        for name in ("outcomes.json", "coordinator-result.json", "result.json")
+    }
+    for path in files.values():
+        path.write_text("{}", encoding="utf-8")
+
+    _cleanup_completed_action_work_files(
+        root=tmp_path,
+        result_file=files["result.json"],
+        completed_action={"message_id": message_id},
+        next_action={"message_id": "next-action"},
+        commit_confirmed=False,
+    )
+
+    assert all(path.exists() for path in files.values())
 
 
 def test_status_uses_bound_host_mapping_for_active_action(tmp_path, monkeypatch) -> None:
@@ -281,7 +813,7 @@ def test_status_uses_bound_host_mapping_for_active_action(tmp_path, monkeypatch)
     assert initialized.exit_code == 0, initialized.output
     calls = []
 
-    def spy(action, root):
+    def spy(action, root, **kwargs):
         calls.append((action, root))
         return action
 
@@ -289,6 +821,326 @@ def test_status_uses_bound_host_mapping_for_active_action(tmp_path, monkeypatch)
     dev_loop_module.run_tick_status(tmp_path)
 
     assert calls
+
+
+def test_status_reports_legacy_active_action_without_crashing(tmp_path, monkeypatch, capsys) -> None:
+    """旧在途 Action 只能给出稳定恢复提示，不能让 status 裸崩。"""
+    dev_loop_module = importlib.import_module("auto_engineering.cli.dev_loop")
+
+    initialized = CliRunner().invoke(
+        main,
+        ["dev-loop", "--init", "实现 X", "--project-root", str(tmp_path)],
+    )
+    assert initialized.exit_code == 0, initialized.output
+    monkeypatch.setattr(
+        dev_loop_module,
+        "_load_active_action",
+        lambda thread_id, store, events: {
+            "message_id": "legacy-action",
+            "thread_id": thread_id,
+            "action": "developer",
+            "stage": "developer",
+            "spawn": {"agents": []},
+        },
+    )
+    from auto_engineering.host.spawn_contract import SpawnContractError
+    monkeypatch.setattr(
+        dev_loop_module,
+        "_map_bound_action_for_host",
+        lambda action, root, **kwargs: (_ for _ in ()).throw(
+            SpawnContractError("SPAWN_LEGACY_FIELD_REJECTED")
+        ),
+    )
+
+    dev_loop_module.run_tick_status(tmp_path)
+    summary = json.loads(capsys.readouterr().out)
+
+    assert summary["active_action_error"] == "SPAWN_LEGACY_FIELD_REJECTED"
+    assert summary["recovery_required"] is True
+
+
+def test_resume_projects_legacy_active_action_as_recovery_gate(
+    tmp_path, monkeypatch
+) -> None:
+    """resume 遇到旧 Action 时必须输出可执行的恢复 Gate。"""
+    dev_loop_module = importlib.import_module("auto_engineering.cli.dev_loop")
+    initialized = CliRunner().invoke(
+        main,
+        ["dev-loop", "--init", "实现 X", "--project-root", str(tmp_path)],
+    )
+    assert initialized.exit_code == 0, initialized.output
+    thread_id = _last_json_line(initialized.output)["thread_id"]
+
+    from auto_engineering.host.spawn_contract import SpawnContractError
+    monkeypatch.setattr(
+        dev_loop_module,
+        "_prepare_action_for_host",
+        lambda action, root: (_ for _ in ()).throw(
+            SpawnContractError("SPAWN_LEGACY_FIELD_REJECTED")
+        ),
+    )
+
+    resumed = CliRunner().invoke(
+        main,
+        ["dev-loop", "--resume", thread_id, "--project-root", str(tmp_path)],
+    )
+
+    assert resumed.exit_code == 0, resumed.output
+    recovery = _last_json_line(resumed.output)
+    assert recovery["action"] == "gate"
+    assert recovery["gate"]["id"] == "state_reconciliation"
+    assert recovery["gate"]["reason_codes"] == [
+        "legacy_active_action_requires_reinitialize"
+    ]
+
+
+def test_resume_projects_legacy_active_action_to_reinitialization_gate(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """旧 Action 不可复用时，恢复必须给出可执行的状态协调 Gate。"""
+    dev_loop_module = importlib.import_module("auto_engineering.cli.dev_loop")
+    initialized = CliRunner().invoke(
+        main,
+        ["dev-loop", "--init", "实现 X", "--project-root", str(tmp_path)],
+    )
+    assert initialized.exit_code == 0, initialized.output
+    thread_id = _last_json_line(initialized.output)["thread_id"]
+
+    from auto_engineering.host.spawn_contract import SpawnContractError
+
+    monkeypatch.setattr(
+        dev_loop_module,
+        "_prepare_action_for_host",
+        lambda action, root: (_ for _ in ()).throw(
+            SpawnContractError("SPAWN_LEGACY_FIELD_REJECTED")
+        ),
+    )
+
+    resumed = CliRunner().invoke(
+        main,
+        ["dev-loop", "--resume", thread_id, "--project-root", str(tmp_path)],
+    )
+
+    assert resumed.exit_code == 0, resumed.output
+    recovery = _last_json_line(resumed.output)
+    assert recovery["action"] == "gate"
+    assert recovery["gate"]["id"] == "state_reconciliation"
+    assert recovery["gate"]["reason_codes"] == [
+        "legacy_active_action_requires_reinitialize"
+    ]
+    assert recovery["gate"]["options"] == [
+        {"id": "reinitialize", "label": "重新初始化"},
+    ]
+    assert "subagent_prompt" not in recovery
+
+
+def test_legacy_recovery_gate_is_persisted_before_host_receives_it(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """旧 Action 恢复 Gate 必须落入 EventStore，下一次 tick 不得再次读旧 Action。"""
+    dev_loop_module = importlib.import_module("auto_engineering.cli.dev_loop")
+    runner = CliRunner()
+    initialized = runner.invoke(
+        main,
+        ["dev-loop", "--init", "实现 X", "--project-root", str(tmp_path)],
+    )
+    assert initialized.exit_code == 0, initialized.output
+    thread_id = _last_json_line(initialized.output)["thread_id"]
+
+    original_prepare = dev_loop_module._prepare_action_for_host
+    rejected = False
+
+    def reject_legacy_once(action, root):
+        nonlocal rejected
+        if not rejected:
+            rejected = True
+            from auto_engineering.host.spawn_contract import SpawnContractError
+
+            raise SpawnContractError("SPAWN_LEGACY_FIELD_REJECTED")
+        return original_prepare(action, root)
+
+    monkeypatch.setattr(dev_loop_module, "_prepare_action_for_host", reject_legacy_once)
+
+    resumed = runner.invoke(
+        main,
+        ["dev-loop", "--resume", thread_id, "--project-root", str(tmp_path)],
+    )
+    assert resumed.exit_code == 0, resumed.output
+    recovery = _last_json_line(resumed.output)
+
+    from auto_engineering.loop.event_store import SQLiteEventStore
+
+    events = SQLiteEventStore(tmp_path / ".ae-state" / "events.db")
+    try:
+        persisted = events.load_action_snapshot(thread_id)
+        state = events.load_projection(thread_id)
+    finally:
+        events.close()
+    assert persisted is not None
+    assert persisted["message_id"] == recovery["message_id"]
+    assert persisted["action"] == "gate"
+    assert state is not None
+    assert state.state_reconciliation is not None
+    assert state.state_reconciliation["status"] == "waiting_user"
+
+
+def test_legacy_recovery_gate_reinitializes_without_resuming_old_action(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """旧 Action 经 Gate 选择重新初始化后，旧 thread 关闭且新 Action 可继续。"""
+    design = tmp_path / "design" / "current.md"
+    design.parent.mkdir()
+    design.write_text(
+        "## B1 页面\n\n### C1 容器\n明确容器契约。\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\nname='legacy-recovery-fixture'\n", encoding="utf-8"
+    )
+    dev_loop_module = importlib.import_module("auto_engineering.cli.dev_loop")
+    runner = CliRunner()
+    initialized = runner.invoke(
+        main,
+        [
+            "dev-loop", "--init", "实现 X", "--design-doc", "design/current.md",
+            "--project-root", str(tmp_path),
+        ],
+    )
+    assert initialized.exit_code == 0, initialized.output
+    first_action = _last_json_line(initialized.output)
+    old_thread_id = first_action["thread_id"]
+
+    original_prepare = dev_loop_module._prepare_action_for_host
+    rejected = False
+
+    def reject_legacy_once(action, root):
+        nonlocal rejected
+        if not rejected:
+            rejected = True
+            from auto_engineering.host.spawn_contract import SpawnContractError
+
+            raise SpawnContractError("SPAWN_LEGACY_FIELD_REJECTED")
+        return original_prepare(action, root)
+
+    monkeypatch.setattr(dev_loop_module, "_prepare_action_for_host", reject_legacy_once)
+    resumed = runner.invoke(
+        main,
+        ["dev-loop", "--resume", old_thread_id, "--project-root", str(tmp_path)],
+    )
+    assert resumed.exit_code == 0, resumed.output
+    gate = _last_json_line(resumed.output)
+
+    result_file = tmp_path / "legacy-reinitialize-result.json"
+    result_file.write_text(json.dumps({
+        "schema_version": "1.1",
+        "message_type": "result",
+        "message_id": "legacy-reinitialize-result",
+        "thread_id": gate["thread_id"],
+        "tick": gate["tick"],
+        "stage": gate["stage"],
+        "causation_id": gate["message_id"],
+        "correlation_id": gate["correlation_id"],
+        "extensions": {},
+        "gate_resolution": {
+            "gate_id": "state_reconciliation",
+            "resolution": "reinitialize",
+        },
+    }), encoding="utf-8")
+    # Gate 产生后设计文件发生变化时，合法的 reinitialize Result 仍必须
+    # 能通过只读校验；否则恢复决策永远到不了真正的 Tick 路径。
+    design.write_text(
+        "## B1 页面\n\n### C1 容器\n重新绑定设计来源。\n",
+        encoding="utf-8",
+    )
+    validated = runner.invoke(
+        main,
+        [
+            "dev-loop", "--validate-result", str(result_file),
+            "--project-root", str(tmp_path),
+        ],
+    )
+    assert validated.exit_code == 0, validated.output
+    assert _last_json_line(validated.output)["action"] == "validation_passed"
+    continued = runner.invoke(
+        main,
+        [
+            "dev-loop", "--tick", "--result", str(result_file),
+            "--project-root", str(tmp_path),
+        ],
+    )
+    assert continued.exit_code == 0, continued.output
+    new_action = _last_json_line(continued.output)
+    assert new_action["thread_id"] != old_thread_id
+    assert new_action["action"] != "error"
+    assert "subagent_prompt" not in new_action
+
+
+def test_legacy_recovery_projection_rejects_missing_identity_and_other_errors(
+    tmp_path: Path,
+) -> None:
+    """恢复投影对身份缺失和非 legacy 错误都保持 fail-closed。"""
+    from auto_engineering.cli.legacy_action_recovery import (
+        build_legacy_action_recovery_gate,
+        host_mapping_error_action,
+    )
+
+    with pytest.raises(ValueError, match="LEGACY_ACTION_IDENTITY_MISSING"):
+        build_legacy_action_recovery_gate(
+            {}, tmp_path, expected_format={}, result_contract={}
+        )
+
+    ordinary = host_mapping_error_action(
+        {"thread_id": "thread", "tick": 2, "stage": "developer"},
+        ValueError("ACTION_INVALID"),
+        expected_format={},
+        result_contract={},
+    )
+    assert ordinary["error_code"] == "ACTION_INVALID"
+
+    malformed_legacy = host_mapping_error_action(
+        {"thread_id": "thread"},
+        ValueError("SPAWN_LEGACY_FIELD_REJECTED"),
+        expected_format={},
+        result_contract={},
+    )
+    assert malformed_legacy["error_code"] == "SPAWN_LEGACY_FIELD_REJECTED"
+
+
+def test_legacy_recovery_persistence_is_idempotent(tmp_path: Path) -> None:
+    """同一旧 Action 重复投影只保留一个恢复 Gate 事件。"""
+    from auto_engineering.cli.legacy_action_recovery import (
+        persist_legacy_action_recovery_gate,
+    )
+    from auto_engineering.engine.state import EngineState
+    from auto_engineering.loop.event_store import SQLiteEventStore
+
+    events = SQLiteEventStore(tmp_path / "events.db")
+    try:
+        state = EngineState(
+            thread_id="legacy-thread", current_stage="developer", tick=4
+        )
+        action = {
+            "action": "developer",
+            "thread_id": state.thread_id,
+            "message_id": "legacy-action",
+            "tick": state.tick,
+            "stage": state.current_stage,
+        }
+        events.import_checkpoint(checkpoint_id="legacy-seed", state=state, action=action)
+        first = persist_legacy_action_recovery_gate(
+            action, state, events, tmp_path,
+            expected_format={}, result_contract={},
+        )
+        projected = events.load_projection(state.thread_id)
+        assert projected is not None
+        second = persist_legacy_action_recovery_gate(
+            action, projected, events, tmp_path,
+            expected_format={}, result_contract={},
+        )
+        assert second == first
+        assert len(events.load_stream(state.thread_id)) == 2
+    finally:
+        events.close()
 
 
 def test_active_action_rejects_event_and_checkpoint_identity_conflict() -> None:
@@ -329,6 +1181,22 @@ def test_active_event_action_is_authoritative_without_checkpoint_splicing() -> N
             return event_action
 
     assert _load_active_action("thread-1", Store(), Events()) == event_action
+
+
+def test_active_action_does_not_fall_back_to_checkpoint_when_event_is_missing() -> None:
+    """EventStore 缺少 Action 时必须暴露恢复故障，不能消费旧 checkpoint。"""
+
+    from auto_engineering.cli.dev_loop import _load_active_action
+
+    class Store:
+        def load_active_protocol_action(self, thread_id):
+            return {"message_id": "checkpoint-only", "thread_id": thread_id}
+
+    class Events:
+        def load_action_snapshot(self, thread_id):
+            return None
+
+    assert _load_active_action("thread-1", Store(), Events()) is None
 
 
 def test_state_source_conflict_is_returned_as_protocol_error_action(
@@ -392,6 +1260,162 @@ def test_status_reports_recovery_required_on_state_source_conflict(
     assert payload["recovery_required"] is True
 
 
+def test_status_reports_recovery_required_on_design_source_drift(
+    tmp_path, monkeypatch
+) -> None:
+    """历史状态的设计源漂移必须稳定报告恢复要求，不输出 traceback。"""
+
+    from auto_engineering.cli import main
+    from auto_engineering.loop.design_decision_ledger import DesignDecisionError
+    from auto_engineering.loop.tick_orchestrator import TickOrchestrator
+
+    initialized = CliRunner().invoke(
+        main,
+        ["dev-loop", "--init", "实现 X", "--project-root", str(tmp_path)],
+    )
+    assert initialized.exit_code == 0, initialized.output
+
+    def raise_source_drift(*_args, **_kwargs):
+        raise DesignDecisionError("DESIGN_LEDGER_SOURCE_MISMATCH")
+
+    monkeypatch.setattr(
+        TickOrchestrator, "restore_from_event_store", raise_source_drift
+    )
+    result = CliRunner().invoke(
+        main,
+        ["dev-loop", "--status", "--project-root", str(tmp_path)],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = _last_json_line(result.output)
+    assert payload["active_action_error"] == "DESIGN_LEDGER_SOURCE_MISMATCH"
+    assert payload["recovery_required"] is True
+    assert "Traceback" not in result.output
+
+
+def test_status_projects_persisted_state_reconciliation_gate_after_design_drift(
+    tmp_path, monkeypatch
+) -> None:
+    """已持久化的恢复 Gate 不应被设计源漂移遮蔽成另一种错误。"""
+
+    from auto_engineering.cli import main
+    dev_loop_module = importlib.import_module("auto_engineering.cli.dev_loop")
+    from auto_engineering.loop.design_decision_ledger import DesignDecisionError
+    from auto_engineering.loop.tick_orchestrator import TickOrchestrator
+
+    initialized = CliRunner().invoke(
+        main,
+        ["dev-loop", "--init", "实现 X", "--project-root", str(tmp_path)],
+    )
+    assert initialized.exit_code == 0, initialized.output
+    thread_id = _last_json_line(initialized.output)["thread_id"]
+    gate = {
+        "message_id": "gate-1",
+        "thread_id": thread_id,
+        "tick": 2,
+        "stage": "developer",
+        "action": "gate",
+        "gate": {"id": "state_reconciliation", "options": [{"id": "reinitialize"}]},
+        "expected_format": {"gate_resolution": {"gate_id": "state_reconciliation"}},
+    }
+
+    monkeypatch.setattr(
+        TickOrchestrator,
+        "restore_from_event_store",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            DesignDecisionError("DESIGN_LEDGER_SOURCE_MISMATCH")
+        ),
+    )
+    monkeypatch.setattr(dev_loop_module, "_load_active_action", lambda *_args: gate)
+
+    result = CliRunner().invoke(
+        main,
+        ["dev-loop", "--status", "--project-root", str(tmp_path)],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = _last_json_line(result.output)
+    assert payload["active_action"]["action"] == "gate"
+    assert payload["active_action"]["gate"]["id"] == "state_reconciliation"
+    assert "active_action_error" not in payload
+
+
+def test_tick_returns_protocol_error_on_design_source_drift(
+    tmp_path, monkeypatch
+) -> None:
+    """tick 恢复设计源漂移时必须返回协议错误，而不是中断宿主进程。"""
+
+    from auto_engineering.cli import main
+    from auto_engineering.loop.design_decision_ledger import DesignDecisionError
+    from auto_engineering.loop.tick_orchestrator import TickOrchestrator
+
+    initialized = CliRunner().invoke(
+        main,
+        ["dev-loop", "--init", "实现 X", "--project-root", str(tmp_path)],
+    )
+    assert initialized.exit_code == 0, initialized.output
+    result_file = tmp_path / "result.json"
+    result_file.write_text("{}", encoding="utf-8")
+
+    def raise_source_drift(*_args, **_kwargs):
+        raise DesignDecisionError("DESIGN_LEDGER_SOURCE_MISMATCH")
+
+    monkeypatch.setattr(
+        TickOrchestrator, "restore_from_event_store", raise_source_drift
+    )
+    result = CliRunner().invoke(
+        main,
+        [
+            "dev-loop", "--tick", "--result", str(result_file),
+            "--project-root", str(tmp_path),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = _last_json_line(result.output)
+    assert payload["action"] == "error"
+    assert payload["error_code"] == "DESIGN_LEDGER_SOURCE_MISMATCH"
+    assert "Traceback" not in result.output
+
+
+def test_validate_returns_protocol_error_on_design_source_drift(
+    tmp_path, monkeypatch
+) -> None:
+    """validate 恢复设计源漂移时必须返回稳定错误且不校验旧 Result。"""
+
+    from auto_engineering.cli import main
+    from auto_engineering.loop.design_decision_ledger import DesignDecisionError
+    from auto_engineering.loop.tick_orchestrator import TickOrchestrator
+
+    initialized = CliRunner().invoke(
+        main,
+        ["dev-loop", "--init", "实现 X", "--project-root", str(tmp_path)],
+    )
+    assert initialized.exit_code == 0, initialized.output
+    result_file = tmp_path / "result.json"
+    result_file.write_text("{}", encoding="utf-8")
+
+    def raise_source_drift(*_args, **_kwargs):
+        raise DesignDecisionError("DESIGN_LEDGER_SOURCE_MISMATCH")
+
+    monkeypatch.setattr(
+        TickOrchestrator, "restore_from_event_store", raise_source_drift
+    )
+    result = CliRunner().invoke(
+        main,
+        [
+            "dev-loop", "--validate-result", str(result_file),
+            "--project-root", str(tmp_path),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = _last_json_line(result.output)
+    assert payload["action"] == "error"
+    assert payload["error_code"] == "DESIGN_LEDGER_SOURCE_MISMATCH"
+    assert "Traceback" not in result.output
+
+
 def test_finalize_stops_with_stable_error_on_state_source_conflict(
     tmp_path, monkeypatch, capsys
 ) -> None:
@@ -421,34 +1445,6 @@ def test_finalize_stops_with_stable_error_on_state_source_conflict(
     payload = _last_json_line(capsys.readouterr().out)
     assert payload["error_code"] == "STATE_SOURCE_CONFLICT"
 
-
-def test_supervisor_stops_with_stable_error_on_state_source_conflict(
-    tmp_path, monkeypatch
-) -> None:
-    """Supervisor 入口遇到状态分叉时必须显式停止且无 traceback。"""
-
-    from auto_engineering.cli import main
-    dev_loop_module = importlib.import_module("auto_engineering.cli.dev_loop")
-
-    initialized = CliRunner().invoke(
-        main,
-        ["dev-loop", "--init", "实现 X", "--project-root", str(tmp_path)],
-    )
-    assert initialized.exit_code == 0, initialized.output
-    monkeypatch.setattr(
-        dev_loop_module,
-        "_load_active_action",
-        lambda *_args: (_ for _ in ()).throw(ValueError("STATE_SOURCE_CONFLICT")),
-    )
-
-    result = CliRunner().invoke(
-        main,
-        ["dev-loop", "--supervise", "--project-root", str(tmp_path)],
-    )
-
-    assert result.exit_code != 0
-    assert "STATE_SOURCE_CONFLICT" in result.output
-    assert "Traceback" not in result.output
 
 
 class TestInitMode:
@@ -685,21 +1681,24 @@ class TestTickMode:
             },
             "devDependencies": {"typescript": "^5.0.0"},
         }), encoding="utf-8")
-        result_file = tmp_path / "project-setup-result.json"
-        result_file.write_text(json.dumps({
-            "schema_version": "1.1",
-            "message_type": "result",
-            "message_id": "result-project-setup",
-            "thread_id": action["thread_id"],
-            "tick": action["tick"],
-            "stage": "project_setup",
-            "causation_id": action["message_id"],
-            "correlation_id": action["correlation_id"],
-            "extensions": {},
+        work_files = action["host_execution"]["work_files"]
+        coordinator_file = tmp_path / work_files["coordinator_result"]
+        result_file = tmp_path / work_files["result"]
+        coordinator_file.parent.mkdir(parents=True, exist_ok=True)
+        coordinator_file.write_text(json.dumps({
             "result_type": "project_setup_completed",
             "artifacts": ["package.json", "src", "tests"],
         }), encoding="utf-8")
 
+        finalized = runner.invoke(
+            main,
+            [
+                "dev-loop", "--finalize-result", str(coordinator_file),
+                "--output-result", str(result_file),
+                "--project-root", str(tmp_path),
+            ],
+        )
+        assert finalized.exit_code == 0, finalized.output
         validation = runner.invoke(
             main,
             [
@@ -721,6 +1720,184 @@ class TestTickMode:
         next_action = _last_json_line(ticked.output)
         assert next_action["stage"] == "gap_scan"
 
+    def test_node_project_setup_accepts_marked_entry_via_public_cli(
+        self, tmp_path
+    ) -> None:
+        """公开 CLI 不得把 Node 工具链的最小入口误判为业务实现。"""
+        design = tmp_path / "design.md"
+        design.write_text("# 产品设计\n## 页面\n实现页面。\n", encoding="utf-8")
+        runner = CliRunner()
+        initialized = runner.invoke(
+            main,
+            [
+                "dev-loop", "--init", "--design-doc", str(design),
+                "--project-root", str(tmp_path),
+            ],
+        )
+        assert initialized.exit_code == 0, initialized.output
+        action = _last_json_line(initialized.output)
+        assert action["stage"] == "project_setup"
+
+        (tmp_path / "src").mkdir()
+        (tmp_path / "tests").mkdir()
+        (tmp_path / "src" / "main.js").write_text(
+            "// setup smoke entry — replaced after architect stage\n"
+            "export {};\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "tests" / "smoke.test.js").write_text(
+            "// setup smoke\n", encoding="utf-8"
+        )
+        (tmp_path / "package.json").write_text(json.dumps({
+            "scripts": {
+                "test": "node -e \"console.log('test passed')\"",
+                "lint": "node -e \"console.log('lint passed')\"",
+                "typecheck": "node -e \"console.log('typecheck passed')\"",
+                "build": "node -e \"console.log('build passed')\"",
+            },
+        }), encoding="utf-8")
+        work_files = action["host_execution"]["work_files"]
+        coordinator_file = tmp_path / work_files["coordinator_result"]
+        result_file = tmp_path / work_files["result"]
+        coordinator_file.parent.mkdir(parents=True, exist_ok=True)
+        coordinator_file.write_text(json.dumps({
+            "result_type": "project_setup_completed",
+            "artifacts": ["package.json", "src/main.js", "tests/smoke.test.js"],
+        }), encoding="utf-8")
+
+        finalized = runner.invoke(main, [
+            "dev-loop", "--finalize-result", str(coordinator_file),
+            "--output-result", str(result_file), "--project-root", str(tmp_path),
+        ])
+        assert finalized.exit_code == 0, finalized.output
+        validated = runner.invoke(main, [
+            "dev-loop", "--validate-result", str(result_file),
+            "--project-root", str(tmp_path),
+        ])
+        assert validated.exit_code == 0, validated.output
+        ticked = runner.invoke(main, [
+            "dev-loop", "--tick", "--result", str(result_file),
+            "--project-root", str(tmp_path),
+        ])
+
+        assert ticked.exit_code == 0, ticked.output
+        assert _last_json_line(ticked.output)["stage"] == "gap_scan"
+
+    def test_project_setup_failure_result_is_bounded_across_public_cli_ticks(
+        self, tmp_path
+    ) -> None:
+        """公开 CLI 必须把宿主失败逐 Tick 交回 Core，第三次进入 WAIT_RESOURCE。"""
+        runner = CliRunner()
+        initialized = runner.invoke(
+            main,
+            ["dev-loop", "--init", "实现一个页面", "--project-root", str(tmp_path)],
+        )
+        assert initialized.exit_code == 0, initialized.output
+        action = _last_json_line(initialized.output)
+        assert action["action"] == "project_setup_required"
+
+        for attempt in range(1, 4):
+            work_files = action["host_execution"]["work_files"]
+            coordinator = tmp_path / work_files["coordinator_result"]
+            result = tmp_path / work_files["result"]
+            coordinator.parent.mkdir(parents=True, exist_ok=True)
+            coordinator.write_text(json.dumps({
+                "result_type": "project_setup_failed",
+                "artifacts": [],
+                "failure_code": "PROJECT_SETUP_BUILD_FAILED",
+                "failure_summary": "构建产物包含绝对路径 symlink",
+                "attempts_in_action": 2,
+            }), encoding="utf-8")
+            finalized = runner.invoke(main, [
+                "dev-loop", "--finalize-result", str(coordinator),
+                "--output-result", str(result), "--project-root", str(tmp_path),
+            ])
+            assert finalized.exit_code == 0, finalized.output
+            validated = runner.invoke(main, [
+                "dev-loop", "--validate-result", str(result),
+                "--project-root", str(tmp_path),
+            ])
+            assert validated.exit_code == 0, validated.output
+            retryable_result = result.read_bytes()
+            ticked = runner.invoke(main, [
+                "dev-loop", "--tick", "--result", str(result),
+                "--project-root", str(tmp_path),
+            ])
+            assert ticked.exit_code == 0, ticked.output
+            action = _last_json_line(ticked.output)
+            if attempt < 3:
+                assert action["action"] == "project_setup_required"
+                assert action["setup_failure_streak"] == attempt
+
+        assert action["action"] == "resource_wait"
+        assert action["reason_code"] == "PROJECT_SETUP_RETRY_EXHAUSTED"
+        assert action["setup_failure_streak"] == 3
+
+        from auto_engineering.loop.event_store import SQLiteEventStore
+
+        with SQLiteEventStore(tmp_path / ".ae-state" / "events.db") as events:
+            event_count_before_yield_replay = len(events.load_stream(action["thread_id"]))
+
+        # WAIT_RESOURCE 是当前宿主调用的 yield 边界；即使宿主按当前等待
+        # Action 重新生成 Result，CLI 也只能返回同一等待视图，不能继续消费 Tick。
+        retry_payload = json.loads(retryable_result)
+        retry_payload["message_id"] = "setup-after-resource-wait"
+        retry_payload["causation_id"] = action["message_id"]
+        retry_payload["tick"] = action["tick"]
+        wait_result = tmp_path / action["host_execution"]["work_files"]["result"]
+        wait_result.parent.mkdir(parents=True, exist_ok=True)
+        wait_result.write_text(json.dumps(retry_payload), encoding="utf-8")
+        replayed = runner.invoke(main, [
+            "dev-loop", "--tick", "--result", str(wait_result),
+            "--project-root", str(tmp_path),
+        ])
+        assert replayed.exit_code == 0, replayed.output
+        replayed_action = _last_json_line(replayed.output)
+        assert replayed_action["action"] == "resource_wait"
+        assert replayed_action["reason_code"] == "PROJECT_SETUP_RETRY_EXHAUSTED"
+        assert replayed_action["setup_failure_streak"] == 3
+        assert replayed_action["active_action_message_id"] == action["active_action_message_id"]
+
+        with SQLiteEventStore(tmp_path / ".ae-state" / "events.db") as events:
+            assert len(events.load_stream(action["thread_id"])) == event_count_before_yield_replay
+
+        # WAIT_RESOURCE 仍允许宿主在修复项目能力后恢复原 Setup Action。
+        (tmp_path / "src").mkdir()
+        (tmp_path / "tests").mkdir()
+        (tmp_path / "package.json").write_text(json.dumps({
+            "scripts": {
+                "test": "node -e \"console.log('1 test passed')\"",
+                "lint": "node -e \"console.log('lint passed')\"",
+                "typecheck": "node -e \"console.log('typecheck passed')\"",
+                "build": "node -e \"console.log('build passed')\"",
+            },
+            "devDependencies": {"typescript": "^5.0.0"},
+        }), encoding="utf-8")
+        recovery_files = replayed_action["host_execution"]["work_files"]
+        recovery_coordinator = tmp_path / recovery_files["coordinator_result"]
+        recovery_result = tmp_path / recovery_files["result"]
+        recovery_coordinator.parent.mkdir(parents=True, exist_ok=True)
+        recovery_coordinator.write_text(json.dumps({
+            "result_type": "project_setup_completed",
+            "artifacts": ["package.json", "src", "tests"],
+        }), encoding="utf-8")
+        recovered = runner.invoke(main, [
+            "dev-loop", "--finalize-result", str(recovery_coordinator),
+            "--output-result", str(recovery_result), "--project-root", str(tmp_path),
+        ])
+        assert recovered.exit_code == 0, recovered.output
+        recovered_validation = runner.invoke(main, [
+            "dev-loop", "--validate-result", str(recovery_result),
+            "--project-root", str(tmp_path),
+        ])
+        assert recovered_validation.exit_code == 0, recovered_validation.output
+        recovered_tick = runner.invoke(main, [
+            "dev-loop", "--tick", "--result", str(recovery_result),
+            "--project-root", str(tmp_path),
+        ])
+        assert recovered_tick.exit_code == 0, recovered_tick.output
+        assert _last_json_line(recovered_tick.output)["action"] == "architect"
+
 
 class TestStatusMode:
     def test_status_action_summary_exposes_current_gap_and_work_contract(
@@ -735,6 +1912,16 @@ class TestStatusMode:
             "current_gap_index": 1,
             "total_gaps": 3,
             "current_gap": {"id": "gap-2", "summary": "缺少接口错误合同"},
+            "gap_review_contract": {
+                "display_scope": "current_gap_only",
+                "decision_count": 1,
+                "gap_id_source": "current_gap.id",
+                "forbidden_context": [
+                    "historical_gap_scan_gaps",
+                    "future_gap_details",
+                    "batch_decisions",
+                ],
+            },
             "work_files": {"result": ".ae-state/work/action-7/result.json"},
             "expected_format": {"decision": {"gap_id": "string"}},
             "context": {"private": "must-not-leak"},
@@ -747,6 +1934,16 @@ class TestStatusMode:
             "current_gap_index": 1,
             "total_gaps": 3,
             "current_gap": {"id": "gap-2", "summary": "缺少接口错误合同"},
+            "gap_review_contract": {
+                "display_scope": "current_gap_only",
+                "decision_count": 1,
+                "gap_id_source": "current_gap.id",
+                "forbidden_context": [
+                    "historical_gap_scan_gaps",
+                    "future_gap_details",
+                    "batch_decisions",
+                ],
+            },
             "work_files": {"result": ".ae-state/work/action-7/result.json"},
             "expected_format": {"decision": {"gap_id": "string"}},
         }
@@ -792,6 +1989,43 @@ class TestStatusMode:
         summary = _last_json_line(status.output)
         assert summary["thread_id"] == thread_id
         assert summary["current_stage"] == "project_setup"
+
+    def test_resume_reloads_same_active_action_from_event_store(self, tmp_path) -> None:
+        """新的 CLI 调用必须从 EventStore 恢复同一个 active Action。"""
+
+        environment = dict(os.environ)
+        source_root = str(Path(__file__).parents[1])
+        environment["PYTHONPATH"] = os.pathsep.join(
+            item for item in (source_root, environment.get("PYTHONPATH")) if item
+        )
+
+        def run_cli(*arguments: str) -> dict:
+            completed = subprocess.run(
+                [str(Path(source_root) / "scripts" / "ae-run"), *arguments],
+                cwd=tmp_path,
+                env=environment,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            assert completed.returncode == 0, completed.stderr or completed.stdout
+            return _last_json_line(completed.stdout)
+
+        initial_action = run_cli(
+            "dev-loop", "--init", "实现跨进程恢复", "--project-root", str(tmp_path),
+        )
+        assert (tmp_path / ".ae-state" / ".ae-runtime" / "bin" / "python").is_file()
+
+        resumed_action = run_cli(
+            "dev-loop", "--resume", initial_action["thread_id"],
+            "--project-root", str(tmp_path),
+        )
+
+        assert resumed_action["thread_id"] == initial_action["thread_id"]
+        assert resumed_action["message_id"] == initial_action["message_id"]
+        assert resumed_action["tick"] == initial_action["tick"]
+        assert resumed_action["stage"] == initial_action["stage"]
+        assert resumed_action.get("spawn") == initial_action.get("spawn")
 
     def test_status_without_checkpoint_errors(self, tmp_path) -> None:
         """无 checkpoint → restore raise → 非零退出 (不静默假成功)."""
@@ -870,424 +2104,6 @@ class TestMutexAndLegacy:
 
         assert result.exit_code == 0, result.output
 
-    def test_supervisor_normalizes_host_resource_exhaustion(self) -> None:
-        from auto_engineering.cli.dev_loop import _host_context_failure_code
-
-        assert _host_context_failure_code(
-            "failed", "HOST_CODEX_USAGE_LIMIT"
-        ) == "HOST_ACTION_CONTEXT_RESOURCE_EXHAUSTED"
-        assert _host_context_failure_code(
-            "failed", "HOST_CLAUDE_BUDGET_EXHAUSTED"
-        ) == "HOST_ACTION_CONTEXT_RESOURCE_EXHAUSTED"
-        assert _host_context_failure_code(
-            "failed", "HOST_CODEX_EXECUTION_FAILED"
-        ) == "HOST_ACTION_CONTEXT_FAILED"
-
-    def test_supervise_is_internal_mutually_exclusive_mode(
-        self, tmp_path, monkeypatch,
-    ) -> None:
-        import auto_engineering.cli as cli_module
-
-        calls: list[object] = []
-        monkeypatch.setattr(
-            cli_module,
-            "run_action_supervisor",
-            lambda root: calls.append(root),
-            raising=False,
-        )
-        runner = CliRunner()
-
-        result = runner.invoke(
-            main,
-            ["dev-loop", "--supervise", "--project-root", str(tmp_path)],
-        )
-        assert result.exit_code == 0, result.output
-        assert calls == [tmp_path.resolve()]
-
-        conflict = runner.invoke(
-            main,
-            [
-                "dev-loop", "--supervise", "--status",
-                "--project-root", str(tmp_path),
-            ],
-        )
-        assert conflict.exit_code != 0
-        assert "互斥" in conflict.output
-
-    def test_supervise_drives_real_active_action_to_terminal(
-        self, tmp_path, monkeypatch,
-    ) -> None:
-        from auto_engineering.host import backends
-        from auto_engineering.host import supervisor as supervisor_module
-        from auto_engineering.host.invocation import (
-            ActionExecutionReceipt,
-            HostInvocationProbe,
-        )
-
-        runner = CliRunner()
-        initialized = runner.invoke(
-            main,
-            ["dev-loop", "--init", "实现 X", "--project-root", str(tmp_path)],
-        )
-        assert initialized.exit_code == 0, initialized.output
-
-        class FakeBackend:
-            def __init__(self, **kwargs):
-                pass
-
-            def probe(self):
-                return HostInvocationProbe.available("codex")
-
-            def execute(self, request):
-                return ActionExecutionReceipt.from_dict({
-                    "schema_version": "1.0",
-                    "thread_id": request.thread_id,
-                    "action_message_id": request.action_message_id,
-                    "build_id": request.build_id,
-                    "host_context_id": "fresh-context-1",
-                    "backend": "codex",
-                    "status": "completed",
-                    "exit_code": 0,
-                    "work_file_digests": {},
-                    "usage": {"input_tokens": 1, "cached_input_tokens": 0, "output_tokens": 1},
-                })
-
-            def cancel(self, host_context_id):
-                raise AssertionError(host_context_id)
-
-        class FakeOperations:
-            def __init__(self, **kwargs):
-                pass
-
-            def run(self, operations):
-                return {
-                    "message_id": "terminal-1",
-                    "action": "done",
-                    "extensions": {"ae": {"execution_control": {
-                        "schema_version": "1.0",
-                        "disposition": "TERMINAL",
-                        "continuation_required": False,
-                        "yield_allowed": True,
-                        "allowed_stop_reasons": ["goal_achieved"],
-                        "reason_code": "GOAL_ACHIEVED",
-                    }}},
-                }
-
-        evidence_calls: list[dict[str, object]] = []
-
-        class FakeEvidence:
-            def __init__(self, *args, **kwargs):
-                pass
-
-            def record_terminal(self, **kwargs):
-                evidence_calls.append(kwargs)
-                return tmp_path / ".ae-state/reports/evidence.json"
-
-        monkeypatch.setattr(backends, "CodexInvocationBackend", FakeBackend)
-        monkeypatch.setattr(
-            supervisor_module, "MachineOperationExecutor", FakeOperations,
-        )
-        monkeypatch.setattr(
-            supervisor_module, "ProductEvidenceArtifactJournal", FakeEvidence,
-        )
-        result = runner.invoke(
-            main,
-            ["dev-loop", "--supervise", "--project-root", str(tmp_path)],
-            env={"AE_HOST_PLATFORM": "codex"},
-        )
-        assert result.exit_code == 0, result.output
-        assert "[宿主监督] 已接管 Action" in result.output
-        assert _last_json_line(result.output)["message_id"] == "terminal-1"
-        assert evidence_calls[0]["host"] == "codex"
-        assert evidence_calls[0]["thread_id"]
-        assert list((tmp_path / ".ae-state/reports").glob("loop-stop-*.md"))
-
-    def test_supervise_reopens_context_after_result_repair_and_clears_lease(
-        self, tmp_path, monkeypatch,
-    ) -> None:
-        """拒绝→修复→重试必须是完整闭环，不能留下假活跃 lease。"""
-        from auto_engineering.host import backends
-        from auto_engineering.host import supervisor as supervisor_module
-        from auto_engineering.host.invocation import (
-            ActionExecutionReceipt,
-            HostInvocationProbe,
-        )
-        from auto_engineering.host.runtime_driver import HostRunLeaseStore
-
-        runner = CliRunner()
-        initialized = runner.invoke(
-            main,
-            ["dev-loop", "--init", "实现 X", "--project-root", str(tmp_path)],
-        )
-        assert initialized.exit_code == 0, initialized.output
-        initial_action = _last_json_line(initialized.output)
-        contexts: list[str] = []
-        operation_calls = 0
-
-        class FakeBackend:
-            def __init__(self, **kwargs):
-                del kwargs
-
-            def probe(self):
-                return HostInvocationProbe.available("codex")
-
-            def execute(self, request):
-                context_id = f"fresh-context-{len(contexts) + 1}"
-                contexts.append(context_id)
-                return ActionExecutionReceipt.from_dict({
-                    "schema_version": "1.0",
-                    "thread_id": request.thread_id,
-                    "action_message_id": request.action_message_id,
-                    "build_id": request.build_id,
-                    "host_context_id": context_id,
-                    "backend": "codex",
-                    "status": "completed",
-                    "exit_code": 0,
-                    "work_file_digests": {},
-                    "usage": {
-                        "input_tokens": 1,
-                        "cached_input_tokens": 0,
-                        "output_tokens": 1,
-                    },
-                })
-
-            def cancel(self, host_context_id):
-                raise AssertionError(host_context_id)
-
-        class FakeOperations:
-            def __init__(self, **kwargs):
-                del kwargs
-
-            def run(self, operations):
-                nonlocal operation_calls
-                operation_calls += 1
-                if operation_calls == 1:
-                    return {
-                        **initial_action,
-                        "result_rejection": {
-                            "repair_required": True,
-                            "error_code": "HOST_EVIDENCE_INVALID",
-                        },
-                    }
-                return {
-                    "message_id": "terminal-after-repair",
-                    "action": "done",
-                    "reason_code": "GOAL_ACHIEVED",
-                    "extensions": {"ae": {"execution_control": {
-                        "schema_version": "1.0",
-                        "disposition": "TERMINAL",
-                        "continuation_required": False,
-                        "yield_allowed": True,
-                        "allowed_stop_reasons": ["goal_achieved"],
-                        "reason_code": "GOAL_ACHIEVED",
-                    }}},
-                }
-
-        class FakeEvidence:
-            def __init__(self, *args, **kwargs):
-                del args, kwargs
-
-            def record_terminal(self, **kwargs):
-                del kwargs
-                return tmp_path / ".ae-state/reports/evidence.json"
-
-        monkeypatch.setattr(backends, "CodexInvocationBackend", FakeBackend)
-        monkeypatch.setattr(
-            supervisor_module, "MachineOperationExecutor", FakeOperations,
-        )
-        monkeypatch.setattr(
-            supervisor_module, "ProductEvidenceArtifactJournal", FakeEvidence,
-        )
-
-        result = runner.invoke(
-            main,
-            ["dev-loop", "--supervise", "--project-root", str(tmp_path)],
-            env={
-                "AE_HOST_PLATFORM": "codex",
-                "CODEX_THREAD_ID": "real-session-1",
-            },
-        )
-
-        assert result.exit_code == 0, result.output
-        assert contexts == ["fresh-context-1", "fresh-context-2"]
-        assert operation_calls == 2
-        assert _last_json_line(result.output)["message_id"] == (
-            "terminal-after-repair"
-        )
-        assert HostRunLeaseStore(tmp_path).load() is None
-
-    def test_supervise_reports_stable_error_without_python_traceback(
-        self, tmp_path, monkeypatch,
-    ) -> None:
-        import auto_engineering.cli as cli_module
-        from auto_engineering.host.invocation import ActionExecutionContractError
-
-        def fail(_root):
-            raise ActionExecutionContractError("HOST_OPERATION_FINALIZE_FAILED")
-
-        monkeypatch.setattr(cli_module, "run_action_supervisor", fail)
-        result = CliRunner().invoke(
-            main,
-            ["dev-loop", "--supervise", "--project-root", str(tmp_path)],
-        )
-
-        assert result.exit_code != 0
-        assert "HOST_OPERATION_FINALIZE_FAILED" in result.output
-        assert "Traceback" not in result.output
-
-    def test_supervise_persists_stop_report_when_host_operation_raises(
-        self, tmp_path, monkeypatch,
-    ) -> None:
-        from auto_engineering.host import backends
-        from auto_engineering.host import supervisor as supervisor_module
-        from auto_engineering.host.invocation import (
-            ActionExecutionContractError,
-            ActionExecutionReceipt,
-            HostInvocationProbe,
-        )
-        from auto_engineering.host.runtime_driver import HostRunLeaseStore
-
-        initialized = CliRunner().invoke(
-            main,
-            ["dev-loop", "--init", "实现 X", "--project-root", str(tmp_path)],
-        )
-        assert initialized.exit_code == 0, initialized.output
-
-        class FakeBackend:
-            def __init__(self, **kwargs):
-                pass
-
-            def probe(self):
-                return HostInvocationProbe.available("codex")
-
-            def execute(self, request):
-                return ActionExecutionReceipt.from_dict({
-                    "schema_version": "1.0",
-                    "thread_id": request.thread_id,
-                    "action_message_id": request.action_message_id,
-                    "build_id": request.build_id,
-                    "host_context_id": "failed-context-1",
-                    "backend": "codex",
-                    "status": "completed",
-                    "exit_code": 0,
-                    "work_file_digests": {},
-                    "usage": {
-                        "input_tokens": 1,
-                        "cached_input_tokens": 0,
-                        "output_tokens": 1,
-                    },
-                })
-
-            def cancel(self, host_context_id):
-                raise AssertionError(host_context_id)
-
-        class FakeOperations:
-            def __init__(self, **kwargs):
-                pass
-
-            def run(self, operations):
-                raise ActionExecutionContractError(
-                    "HOST_OPERATION_FINALIZE_FAILED"
-                )
-
-        monkeypatch.setattr(backends, "CodexInvocationBackend", FakeBackend)
-        monkeypatch.setattr(
-            supervisor_module, "MachineOperationExecutor", FakeOperations,
-        )
-
-        result = CliRunner().invoke(
-            main,
-            ["dev-loop", "--supervise", "--project-root", str(tmp_path)],
-            env={
-                "AE_HOST_PLATFORM": "codex",
-                "CODEX_THREAD_ID": "failed-session-1",
-            },
-        )
-
-        assert result.exit_code != 0
-        assert "HOST_OPERATION_FINALIZE_FAILED" in result.output
-        reports = list(
-            (tmp_path / ".ae-state/reports").glob("loop-stop-*.md")
-        )
-        assert len(reports) == 1
-        report = reports[0].read_text(encoding="utf-8")
-        assert "`ERROR`" in report
-        assert "HOST_OPERATION_FINALIZE_FAILED" in report
-        assert "failed-context-1" in report
-        assert HostRunLeaseStore(tmp_path).load() is None
-
-    def test_supervise_normalizes_unexpected_host_exception(
-        self, tmp_path, monkeypatch,
-    ) -> None:
-        from auto_engineering.host import backends
-        from auto_engineering.host import supervisor as supervisor_module
-        from auto_engineering.host.invocation import (
-            ActionExecutionReceipt,
-            HostInvocationProbe,
-        )
-        from auto_engineering.host.runtime_driver import HostRunLeaseStore
-
-        initialized = CliRunner().invoke(
-            main,
-            ["dev-loop", "--init", "实现 X", "--project-root", str(tmp_path)],
-        )
-        assert initialized.exit_code == 0, initialized.output
-
-        class FakeBackend:
-            def __init__(self, **kwargs):
-                del kwargs
-
-            def probe(self):
-                return HostInvocationProbe.available("codex")
-
-            def execute(self, request):
-                return ActionExecutionReceipt.from_dict({
-                    "schema_version": "1.0",
-                    "thread_id": request.thread_id,
-                    "action_message_id": request.action_message_id,
-                    "build_id": request.build_id,
-                    "host_context_id": "unexpected-context-1",
-                    "backend": "codex",
-                    "status": "completed",
-                    "exit_code": 0,
-                    "work_file_digests": {},
-                    "usage": {
-                        "input_tokens": 1,
-                        "cached_input_tokens": 0,
-                        "output_tokens": 1,
-                    },
-                })
-
-            def cancel(self, host_context_id):
-                raise AssertionError(host_context_id)
-
-        class FailingOperations:
-            def __init__(self, **kwargs):
-                del kwargs
-
-            def run(self, operations):
-                del operations
-                raise RuntimeError("unexpected operation failure")
-
-        monkeypatch.setattr(backends, "CodexInvocationBackend", FakeBackend)
-        monkeypatch.setattr(
-            supervisor_module, "MachineOperationExecutor", FailingOperations,
-        )
-        result = CliRunner().invoke(
-            main,
-            ["dev-loop", "--supervise", "--project-root", str(tmp_path)],
-            env={
-                "AE_HOST_PLATFORM": "codex",
-                "CODEX_THREAD_ID": "unexpected-session-1",
-            },
-        )
-
-        assert result.exit_code != 0
-        assert "HOST_SUPERVISOR_PROTOCOL_ERROR" in result.output
-        assert "Traceback" not in result.output
-        assert list((tmp_path / ".ae-state/reports").glob("loop-stop-*.md"))
-        assert HostRunLeaseStore(tmp_path).load() is None
-
     def test_finalize_result_accepts_non_spawn_coordinator_payload(
         self, tmp_path
     ) -> None:
@@ -1298,7 +2114,9 @@ class TestMutexAndLegacy:
         )
         assert initialized.exit_code == 0, initialized.output
         action = _last_json_line(initialized.output)
-        payload = tmp_path / "coordinator-result.json"
+        work_files = action["host_execution"]["work_files"]
+        payload = tmp_path / work_files["coordinator_result"]
+        payload.parent.mkdir(parents=True, exist_ok=True)
         payload.write_text(
             json.dumps({
                 "result_type": "project_setup_completed",
@@ -1312,9 +2130,9 @@ class TestMutexAndLegacy:
             [
                 "dev-loop",
                 "--finalize-result",
-                str(payload),
+                str(tmp_path / "stale-coordinator-result.json"),
                 "--output-result",
-                str(tmp_path / "result.json"),
+                str(tmp_path / "stale-result.json"),
                 "--project-root",
                 str(tmp_path),
             ],
@@ -1327,9 +2145,11 @@ class TestMutexAndLegacy:
         assert finalized["stage"] == action["stage"]
         assert finalized["result_type"] == "project_setup_completed"
         assert finalized["artifacts"] == ["pyproject.toml"]
+        canonical_result = tmp_path / work_files["result"]
         assert json.loads(
-            (tmp_path / "result.json").read_text(encoding="utf-8")
+            canonical_result.read_text(encoding="utf-8")
         ) == finalized
+        assert not (tmp_path / "stale-result.json").exists()
 
     def test_finalize_missing_spawn_outputs_becomes_worker_failure(
         self, tmp_path: Path, monkeypatch, capsys
@@ -1353,6 +2173,7 @@ class TestMutexAndLegacy:
                 "may_spawn_workers": False,
             },
             receipt_path=".ae-state/spawn-proofs/architect-0.json",
+            outcome_path=".ae-state/host-runtime/worker-outcomes/architect-0.json",
         )
         action = {
             "schema_version": "1.1",
@@ -1441,6 +2262,125 @@ class TestMutexAndLegacy:
         assert repeated["spawn_error_code"] == "HOST_WORKER_FAILED"
         assert repeated["spawn_retry_attempt"] == 1
 
+    def test_finalize_private_outcome_enters_host_attestation_repair(
+        self, tmp_path: Path, monkeypatch, capsys
+    ) -> None:
+        """私有 outcome 存在时不得推进 Worker 失败代际或重新 spawn。"""
+        dev_loop_module = importlib.import_module("auto_engineering.cli.dev_loop")
+        from auto_engineering.host.spawn_contract import WorkerInvocationSpec
+        from auto_engineering.loop import event_store as event_store_module
+        from auto_engineering.loop.checkpoint import store as checkpoint_store
+
+        invocation = WorkerInvocationSpec(
+            worker_id="architect-0",
+            role="architect",
+            prompt_ref=".ae-state/effects/prompt/worker.txt",
+            prompt_sha256="a" * 64,
+            requested_effort="xhigh",
+            isolation="fresh_context",
+            capabilities={
+                "may_drive_loop": False,
+                "may_spawn_workers": False,
+            },
+            receipt_path=".ae-state/spawn-proofs/architect-0.json",
+            outcome_path=".ae-state/host-runtime/worker-outcomes/architect-0.json",
+        )
+        action = {
+            "schema_version": "1.1",
+            "message_id": "architect-action-attestation-repair",
+            "thread_id": "thread-attestation-repair",
+            "stage": "architect",
+            "action": "architect",
+            "spawn": {
+                "contract_version": "1.0",
+                "count": 1,
+                "parallel": False,
+                "effort": "xhigh",
+                "invocations": [invocation.to_dict()],
+            },
+            "host_execution": {
+                "platform": "codex",
+                "workers": [{
+                    "worker_id": "architect-0",
+                    "prompt_ref": invocation.prompt_ref,
+                    "outcome_path": invocation.outcome_path,
+                    "record_worker_outcome": {
+                        "argv_template": ["runner", "--record-worker-outcome"],
+                    },
+                }],
+                "work_files": {
+                    "outcomes": ".ae-state/host-runtime/work/a/outcomes.json",
+                    "coordinator_result": (
+                        ".ae-state/host-runtime/work/a/coordinator-result.json"
+                    ),
+                    "result": ".ae-state/host-runtime/work/a/result.json",
+                },
+            },
+        }
+
+        class FakeStore:
+            def __init__(self, *args, **kwargs) -> None:
+                del args, kwargs
+
+            def close(self) -> None:
+                pass
+
+        class FakeEvents:
+            def __init__(self, *args, **kwargs) -> None:
+                del args, kwargs
+
+            def load_action_snapshot(self, thread_id: str):
+                assert thread_id == action["thread_id"]
+                return action
+
+            def close(self) -> None:
+                pass
+
+        monkeypatch.setattr(checkpoint_store, "SQLiteCheckpointStore", FakeStore)
+        monkeypatch.setattr(event_store_module, "SQLiteEventStore", FakeEvents)
+        monkeypatch.setattr(
+            dev_loop_module, "_active_thread", lambda store: action["thread_id"]
+        )
+        monkeypatch.setattr(
+            dev_loop_module, "_map_bound_action_for_host",
+            lambda value, root, **kwargs: value,
+        )
+        monkeypatch.setattr(dev_loop_module, "_map_action_for_host", lambda value: value)
+
+        private_path = tmp_path / invocation.outcome_path
+        private_path.parent.mkdir(parents=True, exist_ok=True)
+        private_path.write_text(json.dumps({
+            "worker_id": invocation.worker_id,
+            "status": "completed",
+            "payload": {"plan": "按设计实现"},
+            "summary": "Architect 完成规划",
+        }), encoding="utf-8")
+        coordinator = tmp_path / "empty-coordinator.json"
+        coordinator.write_text("{}", encoding="utf-8")
+
+        from auto_engineering.cli.dev_loop import run_tick_finalize
+
+        run_tick_finalize(
+            tmp_path / "missing-outcomes.json",
+            coordinator,
+            tmp_path,
+            output_result_file=tmp_path / "result.json",
+        )
+
+        result = _last_json_line(capsys.readouterr().out)
+        assert result["action"] == "architect"
+        assert "spawn" not in result
+        assert result["host_execution"]["recovery"]["status"] == (
+            "worker_attestation_pending"
+        )
+        assert result["host_execution"]["recovery"]["spawn_permitted"] is False
+        assert result["host_execution"]["recovery"]["required_operation"] == (
+            "record_worker_outcome_then_finalize"
+        )
+        assert result["result_rejection"]["error_code"] == (
+            "HOST_WORKER_ATTESTATION_MISSING"
+        )
+
     def test_internal_result_paths_are_bound_to_project_root_after_cwd_drift(
         self, tmp_path, monkeypatch
     ) -> None:
@@ -1458,7 +2398,7 @@ class TestMutexAndLegacy:
         work_dir = (
             tmp_path / ".ae-state" / "host-runtime" / "work" / action_key
         )
-        work_dir.mkdir(parents=True)
+        work_dir.mkdir(parents=True, exist_ok=True)
         (work_dir / "coordinator-result.json").write_text(
             json.dumps({
                 "result_type": "project_setup_completed",
@@ -1534,7 +2474,7 @@ class TestMutexAndLegacy:
             encoding="utf-8",
         )
         first_payload = tmp_path / first_files["coordinator_result"]
-        first_payload.parent.mkdir(parents=True)
+        first_payload.parent.mkdir(parents=True, exist_ok=True)
         first_payload.write_text(
             json.dumps({
                 "result_type": "project_setup_completed",
@@ -1564,7 +2504,7 @@ class TestMutexAndLegacy:
         assert current["message_id"] != first["message_id"]
         current_files = current["host_execution"]["work_files"]
         current_payload = tmp_path / current_files["coordinator_result"]
-        current_payload.parent.mkdir(parents=True)
+        current_payload.parent.mkdir(parents=True, exist_ok=True)
         current_payload.write_text(
             json.dumps({
                 "gaps": [],

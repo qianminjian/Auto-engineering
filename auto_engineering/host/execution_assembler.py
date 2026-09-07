@@ -4,10 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
-import tempfile
 from collections.abc import Mapping, Sequence
-from dataclasses import asdict, dataclass, replace
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -15,13 +13,32 @@ from uuid import NAMESPACE_URL, uuid5
 
 from auto_engineering.config.runtime_config import get_default_config
 from auto_engineering.host.outcome_journal import OutcomeJournal
-from auto_engineering.host.path_contract import legacy_worker_outcome_path
+from auto_engineering.host.outcome_recovery import OutcomeRecoveryService
+from auto_engineering.host.outcome_repair import (
+    assembly_rejection_can_extend_outcomes,
+    merge_authoritative_outcomes,
+)
+from auto_engineering.host.result_contract import ResultContractService
 from auto_engineering.host.spawn_contract import SpawnContractError, SpawnPlan
 from auto_engineering.host.worker_attestation import (
     WorkerAttestationError,
     validate_attestations,
 )
-from auto_engineering.loop.actions import validate_result_format
+from auto_engineering.host.worker_evidence import (
+    HostEvidenceValidationError,
+    NativeWorkerOutcome,
+    WorkerOutcomeCollectionError,
+    _atomic_write_bytes,
+    _atomic_write_json,
+    _business_payload_reports_test_failure,
+    _canonical_bytes,
+    _canonical_worker_business_status,
+    _native_business_artifact,
+    _native_handle_is_missing,
+    _resolve_worker_execution_binding,
+    can_replace_retryable_outcome,
+)
+from auto_engineering.host.worker_failure import WorkerFailureService
 from auto_engineering.loop.artifacts import (
     ArtifactError,
     ArtifactStore,
@@ -30,79 +47,92 @@ from auto_engineering.loop.artifacts import (
 )
 
 
-class HostEvidenceValidationError(ValueError):
-    """一次报告全部证据问题，避免宿主逐轮修补 JSON。"""
-
-    def __init__(self, violations: Sequence[str]) -> None:
-        self.violations = tuple(dict.fromkeys(violations))
-        super().__init__("HOST_EVIDENCE_INVALID: " + ",".join(self.violations))
-
-
-class WorkerOutcomeCollectionError(ValueError):
-    """Worker 私有产出无法汇总为 Action-scoped outcomes。"""
-
-    def __init__(self, code: str, worker_id: str, detail: str = "") -> None:
-        self.code = code
-        self.worker_id = worker_id
-        self.detail = detail
-        suffix = f":{detail}" if detail else ""
-        super().__init__(f"{code}:{worker_id}{suffix}")
-
-
-@dataclass(frozen=True, slots=True)
-class NativeWorkerOutcome:
-    worker_id: str
-    native_worker_handle: str
-    status: str
-    payload: dict[str, Any]
-    summary: str
-    actual_model: str
-    isolation_evidence: str | None = None
-    execution_generation: int | None = None
-    fencing_token: str | None = None
-
-    def to_dict(self) -> dict[str, Any]:
-        value = asdict(self)
-        if self.execution_generation is None:
-            value.pop("execution_generation")
-        if self.fencing_token is None:
-            value.pop("fencing_token")
-        return value
-
-
-def _canonical_bytes(value: object) -> bytes:
-    return json.dumps(
-        value,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-        allow_nan=False,
-    ).encode("utf-8")
-
-
-def _atomic_write_json(path: Path, payload: object) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, temporary_name = tempfile.mkstemp(
-        prefix=f".{path.name}.",
-        suffix=".tmp",
-        dir=path.parent,
-    )
-    try:
-        with os.fdopen(descriptor, "wb") as handle:
-            handle.write(_canonical_bytes(payload))
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary_name, path)
-    finally:
-        if os.path.exists(temporary_name):
-            os.unlink(temporary_name)
-
-
 class HostExecutionAssembler:
     """以 outcome journal 为恢复点，幂等完成一整个 spawn Action。"""
 
     def __init__(self, project_root: Path) -> None:
         self.project_root = project_root.resolve()
+        self._outcome_recovery = OutcomeRecoveryService(
+            self.project_root,
+            finalize=self.finalize,
+            finalize_to_file=self.finalize_to_file,
+        )
+        self._result_contract = ResultContractService()
+        self._worker_failure = WorkerFailureService(
+            self.project_root,
+            recover_completed_worker_artifacts=self.recover_completed_worker_artifacts,
+        )
+
+    def stage_native_result(
+        self,
+        *,
+        action: Mapping[str, Any],
+        worker_id: str,
+        native_result_file: Path,
+        raw_envelope: bytes,
+    ) -> None:
+        """把原生回包原样暂存到当前 Worker 的绑定路径。
+
+        这是 ``record_worker_outcome`` 的输入侧操作，不是另一条状态机：
+        它只校验 Action 绑定并原子写入，随后仍由同一个 Assembler 解析、
+        合并宿主事实和生成 outcomes。使用 bytes 是为了保留原生 envelope，
+        避免宿主先解析/重编码导致证据漂移。
+        """
+
+        if not isinstance(raw_envelope, bytes) or not raw_envelope.strip():
+            raise HostEvidenceValidationError((
+                f"WORKER_NATIVE_RESULT_EMPTY:{worker_id}",
+            ))
+        try:
+            plan = SpawnPlan.from_action(action)
+        except SpawnContractError as exc:
+            raise HostEvidenceValidationError((str(exc),)) from exc
+        invocation = next(
+            (item for item in plan.invocations if item.worker_id == worker_id),
+            None,
+        )
+        if invocation is None:
+            raise HostEvidenceValidationError((f"WORKER_UNKNOWN:{worker_id}",))
+        host_execution = action.get("host_execution")
+        raw_workers = (
+            host_execution.get("workers")
+            if isinstance(host_execution, Mapping)
+            else None
+        )
+        template = next(
+            (
+                item for item in raw_workers
+                if isinstance(item, Mapping) and item.get("worker_id") == worker_id
+            ),
+            None,
+        ) if isinstance(raw_workers, list) else None
+        native_ref = (
+            template.get("native_result_path")
+            if isinstance(template, Mapping)
+            else None
+        )
+        outcome_ref = (
+            template.get("outcome_path")
+            if isinstance(template, Mapping)
+            else invocation.outcome_path
+        )
+        native_path = native_result_file.resolve()
+        try:
+            native_relative = str(native_path.relative_to(self.project_root))
+        except ValueError:
+            native_relative = ""
+        if (
+            not isinstance(native_ref, str)
+            or native_ref != native_relative
+            or not isinstance(outcome_ref, str)
+            or native_path == self.project_root
+            or self.project_root not in native_path.parents
+            or native_path == (self.project_root / outcome_ref).resolve()
+        ):
+            raise HostEvidenceValidationError((
+                f"WORKER_NATIVE_RESULT_PATH_INVALID:{worker_id}",
+            ))
+        _atomic_write_bytes(native_path, raw_envelope)
 
     def recover_completed_worker_artifacts(
         self,
@@ -197,6 +227,7 @@ class HostExecutionAssembler:
         action: Mapping[str, Any],
         worker_id: str,
         native_worker_handle: str | None,
+        native_result_file: Path | None = None,
         status: str,
         actual_model: str = "unreported",
         isolation_evidence: str | None = None,
@@ -246,17 +277,110 @@ class HostExecutionAssembler:
         outcome_path = (self.project_root / outcome_ref).resolve()
         if outcome_path == self.project_root or self.project_root not in outcome_path.parents:
             raise HostEvidenceValidationError((f"WORKER_OUTCOME_PATH_INVALID:{worker_id}",))
-        try:
-            raw_business = json.loads(outcome_path.read_text(encoding="utf-8"))
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise HostEvidenceValidationError((f"WORKER_BUSINESS_ARTIFACT_INVALID:{worker_id}",)) from exc
+        def load_native_business() -> dict[str, Any]:
+            if native_result_file is None:
+                raise HostEvidenceValidationError((
+                    f"WORKER_NATIVE_RESULT_MISSING:{worker_id}",
+                ))
+            native_ref = template.get("native_result_path") if isinstance(template, Mapping) else None
+            native_path = native_result_file.resolve()
+            try:
+                native_relative = str(native_path.relative_to(self.project_root))
+            except ValueError:
+                native_relative = ""
+            if (
+                not isinstance(native_ref, str)
+                or native_ref != native_relative
+                or native_path == self.project_root
+                or self.project_root not in native_path.parents
+                or native_path == outcome_path
+            ):
+                raise HostEvidenceValidationError((
+                    f"WORKER_NATIVE_RESULT_PATH_INVALID:{worker_id}",
+                ))
+            try:
+                native_raw = json.loads(native_path.read_text(encoding="utf-8"))
+                return _native_business_artifact(
+                    native_raw,
+                    worker_id=worker_id,
+                    status=status,
+                )
+            except (
+                OSError,
+                UnicodeDecodeError,
+                json.JSONDecodeError,
+                HostEvidenceValidationError,
+            ) as exc:
+                raise HostEvidenceValidationError((
+                    f"WORKER_NATIVE_RESULT_INVALID:{worker_id}",
+                )) from exc
+
+        if not outcome_path.is_file():
+            # 只有私有文件完全缺失时，Host 才能从本次原生回包恢复一次。
+            # 一旦 Worker 已经写出文件，该文件就是唯一业务权威；不能
+            # 用另一条 native 解析路径覆盖 Worker 的非法协议。
+            raw_business = load_native_business()
+            _atomic_write_json(outcome_path, raw_business)
+        else:
+            try:
+                raw_business = json.loads(outcome_path.read_text(encoding="utf-8"))
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+                raise HostEvidenceValidationError((
+                    f"WORKER_BUSINESS_ARTIFACT_INVALID:{worker_id}",
+                )) from exc
         if isinstance(raw_business, Mapping) and isinstance(raw_business.get("outcome"), Mapping):
             raw_business = raw_business["outcome"]
-        if not isinstance(raw_business, Mapping):
-            raise HostEvidenceValidationError((f"WORKER_BUSINESS_ARTIFACT_INVALID:{worker_id}",))
+        # Claude Worker 偶尔会把 expected_format 业务对象直接写到私有路径，
+        # 虽然没有携带 Host 身份字段，但仍然是当前 Worker 已授权的业务产物。
+        # 在唯一的 record 边界按当前 Action 的 expected_format 做一次确定性
+        # envelope 归一化；不覆盖原文件，也不从自然语言或宿主字段推断事实。
+        if isinstance(raw_business, Mapping):
+            expected_format = action.get("expected_format")
+            expected_keys = (
+                set(expected_format)
+                if isinstance(expected_format, Mapping)
+                else set()
+            )
+            forbidden_business = {
+                "spawned", "spawn_proof_token", "native_worker_handle", "actual_model",
+                "isolation_evidence", "worker_attestations", "attestation", "receipt",
+            }
+            if (
+                expected_keys
+                and expected_keys.issubset(raw_business)
+                and not forbidden_business.intersection(raw_business)
+                and not {"worker_id", "status", "payload", "summary"}.intersection(raw_business)
+            ):
+                raw_business = {
+                    "worker_id": worker_id,
+                    "status": status,
+                    "payload": dict(raw_business),
+                    "summary": "native_worker_result",
+                }
+            elif (
+                set(raw_business) == {"worker_id", "status", "payload"}
+                and raw_business.get("worker_id") == worker_id
+                and isinstance(raw_business.get("status"), str)
+                and isinstance(raw_business.get("payload"), dict)
+            ):
+                # ``summary`` is audit metadata, not business data.  Native
+                # result parsing already applies this normalization; apply
+                # the same one at the private-file handoff so a Worker that
+                # omitted only this metadata does not lose a valid payload.
+                # Keep the private artifact untouched: the Host only
+                # normalizes the in-memory envelope before merging facts.
+                raw_business = {
+                    **raw_business,
+                    "summary": "native_worker_result",
+                }
         required_business = {"worker_id", "status", "payload", "summary"}
-        if not required_business.issubset(raw_business):
-            raise HostEvidenceValidationError((f"WORKER_BUSINESS_ARTIFACT_INVALID:{worker_id}",))
+        if (
+            not isinstance(raw_business, Mapping)
+            or not required_business.issubset(raw_business)
+        ):
+            raise HostEvidenceValidationError((
+                f"WORKER_BUSINESS_ARTIFACT_INVALID:{worker_id}",
+            ))
         forbidden_business = {
             "spawned", "spawn_proof_token", "native_worker_handle", "actual_model",
             "isolation_evidence", "worker_attestations", "attestation", "receipt",
@@ -268,14 +392,19 @@ class HostExecutionAssembler:
         if raw_business.get("worker_id") != worker_id or not isinstance(raw_business.get("payload"), dict):
             raise HostEvidenceValidationError((f"WORKER_BUSINESS_ARTIFACT_INVALID:{worker_id}",))
         business_status = raw_business.get("status")
-        status_key = {"timeout": "timed_out"}.get(status, status)
-        business_status_key = (
-            {"timeout": "timed_out"}.get(business_status, business_status)
-            if isinstance(business_status, str)
-            else None
-        )
+        status_key = _canonical_worker_business_status(status)
+        business_status_key = _canonical_worker_business_status(business_status)
         if business_status_key != status_key:
             raise HostEvidenceValidationError((f"WORKER_STATUS_CONFLICT:{worker_id}",))
+        # Worker 可能已经完成执行，但其业务测试仍然失败。这个事实由
+        # payload 自身确定性分类为 Host failure；不修改私有 artifact，
+        # 也不要求 Coordinator 伪造 status 或把失败计数改成 0。
+        effective_status = (
+            "failed"
+            if status_key == "completed"
+            and _business_payload_reports_test_failure(raw_business["payload"])
+            else status
+        )
         summary = raw_business.get("summary")
         if not isinstance(summary, str):
             raise HostEvidenceValidationError((f"WORKER_BUSINESS_ARTIFACT_INVALID:{worker_id}",))
@@ -285,18 +414,21 @@ class HostExecutionAssembler:
         handle = native_worker_handle
         if not handle:
             handle = f"unreported:{message_id}:{worker_id}"
-        if status == "completed" and handle.startswith("unreported:"):
+        if effective_status == "completed" and _native_handle_is_missing(handle):
             raise HostEvidenceValidationError((f"NATIVE_WORKER_HANDLE_MISSING:{worker_id}",))
         model = actual_model if isinstance(actual_model, str) and actual_model else "unreported"
         isolation = isolation_evidence.strip() if isinstance(isolation_evidence, str) else None
-        if status == "completed" and not isolation:
+        if effective_status == "completed" and not isolation:
             raise HostEvidenceValidationError((f"NATIVE_ISOLATION_EVIDENCE_MISSING:{worker_id}",))
-        generation = template.get("execution_generation") if isinstance(template, Mapping) else None
-        fence = template.get("fencing_token") if isinstance(template, Mapping) else None
+        generation, fence = _resolve_worker_execution_binding(
+            action,
+            template if isinstance(template, Mapping) else None,
+            worker_id,
+        )
         outcome = NativeWorkerOutcome(
             worker_id=worker_id,
             native_worker_handle=handle,
-            status=status,
+            status=effective_status,
             payload=dict(raw_business["payload"]),
             summary=summary,
             actual_model=model,
@@ -304,6 +436,107 @@ class HostExecutionAssembler:
             execution_generation=generation if isinstance(generation, int) else None,
             fencing_token=fence if isinstance(fence, str) else None,
         )
+        return self._merge_outcome_into_shared(
+            action=action,
+            plan=plan,
+            outcome=outcome,
+        )
+
+    def record_invalid_worker_failure(
+        self,
+        *,
+        action: Mapping[str, Any],
+        worker_id: str,
+        native_worker_handle: str | None,
+        actual_model: str = "unreported",
+        isolation_evidence: str | None = None,
+        detail: str,
+        native_output_available: bool = False,
+    ) -> dict[str, Any]:
+        """把非法 Worker 业务产物收敛为同一条宿主失败事实路径。
+
+        私有业务文件已经存在时，它仍是唯一业务权威，不能被 native 回包
+        覆盖或猜测修复。这里只记录有界的宿主诊断和执行身份，随后复用
+        ``_merge_outcome_into_shared`` 与 ``WorkerFailureService`` 的既有链路。
+        """
+
+        if not isinstance(worker_id, str) or not worker_id:
+            raise HostEvidenceValidationError(("WORKER_ID_MISSING",))
+        try:
+            plan = SpawnPlan.from_action(action)
+        except SpawnContractError as exc:
+            raise HostEvidenceValidationError((str(exc),)) from exc
+        invocation = next(
+            (item for item in plan.invocations if item.worker_id == worker_id),
+            None,
+        )
+        if invocation is None:
+            raise HostEvidenceValidationError((f"WORKER_UNKNOWN:{worker_id}",))
+        message_id = action.get("message_id")
+        if not isinstance(message_id, str) or not message_id:
+            raise HostEvidenceValidationError(("ACTION_MESSAGE_ID_MISSING",))
+        host_execution = action.get("host_execution")
+        raw_workers = (
+            host_execution.get("workers")
+            if isinstance(host_execution, Mapping)
+            else None
+        )
+        template = next(
+            (
+                item for item in raw_workers
+                if isinstance(item, Mapping) and item.get("worker_id") == worker_id
+            ),
+            None,
+        ) if isinstance(raw_workers, list) else None
+        generation, fence = _resolve_worker_execution_binding(
+            action,
+            template if isinstance(template, Mapping) else None,
+            worker_id,
+        )
+        bounded_detail = detail.strip()[:512] if isinstance(detail, str) else ""
+        if not bounded_detail:
+            bounded_detail = f"WORKER_BUSINESS_ARTIFACT_INVALID:{worker_id}"
+        handle = native_worker_handle or f"unreported:{message_id}:{worker_id}"
+        model = actual_model.strip() if isinstance(actual_model, str) else ""
+        isolation = (
+            isolation_evidence.strip()
+            if isinstance(isolation_evidence, str) and isolation_evidence.strip()
+            else "unreported"
+        )
+        outcome = NativeWorkerOutcome(
+            worker_id=worker_id,
+            native_worker_handle=handle,
+            status="failed",
+            payload={
+                "error_code": "HOST_WORKER_OUTPUT_INVALID",
+                "detail": bounded_detail,
+                "native_output_available": bool(native_output_available),
+            },
+            summary=f"HOST_WORKER_OUTPUT_INVALID:{worker_id}:{bounded_detail}"[:512],
+            actual_model=model or "unreported",
+            isolation_evidence=isolation,
+            execution_generation=generation if isinstance(generation, int) else None,
+            fencing_token=fence if isinstance(fence, str) else None,
+        )
+        return self._merge_outcome_into_shared(
+            action=action,
+            plan=plan,
+            outcome=outcome,
+        )
+
+    def _merge_outcome_into_shared(
+        self,
+        *,
+        action: Mapping[str, Any],
+        plan: SpawnPlan,
+        outcome: NativeWorkerOutcome,
+    ) -> dict[str, Any]:
+        """把一个已分类 outcome 幂等合并到当前 Action 的共享副本。"""
+
+        message_id = action.get("message_id")
+        if not isinstance(message_id, str) or not message_id:
+            raise HostEvidenceValidationError(("ACTION_MESSAGE_ID_MISSING",))
+        host_execution = action.get("host_execution")
         work_files = host_execution.get("work_files") if isinstance(host_execution, Mapping) else None
         outcomes_ref = work_files.get("outcomes") if isinstance(work_files, Mapping) else None
         outcomes_path = (
@@ -317,28 +550,43 @@ class HostExecutionAssembler:
         if outcomes_path.is_file():
             try:
                 existing_raw = json.loads(outcomes_path.read_text(encoding="utf-8"))
-            except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-                raise HostEvidenceValidationError(("OUTCOMES_INPUT_INVALID",)) from exc
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+                # outcomes.json 是当前 Action 的可重建工作副本，不是 Core
+                # 权威账本。新的 Host 回写已通过 native handle/model/
+                # isolation 校验后，可以原子重建损坏副本；权威历史仍由
+                # Outcome Journal 保存，不能让半成品阻断同一 Action 恢复。
+                existing_raw = []
         existing_items = existing_raw.get("outcomes") if isinstance(existing_raw, Mapping) else existing_raw
         if not isinstance(existing_items, list):
-            raise HostEvidenceValidationError(("OUTCOMES_INPUT_INVALID",))
+            existing_items = []
         existing_by_worker: dict[str, NativeWorkerOutcome] = {}
         for item in existing_items:
             if not isinstance(item, Mapping):
-                raise HostEvidenceValidationError(("OUTCOMES_INPUT_INVALID",))
+                continue
             try:
                 parsed = NativeWorkerOutcome(**dict(item))
-            except (TypeError, ValueError) as exc:
-                raise HostEvidenceValidationError(("OUTCOMES_INPUT_INVALID",)) from exc
+            except (TypeError, ValueError):
+                # 旧宿主可能已将 host-only 半成品写入共享副本。它没有
+                # Worker 业务 payload，不能参与合并，也不能覆盖本次已验证
+                # 的 outcome；后续 Core 仍会校验完整 Worker 集合。
+                continue
             if parsed.worker_id in existing_by_worker:
-                raise HostEvidenceValidationError(("OUTCOMES_DUPLICATE_WORKER",))
+                # 重复条目使该 Worker 的旧副本不具备确定性；丢弃旧条目，
+                # 由本次原生回写提供唯一事实。其他 Worker 仍可保留。
+                existing_by_worker.pop(parsed.worker_id)
+                continue
             existing_by_worker[parsed.worker_id] = parsed
-        previous = existing_by_worker.get(worker_id)
-        if previous is not None:
-            if previous.to_dict() != outcome.to_dict():
-                raise HostEvidenceValidationError((f"OUTCOMES_CONFLICT:{worker_id}",))
+        previous = existing_by_worker.get(outcome.worker_id)
+        if previous is None:
+            existing_by_worker[outcome.worker_id] = outcome
+        elif previous.to_dict() == outcome.to_dict():
             return outcome.to_dict()
-        existing_by_worker[worker_id] = outcome
+        elif not can_replace_retryable_outcome(previous, outcome):
+            raise HostEvidenceValidationError((
+                f"OUTCOMES_CONFLICT:{outcome.worker_id}",
+            ))
+        else:
+            existing_by_worker[outcome.worker_id] = outcome
         merged = [
             existing_by_worker[item.worker_id]
             for item in plan.invocations
@@ -356,8 +604,8 @@ class HostExecutionAssembler:
         """汇总每个 Worker 的私有产出，形成唯一共享 outcomes 文件。
 
         Coordinator 不再负责创造 Worker 事实；它只负责合并已存在的、按
-        invocation 绑定的 WorkerOutcome。旧 Action 没有 ``outcome_path`` 时
-        返回明确的兼容错误，由调用方继续使用旧共享文件路径。
+        invocation 绑定的 WorkerOutcome。当前 Action 必须提供 canonical
+        ``outcome_path``，缺失或不可读时直接 fail-closed。
         """
 
         try:
@@ -380,34 +628,19 @@ class HostExecutionAssembler:
         } if isinstance(worker_templates, list) else {}
         for invocation in plan.invocations:
             template = template_by_worker.get(invocation.worker_id)
-            template_generation = (
-                template.get("execution_generation")
-                if isinstance(template, Mapping)
-                else None
-            )
-            # Generation-bound templates are authoritative. Legacy Actions keep
-            # the invocation path for backward compatibility.
-            candidate = template.get("outcome_path") if template else None
-            if (
-                template_generation is not None
-                and isinstance(candidate, str)
-                and invocation.outcome_path is not None
-                and candidate != invocation.outcome_path
-            ):
-                raise WorkerOutcomeCollectionError(
-                    "HOST_WORKER_OUTPUT_INVALID", invocation.worker_id,
-                    "outcome_path_drift",
-                )
-            relative = (
-                candidate
-                if template_generation is not None and isinstance(candidate, str)
-                else invocation.outcome_path
-            )
-            if not relative:
-                raise WorkerOutcomeCollectionError(
-                    "HOST_WORKER_OUTPUT_INVALID", invocation.worker_id,
-                    "outcome_path_missing",
-                )
+            if isinstance(template, Mapping):
+                candidate = template.get("outcome_path")
+                if not isinstance(candidate, str) or not candidate:
+                    raise WorkerOutcomeCollectionError(
+                        "HOST_WORKER_OUTPUT_INVALID", invocation.worker_id,
+                        "outcome_path_missing",
+                    )
+                if candidate != invocation.outcome_path:
+                    raise WorkerOutcomeCollectionError(
+                        "HOST_WORKER_OUTPUT_INVALID", invocation.worker_id,
+                        "outcome_path_drift",
+                    )
+            relative = invocation.outcome_path
             path = (self.project_root / relative).resolve()
             if path == self.project_root or self.project_root not in path.parents:
                 raise WorkerOutcomeCollectionError(
@@ -416,31 +649,10 @@ class HostExecutionAssembler:
                 )
             try:
                 raw = json.loads(path.read_text(encoding="utf-8"))
-                legacy_source = None
             except FileNotFoundError as exc:
-                # rc.5 早期真实宿主曾把同一 invocation 写入
-                # <action-key>/outcome-<worker>.json。只按当前 Action/Worker
-                # 计算这一条迁移路径，不做目录扫描；验证通过后复制到 canonical
-                # 路径，避免同一结果在两套命名空间继续漂移。
-                message_id = action.get("message_id")
-                legacy_path = (
-                    self.project_root
-                    / legacy_worker_outcome_path(message_id, invocation.worker_id)
-                    if isinstance(message_id, str) and message_id
-                    else None
-                )
-                if legacy_path is None or not legacy_path.is_file():
-                    raise WorkerOutcomeCollectionError(
-                        "HOST_WORKER_OUTPUT_MISSING", invocation.worker_id
-                    ) from exc
-                try:
-                    raw = json.loads(legacy_path.read_text(encoding="utf-8"))
-                except (OSError, UnicodeDecodeError, json.JSONDecodeError) as legacy_exc:
-                    raise WorkerOutcomeCollectionError(
-                        "HOST_WORKER_OUTPUT_INVALID", invocation.worker_id,
-                        legacy_exc.__class__.__name__,
-                    ) from legacy_exc
-                legacy_source = legacy_path
+                raise WorkerOutcomeCollectionError(
+                    "HOST_WORKER_OUTPUT_MISSING", invocation.worker_id
+                ) from exc
             except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
                 raise WorkerOutcomeCollectionError(
                     "HOST_WORKER_OUTPUT_INVALID", invocation.worker_id,
@@ -495,15 +707,10 @@ class HostExecutionAssembler:
                     "HOST_WORKER_OUTPUT_INVALID", invocation.worker_id,
                     "native_handle_unreported",
                 )
-            expected_generation = (
-                template.get("execution_generation")
-                if isinstance(template, Mapping)
-                else None
-            )
-            expected_fence = (
-                template.get("fencing_token")
-                if isinstance(template, Mapping)
-                else None
+            expected_generation, expected_fence = _resolve_worker_execution_binding(
+                action,
+                template if isinstance(template, Mapping) else None,
+                invocation.worker_id,
             )
             if (
                 (expected_generation is not None or expected_fence is not None)
@@ -520,9 +727,6 @@ class HostExecutionAssembler:
                     "HOST_WORKER_OUTPUT_STALE", invocation.worker_id,
                     "execution_fence_mismatch",
                 )
-            if legacy_source is not None:
-                # 迁移只在完整身份校验之后发生，原文件保留供审计。
-                _atomic_write_json(path, raw)
             outcomes.append(outcome)
         _atomic_write_json(outcomes_path, {"outcomes": [item.to_dict() for item in outcomes]})
         return outcomes
@@ -534,180 +738,11 @@ class HostExecutionAssembler:
         result_path: Path,
         outcomes_path: Path | None = None,
     ) -> dict[str, Any] | None:
-        """从 Core-owned journal 恢复与 active Action 绑定的 Result。
-
-        无 committed journal 表示应执行正常 Worker 路径；已有 journal 但
-        身份不一致则 fail-closed，不得回退为重新 spawn。
-        """
-
-        message_id = action.get("message_id")
-        thread_id = action.get("thread_id")
-        stage = action.get("stage")
-        if (
-            not isinstance(message_id, str)
-            or not message_id
-            or not isinstance(thread_id, str)
-            or not thread_id
-            or not isinstance(stage, str)
-            or not stage
-        ):
-            raise HostEvidenceValidationError(("ACTION_IDENTITY_INVALID",))
-        journal_path = (
-            self.project_root
-            / ".ae-state/host-runtime/outcomes"
-            / f"{message_id}.json"
+        return self._outcome_recovery.restore_committed_result_to_file(
+            action=action,
+            result_path=result_path,
+            outcomes_path=outcomes_path,
         )
-        journal = self._read_json(journal_path)
-        if journal is None:
-            return None
-        if journal.get("status") == "rejected":
-            # Core 已拒绝候选 Result，但 Worker 事实仍是同一 Action 的权威事实；
-            # 修复上下文只能拿到这份原文，绝不能因 rejected 状态重新 spawn。
-            if outcomes_path is None:
-                raise HostEvidenceValidationError(
-                    ("OUTCOME_JOURNAL_OUTCOMES_PATH_MISSING",)
-                )
-            outcomes = self._authoritative_outcomes(
-                journal=journal,
-                action_message_id=message_id,
-                required=True,
-            )
-            if outcomes is None:
-                raise HostEvidenceValidationError(
-                    ("OUTCOME_JOURNAL_OUTCOMES_MISSING",)
-                )
-            self._write_outcomes_file(outcomes_path, outcomes)
-            return None
-        if journal.get("status") == "assembly_rejected":
-            # 语义组装拒绝通常保留已完成 Worker；有事实时恢复并复用，
-            # 没有事实则保持旧兼容路径，允许首次 Worker 执行。
-            outcomes = self._authoritative_outcomes(
-                journal=journal,
-                action_message_id=message_id,
-                required=False,
-            )
-            if outcomes is not None and outcomes_path is not None:
-                self._write_outcomes_file(outcomes_path, outcomes)
-            return None
-        if journal.get("status") == "prepared" and not isinstance(
-            journal.get("result"), dict
-        ):
-            outcomes = journal.get("outcomes")
-            if (
-                journal.get("schema_version") != "1.0"
-                or journal.get("action_message_id") != message_id
-                or not isinstance(outcomes, list)
-            ):
-                raise HostEvidenceValidationError(
-                    ("OUTCOME_JOURNAL_PREPARED_INVALID",)
-                )
-            if outcomes_path is not None:
-                # prepared journal 已在 Worker 完成后原子落盘，是 outcome
-                # 的权威恢复点；宿主工作副本只能由它重建，不能反向改写事实。
-                self._write_outcomes_file(outcomes_path, outcomes)
-            return None
-        if journal.get("status") not in {"prepared", "accepted", "committed"}:
-            return None
-        result = journal.get("result")
-        # 早期 T517 build 曾把失败尝试误写为 committed；失败不是成功证据，
-        # 恢复时必须允许同一 active Action 重新执行 Worker。
-        if isinstance(result, dict) and result.get("spawned") is False:
-            return None
-        if (
-            journal.get("schema_version") not in {"1.0", "1.1"}
-            or journal.get("action_message_id") != message_id
-            or not isinstance(result, dict)
-            or result.get("message_type") != "result"
-            or result.get("causation_id") != message_id
-            or result.get("thread_id") != thread_id
-            or result.get("stage") != stage
-            or result.get("tick") != int(action.get("tick", 0))
-        ):
-            raise HostEvidenceValidationError(
-                ("OUTCOME_JOURNAL_RESULT_IDENTITY_MISMATCH",)
-            )
-        target = (
-            result_path.resolve()
-            if result_path.is_absolute()
-            else (self.project_root / result_path).resolve()
-        )
-        if target != self.project_root and self.project_root not in target.parents:
-            raise HostEvidenceValidationError(
-                ("RESULT_OUTPUT_PATH_OUTSIDE_PROJECT",)
-            )
-        _atomic_write_json(target, result)
-        if outcomes_path is not None:
-            outcomes = journal.get("outcomes", [])
-            if not isinstance(outcomes, list):
-                raise HostEvidenceValidationError(
-                    ("OUTCOME_JOURNAL_OUTCOMES_INVALID",)
-                )
-            outcomes_target = (
-                outcomes_path.resolve()
-                if outcomes_path.is_absolute()
-                else (self.project_root / outcomes_path).resolve()
-            )
-            if (
-                outcomes_target != self.project_root
-                and self.project_root not in outcomes_target.parents
-            ):
-                raise HostEvidenceValidationError(
-                    ("OUTCOMES_OUTPUT_PATH_OUTSIDE_PROJECT",)
-                )
-            _atomic_write_json(outcomes_target, {"outcomes": outcomes})
-        return dict(result)
-
-    def _write_outcomes_file(
-        self,
-        outcomes_path: Path,
-        outcomes: Sequence[Mapping[str, Any]],
-    ) -> None:
-        target = (
-            outcomes_path.resolve()
-            if outcomes_path.is_absolute()
-            else (self.project_root / outcomes_path).resolve()
-        )
-        if target == self.project_root or self.project_root not in target.parents:
-            raise HostEvidenceValidationError(
-                ("OUTCOMES_OUTPUT_PATH_OUTSIDE_PROJECT",)
-            )
-        _atomic_write_json(target, {"outcomes": [dict(item) for item in outcomes]})
-
-    @staticmethod
-    def _authoritative_outcomes(
-        *,
-        journal: Mapping[str, Any],
-        action_message_id: str,
-        required: bool,
-    ) -> list[dict[str, Any]] | None:
-        raw = journal.get("outcomes")
-        if journal.get("action_message_id") != action_message_id:
-            raise HostEvidenceValidationError(
-                ("OUTCOME_JOURNAL_ACTION_IDENTITY_MISMATCH",)
-            )
-        if not isinstance(raw, list):
-            if required:
-                raise HostEvidenceValidationError(
-                    ("OUTCOME_JOURNAL_OUTCOMES_MISSING",)
-                )
-            return None
-        if any(not isinstance(item, Mapping) for item in raw):
-            raise HostEvidenceValidationError(
-                ("OUTCOME_JOURNAL_OUTCOMES_INVALID",)
-            )
-        expected = journal.get("outcomes_fingerprint")
-        if isinstance(expected, str):
-            actual = hashlib.sha256(
-                _canonical_bytes({
-                    "action_message_id": action_message_id,
-                    "outcomes": raw,
-                })
-            ).hexdigest()
-            if actual != expected:
-                raise HostEvidenceValidationError(
-                    ("OUTCOME_JOURNAL_OUTCOMES_FINGERPRINT_MISMATCH",)
-                )
-        return [dict(item) for item in raw]
 
     def finalize(
         self,
@@ -757,32 +792,23 @@ class HostExecutionAssembler:
             / ".ae-state/host-runtime/outcomes"
             / f"{message_id}.json"
         )
-        existing = self._read_json(journal_path)
+        existing = OutcomeRecoveryService.read_json(journal_path)
         outcome_by_worker = {item.worker_id: item for item in outcomes}
         if existing is not None and existing.get("status") in {
             "rejected",
             "assembly_rejected",
         }:
-            authoritative = self._authoritative_outcomes(
+            authoritative = OutcomeRecoveryService.authoritative_outcomes(
                 journal=existing,
                 action_message_id=message_id,
                 required=existing.get("status") == "rejected",
             )
             if authoritative is not None:
-                try:
-                    # Result 修复只允许改变 Coordinator 语义；Worker outcome
-                    # 由首次事务固定，忽略后续宿主 context 传来的替代事实。
-                    outcome_by_worker = {
-                        item.worker_id: item
-                        for item in (
-                            NativeWorkerOutcome(**raw)
-                            for raw in authoritative
-                        )
-                    }
-                except (TypeError, ValueError) as exc:
-                    raise HostEvidenceValidationError((
-                        "OUTCOME_JOURNAL_OUTCOMES_INVALID",
-                    )) from exc
+                # Result 修复只允许改变 Coordinator 语义；Worker outcome
+                # 由首次事务固定，同一 Worker 后续事实不能替换。
+                outcome_by_worker = merge_authoritative_outcomes(
+                    authoritative, outcomes
+                )
         normalized: dict[str, NativeWorkerOutcome] = {}
         for worker_id, outcome in outcome_by_worker.items():
             evidence = outcome.isolation_evidence
@@ -917,14 +943,32 @@ class HostExecutionAssembler:
                 existing = None
             else:
                 existing_outcomes_fingerprint = existing.get("outcomes_fingerprint")
-                if not isinstance(existing_outcomes_fingerprint, str):
+                # 语义预检可能在 Worker 尚未全部回写时产生
+                # ``assembly_rejected``。这类记录只有 Coordinator 的拒绝
+                # 证据，没有权威 outcomes；不能把空列表指纹锁死，阻止
+                # 后续补齐 Worker 后的合法重试。若已有 outcomes，则仍按
+                # 指纹严格拒绝替换事实。
+                incomplete_assembly_rejection = (
+                    existing.get("status") == "assembly_rejected"
+                    and not isinstance(existing_outcomes_fingerprint, str)
+                    and not isinstance(existing.get("outcomes"), list)
+                )
+                if incomplete_assembly_rejection:
+                    existing_outcomes_fingerprint = None
+                elif not isinstance(existing_outcomes_fingerprint, str):
                     existing_outcomes_fingerprint = hashlib.sha256(
                         _canonical_bytes({
                             "action_message_id": message_id,
                             "outcomes": existing.get("outcomes", []),
                         })
                     ).hexdigest()
-                if existing_outcomes_fingerprint != outcomes_fingerprint:
+                if (
+                    existing_outcomes_fingerprint is not None
+                    and existing_outcomes_fingerprint != outcomes_fingerprint
+                    and not assembly_rejection_can_extend_outcomes(
+                        existing, outcomes
+                    )
+                ):
                     raise HostEvidenceValidationError(("OUTCOME_JOURNAL_CONFLICT",))
                 committed_result = existing.get("result")
                 if (
@@ -941,7 +985,9 @@ class HostExecutionAssembler:
         )
         if not isinstance(completed_at, str):
             completed_at = datetime.now(UTC).isoformat()
-        if existing is None or existing.get("status") != "rejected":
+        if existing is None or existing.get("status") not in {
+            "rejected", "assembly_rejected"
+        }:
             _atomic_write_json(journal_path, {
                 "schema_version": "1.0",
                 "status": "prepared",
@@ -1011,23 +1057,10 @@ class HostExecutionAssembler:
         action: Mapping[str, Any],
         coordinator_payload: Mapping[str, Any],
     ) -> dict[str, Any]:
-        """只归一化身份完全一致的已知宿主包装；身份仍由 Core 写入。"""
-        normalized = dict(coordinator_payload)
-        wrapper_keys = {"action", "stage", "tick", "thread_id", "status", "result"}
-        wrapped_result = normalized.get("result")
-        if (
-            isinstance(wrapped_result, Mapping)
-            and set(normalized) == wrapper_keys
-            and normalized.get("action") == action.get("action")
-            and normalized.get("stage") == action.get("stage")
-            and normalized.get("tick") == action.get("tick")
-            and normalized.get("thread_id") == action.get("thread_id")
-            and normalized.get("status") in {"ok", "success", "completed"}
-        ):
-            return dict(wrapped_result)
-        if "stage" in normalized and normalized["stage"] == action.get("stage"):
-            del normalized["stage"]
-        return normalized
+        return ResultContractService.normalize_echoed_identity(
+            action=action,
+            coordinator_payload=coordinator_payload,
+        )
 
     @staticmethod
     def _normalize_business_payload(
@@ -1035,92 +1068,14 @@ class HostExecutionAssembler:
         action: Mapping[str, Any],
         coordinator_payload: Mapping[str, Any],
     ) -> dict[str, Any]:
-        """按 Core 下发合同恢复一次二次序列化，并在写证据前校验。"""
-
-        contract = action.get("result_contract")
-        if contract is None:
-            return dict(coordinator_payload)
-        if not isinstance(contract, Mapping):
-            raise HostEvidenceValidationError(("RESULT_CONTRACT_INVALID",))
-        required = contract.get("required")
-        properties = contract.get("properties")
-        if (
-            contract.get("schema_version") != "1.0"
-            or not isinstance(required, list)
-            or any(not isinstance(item, str) for item in required)
-            or not isinstance(properties, Mapping)
-            or contract.get("additionalProperties") is not False
-        ):
-            raise HostEvidenceValidationError(("RESULT_CONTRACT_INVALID",))
-        normalized = dict(coordinator_payload)
-        violations: list[str] = [
-            f"COORDINATOR_FIELD_UNEXPECTED:{field}"
-            for field in sorted(str(item) for item in normalized)
-            if field not in properties
-        ]
-        for field in required:
-            if field not in normalized:
-                violations.append(f"COORDINATOR_FIELD_REQUIRED:{field}")
-        for field, value in tuple(normalized.items()):
-            declaration = properties.get(field)
-            if not isinstance(declaration, Mapping):
-                continue
-            raw_types = declaration.get("type")
-            expected = (
-                [raw_types]
-                if isinstance(raw_types, str)
-                else raw_types
-                if isinstance(raw_types, list)
-                else []
-            )
-            if (
-                isinstance(value, str)
-                and "string" not in expected
-                and any(item in expected for item in ("array", "object"))
-            ):
-                try:
-                    decoded = json.loads(value)
-                except json.JSONDecodeError:
-                    decoded = value
-                if decoded is not value:
-                    value = decoded
-                    normalized[field] = decoded
-            if not HostExecutionAssembler._matches_json_type(value, expected):
-                violations.append(
-                    f"COORDINATOR_FIELD_TYPE_INVALID:{field}:"
-                    f"{'|'.join(str(item) for item in expected)}"
-                )
-        if violations:
-            raise HostEvidenceValidationError(violations)
-        stage = action.get("stage")
-        if isinstance(stage, str):
-            semantic_errors = validate_result_format(
-                {"stage": stage, **normalized},
-                stage,
-            )
-            if semantic_errors:
-                raise HostEvidenceValidationError(tuple(
-                    f"COORDINATOR_RESULT_INVALID:{error}"
-                    for error in semantic_errors
-                ))
-        return normalized
+        return ResultContractService.normalize_business_payload(
+            action=action,
+            coordinator_payload=coordinator_payload,
+        )
 
     @staticmethod
     def _matches_json_type(value: object, expected: Sequence[object]) -> bool:
-        checks = {
-            "string": lambda item: isinstance(item, str),
-            "array": lambda item: isinstance(item, list),
-            "object": lambda item: isinstance(item, dict),
-            "integer": lambda item: isinstance(item, int) and not isinstance(item, bool),
-            "boolean": lambda item: isinstance(item, bool),
-            "null": lambda item: item is None,
-        }
-        return any(
-            isinstance(kind, str)
-            and kind in checks
-            and checks[kind](value)
-            for kind in expected
-        )
+        return ResultContractService.matches_json_type(value, expected)
 
     def _finalize_worker_failure(
         self,
@@ -1128,174 +1083,10 @@ class HostExecutionAssembler:
         action: Mapping[str, Any],
         outcomes: Sequence[NativeWorkerOutcome],
     ) -> dict[str, Any]:
-        """把原生 Worker 失败事实终结为不可伪装成业务成功的 Result。"""
-
-        violations: list[str] = []
-        try:
-            plan = SpawnPlan.from_action(action)
-        except SpawnContractError as exc:
-            raise HostEvidenceValidationError((str(exc),)) from exc
-        message_id = action.get("message_id")
-        thread_id = action.get("thread_id")
-        stage = action.get("stage")
-        tick = action.get("tick", 0)
-        if not isinstance(message_id, str) or not message_id:
-            violations.append("ACTION_MESSAGE_ID_MISSING")
-        if not isinstance(thread_id, str) or not thread_id:
-            violations.append("THREAD_ID_MISSING")
-        if not isinstance(stage, str) or not stage:
-            violations.append("STAGE_MISSING")
-        if not isinstance(tick, int) or isinstance(tick, bool) or tick < 0:
-            violations.append("ACTION_TICK_INVALID")
-        expected_workers = {item.worker_id for item in plan.invocations}
-        outcome_workers = {item.worker_id for item in outcomes}
-        if outcome_workers != expected_workers:
-            violations.append("WORKER_SET_MISMATCH")
-        allowed_statuses = {"errored", "failed", "cancelled", "timeout", "timed_out"}
-        for outcome in outcomes:
-            violations.append(f"WORKER_NOT_COMPLETED:{outcome.worker_id}")
-            if outcome.status not in allowed_statuses:
-                violations.append(f"WORKER_FAILURE_STATUS_INVALID:{outcome.worker_id}")
-            if not outcome.native_worker_handle:
-                violations.append(f"NATIVE_WORKER_HANDLE_MISSING:{outcome.worker_id}")
-            if not outcome.actual_model:
-                violations.append(f"ACTUAL_MODEL_MISSING:{outcome.worker_id}")
-        # WORKER_NOT_COMPLETED 在失败事务中是已知事实而非拒绝理由；保留该
-        # 诊断仅用于与其他证据违规一起一次性报告。
-        if not any(
-            item.status not in allowed_statuses
-            or not item.native_worker_handle
-            or not item.actual_model
-            for item in outcomes
-        ) and outcome_workers == expected_workers:
-            violations = [
-                item for item in violations
-                if not item.startswith("WORKER_NOT_COMPLETED:")
-            ]
-        if violations:
-            raise HostEvidenceValidationError(violations)
-
-        serialized_outcomes = [item.to_dict() for item in outcomes]
-        failure_text = " | ".join(
-            item.summary.strip() for item in outcomes if item.summary.strip()
-        )[:512]
-        timeout_markers = ("TIMEOUT", "TIMED_OUT", "DEADLINE")
-        is_timeout = any(
-            item.status in {"timeout", "timed_out"}
-            or any(marker in item.summary.upper() for marker in timeout_markers)
-            for item in outcomes
+        return self._worker_failure.finalize_worker_failure(
+            action=action,
+            outcomes=outcomes,
         )
-        error_code = "HOST_WORKER_TIMEOUT" if is_timeout else "HOST_WORKER_FAILED"
-        # 重试预算按失败类别隔离。Prompt/hash/能力等宿主合同错误不能消耗
-        # Worker 超时预算，否则“第一次输入错误 + 第一次真实超时”会被错误
-        # 判定为连续两次超时并提前终止当前 Action。
-        failure_kind = "timeout" if is_timeout else "worker"
-        fingerprint_payload = {
-            "action_message_id": message_id,
-            "outcomes": serialized_outcomes,
-            "spawn_error_code": error_code,
-        }
-        fingerprint = hashlib.sha256(
-            _canonical_bytes(fingerprint_payload)
-        ).hexdigest()
-        journal_path = (
-            self.project_root
-            / ".ae-state/host-runtime/outcomes"
-            / f"{message_id}.json"
-        )
-        existing = self._read_json(journal_path)
-        failure_attempt = 1
-        attempt_history: list[dict[str, Any]] = []
-        if existing is not None:
-            committed_result = existing.get("result")
-            previous_result = committed_result
-            if (
-                existing.get("fingerprint") == fingerprint
-                and existing.get("status") in {"committed", "worker_failed"}
-                and isinstance(committed_result, dict)
-            ):
-                return dict(committed_result)
-            if not (
-                existing.get("status") == "worker_failed"
-                or (
-                    isinstance(committed_result, dict)
-                    and committed_result.get("spawned") is False
-                )
-            ):
-                raise HostEvidenceValidationError(("OUTCOME_JOURNAL_CONFLICT",))
-            previous_kind = existing.get("failure_kind")
-            if previous_kind is None:
-                previous_result = existing.get("result")
-                previous_code = (
-                    previous_result.get("spawn_error_code")
-                    if isinstance(previous_result, Mapping)
-                    else None
-                )
-                previous_kind = (
-                    "timeout" if previous_code == "HOST_WORKER_TIMEOUT" else "worker"
-                )
-            previous_attempt = existing.get("failure_attempt")
-            raw_history = existing.get("attempt_history")
-            if isinstance(raw_history, list):
-                attempt_history = [
-                    dict(item) for item in raw_history[-7:]
-                    if isinstance(item, Mapping)
-                ]
-            attempt_history.append({
-                "failure_kind": previous_kind,
-                "failure_attempt": (
-                    previous_attempt
-                    if isinstance(previous_attempt, int)
-                    and not isinstance(previous_attempt, bool)
-                    else 1
-                ),
-                "spawn_error_code": (
-                    previous_result.get("spawn_error_code")
-                    if isinstance(previous_result, Mapping)
-                    else None
-                ),
-                "fingerprint": existing.get("fingerprint"),
-            })
-            if (
-                previous_kind == failure_kind
-                and isinstance(previous_attempt, int)
-                and not isinstance(previous_attempt, bool)
-            ):
-                failure_attempt = previous_attempt + 1
-
-        result_identity = hashlib.sha256(
-            _canonical_bytes({
-                "fingerprint": fingerprint,
-                "action_message_id": message_id,
-            })
-        ).hexdigest()
-        result = {
-            "schema_version": str(action.get("schema_version") or "1.1"),
-            "message_type": "result",
-            "message_id": str(uuid5(NAMESPACE_URL, result_identity)),
-            "causation_id": message_id,
-            "thread_id": thread_id,
-            "tick": tick,
-            "stage": stage,
-            "correlation_id": str(action.get("correlation_id") or thread_id),
-            "extensions": {},
-            "spawned": False,
-            "spawn_error_code": error_code,
-            "spawn_error": failure_text or error_code,
-            "spawn_retry_attempt": failure_attempt,
-        }
-        _atomic_write_json(journal_path, {
-            "schema_version": "1.0",
-            "status": "worker_failed",
-            "failure_kind": failure_kind,
-            "attempt_history": attempt_history,
-            "fingerprint": fingerprint,
-            "failure_attempt": failure_attempt,
-            "action_message_id": message_id,
-            "outcomes": serialized_outcomes,
-            "result": result,
-        })
-        return result
 
     def finalize_missing_worker_output(
         self,
@@ -1305,76 +1096,12 @@ class HostExecutionAssembler:
         detail: str = "宿主未收到 Worker 的结构化输出",
         result_path: Path | None = None,
     ) -> dict[str, Any]:
-        """将“Worker 无输出/输出不可解析”转换为可重试的失败 Result。
-
-        这是宿主边界的恢复路径，不伪造 Worker 的业务结果。由于原生宿主
-        没有返回 outcome，句柄明确使用 ``unreported:`` 哨兵并把缺失原因
-        写入 payload；Core 因此可以按 ``HOST_WORKER_FAILED`` 自动重试，且
-        不会把空 Coordinator payload 当成 Architect/Developer 成功结果。
-        """
-
-        if reason_code in {
-            "HOST_WORKER_OUTPUT_MISSING",
-            "HOST_WORKER_OUTPUT_INVALID",
-        }:
-            recovered = self.recover_completed_worker_artifacts(
-                action=action,
-                result_path=result_path,
-            )
-            if recovered is not None:
-                return recovered
-
-        try:
-            plan = SpawnPlan.from_action(action)
-        except SpawnContractError as exc:
-            raise HostEvidenceValidationError((str(exc),)) from exc
-        message_id = action.get("message_id")
-        if not isinstance(message_id, str) or not message_id:
-            raise HostEvidenceValidationError(("ACTION_MESSAGE_ID_MISSING",))
-        platform = (
-            action.get("host_execution", {}).get("platform")
-            if isinstance(action.get("host_execution"), Mapping)
-            else None
-        )
-        isolation = (
-            "fork_context=false" if platform == "codex"
-            else "fresh_context" if platform == "claude-code"
-            else None
-        )
-        outcomes = [
-            NativeWorkerOutcome(
-                worker_id=invocation.worker_id,
-                native_worker_handle=(
-                    f"unreported:{message_id}:{invocation.worker_id}"
-                ),
-                status="failed",
-                payload={
-                    "error_code": reason_code,
-                    "detail": detail,
-                    "native_output_available": False,
-                },
-                summary=f"{reason_code}: {detail}",
-                actual_model="unreported",
-                isolation_evidence=isolation,
-            )
-            for invocation in plan.invocations
-        ]
-        result = self._finalize_worker_failure(
+        return self._worker_failure.finalize_missing_worker_output(
             action=action,
-            outcomes=outcomes,
+            reason_code=reason_code,
+            detail=detail,
+            result_path=result_path,
         )
-        if result_path is not None:
-            target = (
-                result_path.resolve()
-                if result_path.is_absolute()
-                else (self.project_root / result_path).resolve()
-            )
-            if target == self.project_root or self.project_root not in target.parents:
-                raise HostEvidenceValidationError(
-                    ("RESULT_OUTPUT_PATH_OUTSIDE_PROJECT",)
-                )
-            _atomic_write_json(target, result)
-        return result
 
     def finalize_to_file(
         self,
@@ -1467,7 +1194,7 @@ class HostExecutionAssembler:
             / ".ae-state/host-runtime/outcomes"
             / f"{message_id}.json"
         )
-        existing = self._read_json(journal_path)
+        existing = OutcomeRecoveryService.read_json(journal_path)
         if existing is not None:
             committed_result = existing.get("result")
             if (
@@ -1508,30 +1235,16 @@ class HostExecutionAssembler:
         return result
 
     @staticmethod
+    @staticmethod
     def _bind_core_auto_decision(
         *,
         action: Mapping[str, Any],
         coordinator_payload: Mapping[str, Any],
     ) -> dict[str, Any]:
-        """把线程策略生成的机器字段重新绑定到 active Action。
-
-        宿主仍负责提供 Fill 的具体内容，但不得遗漏或改写 Core 已经决定的
-        gap、resolution、来源和授权策略。
-        """
-
-        payload = dict(coordinator_payload)
-        auto_decision = action.get("auto_decision")
-        if action.get("stage") != "gap_review" or not isinstance(
-            auto_decision, Mapping
-        ):
-            return payload
-        raw_decision = payload.get("decision")
-        decision = dict(raw_decision) if isinstance(raw_decision, Mapping) else {}
-        for key in ("gap_id", "resolution", "decision_source", "policy"):
-            if key in auto_decision:
-                decision[key] = auto_decision[key]
-        payload["decision"] = decision
-        return payload
+        return ResultContractService.bind_core_auto_decision(
+            action=action,
+            coordinator_payload=coordinator_payload,
+        )
 
     @staticmethod
     def _bind_core_stage_fields(
@@ -1539,124 +1252,10 @@ class HostExecutionAssembler:
         action: Mapping[str, Any],
         coordinator_payload: Mapping[str, Any],
     ) -> dict[str, Any]:
-        """由 active Action 绑定阶段机器事实，Agent 只提供推理语义。"""
-
-        payload = dict(coordinator_payload)
-        if action.get("stage") != "gap_scan":
-            return payload
-        raw_gaps = payload.get("gaps")
-        if isinstance(raw_gaps, list):
-            payload["gaps"] = [
-                {
-                    **dict(gap),
-                    "impact": [gap["impact"]],
-                }
-                if isinstance(gap, Mapping)
-                and isinstance(gap.get("impact"), str)
-                and gap["impact"].strip()
-                else gap
-                for gap in raw_gaps
-            ]
-        context = action.get("context")
-        context_mapping: Mapping[str, Any] = (
-            context if isinstance(context, Mapping) else {}
+        return ResultContractService.bind_core_stage_fields(
+            action=action,
+            coordinator_payload=coordinator_payload,
         )
-        sections = context_mapping.get("design_sections")
-        findings = payload.pop("section_findings", None)
-        if not isinstance(sections, list) or not sections:
-            # 旧 Action 没有稳定工程模型；只读兼容其既有 payload。
-            return dict(coordinator_payload)
-        if not isinstance(findings, list):
-            raise HostEvidenceValidationError(("SECTION_FINDINGS_REQUIRED",))
-
-        expected: dict[str, Mapping[str, Any]] = {}
-        expected_by_ref: dict[str, str] = {}
-        violations: list[str] = []
-        for section in sections:
-            if not isinstance(section, Mapping):
-                violations.append("CORE_DESIGN_SECTION_INVALID")
-                continue
-            section_id = section.get("section_id")
-            if not isinstance(section_id, str) or not section_id:
-                violations.append("CORE_DESIGN_SECTION_ID_MISSING")
-                continue
-            if section_id in expected:
-                violations.append(f"CORE_DESIGN_SECTION_DUPLICATE:{section_id}")
-            expected[section_id] = section
-            section_ref = section.get("design_section")
-            if not isinstance(section_ref, str) or not section_ref:
-                violations.append("CORE_DESIGN_SECTION_REF_MISSING")
-            elif section_ref in expected_by_ref:
-                violations.append(
-                    f"CORE_DESIGN_SECTION_REF_DUPLICATE:{section_ref}"
-                )
-            else:
-                expected_by_ref[section_ref] = section_id
-
-        received: dict[str, Mapping[str, Any]] = {}
-        for index, finding in enumerate(findings):
-            if not isinstance(finding, Mapping):
-                violations.append(f"SECTION_FINDING_INVALID:{index}")
-                continue
-            raw_section_ref = finding.get("section_ref")
-            raw_section_id = finding.get("section_id")
-            section_id = (
-                expected_by_ref.get(raw_section_ref)
-                if isinstance(raw_section_ref, str)
-                else raw_section_id
-            )
-            evidence = finding.get("evidence")
-            identifier_valid = (
-                isinstance(raw_section_ref, str) and bool(raw_section_ref)
-            ) or (
-                isinstance(raw_section_id, str) and bool(raw_section_id)
-            )
-            if (
-                not identifier_valid
-                or finding.get("verdict") not in {"clear", "gap"}
-                or not isinstance(evidence, list)
-                or not evidence
-                or not all(
-                    isinstance(item, str) and item.strip() for item in evidence
-                )
-            ):
-                violations.append(f"SECTION_FINDING_INVALID:{index}")
-                continue
-            if section_id not in expected:
-                unknown = raw_section_ref if raw_section_ref is not None else raw_section_id
-                violations.append(f"SECTION_FINDING_UNKNOWN:{unknown}")
-                continue
-            if section_id in received:
-                violations.append(f"SECTION_FINDING_DUPLICATE:{section_id}")
-                continue
-            received[section_id] = finding
-        for section_id in sorted(set(expected) - set(received)):
-            violations.append(f"SECTION_FINDING_MISSING:{section_id}")
-        if violations:
-            raise HostEvidenceValidationError(violations)
-
-        coverage = [
-            {
-                "section_id": section_id,
-                "design_section_ref": str(expected[section_id]["design_section"]),
-                "verdict": str(received[section_id]["verdict"]),
-                "evidence": list(received[section_id]["evidence"]),
-            }
-            for section_id in expected
-        ]
-        gaps = payload.get("gaps", [])
-        payload.update({
-            "scanned_sections": len(coverage),
-            "has_blocking": any(
-                isinstance(gap, Mapping) and gap.get("grade") == "architectural"
-                for gap in gaps
-            ),
-            "design_doc_digest": str(
-                context_mapping.get("design_doc_digest", "")
-            ),
-            "scan_coverage": coverage,
-        })
-        return payload
 
     def _preflight(
         self,
@@ -1743,7 +1342,7 @@ class HostExecutionAssembler:
                 / ".ae-state/spawn-challenges"
                 / f"{proof_token}.json"
             )
-            challenge = self._read_json(challenge_path)
+            challenge = OutcomeRecoveryService.read_json(challenge_path)
             if challenge is None:
                 violations.append("SPAWN_CHALLENGE_MISSING")
             elif (
@@ -1797,41 +1396,15 @@ class HostExecutionAssembler:
         }
 
     @staticmethod
+    @staticmethod
     def _coordinator_payload_violations(
         action: Mapping[str, Any],
         coordinator_payload: Mapping[str, Any],
     ) -> list[str]:
-        """在任何 evidence/journal 写入前拒绝跨 Action 陈旧业务字段。"""
-        contract = action.get("result_contract")
-        if isinstance(contract, Mapping) and isinstance(
-            contract.get("properties"), Mapping
-        ):
-            allowed = {str(key) for key in contract["properties"]}
-        else:
-            expected = action.get("expected_format")
-            if not isinstance(expected, Mapping):
-                return []
-            allowed = {str(key) for key in expected}
-        if not allowed:
-            return []
-        return [
-            f"COORDINATOR_FIELD_UNEXPECTED:{key}"
-            for key in sorted(str(key) for key in coordinator_payload)
-            if key not in allowed
-        ]
-
-    @staticmethod
-    def _read_json(path: Path) -> dict[str, Any] | None:
-        try:
-            raw = json.loads(path.read_text(encoding="utf-8"))
-        except FileNotFoundError:
-            return None
-        except (OSError, json.JSONDecodeError) as exc:
-            raise HostEvidenceValidationError(("HOST_EVIDENCE_FILE_CORRUPT",)) from exc
-        if not isinstance(raw, dict):
-            raise HostEvidenceValidationError(("HOST_EVIDENCE_FILE_INVALID",))
-        return raw
-
+        return ResultContractService.coordinator_payload_violations(
+            action,
+            coordinator_payload,
+        )
 
 def collect_host_evidence_violations(
     *,

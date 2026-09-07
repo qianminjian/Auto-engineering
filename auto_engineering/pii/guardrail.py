@@ -76,6 +76,8 @@ class PIIGuardrail(Guardrail):
             return GuardrailResult(
                 action=action,
                 message=f"PII detected in {len(findings)} location(s): {'; '.join(findings[:5])}"
-                        + (f" ... and {len(findings) - 5} more" if len(findings) > 5 else ""),
+                        + (f" ... and {len(findings) - 5} more" if len(findings) > 5 else "")
+                        + "。修复要求：真实凭据必须移出代码；测试夹具只能使用明显的 fake 占位符或运行时拼接值，"
+                        + "不要修改断言来隐藏真实失败。",
             )
         return GuardrailResult()

@@ -207,11 +207,11 @@ class TestFileAccessGuardrailIntegration:
             "developer file access is unprotected in production"
         )
 
-    def test_default_chain_has_11_active_guardrails(self) -> None:
+    def test_default_chain_has_12_active_guardrails(self) -> None:
         """T221: G5 保留兼容类，但不在默认链强制 commit。"""
         chain = GuardrailChain.default()
-        assert len(chain.guardrails) == 11, (
-            f"Expected 11 active guardrails, got {len(chain.guardrails)}"
+        assert len(chain.guardrails) == 12, (
+            f"Expected 12 active guardrails, got {len(chain.guardrails)}"
         )
 
     def test_default_chain_block_on_out_of_bounds_file(self, tmp_path: Path) -> None:

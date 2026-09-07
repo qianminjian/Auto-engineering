@@ -2,29 +2,87 @@
 # pre-tool.sh — Auto-Engineering tool-call safety guard (v5.0 §B12.2 + §B12.3)
 # Triggered: PreToolUse hook
 # Input: JSON via $CLAUDE_TOOL_INPUT (tool name + arguments)
-# Output: JSON {"decision":"allow|block","reason":"..."} to stdout
+# Output: Claude Code hook JSON; allow with `decision=approve`, deny with `decision=block`.
 # Refuses: 13 denylist patterns + file-sandbox escape (dual realpath)
 
 set -u
 
 SCRIPT_DIR=$(CDPATH= cd -- "${0%/*}" && pwd -P)
 PLUGIN_DIR=${PLUGIN_ROOT:-$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd -P)}
-RUNTIME_PYTHON="$PLUGIN_DIR/.ae-runtime/bin/python"
-if [[ ! -x "$RUNTIME_PYTHON" ]]; then
-  echo '{"decision":"block","reason":"Auto-Engineering 独立运行时不可用"}'
-  exit 0
-fi
 
 # Read tool input (Claude Code passes as $1 or stdin)
 TOOL_INPUT="${1:-${CLAUDE_TOOL_INPUT:-}}"
+if [[ -z "$TOOL_INPUT" && ! -t 0 ]]; then
+  TOOL_INPUT=$(cat)
+fi
+
+HOOK_PROJECT_ROOT="${AE_INVOCATION_PROJECT_ROOT:-}"
+if [[ -z "$HOOK_PROJECT_ROOT" && -n "$TOOL_INPUT" && -x /usr/bin/python3 ]]; then
+  HOOK_PROJECT_ROOT=$(printf '%s' "$TOOL_INPUT" | /usr/bin/python3 -c '
+import json
+import sys
+
+try:
+    payload = json.load(sys.stdin)
+except (json.JSONDecodeError, OSError):
+    payload = {}
+cwd = payload.get("cwd")
+if not isinstance(cwd, str) or not cwd:
+    tool_input = payload.get("tool_input")
+    cwd = tool_input.get("cwd") if isinstance(tool_input, dict) else ""
+print(cwd if isinstance(cwd, str) else "")
+' 2>/dev/null)
+fi
+
+if [[ -n "$HOOK_PROJECT_ROOT" ]]; then
+  RUNTIME_ROOT=$("$PLUGIN_DIR/scripts/ae-run" --print-runtime-root \
+    --project-root "$HOOK_PROJECT_ROOT" 2>/dev/null) || RUNTIME_ROOT=
+else
+  RUNTIME_ROOT=$("$PLUGIN_DIR/scripts/ae-run" --print-runtime-root 2>/dev/null) || RUNTIME_ROOT=
+fi
+RUNTIME_PYTHON="$RUNTIME_ROOT/bin/python"
+RUNTIME_DEGRADED=0
+if [[ ! -x "$RUNTIME_PYTHON" ]]; then
+  RUNTIME_DEGRADED=1
+  RUNTIME_PYTHON=$(command -v python3 2>/dev/null || true)
+fi
 
 if [[ -z "$TOOL_INPUT" ]]; then
-  echo '{"decision":"allow","reason":"no tool input"}'
+  echo '{"decision":"approve","reason":"no tool input"}'
   exit 0
 fi
 
 # Extract tool name (best effort — JSON parse with python fallback)
 TOOL_NAME=$(echo "$TOOL_INPUT" | "$RUNTIME_PYTHON" -c "import sys,json; d=json.load(sys.stdin); print(d.get('tool_name',''))" 2>/dev/null || echo "")
+
+# Native Worker launch/recording must use the current Action's exact machine
+# contract. This check runs before the generic denylist so a malformed prompt
+# or stale result path cannot reach the host tool and fail only at finalization.
+if [[ "$TOOL_NAME" == "Agent" || "$TOOL_NAME" == "TaskStop" || "$TOOL_NAME" == "Read" || "$TOOL_NAME" == "Bash" || "$TOOL_NAME" == "shell" || "$TOOL_NAME" == "command_execution" || "$TOOL_NAME" == "Edit" || "$TOOL_NAME" == "Write" || "$TOOL_NAME" == "MultiEdit" || "$TOOL_NAME" == "apply_patch" ]]; then
+  if [[ "$RUNTIME_DEGRADED" -eq 1 ]]; then
+    if [[ "$TOOL_NAME" == "Agent" || "$TOOL_NAME" == "TaskStop" || "$TOOL_INPUT" == *"--record-worker-outcome"* || "$TOOL_INPUT" == *".ae-state"* ]]; then
+      echo '{"decision":"block","reason_code":"NATIVE_GUARD_UNAVAILABLE","reason":"Auto-Engineering 原生 Worker 合同校验不可用，已阻止宿主调用"}'
+      exit 0
+    fi
+  else
+    GUARD_INPUT=$(printf '%s' "$TOOL_INPUT" | "$RUNTIME_PYTHON" -c '
+import json
+import sys
+
+payload = json.load(sys.stdin)
+payload["platform"] = "claude-code"
+payload.setdefault("cwd", "")
+print(json.dumps(payload, ensure_ascii=False))
+' 2>/dev/null || true)
+    if [[ -n "$GUARD_INPUT" ]]; then
+      GUARD_OUTPUT=$(printf '%s' "$GUARD_INPUT" | "$RUNTIME_PYTHON" -m auto_engineering.host.native_launch_guard 2>/dev/null || true)
+      if [[ "$GUARD_OUTPUT" == *'"decision": "block"'* ]]; then
+        echo "$GUARD_OUTPUT"
+        exit 0
+      fi
+    fi
+  fi
+fi
 
 # Extract command for Bash tool, or file path for Edit/Write
 extract_arg() {
@@ -97,6 +155,15 @@ check_agent_rules() {
   done
 }
 
+check_state_mutation() {
+  local input="$1"
+  if echo "$input" | /usr/bin/grep -qE -- '(^|[;&|[:space:]])(sudo[[:space:]]+)?(rm|rmdir|unlink|shred|mv)[[:space:]]' \
+    && echo "$input" | /usr/bin/grep -qF -- '.ae-state'; then
+    echo '{"decision":"block","reason":"禁止修改或删除 Loop 状态目录 .ae-state"}'
+    exit 0
+  fi
+}
+
 # --- File sandbox check (v5.0 §B12.3) ---
 # Allowed: project root + .ae-state + /tmp
 check_sandbox() {
@@ -137,6 +204,7 @@ check_sandbox() {
 case "$TOOL_NAME" in
   Bash)
     ARG=$(extract_arg "command")
+    check_state_mutation "$ARG"
     check_denylist "$ARG"
     check_agent_rules "$ARG"
     ;;
@@ -149,5 +217,9 @@ case "$TOOL_NAME" in
     ;;
 esac
 
-echo '{"decision":"allow"}'
+if [[ "$RUNTIME_DEGRADED" -eq 1 ]]; then
+  echo '{"decision":"approve","reason":"独立运行时尚未 bootstrap，已执行静态安全检查"}'
+else
+  echo '{"decision":"approve"}'
+fi
 exit 0

@@ -5,80 +5,20 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-import shutil
 import tomllib
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Protocol
 
+from auto_engineering.project_profile.browser_capability import (
+    detect_browser_capability,
+)
 from auto_engineering.project_profile.models import (
     ProfileEvidence,
     ProjectProfileError,
     ProjectProfileErrorCode,
 )
-
-
-def detect_browser_capability(
-    project_root: Path,
-    *,
-    command: tuple[str, ...] | None,
-    which: Callable[[str], str | None] = shutil.which,
-    gui_candidates: tuple[tuple[Path, str], ...] | None = None,
-) -> dict[str, object]:
-    """无副作用预检 E2E 可用的浏览器运行时。
-
-    只在项目声明 ``browser_e2e`` 命令时启用；不下载驱动、不启动浏览器。
-    返回可审计的替代能力，避免把“Playwright 包存在但浏览器未安装”误报为
-    产品失败。
-    """
-
-    if command is None:
-        return {"declared": False, "status": "not_declared", "providers": []}
-
-    providers: list[str] = []
-    executables: list[str] = []
-    for name, provider in (
-        ("google-chrome", "system_chrome"),
-        ("chromium", "system_chromium"),
-        ("chromium-browser", "system_chromium"),
-        ("chrome", "system_chrome"),
-    ):
-        try:
-            resolved = which(name)
-        except OSError:
-            resolved = None
-        if resolved:
-            providers.append(provider)
-            executables.append(str(resolved))
-
-    for candidate, provider in (
-        (project_root / "node_modules/.bin/playwright", "playwright_driver"),
-        (project_root / "node_modules/.bin/cypress", "cypress_driver"),
-    ):
-        if candidate.is_file() and candidate.stat().st_mode & 0o111:
-            providers.append(provider)
-            executables.append(candidate.relative_to(project_root).as_posix())
-
-    # macOS GUI 安装的 Chrome 不一定注册在 PATH 中。
-    if gui_candidates is None:
-        gui_candidates = (
-            (Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"), "system_chrome"),
-            (Path("/Applications/Chromium.app/Contents/MacOS/Chromium"), "system_chromium"),
-        )
-    for candidate, provider in gui_candidates:
-        if candidate.is_file():
-            providers.append(provider)
-            executables.append(str(candidate))
-
-    unique_providers = sorted(set(providers))
-    return {
-        "declared": True,
-        "status": "available" if unique_providers else "missing",
-        "providers": unique_providers,
-        "executable_count": len(set(executables)),
-        "reason_code": None if unique_providers else "BROWSER_RUNTIME_MISSING",
-    }
 
 
 @dataclass(frozen=True, slots=True)
@@ -282,28 +222,33 @@ class LocalProbeProvider:
             source_roots.extend(self._python_roots(project_root, pyproject))
             tool = pyproject.get("tool")
             if isinstance(tool, dict) and isinstance(tool.get("pytest"), dict):
-                commands["test"] = ("python", "-m", "pytest")
+                commands.setdefault("test", ("uv", "run", "python", "-m", "pytest"))
             ruff_config = tool.get("ruff") if isinstance(tool, dict) else None
             python_roots = tuple(dict.fromkeys(source_roots))
-            if isinstance(ruff_config, dict):
+            python_check_roots = tuple(
+                root for root in (*python_roots, *tuple(test_roots))
+                if self._contains_python_files(project_root, root)
+            )
+            if isinstance(ruff_config, dict) or self._has_python_dev_tool(pyproject, "ruff"):
                 lint_targets = (*python_roots, *tuple(test_roots))
-                commands["lint"] = (
+                commands.setdefault("lint", (
                     "uv", "run", "ruff", "check",
                     *(lint_targets or (".",)),
-                )
+                ))
             mypy_config = tool.get("mypy") if isinstance(tool, dict) else None
-            if isinstance(mypy_config, dict):
+            if isinstance(mypy_config, dict) or self._has_python_dev_tool(pyproject, "mypy"):
                 has_explicit_targets = any(
                     mypy_config.get(key) for key in ("files", "modules", "packages")
-                )
-                commands["type_check"] = (
-                    "uv", "run", "mypy",
-                    *(() if has_explicit_targets else python_roots),
-                )
+                ) if isinstance(mypy_config, dict) else False
+                if has_explicit_targets or python_check_roots:
+                    commands.setdefault("type_check", (
+                        "uv", "run", "mypy",
+                        *(() if has_explicit_targets else python_check_roots),
+                    ))
             if python_roots:
-                commands["build"] = (
-                    "python", "-m", "compileall", "-q", *python_roots,
-                )
+                commands.setdefault("build", (
+                    "uv", "run", "python", "-m", "compileall", "-q", *python_roots,
+                ))
 
         if "go.mod" in entries:
             languages.append("go")
@@ -347,6 +292,30 @@ class LocalProbeProvider:
         return False
 
     @staticmethod
+    def _has_python_dev_tool(pyproject: Mapping[str, object], name: str) -> bool:
+        """仅把 PEP 735 ``dev`` 组中的工具当作质量命令声明证据。
+
+        ``ProjectProfile`` 只负责提出确定性命令；命令是否可执行仍由
+        ``ProfileCommandGate`` 验证。这里不读取任意依赖组或 optional-dependencies，
+        避免把生产依赖误判成开发质量工具。
+        """
+
+        dependency_groups = pyproject.get("dependency-groups")
+        if not isinstance(dependency_groups, Mapping):
+            return False
+        dev_group = dependency_groups.get("dev")
+        if not isinstance(dev_group, list):
+            return False
+        normalized_name = name.lower()
+        for requirement in dev_group:
+            if not isinstance(requirement, str):
+                continue
+            package_name = re.split(r"[\s<>=!~\[;]", requirement.strip(), maxsplit=1)[0]
+            if package_name.lower() == normalized_name:
+                return True
+        return False
+
+    @staticmethod
     def _node_commands(
         scripts: Mapping[object, object],
         package_manager: str,
@@ -356,7 +325,12 @@ class LocalProbeProvider:
     ) -> dict[str, tuple[str, ...]]:
         aliases = {
             "lint": ("lint",),
-            "type_check": ("typecheck", "type-check", "check-types"),
+            "type_check": (
+                "typecheck",
+                "type-check",
+                "type_check",
+                "check-types",
+            ),
             "test": ("test",),
             "build": ("build",),
         }
@@ -411,9 +385,27 @@ class LocalProbeProvider:
                 roots.append(candidate.name)
         return tuple(dict.fromkeys(roots))
 
+    @staticmethod
+    def _contains_python_files(project_root: Path, root_name: str) -> bool:
+        """空 source root 不得生成必失败的 ``mypy <root>`` 命令。"""
+
+        root = project_root / root_name
+        if root.is_file():
+            return root.suffix in {".py", ".pyi"}
+        if not root.is_dir():
+            return False
+        try:
+            return any(
+                candidate.is_file() and candidate.suffix in {".py", ".pyi"}
+                for candidate in root.rglob("*")
+            )
+        except OSError:
+            return False
+
 
 __all__ = [
     "LocalProbeProvider",
     "ProfileContribution",
     "ProjectProfileProvider",
+    "detect_browser_capability",
 ]

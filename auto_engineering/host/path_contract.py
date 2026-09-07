@@ -30,20 +30,20 @@ def worker_outcome_path(
     )
 
 
-def legacy_worker_outcome_path(message_id: str, worker_id: str) -> str:
-    """返回 v5.8.0-rc.5 早期宿主使用的可验证迁移路径。
+def worker_native_result_path(
+    message_id: str,
+    worker_id: str,
+    execution_generation: int,
+) -> str:
+    """返回当前 Action 的原生返回暂存路径（不属于 Core 事实）。"""
 
-    这不是通配搜索：只允许当前 Action/Worker 对应的确定性路径，并且
-    Collector 仍会校验 outcome 身份、generation 和 fencing。
-    """
-
-    if not message_id or not worker_id:
-        raise ValueError("WORKER_OUTCOME_PATH_INPUT_INVALID")
+    if not message_id or not worker_id or execution_generation < 1:
+        raise ValueError("WORKER_NATIVE_RESULT_PATH_INPUT_INVALID")
     safe_worker = "".join(
         char if char.isalnum() or char in {"-", "_"} else "_"
         for char in worker_id
     )
     return (
-        ".ae-state/host-runtime/worker-outcomes/"
-        f"{action_key_for(message_id)}/outcome-{safe_worker}.json"
+        ".ae-state/host-runtime/native-results/"
+        f"{action_key_for(message_id)}-{safe_worker}-g{execution_generation}.json"
     )

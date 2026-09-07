@@ -74,7 +74,6 @@ def write_action_prompt_log(project_root: Path, action: dict) -> None:
         )
 
         instruction = action.get("instruction", "")
-        subagent_prompt = action.get("subagent_prompt", "")
         expected_format = action.get("expected_format", {})
         spawn = action.get("spawn", {})
         lines = [
@@ -110,52 +109,32 @@ def write_action_prompt_log(project_root: Path, action: dict) -> None:
             "",
         ])
 
-        agents = spawn.get("agents", [])
-        if agents:
+        invocations = spawn.get("invocations", [])
+        if invocations:
             lines.extend([
                 "---",
-                "## Part 2a — Merge Instructions（Team Lead 合并指引）",
+                "## Part 2a — Coordinator Prompt Artifact",
                 "",
-                "```",
-                subagent_prompt.strip() or "(empty)",
-                "```",
+                f"- coordinator prompt ref: `{_prompt_ref_text(action)}`",
                 "",
-                f"## Part 2b — Agent Prompts（{len(agents)} 个 agent）",
+                f"## Part 2b — Worker Invocations（{len(invocations)} 个 Worker）",
             ])
-            for agent in agents:
-                prompt = agent.get("prompt", "")
-                prompt_ref = agent.get("prompt_ref", "")
+            for index, invocation in enumerate(invocations):
+                prompt_ref = invocation.get("prompt_ref", "")
                 delivery = (
                     f"prompt ref: `{prompt_ref}`"
                     if prompt_ref
-                    else f"{len(prompt)} chars"
+                    else "prompt ref missing"
                 )
                 lines.extend([
                     "",
                     (
-                        f"### Agent [{agent['index']}]"
-                        f" — role `{agent.get('role', 'unspecified')}`"
-                        f" — hash `{agent.get('prompt_hash', 'N/A')}`"
+                        f"### Worker [{index}]"
+                        f" — role `{invocation.get('role', 'unspecified')}`"
+                        f" — hash `{invocation.get('prompt_sha256', 'N/A')}`"
                         f" — {delivery}"
                     ),
                 ])
-                if prompt:
-                    lines.extend([
-                        "",
-                        "```markdown",
-                        prompt.strip(),
-                        "```",
-                    ])
-        elif subagent_prompt:
-            lines.extend([
-                "---",
-                "## Part 2 — Subagent Prompt",
-                "",
-                "```",
-                subagent_prompt.strip(),
-                "```",
-            ])
-
         if expected_format:
             lines.extend([
                 "",
@@ -192,3 +171,16 @@ def write_action_prompt_log(project_root: Path, action: dict) -> None:
             stage,
             exc_info=True,
         )
+
+
+def _prompt_ref_text(action: dict) -> str:
+    """只记录 Coordinator prompt 引用，不把正文重新内联到诊断日志。"""
+
+    reference = action.get("coordinator_prompt_ref")
+    if not isinstance(reference, dict):
+        return "missing"
+    path = reference.get("path")
+    digest = reference.get("sha256")
+    if not isinstance(path, str) or not isinstance(digest, str):
+        return "invalid"
+    return f"{path} (sha256={digest})"

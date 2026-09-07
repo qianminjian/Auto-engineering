@@ -49,16 +49,12 @@ SECTION_KEY_MAP: dict[str, dict[str, str]] = {
         "pii-guardrail-mode": "AE_PII_GUARDRAIL_MODE",
         "production": "AE_PRODUCTION",
         "strict-red": "AE_STRICT_RED",
-        "config-policy": "AE_CONFIG_POLICY",
     },
     "performance": {
         "max-tool-calls": "AE_MAX_TOOL_CALLS",
     },
     "threshold": {
-        "host-budget-enforcement": "AE_HOST_BUDGET_ENFORCEMENT",
         "gate-timeout": "AE_GATE_TIMEOUT",
-        "session-max-ticks": "AE_SESSION_MAX_TICKS",
-        "session-max-seconds": "AE_SESSION_MAX_SECONDS",
         "context-soft-input": "AE_CONTEXT_SOFT_INPUT",
         "context-hard-input": "AE_CONTEXT_HARD_INPUT",
         "max-prompt-bytes": "AE_MAX_PROMPT_BYTES",
@@ -69,9 +65,6 @@ SECTION_KEY_MAP: dict[str, dict[str, str]] = {
         "max-system-audits": "AE_MAX_SYSTEM_AUDITS",
         "max-worker-receipt-bytes": "AE_MAX_WORKER_RECEIPT_BYTES",
         "max-receipt-summary-bytes": "AE_MAX_RECEIPT_SUMMARY_BYTES",
-        "host-max-elapsed-seconds": "AE_HOST_MAX_ELAPSED_SECONDS",
-        "host-max-cost-usd": "AE_HOST_MAX_COST_USD",
-        "host-max-output-tokens": "AE_HOST_MAX_OUTPUT_TOKENS",
     },
 }
 
@@ -85,8 +78,6 @@ STANDARD_PROFILE_OVERRIDES: dict[str, str] = {
 }
 
 _DEPRECATED_PROFILE_KEYS = frozenset({
-    "AE_SESSION_MAX_TICKS",
-    "AE_SESSION_MAX_SECONDS",
     "AE_CONTEXT_SOFT_INPUT",
     "AE_CONTEXT_HARD_INPUT",
 })

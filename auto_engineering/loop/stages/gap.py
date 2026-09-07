@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from copy import deepcopy
 from typing import Any
 
+from auto_engineering.loop.debug_tracer import now_iso
 from auto_engineering.loop.domain_events import channels_updated
 from auto_engineering.loop.events import LoopEvent, LoopEventType
 from auto_engineering.loop.stages.base import (
@@ -40,6 +41,39 @@ def _advanced(
     )
 
 
+def _supplement_projection(
+    state: Mapping[str, Any],
+    supplements: list[dict[str, Any]],
+) -> str | None:
+    """编译 Supplement 事实对应的唯一 EngineState channel。"""
+    if not supplements:
+        return None
+    raw = state.get("design_supplements_json") or "{}"
+    try:
+        current = json.loads(raw)
+    except (TypeError, json.JSONDecodeError):
+        current = {}
+    if not isinstance(current, dict):
+        current = {}
+    for supplement in supplements:
+        gap = supplement.get("gap")
+        if not isinstance(gap, Mapping):
+            continue
+        gap_id = gap.get("id")
+        if not isinstance(gap_id, str) or not gap_id:
+            continue
+        current[gap_id] = {
+            "gap_id": gap_id,
+            "design_section_ref": gap.get("design_section_ref", ""),
+            "content": supplement.get("content", ""),
+            "source": supplement.get("source", ""),
+            "source_tier": supplement.get("source_tier"),
+            "confidence": supplement.get("confidence", "medium"),
+            "created_at": supplement.get("created_at", ""),
+        }
+    return json.dumps(current, ensure_ascii=False)
+
+
 class GapScanHandler:
     stage: StageName = "gap_scan"
 
@@ -51,10 +85,25 @@ class GapScanHandler:
     ) -> TransitionDecision:
         if not isinstance(state, Mapping):
             raise TypeError("state 必须为 Mapping")
-        gaps = _report(state).get("gaps", [])
+        report = {
+            "gaps": result.get("gaps", []),
+            "scanned_sections": result.get("scanned_sections", 0),
+            "has_blocking": result.get("has_blocking", False),
+            "design_doc_digest": result.get("design_doc_digest", ""),
+            "scan_coverage": result.get("scan_coverage", []),
+        }
+        gaps = report["gaps"]
         target: StageName = "gap_review" if gaps else "architect"
         return TransitionDecision(
-            events=(_advanced(source=self.stage, target=target, context=context),),
+            events=(
+                channels_updated(
+                    LoopEventType.GAP_STATE_UPDATED,
+                    {"gap_report_json": json.dumps(report, ensure_ascii=False)},
+                    thread_id=context.thread_id,
+                    sequence=context.event_sequence,
+                ),
+                _advanced(source=self.stage, target=target, context=context),
+            ),
             next_stage=target,
             lifecycle_effects=LifecycleEffects(
                 fuzzy_sections=tuple(
@@ -92,7 +141,37 @@ class GapReviewHandler:
                 or []
             )
         )
-        for decision in decisions:
+        recorded = [
+            dict(item)
+            for item in state.get("pending_gap_decisions", [])
+            if isinstance(item, Mapping)
+        ]
+        decision_policy = state.get("gap_decision_policy")
+        normalized_decisions: list[dict[str, Any]] = []
+        for raw_decision in decisions:
+            if not isinstance(raw_decision, Mapping):
+                continue
+            decision = dict(raw_decision)
+            gap_id = decision.get("gap_id")
+            gap = by_id.get(gap_id)
+            if gap is None:
+                continue
+            recommendation = gap.get("recommendation") or {}
+            recommended_resolution = recommendation.get("resolution")
+            decision["assistant_recommendation"] = recommended_resolution
+            decision["recommendation_accepted"] = (
+                str(decision.get("resolution", "")).lower()
+                == str(recommended_resolution or "").lower()
+            )
+            decision["evidence_refs"] = list(gap.get("evidence") or [])
+            normalized_decisions.append(decision)
+            recorded = [
+                item for item in recorded if item.get("gap_id") != gap_id
+            ]
+            recorded.append(decision)
+            if decision.get("apply_to_remaining") == "recommendations":
+                decision_policy = "remaining_recommendations"
+        for decision in normalized_decisions:
             gap_id = decision.get("gap_id")
             gap = by_id.get(gap_id)
             if gap is None:
@@ -115,6 +194,7 @@ class GapReviewHandler:
                         "source": "user",
                         "source_tier": None,
                         "confidence": "high",
+                        "created_at": now_iso(),
                     }
                 )
                 archive.pop(gap_id, None)
@@ -137,8 +217,22 @@ class GapReviewHandler:
             "pending_research_ids": pending,
             "research_archive": archive,
         }
+        decision_changes: dict[str, Any] = {
+            "pending_gap_decisions": recorded,
+        }
+        if decision_policy == "remaining_recommendations":
+            decision_changes["gap_decision_policy"] = decision_policy
+        supplement_projection = _supplement_projection(state, supplements)
+        if supplement_projection is not None:
+            decision_changes["design_supplements_json"] = supplement_projection
         return TransitionDecision(
             events=(
+                channels_updated(
+                    LoopEventType.SUPPLEMENT_STATE_UPDATED,
+                    decision_changes,
+                    thread_id=context.thread_id,
+                    sequence=context.event_sequence,
+                ),
                 channels_updated(
                     LoopEventType.GAP_STATE_UPDATED,
                     patch,
@@ -200,6 +294,7 @@ class ResearchHandler:
                         "source": "research_agent",
                         "source_tier": result.get("source_tier"),
                         "confidence": result.get("confidence", "medium"),
+                        "created_at": now_iso(),
                     }
                 )
             patch = {
@@ -222,8 +317,19 @@ class ResearchHandler:
                 target = "gap_review"
             else:
                 target = "architect"
+        supplement_projection = _supplement_projection(state, supplements)
         return TransitionDecision(
             events=(
+                *(
+                    (channels_updated(
+                        LoopEventType.SUPPLEMENT_STATE_UPDATED,
+                        {"design_supplements_json": supplement_projection},
+                        thread_id=context.thread_id,
+                        sequence=context.event_sequence,
+                    ),)
+                    if supplement_projection is not None
+                    else ()
+                ),
                 *(
                     (channels_updated(
                         LoopEventType.GAP_STATE_UPDATED,

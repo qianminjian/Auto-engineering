@@ -1,29 +1,13 @@
-"""Auto-Engineering — 团队级 Loop 工程 + 多 Agent 协作.
+"""Auto-Engineering — 宿主驱动的确定性 Loop 工程内核。
 
-架构:
-    Python 控制流（确定性）        LLM 调用（智能）
-    ┌──────────────────────┐     ┌──────────────────┐
-    │ engine/loop.py        │     │ agents/           │
-    │   while True:         │────→│   architect.py   │
-    │     tick()            │     │   developer.py   │
-    │     agent.execute()   │     │   critic.py      │
-    │     gates.check()     │←────│                  │
-    │     after_tick()      │     └──────────────────┘
-    └──────────────────────┘
+运行边界:
+    主 Agent/Host Driver 负责连续消费 Action、调用原生 Worker、观察并回写结果。
+    Python Core 每次只执行一个确定性 Tick：校验输入、提交事件、投影状态并生成
+    下一条 Action。EventStore 是新运行的事实源，EngineState 是可重建投影。
 
-命令:
-    ae doctor             环境预检
-    ae dev-loop <req>     单需求开发循环
-    ae status             查看当前进度
-    # 2026-07-26 审计清理: ae agent 声明删除 — Phase 40 入口统一(BEACON #97)
-    # 后该命令未注册, docstring 虚报。
-
-设计文档: design/v5.6-Design-Loop.md
-GitHub: https://github.com/qianminjian/Auto-engineering
-
-2026-07-04 v5.0 final: 整合 main 分支 (Self-Refine + suggested_fix + plugin mode
-修复 + 大量 test/docs) + v5.0-plugin-loop-final 分支 (4 个 plugin mode bug
-真实修复).
+Python Core 不启动 LLM、Worker 或长期协调循环；宿主差异通过 Host Adapter 隔离。
+公开入口包括 `ae doctor`、`ae dev-loop` 和 `ae status`，具体运行协议以当前设计
+文档及宿主 Skill/Command 为准。
 """
 
 # T3-1: __version__ 是 auto_engineering 包的版本,用于 CLI --version / ae init --version

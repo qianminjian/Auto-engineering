@@ -69,7 +69,7 @@ def test_profile_test_gate_rejects_zero_tests(tmp_path: Path, monkeypatch) -> No
     monkeypatch.setattr(
         profile_module,
         "run_gate_command",
-        lambda command, project_root, timeout: MagicMock(
+        lambda command, project_root, timeout, **kwargs: MagicMock(
             timed_out=False,
             returncode=0,
             stdout="no tests collected",
@@ -84,13 +84,57 @@ def test_profile_test_gate_rejects_zero_tests(tmp_path: Path, monkeypatch) -> No
     assert "未收集到测试" in verdict.message
 
 
+def test_profile_test_gate_rejects_vitest_watch_script_before_spawn(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (tmp_path / "package.json").write_text(
+        json.dumps({"scripts": {"test": "vitest"}}), encoding="utf-8"
+    )
+    from auto_engineering.gates import profile as profile_module
+
+    monkeypatch.setattr(
+        profile_module,
+        "run_gate_command",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("交互式测试命令不得启动")
+        ),
+    )
+
+    verdict = ProfileCommandGate("test", ("npm", "run", "test")).run(tmp_path)
+
+    assert verdict.passed is False
+    assert "PROJECT_TEST_COMMAND_INTERACTIVE" in verdict.message
+    assert "vitest run" in verdict.message
+
+
+def test_profile_test_gate_allows_explicit_vitest_run_script(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (tmp_path / "package.json").write_text(
+        json.dumps({"scripts": {"test": "vitest run"}}), encoding="utf-8"
+    )
+    from auto_engineering.gates import profile as profile_module
+
+    monkeypatch.setattr(
+        profile_module,
+        "run_gate_command",
+        lambda *_args, **_kwargs: SubprocessResult(
+            returncode=0, stdout="1 passed", stderr=""
+        ),
+    )
+
+    verdict = ProfileCommandGate("test", ("npm", "run", "test")).run(tmp_path)
+
+    assert verdict.passed is True
+
+
 def test_profile_gate_preserves_spawn_error_diagnostics(tmp_path: Path, monkeypatch) -> None:
     from auto_engineering.gates import profile as profile_module
 
     monkeypatch.setattr(
         profile_module,
         "run_gate_command",
-        lambda command, project_root, timeout: SubprocessResult(
+        lambda command, project_root, timeout, **kwargs: SubprocessResult(
             returncode=-1,
             command=tuple(command),
             error="无法启动进程: 参数过长",
@@ -103,6 +147,39 @@ def test_profile_gate_preserves_spawn_error_diagnostics(tmp_path: Path, monkeypa
     assert "npx tsc --noEmit" in verdict.message
     assert "无法启动进程: 参数过长" in verdict.message
     assert "exit=-1" not in verdict.message
+
+
+def test_profile_gate_does_not_inherit_plugin_runtime_for_project_tools(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from auto_engineering.gates import profile as profile_module
+
+    project_bin = tmp_path / ".venv/bin"
+    project_bin.mkdir(parents=True)
+    plugin_bin = tmp_path / ".ae-state/.ae-runtime/bin"
+    plugin_bin.mkdir(parents=True)
+    captured: dict[str, object] = {}
+
+    def fake_run(command, project_root, timeout, *, env):
+        captured["command"] = command
+        captured["env"] = env
+        return SubprocessResult(returncode=0, stdout="1 passed")
+
+    monkeypatch.setenv("UV_PROJECT_ENVIRONMENT", str(tmp_path / ".ae-state/.ae-runtime"))
+    monkeypatch.setenv("VIRTUAL_ENV", str(tmp_path / ".ae-state/.ae-runtime"))
+    monkeypatch.setenv("PATH", str(plugin_bin) + ":/usr/bin")
+    monkeypatch.setattr(profile_module, "run_gate_command", fake_run)
+
+    verdict = ProfileCommandGate("test", ("python3", "-m", "pytest")).run(tmp_path)
+
+    assert verdict.passed is True
+    assert captured["command"] == ["python3", "-m", "pytest"]
+    environment = captured["env"]
+    assert isinstance(environment, dict)
+    assert "UV_PROJECT_ENVIRONMENT" not in environment
+    assert "VIRTUAL_ENV" not in environment
+    assert environment["PATH"].split(":")[:2] == [str(project_bin), "/usr/bin"]
 
 
 def test_restore_rejects_persisted_profile_when_local_evidence_disappears(
@@ -126,7 +203,7 @@ def test_restore_rejects_persisted_profile_when_local_evidence_disappears(
     (tmp_path / "package.json").unlink()
 
     with pytest.raises(CheckpointNotFoundError, match="REVALIDATION_REQUIRED"):
-        TickOrchestrator.restore(
+        TickOrchestrator.restore_from_checkpoint(
             tmp_path,
             store,
             gate_runner=lambda gate_names, project_root: {},

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import subprocess
 import warnings
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -158,7 +159,13 @@ class SubprocessResult:
     error: str = ""
 
 
-def run_gate_command(cmd: list[str], cwd: Path, timeout: float) -> SubprocessResult:
+def run_gate_command(
+    cmd: list[str],
+    cwd: Path,
+    timeout: float,
+    *,
+    env: Mapping[str, str] | None = None,
+) -> SubprocessResult:
     """安全执行 subprocess 命令, 捕获常见错误.
 
     各 Gate 子类调用此函数替代裸 subprocess.run, 按各自策略处理
@@ -171,6 +178,7 @@ def run_gate_command(cmd: list[str], cwd: Path, timeout: float) -> SubprocessRes
             capture_output=True,
             text=True,
             timeout=timeout,
+            env=dict(env) if env is not None else None,
         )
         return SubprocessResult(
             returncode=result.returncode,

@@ -5,9 +5,9 @@
     majors_in_a_row / total_majors / recent_history (≤5 条 RoundHistory)
 
 设计:
-- `_collect_status_json(cwd)` 是核心函数, 从 .ae-state/*.db 读最新 CheckpointEnvelope
+- `_collect_status_json(cwd)` 是核心函数，只从 `.ae-state/events.db` 读取 EventStore 投影
 - Click 命令 `status` 包装 `_collect_status_json` + 输出格式化
-- 边界: 缺失 checkpoint → 默认 7 字段; corrupted db → 跳过该 db 继续找下一个
+- checkpoint 只通过显式迁移入口消费，不参与当前状态展示
 
 引用: design/v5.6-Design-Loop.md §B13.2 stdout JSON 契约
 """
@@ -17,41 +17,24 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
-from contextlib import closing
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import click
 
 from auto_engineering.config.environment import ProjectEnvironment
-from auto_engineering.engine.state import EngineState
 
 _logger = logging.getLogger("ae.cli.status")
 
-
-def _is_checkpoint_database(db_file: Path) -> bool:
-    """判断 SQLite 文件是否包含旧 checkpoint 表，跳过 EventStore 数据库。"""
-    try:
-        uri = f"file:{db_file.resolve()}?mode=ro"
-        # sqlite3.Connection 的 context manager 只提交/回滚事务，并不 close。
-        # status 会枚举多个数据库，必须显式关闭只读探测连接。
-        with closing(sqlite3.connect(uri, uri=True)) as connection:
-            has_table = bool(
-                connection.execute(
-                    "SELECT 1 FROM sqlite_master "
-                    "WHERE type='table' AND name='checkpoints'"
-                ).fetchone()
-            )
-            return has_table
-    except (OSError, sqlite3.Error):
-        # 只读目录可能无法读取 WAL 中的 sqlite_master；文件职责仍可确定。
-        return db_file.name != "events.db"
+if TYPE_CHECKING:
+    from auto_engineering.host.runtime_driver import HostRunLease
 
 
 def _collect_status_json(cwd: Path) -> dict:
     """收集 status JSON 7 字段契约 (v5.0 §B13.2).
 
-    无 checkpoint 时返回 7 字段默认 (recent_history = []).
-    corrupted db → 跳过, 找下一个 db.
+    无 EventStore 时返回 7 字段默认 (recent_history = [])；损坏的 EventStore
+    返回带 recovery_required 的结构化状态，绝不回退到 checkpoint。
     """
     # 默认值
     payload: dict = {
@@ -68,87 +51,24 @@ def _collect_status_json(cwd: Path) -> dict:
     if not cp_dir.exists():
         return payload
 
-    # v5.8：EventStore 是新协议事实源。只有存在真实 events.db 且项目租约
-    # 指向可投影线程时才添加扩展字段，保持无状态/旧 checkpoint 的 7 字段契约。
+    # v5.8：EventStore 是唯一当前事实源。没有事件库时返回空状态；不能
+    # 为了维持旧字段而读取 checkpoint，避免把历史快照伪装成当前运行状态。
     event_payload = _collect_event_store_status(cwd)
     if event_payload is not None:
         return event_payload
-
-    from auto_engineering.loop.checkpoint import Checkpoint, SQLiteCheckpointStore
-
-    # 找到 latest checkpoint (跨所有 db)
-    latest_ckpt = None
-    for db_file in cp_dir.glob("*.db"):
-        if not _is_checkpoint_database(db_file):
-            continue
-        try:
-            store: SQLiteCheckpointStore[EngineState]
-            with SQLiteCheckpointStore(str(db_file), read_only=True) as store:
-                ckpt: Checkpoint[EngineState] | None = store.load_latest()
-            if ckpt is not None and (latest_ckpt is None or ckpt.round > latest_ckpt.round):
-                latest_ckpt = ckpt
-        except (OSError, sqlite3.Error):
-            _logger.warning("checkpoint db 读取失败, 跳过: %s", db_file, exc_info=True)
-            continue
-
-    if latest_ckpt is None:
-        return payload
-
-    state = latest_ckpt.state
-    # 提取 state 字段 (兼容 dict / Pydantic BaseModel / dataclass)
-    # 注: 源字段是 EngineState.critic_verdict; 对外 JSON key 仍为 "verdict" (§B13.2 不变).
-    if isinstance(state, dict):
-        payload["thread_id"] = state.get("thread_id", "")
-        payload["round"] = state.get("round", 0)
-        payload["stage"] = state.get("current_stage", "")
-        payload["verdict"] = state.get("critic_verdict", "")
-        payload["majors_in_a_row"] = state.get("majors_in_a_row", 0)
-        payload["total_majors"] = state.get("total_majors", 0)
-    else:
-        payload["thread_id"] = getattr(state, "thread_id", "") or ""
-        payload["round"] = getattr(state, "round", 0)
-        payload["stage"] = getattr(state, "current_stage", "") or ""
-        payload["verdict"] = getattr(state, "critic_verdict", "") or ""
-        payload["majors_in_a_row"] = getattr(state, "majors_in_a_row", 0)
-        payload["total_majors"] = getattr(state, "total_majors", 0)
-
-    # recent_history: 最近 5 条 RoundHistory (按 round_id DESC)
-    history = latest_ckpt.history or []
-    sorted_hist = sorted(history, key=lambda h: getattr(h, "round_id", 0), reverse=True)[:5]
-    payload["recent_history"] = [
-        {
-            "round_id": getattr(h, "round_id", 0),
-            "files_changed": getattr(h, "files_changed", 0),
-            "lines_added": getattr(h, "lines_added", 0),
-            "lines_removed": getattr(h, "lines_removed", 0),
-            "semantic_satisfied": getattr(h, "semantic_satisfied", None),
-            "tasks_run": list(getattr(h, "tasks_run", []) or []),
-            "task_outcomes": dict(getattr(h, "task_outcomes", {}) or {}),
-        }
-        for h in sorted_hist
-    ]
     return payload
 
 
 def _collect_event_store_status(cwd: Path) -> dict | None:
-    """读取 active EventStore projection；损坏或无租约时返回 None。"""
+    """读取 active EventStore projection；损坏时返回结构化恢复状态。"""
     cp_dir = cwd / ".ae-state"
     event_db = cp_dir / "events.db"
     if not event_db.exists():
         return None
     try:
-        from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
         from auto_engineering.loop.event_store import SQLiteEventStore
 
-        store: SQLiteCheckpointStore[EngineState]
-        with SQLiteCheckpointStore(str(cp_dir / "checkpoints.db"), read_only=True) as store:
-            thread_id = store.active_project_thread()
-        lease = None
-        if not thread_id:
-            from auto_engineering.host.runtime_driver import HostRunLeaseStore
-
-            lease = HostRunLeaseStore(cwd).load()
-            thread_id = lease.thread_id if lease is not None else None
+        thread_id, lease = _event_thread_context(cwd)
         if not thread_id:
             return None
         with SQLiteEventStore(event_db) as events:
@@ -165,7 +85,12 @@ def _collect_event_store_status(cwd: Path) -> dict | None:
             "total_majors": state.total_majors,
             "recent_history": [],
         }
-        if lease is not None and lease.disposition == "TERMINAL":
+        loop_completed = any(
+            event.event_type.value == "LoopCompleted" for event in stream
+        )
+        if loop_completed or (
+            lease is not None and lease.disposition == "TERMINAL"
+        ):
             payload["stage"] = "done"
         from auto_engineering.engine.batch_state import BatchState
         from auto_engineering.loop.status_projection import reconciliation_status
@@ -195,8 +120,46 @@ def _collect_event_store_status(cwd: Path) -> dict | None:
         payload["event_metrics"] = project_event_metrics(stream, usage_records)
         return payload
     except (OSError, sqlite3.Error, ValueError, TypeError):
-        _logger.warning("EventStore status 读取失败，回退旧 checkpoint", exc_info=True)
-        return None
+        _logger.warning("EventStore status 读取失败；拒绝回退 checkpoint", exc_info=True)
+        return {
+            "thread_id": "",
+            "round": 0,
+            "stage": "",
+            "verdict": "",
+            "majors_in_a_row": 0,
+            "total_majors": 0,
+            "recent_history": [],
+            "error_code": "EVENT_STORE_UNAVAILABLE",
+            "recovery_required": True,
+        }
+
+
+def _event_thread_context(cwd: Path) -> tuple[str | None, HostRunLease | None]:
+    """读取 EventStore 所属 thread 的租约定位信息，不读取 checkpoint 状态。"""
+
+    cp_dir = cwd / ".ae-state"
+    thread_id: str | None = None
+    try:
+        from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
+
+        with SQLiteCheckpointStore[object](
+            str(cp_dir / "checkpoints.db"), read_only=True
+        ) as store:
+            thread_id = store.active_project_thread()
+    except (OSError, sqlite3.Error, ValueError, TypeError):
+        _logger.debug("项目占用租约读取失败", exc_info=True)
+    lease = None
+    if not thread_id:
+        from auto_engineering.host.runtime_driver import HostRunLeaseStore
+
+        lease = HostRunLeaseStore(cwd).load()
+        thread_id = lease.thread_id if lease is not None else None
+    if not thread_id and (cp_dir / "events.db").exists():
+        from auto_engineering.loop.event_store import SQLiteEventStore
+
+        with SQLiteEventStore(cp_dir / "events.db") as events:
+            thread_id = events.latest_thread_for_event("LoopCompleted")
+    return thread_id, lease
 
 
 # ============================================================
@@ -273,49 +236,30 @@ def register_status_command(main_group: click.Group) -> None:
         if verbose:
             _display_progress_tree(cwd)
 
-        cp_dir = cwd / ".ae-state"
-        if cp_dir.exists():
-            from auto_engineering.loop.checkpoint import SQLiteCheckpointStore
-
-            total_v2 = 0
-            for db_file in cp_dir.glob("*.db"):
-                try:
-                    # 2026-07-25 审计修复 (P1-6): with 确保 _file_conn/WAL 句柄关闭
-                    store: SQLiteCheckpointStore[EngineState]
-                    with SQLiteCheckpointStore(str(db_file), read_only=True) as store:
-                        total_v2 += store.count()
-                except (OSError, sqlite3.Error):
-                    _logger.warning("checkpoint count 失败, 跳过: %s", db_file, exc_info=True)
-                    continue
-            if total_v2 > 0 and not verbose:
-                click.echo(f"  v2.0 Checkpoints: {total_v2} (使用 --verbose 查看进度树)")
 
 
 def _load_progress_summary(cwd: Path) -> dict:
-    """从最新 checkpoint 读取 progress_tree 摘要 (Phase 40 T180)."""
-    from auto_engineering.loop.checkpoint import Checkpoint, SQLiteCheckpointStore
+    """从 EventStore 投影读取 progress_tree 摘要。"""
     cp_dir = cwd / ".ae-state"
-    if not cp_dir.exists():
+    event_db = cp_dir / "events.db"
+    if not event_db.exists():
         return {"completion_pct": 0.0, "total_tasks": 0, "done_tasks": 0, "node_count": 0}
-    latest_ckpt = None
-    for db_file in cp_dir.glob("*.db"):
-        try:
-            # 2026-07-25 审计修复 (P1-6): with 确保 _file_conn/WAL 句柄关闭
-            store: SQLiteCheckpointStore[EngineState]
-            with SQLiteCheckpointStore(str(db_file), read_only=True) as store:
-                ckpt: Checkpoint[EngineState] | None = store.load_latest()
-                if ckpt is not None and (latest_ckpt is None or ckpt.round > latest_ckpt.round):
-                    latest_ckpt = ckpt
-        except (OSError, sqlite3.Error):
-            continue
-    if latest_ckpt is None:
+    try:
+        from auto_engineering.loop.event_store import SQLiteEventStore
+
+        thread_id, _lease = _event_thread_context(cwd)
+        if not thread_id:
+            return {"completion_pct": 0.0, "total_tasks": 0, "done_tasks": 0, "node_count": 0}
+        with SQLiteEventStore(event_db) as events:
+            state = events.load_projection(thread_id)
+        if state is None:
+            return {"completion_pct": 0.0, "total_tasks": 0, "done_tasks": 0, "node_count": 0}
+        pt_json = state.progress_tree_json
+    except (OSError, sqlite3.Error, ValueError, TypeError, AttributeError):
+        _logger.debug("EventStore progress 读取失败", exc_info=True)
         return {"completion_pct": 0.0, "total_tasks": 0, "done_tasks": 0, "node_count": 0}
     try:
         from auto_engineering.engine.progress_tree import ProgressTree
-        # 2026-07-25 审计修复: ProgressTree 无 from_json (仅 from_dict)。原调用
-        # 必抛 AttributeError 被下方 except 静默吞噬 → 进度摘要恒为默认值
-        # (Phase 40 T180 失效)。
-        pt_json = getattr(latest_ckpt.state, "progress_tree_json", None)
         tree = ProgressTree.from_dict(json.loads(pt_json)) if pt_json else None
         if tree:
             return tree.summary()

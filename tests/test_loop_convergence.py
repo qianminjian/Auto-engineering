@@ -25,6 +25,8 @@ import threading
 
 import pytest
 
+from auto_engineering.loop import convergence as convergence_module
+from auto_engineering.loop import convergence_models
 from auto_engineering.loop.checkpoint import (
     DB_SCHEMA_VERSION,
     CheckpointMeta,
@@ -49,6 +51,11 @@ from auto_engineering.loop.state import (
     CheckpointEnvelope,  # v2.3 P0-A 重命名 (原 LoopState, v2.0 Pydantic Checkpoint 数据信封)
 )
 
+
+def test_convergence_value_objects_have_one_canonical_module() -> None:
+    assert convergence_module.ConvergenceConfig is convergence_models.ConvergenceConfig
+    assert convergence_module.ConvergenceVerdict is convergence_models.ConvergenceVerdict
+
 # ============================================================
 # Fixtures
 # ============================================================
@@ -62,8 +69,8 @@ def store() -> SQLiteCheckpointStore:
 
 @pytest.fixture
 def default_config() -> ConvergenceConfig:
-    """默认收敛配置."""
-    return ConvergenceConfig()
+    """显式兼容收敛配置，供旧 Judge 算法单元测试使用。"""
+    return ConvergenceConfig(max_iterations=10)
 
 
 @pytest.fixture
@@ -113,6 +120,16 @@ def test_convergence_empty_history_continues(
     assert verdict.should_stop is False
     assert verdict.level == LEVEL_CONTINUE
     assert "继续" in verdict.reason
+
+
+def test_default_convergence_does_not_stop_on_tick_count() -> None:
+    """方案 A：生产默认不能因固定 Tick/Round 数截断宿主连续驱动。"""
+
+    judge = ConvergenceJudge()
+    verdict = judge.evaluate([RoundHistory(round_id=10_000, stage="developer")])
+
+    assert verdict.should_stop is False
+    assert verdict.level == LEVEL_CONTINUE
 
 
 def test_convergence_hard_limit_triggers_first(
@@ -912,123 +929,17 @@ class TestCheckpointStateTyping:
 
 
 # ============================================================
-# H. Phase 10 子目标 2: StageRouter + EngineState 集成 + 停滞检测边界
+# H. Phase 10 子目标 2: EngineState 生命周期 + 停滞检测边界
 # ============================================================
 
 
-class TestStageRouterIntegration:
-    """Phase 10: StageRouter + EngineState 集成测试.
+class TestStateLifecycle:
+    """跨阶段重试只清理当前 Stage 的产出，不运行第二张状态机。"""
 
-    已有 test_stage_router.py 覆盖 StageRouter 单独行为 (37 用例).
-    本测试套验证 StageRouter 与 EngineState 真实协作:
-    - 连续 MAJOR 计数累加 + 超限 stop_reason 含正确数字
-    - APPROVE 重置 majors_in_a_row 但保留 total_majors
-    - clear_stage_fields 真实清空 EngineState 字段
-    - _derive_status 真实判定 EngineState.status
-    """
-
-    def test_stage_router_major_in_a_row_accumulates_in_engine_state(self) -> None:
-        """连续 MAJOR 计数累加: 模拟 3 轮 MAJOR, EngineState.majors_in_a_row 累加.
-
-        边界: 第 1 轮 MAJOR (1/1), 第 2 轮 MAJOR (2/2) 触发超限 stop.
-        """
-        from auto_engineering.engine.state import EngineState
-        from auto_engineering.loop.stage_router import StageRouter, update_majors_count
-
-        state = EngineState()
-        router = StageRouter(max_majors_in_a_row=2, max_total_majors=3)
-
-        # 第 1 轮 MAJOR
-        update_majors_count(state, "MAJOR")
-        assert state.majors_in_a_row == 1
-        assert state.total_majors == 1
-        decision = router.next("critic", "MAJOR", state.majors_in_a_row, state.total_majors)
-        assert decision.next_stage == "developer"  # 未超限
-
-        # 第 2 轮 MAJOR → 连续 2 触发 T6
-        update_majors_count(state, "MAJOR")
-        assert state.majors_in_a_row == 2
-        assert state.total_majors == 2
-        decision = router.next("critic", "MAJOR", state.majors_in_a_row, state.total_majors)
-        assert decision.should_stop is True
-        assert "连续2" in decision.stop_reason  # 含累加数字
-        assert "累计2" in decision.stop_reason
-
-    def test_stage_router_approve_resets_in_a_row_but_preserves_total(self) -> None:
-        """APPROVE: 重置 majors_in_a_row=0 但 total_majors 保留.
-
-        业务场景: 累计 3 次 MAJOR 后终于 APPROVE, majors_in_a_row 应清零.
-        """
-        from auto_engineering.engine.state import EngineState
-        from auto_engineering.loop.stage_router import update_majors_count
-
-        state = EngineState()
-        # 累计 3 轮 MAJOR
-        update_majors_count(state, "MAJOR")
-        update_majors_count(state, "MAJOR")
-        update_majors_count(state, "MAJOR")
-        assert state.majors_in_a_row == 3
-        assert state.total_majors == 3
-
-        # APPROVE → 重置 in_a_row, 保留 total
-        update_majors_count(state, "APPROVE")
-        assert state.majors_in_a_row == 0
-        assert state.total_majors == 3  # 保留
-
-    def test_stage_router_total_majors_exceeds_independent_of_in_a_row(self) -> None:
-        """累计 MAJOR 超限: 即便 in_a_row 较小, total 触发 T6 stop.
-
-        场景: 间隔 APPROVE 重置 in_a_row 后, 累计总数仍超限.
-        """
-        from auto_engineering.engine.state import EngineState
-        from auto_engineering.loop.stage_router import StageRouter, update_majors_count
-
-        state = EngineState()
-        router = StageRouter(max_majors_in_a_row=2, max_total_majors=3)
-
-        # 模式: MAJOR, MAJOR, APPROVE, MAJOR, MAJOR (累计 4 次)
-        for verdict in ["MAJOR", "MAJOR", "APPROVE", "MAJOR", "MAJOR"]:
-            update_majors_count(state, verdict)
-
-        # in_a_row=2 (最后一个 APPROVE 后重置, 然后 +2)
-        # total=4 (累计)
-        assert state.majors_in_a_row == 2
-        assert state.total_majors == 4
-
-        # 累计超限触发 (即便 in_a_row=2 == max_in_a_row, 这里应仍触发)
-        decision = router.next("critic", "MAJOR", state.majors_in_a_row, state.total_majors)
-        # 先检查连续 (in_a_row=2 == max=2) → 触发
-        assert decision.should_stop is True
-
-    def test_stage_router_empty_verdict_in_critic_triggers_safety_stop(self) -> None:
-        """critic 阶段 verdict="" 异常: 抛 CriticVerdictInvalid (Bug 3 prismscan 修复).
-
-        2026-07-04 行为变更: 旧实现 should_stop=True + reason 含 '异常' / '' 静默归一化为 PASS
-        (反向语义). 新实现 raise CriticVerdictInvalid 让 orchestrator 显式处理.
-        """
-        import pytest
-
-        from auto_engineering.loop.stage_router import CriticVerdictInvalid, StageRouter
-
-        router = StageRouter()
-        with pytest.raises(CriticVerdictInvalid) as exc_info:
-            router.next("critic", "", majors_in_a_row=0, total_majors=0)
-        assert exc_info.value.verdict == ""
-
-    def test_stage_router_unknown_stage_returns_safety_stop(self) -> None:
-        """未知 stage 防御性 stop (避免 Orchestrator 僵死)."""
-        from auto_engineering.loop.stage_router import StageRouter
-
-        router = StageRouter()
-        decision = router.next("unknown_stage", "APPROVE", 0, 0)
-        assert decision.should_stop is True
-        assert "未知" in decision.stop_reason
-        assert "unknown_stage" in decision.stop_reason
-
-    def testclear_stage_fields_actually_clears_engine_state(self) -> None:
+    def test_clear_stage_fields_actually_clears_engine_state(self) -> None:
         """clear_stage_fields 真实清空 EngineState 字段 (各 stage)."""
         from auto_engineering.engine.state import EngineState
-        from auto_engineering.loop.stage_router import clear_stage_fields
+        from auto_engineering.loop.state_lifecycle import clear_stage_fields
 
         state = EngineState()
 
@@ -1065,28 +976,15 @@ class TestStageRouterIntegration:
         assert state.findings == []
         assert state.critic_feedback == ""
 
-    def testclear_stage_fields_unknown_stage_is_noop(self) -> None:
+    def test_clear_stage_fields_unknown_stage_is_noop(self) -> None:
         """clear_stage_fields 传入未知 stage → no-op (防御性)."""
         from auto_engineering.engine.state import EngineState
-        from auto_engineering.loop.stage_router import clear_stage_fields
+        from auto_engineering.loop.state_lifecycle import clear_stage_fields
 
         state = EngineState()
         state.plan = "keep me"
         clear_stage_fields(state, "unknown_stage")
         assert state.plan == "keep me"  # 未被清空
-
-    def test_stage_router_init_validates_positive_limits(self) -> None:
-        """StageRouter 拒绝 ≤0 限制 (无意义配置)."""
-        from auto_engineering.loop.stage_router import StageRouter
-
-        # max_majors_in_a_row < 1 → ValueError
-        with pytest.raises(ValueError, match="max_majors_in_a_row"):
-            StageRouter(max_majors_in_a_row=0)
-
-        # max_total_majors < 1 → ValueError
-        with pytest.raises(ValueError, match="max_total_majors"):
-            StageRouter(max_total_majors=-1)
-
 
 class TestDetectStagnationEdgeCases:
     """Phase 10: detect_stagnation 边界值测试.
@@ -1200,9 +1098,9 @@ class TestConvergenceJudgeEmptyAndBoundary:
         assert verdict.level == LEVEL_CONTINUE
 
     def test_convergence_judge_default_config_has_reasonable_values(self) -> None:
-        """默认 ConvergenceConfig 应有合理默认值 (>= 1 限制)."""
+        """生产默认不设 Round 上限，但保留有效停滞阈值。"""
         config = ConvergenceConfig()
-        assert config.max_iterations >= 1
+        assert config.max_iterations is None
         assert config.stagnation_threshold >= 1
 
     def test_convergence_judge_picks_hard_limit_over_stagnant_when_both_apply(self) -> None:

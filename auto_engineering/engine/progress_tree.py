@@ -16,11 +16,27 @@
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 
 from auto_engineering.engine.design_doc import DesignDoc
+from auto_engineering.engine.progress_tree_helpers import (
+    component_id as _component_id,
+)
+from auto_engineering.engine.progress_tree_helpers import (
+    components_for_plate as _components_for_plate,
+)
+from auto_engineering.engine.progress_tree_helpers import (
+    normalize_ref as _normalize_ref,
+)
+from auto_engineering.engine.progress_tree_helpers import (
+    now as _now,
+)
+from auto_engineering.engine.progress_tree_helpers import (
+    plate_id as _plate_id,
+)
+from auto_engineering.engine.progress_tree_helpers import (
+    slug as _slug,
+)
 
 # ============================================================
 # B9.2 ProgressNode
@@ -94,51 +110,6 @@ class SyncResult:
 
 
 # ============================================================
-# helpers
-# ============================================================
-
-
-def _now() -> str:
-    return datetime.now(UTC).isoformat()
-
-
-def _normalize_ref(ref: str) -> str:
-    """提取稳定章节编号并统一 § 前缀；标题文本变化不改变节点身份。"""
-    s = ref.strip().lstrip("#").strip().replace("`", "")
-    if not s:
-        return ""
-    s = s.lstrip("§").strip()
-    section_match = re.match(
-        r"(?P<section>(?:[A-Za-z]+\d+|\d+)(?:\.\d+)*(?:[A-Za-z])?)"
-        r"(?=$|[\s:：—–-])",
-        s,
-    )
-    if section_match is not None:
-        s = section_match.group("section")
-    return f"§{s}"
-
-
-def _slug(name: str) -> str:
-    return re.sub(r"\s+", "-", name.strip())
-
-
-def _plate_id(plate) -> str | None:
-    ref = _normalize_ref(plate.design_section)
-    if ref:
-        return ref
-    if plate.name.strip():
-        return f"plate/{_slug(plate.name)}"
-    return None  # 不可识别 → 悬空
-
-
-def _component_id(comp) -> str:
-    ref = _normalize_ref(comp.design_section)
-    if ref:
-        return ref
-    return f"comp/{_slug(comp.name)}"
-
-
-# ============================================================
 # B9.3 ProgressTree
 # ============================================================
 
@@ -169,7 +140,7 @@ class ProgressTree:
                 sort_order=pi, design_section_ref=_normalize_ref(plate.design_section),
                 design_status="stable", created_at=_now(), updated_at=_now(),
             ))
-            for ci, comp in enumerate(plate.components):
+            for ci, comp in enumerate(_components_for_plate(plate)):
                 cid = _component_id(comp)
                 tree._put(ProgressNode(
                     id=cid, name=comp.name, level="component", parent_id=pid,
@@ -229,7 +200,7 @@ class ProgressTree:
             if pid is not None:
                 targets.append((pid, "sys", "plate", plate.name,
                                 _normalize_ref(plate.design_section), 0))
-            for comp in plate.components:
+            for comp in _components_for_plate(plate):
                 cid = _component_id(comp)
                 parent = pid  # 悬空 plate → parent=None → conflict
                 targets.append((cid, parent, "component", comp.name,

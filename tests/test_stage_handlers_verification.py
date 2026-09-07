@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from auto_engineering.engine.state import EngineState
 from auto_engineering.loop.events import LoopEventType
+from auto_engineering.loop.reducers import default_reducer_registry
 from auto_engineering.loop.stages.base import TransitionContext
 from auto_engineering.loop.stages.verification import (
     ComponentVerifierHandler,
@@ -98,6 +100,48 @@ def test_plate_audit_recounts_findings_and_requests_refine() -> None:
     assert "refine_source" not in decision.action_context
     assert len(_changes(decision)["audit_findings"]) == 1
     assert decision.audit_counts == (1, 0, 0)
+
+
+def test_deep_audit_revision_is_owned_by_verification_event() -> None:
+    decision = PlateDeepAuditHandler().apply(
+        {},
+        {"findings": []},
+        _context(
+            audit_revision_key="plate_deep_audit:Core",
+            audit_revision_fingerprint="sha256:abc",
+            verification_layers="plate",
+        ),
+    )
+
+    assert _changes(decision)["audit_revision_fingerprints"] == {
+        "plate_deep_audit:Core": "sha256:abc"
+    }
+
+
+def test_deep_audit_revision_replays_through_verification_reducer() -> None:
+    state = {
+        "audit_revision_fingerprints": {},
+    }
+    decision = SystemDeepAuditHandler().apply(
+        state,
+        {"findings": [], "missing_count": 0, "diverged_count": 0},
+        _context(
+            audit_revision_key="system_deep_audit",
+            audit_revision_fingerprint="sha256:def",
+        ),
+    )
+
+    projected = EngineState(
+        thread_id="thread-1",
+        current_stage="system_deep_audit",
+    )
+    for event in decision.events:
+        if event.event_type is LoopEventType.VERIFICATION_STATE_UPDATED:
+            projected = default_reducer_registry().reduce(projected, event)
+
+    assert projected.audit_revision_fingerprints == {
+        "system_deep_audit": "sha256:def"
+    }
     assert "audit_counts" not in decision.action_context
 
 

@@ -65,7 +65,7 @@ PII_RULES: list[PIIDetectionRule] = [
     ),
     PIIDetectionRule(
         name="api_key",
-        pattern=r'(?:sk|api[_-]?key|token|secret|password|passwd)\s*[:=]\s*["\']?([^\s"\']+)["\']?',
+        pattern=r'(?<![A-Za-z0-9_])(?:sk|api[_-]?key|token|secret|password|passwd)\s*[:=]\s*["\']?([^\s"\']+)["\']?',
         replacement="***REDACTED***",
         severity=PIISeverity.CRITICAL,
         category=PIICategory.CREDENTIAL,

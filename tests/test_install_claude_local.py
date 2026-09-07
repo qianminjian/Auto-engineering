@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import stat
 import subprocess
 import sys
@@ -27,12 +28,10 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_reinstall_unseals_only_enumerated_owned_cache(tmp_path: Path) -> None:
     boundary = tmp_path / "cache" / "auto-engineering" / "auto-engineering"
     plugin = boundary / "5.8.0-rc.5"
-    runtime = plugin / ".ae-runtime"
-    runtime.mkdir(parents=True)
+    plugin.mkdir(parents=True)
     payload = plugin / "build-info.json"
     payload.write_text("{}", encoding="utf-8")
     payload.chmod(0o444)
-    runtime.chmod(0o555)
     plugin.chmod(0o555)
 
     prepare_existing_install_for_removal([{
@@ -42,7 +41,6 @@ def test_reinstall_unseals_only_enumerated_owned_cache(tmp_path: Path) -> None:
     }], cache_root=boundary)
 
     assert stat.S_IMODE(plugin.stat().st_mode) == 0o755
-    assert stat.S_IMODE(runtime.stat().st_mode) == 0o755
     assert stat.S_IMODE(payload.stat().st_mode) == 0o644
 
 
@@ -103,9 +101,12 @@ def _minimal_release(root: Path) -> None:
 def test_direct_script_entrypoint_loads_without_repository_pythonpath(
     tmp_path: Path,
 ) -> None:
+    environment = os.environ.copy()
+    environment.pop("PYTHONPATH", None)
     result = subprocess.run(
-        [sys.executable, str(ROOT / "scripts/install_claude_local.py"), "--help"],
+        [sys.executable, "-S", str(ROOT / "scripts/install_claude_local.py"), "--help"],
         cwd=tmp_path,
+        env=environment,
         capture_output=True,
         text=True,
         check=False,
@@ -113,6 +114,65 @@ def test_direct_script_entrypoint_loads_without_repository_pythonpath(
 
     assert result.returncode == 0, result.stderr
     assert "--staging-root" in result.stdout
+    assert "--archive" in result.stdout
+
+
+def test_archive_cli_installs_and_verifies_exact_release(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    archive = tmp_path / "release.tar.gz"
+    archive.write_bytes(b"archive")
+    staged = StagedRelease(
+        root=tmp_path / "staged/5.8.0-rc.5+sha256.test",
+        version="5.8.0-rc.5",
+        build_id="5.8.0-rc.5+sha256.test",
+        content_sha256="a" * 64,
+    )
+    calls: list[tuple[str, Path, Path]] = []
+
+    def stage(
+        archive_path: Path,
+        staging_root: Path,
+        *,
+        development_root: Path,
+    ) -> StagedRelease:
+        assert archive_path == archive
+        assert staging_root == tmp_path / "staging"
+        assert development_root == tmp_path / "source"
+        return staged
+
+    monkeypatch.setattr(install_claude_local, "stage_archive", stage)
+    monkeypatch.setattr(
+        install_claude_local,
+        "install_claude_release",
+        lambda release_root, *, development_root: calls.append(
+            ("install", release_root, development_root)
+        ),
+    )
+    monkeypatch.setattr(
+        install_claude_local,
+        "verify_claude_install",
+        lambda release, development_root: calls.append(
+            ("verify", release.root, development_root)
+        ),
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "install_claude_local.py",
+            "--root", str(tmp_path / "source"),
+            "--staging-root", str(tmp_path / "staging"),
+            "--archive", str(archive),
+        ],
+    )
+
+    assert install_claude_local.main() == 0
+    assert calls == [
+        ("install", staged.root, tmp_path / "source"),
+        ("verify", staged.root, tmp_path / "source"),
+    ]
 
 
 def test_install_registers_only_staged_claude_marketplace(tmp_path: Path) -> None:
@@ -124,7 +184,8 @@ def test_install_registers_only_staged_claude_marketplace(tmp_path: Path) -> Non
 
     def runner(command: list[str]) -> subprocess.CompletedProcess[str]:
         commands.append(command)
-        return subprocess.CompletedProcess(command, 0, "{}", "")
+        stdout = "[]" if command == ["claude", "plugin", "list", "--json"] else "{}"
+        return subprocess.CompletedProcess(command, 0, stdout, "")
 
     install_claude_release(
         staged_root,
@@ -133,11 +194,44 @@ def test_install_registers_only_staged_claude_marketplace(tmp_path: Path) -> Non
     )
 
     assert commands == [
+        ["claude", "plugin", "list", "--json"],
         ["claude", "plugin", "uninstall", "auto-engineering@auto-engineering", "--scope", "user", "--yes"],
         ["claude", "plugin", "marketplace", "remove", "auto-engineering", "--scope", "user"],
         ["claude", "plugin", "marketplace", "add", str(staged_root), "--scope", "user"],
         ["claude", "plugin", "install", "auto-engineering@auto-engineering", "--scope", "user"],
     ]
+
+
+def test_install_unseals_orphan_using_release_version(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    development_root = tmp_path / "source"
+    staged_root = tmp_path / "releases/5.8.0-rc.5+sha256.test"
+    development_root.mkdir()
+    _minimal_release(staged_root)
+    prepared: list[str] = []
+    monkeypatch.setattr(
+        install_claude_local,
+        "prepare_existing_install_for_removal",
+        lambda plugins: None,
+    )
+    monkeypatch.setattr(
+        install_claude_local,
+        "prepare_orphaned_version_cache_for_removal",
+        lambda *, version, cache_root=None: prepared.append(version),
+    )
+
+    def runner(command: list[str]) -> subprocess.CompletedProcess[str]:
+        stdout = "[]" if command == ["claude", "plugin", "list", "--json"] else "{}"
+        return subprocess.CompletedProcess(command, 0, stdout, "")
+
+    install_claude_release(
+        staged_root,
+        development_root=development_root,
+        runner=CommandRunner(runner),
+    )
+
+    assert prepared == ["5.8.0-rc.5"]
 
 
 def test_standard_install_uses_host_managed_github_marketplace() -> None:
@@ -198,15 +292,11 @@ def _installed_fixture(tmp_path: Path) -> tuple[Path, Path, StagedRelease]:
     plugin_root = tmp_path / "claude-cache/auto-engineering"
     source.mkdir()
     release_root.mkdir(parents=True)
-    (plugin_root / ".ae-runtime/bin").mkdir(parents=True)
+    plugin_root.mkdir(parents=True)
     (plugin_root / "auto_engineering").mkdir()
     build_id = "5.8.0-rc.5+sha256.aaaaaaaaaaaaaaaa"
     (plugin_root / "build-info.json").write_text(
         json.dumps({"build_id": build_id}), encoding="utf-8"
-    )
-    (plugin_root / ".ae-runtime/bin/ae").write_text(
-        f"#!/bin/sh\nexec {plugin_root}/.ae-runtime/bin/python \"$@\"\n",
-        encoding="utf-8",
     )
     return source, plugin_root, StagedRelease(
         root=release_root,
@@ -242,7 +332,9 @@ def test_verify_claude_install_binds_build_and_runtime_origin(
         assert "CODEX_THREAD_ID" not in environment
         assert "CODEX_SANDBOX" not in environment
         if command[0].endswith("ae-run"):
-            assert (Path(kwargs["cwd"]) / ".ae-state").is_dir()
+            project = Path(kwargs["cwd"])
+            assert (project / ".ae-state").is_dir()
+            (project / ".ae-state/.ae-runtime").mkdir(parents=True)
         stdout = ""
         if command[0].endswith("python"):
             stdout = str(plugin_root / "auto_engineering/__init__.py") + "\n"

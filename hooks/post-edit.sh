@@ -5,5 +5,5 @@
 
 set -u
 
-echo '{"decision":"allow"}'
+echo '{"decision":"approve"}'
 exit 0

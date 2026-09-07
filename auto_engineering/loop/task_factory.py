@@ -11,7 +11,7 @@
       缺字段时静默跳过 (if "field" in values: 守卫), 不抛 KeyError.
 
 依赖 (避免循环 import):
-    - plan.Plan / Task (Stage 字段过滤)
+    - engine.models.Plan / Task (Stage 字段过滤)
     - round.TaskOutcome (orchestrator 产出的执行结果)
     - engine.state.EngineState (Channel 写入目标)
 """
@@ -22,9 +22,9 @@ import copy
 import logging
 from typing import Any
 
+from auto_engineering.engine.models import Plan, Task, TaskOutcome
 from auto_engineering.engine.state import EngineState
 from auto_engineering.errors import AEError, ErrorCode
-from auto_engineering.loop.plan import Plan, Task, TaskOutcome
 
 
 def tasks_from_batch_plan(
@@ -99,8 +99,8 @@ ROLE_FIELD_MAP: dict[str, list[str]] = {
                "strengths", "assessment"],
 }
 
-# 每个 field 的清空默认值 (v5.4 审计 r2 P1-3: clear_stage_fields 引用此表 + ROLE_FIELD_DEFAULTS,
-# 消除 stage_router.py 的重复硬编码).
+# 每个 field 的清空默认值；state_lifecycle.clear_stage_fields 直接引用本表，
+# 保持字段清理只有一个事实源。
 ROLE_FIELD_DEFAULTS: dict[str, object] = {
     "plan": "",
     "file_list": [],

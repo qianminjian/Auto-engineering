@@ -36,6 +36,7 @@ from auto_engineering.loop.guardrail import (
     REDGuardrail,
     RegressionGuardrail,
     RequirementValid,
+    TestEvidenceIntegrityGuardrail,
     TestsPass,
 )
 from auto_engineering.loop.guardrails.stateful import (
@@ -384,6 +385,35 @@ class TestGitDiffExists:
         )
         assert result.action == "retry"
 
+    def test_pass_verification_only_batch_without_diff(self, tmp_path: Path) -> None:
+        """既有目标文件已满足且测试通过时，验证型 batch 可无 diff 完成。"""
+        target = tmp_path / "src" / "existing.ts"
+        target.parent.mkdir()
+        target.write_text("export const ready = true;\n", encoding="utf-8")
+        state = EngineState(test_results={"passed": 1, "failed": 0})
+        state.files_changed = []
+        state.batch_state = _StubBatchState([_StubTask("b1-t1", ["src/existing.ts"])])
+        state._plan = object()  # type: ignore[attr-defined]
+        result = GitDiffExists().check(
+            "developer", state, project_root=tmp_path,
+        )
+        assert result.action == "pass"
+
+    def test_pass_verification_only_batch_from_runtime_handles(self, tmp_path: Path) -> None:
+        """Guardrail 使用 TickOrchestrator 注入的 _runtime_ctx 句柄。"""
+        target = tmp_path / "src" / "existing.ts"
+        target.parent.mkdir()
+        target.write_text("export const ready = true;\n", encoding="utf-8")
+        state = EngineState(test_results={"passed": 1, "failed": 0})
+        state._runtime_ctx["batch_state"] = _StubBatchState(
+            [_StubTask("b1-t1", ["src/existing.ts"])]
+        )
+        state._runtime_ctx["plan"] = object()
+        result = GitDiffExists().check(
+            "developer", state, project_root=tmp_path,
+        )
+        assert result.action == "pass"
+
     def test_pass_root_commit_with_show_stat(self, tmp_path: Path) -> None:
         """BUG-02: root commit (无 parent) diff-tree 返回空 → git show --stat 降级 pass."""
         repo = tmp_path / "root_repo"
@@ -653,10 +683,10 @@ class TestGuardrailChain:
         # post/developer → G3 + G4 + G5
         assert len([g for g in chain.guardrails if g.timing == "post" and "developer" in g.applies_to_stages]) == 3
 
-    def test_default_factory_returns_11_guardrails(self) -> None:
+    def test_default_factory_returns_12_guardrails(self) -> None:
         """默认链不以 GitClean 强制未授权 commit。"""
         chain = GuardrailChain.default()
-        assert len(chain.guardrails) == 11
+        assert len(chain.guardrails) == 12
         names = [type(g).__name__ for g in chain.guardrails]
         assert "RequirementValid" in names
         assert "PlanExists" in names
@@ -684,6 +714,7 @@ class TestGuardrailChain:
             REDGuardrail(),
             FreshGuardrail(),
             RegressionGuardrail(),
+            TestEvidenceIntegrityGuardrail(),
             PIIGuardrail(),
             FileAccessGuardrail(),
             AuditTimingGuardrail(),

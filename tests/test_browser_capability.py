@@ -2,10 +2,19 @@
 
 from pathlib import Path
 
+from auto_engineering.project_profile.browser_capability import (
+    detect_browser_capability as canonical_detect_browser_capability,
+)
 from auto_engineering.project_profile.providers import (
     LocalProbeProvider,
     detect_browser_capability,
 )
+
+
+def test_browser_capability_has_one_canonical_implementation() -> None:
+    """兼容导出必须指向独立的浏览器能力探测实现，不能复制第二份逻辑。"""
+
+    assert detect_browser_capability is canonical_detect_browser_capability
 
 
 def test_browser_preflight_reports_alternative_system_runtime(tmp_path: Path) -> None:

@@ -1,11 +1,10 @@
-"""Plugin-Engine stdout JSON 契约 + 子命令契约测试 (v5.6).
+"""Plugin-Engine stdout JSON 契约 + 宿主入口契约测试 (v5.8).
 
 Phase 07+ 所有模块已实现, 测试验证 CLI 契约而非 ImportError。
 
 覆盖范围 (v5.6 CLI 子命令全集 + JSON 契约):
     - ae doctor         环境预检 (7 行 ✓/✗)
     - ae gate-check     Gate 检查 (--all / --quick)
-    - ae agent          单 Agent 调用 (architect/developer/critic)
     - ae dev-loop       stdout JSON 契约 (6 字段)
     - ae status         JSON recent_history (7 字段)
     - exit codes        0=completed, 1=config_error, 2=gate_unrecoverable, 130=SIGINT
@@ -28,6 +27,102 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_core_package_declares_host_driven_single_tick_boundary() -> None:
+    """当前包说明不得重新描述已退役的 Python 长循环架构。"""
+    text = (REPO_ROOT / "auto_engineering" / "__init__.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert "宿主驱动的确定性 Loop 工程内核" in text
+    assert "Python Core 不启动 LLM、Worker 或长期协调循环" in text
+    assert "while True" not in text
+    assert "agent.execute" not in text
+
+
+def test_codex_output_schema_is_strict_compatible() -> None:
+    """Codex strict structured output 要求 properties 全部出现在 required。"""
+    schema = json.loads(
+        (
+            REPO_ROOT
+            / "auto_engineering"
+            / "loop"
+            / "action-context-outcome.schema.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert set(schema["required"]) == set(schema["properties"])
+    assert schema["properties"]["error_code"]["type"] == ["string", "null"]
+
+
+def test_checkpoint_channel_is_documented_as_compatibility_only() -> None:
+    """Checkpoint 兼容 Channel 不得宣称拥有并发 Worker 调度职责。"""
+    text = (
+        REPO_ROOT / "auto_engineering" / "loop" / "checkpoint" / "_serialization.py"
+    ).read_text(encoding="utf-8")
+
+    assert "只服务旧 CheckpointEnvelope 的显式兼容迁移" in text
+    assert "不定义并发调度、Worker 归属或第二套状态机" in text
+    assert "asyncio.gather" not in text
+
+
+def test_current_state_modules_do_not_advertise_a_parallel_loop_model() -> None:
+    """当前状态/编排代码不得留下会诱发第二状态机的并发路线说明。"""
+    paths = (
+        REPO_ROOT / "auto_engineering" / "engine" / "state.py",
+        REPO_ROOT / "auto_engineering" / "loop" / "tick_orchestrator.py",
+        REPO_ROOT / "auto_engineering" / "loop" / "checkpoint" / "_connection.py",
+        REPO_ROOT / "auto_engineering" / "loop" / "state" / "checkpoint_envelope.py",
+    )
+    text = "\n".join(path.read_text(encoding="utf-8") for path in paths)
+
+    assert "未来多 Agent 并发" not in text
+    assert "并行 tick 时需 asyncio.Lock" not in text
+    assert "如果未来需要并发写" not in text
+
+
+def test_gate_package_keeps_only_explicit_deprecated_alias_compatibility() -> None:
+    import auto_engineering.gates as gates
+
+    assert gates.DEFAULT_GATES
+    with pytest.warns(DeprecationWarning):
+        assert gates.Verdict is gates.GateVerdict
+    with pytest.raises(AttributeError):
+        missing_name = "unknown_gate_export"
+        getattr(gates, missing_name)
+
+
+def test_guardrail_package_resolves_lazy_exports_and_rejects_unknown_names() -> None:
+    import auto_engineering.loop.guardrails as guardrails
+
+    assert guardrails.RequirementValid is not None
+    with pytest.raises(AttributeError):
+        missing_name = "unknown_guardrail_export"
+        getattr(guardrails, missing_name)
+
+
+def test_superseded_thin_coordinator_design_is_marked_historical() -> None:
+    """被方案 A 取代的旧设计不能伪装成当前实现规范。"""
+    text = (
+        REPO_ROOT
+        / "design"
+        / "v5.8-Thin-Coordinator-and-Developer-Worker-Design.md"
+    ).read_text(encoding="utf-8")
+
+    assert "历史设计" in text
+    assert "已由 Phase 85 与方案 A 取代" in text
+    assert "不得作为当前实现规范" in text
+
+
+def test_design_index_does_not_promote_superseded_documents() -> None:
+    """设计索引不得把已替代文档列为当前权威。"""
+    text = (REPO_ROOT / "design" / "INDEX.md").read_text(encoding="utf-8")
+
+    assert (
+        "`v5.8-Protocol-Kernel-Convergence-Design.md` | Phase 80 历史目标设计"
+        in text
+    )
+    assert "`v5.8-Protocol-Kernel-Convergence-Design.md` | Phase 80 当前权威收敛设计" not in text
+
+
 def test_shared_skill_describes_multi_worker_prompt_and_receipt_protocol() -> None:
     text = (
         REPO_ROOT / "skills" / "auto-engineering" / "SKILL.md"
@@ -44,6 +139,30 @@ def test_shared_skill_describes_multi_worker_prompt_and_receipt_protocol() -> No
     assert "native_launch_prompt" in text
     assert "不得先读取" in text
     assert "读取每个 invocation 的 `prompt_ref`" not in text
+    assert "task_started.task_id" in text
+    assert "不得启动回显 Agent" in text
+    assert "不得复用旧 Action 的 work_files" in text
+    assert "测试脱敏用例必须使用明显的" in text
+    assert "不得通过修改断言" in text
+
+
+def test_claude_plugin_captures_agent_results_with_post_tool_hook() -> None:
+    manifest = json.loads((REPO_ROOT / "hooks" / "hooks.json").read_text())
+    post_tool = manifest["hooks"]["PostToolUse"]
+    assert post_tool[0]["matcher"] == "Agent|TaskOutput"
+    assert "hooks/post-tool.sh" in post_tool[0]["hooks"][0]["command"]
+
+
+def test_claude_pre_tool_guard_covers_task_stop() -> None:
+    manifest = json.loads((REPO_ROOT / "hooks" / "hooks.json").read_text())
+    pre_tool = manifest["hooks"]["PreToolUse"]
+    assert "TaskStop" in pre_tool[0]["matcher"]
+    assert "Read" in pre_tool[0]["matcher"]
+    pre_tool_script = (REPO_ROOT / "hooks" / "pre-tool.sh").read_text()
+    assert '"$TOOL_NAME" == "Read"' in pre_tool_script
+    assert "BINDING_DESIGN_READ_ONLY" in (
+        REPO_ROOT / "auto_engineering" / "host" / "native_launch_guard.py"
+    ).read_text(encoding="utf-8")
 
 
 def test_claude_command_uses_same_multi_worker_protocol() -> None:
@@ -58,6 +177,8 @@ def test_claude_command_uses_same_multi_worker_protocol() -> None:
     assert "coordinator_prompt_ref" in text
     assert "native_launch_prompt" in text
     assert "不得先读取" in text
+    assert "测试脱敏用例只能使用明显的" in text
+    assert "不得通过修改断言" in text
 
 
 def _run_cli(*args: str, cwd: Path | None = None, timeout: int = 30) -> subprocess.CompletedProcess:

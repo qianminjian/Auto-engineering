@@ -111,6 +111,25 @@ def test_assembly_rejection_preserves_completed_worker_facts(
     assert rejected["completed_at"] == "2026-08-25T10:00:00+00:00"
 
 
+def test_first_assembly_rejection_preserves_current_worker_facts(
+    tmp_path: Path,
+) -> None:
+    """首次组装失败也必须保留本次已收集的 Worker 事实供恢复复用。"""
+    journal = OutcomeJournal(tmp_path)
+    outcomes = [{"worker_id": "architect-0", "status": "completed"}]
+
+    rejected = journal.reject_assembly(
+        "action-1",
+        coordinator_payload={"plan": "过短"},
+        error_code="HOST_EVIDENCE_INVALID",
+        violations=["COORDINATOR_RESULT_INVALID"],
+        outcomes=outcomes,
+    )
+
+    assert rejected["outcomes"] == outcomes
+    assert rejected["outcomes_fingerprint"]
+
+
 def test_only_prepared_candidate_can_be_accepted(tmp_path: Path) -> None:
     journal = OutcomeJournal(tmp_path)
 

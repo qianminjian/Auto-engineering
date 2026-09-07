@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+import json
+
 from auto_engineering.engine.batch_state import BatchState
 from auto_engineering.engine.verification_layers import VerificationLayers
-from auto_engineering.loop.transition_context_factory import TransitionContextFactory
+from auto_engineering.loop.transition_context_factory import (
+    TransitionContextFactory,
+    project_gate_results,
+)
 
 
 def test_developer_context_contains_cursor_and_blocking_gates() -> None:
@@ -35,3 +40,36 @@ def test_developer_context_contains_cursor_and_blocking_gates() -> None:
     assert extensions["has_more_batches_after_advance"] is True
     assert extensions["next_task"] == "实现 B2"
     assert len(extensions["blocking_gate_results"]) == 1
+
+
+def test_blocking_gate_feedback_is_bounded_before_next_worker_prompt() -> None:
+    """Gate 原始输出不能整体回灌 Developer Prompt。"""
+    raw_message = "失败定位\n" + ("详细日志 " * 60_000)
+    raw_gate_results = {
+        "type_check": {
+            "status": "hard_fail",
+            "passed": False,
+            "message": raw_message,
+            "selected_files": [f"src/generated/{index}.py" for index in range(10_000)],
+            "files_snapshot_sha": "sha256:test",
+            "ran_at": "2026-09-01T00:00:00+00:00",
+        },
+    }
+
+    blocking = TransitionContextFactory.blocking_gate_results(raw_gate_results)
+
+    assert len(json.dumps(blocking, ensure_ascii=False).encode("utf-8")) < 8_192
+    assert blocking == [
+        {
+            "gate_name": "type_check",
+            "status": "hard_fail",
+            "passed": False,
+            "message": blocking[0]["message"],
+            "files_snapshot_sha": "sha256:test",
+        },
+    ]
+    assert len(blocking[0]["message"].encode("utf-8")) < 2_500
+
+    projected = project_gate_results(raw_gate_results)
+    assert len(json.dumps(projected, ensure_ascii=False).encode("utf-8")) < 8_192
+    assert "selected_files" not in projected["type_check"]

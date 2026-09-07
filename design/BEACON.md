@@ -1,13 +1,10 @@
 # Auto-Engineering BEACON
-> 创建：2026-06-24｜更新：2026-08-31｜阶段：P0-E2E 端到端产品闭环
+> 创建：2026-06-24｜更新：2026-09-07｜阶段：P0-E2E 端到端产品闭环
 > 决策状态翻转（✅↔❌）或架构降级必须先获用户批准。
 ## 导航
-
 - 当前权威设计：[`v5.8-Main-Agent-Coordinator-Recovery-Design.md`](v5.8-Main-Agent-Coordinator-Recovery-Design.md)
 - 当前任务：[`IMPLEMENTATION-TRACKER.md`](IMPLEMENTATION-TRACKER.md)
-- BEACON 演进历史：[`BEACON-HIS.md`](BEACON-HIS.md)
-- 项目里程碑：[`HISTORY.md`](HISTORY.md)
-
+- 历史与里程碑：[`BEACON-HIS.md`](BEACON-HIS.md) · [`HISTORY.md`](HISTORY.md)
 ## 目标与成功标准
 1. 用户执行一次设计驱动命令后，产品无非预期人工介入地运行到 `TERMINAL`。
 2. 定位为跨 Agent 宿主的确定性工程治理内核；宿主负责推理、工具和连续驱动。
@@ -63,18 +60,21 @@ Gate/Guardrail、五层验证、审计、v5.6 兼容迁移和双宿主验收。
 | D47 | Core 拒绝后的同 Action repair 必须复用 journal 权威 Worker outcomes；修复包只允许 Coordinator，冲突在当前 Action fail-closed 并生成 Stop Report | ✅ |
 | D48 | `done/TERMINAL` 只证明 Core 收敛；必须携带 Core 验证覆盖率与未验证项，真实产品验收仍由 L4 独立证明 | ✅ |
 | D49 | `remaining_recommendations` 仅可自动采用明确标注 `requires_user_approval=false` 的普通 Gap；字段缺失或绑定设计影响必须等待用户 Gate | ✅ |
-| D50-D52 | D50 的旧失败路由由 D56 修订；D51-D52 继续要求 batch 精确覆盖及私有 `outcome_path`→Collector，禁止 Coordinator 创造 native outcome | ✅ |
+| D50-D52/D71 | D50 的旧失败路由由 D56 修订；batch 仍须精确覆盖；原生返回由 Host Driver 在唯一回写边界严格解析并原子固化到私有 `outcome_path`，禁止 Coordinator 手工创造宿主事实或第二条循环 | ✅ |
 | D53 | 当前主 Agent 是活跃宿主会话内唯一 Loop Coordinator；所有业务角色由独立子 Agent 执行，Python 只做确定性治理 | ✅ |
 | D54 | Worker handle 只在当前宿主会话内有效；跨会话恢复只信任原子落盘 outcome，未落盘 Worker 以新执行身份安全重跑 | ✅ |
-| D55 | 预算默认 soft，不因 token、费用、Action/Tick 数或时长停机；旧 Supervisor 先旁路，双宿主 L4 通过后再退役 | ✅ |
+| D55 | 预算默认 soft，不因 token、费用、Action/Tick 数或时长停机；旧 Supervisor 主控路径已退役 | ✅ |
 | D56 | 同时修订 D37 与 D50 的失败路由：wait 到期不是失败；明确失败只重试失败 Worker，资源/所有权不确定才 WAIT_RESOURCE；generation + fencing token 阻止迟到双写 | ✅ |
 | D57-D58 | 统一 generation 绑定映射入口；EventStore 是唯一新协议事实源，checkpoint 仅兼容回退且禁止拼接 | ✅ |
 | D59-D65 | Tick 回滚撤销未提交命名 JSON effect；验收 artifact 由事件/回执推导 machine_claims 并交叉校验；跟踪按证据层级分层；L2 必须经过公开 CLI 轨迹；损坏 receipt/空事件流在边界稳定 fail-closed；Worker 原生事实回写随 Action 下发逐 Worker 机器模板；compact 视图不得丢失回写合同和代际身份 | ✅ |
-## 当前状态
-- `P0-E2E` 是唯一产品交付任务；既有 Phase/T、L1/L2、覆盖率和 archive 安装仅作支撑证据，不能替代 L4。
-- 当前候选版本为 `5.8.0-rc.5`；每次制品 hash 以随包 `build-info.json` 为准，避免设计文档自引用导致版本漂移。当前工作树已完成 Worker artifact 路径、结果优先恢复、代际重试、业务/宿主事实边界、compact 回写合同和显式 Worker 身份修复，全量串行回归 `2835 passed, 1 skipped`，覆盖率 `90%`。真实产品 L3/L4 仍未执行，不得以自动测试替代。
-- 当前工作树生成的 release archive 已分别在 Codex、Claude Code 宿主模式完成隔离归档 smoke；其仅证明安装制品和内部协议入口完整，不能替代真实产品 L3/L4。Phase 85 已进入主控权纠偏实施：默认主控返回当前主 Agent，业务角色继续独立 Worker 化；Python Supervisor 仅保留旁路兼容。预算默认软约束，先跑通再优化。T609-T618 已完成实现、回归与独立归档验收；D63 的损坏 receipt/空事件流 fail-closed、D64 的 Worker 回写机器模板与 D65 的 compact/Worker 身份合同已补齐，T619-T620 仍待真实双宿主 L3/L4 验收。
+| D66 | 当前 Action 禁止生成或消费 `subagent_prompt`；Coordinator prompt 使用内容寻址 `coordinator_prompt_ref`，Worker prompt 只通过 invocation `prompt_ref`/`native_launch_prompt` 交付；旧字段仅由显式历史迁移边界拒绝或转换 | ✅ |
+| D67 | 宿主提交 Worker 失败前，CLI 必须检查当前 Action 的私有 outcome 与 native attestation；若仅缺宿主事实，先投影 `worker_attestation_pending`，不得消费失败预算或重启 Worker | ✅ |
+| D68-D69 | 结果确定性校验失败属于当前 Action 的 Coordinator repair；Core/CLI 必须保持 Action identity、复用已认证 Worker outcome 并隐藏 `spawn`，不得把语义修复变成新 Worker Action；validate→tick 连续调用也必须重复投影 repair；`WAIT_RESOURCE` 是有界 yield，重复失败不得继续递增状态或写事件，修复后的有效 Result 仍可恢复原 active Action | ✅ |
+| D70/D72 | Feature 配置是可选覆盖；默认值、环境变量和 `ae.toml` 是唯一读取链；旧强制配置闸门退役 | ✅ |
+| D73-D74 | 设计来源漂移只有显式 `state_reconciliation/reinitialize` 可以轮换项目级设计账本；旧账本归档保留，普通恢复与只读校验不得改写来源绑定；Developer 的缺工具链/依赖失败属于可恢复资源等待，统一投影为 `WAIT_RESOURCE` 并自动重试原 active Action，真实设计/授权选择仍保持 `WAIT_USER` | ✅ |
+## 当前状态：`P0-E2E` 已完成；核心架构严格是“主 Agent 唯一 Coordinator + Python 单 Tick + EventStore 事实源 + 原生 Worker 交接”。同一 final140 Build `5.8.0-rc.5+sha256.5892735d72dc9851` 已分别在全新 Codex 与 Claude Code 项目完成一次设计驱动命令，均连续到 `TERMINAL/GOAL_ACHIEVED`。Codex 与 Claude 的 Setup、Gap Scan、Architect、Developer、Critic 阶段均有真实宿主证据；Claude 的越权 outcome 写入被 Hook 拒绝后按固定回写边界恢复，Developer lint 与 Architect obligation 修正均在同一 Loop 内完成。T838 的新增文件 patch 契约与 T837 的 generation/fencing 修复均在真实宿主中复验通过。当前不再自动真跑；后续仅归档证据、运行常规回归和按发布流程交付。
+- T707-T750 已补齐隔离证据、同 Action recovery、Codex 单层 `result` 原生回包、无 Git 证据、Worker liveness 观察合同、锁定解释器安装入口、Gate 的 finalize/validate/submit 合同、PlanPatch canonical batch、`complete` 状态别名、短启动合同中的共享 outcomes 禁写约束、`--native-result-stdin` 原样暂存通道、Loop 前 Build Identity 强制预检、产品 artifact 预检事实绑定、SQLite 测试连接显式关闭、Project Setup service/scope 拆分、Worker Evidence 原语、Outcome Recovery 恢复服务、Result Contract 纯策略、Worker Failure 失败事务单一归属、Python CLI 无长期 Coordinator 的架构回归、Codex/Claude/product acceptance 独立入口的仓库根解析、浏览器能力探测单一归属、EngineState 字段校验单一归属、DesignDoc 解析器单一归属、TaskOutcome 执行回执单一模型、ProgressTree 身份辅助单一模块、BatchState 编解码单一模块、Action 响应模型单一模块、Convergence 值对象单一模块、ReducerRegistry 单一模块、EventStore 编解码/schema 单一模块及 Host Action 映射编译器单一模块、Design Stage 辅助单一模块及 PlanRefine 单一模块、Result 校验/PII 入站策略/Tick 证据/Stage Action 编译/Worker 路径/Host Action 运行时与 CLI 恢复读取单一归属、旧 Action 迁移 Gate 单一归属、显式 reinitialize 的设计账本轮换单一归属；当前仍保持主 Agent 唯一协调、Python 单 Tick，旧 Supervisor/第二套循环不在运行路径。
 ## 待解决问题
-- 完成同一 Build 双宿主 L4 前保持发布阻断；当前工作树已通过 Action 产物代际、状态源冲突、effect 清理、machine claims、损坏 receipt/空事件流、Worker/Host 事实边界和结果优先恢复回归测试；真实 Codex/Claude L3/L4 仍未执行。
-## 引用文件
-`design/v5.8-Main-Agent-Coordinator-Recovery-Design.md` · `design/BEACON-HIS.md` · `design/v5.8-Session-Decoupling-Design.md` · `design/v5.8-Session-Decoupling-PLAN.md` · `design/incidents/2026-07-29-claude-146-tick-long-run.md` · `design/incidents/2026-08-30-architecture-audit-remediation.md` · `design/IMPLEMENTATION-TRACKER.md` · `design/HISTORY.md`
+- 发布前唯一 P0 阻断是 A008 的同一 Build 双宿主真实产品证据：final135 已完成一次真实 Codex 尝试但被宿主 Hook 未加载/未触发阻断，尚未达到终态；Claude 同 Build 也尚缺真实产品终态。到此设置止损线：不再自动重复真跑；只有确认 Hook 实际加载后才做一次定向复验。不放宽证据校验、不把私有 outcome 冒充 native envelope、不恢复第二套循环。
+- 保留两个非阻塞 P2 工程观察：真实宿主临时项目的测试根/工具链夹具组织问题、宿主插件 Build Identity 可能与候选制品漂移。下一步只需在可运行 Codex 原生产品的会话中复用 final117 候选和同一 fresh-project 夹具完成最后一跑；不得通过放宽路径或恢复第二套循环绕过门禁。
+## 引用文件：`design/v5.8-Main-Agent-Coordinator-Recovery-Design.md` · `design/BEACON-HIS.md` · `design/v5.8-Session-Decoupling-Design.md` · `design/v5.8-Session-Decoupling-PLAN.md` · `design/incidents/2026-07-29-claude-146-tick-long-run.md` · `design/incidents/2026-08-30-architecture-audit-remediation.md` · `design/IMPLEMENTATION-TRACKER.md` · `design/HISTORY.md`

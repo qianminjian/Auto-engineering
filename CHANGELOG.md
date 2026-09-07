@@ -5,9 +5,21 @@
 
 ## v5.8.0-rc.5 — 主 Agent 协调与宿主恢复收敛（2026-08-30）
 
-- 默认入口由当前主 Agent 连续协调 Action，Python Core 仅负责确定性协议、状态、门禁和审计；旧 Supervisor 保留为旁路兼容。
+- 默认入口由当前主 Agent 连续协调 Action，Python Core 仅负责确定性协议、状态、门禁和审计；旧 Supervisor 主控路径已退役。
 - Worker 支持异步等待、私有 outcome、generation/fencing 防迟到双写，以及所有权不确定时的 `WAIT_RESOURCE` 分流。
-- 增加真实子进程纵向回归、六类历史故障回放矩阵和 Codex/Claude archive smoke 验收；全量测试 `2797 passed / 1 skipped`，覆盖率 90%。
+- Runner 将项目运行时与依赖缓存分离：默认复用 uv 公共缓存，验收可显式锁定受控缓存，修复首次 `--init` 因项目专属缓存未预热而联网超时中断的问题。
+- Runner 增加项目级 bootstrap 原子锁、死锁回收和参数 fail-closed，避免并发 hook 覆盖运行时或缺失 `--project-root` 时误用当前目录。
+- 增加真实子进程纵向回归、六类历史故障回放矩阵和 Codex/Claude archive smoke 验收；全量测试 `2706 passed / 1 skipped`，覆盖率 90%。
+- A009 清除当前 Action 的 `subagent_prompt` 双路径，Coordinator 与 Worker 均改为内容寻址 Artifact 引用。
+- 产品验收证据强制绑定真实 Marketplace 来源、候选 Build Identity 和完整内容摘要，禁止 archive smoke 伪装成真实安装。
+- archive smoke 输出并校验包内 `version/build_id/content_sha256`，确保安装验收报告可追溯到唯一候选制品。
+- 产品发布校验器要求显式传入候选 archive，并将双宿主证据与该 archive 的 Build Identity 绑定。
+- Build Identity 校验集中到共享 Core 合同，安装 smoke 与产品发布校验不再维护两套版本/摘要规则。
+- 发布验收脚本补齐系统 Python 直接启动引导，并增加回归测试；最新全量串行回归为 `2712 passed / 1 skipped`，覆盖率保持 90%。
+- 增加公开 CLI 的 Worker outcome 先落盘、Coordinator 尚未落盘时的跨进程恢复回归；恢复隐藏已完成 Worker，禁止重复 spawn，并要求先生成 Coordinator 结果再 finalize。
+- Worker invocation 将 `outcome_path` 收敛为必填 canonical 合同，移除旧 rc.5 outcome 目录的运行时迁移回退。
+- Gate 失败反馈改为有界摘要，完整日志不再回灌下一轮 Developer Prompt；Prompt 超限改为结构化 `ACTION_CONTEXT_TOO_LARGE`，避免 Python traceback 中断 Loop。
+- Codex 合法非 Stop Hook 补齐结构化安全响应，旧在途 Action 的 status 映射失败改为稳定恢复信号，不再泄漏旧提示词正文。
 - 本候选仍未完成真实 Codex/Claude L3/L4，不能据此宣称正式发布。
 
 ---

@@ -12,7 +12,7 @@
     ae dev-loop --init <req> [--design-doc <path>]   初始化 tick loop
     ae dev-loop --tick --result <file>               提交 tick 结果
     ae dev-loop --status [--verbose] [--format json] 查询进度
-    ae dev-loop --resume <id>                        从 checkpoint 恢复
+    ae dev-loop --resume <thread-id>                 从 EventStore 恢复当前 Action
 """
 
 from __future__ import annotations
@@ -24,8 +24,9 @@ from pathlib import Path
 import click
 
 from auto_engineering import __version__
+from auto_engineering.cli.build_info import register_build_info_command
 from auto_engineering.cli.dev_loop import (
-    run_action_supervisor,
+    run_tick_import_checkpoint,
     run_tick_init,
     run_tick_resume,
     run_tick_status,
@@ -51,6 +52,7 @@ __all__ = [
     "classify_error",
     "dev_loop",
     "main",
+    "register_build_info_command",
     "register_doctor_command",
     "register_status_command",
 ]
@@ -86,6 +88,9 @@ def main():
     )
 
 
+register_build_info_command(main)
+
+
 @main.command(epilog="""
 内部协议 (Skill driving loop 调用):
   ae dev-loop --init ["范围"] [--design-doc <path>] 初始化 tick loop；仅设计文档时执行全文
@@ -95,10 +100,15 @@ def main():
   ae dev-loop --finalize-result outcomes.json --coordinator-result result.json
                                                      spawn Action 生成证明与完整 Result
   ae dev-loop --record-worker-outcome --worker-id <id> --worker-status <status>
-       --native-worker-handle <handle> --actual-model <model> --isolation-evidence <evidence>
+       --native-worker-handle <handle> --native-result-file <file>
+       --actual-model <model> --isolation-evidence <evidence>
                                                      记录宿主原生 Worker 事实
+  ae dev-loop --record-worker-observation --worker-id <id>
+       --observation-status <status> --observation-wait-attempt <n>
+       --owner-known|--owner-unknown                       记录等待/所有权观察
   ae dev-loop --status [--verbose] [--format json]   查看当前进度
-  ae dev-loop --resume <checkpoint-id>               从 checkpoint 恢复
+  ae dev-loop --resume <thread-id>                  从 EventStore 恢复当前 Action
+  ae dev-loop --import-checkpoint <checkpoint-id>    显式导入旧 checkpoint 到 EventStore
 
 辅助命令:
   ae doctor                                          环境预检
@@ -117,11 +127,26 @@ def main():
               help="[内部协议] 从原生 Worker outcomes 原子终结完整 Result")
 @click.option("--record-worker-outcome", "record_worker_outcome_flag", is_flag=True,
               help="[内部协议] 将一个 Worker 业务产物与宿主事实合并")
+@click.option("--record-worker-observation", "record_worker_observation_flag", is_flag=True,
+              help="[内部协议] 记录当前 Action 的 Worker 等待/所有权观察")
 @click.option("--worker-id", help="[内部协议] --record-worker-outcome 的 Worker ID")
 @click.option("--worker-status", type=click.Choice(
     ["completed", "failed", "cancelled", "timeout", "timed_out", "errored"],
 ), help="[内部协议] 原生 Worker 状态")
+@click.option("--observation-status", type=click.Choice(
+    ["running", "completed", "failed", "cancelled", "timed_out", "unknown"],
+), help="[内部协议] --record-worker-observation 的原生观察状态")
+@click.option("--observation-wait-attempt", type=click.IntRange(0, 3),
+              help="[内部协议] 已完成的 bounded wait 次数")
+@click.option("--owner-known/--owner-unknown", default=None,
+              help="[内部协议] 是否能确认原生 Worker owner 仍可控")
+@click.option("--observation-handle", help="[内部协议] 观察到的原生 Worker 句柄")
+@click.option("--observed-at", help="[内部协议] RFC3339 观察时间；省略则由宿主生成")
 @click.option("--native-worker-handle", help="[内部协议] 原生 Worker 句柄")
+@click.option("--native-result-file", type=click.Path(),
+              help="[内部协议] 原生 Worker 返回的 Action-scoped 原样暂存")
+@click.option("--native-result-stdin", is_flag=True,
+              help="[内部协议] 从 stdin 原样暂存原生 Worker 返回 envelope")
 @click.option("--actual-model", default="unreported", show_default=True,
               help="[内部协议] 原生 API 报告的模型标识")
 @click.option("--isolation-evidence", help="[内部协议] 宿主实际隔离证据")
@@ -135,12 +160,17 @@ def main():
               help="--status 输出格式（当前仅支持 json）")
 @click.option("--verbose", "-v", "verbose_flag", is_flag=True,
               help="--status 时输出 batch 级进度明细")
-@click.option("--resume", "resume_id", help="[内部协议] 从指定 checkpoint 恢复")
-@click.option("--supervise", "supervise_flag", is_flag=True,
-              help="[内部协议] 以 Action-scoped context 自动驱动 active thread")
+@click.option("--resume", "resume_id", help="[内部协议] 从 EventStore 恢复指定 thread")
+@click.option(
+    "--import-checkpoint", "import_checkpoint_id",
+    help="[迁移协议] 显式将旧 checkpoint 导入 EventStore",
+)
 @click.option("--design-doc", "design_doc", type=click.Path(),
               help="[内部协议] --init 的设计文档路径 (design-doc 模式)")
-@click.option("--max-rounds", type=int, default=3, help="最大 Round 数")
+@click.option(
+    "--max-rounds", type=int, default=None, hidden=True,
+    help="[历史兼容] 显式启用 Round 上限；生产默认不限制 Tick 数",
+)
 @click.option("--project-root", type=click.Path(exists=True), help="项目根目录 (默认 cwd)")
 @click.option("--debug", "debug_flag", is_flag=True,
               help="启用调试模式: 调度轨迹/故障信息写入 _scratch/debug/")
@@ -150,11 +180,6 @@ def main():
               help="T64: 指定 stage 前暂停 (逗号分隔, 如 architect,critic)")
 @click.option("--escalate", "escalate_flag", is_flag=True,
               help="T95: 触发 escalation gate — 将当前 batch 升级为人工决策")
-@click.option(
-    "--config-policy",
-    type=click.Choice(["require", "defaults", "create"]),
-    help="ae.toml 缺失策略：require 阻断；defaults/create 写入标准配置",
-)
 def dev_loop(
     requirement: str | None,
     init_flag: bool,
@@ -166,6 +191,8 @@ def dev_loop(
     worker_id: str | None,
     worker_status: str | None,
     native_worker_handle: str | None,
+    native_result_file: str | None,
+    native_result_stdin: bool,
     actual_model: str,
     isolation_evidence: str | None,
     coordinator_result_file: str | None,
@@ -173,16 +200,21 @@ def dev_loop(
     status_flag: bool,
     output_format: str,
     resume_id: str | None,
-    supervise_flag: bool,
+    import_checkpoint_id: str | None,
     design_doc: str | None,
-    max_rounds: int,
+    max_rounds: int | None,
     project_root: str | None = None,
     debug_flag: bool = False,
     debug_dir_opt: str | None = None,
     pause_at_stage: str | None = None,
     escalate_flag: bool = False,
     verbose_flag: bool = False,
-    config_policy: str | None = None,
+    record_worker_observation_flag: bool = False,
+    observation_status: str | None = None,
+    observation_wait_attempt: int | None = None,
+    owner_known: bool | None = None,
+    observation_handle: str | None = None,
+    observed_at: str | None = None,
 ):
     """内部协议 — `commands/dev-loop.md` Skill driving loop 调用.
 
@@ -226,12 +258,15 @@ def dev_loop(
     tick_modes = [
         init_flag, tick_flag, status_flag, bool(resume_id),
         bool(validate_result_file), bool(finalize_result_file),
-        supervise_flag, record_worker_outcome_flag,
+        record_worker_outcome_flag, record_worker_observation_flag,
+        bool(import_checkpoint_id),
     ]
     if sum(bool(m) for m in tick_modes) > 1:
         click.echo(
             "错误: --init/--tick/--validate-result/--finalize-result/"
-            "--record-worker-outcome/--status/--resume 互斥, 仅可指定一个。",
+            "--record-worker-outcome/--record-worker-observation/--status/"
+            "--resume/--import-checkpoint "
+            "互斥, 仅可指定一个。",
             err=True,
         )
         raise SystemExit(1)
@@ -245,7 +280,7 @@ def dev_loop(
                 raise SystemExit(1)
         run_tick_init(requirement, design_doc, root, max_rounds, debug=_debug,
                        debug_dir=debug_dir_opt, pause_at_stage=pause_at_stage,
-                       escalate=escalate_flag, config_policy=config_policy)
+                       escalate=escalate_flag)
         return
     if tick_flag:
         if not result_file:
@@ -292,27 +327,49 @@ def dev_loop(
             root=root,
             worker_id=worker_id,
             native_worker_handle=native_worker_handle,
+            native_result_file=(
+                Path(native_result_file) if native_result_file else None
+            ),
+            native_result_stdin=native_result_stdin,
             worker_status=worker_status,
             actual_model=actual_model,
             isolation_evidence=isolation_evidence,
+        )
+        return
+    if record_worker_observation_flag:
+        if (
+            not worker_id
+            or not observation_status
+            or observation_wait_attempt is None
+            or owner_known is None
+        ):
+            raise click.UsageError(
+                "--record-worker-observation 必须同时提供 --worker-id、"
+                "--observation-status、--observation-wait-attempt 和"
+                " --owner-known/--owner-unknown"
+            )
+        from auto_engineering.cli.dev_loop import run_record_worker_observation
+
+        run_record_worker_observation(
+            root=root,
+            worker_id=worker_id,
+            native_status=observation_status,
+            wait_attempt=observation_wait_attempt,
+            owner_known=owner_known,
+            native_worker_handle=observation_handle,
+            observed_at=observed_at,
         )
         return
     if status_flag:
         del output_format  # 当前 status 契约固定为 JSON；参数用于兼容文档化调用。
         run_tick_status(root, verbose=verbose_flag)
         return
+    if import_checkpoint_id:
+        run_tick_import_checkpoint(import_checkpoint_id, root)
+        return
     if resume_id:
         run_tick_resume(resume_id, root)
         return
-    if supervise_flag:
-        from auto_engineering.host.invocation import ActionExecutionContractError
-
-        try:
-            run_action_supervisor(root)
-        except ActionExecutionContractError as exc:
-            raise click.ClickException(str(exc)) from None
-        return
-
     # 无参数且无 flag → 显示帮助
     click.echo(
         "ae dev-loop 是 /auto-engineering:dev-loop Skill 的内部协议。\n"

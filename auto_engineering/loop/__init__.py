@@ -1,12 +1,16 @@
-"""v5.6 Loop 子系统 — Tick 引擎 + 收敛判定 + Checkpoint 持久化.
+"""v5.8 Loop 子系统 — 单 Tick 内核 + 收敛判定 + Checkpoint 兼容层.
 
 Channel[T] ABC 体系 (LastValueChannel/AccumulatingChannel/BarrierChannel) —
 仅用于 v2.5→v5.6 checkpoint 迁移 (migration.py + checkpoint_envelope.py)。
 主循环状态管理走 engine.state.EngineState dataclass, 不经过 Channel。
 Channel 类型不导出 (AD2: 内部实现细节)。
 - Plan/Task DAG + check_file_isolation (确定性文件隔离检查)
-- Round 生命周期 + asyncio.gather 并发调度
-- Orchestrator 主循环 (Round Loop + 收敛判定 + 取消支持)
+- 单 Tick 状态推进、Action 编译与事务提交
+- 收敛判定仅作为 Tick 内的纯判断；连续运行由宿主 Driver 逐 Tick 驱动
+
+本包不启动 Worker、不维护宿主主循环，也不承担并发调度。
+历史 Plan/Task、Convergence 和 Checkpoint 导出仅保留为数据模型或显式兼容边界；
+生产协调权属于主 Agent，Python Core 只消费一次 Tick 输入并返回一个确定性 Action。
 
 v2.3 P1-III: 缩减导出符号到核心 15 个 (原 16, 移除 LoopState — 详见 BEACON 决策 23).
 v2.3 P0-A: CheckpointEnvelope (原 LoopState) 从 v2.0 Pydantic 重命名, 明确"v2.0 Checkpoint 专用"
@@ -17,6 +21,10 @@ v2.3 P0-A: CheckpointEnvelope (原 LoopState) 从 v2.0 Pydantic 重命名, 明�
 内部类型通过子模块访问, 不通过 __init__ 导出.
 """
 
+from auto_engineering.engine.models import (
+    Plan,
+    Task,
+)
 from auto_engineering.loop.checkpoint import (
     Checkpoint,
     SQLiteCheckpointStore,
@@ -25,10 +33,6 @@ from auto_engineering.loop.convergence import (
     ConvergenceConfig,
     ConvergenceJudge,
     RoundHistory,
-)
-from auto_engineering.loop.plan import (
-    Plan,
-    Task,
 )
 
 # RoundResult 虚化代码已移除 (V1 ghost code cleanup, 2026-07-25)

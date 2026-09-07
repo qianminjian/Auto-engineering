@@ -21,6 +21,8 @@ ultrathink
    assumption 仅 advisory。已批准 supplement 直接进入 obligation，禁止再次申请设计变更。
    不得把未来改进或最佳实践提升为当前范围；advisory 冲突时保留原设计并
    提交 `design_change_requests[]` 由 Core 产生用户 Gate，不得自行改写架构。
+   设计文档是 binding source，只读；不得为补充组件、元数据或章节结构而编辑原文。
+   任何设计缺口必须通过 `design_change_requests[]` 请求用户决策。
    该结果是独立协议分支：仅输出 1 个变更请求，不同时输出 plan、
    batch_plan、plan_patch 或 obligations；用户决议后 Core 会重新发出 Architect Action。
 
@@ -28,15 +30,32 @@ ultrathink
 1. 每 batch ≤5 个 task（一个 task = 创建/修改一个文件 + 对应测试）
 2. TDD 排序：测试 task 在前且不得依赖对应实现 task；实现 task 在后并
    通过 `depends_on` 指向对应测试 task。测试 task 只写测试文件，实现 task 只写
-   实现文件；`verification_targets` 只能指向 `kind=test|contract_test` 的 task
+   实现文件；`verification_targets` 只能指向 `kind=test|contract_test` 的 task。
+   如果测试的 `module_ref` 在计划中存在实现 task，则实现必须位于同一或更早
+   batch；禁止把会导入未来 batch 实现的测试提前执行，否则 Core 会以
+   `ARCHITECT_TEST_IMPLEMENTATION_ORDER_INVALID` 拒绝计划。
 3. 依赖方向：工具层 → Hook/API 层 → 简单组件 → 复杂组件 → 容器集成
 4. task id 全局唯一（B1-T1, B2-T1...），depends_on 精确到 task id
 5. `batch_title` 是可自由命名的人类可读聚合标题，不参与机器路由
 6. `plate_keys` 只能从 action 的 `valid_plate_keys` 原样选择；一个 batch 可覆盖多个 key
 7. 只要目标组件存在 `design_item_catalog` 条目，batch 必须声明 `design_item_refs`，并将每个
    条目只分配给负责它的 batch；不得让 component_verifier 扫描整个组件或未来 batch。
-7. `design_sections` 逐项列出覆盖的设计章节，供 verifier 做覆盖映射
-8. 文件路径含目录前缀，从 `project_profile_summary.paths` 读取
+7a. `design_item_refs` 是按 `plate_keys` 做组件归属校验，不是设计章节摘要：每个 ref 必须存在于
+   `design_item_catalog`，且其 `component` 必须等于同 batch 的某个 `plate_key`。信息性或跨组件条目
+   （例如架构总览章节中的 `2.1-*`）不能放入任意组件 batch；如果只是架构总览，就不填入 batch refs。
+   优先逐字复制上下文中的 `canonical_design_item_refs[plate_key]`；这是机器 ID 清单，不得把
+   `§A1.1:next_value`、标题、自然语言 slug 或自造章节引用当作 design item ID。若 Core 返回
+   `BATCH_DESIGN_ITEM_SCOPE_INVALID` 并列出“有效 design_item_refs”，只从该列表复制并继续修复，
+   不得请求用户提供 ID，也不得重新 spawn 已完成的 Worker。
+7b. 每条 obligation 必须同时提供非空的 `implementation_targets` 与 `verification_targets`；后者只能
+   指向 `kind=test|contract_test` 的 task。样式、配置和文档驱动行为也必须安排最小 contract test，
+   不得用空数组占位或把 implementation task 当作验证目标。
+8. `design_sections` 必须逐项原样使用 `action.host_design_sections[].section_ref` 的
+   canonical 引用，供 verifier 做覆盖映射；禁止填写板块标题、组件标题、章节标题全文或
+   `plate/component` 名称。若当前 Action 给出 `§C1`，只能输出 `§C1`，不能输出
+   `B1 Greeting capability`、`Greeting API` 或其他人类可读别名
+8. `file_targets` 和 `file_list` 必须是相对 `project_root` 的 POSIX 路径（如
+   `src/greeting/__init__.py`）；禁止输出绝对路径、`..` 或插件/临时目录路径。
 9. 需求中有模糊点 → 标注 "模糊点: [描述]" 并给出假设，不静默跳过
 
 ## 产出格式（推荐）
@@ -63,7 +82,7 @@ ultrathink
       "batch_id": "B1",
       "batch_title": "可自由命名的聚合批次标题",
       "plate_keys": ["从 valid_plate_keys 选择的精确标识"],
-      "design_sections": ["对应设计文档章节标题"],
+      "design_sections": ["从 action.host_design_sections[].section_ref 原样选择的 canonical 引用"],
       "design_item_refs": ["当前 batch 实际覆盖的设计条目 ID，必须从 design_item_catalog 选择"],
       "description": "本 batch 的目标和范围",
       "tasks": [
@@ -71,13 +90,13 @@ ultrathink
           "id": "B1-T1",
           "description": "做什么（非仅文件名）",
           "kind": "test|contract_test|implementation",
-          "file_targets": ["文件完整路径"],
+          "file_targets": ["相对 project_root 的 POSIX 路径"],
           "depends_on": []
         }
       ]
     }
   ],
-  "file_list": ["所有需创建/修改的文件的完整路径"],
+  "file_list": ["所有需创建/修改的文件的 project-root-relative POSIX 路径"],
   "contracts": {
     "api-name": {"kind": "http", "path": "/api/example", "method": "POST", "request": {}, "response": {}, "status_codes": [200, 400]}
   },

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -77,7 +78,43 @@ class ProjectProfileResolver:
             result[name] = sorted(peers, key=lambda item: item[0])[0][1]
         return result
 
-    def resolve(self, project_root: Path) -> ProjectProfileResolution:
+    @staticmethod
+    def _design_toolchain_requirement(
+        project_root: Path,
+        design_doc_path: str | Path | None,
+    ) -> str | None:
+        """从 binding 设计中识别必须先建立的前端工具链。
+
+        这不是从自然语言猜框架：只有设计明确同时声明 Vite、React 和
+        TypeScript 时才产生能力约束。这样可以阻止 ``pyproject.toml`` 等
+        偶然存在的入口把业务工程误判为 Python，而不替代设计文档对架构的
+        权威性。
+        """
+
+        if design_doc_path is None:
+            return None
+        candidate = Path(design_doc_path)
+        resolved = (candidate if candidate.is_absolute() else project_root / candidate).resolve()
+        try:
+            if not resolved.is_relative_to(project_root.resolve()):
+                return None
+            content = resolved.read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            return None
+        if len(content.encode("utf-8")) > 1024 * 1024:
+            return None
+        normalized = content.casefold()
+        if all(re.search(rf"(?<![\w-]){term}(?![\w-])", normalized) for term in ("vite", "react", "typescript")):
+            return "node_typescript"
+        return None
+
+    def resolve(
+        self,
+        project_root: Path,
+        *,
+        design_doc_path: str | Path | None = None,
+        require_test_command: bool = True,
+    ) -> ProjectProfileResolution:
         contributions = [provider.inspect(project_root) for provider in self.providers]
         active = [
             item
@@ -91,31 +128,39 @@ class ProjectProfileResolver:
         languages = self._select_scalar("languages", active)
         source_roots = self._select_scalar("source_roots", active)
         commands = self._merge_commands(active)
+        design_toolchain = self._design_toolchain_requirement(
+            project_root,
+            design_doc_path,
+        )
         missing: list[str] = []
         if not languages:
             missing.append("primary_language")
         if not source_roots:
             missing.append("source_roots")
-        if not commands.get("test"):
+        if (
+            (
+                require_test_command
+                or design_toolchain == "node_typescript"
+                or (not languages and not source_roots)
+            )
+            and not commands.get("test")
+        ):
             missing.append("test_command")
+        if design_toolchain == "node_typescript" and "typescript" not in (languages or ()):
+            missing.append("design_toolchain:node_typescript")
         missing.extend(
             capability
             for item in active
             for capability in item.missing_capabilities
             if capability not in missing
         )
-        if missing and (
-            not languages
-            or not source_roots
-            or any(
-                capability in {
-                    "eslint_flat_config",
-                    "eslint_effective_config",
-                    "jsdom_dependency",
-                }
-                for capability in missing
-            )
-        ):
+        # A partial profile must not be treated as executable.  In
+        # particular, a project with source roots but no verified test
+        # command used to reach Architect/Developer directly, where the
+        # Worker could only fail after writing business files.  All missing
+        # capabilities are setup prerequisites; the setup Action is the
+        # single place allowed to establish and re-probe them.
+        if missing:
             return ProjectProfileResolution(
                 status=ResolutionStatus.SETUP_REQUIRED,
                 profile=None,

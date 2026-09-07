@@ -8,7 +8,7 @@ P0 修复: dataclass 默认 factory 不可 JSON 序列化 → to_dict/from_dict 
 v5.0 M1: 扩展到 17 字段. v5.1: +suggested_fix 替代 round → 保持 17 字段.
 
 v5.5 P1-5: 写入控制 — 字段级写所有权 + write_field() 验证 + _write_log 审计追踪.
-为未来多 Agent 并发写同一 EngineState 打基础 (当前按 role 天然 partition, 无共享写).
+当前 Core 采用单写者同步 Tick；字段所有权表用于拒绝越权写入并保留审计记录。
 """
 
 import logging
@@ -17,7 +17,15 @@ from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from typing import Any, TypedDict
 
+from auto_engineering.engine import state_validation as _state_validation
+from auto_engineering.engine.state_validation import (
+    validate_field_value as _validate_field_value,
+)
+
 _logger = logging.getLogger("ae.engine.state")
+# 保留旧模块级只读名称；合法值仍只有 state_validation 一份事实源。
+_VALID_STAGES = _state_validation._VALID_STAGES
+_VALID_VERDICTS = _state_validation._VALID_VERDICTS
 
 # ============================================================
 # v5.5 audit P2-17: TypedDict 替代 dict[str, Any] (类型安全)
@@ -68,7 +76,7 @@ class TestResults(TypedDict, total=False):
 class WriteRecord(TypedDict, total=False):
     """单次字段写入记录 (v5.5 P1-5)."""
     field: str
-    writer: str       # agent role or "orchestrator" / "stage_router" / "user"
+    writer: str       # agent role or "orchestrator" / "user"
     timestamp: str    # ISO 8601 UTC
 
 
@@ -83,21 +91,21 @@ class WriteRecord(TypedDict, total=False):
 #   developer:     files_changed, commit_hash, test_results
 #   critic:        critic_verdict, findings, critic_feedback, suggested_fix, strengths, assessment
 #   orchestrator:  current_stage, round, audit_findings, plan_refine_count
-#   stage_router:  majors_in_a_row, total_majors
+#   orchestrator:  current_stage, majors_in_a_row, total_majors, plan_refine_count
 #
-# 未来多 Agent 并发时, 此表用于:
-#   1. 检测跨 role 写入冲突 (同一字段被多个 writer 写入)
-#   2. 按 writer 分区加 asyncio.Lock (每 writer 一个锁)
-#   3. _write_log 提供审计追踪 (谁在何时写了什么)
+# 当前 Tick 中，此表用于：
+#   1. 拒绝跨 role 写入冲突 (同一字段被未授权 writer 写入)
+#   2. 统一记录字段变更的 writer 和时间
+#   3. 让状态写入保持单写者、可审计和可重放
 
 # 字段 → 合法 writer(s)
 _WRITE_OWNERS: dict[str, frozenset[str]] = {
     "requirement":       frozenset({"user", "orchestrator"}),
-    "current_stage":     frozenset({"orchestrator", "stage_router"}),
+    "current_stage":     frozenset({"orchestrator"}),
     "round":             frozenset({"orchestrator"}),
     "thread_id":         frozenset({"auto"}),
-    "majors_in_a_row":   frozenset({"stage_router"}),
-    "total_majors":      frozenset({"stage_router"}),
+    "majors_in_a_row":   frozenset({"orchestrator"}),
+    "total_majors":      frozenset({"orchestrator"}),
     "plan":              frozenset({"architect", "orchestrator"}),
     "file_list":         frozenset({"architect"}),
     "batch_plan":        frozenset({"architect"}),
@@ -145,6 +153,7 @@ _WRITE_OWNERS: dict[str, frozenset[str]] = {
     "project_profile":          frozenset({"orchestrator"}),
     "project_profile_id":       frozenset({"orchestrator"}),
     "missing_project_capabilities": frozenset({"orchestrator"}),
+    "project_setup_baseline_files": frozenset({"orchestrator"}),
     "architecture_baseline":      frozenset({"orchestrator"}),
     "repair_cycle_count":         frozenset({"orchestrator"}),
     "unchanged_finding_streak":   frozenset({"orchestrator"}),
@@ -157,17 +166,6 @@ _WRITE_OWNERS: dict[str, frozenset[str]] = {
     "task_verification_evidence": frozenset({"orchestrator"}),
     "project_anchor_baseline":    frozenset({"orchestrator"}),
 }
-
-# 合法 verdict 值
-_VALID_VERDICTS = frozenset({"", "APPROVE", "MAJOR"})
-
-# 合法 stage 值 (v5.6 §C.10: 扩展到 12 值 — Pre-flight + 5 层验证阶段)
-_VALID_STAGES = frozenset({
-    "", "project_setup", "gap_scan", "gap_review", "research", "architect",
-    "developer", "critic", "component_verifier", "plate_deep_audit",
-    "system_verifier", "system_deep_audit", "plan_refine",
-})
-
 
 def _new_thread_id() -> str:
     """生成 UUID v4 字符串作为默认 thread_id.
@@ -189,9 +187,10 @@ class EngineState:
         developer:     files_changed, commit_hash, test_results
         critic:        verdict, findings, critic_feedback, suggested_fix, strengths, assessment
         orchestrator:  current_stage, round, audit_findings, plan_refine_count
-        stage_router:  majors_in_a_row, total_majors
+        orchestrator:  majors_in_a_row, total_majors
 
-    硬上限由 ConvergenceJudge._check_hard_limit 检查.
+    当前生产终态由 Stage Handler 的验证事实决定，不由固定 Round 数截断；
+    ConvergenceJudge 的 Round 上限仅保留给显式历史兼容调用.
 
     Note (P1-B): 旧名 LoopState 是 EngineState 的 alias, 保持向后兼容.
         新代码推荐 import EngineState.
@@ -270,6 +269,8 @@ class EngineState:
     project_profile: dict[str, Any] | None = None  # #50 当前规范化 ProjectProfile
     project_profile_id: str = ""  # #51 当前 Profile 内容摘要
     missing_project_capabilities: list[str] = field(default_factory=list)  # #52 setup 缺失能力
+    project_setup_failure_streak: int = 0  # Setup 连续失败次数；达到阈值后 WAIT_RESOURCE
+    project_setup_baseline_files: list[str] = field(default_factory=list)  # T677 setup 起始文件基线
     architecture_baseline: dict[str, Any] | None = None  # #53 已接受 Architect 事实投影
     repair_cycle_count: int = 0  # #54 当前 Batch 局部返修次数
     unchanged_finding_streak: int = 0  # #55 无证据增量的相同 Finding 次数
@@ -297,7 +298,7 @@ class EngineState:
         Args:
             name: 字段名 (必须存在于 EngineState).
             value: 新值.
-            writer: 写入者标识 (architect/developer/critic/orchestrator/stage_router/user).
+        writer: 写入者标识 (architect/developer/critic/orchestrator/user).
 
         Raises:
             ValueError: 字段不存在, writer 无权写入, 或值不合法.
@@ -403,33 +404,6 @@ class EngineState:
                 writer=writer,
                 timestamp=datetime.now(UTC).isoformat(),
             ))
-
-
-def _validate_field_value(name: str, value: object) -> None:
-    """字段值合法性校验 (v5.5 P1-5).
-
-    Raises:
-        ValueError: 值不合法.
-    """
-    if name == "critic_verdict" and value not in _VALID_VERDICTS:
-        raise ValueError(
-            f"critic_verdict 非法值 '{value}'. 合法值: {sorted(_VALID_VERDICTS)}"
-        )
-    if name == "current_stage" and value not in _VALID_STAGES:
-        raise ValueError(
-            f"current_stage 非法值 '{value}'. 合法值: {sorted(_VALID_STAGES)}"
-        )
-    if name == "round" and not isinstance(value, int):
-        raise ValueError(f"round 必须是 int, 收到 {type(value).__name__}")
-    if name in (
-        "majors_in_a_row", "total_majors", "plan_refine_count", "tick",
-        "repair_cycle_count", "unchanged_finding_streak",
-    ):
-        if not isinstance(value, int):
-            raise ValueError(f"{name} 必须是 int, 收到 {type(value).__name__}")
-        if value < 0:
-            raise ValueError(f"{name} 不能为负数, 收到 {value}")
-
 
 # P1-B: 向后兼容 alias. 旧代码 `from auto_engineering.engine.state import LoopState` 仍可用.
 LoopState = EngineState

@@ -17,7 +17,8 @@ if __package__:
         PLUGIN_ID,
         StagedRelease,
         _is_within,
-        _seal_runtime_tree,
+        _seal_release_tree,
+        stage_archive,
         stage_release,
         verify_runtime_paths,
     )
@@ -27,7 +28,8 @@ else:
         PLUGIN_ID,
         StagedRelease,
         _is_within,
-        _seal_runtime_tree,
+        _seal_release_tree,
+        stage_archive,
         stage_release,
         verify_runtime_paths,
     )
@@ -82,6 +84,14 @@ def install_claude_release(
         raise RuntimeError("Release 缺少 Claude Marketplace manifest")
 
     execute = runner or CommandRunner(_default_runner)
+    # Claude 的官方缓存由安装器以只读方式封存；替换前必须先枚举并只解封
+    # 明确属于本插件受控边界的旧版本，不能对整个缓存目录递归 chmod。
+    installed_plugins = _json_command(
+        ["claude", "plugin", "list", "--json"], runner=execute,
+    )
+    prepare_existing_install_for_removal(installed_plugins)
+    release_version = release_root.name.split("+sha256.", 1)[0]
+    prepare_orphaned_version_cache_for_removal(version=release_version)
     commands = [
         ["claude", "plugin", "uninstall", PLUGIN_ID, "--scope", "user", "--yes"],
         [
@@ -126,8 +136,10 @@ def install_claude_marketplace(
         _run_required(execute, command, allow_missing=index < 2)
 
 
-def _json_command(command: list[str]) -> object:
-    result = _default_runner(command)
+def _json_command(
+    command: list[str], *, runner: CommandRunner | None = None,
+) -> object:
+    result = (runner or CommandRunner(_default_runner))(command)
     if result.returncode != 0:
         detail = result.stderr.strip() or result.stdout.strip()
         raise RuntimeError(f"命令失败 ({result.returncode}): {' '.join(command)}\n{detail}")
@@ -273,13 +285,13 @@ def verify_claude_install(release: StagedRelease, development_root: Path) -> Non
     ):
         environment.pop(name, None)
     environment["CLAUDE_CODE_ENTRYPOINT"] = "cli"
-    environment["AE_SKIP_CONFIG_CHECK"] = "1"
-    runtime_python = plugin_root / ".ae-runtime/bin/python"
+    runtime_python: Path
     with tempfile.TemporaryDirectory(prefix="ae-claude-install-verify-") as project:
-        (Path(project) / ".ae-state").mkdir()
+        project_root = Path(project)
+        (project_root / ".ae-state").mkdir()
         doctor = subprocess.run(
             [str(plugin_root / "bin/ae-run"), "doctor", "--project-root", project],
-            cwd=project,
+            cwd=project_root,
             env=environment,
             capture_output=True,
             text=True,
@@ -289,26 +301,31 @@ def verify_claude_install(release: StagedRelease, development_root: Path) -> Non
         if doctor.returncode != 0:
             detail = doctor.stderr.strip() or doctor.stdout.strip()
             raise RuntimeError(f"Claude 独立运行时 doctor 失败: {detail}")
-    origin = subprocess.run(
-        [str(runtime_python), "-c", "import auto_engineering; print(auto_engineering.__file__)"],
-        cwd=plugin_root,
-        env=environment,
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=30,
-    )
-    if origin.returncode != 0:
-        raise RuntimeError("无法读取 Claude 插件 Python 模块来源")
-    launcher = (plugin_root / ".ae-runtime/bin/ae").read_text(encoding="utf-8")
-    verify_runtime_paths(
-        development_root=source,
-        marketplace_root=Path(install_location),
-        plugin_root=plugin_root,
-        module_origin=Path(origin.stdout.strip()),
-        launcher_shebang=launcher,
-    )
-    _seal_runtime_tree(plugin_root)
+        runtime_root = project_root / ".ae-state/.ae-runtime"
+        runtime_python = runtime_root / "bin/python"
+        origin = subprocess.run(
+            [
+                str(runtime_python),
+                "-c",
+                "import auto_engineering; print(auto_engineering.__file__)",
+            ],
+            cwd=project_root,
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+        if origin.returncode != 0:
+            raise RuntimeError("无法读取 Claude 插件 Python 模块来源")
+        verify_runtime_paths(
+            development_root=source,
+            marketplace_root=Path(install_location),
+            plugin_root=plugin_root,
+            runtime_root=runtime_root,
+            module_origin=Path(origin.stdout.strip()),
+        )
+    _seal_release_tree(plugin_root)
 
 
 def main() -> int:
@@ -324,16 +341,44 @@ def main() -> int:
         default=DEFAULT_MARKETPLACE_SOURCE,
         help="GitHub Marketplace 来源（默认 qianminjian/Auto-engineering）",
     )
+    parser.add_argument(
+        "--archive",
+        type=Path,
+        help="指定已构建 Release archive；安装后校验同一 Build Identity",
+    )
     parser.add_argument("--stage-only", action="store_true")
     args = parser.parse_args()
 
     if args.stage_only:
-        release = stage_release(args.root, args.staging_root)
+        release = (
+            stage_archive(
+                args.archive,
+                args.staging_root,
+                development_root=args.root,
+            )
+            if args.archive is not None
+            else stage_release(args.root, args.staging_root)
+        )
         payload = {
             "status": "staged",
             "version": release.version,
             "build_id": release.build_id,
             "release_root": str(release.root),
+        }
+    elif args.archive is not None:
+        release = stage_archive(
+            args.archive,
+            args.staging_root,
+            development_root=args.root,
+        )
+        install_claude_release(release.root, development_root=args.root)
+        verify_claude_install(release, args.root)
+        payload = {
+            "status": "installed",
+            "source": str(args.archive.expanduser().resolve()),
+            "build_id": release.build_id,
+            "release_root": str(release.root),
+            "plugin": PLUGIN_ID,
         }
     else:
         install_claude_marketplace(source=args.source)

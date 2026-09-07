@@ -19,7 +19,6 @@ LINE_DEBT = {
     "auto_engineering/engine/progress_tree.py": 485,
     "auto_engineering/host/adapters.py": 407,
     "auto_engineering/host/execution_assembler.py": 1341,
-    "auto_engineering/host/supervisor.py": 682,
     "auto_engineering/loop/tick_orchestrator.py": 3431,
     "auto_engineering/loop/action_builder.py": 1729,
     "auto_engineering/loop/actions.py": 611,

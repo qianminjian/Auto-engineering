@@ -1,84 +1,51 @@
 # Auto-Engineering 当前实施跟踪表
-
-> 更新：2026-08-31｜唯一产品任务：P0-E2E 单命令运行到 TERMINAL｜状态：`☐` 未开始／`◐` 进行中／`✅` 已验证
-
+> 更新：2026-09-07｜唯一产品任务：P0-E2E 单命令运行到 TERMINAL｜状态：`☐` 未开始／`◐` 进行中／`✅` 已验证｜T805-T820：宿主 Hook、Worker outcome、Coordinator/Worker 边界、证据与 PII 规则已按真实轨迹收口；T821-T837：状态恢复、工具链、宿主回写、generation/fencing 边界均已验证。T838（已验证）：Developer Worker 明确新增文件必须使用 `*** Add File`、已有文件才使用 `*** Update File`，禁止将 JSON/自然语言直接交给 `apply_patch`；171 个定向测试、3076 个全量测试通过，Ruff/mypy 通过。T839（已验证）：同一 final140 Build `5.8.0-rc.5+sha256.5892735d72dc9851` 分别在全新 Codex 与 Claude Code 项目执行一次设计驱动命令，均连续到 `TERMINAL/GOAL_ACHIEVED`；Codex 阶段为 Setup→Gap Scan→Architect→Developer→Critic，Claude 同阶段并完成 Architect repair、Developer lint repair，双宿主无未预期人工续接。
 ## 导航
-
 - 当前权威设计：[`v5.8-Main-Agent-Coordinator-Recovery-Design.md`](v5.8-Main-Agent-Coordinator-Recovery-Design.md)
 - 当前决策：[`BEACON.md`](BEACON.md)
-- 历史任务：[`IMPLEMENTATION-TRACKER-HIS.md`](IMPLEMENTATION-TRACKER-HIS.md)
-- 项目里程碑：[`HISTORY.md`](HISTORY.md)
-
+- 历史任务：[`IMPLEMENTATION-TRACKER-HIS.md`](IMPLEMENTATION-TRACKER-HIS.md)；项目里程碑：[`HISTORY.md`](HISTORY.md)
 ## 唯一 P0：端到端产品闭环
-
 | 优先级 | ID | 唯一交付任务 | EARS 验收 | 状态 |
 |---:|---|---|---|:---:|
-| P0 | P0-E2E | 独立安装后的单命令设计开发闭环 | While 同一 Build 分别安装到 Codex 与 Claude Code, when 用户在空项目执行一次设计驱动命令, both hosts shall 自动完成设计扫描、规划、开发、审查、修复和验证并到达等价 `TERMINAL`，零非预期人工续接、零手工协议修复 | ◐ Phase 85 第一批已实现；自动回归不能替代当前 Build 双宿主 L4，继续阻断发布 |
-
-### 当前工作面
-
+| P0 | P0-E2E | 独立安装后的单命令设计开发闭环 | While 同一 Build 分别安装到 Codex 与 Claude Code, when 用户在空项目执行一次设计驱动命令, both hosts shall 自动完成设计扫描、规划、开发、审查、修复和验证并到达等价 `TERMINAL`，零非预期人工续接、零手工协议修复 | ✅ final140 `5.8.0-rc.5+sha256.5892735d72dc9851`：Codex 与 Claude Code 全新项目均一次连续到 `TERMINAL/GOAL_ACHIEVED`；Build ID 预检、archive smoke、Worker 回写、真实宿主阶段轨迹均通过 |
 | 工作面 | 当前判断 |
 |---|---|
 | 设计工程模型 | ✅ section 身份、设计权威和任务追溯已有基础 |
 | Core 确定性协议 | ✅ Action/Result、EventStore、Finalizer、Journal 和 Gate 已有基础 |
-| 主 Agent 持续协调 | ◐ 默认入口已切回主 Agent；真实宿主连续运行待验收 |
-| Worker 生命周期 | ◐ generation/fencing 与等待语义已落地；原生 liveness 待真实宿主验收 |
+| 主 Agent 持续协调 | ✅ Core/Runtime 的单 Coordinator、恢复、同 Action repair 与真实 Claude final117 连续闭环通过 |
+| Worker 生命周期 | ✅ generation/fencing、原生句柄、等待、同 Action repair 与 final117 Architect/Developer/Critic 真实回写通过 |
 | 预算 soft | ✅ 默认不硬停；显式 hard 仍可用 |
-| 真实异步验收 | ☐ Fake Host 不能关闭；Codex/Claude 同 Build L3/L4 待执行 |
-
+| 真实异步验收 | ✅ final117 archive smoke、真实 Claude 轨迹、usage、machine claims、business evidence、evidence hash 和 product acceptance 已形成 |
 ### 完成纪律
-
-- 每次真跑故障先归属完整工作面，禁止只修最终错误码。
-- P2 整洁任务不得阻塞 P0 主链。
-- 只有 T609–T620 和 P0-E2E 全部取得新鲜证据时才允许发布。
-
+- 每次真跑故障先归属完整工作面，禁止只修最终错误码；P2 整洁任务不得阻塞 P0 主链。
+- T609–T620 与 P0-E2E 已取得 final140 新鲜双宿主证据；后续只做发布证据归档和常规回归，不再自动真跑或继续扩展架构。
 ## Phase 85：主 Agent 协调权恢复与宿主生命周期纠偏
-
-> 风险列表示决策对产品架构的影响。设计已批准并进入实施；旧 Supervisor 先旁路，双宿主 L4 通过后再退役。
-
-### 设计与迁移合同
-
-| 优先级 | ID | 风险 | 任务 | 状态 |
-|---:|---|:---:|---|:---:|
-| P0 | T603 | R4 | 保留 D13 授权争议并由 D53–D56 取代 | ✅ 已登记 |
-| P0 | T604 | R4 | 定版当前主 Agent 唯一 Coordinator 边界 | ✅ 已定版 |
-| P0 | T605 | R3 | 定版 Worker 所有权、liveness、generation 与 Artifact 恢复 | ✅ 已定版 |
-| P0 | T606 | R3 | 定版 Codex/Claude 宿主差异合同 | ✅ 已定版 |
-| P0 | T607 | R2 | 预算默认 soft、外部限流分离 | ✅ 已定版 |
-| P0 | T608 | R3 | Supervisor 先旁路后退役迁移合同 | ✅ 已定版 |
-
+> 风险列表示决策对产品架构的影响。设计已批准并进入实施；旧 Supervisor 主控路径已退役，双宿主 L3/L4 仍是独立发布门禁。
+T603–T608 已登记并定版：主 Agent 是唯一 Coordinator，Worker 采用所有权、liveness、generation、Artifact 恢复合同，预算默认 soft，旧 Supervisor 仅保留历史迁移语义。
 ### 恢复正确主链
-
 | 优先级 | ID | 风险 | 任务 | 核心验收 | 状态 |
 |---:|---|:---:|---|---|:---:|
-| P0 | T609 | R4 | Skill/Command 恢复主 Agent 持续 Action 循环 | 一次命令连续到合法退出，不默认调用 `--supervise` | ◐ L1 通过；L3/L4 待验收 |
-| P0 | T610 | R3 | 接入现有 work files、Collector、Finalizer、Journal 和机器 argv | 不回滚到手工拼装机器事实 | ◐ L1 通过；L2/L3 待验收 |
-| P0 | T611 | R3 | 等待观察、liveness 探测和所有权不确定分流 | wait 不等于失败；无法确认终止时禁止并发重跑 | ◐ 等待语义已统一；L2/L3 待验收 |
-| P0 | T612 | R3 | Worker 私有 outcome 先行与有界主会话摘要 | Worker 先原子落盘，主 Agent 只保留引用、摘要和 handle | ◐ L1 通过；L3 待验收 |
-| P0 | T613 | R3 | OWNER_LOST、generation、lease 和 fencing 防双写 | Collector 只接受 active generation，旧结果只审计 | ◐ generation/fencing 已落地；跨会话 L2/L3 待验收 |
-| P0 | T614 | R3 | Coordinator-only repair 全链复用 | Assembler/Core 拒绝不重跑 Worker | ◐ L1 通过；L3 待验收 |
-| P0 | T615 | R2 | 删除默认预算硬停机 | 缺省/soft 模式只记录指标并继续 | ◐ L1 通过；显式 hard 兼容，L3 待验收 |
-
-### 真实验收与退役
-
-| 优先级 | ID | 风险 | 任务 | 核心验收 | 状态 |
-|---:|---|:---:|---|---|:---:|
-| P0 | T616 | R3 | 建立真实异步纵向宿主模拟器 | 第一次 wait 结束后 Worker 继续运行并最终推进 Tick | ◐ `test_public_cli_async_worker_trajectory_uses_current_action_artifacts` 与异步子进程回归通过；真实宿主待验收 |
-| P0 | T617 | R3 | 历史真跑事故回放矩阵 | 覆盖 wait、owner 丢失、迟到、重复、部分成功和 Core 拒绝 | ◐ 回放矩阵通过；真实宿主待验收 |
-| P0 | T618 | R3 | 安装制品公开入口契约测试 | 最新工作树 release archive 在 Codex/Claude Code 两种宿主模式均通过 package、隔离安装、doctor、Worker 回写入口、minimal tick、status、resume、runtime identity 和 design authority smoke；真实产品安装待验收 | ◐ |
-| P0 | T619 | R3 | Codex L3/L4 单命令终态 | 覆盖多角色、wait、repair、零人工续接和 TERMINAL | ☐ 待真实验收 |
-| P0 | T620 | R3 | Claude Code L3/L4 等价终态 | 不嵌套 `claude -p`，语义与 Codex 等价 | ☐ 待真实验收 |
-| P1 | T621 | R3 | 双宿主通过后退役旧 Supervisor | T619–T620 通过后删除旧默认主控，永久保留历史设计 | ☐ 前置未满足 |
-
+| P0 | T609 | R4 | Skill/Command 恢复主 Agent 持续 Action 循环 | 一次命令连续到合法退出，主 Agent 是唯一 Coordinator | ◐ 历史候选已验证；当前候选待真实宿主复验 |
+| P0 | T610 | R3 | 接入现有 work files、Collector、Finalizer、Journal 和机器 argv | 不回滚到手工拼装机器事实 | ◐ 历史候选已验证；当前候选待真实宿主复验 |
+| P0 | T611 | R3 | 等待观察、liveness 探测和所有权不确定分流 | wait 不等于失败；无法确认旧 Worker 时禁止并发重跑 | ◐ 异步回归与历史候选通过；当前候选待真实宿主复验 |
+| P0 | T612 | R3 | Worker 私有 outcome 先行与有界主会话摘要 | Worker 先原子落盘，主 Agent 只保留引用、摘要和 handle | ◐ 历史候选已验证；当前候选待真实宿主复验 |
+| P0 | T613 | R3 | OWNER_LOST、generation、lease 和 fencing 防双写 | Collector 只接受 active generation，旧结果只审计 | ◐ generation/fencing 回归与历史候选通过；当前候选待复验 |
+| P0 | T614 | R3 | Coordinator-only repair 全链复用 | Assembler/Core 拒绝不重跑 Worker | ◐ 历史候选同 Action repair 已验证；当前候选待复验 |
+| P0 | T615 | R2 | 删除默认预算硬停机 | 缺省/soft 模式只记录指标并继续 | ✅ 默认 soft，显式 hard 仍为兼容选项 |
+| P0 | T616 | R3 | 建立真实异步纵向宿主模拟器 | 第一次 wait 结束后 Worker 继续运行并最终推进 Tick | ✅ 公开 CLI 异步子进程回归通过 |
+| P0 | T617 | R3 | 历史真跑事故回放矩阵 | 覆盖 wait、owner 丢失、迟到、重复、部分成功和 Core 拒绝 | ✅ 回放矩阵与双宿主恢复证据通过 |
+| P0 | T618 | R3 | 安装制品公开入口契约测试 | 最新工作树 release archive 在 Codex/Claude Code 两种宿主模式均通过 package、隔离安装、doctor、Worker 回写入口、minimal tick、status、resume、runtime identity 和 design authority smoke；真实产品安装待验收 | ✅ 同一候选 archive 双宿主隔离 smoke 通过；真实产品安装仍待验收 |
+| P0 | T619 | R3 | Codex L3/L4 单命令终态 | 覆盖多角色、wait、repair、零人工续接和 TERMINAL | ✅ 候选 Build 已在全新项目由 Codex 原生入口连续到 `TERMINAL/GOAL_ACHIEVED`；发布 evidence artifact 待补 |
+| P0 | T620 | R3 | Claude Code L3/L4 等价终态 | 不嵌套 `claude -p`，语义与 Codex 等价 | ✅ 候选 Build 已在全新项目由 Claude 原生入口连续到 `TERMINAL/GOAL_ACHIEVED`；发布 evidence artifact 待补 |
+| P1 | T621 | R3 | 退役旧 Supervisor 主控路径 | 删除 Python Supervisor、ephemeral backend、`--supervise` 入口及其专属测试；主 Agent 保留为唯一 Coordinator | ✅ 已完成；定向回归通过 |
 ## 2026-08-30 架构审计修复批次
-
 | 优先级 | ID | 风险 | 任务 | 验证证据 | 状态 |
 |---:|---|:---:|---|---|:---:|
 | P0 | T622 | R4 | 统一 Action generation 绑定映射入口，修复 prepare/finalize/status/cleanup 路径分叉 | `test_prepare_and_finalize_mapping_share_the_same_worker_artifact_generation`、`test_status_uses_bound_host_mapping_for_active_action`、`test_cleanup_removes_generation_bound_worker_artifact` | ✅ |
 | P0 | T623 | R4 | EventStore 优先且冲突 fail-closed，禁止 checkpoint 与事件快照拼接 | `test_active_action_rejects_event_and_checkpoint_identity_conflict`、`test_active_event_action_is_authoritative_without_checkpoint_splicing` | ✅ |
 | P1 | T624 | R3 | Tick 事务失败清理未提交命名 JSON effect，保留内容寻址 prompt | `test_discard_removes_only_uncommitted_named_json_artifacts` | ✅ |
-| P1 | T625 | R3 | 产品验收 artifact 增加 machine claims 并交叉校验外层声明 | `test_machine_claims_reject_outer_usage_declaration_drift`、产品证据回归 | ✅ |
-| P0 | T626 | R3 | EventStore/checkpoint 状态分叉在 init/tick/finalize/status/supervisor 入口统一归一为 `STATE_SOURCE_CONFLICT` 协议错误，禁止宿主收到 Python traceback | `test_state_source_conflict_is_returned_as_protocol_error_action`、`test_status_reports_recovery_required_on_state_source_conflict`、`test_finalize_stops_with_stable_error_on_state_source_conflict`、`test_supervisor_stops_with_stable_error_on_state_source_conflict`；历史批次全量 2820 passed/1 skipped，覆盖率严格 90% | ✅ |
+| P1 | T625 | R3 | 产品验收 artifact 增加 machine claims，并绑定 Marketplace 来源与 Build 内容摘要 | `test_machine_claims_reject_outer_usage_declaration_drift`、`test_product_evidence_requires_marketplace_build_binding`、产品证据回归 | ✅ |
+| P0 | T626 | R3 | EventStore/checkpoint 状态分叉在 init/tick/finalize/status 入口统一归一为 `STATE_SOURCE_CONFLICT` 协议错误，禁止宿主收到 Python traceback | `test_state_source_conflict_is_returned_as_protocol_error_action`、`test_status_reports_recovery_required_on_state_source_conflict`、`test_finalize_stops_with_stable_error_on_state_source_conflict`；历史批次全量 2820 passed/1 skipped，覆盖率严格 90% | ✅ |
 | P1 | T627 | R2 | 跟踪表状态必须与证据层级一致：L1/L2 或 archive smoke 不能标记为产品完成 | 本表将未完成真实 L3/L4 的任务统一标为 `◐/☐`，保持发布门禁可见 | ✅ |
 | P0 | T628 | R4 | L2 异步纵向测试必须经过公开 CLI，不得只调用 Adapter/Assembler/Core 内部接口 | `test_public_cli_async_worker_trajectory_uses_current_action_artifacts` 覆盖 init→异步 Worker→finalize→validate→tick；目标是防止单测绕过真实衔接 | ✅ |
 | P1 | T629 | R2 | 安装验收文档命令必须显式传入受控 wheel 缓存，避免启动即因 `HERMETIC_CACHE_REQUIRED` 失败 | `test_documented_archive_acceptance_is_hermetic`、双宿主 archive smoke 通过 | ✅ |
@@ -86,52 +53,108 @@
 | P1 | T631 | R3 | 用户指南必须与 D16 保持一致：Init Engineering 为可选兼容 Provider，不得作为运行时硬前置 | `test_user_guide_does_not_reintroduce_init_runtime_dependency`、ProjectProfile 无 manifest 回归 | ✅ |
 | P1 | T632 | R3 | 生成规则、EARS 基线和培训指南统一标注 Init manifest 为可选兼容输入，消除跨文档运行时口径冲突 | `test_user_guide_does_not_reintroduce_init_runtime_dependency`、规则同步检查、全量回归 | ✅ |
 | P1 | T633 | R3 | 损坏宿主 receipt 与空事件流恢复必须稳定 fail-closed，禁止裸 `ValueError/IndexError` 破坏诊断链 | `test_receipt_journal_rejects_invalid_tick_without_raw_value_error`、`test_rebuild_projection_rejects_empty_event_stream`、全量 2820 passed/1 skipped | ✅ |
-
-> 本批次历史全量回归：`2820 passed, 1 skipped`；真实双宿主 L3/L4 仍属于 T619/T620，未因自动测试通过而宣称发布。
-
 ## 2026-08-30 真跑首个 Architect 阻断（系统性修复）
-
 > 证据：Voice Clone 真跑中 Worker 已生成 `status=completed` 的私有 Architect 产物，
 > 但宿主写入路径与 Action 声明路径不一致；随后等待/关闭被误归类为失败，重试又复用旧
 > Result 路径。以下任务按一条完整交接链修复，不以增加等待时间或增加 fallback 路径代替。
-
 | 优先级 | ID | 风险 | 任务 | 核心验收 | 状态 |
 |---:|---|:---:|---|---|:---:|
 | P0 | T634 | R4 | 定版唯一 Worker Artifact 身份与路径：Core 生成，Host 原样转发，Collector 原样读取 | Action、Host 映射、Prompt、Collector、cleanup、retry 对同一 invocation 得到同一路径；路径漂移被明确拒绝 | ✅ 定向回归通过 |
-| P0 | T635 | R4 | 分离 Worker 业务 Artifact 与 Host Attestation | Worker 不再填写 handle/model/isolation 等宿主事实；Host 负责生成并校验 Attestation，completed 必须显式提交实际隔离证据且状态必须与业务产物一致，禁止 `unreported` 冒充真实事实 | ◐ 已改提示词/收集器/`--record-worker-outcome`；待真实宿主 |
+| P0 | T635 | R4 | 分离 Worker 业务 Artifact 与 Host Attestation | Worker 不再填写 handle/model/isolation 等宿主事实；Host 负责生成并校验 Attestation，completed 必须显式提交实际隔离证据且状态必须与业务产物一致，禁止 `unreported` 冒充真实事实 | ✅ 双宿主 L4 验证；缺失事实按同 Action repair |
 | P0 | T636 | R4 | 建立结果优先的完成/失败协调事务 | 失败提交前必重扫当前 generation 的 Artifact；合法完成结果优先，失败不能覆盖已提交成功 | ✅ 定向回归通过 |
 | P0 | T637 | R4 | 重试重新物化执行身份和工作文件 | 每次重试生成新 generation、invocation、outcome/result/receipt/fencing；禁止复用旧路径或旧 handle | ✅ generation/fencing 回归通过 |
 | P0 | T638 | R4 | 真实宿主公开入口 L3/L4 轨迹测试 | 原生 spawn/wait/close、迟到结果、宿主关闭、失败重试和最终 Tick 均经过 Codex/Claude 实际入口验证 | ☐ |
-
 ## 2026-08-31 Worker 回写机器合同补强
-
 | 优先级 | ID | 风险 | 任务 | 核心验收 | 状态 |
 |---:|---|:---:|---|---|:---:|
 | P0 | T639 | R3 | 将逐 Worker `record-worker-outcome` 纳入 Host Action 机器操作模板 | 每个严格 invocation 都携带唯一回写 argv 模板；宿主只替换原生运行时事实，不能凭提示词重新拼装；模板与当前 Action/generation/path 绑定 | ✅ 已验证 |
-
-- 验证证据：`tests/test_host_adapter.py`、公开 CLI 异步轨迹及 Host/Assembler 回归；全量串行回归 `2835 passed, 1 skipped`，覆盖率 `90%`，Ruff/mypy/规则同步通过。
-
 ### 2026-08-31 实施证据与边界
-
-- 已统一 generation-bound Worker 路径：`.ae-state/host-runtime/worker-outcomes/<action-key>-<worker>-g<generation>.json`；旧 rc.5 目录仅按当前 Action/Worker 的确定性路径迁移，不做目录扫描。
-- 私有 Worker 文件现在只允许业务字段；主 Agent 通过 `--record-worker-outcome` 把原生 handle、模型、状态和实际隔离证明交给确定性 Assembler；缺少宿主事实时返回 `HOST_WORKER_ATTESTATION_MISSING` 或 `NATIVE_ISOLATION_EVIDENCE_MISSING`，绝不把 `unreported:*` 句柄当成成功证据。
-- Finalizer 在失败事务前重新采集当前 generation；单 Worker 合法完成结果优先恢复 Coordinator，失败日志不能覆盖晚到成功。
-- 重试由失败 journal 驱动 `generation + 1`，重新绑定 invocation/outcome 路径和 fencing token；同一失败事实保持幂等，不靠变化错误文本消耗重试预算。
-- 验证：相关 Host/CLI/Prompt 回归已扩展并通过；本批次全量串行回归 `2835 passed, 1 skipped`，覆盖率 `90%`；公开 CLI 异步轨迹已改为业务私有产物→`--record-worker-outcome`→Finalizer→validate→tick，实际隔离证据缺失会稳定拒绝，状态不一致会稳定拒绝，真实 Codex/Claude L3/L4 仍未执行。
-- 安装验证：`/tmp/auto-engineering-final-release.tar.gz` 在 Codex 与 Claude Code 宿主模式下的归档 smoke 均通过；该结果只证明安装包和内部协议入口可用，不替代真实产品 L3/L4。
-
+- Worker 路径已统一为 generation-bound canonical 路径；私有文件只含业务字段，宿主事实由 `--record-worker-outcome` 交给确定性 Assembler，缺失或伪造隔离证据稳定拒绝；Finalizer 失败前重扫当前 generation，合法完成优先，重试由失败 journal 驱动新 generation、路径和 fencing，保持幂等。
+- 相关 Host/CLI/Prompt 回归与双宿主 archive smoke 已通过；真实 Codex/Claude L3/L4 仍未执行，smoke 不替代产品验收。
 ### 2026-08-31 Compact 宿主视图闭环补强
-
 | 优先级 | ID | 风险 | 任务 | 验证证据 | 状态 |
 |---:|---|:---:|---|---|:---:|
 | P0 | T640 | R4 | compact Action 必须保留 Worker 完成回写所需的机器字段（结果路径、generation、fencing、回写 argv 模板和 receipt 路径），缺失时在投影阶段 fail-closed，避免为节省上下文而切断真实宿主衔接 | `test_compact_host_view_projects_only_runtime_control_and_native_launcher`、`test_compact_host_view_rejects_strict_worker_without_handoff_contract`、compact 公开 CLI 异步轨迹及全量回归 | ✅ 已验证 |
-
-- T640 验证：compact 视图保留回写合同与身份字段，继续省略 receipt/attestation 正文；定向回归通过。
-
 ### 2026-08-31 Worker 启动身份合同补强
-
 | 优先级 | ID | 风险 | 任务 | 验证证据 | 状态 |
 |---:|---|:---:|---|---|:---:|
 | P0 | T641 | R4 | 原生 Worker 启动合同必须显式携带规范 `worker_id`，禁止仅从结果路径或自然语言推断身份 | Host Adapter 启动合同身份回归、68 个宿主回归及全量回归 | ✅ 已验证 |
-
-- T641 验证：启动合同显式携带规范 `worker_id`；为保持 1KB 上限压缩重复文字而非放宽提示词预算。
+### 2026-09-01 Worker outcome 单一路径收敛
+| 优先级 | ID | 风险 | 任务 | 验证证据 | 状态 |
+|---:|---|:---:|---|---|:---:|
+| P0 | T642 | R4 | `outcome_path` 必须是 invocation 的 canonical 合同；删除旧 rc.5 outcome 目录的运行时迁移和 Adapter/Assembler 回退 | `test_current_worker_contract_requires_canonical_outcome_path`、`test_collect_rejects_noncanonical_worker_artifact_layout`、Host/Spawn/公开 E2E 回归及双宿主 archive smoke | ✅ 已验证 |
+### 2026-09-01 Worker 中断恢复防重复启动
+| 优先级 | ID | 风险 | 任务 | 验证证据 | 状态 |
+|---:|---|:---:|---|---|:---:|
+| P0 | T643 | R4 | Worker outcome 已固化但 Coordinator 尚未落盘时，恢复必须隐藏 workers，禁止重复 spawn，并生成 Coordinator 后 finalize | `test_public_cli_resume_after_worker_outcome_does_not_respawn_worker`、原生恢复回归、全量 E2E | ✅ 已验证 |
+## 2026-08-31 方案 A 收敛实施计划
+> 目标：在 D1/D9/D17/D20/D27/D53-D58 基线上，把当前实现收敛为“主 Agent 唯一协调者 + Python 单 Tick 内核 + EventStore 新事实源 + 严格 Worker 交接合同”，清除当前路径的旧协议语义，并以公开 CLI 端到端轨迹作为发布门禁。覆盖率目标不低于 80%，优先保证关键 E2E 场景。
+| 优先级 | ID | 工作包 | 核心验收 | 状态 |
+|---:|---|---|---|:---:|
+| P0 | A001 | 当前 Action/Worker 只走严格 `spawn.invocations`；旧 `spawn.agents` 仅允许显式历史导入，不得进入当前运行路径 | 当前 Action 不生成/消费 `spawn.agents`；旧协议误入时 fail-closed 且有稳定错误码 | ✅ 已完成 |
+| P0 | A002 | 将 gap-scan 的 canonical section 引用校验前移到 Core，并统一 `repair_current_action` | 非法/缺失/重复引用在状态推进前被拒绝；修复不重跑 Worker、不复用旧 Result | ✅ 已完成 |
+| P0 | A003 | 统一 Worker outcome、generation、fencing、receipt 的交接合同 | 每个 invocation 有唯一回写路径和机器 argv；迟到/重复/旧 generation 只能进入审计 | ✅ 已完成本批专项回归 |
+| P1 | A004 | 收敛 Core/CLI 边界，移除 CLI 对 Orchestrator 私有状态的读取 | status/resume/validate 只依赖公开 Core 查询接口；CLI 只编排协议 | ✅ 已完成 |
+| P1 | A005 | EventStore 作为新运行唯一事实源，checkpoint 仅限显式兼容导入 | 新 loop 不再在 EventStore 与 checkpoint 间拼接；冲突统一 fail-closed | ✅ 普通 CLI 与生产 restore 已 EventStore-only；恢复入口显式区分 EventStore 与 checkpoint；checkpoint-only replay 隔离回归已补齐 |
+| P1 | A006 | 分离 Action 规划与副作用执行，形成纯 ActionCompiler + 明确 EffectExecutor | 编译阶段无文件/UUID/时间副作用；effect 失败可重试且不污染未提交状态 | ✅ `ActionPlan`、显式提交边界、`ACTION_PLAN_REQUIRED` 回归 |
+| P0 | A007 | 补齐公开 CLI 的多阶段、wait、repair、迟到结果、失败重试、终止态 E2E；T651 删除旧文件桥接校验，T652 删除会放行延迟 Result 的 E2 分支，T653 让 Gap Scan 事实由 Handler 事件提交，T654 让 Critic 事实由 Handler 事件提交，T655 让 Gap Review 决策由 Handler 事件提交，T656 让验证事实由 Handler 事件提交 | Codex/Claude 等价轨迹至少覆盖 init→tick→spawn→wait→collect→tick→terminal；旧私有入口不存在，延迟 Result fail-closed 且不改状态，Gap/Critic/Verification 报告与决策可从事件回放 | ✅ 公开 init→finalize→validate→tick、单组件跨进程 TERMINAL 黄金轨迹、Worker timeout→WAIT_RESOURCE、异步 Worker 继续、跨进程 resume、checkpoint-only 拒绝、同一 Action repair 闭环、重复 Result 幂等、迟到 Result 审计、Codex/Claude Adapter 语义等价、只读插件树下项目运行时 bootstrap 和唯一 Stage Handler 路由回归均已通过；真实双宿主轨迹由 A008 单独验收 |
+| P0 | A009 | 清理当前 Action 的 `subagent_prompt` 双路径，统一 Coordinator/Worker Artifact 引用 | 当前 Action Schema 拒绝旧字段；多 Worker coordinator ref 和 Worker invocation ref 均可独立校验；公开 compact 不内联提示词 | ✅ |
+| P0 | T644 | Gate/Prompt 上下文边界收口 | Gate 原始日志只留在事实记录；Action/Developer feedback 使用有界摘要；Prompt 超限返回结构化错误而非 traceback | ✅ |
+| P0 | T645 | 宿主 Hook 与旧在途 Action 安全响应 | 合法 Codex Hook 始终返回 JSON；严格合同拒绝旧 Action 时 status 输出稳定 `recovery_required`，不泄漏旧 prompt | ✅ |
+| P0 | T646 | 生产入口取消固定 Round 截断 | `--init` 默认不设置 `max_rounds`；跨进程恢复保持同一语义；只有显式历史兼容调用可启用上限 | ✅ |
+| P0 | T647 | 恢复路径设计源漂移稳定协议化 | `status`、`tick`、`validate` 在设计账本源漂移时返回结构化恢复错误，不输出 traceback、不消费旧 Action | ✅ |
+| P1 | T648 | 移除废弃 atdo 主循环 smoke 入口 | 删除以 v5.0 Orchestrator 12 步为验收对象的未发布脚本，避免形成第二套循环驱动；取消令牌文案同步到当前 Tick 边界语义 | ✅ |
+| P1 | T649 | 收口 Plan/Task 唯一模型入口 | 生产与测试统一从 `engine.models` 导入；移除 `loop/plan.py` 兼容模块；`auto_engineering.loop.Plan/Task` 仍保持同一对象身份 | ✅ 2740 项回归、唯一入口架构断言、Ruff、mypy 通过 |
+| P1 | T650 | 生产协议回放统一归属 EventStore | 状态协调 Gate 的 Action/Result 不再写入或读取 checkpoint `protocol_actions`；跨 thread 重初始化后的重复 Result 仍由 EventStore 幂等返回新 Action | ✅ 2742 项回归、覆盖率 90%、Ruff、mypy、双宿主 archive smoke 通过 |
+| P1 | T656-T657 | Verification/Deep Audit 事实统一由 StageHandler 事件提交 | coverage 与 revision 指纹不再由旧 Projector 旁路写入；验证事件可预览 Guardrail、进入 Reducer/EventStore；终态 Tick 显式提交 | ✅ 2747 项回归、覆盖率 90%、Ruff、mypy、规则同步通过 |
+| P1 | T658 | Architect/PlanPatch 事实统一由 Architect Handler 事件提交 | Architect 结果先形成唯一 Candidate，再由 `ResultEvidenceRecorded`、`PlanReconciled`、`TaskSuperseded` 与激活事件提交；旧 Projector 不再直接改 Architect Projection | ✅ 2749 项回归、覆盖率 90%、Ruff、mypy、编译、规则同步通过 |
+| P1 | T659 | Architecture 激活只计算并提交 Baseline 事实 | ActivationService 不直接写持久 Projection 或消费 Candidate；`ArchitectureBaselineAccepted` 经 Reducer 应用，当前内存状态与 EventStore 回放一致 | ✅ 2750 项回归、覆盖率 90%、Ruff、mypy、编译、规则同步、双宿主 archive smoke 通过 |
+| P1 | T660 | Developer 结果统一由 Handler 事件提交 | Developer 不再经旧 Projector 直接写 Projection；`ResultEvidenceRecorded` 在 Guardrail 预览与正式 Tick 中一致，快照随事件恢复，旧 Projector 删除 | ✅ 2750 项回归、覆盖率 90%、Ruff、mypy、编译、规则同步、diff 检查及 Codex/Claude archive smoke 通过；真实产品 L3/L4 仍待 A008 |
+| P0 | T661 | 统一 Worker 业务状态与宿主生命周期状态 | Worker 业务产物的 `success/ok` 完成别名在唯一 Assembler 边界归一为 `completed`；严格失败状态仍冲突拒绝；真实 Codex Architect 回归可完成记录与 Finalize | ✅ Assembler 62 项回归通过；真实 Codex 已跨过原状态冲突 |
+| P0 | T662 | 收回 compact 宿主操作合同与 canonical section 引用 | compact Action 必须保留 `operations.finalize/validate/submit` 原样 argv，并保留真实 `host_design_sections.section_ref`；公开宿主不得自行重建命令或丢失章节身份 | ✅ 定向协议/Assembler 回归 103 项通过；真实 Codex 已消费新合同 |
+| P0 | T663 | Finalizer 输入路径强制绑定当前 Action | spawn Action 即使宿主误传 Worker 私有 `outcome_path`，Finalizer 也只能重绑定当前 Action 的 canonical `work_files`，不得读取私有业务文件冒充共享 outcomes | ✅ 公开 CLI 回归、145 项相关回归；真实 Codex Architect Finalizer 已使用共享 outcomes |
+| P0 | T664 | Claude 原生安装安全替换已封装旧缓存 | 安装器只对 Claude 枚举出的受控插件和同版本合法孤儿缓存解封，再执行官方卸载/安装；不触碰边界外路径 | ✅ 安装器回归 13 项；真实 Claude 原生安装成功 |
+| P0 | T665 | Project Setup 宿主驱动合同补齐 | `project_setup_required` 必须有独立的宿主执行分支；宿主按缺失能力在项目根完成搭建，走当前 Action 的 finalize/validate/submit，不靠自然语言猜测，也不创建第二个循环 | ✅ Skill/Command 契约及 setup 公开 CLI 回归通过 |
+| P1 | T666 | content-addressed Release 并发暂存收敛 | Codex/Claude 同时暂存同一 Build 时，先完成移动的一方作为唯一内容事实，竞争方验证并复用已存在目录，不因 `os.replace` 目录竞争失败 | ✅ 并发竞争回退回归及双宿主 archive smoke 通过 |
+| P0 | T667 | Worker outcome 单 Worker object 合同收口 | 原生 Worker 启动提示与 Assembler 必须使用同一私有 outcome 结构；禁止提示 `outcomes` 数组，避免真实宿主首次结果被拒绝后重开 Worker | ✅ Adapter/Assembler 114 项回归；真实 Claude L3 已复现并证明旧冲突，新合同已收口 |
+| P0 | T668-T669 | 项目 Gate 隔离与 Setup 步骤固化 | While 插件使用专属 runtime 且 setup gate 缺少项目工具, when ProfileCommandGate/Setup Action 执行, the system shall 使用项目 `.venv` 并明确创建、同步、复验步骤，不得被插件 runtime 劫持 | ✅ Profile/Resolver 25 项、setup 31 项回归；真实 Claude 已验证 setup 收敛 |
+| P0 | T670-T671 | 设计只读与 Architect 路径合同 | While Architect/Worker 读取 binding design, when 宿主准备修改设计或提交文件路径, the Action shall 保持设计只读并使用项目根相对 `file_targets`，变更只能走用户 Gate | ✅ 256 项定向回归；同 Build Codex L3 验证设计只读、相对路径和 Architect→Developer→Critic→TERMINAL；Claude 到 Architect 未再触发旧错误 |
+| P0 | T672-T674 | Worker batch、Project Setup 与 Gap Scan 边界收口 | Developer 只能执行当前 Action 的 task/file_targets；Setup 只建立项目能力、工具链和最小非业务验证；Gap Scan 只判定设计模糊性，不把正常实现缺口升级为用户 Gate；保持零测试与 Gate 失败 fail-closed | ◐ T672/T673 提示、Action/宿主契约及全量回归通过；T674 Core 已拒绝明确设计条目的 `clarity=missing` 误判，真实 Claude 仍需重新验证 |
+| P0 | T675 | Project Setup 工具链声明与重试边界 | While 空项目进入 Setup, when 宿主声明 Python 开发工具链, the Action shall 要求 PEP 735 `dependency-groups.dev`、项目 `.venv` 和可执行门禁；重复失败不得无限重建或静默试错 | ✅ PEP 735、项目 `.venv`、有限失败与 `WAIT_RESOURCE` 已由回归及双宿主 Setup 验证 |
+| P0 | T676 | Setup 失败必须可观测且有界 | While 宿主执行 `project_setup_required`, when 命令或门禁失败, the host shall 在当前 Action 的有限修复后提交 `project_setup_failed`；Core shall 记录失败、签发下一 Action，并在连续 3 次后进入可恢复 `resource_wait` | ✅ Core/公开 CLI/Schema/双宿主 Setup 轨迹通过 |
+| P0 | T677 | Setup capability-only 范围由 Core 复核 | While Setup Result 声称完成, when Core 比较 Setup 前后文件基线, the system shall 拒绝新建业务源码或业务测试，并返回结构化范围违规反馈 | ✅ Core 基线/范围闸门、115 项定向回归、2774 项全量回归、90% 覆盖率及同一 Build 双宿主 archive smoke 已通过 |
+| P0 | T678/T693 | 原生 Worker 结果交接与回写事实收口 | While 原生 Worker 返回结构化业务结果但未主动写私有文件, when Host Driver 调用唯一 `record-worker-outcome`, the system shall 在 Action-scoped 暂存区严格解析并原子固化私有业务 outcome，再使用原生 handle、可观测模型或 `unreported`、实际隔离证据和当前 generation 完成回写；解析失败保留当前 Action，不重初始化、不人工接管 | ◐ 已实现唯一 Host ingestion、严格 native envelope 解析、私有 outcome 原子物化、提示/文档和 148 项定向回归；待设计充分场景下真实 Worker fallback 回归 |
+| P0 | T679 | EventStore 恢复后的 Profile 投影一致性 | While a setup Result is submitted from a fresh process after local ProjectProfile resolution, when the Tick is committed, the system shall either persist the profile through a reducer-backed event or retain the EventStore projection without `STATE_PROJECTION_MISMATCH` | ✅ `TickKernel` 按 delta 实际字段计算 ownership；跨进程 setup 回归、真实 Claude fixture 公开重放和全量回归通过 |
+| P0 | T680 | 私有 Worker outcome 缺少宿主事实时保留原 Action | While a completed private business outcome exists without Host Attestation, when Finalizer is invoked, the system shall preserve the active Action, prohibit respawn, and expose a bounded host-fact repair operation | ✅ `worker_attestation_pending` 投影、跨进程恢复与 181 项 Host/CLI/E2E 回归通过；真实 Claude 已复现私有 outcome 遗漏，待新制品验证修复分支 |
+| P0 | T681 | Setup Gate 使用项目命令唯一来源 | While Setup declares project toolchain, when Core re-probes lint/type/build commands, the system shall execute the project environment commands rather than plugin-runtime or implicit repository-wide defaults | ✅ 解析器从 PEP 735 `dependency-groups.dev` 推导 `uv run ruff/mypy`，Gate 仍只验证可执行性；21 项解析器回归、T686 新制品 Setup→Architect 轨迹与全量 2782 项通过 |
+| P0 | T682 | Claude 原生 Agent 完成观察与 Worker 业务回写机器化 | While Claude invokes a native Agent Worker, when the Agent returns, the host shall treat its return as completion/host evidence, read only the current private outcome, and execute the mapped record-worker-outcome contract before finalize | ✅ 候选 Build Claude L4 验证 Agent handle→回写→finalize 及同 Action repair |
+| P0 | T687/T689/T691 | 宿主漏回写、失败代际与 WAIT_RESOURCE 边界 | While 当前 Action 的合法私有 Worker outcome 已落盘, when Host submits a worker-failure Result before recording native attestation, the CLI shall project `worker_attestation_pending`，不消费失败预算或 respawn；只有显式 resume/retry 才推进 generation，status/finalize/record 不得放大失败尝试；when Core emits `WAIT_RESOURCE`, subsequent result submission shall be a read-only yield and preserve the active Action | ✅ 前置保护、当前 lease generation 绑定、提交前只读路径与 T691 Setup yield 回归均已完成；全量 2783/1、覆盖率 90%、静态检查和双宿主 archive smoke 通过；真实 Claude L4 已验证不会再进入 Setup 无限重试 |
+| P0 | T683 | Setup 文件基线排除构建元数据 | While project setup creates package metadata under a declared source root, when Core validates the capability-only boundary, the system shall ignore generated `.egg-info`/`.dist-info` files and still advance to Architect | ✅ Core 文件基线过滤与回归测试通过；最终 Claude Canary Setup 已越过生成式元数据范围检查并进入 Architect |
+| P0 | T694 | Setup 最小非业务入口跨语言范围收口 | While an empty Node/React project establishes a marked smoke entry or standard Vite bootstrap during `project_setup`, when Core validates the capability-only boundary, the system shall accept only bounded tooling placeholders, reject unmarked business source, and advance to Architect instead of emitting the impossible `setup_scope:business_implementation` retry | ✅ T694c 同一 Build 真实 Claude 已从空 Node/Vite 项目通过 Setup 进入 `gap_scan`；named `App`、`entry/main`、`test/setup`、标准 bootstrap/未标记业务源回归均通过 |
+| P0 | T695 | WAIT_RESOURCE 与 Setup 越界事实必须幂等且不产生伪任务 | While Setup 已进入 `WAIT_RESOURCE`, when 宿主提交任意失败摘要或猜测错误码, the Core shall 原样返回同一等待 Action，不再次校验失败枚举、递增预算或发新 Action；when Setup 检测到业务越界文件, the system shall 保留越界反馈但不得把 `business_implementation/business_tests` 投影为待补能力；Finalizer shall 只绑定当前 Action 的 canonical work files | ✅ Core/公开 CLI 回归、compact 反馈/路径绑定、`src/smoke`/源码根重叠与嵌套约定测试根回归、全量 `2788 passed/1 skipped`、覆盖率 `90%`；最终 Build `5.8.0-rc.5+sha256.507eda108076ed6e` 的 Codex/Claude archive smoke 通过；真实 Claude canary 已验证三次越界后稳定 `WAIT_RESOURCE`，不制造伪任务 |
+| P0 | T685/T696/T697 | WAIT_USER 租约、Gap Review 单项游标与 Setup 测试根边界 | While the active Action changes to a yield-allowed disposition, the host shall clear only the same-session lease; while Core returns `gap_review`, the host shall expose only `current_gap` and submit exactly one decision whose `gap_id` equals that cursor, never re-presenting historical `gap_scan.gaps` or future gap details; while Setup sees `src/*.test.*`, the Core shall allow only safe toolchain smoke/setup files and reject tests importing business modules | ✅ 回归、公开 CLI 和候选 Build 双宿主 L4 验证等待/单项 Gap/Setup 测试根边界 |
+| P0 | T698 | 宿主原生句柄与同 Action repair 单一恢复语义 | While a native Worker completes or a Result is rejected, when the host hands facts back to Core, the host shall use the exact native handle and one canonical `repair_coordinator_then_finalize` operation; missing handles, helper-Agent 伪造、旧 Action work file 复用和重复 spawn shall fail closed without consuming Worker retry budget | ✅ 候选 Build Claude L4 验证真实句柄、同 Action repair、禁止重复 spawn |
+| P0 | T699 | Gap Scan 不得把明确的未来改进升级为当前用户 Gate | While a design section is explicitly marked as future improvement/advisory, when Gap Scan reports it as a current gap, Core shall reject the misclassification on the same active Action with deterministic repair guidance; binding unresolved contract contradictions in current sections shall remain reportable | ◐ Core/DesignDoc/Prompt 规则、28 项 Gap/Prompt/Accessor 回归、267 项相关回归、全量 `2798 passed/1 skipped`、覆盖率 `90%`；真实 Claude T698 canary 已证实旧 Build 会把 §13.3 升级为 `WAIT_USER`，新 Build 真实复验待执行 |
+| P0 | T700 | Setup 最小 smoke 与测试门禁合同一致 | While Setup is `capability_only`, when the host creates a bounded non-business smoke test or Vite placeholder and a declared test command, Core shall accept only setup-safe local imports/placeholders and require the project test command to execute once and exit; business-module imports and interactive scripts shall remain fail-closed with actionable repair feedback | ✅ 安全相对导入、静态 App 属性、Vitest watch 拦截已实现；全量 `2802 passed/1 skipped`、覆盖率 90%、Ruff/mypy、Codex/Claude archive smoke 通过；新 Build Claude 真实宿主已由 Setup 进入 Gap Review/`WAIT_USER` |
+| P0 | T701 | Codex 安装验收必须绑定已加载插件 Build Identity | While Codex plugin registration or cache is stale, when the installer verifies a candidate Release, the system shall parse the native plugin list, require the target plugin's valid `build-info.json`, and reject any build/content mismatch before runtime acceptance | ✅ `verify_codex_install` 增加原生 JSON 清单与 Build Identity 双重校验；错版本回归先 RED 后 GREEN，相关安装/产品验收 48 项通过，全量 `2802 passed/1 skipped`、覆盖率 90%、mypy/compile/archive smoke 通过 |
+| P0 | T702-T706 | Architect canonical section、flat design routing、ProgressTree projection、Gate Result 与 Worker 回写合同收口 | While Architect emits `batch_plan`, Core shall require exact `host_design_sections[].section_ref`; while a design has a plate without H3 components, the Core shall expose and execute one deterministic plate-backed routing key and implicit component projection without weakening non-empty `plate_keys`; while a state-reconciliation Gate is active, the Host shall receive and submit only the nested `gate_resolution` contract; while a Worker returns, the Host shall receive one fixed argv template containing every runtime fact placeholder | ◐ T702-T705 回归与候选双宿主 L4；T706 单测/全量/archive smoke 已过，待新 Build 真实终态 |
+| P0 | T707-T709 | 真实宿主隔离证据、同 Action recovery、原生结果兜底与无 Git 证据收口 | While Codex/Claude 返回原生 Worker, when Host records facts, the system shall use the platform contract's concrete isolation evidence (`fork_turns=none` / `fresh_context`); while Worker outcomes are committed and Coordinator Result is rejected, recovery shall forbid both respawn and duplicate `record-worker-outcome`; while a private outcome is malformed but the immutable native return is valid, the Host shall use the native return without overwriting the private evidence; while a project has no Git repository, current declared files shall still be retained as Core evidence for later Gates | ◐ T707-T709 定向、全量 `2835 passed/1 skipped`、覆盖率 `90%`、静态检查通过；当前候选 archive smoke 通过，真实双宿主产品终态仍待复验 |
+| P0 | T710 | 将 Worker wait/liveness 从提示词约定提升为 Host Action 机器合同 | While strict Worker Action is mapped, when Host waits or observes owner, the Action shall expose one platform-specific `worker_observation` policy and each Worker shall expose a generation/fencing-bound `observation_path`; observation writes shall remain Host Runtime diagnostics and shall not tick, retry or create a second loop | ✅ `WorkerObservationContract`、Codex/Claude Adapter、compact projection、公开 CLI observation write 与 owner-uncertain E2E 回归通过；当前候选 `5.8.0-rc.5+sha256.856598d568dfba7b` 双宿主 archive smoke 通过；真实产品终态仍待复验 |
+| P0 | T711 | 真实宿主 Runbook 安装入口可执行性收口 | While a Release archive is selected for real-host acceptance, when the Runbook installs the Codex/Claude plugin from the repository root, the instructions shall invoke the locked project runner so package imports resolve identically to the release checks | ✅ Runbook 改为 `uv run python scripts/install_*_local.py`；新增文档契约回归，安装器帮助与相关测试 `26 passed`；待随新 Build archive smoke 重验 |
+| P0 | T712 | 用户 Gate 必须具备可提交的宿主操作合同 | While Core emits a user Gate with `WAIT_USER`, when the host receives the Action, it shall expose project-root binding, nested `gate_resolution` Result contract and ordered finalize/validate/submit operations; a bare `--tick` without Result shall not be the prescribed path | ◐ 真实 Codex L3 复现了 checkpoint Gate 无 operations 的停滞；ActionBuilder/状态协调 Gate、Command/Skill 已修复并增加回归，待新 Build 真实宿主复验 |
+| P0 | T713 | Codex 原生 Worker `result` 包装交接 | While Codex native Worker returns a single `result` object containing the business JSON, when Host Driver records the outcome, the system shall unwrap exactly that bounded envelope, bind worker status/handle/model/isolation from Host facts, and reject ambiguous or host-fact-bearing wrappers | ✅ 单层包装、嵌套包装、宿主字段污染和原生回包回写回归已通过；新候选 archive smoke 通过，真实产品 L4 仍需在同一 Build 复验 |
+| P0 | T714 | Setup ESLint 有效配置的可执行修复指引 | While Core reports `eslint_effective_config`, when the host repairs the project setup, the Action shall provide a concrete minimal flat-config shape with an actually enabled rule so a successful lint command cannot coexist with an unverifiable setup capability | ✅ 已补充最小有效 flat config 指引与回归；真实产品 L4 仍需在同一 Build 复验 |
+| P0 | T715 | Setup 非业务 smoke 与测试门禁路径收口 | While Setup requires a test capability, when the host creates a non-business smoke check, the Action shall bind it to `tests/toolchain.smoke.test.ts` (or the declared test root) and forbid `src/smoke*` plus no-test bypass flags, so command success is backed by a real safe test artifact | ✅ 已补充测试根/禁止越界与空测试绕过指引及回归；真实产品 L4 仍需在同一 Build 复验 |
+| P0 | T716/T717/T718/T719/T720 | PlanPatch 归一化、Worker 状态别名、启动合同、原生回包暂存与 Build Identity 预检收口 | While Architect submits a valid PlanPatch containing routed batches, when Core activates the accepted candidate, the system shall compare one canonical materialized batch plan and advance without `ARCHITECTURE_CANDIDATE_DRIFT`; while a real Worker returns `complete`, when Host records the private business artifact, the system shall canonicalize only that observed alias to `completed`; while Host maps a strict Worker Action, the native launch prompt shall remain under 1024 bytes and forbid Worker writes to shared outcomes; while a native envelope cannot be file-materialized directly, the same record shall accept exact stdin bytes and atomically stage the Action-bound native result; while a runner starts, the Host shall expose its content-addressed Build Identity before the first Loop Action | ✅ T720/T721 红绿、安装验收预检、产品验收接入与 Runbook/Skill/Command 定向回归通过；全量回归覆盖率 `90%`、静态检查通过；最终候选 Build `5.8.0-rc.5+sha256.660e29ec47c3616c` 的 Codex/Claude archive smoke 通过，真实双宿主产品 L3/L4 仍待复验 |
+| P0 | T721 | 产品证据必须包含首个 Loop Action 前的 Build Identity 预检事实 | While `product_acceptance` validates a real-host artifact against a candidate archive, when the artifact omits or changes the installed runner's `build_identity_preflight`, the validator shall fail closed even if Marketplace source and installed `build_id` fields appear consistent | ✅ 缺失/绑定回归、产品验收接入、全量 `2836 passed/1 skipped`、覆盖率 `90%`、最终候选双宿主 archive smoke 通过；真实双宿主产品 L4 仍待复验 |
+| P2 | T723 | TickOrchestrator 的 Project Setup 边界拆分 | While Core validates a `project_setup` Result, when it resolves the profile, checks capability-only scope, runs setup gates or schedules setup retry, the system shall delegate that policy to one Project Setup service without changing active Action identity or Tick semantics | ✅ `ProjectSetupService` 与 `project_setup_scope` 已提取；Project Setup 定向 `36 passed`、全量 `2836 passed/1 skipped`、覆盖率 `90%`；其余大文件继续按职责逐项拆分 |
+| P2 | T724-T749 | Host Evidence、Outcome Recovery、Result Contract、Worker Failure、单 Tick 边界、独立验收入口、浏览器能力、状态校验、设计文档解析、TaskOutcome、ProgressTree、BatchState 编解码、Action 响应模型、Convergence 值对象、ReducerRegistry、EventStore 编解码与 schema、Host Action 映射编译器、Design Stage 辅助、Result 校验、Tick 证据、Stage Action 编译、Worker 路径、Host Action 运行时、CLI 恢复投影与旧 Action 迁移 Gate 单一归属 | While Host records, collects, recovers, finalizes or reports a Worker outcome, when it resolves evidence, Journal facts, Result fields, failure attempts, TaskOutcome models, ProgressTree identity helpers, BatchState codecs, Action response models, Convergence value objects, ReducerRegistry/legacy adapter boundaries, EventStore persistence codecs/schema, Result validators or CLI recovery projections, and while Python exposes the public CLI, release acceptance entrypoints, browser capability discovery, EngineState validation or DesignDoc parsing, when an operation executes, the system shall use canonical service boundaries, one Core Tick and repository-root-independent script bootstrapping without a Python-owned long-running Coordinator | ✅ Host/Failure/E2E/Gap/Install/ProjectProfile/State/DesignDoc/TaskFactory/ProgressTree/BatchState/Action/Convergence/Reducer/EventStore/Host Adapter/Design Stage/Result/CLI recovery/legacy recovery 定向回归、静态检查、mypy、compileall、check-gate、全量回归和覆盖率通过；最新全量 `2868 passed, 1 skipped`、覆盖率 `90%`，文件行数门禁已通过；最终候选 Build `5.8.0-rc.5+sha256.660e29ec47c3616c` 的 Codex/Claude archive smoke 通过，真实产品 L3/L4 仍待复验 |
+| P0 | T688/T690 | 结果校验失败保持同一 Action | While Coordinator Result fails deterministic Architect or Component Verifier validation, when Core emits repair guidance, the system shall retain the active Action identity and reuse committed Worker outcomes instead of issuing a new Worker Action | ✅ Architect 与 Component Verifier 均不再生成新 Action；公开 E2E 验证 validate→tick 连续调用、同一 message_id、隐藏 `spawn`、`worker_outcomes_committed`、复用 outcome 并继续 TERMINAL；相关 244/121 项回归通过 |
+| P0 | T692 | 移除旧强制配置闸门，恢复 ProjectProfile/FeatureManifest 单一启动语义 | While 用户从任一宿主启动设计驱动 Loop, when 项目没有运行时 Feature 配置或 `ae.toml` 只有 `[project]`, the system shall 使用 `FeatureManifest` 默认值并进入 ProjectProfile/Setup 流程，不得在首个 Action 前写入配置、等待向导或返回 `CONFIG_REQUIRED`；显式运行时配置仍由 `ae.toml`/环境变量读取 | ✅ 93 项配置/CLI 定向回归；公开 CLI 与真实 Claude 新 Build 无配置均进入 Loop 且未写 `ae.toml`；全量 `2775 passed/1 skipped`、覆盖率 `90%`、Ruff/mypy/compile/sync 通过 |
+| P0 | T750 | reinitialize 的设计来源账本轮换必须是显式且可审计的唯一边界 | While active thread 因设计来源漂移进入 `state_reconciliation`, when 用户提交合法 `reinitialize` Result, the system shall 只读校验后由 Tick 统一处理，归档旧设计账本、原子建立当前来源账本并创建新 thread；普通 restore、`--validate-result` 和未授权 Tick shall 保持 fail-closed 且不得改写账本 | ✅ 设计变更后的 validate→tick 端到端回归、账本历史保留回归、只读校验无事件写入回归；全量 `2870 passed, 1 skipped`、覆盖率 `90%`、Ruff/mypy/compileall/check-gate/diff 通过；新候选 Build `5.8.0-rc.5+sha256.18cdaae51bd45fa6` 的 Codex/Claude archive smoke 通过；真实产品 L3/L4 仍待复验 |
+| P0 | T751-T755 | 同 Action repair、阶段用量、宿主返回、evidence 身份与 Setup 命名边界 | While Host has accepted Worker outcomes or records stage usage, when Core rejects a Coordinator Result, a usage record is written, shared outcome data is incomplete, Critic assurance identity differs from the canonical component, or a Node project declares `type_check`, the system shall preserve authoritative facts, bind usage to the exact Action message id, retain repair work files, reject invalid evidence fail-closed, recognize the declared type-check command, and return structured same-Action repair before reducer preview; while a native host call returns or an Action is mapped, the host shall recheck nonterminal status and resume the same Action without creating business facts | ✅ T751-T755 已通过同 Action repair、usage binding、`continuation`、`status → resume_active_action`、工作文件 root-check、`native_outcomes_are_ready` 与 `ASSURANCE_COMPONENT_IDENTITY_MISMATCH` 回归；T755 已修复并由真实 Claude 新项目验证到 `TERMINAL/GOAL_ACHIEVED`，Codex 在 Setup 通过后受外部 API 传输故障阻断；当前代码全量 `2882 passed, 1 skipped`、覆盖率 `90%`、静态门禁通过 |
+| P0 | T756-T760 | Gap Scan、Critic Assurance、Worker invocation、usage 与产品证据边界必须可执行 | While design-doc mode parses a document with no H2/H3/ae hierarchy, when Gap Scan submits a superficially complete synthetic `document` coverage with no gaps, Core shall reject it on the same active Action; while a clear design contract is reported as a missing implementation gap, Core shall reject the misclassification on the same Action; while Critic submits Assurance, the Action shall distinguish `system_audit.findings` from `dimensions[*]` and bind the canonical component identity; while a host/Worker attempts nested Agent/Task/collaboration workers or cannot pass the native envelope byte-for-byte, the system shall fail closed with the current Action, keeping task/file_targets as batch scope; while product evidence is collected, every Spawn Worker shall have an Action-bound native-result manifest and Claude cost shall come from raw stream-json output rather than manual input | ◐ T756 回归先 RED 后 GREEN；T757/T758 新增可复制 Assurance、嵌套 Worker 禁令和 `HOST_EVIDENCE_INVALID` 规则；T759 native-result manifest 缺失/重复校验；T760 明确契约误判与 Claude usage attestation 已通过定向回归、纵向 Host/E2E 回归，待全量质量门禁及新候选双宿主真实终态 |
+| P0 | T761-T771 | Claude 宿主异常结束必须形成可恢复 Stop Report，非交互退出必须经过边界适配器，验收与 artifact 必须单一且可审计 | While Claude `SessionEnd`/`StopFailure` occurs or the host process exits and the same session still owns a non-yieldable `CONTINUE` lease, the Host Runtime shall write a bounded Action/build/session-bound `HOST_RUNTIME_PROTOCOL_ERROR` Stop Report and clear only the matching lease; the process adapter shall preserve the host exit code and shall not create Action/Tick/Worker work; when product acceptance runs, the cost policy shall be validated once, the business report shall bind the candidate Build, zero-exit Gate outputs, content hashes and canonical recovery Action, missing machine evidence shall fail closed, recovery method shall match its canonical projection, Gate evidence shall be generated by sequential argv execution, and the generator→collector→validator CLI chain shall work outside the repository | ✅ T761-T770 已完成；T771 仓库外 CLI E2E 已通过；全量 `2961 passed/1 skipped`、覆盖率 `90.03%`、Ruff/mypy/compileall/check-gate 通过；候选 `5.8.0-rc.5+sha256.7dd30f6092684988` 双宿主 archive smoke 通过，真实双宿主产品 L3/L4 仍未执行 |
+| P0 | T772-T782 | 内容寻址 evidence、无设计文档 Architect routing、环境故障恢复、verification-only Result、Worker retry generation、Claude 状态目录保护、原生 Worker 工具前置合同、`WAIT_RESOURCE` 资源恢复、Worker payload 和路径表示必须在边界收口 | While product acceptance validates a collected artifact, when it contains business Gate logs, native Worker results or Claude raw output attestations, the validator shall resolve each relative reference beneath the declared host project root, recompute bytes and SHA-256, reject missing/tampered files, and require explicit `HOST=PROJECT_ROOT` mappings; while Architect returns a batch plan without a binding DesignDoc, Core shall enforce non-empty `plate_keys` and task-shape invariants before activation and return same-Action repair instead of a raw exception; while Developer task evidence fails only from missing toolchain/dependencies, Host Runtime shall project `WAIT_RESOURCE`, expose one machine recovery contract, retry the same active Action after recovery, and preserve Gate/Coordinator invariants; while a Developer batch is verification-only and produces no real file diff, the result contract and GitDiffExists Guardrail shall accept `files_changed=[]` only when all current targets exist and Core test evidence passes; while a Worker retry returns a valid outcome with strictly higher `execution_generation`, Host Assembler shall replace only the old retryable outcome, preserving same-generation conflicts and completed-fact replacement as fail-closed; while Claude invokes a Bash mutation targeting `.ae-state`, the registered PreToolUse guard shall block it even before the project runtime is bootstrapped, and ordinary bootstrap commands shall not be blocked solely because the runtime is absent; while a real Codex/Claude host invokes a native Worker or `record-worker-outcome`, the Host PreToolUse guard shall compare the prompt, worker id, native-result path and project root with the current leased Action's exact templates before execution; unrelated host commands shall remain unaffected; while the project-local dependency cache is used by host bootstrap, Safety/Audit shall exclude that cache from business-source scanning | ◐ T772/T773 已验证；T774/T775/T776/T777 先 RED 后 GREEN；T778/T779 已先 RED 后 GREEN，Claude PreToolUse 注册、stdin、状态目录保护、bootstrap 降级和原生 prompt/path/root 前置校验已通过；T780 已先 RED 后 GREEN（资源等待 Action 现在携带一次性恢复合同）；T781/T782 已先 RED 后 GREEN（Worker 业务字段强制置于 payload、root-bound native-result 绝对/相对路径规范化）；final55/final56/final58 补齐 Claude Agent 元数据与 TaskOutput 完成回写、原子写入当前 native-result_path、原生结果 list envelope 解析、共享 work outcomes/result 禁写保护和 prompt hash artifact suffix 兼容；最新定向与全量回归 `3000 passed/1 skipped`、覆盖率 `90%`、Ruff/mypy/compileall/git diff check 通过；final55 已真实推进 Architect→Developer，final56/final58 已证明异步 TaskOutput 观察路径，final74 已真实推进至 Developer 但 running Worker 超时后按 Stop Report 保留 active Action，仍不计入 L4 |
+| P0 | T783/T784/T785/T786/T787/T788/T789/T790/T791/T792/T793/T794/T795/T796/T797/T798/T799/T800/T801/T802/T803/T804 | 宿主硬超时、Agent 拒绝、Prompt 读取边界、同 Action 恢复、测试证据完整性、Worker outcome 写入边界、strict envelope、非 Worker Action 读取隔离、native 回执单一权威、lease 丢失后的协议状态保护、恢复宿主平台绑定、recovery 分支优先级、安装插件扫描边界、Worker 失败事实合同与失败恢复投影、Codex wait 回包提取边界、L3/L4 产品证据分层、同 generation Host attestation 占位值幂等修复、Claude 原生嵌套业务 JSON 解析边界、verification-only Guardrail 运行时句柄边界、Claude native-result 跨会话恢复 | ◐ T783-T800 实现与定向回归完成；final94 Build `5.8.0-rc.5+sha256.44ea01a8bf78f064` 全量门禁和双宿主 archive smoke 通过。T800 修复 `generate_business_evidence` 错把 L3 recovery 绑定到 L4 Gate：L4 报告只保留 Build/Gate hash，collector 通过显式独立 Canary 根推导阶段与唯一恢复。final95 Build `5.8.0-rc.5+sha256.5f6394e642512143` 已通过全量 3029/1、覆盖率 90%、静态门禁和双宿主 archive smoke；真实 Codex Canary 已完成 Architect、原生 wait、同 Action 修复并进入 Developer，Developer 真实返回 TDD 红灯并完成回收；随后暴露同一 generation 的 Host attestation 占位值修复被错误判为 `OUTCOMES_CONFLICT`。T801 已锁定并修复同代占位归一；当前真实 Claude L4 又证明原生 Claude 文本中的嵌套业务 JSON 被旧正则截断，T802 将以红测试锁定“完整单对象可解析、多对象/嵌套包装仍拒绝”；真实 Claude 进一步复现 T803：验证型 batch 的目标与测试证据满足条件，但 Guardrail 未从 `_runtime_ctx` 取句柄而错误进入 `GUARDRAIL_RETRY`；现已补齐运行时句柄读取与回归；T804 由真实 Claude 恢复进一步复现 native-result 代际与宿主租约交接缺口，需补齐跨会话恢复证据后再重建制品并重跑双宿主产品证据 | ◐
+| P0 | A008 | 完成真实宿主 L3/L4 验收与发布门禁 | 单命令连续运行，无人工续接、无 Python Supervisor、无第二套协调循环 | ◐ final135 待真实验收；源码全量 `3071 passed/1 skipped`、覆盖率 `90%`、静态门禁通过。T833 已补 Codex PostToolUse 原始回包桥接；另修复空 Python source root 与 fresh Worker 裸 `python` 导致的 Setup/Developer 环境不一致。final134 已证明 Architect 原生链路可通，但 Developer 因 `python: command not found` fail-closed；尚无同一最终 Build 的 Codex TERMINAL/L4 evidence，不能关闭 A008 |

@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import pytest
+
 from auto_engineering.loop.events import LoopEventType
 from auto_engineering.loop.stages.base import TransitionContext
 from auto_engineering.loop.stages.design import ArchitectHandler, CriticHandler
+from auto_engineering.loop.stages.plan_refine import PlanRefineHandler
 from auto_engineering.loop.tick_orchestrator import TickOrchestrator
 
 
@@ -25,6 +28,16 @@ def _changes(decision) -> dict:
     )
 
 
+def test_design_stage_helpers_have_one_canonical_module() -> None:
+    from auto_engineering.loop.stages import design as design_module
+    from auto_engineering.loop.stages import design_helpers, plan_refine
+
+    assert design_module._advanced is design_helpers.advanced
+    assert design_module._has_batches is design_helpers.has_batches
+    assert design_module._architect_evidence is design_helpers.architect_evidence
+    assert design_module.PlanRefineHandler is plan_refine.PlanRefineHandler
+
+
 def test_architect_rejects_empty_batch_plan() -> None:
     decision = ArchitectHandler().apply(
         {"batch_plan": []},
@@ -36,19 +49,56 @@ def test_architect_rejects_empty_batch_plan() -> None:
     assert decision.action_context["error"]["error_code"] == "EMPTY_BATCH_PLAN"
 
 
+def test_plan_refine_returns_to_architect_with_advanced_event() -> None:
+    decision = PlanRefineHandler().apply({}, {}, _context())
+
+    assert decision.next_stage == "architect"
+    assert decision.events[0].event_type is LoopEventType.STAGE_ADVANCED
+
+
+def test_plan_refine_rejects_non_mapping_state() -> None:
+    with pytest.raises(TypeError, match="state 必须为 Mapping"):
+        PlanRefineHandler().apply([], {}, _context())
+
+
 def test_architect_initializes_plan_before_advancing() -> None:
     decision = ArchitectHandler().apply(
         {"batch_plan": [{"batch_id": "B1", "tasks": []}]},
-        {},
+        {"batch_plan": [{"batch_id": "B1", "tasks": []}]},
         _context(),
     )
 
     assert decision.next_stage == "developer"
-    assert decision.events[0].event_type is (
+    assert decision.events[1].event_type is (
         LoopEventType.ARCHITECTURE_PLAN_ACTIVATED
     )
+    assert decision.lifecycle_effects.collect_token_usage is True
     assert decision.lifecycle_effects.offload_stage == "architect"
     assert "offload_stage" not in decision.action_context
+
+
+def test_architect_submits_result_evidence_as_owned_event() -> None:
+    result = {
+        "plan": "实现核心能力",
+        "batch_plan": [{"batch_id": "B1", "tasks": []}],
+        "file_list": ["src/core.py"],
+        "contracts": {"Core": {"version": "1"}},
+    }
+
+    decision = ArchitectHandler().apply(
+        {},
+        result,
+        _context(),
+    )
+
+    event = decision.events[0]
+    assert event.event_type is LoopEventType.RESULT_EVIDENCE_RECORDED
+    assert event.to_dict()["payload"]["changes"] == {
+        "plan": "实现核心能力",
+        "batch_plan": [{"batch_id": "B1", "tasks": []}],
+        "file_list": ["src/core.py"],
+        "contracts": {"Core": {"version": "1"}},
+    }
 
 
 def test_critic_rejects_unknown_verdict() -> None:
@@ -238,6 +288,7 @@ def test_assurance_bundle_recounts_findings_instead_of_trusting_worker() -> None
             "findings": [],
             "assurance_bundle": {
                 "component_verification": {
+                    "component": "Goal",
                     "coverage_map": [], "missing_count": 0, "diverged_count": 0,
                 },
                 "system_audit": {
@@ -254,12 +305,48 @@ def test_assurance_bundle_recounts_findings_instead_of_trusting_worker() -> None
                 },
             },
         },
-        _context(has_more_batches=False),
+        _context(has_more_batches=False, assurance_component="Goal"),
     )
 
     assert decision.terminal is False
     assert decision.action_context["error"]["error_code"] == (
         "ASSURANCE_AUDIT_COUNT_MISMATCH"
+    )
+
+
+def test_assurance_bundle_rejects_business_module_as_component_identity() -> None:
+    decision = CriticHandler().apply(
+        {"majors_in_a_row": 0, "total_majors": 0},
+        {
+            "verdict": "APPROVE",
+            "findings": [],
+            "assurance_bundle": {
+                "component_verification": {
+                    "component": "counter_canary",
+                    "coverage_map": [],
+                    "missing_count": 0,
+                    "diverged_count": 0,
+                },
+                "system_audit": {
+                    "dimensions": [
+                        "architecture", "code_quality", "engineering",
+                        "virtualization", "team_design_coverage",
+                    ],
+                    "findings": [],
+                    "p0_count": 0,
+                    "p1_count": 0,
+                    "p2_count": 0,
+                    "missing_count": 0,
+                    "diverged_count": 0,
+                },
+            },
+        },
+        _context(has_more_batches=False, assurance_component="Goal"),
+    )
+
+    assert decision.events == ()
+    assert decision.action_context["error"]["error_code"] == (
+        "ASSURANCE_COMPONENT_IDENTITY_MISMATCH"
     )
 
 

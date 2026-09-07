@@ -220,6 +220,69 @@ def test_status_handles_corrupted_state_db(runner: CliRunner, tmp_cwd: Path) -> 
     assert data["round"] == 0
 
 
+def test_status_reports_corrupted_event_store_without_checkpoint_fallback(
+    tmp_cwd: Path,
+) -> None:
+    """EventStore 损坏时必须报告恢复要求，不能展示旧 checkpoint。"""
+    from auto_engineering.engine.state import EngineState
+    from auto_engineering.loop.checkpoint import SQLiteCheckpointStore
+
+    state_dir = tmp_cwd / ".ae-state"
+    state_dir.mkdir(exist_ok=True)
+    (state_dir / "events.db").write_bytes(b"NOT A SQLITE FILE")
+    with SQLiteCheckpointStore(str(state_dir / "checkpoints.db")) as store:
+        assert store.reserve_project_thread("legacy-thread") is None
+        store.save(
+            EngineState(thread_id="legacy-thread", current_stage="critic"),
+            round=9,
+        )
+
+    payload = _collect_status_json(tmp_cwd)
+    assert payload["error_code"] == "EVENT_STORE_UNAVAILABLE"
+    assert payload["recovery_required"] is True
+    assert payload["thread_id"] == ""
+
+
+def test_status_json_reads_event_store_projection(tmp_cwd: Path) -> None:
+    """当前 status 必须读取事件投影，而不是只验证空状态路径。"""
+    from auto_engineering.engine.state import EngineState
+    from auto_engineering.loop.checkpoint import SQLiteCheckpointStore
+    from auto_engineering.loop.event_store import SQLiteEventStore
+    from auto_engineering.loop.events import LoopEvent, LoopEventType
+
+    thread_id = "event-status-thread"
+    state = EngineState(
+        thread_id=thread_id,
+        requirement="事件状态",
+        current_stage="developer",
+        round=3,
+        total_majors=2,
+    )
+    event = LoopEvent.create(
+        thread_id=thread_id,
+        sequence=0,
+        event_type=LoopEventType.LOOP_INITIALIZED,
+        payload={"state": state.to_dict()},
+        correlation_id=thread_id,
+    )
+    ae_state = tmp_cwd / ".ae-state"
+    ae_state.mkdir(exist_ok=True)
+    with SQLiteCheckpointStore(str(ae_state / "checkpoints.db")) as leases:
+        assert leases.reserve_project_thread(thread_id) is None
+    with SQLiteEventStore(ae_state / "events.db") as events:
+        events.commit_tick(
+            events=[event],
+            state=state,
+            action={"thread_id": thread_id, "message_id": "event-status-action"},
+        )
+
+    payload = _collect_status_json(tmp_cwd)
+    assert payload["thread_id"] == thread_id
+    assert payload["stage"] == "developer"
+    assert payload["round"] == 3
+    assert payload["total_majors"] == 2
+
+
 def test_status_does_not_probe_usage_ledger_as_checkpoint(
     tmp_cwd: Path, caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -247,17 +310,12 @@ def test_status_text_mode_no_checkpoint(runner: CliRunner, tmp_cwd: Path) -> Non
 
 
 # ============================================================
-# P1-6 回归: SQLiteCheckpointStore 资源泄漏 (2026-07-25 独立审计)
+# A005 回归：status 不得回退到 SQLiteCheckpointStore 状态快照
 # ============================================================
 
 
 def _make_spy_store():
-    """构造 spy store 工厂: 强引用抑制 __del__ 兜底, 使 close 断言稳定.
-
-    历史 bug: status.py 循环内创建 store 从不 close(), 依赖 __del__ 析构
-    兜底 — CPython 引用计数下 __del__ 会掩盖泄漏, 故测试用强引用抑制它,
-    只有显式 close (with 语句) 才计入 closed。
-    """
+    """构造可观察旧 Store，证明 status 不会把它作为当前事实源。"""
     import auto_engineering.loop.checkpoint as checkpoint_mod
     from auto_engineering.loop.checkpoint import SQLiteCheckpointStore
 
@@ -276,7 +334,7 @@ def _make_spy_store():
     return checkpoint_mod, SQLiteCheckpointStore, _SpyStore, created, closed
 
 
-def test_load_progress_summary_closes_checkpoint_store(
+def test_load_progress_summary_does_not_read_checkpoint_store(
     tmp_cwd: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """P1-6 回归: _load_progress_summary 用后应显式关闭 store."""
@@ -292,13 +350,10 @@ def test_load_progress_summary_closes_checkpoint_store(
     from auto_engineering.cli.status import _load_progress_summary
     _load_progress_summary(tmp_cwd)
 
-    assert closed, (
-        "_load_progress_summary 未显式关闭 SQLiteCheckpointStore"
-        "(P1-6: 连接泄漏回归)"
-    )
+    assert not closed
 
 
-def test_status_command_closes_checkpoint_stores(
+def test_status_command_does_not_read_checkpoint_stores(
     runner: CliRunner, tmp_cwd: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """P1-6 回归: status 命令 checkpoint 计数路径用后应显式关闭 store."""
@@ -313,13 +368,10 @@ def test_status_command_closes_checkpoint_stores(
 
     result = runner.invoke(main, ["status"])
     assert result.exit_code == 0, result.output
-    assert closed, (
-        "status 命令 checkpoint 计数路径未显式关闭 SQLiteCheckpointStore"
-        "(P1-6: 连接泄漏回归)"
-    )
+    assert not closed
 
 
-def test_collect_status_json_closes_checkpoint_stores(
+def test_collect_status_json_does_not_read_checkpoint_stores(
     tmp_cwd: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """回归: JSON 状态收集路径用后应显式关闭每个 checkpoint store."""
@@ -334,42 +386,17 @@ def test_collect_status_json_closes_checkpoint_stores(
 
     _collect_status_json(tmp_cwd)
 
-    assert closed, "_collect_status_json 未显式关闭 SQLiteCheckpointStore"
+    assert not closed
 
 
-def test_load_progress_summary_parses_progress_tree_json(tmp_cwd: Path) -> None:
-    """回归: _load_progress_summary 应解析 checkpoint 中的 progress_tree_json.
-
-    历史 bug (2026-07-25 审计发现, mypy 揭示): 调用 ProgressTree.from_json
-    (该方法不存在, 仅有 from_dict) → 必抛 AttributeError 被 except 静默吞噬
-    → 进度摘要恒返回全零默认值 (Phase 40 T180 功能失效)。
-    """
-    import json
-
-    from auto_engineering.engine.progress_tree import ProgressTree
-    from auto_engineering.engine.state import EngineState
-    from auto_engineering.loop.checkpoint import SQLiteCheckpointStore
-
-    tree = ProgressTree.from_batch_plan(
-        [{
-            "batch_id": "B1", "design_section": "B1", "component": "Foo",
-            "tasks": [{"id": "T1", "description": "实现 foo",
-                       "module_ref": "§B1", "file_targets": ["foo.py"]}],
-        }],
-        requirement="回归测试需求",
-    )
-
-    ae_state = tmp_cwd / ".ae-state"
-    ae_state.mkdir(exist_ok=True)
-    state = EngineState(requirement="回归测试需求", current_stage="developer")
-    state.progress_tree_json = json.dumps(tree.to_dict(), ensure_ascii=False)
-    with SQLiteCheckpointStore(str(ae_state / "thread.db")) as store:
-        store.save(state, round=1, history=[], step=1)
-
+def test_load_progress_summary_ignores_checkpoint_progress(tmp_cwd: Path) -> None:
+    """旧 checkpoint 中的 progress_tree 不能冒充 EventStore 当前投影。"""
     from auto_engineering.cli.status import _load_progress_summary
     summary = _load_progress_summary(tmp_cwd)
 
-    assert summary["total_tasks"] > 0, (
-        f"progress_tree 摘要应为非默认值 (from_json→from_dict 回归), "
-        f"实际: {summary}"
-    )
+    assert summary == {
+        "completion_pct": 0.0,
+        "total_tasks": 0,
+        "done_tasks": 0,
+        "node_count": 0,
+    }

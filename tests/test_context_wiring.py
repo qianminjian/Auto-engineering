@@ -60,6 +60,13 @@ _CRITIC_APPROVE_RESULT = {
 }
 
 
+def _enter_architect(orch: TickOrchestrator) -> None:
+    """将集成测试置于已完成 project_setup 的 Architect 边界。"""
+    assert orch._state is not None
+    orch._state.current_stage = "architect"
+    orch._state.expected_stage = "architect"
+
+
 # =============================================================================
 # Layer 2 — Integration: ContextOffloader wired into TickOrchestrator
 # =============================================================================
@@ -95,13 +102,9 @@ class TestContextOffloaderWiring:
             guardrail=GuardrailChain([]),
         )
         orch.init("实现 StageRouter")
-        # Simulate architect result application
-        orch._state.batch_plan = _VALID_BATCH_PLAN
-        orch._state.plan = _VALID_PLAN
-        orch._state.file_list = ["auto_engineering/loop/stage_router.py"]
-
-        orch._state.current_stage = "architect"
-        orch._after_tick({})
+        _enter_architect(orch)
+        orch._apply_result_to_state(_ARCHITECT_RESULT)
+        orch._after_tick(_ARCHITECT_RESULT)
 
         loaded = offloader.load_summary("architect")
         assert loaded is not None, (
@@ -119,11 +122,9 @@ class TestContextOffloaderWiring:
             gate_runner=lambda names, root: (True, {}, ""),
         )
         orch.init("实现 StageRouter")
-        orch._state.batch_plan = _VALID_BATCH_PLAN
-        orch._state.plan = _VALID_PLAN
-        orch._state.file_list = ["auto_engineering/loop/stage_router.py"]
-        orch._state.current_stage = "architect"
-        orch._after_tick({})  # sets up batch_state
+        _enter_architect(orch)
+        orch._apply_result_to_state(_ARCHITECT_RESULT)
+        orch._after_tick(_ARCHITECT_RESULT)  # sets up batch_state
         orch._state.test_results = {"passed": 5, "failed": 0, "errors": 0}
 
         orch._after_tick({})
@@ -144,13 +145,11 @@ class TestContextOffloaderWiring:
             gate_runner=lambda names, root: (True, {}, ""),
         )
         orch.init("实现 StageRouter")
+        _enter_architect(orch)
 
         # architect
-        orch._state.batch_plan = _VALID_BATCH_PLAN
-        orch._state.plan = _VALID_PLAN
-        orch._state.file_list = ["auto_engineering/loop/stage_router.py"]
-        orch._state.current_stage = "architect"
-        orch._after_tick({})
+        orch._apply_result_to_state(_ARCHITECT_RESULT)
+        orch._after_tick(_ARCHITECT_RESULT)
         assert offloader.load_summary("architect") is not None
 
         # developer
@@ -165,5 +164,3 @@ class TestContextOffloaderWiring:
         assert offloader.load_summary("critic") is not None, (
             "T73 NOT WIRED: _after_critic did not call offloader.offload()"
         )
-
-

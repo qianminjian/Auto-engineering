@@ -258,6 +258,18 @@ class HostRunLeaseStore:
         except FileNotFoundError:
             return
 
+    def clear_if_matches(self, expected: HostRunLease) -> bool:
+        """仅清理仍由 expected 持有的 lease，避免误删后续会话租约。"""
+
+        current = self.load()
+        if current != expected:
+            return False
+        try:
+            self.path.unlink()
+        except FileNotFoundError:
+            return False
+        return True
+
 
 def evaluate_stop(
     lease: HostRunLease | None,

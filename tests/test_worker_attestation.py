@@ -24,6 +24,7 @@ def _spec() -> WorkerInvocationSpec:
         isolation="fresh_context",
         capabilities={"may_drive_loop": False, "may_spawn_workers": False},
         receipt_path=".ae-state/spawn-proofs/token.json",
+        outcome_path=".ae-state/host-runtime/worker-outcomes/architect.json",
     )
 
 

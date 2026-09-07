@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from auto_engineering.host import HostPlatform
@@ -39,7 +40,23 @@ class FakeHostRuntime:
         action: Mapping[str, Any],
         worker: Callable[[WorkerInvocation], Mapping[str, Any]],
     ) -> FakeHostExecution:
-        invocation = compile_worker_invocation(action, platform=self.platform)
+        def load_prompt(reference: str) -> str:
+            worker_prompt = action.get("worker_prompt")
+            if isinstance(worker_prompt, str):
+                return worker_prompt
+            project_root = action.get("project_root")
+            if not isinstance(project_root, str):
+                return ""
+            try:
+                return (Path(project_root) / reference).read_text(encoding="utf-8")
+            except OSError:
+                return ""
+
+        invocation = compile_worker_invocation(
+            action,
+            platform=self.platform,
+            prompt_loader=load_prompt,
+        )
         attempts = 0
         while True:
             attempts += 1
@@ -52,7 +69,7 @@ class FakeHostRuntime:
                 self.reclaimed_count += 1
 
         validated = validate_worker_outcome(raw, stage=str(action.get("stage", "")))
-        outcome = WorkerOutcome.from_dict(validated)
+        outcome = WorkerOutcome.from_business_payload(validated)
         result = {**outcome.payload, "spawned": True}
         receipt = {
             "status": "completed",

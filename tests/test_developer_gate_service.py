@@ -47,6 +47,30 @@ def test_gate_service_updates_state_and_returns_duration() -> None:
     )
 
 
+def test_gate_service_reuses_batch_files_when_repair_adds_no_files() -> None:
+    """修复轮次无新增文件时仍须对当前 Batch 的文件运行门禁。"""
+    state = EngineState(thread_id="thread-1")
+    state.current_stage = "critic"
+    state.tick = 7
+    state.files_changed = []
+    state.batch_changed_files = ["src/core.py", "tests/test_core.py"]
+    runner = Mock()
+    runner.run.return_value = ({"test": {"passed": True}}, 2.0)
+
+    DeveloperGateService(runner).run(
+        state=state,
+        batch_state=None,
+        developer_snapshot={"files_changed": []},
+    )
+
+    runner.run.assert_called_once_with(
+        ["src/core.py", "tests/test_core.py"],
+        stage="critic",
+        tick=7,
+        contracts={},
+    )
+
+
 def test_gate_service_adds_task_aware_core_evidence() -> None:
     state = EngineState(thread_id="thread-1")
     state.current_stage = "developer"

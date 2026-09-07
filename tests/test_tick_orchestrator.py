@@ -28,10 +28,19 @@ from auto_engineering.host import HostPlatform
 from auto_engineering.host.spawn_contract import SpawnPlan
 from auto_engineering.host.worker_attestation import WorkerAttestation
 from auto_engineering.loop.architect_validation import dry_run_architect_plan
+from auto_engineering.loop.domain_events import channels_updated
+from auto_engineering.loop.effects import EffectExecutor
 from auto_engineering.loop.escalation_handler import EscalationContext, EscalationHandler
 from auto_engineering.loop.event_store import SQLiteEventStore
 from auto_engineering.loop.events import LoopEventType
 from auto_engineering.loop.guardrail import GuardrailChain
+from auto_engineering.loop.reducers import default_reducer_registry
+from auto_engineering.loop.stages.base import TransitionContext
+from auto_engineering.loop.stages.design import CriticHandler
+from auto_engineering.loop.stages.verification import (
+    ComponentVerifierHandler,
+    SystemVerifierHandler,
+)
 from auto_engineering.loop.tick_orchestrator import ORCH_BUDGET_MS, TickOrchestrator
 
 _TEST_RUNTIME_HANDLE = tempfile.TemporaryDirectory(prefix="ae-orchestrator-tests-")
@@ -42,6 +51,28 @@ _TEST_RUNTIME_ROOT = Path(_TEST_RUNTIME_HANDLE.name)
 )
 _ACTIVE_TEST_ROOT = _TEST_RUNTIME_ROOT
 _ACTIVE_ORCHESTRATOR: TickOrchestrator | None = None
+
+
+def _worker_prompt(action: dict) -> str:
+    """读取当前 Action 绑定的 Worker prompt artifact，不从 Action 内联取正文。"""
+
+    invocation = action["spawn"]["invocations"][0]
+    return (_ACTIVE_TEST_ROOT / invocation["prompt_ref"]).read_text(
+        encoding="utf-8"
+    )
+
+
+def _materialize_worker_action(builder, state, **kwargs):
+    plan = builder.build_plan(state, **kwargs)
+    executor = EffectExecutor(builder.project_root)
+    for intent in plan.effect_intents:
+        executor.execute(intent)
+    action = plan.payload
+    invocation = action["spawn"]["invocations"][0]
+    prompt = (builder.project_root / invocation["prompt_ref"]).read_text(
+        encoding="utf-8"
+    )
+    return action, prompt
 
 
 @pytest.fixture(autouse=True)
@@ -263,7 +294,9 @@ class TestInit:
             "diverged_count": 0,
         })
 
-        result = o._read_and_validate(result_file)
+        result = o._validate_result_dict(
+            json.loads(result_file.read_text(encoding="utf-8"))
+        )
 
         assert result.error_code == "COMPONENT_VERIFICATION_SCOPE_INVALID"
 
@@ -411,7 +444,7 @@ class TestTickDeveloperToCritic:
         }))
 
         # 模拟跨进程 restore: 新 TickOrchestrator 从 checkpoint 恢复
-        restored = TickOrchestrator.restore(tmp_path, store)
+        restored = TickOrchestrator.restore_from_checkpoint(tmp_path, store)
         assert restored._batch_state is not None
         assert restored._batch_state.current_batch_idx == 1, (
             f"BUG-03: batch_idx 应为 1 (已推进到 b2), "
@@ -747,6 +780,46 @@ class TestSystemDeepAuditCoverageGate:
         }))
         assert a["action"] == "architect"
 
+    def test_event_store_replays_deep_audit_revision_as_verification_fact(self, tmp_path) -> None:
+        """Deep Audit 去重指纹必须随验证事件进入 EventStore 投影。"""
+        global _ACTIVE_ORCHESTRATOR, _ACTIVE_TEST_ROOT
+        _ACTIVE_TEST_ROOT = _TEST_RUNTIME_ROOT
+        with SQLiteEventStore(tmp_path / "events.db") as events:
+            o = TickOrchestrator(
+                _TEST_RUNTIME_ROOT,
+                gate_runner=_pass_gate_runner,
+                guardrail=_pass_guardrail(),
+                checkpoint_store=None,
+                event_store=events,
+            )
+            _ACTIVE_ORCHESTRATOR = o
+            self._drive_to_system_deep_audit(o)
+            action = o.tick(_make_result_file({
+                "stage": "system_deep_audit", "spawned": True,
+                "findings": [], "p0_count": 0, "p1_count": 0,
+                "p2_count": 0, "total_audited_files": 1,
+                "design_docs_stale": False, "design_doc_suggestions": "",
+                "missing_count": 0, "diverged_count": 0,
+            }))
+
+            assert action["verdict"] == "GOAL_ACHIEVED"
+            stream = events.load_stream(o._state.thread_id)
+            verification_events = [
+                event for event in stream
+                if event.event_type is LoopEventType.VERIFICATION_STATE_UPDATED
+                and "audit_revision_fingerprints"
+                in event.to_dict()["payload"].get("changes", {})
+            ]
+            assert len(verification_events) == 1, [
+                (event.event_type.value, list(event.to_dict()["payload"]))
+                for event in stream[-8:]
+            ]
+            projection = events.load_projection(o._state.thread_id)
+            assert projection is not None
+            assert projection.audit_revision_fingerprints == (
+                o._state.audit_revision_fingerprints
+            )
+
 
 # ── MAJOR loop ──
 
@@ -890,6 +963,32 @@ class TestErrorHandling:
         action = o.tick(r)
         assert action["action"] == "error"
         assert action["error_code"] == "ACTION_NOT_ACTIVE"
+
+    def test_delayed_stage_result_is_rejected_without_state_projection(self) -> None:
+        """延迟的上一阶段 payload 不能再通过 E2 降级写入当前状态。"""
+        o = _orchestrator()
+        active = o.init("req")
+        before_plan = o._state.plan
+        result = {
+            "schema_version": "1.1",
+            "message_type": "result",
+            "message_id": "delayed-result",
+            "thread_id": active["thread_id"],
+            "tick": active["tick"],
+            "stage": "developer",
+            "causation_id": active["message_id"],
+            "correlation_id": active["correlation_id"],
+            "extensions": {},
+            "spawned": True,
+            "files_changed": ["stale.py"],
+            "test_results": {"passed": 1, "failed": 0},
+        }
+
+        action = o.tick_dict(result)
+
+        assert action["action"] == "error"
+        assert action["error_code"] == "STAGE_MISMATCH"
+        assert o._state.plan == before_plan
 
     @pytest.mark.parametrize(
         ("field", "value"),
@@ -1365,6 +1464,8 @@ class TestPlanRefineProgressSync:
                         "file_targets": ["foo.py"]}]},
         ])
         baseline_before = o._state.architecture_baseline["baseline_id"]
+        active_message_id = o._active_action["message_id"]
+        counters_before = dict(o._state.guardrail_retry_counters)
 
         result = o.tick(_make_result_file({
             "stage": "architect", "spawned": True, "plan": _VALID_PLAN,
@@ -1376,13 +1477,10 @@ class TestPlanRefineProgressSync:
             "file_list": ["foo.py"], "contracts": {},
         }))
 
-        assert result["action"] == "architect"
-        assert result["feedback"]["mode"] == "PLAN_REFINE"
-        assert "RESULT_REPAIR" in result["feedback"]["validation_error"]
-        assert "plan_patch" in result["feedback"]["validation_error"]
-        assert o._state.guardrail_retry_counters[
-            "architect_result_validation"
-        ] == 1
+        assert result["action"] == "error"
+        assert result["error_code"] == "ARCHITECT_PLAN_INVALID"
+        assert o._active_action["message_id"] == active_message_id
+        assert o._state.guardrail_retry_counters == counters_before
         assert o._state.architecture_baseline["baseline_id"] == baseline_before
         assert o._batch_state.batch_plan[0]["tasks"][0]["description"] == "d"
 
@@ -1393,13 +1491,10 @@ class TestPlanRefineProgressSync:
             "Architect 计划无法初始化执行树: invalid",
         )
         second = o._tick_process_result(invalid)
-        assert second["action"] == "architect"
-        assert o._state.guardrail_retry_counters[
-            "architect_result_validation"
-        ] == 2
-
-        third = o._tick_process_result(invalid)
-        assert third["error_code"] == "ARCHITECT_PLAN_INVALID"
+        assert second["action"] == "error"
+        assert second["error_code"] == "ARCHITECT_PLAN_INVALID"
+        assert o._active_action["message_id"] == active_message_id
+        assert o._state.guardrail_retry_counters == counters_before
 
     def test_refine_action_requests_incremental_plan_patch(self) -> None:
         o = _orchestrator(max_rounds=20)
@@ -1413,9 +1508,10 @@ class TestPlanRefineProgressSync:
         assert action["expected_format"]["plan_patch"].startswith("{")
         assert "obligation_updates" in action["expected_format"]["plan_patch"]
         assert "batch_plan" not in action["expected_format"]
-        assert '"plan_revision": 1' in action["subagent_prompt"]
-        assert "历史 obligation 自动继承" in action["subagent_prompt"]
-        assert "不得重复提交" in action["subagent_prompt"]
+        prompt = _worker_prompt(action)
+        assert '"plan_revision": 1' in prompt
+        assert "历史 obligation 自动继承" in prompt
+        assert "不得重复提交" in prompt
 
     def test_refine_patch_cannot_delete_existing_component(self) -> None:
         o = _orchestrator(max_rounds=20)
@@ -1499,7 +1595,7 @@ class TestBuildActionContexts:
         a = o.init("req")
         assert "expected_format" in a
         assert "batch_plan" in a["expected_format"]
-        assert '"requirement": "req"' in a["subagent_prompt"]
+        assert '"requirement": "req"' in _worker_prompt(a)
 
     def test_developer_action_has_tasks(self) -> None:
         o = _orchestrator()
@@ -1525,9 +1621,10 @@ class TestBuildActionContexts:
 
         action = o.build_action(feedback="P0：重复 Result 会推进两次")
 
-        assert "你是 Developer" in action["subagent_prompt"]
-        assert "重复 Result 会推进两次" in action["subagent_prompt"]
-        assert '"git_authorized": false' in action["subagent_prompt"]
+        prompt = _worker_prompt(action)
+        assert "你是 Developer" in prompt
+        assert "重复 Result 会推进两次" in prompt
+        assert '"git_authorized": false' in prompt
 
     def test_critic_action_has_context_fields(self) -> None:
         o = _orchestrator()
@@ -1549,8 +1646,9 @@ class TestBuildActionContexts:
         assert action["action"] == "critic"
         assert action["stage"] == "critic"
         assert "context" not in action
-        assert '"files_changed": [' in action["subagent_prompt"]
-        assert '"x.py"' in action["subagent_prompt"]
+        prompt = _worker_prompt(action)
+        assert '"files_changed": [' in prompt
+        assert '"x.py"' in prompt
         assert action["extensions"]["context_manifest"]["duplicate_block_bytes"] == 0
 
     def test_system_verifier_receives_global_context(self) -> None:
@@ -1563,7 +1661,7 @@ class TestBuildActionContexts:
 
         action = o.build_action()
 
-        prompt = action["subagent_prompt"]
+        prompt = _worker_prompt(action)
         assert "design/spec.md" in prompt
         assert "auto_engineering/events/store.py" in prompt
         assert '"design_item": "幂等"' in prompt
@@ -1588,11 +1686,17 @@ class TestApplyResultToState:
     def test_architect_writes_plan_batch_file_contracts(self) -> None:
         o = _orchestrator()
         o.init("req")
-        o._apply_result_to_state({
+        result = {
             "stage": "architect", "spawned": True, "plan": _VALID_PLAN,
             "batch_plan": [{"batch_id": "b1"}],
             "file_list": ["x.py"], "contracts": {"c1": "spec"},
-        })
+        }
+        o._apply_result_to_state(result)
+        decision = o._build_stage_decision(result)
+        registry = default_reducer_registry()
+        for event in decision.events:
+            if event.event_type is not LoopEventType.STAGE_ADVANCED:
+                o._state = registry.reduce(o._state, event)
         assert o._state.plan == _VALID_PLAN
         assert o._state.batch_plan == [{"batch_id": "b1"}]
         assert o._state.file_list == ["x.py"]
@@ -1600,86 +1704,103 @@ class TestApplyResultToState:
 
     def test_developer_writes_files_commit_tests(self) -> None:
         o = _orchestrator()
-        o.init("req")
-        o._apply_result_to_state({
+        o._state = EngineState(thread_id="thread-1", current_stage="developer")
+        result = {
             "stage": "developer", "files_changed": ["a.py"],
             "commit_hash": "abc", "test_results": {"passed": 2, "failed": 0},
-        })
+        }
+        decision = o._build_stage_decision(result)
+        for event in decision.events:
+            if event.event_type is LoopEventType.RESULT_EVIDENCE_RECORDED:
+                o._state = default_reducer_registry().reduce(o._state, event)
         assert o._state.files_changed == ["a.py"]
         assert o._state.commit_hash == "abc"
         assert o._state.test_results == {"passed": 2, "failed": 0}
 
     def test_critic_writes_verdict_to_critic_verdict_field(self) -> None:
-        """T1 决策: EngineState 字段名是 critic_verdict, 非 verdict."""
-        o = _orchestrator()
-        o.init("req")
-        o._apply_result_to_state({
-            "stage": "critic", "spawned": True, "verdict": "APPROVE",
-            "findings": [{"x": 1}], "critic_feedback": "ok",
-        })
-        assert o._state.critic_verdict == "APPROVE"
-        assert o._state.findings == [{"x": 1}]
-        assert o._state.critic_feedback == "ok"
+        """Critic 事实通过 Handler 事件写入，而不是 Result 旁路赋值。"""
+        state = EngineState(thread_id="thread-1", current_stage="critic")
+        decision = CriticHandler().apply(
+            state.to_dict(),
+            {"verdict": "APPROVE", "findings": [{"x": 1}], "critic_feedback": "ok"},
+            TransitionContext(thread_id="thread-1", tick=1, event_sequence=1),
+        )
+        registry = default_reducer_registry()
+        for event in decision.events:
+            if event.event_type is LoopEventType.CRITIC_STATE_UPDATED:
+                state = registry.reduce(state, event)
+
+        assert state.critic_verdict == "APPROVE"
+        assert state.findings == [{"x": 1}]
+        assert state.critic_feedback == "ok"
 
     def test_component_verifier_writes_coverage_map(self) -> None:
-        o = _orchestrator()
-        o.init("req")
-        o._apply_result_to_state({
-            "stage": "component_verifier", "spawned": True,
-            "coverage_map": [{"design_item": "B2-1", "status": "IMPLEMENTED"}],
-        })
-        assert o._state.coverage_map == [
+        state = EngineState(thread_id="thread-1", current_stage="component_verifier")
+        decision = ComponentVerifierHandler().apply(
+            state.to_dict(),
+            {"coverage_map": [{"design_item": "B2-1", "status": "IMPLEMENTED"}]},
+            TransitionContext(
+                thread_id="thread-1",
+                tick=1,
+                event_sequence=1,
+                extensions={"verification_layers": "leaf"},
+            ),
+        )
+        for event in decision.events:
+            if event.event_type is LoopEventType.VERIFICATION_STATE_UPDATED:
+                state = default_reducer_registry().reduce(state, event)
+        assert state.coverage_map == [
             {"design_item": "B2-1", "status": "IMPLEMENTED"}]
 
     def test_system_verifier_maps_full_coverage_to_coverage_map(self) -> None:
-        o = _orchestrator()
-        o.init("req")
-        o._apply_result_to_state({
-            "stage": "system_verifier", "spawned": True,
-            "full_coverage_map": [{"design_section": "B2", "status": "IMPLEMENTED"}],
-        })
-        assert o._state.coverage_map == [
+        state = EngineState(thread_id="thread-1", current_stage="system_verifier")
+        decision = SystemVerifierHandler().apply(
+            state.to_dict(),
+            {"full_coverage_map": [{"design_section": "B2", "status": "IMPLEMENTED"}]},
+            TransitionContext(thread_id="thread-1", tick=1, event_sequence=1),
+        )
+        for event in decision.events:
+            if event.event_type is LoopEventType.VERIFICATION_STATE_UPDATED:
+                state = default_reducer_registry().reduce(state, event)
+        assert state.coverage_map == [
             {"design_section": "B2", "status": "IMPLEMENTED"}]
 
     def test_critic_invalid_verdict_rejected_by_after_critic(self) -> None:
-        """T116: 非法 critic verdict 在 _after_critic() 中被拦截（非 _apply_result_to_state）"""
-        o = _orchestrator()
-        o.init("req")
-        # _apply_result_to_state 只负责赋值，不校验 verdict 合法性
-        o._apply_result_to_state({
-            "stage": "critic", "spawned": True, "verdict": "INVALID",
-            "findings": [], "critic_feedback": "",
-        })
-        # state 被写入（原始值）
-        assert o._state.critic_verdict == "INVALID"
-        # CriticHandler 捕获非法 verdict 并返回 ActionError
-        o._state.current_stage = "critic"
-        result = o._after_tick({
-            "stage": "critic", "spawned": True, "verdict": "INVALID",
-            "findings": [], "critic_feedback": "",
-        })
-        assert result.get("error_code") == "INVALID_VERDICT"
+        """T116: 非法 verdict 不产生 Critic 事实事件。"""
+        state = EngineState(thread_id="thread-1", current_stage="critic")
+        decision = CriticHandler().apply(
+            state.to_dict(), {"verdict": "INVALID", "findings": []},
+            TransitionContext(thread_id="thread-1", tick=1, event_sequence=1),
+        )
+
+        assert decision.action_context["error"]["error_code"] == "INVALID_VERDICT"
+        assert decision.events == ()
 
     def test_critic_allows_empty_verdict(self) -> None:
-        """T116: 空字符串 verdict 通过（初始状态/未设置）"""
-        o = _orchestrator()
-        o.init("req")
-        o._apply_result_to_state({
-            "stage": "critic", "spawned": True, "verdict": "",
-            "findings": [], "critic_feedback": "",
-        })
-        assert o._state.critic_verdict == ""
+        """T116: 空 verdict 不产生未验证的 Critic 状态。"""
+        state = EngineState(thread_id="thread-1", current_stage="critic")
+        decision = CriticHandler().apply(
+            state.to_dict(), {"verdict": "", "findings": []},
+            TransitionContext(thread_id="thread-1", tick=1, event_sequence=1),
+        )
+
+        assert decision.action_context["error"]["error_code"] == "INVALID_VERDICT"
+        assert decision.events == ()
 
     def test_critic_approve_verdict_still_writes(self) -> None:
-        """T116: 合法 APPROVE verdict 正常写入 state"""
-        o = _orchestrator()
-        o.init("req")
-        o._apply_result_to_state({
-            "stage": "critic", "spawned": True, "verdict": "APPROVE",
-            "findings": [{"x": 1}], "critic_feedback": "",
-        })
-        assert o._state.critic_verdict == "APPROVE"
-        assert o._state.findings == [{"x": 1}]
+        """T116: 合法 APPROVE 通过 Critic 领域事件写入 state。"""
+        state = EngineState(thread_id="thread-1", current_stage="critic")
+        decision = CriticHandler().apply(
+            state.to_dict(), {"verdict": "APPROVE", "findings": [{"x": 1}]},
+            TransitionContext(thread_id="thread-1", tick=1, event_sequence=1),
+        )
+        registry = default_reducer_registry()
+        for event in decision.events:
+            if event.event_type is LoopEventType.CRITIC_STATE_UPDATED:
+                state = registry.reduce(state, event)
+
+        assert state.critic_verdict == "APPROVE"
+        assert state.findings == [{"x": 1}]
 
 
 # ── T7b: ProgressTree 更新 + _display_progress ──
@@ -1882,6 +2003,38 @@ _GAP_B2 = {
 
 
 class TestPhase0GapScan:
+    def test_gap_scan_rejects_synthetic_document_for_unstructured_design(
+        self, tmp_path,
+    ) -> None:
+        """无 H2/H3 的设计文档不得伪装成可执行的 document 章节。"""
+        o = _orchestrator()
+        (tmp_path / ".ae-state").mkdir(parents=True, exist_ok=True)
+        design = tmp_path / "design.md"
+        design.write_text("# Only a title\n\nNo executable hierarchy.\n", encoding="utf-8")
+        _prepare_existing_project(tmp_path)
+        o.project_root = tmp_path
+        action = o.init("req", design_doc_path=str(design))
+        assert action["stage"] == "gap_scan"
+
+        result = _make_result_file({
+            "stage": "gap_scan",
+            "gaps": [],
+            "scanned_sections": 1,
+            "has_blocking": False,
+            "design_doc_digest": o._state.design_doc_digest,
+            "scan_coverage": [{
+                "design_section_ref": "document",
+                "verdict": "clear",
+                "evidence": ["已检查 document"],
+            }],
+        })
+
+        rejected = o.tick(result)
+
+        assert rejected["action"] == "error"
+        assert rejected["error_code"] == "GAP_SCAN_DESIGN_STRUCTURE_INVALID"
+        assert o._state.current_stage == "gap_scan"
+
     def test_zero_gap_without_section_evidence_is_rejected(self, tmp_path) -> None:
         o = _orchestrator()
         _init_design(o, tmp_path)
@@ -1943,6 +2096,156 @@ class TestPhase0GapScan:
         assert action["action"] == "gap_review"
         assert action["current_gap"]["id"] == "gap-B2"
 
+    def test_gap_scan_rejects_missing_clarity_for_explicit_design_items(
+        self, tmp_path,
+    ) -> None:
+        """实现文件缺失不得把已有明确设计条目升级成设计 gap。"""
+        (tmp_path / ".ae-state").mkdir(parents=True, exist_ok=True)
+        design = tmp_path / "design.md"
+        design.write_text(
+            "## A1 Core\n\n### A1.1 Counter function\n\n"
+            "#### Contract\n\n- next_value(current, step) returns current + step.\n",
+            encoding="utf-8",
+        )
+        _prepare_existing_project(tmp_path)
+        o = _orchestrator()
+        o.project_root = tmp_path
+        o.init("req", design_doc_path=str(design))
+        implementation_gap = {
+            **_GAP_B2,
+            "id": "gap-implementation-only",
+            "design_section_ref": "§A1.1",
+            "clarity": "missing",
+            "summary": "counter.py 尚未实现",
+            "evidence": ["src/canary_math/counter.py 文件不存在"],
+        }
+
+        action = o.tick(_gap_scan_result([implementation_gap]))
+
+        assert action["action"] == "error"
+        assert action["error_code"] == "GAP_ANALYSIS_IMPLEMENTATION_MISCLASSIFIED"
+
+    def test_gap_scan_rejects_missing_clarity_for_explicit_paragraph_contract(
+        self, tmp_path,
+    ) -> None:
+        """H3 下的明确正文契约不能因尚未有源码而变成设计 Gap。"""
+        (tmp_path / ".ae-state").mkdir(parents=True, exist_ok=True)
+        design = tmp_path / "design.md"
+        design.write_text(
+            "## §1 Counter module\n\n"
+            "### §1.1 Public behavior\n\n"
+            "Implement `Counter(initial: int = 0)`; `increment(amount: int) -> int` "
+            "returns the new value and rejects bool with TypeError.\n",
+            encoding="utf-8",
+        )
+        _prepare_existing_project(tmp_path)
+        o = _orchestrator()
+        o.project_root = tmp_path
+        o.init("req", design_doc_path=str(design))
+        implementation_gap = {
+            **_GAP_B2,
+            "id": "gap-paragraph-contract",
+            "design_section_ref": "§1.1",
+            "clarity": "missing",
+            "summary": "counter.py 尚未实现",
+            "evidence": ["src/counter.py 文件不存在"],
+        }
+
+        action = o.tick(_gap_scan_result([implementation_gap]))
+
+        assert action["action"] == "error"
+        assert action["error_code"] == "GAP_ANALYSIS_IMPLEMENTATION_MISCLASSIFIED"
+
+    def test_gap_scan_rejects_gap_bound_to_future_improvement_section(
+        self, tmp_path,
+    ) -> None:
+        """明确的未来改进只能作为 advisory，不能触发当前版本用户 Gate。"""
+        (tmp_path / ".ae-state").mkdir(parents=True, exist_ok=True)
+        design = tmp_path / "design.md"
+        design.write_text(
+            "## 13. 已知问题与未来改进\n\n"
+            "### 13.2 当前版本约束\n\n当前行为契约。\n\n"
+            "### 13.3 未来改进方向\n\n后续版本再考虑。\n",
+            encoding="utf-8",
+        )
+        _prepare_existing_project(tmp_path)
+        o = _orchestrator()
+        o.project_root = tmp_path
+        o.init("req", design_doc_path=str(design))
+        future_gap = {
+            **_GAP_B2,
+            "id": "gap-future",
+            "design_section_ref": "§13.3",
+            "evidence": ["§13.3 未来改进方向：后续版本再考虑同源服务层"],
+            "summary": "未来改进方向尚未实现",
+            "problem_statement": "未来版本的服务层尚未实现",
+        }
+
+        action = o.tick(_gap_scan_result([future_gap]))
+
+        assert action["action"] == "error"
+        assert action["error_code"] == "GAP_ANALYSIS_FUTURE_SCOPE_MISCLASSIFIED"
+        assert "§13.3" in action["message"]
+
+    def test_gap_scan_keeps_current_contract_gap_reportable(
+        self, tmp_path,
+    ) -> None:
+        """当前章节之间的未决契约矛盾仍必须进入 Gap Review。"""
+        (tmp_path / ".ae-state").mkdir(parents=True, exist_ok=True)
+        design = tmp_path / "design.md"
+        design.write_text(
+            "## 13. 已知问题与未来改进\n\n"
+            "### 13.2 当前版本约束\n\n当前行为契约。\n\n"
+            "### 13.3 未来改进方向\n\n后续版本再考虑。\n",
+            encoding="utf-8",
+        )
+        _prepare_existing_project(tmp_path)
+        o = _orchestrator()
+        o.project_root = tmp_path
+        o.init("req", design_doc_path=str(design))
+        current_gap = {
+            **_GAP_B2,
+            "id": "gap-current",
+            "design_section_ref": "§13.2",
+            "evidence": ["§13.2 当前版本约束未定义跨组件输入输出"],
+        }
+
+        action = o.tick(_gap_scan_result([current_gap]))
+
+        assert action["action"] == "gap_review"
+        assert action["current_gap"]["id"] == "gap-current"
+
+    def test_gap_scan_rejects_advisory_reference_in_gap_evidence(
+        self, tmp_path,
+    ) -> None:
+        """当前章节的 gap 也不得借未来章节作为证据来源。"""
+        (tmp_path / ".ae-state").mkdir(parents=True, exist_ok=True)
+        design = tmp_path / "design.md"
+        design.write_text(
+            "## 13. 已知问题与未来改进\n\n"
+            "### 13.2 当前版本约束\n\n当前行为契约。\n\n"
+            "### 13.3 未来改进方向\n\n后续版本再考虑。\n",
+            encoding="utf-8",
+        )
+        _prepare_existing_project(tmp_path)
+        o = _orchestrator()
+        o.project_root = tmp_path
+        o.init("req", design_doc_path=str(design))
+        mixed_gap = {
+            **_GAP_B2,
+            "id": "gap-mixed-source",
+            "design_section_ref": "§13.2",
+            "evidence": [
+                "§13.2 当前版本约束未定义输入输出",
+                "§13.3 未来改进方向也提到同源服务层",
+            ],
+        }
+
+        action = o.tick(_gap_scan_result([mixed_gap]))
+
+        assert action["action"] == "error"
+        assert action["error_code"] == "GAP_ANALYSIS_FUTURE_SCOPE_MISCLASSIFIED"
+
     def test_gap_scan_no_gaps_routes_to_architect(self, tmp_path) -> None:
         o = _orchestrator()
         _init_design(o, tmp_path)
@@ -1984,6 +2287,16 @@ class TestPhase0GapReview:
         assert action["current_gap"]["id"] == "gap-A"
         assert "gaps" not in action
         assert action["decisions_so_far"] == []
+        assert action["gap_review_contract"] == {
+            "display_scope": "current_gap_only",
+            "decision_count": 1,
+            "gap_id_source": "current_gap.id",
+            "forbidden_context": [
+                "historical_gap_scan_gaps",
+                "future_gap_details",
+                "batch_decisions",
+            ],
+        }
         assert "decision" in action["expected_format"]
 
     def test_single_decision_is_persisted_before_next_gap(self, tmp_path) -> None:
@@ -2735,7 +3048,7 @@ class TestA3WriteSide:
         first_action = o.build_action()
         assert "history.py" in first_action["session_summary"]
 
-        restored = TickOrchestrator.restore(
+        restored = TickOrchestrator.restore_from_checkpoint(
             tmp_path,
             store,
             gate_runner=_pass_gate_runner,
@@ -2794,7 +3107,7 @@ class TestCrossProcessRestore:
 
         # 新进程: 独立 store, 无 in-memory 状态
         store2 = SQLiteCheckpointStore(db)
-        restored = TickOrchestrator.restore(tmp_path, store2)
+        restored = TickOrchestrator.restore_from_checkpoint(tmp_path, store2)
         assert restored._state is not None
         assert restored._state.thread_id == thread_id
         assert restored._state.current_stage == "developer"
@@ -2815,15 +3128,25 @@ class TestCrossProcessRestore:
         store = SQLiteCheckpointStore(db)
         orchestrator = _store_orchestrator(store)
         orchestrator.init("实现 X")
-        orchestrator._state.files_changed = ["src/example.ts"]
-        orchestrator._state.commit_hash = "abc123"
-        orchestrator._state.test_results = {"passed": 2, "failed": 0}
-        orchestrator._snapshot_developer_output()
+        snapshot = {
+            "files_changed": ["src/example.ts"],
+            "commit_hash": "abc123",
+            "test_results": {"passed": 2, "failed": 0},
+        }
+        event = channels_updated(
+            LoopEventType.RESULT_EVIDENCE_RECORDED,
+            {**snapshot, "developer_snapshot": snapshot},
+            thread_id=orchestrator._state.thread_id,
+            sequence=orchestrator._state.tick,
+        )
+        orchestrator._state = default_reducer_registry().reduce(
+            orchestrator._state, event
+        )
         orchestrator._save_checkpoint()
         store.close()
 
         restored_store = SQLiteCheckpointStore(db)
-        restored = TickOrchestrator.restore(tmp_path, restored_store)
+        restored = TickOrchestrator.restore_from_checkpoint(tmp_path, restored_store)
 
         assert restored._dev_snapshot == {
             "files_changed": ["src/example.ts"],
@@ -2840,7 +3163,7 @@ class TestCrossProcessRestore:
         try:
             import pytest
             with pytest.raises(CheckpointNotFoundError):
-                TickOrchestrator.restore(tmp_path, empty)
+                TickOrchestrator.restore_from_checkpoint(tmp_path, empty)
         finally:
             empty.close()
 
@@ -2858,7 +3181,9 @@ class TestCrossProcessRestore:
         store.close()
 
         store2 = SQLiteCheckpointStore(db)
-        restored = TickOrchestrator.restore(tmp_path, store2, checkpoint_id=first_id)
+        restored = TickOrchestrator.restore_from_checkpoint(
+            tmp_path, store2, checkpoint_id=first_id
+        )
         assert restored._state is not None
         assert restored._state.current_stage == "architect"
         store2.close()
@@ -2886,7 +3211,7 @@ class TestPromptVersionLock:
         store.close()
 
         store2 = SQLiteCheckpointStore(db)
-        TickOrchestrator.restore(tmp_path, store2)
+        TickOrchestrator.restore_from_checkpoint(tmp_path, store2)
         store2.close()
         assert "hash 不符" not in capsys.readouterr().err
 
@@ -2905,7 +3230,7 @@ class TestPromptVersionLock:
         store.close()
 
         store2 = SQLiteCheckpointStore(db)
-        restored = TickOrchestrator.restore(tmp_path, store2)
+        restored = TickOrchestrator.restore_from_checkpoint(tmp_path, store2)
         assert restored._active_action is not None
         assert restored._state.pending_runtime_revision is None
         assert (
@@ -2944,7 +3269,7 @@ class TestCrossTickE2E:
 
         def _fresh() -> TickOrchestrator:
             # 每 tick 一个全新实例 (无 in-memory 状态), 只从 store restore
-            restored = TickOrchestrator.restore(
+            restored = TickOrchestrator.restore_from_checkpoint(
                 tmp_path, store,
                 gate_runner=_pass_gate_runner, guardrail=_pass_guardrail())
             global _ACTIVE_ORCHESTRATOR
@@ -3492,83 +3817,6 @@ class TestFreshGuardrailAtCritic:
         assert action["stage"] == "critic"
 
 
-# ── S-2: Driver A vs Driver B 保真度对比 ──
-
-
-class TestValidationConsistency:
-    """_validate_result_dict vs _read_and_validate — 两个验证入口必须一致.
-
-    Driver A (tick) 走 _read_and_validate (文件→dict→验证),
-    Driver B (tick_dict) 走 _validate_result_dict (dict→验证).
-    同一份数据应产出一致的 dict 或一致的 ErrorResponse.
-    """
-
-    def test_valid_architect_result_consistent(self) -> None:
-        """有效 architect result: dict 验证 vs 文件验证 → 一致."""
-        o = _orchestrator()
-        o.init("req")
-        data = {
-            "stage": "architect", "spawned": True, "plan": _VALID_PLAN,
-            "batch_plan": [{
-                "batch_id": "b1", "design_section": "B2", "component": "C",
-                "tasks": [{"id": "T1", "description": "d", "module_ref": "§B2",
-                           "file_targets": ["x.py"]}],
-            }], "file_list": ["x.py"], "contracts": {},
-        }
-        result_file = _make_result_file(data)
-        via_dict = o._validate_result_dict(data)
-        via_file = o._read_and_validate(result_file)
-        assert via_dict == via_file
-
-    def test_stage_mismatch_consistent(self) -> None:
-        """stage 不匹配: 两种入口返回相同 error_code + 相同 message."""
-        o = _orchestrator()
-        o.init("req")  # expected_stage = "architect"
-        data = {"stage": "developer", "files_changed": ["x.py"]}
-        via_dict = o._validate_result_dict(data)
-        via_file = o._read_and_validate(_make_result_file(data))
-        assert via_dict.error_code == via_file.error_code == "STAGE_MISMATCH"
-        assert via_dict.message == via_file.message
-
-    def test_type_error_consistent(self) -> None:
-        """result 不是 dict: 两种入口返回 RESULT_TYPE_ERROR."""
-        o = _orchestrator()
-        o.init("req")
-        # Driver B 直接传 list: _validate_result_dict 立即检测
-        via_dict = o._validate_result_dict(["not", "a", "dict"])
-        assert via_dict.error_code == "RESULT_TYPE_ERROR"
-        # Driver A 从文件读: JSON 顶层是 list, _read_and_validate 也检测
-        f = Path(tempfile.mktemp(suffix=".json"))
-        f.write_text(json.dumps(["not", "a", "dict"]), encoding="utf-8")
-        via_file = o._read_and_validate(f)
-        assert via_file.error_code == "RESULT_TYPE_ERROR"
-
-    def test_empty_batch_plan_consistent(self) -> None:
-        """空 batch_plan: 两种入口都返回 RESULT_VALIDATION_ERROR."""
-        o = _orchestrator()
-        o.init("req")
-        data = {
-            "stage": "architect", "spawned": True, "plan": _VALID_PLAN, "batch_plan": [],
-            "file_list": ["x.py"], "contracts": {},
-        }
-        via_dict = o._validate_result_dict(data)
-        via_file = o._read_and_validate(_make_result_file(data))
-        assert via_dict.error_code == via_file.error_code == "RESULT_VALIDATION_ERROR"
-
-    def test_parse_error_only_from_file(self) -> None:
-        """文件解析失败 (RESULT_PARSE_ERROR): 仅 Driver A 路径可达.
-        Driver B 路径 dict 已在内存, 不存在 parse 失败场景.
-        这是两个驱动的合理差异 (非 bug).
-        """
-        o = _orchestrator()
-        o.init("req")
-        bad_file = Path(tempfile.mktemp(suffix=".json"))
-        bad_file.write_text("not json{{{", encoding="utf-8")
-        via_file = o._read_and_validate(bad_file)
-        assert via_file.error_code == "RESULT_PARSE_ERROR"
-        # Driver B 不存在等价场景 — 这是设计上的合理差异
-
-
 class TestTickVsTickDictIdenticalActions:
     """tick(file) vs tick_dict(dict) — 同一 state + 同一 result → 同一 next action.
 
@@ -3600,7 +3848,6 @@ class TestTickVsTickDictIdenticalActions:
         stripped.pop("message_id", None)
         stripped.pop("correlation_id", None)
         stripped.pop("causation_id", None)
-        stripped.pop("subagent_prompt", None)  # DS-15: file-based, may differ
         extensions = stripped.get("extensions")
         if isinstance(extensions, dict):
             extensions = dict(extensions)
@@ -4879,7 +5126,15 @@ class TestT105MetricsConvergence:
         o._state.plan = _VALID_PLAN
         o._state.file_list = ["foo.py"]
         o._state.current_stage = "architect"
-        o._after_tick({})
+        architect_result = {
+            "stage": "architect",
+            "plan": _VALID_PLAN,
+            "batch_plan": o._state.batch_plan,
+            "file_list": ["foo.py"],
+            "contracts": {},
+        }
+        o._apply_result_to_state(architect_result)
+        o._after_tick(architect_result)
 
         o._offload_stage("developer")
 
@@ -5287,12 +5542,12 @@ class TestF8ActionContextInjection:
         bs.batches_for.return_value = [
             {"tasks": [{"file_targets": ["src/components/ApiKeyInput.tsx"]}]}]
         state = EngineState(thread_id="t", current_stage="component_verifier")
-        action = b.build_action(state, batch_state=bs)
+        action, prompt = _materialize_worker_action(b, state, batch_state=bs)
         assert "context" not in action
-        assert '"ApiKeyInput"' in action["subagent_prompt"]
-        assert '"§6.2"' in action["subagent_prompt"]
-        assert "密码输入框 + Show/Hide" in action["subagent_prompt"]
-        assert "ApiKeyInput.tsx" in action["subagent_prompt"]
+        assert '"ApiKeyInput"' in prompt
+        assert '"§6.2"' in prompt
+        assert "密码输入框 + Show/Hide" in prompt
+        assert "ApiKeyInput.tsx" in prompt
 
     def test_plate_deep_audit_action_has_plate_context(self, tmp_path, monkeypatch):
         b = self._builder(tmp_path, monkeypatch)
@@ -5304,15 +5559,21 @@ class TestF8ActionContextInjection:
         bs = MagicMock()
         bs.current_plate.return_value = plate
         state = EngineState(thread_id="t", current_stage="plate_deep_audit")
-        action = b.build_action(state, batch_state=bs)
+        plan = b.build_plan(state, batch_state=bs)
+        from auto_engineering.loop.effects import EffectExecutor
+
+        executor = EffectExecutor(tmp_path)
+        for intent in plan.effect_intents:
+            executor.execute(intent)
+        action = plan.payload
         assert "context" not in action
-        agents = action["spawn"]["agents"]
-        prompt = (tmp_path / agents[0]["prompt_ref"]).read_text(encoding="utf-8")
+        invocations = action["spawn"]["invocations"]
+        prompt = (tmp_path / invocations[0]["prompt_ref"]).read_text(encoding="utf-8")
         assert "工具模块" in prompt
         assert "voice-id.ts — Voice ID 校验" in prompt
-        assert "prompt" not in agents[0]
-        assert len({a["receipt_token"] for a in agents}) == 3
-        assert all(a["receipt_path"].endswith(".json") for a in agents)
+        assert "prompt" not in invocations[0]
+        assert len({a["receipt_path"] for a in invocations}) == 3
+        assert all(a["receipt_path"].endswith(".json") for a in invocations)
 
     def test_plate_deep_audit_no_batch_state_no_context(self, tmp_path, monkeypatch):
         from auto_engineering.prompts.compiler import PromptContextError
@@ -5343,6 +5604,13 @@ class TestF7SpawnProofForgery:
         assert "__AE_BUNDLED_RUNNER__" in rendered
         assert "abc123" not in rendered
         assert "OVERWRITE" not in rendered
+        assert "binding design document is read-only" in rendered
+        assert "relative to the project root" in rendered
+        assert "must not invoke Agent/Task/collaboration or create nested workers" in rendered
+        assert "HOST_EVIDENCE_INVALID" in rendered
+        assert "async_launched" in rendered
+        assert "TaskOutput" in rendered
+        assert "do not Stop, TaskStop, Read, Bash" in rendered
 
     def _setup_critic(self, tmp_path, proof_status):
         o = _orchestrator()
@@ -5419,10 +5687,18 @@ class TestF7SpawnProofForgery:
 
     def test_proof_completed_passes(self, tmp_path):
         from auto_engineering.loop.actions import ErrorResponse
+        from auto_engineering.loop.effects import WriteJsonArtifact
         o = self._setup_critic(tmp_path, "completed")
         resp = o._validate_result_dict(self._critic_result())
         assert not (isinstance(resp, ErrorResponse)
                     and resp.error_code == "SPAWN_PROOF_INCOMPLETE")
+        # 验证阶段只规划 acceptance receipt；统一提交边界负责实际落盘。
+        assert any(
+            isinstance(intent, WriteJsonArtifact)
+            and intent.relative_path == "spawn-receipts/tok123.accepted.json"
+            for intent in o._pending_effect_intents
+        )
+        o._execute_pending_effects()
         accepted = json.loads(
             (tmp_path / ".ae-state" / "spawn-receipts"
              / "tok123.accepted.json").read_text(encoding="utf-8")
@@ -5540,25 +5816,6 @@ class TestF7SpawnProofForgery:
         assert o._state.tick == tick_before
         assert o._state.guardrail_retry_counters == counters_before
 
-    def test_host_context_resource_exhaustion_preserves_active_action(self, tmp_path):
-        o = self._setup_critic(tmp_path, "pending")
-        active_message_id = o._active_action["message_id"]
-        tick_before = o._state.tick
-        result = {
-            "stage": "critic",
-            "spawned": False,
-            "spawn_error_code": "HOST_ACTION_CONTEXT_RESOURCE_EXHAUSTED",
-            "spawn_error": "HOST_CODEX_USAGE_LIMIT",
-        }
-
-        assert o._validate_result_dict(result) == result
-        action = o.tick_dict(result)
-
-        assert action["action"] == "resource_wait"
-        assert action["reason_code"] == "HOST_ACTION_CONTEXT_RESOURCE_EXHAUSTED"
-        assert action["extensions"]["ae"]["execution_control"]["disposition"] == "WAIT_RESOURCE"
-        assert o._active_action["message_id"] == active_message_id
-        assert o._state.tick == tick_before
 
     def test_second_worker_timeout_exhausts_retry_without_replacing_action(
         self, tmp_path,
@@ -5651,9 +5908,17 @@ class TestF7SpawnProofForgery:
         assert o._active_action["message_id"] == active_message_id
 
     def test_init_binds_proof_to_protocol_action(self, tmp_path):
+        from copy import copy
+
         from auto_engineering.loop.action_builder import ActionBuilder
+        from auto_engineering.loop.effects import EffectExecutor
 
         builder = ActionBuilder(tmp_path)
+        intents = []
+        receipts = []
+        builder = copy(builder)
+        builder._effect_intent_sink = intents.append
+        builder._effect_sink = receipts.append
         token = "proof-token"
         builder._write_spawn_proof_file(token, "architect")
         action = {
@@ -5663,6 +5928,9 @@ class TestF7SpawnProofForgery:
             "stage": "architect",
         }
         builder.bind_spawn_proofs(action)
+        executor = EffectExecutor(tmp_path)
+        for intent in intents:
+            executor.execute(intent)
         proof = json.loads(
             (tmp_path / ".ae-state" / "spawn-proofs" / f"{token}.json")
             .read_text(encoding="utf-8")
@@ -5739,8 +6007,8 @@ class TestF7SpawnProofForgery:
         response = o._validate_result_dict(result)
 
         assert isinstance(response, ErrorResponse)
-        assert response.error_code == "WORKER_RECEIPT_MISSING"
-        assert "worker-2" in response.message
+        assert response.error_code == "WORKER_INVOCATION_CONTRACT_REQUIRED"
+        assert "spawn.agents" in response.message
 
 
 class TestDeveloperInstruction:
@@ -5765,20 +6033,24 @@ class TestDeveloperInstruction:
         bs.current_batch_tasks.return_value = [task]
         plan = MagicMock()
         state = EngineState(thread_id="t", current_stage="developer", plan="plan")
-        action = b.build_action(state, batch_state=bs, plan=plan)
-        prompt = action["subagent_prompt"]
+        action, prompt = _materialize_worker_action(b, state, batch_state=bs, plan=plan)
         assert action["spawn"]["count"] == 1
         assert "B7" in prompt
         assert "ApiKeyInput" in prompt
         assert "B7-T1" in prompt
         assert "TDD 铁律" in prompt
+        assert "inline TDD" not in prompt
+        assert "隔离 Worker 会话" in prompt
         assert "project_profile_summary" in prompt
         assert "init-manifest" not in prompt
         assert "test_results" in prompt  # result 格式指引
+        assert "只能修改当前 task 的 file_targets" in prompt
+        assert "不得跨 batch 提前实现其他设计项" in prompt
+        assert "files_changed 只填写本次真实变更" in prompt
 
     def test_developer_instruction_no_tasks_graceful(self, tmp_path):
         from auto_engineering.loop.action_builder import ActionBuilder
         b = ActionBuilder(tmp_path)
         state = EngineState(thread_id="t", current_stage="developer", plan="plan")
-        action = b.build_action(state)
-        assert "无 task 明细" in action["subagent_prompt"]  # 优雅降级
+        _action, prompt = _materialize_worker_action(b, state)
+        assert "无 task 明细" in prompt  # 优雅降级

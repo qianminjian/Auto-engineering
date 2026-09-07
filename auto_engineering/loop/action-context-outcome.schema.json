@@ -4,10 +4,10 @@
   "title": "ActionContextOutcome",
   "type": "object",
   "additionalProperties": false,
-  "required": ["status", "summary"],
+  "required": ["status", "summary", "error_code"],
   "properties": {
     "status": {"enum": ["completed", "failed"]},
     "summary": {"type": "string", "maxLength": 1000},
-    "error_code": {"type": "string", "minLength": 1}
+    "error_code": {"type": ["string", "null"]}
   }
 }

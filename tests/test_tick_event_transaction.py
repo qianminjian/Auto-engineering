@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -76,6 +77,29 @@ def test_commit_tick_atomically_writes_result_replay_receipt() -> None:
         ) == ("a" * 64, _action())
 
 
+def test_protocol_result_response_can_be_rebound_in_event_store() -> None:
+    """跨 thread 重初始化后，幂等回放仍由 EventStore 保持唯一。"""
+
+    state = _state()
+    rebound = {**_action(), "thread_id": "thread-2", "message_id": "new-action"}
+    with SQLiteEventStore(":memory:") as store:
+        store.commit_tick(
+            events=[_event()],
+            state=state,
+            action=_action(),
+            result_causation_id="previous-action",
+            result_hash="a" * 64,
+        )
+
+        store.replace_protocol_result_response(
+            "thread-1", "previous-action", rebound
+        )
+
+        assert store.load_protocol_result(
+            "thread-1", "previous-action"
+        ) == ("a" * 64, rebound)
+
+
 def test_result_replay_receipt_rolls_back_with_tick() -> None:
     def fail_after_result(point: str) -> None:
         if point == "after_result":
@@ -111,6 +135,38 @@ def test_effect_receipts_commit_with_action_snapshot() -> None:
         )
 
         assert store.load_effect_receipts("thread-1", "action-1") == [receipt]
+
+
+def test_event_core_executes_planned_effects_at_commit_boundary(tmp_path) -> None:
+    """ActionBuilder 只规划 effect；EventStore Tick 提交边界负责落盘。"""
+
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\nname='effect-boundary'\n", encoding="utf-8"
+    )
+    (tmp_path / "src").mkdir()
+    (tmp_path / "tests").mkdir()
+
+    with SQLiteEventStore(tmp_path / "events.db") as events:
+        orchestrator = TickOrchestrator(
+            tmp_path,
+            checkpoint_store=None,
+            event_store=events,
+        )
+        action = orchestrator.init("验证 effect 提交边界")
+
+        assert action["spawn"]["invocations"]
+        prompt_ref = action["spawn"]["invocations"][0]["prompt_ref"]
+        assert (tmp_path / prompt_ref).is_file()
+        assert (
+            tmp_path
+            / ".ae-state"
+            / "spawn-proofs"
+            / f"{action['spawn_proof_token']}.json"
+        ).is_file()
+        receipts = events.load_effect_receipts(
+            action["thread_id"], action["message_id"]
+        )
+        assert receipts
 
 
 def test_effect_receipts_roll_back_with_tick() -> None:
@@ -263,7 +319,7 @@ def test_orchestrator_restores_projection_and_active_action_from_event_store(
             )
             action = first.init("事件恢复")
 
-            restored = TickOrchestrator.restore(
+            restored = TickOrchestrator.restore_from_event_store(
                 tmp_path,
                 checkpoints,
                 event_store=events,
@@ -273,6 +329,19 @@ def test_orchestrator_restores_projection_and_active_action_from_event_store(
             assert restored._state.to_dict() == first._state.to_dict()
             assert restored._active_action == action
             assert restored._round_history == []
+    finally:
+        checkpoints.close()
+
+
+def test_production_restore_rejects_explicit_none_event_store(tmp_path) -> None:
+    checkpoints = SQLiteCheckpointStore(tmp_path / "checkpoints.db")
+    try:
+        with pytest.raises(RuntimeError, match="EVENT_STORE_REQUIRED"):
+            TickOrchestrator.restore(
+                tmp_path,
+                checkpoints,
+                event_store=cast(SQLiteEventStore, None),
+            )
     finally:
         checkpoints.close()
 
@@ -404,7 +473,7 @@ def test_gap_wizard_restores_at_first_undecided_gap(tmp_path) -> None:
                 },
             })
 
-            restored = TickOrchestrator.restore(
+            restored = TickOrchestrator.restore_from_event_store(
                 tmp_path,
                 checkpoints,
                 event_store=events,

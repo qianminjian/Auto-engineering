@@ -8,7 +8,7 @@
           每次 tick 是独立 Python 进程 (Tick-Based Discrete Invocation).
   step  — tick 内的一个 stage 转换 (e.g. architect→developer→critic).
           一个 tick 恰好跨越一个 step; 收敛判定在每个 tick 结束时执行.
-  round — StageRouter 内的累积 stage 轮次, 跨 tick 递增. 对应 EngineState.round.
+  round — 状态投影中的累积 stage 轮次, 跨 tick 递增. 对应 EngineState.round.
 
 核心契约:
   - 每 tick Python 输出一个 action dict (stdout JSON) 告诉 Agent 下一步做什么
@@ -21,24 +21,28 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import subprocess
 import sys
 import time
 from collections.abc import Callable, Mapping
-from copy import deepcopy
+from copy import copy, deepcopy
 from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Protocol, cast, runtime_checkable
 from uuid import uuid4
 
 from auto_engineering.build_identity import current_build_identity
-from auto_engineering.config.constants import _SPAWN_CONFIG, DEFAULT_P1_THRESHOLD, STAGE_TO_ROLE
+from auto_engineering.config.constants import (
+    _SPAWN_CONFIG,
+    DEFAULT_P1_THRESHOLD,
+    STAGE_TO_ROLE,
+)
 from auto_engineering.config.runtime_config import RuntimeConfig, get_default_config
 from auto_engineering.context.offloading import StageContextOffload
 from auto_engineering.context.summarization import SessionSummary
 from auto_engineering.engine.batch_state import BatchState
 from auto_engineering.engine.design_doc import DesignDoc, Supplement
+from auto_engineering.engine.models import Plan
 from auto_engineering.engine.progress_tree import ProgressTree
 from auto_engineering.engine.state import EngineState
 from auto_engineering.engine.verification_layers import (
@@ -70,6 +74,10 @@ from auto_engineering.loop.actions import (
     build_terminal_acceptance_summary,
     result_contract_warnings,
     validate_result_format,
+)
+from auto_engineering.loop.architect_result import (
+    ArchitectResultPreparer,
+    is_same_action_repair,
 )
 from auto_engineering.loop.architecture_activation import ArchitectureActivationService
 from auto_engineering.loop.artifacts import (
@@ -104,7 +112,6 @@ from auto_engineering.loop.effects import (
     EffectReceipt,
     WriteJsonArtifact,
 )
-from auto_engineering.loop.engineering_model import EngineeringModel
 from auto_engineering.loop.escalation_handler import (
     EscalationContext,
     EscalationHandler,
@@ -114,7 +121,15 @@ from auto_engineering.loop.events import EVENT_SCHEMA_VERSION, LoopEvent, LoopEv
 from auto_engineering.loop.guardrail import GuardrailChain
 from auto_engineering.loop.kernel import TickKernel
 from auto_engineering.loop.loop_budget import LoopUsage, evaluate_loop_budget
-from auto_engineering.loop.plan import Plan
+from auto_engineering.loop.project_setup_scope import (
+    is_minimal_setup_source,
+    is_minimal_setup_test,
+    is_setup_safe_local_import,
+    project_setup_files,
+    project_setup_scope_violations,
+    project_setup_snapshot_files,
+)
+from auto_engineering.loop.project_setup_service import ProjectSetupService
 from auto_engineering.loop.protocol import (
     SCHEMA_VERSION,
     ProtocolErrorCode,
@@ -127,6 +142,21 @@ from auto_engineering.loop.protocol import (
 from auto_engineering.loop.protocol_compat import upgrade_legacy_result
 from auto_engineering.loop.reducers import default_reducer_registry
 from auto_engineering.loop.refine import build_refine_request
+from auto_engineering.loop.result_inbound_policy import (
+    apply_inbound_pii_policy as _apply_inbound_pii_policy_impl,
+)
+from auto_engineering.loop.result_validators import (
+    normalize_result_section_findings as _normalize_result_section_findings_impl,
+)
+from auto_engineering.loop.result_validators import (
+    validate_component_verifier_scope as _validate_component_verifier_scope_impl,
+)
+from auto_engineering.loop.result_validators import (
+    validate_gap_analysis as _validate_gap_analysis_impl,
+)
+from auto_engineering.loop.result_validators import (
+    validate_gap_review_decisions as _validate_gap_review_decisions_impl,
+)
 from auto_engineering.loop.runtime_revision import (
     CompatibilityDecision,
     RuntimeRevision,
@@ -136,12 +166,11 @@ from auto_engineering.loop.runtime_revision import (
 from auto_engineering.loop.session_handoff import SessionHandoff
 from auto_engineering.loop.stage_offload import StageOffloadService
 from auto_engineering.loop.stage_result_prevalidator import StageResultPrevalidator
-from auto_engineering.loop.stage_result_projector import StageResultProjector
-from auto_engineering.loop.stage_router import (
-    StageRouter,
-    clear_stage_fields,
+from auto_engineering.loop.stages.base import (
+    StageName,
+    TransitionContext,
+    TransitionDecision,
 )
-from auto_engineering.loop.stages.base import TransitionContext, TransitionDecision
 from auto_engineering.loop.stages.design import (
     ArchitectHandler,
     CriticHandler,
@@ -161,7 +190,14 @@ from auto_engineering.loop.stages.verification import (
     SystemDeepAuditHandler,
     SystemVerifierHandler,
 )
+from auto_engineering.loop.state_lifecycle import clear_stage_fields
 from auto_engineering.loop.task_factory import tasks_from_batch_plan
+from auto_engineering.loop.tick_evidence import (
+    compute_diff_stats as _compute_diff_stats_impl,
+)
+from auto_engineering.loop.tick_evidence import (
+    record_tick_latency as _record_tick_latency_impl,
+)
 from auto_engineering.loop.tick_gate_runner import TickGateRunner
 from auto_engineering.loop.transition_context_factory import TransitionContextFactory
 from auto_engineering.loop.transition_effects import TransitionEffectExecutor
@@ -182,6 +218,7 @@ from auto_engineering.project_profile import (
     ProjectProfileResolver,
     ResolutionStatus,
 )
+from auto_engineering.prompts.compiler import PromptContextError
 from auto_engineering.prompts.registry import default_registry
 
 
@@ -193,9 +230,6 @@ class _GateRunner(Protocol):
 GateRunner = _GateRunner  # backward-compat alias
 
 _MAX_PER_SOURCE = 2
-_RESULT_REPAIR_STAGE_BY_ERROR = {
-    "ARCHITECT_PLAN_INVALID": "architect",
-}
 _MAX_GLOBAL = 4
 _ISO_FMT = "%Y-%m-%dT%H:%M:%SZ"
 
@@ -309,7 +343,7 @@ class TickOrchestrator:
         self._transcript_parser = transcript_parser if transcript_parser is not None else create_parser(self.project_root)  # noqa: E501
 
         self._state: EngineState | None = None
-        self._router: StageRouter | None = None
+        self._design_ledger = DesignDecisionLedger(())
         self._judge: ConvergenceJudge | None = None
         self._plan: Plan | None = None
         self._checkpoint_mgr: CheckpointManager | None = None
@@ -319,12 +353,12 @@ class TickOrchestrator:
             LegacyInitProvider(),
         ))
         self._project_profile_resolution: ProjectProfileResolution | None = None
+        self._project_setup_service = ProjectSetupService(self)
         self._design_doc: DesignDoc | None = None
         self._batch_state: BatchState | None = None
         self._progress_tree: ProgressTree | None = None
         self._verification_layers: VerificationLayers | None = None
         self._round_history: list = []  # T1: 在 TickOrchestrator, 非 EngineState 字段
-        self._last_completed_stage: str = ""  # E2: 追踪上一完成 stage（延迟结果降级）
         self._last_batch_id: str | None = None  # 跨 stage 传 batch_id (组件完成后无 current)
         self._dev_snapshot: dict[str, Any] | None = None  # developer 产出快照 (供 critic 上下文)
         # DS-10 延迟打点累加器 (每 tick 起始清零, tick() 内累加子进程墙钟)
@@ -332,7 +366,7 @@ class TickOrchestrator:
         self._t_guard_sub_ms: float = 0.0
         # DebugTracer (可选, --debug 或 AE_DEBUG=1 时激活)
         self._debug_tracer: DebugTracer | None = None
-        self._last_guardrail: dict | None = None  # FUTURE: 并行 tick 时需 asyncio.Lock
+        self._last_guardrail: dict | None = None  # 当前 Tick 的调试快照
         # T64: Stage Checkpoint Gate (DecisionGate 形态 3)
         self._pause_at_stages: set[str] = set()
         self._passed_checkpoints: set[str] = set()
@@ -368,8 +402,6 @@ class TickOrchestrator:
             pii_redactor=self._pii_redactor,
             pii_outbound=self._runtime_config.pii_outbound,
             runtime_config=self._runtime_config,
-            effect_sink=self._pending_effect_receipts.append,
-            effect_intent_sink=self._pending_effect_intents.append,
         )
         # P0-1: TickGateRunner delegate — gate selection, execution, metrics, tracing
         self._tick_gate_runner = TickGateRunner(
@@ -410,6 +442,66 @@ class TickOrchestrator:
                           attr_name, reason)
         return val
 
+    def status_snapshot(self, *, verbose: bool = False) -> dict[str, Any]:
+        """返回 CLI 可消费的只读状态投影，不暴露可变内部对象。"""
+        if self._state is None:
+            raise RuntimeError("LOOP_STATE_UNAVAILABLE")
+        state = self._state
+        summary: dict[str, Any] = {
+            "thread_id": state.thread_id,
+            "current_stage": state.current_stage,
+            "expected_stage": state.expected_stage,
+            "tick": state.tick,
+            "round": state.round,
+            "verdict": state.critic_verdict,
+            "total_majors": state.total_majors,
+            "plan_refine_count": state.plan_refine_count,
+        }
+        if isinstance(self._active_action, Mapping):
+            summary["active_action"] = deepcopy(dict(self._active_action))
+        from auto_engineering.loop.status_projection import reconciliation_status
+
+        reconciliation = reconciliation_status(state, self._batch_state)
+        if reconciliation is not None:
+            summary["plan_reconciliation"] = reconciliation
+        if verbose and self._batch_state is not None:
+            batch_state = self._batch_state
+            batches: list[dict[str, Any]] = []
+            component = None
+            try:
+                component = batch_state.current_component()
+                for batch in batch_state.batches_for(component):
+                    batches.append({
+                        "batch_id": batch.get("batch_id", ""),
+                        "component": batch.get("component", ""),
+                        "task_count": len(batch.get("tasks", [])),
+                    })
+            except Exception:
+                _logger.debug("batch summary build failed", exc_info=True)
+            summary["batch_progress"] = {
+                "current_component": component.name if component else "?",
+                "current_batch_idx": batch_state.current_batch_idx,
+                "total_batches": len(batch_state.batches_for(component))
+                if component else 0,
+                "batches": batches,
+                "total_components_seen": len(
+                    getattr(batch_state, "_seen_components", [])
+                ),
+            }
+        return summary
+
+    def state_snapshot(self) -> EngineState:
+        """返回当前领域状态的隔离副本，供宿主编排协议使用。"""
+        if self._state is None:
+            raise RuntimeError("LOOP_STATE_UNAVAILABLE")
+        return deepcopy(self._state)
+
+    def active_action_snapshot(self) -> dict[str, Any] | None:
+        """返回当前 Action 的隔离副本；宿主不得修改 Core 内部 Action。"""
+        if not isinstance(self._active_action, Mapping):
+            return None
+        return deepcopy(dict(self._active_action))
+
     # ── T64: Stage Checkpoint Gate ──
     def set_pause_at_stages(self, stages: list[str]) -> None:
         """Set stages to pause at (T64 --pause-at-stage).
@@ -445,7 +537,7 @@ class TickOrchestrator:
         self,
         requirement: str,
         design_doc_path: str | None = None,
-        max_rounds: int = 5,
+        max_rounds: int | None = None,
         thread_id: str | None = None,
     ) -> dict:
         """初始化 loop。有设计文档时解析层次并进入 gap_scan; 否则直接 architect.
@@ -455,7 +547,7 @@ class TickOrchestrator:
         if design_doc_path:
             resolved_design_doc = self._resolve_design_doc_path(design_doc_path)
             self._design_doc = DesignDoc.parse(resolved_design_doc)
-            DesignDecisionLedger.ensure_intake(
+            self._design_ledger = DesignDecisionLedger.ensure_intake(
                 self.project_root,
                 resolved_design_doc,
             )
@@ -473,6 +565,7 @@ class TickOrchestrator:
             execution_session_id=str(uuid4()),
             session_started_at=datetime.now().astimezone().isoformat(),
         )
+        self._state.project_setup_baseline_files = self._project_setup_files()
         self._state.active_runtime_revision = self._current_runtime_revision().to_dict()
         if design_doc_path:
             # 持久化路径 — 跨进程 restore 据此重 parse 设计文档 (T9a)
@@ -489,7 +582,6 @@ class TickOrchestrator:
             self._state.debug_dir = str(debug_path)
             self._debug_tracer = DebugTracer(debug_path)
 
-        self._router = StageRouter()
         self._judge = ConvergenceJudge(ConvergenceConfig(max_iterations=max_rounds))
         self._checkpoint_mgr = CheckpointManager(self._checkpoint_store)
 
@@ -497,7 +589,11 @@ class TickOrchestrator:
             self._guardrail = GuardrailChain.default()
 
         try:
-            self._project_profile_resolution = self._project_profile_resolver.resolve(self.project_root)
+            self._project_profile_resolution = self._project_profile_resolver.resolve(
+                self.project_root,
+                design_doc_path=design_doc_path,
+                require_test_command=False,
+            )
         except ProjectProfileError as exc:
             self._state.current_stage = "project_setup"
             self._state.expected_stage = "project_setup"
@@ -558,6 +654,99 @@ class TickOrchestrator:
         project_root: Path,
         checkpoint_store: SQLiteCheckpointStore,
         *,
+        event_store: SQLiteEventStore,
+        thread_id: str | None = None,
+        gate_runner: GateRunner | None = None,
+        guardrail: GuardrailChain | None = None,
+        context_offloader: TickContextOffloader | None = None,
+        session_summarizer: TickSessionSummarizer | None = None,
+        tracer: Any | None = None,
+        audit_logger: AuditLogger | None = None,
+        runtime_config: RuntimeConfig | None = None,
+        max_rounds: int | None = None,
+        debug: bool = False,
+        debug_dir: str | None = None,
+    ) -> TickOrchestrator:
+        """恢复生产 Loop；运行事实源必须显式为 EventStore。"""
+
+        return cls.restore_from_event_store(
+            project_root,
+            checkpoint_store,
+            event_store=event_store,
+            thread_id=thread_id,
+            gate_runner=gate_runner,
+            guardrail=guardrail,
+            context_offloader=context_offloader,
+            session_summarizer=session_summarizer,
+            tracer=tracer,
+            audit_logger=audit_logger,
+            runtime_config=runtime_config,
+            max_rounds=max_rounds,
+            debug=debug,
+            debug_dir=debug_dir,
+        )
+
+    @classmethod
+    def restore_from_event_store(
+        cls,
+        project_root: Path,
+        checkpoint_store: SQLiteCheckpointStore,
+        *,
+        event_store: SQLiteEventStore,
+        thread_id: str | None = None,
+        gate_runner: GateRunner | None = None,
+        guardrail: GuardrailChain | None = None,
+        context_offloader: TickContextOffloader | None = None,
+        session_summarizer: TickSessionSummarizer | None = None,
+        tracer: Any | None = None,
+        audit_logger: AuditLogger | None = None,
+        runtime_config: RuntimeConfig | None = None,
+        max_rounds: int | None = None,
+        debug: bool = False,
+        debug_dir: str | None = None,
+    ) -> TickOrchestrator:
+        """从 EventStore 恢复 Canonical Projection 与 active Action。"""
+
+        if event_store is None:
+            raise RuntimeError("EVENT_STORE_REQUIRED")
+        resolved_thread_id = thread_id or checkpoint_store.active_project_thread()
+        if resolved_thread_id is None:
+            raise CheckpointNotFoundError("无 active EventStore thread 可恢复")
+        state = event_store.load_projection(resolved_thread_id)
+        if state is None:
+            raise CheckpointNotFoundError(
+                f"EventStore 无状态投影 (thread_id={resolved_thread_id})"
+            )
+        round_history = [
+            RoundHistory(**item)
+            for item in event_store.load_round_history(resolved_thread_id)
+        ]
+        active_action = event_store.load_action_snapshot(resolved_thread_id)
+        return cls._restore_loaded_state(
+            project_root,
+            checkpoint_store,
+            state=state,
+            round_history=round_history,
+            active_action=active_action,
+            event_store=event_store,
+            gate_runner=gate_runner,
+            guardrail=guardrail,
+            context_offloader=context_offloader,
+            session_summarizer=session_summarizer,
+            tracer=tracer,
+            audit_logger=audit_logger,
+            runtime_config=runtime_config,
+            max_rounds=max_rounds,
+            debug=debug,
+            debug_dir=debug_dir,
+        )
+
+    @classmethod
+    def restore_from_checkpoint(
+        cls,
+        project_root: Path,
+        checkpoint_store: SQLiteCheckpointStore,
+        *,
         checkpoint_id: str | None = None,
         gate_runner: GateRunner | None = None,
         guardrail: GuardrailChain | None = None,
@@ -566,11 +755,66 @@ class TickOrchestrator:
         tracer: Any | None = None,
         audit_logger: AuditLogger | None = None,
         runtime_config: RuntimeConfig | None = None,
-        max_rounds: int = 5,
+        max_rounds: int | None = None,
+        debug: bool = False,
+        debug_dir: str | None = None,
+    ) -> TickOrchestrator:
+        """显式恢复历史 checkpoint；不属于生产 Loop 默认运行路径。"""
+
+        checkpoint = (
+            checkpoint_store.load(checkpoint_id)
+            if checkpoint_id
+            else checkpoint_store.load_latest()
+        )
+        if checkpoint is None:
+            raise CheckpointNotFoundError(
+                f"无 checkpoint 可恢复 (project_root={project_root})"
+            )
+        state = checkpoint.state
+        thread_id = (
+            state.thread_id
+            if isinstance(state, EngineState)
+            else state["thread_id"]
+        )
+        active_action = checkpoint_store.load_active_protocol_action(thread_id)
+        return cls._restore_loaded_state(
+            project_root,
+            checkpoint_store,
+            state=state,
+            round_history=list(checkpoint.history or []),
+            active_action=active_action,
+            gate_runner=gate_runner,
+            guardrail=guardrail,
+            context_offloader=context_offloader,
+            session_summarizer=session_summarizer,
+            tracer=tracer,
+            audit_logger=audit_logger,
+            runtime_config=runtime_config,
+            max_rounds=max_rounds,
+            debug=debug,
+            debug_dir=debug_dir,
+        )
+
+    @classmethod
+    def _restore_loaded_state(
+        cls,
+        project_root: Path,
+        checkpoint_store: SQLiteCheckpointStore,
+        *,
+        state: EngineState | dict[str, Any],
+        round_history: list[RoundHistory],
+        active_action: dict[str, Any] | None,
+        gate_runner: GateRunner | None = None,
+        guardrail: GuardrailChain | None = None,
+        context_offloader: TickContextOffloader | None = None,
+        session_summarizer: TickSessionSummarizer | None = None,
+        tracer: Any | None = None,
+        audit_logger: AuditLogger | None = None,
+        runtime_config: RuntimeConfig | None = None,
+        max_rounds: int | None = None,
         debug: bool = False,
         debug_dir: str | None = None,
         event_store: SQLiteEventStore | None = None,
-        thread_id: str | None = None,
     ) -> TickOrchestrator:
         """跨进程恢复 (§A.1: 每 tick 独立进程, 从 SQLite 重建全部 in-memory 状态)."""
         self = cls(
@@ -588,34 +832,10 @@ class TickOrchestrator:
             debug_dir=debug_dir,
         )
 
-        ck = None
-        resolved_thread_id = thread_id
-        if event_store is not None:
-            resolved_thread_id = thread_id or checkpoint_store.active_project_thread()
-            if resolved_thread_id is None:
-                raise CheckpointNotFoundError("无 active EventStore thread 可恢复")
-            state = event_store.load_projection(resolved_thread_id)
-            if state is None:
-                raise CheckpointNotFoundError(
-                    f"EventStore 无状态投影 (thread_id={resolved_thread_id})"
-                )
-            from auto_engineering.loop.checkpoint.records import RoundHistory
-            self._round_history = [
-                RoundHistory(**item)
-                for item in event_store.load_round_history(resolved_thread_id)
-            ]
-            self._active_action = event_store.load_action_snapshot(resolved_thread_id)
-        else:
-            ck = (checkpoint_store.load(checkpoint_id) if checkpoint_id
-                  else checkpoint_store.load_latest())
-            if ck is None:
-                raise CheckpointNotFoundError(
-                    f"无 checkpoint 可恢复 (project_root={project_root})")
-            state = ck.state
-            self._round_history = list(ck.history or [])
-            self._active_action = checkpoint_store.load_active_protocol_action(
-                state.thread_id if not isinstance(state, dict) else state["thread_id"]
-            )
+        self._round_history = list(round_history)
+        self._active_action = (
+            dict(active_action) if isinstance(active_action, Mapping) else None
+        )
         if isinstance(state, dict):  # 防御: deserialize 未命中 EngineState 分派
             state = EngineState.from_dict(state)
         resolved_thread_id = state.thread_id
@@ -627,7 +847,6 @@ class TickOrchestrator:
         )
 
         # 协作组件 (无状态 / 从 store 重建)
-        self._router = StageRouter()
         self._judge = ConvergenceJudge(ConvergenceConfig(max_iterations=max_rounds))
         self._checkpoint_mgr = CheckpointManager(checkpoint_store)
         if self._guardrail is None:
@@ -635,7 +854,11 @@ class TickOrchestrator:
 
         # 持久化 Profile 只作审计快照；恢复必须重新读取当前本地证据。
         previous_profile_id = state.project_profile_id
-        resolution = self._project_profile_resolver.resolve(project_root)
+        resolution = self._project_profile_resolver.resolve(
+            project_root,
+            design_doc_path=state.design_doc_path,
+            require_test_command=False,
+        )
         if (
             resolution.status is not ResolutionStatus.RESOLVED
             and state.current_stage != "project_setup"
@@ -659,7 +882,7 @@ class TickOrchestrator:
         if state.design_doc_path:
             resolved_design_doc = self._resolve_design_doc_path(state.design_doc_path)
             self._design_doc = DesignDoc.parse(resolved_design_doc)
-            DesignDecisionLedger.ensure_intake(
+            self._design_ledger = DesignDecisionLedger.ensure_intake(
                 self.project_root,
                 resolved_design_doc,
             )
@@ -816,6 +1039,7 @@ class TickOrchestrator:
             if (
                 replay is None
                 and result_causation
+                and self._event_store is None
                 and self._checkpoint_store is not None
             ):
                 replay = self._checkpoint_store.load_protocol_result(
@@ -1053,42 +1277,45 @@ class TickOrchestrator:
             causation_id=causation_id,
         )
 
+    def _resource_wait_action(
+        self,
+        *,
+        resource: str,
+        reason_code: str,
+        message: str,
+        suggestion: str,
+    ) -> dict[str, Any]:
+        """构建可恢复的等待 Action，并显式绑定仍在执行中的 Action。"""
+
+        active_message_id = str((self._active_action or {}).get("message_id", ""))
+        return {
+            "action": "resource_wait",
+            "stage": self._state.current_stage,
+            "resource": resource,
+            "retry_stage": self._state.current_stage,
+            "reason_code": reason_code,
+            "message": message,
+            "suggestion": suggestion,
+            "active_action_message_id": active_message_id,
+        }
+
     def _tick_body_dict(self, result: dict) -> dict:
         """tick 核心逻辑 (dict 版本): Gate resolution → 验证 → Guardrail → Gate → 路由 → action."""
-        context_failure = result.get("spawn_error_code")
-        if result.get("spawned") is False and context_failure in {
-            "HOST_ACTION_CONTEXT_TIMEOUT",
-            "HOST_ACTION_CONTEXT_RESOURCE_EXHAUSTED",
-            "HOST_ACTION_CONTEXT_FAILED",
-        }:
-            if context_failure in {
-                "HOST_ACTION_CONTEXT_TIMEOUT",
-                "HOST_ACTION_CONTEXT_RESOURCE_EXHAUSTED",
-            }:
-                message = (
-                    "宿主 Action context 超时；active Action 保持不变。"
-                    if context_failure == "HOST_ACTION_CONTEXT_TIMEOUT"
-                    else "宿主 Action context 资源额度不足；active Action 保持不变。"
-                )
-                return {
-                    "action": "resource_wait",
-                    "stage": self._state.current_stage,
-                    "resource": "host_action_context",
-                    "retry_stage": self._state.current_stage,
-                    "reason_code": context_failure,
-                    "message": message,
-                    "suggestion": "宿主资源恢复后重新执行同一 active Action。",
-                }
-            return ErrorResponse(
-                error_code="HOST_ACTION_CONTEXT_FAILED",
-                message="宿主 Action context 执行失败；active Action 保持不变。",
-                current_state=self._state.to_dict(),
-                suggestion="检查宿主失败证据后重新执行同一 active Action。",
-            ).to_dict()
         if self._state.current_stage == "project_setup":
+            # WAIT_RESOURCE 是宿主让出控制权的边界。失败 Result 在此只表示
+            # “仍未修复”，不应再次进入格式校验、猜错误码或消费失败预算；
+            # 只有 project_setup_completed 才有资格尝试恢复原 Setup Action。
+            if (
+                isinstance(self._active_action, Mapping)
+                and self._active_action.get("action") == "resource_wait"
+                and result.get("result_type") == "project_setup_failed"
+            ):
+                return deepcopy(dict(self._active_action))
             validated = self._validate_result_dict(result)
             if isinstance(validated, ErrorResponse):
                 return validated.to_dict()
+            if result.get("result_type") == "project_setup_failed":
+                return self._record_project_setup_failure(result)
             return self._complete_project_setup()
 
         # T95: Agent mid-loop escalation — Agent 在 result 中置 escalate=true
@@ -1104,29 +1331,23 @@ class TickOrchestrator:
             and result.get("spawned") is False
             and result.get("spawn_error_code") == "HOST_AGENT_CAPACITY"
         ):
-            return {
-                "action": "resource_wait",
-                "stage": self._state.current_stage,
-                "resource": "agent_slot",
-                "retry_stage": self._state.current_stage,
-                "reason_code": "HOST_AGENT_CAPACITY",
-                "message": "宿主 Agent 容量暂时不足；保留当前 Action，等待资源后重试。",
-                "suggestion": "回收已完成的 Agent；容量释放后重新执行当前 Action。",
-            }
+            return self._resource_wait_action(
+                resource="agent_slot",
+                reason_code="HOST_AGENT_CAPACITY",
+                message="宿主 Agent 容量暂时不足；保留当前 Action，等待资源后重试。",
+                suggestion="回收已完成的 Agent；容量释放后重新执行当前 Action。",
+            )
         if (
             self._state.current_stage in _SPAWN_CONFIG
             and result.get("spawned") is False
             and result.get("spawn_error_code") == "HOST_WORKER_OWNER_LOST"
         ):
-            return {
-                "action": "resource_wait",
-                "stage": self._state.current_stage,
-                "resource": "worker_ownership",
-                "retry_stage": self._state.current_stage,
-                "reason_code": "HOST_WORKER_OWNER_LOST",
-                "message": "宿主无法确认旧 Worker 所有权；保留当前 Action，禁止并发重跑。",
-                "suggestion": "先确认旧 Worker 已终止；确认后再按同一 active Action 恢复。",
-            }
+            return self._resource_wait_action(
+                resource="worker_ownership",
+                reason_code="HOST_WORKER_OWNER_LOST",
+                message="宿主无法确认旧 Worker 所有权；保留当前 Action，禁止并发重跑。",
+                suggestion="先确认旧 Worker 已终止；确认后再按同一 active Action 恢复。",
+            )
         if (
             self._state.current_stage in _SPAWN_CONFIG
             and result.get("spawned") is False
@@ -1147,15 +1368,14 @@ class TickOrchestrator:
                     suggestion="保留当前 Action；待宿主模型服务恢复后重新启动 Loop。",
                 ).to_dict()
             return {
-                "action": "resource_wait",
-                "stage": self._state.current_stage,
-                "resource": "worker_completion",
-                "retry_stage": self._state.current_stage,
-                "reason_code": "HOST_WORKER_TIMEOUT",
+                **self._resource_wait_action(
+                    resource="worker_completion",
+                    reason_code="HOST_WORKER_TIMEOUT",
+                    message="宿主 Worker 执行超时；保留当前 Action，等待资源后有界重试。",
+                    suggestion="按同一 active Action 重新启动隔离 Worker；不得伪造业务结果。",
+                ),
                 "retry_attempt": retry_attempt,
                 "retry_limit": 1,
-                "message": "宿主 Worker 执行超时；保留当前 Action，等待资源后有界重试。",
-                "suggestion": "按同一 active Action 重新启动隔离 Worker；不得伪造业务结果。",
             }
         if self._state.current_stage in _SPAWN_CONFIG and result.get("spawned") is False:
             active_message_id = str((self._active_action or {}).get("message_id", ""))
@@ -1179,15 +1399,14 @@ class TickOrchestrator:
                         suggestion="修复宿主调用合同后，保留当前 Action 并从同一事实恢复。",
                     ).to_dict()
                 return {
-                    "action": "resource_wait",
-                    "stage": self._state.current_stage,
-                    "resource": "worker_completion",
-                    "retry_stage": self._state.current_stage,
-                    "reason_code": "HOST_WORKER_FAILED",
+                    **self._resource_wait_action(
+                        resource="worker_completion",
+                        reason_code="HOST_WORKER_FAILED",
+                        message="宿主 Worker 合同执行失败；保留当前 Action，修复后自动重试。",
+                        suggestion="使用当前 Action 的原生启动合同，不得伪造业务结果。",
+                    ),
                     "retry_attempt": retry_attempt,
                     "retry_limit": 1,
-                    "message": "宿主 Worker 合同执行失败；保留当前 Action，修复后自动重试。",
-                    "suggestion": "使用当前 Action 的原生启动合同，不得伪造业务结果。",
                 }
             spawn_error = str(result.get("spawn_error") or "")
             if (
@@ -1223,56 +1442,30 @@ class TickOrchestrator:
         if gate_resolution and isinstance(gate_resolution, dict):
             return self._tick_process_result(result)
 
-        # E2: STAGE_MISMATCH 降级 — Agent 提交上一 stage 的延迟结果时，
-        # 不再报错，接受结果并重建当前 stage 的 action。
-        # 解决 T51c-T51f spawn 校验被 stage 不匹配错误短路的问题。
-        result_stage = result.get("stage", "")
-        if (result_stage
-                and result_stage != self._state.current_stage
-                and result_stage == self._last_completed_stage):
-            _logger.warning(
-                "E2 downgrade: Agent sent stale result for '%s' "
-                "(orchestrator already at '%s'). Accepting + rebuilding action.",
-                result_stage, self._state.current_stage,
-            )
-            self._apply_result_to_state(result)
-            self._record_tick_latency(time.perf_counter(), self._state.tick)
-            StageGateDispatcher().dispatch(
-                self._state.current_stage,
-                self._run_developer_gates,
-            )
-            return self.build_action()
-
         validated = self._validate_result_dict(result)
         return self._tick_process_result(validated)
 
     def _tick_process_result(self, result: dict | ErrorResponse) -> dict:
         """tick 公共处理逻辑: Gate resolution → Guardrail → Gate → 路由 → action."""
         if isinstance(result, ErrorResponse):
-            if (
-                _RESULT_REPAIR_STAGE_BY_ERROR.get(result.error_code)
-                == self._state.current_stage
+            if is_same_action_repair(
+                error_code=result.error_code,
+                current_stage=self._state.current_stage,
             ):
-                retry_key = "architect_result_validation"
-                attempt = self._state.guardrail_retry_counters.get(
-                    retry_key, 0
-                ) + 1
-                if attempt <= 2:
-                    counters = dict(self._state.guardrail_retry_counters)
-                    counters[retry_key] = attempt
-                    self._state.guardrail_retry_counters = counters
-                    if self._event_store is not None:
-                        self._queue_domain_event(
-                            LoopEventType.LIFECYCLE_STATE_UPDATED,
-                            {"changes": {
-                                "guardrail_retry_counters": counters,
-                            }},
-                        )
-                    return self.build_action(feedback=(
-                        "RESULT_REPAIR：上一份 Architect 计划未被激活。"
-                        f"第 {attempt}/2 次修复；必须重新输出完整计划。"
-                        f"确定性校验错误：{result.message}"
-                    ))
+                # Architect 的业务结果已经由 Worker 产出；确定性校验失败只
+                # 说明 Coordinator payload 需要修复。不得把拒绝转换成新
+                # Action，否则会丢失同一 Action 的 outcome/generation/fence
+                # 身份并诱发重复 Worker。公开 CLI 会在该 error 上投影
+                # repair_current_action，复用当前 active Action 的工作文件。
+                return ErrorResponse(
+                    result.error_code,
+                    result.message,
+                    self._state.to_dict(),
+                    suggestion=(
+                        "保持当前 Architect Action 不变；只修复 Coordinator 计划，"
+                        "复用已固化 Worker outcome 后重新 finalize、validate、submit。"
+                    ),
+                ).to_dict()
             if self._require("_debug_tracer", "debug tracing disabled") is not None:
                 self._debug_tracer.record_error(
                     tick=self._state.tick,
@@ -1480,10 +1673,11 @@ class TickOrchestrator:
         # asdict 只序列化 dataclass 字段 → 不泄漏进 checkpoint.
         self._state._runtime_ctx["batch_state"] = self._batch_state
         self._state._runtime_ctx["plan"] = self._plan
+        guardrail_state = self._guardrail_state(result)
 
         t_g = time.perf_counter()
         gr = self._guardrail.check("post", self._state.current_stage,
-                                   self._state, self.project_root)
+                                   guardrail_state, self.project_root)
         self._t_guard_sub_ms += (time.perf_counter() - t_g) * 1000
 
         # 存储供 DebugTracer 使用
@@ -1501,7 +1695,7 @@ class TickOrchestrator:
             if getattr(gr, "guardrail_name", "") == "FreshGuardrail":
                 StageGateDispatcher().dispatch(
                     self._state.current_stage,
-                    self._run_developer_gates,
+                    lambda: self._run_developer_gates(state=guardrail_state),
                     force=True,
                 )
             else:
@@ -1519,95 +1713,43 @@ class TickOrchestrator:
 
         StageGateDispatcher().dispatch(
             self._state.current_stage,
-            self._run_developer_gates,
+            lambda: self._run_developer_gates(state=guardrail_state),
         )
 
         return self._after_tick(result)
 
     def _complete_project_setup(self) -> dict:
-        """重新探测并执行工程门禁；未满足能力时保持原 active Action。"""
-        resolution = self._project_profile_resolver.resolve(self.project_root)
-        self._project_profile_resolution = resolution
-        if resolution.status is not ResolutionStatus.RESOLVED:
-            return self._retry_project_setup(
-                "PROJECT_SETUP_UNVERIFIED: 项目搭建结果未通过本地证据验证",
-                list(resolution.missing_capabilities),
-            )
-        self._apply_project_profile_resolution(resolution)
-        profile = resolution.profile
-        if profile is None:
-            raise RuntimeError("RESOLVED ProjectProfile 缺少 profile")
-        snapshot_files = self._project_setup_snapshot_files(profile)
-        try:
-            gate_results, duration_ms = self._tick_gate_runner.run(
-                snapshot_files,
-                stage="project_setup",
-                tick=self._state.tick,
-            )
-            self._t_gate_ms += duration_ms
-        except ValueError as exc:
-            return self._retry_project_setup(
-                f"PROJECT_SETUP_GATE_FAILED: 项目搭建工程门禁无法执行: {exc}",
-                ["setup_gate:snapshot"],
-            )
-        self._state.gate_results = gate_results
-        failed_gates = sorted(
-            name for name, result in gate_results.items()
-            if not result.get("not_applicable") and result.get("passed") is not True
-        )
-        if failed_gates:
-            return self._retry_project_setup(
-                "PROJECT_SETUP_GATE_FAILED: 项目搭建工程门禁失败: "
-                + ", ".join(failed_gates),
-                [f"setup_gate:{name}" for name in failed_gates],
-            )
-        self._queue_domain_event(
-            LoopEventType.PROJECT_SETUP_COMPLETED,
-            {"profile_id": self._state.project_profile_id},
-        )
-        previous_stage = self._state.current_stage
-        self._state.current_stage = "gap_scan" if self._design_doc else "architect"
-        self._state.expected_stage = self._state.current_stage
-        self._queue_domain_event(
-            LoopEventType.STAGE_ADVANCED,
-            {"from": previous_stage, "to": self._state.current_stage},
-        )
-        self._state.tick += 1
-        self._save_checkpoint()
-        return self.build_action()
+        return self._project_setup_service.complete()
+
+    def _record_project_setup_failure(self, result: dict) -> dict:
+        return self._project_setup_service.record_failure(result)
 
     def _retry_project_setup(self, feedback: str, missing: list[str]) -> dict:
-        """把可修复 setup 失败转换为下一 Action，而不是终止 Product Driver。"""
-        self._state.missing_project_capabilities = missing
-        self._state.tick += 1
-        self._save_checkpoint()
-        return self.build_action(feedback=feedback)
+        return self._project_setup_service.retry(feedback, missing)
+
+    def _reject_project_setup_scope(self, violations: dict[str, list[str]]) -> dict:
+        return self._project_setup_service.reject_scope(violations)
+
+    def _project_setup_scope_violations(
+        self, profile: ProjectProfile | None,
+    ) -> dict[str, list[str]]:
+        return project_setup_scope_violations(self, profile)
+
+    def _is_minimal_setup_test(self, relative: Path) -> bool:
+        return is_minimal_setup_test(self, relative)
+
+    def _is_setup_safe_local_import(self, relative: Path, imported: str) -> bool:
+        return is_setup_safe_local_import(self, relative, imported)
+
+    def _is_minimal_setup_source(self, relative: Path) -> bool:
+        return is_minimal_setup_source(self, relative)
+
+    def _project_setup_files(self) -> list[str]:
+        return project_setup_files(self)
 
     def _project_setup_snapshot_files(self, profile: ProjectProfile) -> list[str]:
-        """为 setup Gate 构造有界、项目内的确定性文件快照。"""
-        excluded = {".git", ".ae-state", "_scratch", "node_modules"}
-        root = self.project_root.resolve()
-        selected: set[str] = set()
-        for evidence in profile.evidence:
-            candidate = self.project_root / evidence.source
-            if (
-                candidate.is_file()
-                and not excluded.intersection(Path(evidence.source).parts)
-                and candidate.resolve().is_relative_to(root)
-            ):
-                selected.add(candidate.relative_to(self.project_root).as_posix())
-        for root_name in (*profile.source_roots, *profile.test_roots):
-            source_root = self.project_root / root_name
-            if not source_root.is_dir() or not source_root.resolve().is_relative_to(root):
-                continue
-            for candidate in source_root.rglob("*"):
-                if candidate.is_file() and not candidate.is_symlink():
-                    selected.add(candidate.relative_to(self.project_root).as_posix())
-                    if len(selected) > 10_000:
-                        raise ValueError("PROJECT_SETUP_SNAPSHOT_TOO_LARGE: 超过 10000 个文件")
-        if not selected:
-            raise ValueError("PROJECT_SETUP_SNAPSHOT_EMPTY: 无可验证项目文件")
-        return sorted(selected)
+        return project_setup_snapshot_files(self, profile)
+
 
     def _apply_project_profile_resolution(self, resolution: ProjectProfileResolution) -> None:
         profile = resolution.profile
@@ -1672,20 +1814,6 @@ class TickOrchestrator:
                         f"(stage 是角色名如 'developer'/'architect', 不是 batch_id 如 'B4')",
                 current_state=self._state.to_dict())
 
-        context_failure = result.get("spawn_error_code")
-        if result.get("spawned") is False and context_failure in {
-            "HOST_ACTION_CONTEXT_TIMEOUT",
-            "HOST_ACTION_CONTEXT_RESOURCE_EXHAUSTED",
-            "HOST_ACTION_CONTEXT_FAILED",
-        }:
-            detail = result.get("spawn_error")
-            if not isinstance(detail, str) or not detail.strip():
-                return ErrorResponse(
-                    error_code="HOST_ACTION_CONTEXT_DETAIL_REQUIRED",
-                    message="Action context 失败必须包含非空错误详情。",
-                    current_state=self._state.to_dict(),
-                )
-            return result
 
         active_gate = (
             self._active_action.get("gate")
@@ -1748,6 +1876,21 @@ class TickOrchestrator:
                 error_code="RESULT_VALIDATION_ERROR",
                 message="; ".join(errors),
                 current_state=self._state.to_dict())
+
+        active_spawn = (
+            self._active_action.get("spawn")
+            if isinstance(self._active_action, Mapping)
+            else None
+        )
+        if isinstance(active_spawn, Mapping) and "agents" in active_spawn:
+            return ErrorResponse(
+                "WORKER_INVOCATION_CONTRACT_REQUIRED",
+                "当前 Action 含已废弃的 spawn.agents，必须重新签发严格 invocations",
+                self._state.to_dict(),
+            )
+
+        if section_error := self._normalize_result_section_findings(result):
+            return section_error
 
         if scope_error := self._validate_component_verifier_scope(result):
             return scope_error
@@ -1965,55 +2108,6 @@ class TickOrchestrator:
 
             self._bind_spawn_result_receipt(proof_token, result, challenge_data)
 
-            active_spawn = (
-                self._active_action.get("spawn", {})
-                if self._active_action is not None else {}
-            )
-            active_agents = active_spawn.get("agents", [])
-            if isinstance(active_agents, list) and len(active_agents) > 1:
-                missing_receipts: list[str] = []
-                for agent in active_agents:
-                    if not isinstance(agent, dict):
-                        continue
-                    receipt_token = agent.get("receipt_token")
-                    if not isinstance(receipt_token, str):
-                        missing_receipts.append(
-                            f"agent-{agent.get('index', '?')}:token-missing"
-                        )
-                        continue
-                    receipt_file = (
-                        self.project_root / ".ae-state" / "spawn-proofs"
-                        / f"{receipt_token}.json"
-                    )
-                    try:
-                        receipt = json.loads(receipt_file.read_text(encoding="utf-8"))
-                        receipt_ok = validate_worker_receipt(
-                            receipt,
-                            expected_stage=stage,
-                            store=ArtifactStore(
-                                self.project_root / ".ae-state" / "artifacts"
-                            ),
-                            receipt_limit=self._runtime_config.max_worker_receipt_bytes,
-                            summary_limit=self._runtime_config.max_receipt_summary_bytes,
-                            expected_effort=str(agent.get(
-                                "requested_effort",
-                                active_spawn.get("effort", "high"),
-                            )),
-                        )
-                    except (OSError, json.JSONDecodeError, ArtifactError):
-                        receipt_ok = False
-                    if not receipt_ok:
-                        missing_receipts.append(receipt_token)
-                if missing_receipts:
-                    return ErrorResponse(
-                        error_code="WORKER_RECEIPT_MISSING",
-                        message=(
-                            f"Stage '{stage}' 未收齐 Worker receipt: "
-                            + ", ".join(missing_receipts)
-                        ),
-                        current_state=self._state.to_dict(),
-                    )
-
         # 设计冲突是一个独立的 Core 协议结果，不是尚未完成的
         # 可执行计划。上方已完成宿主证据验证；具体请求由
         # _tick_process_result 解析并发出用户 Gate，不进入 plan dry-run。
@@ -2123,75 +2217,66 @@ class TickOrchestrator:
             payload=payload,
         )
         self._pending_effect_intents.append(intent)
-        receipt = EffectExecutor(self.project_root).execute(intent)
+        receipt = EffectExecutor(self.project_root).preview(intent)
         self._pending_effect_receipts.append(receipt)
 
     def _record_tick_latency(self, t_start: float, tick_no: int) -> None:
-        """DS-10: 写 tick 延迟记录到 action_history, 超编排预算只告警不中断.
-
-        t_guard_sub 用 guardrail.check() 整段墙钟近似 (纯 Python guardrail 逻辑为
-        µs 量级, 相对 git 子进程墙钟可忽略). 精确到子进程级留 Phase 5 观测按需细化.
-        """
-        if self._state is None:
-            return
-        t_total_ms = (time.perf_counter() - t_start) * 1000
-        t_gate_ms = self._t_gate_ms
-        t_guard_sub_ms = self._t_guard_sub_ms
-        t_orch_ms = t_total_ms - t_gate_ms - t_guard_sub_ms
-        active_spawn = (
-            self._active_action.get("spawn")
-            if isinstance(self._active_action, dict)
-            else None
+        return _record_tick_latency_impl(
+            self, t_start, tick_no, budget_ms=ORCH_BUDGET_MS,
         )
-        spawn_count = (
-            active_spawn.get("count")
-            if isinstance(active_spawn, dict)
-            else 0
-        )
-        self._state.action_history.append({
-            "tick": tick_no,
-            "stage": self._state.current_stage,
-            "spawn_count": spawn_count if isinstance(spawn_count, int) else 0,
-            "t_total_ms": round(t_total_ms, 2),
-            "t_gate_ms": round(t_gate_ms, 2),
-            "t_guard_sub_ms": round(t_guard_sub_ms, 2),
-            "t_orchestration_ms": round(t_orch_ms, 2),
-        })
-        if t_orch_ms > ORCH_BUDGET_MS:
-            _logger.warning(
-                "[latency] tick %d 编排开销 %.0fms 超预算 %dms "
-                "(total=%.0f gate=%.0f guard_sub=%.0f)",
-                tick_no, t_orch_ms, ORCH_BUDGET_MS,
-                t_total_ms, t_gate_ms, t_guard_sub_ms)
 
     # ── 核心路由 dispatch ──
 
     def _after_tick(self, result: dict) -> dict:
         stage = self._state.current_stage
         if stage in self._stage_handlers.stages:
-            stage_handler = self._stage_handlers.get(stage)
-            event_sequence = (
-                self._event_store.next_sequence(self._state.thread_id)
-                if self._event_store is not None
-                else self._state.tick
-            )
-            decision = stage_handler.apply(
-                self._state.to_dict(),
-                result,
-                TransitionContext(
-                    thread_id=self._state.thread_id,
-                    tick=self._state.tick,
-                    event_sequence=event_sequence,
-                    extensions=self._transition_extensions(stage),
-                ),
-            )
+            decision = self._build_stage_decision(result)
             return self._apply_stage_decision(decision)
         return ActionError(error_code="UNKNOWN_STAGE",
                            message=f"Unknown stage: {stage}").to_dict()
 
+    def _build_stage_decision(self, result: Mapping[str, Any]) -> TransitionDecision:
+        """让 Handler 同时服务 guardrail 预览和正式提交，避免重复投影语义。"""
+        stage = self._state.current_stage
+        stage_handler = self._stage_handlers.get(stage)
+        event_sequence = (
+            self._event_store.next_sequence(self._state.thread_id)
+            if self._event_store is not None
+            else self._state.tick
+        )
+        return stage_handler.apply(
+            self._state.to_dict(),
+            result,
+            TransitionContext(
+                thread_id=self._state.thread_id,
+                tick=self._state.tick,
+                event_sequence=event_sequence,
+                extensions=self._transition_extensions(stage),
+            ),
+        )
+
+    def _guardrail_state(self, result: Mapping[str, Any]) -> EngineState:
+        """以 Handler 事件预览 Guardrail 输入，不提前改变真实状态。"""
+        state = self._state
+        if state is None:
+            raise RuntimeError("EngineState 尚未初始化")
+        stage = cast(StageName, state.current_stage)
+        if stage not in self._stage_handlers.stages:
+            return state
+        candidate = deepcopy(state)
+        decision = self._build_stage_decision(result)
+        registry = default_reducer_registry()
+        for event in decision.events:
+            if event.event_type is not LoopEventType.STAGE_ADVANCED:
+                candidate = registry.reduce(candidate, event)
+        candidate._runtime_ctx["batch_state"] = self._batch_state
+        candidate._runtime_ctx["plan"] = self._plan
+        candidate._runtime_ctx["active_action"] = self._active_action
+        return candidate
+
     def _transition_extensions(self, stage: str) -> dict[str, object]:
         """兼容入口：装配参数并委托 TransitionContextFactory。"""
-        return TransitionContextFactory().build(
+        extensions = TransitionContextFactory().build(
             stage,
             batch_state=self._batch_state,
             progress_tree=self._progress_tree,
@@ -2200,6 +2285,15 @@ class TickOrchestrator:
             p1_threshold=self._get_p1_threshold(),
             gate_results=self._state.gate_results,
         )
+        if stage in {"plate_deep_audit", "system_deep_audit"}:
+            extensions.update({
+                "audit_revision_key": self._audit_revision_key(stage),
+                "audit_revision_fingerprint": self._audit_revision_fingerprint(stage),
+            })
+        prepared = self._state._runtime_ctx.get("architect_prepared")
+        if isinstance(prepared, Mapping):
+            extensions["architect_prepared"] = prepared
+        return extensions
 
     @staticmethod
     def _blocking_gate_results(
@@ -2322,28 +2416,49 @@ class TickOrchestrator:
 
     def _activate_architecture_plan(self) -> None:
         """兼容入口：委托独立 ArchitectureActivationService。"""
+        emitted: list[LoopEvent] = []
+
+        def emit(event_type: LoopEventType, payload: dict) -> None:
+            event = LoopEvent.create(
+                thread_id=self._state.thread_id,
+                sequence=0,
+                event_type=event_type,
+                payload=payload,
+                correlation_id=self._state.thread_id,
+                causation_id=self._current_result_message_id,
+            )
+            emitted.append(event)
+            self._queue_domain_event(event_type, payload)
+
         result = ArchitectureActivationService(self.project_root).activate(
             state=self._state,
             design_doc=self._design_doc,
             batch_state=self._batch_state,
             progress_tree=self._progress_tree,
             verification_layers=self._verification_layers,
-            emit=self._queue_domain_event,
+            emit=emit,
         )
+        registry = default_reducer_registry()
+        for event in emitted:
+            self._state = registry.reduce(self._state, event)
         self._batch_state = result.batch_state
         self._plan = result.plan
         self._verification_layers = result.verification_layers
         self._progress_tree = result.progress_tree
+        self._state._runtime_ctx.pop("architect_prepared", None)
+        self._state._runtime_ctx.pop("plan_reconciliation_candidate", None)
+        self._state._runtime_ctx.pop("architecture_candidate", None)
+        self._state._runtime_ctx.pop("plan_patch_base_revision", None)
+        self._state._runtime_ctx.pop("architect_obligations", None)
 
     def _snapshot_developer_output(self) -> None:
-        """保存 developer 产出快照 (advance_stage 会 clear_stage_fields)."""
+        """同步进程内上下文；持久快照由 ResultEvidenceRecorded 投影。"""
         snapshot = {
             "files_changed": self._state.files_changed,
             "commit_hash": self._state.commit_hash,
             "test_results": self._state.test_results,
         }
         self._dev_snapshot = snapshot
-        self._state.developer_snapshot = snapshot
 
     def _offload_stage(self, stage: str) -> None:
         """兼容入口：委托独立 StageOffloadService。"""
@@ -2375,17 +2490,15 @@ class TickOrchestrator:
                     node.gate_pass_count += 1
 
     def _inject_supplement(self, gap: dict, content: str, source: str,
-                           source_tier: str | None, confidence: str) -> None:
-        """将细化产出注入 DesignDoc.supplements + 序列化到 EngineState + 标记节点 stable."""
+                           source_tier: str | None, confidence: str,
+                           created_at: str | None = None) -> None:
+        """将细化产出注入 DesignDoc.supplements，并标记节点 stable。"""
         if self._design_doc is not None:
             self._design_doc.supplements[gap["id"]] = Supplement(
                 gap_id=gap["id"],
                 design_section_ref=gap.get("design_section_ref", ""),
                 content=content, source=source, source_tier=source_tier,
-                confidence=confidence, created_at=now_iso())
-            self._state.design_supplements_json = json.dumps(
-                {k: asdict(v) for k, v in self._design_doc.supplements.items()},
-                ensure_ascii=False)
+                confidence=confidence, created_at=created_at or now_iso())
         if self._progress_tree:
             node = self._progress_tree.find_by_design_section(
                 gap.get("design_section_ref", ""))
@@ -2520,6 +2633,7 @@ class TickOrchestrator:
                 action["metrics"] = enrichment
                 # P0-3: RatchetController 接线 — 收敛时执行棘轮判定
                 action["ratchet"] = self._run_ratchet(mc, enrichment)
+            action = self._commit_terminal_action(action)
             return action
 
         self._save_checkpoint()
@@ -2532,6 +2646,35 @@ class TickOrchestrator:
         ).to_dict()
         if mc is not None and enrichment:
             action["metrics"] = enrichment
+        action = self._commit_terminal_action(action)
+        return action
+
+    def _commit_terminal_action(self, action: dict[str, Any]) -> dict[str, Any]:
+        """终态没有下一轮 build_action，必须显式提交当前 Tick 事实。"""
+        if self._event_store is None:
+            return action
+        revision = RuntimeRevision.from_dict(
+            self._state.active_runtime_revision
+            or self._current_runtime_revision().to_dict()
+        )
+        compiled = ActionCompiler().compile(
+            payload={
+                **action,
+                "thread_id": self._state.thread_id,
+                "tick": self._state.tick + 1,
+                "stage": self._state.current_stage,
+            },
+            identity=ActionIdentity(
+                message_id=str(uuid4()),
+                correlation_id=self._state.thread_id,
+                causation_id=self._current_result_message_id,
+            ),
+            runtime_revision=revision,
+            issued_at=datetime.now().astimezone().isoformat(),
+            effects=(),
+        )
+        action = dict(compiled.payload)
+        self._commit_event_action(action)
         return action
 
     # ── P1-2: RatchetController 接线 ──
@@ -2567,32 +2710,66 @@ class TickOrchestrator:
             self._design_authority_events()
         )
 
-    def build_action(self, feedback: str | None = None, pre_gate: dict | None = None) -> dict:
+    def build_action(
+        self,
+        feedback: str | None = None,
+        pre_gate: dict | None = None,
+        *,
+        project_setup_recovery: bool = False,
+    ) -> dict:
         """Build the action dict for the current stage — delegates to ActionBuilder."""
         if self._event_store is None:
             self._pending_effect_receipts.clear()
             self._pending_effect_intents.clear()
         self._state.action_timestamp = time.time()
-        ledger = DesignDecisionLedger.from_project(self.project_root)
-        action = self.action_builder.build_action(
-            self._state,
-            design_authority_projection=ledger.effective_projection(
-                self._design_authority_events()
-            ),
-            design_doc=self._design_doc,
-            batch_state=self._batch_state,
-            plan=self._plan,
-            dev_snapshot=self._dev_snapshot,
-            progress_tree=self._progress_tree,
-            pause_at_stages=self._pause_at_stages,
-            passed_checkpoints=self._passed_checkpoints,
-            last_batch_id=self._last_batch_id,
-            feedback=feedback,
-            pre_gate=pre_gate,
-            pii_enabled=self._pii_enabled,
-            pii_redactor=self._pii_redactor,
-            pii_outbound=self._runtime_config.pii_outbound,
-        )
+        try:
+            plan = self.action_builder.build_plan(
+                self._state,
+                design_authority_projection=self._design_ledger.effective_projection(
+                    self._design_authority_events()
+                ),
+                design_doc=self._design_doc,
+                batch_state=self._batch_state,
+                plan=self._plan,
+                dev_snapshot=self._dev_snapshot,
+                progress_tree=self._progress_tree,
+                pause_at_stages=self._pause_at_stages,
+                passed_checkpoints=self._passed_checkpoints,
+                last_batch_id=self._last_batch_id,
+                feedback=feedback,
+                pre_gate=pre_gate,
+                project_setup_recovery=project_setup_recovery,
+                pii_enabled=self._pii_enabled,
+                pii_redactor=self._pii_redactor,
+                pii_outbound=self._runtime_config.pii_outbound,
+            )
+        except PromptContextError as exc:
+            if not str(exc).startswith("PROMPT_CONTEXT_TOO_LARGE"):
+                raise
+            _logger.error(
+                "Prompt context exceeded stage hard limit: stage=%s",
+                self._state.current_stage,
+            )
+            return action_envelope(
+                ActionError(
+                    error_code="ACTION_CONTEXT_TOO_LARGE",
+                    message="当前 Stage 上下文超过单次请求硬限制，已拒绝生成未完整的 Action",
+                    suggestion=(
+                        "仅保留当前任务、直接依赖和最新失败定位；完整日志请通过 Artifact 引用读取"
+                    ),
+                ).to_dict(),
+                thread_id=self._state.thread_id,
+                tick=self._state.tick + 1,
+                stage=self._state.current_stage,
+                causation_id=self._current_result_message_id,
+            )
+        action = plan.payload
+        if (
+            action.get("action") == "resource_wait"
+            and isinstance(self._active_action, Mapping)
+            and self._active_action.get("message_id")
+        ):
+            action["active_action_message_id"] = self._active_action["message_id"]
         # Fix C: auto-skip component_verifier when no design data
         if action.get("action") == "skip" and action.get("stage") == "component_verifier":
             _logger.info("Auto-skip component_verifier: %s", action.get("reason", ""))
@@ -2664,7 +2841,16 @@ class TickOrchestrator:
             effects=tuple(self._pending_effect_intents),
         )
         action = dict(draft.payload)
-        self.action_builder.bind_spawn_proofs(action)
+        binding_intents: list[EffectIntent] = []
+        binding_receipts: list[EffectReceipt] = []
+        binding_builder = copy(self.action_builder)
+        binding_builder._effect_intent_sink = binding_intents.append
+        binding_builder._effect_sink = binding_receipts.append
+        binding_builder.bind_spawn_proofs(action)
+        plan = plan.with_effects(
+            intents=tuple(binding_intents),
+            receipts=tuple(binding_receipts),
+        )
         action["extensions"]["policy_snapshot"] = {
             **asdict(self._runtime_config.loop_budget_policy),
             "max_worker_receipt_bytes": (
@@ -2691,13 +2877,37 @@ class TickOrchestrator:
                 action.setdefault("extensions", {})["informational_drift"] = drift
         validate_action_envelope(action)
         if action.get("action") != "error":
+            self._pending_effect_intents.extend(plan.effect_intents)
+            self._pending_effect_receipts.extend(plan.preview_receipts)
             if self._event_store is not None:
                 self._commit_event_action(action)
+            else:
+                # 无持久化 EventStore 的内存/旧 checkpoint façade 仍需显式
+                # 执行已规划 effect；这不是新运行事实源，只是兼容运行时。
+                self._execute_pending_effects()
             self._active_action = action
             if self._checkpoint_store is not None and self._event_store is None:
                 self._checkpoint_store.record_protocol_action(action)
         self.action_builder.log_prompt(self.project_root, action)
         return action
+
+    def _execute_pending_effects(self) -> None:
+        """执行当前 Action 的 effect intents，并替换为真实 receipts。"""
+
+        if not self._pending_effect_intents:
+            return
+        executor = EffectExecutor(self.project_root)
+        executed: list[EffectReceipt] = []
+        try:
+            executed = [
+                executor.execute(intent) for intent in self._pending_effect_intents
+            ]
+        except BaseException:
+            executor.discard(executed)
+            raise
+        self._pending_effect_receipts = list({
+            receipt.relative_path: receipt for receipt in executed
+        }.values())
 
     def _current_runtime_revision(self) -> RuntimeRevision:
         """由当前 Prompt 与确定性策略构建 Action 级运行时修订。"""
@@ -2921,6 +3131,11 @@ class TickOrchestrator:
                             estimator_version=usage.get(
                                 "estimator_version", ""
                             ),
+                            action_message_id=(
+                                active_action.get("message_id")
+                                if isinstance(active_action, dict)
+                                else None
+                            ),
                         ))
                     finally:
                         ledger.close()
@@ -2948,375 +3163,53 @@ class TickOrchestrator:
         except (OSError, ValueError, KeyError, TypeError):
             _logger.debug("Token collect failed", exc_info=True)
 
-    # ── read/validate/apply ──
+    # ── Result 验证 ──
 
-    def _read_and_validate(self, result_file: Path) -> dict | ErrorResponse:
-        try:
-            result = json.loads(result_file.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError) as e:
-            return ErrorResponse(
-                error_code="RESULT_PARSE_ERROR",
-                message=f"无法解析 result 文件: {e}",
-                current_state=self._state.to_dict() if self._state else None)
-
-        if not isinstance(result, dict):
-            return ErrorResponse(
-                error_code="RESULT_TYPE_ERROR",
-                message="result 必须是 JSON object",
-                current_state=self._state.to_dict() if self._state else None)
-
-        result_stage = result.get("stage", "")
-        if result_stage != self._state.current_stage:
-            return ErrorResponse(
-                error_code="STAGE_MISMATCH",
-                message=f"stage 不匹配: result={result_stage!r}, "
-                        f"expected={self._state.current_stage!r} "
-                        f"(stage 是角色名如 'developer'/'architect', 不是 batch_id 如 'B4')",
-                current_state=self._state.to_dict())
-
-        errors = validate_result_format(result, self._state.current_stage)
-        if errors:
-            return ErrorResponse(
-                error_code="RESULT_VALIDATION_ERROR",
-                message="; ".join(errors),
-                current_state=self._state.to_dict())
-
-        if scope_error := self._validate_component_verifier_scope(result):
-            return scope_error
-
-        if gap_error := self._validate_gap_analysis(result):
-            return gap_error
-
-        if gap_error := self._validate_gap_review_decisions(result):
-            return gap_error
-
-        # T109d: L3 — inbound result JSON PII scan
-        return self._scan_inbound_for_pii(result)
+    def _normalize_result_section_findings(
+        self, result: dict,
+    ) -> ErrorResponse | None:
+        return _normalize_result_section_findings_impl(self, result)
 
     def _validate_gap_analysis(self, result: dict) -> ErrorResponse | None:
-        """Gap Scan 必须提供足以让用户判断的完整分析，不接受空洞摘要。"""
-        if self._state.current_stage != "gap_scan":
-            return None
-        coverage = result.get("scan_coverage")
-        if not isinstance(coverage, list) or not coverage:
-            return ErrorResponse(
-                "GAP_SCAN_EVIDENCE_INCOMPLETE",
-                "Gap Scan 必须逐项提供 Core 解析章节的覆盖结论与非空证据",
-                self._state.to_dict(),
-            )
-        if result.get("design_doc_digest") != self._state.design_doc_digest:
-            return ErrorResponse(
-                "GAP_SCAN_DESIGN_MISMATCH",
-                "Gap Scan 结果未绑定当前 active design digest",
-                self._state.to_dict(),
-            )
-        engineering_model = (
-            EngineeringModel.from_design_doc(
-                self._design_doc,
-                design_digest=self._state.design_doc_digest,
-            )
-            if self._design_doc is not None
-            else None
-        )
-        expected_by_id = {
-            section.section_id: section.design_section
-            for section in engineering_model.sections
-        } if engineering_model is not None else {}
-        expected_id_by_ref = {
-            reference: section_id
-            for section_id, reference in expected_by_id.items()
-        }
-        actual_section_ids: list[str] = []
-        for index, item in enumerate(coverage):
-            section_id = item.get("section_id") if isinstance(item, dict) else None
-            design_section_ref = (
-                item.get("design_section_ref") if isinstance(item, dict) else None
-            )
-            valid = (
-                isinstance(item, dict)
-                and isinstance(design_section_ref, str)
-                and item.get("verdict") in {"clear", "gap"}
-                and isinstance(item.get("evidence"), list)
-                and bool(item.get("evidence"))
-                and all(
-                    isinstance(evidence, str) and evidence.strip()
-                    for evidence in item.get("evidence", [])
-                )
-            )
-            if not valid:
-                return ErrorResponse(
-                    "GAP_SCAN_EVIDENCE_INCOMPLETE",
-                    f"scan_coverage[{index}] 缺少章节、结论或非空证据",
-                    self._state.to_dict(),
-                )
-            resolved_id = (
-                section_id
-                if isinstance(section_id, str)
-                else expected_id_by_ref.get(str(design_section_ref))
-            )
-            if (
-                not isinstance(resolved_id, str)
-                or resolved_id not in expected_by_id
-                or expected_by_id[resolved_id] != design_section_ref
-            ):
-                return ErrorResponse(
-                    "GAP_SCAN_COVERAGE_MISMATCH",
-                    f"scan_coverage[{index}] 未绑定当前设计的稳定章节身份",
-                    self._state.to_dict(),
-                )
-            actual_section_ids.append(resolved_id)
-        if (
-            len(actual_section_ids) != len(set(actual_section_ids))
-            or set(actual_section_ids) != set(expected_by_id)
-            or result.get("scanned_sections") != len(actual_section_ids)
-        ):
-            return ErrorResponse(
-                "GAP_SCAN_COVERAGE_MISMATCH",
-                "Gap Scan 覆盖必须与 Core 解析章节一一对应且计数一致",
-                self._state.to_dict(),
-            )
-        required = {
-            "evidence", "problem_statement", "impact", "dependencies",
-            "recommendation", "options", "blocking_rule",
-        }
-        gaps = result.get("gaps", [])
-        for index, gap in enumerate(gaps):
-            if not isinstance(gap, dict):
-                return ErrorResponse(
-                    "GAP_ANALYSIS_INCOMPLETE",
-                    f"gaps[{index}] 必须是 object",
-                    self._state.to_dict(),
-                )
-            missing = sorted(required - set(gap))
-            recommendation = gap.get("recommendation")
-            options = gap.get("options")
-            invalid = (
-                missing
-                or not isinstance(gap.get("evidence"), list)
-                or not gap.get("evidence")
-                or not isinstance(gap.get("impact"), list)
-                or not gap.get("impact")
-                or not isinstance(recommendation, dict)
-                or not {"resolution", "reason", "confidence"}.issubset(
-                    recommendation or {}
-                )
-                or not isinstance(options, list)
-                or not options
-            )
-            if invalid:
-                gap_id = gap.get("id", f"index-{index}")
-                return ErrorResponse(
-                    "GAP_ANALYSIS_INCOMPLETE",
-                    f"gap {gap_id!r} 缺少可审计的证据、影响、推荐或选项",
-                    self._state.to_dict(),
-                )
-            if gap.get("grade") == "architectural" and any(
-                isinstance(option, dict)
-                and str(option.get("resolution", "")).lower() == "defer"
-                and option.get("enabled", True)
-                for option in options
-            ):
-                return ErrorResponse(
-                    "GAP_ANALYSIS_BLOCKING_RULE_INVALID",
-                    f"architectural gap {gap.get('id')!r} 不得启用纯 Defer",
-                    self._state.to_dict(),
-                )
-        expected_blocking = any(
-            isinstance(gap, dict) and gap.get("grade") == "architectural"
-            for gap in gaps
-        )
-        if bool(result.get("has_blocking")) != expected_blocking:
-            return ErrorResponse(
-                "GAP_ANALYSIS_BLOCKING_FLAG_MISMATCH",
-                "has_blocking 必须由 architectural gap 集合确定",
-                self._state.to_dict(),
-            )
-        return None
+        return _validate_gap_analysis_impl(self, result)
 
     def _validate_component_verifier_scope(self, result: dict) -> ErrorResponse | None:
-        """Verifier 只能提交当前 Action 声明的批次设计条目。"""
-        if self._state.current_stage != "component_verifier":
-            return None
-        action = self._active_action or {}
-        scope = action.get("verification_scope")
-        if not isinstance(scope, dict):
-            return None
-        if scope.get("mode") != "batch_design_items":
-            return None
-        component = scope.get("component")
-        if result.get("component") != component:
-            return ErrorResponse(
-                "COMPONENT_VERIFICATION_SCOPE_INVALID",
-                "component_verifier 结果的 component 未绑定当前批次",
-                self._state.to_dict(),
-            )
-        expected = scope.get("design_item_ids")
-        if not isinstance(expected, list) or any(not isinstance(item, str) for item in expected):
-            return ErrorResponse(
-                "COMPONENT_VERIFICATION_SCOPE_INVALID",
-                "当前 Action 的 design_item_ids 非法，无法安全接收覆盖结果",
-                self._state.to_dict(),
-            )
-        coverage = result.get("coverage_map")
-        if not isinstance(coverage, list):
-            return None
-        actual: list[str] = []
-        for item in coverage:
-            if not isinstance(item, dict) or not isinstance(item.get("design_item"), str):
-                return ErrorResponse(
-                    "COMPONENT_VERIFICATION_SCOPE_INVALID",
-                    "coverage_map 每项必须绑定非空 design_item",
-                    self._state.to_dict(),
-                )
-            actual.append(item["design_item"])
-        if len(actual) != len(set(actual)):
-            return ErrorResponse(
-                "COMPONENT_VERIFICATION_SCOPE_INVALID",
-                "coverage_map 不得重复提交同一 design_item",
-                self._state.to_dict(),
-            )
-        expected_set = set(expected)
-        actual_set = set(actual)
-        missing = sorted(expected_set - actual_set)
-        unexpected = sorted(actual_set - expected_set)
-        if missing or unexpected:
-            detail = []
-            if missing:
-                detail.append("缺少=" + ",".join(missing))
-            if unexpected:
-                detail.append("越界=" + ",".join(unexpected))
-            return ErrorResponse(
-                "COMPONENT_VERIFICATION_SCOPE_INVALID",
-                "coverage_map 未完整且仅覆盖当前批次白名单（" + "; ".join(detail) + "）",
-                self._state.to_dict(),
-            )
-        return None
+        return _validate_component_verifier_scope_impl(self, result)
 
     def _validate_gap_review_decisions(self, result: dict) -> ErrorResponse | None:
-        """新 Action 接受当前单项决定；旧 active Action 兼容完整 decisions。"""
-        if self._state.current_stage != "gap_review":
-            return None
-        report = json.loads(self._state.gap_report_json or '{"gaps": []}')
-        unresolved = [
-            str(gap.get("id"))
-            for gap in report.get("gaps", [])
-            if gap.get("id") is not None
-            and gap.get("resolution") not in {"fill", "defer"}
-        ]
-        decision = result.get("decision")
-        if isinstance(decision, dict):
-            current_id = unresolved[0] if unresolved else None
-            if decision.get("gap_id") != current_id:
-                return ErrorResponse(
-                    error_code="GAP_REVIEW_DECISION_OUT_OF_ORDER",
-                    message=(
-                        f"当前只能处理 gap {current_id!r}，不得跳项或重复提交"
-                    ),
-                    current_state=self._state.to_dict(),
-                )
-            decision_source = decision.get("decision_source")
-            if decision_source == "thread_policy":
-                current_gap: dict[str, Any] = next(
-                    (
-                        gap for gap in report.get("gaps", [])
-                        if str(gap.get("id")) == current_id
-                    ),
-                    {},
-                )
-                recommended = (current_gap.get("recommendation") or {}).get(
-                    "resolution"
-                )
-                recommendation = current_gap.get("recommendation")
-                if not isinstance(recommendation, dict) or recommendation.get(
-                    "requires_user_approval"
-                ) is not False:
-                    return ErrorResponse(
-                        error_code="GAP_REVIEW_POLICY_REQUIRES_APPROVAL",
-                        message=(
-                            "当前 Gap 推荐可能改变绑定设计，不能由线程策略自动采用；"
-                            "必须单独提交用户 Gate 决策。"
-                        ),
-                        current_state=self._state.to_dict(),
-                    )
-                if (
-                    self._state.gap_decision_policy
-                    != "remaining_recommendations"
-                    or decision.get("policy") != "remaining_recommendations"
-                    or str(decision.get("resolution", "")).lower()
-                    != str(recommended or "").lower()
-                ):
-                    return ErrorResponse(
-                        error_code="GAP_REVIEW_POLICY_DECISION_INVALID",
-                        message="自动 Gap 决策必须匹配当前线程的结构化授权与 Core 推荐",
-                        current_state=self._state.to_dict(),
-                    )
-                return None
-            if decision_source != "user":
-                return ErrorResponse(
-                    error_code="GAP_REVIEW_USER_DECISION_REQUIRED",
-                    message="Gap Review 决策必须来自用户，禁止宿主代选",
-                    current_state=self._state.to_dict(),
-                )
-            return None
-        expected = set(unresolved)
-        decisions = result.get("decisions", [])
-        actual = [str(item.get("gap_id")) for item in decisions if isinstance(item, dict)]
-        actual_set = set(actual)
-        if len(actual) != len(actual_set) or not actual_set.issubset(expected):
-            return ErrorResponse(
-                error_code="GAP_REVIEW_DECISIONS_INVALID_SET",
-                message="decisions 含重复或未知 gap_id，必须严格对应当前 action.gaps",
-                current_state=self._state.to_dict(),
-            )
-        if actual_set != expected:
-            missing = sorted(expected - actual_set)
-            return ErrorResponse(
-                error_code="GAP_REVIEW_DECISIONS_INCOMPLETE",
-                message=f"decisions 未完整覆盖当前 gap: {', '.join(missing)}",
-                current_state=self._state.to_dict(),
-            )
-        return None
+        return _validate_gap_review_decisions_impl(self, result)
 
     def _scan_inbound_for_pii(self, result: dict) -> dict | ErrorResponse:
-        """T109d L3: inbound result JSON PII scan/redact/block."""
-        if not self._pii_enabled or not self._pii_redactor:
-            return result
-        inbound = self._runtime_config.pii_inbound
-        if inbound == "redact":
-            redacted = self._pii_redactor.redact_dict(result)
-            # redact_dict(dict) → dict (list 分支不可能，因 result 类型为 dict)
-            if isinstance(redacted, dict):
-                return redacted
-            return result
-        findings = self._pii_redactor.scan_dict(result)
-        if findings:
-            # P2-35: summarize by category for actionable diagnosis
-            by_cat: dict[str, int] = {}
-            for f in findings:
-                cat = getattr(f, "category", "unknown")
-                by_cat[cat] = by_cat.get(cat, 0) + 1
-            cat_summary = ", ".join(f"{c}:{n}" for c, n in sorted(by_cat.items())[:3])
-            _logger.warning(
-                "PII detected in inbound result: %d matches (%s)", len(findings), cat_summary)
-            if inbound == "block":
-                s = self._state
-                return ErrorResponse(
-                    error_code="PII_BLOCKED_INBOUND",
-                    message=(
-                        f"PII detected in inbound result: "
-                        f"{len(findings)} matches ({cat_summary}). "
-                        f"审查 result JSON 中的 PII 字段后重试"),
-                    current_state=s.to_dict() if s else None)
-        return result
+        return _apply_inbound_pii_policy_impl(self, result)
 
     def _apply_result_to_state(self, result: dict) -> None:
-        """兼容入口：委托独立 StageResultProjector。"""
-        StageResultProjector().apply(
-            self._state,
-            result,
-            audit_key=self._audit_revision_key,
-            audit_fingerprint=self._audit_revision_fingerprint,
-        )
+        """只准备 Architect 的瞬时 Candidate；持久结果由 Handler 事件提交。"""
+        if result.get("stage") == "architect":
+            preparation = ArchitectResultPreparer().prepare(self._state, result)
+            prepared = {
+                "evidence_changes": preparation.evidence_changes,
+                "plan_reconciliation_changes": (
+                    preparation.plan_reconciliation_changes
+                ),
+                "superseded_tasks": list(preparation.superseded_tasks),
+            }
+            self._state._runtime_ctx["architect_prepared"] = prepared
+            if preparation.plan_reconciliation_changes is not None or result.get("plan_patch") is not None:
+                self._state._runtime_ctx["architecture_candidate"] = (
+                    preparation.candidate
+                )
+            else:
+                self._state._runtime_ctx.pop("architecture_candidate", None)
+            if preparation.plan_patch_base_revision is None:
+                self._state._runtime_ctx.pop("plan_patch_base_revision", None)
+            else:
+                self._state._runtime_ctx[
+                    "plan_patch_base_revision"
+                ] = preparation.plan_patch_base_revision
+            self._state._runtime_ctx["architect_obligations"] = list(
+                preparation.candidate.get("obligations", [])
+            )
+            return
 
     # ── 辅助 ──
 
@@ -3324,7 +3217,6 @@ class TickOrchestrator:
         if next_stage is None:
             return
         previous_stage = self._state.current_stage
-        self._last_completed_stage = previous_stage  # E2: 在推进前记录
         self._append_round_history()
         clear_stage_fields(self._state, self._state.current_stage)
         self._state.current_stage = next_stage
@@ -3370,53 +3262,25 @@ class TickOrchestrator:
         ))
 
     def _compute_diff_stats(self, files_changed: list, *, git_runner: Callable | None = None) -> tuple[int, int]:
-        """Compute lines_added/lines_removed from git diff --numstat (T105b).
+        return _compute_diff_stats_impl(
+            self, files_changed, git_runner=git_runner,
+        )
 
-        Args:
-            files_changed: list of changed file paths.
-            git_runner: optional callable for git subprocess (injectable for testing).
-                        Signature: (list[str]) -> subprocess.CompletedProcess.
-                        Defaults to subprocess.run.
-        """
-        if not files_changed:
-            return 0, 0
-        try:
-            runner = git_runner if git_runner is not None else subprocess.run
-            result = runner(
-                ["git", "-C", str(self.project_root), "diff", "--numstat"],
-                capture_output=True, text=True, timeout=5,
-            )
-            if result.returncode != 0:
-                return 0, 0
-            added = 0
-            removed = 0
-            for line in result.stdout.strip().split("\n"):
-                if not line:
-                    continue
-                parts = line.split("\t")
-                if len(parts) >= 3:
-                    # P2-32: binary files output "- \t - \t filename"
-                    if parts[0] == "-" and parts[1] == "-":
-                        continue
-                    try:
-                        if parts[0] != "-":
-                            added += int(parts[0])
-                        if parts[1] != "-":
-                            removed += int(parts[1])
-                    except ValueError:
-                        _logger.debug("git diff numstat parse failed: %s", line, exc_info=True)
-                        pass
-            return added, removed
-        except (OSError, subprocess.SubprocessError, ValueError):
-            return 0, 0
-
-    def _run_developer_gates(self) -> None:
+    def _run_developer_gates(self, *, state: EngineState | None = None) -> None:
         """兼容入口：委托独立 DeveloperGateService。"""
+        gate_state = state or self._state
         self._t_gate_ms += DeveloperGateService(self._tick_gate_runner).run(
-            state=self._state,
+            state=gate_state,
             batch_state=self._batch_state,
             developer_snapshot=self._dev_snapshot,
         )
+        if gate_state is not self._state:
+            # Gate 只拥有 telemetry / evidence 事实；业务 Result 仍由 Handler
+            # 的 ResultEvidenceRecorded 事件提交，避免恢复旧 Projector 旁路。
+            self._state.gate_results = gate_state.gate_results
+            self._state.task_verification_evidence = (
+                gate_state.task_verification_evidence
+            )
 
     def _handle_guardrail_result(self, gr) -> dict:
         action = getattr(gr, "action", "block")
@@ -3495,6 +3359,7 @@ class TickOrchestrator:
                 result_causation_id=result_causation_id,
                 round_history=tuple(asdict(item) for item in self._round_history),
             )
+            self._execute_pending_effects()
             self._event_store.commit_tick(
                 events=candidate.events,
                 state=self._state,

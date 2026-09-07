@@ -5,7 +5,7 @@
 TickOrchestrator 的 I/O 层: 每 tick Python 输出一个 action dict (stdout),
 Agent 执行后写 stage-result.json, Python 读回验证. 本模块提供:
   - ActionDone / ActionError: Python → Agent 的终态/错误 action
-  - ErrorResponse: _read_and_validate 校验失败的返回 (带 current_state, 供 isinstance 分流)
+  - ErrorResponse: Result 校验失败的返回 (带 current_state, 供 isinstance 分流)
   - RESULT_SCHEMA + validate_result_format: 各 stage result 必填字段/值域校验
 
 测试原则 (per pytest-memory-management.md): 单文件 pytest --timeout=60.
@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import pytest
 
+from auto_engineering.loop import action_responses
 from auto_engineering.loop.actions import (
     RESULT_SCHEMA,
     ActionDone,
@@ -27,6 +28,13 @@ from auto_engineering.loop.protocol import (
     ProtocolValidationError,
     validate_result_envelope,
 )
+
+
+def test_action_response_models_have_one_canonical_module() -> None:
+    assert ActionDone is action_responses.ActionDone
+    assert ActionError is action_responses.ActionError
+    assert ErrorResponse is action_responses.ErrorResponse
+    assert action_responses.build_terminal_acceptance_summary is not None
 
 
 class TestActionDone:
@@ -246,12 +254,12 @@ class TestValidateResultFormat:
         errs = validate_result_format(result, "developer")
         assert any("failed" in e for e in errs)
 
-    def test_developer_no_files_changed_rejected(self) -> None:
+    def test_developer_verification_only_batch_allows_no_files_changed(self) -> None:
         result = {"stage": "developer", "batch_id": "b1",
                   "files_changed": [],
                   "test_results": {"passed": 1, "failed": 0}}
         errs = validate_result_format(result, "developer")
-        assert any("files_changed" in e for e in errs)
+        assert errs == []
 
     def test_valid_critic_approve(self) -> None:
         result = {"stage": "critic", "verdict": "APPROVE", "findings": []}

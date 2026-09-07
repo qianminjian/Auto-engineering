@@ -84,6 +84,152 @@ def test_normalizes_codex_file_path(tmp_path: Path) -> None:
     assert event.file_path == "src/app.py"
 
 
+def test_codex_post_tool_persists_spawn_response_without_rebuilding_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from auto_engineering.host import codex_hooks
+
+    worker = {
+        "worker_id": "developer-0",
+        "native_launch_prompt": "native-prompt",
+        "native_result_path": ".ae-state/host-runtime/native-results/developer.json",
+    }
+    monkeypatch.setattr(
+        "auto_engineering.host.native_launch_guard.active_native_workers",
+        lambda **_: [worker],
+    )
+    raw = '{"receiver_thread_ids":["agent-1"],"agents_states":{"agent-1":"pending"}}'
+    output = StringIO()
+    assert codex_hooks.main(StringIO(json.dumps({
+        "hook_event_name": "PostToolUse",
+        "cwd": str(tmp_path),
+        "tool_name": "multi_agent_v1__spawn_agent",
+        "tool_input": {"prompt": "native-prompt"},
+        "tool_response": raw,
+    })), output) == 0
+    path = tmp_path / str(worker["native_result_path"])
+    assert path.read_bytes() == raw.encode()
+    assert "启动事实已固化" in json.loads(output.getvalue())["systemMessage"]
+
+
+def test_codex_post_tool_persists_only_target_completed_body_byte_for_byte(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from auto_engineering.host import codex_hooks
+
+    worker = {
+        "worker_id": "developer-0",
+        "native_result_path": ".ae-state/host-runtime/native-results/developer.json",
+    }
+    monkeypatch.setattr(
+        "auto_engineering.host.native_launch_guard.active_native_workers",
+        lambda **_: [worker],
+    )
+    spawn_raw = '{"receiver_thread_ids":["agent-1"]}'
+    path = tmp_path / str(worker["native_result_path"])
+    path.parent.mkdir(parents=True)
+    path.write_bytes(spawn_raw.encode())
+    completed = '{"worker_id":"developer-0","status":"completed"}'
+    wait_raw = json.dumps({"status": {"agent-1": {"completed": completed}}})
+    output = StringIO()
+    assert codex_hooks.main(StringIO(json.dumps({
+        "hook_event_name": "PostToolUse", "cwd": str(tmp_path),
+        "tool_name": "collaboration.wait_agent",
+        "tool_input": {"targets": ["agent-1"]}, "tool_response": wait_raw,
+    })), output) == 0
+    assert path.read_bytes() == completed.encode()
+    assert "完成证据已固化" in json.loads(output.getvalue())["systemMessage"]
+
+
+def test_codex_post_tool_persists_real_wait_message_body_byte_for_byte(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """真实 Codex wait 将完成 envelope 放在 target.message 中。"""
+
+    from auto_engineering.host import codex_hooks
+
+    worker = {
+        "worker_id": "critic-0",
+        "native_result_path": ".ae-state/host-runtime/native-results/critic.json",
+    }
+    monkeypatch.setattr(
+        "auto_engineering.host.native_launch_guard.active_native_workers",
+        lambda **_: [worker],
+    )
+    spawn_raw = '{"receiver_thread_ids":["agent-1"]}'
+    path = tmp_path / str(worker["native_result_path"])
+    path.parent.mkdir(parents=True)
+    path.write_bytes(spawn_raw.encode())
+    completed = (
+        '{"worker_id":"critic-0","status":"completed",'
+        '"payload":{"verdict":"APPROVE"}}'
+    )
+    wait_raw = json.dumps({
+        "agents_states": {
+            "agent-1": {"status": "completed", "message": completed},
+        },
+    })
+    output = StringIO()
+    assert codex_hooks.main(StringIO(json.dumps({
+        "hook_event_name": "PostToolUse", "cwd": str(tmp_path),
+        "tool_name": "collaboration.wait_agent",
+        "tool_input": {"targets": ["agent-1"]}, "tool_response": wait_raw,
+    })), output) == 0
+    assert path.read_bytes() == completed.encode()
+    assert "完成证据已固化" in json.loads(output.getvalue())["systemMessage"]
+
+
+def test_codex_post_tool_does_not_reencode_structured_response(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from auto_engineering.host import codex_hooks
+
+    monkeypatch.setattr(
+        "auto_engineering.host.native_launch_guard.active_native_workers",
+        lambda **_: [{
+            "worker_id": "developer-0",
+            "native_launch_prompt": "native-prompt",
+            "native_result_path": ".ae-state/host-runtime/native-results/developer.json",
+        }],
+    )
+    output = StringIO()
+    assert codex_hooks.main(StringIO(json.dumps({
+        "hook_event_name": "PostToolUse", "cwd": str(tmp_path),
+        "tool_name": "collaboration.spawn_agent",
+        "tool_input": {"prompt": "native-prompt"},
+        "tool_response": {"receiver_thread_ids": ["agent-1"]},
+    })), output) == 0
+    assert "未提供原始返回" in json.loads(output.getvalue())["systemMessage"]
+
+
+def test_codex_pre_tool_blocks_native_contract_guard_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from auto_engineering.host import codex_hooks
+    from auto_engineering.host.native_launch_guard import NativeLaunchGuardError
+
+    def reject(*args: object, **kwargs: object) -> None:
+        del args, kwargs
+        raise NativeLaunchGuardError("NATIVE_LAUNCH_PROMPT_MISMATCH")
+
+    monkeypatch.setattr(
+        "auto_engineering.host.native_launch_guard.guard_active_native_tool_call",
+        reject,
+    )
+    output = StringIO()
+    payload = {
+        "hook_event_name": "PreToolUse",
+        "cwd": str(tmp_path),
+        "tool_name": "collaboration.spawn_agent",
+        "tool_input": {"prompt": "stale"},
+    }
+
+    assert codex_hooks.main(StringIO(json.dumps(payload)), output) == 0
+    response = json.loads(output.getvalue())
+    assert response["decision"] == "block"
+    assert response["reason_code"] == "NATIVE_LAUNCH_PROMPT_MISMATCH"
+
+
 @pytest.mark.parametrize(
     "payload",
     [
@@ -131,8 +277,8 @@ def test_codex_hook_handler_reads_valid_json_from_stdin(tmp_path: Path) -> None:
     )
 
     assert result.returncode == 0
-    assert result.stdout == ""
     assert result.stderr == ""
+    assert "安全跳过" in json.loads(result.stdout)["systemMessage"]
 
 
 def test_codex_hook_handler_safely_skips_invalid_json() -> None:
@@ -251,7 +397,6 @@ def test_claude_stop_shell_uses_plugin_runtime(tmp_path: Path) -> None:
 def test_claude_stop_shell_uses_only_dedicated_runtime_contract() -> None:
     source = (ROOT / "hooks" / "stop.sh").read_text(encoding="utf-8")
 
-    assert '"$PLUGIN_DIR/.ae-runtime/bin/python"' in source
+    assert '"$RUNTIME_ROOT/bin/python"' in source
     assert '"$PLUGIN_DIR/.venv/bin/python"' not in source
-    assert 'UV_PROJECT_ENVIRONMENT="$PLUGIN_DIR/.ae-runtime"' in source
-    assert "uv run --frozen" in source
+    assert '"$PLUGIN_DIR/scripts/ae-run" --run-module' in source

@@ -58,6 +58,22 @@ def test_packaged_build_identity_rejects_invalid_metadata(tmp_path: Path) -> Non
     assert _read_packaged_build_identity(package_root) is None
 
 
+def test_build_info_contract_is_shared_by_acceptance_entrypoints() -> None:
+    from auto_engineering import build_identity
+
+    validator = getattr(build_identity, "validate_build_info", None)
+    assert callable(validator)
+    assert validator({
+        "version": "5.8.0-rc.5",
+        "build_id": "5.8.0-rc.5+sha256.aaaaaaaaaaaaaaaa",
+        "content_sha256": "a" * 64,
+    }) == {
+        "version": "5.8.0-rc.5",
+        "build_id": "5.8.0-rc.5+sha256.aaaaaaaaaaaaaaaa",
+        "content_sha256": "a" * 64,
+    }
+
+
 def _revision(*, prompt: str = "prompt-a", build: str = "rc.5") -> RuntimeRevision:
     return RuntimeRevision(
         protocol_version="1.1",
@@ -161,7 +177,7 @@ def test_restore_activates_new_prompt_revision_only_after_active_action(
         lambda: _Registry(),
     )
     restored_store = SQLiteCheckpointStore(db)
-    restored = TickOrchestrator.restore(tmp_path, restored_store)
+    restored = TickOrchestrator.restore_from_checkpoint(tmp_path, restored_store)
 
     assert restored._active_action["message_id"] == active_action["message_id"]
     assert restored._state.active_runtime_revision == old_revision
@@ -202,7 +218,7 @@ def test_event_store_restore_does_not_require_legacy_checkpoint(tmp_path) -> Non
         action = original.init("验证纯事件恢复")
 
         assert checkpoint_store.load_latest() is None
-        restored = TickOrchestrator.restore(
+        restored = TickOrchestrator.restore_from_event_store(
             tmp_path,
             checkpoint_store,
             event_store=events,

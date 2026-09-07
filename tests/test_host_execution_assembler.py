@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from copy import deepcopy
 from pathlib import Path
 
 import pytest
@@ -16,11 +17,46 @@ from auto_engineering.host.execution_assembler import (
     WorkerOutcomeCollectionError,
     collect_host_evidence_violations,
 )
+from auto_engineering.host.outcome_recovery import OutcomeRecoveryService
+from auto_engineering.host.result_contract import ResultContractService
 from auto_engineering.host.spawn_contract import WorkerInvocationSpec
 from auto_engineering.host.worker_attestation import (
     attestation_template,
     validate_attestations,
 )
+from auto_engineering.host.worker_evidence import (
+    HostEvidenceValidationError as WorkerEvidenceValidationError,
+)
+from auto_engineering.host.worker_evidence import (
+    NativeWorkerOutcome as WorkerEvidenceOutcome,
+)
+from auto_engineering.host.worker_failure import WorkerFailureService
+
+
+def test_worker_evidence_primitives_have_one_canonical_module() -> None:
+    """Assembler 只重导出 evidence 原语，不能保留第二套定义。"""
+
+    assert HostEvidenceValidationError is WorkerEvidenceValidationError
+    assert NativeWorkerOutcome is WorkerEvidenceOutcome
+
+
+def test_assembler_uses_one_outcome_recovery_service(tmp_path: Path) -> None:
+    assembler = HostExecutionAssembler(tmp_path)
+
+    assert isinstance(assembler._outcome_recovery, OutcomeRecoveryService)
+    assert assembler._outcome_recovery.project_root == tmp_path.resolve()
+
+
+def test_assembler_uses_one_result_contract_service(tmp_path: Path) -> None:
+    assembler = HostExecutionAssembler(tmp_path)
+
+    assert isinstance(assembler._result_contract, ResultContractService)
+
+
+def test_assembler_uses_one_worker_failure_service(tmp_path: Path) -> None:
+    assembler = HostExecutionAssembler(tmp_path)
+
+    assert isinstance(assembler._worker_failure, WorkerFailureService)
 
 
 def _action(tmp_path: Path) -> dict:
@@ -336,6 +372,569 @@ def test_record_worker_outcome_merges_business_artifact_with_host_fact(
     assert outcomes == [recorded]
 
 
+def test_record_worker_outcome_routes_business_test_failure_to_worker_failure(
+    tmp_path: Path,
+) -> None:
+    """测试失败不能被误记为 completed，也不能要求模型修改私有 outcome。"""
+
+    action = _action(tmp_path)
+    action["host_execution"]["work_files"] = {
+        "outcomes": ".ae-state/host-runtime/work/outcomes.json",
+    }
+    private_path = tmp_path / action["spawn"]["invocations"][0]["outcome_path"]
+    private_path.parent.mkdir(parents=True, exist_ok=True)
+    private_business = {
+        "worker_id": "critic-0",
+        "status": "completed",
+        "payload": {
+            "batch_id": "B1",
+            "test_results": {"passed": 14, "failed": 1, "errors": 0},
+            "red_evidence": ["VoiceResult 使用了错误的字段名"],
+        },
+        "summary": "发现业务测试失败",
+    }
+    private_path.write_text(json.dumps(private_business), encoding="utf-8")
+
+    recorded = HostExecutionAssembler(tmp_path).record_worker_outcome(
+        action=action,
+        worker_id="critic-0",
+        native_worker_handle="native-host-1",
+        status="completed",
+        actual_model="host-model",
+        isolation_evidence="fork_turns=none",
+    )
+
+    assert recorded["status"] == "failed"
+    assert recorded["payload"] == private_business["payload"]
+    assert json.loads(private_path.read_text(encoding="utf-8")) == private_business
+    assert json.loads(
+        (tmp_path / ".ae-state/host-runtime/work/outcomes.json").read_text()
+    )["outcomes"] == [recorded]
+
+    result = HostExecutionAssembler(tmp_path).finalize(
+        action=action,
+        outcomes=[NativeWorkerOutcome(**recorded)],
+        coordinator_payload={},
+    )
+    assert result["spawned"] is False
+    assert result["spawn_error_code"] == "HOST_WORKER_FAILED"
+
+
+def test_record_worker_outcome_repairs_host_only_shared_work_file(
+    tmp_path: Path,
+) -> None:
+    """完整原生回写可以修复宿主提前污染的共享 outcomes 工作副本。"""
+
+    action = _action(tmp_path)
+    native_ref = ".ae-state/host-runtime/native-results/native.json"
+    outcomes_ref = ".ae-state/host-runtime/work/outcomes.json"
+    action["host_execution"]["work_files"] = {"outcomes": outcomes_ref}
+    action["host_execution"]["workers"][0]["native_result_path"] = native_ref
+
+    # 私有 outcome 完全缺失时，Host 才能从绑定的 native 业务对象恢复。
+    outcomes_path = tmp_path / outcomes_ref
+    outcomes_path.parent.mkdir(parents=True, exist_ok=True)
+    outcomes_path.write_text(json.dumps({"outcomes": [{
+        "worker_id": "critic-0",
+        "status": "completed",
+        "native_worker_handle": "stale-host-fact",
+        "actual_model": "unreported",
+        "isolation_evidence": "fork_turns=none",
+    }]}), encoding="utf-8")
+    native_path = tmp_path / native_ref
+    native_path.parent.mkdir(parents=True, exist_ok=True)
+    native_path.write_text(json.dumps({
+        "component": "Goal",
+        "coverage_map": [],
+        "missing_count": 0,
+        "diverged_count": 0,
+        "recheck_log": [],
+    }), encoding="utf-8")
+
+    recorded = HostExecutionAssembler(tmp_path).record_worker_outcome(
+        action=action,
+        worker_id="critic-0",
+        native_worker_handle="native-host-1",
+        native_result_file=native_path,
+        status="completed",
+        actual_model="unreported",
+        isolation_evidence="fork_turns=none",
+    )
+
+    assert recorded["payload"]["component"] == "Goal"
+    assert json.loads(outcomes_path.read_text(encoding="utf-8")) == {
+        "outcomes": [recorded]
+    }
+
+
+def test_record_worker_outcome_ingests_native_agent_envelope_when_private_file_missing(
+    tmp_path: Path,
+) -> None:
+    """原生 Agent 漏写私有文件时，唯一回写边界仍可安全完成交接。"""
+
+    action = _action(tmp_path)
+    native_ref = ".ae-state/host-runtime/native-results/native.json"
+    action["host_execution"]["work_files"] = {
+        "outcomes": ".ae-state/host-runtime/work/outcomes.json",
+    }
+    action["host_execution"]["workers"][0]["native_result_path"] = native_ref
+    native_path = tmp_path / native_ref
+    native_path.parent.mkdir(parents=True, exist_ok=True)
+    native_path.write_text(json.dumps({
+        "agentId": "native-agent-1",
+        "content": [{
+            "type": "text",
+            "text": "完成。\n```json\n"
+            "{\"batch_id\":\"B1\",\"test_results\":{\"passed\":8}}\n"
+            "```",
+        }],
+    }), encoding="utf-8")
+
+    recorded = HostExecutionAssembler(tmp_path).record_worker_outcome(
+        action=action,
+        worker_id="critic-0",
+        native_worker_handle="native-agent-1",
+        native_result_file=native_path,
+        status="completed",
+        actual_model="unreported",
+        isolation_evidence="fork_turns=none",
+    )
+
+    private_path = tmp_path / action["spawn"]["invocations"][0]["outcome_path"]
+    private = json.loads(private_path.read_text(encoding="utf-8"))
+    assert private == {
+        "worker_id": "critic-0",
+        "status": "completed",
+        "payload": {
+            "batch_id": "B1",
+            "test_results": {"passed": 8},
+        },
+        "summary": "native_worker_result",
+    }
+    assert recorded["payload"] == private["payload"]
+
+
+def test_stage_native_result_preserves_exact_envelope_atomically(
+    tmp_path: Path,
+) -> None:
+    """Host 可把原生回包原样暂存到当前 Action 绑定路径。"""
+
+    action = _action(tmp_path)
+    native_ref = ".ae-state/host-runtime/native-results/native.json"
+    action["host_execution"]["workers"][0]["native_result_path"] = native_ref
+    native_path = tmp_path / native_ref
+    raw_envelope = b'{\n  "result": {"batch_id": "B1"}\n}\n'
+
+    HostExecutionAssembler(tmp_path).stage_native_result(
+        action=action,
+        worker_id="critic-0",
+        native_result_file=native_path,
+        raw_envelope=raw_envelope,
+    )
+
+    assert native_path.read_bytes() == raw_envelope
+
+
+def test_stage_native_result_rejects_unbound_path(
+    tmp_path: Path,
+) -> None:
+    action = _action(tmp_path)
+    unbound_path = tmp_path / ".ae-state/host-runtime/native-results/other.json"
+
+    with pytest.raises(
+        HostEvidenceValidationError,
+        match="WORKER_NATIVE_RESULT_PATH_INVALID:critic-0",
+    ):
+        HostExecutionAssembler(tmp_path).stage_native_result(
+            action=action,
+            worker_id="critic-0",
+            native_result_file=unbound_path,
+            raw_envelope=b'{"batch_id":"B1"}',
+        )
+
+
+def test_stage_native_result_rejects_empty_envelope(
+    tmp_path: Path,
+) -> None:
+    action = _action(tmp_path)
+    native_ref = ".ae-state/host-runtime/native-results/native.json"
+    action["host_execution"]["workers"][0]["native_result_path"] = native_ref
+
+    with pytest.raises(
+        HostEvidenceValidationError,
+        match="WORKER_NATIVE_RESULT_EMPTY:critic-0",
+    ):
+        HostExecutionAssembler(tmp_path).stage_native_result(
+            action=action,
+            worker_id="critic-0",
+            native_result_file=tmp_path / native_ref,
+            raw_envelope=b" \n",
+        )
+
+
+def test_record_worker_outcome_ingests_codex_result_wrapper_when_private_file_missing(
+    tmp_path: Path,
+) -> None:
+    """Codex 原生回包的单层 result 包装必须在 Host 边界解包。"""
+
+    action = _action(tmp_path)
+    native_ref = ".ae-state/host-runtime/native-results/native.json"
+    action["host_execution"]["work_files"] = {
+        "outcomes": ".ae-state/host-runtime/work/outcomes.json",
+    }
+    action["host_execution"]["workers"][0]["native_result_path"] = native_ref
+    native_path = tmp_path / native_ref
+    native_path.parent.mkdir(parents=True, exist_ok=True)
+    native_path.write_text(json.dumps({
+        "result": {
+            "plan": "先实现 API，再实现页面",
+            "batch_plan": [{"batch_id": "B1", "tasks": ["api"]}],
+            "contracts": {"clone-api": {"kind": "function"}},
+            "file_list": ["src/voiceCloneApi.ts"],
+            "obligations": [{"id": "O1", "summary": "实现 API"}],
+            "decision_impacts": [],
+        },
+    }), encoding="utf-8")
+
+    recorded = HostExecutionAssembler(tmp_path).record_worker_outcome(
+        action=action,
+        worker_id="critic-0",
+        native_worker_handle="native-codex-worker-1",
+        native_result_file=native_path,
+        status="completed",
+        actual_model="unreported",
+        isolation_evidence="fork_turns=none",
+    )
+
+    assert recorded["payload"]["plan"] == "先实现 API，再实现页面"
+    assert recorded["payload"]["batch_plan"][0]["batch_id"] == "B1"
+    private_path = tmp_path / action["spawn"]["invocations"][0]["outcome_path"]
+    assert json.loads(private_path.read_text(encoding="utf-8"))["payload"] == recorded[
+        "payload"
+    ]
+
+
+def test_record_worker_outcome_normalizes_missing_native_summary_metadata(
+    tmp_path: Path,
+) -> None:
+    """原生业务 envelope 可省略非业务 summary，由 Host 确定性补齐。"""
+
+    action = _action(tmp_path)
+    native_ref = ".ae-state/host-runtime/native-results/native.json"
+    action["host_execution"]["workers"][0]["native_result_path"] = native_ref
+    native_path = tmp_path / native_ref
+    native_path.parent.mkdir(parents=True, exist_ok=True)
+    native_path.write_text(json.dumps({
+        "worker_id": "critic-0",
+        "status": "completed",
+        "payload": {"assessment": "Needs rework", "findings": []},
+    }), encoding="utf-8")
+
+    recorded = HostExecutionAssembler(tmp_path).record_worker_outcome(
+        action=action,
+        worker_id="critic-0",
+        native_worker_handle="native-critic-1",
+        native_result_file=native_path,
+        status="completed",
+        actual_model="unreported",
+        isolation_evidence="fork_turns=none",
+    )
+
+    private_path = tmp_path / action["spawn"]["invocations"][0]["outcome_path"]
+    assert json.loads(private_path.read_text(encoding="utf-8")) == {
+        "worker_id": "critic-0",
+        "status": "completed",
+        "payload": {"assessment": "Needs rework", "findings": []},
+        "summary": "native_worker_result",
+    }
+    assert recorded["payload"]["assessment"] == "Needs rework"
+
+
+def test_record_worker_outcome_normalizes_missing_private_summary_metadata(
+    tmp_path: Path,
+) -> None:
+    """私有 envelope 缺少非业务 summary 时也由唯一边界确定性补齐。"""
+
+    action = _action(tmp_path)
+    private_path = tmp_path / action["spawn"]["invocations"][0]["outcome_path"]
+    private_path.parent.mkdir(parents=True, exist_ok=True)
+    private_path.write_text(json.dumps({
+        "worker_id": "critic-0",
+        "status": "completed",
+        "payload": {"assessment": "Needs rework", "findings": []},
+    }), encoding="utf-8")
+
+    recorded = HostExecutionAssembler(tmp_path).record_worker_outcome(
+        action=action,
+        worker_id="critic-0",
+        native_worker_handle="native-critic-1",
+        native_result_file=None,
+        status="completed",
+        actual_model="unreported",
+        isolation_evidence="fork_turns=none",
+    )
+
+    assert json.loads(private_path.read_text(encoding="utf-8")) == {
+        "worker_id": "critic-0",
+        "status": "completed",
+        "payload": {"assessment": "Needs rework", "findings": []},
+    }
+    assert recorded["payload"]["assessment"] == "Needs rework"
+
+
+def test_record_worker_outcome_rejects_nested_codex_result_wrapper(
+    tmp_path: Path,
+) -> None:
+    """多层包装不属于当前原生合同，不能被宽松递归解析。"""
+
+    action = _action(tmp_path)
+    native_ref = ".ae-state/host-runtime/native-results/native.json"
+    action["host_execution"]["workers"][0]["native_result_path"] = native_ref
+    native_path = tmp_path / native_ref
+    native_path.parent.mkdir(parents=True, exist_ok=True)
+    native_path.write_text(json.dumps({
+        "result": {"result": {"plan": "ambiguous"}},
+    }), encoding="utf-8")
+
+    with pytest.raises(
+        HostEvidenceValidationError,
+        match="WORKER_NATIVE_RESULT_INVALID:critic-0",
+    ):
+        HostExecutionAssembler(tmp_path).record_worker_outcome(
+            action=action,
+            worker_id="critic-0",
+            native_worker_handle="native-codex-worker-1",
+            native_result_file=native_path,
+            status="completed",
+            actual_model="unreported",
+            isolation_evidence="fork_turns=none",
+        )
+
+
+def test_record_worker_outcome_rejects_malformed_private_file_without_fallback(
+    tmp_path: Path,
+) -> None:
+    """私有文件格式损坏时必须保留当前 Action，不能启用第二条业务路径。"""
+
+    action = _action(tmp_path)
+    native_ref = ".ae-state/host-runtime/native-results/native.json"
+    action["host_execution"]["work_files"] = {
+        "outcomes": ".ae-state/host-runtime/work/outcomes.json",
+    }
+    action["host_execution"]["workers"][0]["native_result_path"] = native_ref
+    private_path = tmp_path / action["spawn"]["invocations"][0]["outcome_path"]
+    private_path.parent.mkdir(parents=True, exist_ok=True)
+    malformed_private = {"batch_id": "private-but-unwrapped"}
+    private_path.write_text(json.dumps(malformed_private), encoding="utf-8")
+    native_path = tmp_path / native_ref
+    native_path.parent.mkdir(parents=True, exist_ok=True)
+    native_path.write_text(json.dumps({
+        "content": [{
+            "type": "text",
+            "text": '{"batch_id":"native-authoritative"}',
+        }],
+    }), encoding="utf-8")
+
+    with pytest.raises(
+        HostEvidenceValidationError,
+        match="WORKER_BUSINESS_ARTIFACT_INVALID:critic-0",
+    ):
+        HostExecutionAssembler(tmp_path).record_worker_outcome(
+            action=action,
+            worker_id="critic-0",
+            native_worker_handle="native-agent-1",
+            native_result_file=native_path,
+            status="completed",
+            actual_model="unreported",
+            isolation_evidence="fork_turns=none",
+        )
+
+    assert json.loads(private_path.read_text(encoding="utf-8")) == malformed_private
+
+
+def test_record_invalid_worker_failure_preserves_private_artifact_and_finalizes_failure(
+    tmp_path: Path,
+) -> None:
+    """非法私有产物只转为宿主失败事实，不能被 native 回包重写。"""
+
+    action = _action(tmp_path)
+    action["host_execution"]["work_files"] = {
+        "outcomes": ".ae-state/host-runtime/work/outcomes.json",
+    }
+    private_path = tmp_path / action["spawn"]["invocations"][0]["outcome_path"]
+    private_path.parent.mkdir(parents=True, exist_ok=True)
+    malformed_private = {"batch_id": "private-but-invalid"}
+    private_path.write_text(json.dumps(malformed_private), encoding="utf-8")
+
+    assembler = HostExecutionAssembler(tmp_path)
+    recorded = assembler.record_invalid_worker_failure(
+        action=action,
+        worker_id="critic-0",
+        native_worker_handle="native-agent-1",
+        actual_model="sonnet",
+        isolation_evidence="fresh_context",
+        detail="WORKER_BUSINESS_ARTIFACT_INVALID:critic-0",
+    )
+
+    assert recorded["status"] == "failed"
+    assert recorded["payload"]["error_code"] == "HOST_WORKER_OUTPUT_INVALID"
+    shared = json.loads(
+        (tmp_path / ".ae-state/host-runtime/work/outcomes.json").read_text()
+    )
+    assert shared["outcomes"] == [recorded]
+    assert json.loads(private_path.read_text(encoding="utf-8")) == malformed_private
+
+    result = assembler.finalize(
+        action=action,
+        outcomes=[NativeWorkerOutcome(**recorded)],
+        coordinator_payload={},
+    )
+    assert result["spawned"] is False
+    assert result["spawn_error_code"] == "HOST_WORKER_FAILED"
+
+
+def test_record_worker_outcome_rejects_bare_private_payload_before_native_summary(
+    tmp_path: Path,
+) -> None:
+    """已存在的裸 payload 不得退回 native 摘要或被隐式修复。"""
+
+    action = _action(tmp_path)
+    native_ref = ".ae-state/host-runtime/native-results/native.json"
+    action["host_execution"]["workers"][0]["native_result_path"] = native_ref
+    private_path = tmp_path / action["spawn"]["invocations"][0]["outcome_path"]
+    private_path.parent.mkdir(parents=True, exist_ok=True)
+    private_path.write_text(json.dumps({
+        "plan": "裸业务结果",
+        "batch_plan": [{"batch_id": "B1"}],
+    }), encoding="utf-8")
+    native_path = tmp_path / native_ref
+    native_path.parent.mkdir(parents=True, exist_ok=True)
+    native_path.write_text(json.dumps({
+        "status": "completed",
+        "agentId": "native-agent-summary-only",
+        "content": [{
+            "type": "text",
+            "text": "Worker completed; the business result was written to outcome_path.",
+        }],
+    }), encoding="utf-8")
+
+    with pytest.raises(
+        HostEvidenceValidationError,
+        match="WORKER_BUSINESS_ARTIFACT_INVALID:critic-0",
+    ):
+        HostExecutionAssembler(tmp_path).record_worker_outcome(
+            action=action,
+            worker_id="critic-0",
+            native_worker_handle="native-agent-summary-only",
+            native_result_file=native_path,
+            status="completed",
+            actual_model="unreported",
+            isolation_evidence="fresh_context",
+        )
+
+
+def test_record_worker_outcome_normalizes_expected_bare_private_payload(
+    tmp_path: Path,
+) -> None:
+    """Worker 已写出完整业务字段时，唯一回写边界可确定性补 envelope。"""
+
+    action = _action(tmp_path)
+    action["expected_format"] = {
+        "batch_id": "string",
+        "files_changed": "[string]",
+        "test_results": "object",
+    }
+    native_ref = ".ae-state/host-runtime/native-results/native.json"
+    action["host_execution"]["workers"][0]["native_result_path"] = native_ref
+    private_path = tmp_path / action["spawn"]["invocations"][0]["outcome_path"]
+    private_path.parent.mkdir(parents=True, exist_ok=True)
+    bare_payload = {
+        "batch_id": "B1",
+        "files_changed": ["src/counter.py"],
+        "test_results": {"passed": 14, "failed": 0, "total": 14},
+    }
+    private_path.write_text(json.dumps(bare_payload), encoding="utf-8")
+    native_path = tmp_path / native_ref
+    native_path.parent.mkdir(parents=True, exist_ok=True)
+    native_path.write_text(json.dumps({"content": [{"type": "text", "text": "done"}]}), encoding="utf-8")
+
+    recorded = HostExecutionAssembler(tmp_path).record_worker_outcome(
+        action=action,
+        worker_id="critic-0",
+        native_worker_handle="native-agent-summary-only",
+        native_result_file=native_path,
+        status="completed",
+        actual_model="unreported",
+        isolation_evidence="fork_turns=none",
+    )
+
+    assert recorded["payload"] == bare_payload
+    assert recorded["status"] == "completed"
+    assert json.loads(private_path.read_text(encoding="utf-8")) == bare_payload
+
+
+def test_record_worker_outcome_rejects_ambiguous_native_agent_result(
+    tmp_path: Path,
+) -> None:
+    action = _action(tmp_path)
+    native_ref = ".ae-state/host-runtime/native-results/native.json"
+    action["host_execution"]["workers"][0]["native_result_path"] = native_ref
+    native_path = tmp_path / native_ref
+    native_path.parent.mkdir(parents=True, exist_ok=True)
+    native_path.write_text(json.dumps({
+        "content": [{"type": "text", "text": "{} {}"}],
+    }), encoding="utf-8")
+
+    with pytest.raises(
+        HostEvidenceValidationError,
+        match="WORKER_NATIVE_RESULT_INVALID:critic-0",
+    ):
+        HostExecutionAssembler(tmp_path).record_worker_outcome(
+            action=action,
+            worker_id="critic-0",
+            native_worker_handle="native-agent-1",
+            native_result_file=native_path,
+            status="completed",
+            actual_model="unreported",
+            isolation_evidence="fork_turns=none",
+        )
+
+
+@pytest.mark.parametrize("business_status", ["success", "ok", "complete"])
+def test_record_worker_outcome_normalizes_completion_aliases(
+    tmp_path: Path,
+    business_status: str,
+) -> None:
+    """模型常用的成功别名必须在唯一交接边界归一为 completed。"""
+
+    action = _action(tmp_path)
+    action["host_execution"]["work_files"] = {
+        "outcomes": ".ae-state/host-runtime/work/outcomes.json",
+    }
+    private_path = tmp_path / action["spawn"]["invocations"][0]["outcome_path"]
+    private_path.parent.mkdir(parents=True, exist_ok=True)
+    private_path.write_text(json.dumps({
+        "worker_id": "critic-0",
+        "status": business_status,
+        "payload": {"verdict": "APPROVE"},
+        "summary": "业务结果",
+    }), encoding="utf-8")
+
+    recorded = HostExecutionAssembler(tmp_path).record_worker_outcome(
+        action=action,
+        worker_id="critic-0",
+        native_worker_handle="native-host-1",
+        status="completed",
+        actual_model="host-model",
+        isolation_evidence="fork_turns=none",
+    )
+
+    assert recorded["status"] == "completed"
+    assert json.loads(
+        (tmp_path / ".ae-state/host-runtime/work/outcomes.json").read_text()
+    )["outcomes"][0]["status"] == "completed"
+
+
 def test_record_worker_outcome_rejects_completed_without_native_handle(
     tmp_path: Path,
 ) -> None:
@@ -358,6 +957,34 @@ def test_record_worker_outcome_rejects_completed_without_native_handle(
             worker_id="critic-0",
             native_worker_handle=None,
             status="completed",
+        )
+
+
+def test_record_worker_outcome_rejects_explicit_unreported_handle_for_completed(
+    tmp_path: Path,
+) -> None:
+    """固定 argv 模板的缺失句柄哨兵不能伪装成 completed 事实。"""
+
+    action = _action(tmp_path)
+    private_path = tmp_path / action["spawn"]["invocations"][0]["outcome_path"]
+    private_path.parent.mkdir(parents=True, exist_ok=True)
+    private_path.write_text(json.dumps({
+        "worker_id": "critic-0",
+        "status": "completed",
+        "payload": {},
+        "summary": "完成",
+    }), encoding="utf-8")
+
+    with pytest.raises(
+        HostEvidenceValidationError,
+        match="NATIVE_WORKER_HANDLE_MISSING:critic-0",
+    ):
+        HostExecutionAssembler(tmp_path).record_worker_outcome(
+            action=action,
+            worker_id="critic-0",
+            native_worker_handle="unreported",
+            status="completed",
+            isolation_evidence="fork_turns=none",
         )
 
 
@@ -484,14 +1111,140 @@ def test_record_worker_outcome_is_idempotent_and_rejects_conflicting_retry(
         )
 
 
-def test_collect_migrates_observed_legacy_worker_artifact_layout(
+def test_record_worker_outcome_allows_same_generation_host_model_placeholder_repair(
     tmp_path: Path,
 ) -> None:
-    """旧宿主的确定性目录布局可迁移，但不能触发任意目录搜索。"""
-    from auto_engineering.host.path_contract import legacy_worker_outcome_path
+    """同一原生事实仅修正模型占位值时，回写必须保持幂等。"""
 
     action = _action(tmp_path)
-    legacy_path = tmp_path / legacy_worker_outcome_path("action-1", "critic-0")
+    action["execution_generation"] = 1
+    action["fencing_token"] = "a" * 64
+    action["host_execution"]["workers"][0].update({
+        "execution_generation": 1,
+        "fencing_token": "b" * 64,
+    })
+    action["host_execution"]["work_files"] = {
+        "outcomes": ".ae-state/host-runtime/work/outcomes.json",
+    }
+    private_path = tmp_path / action["spawn"]["invocations"][0]["outcome_path"]
+    private_path.parent.mkdir(parents=True, exist_ok=True)
+    private_path.write_text(json.dumps({
+        "worker_id": "critic-0",
+        "status": "failed",
+        "payload": {"test_results": {"passed": 1, "failed": 1, "total": 2}},
+        "summary": "业务失败",
+    }), encoding="utf-8")
+
+    assembler = HostExecutionAssembler(tmp_path)
+    first = assembler.record_worker_outcome(
+        action=action,
+        worker_id="critic-0",
+        native_worker_handle="native-host-1",
+        status="failed",
+        actual_model="unreported",
+        isolation_evidence="fork_turns=none",
+    )
+
+    repaired = assembler.record_worker_outcome(
+        action=action,
+        worker_id="critic-0",
+        native_worker_handle="native-host-1",
+        status="failed",
+        actual_model="unknown",
+        isolation_evidence="fork_turns=none",
+    )
+
+    assert repaired["native_worker_handle"] == first["native_worker_handle"]
+    assert repaired["payload"] == first["payload"]
+    assert json.loads(
+        (tmp_path / ".ae-state/host-runtime/work/outcomes.json").read_text()
+    )["outcomes"] == [repaired]
+
+
+def test_record_worker_outcome_replaces_failed_prior_generation_on_retry(
+    tmp_path: Path,
+) -> None:
+    """更高代的合法重试必须替换同一 Action 的旧失败事实。"""
+
+    first_action = _action(tmp_path)
+    first_action["execution_generation"] = 1
+    first_action["fencing_token"] = "a" * 64
+    first_action["host_execution"]["workers"][0].update({
+        "execution_generation": 1,
+        "fencing_token": "b" * 64,
+    })
+    first_action["host_execution"]["work_files"] = {
+        "outcomes": ".ae-state/host-runtime/work/outcomes.json",
+    }
+    first_private_path = (
+        tmp_path / first_action["spawn"]["invocations"][0]["outcome_path"]
+    )
+    first_private_path.parent.mkdir(parents=True, exist_ok=True)
+    first_private_path.write_text(json.dumps({
+        "worker_id": "critic-0",
+        "status": "failed",
+        "payload": {"error": "temporary host failure"},
+        "summary": "第一代失败",
+    }), encoding="utf-8")
+    assembler = HostExecutionAssembler(tmp_path)
+    assembler.record_worker_outcome(
+        action=first_action,
+        worker_id="critic-0",
+        native_worker_handle="native-failed",
+        status="failed",
+        actual_model="host-model",
+        isolation_evidence="fork_turns=none",
+    )
+
+    retry_action = deepcopy(first_action)
+    retry_action["execution_generation"] = 2
+    retry_action["fencing_token"] = "c" * 64
+    retry_action["host_execution"]["workers"][0].update({
+        "execution_generation": 2,
+        "fencing_token": "d" * 64,
+        "outcome_path": (
+            ".ae-state/host-runtime/worker-outcomes/worker-token-g2.json"
+        ),
+    })
+    retry_private_path = (
+        tmp_path / retry_action["host_execution"]["workers"][0]["outcome_path"]
+    )
+    retry_private_path.parent.mkdir(parents=True, exist_ok=True)
+    retry_private_path.write_text(json.dumps({
+        "worker_id": "critic-0",
+        "status": "completed",
+        "payload": {"verdict": "APPROVE"},
+        "summary": "第二代成功",
+    }), encoding="utf-8")
+
+    replaced = assembler.record_worker_outcome(
+        action=retry_action,
+        worker_id="critic-0",
+        native_worker_handle="native-completed",
+        status="completed",
+        actual_model="host-model",
+        isolation_evidence="fork_turns=none",
+    )
+
+    assert replaced["status"] == "completed"
+    assert replaced["execution_generation"] == 2
+    outcomes = json.loads(
+        (tmp_path / ".ae-state/host-runtime/work/outcomes.json").read_text()
+    )
+    assert outcomes["outcomes"] == [replaced]
+
+
+def test_collect_rejects_noncanonical_worker_artifact_layout(
+    tmp_path: Path,
+) -> None:
+    """当前 Worker 只能从 invocation 绑定的 canonical 路径读取产物。"""
+    from auto_engineering.host.path_contract import action_key_for
+
+    action = _action(tmp_path)
+    legacy_path = (
+        tmp_path / ".ae-state/host-runtime/worker-outcomes"
+        / action_key_for("action-1") / "outcome-critic-0.json"
+    )
     legacy_path.parent.mkdir(parents=True, exist_ok=True)
     legacy_path.write_text(json.dumps({
         "worker_id": "critic-0",
@@ -502,14 +1255,14 @@ def test_collect_migrates_observed_legacy_worker_artifact_layout(
         "actual_model": "deterministic-host",
     }), encoding="utf-8")
 
-    canonical = tmp_path / action["spawn"]["invocations"][0]["outcome_path"]
-    outcomes = HostExecutionAssembler(tmp_path).collect_worker_outcomes_from_artifacts(
-        action=action,
-        outcomes_path=tmp_path / "outcomes.json",
-    )
-
-    assert outcomes[0].native_worker_handle == "native-legacy"
-    assert canonical.is_file()
+    with pytest.raises(
+        WorkerOutcomeCollectionError,
+        match="HOST_WORKER_OUTPUT_MISSING:critic-0",
+    ):
+        HostExecutionAssembler(tmp_path).collect_worker_outcomes_from_artifacts(
+            action=action,
+            outcomes_path=tmp_path / "outcomes.json",
+        )
     assert legacy_path.is_file()
 
 
@@ -519,6 +1272,33 @@ def test_collect_worker_outcomes_reports_missing_private_artifact(tmp_path: Path
             action=_action(tmp_path),
             outcomes_path=tmp_path / "outcomes.json",
         )
+
+
+def test_finalize_preserves_private_business_vs_host_attestation_failure(
+    tmp_path: Path,
+) -> None:
+    """私有业务产物存在但未回写宿主事实时，诊断不得伪装成业务产物缺失。"""
+    action = _action(tmp_path)
+    private_path = tmp_path / action["spawn"]["invocations"][0]["outcome_path"]
+    private_path.parent.mkdir(parents=True, exist_ok=True)
+    private_path.write_text(json.dumps({
+        "worker_id": "critic-0",
+        "status": "completed",
+        "payload": {"verdict": "APPROVE"},
+        "summary": "完成",
+    }), encoding="utf-8")
+
+    result = HostExecutionAssembler(tmp_path).finalize_missing_worker_output(
+        action=action,
+        reason_code="HOST_WORKER_ATTESTATION_MISSING",
+        detail="private_business_artifact_only",
+    )
+
+    assert result["spawned"] is False
+    assert result["spawn_error_code"] == "HOST_WORKER_FAILED"
+    assert result["spawn_error"] == (
+        "HOST_WORKER_ATTESTATION_MISSING: private_business_artifact_only"
+    )
 
 
 def test_collect_rejects_unreported_native_handle_for_completed_worker(
@@ -2022,3 +2802,43 @@ def test_finalize_to_file_rejects_path_outside_project(tmp_path: Path) -> None:
         )
 
     assert caught.value.violations == ("RESULT_OUTPUT_PATH_OUTSIDE_PROJECT",)
+
+
+def test_missing_worker_failure_preserves_action_execution_binding(
+    tmp_path: Path,
+) -> None:
+    action = _action(tmp_path)
+    action["execution_generation"] = 3
+    action["fencing_token"] = "f" * 64
+    action["host_execution"]["workers"][0]["execution_generation"] = 3
+    action["host_execution"]["workers"][0]["fencing_token"] = "f" * 64
+
+    result = HostExecutionAssembler(tmp_path).finalize_missing_worker_output(
+        action=action,
+    )
+
+    journal = json.loads(
+        (tmp_path / ".ae-state/host-runtime/outcomes/action-1.json")
+        .read_text(encoding="utf-8")
+    )
+    assert journal["outcomes"][0]["execution_generation"] == 3
+    assert journal["outcomes"][0]["fencing_token"] == "f" * 64
+    assert result["spawn_error_code"] == "HOST_WORKER_FAILED"
+
+
+def test_worker_template_cannot_drift_from_action_execution_binding(
+    tmp_path: Path,
+) -> None:
+    action = _action(tmp_path)
+    action["execution_generation"] = 3
+    action["fencing_token"] = "f" * 64
+    action["host_execution"]["workers"][0]["execution_generation"] = 2
+    action["host_execution"]["workers"][0]["fencing_token"] = "e" * 64
+
+    with pytest.raises(
+        HostEvidenceValidationError,
+        match="WORKER_EXECUTION_BINDING_MISMATCH:critic-0",
+    ):
+        HostExecutionAssembler(tmp_path).finalize_missing_worker_output(
+            action=action,
+        )

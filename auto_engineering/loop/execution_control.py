@@ -140,7 +140,10 @@ def control_for_action(action: Mapping[str, Any]) -> ExecutionControl:
         and action["gate_summary"]["task_evidence"].get("status")
         == "environment_failure"
     ):
-        disposition = ExecutionDisposition.WAIT_USER
+        # 缺工具链/依赖是可恢复的运行资源问题，不是需要用户作产品决策的
+        # Gate。让宿主沿同一 active Action 自动重试，避免“环境已修复但仍
+        # 被迫人工确认”的中断；Developer 仍会重新执行生产 Gate，不会绕过验证。
+        disposition = ExecutionDisposition.WAIT_RESOURCE
         reason = "environment_failure"
     elif name == "gate":
         gate = action.get("gate")

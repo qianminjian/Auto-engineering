@@ -9,6 +9,8 @@ import pytest
 from auto_engineering.engine.batch_state import BatchState
 from auto_engineering.engine.progress_tree import ProgressTree
 from auto_engineering.engine.state import EngineState
+from auto_engineering.loop import reducer_registry
+from auto_engineering.loop import reducers as reducers_module
 from auto_engineering.loop.event_store import SQLiteEventStore
 from auto_engineering.loop.events import LoopEvent, LoopEventType
 from auto_engineering.loop.kernel import FALLBACK_CHANNEL_EVENTS
@@ -18,6 +20,12 @@ from auto_engineering.loop.reducers import (
     ReducerRegistry,
     default_reducer_registry,
 )
+
+
+def test_reducer_registry_has_one_canonical_module() -> None:
+    assert reducers_module.EventChannelViolation is reducer_registry.EventChannelViolation
+    assert reducers_module.Reducer is reducer_registry.Reducer
+    assert reducers_module.ReducerRegistry is reducer_registry.ReducerRegistry
 
 
 def _event(event_type: LoopEventType, payload: dict[str, object]) -> LoopEvent:
@@ -57,7 +65,7 @@ def test_stage_advanced_reducer_clears_source_stage_transient_fields() -> None:
     assert state.critic_verdict == "MAJOR"
 
 
-def test_lifecycle_event_replays_architect_repair_counter() -> None:
+def test_lifecycle_event_replays_orchestrator_retry_counter() -> None:
     state = EngineState(thread_id="thread-1", current_stage="architect")
 
     reduced = default_reducer_registry().reduce(
@@ -66,14 +74,14 @@ def test_lifecycle_event_replays_architect_repair_counter() -> None:
             LoopEventType.LIFECYCLE_STATE_UPDATED,
             {"changes": {
                 "guardrail_retry_counters": {
-                    "architect_result_validation": 1,
+                    "orchestrator": 1,
                 },
             }},
         ),
     )
 
     assert reduced.guardrail_retry_counters == {
-        "architect_result_validation": 1,
+        "orchestrator": 1,
     }
 
 

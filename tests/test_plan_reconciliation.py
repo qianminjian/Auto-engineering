@@ -8,12 +8,16 @@ import pytest
 from auto_engineering.engine.state import EngineState
 from auto_engineering.loop.action_builder import ActionBuilder
 from auto_engineering.loop.actions import validate_result_format
+from auto_engineering.loop.architect_result import ArchitectResultPreparer
 from auto_engineering.loop.architecture_activation import ArchitectureActivationService
+from auto_engineering.loop.events import LoopEvent, LoopEventType
 from auto_engineering.loop.plan_reconciliation import (
     PlanReconciliationError,
     PlanReconciliationValidator,
 )
-from auto_engineering.loop.stage_result_projector import StageResultProjector
+from auto_engineering.loop.reducers import default_reducer_registry
+from auto_engineering.loop.stages.base import TransitionContext
+from auto_engineering.loop.stages.design import ArchitectHandler
 from auto_engineering.loop.tick_orchestrator import TickOrchestrator
 
 
@@ -248,7 +252,28 @@ def test_validated_candidate_activates_only_current_work_set(tmp_path: Path) -> 
     )
     state._runtime_ctx["plan_reconciliation_candidate"] = candidate
 
-    StageResultProjector().apply(state, result)
+    preparation = ArchitectResultPreparer().prepare(state, result)
+    state._runtime_ctx["architecture_candidate"] = preparation.candidate
+    prepared = {
+        "evidence_changes": preparation.evidence_changes,
+        "plan_reconciliation_changes": preparation.plan_reconciliation_changes,
+        "superseded_tasks": list(preparation.superseded_tasks),
+    }
+    state._runtime_ctx["architect_prepared"] = prepared
+    decision = ArchitectHandler().apply(
+        state.to_dict(),
+        result,
+        TransitionContext(
+            thread_id=state.thread_id,
+            tick=1,
+            event_sequence=1,
+            extensions={"architect_prepared": prepared},
+        ),
+    )
+    registry = default_reducer_registry()
+    for event in decision.events:
+        if event.event_type is not LoopEventType.STAGE_ADVANCED:
+            state = registry.reduce(state, event)
     emitted = []
     activated = ArchitectureActivationService(tmp_path).activate(
         state=state,
@@ -258,6 +283,17 @@ def test_validated_candidate_activates_only_current_work_set(tmp_path: Path) -> 
         verification_layers=None,
         emit=lambda event_type, payload: emitted.append((event_type, payload)),
     )
+    for event_type, payload in emitted:
+        state = registry.reduce(
+            state,
+            LoopEvent.create(
+                thread_id=state.thread_id,
+                sequence=2,
+                event_type=event_type,
+                payload=payload,
+                correlation_id=state.thread_id,
+            ),
+        )
 
     assert [task["id"] for task in state.batch_plan[0]["tasks"]] == ["B1-T1"]
     assert state.superseded_tasks == [
@@ -265,13 +301,10 @@ def test_validated_candidate_activates_only_current_work_set(tmp_path: Path) -> 
     ]
     assert state.architecture_baseline["revision"] == 3
     assert activated.batch_state.current_batch_id() == "B1"
-    assert {event_type.value for event_type, _ in emitted} >= {
+    assert {event.event_type.value for event in decision.events} >= {
         "PlanReconciled",
         "TaskSuperseded",
     }
-    reconciled_payload = next(
-        payload
-        for event_type, payload in emitted
-        if event_type.value == "PlanReconciled"
-    )
-    assert reconciled_payload["changes"]["state_reconciliation"]["status"] == "reconciled"
+    assert [event_type.value for event_type, _ in emitted] == [
+        "ArchitectureBaselineAccepted"
+    ]

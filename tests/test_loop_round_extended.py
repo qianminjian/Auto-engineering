@@ -10,9 +10,8 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from auto_engineering.engine.models import _topological_levels
+from auto_engineering.engine.models import ConflictError, Task, TaskOutcome, _topological_levels
 from auto_engineering.gates.base import GateVerdict
-from auto_engineering.loop.plan import ConflictError, Task, TaskOutcome
 
 
 @dataclass

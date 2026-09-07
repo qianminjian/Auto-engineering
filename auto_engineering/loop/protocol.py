@@ -161,6 +161,19 @@ def validate_action_envelope(action: Mapping[str, Any]) -> None:
             ProtocolErrorCode.INVALID_ENVELOPE,
             f"Action 不符合 v1.1 schema: {detail}",
         )
+    reference = action.get("coordinator_prompt_ref")
+    if isinstance(reference, Mapping):
+        artifact_path = reference.get("path")
+        if (
+            not isinstance(artifact_path, str)
+            or not artifact_path
+            or Path(artifact_path).is_absolute()
+            or ".." in Path(artifact_path).parts
+        ):
+            raise ProtocolValidationError(
+                ProtocolErrorCode.INVALID_ENVELOPE,
+                "Action coordinator_prompt_ref.path 必须是安全的相对路径",
+            )
 
 
 def validate_result_envelope(result: Mapping[str, Any]) -> ResultEnvelope:

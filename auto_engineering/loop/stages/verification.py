@@ -32,6 +32,22 @@ def _advanced(
     )
 
 
+def _audit_revision_changes(
+    source: StageName,
+    context: TransitionContext,
+) -> dict[str, dict[str, str]]:
+    """把 Deep Audit 去重指纹作为验证事实交给 Reducer。"""
+    if source not in {"plate_deep_audit", "system_deep_audit"}:
+        return {}
+    key = context.extensions.get("audit_revision_key")
+    fingerprint = context.extensions.get("audit_revision_fingerprint")
+    if not isinstance(key, str) or not key:
+        return {}
+    if not isinstance(fingerprint, str) or not fingerprint:
+        return {}
+    return {"audit_revision_fingerprints": {key: fingerprint}}
+
+
 def _refine(
     source: StageName,
     changes: Mapping[str, Any],
@@ -40,6 +56,8 @@ def _refine(
     progress_update: Mapping[str, Any] | None = None,
     **action_context: Any,
 ) -> TransitionDecision:
+    changes = dict(changes)
+    changes.update(_audit_revision_changes(source, context))
     return TransitionDecision(
         events=(channels_updated(
             LoopEventType.VERIFICATION_STATE_UPDATED,
@@ -146,7 +164,10 @@ class PlateDeepAuditHandler:
                 ),
                 channels_updated(
                     LoopEventType.VERIFICATION_STATE_UPDATED,
-                    {"open_findings": []},
+                    {
+                        "open_findings": [],
+                        **_audit_revision_changes(self.stage, context),
+                    },
                     thread_id=context.thread_id,
                     sequence=context.event_sequence,
                 ),
@@ -251,6 +272,7 @@ class SystemDeepAuditHandler:
                 audit_counts=counts,
             )
         patch["open_findings"] = []
+        patch.update(_audit_revision_changes(self.stage, context))
         return TransitionDecision(
             events=(channels_updated(
                 LoopEventType.VERIFICATION_STATE_UPDATED,

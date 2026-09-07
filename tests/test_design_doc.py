@@ -18,12 +18,21 @@ from pathlib import Path
 
 import pytest
 
+from auto_engineering.engine import design_doc as design_doc_module
 from auto_engineering.engine.design_doc import (
     Component,
     DesignDoc,
     DesignItem,
     Plate,
 )
+
+
+def test_design_doc_parser_has_one_canonical_module() -> None:
+    """DesignDoc 数据模型不得重新承载 Markdown 解析器实现。"""
+
+    source = Path(design_doc_module.__file__).read_text(encoding="utf-8")
+    assert "class _DesignDocParser" not in source
+    assert "design_doc_parser" in source
 
 
 def _write(tmp_path: Path, content: str) -> Path:

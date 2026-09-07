@@ -31,13 +31,39 @@ def validate_architect_obligations(
     if isinstance(patch, dict):
         raw_batches = patch.get("add_batches", [])
     tasks: dict[str, dict] = {}
+    implementation_batches: dict[str, list[int]] = {}
+    test_tasks: list[tuple[str, str, int]] = []
     if isinstance(raw_batches, list):
-        for batch in raw_batches:
+        for batch_index, batch in enumerate(raw_batches):
             if not isinstance(batch, dict):
                 continue
             for task in batch.get("tasks", []):
                 if isinstance(task, dict) and isinstance(task.get("id"), str):
                     tasks[task["id"]] = task
+                    module_ref = task.get("module_ref")
+                    kind = task.get("kind", task.get("type"))
+                    if not isinstance(module_ref, str) or not module_ref:
+                        continue
+                    if kind == "implementation":
+                        implementation_batches.setdefault(module_ref, []).append(
+                            batch_index
+                        )
+                    elif kind in {"test", "contract_test"}:
+                        test_tasks.append((task["id"], module_ref, batch_index))
+
+    # Developer 每次只消费一个 batch；如果测试先进入当前 batch，而对应
+    # 实现却被安排到未来 batch，该测试在当前 Action 必然失败。这是
+    # Architect 计划拓扑错误，必须在激活前拒绝，不能让 Worker 越界补文件。
+    for task_id, module_ref, test_batch_index in test_tasks:
+        implementation_indices = implementation_batches.get(module_ref, [])
+        if implementation_indices and not any(
+            index <= test_batch_index for index in implementation_indices
+        ):
+            return (
+                "ARCHITECT_TEST_IMPLEMENTATION_ORDER_INVALID: 测试任务 "
+                f"{task_id} ({module_ref}) 对应实现位于未来 batch；"
+                "实现任务必须位于同一或更早 batch"
+            )
 
     obligations = result.get("obligations", [])
     if not isinstance(obligations, list):
@@ -115,14 +141,25 @@ def dry_run_architect_plan(
         missing_refs = sorted(required_refs - mapped_refs)
         if missing_refs:
             return "Critic finding 缺少修复义务映射: " + ", ".join(missing_refs)
-    if design_doc is None:
-        return None
     batches = candidate.get("batch_plan", [])
     if not isinstance(batches, list) or not batches:
         return "batch_plan 不能为空"
     try:
         normalized = BatchState.flatten_batch_plan(batches)
-        normalized = BatchState.from_design_doc(design_doc, normalized).batch_plan
+        if design_doc is None and any(
+            "plate_keys" in batch for batch in normalized
+        ):
+            # 模糊需求没有 DesignDoc 可做组件存在性校验，但显式使用新
+            # routing 合同时仍必须经过同一归一化。否则空 plate_keys 会
+            # 绕过 prevalidator，直到 ARCHITECTURE_PLAN_ACTIVATED 的副作用
+            # 阶段才抛出裸 ValueError。未携带 routing 字段的历史结果继续
+            # 保留只读兼容校验，不在这里伪造新的机器路由。
+            normalized = BatchState.from_batch_plan(normalized).batch_plan
+        elif design_doc is not None:
+            normalized = BatchState.from_design_doc(design_doc, normalized).batch_plan
+        if design_doc is None:
+            tasks_from_batch_plan(normalized, requirement)
+            return None
         model = EngineeringModel.from_design_doc(
             design_doc, design_digest="sha256:" + "0" * 64
         )
@@ -162,10 +199,17 @@ def dry_run_architect_plan(
             }
             invalid = sorted({ref for ref in refs if ref not in allowed})
             if invalid:
+                allowed_refs = sorted(
+                    item.item_id
+                    for component in target_components
+                    for item in component.design_items
+                )
                 return (
                     "BATCH_DESIGN_ITEM_SCOPE_INVALID: batch "
                     f"{batch.get('batch_id', '?')} 含不属于组件的 design_item_refs "
                     + ", ".join(invalid)
+                    + "；有效 design_item_refs: "
+                    + (", ".join(allowed_refs) if allowed_refs else "（无）")
                 )
         tree = ProgressTree.from_design_doc(design_doc)
         tree.apply_batch_plan_totals(normalized)

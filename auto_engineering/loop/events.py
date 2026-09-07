@@ -45,6 +45,7 @@ class LoopEventType(StrEnum):
     PROJECT_PROFILE_CONFLICT = "ProjectProfileConflict"
     PROJECT_SETUP_REQUIRED = "ProjectSetupRequired"
     PROJECT_SETUP_COMPLETED = "ProjectSetupCompleted"
+    PROJECT_SETUP_FAILED = "ProjectSetupFailed"
     PROJECT_ANCHORS_WITNESSED = "ProjectAnchorsWitnessed"
     ARCHITECTURE_BASELINE_ACCEPTED = "ArchitectureBaselineAccepted"
     RUNTIME_REVISION_DETECTED = "RuntimeRevisionDetected"

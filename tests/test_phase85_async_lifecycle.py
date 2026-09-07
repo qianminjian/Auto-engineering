@@ -203,6 +203,46 @@ def test_public_cli_async_worker_trajectory_uses_current_action_artifacts(
     assert "outcome_path" in worker
     assert "execution_generation" in worker
     assert "fencing_token" in worker
+    assert "observation_path" in worker
+
+    observed = runner.invoke(
+        main,
+        [
+            "dev-loop", "--record-worker-observation",
+            "--worker-id", str(worker["worker_id"]),
+            "--observation-status", "running",
+            "--observation-wait-attempt", "1",
+            "--owner-known",
+            "--observation-handle", "native-async-public",
+            "--observed-at", "2026-09-02T09:00:00+00:00",
+            "--project-root", str(tmp_path),
+        ],
+    )
+    assert observed.exit_code == 0, observed.output
+    observation_path = tmp_path / str(worker["observation_path"])
+    observation = json.loads(observation_path.read_text(encoding="utf-8"))
+    assert observation["native_status"] == "running"
+    assert observation["wait_attempt"] == 1
+    assert observation["owner_known"] is True
+
+    uncertain = runner.invoke(
+        main,
+        [
+            "dev-loop", "--record-worker-observation",
+            "--worker-id", str(worker["worker_id"]),
+            "--observation-status", "unknown",
+            "--observation-wait-attempt", "3",
+            "--owner-unknown",
+            "--observed-at", "2026-09-02T09:15:00+00:00",
+            "--project-root", str(tmp_path),
+        ],
+    )
+    assert uncertain.exit_code == 0, uncertain.output
+    uncertain_observation = json.loads(
+        observation_path.read_text(encoding="utf-8")
+    )
+    assert uncertain_observation["native_status"] == "unknown"
+    assert uncertain_observation["owner_known"] is False
 
     payload = {
         "plan": (

@@ -23,8 +23,8 @@ fi
 
 CHECKS_JSON=""
 
-# ── 运行时隔离：只使用安装制品自带的 .ae-runtime/bin/python ──
-RUNTIME_ROOT="${AE_PLUGIN_ROOT}/.ae-runtime"
+# ── 运行时隔离：只使用当前项目的唯一 .ae-state/.ae-runtime ──
+RUNTIME_ROOT=$("${AE_PLUGIN_ROOT}/scripts/ae-run" --print-runtime-root 2>/dev/null) || RUNTIME_ROOT=
 RUNTIME_PYTHON="${RUNTIME_ROOT}/bin/python"
 _bootstrap() {
   # Hook 不得在项目 cwd 安装依赖或把开发 .venv 放入 PATH。

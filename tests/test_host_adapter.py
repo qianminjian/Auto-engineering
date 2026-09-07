@@ -128,6 +128,47 @@ def test_inline_action_uses_machine_finalizer_operation(tmp_path: Path) -> None:
     assert argv[-2:] == ["--project-root", str(tmp_path)]
 
 
+def test_environment_wait_exposes_one_shot_recovery_contract(tmp_path: Path) -> None:
+    """资源故障必须告诉宿主恢复同一 Action，不能只投影一个 WAIT 状态。"""
+
+    from auto_engineering.host import HostPlatform
+    from auto_engineering.host.adapters import adapter_for
+
+    adapter = adapter_for(HostPlatform.CODEX)
+    profile = adapter.profile(
+        detected=adapter.capabilities,
+        authorized=adapter.capabilities,
+    )
+    mapped = adapter.map_action({
+        "action": "developer",
+        "stage": "developer",
+        "message_id": "environment-wait-1",
+        "thread_id": "thread-environment-wait-1",
+        "tick": 3,
+        "project_root": str(tmp_path),
+        "gate_summary": {
+            "task_evidence": {
+                "status": "environment_failure",
+                "passed": False,
+            },
+        },
+    }, profile=profile).payload
+
+    host_execution = mapped["host_execution"]
+    assert host_execution["resource_recovery"] == {
+        "schema_version": "1.0",
+        "status": "WAIT_RESOURCE",
+        "reason_code": "environment_failure",
+        "resume_operation": "resume_active_action",
+        "retry_mode": "reexecute_active_action",
+        "spawn_permitted": False,
+        "forbidden_operations": ["submit_resource_wait", "advance_stage"],
+        "required_operation": "recover_resource_then_resume",
+    }
+    assert "修复环境" in mapped["instruction"]
+    assert "resume_active_action" in mapped["instruction"]
+
+
 @pytest.mark.parametrize(
     ("platform_name", "isolation"),
     [("CODEX", "fork_turns=none"), ("CLAUDE_CODE", "fresh_context")],
@@ -163,6 +204,10 @@ def test_adapter_materializes_strict_worker_evidence_templates(
                         "may_spawn_workers": False,
                     },
                     "receipt_path": f".ae-state/spawn-proofs/{index}.json",
+                    "outcome_path": (
+                        ".ae-state/host-runtime/worker-outcomes/"
+                        f"action-multi-{index}.json"
+                    ),
                 }
                 for index, role in enumerate(("contract", "architecture", "quality"), 1)
             ],
@@ -180,6 +225,28 @@ def test_adapter_materializes_strict_worker_evidence_templates(
 
     action_key = hashlib.sha256(b"action-multi").hexdigest()[:24]
     assert host_execution["action_message_id"] == "action-multi"
+    assert host_execution["continuation"] == {
+        "schema_version": "1.0",
+        "after_host_return": "recheck_core_status",
+        "status_operation": "ae-run dev-loop --status --format json",
+        "resume_operation": "resume_active_action",
+        "same_action_rule": "thread_id_and_message_id_equal",
+        "action_identity": {
+            "message_id": "action-multi",
+            "thread_id": "multi-evidence",
+            "tick": 1,
+            "stage": "plate_deep_audit",
+        },
+        "must_resume_when": ["CONTINUE"],
+        "may_yield_when": [
+            "WAIT_USER",
+            "WAIT_RESOURCE",
+            "TERMINAL",
+            "ERROR",
+            "HANDOFF_REQUIRED",
+        ],
+        "forbidden_success_when": ["CONTINUE"],
+    }
     assert host_execution["work_files"] == {
         "outcomes": f".ae-state/host-runtime/work/{action_key}/outcomes.json",
         "coordinator_result": (
@@ -229,6 +296,15 @@ def test_adapter_materializes_strict_worker_evidence_templates(
         assert execution["attestation"]["prompt_sha256"] == invocation["prompt_sha256"]
         assert execution["attestation"]["isolation_evidence"] == isolation
         assert execution["expected_isolation_evidence"] == isolation
+        assert execution["host_fact_mapping"] == {
+            "native_worker_handle": (
+                "native_agent_id_or_task_id"
+                if platform_name == "CLAUDE_CODE"
+                else "native_agent_or_thread_id"
+            ),
+            "actual_model": "native_model_or_unreported",
+            "isolation_evidence": isolation,
+        }
         bridge = execution["record_worker_outcome"]
         assert bridge["schema_version"] == "1.0"
         assert bridge["argv_template"][:6] == [
@@ -238,31 +314,68 @@ def test_adapter_materializes_strict_worker_evidence_templates(
         assert bridge["argv_template"][-2:] == [
             "--project-root", action["project_root"],
         ]
+        expected_argv = [
+            "__AE_BUNDLED_RUNNER__", "dev-loop", "--record-worker-outcome",
+            "--worker-id", invocation["worker_id"], "--worker-status",
+            "__WORKER_STATUS__", "--native-worker-handle",
+            "__NATIVE_WORKER_HANDLE__", "--native-result-file",
+            execution["native_result_path"],
+        ]
+        if platform_name == "CODEX":
+            expected_argv.append("--native-result-stdin")
+        expected_argv.extend([
+            "--actual-model", "__ACTUAL_MODEL__",
+            "--isolation-evidence", "__ISOLATION_EVIDENCE__", "--project-root",
+            action["project_root"],
+        ])
+        assert bridge["argv_template"] == expected_argv
         assert bridge["runtime_arguments"] == {
             "worker_status": "--worker-status",
             "native_worker_handle": "--native-worker-handle",
             "actual_model": "--actual-model",
             "isolation_evidence": "--isolation-evidence",
+            "native_result_file": "--native-result-file",
         }
         assert bridge["required_when_completed"] == [
             "native_worker_handle", "isolation_evidence",
         ]
+        assert bridge["required_runtime_fields"] == [
+            "worker_status", "native_worker_handle", "actual_model",
+            "isolation_evidence",
+        ]
         assert execution["execution_generation"] == 1
+        assert execution["native_result_path"].endswith(
+            f"-{invocation['worker_id']}-g1.json"
+        )
         assert len(execution["fencing_token"]) == 64
-        assert '"execution_generation":1' in execution["native_launch_prompt"]
+        assert '"execution_generation"' not in execution["native_launch_prompt"]
         assert (
             f'"worker_id":"{invocation["worker_id"]}"'
             in execution["native_launch_prompt"]
         )
-        assert execution["fencing_token"] in execution["native_launch_prompt"]
+        assert execution["fencing_token"] not in execution["native_launch_prompt"]
         assert len(execution["attestation"]["visible_capabilities_sha256"]) == 64
         launcher = execution["native_launch_prompt"]
+        assert "VERBATIM=1;NO_EXTRA" in launcher
         assert action["project_root"] in launcher
         assert invocation["prompt_ref"] in launcher
         assert invocation["prompt_sha256"] in launcher
-        assert "不得返回完整 diff、日志或报告正文" in launcher
-        assert '{"outcomes":[...]}' in launcher
-        assert "不得写顶层数组或字符串化 JSON" in launcher
+        assert "outcome_path:{worker_id,status,payload,summary}" in launcher
+        assert "private_schema=object" in launcher
+        assert "payload_nested" in launcher
+        assert "never write payload directly" in launcher
+        assert "stage_fields_only" in launcher
+        assert "no_expected_fields" in launcher
+        assert "expected_fields in payload" not in launcher
+        assert "status=completed|failed|cancelled|timed_out" in launcher
+        assert "aliases host" in launcher
+        assert "no host fields/shared outcomes" in launcher
+        assert "host metadata is read-only" in launcher
+        assert "never write generation/fence to outcome_path" in launcher
+        assert '必须 object {"outcomes":[...]}' not in launcher
+        if platform_name == "CODEX":
+            launch_contract = json.loads(launcher.splitlines()[-1])
+            assert launch_contract["required_isolation_evidence"] == isolation
         launch_contract = json.loads(launcher.splitlines()[-1])
         assert launch_contract["may_drive_loop"] is False
         assert launch_contract["may_spawn_workers"] is False
@@ -366,8 +479,11 @@ def test_result_repair_reuses_worker_outcomes_without_respawn(
     assert "spawn_proof_token" not in mapped
     assert "workers" not in mapped["host_execution"]
     recovery = mapped["host_execution"]["recovery"]
-    assert recovery["status"] == "result_repair_worker_reuse"
+    assert recovery["status"] == "worker_outcomes_committed"
     assert recovery["spawn_permitted"] is False
+    assert recovery["forbidden_operations"] == [
+        "spawn_worker", "record_worker_outcome",
+    ]
     assert recovery["required_operation"] == "repair_coordinator_then_finalize"
     finalize = mapped["host_execution"]["operations"]["finalize"]["argv"]
     assert mapped["host_execution"]["work_files"]["outcomes"] in finalize
@@ -396,6 +512,7 @@ def test_codex_adapter_advertises_semantic_native_worker_tool_families() -> None
                 "isolation": "fresh_context",
                 "capabilities": {"may_drive_loop": False, "may_spawn_workers": False},
                 "receipt_path": ".ae-state/spawn-proofs/architect.json",
+                "outcome_path": ".ae-state/host-runtime/worker-outcomes/architect.json",
             }],
         },
     }
@@ -420,6 +537,105 @@ def test_codex_adapter_advertises_semantic_native_worker_tool_families() -> None
             "close": "multi_agent_v1__close_agent",
         },
     ]
+
+
+def test_codex_worker_lifecycle_requires_reclaim_before_finalize() -> None:
+    from auto_engineering.host import HostPlatform
+    from auto_engineering.host.adapters import adapter_for
+
+    action = {
+        "action": "architect",
+        "stage": "architect",
+        "message_id": "action-worker-lifecycle",
+        "project_root": "/tmp/project",
+        "spawn": {
+            "contract_version": "1.0",
+            "count": 1,
+            "effort": "high",
+            "parallel": False,
+            "invocations": [{
+                "worker_id": "architect-0",
+                "role": "architect",
+                "prompt_ref": ".ae-state/effects/prompt/architect.txt",
+                "prompt_sha256": "a" * 64,
+                "requested_effort": "high",
+                "isolation": "fresh_context",
+                "capabilities": {
+                    "may_drive_loop": False,
+                    "may_spawn_workers": False,
+                },
+                "receipt_path": ".ae-state/spawn-proofs/architect.json",
+                "outcome_path": ".ae-state/host-runtime/worker-outcomes/architect.json",
+            }],
+        },
+    }
+    adapter = adapter_for(HostPlatform.CODEX)
+    profile = adapter.profile(
+        detected=adapter.capabilities,
+        authorized=adapter.capabilities,
+    )
+
+    lifecycle = adapter.map_action(action, profile=profile).payload[
+        "host_execution"
+    ]["worker_lifecycle"]
+
+    assert lifecycle["required_order"] == [
+        "spawn", "wait", "record_worker_outcome", "reclaim", "finalize",
+    ]
+    assert lifecycle["reclaim_before_finalize"] is True
+    assert "multi_agent_v1__close_agent" in lifecycle["reclaim_tools"]
+    assert "close_agent" in lifecycle["reclaim_tools"]
+    assert lifecycle["completed_handle_must_not_survive_action"] is True
+
+
+def test_claude_adapter_advertises_native_agent_completion_contract() -> None:
+    from auto_engineering.host import HostPlatform
+    from auto_engineering.host.adapters import adapter_for
+
+    action = {
+        "action": "architect",
+        "stage": "architect",
+        "message_id": "action-claude-native-tools",
+        "project_root": "/tmp/project",
+        "spawn": {
+            "contract_version": "1.0",
+            "count": 1,
+            "effort": "high",
+            "parallel": False,
+            "invocations": [{
+                "worker_id": "architect-0",
+                "role": "architect",
+                "prompt_ref": ".ae-state/effects/prompt/architect.txt",
+                "prompt_sha256": "a" * 64,
+                "requested_effort": "high",
+                "isolation": "fresh_context",
+                "capabilities": {
+                    "may_drive_loop": False,
+                    "may_spawn_workers": False,
+                },
+                "receipt_path": ".ae-state/spawn-proofs/architect.json",
+                "outcome_path": ".ae-state/host-runtime/worker-outcomes/architect.json",
+            }],
+        },
+    }
+    adapter = adapter_for(HostPlatform.CLAUDE_CODE)
+    profile = adapter.profile(
+        detected=adapter.capabilities,
+        authorized=adapter.capabilities,
+    )
+
+    native_tools = adapter.map_action(action, profile=profile).payload[
+        "host_execution"
+    ]["native_worker_tools"]
+
+    assert native_tools == {
+        "selection": "claude_code_native_agent",
+        "spawn": "Agent",
+        "completion": "TaskOutput",
+        "handle_field": "agentId_or_task_id",
+        "model_field": "model_or_unreported",
+        "isolation_evidence": "fresh_context",
+    }
 
 
 def test_spawn_action_without_project_root_fails_closed() -> None:
@@ -765,6 +981,16 @@ def test_adapters_return_none_for_invalid_host_events() -> None:
 
     assert adapter_for(HostPlatform.CODEX).normalize_event({}) is None
     assert adapter_for(HostPlatform.CLAUDE_CODE).normalize_event({}) is None
+
+
+def test_host_action_mapping_has_one_canonical_compiler() -> None:
+    import inspect
+
+    import auto_engineering.host.action_mapper as action_mapper
+    import auto_engineering.host.adapters as adapters
+
+    assert adapters._map_host_action is action_mapper.map_host_action
+    assert "native_launch_prompt" not in inspect.getsource(adapters._Adapter2Mixin)
 
 
 def test_unknown_host_has_no_assumed_capabilities() -> None:

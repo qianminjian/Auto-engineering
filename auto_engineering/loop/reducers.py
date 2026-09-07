@@ -3,26 +3,19 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from typing import Any
 
 from auto_engineering.engine.batch_state import BatchState
 from auto_engineering.engine.progress_tree import ProgressTree
 from auto_engineering.engine.state import EngineState
 from auto_engineering.loop.events import LoopEvent, LoopEventType
-from auto_engineering.loop.legacy_event_adapter import (
-    LegacyEventAdapter,
-    LegacyEventError,
+from auto_engineering.loop.reducer_registry import (
+    EventChannelViolation,
+    Reducer,
+    ReducerRegistry,
 )
 from auto_engineering.loop.task_factory import ROLE_FIELD_DEFAULTS, ROLE_FIELD_MAP
-
-
-class EventChannelViolation(ValueError):
-    """事件尝试修改不属于自身的 Projection channel。"""
-
-
-Reducer = Callable[[EngineState, LoopEvent], EngineState]
-
 
 EVENT_CHANNELS: dict[LoopEventType, frozenset[str]] = {
     LoopEventType.STAGE_ADVANCED: frozenset({"current_stage"}),
@@ -61,6 +54,7 @@ EVENT_CHANNELS: dict[LoopEventType, frozenset[str]] = {
         "open_findings",
         "coverage_map",
         "critic_feedback",
+        "audit_revision_fingerprints",
     }),
     LoopEventType.LIFECYCLE_STATE_UPDATED: frozenset({
         "round",
@@ -98,6 +92,8 @@ EVENT_CHANNELS: dict[LoopEventType, frozenset[str]] = {
         "project_profile",
         "project_profile_id",
         "missing_project_capabilities",
+        "project_setup_failure_streak",
+        "project_setup_baseline_files",
     }),
     LoopEventType.PROJECT_ANCHORS_WITNESSED: frozenset({
         "project_anchor_baseline",
@@ -107,7 +103,6 @@ EVENT_CHANNELS: dict[LoopEventType, frozenset[str]] = {
         "gate_results",
         "action_timestamp",
         "tick_token_usage",
-        "audit_revision_fingerprints",
         "task_verification_evidence",
     }),
     LoopEventType.SUPPLEMENT_STATE_UPDATED: frozenset({
@@ -140,7 +135,11 @@ def _copy(state: EngineState, **changes: Any) -> EngineState:
     if unknown:
         raise EventChannelViolation(f"事件含未知 State channel: {', '.join(unknown)}")
     value.update(changes)
-    return EngineState.from_dict(value)
+    updated = EngineState.from_dict(value)
+    # Projection 事件不能丢失当前进程内的未持久化候选；它只供同一 Tick 的
+    # Effect 消费，真正的持久事实仍必须由后续事件写入 EventStore。
+    updated._runtime_ctx.update(state._runtime_ctx)
+    return updated
 
 
 def _payload(event: LoopEvent) -> dict[str, Any]:
@@ -243,6 +242,11 @@ def _critic_state_updated(state: EngineState, event: LoopEvent) -> EngineState:
             "majors_in_a_row",
             "total_majors",
             "critic_verdict",
+            "findings",
+            "critic_feedback",
+            "suggested_fix",
+            "strengths",
+            "assessment",
             "open_findings",
             "repair_cycle_count",
             "unchanged_finding_streak",
@@ -261,6 +265,7 @@ def _verification_state_updated(state: EngineState, event: LoopEvent) -> EngineS
             "open_findings",
             "coverage_map",
             "critic_feedback",
+            "audit_revision_fingerprints",
         }),
     )
 
@@ -413,32 +418,6 @@ def _registered_channels(state: EngineState, event: LoopEvent) -> EngineState:
         raise EventChannelViolation(f"{event.event_type.value} 缺少 Channel 注册")
     return _owned_channels(state, event, allowed=allowed)
 
-
-class ReducerRegistry:
-    """Event Type 到纯 Reducer 的唯一注册表。"""
-
-    def __init__(self) -> None:
-        self._reducers: dict[LoopEventType, Reducer] = {}
-        self.legacy_patch_count = 0
-
-    def register(self, event_type: LoopEventType, reducer: Reducer) -> None:
-        if event_type in self._reducers:
-            raise ValueError(f"Reducer 重复注册: {event_type.value}")
-        self._reducers[event_type] = reducer
-
-    def reduce(self, state: EngineState, event: LoopEvent) -> EngineState:
-        try:
-            adapted = LegacyEventAdapter().adapt(state, event)
-        except LegacyEventError as exc:
-            raise EventChannelViolation(str(exc)) from exc
-        if adapted is not None:
-            self.legacy_patch_count += 1
-            state = adapted.state
-            event = adapted.event
-        reducer = self._reducers.get(event.event_type)
-        if reducer is None:
-            raise EventChannelViolation(f"未注册事件 Reducer: {event.event_type.value}")
-        return reducer(state, event)
 
 def default_reducer_registry() -> ReducerRegistry:
     registry = ReducerRegistry()

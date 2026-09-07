@@ -6,14 +6,138 @@ set -u
 SCRIPT_DIR=$(CDPATH= cd -- "${0%/*}" && pwd -P)
 PLUGIN_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd -P)
 
+resolve_project_root() {
+    project_root="$(pwd -P)"
+    expect_project_root=0
+    for argument in "$@"; do
+        if [ "$expect_project_root" -eq 1 ]; then
+            project_root="$argument"
+            expect_project_root=0
+            continue
+        fi
+        case "$argument" in
+            --project-root)
+                expect_project_root=1
+                ;;
+            --project-root=*)
+                project_root=${argument#--project-root=}
+                ;;
+        esac
+    done
+    if [ "$expect_project_root" -eq 1 ]; then
+        return 2
+    fi
+    CDPATH= cd -- "$project_root" && pwd -P
+}
+
+PROJECT_ROOT=$(resolve_project_root "$@") || {
+    printf '%s\n' "AE_PROJECT_ROOT_INVALID: 项目根目录不可用" >&2
+    exit 2
+}
+if [ -n "${AE_INVOCATION_PROJECT_ROOT:-}" ]; then
+    INVOCATION_PROJECT_ROOT=$(CDPATH= cd -- "$AE_INVOCATION_PROJECT_ROOT" && pwd -P) || {
+        printf '%s\n' "AE_PROJECT_ROOT_INVALID: 宿主启动根目录不可用" >&2
+        exit 2
+    }
+    if [ "$PROJECT_ROOT" != "$INVOCATION_PROJECT_ROOT" ]; then
+        printf '%s\n' "AE_PROJECT_ROOT_DRIFT: 请求项目根偏离宿主启动根目录" >&2
+        exit 2
+    fi
+fi
+RUNTIME_ROOT="$PROJECT_ROOT/.ae-state/.ae-runtime"
+STATE_ROOT="$PROJECT_ROOT/.ae-state"
+
+RUN_MODULE=""
+if [ "${1:-}" = "--run-module" ]; then
+    if [ "$#" -lt 2 ] || [ -z "${2:-}" ]; then
+        printf '%s\n' "AE_MODULE_INVALID: 缺少宿主模块" >&2
+        exit 2
+    fi
+    RUN_MODULE="$2"
+    shift 2
+fi
+
+if [ "${1:-}" = "--print-runtime-root" ]; then
+    printf '%s\n' "$RUNTIME_ROOT"
+    exit 0
+fi
+
 if command -v uv >/dev/null 2>&1; then
     # .venv 属于项目工具状态，绝不作为插件运行时。始终使用专属环境，避免宿主
     # 在错误 cwd 执行 uv 后生成的 .venv 劫持内容寻址 Release。
-    UV_PROJECT_ENVIRONMENT="$PLUGIN_ROOT/.ae-runtime"
+    UV_PROJECT_ENVIRONMENT="$RUNTIME_ROOT"
     export UV_PROJECT_ENVIRONMENT
+    # 依赖缓存不是运行时状态：默认保留 uv 的公共缓存，避免每个项目首次启动
+    # 重复联网解析；验收或受控镜像可显式传入 UV_CACHE_DIR 覆盖。运行时本身仍
+    # 始终绑定当前项目，插件树保持只读。
+    # 依赖 bootstrap 属于宿主启动链；网络异常必须在有界时间内失败，不能把
+    # loop 表现成无输出卡死。
+    UV_HTTP_TIMEOUT="${UV_HTTP_TIMEOUT:-15}"
+    UV_HTTP_RETRIES="${UV_HTTP_RETRIES:-1}"
+    export UV_HTTP_TIMEOUT UV_HTTP_RETRIES
     PYTHONDONTWRITEBYTECODE=1
     export PYTHONDONTWRITEBYTECODE
-    exec uv run --frozen --project "$PLUGIN_ROOT" ae "$@"
+    if [ -L "$STATE_ROOT" ] || [ -e "$STATE_ROOT" ] && [ ! -d "$STATE_ROOT" ]; then
+        printf '%s\n' "AE_RUNTIME_INVALID: 项目状态路径不是目录" >&2
+        exit 2
+    fi
+    if ! mkdir -p "$STATE_ROOT"; then
+        printf '%s\n' "AE_RUNTIME_INVALID: 项目状态目录不可写" >&2
+        exit 2
+    fi
+    if [ -L "$RUNTIME_ROOT" ] || [ -e "$RUNTIME_ROOT" ] && [ ! -d "$RUNTIME_ROOT" ]; then
+        printf '%s\n' "AE_RUNTIME_INVALID: 项目运行时路径不是目录" >&2
+        exit 2
+    fi
+    if [ ! -x "$RUNTIME_ROOT/bin/python" ]; then
+        # 多个 hook/宿主事件可能同时首次启动；目录创建是 macOS/POSIX 下的
+        # 原子锁。锁只保护 venv bootstrap，不参与 Action、Worker 或 Tick 调度。
+        BOOTSTRAP_LOCK="$STATE_ROOT/.ae-runtime.bootstrap.lock"
+        bootstrap_timeout="${AE_RUNTIME_BOOTSTRAP_TIMEOUT:-30}"
+        case "$bootstrap_timeout" in
+            ''|*[!0-9]*) bootstrap_timeout=30 ;;
+        esac
+        elapsed=0
+        while ! mkdir "$BOOTSTRAP_LOCK" 2>/dev/null; do
+            if [ "$elapsed" -ge "$bootstrap_timeout" ]; then
+                printf '%s\n' "AE_RUNTIME_BUSY: 项目运行时正在初始化，请稍后重试" >&2
+                exit 75
+            fi
+            if [ -f "$BOOTSTRAP_LOCK/owner.pid" ]; then
+                owner_pid=""
+                read -r owner_pid < "$BOOTSTRAP_LOCK/owner.pid" || true
+                case "$owner_pid" in
+                    ''|*[!0-9]*) ;;
+                    *)
+                        if ! kill -0 "$owner_pid" 2>/dev/null; then
+                            rm -f "$BOOTSTRAP_LOCK/owner.pid"
+                            rmdir "$BOOTSTRAP_LOCK" 2>/dev/null || true
+                            continue
+                        fi
+                        ;;
+                esac
+            fi
+            sleep 1
+            elapsed=$((elapsed + 1))
+        done
+        printf '%s\n' "$$" > "$BOOTSTRAP_LOCK/owner.pid"
+        cleanup_bootstrap_lock() {
+            rm -f "$BOOTSTRAP_LOCK/owner.pid"
+            rmdir "$BOOTSTRAP_LOCK" 2>/dev/null || true
+        }
+        trap cleanup_bootstrap_lock EXIT HUP INT TERM
+        if [ ! -x "$RUNTIME_ROOT/bin/python" ]; then
+            # uv 对“已存在但不完整”的环境会直接拒绝；只清理本产品专属的
+            # 目标运行时目录，避免把半初始化状态带入下一次 Loop。
+            UV_VENV_CLEAR=1 uv venv --quiet "$RUNTIME_ROOT" || exit $?
+        fi
+        trap - EXIT HUP INT TERM
+        cleanup_bootstrap_lock
+    fi
+    if [ -n "$RUN_MODULE" ]; then
+        exec uv run --frozen --no-dev --project "$PLUGIN_ROOT" python -m "$RUN_MODULE" "$@"
+    fi
+    exec uv run --frozen --no-dev --project "$PLUGIN_ROOT" ae "$@"
 fi
 
 printf '%s\n' \

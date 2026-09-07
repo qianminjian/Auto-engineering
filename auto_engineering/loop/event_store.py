@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import contextlib
-import json
 import sqlite3
 import threading
 from collections.abc import Callable, Iterable, Mapping
@@ -12,9 +11,14 @@ from pathlib import Path
 from typing import Any
 
 from auto_engineering.engine.state import EngineState
+from auto_engineering.loop import event_store_codec, event_store_schema
 from auto_engineering.loop.effects import EffectReceipt
 from auto_engineering.loop.events import LoopEvent, LoopEventType
 from auto_engineering.loop.projector import EngineStateProjector
+
+_json_dumps = event_store_codec.dumps
+_json_loads = event_store_codec.loads
+_ensure_schema = event_store_schema.ensure_schema
 
 
 class StateProjectionMismatchError(ValueError):
@@ -30,6 +34,8 @@ class StateProjectionMismatchError(ValueError):
 
 class SQLiteEventStore:
     """按 thread_id 分流、按 sequence 严格连续的事件存储。"""
+
+    _row_to_event = staticmethod(event_store_codec.event_from_row)
 
     def __init__(
         self,
@@ -57,62 +63,7 @@ class SQLiteEventStore:
             raise RuntimeError("EventStore 已关闭")
 
     def _ensure_schema(self) -> None:
-        self._conn.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS loop_events (
-                event_id TEXT PRIMARY KEY,
-                thread_id TEXT NOT NULL,
-                sequence INTEGER NOT NULL CHECK (sequence >= 0),
-                event_type TEXT NOT NULL,
-                causation_id TEXT,
-                correlation_id TEXT NOT NULL,
-                schema_version TEXT NOT NULL,
-                payload_json TEXT NOT NULL,
-                payload_sha256 TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                UNIQUE(thread_id, sequence)
-            );
-            CREATE INDEX IF NOT EXISTS idx_loop_events_stream
-            ON loop_events(thread_id, sequence);
-            CREATE TABLE IF NOT EXISTS engine_state_projections (
-                thread_id TEXT PRIMARY KEY,
-                sequence INTEGER NOT NULL CHECK (sequence >= 0),
-                state_json TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS action_snapshots (
-                thread_id TEXT PRIMARY KEY,
-                message_id TEXT NOT NULL UNIQUE,
-                sequence INTEGER NOT NULL CHECK (sequence >= 0),
-                action_json TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS protocol_result_replays (
-                thread_id TEXT NOT NULL,
-                causation_id TEXT NOT NULL,
-                result_hash TEXT NOT NULL,
-                response_json TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                PRIMARY KEY(thread_id, causation_id)
-            );
-            CREATE TABLE IF NOT EXISTS effect_receipts (
-                thread_id TEXT NOT NULL,
-                action_message_id TEXT NOT NULL,
-                kind TEXT NOT NULL,
-                relative_path TEXT NOT NULL,
-                sha256 TEXT NOT NULL,
-                byte_count INTEGER NOT NULL CHECK (byte_count >= 0),
-                created_at TEXT NOT NULL,
-                PRIMARY KEY(thread_id, action_message_id, relative_path)
-            );
-            CREATE TABLE IF NOT EXISTS checkpoint_imports (
-                checkpoint_id TEXT PRIMARY KEY,
-                thread_id TEXT NOT NULL UNIQUE,
-                event_id TEXT NOT NULL UNIQUE,
-                imported_at TEXT NOT NULL
-            );
-            """
-        )
+        _ensure_schema(self._conn)
 
     def append(self, events: Iterable[LoopEvent]) -> None:
         """原子追加一批连续事件；任意失败不会留下部分写入。"""
@@ -166,12 +117,7 @@ class SQLiteEventStore:
                     event.causation_id,
                     event.correlation_id,
                     event.schema_version,
-                    json.dumps(
-                        event.to_dict()["payload"],
-                        ensure_ascii=False,
-                        sort_keys=True,
-                        separators=(",", ":"),
-                    ),
+                    _json_dumps(event.to_dict()["payload"]),
                     event.payload_sha256,
                     event.created_at,
                 )
@@ -240,13 +186,7 @@ class SQLiteEventStore:
                 self._append_in_transaction(batch)
                 self._inject_fault("after_events")
                 last = batch[-1]
-                state_json = json.dumps(
-                    state.to_dict(),
-                    ensure_ascii=False,
-                    sort_keys=True,
-                    separators=(",", ":"),
-                    default=str,
-                )
+                state_json = _json_dumps(state.to_dict(), default_str=True)
                 self._conn.execute(
                     """
                     INSERT INTO engine_state_projections
@@ -260,13 +200,7 @@ class SQLiteEventStore:
                     (thread_id, last.sequence, state_json, last.created_at),
                 )
                 self._inject_fault("after_projection")
-                action_json = json.dumps(
-                    dict(action),
-                    ensure_ascii=False,
-                    sort_keys=True,
-                    separators=(",", ":"),
-                    default=str,
-                )
+                action_json = _json_dumps(dict(action), default_str=True)
                 self._conn.execute(
                     """
                     INSERT INTO action_snapshots
@@ -398,6 +332,26 @@ class SQLiteEventStore:
             self._ensure_open()
             return self._load_stream_unlocked(thread_id)
 
+    def latest_thread_for_event(
+        self, event_type: LoopEventType | str,
+    ) -> str | None:
+        """按事件事实找最近完成的 thread，不依赖 checkpoint 或宿主租约。"""
+
+        event_name = event_type.value if isinstance(event_type, LoopEventType) else event_type
+        with self._lock:
+            self._ensure_open()
+            row = self._conn.execute(
+                """
+                SELECT thread_id
+                FROM loop_events
+                WHERE event_type = ?
+                ORDER BY created_at DESC, sequence DESC
+                LIMIT 1
+                """,
+                (event_name,),
+            ).fetchone()
+        return str(row["thread_id"]) if row is not None else None
+
     def _load_stream_unlocked(self, thread_id: str) -> list[LoopEvent]:
         rows = self._conn.execute(
             "SELECT * FROM loop_events WHERE thread_id = ? ORDER BY sequence",
@@ -414,7 +368,7 @@ class SQLiteEventStore:
             ).fetchone()
         if row is None:
             return None
-        return EngineState.from_dict(json.loads(row["state_json"]))
+        return EngineState.from_dict(_json_loads(row["state_json"]))
 
     def rebuild_projection(self, thread_id: str) -> EngineState:
         """删除或损坏投影后，以事件日志为唯一事实源重建。"""
@@ -426,13 +380,7 @@ class SQLiteEventStore:
                 raise ValueError("PROJECTION_STREAM_EMPTY")
             state = EngineStateProjector().replay(stream)
             last = stream[-1]
-            state_json = json.dumps(
-                state.to_dict(),
-                ensure_ascii=False,
-                sort_keys=True,
-                separators=(",", ":"),
-                default=str,
-            )
+            state_json = _json_dumps(state.to_dict(), default_str=True)
             self._conn.execute("BEGIN IMMEDIATE")
             try:
                 self._conn.execute(
@@ -460,7 +408,7 @@ class SQLiteEventStore:
                 "SELECT action_json FROM action_snapshots WHERE thread_id = ?",
                 (thread_id,),
             ).fetchone()
-        return json.loads(row["action_json"]) if row else None
+        return _json_loads(row["action_json"]) if row else None
 
     def load_protocol_result(
         self,
@@ -480,7 +428,40 @@ class SQLiteEventStore:
             ).fetchone()
         if row is None:
             return None
-        return row["result_hash"], json.loads(row["response_json"])
+        return row["result_hash"], _json_loads(row["response_json"])
+
+    def replace_protocol_result_response(
+        self,
+        thread_id: str,
+        causation_id: str,
+        response: Mapping[str, Any],
+    ) -> None:
+        """更新已接受 Result 的响应 Action，不改变其 Result 身份。
+
+        状态协调 Gate 可能在旧 thread 上触发新 thread 初始化。旧 thread 的
+        Result 回放仍须返回新 thread 的首个 Action；该绑定属于 EventStore 的
+        幂等索引，不应重新写入 checkpoint 或伪造第二条 Result 事实。
+        """
+
+        response_json = _json_dumps(dict(response), default_str=True)
+        with self._lock:
+            self._ensure_open()
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                cursor = self._conn.execute(
+                    """
+                    UPDATE protocol_result_replays
+                    SET response_json = ?
+                    WHERE thread_id = ? AND causation_id = ?
+                    """,
+                    (response_json, thread_id, causation_id),
+                )
+                if cursor.rowcount != 1:
+                    raise ValueError("Result causation_id 未指向 EventStore 回放记录")
+                self._conn.commit()
+            except BaseException:
+                self._conn.rollback()
+                raise
 
     def load_effect_receipts(
         self,
@@ -528,7 +509,7 @@ class SQLiteEventStore:
             ).fetchone()
         if row is None:
             return []
-        payload = json.loads(row["payload_json"])
+        payload = _json_loads(row["payload_json"])
         history = payload.get("round_history", [])
         return list(history) if isinstance(history, list) else []
 
@@ -575,13 +556,7 @@ class SQLiteEventStore:
             self._conn.execute("BEGIN IMMEDIATE")
             try:
                 self._append_in_transaction([event])
-                state_json = json.dumps(
-                    state.to_dict(),
-                    ensure_ascii=False,
-                    sort_keys=True,
-                    separators=(",", ":"),
-                    default=str,
-                )
+                state_json = _json_dumps(state.to_dict(), default_str=True)
                 self._conn.execute(
                     """
                     INSERT INTO engine_state_projections
@@ -603,13 +578,7 @@ class SQLiteEventStore:
                         (
                             thread_id,
                             message_id,
-                            json.dumps(
-                                dict(action),
-                                ensure_ascii=False,
-                                sort_keys=True,
-                                separators=(",", ":"),
-                                default=str,
-                            ),
+                            _json_dumps(dict(action), default_str=True),
                             imported_at,
                         ),
                     )
@@ -626,23 +595,6 @@ class SQLiteEventStore:
                 self._conn.rollback()
                 raise
             return event
-
-    @staticmethod
-    def _row_to_event(row: sqlite3.Row) -> LoopEvent:
-        return LoopEvent.from_dict(
-            {
-                "schema_version": row["schema_version"],
-                "event_id": row["event_id"],
-                "thread_id": row["thread_id"],
-                "sequence": row["sequence"],
-                "event_type": row["event_type"],
-                "causation_id": row["causation_id"],
-                "correlation_id": row["correlation_id"],
-                "payload": json.loads(row["payload_json"]),
-                "payload_sha256": row["payload_sha256"],
-                "created_at": row["created_at"],
-            }
-        )
 
     def close(self) -> None:
         with self._lock:

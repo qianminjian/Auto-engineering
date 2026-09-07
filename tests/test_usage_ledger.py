@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import sqlite3
+
 from auto_engineering.config.runtime_config import RuntimeConfig
 from auto_engineering.engine.state import EngineState
 from auto_engineering.loop.tick_orchestrator import TickOrchestrator
@@ -37,6 +39,63 @@ def test_usage_ledger_preserves_all_attribution_dimensions(tmp_path) -> None:
     assert totals["measurement_complete"] is False
     assert totals["attributed_records"] == 1
     ledger.close()
+
+
+def test_usage_ledger_preserves_action_binding_and_migrates_existing_schema(
+    tmp_path,
+) -> None:
+    path = tmp_path / "usage.db"
+    connection = sqlite3.connect(path)
+    connection.execute(
+        """
+        CREATE TABLE usage_ledger (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            thread_id TEXT NOT NULL,
+            session_id TEXT NOT NULL,
+            tick INTEGER NOT NULL,
+            stage TEXT NOT NULL,
+            worker TEXT NOT NULL,
+            input_units INTEGER,
+            cache_read_units INTEGER,
+            cache_write_units INTEGER,
+            output_units INTEGER,
+            provider TEXT NOT NULL,
+            model TEXT NOT NULL,
+            usage_source TEXT NOT NULL,
+            estimated INTEGER NOT NULL,
+            core_payload_bytes INTEGER,
+            inline_unique_bytes INTEGER,
+            duplicate_block_bytes INTEGER,
+            host_context_window_units INTEGER,
+            estimator_version TEXT NOT NULL DEFAULT ''
+        )
+        """
+    )
+    connection.commit()
+    connection.close()
+    ledger = UsageLedger(path)
+    ledger.append(UsageRecord(
+        thread_id="thread-1",
+        session_id="session-1",
+        tick=2,
+        stage="architect",
+        worker="main",
+        input_units=10,
+        cache_read_units=5,
+        cache_write_units=0,
+        output_units=2,
+        provider="openai",
+        model="test-model",
+        usage_source="test",
+        estimated=False,
+        action_message_id="action-1",
+    ))
+    assert ledger.list_records("thread-1")[0].action_message_id == "action-1"
+    ledger.close()
+
+    reopened = UsageLedger(path)
+    assert reopened.list_records("thread-1")[0].action_message_id == "action-1"
+    reopened.close()
 
 
 def test_unknown_usage_remains_null_not_zero(tmp_path) -> None:
