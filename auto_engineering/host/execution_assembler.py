@@ -5,19 +5,17 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Mapping, Sequence
-from dataclasses import replace
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from uuid import NAMESPACE_URL, uuid5
 
-from auto_engineering.config.runtime_config import get_default_config
+from auto_engineering.host.execution_assembler_result import ResultFinalizationMixin
+from auto_engineering.host.outcome_file import (
+    OutcomeFileError,
+    parse_outcomes_document,
+)
 from auto_engineering.host.outcome_journal import OutcomeJournal
 from auto_engineering.host.outcome_recovery import OutcomeRecoveryService
-from auto_engineering.host.outcome_repair import (
-    assembly_rejection_can_extend_outcomes,
-    merge_authoritative_outcomes,
-)
 from auto_engineering.host.result_contract import ResultContractService
 from auto_engineering.host.spawn_contract import SpawnContractError, SpawnPlan
 from auto_engineering.host.worker_attestation import (
@@ -39,15 +37,21 @@ from auto_engineering.host.worker_evidence import (
     can_replace_retryable_outcome,
 )
 from auto_engineering.host.worker_failure import WorkerFailureService
+from auto_engineering.host.worker_observation import (
+    WorkerObservationContractError,
+    WorkerObservationRecord,
+)
+from auto_engineering.loop.architect_plan_coverage import (
+    architect_plan_coverage_violations,
+)
 from auto_engineering.loop.artifacts import (
     ArtifactError,
     ArtifactStore,
-    compact_worker_receipt,
     validate_worker_receipt,
 )
 
 
-class HostExecutionAssembler:
+class HostExecutionAssembler(ResultFinalizationMixin):
     """以 outcome journal 为恢复点，幂等完成一整个 spawn Action。"""
 
     def __init__(self, project_root: Path) -> None:
@@ -84,7 +88,7 @@ class HostExecutionAssembler:
                 f"WORKER_NATIVE_RESULT_EMPTY:{worker_id}",
             ))
         try:
-            plan = SpawnPlan.from_action(action)
+            plan = SpawnPlan.for_recording(action)
         except SpawnContractError as exc:
             raise HostEvidenceValidationError((str(exc),)) from exc
         invocation = next(
@@ -228,6 +232,7 @@ class HostExecutionAssembler:
         worker_id: str,
         native_worker_handle: str | None,
         native_result_file: Path | None = None,
+        native_status_only: bool = False,
         status: str,
         actual_model: str = "unreported",
         isolation_evidence: str | None = None,
@@ -245,7 +250,7 @@ class HostExecutionAssembler:
         if status not in allowed_statuses:
             raise HostEvidenceValidationError((f"WORKER_STATUS_INVALID:{worker_id}",))
         try:
-            plan = SpawnPlan.from_action(action)
+            plan = SpawnPlan.for_recording(action)
         except SpawnContractError as exc:
             raise HostEvidenceValidationError((str(exc),)) from exc
         invocation = next(
@@ -315,6 +320,84 @@ class HostExecutionAssembler:
                     f"WORKER_NATIVE_RESULT_INVALID:{worker_id}",
                 )) from exc
 
+        def require_completed_observation() -> None:
+            """验证 Codex status-only wait 的终态观察绑定。
+
+            Codex 的原生 wait 可能只返回 ``status=completed`` 而不返回 Worker
+            文本；此时业务事实仍来自 Worker 私有 outcome，但只有同一 Action、
+            同一代际/围栏、同一 native handle 的 completed observation 才能
+            授予宿主事实资格。没有这个观察，不能把“文件已存在”升级为完成。
+            """
+
+            if not native_status_only:
+                return
+            host_execution = action.get("host_execution")
+            contract = (
+                host_execution.get("worker_observation")
+                if isinstance(host_execution, Mapping)
+                else None
+            )
+            if not isinstance(contract, Mapping) or contract.get("mode") != "native_wait":
+                raise HostEvidenceValidationError((
+                    f"WORKER_STATUS_ONLY_UNSUPPORTED:{worker_id}",
+                ))
+            observation_ref = (
+                template.get("observation_path")
+                if isinstance(template, Mapping)
+                else None
+            )
+            if not isinstance(observation_ref, str) or not observation_ref:
+                # Status-only 是原生 wait 已返回 completed、但宿主没有正文
+                # envelope 的显式交接分支；观察文件是诊断增强，不是业务
+                # payload。没有启用 Hook 时允许直接使用当前命令携带的
+                # native handle/status/isolation 事实继续回写。
+                return
+            observation_path = (self.project_root / observation_ref).resolve()
+            if (
+                observation_path == self.project_root
+                or self.project_root not in observation_path.parents
+            ):
+                raise HostEvidenceValidationError((
+                    f"WORKER_OBSERVATION_PATH_INVALID:{worker_id}",
+                ))
+            try:
+                record = WorkerObservationRecord.from_dict(
+                    json.loads(observation_path.read_text(encoding="utf-8"))
+                )
+            except FileNotFoundError:
+                return
+            except (
+                OSError,
+                UnicodeDecodeError,
+                json.JSONDecodeError,
+                WorkerObservationContractError,
+                TypeError,
+                ValueError,
+            ) as exc:
+                raise HostEvidenceValidationError((
+                    f"WORKER_OBSERVATION_INVALID:{worker_id}",
+                )) from exc
+            message_id = action.get("message_id")
+            generation, fence = _resolve_worker_execution_binding(
+                action,
+                template if isinstance(template, Mapping) else None,
+                worker_id,
+            )
+            if (
+                record.action_message_id != message_id
+                or record.worker_id != worker_id
+                or record.execution_generation != generation
+                or record.fencing_token != fence
+                or record.native_status != "completed"
+                or not record.owner_known
+                or record.native_worker_handle != native_worker_handle
+            ):
+                raise HostEvidenceValidationError((
+                    f"WORKER_OBSERVATION_MISMATCH:{worker_id}",
+                ))
+
+        if native_status_only:
+            require_completed_observation()
         if not outcome_path.is_file():
             # 只有私有文件完全缺失时，Host 才能从本次原生回包恢复一次。
             # 一旦 Worker 已经写出文件，该文件就是唯一业务权威；不能
@@ -463,7 +546,7 @@ class HostExecutionAssembler:
         if not isinstance(worker_id, str) or not worker_id:
             raise HostEvidenceValidationError(("WORKER_ID_MISSING",))
         try:
-            plan = SpawnPlan.from_action(action)
+            plan = SpawnPlan.for_recording(action)
         except SpawnContractError as exc:
             raise HostEvidenceValidationError((str(exc),)) from exc
         invocation = next(
@@ -546,19 +629,18 @@ class HostExecutionAssembler:
         )
         if outcomes_path == self.project_root or self.project_root not in outcomes_path.parents:
             raise HostEvidenceValidationError(("OUTCOMES_OUTPUT_PATH_INVALID",))
-        existing_raw: object = []
+        existing_items: list[dict[str, Any]] = []
         if outcomes_path.is_file():
             try:
-                existing_raw = json.loads(outcomes_path.read_text(encoding="utf-8"))
-            except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+                existing_items = parse_outcomes_document(json.loads(
+                    outcomes_path.read_text(encoding="utf-8")
+                ))
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError, OutcomeFileError):
                 # outcomes.json 是当前 Action 的可重建工作副本，不是 Core
                 # 权威账本。新的 Host 回写已通过 native handle/model/
                 # isolation 校验后，可以原子重建损坏副本；权威历史仍由
                 # Outcome Journal 保存，不能让半成品阻断同一 Action 恢复。
-                existing_raw = []
-        existing_items = existing_raw.get("outcomes") if isinstance(existing_raw, Mapping) else existing_raw
-        if not isinstance(existing_items, list):
-            existing_items = []
+                existing_items = []
         existing_by_worker: dict[str, NativeWorkerOutcome] = {}
         for item in existing_items:
             if not isinstance(item, Mapping):
@@ -566,9 +648,9 @@ class HostExecutionAssembler:
             try:
                 parsed = NativeWorkerOutcome(**dict(item))
             except (TypeError, ValueError):
-                # 旧宿主可能已将 host-only 半成品写入共享副本。它没有
-                # Worker 业务 payload，不能参与合并，也不能覆盖本次已验证
-                # 的 outcome；后续 Core 仍会校验完整 Worker 集合。
+                # 共享副本可能已被宿主写入 host-only 半成品。它没有 Worker
+                # 业务 payload，不能参与合并，也不能覆盖本次已验证的 outcome；
+                # 后续 Core 仍会校验完整 Worker 集合。
                 continue
             if parsed.worker_id in existing_by_worker:
                 # 重复条目使该 Worker 的旧副本不具备确定性；丢弃旧条目，
@@ -609,7 +691,7 @@ class HostExecutionAssembler:
         """
 
         try:
-            plan = SpawnPlan.from_action(action)
+            plan = SpawnPlan.for_recording(action)
         except SpawnContractError as exc:
             raise WorkerOutcomeCollectionError(
                 "HOST_WORKER_OUTPUT_INVALID", "unknown", str(exc)
@@ -743,313 +825,6 @@ class HostExecutionAssembler:
             result_path=result_path,
             outcomes_path=outcomes_path,
         )
-
-    def finalize(
-        self,
-        *,
-        action: Mapping[str, Any],
-        outcomes: Sequence[NativeWorkerOutcome],
-        coordinator_payload: Mapping[str, Any],
-    ) -> dict[str, Any]:
-        # Worker 失败是一次独立的宿主事实，不依赖 Coordinator 业务字段。
-        # 必须先终结失败尝试，再校验 Architect/Developer 等成功 payload；
-        # 否则超时时的空 payload 会被误判为可修复的业务 Result，既无法
-        # 生成 result.json，也会错误进入“复用 Worker、禁止重启”的路径。
-        if (
-            isinstance(action.get("spawn"), Mapping)
-            and any(outcome.status != "completed" for outcome in outcomes)
-        ):
-            return self._finalize_worker_failure(
-                action=action,
-                outcomes=outcomes,
-            )
-        coordinator_payload = self._normalize_echoed_identity(
-            action=action,
-            coordinator_payload=coordinator_payload,
-        )
-        coordinator_payload = self._normalize_business_payload(
-            action=action,
-            coordinator_payload=coordinator_payload,
-        )
-        if not isinstance(action.get("spawn"), Mapping):
-            return self._finalize_inline(
-                action=action,
-                outcomes=outcomes,
-                coordinator_payload=coordinator_payload,
-            )
-        violations, context = self._preflight(
-            action=action,
-            outcomes=outcomes,
-            coordinator_payload=coordinator_payload,
-        )
-        if violations:
-            raise HostEvidenceValidationError(violations)
-
-        plan: SpawnPlan = context["plan"]
-        message_id = context["message_id"]
-        journal_path = (
-            self.project_root
-            / ".ae-state/host-runtime/outcomes"
-            / f"{message_id}.json"
-        )
-        existing = OutcomeRecoveryService.read_json(journal_path)
-        outcome_by_worker = {item.worker_id: item for item in outcomes}
-        if existing is not None and existing.get("status") in {
-            "rejected",
-            "assembly_rejected",
-        }:
-            authoritative = OutcomeRecoveryService.authoritative_outcomes(
-                journal=existing,
-                action_message_id=message_id,
-                required=existing.get("status") == "rejected",
-            )
-            if authoritative is not None:
-                # Result 修复只允许改变 Coordinator 语义；Worker outcome
-                # 由首次事务固定，同一 Worker 后续事实不能替换。
-                outcome_by_worker = merge_authoritative_outcomes(
-                    authoritative, outcomes
-                )
-        normalized: dict[str, NativeWorkerOutcome] = {}
-        for worker_id, outcome in outcome_by_worker.items():
-            evidence = outcome.isolation_evidence
-            canonical_evidence: str | None = None
-            if evidence in (
-                {"fork_context": False},
-                {"fork_context": False, "fork_turns": "none"},
-            ):
-                canonical_evidence = "fork_context=false"
-            elif evidence == {"fork_turns": "none"}:
-                canonical_evidence = "fork_turns=none"
-            normalized[worker_id] = (
-                replace(outcome, isolation_evidence=canonical_evidence)
-                if canonical_evidence is not None
-                else outcome
-            )
-        outcome_by_worker = normalized
-        config = get_default_config()
-        receipts: dict[str, dict[str, Any]] = {}
-        for invocation in plan.invocations:
-            outcome = outcome_by_worker[invocation.worker_id]
-            try:
-                receipts[invocation.worker_id] = compact_worker_receipt(
-                    store=ArtifactStore(
-                        self.project_root / ".ae-state" / "artifacts"
-                    ),
-                    stage=context["stage"],
-                    worker=invocation.worker_id,
-                    payload=outcome.payload,
-                    summary=outcome.summary,
-                    inline_limit=config.max_worker_receipt_bytes,
-                    summary_limit=config.max_receipt_summary_bytes,
-                    requested_effort=invocation.requested_effort,
-                    actual_model=outcome.actual_model,
-                    native_worker_handle=outcome.native_worker_handle,
-                )
-            except ArtifactError as exc:
-                raise HostEvidenceValidationError((
-                    f"WORKER_RECEIPT_TOO_LARGE:{invocation.worker_id}",
-                )) from exc
-
-        worker_templates: dict[str, Mapping[str, Any]] = context["worker_templates"]
-
-        def validated_attestations(
-            candidates: Mapping[str, NativeWorkerOutcome],
-        ) -> list[dict[str, Any]]:
-            built: list[dict[str, Any]] = []
-            for invocation in plan.invocations:
-                outcome = candidates[invocation.worker_id]
-                template = worker_templates[invocation.worker_id]
-                raw_attestation = template.get("attestation")
-                assert isinstance(raw_attestation, Mapping)
-                attestation = dict(raw_attestation)
-                attestation["status"] = "completed"
-                attestation["actual_model"] = outcome.actual_model
-                if outcome.isolation_evidence is not None:
-                    attestation["isolation_evidence"] = outcome.isolation_evidence
-                built.append(attestation)
-            validate_attestations(
-                action_message_id=context["message_id"],
-                invocations=plan.invocations,
-                attestations=built,
-            )
-            return built
-
-        try:
-            attestations = validated_attestations(outcome_by_worker)
-        except WorkerAttestationError as exc:
-            raise HostEvidenceValidationError((str(exc),)) from exc
-
-        serialized_outcomes = [
-            outcome_by_worker[item.worker_id].to_dict() for item in plan.invocations
-        ]
-        outcomes_fingerprint = hashlib.sha256(
-            _canonical_bytes({
-                "action_message_id": message_id,
-                "outcomes": serialized_outcomes,
-            })
-        ).hexdigest()
-        fingerprint_payload = {
-            "action_message_id": message_id,
-            "outcomes": serialized_outcomes,
-            "coordinator_payload": dict(coordinator_payload),
-        }
-        fingerprint = hashlib.sha256(_canonical_bytes(fingerprint_payload)).hexdigest()
-        if existing is not None and existing.get("status") == "prepared":
-            rejection_reason: str | None = None
-            try:
-                raw_existing_outcomes = existing.get("outcomes")
-                if not isinstance(raw_existing_outcomes, list):
-                    raise ValueError("PREPARED_OUTCOME_SCHEMA_INVALID")
-                parsed_existing = [
-                    NativeWorkerOutcome(**dict(item))
-                    for item in raw_existing_outcomes
-                    if isinstance(item, Mapping)
-                ]
-                if len(parsed_existing) != len(raw_existing_outcomes):
-                    raise ValueError("PREPARED_OUTCOME_SCHEMA_INVALID")
-                validated_attestations({
-                    item.worker_id: item for item in parsed_existing
-                })
-            except WorkerAttestationError as exc:
-                rejection_reason = str(exc)
-            except (KeyError, TypeError, ValueError):
-                rejection_reason = "PREPARED_OUTCOME_SCHEMA_INVALID"
-            if rejection_reason is not None:
-                rejected_digest = hashlib.sha256(
-                    _canonical_bytes(existing)
-                ).hexdigest()[:16]
-                rejected_path = (
-                    self.project_root
-                    / ".ae-state/host-runtime/rejected-outcomes"
-                    / f"{message_id}-{rejected_digest}.json"
-                )
-                _atomic_write_json(rejected_path, {
-                    "schema_version": "1.0",
-                    "status": "rejected",
-                    "reason": rejection_reason,
-                    "journal": existing,
-                })
-                existing = None
-        if existing is not None:
-            existing_result = existing.get("result")
-            retryable_failure = (
-                existing.get("status") == "worker_failed"
-                or (
-                    isinstance(existing_result, dict)
-                    and existing_result.get("spawned") is False
-                )
-            )
-            if retryable_failure:
-                existing = None
-            else:
-                existing_outcomes_fingerprint = existing.get("outcomes_fingerprint")
-                # 语义预检可能在 Worker 尚未全部回写时产生
-                # ``assembly_rejected``。这类记录只有 Coordinator 的拒绝
-                # 证据，没有权威 outcomes；不能把空列表指纹锁死，阻止
-                # 后续补齐 Worker 后的合法重试。若已有 outcomes，则仍按
-                # 指纹严格拒绝替换事实。
-                incomplete_assembly_rejection = (
-                    existing.get("status") == "assembly_rejected"
-                    and not isinstance(existing_outcomes_fingerprint, str)
-                    and not isinstance(existing.get("outcomes"), list)
-                )
-                if incomplete_assembly_rejection:
-                    existing_outcomes_fingerprint = None
-                elif not isinstance(existing_outcomes_fingerprint, str):
-                    existing_outcomes_fingerprint = hashlib.sha256(
-                        _canonical_bytes({
-                            "action_message_id": message_id,
-                            "outcomes": existing.get("outcomes", []),
-                        })
-                    ).hexdigest()
-                if (
-                    existing_outcomes_fingerprint is not None
-                    and existing_outcomes_fingerprint != outcomes_fingerprint
-                    and not assembly_rejection_can_extend_outcomes(
-                        existing, outcomes
-                    )
-                ):
-                    raise HostEvidenceValidationError(("OUTCOME_JOURNAL_CONFLICT",))
-                committed_result = existing.get("result")
-                if (
-                    existing.get("fingerprint") == fingerprint
-                    and existing.get("status") in {"accepted", "committed"}
-                    and isinstance(committed_result, dict)
-                ):
-                    return dict(committed_result)
-
-        completed_at = (
-            existing.get("completed_at")
-            if isinstance(existing, dict)
-            else None
-        )
-        if not isinstance(completed_at, str):
-            completed_at = datetime.now(UTC).isoformat()
-        if existing is None or existing.get("status") not in {
-            "rejected", "assembly_rejected"
-        }:
-            _atomic_write_json(journal_path, {
-                "schema_version": "1.0",
-                "status": "prepared",
-                "fingerprint": fingerprint,
-                "outcomes_fingerprint": outcomes_fingerprint,
-                "action_message_id": message_id,
-                "completed_at": completed_at,
-                "outcomes": serialized_outcomes,
-            })
-
-        for invocation in plan.invocations:
-            receipt = receipts[invocation.worker_id]
-            _atomic_write_json(self.project_root / invocation.receipt_path, receipt)
-        challenge: dict[str, Any] = context["challenge"]
-        total_proof = {
-            **challenge,
-            "status": "completed",
-            "completed_at": completed_at,
-            "workers": [item.worker_id for item in plan.invocations],
-            "worker_receipts": [item.receipt_path for item in plan.invocations],
-        }
-        total_path = (
-            self.project_root
-            / ".ae-state/spawn-proofs"
-            / f"{context['proof_token']}.json"
-        )
-        _atomic_write_json(total_path, total_proof)
-
-        result_identity = hashlib.sha256(
-            _canonical_bytes({
-                "fingerprint": fingerprint,
-                "action_message_id": message_id,
-            })
-        ).hexdigest()
-        result = {
-            "schema_version": str(action.get("schema_version") or "1.1"),
-            "message_type": "result",
-            "message_id": str(uuid5(NAMESPACE_URL, result_identity)),
-            "causation_id": message_id,
-            "thread_id": context["thread_id"],
-            "tick": int(action.get("tick", 0)),
-            "stage": context["stage"],
-            "correlation_id": str(
-                action.get("correlation_id") or context["thread_id"]
-            ),
-            "extensions": {},
-            **dict(coordinator_payload),
-            "spawned": True,
-            "spawn_proof_token": context["proof_token"],
-            "worker_attestations": attestations,
-        }
-        OutcomeJournal(self.project_root).prepare(
-            message_id,
-            result,
-            fingerprint=fingerprint,
-            extra={
-                "outcomes_fingerprint": outcomes_fingerprint,
-                "completed_at": completed_at,
-                "outcomes": serialized_outcomes,
-            },
-        )
-        return result
 
     @staticmethod
     def _normalize_echoed_identity(
@@ -1266,7 +1041,7 @@ class HostExecutionAssembler:
     ) -> tuple[list[str], dict[str, Any]]:
         violations: list[str] = []
         try:
-            plan = SpawnPlan.from_action(action)
+            plan = SpawnPlan.for_recording(action)
         except SpawnContractError as exc:
             return [str(exc)], {}
         message_id = action.get("message_id")
@@ -1334,6 +1109,17 @@ class HostExecutionAssembler:
         violations.extend(
             self._coordinator_payload_violations(action, coordinator_payload)
         )
+        if stage == "architect":
+            violations.extend(
+                architect_plan_coverage_violations(
+                    worker_payloads=[
+                        outcome.payload
+                        for outcome in outcomes
+                        if isinstance(outcome.payload, Mapping)
+                    ],
+                    coordinator_payload=coordinator_payload,
+                )
+            )
 
         challenge: dict[str, Any] | None = None
         if isinstance(proof_token, str) and proof_token:
@@ -1418,7 +1204,7 @@ def collect_host_evidence_violations(
 
     violations: list[str] = []
     try:
-        plan = SpawnPlan.from_action(action)
+        plan = SpawnPlan.for_recording(action)
     except SpawnContractError as exc:
         return (str(exc),)
     root = project_root.resolve()
@@ -1459,6 +1245,30 @@ def collect_host_evidence_violations(
             violations.append(f"WORKER_ATTESTATIONS_INVALID:{exc}")
 
     stage = str(action.get("stage") or "")
+    if stage == "architect" and isinstance(result.get("batch_plan"), list):
+        worker_payloads: list[Mapping[str, Any]] = []
+        for invocation in plan.invocations:
+            candidate = Path(invocation.outcome_path)
+            path = (
+                candidate if candidate.is_absolute() else root / candidate
+            ).resolve()
+            if path == root or root not in path.parents:
+                continue
+            try:
+                raw = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+                continue
+            if isinstance(raw, Mapping) and isinstance(raw.get("outcome"), Mapping):
+                raw = raw["outcome"]
+            payload = raw.get("payload") if isinstance(raw, Mapping) else None
+            if isinstance(payload, Mapping):
+                worker_payloads.append(dict(payload))
+        violations.extend(
+            architect_plan_coverage_violations(
+                worker_payloads=worker_payloads,
+                coordinator_payload=result,
+            )
+        )
     store = ArtifactStore(root / ".ae-state/artifacts")
     for invocation in plan.invocations:
         try:

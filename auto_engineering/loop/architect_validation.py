@@ -6,6 +6,7 @@ from auto_engineering.engine.batch_state import BatchState
 from auto_engineering.engine.design_doc import DesignDoc
 from auto_engineering.engine.progress_tree import ProgressTree
 from auto_engineering.engine.verification_layers import determine_verification_layers
+from auto_engineering.loop.architect_task_contract import validate_architect_batch_plan
 from auto_engineering.loop.architecture_candidate import (
     ArchitectureCandidateBuilder,
     ArchitectureCandidateError,
@@ -117,6 +118,21 @@ def dry_run_architect_plan(
         )
     except ArchitectureCandidateError as exc:
         return str(exc)
+
+    # 有显式设计文档时，计划进入激活前必须满足当前 Architect 机器契约。
+    # 无设计文档仍保留旧输入兼容性，避免把历史模糊需求的迁移成本伪装成
+    # 本次设计驱动协议的一部分；后续可在无设计文档协议定型后单独收紧。
+    if design_doc is not None:
+        if result.get("result_type") == "plan_reconciliation":
+            task_plan = result.get("new_batch_plan")
+        elif active_revision <= 0:
+            task_plan = result.get("batch_plan")
+        else:
+            patch = result.get("plan_patch")
+            task_plan = patch.get("add_batches") if isinstance(patch, dict) else None
+        task_error = validate_architect_batch_plan(task_plan)
+        if task_error:
+            return task_error
 
     obligation_error = validate_architect_obligations(
         candidate, research_archive or {}

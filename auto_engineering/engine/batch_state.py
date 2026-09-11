@@ -334,6 +334,7 @@ class BatchState:
             )
         existing = {str(batch["batch_id"]): batch for batch in self.batch_plan}
         combined = list(self.batch_plan)
+        added_ids: list[str] = []
         for batch in self.flatten_batch_plan(add_batches):
             batch_id = str(batch["batch_id"])
             if batch_id in existing:
@@ -342,20 +343,33 @@ class BatchState:
                 continue
             existing[batch_id] = batch
             combined.append(batch)
+            added_ids.append(batch_id)
 
         patched = (
             self.from_design_doc(design_doc, combined)
             if design_doc is not None
             else self.from_batch_plan(combined)
         )
+        # PlanPatch 的新增批次是对开放 finding 的返修；设计要求它们在
+        # 原计划的后续待办之前执行，否则已知缺陷会被后续批次重复带入
+        # Critic，最终错误触发 REFINE_LIMIT。完成事实仍只由
+        # completed_batch_ids 决定，新增批次本身不会重开旧批次。
         pending_id = next(
             (
-                str(batch["batch_id"])
-                for batch in combined
-                if str(batch["batch_id"]) not in completed_batch_ids
+                batch_id for batch_id in added_ids
+                if batch_id not in completed_batch_ids
             ),
             None,
         )
+        if pending_id is None:
+            pending_id = next(
+                (
+                    str(batch["batch_id"])
+                    for batch in combined
+                    if str(batch["batch_id"]) not in completed_batch_ids
+                ),
+                None,
+            )
         if pending_id is None:
             patched.current_plate_idx = len(patched.plates)
             return patched

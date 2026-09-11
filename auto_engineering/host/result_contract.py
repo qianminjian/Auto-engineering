@@ -17,6 +17,96 @@ from auto_engineering.loop.section_findings import (
 class ResultContractService:
     """不读写运行态、只按 active Action 处理 Coordinator Result。"""
 
+    _HOST_ONLY_FIELDS = frozenset({
+        "native_result",
+        "native_result_file",
+        "native_worker_handle",
+        "actual_model",
+        "isolation_evidence",
+        "execution_generation",
+        "fencing_token",
+        "generation",
+        "fencing",
+        "attestation",
+        "worker_attestations",
+        "receipt",
+        "outcomes",
+    })
+
+    @staticmethod
+    def _developer_execution_scope(
+        action: Mapping[str, Any],
+    ) -> tuple[str, list[str]] | None:
+        if action.get("stage") != "developer":
+            return None
+        extensions = action.get("extensions")
+        scope = (
+            extensions.get("execution_scope")
+            if isinstance(extensions, Mapping)
+            else None
+        )
+        if scope is None:
+            return None
+        if not isinstance(scope, Mapping):
+            raise HostEvidenceValidationError(("DEVELOPER_SCOPE_UNAVAILABLE",))
+        batch_id = scope.get("batch_id")
+        task_ids = scope.get("task_ids")
+        if (
+            not isinstance(batch_id, str)
+            or not batch_id
+            or not isinstance(task_ids, list)
+            or not all(isinstance(item, str) and item for item in task_ids)
+            or len(task_ids) != len(set(task_ids))
+        ):
+            raise HostEvidenceValidationError(("DEVELOPER_SCOPE_UNAVAILABLE",))
+        return batch_id, list(task_ids)
+
+    @staticmethod
+    def _bind_developer_execution_scope(
+        *,
+        normalized: Mapping[str, Any],
+        execution_scope: tuple[str, list[str]],
+    ) -> dict[str, Any]:
+        """把 active batch 的机器范围回填并校验到 Developer Result。"""
+
+        bound = dict(normalized)
+        scope_batch_id, scope_task_ids = execution_scope
+        if "batch_id" not in bound:
+            bound["batch_id"] = scope_batch_id
+        elif bound["batch_id"] != scope_batch_id:
+            raise HostEvidenceValidationError((
+                "DEVELOPER_BATCH_ID_SCOPE_MISMATCH",
+            ))
+        if "task_ids" not in bound:
+            bound["task_ids"] = list(scope_task_ids)
+        else:
+            actual_task_ids = bound["task_ids"]
+            if (
+                not isinstance(actual_task_ids, list)
+                or any(
+                    not isinstance(item, str) or not item
+                    for item in actual_task_ids
+                )
+                or len(actual_task_ids) != len(set(actual_task_ids))
+                or set(actual_task_ids) != set(scope_task_ids)
+            ):
+                raise HostEvidenceValidationError((
+                    "DEVELOPER_TASK_IDS_SCOPE_MISMATCH",
+                ))
+        return bound
+
+    @classmethod
+    def _host_field_violations(
+        cls,
+        coordinator_payload: Mapping[str, Any],
+    ) -> tuple[str, ...]:
+        return tuple(
+            f"COORDINATOR_HOST_FIELD_FORBIDDEN:{field}"
+            for field in sorted(
+                cls._HOST_ONLY_FIELDS.intersection(coordinator_payload)
+            )
+        )
+
     @staticmethod
     def normalize_echoed_identity(
         *,
@@ -50,9 +140,22 @@ class ResultContractService:
     ) -> dict[str, Any]:
         """按 Core 下发合同恢复一次二次序列化，并在写证据前校验。"""
 
+        normalized = dict(coordinator_payload)
+        host_field_violations = ResultContractService._host_field_violations(
+            normalized
+        )
+        if host_field_violations:
+            raise HostEvidenceValidationError(host_field_violations)
+
+        execution_scope = ResultContractService._developer_execution_scope(action)
+        if execution_scope is not None:
+            normalized = ResultContractService._bind_developer_execution_scope(
+                normalized=normalized,
+                execution_scope=execution_scope,
+            )
         contract = action.get("result_contract")
         if contract is None:
-            return dict(coordinator_payload)
+            return normalized
         if not isinstance(contract, Mapping):
             raise HostEvidenceValidationError(("RESULT_CONTRACT_INVALID",))
         required = contract.get("required")
@@ -65,7 +168,16 @@ class ResultContractService:
             or contract.get("additionalProperties") is not False
         ):
             raise HostEvidenceValidationError(("RESULT_CONTRACT_INVALID",))
-        normalized = dict(coordinator_payload)
+        required = list(required)
+        properties = dict(properties)
+        if execution_scope is not None:
+            properties.setdefault("batch_id", {"type": "string"})
+            properties.setdefault("task_ids", {"type": "array"})
+            for field in ("batch_id", "task_ids"):
+                if field not in required:
+                    required.append(field)
+        elif action.get("stage") == "developer" and "task_ids" not in required:
+            required.append("task_ids")
         violations: list[str] = [
             f"COORDINATOR_FIELD_UNEXPECTED:{field}"
             for field in sorted(str(item) for item in normalized)
@@ -210,6 +322,10 @@ class ResultContractService:
     ) -> list[str]:
         """在任何 evidence/journal 写入前拒绝跨 Action 陈旧业务字段。"""
 
+        violations = list(
+            ResultContractService._host_field_violations(coordinator_payload)
+        )
+        execution_scope = ResultContractService._developer_execution_scope(action)
         contract = action.get("result_contract")
         if isinstance(contract, Mapping) and isinstance(
             contract.get("properties"), Mapping
@@ -217,16 +333,23 @@ class ResultContractService:
             allowed = {str(key) for key in contract["properties"]}
         else:
             expected = action.get("expected_format")
-            if not isinstance(expected, Mapping):
-                return []
-            allowed = {str(key) for key in expected}
+            allowed = (
+                set()
+                if not isinstance(expected, Mapping)
+                else {str(key) for key in expected}
+            )
+        if action.get("stage") == "developer":
+            allowed.add("task_ids")
+            if execution_scope is not None:
+                allowed.add("batch_id")
         if not allowed:
-            return []
-        return [
+            return violations
+        violations.extend([
             f"COORDINATOR_FIELD_UNEXPECTED:{key}"
             for key in sorted(str(key) for key in coordinator_payload)
             if key not in allowed
-        ]
+        ])
+        return violations
 
 
 __all__ = ["ResultContractService"]

@@ -196,6 +196,7 @@ def test_product_build_identity_preflight_is_required_and_bound() -> None:
                 "build_id": candidate["build_id"],
                 "version": candidate["version"],
                 "source_kind": "packaged",
+                "content_sha256": candidate["content_sha256"],
             }
         },
         candidate,
@@ -225,9 +226,11 @@ def test_l3_canary_engineering_baseline_is_explicit_and_versioned() -> None:
     ]
     assert project["tool"]["hatch"]["build"]["targets"]["sdist"]["exclude"] == [
         "/.ae-state",
+        "/.ae-runtime",
         "/_scratch",
         "/.venv",
         "/dist",
+        "/build",
         "/**/__pycache__",
     ]
     assert "source distribution" in design
@@ -237,6 +240,27 @@ def test_l3_canary_engineering_baseline_is_explicit_and_versioned() -> None:
         "type_check": ["uv", "run", "mypy", "src", "tests"],
         "test": ["uv", "run", "pytest", "-q"],
         "build": ["uv", "build"],
+    }
+
+
+def test_repository_build_config_excludes_all_runtime_trees() -> None:
+    import tomllib
+
+    project = tomllib.loads(
+        (Path(__file__).parents[1] / "pyproject.toml").read_text(encoding="utf-8")
+    )
+    wheel = project["tool"]["hatch"]["build"]["targets"]["wheel"]
+    sdist = project["tool"]["hatch"]["build"]["targets"]["sdist"]
+
+    assert wheel["packages"] == ["auto_engineering"]
+    assert set(sdist["exclude"]) >= {
+        "/.ae-state",
+        "/.ae-runtime",
+        "/.venv",
+        "/dist",
+        "/build",
+        "/_scratch",
+        "/**/__pycache__",
     }
 
 
@@ -277,6 +301,14 @@ def _evidence(tmp_path=None) -> dict[str, object]:
             "recovery_verified": True,
             "recovery_method": "coordinator_repair",
             "recovery_action_message_id": "architect-action",
+            "recovery_result_causation_id": "architect-action",
+            "event_store_source": {
+                "kind": "event_store",
+                "root": "/tmp/canary-project",
+                "thread_id": "thread-1",
+                "event_store_path": ".ae-state/events.db",
+                "semantic_signature": [9, 9, 9],
+            },
         },
         "golden_project": {
             "status": "pass",
@@ -447,9 +479,10 @@ def test_release_requires_both_hosts_on_same_build(tmp_path) -> None:
             "installed_build_id": evidence["build_id"],
             "build_identity_preflight": {
                 "status": "pass",
-                "build_id": evidence["build_id"],
-                "version": "5.8.0-rc.5",
-                "source_kind": "packaged",
+                    "build_id": evidence["build_id"],
+                    "version": "5.8.0-rc.5",
+                    "source_kind": "packaged",
+                    "content_sha256": "a" * 64,
             },
             "plugin_discovered": True,
             "business_evidence": _business_evidence_payload(evidence["build_id"]),

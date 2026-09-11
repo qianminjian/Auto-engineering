@@ -8,12 +8,17 @@ import os
 from pathlib import Path
 from unittest.mock import patch
 
+from auto_engineering.config.runtime_config import RuntimeConfig
+
 # ── Helpers ──
 
 def _get_injectables(root: Path, environ: dict | None = None) -> dict:
     """Call _build_injectables with optional env override."""
     from auto_engineering.cli.dev_loop import _build_injectables
-    return _build_injectables(root, environ or os.environ)
+    return _build_injectables(
+        root,
+        RuntimeConfig(environ=dict(environ or os.environ)),
+    )
 
 
 # ── L3-a: Required injectables must be instantiated ──
@@ -78,7 +83,9 @@ def test_new_module_wiring_convention():
             from auto_engineering.cli.dev_loop import _build_injectables
             # Minimal environ: no optional features enabled
             minimal_env: dict[str, str] = {}
-            inj = _build_injectables(Path("/nonexistent"), minimal_env)
+            inj = _build_injectables(
+                Path("/nonexistent"), RuntimeConfig(environ=minimal_env)
+            )
 
     actual_keys = set(inj.keys())
     expected_required = {"context_offloader"}

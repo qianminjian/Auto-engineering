@@ -22,6 +22,7 @@ from auto_engineering.config.constants import (
 )
 from auto_engineering.config.feature_flags import feature_status_for_action
 from auto_engineering.config.runtime_config import RuntimeConfig, get_default_config
+from auto_engineering.loop.action_builder_effects import ActionBuilderEffectsMixin
 from auto_engineering.loop.action_context_projection import (
     gap_scan_summary as _gap_scan_summary_impl,
 )
@@ -32,14 +33,16 @@ from auto_engineering.loop.action_prompt_contract import (
     SPAWN_SINGLE_INSTRUCTION,
 )
 from auto_engineering.loop.actions import business_result_contract
+from auto_engineering.loop.architect_task_contract import (
+    architect_task_format_description,
+    architect_task_schema,
+    architect_task_template,
+)
 from auto_engineering.loop.design_authority import DesignAuthorityPolicy
 from auto_engineering.loop.design_decision_ledger import DesignDecisionLedger
 from auto_engineering.loop.effects import (
-    EffectExecutor,
     EffectIntent,
     EffectReceipt,
-    WriteContentAddressedArtifact,
-    WriteJsonArtifact,
 )
 from auto_engineering.loop.engineering_model import EngineeringModel
 from auto_engineering.loop.guardrails.test_evidence import (
@@ -50,13 +53,14 @@ from auto_engineering.loop.stage_action_compiler import (
 )
 from auto_engineering.loop.transition_context_factory import project_gate_results
 from auto_engineering.project_profile.providers import detect_browser_capability
+from auto_engineering.project_profile.python_packaging import HATCHLING_SDIST_EXCLUDE_EXAMPLE
 from auto_engineering.prompts.architect_context import build_architect_research_context
 from auto_engineering.prompts.compiler import (
     CORE_OWNED_OUTPUT_FIELDS,
     compile_prompt_bundle,
 )
 from auto_engineering.prompts.contracts import default_prompt_contracts
-from auto_engineering.prompts.registry import default_registry
+from auto_engineering.prompts.registry import default_registry  # noqa: F401
 
 _CORE_OWNED_RESULT_FIELDS = CORE_OWNED_OUTPUT_FIELDS
 _INLINE_INSTRUCTION = INLINE_INSTRUCTION
@@ -101,6 +105,7 @@ class ActionBuildContext:
     passed_checkpoints: frozenset[str] = frozenset()
     last_batch_id: str | None = None
     project_setup_recovery: bool = False
+    artifact_namespace: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,11 +131,11 @@ class ActionPlan:
         )
 
 
-class ActionBuilder:
+class ActionBuilder(ActionBuilderEffectsMixin):
     """Build per-tick action JSON for each stage.
 
-    Extracted from TickOrchestrator (P0-1: God Class — 2321 行, 60 方法).
-    Encapsulates 10 stage action builders + dispatch + PII outbound filtering.
+    Extracted from TickOrchestrator (P0-1: God Class — 2321 行, 60 方法); encapsulates
+    10 stage action builders + dispatch + PII outbound filtering.
 
     Usage::
 
@@ -183,6 +188,7 @@ class ActionBuilder:
         pii_redactor: PIIRedactor | None = None,
         pii_outbound: str | None = None,
         project_setup_recovery: bool = False,
+        artifact_namespace: str | None = None,
     ) -> ActionPlan:
         """纯规划当前 stage 的 Action 和待提交 effect。
 
@@ -203,6 +209,7 @@ class ActionBuilder:
             passed_checkpoints=frozenset(passed_checkpoints or ()),
             last_batch_id=last_batch_id,
             project_setup_recovery=project_setup_recovery,
+            artifact_namespace=artifact_namespace,
         )
         # Per-call PII overrides (local copies — do NOT mutate instance state
         # to avoid cross-tick leakage, P1-12)
@@ -370,7 +377,8 @@ class ActionBuilder:
                     "WAIT_RESOURCE 是宿主让出控制权的边界；不要重复提交失败 Result、"
                     "猜测 failure_code 或重新初始化。修复现有项目后，"
                     "以当前等待 Action 的 message_id 为 causation，提交"
-                    " project_setup_completed；禁止删除 .venv 或项目状态。"
+                    " project_setup_completed；只有项目输入实际发生变化才会重新验证，"
+                    "未改变输入的 completed 会继续返回当前等待 Action；禁止删除 .venv 或项目状态。"
                 ),
                 "setup_failure_streak": self._state.project_setup_failure_streak,
             }
@@ -380,6 +388,13 @@ class ActionBuilder:
         capability_hints.extend([
             "Python 项目开发依赖必须使用 PEP 735 `[dependency-groups] dev`，并声明 pytest 测试根，"
             "不得用 `[project.optional-dependencies]` 冒充。",
+            "Python 使用 src 布局且采用 Hatchling 时，必须显式声明 `[build-system]` 的"
+            " `hatchling.build`，并在 `[tool.hatch.build.targets.wheel]` 设置与实际源码目录"
+            "一致的 `packages`；配置后必须从项目根执行 `uv build` 验证，不能只让 `uv sync` 通过。",
+            "Python 项目的 Ruff 源码路径由 `ruff check src tests` 命令参数提供；不要在 pyproject.toml "
+            "写 `src_paths`、`[tool.ruff.lint] src` 或把路径数组误写到 `extend`，这些字段会让当前 Ruff "
+            "在首个门禁前解析失败。最小配置只需保留 `[tool.pytest.ini_options]` 的测试根，Ruff "
+            "不需要源码路径配置；若确需 Ruff 配置，仅使用当前版本支持的标量字段并先用项目环境验证。",
             "Python smoke 固定放在声明测试根的 `test_smoke.py`，只写 `assert True` 工具链自检，不得导入业务模块。",
             "项目打包只允许包含源码与必要项目元数据；必须将 .ae-state、_scratch、.venv、"
             "dist、build 等运行态或构建产物排除，避免把绝对路径 symlink 带入 sdist。",
@@ -399,6 +414,17 @@ class ActionBuilder:
             )
         if "jsdom_dependency" in missing_capabilities:
             capability_hints.append("补齐测试环境的直接 jsdom 开发依赖。")
+        if "python_packaging" in missing_capabilities:
+            capability_hints.append(
+                "检测到 Python regular package 但包装契约未通过：补齐 PEP 517 的"
+                " `[build-system]`；若是 Hatchling src layout，显式设置 `[tool.hatch.build.targets.wheel].packages`，"
+                "路径必须真实存在并位于项目根内；完成后必须执行 `uv build`，通过后再提交 project_setup_completed。"
+            )
+            capability_hints.append(
+                "Hatchling 的 `[tool.hatch.build.targets.sdist]` 必须使用根路径模式："
+                f"`{HATCHLING_SDIST_EXCLUDE_EXAMPLE}`；禁止使用 `[tool.hatchling.files]` "
+                "或其他未被当前 Hatchling 版本识别的排除表。"
+            )
         if any(item.startswith("setup_gate:") for item in missing_capabilities):
             capability_hints.extend([
                 "先建立项目自己的工具环境，不得使用插件 .ae-state/.ae-runtime。",
@@ -471,7 +497,7 @@ class ActionBuilder:
                 "允许创建仅用于证明工具链可执行的最小非业务 smoke/contract test，"
                 "不得用它替代后续业务测试；smoke 不得导入、创建或引用设计中的业务模块、类、"
                 "函数或行为；不得为了让 smoke 通过而创建业务模块桩代码。"
-                "放入 source_roots 的入口文件必须保留明确的 minimal smoke/setup smoke 标记，"
+                "放入 source_roots 的入口文件必须保留明确的 AE_SETUP_SMOKE 或 minimal smoke/setup smoke 标记，"
                 "或满足 Core 认可的标准 Vite React bootstrap；其他未标记源码会被视为业务实现。"
                 + "".join(capability_hints)
                 + "Git 仅是可选证据源，未经用户授权不得执行 git init/add/commit。"
@@ -482,7 +508,6 @@ class ActionBuilder:
                 expected_format,
             ),
         }
-
     @property
     def _context(self) -> ActionBuildContext:
         if self._bound_context is None:
@@ -574,7 +599,12 @@ class ActionBuilder:
         return self._context.last_batch_id
 
     def _stable_token(self, role: str, content_hash: str = "") -> str:
-        """按不可变 Action 输入计算 artifact token，避免构建阶段取 UUID。"""
+        """按 Action 快照和生产 namespace 计算 artifact token。
+
+        直接调用 Builder 时 namespace 为空，保持纯快照的稳定性；生产
+        Tick 为每个新 Action 注入唯一 namespace，避免同一 tick/stage 的
+        重试 Action 复用 proof/challenge 路径。
+        """
 
         return _stable_artifact_token(
             self._state.thread_id,
@@ -582,6 +612,7 @@ class ActionBuilder:
             self._state.current_stage,
             role,
             content_hash,
+            self._context.artifact_namespace or "",
         )
 
     @staticmethod
@@ -624,7 +655,7 @@ class ActionBuilder:
         s = self._state
         if s is None:
             return "tick=0, stage=?"
-        parts = [f"tick={s.tick}/{s.round}", f"stage={s.current_stage}"]
+        parts = [f"tick={s.tick}", f"stage={s.current_stage}"]
         if self._batch_state is not None:
             if self._batch_state.is_component_complete():
                 parts.append("batch=complete")
@@ -692,7 +723,6 @@ class ActionBuilder:
                             f"{len(findings)} matches"),
                     }
         return action
-
     # ── base ──
 
     def _build_action_base(self, feedback: str | None = None) -> dict:
@@ -721,7 +751,6 @@ class ActionBuilder:
 
     def _gap_scan_summary(self) -> dict[str, object] | None:
         return _gap_scan_summary_impl(self)
-
     # ── helper: data-driven stage action builder ──
 
     def _build_stage_action(
@@ -736,155 +765,7 @@ class ActionBuilder:
             expected_format=expected_format,
             **extra,
         )
-
-    def _write_prompt_artifact(self, prompt: str, prompt_hash: str) -> str:
-        """内容寻址保存 Worker prompt，避免全部正文进入 Coordinator Action。"""
-        receipt = self._execute_effect(
-            WriteContentAddressedArtifact(
-                kind="prompt",
-                content=prompt,
-                sha256=prompt_hash,
-            )
-        )
-        return receipt.relative_path
-
-    def _write_coordinator_prompt(self, prompt: str) -> dict[str, object]:
-        """把多 Worker 合并提示词作为唯一 Coordinator Artifact 引用。"""
-
-        encoded = prompt.encode("utf-8")
-        digest = hashlib.sha256(encoded).hexdigest()
-        path = self._write_prompt_artifact(prompt, digest)
-        return {
-            "path": path,
-            "sha256": digest,
-            "size_bytes": len(encoded),
-            "media_type": "text/plain; charset=utf-8",
-        }
-
-    def _execute_effect(self, intent: EffectIntent) -> EffectReceipt:
-        if self._effect_intent_sink is None:
-            raise RuntimeError("ACTION_PLAN_REQUIRED")
-        self._effect_intent_sink(intent)
-        receipt = EffectExecutor(self.project_root).preview(intent)
-        if self._effect_sink is not None:
-            self._effect_sink(receipt)
-        return receipt
-
-    # ── DS-15 helpers ──
-
-    def _load_prompt(self, stage: str) -> str:
-        """加载唯一的 PromptRegistry 组合结果；注册表失败必须显式终止。"""
-        try:
-            combined = default_registry().get(stage)
-        except (KeyError, OSError, UnicodeDecodeError, ValueError) as exc:
-            _logger.error("PromptRegistry 加载失败，拒绝发送未编译提示词: stage=%s", stage)
-            raise RuntimeError("PROMPT_REGISTRY_UNAVAILABLE") from exc
-        if not combined.strip():
-            raise RuntimeError("PROMPT_REGISTRY_EMPTY")
-        return combined
-
-    def _write_spawn_proof_file(self, proof_token: str, stage: str) -> None:
-        """DS-15: pre-write spawn proof file so subagent can append to it.
-
-        Engine writes the initial file with status='pending'.  Subagent
-        appends stage + timestamp after completing its work.
-        """
-        payload = {"token": proof_token, "stage": stage, "status": "pending"}
-        self._execute_effect(WriteJsonArtifact(
-            relative_path=f"spawn-proofs/{proof_token}.json",
-            payload=payload,
-        ))
-        self._execute_effect(WriteJsonArtifact(
-            relative_path=f"spawn-challenges/{proof_token}.json",
-            payload=payload,
-        ))
-
-    def bind_spawn_proofs(self, action: dict) -> None:
-        """在 Action 获得协议身份后，把所有 proof 绑定到该 Action。"""
-        token_roles = [(action.get("spawn_proof_token"), "total", None)]
-        spawn = action.get("spawn")
-        if isinstance(spawn, dict):
-            invocations = spawn.get("invocations", [])
-            if isinstance(invocations, list):
-                token_roles.extend(
-                    (
-                        Path(str(invocation.get("receipt_path", ""))).stem,
-                        "worker",
-                        invocation.get("requested_effort"),
-                    )
-                    for invocation in invocations
-                    if isinstance(invocation, dict)
-                )
-        for token, proof_role, requested_effort in token_roles:
-            if not isinstance(token, str) or not token:
-                continue
-            if self._effect_intent_sink is not None:
-                payload: dict[str, Any] = {
-                    "token": token,
-                    "thread_id": action.get("thread_id"),
-                    "action_message_id": action.get("message_id"),
-                    "stage": action.get("stage"),
-                    "proof_role": proof_role,
-                    "status": "pending",
-                }
-                if requested_effort is not None:
-                    payload["requested_effort"] = requested_effort
-                self._execute_effect(WriteJsonArtifact(
-                    relative_path=f"spawn-proofs/{token}.json",
-                    payload=payload,
-                ))
-                self._execute_effect(WriteJsonArtifact(
-                    relative_path=f"spawn-challenges/{token}.json",
-                    payload=payload,
-                ))
-                continue
-            proof_file = (
-                self.project_root / ".ae-state" / "spawn-proofs"
-                / f"{token}.json"
-            )
-            challenge_file = (
-                self.project_root / ".ae-state" / "spawn-challenges"
-                / f"{token}.json"
-            )
-            try:
-                payload = json.loads(proof_file.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError) as exc:
-                raise ValueError(f"SPAWN_PROOF_BIND_FAILED: {token}") from exc
-            payload.update({
-                "token": token,
-                "thread_id": action["thread_id"],
-                "action_message_id": action["message_id"],
-                "stage": action["stage"],
-                "proof_role": proof_role,
-            })
-            if requested_effort is not None:
-                payload["requested_effort"] = requested_effort
-            self._execute_effect(WriteJsonArtifact(
-                relative_path=f"spawn-proofs/{token}.json",
-                payload=payload,
-            ))
-            try:
-                challenge_payload = json.loads(
-                    challenge_file.read_text(encoding="utf-8")
-                )
-            except (OSError, json.JSONDecodeError) as exc:
-                raise ValueError(f"SPAWN_CHALLENGE_BIND_FAILED: {token}") from exc
-            challenge_payload.update({
-                "token": token,
-                "thread_id": action["thread_id"],
-                "action_message_id": action["message_id"],
-                "stage": action["stage"],
-                "proof_role": proof_role,
-            })
-            if requested_effort is not None:
-                challenge_payload["requested_effort"] = requested_effort
-            self._execute_effect(WriteJsonArtifact(
-                relative_path=f"spawn-challenges/{token}.json",
-                payload=challenge_payload,
-            ))
-
     # ── stage builders ──
-
     def _build_action_gap_scan(self, base: dict) -> dict:
         engineering_model = self._engineering_model()
         design_sections = (
@@ -1035,7 +916,6 @@ class ActionBuilder:
 
     def _compile_inline_action(self, action: dict, stage: str) -> dict:
         """用中央角色和契约替换 inline stage 的重复硬编码指令。"""
-
         bundle = compile_prompt_bundle(
             contract=default_prompt_contracts()[stage],
             role_prompt=self._load_prompt(stage),
@@ -1243,11 +1123,7 @@ class ActionBuilder:
                     "depends_on": [],
                 },
                 "task_template": {
-                    "id": "B<n>-T<n>",
-                    "description": "string",
-                    "kind": "implementation|test|contract_test",
-                    "module_ref": "string",
-                    "file_targets": ["path"],
+                    **architect_task_template(),
                 },
             }
         canonical_design_item_refs = json.dumps(
@@ -1286,7 +1162,7 @@ class ActionBuilder:
             "batch_plan": (
                 "[{batch_id, batch_title, plate_keys:[valid_plate_key], "
                 "design_sections:[string], design_item_refs:[design_item_id], "
-                "tasks:[{id, description, module_ref, file_targets}], "
+                f"tasks:{architect_task_format_description()}, "
                 "depends_on}] (min 1 batch); " + design_item_ref_contract
             )
         })
@@ -1299,13 +1175,13 @@ class ActionBuilder:
             "engineering_sections": self._engineering_sections(),
             "batch_id_policy": batch_id_policy,
             "project_profile_summary": self._project_profile_summary(),
-            "design_item_catalog": self._design_item_catalog(),
             "canonical_design_item_refs": self._canonical_design_item_refs(),
             **({"plan_revision": self._state.plan_refine_count} if is_refine else {}),
             "feedback": extra.get("feedback", base.get("feedback")),
             "research_and_design_context": research_context,
             "gap_decisions": gap_decisions_context,
             "design_authority": extra["design_authority"],
+            "architect_task_contract": architect_task_schema(),
         }, expected_format={
             "design_change_requests": (
                 "仅当 advisory 必须改变 binding design 时，只输出 1 项："
@@ -1393,6 +1269,7 @@ class ActionBuilder:
             expected_format={
                 "stage": "developer",
                 "batch_id": "string",
+                "task_ids": "[string] exact current batch task IDs",
                 "files_changed": "[string]",
                 "commit_hash": "string (仅实际获授权提交时填写，否则为空)",
                 "test_results": "{passed:int, failed:0, total:int}",
@@ -1405,6 +1282,17 @@ class ActionBuilder:
                 (self._state.architecture_baseline or {}).get("plan_summary", "")
                 or self._state.plan
             ))
+        action.setdefault("extensions", {})["execution_scope"] = {
+            "schema_version": "1.0",
+            "mode": "developer_batch",
+            "batch_id": batch_id,
+            "task_ids": [task["id"] for task in task_dicts],
+            "file_targets": [
+                target
+                for task in task_dicts
+                for target in task["file_targets"]
+            ],
+        }
         action.setdefault("extensions", {})[
             "test_evidence_baseline"
         ] = test_evidence_baseline
@@ -1455,9 +1343,9 @@ class ActionBuilder:
             "verdict": "APPROVE | MAJOR",
             "findings": (
                 "[{finding_id?, kind: implementation_defect|plan_gap|"
-                "contract_gap|project_capability, file, line, severity, issue, "
-                "suggestion, design_ref?, task_ref?, contract_ref?}]"
-            ),
+                "contract_gap|project_capability, file, line, severity, issue, suggestion, "
+                "design_ref?, task_ref?, contract_ref?}]"),
+            "cross_batch_findings": "[{severity, file, issue, suggestion}]（跨 batch 阻断）",
             "strengths": "[{description:string, location?:string}]",
             "critic_feedback": "string",
             "assessment": "Ready to merge | With fixes | Needs rework",
@@ -1495,12 +1383,46 @@ class ActionBuilder:
                 "\"total_audited_files\":0,\"design_docs_stale\":false,\"design_doc_suggestions\":[],"
                 "\"missing_count\":0,\"diverged_count\":0}}}. "
                 "有审计发现时，只将对象追加到 system_audit.findings 数组。")
-        return self._build_stage_action(
+        action = self._build_stage_action(
             base,
             "critic",
             context=context,
             expected_format=expected_format,
         )
+        if batch_state is not None:
+            current_batch: dict | None = None
+            if not batch_state.is_component_complete():
+                current_batch = batch_state.current_batch()
+            if current_batch is None and self._last_batch_id:
+                current_batch = next(
+                    (
+                        batch for batch in batch_state.batch_plan
+                        if isinstance(batch, dict)
+                        and batch.get("batch_id") == self._last_batch_id
+                    ),
+                    None,
+                )
+            if current_batch is None:
+                component_batches = batch_state.batches_for(
+                    batch_state.current_component()
+                )
+                current_batch = component_batches[-1] if component_batches else None
+            if current_batch is None:
+                return action
+            file_targets = [
+                target
+                for task in current_batch.get("tasks", [])
+                if isinstance(task, dict)
+                for target in task.get("file_targets", [])
+                if isinstance(target, str) and target
+            ]
+            action.setdefault("extensions", {})["execution_scope"] = {
+                "schema_version": "1.0",
+                "mode": "critic_batch",
+                "batch_id": current_batch.get("batch_id"),
+                "file_targets": list(dict.fromkeys(file_targets)),
+            }
+        return action
 
     def _build_action_component_verifier(self, base: dict) -> dict:
         # 2026-07-25 审计修复: batch_state 为 None 时原代码 AttributeError 崩溃,
@@ -1674,24 +1596,8 @@ class ActionBuilder:
                "component": comp.name,
                "batch_id": current_batch.get("batch_id"),
                "design_item_ids": [item["design_item"] for item in allowed_design_items],
+               "file_targets": impl_files,
            })
-
-    def _design_item_catalog(self) -> list[dict[str, object]]:
-        """Architect 可用的有界设计条目目录，避免 Worker 猜测批次范围。"""
-        if self._design_doc is None:
-            return []
-        return [
-            {
-                "design_item": item.item_id,
-                "design_section": item.design_section,
-                "component": component.name,
-                "title": item.title[:240],
-                "key_claims": [claim[:240] for claim in item.key_claims[:8]],
-            }
-            for plate in self._design_doc.plates
-            for component in plate.components
-            for item in component.design_items
-        ]
 
     def _canonical_design_item_refs(self) -> dict[str, list[str]]:
         """按组件提供可直接复制的 canonical design item ID 列表。"""
@@ -1718,7 +1624,7 @@ class ActionBuilder:
                 }
             except (AssertionError, IndexError):
                 ctx = {}
-        return self._build_stage_action(base, "plate_deep_audit", context=ctx or None, expected_format={
+        action = self._build_stage_action(base, "plate_deep_audit", context=ctx or None, expected_format={
             "stage": "plate_deep_audit",
             "plate": "string (板块名称, 必填)",
             "findings": (
@@ -1728,9 +1634,15 @@ class ActionBuilder:
             "cross_component_issues": "[{contract_id, status, detail}]",
             "total_audited_files": "int",
         })
+        action.setdefault("extensions", {})["execution_scope"] = {
+            "schema_version": "1.0",
+            "mode": "plate_audit",
+            "file_targets": self._implementation_file_targets(),
+        }
+        return action
 
     def _build_action_system_verifier(self, base: dict) -> dict:
-        return self._build_stage_action(base, "system_verifier", context={
+        action = self._build_stage_action(base, "system_verifier", context={
             "design_doc_path": self._state.design_doc_path,
             "file_list": list(self._state.file_list),
             "component_coverage": self._state.coverage_map or [],
@@ -1749,9 +1661,15 @@ class ActionBuilder:
                 "[{design_item, haiku_status, sonnet_verdict, final_status}] "
                 "(仅负判定经 Sonnet 复核后填, 无负判定则空)"),
         }, recheck=dict(_VERIFIER_RECHECK))
+        action.setdefault("extensions", {})["execution_scope"] = {
+            "schema_version": "1.0",
+            "mode": "system_verifier",
+            "file_targets": self._implementation_file_targets(),
+        }
+        return action
 
     def _build_action_system_deep_audit(self, base: dict) -> dict:
-        return self._build_stage_action(base, "system_deep_audit", context={
+        action = self._build_stage_action(base, "system_deep_audit", context={
             "coverage_map": self._state.coverage_map or [],
             "audit_scope": {
                 "project_root": str(self.project_root),
@@ -1769,6 +1687,34 @@ class ActionBuilder:
             "missing_count": "int",
             "diverged_count": "int",
         })
+        action.setdefault("extensions", {})["execution_scope"] = {
+            "schema_version": "1.0",
+            "mode": "system_deep_audit",
+            "file_targets": self._implementation_file_targets(),
+        }
+        return action
 
+    def _implementation_file_targets(self) -> list[str]:
+        """从持久执行计划重建全局实现文件范围。"""
+
+        candidates: list[str] = list(self._state.file_list)
+        if self._batch_state is not None:
+            for batch in self._batch_state.batch_plan:
+                if not isinstance(batch, dict):
+                    continue
+                for task in batch.get("tasks", []):
+                    if not isinstance(task, dict):
+                        continue
+                    candidates.extend(
+                        target for target in task.get("file_targets", [])
+                        if isinstance(target, str)
+                    )
+        if self._plan is not None:
+            candidates.extend(
+                target
+                for task in self._plan.tasks
+                for target in task.target_files
+            )
+        return list(dict.fromkeys(item for item in candidates if item))
 
 __all__ = ["ActionBuildContext", "ActionBuilder", "ActionPlan"]

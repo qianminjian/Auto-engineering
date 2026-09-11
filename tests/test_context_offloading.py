@@ -18,7 +18,7 @@ class TestStageContextOffload:
         """Minimal construction with only required fields."""
         offload = StageContextOffload(
             stage="architect",
-            round_number=1,
+            revision=1,
             timestamp="2026-07-19T10:00:00",
             summary="Designed payment module architecture.",
             key_decisions=[],
@@ -27,14 +27,14 @@ class TestStageContextOffload:
             raw_context_path="/tmp/offload/architect-r1.json",
         )
         assert offload.stage == "architect"
-        assert offload.round_number == 1
+        assert offload.revision == 1
         assert offload.summary == "Designed payment module architecture."
 
     def test_full_construction_with_all_fields(self) -> None:
         """Full construction exercise all dataclass fields."""
         offload = StageContextOffload(
             stage="developer",
-            round_number=2,
+            revision=2,
             timestamp="2026-07-19T10:05:00",
             summary="Implemented payment module with TDD.",
             key_decisions=["Used Decimal for amounts", "Added retry on gateway timeout"],
@@ -50,7 +50,7 @@ class TestStageContextOffload:
         """StageContextOffload can be serialized to dict and reconstructed."""
         offload = StageContextOffload(
             stage="critic",
-            round_number=3,
+            revision=3,
             timestamp="2026-07-19T10:10:00",
             summary="Code review passed.",
             key_decisions=[],
@@ -60,7 +60,7 @@ class TestStageContextOffload:
         )
         d = {
             "stage": offload.stage,
-            "round_number": offload.round_number,
+            "revision": offload.revision,
             "timestamp": offload.timestamp,
             "summary": offload.summary,
             "key_decisions": offload.key_decisions,
@@ -70,7 +70,7 @@ class TestStageContextOffload:
         }
         reconstructed = StageContextOffload(**d)
         assert reconstructed.stage == offload.stage
-        assert reconstructed.round_number == offload.round_number
+        assert reconstructed.revision == offload.revision
         assert reconstructed.summary == offload.summary
 
 
@@ -98,7 +98,7 @@ class TestContextOffloader:
             gate_results={},
         )
         assert offload.stage == "architect"
-        assert offload.round_number == 1
+        assert offload.revision == 1
         assert Path(offload.raw_context_path).exists()
 
     def test_offload_writes_valid_json(self, offloader: ContextOffloader, offload_dir: Path) -> None:
@@ -173,7 +173,7 @@ class TestContextOffloader:
         assert arch.stage == "architect"
         assert dev.stage == "developer"
 
-    def test_round_number_increments_per_offload(
+    def test_revision_increments_per_offload(
         self, offloader: ContextOffloader
     ) -> None:
         """Each offload call increments the round counter."""
@@ -193,8 +193,8 @@ class TestContextOffloader:
             files_changed=[],
             gate_results={},
         )
-        assert o1.round_number == 1
-        assert o2.round_number == 2
+        assert o1.revision == 1
+        assert o2.revision == 2
 
     def test_offload_directory_does_not_exist_creates_it(self) -> None:
         """ContextOffloader creates the offload directory if it doesn't exist."""

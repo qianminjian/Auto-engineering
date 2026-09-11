@@ -8,10 +8,17 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
-from auto_engineering.engine.state import EngineState
+from auto_engineering.cli.architect_repair_guidance import architect_repair_guidance
+from auto_engineering.cli.native_result_recovery import native_result_worker_ids
+from auto_engineering.cli.state_reconciliation_projection import (
+    validate_state_reconciliation_result_file,  # noqa: F401
+)
+from auto_engineering.host.outcome_file import (
+    OutcomeFileError,
+    parse_outcomes_document,
+)
 
 if TYPE_CHECKING:
-    from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
     from auto_engineering.loop.event_store import SQLiteEventStore
 
 
@@ -89,12 +96,10 @@ def project_result_repair_action(
             "任何路径，不得使用其他 Action 或 /tmp 临时文件作为输入。"
         )
         rejection_message = str(projected["result_rejection"].get("message", ""))
-        if "BATCH_DESIGN_ITEM_SCOPE" in rejection_message:
-            repair_instruction += (
-                "这是机器设计项范围校验，不需要用户输入或重新启动 Worker。"
-                "直接从 result_rejection.message 中‘有效 design_item_refs’后的列表"
-                "逐字复制到对应 batch 的 design_item_refs；不得使用章节号、标题或 slug。"
-            )
+        repair_instruction += architect_repair_guidance(
+            rejection_message,
+            projected["result_rejection"].get("violations", []),
+        )
     projected["instruction"] = (
         f"{original_instruction}\n\n## Result 修复\n\n{repair_instruction}"
         if isinstance(original_instruction, str) and original_instruction
@@ -145,6 +150,7 @@ def project_host_attestation_repair_action(
         return projected
     host = dict(host_execution)
     work_files = host.get("work_files")
+    spawn = mapped_action.get("spawn")
     recovery: dict[str, Any] = {
         "schema_version": "1.0",
         "status": "worker_attestation_pending",
@@ -154,6 +160,17 @@ def project_host_attestation_repair_action(
         "worker_id": worker_id,
         "detail": detail,
     }
+    if isinstance(spawn, Mapping):
+        # 恢复视图必须隐藏 launch plan，但记录/最终化仍需要验证同一份
+        # invocation 合同。record_plan 是只读副本，不是新的 spawn 入口。
+        recovery["record_plan"] = {
+            key: (
+                [dict(item) for item in value]
+                if key == "invocations" and isinstance(value, list)
+                else value
+            )
+            for key, value in spawn.items()
+        }
     if isinstance(work_files, Mapping):
         for key in ("outcomes", "coordinator_result", "result"):
             value = work_files.get(key)
@@ -231,11 +248,10 @@ def project_submitted_worker_failure_recovery(
         raw_outcomes = json.loads(outcomes_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         raw_outcomes = None
-    outcome_items = (
-        raw_outcomes.get("outcomes")
-        if isinstance(raw_outcomes, Mapping)
-        else None
-    )
+    try:
+        outcome_items = parse_outcomes_document(raw_outcomes)
+    except OutcomeFileError:
+        outcome_items = None
     from auto_engineering.host.worker_evidence import (
         worker_failure_outcomes_are_ready,
     )
@@ -247,6 +263,21 @@ def project_submitted_worker_failure_recovery(
         outcome_items=outcome_items,
     ):
         return None
+    # 原生 Agent 返回已经由 Hook 原样落在 Action 绑定路径，但宿主可能
+    # 在调用 ``record-worker-outcome`` 前就提交了 HOST_WORKER_FAILED。
+    # 这不是 Worker 失败，也不能要求模型再 spawn；先把同一 Action 投影
+    # 到唯一的宿主事实回写操作，后续仍由 record 边界验证 native envelope。
+    native_result_workers = native_result_worker_ids(
+        host_execution,
+        root=root,
+        root_bound_path_fn=root_bound_path_fn,
+    )
+    if len(native_result_workers) == 1:
+        return project_host_attestation_repair_action_fn(
+            mapped_action,
+            worker_id=native_result_workers[0],
+            detail="native_result_ready_without_record_worker_outcome",
+        )
     try:
         HostExecutionAssembler(root).collect_worker_outcomes_from_artifacts(
             action=mapped_action,
@@ -267,7 +298,6 @@ def process_state_reconciliation_result(
     *,
     result_file: Path,
     root: Path,
-    store: SQLiteCheckpointStore[EngineState],
     events: SQLiteEventStore,
     debug: bool = False,
     debug_dir: str | None = None,
@@ -309,16 +339,11 @@ def process_state_reconciliation_result(
         return dict(outcome.response)
 
     old_thread_id = old_state.thread_id
-    store.release_project_thread(old_thread_id)
     new_thread_id = str(uuid4())
-    existing = store.reserve_project_thread(new_thread_id)
-    if existing is not None:
-        raise ValueError(f"PROJECT_THREAD_ACTIVE: {existing}")
     try:
         inj = build_injectables_fn(root)
         orch = tick_orchestrator_cls(
             root,
-            checkpoint_store=store,
             event_store=events,
             context_offloader=inj["context_offloader"],
             session_summarizer=inj.get("session_summarizer"),
@@ -351,62 +376,4 @@ def process_state_reconciliation_result(
             )
         return action
     except BaseException:
-        store.release_project_thread(new_thread_id)
         raise
-
-
-def validate_state_reconciliation_result_file(
-    *,
-    result_file: Path,
-    active_thread: str,
-    events: SQLiteEventStore,
-) -> dict[str, Any] | None:
-    """只读校验状态协调 Result；非协调 Result 返回 None。"""
-
-    try:
-        result = json.loads(result_file.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    if not isinstance(result, Mapping):
-        return None
-    resolution = result.get("gate_resolution")
-    if not isinstance(resolution, Mapping):
-        return None
-    if resolution.get("gate_id") != "state_reconciliation":
-        return None
-
-    from auto_engineering.loop.action_responses import ErrorResponse
-    from auto_engineering.loop.protocol import ProtocolValidationError
-    from auto_engineering.loop.state_reconciliation import (
-        StateReconciliationError,
-        StateReconciliationService,
-    )
-
-    if result.get("thread_id") != active_thread:
-        return ErrorResponse(
-            "ACTION_NOT_ACTIVE",
-            "Result 指向的 thread 不是当前 active thread",
-        ).to_dict()
-    try:
-        StateReconciliationService(events).validate(result)
-    except ProtocolValidationError as exc:
-        return ErrorResponse(exc.code.value, str(exc)).to_dict()
-    except StateReconciliationError as exc:
-        return ErrorResponse(
-            "STATE_RECONCILIATION_RESULT_INVALID",
-            str(exc),
-            suggestion="只提交当前 state_reconciliation Gate 的合法 reinitialize 选择。",
-        ).to_dict()
-
-    state = events.load_projection(active_thread)
-    if state is None:
-        return ErrorResponse(
-            "STATE_RECONCILIATION_RESULT_INVALID",
-            "协调 Result 对应的 active thread 状态不存在",
-        ).to_dict()
-    return {
-        "action": "validation_passed",
-        "stage": state.current_stage,
-        "thread_id": state.thread_id,
-        "causation_id": result.get("causation_id"),
-    }

@@ -1,7 +1,7 @@
 """CancellationToken — 协作式取消令牌 (Phase 03 整合到 runtime 模块).
 
 设计来源: v2.0 协作式取消契约；当前 v5.8 仅用于在 Tick 边界传播用户取消，
-不承担 Round/Iteration 上限或宿主主循环调度。
+不承担 Tick 上限或宿主主循环调度。
 
 借鉴 AutoGen _base_agent.py cancellation 支持.
 

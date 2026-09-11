@@ -322,7 +322,7 @@ def test_adapter_materializes_strict_worker_evidence_templates(
             execution["native_result_path"],
         ]
         if platform_name == "CODEX":
-            expected_argv.append("--native-result-stdin")
+            expected_argv.extend(["--native-result-stdin", "--native-status-only"])
         expected_argv.extend([
             "--actual-model", "__ACTUAL_MODEL__",
             "--isolation-evidence", "__ISOLATION_EVIDENCE__", "--project-root",
@@ -335,6 +335,11 @@ def test_adapter_materializes_strict_worker_evidence_templates(
             "actual_model": "--actual-model",
             "isolation_evidence": "--isolation-evidence",
             "native_result_file": "--native-result-file",
+            **(
+                {"native_status_only": "--native-status-only"}
+                if platform_name == "CODEX"
+                else {}
+            ),
         }
         assert bridge["required_when_completed"] == [
             "native_worker_handle", "isolation_evidence",
@@ -361,6 +366,7 @@ def test_adapter_materializes_strict_worker_evidence_templates(
         assert invocation["prompt_ref"] in launcher
         assert invocation["prompt_sha256"] in launcher
         assert "outcome_path:{worker_id,status,payload,summary}" in launcher
+        assert "private;no_native_result" in launcher
         assert "private_schema=object" in launcher
         assert "payload_nested" in launcher
         assert "never write payload directly" in launcher

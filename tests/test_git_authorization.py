@@ -126,8 +126,9 @@ def test_code_review_requires_current_user_authorization_before_mutation() -> No
     assert "不得从历史消息、宿主能力或 loop 完成状态推断授权" in content
 
 
-def test_checkpoint_is_the_loop_boundary_without_git_mutation() -> None:
+def test_event_store_is_the_runtime_boundary_without_git_mutation() -> None:
     content = (ROOT / "skills" / "auto-engineering" / "SKILL.md").read_text()
 
-    assert "checkpoint 是循环恢复边界" in content
-    assert "checkpoint 不要求 commit" in content
+    assert "EventStore 是新运行的唯一恢复边界" in content
+    assert "正常 init/tick/status/resume 只读取 EventStore" in content
+    assert "不得把 clean working tree 或历史授权解释为当前授权" in content

@@ -100,3 +100,36 @@ def test_codex_parser_reports_only_positive_cumulative_delta(tmp_path: Path) -> 
     assert second["cache_read_tokens"] == 300
     assert second["output_tokens"] == 40
     assert parser.collect()["input_tokens"] == 0
+
+
+def test_codex_parser_rejects_missing_or_malformed_session_facts(
+    tmp_path: Path, monkeypatch
+) -> None:
+    parser = CodexSessionTranscriptParser(
+        tmp_path / "project", thread_id="thread-missing",
+        sessions_root=tmp_path / "sessions",
+    )
+    assert parser.collect()["message_count"] == 0
+    assert parser._same_project(None) is False
+    assert parser._same_project("") is False
+    assert parser._find_main_file() is None
+    assert parser._read_meta(tmp_path / "bad.jsonl") == {}
+    assert parser._read_cumulative(tmp_path / "bad.jsonl")[2] is False
+    parser.reset()
+    assert parser._main_file is None
+
+
+def test_codex_parser_skips_malformed_and_non_usage_lines(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    path = tmp_path / "rollout.jsonl"
+    path.write_text(
+        "{bad-json}\n"
+        + json.dumps({"type": "event_msg", "payload": {"type": "token_count", "info": {}}})
+        + "\n",
+        encoding="utf-8",
+    )
+    parser = CodexSessionTranscriptParser(
+        project, thread_id="thread", sessions_root=tmp_path
+    )
+    assert parser._read_cumulative(path) == ((0, 0, 0, 0), "", False)

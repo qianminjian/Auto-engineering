@@ -19,9 +19,7 @@ class ActionDone:
     verdict_level: int | None = None
     tick: int | None = None
     thread_id: str | None = None
-    rounds: int | None = None
     gate_summary: dict | None = None
-    checkpoint_id: str | None = None
     acceptance_summary: dict | None = None
 
     def to_dict(self) -> dict:
@@ -38,7 +36,7 @@ class ActionDone:
             d["acceptance_summary"] = build_terminal_acceptance_summary(
                 None, verdict=self.verdict,
             )
-        for key in ("thread_id", "rounds", "gate_summary", "checkpoint_id"):
+        for key in ("thread_id", "gate_summary"):
             val = getattr(self, key)
             if val is not None:
                 d[key] = val

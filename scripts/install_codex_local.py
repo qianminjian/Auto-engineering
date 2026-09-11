@@ -322,6 +322,64 @@ def verify_runtime_paths(
         raise RuntimeError("项目独立运行时不存在")
 
 
+def verify_codex_hook_wire_contract(
+    *,
+    plugin_root: Path,
+    project_root: Path,
+    environment: dict[str, str],
+) -> None:
+    """验证已安装 Codex Hook 的阻断响应符合宿主严格 Wire Schema。"""
+
+    handler = plugin_root / "hooks" / "codex-hook.sh"
+    if not handler.is_file():
+        raise RuntimeError("Codex 安装制品缺少 Hook 执行入口")
+    payload = {
+        "hook_event_name": "PreToolUse",
+        "cwd": str(project_root),
+        "session_id": "local-install-hook-verification",
+        "tool_name": "Bash",
+        "tool_input": {"command": "printf blocked > .ae-state/events.db"},
+    }
+    hook_environment = dict(environment)
+    hook_environment["PLUGIN_ROOT"] = str(plugin_root)
+    try:
+        result = subprocess.run(
+            [str(handler)],
+            cwd=project_root,
+            env=hook_environment,
+            input=json.dumps(payload),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise RuntimeError("Codex Hook Wire Contract 执行失败") from exc
+    if result.returncode != 0:
+        raise RuntimeError(
+            "Codex Hook Wire Contract 执行失败: "
+            f"{result.stderr.strip() or result.stdout.strip()}"
+        )
+    try:
+        response = json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("Codex Hook 未返回 JSON Wire 响应") from exc
+    if not isinstance(response, dict) or set(response) != {
+        "systemMessage", "hookSpecificOutput",
+    }:
+        raise RuntimeError(
+            "Codex Hook 返回了宿主不允许的顶层字段；"
+            "拒绝继续安装"
+        )
+    specific = response.get("hookSpecificOutput")
+    if not isinstance(specific, dict) or set(specific) != {
+        "hookEventName", "permissionDecision", "permissionDecisionReason",
+    } or specific.get("hookEventName") != "PreToolUse" or specific.get(
+        "permissionDecision"
+    ) != "deny":
+        raise RuntimeError("Codex Hook 未返回有效的 PreToolUse deny Wire 响应")
+
+
 def verify_codex_install(release: StagedRelease, development_root: Path) -> None:
     """运行真实 Codex 枚举和插件内 Python，形成安装后来源证明。"""
     source = development_root.resolve()
@@ -359,6 +417,11 @@ def verify_codex_install(release: StagedRelease, development_root: Path) -> None
         if doctor.returncode != 0:
             detail = doctor.stderr.strip() or doctor.stdout.strip()
             raise RuntimeError(f"独立运行时 doctor 失败: {detail}")
+        verify_codex_hook_wire_contract(
+            plugin_root=plugin_root,
+            project_root=project_root,
+            environment=environment,
+        )
         runtime_root = project_root / ".ae-state/.ae-runtime"
         runtime_python = runtime_root / "bin/python"
         origin = subprocess.run(

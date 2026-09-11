@@ -5,13 +5,9 @@ from __future__ import annotations
 import json
 from unittest.mock import MagicMock
 
-from auto_engineering.engine.state import EngineState
 from auto_engineering.host import HostPlatform
 from auto_engineering.host.spawn_contract import SpawnPlan
 from auto_engineering.host.worker_attestation import WorkerAttestation
-from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
-from auto_engineering.loop.event_store import SQLiteEventStore
-from auto_engineering.loop.protocol import payload_digest
 from auto_engineering.loop.tick_orchestrator import TickOrchestrator
 
 _VALID_PLAN = (
@@ -34,7 +30,6 @@ def _orchestrator() -> TickOrchestrator:
     return TickOrchestrator(
         gate_runner=_pass_gate_runner,
         guardrail=_pass_guardrail(),
-        checkpoint_store=None,
     )
 
 
@@ -146,7 +141,6 @@ def test_unknown_causation_is_not_active() -> None:
     assert response["action"] == "error"
     assert response["error_code"] == "ACTION_NOT_ACTIVE"
 
-
 def test_result_for_different_thread_is_not_active() -> None:
     orchestrator = _orchestrator()
     action = orchestrator.init("实现协议")
@@ -157,73 +151,3 @@ def test_result_for_different_thread_is_not_active() -> None:
 
     assert response["action"] == "error"
     assert response["error_code"] == "ACTION_NOT_ACTIVE"
-
-
-def test_duplicate_result_replays_across_process_restore(tmp_path) -> None:
-    (tmp_path / "pyproject.toml").write_text("[project]\nname='demo'\n")
-    (tmp_path / "demo").mkdir()
-    db_path = tmp_path / "checkpoints.db"
-    first_store = SQLiteCheckpointStore[EngineState](db_path)
-    first = TickOrchestrator(
-        tmp_path,
-        gate_runner=_pass_gate_runner,
-        guardrail=_pass_guardrail(),
-        checkpoint_store=first_store,
-    )
-    action = first.init("实现协议")
-    _complete_spawn_proof(first, action)
-    result = _architect_result(action)
-    expected = first.tick_dict(result)
-    first_store.close()
-
-    second_store = SQLiteCheckpointStore[EngineState](db_path)
-    try:
-        restored = TickOrchestrator.restore_from_checkpoint(
-            tmp_path,
-            second_store,
-            gate_runner=_pass_gate_runner,
-            guardrail=_pass_guardrail(),
-        )
-        state_before = restored._state.to_dict()
-
-        replay = restored.tick_dict(result)
-
-        assert replay == expected
-        assert restored._state.to_dict() == state_before
-    finally:
-        second_store.close()
-
-
-def test_event_store_does_not_replay_checkpoint_only_result(tmp_path) -> None:
-    """EventStore 运行中不能从 checkpoint 的旧 replay 表偷偷恢复。"""
-
-    (tmp_path / "pyproject.toml").write_text("[project]\nname='event-only'\n")
-    (tmp_path / "src").mkdir()
-    checkpoints = SQLiteCheckpointStore[EngineState](tmp_path / "checkpoints.db")
-    with SQLiteEventStore(tmp_path / "events.db") as events:
-        orchestrator = TickOrchestrator(
-            tmp_path,
-            gate_runner=_pass_gate_runner,
-            guardrail=_pass_guardrail(),
-            checkpoint_store=checkpoints,
-            event_store=events,
-        )
-        action = orchestrator.init("验证 EventStore 事实源")
-        _complete_spawn_proof(orchestrator, action)
-        result = _architect_result(action)
-        checkpoints.record_protocol_action(action)
-        checkpoints.record_protocol_result(
-            action["thread_id"],
-            action["message_id"],
-            payload_digest(result),
-            {"action": "checkpoint-only-replay"},
-        )
-
-        response = orchestrator.tick_dict(result)
-
-        assert response["action"] != "checkpoint-only-replay"
-        assert response["action"] == "developer"
-        assert events.load_protocol_result(
-            action["thread_id"], action["message_id"]
-        ) is not None
-    checkpoints.close()

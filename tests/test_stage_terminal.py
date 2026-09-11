@@ -26,15 +26,15 @@ def test_resolves_done_terminal() -> None:
     action = resolve_terminal_action(
         {
             "terminal_action": {
-                "verdict": "HARD_LIMIT",
-                "reason": "已达到上限",
+                "verdict": "REFINE_LIMIT",
+                "reason": "细化回路已达到上限",
             }
         }
     )
 
     assert action["action"] == "done"
-    assert action["verdict"] == "HARD_LIMIT"
-    assert action["verdict_reason"] == "已达到上限"
+    assert action["verdict"] == "REFINE_LIMIT"
+    assert action["verdict_reason"] == "细化回路已达到上限"
 
 
 def test_non_terminal_context_returns_none() -> None:

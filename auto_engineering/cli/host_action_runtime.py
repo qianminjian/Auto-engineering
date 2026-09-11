@@ -1,25 +1,27 @@
 """CLI 宿主 Action 运行时投影的 canonical service。
 
 这里承载 generation/fencing、Worker outcome 恢复和宿主 lease 绑定。
-dev_loop.py 只保留协议入口与兼容包装，不复制这套运行时决策。
+dev_loop.py 只保留协议入口与薄委托，不复制这套运行时决策。
 """
 
 from __future__ import annotations
 
-import json
-import logging
 import os
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from pathlib import Path
 
+from auto_engineering.cli.host_action_identity import (
+    bind_worker_execution_identity,
+    resume_host_platform,  # noqa: F401
+)
 from auto_engineering.cli.host_action_work_files import (
     ensure_action_work_file_parents,
     root_bound_path,
 )
-from auto_engineering.host.path_contract import (
-    worker_native_result_path,
-    worker_outcome_path,
+from auto_engineering.host.outcome_file import (
+    OutcomeFileError,
+    parse_outcomes_document,
 )
 from auto_engineering.host.recovery_contract import (
     NATIVE_OUTCOMES_READY,
@@ -27,63 +29,6 @@ from auto_engineering.host.recovery_contract import (
     WORKER_OUTCOMES_COMMITTED,
 )
 from auto_engineering.host.worker_evidence import native_outcomes_are_ready
-
-_logger = logging.getLogger("ae.cli.host_action_runtime")
-
-
-def resume_host_platform(root: Path, action: Mapping[str, object]) -> str | None:
-    """恢复 active Action 时复用上一次宿主平台，避免合同跨宿主漂移。"""
-
-    from auto_engineering.host import HostPlatform
-    from auto_engineering.host.runtime_driver import HostRunLeaseStore
-
-    thread_id = action.get("thread_id")
-    message_id = action.get("message_id")
-    if not isinstance(thread_id, str) or not isinstance(message_id, str):
-        return None
-
-    lease = HostRunLeaseStore(root).load()
-    if (
-        lease is not None
-        and lease.thread_id == thread_id
-        and lease.action_message_id == message_id
-    ):
-        try:
-            return HostPlatform(lease.platform).value
-        except ValueError:
-            return None
-
-    report_root = root.resolve() / ".ae-state" / "host-runtime" / "stop-reports"
-    candidates: list[tuple[float, str]] = []
-    for path in report_root.glob("*.json"):
-        try:
-            report = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError, TypeError):
-            continue
-        if not isinstance(report, Mapping):
-            continue
-        if (
-            report.get("thread_id") != thread_id
-            or report.get("action_message_id") != message_id
-            or report.get("disposition") != "CONTINUE"
-            or report.get("lease_cleared") is not True
-        ):
-            continue
-        platform = report.get("platform")
-        if not isinstance(platform, str):
-            continue
-        try:
-            normalized = HostPlatform(platform).value
-        except ValueError:
-            continue
-        try:
-            modified = path.stat().st_mtime
-        except OSError:
-            modified = 0.0
-        candidates.append((modified, normalized))
-    if candidates:
-        return max(candidates, key=lambda item: item[0])[1]
-    return None
 
 
 @contextmanager
@@ -126,111 +71,6 @@ def map_action_for_host(action: dict) -> dict:
         authorized=detection.capabilities,
     )
     return adapter.map_action(action, profile=profile).payload
-
-
-def bind_worker_execution_identity(
-    action: dict,
-    root: Path,
-    *,
-    include_failure_journal: bool = True,
-) -> dict:
-    """为当前宿主会话绑定 Action generation；普通重读保持幂等。
-
-    前置恢复检查必须使用当前 lease 的 generation；只有确认 Worker 失败后
-    的正常重试映射，才允许读取 failure journal 推进下一代。
-    """
-
-    if not isinstance(action.get("spawn"), Mapping):
-        return action
-    message_id = action.get("message_id")
-    if not isinstance(message_id, str) or not message_id:
-        return action
-    from auto_engineering.host import HostPlatform, detect_host
-    from auto_engineering.host.runtime_driver import (
-        HostRunLeaseStore,
-        fencing_token_for,
-        host_session_id_from_environ,
-    )
-
-    detection = detect_host()
-    if detection.platform is HostPlatform.UNKNOWN:
-        return action
-    session_id = host_session_id_from_environ(detection.platform)
-    if not session_id:
-        return action
-    previous = HostRunLeaseStore(root).load()
-    recovered_generation: int | None = None
-    if previous is not None and previous.action_message_id == message_id:
-        generation = previous.execution_generation
-        # 宿主会话切换不应让已经由 PostToolUse/Worker 写入的旧代事实
-        # 失去 canonical 路径。只在当前 Action、当前 Worker 的旧代
-        # artifact 确实存在时复用该代；没有事实时才升代，保持 fail-closed。
-        for candidate in range(previous.execution_generation, 0, -1):
-            if _has_worker_generation_artifact(action, root, candidate):
-                recovered_generation = candidate
-                generation = candidate
-                break
-        if (
-            previous.host_session_id != session_id
-            and recovered_generation is None
-        ):
-            generation = previous.execution_generation + 1
-    else:
-        generation = 1
-    # Worker 失败后仍保留同一个 Core Action，但下一次执行必须是新的
-    # generation。以 Outcome Journal 的已提交失败次数作为稳定提示，避免
-    # 每次 status/read 都无界递增，同时阻止重试复用旧 artifact/handle。
-    failure_journal = (
-        root / ".ae-state/host-runtime/outcomes" / f"{message_id}.json"
-    )
-    try:
-        journal = json.loads(failure_journal.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        journal = None
-    if (
-        include_failure_journal
-        and recovered_generation is None
-        and isinstance(journal, Mapping)
-        and journal.get("status") == "worker_failed"
-    ):
-        failure_attempt = journal.get("failure_attempt")
-        if isinstance(failure_attempt, int) and not isinstance(failure_attempt, bool):
-            generation = max(generation, failure_attempt + 1)
-    bound = dict(action)
-    bound["execution_generation"] = generation
-    bound["fencing_token"] = fencing_token_for(
-        message_id, session_id, generation
-    )
-    return bound
-
-
-def _has_worker_generation_artifact(
-    action: Mapping[str, object], root: Path, generation: int
-) -> bool:
-    """判断当前 Action 的某一代是否已有宿主/Worker 事实。"""
-
-    if generation < 1:
-        return False
-    message_id = action.get("message_id")
-    spawn = action.get("spawn")
-    invocations = spawn.get("invocations") if isinstance(spawn, Mapping) else None
-    if not isinstance(message_id, str) or not message_id or not isinstance(invocations, list):
-        return False
-    root = root.resolve()
-    for invocation in invocations:
-        if not isinstance(invocation, Mapping):
-            continue
-        worker_id = invocation.get("worker_id")
-        if not isinstance(worker_id, str) or not worker_id:
-            continue
-        for relative in (
-            worker_native_result_path(message_id, worker_id, generation),
-            worker_outcome_path(message_id, worker_id, generation),
-        ):
-            candidate = (root / relative).resolve()
-            if root in candidate.parents and candidate.is_file():
-                return True
-    return False
 
 
 def prepare_action_for_host(
@@ -352,16 +192,18 @@ def prepare_action_for_host(
                     except (OSError, json.JSONDecodeError):
                         raw_coordinator = None
                     coordinator_ready = isinstance(raw_coordinator, dict)
-                    outcome_items = (
-                        raw_outcomes.get("outcomes")
-                        if isinstance(raw_outcomes, dict)
-                        else None
-                    )
+                    outcome_items = parse_outcomes_document(raw_outcomes)
                     native_ready = native_outcomes_are_ready(
                         action=mapped,
                         outcome_items=outcome_items,
                     )
-                except (KeyError, OSError, json.JSONDecodeError, TypeError):
+                except (
+                    KeyError,
+                    OSError,
+                    json.JSONDecodeError,
+                    TypeError,
+                    OutcomeFileError,
+                ):
                     native_ready = False
                 if native_ready:
                     mapped.pop("spawn", None)

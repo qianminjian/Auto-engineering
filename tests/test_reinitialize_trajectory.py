@@ -7,8 +7,8 @@ import pytest
 
 from auto_engineering.cli.dev_loop import _process_state_reconciliation_result
 from auto_engineering.engine.state import EngineState
-from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
 from auto_engineering.loop.event_store import SQLiteEventStore
+from auto_engineering.loop.events import LoopEvent, LoopEventType
 from auto_engineering.loop.protocol import action_envelope, validate_action_envelope
 from auto_engineering.loop.state_reconciliation import (
     StateReconciliationError,
@@ -51,8 +51,14 @@ def _seed(root: Path) -> tuple[SQLiteEventStore, EngineState, dict]:
         stage=state.current_stage,
         message_id="gate-message",
     )
-    events.import_checkpoint(
-        checkpoint_id="checkpoint-old",
+    events.commit_tick(
+        events=[LoopEvent.create(
+            thread_id=state.thread_id,
+            sequence=0,
+            event_type=LoopEventType.LOOP_INITIALIZED,
+            payload={"state": state.to_dict()},
+            correlation_id=state.thread_id,
+        )],
         state=state,
         action=gate,
     )
@@ -119,6 +125,76 @@ def test_reinitialize_result_validation_is_read_only(tmp_path: Path) -> None:
     assert events.load_stream("thread-old") == before
 
 
+def test_cli_state_reconciliation_projection_accepts_current_valid_result(
+    tmp_path: Path,
+) -> None:
+    from auto_engineering.cli.state_reconciliation_projection import (
+        validate_state_reconciliation_result_file,
+    )
+
+    events, _, gate = _seed(tmp_path)
+    result_file = tmp_path / "state-reconciliation-result.json"
+    result_file.write_text(json.dumps(_result(gate)), encoding="utf-8")
+
+    projected = validate_state_reconciliation_result_file(
+        result_file=result_file,
+        active_thread="thread-old",
+        events=events,
+    )
+
+    assert projected == {
+        "action": "validation_passed",
+        "stage": "developer",
+        "thread_id": "thread-old",
+        "causation_id": "gate-message",
+    }
+
+
+def test_cli_state_reconciliation_projection_rejects_invalid_protocol_result(
+    tmp_path: Path,
+) -> None:
+    from auto_engineering.cli.state_reconciliation_projection import (
+        validate_state_reconciliation_result_file,
+    )
+
+    events, _, gate = _seed(tmp_path)
+    invalid = _result(gate)
+    invalid["schema_version"] = "1.0"
+    result_file = tmp_path / "invalid-result.json"
+    result_file.write_text(json.dumps(invalid), encoding="utf-8")
+
+    projected = validate_state_reconciliation_result_file(
+        result_file=result_file,
+        active_thread="thread-old",
+        events=events,
+    )
+
+    assert projected is not None
+    assert projected["error_code"] == "SCHEMA_VERSION_UNSUPPORTED"
+
+
+def test_cli_state_reconciliation_projection_rejects_missing_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from auto_engineering.cli import state_reconciliation_projection as projection
+    from auto_engineering.loop.state_reconciliation import StateReconciliationService
+
+    events, _, gate = _seed(tmp_path)
+    monkeypatch.setattr(StateReconciliationService, "validate", lambda self, result: None)
+    monkeypatch.setattr(events, "load_projection", lambda thread_id: None)
+    result_file = tmp_path / "missing-state-result.json"
+    result_file.write_text(json.dumps(_result(gate)), encoding="utf-8")
+
+    projected = projection.validate_state_reconciliation_result_file(
+        result_file=result_file,
+        active_thread="thread-old",
+        events=events,
+    )
+
+    assert projected is not None
+    assert projected["error_code"] == "STATE_RECONCILIATION_RESULT_INVALID"
+
+
 def test_selection_must_bind_active_gate_message(tmp_path: Path) -> None:
     events, _, gate = _seed(tmp_path)
     result = _result(gate)
@@ -143,8 +219,6 @@ def test_cli_reinitialize_creates_new_thread_and_replays_new_action(tmp_path: Pa
         encoding="utf-8",
     )
     events, _, gate = _seed(tmp_path)
-    checkpoints: SQLiteCheckpointStore[EngineState] = SQLiteCheckpointStore(":memory:")
-    assert checkpoints.reserve_project_thread("thread-old") is None
     result = _result(gate)
     result_file = tmp_path / "result.json"
     result_file.write_text(json.dumps(result), encoding="utf-8")
@@ -152,14 +226,12 @@ def test_cli_reinitialize_creates_new_thread_and_replays_new_action(tmp_path: Pa
     action = _process_state_reconciliation_result(
         result_file=result_file,
         root=tmp_path,
-        store=checkpoints,
         events=events,
     )
 
     assert action is not None
     assert action["thread_id"] != "thread-old"
     assert action["action"] == "project_setup_required"
-    assert checkpoints.active_project_thread() == action["thread_id"]
     old_projection = events.load_projection("thread-old")
     assert old_projection is not None
     assert old_projection.thread_status == "superseded"
@@ -168,7 +240,6 @@ def test_cli_reinitialize_creates_new_thread_and_replays_new_action(tmp_path: Pa
     repeated = _process_state_reconciliation_result(
         result_file=result_file,
         root=tmp_path,
-        store=checkpoints,
         events=events,
     )
     assert repeated == action

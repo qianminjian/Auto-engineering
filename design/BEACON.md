@@ -1,5 +1,5 @@
 # Auto-Engineering BEACON
-> 创建：2026-06-24｜更新：2026-09-07｜阶段：P0-E2E 端到端产品闭环
+> 创建：2026-06-24｜更新：2026-09-11｜阶段：P0-E2E 端到端产品闭环
 > 决策状态翻转（✅↔❌）或架构降级必须先获用户批准。
 ## 导航
 - 当前权威设计：[`v5.8-Main-Agent-Coordinator-Recovery-Design.md`](v5.8-Main-Agent-Coordinator-Recovery-Design.md)
@@ -24,7 +24,7 @@ Gate/Guardrail、五层验证、审计、v5.6 兼容迁移和双宿主验收。
 | D4 | `FeatureManifest` 是 `AE_*` 默认值唯一事实源 | ✅ |
 | D5 | archive smoke 与真实 product install 分开报告 | ✅ |
 | D6 | 当前资产短小可追溯，详细历史由 Git 和 `HISTORY.md` 保留 | ✅ |
-| D7 | 采用双基线：v5.7.1 是当前发布实现，v5.8 是已批准目标 | ✅ |
+| D7 | 采用双基线：v5.8.0-rc.5 是当前发布候选，v5.7.1 仅作历史对照 | ✅ |
 | D8 | v5.7 采用渐进协议内核重构，不建立双内核 | ✅ |
 | D9 | 事件是事实源，EngineState 是可重建投影 | ✅ |
 | D10 | Prompt Contract 采用兼容式编译，不改变 Action/Result v1.1 核心语义 | ✅ |
@@ -65,16 +65,16 @@ Gate/Guardrail、五层验证、审计、v5.6 兼容迁移和双宿主验收。
 | D54 | Worker handle 只在当前宿主会话内有效；跨会话恢复只信任原子落盘 outcome，未落盘 Worker 以新执行身份安全重跑 | ✅ |
 | D55 | 预算默认 soft，不因 token、费用、Action/Tick 数或时长停机；旧 Supervisor 主控路径已退役 | ✅ |
 | D56 | 同时修订 D37 与 D50 的失败路由：wait 到期不是失败；明确失败只重试失败 Worker，资源/所有权不确定才 WAIT_RESOURCE；generation + fencing token 阻止迟到双写 | ✅ |
-| D57-D58 | 统一 generation 绑定映射入口；EventStore 是唯一新协议事实源，checkpoint 仅兼容回退且禁止拼接 | ✅ |
+| D57-D58 | 统一 generation 绑定映射入口；EventStore 是唯一运行事实源，旧 checkpoint 仅保留历史迁移证据，禁止运行时回退或与 EventStore 拼接 | ✅ |
 | D59-D65 | Tick 回滚撤销未提交命名 JSON effect；验收 artifact 由事件/回执推导 machine_claims 并交叉校验；跟踪按证据层级分层；L2 必须经过公开 CLI 轨迹；损坏 receipt/空事件流在边界稳定 fail-closed；Worker 原生事实回写随 Action 下发逐 Worker 机器模板；compact 视图不得丢失回写合同和代际身份 | ✅ |
 | D66 | 当前 Action 禁止生成或消费 `subagent_prompt`；Coordinator prompt 使用内容寻址 `coordinator_prompt_ref`，Worker prompt 只通过 invocation `prompt_ref`/`native_launch_prompt` 交付；旧字段仅由显式历史迁移边界拒绝或转换 | ✅ |
 | D67 | 宿主提交 Worker 失败前，CLI 必须检查当前 Action 的私有 outcome 与 native attestation；若仅缺宿主事实，先投影 `worker_attestation_pending`，不得消费失败预算或重启 Worker | ✅ |
 | D68-D69 | 结果确定性校验失败属于当前 Action 的 Coordinator repair；Core/CLI 必须保持 Action identity、复用已认证 Worker outcome 并隐藏 `spawn`，不得把语义修复变成新 Worker Action；validate→tick 连续调用也必须重复投影 repair；`WAIT_RESOURCE` 是有界 yield，重复失败不得继续递增状态或写事件，修复后的有效 Result 仍可恢复原 active Action | ✅ |
 | D70/D72 | Feature 配置是可选覆盖；默认值、环境变量和 `ae.toml` 是唯一读取链；旧强制配置闸门退役 | ✅ |
-| D73-D74 | 设计来源漂移只有显式 `state_reconciliation/reinitialize` 可以轮换项目级设计账本；旧账本归档保留，普通恢复与只读校验不得改写来源绑定；Developer 的缺工具链/依赖失败属于可恢复资源等待，统一投影为 `WAIT_RESOURCE` 并自动重试原 active Action，真实设计/授权选择仍保持 `WAIT_USER` | ✅ |
-## 当前状态：`P0-E2E` 已完成；核心架构严格是“主 Agent 唯一 Coordinator + Python 单 Tick + EventStore 事实源 + 原生 Worker 交接”。同一 final140 Build `5.8.0-rc.5+sha256.5892735d72dc9851` 已分别在全新 Codex 与 Claude Code 项目完成一次设计驱动命令，均连续到 `TERMINAL/GOAL_ACHIEVED`。Codex 与 Claude 的 Setup、Gap Scan、Architect、Developer、Critic 阶段均有真实宿主证据；Claude 的越权 outcome 写入被 Hook 拒绝后按固定回写边界恢复，Developer lint 与 Architect obligation 修正均在同一 Loop 内完成。T838 的新增文件 patch 契约与 T837 的 generation/fencing 修复均在真实宿主中复验通过。final143 archive `5.8.0-rc.5+sha256.f46d72d68586709b` 已由提交 `a528810e` 构建并通过 Codex/Claude smoke。当前不再自动真跑；后续仅归档证据、运行常规回归和按发布流程交付。
+| D73-D77 | D73-D74：设计来源漂移只有显式 `state_reconciliation/reinitialize` 可以轮换项目级设计账本；旧账本归档保留，普通恢复与只读校验不得改写来源绑定；Developer 缺工具链/依赖失败统一进入 `WAIT_RESOURCE`，真实设计/授权选择保持 `WAIT_USER`。D75：当前 Action 的原生 Worker 结果已落盘但尚未回写共享 outcome 时，Host 投影同 Action 的 `worker_attestation_pending`，禁止消费失败预算或重新 spawn；最终事实仍只能由 `record-worker-outcome` 合并。D76：失败 Journal 存在时，非法/半成品 native artifact 不得占用新重试 generation；仅唯一 native 解析器确认可恢复的结果可复用原代。D77：项目级 thread 选择必须优先唯一未终态 thread；多个未终态必须 fail-closed，不能由最新事件、终态 thread 或 stale lease 掩盖；无未终态时才允许选择最近终态 thread 供只读 status 展示 | ✅ |
+| D78 | 运行时只保留一套最新 Loop：主 Agent 是唯一 Coordinator，Python 只执行单 Tick，EngineState + EventStore/Reducer 是唯一状态与事实链；旧 Supervisor、RoundHistory/ConvergenceJudge、CheckpointManager/SQLiteCheckpointStore、LoopState、旧 Gate/Task 别名、旧 transcript fallback、legacy recovery 和重复 EventStore 兼容路径不得参与生产运行，也不得通过公共 CLI 暴露 | ✅ |
+## 当前状态：核心纠偏和双宿主 L3 已通过自动化与历史局部真实证据，L4 产品验收仍未完成。核心架构仍严格是“主 Agent 唯一 Coordinator + Python 单 Tick + EngineState + EventStore 事实源 + 原生 Worker 交接”。最新全量质量基线为 `2873 passed/1 skipped`、覆盖率 `90.01%`；T811-T845、T854-T876 已补齐宿主协议、结果修复预算、Architect coverage manifest/digest 的 accepted baseline 投影、EventStore 唯一事实链、旧 Supervisor/Round/Checkpoint/UsageLedger/别名/旁路清理、产品预检内容寻址和 Canary Action→ResultAccepted 因果复核、Gate 扫描边界与异常误报收口。Build `5.8.0-rc.5+sha256.887b80d3ee644188` 的 Claude/Codex archive smoke 已通过；自动验收仍明确区分 `product_install: not_run`。真实 Voice Clone L4、`product_business_acceptance` 和双宿主产品 evidence 仍未形成有效终态，不能关闭 L4 发布门禁。事故与真实运行证据登记在 incidents 目录。
 - T707-T750 已补齐隔离证据、同 Action recovery、Codex 单层 `result` 原生回包、无 Git 证据、Worker liveness 观察合同、锁定解释器安装入口、Gate 的 finalize/validate/submit 合同、PlanPatch canonical batch、`complete` 状态别名、短启动合同中的共享 outcomes 禁写约束、`--native-result-stdin` 原样暂存通道、Loop 前 Build Identity 强制预检、产品 artifact 预检事实绑定、SQLite 测试连接显式关闭、Project Setup service/scope 拆分、Worker Evidence 原语、Outcome Recovery 恢复服务、Result Contract 纯策略、Worker Failure 失败事务单一归属、Python CLI 无长期 Coordinator 的架构回归、Codex/Claude/product acceptance 独立入口的仓库根解析、浏览器能力探测单一归属、EngineState 字段校验单一归属、DesignDoc 解析器单一归属、TaskOutcome 执行回执单一模型、ProgressTree 身份辅助单一模块、BatchState 编解码单一模块、Action 响应模型单一模块、Convergence 值对象单一模块、ReducerRegistry 单一模块、EventStore 编解码/schema 单一模块及 Host Action 映射编译器单一模块、Design Stage 辅助单一模块及 PlanRefine 单一模块、Result 校验/PII 入站策略/Tick 证据/Stage Action 编译/Worker 路径/Host Action 运行时与 CLI 恢复读取单一归属、旧 Action 迁移 Gate 单一归属、显式 reinitialize 的设计账本轮换单一归属；当前仍保持主 Agent 唯一协调、Python 单 Tick，旧 Supervisor/第二套循环不在运行路径。
-## 待解决问题：当前没有未完成的 P0/P1 工程任务；A008/P0-E2E 已由同一 final140 Build 在全新 Codex 与 Claude Code 项目完成真实终态验收。
-- 发布层仍可单独创建版本 Tag、Release Archive 和 GitHub Release；这些是交付动作，不是 Loop 开发阻断，也不得重新打开 A008 或恢复旧 Supervisor。
-- 后续新问题必须以新的运行证据建立新任务；本文件和跟踪表中的历史“待复验”只保留审计，不得重新生成当前待办。
+本轮源码已补齐 T869–T876：Build Identity 预检必须由宿主实际执行并以项目内文件留证，Recovery Canary 必须由验收器重新读取独立 EventStore 并核对因果链；Architect Worker coverage manifest/digest 已随 accepted baseline 进入唯一 EventStore 投影；旧 Round 终止语义和 EventStore 非 Tick `append_new` 写入入口已清除，并由架构回归锁定；生产源码不得绕过单 Tick 直接调用 EventStore raw append，已由架构回归锁定；canonical 路径 mypy 类型错误已收口；Audit/Safety 共享业务源码扫描边界，AuditGate 用语法树区分空异常处理与受控返回，DeepAudit 明确由宿主提交 findings 且 Python 不 spawn Agent；新增回归与全量质量门禁通过。最新 Build `5.8.0-rc.5+sha256.887b80d3ee644188` 的 Codex/Claude archive smoke 已通过；真实产品 evidence 因 `product_install: not_run` 保持未通过，`product_business_acceptance` 与 Voice Clone L4 仍未关闭。
+## 待解决问题：L4 Voice Clone 业务 Gate、双宿主产品证据和受控 Recovery Canary 终态仍待完成；普通成功 Canary 只能证明 L3，不能替代 recovery 终态证据。Voice Clone 录音已对 `webm` 做 fail-closed 提示，MiniMax `mp3/m4a/wav` 真实格式转换与 API/设备验收仍待真实环境验证；当前 Canary 的 active Action 仅作为事故审计/回放事实保留，不得盲目续作。L3 结构门禁、真实 Claude 局部运行和全量自动化测试均不能替代 L4 业务验收。
 ## 引用文件：`design/v5.8-Main-Agent-Coordinator-Recovery-Design.md` · `design/BEACON-HIS.md` · `design/v5.8-Session-Decoupling-Design.md` · `design/v5.8-Session-Decoupling-PLAN.md` · `design/incidents/2026-07-29-claude-146-tick-long-run.md` · `design/incidents/2026-08-30-architecture-audit-remediation.md` · `design/IMPLEMENTATION-TRACKER.md` · `design/HISTORY.md`

@@ -79,7 +79,7 @@ addopts = ["--timeout=60", "-p no:cacheprovider"]
 patch = ["subprocess"]
 
 [tool.auto-engineering.baseline]
-passed = 2961
+passed = 2873
 skipped = 1
 
 [build-system]
@@ -124,3 +124,17 @@ disable_error_code = ["union-attr"]
 
 [tool.uv]
 package = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["auto_engineering"]
+
+[tool.hatch.build.targets.sdist]
+exclude = [
+    "/.ae-state",
+    "/.ae-runtime",
+    "/.venv",
+    "/dist",
+    "/build",
+    "/_scratch",
+    "/**/__pycache__",
+]

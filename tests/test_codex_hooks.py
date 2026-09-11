@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 from io import StringIO
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -35,6 +37,23 @@ def test_plugin_hooks_use_codex_matcher_handler_schema() -> None:
             assert "$PLUGIN_ROOT/hooks/codex-hook.sh" in handlers[0]["command"]
 
 
+def test_plugin_hook_matchers_are_valid_codex_regexes() -> None:
+    """Codex matcher 必须是可编译的正则，避免版本相关的通配符歧义。"""
+
+    config = _load_hooks(ROOT / "hooks-codex.json")
+    hooks = config["hooks"]
+
+    assert isinstance(hooks, dict)
+    for groups in hooks.values():
+        assert isinstance(groups, list)
+        for group in groups:
+            assert isinstance(group, dict)
+            matcher = group.get("matcher")
+            if isinstance(matcher, str):
+                assert matcher != "*"
+                re.compile(matcher)
+
+
 def test_project_hooks_use_workspace_handler_path() -> None:
     config = _load_hooks(ROOT / ".codex" / "hooks.json")
     hooks = config["hooks"]
@@ -48,7 +67,10 @@ def test_project_hooks_use_workspace_handler_path() -> None:
         for handler in group["hooks"]
     ]
     assert commands
-    assert all(command == "./hooks/codex-hook.sh" for command in commands)
+    assert all(
+        command == '"$(git rev-parse --show-toplevel)/hooks/codex-hook.sh"'
+        for command in commands
+    )
 
 
 def test_normalizes_codex_pre_tool_event(tmp_path: Path) -> None:
@@ -82,6 +104,57 @@ def test_normalizes_codex_file_path(tmp_path: Path) -> None:
 
     assert event.event == "post_tool"
     assert event.file_path == "src/app.py"
+
+
+def test_codex_pre_tool_dispatch_emits_host_blocking_contract(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    from auto_engineering.host.codex_hook_dispatch import main
+    from auto_engineering.host.native_launch_guard import NativeLaunchGuardError
+
+    def blocked(*args: object, **kwargs: object) -> None:
+        raise NativeLaunchGuardError("AE_STATE_MUTATION_FORBIDDEN")
+
+    monkeypatch.setattr(
+        "auto_engineering.host.native_launch_guard.guard_active_native_tool_call",
+        blocked,
+    )
+    output = StringIO()
+    assert main(StringIO(json.dumps({
+        "hook_event_name": "PreToolUse",
+        "cwd": str(tmp_path),
+        "tool_name": "Bash",
+        "tool_input": {"command": "printf x > .ae-state/events.db"},
+    })), output) == 0
+
+    payload = json.loads(output.getvalue())
+    assert set(payload) == {"systemMessage", "hookSpecificOutput"}
+    assert payload["hookSpecificOutput"] == {
+        "hookEventName": "PreToolUse",
+        "permissionDecision": "deny",
+        "permissionDecisionReason": payload["systemMessage"],
+    }
+
+
+def test_codex_pre_tool_dispatch_emits_explicit_allow_contract(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    from auto_engineering.host.codex_hook_dispatch import main
+
+    monkeypatch.setattr(
+        "auto_engineering.host.native_launch_guard.guard_active_native_tool_call",
+        lambda *args, **kwargs: None,
+    )
+    output = StringIO()
+    assert main(StringIO(json.dumps({
+        "hook_event_name": "PreToolUse",
+        "cwd": str(tmp_path),
+        "tool_name": "Bash",
+        "tool_input": {"command": "git status"},
+    })), output) == 0
+
+    payload = json.loads(output.getvalue())
+    assert payload == {"systemMessage": "Auto-Engineering Hook 已安全跳过"}
 
 
 def test_codex_post_tool_persists_spawn_response_without_rebuilding_it(
@@ -179,6 +252,166 @@ def test_codex_post_tool_persists_real_wait_message_body_byte_for_byte(
     assert "完成证据已固化" in json.loads(output.getvalue())["systemMessage"]
 
 
+def test_codex_post_tool_records_completed_status_without_null_message(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """真实 Codex completed:null 只能形成终态观察，不能伪造业务正文。"""
+
+    from auto_engineering.host import codex_hooks
+
+    worker = {
+        "worker_id": "developer-0",
+        "execution_generation": 1,
+        "fencing_token": "a" * 64,
+        "native_result_path": ".ae-state/host-runtime/native-results/developer.json",
+    }
+    monkeypatch.setattr(
+        "auto_engineering.host.native_launch_guard.active_native_workers",
+        lambda **_: [worker],
+    )
+    monkeypatch.setattr(
+        "auto_engineering.host.runtime_driver.HostRunLeaseStore.load",
+        lambda _store: SimpleNamespace(action_message_id="action-1"),
+    )
+    native_path = tmp_path / str(worker["native_result_path"])
+    native_path.parent.mkdir(parents=True)
+    native_path.write_text(
+        '{"receiver_thread_ids":["agent-1"]}', encoding="utf-8"
+    )
+    output = StringIO()
+    wait_raw = json.dumps({
+        "agents_states": {
+            "agent-1": {"status": "completed", "message": None},
+        },
+    })
+
+    assert codex_hooks.main(StringIO(json.dumps({
+        "hook_event_name": "PostToolUse",
+        "cwd": str(tmp_path),
+        "tool_name": "collaboration.wait_agent",
+        "tool_input": {"targets": ["agent-1"], "timeout_ms": 300_000},
+        "tool_response": wait_raw,
+    })), output) == 0
+
+    observation = json.loads(
+        (tmp_path / ".ae-state/host-runtime/worker-observations/"
+         "action-1-developer-0-g1.json").read_text(encoding="utf-8")
+    )
+    assert observation["native_status"] == "completed"
+    assert observation["native_worker_handle"] == "agent-1"
+    assert "--native-status-only" in json.loads(
+        output.getvalue()
+    )["systemMessage"]
+    assert native_path.read_text(encoding="utf-8") == (
+        '{"receiver_thread_ids":["agent-1"]}'
+    )
+
+
+def test_codex_wait_post_tool_records_running_observation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """wait 未终态时，Hook 必须自动落盘 Action-scoped 观察事实。"""
+
+    from auto_engineering.host import codex_hooks
+
+    worker = {
+        "worker_id": "developer-0",
+        "execution_generation": 1,
+        "fencing_token": "a" * 64,
+        "native_result_path": ".ae-state/host-runtime/native-results/developer.json",
+    }
+    monkeypatch.setattr(
+        "auto_engineering.host.native_launch_guard.active_native_workers",
+        lambda **_: [worker],
+    )
+    monkeypatch.setattr(
+        "auto_engineering.host.runtime_driver.HostRunLeaseStore.load",
+        lambda _store: SimpleNamespace(action_message_id="action-1"),
+    )
+    native_path = tmp_path / str(worker["native_result_path"])
+    native_path.parent.mkdir(parents=True)
+    native_path.write_text(
+        '{"receiver_thread_ids":["agent-1"]}', encoding="utf-8"
+    )
+    output = StringIO()
+    wait_raw = json.dumps({
+        "agents_states": {
+            "agent-1": {"status": "running", "message": "仍在运行"},
+        },
+    })
+
+    assert codex_hooks.main(StringIO(json.dumps({
+        "hook_event_name": "PostToolUse",
+        "cwd": str(tmp_path),
+        "tool_name": "collaboration.wait_agent",
+        "tool_input": {"targets": ["agent-1"], "timeout_ms": 300_000},
+        "tool_response": wait_raw,
+    })), output) == 0
+
+    observation = json.loads(
+        (tmp_path / ".ae-state/host-runtime/worker-observations/"
+         "action-1-developer-0-g1.json").read_text(encoding="utf-8")
+    )
+    assert observation["native_status"] == "running"
+    assert observation["wait_attempt"] == 1
+    assert observation["owner_known"] is True
+
+
+def test_codex_wait_third_observation_requires_owner_recovery(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """三次长等待后不得把 CONTINUE 静默交还给宿主。"""
+
+    from auto_engineering.host import codex_hooks
+
+    worker = {
+        "worker_id": "developer-0",
+        "execution_generation": 1,
+        "fencing_token": "a" * 64,
+        "native_result_path": ".ae-state/host-runtime/native-results/developer.json",
+    }
+    monkeypatch.setattr(
+        "auto_engineering.host.native_launch_guard.active_native_workers",
+        lambda **_: [worker],
+    )
+    monkeypatch.setattr(
+        "auto_engineering.host.runtime_driver.HostRunLeaseStore.load",
+        lambda _store: SimpleNamespace(action_message_id="action-1"),
+    )
+    native_path = tmp_path / str(worker["native_result_path"])
+    native_path.parent.mkdir(parents=True)
+    native_path.write_text(
+        '{"receiver_thread_ids":["agent-1"]}', encoding="utf-8"
+    )
+    observation_dir = tmp_path / ".ae-state/host-runtime/worker-observations"
+    observation_dir.mkdir(parents=True)
+    observation_path = observation_dir / "action-1-developer-0-g1.json"
+    observation_path.write_text(
+        json.dumps({"wait_attempt": 2}), encoding="utf-8"
+    )
+    output = StringIO()
+    wait_raw = json.dumps({
+        "agents_states": {
+            "agent-1": {"status": "running", "message": "仍在运行"},
+        },
+    })
+
+    assert codex_hooks.main(StringIO(json.dumps({
+        "hook_event_name": "PostToolUse",
+        "cwd": str(tmp_path),
+        "tool_name": "collaboration.wait_agent",
+        "tool_input": {"targets": ["agent-1"], "timeout_ms": 300_000},
+        "tool_response": wait_raw,
+    })), output) == 0
+
+    response = json.loads(output.getvalue())
+    assert "所有权不确定" in response["systemMessage"]
+    observation = json.loads(observation_path.read_text(encoding="utf-8"))
+    assert observation["native_status"] == "unknown"
+    assert observation["wait_attempt"] == 3
+    assert observation["owner_known"] is False
+
+
 def test_codex_post_tool_does_not_reencode_structured_response(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -226,8 +459,42 @@ def test_codex_pre_tool_blocks_native_contract_guard_failure(
 
     assert codex_hooks.main(StringIO(json.dumps(payload)), output) == 0
     response = json.loads(output.getvalue())
-    assert response["decision"] == "block"
-    assert response["reason_code"] == "NATIVE_LAUNCH_PROMPT_MISMATCH"
+    assert response["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert response["hookSpecificOutput"]["permissionDecisionReason"] == response[
+        "systemMessage"
+    ]
+    assert "原生 Worker 启动" in response["systemMessage"]
+
+
+def test_codex_pre_tool_blocks_wait_timeout_that_ignores_action_observation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Hook 层必须阻止宿主绕过 Action 注入的等待预算。"""
+
+    from auto_engineering.host import codex_hooks
+
+    monkeypatch.setattr(
+        "auto_engineering.host.native_launch_guard.active_native_workers",
+        lambda **_: [{
+            "worker_id": "architect-0",
+            "worker_observation": {
+                "mode": "native_wait",
+                "wait_timeout_ms": 300_000,
+            },
+        }],
+    )
+    output = StringIO()
+    payload = {
+        "hook_event_name": "PreToolUse",
+        "cwd": str(tmp_path),
+        "tool_name": "collaboration.wait_agent",
+        "tool_input": {"targets": ["architect-native"], "timeout_ms": 30_000},
+    }
+
+    assert codex_hooks.main(StringIO(json.dumps(payload)), output) == 0
+    response = json.loads(output.getvalue())
+    assert response["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert "短等待" in response["systemMessage"]
 
 
 @pytest.mark.parametrize(
@@ -325,9 +592,11 @@ def test_stop_hook_blocks_same_session_with_continue_lease(tmp_path: Path) -> No
 
     assert main(StringIO(json.dumps(payload)), output) == 0
     response = json.loads(output.getvalue())
-    assert response["decision"] == "block"
-    assert response["reason_code"] == "AE_CONTINUATION_REQUIRED"
-    assert response["action_message_id"] == "action-1"
+    assert response == {
+        "continue": False,
+        "stopReason": "AE_CONTINUATION_REQUIRED",
+        "systemMessage": "Auto-Engineering 仍有必须继续执行的 Action",
+    }
 
 
 def test_claude_stop_hook_blocks_same_session_with_continue_lease(
@@ -359,6 +628,9 @@ def test_claude_stop_hook_blocks_same_session_with_continue_lease(
     response = json.loads(output.getvalue())
     assert response["decision"] == "block"
     assert response["reason_code"] == "AE_CONTINUATION_REQUIRED"
+    assert response["continuation"]["resume_operation"]["argv"] == [
+        "dev-loop", "--resume", "thread-1",
+    ]
 
 
 def test_claude_stop_shell_uses_plugin_runtime(tmp_path: Path) -> None:

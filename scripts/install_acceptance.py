@@ -136,7 +136,7 @@ def _last_json_object(output: str) -> dict[str, object]:
     return objects[-1]
 
 
-def _verify_checkpoint_lifecycle(
+def _verify_event_store_lifecycle(
     resolver: str,
     project: Path,
     environment: dict[str, str],
@@ -316,8 +316,6 @@ def accept_archive(
             "dev-loop",
             f"{host} release acceptance",
             "--init",
-            "--max-rounds",
-            "1",
         ],
         cwd=project,
         env=environment,
@@ -327,7 +325,7 @@ def accept_archive(
         raise RuntimeError("无配置最小 Tick 未进入合法 Setup/Architect Action")
     if (project / "ae.toml").exists():
         raise RuntimeError("无配置最小 Tick 不得自动写入 ae.toml")
-    lifecycle_evidence = _verify_checkpoint_lifecycle(
+    lifecycle_evidence = _verify_event_store_lifecycle(
         resolver,
         project,
         environment,

@@ -4,14 +4,15 @@ description: >
   宿主无关的 Tick-Based Loop Engineering 调度协议
   （architect → developer → critic → verification）。
   Use when the user invokes $auto-engineering, asks to implement through
-  dev-loop, check loop status, resume a checkpoint, or run gated development.
+  dev-loop, check loop status, resume an EventStore thread, or run gated development.
 ---
 
 # Auto-Engineering v5.8 — 跨宿主确定性会话 Tick 协议
 
 Auto-Engineering 将职责拆成两层：
 
-- Python 引擎是确定性 gatekeeper，负责路由、Guardrail、Gate、收敛和 checkpoint。
+- Python 引擎是确定性 gatekeeper，负责路由、Guardrail、Gate、收敛和 EventStore Tick 事务；
+  EventStore 是唯一状态与恢复事实源。
 - 当前 Agent 宿主是执行器，负责推理、编辑、验证，并按 action 调用宿主原生子代理能力。
 
 `$auto-engineering` 是 Codex 的显式入口；其他 Agent 平台使用各自的 Skill 或
@@ -41,10 +42,10 @@ Violating the letter of this rule is violating the spirit of this rule.
 Git commit、push 和 PR 是外部副作用，只有获得用户明确授权后才能执行；宿主具备
 相关能力不等于获得授权。
 
-checkpoint 是循环恢复边界，checkpoint 不要求 commit。普通 developer batch 可以
-保留未提交变更并继续 Tick；若某个确定性 Guardrail 确实需要 Git 写操作，必须暂停
-并针对具体操作请求用户授权，不得把 checkpoint、clean working tree 或历史授权
-解释为当前授权。
+EventStore 是新运行的唯一恢复边界，也是唯一状态事实源，不存在第二套快照导入路径。
+正常 init/tick/status/resume 只读取 EventStore 的当前 thread、Action 和投影；普通 developer batch
+可以保留未提交变更并继续 Tick。若某个确定性 Guardrail 确实需要 Git 写操作，必须暂停并针对
+具体操作请求用户授权，不得把 clean working tree 或历史授权解释为当前授权。
 
 ## 命令入口
 
@@ -55,7 +56,7 @@ checkpoint 是循环恢复边界，checkpoint 不要求 commit。普通 develope
 | 预校验 Result | `ae-run dev-loop --validate-result <file>` |
 | 推进一个 Tick | `ae-run dev-loop --tick --result <file>` |
 | 查看循环状态 | `ae-run dev-loop --status --format json` |
-| 恢复 checkpoint | `ae-run dev-loop --resume <id>` |
+| 恢复 EventStore thread | `ae-run dev-loop --resume <thread-id>` |
 
 设计文档模式必须把自然语言需求和文档路径分开传入：
 
@@ -78,6 +79,11 @@ ae-run dev-loop --init \
 都不得编辑原设计、注入 `ae:component` 等元数据或为补齐结构改写章节；确需改变设计时，
 只能提交 `design_change_requests[]`，由 Core 发出用户 Gate，用户批准后再由明确的变更
 Action 写入。
+
+设计文档进入 Loop 前先做确定性结构预检：若没有可识别的 H2/H3 或 `ae` 层次，首个
+Action 必须是 `gate`（`gate.id=design_structure_preflight`），不得启动 Gap Scan Worker。
+宿主只提交当前 Gate 的 `gate_resolution`；选择修复后应修改文档并重新执行 `--init`，
+不得伪造 Gap Scan Result 或在同一线程继续旧的设计源。
 
 ## Action 执行协议
 
@@ -137,6 +143,28 @@ Loop 成功。必须先消费当前 Action 的 `host_execution.continuation` 合
 创建第二个 Coordinator。只有 `WAIT_USER`、`WAIT_RESOURCE`、`TERMINAL`、`ERROR` 或
 `HANDOFF_REQUIRED` 才允许按各自合同让出当前宿主控制权；任何空结果、非零退出或
 非终态返回都必须保留现有状态并进入恢复/错误处理，不能吞掉为成功。
+
+对于非交互宿主命令或可能触发预算/硬限制退出的运行，必须通过
+`scripts/ae-host-run --auto-resume` 这一进程边界适配器执行。它只在 status 回查明确
+返回 `active_action + resume_active_action + CONTINUE lease` 时重新启动同一宿主命令，
+不创建 Action、不调用 Tick、不启动 Worker；`--max-resumes` 提供有界上限。达到上限时
+保留 active Action 并以失败退出，禁止无限重启。直接运行宿主 CLI 只能作为诊断，不作为
+"不中断"验收入口。适配器默认还对宿主有意义 stdout 设置 300 秒无进展上限；Claude 仅有 `system/thinking_tokens`、重复工具调用或工具回执时只保留审计，不刷新该上限；未提交候选 work 文件改写也不得刷新；可用
+`--max-idle-seconds` 显式调整。无输出超时只记录 `HOST_PROCESS_IDLE_TIMEOUT`，随后仍按
+同一 status→resume 规则决定是否续跑，禁止把卡死宿主当作成功。
+该适配器是外层唯一宿主进程边界；宿主命令继承 `AE_HOST_ADAPTER_ACTIVE=1`，不得再嵌套
+调用 `ae-host-run`，否则立即以协议错误退出，避免形成第二套恢复循环。
+Claude 的 `SessionEnd`/`StopFailure` Hook 在该适配器环境中只返回控制信息，不得先清理
+lease 或写 Stop Report；外层 `process-exit` bridge 会读取完整 attempt stream，再由有限白名单
+归一上游错误。比如 `API Error: Stream idle timeout - no chunks received` 必须记录为
+`HOST_PROVIDER_STREAM_IDLE_TIMEOUT`，保留同一 Action 的恢复合同，不得降级为 `unknown`。
+
+同一宿主会话内的原生合同拒绝也必须有界：适配器默认最多观察 8 次
+`Blocked by hook`、`NATIVE_LAUNCH_PROMPT_MISMATCH` 或同类拒绝，可用
+`--max-protocol-refusals` 调整。达到上限后，适配器必须结束当前宿主，记录
+`HOST_PROTOCOL_RETRY_EXHAUSTED`，保留同一 active Action 与 CONTINUE lease，并以退出码
+75 停止；不得让模型继续重复调用、不得自动开启第二个恢复循环、不得伪造 Worker 结果。
+修复合同后必须显式重新运行同一 Action；这不是成功，也不是业务失败。
 
 Action 身份必须以 `thread_id + message_id` 判断；`stage`、`tick` 或自然语言摘要不是身份。
 尤其是 `developer B1 → developer B2` 这类同一 stage 的下一 Action，若 `message_id` 已变化，
@@ -199,6 +227,11 @@ Worker 已终止时必须进入 `WAIT_RESOURCE/WORKER_OWNERSHIP_UNCERTAIN`，禁
   `env -u UV_PROJECT_ENVIRONMENT -u VIRTUAL_ENV uv sync --dev --project .`；随后用
   `.venv/bin/python`、`.venv/bin/ruff`、`.venv/bin/mypy` 实际运行对应门禁。不得把插件的
   `.ae-state/.ae-runtime` 当作项目环境；调用 `uv` 前不得继承插件的运行时变量。
+  Ruff 的源码路径直接通过 `ruff check src tests` 命令参数提供；不要生成 `src_paths`、
+  `[tool.ruff.lint] src`，也不要把源码路径数组写到 `extend`，否则当前 Ruff 会在首个门禁
+  解析 `pyproject.toml` 时失败。最小配置只需保留 `[tool.pytest.ini_options]` 的测试根，
+  Ruff 不需要源码路径配置；若确需 Ruff 配置，只写当前版本支持的标量字段，并先在项目环境
+  中执行一次真实解析和 lint 验证。
   Setup Gate 失败时只修正项目声明或工具环境后重跑；不得执行 `rm -rf .venv`、删除项目状态或
   重新初始化项目来掩盖失败。项目打包只纳入源码和必要元数据，必须排除 `.ae-state`、`_scratch`、
   `.venv`、`dist`、`build` 等运行态/构建产物，避免绝对路径 symlink 进入 sdist；同一 Action 内
@@ -243,7 +276,9 @@ Worker 已终止时必须进入 `WAIT_RESOURCE/WORKER_OWNERSHIP_UNCERTAIN`，禁
 通过而创建业务模块桩代码，若 smoke 需要业务模块则应删除或改为非业务 smoke。该边界由 Core 基于 init
 文件基线和当前工作区事实复核，不能用 `artifacts` 或文字声明替代；发现新增业务源码/测试时
   Python 项目可固定使用声明测试根中的最小 `test_smoke.py`；Node 项目可使用
-  `test_smoke.js/.jsx/.ts/.tsx`。这些文件仅执行工具链自检，不得导入设计模块或写业务断言。
+  `test_smoke.js/.jsx/.ts/.tsx`。放入 source root 的最小入口必须使用明确的 `AE_SETUP_SMOKE`
+  标记（或 `minimal smoke`/`setup smoke` 标记），除非它符合 Core 认可的标准 Vite React
+  bootstrap；这些文件仅执行工具链自检，不得导入设计模块或写业务断言。
 项目测试命令必须一次性、非交互并在完成后退出；Vitest 使用 `vitest run`，不得使用默认
 `vitest` 或 `--watch`，Cypress 不得使用 `cypress open`，Playwright 不得使用 UI 模式。
 停止推进并等待 Core 返回范围违规反馈。它不改变“Python
@@ -415,6 +450,14 @@ validate、tick、status、resume）都必须显式附加
   Worker 私有 outcome 都不是 native envelope，禁止把等待包装整体回写。
   Codex 原生结构化回包允许精确单层 `{"result": <business-object>}` 包装；Host 只解这一层，
    不递归解包，也不采纳返回内容中的 handle/model/isolation 等宿主事实。
+  Codex 的 `wait_agent` 还可能合法返回目标状态 `completed` 但 `message: null`。这表示
+  原生 Worker 已终态、但宿主没有正文 envelope；此时不得把 Worker 判为 running，也不得
+  把 `agents_states`/`status` 外层 JSON 当作业务结果。宿主必须用同一 target 句柄调用
+  `--record-worker-observation --observation-status completed --owner-known`，再按当前
+  `record_worker_outcome.argv_template` 原样调用其中的 `--native-status-only` 分支；该分支
+  只在 Action-scoped completed observation、代际/围栏、native handle 和 isolation evidence
+  全部匹配时消费 Worker 私有 `outcome_path`。若 observation 缺失或不匹配，仍然
+  `HOST_WORKER_ATTESTATION_MISSING`，不得凭文件存在猜测完成。
 6. 全部 Worker completed 时，Coordinator 从真实输出合并 `action.expected_format` 要求的业务字段，
    只写入当前 Action 的 `work_files.coordinator_result`；设计冲突写 `design_change_requests[]`，
    不伪造可执行计划。任一 Worker 超时/失败时写 `{}`，不得补业务字段或假装成功。
@@ -477,5 +520,6 @@ Gap Review 默认仍是用户决策。用户可通过结构化字段
 ## References
 
 - `commands/dev-loop.md` — 完整 Tick 驱动手册
-- `design/v5.6-Design-Loop.md` — 架构与阶段规格
+- `design/BEACON.md`、`design/INDEX.md` — 当前设计入口与权威顺序
+- `design/v5.8-Main-Agent-Coordinator-Recovery-Design.md` — 主 Agent Coordinator 与宿主交接规格
 - `design/BEACON.md` — 当前设计决策与状态

@@ -1,14 +1,27 @@
 #!/bin/sh
-# 宿主进程边界适配器：执行指定宿主命令，退出后只记录退出事实。
-# 不创建 Action、不调用 Tick、不启动 Worker，也不重启宿主。
+# 宿主进程边界适配器：执行指定宿主命令，退出后记录退出事实。
+# --auto-resume 只在 Core 明确返回 CONTINUE 且仍有 active Action 时重新交给宿主；
+# 不创建 Action、不调用 Tick、不启动 Worker。
 
 set -u
 
+if [ "${AE_HOST_ADAPTER_ACTIVE:-0}" = "1" ]; then
+    printf '%s\n' '宿主边界适配器禁止嵌套调用' >&2
+    exit 75
+fi
+export AE_HOST_ADAPTER_ACTIVE=1
+
 SCRIPT_DIR=$(CDPATH= cd -- "${0%/*}" && pwd -P)
 PLUGIN_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd -P)
+AE_RUNNER=${AE_HOST_RUNNER:-"$PLUGIN_ROOT/scripts/ae-run"}
 PROJECT_ROOT=
 OUTPUT=
 MAX_RUNTIME_SECONDS=
+MAX_IDLE_SECONDS=300
+AUTO_RESUME=0
+MAX_RESUMES=16
+MAX_PROTOCOL_REFUSALS=8
+MAX_COORDINATOR_POLLS=32
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -27,6 +40,30 @@ while [ "$#" -gt 0 ]; do
             MAX_RUNTIME_SECONDS=$2
             shift 2
             ;;
+        --max-idle-seconds)
+            [ "$#" -ge 2 ] || { printf '%s\n' '缺少 --max-idle-seconds 参数' >&2; exit 2; }
+            MAX_IDLE_SECONDS=$2
+            shift 2
+            ;;
+        --auto-resume)
+            AUTO_RESUME=1
+            shift
+            ;;
+        --max-resumes)
+            [ "$#" -ge 2 ] || { printf '%s\n' '缺少 --max-resumes 参数' >&2; exit 2; }
+            MAX_RESUMES=$2
+            shift 2
+            ;;
+        --max-protocol-refusals)
+            [ "$#" -ge 2 ] || { printf '%s\n' '缺少 --max-protocol-refusals 参数' >&2; exit 2; }
+            MAX_PROTOCOL_REFUSALS=$2
+            shift 2
+            ;;
+        --max-coordinator-polls)
+            [ "$#" -ge 2 ] || { printf '%s\n' '缺少 --max-coordinator-polls 参数' >&2; exit 2; }
+            MAX_COORDINATOR_POLLS=$2
+            shift 2
+            ;;
         --)
             shift
             break
@@ -39,9 +76,85 @@ while [ "$#" -gt 0 ]; do
 done
 
 if [ -z "$PROJECT_ROOT" ] || [ -z "$OUTPUT" ] || [ "$#" -eq 0 ]; then
-    printf '%s\n' '用法: ae-host-run --project-root <path> --output <file> [--max-runtime-seconds <n>] -- <host command ...>' >&2
+    printf '%s\n' '用法: ae-host-run --project-root <path> --output <file> [--max-runtime-seconds <n>] [--max-idle-seconds <n>] [--max-protocol-refusals <n>] [--max-coordinator-polls <n>] [--auto-resume [--max-resumes <n>]] -- <host command ...>' >&2
     exit 2
 fi
+
+# Claude 的 --disable-slash-commands 会同时关闭所有 Skill；若宿主命令
+# 又传入当前插件的 slash 入口，Claude 只会返回 Unknown command，Core
+# 随后无法找到活动 thread。这是调用契约错误，不应进入 Loop 状态机。
+AE_HAS_DISABLED_SLASH_COMMANDS=0
+AE_HAS_AUTO_ENGINEERING_SLASH_COMMAND=0
+for AE_HOST_ARG in "$@"; do
+    case "$AE_HOST_ARG" in
+        --disable-slash-commands)
+            AE_HAS_DISABLED_SLASH_COMMANDS=1
+            ;;
+        /auto-engineering:*)
+            AE_HAS_AUTO_ENGINEERING_SLASH_COMMAND=1
+            ;;
+    esac
+done
+if [ "$AE_HAS_DISABLED_SLASH_COMMANDS" -eq 1 ] && [ "$AE_HAS_AUTO_ENGINEERING_SLASH_COMMAND" -eq 1 ]; then
+    printf '%s\n' 'HOST_COMMAND_CONTRACT_INVALID: --disable-slash-commands 会关闭 /auto-engineering:* 入口' >&2
+    exit 2
+fi
+
+# 宿主命令可能继承外层 Codex/Claude 的环境信号。命令本身才是这次
+# 边界调用的权威宿主身份；若不在这里绑定，外层 CODEX_THREAD_ID 可能
+# 抢先把真实的 Claude 调用识别成 Codex，导致 Action/lease 平台漂移。
+AE_COMMAND_PLATFORM=
+case "${1##*/}" in
+    claude|claude-code)
+        AE_COMMAND_PLATFORM=claude-code
+        ;;
+    codex)
+        AE_COMMAND_PLATFORM=codex
+        ;;
+esac
+if [ -n "$AE_COMMAND_PLATFORM" ]; then
+    if [ -n "${AE_HOST_PLATFORM:-}" ] && [ "$AE_HOST_PLATFORM" != "$AE_COMMAND_PLATFORM" ]; then
+        printf '%s\n' "HOST_COMMAND_PLATFORM_MISMATCH: 命令身份 $AE_COMMAND_PLATFORM 与 AE_HOST_PLATFORM=$AE_HOST_PLATFORM 冲突" >&2
+        exit 2
+    fi
+    export AE_HOST_PLATFORM=$AE_COMMAND_PLATFORM
+    if [ "$AE_COMMAND_PLATFORM" = "claude-code" ]; then
+        unset CODEX_THREAD_ID CODEX_PLUGIN_ROOT CODEX_SANDBOX
+        # 独立调用 claude CLI 时，宿主进程通常不会把内部 session id
+        # 暴露为环境变量；但 Loop 的每个 CONTINUE Action 都必须携带同一
+        # 可验证 session，才能在原生 Worker 返回后完成 --tick 提交。
+        # 已有真实 session 优先复用；否则由本次适配器生成稳定的边界 id，
+        # 并在所有 auto-resume attempt 中继承。
+        if [ -z "${CLAUDE_CODE_SESSION_ID:-}" ] && [ -z "${CLAUDE_SESSION_ID:-}" ]; then
+            if command -v uuidgen >/dev/null 2>&1; then
+                CLAUDE_CODE_SESSION_ID=$(uuidgen)
+            else
+                CLAUDE_CODE_SESSION_ID="ae-host-$$-$(date +%s)"
+            fi
+            export CLAUDE_CODE_SESSION_ID
+        fi
+    else
+        unset CLAUDE_CODE CLAUDE_CODE_ENTRYPOINT CLAUDE_CODE_SESSION_ID CLAUDE_SESSION_ID CLAUDE_PLUGIN_ROOT
+    fi
+fi
+
+ADAPTER_MARKER="$OUTPUT.adapter-active"
+if [ -f "$ADAPTER_MARKER" ]; then
+    ADAPTER_OWNER=$(sed -n '1p' "$ADAPTER_MARKER" 2>/dev/null || true)
+    case "$ADAPTER_OWNER" in
+        ''|*[!0-9]*)
+            rm -f "$ADAPTER_MARKER"
+            ;;
+        *)
+            if kill -0 "$ADAPTER_OWNER" 2>/dev/null; then
+                printf '%s\n' '同一输出路径已有宿主边界适配器运行，禁止嵌套调用' >&2
+                exit 75
+            fi
+            rm -f "$ADAPTER_MARKER"
+            ;;
+    esac
+fi
+printf '%s\n' "$$" > "$ADAPTER_MARKER"
 
 case "$MAX_RUNTIME_SECONDS" in
     '') ;;
@@ -51,6 +164,56 @@ case "$MAX_RUNTIME_SECONDS" in
         ;;
 esac
 
+case "$MAX_IDLE_SECONDS" in
+    ''|*[!0-9]*|0)
+        printf '%s\n' '--max-idle-seconds 必须是正整数' >&2
+        exit 2
+        ;;
+esac
+
+case "$MAX_RESUMES" in
+    ''|*[!0-9]*|0)
+        printf '%s\n' '--max-resumes 必须是正整数' >&2
+        exit 2
+        ;;
+esac
+
+case "$MAX_PROTOCOL_REFUSALS" in
+    ''|*[!0-9]*|0)
+        printf '%s\n' '--max-protocol-refusals 必须是正整数' >&2
+        exit 2
+        ;;
+esac
+
+case "$MAX_COORDINATOR_POLLS" in
+    ''|*[!0-9]*|0)
+        printf '%s\n' '--max-coordinator-polls 必须是正整数' >&2
+        exit 2
+        ;;
+esac
+
+# Claude 的 SessionEnd/StopFailure Hook 会在宿主退出时参与租约收尾。
+# auto-resume 模式下必须让 Hook 知道外层仍会依据同一 lease 做有界恢复；
+# 否则 Hook 先清 lease，后续 process_exit --preserve-lease 将失去恢复合同。
+if [ "$AUTO_RESUME" -eq 1 ]; then
+    export AE_HOST_ADAPTER_AUTO_RESUME=1
+else
+    unset AE_HOST_ADAPTER_AUTO_RESUME 2>/dev/null || true
+fi
+
+if [ "${OUTPUT#/}" = "$OUTPUT" ]; then
+    OUTPUT_DIR=${OUTPUT%/*}
+    if [ "$OUTPUT_DIR" = "$OUTPUT" ]; then
+        OUTPUT_DIR=.
+    fi
+    OUTPUT_NAME=${OUTPUT##*/}
+    if ! OUTPUT_DIR=$(CDPATH= cd -- "$OUTPUT_DIR" && pwd -P); then
+        printf '%s\n' '输出文件父目录不可用' >&2
+        exit 2
+    fi
+    OUTPUT="$OUTPUT_DIR/$OUTPUT_NAME"
+fi
+
 if ! CDPATH= cd -- "$PROJECT_ROOT"; then
     printf '%s\n' '项目根目录不可用' >&2
     exit 2
@@ -59,46 +222,579 @@ PROJECT_ROOT=$(pwd -P)
 AE_INVOCATION_PROJECT_ROOT=$PROJECT_ROOT
 export AE_INVOCATION_PROJECT_ROOT
 
+# 环境变量可能被真实宿主重建，输出文件也可能因不同重试而变化；仅靠
+# AE_HOST_ADAPTER_ACTIVE 和 output.adapter-active 不能阻止同一项目的内层
+# 宿主再次启动。项目级原子目录锁是跨宿主边界的最后一道防线。
+ADAPTER_LOCK_DIR="$PROJECT_ROOT/.ae-state/host-runtime/.adapter-lock"
+if ! mkdir -p "${ADAPTER_LOCK_DIR%/*}"; then
+    printf '%s\n' '宿主边界锁目录不可写' >&2
+    exit 75
+fi
+if ! mkdir "$ADAPTER_LOCK_DIR" 2>/dev/null; then
+    ADAPTER_OWNER=$(sed -n '1p' "$ADAPTER_LOCK_DIR/owner.pid" 2>/dev/null || true)
+    case "$ADAPTER_OWNER" in
+        ''|*[!0-9]*)
+            printf '%s\n' '同一项目已有宿主边界锁，禁止嵌套调用' >&2
+            exit 75
+            ;;
+        *)
+            if kill -0 "$ADAPTER_OWNER" 2>/dev/null; then
+                printf '%s\n' '同一项目已有宿主边界适配器运行，禁止嵌套调用' >&2
+                exit 75
+            fi
+            rm -f "$ADAPTER_LOCK_DIR/owner.pid"
+            rmdir "$ADAPTER_LOCK_DIR" 2>/dev/null || {
+                printf '%s\n' '同一项目宿主边界锁状态不确定，禁止嵌套调用' >&2
+                exit 75
+            }
+            if ! mkdir "$ADAPTER_LOCK_DIR" 2>/dev/null; then
+                printf '%s\n' '同一项目宿主边界锁竞争失败，禁止嵌套调用' >&2
+                exit 75
+            fi
+            ;;
+    esac
+fi
+printf '%s\n' "$$" > "$ADAPTER_LOCK_DIR/owner.pid"
+
 TIMEOUT_MARKER="$OUTPUT.timeout"
+IDLE_MARKER="$OUTPUT.idle-timeout"
+PROTOCOL_MARKER="$OUTPUT.protocol-retry-exhausted"
+COORDINATOR_MARKER="$OUTPUT.coordinator-poll-limit"
 WATCHDOG_PID=
-rm -f "$TIMEOUT_MARKER"
-
-"$@" > "$OUTPUT" &
-HOST_PID=$!
-if [ -n "$MAX_RUNTIME_SECONDS" ]; then
-    (
-        sleep "$MAX_RUNTIME_SECONDS"
-        if kill -0 "$HOST_PID" 2>/dev/null; then
-            : > "$TIMEOUT_MARKER"
-            kill -TERM "$HOST_PID" 2>/dev/null || true
+# 只统计可判定为宿主协议违规的机器错误码。普通的
+# "Blocked by hook" 可能来自原生 Worker 的嵌套 transcript，不能越层
+# 被外层宿主熔断器解释为协议拒绝。
+PROTOCOL_REFUSAL_PATTERN='NATIVE_LAUNCH_PROMPT_MISMATCH|NATIVE_WORKER_OUTCOME_PATH_MISMATCH|NATIVE_WORKER_OUTCOME_MUTATION_FORBIDDEN|NATIVE_WORKER_STOP_FORBIDDEN|NATIVE_WORKER_PROMPT_READ_FORBIDDEN|NATIVE_ACTIVE_ACTION_UNAVAILABLE|NATIVE_WORKER_OUTCOME_INVALID|NATIVE_RESULT_PATH_MISMATCH|NATIVE_RECORD_ARGUMENTS_MISSING|NATIVE_RECORD_WORKER_MISMATCH|NATIVE_PROJECT_ROOT_MISMATCH|NATIVE_FINALIZE_PATH_MISMATCH|已阻止原生 Worker 启动|已阻止 Worker 写入|已阻止停止当前 Worker|已阻止读取 Worker prompt'
+RUN_DIR=$(mktemp -d "${TMPDIR:-/tmp}/ae-host-run.XXXXXX") || {
+    printf '%s\n' '宿主边界临时目录创建失败' >&2
+    exit 75
+}
+cleanup_run_dir() {
+    rm -rf "$RUN_DIR"
+    if [ -f "$ADAPTER_MARKER" ] && [ "$(sed -n '1p' "$ADAPTER_MARKER" 2>/dev/null || true)" = "$$" ]; then
+        rm -f "$ADAPTER_MARKER"
+    fi
+    if [ -f "$ADAPTER_LOCK_DIR/owner.pid" ] && [ "$(sed -n '1p' "$ADAPTER_LOCK_DIR/owner.pid" 2>/dev/null || true)" = "$$" ]; then
+        rm -f "$ADAPTER_LOCK_DIR/owner.pid"
+        rmdir "$ADAPTER_LOCK_DIR" 2>/dev/null || true
+    fi
+}
+interrupt_handler() {
+    if [ -n "${HOST_PID:-}" ]; then
+        terminate_host "$HOST_PID"
+    fi
+    # 用户中断也必须经过同一条宿主退出事实边界；直接 exit 会留下
+    # active Action 却没有 Stop Report，下一次恢复只能靠猜测停止原因。
+    INTERRUPT_OUTPUT=${ATTEMPT_OUTPUT:-$OUTPUT}
+    if [ -n "${AE_RUNNER:-}" ] && [ -n "${PROJECT_ROOT:-}" ]; then
+        "$AE_RUNNER" --run-module auto_engineering.host.process_exit \
+            --project-root "$PROJECT_ROOT" \
+            --host-output "$INTERRUPT_OUTPUT" \
+            --exit-code 130 \
+            --reason-code HOST_PROCESS_INTERRUPTED \
+            > "${OUTPUT}.stop-report.json" 2>/dev/null || true
+    fi
+    exit 130
+}
+terminate_host() {
+    target_pid=$1
+    kill -TERM "$target_pid" 2>/dev/null || true
+    grace=0
+    while kill -0 "$target_pid" 2>/dev/null; do
+        sleep 1
+        grace=$((grace + 1))
+        if [ "$grace" -ge 5 ]; then
+            # 某些宿主在网络/子进程等待期间不会处理 TERM；watchdog
+            # 已经做出有界终止决定后，不能再被 wait 无限挂住。
+            kill -KILL "$target_pid" 2>/dev/null || true
+            break
         fi
-    ) &
-    WATCHDOG_PID=$!
-fi
+    done
+}
+watchdog_loop() {
+    python3 - \
+        "$PLUGIN_ROOT" \
+        "$HOST_PID" \
+        "$ATTEMPT_OUTPUT" \
+        "$MAX_IDLE_SECONDS" \
+        "${MAX_RUNTIME_SECONDS:-}" \
+        "$MAX_PROTOCOL_REFUSALS" \
+        "$MAX_COORDINATOR_POLLS" \
+        "$PROTOCOL_REFUSAL_PATTERN" \
+        "$IDLE_MARKER" \
+        "$TIMEOUT_MARKER" \
+        "$PROTOCOL_MARKER" \
+        "$COORDINATOR_MARKER" \
+        "$PROJECT_ROOT/.ae-state" \
+        "$ATTEMPT_STARTED_AT" <<'PY'
+import os
+import json
+import hashlib
+import re
+import signal
+import subprocess
+import sys
+import time
+from datetime import datetime
+from sqlite3 import Error as SQLiteError
 
-wait "$HOST_PID"
-HOST_EXIT=$?
 
-if [ -n "$WATCHDOG_PID" ]; then
-    kill "$WATCHDOG_PID" 2>/dev/null || true
-    wait "$WATCHDOG_PID" 2>/dev/null || true
-fi
+sys.path.insert(0, sys.argv[1])
+from auto_engineering.loop.event_store import SQLiteEventStore
 
-HOST_REASON_CODE=HOST_RUNTIME_PROTOCOL_ERROR
-if [ -f "$TIMEOUT_MARKER" ]; then
-    HOST_REASON_CODE=HOST_PROCESS_TIMEOUT
+
+host_pid = int(sys.argv[2])
+attempt_output = sys.argv[3]
+max_idle = float(sys.argv[4])
+max_runtime = float(sys.argv[5]) if sys.argv[5] else None
+max_protocol_refusals = int(sys.argv[6])
+max_coordinator_polls = int(sys.argv[7])
+protocol_pattern = re.compile(sys.argv[8])
+idle_marker, timeout_marker, protocol_marker, coordinator_marker = sys.argv[9:13]
+state_root = sys.argv[13]
+attempt_started_epoch = float(sys.argv[14])
+resume_pattern = re.compile(r"dev-loop\s+--resume\s+[0-9a-fA-F-]{36}")
+NATIVE_OBSERVATION_MAX_AGE_SECONDS = 300.0
+NATIVE_OBSERVATION_STARTUP_GRACE_SECONDS = 2.0
+stream_terminal_observed = False
+
+
+def alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except (ProcessLookupError, PermissionError):
+        return False
+    try:
+        state = subprocess.run(
+            ["ps", "-o", "state=", "-p", str(pid)],
+            capture_output=True,
+            text=True,
+            check=False,
+        ).stdout.strip()
+    except OSError:
+        return True
+    return bool(state) and not state.startswith("Z")
+
+
+def terminate(reason_marker: str) -> None:
+    with open(reason_marker, "wb"):
+        pass
+    try:
+        os.kill(host_pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    deadline = time.monotonic() + 5
+    while alive(host_pid) and time.monotonic() < deadline:
+        time.sleep(0.2)
+    if alive(host_pid):
+        try:
+            os.kill(host_pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+
+
+def event_store_semantic_signature(path: str):
+    """通过 canonical EventStore API 读取已提交事实，不信任数据库 mtime。"""
+    try:
+        with SQLiteEventStore(path, read_only=True) as event_store:
+            return event_store.semantic_signature()
+    except (OSError, SQLiteError, TypeError, ValueError, RuntimeError):
+        return None
+
+
+def state_signature() -> tuple[tuple[str, str, int], ...]:
+    """只观察当前 Host Action 的 Core/Host 事实目录活动。
+
+    ``.ae-state`` 还包含 prompt、offload、设计缓存等非 liveness 目录；
+    ``active-lease.json`` 也不属于进度事实，它只承载身份、fencing 和
+    续驱动授权，不能因为 lease 被重写就延长等待窗口。
+    遍历整个状态树会把无关写入误当成 Action 活跃，导致 watchdog 永不
+    idle。这里保持白名单，和 Host Runtime 实际写入的事实边界一致。
+    当前 Action 的 work 文件是尚未提交的候选载荷，不能单独刷新 idle；
+    只有 Core/Host 已提交事实或终态事件可以证明宿主有语义进展。
+    """
+
+    watched_paths = (
+        os.path.join(state_root, "events.db"),
+        os.path.join(state_root, "spawn-receipts"),
+        os.path.join(state_root, "spawn-proofs"),
+        os.path.join(state_root, "spawn-challenges"),
+        os.path.join(state_root, "host-runtime", "worker-outcomes"),
+        os.path.join(state_root, "host-runtime", "outcomes"),
+    )
+    event_store_path = os.path.join(state_root, "events.db")
+    content_watched = {
+        os.path.join(state_root, "host-runtime", "worker-outcomes"),
+        os.path.join(state_root, "host-runtime", "outcomes"),
+    }
+    entries: list[tuple[str, str, int]] = []
+    for watched in watched_paths:
+        if os.path.isdir(watched):
+            for root, directories, files in os.walk(watched, followlinks=False):
+                directories[:] = [name for name in directories if name != ".ae-runtime"]
+                for name in files:
+                    path = os.path.join(root, name)
+                    try:
+                        stat = os.stat(path, follow_symlinks=False)
+                    except OSError:
+                        continue
+                    if watched in content_watched:
+                        try:
+                            with open(path, "rb") as stream:
+                                raw = stream.read()
+                            try:
+                                normalized = json.dumps(
+                                    json.loads(raw),
+                                    ensure_ascii=False,
+                                    sort_keys=True,
+                                    separators=(",", ":"),
+                                ).encode("utf-8")
+                            except (TypeError, ValueError):
+                                normalized = raw
+                            marker = hashlib.sha256(normalized).hexdigest()
+                        except OSError:
+                            continue
+                    else:
+                        marker = str(stat.st_mtime_ns)
+                    entries.append((path, marker, stat.st_size))
+            continue
+        try:
+            stat = os.stat(watched, follow_symlinks=False)
+        except OSError:
+            continue
+        if watched == event_store_path:
+            semantic = event_store_semantic_signature(watched)
+            if semantic is None:
+                continue
+            entries.append((watched, "event-store:" + repr(semantic), 0))
+            continue
+        if watched in content_watched:
+            try:
+                with open(watched, "rb") as stream:
+                    raw = stream.read()
+                try:
+                    normalized = json.dumps(
+                        json.loads(raw),
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode("utf-8")
+                except (TypeError, ValueError):
+                    normalized = raw
+                marker = hashlib.sha256(normalized).hexdigest()
+            except OSError:
+                continue
+        else:
+            marker = str(stat.st_mtime_ns)
+        entries.append((watched, marker, stat.st_size))
+    return tuple(sorted(entries))
+
+
+started = time.monotonic()
+last_activity = started
+offset = 0
+pending = ""
+protocol_refusals = 0
+coordinator_polls = 0
+previous_state = state_signature()
+
+
+def native_sync_wait_active() -> bool:
+    """同步 Claude Agent 等待时，在有界窗口内不把无 stdout 当作宿主失活。
+
+    只接受本次 attempt 之后写入、且与当前 lease action/generation 匹配的
+    ``native_status=running`` 观察；观察超过最大年龄后必须重新受 idle guard
+    约束，防止 PostToolUse 丢失时 stale Hook 无限压制 watchdog。lease 自身的
+    mtime 不参与这个判断，防止租约续写把真正无进展的 Coordinator 伪装成活跃。
+    """
+
+    lease_path = os.path.join(state_root, "host-runtime", "active-lease.json")
+    try:
+        with open(lease_path, encoding="utf-8") as stream:
+            lease = json.load(stream)
+    except (OSError, ValueError):
+        return False
+    if (
+        not isinstance(lease, dict)
+        or lease.get("platform") != "claude-code"
+        or lease.get("disposition") != "CONTINUE"
+    ):
+        return False
+    action_message_id = lease.get("action_message_id")
+    generation = lease.get("execution_generation", 1)
+    fencing_token = lease.get("fencing_token")
+    if (
+        not isinstance(action_message_id, str)
+        or not isinstance(generation, int)
+        or not isinstance(fencing_token, str)
+        or not re.fullmatch(r"[0-9a-f]{64}", fencing_token)
+    ):
+        return False
+    now_epoch = time.time()
+    # Claude 的原生调用可能在首次 Hook observation 写入前经历一次进程
+    # 启动/调度间隙。只给已由命令路径识别为 Claude 的本次 attempt 一个
+    # 固定且很短的启动宽限；宽限结束后仍必须有完整身份匹配的 observation，
+    # 防止把无输出宿主变成无限保活。
+    if (
+        os.environ.get("AE_HOST_PLATFORM") == "claude-code"
+        and now_epoch - attempt_started_epoch
+        <= max_idle + NATIVE_OBSERVATION_STARTUP_GRACE_SECONDS
+    ):
+        return True
+    observations_root = os.path.join(
+        state_root, "host-runtime", "worker-observations"
+    )
+    if not os.path.isdir(observations_root):
+        return False
+    max_observation_age = max(NATIVE_OBSERVATION_MAX_AGE_SECONDS, max_idle)
+    for directory, _, files in os.walk(observations_root, followlinks=False):
+        for name in files:
+            path = os.path.join(directory, name)
+            try:
+                with open(path, encoding="utf-8") as stream:
+                    observation = json.load(stream)
+            except (OSError, ValueError):
+                continue
+            observed_at = (
+                observation.get("observed_at")
+                if isinstance(observation, dict)
+                else None
+            )
+            if not isinstance(observed_at, str) or not observed_at:
+                continue
+            try:
+                # BSD date 可输出纳秒，而 datetime 只接受微秒；统一截断多余
+                # 精度，避免 macOS 上合法的 Hook observation 被误判为无效。
+                normalized_observed_at = re.sub(
+                    r"\.(\d{6})\d+(?=(?:Z|[+-]\d{2}:?\d{2})$)",
+                    r".\1",
+                    observed_at,
+                )
+                normalized_observed_at = re.sub(
+                    r"([+-]\d{2})(\d{2})$",
+                    r"\1:\2",
+                    normalized_observed_at,
+                )
+                observed_epoch = datetime.fromisoformat(normalized_observed_at).timestamp()
+            except ValueError:
+                continue
+            if (
+                isinstance(observation, dict)
+                and observation.get("action_message_id") == action_message_id
+                and observation.get("execution_generation") == generation
+                and observation.get("fencing_token") == fencing_token
+                and observation.get("native_status") == "running"
+                # Hook/CLI 与 watchdog 可能在不同进程、不同调度片段中取时钟；
+                # 允许小范围启动竞态，但不接受明显早于本次 attempt 的 stale
+                # running 观察。
+                and observed_epoch + 2.0 >= attempt_started_epoch
+                and observed_epoch <= now_epoch + 2.0
+                and now_epoch - observed_epoch <= max_observation_age
+            ):
+                return True
+    return False
+
+
+def has_meaningful_stream_activity(lines: list[str]) -> bool:
+    """只用白名单终态事件刷新 idle，未知流量仅保留在原始审计中。"""
+
+    global stream_terminal_observed
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            continue
+        try:
+            value = json.loads(stripped)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(value, dict):
+            continue
+        event_type = value.get("type")
+        if event_type == "result":
+            if stream_terminal_observed:
+                continue
+            stream_terminal_observed = True
+            return True
+        if event_type in {"turn.completed", "response.completed"}:
+            if stream_terminal_observed:
+                continue
+            stream_terminal_observed = True
+            return True
+        if event_type == "message" and value.get("is_api_error_message"):
+            if stream_terminal_observed:
+                continue
+            stream_terminal_observed = True
+            return True
+        if event_type == "message":
+            continue
+        if event_type == "item.completed":
+            item = value.get("item")
+            if isinstance(item, dict) and item.get("type") in {
+                "agent_message", "assistant_message"
+            }:
+                return True
+            continue
+        if event_type in {"system", "user", "assistant"}:
+            continue
+        continue
+    return False
+
+
+while alive(host_pid):
+    time.sleep(1)
+    now = time.monotonic()
+    try:
+        size = os.path.getsize(attempt_output)
+    except OSError:
+        size = 0
+    if size != offset:
+        if size < offset:
+            offset = 0
+            pending = ""
+        try:
+            with open(attempt_output, "rb") as stream:
+                stream.seek(offset)
+                chunk = stream.read()
+        except OSError:
+            chunk = b""
+        offset += len(chunk)
+        text = pending + chunk.decode("utf-8", errors="replace")
+        lines = text.splitlines(keepends=True)
+        pending = ""
+        if lines and not lines[-1].endswith(("\n", "\r")):
+            pending = lines.pop()
+        protocol_refusals += sum(
+            len(protocol_pattern.findall(line)) for line in lines
+        )
+        coordinator_polls += sum(
+            len(resume_pattern.findall(line)) for line in lines
+        )
+        if has_meaningful_stream_activity(lines):
+            last_activity = now
+    current_state = state_signature()
+    if current_state != previous_state:
+        last_activity = now
+        previous_state = current_state
+    if protocol_refusals >= max_protocol_refusals:
+        terminate(protocol_marker)
+        break
+    if coordinator_polls >= max_coordinator_polls:
+        terminate(coordinator_marker)
+        break
+    native_active = native_sync_wait_active()
+    lease_present = os.path.isfile(
+        os.path.join(state_root, "host-runtime", "active-lease.json")
+    )
+    if now - last_activity >= max_idle and lease_present and not native_active:
+        terminate(idle_marker)
+        break
+    if max_runtime is not None and now - started >= max_runtime:
+        terminate(timeout_marker)
+        break
+PY
+}
+trap cleanup_run_dir EXIT
+trap interrupt_handler HUP INT TERM
+
+ATTEMPT=0
+RESUME_COUNT=0
+: > "$OUTPUT"
+while :; do
+    ATTEMPT_OUTPUT="$RUN_DIR/attempt-${ATTEMPT}.jsonl"
     rm -f "$TIMEOUT_MARKER"
-fi
+    rm -f "$IDLE_MARKER"
+    rm -f "$PROTOCOL_MARKER"
+    rm -f "$COORDINATOR_MARKER"
+    WATCHDOG_PID=
+    ATTEMPT_STARTED_AT=$(date +%s.%N)
 
-if ! "$PLUGIN_ROOT/scripts/ae-run" --run-module auto_engineering.host.process_exit \
-    --project-root "$PROJECT_ROOT" \
-    --host-output "$OUTPUT" \
-    --exit-code "$HOST_EXIT" \
-    --reason-code "$HOST_REASON_CODE" > "${OUTPUT}.stop-report.json"; then
-    printf '%s\n' '宿主退出事实未能落盘，拒绝伪装为可验收运行' >&2
-    if [ "$HOST_EXIT" -eq 0 ]; then
+    "$@" > "$ATTEMPT_OUTPUT" &
+    HOST_PID=$!
+    watchdog_loop &
+    WATCHDOG_PID=$!
+
+    wait "$HOST_PID"
+    HOST_EXIT=$?
+
+    if [ -n "$WATCHDOG_PID" ]; then
+        kill "$WATCHDOG_PID" 2>/dev/null || true
+        wait "$WATCHDOG_PID" 2>/dev/null || true
+    fi
+
+    cat "$ATTEMPT_OUTPUT" >> "$OUTPUT"
+    HOST_REASON_CODE=HOST_RUNTIME_PROTOCOL_ERROR
+    PROTOCOL_RETRY_EXHAUSTED=0
+    COORDINATOR_POLL_LIMIT=0
+    if [ -f "$PROTOCOL_MARKER" ]; then
+        HOST_REASON_CODE=HOST_PROTOCOL_RETRY_EXHAUSTED
+        PROTOCOL_RETRY_EXHAUSTED=1
+        rm -f "$PROTOCOL_MARKER"
+    elif [ -f "$COORDINATOR_MARKER" ]; then
+        HOST_REASON_CODE=HOST_COORDINATOR_POLL_LIMIT
+        COORDINATOR_POLL_LIMIT=1
+        rm -f "$COORDINATOR_MARKER"
+    elif [ -f "$IDLE_MARKER" ]; then
+        HOST_REASON_CODE=HOST_PROCESS_IDLE_TIMEOUT
+        rm -f "$IDLE_MARKER"
+    elif [ -f "$TIMEOUT_MARKER" ]; then
+        HOST_REASON_CODE=HOST_PROCESS_TIMEOUT
+        rm -f "$TIMEOUT_MARKER"
+    fi
+
+    PROCESS_EXIT_ARGS=
+    if [ "$AUTO_RESUME" -eq 1 ]; then
+        PROCESS_EXIT_ARGS='--preserve-lease'
+    fi
+    if ! "$AE_RUNNER" --run-module auto_engineering.host.process_exit \
+        --project-root "$PROJECT_ROOT" \
+        --host-output "$ATTEMPT_OUTPUT" \
+        --exit-code "$HOST_EXIT" \
+        --reason-code "$HOST_REASON_CODE" $PROCESS_EXIT_ARGS \
+        > "${OUTPUT}.stop-report.json"; then
+        printf '%s\n' '宿主退出事实未能落盘，拒绝伪装为可验收运行' >&2
+        if [ "$HOST_EXIT" -eq 0 ]; then
+            exit 75
+        fi
+    fi
+
+    if [ "$AUTO_RESUME" -eq 0 ]; then
+        exit "$HOST_EXIT"
+    fi
+
+    if [ "$PROTOCOL_RETRY_EXHAUSTED" -eq 1 ]; then
+        printf '%s\n' '宿主原生协议拒绝达到有界次数，已保留 active Action；修复宿主合同后再显式恢复' >&2
         exit 75
     fi
-fi
+    if [ "$COORDINATOR_POLL_LIMIT" -eq 1 ]; then
+        printf '%s\n' '同一 Action 的 Coordinator resume 轮询达到有界次数，已保留 active Action；修复宿主消费逻辑后再显式恢复' >&2
+        exit 75
+    fi
 
-exit "$HOST_EXIT"
+    STATUS_FILE="$RUN_DIR/status-${ATTEMPT}.json"
+    STATUS_ERROR="$RUN_DIR/status-${ATTEMPT}.err"
+    if ! "$AE_RUNNER" dev-loop --status --format json \
+        --project-root "$PROJECT_ROOT" > "$STATUS_FILE" 2> "$STATUS_ERROR"; then
+        cat "$STATUS_ERROR" >&2
+        printf '%s\n' 'Core 状态回查失败，禁止自动续驱动' >&2
+        exit 75
+    fi
+    LEASE_FILE="$PROJECT_ROOT/.ae-state/host-runtime/active-lease.json"
+    DECISION=$("$AE_RUNNER" --run-module \
+        auto_engineering.host.continuation_driver \
+        --status-file "$STATUS_FILE" \
+        --lease-file "$LEASE_FILE" 2>> "$STATUS_ERROR") || {
+        cat "$STATUS_ERROR" >&2
+        printf '%s\n' '宿主续驱动决策失败，禁止猜测为 CONTINUE' >&2
+        exit 75
+    }
+    if [ "$DECISION" != "resume" ]; then
+        exit "$HOST_EXIT"
+    fi
+    if [ "$RESUME_COUNT" -ge "$MAX_RESUMES" ]; then
+        printf '%s\n' '宿主自动续驱动达到有界次数，已保留 active Action 供人工恢复' >&2
+        exit 75
+    fi
+    RESUME_COUNT=$((RESUME_COUNT + 1))
+    ATTEMPT=$((ATTEMPT + 1))
+    printf '[Auto-Resume] 第 %s 次恢复同一 active Action\n' "$RESUME_COUNT" >&2
+done

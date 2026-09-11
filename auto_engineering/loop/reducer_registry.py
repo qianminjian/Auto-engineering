@@ -1,4 +1,4 @@
-"""领域 Reducer 的注册与 legacy 事件适配边界。"""
+"""领域 Reducer 的注册表。"""
 
 from __future__ import annotations
 
@@ -6,10 +6,6 @@ from collections.abc import Callable
 
 from auto_engineering.engine.state import EngineState
 from auto_engineering.loop.events import LoopEvent, LoopEventType
-from auto_engineering.loop.legacy_event_adapter import (
-    LegacyEventAdapter,
-    LegacyEventError,
-)
 
 
 class EventChannelViolation(ValueError):
@@ -24,7 +20,6 @@ class ReducerRegistry:
 
     def __init__(self) -> None:
         self._reducers: dict[LoopEventType, Reducer] = {}
-        self.legacy_patch_count = 0
 
     def register(self, event_type: LoopEventType, reducer: Reducer) -> None:
         if event_type in self._reducers:
@@ -32,14 +27,6 @@ class ReducerRegistry:
         self._reducers[event_type] = reducer
 
     def reduce(self, state: EngineState, event: LoopEvent) -> EngineState:
-        try:
-            adapted = LegacyEventAdapter().adapt(state, event)
-        except LegacyEventError as exc:
-            raise EventChannelViolation(str(exc)) from exc
-        if adapted is not None:
-            self.legacy_patch_count += 1
-            state = adapted.state
-            event = adapted.event
         reducer = self._reducers.get(event.event_type)
         if reducer is None:
             raise EventChannelViolation(f"未注册事件 Reducer: {event.event_type.value}")

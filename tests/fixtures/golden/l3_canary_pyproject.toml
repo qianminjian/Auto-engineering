@@ -14,7 +14,7 @@ dev = ["build>=1.2", "hatchling>=1.27,<2", "mypy>=1.17", "pytest>=8", "ruff>=0.1
 packages = ["src/canary_math"]
 
 [tool.hatch.build.targets.sdist]
-exclude = ["/.ae-state", "/_scratch", "/.venv", "/dist", "/**/__pycache__"]
+exclude = ["/.ae-state", "/.ae-runtime", "/_scratch", "/.venv", "/dist", "/build", "/**/__pycache__"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

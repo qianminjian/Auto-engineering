@@ -206,7 +206,18 @@ class HostRunLease:
         return lease
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        # Legacy callers may still construct a lease with the v1.0 empty-token
+        # sentinel. Normalize it before persistence so Python readers and the
+        # external watchdog observe the same canonical identity.
+        payload = asdict(self)
+        payload["fencing_token"] = _resolve_fencing_token(
+            action_message_id=self.action_message_id,
+            host_session_id=self.host_session_id,
+            generation=self.execution_generation,
+            supplied=self.fencing_token,
+            supplied_present=True,
+        )
+        return payload
 
 
 class HostRunLeaseStore:
@@ -289,6 +300,35 @@ def evaluate_stop(
     return StopGuardDecision.ALLOW
 
 
+def continuation_recovery_contract(lease: HostRunLease) -> dict[str, Any]:
+    """返回 Stop 边界必须消费的同一 Action 恢复合同。
+
+    该函数只生成机器可读的边界事实，不执行 status、resume 或 Tick；实际
+    驱动仍由当前宿主 Agent 完成，避免把 Python 变成第二个 Coordinator。
+    """
+
+    return {
+        "schema_version": "1.0",
+        "after_host_return": "recheck_core_status",
+        "status_operation": {
+            "operation": "recheck_core_status",
+            "argv": ["dev-loop", "--status", "--format", "json"],
+        },
+        "resume_operation": {
+            "operation": "resume_active_action",
+            "argv": ["dev-loop", "--resume", lease.thread_id],
+        },
+        "action_identity": {
+            "thread_id": lease.thread_id,
+            "message_id": lease.action_message_id,
+            "execution_generation": lease.execution_generation,
+            "fencing_token": lease.fencing_token,
+        },
+        "resume_only_when": ["status.execution_control.disposition=CONTINUE"],
+        "forbidden_success_when": ["CONTINUE", "active_action_present"],
+    }
+
+
 def host_session_id_from_environ(
     platform: HostPlatform | Mapping[str, str] | None = None,
     environ: Mapping[str, str] | None = None,
@@ -326,6 +366,7 @@ __all__ = [
     "HostRunLeaseError",
     "HostRunLeaseStore",
     "StopGuardDecision",
+    "continuation_recovery_contract",
     "evaluate_stop",
     "fencing_token_for",
     "host_session_id_from_environ",

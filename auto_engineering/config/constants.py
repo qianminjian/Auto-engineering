@@ -49,8 +49,8 @@ PROJECT_SETUP_FAILURE_CODES = frozenset({
 # Single source of truth — previously duplicated between action_builder.py and
 # tick_orchestrator.py with diverging system_deep_audit count (3 vs 5).
 
-# T136a: subagent_type removed — Agent Tool 不传该参数即用平台默认 agent,
-# 消除 code-reviewer 等特定 agent 类型工具不兼容的依赖.
+# T136a: 不传宿主专属的 Agent 类型参数，由平台自行选择执行器，
+# 消除对特定 agent 类型工具的依赖。
 # model 不指定 — 不同 Agent 平台模型名不同，由平台自行选择.
 _SPAWN_CONFIG: dict[str, dict] = {
     # DS-15: instruction moved to _SPAWN_INSTRUCTION template in action_builder.py.

@@ -92,15 +92,9 @@ class SessionTranscriptParser:
         except (json.JSONDecodeError, OSError):
             _logger.debug("Failed to read main session file", exc_info=True)
 
-        # Current Claude stores workers under <session-id>/subagents. Keep the
-        # former flat location as a read-only compatibility fallback.
-        subagent_dirs = (
-            session_file.parent / session_file.stem / "subagents",
-            session_file.parent / "subagents",
-        )
-        for subagent_dir in subagent_dirs:
-            if not subagent_dir.exists():
-                continue
+        # Claude stores workers under the current session's subagents directory.
+        subagent_dir = session_file.parent / session_file.stem / "subagents"
+        if subagent_dir.exists():
             try:
                 for agent_file in sorted(subagent_dir.glob("agent-*.jsonl")):
                     fkey = str(agent_file)

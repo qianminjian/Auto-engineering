@@ -22,7 +22,6 @@ LINE_DEBT = {
     "auto_engineering/loop/tick_orchestrator.py": 3431,
     "auto_engineering/loop/action_builder.py": 1729,
     "auto_engineering/loop/actions.py": 611,
-    "auto_engineering/loop/checkpoint/store.py": 835,
     "auto_engineering/loop/event_store.py": 663,
     "auto_engineering/loop/guardrail.py": 620,
     "auto_engineering/loop/reducers.py": 484,
@@ -31,11 +30,9 @@ LINE_DEBT = {
     "auto_engineering/project_profile/providers.py": 419,
     "auto_engineering/cli/doctor.py": 677,
     "auto_engineering/gates/audit.py": 513,
-    "auto_engineering/loop/checkpoint/_serialization.py": 491,
     "auto_engineering/engine/models.py": 490,
     "auto_engineering/loop/guardrails/stateful.py": 459,
     "auto_engineering/engine/design_doc.py": 445,
-    "auto_engineering/loop/convergence.py": 436,
     "auto_engineering/metrics/collector.py": 408,
 }
 

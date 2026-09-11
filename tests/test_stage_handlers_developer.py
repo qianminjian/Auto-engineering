@@ -44,7 +44,7 @@ def test_developer_advances_to_next_batch_with_checkpoint() -> None:
         "progress_node_id": "§1",
         "next_task": "实现 B2",
     }
-    assert decision.lifecycle_effects.save_checkpoint is True
+    assert decision.lifecycle_effects.persist_state is True
     assert not {
         "collect_token_usage",
         "completed_batch_id",
@@ -74,7 +74,7 @@ def test_developer_component_completion_routes_to_critic() -> None:
 
     assert decision.next_stage == "critic"
     assert decision.lifecycle_effects.snapshot_developer_output is True
-    assert decision.lifecycle_effects.save_checkpoint is False
+    assert decision.lifecycle_effects.persist_state is False
 
 
 def test_developer_result_is_submitted_as_evidence_event() -> None:

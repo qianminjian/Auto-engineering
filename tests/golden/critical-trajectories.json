@@ -42,12 +42,6 @@
     "expected": {"events": [{"event_type": "ResultConflict"}], "projection": {"tick": 3}, "action": {"action": "error", "error_code": "RESULT_MESSAGE_CONFLICT"}, "verdict": null}
   },
   {
-    "name": "checkpoint_import",
-    "input": {"schema_version": "1.1", "message_id": "in-8", "payload": {"checkpoint_version": "5.6"}},
-    "actual": {"events": [{"created_at": "now", "event_type": "CheckpointImported"}], "projection": {"current_stage": "developer"}, "action": {"action": "developer"}, "verdict": null},
-    "expected": {"events": [{"event_type": "CheckpointImported"}], "projection": {"current_stage": "developer"}, "action": {"action": "developer"}, "verdict": null}
-  },
-  {
     "name": "crash_recovery",
     "input": {"schema_version": "1.1", "message_id": "in-9", "payload": {"resume": true}},
     "actual": {"events": [{"event_id": "e-9", "event_type": "ActionRecovered"}], "projection": {"tick": 4}, "action": {"action": "developer"}, "verdict": null},

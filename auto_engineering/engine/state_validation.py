@@ -19,8 +19,6 @@ def validate_field_value(name: str, value: object) -> None:
         raise ValueError(
             f"current_stage 非法值 '{value}'. 合法值: {sorted(_VALID_STAGES)}"
         )
-    if name == "round" and not isinstance(value, int):
-        raise ValueError(f"round 必须是 int, 收到 {type(value).__name__}")
     if name in (
         "majors_in_a_row", "total_majors", "plan_refine_count", "tick",
         "repair_cycle_count", "unchanged_finding_streak",

@@ -5,7 +5,7 @@ description: 查看当前 dev-loop 进度与状态
 
 # /status — Loop Progress
 
-Display the current tick loop state: stage, round, tick, verdict, and progress summary.
+Display the current EventStore-projected loop state: stage, tick, verdict, and progress summary.
 
 ```
 ae-run status

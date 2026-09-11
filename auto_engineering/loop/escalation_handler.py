@@ -68,7 +68,7 @@ class EscalationContext:
     state: EngineState
     batch_state: BatchState | None
     build_action: Callable[..., dict]
-    save_checkpoint: Callable[[], str | None]
+    persist_state: Callable[[], None]
     queue_domain_event: Callable[[LoopEventType, dict[str, Any]], None]
 
 
@@ -135,8 +135,7 @@ class EscalationHandler:
                     LoopEventType.STAGE_ADVANCED,
                     {"from": previous_stage, "to": state.current_stage},
                 )
-            state.round += 1
-            self._ctx.save_checkpoint()
+            self._ctx.persist_state()
             note = detail.get("note", "")
             return self._ctx.build_action(
                 feedback=f"Agent escalation: 用户选择回退重设计。{note}".rstrip())
@@ -144,7 +143,7 @@ class EscalationHandler:
         if "跳过" in resolution:
             if self._ctx.batch_state is not None:
                 self._ctx.batch_state.advance_batch()
-            self._ctx.save_checkpoint()
+            self._ctx.persist_state()
             return self._ctx.build_action()
 
         # 默认: "批准继续" / "继续（批准当前方向）"
@@ -157,5 +156,5 @@ class EscalationHandler:
                     LoopEventType.STAGE_ADVANCED,
                     {"from": previous_stage, "to": state.current_stage},
                 )
-        self._ctx.save_checkpoint()
+        self._ctx.persist_state()
         return self._ctx.build_action()

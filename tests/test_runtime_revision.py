@@ -154,73 +154,28 @@ def test_runtime_revision_diff_names_incompatible_fields() -> None:
     }
 
 
-def test_restore_activates_new_prompt_revision_only_after_active_action(
-    tmp_path, monkeypatch
-) -> None:
-    from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
-    from auto_engineering.loop.tick_orchestrator import TickOrchestrator
-    from tests.test_tick_orchestrator import _store_orchestrator
-
-    class _Registry:
-        def registry_hash(self) -> str:
-            return "new-prompt-revision"
-
-    db = tmp_path / "checkpoint.db"
-    store = SQLiteCheckpointStore(db)
-    original = _store_orchestrator(store)
-    active_action = original.init("实现 X")
-    old_revision = active_action["extensions"]["ae"]["runtime_revision"]
-    store.close()
-
-    monkeypatch.setattr(
-        "auto_engineering.loop.tick_orchestrator.default_registry",
-        lambda: _Registry(),
-    )
-    restored_store = SQLiteCheckpointStore(db)
-    restored = TickOrchestrator.restore_from_checkpoint(tmp_path, restored_store)
-
-    assert restored._active_action["message_id"] == active_action["message_id"]
-    assert restored._state.active_runtime_revision == old_revision
-    assert restored._state.pending_runtime_revision["prompt_revision"] == (
-        "new-prompt-revision"
-    )
-
-    restored._current_result_message_id = "result-for-active-action"
-    next_action = restored.build_action()
-
-    assert next_action["message_id"] != active_action["message_id"]
-    assert next_action["extensions"]["ae"]["runtime_revision"][
-        "prompt_revision"
-    ] == "new-prompt-revision"
-    assert restored._state.pending_runtime_revision is None
-    restored_store.close()
 
 
 def test_event_store_restore_does_not_require_legacy_checkpoint(tmp_path) -> None:
     from unittest.mock import MagicMock
 
-    from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
     from auto_engineering.loop.event_store import SQLiteEventStore
     from auto_engineering.loop.tick_orchestrator import TickOrchestrator
 
     (tmp_path / "pyproject.toml").write_text("[project]\nname='event-only'\n")
     (tmp_path / "event_only").mkdir()
-    checkpoint_store = SQLiteCheckpointStore(tmp_path / "checkpoints.db")
     guardrail = MagicMock()
     guardrail.check.return_value = MagicMock(action="pass")
     with SQLiteEventStore(tmp_path / "events.db") as events:
         original = TickOrchestrator(
             tmp_path,
-            checkpoint_store=checkpoint_store,
             event_store=events,
             guardrail=guardrail,
         )
         action = original.init("验证纯事件恢复")
 
-        assert checkpoint_store.load_latest() is None
         restored = TickOrchestrator.restore_from_event_store(
             tmp_path,
-            checkpoint_store,
             event_store=events,
             thread_id=action["thread_id"],
             guardrail=guardrail,
@@ -228,4 +183,3 @@ def test_event_store_restore_does_not_require_legacy_checkpoint(tmp_path) -> Non
 
         assert restored._state.thread_id == action["thread_id"]
         assert restored._active_action == action
-    checkpoint_store.close()

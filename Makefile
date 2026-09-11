@@ -17,7 +17,7 @@ help:  ## 显示帮助
 ci: lint test  ## 完整 CI: lint + test
 
 test:  ## pytest + 覆盖率(默认带 cov 报告)
-	uv run pytest
+	uv run pytest --cov=auto_engineering --cov-report=term-missing --cov-fail-under=90
 
 test-fast:  ## pytest 不带覆盖率(快速)
 	uv run pytest --no-cov

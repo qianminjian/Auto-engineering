@@ -395,7 +395,7 @@ class RegressionGuardrail(Guardrail):
         4. 恢复后回归测试 MUST PASS
 
     失败 action=block (而非 retry): 无效回归测试须重写, 非重跑 Agent 可修复.
-    非回归修复轮次 / 无运行时句柄 → pass (N/A). 与 G7 REDGuardrail 互补:
+    非回归修复流程 / 无运行时句柄 → pass (N/A). 与 G7 REDGuardrail 互补:
     REDGuardrail 校验"测试先于实现且曾红", RegressionGuardrail 校验"测试真能红".
     """
 
@@ -412,7 +412,7 @@ class RegressionGuardrail(Guardrail):
         root = project_root if project_root is not None else Path.cwd()
         task = _current_regression_task(state)
         if task is None:
-            return GuardrailResult()  # 非回归修复轮次 → N/A pass
+            return GuardrailResult()  # 非回归修复流程 → N/A pass
 
         task_id = getattr(task, "id", "?")
         test_id = getattr(task, "regression_test_id", "") or ""

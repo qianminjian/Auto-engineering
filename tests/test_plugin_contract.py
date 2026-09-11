@@ -53,24 +53,12 @@ def test_codex_output_schema_is_strict_compatible() -> None:
     assert schema["properties"]["error_code"]["type"] == ["string", "null"]
 
 
-def test_checkpoint_channel_is_documented_as_compatibility_only() -> None:
-    """Checkpoint 兼容 Channel 不得宣称拥有并发 Worker 调度职责。"""
-    text = (
-        REPO_ROOT / "auto_engineering" / "loop" / "checkpoint" / "_serialization.py"
-    ).read_text(encoding="utf-8")
-
-    assert "只服务旧 CheckpointEnvelope 的显式兼容迁移" in text
-    assert "不定义并发调度、Worker 归属或第二套状态机" in text
-    assert "asyncio.gather" not in text
-
-
 def test_current_state_modules_do_not_advertise_a_parallel_loop_model() -> None:
     """当前状态/编排代码不得留下会诱发第二状态机的并发路线说明。"""
     paths = (
         REPO_ROOT / "auto_engineering" / "engine" / "state.py",
         REPO_ROOT / "auto_engineering" / "loop" / "tick_orchestrator.py",
-        REPO_ROOT / "auto_engineering" / "loop" / "checkpoint" / "_connection.py",
-        REPO_ROOT / "auto_engineering" / "loop" / "state" / "checkpoint_envelope.py",
+        REPO_ROOT / "auto_engineering" / "loop" / "event_store.py",
     )
     text = "\n".join(path.read_text(encoding="utf-8") for path in paths)
 
@@ -79,12 +67,11 @@ def test_current_state_modules_do_not_advertise_a_parallel_loop_model() -> None:
     assert "如果未来需要并发写" not in text
 
 
-def test_gate_package_keeps_only_explicit_deprecated_alias_compatibility() -> None:
+def test_gate_package_exposes_only_canonical_result_model() -> None:
     import auto_engineering.gates as gates
 
     assert gates.DEFAULT_GATES
-    with pytest.warns(DeprecationWarning):
-        assert gates.Verdict is gates.GateVerdict
+    assert not hasattr(gates, "Verdict")
     with pytest.raises(AttributeError):
         missing_name = "unknown_gate_export"
         getattr(gates, missing_name)
@@ -136,6 +123,8 @@ def test_shared_skill_describes_multi_worker_prompt_and_receipt_protocol() -> No
     assert "每条 `ae-run dev-loop` 内部命令" in text
     assert "AE_HOST_ACTION_VIEW=compact" in text
     assert "coordinator_prompt_ref" in text
+    assert "正常 init/tick/status/resume 只读取 EventStore" in text
+    assert "checkpoint 不参与正常 init/tick/status/resume" not in text
     assert "native_launch_prompt" in text
     assert "不得先读取" in text
     assert "读取每个 invocation 的 `prompt_ref`" not in text
@@ -149,7 +138,7 @@ def test_shared_skill_describes_multi_worker_prompt_and_receipt_protocol() -> No
 def test_claude_plugin_captures_agent_results_with_post_tool_hook() -> None:
     manifest = json.loads((REPO_ROOT / "hooks" / "hooks.json").read_text())
     post_tool = manifest["hooks"]["PostToolUse"]
-    assert post_tool[0]["matcher"] == "Agent|TaskOutput"
+    assert post_tool[0]["matcher"] == "Agent|Task|TaskOutput"
     assert "hooks/post-tool.sh" in post_tool[0]["hooks"][0]["command"]
 
 
@@ -292,7 +281,7 @@ class TestDevLoopJSON:
             tdir = Path(tmp)
             subprocess.run(["git", "init"], cwd=tdir, capture_output=True, timeout=10)
             result = _run_cli(
-                "dev-loop", "noop", "--init", "--max-rounds", "1",
+                "dev-loop", "noop", "--init",
                 cwd=tdir, timeout=60,
             )
         # --init 输出单行 compact action JSON。逐行找含 thread_id+action 的 dict。
@@ -336,7 +325,7 @@ class TestStatusJSON:
             pytest.fail(f"stdout not JSON: {result.stdout[:200]}")
         # 7 字段
         required = {
-            "thread_id", "round", "stage", "verdict",
+            "thread_id", "tick", "stage", "verdict",
             "majors_in_a_row", "total_majors", "recent_history",
         }
         missing = required - set(data.keys())
@@ -390,7 +379,7 @@ class TestExitCodes:
     def test_exit_code_1_config_error(self, tmp_path: Path) -> None:
         """ae dev-loop 在非 git 仓库 → exit 1 (config_error / preflight fail)."""
         # tmp_path 不在 git 仓库内
-        result = _run_cli("dev-loop", "test", "--max-rounds", "1", cwd=tmp_path, timeout=20)
+        result = _run_cli("dev-loop", "test", cwd=tmp_path, timeout=20)
         # preflight 失败 → SystemExit(1)
         assert result.returncode == 1, (
             f"expected 1 (preflight fail), got {result.returncode}:\nstderr={result.stderr[:200]}"

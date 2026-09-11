@@ -1,7 +1,7 @@
 # Auto-Engineering 产品培训手册
 
 > 适用对象：内部开发者、技术负责人、产品与交付人员
-> 适用版本：5.6.0｜更新：2026-07-27
+> 适用版本：5.8.0｜更新：2026-09-10
 
 ## 1. 一句话定位
 
@@ -27,7 +27,7 @@ ae-run dev-loop --init "需求"
 ## 3. 核心价值
 
 1. **跨宿主复用**：一套 Core、一套 schema、一套验证语义。
-2. **过程可恢复**：每个 Tick 独立进程，状态进入 SQLite checkpoint。
+2. **过程可恢复**：每个 Tick 独立进程，状态进入 EventStore 的 SQLite 事件流与投影。
 3. **质量确定性**：Guardrail、Gate 与五层验证不是提示词承诺。
 4. **边界清晰**：Init Engineering 独立；本项目默认本地探测，旧 manifest 仅作只读兼容输入。
 5. **可审计**：设计、配置、测试基线与 Release 报告都有唯一事实源。
@@ -44,7 +44,7 @@ sequenceDiagram
   C-->>H: action JSON
   H->>H: 推理、编辑、测试
   H->>C: result JSON
-  C->>C: Guardrail / Gate / Checkpoint
+  C->>C: Guardrail / Gate / EventStore Tick commit
   C-->>H: next action 或 done
 ```
 
@@ -116,5 +116,5 @@ Provider SDK 按需安装，不改变 Core 的宿主中立性。
 4. 为什么 `archive_smoke=pass` 不能推出 `product_install=pass`？
 5. 配置默认值的唯一事实源在哪里？
 
-答案见 `design/v5.6-Design-Loop.md`、`docs/USER_GUIDE.md` 和
+答案见 `design/BEACON.md`、`design/INDEX.md`、`docs/USER_GUIDE.md` 和
 `docs/api-reference.md`。历史里程碑与恢复方式见 `design/HISTORY.md`。

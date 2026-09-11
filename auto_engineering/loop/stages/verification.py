@@ -48,6 +48,24 @@ def _audit_revision_changes(
     return {"audit_revision_fingerprints": {key: fingerprint}}
 
 
+def _merge_coverage_map(
+    existing: object, incoming: object,
+) -> list[dict[str, Any]]:
+    """按 design_item 合并组件覆盖事实，禁止后一个组件覆盖前一个组件。"""
+
+    merged: dict[str, dict[str, Any]] = {}
+    for source in (existing, incoming):
+        if not isinstance(source, list):
+            continue
+        for item in source:
+            if not isinstance(item, Mapping):
+                continue
+            design_item = item.get("design_item")
+            if isinstance(design_item, str) and design_item:
+                merged[design_item] = dict(item)
+    return list(merged.values())
+
+
 def _refine(
     source: StageName,
     changes: Mapping[str, Any],
@@ -83,6 +101,14 @@ class ComponentVerifierHandler:
         result: Mapping[str, Any],
         context: TransitionContext,
     ) -> TransitionDecision:
+        existing_coverage = (
+            state.get("coverage_map")
+            if isinstance(state, Mapping)
+            else None
+        )
+        coverage = _merge_coverage_map(
+            existing_coverage, result.get("coverage_map", []),
+        )
         missing = int(result.get("missing_count", 0))
         diverged = int(result.get("diverged_count", 0))
         progress = {"kind": self.stage, "missing": missing, "diverged": diverged}
@@ -90,7 +116,7 @@ class ComponentVerifierHandler:
             return _refine(
                 self.stage,
                 {
-                    "coverage_map": list(result.get("coverage_map", [])),
+                    "coverage_map": coverage,
                     "audit_findings": list(result.get("coverage_map", [])),
                 },
                 context,
@@ -106,7 +132,7 @@ class ComponentVerifierHandler:
             events=(
                 channels_updated(
                     LoopEventType.VERIFICATION_STATE_UPDATED,
-                    {"coverage_map": list(result.get("coverage_map", []))},
+                    {"coverage_map": coverage},
                     thread_id=context.thread_id,
                     sequence=context.event_sequence,
                 ),

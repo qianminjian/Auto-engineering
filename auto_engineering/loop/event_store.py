@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import sqlite3
 import threading
 from collections.abc import Callable, Iterable, Mapping
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 from auto_engineering.engine.state import EngineState
 from auto_engineering.loop import event_store_codec, event_store_schema
@@ -42,21 +43,34 @@ class SQLiteEventStore:
         db_path: str | Path,
         *,
         fault_injector: Callable[[str], None] | None = None,
+        read_only: bool = False,
     ) -> None:
         self.db_path = str(db_path)
         self._lock = threading.RLock()
         self._closed = False
         self._fault_injector = fault_injector
-        self._conn = sqlite3.connect(
-            self.db_path,
-            check_same_thread=False,
-            isolation_level=None,
-        )
+        if read_only:
+            if self.db_path == ":memory:":
+                raise ValueError("EVENT_STORE_READ_ONLY_REQUIRES_FILE")
+            uri = "file:" + quote(str(Path(self.db_path).resolve()), safe="/:")
+            self._conn = sqlite3.connect(
+                uri + "?mode=ro",
+                uri=True,
+                check_same_thread=False,
+                isolation_level=None,
+            )
+        else:
+            self._conn = sqlite3.connect(
+                self.db_path,
+                check_same_thread=False,
+                isolation_level=None,
+            )
         self._conn.row_factory = sqlite3.Row
-        if self.db_path != ":memory:":
+        if not read_only and self.db_path != ":memory:":
             self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA foreign_keys=ON")
-        self._ensure_schema()
+        if not read_only:
+            self._ensure_schema()
 
     def _ensure_open(self) -> None:
         if self._closed:
@@ -135,9 +149,9 @@ class SQLiteEventStore:
                 raise ValueError("ResultAccepted 必须包含 causation_id")
             payload = event.to_dict()["payload"]
             patch = payload.get("state_patch")
-            if patch is not None and payload.get("legacy_import") is not True:
+            if patch is not None:
                 raise ValueError(
-                    f"NEW_STATE_PATCH_FORBIDDEN: {event.event_type.value}"
+                    f"STATE_PATCH_FORBIDDEN: {event.event_type.value}"
                 )
 
     def commit_tick(
@@ -293,30 +307,6 @@ class SQLiteEventStore:
                 raise ValueError("EFFECT_RECEIPT_CONFLICT")
             seen[receipt.relative_path] = receipt
 
-    def append_new(
-        self,
-        *,
-        thread_id: str,
-        event_type: LoopEventType | str,
-        payload: Mapping[str, Any],
-        correlation_id: str,
-        causation_id: str | None = None,
-    ) -> LoopEvent:
-        """在同一临界区分配下一序列并追加一个事件。"""
-
-        with self._lock:
-            sequence = self.next_sequence(thread_id)
-            event = LoopEvent.create(
-                thread_id=thread_id,
-                sequence=sequence,
-                event_type=event_type,
-                payload=payload,
-                correlation_id=correlation_id,
-                causation_id=causation_id,
-            )
-            self.append([event])
-            return event
-
     def next_sequence(self, thread_id: str) -> int:
         with self._lock:
             self._ensure_open()
@@ -332,25 +322,130 @@ class SQLiteEventStore:
             self._ensure_open()
             return self._load_stream_unlocked(thread_id)
 
-    def latest_thread_for_event(
-        self, event_type: LoopEventType | str,
-    ) -> str | None:
-        """按事件事实找最近完成的 thread，不依赖 checkpoint 或宿主租约。"""
+    def latest_thread(self) -> str | None:
+        """返回最近写入事件所属 thread，作为当前项目状态定位依据。"""
 
-        event_name = event_type.value if isinstance(event_type, LoopEventType) else event_type
         with self._lock:
             self._ensure_open()
             row = self._conn.execute(
                 """
                 SELECT thread_id
                 FROM loop_events
-                WHERE event_type = ?
                 ORDER BY created_at DESC, sequence DESC
                 LIMIT 1
-                """,
-                (event_name,),
+                """
             ).fetchone()
         return str(row["thread_id"]) if row is not None else None
+
+    def thread_ids(self) -> list[str]:
+        """返回所有事件流身份；调用方必须自行处理多线程歧义。"""
+
+        with self._lock:
+            self._ensure_open()
+            rows = self._conn.execute(
+                "SELECT DISTINCT thread_id FROM loop_events ORDER BY thread_id"
+            ).fetchall()
+        return [str(row["thread_id"]) for row in rows]
+
+    def semantic_signature(self, thread_id: str | None = None) -> tuple[object, ...] | None:
+        """返回指定事实流的稳定签名，供 Host liveness 观察使用。
+
+        签名只由已提交 EventStore 语义事实构成；调用方不需要复制 SQLite 表结构，
+        也不能把数据库 mtime/WAL 变化误当作 Loop 进展。
+        """
+        with self._lock:
+            self._ensure_open()
+            resolved_thread_id = thread_id or self.current_thread()
+            if resolved_thread_id is None:
+                return None
+            row = self._conn.execute(
+                """
+                SELECT
+                    COALESCE(MAX(sequence), -1),
+                    COUNT(*),
+                    COALESCE((SELECT MAX(sequence)
+                              FROM engine_state_projections WHERE thread_id = ?), -1),
+                    COALESCE((SELECT MAX(sequence)
+                              FROM action_snapshots WHERE thread_id = ?), -1),
+                    COALESCE((SELECT COUNT(*)
+                              FROM protocol_result_replays WHERE thread_id = ?), 0),
+                    COALESCE((SELECT COUNT(*)
+                              FROM effect_receipts WHERE thread_id = ?), 0)
+                FROM loop_events
+                WHERE thread_id = ?
+                """,
+                (
+                    resolved_thread_id,
+                    resolved_thread_id,
+                    resolved_thread_id,
+                    resolved_thread_id,
+                    resolved_thread_id,
+                ),
+            ).fetchone()
+            if row is None:
+                return None
+            replay_digest = hashlib.sha256()
+            for replay in self._conn.execute(
+                """
+                SELECT causation_id, result_hash, response_json, created_at
+                FROM protocol_result_replays
+                WHERE thread_id = ?
+                ORDER BY causation_id
+                """,
+                (resolved_thread_id,),
+            ):
+                replay_digest.update(_json_dumps(tuple(replay)).encode("utf-8"))
+                replay_digest.update(b"\0")
+            receipt_digest = hashlib.sha256()
+            for receipt in self._conn.execute(
+                """
+                SELECT action_message_id, kind, relative_path,
+                       sha256, byte_count, created_at
+                FROM effect_receipts
+                WHERE thread_id = ?
+                ORDER BY action_message_id, relative_path
+                """,
+                (resolved_thread_id,),
+            ):
+                receipt_digest.update(_json_dumps(tuple(receipt)).encode("utf-8"))
+                receipt_digest.update(b"\0")
+            return (
+                resolved_thread_id,
+                *tuple(row),
+                replay_digest.hexdigest(),
+                receipt_digest.hexdigest(),
+            )
+
+    def unfinished_threads(self) -> list[str]:
+        """返回所有未记录终态的 thread，供 init 做项目占用校验。"""
+        terminal_types = (
+            LoopEventType.LOOP_COMPLETED.value,
+            LoopEventType.LOOP_FAILED.value,
+            LoopEventType.THREAD_SUPERSEDED.value,
+        )
+        with self._lock:
+            self._ensure_open()
+            rows = self._conn.execute(
+                """
+                SELECT DISTINCT candidate.thread_id
+                FROM loop_events AS candidate
+                WHERE NOT EXISTS (
+                    SELECT 1
+                    FROM loop_events AS terminal
+                    WHERE terminal.thread_id = candidate.thread_id
+                      AND terminal.event_type IN (?, ?, ?)
+                )
+                ORDER BY candidate.thread_id
+                """,
+                terminal_types,
+            ).fetchall()
+        return [str(row["thread_id"]) for row in rows]
+    def current_thread(self) -> str | None:
+        """返回唯一未终态 thread；无活动 thread 时返回 ``None``。"""
+        unfinished = self.unfinished_threads()
+        if len(unfinished) > 1:
+            raise ValueError("PROJECT_THREAD_AMBIGUOUS: EventStore 检测到多个未终态 thread: " + ", ".join(unfinished))
+        return unfinished[0] if unfinished else None
 
     def _load_stream_unlocked(self, thread_id: str) -> list[LoopEvent]:
         rows = self._conn.execute(
@@ -440,7 +535,7 @@ class SQLiteEventStore:
 
         状态协调 Gate 可能在旧 thread 上触发新 thread 初始化。旧 thread 的
         Result 回放仍须返回新 thread 的首个 Action；该绑定属于 EventStore 的
-        幂等索引，不应重新写入 checkpoint 或伪造第二条 Result 事实。
+        幂等索引，不应重新写入状态快照或伪造第二条 Result 事实。
         """
 
         response_json = _json_dumps(dict(response), default_str=True)
@@ -490,111 +585,6 @@ class SQLiteEventStore:
             )
             for row in rows
         ]
-
-    def load_round_history(self, thread_id: str) -> list[dict[str, Any]]:
-        """读取最新状态事件携带的确定性轮次历史。"""
-        with self._lock:
-            self._ensure_open()
-            row = self._conn.execute(
-                """
-                SELECT payload_json FROM loop_events
-                WHERE thread_id = ? AND event_type IN (?, ?)
-                ORDER BY sequence DESC LIMIT 1
-                """,
-                (
-                    thread_id,
-                    LoopEventType.RESULT_ACCEPTED.value,
-                    LoopEventType.LOOP_INITIALIZED.value,
-                ),
-            ).fetchone()
-        if row is None:
-            return []
-        payload = _json_loads(row["payload_json"])
-        history = payload.get("round_history", [])
-        return list(history) if isinstance(history, list) else []
-
-    def import_checkpoint(
-        self,
-        *,
-        checkpoint_id: str,
-        state: EngineState,
-        action: Mapping[str, Any] | None = None,
-    ) -> LoopEvent:
-        """将一个 v5.6 EngineState 一次性导入为事件流种子，不改写源记录。"""
-
-        if not checkpoint_id:
-            raise ValueError("checkpoint_id 不能为空")
-        thread_id = state.thread_id
-        if action is not None and action.get("thread_id") != thread_id:
-            raise ValueError("checkpoint Action thread_id 与状态不一致")
-        with self._lock:
-            self._ensure_open()
-            row = self._conn.execute(
-                "SELECT event_id FROM checkpoint_imports WHERE checkpoint_id = ?",
-                (checkpoint_id,),
-            ).fetchone()
-            if row is not None:
-                event_row = self._conn.execute(
-                    "SELECT * FROM loop_events WHERE event_id = ?",
-                    (row["event_id"],),
-                ).fetchone()
-                if event_row is None:
-                    raise RuntimeError("checkpoint 导入标记缺少对应事件")
-                return self._row_to_event(event_row)
-            if self.next_sequence(thread_id) != 0:
-                raise ValueError("已有事件流不能再次导入 checkpoint")
-
-            imported_at = datetime.now(UTC).isoformat()
-            event = LoopEvent.create(
-                thread_id=thread_id,
-                sequence=0,
-                event_type=LoopEventType.CHECKPOINT_IMPORTED,
-                payload={"checkpoint_id": checkpoint_id, "state": state.to_dict()},
-                correlation_id=thread_id,
-                created_at=imported_at,
-            )
-            self._conn.execute("BEGIN IMMEDIATE")
-            try:
-                self._append_in_transaction([event])
-                state_json = _json_dumps(state.to_dict(), default_str=True)
-                self._conn.execute(
-                    """
-                    INSERT INTO engine_state_projections
-                        (thread_id, sequence, state_json, updated_at)
-                    VALUES (?, 0, ?, ?)
-                    """,
-                    (thread_id, state_json, imported_at),
-                )
-                if action is not None:
-                    message_id = action.get("message_id")
-                    if not isinstance(message_id, str) or not message_id:
-                        raise ValueError("checkpoint Action 缺少 message_id")
-                    self._conn.execute(
-                        """
-                        INSERT INTO action_snapshots
-                            (thread_id, message_id, sequence, action_json, updated_at)
-                        VALUES (?, ?, 0, ?, ?)
-                        """,
-                        (
-                            thread_id,
-                            message_id,
-                            _json_dumps(dict(action), default_str=True),
-                            imported_at,
-                        ),
-                    )
-                self._conn.execute(
-                    """
-                    INSERT INTO checkpoint_imports
-                        (checkpoint_id, thread_id, event_id, imported_at)
-                    VALUES (?, ?, ?, ?)
-                    """,
-                    (checkpoint_id, thread_id, event.event_id, imported_at),
-                )
-                self._conn.commit()
-            except BaseException:
-                self._conn.rollback()
-                raise
-            return event
 
     def close(self) -> None:
         with self._lock:

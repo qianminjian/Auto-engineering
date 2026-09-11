@@ -14,7 +14,8 @@ def status_action_summary(action: Mapping[str, Any]) -> dict[str, Any]:
         work_files = host_execution.get("work_files")
     summary: dict[str, Any] = {}
     for key in (
-        "message_id", "action", "stage", "current_gap_index", "total_gaps",
+        "message_id", "correlation_id", "causation_id", "thread_id", "tick",
+        "action", "stage", "current_gap_index", "total_gaps",
         "gap_review_contract", "gate", "current_gap", "expected_format",
     ):
         value = action.get(key)
@@ -24,6 +25,17 @@ def status_action_summary(action: Mapping[str, Any]) -> dict[str, Any]:
             summary[key] = value
     if isinstance(work_files, Mapping):
         summary["work_files"] = dict(work_files)
+    extensions = action.get("extensions")
+    ae = extensions.get("ae") if isinstance(extensions, Mapping) else None
+    runtime_revision = (
+        ae.get("runtime_revision") if isinstance(ae, Mapping) else None
+    )
+    if isinstance(runtime_revision, Mapping):
+        engine_build_id = runtime_revision.get("engine_build_id")
+        if isinstance(engine_build_id, str) and engine_build_id:
+            summary["runtime_identity"] = {
+                "engine_build_id": engine_build_id,
+            }
     return summary
 
 

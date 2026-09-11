@@ -92,9 +92,13 @@ def _critic_result_fields(
 ) -> dict[str, Any]:
     """返回 Critic Result 的完整事实字段，由 CRITIC_STATE_UPDATED 拥有。"""
 
+    findings = [
+        *list(result.get("findings", [])),
+        *list(result.get("cross_batch_findings", [])),
+    ]
     return {
         "critic_verdict": effective_verdict,
-        "findings": list(result.get("findings", [])),
+        "findings": findings,
         "critic_feedback": result.get("critic_feedback", ""),
         "strengths": result.get("strengths"),
         "assessment": result.get("assessment"),
@@ -113,7 +117,10 @@ class CriticHandler:
         if not isinstance(state, Mapping):
             raise TypeError("state 必须为 Mapping")
         verdict = result.get("verdict", "")
-        findings = list(result.get("findings", []))
+        findings = [
+            *list(result.get("findings", [])),
+            *list(result.get("cross_batch_findings", [])),
+        ]
         blocking_findings = [
             finding for finding in findings
             if isinstance(finding, Mapping)

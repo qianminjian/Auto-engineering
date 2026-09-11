@@ -1,10 +1,7 @@
 """P2-B-1 (deep audit) — engine/state.py 直接测试.
 
-之前 test_type_aliases_p1b.py 只测了重命名 (LoopState → EngineState
-alias) 和字段存在性, 78 行 EngineState 的核心方法 to_dict / from_dict
-/ get_channels / set_channels 没有直接 round-trip 测试. SQLite checkpoint
-migrate 依赖 to_dict 输出, CheckpointEnvelope.from_dict 重建, 都
-需要 round-trip 保护.
+EngineState 的核心方法 to_dict / from_dict / get_channels 需要直接
+round-trip 测试，EventStore 投影重建依赖稳定的序列化边界。
 
 测试原则 (per pytest-memory-management.md): 单文件 pytest --no-cov --timeout=60.
 """
@@ -13,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from auto_engineering.engine.state import EngineState, LoopState, _validate_field_value
+from auto_engineering.engine.state import EngineState, _validate_field_value
 from auto_engineering.engine.state_validation import validate_field_value
 
 
@@ -28,7 +25,6 @@ def test_engine_state_uses_one_canonical_field_validation_policy() -> None:
     [
         ("critic_verdict", "INVALID"),
         ("current_stage", "unknown_stage"),
-        ("round", "not-an-int"),
     ],
 )
 def test_engine_state_validation_rejects_invalid_scalar_fields(
@@ -39,7 +35,7 @@ def test_engine_state_validation_rejects_invalid_scalar_fields(
 
 # v5.8 状态字段（含 #43-47 会话预算与 Developer 证据锚点）。
 _EXPECTED_V58_FIELDS = {
-    "requirement", "current_stage", "round",
+    "requirement", "current_stage",
     "thread_id", "majors_in_a_row", "total_majors",
     "plan", "file_list", "batch_plan", "contracts",
     "files_changed", "commit_hash", "test_results",
@@ -63,7 +59,7 @@ _EXPECTED_V58_FIELDS = {
     "action_timestamp",
     # #41 T110b: tick_token_usage (当前 tick token 消耗)
     "tick_token_usage",
-    # #42 T136: checkpoint 持久化滚动摘要
+    # #42 T136: EventStore 投影滚动摘要
     "session_summary",
     # #43-46 v5.8 ExecutionSession 与 ContextBudget
     "execution_session_id", "session_start_tick",
@@ -76,7 +72,7 @@ _EXPECTED_V58_FIELDS = {
     "open_findings",
     # #50-52 Phase 73 ProjectProfile 与 setup 能力
     "project_profile", "project_profile_id", "missing_project_capabilities",
-    "project_setup_failure_streak",
+    "project_setup_failure_streak", "project_setup_failure_fingerprint",
     "project_setup_baseline_files",
     # #53-57 Phase 78 架构事实与确定性修复控制
     "architecture_baseline", "repair_cycle_count",
@@ -91,7 +87,7 @@ _EXPECTED_V58_FIELDS = {
     "project_anchor_baseline",
     # 内部写入审计日志
     "_write_log",
-    # P1-28: 运行时句柄 (不进 checkpoint)
+    # P1-28: 运行时句柄 (不进 EventStore 投影)
     "_runtime_ctx",
 }
 
@@ -125,7 +121,7 @@ class TestEngineStateRoundTrip:
         assert restored.findings == [{"severity": "info", "msg": "ok"}]
 
     def test_to_dict_is_json_serializable(self) -> None:
-        """to_dict 输出可直接 json.dumps (Checkpoint 持久化路径)."""
+        """to_dict 输出可直接 json.dumps (EventStore 投影路径)."""
         import json
         state = EngineState(requirement="x", plan="p", file_list=["a.py"])
         dumped = json.dumps(state.to_dict())
@@ -157,21 +153,8 @@ class TestFromDictDefensive:
         assert state.file_list == []  # default factory
 
 
-class TestBackwardCompatAlias:
-    """P1-B 重命名: LoopState 仍是 EngineState 的 alias."""
-
-    def test_loop_state_is_engine_state(self) -> None:
-        assert LoopState is EngineState
-
-    def test_loop_state_works_with_to_dict(self) -> None:
-        """LoopState (alias) 也能 to_dict."""
-        state = LoopState(requirement="via alias")
-        d = state.to_dict()
-        assert d["requirement"] == "via alias"
-
-
-class TestGetSetChannels:
-    """get_channels / set_channels 辅助方法."""
+class TestGetChannels:
+    """get_channels 辅助方法."""
 
     def test_get_channels_existing(self) -> None:
         """get_channels 返回已存在字段的值."""
@@ -185,14 +168,6 @@ class TestGetSetChannels:
         result = state.get_channels(["requirement", "nonexistent_field"])
         assert result == {"requirement": ""}
 
-    def test_set_channels_updates_fields(self) -> None:
-        """set_channels 把 writes 写入对应字段."""
-        state = EngineState()
-        state.set_channels({"plan": "new plan", "commit_hash": "xyz"})
-        assert state.plan == "new plan"
-        assert state.commit_hash == "xyz"
-
-
 class TestEngineStateFieldDefaults:
     """Phase 10: 17 字段默认值 + 类型契约.
 
@@ -201,7 +176,7 @@ class TestEngineStateFieldDefaults:
     """
 
     def test_all_fields_exist(self) -> None:
-        """EngineState 字段集合与跨 tick checkpoint 契约一致。"""
+        """EngineState 字段集合与跨 Tick EventStore 投影契约一致。"""
         from dataclasses import fields
 
         EngineState()
@@ -346,15 +321,8 @@ class TestEngineStateBoundary:
         assert restored.findings == findings
         assert restored.findings[0]["line"] == 42
 
-    def test_set_channels_with_unknown_field_silently_skipped(self) -> None:
-        """set_channels 写入未知字段 → 静默跳过, 不抛."""
-        state = EngineState()
-        state.set_channels({"plan": "ok", "nonexistent": "should_be_dropped"})
-        assert state.plan == "ok"
-        assert not hasattr(state, "nonexistent")
-
     def test_to_dict_contains_all_fields(self) -> None:
-        """to_dict 输出含全部 71 字段（不含内部字段）。"""
+        """to_dict 输出含全部当前公共字段（不含内部字段）。"""
         state = EngineState()
         d = state.to_dict()
         assert len(d) == 71, (

@@ -6,7 +6,7 @@
 
 - Package builds use the `hatchling.build` backend declared explicitly in `pyproject.toml`; legacy
   or implicit build-backend discovery is outside this design.
-- The source distribution must exclude `.ae-state`, `_scratch`, `.venv`, `dist`, and every
+- The source distribution must exclude `.ae-state`, `.ae-runtime`, `_scratch`, `.venv`, `dist`, `build`, and every
   `__pycache__` directory; Core state and transient workspace artifacts are not product source.
 - Use a standard regular-package src layout: create an empty `src/canary_math/__init__.py`.
 - The only public import path required by this design is

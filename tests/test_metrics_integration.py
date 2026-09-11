@@ -1,10 +1,11 @@
-"""MetricsCollector integration — convergence and Tick event wiring."""
+"""MetricsCollector integration and end-to-end telemetry pipeline."""
 import tempfile
 from pathlib import Path
 
 import pytest
 
-from auto_engineering.loop.convergence import ConvergenceJudge, RoundHistory
+from auto_engineering.loop.event_store import SQLiteEventStore
+from auto_engineering.loop.events import LoopEvent, LoopEventType
 from auto_engineering.metrics.collector import (
     MetricsCollector,
     get_collector,
@@ -20,48 +21,6 @@ def _reset_collector():
     set_collector(None)
 
 
-class TestConvergenceIntegration:
-    """ConvergenceJudge.evaluate() → collector.record_convergence()."""
-
-    def test_evaluate_records_convergence(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            collector = MetricsCollector(project_root=Path(tmp))
-            set_collector(collector)
-            judge = ConvergenceJudge()
-
-            history = [
-                RoundHistory(round_id=1, files_changed=3, lines_added=50, lines_removed=10),
-            ]
-            judge.evaluate(history)
-
-            assert len(collector._events) == 1
-            event = collector._events[0]
-            assert event["event_type"] == "convergence"
-            assert "verdict" in event["payload"]
-
-    def test_evaluate_no_collector_does_not_crash(self):
-        set_collector(None)
-        judge = ConvergenceJudge()
-        history = [RoundHistory(round_id=1, files_changed=3, lines_added=50, lines_removed=10)]
-        verdict = judge.evaluate(history)
-        assert not verdict.should_stop  # 未满足终态条件，生产默认不按 Round 截断
-
-    def test_evaluate_goal_achieved_records_success(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            collector = MetricsCollector(project_root=Path(tmp))
-            set_collector(collector)
-            judge = ConvergenceJudge()
-
-            judge.evaluate(
-                [], design_coverage_ok=True, system_deep_audit_ok=True,
-            )
-
-            assert len(collector._events) == 1
-            event = collector._events[0]
-            assert event["event_type"] == "convergence"
-            assert event["payload"]["verdict"] == "GOAL_ACHIEVED"
-
-
 class TestCollectorNotLeaked:
     """Verify that autouse fixture resets collector state."""
 
@@ -70,91 +29,94 @@ class TestCollectorNotLeaked:
 
 
 class TestE2EPipeline:
-    """P2-4: End-to-end pipeline — events → flush → load → detect → diagnose.
+    """P2-4: EventStore projection → summary → diagnosis.
 
-    Verifies the full data flow: events.jsonl write → load_history() →
+    Verifies the derived data flow: metric projection → summary.json →
     SignalDetector.analyze() → Diagnoser.diagnose() → human_actions present.
     """
 
     def test_full_pipeline_events_to_diagnosis(self):
-        import tempfile
-        from pathlib import Path
 
-        from auto_engineering.metrics.collector import AIOrigin, MetricsCollector
         from auto_engineering.metrics.diagnoser import Diagnoser
         from auto_engineering.metrics.signals import SignalDetector
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            collector = MetricsCollector(project_root=root)
+            with SQLiteEventStore(root / "events.db") as store:
+                collector = MetricsCollector(project_root=root, event_store=store)
 
-            # Simulate a requirement lifecycle: begin → events → end
-            collector.begin_requirement(
-                "thread-001", "abc123def456",
-                requirement_category="medium_crud",
-            )
-            origin = AIOrigin(level="led", agent_role="critic",
-                            model_name="claude-sonnet-4-6", driver_type="agent")
-
-            # Simulate 8 ticks (high tick count = potential slow_convergence signal)
-            for i in range(8):
-                collector.record_tick_complete(
-                    tick_number=i + 1, stage=f"stage_{i}",
-                    duration_ms=5000, ai_origin=origin,
-                )
-                collector.record_stage_transition(
-                    from_stage=f"stage_{i}", to_stage=f"stage_{i+1}",
-                    reason="normal", ai_origin=origin,
-                )
-                collector.record_token_usage(
-                    input_tokens=2000, output_tokens=500,
-                    model="claude-sonnet-4-6", provider="anthropic",
-                    stage=f"stage_{i}", ai_origin=origin,
+                # Simulate a requirement lifecycle through canonical facts.
+                collector.begin_requirement(
+                    "thread-001", "abc123def456",
+                    requirement_category="medium_crud",
                 )
 
-            # MAJOR convergence with critic_approved criteria_met (for M2)
-            collector.record_convergence(
-                verdict="GOAL_ACHIEVED", total_ticks=8,
-                criteria_met="critic_approved", ai_origin=origin,
-            )
-            collector.record_convergence(
-                verdict="MAJOR", total_ticks=4,
-                criteria_met="critic_major", ai_origin=origin,
-            )
+                for i in range(8):
+                    store.append([LoopEvent.create(
+                        thread_id="thread-001",
+                        sequence=store.next_sequence("thread-001"),
+                        event_type=LoopEventType.ACTION_ISSUED,
+                        payload={"action": {
+                            "action": "spawn", "message_id": f"a-{i}",
+                            "thread_id": "thread-001", "tick": i + 1,
+                            "stage": f"stage_{i}",
+                        }},
+                        correlation_id="thread-001",
+                    )])
+                    store.append([LoopEvent.create(
+                        thread_id="thread-001",
+                        sequence=store.next_sequence("thread-001"),
+                        event_type=LoopEventType.USAGE_RECORDED,
+                        payload={"usage": {
+                            "input_units": 2000, "output_units": 500,
+                            "stage": f"stage_{i}", "worker": "main",
+                            "session_id": "session-1", "provider": "test",
+                            "model": "test-model", "usage_source": "test",
+                            "estimated": False,
+                        }},
+                        correlation_id="thread-001",
+                    )])
 
-            # End requirement → flush events + write summary to disk
-            summary = collector.end_requirement("GOAL_ACHIEVED", total_ticks=8, loc_added=200)
-            assert summary is not None
-            assert "M1_loop_efficiency" in summary
+                store.append([LoopEvent.create(
+                    thread_id="thread-001",
+                    sequence=store.next_sequence("thread-001"),
+                    event_type=LoopEventType.LOOP_COMPLETED,
+                    payload={"verdict": "GOAL_ACHIEVED", "tick": 8},
+                    correlation_id="thread-001",
+                )])
 
-            # Verify events.jsonl was written
-            events_path = root / ".ae-state" / "metrics" / "requirements" / "thread-001" / "events.jsonl"
-            assert events_path.exists()
+                # End requirement → write only the derived summary to disk
+                summary = collector.end_requirement("GOAL_ACHIEVED", total_ticks=8, loc_added=200)
+                assert summary is not None
+                assert "M1_loop_efficiency" in summary
 
-            # Verify summary.json was written
-            summary_path = root / ".ae-state" / "metrics" / "requirements" / "thread-001" / "summary.json"
-            assert summary_path.exists()
+                # A parallel metric event log must never be written.
+                events_path = root / ".ae-state" / "metrics" / "requirements" / "thread-001" / "events.jsonl"
+                assert not events_path.exists()
 
-            # Reload history
-            history = collector.load_history(limit=5)
-            assert len(history) >= 1
-            assert "M1_loop_efficiency" in history[0]
-            assert "M2_critic_major_rate" in history[0]
+                # Verify summary.json was written
+                summary_path = root / ".ae-state" / "metrics" / "requirements" / "thread-001" / "summary.json"
+                assert summary_path.exists()
 
-            # Signal detection on history — pipeline should not crash
-            detector = SignalDetector(min_samples=1)
-            signals = detector.analyze(history)
-            assert isinstance(signals, list)
+                # Reload history
+                history = collector.load_history(limit=5)
+                assert len(history) >= 1
+                assert "M1_loop_efficiency" in history[0]
+                assert "M2_critic_major_rate" in history[0]
 
-            # Diagnose each detected signal — pipeline should not crash
-            diagnoser = Diagnoser()
-            for sig in signals:
-                d = diagnoser.diagnose(sig)
-                if d is not None:
-                    # Verify human_actions field exists (key P2-4 check)
-                    assert hasattr(d, "human_actions")
-                    assert isinstance(d.human_actions, list)
+                # Signal detection on history — pipeline should not crash
+                detector = SignalDetector(min_samples=1)
+                signals = detector.analyze(history)
+                assert isinstance(signals, list)
 
-            # Pipeline verification: events.jsonl → summary.json → load_history →
+                # Diagnose each detected signal — pipeline should not crash
+                diagnoser = Diagnoser()
+                for sig in signals:
+                    d = diagnoser.diagnose(sig)
+                    if d is not None:
+                        assert hasattr(d, "human_actions")
+                        assert isinstance(d.human_actions, list)
+
+            # Pipeline verification: projection → summary.json → load_history →
             # analyze → diagnose all completed without crash. Specific signal counts
             # depend on cold-start thresholds; this test guards the data flow.

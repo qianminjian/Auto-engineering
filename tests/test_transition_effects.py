@@ -118,14 +118,14 @@ def test_declared_lifecycle_effects_run_in_stable_order() -> None:
         collect_token_usage=lambda: calls.append("usage"),
         record_completed_batch=lambda batch_id: calls.append(f"batch:{batch_id}"),
         snapshot_developer_output=lambda: calls.append("snapshot"),
-        save_checkpoint=lambda: calls.append("checkpoint"),
+        persist_state=lambda: calls.append("persist_state"),
         offload_stage=lambda stage: calls.append(f"offload:{stage}"),
     )
     effects = LifecycleEffects(
         collect_token_usage=True,
         completed_batch_id="B1",
         snapshot_developer_output=True,
-        save_checkpoint=True,
+        persist_state=True,
         offload_stage="developer",
     )
 
@@ -136,7 +136,7 @@ def test_declared_lifecycle_effects_run_in_stable_order() -> None:
         "usage",
         "batch:B1",
         "snapshot",
-        "checkpoint",
+        "persist_state",
         "offload:developer",
     ]
 

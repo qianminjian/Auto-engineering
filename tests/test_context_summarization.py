@@ -68,6 +68,20 @@ class TestSessionSummary:
         assert len(s.major_history) == 1
         assert s.unresolved_issues[0].startswith("Performance")
 
+    def test_event_store_round_trip_preserves_summary_fields(self) -> None:
+        summary = SessionSummary(
+            ticks_covered=range(2, 5),
+            key_implementation_decisions=["decision"],
+            files_created_modified={"src/a.py": "changed"},
+            major_history=[{"tick": 3, "findings": ["finding"]}],
+            unresolved_issues=["issue"],
+            generated_at_tick=4,
+        )
+
+        restored = SessionSummary.from_dict(summary.to_dict())
+
+        assert restored == summary
+
 
 class TestSessionSummarizer:
     """SessionSummarizer tests (LLM calls mocked)."""
@@ -168,3 +182,60 @@ class TestSessionSummarizer:
         )
         injected = summarizer.inject_into_prompt(s)
         assert "Previous Session Summary" in injected
+
+    def test_structured_summary_collects_current_and_previous_state(self) -> None:
+        previous = SessionSummary(
+            ticks_covered=range(1, 3),
+            files_created_modified={"src/old.py": ""},
+            major_history=[{"tick": 2, "findings": ["old finding"]}],
+            unresolved_issues=["old issue"],
+            generated_at_tick=2,
+        )
+        summary = SessionSummarizer().summarize_structured(
+            tick=4,
+            test_results={"passed": 3, "total": 3},
+            files_changed=["src/new.py"],
+            commit_hash="abcdef123456",
+            gate_results={"lint": {"passed": True}},
+            critic_verdict="APPROVE",
+            total_majors=1,
+            batch_progress="1/2",
+            previous_summary=previous,
+        )
+
+        assert summary.ticks_covered == range(3, 5)
+        assert "batch_progress: 1/2" in summary.key_implementation_decisions
+        assert "commit=abcdef12" in summary.key_implementation_decisions
+        assert "tests: 3/3 passed" in summary.key_implementation_decisions
+        assert "all gates passed" in summary.key_implementation_decisions
+        assert "critic: APPROVE (total MAJORs=1)" in summary.key_implementation_decisions
+        assert set(summary.files_created_modified) == {"src/new.py", "src/old.py"}
+        assert summary.major_history == previous.major_history
+        assert summary.unresolved_issues == previous.unresolved_issues
+
+    def test_structured_summary_records_failed_gate_and_major(self) -> None:
+        summary = SessionSummarizer().summarize_structured(
+            tick=2,
+            test_results={"passed": 1, "total": 2},
+            gate_results={"test": {"passed": False}},
+            critic_verdict="MAJOR",
+            total_majors=2,
+        )
+
+        assert "tests: 1/2 passed" in summary.key_implementation_decisions
+        assert "failed gates: test" in summary.unresolved_issues
+        assert "critic: MAJOR (total MAJORs=2)" in summary.unresolved_issues
+
+    @pytest.mark.asyncio
+    async def test_summarize_without_provider_fails_explicitly(self) -> None:
+        with pytest.raises(RuntimeError, match="LLM provider required"):
+            await SessionSummarizer().summarize([], None, 1)
+
+    def test_close_releases_provider(self) -> None:
+        llm = _FakeLLM()
+        closed = []
+        llm.close = lambda: closed.append(True)
+
+        SessionSummarizer(llm).close()
+
+        assert closed == [True]

@@ -28,22 +28,23 @@ ultrathink
 
 ## 规则
 1. 每 batch ≤5 个 task（一个 task = 创建/修改一个文件 + 对应测试）
-2. TDD 排序：测试 task 在前且不得依赖对应实现 task；实现 task 在后并
-   通过 `depends_on` 指向对应测试 task。测试 task 只写测试文件，实现 task 只写
-   实现文件；`verification_targets` 只能指向 `kind=test|contract_test` 的 task。
-   如果测试的 `module_ref` 在计划中存在实现 task，则实现必须位于同一或更早
-   batch；禁止把会导入未来 batch 实现的测试提前执行，否则 Core 会以
-   `ARCHITECT_TEST_IMPLEMENTATION_ORDER_INVALID` 拒绝计划。
+2. TDD 排序：测试 task 不得依赖对应实现 task；实现 task 通过 `depends_on` 指向
+   对应测试 task。测试 task 只写测试文件，实现 task 只写实现文件；
+   `verification_targets` 只能指向 `kind=test|contract_test` 的 task。测试会导入
+   目标实现时，测试 task 与对应实现 task 必须放在同一 batch（实现依赖测试，
+   由 Developer 在该 batch 内按依赖顺序先建立测试再实现）；只有不导入未来实现的
+   独立契约测试才可放在更早 batch。禁止把会导入未来 batch 实现的测试提前执行，
+   否则 Core 会以 `ARCHITECT_TEST_IMPLEMENTATION_ORDER_INVALID` 拒绝计划。
 3. 依赖方向：工具层 → Hook/API 层 → 简单组件 → 复杂组件 → 容器集成
 4. task id 全局唯一（B1-T1, B2-T1...），depends_on 精确到 task id
 5. `batch_title` 是可自由命名的人类可读聚合标题，不参与机器路由
 6. `plate_keys` 只能从 action 的 `valid_plate_keys` 原样选择；一个 batch 可覆盖多个 key
-7. 只要目标组件存在 `design_item_catalog` 条目，batch 必须声明 `design_item_refs`，并将每个
+7. 只要目标组件在只读设计文档中存在设计条目，batch 必须声明 `design_item_refs`，并将每个
    条目只分配给负责它的 batch；不得让 component_verifier 扫描整个组件或未来 batch。
 7a. `design_item_refs` 是按 `plate_keys` 做组件归属校验，不是设计章节摘要：每个 ref 必须存在于
-   `design_item_catalog`，且其 `component` 必须等于同 batch 的某个 `plate_key`。信息性或跨组件条目
+   只读设计文档中对应组件，且其组件必须等于同 batch 的某个 `plate_key`。信息性或跨组件条目
    （例如架构总览章节中的 `2.1-*`）不能放入任意组件 batch；如果只是架构总览，就不填入 batch refs。
-   优先逐字复制上下文中的 `canonical_design_item_refs[plate_key]`；这是机器 ID 清单，不得把
+   Architect 必须先读取绑定设计文档，再优先逐字复制上下文中的 `canonical_design_item_refs[plate_key]`；这是机器 ID 清单，不得把
    `§A1.1:next_value`、标题、自然语言 slug 或自造章节引用当作 design item ID。若 Core 返回
    `BATCH_DESIGN_ITEM_SCOPE_INVALID` 并列出“有效 design_item_refs”，只从该列表复制并继续修复，
    不得请求用户提供 ID，也不得重新 spawn 已完成的 Worker。
@@ -83,13 +84,14 @@ ultrathink
       "batch_title": "可自由命名的聚合批次标题",
       "plate_keys": ["从 valid_plate_keys 选择的精确标识"],
       "design_sections": ["从 action.host_design_sections[].section_ref 原样选择的 canonical 引用"],
-      "design_item_refs": ["当前 batch 实际覆盖的设计条目 ID，必须从 design_item_catalog 选择"],
+      "design_item_refs": ["当前 batch 实际覆盖的设计条目 ID，必须来自只读设计文档并匹配 canonical_design_item_refs"],
       "description": "本 batch 的目标和范围",
       "tasks": [
         {
           "id": "B1-T1",
           "description": "做什么（非仅文件名）",
           "kind": "test|contract_test|implementation",
+          "module_ref": "负责的设计模块或组件引用",
           "file_targets": ["相对 project_root 的 POSIX 路径"],
           "depends_on": []
         }
@@ -104,6 +106,11 @@ ultrathink
     {"id": "O1", "source_ref": "gap-1", "summary": "研究结论摘要", "implementation_targets": ["B1-T1"], "verification_targets": ["B1-T2"], "contract_refs": ["api-name"]}
   ]
 }
+
+每个 task 必须同时提供 `id`、`description`、`kind`、`module_ref`、`file_targets` 和
+`depends_on`；`kind` 不能省略或用 `type` 替代。测试/contract_test 必须放在对应实现
+任务同一或更早的 batch，并通过 `depends_on` 表达拓扑。不要依赖自然语言补全这些字段，
+因为 Action 会注入 `architect_task_contract` 机器契约，Core 会在激活前按同一模板做确定性校验。
 
 没有跨模块/API 契约时 contracts 可为空；没有 Research/设计补充来源时 obligations 可为空。
 首次规划存在 `research_and_design_context` 时，每个来源必须由 obligation 覆盖，且验证目标必须

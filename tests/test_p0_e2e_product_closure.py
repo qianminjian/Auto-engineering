@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-import sqlite3
 import subprocess
 import sys
 from copy import deepcopy
@@ -24,6 +23,7 @@ from auto_engineering.host.execution_assembler import (
     NativeWorkerOutcome,
 )
 from auto_engineering.host.outcome_journal import OutcomeJournal
+from auto_engineering.loop.architect_plan_coverage import architect_plan_manifest
 from auto_engineering.loop.event_store import SQLiteEventStore
 from auto_engineering.loop.tick_orchestrator import TickOrchestrator
 
@@ -188,15 +188,8 @@ def test_public_cli_gap_scan_finalize_validate_tick_roundtrip(tmp_path: Path) ->
     assert "ResultAccepted" in event_types
     assert "ActionIssued" in event_types
 
-    connection = sqlite3.connect(tmp_path / ".ae-state" / "checkpoints.db")
-    try:
-        with connection:
-            protocol_action_count = connection.execute(
-                "SELECT COUNT(*) FROM protocol_actions"
-            ).fetchone()[0]
-    finally:
-        connection.close()
-    assert protocol_action_count == 0
+    # 正常运行只创建 EventStore，不创建旧快照数据库。
+    assert not (tmp_path / ".ae-state" / "checkpoints.db").exists()
 
 
 def test_public_cli_duplicate_result_replays_same_next_action(
@@ -854,6 +847,223 @@ def test_public_cli_architect_result_repair_keeps_worker_outcomes_and_hides_spaw
     assert sum(event.event_type.value == "ResultAccepted" for event in stream) == 1
 
 
+def test_public_cli_architect_subset_plan_is_rejected_before_result_commit(
+    tmp_path: Path,
+) -> None:
+    """公开 CLI 不得把完整 Worker 计划静默缩成 Coordinator 子集。"""
+
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\nname='public-cli-architect-coverage-e2e'\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "src").mkdir()
+    (tmp_path / "tests").mkdir()
+    design = _design_doc(tmp_path)
+    runner = CliRunner()
+    host_env = {
+        "AE_HOST_PLATFORM": "codex",
+        "CODEX_THREAD_ID": "public-cli-architect-coverage",
+    }
+
+    design.write_text(
+        "## B1 音色克隆\n\n"
+        "### C1 上传\n明确上传契约。\n\n"
+        "### C2 播放\n明确播放契约。\n",
+        encoding="utf-8",
+    )
+
+    def invoke(*arguments: str) -> dict:
+        completed = runner.invoke(
+            main,
+            ["dev-loop", *arguments, "--project-root", str(tmp_path)],
+            env=host_env,
+        )
+        assert completed.exit_code == 0, completed.output
+        return json.loads(completed.output.strip().splitlines()[-1])
+
+    action = invoke(
+        "--init", "按设计实现音色克隆页面", "--design-doc", str(design),
+    )
+    gap_work = action["host_execution"]["work_files"]
+    gap_coordinator = tmp_path / gap_work["coordinator_result"]
+    gap_result = tmp_path / gap_work["result"]
+    gap_coordinator.parent.mkdir(parents=True, exist_ok=True)
+    gap_coordinator.write_text(json.dumps({
+        "gaps": [],
+        "section_findings": [{
+            "section_ref": "§C1",
+            "verdict": "clear",
+            "evidence": ["上传契约明确且可验证。"],
+        }, {
+            "section_ref": "§C2",
+            "verdict": "clear",
+            "evidence": ["播放契约明确且可验证。"],
+        }],
+    }, ensure_ascii=False), encoding="utf-8")
+    invoke(
+        "--finalize-result", str(gap_coordinator), "--output-result", str(gap_result),
+    )
+    invoke("--validate-result", str(gap_result))
+    architect_action = invoke("--tick", "--result", str(gap_result))
+    worker = architect_action["host_execution"]["workers"][0]
+    work_files = architect_action["host_execution"]["work_files"]
+
+    full_plan = {
+        "plan": (
+            "按原设计完成全部组件的实现、测试、审查、契约验证、类型检查、"
+            "最终构建验收，并保留完整可重放的 Worker 与 Coordinator 审计证据。"
+        ),
+        "batch_plan": [
+            {
+                "batch_id": "B1",
+                "component": "上传",
+                "design_item_refs": ["C1-1"],
+                "tasks": [{
+                    "id": "B1-T1",
+                    "description": "实现上传组件",
+                    "kind": "implementation",
+                    "module_ref": "上传",
+                    "file_targets": ["src/upload.py"],
+                    "depends_on": [],
+                }],
+            },
+            {
+                "batch_id": "B2",
+                "component": "播放",
+                "design_item_refs": ["C2-1"],
+                "tasks": [{
+                    "id": "B2-T1",
+                    "description": "实现播放组件",
+                    "kind": "implementation",
+                    "module_ref": "播放",
+                    "file_targets": ["src/player.py"],
+                    "depends_on": [],
+                }],
+            },
+        ],
+        "file_list": ["src/upload.py", "src/player.py"],
+        "contracts": {},
+    }
+    outcome_path = tmp_path / worker["outcome_path"]
+    outcome_path.parent.mkdir(parents=True, exist_ok=True)
+    outcome_path.write_text(json.dumps({
+        "worker_id": worker["worker_id"],
+        "status": "completed",
+        "payload": full_plan,
+        "summary": "Worker 完成完整 Architect 计划",
+    }, ensure_ascii=False), encoding="utf-8")
+    invoke(
+        "--record-worker-outcome",
+        "--worker-id", worker["worker_id"],
+        "--worker-status", "completed",
+        "--native-worker-handle", "architect-coverage-native",
+        "--actual-model", "gpt-5.6-sol",
+        "--isolation-evidence", "fork_turns=none",
+    )
+
+    coordinator = tmp_path / work_files["coordinator_result"]
+    result = tmp_path / work_files["result"]
+    coordinator.parent.mkdir(parents=True, exist_ok=True)
+    coordinator.write_text(json.dumps({
+        **full_plan,
+        "batch_plan": [full_plan["batch_plan"][0]],
+        "file_list": ["src/upload.py"],
+    }, ensure_ascii=False), encoding="utf-8")
+    rejected = invoke(
+        "--finalize-result", str(tmp_path / work_files["outcomes"]),
+        "--coordinator-result", str(coordinator), "--output-result", str(result),
+    )
+
+    assert not result.exists()
+    assert rejected["result_rejection"]["error_code"] == "HOST_EVIDENCE_INVALID"
+    assert "ARCHITECT_RESULT_COVERAGE_LOSS" in (
+        rejected["result_rejection"]["violations"]
+    )
+    assert rejected["message_id"] == architect_action["message_id"]
+    assert "workers" not in rejected["host_execution"]
+    assert rejected["host_execution"]["recovery"]["spawn_permitted"] is False
+
+    coordinator.write_text(
+        json.dumps({
+            "plan": full_plan["plan"],
+            "file_list": full_plan["file_list"],
+            "contracts": {},
+        }, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    missing_plan = invoke(
+        "--finalize-result", str(tmp_path / work_files["outcomes"]),
+        "--coordinator-result", str(coordinator), "--output-result", str(result),
+    )
+    assert missing_plan["result_rejection"]["error_code"] == (
+        "HOST_EVIDENCE_INVALID"
+    )
+    assert "ARCHITECT_RESULT_COVERAGE_LOSS" in (
+        missing_plan["result_rejection"]["violations"]
+    )
+
+    resumed = runner.invoke(
+        main,
+        [
+            "dev-loop", "--resume", architect_action["thread_id"],
+            "--project-root", str(tmp_path),
+        ],
+        env=host_env,
+    )
+    assert resumed.exit_code == 0, resumed.output
+    resumed_action = json.loads(resumed.output.strip().splitlines()[-1])
+    assert resumed_action["message_id"] == architect_action["message_id"]
+    assert "workers" not in resumed_action["host_execution"]
+    assert resumed_action["host_execution"]["recovery"]["spawn_permitted"] is False
+
+    submitted_outcomes = json.loads(
+        (tmp_path / work_files["outcomes"]).read_text(encoding="utf-8")
+    )
+    submitted_outcomes["outcomes"][0]["payload"]["batch_plan"][0]["tasks"][0][
+        "description"
+    ] = "Coordinator repair 不能替换已提交 Worker outcome"
+    (tmp_path / work_files["outcomes"]).write_text(
+        json.dumps(submitted_outcomes, ensure_ascii=False), encoding="utf-8"
+    )
+    coordinator.write_text(json.dumps(full_plan, ensure_ascii=False), encoding="utf-8")
+    repaired_result = invoke(
+        "--finalize-result", str(tmp_path / work_files["outcomes"]),
+        "--coordinator-result", str(coordinator), "--output-result", str(result),
+    )
+    assert repaired_result["causation_id"] == architect_action["message_id"]
+    coverage = repaired_result["extensions"]["architect_plan_coverage"]
+    assert coverage["batch_ids"] == ["B1", "B2"]
+    assert coverage["task_ids"] == ["B1-T1", "B2-T1"]
+    assert coverage == architect_plan_manifest(full_plan["batch_plan"])
+    committed = OutcomeJournal(tmp_path).load(architect_action["message_id"])
+    assert committed is not None
+    assert committed["outcomes"][0]["native_worker_handle"] == (
+        "architect-coverage-native"
+    )
+
+    validation = invoke("--validate-result", str(result))
+    assert validation["action"] == "validation_passed"
+    assert validation["causation_id"] == architect_action["message_id"]
+    next_action = invoke("--tick", "--result", str(result))
+    assert next_action["stage"] == "developer"
+    assert next_action["message_id"] != architect_action["message_id"]
+    with SQLiteEventStore(tmp_path / ".ae-state" / "events.db") as events:
+        stream = events.load_stream(architect_action["thread_id"])
+        accepted = [
+            event for event in stream
+            if event.event_type.value == "ResultAccepted"
+            and event.causation_id == architect_action["message_id"]
+        ]
+        projection = events.load_projection(architect_action["thread_id"])
+    assert len(accepted) == 1
+    assert projection is not None
+    assert projection.architecture_baseline is not None
+    assert projection.architecture_baseline["batch_plan"] == (
+        full_plan["batch_plan"]
+    )
+    assert projection.architecture_baseline["architect_plan_coverage"] == coverage
+
+
 def test_public_cli_multi_worker_partial_completion_requires_all_outcomes(
     tmp_path: Path,
 ) -> None:
@@ -865,20 +1075,15 @@ def test_public_cli_multi_worker_partial_completion_requires_all_outcomes(
     (tmp_path / "src").mkdir()
     (tmp_path / "tests").mkdir()
 
-    from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
     from tests.host_runtime.trajectory_runner import HostTrajectoryRunner
 
     state_dir = tmp_path / ".ae-state"
     state_dir.mkdir()
-    with (
-        SQLiteCheckpointStore(state_dir / "checkpoints.db") as checkpoints,
-        SQLiteEventStore(state_dir / "events.db") as events,
-    ):
+    with SQLiteEventStore(state_dir / "events.db") as events:
         guardrail = MagicMock()
         guardrail.check.return_value = MagicMock(action="pass")
         core = TickOrchestrator(
             tmp_path,
-            checkpoint_store=checkpoints,
             event_store=events,
             guardrail=guardrail,
             gate_runner=lambda names, root: {
@@ -928,6 +1133,7 @@ def test_public_cli_multi_worker_partial_completion_requires_all_outcomes(
         for batch_id, component in (("B1", "Foo"), ("B2", "Bar")):
             action = trajectory.run(action, workers=[lambda invocation, batch=batch_id, name=component: {
                 "batch_id": batch,
+                "task_ids": [f"{batch}-T1"],
                 "files_changed": [f"src/{name.lower()}.py"],
                 "commit_hash": "",
                 "test_results": {"passed": 1, "failed": 0, "total": 1},
@@ -950,7 +1156,6 @@ def test_public_cli_multi_worker_partial_completion_requires_all_outcomes(
 
         assert action["stage"] == "plate_deep_audit"
         assert action["spawn"]["count"] == 3
-        assert checkpoints.reserve_project_thread(action["thread_id"]) is None
 
     runner = CliRunner()
     resumed = runner.invoke(
@@ -1191,7 +1396,8 @@ def test_public_cli_single_component_reaches_terminal_across_processes(
                     "design_item_refs": ["C1-1"],
                     "tasks": [{
                         "id": "B1-T1", "description": "实现上传",
-                        "file_targets": ["src/upload.py"],
+                        "kind": "implementation", "module_ref": "§C1",
+                        "file_targets": ["src/upload.py"], "depends_on": [],
                     }],
                 }],
                 "file_list": ["src/upload.py"],
@@ -1204,6 +1410,7 @@ def test_public_cli_single_component_reaches_terminal_across_processes(
             )
             payload = {
                 "batch_id": context["batch_id"],
+                "task_ids": [task["id"] for task in context["tasks"]],
                 "files_changed": ["src/upload.py"],
                 "commit_hash": "",
                 "test_results": {"passed": 1, "failed": 0, "total": 1},

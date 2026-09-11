@@ -126,6 +126,7 @@ class TestContextOffloaderWiring:
         orch._apply_result_to_state(_ARCHITECT_RESULT)
         orch._after_tick(_ARCHITECT_RESULT)  # sets up batch_state
         orch._state.test_results = {"passed": 5, "failed": 0, "errors": 0}
+        orch._populate_serialized_state()
 
         orch._after_tick({})
 
@@ -154,6 +155,7 @@ class TestContextOffloaderWiring:
 
         # developer
         orch._state.test_results = {"passed": 5, "failed": 0, "errors": 0}
+        orch._populate_serialized_state()
         orch._after_tick({})
         assert offloader.load_summary("developer") is not None
 

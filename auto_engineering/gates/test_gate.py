@@ -225,7 +225,3 @@ class TestGate(Gate):
             if line.strip().endswith("passed"):
                 return line.strip()
         return "tests passed"
-
-
-# v5.5 audit P2-15: 向后兼容别名, v6.0 移除
-TestGate._register_alias("pytest_bin", "test_runner_bin")

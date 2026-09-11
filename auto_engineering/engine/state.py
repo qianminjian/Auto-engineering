@@ -1,11 +1,8 @@
-"""EngineState — Stage 之间通过 channel 共享的状态对象 (P1-B 重命名).
-
-原名 LoopState 改为 EngineState 以避免与 v2.0 loop.state.CheckpointEnvelope 同名冲突.
-旧名 LoopState 保留为 type alias, 向后兼容.
+"""EngineState — Loop 运行时唯一的共享状态模型。
 
 参考 LangGraph StateGraph state_schema(简化: 单一 dataclass,无 channel 类型/reducer).
 P0 修复: dataclass 默认 factory 不可 JSON 序列化 → to_dict/from_dict 用 asdict.
-v5.0 M1: 扩展到 17 字段. v5.1: +suggested_fix 替代 round → 保持 17 字段.
+v5.0 M1: 扩展状态字段；当前进度统一由 tick 与 stage 表达。
 
 v5.5 P1-5: 写入控制 — 字段级写所有权 + write_field() 验证 + _write_log 审计追踪.
 当前 Core 采用单写者同步 Tick；字段所有权表用于拒绝越权写入并保留审计记录。
@@ -90,7 +87,6 @@ class WriteRecord(TypedDict, total=False):
 #   architect:     plan, file_list, batch_plan, contracts
 #   developer:     files_changed, commit_hash, test_results
 #   critic:        critic_verdict, findings, critic_feedback, suggested_fix, strengths, assessment
-#   orchestrator:  current_stage, round, audit_findings, plan_refine_count
 #   orchestrator:  current_stage, majors_in_a_row, total_majors, plan_refine_count
 #
 # 当前 Tick 中，此表用于：
@@ -102,7 +98,6 @@ class WriteRecord(TypedDict, total=False):
 _WRITE_OWNERS: dict[str, frozenset[str]] = {
     "requirement":       frozenset({"user", "orchestrator"}),
     "current_stage":     frozenset({"orchestrator"}),
-    "round":             frozenset({"orchestrator"}),
     "thread_id":         frozenset({"auto"}),
     "majors_in_a_row":   frozenset({"orchestrator"}),
     "total_majors":      frozenset({"orchestrator"}),
@@ -153,6 +148,7 @@ _WRITE_OWNERS: dict[str, frozenset[str]] = {
     "project_profile":          frozenset({"orchestrator"}),
     "project_profile_id":       frozenset({"orchestrator"}),
     "missing_project_capabilities": frozenset({"orchestrator"}),
+    "project_setup_failure_fingerprint": frozenset({"orchestrator"}),
     "project_setup_baseline_files": frozenset({"orchestrator"}),
     "architecture_baseline":      frozenset({"orchestrator"}),
     "repair_cycle_count":         frozenset({"orchestrator"}),
@@ -186,20 +182,15 @@ class EngineState:
         architect:     plan, file_list, batch_plan, contracts
         developer:     files_changed, commit_hash, test_results
         critic:        verdict, findings, critic_feedback, suggested_fix, strengths, assessment
-        orchestrator:  current_stage, round, audit_findings, plan_refine_count
+        orchestrator:  current_stage, audit_findings, plan_refine_count
         orchestrator:  majors_in_a_row, total_majors
 
-    当前生产终态由 Stage Handler 的验证事实决定，不由固定 Round 数截断；
-    ConvergenceJudge 的 Round 上限仅保留给显式历史兼容调用.
+    当前生产终态由 Stage Handler 的验证事实决定，不由固定次数截断。
 
-    Note (P1-B): 旧名 LoopState 是 EngineState 的 alias, 保持向后兼容.
-        新代码推荐 import EngineState.
     """
 
     requirement: str = ""
     current_stage: str = ""
-    round: int = 0
-
     # 控制 (v5.0 §B1.1 字段 15-17: thread_id / majors_in_a_row / total_majors)
     thread_id: str = field(default_factory=_new_thread_id)
     majors_in_a_row: int = 0
@@ -251,14 +242,14 @@ class EngineState:
     design_doc_digest: str = ""  # init 即持久化；pre-Architect 跨会话兼容锚点
     refine_request_json: str | None = None                        # #35 plan_refine 输入 (RefineRequest)
     plan_refine_by_source: dict[str, int] = field(default_factory=dict)  # #36 分源 refine 计数 (DS-8)
-    _runtime_ctx: dict[str, object] = field(  # P1-28: 跨 tick 运行时句柄, 不进 checkpoint
-        default_factory=dict, repr=False, compare=False, metadata={"checkpoint_skip": True})
+    _runtime_ctx: dict[str, object] = field(  # P1-28: 跨 tick 运行时句柄, 不进持久化投影
+        default_factory=dict, repr=False, compare=False)
     prompt_registry_hash: str = ""  # #37 B12.5 版本锁 (init 盖, resume 校验)
     debug_enabled: bool = False  # #38 --debug 开关 (AE_DEBUG=1 或 --debug flag)
     debug_dir: str | None = None  # #39 debug 输出目录 (默认 <project_root>/_scratch/debug/)
     action_timestamp: float = 0.0  # #40 T112: _build_action() 出站时间戳 (跨 tick 计时)
     tick_token_usage: dict | None = None  # #41 T110b: 当前 tick 的 token 消耗 (JSONL 采集)
-    session_summary: dict[str, Any] | None = None  # #42 T136: 跨进程滚动摘要 checkpoint
+    session_summary: dict[str, Any] | None = None  # #42 T136: 跨进程滚动摘要
     execution_session_id: str = ""  # #43 v5.8 当前宿主会话 identity
     session_start_tick: int = 0  # #44 当前宿主会话开始时的业务 Tick
     session_started_at: str = ""  # #45 UTC ISO 时间；跨进程预算基准
@@ -270,6 +261,7 @@ class EngineState:
     project_profile_id: str = ""  # #51 当前 Profile 内容摘要
     missing_project_capabilities: list[str] = field(default_factory=list)  # #52 setup 缺失能力
     project_setup_failure_streak: int = 0  # Setup 连续失败次数；达到阈值后 WAIT_RESOURCE
+    project_setup_failure_fingerprint: str = ""  # WAIT_RESOURCE 时最后一次失败输入摘要
     project_setup_baseline_files: list[str] = field(default_factory=list)  # T677 setup 起始文件基线
     architecture_baseline: dict[str, Any] | None = None  # #53 已接受 Architect 事实投影
     repair_cycle_count: int = 0  # #54 当前 Batch 局部返修次数
@@ -350,7 +342,7 @@ class EngineState:
         """
         result = asdict(self)
         result.pop("_write_log", None)
-        result.pop("_runtime_ctx", None)  # P1-28: 不进 checkpoint
+        result.pop("_runtime_ctx", None)  # P1-28: 不进持久化投影
         return result
 
     def to_dict(self) -> dict[str, Any]:
@@ -378,32 +370,3 @@ class EngineState:
             else:
                 _logger.warning("get_channels: unknown channel '%s'", n)
         return result
-
-    def set_channels(self, writes: dict[str, Any], writer: str = "orchestrator") -> None:
-        """批量写入 channel, 做审计日志但**不强制**所有权校验 (向后兼容).
-
-        ⚠️ 有意的所有权旁路: write_field() 会按 _WRITE_OWNERS 校验 writer 是否有权
-        写该字段; set_channels **跳过**该校验 (仅做 hasattr + 值校验 + 审计日志)。
-        这是**已知设计取舍**——orchestrator 用本方法批量 apply 多字段产出 (默认
-        writer="orchestrator"), 若逐字段强制 role 所有权会破坏 apply-outcome 流。
-        新代码应优先用 write_field() 获得所有权保护; set_channels 保留给
-        orchestrator 批量写入路径。
-
-        Args:
-            writes: {field_name: value} 映射.
-            writer: 写入者标识 (默认 orchestrator).
-        """
-        for k, v in writes.items():
-            if not hasattr(self, k):
-                _logger.warning("set_channels: unknown channel '%s', skipped", k)
-                continue
-            _validate_field_value(k, v)
-            setattr(self, k, v)
-            self._write_log.append(WriteRecord(
-                field=k,
-                writer=writer,
-                timestamp=datetime.now(UTC).isoformat(),
-            ))
-
-# P1-B: 向后兼容 alias. 旧代码 `from auto_engineering.engine.state import LoopState` 仍可用.
-LoopState = EngineState

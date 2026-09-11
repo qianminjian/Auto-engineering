@@ -277,12 +277,7 @@ def test_voice_clone_golden_reaches_done_through_real_core(
             ):
                 context = _prompt_context(invocation.prompt)
                 if current_stage == "architect":
-                    catalog = context.get("design_item_catalog", [])
-                    refs_by_component = {}
-                    for item in catalog:
-                        refs_by_component.setdefault(item.get("component"), []).append(
-                            item["design_item"]
-                        )
+                    refs_by_component = context.get("canonical_design_item_refs", {})
                     return {
                         "plan": (
                             "保留纯前端 SPA、内存 API Key 和 MiniMax 直连设计，"
@@ -291,12 +286,14 @@ def test_voice_clone_golden_reaches_done_through_real_core(
                         "batch_plan": [
                             {"batch_id": "B1", "component": "VoiceClonePage",
                              "design_item_refs": refs_by_component.get("VoiceClonePage", []),
-                             "tasks": [{"id": "B1-T1", "description": "页面",
-                                        "file_targets": ["voice_clone/page.py"]}]},
+                                 "tasks": [{"id": "B1-T1", "description": "页面",
+                                            "kind": "implementation", "module_ref": "VoiceClonePage",
+                                            "file_targets": ["voice_clone/page.py"], "depends_on": []}]},
                             {"batch_id": "B2", "component": "AudioPipeline",
                              "design_item_refs": refs_by_component.get("AudioPipeline", []),
-                             "tasks": [{"id": "B2-T1", "description": "音频",
-                                        "file_targets": ["voice_clone/audio.py"]}]},
+                                 "tasks": [{"id": "B2-T1", "description": "音频",
+                                            "kind": "implementation", "module_ref": "AudioPipeline",
+                                            "file_targets": ["voice_clone/audio.py"], "depends_on": []}]},
                         ],
                         "file_list": ["voice_clone/page.py", "voice_clone/audio.py"],
                         "contracts": {},
@@ -308,7 +305,10 @@ def test_voice_clone_golden_reaches_done_through_real_core(
                 if current_stage == "developer":
                     return {
                         "batch_id": context["batch_id"],
-                        "files_changed": [f"voice_clone/part_{current_batch}.py"],
+                        "task_ids": [task["id"] for task in context["tasks"]],
+                        "files_changed": [
+                            context["tasks"][0]["file_targets"][0]
+                        ],
                         "commit_hash": "",
                         "test_results": {"passed": 127, "failed": 0, "total": 127},
                         "red_evidence": ["先失败后通过"],
@@ -332,7 +332,8 @@ def test_voice_clone_golden_reaches_done_through_real_core(
                         "component": context["component"],
                         "coverage_map": [
                             {"design_item": item["design_item"], "status": "IMPLEMENTED",
-                             "file": "voice_clone/page.py", "line": 1, "note": ""}
+                             "file": context["implementation_files"][0],
+                             "line": 1, "note": "组件实现已按设计条目核验"}
                             for item in context["allowed_design_items"]
                         ],
                         "missing_count": 0, "diverged_count": 0,
@@ -342,10 +343,36 @@ def test_voice_clone_golden_reaches_done_through_real_core(
                             "p0_count": 0, "p1_count": 0, "p2_count": 0,
                             "cross_component_issues": [], "total_audited_files": 2}
                 if current_stage == "system_verifier":
-                    return {"full_coverage_map": [{"design_section": "golden",
-                                                    "status": "IMPLEMENTED"}],
-                            "total_design_items": 1, "covered_count": 1,
-                            "missing_count": 0, "diverged_count": 0}
+                    component_coverage = context.get("component_coverage", [])
+                    coverage = [
+                        {
+                            "design_section": "golden",
+                            "design_item": item["design_item"],
+                            "status": item.get("status", "IMPLEMENTED"),
+                            "implementation": (
+                                f"{item.get('file', 'voice_clone/page.py')}"
+                                f":{item.get('line', 1)}"
+                            ),
+                            "note": "黄金轨迹逐项复核实现证据",
+                        }
+                        for item in component_coverage
+                        if isinstance(item, dict)
+                        and isinstance(item.get("design_item"), str)
+                    ]
+                    return {
+                        "full_coverage_map": coverage,
+                        "total_design_items": len(coverage),
+                        "covered_count": sum(
+                            item["status"] == "IMPLEMENTED"
+                            for item in coverage
+                        ),
+                        "missing_count": sum(
+                            item["status"] == "MISSING" for item in coverage
+                        ),
+                        "diverged_count": sum(
+                            item["status"] == "DIVERGED" for item in coverage
+                        ),
+                    }
                 if current_stage == "system_deep_audit":
                     return {"findings": [], "p0_count": 0, "p1_count": 0,
                             "p2_count": 0, "total_audited_files": 2,

@@ -84,7 +84,7 @@ class OutcomeRecoveryService:
             return None
         if journal.get("status") == "assembly_rejected":
             # 语义组装拒绝通常保留已完成 Worker；有事实时恢复并复用，
-            # 没有事实则保持旧兼容路径，允许首次 Worker 执行。
+            # 没有事实则允许当前 Action 首次执行 Worker。
             outcomes = self.authoritative_outcomes(
                 journal=journal,
                 action_message_id=message_id,

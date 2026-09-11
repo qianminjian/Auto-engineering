@@ -12,7 +12,7 @@
 
 与 /audit 的关系:
   - Phase 1 自动化扫描 → 本 Gate 直接实现 (快速, 确定性)
-  - Phase 2 深度 Agent 审计 → 可选 LLM 增强路径 (future)
+  - Phase 2 深度 Agent 审计 → 由宿主执行并通过当前 Action contracts 注入结果
   - Phase 3 汇总报告 → GateVerdict.message (结构化 findings)
 """
 
@@ -23,6 +23,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from auto_engineering.gates._scan_utils import DEFAULT_SKIP_DIRS, find_silent_except_lines
 from auto_engineering.gates.base import Gate, GateVerdict
 
 __all__ = [
@@ -54,10 +55,8 @@ class AuditFinding:
     evidence: str = ""
 
 
-# 语义检查器扩展点 (B15.3 #6): (rel_path, content) → 额外 findings.
-# 默认注入 None (纯正则路径). 这是 Agent 侧 / LLM 后端语义层的挂载点 —
-# Python 本身永不调 LLM (§A.1), 只做确定性正则 + 合并"注入进来"的语义结果.
-# 检测正则看不到的语义问题 (误导性命名 / 逻辑与设计矛盾, 用 crafted context).
+# 语义审计结果只能由宿主通过当前 Action contracts 注入；Python 本身不调 LLM、
+# 不 spawn Agent，不在这里形成第二套隐式审计/协调循环。
 
 def finding_fingerprint(f: AuditFinding) -> str:
     """finding 稳定指纹 `severity|dimension|file|description` — 行号**不入**指纹.
@@ -72,12 +71,8 @@ def finding_fingerprint(f: AuditFinding) -> str:
 # 扫描规则 (直接复用 /audit Phase 1.2 通用反模式扫描)
 # ============================================================
 
-# 跳过这些目录
-SKIP_DIRS = {
-    ".git", ".venv", "venv", "node_modules", "__pycache__",
-    ".pytest_cache", ".ae-state", ".uv-cache", "dist", "build", ".eggs",
-    "_scratch", ".planning", ".ae-plugin",
-}
+# 跳过这些目录；与 SafetyGate 共用扫描边界。
+SKIP_DIRS = set(DEFAULT_SKIP_DIRS)
 
 # 单文件大小上限 (MB)
 _MAX_FILE_MB = 5
@@ -104,10 +99,13 @@ _SILENT_EXCEPT_PY = re.compile(
     re.MULTILINE,
 )
 
+
 # P0: 硬编码密钥/密码 (通用)
 _HARDCODED_SECRET = re.compile(
     r"(?i)(?:api[_-]?key|secret[_-]?key|password|token|AUTH_TOKEN)"
-    r"\s*[:=]\s*['\"][A-Za-z0-9_\-]{16,}['\"]",
+    r"\s*[:=]\s*['\"]"
+    r"(?!(?:config|error|invalid|missing|unknown|test|example|placeholder)_"
+    r"[a-z0-9_]+['\"])[A-Za-z0-9_\-]{16,}['\"]",
 )
 
 # P1: TODO/FIXME/HACK/XXX
@@ -274,14 +272,13 @@ class AuditGate(Gate):
     def _scan_py(self, content: str, rel: str) -> list[AuditFinding]:
         findings: list[AuditFinding] = []
 
-        # P0: 静默吞异常
-        for m in _SILENT_EXCEPT_PY.finditer(content):
-            line_no = content[: m.start()].count("\n") + 1
+        # P0: 真正空处理的异常；受控 return/转换不属于静默吞异常。
+        for line_no in find_silent_except_lines(content):
             findings.append(AuditFinding(
                 severity="P0", dimension="代码质量",
                 file=rel, line=line_no,
                 description="静默吞异常 (except 无 logger/raise)",
-                evidence=m.group().strip()[:80],
+                evidence=content.splitlines()[line_no - 1].strip()[:80],
             ))
 
         # P1: TODO/FIXME/HACK/XXX

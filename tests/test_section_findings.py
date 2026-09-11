@@ -67,7 +67,6 @@ def test_normalize_section_findings_reports_all_identity_violations(
 def test_core_rejects_raw_section_findings_before_progression(tmp_path) -> None:
     orchestrator = TickOrchestrator(
         project_root=tmp_path,
-        checkpoint_store=None,
     )
     orchestrator._state = EngineState(
         thread_id="thread-1",

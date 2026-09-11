@@ -87,7 +87,7 @@ ae-run dev-loop --resume
 
 ## 5. 配置与运行状态
 
-- `.ae-state/`：checkpoint、result、metrics 等本地状态。
+- `.ae-state/`：EventStore `events.db`、result 和运行证据等本地状态；EventStore 是唯一事实源。
 - `ae.toml`：可选项目配置。`[project]` 用于显式提供 ProjectProfile，运行时 Feature
   配置用于覆盖 `FeatureManifest` 默认值；两者缺失时仍可直接启动 Loop，不会被配置向导
   或 `CONFIG_REQUIRED` 阻断。环境变量优先级高于文件，可在运行前逐项覆盖。需要显式
@@ -107,7 +107,7 @@ ae-run dev-loop --resume
 1. Guardrail 前后置约束。
 2. safety、lint、type check、audit、contract、test、build Gates。
 3. critic、component、plate、system 与 system deep audit 五层验证。
-4. checkpoint 原子持久化。
+4. EventStore 单 Tick 事务持久化。
 
 验证范围可按变更范围裁剪，但必需层不可被提示词或口头结论短路。
 
@@ -126,12 +126,12 @@ ae-run dev-loop --resume
 `$auto-engineering` 进入，不要手工伪造宿主状态。
 
 **Tick 无法恢复**：先查看 `ae-run status --format json`；保留
-`.ae-state/` 供诊断，不直接编辑 checkpoint 数据库。
+`.ae-state/` 供诊断，不直接编辑 EventStore 数据库。
 
 ## 9. 更多资料
 
-- 当前设计：`design/v5.6-Design-Loop.md`
-- 目标设计：`design/v5.7-Protocol-Kernel-Design.md`
+- 当前设计入口：`design/BEACON.md`、`design/INDEX.md`
+- 当前主链设计：`design/v5.8-Main-Agent-Coordinator-Recovery-Design.md`
 - 当前跟踪：`design/IMPLEMENTATION-TRACKER.md`
 - API：`docs/api-reference.md`
 - 历史：`design/HISTORY.md`

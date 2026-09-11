@@ -179,7 +179,7 @@ class GitDiffExists(Guardrail):
         resolved_root = project_root if project_root is not None else Path.cwd()
         declared_files = declared_real_files(state, resolved_root)
 
-        # T221: checkpoint 是循环边界，先认可未提交的真实工作树变更。
+        # T221: 阶段 Gate 是循环边界，先认可未提交的真实工作树变更。
         rc0, stdout0 = _run_git_diff(resolved_root, [])
         if rc0 == 0 and stdout0.strip():
             return GuardrailResult()

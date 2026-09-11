@@ -12,7 +12,7 @@ from subprocess import CompletedProcess
 import pytest
 
 
-def test_verify_checkpoint_lifecycle_checks_status_and_resume(
+def test_verify_event_store_lifecycle_checks_status_and_resume(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -54,7 +54,7 @@ def test_verify_checkpoint_lifecycle_checks_status_and_resume(
 
     monkeypatch.setattr(install_acceptance, "_run", fake_run)
 
-    evidence = install_acceptance._verify_checkpoint_lifecycle(
+    evidence = install_acceptance._verify_event_store_lifecycle(
         "scripts/ae-run",
         tmp_path,
         {},

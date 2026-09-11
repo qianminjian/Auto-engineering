@@ -22,6 +22,7 @@ from scripts.install_codex_local import (
     install_codex_release,
     stage_archive,
     stage_release,
+    verify_codex_hook_wire_contract,
     verify_runtime_paths,
 )
 
@@ -297,6 +298,18 @@ def test_runtime_path_verification_accepts_isolated_origins(
         plugin_root=plugin_root,
         module_origin=plugin_root / "auto_engineering/__init__.py",
         runtime_root=tmp_path / "project/.ae-state/.ae-runtime",
+    )
+
+
+def test_installed_codex_hook_wire_contract_blocks_before_mutation(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    (project / ".ae-state").mkdir(parents=True)
+    verify_codex_hook_wire_contract(
+        plugin_root=ROOT,
+        project_root=project,
+        environment={"PATH": os.environ["PATH"]},
     )
 
 

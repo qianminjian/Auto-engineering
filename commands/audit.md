@@ -13,20 +13,16 @@ description: 深度审计 — 架构/代码质量/工程化/协作/虚化度 5 �
 - **语言**: Python
 - **核心模块**: agents/ loop/ gates/ engine/ cli/ runtime/ tools/
 - **设计基线**: `design/BEACON.md`
-- **设计文档**: `design/v5.6-Design-Loop.md`
-- **验收标准**: `docs/EARS-v5.0.md`
-- **参考项目**:
-  - LangGraph — `~/Documents/06-Mi-Model-Rule/历史项目或资料备份/auto-eng/references/langgraph/`（tick/after_tick 控制流）
-  - AutoGen — `~/Documents/06-Mi-Model-Rule/历史项目或资料备份/auto-eng/references/autogen/`（AgentRuntime 懒实例化）
-  - CrewAI — `~/Documents/06-Mi-Model-Rule/历史项目或资料备份/auto-eng/references/crewai/`（Guardrail 模式）
+- **设计文档**: `design/BEACON.md`、`design/INDEX.md`、`design/v5.8-Main-Agent-Coordinator-Recovery-Design.md`、`design/v5.8-Scheme-A-Convergence-Plan.md`
+- **验收标准**: `design/v5.8-Real-Host-Acceptance-Runbook.md` 与 `design/IMPLEMENTATION-TRACKER.md`
+- **外部对标**: 仅按 AGENTS.md 的“Grep 定位 → 片段读取”规则单文件、只读、按需对标；禁止并行或全量扫描参考源码。
 
 ## 执行（三阶段，自含）
 
 ### Phase 1 — 自动化确定性扫描（项目自有 Gate）
 
 ```bash
-# Phase 40: ae gate-check CLI 已删除。Gate 在 dev-loop 内自动运行。
-# 手动跑 Gate: ae dev-loop --tick (dev-loop 内自动 trigger gate chain)
+# Phase 40: ae gate-check CLI 已删除。Gate 在 dev-loop 的单 Tick 提交中自动运行。
 make check-gate           # 静默吞异常闸门
 make audit-dead-imports   # dead import (F401)
 make audit-line-count     # 超 400 行文件
@@ -36,10 +32,11 @@ make audit-test-gap       # 测试缺口
 AuditGate 的 5 维静态扫描提供确定性基线 findings（`gates/audit.py`），
 无需 LLM，可复现。
 
-### Phase 2 — 3-Agent 并行深度审计（内化 system_deep_audit 方法论，§B6.7a）
+### Phase 2 — 隔离只读深度审计（内化 system_deep_audit 方法论，§B6.7a）
 
-**并行 spawn 3 个子 Agent**（对齐 `loop/deep_audit.py` 的 `AUDIT_DIMENSIONS`），
-各自 Read 上下文后产出结构化 findings —— **不委托任何外部 `/audit` 命令**：
+按 `loop/deep_audit.py` 的 `AUDIT_DIMENSIONS` 分配最多 3 个隔离只读审计任务，
+遵守项目内存约束，不并行扫描外部参考源码；各自 Read 有界上下文后产出结构化 findings ——
+**不委托任何外部 `/audit` 命令**：
 
 | 子 Agent | agent_source | 覆盖维度（audit-role.md 5 维映射）|
 |---------|--------------|--------------------------------|
@@ -49,7 +46,7 @@ AuditGate 的 5 维静态扫描提供确定性基线 findings（`gates/audit.py`
 
 每个子 Agent 必须：
 1. 先 Read `design/BEACON.md` 对齐设计基线
-2. 对比 `design/v5.6-Design-Loop.md` 设计约定与代码实际实现（差异默认判为代码缺口，见 `design-document-inviolability.md`）
+2. 对比当前设计入口及 `design/v5.8-Main-Agent-Coordinator-Recovery-Design.md` 与代码实际实现（差异默认判为代码缺口，见 `design-document-inviolability.md`）
 3. 参考 LangGraph/AutoGen/CrewAI 对应模块逐项比对，标注差异（遵守 `CLAUDE.md` §硬禁令：grep 定位 → 50-200 行 Read → 丢弃，禁批量/并行扫描参考源）
 4. 遵守 `@.claude/rules/audit-role.md` 审计约束
 5. 输出 findings：`[{severity(P0/P1/P2), dimension, agent_source, file, line, description, evidence, suggested_fix}]`

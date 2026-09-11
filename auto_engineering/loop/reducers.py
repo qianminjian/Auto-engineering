@@ -1,4 +1,4 @@
-"""显式领域事件 Reducer 与只读 legacy state patch 兼容。"""
+"""显式领域事件 Reducer；所有新状态变化均通过领域事件投影。"""
 
 from __future__ import annotations
 
@@ -57,7 +57,6 @@ EVENT_CHANNELS: dict[LoopEventType, frozenset[str]] = {
         "audit_revision_fingerprints",
     }),
     LoopEventType.LIFECYCLE_STATE_UPDATED: frozenset({
-        "round",
         "tick",
         "expected_stage",
         "guardrail_retry_counters",
@@ -93,6 +92,7 @@ EVENT_CHANNELS: dict[LoopEventType, frozenset[str]] = {
         "project_profile_id",
         "missing_project_capabilities",
         "project_setup_failure_streak",
+        "project_setup_failure_fingerprint",
         "project_setup_baseline_files",
     }),
     LoopEventType.PROJECT_ANCHORS_WITNESSED: frozenset({
@@ -283,7 +283,12 @@ def _batch_completed(state: EngineState, event: LoopEvent) -> EngineState:
         "next_task",
     }
     if set(payload) != required:
-        raise EventChannelViolation("BATCH_COMPLETED_PAYLOAD_INVALID")
+        missing = sorted(required - set(payload))
+        unexpected = sorted(set(payload) - required)
+        raise EventChannelViolation(
+            "BATCH_COMPLETED_PAYLOAD_INVALID: "
+            f"missing={missing}, unexpected={unexpected}"
+        )
     batch_id = payload.get("batch_id")
     task_ids = payload.get("task_ids")
     count = payload.get("completed_task_count")
@@ -307,7 +312,13 @@ def _batch_completed(state: EngineState, event: LoopEvent) -> EngineState:
         or not isinstance(state.batch_state_json, str)
         or not isinstance(state.progress_tree_json, str)
     ):
-        raise EventChannelViolation("BATCH_COMPLETED_PAYLOAD_INVALID")
+        raise EventChannelViolation(
+            "BATCH_COMPLETED_PAYLOAD_INVALID: "
+            f"batch_state_json={isinstance(state.batch_state_json, str)}, "
+            f"progress_tree_json={isinstance(state.progress_tree_json, str)}, "
+            f"batch_id={batch_id!r}, task_ids={task_ids!r}, "
+            f"design_section={section!r}, progress_node_id={progress_node_id!r}"
+        )
     try:
         batch_state = BatchState.from_json(state.batch_state_json, None)
         progress_tree = ProgressTree.from_dict(

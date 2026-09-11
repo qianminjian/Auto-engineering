@@ -76,6 +76,30 @@ def test_same_design_and_existing_declared_roots_are_compatible(tmp_path: Path) 
     assert report.reason_codes == ()
 
 
+def test_active_action_from_another_build_requires_reconciliation(tmp_path: Path) -> None:
+    intent = _intent(tmp_path)
+    (tmp_path / "src").mkdir()
+    (tmp_path / "tests").mkdir()
+    report = StateCompatibilityInspector(tmp_path).inspect(
+        intent=intent,
+        state=_state(intent),
+        profile_resolution=ProjectProfileResolution(
+            status=ResolutionStatus.RESOLVED,
+            profile=None,
+        ),
+        active_action={
+            "action": "agent",
+            "stage": "developer",
+            "extensions": {
+                "ae": {"runtime_revision": {"engine_build_id": "old-build"}},
+            },
+        },
+    )
+
+    assert report.status is CompatibilityStatus.CONFLICT
+    assert "runtime_build_changed" in report.reason_codes
+
+
 def test_changed_design_is_a_conflict(tmp_path: Path) -> None:
     original = _intent(tmp_path, "# Original\n")
     state = _state(original)

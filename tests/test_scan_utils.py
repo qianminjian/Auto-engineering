@@ -6,6 +6,7 @@ from pathlib import Path
 
 from auto_engineering.gates._scan_utils import (
     DEFAULT_MAX_FILE_MB,
+    DEFAULT_SKIP_DIRS,
     iter_scan_files,
     read_file_safe,
     should_skip_path,
@@ -97,3 +98,6 @@ class TestDefaultConstant:
 
     def test_default_max_file_mb_is_5(self) -> None:
         assert DEFAULT_MAX_FILE_MB == 5
+
+    def test_business_scanners_share_runtime_boundary(self) -> None:
+        assert {".ae-runtime", ".ae-plugin", "tests"}.issubset(DEFAULT_SKIP_DIRS)

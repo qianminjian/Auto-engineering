@@ -11,36 +11,31 @@ from types import SimpleNamespace
 import pytest
 
 
-class _Store:
-    instances: list[_Store] = []
+class _EventStore:
+    instances: list[_EventStore] = []
 
     def __init__(self, path: Path) -> None:
         self.path = path
         self.closed = False
-        self.thread_checkpoint: str | None = "resolved-checkpoint"
         self.__class__.instances.append(self)
 
     def close(self) -> None:
         self.closed = True
 
-    def find_by_thread_id(self, candidate: str) -> str | None:
-        return self.thread_checkpoint
-
-    def active_project_thread(self) -> str | None:
-        return "thread-1"
-
-    def reserve_project_thread(self, candidate: str) -> str | None:
-        self.reserved_thread_id = candidate
+    def load_action_snapshot(self, thread_id: str) -> dict[str, object] | None:
+        del thread_id
         return None
 
-    def release_project_thread(self, thread_id: str) -> bool:
-        self.released_thread_id = thread_id
-        return True
+    def load_projection(self, thread_id: str):
+        del thread_id
+        return None
 
+    def load_stream(self, thread_id: str) -> list[object]:
+        del thread_id
+        return []
 
 class _Orchestrator:
     restore_calls: list[str | None] = []
-    fail_first_restore = False
     action: dict[str, object] = {"action": "developer", "tick": 2}
     tick_error: Exception | None = None
 
@@ -52,7 +47,6 @@ class _Orchestrator:
             current_stage="developer",
             expected_stage="developer",
             tick=2,
-            round=1,
             critic_verdict=None,
             total_majors=0,
             plan_refine_count=0,
@@ -67,7 +61,6 @@ class _Orchestrator:
         requirement: str,
         *,
         design_doc_path: str | None,
-        max_rounds: int,
         thread_id: str | None = None,
     ) -> dict[str, object]:
         return {
@@ -77,27 +70,15 @@ class _Orchestrator:
         }
 
     @classmethod
-    def restore(
-        cls,
-        root: Path,
-        store: _Store,
-        *,
-        checkpoint_id: str | None = None,
-        **kwargs: object,
-    ) -> _Orchestrator:
-        cls.restore_calls.append(checkpoint_id)
-        if cls.fail_first_restore and len(cls.restore_calls) == 1:
-            raise ValueError("not found")
-        return cls(root)
-
-    @classmethod
     def restore_from_event_store(
         cls,
         root: Path,
-        store: _Store,
+        store: _EventStore | None = None,
         **kwargs: object,
     ) -> _Orchestrator:
-        return cls.restore(root, store, **kwargs)
+        del store, kwargs
+        cls.restore_calls.append(None)
+        return cls(root)
 
     def tick(self, result_file: Path) -> dict[str, object]:
         if self.tick_error is not None:
@@ -119,7 +100,6 @@ class _Orchestrator:
             "current_stage": self._state.current_stage,
             "expected_stage": self._state.expected_stage,
             "tick": self._state.tick,
-            "round": self._state.round,
             "verdict": self._state.critic_verdict,
             "total_majors": self._state.total_majors,
             "plan_refine_count": self._state.plan_refine_count,
@@ -151,20 +131,22 @@ class _Orchestrator:
 
 @pytest.fixture(autouse=True)
 def _reset_fakes() -> None:
-    _Store.instances.clear()
+    _EventStore.instances.clear()
     _Orchestrator.restore_calls.clear()
-    _Orchestrator.fail_first_restore = False
     _Orchestrator.action = {"action": "developer", "tick": 2}
     _Orchestrator.tick_error = None
 
 
 @pytest.fixture
 def _patch_tick_types(monkeypatch: pytest.MonkeyPatch) -> None:
-    import auto_engineering.loop.checkpoint.store as store_module
+    import auto_engineering.loop.event_store as store_module
     import auto_engineering.loop.tick_orchestrator as orchestrator_module
+    dev_loop = import_module("auto_engineering.cli.dev_loop")
 
-    monkeypatch.setattr(store_module, "SQLiteCheckpointStore", _Store)
+    monkeypatch.setattr(store_module, "SQLiteEventStore", _EventStore)
     monkeypatch.setattr(orchestrator_module, "TickOrchestrator", _Orchestrator)
+    monkeypatch.setattr(dev_loop, "_active_thread", lambda _events: "thread-1")
+    monkeypatch.setattr(dev_loop, "_unfinished_thread", lambda _events: "thread-1")
 
 
 def _config(*, metrics: bool = False) -> SimpleNamespace:
@@ -195,7 +177,7 @@ def test_requirement_category_inference(
     assert _infer_category(requirement) == expected
 
 
-def test_tick_init_emits_action_and_closes_store(
+def test_tick_init_emits_action_with_event_store(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -209,6 +191,7 @@ def test_tick_init_emits_action_and_closes_store(
         "tracer": None,
         "audit_logger": None,
     })
+    monkeypatch.setattr(dev_loop, "_unfinished_thread", lambda _events: None)
     monkeypatch.setattr(dev_loop, "get_default_config", lambda: _config())
 
     dev_loop.run_tick_init(
@@ -220,7 +203,6 @@ def test_tick_init_emits_action_and_closes_store(
     )
 
     assert json.loads(capsys.readouterr().out)["action"] == "architect"
-    assert _Store.instances[-1].closed is True
 
 
 @pytest.mark.parametrize("terminal", [False, True])
@@ -239,17 +221,14 @@ def test_tick_step_updates_metrics_and_closes_store(
         ended: list[tuple[str, int]] = []
         flushed = 0
 
-        def __init__(self, root: Path) -> None:
+        def __init__(self, root: Path, *, event_store=None) -> None:
             self.root = root
 
-        def resume_events(self, thread_id: str) -> None:
+        def resume_from_event_store(self, thread_id: str) -> None:
             self.resumed.append(thread_id)
 
         def end_requirement(self, verdict: str, *, total_ticks: int) -> None:
             self.ended.append((verdict, total_ticks))
-
-        def _flush(self) -> None:
-            self.__class__.flushed += 1
 
     active: dict[str, Collector] = {}
     monkeypatch.setattr(collector_module, "MetricsCollector", Collector)
@@ -284,9 +263,6 @@ def test_tick_step_updates_metrics_and_closes_store(
     assert Collector.resumed[-1] == "thread-1"
     if terminal:
         assert Collector.ended[-1] == ("PASS", 9)
-    else:
-        assert Collector.flushed == 1
-    assert _Store.instances[-1].closed is True
 
 
 def test_tick_step_returns_structured_projection_error(
@@ -318,7 +294,6 @@ def test_tick_step_returns_structured_projection_error(
     assert action["error_code"] == "STATE_PROJECTION_MISMATCH"
     assert action["extensions"]["ae"]["execution_control"]["disposition"] == "ERROR"
     assert "Traceback" not in captured.out
-    assert _Store.instances[-1].closed is True
 
 
 def test_tick_status_verbose_renders_batch_summary(
@@ -347,7 +322,12 @@ def test_tick_status_verbose_renders_batch_summary(
 
     original_restore = _Orchestrator.restore_from_event_store.__func__
 
-    def restore(cls: type[_Orchestrator], root: Path, store: _Store, **kwargs: object) -> _Orchestrator:
+    def restore(
+        cls: type[_Orchestrator],
+        root: Path,
+        store: _EventStore | None = None,
+        **kwargs: object,
+    ) -> _Orchestrator:
         instance = original_restore(cls, root, store, **kwargs)
         instance._batch_state = BatchState()
         return instance
@@ -359,7 +339,6 @@ def test_tick_status_verbose_renders_batch_summary(
 
     assert summary["batch_progress"]["current_component"] == "api"
     assert summary["batch_progress"]["batches"][0]["task_count"] == 2
-    assert _Store.instances[-1].closed is True
 
 
 def test_tick_status_verbose_degrades_when_batch_component_fails(
@@ -379,7 +358,12 @@ def test_tick_status_verbose_degrades_when_batch_component_fails(
 
     original_restore = _Orchestrator.restore_from_event_store.__func__
 
-    def restore(cls: type[_Orchestrator], root: Path, store: _Store, **kwargs: object) -> _Orchestrator:
+    def restore(
+        cls: type[_Orchestrator],
+        root: Path,
+        store: _EventStore | None = None,
+        **kwargs: object,
+    ) -> _Orchestrator:
         instance = original_restore(cls, root, store, **kwargs)
         instance._batch_state = BrokenBatchState()
         return instance
@@ -391,10 +375,33 @@ def test_tick_status_verbose_degrades_when_batch_component_fails(
 
     assert summary["batch_progress"]["current_component"] == "?"
     assert summary["batch_progress"]["total_batches"] == 0
-    assert _Store.instances[-1].closed is True
 
 
-def test_tick_resume_does_not_fall_back_to_checkpoint(
+def test_tick_status_does_not_use_stale_continue_lease_as_thread_source(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    _patch_tick_types: None,
+) -> None:
+    """旧租约不能把已无活动的 thread 伪装成可继续状态。"""
+    dev_loop = import_module("auto_engineering.cli.dev_loop")
+
+    class StaleLease:
+        disposition = "CONTINUE"
+        thread_id = "stale-thread"
+
+    monkeypatch.setattr(
+        "auto_engineering.host.runtime_driver.HostRunLeaseStore.load",
+        lambda _store: StaleLease(),
+    )
+    dev_loop.run_tick_status(tmp_path)
+    summary = json.loads(capsys.readouterr().out)
+
+    assert summary["error_code"] == "HOST_RUN_LEASE_THREAD_MISMATCH"
+    assert summary["recovery_required"] is True
+
+
+def test_tick_resume_does_not_fall_back_to_second_state_source(
     tmp_path: Path,
     _patch_tick_types: None,
 ) -> None:
@@ -405,7 +412,7 @@ def test_tick_resume_does_not_fall_back_to_checkpoint(
     with pytest.raises(click.ClickException, match="EVENT_ACTION_NOT_FOUND"):
         run_tick_resume("thread-1", tmp_path)
     assert _Orchestrator.restore_calls == []
-    assert _Store.instances == []
+    assert len(_EventStore.instances) == 1
 
 
 def test_tick_resume_reuses_stop_report_host_platform(

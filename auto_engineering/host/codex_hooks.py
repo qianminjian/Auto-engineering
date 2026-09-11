@@ -12,6 +12,9 @@ from pathlib import Path
 from typing import TextIO
 
 from auto_engineering.host import HostEvent, HostPlatform
+from auto_engineering.host.codex_wait_observation import (
+    record_codex_wait_observation as _record_codex_wait_observation,
+)
 
 _EVENT_NAMES = {
     "SessionStart": "session_start",
@@ -224,6 +227,49 @@ def _completed_body(raw: bytes, target_id: str) -> str | None:
     return None
 
 
+def _wait_status(completed: str | None) -> str:
+    if completed is None:
+        return "running"
+    mapping = _json_mapping(completed.encode("utf-8"))
+    status = mapping.get("status") if mapping is not None else None
+    return status if status in {
+        "completed", "failed", "cancelled", "timed_out",
+    } else "running"
+
+
+def _native_wait_status(raw: bytes, target_id: str, completed: str | None) -> str:
+    """读取 wait target 的终态，即使宿主不返回完成正文。
+
+    Codex 的真实 wait 回包可能是 ``{status: {target: {status:
+    "completed", message: null}}}``。正文缺失不等于 Worker 仍在运行；
+    但只有 status observation，不足以生成业务 payload，后续必须消费
+    Worker 私有 outcome 的 status-only record 合同。
+    """
+
+    if completed is not None:
+        return _wait_status(completed)
+    value = _json_mapping(raw)
+    if value is None:
+        return "running"
+    for field in ("agents_states", "status"):
+        states = value.get(field)
+        if not isinstance(states, Mapping):
+            continue
+        state = states.get(target_id)
+        if isinstance(state, Mapping):
+            status = state.get("status")
+            if status in {"completed", "failed", "cancelled", "timed_out"}:
+                return status
+            completed_value = state.get("completed")
+            if isinstance(completed_value, str):
+                return _wait_status(completed_value)
+        elif isinstance(state, str) and state in {
+            "completed", "failed", "cancelled", "timed_out",
+        }:
+            return state
+    return "running"
+
+
 def _capture_codex_post_tool(payload: Mapping[str, object]) -> str | None:
     """自动固化 Codex spawn/wait 的原始 Worker 证据。"""
 
@@ -267,8 +313,36 @@ def _capture_codex_post_tool(payload: Mapping[str, object]) -> str | None:
     target_id = targets[0]
     worker = _worker_for_target(workers, project_root, target_id)
     completed = _completed_body(raw, target_id)
+    observed_native_status = _native_wait_status(raw, target_id, completed)
+    observed, observed_status = _record_codex_wait_observation(
+        project_root,
+        worker,
+        target_id=target_id,
+        native_status=observed_native_status,
+    )
     if completed is None:
-        return "Auto-Engineering Hook 已记录 Worker 仍在运行"
+        if observed_status in {"completed", "failed", "cancelled"}:
+            return (
+                "Auto-Engineering Hook 已记录 Worker 的原生终态 "
+                f"{observed_status}；若正文为空，必须使用当前私有 outcome "
+                "并按固定模板调用 --native-status-only，禁止把 wait 外层包装当业务结果"
+            )
+        if observed_status == "timed_out":
+            return (
+                "Auto-Engineering 三次长等待已耗尽：必须先查询并确认 Worker owner，"
+                "正常取消或进入 WAIT_RESOURCE；禁止直接 finalize、重启 Worker 或让出 CONTINUE"
+            )
+        if observed_status == "unknown":
+            return (
+                "Auto-Engineering 等待预算已耗尽但 Worker 仍未返回终态；"
+                "所有权不确定，必须先查询并确认 Worker owner，禁止写入 timed_out、"
+                "重启 Worker 或让出 CONTINUE"
+            )
+        suffix = "" if observed else "；观察事实未能固化"
+        return (
+            "Auto-Engineering Hook 已记录 Worker 仍在运行；必须继续当前 Action 的 wait"
+            + suffix
+        )
     if worker is None or not _write_native_bytes(
         project_root, worker.get("native_result_path"), completed.encode("utf-8"),
     ):
@@ -277,102 +351,11 @@ def _capture_codex_post_tool(payload: Mapping[str, object]) -> str | None:
 
 
 def main(stdin: TextIO = sys.stdin, stdout: TextIO = sys.stdout) -> int:
-    """验证 Hook；同一会话仍有 CONTINUE Action 时拒绝误停。"""
-    response_written = False
-    try:
-        payload = json.load(stdin)
-        if not isinstance(payload, dict):
-            raise ValueError("Hook 输入必须是 JSON object")
-        event = normalize_codex_event(payload)
-        if event.event == "post_tool":
-            message = _capture_codex_post_tool(payload)
-            if message is not None:
-                json.dump({"systemMessage": message}, stdout, ensure_ascii=False)
-                stdout.write("\n")
-                response_written = True
-        if event.event == "pre_tool":
-            from auto_engineering.host.native_launch_guard import (
-                NativeLaunchGuardError,
-                guard_active_native_tool_call,
-                guard_system_message,
-            )
+    """兼容入口；实现位于独立的 Hook dispatch 模块。"""
 
-            try:
-                guard_active_native_tool_call(
-                    payload,
-                    project_root=event.project_root,
-                    platform=HostPlatform.CODEX,
-                )
-            except NativeLaunchGuardError as exc:
-                json.dump(
-                    {
-                        "decision": "block",
-                        "reason_code": exc.code,
-                        "systemMessage": guard_system_message(exc.code),
-                    },
-                    stdout,
-                    ensure_ascii=False,
-                )
-                stdout.write("\n")
-                response_written = True
-                return 0
-        if event.event == "stop":
-            from auto_engineering.host.runtime_driver import (
-                HostRunLeaseError,
-                HostRunLeaseStore,
-                StopGuardDecision,
-                evaluate_stop,
-            )
+    from auto_engineering.host.codex_hook_dispatch import main as dispatch
 
-            session_id = payload.get("session_id")
-            normalized_session = session_id if isinstance(session_id, str) else None
-            try:
-                lease = HostRunLeaseStore(event.project_root).load()
-            except HostRunLeaseError:
-                json.dump(
-                    {
-                        "decision": "block",
-                        "reason_code": "AE_HOST_RUN_LEASE_CORRUPT",
-                        "systemMessage": "Auto-Engineering 运行租约损坏，已阻止不安全停止",
-                    },
-                    stdout,
-                    ensure_ascii=False,
-                )
-                stdout.write("\n")
-                response_written = True
-                return 0
-            if evaluate_stop(
-                lease,
-                host_session_id=normalized_session,
-            ) is StopGuardDecision.BLOCK:
-                assert lease is not None
-                json.dump(
-                    {
-                        "decision": "block",
-                        "reason_code": "AE_CONTINUATION_REQUIRED",
-                        "action_message_id": lease.action_message_id,
-                        "systemMessage": "Auto-Engineering 仍有必须继续执行的 Action",
-                    },
-                    stdout,
-                    ensure_ascii=False,
-                )
-                stdout.write("\n")
-                response_written = True
-        if not response_written:
-            json.dump(
-                {"systemMessage": "Auto-Engineering Hook 已安全跳过"},
-                stdout,
-                ensure_ascii=False,
-            )
-            stdout.write("\n")
-    except (json.JSONDecodeError, OSError, TypeError, ValueError):
-        json.dump(
-            {"systemMessage": "Auto-Engineering Hook 输入无效，已安全跳过"},
-            stdout,
-            ensure_ascii=False,
-        )
-        stdout.write("\n")
-    return 0
+    return dispatch(stdin, stdout)
 
 
 if __name__ == "__main__":

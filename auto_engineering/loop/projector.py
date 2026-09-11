@@ -22,7 +22,6 @@ class EngineStateProjector:
 
     _SEED_EVENTS: ClassVar[set[LoopEventType]] = {
         LoopEventType.LOOP_INITIALIZED,
-        LoopEventType.CHECKPOINT_IMPORTED,
     }
 
     def replay(self, events: Iterable[LoopEvent]) -> EngineState:

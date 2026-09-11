@@ -19,6 +19,12 @@ from auto_engineering.project_profile.models import (
     ProjectProfileError,
     ProjectProfileErrorCode,
 )
+from auto_engineering.project_profile.python_packaging import (
+    has_packaged_python_source,
+    python_build_command,
+    python_packaging_gaps,
+)
+from auto_engineering.project_profile.python_quality import has_python_dev_tool
 
 
 @dataclass(frozen=True, slots=True)
@@ -220,23 +226,30 @@ class LocalProbeProvider:
             project_type = project_type or "application"
             package_manager = package_manager or ("uv" if "uv.lock" in entries else None)
             source_roots.extend(self._python_roots(project_root, pyproject))
+            python_roots = tuple(dict.fromkeys(source_roots))
+            packaged_source = has_packaged_python_source(project_root, python_roots)
+            packaging_gaps = python_packaging_gaps(
+                project_root,
+                pyproject,
+                python_roots,
+            )
+            missing_capabilities.extend(packaging_gaps)
             tool = pyproject.get("tool")
             if isinstance(tool, dict) and isinstance(tool.get("pytest"), dict):
                 commands.setdefault("test", ("uv", "run", "python", "-m", "pytest"))
             ruff_config = tool.get("ruff") if isinstance(tool, dict) else None
-            python_roots = tuple(dict.fromkeys(source_roots))
             python_check_roots = tuple(
                 root for root in (*python_roots, *tuple(test_roots))
                 if self._contains_python_files(project_root, root)
             )
-            if isinstance(ruff_config, dict) or self._has_python_dev_tool(pyproject, "ruff"):
+            if isinstance(ruff_config, dict) or has_python_dev_tool(pyproject, "ruff"):
                 lint_targets = (*python_roots, *tuple(test_roots))
                 commands.setdefault("lint", (
                     "uv", "run", "ruff", "check",
                     *(lint_targets or (".",)),
                 ))
             mypy_config = tool.get("mypy") if isinstance(tool, dict) else None
-            if isinstance(mypy_config, dict) or self._has_python_dev_tool(pyproject, "mypy"):
+            if isinstance(mypy_config, dict) or has_python_dev_tool(pyproject, "mypy"):
                 has_explicit_targets = any(
                     mypy_config.get(key) for key in ("files", "modules", "packages")
                 ) if isinstance(mypy_config, dict) else False
@@ -246,9 +259,14 @@ class LocalProbeProvider:
                         *(() if has_explicit_targets else python_check_roots),
                     ))
             if python_roots:
-                commands.setdefault("build", (
-                    "uv", "run", "python", "-m", "compileall", "-q", *python_roots,
-                ))
+                commands.setdefault(
+                    "build",
+                    python_build_command(
+                        python_roots,
+                        packaging_gaps,
+                        packaged_source=packaged_source,
+                    ),
+                )
 
         if "go.mod" in entries:
             languages.append("go")
@@ -288,30 +306,6 @@ class LocalProbeProvider:
         for field_name in ("dependencies", "devDependencies"):
             dependencies = package.get(field_name)
             if isinstance(dependencies, Mapping) and name in dependencies:
-                return True
-        return False
-
-    @staticmethod
-    def _has_python_dev_tool(pyproject: Mapping[str, object], name: str) -> bool:
-        """仅把 PEP 735 ``dev`` 组中的工具当作质量命令声明证据。
-
-        ``ProjectProfile`` 只负责提出确定性命令；命令是否可执行仍由
-        ``ProfileCommandGate`` 验证。这里不读取任意依赖组或 optional-dependencies，
-        避免把生产依赖误判成开发质量工具。
-        """
-
-        dependency_groups = pyproject.get("dependency-groups")
-        if not isinstance(dependency_groups, Mapping):
-            return False
-        dev_group = dependency_groups.get("dev")
-        if not isinstance(dev_group, list):
-            return False
-        normalized_name = name.lower()
-        for requirement in dev_group:
-            if not isinstance(requirement, str):
-                continue
-            package_name = re.split(r"[\s<>=!~\[;]", requirement.strip(), maxsplit=1)[0]
-            if package_name.lower() == normalized_name:
                 return True
         return False
 

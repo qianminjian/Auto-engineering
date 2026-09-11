@@ -349,6 +349,51 @@ def test_local_probe_derives_configured_python_quality_commands(
     }
 
 
+def test_local_probe_blocks_packaged_python_project_until_build_contract_exists(
+    tmp_path: Path,
+) -> None:
+    package = tmp_path / "src" / "voice_app"
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\nname = 'voice-app'\nversion = '0.1.0'\n"
+        "[tool.pytest.ini_options]\ntestpaths = ['tests']\n",
+        encoding="utf-8",
+    )
+
+    result = ProjectProfileResolver((LocalProbeProvider(),)).resolve(tmp_path)
+
+    assert result.status is ResolutionStatus.SETUP_REQUIRED
+    assert result.profile is None
+    assert result.missing_capabilities == ("python_packaging",)
+
+
+def test_local_probe_promotes_verified_python_package_to_uv_build(
+    tmp_path: Path,
+) -> None:
+    package = tmp_path / "src" / "voice_app"
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "pyproject.toml").write_text(
+        "[build-system]\nrequires = ['hatchling']\n"
+        "build-backend = 'hatchling.build'\n"
+        "[project]\nname = 'voice-app'\nversion = '0.1.0'\n"
+        "[tool.hatch.build.targets.wheel]\npackages = ['src/voice_app']\n"
+        "[tool.hatch.build.targets.sdist]\n"
+        "exclude = ['/.ae-state', '/.ae-runtime', '/.venv', '/dist', '/build', '/_scratch', '/**/__pycache__']\n"
+        "[tool.pytest.ini_options]\ntestpaths = ['tests']\n",
+        encoding="utf-8",
+    )
+
+    result = ProjectProfileResolver((LocalProbeProvider(),)).resolve(tmp_path)
+
+    assert result.status is ResolutionStatus.RESOLVED
+    assert result.profile is not None
+    assert result.profile.commands["build"] == ("uv", "build")
+
+
 def test_local_probe_derives_python_quality_commands_from_dev_group(
     tmp_path: Path,
 ) -> None:

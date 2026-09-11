@@ -11,9 +11,6 @@ import pytest
 from auto_engineering.gates.base import SubprocessResult
 from auto_engineering.gates.profile import ProfileCommandGate
 from auto_engineering.gates.registry import build_gates_from_profile
-from auto_engineering.loop.checkpoint.records import CheckpointNotFoundError
-from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
-from auto_engineering.loop.tick_orchestrator import TickOrchestrator
 from auto_engineering.project_profile import ProjectProfile
 
 
@@ -180,33 +177,3 @@ def test_profile_gate_does_not_inherit_plugin_runtime_for_project_tools(
     assert "UV_PROJECT_ENVIRONMENT" not in environment
     assert "VIRTUAL_ENV" not in environment
     assert environment["PATH"].split(":")[:2] == [str(project_bin), "/usr/bin"]
-
-
-def test_restore_rejects_persisted_profile_when_local_evidence_disappears(
-    tmp_path: Path,
-) -> None:
-    (tmp_path / "package.json").write_text(
-        json.dumps({"scripts": {"test": "vitest run", "lint": "eslint ."}}),
-        encoding="utf-8",
-    )
-    (tmp_path / "src").mkdir()
-    store = SQLiteCheckpointStore(tmp_path / "checkpoint.db")
-    guardrail = MagicMock()
-    guardrail.check.return_value = MagicMock(action="pass")
-    orchestrator = TickOrchestrator(
-        project_root=tmp_path,
-        gate_runner=lambda gate_names, project_root: {},
-        guardrail=guardrail,
-        checkpoint_store=store,
-    )
-    orchestrator.init("实现功能")
-    (tmp_path / "package.json").unlink()
-
-    with pytest.raises(CheckpointNotFoundError, match="REVALIDATION_REQUIRED"):
-        TickOrchestrator.restore_from_checkpoint(
-            tmp_path,
-            store,
-            gate_runner=lambda gate_names, project_root: {},
-            guardrail=guardrail,
-        )
-    store.close()

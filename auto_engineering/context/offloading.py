@@ -26,7 +26,7 @@ class StageContextOffload:
     """
 
     stage: str
-    round_number: int
+    revision: int
     timestamp: str
     summary: str
     key_decisions: list[str] = field(default_factory=list)
@@ -54,7 +54,7 @@ class ContextOffloader:
     def __init__(self, storage_dir: Path | None = None, offload_dir: Path | None = None,
                  project_root: Path | None = None) -> None:
         self._dir = storage_dir or offload_dir or (project_root / ".ae-state" / "offload" if project_root else Path(".ae-state/offload"))  # noqa: E501
-        self._round_counter: int = 0
+        self._revision_counter: int = 0
         self._summaries: dict[str, str] = {}
 
     # ---- public API ----------------------------------------------------
@@ -69,16 +69,16 @@ class ContextOffloader:
         gate_results: dict,
     ) -> StageContextOffload:
         """Persist the stage's full conversation and return a summary artifact."""
-        self._round_counter += 1
+        self._revision_counter += 1
         self._dir.mkdir(parents=True, exist_ok=True)
 
         timestamp = datetime.now(UTC).isoformat()
-        filename = f"{stage}-r{self._round_counter}.json"
+        filename = f"{stage}-v{self._revision_counter}.json"
         filepath = self._dir / filename
 
         payload = {
             "stage": stage,
-            "round_number": self._round_counter,
+            "revision": self._revision_counter,
             "timestamp": timestamp,
             "summary": summary,
             "key_decisions": key_decisions,
@@ -90,7 +90,7 @@ class ContextOffloader:
 
         return StageContextOffload(
             stage=stage,
-            round_number=self._round_counter,
+            revision=self._revision_counter,
             timestamp=timestamp,
             summary=summary,
             key_decisions=list(key_decisions),
@@ -109,7 +109,7 @@ class ContextOffloader:
             return None
         return StageContextOffload(
             stage=data["stage"],
-            round_number=data["round_number"],
+            revision=data["revision"],
             timestamp=data["timestamp"],
             summary=data["summary"],
             key_decisions=data.get("key_decisions", []),
@@ -150,7 +150,7 @@ class ContextOffloader:
         if not self._dir.exists():
             return None
         candidates = sorted(
-            self._dir.glob(f"{stage}-r*.json"),
+            self._dir.glob(f"{stage}-v*.json"),
             key=lambda p: p.stat().st_mtime,
             reverse=True,
         )

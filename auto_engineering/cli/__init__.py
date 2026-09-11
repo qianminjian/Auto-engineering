@@ -1,6 +1,6 @@
 """CLI 入口 — Click 命令注册.
 
-从 cli.py 拆分 (Plan P1-B): helpers.py + dev_loop.py + checkpoint.py + __init__.py.
+从 cli.py 拆分 (Plan P1-B): helpers.py + dev_loop.py + event_store.py + __init__.py.
 
 入口 (BEACON 决策 #97, Phase 40):
     /auto-engineering:dev-loop Skill → commands/dev-loop.md driving loop
@@ -26,7 +26,6 @@ import click
 from auto_engineering import __version__
 from auto_engineering.cli.build_info import register_build_info_command
 from auto_engineering.cli.dev_loop import (
-    run_tick_import_checkpoint,
     run_tick_init,
     run_tick_resume,
     run_tick_status,
@@ -101,6 +100,7 @@ register_build_info_command(main)
                                                      spawn Action 生成证明与完整 Result
   ae dev-loop --record-worker-outcome --worker-id <id> --worker-status <status>
        --native-worker-handle <handle> --native-result-file <file>
+       [--native-status-only]
        --actual-model <model> --isolation-evidence <evidence>
                                                      记录宿主原生 Worker 事实
   ae dev-loop --record-worker-observation --worker-id <id>
@@ -108,7 +108,6 @@ register_build_info_command(main)
        --owner-known|--owner-unknown                       记录等待/所有权观察
   ae dev-loop --status [--verbose] [--format json]   查看当前进度
   ae dev-loop --resume <thread-id>                  从 EventStore 恢复当前 Action
-  ae dev-loop --import-checkpoint <checkpoint-id>    显式导入旧 checkpoint 到 EventStore
 
 辅助命令:
   ae doctor                                          环境预检
@@ -147,6 +146,8 @@ register_build_info_command(main)
               help="[内部协议] 原生 Worker 返回的 Action-scoped 原样暂存")
 @click.option("--native-result-stdin", is_flag=True,
               help="[内部协议] 从 stdin 原样暂存原生 Worker 返回 envelope")
+@click.option("--native-status-only", is_flag=True,
+              help="[内部协议] Codex wait 仅返回 completed 状态时使用已绑定观察")
 @click.option("--actual-model", default="unreported", show_default=True,
               help="[内部协议] 原生 API 报告的模型标识")
 @click.option("--isolation-evidence", help="[内部协议] 宿主实际隔离证据")
@@ -161,16 +162,8 @@ register_build_info_command(main)
 @click.option("--verbose", "-v", "verbose_flag", is_flag=True,
               help="--status 时输出 batch 级进度明细")
 @click.option("--resume", "resume_id", help="[内部协议] 从 EventStore 恢复指定 thread")
-@click.option(
-    "--import-checkpoint", "import_checkpoint_id",
-    help="[迁移协议] 显式将旧 checkpoint 导入 EventStore",
-)
 @click.option("--design-doc", "design_doc", type=click.Path(),
               help="[内部协议] --init 的设计文档路径 (design-doc 模式)")
-@click.option(
-    "--max-rounds", type=int, default=None, hidden=True,
-    help="[历史兼容] 显式启用 Round 上限；生产默认不限制 Tick 数",
-)
 @click.option("--project-root", type=click.Path(exists=True), help="项目根目录 (默认 cwd)")
 @click.option("--debug", "debug_flag", is_flag=True,
               help="启用调试模式: 调度轨迹/故障信息写入 _scratch/debug/")
@@ -193,6 +186,7 @@ def dev_loop(
     native_worker_handle: str | None,
     native_result_file: str | None,
     native_result_stdin: bool,
+    native_status_only: bool,
     actual_model: str,
     isolation_evidence: str | None,
     coordinator_result_file: str | None,
@@ -200,9 +194,7 @@ def dev_loop(
     status_flag: bool,
     output_format: str,
     resume_id: str | None,
-    import_checkpoint_id: str | None,
     design_doc: str | None,
-    max_rounds: int | None,
     project_root: str | None = None,
     debug_flag: bool = False,
     debug_dir_opt: str | None = None,
@@ -259,13 +251,12 @@ def dev_loop(
         init_flag, tick_flag, status_flag, bool(resume_id),
         bool(validate_result_file), bool(finalize_result_file),
         record_worker_outcome_flag, record_worker_observation_flag,
-        bool(import_checkpoint_id),
     ]
     if sum(bool(m) for m in tick_modes) > 1:
         click.echo(
             "错误: --init/--tick/--validate-result/--finalize-result/"
             "--record-worker-outcome/--record-worker-observation/--status/"
-            "--resume/--import-checkpoint "
+            "--resume "
             "互斥, 仅可指定一个。",
             err=True,
         )
@@ -278,7 +269,7 @@ def dev_loop(
             else:
                 click.echo("错误: --init 需要 requirement 参数，或提供 --design-doc。", err=True)
                 raise SystemExit(1)
-        run_tick_init(requirement, design_doc, root, max_rounds, debug=_debug,
+        run_tick_init(requirement, design_doc, root, debug=_debug,
                        debug_dir=debug_dir_opt, pause_at_stage=pause_at_stage,
                        escalate=escalate_flag)
         return
@@ -331,6 +322,7 @@ def dev_loop(
                 Path(native_result_file) if native_result_file else None
             ),
             native_result_stdin=native_result_stdin,
+            native_status_only=native_status_only,
             worker_status=worker_status,
             actual_model=actual_model,
             isolation_evidence=isolation_evidence,
@@ -363,9 +355,6 @@ def dev_loop(
     if status_flag:
         del output_format  # 当前 status 契约固定为 JSON；参数用于兼容文档化调用。
         run_tick_status(root, verbose=verbose_flag)
-        return
-    if import_checkpoint_id:
-        run_tick_import_checkpoint(import_checkpoint_id, root)
         return
     if resume_id:
         run_tick_resume(resume_id, root)

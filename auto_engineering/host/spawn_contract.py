@@ -159,6 +159,36 @@ class SpawnPlan:
             raise SpawnContractError("WORKER_ID_DUPLICATE")
         return cls(contract_version, invocations)
 
+    @classmethod
+    def for_recording(cls, action: Mapping[str, Any]) -> SpawnPlan:
+        """读取当前 Action 的 Worker 记录合同。
+
+        正常启动视图从 ``action.spawn`` 读取；恢复视图为避免宿主误启动会
+        移除该字段，但必须携带不可变的 ``host_execution.recovery.record_plan``
+        供已完成 Worker 的事实回写和最终化使用。这个入口只允许记录/最终化
+        路径调用，启动路径仍然只能调用 :meth:`from_action`。
+        """
+
+        if not isinstance(action, Mapping):
+            raise SpawnContractError("SPAWN_PLAN_INVALID")
+        spawn = action.get("spawn")
+        if isinstance(spawn, Mapping):
+            return cls.from_action(action)
+        host_execution = action.get("host_execution")
+        recovery = (
+            host_execution.get("recovery")
+            if isinstance(host_execution, Mapping)
+            else None
+        )
+        record_plan = (
+            recovery.get("record_plan")
+            if isinstance(recovery, Mapping)
+            else None
+        )
+        if not isinstance(record_plan, Mapping):
+            raise SpawnContractError("SPAWN_PLAN_MISSING")
+        return cls.from_action({"spawn": dict(record_plan)})
+
 
 @dataclass(frozen=True, slots=True)
 class WorkerOutcome:

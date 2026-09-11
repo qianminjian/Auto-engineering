@@ -103,6 +103,41 @@ def test_architect_worker_receives_requirement_and_refine_feedback() -> None:
     assert bundle.worker_prompts[0].execution_identity["role"] == "worker"
 
 
+def test_architect_prompt_drops_redundant_full_design_item_catalog() -> None:
+    """Architect 应通过只读设计文档获取条目，Prompt 只保留可复制的 ID。"""
+    contract = default_prompt_contracts()["architect"]
+    huge_catalog = [
+        {
+            "design_item": f"item-{index}",
+            "design_section": "§A1.1",
+            "component": "Core",
+            "title": "条目标题",
+            "key_claims": ["详细设计声明 " + ("x" * 240)],
+        }
+        for index in range(160)
+    ]
+
+    bundle = compile_prompt_bundle(
+        contract=contract,
+        role_prompt="你是 Architect。",
+        context={
+            "requirement": "实现 Loop 工程",
+            "design_doc_path": "design/spec.md",
+            "valid_plate_keys": ["Core"],
+            "project_profile_summary": _PROFILE_SUMMARY,
+            "design_item_catalog": huge_catalog,
+            "canonical_design_item_refs": {
+                "Core": ["item-1", "item-2"],
+            },
+        },
+        expected_format={"plan": "string"},
+    )
+
+    prompt = bundle.worker_prompts[0].prompt
+    assert "design_item_catalog" not in prompt
+    assert '"item-1"' in prompt
+
+
 def test_single_worker_receives_dynamic_context_in_actual_prompt() -> None:
     contract = default_prompt_contracts()["component_verifier"]
 

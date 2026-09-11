@@ -13,6 +13,7 @@ from auto_engineering.host.runtime_driver import (
     HostRunLeaseStore,
     StopGuardDecision,
     evaluate_stop,
+    fencing_token_for,
     host_session_id_from_environ,
 )
 from auto_engineering.loop.design_authority import DesignChangeRequest
@@ -383,6 +384,33 @@ def test_finished_supervision_clears_active_continue_lease(tmp_path) -> None:
     assert store.load() is None
 
 
+def test_lease_store_persists_canonical_fencing_token_for_legacy_lease(
+    tmp_path,
+) -> None:
+    """legacy 空 token 落盘时也必须让外层 watchdog 看到完整身份。"""
+
+    lease = HostRunLease(
+        schema_version="1.0",
+        thread_id="thread-legacy-store",
+        action_message_id="action-legacy-store",
+        platform="claude-code",
+        host_session_id="session-legacy-store",
+        build_id="build-legacy-store",
+        disposition="CONTINUE",
+        continuation_required=True,
+        yield_allowed=False,
+    )
+
+    store = HostRunLeaseStore(tmp_path)
+    store.save(lease)
+
+    persisted = json.loads(store.path.read_text(encoding="utf-8"))
+    assert persisted["fencing_token"] == fencing_token_for(
+        "action-legacy-store", "session-legacy-store", 1,
+    )
+    assert store.load() is not None
+
+
 def test_run_lease_binds_engine_build_from_current_runtime_revision() -> None:
     action = {
         "message_id": "action-current",
@@ -689,6 +717,45 @@ def test_cli_host_mapping_fails_closed_without_session_identity(
 
     with pytest.raises(ValueError, match="HOST_SESSION_ID_UNAVAILABLE"):
         _prepare_action_for_host(action, tmp_path)
+
+
+def test_cli_host_mapping_returns_structured_error_without_session_identity(
+    tmp_path, monkeypatch
+) -> None:
+    from auto_engineering.cli.dev_loop import _prepare_action_for_cli
+    from auto_engineering.host import HostDetection
+
+    monkeypatch.delenv("CODEX_THREAD_ID", raising=False)
+    monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
+    monkeypatch.delenv("CLAUDE_SESSION_ID", raising=False)
+    monkeypatch.setattr(
+        "auto_engineering.host.detect_host",
+        lambda: HostDetection(HostPlatform.CODEX, "test"),
+    )
+
+    action = {
+        "action": "developer",
+        "stage": "developer",
+        "message_id": "action-no-session-structured",
+        "thread_id": "thread-structured",
+        "tick": 2,
+        "extensions": {
+            "ae": {
+                "execution_control": control_for_action(
+                    {"action": "developer"}
+                ).to_dict(),
+                "runtime": {"build_id": "test-build"},
+            }
+        },
+    }
+
+    prepared = _prepare_action_for_cli(action, tmp_path)
+
+    assert prepared["action"] == "error"
+    assert prepared["error_code"] == "HOST_SESSION_ID_UNAVAILABLE"
+    assert prepared["thread_id"] == "thread-structured"
+    assert prepared["tick"] == 2
+    assert "Traceback" not in str(prepared)
 
 
 def test_compact_host_view_uses_prompt_ref_without_inlining_action_context(

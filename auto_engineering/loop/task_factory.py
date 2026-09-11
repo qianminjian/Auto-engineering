@@ -12,7 +12,7 @@
 
 依赖 (避免循环 import):
     - engine.models.Plan / Task (Stage 字段过滤)
-    - round.TaskOutcome (orchestrator 产出的执行结果)
+    - engine.task_outcome.TaskOutcome (orchestrator 产出的执行结果)
     - engine.state.EngineState (Channel 写入目标)
 """
 
@@ -71,7 +71,7 @@ def tasks_from_batch_plan(
                 expected_output=f"实现并测试通过 {task_dict.get('description', '')}",
                 role="developer",
                 target_files=frozenset(task_dict.get("file_targets", [])),
-                depends_on=[],  # task 级为空; batch 内顺序 = 隐式依赖
+                depends_on=list(task_dict.get("depends_on", [])),
                 kind=task_dict.get("kind", ""),  # v5.6 T30: regression_fix → RegressionGuardrail(G9)
                 regression_test_id=task_dict.get("regression_test_id", ""),
             ))

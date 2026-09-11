@@ -27,8 +27,24 @@ def ensure_action_work_file_parents(
     if not isinstance(work_files, Mapping):
         return
     project_root = root.resolve()
-    for key in ("outcomes", "coordinator_result", "result"):
-        raw_path = work_files.get(key)
+    paths: list[object] = [
+        work_files.get(key)
+        for key in ("outcomes", "coordinator_result", "result")
+    ]
+    workers = host_execution.get("workers") if isinstance(host_execution, Mapping) else None
+    if isinstance(workers, list):
+        for worker in workers:
+            if not isinstance(worker, Mapping):
+                continue
+            # Host Runtime owns these parent directories.  Creating them before
+            # handing the Action to a native Worker prevents a legitimate
+            # Worker from attempting ``mkdir .ae-state/...`` through the
+            # protocol-state guard.
+            paths.extend(
+                worker.get(key)
+                for key in ("outcome_path", "native_result_path", "observation_path", "receipt_path")
+            )
+    for raw_path in paths:
         if not isinstance(raw_path, str) or not raw_path:
             continue
         target = root_bound_path(Path(raw_path), root)

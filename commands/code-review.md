@@ -151,7 +151,7 @@ COMMITS=$(git log "$BASE...HEAD" --oneline 2>/dev/null | head -10)
 PR_TITLE=$(git log "$BASE...HEAD" --oneline --format="%s" 2>/dev/null | head -1 || echo "Auto-Engineering: Code changes")
 
 # Status info for header
-ROUNDS=$(echo "$STATUS_JSON" | python3 -c "import sys,json; print(json.loads(sys.stdin.read()).get('round',0))" 2>/dev/null || echo "?")
+TICK=$(echo "$STATUS_JSON" | python3 -c "import sys,json; print(json.loads(sys.stdin.read()).get('tick',0))" 2>/dev/null || echo "?")
 THREAD_ID=$(echo "$STATUS_JSON" | python3 -c "import sys,json; print(json.loads(sys.stdin.read()).get('thread_id',''))" 2>/dev/null || echo "")
 
 # Step 4: Push and create PR
@@ -173,7 +173,7 @@ PR_URL=$(gh pr create \
   --body "$(cat <<PRBODY
 ## AI Dev-Loop Summary
 
-**Status**: APPROVED by Critic | **Rounds**: ${ROUNDS} | **Thread**: \`${THREAD_ID}\`
+**Status**: APPROVED by Critic | **Tick**: ${TICK} | **Thread**: \`${THREAD_ID}\`
 
 ### Gate Results
 

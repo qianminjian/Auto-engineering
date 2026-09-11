@@ -3,17 +3,14 @@
 RED marker 测试 — 验证 status 命令输出 7 字段 JSON 契约 + 边界场景.
 
 测试覆盖:
-- 7 字段契约 (thread_id / round / stage / verdict / majors_in_a_row / total_majors / recent_history)
-- recent_history 最多 5 条 + 按 round_id DESC
+- 状态查询字段契约和只读语义
 - 命令注册 (uv run ae status --format json)
-- 边界场景: 缺失 checkpoint, corrupted state_db
+- 边界场景: 缺失 EventStore、损坏 EventStore
 """
 
 from __future__ import annotations
 
 import json
-import sqlite3
-from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -53,7 +50,7 @@ def test_status_json_7_fields_required(runner: CliRunner, tmp_cwd: Path) -> None
     data = json.loads(result.output)
     expected_keys = {
         "thread_id",
-        "round",
+        "tick",
         "stage",
         "verdict",
         "majors_in_a_row",
@@ -67,22 +64,22 @@ def test_status_json_7_fields_required(runner: CliRunner, tmp_cwd: Path) -> None
 
 
 def test_status_thread_id_format(runner: CliRunner, tmp_cwd: Path) -> None:
-    """thread_id 应为字符串 (无 checkpoint 时为空串)."""
+    """thread_id 应为字符串 (无 EventStore 时为空串)."""
     result = runner.invoke(main, ["status", "--format", "json"])
     data = json.loads(result.output)
     assert isinstance(data["thread_id"], str), f"thread_id 应为 str, 实际 {type(data['thread_id'])}"
 
 
-def test_status_round_in_range(runner: CliRunner, tmp_cwd: Path) -> None:
-    """round 应为非负整数 (无 checkpoint 时为 0)."""
+def test_status_tick_in_range(runner: CliRunner, tmp_cwd: Path) -> None:
+    """tick 应为非负整数 (无 EventStore 时为 0)."""
     result = runner.invoke(main, ["status", "--format", "json"])
     data = json.loads(result.output)
-    assert isinstance(data["round"], int), f"round 应为 int, 实际 {type(data['round'])}"
-    assert data["round"] >= 0, f"round 应 ≥ 0, 实际 {data['round']}"
+    assert isinstance(data["tick"], int), f"tick 应为 int, 实际 {type(data['tick'])}"
+    assert data["tick"] >= 0, f"tick 应 ≥ 0, 实际 {data['tick']}"
 
 
 def test_status_stage_in_valid_values(runner: CliRunner, tmp_cwd: Path) -> None:
-    """stage 应为合法 enum 值或空串 (无 checkpoint 时为空)."""
+    """stage 应为合法 enum 值或空串 (无 EventStore 时为空)."""
     result = runner.invoke(main, ["status", "--format", "json"])
     data = json.loads(result.output)
     # v5.0 §B1.1: current_stage ∈ {"", "architect", "developer", "critic"}
@@ -120,59 +117,6 @@ def test_status_total_majors_non_negative(runner: CliRunner, tmp_cwd: Path) -> N
 # ============================================================
 
 
-def test_status_recent_history_max_5(tmp_cwd: Path) -> None:
-    """recent_history 最多 5 条 (v5.0 §B13.2 spec)."""
-    # 构造含 8 条 history 的 checkpoint
-    from auto_engineering.loop.checkpoint import SQLiteCheckpointStore
-    from auto_engineering.loop.convergence import RoundHistory
-    from auto_engineering.loop.state import CheckpointEnvelope
-
-    cp_dir = tmp_cwd / ".ae-state"
-    cp_dir.mkdir()
-    db_path = cp_dir / "test.db"
-    env = CheckpointEnvelope(round=8, step=1, status="running")
-    history = [
-        RoundHistory(round_id=i, files_changed=i, lines_added=i * 2)
-        for i in range(1, 9)  # 8 条
-    ]
-    with SQLiteCheckpointStore[CheckpointEnvelope](str(db_path)) as store:
-        store.save(env, round=8, history=history)
-
-    data = _collect_status_json(tmp_cwd)
-    assert isinstance(data["recent_history"], list)
-    assert len(data["recent_history"]) <= 5, (
-        f"recent_history 应 ≤ 5, 实际 {len(data['recent_history'])}"
-    )
-
-
-def test_status_recent_history_round_id_desc(tmp_cwd: Path) -> None:
-    """recent_history 应按 round_id DESC 排序."""
-    from auto_engineering.loop.checkpoint import SQLiteCheckpointStore
-    from auto_engineering.loop.convergence import RoundHistory
-    from auto_engineering.loop.state import CheckpointEnvelope
-
-    cp_dir = tmp_cwd / ".ae-state"
-    cp_dir.mkdir()
-    db_path = cp_dir / "test.db"
-    env = CheckpointEnvelope(round=3, step=1, status="running")
-    history = [
-        RoundHistory(round_id=1, files_changed=1),
-        RoundHistory(round_id=2, files_changed=2),
-        RoundHistory(round_id=3, files_changed=3),
-    ]
-    with SQLiteCheckpointStore[CheckpointEnvelope](str(db_path)) as store:
-        store.save(env, round=3, history=history)
-
-    data = _collect_status_json(tmp_cwd)
-    round_ids = [h["round_id"] for h in data["recent_history"]]
-    assert round_ids == sorted(round_ids, reverse=True), (
-        f"recent_history 应按 round_id DESC, 实际 {round_ids}"
-    )
-
-
-# ============================================================
-# 命令注册 + 边界
-# ============================================================
 
 
 def test_status_command_registered_in_cli_main(runner: CliRunner, tmp_cwd: Path) -> None:
@@ -181,7 +125,7 @@ def test_status_command_registered_in_cli_main(runner: CliRunner, tmp_cwd: Path)
     assert "status" in result.output, "ae status 命令未注册"
 
 
-def test_status_handles_missing_checkpoint(runner: CliRunner, tmp_cwd: Path) -> None:
+def test_status_handles_missing_event_store(runner: CliRunner, tmp_cwd: Path) -> None:
     """缺失 .ae-state 目录: 输出 7 字段默认 JSON (无 error)."""
     # tmp_cwd 不创建 .ae-state
     result = runner.invoke(main, ["status", "--format", "json"])
@@ -189,16 +133,16 @@ def test_status_handles_missing_checkpoint(runner: CliRunner, tmp_cwd: Path) -> 
     data = json.loads(result.output)
     # 7 字段应全在 (默认值)
     expected_keys = {
-        "thread_id", "round", "stage", "verdict",
+        "thread_id", "tick", "stage", "verdict",
         "majors_in_a_row", "total_majors", "recent_history",
     }
     assert set(data.keys()) == expected_keys
     # recent_history 应为空列表
     assert data["recent_history"] == []
-    assert data["round"] == 0
+    assert data["tick"] == 0
 
 
-def test_status_handles_corrupted_state_db(runner: CliRunner, tmp_cwd: Path) -> None:
+def test_status_handles_corrupted_event_store(runner: CliRunner, tmp_cwd: Path) -> None:
     """.ae-state/*.db 文件损坏: status 不崩溃, 输出默认 JSON."""
     cp_dir = tmp_cwd / ".ae-state"
     cp_dir.mkdir()
@@ -211,32 +155,23 @@ def test_status_handles_corrupted_state_db(runner: CliRunner, tmp_cwd: Path) -> 
 
     data = json.loads(result.output)
     expected_keys = {
-        "thread_id", "round", "stage", "verdict",
+        "thread_id", "tick", "stage", "verdict",
         "majors_in_a_row", "total_majors", "recent_history",
     }
     assert set(data.keys()) == expected_keys
-    # 没有有效 checkpoint → 默认值
+    # 没有有效 EventStore → 默认值
     assert data["recent_history"] == []
-    assert data["round"] == 0
+    assert data["tick"] == 0
 
 
-def test_status_reports_corrupted_event_store_without_checkpoint_fallback(
+def test_status_reports_corrupted_event_store_without_legacy_fallback(
     tmp_cwd: Path,
 ) -> None:
-    """EventStore 损坏时必须报告恢复要求，不能展示旧 checkpoint。"""
-    from auto_engineering.engine.state import EngineState
-    from auto_engineering.loop.checkpoint import SQLiteCheckpointStore
+    """EventStore 损坏时必须报告恢复要求，不能展示旧状态。"""
 
     state_dir = tmp_cwd / ".ae-state"
     state_dir.mkdir(exist_ok=True)
     (state_dir / "events.db").write_bytes(b"NOT A SQLITE FILE")
-    with SQLiteCheckpointStore(str(state_dir / "checkpoints.db")) as store:
-        assert store.reserve_project_thread("legacy-thread") is None
-        store.save(
-            EngineState(thread_id="legacy-thread", current_stage="critic"),
-            round=9,
-        )
-
     payload = _collect_status_json(tmp_cwd)
     assert payload["error_code"] == "EVENT_STORE_UNAVAILABLE"
     assert payload["recovery_required"] is True
@@ -246,7 +181,6 @@ def test_status_reports_corrupted_event_store_without_checkpoint_fallback(
 def test_status_json_reads_event_store_projection(tmp_cwd: Path) -> None:
     """当前 status 必须读取事件投影，而不是只验证空状态路径。"""
     from auto_engineering.engine.state import EngineState
-    from auto_engineering.loop.checkpoint import SQLiteCheckpointStore
     from auto_engineering.loop.event_store import SQLiteEventStore
     from auto_engineering.loop.events import LoopEvent, LoopEventType
 
@@ -255,7 +189,6 @@ def test_status_json_reads_event_store_projection(tmp_cwd: Path) -> None:
         thread_id=thread_id,
         requirement="事件状态",
         current_stage="developer",
-        round=3,
         total_majors=2,
     )
     event = LoopEvent.create(
@@ -267,8 +200,6 @@ def test_status_json_reads_event_store_projection(tmp_cwd: Path) -> None:
     )
     ae_state = tmp_cwd / ".ae-state"
     ae_state.mkdir(exist_ok=True)
-    with SQLiteCheckpointStore(str(ae_state / "checkpoints.db")) as leases:
-        assert leases.reserve_project_thread(thread_id) is None
     with SQLiteEventStore(ae_state / "events.db") as events:
         events.commit_tick(
             events=[event],
@@ -279,21 +210,173 @@ def test_status_json_reads_event_store_projection(tmp_cwd: Path) -> None:
     payload = _collect_status_json(tmp_cwd)
     assert payload["thread_id"] == thread_id
     assert payload["stage"] == "developer"
-    assert payload["round"] == 3
+    assert payload["tick"] == 0
     assert payload["total_majors"] == 2
 
 
-def test_status_does_not_probe_usage_ledger_as_checkpoint(
-    tmp_cwd: Path, caplog: pytest.LogCaptureFixture,
+def test_status_prefers_older_unfinished_thread_over_newer_terminal_thread(
+    tmp_cwd: Path,
 ) -> None:
+    """终态新 thread 不能掩盖仍需恢复的旧 thread。"""
+    from auto_engineering.engine.state import EngineState
+    from auto_engineering.loop.event_store import SQLiteEventStore
+    from auto_engineering.loop.events import LoopEvent, LoopEventType
+
+    state_dir = tmp_cwd / ".ae-state"
+    state_dir.mkdir(exist_ok=True)
+    with SQLiteEventStore(state_dir / "events.db") as events:
+        unfinished = EngineState(
+            thread_id="unfinished-thread",
+            current_stage="developer",
+        )
+        events.commit_tick(
+            events=[LoopEvent.create(
+                thread_id=unfinished.thread_id,
+                sequence=0,
+                event_type=LoopEventType.LOOP_INITIALIZED,
+                payload={"state": unfinished.to_dict()},
+                correlation_id=unfinished.thread_id,
+            )],
+            state=unfinished,
+            action={"thread_id": unfinished.thread_id, "message_id": "action-old"},
+        )
+        finished = EngineState(
+            thread_id="finished-thread",
+            current_stage="critic",
+        )
+        events.commit_tick(
+            events=[LoopEvent.create(
+                thread_id=finished.thread_id,
+                sequence=0,
+                event_type=LoopEventType.LOOP_INITIALIZED,
+                payload={"state": finished.to_dict()},
+                correlation_id=finished.thread_id,
+            )],
+            state=finished,
+            action={"thread_id": finished.thread_id, "message_id": "action-new"},
+        )
+        events.append([LoopEvent.create(
+            thread_id=finished.thread_id,
+            sequence=1,
+            event_type=LoopEventType.LOOP_COMPLETED,
+            payload={"status": "TERMINAL"},
+            correlation_id=finished.thread_id,
+        )])
+
+    payload = _collect_status_json(tmp_cwd)
+    assert payload["thread_id"] == "unfinished-thread"
+    assert payload["stage"] == "developer"
+
+
+def test_status_projects_terminal_event_and_usage_from_event_store(tmp_cwd: Path) -> None:
+    from auto_engineering.engine.state import EngineState
+    from auto_engineering.loop.event_store import SQLiteEventStore
+    from auto_engineering.loop.events import LoopEvent, LoopEventType
+
+    thread_id = "terminal-status-thread"
+    state = EngineState(thread_id=thread_id, current_stage="critic")
+    state_dir = tmp_cwd / ".ae-state"
+    state_dir.mkdir(exist_ok=True)
+    with SQLiteEventStore(state_dir / "events.db") as events:
+        events.commit_tick(
+            events=[LoopEvent.create(
+                thread_id=thread_id,
+                sequence=0,
+                event_type=LoopEventType.LOOP_INITIALIZED,
+                payload={"state": state.to_dict()},
+                correlation_id=thread_id,
+            )],
+            state=state,
+            action={"thread_id": thread_id, "message_id": "terminal-action"},
+        )
+        events.append([LoopEvent.create(
+                thread_id=thread_id,
+                sequence=1,
+                event_type=LoopEventType.LOOP_COMPLETED,
+                payload={"status": "TERMINAL"},
+                correlation_id=thread_id,
+        )])
+        events.append([LoopEvent.create(
+                thread_id=thread_id,
+                sequence=2,
+                event_type=LoopEventType.USAGE_RECORDED,
+                payload={"usage": {
+                    "session_id": "session-1", "tick": 1, "stage": "critic",
+                    "worker": "coordinator", "input_units": 10,
+                    "cache_read_units": 0, "cache_write_units": 0, "output_units": 5,
+                    "provider": "test", "model": "test-model",
+                    "usage_source": "test", "estimated": False,
+                }},
+                correlation_id=thread_id,
+        )])
+
+    payload = _collect_status_json(tmp_cwd)
+    assert payload["stage"] == "done"
+    assert "event_metrics" in payload
+    assert payload["event_metrics"]["usage"]["input_units"] == 10
+
+
+def test_status_verbose_reads_progress_tree_from_event_projection(tmp_cwd: Path) -> None:
+    from auto_engineering.engine.progress_tree import ProgressTree
+    from auto_engineering.engine.state import EngineState
+    from auto_engineering.loop.event_store import SQLiteEventStore
+    from auto_engineering.loop.events import LoopEvent, LoopEventType
+
+    state = EngineState(thread_id="progress-thread", current_stage="developer")
+    state.progress_tree_json = json.dumps(
+        ProgressTree(
+            system_id="system-1",
+            system_name="系统",
+            design_doc_path=None,
+        ).to_dict()
+    )
+    state_dir = tmp_cwd / ".ae-state"
+    state_dir.mkdir(exist_ok=True)
+    with SQLiteEventStore(state_dir / "events.db") as events:
+        events.commit_tick(
+            events=[LoopEvent.create(
+                thread_id=state.thread_id,
+                sequence=0,
+                event_type=LoopEventType.LOOP_INITIALIZED,
+                payload={"state": state.to_dict()},
+                correlation_id=state.thread_id,
+            )],
+            state=state,
+            action={"thread_id": state.thread_id, "message_id": "progress-action"},
+        )
+
+    from auto_engineering.cli.status import _load_progress_summary
+
+    summary = _load_progress_summary(tmp_cwd)
+    assert summary["total_tasks"] == 0
+    assert summary["completion_pct"] == 0.0
+
+
+def test_status_verbose_handles_invalid_progress_projection(tmp_cwd: Path) -> None:
+    from auto_engineering.cli.status import _load_progress_summary
+
     state_dir = tmp_cwd / ".ae-state"
     state_dir.mkdir()
-    with closing(sqlite3.connect(state_dir / "usage-ledger.db")) as connection:
-        connection.execute("CREATE TABLE usage_records (id TEXT)")
+    (state_dir / "events.db").write_bytes(b"invalid")
 
-    _collect_status_json(tmp_cwd)
+    summary = _load_progress_summary(tmp_cwd)
+    assert summary["node_count"] == 0
 
-    assert "usage-ledger.db" not in caplog.text
+
+def test_status_text_mode_reports_environment_detection_failure(
+    runner: CliRunner,
+    tmp_cwd: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "auto_engineering.cli.status.ProjectEnvironment._from_detection",
+        classmethod(lambda cls, root: (_ for _ in ()).throw(RuntimeError("probe failed"))),
+    )
+
+    result = runner.invoke(main, ["status"])
+
+    assert result.exit_code == 0
+    assert "读取项目环境失败" in result.output
 
 
 # ============================================================
@@ -301,102 +384,30 @@ def test_status_does_not_probe_usage_ledger_as_checkpoint(
 # ============================================================
 
 
-def test_status_text_mode_no_checkpoint(runner: CliRunner, tmp_cwd: Path) -> None:
-    """默认 text 模式 (无 checkpoint) 不应崩溃."""
+def test_status_text_mode_without_event_store(runner: CliRunner, tmp_cwd: Path) -> None:
+    """默认 text 模式 (无 EventStore) 不应崩溃."""
     result = runner.invoke(main, ["status"])
     assert result.exit_code == 0
     # 应至少输出 "当前目录"
     assert "当前目录" in result.output or "项目" in result.output
 
 
-# ============================================================
-# A005 回归：status 不得回退到 SQLiteCheckpointStore 状态快照
-# ============================================================
-
-
-def _make_spy_store():
-    """构造可观察旧 Store，证明 status 不会把它作为当前事实源。"""
-    import auto_engineering.loop.checkpoint as checkpoint_mod
-    from auto_engineering.loop.checkpoint import SQLiteCheckpointStore
-
-    created: list = []
-    closed: list[bool] = []
-
-    class _SpyStore(SQLiteCheckpointStore):
-        def __init__(self, *args, **kwargs) -> None:
-            super().__init__(*args, **kwargs)
-            created.append(self)  # 强引用 → __del__ 不触发
-
-        def close(self) -> None:
-            closed.append(True)
-            super().close()
-
-    return checkpoint_mod, SQLiteCheckpointStore, _SpyStore, created, closed
-
-
-def test_load_progress_summary_does_not_read_checkpoint_store(
-    tmp_cwd: Path, monkeypatch: pytest.MonkeyPatch
+def test_status_verbose_reads_only_event_store_progress(
+    runner: CliRunner,
+    tmp_cwd: Path,
 ) -> None:
-    """P1-6 回归: _load_progress_summary 用后应显式关闭 store."""
-    checkpoint_mod, real_store, spy_store, _created, closed = _make_spy_store()
+    result = runner.invoke(main, ["status", "--verbose"])
 
-    ae_state = tmp_cwd / ".ae-state"
-    ae_state.mkdir(exist_ok=True)
-    with real_store(str(ae_state / "thread.db")):
-        pass  # 空 db, load_latest 返回 None
-
-    monkeypatch.setattr(checkpoint_mod, "SQLiteCheckpointStore", spy_store)
-
-    from auto_engineering.cli.status import _load_progress_summary
-    _load_progress_summary(tmp_cwd)
-
-    assert not closed
+    assert result.exit_code == 0
+    assert "暂无进度数据" in result.output
 
 
-def test_status_command_does_not_read_checkpoint_stores(
-    runner: CliRunner, tmp_cwd: Path, monkeypatch: pytest.MonkeyPatch
+def test_status_json_verbose_includes_event_store_progress_shape(
+    runner: CliRunner,
+    tmp_cwd: Path,
 ) -> None:
-    """P1-6 回归: status 命令 checkpoint 计数路径用后应显式关闭 store."""
-    checkpoint_mod, real_store, spy_store, _created, closed = _make_spy_store()
+    result = runner.invoke(main, ["status", "--format", "json", "--verbose"])
 
-    ae_state = tmp_cwd / ".ae-state"
-    ae_state.mkdir(exist_ok=True)
-    with real_store(str(ae_state / "thread.db")):
-        pass
-
-    monkeypatch.setattr(checkpoint_mod, "SQLiteCheckpointStore", spy_store)
-
-    result = runner.invoke(main, ["status"])
-    assert result.exit_code == 0, result.output
-    assert not closed
-
-
-def test_collect_status_json_does_not_read_checkpoint_stores(
-    tmp_cwd: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """回归: JSON 状态收集路径用后应显式关闭每个 checkpoint store."""
-    checkpoint_mod, real_store, spy_store, _created, closed = _make_spy_store()
-
-    ae_state = tmp_cwd / ".ae-state"
-    ae_state.mkdir(exist_ok=True)
-    with real_store(str(ae_state / "thread.db")):
-        pass
-
-    monkeypatch.setattr(checkpoint_mod, "SQLiteCheckpointStore", spy_store)
-
-    _collect_status_json(tmp_cwd)
-
-    assert not closed
-
-
-def test_load_progress_summary_ignores_checkpoint_progress(tmp_cwd: Path) -> None:
-    """旧 checkpoint 中的 progress_tree 不能冒充 EventStore 当前投影。"""
-    from auto_engineering.cli.status import _load_progress_summary
-    summary = _load_progress_summary(tmp_cwd)
-
-    assert summary == {
-        "completion_pct": 0.0,
-        "total_tasks": 0,
-        "done_tasks": 0,
-        "node_count": 0,
-    }
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["progress_tree"]["node_count"] == 0

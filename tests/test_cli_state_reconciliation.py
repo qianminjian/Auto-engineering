@@ -2,26 +2,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from auto_engineering.cli.dev_loop import _resolve_active_thread_start
 from auto_engineering.engine.state import EngineState
 from auto_engineering.loop.invocation_intent import InvocationIntent
-
-
-class _Store:
-    def __init__(self, thread_id: str, active_action: dict | None = None) -> None:
-        self.thread_id = thread_id
-        self.active_action = active_action
-        self.recorded: list[dict] = []
-
-    def active_project_thread(self) -> str:
-        return self.thread_id
-
-    def load_active_protocol_action(self, thread_id: str) -> dict | None:
-        assert thread_id == self.thread_id
-        return self.active_action
-
-    def record_protocol_action(self, action: dict) -> None:
-        self.recorded.append(action)
 
 
 class _Events:
@@ -29,6 +14,12 @@ class _Events:
         self.state = state
         self.action = action
         self.committed: list[dict] = []
+
+    def current_thread(self) -> str:
+        return self.state.thread_id
+
+    def unfinished_threads(self) -> list[str]:
+        return [self.state.thread_id]
 
     def load_projection(self, thread_id: str) -> EngineState:
         assert thread_id == self.state.thread_id
@@ -73,13 +64,10 @@ def test_conflicting_active_thread_returns_persisted_decision_gate(tmp_path: Pat
     _, state = _intent_and_state(tmp_path)
     state.project_anchor_baseline = ["src", "tests"]
     old_action = {"action": "developer", "thread_id": state.thread_id}
-    store = _Store(state.thread_id, old_action)
-
     events = _Events(state, old_action)
     action = _resolve_active_thread_start(
         root=tmp_path,
         design_doc_path="design/feature.md",
-        store=store,
         events=events,
     )
 
@@ -105,7 +93,6 @@ def test_conflicting_active_thread_returns_persisted_decision_gate(tmp_path: Pat
         "additionalProperties": False,
     }
     assert "禁止提交顶层 decision" in action["instruction"]
-    assert store.recorded == []
     assert len(events.committed) == 1
     committed_event = events.committed[0]["events"][0]
     assert committed_event.causation_id == action["message_id"]
@@ -124,17 +111,13 @@ def test_compatible_active_thread_returns_original_action(tmp_path: Path) -> Non
         "thread_id": state.thread_id,
         "message_id": "existing-action",
     }
-    store = _Store(state.thread_id, old_action)
-
     action = _resolve_active_thread_start(
         root=tmp_path,
         design_doc_path="design/feature.md",
-        store=store,
         events=_Events(state, old_action),
     )
 
     assert action == old_action
-    assert store.recorded == []
 
 
 def test_pre_architect_gap_thread_resumes_from_init_digest(tmp_path: Path) -> None:
@@ -153,28 +136,22 @@ def test_pre_architect_gap_thread_resumes_from_init_digest(tmp_path: Path) -> No
         "thread_id": state.thread_id,
         "message_id": "gap-action",
     }
-    store = _Store(state.thread_id, old_action)
-
     action = _resolve_active_thread_start(
         root=tmp_path,
         design_doc_path="design/feature.md",
-        store=store,
         events=_Events(state, old_action),
     )
 
     assert action == old_action
-    assert store.recorded == []
 
 
 def test_repeated_conflict_reuses_gate_without_duplicate_event(tmp_path: Path) -> None:
     _, state = _intent_and_state(tmp_path)
     state.project_anchor_baseline = ["src", "tests"]
-    store = _Store(state.thread_id)
     first_events = _Events(state)
     first = _resolve_active_thread_start(
         root=tmp_path,
         design_doc_path="design/feature.md",
-        store=store,
         events=first_events,
     )
     assert first is not None
@@ -187,7 +164,6 @@ def test_repeated_conflict_reuses_gate_without_duplicate_event(tmp_path: Path) -
     repeated = _resolve_active_thread_start(
         root=tmp_path,
         design_doc_path="design/feature.md",
-        store=store,
         events=repeated_events,
     )
 
@@ -208,14 +184,148 @@ def test_interrupted_architect_resumes_when_declared_roots_never_existed(
         "thread_id": state.thread_id,
         "message_id": "architect-action",
     }
-    store = _Store(state.thread_id, old_action)
-
     action = _resolve_active_thread_start(
         root=tmp_path,
         design_doc_path="design/feature.md",
-        store=store,
         events=_Events(state, old_action),
     )
 
     assert action == old_action
-    assert store.recorded == []
+
+
+def test_recovery_projection_builds_and_rejects_invalid_action_identity(
+    tmp_path: Path,
+) -> None:
+    from auto_engineering.cli.state_reconciliation_projection import (
+        build_recovery_gate,
+        host_mapping_error_action,
+    )
+
+    expected = {"gate_resolution": {"gate_id": "state_reconciliation"}}
+    contract = {"required": ["gate_resolution"]}
+    gate = build_recovery_gate(
+        {"thread_id": "thread-1", "tick": 3, "stage": "developer", "message_id": "old"},
+        tmp_path,
+        expected_format=expected,
+        result_contract=contract,
+    )
+    assert gate["action"] == "gate"
+    assert gate["gate"]["id"] == "state_reconciliation"
+
+    with pytest.raises(ValueError, match="ACTION_IDENTITY_MISSING"):
+        build_recovery_gate(
+            {"thread_id": "thread-1", "tick": "3"},
+            tmp_path,
+            expected_format=expected,
+            result_contract=contract,
+        )
+
+    error = host_mapping_error_action(
+        {"thread_id": "thread-1", "tick": 3, "stage": "developer", "message_id": "old"},
+        ValueError("ACTION_INVALID"),
+        expected_format=expected,
+        result_contract=contract,
+    )
+    assert error["action"] == "error"
+    assert error["error_code"] == "ACTION_INVALID"
+    assert host_mapping_error_action(
+        {}, ValueError("ACTION_INVALID"),
+        expected_format=expected,
+        result_contract=contract,
+    )["error_code"] == "ACTION_INVALID"
+
+
+def test_persisted_recovery_projection_is_idempotent(tmp_path: Path) -> None:
+    from auto_engineering.cli.state_reconciliation_projection import (
+        persist_recovery_gate,
+        persisted_reconciliation_gate_status,
+    )
+    from auto_engineering.loop.event_store import SQLiteEventStore
+    from auto_engineering.loop.events import LoopEvent, LoopEventType
+
+    state = EngineState(thread_id="thread-1", current_stage="developer")
+    with SQLiteEventStore(tmp_path / "events.db") as events:
+        events.commit_tick(
+            events=[LoopEvent.create(
+                thread_id=state.thread_id,
+                sequence=0,
+                event_type=LoopEventType.LOOP_INITIALIZED,
+                payload={"state": state.to_dict()},
+                correlation_id=state.thread_id,
+            )],
+            state=state,
+            action={"thread_id": state.thread_id, "message_id": "action-1"},
+        )
+        kwargs = {
+            "expected_format": {"gate_resolution": {"gate_id": "state_reconciliation"}},
+            "result_contract": {"required": ["gate_resolution"]},
+        }
+        first = persist_recovery_gate(
+            {"thread_id": state.thread_id, "tick": 0, "message_id": "action-1"},
+            state,
+            events,
+            tmp_path,
+            **kwargs,
+        )
+        projected = events.load_projection(state.thread_id)
+        assert projected is not None
+        second = persist_recovery_gate(
+            {"thread_id": state.thread_id, "tick": 0, "message_id": "action-1"},
+            projected,
+            events,
+            tmp_path,
+            **kwargs,
+        )
+        assert second["message_id"] == first["message_id"]
+        assert len(events.load_stream(state.thread_id)) == 2
+        status = persisted_reconciliation_gate_status(
+            first,
+            projected,
+            status_action={"action": "gate"},
+            next_operation={"operation": "resume"},
+        )
+        assert status is not None
+        assert status["active_action"] == {"action": "gate"}
+        assert persisted_reconciliation_gate_status(
+            {"action": "developer"}, projected,
+            status_action={}, next_operation={},
+        ) is None
+
+
+@pytest.mark.parametrize(
+    "content",
+    ["not-json", "[]", '{"gate_resolution": {"gate_id": "other"}}'],
+)
+def test_state_reconciliation_result_projection_ignores_non_current_files(
+    tmp_path: Path, content: str,
+) -> None:
+    from auto_engineering.cli.state_reconciliation_projection import (
+        validate_state_reconciliation_result_file,
+    )
+
+    result_file = tmp_path / "result.json"
+    result_file.write_text(content, encoding="utf-8")
+    assert validate_state_reconciliation_result_file(
+        result_file=result_file,
+        active_thread="thread-1",
+        events=object(),  # early returns must not touch the EventStore
+    ) is None
+
+
+def test_state_reconciliation_result_rejects_wrong_thread(tmp_path: Path) -> None:
+    from auto_engineering.cli.state_reconciliation_projection import (
+        validate_state_reconciliation_result_file,
+    )
+
+    result_file = tmp_path / "result.json"
+    result_file.write_text(
+        '{"thread_id":"other","gate_resolution":{"gate_id":"state_reconciliation"}}',
+        encoding="utf-8",
+    )
+    result = validate_state_reconciliation_result_file(
+        result_file=result_file,
+        active_thread="thread-1",
+        events=object(),
+    )
+    assert result is not None
+    assert result["error_code"] == "ACTION_NOT_ACTIVE"

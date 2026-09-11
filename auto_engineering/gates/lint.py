@@ -154,7 +154,3 @@ class LintGate(Gate):
             f"{linter} 失败 (exit={result.returncode}):\n{snippet}",
             gate_name=self.name,
         )
-
-
-# v5.5 audit P2-15: 向后兼容别名, v6.0 移除
-LintGate._register_alias("ruff_bin", "linter_bin")

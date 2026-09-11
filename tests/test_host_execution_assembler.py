@@ -59,6 +59,151 @@ def test_assembler_uses_one_worker_failure_service(tmp_path: Path) -> None:
     assert isinstance(assembler._worker_failure, WorkerFailureService)
 
 
+def test_architect_coordinator_cannot_shrink_committed_worker_plan(
+    tmp_path: Path,
+) -> None:
+    """Worker 的完整 Architect 计划不可被 Coordinator 修复为子集。"""
+
+    action = _action(tmp_path)
+    action.update({"action": "architect", "stage": "architect"})
+    challenge_path = tmp_path / ".ae-state/spawn-challenges/total-token.json"
+    challenge = json.loads(challenge_path.read_text(encoding="utf-8"))
+    challenge["stage"] = "architect"
+    challenge_path.write_text(json.dumps(challenge), encoding="utf-8")
+    full_plan = [
+        {
+            "batch_id": "B1",
+            "component": "Core",
+            "tasks": [{"id": "B1-T1", "description": "实现 B1"}],
+        },
+        {
+            "batch_id": "B2",
+            "component": "Core",
+            "tasks": [{"id": "B2-T1", "description": "实现 B2"}],
+        },
+    ]
+    outcome = NativeWorkerOutcome(
+        worker_id="critic-0",
+        native_worker_handle="agent-123",
+        status="completed",
+        payload={"plan": "完整计划", "file_list": [], "batch_plan": full_plan},
+        summary="完整 Architect 计划",
+        actual_model="gpt-5.6-sol",
+    )
+
+    with pytest.raises(
+        HostEvidenceValidationError,
+        match="ARCHITECT_RESULT_COVERAGE_LOSS",
+    ):
+        HostExecutionAssembler(tmp_path).finalize(
+            action=action,
+            outcomes=[outcome],
+            coordinator_payload={
+                "plan": "完整计划",
+                "file_list": [],
+                "batch_plan": [full_plan[0]],
+            },
+        )
+
+
+def test_architect_finalize_records_worker_plan_manifest(tmp_path: Path) -> None:
+    action = _action(tmp_path)
+    action.update({"action": "architect", "stage": "architect"})
+    challenge_path = tmp_path / ".ae-state/spawn-challenges/total-token.json"
+    challenge = json.loads(challenge_path.read_text(encoding="utf-8"))
+    challenge["stage"] = "architect"
+    challenge_path.write_text(json.dumps(challenge), encoding="utf-8")
+    plan = [{
+        "batch_id": "B1",
+        "component": "Core",
+        "tasks": [{"id": "B1-T1", "description": "实现 B1"}],
+    }]
+    outcome = NativeWorkerOutcome(
+        worker_id="critic-0",
+        native_worker_handle="agent-123",
+        status="completed",
+        payload={"plan": "计划", "file_list": [], "batch_plan": plan},
+        summary="Architect 计划",
+        actual_model="gpt-5.6-sol",
+    )
+
+    result = HostExecutionAssembler(tmp_path).finalize(
+        action=action,
+        outcomes=[outcome],
+        coordinator_payload={"plan": "计划", "file_list": [], "batch_plan": plan},
+    )
+
+    coverage = result["extensions"]["architect_plan_coverage"]
+    assert coverage["batch_ids"] == ["B1"]
+    assert coverage["task_ids"] == ["B1-T1"]
+    assert len(coverage["digest"]) == 64
+
+
+def test_core_host_evidence_check_rejects_architect_plan_subset(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    action = _action(tmp_path)
+    action.update({"action": "architect", "stage": "architect"})
+    challenge_path = tmp_path / ".ae-state/spawn-challenges/total-token.json"
+    challenge = json.loads(challenge_path.read_text(encoding="utf-8"))
+    challenge["stage"] = "architect"
+    challenge_path.write_text(json.dumps(challenge), encoding="utf-8")
+    proof_path = tmp_path / ".ae-state/spawn-proofs/total-token.json"
+    proof_path.parent.mkdir(parents=True, exist_ok=True)
+    proof_path.write_text(
+        json.dumps({"status": "completed", "token": "total-token",
+                    "thread_id": "thread-1", "action_message_id": "action-1",
+                    "stage": "architect"}),
+        encoding="utf-8",
+    )
+    invocation = action["spawn"]["invocations"][0]
+    outcome_path = tmp_path / invocation["outcome_path"]
+    outcome_path.parent.mkdir(parents=True, exist_ok=True)
+    full_plan = [
+        {"batch_id": "B1", "tasks": [{"id": "B1-T1"}]},
+        {"batch_id": "B2", "tasks": [{"id": "B2-T1"}]},
+    ]
+    outcome_path.write_text(
+        json.dumps({
+            "worker_id": "critic-0",
+            "status": "completed",
+            "payload": {"batch_plan": full_plan},
+            "summary": "Architect",
+        }),
+        encoding="utf-8",
+    )
+    receipt_path = tmp_path / invocation["receipt_path"]
+    receipt_path.parent.mkdir(parents=True, exist_ok=True)
+    receipt_path.write_text(
+        json.dumps({"worker": "critic-0", "native_worker_handle": "agent-123"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "auto_engineering.host.execution_assembler.validate_attestations",
+        lambda **_: None,
+    )
+    monkeypatch.setattr(
+        "auto_engineering.host.execution_assembler.validate_worker_receipt",
+        lambda *args, **kwargs: None,
+    )
+
+    violations = collect_host_evidence_violations(
+        project_root=tmp_path,
+        action=action,
+        result={
+            "spawned": True,
+            "spawn_proof_token": "total-token",
+            "worker_attestations": [],
+            "batch_plan": [full_plan[0]],
+        },
+        receipt_limit=4096,
+        summary_limit=1024,
+    )
+
+    assert "ARCHITECT_RESULT_COVERAGE_LOSS" in violations
+
+
 def _action(tmp_path: Path) -> dict:
     prompt = "审查当前实现"
     prompt_hash = hashlib.sha256(prompt.encode()).hexdigest()
@@ -240,6 +385,46 @@ def test_finalize_missing_worker_output_builds_deterministic_failure(
         "HOST_WORKER_OUTPUT_MISSING"
     )
     assert json.loads(result_path.read_text(encoding="utf-8")) == result
+
+
+def test_finalize_missing_preserves_recorded_invalid_native_failure(
+    tmp_path: Path,
+) -> None:
+    """已记录的 native invalid 失败不能被重新降级为 missing 并消耗重试预算。"""
+
+    action = _action(tmp_path)
+    outcomes_ref = ".ae-state/host-runtime/work/action-1/outcomes.json"
+    action["host_execution"]["work_files"] = {"outcomes": outcomes_ref}
+    outcomes_path = tmp_path / outcomes_ref
+    outcomes_path.parent.mkdir(parents=True, exist_ok=True)
+    outcome = NativeWorkerOutcome(
+        worker_id="critic-0",
+        native_worker_handle="native-invalid",
+        status="failed",
+        payload={
+            "error_code": "HOST_WORKER_OUTPUT_INVALID",
+            "detail": "WORKER_NATIVE_RESULT_INVALID:critic-0",
+            "native_output_available": True,
+        },
+        summary="HOST_WORKER_OUTPUT_INVALID:critic-0",
+        actual_model="unreported",
+        isolation_evidence="fork_context=false",
+    )
+    outcomes_path.write_text(
+        json.dumps({"outcomes": [outcome.to_dict()]}),
+        encoding="utf-8",
+    )
+
+    result = HostExecutionAssembler(tmp_path).finalize_missing_worker_output(
+        action=action,
+        reason_code="HOST_WORKER_OUTPUT_INVALID",
+        result_path=tmp_path / ".ae-state/host-runtime/work/action-1/result.json",
+    )
+
+    assert result["spawned"] is False
+    assert result["spawn_error_code"] == "HOST_WORKER_FAILED"
+    assert result["spawn_retry_attempt"] == 1
+    assert result["spawn_error"] == "HOST_WORKER_OUTPUT_INVALID:critic-0"
 
 
 def test_missing_coordinator_recovers_completed_single_worker_artifact(
@@ -535,6 +720,88 @@ def test_stage_native_result_preserves_exact_envelope_atomically(
     assert native_path.read_bytes() == raw_envelope
 
 
+def test_record_only_recovery_view_reuses_plan_without_spawn(
+    tmp_path: Path,
+) -> None:
+    """恢复视图隐藏 spawn 后，仍可回写同一 Worker 的宿主事实。"""
+
+    action = _action(tmp_path)
+    invocation = action["spawn"]["invocations"][0]
+    native_ref = ".ae-state/host-runtime/native-results/recovery.json"
+    outcomes_ref = ".ae-state/host-runtime/work/recovery-outcomes.json"
+    action["host_execution"]["work_files"] = {"outcomes": outcomes_ref}
+    action["host_execution"]["workers"][0]["native_result_path"] = native_ref
+    action["host_execution"]["recovery"] = {
+        "schema_version": "1.0",
+        "status": "worker_attestation_pending",
+        "spawn_permitted": False,
+        "record_plan": deepcopy(action["spawn"]),
+    }
+    action.pop("spawn")
+    private_path = tmp_path / invocation["outcome_path"]
+    private_path.parent.mkdir(parents=True, exist_ok=True)
+    private_path.write_text(json.dumps({
+        "worker_id": invocation["worker_id"],
+        "status": "completed",
+        "payload": {"verdict": "APPROVE"},
+        "summary": "恢复回写",
+    }), encoding="utf-8")
+
+    assembler = HostExecutionAssembler(tmp_path)
+    assembler.stage_native_result(
+        action=action,
+        worker_id=invocation["worker_id"],
+        native_result_file=tmp_path / native_ref,
+        raw_envelope=b'{"status":"completed"}',
+    )
+    recorded = assembler.record_worker_outcome(
+        action=action,
+        worker_id=invocation["worker_id"],
+        native_worker_handle="recovered-native-worker",
+        status="completed",
+        actual_model="gpt-5.6-sol",
+        isolation_evidence="fork_turns=none",
+    )
+
+    assert recorded["native_worker_handle"] == "recovered-native-worker"
+    assert json.loads((tmp_path / outcomes_ref).read_text())["outcomes"] == [
+        recorded
+    ]
+
+
+def test_finalize_treats_attestation_recovery_as_worker_action(
+    tmp_path: Path,
+) -> None:
+    """恢复 Action 最终化仍必须生成 Worker 证据，不能降级为 inline。"""
+
+    action = _action(tmp_path)
+    action["host_execution"]["recovery"] = {
+        "schema_version": "1.0",
+        "status": "worker_attestation_pending",
+        "spawn_permitted": False,
+        "record_plan": deepcopy(action["spawn"]),
+    }
+    action.pop("spawn")
+    outcome = NativeWorkerOutcome(
+        worker_id="critic-0",
+        native_worker_handle="recovered-native-worker",
+        status="completed",
+        payload={"verdict": "APPROVE"},
+        summary="恢复完成",
+        actual_model="gpt-5.6-sol",
+        isolation_evidence="fork_turns=none",
+    )
+
+    result = HostExecutionAssembler(tmp_path).finalize(
+        action=action,
+        outcomes=[outcome],
+        coordinator_payload={"verdict": "APPROVE"},
+    )
+
+    assert result["spawned"] is True
+    assert result["worker_attestations"][0]["worker_id"] == "critic-0"
+
+
 def test_stage_native_result_rejects_unbound_path(
     tmp_path: Path,
 ) -> None:
@@ -704,6 +971,74 @@ def test_record_worker_outcome_rejects_nested_codex_result_wrapper(
             action=action,
             worker_id="critic-0",
             native_worker_handle="native-codex-worker-1",
+            native_result_file=native_path,
+            status="completed",
+            actual_model="unreported",
+            isolation_evidence="fork_turns=none",
+        )
+
+
+def test_record_worker_outcome_parses_nested_json_business_object(
+    tmp_path: Path,
+) -> None:
+    """完整嵌套业务对象不能被正则在内层右括号处截断。"""
+
+    action = _action(tmp_path)
+    native_ref = ".ae-state/host-runtime/native-results/native.json"
+    action["host_execution"]["workers"][0]["native_result_path"] = native_ref
+    native_path = tmp_path / native_ref
+    native_path.parent.mkdir(parents=True, exist_ok=True)
+    business = {
+        "verdict": "APPROVE",
+        "findings": [{"path": "src/App.tsx", "details": {"line": 12}}],
+    }
+    native_path.write_text(json.dumps({
+        "content": [{
+            "type": "text",
+            "text": f"完成。```json\n{json.dumps(business)}\n```",
+        }],
+    }), encoding="utf-8")
+
+    recorded = HostExecutionAssembler(tmp_path).record_worker_outcome(
+        action=action,
+        worker_id="critic-0",
+        native_worker_handle="native-critic-nested",
+        native_result_file=native_path,
+        status="completed",
+        actual_model="unreported",
+        isolation_evidence="fork_turns=none",
+    )
+
+    assert recorded["payload"] == business
+
+
+def test_record_worker_outcome_rejects_ambiguous_top_level_json_objects(
+    tmp_path: Path,
+) -> None:
+    """正文含两个顶层对象时必须拒绝，不能猜测业务结果。"""
+
+    action = _action(tmp_path)
+    native_ref = ".ae-state/host-runtime/native-results/native.json"
+    action["host_execution"]["workers"][0]["native_result_path"] = native_ref
+    native_path = tmp_path / native_ref
+    native_path.parent.mkdir(parents=True, exist_ok=True)
+    first = {"verdict": "APPROVE", "note": "literal } brace"}
+    second = {"verdict": "REJECT"}
+    native_path.write_text(json.dumps({
+        "content": [{
+            "type": "text",
+            "text": f"{json.dumps(first)}\n补充说明\n{json.dumps(second)}",
+        }],
+    }), encoding="utf-8")
+
+    with pytest.raises(
+        HostEvidenceValidationError,
+        match="WORKER_NATIVE_RESULT_INVALID:critic-0",
+    ):
+        HostExecutionAssembler(tmp_path).record_worker_outcome(
+            action=action,
+            worker_id="critic-0",
+            native_worker_handle="native-critic-ambiguous",
             native_result_file=native_path,
             status="completed",
             actual_model="unreported",

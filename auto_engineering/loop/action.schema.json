@@ -187,7 +187,8 @@
         "mode": {"enum": ["batch_design_items", "implementation_only"]},
         "component": {"type": "string", "minLength": 1},
         "batch_id": {"type": ["string", "null"]},
-        "design_item_ids": {"type": "array", "items": {"type": "string"}, "uniqueItems": true}
+        "design_item_ids": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "file_targets": {"type": "array", "items": {"type": "string"}, "uniqueItems": true}
       },
       "additionalProperties": false
     },
@@ -254,8 +255,6 @@
       },
       "additionalProperties": false
     },
-    "rounds": {"type": "integer"},
-    "checkpoint_id": {"type": "string"},
     "current_session_id": {"type": "string", "minLength": 1},
     "capsule": {
       "type": "object",

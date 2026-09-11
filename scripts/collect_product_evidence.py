@@ -6,6 +6,7 @@ import argparse
 import hashlib
 import json
 import sqlite3
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -13,11 +14,17 @@ from auto_engineering.host.path_contract import (
     action_key_for,
     worker_native_result_path,
 )
+from auto_engineering.host.stop_report import HOST_STOP_REASON_CODES
+
+# `HOST_RUNTIME_PROTOCOL_ERROR` 是历史基础 Stop Report 错误码；集合同时允许
+# 更具体但同样受控的宿主失败码，避免把错误事实重新降级成单一泛化码。
 from auto_engineering.host.usage_attestation import (
     HostUsageAttestationError,
     read_claude_stream_usage,
 )
-from auto_engineering.metrics.usage_ledger import UsageLedger
+from auto_engineering.loop.event_store import SQLiteEventStore
+from auto_engineering.metrics.event_projection import usage_records_from_events
+from auto_engineering.metrics.usage import UsageRecord
 from scripts.product_acceptance import (
     _RECOVERY_METHOD_STATUS,
     DEFAULT_CLAUDE_COST_LIMIT_USD,
@@ -120,33 +127,64 @@ def _read_business_evidence(
 
 def _read_loop_facts(project_root: Path) -> tuple[str, list[dict[str, Any]]]:
     database = project_root / ".ae-state" / "events.db"
-    connection: sqlite3.Connection | None = None
     try:
-        connection = sqlite3.connect(database)
-        rows = connection.execute(
-            "SELECT thread_id, event_type, payload_json "
-            "FROM loop_events ORDER BY sequence"
-        ).fetchall()
-    except (OSError, sqlite3.Error) as exc:
+        with SQLiteEventStore(database) as event_store:
+            threads = event_store.thread_ids()
+            if len(threads) != 1:
+                raise EvidenceCollectionError("EVENT_THREAD_INVALID")
+            stream = event_store.load_stream(threads[0])
+    except (OSError, sqlite3.Error, ValueError, RuntimeError) as exc:
+        if isinstance(exc, EvidenceCollectionError):
+            raise
         raise EvidenceCollectionError("EVENT_STORE_UNREADABLE") from exc
-    finally:
-        if connection is not None:
-            connection.close()
-    threads = {row[0] for row in rows}
-    if len(threads) != 1:
-        raise EvidenceCollectionError("EVENT_THREAD_INVALID")
-    facts: list[dict[str, Any]] = []
+    return threads[0], [
+        {
+            "thread_id": event.thread_id,
+            "event_type": event.event_type.value,
+            "causation_id": event.causation_id,
+            "payload": event.to_dict()["payload"],
+        }
+        for event in stream
+    ]
+
+
+def _read_runtime_preflight(
+    path: Path,
+    *,
+    project_root: Path,
+    candidate: dict[str, str],
+) -> dict[str, Any]:
+    """读取真实宿主执行过的 build-info 输出；禁止由 archive 元数据代填。"""
+
+    root = project_root.resolve()
+    preflight_path = path.resolve()
+    if not preflight_path.is_file() or not preflight_path.is_relative_to(root):
+        raise EvidenceCollectionError("RUNTIME_PREFLIGHT_MISSING")
     try:
-        for thread_id, event_type, payload_json in rows:
-            payload = json.loads(payload_json)
-            facts.append({
-                "thread_id": thread_id,
-                "event_type": event_type,
-                "payload": payload,
-            })
-    except (TypeError, json.JSONDecodeError) as exc:
-        raise EvidenceCollectionError("EVENT_PAYLOAD_INVALID") from exc
-    return next(iter(threads)), facts
+        raw = preflight_path.read_bytes()
+        payload = json.loads(raw.decode("utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise EvidenceCollectionError("RUNTIME_PREFLIGHT_INVALID") from exc
+    if (
+        not isinstance(payload, dict)
+        or payload.get("version") != candidate["version"]
+        or payload.get("build_id") != candidate["build_id"]
+        or payload.get("source_kind") != "packaged"
+        or payload.get("content_sha256") != candidate["content_sha256"]
+    ):
+        raise EvidenceCollectionError("RUNTIME_PREFLIGHT_MISMATCH")
+    return {
+        "status": "pass",
+        "version": candidate["version"],
+        "build_id": candidate["build_id"],
+        "content_sha256": candidate["content_sha256"],
+        "source_kind": "packaged",
+        "source": {
+            "path": preflight_path.relative_to(root).as_posix(),
+            "sha256": hashlib.sha256(raw).hexdigest(),
+            "bytes": len(raw),
+        },
+    }
 
 
 def _action_facts(facts: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -176,7 +214,7 @@ def _unexpected_stop_report_count(project_root: Path) -> int:
             raise EvidenceCollectionError("STOP_REPORT_INVALID") from exc
         if (
             not isinstance(report, dict)
-            or report.get("reason_code") != "HOST_RUNTIME_PROTOCOL_ERROR"
+            or report.get("reason_code") not in HOST_STOP_REASON_CODES
         ):
             raise EvidenceCollectionError("STOP_REPORT_INVALID")
         count += 1
@@ -357,8 +395,14 @@ def _read_canary_evidence(
     """从独立 L3 项目事实推导阶段和一次恢复，不读取 L4 业务报告。"""
 
     root = project_root.resolve()
-    _, facts = _read_loop_facts(root)
+    thread_id, facts = _read_loop_facts(root)
     actions = _action_facts(facts)
+    accepted_action_ids = {
+        fact["causation_id"]
+        for fact in facts
+        if fact["event_type"] == "ResultAccepted"
+        and isinstance(fact.get("causation_id"), str)
+    }
     build_ids = {
         action_build_id
         for action in actions
@@ -397,6 +441,7 @@ def _read_canary_evidence(
         if (
             isinstance(action_id, str)
             and action_id
+            and action_id in accepted_action_ids
             and isinstance(method, str)
             and recovery.get("spawn_permitted") is False
             and status in _RECOVERY_STATUSES
@@ -407,6 +452,10 @@ def _read_canary_evidence(
     if len(candidates) != 1:
         raise EvidenceCollectionError("CANARY_RECOVERY_NOT_UNIQUE")
     action_id, method, projection_status = candidates[0]
+    with SQLiteEventStore(root / ".ae-state" / "events.db") as event_store:
+        signature = event_store.semantic_signature(thread_id)
+    if signature is None:
+        raise EvidenceCollectionError("CANARY_EVENT_STORE_SIGNATURE_MISSING")
     return {
         "schema_version": "1.0",
         "status": "pass",
@@ -416,18 +465,22 @@ def _read_canary_evidence(
             "status": "verified",
             "method": method,
             "action_message_id": action_id,
+            "result_causation_id": action_id,
             "projection_status": projection_status,
         },
         "source": {
             "kind": "event_store",
             "root": str(root),
+            "thread_id": thread_id,
+            "event_store_path": ".ae-state/events.db",
+            "semantic_signature": list(signature),
         },
     }
 
 
 def _usage_receipts(
     *,
-    ledger: UsageLedger,
+    usage_records: Sequence[UsageRecord],
     thread_id: str,
     actions: list[dict[str, Any]],
     build_id: str,
@@ -435,7 +488,10 @@ def _usage_receipts(
     cost_usd: float | None,
 ) -> tuple[list[dict[str, Any]], dict[str, int | float | None]]:
     action_by_id = {action["message_id"]: action for action in actions}
-    grouped = ledger.records_for_action(thread_id)
+    grouped: dict[str, list[UsageRecord]] = {}
+    for record in usage_records:
+        if record.thread_id == thread_id:
+            grouped.setdefault(record.action_message_id or "", []).append(record)
     if "" in grouped:
         raise EvidenceCollectionError("USAGE_ACTION_BINDING_MISSING")
     if not grouped:
@@ -511,21 +567,28 @@ def collect_product_evidence(
     output: Path,
     evidence_output: Path,
     business_evidence: Path,
+    runtime_identity: Path | None = None,
     host_output: Path | None = None,
     max_claude_cost_usd: float = DEFAULT_CLAUDE_COST_LIMIT_USD,
 ) -> dict[str, Any]:
     max_claude_cost_usd = _validate_cost_limit(max_claude_cost_usd)
     candidate = _read_candidate_build_info(archive)
-    thread_id, facts = _read_loop_facts(project_root.resolve())
+    project_root = project_root.resolve()
+    runtime_preflight = _read_runtime_preflight(
+        runtime_identity or project_root / ".ae-state/product-evidence/build-identity.json",
+        project_root=project_root,
+        candidate=candidate,
+    )
+    thread_id, facts = _read_loop_facts(project_root)
     actions = _action_facts(facts)
-    native_result_manifest = _native_result_manifest(project_root.resolve(), actions)
+    native_result_manifest = _native_result_manifest(project_root, actions)
     cost_usd: float | None = None
     host_usage_attestation: dict[str, Any] | None = None
     if host == "claude-code":
         if host_output is None:
             raise EvidenceCollectionError("CLAUDE_COST_EVIDENCE_MISSING")
         host_output = host_output.resolve()
-        if not host_output.is_relative_to(project_root.resolve()):
+        if not host_output.is_relative_to(project_root):
             raise EvidenceCollectionError("CLAUDE_USAGE_ATTESTATION_PATH_INVALID")
         try:
             cost_usd = read_claude_stream_usage(host_output).cost_usd
@@ -537,7 +600,7 @@ def collect_product_evidence(
                 "CLAUDE_USAGE_ATTESTATION_UNREADABLE"
             ) from exc
         host_usage_attestation = {
-            "path": host_output.relative_to(project_root.resolve()).as_posix(),
+            "path": host_output.relative_to(project_root).as_posix(),
             "sha256": hashlib.sha256(raw_host_output).hexdigest(),
             "bytes": len(raw_host_output),
             "source": "claude-cli-result",
@@ -568,21 +631,22 @@ def collect_product_evidence(
         )
         if not journal.is_file() or json.loads(journal.read_text()).get("status") != "accepted":
             raise EvidenceCollectionError("OUTCOME_JOURNAL_INCOMPLETE")
-    ledger = UsageLedger(project_root / ".ae-state" / "usage-ledger.db")
-    try:
-        receipts, usage = _usage_receipts(
-            ledger=ledger,
-            thread_id=thread_id,
-            actions=actions,
-            build_id=candidate["build_id"],
-            host=host,
-            cost_usd=cost_usd,
+    database = project_root / ".ae-state" / "events.db"
+    with SQLiteEventStore(database) as event_store:
+        usage_records = usage_records_from_events(
+            event_store.load_stream(thread_id)
         )
-    finally:
-        ledger.close()
+    receipts, usage = _usage_receipts(
+        usage_records=usage_records,
+        thread_id=thread_id,
+        actions=actions,
+        build_id=candidate["build_id"],
+        host=host,
+        cost_usd=cost_usd,
+    )
     event_types = [fact["event_type"] for fact in facts]
     unexpected_stop_count = int("LoopFailed" in event_types) + _unexpected_stop_report_count(
-        project_root.resolve()
+        project_root
     )
     if "LoopCompleted" not in event_types or "ResultAccepted" not in event_types:
         raise EvidenceCollectionError("LOOP_COMPLETION_FACTS_INCOMPLETE")
@@ -594,10 +658,7 @@ def collect_product_evidence(
         "build_id": candidate["build_id"],
         "installed_build_id": candidate["build_id"],
         "build_identity_preflight": {
-            "status": "pass",
-            "build_id": candidate["build_id"],
-            "version": candidate["version"],
-            "source_kind": "packaged",
+            **runtime_preflight,
         },
         "acceptance_policy": {
             "max_claude_cost_usd": max_claude_cost_usd,
@@ -660,6 +721,8 @@ def collect_product_evidence(
             "recovery_verified": canary["recovery"]["status"] == "verified",
             "recovery_method": canary["recovery"]["method"],
             "recovery_action_message_id": canary["recovery"]["action_message_id"],
+            "recovery_result_causation_id": canary["recovery"]["result_causation_id"],
+            "event_store_source": canary["source"],
         },
         "golden_project": {
             "status": "pass",
@@ -695,6 +758,10 @@ def main() -> int:
         help="项目内结构化 L4 业务验收报告；必须绑定 Build 和 Gate 输出",
     )
     parser.add_argument(
+        "--runtime-identity", type=Path,
+        help="宿主实际执行 build-info --expect-build-id 后保存的 JSON 预检事实",
+    )
+    parser.add_argument(
         "--host-output", type=Path,
         help="宿主 stream-json 原始输出；Claude 必须用它提取真实成本",
     )
@@ -717,6 +784,7 @@ def main() -> int:
             output=args.output,
             evidence_output=args.evidence_output,
             business_evidence=args.business_evidence,
+            runtime_identity=args.runtime_identity,
             host_output=args.host_output,
             max_claude_cost_usd=args.max_claude_cost_usd,
         )

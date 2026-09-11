@@ -1,9 +1,8 @@
-"""v5.5 — DeepAuditGate: 全量代码深度审计 Gate.
+"""DeepAuditGate：消费宿主提交的深度审计发现并确定性汇总。
 
-触发时机: Orchestrator 在 critic APPROVE + gates passed 后调 DeepAuditGate.run() (B7.1 步2j)
-输出: GateVerdict 含 P0/P1/P2 分类 findings.
-
-设计来源: design/v5.6-Design-Loop.md §B6.5
+Python/Core 不创建审计 Agent，也不启动第二个协调循环。主 Agent/宿主按当前
+Action 合同完成审计后，把受约束的 ``findings`` 放入 Gate contracts；本模块只
+负责归一化、去重、重算等级数量和执行阈值判定。
 """
 
 from __future__ import annotations
@@ -152,10 +151,10 @@ class DeepAuditReport:
 
 
 class DeepAuditGate(Gate):
-    """全量代码深度审计 Gate — LLM 3-agent 并行审计.
+    """深度审计结果 Gate；不负责 Agent 调度或宿主会话创建。
 
-    当前 Phase 1 为骨架实现: 创建 DeepAuditReport 结构, 但不实际 spawn agent.
-    Phase 2 集成到 Orchestrator 后, _run_deep_audit() 调用实际的 3-agent 编排器.
+    多角色审计若被宿主采用，必须在边界上汇总成一个当前 Action 的
+    ``findings`` 合同；Gate 内部只保留一条确定性求值路径。
 
     Args:
         project_root: 项目根目录路径.
@@ -171,8 +170,7 @@ class DeepAuditGate(Gate):
     def run(self, project_root: Path) -> GateVerdict:
         """执行 DeepAudit, 返回 GateVerdict.
 
-        v5.5 P1-9: contracts 改为实例属性 (self.contracts).
-        v5.5 audit P0-2: Orchestrator 通过 contracts 回填真实 findings.
+        ``contracts`` 是宿主提交的当前 Action 结果，不是隐式的第二调度入口。
 
         Returns:
             GateVerdict (passed + details + suggestions).

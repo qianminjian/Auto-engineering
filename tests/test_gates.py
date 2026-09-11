@@ -11,7 +11,7 @@
     - Gate 4 test (subprocess pytest + --timeout=60 + --no-cov)
     - Gate 5 coverage (pytest --cov + threshold check)
     - Gate 6 build (Python: import auto_engineering)
-    - CLI ae status + ae checkpoint v2 list/show
+    - CLI ae status 与 EventStore 状态查询
 """
 
 from __future__ import annotations
@@ -349,7 +349,7 @@ class TestBuildGate:
 
 
 # ============================================================
-# Group 9: CLI ae status + ae checkpoint v2
+# Group 9: CLI ae status
 # ============================================================
 
 
@@ -367,5 +367,4 @@ class TestCLIStatus:
         assert str(tmp_path) in result.output or "当前目录" in result.output
 
 
-# Phase 40: ae checkpoint 已删除 — TestCLICheckpointV2 测试已移除
-# checkpoint SQLite store 功能保留，仅 CLI 入口删除
+# Phase 40: 退役的旧状态快照 CLI 与实现均已移除

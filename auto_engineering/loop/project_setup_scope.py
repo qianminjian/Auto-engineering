@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 from pathlib import Path
 from typing import Protocol
@@ -101,8 +102,8 @@ def is_minimal_setup_test(owner: ProjectSetupScopeOwner, relative: Path) -> bool
     }
     is_smoke_test = relative.name.lower() in {
         "test_smoke.js", "test_smoke.jsx", "test_smoke.ts", "test_smoke.tsx",
-    } or (
-        ("smoke" in stem or any("smoke" in part.lower() for part in relative.parts))
+    } or stem in {"smoke", "setup.smoke", "toolchain.smoke"} or (
+        any("smoke" in part.lower() for part in relative.parts)
         and (
             stem.endswith(".test")
             or stem.endswith(".spec")
@@ -183,10 +184,21 @@ def is_minimal_setup_source(owner: ProjectSetupScopeOwner, relative: Path) -> bo
         content = candidate.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return False
+    has_canonical_marker = re.search(
+        r"(?i)\bAE_SETUP_SMOKE\b", content[:16 * 1024]
+    ) is not None
     has_smoke_marker = re.search(
-        r"(?i)(?:minimal|setup|non[- ]business)\s+(?:non[- ]business\s+)?smoke",
+        r"(?i)(?:\bAE_SETUP_SMOKE\b|"
+        r"\b(?:minimal|setup)\s+(?:non[- ]business\s+)?smoke\b|"
+        r"\bnon[- ]business\b.{0,80}\b(?:smoke|placeholder|toolchain)\b)",
         content[:16 * 1024],
     ) is not None
+    if has_canonical_marker or (
+        has_smoke_marker
+        and relative.stem.lower()
+        in {"bootstrap", "index", "main", "placeholder", "setup", "toolchain"}
+    ):
+        return True
     if relative.stem.lower() == "app" and relative.suffix.lower() in {".jsx", ".tsx"}:
         match = re.fullmatch(
             r"\s*(?:/\*.*?\*/\s*|//[^\n]*\n\s*)*"
@@ -224,8 +236,6 @@ def is_minimal_setup_source(owner: ProjectSetupScopeOwner, relative: Path) -> bo
         ".cjs", ".cts", ".go", ".js", ".jsx", ".mjs", ".mts", ".py", ".rs", ".ts", ".tsx",
     }:
         return False
-    if has_smoke_marker:
-        return True
     imports = re.findall(
         r"\bfrom\s+['\"]([^'\"]+)['\"]|\bimport\s+['\"]([^'\"]+)['\"]",
         content,
@@ -280,6 +290,30 @@ def project_setup_files(owner: ProjectSetupScopeOwner) -> list[str]:
     return sorted(selected)
 
 
+def project_setup_fingerprint(owner: ProjectSetupScopeOwner) -> str:
+    """计算 Setup 输入指纹，证明资源恢复确实改变了项目。"""
+    digest = hashlib.sha256()
+    for relative_name in project_setup_files(owner):
+        candidate = owner.project_root / relative_name
+        digest.update(relative_name.encode("utf-8"))
+        digest.update(b"\0")
+        if candidate.is_symlink():
+            try:
+                digest.update(b"symlink:")
+                digest.update(str(candidate.readlink()).encode("utf-8"))
+            except OSError as exc:
+                digest.update(f"symlink-error:{type(exc).__name__}".encode())
+        else:
+            try:
+                with candidate.open("rb") as stream:
+                    while chunk := stream.read(1024 * 1024):
+                        digest.update(chunk)
+            except OSError as exc:
+                digest.update(f"read-error:{type(exc).__name__}".encode())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
 def project_setup_snapshot_files(
     owner: ProjectSetupScopeOwner,
     profile: ProjectProfile,
@@ -317,6 +351,7 @@ __all__ = [
     "is_setup_safe_local_import",
     "path_is_under_any",
     "project_setup_files",
+    "project_setup_fingerprint",
     "project_setup_scope_violations",
     "project_setup_snapshot_files",
 ]

@@ -23,10 +23,21 @@ def test_real_host_runbook_uses_locked_project_runner_for_installers() -> None:
     assert "不能从插件根目录执行" in runbook
     assert "AE_INVOCATION_PROJECT_ROOT" in runbook
     assert "AE_PROJECT_ROOT_DRIFT" in runbook
+    assert "--setting-sources user,project" in runbook
+    assert "--strict-mcp-config" in runbook
+    assert "  --disable-slash-commands --no-chrome" not in runbook
+    assert "会关闭所有 Skill" in runbook
+    assert "--max-coordinator-polls 32" in runbook
+    assert "HOST_COORDINATOR_POLL_LIMIT" in runbook
+    assert "HOST_PROVIDER_STREAM_IDLE_TIMEOUT" in runbook
+    assert "不得先清理 lease 或写 Stop Report" in runbook
+    assert "authentication_failed / Not logged in" in runbook
     assert '--project-root "codex=$CODEX_PROJECT_ROOT"' in runbook
     assert '--project-root "claude-code=$CLAUDE_PROJECT_ROOT"' in runbook
     assert "不一致" in runbook
     assert "立即停止本次验收" in runbook
+    assert "design_structure_preflight" in runbook
+    assert "零 Worker" in runbook
 
 
 def test_dev_loop_command_does_not_tick_a_gate_without_a_result() -> None:

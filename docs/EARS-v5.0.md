@@ -1,5 +1,7 @@
 # Auto-Engineering v5.6 EARS Acceptance Criteria
 
+> ⚠️ **历史验收档案，不是当前运行规范。** 本文保留 v5.0/v5.6 的历史 AC、旧命令和旧持久化口径，仅用于演进审计；当前验收以 `design/BEACON.md`、`design/v5.8-Scheme-A-Convergence-Plan.md` 和 `design/v5.8-Real-Host-Acceptance-Runbook.md` 为准。本文中的历史 PASS 不代表当前产品已通过真实 L4。
+
 > **Version**: 5.6.0 | **Status**: v5.6 验收基线 (v5.0 15 AC + v5.6 扩展) | **Last updated**: 2026-07-16
 > 决策依据: `design/BEACON.md` 决策 #28, #41, #53 · `design/v5.6-Design-Loop.md` §B18 + §IL.6
 > 验收人: AI 自动 + 用户手动 (EARS AC-12/14 真实环境)

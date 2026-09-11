@@ -27,6 +27,7 @@ def build_architecture_baseline(
     contracts: dict[str, Any],
     obligations: list[dict[str, Any]],
     accepted_at_tick: int,
+    architect_plan_coverage: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """规范化并摘要 Architect 已接受输出；时间不参与摘要外的可变状态。"""
     if revision < 1:
@@ -44,6 +45,10 @@ def build_architecture_baseline(
         "obligations": obligations,
         "accepted_at_tick": accepted_at_tick,
     }
+    if architect_plan_coverage is not None:
+        # Worker 计划覆盖是 Architect accepted 事实的一部分，必须随同
+        # baseline 进入 Reducer/EventStore 投影，不能只停留在宿主 result。
+        payload["architect_plan_coverage"] = architect_plan_coverage
     digest_payload = dict(payload)
     digest_payload.pop("accepted_at_tick")
     payload["baseline_id"] = hashlib.sha256(

@@ -11,7 +11,6 @@ from auto_engineering.loop.stage_offload import StageOffloadService
 def test_developer_offload_contains_batch_and_test_evidence(tmp_path) -> None:
     state = EngineState(thread_id="thread-1")
     state.tick = 8
-    state.round = 3
     state.files_changed = ["src/core.py"]
     state.test_results = {"passed": 2, "failed": 1, "errors": 0}
     state.gate_results = {"test": {"passed": False}}
@@ -46,7 +45,6 @@ def test_developer_offload_handles_completed_batch_cursor_without_warning(
 ) -> None:
     state = EngineState(thread_id="thread-complete")
     state.tick = 3
-    state.round = 1
     state.test_results = {"passed": 4, "failed": 0}
     batch_state = BatchState.from_batch_plan([{
         "batch_id": "B1",

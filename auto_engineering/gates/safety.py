@@ -25,6 +25,7 @@ import re
 import subprocess
 from pathlib import Path
 
+from auto_engineering.gates._scan_utils import DEFAULT_SKIP_DIRS
 from auto_engineering.gates.base import Gate, GateVerdict
 
 __all__ = ["SECRET_PATTERNS", "SKIP_DIRS", "SafetyGate"]
@@ -89,26 +90,8 @@ SECRET_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("DB DSN with password", re.compile(r"(postgres|mysql|mongodb)" r"://[^:\s]+:[^@\s]+@")),
 ]
 
-# 跳过这些目录(避免扫描 venv / .git / node_modules)
-SKIP_DIRS = {
-    ".git",
-    ".venv",
-    "venv",
-    "node_modules",
-    "__pycache__",
-    ".pytest_cache",
-    ".ae-state",
-    ".ae-plugin",
-    ".gitnexus",
-    ".uv-cache",
-    "dist",
-    "build",
-    ".eggs",
-    "tests",
-    # DS-14 (T155, 2026-07-23): _scratch/ 是引擎/Agent 调试产物目录，
-    # 含 prompt-log、debug traces 等——不应触发 safety gate 假阳性
-    "_scratch",
-}
+# Audit/Safety 共用业务源码扫描边界，避免生成物和依赖缓存触发误报。
+SKIP_DIRS = set(DEFAULT_SKIP_DIRS)
 
 # 单文件大小上限(MB), 超过跳过(防止大文件扫描)
 _MAX_FILE_MB = 5

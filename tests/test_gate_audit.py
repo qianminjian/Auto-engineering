@@ -94,6 +94,19 @@ class TestAuditGateP0Findings:
         assert verdict.passed is False
         assert "静默吞异常" in verdict.message
 
+    def test_controlled_return_from_except_is_not_silent(self, tmp_path: Path) -> None:
+        """异常被明确转换为返回值时，不应被误报为静默吞异常。"""
+        (tmp_path / "controlled.py").write_text(
+            "def read_optional():\n"
+            "    try:\n"
+            "        return load_value()\n"
+            "    except ValueError:\n"
+            "        return None\n"
+        )
+        verdict = AuditGate().run(tmp_path)
+        assert verdict.passed is True
+        assert "静默吞异常" not in verdict.message
+
     def test_custom_max_p0_allows_one(self, tmp_path: Path) -> None:
         """max_p0=1 允许 1 个 P0 → passed."""
         (tmp_path / "config.py").write_text(
@@ -193,6 +206,30 @@ class TestAuditGateSkipDirs:
         gate = AuditGate()
         verdict = gate.run(tmp_path)
         assert verdict.passed is True
+
+    def test_skips_project_dependency_runtime(self, tmp_path: Path) -> None:
+        """项目自带运行时依赖缓存不属于业务源码扫描范围。"""
+        runtime_dir = tmp_path / ".ae-runtime" / "lib" / "python3.13"
+        runtime_dir.mkdir(parents=True)
+        (runtime_dir / "dependency.py").write_text(
+            'API_KEY = "sk-1234567890abcdef1234567890abcdef"\n',
+            encoding="utf-8",
+        )
+        verdict = AuditGate().run(tmp_path)
+        assert verdict.passed is True
+        assert "无审计发现" in verdict.message
+
+
+class TestAuditGateSecretClassification:
+    def test_error_code_literal_is_not_a_secret(self, tmp_path: Path) -> None:
+        """结构化错误码不能因字段名包含 API_KEY 被误报为凭据。"""
+        (tmp_path / "errors.py").write_text(
+            'CONFIG_MISSING_API_KEY = "CONFIG_MISSING_API_KEY"\n',
+            encoding="utf-8",
+        )
+        verdict = AuditGate().run(tmp_path)
+        assert verdict.passed is True
+        assert "硬编码密钥" not in verdict.message
 
 
 class TestAuditGateLargeFiles:

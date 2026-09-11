@@ -66,7 +66,7 @@ def test_compare_trajectory_validates_business_semantics() -> None:
         compare_trajectory(changed, expected)
 
 
-def test_all_ten_required_golden_trajectories_pass() -> None:
+def test_all_required_golden_trajectories_pass() -> None:
     fixtures = load_fixtures(
         Path(__file__).parent / "golden" / "critical-trajectories.json"
     )
@@ -79,7 +79,6 @@ def test_all_ten_required_golden_trajectories_pass() -> None:
         "verification_refine",
         "duplicate_result",
         "conflicting_result",
-        "checkpoint_import",
         "crash_recovery",
         "terminal_replay",
     }

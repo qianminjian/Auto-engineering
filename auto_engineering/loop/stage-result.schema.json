@@ -91,11 +91,17 @@
       }
     },
     "batch_id": {"type": ["string", "null"]},
+    "task_ids": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1},
+      "uniqueItems": true
+    },
     "files_changed": {"type": "array"},
     "commit_hash": {"type": "string"},
     "test_results": {"type": "object"},
     "verdict": {"type": "string"},
     "findings": {"type": ["array", "string"]},
+    "cross_batch_findings": {"type": "array", "items": {"type": "object"}},
     "critic_feedback": {"type": "string"},
     "strengths": {"type": "array", "items": {"type": "object"}},
     "assessment": {"type": "string"},
@@ -319,7 +325,7 @@
     },
     {
       "if": {"properties": {"stage": {"const": "developer"}}},
-      "then": {"required": ["stage", "batch_id", "files_changed", "test_results"]}
+      "then": {"required": ["stage", "batch_id", "task_ids", "files_changed", "test_results"]}
     },
     {
       "if": {"properties": {"stage": {"const": "critic"}}},
@@ -378,9 +384,13 @@
             "items": {
               "type": "object",
               "properties": {
-                "status": {"enum": ["IMPLEMENTED", "MISSING", "DIVERGED"]}
+                "design_section": {"type": "string", "minLength": 1},
+                "design_item": {"type": "string", "minLength": 1},
+                "status": {"enum": ["IMPLEMENTED", "MISSING", "DIVERGED"]},
+                "implementation": {"type": "string"},
+                "note": {"type": "string", "minLength": 1}
               },
-              "required": ["status"]
+              "required": ["design_section", "design_item", "status", "implementation", "note"]
             }
           }
         }

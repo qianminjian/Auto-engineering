@@ -56,12 +56,6 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
             created_at TEXT NOT NULL,
             PRIMARY KEY(thread_id, action_message_id, relative_path)
         );
-        CREATE TABLE IF NOT EXISTS checkpoint_imports (
-            checkpoint_id TEXT PRIMARY KEY,
-            thread_id TEXT NOT NULL UNIQUE,
-            event_id TEXT NOT NULL UNIQUE,
-            imported_at TEXT NOT NULL
-        );
         """
     )
 

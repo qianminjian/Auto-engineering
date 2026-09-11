@@ -5,15 +5,42 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import tempfile
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from auto_engineering.host.runtime_driver import HostRunLease, HostRunLeaseStore
+from auto_engineering.host.runtime_driver import (
+    HostRunLease,
+    HostRunLeaseStore,
+    continuation_recovery_contract,
+)
 
 HOST_RUNTIME_PROTOCOL_ERROR = "HOST_RUNTIME_PROTOCOL_ERROR"
+HOST_PROVIDER_STREAM_IDLE_TIMEOUT = "HOST_PROVIDER_STREAM_IDLE_TIMEOUT"
+HOST_STOP_REASON_CODES = frozenset({
+    HOST_RUNTIME_PROTOCOL_ERROR,
+    HOST_PROVIDER_STREAM_IDLE_TIMEOUT,
+    "HOST_PROCESS_INTERRUPTED",
+    "HOST_PROCESS_IDLE_TIMEOUT",
+    "HOST_PROCESS_TIMEOUT",
+    "HOST_PROTOCOL_RETRY_EXHAUSTED",
+    "HOST_COORDINATOR_POLL_LIMIT",
+    "HOST_WORKER_ATTESTATION_MISSING",
+})
 _MAX_REASON_LENGTH = 128
+_STREAM_IDLE_TIMEOUT = re.compile(r"\bstream\s+idle\s+timeout\b", re.IGNORECASE)
+
+
+def classify_host_observation(value: object) -> str | None:
+    """把已知的上游宿主错误文本归一为稳定错误码。"""
+
+    if value == HOST_PROVIDER_STREAM_IDLE_TIMEOUT:
+        return HOST_PROVIDER_STREAM_IDLE_TIMEOUT
+    if isinstance(value, str) and _STREAM_IDLE_TIMEOUT.search(value):
+        return HOST_PROVIDER_STREAM_IDLE_TIMEOUT
+    return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,6 +59,7 @@ class HostStopReport:
     last_host_observation: dict[str, str]
     lease_cleared: bool
     next_operation: dict[str, object]
+    continuation: dict[str, object]
 
     @classmethod
     def from_lease(
@@ -64,6 +92,7 @@ class HostStopReport:
                 "thread_id": lease.thread_id,
                 "argv": ["dev-loop", "--resume", lease.thread_id],
             },
+            continuation=continuation_recovery_contract(lease),
         )
 
     def to_dict(self) -> dict[str, object]:
@@ -113,6 +142,9 @@ def _bounded_reason(payload: Mapping[str, object]) -> str:
     value = payload.get("reason")
     if not isinstance(value, str) or not value:
         return "unknown"
+    classified = classify_host_observation(value)
+    if classified is not None:
+        return classified
     return value[:_MAX_REASON_LENGTH]
 
 
@@ -121,6 +153,7 @@ def handle_claude_session_end(
     payload: Mapping[str, object],
     *,
     reason_code: str = HOST_RUNTIME_PROTOCOL_ERROR,
+    clear_lease: bool = True,
 ) -> dict[str, object]:
     event_name = payload.get("hook_event_name")
     if event_name not in {"SessionEnd", "StopFailure"}:
@@ -155,27 +188,39 @@ def handle_claude_session_end(
         termination_category=termination_category,
         reason=_bounded_reason(payload),
         lease_cleared=False,
-        reason_code=reason_code,
+        reason_code=(
+            _bounded_reason(payload)
+            if reason_code == HOST_RUNTIME_PROTOCOL_ERROR
+            and classify_host_observation(payload.get("reason")) is not None
+            else reason_code
+        ),
     )
     report_store = HostStopReportStore(project_root)
     report_store.save(report)
-    cleared = lease_store.clear_if_matches(lease)
+    cleared = lease_store.clear_if_matches(lease) if clear_lease else False
     if cleared:
+        effective_reason_code = (
+            _bounded_reason(payload)
+            if reason_code == HOST_RUNTIME_PROTOCOL_ERROR
+            and classify_host_observation(payload.get("reason")) is not None
+            else reason_code
+        )
         report = HostStopReport.from_lease(
             lease,
             event_name=event_name,
             termination_category=termination_category,
             reason=_bounded_reason(payload),
             lease_cleared=True,
-            reason_code=reason_code,
+            reason_code=effective_reason_code,
         )
         report_store.save(report)
     report_path = report_store.path_for(report)
     return {
-        "reason_code": reason_code,
+        "reason_code": report.reason_code,
         "lease_cleared": cleared,
         "stop_report_path": str(report_path.relative_to(project_root.resolve())),
         "next_operation": report.next_operation,
+        "continuation": report.continuation,
         "systemMessage": (
             "Auto-Engineering 宿主已结束，但 Core 仍要求继续；"
             "已记录 Stop Report，请从 active Action 恢复"
@@ -184,8 +229,11 @@ def handle_claude_session_end(
 
 
 __all__ = [
+    "HOST_PROVIDER_STREAM_IDLE_TIMEOUT",
     "HOST_RUNTIME_PROTOCOL_ERROR",
+    "HOST_STOP_REASON_CODES",
     "HostStopReport",
     "HostStopReportStore",
+    "classify_host_observation",
     "handle_claude_session_end",
 ]

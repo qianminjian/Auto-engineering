@@ -7,7 +7,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "./hooks/codex-hook.sh",
+            "command": "\"$(git rev-parse --show-toplevel)/hooks/codex-hook.sh\"",
             "timeout": 10
           }
         ]
@@ -15,11 +15,11 @@
     ],
     "PreToolUse": [
       {
-        "matcher": "*",
+        "matcher": ".*",
         "hooks": [
           {
             "type": "command",
-            "command": "./hooks/codex-hook.sh",
+            "command": "\"$(git rev-parse --show-toplevel)/hooks/codex-hook.sh\"",
             "timeout": 10
           }
         ]
@@ -27,11 +27,11 @@
     ],
     "PostToolUse": [
       {
-        "matcher": "*",
+        "matcher": ".*",
         "hooks": [
           {
             "type": "command",
-            "command": "./hooks/codex-hook.sh",
+            "command": "\"$(git rev-parse --show-toplevel)/hooks/codex-hook.sh\"",
             "timeout": 10
           }
         ]
@@ -42,7 +42,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "./hooks/codex-hook.sh",
+            "command": "\"$(git rev-parse --show-toplevel)/hooks/codex-hook.sh\"",
             "timeout": 10
           }
         ]

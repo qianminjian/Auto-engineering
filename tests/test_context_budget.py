@@ -115,13 +115,13 @@ def test_tick_kernel_does_not_rollover_at_fixed_tick_count() -> None:
 
 
 def test_tick_orchestrator_production_default_has_no_round_cap() -> None:
-    """固定 Round 上限只能是显式兼容配置，不能成为当前生产默认。"""
+    """当前生产编排器不再持有旧 Round/Convergence 判定器。"""
 
     orchestrator = _orchestrator(RuntimeConfig(environ={}))
     orchestrator.init("实现长流程功能")
 
-    assert orchestrator._judge is not None
-    assert orchestrator._judge.config.max_iterations is None
+    assert orchestrator._event_store is None
+    assert not hasattr(orchestrator, "_judge")
 
 
 def test_tick_kernel_rejects_oversized_candidate_without_truncation() -> None:

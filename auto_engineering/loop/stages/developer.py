@@ -154,7 +154,7 @@ class DeveloperHandler:
                     if isinstance(completed_batch_id, str)
                     else None
                 ),
-                save_checkpoint=more,
+                persist_state=more,
                 offload_stage=self.stage,
                 snapshot_developer_output=not more,
                 developer_progress=progress,

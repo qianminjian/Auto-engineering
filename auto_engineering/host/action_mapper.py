@@ -3,10 +3,15 @@
 from __future__ import annotations
 
 import hashlib
-import json
 from collections.abc import Mapping
 
 from auto_engineering.host import HostPlatform, MappedHostAction
+from auto_engineering.host.action_mapper_contracts import (
+    CLAUDE_NATIVE_WORKER_TOOLS,
+    CODEX_NATIVE_WORKER_TOOL_FAMILIES,
+    native_worker_launch_prompt,
+    worker_fencing_token,
+)
 from auto_engineering.host.continuation_contract import continuation_contract
 from auto_engineering.host.path_contract import (
     worker_native_result_path,
@@ -26,76 +31,8 @@ from auto_engineering.loop.execution_control import (
     control_for_action,
 )
 
-_CODEX_NATIVE_WORKER_TOOL_FAMILIES = [
-    {
-        "spawn": "collaboration.spawn_agent",
-        "wait": "collaboration.wait_agent",
-        "close": "collaboration.interrupt_agent",
-    },
-    {
-        "spawn": "multi_agent_v1__spawn_agent",
-        "wait": "multi_agent_v1__wait_agent",
-        "close": "multi_agent_v1__close_agent",
-    },
-]
-
-_CLAUDE_NATIVE_WORKER_TOOLS = {
-    "selection": "claude_code_native_agent",
-    "spawn": "Agent",
-    "completion": "TaskOutput",
-    "handle_field": "agentId_or_task_id",
-    "model_field": "model_or_unreported",
-    "isolation_evidence": "fresh_context",
-}
-
-
-def _worker_fencing_token(
-    action_message_id: str,
-    worker_id: str,
-    execution_generation: int,
-) -> str:
-    return hashlib.sha256(
-        f"{action_message_id}:{worker_id}:{execution_generation}".encode()
-    ).hexdigest()
-
-
-def _native_worker_launch_prompt(
-    *,
-    project_root: str,
-    worker_id: str,
-    prompt_ref: str,
-    prompt_sha256: str,
-    outcome_path: str,
-    required_isolation_evidence: str,
-    execution_generation: int,
-    fencing_token: str,
-) -> str:
-    """生成不含 Worker 正文的有界原生启动合同。"""
-
-    contract = {
-        "schema_version": "1.0",
-        "project_root": project_root,
-        "worker_id": worker_id,
-        "prompt_ref": prompt_ref,
-        "prompt_sha256": prompt_sha256,
-        "outcome_path": outcome_path,
-        "may_drive_loop": False,
-        "may_spawn_workers": False,
-        "required_isolation_evidence": required_isolation_evidence,
-    }
-    return (
-        "AUTO_ENGINEERING_NATIVE_WORKER_LAUNCH_V1\n"
-        "VERBATIM=1;NO_EXTRA\n"
-        "outcome_path:{worker_id,status,payload,summary}"
-        "private_schema=objectpayload_nested"
-        "never write payload directlyno bare payload"
-        "stage_fields_only;no_expected_fields"
-        "status=completed|failed|cancelled|timed_out"
-        "aliases host;no host fields/shared outcomesread prompt_ref exactly"
-        "no summary/reconstructionwrite exactly one JSON object; "
-        "host metadata is read-only; never write generation/fence to outcome_path;\n"
-        + json.dumps(contract, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    )
+# 旧测试/集成入口仍可读取该纯合同函数；实现只保留在 canonical 合同模块。
+_native_worker_launch_prompt = native_worker_launch_prompt
 
 
 def map_host_action(
@@ -263,7 +200,10 @@ def map_host_action(
             # Codex 的 wait_agent 正文通过 stdin 原样转交；Claude 的
             # PostToolUse 已将 Agent/TaskOutput 原生 envelope 原子写入文件。
             if platform is HostPlatform.CODEX:
-                argv.append("--native-result-stdin")
+                # Codex 原生 wait 可能只返回 target 的 completed 状态，正文
+                # 为 null；此时必须依赖同一 Action 的 completed observation
+                # 与 Worker 私有 outcome，而不能把 wait 外层包装当业务结果。
+                argv.extend(["--native-result-stdin", "--native-status-only"])
             argv.extend([
                 "--actual-model", "__ACTUAL_MODEL__", "--isolation-evidence",
                 "__ISOLATION_EVIDENCE__", "--project-root", project_root,
@@ -282,10 +222,10 @@ def map_host_action(
                     message_id, invocation.worker_id, execution_generation
                 )),
                 "execution_generation": execution_generation,
-                "fencing_token": _worker_fencing_token(
+                "fencing_token": worker_fencing_token(
                     message_id, invocation.worker_id, execution_generation
                 ),
-                "native_launch_prompt": _native_worker_launch_prompt(
+                "native_launch_prompt": native_worker_launch_prompt(
                     project_root=project_root,
                     worker_id=invocation.worker_id,
                     prompt_ref=invocation.prompt_ref,
@@ -293,7 +233,7 @@ def map_host_action(
                     outcome_path=resolved_outcome_path(invocation),
                     required_isolation_evidence=expected_isolation,
                     execution_generation=execution_generation,
-                    fencing_token=_worker_fencing_token(
+                    fencing_token=worker_fencing_token(
                         message_id, invocation.worker_id, execution_generation
                     ),
                 ),
@@ -330,6 +270,11 @@ def map_host_action(
                         "actual_model": "--actual-model",
                         "isolation_evidence": "--isolation-evidence",
                         "native_result_file": "--native-result-file",
+                        **(
+                            {"native_status_only": "--native-status-only"}
+                            if platform is HostPlatform.CODEX
+                            else {}
+                        ),
                     },
                     "required_runtime_fields": [
                         "worker_status",
@@ -353,10 +298,10 @@ def map_host_action(
         if platform is HostPlatform.CODEX:
             host_execution["native_worker_tools"] = {
                 "selection": "first_complete_exposed_family",
-                "families": [dict(family) for family in _CODEX_NATIVE_WORKER_TOOL_FAMILIES],
+                "families": [dict(family) for family in CODEX_NATIVE_WORKER_TOOL_FAMILIES],
             }
         else:
-            host_execution["native_worker_tools"] = dict(_CLAUDE_NATIVE_WORKER_TOOLS)
+            host_execution["native_worker_tools"] = dict(CLAUDE_NATIVE_WORKER_TOOLS)
     elif (
         is_result_repair
         and isinstance(spawn, Mapping)

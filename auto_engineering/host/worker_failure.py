@@ -17,6 +17,9 @@ from auto_engineering.host.worker_evidence import (
     _canonical_bytes,
     _resolve_worker_execution_binding,
 )
+from auto_engineering.host.worker_failure_recovery import (
+    read_recorded_failure_outcomes,
+)
 
 _RecoverCompleted = Callable[..., dict[str, Any] | None]
 
@@ -43,7 +46,7 @@ class WorkerFailureService:
 
         violations: list[str] = []
         try:
-            plan = SpawnPlan.from_action(action)
+            plan = SpawnPlan.for_recording(action)
         except SpawnContractError as exc:
             raise HostEvidenceValidationError((str(exc),)) from exc
         message_id = action.get("message_id")
@@ -258,9 +261,30 @@ class WorkerFailureService:
             )
             if recovered is not None:
                 return recovered
+            recorded_failure = read_recorded_failure_outcomes(
+                self.project_root,
+                action,
+            )
+            if recorded_failure is not None:
+                result = self.finalize_worker_failure(
+                    action=action,
+                    outcomes=recorded_failure,
+                )
+                if result_path is not None:
+                    target = (
+                        result_path.resolve()
+                        if result_path.is_absolute()
+                        else (self.project_root / result_path).resolve()
+                    )
+                    if target == self.project_root or self.project_root not in target.parents:
+                        raise HostEvidenceValidationError(
+                            ("RESULT_OUTPUT_PATH_OUTSIDE_PROJECT",)
+                        )
+                    _atomic_write_json(target, result)
+                return result
 
         try:
-            plan = SpawnPlan.from_action(action)
+            plan = SpawnPlan.for_recording(action)
         except SpawnContractError as exc:
             raise HostEvidenceValidationError((str(exc),)) from exc
         message_id = action.get("message_id")
@@ -332,6 +356,5 @@ class WorkerFailureService:
                 )
             _atomic_write_json(target, result)
         return result
-
 
 __all__ = ["WorkerFailureService"]

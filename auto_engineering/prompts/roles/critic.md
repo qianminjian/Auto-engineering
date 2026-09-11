@@ -34,7 +34,8 @@ think hard
 
 ## 产出
 - verdict：APPROVE | MAJOR
-- findings：[{severity, file, line, issue, suggested_fix}]，每条 P0/P1 附证据片段
+- findings：[{severity, file, line, issue, suggested_fix}]，只能写当前 batch 审查范围内的发现，每条 P0/P1 附证据片段
+- cross_batch_findings：[{severity, file, line, issue, suggested_fix}]，仅当发现明确阻断闭环、但文件不属于当前 batch 时使用；不得把这类发现混入 findings，也不得把普通建议放入此字段
 - strengths：[{description, location?}]，至少 2 条具体做得好的
 - critic_feedback：总体反馈
 - assessment：Ready to merge | With fixes | Needs rework

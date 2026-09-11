@@ -68,11 +68,16 @@ def _add_json(
     payload: dict[str, object],
 ) -> None:
     """把确定性 JSON 资产写入 archive，不依赖本地 staging 目录。"""
-    content = (json.dumps(payload, ensure_ascii=False, indent=2) + "\n").encode()
+    content = _json_asset_bytes(payload)
     info = tarfile.TarInfo(path.as_posix())
     info.size = len(content)
     info.mode = 0o644
     package.addfile(info, io.BytesIO(content))
+
+
+def _json_asset_bytes(payload: dict[str, object]) -> bytes:
+    """返回与 archive 写入完全一致的确定性 JSON 字节。"""
+    return (json.dumps(payload, ensure_ascii=False, indent=2) + "\n").encode()
 
 
 def _release_content_digest(root: Path) -> str:
@@ -97,6 +102,17 @@ def _release_content_digest(root: Path) -> str:
         digest.update(relative.as_posix().encode("utf-8"))
         digest.update(b"\0")
         digest.update(path.read_bytes())
+        digest.update(b"\0")
+    # marketplace manifests are generated assets; include their final bytes so
+    # build identity describes the archive consumers actually install.
+    claude_marketplace, codex_marketplace = _marketplace_manifests(root)
+    for relative, payload in (
+        (Path(".claude-plugin/marketplace.json"), claude_marketplace),
+        (Path(".agents/plugins/marketplace.json"), codex_marketplace),
+    ):
+        digest.update(relative.as_posix().encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(_json_asset_bytes(payload))
         digest.update(b"\0")
     return digest.hexdigest()
 

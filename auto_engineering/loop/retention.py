@@ -8,11 +8,10 @@ from pathlib import Path
 
 @dataclass(frozen=True, slots=True)
 class RetentionPolicy:
-    keep_checkpoint_copies: int
     keep_prompt_logs: int
 
     def __post_init__(self) -> None:
-        if self.keep_checkpoint_copies < 1 or self.keep_prompt_logs < 1:
+        if self.keep_prompt_logs < 1:
             raise ValueError("保留数量必须至少为 1")
 
 
@@ -54,12 +53,6 @@ class RetentionPlanner:
         referenced_artifact_ids: set[str] | None = None,
     ) -> RetentionPlan:
         candidates: list[RetentionCandidate] = []
-        for path in self._older_files(
-            self.state_root / "checkpoints", policy.keep_checkpoint_copies
-        ):
-            candidates.append(RetentionCandidate(
-                path, "checkpoint_copy", "超过 checkpoint 副本保留数", True
-            ))
         for path in self._older_files(
             self.state_root / "prompt-log", policy.keep_prompt_logs
         ):

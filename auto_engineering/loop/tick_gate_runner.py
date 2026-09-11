@@ -133,25 +133,6 @@ class TickGateRunner:
             for name, v in per_gate.items()
         }
 
-        # T69a: Record gate results for metrics collector
-        from auto_engineering.metrics.collector import AIOrigin, get_collector
-        mc = get_collector()
-        if mc is not None:
-            for name, info in gate_results.items():
-                findings = 0
-                msg = info.get("message", "")
-                if isinstance(msg, str) and msg:
-                    findings = msg.count("\n") + 1 if msg.strip() else 0
-                mc.record_gate_result(
-                    gate_name=name,
-                    passed=bool(info.get("passed")),
-                    duration_ms=int(duration_ms),
-                    findings_count=findings,
-                    ai_origin=AIOrigin(
-                        level="led", agent_role=stage or "developer", driver_type="agent",
-                    ),
-                )
-
         # T75: close gate tracing span + T76: audit log gate results
         if gate_span is not None:
             passed = all(

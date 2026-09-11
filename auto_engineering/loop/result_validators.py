@@ -17,13 +17,26 @@ from auto_engineering.loop.engineering_model import EngineeringModel
 from auto_engineering.loop.result_section_validator import (
     normalize_result_section_findings,
 )
+from auto_engineering.loop.scope_evidence_validators import (
+    validate_global_evidence_scope,
+)
+from auto_engineering.loop.scope_validators import (
+    validate_component_verifier_scope as _validate_component_verifier_scope,
+)
+from auto_engineering.loop.scope_validators import (
+    validate_critic_scope,
+    validate_execution_scope,
+)
 from auto_engineering.loop.section_findings import section_has_explicit_design_contract
 
 __all__ = [
     "normalize_result_section_findings",
     "validate_component_verifier_scope",
+    "validate_critic_scope",
+    "validate_execution_scope",
     "validate_gap_analysis",
     "validate_gap_review_decisions",
+    "validate_global_evidence_scope",
 ]
 
 
@@ -249,63 +262,7 @@ def validate_gap_analysis(target: ResultValidationTarget, result: dict) -> Error
     return None
 
 def validate_component_verifier_scope(target: ResultValidationTarget, result: dict) -> ErrorResponse | None:
-    """Verifier 只能提交当前 Action 声明的批次设计条目。"""
-    if target._state.current_stage != "component_verifier":
-        return None
-    action = target._active_action or {}
-    scope = action.get("verification_scope")
-    if not isinstance(scope, dict):
-        return None
-    if scope.get("mode") != "batch_design_items":
-        return None
-    component = scope.get("component")
-    if result.get("component") != component:
-        return ErrorResponse(
-            "COMPONENT_VERIFICATION_SCOPE_INVALID",
-            "component_verifier 结果的 component 未绑定当前批次",
-            target._state.to_dict(),
-        )
-    expected = scope.get("design_item_ids")
-    if not isinstance(expected, list) or any(not isinstance(item, str) for item in expected):
-        return ErrorResponse(
-            "COMPONENT_VERIFICATION_SCOPE_INVALID",
-            "当前 Action 的 design_item_ids 非法，无法安全接收覆盖结果",
-            target._state.to_dict(),
-        )
-    coverage = result.get("coverage_map")
-    if not isinstance(coverage, list):
-        return None
-    actual: list[str] = []
-    for item in coverage:
-        if not isinstance(item, dict) or not isinstance(item.get("design_item"), str):
-            return ErrorResponse(
-                "COMPONENT_VERIFICATION_SCOPE_INVALID",
-                "coverage_map 每项必须绑定非空 design_item",
-                target._state.to_dict(),
-            )
-        actual.append(item["design_item"])
-    if len(actual) != len(set(actual)):
-        return ErrorResponse(
-            "COMPONENT_VERIFICATION_SCOPE_INVALID",
-            "coverage_map 不得重复提交同一 design_item",
-            target._state.to_dict(),
-        )
-    expected_set = set(expected)
-    actual_set = set(actual)
-    missing = sorted(expected_set - actual_set)
-    unexpected = sorted(actual_set - expected_set)
-    if missing or unexpected:
-        detail = []
-        if missing:
-            detail.append("缺少=" + ",".join(missing))
-        if unexpected:
-            detail.append("越界=" + ",".join(unexpected))
-        return ErrorResponse(
-            "COMPONENT_VERIFICATION_SCOPE_INVALID",
-            "coverage_map 未完整且仅覆盖当前批次白名单（" + "; ".join(detail) + "）",
-            target._state.to_dict(),
-        )
-    return None
+    return _validate_component_verifier_scope(target, result)
 
 def validate_gap_review_decisions(target: ResultValidationTarget, result: dict) -> ErrorResponse | None:
     """新 Action 接受当前单项决定；旧 active Action 兼容完整 decisions。"""

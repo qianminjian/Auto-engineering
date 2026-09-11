@@ -55,6 +55,56 @@ def test_business_result_contract_rejects_undeclared_field_type() -> None:
         )
 
 
+def test_developer_result_contract_requires_current_batch_task_ids() -> None:
+    contract = business_result_contract(
+        "developer",
+        {
+            "batch_id": "string",
+            "task_ids": "array",
+            "files_changed": "array",
+            "test_results": "object",
+        },
+    )
+
+    assert contract is not None
+    assert contract["required"] == [
+        "batch_id", "task_ids", "files_changed", "test_results",
+    ]
+
+
+def test_developer_contract_recovery_binds_missing_batch_scope_identity() -> None:
+    from auto_engineering.host.result_contract import ResultContractService
+
+    action = {
+        "stage": "developer",
+        "extensions": {
+            "execution_scope": {
+                "batch_id": "B3",
+                "task_ids": ["B3-T1", "B3-T2"],
+            },
+        },
+        "result_contract": {
+            "schema_version": "1.0",
+            "required": ["batch_id", "files_changed", "test_results"],
+            "properties": {
+                "batch_id": {"type": "string"},
+                "task_ids": {"type": "array"},
+                "files_changed": {"type": "array"},
+                "test_results": {"type": "object"},
+            },
+            "additionalProperties": False,
+        },
+    }
+
+    normalized = ResultContractService.normalize_business_payload(
+        action=action,
+        coordinator_payload={"files_changed": [], "test_results": {"passed": 1}},
+    )
+
+    assert normalized["batch_id"] == "B3"
+    assert normalized["task_ids"] == ["B3-T1", "B3-T2"]
+
+
 def test_optional_result_field_must_be_omitted_instead_of_null() -> None:
     errors = validate_result_format(
         {
@@ -86,7 +136,6 @@ def _orchestrator() -> TickOrchestrator:
     return TickOrchestrator(
         gate_runner=_pass_gate_runner,
         guardrail=_pass_guardrail(),
-        checkpoint_store=None,
     )
 
 
@@ -105,6 +154,7 @@ def _valid_result(stage: str) -> dict:
         "developer": {
             "stage": "developer",
             "batch_id": "b1",
+            "task_ids": ["b1-t1"],
             "files_changed": ["auto_engineering/foo.py"],
             "commit_hash": "abc123",
             "test_results": {"passed": 3, "failed": 0},

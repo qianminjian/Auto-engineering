@@ -1,13 +1,13 @@
 """ae status 命令 — v5.0 §B13.2 /status stdout JSON 契约.
 
 实现 7 字段 JSON 输出 + 文本模式兼容:
-    thread_id / round / stage / verdict /
-    majors_in_a_row / total_majors / recent_history (≤5 条 RoundHistory)
+    thread_id / tick / stage / verdict /
+    majors_in_a_row / total_majors
 
 设计:
 - `_collect_status_json(cwd)` 是核心函数，只从 `.ae-state/events.db` 读取 EventStore 投影
 - Click 命令 `status` 包装 `_collect_status_json` + 输出格式化
-- checkpoint 只通过显式迁移入口消费，不参与当前状态展示
+- EventStore 是唯一状态来源；不读取或拼接第二套快照
 
 引用: design/v5.6-Design-Loop.md §B13.2 stdout JSON 契约
 """
@@ -34,12 +34,12 @@ def _collect_status_json(cwd: Path) -> dict:
     """收集 status JSON 7 字段契约 (v5.0 §B13.2).
 
     无 EventStore 时返回 7 字段默认 (recent_history = [])；损坏的 EventStore
-    返回带 recovery_required 的结构化状态，绝不回退到 checkpoint。
+    返回带 recovery_required 的结构化状态，绝不回退到其他状态源。
     """
     # 默认值
     payload: dict = {
         "thread_id": "",
-        "round": 0,
+        "tick": 0,
         "stage": "",
         "verdict": "",
         "majors_in_a_row": 0,
@@ -52,7 +52,7 @@ def _collect_status_json(cwd: Path) -> dict:
         return payload
 
     # v5.8：EventStore 是唯一当前事实源。没有事件库时返回空状态；不能
-    # 为了维持旧字段而读取 checkpoint，避免把历史快照伪装成当前运行状态。
+    # 不读取其他状态源，避免把历史快照伪装成当前运行状态。
     event_payload = _collect_event_store_status(cwd)
     if event_payload is not None:
         return event_payload
@@ -68,7 +68,7 @@ def _collect_event_store_status(cwd: Path) -> dict | None:
     try:
         from auto_engineering.loop.event_store import SQLiteEventStore
 
-        thread_id, lease = _event_thread_context(cwd)
+        thread_id, _lease = _event_thread_context(cwd)
         if not thread_id:
             return None
         with SQLiteEventStore(event_db) as events:
@@ -78,7 +78,7 @@ def _collect_event_store_status(cwd: Path) -> dict | None:
             return None
         payload = {
             "thread_id": state.thread_id,
-            "round": state.round,
+            "tick": state.tick,
             "stage": state.current_stage,
             "verdict": state.critic_verdict,
             "majors_in_a_row": state.majors_in_a_row,
@@ -88,9 +88,7 @@ def _collect_event_store_status(cwd: Path) -> dict | None:
         loop_completed = any(
             event.event_type.value == "LoopCompleted" for event in stream
         )
-        if loop_completed or (
-            lease is not None and lease.disposition == "TERMINAL"
-        ):
+        if loop_completed:
             payload["stage"] = "done"
         from auto_engineering.engine.batch_state import BatchState
         from auto_engineering.loop.status_projection import reconciliation_status
@@ -107,23 +105,13 @@ def _collect_event_store_status(cwd: Path) -> dict | None:
             payload["plan_reconciliation"] = reconciliation
         from auto_engineering.metrics.event_projection import project_event_metrics
 
-        usage_records = []
-        usage_path = cp_dir / "usage-ledger.db"
-        if usage_path.exists():
-            from auto_engineering.metrics.usage_ledger import UsageLedger
-
-            usage_ledger = UsageLedger(usage_path)
-            try:
-                usage_records = usage_ledger.list_records(thread_id)
-            finally:
-                usage_ledger.close()
-        payload["event_metrics"] = project_event_metrics(stream, usage_records)
+        payload["event_metrics"] = project_event_metrics(stream)
         return payload
     except (OSError, sqlite3.Error, ValueError, TypeError):
-        _logger.warning("EventStore status 读取失败；拒绝回退 checkpoint", exc_info=True)
+        _logger.warning("EventStore status 读取失败；拒绝回退其他状态源", exc_info=True)
         return {
             "thread_id": "",
-            "round": 0,
+        "tick": 0,
             "stage": "",
             "verdict": "",
             "majors_in_a_row": 0,
@@ -135,30 +123,26 @@ def _collect_event_store_status(cwd: Path) -> dict | None:
 
 
 def _event_thread_context(cwd: Path) -> tuple[str | None, HostRunLease | None]:
-    """读取 EventStore 所属 thread 的租约定位信息，不读取 checkpoint 状态。"""
+    """从 Lease 或 EventStore 定位 thread，不读取 checkpoint 状态。"""
 
     cp_dir = cwd / ".ae-state"
-    thread_id: str | None = None
-    try:
-        from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
+    from auto_engineering.host.runtime_driver import HostRunLeaseStore
 
-        with SQLiteCheckpointStore[object](
-            str(cp_dir / "checkpoints.db"), read_only=True
-        ) as store:
-            thread_id = store.active_project_thread()
-    except (OSError, sqlite3.Error, ValueError, TypeError):
-        _logger.debug("项目占用租约读取失败", exc_info=True)
-    lease = None
-    if not thread_id:
-        from auto_engineering.host.runtime_driver import HostRunLeaseStore
-
-        lease = HostRunLeaseStore(cwd).load()
-        thread_id = lease.thread_id if lease is not None else None
-    if not thread_id and (cp_dir / "events.db").exists():
+    lease = HostRunLeaseStore(cwd).load()
+    thread_id = lease.thread_id if lease is not None else None
+    if (cp_dir / "events.db").exists():
         from auto_engineering.loop.event_store import SQLiteEventStore
 
         with SQLiteEventStore(cp_dir / "events.db") as events:
-            thread_id = events.latest_thread_for_event("LoopCompleted")
+            current_thread = events.current_thread()
+            if lease is not None and lease.disposition == "CONTINUE":
+                if current_thread != lease.thread_id:
+                    raise ValueError("HOST_RUN_LEASE_THREAD_MISMATCH")
+                thread_id = lease.thread_id
+            else:
+                # 最近终态 thread 仅用于只读 status；运行入口必须使用
+                # current_thread() 返回的唯一未终态 thread。
+                thread_id = current_thread or events.latest_thread()
     return thread_id, lease
 
 
@@ -269,14 +253,13 @@ def _load_progress_summary(cwd: Path) -> dict:
 
 
 def _display_progress_tree(cwd: Path) -> None:
-    """显示进度树 (Phase 40 T180, 合并自 progress.py)."""
-    try:
-        from auto_engineering.cli.progress import _load_progress_tree
-        tree = _load_progress_tree(cwd)
-        if tree:
-            click.echo(tree.display())
-        else:
-            click.echo("  (暂无进度数据)")
-    except (ImportError, ValueError, TypeError, OSError) as e:
-        _logger.debug("进度树加载失败: %s", e)
-        click.echo("  (进度树暂不可用)")
+    """显示 EventStore 投影中的进度摘要。"""
+    summary = _load_progress_summary(cwd)
+    if summary["node_count"] == 0:
+        click.echo("  (暂无进度数据)")
+        return
+    click.echo(
+        "  进度: "
+        f"{summary['completion_pct']:.1f}% "
+        f"({summary['done_tasks']}/{summary['total_tasks']})"
+    )

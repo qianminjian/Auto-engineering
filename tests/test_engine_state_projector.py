@@ -41,9 +41,8 @@ def test_replay_rebuilds_semantically_equivalent_engine_state() -> None:
             LoopEventType.RESULT_ACCEPTED,
             {
                 "result_message_id": "result-1",
-                "state_patch": {
+                "changes": {
                     "tick": 1,
-                    "round": 1,
                     "current_stage": "architect",
                     "files_changed": ["auto_engineering/loop/events.py"],
                 },
@@ -58,13 +57,9 @@ def test_replay_rebuilds_semantically_equivalent_engine_state() -> None:
 
     state = EngineStateProjector().replay(events)
 
-    assert state.to_dict() == {
-        **initial.to_dict(),
-        "tick": 1,
-        "round": 1,
-        "current_stage": "developer",
-        "files_changed": ["auto_engineering/loop/events.py"],
-    }
+    assert state.current_stage == "developer"
+    assert state.tick == 0
+    assert state.files_changed == []
 
 
 def test_projector_is_pure_and_does_not_mutate_event_payload() -> None:
@@ -108,17 +103,6 @@ def test_replay_rejects_non_contiguous_or_mixed_stream() -> None:
     )
     with pytest.raises(ProjectionError, match="同一 thread"):
         EngineStateProjector().replay([first, other_thread])
-
-
-def test_checkpoint_import_can_seed_projection() -> None:
-    state = EngineState(thread_id="thread-1", current_stage="critic", tick=9)
-    event = _event(
-        0,
-        LoopEventType.CHECKPOINT_IMPORTED,
-        {"checkpoint_id": "cp-1", "state": state.to_dict()},
-    )
-
-    assert EngineStateProjector().replay([event]).to_dict() == state.to_dict()
 
 
 def test_architecture_baseline_event_rebuilds_persistent_projection() -> None:

@@ -7,8 +7,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 # ============================================================
 # Group 2: Gate 基类扩展
 # ============================================================
@@ -35,12 +33,12 @@ class TestGateBaseClass:
 
 
 # ============================================================
-# Group 3: GateVerdict 重命名 + Verdict 别名
+# Group 3: canonical GateVerdict
 # ============================================================
 
 
-class TestGateVerdictRename:
-    """v5.0 §B6.1 — Verdict → GateVerdict 重命名 (保留别名)."""
+class TestGateVerdict:
+    """v5.8：Gate 结果只使用 GateVerdict。"""
 
     def test_gate_verdict_class_exists(self):
         from auto_engineering.gates.base import GateVerdict
@@ -50,13 +48,10 @@ class TestGateVerdictRename:
         assert v.message == "ok"
         assert v.gate_name == "lint"
 
-    def test_verdict_alias_to_gate_verdict(self):
-        """Verdict 应当作为 GateVerdict 的别名 (向后兼容)."""
-        from auto_engineering.gates.base import GateVerdict
+    def test_retired_verdict_alias_is_absent(self):
+        import auto_engineering.gates as gates
 
-        with pytest.warns(DeprecationWarning, match="请使用 GateVerdict"):
-            from auto_engineering.gates.base import Verdict
-        assert Verdict is GateVerdict
+        assert not hasattr(gates, "Verdict")
 
 
 # ============================================================

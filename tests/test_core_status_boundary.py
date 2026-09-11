@@ -9,7 +9,7 @@ from auto_engineering.loop.tick_orchestrator import TickOrchestrator
 def test_status_snapshot_projects_state_without_exposing_orchestrator_internals(
     tmp_path,
 ) -> None:
-    orchestrator = TickOrchestrator(project_root=tmp_path, checkpoint_store=None)
+    orchestrator = TickOrchestrator(project_root=tmp_path)
     orchestrator._state = EngineState(
         thread_id="thread-1",
         current_stage="architect",
@@ -36,7 +36,7 @@ def test_build_action_does_not_reread_static_ledger_each_tick(tmp_path, monkeypa
     )
     (tmp_path / "src").mkdir()
     (tmp_path / "tests").mkdir()
-    orchestrator = TickOrchestrator(project_root=tmp_path, checkpoint_store=None)
+    orchestrator = TickOrchestrator(project_root=tmp_path)
     orchestrator.init("实现确定性治理")
 
     def fail_if_reread(_root):

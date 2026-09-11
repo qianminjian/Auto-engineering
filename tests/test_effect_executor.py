@@ -135,6 +135,24 @@ def test_action_builder_effect_references_are_stable_for_same_snapshot(tmp_path)
     assert first["spawn"]["invocations"] == second["spawn"]["invocations"]
 
 
+def test_production_action_namespace_separates_same_tick_retry_artifacts(tmp_path) -> None:
+    state = EngineState(
+        thread_id="thread-1",
+        current_stage="architect",
+        requirement="实现功能",
+        tick=2,
+    )
+    builder = ActionBuilder(tmp_path)
+
+    first = builder.build_action(state, artifact_namespace="action-a")
+    second = builder.build_action(state, artifact_namespace="action-b")
+
+    assert first["spawn_proof_token"] != second["spawn_proof_token"]
+    assert first["spawn"]["invocations"][0]["receipt_path"] != (
+        second["spawn"]["invocations"][0]["receipt_path"]
+    )
+
+
 def test_discard_removes_only_uncommitted_named_json_artifacts(tmp_path) -> None:
     executor = EffectExecutor(tmp_path)
     proof = executor.execute(WriteJsonArtifact(

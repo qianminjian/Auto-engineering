@@ -102,6 +102,35 @@ def test_native_spawn_must_use_exact_action_bound_prompt() -> None:
         )
 
 
+def test_codex_wait_must_consume_action_observation_timeout() -> None:
+    from auto_engineering.host.native_launch_guard import (
+        NativeLaunchGuardError,
+        validate_native_tool_call,
+    )
+
+    worker = _worker_template()
+    worker["worker_observation"] = {
+        "mode": "native_wait",
+        "wait_timeout_ms": 300_000,
+    }
+    validate_native_tool_call(
+        platform="codex",
+        tool_name="collaboration.wait_agent",
+        tool_input={"targets": ["agent-1"], "timeout_ms": 300_000},
+        workers=[worker],
+        project_root=Path("/tmp/project"),
+    )
+
+    with pytest.raises(NativeLaunchGuardError, match="NATIVE_WAIT_TIMEOUT_MISMATCH"):
+        validate_native_tool_call(
+            platform="codex",
+            tool_name="collaboration.wait_agent",
+            tool_input={"targets": ["agent-1"], "timeout_ms": 30_000},
+            workers=[worker],
+            project_root=Path("/tmp/project"),
+        )
+
+
 def test_binding_design_is_read_only_for_active_host_mutation(tmp_path: Path) -> None:
     from auto_engineering.host.native_launch_guard import (
         NativeLaunchGuardError,
@@ -999,6 +1028,9 @@ def test_record_command_requires_literal_paths_before_shell_expansion() -> None:
         )
     assert "字面量" in guard_system_message("NATIVE_PROJECT_ROOT_MISMATCH")
     assert "$VAR" in guard_system_message("NATIVE_RECORD_ARGUMENTS_MISSING")
+    assert "不得复用上一 Action" in guard_system_message(
+        "NATIVE_WORKER_TEMPLATE_UNAVAILABLE"
+    )
 
 
 def test_finalize_command_rejects_missing_or_wrong_action_work_files() -> None:
@@ -1161,6 +1193,106 @@ def test_active_native_workers_maps_current_action_and_fails_closed(
         active_native_workers(project_root=tmp_path, platform=HostPlatform.CODEX)
 
 
+def test_spawn_action_requires_lease_uses_event_store_without_checkpoint(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """无 lease 的防重复启动判断不能依赖旧 checkpoint 定位 Action。"""
+
+    from auto_engineering.host.native_launch_runtime import spawn_action_requires_lease
+
+    state = tmp_path / ".ae-state"
+    state.mkdir()
+    (state / "events.db").touch()
+
+    class Events:
+        def __init__(self, _path: Path) -> None:
+            pass
+
+        def unfinished_threads(self) -> list[str]:
+            return ["event-thread"]
+
+        def load_action_snapshot(self, _thread_id: str) -> object:
+            return {
+                "project_root": str(tmp_path),
+                "host_execution": {"workers": [{"worker_id": "developer-0"}]},
+            }
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(
+        "auto_engineering.loop.event_store.SQLiteEventStore", Events
+    )
+    assert spawn_action_requires_lease(tmp_path) is True
+
+
+@pytest.mark.parametrize(
+    ("mode", "expected"),
+    [
+        ("ambiguous", True),
+        ("empty", False),
+        ("error", False),
+        ("invalid_thread", False),
+        ("invalid_action", False),
+        ("wrong_root", False),
+    ],
+)
+def test_spawn_action_requires_lease_fails_closed_on_thread_resolution_edges(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    mode: str,
+    expected: bool,
+) -> None:
+    """未终态查询异常或歧义不能放行无 lease 的 Worker。"""
+    from auto_engineering.host.native_launch_runtime import spawn_action_requires_lease
+
+    state = tmp_path / ".ae-state"
+    state.mkdir()
+    (state / "events.db").touch()
+
+    class Events:
+        def __init__(self, _path: Path) -> None:
+            pass
+
+        def unfinished_threads(self) -> list[str]:
+            if mode == "error":
+                raise ValueError("broken event store")
+            if mode == "ambiguous":
+                return ["thread-a", "thread-b"]
+            if mode == "empty":
+                return []
+            if mode == "invalid_thread":
+                return [""]
+            return ["thread-1"]
+
+        def load_action_snapshot(self, _thread_id: str) -> object:
+            if mode == "invalid_action":
+                return None
+            return {
+                "project_root": (
+                    str(tmp_path / "other") if mode == "wrong_root" else str(tmp_path)
+                ),
+                "host_execution": {"workers": [{"worker_id": "developer-0"}]},
+            }
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr("auto_engineering.loop.event_store.SQLiteEventStore", Events)
+    assert spawn_action_requires_lease(tmp_path) is expected
+
+
+def test_spawn_action_requires_lease_ignores_checkpoint_only_state(tmp_path: Path) -> None:
+    """只有 checkpoint 的旧 Action 不能阻断普通宿主 Agent。"""
+
+    from auto_engineering.host.native_launch_runtime import spawn_action_requires_lease
+
+    state = tmp_path / ".ae-state"
+    state.mkdir()
+    (state / "checkpoints.db").touch()
+    assert spawn_action_requires_lease(tmp_path) is False
+
+
 def test_native_guard_main_emits_stable_allow_and_block_json(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
@@ -1188,8 +1320,7 @@ def test_native_guard_main_emits_stable_allow_and_block_json(
     monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps({"platform": "codex", "cwd": str(tmp_path)})))
     assert main() == 0
     allowed = json.loads(capsys.readouterr().out)
-    assert allowed["decision"] == "approve"
-    assert allowed["hookSpecificOutput"]["permissionDecision"] == "allow"
+    assert allowed == {"systemMessage": "Auto-Engineering Hook 已安全跳过"}
 
     def blocked(*args: object, **kwargs: object) -> None:
         raise NativeLaunchGuardError("NATIVE_LAUNCH_PROMPT_MISMATCH")
@@ -1200,7 +1331,6 @@ def test_native_guard_main_emits_stable_allow_and_block_json(
     monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps({"platform": "codex", "cwd": str(tmp_path)})))
     assert main() == 0
     output = json.loads(capsys.readouterr().out)
-    assert output["decision"] == "block"
-    assert output["reason_code"] == "NATIVE_LAUNCH_PROMPT_MISMATCH"
+    assert set(output) == {"systemMessage", "hookSpecificOutput"}
     assert output["hookSpecificOutput"]["permissionDecision"] == "deny"
     assert output["hookSpecificOutput"]["permissionDecisionReason"]

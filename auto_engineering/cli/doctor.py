@@ -4,7 +4,7 @@
     1. Python ≥ 3.12
     2. uv ≥ 0.5 (包管理工具)
     3. git ≥ 2.40
-    4. sqlite3 ≥ 3.42 (用于 SQLiteCheckpointStore)
+    4. sqlite3 ≥ 3.42 (用于 EventStore)
     5. N/A (SDK 自动从 env 读 key, Plugin 模式无需设置)
     6. .ae-state/ 可读写 (项目状态目录)
     7. ProjectProfile 可解析，或明确报告 setup_required
@@ -626,12 +626,10 @@ def register_doctor_command(main: click.Group) -> None:
         --setup-observability: 一键启动 OTLP collector (Jaeger)
         --teardown-observability: 停止 OTLP collector
         """
-        # Phase 45: 配置向导
         if wizard:
             root = Path(project_root).resolve() if project_root else Path.cwd()
             _run_wizard(root)
             return
-        # Phase 44: 配置文件生成
         if init_config:
             root = Path(project_root).resolve() if project_root else Path.cwd()
             _init_config(root)
@@ -669,7 +667,6 @@ def register_doctor_command(main: click.Group) -> None:
             mark = "✓" if ok else "✗"
             click.echo(f"{mark} {line}")
 
-        # T114 5.2: Optional features panel
         click.echo("")
         click.echo("── Optional Features ──")
         for active, line in render_optional_features():

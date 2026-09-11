@@ -83,7 +83,6 @@ def test_all_planned_event_types_are_explicit() -> None:
         "GuardrailEvaluated",
         "GatesCompleted",
         "StageAdvanced",
-        "CheckpointImported",
         "LoopCompleted",
         "LoopFailed",
         "ExecutionSessionStarted",

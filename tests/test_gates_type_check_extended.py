@@ -21,8 +21,6 @@ import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 # ============================================================
 # 1. TypeCheckGate 基础
 # ============================================================
@@ -55,16 +53,6 @@ class TestTypeCheckGateBasics:
         assert gate.timeout == 60.0
         assert gate.strict is True
         assert gate.require_config is True
-
-    def test_backward_compat_mypy_bin(self):
-        """向后兼容: mypy_bin 作为 @property 别名委托到 type_checker_bin."""
-        from auto_engineering.gates.type_check import TypeCheckGate
-
-        gate = TypeCheckGate(type_checker_bin="custom-mypy")
-        # 旧名 mypy_bin 通过 @property getter 访问 (DeprecationWarning)
-        with pytest.warns(DeprecationWarning, match="use .type_checker_bin instead"):
-            assert gate.mypy_bin == "custom-mypy"
-        assert gate.type_checker_bin == "custom-mypy"
 
     def test_class_attributes(self):
         """类属性: name='type_check'."""
@@ -487,4 +475,3 @@ class TestTypeCheckRun:
                 verdict = gate.run(tmp_path)
         assert verdict.passed is False
         assert "..." in verdict.message
-

@@ -282,13 +282,6 @@ class TestV5ErrorCodeMapping:
         assert err.code is ErrorCode.TASK_CANCELLED
         assert "SIGINT" in err.message or "ctrl" in err.message.lower()
 
-    def test_v5_f_checkpoint_not_found(self) -> None:
-        """CheckpointNotFoundError (checkpoint_store.load() LookupError)."""
-        from auto_engineering.loop.checkpoint import CheckpointNotFoundError
-
-        with pytest.raises(CheckpointNotFoundError):
-            raise CheckpointNotFoundError("nonexistent-id")
-
     def test_v5_d_llm_max_tokens(self) -> None:
         """BUDGET_EXCEEDED replaces LLM_MAX_RETRIES (response.stop_reason='max_tokens')."""
         err = AEError(ErrorCode.BUDGET_EXCEEDED, "LLM max_tokens: response truncated")

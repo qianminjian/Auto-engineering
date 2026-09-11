@@ -65,6 +65,13 @@ class StateCompatibilityInspector:
         ):
             reasons.append("design_doc_changed")
 
+        active_build = self._active_action_build_id(active_action)
+        if active_build is not None:
+            from auto_engineering.build_identity import current_build_identity
+
+            if active_build != current_build_identity():
+                reasons.append("runtime_build_changed")
+
         # Profile 路径是期望能力，可能要到 Developer 才创建；只有 Core 先前
         # 实际见证并持久化的目录，才构成“后来被删除”的恢复冲突证据。
         roots = tuple(state.project_anchor_baseline)
@@ -121,6 +128,18 @@ class StateCompatibilityInspector:
             return None
         digest = ledger.get("source_sha256")
         return digest if isinstance(digest, str) and digest else None
+
+    @staticmethod
+    def _active_action_build_id(
+        active_action: Mapping[str, Any] | None,
+    ) -> str | None:
+        if not isinstance(active_action, Mapping):
+            return None
+        extensions = active_action.get("extensions")
+        ae = extensions.get("ae") if isinstance(extensions, Mapping) else None
+        revision = ae.get("runtime_revision") if isinstance(ae, Mapping) else None
+        build_id = revision.get("engine_build_id") if isinstance(revision, Mapping) else None
+        return build_id if isinstance(build_id, str) and build_id else None
 
     @staticmethod
     def _normalize_digest(value: str) -> str:

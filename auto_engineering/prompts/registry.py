@@ -2,7 +2,7 @@
 
 PromptRegistry 在 Engine `init` 一次性加载 `roles/*.md`, 按 frontmatter 声明
 的 `fragments` 顺序把 `fragments/*.md` 追加到正文顶部 (Iron Law/Red Flags/合理化表
-前置以最大化遵守), 每个组合后 prompt 算 sha256 写入 checkpoint 供 resume 校验.
+前置以最大化遵守), 每个组合后 prompt 算 sha256 写入 EngineState 供 resume 校验.
 
 设计边界 (§B12.7): 无模板引擎 (简单字符串组合), 无热重载 (仅 init 加载, 保持
 Python 门控确定性). frontmatter 用 PyYAML 解析 (已是项目依赖).
@@ -26,7 +26,7 @@ Python 门控确定性). frontmatter 用 PyYAML 解析 (已是项目依赖).
         agents/prompts.py        — 模块级常量 (ARCHITECT/DEVELOPER/CRITIC_SYSTEM_PROMPT)
         agents/base.py            — schema_injection_template() (延迟导入)
         cli/dev_loop.py           — registry_hash() 版本锁校验 + 打印 registry 信息
-        loop/tick_orchestrator.py — registry_hash() checkpoint 版本锁
+        loop/tick_orchestrator.py — registry_hash() 运行时版本锁
 """
 
 from __future__ import annotations
@@ -74,7 +74,7 @@ class PromptRegistry:
         return self._roles[role]
 
     def hash(self, role: str) -> str:
-        """返回组合后 prompt 的 sha256 (写入 EngineState + checkpoint)."""
+        """返回组合后 prompt 的 sha256 (写入 EngineState)."""
         self._require(role)
         return self._hashes[role]
 

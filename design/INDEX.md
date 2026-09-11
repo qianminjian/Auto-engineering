@@ -1,6 +1,6 @@
 # design/ 资产索引
 
-> 更新：2026-09-03｜当前实现：v5.8.0-rc.5；Phase 85 主控权纠偏已实施，候选 Build 已通过双宿主 archive smoke，真实 L4 与发布 evidence artifact 仍待补齐
+> 更新：2026-09-10｜当前实现：v5.8.0-rc.5；D78 单一运行时清理已实施，最新 Build 已通过双宿主 archive smoke 和全量质量门禁，真实 L4 与发布 evidence artifact 仍待补齐
 
 ## 当前唯一运行与实施权威
 
@@ -9,7 +9,8 @@
 1. `BEACON.md`：北方之星、批准决策和发布阻断条件。
 2. `v5.8-Main-Agent-Coordinator-Recovery-Design.md`：主 Agent 唯一 Coordinator、Worker 所有权和恢复边界。
 3. `v5.8-Scheme-A-Convergence-Plan.md`：方案 A 的实现映射、EARS、公开 CLI 矩阵和 A008 发布门禁。
-4. `v5.6-Design-Loop.md`：当前已实现的协议与 CLI 基线；与上位设计冲突时以前三者为准。
+4. `v5.8-Host-Runtime-Convergence-Design.md`：Host Runtime、原子 Worker 证据和 Gate 处置
+   的共用支撑规范；与上位设计冲突时以前三者为准。
 
 旧 Phase 设计、T533 Supervisor 方案和事故文档只用于理解演进与审计，不能作为运行时实现依据；它们统一保留在下面的索引中，不代表当前代码入口。
 
@@ -20,15 +21,15 @@
 | `BEACON.md` | 北方之星、范围、批准决策与下一步（≤80 行） |
 | `BEACON-HIS.md` | 从 BEACON 归档的设计演进摘要；不作为当前决策或运行状态源 |
 | `IMPLEMENTATION-TRACKER-HIS.md` | Phase 64–84 历史任务摘要；完整逐项状态由 Git 追溯 |
-| `v5.6-Design-Loop.md` | 当前已实现行为与兼容基线 |
-| `v5.7-Protocol-Kernel-Design.md` | 已批准的协议内核目标设计 |
+| `v5.6-Design-Loop.md` | 历史协议与 CLI 参考；旧 checkpoint 模型不属于当前运行路径 |
+| `v5.7-Protocol-Kernel-Design.md` | 历史协议内核演进记录；旧迁移 façade 不属于当前运行路径 |
 | `v5.7-Protocol-Kernel-PLAN.md` | Phase 52-56 可执行实施计划 |
 | `v5.7-Prompt-Contract-Design.md` | Phase 60 Prompt Contract 与多 Agent 交付设计 |
 | `v5.7-Prompt-Contract-PLAN.md` | Phase 60 T280-T287 TDD 实施计划 |
 | `v5.8-Protocol-Kernel-Convergence-Design.md` | Phase 80 历史目标设计；仅用于演进与审计，不作为当前规范 |
 | `v5.8-Protocol-Kernel-Convergence-PLAN.md` | Phase 80 T403-T412 分波次 TDD 实施计划 |
 | `v5.8-Effective-Design-Authority-Projection.md` | T554-T557 批准事务、单一权威投影、收敛不变量与四层验收 |
-| `v5.8-State-Reconciliation-Design.md` | Phase 81 显式启动意图、状态冲突二选一、任务续作与验证证据设计 |
+| `v5.8-State-Reconciliation-Design.md` | Phase 81 历史状态冲突与任务续作设计；不属于当前运行规范 |
 | `v5.8-State-Reconciliation-PLAN.md` | Phase 81 T423-T430 逐步 TDD 实施计划 |
 | `v5.8-Gap-Review-Wizard-Design.md` | T432 单项 Gap 向导、计划路由、事件恢复与新项目证据设计 |
 | `v5.8-Real-Host-Closure-Design.md` | Phase 82 严格 SpawnPlan、设计决策账本、四层验收与发布门禁 |
@@ -48,7 +49,7 @@
 | `v5.8-Main-Agent-Coordinator-Recovery-Design.md` | Phase 85 权威设计：主 Agent 唯一协调、Worker 所有权、异常恢复、预算 soft 和旧 Supervisor 退役 |
 | `v5.8-Scheme-A-Convergence-Plan.md` | 方案 A 收敛设计：分层所有权、最佳实践映射、实施计划、EARS 与 E2E 发布门禁 |
 | `v5.8-Automatic-Context-Governance.md` | Phase 70 自动 compaction、有界增量上下文与成本治理权威设计 |
-| `v5.8-Session-Decoupling-Design.md` | Phase 64-67 状态恢复设计；日常 rollover 已由 Phase 70 纠偏 |
+| `v5.8-Session-Decoupling-Design.md` | Phase 64-67 历史状态恢复设计；日常 rollover 已由 Phase 70 纠偏，不属于当前运行规范 |
 | `v5.8-Session-Decoupling-PLAN.md` | Phase 64-70 T302-T350 可执行实施计划 |
 | `v5.8-Deep-Audit-Remediation-PLAN.md` | Phase 74 T368-T376 深度审计修复计划 |
 | `v5.8-Deep-Audit-Report-2026-08-02.md` | Phase 75 自动门禁、风险和真实宿主准入证据 |
@@ -74,8 +75,9 @@
 ## 解释顺序
 
 1. Phase 85 的宿主主控权、Worker 生命周期、预算和旧 Supervisor 退役以 Main Agent Coordinator Recovery Design 为准；与旧 T533 冲突时，本设计优先。
-2. Phase 80 目标架构与迁移边界以 Protocol Kernel Convergence 为准；当前剩余未迁移行为
-   仍以 v5.6 设计、代码和新鲜测试证据为准，不得把目标误称为已实现。
+2. Phase 80、v5.6 和 v5.7 资产只用于历史演进审计；旧 checkpoint、Round、Supervisor 和迁移
+   façade 不属于当前运行输入。当前实现以 D78 约束、EventStore/Reducer 和最新测试证据为准，
+   不得从历史文档恢复已删除入口。
 3. 上下文与日常会话行为以 Automatic Context Governance 为准；恢复语义再读取
    Session Decoupling，冲突时前者优先。
 4. 实施顺序和任务状态以 PLAN 与 Tracker 为准。

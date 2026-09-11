@@ -43,13 +43,4 @@ def __getattr__(name: str) -> object:
         from auto_engineering.gates.registry import get_default_gates
 
         return get_default_gates()
-    if name == "Verdict":
-        import warnings
-
-        warnings.warn(
-            "Verdict 是 GateVerdict 的废弃别名, 将在 v6.0 移除. 请使用 GateVerdict.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return GateVerdict
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

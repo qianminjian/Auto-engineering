@@ -96,10 +96,9 @@ class Task:
         context_files: 上下文文件列表 (只读, 新字段)
         validation: 验证规则 (Gate 子集, 新字段)
         depends_on: 前置 Task ID 列表 (v5.5 audit P0-6: 统一字段, 废弃 deps)
-        estimated_minutes: 预估耗时 (供 Round Close 监控)
+        estimated_minutes: 预估耗时 (供阶段结束监控)
         status: 任务状态
         output: 任务输出 (新字段, 完成后赋值)
-        agent_type: Deprecated property, delegates to role (v5.5 P1-7)
     """
 
     id: str
@@ -125,20 +124,6 @@ class Task:
             self.target_files = frozenset(self.target_files)
         self.depends_on = list(self.depends_on)
         self.context_files = list(self.context_files)
-
-    @property
-    def agent_type(self) -> str:
-        """Deprecated: use role instead."""
-        import warnings
-        warnings.warn("agent_type is deprecated, use role instead", FutureWarning, stacklevel=2)
-        return self.role
-
-    @agent_type.setter
-    def agent_type(self, value: str) -> None:
-        import warnings
-        warnings.warn("agent_type is deprecated, use role instead", FutureWarning, stacklevel=2)
-        self.role = value
-
 
 @dataclass
 class TaskDAG:
@@ -351,7 +336,7 @@ class Plan:
 
     Attributes:
         tasks: Task 列表
-        requirement: 原始需求描述 (供 Round Close 报告)
+        requirement: 原始需求描述 (供阶段结束报告)
         created_at: 创建时间戳 (ISO format)
     """
 

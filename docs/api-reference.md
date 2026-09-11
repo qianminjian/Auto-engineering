@@ -1,6 +1,6 @@
 # Auto-Engineering API 参考
 
-> 适用版本：5.6.0｜当前公共契约
+> 适用版本：5.8.0｜当前公共契约
 
 ## 宿主入口
 
@@ -21,14 +21,14 @@ ae-run doctor [--project-root PATH]
 ae-run dev-loop --init "需求"
 ae-run dev-loop --tick --result result.json
 ae-run status --format json
-ae-run dev-loop --resume
+ae-run dev-loop --resume <thread-id>
 ```
 
 - `doctor`：检查依赖、宿主、Init manifest 和可选功能。
-- `--init`：创建 thread/checkpoint，输出首个 action。
+- `--init`：创建 thread，并将首个 action 写入 EventStore。
 - `--tick`：校验 result 并输出下一 action。
 - `status`：读取当前 thread、stage、tick、进度和最近历史。
-- `--resume`：从最后有效 checkpoint 恢复。
+- `--resume <thread-id>`：读取指定 thread 的当前 Action 并恢复；不创建 Worker，也不调用 Tick。
 
 ## Python 宿主 API
 
@@ -108,5 +108,6 @@ uv sync --extra openai
 - Git 写操作同时受 capability 与用户授权约束。
 - 路径输入必须归一化并执行白名单检查。
 
-当前实现见 `design/v5.6-Design-Loop.md`，已批准目标见
-`design/v5.7-Protocol-Kernel-Design.md`，历史摘要见 `design/HISTORY.md`。
+当前实现以 `design/BEACON.md` 和 `design/INDEX.md` 为入口，核心设计见
+`design/v5.8-Main-Agent-Coordinator-Recovery-Design.md`；历史协议见
+`design/v5.6-Design-Loop.md` 和 `design/HISTORY.md`。

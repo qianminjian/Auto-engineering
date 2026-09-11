@@ -9,7 +9,7 @@ description: Auto-Engineering v5.8 宿主无关确定性会话 Tick-Based 开发
 并在需要隔离角色时调用当前宿主原生子代理能力。
 
 > Authority: BEACON #39、#64、#91、#101
-> Spec: `design/v5.6-Design-Loop.md`
+> Authority: `design/BEACON.md` → `design/INDEX.md` → `design/v5.8-Main-Agent-Coordinator-Recovery-Design.md`
 
 ## 铁律
 
@@ -247,6 +247,9 @@ Coordinator 不得先读取、`sed`、复制、总结或重新拼接 `prompt_ref
              declare missing pytest/ruff/mypy under the PEP 735 [dependency-groups] dev group
              in pyproject.toml, and configure [tool.pytest.ini_options] with the project test root;
              do not substitute [project.optional-dependencies]
+             pass Ruff source paths as command arguments (`ruff check src tests`); never generate
+             `src_paths`, `[tool.ruff.lint] src`, or a path array under `extend`, because current
+             Ruff rejects those pyproject shapes before linting starts
              run env -u UV_PROJECT_ENVIRONMENT -u VIRTUAL_ENV uv sync --dev --project .
              verify gates with the project .venv/bin tools before reporting setup complete
              on a failed setup gate, repair the declaration or environment in place; never run
@@ -298,6 +301,27 @@ Action 完成报告为 Loop 成功，不得报告成功。只有 `WAIT_USER`、`
 或 `HANDOFF_REQUIRED` 允许让出当前宿主控制权。非零退出、空结果和非终态退出必须
 保留 `.ae-state`、记录结构化中断事实并恢复/报告，禁止吞错、重跑已落盘 Worker 或
 启动第二个 Coordinator。
+
+非交互宿主命令应使用进程边界适配器承接上述返回边界：
+
+```bash
+<plugin-root>/scripts/ae-host-run \
+  --project-root <project-root> \
+  --output <host-stream.jsonl> \
+  --max-idle-seconds 300 \
+  --auto-resume --max-resumes 16 \
+  -- <host command ...>
+```
+
+适配器只依据 Core 的 status 和当前 lease 决定是否恢复同一宿主命令；它不发起 Tick、
+Worker 或第二个 Coordinator。没有 `active_action + resume_active_action + CONTINUE`
+时立即让出控制；达到恢复上限则失败退出并保留 active Action。
+外层适配器设置 `AE_HOST_ADAPTER_ACTIVE=1` 后，Claude `SessionEnd`/`StopFailure` Hook
+只返回控制信息，不得抢先清理 lease 或写 Stop Report；退出 bridge 读取完整 attempt 输出，
+将有限允许的上游错误（包括 `Stream idle timeout`）归一为稳定错误码
+`HOST_PROVIDER_STREAM_IDLE_TIMEOUT`，再执行唯一的 Stop Report 收尾。
+Claude 仅有 `system/thinking_tokens` 的传输层记录只保留为审计，不算宿主语义进展，
+不得刷新 idle 期限；只有合法终态事件或已提交的 Action-scoped Core/Host 事实变化才算有效进展。
 
 Action 身份只由 `thread_id + message_id` 决定；`stage`、`tick` 和 `causation_id` 不能替代身份。
 因此同一 stage 的新 batch（例如 `developer B1` 后的 `developer B2`）只要
@@ -351,6 +375,10 @@ ae-run dev-loop --init \
 注入 `ae:component` 元数据或为补齐结构改写章节；确需改变设计时只能提交
 `design_change_requests[]`，由 Core 进入用户 Gate，批准后再执行明确的设计变更 Action。
 
+`--init --design-doc` 会先做设计结构预检：没有可识别的 H2/H3 或 `ae` 层次时，Core
+返回 `gate.id=design_structure_preflight`，此时不得启动 Gap Scan Worker，也不得伪造
+Gap Scan Result。选择“修复设计文档后重新初始化”后，修正文档并重新执行同一条 `--init`。
+
 ## CLI 契约
 
 | 命令 | 输出 |
@@ -364,7 +392,6 @@ ae-run dev-loop --init \
 | `ae-run dev-loop --tick --result <file>` | 下一个 action JSON |
 | `ae-run dev-loop --status --format json` | 状态 JSON |
 | `ae-run dev-loop --resume <thread-id>` | 从 EventStore 恢复后的 action JSON |
-| `ae-run dev-loop --import-checkpoint <id>` | 显式将旧 checkpoint 导入 EventStore 后输出 Action |
 | `ae-run status --format json` | 统一状态 JSON |
 
 ## Spawn 纪律
@@ -413,7 +440,9 @@ ae-run dev-loop --init \
 桩代码，若 smoke 需要业务模块则应删除或改为非业务 smoke。Core 会以 Setup 开始时的项目文件基线复核该
 边界，不能以 `artifacts` 或宿主文字声明绕过。其余非 spawn Action 只写业务 payload，并调用
  Python 项目可固定使用声明测试根中的最小 `test_smoke.py`；Node 项目可使用
- `test_smoke.js/.jsx/.ts/.tsx`。这些文件仅执行工具链自检，不得导入设计模块或写业务断言。
+ `test_smoke.js/.jsx/.ts/.tsx`。放入 source root 的最小入口必须使用明确的 `AE_SETUP_SMOKE`
+ 标记（或 `minimal smoke`/`setup smoke` 标记），除非它符合 Core 认可的标准 Vite React
+ bootstrap；这些文件仅执行工具链自检，不得导入设计模块或写业务断言。
 项目测试命令必须一次性、非交互并在完成后退出；Vitest 使用 `vitest run`，不得使用默认
 `vitest` 或 `--watch`，Cypress 不得使用 `cypress open`，Playwright 不得使用 UI 模式。
 `ae-run dev-loop --finalize-result coordinator-result.json --output-result result.json`。
@@ -461,10 +490,10 @@ developer 开始前读取 architect offload，critic 开始前读取 developer o
 | verdict | 含义 |
 |---|---|
 | GOAL_ACHIEVED | 目标达成，汇报验证结果 |
-| QUALITY | 达到质量标准但触及轮次上限 |
-| STAGNANT | 多轮没有实质进展 |
-| HARD_LIMIT | 达到最大轮次 |
+| STAGNANT | 连续证据无实质变化，按停滞保护终止 |
 | REFINE_LIMIT | plan_refine 回路超限 |
+| TERMINATED | 用户选择终止当前 thread |
+| SUPERSEDED | 用户选择重新初始化，当前 thread 逻辑关闭 |
 
 ## 失败透明
 

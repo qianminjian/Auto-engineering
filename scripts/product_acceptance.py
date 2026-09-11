@@ -6,6 +6,7 @@ import argparse
 import hashlib
 import json
 import math
+import sqlite3
 import sys
 import tarfile
 from collections.abc import Mapping
@@ -20,6 +21,7 @@ if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
 from auto_engineering.build_identity import validate_build_info  # noqa: E402
+from auto_engineering.loop.event_store import SQLiteEventStore  # noqa: E402
 
 
 class ProductAcceptanceError(ValueError):
@@ -228,9 +230,58 @@ def _validate_installation_source(
         raise ProductAcceptanceError("INSTALLATION_BUILD_ID_MISMATCH")
 
 
+def _validate_canary_event_store(
+    evidence: dict[str, Any],
+    *,
+    canary_root: Path,
+) -> None:
+    """重新读取 Canary EventStore，验证摘要没有脱离恢复事实链。"""
+
+    canary = evidence.get("canary")
+    source = canary.get("event_store_source") if isinstance(canary, dict) else None
+    if not isinstance(source, dict):
+        raise ProductAcceptanceError("CANARY_EVENT_STORE_EVIDENCE_MISSING")
+    root = canary_root.resolve()
+    declared_root = source.get("root")
+    if not isinstance(declared_root, str) or Path(declared_root).resolve() != root:
+        raise ProductAcceptanceError("CANARY_EVENT_STORE_ROOT_MISMATCH")
+    thread_id = source.get("thread_id")
+    recovery_id = canary.get("recovery_action_message_id")
+    if not isinstance(thread_id, str) or not thread_id or not isinstance(recovery_id, str):
+        raise ProductAcceptanceError("CANARY_EVENT_STORE_EVIDENCE_INVALID")
+    database = root / ".ae-state" / "events.db"
+    try:
+        with SQLiteEventStore(database) as event_store:
+            if event_store.thread_ids() != [thread_id]:
+                raise ProductAcceptanceError("CANARY_EVENT_THREAD_INVALID")
+            signature = event_store.semantic_signature(thread_id)
+            stream = event_store.load_stream(thread_id)
+    except ProductAcceptanceError:
+        raise
+    except (OSError, sqlite3.Error, ValueError, RuntimeError) as exc:
+        raise ProductAcceptanceError("CANARY_EVENT_STORE_UNREADABLE") from exc
+    if signature is None or list(signature) != source.get("semantic_signature"):
+        raise ProductAcceptanceError("CANARY_EVENT_STORE_SIGNATURE_MISMATCH")
+    action_ids = {
+        event.to_dict()["payload"].get("action", {}).get("message_id")
+        for event in stream
+        if event.event_type.value == "ActionIssued"
+        and isinstance(event.to_dict()["payload"].get("action"), dict)
+    }
+    accepted_causations = {
+        event.causation_id
+        for event in stream
+        if event.event_type.value == "ResultAccepted"
+    }
+    if recovery_id not in action_ids or recovery_id not in accepted_causations:
+        raise ProductAcceptanceError("CANARY_RECOVERY_EVENT_BINDING_MISSING")
+
+
 def _validate_build_identity_preflight(
     artifact: dict[str, Any],
     candidate_build_info: dict[str, str],
+    *,
+    source_root: Path | None = None,
 ) -> None:
     """要求真实产品 artifact 证明首个 Loop Action 前执行了身份预检。"""
 
@@ -242,14 +293,28 @@ def _validate_build_identity_preflight(
         or preflight.get("build_id") != candidate_build_info["build_id"]
         or preflight.get("version") != candidate_build_info["version"]
         or preflight.get("source_kind") != "packaged"
+        or preflight.get("content_sha256") != candidate_build_info["content_sha256"]
     ):
         raise ProductAcceptanceError("PRODUCT_BUILD_IDENTITY_PREFLIGHT_MISMATCH")
+    if source_root is not None:
+        source = preflight.get("source")
+        if not isinstance(source, dict):
+            raise ProductAcceptanceError("PRODUCT_BUILD_IDENTITY_PREFLIGHT_MISSING")
+        _validate_source_file(
+            source_root,
+            relative_path=source.get("path"),
+            expected_sha256=source.get("sha256"),
+            expected_bytes=source.get("bytes"),
+            missing_code="PRODUCT_BUILD_IDENTITY_PREFLIGHT_MISSING",
+            mismatch_code="PRODUCT_BUILD_IDENTITY_PREFLIGHT_MISMATCH",
+        )
 
 
 def evaluate_product_evidence(
     evidence: dict[str, Any],
     *,
     evidence_root: Path | None = None,
+    canary_root: Path | None = None,
     max_claude_cost_usd: float = DEFAULT_CLAUDE_COST_LIMIT_USD,
 ) -> dict[str, Any]:
     max_claude_cost_usd = _validate_cost_limit(max_claude_cost_usd)
@@ -290,8 +355,25 @@ def evaluate_product_evidence(
         or canary.get("recovery_method") not in _RECOVERY_METHOD_STATUS
         or not isinstance(canary.get("recovery_action_message_id"), str)
         or not canary["recovery_action_message_id"]
+        or canary.get("recovery_result_causation_id")
+        != canary.get("recovery_action_message_id")
     ):
         raise ProductAcceptanceError("CANARY_RECOVERY_NOT_VERIFIED")
+    source = canary.get("event_store_source")
+    if (
+        not isinstance(source, dict)
+        or source.get("kind") != "event_store"
+        or not isinstance(source.get("root"), str)
+        or not source["root"]
+        or not isinstance(source.get("thread_id"), str)
+        or not source["thread_id"]
+        or source.get("event_store_path") != ".ae-state/events.db"
+        or not isinstance(source.get("semantic_signature"), list)
+        or not source["semantic_signature"]
+    ):
+        raise ProductAcceptanceError("CANARY_EVENT_STORE_EVIDENCE_INVALID")
+    if canary_root is not None:
+        _validate_canary_event_store(evidence, canary_root=canary_root)
 
     golden = evidence.get("golden_project")
     if not isinstance(golden, dict) or golden.get("status") != "pass":
@@ -628,6 +710,7 @@ def evaluate_host_evidence(
     *,
     evidence_root: Path,
     source_root: Path | None = None,
+    canary_root: Path | None = None,
     candidate_build_info: dict[str, str] | None = None,
     max_claude_cost_usd: float = DEFAULT_CLAUDE_COST_LIMIT_USD,
 ) -> dict[str, Any]:
@@ -691,7 +774,11 @@ def evaluate_host_evidence(
     ):
         raise ProductAcceptanceError("CANDIDATE_BUILD_MISMATCH")
     if candidate_build_info is not None:
-        _validate_build_identity_preflight(artifact_payload, candidate_build_info)
+        _validate_build_identity_preflight(
+            artifact_payload,
+            candidate_build_info,
+            source_root=source_root,
+        )
     _validate_business_evidence(artifact_payload, source_root=source_root)
     business_evidence = artifact_payload.get("business_evidence")
     if isinstance(business_evidence, dict) and business_evidence.get("build_id") != evidence.get("build_id"):
@@ -713,6 +800,7 @@ def evaluate_host_evidence(
     return evaluate_product_evidence(
         evidence,
         evidence_root=root,
+        canary_root=canary_root,
         max_claude_cost_usd=max_claude_cost_usd,
     )
 
@@ -723,6 +811,7 @@ def evaluate_release_evidence(
     evidence_root: Path,
     source_root: Path | None = None,
     source_roots: Mapping[str, Path] | None = None,
+    canary_roots: Mapping[str, Path] | None = None,
     candidate_build_info: dict[str, str] | None = None,
     max_claude_cost_usd: float = DEFAULT_CLAUDE_COST_LIMIT_USD,
 ) -> dict[str, Any]:
@@ -747,11 +836,18 @@ def evaluate_release_evidence(
             for host in {"claude-code", "codex"}
             if source_root is not None
         }
+    if canary_roots is not None and set(canary_roots) != {"claude-code", "codex"}:
+        raise ProductAcceptanceError("CANARY_ROOTS_INCOMPLETE")
     results = [
         evaluate_host_evidence(
             evidence,
             evidence_root=evidence_root,
             source_root=source_roots.get(evidence.get("host")),
+            canary_root=(
+                canary_roots.get(evidence.get("host"))
+                if canary_roots is not None
+                else None
+            ),
             candidate_build_info=candidate_build_info,
             max_claude_cost_usd=max_claude_cost_usd,
         )
@@ -794,6 +890,10 @@ def main() -> int:
         help="真实宿主项目根映射，例如 codex=/tmp/project；双宿主各传一次",
     )
     parser.add_argument(
+        "--canary-root", action="append", default=[], metavar="HOST=PATH",
+        help="真实 L3 Canary 项目根映射；用于重新校验 EventStore 恢复因果链",
+    )
+    parser.add_argument(
         "--max-claude-cost-usd",
         type=float,
         default=DEFAULT_CLAUDE_COST_LIMIT_USD,
@@ -804,17 +904,23 @@ def main() -> int:
     if not all(isinstance(payload, dict) for payload in payloads):
         raise ProductAcceptanceError("EVIDENCE_INVALID")
     project_roots = _parse_project_roots(args.project_root)
+    canary_roots = _parse_project_roots(args.canary_root) if args.canary_root else {}
     if len(payloads) == 1:
         source_root = project_roots.get(payloads[0].get("host"))
         if source_root is None:
             raise ProductAcceptanceError("PROJECT_ROOT_INVALID")
+        canary_root = canary_roots.get(payloads[0].get("host"))
+        if canary_root is None:
+            raise ProductAcceptanceError("CANARY_ROOT_INVALID")
     else:
         source_root = None
+        canary_root = None
     verdict = (
         evaluate_host_evidence(
             payloads[0],
             evidence_root=args.evidence_root,
             source_root=source_root,
+            canary_root=canary_root,
             candidate_build_info=_read_candidate_build_info(args.archive),
             max_claude_cost_usd=args.max_claude_cost_usd,
         )
@@ -823,6 +929,7 @@ def main() -> int:
             payloads,
             evidence_root=args.evidence_root,
             source_roots=project_roots,
+            canary_roots=canary_roots,
             candidate_build_info=_read_candidate_build_info(args.archive),
             max_claude_cost_usd=args.max_claude_cost_usd,
         )

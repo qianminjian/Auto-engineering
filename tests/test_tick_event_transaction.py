@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
 
 from auto_engineering.engine.state import EngineState
 from auto_engineering.host import HostPlatform
-from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
 from auto_engineering.loop.effects import EffectReceipt
 from auto_engineering.loop.event_store import SQLiteEventStore
 from auto_engineering.loop.events import LoopEvent, LoopEventType
@@ -51,6 +49,25 @@ def _action() -> dict[str, object]:
     }
 
 
+def _result_for_active(
+    orchestrator: TickOrchestrator, payload: dict[str, object]
+) -> dict[str, object]:
+    active = orchestrator.active_action_snapshot()
+    assert active is not None
+    return {
+        "schema_version": "1.1",
+        "message_type": "result",
+        "message_id": f"result-{active['message_id']}",
+        "thread_id": active["thread_id"],
+        "tick": active["tick"],
+        "stage": active["stage"],
+        "causation_id": active["message_id"],
+        "correlation_id": active["correlation_id"],
+        "extensions": {},
+        **payload,
+    }
+
+
 def test_commit_tick_atomically_writes_event_projection_and_action() -> None:
     state = _state()
     with SQLiteEventStore(":memory:") as store:
@@ -59,6 +76,33 @@ def test_commit_tick_atomically_writes_event_projection_and_action() -> None:
         assert len(store.load_stream("thread-1")) == 1
         assert store.load_projection("thread-1").to_dict() == state.to_dict()
         assert store.load_action_snapshot("thread-1") == _action()
+
+
+def test_done_action_emits_loop_completed_in_the_same_tick_candidate() -> None:
+    state = _state()
+    done_action = {
+        **_action(),
+        "action": "done",
+        "verdict": "GOAL_ACHIEVED",
+        "tick": 1,
+    }
+
+    candidate = TickKernel().compile_commit(
+        next_sequence=0,
+        previous_state=None,
+        current_state=state,
+        action=done_action,
+        pending_events=[],
+        result_message_id=None,
+        result_causation_id=None,
+    )
+
+    assert [event.event_type for event in candidate.events] == [
+        LoopEventType.LOOP_INITIALIZED,
+        LoopEventType.ACTION_ISSUED,
+        LoopEventType.LOOP_COMPLETED,
+    ]
+    assert candidate.events[-1].payload["verdict"] == "GOAL_ACHIEVED"
 
 
 def test_commit_tick_atomically_writes_result_replay_receipt() -> None:
@@ -149,7 +193,6 @@ def test_event_core_executes_planned_effects_at_commit_boundary(tmp_path) -> Non
     with SQLiteEventStore(tmp_path / "events.db") as events:
         orchestrator = TickOrchestrator(
             tmp_path,
-            checkpoint_store=None,
             event_store=events,
         )
         action = orchestrator.init("验证 effect 提交边界")
@@ -288,7 +331,6 @@ def test_orchestrator_init_uses_event_transaction_without_checkpoint_write(
     with SQLiteEventStore(tmp_path / "events.db") as store:
         orchestrator = TickOrchestrator(
             tmp_path,
-            checkpoint_store=None,
             event_store=store,
         )
 
@@ -306,46 +348,6 @@ def test_orchestrator_init_uses_event_transaction_without_checkpoint_write(
         assert store.load_action_snapshot(action["thread_id"]) == action
 
 
-def test_orchestrator_restores_projection_and_active_action_from_event_store(
-    tmp_path,
-) -> None:
-    checkpoints = SQLiteCheckpointStore(tmp_path / "checkpoints.db")
-    try:
-        with SQLiteEventStore(tmp_path / "events.db") as events:
-            first = TickOrchestrator(
-                tmp_path,
-                checkpoint_store=checkpoints,
-                event_store=events,
-            )
-            action = first.init("事件恢复")
-
-            restored = TickOrchestrator.restore_from_event_store(
-                tmp_path,
-                checkpoints,
-                event_store=events,
-                thread_id=action["thread_id"],
-            )
-
-            assert restored._state.to_dict() == first._state.to_dict()
-            assert restored._active_action == action
-            assert restored._round_history == []
-    finally:
-        checkpoints.close()
-
-
-def test_production_restore_rejects_explicit_none_event_store(tmp_path) -> None:
-    checkpoints = SQLiteCheckpointStore(tmp_path / "checkpoints.db")
-    try:
-        with pytest.raises(RuntimeError, match="EVENT_STORE_REQUIRED"):
-            TickOrchestrator.restore(
-                tmp_path,
-                checkpoints,
-                event_store=cast(SQLiteEventStore, None),
-            )
-    finally:
-        checkpoints.close()
-
-
 def test_orchestrator_restores_projection_when_commit_compilation_fails(
     tmp_path,
     monkeypatch,
@@ -354,7 +356,6 @@ def test_orchestrator_restores_projection_when_commit_compilation_fails(
     with SQLiteEventStore(tmp_path / "events.db") as events:
         orchestrator = TickOrchestrator(
             tmp_path,
-            checkpoint_store=None,
             event_store=events,
         )
         action = orchestrator.init("事件恢复")
@@ -384,7 +385,7 @@ def test_orchestrator_clears_uncommitted_effects_after_commit_failure(tmp_path) 
         tmp_path / "events.db", fault_injector=fail_after_events
     ) as events:
         orchestrator = TickOrchestrator(
-            tmp_path, checkpoint_store=None, event_store=events
+            tmp_path, event_store=events
         )
         action = orchestrator.init("清理未提交副作用")
         armed = True
@@ -433,9 +434,7 @@ def test_gap_wizard_restores_at_first_undecided_gap(tmp_path) -> None:
         }],
         "blocking_rule": "component gap 可 Fill",
     }
-    checkpoints = SQLiteCheckpointStore(tmp_path / "checkpoints.db")
-    try:
-        with SQLiteEventStore(tmp_path / "events.db") as events:
+    with SQLiteEventStore(tmp_path / "events.db") as events:
             guardrail = MagicMock()
             guardrail.check.return_value = MagicMock(action="pass")
             orchestrator = TickOrchestrator(
@@ -444,11 +443,10 @@ def test_gap_wizard_restores_at_first_undecided_gap(tmp_path) -> None:
                     name: MagicMock(passed=True, message="ok") for name in names
                 },
                 guardrail=guardrail,
-                checkpoint_store=checkpoints,
                 event_store=events,
             )
             initial = orchestrator.init("实现接口", design_doc_path=str(design))
-            orchestrator.tick_dict({
+            orchestrator.tick_dict(_result_for_active(orchestrator, {
                 "stage": "gap_scan",
                 "gaps": [
                     {**gap_base, "id": "gap-A"},
@@ -462,8 +460,8 @@ def test_gap_wizard_restores_at_first_undecided_gap(tmp_path) -> None:
                     "verdict": "gap",
                     "evidence": ["§1 未定义输入输出"],
                 }],
-            })
-            action = orchestrator.tick_dict({
+            }))
+            action = orchestrator.tick_dict(_result_for_active(orchestrator, {
                 "stage": "gap_review",
                 "decision": {
                     "gap_id": "gap-A",
@@ -471,11 +469,10 @@ def test_gap_wizard_restores_at_first_undecided_gap(tmp_path) -> None:
                     "fill_content": "输入 string，输出 Result",
                     "decision_source": "user",
                 },
-            })
+            }))
 
             restored = TickOrchestrator.restore_from_event_store(
                 tmp_path,
-                checkpoints,
                 event_store=events,
                 thread_id=initial["thread_id"],
             )
@@ -487,8 +484,6 @@ def test_gap_wizard_restores_at_first_undecided_gap(tmp_path) -> None:
             assert events.load_projection(initial["thread_id"]).to_dict() == (
                 restored._state.to_dict()
             )
-    finally:
-        checkpoints.close()
 
 
 def test_critic_major_replays_to_developer_without_projection_drift(tmp_path) -> None:
@@ -502,65 +497,61 @@ def test_critic_major_replays_to_developer_without_projection_drift(tmp_path) ->
     guardrail = MagicMock()
     guardrail.check.return_value = MagicMock(action="pass")
 
-    checkpoints = SQLiteCheckpointStore(tmp_path / "checkpoints.db")
-    try:
-        with SQLiteEventStore(tmp_path / "events.db") as events:
-            orchestrator = TickOrchestrator(
-                tmp_path,
-                gate_runner=lambda names, root: {
-                    name: MagicMock(passed=True, message="ok") for name in names
-                },
-                guardrail=guardrail,
-                checkpoint_store=checkpoints,
-                event_store=events,
-            )
-            architect = orchestrator.init("实现功能")
-            runner = HostTrajectoryRunner(
-                tmp_path, HostPlatform.CODEX, core=orchestrator, event_store=events
-            )
-            developer = runner.run(architect, workers=[lambda invocation: {
-                "plan": (
-                    "实现完整功能并执行 Red Green Refactor、静态检查、单元测试、"
-                    "契约验证和构建验收，保留可重放证据。"
-                ),
-                "batch_plan": [{
-                    "batch_id": "B01",
-                    "component": "核心组件",
-                    "tasks": [{
-                        "id": "B01-T1",
-                        "description": "实现核心功能",
-                        "file_targets": ["critic_retry/core.py"],
-                    }],
-                }],
-                "file_list": ["critic_retry/core.py"],
-                "contracts": {},
-            }]).next_action
-            assert developer.get("action") == "developer", developer
-            critic = runner.run(developer, workers=[lambda invocation: {
+    with SQLiteEventStore(tmp_path / "events.db") as events:
+        orchestrator = TickOrchestrator(
+            tmp_path,
+            gate_runner=lambda names, root: {
+                name: MagicMock(passed=True, message="ok") for name in names
+            },
+            guardrail=guardrail,
+            event_store=events,
+        )
+        architect = orchestrator.init("实现功能")
+        runner = HostTrajectoryRunner(
+            tmp_path, HostPlatform.CODEX, core=orchestrator, event_store=events
+        )
+        developer = runner.run(architect, workers=[lambda invocation: {
+            "plan": (
+                "实现完整功能并执行 Red Green Refactor、静态检查、单元测试、"
+                "契约验证和构建验收，保留可重放证据。"
+            ),
+            "batch_plan": [{
                 "batch_id": "B01",
-                "files_changed": ["critic_retry/core.py"],
-                "commit_hash": "",
-                "test_results": {"passed": 1, "failed": 0, "total": 1},
-                "red_evidence": [],
-            }]).next_action
-            retry = runner.run(critic, workers=[lambda invocation: {
-                "verdict": "MAJOR",
-                "findings": [{
-                    "file": "critic_retry/core.py",
-                    "line": 1,
-                    "severity": "P1",
-                    "issue": "缺少边界处理",
-                    "suggestion": "补充异常分支",
+                "component": "核心组件",
+                "tasks": [{
+                    "id": "B01-T1",
+                    "description": "实现核心功能",
+                    "file_targets": ["critic_retry/core.py"],
                 }],
-                "strengths": [{"description": "接口边界清晰"}],
-                "assessment": "Needs rework",
-            }]).next_action
+            }],
+            "file_list": ["critic_retry/core.py"],
+            "contracts": {},
+        }]).next_action
+        assert developer.get("action") == "developer", developer
+        critic = runner.run(developer, workers=[lambda invocation: {
+            "batch_id": "B01",
+            "task_ids": ["B01-T1"],
+            "files_changed": ["critic_retry/core.py"],
+            "commit_hash": "",
+            "test_results": {"passed": 1, "failed": 0, "total": 1},
+            "red_evidence": [],
+        }]).next_action
+        retry = runner.run(critic, workers=[lambda invocation: {
+            "verdict": "MAJOR",
+            "findings": [{
+                "file": "critic_retry/core.py",
+                "line": 1,
+                "severity": "P1",
+                "issue": "缺少边界处理",
+                "suggestion": "补充异常分支",
+            }],
+            "strengths": [{"description": "接口边界清晰"}],
+            "assessment": "Needs rework",
+        }]).next_action
 
-            projection = events.load_projection(architect["thread_id"])
-            assert retry["action"] == "developer"
-            assert projection.current_stage == "developer"
-            assert projection.strengths is None
-            assert projection.assessment is None
-            assert events.load_action_snapshot(architect["thread_id"]) == retry
-    finally:
-        checkpoints.close()
+        projection = events.load_projection(architect["thread_id"])
+        assert retry["action"] == "developer"
+        assert projection.current_stage == "developer"
+        assert projection.strengths is None
+        assert projection.assessment is None
+        assert events.load_action_snapshot(architect["thread_id"]) == retry

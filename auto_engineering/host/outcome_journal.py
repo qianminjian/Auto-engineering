@@ -15,6 +15,27 @@ class OutcomeJournalTransitionError(ValueError):
     """Outcome journal 出现非法状态转换。"""
 
 
+MAX_ASSEMBLY_REPAIR_ATTEMPTS = 3
+
+
+def _outcomes_fingerprint(
+    action_message_id: str,
+    outcomes: Sequence[Mapping[str, Any]],
+) -> str:
+    return hashlib.sha256(
+        json.dumps(
+            {
+                "action_message_id": action_message_id,
+                "outcomes": [dict(item) for item in outcomes],
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+    ).hexdigest()
+
+
 def _atomic_write(path: Path, payload: Mapping[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary_name = tempfile.mkstemp(
@@ -120,6 +141,19 @@ class OutcomeJournal:
         status = existing.get("status") if existing is not None else None
         if status in {"accepted", "committed"}:
             raise OutcomeJournalTransitionError("OUTCOME_ALREADY_ACCEPTED")
+        if status in {"rejected", "assembly_rejected"}:
+            previous_attempt = existing.get("attempt", 1) if existing else 1
+            if (
+                existing is not None
+                and (
+                    existing.get("repairable") is False
+                    or (
+                        isinstance(previous_attempt, int)
+                        and previous_attempt >= MAX_ASSEMBLY_REPAIR_ATTEMPTS
+                    )
+                )
+            ):
+                raise OutcomeJournalTransitionError("OUTCOME_REPAIR_EXHAUSTED")
         history: list[object] = []
         attempt = 1
         if existing is not None:
@@ -189,30 +223,46 @@ class OutcomeJournal:
             "status": "assembly_rejected",
             "action_message_id": action_message_id,
             "attempt": attempt,
-            "repairable": True,
+            "repairable": attempt < MAX_ASSEMBLY_REPAIR_ATTEMPTS,
             "semantic_payload": dict(coordinator_payload),
             "rejection": rejection,
             "rejection_history": history,
         }
+        serialized_outcomes: list[dict[str, Any]] | None = None
+        outcomes_fingerprint: str | None = None
         if outcomes is not None:
             serialized_outcomes = [dict(item) for item in outcomes]
+            outcomes_fingerprint = _outcomes_fingerprint(
+                action_message_id,
+                serialized_outcomes,
+            )
             record["outcomes"] = serialized_outcomes
-            record["outcomes_fingerprint"] = hashlib.sha256(
-                json.dumps(
-                    {
-                        "action_message_id": action_message_id,
-                        "outcomes": serialized_outcomes,
-                    },
-                    ensure_ascii=False,
-                    sort_keys=True,
-                    separators=(",", ":"),
-                    allow_nan=False,
-                ).encode("utf-8")
-            ).hexdigest()
+            record["outcomes_fingerprint"] = outcomes_fingerprint
         if existing is not None:
-            for key in ("outcomes_fingerprint", "outcomes", "completed_at"):
-                if key in existing:
-                    record[key] = existing[key]
+            existing_outcomes = existing.get("outcomes")
+            existing_fingerprint = existing.get("outcomes_fingerprint")
+            existing_pair_is_valid = (
+                isinstance(existing_outcomes, list)
+                and all(isinstance(item, Mapping) for item in existing_outcomes)
+                and isinstance(existing_fingerprint, str)
+                and existing_fingerprint
+                == _outcomes_fingerprint(action_message_id, existing_outcomes)
+            )
+            if existing_pair_is_valid:
+                # Worker facts are immutable once journaled, but the pair must
+                # be preserved atomically. Never copy an old fingerprint and
+                # outcomes independently: a prior interrupted write must not
+                # poison every subsequent finalize attempt.
+                record["outcomes"] = existing_outcomes
+                record["outcomes_fingerprint"] = existing_fingerprint
+            elif serialized_outcomes is None:
+                # A corrupt or legacy pair cannot be treated as authoritative.
+                # Without current facts, leave the record explicitly fact-less;
+                # the next repair must provide a fresh validated outcome.
+                record.pop("outcomes", None)
+                record.pop("outcomes_fingerprint", None)
+            if "completed_at" in existing:
+                record["completed_at"] = existing["completed_at"]
         _atomic_write(self.path_for(action_message_id), record)
         return record
 
@@ -226,13 +276,44 @@ class OutcomeJournal:
         record = self.load(action_message_id)
         if record is None or record.get("status") != "prepared":
             raise OutcomeJournalTransitionError("OUTCOME_NOT_PREPARED")
+        attempt = record.get("attempt", 1)
+        if not isinstance(attempt, int) or isinstance(attempt, bool) or attempt < 1:
+            attempt = 1
         record.update({
             "status": "rejected",
-            "repairable": True,
+            "repairable": attempt < MAX_ASSEMBLY_REPAIR_ATTEMPTS,
             "rejection": {
                 "error_code": error_code,
                 "violations": list(violations),
             },
+        })
+        _atomic_write(self.path_for(action_message_id), record)
+        return record
+
+    def reopen_assembly_repair(self, action_message_id: str, *, reason: str) -> dict[str, Any]:
+        """显式恢复一次被错误结果耗尽的 assembly repair 预算。
+
+        仅供人工确认后的恢复工具使用；保留完整拒绝历史，并把预算回退到
+        最后一次可修复尝试。它不改变 Worker outcomes，也不产生 Core 事实。
+        """
+
+        record = self.load(action_message_id)
+        if record is None or record.get("status") not in {
+            "rejected", "assembly_rejected",
+        }:
+            raise OutcomeJournalTransitionError("OUTCOME_NOT_REPAIR_EXHAUSTED")
+        if record.get("repairable") is not False:
+            raise OutcomeJournalTransitionError("OUTCOME_REPAIR_NOT_EXHAUSTED")
+        rejection = record.get("rejection")
+        history = list(record.get("rejection_history", []))
+        if isinstance(rejection, Mapping):
+            history.append({**dict(rejection), "reopened_reason": reason})
+        record.update({
+            "status": "assembly_rejected",
+            "attempt": MAX_ASSEMBLY_REPAIR_ATTEMPTS - 1,
+            "repairable": True,
+            "rejection_history": history,
+            "reopened_reason": reason,
         })
         _atomic_write(self.path_for(action_message_id), record)
         return record

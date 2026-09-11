@@ -174,6 +174,8 @@ def test_host_contract_has_explicit_project_setup_driver_branch() -> None:
         assert "不得实现用户业务功能" in content
         assert "不得创建业务测试" in content
         assert "PEP 735" in content
+        assert "src_paths" in content
+        assert "路径数组" in content or "path array" in content
         assert "[dependency-groups]" in content
         assert "[project.optional-dependencies]" in content
         assert "不得执行 `rm -rf .venv`" in content or "never run\n             rm -rf .venv" in content
@@ -196,6 +198,16 @@ def test_host_contract_locks_startup_project_root_before_init() -> None:
         assert "HOST_PROJECT_ROOT_DRIFT" in content
         assert "禁止搜索父目录" in content
         assert "禁止改写 `--project-root`" in content
+
+
+def test_outer_adapter_owns_claude_exit_facts() -> None:
+    """入口说明必须保留 Hook 延后与具体 provider 故障分类合同。"""
+
+    for content in (SKILL.read_text(), DEV_LOOP.read_text()):
+        assert "AE_HOST_ADAPTER_ACTIVE=1" in content
+        assert "SessionEnd`/`StopFailure" in content
+        assert "HOST_PROVIDER_STREAM_IDLE_TIMEOUT" in content
+        assert "不得先清理" in content or "不得抢先清理" in content
 
 
 def test_skill_does_not_assume_git_authorization() -> None:
@@ -314,7 +326,7 @@ def test_plan_models_have_one_canonical_runtime_module() -> None:
         ROOT / "auto_engineering" / "loop" / "task_factory.py",
         ROOT / "auto_engineering" / "loop" / "architecture_activation.py",
         ROOT / "auto_engineering" / "loop" / "tick_orchestrator.py",
-        ROOT / "auto_engineering" / "loop" / "state" / "checkpoint_envelope.py",
+        ROOT / "auto_engineering" / "engine" / "models.py",
     ):
         content = path.read_text()
         assert "from auto_engineering.loop.plan import" not in content

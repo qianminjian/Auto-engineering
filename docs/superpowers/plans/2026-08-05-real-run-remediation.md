@@ -1,6 +1,10 @@
-# Plan: v5.8 真跑问题整改
+# Plan: v5.8 真跑问题整改（历史）
 
-> **For agent execution:** follow this plan task-by-task and keep the tracker current.
+> 本文件是 2026-08-05 的历史执行计划，仅用于事故回溯，禁止作为当前执行计划。
+> 当前运行设计以 `design/BEACON.md`、`design/INDEX.md` 和 v5.8 主 Agent Coordinator
+> 设计为准；其中 checkpoint fallback、旧 restore 兼容和历史迁移路径均已退役。
+
+> 历史执行提示：不要按本文件 task-by-task 执行；如需追溯，请只读取对应提交和事故记录。
 
 ## Goal
 
@@ -37,4 +41,3 @@
 - 串行运行相关 pytest（`--no-cov --timeout=60`），再运行全量测试/静态检查。
 - 检查 diff、Spec、Tracker、BEACON 状态一致。
 - 报告仍需真实宿主重跑；本次不直接修改外部 Voice Clone 业务源码。
-

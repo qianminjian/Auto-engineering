@@ -206,6 +206,35 @@ class TestAdvance:
         assert bs.current_batch_idx == 1
         assert bs.current_component_idx == 0
 
+    def test_plan_patch_prioritizes_new_repair_batch_over_pending_work(self) -> None:
+        """返修批次必须先执行，不能让已知缺陷被后续批次重复审查。"""
+        bs = self._bs()
+        bs.advance_batch()  # bx1 已完成，bx2 仍是原计划待办
+
+        patched = bs.apply_plan_patch(
+            base_revision=1,
+            active_revision=1,
+            add_batches=[_batch("repair-1", "CompX")],
+            completed_batch_ids=bs.completed_batch_ids(),
+        )
+
+        assert patched.current_batch_id() == "repair-1"
+
+    def test_plan_patch_prioritizes_new_batch_when_caller_passes_merged_plan(self) -> None:
+        """ArchitectureActivation 传入合并计划时仍能识别新增返修批次。"""
+        bs = self._bs()
+        bs.advance_batch()
+        merged_plan = [*bs.batch_plan, _batch("repair-2", "CompX")]
+
+        patched = bs.apply_plan_patch(
+            base_revision=1,
+            active_revision=1,
+            add_batches=merged_plan,
+            completed_batch_ids=bs.completed_batch_ids(),
+        )
+
+        assert patched.current_batch_id() == "repair-2"
+
     def test_reopen_previous_batch_is_bounded(self) -> None:
         bs = self._bs()
         bs.advance_batch()

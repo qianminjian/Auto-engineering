@@ -56,9 +56,23 @@ class _MetricsAggregator:
         critic_ticks = [e for e in ticks
                         if e["payload"].get("stage") == "critic"
                         and e["payload"].get("verdict")]
-        major_count = sum(1 for e in critic_ticks
-                         if e["payload"].get("verdict") == "MAJOR")
-        m2 = major_count / max(len(critic_ticks), 1)
+        major_count = sum(
+            1 for e in critic_ticks
+            if e["payload"].get("verdict") == "MAJOR"
+        )
+        # EventStore projections use a separate critic_verdict fact because a
+        # CriticStateUpdated event is not itself a Tick completion event.
+        projected_critic = [
+            e for e in events if e.get("event_type") == "critic_verdict"
+        ]
+        if projected_critic:
+            major_count = sum(
+                e.get("payload", {}).get("verdict") == "MAJOR"
+                for e in projected_critic
+            )
+            m2 = major_count / max(len(projected_critic), 1)
+        else:
+            m2 = major_count / max(len(critic_ticks), 1)
 
         # M3: 验证层级触发率
         verifier_stages = ["component_verifier", "plate_deep_audit",

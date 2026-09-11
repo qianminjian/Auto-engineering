@@ -75,7 +75,7 @@ class TaskEvidencePolicy:
             return False
         status = raw.get("status", "pass")
         if status == "":
-            # 兼容旧注入 GateRunner：空 status 但 passed=true 是 Core 返回事实。
+            # Core 返回的 passed=true 是事实，即使 Gate 没有附带 status。
             return True
         return (
             status == "pass"

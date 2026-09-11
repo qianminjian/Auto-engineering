@@ -12,16 +12,37 @@ from auto_engineering.loop.events import LoopEventType
 from auto_engineering.loop.tick_orchestrator import TickOrchestrator
 
 
+class _EnvelopeTestOrchestrator(TickOrchestrator):
+    """把旧的紧凑测试输入扩展为当前 Result Envelope。"""
+
+    def tick_dict(self, result: dict) -> dict:
+        if "schema_version" not in result:
+            active = self._active_action
+            if active is not None:
+                result = {
+                    "schema_version": "1.1",
+                    "message_type": "result",
+                    "message_id": f"test-result-{active['tick']}",
+                    "thread_id": active["thread_id"],
+                    "tick": active["tick"],
+                    "stage": result.get("stage", active["stage"]),
+                    "causation_id": active["message_id"],
+                    "correlation_id": active["correlation_id"],
+                    "extensions": {},
+                    **result,
+                }
+        return super().tick_dict(result)
+
+
 def _orchestrator(project_root: Path) -> TickOrchestrator:
     guardrail = MagicMock()
     guardrail.check.return_value = MagicMock(action="pass")
-    return TickOrchestrator(
+    return _EnvelopeTestOrchestrator(
         project_root=project_root,
         gate_runner=lambda gate_names, project_root: {
             name: MagicMock(passed=True, message="ok") for name in gate_names
         },
         guardrail=guardrail,
-        checkpoint_store=None,
     )
 
 
@@ -98,6 +119,8 @@ def test_setup_instruction_does_not_take_over_business_implementation(
     )
     assert "不得为了让 smoke 通过而创建业务模块桩代码" in action["instruction"]
     assert "测试门禁必须是一次性非交互命令" in action["instruction"]
+    assert "Python 项目的 Ruff 源码路径由 `ruff check src tests` 命令参数提供" in action["instruction"]
+    assert "不要在 pyproject.toml 写 `src_paths`" in action["instruction"]
     assert "Vitest 使用 `vitest run`" in action["instruction"]
     assert "tests/toolchain.smoke.test.ts" in action["instruction"]
     assert "不得创建 `src/smoke*`" in action["instruction"]
@@ -143,6 +166,8 @@ def test_setup_gate_action_contains_executable_project_environment_steps(
     assert "pytest/ruff/mypy" in action["instruction"]
     assert "PEP 735" in action["instruction"]
     assert "[project.optional-dependencies]" in action["instruction"]
+    assert "tool.hatch.build.targets.wheel" in action["instruction"]
+    assert "packages" in action["instruction"]
     assert "不得执行 `rm -rf .venv`" in action["instruction"]
     assert "resource_wait" in action["instruction"]
     assert "绝对路径 symlink" in action["instruction"]
@@ -159,6 +184,24 @@ def test_setup_gate_action_contains_executable_project_environment_steps(
         "PROJECT_SETUP_TOOLCHAIN_FAILED",
         "PROJECT_SETUP_UNKNOWN_FAILURE",
     ]
+
+
+def test_python_packaging_gap_action_explains_the_deterministic_repair(
+    tmp_path: Path,
+) -> None:
+    orchestrator = _orchestrator(tmp_path)
+    orchestrator.init("实现 Python voice package")
+    orchestrator._state.current_stage = "project_setup"
+    orchestrator._state.missing_project_capabilities = ["python_packaging"]
+
+    action = orchestrator.build_action()
+
+    assert "PEP 517" in action["instruction"]
+    assert "build-system" in action["instruction"]
+    assert "uv build" in action["instruction"]
+    assert 'exclude = ["/.ae-state", "/.ae-runtime", "/.venv"' in action["instruction"]
+    assert "禁止使用 `[tool.hatchling.files]`" in action["instruction"]
+    assert "project_setup_completed" in action["instruction"]
 
 
 def test_unverified_setup_result_keeps_setup_stage(tmp_path: Path) -> None:
@@ -234,6 +277,62 @@ def test_setup_result_after_resource_wait_is_read_only_even_if_failure_is_malfor
     assert failure["reason_code"] == "PROJECT_SETUP_RETRY_EXHAUSTED"
     assert failure["message_id"] == waiting["message_id"]
     assert orchestrator._state.project_setup_failure_streak == 3
+
+
+def test_unchanged_setup_completion_after_resource_wait_stays_waiting(
+    tmp_path: Path,
+) -> None:
+    """未改变项目输入时，completed 不能绕过 Core 的重试上限。"""
+    orchestrator = _orchestrator(tmp_path)
+    orchestrator.init("实现一个页面")
+    for _ in range(3):
+        orchestrator.tick_dict({
+            "stage": "project_setup",
+            "result_type": "project_setup_completed",
+            "artifacts": [],
+        })
+
+    waiting = orchestrator._active_action
+    assert waiting is not None
+    repeated = orchestrator.tick_dict({
+        "stage": "project_setup",
+        "result_type": "project_setup_completed",
+        "artifacts": [],
+    })
+
+    assert repeated["action"] == "resource_wait"
+    assert repeated["reason_code"] == "PROJECT_SETUP_RETRY_EXHAUSTED"
+    assert repeated["message_id"] == waiting["message_id"]
+    assert orchestrator._state.project_setup_failure_streak == 3
+
+
+def test_setup_wait_fingerprint_is_persisted_as_project_state(
+    tmp_path: Path,
+) -> None:
+    """恢复闸门必须跨进程由 EventStore 保留，而非只依赖内存。"""
+    with SQLiteEventStore(tmp_path / "events.db") as events:
+        orchestrator = _EnvelopeTestOrchestrator(
+            project_root=tmp_path,
+            gate_runner=lambda gate_names, project_root: {
+                name: MagicMock(passed=True, message="ok") for name in gate_names
+            },
+            guardrail=MagicMock(check=MagicMock(return_value=MagicMock(action="pass"))),
+            event_store=events,
+        )
+        initial = orchestrator.init("实现一个页面")
+        for _ in range(3):
+            orchestrator.tick_dict({
+                "stage": "project_setup",
+                "result_type": "project_setup_completed",
+                "artifacts": [],
+            })
+
+        projected = events.load_projection(initial["thread_id"])
+        assert projected is not None
+        assert projected.project_setup_failure_fingerprint
+        assert projected.project_setup_failure_fingerprint == (
+            orchestrator._state.project_setup_failure_fingerprint
+        )
 
 
 def test_invalid_setup_completion_after_resource_wait_returns_repair_action(
@@ -370,13 +469,12 @@ def test_verified_setup_commits_stage_transition_with_event_store(
 ) -> None:
     """真跑路径必须以 StageAdvanced 拥有 setup→architect 投影变化。"""
     with SQLiteEventStore(tmp_path / "events.db") as events:
-        orchestrator = TickOrchestrator(
+        orchestrator = _EnvelopeTestOrchestrator(
             project_root=tmp_path,
             gate_runner=lambda gate_names, project_root: {
                 name: MagicMock(passed=True, message="ok")
                 for name in gate_names
             },
-            checkpoint_store=None,
             event_store=events,
         )
         initial = orchestrator.init("实现一个页面")
@@ -421,10 +519,9 @@ def test_restored_setup_result_does_not_drift_profile_projection(
                 name: MagicMock(passed=True, message="ok")
                 for name in gate_names
             }
-        first = TickOrchestrator(
+        first = _EnvelopeTestOrchestrator(
             project_root=tmp_path,
             gate_runner=gate_runner,
-            checkpoint_store=None,
             event_store=events,
         )
         initial = first.init("实现一个页面")
@@ -438,9 +535,8 @@ def test_restored_setup_result_does_not_drift_profile_projection(
             encoding="utf-8",
         )
 
-        restored = TickOrchestrator.restore_from_event_store(
+        restored = _EnvelopeTestOrchestrator.restore_from_event_store(
             tmp_path,
-            checkpoint_store=None,
             event_store=events,
             thread_id=initial["thread_id"],
             gate_runner=gate_runner,
@@ -464,7 +560,7 @@ def test_failed_setup_commits_only_new_setup_action_without_stage_advance(
     tmp_path: Path,
 ) -> None:
     with SQLiteEventStore(tmp_path / "events.db") as events:
-        orchestrator = TickOrchestrator(
+        orchestrator = _EnvelopeTestOrchestrator(
             project_root=tmp_path,
             gate_runner=lambda gate_names, project_root: {
                 name: MagicMock(
@@ -475,7 +571,6 @@ def test_failed_setup_commits_only_new_setup_action_without_stage_advance(
                 )
                 for name in gate_names
             },
-            checkpoint_store=None,
             event_store=events,
         )
         initial = orchestrator.init("实现一个页面")
@@ -508,11 +603,10 @@ def test_reported_setup_failure_is_persisted_as_a_domain_fact(
     tmp_path: Path,
 ) -> None:
     with SQLiteEventStore(tmp_path / "events.db") as events:
-        orchestrator = TickOrchestrator(
+        orchestrator = _EnvelopeTestOrchestrator(
             project_root=tmp_path,
             gate_runner=lambda gate_names, project_root: {},
             guardrail=MagicMock(check=MagicMock(return_value=MagicMock(action="pass"))),
-            checkpoint_store=None,
             event_store=events,
         )
         initial = orchestrator.init("实现一个页面")
@@ -570,13 +664,12 @@ def test_setup_rejects_new_business_files_before_profile_completion(
 
 def test_setup_scope_violation_is_persisted_as_core_fact(tmp_path: Path) -> None:
     with SQLiteEventStore(tmp_path / "events.db") as events:
-        orchestrator = TickOrchestrator(
+        orchestrator = _EnvelopeTestOrchestrator(
             project_root=tmp_path,
             gate_runner=lambda gate_names, project_root: {},
             guardrail=MagicMock(
                 check=MagicMock(return_value=MagicMock(action="pass"))
             ),
-            checkpoint_store=None,
             event_store=events,
         )
         initial = orchestrator.init("实现一个页面")
@@ -760,7 +853,12 @@ def test_setup_allows_project_metadata_and_minimal_smoke_files(
         "def test_smoke(): assert True\n", encoding="utf-8"
     )
     (tmp_path / "pyproject.toml").write_text(
+        "[build-system]\nrequires=['hatchling']\n"
+        "build-backend='hatchling.build'\n"
         "[project]\nname='demo'\nversion='0.1.0'\n"
+        "[tool.hatch.build.targets.wheel]\npackages=['src']\n"
+        "[tool.hatch.build.targets.sdist]\n"
+        "exclude=['/.ae-state','/.ae-runtime','/.venv','/dist','/build','/_scratch','/**/__pycache__']\n"
         "[tool.pytest.ini_options]\ntestpaths=['tests']\n",
         encoding="utf-8",
     )
@@ -820,7 +918,12 @@ def test_setup_allows_toolchain_smoke_using_safe_stdlib_modules(
         encoding="utf-8",
     )
     (tmp_path / "pyproject.toml").write_text(
+        "[build-system]\nrequires=['hatchling']\n"
+        "build-backend='hatchling.build'\n"
         "[project]\nname='demo'\nversion='0.1.0'\n"
+        "[tool.hatch.build.targets.wheel]\npackages=['src']\n"
+        "[tool.hatch.build.targets.sdist]\n"
+        "exclude=['/.ae-state','/.ae-runtime','/.venv','/dist','/build','/_scratch','/**/__pycache__']\n"
         "[tool.pytest.ini_options]\ntestpaths=['tests']\n",
         encoding="utf-8",
     )
@@ -864,6 +967,39 @@ def test_setup_allows_marked_node_minimal_smoke_entry(tmp_path: Path) -> None:
     })
 
     assert action["action"] == "architect"
+
+
+def test_setup_accepts_explicit_non_business_toolchain_placeholder(
+    tmp_path: Path,
+) -> None:
+    """宿主常用的非业务工具链占位说明不能被误报为业务源码。"""
+    orchestrator = _orchestrator(tmp_path)
+    orchestrator.init("实现一个页面")
+    source = tmp_path / "src"
+    source.mkdir()
+    (source / "toolchain.ts").write_text(
+        "// NON-BUSINESS: Toolchain setup verification placeholder.\n"
+        "export const __toolchain_placeholder = true;\n",
+        encoding="utf-8",
+    )
+
+    profile = SimpleNamespace(source_roots=("src",), test_roots=())
+    assert orchestrator._project_setup_scope_violations(profile) == {}
+
+
+def test_setup_accepts_toolchain_smoke_without_test_suffix(tmp_path: Path) -> None:
+    """常见的 toolchain.smoke.ts 命名不应被误判为业务测试。"""
+    orchestrator = _orchestrator(tmp_path)
+    orchestrator.init("实现一个页面")
+    tests = tmp_path / "tests"
+    tests.mkdir()
+    (tests / "toolchain.smoke.ts").write_text(
+        "describe('toolchain', () => { it('loads', () => expect(true).toBe(true)); });\n",
+        encoding="utf-8",
+    )
+
+    profile = SimpleNamespace(source_roots=("src",), test_roots=("tests",))
+    assert orchestrator._project_setup_scope_violations(profile) == {}
 
 
 def test_setup_allows_bounded_vite_bootstrap_placeholders(tmp_path: Path) -> None:
@@ -965,7 +1101,12 @@ def test_setup_ignores_generated_python_package_metadata(
         "def test_smoke(): assert True\n", encoding="utf-8"
     )
     (tmp_path / "pyproject.toml").write_text(
+        "[build-system]\nrequires=['hatchling']\n"
+        "build-backend='hatchling.build'\n"
         "[project]\nname='demo'\nversion='0.1.0'\n"
+        "[tool.hatch.build.targets.wheel]\npackages=['src/canary_math']\n"
+        "[tool.hatch.build.targets.sdist]\n"
+        "exclude=['/.ae-state','/.ae-runtime','/.venv','/dist','/build','/_scratch','/**/__pycache__']\n"
         "[tool.pytest.ini_options]\ntestpaths=['tests']\n",
         encoding="utf-8",
     )
@@ -1007,11 +1148,10 @@ def test_setup_does_not_complete_when_declared_quality_gate_fails(
             for name in gate_names
         }
 
-    orchestrator = TickOrchestrator(
+    orchestrator = _EnvelopeTestOrchestrator(
         project_root=tmp_path,
         gate_runner=gate_runner,
         guardrail=MagicMock(check=MagicMock(return_value=MagicMock(action="pass"))),
-        checkpoint_store=None,
     )
     orchestrator.init("实现一个页面")
     (tmp_path / "src").mkdir()

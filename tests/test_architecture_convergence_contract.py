@@ -196,3 +196,53 @@ def test_developer_projection_does_not_use_legacy_projector() -> None:
 
     assert "StageResultProjector" not in orchestrator
     assert not projector.exists()
+
+
+def test_metrics_have_no_second_persisted_event_stream() -> None:
+    """指标只能从 EventStore 投影，不能再维护 events.jsonl 事实流。"""
+    persistence = (ROOT / "auto_engineering/metrics/_persistence.py").read_text(
+        encoding="utf-8"
+    )
+    collector = (ROOT / "auto_engineering/metrics/collector.py").read_text(
+        encoding="utf-8"
+    )
+    dev_loop = (ROOT / "auto_engineering/cli/dev_loop.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert "events.jsonl" not in persistence
+    assert "flush_events" not in persistence
+    assert "read_events_from_disk" not in persistence
+    assert "resume_events" not in collector
+    assert "resume_events" not in dev_loop
+    assert "event_store" in collector
+    assert "self._events" not in collector
+    assert "def record_" not in collector
+
+
+def test_tick_and_gate_do_not_write_metric_events_outside_the_tick() -> None:
+    """指标不得通过 Collector 回调重新形成第二条事件写入路径。"""
+    orchestrator = (ROOT / "auto_engineering/loop/tick_orchestrator.py").read_text(
+        encoding="utf-8"
+    )
+    gate_runner = (ROOT / "auto_engineering/loop/tick_gate_runner.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert "mc.record_" not in orchestrator
+    assert "mc.record_" not in gate_runner
+    assert "record_tick_complete" not in orchestrator
+    assert "record_token_usage" not in orchestrator
+
+
+def test_runtime_usage_is_an_event_store_fact() -> None:
+    """运行时不能通过 UsageLedger 写入第二条跨 Tick 用量事实。"""
+    orchestrator = (ROOT / "auto_engineering/loop/tick_orchestrator.py").read_text(
+        encoding="utf-8"
+    )
+    status = (ROOT / "auto_engineering/cli/status.py").read_text(encoding="utf-8")
+
+    assert "UsageLedger" not in orchestrator
+    assert "UsageLedger" not in status
+    assert "LoopEventType.USAGE_RECORDED" in orchestrator
+    assert "project_event_metrics(stream" in status

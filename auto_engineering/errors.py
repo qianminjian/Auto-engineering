@@ -30,7 +30,7 @@ class ErrorCode(Enum):
 
     # ── Task / Cancellation ──
     TASK_CANCELLED = "TASK_CANCELLED"  # CancellationToken.check() → 用户 Ctrl-C
-    AGENT_REGISTRATION_ERROR = "AGENT_REGISTRATION_ERROR"  # AgentRuntime → agent_type 未注册
+    AGENT_REGISTRATION_ERROR = "AGENT_REGISTRATION_ERROR"  # AgentRuntime 未注册角色
     # ── Configuration ──
     CONFIG_MISSING_API_KEY = "CONFIG_MISSING_API_KEY"  # cli/__init__.py: CLI 模式缺 API key
 

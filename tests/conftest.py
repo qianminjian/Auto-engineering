@@ -99,12 +99,6 @@ def _reset_block_cache():
 # ============================================================
 
 
-@pytest.fixture
-def checkpoint_dir(tmp_path):
-    """每个测试用独立 tmp 目录存 checkpoint SQLite."""
-    return str(tmp_path / ".ae-state")
-
-
 def run_async(coro):
     """同步上下文跑 async 协程. Phase 1 不引入 pytest-asyncio 依赖."""
     return asyncio.run(coro)

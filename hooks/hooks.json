@@ -25,7 +25,7 @@
     ],
     "PreToolUse": [
       {
-        "matcher": "Agent|TaskStop|Bash|Edit|Write|MultiEdit|Read",
+        "matcher": "Agent|Task|TaskStop|Bash|Edit|Write|MultiEdit|Read",
         "hooks": [
           {
             "type": "command",
@@ -37,7 +37,7 @@
     ],
     "PostToolUse": [
       {
-        "matcher": "Agent|TaskOutput",
+        "matcher": "Agent|Task|TaskOutput",
         "hooks": [
           {
             "type": "command",

@@ -17,6 +17,7 @@ from auto_engineering.config.constants import (
 )
 from auto_engineering.loop.events import LoopEventType
 from auto_engineering.loop.project_setup_scope import (
+    project_setup_fingerprint,
     project_setup_scope_violations,
     project_setup_snapshot_files,
 )
@@ -101,7 +102,7 @@ class ProjectSetupService:
             {"from": previous_stage, "to": state.current_stage},
         )
         state.tick += 1
-        owner._save_checkpoint()
+        owner._persist_state()
         return owner.build_action()
 
     def record_failure(self, result: dict) -> dict:
@@ -143,14 +144,19 @@ class ProjectSetupService:
             and isinstance(owner._active_action, Mapping)
             and owner._active_action.get("action") == "resource_wait"
         ):
-            if allow_recovery:
+            if allow_recovery and self._project_changed_since_wait():
+                fingerprint = project_setup_fingerprint(owner)
                 state.missing_project_capabilities = missing
+                state.project_setup_failure_fingerprint = fingerprint
                 owner._queue_domain_event(
                     LoopEventType.PROJECT_STATE_UPDATED,
-                    {"changes": {"missing_project_capabilities": missing}},
+                    {"changes": {
+                        "missing_project_capabilities": missing,
+                        "project_setup_failure_fingerprint": fingerprint,
+                    }},
                 )
                 state.tick += 1
-                owner._save_checkpoint()
+                owner._persist_state()
                 return owner.build_action(
                     feedback=feedback,
                     project_setup_recovery=True,
@@ -159,16 +165,29 @@ class ProjectSetupService:
         failure_streak = state.project_setup_failure_streak + 1
         state.project_setup_failure_streak = failure_streak
         state.missing_project_capabilities = missing
+        changes = {
+            "missing_project_capabilities": missing,
+            "project_setup_failure_streak": failure_streak,
+        }
+        if failure_streak >= PROJECT_SETUP_MAX_FAILURE_STREAK:
+            fingerprint = project_setup_fingerprint(owner)
+            state.project_setup_failure_fingerprint = fingerprint
+            changes["project_setup_failure_fingerprint"] = fingerprint
         owner._queue_domain_event(
             LoopEventType.PROJECT_STATE_UPDATED,
-            {"changes": {
-                "missing_project_capabilities": missing,
-                "project_setup_failure_streak": failure_streak,
-            }},
+            {"changes": changes},
         )
         state.tick += 1
-        owner._save_checkpoint()
+        owner._persist_state()
         return owner.build_action(feedback=feedback)
+
+    def _project_changed_since_wait(self) -> bool:
+        """只有 Setup 输入发生变化，才能从 resource_wait 恢复。"""
+        owner = self.owner
+        state = owner._state
+        if state is None:
+            raise RuntimeError("PROJECT_SETUP_STATE_UNAVAILABLE")
+        return project_setup_fingerprint(owner) != state.project_setup_failure_fingerprint
 
     def reject_scope(self, violations: dict[str, list[str]]) -> dict:
         """拒绝 setup 阶段越过 capability-only 边界的文件写入。"""

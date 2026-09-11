@@ -16,6 +16,7 @@ from auto_engineering.host.runtime_driver import (
     HostRunLeaseError,
     HostRunLeaseStore,
     StopGuardDecision,
+    continuation_recovery_contract,
     evaluate_stop,
 )
 from auto_engineering.host.stop_report import handle_claude_session_end
@@ -43,6 +44,26 @@ def _task_output_payload(response: object) -> object | None:
     if isinstance(response, Mapping):
         status = response.get("status")
         if status in {"running", "pending", "async_launched"}:
+            return None
+        # Claude Code 的对象格式 TaskOutput 会把真实结果放在
+        # ``task.output`` 中，并额外包一层 retrieval_status/task。这个
+        # 宿主内部信封不能直接进入 Worker evidence；只提取完成态的原生
+        # 正文，交给统一的 native-result parser 解析业务 JSON。
+        task = response.get("task")
+        if isinstance(task, Mapping):
+            task_status = task.get("status")
+            if task_status in {"running", "pending", "async_launched"}:
+                return None
+            if task_status not in {"completed", "complete", "success", "ok"}:
+                return None
+            output = task.get("output")
+            if not isinstance(output, str) or not output.strip():
+                return None
+            return {"content": [{"type": "text", "text": output}]}
+        output = response.get("output")
+        if status in {"completed", "complete", "success", "ok"} and isinstance(output, str):
+            if output.strip():
+                return {"content": [{"type": "text", "text": output}]}
             return None
         return response
     if not isinstance(response, str):
@@ -93,22 +114,124 @@ def _resolve_task_output_worker(
     return None
 
 
+def _record_native_observation(
+    *,
+    root: Path,
+    worker: Mapping[str, object],
+    native_status: str,
+    owner_known: bool,
+    native_worker_handle: str | None,
+) -> bool:
+    """固化 Agent 调用阶段，供外层 watchdog 区分合法等待与失活。"""
+
+    from datetime import UTC, datetime
+
+    from auto_engineering.host.worker_observation import WorkerObservationRecord
+    from auto_engineering.host.worker_observation_store import WorkerObservationStore
+
+    lease = HostRunLeaseStore(root).load()
+    generation = worker.get("execution_generation")
+    fencing_token = worker.get("fencing_token")
+    if (
+        lease is None
+        or not isinstance(generation, int)
+        or isinstance(generation, bool)
+        or not isinstance(fencing_token, str)
+    ):
+        return False
+    try:
+        record = WorkerObservationRecord(
+            schema_version="1.0",
+            action_message_id=lease.action_message_id,
+            worker_id=str(worker["worker_id"]),
+            execution_generation=generation,
+            fencing_token=fencing_token,
+            observed_at=datetime.now(UTC).isoformat(),
+            native_status=native_status,
+            wait_attempt=0,
+            owner_known=owner_known,
+            native_worker_handle=native_worker_handle,
+        )
+        WorkerObservationStore(root).save(record)
+    except (KeyError, OSError, TypeError, ValueError):
+        return False
+    return True
+
+
+def _record_agent_post_tool_observation(
+    *,
+    root: Path,
+    worker: Mapping[str, object],
+    response: object,
+) -> None:
+    status = response.get("status") if isinstance(response, Mapping) else None
+    native_status = (
+        "running"
+        if status in {"running", "pending", "async_launched"}
+        else status
+        if status in {"failed", "cancelled", "timed_out"}
+        else "unknown"
+    )
+    _record_native_observation(
+        root=root,
+        worker=worker,
+        native_status=native_status,
+        owner_known=False,
+        native_worker_handle=None,
+    )
+
+
+def _pre_tool_worker(payload: Mapping[str, object]) -> Mapping[str, object] | None:
+    """为当前 Agent launch 找到唯一 Action-bound Worker。"""
+
+    from auto_engineering.host import HostPlatform
+    from auto_engineering.host.native_launch_guard import active_native_workers
+
+    cwd = payload.get("cwd")
+    tool_input = payload.get("tool_input")
+    if not isinstance(cwd, str) or not isinstance(tool_input, Mapping):
+        return None
+    if payload.get("tool_name") not in {"Agent", "Task"}:
+        return None
+    contract = _launch_contract(tool_input.get("prompt"))
+    worker_id = contract.get("worker_id") if contract else None
+    if not isinstance(worker_id, str):
+        return None
+    try:
+        workers = active_native_workers(
+            project_root=Path(cwd).resolve(),
+            platform=HostPlatform.CLAUDE_CODE,
+        )
+    except (OSError, TypeError, ValueError):
+        return None
+    if workers is None:
+        return None
+    return next(
+        (
+            item for item in workers
+            if item.get("worker_id") == worker_id
+        ),
+        None,
+    )
+
+
 def _capture_claude_post_tool(payload: Mapping[str, object]) -> dict[str, object]:
     """由 PostToolUse Hook 固化 Claude Agent 的原生返回，不让 Coordinator 重建。"""
 
     tool_name = payload.get("tool_name")
-    if tool_name not in {"Agent", "TaskOutput"}:
+    if tool_name not in {"Agent", "Task", "TaskOutput"}:
         return {"systemMessage": "Auto-Engineering Hook 已安全跳过"}
     cwd = payload.get("cwd")
     tool_input = payload.get("tool_input")
     if not isinstance(cwd, str) or not isinstance(tool_input, Mapping):
         return {"systemMessage": "Auto-Engineering Hook 输入无效，已安全跳过"}
+    root = Path(cwd).resolve()
     from auto_engineering.host import HostPlatform
     from auto_engineering.host.native_launch_guard import active_native_workers
 
     try:
         workers = active_native_workers(
-            project_root=Path(cwd).resolve(),
+            project_root=root,
             platform=HostPlatform.CLAUDE_CODE,
         )
     except (OSError, TypeError, ValueError):
@@ -116,7 +239,7 @@ def _capture_claude_post_tool(payload: Mapping[str, object]) -> dict[str, object
     if workers is None:
         return {"systemMessage": "Auto-Engineering 原生 Worker 证据未能固化"}
     worker: Mapping[str, object] | None
-    if tool_name == "Agent":
+    if tool_name in {"Agent", "Task"}:
         contract = _launch_contract(tool_input.get("prompt"))
         worker_id = contract.get("worker_id") if contract else None
         if not isinstance(worker_id, str):
@@ -130,16 +253,29 @@ def _capture_claude_post_tool(payload: Mapping[str, object]) -> dict[str, object
         worker = _resolve_task_output_worker(
             workers=workers,
             task_id=task_id,
-            project_root=Path(cwd).resolve(),
+            project_root=root,
         )
         response = _task_output_payload(payload.get("tool_response"))
         if response is None:
+            if worker is not None:
+                _record_native_observation(
+                    root=Path(cwd).resolve(),
+                    worker=worker,
+                    native_status="running",
+                    owner_known=True,
+                    native_worker_handle=task_id,
+                )
             return {"systemMessage": "Auto-Engineering Hook 已记录 Worker 仍在运行"}
     native_path = worker.get("native_result_path") if worker else None
     if worker is None or not isinstance(native_path, str) or response is None:
+        if tool_name in {"Agent", "Task"} and worker is not None:
+            _record_agent_post_tool_observation(
+                root=root,
+                worker=worker,
+                response=response,
+            )
         return {"systemMessage": "Auto-Engineering 原生 Worker 证据未能固化"}
 
-    root = Path(cwd).resolve()
     target = (root / native_path).resolve() if not Path(native_path).is_absolute() else Path(native_path).resolve()
     if root not in target.parents or target.name == "":
         return {"systemMessage": "Auto-Engineering 原生 Worker 路径无效"}
@@ -156,6 +292,20 @@ def _capture_claude_post_tool(payload: Mapping[str, object]) -> dict[str, object
         with suppress(OSError):
             os.unlink(temporary)
         return {"systemMessage": "Auto-Engineering 原生 Worker 证据未能固化"}
+    if tool_name in {"Agent", "Task"}:
+        _record_agent_post_tool_observation(
+            root=root,
+            worker=worker,
+            response=response,
+        )
+    if tool_name == "TaskOutput":
+        _record_native_observation(
+            root=root,
+            worker=worker,
+            native_status="completed",
+            owner_known=True,
+            native_worker_handle=task_id,
+        )
     return {"systemMessage": "Auto-Engineering 原生 Worker 证据已固化"}
 
 
@@ -171,10 +321,34 @@ def main(stdin: TextIO = sys.stdin, stdout: TextIO = sys.stdout) -> int:
             json.dump(response, stdout, ensure_ascii=False)
             stdout.write("\n")
             return 0
+        if event_name == "PreToolUse":
+            worker = _pre_tool_worker(payload)
+            if worker is not None and isinstance(cwd, str) and cwd:
+                recorded = _record_native_observation(
+                    root=Path(cwd).resolve(),
+                    worker=worker,
+                    native_status="running",
+                    owner_known=False,
+                    native_worker_handle=None,
+                )
+                message = (
+                    "Auto-Engineering 已记录原生 Worker 启动"
+                    if recorded
+                    else "Auto-Engineering 原生 Worker 启动观察未能固化"
+                )
+                json.dump({"systemMessage": message}, stdout, ensure_ascii=False)
+                stdout.write("\n")
+            return 0
         if event_name not in {"Stop", "SessionEnd", "StopFailure"} or not isinstance(cwd, str) or not cwd:
             return 0
         if event_name in {"SessionEnd", "StopFailure"}:
-            response = handle_claude_session_end(Path(cwd), payload)
+            # 普通外层适配器也必须延后：它拥有完整的 attempt 输出，Hook
+            # 只有有限的事件 payload，不能抢先把真实上游错误降级为 unknown。
+            if os.environ.get("AE_HOST_ADAPTER_ACTIVE") == "1":
+                response = {"systemMessage": "Auto-Engineering 退出事实交由外层宿主边界记录"}
+            else:
+                preserve_lease = os.environ.get("AE_HOST_ADAPTER_AUTO_RESUME") == "1"
+                response = handle_claude_session_end(Path(cwd), payload, clear_lease=not preserve_lease)
             json.dump(response, stdout, ensure_ascii=False)
             stdout.write("\n")
             return 0
@@ -204,6 +378,7 @@ def main(stdin: TextIO = sys.stdin, stdout: TextIO = sys.stdout) -> int:
                     "decision": "block",
                     "reason_code": "AE_CONTINUATION_REQUIRED",
                     "action_message_id": lease.action_message_id,
+                    "continuation": continuation_recovery_contract(lease),
                     "systemMessage": "Auto-Engineering 仍有必须继续执行的 Action",
                 },
                 stdout,

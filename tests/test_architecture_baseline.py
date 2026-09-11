@@ -134,6 +134,34 @@ def test_architect_rejects_test_whose_implementation_is_in_a_future_batch() -> N
     assert "ARCHITECT_TEST_IMPLEMENTATION_ORDER_INVALID" in error
 
 
+def test_architect_accepts_tdd_test_and_implementation_in_same_batch() -> None:
+    result = {
+        "batch_plan": [{
+            "batch_id": "B1",
+            "tasks": [
+                {
+                    "id": "B1-T1",
+                    "kind": "test",
+                    "module_ref": "utility.download",
+                    "file_targets": ["tests/utility/download.test.ts"],
+                    "depends_on": [],
+                },
+                {
+                    "id": "B1-T2",
+                    "kind": "implementation",
+                    "module_ref": "utility.download",
+                    "file_targets": ["src/utility/download.ts"],
+                    "depends_on": ["B1-T1"],
+                },
+            ],
+        }],
+        "contracts": {},
+        "obligations": [],
+    }
+
+    assert validate_architect_obligations(result, {}) is None
+
+
 def test_architect_without_design_doc_rejects_empty_plate_keys() -> None:
     result = {
         "plan": "先建立可验证的最小领域契约，再逐步实现并验证核心能力。",
@@ -184,7 +212,11 @@ def test_architect_scope_error_exposes_allowed_item_ids() -> None:
             "plate_keys": ["核心"],
             "design_sections": ["§1.1"],
             "design_item_refs": ["2.1-6"],
-            "tasks": [{"id": "B1-T1", "description": "实现类型"}],
+            "tasks": [{
+                "id": "B1-T1", "description": "实现类型", "kind": "implementation",
+                "module_ref": "§1.1", "file_targets": ["src/types/index.ts"],
+                "depends_on": [],
+            }],
         }],
         "contracts": {},
         "obligations": [],

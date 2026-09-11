@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
@@ -152,6 +152,10 @@ class ArchitectureActivationService:
             except OSError:
                 digest = ""
         raw_candidate = state._runtime_ctx.get("architecture_candidate")
+        raw_coverage = state._runtime_ctx.get("architect_plan_coverage")
+        architect_plan_coverage = (
+            dict(raw_coverage) if isinstance(raw_coverage, Mapping) else None
+        )
         if isinstance(raw_candidate, dict):
             candidate_batches = self._canonical_batches(
                 raw_candidate.get("batch_plan", []),
@@ -198,6 +202,7 @@ class ArchitectureActivationService:
             contracts=contracts,
             obligations=obligations,
             accepted_at_tick=state.tick,
+            architect_plan_coverage=architect_plan_coverage,
         )
 
     @staticmethod

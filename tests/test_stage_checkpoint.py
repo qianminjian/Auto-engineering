@@ -16,6 +16,8 @@ _VALID_PLAN = (
     "实现组件, 包含完整的 TDD Red-Green-Refactor 循环 + Gate 验证流程, 确保文件隔离检查通过"
 )
 
+_ACTIVE_ORCHESTRATOR: TickOrchestrator | None = None
+
 
 def _pass_gate_runner(gate_names, project_root):
     return {name: MagicMock(passed=True, message="ok") for name in gate_names}
@@ -28,20 +30,34 @@ def _pass_guardrail():
 
 
 def _orchestrator(
-    max_rounds: int = 10,
     pause_at_stages: list[str] | None = None,
 ) -> TickOrchestrator:
+    global _ACTIVE_ORCHESTRATOR
     orch = TickOrchestrator(
         gate_runner=_pass_gate_runner,
         guardrail=_pass_guardrail(),
-        checkpoint_store=None,
     )
+    _ACTIVE_ORCHESTRATOR = orch
     if pause_at_stages:
         orch.set_pause_at_stages(pause_at_stages)
     return orch
 
 
 def _make_result_file(data: dict) -> Path:
+    active = _ACTIVE_ORCHESTRATOR._active_action if _ACTIVE_ORCHESTRATOR else None
+    if active is not None:
+        data = {
+            "schema_version": "1.1",
+            "message_type": "result",
+            "message_id": f"result-{active['message_id']}-{active['tick']}",
+            "thread_id": active["thread_id"],
+            "tick": active["tick"],
+            "stage": active["stage"],
+            "causation_id": active["message_id"],
+            "correlation_id": active["correlation_id"],
+            "extensions": {},
+            **data,
+        }
     f = Path(tempfile.mktemp(suffix=".json"))
     f.write_text(json.dumps(data), encoding="utf-8")
     return f
@@ -109,7 +125,7 @@ class TestStageCheckpoint:
     def test_pause_at_architect_returns_gate_action_on_init(self) -> None:
         """init with architect in pause-at-stage → gate action."""
         orch = _orchestrator(pause_at_stages=["architect"])
-        action = orch.init("test requirement", max_rounds=5)
+        action = orch.init("test requirement")
         assert action["action"] == "gate"
         assert action["stage"] == "architect"
         gate = action["gate"]
@@ -156,7 +172,7 @@ class TestStageCheckpoint:
     def test_pause_at_critic_returns_gate_action_after_developer(self) -> None:
         """After developer completion with critic in pause-at-stage → gate action."""
         orch = _orchestrator(pause_at_stages=["critic"])
-        orch.init("test requirement", max_rounds=5)
+        orch.init("test requirement")
 
         # Simulate architect completion
         action = orch.tick(_architect_result_file(orch))
@@ -166,6 +182,7 @@ class TestStageCheckpoint:
         dev_result = _strict_result_file(orch, {
             "stage": "developer",
             "batch_id": "B1",
+            "task_ids": ["T1"],
             "files_changed": ["test.py"],
             "test_results": {"passed": 3, "failed": 0},
         })
@@ -177,7 +194,7 @@ class TestStageCheckpoint:
     def test_gate_resolution_continue_proceeds_to_stage(self) -> None:
         """Gate resolution '继续' marks checkpoint and proceeds."""
         orch = _orchestrator(pause_at_stages=["architect"])
-        action = orch.init("test requirement", max_rounds=5)
+        action = orch.init("test requirement")
         assert action["action"] == "gate"
         gate_id = action["gate"]["id"]
 
@@ -191,7 +208,7 @@ class TestStageCheckpoint:
     def test_gate_resolution_terminate_returns_done(self) -> None:
         """Gate resolution '终止 loop' returns done."""
         orch = _orchestrator(pause_at_stages=["architect"])
-        action = orch.init("test requirement", max_rounds=5)
+        action = orch.init("test requirement")
         gate_id = action["gate"]["id"]
 
         resolution = _make_result_file({
@@ -204,7 +221,7 @@ class TestStageCheckpoint:
     def test_checkpoint_not_triggered_twice_for_same_stage(self) -> None:
         """After passing checkpoint, same stage doesn't trigger again."""
         orch = _orchestrator(pause_at_stages=["architect"])
-        action = orch.init("test requirement", max_rounds=5)
+        action = orch.init("test requirement")
         gate_id = action["gate"]["id"]
 
         # Resolve gate → continue
@@ -222,7 +239,7 @@ class TestStageCheckpoint:
     def test_progress_summary_in_gate_action(self) -> None:
         """Gate action contains progress_summary."""
         orch = _orchestrator(pause_at_stages=["architect"])
-        action = orch.init("test requirement", max_rounds=5)
+        action = orch.init("test requirement")
         assert action["action"] == "gate"
         assert "progress_summary" in action
         summary = action["progress_summary"]
@@ -232,7 +249,7 @@ class TestStageCheckpoint:
     def test_pause_at_stage_not_in_list_no_gate(self) -> None:
         """Stage not in pause list → no gate, proceeds directly."""
         orch = _orchestrator()  # no pause stages
-        action = orch.init("test requirement", max_rounds=5)
+        action = orch.init("test requirement")
         # Should go straight to architect (or gap_scan), not gate
         assert action["action"] != "gate"
 
@@ -240,14 +257,14 @@ class TestStageCheckpoint:
         """set_pause_at_stages accepts string list."""
         orch = _orchestrator()
         orch.set_pause_at_stages(["architect", "critic"])
-        action = orch.init("test requirement", max_rounds=5)
+        action = orch.init("test requirement")
         assert action["action"] == "gate"
         assert action["stage"] == "architect"
 
     def test_gate_action_includes_all_three_options(self) -> None:
         """Gate action has exactly 3 options: 继续, 审查当前产出, 终止 loop."""
         orch = _orchestrator(pause_at_stages=["architect"])
-        action = orch.init("test requirement", max_rounds=5)
+        action = orch.init("test requirement")
         options = action["gate"]["options"]
         assert len(options) == 3
         assert "继续" in options
@@ -257,7 +274,7 @@ class TestStageCheckpoint:
     def test_gate_resolution_review_returns_review_feedback(self) -> None:
         """Gate resolution '审查当前产出' returns stage action with feedback."""
         orch = _orchestrator(pause_at_stages=["architect"])
-        action = orch.init("test requirement", max_rounds=5)
+        action = orch.init("test requirement")
         gate_id = action["gate"]["id"]
 
         resolution = _make_result_file({
@@ -270,7 +287,7 @@ class TestStageCheckpoint:
     def test_gate_resolution_invalid_returns_error(self) -> None:
         """Invalid/unknown gate resolution returns ErrorResponse."""
         orch = _orchestrator(pause_at_stages=["architect"])
-        action = orch.init("test requirement", max_rounds=5)
+        action = orch.init("test requirement")
         gate_id = action["gate"]["id"]
 
         resolution = _make_result_file({
@@ -283,7 +300,7 @@ class TestStageCheckpoint:
     def test_gate_resolution_empty_string_returns_error(self) -> None:
         """Empty resolution string is treated as invalid → ErrorResponse (T64 audit fix)."""
         orch = _orchestrator(pause_at_stages=["architect"])
-        action = orch.init("test requirement", max_rounds=5)
+        action = orch.init("test requirement")
         gate_id = action["gate"]["id"]
 
         resolution = _make_result_file({

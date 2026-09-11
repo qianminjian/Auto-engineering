@@ -17,7 +17,6 @@ FALLBACK_CHANNEL_EVENTS: dict[str, LoopEventType] = {
     "expected_stage": LoopEventType.LIFECYCLE_STATE_UPDATED,
     "guardrail_retry_counters": LoopEventType.LIFECYCLE_STATE_UPDATED,
     "progress_tree_json": LoopEventType.LIFECYCLE_STATE_UPDATED,
-    "round": LoopEventType.LIFECYCLE_STATE_UPDATED,
     "tick": LoopEventType.LIFECYCLE_STATE_UPDATED,
     "batch_changed_files": LoopEventType.RESULT_EVIDENCE_RECORDED,
     "batch_plan": LoopEventType.RESULT_EVIDENCE_RECORDED,
@@ -41,6 +40,7 @@ FALLBACK_CHANNEL_EVENTS: dict[str, LoopEventType] = {
     "project_profile": LoopEventType.PROJECT_STATE_UPDATED,
     "project_profile_id": LoopEventType.PROJECT_STATE_UPDATED,
     "project_setup_failure_streak": LoopEventType.PROJECT_STATE_UPDATED,
+    "project_setup_failure_fingerprint": LoopEventType.PROJECT_STATE_UPDATED,
     "project_setup_baseline_files": LoopEventType.PROJECT_STATE_UPDATED,
     "project_anchor_baseline": LoopEventType.PROJECT_ANCHORS_WITNESSED,
     "action_history": LoopEventType.TELEMETRY_RECORDED,
@@ -93,7 +93,6 @@ class TickKernel:
         pending_events: Sequence[LoopEvent],
         result_message_id: str | None,
         result_causation_id: str | None,
-        round_history: Sequence[Mapping[str, Any]] = (),
     ) -> TickCommitCandidate:
         thread_id = current_state.thread_id
         sequence = next_sequence
@@ -119,7 +118,7 @@ class TickKernel:
         if next_sequence == 0:
             append(
                 LoopEventType.LOOP_INITIALIZED,
-                {"state": current_state.to_dict(), "round_history": list(round_history)},
+                {"state": current_state.to_dict()},
             )
         elif result_message_id is not None:
             if previous_state is None or result_causation_id is None:
@@ -128,7 +127,6 @@ class TickKernel:
                 LoopEventType.RESULT_ACCEPTED,
                 {
                     "result_message_id": result_message_id,
-                    "round_history": list(round_history),
                 },
                 causation_id=result_causation_id,
             )
@@ -179,6 +177,16 @@ class TickKernel:
             {"action": dict(action)},
             causation_id=result_message_id,
         )
+        if action.get("action") == "done":
+            append(
+                LoopEventType.LOOP_COMPLETED,
+                {
+                    "action": "done",
+                    "verdict": action.get("verdict"),
+                    "tick": action.get("tick", current_state.tick),
+                },
+                causation_id=action.get("message_id") or result_message_id,
+            )
         return TickCommitCandidate(
             events=tuple(events),
             state=current_state,

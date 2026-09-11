@@ -30,7 +30,7 @@ class LifecycleEffects:
     collect_token_usage: bool = False
     completed_batch_id: str | None = None
     snapshot_developer_output: bool = False
-    save_checkpoint: bool = False
+    persist_state: bool = False
     offload_stage: StageName | None = None
     supplements: tuple[Mapping[str, Any], ...] = ()
     pause_stages: tuple[StageName, ...] = ()

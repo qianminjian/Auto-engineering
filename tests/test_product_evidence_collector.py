@@ -13,10 +13,14 @@ from pathlib import Path
 
 import pytest
 
-from auto_engineering.metrics.usage_ledger import UsageLedger, UsageRecord
+from auto_engineering.engine.state import EngineState
+from auto_engineering.loop.event_store import SQLiteEventStore
+from auto_engineering.loop.events import LoopEvent, LoopEventType
+from auto_engineering.metrics.usage import UsageRecord
 from scripts.collect_product_evidence import (
     EvidenceCollectionError,
     _native_result_manifest,
+    _unexpected_stop_report_count,
     _usage_receipts,
     collect_product_evidence,
 )
@@ -44,26 +48,20 @@ def _record(action_id: str, stage: str) -> UsageRecord:
 
 
 def test_usage_receipts_reject_unbound_usage() -> None:
-    from tempfile import TemporaryDirectory
-
-    with TemporaryDirectory() as directory:
-        ledger = UsageLedger(Path(directory) / "usage.db")
-        record = replace(_record("action-1", "architect"), action_message_id=None)
-        ledger.append(record)
-        action = {
-            "message_id": "action-1",
-            "stage": "architect",
-        }
-        with pytest.raises(EvidenceCollectionError, match="USAGE_ACTION_BINDING_MISSING"):
-            _usage_receipts(
-                ledger=ledger,
-                thread_id="thread-1",
-                actions=[action],
-                build_id="5.8.0-rc.5+sha256." + "a" * 16,
-                host="codex",
-                cost_usd=None,
-            )
-        ledger.close()
+    record = replace(_record("action-1", "architect"), action_message_id=None)
+    action = {
+        "message_id": "action-1",
+        "stage": "architect",
+    }
+    with pytest.raises(EvidenceCollectionError, match="USAGE_ACTION_BINDING_MISSING"):
+        _usage_receipts(
+            usage_records=[record],
+            thread_id="thread-1",
+            actions=[action],
+            build_id="5.8.0-rc.5+sha256." + "a" * 16,
+            host="codex",
+            cost_usd=None,
+        )
 
 
 def test_native_manifest_discovers_private_result_when_event_action_is_canonical(
@@ -119,12 +117,32 @@ def _create_candidate(path: Path) -> tuple[str, str]:
 def _create_project(root: Path, build_id: str) -> None:
     state = root / ".ae-state"
     (state / "host-runtime" / "outcomes").mkdir(parents=True)
-    connection = sqlite3.connect(state / "events.db")
-    connection.execute(
-        "CREATE TABLE loop_events (thread_id TEXT, event_type TEXT, payload_json TEXT, sequence INTEGER)"
+    product_evidence = state / "product-evidence"
+    product_evidence.mkdir(parents=True)
+    content_sha256 = "a" * 64
+    (product_evidence / "build-identity.json").write_text(
+        json.dumps({
+            "version": build_id.split("+", 1)[0],
+            "build_id": build_id,
+            "source_kind": "packaged",
+            "content_sha256": content_sha256,
+        }),
+        encoding="utf-8",
     )
+    state_projection = EngineState(thread_id="thread-1", current_stage="architect")
+    event_store = SQLiteEventStore(state / "events.db")
     actions = []
-    sequence = 0
+    sequence = 1
+    event_store.commit_tick(
+        events=[LoopEvent.create(
+            thread_id="thread-1", sequence=0,
+            event_type=LoopEventType.LOOP_INITIALIZED,
+            payload={"state": state_projection.to_dict()},
+            correlation_id="thread-1",
+        )],
+        state=state_projection,
+        action={"thread_id": "thread-1", "message_id": "init-action"},
+    )
     for stage, action_id in (
         ("architect", "architect-action"),
         ("developer", "developer-action"),
@@ -153,15 +171,17 @@ def _create_project(root: Path, build_id: str) -> None:
                 "required_operation": "repair_coordinator_then_finalize",
             }
         actions.append(action)
-        connection.execute(
-            "INSERT INTO loop_events VALUES (?, ?, ?, ?)",
-            ("thread-1", "ActionIssued", json.dumps({"action": action}), sequence),
-        )
+        event_store.append([LoopEvent.create(
+            thread_id="thread-1", sequence=sequence,
+            event_type=LoopEventType.ACTION_ISSUED,
+            payload={"action": action}, correlation_id="thread-1",
+        )])
         sequence += 1
-        connection.execute(
-            "INSERT INTO loop_events VALUES (?, ?, ?, ?)",
-            ("thread-1", "ResultAccepted", json.dumps({}), sequence),
-        )
+        event_store.append([LoopEvent.create(
+            thread_id="thread-1", sequence=sequence,
+            event_type=LoopEventType.RESULT_ACCEPTED,
+            payload={}, correlation_id="thread-1", causation_id=action_id,
+        )])
         sequence += 1
         (state / "host-runtime" / "outcomes" / f"{action_id}.json").write_text(
             json.dumps({"status": "accepted"}), encoding="utf-8"
@@ -184,25 +204,109 @@ def _create_project(root: Path, build_id: str) -> None:
             "coverage": {"verified": 1, "total": 2},
         },
     }
-    connection.execute(
-        "INSERT INTO loop_events VALUES (?, ?, ?, ?)",
-        ("thread-1", "ActionIssued", json.dumps({"action": terminal}), sequence),
-    )
+    event_store.append([LoopEvent.create(
+        thread_id="thread-1", sequence=sequence,
+        event_type=LoopEventType.ACTION_ISSUED,
+        payload={"action": terminal}, correlation_id="thread-1",
+    )])
     sequence += 1
-    connection.execute(
-        "INSERT INTO loop_events VALUES (?, ?, ?, ?)",
-        ("thread-1", "LoopCompleted", json.dumps({}), sequence),
-    )
-    connection.commit()
-    connection.close()
-    ledger = UsageLedger(state / "usage-ledger.db")
+    event_store.append([LoopEvent.create(
+        thread_id="thread-1", sequence=sequence,
+        event_type=LoopEventType.LOOP_COMPLETED,
+        payload={"status": "TERMINAL", "verdict": "GOAL_ACHIEVED", "tick": sequence},
+        correlation_id="thread-1", causation_id="done-action",
+    )])
+    sequence += 1
     for stage, action_id in (
         ("architect", "architect-action"),
         ("developer", "developer-action"),
         ("critic", "critic-action"),
     ):
-        ledger.append(_record(action_id, stage))
-    ledger.close()
+        record = _record(action_id, stage)
+        event_store.append([LoopEvent.create(
+            thread_id="thread-1", sequence=sequence,
+            event_type=LoopEventType.USAGE_RECORDED,
+            payload={"usage": {
+                "session_id": record.session_id, "tick": record.tick,
+                "stage": record.stage, "worker": record.worker,
+                "input_units": record.input_units,
+                "cache_read_units": record.cache_read_units,
+                "cache_write_units": record.cache_write_units,
+                "output_units": record.output_units,
+                "provider": record.provider, "model": record.model,
+                "usage_source": record.usage_source,
+                "estimated": record.estimated,
+                "core_payload_bytes": record.core_payload_bytes,
+                "action_message_id": record.action_message_id,
+            }}, correlation_id="thread-1",
+        )])
+        sequence += 1
+    event_store.close()
+
+
+def _mutate_first_action(root: Path, mutate) -> None:
+    """测试辅助：通过完整 payload hash 修改唯一 EventStore 事件。"""
+    database = root / ".ae-state" / "events.db"
+    connection = sqlite3.connect(database)
+    row = connection.execute(
+        "SELECT payload_json FROM loop_events "
+        "WHERE event_type = 'ActionIssued' AND sequence = 1"
+    ).fetchone()
+    assert row is not None
+    payload = json.loads(row[0])
+    mutate(payload["action"])
+    encoded = json.dumps(
+        payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    )
+    connection.execute(
+        "UPDATE loop_events SET payload_json = ?, payload_sha256 = ? "
+        "WHERE event_type = 'ActionIssued' AND sequence = 1",
+        (encoded, hashlib.sha256(encoded.encode("utf-8")).hexdigest()),
+    )
+    connection.commit()
+    connection.close()
+
+
+def _mutate_first_result_causation(root: Path, causation_id: str) -> None:
+    database = root / ".ae-state" / "events.db"
+    connection = sqlite3.connect(database)
+    connection.execute(
+        "UPDATE loop_events SET causation_id = ? "
+        "WHERE event_type = 'ResultAccepted' AND sequence = 2",
+        (causation_id,),
+    )
+    connection.commit()
+    connection.close()
+
+
+def _append_duplicate_first_action(root: Path) -> None:
+    database = root / ".ae-state" / "events.db"
+    with SQLiteEventStore(database) as event_store:
+        source = next(
+            event for event in event_store.load_stream("thread-1")
+            if event.event_type is LoopEventType.ACTION_ISSUED
+            and event.sequence == 1
+        )
+        action = json.loads(json.dumps(source.to_dict()["payload"]["action"]))
+        action["message_id"] = "duplicate-recovery-action"
+        action_sequence = event_store.next_sequence("thread-1")
+        event_store.append([
+            LoopEvent.create(
+                thread_id="thread-1",
+                sequence=action_sequence,
+                event_type=LoopEventType.ACTION_ISSUED,
+                payload={"action": action},
+                correlation_id="thread-1",
+            ),
+            LoopEvent.create(
+                thread_id="thread-1",
+                sequence=action_sequence + 1,
+                event_type=LoopEventType.RESULT_ACCEPTED,
+                payload={},
+                correlation_id="thread-1",
+                causation_id=action["message_id"],
+            ),
+        ])
 
 
 def _create_business_evidence(root: Path, build_id: str) -> Path:
@@ -258,6 +362,81 @@ def test_collector_requires_structured_business_evidence(tmp_path: Path) -> None
     assert evidence["golden_project"]["final_verdict"] == "pass"
 
 
+def test_collector_rejects_missing_runtime_build_preflight(
+    tmp_path: Path,
+) -> None:
+    archive, build_id = _create_candidate(tmp_path)
+    project = tmp_path / "project"
+    project.mkdir()
+    _create_project(project, build_id)
+    (project / ".ae-state/product-evidence/build-identity.json").unlink()
+
+    with pytest.raises(EvidenceCollectionError, match="RUNTIME_PREFLIGHT_MISSING"):
+        collect_product_evidence(
+            project_root=project,
+            canary_project_root=project,
+            host="codex",
+            archive=Path(archive),
+            runtime_root=tmp_path / "runtime",
+            development_root=tmp_path / "development",
+            source_ref="local-marketplace-fixture",
+            output=tmp_path / "artifact.json",
+            evidence_output=tmp_path / "evidence.json",
+            business_evidence=_create_business_evidence(project, build_id),
+        )
+
+
+def test_collector_rejects_runtime_build_preflight_mismatch(
+    tmp_path: Path,
+) -> None:
+    archive, build_id = _create_candidate(tmp_path)
+    project = tmp_path / "project"
+    project.mkdir()
+    _create_project(project, build_id)
+    preflight = project / ".ae-state/product-evidence/build-identity.json"
+    payload = json.loads(preflight.read_text(encoding="utf-8"))
+    payload["build_id"] = "5.8.0-rc.5+sha256." + "b" * 16
+    preflight.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(EvidenceCollectionError, match="RUNTIME_PREFLIGHT_MISMATCH"):
+        collect_product_evidence(
+            project_root=project,
+            canary_project_root=project,
+            host="codex",
+            archive=Path(archive),
+            runtime_root=tmp_path / "runtime",
+            development_root=tmp_path / "development",
+            source_ref="local-marketplace-fixture",
+            output=tmp_path / "artifact.json",
+            evidence_output=tmp_path / "evidence.json",
+            business_evidence=_create_business_evidence(project, build_id),
+        )
+
+
+def test_canary_recovery_requires_event_store_result_causation(
+    tmp_path: Path,
+) -> None:
+    archive, build_id = _create_candidate(tmp_path)
+    project = tmp_path / "project"
+    project.mkdir()
+    _create_project(project, build_id)
+    _mutate_first_result_causation(project, "unrelated-action")
+
+    with pytest.raises(EvidenceCollectionError, match="CANARY_RECOVERY_NOT_UNIQUE"):
+        collect_product_evidence(
+            project_root=project,
+            canary_project_root=project,
+            host="codex",
+            archive=Path(archive),
+            runtime_root=tmp_path / "runtime",
+            development_root=tmp_path / "development",
+            source_ref="local-marketplace-fixture",
+            output=tmp_path / "artifact.json",
+            evidence_output=tmp_path / "evidence.json",
+            business_evidence=_create_business_evidence(project, build_id),
+        )
+
+
 def test_collector_separates_l4_business_project_from_l3_canary_project(
     tmp_path: Path,
 ) -> None:
@@ -268,21 +447,9 @@ def test_collector_separates_l4_business_project_from_l3_canary_project(
     canary.mkdir()
     _create_project(project, build_id)
     _create_project(canary, build_id)
-    events = sqlite3.connect(project / ".ae-state" / "events.db")
-    row = events.execute(
-        "SELECT payload_json FROM loop_events "
-        "WHERE event_type = 'ActionIssued' AND sequence = 0"
-    ).fetchone()
-    assert row is not None
-    action_payload = json.loads(row[0])
-    action_payload["action"]["host_execution"].pop("recovery")
-    events.execute(
-        "UPDATE loop_events SET payload_json = ? "
-        "WHERE event_type = 'ActionIssued' AND sequence = 0",
-        (json.dumps(action_payload),),
+    _mutate_first_action(
+        project, lambda action: action["host_execution"].pop("recovery")
     )
-    events.commit()
-    events.close()
     report = _create_business_evidence(project, build_id)
 
     evidence = collect_product_evidence(
@@ -338,21 +505,9 @@ def test_collector_rejects_canary_without_bound_recovery_action(
     project.mkdir()
     _create_project(project, build_id)
     report = _create_business_evidence(project, build_id)
-    events = sqlite3.connect(project / ".ae-state" / "events.db")
-    row = events.execute(
-        "SELECT payload_json FROM loop_events "
-        "WHERE event_type = 'ActionIssued' AND sequence = 0"
-    ).fetchone()
-    assert row is not None
-    action_payload = json.loads(row[0])
-    action_payload["action"]["host_execution"].pop("recovery")
-    events.execute(
-        "UPDATE loop_events SET payload_json = ? "
-        "WHERE event_type = 'ActionIssued' AND sequence = 0",
-        (json.dumps(action_payload),),
+    _mutate_first_action(
+        project, lambda action: action["host_execution"].pop("recovery")
     )
-    events.commit()
-    events.close()
 
     with pytest.raises(EvidenceCollectionError, match="CANARY_RECOVERY_NOT_UNIQUE"):
         collect_product_evidence(
@@ -379,21 +534,9 @@ def test_collector_accepts_coordinator_repair_from_outcome_journal(
     _create_project(project, build_id)
     report = _create_business_evidence(project, build_id)
 
-    events = sqlite3.connect(project / ".ae-state" / "events.db")
-    row = events.execute(
-        "SELECT payload_json FROM loop_events "
-        "WHERE event_type = 'ActionIssued' AND sequence = 0"
-    ).fetchone()
-    assert row is not None
-    action_payload = json.loads(row[0])
-    action_payload["action"]["host_execution"].pop("recovery")
-    events.execute(
-        "UPDATE loop_events SET payload_json = ? "
-        "WHERE event_type = 'ActionIssued' AND sequence = 0",
-        (json.dumps(action_payload),),
+    _mutate_first_action(
+        project, lambda action: action["host_execution"].pop("recovery")
     )
-    events.commit()
-    events.close()
 
     journal = project / ".ae-state/host-runtime/outcomes/architect-action.json"
     journal.write_text(
@@ -429,21 +572,7 @@ def test_collector_rejects_multiple_canary_recovery_actions(tmp_path: Path) -> N
     project.mkdir()
     _create_project(project, build_id)
     report = _create_business_evidence(project, build_id)
-    events = sqlite3.connect(project / ".ae-state" / "events.db")
-    row = events.execute(
-        "SELECT payload_json FROM loop_events "
-        "WHERE event_type = 'ActionIssued' AND sequence = 0"
-    ).fetchone()
-    assert row is not None
-    action_payload = json.loads(row[0])
-    duplicate = json.loads(json.dumps(action_payload))
-    duplicate["action"]["message_id"] = "duplicate-recovery-action"
-    events.execute(
-        "INSERT INTO loop_events VALUES (?, ?, ?, ?)",
-        ("thread-1", "ActionIssued", json.dumps(duplicate), 99),
-    )
-    events.commit()
-    events.close()
+    _append_duplicate_first_action(project)
 
     with pytest.raises(EvidenceCollectionError, match="CANARY_RECOVERY_NOT_UNIQUE"):
         collect_product_evidence(
@@ -467,23 +596,12 @@ def test_collector_accepts_native_outcome_resume_when_projection_matches(
     project = tmp_path / "project"
     project.mkdir()
     _create_project(project, build_id)
-    events = sqlite3.connect(project / ".ae-state" / "events.db")
-    row = events.execute(
-        "SELECT payload_json FROM loop_events "
-        "WHERE event_type = 'ActionIssued' AND sequence = 0"
-    ).fetchone()
-    assert row is not None
-    action_payload = json.loads(row[0])
-    action_payload["action"]["host_execution"]["recovery"]["status"] = (
-        "native_outcomes_ready"
+    _mutate_first_action(
+        project,
+        lambda action: action["host_execution"]["recovery"].update(
+            status="native_outcomes_ready"
+        ),
     )
-    events.execute(
-        "UPDATE loop_events SET payload_json = ? WHERE event_type = 'ActionIssued' "
-        "AND sequence = 0",
-        (json.dumps(action_payload),),
-    )
-    events.commit()
-    events.close()
     report = _create_business_evidence(project, build_id)
 
     evidence = collect_product_evidence(
@@ -661,8 +779,8 @@ def test_business_evidence_cli_chain_runs_from_outside_repository(
             str(runtime),
                 "--development-root",
                 str(development),
-                "--canary-project-root",
-                str(project),
+            "--canary-project-root",
+            str(project),
                 "--source-ref",
             "local-marketplace-fixture",
             "--output",
@@ -690,6 +808,8 @@ def test_business_evidence_cli_chain_runs_from_outside_repository(
             "--evidence-root",
             str(tmp_path),
             "--project-root",
+            f"codex={project}",
+            "--canary-root",
             f"codex={project}",
         ],
         cwd=tmp_path,
@@ -734,7 +854,21 @@ def test_collector_derives_hashable_host_evidence_from_facts(tmp_path: Path) -> 
     assert json.loads(artifact.read_text())["acceptance_policy"] == {
         "max_claude_cost_usd": 2.0,
     }
-    assert evaluate_host_evidence(evidence, evidence_root=tmp_path)["status"] == "pass"
+    assert evaluate_host_evidence(
+        evidence,
+        evidence_root=tmp_path,
+        canary_root=project,
+    )["status"] == "pass"
+    _mutate_first_result_causation(project, "tampered-causation")
+    with pytest.raises(
+        ProductAcceptanceError,
+        match="CANARY_RECOVERY_EVENT_BINDING_MISSING",
+    ):
+        evaluate_host_evidence(
+            evidence,
+            evidence_root=tmp_path,
+            canary_root=project,
+        )
 
 
 def test_claude_collector_reads_cost_from_native_stream_output(tmp_path: Path) -> None:
@@ -880,6 +1014,17 @@ def test_collector_counts_host_stop_report_as_unexpected_stop(tmp_path: Path) ->
     assert evidence["unexpected_stops"] == 1
 
 
+def test_collector_accepts_allowlisted_provider_stop_report(tmp_path: Path) -> None:
+    report_root = tmp_path / ".ae-state/host-runtime/stop-reports"
+    report_root.mkdir(parents=True)
+    (report_root / "provider.json").write_text(
+        json.dumps({"reason_code": "HOST_PROVIDER_STREAM_IDLE_TIMEOUT"}),
+        encoding="utf-8",
+    )
+
+    assert _unexpected_stop_report_count(tmp_path) == 1
+
+
 def test_validator_rechecks_content_addressed_project_sources(
     tmp_path: Path,
 ) -> None:
@@ -985,6 +1130,10 @@ def test_dual_host_validator_cli_uses_separate_project_roots(
             "--project-root",
             f"codex={project_roots['codex']}",
             "--project-root",
+            f"claude-code={project_roots['claude-code']}",
+            "--canary-root",
+            f"codex={project_roots['codex']}",
+            "--canary-root",
             f"claude-code={project_roots['claude-code']}",
         ],
         cwd=tmp_path,

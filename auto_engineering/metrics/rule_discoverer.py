@@ -150,11 +150,11 @@ class DiagnosticRuleDiscoverer:
                 metric="M1",
                 causes=[
                     "Frequent interruptions break agent context continuity",
-                    "Checkpoint restore overhead adds ticks",
+                    "恢复活动 Action 的持久化开销增加 Tick 数",
                 ],
                 actions=[
                     "Investigate root cause of frequent --resume",
-                    "Consider increasing checkpoint frequency",
+                    "检查宿主中断与恢复频率及其根因",
                 ],
                 human_actions=[0, 1],
                 correlation_score=abs(rho),

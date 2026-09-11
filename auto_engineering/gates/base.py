@@ -7,15 +7,11 @@
     - GateVerdict: 数据类, 携带 passed / message / gate_name
     - 6 道 Gate: safety / lint / type_check / contract / test / build
     - 单 Gate 失败不抛异常, 返回 passed=False + message (上层决定 block / retry)
-
-向后兼容:
-    - GateResult 保留供向后兼容 (v6.0 删除)
 """
 
 from __future__ import annotations
 
 import subprocess
-import warnings
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -25,13 +21,13 @@ if TYPE_CHECKING:
     from auto_engineering.config.runtime_config import RuntimeConfig
 
 # ============================================================
-# GateVerdict (v5.0 §B6.1 — Verdict → GateVerdict 重命名)
+# GateVerdict (v5.8 canonical Gate result)
 # ============================================================
 
 
 @dataclass
 class GateVerdict:
-    """Gate 检查结果 (v5.0 §B6.1 重命名自 Verdict).
+    """Gate 检查结果。
 
     Attributes:
         gate_name: Gate 名称(由 Gate 实例填入, 调用方无需传)
@@ -115,21 +111,6 @@ class GateVerdict:
         )
 
 
-# v5.4 P2-2: Verdict 别名保留向后兼容, 通过 __getattr__ 触发 DeprecationWarning.
-# 新代码应使用 GateVerdict. v6.0 将移除 Verdict 别名.
-
-
-def __getattr__(name: str) -> object:
-    if name == "Verdict":
-        warnings.warn(
-            "Verdict 是 GateVerdict 的废弃别名, 将在 v6.0 移除. 请使用 GateVerdict.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return GateVerdict
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
-
 __all__ = ["Gate", "GateVerdict", "SubprocessResult", "run_gate_command"]
 
 
@@ -208,11 +189,8 @@ class Gate:
     子类必须实现 run(project_root) 方法, 返回 GateVerdict.
     默认实现: 检查项目根存在 → 委托子类.
 
-    旧接口 Gate.check(stage, context) 保留供 v2.0 Guardrail 体系使用.
-
     v5.5 audit P1-9: contracts 从 run() 签名移除, 改为实例属性.
           仅 ContractGate 需要 contracts, 其他 6 个 Gate 不再有冗余参数.
-        - v5.5 audit P2-15: _register_alias 统一向后兼容别名模式.
     """
 
     name: str = "base"
@@ -230,25 +208,6 @@ class Gate:
         cfg = config if config is not None else get_default_config()
         val = cfg.gate_timeout
         return float(val) if val is not None else default
-
-    @classmethod
-    def _register_alias(cls, old_name: str, new_name: str) -> None:
-        """注册废弃别名 property, 访问时触发 DeprecationWarning.
-
-        Usage (at module level after class definition):
-            LintGate._register_alias("ruff_bin", "linter_bin")
-        """
-        import warnings
-
-        def _getter(self: Gate) -> object:
-            warnings.warn(
-                f"{cls.__name__}.{old_name} is deprecated, use .{new_name} instead",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            return getattr(self, new_name)
-
-        setattr(cls, old_name, property(_getter))
 
     def run(
         self,

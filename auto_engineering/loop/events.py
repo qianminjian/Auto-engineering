@@ -25,7 +25,6 @@ class LoopEventType(StrEnum):
     GUARDRAIL_EVALUATED = "GuardrailEvaluated"
     GATES_COMPLETED = "GatesCompleted"
     STAGE_ADVANCED = "StageAdvanced"
-    CHECKPOINT_IMPORTED = "CheckpointImported"
     LOOP_COMPLETED = "LoopCompleted"
     LOOP_FAILED = "LoopFailed"
     EXECUTION_SESSION_STARTED = "ExecutionSessionStarted"

@@ -6,8 +6,14 @@ import json
 from io import StringIO
 from pathlib import Path
 
+import pytest
+
 from auto_engineering.host.claude_hooks import main
-from auto_engineering.host.runtime_driver import HostRunLease, HostRunLeaseStore
+from auto_engineering.host.runtime_driver import (
+    HostRunLease,
+    HostRunLeaseStore,
+    fencing_token_for,
+)
 
 
 def _save_lease(
@@ -72,6 +78,26 @@ def test_session_end_records_report_and_clears_same_session_continue_lease(
             "operation": "resume_active_action",
             "thread_id": "thread-1",
         },
+        "continuation": {
+            "action_identity": {
+                "execution_generation": 1,
+                "fencing_token": fencing_token_for("action-1", "session-1", 1),
+                "message_id": "action-1",
+                "thread_id": "thread-1",
+            },
+            "after_host_return": "recheck_core_status",
+            "forbidden_success_when": ["CONTINUE", "active_action_present"],
+            "resume_only_when": ["status.execution_control.disposition=CONTINUE"],
+            "resume_operation": {
+                "argv": ["dev-loop", "--resume", "thread-1"],
+                "operation": "resume_active_action",
+            },
+            "schema_version": "1.0",
+            "status_operation": {
+                "argv": ["dev-loop", "--status", "--format", "json"],
+                "operation": "recheck_core_status",
+            },
+        },
         "platform": "claude-code",
         "reason_code": "HOST_RUNTIME_PROTOCOL_ERROR",
         "schema_version": "1.0",
@@ -79,6 +105,30 @@ def test_session_end_records_report_and_clears_same_session_continue_lease(
         "thread_id": "thread-1",
     }
     assert "transcript" not in report_path.read_text(encoding="utf-8")
+
+
+def test_session_end_preserves_continue_lease_for_auto_resume(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _save_lease(tmp_path)
+    monkeypatch.setenv("AE_HOST_ADAPTER_AUTO_RESUME", "1")
+    output = StringIO()
+
+    assert main(
+        StringIO(json.dumps({
+            "hook_event_name": "SessionEnd",
+            "cwd": str(tmp_path),
+            "session_id": "session-1",
+            "reason": "budget_exceeded",
+        })),
+        output,
+    ) == 0
+
+    response = json.loads(output.getvalue())
+    assert response["lease_cleared"] is False
+    assert HostRunLeaseStore(tmp_path).load() is not None
+    report_path = tmp_path / response["stop_report_path"]
+    assert json.loads(report_path.read_text(encoding="utf-8"))["lease_cleared"] is False
 
 
 def test_session_end_clears_terminal_lease_without_protocol_error(

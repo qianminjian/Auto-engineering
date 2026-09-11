@@ -70,6 +70,25 @@ def test_release_embeds_one_content_addressed_build_identity(tmp_path: Path) -> 
     )
 
 
+def test_release_digest_includes_generated_marketplace_bytes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts import build_release
+
+    original = build_release._marketplace_manifests
+    first = build_release._release_content_digest(ROOT)
+
+    def changed_manifest(root: Path) -> tuple[dict[str, object], dict[str, object]]:
+        claude, codex = original(root)
+        claude = {**claude, "description": "changed"}
+        return claude, codex
+
+    monkeypatch.setattr(build_release, "_marketplace_manifests", changed_manifest)
+    second = build_release._release_content_digest(ROOT)
+
+    assert second != first
+
+
 def test_release_archive_is_self_contained_dual_host_marketplace(
     tmp_path: Path,
 ) -> None:

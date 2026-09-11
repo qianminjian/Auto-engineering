@@ -107,7 +107,6 @@ def _orchestrator_at_design_gate(tmp_path, request: DesignChangeRequest):
     orchestrator = TickOrchestrator(
         gate_runner=lambda names, root: {},
         guardrail=guardrail,
-        checkpoint_store=None,
     )
     orchestrator.project_root = tmp_path
     orchestrator._state = EngineState(

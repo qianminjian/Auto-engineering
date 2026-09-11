@@ -39,10 +39,10 @@ def test_action_response_models_have_one_canonical_module() -> None:
 
 class TestActionDone:
     def test_minimal_done(self) -> None:
-        d = ActionDone(verdict="HARD_LIMIT", reason="MAJOR 超限").to_dict()
+        d = ActionDone(verdict="TERMINATED", reason="用户选择终止").to_dict()
         assert d["action"] == "done"
-        assert d["verdict"] == "HARD_LIMIT"
-        assert d["verdict_reason"] == "MAJOR 超限"
+        assert d["verdict"] == "TERMINATED"
+        assert d["verdict_reason"] == "用户选择终止"
         assert "stage" not in d  # stage key omitted when None (P2-27 audit fix)
 
     def test_verdict_level_included(self) -> None:
@@ -52,20 +52,17 @@ class TestActionDone:
     def test_optional_fields_emitted_when_set(self) -> None:
         d = ActionDone(
             verdict="GOAL_ACHIEVED", reason="ok", verdict_level=1,
-            tick=9, thread_id="uuid-v4", rounds=2,
-            gate_summary={"safety": "pass"}, checkpoint_id="cp-1",
+            tick=9, thread_id="uuid-v4",
+            gate_summary={"safety": "pass"},
         ).to_dict()
         assert d["tick"] == 9
         assert d["thread_id"] == "uuid-v4"
-        assert d["rounds"] == 2
         assert d["gate_summary"] == {"safety": "pass"}
-        assert d["checkpoint_id"] == "cp-1"
 
     def test_optional_fields_omitted_when_none(self) -> None:
         d = ActionDone(verdict="STAGNANT").to_dict()
         # 未提供的可选字段不出现 (保持 JSON 精简)
-        assert "checkpoint_id" not in d
-        assert "rounds" not in d
+        assert "tick" not in d
 
     def test_done_always_declares_core_and_product_acceptance_boundary(self) -> None:
         d = ActionDone(verdict="GOAL_ACHIEVED").to_dict()
@@ -242,6 +239,7 @@ class TestValidateResultFormat:
     def test_valid_developer(self) -> None:
         result = {
             "stage": "developer", "batch_id": "b1",
+            "task_ids": ["b1-t1"],
             "files_changed": ["a.py"],
             "test_results": {"passed": 5, "failed": 0},
         }
@@ -256,6 +254,7 @@ class TestValidateResultFormat:
 
     def test_developer_verification_only_batch_allows_no_files_changed(self) -> None:
         result = {"stage": "developer", "batch_id": "b1",
+                  "task_ids": ["b1-t1"],
                   "files_changed": [],
                   "test_results": {"passed": 1, "failed": 0}}
         errs = validate_result_format(result, "developer")

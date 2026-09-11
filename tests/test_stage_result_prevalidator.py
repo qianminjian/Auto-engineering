@@ -184,6 +184,7 @@ def test_architect_prevalidation_rejects_unknown_future_action_section(
                 "kind": "implementation",
                 "module_ref": "slugify",
                 "file_targets": ["src/slugify/__init__.py"],
+                "depends_on": [],
             }],
             "depends_on": [],
         }],

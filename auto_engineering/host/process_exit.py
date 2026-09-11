@@ -10,7 +10,10 @@ from pathlib import Path
 from typing import TextIO
 
 from auto_engineering.host.runtime_driver import HostRunLeaseStore
-from auto_engineering.host.stop_report import handle_claude_session_end
+from auto_engineering.host.stop_report import (
+    classify_host_observation,
+    handle_claude_session_end,
+)
 
 
 def _last_json_object(path: Path) -> dict[str, object] | None:
@@ -33,6 +36,16 @@ def _termination_reason_from_value(value: object) -> str | None:
 
     if not isinstance(value, Mapping):
         return None
+    for key in ("result", "text"):
+        classified = classify_host_observation(value.get(key))
+        if classified is not None:
+            return classified
+    content = value.get("content")
+    if isinstance(content, Sequence) and not isinstance(content, (str, bytes, bytearray)):
+        for item in reversed(content):
+            nested = _termination_reason_from_value(item)
+            if nested is not None:
+                return nested
     for key in ("terminal_reason", "stop_reason"):
         candidate = value.get(key)
         if isinstance(candidate, str) and candidate:
@@ -95,6 +108,11 @@ def main(
         default="HOST_RUNTIME_PROTOCOL_ERROR",
         help="有限的宿主停止原因码；默认使用通用协议错误",
     )
+    parser.add_argument(
+        "--preserve-lease",
+        action="store_true",
+        help="为宿主自动续驱动保留 CONTINUE 租约；不改变 Core 状态",
+    )
     args = parser.parse_args(argv)
     if args.exit_code < 0:
         parser.error("--exit-code 不能为负数")
@@ -125,7 +143,7 @@ def main(
         "cwd": str(args.project_root),
         "session_id": lease.host_session_id,
         "reason": stream_reason or _termination_reason(result),
-    }, reason_code=args.reason_code)
+    }, reason_code=args.reason_code, clear_lease=not args.preserve_lease)
     json.dump(response, stdout, ensure_ascii=False)
     stdout.write("\n")
     return 0

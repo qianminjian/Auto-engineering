@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 
-from auto_engineering.metrics.usage_ledger import UsageLedger
+from auto_engineering.metrics.usage import UsageRecord
 
 
 class CostBaselineError(ValueError):
@@ -26,9 +27,9 @@ class CostSnapshot:
     measurement_complete: bool
 
     @classmethod
-    def from_ledger(
+    def from_records(
         cls,
-        ledger: UsageLedger,
+        records: Sequence[UsageRecord],
         *,
         thread_id: str,
         fixture: str,
@@ -36,7 +37,32 @@ class CostSnapshot:
         model: str,
         completed_work_units: int,
     ) -> CostSnapshot:
-        totals = ledger.aggregate(thread_id)
+        scoped = [record for record in records if record.thread_id == thread_id]
+
+        def total(field: str) -> int:
+            return sum(
+                value for record in scoped
+                if (value := getattr(record, field)) is not None
+            )
+
+        totals = {
+            "input_units": total("input_units"),
+            "cache_read_units": total("cache_read_units"),
+            "cache_write_units": total("cache_write_units"),
+            "output_units": total("output_units"),
+            "core_payload_bytes": total("core_payload_bytes"),
+            "duplicate_block_bytes": total("duplicate_block_bytes"),
+            "measurement_complete": bool(scoped) and all(
+                record.core_payload_bytes is not None for record in scoped
+            ) and all(
+                getattr(record, field) is not None
+                for record in scoped
+                for field in (
+                    "input_units", "cache_read_units",
+                    "cache_write_units", "output_units",
+                )
+            ),
+        }
         if completed_work_units <= 0:
             raise CostBaselineError("completed_work_units 必须为正整数")
         return cls(

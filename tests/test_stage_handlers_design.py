@@ -187,6 +187,33 @@ def test_critic_plan_gap_routes_to_architect_refine() -> None:
     )
 
 
+def test_critic_preserves_explicit_cross_batch_blocker_for_refine() -> None:
+    finding = {
+        "finding_id": "F-CROSS-001",
+        "severity": "P0",
+        "kind": "implementation_defect",
+        "file": "src/hooks/useAudioRecorder.ts",
+        "line": 38,
+        "issue": "构造失败时媒体流未释放",
+        "suggestion": "在异常路径停止本次媒体流",
+    }
+
+    decision = CriticHandler().apply(
+        {"majors_in_a_row": 0, "total_majors": 0},
+        {
+            "verdict": "MAJOR",
+            "findings": [],
+            "cross_batch_findings": [finding],
+        },
+        _context(allowed_file_targets=["src/components/ApiKeyInput.tsx"]),
+    )
+
+    changes = _changes(decision)
+    assert decision.next_stage == "architect"
+    assert changes["open_findings"] == [finding]
+    assert decision.action_context["feedback"] == [finding]
+
+
 def test_critic_legacy_out_of_scope_finding_is_plan_gap() -> None:
     """旧 Result 没有 kind 时，以文件边界确定性识别计划缺口。"""
     decision = CriticHandler().apply(

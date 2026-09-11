@@ -4,17 +4,16 @@
 
 术语:
   tick  — 一次完整的离散调用周期: read result → validate → guardrail → gate
-          → convergence judge → build action → save checkpoint → output JSON.
+          → verification → build action → persist EventStore transaction → output JSON.
           每次 tick 是独立 Python 进程 (Tick-Based Discrete Invocation).
   step  — tick 内的一个 stage 转换 (e.g. architect→developer→critic).
           一个 tick 恰好跨越一个 step; 收敛判定在每个 tick 结束时执行.
-  round — 状态投影中的累积 stage 轮次, 跨 tick 递增. 对应 EngineState.round.
 
 核心契约:
   - 每 tick Python 输出一个 action dict (stdout JSON) 告诉 Agent 下一步做什么
   - Agent 执行后写 stage-result.json, Python 读回校验
   - Python 绝不自调 LLM — Agent 在 tick 之间做 LLM 工作
-  - gate_runner/guardrail/checkpoint_store 可注入 (单元测试 stub, 防挂死)
+  - gate_runner/guardrail 可注入 (单元测试 stub, 防挂死)
 """
 from __future__ import annotations
 
@@ -23,7 +22,7 @@ import json
 import logging
 import sys
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from copy import copy, deepcopy
 from dataclasses import asdict
 from datetime import datetime
@@ -49,9 +48,8 @@ from auto_engineering.engine.verification_layers import (
     VerificationLayers,
     determine_verification_layers,
 )
-from auto_engineering.host.execution_assembler import (
-    collect_host_evidence_violations,
-)
+from auto_engineering.host.adapters import usage_collector_for
+from auto_engineering.host.execution_assembler import collect_host_evidence_violations
 from auto_engineering.host.outcome_journal import OutcomeJournal
 from auto_engineering.host.spawn_contract import SpawnContractError, SpawnPlan
 from auto_engineering.host.worker_attestation import (
@@ -86,22 +84,23 @@ from auto_engineering.loop.artifacts import (
     validate_worker_receipt,
 )
 from auto_engineering.loop.audit_revision import AuditRevisionService
-from auto_engineering.loop.checkpoint.manager import CheckpointManager
-from auto_engineering.loop.checkpoint.records import CheckpointNotFoundError
-from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
 from auto_engineering.loop.context_authority import informational_drift
 from auto_engineering.loop.context_budget import (
     BudgetDecision,
     ContextUsage,
     evaluate_budget,
 )
-from auto_engineering.loop.convergence import ConvergenceConfig, ConvergenceJudge, RoundHistory
 from auto_engineering.loop.debug_tracer import DebugTracer, now_iso
 from auto_engineering.loop.design_authority import (
     DesignAuthorityError,
     DesignChangeRequest,
 )
 from auto_engineering.loop.design_decision_ledger import DesignDecisionLedger
+from auto_engineering.loop.design_preflight import (
+    build_design_structure_preflight_gate,
+    prepare_design_ledger,
+    resolve_design_structure_preflight_gate,
+)
 from auto_engineering.loop.developer_gate_service import (
     DeveloperGateService,
     StageGateDispatcher,
@@ -121,14 +120,6 @@ from auto_engineering.loop.events import EVENT_SCHEMA_VERSION, LoopEvent, LoopEv
 from auto_engineering.loop.guardrail import GuardrailChain
 from auto_engineering.loop.kernel import TickKernel
 from auto_engineering.loop.loop_budget import LoopUsage, evaluate_loop_budget
-from auto_engineering.loop.project_setup_scope import (
-    is_minimal_setup_source,
-    is_minimal_setup_test,
-    is_setup_safe_local_import,
-    project_setup_files,
-    project_setup_scope_violations,
-    project_setup_snapshot_files,
-)
 from auto_engineering.loop.project_setup_service import ProjectSetupService
 from auto_engineering.loop.protocol import (
     SCHEMA_VERSION,
@@ -139,7 +130,6 @@ from auto_engineering.loop.protocol import (
     validate_action_envelope,
     validate_result_envelope,
 )
-from auto_engineering.loop.protocol_compat import upgrade_legacy_result
 from auto_engineering.loop.reducers import default_reducer_registry
 from auto_engineering.loop.refine import build_refine_request
 from auto_engineering.loop.result_inbound_policy import (
@@ -152,10 +142,19 @@ from auto_engineering.loop.result_validators import (
     validate_component_verifier_scope as _validate_component_verifier_scope_impl,
 )
 from auto_engineering.loop.result_validators import (
+    validate_critic_scope as _validate_critic_scope_impl,
+)
+from auto_engineering.loop.result_validators import (
+    validate_execution_scope as _validate_execution_scope_impl,
+)
+from auto_engineering.loop.result_validators import (
     validate_gap_analysis as _validate_gap_analysis_impl,
 )
 from auto_engineering.loop.result_validators import (
     validate_gap_review_decisions as _validate_gap_review_decisions_impl,
+)
+from auto_engineering.loop.result_validators import (
+    validate_global_evidence_scope as _validate_global_evidence_scope_impl,
 )
 from auto_engineering.loop.runtime_revision import (
     CompatibilityDecision,
@@ -193,18 +192,14 @@ from auto_engineering.loop.stages.verification import (
 from auto_engineering.loop.state_lifecycle import clear_stage_fields
 from auto_engineering.loop.task_factory import tasks_from_batch_plan
 from auto_engineering.loop.tick_evidence import (
-    compute_diff_stats as _compute_diff_stats_impl,
-)
-from auto_engineering.loop.tick_evidence import (
     record_tick_latency as _record_tick_latency_impl,
 )
 from auto_engineering.loop.tick_gate_runner import TickGateRunner
+from auto_engineering.loop.tick_project_setup import TickProjectSetupMixin
 from auto_engineering.loop.transition_context_factory import TransitionContextFactory
 from auto_engineering.loop.transition_effects import TransitionEffectExecutor
-from auto_engineering.metrics.collector import AIOrigin, get_collector
+from auto_engineering.metrics.collector import get_collector
 from auto_engineering.metrics.enrichment import compute_metrics_signals
-from auto_engineering.metrics.transcript_parser import create_parser
-from auto_engineering.metrics.usage_ledger import UsageLedger, UsageRecord
 from auto_engineering.observability.audit_log import AuditLogger
 from auto_engineering.observability.tracing import _TracerLike
 from auto_engineering.pii.redactor import PIIRedactor
@@ -212,7 +207,6 @@ from auto_engineering.project_profile import (
     AeConfigProvider,
     LegacyInitProvider,
     LocalProbeProvider,
-    ProjectProfile,
     ProjectProfileError,
     ProjectProfileResolution,
     ProjectProfileResolver,
@@ -222,12 +216,10 @@ from auto_engineering.prompts.compiler import PromptContextError
 from auto_engineering.prompts.registry import default_registry
 
 
-class _GateRunner(Protocol):
+class GateRunner(Protocol):
     """Typed protocol for gate runner (replaces Callable[..., dict])."""
     def __call__(self, gate_names: tuple[str, ...], project_root: Path,
                  files_changed: list[str] | None = None) -> dict[str, dict]: ...
-
-GateRunner = _GateRunner  # backward-compat alias
 
 _MAX_PER_SOURCE = 2
 _MAX_GLOBAL = 4
@@ -284,18 +276,17 @@ class TickSessionSummarizer(Protocol):
 
 
 @runtime_checkable
-class _TranscriptParserLike(Protocol):
-    """SessionTranscriptParser structural interface (T135c)."""
+class _UsageCollectorLike(Protocol):
+    """Host Adapter 提供的标准化 usage collector。"""
     def collect(self) -> dict[str, Any]: ...
 
 
-class TickOrchestrator:
+class TickOrchestrator(TickProjectSetupMixin):
     """Discrete-tick orchestrator with layered verification (C.5).
 
     Injectables (all optional, for hang-free unit testing):
         gate_runner:    替换 run_gates (同步, 可快速 stub)
         guardrail:      替换 GuardrailChain (stub 跳过子进程)
-        checkpoint_store: 替换 SQLiteCheckpointStore (None → no-op save)
     """
     def __init__(
         self,
@@ -303,7 +294,6 @@ class TickOrchestrator:
         *,
         gate_runner: GateRunner | None = None,
         guardrail: GuardrailChain | None = None,
-        checkpoint_store: SQLiteCheckpointStore | None = None,
         event_store: SQLiteEventStore | None = None,
         context_offloader: TickContextOffloader | None = None,
         session_summarizer: TickSessionSummarizer | None = None,
@@ -311,7 +301,7 @@ class TickOrchestrator:
         audit_logger: AuditLogger | None = None,
         runtime_config: RuntimeConfig | None = None,
         pii_redactor: PIIRedactor | None = None,
-        transcript_parser: _TranscriptParserLike | None = None,  # T135c: typed Protocol
+        usage_collector: _UsageCollectorLike | None = None,
         escalate: bool = False,
         debug: bool = False,
         debug_dir: str | None = None,
@@ -320,7 +310,6 @@ class TickOrchestrator:
         self._audit_logger = audit_logger
         self._escalate = escalate
         self._guardrail = guardrail
-        self._checkpoint_store = checkpoint_store
         self._event_store = event_store
         self._context_offloader = context_offloader
         self._session_summarizer = session_summarizer
@@ -340,13 +329,15 @@ class TickOrchestrator:
         )
 
         # T110: M5 Token JSONL 采集 (可注入, 默认自动创建)
-        self._transcript_parser = transcript_parser if transcript_parser is not None else create_parser(self.project_root)  # noqa: E501
+        self._usage_collector = (
+            usage_collector
+            if usage_collector is not None
+            else usage_collector_for(self.project_root)
+        )
 
         self._state: EngineState | None = None
         self._design_ledger = DesignDecisionLedger(())
-        self._judge: ConvergenceJudge | None = None
         self._plan: Plan | None = None
-        self._checkpoint_mgr: CheckpointManager | None = None
         self._project_profile_resolver = ProjectProfileResolver((
             AeConfigProvider(),
             LocalProbeProvider(),
@@ -358,7 +349,6 @@ class TickOrchestrator:
         self._batch_state: BatchState | None = None
         self._progress_tree: ProgressTree | None = None
         self._verification_layers: VerificationLayers | None = None
-        self._round_history: list = []  # T1: 在 TickOrchestrator, 非 EngineState 字段
         self._last_batch_id: str | None = None  # 跨 stage 传 batch_id (组件完成后无 current)
         self._dev_snapshot: dict[str, Any] | None = None  # developer 产出快照 (供 critic 上下文)
         # DS-10 延迟打点累加器 (每 tick 起始清零, tick() 内累加子进程墙钟)
@@ -371,7 +361,7 @@ class TickOrchestrator:
         self._pause_at_stages: set[str] = set()
         self._passed_checkpoints: set[str] = set()
         # Protocol v1.1: 当前待处理 Action 与已完成 Result 的进程内幂等索引。
-        # SQLite 跨进程持久化由同阶段的 checkpoint store 兼容表承载。
+        # 跨进程状态与阶段 Gate 事实统一由 EventStore 承载。
         self._active_action: dict[str, Any] | None = None
         self._result_replays: dict[str, tuple[str, dict[str, Any]]] = {}
         self._current_result_message_id: str | None = None
@@ -423,7 +413,7 @@ class TickOrchestrator:
                 state=self._state,
                 batch_state=self._batch_state,
                 build_action=self.build_action,
-                save_checkpoint=self._save_checkpoint,
+                persist_state=self._persist_state,
                 queue_domain_event=self._queue_domain_event,
             ))
         return self._escalation
@@ -452,7 +442,6 @@ class TickOrchestrator:
             "current_stage": state.current_stage,
             "expected_stage": state.expected_stage,
             "tick": state.tick,
-            "round": state.round,
             "verdict": state.critic_verdict,
             "total_majors": state.total_majors,
             "plan_refine_count": state.plan_refine_count,
@@ -526,7 +515,7 @@ class TickOrchestrator:
         """按项目根解析设计文档，避免跨 cwd 恢复时丢失文档。
 
         协议仍保存宿主提供的相对路径以保持兼容；所有实际读取统一经过
-        project_root 解析。绝对路径保持原样，便于旧 checkpoint 恢复。
+        project_root 解析。绝对路径保持原样，便于跨 Tick 恢复。
         """
         candidate = Path(path)
         if candidate.is_absolute():
@@ -537,7 +526,6 @@ class TickOrchestrator:
         self,
         requirement: str,
         design_doc_path: str | None = None,
-        max_rounds: int | None = None,
         thread_id: str | None = None,
     ) -> dict:
         """初始化 loop。有设计文档时解析层次并进入 gap_scan; 否则直接 architect.
@@ -547,12 +535,9 @@ class TickOrchestrator:
         if design_doc_path:
             resolved_design_doc = self._resolve_design_doc_path(design_doc_path)
             self._design_doc = DesignDoc.parse(resolved_design_doc)
-            self._design_ledger = DesignDecisionLedger.ensure_intake(
-                self.project_root,
-                resolved_design_doc,
+            self._design_ledger = prepare_design_ledger(
+                self.project_root, resolved_design_doc, self._design_doc
             )
-
-        # T109b: L1 — requirement PII 扫描 (不阻断, 仅 WARN)
         if self._pii_enabled and self._pii_redactor:
             findings = self._pii_redactor.scan_dict({"requirement": requirement})
             if findings:
@@ -582,9 +567,6 @@ class TickOrchestrator:
             self._state.debug_dir = str(debug_path)
             self._debug_tracer = DebugTracer(debug_path)
 
-        self._judge = ConvergenceJudge(ConvergenceConfig(max_iterations=max_rounds))
-        self._checkpoint_mgr = CheckpointManager(self._checkpoint_store)
-
         if self._guardrail is None:
             self._guardrail = GuardrailChain.default()
 
@@ -602,7 +584,7 @@ class TickOrchestrator:
                 LoopEventType.PROJECT_PROFILE_CONFLICT,
                 {"error_code": exc.code.value, "message": str(exc)},
             )
-            self._save_checkpoint()
+            self._persist_state()
             return self.build_action()
         setup_required = self._project_profile_resolution.status is ResolutionStatus.SETUP_REQUIRED
         if setup_required:
@@ -617,7 +599,7 @@ class TickOrchestrator:
                 {"missing_capabilities": list(self._project_profile_resolution.missing_capabilities)},
             )
             if not self._escalate:
-                self._save_checkpoint()
+                self._persist_state()
                 return self.build_action()
         else:
             self._apply_project_profile_resolution(self._project_profile_resolution)
@@ -635,7 +617,7 @@ class TickOrchestrator:
                 self._state.current_stage = "architect"
                 self._state.expected_stage = "architect"
             self._state.tick = 1
-            self._save_checkpoint()
+            self._persist_state()
             return self.build_action(pre_gate=self.escalation.build_agent_escalation_gate(None))
 
         if self._design_doc:
@@ -645,52 +627,13 @@ class TickOrchestrator:
             self._state.current_stage = "architect"
             self._state.expected_stage = "architect"
         self._state.tick = 0
-        self._save_checkpoint()
+        self._persist_state()
         return self.build_action()
-
-    @classmethod
-    def restore(
-        cls,
-        project_root: Path,
-        checkpoint_store: SQLiteCheckpointStore,
-        *,
-        event_store: SQLiteEventStore,
-        thread_id: str | None = None,
-        gate_runner: GateRunner | None = None,
-        guardrail: GuardrailChain | None = None,
-        context_offloader: TickContextOffloader | None = None,
-        session_summarizer: TickSessionSummarizer | None = None,
-        tracer: Any | None = None,
-        audit_logger: AuditLogger | None = None,
-        runtime_config: RuntimeConfig | None = None,
-        max_rounds: int | None = None,
-        debug: bool = False,
-        debug_dir: str | None = None,
-    ) -> TickOrchestrator:
-        """恢复生产 Loop；运行事实源必须显式为 EventStore。"""
-
-        return cls.restore_from_event_store(
-            project_root,
-            checkpoint_store,
-            event_store=event_store,
-            thread_id=thread_id,
-            gate_runner=gate_runner,
-            guardrail=guardrail,
-            context_offloader=context_offloader,
-            session_summarizer=session_summarizer,
-            tracer=tracer,
-            audit_logger=audit_logger,
-            runtime_config=runtime_config,
-            max_rounds=max_rounds,
-            debug=debug,
-            debug_dir=debug_dir,
-        )
 
     @classmethod
     def restore_from_event_store(
         cls,
         project_root: Path,
-        checkpoint_store: SQLiteCheckpointStore,
         *,
         event_store: SQLiteEventStore,
         thread_id: str | None = None,
@@ -701,7 +644,6 @@ class TickOrchestrator:
         tracer: Any | None = None,
         audit_logger: AuditLogger | None = None,
         runtime_config: RuntimeConfig | None = None,
-        max_rounds: int | None = None,
         debug: bool = False,
         debug_dir: str | None = None,
     ) -> TickOrchestrator:
@@ -709,24 +651,18 @@ class TickOrchestrator:
 
         if event_store is None:
             raise RuntimeError("EVENT_STORE_REQUIRED")
-        resolved_thread_id = thread_id or checkpoint_store.active_project_thread()
+        resolved_thread_id = thread_id or event_store.current_thread()
         if resolved_thread_id is None:
-            raise CheckpointNotFoundError("无 active EventStore thread 可恢复")
+            raise RuntimeError("无 active EventStore thread 可恢复")
         state = event_store.load_projection(resolved_thread_id)
         if state is None:
-            raise CheckpointNotFoundError(
+            raise RuntimeError(
                 f"EventStore 无状态投影 (thread_id={resolved_thread_id})"
             )
-        round_history = [
-            RoundHistory(**item)
-            for item in event_store.load_round_history(resolved_thread_id)
-        ]
         active_action = event_store.load_action_snapshot(resolved_thread_id)
         return cls._restore_loaded_state(
             project_root,
-            checkpoint_store,
             state=state,
-            round_history=round_history,
             active_action=active_action,
             event_store=event_store,
             gate_runner=gate_runner,
@@ -736,61 +672,6 @@ class TickOrchestrator:
             tracer=tracer,
             audit_logger=audit_logger,
             runtime_config=runtime_config,
-            max_rounds=max_rounds,
-            debug=debug,
-            debug_dir=debug_dir,
-        )
-
-    @classmethod
-    def restore_from_checkpoint(
-        cls,
-        project_root: Path,
-        checkpoint_store: SQLiteCheckpointStore,
-        *,
-        checkpoint_id: str | None = None,
-        gate_runner: GateRunner | None = None,
-        guardrail: GuardrailChain | None = None,
-        context_offloader: TickContextOffloader | None = None,
-        session_summarizer: TickSessionSummarizer | None = None,
-        tracer: Any | None = None,
-        audit_logger: AuditLogger | None = None,
-        runtime_config: RuntimeConfig | None = None,
-        max_rounds: int | None = None,
-        debug: bool = False,
-        debug_dir: str | None = None,
-    ) -> TickOrchestrator:
-        """显式恢复历史 checkpoint；不属于生产 Loop 默认运行路径。"""
-
-        checkpoint = (
-            checkpoint_store.load(checkpoint_id)
-            if checkpoint_id
-            else checkpoint_store.load_latest()
-        )
-        if checkpoint is None:
-            raise CheckpointNotFoundError(
-                f"无 checkpoint 可恢复 (project_root={project_root})"
-            )
-        state = checkpoint.state
-        thread_id = (
-            state.thread_id
-            if isinstance(state, EngineState)
-            else state["thread_id"]
-        )
-        active_action = checkpoint_store.load_active_protocol_action(thread_id)
-        return cls._restore_loaded_state(
-            project_root,
-            checkpoint_store,
-            state=state,
-            round_history=list(checkpoint.history or []),
-            active_action=active_action,
-            gate_runner=gate_runner,
-            guardrail=guardrail,
-            context_offloader=context_offloader,
-            session_summarizer=session_summarizer,
-            tracer=tracer,
-            audit_logger=audit_logger,
-            runtime_config=runtime_config,
-            max_rounds=max_rounds,
             debug=debug,
             debug_dir=debug_dir,
         )
@@ -799,10 +680,8 @@ class TickOrchestrator:
     def _restore_loaded_state(
         cls,
         project_root: Path,
-        checkpoint_store: SQLiteCheckpointStore,
         *,
         state: EngineState | dict[str, Any],
-        round_history: list[RoundHistory],
         active_action: dict[str, Any] | None,
         gate_runner: GateRunner | None = None,
         guardrail: GuardrailChain | None = None,
@@ -811,7 +690,6 @@ class TickOrchestrator:
         tracer: Any | None = None,
         audit_logger: AuditLogger | None = None,
         runtime_config: RuntimeConfig | None = None,
-        max_rounds: int | None = None,
         debug: bool = False,
         debug_dir: str | None = None,
         event_store: SQLiteEventStore | None = None,
@@ -821,7 +699,6 @@ class TickOrchestrator:
             project_root,
             gate_runner=gate_runner,
             guardrail=guardrail,
-            checkpoint_store=checkpoint_store,
             event_store=event_store,
             context_offloader=context_offloader,
             session_summarizer=session_summarizer,
@@ -832,7 +709,6 @@ class TickOrchestrator:
             debug_dir=debug_dir,
         )
 
-        self._round_history = list(round_history)
         self._active_action = (
             dict(active_action) if isinstance(active_action, Mapping) else None
         )
@@ -846,9 +722,6 @@ class TickOrchestrator:
             else None
         )
 
-        # 协作组件 (无状态 / 从 store 重建)
-        self._judge = ConvergenceJudge(ConvergenceConfig(max_iterations=max_rounds))
-        self._checkpoint_mgr = CheckpointManager(checkpoint_store)
         if self._guardrail is None:
             self._guardrail = GuardrailChain.default()
 
@@ -863,9 +736,9 @@ class TickOrchestrator:
             resolution.status is not ResolutionStatus.RESOLVED
             and state.current_stage != "project_setup"
         ):
-            raise CheckpointNotFoundError(
+            raise RuntimeError(
                 "PROJECT_PROFILE_REVALIDATION_REQUIRED: 当前项目证据不足，"
-                "不能继续使用 checkpoint 中的陈旧 Profile"
+                "不能继续使用持久化投影中的陈旧 Profile"
             )
         self._project_profile_resolution = resolution
         self._apply_project_profile_resolution(resolution)
@@ -926,14 +799,14 @@ class TickOrchestrator:
                 issued=issued_revision,
                 current=current_revision,
             )
-            raise CheckpointNotFoundError(
+            raise RuntimeError(
                 "RUNTIME_REVISION_INCOMPATIBLE: EventStore projection 与 active "
                 f"ActionSnapshot 已恢复；thread_id={resolved_thread_id}, "
                 f"action_message_id={(self._active_action or {}).get('message_id')}, "
                 f"differences={json.dumps(differences, ensure_ascii=False, sort_keys=True)}"
             )
         if compatibility is CompatibilityDecision.MIGRATION_REQUIRED:
-            raise CheckpointNotFoundError(
+            raise RuntimeError(
                 "RUNTIME_MIGRATION_REQUIRED: Event/Projection 版本需要确定性迁移器"
             )
         self._state.active_runtime_revision = issued_revision.to_dict()
@@ -967,7 +840,6 @@ class TickOrchestrator:
             return ErrorResponse("NO_STATE", "请先调用 --init 初始化").to_dict()
         try:
             result = json.loads(result_file.read_text(encoding="utf-8"))
-            result = upgrade_legacy_result(result, self._active_action)
             result = self._bind_active_auto_decision(result)
             envelope = validate_result_envelope(result)
         except (json.JSONDecodeError, OSError) as exc:
@@ -1009,7 +881,6 @@ class TickOrchestrator:
         stage_in = self._state.current_stage
 
         try:
-            result = upgrade_legacy_result(result, self._active_action)
             result = self._bind_active_auto_decision(result)
         except ProtocolValidationError as exc:
             self._record_tick_latency(t_start, tick_no)
@@ -1033,16 +904,6 @@ class TickOrchestrator:
                 and self._event_store is not None
             ):
                 replay = self._event_store.load_protocol_result(
-                    self._state.thread_id,
-                    result_causation,
-                )
-            if (
-                replay is None
-                and result_causation
-                and self._event_store is None
-                and self._checkpoint_store is not None
-            ):
-                replay = self._checkpoint_store.load_protocol_result(
                     self._state.thread_id,
                     result_causation,
                 )
@@ -1087,22 +948,13 @@ class TickOrchestrator:
                 ).to_dict()
             else:
                 try:
-                    if self._checkpoint_store is not None:
-                        action = self._checkpoint_store.claim_session(
-                            claim_token=result["claim_token"],
-                            session_id=result["session_id"],
-                            host=result["host"],
-                        )
-                    else:
-                        action = self._session_handoff.claim(result)
+                    action = self._session_handoff.claim(result)
                     self._state.execution_session_id = result["session_id"]
                     self._state.session_start_tick = self._state.tick
                     self._state.session_started_at = datetime.now().astimezone().isoformat()
                     self._state.session_input_units = 0
                     self._active_action = action
-                    self._save_checkpoint()
-                    if self._checkpoint_store is not None:
-                        self._checkpoint_store.record_protocol_action(action)
+                    self._persist_state()
                 except (KeyError, ValueError) as exc:
                     error_code = getattr(exc, "error_code", "SESSION_CLAIM_INVALID")
                     action = ErrorResponse(
@@ -1137,13 +989,6 @@ class TickOrchestrator:
         result_accepted = action.get("action") not in {"error", "resource_wait"}
         if native_result and result_causation and result_hash and result_accepted:
             self._result_replays[result_causation] = (result_hash, action)
-            if self._checkpoint_store is not None and self._event_store is None:
-                self._checkpoint_store.record_protocol_result(
-                    self._state.thread_id,
-                    result_causation,
-                    result_hash,
-                    action,
-                )
         self._current_result_message_id = None
         self._current_result_causation_id = None
         self._current_result_hash = None
@@ -1155,30 +1000,7 @@ class TickOrchestrator:
             tick_span.end()
         self._record_tick_latency(t_start, tick_no)
 
-        # T69a: Record tick completion event for metrics collector.
-        # Only record successful ticks — error/retry submissions inflate M1.
-        is_error = isinstance(action, dict) and action.get("action") == "error"
-        mc = get_collector()
-        if mc is not None and not is_error:
-            verdict = ""
-            if action.get("action") == "done":
-                verdict = action.get("verdict", "")
-            elif stage_in == "critic":
-                # T80: 传递 critic MAJOR/APPROVE 供 M2 统计
-                verdict = self._state.critic_verdict
-            mc.record_tick_complete(
-                tick_number=tick_no + 1,
-                stage=stage_in,
-                duration_ms=duration_ms,
-                verdict=verdict,
-                ai_origin=AIOrigin(
-                    level="led",
-                    agent_role=stage_in,
-                    driver_type="agent",
-                ),
-            )
-
-        # DebugTracer + Metrics: 记录 per-tick 快照
+        # DebugTracer 记录可重建的 per-tick 快照
         t_total_ms = (time.perf_counter() - t_start) * 1000
         timing_ms = {
             "t_total": round(t_total_ms, 2),
@@ -1200,47 +1022,16 @@ class TickOrchestrator:
                 gate_results=gate_snapshot,
                 timing_ms=timing_ms,
             )
-            # Metrics: bridge per-tick snapshots into metrics storage
-            if mc is not None:
-                mc.record_tick_snapshot(
-                    tick_number=tick_no + 1,
-                    stage_in=stage_in,
-                    action=action,
-                    state_snapshot=state_snapshot,
-                    guardrail_results=guardrail_snapshot,
-                    gate_results=gate_snapshot,
-                    timing_ms=timing_ms,
-                )
             # 检查 terminal verdict → finalize
             action_type = action.get("action", "")
             verdict = action.get("verdict", "")
             if action_type == "done" or verdict in (
-                "GOAL_ACHIEVED", "HARD_LIMIT", "REFINE_LIMIT", "STAGNANT",
+                "GOAL_ACHIEVED", "REFINE_LIMIT", "STAGNANT", "TERMINATED", "SUPERSEDED",
             ):
                 self._debug_tracer.finalize(
                     verdict=verdict or "UNKNOWN",
                     total_ticks=tick_no + 1,
                 )
-                # T80: Record convergence with criteria_met for M2 calculation
-                if mc is not None:
-                    criteria_map = {
-                        "GOAL_ACHIEVED": "critic_approved",
-                        "HARD_LIMIT": "hard_limit",
-                        "REFINE_LIMIT": "plan_refine",
-                        "STAGNANT": "stagnant",
-                        "TERMINATED": "terminated",
-                    }
-                    criteria_met = criteria_map.get(verdict, verdict.lower())
-                    mc.record_convergence(
-                        verdict=verdict or "UNKNOWN",
-                        total_ticks=tick_no + 1,
-                        criteria_met=criteria_met,
-                        ai_origin=AIOrigin(
-                            level="led",
-                            agent_role=self._state.current_stage if self._state else "?",
-                            driver_type="agent",
-                        ),
-                    )
 
         return action
 
@@ -1620,7 +1411,8 @@ class TickOrchestrator:
                 )
                 return self.build_action()
 
-            # Stage Checkpoint Gate (T64) — gate_id starts with "checkpoint_"
+            if gate_id == "design_structure_preflight":
+                return resolve_design_structure_preflight_gate(self._active_action, gate_resolution, self._state)
             if gate_id.startswith("checkpoint_"):
                 if resolution == "终止 loop":
                     return {
@@ -1664,13 +1456,13 @@ class TickOrchestrator:
             feedback = f"Gate '{gate_id}' resolved: {resolution}"
             if note:
                 feedback += f" — {note}"
-            self._save_checkpoint()
+            self._persist_state()
             return self.build_action(feedback=feedback)
 
         self._apply_result_to_state(result)
 
         # 挂运行时非持久句柄供 Guardrail (G7 REDGuardrail 读 batch_state/_plan, B3 line 657).
-        # asdict 只序列化 dataclass 字段 → 不泄漏进 checkpoint.
+        # asdict 只序列化 dataclass 字段 → 不泄漏进持久化投影。
         self._state._runtime_ctx["batch_state"] = self._batch_state
         self._state._runtime_ctx["plan"] = self._plan
         guardrail_state = self._guardrail_state(result)
@@ -1717,58 +1509,6 @@ class TickOrchestrator:
         )
 
         return self._after_tick(result)
-
-    def _complete_project_setup(self) -> dict:
-        return self._project_setup_service.complete()
-
-    def _record_project_setup_failure(self, result: dict) -> dict:
-        return self._project_setup_service.record_failure(result)
-
-    def _retry_project_setup(self, feedback: str, missing: list[str]) -> dict:
-        return self._project_setup_service.retry(feedback, missing)
-
-    def _reject_project_setup_scope(self, violations: dict[str, list[str]]) -> dict:
-        return self._project_setup_service.reject_scope(violations)
-
-    def _project_setup_scope_violations(
-        self, profile: ProjectProfile | None,
-    ) -> dict[str, list[str]]:
-        return project_setup_scope_violations(self, profile)
-
-    def _is_minimal_setup_test(self, relative: Path) -> bool:
-        return is_minimal_setup_test(self, relative)
-
-    def _is_setup_safe_local_import(self, relative: Path, imported: str) -> bool:
-        return is_setup_safe_local_import(self, relative, imported)
-
-    def _is_minimal_setup_source(self, relative: Path) -> bool:
-        return is_minimal_setup_source(self, relative)
-
-    def _project_setup_files(self) -> list[str]:
-        return project_setup_files(self)
-
-    def _project_setup_snapshot_files(self, profile: ProjectProfile) -> list[str]:
-        return project_setup_snapshot_files(self, profile)
-
-
-    def _apply_project_profile_resolution(self, resolution: ProjectProfileResolution) -> None:
-        profile = resolution.profile
-        if profile is None:
-            return
-        self._state.project_profile = profile.to_dict()
-        self._state.project_profile_id = profile.profile_id
-        self._state.missing_project_capabilities = list(resolution.missing_capabilities)
-        witnessed = list(self._state.project_anchor_baseline)
-        for root in (*profile.source_roots, *profile.test_roots):
-            if root not in witnessed and (self.project_root / root).is_dir():
-                witnessed.append(root)
-        if witnessed != self._state.project_anchor_baseline:
-            self._state.project_anchor_baseline = witnessed
-            self._queue_domain_event(
-                LoopEventType.PROJECT_ANCHORS_WITNESSED,
-                {"changes": {"project_anchor_baseline": witnessed}},
-            )
-        self._tick_gate_runner.reload(profile)
 
     def _queue_domain_event(self, event_type: LoopEventType, payload: dict[str, Any]) -> None:
         """暂存领域事实，由下一次 EventStore Tick 事务统一分配序列。"""
@@ -1876,6 +1616,28 @@ class TickOrchestrator:
                 error_code="RESULT_VALIDATION_ERROR",
                 message="; ".join(errors),
                 current_state=self._state.to_dict())
+
+        if self._batch_state is not None and "batch_id" in result:
+            expected_batch_id = self._batch_state.current_batch_id()
+            if result.get("batch_id") != expected_batch_id:
+                return ErrorResponse(
+                    error_code="DEVELOPER_BATCH_ID_MISMATCH",
+                    message=(
+                        "Result 的 batch_id 未绑定当前 active batch: "
+                        f"result={result.get('batch_id')!r}, "
+                        f"expected={expected_batch_id!r}"
+                    ),
+                    current_state=self._state.to_dict(),
+                )
+
+        if scope_error := self._validate_execution_scope(result):
+            return scope_error
+
+        if scope_error := self._validate_critic_scope(result):
+            return scope_error
+
+        if scope_error := self._validate_global_evidence_scope(result):
+            return scope_error
 
         active_spawn = (
             self._active_action.get("spawn")
@@ -1995,12 +1757,10 @@ class TickOrchestrator:
                 if proof_file.exists():
                     try:
                         proof_data = json.loads(proof_file.read_text(encoding="utf-8"))
-                        # 新 Action 使用不可变 challenge；旧线程没有 challenge 时
-                        # 只读兼容其 proof 内身份字段，不能用于新 Action 创建。
-                        challenge_data = (
-                            json.loads(challenge_file.read_text(encoding="utf-8"))
-                            if challenge_file.exists()
-                            else proof_data
+                        # 当前 Action 必须同时具备不可变 challenge 与完成 proof；
+                        # 缺少 challenge 时 fail-closed，不从 proof 猜测身份。
+                        challenge_data = json.loads(
+                            challenge_file.read_text(encoding="utf-8")
                         )
                         proof_ok = (
                             proof_data.get("status") == "completed"
@@ -2264,6 +2024,18 @@ class TickOrchestrator:
         if stage not in self._stage_handlers.stages:
             return state
         candidate = deepcopy(state)
+        # Guardrail 预览必须具备与当前运行时相同的持久化投影输入。正式提交前
+        # 的 ARCHITECTURE_PLAN_ACTIVATED 副作用尚未执行，因此不能让严格的
+        # BATCH_COMPLETED Reducer 误把正常开发结果判成投影缺失。
+        if self._batch_state is not None and candidate.batch_state_json is None:
+            candidate.batch_state_json = self._batch_state.to_json()
+        if self._progress_tree is not None and candidate.progress_tree_json is None:
+            candidate.progress_tree_json = json.dumps(
+                self._progress_tree.to_dict(),
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
         decision = self._build_stage_decision(result)
         registry = default_reducer_registry()
         for event in decision.events:
@@ -2275,7 +2047,7 @@ class TickOrchestrator:
         return candidate
 
     def _transition_extensions(self, stage: str) -> dict[str, object]:
-        """兼容入口：装配参数并委托 TransitionContextFactory。"""
+        """装配当前 Tick 的 transition 扩展，并委托唯一工厂。"""
         extensions = TransitionContextFactory().build(
             stage,
             batch_state=self._batch_state,
@@ -2295,13 +2067,6 @@ class TickOrchestrator:
             extensions["architect_prepared"] = prepared
         return extensions
 
-    @staticmethod
-    def _blocking_gate_results(
-        gate_results: object,
-    ) -> list[dict[str, object]]:
-        """Legacy 测试入口；生产路径使用 TransitionContextFactory。"""
-        return TransitionContextFactory.blocking_gate_results(gate_results)
-
     def _apply_stage_decision(self, decision: TransitionDecision) -> dict:
         """应用纯 Handler 决策；副作用集中保留在 Kernel façade。"""
 
@@ -2314,7 +2079,7 @@ class TickOrchestrator:
             self._collect_token_usage,
             self._record_completed_batch,
             self._snapshot_developer_output,
-            self._save_checkpoint,
+            self._persist_state,
             self._offload_stage,
             self._apply_supplement_effect,
             self._pause_stage,
@@ -2323,9 +2088,12 @@ class TickOrchestrator:
         transition_effects.apply_before_transition(decision.lifecycle_effects)
         reducer_registry = default_reducer_registry()
         cursor_fact_applied = False
+        # Reducer 只接受 EventStore 可重放的序列化投影。Handler 读取的是
+        # 当前 Tick 的内存投影，因此正式应用 cursor fact 前必须先同步一次；
+        # 仅在 _guardrail_state() 中补齐会让预览通过、正式提交却中断。
+        self._populate_serialized_state()
         for event in decision.events:
-            # Stage 推进还需执行 round/history/checkpoint 生命周期，暂由 façade
-            # 的 _advance_stage 负责；其余 Projection 变化统一走纯 Reducer。
+            # Stage 推进由当前 EventStore 事实链负责；其余 Projection 变化统一走纯 Reducer。
             if event.event_type is not LoopEventType.STAGE_ADVANCED:
                 self._state = reducer_registry.reduce(self._state, event)
             if event.event_type in {
@@ -2383,7 +2151,7 @@ class TickOrchestrator:
                 )
             if decision.display_progress:
                 self._display_progress()
-            return self._convergence_check(**convergence)
+            return self._resolve_completion(**convergence)
         if decision.advance_stage:
             self._advance_stage(decision.next_stage)
         feedback = action_context.get("feedback")
@@ -2521,7 +2289,7 @@ class TickOrchestrator:
         src_count = self._state.plan_refine_by_source.get(source, 0)
         if (src_count >= _MAX_PER_SOURCE
                 or self._state.plan_refine_count >= _MAX_GLOBAL):
-            self._save_checkpoint()
+            self._persist_state()
             if src_count >= _MAX_PER_SOURCE:
                 reason = (f"REFINE_LIMIT: {source} 分源 "
                           f"{src_count}/{_MAX_PER_SOURCE} 未解决")
@@ -2579,15 +2347,19 @@ class TickOrchestrator:
         )
         return asdict(req)
 
-    # ── 收敛判定 ──
+    # ── 完成判定 ──
 
-    def _convergence_check(
+    def _resolve_completion(
         self, design_coverage_ok: bool = False, system_deep_audit_ok: bool = False
     ) -> dict:
-        verdict = self._judge.evaluate(
-            self._round_history,
-            design_coverage_ok=design_coverage_ok,
-            system_deep_audit_ok=system_deep_audit_ok)
+        """只依据本 Tick 已提交的验证事实决定是否完成。"""
+        if not (design_coverage_ok and system_deep_audit_ok):
+            return ErrorResponse(
+                error_code="COMPLETION_EVIDENCE_INCOMPLETE",
+                message="完成判定缺少设计覆盖或系统深审计事实",
+                current_state=self._state.to_dict(),
+            ).to_dict()
+        verdict = "GOAL_ACHIEVED"
 
         # T83: Compute metrics signals only on convergence (done verdict).
         # Previously in _build_action() on every tick — moved here so signals
@@ -2601,14 +2373,14 @@ class TickOrchestrator:
                 project_root=str(self.project_root),
             )
 
-        if verdict.should_stop:
-            self._save_checkpoint()
+        if verdict == "GOAL_ACHIEVED":
+            self._persist_state()
             action = ActionDone(
-                verdict=verdict.level_name, reason=verdict.reason,
-                verdict_level=verdict.level,
+                verdict=verdict, reason="设计覆盖与系统深审计均已通过",
+                verdict_level=1,
                 acceptance_summary=build_terminal_acceptance_summary(
                     self._state,
-                    verdict=verdict.level_name,
+                    verdict=verdict,
                     design_coverage_ok=design_coverage_ok,
                     system_deep_audit_ok=system_deep_audit_ok,
                 ),
@@ -2623,7 +2395,7 @@ class TickOrchestrator:
                 #      独立于信号富集是否存在 (BEACON #69 T111)。
                 try:
                     mc.end_requirement(
-                        verdict=verdict.level_name,
+                        verdict=verdict,
                         total_ticks=self._state.tick,
                     )
                     _logger.debug("end_requirement triggered for DiagnosticRuleDiscoverer")
@@ -2636,18 +2408,12 @@ class TickOrchestrator:
             action = self._commit_terminal_action(action)
             return action
 
-        self._save_checkpoint()
-        action = ActionDone(
-            verdict="UNEXPECTED",
-            reason="ConvergenceJudge returned CONTINUE after full cycle",
-            acceptance_summary=build_terminal_acceptance_summary(
-                self._state, verdict="UNEXPECTED",
-            ),
+        self._persist_state()
+        return ErrorResponse(
+            error_code="COMPLETION_EVIDENCE_INCOMPLETE",
+            message="完成判定缺少设计覆盖或系统深审计事实",
+            current_state=self._state.to_dict(),
         ).to_dict()
-        if mc is not None and enrichment:
-            action["metrics"] = enrichment
-        action = self._commit_terminal_action(action)
-        return action
 
     def _commit_terminal_action(self, action: dict[str, Any]) -> dict[str, Any]:
         """终态没有下一轮 build_action，必须显式提交当前 Tick 事实。"""
@@ -2718,6 +2484,8 @@ class TickOrchestrator:
         project_setup_recovery: bool = False,
     ) -> dict:
         """Build the action dict for the current stage — delegates to ActionBuilder."""
+        if pre_gate is None:
+            pre_gate = build_design_structure_preflight_gate(self._state.current_stage, self._design_doc)
         if self._event_store is None:
             self._pending_effect_receipts.clear()
             self._pending_effect_intents.clear()
@@ -2742,7 +2510,8 @@ class TickOrchestrator:
                 pii_enabled=self._pii_enabled,
                 pii_redactor=self._pii_redactor,
                 pii_outbound=self._runtime_config.pii_outbound,
-            )
+                artifact_namespace=uuid4().hex,
+        )
         except PromptContextError as exc:
             if not str(exc).startswith("PROMPT_CONTEXT_TOO_LARGE"):
                 raise
@@ -2812,7 +2581,7 @@ class TickOrchestrator:
                 self._state.session_summary = summary.to_dict()
                 # build_action 发生在 stage checkpoint 之后；立即持久化，确保
                 # 下一次独立 --tick 进程能恢复刚注入的滚动摘要。
-                self._save_checkpoint()
+            self._persist_state()
         # v5.8: 先编译候选工作 Action，再以确定性预算决定是否改发 rollover。
         if (
             self._current_result_message_id is not None
@@ -2882,12 +2651,10 @@ class TickOrchestrator:
             if self._event_store is not None:
                 self._commit_event_action(action)
             else:
-                # 无持久化 EventStore 的内存/旧 checkpoint façade 仍需显式
+                # 无持久化 EventStore 的内存测试 façade 仍需显式
                 # 执行已规划 effect；这不是新运行事实源，只是兼容运行时。
                 self._execute_pending_effects()
             self._active_action = action
-            if self._checkpoint_store is not None and self._event_store is None:
-                self._checkpoint_store.record_protocol_action(action)
         self.action_builder.log_prompt(self.project_root, action)
         return action
 
@@ -2938,7 +2705,7 @@ class TickOrchestrator:
         self,
         current: RuntimeRevision,
     ) -> RuntimeRevision:
-        """读取 active Action 修订；旧线程只把 Prompt hash 转换为 legacy 修订。"""
+        """读取当前 active Action 修订；无活动修订时使用当前运行时修订。"""
 
         if self._active_action is not None:
             raw = (
@@ -2950,16 +2717,7 @@ class TickOrchestrator:
                 return RuntimeRevision.from_dict(raw)
         if self._state.active_runtime_revision is not None:
             return RuntimeRevision.from_dict(self._state.active_runtime_revision)
-        legacy_prompt = self._state.prompt_registry_hash or current.prompt_revision
-        return RuntimeRevision(
-            protocol_version=current.protocol_version,
-            event_schema_version=current.event_schema_version,
-            projection_schema_version=current.projection_schema_version,
-            action_contract_version=current.action_contract_version,
-            prompt_revision=legacy_prompt,
-            policy_revision=current.policy_revision,
-            engine_build_id=current.engine_build_id,
-        )
+        return current
 
     def _apply_loop_budget(self, candidate: dict[str, Any]) -> dict[str, Any]:
         if candidate.get("action") in {"done", "error", "session_rollover", "gate"}:
@@ -3073,10 +2831,10 @@ class TickOrchestrator:
 
     def _collect_token_usage(self) -> None:
         """T110b: 从 JSONL 转录文件增量采集本 tick 的 token 消耗."""
-        if self._transcript_parser is None:
+        if self._usage_collector is None:
             return
         try:
-            usage = self._transcript_parser.collect()
+            usage = self._usage_collector.collect()
             if usage.get("input_tokens") or usage.get("output_tokens"):
                 provider = usage.get("provider")
                 usage_source = usage.get("usage_source") or "unsupported"
@@ -3098,68 +2856,53 @@ class TickOrchestrator:
                         active_action.get("extensions", {})
                         .get("context_manifest", {})
                     )
-                    ledger = UsageLedger(
-                        self.project_root / ".ae-state" / "usage-ledger.db"
+                    # Usage is a semantic EventStore fact, committed with this
+                    # Tick. No second usage database may participate in Loop
+                    # recovery or status.
+                    self._queue_domain_event(
+                        LoopEventType.USAGE_RECORDED,
+                        {
+                            "usage": {
+                                "session_id": (
+                                    self._state.execution_session_id
+                                    or self._state.thread_id
+                                ),
+                                "tick": self._state.tick,
+                                "stage": self._state.current_stage or "unknown",
+                                "worker": self._state.current_stage or "main",
+                                "input_units": usage.get("input_tokens"),
+                                "cache_read_units": usage.get("cache_read_tokens"),
+                                "cache_write_units": usage.get("cache_write_tokens"),
+                                "output_units": usage.get("output_tokens"),
+                                "provider": provider or "unknown",
+                                "model": usage.get("model") or "unknown",
+                                "usage_source": usage_source,
+                                "estimated": bool(usage.get("estimated", False)),
+                                "core_payload_bytes": payload_bytes,
+                                "inline_unique_bytes": manifest.get(
+                                    "total_inline_bytes"
+                                ),
+                                "duplicate_block_bytes": manifest.get(
+                                    "duplicate_block_bytes"
+                                ),
+                                "host_context_window_units": usage.get(
+                                    "host_context_window_units"
+                                ),
+                                "estimator_version": usage.get(
+                                    "estimator_version", ""
+                                ),
+                                "action_message_id": (
+                                    active_action.get("message_id")
+                                    if isinstance(active_action, dict)
+                                    else None
+                                ),
+                            }
+                        },
                     )
-                    try:
-                        ledger.append(UsageRecord(
-                            thread_id=self._state.thread_id,
-                            session_id=(
-                                self._state.execution_session_id or "legacy-session"
-                            ),
-                            tick=self._state.tick,
-                            stage=self._state.current_stage or "unknown",
-                            worker=self._state.current_stage or "main",
-                            input_units=usage.get("input_tokens"),
-                            cache_read_units=usage.get("cache_read_tokens"),
-                            cache_write_units=usage.get("cache_write_tokens"),
-                            output_units=usage.get("output_tokens"),
-                            provider=provider or "unknown",
-                            model=usage.get("model") or "unknown",
-                            usage_source=usage_source,
-                            estimated=bool(usage.get("estimated", False)),
-                            core_payload_bytes=payload_bytes,
-                            inline_unique_bytes=manifest.get(
-                                "total_inline_bytes"
-                            ),
-                            duplicate_block_bytes=manifest.get(
-                                "duplicate_block_bytes"
-                            ),
-                            host_context_window_units=usage.get(
-                                "host_context_window_units"
-                            ),
-                            estimator_version=usage.get(
-                                "estimator_version", ""
-                            ),
-                            action_message_id=(
-                                active_action.get("message_id")
-                                if isinstance(active_action, dict)
-                                else None
-                            ),
-                        ))
-                    finally:
-                        ledger.close()
                 _logger.debug(
                     "Token collect: tick=%d input=%d output=%d model=%s",
                     self._state.tick, usage["input_tokens"],
                     usage["output_tokens"], usage.get("model", ""))
-                # 2026-07-25 审计修复: 记录到 collector, 打通 M5 数据流。
-                # 原实现只写 state.tick_token_usage, 从未调用
-                # record_token_usage() → token_events 恒空, M5 结构性为零。
-                mc = get_collector()
-                if mc is not None:
-                    mc.record_token_usage(
-                        input_tokens=usage["input_tokens"],
-                        output_tokens=usage["output_tokens"],
-                        model=usage.get("model", "unknown"),
-                        provider=provider or "unsupported",
-                        stage=self._state.current_stage or "",
-                        ai_origin=AIOrigin(
-                            level="led",
-                            agent_role=self._state.current_stage or "",
-                            driver_type="agent",
-                        ),
-                    )
         except (OSError, ValueError, KeyError, TypeError):
             _logger.debug("Token collect failed", exc_info=True)
 
@@ -3176,6 +2919,15 @@ class TickOrchestrator:
     def _validate_component_verifier_scope(self, result: dict) -> ErrorResponse | None:
         return _validate_component_verifier_scope_impl(self, result)
 
+    def _validate_execution_scope(self, result: dict) -> ErrorResponse | None:
+        return _validate_execution_scope_impl(self, result)
+
+    def _validate_critic_scope(self, result: dict) -> ErrorResponse | None:
+        return _validate_critic_scope_impl(self, result)
+
+    def _validate_global_evidence_scope(self, result: dict) -> ErrorResponse | None:
+        return _validate_global_evidence_scope_impl(self, result)
+
     def _validate_gap_review_decisions(self, result: dict) -> ErrorResponse | None:
         return _validate_gap_review_decisions_impl(self, result)
 
@@ -3185,6 +2937,18 @@ class TickOrchestrator:
     def _apply_result_to_state(self, result: dict) -> None:
         """只准备 Architect 的瞬时 Candidate；持久结果由 Handler 事件提交。"""
         if result.get("stage") == "architect":
+            extensions = result.get("extensions")
+            raw_coverage = (
+                extensions.get("architect_plan_coverage")
+                if isinstance(extensions, Mapping)
+                else None
+            )
+            if isinstance(raw_coverage, Mapping):
+                self._state._runtime_ctx["architect_plan_coverage"] = deepcopy(
+                    dict(raw_coverage)
+                )
+            else:
+                self._state._runtime_ctx.pop("architect_plan_coverage", None)
             preparation = ArchitectResultPreparer().prepare(self._state, result)
             prepared = {
                 "evidence_changes": preparation.evidence_changes,
@@ -3217,11 +2981,9 @@ class TickOrchestrator:
         if next_stage is None:
             return
         previous_stage = self._state.current_stage
-        self._append_round_history()
         clear_stage_fields(self._state, self._state.current_stage)
         self._state.current_stage = next_stage
         self._state.expected_stage = next_stage
-        self._state.round += 1
         self._state.tick += 1
         self._state.guardrail_retry_counters[next_stage] = 0
         has_transition_fact = any(
@@ -3235,36 +2997,8 @@ class TickOrchestrator:
                 LoopEventType.STAGE_ADVANCED,
                 {"from": previous_stage, "to": next_stage},
             )
-        self._save_checkpoint()
-
-    def _append_round_history(self) -> None:
-        """Append current tick as RoundHistory for convergence judge (P0-1 fix).
-
-        Previously _round_history was initialized and saved to checkpoint but
-        never populated — all 4 convergence levels (hard_limit, quality_gates,
-        stagnation, semantic) were silently bypassed.  Each stage transition
-        records a RoundHistory so the judge has real data.
-
-        T105b: lines_added/lines_removed populated from git diff --numstat so
-        stagnation detection can sense "small file big change" scenarios.
-        """
-
-        gate_results = getattr(self._state, "gate_results", {}) or {}
-        files_changed = getattr(self._state, "files_changed", []) or []
-        lines_added, lines_removed = self._compute_diff_stats(files_changed)
-        self._round_history.append(RoundHistory(
-            round_id=self._state.round,
-            stage=self._state.current_stage,
-            files_changed=len(files_changed),
-            lines_added=lines_added,
-            lines_removed=lines_removed,
-            gate_results=gate_results,
-        ))
-
-    def _compute_diff_stats(self, files_changed: list, *, git_runner: Callable | None = None) -> tuple[int, int]:
-        return _compute_diff_stats_impl(
-            self, files_changed, git_runner=git_runner,
-        )
+        if self._event_store is not None:
+            self._persist_state()
 
     def _run_developer_gates(self, *, state: EngineState | None = None) -> None:
         """兼容入口：委托独立 DeveloperGateService。"""
@@ -3317,17 +3051,11 @@ class TickOrchestrator:
             "audit findings recorded: P0=%d P1=%d P2=%d triggered=%s",
             p0, p1, p2, triggered)
 
-    def _save_checkpoint(self) -> str | None:
-        # v5.7 新线程由 EventStore 的单 Tick 事务持久化；旧 checkpoint 仅作兼容读取。
-        if self._event_store is not None:
-            self._populate_serialized_state()
-            return None
-        if self._checkpoint_mgr is None:
-            return None
+    def _persist_state(self) -> None:
+        """准备当前投影，随后由单 Tick EventStore 事务提交。"""
+        if self._event_store is None:
+            return
         self._populate_serialized_state()
-        return self._checkpoint_mgr.save(
-            self._state, self._state.round, step=self._state.tick,
-            history=self._round_history)
 
     def _commit_event_action(self, action: dict[str, Any]) -> None:
         """将当前状态与出站 Action 作为一个 EventStore Tick 原子提交。"""
@@ -3341,7 +3069,6 @@ class TickOrchestrator:
         state_snapshot = deepcopy(self._state)
         batch_state_snapshot = deepcopy(self._batch_state)
         progress_tree_snapshot = deepcopy(self._progress_tree)
-        round_history_snapshot = deepcopy(self._round_history)
         active_action_snapshot = deepcopy(self._active_action)
         result_causation_id = (
             self._active_action.get("message_id")
@@ -3357,7 +3084,6 @@ class TickOrchestrator:
                 pending_events=tuple(self._pending_domain_events),
                 result_message_id=self._current_result_message_id,
                 result_causation_id=result_causation_id,
-                round_history=tuple(asdict(item) for item in self._round_history),
             )
             self._execute_pending_effects()
             self._event_store.commit_tick(
@@ -3390,7 +3116,6 @@ class TickOrchestrator:
                 self._state = state_snapshot
             self._batch_state = batch_state_snapshot
             self._progress_tree = progress_tree_snapshot
-            self._round_history = round_history_snapshot
             self._active_action = active_action_snapshot
             # 这些对象对应本次未提交 Tick；必须清空，避免下一次重试重复写入。
             self._pending_domain_events.clear()

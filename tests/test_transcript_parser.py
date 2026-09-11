@@ -307,6 +307,81 @@ class TestSessionTranscriptParserCollect:
         assert "claude-haiku-4-5" in result["model"]
         assert result["message_count"] == 1
 
+    def test_flat_subagent_directory_is_not_a_runtime_source(self, tmp_path, monkeypatch):
+        """旧的 session 目录扁平 subagents 路径不得再被读取。"""
+        encoded = _encode_cwd(str(tmp_path))
+        session_dir = Path.home() / ".claude" / "projects" / encoded
+        main_file = session_dir / "session.jsonl"
+        flat_dir = session_dir / "subagents"
+        flat_dir.mkdir(parents=True, exist_ok=True)
+        main_file.write_text("")
+        (flat_dir / "agent-old.jsonl").write_text(json.dumps({
+            "type": "assistant",
+            "message": {
+                "id": "old",
+                "usage": {"input_tokens": 1, "output_tokens": 1},
+            },
+        }) + "\n")
+
+        class FakeParser(SessionTranscriptParser):
+            def _find_latest_session(self):
+                return main_file
+
+        result = FakeParser(tmp_path).collect()
+        assert result["input_tokens"] == 0
+        assert result["message_count"] == 0
+
+    def test_collect_keeps_empty_projection_when_main_read_fails(
+        self, tmp_path, monkeypatch
+    ):
+        session_file = tmp_path / "session.jsonl"
+        session_file.write_text("", encoding="utf-8")
+
+        class FailingParser(SessionTranscriptParser):
+            def _find_latest_session(self):
+                return session_file
+
+            def _read_incremental(self, filepath, offset):
+                raise OSError("session disappeared")
+
+        result = FailingParser(tmp_path).collect()
+        assert result["input_tokens"] == 0
+        assert result["message_count"] == 0
+
+    def test_collect_skips_a_failed_subagent_file(self, tmp_path):
+        session_file = tmp_path / "session.jsonl"
+        session_file.write_text("", encoding="utf-8")
+        subagent_dir = session_file.parent / session_file.stem / "subagents"
+        subagent_dir.mkdir(parents=True)
+        (subagent_dir / "agent-failing.jsonl").write_text("", encoding="utf-8")
+
+        class FailingSubagentParser(SessionTranscriptParser):
+            def _find_latest_session(self):
+                return session_file
+
+            def _read_incremental(self, filepath, offset):
+                if filepath.name.startswith("agent-"):
+                    raise ValueError("bad subagent transcript")
+                return offset, 0, 0, 0, 0, set(), 0
+
+        result = FailingSubagentParser(tmp_path).collect()
+        assert result["input_tokens"] == 0
+
+    def test_find_latest_session_and_incremental_read_fail_closed(
+        self, tmp_path, monkeypatch
+    ):
+        parser = SessionTranscriptParser(tmp_path)
+        original_glob = Path.glob
+
+        def failing_glob(path, pattern):
+            if path == parser._session_dir:
+                raise OSError("permission denied")
+            return original_glob(path, pattern)
+
+        monkeypatch.setattr(Path, "glob", failing_glob)
+        assert parser._find_latest_session() is None
+        assert parser._read_incremental(tmp_path / "missing.jsonl", 4)[0] == 4
+
 
 class TestSessionTranscriptParserReset:
     def test_reset_clears_state(self, tmp_path, monkeypatch):
@@ -382,3 +457,16 @@ class TestCreateParser:
 
         parser = create_parser(tmp_path)
         assert isinstance(parser, CodexSessionTranscriptParser)
+
+    def test_returns_none_when_no_supported_host_is_detected(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.setenv("AE_METRICS", "1")
+        monkeypatch.setenv("AE_TOKEN_TRACKING", "1")
+        for name in (
+            "AE_HOST_PLATFORM", "CLAUDE_PLUGIN_ROOT", "CODEX_PLUGIN_ROOT",
+            "CODEX_THREAD_ID", "CODEX_SANDBOX", "CLAUDE_CODE",
+            "CLAUDE_CODE_ENTRYPOINT", "ANTHROPIC_CLI",
+        ):
+            monkeypatch.delenv(name, raising=False)
+        assert create_parser(tmp_path) is None

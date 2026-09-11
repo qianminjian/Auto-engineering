@@ -108,6 +108,16 @@ def test_architect_prompt_requires_canonical_design_section_refs() -> None:
     assert "不能输出" in prompt
 
 
+def test_architect_prompt_matches_core_task_shape() -> None:
+    prompt = default_registry().get("architect")
+
+    assert '"kind": "test|contract_test|implementation"' in prompt
+    assert '"module_ref": "负责的设计模块或组件引用"' in prompt
+    assert '"file_targets": ["相对 project_root 的 POSIX 路径"]' in prompt
+    assert '"depends_on": []' in prompt
+    assert "Core 会在激活前按同一模板做确定性校验" in prompt
+
+
 def test_verifier_prompts_only_offer_result_schema_status_values() -> None:
     for stage in ("component_verifier", "system_verifier"):
         prompt = default_registry().get(stage)

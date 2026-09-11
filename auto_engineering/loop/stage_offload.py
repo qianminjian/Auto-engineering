@@ -68,7 +68,7 @@ class StageOffloadService:
         batch_state: BatchState | None,
         cached_summary: SessionSummary | None,
     ) -> SessionSummary | None:
-        summary = f"{stage} stage completed at tick {state.tick}/{state.round}"
+        summary = f"{stage} stage completed at tick {state.tick}"
         key_decisions: list[str] = []
         files_changed = list(state.files_changed or [])
         if stage == "architect":

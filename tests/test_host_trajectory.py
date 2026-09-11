@@ -12,7 +12,6 @@ from auto_engineering.engine.state import EngineState
 from auto_engineering.host import HostPlatform
 from auto_engineering.host.capabilities import HostCapabilities, HostCapabilityError
 from auto_engineering.loop.action_builder import ActionBuilder
-from auto_engineering.loop.checkpoint.store import SQLiteCheckpointStore
 from auto_engineering.loop.design_decision_ledger import DesignDecisionLedger
 from auto_engineering.loop.event_store import SQLiteEventStore
 from auto_engineering.loop.tick_orchestrator import TickOrchestrator
@@ -40,7 +39,6 @@ def _inline_result(action: dict, **payload: object) -> dict:
 def _core(
     root: Path,
     events: SQLiteEventStore,
-    checkpoint_store: SQLiteCheckpointStore | None = None,
 ) -> tuple[TickOrchestrator, dict]:
     (root / "pyproject.toml").write_text("[project]\nname='trajectory'\n")
     (root / "trajectory").mkdir()
@@ -48,7 +46,6 @@ def _core(
     guardrail.check.return_value = MagicMock(action="pass")
     core = TickOrchestrator(
         root,
-        checkpoint_store=checkpoint_store,
         event_store=events,
         guardrail=guardrail,
         gate_runner=lambda names, project: {
@@ -112,9 +109,8 @@ def test_architect_design_conflict_uses_core_user_gate_and_approval_event(
         "change_summary": "将原设计改为新架构",
         "affected_design_refs": ["§4.1"],
     }
-    checkpoints = SQLiteCheckpointStore(tmp_path / "checkpoints.db")
     with SQLiteEventStore(tmp_path / "events.db") as events:
-        core, action = _core(tmp_path, events, checkpoints)
+        core, action = _core(tmp_path, events)
         core._state.research_archive = {
             "gap-research-1": {
                 "recommended_design": "将原设计改为新架构",
@@ -160,7 +156,6 @@ def test_architect_design_conflict_uses_core_user_gate_and_approval_event(
         restored_guardrail.check.return_value = MagicMock(action="pass")
         core = TickOrchestrator.restore_from_event_store(
             tmp_path,
-            checkpoints,
             event_store=events,
             thread_id=action["thread_id"],
             guardrail=restored_guardrail,
@@ -205,7 +200,6 @@ def test_architect_design_conflict_uses_core_user_gate_and_approval_event(
             }],
         }]).next_action
         assert planned["action"] == "developer", planned.get("feedback")
-    checkpoints.close()
 
 
 def test_three_worker_plate_audit_uses_templates_through_core_tick(
@@ -252,6 +246,7 @@ def test_three_worker_plate_audit_uses_templates_through_core_tick(
                 action,
                 workers=[lambda invocation, batch=batch_id, name=component: {
                     "batch_id": batch,
+                    "task_ids": [f"{batch}-T1"],
                     "files_changed": [f"trajectory/{name.lower()}.py"],
                     "commit_hash": "",
                     "test_results": {"passed": 1, "failed": 0, "total": 1},
@@ -444,6 +439,7 @@ def test_stringified_critic_findings_are_normalized_before_core_submission(
         }]).next_action
         action = runner.run(action, workers=[lambda invocation: {
             "batch_id": "B1",
+            "task_ids": ["B1-T1"],
             "files_changed": ["trajectory/core.py"],
             "commit_hash": "",
             "test_results": {"passed": 1, "failed": 0, "total": 1},

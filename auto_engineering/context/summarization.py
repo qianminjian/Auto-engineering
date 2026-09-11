@@ -76,7 +76,7 @@ class SessionSummary:
     generated_at_tick: int = 0
 
     def to_dict(self) -> dict[str, Any]:
-        """转换为 checkpoint 可序列化结构。"""
+        """转换为 EventStore 可序列化结构。"""
         return {
             "ticks_covered": {
                 "start": self.ticks_covered.start,
@@ -94,7 +94,7 @@ class SessionSummary:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> SessionSummary:
-        """从 checkpoint 结构恢复滚动摘要。"""
+        """从 EventStore 投影结构恢复滚动摘要。"""
         ticks = data.get("ticks_covered", {})
         return cls(
             ticks_covered=range(

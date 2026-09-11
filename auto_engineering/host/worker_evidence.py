@@ -8,32 +8,26 @@
 from __future__ import annotations
 
 import json
-import os
-import re
-import tempfile
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass
-from pathlib import Path
 from typing import Any
 
-
-class HostEvidenceValidationError(ValueError):
-    """一次报告全部证据问题，避免宿主逐轮修补 JSON。"""
-
-    def __init__(self, violations: Sequence[str]) -> None:
-        self.violations = tuple(dict.fromkeys(violations))
-        super().__init__("HOST_EVIDENCE_INVALID: " + ",".join(self.violations))
-
-
-class WorkerOutcomeCollectionError(ValueError):
-    """Worker 私有产出无法汇总为 Action-scoped outcomes。"""
-
-    def __init__(self, code: str, worker_id: str, detail: str = "") -> None:
-        self.code = code
-        self.worker_id = worker_id
-        self.detail = detail
-        suffix = f":{detail}" if detail else ""
-        super().__init__(f"{code}:{worker_id}{suffix}")
+from auto_engineering.host.worker_evidence_contracts import (
+    HostEvidenceValidationError,
+    WorkerOutcomeCollectionError,
+)
+from auto_engineering.host.worker_evidence_io import (
+    atomic_write_bytes as _atomic_write_bytes,
+)
+from auto_engineering.host.worker_evidence_io import (
+    atomic_write_json as _atomic_write_json,
+)
+from auto_engineering.host.worker_evidence_io import (
+    canonical_bytes as _canonical_bytes,
+)
+from auto_engineering.host.worker_execution_binding import (
+    resolve_worker_execution_binding as _resolve_worker_execution_binding,
+)
 
 
 def _native_handle_is_missing(value: str | None) -> bool:
@@ -72,6 +66,29 @@ def _business_payload_reports_test_failure(payload: Mapping[str, Any]) -> bool:
         for key in ("failed", "errors")
         for value in (test_results.get(key),)
     )
+
+
+def _json_object_candidates(text: str) -> list[Mapping[str, Any]]:
+    """提取文本中的完整 JSON 对象，保留嵌套结构并拒绝歧义。"""
+
+    decoder = json.JSONDecoder()
+    candidates: list[Mapping[str, Any]] = []
+    cursor = 0
+    while cursor < len(text):
+        start = text.find("{", cursor)
+        if start < 0:
+            break
+        try:
+            candidate, end = decoder.raw_decode(text, start)
+        except json.JSONDecodeError:
+            cursor = start + 1
+            continue
+        if isinstance(candidate, Mapping):
+            candidates.append(candidate)
+        # raw_decode 已经消费完整对象，跳过其内部嵌套对象；若正文中
+        # 还有第二个顶层对象，下一次循环会将其识别出来并让调用方拒绝。
+        cursor = end
+    return candidates
 
 
 def _native_business_artifact(
@@ -120,23 +137,7 @@ def _native_business_artifact(
             if isinstance(text, str):
                 texts.append(text)
         for text in texts:
-            stripped = text.strip()
-            if stripped.startswith("{") and stripped.endswith("}"):
-                try:
-                    candidate = json.loads(stripped)
-                except json.JSONDecodeError:
-                    candidate = None
-                if isinstance(candidate, Mapping):
-                    candidates.append(candidate)
-            for match in re.findall(
-                r"```(?:json)?\s*(\{.*?\})\s*```", text, flags=re.DOTALL
-            ):
-                try:
-                    candidate = json.loads(match)
-                except json.JSONDecodeError:
-                    continue
-                if isinstance(candidate, Mapping):
-                    candidates.append(candidate)
+            candidates.extend(_json_object_candidates(text))
     elif isinstance(raw, list):
         texts = []
         for block in raw:
@@ -146,23 +147,7 @@ def _native_business_artifact(
             if isinstance(text, str):
                 texts.append(text)
         for text in texts:
-            stripped = text.strip()
-            if stripped.startswith("{") and stripped.endswith("}"):
-                try:
-                    candidate = json.loads(stripped)
-                except json.JSONDecodeError:
-                    candidate = None
-                if isinstance(candidate, Mapping):
-                    candidates.append(candidate)
-            for match in re.findall(
-                r"```(?:json)?\s*(\{.*?\})\s*```", text, flags=re.DOTALL
-            ):
-                try:
-                    candidate = json.loads(match)
-                except json.JSONDecodeError:
-                    continue
-                if isinstance(candidate, Mapping):
-                    candidates.append(candidate)
+            candidates.extend(_json_object_candidates(text))
     elif isinstance(raw, Mapping):
         # Codex 的结构化 Worker 返回也可能已经是裸业务对象。它仍然只
         # 作为 payload 使用，宿主 envelope 继续由本次 record 调用绑定。
@@ -357,110 +342,6 @@ def worker_failure_outcomes_are_ready(
         outcome_items=outcome_items,
         allowed_statuses={"failed", "cancelled", "timeout", "timed_out", "errored"},
     )
-
-
-def _resolve_worker_execution_binding(
-    action: Mapping[str, Any],
-    template: Mapping[str, Any] | None,
-    worker_id: str,
-) -> tuple[int | None, str | None]:
-    """解析并校验 Action 顶层与宿主 Worker 模板的同一代际绑定。"""
-
-    action_generation = action.get("execution_generation")
-    action_fence = action.get("fencing_token")
-    template_generation = template.get("execution_generation") if template else None
-    template_fence = template.get("fencing_token") if template else None
-    has_action_binding = action_generation is not None or action_fence is not None
-    if has_action_binding:
-        if (
-            not isinstance(action_generation, int)
-            or isinstance(action_generation, bool)
-            or action_generation < 1
-            or not isinstance(action_fence, str)
-            or len(action_fence) != 64
-        ):
-            raise HostEvidenceValidationError(
-                (f"WORKER_EXECUTION_BINDING_INVALID:{worker_id}",)
-            )
-        # Action 级 fence 与 Worker 级 fence 是两个不同作用域：前者绑定
-        # 宿主会话，后者还包含 worker_id。两者不能直接比较，但都必须
-        # 与同一个 execution_generation 对齐。
-        if template is None:
-            # 旧的宿主视图可能没有 workers 模板；此时不把 Action 级
-            # lease 伪装成 Worker 级交接，避免同一兼容失败被误判为新代。
-            return None, None
-        if template_generation != action_generation:
-            raise HostEvidenceValidationError(
-                (f"WORKER_EXECUTION_BINDING_MISMATCH:{worker_id}",)
-            )
-        if template_fence is None:
-            return action_generation, None
-        if not isinstance(template_fence, str) or len(template_fence) != 64:
-            raise HostEvidenceValidationError(
-                (f"WORKER_EXECUTION_BINDING_INVALID:{worker_id}",)
-            )
-        return action_generation, template_fence
-    if template_generation is None and template_fence is None:
-        return None, None
-    if (
-        not isinstance(template_generation, int)
-        or isinstance(template_generation, bool)
-        or template_generation < 1
-        or not isinstance(template_fence, str)
-        or len(template_fence) != 64
-    ):
-        raise HostEvidenceValidationError(
-            (f"WORKER_EXECUTION_BINDING_INVALID:{worker_id}",)
-        )
-    return template_generation, template_fence
-
-
-def _canonical_bytes(value: object) -> bytes:
-    return json.dumps(
-        value,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-        allow_nan=False,
-    ).encode("utf-8")
-
-
-def _atomic_write_json(path: Path, payload: object) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, temporary_name = tempfile.mkstemp(
-        prefix=f".{path.name}.",
-        suffix=".tmp",
-        dir=path.parent,
-    )
-    try:
-        with os.fdopen(descriptor, "wb") as handle:
-            handle.write(_canonical_bytes(payload))
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary_name, path)
-    finally:
-        if os.path.exists(temporary_name):
-            os.unlink(temporary_name)
-
-
-def _atomic_write_bytes(path: Path, payload: bytes) -> None:
-    """原样原子写入宿主回包，不对 native envelope 做二次序列化。"""
-
-    path.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, temporary_name = tempfile.mkstemp(
-        prefix=f".{path.name}.",
-        suffix=".tmp",
-        dir=path.parent,
-    )
-    try:
-        with os.fdopen(descriptor, "wb") as handle:
-            handle.write(payload)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary_name, path)
-    finally:
-        if os.path.exists(temporary_name):
-            os.unlink(temporary_name)
 
 
 __all__ = [

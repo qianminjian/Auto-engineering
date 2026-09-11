@@ -59,7 +59,9 @@ RESULT_SCHEMA: dict[str, dict] = {
         "plan_min_length": 50,
     },
     "developer": {
-        "required": ["stage", "batch_id", "files_changed", "test_results"],
+        "required": [
+            "stage", "batch_id", "task_ids", "files_changed", "test_results",
+        ],
         "test_results_min_passed": 1,
         "test_results_required_failed": 0,
     },
@@ -122,11 +124,13 @@ _RESULT_FIELD_TYPES: dict[str, dict[str, tuple[type, ...]]] = {
     },
     "developer": {
         "stage": (str,), "batch_id": (str, type(None)),
+        "task_ids": (list,),
         "files_changed": (list,), "test_results": (dict,),
         "commit_hash": (str,), "red_evidence": (list,),
     },
     "critic": {
         "stage": (str,), "verdict": (str,), "findings": (list,),
+        "cross_batch_findings": (list,),
         "strengths": (list,), "critic_feedback": (str,),
         "assessment": (str,), "assurance_bundle": (dict,),
     },

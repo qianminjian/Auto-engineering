@@ -23,7 +23,7 @@ class TransitionEffectExecutor:
         collect_token_usage: Callable[[], None] | None = None,
         record_completed_batch: Callable[[str], None] | None = None,
         snapshot_developer_output: Callable[[], None] | None = None,
-        save_checkpoint: Callable[[], None] | None = None,
+        persist_state: Callable[[], None] | None = None,
         offload_stage: Callable[[str], None] | None = None,
         inject_supplement: Callable[[Mapping[str, Any]], None] | None = None,
         pause_stage: Callable[[str], None] | None = None,
@@ -36,7 +36,7 @@ class TransitionEffectExecutor:
         self._collect_token_usage = collect_token_usage
         self._record_completed_batch = record_completed_batch
         self._snapshot_developer_output = snapshot_developer_output
-        self._save_checkpoint = save_checkpoint
+        self._persist_state = persist_state
         self._offload_stage = offload_stage
         self._inject_supplement = inject_supplement
         self._pause_stage = pause_stage
@@ -68,8 +68,8 @@ class TransitionEffectExecutor:
             and self._snapshot_developer_output is not None
         ):
             self._snapshot_developer_output()
-        if effects.save_checkpoint and self._save_checkpoint is not None:
-            self._save_checkpoint()
+        if effects.persist_state and self._persist_state is not None:
+            self._persist_state()
         if effects.offload_stage is not None and self._offload_stage is not None:
             self._offload_stage(effects.offload_stage)
 

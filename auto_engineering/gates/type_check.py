@@ -222,7 +222,3 @@ class TypeCheckGate(Gate):
             f"{checker} 退出 {result.returncode}, 无类型 error",
             gate_name=self.name,
         )
-
-
-# v5.5 audit P2-15: 向后兼容别名, v6.0 移除
-TypeCheckGate._register_alias("mypy_bin", "type_checker_bin")

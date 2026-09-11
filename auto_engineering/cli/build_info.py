@@ -25,6 +25,19 @@ def _identity_source() -> str:
     return "packaged" if metadata["version"] == __version__ else "source"
 
 
+def _packaged_content_sha256() -> str | None:
+    """返回已加载 Release 的完整内容摘要，供宿主预检落盘。"""
+
+    build_info_path = Path(__file__).resolve().parents[1].parent / "build-info.json"
+    try:
+        metadata = validate_build_info(
+            json.loads(build_info_path.read_text(encoding="utf-8"))
+        )
+    except (OSError, json.JSONDecodeError, TypeError, ValueError):
+        return None
+    return metadata["content_sha256"]
+
+
 @click.command("build-info")
 @click.option(
     "--format",
@@ -46,6 +59,9 @@ def build_info(output_format: str, expect_build_id: str | None) -> None:
         "build_id": current_build_identity(),
         "source_kind": _identity_source(),
     }
+    content_sha256 = _packaged_content_sha256()
+    if content_sha256 is not None:
+        payload["content_sha256"] = content_sha256
     if expect_build_id is not None and payload["build_id"] != expect_build_id:
         raise click.ClickException(
             "Build Identity 不匹配："

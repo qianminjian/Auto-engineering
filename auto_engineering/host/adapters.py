@@ -28,6 +28,17 @@ _EVENT_NAMES = {
     "Stop": "stop",
 }
 
+
+def usage_collector_for(project_root: Path):
+    """返回当前宿主的标准化 usage collector。
+
+    私有 transcript/rollout 格式属于 Host Adapter 边界；Loop Core 只依赖
+    ``collect()`` 结构，不直接导入或探测宿主会话目录。
+    """
+    from auto_engineering.metrics.transcript_parser import create_parser
+
+    return create_parser(project_root)
+
 class _Adapter2Mixin:
     platform: ClassVar[HostPlatform]
     capabilities: ClassVar[HostCapabilities]
@@ -189,4 +200,5 @@ __all__ = [
     "ClaudeCodeHostAdapter",
     "CodexHostAdapter",
     "adapter_for",
+    "usage_collector_for",
 ]

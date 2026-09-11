@@ -1,22 +1,16 @@
-"""MetricsCollector — 跨需求度量聚合器 (T65, T117 拆分).
-
-借鉴 LangGraph runtime.py Runtime 的 scoped context 模式：
-Runtime 为每个 run 提供独立上下文（run_id, attempt 计数器），
-MetricsCollector 为每个需求提供独立采集作用域（thread_id → 事件流）。
-
-T117: 拆分为门面 + _MetricsAggregator + _MetricsPersistence.
-      MetricsCollector 保留事件记录 + 生命周期, 委托聚合/持久化给 delegate.
-"""
-import json
+"""MetricsCollector 门面：只从 EventStore 投影并物化派生摘要。"""
 import logging
 import threading
-import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
-from auto_engineering.metrics._aggregator import _count_by, _MetricsAggregator
+from auto_engineering.metrics._aggregator import _MetricsAggregator
 from auto_engineering.metrics._persistence import _MetricsPersistence
+from auto_engineering.metrics.event_projection import project_metrics_events
+
+if TYPE_CHECKING:
+    from auto_engineering.loop.event_store import SQLiteEventStore
 
 _logger = logging.getLogger(__name__)
 
@@ -44,17 +38,7 @@ class AIOrigin:
         }
 
 
-# Module-level collector singleton — set by CLI/loop entry point, read by agents/base.py.
-# Pattern: AE_METRICS=1 env var activates → set_collector(MetricsCollector(project_root)).
-# When AE_METRICS is unset, _collector stays None → all hook points are no-ops.
-#
-# Lifecycle:
-#   1. CLI entry (dev_loop.py) calls set_collector(...) at init
-#   2. Agent code (agents/base.py) calls get_collector() → None-safe no-op if disabled
-#   3. Process exit → singleton dies with process (no explicit teardown needed)
-#
-# Thread safety: _collector_lock protects set/get. Each tick is a fresh process
-# (Tick-Based Discrete Invocation), so no cross-tick state leakage.
+# CLI 设置单例，Agent hook 读取；锁保护进程内访问，跨 Tick 不保留状态。
 _collector: "MetricsCollector | None" = None
 _collector_lock = threading.Lock()
 
@@ -76,26 +60,24 @@ def get_collector() -> "MetricsCollector | None":
 
 
 class MetricsCollector:
-    """跨需求度量聚合器.
-
-    每个需求的生命周期：begin_requirement → 事件采集 → end_requirement → summary.
-
-    T117: 门面模式 — 持有 _MetricsAggregator + _MetricsPersistence 两个 delegate (组合非继承).
-    事件记录 (record_*) 和需求生命周期留在本类.
-    聚合计算委托给 _aggregator, 文件持久化委托给 _persistence.
-    """
+    """跨需求度量门面，委托聚合与派生摘要持久化。"""
 
     BASELINE_MIN_SAMPLES: int = _MetricsAggregator.BASELINE_MIN_SAMPLES
     BASELINE_FULL_STATS: int = _MetricsAggregator.BASELINE_FULL_STATS
 
-    def __init__(self, project_root: Path) -> None:
+    def __init__(
+        self,
+        project_root: Path,
+        *,
+        event_store: "SQLiteEventStore",
+    ) -> None:
         self.project_root = project_root
         from auto_engineering.metrics._paths import get_metrics_dir
         self._metrics_dir = get_metrics_dir(project_root)
         self._current_thread_id: str = ""
         self._current_category: str = ""
-        self._events: list[dict] = []
         self._latest_summary: dict | None = None
+        self._event_store = event_store
         self._driver_mode: str = "agent"  # 2026-07-26 删除 Standalone 路径: 仅余 "agent"
         self._aggregator = _MetricsAggregator()
         self._persistence = _MetricsPersistence()
@@ -119,49 +101,22 @@ class MetricsCollector:
     def begin_requirement(self, thread_id: str, requirement_hash: str,
                           requirement_category: str = "") -> None:
         self._metrics_dir.mkdir(parents=True, exist_ok=True)
-        if self._events and self._current_thread_id:
-            self._persistence.flush_events(self._events, self._metrics_dir,
-                                           self._current_thread_id)
         self._current_thread_id = thread_id
         self._current_category = requirement_category
-        self._events = []
         self._latest_summary = None
-        self._events.append({
-            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
-            "event_type": "requirement_start",
-            "thread_id": thread_id,
-            "requirement_hash": requirement_hash,
-        })
 
-    def resume_events(self, thread_id: str) -> list[dict]:
-        """Load existing events from disk for cross-process tick continuation.
-
-        Reads events.jsonl for the given thread_id and populates in-memory
-        event buffer. Does NOT add a new requirement_start event.
-        Restores _current_category from metadata.json (T85).
-        Returns the loaded events list (empty if no prior events).
-        """
+    def resume_from_event_store(self, thread_id: str) -> list[dict]:
+        """Load a temporary metric view by replaying the current EventStore stream."""
+        if self._event_store is None:
+            raise AssertionError("MetricsCollector 必须绑定 EventStore")
         self._current_thread_id = thread_id
-        self._events = []
         self._latest_summary = None
-        # T85: Restore category from metadata.json for cross-process continuity
-        self._current_category = self._persistence.read_category_from_disk(
-            self._metrics_dir, thread_id)
-        self._events = self._persistence.read_events_from_disk(
-            self._metrics_dir, thread_id)
-        return self._events
+        return project_metrics_events(self._event_store.load_stream(thread_id))
 
     def end_requirement(self, verdict: str, total_ticks: int,
                         loc_added: int = 0) -> dict:
-        self._events.append({
-            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
-            "event_type": "requirement_end",
-            "thread_id": self._current_thread_id,
-            "verdict": verdict,
-            "total_ticks": total_ticks,
-        })
         summary = self._aggregator.compute_summary(
-            self._events, loc_added, self._driver_mode)
+            self._summary_events(), loc_added, self._driver_mode)
 
         # T111: RuleDiscoverer — 历史数据 ≥ 10 时运行 Spearman 相关扫描
         history = self._persistence.load_history(self._metrics_dir, limit=100)
@@ -181,8 +136,10 @@ class MetricsCollector:
                 ]
 
         self._latest_summary = summary
-        self._persistence.flush(self._events, summary, self._metrics_dir,
-                                self._current_thread_id, self._current_category)
+        self._persistence.write_summary(
+            summary, self._metrics_dir, self._current_thread_id,
+            self._current_category,
+        )
         return summary
 
     def get_latest_summary(self) -> dict | None:
@@ -204,171 +161,28 @@ class MetricsCollector:
         """
         return self._aggregator.load_baseline(self._metrics_dir)
 
-    # ── 事件采集 ──
+    def _summary_events(self) -> list[dict]:
+        """Return the current thread's temporary EventStore projection."""
+        if not self._current_thread_id:
+            raise ValueError("METRICS_THREAD_REQUIRED")
+        return project_metrics_events(
+            self._event_store.load_stream(self._current_thread_id)
+        )
 
-    def record_tick_complete(self, tick_number: int, stage: str,
-                             duration_ms: int,
-                             ai_origin: AIOrigin,
-                             gate_results: dict | None = None,
-                             guardrail_results: dict | None = None,
-                             verdict: str = "") -> None:
-        payload: dict = {
-            "tick_number": tick_number,
-            "stage": stage,
-            "duration_ms": duration_ms,
-            "gate_results": gate_results or {},
-            "guardrail_results": guardrail_results or {},
-        }
-        if verdict:
-            payload["verdict"] = verdict
-        self._events.append({
-            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
-            "event_type": "tick_complete",
-            "thread_id": self._current_thread_id,
-            "ai_origin": ai_origin.to_dict(),
-            "payload": payload,
-        })
-
-    def record_token_usage(self, input_tokens: int, output_tokens: int,
-                           model: str, provider: str, stage: str,
-                           ai_origin: AIOrigin) -> None:
-        self._events.append({
-            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
-            "event_type": "token_usage",
-            "thread_id": self._current_thread_id,
-            "ai_origin": ai_origin.to_dict(),
-            "payload": {
-                "input_tokens": input_tokens,
-                "output_tokens": output_tokens,
-                "total_tokens": input_tokens + output_tokens,
-                "model": model,
-                "provider": provider,
-                "stage": stage,
-            },
-        })
-
-    def record_stage_transition(self, from_stage: str, to_stage: str,
-                                reason: str,
-                                ai_origin: AIOrigin) -> None:
-        self._events.append({
-            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
-            "event_type": "stage_transition",
-            "thread_id": self._current_thread_id,
-            "ai_origin": ai_origin.to_dict(),
-            "payload": {
-                "from_stage": from_stage,
-                "to_stage": to_stage,
-                "transition_reason": reason,
-            },
-        })
-
-    def record_convergence(self, verdict: str, total_ticks: int,
-                           criteria_met: str = "",
-                           ai_origin: AIOrigin | None = None) -> None:
-        event: dict = {
-            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
-            "event_type": "convergence",
-            "thread_id": self._current_thread_id,
-            "payload": {
-                "verdict": verdict,
-                "total_ticks": total_ticks,
-                "criteria_met": criteria_met,
-            },
-        }
-        if ai_origin is not None:
-            event["ai_origin"] = ai_origin.to_dict()
-        self._events.append(event)
-
-    def record_gate_result(self, gate_name: str, passed: bool,
-                           duration_ms: int, findings_count: int,
-                           ai_origin: AIOrigin | None = None) -> None:
-        event: dict = {
-            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
-            "event_type": "gate_result",
-            "thread_id": self._current_thread_id,
-            "payload": {
-                "gate_name": gate_name,
-                "passed": passed,
-                "duration_ms": duration_ms,
-                "findings_count": findings_count,
-            },
-        }
-        if ai_origin is not None:
-            event["ai_origin"] = ai_origin.to_dict()
-        self._events.append(event)
-
-    # T109f: PII 事件
-    def record_pii_event(self, event_type: str, findings: list[dict],
-                         tick: int = 0) -> None:
-        """Record a PII detection event (T109f).
-
-        Args:
-            event_type: One of PII_DETECTED_REQUIREMENT, PII_DETECTED_RESULT,
-                        PII_REDACTED, PII_DETECTED_FILE.
-            findings: List of PII findings from scan_dict/scan_text.
-            tick: Current tick number for by_tick aggregation.
-        """
-        self._events.append({
-            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
-            "event_type": event_type,
-            "thread_id": self._current_thread_id,
-            "payload": {
-                "tick": tick,
-                "count": len(findings),
-                "by_severity": _count_by(findings, "severity"),
-                "by_category": _count_by(findings, "category"),
-                "by_rule": _count_by(findings, "rule"),
-            },
-        })
-
-    def record_tick_snapshot(self, tick_number: int, stage_in: str,
-                              action: dict, state_snapshot: dict,
-                              guardrail_results: dict, gate_results: dict,
-                              timing_ms: dict) -> None:
-        """Write per-tick snapshot to requirements/<thread_id>/ticks/tick-{N:04d}.json.
-
-        Bridges DebugTracer's per-tick snapshots into the metrics storage directory.
-        Design: F.2.3 storage structure — ticks/ directory alongside events.jsonl.
-        """
-        ticks_dir = self._metrics_dir / "requirements" / self._current_thread_id / "ticks"
-        ticks_dir.mkdir(parents=True, exist_ok=True)
-        snapshot = {
-            "tick": tick_number,
-            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
-            "stage_in": stage_in,
-            "action": action,
-            "state_snapshot": state_snapshot,
-            "guardrail_results": guardrail_results,
-            "gate_results": gate_results,
-            "timing_ms": timing_ms,
-        }
-        tick_file = ticks_dir / f"tick-{tick_number:04d}.json"
-        tick_file.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2))
-
-    # ── 私有方法委托 (保持外部测试/CLI 兼容性) ──
+    # ── 私有方法委托 ──
 
     def _compute_summary(self, loc_added: int = 0) -> dict:
         return self._aggregator.compute_summary(
-            self._events, loc_added, self._driver_mode)
-
-    def _flush_events(self) -> None:
-        """Write events buffer to events.jsonl (atomic overwrite via temp file, P2-41)."""
-        self._persistence.flush_events(self._events, self._metrics_dir,
-                                       self._current_thread_id)
+            self._summary_events(), loc_added, self._driver_mode)
 
     def _write_summary(self, summary: dict | None = None) -> None:
         """Write M1-M5 summary.json and category metadata.json."""
         if summary is None:
             summary = self._aggregator.compute_summary(
-                self._events, 0, self._driver_mode)
+                self._summary_events(), 0, self._driver_mode)
         self._persistence.write_summary(summary, self._metrics_dir,
                                         self._current_thread_id,
                                         self._current_category)
-
-    def _flush(self, summary: dict | None = None) -> None:
-        """Flush events and write summary (convenience, calls _flush_events + _write_summary)."""
-        self._flush_events()
-        self._write_summary(summary)
 
     # ── 基线管理 (委托给 _aggregator) ──
 

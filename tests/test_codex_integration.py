@@ -79,14 +79,36 @@ def test_codex_release_minimal_tick_chain(tmp_path: Path) -> None:
     assert hook.returncode == 0, hook.stderr
     assert "安全跳过" in json.loads(hook.stdout)["systemMessage"]
 
+    blocked_hook = subprocess.run(
+        [str(install_root / "hooks" / "codex-hook.sh")],
+        cwd=project,
+        env=environment,
+        input=json.dumps({
+            "hook_event_name": "PreToolUse",
+            "cwd": str(project),
+            "session_id": "integration-session",
+            "tool_name": "Bash",
+            "tool_input": {"command": "printf blocked > .ae-state/events.db"},
+        }),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert blocked_hook.returncode == 0, blocked_hook.stderr
+    blocked_payload = json.loads(blocked_hook.stdout)
+    assert set(blocked_payload) == {"systemMessage", "hookSpecificOutput"}
+    assert blocked_payload["hookSpecificOutput"] == {
+        "hookEventName": "PreToolUse",
+        "permissionDecision": "deny",
+        "permissionDecisionReason": blocked_payload["systemMessage"],
+    }
+
     tick = subprocess.run(
         [
             str(install_root / "scripts" / "ae-run"),
             "dev-loop",
             "Codex release integration",
             "--init",
-            "--max-rounds",
-            "1",
         ],
         cwd=project,
         env=environment,

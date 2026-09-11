@@ -2,31 +2,20 @@
 
 from __future__ import annotations
 
-import json
-
 from auto_engineering.loop.retention import RetentionPlanner, RetentionPolicy
 
 
 def test_plan_never_marks_event_facts_for_cleanup(tmp_path) -> None:
     state = tmp_path / ".ae-state"
-    (state / "events").mkdir(parents=True)
-    (state / "checkpoints").mkdir()
-    (state / "events" / "events.jsonl").write_text("{}\n", encoding="utf-8")
-    for index in range(4):
-        (state / "checkpoints" / f"{index}.json").write_text(
-            json.dumps({"index": index}), encoding="utf-8"
-        )
+    state.mkdir(parents=True)
+    (state / "events.db").write_bytes(b"canonical event facts")
 
     plan = RetentionPlanner(state).plan(RetentionPolicy(
-        keep_checkpoint_copies=2,
         keep_prompt_logs=2,
     ))
 
-    assert all("events" not in item.path.parts for item in plan.candidates)
-    assert len([
-        item for item in plan.candidates if item.kind == "checkpoint_copy"
-    ]) == 2
-    assert (state / "events" / "events.jsonl").exists()
+    assert all(item.path != state / "events.db" for item in plan.candidates)
+    assert (state / "events.db").exists()
 
 
 def test_dry_run_does_not_mutate_files(tmp_path) -> None:
@@ -38,7 +27,6 @@ def test_dry_run_does_not_mutate_files(tmp_path) -> None:
     before = sorted(path.name for path in prompts.iterdir())
 
     plan = RetentionPlanner(state).plan(RetentionPolicy(
-        keep_checkpoint_copies=1,
         keep_prompt_logs=2,
     ))
 
@@ -57,7 +45,7 @@ def test_referenced_artifact_is_retained_and_missing_ref_reported(tmp_path) -> N
     planner = RetentionPlanner(state)
 
     plan = planner.plan(
-        RetentionPolicy(keep_checkpoint_copies=1, keep_prompt_logs=1),
+        RetentionPolicy(keep_prompt_logs=1),
         referenced_artifact_ids={kept},
     )
     missing = planner.verify_artifact_references({kept, "c" * 64})

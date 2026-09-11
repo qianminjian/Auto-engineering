@@ -4,11 +4,164 @@ from __future__ import annotations
 
 import os
 import socket
-import sqlite3
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+
+
+def test_tick_evidence_records_latency_and_spawn_count(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import auto_engineering.loop.tick_evidence as evidence
+    from auto_engineering.engine.state import EngineState
+
+    state = EngineState(thread_id="thread-1", current_stage="developer")
+    target = SimpleNamespace(
+        project_root=Path("."),
+        _state=state,
+        _active_action={"spawn": {"count": 2}},
+        _t_gate_ms=1.0,
+        _t_guard_sub_ms=1.0,
+    )
+    monkeypatch.setattr(evidence.time, "perf_counter", lambda: 1.2)
+
+    evidence.record_tick_latency(target, 1.0, 4, budget_ms=0)
+
+    assert state.action_history[0]["tick"] == 4
+    assert state.action_history[0]["spawn_count"] == 2
+
+
+def test_tick_evidence_handles_missing_state_and_malformed_spawn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import auto_engineering.loop.tick_evidence as evidence
+
+    empty = SimpleNamespace(_state=None, _active_action=None)
+    evidence.record_tick_latency(empty, 0.0, 1, budget_ms=1)
+
+    state_target = SimpleNamespace(
+        project_root=Path("."),
+        _state=SimpleNamespace(action_history=[], current_stage="developer"),
+        _active_action={"spawn": {"count": "bad"}},
+        _t_gate_ms=0.0,
+        _t_guard_sub_ms=0.0,
+    )
+    monkeypatch.setattr(evidence.time, "perf_counter", lambda: 1.0)
+    evidence.record_tick_latency(state_target, 0.0, 2, budget_ms=1000)
+    assert state_target._state.action_history[0]["spawn_count"] == 0
+
+
+@pytest.mark.parametrize(
+    ("runner", "expected"),
+    [
+        (lambda *_args, **_kwargs: SimpleNamespace(returncode=1, stdout="", stderr=""), (0, 0)),
+        (lambda *_args, **_kwargs: SimpleNamespace(
+            returncode=0,
+            stdout="3\t1\tsrc/a.py\n-\t-\tbin\ninvalid\trow\tbad\n",
+            stderr="",
+        ), (3, 1)),
+        (lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("git down")), (0, 0)),
+    ],
+)
+def test_tick_evidence_computes_diff_stats_without_second_driver(
+    runner: object,
+    expected: tuple[int, int],
+) -> None:
+    from auto_engineering.loop.tick_evidence import compute_diff_stats
+
+    target = SimpleNamespace(project_root=Path("."))
+    assert compute_diff_stats(target, ["src/a.py"], git_runner=runner) == expected
+    assert compute_diff_stats(target, [], git_runner=runner) == (0, 0)
+
+
+def test_escalation_gate_defaults_and_custom_options(tmp_path: Path) -> None:
+    from auto_engineering.loop.escalation_handler import EscalationHandler
+
+    default = EscalationHandler.build_agent_escalation_gate(None)
+    custom = EscalationHandler.build_agent_escalation_gate({
+        "question": "选择",
+        "options": ["A", "B"],
+        "default": "B",
+    })
+    assert default["default"] == default["options"][0]
+    assert custom["question"] == "选择"
+    assert custom["default"] == "B"
+
+    (tmp_path / "pyproject.toml").write_text("[project]\n", encoding="utf-8")
+    assert EscalationHandler is not None
+
+
+@pytest.mark.parametrize(
+    ("filename", "expected"),
+    [("pyproject.toml", "python"), ("go.mod", "go"), ("none", None)],
+)
+def test_escalation_detects_project_language(
+    tmp_path: Path, filename: str, expected: str | None,
+) -> None:
+    from auto_engineering.loop.escalation_handler import detect_project_language
+
+    if filename != "none":
+        (tmp_path / filename).write_text("{}", encoding="utf-8")
+    assert detect_project_language(tmp_path) == expected
+
+
+def test_escalation_treats_unreadable_package_manifest_as_typescript(
+    tmp_path: Path,
+) -> None:
+    from auto_engineering.loop.escalation_handler import detect_project_language
+
+    (tmp_path / "package.json").write_text("not-json", encoding="utf-8")
+
+    assert detect_project_language(tmp_path) == "typescript"
+
+
+def test_escalation_resolutions_use_injected_single_tick_callbacks() -> None:
+    from auto_engineering.engine.state import EngineState
+    from auto_engineering.loop.escalation_handler import (
+        EscalationContext,
+        EscalationHandler,
+    )
+
+    state = EngineState(
+        thread_id="thread-1",
+        current_stage="developer",
+        missing_project_capabilities=["python"],
+    )
+    calls: list[str] = []
+    actions: list[dict] = []
+
+    class Batch:
+        def advance_batch(self) -> None:
+            calls.append("advance_batch")
+
+    context = EscalationContext(
+        state=state,
+        batch_state=Batch(),
+        build_action=lambda **kwargs: actions.append(kwargs) or {"action": "next"},
+        persist_state=lambda: calls.append("persist"),
+        queue_domain_event=lambda *_args: calls.append("event"),
+    )
+    handler = EscalationHandler(context)
+
+    terminated = handler.resolve_agent_escalation({"resolution": "终止 loop"})
+    assert terminated["verdict"] == "TERMINATED"
+
+    state.current_stage = "critic"
+    handler.resolve_agent_escalation({
+        "resolution": "回退重设计",
+        "resolution_detail": {"note": "补充边界"},
+    })
+    assert state.current_stage == "architect"
+
+    handler.resolve_agent_escalation({"resolution": "跳过"})
+    assert "advance_batch" in calls
+
+    state.current_stage = "architect"
+    state.project_profile = None
+    handler.resolve_agent_escalation({"resolution": "批准继续"})
+    assert state.current_stage == "project_setup"
+    assert actions
 
 
 @pytest.mark.parametrize(
@@ -155,47 +308,6 @@ def test_ratchet_runner_skips_incomplete_or_invalid_data(
         SimpleNamespace(load_baseline=lambda: {"M1": 1}),
         {"metrics_signals": {"M1": 2}},
     ) is None
-
-
-def test_checkpoint_manager_delegates_and_handles_io_errors() -> None:
-    from auto_engineering.loop.checkpoint.manager import CheckpointManager
-    from auto_engineering.loop.checkpoint.records import CheckpointNotFoundError
-
-    class Store:
-        fail = False
-
-        def save(self, **kwargs: object) -> str:
-            if self.fail:
-                raise sqlite3.OperationalError("disk")
-            return "checkpoint-1"
-
-        def list_all(self) -> list[str]:
-            return ["meta"]
-
-        def load(self, checkpoint_id: str) -> str:
-            return checkpoint_id
-
-        def count(self) -> int:
-            return 1
-
-    empty = CheckpointManager()
-    assert empty.save(object(), 1) is None
-    assert empty.save(None, 1) is None
-    assert empty.list_metas() == []
-    assert empty.count() == 0
-    with pytest.raises(CheckpointNotFoundError):
-        empty.load("missing")
-
-    store = Store()
-    manager = CheckpointManager(store)
-    assert manager.save(None, 1) is None
-    assert manager.store is store
-    assert manager.save(object(), 2, history=["event"], tag="tag") == "checkpoint-1"
-    assert manager.list_metas() == ["meta"]
-    assert manager.load("checkpoint-1") == "checkpoint-1"
-    assert manager.count() == 1
-    store.fail = True
-    assert manager.save(object(), 3) is None
 
 
 def test_tracing_unreachable_collector_falls_back(

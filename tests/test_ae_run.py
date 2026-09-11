@@ -64,6 +64,31 @@ def _write_plugin_venv_executable(plugin: Path, output: str) -> None:
     entrypoint.chmod(0o755)
 
 
+def test_release_shell_entrypoints_and_embedded_watchdog_are_parseable() -> None:
+    """发布边界脚本必须通过真实 shell 与内嵌 Python 解析。"""
+
+    root = Path(__file__).parents[1]
+    shell_scripts = (
+        root / "scripts/ae-run",
+        root / "scripts/ae-host-run",
+        root / "bin/ae-run",
+    )
+    for script in shell_scripts:
+        result = subprocess.run(
+            ["sh", "-n", str(script)],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 0, f"{script}: {result.stderr}"
+
+    source = (root / "scripts/ae-host-run").read_text(encoding="utf-8")
+    watchdog = source.split("python3 - \\\n", 1)[1].split("\nPY\n", 1)[0]
+    watchdog_source = watchdog.split("<<'PY'\n", 1)[1]
+    compile(watchdog_source, "scripts/ae-host-run:<watchdog>", "exec")
+
+
 def _run(
     launcher: Path,
     path: str,
