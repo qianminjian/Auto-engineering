@@ -16,8 +16,14 @@ from typing import Any
 def should_resume_host(
     status: Mapping[str, Any] | None,
     lease: Mapping[str, Any] | None,
+    outcome_journal_dir: Path | None = None,
 ) -> bool:
-    """仅在 Core 明确要求继续且仍有 active Action 时允许续跑。"""
+    """仅在 Core 明确要求继续且仍有 active Action 时允许续跑。
+
+    OutcomeJournal 是宿主交接的事实证据，不是 Loop 状态源。若当前 Action
+    的 Result 修复预算已耗尽，继续 resume 只会重复同一个坏路径，必须停下让
+    人工修复宿主合同后显式恢复。
+    """
 
     if not isinstance(status, Mapping) or not isinstance(lease, Mapping):
         return False
@@ -54,10 +60,33 @@ def should_resume_host(
         or active_message_id != lease_message_id
     ):
         return False
+    if not isinstance(active_message_id, str):
+        return False
+    if isinstance(outcome_journal_dir, Path) and _repair_is_exhausted(
+        outcome_journal_dir, active_message_id
+    ):
+        return False
     return (
         lease.get("disposition") == "CONTINUE"
         and lease.get("continuation_required") is True
         and lease.get("yield_allowed") is False
+    )
+
+
+def _repair_is_exhausted(journal_dir: Path, action_message_id: str) -> bool:
+    """检查当前 Action 的宿主交接记录是否已进入不可修复终态。"""
+
+    if Path(action_message_id).name != action_message_id or "\\" in action_message_id:
+        return True
+    journal_path = journal_dir / f"{action_message_id}.json"
+    if not journal_path.is_file():
+        return False
+    record = _read_mapping(journal_path)
+    if record is None or record.get("action_message_id") != action_message_id:
+        return True
+    return (
+        record.get("status") in {"rejected", "assembly_rejected"}
+        and record.get("repairable") is False
     )
 
 
@@ -73,9 +102,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--status-file", type=Path, required=True)
     parser.add_argument("--lease-file", type=Path, required=True)
+    parser.add_argument("--outcome-journal-dir", type=Path, required=True)
     args = parser.parse_args(argv)
     print("resume" if should_resume_host(
-        _read_mapping(args.status_file), _read_mapping(args.lease_file)
+        _read_mapping(args.status_file),
+        _read_mapping(args.lease_file),
+        args.outcome_journal_dir,
     ) else "stop")
     return 0
 

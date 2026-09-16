@@ -14,6 +14,39 @@ from auto_engineering.loop.section_findings import (
 )
 
 
+def unwrap_single_worker_coordinator_envelope(
+    *,
+    action: Mapping[str, Any],
+    coordinator_payload: Mapping[str, Any],
+    outcomes: Sequence[Mapping[str, Any]],
+) -> dict[str, Any] | None:
+    """从当前单 Worker 的误写 envelope 中恢复已认证业务 payload。
+
+    这是宿主交接边界的确定性归一化，不是重新执行 Worker，也不替代
+    Coordinator。只有 envelope 的四个字段、当前 Action 只有一个 Worker，
+    且 Worker 身份、状态、摘要和 payload 与已收集 outcome 完全一致时才解包；
+    其他情况返回 ``None``，交由正常 Result 合同拒绝。
+    """
+
+    del action  # 保留 Action 参数，明确该归一化属于当前 Action 边界。
+    if set(coordinator_payload) != {
+        "worker_id", "status", "payload", "summary"
+    } or len(outcomes) != 1:
+        return None
+    authoritative = outcomes[0]
+    if not isinstance(authoritative, Mapping):
+        return None
+    if (
+        coordinator_payload.get("worker_id") != authoritative.get("worker_id")
+        or coordinator_payload.get("status") != authoritative.get("status")
+        or coordinator_payload.get("summary") != authoritative.get("summary")
+        or coordinator_payload.get("payload") != authoritative.get("payload")
+    ):
+        return None
+    payload = coordinator_payload.get("payload")
+    return dict(payload) if isinstance(payload, Mapping) else None
+
+
 class ResultContractService:
     """不读写运行态、只按 active Action 处理 Coordinator Result。"""
 

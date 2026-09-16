@@ -164,6 +164,14 @@ def validate_native_tool_call(
 ) -> None:
     """验证一次原生 spawn 或宿主回写工具调用。"""
 
+    command = tool_input.get("command")
+    if (
+        tool_name in {"Bash", "shell", "command_execution"}
+        and isinstance(command, str)
+        and "--passWithNoTests" in command
+    ):
+        raise NativeLaunchGuardError("NATIVE_SETUP_TEST_BYPASS_FORBIDDEN")
+
     _validate_binding_design_mutation(
         tool_name=tool_name,
         tool_input=tool_input,

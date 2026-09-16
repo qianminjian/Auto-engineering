@@ -974,7 +974,7 @@ def run_tick_validate(result_file: Path, root: Path) -> None:
                     _result_repair_exhausted_action(active_action, journal_record),
                     ensure_ascii=False,
                 ))
-                return
+                raise SystemExit(1)
             if candidate_rejected and active_action is not None:
                 repair = _project_result_repair_action(
                     active_action, result
@@ -1021,6 +1021,9 @@ def run_tick_finalize(
         OutcomeJournalTransitionError,
     )
     from auto_engineering.host.recovery_contract import is_worker_execution_action
+    from auto_engineering.host.result_contract import (
+        unwrap_single_worker_coordinator_envelope,
+    )
     from auto_engineering.loop.event_store import SQLiteEventStore
 
     supplied_outcomes_file = (
@@ -1176,6 +1179,24 @@ def run_tick_finalize(
                 if coordinator_path is not None:
                     _dev_loop_paths.write_json_atomically(coordinator_path, coordinator_payload)
 
+        if (
+            is_spawn_action
+            and coordinator_error is None
+            and isinstance(coordinator_payload, Mapping)
+            and isinstance(outcome_items, list)
+        ):
+            unwrapped_payload = unwrap_single_worker_coordinator_envelope(
+                action=mapped_action,
+                coordinator_payload=coordinator_payload,
+                outcomes=outcome_items,
+            )
+            if unwrapped_payload is not None:
+                coordinator_payload = unwrapped_payload
+                if coordinator_path is not None:
+                    _dev_loop_paths.write_json_atomically(
+                        coordinator_path, coordinator_payload
+                    )
+
         if not is_spawn_action:
             input_error = coordinator_error or outcomes_error
         else:
@@ -1270,7 +1291,7 @@ def run_tick_finalize(
                 _result_repair_exhausted_action(mapped_action, record),
                 ensure_ascii=False,
             ))
-            return
+            raise SystemExit(1) from exc
         except HostEvidenceValidationError as exc:
             action_message_id = mapped_action.get("message_id")
             if not isinstance(action_message_id, str) or not action_message_id:
@@ -1291,7 +1312,7 @@ def run_tick_finalize(
                     ),
                     ensure_ascii=False,
                 ))
-                return
+                raise SystemExit(1) from exc
             repair_action = _project_result_repair_action(
                 mapped_action,
                 {

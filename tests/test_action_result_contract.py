@@ -21,6 +21,9 @@ import pytest
 from jsonschema import Draft202012Validator
 
 from auto_engineering.engine.state import EngineState
+from auto_engineering.host.result_contract import (
+    unwrap_single_worker_coordinator_envelope,
+)
 from auto_engineering.loop.actions import (
     RESULT_SCHEMA,
     ActionDone,
@@ -42,6 +45,44 @@ _result_validator = Draft202012Validator(_RESULT_SCHEMA_JSON)
 _PHASE0_STAGES = ("gap_scan", "gap_review", "research")
 
 _VALID_PLAN = "实现组件, 包含完整的 TDD Red-Green-Refactor 循环 + Gate 验证流程, 确保文件隔离检查通过"
+
+
+def test_unwraps_only_authoritative_single_worker_coordinator_envelope() -> None:
+    payload = {"plan": "按设计实现", "batch_plan": []}
+    outcome = {
+        "worker_id": "architect-0",
+        "status": "completed",
+        "payload": payload,
+        "summary": "Architect 已完成规划",
+    }
+    envelope = dict(outcome)
+
+    assert unwrap_single_worker_coordinator_envelope(
+        action={"stage": "architect"},
+        coordinator_payload=envelope,
+        outcomes=[outcome],
+    ) == payload
+
+
+def test_does_not_unwrap_ambiguous_or_unbound_worker_envelope() -> None:
+    outcome = {
+        "worker_id": "architect-0",
+        "status": "completed",
+        "payload": {"plan": "按设计实现"},
+        "summary": "Architect 已完成规划",
+    }
+    envelope = dict(outcome)
+
+    assert unwrap_single_worker_coordinator_envelope(
+        action={"stage": "architect"},
+        coordinator_payload=envelope,
+        outcomes=[{**outcome, "summary": "不同摘要"}],
+    ) is None
+    assert unwrap_single_worker_coordinator_envelope(
+        action={"stage": "architect"},
+        coordinator_payload=envelope,
+        outcomes=[outcome, {**outcome, "worker_id": "architect-1"}],
+    ) is None
 
 
 def test_business_result_contract_rejects_undeclared_field_type() -> None:

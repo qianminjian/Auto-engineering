@@ -19,6 +19,7 @@ import os
 import subprocess
 from pathlib import Path
 
+import pytest
 from click.testing import CliRunner
 
 from auto_engineering.cli import main
@@ -1466,11 +1467,54 @@ def test_finalize_reports_exhausted_result_repair_without_traceback(
 
     monkeypatch.setattr(HostExecutionAssembler, "finalize", raise_exhausted)
     monkeypatch.setattr(HostExecutionAssembler, "finalize_to_file", raise_exhausted)
-    run_tick_finalize(None, coordinator, tmp_path)
+    with pytest.raises(SystemExit) as exc_info:
+        run_tick_finalize(None, coordinator, tmp_path)
 
     payload = _last_json_line(capsys.readouterr().out)
     assert payload["action"] == "error"
     assert payload["error_code"] == "HOST_RESULT_REPAIR_EXHAUSTED"
+    assert exc_info.value.code == 1
+
+
+def test_finalize_repair_action_returns_zero(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    """finalize 产出可修复 Action 时，协议响应本身不是进程错误。"""
+    dev_loop_module = importlib.import_module("auto_engineering.cli.dev_loop")
+    from auto_engineering.host.execution_assembler import (
+        HostEvidenceValidationError,
+        HostExecutionAssembler,
+    )
+
+    initialized = CliRunner().invoke(
+        main,
+        ["dev-loop", "--init", "实现 X", "--project-root", str(tmp_path)],
+    )
+    assert initialized.exit_code == 0, initialized.output
+    action = _last_json_line(initialized.output)
+    coordinator = tmp_path / action["host_execution"]["work_files"]["coordinator_result"]
+    coordinator.parent.mkdir(parents=True, exist_ok=True)
+    coordinator.write_text("{}", encoding="utf-8")
+
+    def reject(*_args, **_kwargs):
+        raise HostEvidenceValidationError(("ARCHITECT_RESULT_COVERAGE_LOSS",))
+
+    monkeypatch.setattr(HostExecutionAssembler, "finalize", reject)
+    monkeypatch.setattr(HostExecutionAssembler, "finalize_to_file", reject)
+    monkeypatch.setattr(
+        dev_loop_module,
+        "_project_result_repair_action",
+        lambda *_args: {
+            "action": "architect",
+            "result_rejection": {"repair_required": True},
+        },
+    )
+
+    dev_loop_module.run_tick_finalize(None, coordinator, tmp_path)
+
+    assert json.loads(capsys.readouterr().out.strip())["result_rejection"][
+        "repair_required"
+    ] is True
 
 
 
@@ -1677,6 +1721,57 @@ class TestTickMode:
         assert validation.exit_code == 1
         assert _last_json_line(validation.output)["error_code"] == "RESULT_PARSE_ERROR"
         assert _last_json_line(after.output) == _last_json_line(before.output)
+
+    def test_validate_result_repair_action_returns_zero(
+        self, tmp_path, monkeypatch, capsys
+    ) -> None:
+        """validate 产出可修复 Action 时，协议响应本身不是进程错误。"""
+        dev_loop_module = importlib.import_module("auto_engineering.cli.dev_loop")
+        from auto_engineering.loop.tick_orchestrator import TickOrchestrator
+
+        initialized = CliRunner().invoke(
+            main,
+            ["dev-loop", "--init", "实现 X", "--project-root", str(tmp_path)],
+        )
+        assert initialized.exit_code == 0, initialized.output
+        active_action = _last_json_line(initialized.output)
+        result_file = tmp_path / "candidate-result.json"
+        result_file.write_text("{}", encoding="utf-8")
+
+        class FakeOrchestrator:
+            def active_action_snapshot(self):
+                return active_action
+
+            def validate_result_file(self, _result_file):
+                return {
+                    "action": "error",
+                    "error_code": "HOST_EVIDENCE_INVALID",
+                    "message": "需要修复当前 Action",
+                }
+
+        monkeypatch.setattr(
+            TickOrchestrator,
+            "restore_from_event_store",
+            classmethod(lambda cls, *args, **kwargs: FakeOrchestrator()),
+        )
+        monkeypatch.setattr(
+            dev_loop_module,
+            "_record_outcome_acceptance",
+            lambda **kwargs: True,
+        )
+        monkeypatch.setattr(
+            dev_loop_module,
+            "_project_result_repair_action",
+            lambda *_args: {
+                "action": "architect",
+                "result_rejection": {"repair_required": True},
+            },
+        )
+
+        dev_loop_module.run_tick_validate(result_file, tmp_path)
+
+        output = capsys.readouterr().out
+        assert json.loads(output.strip())["result_rejection"]["repair_required"] is True
 
     def test_project_setup_completion_commits_profile_stage_and_next_action(
         self, tmp_path
@@ -2307,6 +2402,108 @@ class TestMutexAndLegacy:
         assert repeated["spawned"] is False
         assert repeated["spawn_error_code"] == "HOST_WORKER_FAILED"
         assert repeated["spawn_retry_attempt"] == 1
+
+    def test_finalize_unwraps_matching_single_worker_envelope(
+        self, tmp_path: Path, monkeypatch, capsys
+    ) -> None:
+        """单 Worker 误把自身 envelope 写入 Coordinator 时只解一层。"""
+        dev_loop_module = importlib.import_module("auto_engineering.cli.dev_loop")
+        from auto_engineering.host.execution_assembler import (
+            HostExecutionAssembler,
+            NativeWorkerOutcome,
+        )
+        from auto_engineering.loop import event_store as event_store_module
+
+        payload = {"plan": "按原设计实现", "batch_plan": []}
+        invocation = {
+            "worker_id": "architect-0",
+            "outcome_path": ".ae-state/host-runtime/worker-outcomes/a.json",
+        }
+        action = {
+            "message_id": "architect-envelope-1",
+            "thread_id": "thread-envelope-1",
+            "stage": "architect",
+            "action": "architect",
+            "spawn": {"invocations": [invocation]},
+            "host_execution": {
+                "work_files": {
+                    "outcomes": ".ae-state/host-runtime/work/a/outcomes.json",
+                    "coordinator_result": (
+                        ".ae-state/host-runtime/work/a/coordinator-result.json"
+                    ),
+                    "result": ".ae-state/host-runtime/work/a/result.json",
+                },
+            },
+        }
+
+        class FakeEvents:
+            def __init__(self, *args, **kwargs) -> None:
+                del args, kwargs
+
+            def unfinished_threads(self) -> list[str]:
+                return [action["thread_id"]]
+
+            def load_action_snapshot(self, thread_id: str):
+                assert thread_id == action["thread_id"]
+                return action
+
+            def close(self) -> None:
+                pass
+
+        outcome = NativeWorkerOutcome(
+            worker_id="architect-0",
+            native_worker_handle="codex-native-architect-0",
+            status="completed",
+            payload=payload,
+            summary="Architect 已完成规划",
+            actual_model="unreported",
+            isolation_evidence="fork_turns=none",
+        )
+        work_root = tmp_path / ".ae-state/host-runtime/work/a"
+        work_root.mkdir(parents=True)
+        (work_root / "outcomes.json").write_text(
+            json.dumps({"outcomes": []}), encoding="utf-8"
+        )
+        (work_root / "coordinator-result.json").write_text(
+            json.dumps({
+                "worker_id": outcome.worker_id,
+                "status": outcome.status,
+                "payload": payload,
+                "summary": outcome.summary,
+            }),
+            encoding="utf-8",
+        )
+
+        captured: dict[str, object] = {}
+
+        def collect(*_args, **_kwargs):
+            return [outcome]
+
+        def finalize_to_file(self, **kwargs):
+            del self
+            captured.update(kwargs)
+            return {"message_type": "result", "stage": "architect"}
+
+        monkeypatch.setattr(event_store_module, "SQLiteEventStore", FakeEvents)
+        monkeypatch.setattr(
+            dev_loop_module, "_map_bound_action_for_host",
+            lambda value, root, **kwargs: value,
+        )
+        monkeypatch.setattr(
+            HostExecutionAssembler,
+            "collect_worker_outcomes_from_artifacts",
+            collect,
+        )
+        monkeypatch.setattr(HostExecutionAssembler, "finalize_to_file", finalize_to_file)
+
+        dev_loop_module.run_tick_finalize(
+            None,
+            work_root / "coordinator-result.json",
+            tmp_path,
+        )
+
+        assert captured["coordinator_payload"] == payload
+        assert _last_json_line(capsys.readouterr().out)["message_type"] == "result"
 
     def test_finalize_private_outcome_enters_host_attestation_repair(
         self, tmp_path: Path, monkeypatch, capsys

@@ -73,6 +73,10 @@ def guard_system_message(code: str) -> str:
             "只能写入当前 Action 的 coordinator-result.json，再按绑定的 "
             "finalize → validate → submit 操作生成完整 Result。"
         ),
+        "NATIVE_SETUP_TEST_BYPASS_FORBIDDEN": (
+            "已阻止绕过测试证明的命令；不得使用 --passWithNoTests，"
+            "必须执行一次性测试命令并提交真实结果。"
+        ),
     }
     return messages.get(
         code,

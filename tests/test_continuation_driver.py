@@ -48,6 +48,40 @@ def test_does_not_resume_user_wait_terminal_or_yieldable_lease() -> None:
     assert should_resume_host(_status(), _lease(yield_allowed=True)) is False
 
 
+def test_does_not_resume_when_action_result_repair_is_exhausted(tmp_path) -> None:
+    import json
+
+    journal_dir = tmp_path / "outcomes"
+    journal_dir.mkdir()
+    (journal_dir / "action-1.json").write_text(
+        json.dumps({
+            "status": "assembly_rejected",
+            "action_message_id": "action-1",
+            "repairable": False,
+        }),
+        encoding="utf-8",
+    )
+
+    assert should_resume_host(_status(), _lease(), journal_dir) is False
+
+
+def test_resumes_when_action_result_repair_is_still_available(tmp_path) -> None:
+    import json
+
+    journal_dir = tmp_path / "outcomes"
+    journal_dir.mkdir()
+    (journal_dir / "action-1.json").write_text(
+        json.dumps({
+            "status": "assembly_rejected",
+            "action_message_id": "action-1",
+            "repairable": True,
+        }),
+        encoding="utf-8",
+    )
+
+    assert should_resume_host(_status(), _lease(), journal_dir) is True
+
+
 def test_cli_emits_machine_decision_without_mutating_inputs(tmp_path) -> None:
     import json
 
@@ -55,10 +89,13 @@ def test_cli_emits_machine_decision_without_mutating_inputs(tmp_path) -> None:
     lease_path = tmp_path / "lease.json"
     status_path.write_text(json.dumps(_status()), encoding="utf-8")
     lease_path.write_text(json.dumps(_lease()), encoding="utf-8")
+    journal_dir = tmp_path / "outcomes"
+    journal_dir.mkdir()
 
     assert main([
         "--status-file", str(status_path),
         "--lease-file", str(lease_path),
+        "--outcome-journal-dir", str(journal_dir),
     ]) == 0
     assert status_path.read_text(encoding="utf-8") == json.dumps(_status())
     assert lease_path.read_text(encoding="utf-8") == json.dumps(_lease())

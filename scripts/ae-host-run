@@ -782,7 +782,9 @@ while :; do
     DECISION=$("$AE_RUNNER" --run-module \
         auto_engineering.host.continuation_driver \
         --status-file "$STATUS_FILE" \
-        --lease-file "$LEASE_FILE" 2>> "$STATUS_ERROR") || {
+        --lease-file "$LEASE_FILE" \
+        --outcome-journal-dir "$PROJECT_ROOT/.ae-state/host-runtime/outcomes" \
+        2>> "$STATUS_ERROR") || {
         cat "$STATUS_ERROR" >&2
         printf '%s\n' '宿主续驱动决策失败，禁止猜测为 CONTINUE' >&2
         exit 75

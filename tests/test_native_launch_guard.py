@@ -102,6 +102,24 @@ def test_native_spawn_must_use_exact_action_bound_prompt() -> None:
         )
 
 
+def test_setup_test_bypass_flag_is_blocked_before_execution(tmp_path: Path) -> None:
+    from auto_engineering.host.native_launch_guard import (
+        NativeLaunchGuardError,
+        validate_native_tool_call,
+    )
+
+    with pytest.raises(
+        NativeLaunchGuardError, match="NATIVE_SETUP_TEST_BYPASS_FORBIDDEN"
+    ):
+        validate_native_tool_call(
+            platform="codex",
+            tool_name="Bash",
+            tool_input={"command": "vitest run --passWithNoTests"},
+            workers=[],
+            project_root=tmp_path,
+        )
+
+
 def test_codex_wait_must_consume_action_observation_timeout() -> None:
     from auto_engineering.host.native_launch_guard import (
         NativeLaunchGuardError,
