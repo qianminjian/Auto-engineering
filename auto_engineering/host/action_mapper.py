@@ -134,7 +134,7 @@ def map_host_action(
         generation_bound_paths = "execution_generation" in action
         if generation_bound_paths:
             # generation 绑定后，映射视图中的 invocation 也必须改成同一
-            # canonical 路径；否则 launch prompt 与 Collector 会各读一处。
+            # canonical 路径；否则 launch prompt 与 artifact inspector 会各读一处。
             mapped_spawn = dict(spawn)
             mapped_spawn["invocations"] = [
                 {

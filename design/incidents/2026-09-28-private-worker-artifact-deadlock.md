@@ -38,4 +38,4 @@ private artifact malformed + native invalid/unbound
 - `spawn_permitted=false`，不会消费 Worker 失败预算，不会创建新 generation。
 - native 无效、路径漂移、身份/状态不一致仍 fail-closed；不能用 `unreported` 伪造 completed。
 
-实现与回归覆盖：`HostExecutionAssembler` 负责唯一共享 outcome 合并，`worker_artifact_inspector` 只做私有业务 artifact 检查，CLI recovery projection 负责分类，`worker_artifact_repair` 负责幂等隔离。旧 `worker_outcome_collector.py` 与从私有 Host envelope 直接恢复成功的入口已删除；后续加固已让恢复探测直接复用 canonical native parser，非空但不完整、嵌套歧义或含宿主字段的 native 文档不会再被误投影为 `worker_attestation_pending`。外部 Voice Clone 报告仅作为只读故障证据，本文件和代码均不修改外部项目。
+实现与回归覆盖：`HostExecutionAssembler` 负责唯一共享 outcome 合并，`worker_artifact_inspector` 只做私有业务 artifact 检查，CLI recovery projection 负责分类，`worker_artifact_repair` 负责幂等隔离。旧 `worker_outcome_collector.py`、从私有 Host envelope 直接恢复成功的入口，以及把 Worker envelope 自动解包成 Coordinator Result 的兼容入口均已删除；后续加固已让恢复探测直接复用 canonical native parser，非空但不完整、嵌套歧义或含宿主字段的 native 文档不会再被误投影为 `worker_attestation_pending`。外部 Voice Clone 报告仅作为只读故障证据，本文件和代码均不修改外部项目。

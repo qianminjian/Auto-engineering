@@ -156,6 +156,16 @@ def test_active_runtime_has_no_compatibility_alias_for_gate_runner() -> None:
     assert "GateRunner =" not in source
 
 
+def test_coordinator_result_has_no_worker_outcome_envelope_compatibility() -> None:
+    """Coordinator Result 必须与私有 Worker artifact 保持单一边界。"""
+
+    source = _source("auto_engineering/host/result_contract.py")
+    cli_source = _source("auto_engineering/cli/dev_loop.py")
+
+    assert "unwrap_single_worker_coordinator_envelope" not in source
+    assert "unwrap_single_worker_coordinator_envelope" not in cli_source
+
+
 def test_host_continuation_boundary_cannot_become_a_second_loop() -> None:
     continuation = _source("auto_engineering/host/continuation_driver.py")
     adapter = _source("scripts/ae-host-run")

@@ -1023,9 +1023,6 @@ def run_tick_finalize(
         OutcomeJournalTransitionError,
     )
     from auto_engineering.host.recovery_contract import is_worker_execution_action
-    from auto_engineering.host.result_contract import (
-        unwrap_single_worker_coordinator_envelope,
-    )
     from auto_engineering.loop.event_store import SQLiteEventStore
 
     supplied_outcomes_file = (
@@ -1159,43 +1156,6 @@ def run_tick_finalize(
                 collection_error_code = exc.code
                 collection_error_worker_id = exc.worker_id
                 outcomes_error = str(exc)
-
-        # 单 Worker 的 Coordinator 可能在宿主上下文退出前尚未来得及写文件。
-        # 只在已收集到一个合法 completed WorkerArtifact 时从其业务 payload
-        # 恢复 Coordinator 输入；多 Worker 仍必须由 Coordinator 显式合并。
-        if (
-            is_spawn_action
-            and outcomes_error is None
-            and isinstance(outcome_items, list)
-            and len(outcome_items) == 1
-            and isinstance(outcome_items[0], Mapping)
-            and outcome_items[0].get("status") == "completed"
-            and coordinator_error is not None
-        ):
-            recovered_payload = outcome_items[0].get("payload")
-            if isinstance(recovered_payload, dict):
-                coordinator_payload = dict(recovered_payload)
-                coordinator_error = None
-                if coordinator_path is not None:
-                    _dev_loop_paths.write_json_atomically(coordinator_path, coordinator_payload)
-
-        if (
-            is_spawn_action
-            and coordinator_error is None
-            and isinstance(coordinator_payload, Mapping)
-            and isinstance(outcome_items, list)
-        ):
-            unwrapped_payload = unwrap_single_worker_coordinator_envelope(
-                action=mapped_action,
-                coordinator_payload=coordinator_payload,
-                outcomes=outcome_items,
-            )
-            if unwrapped_payload is not None:
-                coordinator_payload = unwrapped_payload
-                if coordinator_path is not None:
-                    _dev_loop_paths.write_json_atomically(
-                        coordinator_path, coordinator_payload
-                    )
 
         if not is_spawn_action:
             input_error = coordinator_error or outcomes_error
