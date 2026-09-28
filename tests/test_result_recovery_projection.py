@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from auto_engineering.cli.result_recovery_projection import (
+from auto_engineering.cli.host_recovery_projection import (
     project_host_attestation_repair_action,
 )
 
@@ -53,3 +53,36 @@ def test_worker_artifact_repair_projection_forbids_respawn() -> None:
     )
     assert "spawn" not in projected
     assert "禁止重新启动 Worker" in projected["instruction"]
+
+
+def test_protocol_failure_projection_forbids_respawn_without_result_repair() -> None:
+    action = {
+        "message_id": "action-protocol",
+        "instruction": "执行当前 Action",
+        "spawn": {"count": 1, "invocations": [{"worker_id": "critic-0"}]},
+        "host_execution": {
+            "work_files": {
+                "outcomes": ".ae-state/work/outcomes.json",
+                "coordinator_result": ".ae-state/work/coordinator.json",
+                "result": ".ae-state/work/result.json",
+            }
+        },
+    }
+
+    projected = project_host_attestation_repair_action(
+        action,
+        worker_id="critic-0",
+        detail="private_artifact_invalid",
+        repair_kind="protocol_failure",
+        project_result_repair_action_fn=lambda *_args: {},
+    )
+
+    recovery = projected["host_execution"]["recovery"]
+    assert recovery["status"] == "host_protocol_failure"
+    assert recovery["required_operation"] == (
+        "record_worker_protocol_failure_then_finalize"
+    )
+    assert recovery["error_code"] == "HOST_PROTOCOL_FAILURE"
+    assert recovery["spawn_permitted"] is False
+    assert "result_rejection" not in projected
+    assert "spawn" not in projected

@@ -1355,6 +1355,55 @@ def test_cli_recovery_finalizes_complete_native_files_before_respawn(
     assert recovery["required_operation"] == "finalize_current_native_outcomes"
 
 
+def test_cli_prepare_fail_closes_invalid_private_native_handoff(
+    tmp_path,
+) -> None:
+    from auto_engineering.cli.host_action_runtime import prepare_action_for_host
+    from auto_engineering.cli.host_recovery_projection import (
+        project_host_attestation_repair_action,
+    )
+    from auto_engineering.cli.result_recovery_projection import (
+        project_result_repair_action,
+    )
+    from tests.test_host_execution_assembler import _action
+
+    action = _action(tmp_path)
+    action["host_execution"]["work_files"] = {
+        "outcomes": ".ae-state/host-runtime/work/outcomes.json",
+        "coordinator_result": ".ae-state/host-runtime/work/coordinator.json",
+        "result": ".ae-state/host-runtime/work/result.json",
+    }
+    worker = action["host_execution"]["workers"][0]
+    native_ref = ".ae-state/host-runtime/native-results/invalid.json"
+    worker["native_result_path"] = native_ref
+    private = tmp_path / worker["outcome_path"]
+    private.parent.mkdir(parents=True, exist_ok=True)
+    private.write_text(json.dumps({"status": "completed"}), encoding="utf-8")
+    native = tmp_path / native_ref
+    native.parent.mkdir(parents=True, exist_ok=True)
+    native.write_text("not-json", encoding="utf-8")
+
+    prepared = prepare_action_for_host(
+        action,
+        tmp_path,
+        bind_worker_execution_identity_fn=lambda value, _root, **_kwargs: value,
+        map_action_fn=lambda value: value,
+        project_host_attestation_repair_action=lambda value, **kwargs: (
+            project_host_attestation_repair_action(
+                value,
+                **kwargs,
+                project_result_repair_action_fn=project_result_repair_action,
+            )
+        ),
+        compact_action=lambda value, _root: dict(value),
+    )
+
+    assert "spawn" not in prepared
+    assert prepared["host_execution"]["recovery"]["status"] == (
+        "host_protocol_failure"
+    )
+
+
 def test_cli_recovery_does_not_promote_host_only_outcomes_to_native_ready(
     tmp_path,
     monkeypatch,

@@ -12,11 +12,13 @@ REPAIR_COORDINATOR_THEN_FINALIZE = "repair_coordinator_then_finalize"
 NATIVE_OUTCOMES_READY = "native_outcomes_ready"
 HOST_PROTOCOL_FAILURE = "HOST_PROTOCOL_FAILURE"
 HOST_PROTOCOL_RETRY_EXHAUSTED = "HOST_PROTOCOL_RETRY_EXHAUSTED"
+HOST_PROTOCOL_RECOVERY = "host_protocol_failure"
 WORKER_RECOVERY_STATUSES = frozenset({
     NATIVE_OUTCOMES_READY,
     WORKER_OUTCOMES_COMMITTED,
     "worker_artifact_repair",
     "worker_attestation_pending",
+    HOST_PROTOCOL_RECOVERY,
 })
 
 
@@ -44,6 +46,7 @@ def is_worker_execution_action(action: object) -> bool:
 
 __all__ = [
     "HOST_PROTOCOL_FAILURE",
+    "HOST_PROTOCOL_RECOVERY",
     "HOST_PROTOCOL_RETRY_EXHAUSTED",
     "NATIVE_OUTCOMES_READY",
     "REPAIR_COORDINATOR_THEN_FINALIZE",

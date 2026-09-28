@@ -28,6 +28,9 @@ from auto_engineering.host.recovery_contract import (
     REPAIR_COORDINATOR_THEN_FINALIZE,
     WORKER_OUTCOMES_COMMITTED,
 )
+from auto_engineering.host.worker_artifact_inspector import (
+    classify_private_worker_artifacts,
+)
 from auto_engineering.host.worker_evidence import native_outcomes_are_ready
 
 
@@ -100,7 +103,6 @@ def prepare_action_for_host(
         from auto_engineering.host.execution_assembler import (
             HostEvidenceValidationError,
             HostExecutionAssembler,
-            WorkerOutcomeCollectionError,
         )
 
         work_files = host_execution.get("work_files")
@@ -260,23 +262,32 @@ def prepare_action_for_host(
                     # 宿主进程可能在 Worker 写入私有业务 outcome、但尚未
                     # 回写原生事实时退出。跨进程恢复必须识别这个中间态，
                     # 否则 canonical Action 仍含 spawn 就会重复启动 Worker。
-                    try:
-                        HostExecutionAssembler(root).inspect_private_worker_artifacts(
+                    if isinstance(mapped.get("spawn"), Mapping):
+                        classification = classify_private_worker_artifacts(
+                            project_root=root,
                             action=mapped,
                         )
-                    except WorkerOutcomeCollectionError as exc:
-                        if exc.code in {
+                        if classification.code in {
                             "HOST_WORKER_ATTESTATION_MISSING",
                             "HOST_WORKER_ARTIFACT_REPAIRABLE",
+                            "HOST_PROTOCOL_FAILURE",
                         }:
                             mapped = project_host_attestation_repair_action(
                                 mapped,
-                                worker_id=exc.worker_id,
-                                detail=exc.detail or "private_business_artifact_only",
+                                worker_id=classification.worker_id,
+                                detail=(
+                                    classification.detail
+                                    or "private_business_artifact_only"
+                                ),
                                 repair_kind=(
                                     "worker_artifact"
-                                    if exc.code == "HOST_WORKER_ARTIFACT_REPAIRABLE"
-                                    else "attestation"
+                                    if classification.code
+                                    == "HOST_WORKER_ARTIFACT_REPAIRABLE"
+                                    else (
+                                        "protocol_failure"
+                                        if classification.code == "HOST_PROTOCOL_FAILURE"
+                                        else "attestation"
+                                    )
                                 ),
                             )
     from auto_engineering.host import HostPlatform, detect_host

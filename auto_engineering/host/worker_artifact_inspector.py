@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +18,126 @@ from auto_engineering.host.worker_evidence import (
     WorkerOutcomeCollectionError,
     parse_private_worker_artifact,
 )
+
+
+@dataclass(frozen=True, slots=True)
+class WorkerArtifactClassification:
+    """当前 Action 的唯一私有/native 交接分类。"""
+
+    code: str
+    worker_id: str
+    detail: str = ""
+
+
+def classify_private_worker_artifacts(
+    *,
+    project_root: Path,
+    action: Mapping[str, Any],
+) -> WorkerArtifactClassification:
+    """按全部 Worker 证据给出一次确定性恢复分类。"""
+
+    try:
+        plan = SpawnPlan.for_recording(action)
+    except SpawnContractError as exc:
+        return WorkerArtifactClassification(HOST_PROTOCOL_FAILURE, "unknown", str(exc))
+
+    root = project_root.resolve()
+    host_execution = action.get("host_execution")
+    worker_templates = (
+        host_execution.get("workers")
+        if isinstance(host_execution, Mapping)
+        else None
+    )
+    template_by_worker = {
+        item.get("worker_id"): item
+        for item in worker_templates
+        if isinstance(item, Mapping) and isinstance(item.get("worker_id"), str)
+    } if isinstance(worker_templates, list) else {}
+    classifications: list[tuple[int, WorkerArtifactClassification]] = []
+    for invocation in plan.invocations:
+        template = template_by_worker.get(invocation.worker_id)
+        if isinstance(template, Mapping):
+            candidate = template.get("outcome_path")
+            if not isinstance(candidate, str) or not candidate:
+                return WorkerArtifactClassification(
+                    HOST_PROTOCOL_FAILURE, invocation.worker_id, "outcome_path_missing"
+                )
+            if candidate != invocation.outcome_path:
+                return WorkerArtifactClassification(
+                    HOST_PROTOCOL_FAILURE, invocation.worker_id, "outcome_path_drift"
+                )
+        path = (root / invocation.outcome_path).resolve()
+        if path == root or root not in path.parents:
+            return WorkerArtifactClassification(
+                HOST_PROTOCOL_FAILURE, invocation.worker_id, "path_outside_project"
+            )
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            continue
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            if bound_native_business_is_valid(
+                project_root=root,
+                invocation=invocation,
+                template=template if isinstance(template, Mapping) else None,
+            ):
+                classifications.append((
+                    1,
+                    WorkerArtifactClassification(
+                        "HOST_WORKER_ARTIFACT_REPAIRABLE",
+                        invocation.worker_id,
+                        "private_artifact_unreadable_native_result_available",
+                    ),
+                ))
+            else:
+                classifications.append((
+                    0,
+                    WorkerArtifactClassification(
+                        HOST_PROTOCOL_FAILURE,
+                        invocation.worker_id,
+                        exc.__class__.__name__,
+                    ),
+                ))
+            continue
+        try:
+            parse_private_worker_artifact(raw, worker_id=invocation.worker_id)
+        except HostEvidenceValidationError:
+            if bound_native_business_is_valid(
+                project_root=root,
+                invocation=invocation,
+                template=template if isinstance(template, Mapping) else None,
+            ):
+                classifications.append((
+                    1,
+                    WorkerArtifactClassification(
+                        "HOST_WORKER_ARTIFACT_REPAIRABLE",
+                        invocation.worker_id,
+                        "private_artifact_invalid_native_result_available",
+                    ),
+                ))
+            else:
+                classifications.append((
+                    0,
+                    WorkerArtifactClassification(
+                        HOST_PROTOCOL_FAILURE,
+                        invocation.worker_id,
+                        "private_artifact_invalid",
+                    ),
+                ))
+            continue
+        classifications.append((
+            2,
+            WorkerArtifactClassification(
+                "HOST_WORKER_ATTESTATION_MISSING",
+                invocation.worker_id,
+                "private_business_artifact_only",
+            ),
+        ))
+    if classifications:
+        return min(classifications, key=lambda item: (item[0], item[1].worker_id))[1]
+    return WorkerArtifactClassification(
+        "HOST_WORKER_OUTPUT_MISSING", plan.invocations[0].worker_id
+    )
 
 
 def inspect_private_worker_artifacts(
@@ -33,82 +154,18 @@ def inspect_private_worker_artifacts(
     Host-in-private envelope，也不再自行构造第二套 ``NativeWorkerOutcome``。
     """
 
-    try:
-        plan = SpawnPlan.for_recording(action)
-    except SpawnContractError as exc:
-        raise WorkerOutcomeCollectionError(
-            HOST_PROTOCOL_FAILURE, "unknown", str(exc)
-        ) from exc
-    host_execution = action.get("host_execution")
-    worker_templates = (
-        host_execution.get("workers")
-        if isinstance(host_execution, Mapping)
-        else None
+    classification = classify_private_worker_artifacts(
+        project_root=project_root,
+        action=action,
     )
-    template_by_worker = {
-        item.get("worker_id"): item
-        for item in worker_templates
-        if isinstance(item, Mapping) and isinstance(item.get("worker_id"), str)
-    } if isinstance(worker_templates, list) else {}
-    for invocation in plan.invocations:
-        template = template_by_worker.get(invocation.worker_id)
-        if isinstance(template, Mapping):
-            candidate = template.get("outcome_path")
-            if not isinstance(candidate, str) or not candidate:
-                raise WorkerOutcomeCollectionError(
-                    HOST_PROTOCOL_FAILURE, invocation.worker_id,
-                    "outcome_path_missing",
-                )
-            if candidate != invocation.outcome_path:
-                raise WorkerOutcomeCollectionError(
-                    HOST_PROTOCOL_FAILURE, invocation.worker_id,
-                    "outcome_path_drift",
-                )
-        path = (project_root / invocation.outcome_path).resolve()
-        if path == project_root or project_root not in path.parents:
-            raise WorkerOutcomeCollectionError(
-                HOST_PROTOCOL_FAILURE, invocation.worker_id,
-                "path_outside_project",
-            )
-        try:
-            raw = json.loads(path.read_text(encoding="utf-8"))
-        except FileNotFoundError as exc:
-            raise WorkerOutcomeCollectionError(
-                "HOST_WORKER_OUTPUT_MISSING", invocation.worker_id
-            ) from exc
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-            if bound_native_business_is_valid(
-                project_root=project_root,
-                invocation=invocation,
-                template=template if isinstance(template, Mapping) else None,
-            ):
-                raise WorkerOutcomeCollectionError(
-                    "HOST_WORKER_ARTIFACT_REPAIRABLE", invocation.worker_id,
-                    "private_artifact_unreadable_native_result_available",
-                ) from exc
-            raise WorkerOutcomeCollectionError(
-                HOST_PROTOCOL_FAILURE, invocation.worker_id,
-                exc.__class__.__name__,
-            ) from exc
-        try:
-            parse_private_worker_artifact(raw, worker_id=invocation.worker_id)
-        except HostEvidenceValidationError as exc:
-            if bound_native_business_is_valid(
-                project_root=project_root,
-                invocation=invocation,
-                template=template if isinstance(template, Mapping) else None,
-            ):
-                raise WorkerOutcomeCollectionError(
-                    "HOST_WORKER_ARTIFACT_REPAIRABLE", invocation.worker_id,
-                    "private_artifact_invalid_native_result_available",
-                ) from exc
-            raise WorkerOutcomeCollectionError(
-                HOST_PROTOCOL_FAILURE, invocation.worker_id,
-                "private_artifact_invalid",
-            ) from exc
-        raise WorkerOutcomeCollectionError(
-            "HOST_WORKER_ATTESTATION_MISSING", invocation.worker_id,
-            "private_business_artifact_only",
-        )
+    raise WorkerOutcomeCollectionError(
+        classification.code,
+        classification.worker_id,
+        classification.detail,
+    )
 
-__all__ = ["inspect_private_worker_artifacts"]
+__all__ = [
+    "WorkerArtifactClassification",
+    "classify_private_worker_artifacts",
+    "inspect_private_worker_artifacts",
+]

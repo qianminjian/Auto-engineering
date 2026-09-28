@@ -39,11 +39,11 @@ from auto_engineering.cli.host_action_binding import (
 from auto_engineering.cli.host_action_errors import (
     prepare_action_for_cli as _prepare_action_for_cli_impl,
 )
-from auto_engineering.cli.result_recovery_projection import (
-    process_state_reconciliation_result as _process_state_reconciliation_result_impl,
+from auto_engineering.cli.host_recovery_projection import (
+    project_host_attestation_repair_action as _project_host_attestation_repair_action_impl,
 )
 from auto_engineering.cli.result_recovery_projection import (
-    project_host_attestation_repair_action as _project_host_attestation_repair_action_impl,
+    process_state_reconciliation_result as _process_state_reconciliation_result_impl,
 )
 from auto_engineering.cli.result_recovery_projection import (
     project_result_repair_action as _project_result_repair_action_impl,
@@ -1012,7 +1012,6 @@ def run_tick_finalize(
         HostEvidenceValidationError,
         HostExecutionAssembler,
         NativeWorkerOutcome,
-        WorkerOutcomeCollectionError,
     )
     from auto_engineering.host.outcome_file import (
         OutcomeFileError,
@@ -1023,6 +1022,9 @@ def run_tick_finalize(
         OutcomeJournalTransitionError,
     )
     from auto_engineering.host.recovery_contract import is_worker_execution_action
+    from auto_engineering.host.worker_artifact_inspector import (
+        classify_private_worker_artifacts,
+    )
     from auto_engineering.loop.event_store import SQLiteEventStore
 
     supplied_outcomes_file = (
@@ -1143,19 +1145,25 @@ def run_tick_finalize(
             # 新版 Worker 先写自己的 outcome_path，Coordinator 只负责合并。
             # 共享 outcomes 缺失/为空时，从当前 Action 绑定的私有产物重建；
             # 真实宿主不依赖 Coordinator 手工捏造 Worker 事实。
-            try:
-                if outcomes_path is None:
-                    raise WorkerOutcomeCollectionError(
-                        "HOST_WORKER_OUTPUT_MISSING", "unknown", "outcomes_path_missing"
-                    )
-                HostExecutionAssembler(root).inspect_private_worker_artifacts(
+            if outcomes_path is None:
+                collection_error_code = "HOST_WORKER_OUTPUT_MISSING"
+                collection_error_worker_id = "unknown"
+                outcomes_error = "HOST_WORKER_OUTPUT_MISSING:unknown:outcomes_path_missing"
+            else:
+                classification = classify_private_worker_artifacts(
+                    project_root=root,
                     action=mapped_action,
                 )
-                outcomes_error = None
-            except WorkerOutcomeCollectionError as exc:
-                collection_error_code = exc.code
-                collection_error_worker_id = exc.worker_id
-                outcomes_error = str(exc)
+                if classification.code != "HOST_WORKER_OUTPUT_MISSING":
+                    collection_error_code = classification.code
+                    collection_error_worker_id = classification.worker_id
+                    outcomes_error = ":".join(
+                        part for part in (
+                            classification.code,
+                            classification.worker_id,
+                            classification.detail,
+                        ) if part
+                    )
 
         if not is_spawn_action:
             input_error = coordinator_error or outcomes_error

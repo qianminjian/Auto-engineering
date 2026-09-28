@@ -121,93 +121,6 @@ def project_result_repair_action(
     return projected
 
 
-def project_host_attestation_repair_action(
-    mapped_action: Mapping[str, Any],
-    *,
-    worker_id: str,
-    detail: str,
-    repair_kind: str = "attestation",
-    project_result_repair_action_fn: Callable,
-) -> dict[str, Any]:
-
-    is_artifact_repair = repair_kind == "worker_artifact"
-    projected = project_result_repair_action_fn(
-        mapped_action,
-        {
-            "error_code": (
-                "HOST_WORKER_ARTIFACT_REPAIRABLE"
-                if is_artifact_repair
-                else "HOST_WORKER_ATTESTATION_MISSING"
-            ),
-            "message": (
-                "Worker 私有产物格式无效，但同一 Action 的绑定原生结果可修复。"
-                if is_artifact_repair
-                else "Worker 业务产物已存在，但宿主原生事实尚未回写。"
-            ),
-            "violations": [f"{worker_id}:{detail}"],
-            },
-        )
-    host_execution = projected.get("host_execution")
-    if not isinstance(host_execution, Mapping):
-        return projected
-    host = dict(host_execution)
-    work_files = host.get("work_files")
-    spawn = mapped_action.get("spawn")
-    recovery: dict[str, Any] = {
-        "schema_version": "1.0",
-        "status": (
-            "worker_artifact_repair"
-            if is_artifact_repair
-            else "worker_attestation_pending"
-        ),
-        "spawn_permitted": False,
-        "forbidden_operations": ["spawn_worker"],
-        "required_operation": (
-            "repair_worker_artifact_then_finalize"
-            if is_artifact_repair
-            else "record_worker_outcome_then_finalize"
-        ),
-        "worker_id": worker_id,
-        "detail": detail,
-        "repair_kind": repair_kind,
-    }
-    if isinstance(spawn, Mapping):
-        recovery["record_plan"] = {
-            key: (
-                [dict(item) for item in value]
-                if key == "invocations" and isinstance(value, list)
-                else value
-            )
-            for key, value in spawn.items()
-        }
-    if isinstance(work_files, Mapping):
-        for key in ("outcomes", "coordinator_result", "result"):
-            value = work_files.get(key)
-            if isinstance(value, str) and value:
-                recovery[f"{key}_ref"] = value
-    host["recovery"] = recovery
-    projected["host_execution"] = host
-    projected.pop("spawn", None)
-    projected["instruction"] = (
-        (
-            "当前 Worker 私有业务 outcome 格式无效，但同一 Action 的绑定原生结果有效。"
-            "禁止重新启动 Worker；使用该绑定结果按固定 record_worker_outcome 合同"
-            "重建 canonical business envelope。宿主会隔离原私有文件并保持幂等，"
-            "随后按当前 Action 的 finalize、validate、submit 顺序继续。"
-        )
-        if is_artifact_repair
-        else (
-            "当前 Worker 已写入私有业务 outcome，但宿主事实回写缺失。"
-            "禁止重新启动或等待新的 Worker；使用仍然有效的原生 Worker 返回值，"
-            "按 host_execution.workers[].record_worker_outcome 固定模板补交 handle、"
-            "actual_model 和实际 isolation_evidence，随后按当前 Action 的 finalize、"
-            "validate、submit 顺序继续。若宿主已丢失原生 handle，必须保留该错误并停止，"
-            "不得用 unreported 句柄伪造 completed。"
-        )
-    )
-    return projected
-
-
 def project_submitted_worker_failure_recovery(
     *,
     action: Mapping[str, Any] | None,
@@ -228,9 +141,8 @@ def project_submitted_worker_failure_recovery(
     }:
         return None
 
-    from auto_engineering.host.execution_assembler import (
-        HostExecutionAssembler,
-        WorkerOutcomeCollectionError,
+    from auto_engineering.host.worker_artifact_inspector import (
+        classify_private_worker_artifacts,
     )
 
     mapped_action = map_bound_action_fn(
@@ -268,28 +180,31 @@ def project_submitted_worker_failure_recovery(
         outcome_items=outcome_items,
     ):
         return None
-    try:
-        HostExecutionAssembler(root).inspect_private_worker_artifacts(
-            action=mapped_action,
+    classification = classify_private_worker_artifacts(
+        project_root=root,
+        action=mapped_action,
+    )
+    if classification.code in {
+        "HOST_WORKER_ARTIFACT_REPAIRABLE",
+        "HOST_WORKER_ATTESTATION_MISSING",
+    }:
+        return project_host_attestation_repair_action_fn(
+            mapped_action,
+            worker_id=classification.worker_id,
+            detail=classification.detail or "private_business_artifact_only",
+            repair_kind=(
+                "worker_artifact"
+                if classification.code == "HOST_WORKER_ARTIFACT_REPAIRABLE"
+                else "attestation"
+            ),
         )
-    except WorkerOutcomeCollectionError as exc:
-        if exc.code not in {
-            "HOST_WORKER_ARTIFACT_REPAIRABLE",
-            "HOST_WORKER_ATTESTATION_MISSING",
-        }:
-            if exc.code != "HOST_WORKER_OUTPUT_MISSING":
-                return None
-        else:
-            return project_host_attestation_repair_action_fn(
-                mapped_action,
-                worker_id=exc.worker_id,
-                detail=exc.detail or "private_business_artifact_only",
-                repair_kind=(
-                    "worker_artifact"
-                    if exc.code == "HOST_WORKER_ARTIFACT_REPAIRABLE"
-                    else "attestation"
-                ),
-            )
+    if classification.code == "HOST_PROTOCOL_FAILURE":
+        return project_host_attestation_repair_action_fn(
+            mapped_action,
+            worker_id=classification.worker_id,
+            detail=classification.detail or "private_native_protocol_invalid",
+            repair_kind="protocol_failure",
+        )
     native_result_workers = native_result_worker_ids(
         host_execution,
         action=mapped_action,

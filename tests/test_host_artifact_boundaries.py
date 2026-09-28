@@ -13,6 +13,7 @@ from auto_engineering.host.outcome_repair import (
 )
 from auto_engineering.host.spawn_contract import SpawnContractError, SpawnPlan
 from auto_engineering.host.worker_artifact_inspector import (
+    classify_private_worker_artifacts,
     inspect_private_worker_artifacts,
 )
 from auto_engineering.host.worker_artifact_repair import (
@@ -150,6 +151,25 @@ def test_failure_recovery_requires_current_action_and_all_workers_to_fail(tmp_pa
     assert read_recorded_failure_outcomes(tmp_path, action) is None
     action["spawn"] = {}  # type: ignore[index]
     assert read_recorded_failure_outcomes(tmp_path, action) is None
+
+
+def test_classifier_fail_closes_malformed_private_artifact_without_native_result(
+    tmp_path: Path,
+) -> None:
+    action = _action(tmp_path)
+    invocation = action["spawn"]["invocations"][0]  # type: ignore[index]
+    private = tmp_path / invocation["outcome_path"]
+    private.parent.mkdir(parents=True, exist_ok=True)
+    private.write_text(json.dumps({"status": "completed"}), encoding="utf-8")
+
+    classification = classify_private_worker_artifacts(
+        project_root=tmp_path,
+        action=action,
+    )
+
+    assert classification.code == "HOST_PROTOCOL_FAILURE"
+    assert classification.worker_id == "critic-0"
+    assert classification.detail == "private_artifact_invalid"
 
 
 def test_collector_rejects_missing_drift_and_unreported_worker_artifacts(tmp_path: Path) -> None:
