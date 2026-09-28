@@ -93,9 +93,6 @@ def _state_signature(state_root: Path) -> tuple[tuple[str, str, int], ...]:
     event_store_path = state_root / "events.db"
     watched_paths = (
         event_store_path,
-        state_root / "spawn-receipts",
-        state_root / "spawn-proofs",
-        state_root / "spawn-challenges",
         state_root / "host-runtime" / "worker-outcomes",
         state_root / "host-runtime" / "outcomes",
     )

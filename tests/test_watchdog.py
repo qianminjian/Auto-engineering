@@ -158,10 +158,14 @@ def test_state_signature_normalizes_content_and_reads_event_store(
 ) -> None:
     state = tmp_path / ".ae-state"
     (state / "spawn-receipts").mkdir(parents=True)
+    (state / "spawn-proofs").mkdir(parents=True)
+    (state / "spawn-challenges").mkdir(parents=True)
     (state / "host-runtime" / "worker-outcomes").mkdir(parents=True)
     (state / "host-runtime" / "outcomes").mkdir(parents=True)
     (state / "events.db").write_bytes(b"database")
     (state / "spawn-receipts" / "receipt.json").write_text("receipt", encoding="utf-8")
+    (state / "spawn-proofs" / "historical.json").write_text("proof", encoding="utf-8")
+    (state / "spawn-challenges" / "historical.json").write_text("challenge", encoding="utf-8")
     (state / "host-runtime" / "worker-outcomes" / "one.json").write_text(
         '{"b":2,"a":1}', encoding="utf-8"
     )
@@ -179,6 +183,9 @@ def test_state_signature_normalizes_content_and_reads_event_store(
     assert any(item[0].endswith("events.db") for item in signature)
     assert any(item[0].endswith("one.json") for item in signature)
     assert any(item[0].endswith("bad.json") for item in signature)
+    assert not any("spawn-receipts" in item[0] for item in signature)
+    assert not any("spawn-proofs" in item[0] for item in signature)
+    assert not any("spawn-challenges" in item[0] for item in signature)
     assert watchdog._content_marker(tmp_path / "missing.json") is None
 
 
