@@ -104,6 +104,47 @@ def test_does_not_resume_after_host_protocol_failure(tmp_path) -> None:
     assert should_resume_host(_status(), _lease(), journal_dir) is False
 
 
+def test_does_not_resume_when_journal_is_corrupt_or_identity_is_unsafe(tmp_path) -> None:
+    import json
+
+    journal_dir = tmp_path / "outcomes"
+    journal_dir.mkdir()
+    journal = journal_dir / "action-1.json"
+    journal.write_text("not-json", encoding="utf-8")
+    assert should_resume_host(_status(), _lease(), journal_dir) is False
+    journal.write_text(json.dumps({"status": "worker_failed"}), encoding="utf-8")
+    assert should_resume_host(_status(), _lease(), journal_dir) is False
+    unsafe_status = _status()
+    unsafe_status["active_action"] = {"message_id": "../escape"}
+    assert should_resume_host(unsafe_status, _lease(), journal_dir) is False
+
+
+def test_does_not_resume_for_protocol_failure_kind_or_result_code(tmp_path) -> None:
+    import json
+
+    journal_dir = tmp_path / "outcomes"
+    journal_dir.mkdir()
+    journal = journal_dir / "action-1.json"
+    journal.write_text(
+        json.dumps({
+            "action_message_id": "action-1",
+            "failure_kind": "protocol",
+            "status": "worker_failed",
+        }),
+        encoding="utf-8",
+    )
+    assert should_resume_host(_status(), _lease(), journal_dir) is False
+    journal.write_text(
+        json.dumps({
+            "action_message_id": "action-1",
+            "status": "worker_failed",
+            "result": {"spawn_error_code": "HOST_PROTOCOL_FAILURE"},
+        }),
+        encoding="utf-8",
+    )
+    assert should_resume_host(_status(), _lease(), journal_dir) is False
+
+
 def test_cli_emits_machine_decision_without_mutating_inputs(tmp_path) -> None:
     import json
 

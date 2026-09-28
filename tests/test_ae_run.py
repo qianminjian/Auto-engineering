@@ -64,8 +64,8 @@ def _write_plugin_venv_executable(plugin: Path, output: str) -> None:
     entrypoint.chmod(0o755)
 
 
-def test_release_shell_entrypoints_and_embedded_watchdog_are_parseable() -> None:
-    """发布边界脚本必须通过真实 shell 与内嵌 Python 解析。"""
+def test_release_shell_entrypoints_and_watchdog_module_are_parseable() -> None:
+    """发布边界脚本与受控 watchdog 模块必须可解析。"""
 
     root = Path(__file__).parents[1]
     shell_scripts = (
@@ -84,9 +84,10 @@ def test_release_shell_entrypoints_and_embedded_watchdog_are_parseable() -> None
         assert result.returncode == 0, f"{script}: {result.stderr}"
 
     source = (root / "scripts/ae-host-run").read_text(encoding="utf-8")
-    watchdog = source.split("python3 - \\\n", 1)[1].split("\nPY\n", 1)[0]
-    watchdog_source = watchdog.split("<<'PY'\n", 1)[1]
-    compile(watchdog_source, "scripts/ae-host-run:<watchdog>", "exec")
+    assert "python3 -" not in source
+    assert '"$AE_RUNNER" --run-module auto_engineering.host.watchdog' in source
+    watchdog = root / "auto_engineering/host/watchdog.py"
+    compile(watchdog.read_text(encoding="utf-8"), str(watchdog), "exec")
 
 
 def _run(

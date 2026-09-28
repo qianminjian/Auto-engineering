@@ -157,6 +157,38 @@ def test_observation_record_is_bound_to_worker_generation_and_fence(
     assert WorkerObservationStore(tmp_path).load(record) == record
 
 
+def test_observation_store_returns_missing_and_rejects_corrupt_or_mismatched_records(
+    tmp_path: Path,
+) -> None:
+    from auto_engineering.host.worker_observation import WorkerObservationRecord
+    from auto_engineering.host.worker_observation_store import WorkerObservationStore
+
+    record = WorkerObservationRecord(
+        schema_version="1.0",
+        action_message_id="store-action",
+        worker_id="critic-0",
+        execution_generation=1,
+        fencing_token="d" * 64,
+        observed_at="2026-09-02T09:00:00+00:00",
+        native_status="running",
+        wait_attempt=1,
+        owner_known=True,
+        native_worker_handle="native-store",
+    )
+    store = WorkerObservationStore(tmp_path)
+    assert store.load(record) is None
+    path = store.save(record)
+    path.write_text("not-json", encoding="utf-8")
+    with pytest.raises(ValueError, match="WORKER_OBSERVATION_RECORD_CORRUPT"):
+        store.load(record)
+    store.save(record)
+    mismatched = WorkerObservationRecord(
+        **{**record.to_dict(), "observed_at": "2026-09-02T09:01:00+00:00"}
+    )
+    with pytest.raises(ValueError, match="WORKER_OBSERVATION_RECORD_IDENTITY_MISMATCH"):
+        store.load(mismatched)
+
+
 def test_observation_record_rejects_unknown_owner_with_completed_status() -> None:
     from auto_engineering.host.worker_observation import (
         WorkerObservationContractError,

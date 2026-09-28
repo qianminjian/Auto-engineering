@@ -184,7 +184,7 @@ def test_loop_core_does_not_import_host_private_transcript_parser() -> None:
 
 def test_host_watchdog_uses_canonical_event_store_reader() -> None:
     """Watchdog 不得复制 EventStore 的 SQLite schema/query。"""
-    source = _source("scripts/ae-host-run")
+    source = _source("auto_engineering/host/watchdog.py")
 
     assert "from auto_engineering.loop.event_store import SQLiteEventStore" in source
     assert "event_store.semantic_signature()" in source
