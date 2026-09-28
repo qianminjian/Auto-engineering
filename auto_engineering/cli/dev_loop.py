@@ -861,11 +861,13 @@ def _project_host_attestation_repair_action(
     *,
     worker_id: str,
     detail: str,
+    repair_kind: str = "attestation",
 ) -> dict[str, Any]:
     return _project_host_attestation_repair_action_impl(
         mapped_action,
         worker_id=worker_id,
         detail=detail,
+        repair_kind=repair_kind,
         project_result_repair_action_fn=_project_result_repair_action,
     )
 
@@ -1215,7 +1217,10 @@ def run_tick_finalize(
         if input_error is not None:
             if (
                 is_spawn_action
-                and collection_error_code == "HOST_WORKER_ATTESTATION_MISSING"
+                and collection_error_code in {
+                    "HOST_WORKER_ATTESTATION_MISSING",
+                    "HOST_WORKER_ARTIFACT_REPAIRABLE",
+                }
                 and collection_error_worker_id is not None
             ):
                 # 私有业务产物已经存在；这不是 Worker 的失败事实。保留
@@ -1225,6 +1230,11 @@ def run_tick_finalize(
                     mapped_action,
                     worker_id=collection_error_worker_id,
                     detail=outcomes_error or "private_business_artifact_only",
+                    repair_kind=(
+                        "worker_artifact"
+                        if collection_error_code == "HOST_WORKER_ARTIFACT_REPAIRABLE"
+                        else "attestation"
+                    ),
                 )
                 output = (
                     _compact_host_action(repair, root)

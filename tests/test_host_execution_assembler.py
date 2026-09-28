@@ -523,6 +523,38 @@ def test_collect_worker_outcomes_from_private_worker_artifact(tmp_path: Path) ->
     ] == "native-1"
 
 
+def test_collect_marks_invalid_private_artifact_repairable_when_native_is_valid(
+    tmp_path: Path,
+) -> None:
+    """恢复探测必须区分可修复产物与单纯缺少宿主证明。"""
+
+    action = _action(tmp_path)
+    native_ref = ".ae-state/host-runtime/native-results/native.json"
+    action["host_execution"]["workers"][0]["native_result_path"] = native_ref
+    private_path = tmp_path / action["spawn"]["invocations"][0]["outcome_path"]
+    private_path.parent.mkdir(parents=True, exist_ok=True)
+    private_path.write_text(
+        json.dumps({"status": "completed", "payload": {"verdict": "APPROVE"}}),
+        encoding="utf-8",
+    )
+    native_path = tmp_path / native_ref
+    native_path.parent.mkdir(parents=True, exist_ok=True)
+    native_path.write_text(
+        json.dumps({"verdict": "APPROVE", "findings": []}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        WorkerOutcomeCollectionError,
+        match="HOST_WORKER_ARTIFACT_REPAIRABLE:critic-0:"
+        "private_artifact_incomplete_native_result_available",
+    ):
+        HostExecutionAssembler(tmp_path).collect_worker_outcomes_from_artifacts(
+            action=action,
+            outcomes_path=tmp_path / ".ae-state/host-runtime/work/outcomes.json",
+        )
+
+
 def test_record_worker_outcome_merges_business_artifact_with_host_fact(
     tmp_path: Path,
 ) -> None:
@@ -949,6 +981,72 @@ def test_record_worker_outcome_normalizes_missing_private_summary_metadata(
     assert recorded["payload"]["assessment"] == "Needs rework"
 
 
+def test_record_worker_outcome_repairs_invalid_private_artifact_from_bound_native_result(
+    tmp_path: Path,
+) -> None:
+    """私有 envelope 损坏时，绑定的 native result 可修复同一 Action。"""
+
+    action = _action(tmp_path)
+    action["host_execution"]["work_files"] = {
+        "outcomes": ".ae-state/host-runtime/work/outcomes.json",
+    }
+    native_ref = ".ae-state/host-runtime/native-results/native.json"
+    action["host_execution"]["workers"][0]["native_result_path"] = native_ref
+    private_path = tmp_path / action["spawn"]["invocations"][0]["outcome_path"]
+    private_path.parent.mkdir(parents=True, exist_ok=True)
+    private_artifact = {"status": "completed", "payload": {"verdict": "APPROVE"}}
+    private_path.write_text(json.dumps(private_artifact), encoding="utf-8")
+    native_path = tmp_path / native_ref
+    native_path.parent.mkdir(parents=True, exist_ok=True)
+    native_artifact = {
+        "worker_id": "critic-0",
+        "status": "completed",
+        "payload": {"verdict": "APPROVE"},
+        "summary": "native completion",
+    }
+    native_path.write_text(json.dumps(native_artifact), encoding="utf-8")
+
+    recorded = HostExecutionAssembler(tmp_path).record_worker_outcome(
+        action=action,
+        worker_id="critic-0",
+        native_worker_handle="native-critic-1",
+        native_result_file=native_path,
+        status="completed",
+        actual_model="unreported",
+        isolation_evidence="fork_turns=none",
+    )
+
+    repeated = HostExecutionAssembler(tmp_path).record_worker_outcome(
+        action=action,
+        worker_id="critic-0",
+        native_worker_handle="native-critic-1",
+        native_result_file=native_path,
+        status="completed",
+        actual_model="unreported",
+        isolation_evidence="fork_turns=none",
+    )
+
+    assert recorded["payload"] == native_artifact["payload"]
+    assert repeated == recorded
+    assert json.loads(private_path.read_text(encoding="utf-8")) == private_artifact
+    shared = json.loads(
+        (tmp_path / ".ae-state/host-runtime/work/outcomes.json").read_text()
+    )
+    assert shared["outcomes"][0]["payload"] == native_artifact["payload"]
+    quarantine = list(
+        (tmp_path / ".ae-state/host-runtime/worker-outcome-quarantine").glob(
+            "*.json"
+        )
+    )
+    assert len(quarantine) == 1
+    quarantine_record = json.loads(quarantine[0].read_text(encoding="utf-8"))
+    assert quarantine_record["action_message_id"] == "action-1"
+    assert quarantine_record["worker_id"] == "critic-0"
+    assert quarantine_record["artifact_sha256"] == hashlib.sha256(
+        json.dumps(private_artifact).encode()
+    ).hexdigest()
+
+
 def test_record_worker_outcome_rejects_nested_codex_result_wrapper(
     tmp_path: Path,
 ) -> None:
@@ -1046,10 +1144,10 @@ def test_record_worker_outcome_rejects_ambiguous_top_level_json_objects(
         )
 
 
-def test_record_worker_outcome_rejects_malformed_private_file_without_fallback(
+def test_record_worker_outcome_repairs_malformed_private_file_from_native_result(
     tmp_path: Path,
 ) -> None:
-    """私有文件格式损坏时必须保留当前 Action，不能启用第二条业务路径。"""
+    """私有文件格式损坏时，绑定 native result 可修复同一 Action。"""
 
     action = _action(tmp_path)
     native_ref = ".ae-state/host-runtime/native-results/native.json"
@@ -1070,21 +1168,24 @@ def test_record_worker_outcome_rejects_malformed_private_file_without_fallback(
         }],
     }), encoding="utf-8")
 
-    with pytest.raises(
-        HostEvidenceValidationError,
-        match="WORKER_BUSINESS_ARTIFACT_INVALID:critic-0",
-    ):
-        HostExecutionAssembler(tmp_path).record_worker_outcome(
-            action=action,
-            worker_id="critic-0",
-            native_worker_handle="native-agent-1",
-            native_result_file=native_path,
-            status="completed",
-            actual_model="unreported",
-            isolation_evidence="fork_turns=none",
-        )
+    recorded = HostExecutionAssembler(tmp_path).record_worker_outcome(
+        action=action,
+        worker_id="critic-0",
+        native_worker_handle="native-agent-1",
+        native_result_file=native_path,
+        status="completed",
+        actual_model="unreported",
+        isolation_evidence="fork_turns=none",
+    )
 
     assert json.loads(private_path.read_text(encoding="utf-8")) == malformed_private
+    assert recorded["payload"] == {"batch_id": "native-authoritative"}
+    quarantine = list(
+        (tmp_path / ".ae-state/host-runtime/worker-outcome-quarantine").glob(
+            "*.json"
+        )
+    )
+    assert len(quarantine) == 1
 
 
 def test_record_invalid_worker_failure_preserves_private_artifact_and_finalizes_failure(

@@ -18,6 +18,9 @@ from auto_engineering.host.outcome_journal import OutcomeJournal
 from auto_engineering.host.outcome_recovery import OutcomeRecoveryService
 from auto_engineering.host.result_contract import ResultContractService
 from auto_engineering.host.spawn_contract import SpawnContractError, SpawnPlan
+from auto_engineering.host.worker_artifact_repair import (
+    quarantine_private_artifact,
+)
 from auto_engineering.host.worker_attestation import (
     WorkerAttestationError,
     validate_attestations,
@@ -40,6 +43,9 @@ from auto_engineering.host.worker_failure import WorkerFailureService
 from auto_engineering.host.worker_observation import (
     WorkerObservationContractError,
     WorkerObservationRecord,
+)
+from auto_engineering.host.worker_outcome_collector import (
+    collect_worker_outcomes_from_artifacts,
 )
 from auto_engineering.loop.architect_plan_coverage import (
     architect_plan_coverage_violations,
@@ -398,19 +404,24 @@ class HostExecutionAssembler(ResultFinalizationMixin):
 
         if native_status_only:
             require_completed_observation()
+        private_artifact_bytes: bytes | None = None
+        private_artifact_violations: tuple[str, ...] = ()
+        private_artifact_repaired = False
         if not outcome_path.is_file():
             # 只有私有文件完全缺失时，Host 才能从本次原生回包恢复一次。
-            # 一旦 Worker 已经写出文件，该文件就是唯一业务权威；不能
-            # 用另一条 native 解析路径覆盖 Worker 的非法协议。
+            # 原生结果仍然必须经过同一个解析器和当前 Action 绑定校验。
             raw_business = load_native_business()
             _atomic_write_json(outcome_path, raw_business)
         else:
             try:
-                raw_business = json.loads(outcome_path.read_text(encoding="utf-8"))
+                private_artifact_bytes = outcome_path.read_bytes()
+                raw_business = json.loads(private_artifact_bytes.decode("utf-8"))
             except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-                raise HostEvidenceValidationError((
+                raw_business = None
+                private_artifact_violations = (
                     f"WORKER_BUSINESS_ARTIFACT_INVALID:{worker_id}",
-                )) from exc
+                    exc.__class__.__name__,
+                )
         if isinstance(raw_business, Mapping) and isinstance(raw_business.get("outcome"), Mapping):
             raw_business = raw_business["outcome"]
         # Claude Worker 偶尔会把 expected_format 业务对象直接写到私有路径，
@@ -461,9 +472,24 @@ class HostExecutionAssembler(ResultFinalizationMixin):
             not isinstance(raw_business, Mapping)
             or not required_business.issubset(raw_business)
         ):
-            raise HostEvidenceValidationError((
-                f"WORKER_BUSINESS_ARTIFACT_INVALID:{worker_id}",
-            ))
+            if not private_artifact_violations:
+                private_artifact_violations = (
+                    f"WORKER_BUSINESS_ARTIFACT_INVALID:{worker_id}",
+                )
+            if private_artifact_bytes is None or native_result_file is None:
+                raise HostEvidenceValidationError(private_artifact_violations)
+            # Worker 的私有文件是业务证据输入，但不是宿主完成事实的唯一
+            # 权威。当前 Action 已有绑定的 native envelope 时，允许一次
+            # 确定性 repair：保留原文件，隔离其摘要，再由同一个 native
+            # parser 生成 canonical business envelope。禁止用任意正文或
+            # Coordinator 输入替代它。
+            try:
+                raw_business = load_native_business()
+            except HostEvidenceValidationError as exc:
+                raise HostEvidenceValidationError(
+                    (*private_artifact_violations, *exc.violations)
+                ) from exc
+            private_artifact_repaired = True
         forbidden_business = {
             "spawned", "spawn_proof_token", "native_worker_handle", "actual_model",
             "isolation_evidence", "worker_attestations", "attestation", "receipt",
@@ -508,6 +534,17 @@ class HostExecutionAssembler(ResultFinalizationMixin):
             template if isinstance(template, Mapping) else None,
             worker_id,
         )
+        if private_artifact_repaired:
+            quarantine_private_artifact(
+                project_root=self.project_root,
+                action=action,
+                worker_id=worker_id,
+                outcome_ref=outcome_ref,
+                raw_bytes=private_artifact_bytes,
+                violations=private_artifact_violations,
+                execution_generation=generation,
+                fencing_token=fence,
+            )
         outcome = NativeWorkerOutcome(
             worker_id=worker_id,
             native_worker_handle=handle,
@@ -674,7 +711,10 @@ class HostExecutionAssembler(ResultFinalizationMixin):
             for item in plan.invocations
             if item.worker_id in existing_by_worker
         ]
-        _atomic_write_json(outcomes_path, {"outcomes": [item.to_dict() for item in merged]})
+        _atomic_write_json(
+            outcomes_path,
+            {"outcomes": [item.to_dict() for item in merged]},
+        )
         return outcome.to_dict()
 
     def collect_worker_outcomes_from_artifacts(
@@ -683,135 +723,11 @@ class HostExecutionAssembler(ResultFinalizationMixin):
         action: Mapping[str, Any],
         outcomes_path: Path,
     ) -> list[NativeWorkerOutcome]:
-        """汇总每个 Worker 的私有产出，形成唯一共享 outcomes 文件。
-
-        Coordinator 不再负责创造 Worker 事实；它只负责合并已存在的、按
-        invocation 绑定的 WorkerOutcome。当前 Action 必须提供 canonical
-        ``outcome_path``，缺失或不可读时直接 fail-closed。
-        """
-
-        try:
-            plan = SpawnPlan.for_recording(action)
-        except SpawnContractError as exc:
-            raise WorkerOutcomeCollectionError(
-                "HOST_WORKER_OUTPUT_INVALID", "unknown", str(exc)
-            ) from exc
-        outcomes: list[NativeWorkerOutcome] = []
-        host_execution = action.get("host_execution")
-        worker_templates = (
-            host_execution.get("workers")
-            if isinstance(host_execution, Mapping)
-            else None
+        return collect_worker_outcomes_from_artifacts(
+            project_root=self.project_root,
+            action=action,
+            outcomes_path=outcomes_path,
         )
-        template_by_worker = {
-            item.get("worker_id"): item
-            for item in worker_templates
-            if isinstance(item, Mapping) and isinstance(item.get("worker_id"), str)
-        } if isinstance(worker_templates, list) else {}
-        for invocation in plan.invocations:
-            template = template_by_worker.get(invocation.worker_id)
-            if isinstance(template, Mapping):
-                candidate = template.get("outcome_path")
-                if not isinstance(candidate, str) or not candidate:
-                    raise WorkerOutcomeCollectionError(
-                        "HOST_WORKER_OUTPUT_INVALID", invocation.worker_id,
-                        "outcome_path_missing",
-                    )
-                if candidate != invocation.outcome_path:
-                    raise WorkerOutcomeCollectionError(
-                        "HOST_WORKER_OUTPUT_INVALID", invocation.worker_id,
-                        "outcome_path_drift",
-                    )
-            relative = invocation.outcome_path
-            path = (self.project_root / relative).resolve()
-            if path == self.project_root or self.project_root not in path.parents:
-                raise WorkerOutcomeCollectionError(
-                    "HOST_WORKER_OUTPUT_INVALID", invocation.worker_id,
-                    "path_outside_project",
-                )
-            try:
-                raw = json.loads(path.read_text(encoding="utf-8"))
-            except FileNotFoundError as exc:
-                raise WorkerOutcomeCollectionError(
-                    "HOST_WORKER_OUTPUT_MISSING", invocation.worker_id
-                ) from exc
-            except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-                raise WorkerOutcomeCollectionError(
-                    "HOST_WORKER_OUTPUT_INVALID", invocation.worker_id,
-                    exc.__class__.__name__,
-                ) from exc
-            if isinstance(raw, Mapping) and isinstance(raw.get("outcome"), Mapping):
-                raw = raw["outcome"]
-            if not isinstance(raw, Mapping):
-                raise WorkerOutcomeCollectionError(
-                    "HOST_WORKER_OUTPUT_INVALID", invocation.worker_id,
-                    "top_level_must_be_object",
-                )
-            # 私有文件是 Worker 业务边界，不是宿主事实边界。若只收到业务
-            # 字段，不能把它升级成 NativeWorkerOutcome；必须等 Host Driver
-            # 用原生 API 返回的句柄/模型/隔离证据完成合并，否则会把模型文本
-            # 或 unreported 哨兵误当成真实宿主证明。
-            business_fields = {"worker_id", "status", "payload", "summary"}
-            host_fields = {
-                "native_worker_handle", "actual_model", "isolation_evidence",
-            }
-            if (
-                (bool(raw) and set(raw).issubset(business_fields))
-                or (
-                    business_fields.issubset(raw)
-                    and not (host_fields & set(raw))
-                )
-            ):
-                raise WorkerOutcomeCollectionError(
-                    "HOST_WORKER_ATTESTATION_MISSING", invocation.worker_id,
-                    "private_business_artifact_only",
-                )
-            try:
-                outcome = NativeWorkerOutcome(**dict(raw))
-            except (TypeError, ValueError) as exc:
-                raise WorkerOutcomeCollectionError(
-                    "HOST_WORKER_OUTPUT_INVALID", invocation.worker_id,
-                    exc.__class__.__name__,
-                ) from exc
-            if outcome.worker_id != invocation.worker_id:
-                raise WorkerOutcomeCollectionError(
-                    "HOST_WORKER_OUTPUT_INVALID", invocation.worker_id,
-                    "worker_id_mismatch",
-                )
-            if (
-                outcome.status == "completed"
-                and outcome.native_worker_handle.startswith("unreported:")
-            ):
-                # native handle 必须来自宿主原生 spawn 返回；Worker 不能用
-                # 哨兵值冒充 Host Attestation。模型未知仍可使用 unreported，
-                # 但句柄未知不能提交成功证据。
-                raise WorkerOutcomeCollectionError(
-                    "HOST_WORKER_OUTPUT_INVALID", invocation.worker_id,
-                    "native_handle_unreported",
-                )
-            expected_generation, expected_fence = _resolve_worker_execution_binding(
-                action,
-                template if isinstance(template, Mapping) else None,
-                invocation.worker_id,
-            )
-            if (
-                (expected_generation is not None or expected_fence is not None)
-                and (
-                    not isinstance(expected_generation, int)
-                    or expected_generation < 1
-                    or not isinstance(expected_fence, str)
-                    or len(expected_fence) != 64
-                    or outcome.execution_generation != expected_generation
-                    or outcome.fencing_token != expected_fence
-                )
-            ):
-                raise WorkerOutcomeCollectionError(
-                    "HOST_WORKER_OUTPUT_STALE", invocation.worker_id,
-                    "execution_fence_mismatch",
-                )
-            outcomes.append(outcome)
-        _atomic_write_json(outcomes_path, {"outcomes": [item.to_dict() for item in outcomes]})
-        return outcomes
 
     def restore_committed_result_to_file(
         self,

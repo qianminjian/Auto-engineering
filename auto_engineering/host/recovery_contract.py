@@ -13,6 +13,7 @@ NATIVE_OUTCOMES_READY = "native_outcomes_ready"
 WORKER_RECOVERY_STATUSES = frozenset({
     NATIVE_OUTCOMES_READY,
     WORKER_OUTCOMES_COMMITTED,
+    "worker_artifact_repair",
     "worker_attestation_pending",
 })
 

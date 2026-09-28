@@ -266,11 +266,19 @@ def prepare_action_for_host(
                             outcomes_path=outcomes_path,
                         )
                     except WorkerOutcomeCollectionError as exc:
-                        if exc.code == "HOST_WORKER_ATTESTATION_MISSING":
+                        if exc.code in {
+                            "HOST_WORKER_ATTESTATION_MISSING",
+                            "HOST_WORKER_ARTIFACT_REPAIRABLE",
+                        }:
                             mapped = project_host_attestation_repair_action(
                                 mapped,
                                 worker_id=exc.worker_id,
                                 detail=exc.detail or "private_business_artifact_only",
+                                repair_kind=(
+                                    "worker_artifact"
+                                    if exc.code == "HOST_WORKER_ARTIFACT_REPAIRABLE"
+                                    else "attestation"
+                                ),
                             )
     from auto_engineering.host import HostPlatform, detect_host
     from auto_engineering.host.runtime_driver import (

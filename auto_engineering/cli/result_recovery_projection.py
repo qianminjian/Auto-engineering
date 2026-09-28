@@ -126,22 +126,24 @@ def project_host_attestation_repair_action(
     *,
     worker_id: str,
     detail: str,
+    repair_kind: str = "attestation",
     project_result_repair_action_fn: Callable,
 ) -> dict[str, Any]:
-    """保留已完成 Worker 的 active Action，等待宿主补交原生事实。
 
-    私有业务 outcome 已存在时，问题不是 Worker 失败，而是 Host Driver 没有
-    调用 ``record-worker-outcome``。若直接生成 ``spawned=false``，Core 会推进
-    失败代际并在下一次 Action 上找不到上一代 outcome，最终把可修复的宿主
-    回写遗漏放大成重跑/预算耗尽。这个投影只供当前宿主修复，不改变 Core
-    持久化的 canonical Action，也不允许重新 spawn。
-    """
-
+    is_artifact_repair = repair_kind == "worker_artifact"
     projected = project_result_repair_action_fn(
         mapped_action,
         {
-            "error_code": "HOST_WORKER_ATTESTATION_MISSING",
-            "message": "Worker 业务产物已存在，但宿主原生事实尚未回写。",
+            "error_code": (
+                "HOST_WORKER_ARTIFACT_REPAIRABLE"
+                if is_artifact_repair
+                else "HOST_WORKER_ATTESTATION_MISSING"
+            ),
+            "message": (
+                "Worker 私有产物格式无效，但同一 Action 的绑定原生结果可修复。"
+                if is_artifact_repair
+                else "Worker 业务产物已存在，但宿主原生事实尚未回写。"
+            ),
             "violations": [f"{worker_id}:{detail}"],
             },
         )
@@ -153,16 +155,23 @@ def project_host_attestation_repair_action(
     spawn = mapped_action.get("spawn")
     recovery: dict[str, Any] = {
         "schema_version": "1.0",
-        "status": "worker_attestation_pending",
+        "status": (
+            "worker_artifact_repair"
+            if is_artifact_repair
+            else "worker_attestation_pending"
+        ),
         "spawn_permitted": False,
         "forbidden_operations": ["spawn_worker"],
-        "required_operation": "record_worker_outcome_then_finalize",
+        "required_operation": (
+            "repair_worker_artifact_then_finalize"
+            if is_artifact_repair
+            else "record_worker_outcome_then_finalize"
+        ),
         "worker_id": worker_id,
         "detail": detail,
+        "repair_kind": repair_kind,
     }
     if isinstance(spawn, Mapping):
-        # 恢复视图必须隐藏 launch plan，但记录/最终化仍需要验证同一份
-        # invocation 合同。record_plan 是只读副本，不是新的 spawn 入口。
         recovery["record_plan"] = {
             key: (
                 [dict(item) for item in value]
@@ -178,16 +187,23 @@ def project_host_attestation_repair_action(
                 recovery[f"{key}_ref"] = value
     host["recovery"] = recovery
     projected["host_execution"] = host
-    # The recovery view retains worker templates for the fixed record command,
-    # but removes spawn so a compliant host cannot accidentally launch again.
     projected.pop("spawn", None)
     projected["instruction"] = (
-        "当前 Worker 已写入私有业务 outcome，但宿主事实回写缺失。"
-        "禁止重新启动或等待新的 Worker；使用仍然有效的原生 Worker 返回值，"
-        "按 host_execution.workers[].record_worker_outcome 固定模板补交 handle、"
-        "actual_model 和实际 isolation_evidence，随后按当前 Action 的 finalize、"
-        "validate、submit 顺序继续。若宿主已丢失原生 handle，必须保留该错误并停止，"
-        "不得用 unreported 句柄伪造 completed。"
+        (
+            "当前 Worker 私有业务 outcome 格式无效，但同一 Action 的绑定原生结果有效。"
+            "禁止重新启动 Worker；使用该绑定结果按固定 record_worker_outcome 合同"
+            "重建 canonical business envelope。宿主会隔离原私有文件并保持幂等，"
+            "随后按当前 Action 的 finalize、validate、submit 顺序继续。"
+        )
+        if is_artifact_repair
+        else (
+            "当前 Worker 已写入私有业务 outcome，但宿主事实回写缺失。"
+            "禁止重新启动或等待新的 Worker；使用仍然有效的原生 Worker 返回值，"
+            "按 host_execution.workers[].record_worker_outcome 固定模板补交 handle、"
+            "actual_model 和实际 isolation_evidence，随后按当前 Action 的 finalize、"
+            "validate、submit 顺序继续。若宿主已丢失原生 handle，必须保留该错误并停止，"
+            "不得用 unreported 句柄伪造 completed。"
+        )
     )
     return projected
 
@@ -201,14 +217,6 @@ def project_submitted_worker_failure_recovery(
     root_bound_path_fn: Callable,
     project_host_attestation_repair_action_fn: Callable,
 ) -> dict[str, Any] | None:
-    """在 Core 消耗失败预算前识别已落盘的私有 Worker 产物。
-
-    宿主可能在原生 Agent 返回后先提交了 ``HOST_WORKER_FAILED``，而尚未执行
-    ``record-worker-outcome``。若把这个 Result 直接交给 Core，会把“宿主回写
-    漏接”错误地记为 Worker 失败，并推进失败 generation。这里仅识别严格的
-    私有业务 artifact；宿主事实仍必须随后通过固定回写合同补齐，不能由 CLI
-    猜测或生成。
-    """
 
     if not isinstance(action, Mapping) or not isinstance(action.get("spawn"), Mapping):
         return None
@@ -255,18 +263,34 @@ def project_submitted_worker_failure_recovery(
     from auto_engineering.host.worker_evidence import (
         worker_failure_outcomes_are_ready,
     )
-    # record-worker-outcome 已经把完整失败事实写入共享 outcomes 时，必须
-    # 交回 Core 的 HOST_WORKER_FAILED → resource_wait 路径；不能因为私有
-    # artifact 仍然只含业务字段，就再次投影成“等待宿主回写”。
     if worker_failure_outcomes_are_ready(
         action=mapped_action,
         outcome_items=outcome_items,
     ):
         return None
-    # 原生 Agent 返回已经由 Hook 原样落在 Action 绑定路径，但宿主可能
-    # 在调用 ``record-worker-outcome`` 前就提交了 HOST_WORKER_FAILED。
-    # 这不是 Worker 失败，也不能要求模型再 spawn；先把同一 Action 投影
-    # 到唯一的宿主事实回写操作，后续仍由 record 边界验证 native envelope。
+    try:
+        HostExecutionAssembler(root).collect_worker_outcomes_from_artifacts(
+            action=mapped_action,
+            outcomes_path=outcomes_path,
+        )
+    except WorkerOutcomeCollectionError as exc:
+        if exc.code not in {
+            "HOST_WORKER_ARTIFACT_REPAIRABLE",
+            "HOST_WORKER_ATTESTATION_MISSING",
+        }:
+            if exc.code != "HOST_WORKER_OUTPUT_MISSING":
+                return None
+        else:
+            return project_host_attestation_repair_action_fn(
+                mapped_action,
+                worker_id=exc.worker_id,
+                detail=exc.detail or "private_business_artifact_only",
+                repair_kind=(
+                    "worker_artifact"
+                    if exc.code == "HOST_WORKER_ARTIFACT_REPAIRABLE"
+                    else "attestation"
+                ),
+            )
     native_result_workers = native_result_worker_ids(
         host_execution,
         root=root,
@@ -277,19 +301,6 @@ def project_submitted_worker_failure_recovery(
             mapped_action,
             worker_id=native_result_workers[0],
             detail="native_result_ready_without_record_worker_outcome",
-        )
-    try:
-        HostExecutionAssembler(root).collect_worker_outcomes_from_artifacts(
-            action=mapped_action,
-            outcomes_path=outcomes_path,
-        )
-    except WorkerOutcomeCollectionError as exc:
-        if exc.code != "HOST_WORKER_ATTESTATION_MISSING":
-            return None
-        return project_host_attestation_repair_action_fn(
-            mapped_action,
-            worker_id=exc.worker_id,
-            detail=exc.detail or "private_business_artifact_only",
         )
     return None
 
