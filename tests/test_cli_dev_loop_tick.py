@@ -713,6 +713,12 @@ def test_tick_preflight_projects_native_result_repair_before_worker_failure(
     }
     native_path = tmp_path / native_ref
     native_path.parent.mkdir(parents=True, exist_ok=True)
+    private_path = tmp_path / invocation.outcome_path
+    private_path.parent.mkdir(parents=True, exist_ok=True)
+    private_path.write_text(
+        json.dumps({"status": "completed", "payload": {"retrieval_status": "success"}}),
+        encoding="utf-8",
+    )
     native_path.write_text(
         json.dumps({"retrieval_status": "success", "result": "structured"}),
         encoding="utf-8",
@@ -730,10 +736,13 @@ def test_tick_preflight_projects_native_result_repair_before_worker_failure(
 
     assert recovered is not None
     assert recovered["host_execution"]["recovery"]["status"] == (
-        "worker_attestation_pending"
+        "worker_artifact_repair"
     )
     assert recovered["host_execution"]["recovery"]["detail"] == (
-        "native_result_ready_without_record_worker_outcome"
+        "private_artifact_incomplete_native_result_available"
+    )
+    assert recovered["host_execution"]["recovery"]["required_operation"] == (
+        "repair_worker_artifact_then_finalize"
     )
     assert recovered["host_execution"]["recovery"]["spawn_permitted"] is False
     assert "spawn" not in recovered

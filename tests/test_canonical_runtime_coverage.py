@@ -196,6 +196,13 @@ def test_thread_selection_requires_event_store_capabilities() -> None:
     assert active_thread(object()) is None
     assert unfinished_thread(object()) is None
 
+    class AmbiguousEvents:
+        def unfinished_threads(self) -> list[str]:
+            return ["thread-1", "thread-2"]
+
+    with pytest.raises(ValueError, match="PROJECT_THREAD_AMBIGUOUS"):
+        unfinished_thread(AmbiguousEvents())
+
 
 def test_native_result_probe_accepts_only_root_bound_json_documents(
     tmp_path: Path,
@@ -203,7 +210,7 @@ def test_native_result_probe_accepts_only_root_bound_json_documents(
     from auto_engineering.cli.native_result_recovery import native_result_worker_ids
 
     result = tmp_path / "result.json"
-    result.write_text('{"status":"completed"}', encoding="utf-8")
+    result.write_text('{"verdict":"APPROVE"}', encoding="utf-8")
     host_execution = {
         "workers": [
             {"worker_id": "worker-1", "native_result_path": "result.json"},
@@ -211,15 +218,78 @@ def test_native_result_probe_accepts_only_root_bound_json_documents(
             {"worker_id": "worker-2", "native_result_path": "missing.json"},
         ]
     }
+    action = {
+        "spawn": {
+            "invocations": [{"worker_id": "worker-1"}],
+        },
+    }
 
     assert native_result_worker_ids(
         host_execution,
+        action=action,
         root=tmp_path,
         root_bound_path_fn=lambda path, root: root / path,
     ) == ["worker-1"]
     assert native_result_worker_ids(
         {"workers": "invalid"}, root=tmp_path,
+        action=action,
         root_bound_path_fn=lambda path, root: root / path,
+    ) == []
+
+
+def test_native_result_probe_rejects_noncanonical_json_documents(
+    tmp_path: Path,
+) -> None:
+    from auto_engineering.cli.native_result_recovery import native_result_worker_ids
+
+    result = tmp_path / "result.json"
+    host_execution = {
+        "workers": [{"worker_id": "worker-1", "native_result_path": "result.json"}],
+    }
+    action = {"spawn": {"invocations": [{"worker_id": "worker-1"}]}}
+    for raw in (
+        {"status": "completed"},
+        {"result": {"result": {"verdict": "AMBIGUOUS"}}},
+        {"native_worker_handle": "fake", "verdict": "POLLUTED"},
+    ):
+        result.write_text(json.dumps(raw), encoding="utf-8")
+        assert native_result_worker_ids(
+            host_execution,
+            action=action,
+            root=tmp_path,
+            root_bound_path_fn=lambda path, root: root / path,
+        ) == []
+
+
+def test_native_result_probe_rejects_unbound_or_incomplete_worker_records(
+    tmp_path: Path,
+) -> None:
+    from auto_engineering.cli.native_result_recovery import native_result_worker_ids
+
+    result = tmp_path / "result.json"
+    result.write_text('{"verdict":"APPROVE"}', encoding="utf-8")
+
+    def probe(host_execution: object, action: object) -> list[str]:
+        return native_result_worker_ids(
+            host_execution,
+            action=action,
+            root=tmp_path,
+            root_bound_path_fn=lambda path, root: root / path,
+        )
+
+    assert probe(
+        {"workers": [{"worker_id": "worker-1", "native_result_path": "result.json"}]},
+        {"spawn": {"invocations": []}},
+    ) == []
+    assert probe(
+        {"workers": [None, {"worker_id": "worker-1"}, {"worker_id": "worker-1", "native_result_path": "result.json"}]},
+        {"spawn": {"invocations": [{"worker_id": "worker-1"}]}},
+    ) == ["worker-1"]
+    assert native_result_worker_ids(
+        {"workers": [{"worker_id": "worker-1", "native_result_path": "result.json"}]},
+        action={"spawn": {"invocations": [{"worker_id": "worker-1"}]}},
+        root=tmp_path,
+        root_bound_path_fn=lambda path, root: root.parent,
     ) == []
 
 

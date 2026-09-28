@@ -293,6 +293,7 @@ def project_submitted_worker_failure_recovery(
             )
     native_result_workers = native_result_worker_ids(
         host_execution,
+        action=mapped_action,
         root=root,
         root_bound_path_fn=root_bound_path_fn,
     )
