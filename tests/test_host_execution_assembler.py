@@ -428,10 +428,10 @@ def test_finalize_missing_preserves_recorded_invalid_native_failure(
     assert "HOST_PROTOCOL_FAILURE" in result["spawn_error"]
 
 
-def test_missing_coordinator_recovers_completed_single_worker_artifact(
+def test_missing_coordinator_does_not_promote_private_host_envelope(
     tmp_path: Path,
 ) -> None:
-    """Worker 已落盘但 Coordinator 崩溃时，失败分支不能遮蔽成功事实。"""
+    """旧的 Host-in-private envelope 不能绕过 record-worker-outcome。"""
     action = _action(tmp_path)
     private_path = tmp_path / action["spawn"]["invocations"][0]["outcome_path"]
     private_path.parent.mkdir(parents=True, exist_ok=True)
@@ -451,19 +451,21 @@ def test_missing_coordinator_recovers_completed_single_worker_artifact(
         result_path=tmp_path / "recovered-result.json",
     )
 
-    assert result["spawned"] is True
-    assert result["verdict"] == "APPROVE"
-    assert json.loads((tmp_path / "recovered-result.json").read_text()) == result
+    assert result["spawned"] is False
+    assert result["spawn_error_code"] == "HOST_PROTOCOL_FAILURE"
+    assert json.loads(
+        (tmp_path / "recovered-result.json").read_text(encoding="utf-8")
+    )["spawn_error_code"] == "HOST_PROTOCOL_FAILURE"
     journal = json.loads(
         (tmp_path / ".ae-state/host-runtime/outcomes/action-1.json").read_text()
     )
-    assert journal["status"] == "prepared"
+    assert journal["status"] == "protocol_failed"
 
 
-def test_late_completed_artifact_has_priority_over_previous_missing_failure(
+def test_late_private_host_envelope_cannot_replace_protocol_failure(
     tmp_path: Path,
 ) -> None:
-    """失败落盘后 Worker 晚到，成功事实必须优先完成同一 Action。"""
+    """失败事实提交后，迟到的旧私有 envelope 不能覆盖共享事实。"""
 
     action = _action(tmp_path)
     assembler = HostExecutionAssembler(tmp_path)
@@ -490,15 +492,15 @@ def test_late_completed_artifact_has_priority_over_previous_missing_failure(
         reason_code="HOST_WORKER_OUTPUT_MISSING",
     )
 
-    assert result["spawned"] is True
-    assert result["verdict"] == "APPROVE"
+    assert result["spawned"] is False
+    assert result["spawn_error_code"] == "HOST_PROTOCOL_FAILURE"
     journal = json.loads(
         (tmp_path / ".ae-state/host-runtime/outcomes/action-1.json").read_text()
     )
-    assert journal["status"] == "prepared"
+    assert journal["status"] == "protocol_failed"
 
 
-def test_collect_worker_outcomes_from_private_worker_artifact(tmp_path: Path) -> None:
+def test_collect_rejects_private_host_envelope(tmp_path: Path) -> None:
     action = _action(tmp_path)
     private_path = tmp_path / action["spawn"]["invocations"][0]["outcome_path"]
     private_path.parent.mkdir(parents=True, exist_ok=True)
@@ -512,16 +514,13 @@ def test_collect_worker_outcomes_from_private_worker_artifact(tmp_path: Path) ->
         "isolation_evidence": "fork_context=false",
     }), encoding="utf-8")
 
-    outcomes_path = tmp_path / ".ae-state/host-runtime/work/outcomes.json"
-    outcomes = HostExecutionAssembler(tmp_path).collect_worker_outcomes_from_artifacts(
-        action=action,
-        outcomes_path=outcomes_path,
-    )
-
-    assert outcomes[0].worker_id == "critic-0"
-    assert json.loads(outcomes_path.read_text(encoding="utf-8"))["outcomes"][0][
-        "native_worker_handle"
-    ] == "native-1"
+    with pytest.raises(
+        WorkerOutcomeCollectionError,
+        match="HOST_PROTOCOL_FAILURE:critic-0:private_artifact_invalid",
+    ):
+        HostExecutionAssembler(tmp_path).inspect_private_worker_artifacts(
+            action=action,
+        )
 
 
 def test_collect_marks_invalid_private_artifact_repairable_when_native_is_valid(
@@ -548,11 +547,10 @@ def test_collect_marks_invalid_private_artifact_repairable_when_native_is_valid(
     with pytest.raises(
         WorkerOutcomeCollectionError,
         match="HOST_WORKER_ARTIFACT_REPAIRABLE:critic-0:"
-        "private_artifact_incomplete_native_result_available",
+        "private_artifact_invalid_native_result_available",
     ):
-        HostExecutionAssembler(tmp_path).collect_worker_outcomes_from_artifacts(
+        HostExecutionAssembler(tmp_path).inspect_private_worker_artifacts(
             action=action,
-            outcomes_path=tmp_path / ".ae-state/host-runtime/work/outcomes.json",
         )
 
 
@@ -1766,18 +1764,16 @@ def test_collect_rejects_noncanonical_worker_artifact_layout(
         WorkerOutcomeCollectionError,
         match="HOST_WORKER_OUTPUT_MISSING:critic-0",
     ):
-        HostExecutionAssembler(tmp_path).collect_worker_outcomes_from_artifacts(
+        HostExecutionAssembler(tmp_path).inspect_private_worker_artifacts(
             action=action,
-            outcomes_path=tmp_path / "outcomes.json",
         )
     assert legacy_path.is_file()
 
 
 def test_collect_worker_outcomes_reports_missing_private_artifact(tmp_path: Path) -> None:
     with pytest.raises(WorkerOutcomeCollectionError, match="HOST_WORKER_OUTPUT_MISSING:critic-0"):
-        HostExecutionAssembler(tmp_path).collect_worker_outcomes_from_artifacts(
+        HostExecutionAssembler(tmp_path).inspect_private_worker_artifacts(
             action=_action(tmp_path),
-            outcomes_path=tmp_path / "outcomes.json",
         )
 
 
@@ -1826,11 +1822,10 @@ def test_collect_rejects_unreported_native_handle_for_completed_worker(
 
     with pytest.raises(
         WorkerOutcomeCollectionError,
-        match="HOST_PROTOCOL_FAILURE:critic-0:native_handle_unreported",
+        match="HOST_PROTOCOL_FAILURE:critic-0:private_artifact_invalid",
     ):
-        HostExecutionAssembler(tmp_path).collect_worker_outcomes_from_artifacts(
+        HostExecutionAssembler(tmp_path).inspect_private_worker_artifacts(
             action=action,
-            outcomes_path=tmp_path / "outcomes.json",
         )
 
 
@@ -1853,9 +1848,8 @@ def test_collect_rejects_private_business_artifact_without_host_attestation(
         WorkerOutcomeCollectionError,
         match="HOST_WORKER_ATTESTATION_MISSING:critic-0:private_business_artifact_only",
     ):
-        HostExecutionAssembler(tmp_path).collect_worker_outcomes_from_artifacts(
+        HostExecutionAssembler(tmp_path).inspect_private_worker_artifacts(
             action=action,
-            outcomes_path=tmp_path / ".ae-state/work/outcomes.json",
         )
 
 
@@ -1882,11 +1876,10 @@ def test_collect_worker_outcomes_rejects_stale_execution_fence(
 
     with pytest.raises(
         WorkerOutcomeCollectionError,
-        match="HOST_WORKER_OUTPUT_STALE:critic-0",
+        match="HOST_PROTOCOL_FAILURE:critic-0:private_artifact_invalid",
     ):
-        HostExecutionAssembler(tmp_path).collect_worker_outcomes_from_artifacts(
+        HostExecutionAssembler(tmp_path).inspect_private_worker_artifacts(
             action=action,
-            outcomes_path=tmp_path / "outcomes.json",
         )
 
 

@@ -1151,11 +1151,9 @@ def run_tick_finalize(
                     raise WorkerOutcomeCollectionError(
                         "HOST_WORKER_OUTPUT_MISSING", "unknown", "outcomes_path_missing"
                     )
-                collected_outcomes = HostExecutionAssembler(root).collect_worker_outcomes_from_artifacts(
+                HostExecutionAssembler(root).inspect_private_worker_artifacts(
                     action=mapped_action,
-                    outcomes_path=outcomes_path,
                 )
-                outcome_items = [item.to_dict() for item in collected_outcomes]
                 outcomes_error = None
             except WorkerOutcomeCollectionError as exc:
                 collection_error_code = exc.code

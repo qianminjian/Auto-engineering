@@ -188,7 +188,7 @@ def test_architect_action_exposes_valid_machine_routing_keys(tmp_path) -> None:
     assert '"工具模块"' in prompt
     assert '"engineering_sections"' in prompt
     assert prompt.count('"section_id"') == 2
-    assert "Host Collector will merge them into the shared" in action["instruction"]
+    assert "single record-worker-outcome boundary will merge them into the shared" in action["instruction"]
     assert "Never reuse files from another Action" in action["instruction"]
     assert '"outcomes"' in action["instruction"]
     assert "isolation_evidence" in action["instruction"]

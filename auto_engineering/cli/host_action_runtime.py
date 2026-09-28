@@ -261,9 +261,8 @@ def prepare_action_for_host(
                     # 回写原生事实时退出。跨进程恢复必须识别这个中间态，
                     # 否则 canonical Action 仍含 spawn 就会重复启动 Worker。
                     try:
-                        HostExecutionAssembler(root).collect_worker_outcomes_from_artifacts(
+                        HostExecutionAssembler(root).inspect_private_worker_artifacts(
                             action=mapped,
-                            outcomes_path=outcomes_path,
                         )
                     except WorkerOutcomeCollectionError as exc:
                         if exc.code in {

@@ -147,10 +147,7 @@ def test_partial_private_outcome_fails_closed_without_partial_merge(
             WorkerOutcomeCollectionError,
             match="HOST_PROTOCOL_FAILURE:architect-0",
         ):
-            mapped.collect_worker_outcomes_from_artifacts(
-                action=action,
-                outcomes_path=tmp_path / "outcomes.json",
-            )
+            mapped.inspect_private_worker_artifacts(action=action)
         assert events.load_action_snapshot(action["thread_id"]) == action
 
 

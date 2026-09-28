@@ -19,6 +19,9 @@ from auto_engineering.host.outcome_recovery import OutcomeRecoveryService
 from auto_engineering.host.recovery_contract import HOST_PROTOCOL_FAILURE
 from auto_engineering.host.result_contract import ResultContractService
 from auto_engineering.host.spawn_contract import SpawnContractError, SpawnPlan
+from auto_engineering.host.worker_artifact_inspector import (
+    inspect_private_worker_artifacts,
+)
 from auto_engineering.host.worker_artifact_repair import (
     quarantine_private_artifact,
 )
@@ -45,9 +48,6 @@ from auto_engineering.host.worker_observation import (
     WorkerObservationContractError,
     WorkerObservationRecord,
 )
-from auto_engineering.host.worker_outcome_collector import (
-    collect_worker_outcomes_from_artifacts,
-)
 from auto_engineering.loop.architect_plan_coverage import (
     architect_plan_coverage_violations,
 )
@@ -71,7 +71,6 @@ class HostExecutionAssembler(ResultFinalizationMixin):
         self._result_contract = ResultContractService()
         self._worker_failure = WorkerFailureService(
             self.project_root,
-            recover_completed_worker_artifacts=self.recover_completed_worker_artifacts,
         )
 
     def stage_native_result(
@@ -144,93 +143,6 @@ class HostExecutionAssembler(ResultFinalizationMixin):
                 f"WORKER_NATIVE_RESULT_PATH_INVALID:{worker_id}",
             ))
         _atomic_write_bytes(native_path, raw_envelope)
-
-    def recover_completed_worker_artifacts(
-        self,
-        *,
-        action: Mapping[str, Any],
-        result_path: Path | None = None,
-    ) -> dict[str, Any] | None:
-        """在 Coordinator 文件缺失时，从已提交的单 Worker 业务产物恢复。
-
-        这是宿主上下文在 ``WorkerOutcome`` 已落盘后的崩溃恢复，不是重新
-        执行 Worker。多 Worker 的合并语义必须由 Coordinator 提供，因此
-        不在这里猜测或拼接。
-        """
-
-        host_execution = action.get("host_execution")
-        work_files = (
-            host_execution.get("work_files")
-            if isinstance(host_execution, Mapping)
-            else None
-        )
-        outcomes_ref = (
-            work_files.get("outcomes")
-            if isinstance(work_files, Mapping)
-            else None
-        )
-        coordinator_ref = (
-            work_files.get("coordinator_result")
-            if isinstance(work_files, Mapping)
-            else None
-        )
-        result_ref = (
-            work_files.get("result")
-            if isinstance(work_files, Mapping)
-            else None
-        )
-
-        def bound_path(value: object) -> Path | None:
-            if not isinstance(value, (str, Path)) or not value:
-                return None
-            candidate = Path(value)
-            resolved = (
-                candidate.resolve()
-                if candidate.is_absolute()
-                else (self.project_root / candidate).resolve()
-            )
-            if resolved == self.project_root or self.project_root not in resolved.parents:
-                return None
-            return resolved
-
-        outcomes_path = bound_path(outcomes_ref)
-        if outcomes_path is None:
-            message_id = action.get("message_id")
-            if not isinstance(message_id, str) or not message_id:
-                return None
-            outcomes_path = (
-                self.project_root
-                / ".ae-state/host-runtime/recovery"
-                / f"{message_id}.outcomes.json"
-            )
-        try:
-            outcomes = self.collect_worker_outcomes_from_artifacts(
-                action=action,
-                outcomes_path=outcomes_path,
-            )
-        except WorkerOutcomeCollectionError:
-            return None
-        if len(outcomes) != 1 or outcomes[0].status != "completed":
-            return None
-        payload = outcomes[0].payload
-        if not isinstance(payload, dict):
-            return None
-        coordinator_path = bound_path(coordinator_ref)
-        if coordinator_path is not None:
-            _atomic_write_json(coordinator_path, payload)
-        effective_result_path = bound_path(result_path) if result_path is not None else bound_path(result_ref)
-        if effective_result_path is None:
-            return self.finalize(
-                action=action,
-                outcomes=outcomes,
-                coordinator_payload=payload,
-            )
-        return self.finalize_to_file(
-            action=action,
-            outcomes=outcomes,
-            coordinator_payload=payload,
-            result_path=effective_result_path,
-        )
 
     def record_worker_outcome(
         self,
@@ -788,16 +700,14 @@ class HostExecutionAssembler(ResultFinalizationMixin):
         )
         return outcome.to_dict()
 
-    def collect_worker_outcomes_from_artifacts(
+    def inspect_private_worker_artifacts(
         self,
         *,
         action: Mapping[str, Any],
-        outcomes_path: Path,
-    ) -> list[NativeWorkerOutcome]:
-        return collect_worker_outcomes_from_artifacts(
+    ) -> None:
+        return inspect_private_worker_artifacts(
             project_root=self.project_root,
             action=action,
-            outcomes_path=outcomes_path,
         )
 
     def restore_committed_result_to_file(

@@ -35,10 +35,7 @@ def _failure(*, status: str = "failed", error_code: str | None = None) -> Native
 
 
 def test_worker_failure_is_classified_and_idempotent(tmp_path: Path) -> None:
-    service = WorkerFailureService(
-        tmp_path,
-        recover_completed_worker_artifacts=lambda **_: None,
-    )
+    service = WorkerFailureService(tmp_path)
     action = _action(tmp_path)
     result = service.finalize_worker_failure(action=action, outcomes=[_failure()])
     assert result["spawned"] is False
@@ -47,10 +44,7 @@ def test_worker_failure_is_classified_and_idempotent(tmp_path: Path) -> None:
 
 
 def test_worker_failure_classifies_timeout_and_protocol_separately(tmp_path: Path) -> None:
-    service = WorkerFailureService(
-        tmp_path,
-        recover_completed_worker_artifacts=lambda **_: None,
-    )
+    service = WorkerFailureService(tmp_path)
     timeout_action = _action(tmp_path)
     timeout = service.finalize_worker_failure(
         action=timeout_action,
@@ -79,10 +73,7 @@ def test_worker_failure_classifies_timeout_and_protocol_separately(tmp_path: Pat
 def test_worker_failure_rejects_incomplete_action_identity(
     tmp_path: Path, mutator: object, violation: str
 ) -> None:
-    service = WorkerFailureService(
-        tmp_path,
-        recover_completed_worker_artifacts=lambda **_: None,
-    )
+    service = WorkerFailureService(tmp_path)
     action = _action(tmp_path)
     mutator(action)  # type: ignore[operator]
     with pytest.raises(HostEvidenceValidationError, match=violation):
@@ -92,10 +83,7 @@ def test_worker_failure_rejects_incomplete_action_identity(
 def test_missing_worker_output_writes_bounded_result_and_rejects_escape(
     tmp_path: Path,
 ) -> None:
-    service = WorkerFailureService(
-        tmp_path,
-        recover_completed_worker_artifacts=lambda **_: None,
-    )
+    service = WorkerFailureService(tmp_path)
     action = _action(tmp_path)
     result_path = tmp_path / ".ae-state/host-runtime/result.json"
     result = service.finalize_missing_worker_output(

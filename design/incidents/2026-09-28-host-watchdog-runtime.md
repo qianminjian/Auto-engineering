@@ -40,6 +40,6 @@ EventStore 和恢复状态并没有证明业务失败；失效的是宿主边界
 - watchdog 直接边界测试：26 passed。
 - 宿主进程退出与恢复回归：46 passed。
 - fresh 业务回归范围：2897 passed / 1 skipped。
-- 严格覆盖率：18350 / 20388 statements，90.003924%。
+- 严格覆盖率：18291 / 20323 statements，90.001476%。
 - 真实 Codex/Claude 独立安装 L4、Voice Clone 业务验收和 Recovery Canary 产品证据
   仍是发布门禁，未被本次自动化回归替代。

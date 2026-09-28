@@ -739,7 +739,7 @@ def test_tick_preflight_projects_native_result_repair_before_worker_failure(
         "worker_artifact_repair"
     )
     assert recovered["host_execution"]["recovery"]["detail"] == (
-        "private_artifact_incomplete_native_result_available"
+        "private_artifact_invalid_native_result_available"
     )
     assert recovered["host_execution"]["recovery"]["required_operation"] == (
         "repair_worker_artifact_then_finalize"
@@ -2509,108 +2509,6 @@ class TestMutexAndLegacy:
         assert repeated["spawned"] is False
         assert repeated["spawn_error_code"] == "HOST_PROTOCOL_FAILURE"
         assert repeated["spawn_retry_attempt"] == 1
-
-    def test_finalize_unwraps_matching_single_worker_envelope(
-        self, tmp_path: Path, monkeypatch, capsys
-    ) -> None:
-        """单 Worker 误把自身 envelope 写入 Coordinator 时只解一层。"""
-        dev_loop_module = importlib.import_module("auto_engineering.cli.dev_loop")
-        from auto_engineering.host.execution_assembler import (
-            HostExecutionAssembler,
-            NativeWorkerOutcome,
-        )
-        from auto_engineering.loop import event_store as event_store_module
-
-        payload = {"plan": "按原设计实现", "batch_plan": []}
-        invocation = {
-            "worker_id": "architect-0",
-            "outcome_path": ".ae-state/host-runtime/worker-outcomes/a.json",
-        }
-        action = {
-            "message_id": "architect-envelope-1",
-            "thread_id": "thread-envelope-1",
-            "stage": "architect",
-            "action": "architect",
-            "spawn": {"invocations": [invocation]},
-            "host_execution": {
-                "work_files": {
-                    "outcomes": ".ae-state/host-runtime/work/a/outcomes.json",
-                    "coordinator_result": (
-                        ".ae-state/host-runtime/work/a/coordinator-result.json"
-                    ),
-                    "result": ".ae-state/host-runtime/work/a/result.json",
-                },
-            },
-        }
-
-        class FakeEvents:
-            def __init__(self, *args, **kwargs) -> None:
-                del args, kwargs
-
-            def unfinished_threads(self) -> list[str]:
-                return [action["thread_id"]]
-
-            def load_action_snapshot(self, thread_id: str):
-                assert thread_id == action["thread_id"]
-                return action
-
-            def close(self) -> None:
-                pass
-
-        outcome = NativeWorkerOutcome(
-            worker_id="architect-0",
-            native_worker_handle="codex-native-architect-0",
-            status="completed",
-            payload=payload,
-            summary="Architect 已完成规划",
-            actual_model="unreported",
-            isolation_evidence="fork_turns=none",
-        )
-        work_root = tmp_path / ".ae-state/host-runtime/work/a"
-        work_root.mkdir(parents=True)
-        (work_root / "outcomes.json").write_text(
-            json.dumps({"outcomes": []}), encoding="utf-8"
-        )
-        (work_root / "coordinator-result.json").write_text(
-            json.dumps({
-                "worker_id": outcome.worker_id,
-                "status": outcome.status,
-                "payload": payload,
-                "summary": outcome.summary,
-            }),
-            encoding="utf-8",
-        )
-
-        captured: dict[str, object] = {}
-
-        def collect(*_args, **_kwargs):
-            return [outcome]
-
-        def finalize_to_file(self, **kwargs):
-            del self
-            captured.update(kwargs)
-            return {"message_type": "result", "stage": "architect"}
-
-        monkeypatch.setattr(event_store_module, "SQLiteEventStore", FakeEvents)
-        monkeypatch.setattr(
-            dev_loop_module, "_map_bound_action_for_host",
-            lambda value, root, **kwargs: value,
-        )
-        monkeypatch.setattr(
-            HostExecutionAssembler,
-            "collect_worker_outcomes_from_artifacts",
-            collect,
-        )
-        monkeypatch.setattr(HostExecutionAssembler, "finalize_to_file", finalize_to_file)
-
-        dev_loop_module.run_tick_finalize(
-            None,
-            work_root / "coordinator-result.json",
-            tmp_path,
-        )
-
-        assert captured["coordinator_payload"] == payload
-        assert _last_json_line(capsys.readouterr().out)["message_type"] == "result"
 
     def test_finalize_private_outcome_enters_host_attestation_repair(
         self, tmp_path: Path, monkeypatch, capsys

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 from uuid import NAMESPACE_URL, uuid5
@@ -22,7 +22,6 @@ from auto_engineering.host.worker_failure_recovery import (
     read_recorded_failure_outcomes,
 )
 
-_RecoverCompleted = Callable[..., dict[str, Any] | None]
 _PROTOCOL_OUTCOME_CODES = frozenset({
     HOST_PROTOCOL_FAILURE,
     "HOST_WORKER_OUTPUT_INVALID",
@@ -38,11 +37,8 @@ class WorkerFailureService:
     def __init__(
         self,
         project_root: Path,
-        *,
-        recover_completed_worker_artifacts: _RecoverCompleted,
     ) -> None:
         self.project_root = project_root.resolve()
-        self._recover_completed_worker_artifacts = recover_completed_worker_artifacts
 
     def finalize_worker_failure(
         self,
@@ -280,12 +276,6 @@ class WorkerFailureService:
             "HOST_WORKER_OUTPUT_MISSING",
             "HOST_WORKER_OUTPUT_INVALID",
         }:
-            recovered = self._recover_completed_worker_artifacts(
-                action=action,
-                result_path=result_path,
-            )
-            if recovered is not None:
-                return recovered
             recorded_failure = read_recorded_failure_outcomes(
                 self.project_root,
                 action,

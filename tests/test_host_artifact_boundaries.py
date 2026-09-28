@@ -12,6 +12,9 @@ from auto_engineering.host.outcome_repair import (
     merge_authoritative_outcomes,
 )
 from auto_engineering.host.spawn_contract import SpawnContractError, SpawnPlan
+from auto_engineering.host.worker_artifact_inspector import (
+    inspect_private_worker_artifacts,
+)
 from auto_engineering.host.worker_artifact_repair import (
     bound_native_business_is_valid,
     quarantine_private_artifact,
@@ -25,9 +28,6 @@ from auto_engineering.host.worker_evidence_contracts import (
 )
 from auto_engineering.host.worker_failure_recovery import (
     read_recorded_failure_outcomes,
-)
-from auto_engineering.host.worker_outcome_collector import (
-    collect_worker_outcomes_from_artifacts,
 )
 
 
@@ -155,104 +155,108 @@ def test_failure_recovery_requires_current_action_and_all_workers_to_fail(tmp_pa
 def test_collector_rejects_missing_drift_and_unreported_worker_artifacts(tmp_path: Path) -> None:
     action = _action(tmp_path)
     worker = action["spawn"]["invocations"][0]  # type: ignore[index]
-    outcomes_path = tmp_path / ".ae-state/host-runtime/work/outcomes.json"
     with pytest.raises(WorkerOutcomeCollectionError, match="HOST_WORKER_OUTPUT_MISSING"):
-        collect_worker_outcomes_from_artifacts(
-            project_root=tmp_path, action=action, outcomes_path=outcomes_path
-        )
+        inspect_private_worker_artifacts(project_root=tmp_path, action=action)
     action["host_execution"]["workers"][0]["outcome_path"] = "wrong.json"  # type: ignore[index]
     with pytest.raises(WorkerOutcomeCollectionError, match="outcome_path_drift"):
-        collect_worker_outcomes_from_artifacts(
-            project_root=tmp_path, action=action, outcomes_path=outcomes_path
-        )
+        inspect_private_worker_artifacts(project_root=tmp_path, action=action)
     action["host_execution"]["workers"][0]["outcome_path"] = worker["outcome_path"]  # type: ignore[index]
     private = tmp_path / worker["outcome_path"]
     private.parent.mkdir(parents=True, exist_ok=True)
     private.write_text(json.dumps({"worker_id": "critic-0", "status": "completed", "payload": {}}), encoding="utf-8")
-    with pytest.raises(WorkerOutcomeCollectionError, match="HOST_WORKER_ATTESTATION_MISSING"):
-        collect_worker_outcomes_from_artifacts(
-            project_root=tmp_path, action=action, outcomes_path=outcomes_path
-        )
+    with pytest.raises(
+        WorkerOutcomeCollectionError,
+        match="HOST_PROTOCOL_FAILURE:critic-0:private_artifact_invalid",
+    ):
+        inspect_private_worker_artifacts(project_root=tmp_path, action=action)
 
 
 def test_collector_rejects_outside_path_and_invalid_spawn_contract(tmp_path: Path) -> None:
     action = _action(tmp_path)
     action["spawn"]["invocations"][0]["outcome_path"] = "../outside.json"  # type: ignore[index]
     with pytest.raises(WorkerOutcomeCollectionError, match="HOST_PROTOCOL_FAILURE"):
-        collect_worker_outcomes_from_artifacts(
-            project_root=tmp_path, action=action, outcomes_path=tmp_path / "outcomes.json"
-        )
+        inspect_private_worker_artifacts(project_root=tmp_path, action=action)
     with pytest.raises(WorkerOutcomeCollectionError, match="HOST_PROTOCOL_FAILURE"):
-        collect_worker_outcomes_from_artifacts(
-            project_root=tmp_path, action={"spawn": {}}, outcomes_path=tmp_path / "outcomes.json"
-        )
+        inspect_private_worker_artifacts(project_root=tmp_path, action={"spawn": {}})
     with pytest.raises(SpawnContractError):
         SpawnPlan.for_recording({"host_execution": {"recovery": {"record_plan": {}}}})
 
 
 @pytest.mark.parametrize(
-    ("raw", "message"),
+    "raw",
     [
-        ([], "top_level_must_be_object"),
-        (
-            {
-                "worker_id": "other",
-                "native_worker_handle": "native",
-                "status": "completed",
-                "payload": {},
-                "summary": "bad",
-                "actual_model": "test",
-            },
-            "worker_id_mismatch",
-        ),
-        (
-            {
-                "worker_id": "critic-0",
-                "native_worker_handle": "unreported:x",
-                "status": "completed",
-                "payload": {},
-                "summary": "bad",
-                "actual_model": "test",
-            },
-            "native_handle_unreported",
-        ),
+        [],
+        {
+            "worker_id": "other",
+            "native_worker_handle": "native",
+            "status": "completed",
+            "payload": {},
+            "summary": "bad",
+            "actual_model": "test",
+        },
+        {
+            "worker_id": "critic-0",
+            "native_worker_handle": "unreported:x",
+            "status": "completed",
+            "payload": {},
+            "summary": "bad",
+            "actual_model": "test",
+        },
     ],
 )
-def test_collector_rejects_nonobject_identity_and_unreported_artifacts(
-    tmp_path: Path, raw: object, message: str
+def test_collector_rejects_noncanonical_private_artifacts(
+    tmp_path: Path, raw: object
 ) -> None:
     action = _action(tmp_path)
     worker = action["spawn"]["invocations"][0]  # type: ignore[index]
     private = tmp_path / worker["outcome_path"]
     private.parent.mkdir(parents=True, exist_ok=True)
     private.write_text(json.dumps(raw), encoding="utf-8")
-    with pytest.raises(WorkerOutcomeCollectionError, match=message):
-        collect_worker_outcomes_from_artifacts(
-            project_root=tmp_path,
-            action=action,
-            outcomes_path=tmp_path / ".ae-state/host-runtime/work/outcomes.json",
-        )
+    with pytest.raises(
+        WorkerOutcomeCollectionError,
+        match="HOST_PROTOCOL_FAILURE:critic-0:private_artifact_invalid",
+    ):
+        inspect_private_worker_artifacts(project_root=tmp_path, action=action)
 
 
-def test_collector_rejects_template_drift_and_unreadable_private_artifact(
+def test_inspector_rejects_template_drift_and_unreadable_private_artifact(
     tmp_path: Path,
 ) -> None:
     action = _action(tmp_path)
     action["host_execution"]["workers"][0].pop("outcome_path")  # type: ignore[index]
     with pytest.raises(WorkerOutcomeCollectionError, match="outcome_path_missing"):
-        collect_worker_outcomes_from_artifacts(
-            project_root=tmp_path,
-            action=action,
-            outcomes_path=tmp_path / "outcomes.json",
-        )
+        inspect_private_worker_artifacts(project_root=tmp_path, action=action)
     action = _action(tmp_path / "nested")
     worker = action["spawn"]["invocations"][0]  # type: ignore[index]
+    action["host_execution"]["workers"][0]["native_result_path"] = (  # type: ignore[index]
+        ".ae-state/host-runtime/native-results/native.json"
+    )
+    native_path = tmp_path / "nested/.ae-state/host-runtime/native-results/native.json"
+    native_path.parent.mkdir(parents=True, exist_ok=True)
+    native_path.write_text(json.dumps({"verdict": "APPROVE"}), encoding="utf-8")
     private = tmp_path / "nested" / worker["outcome_path"]
     private.parent.mkdir(parents=True, exist_ok=True)
     private.write_text("not-json", encoding="utf-8")
-    with pytest.raises(WorkerOutcomeCollectionError, match="HOST_PROTOCOL_FAILURE"):
-        collect_worker_outcomes_from_artifacts(
-            project_root=tmp_path / "nested",
-            action=action,
-            outcomes_path=tmp_path / "nested/outcomes.json",
-        )
+    with pytest.raises(
+        WorkerOutcomeCollectionError,
+        match="private_artifact_unreadable_native_result_available",
+    ):
+        inspect_private_worker_artifacts(project_root=tmp_path / "nested", action=action)
+    native_path.unlink()
+    with pytest.raises(
+        WorkerOutcomeCollectionError,
+        match="HOST_PROTOCOL_FAILURE:critic-0:JSONDecodeError",
+    ):
+        inspect_private_worker_artifacts(project_root=tmp_path / "nested", action=action)
+
+
+def test_inspector_rejects_resolved_symlink_outside_project(tmp_path: Path) -> None:
+    action = _action(tmp_path)
+    worker = action["spawn"]["invocations"][0]  # type: ignore[index]
+    private = tmp_path / worker["outcome_path"]
+    private.parent.mkdir(parents=True, exist_ok=True)
+    outside = tmp_path.parent / "private-worker-outside.json"
+    outside.write_text("{}", encoding="utf-8")
+    private.symlink_to(outside)
+    with pytest.raises(WorkerOutcomeCollectionError, match="path_outside_project"):
+        inspect_private_worker_artifacts(project_root=tmp_path, action=action)

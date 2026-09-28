@@ -12,7 +12,10 @@ import pytest
 from click.testing import CliRunner
 
 from auto_engineering.cli import main
-from auto_engineering.host.execution_assembler import HostExecutionAssembler
+from auto_engineering.host.execution_assembler import (
+    HostExecutionAssembler,
+    NativeWorkerOutcome,
+)
 from auto_engineering.host.outcome_journal import OutcomeJournal
 from auto_engineering.loop.event_store import SQLiteEventStore
 from auto_engineering.loop.tick_orchestrator import TickOrchestrator
@@ -32,9 +35,8 @@ def test_wait_observation_does_not_fail_worker_before_async_outcome_arrives(
     outcome_path.parent.mkdir(parents=True, exist_ok=True)
     script = (
         "import json,time; time.sleep(0.15); "
-        "json.dump({'worker_id':'critic-0','native_worker_handle':'native-async',"
-        "'status':'completed','payload':{'verdict':'PASS'},"
-        "'summary':'async complete','actual_model':'unreported'},"
+        "json.dump({'worker_id':'critic-0','status':'completed',"
+        "'payload':{'verdict':'PASS'},'summary':'async complete'},"
         "open(" + repr(str(outcome_path)) + ",'w',encoding='utf-8'))"
     )
     process = subprocess.Popen([sys.executable, "-c", script])
@@ -44,21 +46,17 @@ def test_wait_observation_does_not_fail_worker_before_async_outcome_arrives(
     assert process.poll() is None
 
     process.wait(timeout=2)
-    outcomes = HostExecutionAssembler(tmp_path).collect_worker_outcomes_from_artifacts(
-        action=action,
-        outcomes_path=tmp_path / ".ae-state/work/outcomes.json",
-    )
-    result = HostExecutionAssembler(tmp_path).finalize(
-        action=action,
-        outcomes=outcomes,
-        coordinator_payload={"verdict": "PASS", "findings": []},
+    from auto_engineering.host.worker_evidence_contracts import (
+        WorkerOutcomeCollectionError,
     )
 
-    assert result["spawned"] is True
-    receipt = json.loads(
-        (tmp_path / ".ae-state/spawn-proofs/worker-token.json").read_text()
-    )
-    assert receipt["worker"] == "critic-0"
+    with pytest.raises(
+        WorkerOutcomeCollectionError,
+        match="HOST_WORKER_ATTESTATION_MISSING:critic-0:private_business_artifact_only",
+    ):
+        HostExecutionAssembler(tmp_path).inspect_private_worker_artifacts(
+            action=action,
+        )
 
 
 def test_async_worker_continues_through_core_tick_after_wait_observation(
@@ -119,12 +117,9 @@ def test_async_worker_continues_through_core_tick_after_wait_observation(
         script = (
             "import json,time; time.sleep(0.15); "
             "json.dump({"
-            "'worker_id':'architect-0','native_worker_handle':'native-async',"
+            "'worker_id':'architect-0',"
             "'status':'completed','payload':" + repr(payload) + ","
-            "'summary':'async complete','actual_model':'unreported',"
-            "'isolation_evidence':" + repr(worker["expected_isolation_evidence"]) + ","
-            "'execution_generation':" + repr(worker["execution_generation"]) + ","
-            "'fencing_token':" + repr(worker["fencing_token"]) + "},"
+            "'summary':'async complete'},"
             "open(" + repr(str(outcome_path)) + ",'w',encoding='utf-8'))"
         )
         process = subprocess.Popen([sys.executable, "-c", script])
@@ -133,10 +128,20 @@ def test_async_worker_continues_through_core_tick_after_wait_observation(
         assert process.poll() is None
         process.wait(timeout=2)
 
-        outcomes = HostExecutionAssembler(tmp_path).collect_worker_outcomes_from_artifacts(
+        native_path = tmp_path / worker["native_result_path"]
+        native_path.parent.mkdir(parents=True, exist_ok=True)
+        native_path.write_text(json.dumps(payload), encoding="utf-8")
+        assembler = HostExecutionAssembler(tmp_path)
+        recorded = assembler.record_worker_outcome(
             action=mapped,
-            outcomes_path=tmp_path / ".ae-state/work/outcomes.json",
+            worker_id="architect-0",
+            native_worker_handle="native-async",
+            native_result_file=native_path,
+            status="completed",
+            actual_model="unreported",
+            isolation_evidence=worker["expected_isolation_evidence"],
         )
+        outcomes = [NativeWorkerOutcome(**recorded)]
         result = HostExecutionAssembler(tmp_path).finalize(
             action=mapped,
             outcomes=outcomes,

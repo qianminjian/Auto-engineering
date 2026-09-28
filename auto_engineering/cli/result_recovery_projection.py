@@ -269,9 +269,8 @@ def project_submitted_worker_failure_recovery(
     ):
         return None
     try:
-        HostExecutionAssembler(root).collect_worker_outcomes_from_artifacts(
+        HostExecutionAssembler(root).inspect_private_worker_artifacts(
             action=mapped_action,
-            outcomes_path=outcomes_path,
         )
     except WorkerOutcomeCollectionError as exc:
         if exc.code not in {
