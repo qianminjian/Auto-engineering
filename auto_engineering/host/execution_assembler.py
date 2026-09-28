@@ -16,6 +16,7 @@ from auto_engineering.host.outcome_file import (
 )
 from auto_engineering.host.outcome_journal import OutcomeJournal
 from auto_engineering.host.outcome_recovery import OutcomeRecoveryService
+from auto_engineering.host.recovery_contract import HOST_PROTOCOL_FAILURE
 from auto_engineering.host.result_contract import ResultContractService
 from auto_engineering.host.spawn_contract import SpawnContractError, SpawnPlan
 from auto_engineering.host.worker_artifact_repair import (
@@ -562,7 +563,7 @@ class HostExecutionAssembler(ResultFinalizationMixin):
             outcome=outcome,
         )
 
-    def record_invalid_worker_failure(
+    def record_host_protocol_failure(
         self,
         *,
         action: Mapping[str, Any],
@@ -573,11 +574,11 @@ class HostExecutionAssembler(ResultFinalizationMixin):
         detail: str,
         native_output_available: bool = False,
     ) -> dict[str, Any]:
-        """把非法 Worker 业务产物收敛为同一条宿主失败事实路径。
+        """把无法证明业务结果的交接错误收敛为宿主协议事实。
 
-        私有业务文件已经存在时，它仍是唯一业务权威，不能被 native 回包
-        覆盖或猜测修复。这里只记录有界的宿主诊断和执行身份，随后复用
-        ``_merge_outcome_into_shared`` 与 ``WorkerFailureService`` 的既有链路。
+        这里不声明 Worker 业务失败，也不消费 Worker 失败重试预算。原始
+        private/native 证据仍由调用方保留；共享副本只写入绑定身份和有界
+        字段诊断，最终由 Core 返回有界的协议终止错误。
         """
 
         if not isinstance(worker_id, str) or not worker_id:
@@ -613,6 +614,52 @@ class HostExecutionAssembler(ResultFinalizationMixin):
             template if isinstance(template, Mapping) else None,
             worker_id,
         )
+        def describe_artifact(reference: object, source: str) -> dict[str, Any]:
+            descriptor: dict[str, Any] = {
+                "source": source,
+                "path": reference if isinstance(reference, str) else None,
+                "exists": False,
+            }
+            if not isinstance(reference, str) or not reference:
+                descriptor["binding"] = "missing"
+                return descriptor
+            candidate = (self.project_root / reference).resolve()
+            if candidate == self.project_root or self.project_root not in candidate.parents:
+                descriptor["binding"] = "outside_project"
+                return descriptor
+            try:
+                raw = candidate.read_bytes()
+            except FileNotFoundError:
+                return descriptor
+            except OSError:
+                descriptor.update({"exists": True, "readable": False})
+                return descriptor
+            descriptor.update({
+                "exists": True,
+                "readable": True,
+                "sha256": hashlib.sha256(raw).hexdigest()[:16],
+            })
+            return descriptor
+
+        native_ref = (
+            template.get("native_result_path")
+            if isinstance(template, Mapping)
+            else None
+        )
+        diagnostics = {
+            "action_message_id": message_id,
+            "worker_id": worker_id,
+            "execution_generation": generation,
+            "fencing_token_sha256": (
+                hashlib.sha256(fence.encode("utf-8")).hexdigest()[:16]
+                if isinstance(fence, str)
+                else None
+            ),
+            "artifacts": [
+                describe_artifact(invocation.outcome_path, "private_worker_artifact"),
+                describe_artifact(native_ref, "native_result"),
+            ],
+        }
         bounded_detail = detail.strip()[:512] if isinstance(detail, str) else ""
         if not bounded_detail:
             bounded_detail = f"WORKER_BUSINESS_ARTIFACT_INVALID:{worker_id}"
@@ -628,11 +675,12 @@ class HostExecutionAssembler(ResultFinalizationMixin):
             native_worker_handle=handle,
             status="failed",
             payload={
-                "error_code": "HOST_WORKER_OUTPUT_INVALID",
+                "error_code": HOST_PROTOCOL_FAILURE,
                 "detail": bounded_detail,
                 "native_output_available": bool(native_output_available),
+                "diagnostics": diagnostics,
             },
-            summary=f"HOST_WORKER_OUTPUT_INVALID:{worker_id}:{bounded_detail}"[:512],
+            summary=f"{HOST_PROTOCOL_FAILURE}:{worker_id}:{bounded_detail}"[:512],
             actual_model=model or "unreported",
             isolation_evidence=isolation,
             execution_generation=generation if isinstance(generation, int) else None,

@@ -210,8 +210,14 @@ def test_public_cli_routes_invalid_worker_artifact_to_failure_outcome(
     assert recorded.exit_code == 0, recorded.output
     body = _last_json_line(recorded.output)
     assert body["status"] == "worker_outcome_recorded"
-    assert body["failure_code"] == "HOST_WORKER_OUTPUT_INVALID"
+    assert body["failure_code"] == "HOST_PROTOCOL_FAILURE"
     assert body["outcome"]["status"] == "failed"
+    assert body["outcome"]["payload"]["native_output_available"] is False
+    diagnostics = body["outcome"]["payload"]["diagnostics"]
+    assert diagnostics["action_message_id"] == action["message_id"]
+    assert diagnostics["worker_id"] == worker["worker_id"]
+    assert diagnostics["artifacts"][1]["source"] == "native_result"
+    assert diagnostics["artifacts"][1]["exists"] is False
     assert json.loads(private_path.read_text(encoding="utf-8")) == malformed_private
     shared_path = tmp_path / mapped["host_execution"]["work_files"]["outcomes"]
     assert json.loads(shared_path.read_text(encoding="utf-8"))["outcomes"][0][
@@ -272,8 +278,12 @@ def test_public_cli_routes_invalid_native_business_result_to_failure_outcome(
     assert recorded.exit_code == 0, recorded.output
     body = _last_json_line(recorded.output)
     assert body["status"] == "worker_outcome_recorded"
-    assert body["failure_code"] == "HOST_WORKER_OUTPUT_INVALID"
+    assert body["failure_code"] == "HOST_PROTOCOL_FAILURE"
     assert body["outcome"]["status"] == "failed"
+    assert body["outcome"]["payload"]["native_output_available"] is True
+    native_diagnostics = body["outcome"]["payload"]["diagnostics"]["artifacts"][1]
+    assert native_diagnostics["exists"] is True
+    assert len(native_diagnostics["sha256"]) == 16
 
 
 def test_public_cli_finalize_preserves_invalid_native_failure(
@@ -324,7 +334,7 @@ def test_public_cli_finalize_preserves_invalid_native_failure(
     ])
     assert recorded.exit_code == 0, recorded.output
     assert _last_json_line(recorded.output)["failure_code"] == (
-        "HOST_WORKER_OUTPUT_INVALID"
+        "HOST_PROTOCOL_FAILURE"
     )
 
     work_files = mapped["host_execution"]["work_files"]
@@ -340,9 +350,19 @@ def test_public_cli_finalize_preserves_invalid_native_failure(
     assert finalized.exit_code == 0, finalized.output
     result = _last_json_line(finalized.output)
     assert result["spawned"] is False
-    assert result["spawn_error_code"] == "HOST_WORKER_FAILED"
-    assert "HOST_WORKER_OUTPUT_INVALID" in result["spawn_error"]
+    assert result["spawn_error_code"] == "HOST_PROTOCOL_FAILURE"
+    assert "WORKER_NATIVE_RESULT_INVALID" in result["spawn_error"]
+    assert "HOST_PROTOCOL_FAILURE" in result["spawn_error"]
     assert "HOST_WORKER_OUTPUT_MISSING" not in result["spawn_error"]
+
+    ticked = runner.invoke(main, [
+        "dev-loop", "--tick", "--result", str(result_file),
+        "--project-root", str(tmp_path),
+    ])
+    assert ticked.exit_code == 0, ticked.output
+    assert _last_json_line(ticked.output)["error_code"] == (
+        "HOST_PROTOCOL_RETRY_EXHAUSTED"
+    )
 
 
 def test_public_cli_fails_closed_with_structured_error_when_native_handle_is_missing(
@@ -2298,7 +2318,7 @@ class TestMutexAndLegacy:
         ) == finalized
         assert not (tmp_path / "stale-result.json").exists()
 
-    def test_finalize_missing_spawn_outputs_becomes_worker_failure(
+    def test_finalize_missing_spawn_outputs_becomes_protocol_failure(
         self, tmp_path: Path, monkeypatch, capsys
     ) -> None:
         """真实 CLI Finalizer 不得把 spawn 空交接误报为输入错误。"""
@@ -2382,7 +2402,7 @@ class TestMutexAndLegacy:
 
         result = json.loads(capsys.readouterr().out.strip())
         assert result["spawned"] is False
-        assert result["spawn_error_code"] == "HOST_WORKER_FAILED"
+        assert result["spawn_error_code"] == "HOST_PROTOCOL_FAILURE"
         canonical_result = (
             tmp_path / ".ae-state/host-runtime/work/a/result.json"
         )
@@ -2400,7 +2420,7 @@ class TestMutexAndLegacy:
         )
         repeated = json.loads(capsys.readouterr().out.strip())
         assert repeated["spawned"] is False
-        assert repeated["spawn_error_code"] == "HOST_WORKER_FAILED"
+        assert repeated["spawn_error_code"] == "HOST_PROTOCOL_FAILURE"
         assert repeated["spawn_retry_attempt"] == 1
 
     def test_finalize_unwraps_matching_single_worker_envelope(

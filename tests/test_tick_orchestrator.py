@@ -4122,6 +4122,32 @@ class TestF7SpawnProofForgery:
         assert action["action"] == "error"
         assert action["error_code"] == "HOST_WORKER_FAILURE_EXHAUSTED"
 
+    def test_protocol_failure_stops_without_worker_retry_budget(
+        self, tmp_path,
+    ):
+        """宿主交接协议失败不能伪装成 Worker 业务失败或进入 resource_wait。"""
+        o = self._setup_critic(tmp_path, "pending")
+        active_message_id = o._active_action["message_id"]
+
+        result = {
+            "stage": "critic",
+            "spawned": False,
+            "spawn_error_code": "HOST_PROTOCOL_FAILURE",
+            "spawn_error": (
+                "WORKER_NATIVE_RESULT_INVALID:critic-0;"
+                " private_artifact_incomplete"
+            ),
+            "spawn_retry_attempt": 1,
+        }
+
+        assert o._validate_result_dict(result) == result
+        action = o.tick_dict(result)
+
+        assert action["action"] == "error"
+        assert action["error_code"] == "HOST_PROTOCOL_RETRY_EXHAUSTED"
+        assert "业务失败预算" in action["message"]
+        assert active_message_id == o._active_action["message_id"]
+
     def test_unknown_worker_failure_preserves_action_with_recovery_guidance(
         self, tmp_path,
     ):

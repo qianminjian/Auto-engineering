@@ -9,6 +9,7 @@ from typing import Any
 from uuid import NAMESPACE_URL, uuid5
 
 from auto_engineering.host.outcome_recovery import OutcomeRecoveryService
+from auto_engineering.host.recovery_contract import HOST_PROTOCOL_FAILURE
 from auto_engineering.host.spawn_contract import SpawnContractError, SpawnPlan
 from auto_engineering.host.worker_evidence import (
     HostEvidenceValidationError,
@@ -22,6 +23,13 @@ from auto_engineering.host.worker_failure_recovery import (
 )
 
 _RecoverCompleted = Callable[..., dict[str, Any] | None]
+_PROTOCOL_OUTCOME_CODES = frozenset({
+    HOST_PROTOCOL_FAILURE,
+    "HOST_WORKER_OUTPUT_INVALID",
+    "HOST_WORKER_OUTPUT_MISSING",
+    "HOST_WORKER_OUTPUT_STALE",
+    "HOST_WORKER_ATTESTATION_MISSING",
+})
 
 
 class WorkerFailureService:
@@ -129,11 +137,22 @@ class WorkerFailureService:
             or any(marker in item.summary.upper() for marker in timeout_markers)
             for item in outcomes
         )
-        error_code = "HOST_WORKER_TIMEOUT" if is_timeout else "HOST_WORKER_FAILED"
+        protocol_failure = any(
+            isinstance(item.payload, Mapping)
+            and item.payload.get("error_code") in _PROTOCOL_OUTCOME_CODES
+            for item in outcomes
+        )
+        error_code = (
+            HOST_PROTOCOL_FAILURE
+            if protocol_failure
+            else "HOST_WORKER_TIMEOUT" if is_timeout else "HOST_WORKER_FAILED"
+        )
         # 重试预算按失败类别隔离。Prompt/hash/能力等宿主合同错误不能消耗
         # Worker 超时预算，否则“第一次输入错误 + 第一次真实超时”会被错误
         # 判定为连续两次超时并提前终止当前 Action。
-        failure_kind = "timeout" if is_timeout else "worker"
+        failure_kind = (
+            "protocol" if protocol_failure else "timeout" if is_timeout else "worker"
+        )
         fingerprint_payload = {
             "action_message_id": message_id,
             "outcomes": serialized_outcomes,
@@ -155,12 +174,14 @@ class WorkerFailureService:
             previous_result = committed_result
             if (
                 existing.get("fingerprint") == fingerprint
-                and existing.get("status") in {"committed", "worker_failed"}
+                and existing.get("status") in {
+                    "committed", "worker_failed", "protocol_failed",
+                }
                 and isinstance(committed_result, dict)
             ):
                 return dict(committed_result)
             if not (
-                existing.get("status") == "worker_failed"
+                existing.get("status") in {"worker_failed", "protocol_failed"}
                 or (
                     isinstance(committed_result, dict)
                     and committed_result.get("spawned") is False
@@ -176,7 +197,11 @@ class WorkerFailureService:
                     else None
                 )
                 previous_kind = (
-                    "timeout" if previous_code == "HOST_WORKER_TIMEOUT" else "worker"
+                    "protocol"
+                    if previous_code == HOST_PROTOCOL_FAILURE
+                    else "timeout"
+                    if previous_code == "HOST_WORKER_TIMEOUT"
+                    else "worker"
                 )
             previous_attempt = existing.get("failure_attempt")
             raw_history = existing.get("attempt_history")
@@ -230,7 +255,7 @@ class WorkerFailureService:
         }
         _atomic_write_json(journal_path, {
             "schema_version": "1.0",
-            "status": "worker_failed",
+            "status": "protocol_failed" if protocol_failure else "worker_failed",
             "failure_kind": failure_kind,
             "attempt_history": attempt_history,
             "fingerprint": fingerprint,
@@ -300,6 +325,13 @@ class WorkerFailureService:
             else "fresh_context" if platform == "claude-code"
             else None
         )
+        protocol_reason = reason_code in {
+            "HOST_WORKER_OUTPUT_MISSING",
+            "HOST_WORKER_OUTPUT_INVALID",
+            "HOST_WORKER_OUTPUT_STALE",
+            "HOST_WORKER_ATTESTATION_MISSING",
+        }
+        outcome_error_code = HOST_PROTOCOL_FAILURE if protocol_reason else reason_code
         outcomes = []
         for invocation in plan.invocations:
             template = None
@@ -330,11 +362,12 @@ class WorkerFailureService:
                 ),
                 status="failed",
                 payload={
-                    "error_code": reason_code,
+                    "error_code": outcome_error_code,
+                    "source_error_code": reason_code,
                     "detail": detail,
                     "native_output_available": False,
                 },
-                summary=f"{reason_code}: {detail}",
+                summary=f"{outcome_error_code}: {reason_code}: {detail}",
                 actual_model="unreported",
                 isolation_evidence=isolation,
                 execution_generation=generation,

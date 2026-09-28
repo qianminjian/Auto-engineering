@@ -362,7 +362,7 @@ def test_finalize_worker_timeout_builds_failure_transaction_without_success_evid
 def test_finalize_missing_worker_output_builds_deterministic_failure(
     tmp_path: Path,
 ) -> None:
-    """宿主没有写出任何 outcome 时，也必须形成可重试的失败事务。"""
+    """宿主没有写出任何 outcome 时，必须形成有界的协议失败事务。"""
     action = _action(tmp_path)
     result_path = tmp_path / "retry-result.json"
     result = HostExecutionAssembler(tmp_path).finalize_missing_worker_output(
@@ -373,16 +373,16 @@ def test_finalize_missing_worker_output_builds_deterministic_failure(
     )
 
     assert result["spawned"] is False
-    assert result["spawn_error_code"] == "HOST_WORKER_FAILED"
+    assert result["spawn_error_code"] == "HOST_PROTOCOL_FAILURE"
     assert result["spawn_retry_attempt"] == 1
     assert "verdict" not in result
     journal = json.loads(
         (tmp_path / ".ae-state/host-runtime/outcomes/action-1.json").read_text()
     )
-    assert journal["status"] == "worker_failed"
+    assert journal["status"] == "protocol_failed"
     assert journal["outcomes"][0]["status"] == "failed"
     assert journal["outcomes"][0]["payload"]["error_code"] == (
-        "HOST_WORKER_OUTPUT_MISSING"
+        "HOST_PROTOCOL_FAILURE"
     )
     assert json.loads(result_path.read_text(encoding="utf-8")) == result
 
@@ -402,11 +402,12 @@ def test_finalize_missing_preserves_recorded_invalid_native_failure(
         native_worker_handle="native-invalid",
         status="failed",
         payload={
-            "error_code": "HOST_WORKER_OUTPUT_INVALID",
+            "error_code": "HOST_PROTOCOL_FAILURE",
+            "source_error_code": "HOST_WORKER_OUTPUT_INVALID",
             "detail": "WORKER_NATIVE_RESULT_INVALID:critic-0",
             "native_output_available": True,
         },
-        summary="HOST_WORKER_OUTPUT_INVALID:critic-0",
+        summary="HOST_PROTOCOL_FAILURE: HOST_WORKER_OUTPUT_INVALID:critic-0",
         actual_model="unreported",
         isolation_evidence="fork_context=false",
     )
@@ -422,9 +423,9 @@ def test_finalize_missing_preserves_recorded_invalid_native_failure(
     )
 
     assert result["spawned"] is False
-    assert result["spawn_error_code"] == "HOST_WORKER_FAILED"
+    assert result["spawn_error_code"] == "HOST_PROTOCOL_FAILURE"
     assert result["spawn_retry_attempt"] == 1
-    assert result["spawn_error"] == "HOST_WORKER_OUTPUT_INVALID:critic-0"
+    assert "HOST_PROTOCOL_FAILURE" in result["spawn_error"]
 
 
 def test_missing_coordinator_recovers_completed_single_worker_artifact(
@@ -1188,7 +1189,7 @@ def test_record_worker_outcome_repairs_malformed_private_file_from_native_result
     assert len(quarantine) == 1
 
 
-def test_record_invalid_worker_failure_preserves_private_artifact_and_finalizes_failure(
+def test_record_host_protocol_failure_preserves_private_artifact_and_finalizes_failure(
     tmp_path: Path,
 ) -> None:
     """非法私有产物只转为宿主失败事实，不能被 native 回包重写。"""
@@ -1203,7 +1204,7 @@ def test_record_invalid_worker_failure_preserves_private_artifact_and_finalizes_
     private_path.write_text(json.dumps(malformed_private), encoding="utf-8")
 
     assembler = HostExecutionAssembler(tmp_path)
-    recorded = assembler.record_invalid_worker_failure(
+    recorded = assembler.record_host_protocol_failure(
         action=action,
         worker_id="critic-0",
         native_worker_handle="native-agent-1",
@@ -1213,7 +1214,7 @@ def test_record_invalid_worker_failure_preserves_private_artifact_and_finalizes_
     )
 
     assert recorded["status"] == "failed"
-    assert recorded["payload"]["error_code"] == "HOST_WORKER_OUTPUT_INVALID"
+    assert recorded["payload"]["error_code"] == "HOST_PROTOCOL_FAILURE"
     shared = json.loads(
         (tmp_path / ".ae-state/host-runtime/work/outcomes.json").read_text()
     )
@@ -1226,7 +1227,37 @@ def test_record_invalid_worker_failure_preserves_private_artifact_and_finalizes_
         coordinator_payload={},
     )
     assert result["spawned"] is False
-    assert result["spawn_error_code"] == "HOST_WORKER_FAILED"
+    assert result["spawn_error_code"] == "HOST_PROTOCOL_FAILURE"
+
+
+def test_invalid_handoff_is_protocol_failure_not_worker_business_failure(
+    tmp_path: Path,
+) -> None:
+    """native/private 交接无效时只生成协议终态，不消费 Worker 失败语义。"""
+
+    action = _action(tmp_path)
+    action["host_execution"]["work_files"] = {
+        "outcomes": ".ae-state/host-runtime/work/outcomes.json",
+    }
+    assembler = HostExecutionAssembler(tmp_path)
+
+    recorded = assembler.record_host_protocol_failure(
+        action=action,
+        worker_id="critic-0",
+        native_worker_handle="native-agent-invalid",
+        actual_model="unreported",
+        isolation_evidence="fresh_context",
+        detail="WORKER_NATIVE_RESULT_INVALID:critic-0",
+    )
+
+    assert recorded["payload"]["error_code"] == "HOST_PROTOCOL_FAILURE"
+    result = assembler.finalize(
+        action=action,
+        outcomes=[NativeWorkerOutcome(**recorded)],
+        coordinator_payload={},
+    )
+    assert result["spawn_error_code"] == "HOST_PROTOCOL_FAILURE"
+    assert result["spawn_retry_attempt"] == 1
 
 
 def test_record_worker_outcome_rejects_bare_private_payload_before_native_summary(
@@ -1731,9 +1762,10 @@ def test_finalize_preserves_private_business_vs_host_attestation_failure(
     )
 
     assert result["spawned"] is False
-    assert result["spawn_error_code"] == "HOST_WORKER_FAILED"
+    assert result["spawn_error_code"] == "HOST_PROTOCOL_FAILURE"
     assert result["spawn_error"] == (
-        "HOST_WORKER_ATTESTATION_MISSING: private_business_artifact_only"
+        "HOST_PROTOCOL_FAILURE: HOST_WORKER_ATTESTATION_MISSING: "
+        "private_business_artifact_only"
     )
 
 
@@ -3259,7 +3291,7 @@ def test_missing_worker_failure_preserves_action_execution_binding(
     )
     assert journal["outcomes"][0]["execution_generation"] == 3
     assert journal["outcomes"][0]["fencing_token"] == "f" * 64
-    assert result["spawn_error_code"] == "HOST_WORKER_FAILED"
+    assert result["spawn_error_code"] == "HOST_PROTOCOL_FAILURE"
 
 
 def test_worker_template_cannot_drift_from_action_execution_binding(

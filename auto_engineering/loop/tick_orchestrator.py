@@ -51,6 +51,10 @@ from auto_engineering.engine.verification_layers import (
 from auto_engineering.host.adapters import usage_collector_for
 from auto_engineering.host.execution_assembler import collect_host_evidence_violations
 from auto_engineering.host.outcome_journal import OutcomeJournal
+from auto_engineering.host.recovery_contract import (
+    HOST_PROTOCOL_FAILURE,
+    HOST_PROTOCOL_RETRY_EXHAUSTED,
+)
 from auto_engineering.host.spawn_contract import SpawnContractError, SpawnPlan
 from auto_engineering.host.worker_attestation import (
     WorkerAttestationError,
@@ -1168,6 +1172,23 @@ class TickOrchestrator(TickProjectSetupMixin):
                 "retry_attempt": retry_attempt,
                 "retry_limit": 1,
             }
+        if (
+            self._state.current_stage in _SPAWN_CONFIG
+            and result.get("spawned") is False
+            and result.get("spawn_error_code") == HOST_PROTOCOL_FAILURE
+        ):
+            return ErrorResponse(
+                error_code=HOST_PROTOCOL_RETRY_EXHAUSTED,
+                message=(
+                    "宿主 Worker 交接协议无效，无法证明业务结果；"
+                    "已停止继续重试，不消费 Worker 业务失败预算。"
+                ),
+                current_state=self._state.to_dict(),
+                suggestion=(
+                    "保留当前 Action、private/native 原始证据和字段诊断；"
+                    "修复宿主交接合同后再由同一 Action 重新记录，禁止重新 spawn。"
+                ),
+            ).to_dict()
         if self._state.current_stage in _SPAWN_CONFIG and result.get("spawned") is False:
             active_message_id = str((self._active_action or {}).get("message_id", ""))
             if result.get("spawn_error_code") == "HOST_WORKER_FAILED":
@@ -1585,6 +1606,7 @@ class TickOrchestrator(TickProjectSetupMixin):
                 "HOST_WORKER_OWNER_LOST",
                 "HOST_WORKER_TIMEOUT",
                 "HOST_WORKER_FAILED",
+                HOST_PROTOCOL_FAILURE,
             }:
                 return ErrorResponse(
                     error_code="SPAWN_FAILURE_CODE_INVALID",
@@ -1598,14 +1620,16 @@ class TickOrchestrator(TickProjectSetupMixin):
                     current_state=self._state.to_dict(),
                 )
             retry_attempt = result.get("spawn_retry_attempt")
-            if spawn_error_code == "HOST_WORKER_TIMEOUT" and (
+            if spawn_error_code in {"HOST_WORKER_TIMEOUT", HOST_PROTOCOL_FAILURE} and (
                 not isinstance(retry_attempt, int)
                 or isinstance(retry_attempt, bool)
                 or retry_attempt < 1
             ):
                 return ErrorResponse(
                     error_code="HOST_WORKER_RETRY_ATTEMPT_INVALID",
-                    message="HOST_WORKER_TIMEOUT 必须包含正整数 spawn_retry_attempt",
+                    message=(
+                        f"{spawn_error_code} 必须包含正整数 spawn_retry_attempt"
+                    ),
                     current_state=self._state.to_dict(),
                 )
             return result

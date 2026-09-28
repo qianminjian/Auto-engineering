@@ -10,6 +10,8 @@ from collections.abc import Mapping
 WORKER_OUTCOMES_COMMITTED = "worker_outcomes_committed"
 REPAIR_COORDINATOR_THEN_FINALIZE = "repair_coordinator_then_finalize"
 NATIVE_OUTCOMES_READY = "native_outcomes_ready"
+HOST_PROTOCOL_FAILURE = "HOST_PROTOCOL_FAILURE"
+HOST_PROTOCOL_RETRY_EXHAUSTED = "HOST_PROTOCOL_RETRY_EXHAUSTED"
 WORKER_RECOVERY_STATUSES = frozenset({
     NATIVE_OUTCOMES_READY,
     WORKER_OUTCOMES_COMMITTED,
@@ -41,6 +43,8 @@ def is_worker_execution_action(action: object) -> bool:
     )
 
 __all__ = [
+    "HOST_PROTOCOL_FAILURE",
+    "HOST_PROTOCOL_RETRY_EXHAUSTED",
     "NATIVE_OUTCOMES_READY",
     "REPAIR_COORDINATOR_THEN_FINALIZE",
     "WORKER_OUTCOMES_COMMITTED",

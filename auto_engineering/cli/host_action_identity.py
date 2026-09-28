@@ -104,7 +104,7 @@ def bind_worker_execution_identity(
     has_failure_journal = (
         include_failure_journal
         and isinstance(journal, Mapping)
-        and journal.get("status") == "worker_failed"
+        and journal.get("status") in {"worker_failed", "protocol_failed"}
     )
     recovered_generation: int | None = None
     if previous is not None and previous.action_message_id == message_id:

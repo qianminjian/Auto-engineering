@@ -1244,9 +1244,9 @@ def run_tick_finalize(
                 )
                 click.echo(json.dumps(output, ensure_ascii=False))
                 return
-            # Spawn Action 的空/损坏交接文件代表 Worker 失败，而不是 CLI
-            # 参数错误。生成带明确 unreported 哨兵的失败事务，让 Core 按
-            # 失败预算自动重试；inline Action 仍保持严格输入错误。
+            # Spawn Action 的空/损坏交接文件是 Host 协议事实，不是 Worker
+            # 业务失败，也不是 CLI 参数错误。生成带绑定身份和字段诊断的
+            # 有界协议失败事务；inline Action 仍保持严格输入错误。
             if is_worker_execution_action(mapped_action):
                 assembler = HostExecutionAssembler(root)
                 failure_detail = input_error
@@ -1259,9 +1259,9 @@ def run_tick_finalize(
                     )
                 )
                 if failure_code == "HOST_WORKER_OUTPUT_MISSING":
-                    # 缺失/空交接是同一个可重试事实；不能因为首次是
+                    # 缺失/空交接是同一个协议事实；不能因为首次是
                     # FileNotFound、第二次是空 JSON 而生成不同 fingerprint，
-                    # 否则失败预算会永远从 1 开始。
+                    # 否则协议终态会被反复伪装成新的失败。
                     failure_detail = "Worker 未产生可验证的私有 outcome"
                 result = assembler.finalize_missing_worker_output(
                     action=mapped_action,
@@ -1422,14 +1422,17 @@ def run_record_worker_outcome(
             )
             if invalid_business_artifact:
                 try:
-                    failure = assembler.record_invalid_worker_failure(
+                    failure = assembler.record_host_protocol_failure(
                         action=mapped_action,
                         worker_id=worker_id,
                         native_worker_handle=native_worker_handle,
                         actual_model=actual_model,
                         isolation_evidence=isolation_evidence,
                         detail=" | ".join(exc.violations),
-                        native_output_available=bound_native_result_file is not None,
+                        native_output_available=(
+                            bound_native_result_file is not None
+                            and bound_native_result_file.is_file()
+                        ),
                     )
                 except HostEvidenceValidationError:
                     # 只有业务私有文件非法可以转换为失败事实；代际、路径、
@@ -1440,7 +1443,7 @@ def run_record_worker_outcome(
                         "status": "worker_outcome_recorded",
                         "worker_id": worker_id,
                         "outcome": failure,
-                        "failure_code": "HOST_WORKER_OUTPUT_INVALID",
+                        "failure_code": "HOST_PROTOCOL_FAILURE",
                     }, ensure_ascii=False))
                     return
             missing_native_handle = any(

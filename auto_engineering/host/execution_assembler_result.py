@@ -272,7 +272,7 @@ class ResultFinalizationMixin:
         if existing is not None:
             existing_result = existing.get("result")
             retryable_failure = (
-                existing.get("status") == "worker_failed"
+                existing.get("status") in {"worker_failed", "protocol_failed"}
                 or (
                     isinstance(existing_result, dict)
                     and existing_result.get("spawned") is False
