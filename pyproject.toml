@@ -79,7 +79,7 @@ addopts = ["--timeout=60", "-p no:cacheprovider"]
 patch = ["subprocess"]
 
 [tool.auto-engineering.baseline]
-passed = 3016
+passed = 3017
 skipped = 1
 
 [build-system]

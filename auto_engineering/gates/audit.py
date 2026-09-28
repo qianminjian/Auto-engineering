@@ -23,7 +23,11 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from auto_engineering.gates._scan_utils import DEFAULT_SKIP_DIRS, find_silent_except_lines
+from auto_engineering.gates._scan_utils import (
+    DEFAULT_SKIP_DIRS,
+    find_silent_except_lines,
+    iter_scan_files,
+)
 from auto_engineering.gates.base import Gate, GateVerdict
 
 __all__ = [
@@ -134,15 +138,6 @@ _TEXT_EXTS = _PY_EXTS | _JS_EXTS | {
 }
 
 
-def _should_skip(path: Path) -> bool:
-    """检查路径是否应跳过."""
-    return any(part in SKIP_DIRS for part in path.parts)
-
-
-def _is_text_file(path: Path) -> bool:
-    return path.suffix.lower() in _TEXT_EXTS
-
-
 # ============================================================
 # AuditGate
 # ============================================================
@@ -182,7 +177,7 @@ class AuditGate(Gate):
         self.accepted_fingerprints = set(accepted_fingerprints or ())
 
     def run(self, project_root: Path) -> GateVerdict:
-        project_root = Path(project_root)
+        project_root = Path(project_root).resolve()
         if verdict := self._validate_project_root(project_root):
             return verdict
 
@@ -206,16 +201,12 @@ class AuditGate(Gate):
         findings: list[AuditFinding] = []
         files_scanned = 0
 
-        for path in project_root.rglob("*"):
-            if not path.is_file():
-                continue
-            if _should_skip(path):
-                continue
-            if not _is_text_file(path):
-                continue
-
-            rel = str(path.relative_to(project_root))
-
+        scanned_files = iter_scan_files(
+            project_root,
+            extensions=_TEXT_EXTS,
+            skip_dirs=SKIP_DIRS,
+        )
+        for path, rel in scanned_files:
             # 增量模式: 跳过未变更文件
             if target_files is not None and rel not in target_files:
                 continue
@@ -386,16 +377,15 @@ class AuditGate(Gate):
 
     def _scan_large_files(self, project_root: Path) -> list[AuditFinding]:
         """检测大文件 + 目录文件数过多."""
+        project_root = project_root.resolve()
         findings: list[AuditFinding] = []
         dir_files: dict[str, int] = {}
 
-        for path in project_root.rglob("*"):
-            if not path.is_file():
-                continue
-            if _should_skip(path):
-                continue
-            if not _is_text_file(path):
-                continue
+        for path, rel in iter_scan_files(
+            project_root,
+            extensions=_TEXT_EXTS,
+            skip_dirs=SKIP_DIRS,
+        ):
 
             # 统计目录文件数
             parent = str(path.parent.relative_to(project_root))

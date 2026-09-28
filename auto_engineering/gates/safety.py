@@ -25,7 +25,7 @@ import re
 import subprocess
 from pathlib import Path
 
-from auto_engineering.gates._scan_utils import DEFAULT_SKIP_DIRS
+from auto_engineering.gates._scan_utils import DEFAULT_SKIP_DIRS, iter_scan_files
 from auto_engineering.gates.base import Gate, GateVerdict
 
 __all__ = ["SECRET_PATTERNS", "SKIP_DIRS", "SafetyGate"]
@@ -138,35 +138,18 @@ def _scan_file(path: Path) -> list[str]:
 def _scan_dir(project_root: Path) -> list[tuple[Path, list[str]]]:
     """递归扫描目录, 返回 [(file, [descs]), ...]."""
     findings = []
-    for path in project_root.rglob("*"):
-        if not path.is_file():
-            continue
-        # 跳过 SKIP_DIRS
-        if any(part in SKIP_DIRS for part in path.parts):
-            continue
-        # 仅扫描文本类文件(扩展名启发式)
-        if path.suffix.lower() in {
-            ".py",
-            ".js",
-            ".ts",
-            ".tsx",
-            ".jsx",
-            ".yaml",
-            ".yml",
-            ".json",
-            ".toml",
-            ".env",
-            ".sh",
-            ".md",
-            ".txt",
-            ".cfg",
-            ".ini",
-            ".pem",
-            ".key",
-        }:
-            hits = _scan_file(path)
-            if hits:
-                findings.append((path, hits))
+    text_extensions = {
+        ".py", ".js", ".ts", ".tsx", ".jsx", ".yaml", ".yml", ".json",
+        ".toml", ".env", ".sh", ".md", ".txt", ".cfg", ".ini", ".pem", ".key",
+    }
+    for path, _ in iter_scan_files(
+        project_root,
+        extensions=text_extensions,
+        skip_dirs=SKIP_DIRS,
+    ):
+        hits = _scan_file(path)
+        if hits:
+            findings.append((path, hits))
     return findings
 
 
@@ -196,6 +179,7 @@ class SafetyGate(Gate):
         Returns:
             GateVerdict: passed=True 表示无 secret; passed=False 表示检测到 secret.
         """
+        project_root = Path(project_root).resolve()
         if verdict := self._validate_project_root(project_root):
             return verdict
 

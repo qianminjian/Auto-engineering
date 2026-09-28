@@ -9,6 +9,8 @@ import ast
 import logging
 from pathlib import Path
 
+from auto_engineering.utils.project_files import iter_project_files
+
 __all__ = [
     "DEFAULT_MAX_FILE_MB",
     "DEFAULT_SKIP_DIRS",
@@ -93,16 +95,15 @@ def iter_scan_files(
 
     Returns list of (absolute_path, relative_path_str).
     """
-    _skip = skip_dirs or set()
+    root = project_root.resolve()
+    _skip = skip_dirs if skip_dirs is not None else set()
     _exts = extensions
     files: list[tuple[Path, str]] = []
-    for path in project_root.rglob("*"):
-        if not path.is_file():
-            continue
+    for path in iter_project_files(root, skip_dirs=_skip):
         if should_skip_path(path, _skip):
             continue
         if _exts is not None and path.suffix.lower() not in _exts:
             continue
-        rel = str(path.relative_to(project_root))
+        rel = str(path.relative_to(root))
         files.append((path, rel))
     return files

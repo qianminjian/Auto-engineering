@@ -13,6 +13,7 @@ from typing import Any
 
 from auto_engineering.gates.profile import ProfileCommandGate
 from auto_engineering.project_profile.models import ProjectProfile
+from auto_engineering.utils.project_files import iter_project_files
 
 
 class TickGateRunner:
@@ -67,10 +68,10 @@ class TickGateRunner:
         """Run all gates. Returns (gate_results_dict, duration_ms)."""
         if not files_changed and any(
             path.is_file()
-            and not {".git", ".ae-state", "_scratch"}.intersection(
-                path.relative_to(self._project_root).parts
+            for path in iter_project_files(
+                self._project_root,
+                skip_dirs={".git", ".ae-state", "_scratch"},
             )
-            for path in self._project_root.rglob("*")
         ):
             raise ValueError("GATE_SNAPSHOT_EMPTY: 非空项目的验证文件快照为空")
         from auto_engineering.loop.guardrails.stateful import aggregate_files_sha

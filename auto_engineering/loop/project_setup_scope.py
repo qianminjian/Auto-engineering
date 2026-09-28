@@ -14,6 +14,7 @@ from typing import Protocol
 
 from auto_engineering.engine.state import EngineState
 from auto_engineering.project_profile.models import ProjectProfile
+from auto_engineering.utils.project_files import iter_project_files
 
 
 class ProjectSetupScopeOwner(Protocol):
@@ -269,9 +270,9 @@ def project_setup_files(owner: ProjectSetupScopeOwner) -> list[str]:
     }
     root = owner.project_root.resolve()
     selected: list[str] = []
-    for candidate in owner.project_root.rglob("*"):
-        relative = candidate.relative_to(owner.project_root)
-        if excluded.intersection(relative.parts) or any(
+    for candidate in iter_project_files(root, skip_dirs=excluded):
+        relative = candidate.relative_to(root)
+        if any(
             part.endswith((".egg-info", ".dist-info")) for part in relative.parts
         ):
             continue

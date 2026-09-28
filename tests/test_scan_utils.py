@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import auto_engineering.utils.project_files as project_files
 from auto_engineering.gates._scan_utils import (
     DEFAULT_MAX_FILE_MB,
     DEFAULT_SKIP_DIRS,
@@ -91,6 +92,31 @@ class TestIterScanFiles:
     def test_empty_directory(self, tmp_path: Path) -> None:
         files = iter_scan_files(tmp_path, extensions={".py"})
         assert files == []
+
+    def test_prunes_excluded_directory_before_descending(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        excluded = tmp_path / ".ae-state"
+        excluded.mkdir()
+        (excluded / "historical.json").write_text("x")
+        (tmp_path / "main.py").write_text("x")
+        observed: list[tuple[str, list[str]]] = []
+        real_walk = project_files.os.walk
+
+        def tracking_walk(*args, **kwargs):
+            for directory, directories, files in real_walk(*args, **kwargs):
+                observed.append((directory, directories))
+                yield directory, directories, files
+
+        monkeypatch.setattr(project_files.os, "walk", tracking_walk)
+        files = iter_scan_files(tmp_path, skip_dirs={".ae-state"})
+
+        assert {relative for _, relative in files} == {"main.py"}
+        root_observation = next(
+            directories for directory, directories in observed
+            if Path(directory) == tmp_path
+        )
+        assert ".ae-state" not in root_observation
 
 
 class TestDefaultConstant:
