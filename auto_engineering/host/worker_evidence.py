@@ -158,6 +158,12 @@ def _native_business_artifact(
         ))
 
     candidate = candidates[0]
+    if not candidate:
+        # 空对象没有任何可提交的业务事实。若把它当作裸 payload 接受，
+        # 跨会话恢复会错误复用旧 generation，并在后续边界反复卡住。
+        raise HostEvidenceValidationError((
+            f"WORKER_NATIVE_RESULT_INVALID:{worker_id}",
+        ))
     if set(candidate) == {"result"}:
         raise HostEvidenceValidationError((
             f"WORKER_NATIVE_RESULT_INVALID:{worker_id}",
@@ -203,6 +209,36 @@ def _native_business_artifact(
         "payload": dict(candidate),
         "summary": "native_worker_result",
     }
+
+
+def parse_private_worker_artifact(
+    raw: object,
+    *,
+    worker_id: str,
+) -> dict[str, Any]:
+    """解析唯一的私有 Worker 业务 envelope。"""
+
+    if isinstance(raw, Mapping) and isinstance(raw.get("outcome"), Mapping):
+        raw = raw["outcome"]
+    required = {"worker_id", "status", "payload", "summary"}
+    forbidden = {
+        "native_worker_handle", "actual_model", "isolation_evidence",
+        "attestation", "worker_attestations", "receipt", "outcomes",
+    }
+    if (
+        not isinstance(raw, Mapping)
+        or set(raw) != required
+        or forbidden.intersection(raw)
+        or raw.get("worker_id") != worker_id
+        or not isinstance(raw.get("status"), str)
+        or not isinstance(raw.get("payload"), dict)
+        or not isinstance(raw.get("summary"), str)
+        or not raw.get("summary")
+    ):
+        raise HostEvidenceValidationError((
+            f"WORKER_PRIVATE_ARTIFACT_INVALID:{worker_id}",
+        ))
+    return dict(raw)
 
 
 @dataclass(frozen=True, slots=True)
@@ -357,5 +393,6 @@ __all__ = [
     "_native_handle_is_missing",
     "_resolve_worker_execution_binding",
     "native_outcomes_are_ready",
+    "parse_private_worker_artifact",
     "worker_failure_outcomes_are_ready",
 ]

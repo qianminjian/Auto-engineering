@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -109,19 +110,31 @@ def bind_worker_execution_identity(
     recovered_generation: int | None = None
     if previous is not None and previous.action_message_id == message_id:
         generation = previous.execution_generation
-        for candidate in range(previous.execution_generation, 0, -1):
-            artifact_exists = _has_worker_generation_artifact(action, root, candidate)
-            artifact_is_valid = _has_valid_native_result_artifact(
-                action, root, candidate
-            )
-            if artifact_exists and (not has_failure_journal or artifact_is_valid):
-                recovered_generation = candidate
-                generation = candidate
-                break
-        if previous.host_session_id != session_id and recovered_generation is None:
-            generation = previous.execution_generation + 1
+        if previous.host_session_id != session_id:
+            # 跨会话只能复用 canonical parser 已确认的 native 事实。仅凭
+            # 文件存在不能恢复旧代：半写入、空对象或自然语言回包都可能
+            # 占住旧路径，随后让新的宿主在同一 generation 无限重复失败。
+            # 同会话则保留当前代，由唯一 record 边界完成原地 repair。
+            for candidate in range(previous.execution_generation, 0, -1):
+                if _has_recoverable_worker_artifact(action, root, candidate):
+                    recovered_generation = candidate
+                    generation = candidate
+                    break
+            if recovered_generation is None:
+                generation = previous.execution_generation + 1
     else:
         generation = 1
+        existing_generations = _existing_worker_generations(action, root)
+        if existing_generations:
+            latest = max(existing_generations)
+            # Stop Report 清理 lease 后，不能无条件回到 generation 1。
+            # 只有最新代的 native 或私有业务 artifact 能被唯一边界接受时
+            # 才复用；否则递增到新路径，保留旧证据并避免重复消费半成品。
+            generation = (
+                latest
+                if _has_recoverable_worker_artifact(action, root, latest)
+                else latest + 1
+            )
     if (
         has_failure_journal
         and recovered_generation is None
@@ -162,6 +175,44 @@ def _has_worker_generation_artifact(
             if root in candidate.parents and candidate.is_file():
                 return True
     return False
+
+
+def _existing_worker_generations(
+    action: Mapping[str, object], root: Path
+) -> set[int]:
+    """列出当前 Action 预期路径上已经落盘的 generation。"""
+
+    message_id = action.get("message_id")
+    spawn = action.get("spawn")
+    invocations = spawn.get("invocations") if isinstance(spawn, Mapping) else None
+    if not isinstance(message_id, str) or not message_id or not isinstance(invocations, list):
+        return set()
+    root = root.resolve()
+    generations: set[int] = set()
+    for invocation in invocations:
+        if not isinstance(invocation, Mapping):
+            continue
+        worker_id = invocation.get("worker_id")
+        if not isinstance(worker_id, str) or not worker_id:
+            continue
+        for relative in (
+            worker_native_result_path(message_id, worker_id, 1),
+            worker_outcome_path(message_id, worker_id, 1),
+        ):
+            directory = (root / relative).resolve().parent
+            prefix = Path(relative).name.removesuffix("-g1.json")
+            if directory == root or root not in directory.parents:
+                continue
+            try:
+                candidates = directory.glob(f"{prefix}-g*.json")
+            except OSError:
+                continue
+            pattern = re.compile(rf"^{re.escape(prefix)}-g([1-9][0-9]*)\.json$")
+            for candidate in candidates:
+                match = pattern.fullmatch(candidate.name)
+                if match is not None and candidate.is_file():
+                    generations.add(int(match.group(1)))
+    return generations
 
 
 def _has_valid_native_result_artifact(
@@ -206,6 +257,56 @@ def _has_valid_native_result_artifact(
             continue
         return True
     return False
+
+
+def _has_valid_private_outcome_artifact(
+    action: Mapping[str, object], root: Path, generation: int
+) -> bool:
+    """判断跨会话是否已有可继续 attestation 的私有业务 outcome。"""
+
+    if generation < 1:
+        return False
+    message_id = action.get("message_id")
+    spawn = action.get("spawn")
+    invocations = spawn.get("invocations") if isinstance(spawn, Mapping) else None
+    if not isinstance(message_id, str) or not message_id or not isinstance(invocations, list):
+        return False
+    root = root.resolve()
+    from auto_engineering.host.worker_evidence import parse_private_worker_artifact
+
+    for invocation in invocations:
+        if not isinstance(invocation, Mapping):
+            continue
+        worker_id = invocation.get("worker_id")
+        if not isinstance(worker_id, str) or not worker_id:
+            continue
+        outcome_path = (root / worker_outcome_path(
+            message_id, worker_id, generation
+        )).resolve()
+        if root not in outcome_path.parents or not outcome_path.is_file():
+            continue
+        try:
+            raw = json.loads(outcome_path.read_text(encoding="utf-8"))
+            parse_private_worker_artifact(raw, worker_id=worker_id)
+        except (
+            OSError,
+            UnicodeDecodeError,
+            json.JSONDecodeError,
+            ValueError,
+        ):
+            continue
+        return True
+    return False
+
+
+def _has_recoverable_worker_artifact(
+    action: Mapping[str, object], root: Path, generation: int
+) -> bool:
+    """返回可在新宿主中继续绑定的唯一 Worker artifact 判断。"""
+
+    return _has_valid_native_result_artifact(action, root, generation) or (
+        _has_valid_private_outcome_artifact(action, root, generation)
+    )
 
 
 __all__ = ["bind_worker_execution_identity", "resume_host_platform"]

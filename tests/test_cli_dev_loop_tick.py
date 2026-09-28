@@ -863,13 +863,91 @@ def test_worker_execution_identity_reuses_fact_generation_during_native_recovery
         action["message_id"], "architect-0", 1,
     )
     native_path.parent.mkdir(parents=True, exist_ok=True)
-    native_path.write_text("{}", encoding="utf-8")
+    native_path.write_text(
+        json.dumps({"plan": "已完成"}),
+        encoding="utf-8",
+    )
 
     monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "session-b")
     takeover = _bind_worker_execution_identity(action, tmp_path)
 
     assert takeover["execution_generation"] == 1
     assert takeover["fencing_token"] != first["fencing_token"]
+
+
+def test_worker_execution_identity_rotates_after_invalid_native_takeover_artifact(
+    tmp_path, monkeypatch
+) -> None:
+    """跨会话接管不能让无效 native artifact 占住旧代路径。"""
+    from auto_engineering.cli.dev_loop import _bind_worker_execution_identity
+    from auto_engineering.host.path_contract import worker_native_result_path
+    from auto_engineering.host.runtime_driver import HostRunLease, HostRunLeaseStore
+
+    monkeypatch.setenv("AE_HOST_PLATFORM", "claude-code")
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "session-a")
+    action = {
+        "message_id": "action-invalid-native-takeover",
+        "thread_id": "thread-invalid-native-takeover",
+        "spawn": {"invocations": [{"worker_id": "developer-0"}]},
+    }
+    first = _bind_worker_execution_identity(action, tmp_path)
+    lease_action = {
+        **first,
+        "extensions": {
+            "ae": {
+                "execution_control": {
+                    "schema_version": "1.0",
+                    "disposition": "CONTINUE",
+                    "continuation_required": True,
+                    "yield_allowed": False,
+                    "allowed_stop_reasons": [],
+                },
+                "runtime": {"build_id": "build-1"},
+            }
+        },
+    }
+    HostRunLeaseStore(tmp_path).save(HostRunLease.from_action(
+        lease_action,
+        platform="claude-code",
+        host_session_id="session-a",
+    ))
+    native_path = tmp_path / worker_native_result_path(
+        action["message_id"], "developer-0", 1,
+    )
+    native_path.parent.mkdir(parents=True, exist_ok=True)
+    native_path.write_text("{}", encoding="utf-8")
+
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "session-b")
+    takeover = _bind_worker_execution_identity(action, tmp_path)
+
+    assert first["execution_generation"] == 1
+    assert takeover["execution_generation"] == 2
+    assert takeover["fencing_token"] != first["fencing_token"]
+
+
+def test_worker_execution_identity_rotates_invalid_artifact_without_previous_lease(
+    tmp_path, monkeypatch
+) -> None:
+    """租约已清理后，损坏旧代也不能被新会话重新占用。"""
+    from auto_engineering.cli.dev_loop import _bind_worker_execution_identity
+    from auto_engineering.host.path_contract import worker_native_result_path
+
+    monkeypatch.setenv("AE_HOST_PLATFORM", "codex")
+    monkeypatch.setenv("CODEX_THREAD_ID", "new-session")
+    action = {
+        "message_id": "action-invalid-native-no-lease",
+        "thread_id": "thread-invalid-native-no-lease",
+        "spawn": {"invocations": [{"worker_id": "developer-0"}]},
+    }
+    native_path = tmp_path / worker_native_result_path(
+        action["message_id"], "developer-0", 1,
+    )
+    native_path.parent.mkdir(parents=True, exist_ok=True)
+    native_path.write_text("[]", encoding="utf-8")
+
+    bound = _bind_worker_execution_identity(action, tmp_path)
+
+    assert bound["execution_generation"] == 2
 
 
 def test_worker_retry_after_failure_journal_gets_new_stable_generation(

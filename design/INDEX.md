@@ -69,6 +69,7 @@
 | `incidents/2026-08-30-supervisor-research-closure.md` | Supervisor 终态、Research 结果契约与纵向恢复闭环事故 |
 | `incidents/2026-09-02-t719-native-result-bridge.md` | 原生 Worker 回包暂存、Build Identity 漂移与当前 L4 阻断证据 |
 | `incidents/2026-09-03-real-host-l4-closure.md` | 候选 Build 双宿主真实 L4 终态与发布 evidence artifact 待补记录 |
+| `incidents/2026-09-28-generation-reuse-boundary.md` | 跨会话 Worker generation 复用、空 native artifact 与租约清理后的恢复边界 |
 | `IMPLEMENTATION-TRACKER.md` | 当前任务状态、优先级与 EARS 验收 |
 | `HISTORY.md` | 历史里程碑与 Git 追溯入口 |
 
