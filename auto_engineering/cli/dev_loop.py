@@ -1417,6 +1417,7 @@ def run_record_worker_outcome(
                     "WORKER_BUSINESS_ARTIFACT_INVALID:",
                     "WORKER_NATIVE_RESULT_INVALID:",
                     "WORKER_NATIVE_RESULT_HOST_FIELDS:",
+                    "WORKER_NATIVE_RESULT_CONFLICT:",
                 ))
                 for violation in exc.violations
             )

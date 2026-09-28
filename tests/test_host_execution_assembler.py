@@ -1300,6 +1300,46 @@ def test_record_worker_outcome_rejects_bare_private_payload_before_native_summar
         )
 
 
+def test_record_worker_outcome_rejects_private_native_business_conflict(
+    tmp_path: Path,
+) -> None:
+    """private/native 同时存在但业务内容不一致时不得选择任一权威。"""
+
+    action = _action(tmp_path)
+    native_ref = ".ae-state/host-runtime/native-results/conflict.json"
+    action["host_execution"]["workers"][0]["native_result_path"] = native_ref
+    private_path = tmp_path / action["spawn"]["invocations"][0]["outcome_path"]
+    private_path.parent.mkdir(parents=True, exist_ok=True)
+    private_path.write_text(json.dumps({
+        "worker_id": "critic-0",
+        "status": "completed",
+        "payload": {"verdict": "APPROVE", "findings": []},
+        "summary": "private result",
+    }), encoding="utf-8")
+    native_path = tmp_path / native_ref
+    native_path.parent.mkdir(parents=True, exist_ok=True)
+    native_path.write_text(json.dumps({
+        "content": [{
+            "type": "text",
+            "text": '{"verdict":"REJECT","findings":[{"id":"F1"}]}',
+        }],
+    }), encoding="utf-8")
+
+    with pytest.raises(
+        HostEvidenceValidationError,
+        match="WORKER_NATIVE_RESULT_CONFLICT:critic-0",
+    ):
+        HostExecutionAssembler(tmp_path).record_worker_outcome(
+            action=action,
+            worker_id="critic-0",
+            native_worker_handle="native-agent-conflict",
+            native_result_file=native_path,
+            status="completed",
+            actual_model="unreported",
+            isolation_evidence="fresh_context",
+        )
+
+
 def test_record_worker_outcome_normalizes_expected_bare_private_payload(
     tmp_path: Path,
 ) -> None:

@@ -501,6 +501,29 @@ class HostExecutionAssembler(ResultFinalizationMixin):
             raise HostEvidenceValidationError((f"WORKER_BUSINESS_BOUNDARY_VIOLATION:{worker_id}",))
         if raw_business.get("worker_id") != worker_id or not isinstance(raw_business.get("payload"), dict):
             raise HostEvidenceValidationError((f"WORKER_BUSINESS_ARTIFACT_INVALID:{worker_id}",))
+        native_business_for_consistency: dict[str, Any] | None = None
+        if native_result_file is not None and native_result_file.is_file():
+            try:
+                native_business_for_consistency = load_native_business()
+            except HostEvidenceValidationError:
+                # 已经具备完整私有业务 envelope 时，native 摘要-only 回包不
+                # 是第二个业务权威；只有 native 同样可解析为业务对象时才
+                # 进入内容一致性比较。私有 artifact 需要 repair 时，前面的
+                # load_native_business() 仍会 fail-closed。
+                native_business_for_consistency = None
+        if native_business_for_consistency is not None:
+            private_status = _canonical_worker_business_status(raw_business.get("status"))
+            native_status = _canonical_worker_business_status(
+                native_business_for_consistency.get("status")
+            )
+            if (
+                private_status != native_status
+                or raw_business.get("payload")
+                != native_business_for_consistency.get("payload")
+            ):
+                raise HostEvidenceValidationError((
+                    f"WORKER_NATIVE_RESULT_CONFLICT:{worker_id}",
+                ))
         business_status = raw_business.get("status")
         status_key = _canonical_worker_business_status(status)
         business_status_key = _canonical_worker_business_status(business_status)
