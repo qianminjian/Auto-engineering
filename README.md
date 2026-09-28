@@ -91,7 +91,7 @@ Host-neutral Core (auto_engineering/)
 
 ```bash
 uv run pytest tests/ --no-cov --timeout=120 -q
-<!-- test-baseline --> 2899 passed / 1 skipped; coverage gate currently 90.040350% (18298/20322 statements，达到 90% 自动门禁；真实双宿主终态仍需单独验收)
+<!-- test-baseline --> 2901 passed / 1 skipped; coverage gate currently 90.040350% (18298/20322 statements，达到 90% 自动门禁；真实双宿主终态仍需单独验收)
 ```
 
 ## 环境变量

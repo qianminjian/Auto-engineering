@@ -44,11 +44,27 @@ RUNTIME_PYTHON="$RUNTIME_ROOT/bin/python"
 RUNTIME_DEGRADED=0
 if [[ ! -x "$RUNTIME_PYTHON" ]]; then
   RUNTIME_DEGRADED=1
-  RUNTIME_PYTHON=$(command -v python3 2>/dev/null || true)
+  RUNTIME_PYTHON=""
+  for candidate in \
+    "$HOOK_PROJECT_ROOT/.venv/bin/python" \
+    "$PLUGIN_DIR/.venv/bin/python" \
+    "$(command -v python3 2>/dev/null || true)" \
+    "$(command -v python 2>/dev/null || true)"; do
+    if [[ -n "$candidate" && -x "$candidate" ]] \
+      && "$candidate" -c 'import json' </dev/null >/dev/null 2>&1; then
+      RUNTIME_PYTHON="$candidate"
+      break
+    fi
+  done
 fi
 
 if [[ -z "$TOOL_INPUT" ]]; then
   echo '{"decision":"approve","reason":"no tool input"}'
+  exit 0
+fi
+
+if [[ -z "$RUNTIME_PYTHON" ]]; then
+  echo '{"decision":"block","reason_code":"NATIVE_GUARD_UNAVAILABLE","reason":"Auto-Engineering 安全校验运行时不可用，已阻止宿主调用"}'
   exit 0
 fi
 
@@ -61,7 +77,11 @@ TOOL_NAME=$(echo "$TOOL_INPUT" | "$RUNTIME_PYTHON" -c "import sys,json; d=json.l
 if [[ "$TOOL_NAME" == "Agent" || "$TOOL_NAME" == "TaskStop" || "$TOOL_NAME" == "Read" || "$TOOL_NAME" == "Bash" || "$TOOL_NAME" == "shell" || "$TOOL_NAME" == "command_execution" || "$TOOL_NAME" == "Edit" || "$TOOL_NAME" == "Write" || "$TOOL_NAME" == "MultiEdit" || "$TOOL_NAME" == "apply_patch" ]]; then
   if [[ "$RUNTIME_DEGRADED" -eq 1 ]]; then
     if [[ "$TOOL_NAME" == "Agent" || "$TOOL_NAME" == "TaskStop" || "$TOOL_INPUT" == *"--record-worker-outcome"* || "$TOOL_INPUT" == *".ae-state"* ]]; then
-      echo '{"decision":"block","reason_code":"NATIVE_GUARD_UNAVAILABLE","reason":"Auto-Engineering 原生 Worker 合同校验不可用，已阻止宿主调用"}'
+      if [[ "$TOOL_INPUT" == *".ae-state"* ]]; then
+        echo '{"decision":"block","reason_code":"NATIVE_GUARD_UNAVAILABLE","reason":"Auto-Engineering 原生 Worker 合同校验不可用；检测到 .ae-state 状态目录操作，已阻止宿主调用"}'
+      else
+        echo '{"decision":"block","reason_code":"NATIVE_GUARD_UNAVAILABLE","reason":"Auto-Engineering 原生 Worker 合同校验不可用，已阻止宿主调用"}'
+      fi
       exit 0
     fi
   else

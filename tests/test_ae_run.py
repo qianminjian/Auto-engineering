@@ -188,6 +188,46 @@ def test_explicit_project_root_controls_writable_runtime_location(tmp_path: Path
     )
 
 
+def test_rejects_plugin_source_as_implicit_project_root(tmp_path: Path) -> None:
+    """插件源码目录不能被当成业务项目写入第二套运行状态。"""
+
+    launcher = _copy_launcher(tmp_path)
+    _write_fake_uv(tmp_path / "bin/uv", "unexpected")
+    result = subprocess.run(
+        [str(launcher), "status"],
+        cwd=tmp_path / "plugin",
+        env={
+            **os.environ,
+            "PATH": os.pathsep.join((str(tmp_path / "bin"), "/usr/bin", "/bin")),
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 2
+    assert result.stdout == ""
+    assert "AE_PROJECT_ROOT_REQUIRED" in result.stderr
+    assert not (tmp_path / "plugin" / ".ae-state").exists()
+
+
+def test_rejects_plugin_source_as_explicit_project_root(tmp_path: Path) -> None:
+    launcher = _copy_launcher(tmp_path)
+    _write_fake_uv(tmp_path / "bin/uv", "unexpected")
+    result = _run(
+        launcher,
+        str(tmp_path / "bin"),
+        "status",
+        "--project-root",
+        str(tmp_path / "plugin"),
+    )
+
+    assert result.returncode == 2
+    assert result.stdout == ""
+    assert "AE_PROJECT_ROOT_INVALID" in result.stderr
+    assert not (tmp_path / "plugin" / ".ae-state").exists()
+
+
 def test_rejects_project_root_drift_from_host_invocation_root(tmp_path: Path) -> None:
     launcher = _copy_launcher(tmp_path)
     invocation_root = tmp_path / "invocation"

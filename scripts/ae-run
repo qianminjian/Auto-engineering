@@ -34,6 +34,23 @@ PROJECT_ROOT=$(resolve_project_root "$@") || {
     printf '%s\n' "AE_PROJECT_ROOT_INVALID: 项目根目录不可用" >&2
     exit 2
 }
+PROJECT_ROOT_EXPLICIT=0
+for argument in "$@"; do
+    case "$argument" in
+        --project-root|--project-root=*)
+            PROJECT_ROOT_EXPLICIT=1
+            break
+            ;;
+    esac
+done
+if [ "$PROJECT_ROOT" = "$PLUGIN_ROOT" ]; then
+    if [ "$PROJECT_ROOT_EXPLICIT" -eq 1 ]; then
+        printf '%s\n' "AE_PROJECT_ROOT_INVALID: 目标项目根不能是 Auto-Engineering 插件目录" >&2
+    else
+        printf '%s\n' "AE_PROJECT_ROOT_REQUIRED: 插件源码目录不能作为目标项目，请显式指定 --project-root" >&2
+    fi
+    exit 2
+fi
 if [ -n "${AE_INVOCATION_PROJECT_ROOT:-}" ]; then
     INVOCATION_PROJECT_ROOT=$(CDPATH= cd -- "$AE_INVOCATION_PROJECT_ROOT" && pwd -P) || {
         printf '%s\n' "AE_PROJECT_ROOT_INVALID: 宿主启动根目录不可用" >&2
