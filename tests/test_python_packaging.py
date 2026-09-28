@@ -27,6 +27,20 @@ def test_src_package_without_build_backend_is_setup_gap(tmp_path: Path) -> None:
     )
 
 
+def test_packaging_probe_prunes_runtime_state_when_root_is_project_root(
+    tmp_path: Path,
+) -> None:
+    state_package = tmp_path / ".ae-state" / "historical"
+    state_package.mkdir(parents=True)
+    (state_package / "__init__.py").write_text("", encoding="utf-8")
+
+    assert python_packaging_gaps(
+        tmp_path,
+        {"project": {"name": "state-only"}},
+        (".",),
+    ) == ()
+
+
 def test_hatchling_src_package_requires_existing_explicit_wheel_mapping(
     tmp_path: Path,
 ) -> None:

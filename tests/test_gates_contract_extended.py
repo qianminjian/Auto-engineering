@@ -65,6 +65,21 @@ def test_collect_source_files_nested_src(tmp_path: Path) -> None:
     assert "helper.py" in paths
 
 
+def test_collect_source_files_prunes_runtime_state_inside_declared_root(
+    tmp_path: Path,
+) -> None:
+    src_dir = tmp_path / "src"
+    src_dir.mkdir()
+    (src_dir / "main.py").write_text("def main(): pass")
+    state_dir = src_dir / ".ae-state" / "historical"
+    state_dir.mkdir(parents=True)
+    (state_dir / "artifact.py").write_text("not_business_source = True")
+
+    files = _collect_source_files(tmp_path)
+
+    assert [path.relative_to(src_dir).as_posix() for path in files] == ["main.py"]
+
+
 def test_collect_source_files_no_matching(tmp_path: Path) -> None:
     """_collect_source_files returns empty when no source files found."""
     (tmp_path / "readme.md").write_text("hello")

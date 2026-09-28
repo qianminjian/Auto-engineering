@@ -119,6 +119,16 @@ def test_python_profile_does_not_type_check_an_empty_source_root(
     )
 
 
+def test_python_probe_prunes_runtime_state_when_source_root_is_project_root(
+    tmp_path: Path,
+) -> None:
+    state_package = tmp_path / ".ae-state" / "historical"
+    state_package.mkdir(parents=True)
+    (state_package / "__init__.py").write_text("", encoding="utf-8")
+
+    assert LocalProbeProvider._contains_python_files(tmp_path, ".") is False
+
+
 def test_legacy_manifest_without_current_roots_requires_setup(tmp_path: Path) -> None:
     state_dir = tmp_path / ".ae-state"
     state_dir.mkdir()

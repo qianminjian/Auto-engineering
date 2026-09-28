@@ -9,7 +9,10 @@ import ast
 import logging
 from pathlib import Path
 
-from auto_engineering.utils.project_files import iter_project_files
+from auto_engineering.utils.project_files import (
+    PROJECT_SCAN_SKIP_DIRS,
+    iter_project_files,
+)
 
 __all__ = [
     "DEFAULT_MAX_FILE_MB",
@@ -26,27 +29,7 @@ DEFAULT_MAX_FILE_MB = 5
 
 # Audit/Safety 共享同一套业务源码扫描边界；依赖运行时、生成物和测试夹具
 # 不属于被 Gate 评估的业务实现，避免两个 Gate 各自维护一份易漂移的列表。
-DEFAULT_SKIP_DIRS = frozenset(
-    {
-        ".git",
-        ".venv",
-        "venv",
-        "node_modules",
-        "__pycache__",
-        ".pytest_cache",
-        ".ae-state",
-        ".ae-plugin",
-        ".gitnexus",
-        ".uv-cache",
-        ".ae-runtime",
-        "dist",
-        "build",
-        ".eggs",
-        "tests",
-        "_scratch",
-        ".planning",
-    }
-)
+DEFAULT_SKIP_DIRS = PROJECT_SCAN_SKIP_DIRS | {"tests"}
 
 
 def find_silent_except_lines(content: str) -> list[int]:

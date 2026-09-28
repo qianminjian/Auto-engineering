@@ -9,6 +9,7 @@ from unittest.mock import MagicMock
 
 from auto_engineering.loop.event_store import SQLiteEventStore
 from auto_engineering.loop.events import LoopEventType
+from auto_engineering.loop.project_setup_scope import project_setup_snapshot_files
 from auto_engineering.loop.tick_orchestrator import TickOrchestrator
 
 
@@ -899,6 +900,27 @@ def test_setup_ignores_gitkeep_used_to_materialize_empty_source_root(
 
     profile = SimpleNamespace(source_roots=("src",), test_roots=())
     assert orchestrator._project_setup_scope_violations(profile) == {}
+
+
+def test_setup_snapshot_prunes_runtime_state_when_source_root_is_project_root(
+    tmp_path: Path,
+) -> None:
+    """声明 ``.`` 为源码根时也不得递归历史运行证据。"""
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "main.py").write_text("print('ok')\n", encoding="utf-8")
+    (tmp_path / ".ae-state" / "historical" / "nested").mkdir(parents=True)
+    (tmp_path / ".ae-state" / "historical" / "nested" / "artifact.py").write_text(
+        "should_not_be_scanned = True\n",
+        encoding="utf-8",
+    )
+    profile = SimpleNamespace(
+        evidence=(),
+        source_roots=(".",),
+        test_roots=(),
+    )
+    owner = SimpleNamespace(project_root=tmp_path)
+
+    assert project_setup_snapshot_files(owner, profile) == ["src/main.py"]
 
 
 def test_setup_allows_toolchain_smoke_using_safe_stdlib_modules(

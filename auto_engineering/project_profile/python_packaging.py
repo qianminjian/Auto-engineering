@@ -9,6 +9,11 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from pathlib import Path, PurePosixPath
 
+from auto_engineering.utils.project_files import (
+    PROJECT_SCAN_SKIP_DIRS,
+    iter_project_files,
+)
+
 PYTHON_PACKAGING_GAP = "python_packaging"
 HATCHLING_SDIST_EXCLUDE_EXAMPLE = (
     'exclude = ["/.ae-state", "/.ae-runtime", "/.venv", "/dist", '
@@ -29,7 +34,13 @@ def _is_python_package(path: Path) -> bool:
     if not path.is_dir():
         return False
     try:
-        return any(candidate.is_file() for candidate in path.rglob("__init__.py"))
+        return any(
+            candidate.name == "__init__.py"
+            for candidate in iter_project_files(
+                path,
+                skip_dirs=PROJECT_SCAN_SKIP_DIRS,
+            )
+        )
     except OSError:
         return False
 

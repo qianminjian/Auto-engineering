@@ -6,6 +6,31 @@ import os
 from collections.abc import Iterable, Iterator
 from pathlib import Path
 
+PROJECT_SCAN_SKIP_DIRS = frozenset(
+    {
+        ".git",
+        ".venv",
+        "venv",
+        "node_modules",
+        "__pycache__",
+        ".pytest_cache",
+        ".ruff_cache",
+        ".mypy_cache",
+        ".ae-state",
+        ".ae-runtime",
+        ".ae-plugin",
+        ".gitnexus",
+        ".uv-cache",
+        "dist",
+        "build",
+        ".eggs",
+        "_scratch",
+        ".planning",
+        ".tox",
+        ".nox",
+    }
+)
+
 
 def iter_project_files(
     project_root: Path,
@@ -35,4 +60,4 @@ def iter_project_files(
             yield Path(directory) / name
 
 
-__all__ = ["iter_project_files"]
+__all__ = ["PROJECT_SCAN_SKIP_DIRS", "iter_project_files"]

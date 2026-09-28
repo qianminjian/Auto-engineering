@@ -25,6 +25,10 @@ from auto_engineering.project_profile.python_packaging import (
     python_packaging_gaps,
 )
 from auto_engineering.project_profile.python_quality import has_python_dev_tool
+from auto_engineering.utils.project_files import (
+    PROJECT_SCAN_SKIP_DIRS,
+    iter_project_files,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -390,8 +394,11 @@ class LocalProbeProvider:
             return False
         try:
             return any(
-                candidate.is_file() and candidate.suffix in {".py", ".pyi"}
-                for candidate in root.rglob("*")
+                candidate.suffix in {".py", ".pyi"}
+                for candidate in iter_project_files(
+                    root,
+                    skip_dirs=PROJECT_SCAN_SKIP_DIRS,
+                )
             )
         except OSError:
             return False

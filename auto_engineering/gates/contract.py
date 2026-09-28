@@ -22,6 +22,10 @@ import logging
 from pathlib import Path
 
 from auto_engineering.gates.base import Gate, GateVerdict
+from auto_engineering.utils.project_files import (
+    PROJECT_SCAN_SKIP_DIRS,
+    iter_project_files,
+)
 
 __all__ = ["ContractGate"]
 
@@ -49,9 +53,7 @@ def _collect_source_files(project_root: Path) -> list[Path]:
         if not root.is_dir():
             continue
         found_root = True
-        for path in root.rglob("*"):
-            if not path.is_file():
-                continue
+        for path in iter_project_files(root, skip_dirs=PROJECT_SCAN_SKIP_DIRS):
             if path.suffix.lower() in _SOURCE_EXTENSIONS:
                 files.append(path)
     if found_root:

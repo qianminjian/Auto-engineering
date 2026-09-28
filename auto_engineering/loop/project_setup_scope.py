@@ -14,7 +14,10 @@ from typing import Protocol
 
 from auto_engineering.engine.state import EngineState
 from auto_engineering.project_profile.models import ProjectProfile
-from auto_engineering.utils.project_files import iter_project_files
+from auto_engineering.utils.project_files import (
+    PROJECT_SCAN_SKIP_DIRS,
+    iter_project_files,
+)
 
 
 class ProjectSetupScopeOwner(Protocol):
@@ -320,7 +323,7 @@ def project_setup_snapshot_files(
     profile: ProjectProfile,
 ) -> list[str]:
     """为 setup Gate 构造有界、项目内的确定性文件快照。"""
-    excluded = {".git", ".ae-state", "_scratch", "node_modules"}
+    excluded = PROJECT_SCAN_SKIP_DIRS
     root = owner.project_root.resolve()
     selected: set[str] = set()
     for evidence in profile.evidence:
@@ -335,9 +338,9 @@ def project_setup_snapshot_files(
         source_root = owner.project_root / root_name
         if not source_root.is_dir() or not source_root.resolve().is_relative_to(root):
             continue
-        for candidate in source_root.rglob("*"):
-            if candidate.is_file() and not candidate.is_symlink():
-                selected.add(candidate.relative_to(owner.project_root).as_posix())
+        for candidate in iter_project_files(source_root, skip_dirs=excluded):
+            if not candidate.is_symlink():
+                selected.add(candidate.relative_to(root).as_posix())
                 if len(selected) > 10_000:
                     raise ValueError("PROJECT_SETUP_SNAPSHOT_TOO_LARGE: 超过 10000 个文件")
     if not selected:
