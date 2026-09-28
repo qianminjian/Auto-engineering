@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from auto_engineering.host.recovery_contract import HOST_PROTOCOL_FAILURE
 from auto_engineering.host.spawn_contract import SpawnContractError, SpawnPlan
 from auto_engineering.host.worker_artifact_repair import (
     bound_native_business_is_valid,
@@ -31,7 +32,7 @@ def collect_worker_outcomes_from_artifacts(
         plan = SpawnPlan.for_recording(action)
     except SpawnContractError as exc:
         raise WorkerOutcomeCollectionError(
-            "HOST_WORKER_OUTPUT_INVALID", "unknown", str(exc)
+            HOST_PROTOCOL_FAILURE, "unknown", str(exc)
         ) from exc
     outcomes: list[NativeWorkerOutcome] = []
     host_execution = action.get("host_execution")
@@ -51,18 +52,18 @@ def collect_worker_outcomes_from_artifacts(
             candidate = template.get("outcome_path")
             if not isinstance(candidate, str) or not candidate:
                 raise WorkerOutcomeCollectionError(
-                    "HOST_WORKER_OUTPUT_INVALID", invocation.worker_id,
+                    HOST_PROTOCOL_FAILURE, invocation.worker_id,
                     "outcome_path_missing",
                 )
             if candidate != invocation.outcome_path:
                 raise WorkerOutcomeCollectionError(
-                    "HOST_WORKER_OUTPUT_INVALID", invocation.worker_id,
+                    HOST_PROTOCOL_FAILURE, invocation.worker_id,
                     "outcome_path_drift",
                 )
         path = (project_root / invocation.outcome_path).resolve()
         if path == project_root or project_root not in path.parents:
             raise WorkerOutcomeCollectionError(
-                "HOST_WORKER_OUTPUT_INVALID", invocation.worker_id,
+                HOST_PROTOCOL_FAILURE, invocation.worker_id,
                 "path_outside_project",
             )
         try:
@@ -82,7 +83,7 @@ def collect_worker_outcomes_from_artifacts(
                     "private_artifact_unreadable_native_result_available",
                 ) from exc
             raise WorkerOutcomeCollectionError(
-                "HOST_WORKER_OUTPUT_INVALID", invocation.worker_id,
+                HOST_PROTOCOL_FAILURE, invocation.worker_id,
                 exc.__class__.__name__,
             ) from exc
         if isinstance(raw, Mapping) and isinstance(raw.get("outcome"), Mapping):
@@ -98,7 +99,7 @@ def collect_worker_outcomes_from_artifacts(
                     "private_artifact_not_object_native_result_available",
                 )
             raise WorkerOutcomeCollectionError(
-                "HOST_WORKER_OUTPUT_INVALID", invocation.worker_id,
+                HOST_PROTOCOL_FAILURE, invocation.worker_id,
                 "top_level_must_be_object",
             )
         business_fields = {"worker_id", "status", "payload", "summary"}
@@ -140,12 +141,12 @@ def collect_worker_outcomes_from_artifacts(
                     "private_artifact_invalid_native_result_available",
                 ) from exc
             raise WorkerOutcomeCollectionError(
-                "HOST_WORKER_OUTPUT_INVALID", invocation.worker_id,
+                HOST_PROTOCOL_FAILURE, invocation.worker_id,
                 exc.__class__.__name__,
             ) from exc
         if outcome.worker_id != invocation.worker_id:
             raise WorkerOutcomeCollectionError(
-                "HOST_WORKER_OUTPUT_INVALID", invocation.worker_id,
+                HOST_PROTOCOL_FAILURE, invocation.worker_id,
                 "worker_id_mismatch",
             )
         if (
@@ -153,7 +154,7 @@ def collect_worker_outcomes_from_artifacts(
             and outcome.native_worker_handle.startswith("unreported:")
         ):
             raise WorkerOutcomeCollectionError(
-                "HOST_WORKER_OUTPUT_INVALID", invocation.worker_id,
+                HOST_PROTOCOL_FAILURE, invocation.worker_id,
                 "native_handle_unreported",
             )
         expected_generation, expected_fence = _resolve_worker_execution_binding(

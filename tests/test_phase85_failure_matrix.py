@@ -145,7 +145,7 @@ def test_partial_private_outcome_fails_closed_without_partial_merge(
 
         with pytest.raises(
             WorkerOutcomeCollectionError,
-            match="HOST_WORKER_OUTPUT_INVALID:architect-0",
+            match="HOST_PROTOCOL_FAILURE:architect-0",
         ):
             mapped.collect_worker_outcomes_from_artifacts(
                 action=action,

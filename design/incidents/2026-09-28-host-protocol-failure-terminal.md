@@ -26,10 +26,14 @@
 
 - Host/CLI/Tick 核心回归：333 passed。
 - 业务回归（排除 macOS Xcode license 依赖的 Git guardrail 与 host-process 测试）：
-  2725 passed，1 skipped。
+  2726 passed，1 skipped。
 - Ruff、mypy（244 个源码文件）、silent-except、line-count、git diff check 通过。
 - 覆盖率：89%；项目要求的 90% 全量门禁仍受系统 Git/Xcode license 环境阻断，未将
   89% 虚报为 90%。
+
+本轮补强后，当前采集器的无效交接中间分类也统一使用
+`HOST_PROTOCOL_FAILURE`；`HOST_WORKER_OUTPUT_INVALID` 仅保留在历史 journal
+迁移兼容边界，不再作为当前生产采集路径的协议名称。
 
 ## 不变量
 

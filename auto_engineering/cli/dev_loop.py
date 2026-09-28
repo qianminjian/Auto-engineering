@@ -1255,7 +1255,7 @@ def run_tick_finalize(
                     or (
                         "HOST_WORKER_OUTPUT_MISSING"
                         if not outcomes
-                        else "HOST_WORKER_OUTPUT_INVALID"
+                        else "HOST_PROTOCOL_FAILURE"
                     )
                 )
                 if failure_code == "HOST_WORKER_OUTPUT_MISSING":

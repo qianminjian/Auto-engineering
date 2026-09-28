@@ -1826,7 +1826,7 @@ def test_collect_rejects_unreported_native_handle_for_completed_worker(
 
     with pytest.raises(
         WorkerOutcomeCollectionError,
-        match="HOST_WORKER_OUTPUT_INVALID:critic-0:native_handle_unreported",
+        match="HOST_PROTOCOL_FAILURE:critic-0:native_handle_unreported",
     ):
         HostExecutionAssembler(tmp_path).collect_worker_outcomes_from_artifacts(
             action=action,
