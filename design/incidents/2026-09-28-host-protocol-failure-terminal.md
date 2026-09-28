@@ -35,6 +35,10 @@
 `HOST_PROTOCOL_FAILURE`；`HOST_WORKER_OUTPUT_INVALID` 仅保留在历史 journal
 迁移兼容边界，不再作为当前生产采集路径的协议名称。
 
+续驱动边界也已补强：当 Outcome Journal 为 `protocol_failed`、协议失败类型，
+或结果携带 `HOST_PROTOCOL_FAILURE` 时，即使退出顺序暂时保留 `CONTINUE` lease，
+`continuation_driver` 也必须返回 `stop`，不得重复恢复同一 Action。
+
 ## 不变量
 
 `HOST_PROTOCOL_FAILURE` 不得被映射为 `HOST_WORKER_FAILED`；有效 native repair 不得

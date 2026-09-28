@@ -84,6 +84,18 @@ def _repair_is_exhausted(journal_dir: Path, action_message_id: str) -> bool:
     record = _read_mapping(journal_path)
     if record is None or record.get("action_message_id") != action_message_id:
         return True
+    # 宿主协议失败不是 Coordinator Result repair。它已经由 Core 映射为
+    # HOST_PROTOCOL_RETRY_EXHAUSTED；即使外层进程退出顺序暂时保留
+    # CONTINUE lease，也绝不能再次把同一坏 Action 交给宿主，形成反馈死循环。
+    if record.get("status") == "protocol_failed":
+        return True
+    if record.get("failure_kind") == "protocol":
+        return True
+    result = record.get("result")
+    if isinstance(result, Mapping) and result.get("spawn_error_code") == (
+        "HOST_PROTOCOL_FAILURE"
+    ):
+        return True
     return (
         record.get("status") in {"rejected", "assembly_rejected"}
         and record.get("repairable") is False

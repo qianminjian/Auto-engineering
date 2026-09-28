@@ -82,6 +82,28 @@ def test_resumes_when_action_result_repair_is_still_available(tmp_path) -> None:
     assert should_resume_host(_status(), _lease(), journal_dir) is True
 
 
+def test_does_not_resume_after_host_protocol_failure(tmp_path) -> None:
+    """协议终态即使暂留 CONTINUE lease，也不得重复喂给同一坏 Action。"""
+    import json
+
+    journal_dir = tmp_path / "outcomes"
+    journal_dir.mkdir()
+    (journal_dir / "action-1.json").write_text(
+        json.dumps({
+            "status": "protocol_failed",
+            "failure_kind": "protocol",
+            "action_message_id": "action-1",
+            "result": {
+                "spawned": False,
+                "spawn_error_code": "HOST_PROTOCOL_FAILURE",
+            },
+        }),
+        encoding="utf-8",
+    )
+
+    assert should_resume_host(_status(), _lease(), journal_dir) is False
+
+
 def test_cli_emits_machine_decision_without_mutating_inputs(tmp_path) -> None:
     import json
 
