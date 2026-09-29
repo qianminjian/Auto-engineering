@@ -100,7 +100,15 @@ def classify_private_worker_artifacts(
                 ))
             continue
         try:
-            parse_private_worker_artifact(raw, worker_id=invocation.worker_id)
+            expected_format = action.get("expected_format")
+            parse_private_worker_artifact(
+                raw,
+                worker_id=invocation.worker_id,
+                status="completed",
+                expected_format=(
+                    expected_format if isinstance(expected_format, Mapping) else None
+                ),
+            )
         except HostEvidenceValidationError:
             if bound_native_business_is_valid(
                 project_root=root,

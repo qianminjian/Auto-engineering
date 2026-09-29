@@ -287,7 +287,15 @@ def _has_valid_private_outcome_artifact(
             continue
         try:
             raw = json.loads(outcome_path.read_text(encoding="utf-8"))
-            parse_private_worker_artifact(raw, worker_id=worker_id)
+            expected_format = action.get("expected_format")
+            parse_private_worker_artifact(
+                raw,
+                worker_id=worker_id,
+                status="completed",
+                expected_format=(
+                    expected_format if isinstance(expected_format, Mapping) else None
+                ),
+            )
         except (
             OSError,
             UnicodeDecodeError,

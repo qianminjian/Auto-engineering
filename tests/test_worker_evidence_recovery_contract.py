@@ -116,14 +116,6 @@ def test_private_worker_artifact_accepts_one_outcome_wrapper() -> None:
     "raw",
     [
         None,
-        {"worker_id": "worker-0", "status": "completed", "payload": {}},
-        {
-            "worker_id": "worker-0",
-            "status": "completed",
-            "payload": {},
-            "summary": "",
-            "receipt": {},
-        },
         {
             "worker_id": "other-worker",
             "status": "completed",
@@ -144,6 +136,15 @@ def test_private_worker_artifact_rejects_invalid_envelope(raw: object) -> None:
         match="WORKER_PRIVATE_ARTIFACT_INVALID:worker-0",
     ):
         parse_private_worker_artifact(raw, worker_id="worker-0")
+
+
+def test_private_worker_artifact_normalizes_missing_summary_once() -> None:
+    raw = {"worker_id": "worker-0", "status": "completed", "payload": {}}
+
+    assert parse_private_worker_artifact(raw, worker_id="worker-0") == {
+        **raw,
+        "summary": "native_worker_result",
+    }
 
 
 def test_business_status_normalization_is_fail_closed_for_non_string() -> None:

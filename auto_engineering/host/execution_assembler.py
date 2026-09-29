@@ -42,6 +42,7 @@ from auto_engineering.host.worker_evidence import (
     _native_handle_is_missing,
     _resolve_worker_execution_binding,
     can_replace_retryable_outcome,
+    parse_private_worker_artifact,
 )
 from auto_engineering.host.worker_failure import WorkerFailureService
 from auto_engineering.host.worker_observation import (
@@ -335,51 +336,27 @@ class HostExecutionAssembler(ResultFinalizationMixin):
                     f"WORKER_BUSINESS_ARTIFACT_INVALID:{worker_id}",
                     exc.__class__.__name__,
                 )
-        if isinstance(raw_business, Mapping) and isinstance(raw_business.get("outcome"), Mapping):
-            raw_business = raw_business["outcome"]
-        # Claude Worker 偶尔会把 expected_format 业务对象直接写到私有路径，
-        # 虽然没有携带 Host 身份字段，但仍然是当前 Worker 已授权的业务产物。
-        # 在唯一的 record 边界按当前 Action 的 expected_format 做一次确定性
-        # envelope 归一化；不覆盖原文件，也不从自然语言或宿主字段推断事实。
         if isinstance(raw_business, Mapping):
-            expected_format = action.get("expected_format")
-            expected_keys = (
-                set(expected_format)
-                if isinstance(expected_format, Mapping)
-                else set()
-            )
-            forbidden_business = {
-                "spawned", "spawn_proof_token", "native_worker_handle", "actual_model",
-                "isolation_evidence", "worker_attestations", "attestation", "receipt",
-            }
-            if (
-                expected_keys
-                and expected_keys.issubset(raw_business)
-                and not forbidden_business.intersection(raw_business)
-                and not {"worker_id", "status", "payload", "summary"}.intersection(raw_business)
-            ):
-                raw_business = {
-                    "worker_id": worker_id,
-                    "status": status,
-                    "payload": dict(raw_business),
-                    "summary": "native_worker_result",
-                }
-            elif (
-                set(raw_business) == {"worker_id", "status", "payload"}
-                and raw_business.get("worker_id") == worker_id
-                and isinstance(raw_business.get("status"), str)
-                and isinstance(raw_business.get("payload"), dict)
-            ):
-                # ``summary`` is audit metadata, not business data.  Native
-                # result parsing already applies this normalization; apply
-                # the same one at the private-file handoff so a Worker that
-                # omitted only this metadata does not lose a valid payload.
-                # Keep the private artifact untouched: the Host only
-                # normalizes the in-memory envelope before merging facts.
-                raw_business = {
-                    **raw_business,
-                    "summary": "native_worker_result",
-                }
+            try:
+                raw_business = parse_private_worker_artifact(
+                    raw_business,
+                    worker_id=worker_id,
+                    status=status,
+                    expected_format=(
+                        action.get("expected_format")
+                        if isinstance(action.get("expected_format"), Mapping)
+                        else None
+                    ),
+                )
+            except HostEvidenceValidationError as exc:
+                if not private_artifact_violations:
+                    private_artifact_violations = tuple(
+                        f"WORKER_BUSINESS_ARTIFACT_INVALID:{worker_id}"
+                        if violation.startswith("WORKER_PRIVATE_ARTIFACT_INVALID:")
+                        else violation
+                        for violation in exc.violations
+                    )
+                raw_business = None
         required_business = {"worker_id", "status", "payload", "summary"}
         if (
             not isinstance(raw_business, Mapping)

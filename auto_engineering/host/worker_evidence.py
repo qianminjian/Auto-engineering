@@ -16,6 +16,9 @@ from auto_engineering.host.worker_evidence_contracts import (
     HostEvidenceValidationError,
     WorkerOutcomeCollectionError,
 )
+from auto_engineering.host.worker_artifact_parser import (
+    parse_private_worker_artifact,
+)
 from auto_engineering.host.worker_evidence_io import (
     atomic_write_bytes as _atomic_write_bytes,
 )
@@ -209,36 +212,6 @@ def _native_business_artifact(
         "payload": dict(candidate),
         "summary": "native_worker_result",
     }
-
-
-def parse_private_worker_artifact(
-    raw: object,
-    *,
-    worker_id: str,
-) -> dict[str, Any]:
-    """解析唯一的私有 Worker 业务 envelope。"""
-
-    if isinstance(raw, Mapping) and isinstance(raw.get("outcome"), Mapping):
-        raw = raw["outcome"]
-    required = {"worker_id", "status", "payload", "summary"}
-    forbidden = {
-        "native_worker_handle", "actual_model", "isolation_evidence",
-        "attestation", "worker_attestations", "receipt", "outcomes",
-    }
-    if (
-        not isinstance(raw, Mapping)
-        or set(raw) != required
-        or forbidden.intersection(raw)
-        or raw.get("worker_id") != worker_id
-        or not isinstance(raw.get("status"), str)
-        or not isinstance(raw.get("payload"), dict)
-        or not isinstance(raw.get("summary"), str)
-        or not raw.get("summary")
-    ):
-        raise HostEvidenceValidationError((
-            f"WORKER_PRIVATE_ARTIFACT_INVALID:{worker_id}",
-        ))
-    return dict(raw)
 
 
 @dataclass(frozen=True, slots=True)

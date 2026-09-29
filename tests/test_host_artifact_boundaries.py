@@ -186,9 +186,34 @@ def test_collector_rejects_missing_drift_and_unreported_worker_artifacts(tmp_pat
     private.write_text(json.dumps({"worker_id": "critic-0", "status": "completed", "payload": {}}), encoding="utf-8")
     with pytest.raises(
         WorkerOutcomeCollectionError,
-        match="HOST_PROTOCOL_FAILURE:critic-0:private_artifact_invalid",
+        match="HOST_WORKER_ATTESTATION_MISSING:critic-0:private_business_artifact_only",
     ):
         inspect_private_worker_artifacts(project_root=tmp_path, action=action)
+
+
+def test_classifier_uses_same_private_normalization_for_bare_expected_payload(
+    tmp_path: Path,
+) -> None:
+    action = _action(tmp_path)
+    action["expected_format"] = {
+        "verdict": "string",
+        "findings": "array",
+    }
+    worker = action["spawn"]["invocations"][0]  # type: ignore[index]
+    private = tmp_path / worker["outcome_path"]
+    private.parent.mkdir(parents=True, exist_ok=True)
+    private.write_text(
+        json.dumps({"verdict": "APPROVE", "findings": []}),
+        encoding="utf-8",
+    )
+
+    classification = classify_private_worker_artifacts(
+        project_root=tmp_path,
+        action=action,
+    )
+
+    assert classification.code == "HOST_WORKER_ATTESTATION_MISSING"
+    assert classification.detail == "private_business_artifact_only"
 
 
 def test_collector_rejects_outside_path_and_invalid_spawn_contract(tmp_path: Path) -> None:
