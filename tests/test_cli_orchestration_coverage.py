@@ -26,6 +26,9 @@ class _EventStore:
         del thread_id
         return None
 
+    def unfinished_threads(self) -> list[str]:
+        return []
+
     def load_projection(self, thread_id: str):
         del thread_id
         return None
@@ -415,6 +418,36 @@ def test_tick_resume_does_not_fall_back_to_second_state_source(
     assert len(_EventStore.instances) == 1
 
 
+def test_tick_resume_rejects_non_current_unfinished_thread(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """resume 不能用显式 thread_id 绕过唯一活动 thread。"""
+    import click
+
+    from auto_engineering.cli.dev_loop import run_tick_resume
+
+    class _Events:
+        def __init__(self, path: Path) -> None:
+            self.path = path
+
+        def unfinished_threads(self) -> list[str]:
+            return ["current-thread"]
+
+        def load_action_snapshot(self, thread_id: str) -> dict[str, object] | None:
+            raise AssertionError(f"不应读取非当前 thread: {thread_id}")
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(
+        "auto_engineering.loop.event_store.SQLiteEventStore", _Events,
+    )
+
+    with pytest.raises(click.ClickException, match="PROJECT_THREAD_NOT_ACTIVE"):
+        run_tick_resume("other-thread", tmp_path)
+
+
 def test_tick_resume_reuses_stop_report_host_platform(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -436,6 +469,9 @@ def test_tick_resume_reuses_stop_report_host_platform(
         def load_action_snapshot(self, thread_id: str) -> dict[str, object] | None:
             assert thread_id == action["thread_id"]
             return action
+
+        def unfinished_threads(self) -> list[str]:
+            return [str(action["thread_id"])]
 
         def close(self) -> None:
             return None

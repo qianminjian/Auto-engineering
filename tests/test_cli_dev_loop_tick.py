@@ -19,6 +19,7 @@ import os
 import subprocess
 from pathlib import Path
 
+import click
 import pytest
 from click.testing import CliRunner
 
@@ -2041,6 +2042,40 @@ class TestInitMode:
         assert second.exit_code != 0
         assert "PROJECT_THREAD_ACTIVE" in second.output
         assert f"--resume {thread_id}" in second.output
+
+    def test_resume_rejects_terminal_thread_instead_of_replaying_its_action(
+        self, tmp_path
+    ) -> None:
+        """resume 不能绕过项目级唯一未终态 thread 选择。"""
+        from auto_engineering.loop.event_store import SQLiteEventStore
+        from auto_engineering.loop.events import LoopEvent, LoopEventType
+
+        runner = CliRunner()
+        initialized = runner.invoke(
+            main,
+            ["dev-loop", "--init", "实现 X", "--project-root", str(tmp_path)],
+        )
+        assert initialized.exit_code == 0, initialized.output
+        thread_id = _last_json_line(initialized.output)["thread_id"]
+
+        store = SQLiteEventStore(tmp_path / ".ae-state" / "events.db")
+        try:
+            store.append([
+                LoopEvent.create(
+                    thread_id=thread_id,
+                    sequence=store.next_sequence(thread_id),
+                    event_type=LoopEventType.LOOP_COMPLETED,
+                    payload={"reason": "test"},
+                    correlation_id=thread_id,
+                )
+            ])
+        finally:
+            store.close()
+
+        from auto_engineering.cli.dev_loop import run_tick_resume
+
+        with pytest.raises(click.ClickException, match="EVENT_THREAD_NOT_ACTIVE"):
+            run_tick_resume(thread_id, tmp_path)
 
 
 class TestTickMode:

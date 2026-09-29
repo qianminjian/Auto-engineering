@@ -1,6 +1,7 @@
 # Loop 设计—实现对照审计
 
 > 日期：2026-09-29
+> 最新追加：T912 收紧 `--resume` 的 thread 绑定，终态或非当前 thread 不再被直接读取 Action 快照。
 > 范围：仅 Auto-Engineering Loop 工程；外部 Voice Clone 项目和用户指定的外部事故报告保持只读。
 > 对照基线：`design/BEACON.md`、`design/v5.8-Main-Agent-Coordinator-Recovery-Design.md`、`design/v5.8-Real-Host-Acceptance-Runbook.md`、`design/IMPLEMENTATION-TRACKER.md`。
 
@@ -26,6 +27,7 @@
 | 协议恢复 | 格式错误不等于业务失败；有效 native 事实可在同一 Action 修复 | `host/worker_artifact_repair.py`、`cli/native_result_recovery.py` | T902/T903 CLI E2E | 一致 |
 | 绑定解析 | Action lease fence 与 Worker fence 分层校验；模板 fence 缺失或 native path 漂移不得降级为 generation-only | `host/worker_execution_binding.py`、`host/worker_artifact_repair.py` | T910 回归与全量测试 | 一致 |
 | Developer 变更证据 | Git diff、staged diff、最近 commit 和 root commit 只能证明当前 `files_changed` 声明路径；无关 diff 不得制造假通过，越界文件先由 FileAccessGuardrail block | `loop/change_evidence.py`、`loop/guardrail.py` | T911 红绿回归、全量测试、check-gate | 一致 |
+| 显式 resume 入口 | `--resume` 只能恢复 EventStore 判定的唯一未终态 thread；终态、未知或其他 thread 必须 fail-closed | `cli/dev_loop.py`、`cli/active_action_source.py` | T912 终态/非当前 thread 回归 | 一致 |
 | 结果证据 | 产品 artifact 必须绑定 Build、EventStore、native manifest、usage 和 policy | `scripts/collect_product_evidence.py`、`scripts/product_acceptance.py` | T905/T906/T907 定向回归 | 一致 |
 | 产品发布 | 只承认同一 Build 的双宿主真实 L4，不把 smoke 当产品完成 | `design/v5.8-Real-Host-Acceptance-Runbook.md`、product acceptance | 当前 `product_install: not_run` | 未完成 |
 
@@ -100,6 +102,14 @@ T909 验证证据：新增宿主适配器回归使全量达到 `3052 passed, 1 s
 修复后的单一证据规则是：未暂存 diff、staged diff、最近授权 commit 以及 root commit fallback，都必须按当前 `files_changed` 做 Git pathspec 过滤；删除文件仍保留 pathspec，不因文件已不存在而丢失证据。没有声明文件时，不能用任意 diff 充当开发证据，只能在验证型 batch 的目标文件全部存在且 Core 测试证据通过时走明确的 zero-diff 豁免。默认链将 `FileAccessGuardrail` 前置，越界文件先返回 `block`，不会被 `GitDiffExists` 的 `retry` 抢先遮蔽。
 
 证据：先以两个红测试证明无关 tracked/staged diff 会错误通过，再完成路径过滤、root commit 证据下沉和 Guardrail 顺序修复；相关回归 125 项、全量 `3056 passed/1 skipped`、严格覆盖率 `91%`、Ruff、mypy、shell 语法与 `make check-gate` 均通过。`guardrail.py` 从 636 行降至 614 行，未放宽文件行数门禁。T911 制品 `5.8.0-rc.5+sha256.85c76f49dbacd4c6` 已通过 Codex/Claude Code archive smoke。
+
+## 五点三、T912：显式 resume 不能绕过唯一活动 thread
+
+审计发现 `run_tick_step` 已经通过 `unfinished_threads()` 选择唯一未终态 thread，但 `run_tick_resume` 仍直接按 CLI 传入的 `thread_id` 读取 Action 快照。由于终态 thread 的快照仍可存在，这会让旧 Action 被重新输出，形成“看似恢复、实际重放历史”的旁路。
+
+当前修复把 `--resume` 也绑定到同一 EventStore 选择规则：没有未终态 thread 时返回 `EVENT_THREAD_NOT_ACTIVE`；传入的 thread 不是唯一未终态 thread 时返回 `PROJECT_THREAD_NOT_ACTIVE`；只有绑定通过后才读取该 Action 快照。这样没有新增状态源、循环或兼容路径，且与 D77 的 fail-closed 语义一致。
+
+证据：先以终态 thread 回归复现旧 Action 被输出，再以非当前未终态 thread 回归锁定显式参数绕过；修复后相关 CLI/架构/恢复/宿主回归 `198 passed`，Ruff、目标源码 mypy 和 `git diff --check` 通过。
 
 ## 六、仍未闭环的发布证据
 

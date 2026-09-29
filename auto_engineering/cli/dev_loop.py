@@ -1733,6 +1733,17 @@ def run_tick_resume(thread_id: str, root: Path) -> None:
 
     events = SQLiteEventStore(_dev_loop_paths.ensure_event_db_path(root))
     try:
+        active_thread = _required_unfinished_thread(events)
+        if active_thread is None:
+            raise click.ClickException(
+                "EVENT_THREAD_NOT_ACTIVE: EventStore 没有可恢复的未终态 thread；"
+                "终态 thread 不能通过 --resume 重放，请通过 --init 创建新的运行线程"
+            )
+        if active_thread != thread_id:
+            raise click.ClickException(
+                "PROJECT_THREAD_NOT_ACTIVE: --resume 的 thread 不是当前唯一未终态 thread；"
+                f"请恢复 {active_thread}"
+            )
         action = events.load_action_snapshot(thread_id)
         if action is None:
             raise click.ClickException(
