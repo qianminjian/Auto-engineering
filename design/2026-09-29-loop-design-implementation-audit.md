@@ -59,7 +59,7 @@
 - 产品验收/collector 定向：`70 passed`。
 - `Ruff`、核心源码 mypy（249 个文件）、产品脚本 mypy、`make check-gate`、规则同步检查通过。
 - T909 新制品 `5.8.0-rc.5+sha256.49b19a755b6cd8e8` 的 Codex/Claude Code archive smoke 通过，且两宿主 Build Identity 一致。
-- 本次只完成隔离制品验收；`product_install: not_run` 仍表示未在真实产品内安装该新制品，不能把 archive smoke 当作真实宿主卸载重装或 L4 证据。
+- 归档自动验收仍返回 `product_install: not_run`（该脚本只做隔离 smoke）；随后已用项目官方本地安装器分别对 Codex 与 Claude Code 完成卸载重装，两个宿主均校验到同一 Build Identity。该安装事实仍不能替代真实连续 L4、Recovery Canary 或 Voice Clone 业务证据。
 
 ## 五、追加发现：首次 runtime bootstrap 失败边界
 
@@ -85,7 +85,7 @@ T909 验证证据：新增宿主适配器回归使全量达到 `3052 passed, 1 s
 
 以下项目不能由本地测试推断完成：
 
-1. 同一最新 Build 已实际安装到 Codex 和 Claude Code；仍需各执行一次真实设计驱动命令。
+1. 同一最新 Build 已实际安装到 Codex 和 Claude Code；仍需各执行一次真实设计驱动命令并收集完整产品 evidence。
 2. 真实宿主完成 Architect → Developer → Critic → Verification 的连续推进。
 3. 发生一次真实 Recovery Canary，并证明恢复 Action 与 `ResultAccepted` 的 causation chain。
 4. Voice Clone 真实业务 Gate、usage、machine evidence 和最终 `TERMINAL` 同时通过。
@@ -96,8 +96,8 @@ T909 验证证据：新增宿主适配器回归使全量达到 `3052 passed, 1 s
 ## 七、后续执行顺序
 
 1. T909 源码、质量门禁与双宿主 archive smoke 已完成；新制品为 `5.8.0-rc.5+sha256.49b19a755b6cd8e8`。
-2. 用官方宿主安装脚本卸载并重装该新 Build，分别记录 Build Identity 和安装来源；这是当前剩余的真实安装动作。
-3. 安装后运行最小真实宿主 Canary，确认首个 Action、lease、native Worker 和 `record → finalize → validate → tick` 链路；若环境前置失败，应只出现 `AE_RUNTIME_BOOTSTRAP_FAILED`，不得伪造 Loop 状态。
+2. 已用官方本地安装器完成 Codex/Claude Code 卸载重装，两个安装器均返回同一 Build Identity；归档自动验收的 `product_install: not_run` 仅表示它不模拟真实产品安装。
+3. 下一步运行最小真实宿主 Canary，确认首个 Action、lease、native Worker 和 `record → finalize → validate → tick` 链路；若环境前置失败，应只出现 `AE_RUNTIME_BOOTSTRAP_FAILED`，不得伪造 Loop 状态。
 4. 再运行 Voice Clone L4；任何失败必须按 Core、Host、Worker、外部模型、业务项目和验收链六类归属，禁止只修最后一个错误码。
 5. 只有双宿主证据由 `product_acceptance.py` 重新读取并通过后，才允许关闭 P0-E2E。
 
