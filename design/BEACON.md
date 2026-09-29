@@ -1,7 +1,7 @@
 # Auto-Engineering BEACON
 > 创建：2026-06-24｜更新：2026-09-29｜阶段：P0-E2E 端到端产品闭环｜决策状态翻转（✅↔❌）或架构降级必须先获用户批准。
 ## 导航
-> T911（2026-09-29）：Developer 变更证据已限定为 `files_changed` 路径交集，并将 FileAccessGuardrail 前置；无关 tracked/staged diff 不再制造假通过。全量 `3056 passed/1 skipped`、严格覆盖率 `91%`、Ruff/mypy/shell/check-gate 通过；Build `5.8.0-rc.5+sha256.85c76f49dbacd4c6` 已通过 Codex/Claude Code archive smoke。真实双宿主 L4、Voice Clone 业务、Recovery Canary 仍是唯一未闭环发布证据。
+> T911（2026-09-29）：Developer 变更证据已限定为 `files_changed` 路径交集，并将 FileAccessGuardrail 前置；无关 tracked/staged diff 不再制造假通过。全量 `3056 passed/1 skipped`、严格覆盖率 `91%`、Ruff/mypy/shell/check-gate 通过；Build `5.8.0-rc.5+sha256.85c76f49dbacd4c6` 已通过 Codex/Claude Code archive smoke，随后两个官方本地安装器均完成卸载重装并校验同一 Build。真实双宿主 L4、Voice Clone 业务、Recovery Canary 仍是唯一未闭环发布证据。
 - 当前权威设计：[`v5.8-Main-Agent-Coordinator-Recovery-Design.md`](v5.8-Main-Agent-Coordinator-Recovery-Design.md)
 - 当前任务：[`IMPLEMENTATION-TRACKER.md`](IMPLEMENTATION-TRACKER.md)
 - 历史与里程碑：[`BEACON-HIS.md`](BEACON-HIS.md) · [`HISTORY.md`](HISTORY.md)
