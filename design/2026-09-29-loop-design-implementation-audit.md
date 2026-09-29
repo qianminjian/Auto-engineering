@@ -57,14 +57,15 @@
 
 ## 四、当前验证事实
 
-- 全量回归：`3056 passed, 1 skipped`。
-- 严格覆盖率：`91%`，以 `pyproject.toml` 基线为准。
+- 全量回归：`3057 passed, 1 skipped`。
+- 严格覆盖率：`90.66%`，以 `pyproject.toml` 基线为准。
 - 架构专项：单一运行时、架构收敛、Runtime Identity、Revision 共 `51 passed`。
 - 产品验收/collector 定向：`70 passed`。
 - `Ruff`、核心源码 mypy（249 个文件）、产品脚本 mypy、`make check-gate`、规则同步检查通过。
 - T909 新制品 `5.8.0-rc.5+sha256.49b19a755b6cd8e8` 的 Codex/Claude Code archive smoke 通过，且两宿主 Build Identity 一致。
 - T910 新制品 `5.8.0-rc.5+sha256.562d231e9f74263a` 的 Codex/Claude Code archive smoke 通过，且两宿主 Build Identity 一致；该新制品尚未进行真实产品卸载重装。
 - T911 新制品 `5.8.0-rc.5+sha256.85c76f49dbacd4c6` 的 Codex/Claude Code archive smoke 通过，且两宿主 Build Identity 与 content SHA 一致；随后已用官方本地安装器完成 Codex/Claude Code 卸载重装并校验同一 Build。自动验收仍明确为 `product_install: not_run`，因为该脚本不模拟真实产品安装。
+- T912 制品 `5.8.0-rc.5+sha256.819989ddb7274d48` 已通过 Codex 与 Claude Code archive smoke；两端 content SHA 均为 `819989ddb7274d485456f0013779c6c1e80b162e5135844419d69d1a361fcdeb`，随后官方本地安装器均返回 `status=installed` 并校验同一 Build。自动验收仍为 `product_install: not_run`。
 - 归档自动验收仍返回 `product_install: not_run`（该脚本只做隔离 smoke）；随后已用项目官方本地安装器分别对 Codex 与 Claude Code 完成卸载重装，两个宿主均校验到同一 Build Identity。该安装事实仍不能替代真实连续 L4、Recovery Canary 或 Voice Clone 业务证据。
 
 ## 五、追加发现：首次 runtime bootstrap 失败边界
@@ -126,7 +127,7 @@ T909 验证证据：新增宿主适配器回归使全量达到 `3052 passed, 1 s
 ## 七、后续执行顺序
 
 1. T909 源码、质量门禁与双宿主 archive smoke 已完成；新制品为 `5.8.0-rc.5+sha256.49b19a755b6cd8e8`。
-2. T911 新制品已通过两个宿主 archive smoke，并已用官方本地安装器完成 Codex/Claude Code 卸载重装，两个安装器均返回同一 Build Identity；归档自动验收的 `product_install: not_run` 仅表示它不模拟真实产品安装。T910 新制品仍未单独重装，当前安装事实以 T911 Build 为准。
+2. T912 新制品已通过两个宿主 archive smoke，并已用官方本地安装器完成 Codex/Claude Code 卸载重装，两个安装器均返回同一 Build Identity；归档自动验收的 `product_install: not_run` 仅表示它不模拟真实产品安装。
 3. 下一步运行最小真实宿主 Canary，确认首个 Action、lease、native Worker 和 `record → finalize → validate → tick` 链路；若环境前置失败，应只出现 `AE_RUNTIME_BOOTSTRAP_FAILED`，不得伪造 Loop 状态。
 4. 再运行 Voice Clone L4；任何失败必须按 Core、Host、Worker、外部模型、业务项目和验收链六类归属，禁止只修最后一个错误码。
 5. 只有双宿主证据由 `product_acceptance.py` 重新读取并通过后，才允许关闭 P0-E2E。
