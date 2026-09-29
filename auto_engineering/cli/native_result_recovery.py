@@ -6,6 +6,9 @@ import json
 from collections.abc import Callable, Mapping
 from pathlib import Path
 
+from auto_engineering.host.worker_artifact_repair import (
+    bound_native_result_path_is_valid,
+)
 from auto_engineering.host.worker_evidence import (
     HostEvidenceValidationError,
     _native_business_artifact,
@@ -56,6 +59,13 @@ def native_result_worker_ids(
         ):
             continue
         if not isinstance(native_ref, str) or not native_ref:
+            continue
+        if not bound_native_result_path_is_valid(
+            action=action,
+            template=worker,
+            worker_id=worker_id,
+            native_ref=native_ref,
+        ):
             continue
         native_path = root_bound_path_fn(Path(native_ref), root)
         if native_path == root or root not in native_path.parents:

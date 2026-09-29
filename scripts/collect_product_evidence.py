@@ -22,6 +22,9 @@ from auto_engineering.host.usage_attestation import (
     HostUsageAttestationError,
     read_claude_stream_usage,
 )
+from auto_engineering.host.worker_artifact_repair import (
+    bound_native_result_path_is_valid,
+)
 from auto_engineering.loop.event_store import SQLiteEventStore
 from auto_engineering.metrics.event_projection import usage_records_from_events
 from auto_engineering.metrics.usage import UsageRecord
@@ -279,6 +282,15 @@ def _native_result_manifest(
                 )
             if not isinstance(relative, str) or not relative:
                 raise EvidenceCollectionError("NATIVE_RESULT_EVIDENCE_MISSING")
+            if not bound_native_result_path_is_valid(
+                action=action,
+                template=mapped_worker,
+                worker_id=worker_id,
+                native_ref=relative,
+            ):
+                raise EvidenceCollectionError(
+                    "NATIVE_RESULT_EVIDENCE_BINDING_INVALID"
+                )
             path = (project_root / relative).resolve()
             if (
                 not path.is_file()

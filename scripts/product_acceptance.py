@@ -641,13 +641,16 @@ def _validate_business_evidence(
 def _validate_host_usage_attestation(
     artifact: dict[str, Any],
     *,
+    required: bool = False,
     source_root: Path | None = None,
 ) -> None:
     """校验 Claude 成本来自原始宿主输出，而不是人工输入数字。"""
 
     attestation = artifact.get("host_usage_attestation")
     if attestation is None:
-        return  # 兼容旧版 artifact；新 Claude collector 始终写入
+        if required:
+            raise ProductAcceptanceError("HOST_USAGE_ATTESTATION_MISSING")
+        return
     if not isinstance(attestation, dict):
         raise ProductAcceptanceError("HOST_USAGE_ATTESTATION_INVALID")
     path = attestation.get("path")
@@ -790,7 +793,11 @@ def evaluate_host_evidence(
     _validate_terminal_acceptance_summary(terminal_action)
     _validate_machine_claims(artifact_payload, evidence)
     _validate_native_result_manifest(artifact_payload, source_root=source_root)
-    _validate_host_usage_attestation(artifact_payload, source_root=source_root)
+    _validate_host_usage_attestation(
+        artifact_payload,
+        required=evidence.get("host") == "claude-code",
+        source_root=source_root,
+    )
     _validate_attempt_receipts(artifact_payload, evidence)
     _validate_receipts(
         artifact_payload,

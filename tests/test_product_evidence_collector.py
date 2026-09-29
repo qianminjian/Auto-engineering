@@ -97,6 +97,29 @@ def test_native_manifest_discovers_private_result_when_event_action_is_canonical
     }]
 
 
+def test_native_manifest_rejects_bound_path_drift(tmp_path: Path) -> None:
+    action = {
+        "message_id": "action-native-binding",
+        "execution_generation": 2,
+        "fencing_token": "f" * 64,
+        "spawn": {"invocations": [{"worker_id": "worker-1"}]},
+        "host_execution": {
+            "workers": [{
+                "worker_id": "worker-1",
+                "native_result_path": ".ae-state/host-runtime/native-results/stale.json",
+                "execution_generation": 2,
+                "fencing_token": "f" * 64,
+            }],
+        },
+    }
+    stale = tmp_path / ".ae-state/host-runtime/native-results/stale.json"
+    stale.parent.mkdir(parents=True, exist_ok=True)
+    stale.write_text('{"verdict":"APPROVE"}', encoding="utf-8")
+
+    with pytest.raises(EvidenceCollectionError, match="NATIVE_RESULT_EVIDENCE_BINDING_INVALID"):
+        _native_result_manifest(tmp_path, [action])
+
+
 def _create_candidate(path: Path) -> tuple[str, str]:
     content_sha256 = "a" * 64
     build_id = "5.8.0-rc.5+sha256." + content_sha256[:16]

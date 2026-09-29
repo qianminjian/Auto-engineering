@@ -8,6 +8,7 @@ Test layers:
 
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 
@@ -21,10 +22,11 @@ def _make_git_repo(tmp_path: Path) -> Path:
     """Create a clean temp git repo with one commit."""
     repo = tmp_path / "repo"
     repo.mkdir()
-    env = {
+    env = dict(os.environ)
+    env.update({
         "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@x",
         "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@x",
-    }
+    })
     subprocess.run(["git", "-C", str(repo), "init", "-q"], check=True, capture_output=True, env=env)
     subprocess.run(["git", "-C", str(repo), "config", "user.email", "t@x"], check=True, capture_output=True, env=env)
     subprocess.run(["git", "-C", str(repo), "config", "user.name", "t"], check=True, capture_output=True, env=env)

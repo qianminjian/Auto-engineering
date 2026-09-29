@@ -40,6 +40,13 @@ def bound_native_business_is_valid(
     )
     if not isinstance(native_ref, str) or not native_ref:
         return False
+    if not bound_native_result_path_is_valid(
+        action=action,
+        template=template,
+        worker_id=invocation.worker_id,
+        native_ref=native_ref,
+    ):
+        return False
     if action is not None:
         message_id = action.get("message_id")
         if not isinstance(message_id, str) or not message_id:
@@ -90,6 +97,43 @@ def bound_native_business_is_valid(
     ):
         return False
     return True
+
+
+def bound_native_result_path_is_valid(
+    *,
+    action: Mapping[str, Any] | None,
+    template: Mapping[str, Any] | None,
+    worker_id: str,
+    native_ref: str,
+) -> bool:
+    """校验 native result 是否仍绑定当前 Action 的代际路径。
+
+    历史无代际字段的测试/迁移输入保留旧的根路径兼容性；一旦 Action 声明
+    generation 或 fencing，native 文件必须命中唯一的 message/worker/generation
+    路径，并先经过统一的代际/fence 解析。仅“在项目根内且 JSON 合法”不构成
+    当前 Action 的宿主证据。
+    """
+
+    if action is None:
+        return True
+    if action.get("execution_generation") is None and action.get("fencing_token") is None:
+        return True
+    message_id = action.get("message_id")
+    if not isinstance(message_id, str) or not message_id:
+        return False
+    try:
+        generation, _fence = resolve_worker_execution_binding(
+            action, template, worker_id
+        )
+    except HostEvidenceValidationError:
+        return False
+    if not isinstance(generation, int) or generation < 1:
+        return False
+    try:
+        expected_ref = worker_native_result_path(message_id, worker_id, generation)
+    except ValueError:
+        return False
+    return native_ref == expected_ref
 
 
 def quarantine_private_artifact(
@@ -190,4 +234,8 @@ def quarantine_private_artifact(
     )
 
 
-__all__ = ["bound_native_business_is_valid", "quarantine_private_artifact"]
+__all__ = [
+    "bound_native_business_is_valid",
+    "bound_native_result_path_is_valid",
+    "quarantine_private_artifact",
+]

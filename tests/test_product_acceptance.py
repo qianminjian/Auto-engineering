@@ -513,6 +513,27 @@ def test_release_requires_both_hosts_on_same_build(tmp_path) -> None:
                 for index in range(3)
             ],
         }
+        if host == "claude-code":
+            raw_host_output = tmp_path / host / "claude-result.jsonl"
+            raw_host_output.write_text(
+                json.dumps({
+                    "total_cost_usd": 1.5,
+                    "usage": {
+                        "input_tokens": 99_999,
+                        "cache_read_input_tokens": 80_001,
+                        "cache_creation_input_tokens": 0,
+                        "output_tokens": 5_001,
+                    },
+                }) + "\n",
+                encoding="utf-8",
+            )
+            raw_bytes = raw_host_output.read_bytes()
+            payload["host_usage_attestation"] = {
+                "path": raw_host_output.relative_to(tmp_path / host).as_posix(),
+                "sha256": hashlib.sha256(raw_bytes).hexdigest(),
+                "bytes": len(raw_bytes),
+                "source": "claude-cli-result",
+            }
         payload["attempt_receipts"] = list(payload["action_receipts"])
         payload["machine_claims"] = {
             "usage_status": "complete",
@@ -549,6 +570,27 @@ def test_release_requires_both_hosts_on_same_build(tmp_path) -> None:
     assert verdict["status"] == "pass"
     assert verdict["policy"] == {"max_claude_cost_usd": 2.0}
     assert verdict["hosts"] == ["claude-code", "codex"]
+
+    claude_artifact = tmp_path / "claude-code.json"
+    claude_payload = json.loads(claude_artifact.read_text(encoding="utf-8"))
+    claude_payload.pop("host_usage_attestation")
+    claude_artifact.write_text(json.dumps(claude_payload), encoding="utf-8")
+    broken_claude = dict(evidences[1])
+    broken_claude["evidence_artifact"] = {
+        "path": claude_artifact.name,
+        "sha256": hashlib.sha256(claude_artifact.read_bytes()).hexdigest(),
+    }
+    with pytest.raises(ProductAcceptanceError, match="HOST_USAGE_ATTESTATION_MISSING"):
+        evaluate_release_evidence(
+            [evidences[0], broken_claude],
+            evidence_root=tmp_path,
+        )
+
+
+def test_current_claude_artifact_requires_raw_usage_attestation(tmp_path) -> None:
+    del tmp_path
+    with pytest.raises(ProductAcceptanceError, match="HOST_USAGE_ATTESTATION_MISSING"):
+        _validate_host_usage_attestation({}, required=True)
 
 
 def test_candidate_archive_build_identity_is_read_from_package(tmp_path) -> None:

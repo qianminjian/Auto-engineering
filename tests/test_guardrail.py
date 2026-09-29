@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -49,12 +50,13 @@ from auto_engineering.pii.guardrail import PIIGuardrail
 
 def _git(cwd: Path, *args: str, env: dict[str, str] | None = None) -> None:
     """在指定目录下跑 git 命令（不抛错）."""
-    full_env = env or {}
+    full_env = dict(os.environ)
+    full_env.update(env or {})
     subprocess.run(
         ["git", "-C", str(cwd), *args],
         check=True,
         capture_output=True,
-        env=full_env or None,
+        env=full_env,
     )
 
 
