@@ -339,7 +339,7 @@ class TestGitDiffExists:
         (repo / "new.txt").write_text("added\n")
         _git(repo, "add", "new.txt")
         _git(repo, "commit", "-q", "-m", "add new")
-        state = EngineState()
+        state = EngineState(files_changed=["new.txt"])
         result = GitDiffExists().check(
             "developer", state, project_root=repo,
         )
@@ -361,16 +361,49 @@ class TestGitDiffExists:
         }
         # 创建第二个空 commit，使 HEAD~1 存在但 HEAD~1..HEAD 无文件变更
         _git(repo, "commit", "-q", "--allow-empty", "-m", "noop", env=env)
-        state = EngineState()
+        state = EngineState(files_changed=["seed.txt"])
         result = GitDiffExists().check(
             "developer", state, project_root=repo,
         )
         assert result.action == "retry"
 
+    def test_retry_when_only_unrelated_worktree_diff_exists(self, tmp_path: Path) -> None:
+        """无关 tracked diff 不能冒充当前 files_changed 的开发证据。"""
+        repo = _make_git_repo(tmp_path)
+        (repo / "target.py").write_text("ready = True\n")
+        _git(repo, "add", "target.py")
+        _git(repo, "commit", "-q", "-m", "add target")
+        _git(repo, "commit", "-q", "--allow-empty", "-m", "noop")
+        (repo / "seed.txt").write_text("unrelated change\n")
+        state = EngineState(files_changed=["target.py"])
+
+        result = GitDiffExists().check(
+            "developer", state, project_root=repo,
+        )
+
+        assert result.action == "retry"
+
+    def test_retry_when_only_unrelated_staged_diff_exists(self, tmp_path: Path) -> None:
+        """无关 staged diff 不能冒充当前 files_changed 的开发证据。"""
+        repo = _make_git_repo(tmp_path)
+        (repo / "target.py").write_text("ready = True\n")
+        _git(repo, "add", "target.py")
+        _git(repo, "commit", "-q", "-m", "add target")
+        _git(repo, "commit", "-q", "--allow-empty", "-m", "noop")
+        (repo / "seed.txt").write_text("unrelated staged change\n")
+        _git(repo, "add", "seed.txt")
+        state = EngineState(files_changed=["target.py"])
+
+        result = GitDiffExists().check(
+            "developer", state, project_root=repo,
+        )
+
+        assert result.action == "retry"
+
     def test_pass_new_repo_with_cached(self, tmp_path: Path) -> None:
         """新仓库（无 HEAD~1）→ 降级到 --cached,有 staged 内容时 → pass."""
         repo = _make_new_repo(tmp_path)
-        state = EngineState()
+        state = EngineState(files_changed=["staged.txt"])
         result = GitDiffExists().check(
             "developer", state, project_root=repo,
         )
@@ -434,7 +467,7 @@ class TestGitDiffExists:
         _git(repo, "add", "main.py", env=env)
         _git(repo, "commit", "-q", "-m", "root commit", env=env)
         # staged 干净（auto_commit 后场景）— 不需要断言, GitDiffExists.check 内部会判定
-        state = EngineState()
+        state = EngineState(files_changed=["main.py"])
         result = GitDiffExists().check(
             "developer", state, project_root=repo,
         )
@@ -710,6 +743,7 @@ class TestGuardrailChain:
         manual_chain = GuardrailChain([
             RequirementValid(),
             PlanExists(),
+            FileAccessGuardrail(),
             GitDiffExists(),
             TestsPass(),
             NoDeferredBlockingGap(),
@@ -718,7 +752,6 @@ class TestGuardrailChain:
             RegressionGuardrail(),
             TestEvidenceIntegrityGuardrail(),
             PIIGuardrail(),
-            FileAccessGuardrail(),
             AuditTimingGuardrail(),
         ])
         # 同数量

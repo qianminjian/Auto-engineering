@@ -35,7 +35,10 @@ from auto_engineering.engine.gap_analysis import (  # noqa: E402
     _BLOCKING_FORBIDDEN as _BLOCKING_FORBIDDEN_RESOLUTIONS,
 )
 from auto_engineering.loop.change_evidence import (  # noqa: E402
+    committed_git_has_scoped_changes,
+    declared_git_paths,
     declared_real_files,
+    scoped_git_diff,
     verification_only_batch_ready,
 )
 from auto_engineering.loop.guardrails.stateful import (  # noqa: E402
@@ -52,7 +55,6 @@ from auto_engineering.shared.guardrail import (  # noqa: E402
     GuardrailResult,
 )
 from auto_engineering.utils.git import run_git as _run_git  # noqa: E402
-from auto_engineering.utils.git import run_git_diff as _run_git_diff  # noqa: E402
 
 __all__ = [
     "Action",
@@ -177,14 +179,17 @@ class GitDiffExists(Guardrail):
         project_root: Path | None = None,
     ) -> GuardrailResult:
         resolved_root = project_root if project_root is not None else Path.cwd()
+        declared_paths = declared_git_paths(state, resolved_root)
         declared_files = declared_real_files(state, resolved_root)
 
         # T221: 阶段 Gate 是循环边界，先认可未提交的真实工作树变更。
-        rc0, stdout0 = _run_git_diff(resolved_root, [])
+        rc0, stdout0 = scoped_git_diff(resolved_root, [], declared_paths)
         if rc0 == 0 and stdout0.strip():
             return GuardrailResult()
 
-        rc_cached, stdout_cached = _run_git_diff(resolved_root, ["--cached"])
+        rc_cached, stdout_cached = scoped_git_diff(
+            resolved_root, ["--cached"], declared_paths,
+        )
         if rc_cached == 0 and stdout_cached.strip():
             return GuardrailResult()
 
@@ -213,7 +218,9 @@ class GitDiffExists(Guardrail):
             return GuardrailResult()
 
         # 兼容用户已明确授权 commit 的工作流。
-        rc1, stdout1 = _run_git_diff(resolved_root, ["HEAD~1..HEAD"])
+        rc1, stdout1 = scoped_git_diff(
+            resolved_root, ["HEAD~1..HEAD"], declared_paths,
+        )
         if rc1 == 0:
             if stdout1.strip():
                 return GuardrailResult()  # pass
@@ -223,16 +230,8 @@ class GitDiffExists(Guardrail):
             )
 
         # HEAD~1 不存在但 HEAD 存在：root commit 仍可作为已有变更证据。
-        rc3, _ = _run_git(resolved_root, "rev-parse", "HEAD")
-        if rc3 == 0:
-            rc4, stdout4 = _run_git(resolved_root, "diff-tree", "--no-commit-id", "-r", "HEAD")
-            if rc4 == 0 and stdout4.strip():
-                return GuardrailResult()  # pass: HEAD commit 包含文件变更
-            # 降级: diff-tree 对 root commit 返回空 (无 parent 可 diff)
-            # → git show --stat (不依赖 parent, 列出 HEAD 的文件变更)
-            rc5, stdout5 = _run_git(resolved_root, "show", "--stat", "--format=", "HEAD")
-            if rc5 == 0 and stdout5.strip():
-                return GuardrailResult()
+        if committed_git_has_scoped_changes(resolved_root, declared_paths):
+            return GuardrailResult()
 
         return GuardrailResult(
             action="retry",
@@ -503,6 +502,7 @@ class GuardrailChain:
         return cls([
             RequirementValid(),
             PlanExists(),
+            FileAccessGuardrail(),
             GitDiffExists(),
             TestsPass(),
             NoDeferredBlockingGap(),
@@ -511,7 +511,6 @@ class GuardrailChain:
             RegressionGuardrail(),
             TestEvidenceIntegrityGuardrail(),
             PIIGuardrail(),
-            FileAccessGuardrail(),
             AuditTimingGuardrail(),
         ])
 

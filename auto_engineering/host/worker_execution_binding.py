@@ -13,7 +13,11 @@ def resolve_worker_execution_binding(
     template: Mapping[str, Any] | None,
     worker_id: str,
 ) -> tuple[int | None, str | None]:
-    """解析并校验 Action 顶层与宿主 Worker 模板的同一代际绑定。"""
+    """解析并校验 Action lease 与 Worker 模板的同一代际绑定。
+
+    Action 顶层 fence 标识宿主会话 lease，模板 fence 标识具体 Worker；两者
+    必须分别合法，不能把不同层的 fence 当成同一个字符串比较。
+    """
 
     action_generation = action.get("execution_generation")
     action_fence = action.get("fencing_token")
@@ -35,15 +39,25 @@ def resolve_worker_execution_binding(
             raise HostEvidenceValidationError(
                 (f"WORKER_EXECUTION_BINDING_MISSING:{worker_id}",)
             )
-        if template_generation != action_generation:
+        if template_generation is None or template_fence is None:
             raise HostEvidenceValidationError(
                 (f"WORKER_EXECUTION_BINDING_MISMATCH:{worker_id}",)
             )
-        if template_fence is None:
-            return action_generation, None
         if not isinstance(template_fence, str) or len(template_fence) != 64:
             raise HostEvidenceValidationError(
                 (f"WORKER_EXECUTION_BINDING_INVALID:{worker_id}",)
+            )
+        if (
+            not isinstance(template_generation, int)
+            or isinstance(template_generation, bool)
+            or template_generation < 1
+        ):
+            raise HostEvidenceValidationError(
+                (f"WORKER_EXECUTION_BINDING_INVALID:{worker_id}",)
+            )
+        if template_generation != action_generation:
+            raise HostEvidenceValidationError(
+                (f"WORKER_EXECUTION_BINDING_MISMATCH:{worker_id}",)
             )
         return action_generation, template_fence
     if template_generation is None and template_fence is None:

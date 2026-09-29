@@ -223,6 +223,8 @@ class TestFileAccessGuardrailIntegration:
         when a developer modifies files outside declared targets.
         """
         repo = _make_git_repo(tmp_path)
+        (repo / "src").mkdir()
+        (repo / "src" / "secrets.py").write_text("SECRET = 'fake'\n")
         chain = GuardrailChain.default()
         state = _make_state(
             files_changed=["src/secrets.py"],
@@ -239,6 +241,10 @@ class TestFileAccessGuardrailIntegration:
     def test_default_chain_pass_when_files_in_targets(self, tmp_path: Path) -> None:
         """E2E: default chain passes when all files are within declared targets."""
         repo = _make_git_repo(tmp_path)
+        (repo / "src").mkdir()
+        (repo / "tests").mkdir()
+        (repo / "src" / "app.py").write_text("READY = True\n")
+        (repo / "tests" / "test_app.py").write_text("def test_ready(): assert True\n")
         chain = GuardrailChain.default()
         state = _make_state(
             files_changed=["src/app.py", "tests/test_app.py"],

@@ -1659,7 +1659,7 @@ def test_record_worker_outcome_allows_same_generation_host_model_placeholder_rep
     action["fencing_token"] = "a" * 64
     action["host_execution"]["workers"][0].update({
         "execution_generation": 1,
-        "fencing_token": "b" * 64,
+        "fencing_token": "a" * 64,
     })
     action["host_execution"]["work_files"] = {
         "outcomes": ".ae-state/host-runtime/work/outcomes.json",
@@ -1756,7 +1756,7 @@ def test_record_worker_outcome_replaces_failed_prior_generation_on_retry(
     first_action["fencing_token"] = "a" * 64
     first_action["host_execution"]["workers"][0].update({
         "execution_generation": 1,
-        "fencing_token": "b" * 64,
+        "fencing_token": "a" * 64,
     })
     first_action["host_execution"]["work_files"] = {
         "outcomes": ".ae-state/host-runtime/work/outcomes.json",
@@ -1786,7 +1786,7 @@ def test_record_worker_outcome_replaces_failed_prior_generation_on_retry(
     retry_action["fencing_token"] = "c" * 64
     retry_action["host_execution"]["workers"][0].update({
         "execution_generation": 2,
-        "fencing_token": "d" * 64,
+        "fencing_token": "c" * 64,
         "outcome_path": (
             ".ae-state/host-runtime/worker-outcomes/worker-token-g2.json"
         ),
@@ -3423,3 +3423,23 @@ def test_worker_template_cannot_drift_from_action_execution_binding(
         HostExecutionAssembler(tmp_path).finalize_missing_worker_output(
             action=action,
         )
+
+
+def test_worker_template_cannot_drop_action_fencing_binding(
+    tmp_path: Path,
+) -> None:
+    from auto_engineering.host.worker_execution_binding import (
+        resolve_worker_execution_binding,
+    )
+
+    action = _action(tmp_path)
+    action["execution_generation"] = 3
+    action["fencing_token"] = "f" * 64
+    template = action["host_execution"]["workers"][0]
+    template["execution_generation"] = 3
+
+    with pytest.raises(
+        HostEvidenceValidationError,
+        match="WORKER_EXECUTION_BINDING_MISMATCH:critic-0",
+    ):
+        resolve_worker_execution_binding(action, template, "critic-0")

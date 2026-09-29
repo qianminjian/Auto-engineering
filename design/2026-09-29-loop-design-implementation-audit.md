@@ -24,6 +24,8 @@
 | 事实存储 | EventStore 是唯一新运行事实源；非 Tick 不得 raw append | `loop/event_store.py`、`event_store_schema.py` | EventStore 架构回归、check-gate | 一致 |
 | Worker 业务产物 | Worker 只写业务字段；Host 绑定 handle、model、generation、fence、路径和 attestation | `host/worker_evidence.py`、`host/execution_assembler.py` | private/native parser 与 boundary tests | 一致 |
 | 协议恢复 | 格式错误不等于业务失败；有效 native 事实可在同一 Action 修复 | `host/worker_artifact_repair.py`、`cli/native_result_recovery.py` | T902/T903 CLI E2E | 一致 |
+| 绑定解析 | Action lease fence 与 Worker fence 分层校验；模板 fence 缺失或 native path 漂移不得降级为 generation-only | `host/worker_execution_binding.py`、`host/worker_artifact_repair.py` | T910 回归与全量测试 | 一致 |
+| Developer 变更证据 | Git diff、staged diff、最近 commit 和 root commit 只能证明当前 `files_changed` 声明路径；无关 diff 不得制造假通过，越界文件先由 FileAccessGuardrail block | `loop/change_evidence.py`、`loop/guardrail.py` | T911 红绿回归、全量测试、check-gate | 一致 |
 | 结果证据 | 产品 artifact 必须绑定 Build、EventStore、native manifest、usage 和 policy | `scripts/collect_product_evidence.py`、`scripts/product_acceptance.py` | T905/T906/T907 定向回归 | 一致 |
 | 产品发布 | 只承认同一 Build 的双宿主真实 L4，不把 smoke 当产品完成 | `design/v5.8-Real-Host-Acceptance-Runbook.md`、product acceptance | 当前 `product_install: not_run` | 未完成 |
 
@@ -53,12 +55,14 @@
 
 ## 四、当前验证事实
 
-- 全量回归：`3052 passed, 1 skipped`。
+- 全量回归：`3056 passed, 1 skipped`。
 - 严格覆盖率：`91%`，以 `pyproject.toml` 基线为准。
 - 架构专项：单一运行时、架构收敛、Runtime Identity、Revision 共 `51 passed`。
 - 产品验收/collector 定向：`70 passed`。
 - `Ruff`、核心源码 mypy（249 个文件）、产品脚本 mypy、`make check-gate`、规则同步检查通过。
 - T909 新制品 `5.8.0-rc.5+sha256.49b19a755b6cd8e8` 的 Codex/Claude Code archive smoke 通过，且两宿主 Build Identity 一致。
+- T910 新制品 `5.8.0-rc.5+sha256.562d231e9f74263a` 的 Codex/Claude Code archive smoke 通过，且两宿主 Build Identity 一致；该新制品尚未进行真实产品卸载重装。
+- T911 新制品 `5.8.0-rc.5+sha256.85c76f49dbacd4c6` 的 Codex/Claude Code archive smoke 通过，且两宿主 Build Identity 与 content SHA 一致；自动验收仍明确为 `product_install: not_run`。
 - 归档自动验收仍返回 `product_install: not_run`（该脚本只做隔离 smoke）；随后已用项目官方本地安装器分别对 Codex 与 Claude Code 完成卸载重装，两个宿主均校验到同一 Build Identity。该安装事实仍不能替代真实连续 L4、Recovery Canary 或 Voice Clone 业务证据。
 
 ## 五、追加发现：首次 runtime bootstrap 失败边界
@@ -81,6 +85,22 @@ T909 验证证据：新增宿主适配器回归使全量达到 `3052 passed, 1 s
 
 这项修复解决的是“宿主启动前置失败被伪装成 Loop 失败”的诊断和重试边界，不改变 D17 单 Tick、D53 单 Coordinator、D78 单一运行时或 D79 Worker repair 语义；它也证明了启动器与宿主适配器之间只有一条 bootstrap 错误边界，没有新增第二个 Loop。
 
+## 五点一、T910：Worker 绑定解析不能降级
+
+本轮补齐了一个此前未覆盖的身份错配边界。当前 Action 顶层的 `fencing_token` 是 Host session lease，Host Worker 模板中的 `fencing_token` 是按 `message_id + worker_id + generation` 派生的 Worker fence；两者属于不同层次，不能错误要求字面相等，但也不能因模板 fence 缺失而退化为只有 generation 的绑定。
+
+修复后的唯一解析器要求：Action 绑定存在时，Worker 模板必须同时具备合法 generation 与 Worker fence，且 generation 必须一致；Action 顶层没有重复绑定时，只要模板携带绑定，native recovery probe 仍必须命中 canonical `message_id + worker_id + generation` 路径。这样可以拒绝“项目根内、JSON 合法、但属于旧代际或错误 Worker 的文件”，同时保留未绑定历史迁移 fixture 的兼容边界。
+
+证据：先以红测试复现模板 fence 缺失和模板绑定下的 path drift，再修复统一解析器；相关回归 190 项通过，全量 `3056 passed/1 skipped`，严格覆盖率 `91%`，Ruff、mypy、shell 语法和 `make check-gate` 均通过。隔离的开发 Worker 回路同时暴露了“Worker 结果声明了 files_changed，但工作区快照未产生对应源码”的一致性风险；该风险随后由 T911 收口，本轮没有把隔离 scratch 结果冒充生产变更。
+
+## 五点二、T911：Developer 变更证据必须与任务路径相交
+
+本轮把隔离回路暴露的“声明了 `files_changed`，但实际没有对应源码变更”落实为生产回归。旧的 `GitDiffExists` 只要发现工作区存在任意 tracked/staged diff，就会通过；如果仓库里恰好有别的文件变更，当前 Worker 即使没有写入声明文件，也可能进入后续 Gate。
+
+修复后的单一证据规则是：未暂存 diff、staged diff、最近授权 commit 以及 root commit fallback，都必须按当前 `files_changed` 做 Git pathspec 过滤；删除文件仍保留 pathspec，不因文件已不存在而丢失证据。没有声明文件时，不能用任意 diff 充当开发证据，只能在验证型 batch 的目标文件全部存在且 Core 测试证据通过时走明确的 zero-diff 豁免。默认链将 `FileAccessGuardrail` 前置，越界文件先返回 `block`，不会被 `GitDiffExists` 的 `retry` 抢先遮蔽。
+
+证据：先以两个红测试证明无关 tracked/staged diff 会错误通过，再完成路径过滤、root commit 证据下沉和 Guardrail 顺序修复；相关回归 125 项、全量 `3056 passed/1 skipped`、严格覆盖率 `91%`、Ruff、mypy、shell 语法与 `make check-gate` 均通过。`guardrail.py` 从 636 行降至 614 行，未放宽文件行数门禁。T911 制品 `5.8.0-rc.5+sha256.85c76f49dbacd4c6` 已通过 Codex/Claude Code archive smoke。
+
 ## 六、仍未闭环的发布证据
 
 以下项目不能由本地测试推断完成：
@@ -96,7 +116,7 @@ T909 验证证据：新增宿主适配器回归使全量达到 `3052 passed, 1 s
 ## 七、后续执行顺序
 
 1. T909 源码、质量门禁与双宿主 archive smoke 已完成；新制品为 `5.8.0-rc.5+sha256.49b19a755b6cd8e8`。
-2. 已用官方本地安装器完成 Codex/Claude Code 卸载重装，两个安装器均返回同一 Build Identity；归档自动验收的 `product_install: not_run` 仅表示它不模拟真实产品安装。
+2. 已用官方本地安装器完成 Codex/Claude Code 卸载重装，两个安装器均返回同一 Build Identity；归档自动验收的 `product_install: not_run` 仅表示它不模拟真实产品安装。T910 新制品已通过两个宿主 archive smoke，但尚未进行真实产品重装；T911 新制品已通过两个宿主 archive smoke，真实产品重装仍需随后执行。
 3. 下一步运行最小真实宿主 Canary，确认首个 Action、lease、native Worker 和 `record → finalize → validate → tick` 链路；若环境前置失败，应只出现 `AE_RUNTIME_BOOTSTRAP_FAILED`，不得伪造 Loop 状态。
 4. 再运行 Voice Clone L4；任何失败必须按 Core、Host、Worker、外部模型、业务项目和验收链六类归属，禁止只修最后一个错误码。
 5. 只有双宿主证据由 `product_acceptance.py` 重新读取并通过后，才允许关闭 P0-E2E。

@@ -59,7 +59,7 @@ def test_uncommitted_tracked_change_satisfies_developer_diff_guardrail(
 
     result = GitDiffExists().check(
         "developer",
-        EngineState(),
+        EngineState(files_changed=["tracked.txt"]),
         project_root=repo,
     )
 

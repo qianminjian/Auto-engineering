@@ -116,7 +116,15 @@ def bound_native_result_path_is_valid(
 
     if action is None:
         return True
-    if action.get("execution_generation") is None and action.get("fencing_token") is None:
+    action_has_binding = (
+        action.get("execution_generation") is not None
+        or action.get("fencing_token") is not None
+    )
+    template_has_binding = isinstance(template, Mapping) and (
+        template.get("execution_generation") is not None
+        or template.get("fencing_token") is not None
+    )
+    if not action_has_binding and not template_has_binding:
         return True
     message_id = action.get("message_id")
     if not isinstance(message_id, str) or not message_id:

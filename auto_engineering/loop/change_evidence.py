@@ -5,8 +5,64 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from auto_engineering.utils.git import run_git, run_git_diff
+
 if TYPE_CHECKING:
     from auto_engineering.engine.state import EngineState
+
+
+def declared_git_paths(state: EngineState, root: Path) -> set[str]:
+    """返回可安全用于 Git pathspec 的任务声明路径。
+
+    与 ``declared_real_files`` 不同，这里保留尚未存在的路径，以便 Git
+    能够识别“声明删除文件”的变更；同时拒绝项目根外路径和路径穿越。
+    """
+    resolved_root = root.resolve()
+    paths: set[str] = set()
+    for raw in getattr(state, "files_changed", []) or []:
+        if not isinstance(raw, str) or not raw.strip():
+            continue
+        candidate = Path(raw)
+        candidate = candidate if candidate.is_absolute() else resolved_root / candidate
+        try:
+            relative = candidate.resolve(strict=False).relative_to(resolved_root)
+        except (OSError, ValueError):
+            continue
+        if relative != Path("."):
+            paths.add(relative.as_posix())
+    return paths
+
+
+def scoped_git_diff(
+    root: Path, diff_args: list[str], paths: set[str],
+) -> tuple[int, str]:
+    """只读取当前任务声明的 Git diff 路径。"""
+    if not paths:
+        return 0, ""
+    return run_git_diff(root, [*diff_args, "--", *sorted(paths)])
+
+
+def scoped_git_command_args(command_args: list[str], paths: set[str]) -> list[str]:
+    """为 diff-tree/show 生成带任务路径边界的 Git 参数。"""
+    return [*command_args, "--", *sorted(paths)] if paths else [*command_args, "--"]
+
+
+def committed_git_has_scoped_changes(root: Path, paths: set[str]) -> bool:
+    """检查 root commit 是否包含当前任务声明的文件变更。"""
+    rc_head, _ = run_git(root, "rev-parse", "HEAD")
+    if rc_head != 0:
+        return False
+    diff_tree_args = scoped_git_command_args(
+        ["diff-tree", "--no-commit-id", "-r", "HEAD"], paths,
+    )
+    rc_tree, stdout_tree = run_git(root, *diff_tree_args)
+    if rc_tree == 0 and stdout_tree.strip():
+        return True
+    show_args = scoped_git_command_args(
+        ["show", "--stat", "--format=", "HEAD"], paths,
+    )
+    rc_show, stdout_show = run_git(root, *show_args)
+    return rc_show == 0 and bool(stdout_show.strip())
 
 
 def declared_real_files(state: EngineState, root: Path) -> set[str]:

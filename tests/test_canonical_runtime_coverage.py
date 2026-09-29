@@ -340,6 +340,51 @@ def test_native_result_probe_rejects_generation_path_drift(
     ) == [worker_id]
 
 
+def test_native_result_probe_rejects_template_bound_path_drift_without_action_binding(
+    tmp_path: Path,
+) -> None:
+    from auto_engineering.cli.native_result_recovery import native_result_worker_ids
+    from auto_engineering.host.path_contract import worker_native_result_path
+
+    message_id = "action-template-binding"
+    worker_id = "worker-1"
+    generation = 1
+    fence = "f" * 64
+    stale_path = tmp_path / "stale-native.json"
+    stale_path.write_text('{"verdict":"APPROVE"}', encoding="utf-8")
+    action = {
+        "message_id": message_id,
+        "spawn": {"invocations": [{"worker_id": worker_id}]},
+    }
+    host_execution = {
+        "workers": [{
+            "worker_id": worker_id,
+            "native_result_path": "stale-native.json",
+            "execution_generation": generation,
+            "fencing_token": fence,
+        }],
+    }
+
+    assert native_result_worker_ids(
+        host_execution,
+        action=action,
+        root=tmp_path,
+        root_bound_path_fn=lambda path, root: root / path,
+    ) == []
+
+    canonical_path = worker_native_result_path(message_id, worker_id, generation)
+    canonical_file = tmp_path / canonical_path
+    canonical_file.parent.mkdir(parents=True, exist_ok=True)
+    canonical_file.write_text('{"verdict":"APPROVE"}', encoding="utf-8")
+    host_execution["workers"][0]["native_result_path"] = canonical_path
+    assert native_result_worker_ids(
+        host_execution,
+        action=action,
+        root=tmp_path,
+        root_bound_path_fn=lambda path, root: root / path,
+    ) == [worker_id]
+
+
 def test_tick_usage_is_normalized_into_one_event_fact(tmp_path: Path) -> None:
     from auto_engineering.config.runtime_config import RuntimeConfig
     from auto_engineering.engine.state import EngineState
