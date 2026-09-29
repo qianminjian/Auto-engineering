@@ -50,6 +50,7 @@
 
 - 本轮定向回归：269 passed，覆盖 EventStore recovery、tick transaction、Worker generation/fence、recovery projection、Host assembler、Outcome Journal、process exit、failure service、release archive 和 P0 跨进程 E2E。
 - 新鲜验证：串行全量 `3039 passed, 1 skipped`；严格覆盖率 `91%`；相关源文件 mypy、Ruff、shell 语法检查和 `make check-gate` 通过。
+- 新 Build `5.8.0-rc.5+sha256.c37b122ba3d9d43b` 已按官方流程卸载并重装 Codex、Claude Code；两端入口 `build-info --expect-build-id` 均通过，且均为 `source_kind=packaged`。
 - 额外回归：native wait timeout 无终止观察进入 owner lost；匹配 terminal observation 才进入 timeout；终态 `--status` 不再要求 active Action；release symlink 在构建期拒绝。
 - Ruff、相关 mypy、shell `sh -n` 已通过。
 
