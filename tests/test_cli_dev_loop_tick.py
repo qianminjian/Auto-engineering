@@ -365,6 +365,118 @@ def test_public_cli_finalize_preserves_invalid_native_failure(
     )
 
 
+def test_public_cli_repairs_previously_recorded_protocol_failure_from_native(
+    tmp_path: Path,
+) -> None:
+    """已写入协议失败后，绑定 native 结果仍能在同一 Action 修复。"""
+
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\nname='protocol-repair-fixture'\n", encoding="utf-8"
+    )
+    (tmp_path / "src").mkdir()
+    (tmp_path / "tests").mkdir()
+    runner = CliRunner()
+    initialized = runner.invoke(
+        main,
+        ["dev-loop", "--init", "实现 X", "--project-root", str(tmp_path)],
+    )
+    assert initialized.exit_code == 0, initialized.output
+    action = _last_json_line(initialized.output)
+
+    from auto_engineering.host import HostPlatform
+    from auto_engineering.host.adapters import adapter_for
+
+    adapter = adapter_for(HostPlatform.CLAUDE_CODE)
+    profile = adapter.profile(
+        detected=adapter.capabilities,
+        authorized=adapter.capabilities,
+    )
+    mapped = adapter.map_action(action, profile=profile).payload
+    worker = mapped["host_execution"]["workers"][0]
+    private_path = tmp_path / worker["outcome_path"]
+    private_path.parent.mkdir(parents=True, exist_ok=True)
+    private_path.write_text(
+        json.dumps({
+            "worker_id": worker["worker_id"],
+            "status": "completed",
+            "payload": {"verdict": "APPROVE"},
+            "summary": 1,
+        }),
+        encoding="utf-8",
+    )
+    native_path = tmp_path / worker["native_result_path"]
+    native_path.parent.mkdir(parents=True, exist_ok=True)
+    native_path.write_text(json.dumps({
+        "agentId": "claude-native-repair",
+        "status": "completed",
+        "content": [{"type": "text", "text": "invalid native result"}],
+    }), encoding="utf-8")
+
+    first_record = runner.invoke(main, [
+        "dev-loop", "--record-worker-outcome",
+        "--worker-id", worker["worker_id"],
+        "--worker-status", "completed",
+        "--native-worker-handle", "claude-native-repair",
+        "--actual-model", "unreported",
+        "--isolation-evidence", "fresh_context",
+        "--native-result-file", str(native_path),
+        "--project-root", str(tmp_path),
+    ])
+    assert first_record.exit_code == 0, first_record.output
+    assert _last_json_line(first_record.output)["failure_code"] == (
+        "HOST_PROTOCOL_FAILURE"
+    )
+
+    private_path.write_text(
+        json.dumps({"status": "completed", "payload": {"verdict": "APPROVE"}}),
+        encoding="utf-8",
+    )
+    native_path.write_text(json.dumps({"verdict": "APPROVE"}), encoding="utf-8")
+    work_files = mapped["host_execution"]["work_files"]
+    coordinator = tmp_path / work_files["coordinator_result"]
+    coordinator.parent.mkdir(parents=True, exist_ok=True)
+    coordinator.write_text("{}", encoding="utf-8")
+    result_file = tmp_path / work_files["result"]
+    finalized = runner.invoke(main, [
+        "dev-loop", "--finalize-result", str(coordinator),
+        "--output-result", str(result_file),
+        "--project-root", str(tmp_path),
+    ])
+    assert finalized.exit_code == 0, finalized.output
+    protocol_result = _last_json_line(finalized.output)
+    assert protocol_result["spawn_error_code"] == "HOST_PROTOCOL_FAILURE"
+
+    ticked = runner.invoke(main, [
+        "dev-loop", "--tick", "--result", str(result_file),
+        "--project-root", str(tmp_path),
+    ])
+    assert ticked.exit_code == 0, ticked.output
+    repair_action = _last_json_line(ticked.output)
+    assert repair_action["host_execution"]["recovery"]["status"] == (
+        "worker_artifact_repair"
+    )
+    assert repair_action["host_execution"]["recovery"]["spawn_permitted"] is False
+    assert "spawn" not in repair_action
+
+    repaired = runner.invoke(main, [
+        "dev-loop", "--record-worker-outcome",
+        "--worker-id", worker["worker_id"],
+        "--worker-status", "completed",
+        "--native-worker-handle", "claude-native-repair",
+        "--native-result-file", str(native_path),
+        "--actual-model", "host-model",
+        "--isolation-evidence", "fresh_context",
+        "--project-root", str(tmp_path),
+    ])
+    assert repaired.exit_code == 0, repaired.output
+    repaired_body = _last_json_line(repaired.output)
+    assert repaired_body["outcome"]["status"] == "completed"
+    shared = json.loads(
+        (tmp_path / work_files["outcomes"]).read_text(encoding="utf-8")
+    )
+    assert [item["status"] for item in shared["outcomes"]] == ["completed"]
+
+
 def test_public_cli_fails_closed_with_structured_error_when_native_handle_is_missing(
     tmp_path: Path,
 ) -> None:
@@ -647,8 +759,13 @@ def test_tick_preflight_projects_attestation_repair_before_worker_failure(
     assert recovered["host_execution"]["recovery"]["record_plan"]["count"] == 1
 
 
+@pytest.mark.parametrize(
+    "submitted_error_code",
+    ["HOST_WORKER_FAILED", "HOST_PROTOCOL_FAILURE", "HOST_WORKER_OUTPUT_INVALID"],
+)
 def test_tick_preflight_projects_native_result_repair_before_worker_failure(
     tmp_path: Path,
+    submitted_error_code: str,
 ) -> None:
     """原生回包已落盘但漏调用 record 时不得消费 Worker 失败预算。"""
     from auto_engineering.cli.dev_loop import (
@@ -723,12 +840,29 @@ def test_tick_preflight_projects_native_result_repair_before_worker_failure(
         json.dumps({"retrieval_status": "success", "result": "structured"}),
         encoding="utf-8",
     )
+    if submitted_error_code in {"HOST_PROTOCOL_FAILURE", "HOST_WORKER_OUTPUT_INVALID"}:
+        outcomes_path = tmp_path / action["host_execution"]["work_files"]["outcomes"]
+        outcomes_path.parent.mkdir(parents=True, exist_ok=True)
+        outcomes_path.write_text(json.dumps({
+            "outcomes": [{
+                "worker_id": invocation.worker_id,
+                "native_worker_handle": "native-handle",
+                "status": "failed",
+                "payload": {
+                    "error_code": "HOST_WORKER_OUTPUT_INVALID",
+                    "native_output_available": True,
+                },
+                "summary": "HOST_WORKER_OUTPUT_INVALID",
+                "actual_model": "host-model",
+                "isolation_evidence": "fresh_context",
+            }],
+        }), encoding="utf-8")
 
     recovered = _project_submitted_worker_failure_recovery(
         action=action,
         submitted_result={
             "spawned": False,
-            "spawn_error_code": "HOST_WORKER_FAILED",
+            "spawn_error_code": submitted_error_code,
             "spawn_retry_attempt": 1,
         },
         root=tmp_path,

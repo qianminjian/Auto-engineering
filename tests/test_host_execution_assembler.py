@@ -1685,6 +1685,53 @@ def test_record_worker_outcome_allows_same_generation_host_model_placeholder_rep
     )["outcomes"] == [repaired]
 
 
+def test_record_worker_outcome_replaces_same_generation_protocol_placeholder(
+    tmp_path: Path,
+) -> None:
+    """同一代协议失败占位事实可由绑定 native 完成事实幂等修复。"""
+
+    action = _action(tmp_path)
+    action["host_execution"]["work_files"] = {
+        "outcomes": ".ae-state/host-runtime/work/outcomes.json",
+    }
+    native_ref = ".ae-state/host-runtime/native-results/native.json"
+    action["host_execution"]["workers"][0]["native_result_path"] = native_ref
+    private_path = tmp_path / action["spawn"]["invocations"][0]["outcome_path"]
+    private_path.parent.mkdir(parents=True, exist_ok=True)
+    private_path.write_text(
+        json.dumps({"status": "completed", "payload": {"verdict": "APPROVE"}}),
+        encoding="utf-8",
+    )
+    native_path = tmp_path / native_ref
+    native_path.parent.mkdir(parents=True, exist_ok=True)
+    native_path.write_text(json.dumps({"verdict": "APPROVE"}), encoding="utf-8")
+    assembler = HostExecutionAssembler(tmp_path)
+    assembler.record_host_protocol_failure(
+        action=action,
+        worker_id="critic-0",
+        native_worker_handle="native-host-1",
+        actual_model="host-model",
+        isolation_evidence="fork_turns=none",
+        detail="private_artifact_invalid",
+        native_output_available=True,
+    )
+
+    repaired = assembler.record_worker_outcome(
+        action=action,
+        worker_id="critic-0",
+        native_worker_handle="native-host-1",
+        native_result_file=native_path,
+        status="completed",
+        actual_model="host-model",
+        isolation_evidence="fork_turns=none",
+    )
+
+    assert repaired["status"] == "completed"
+    assert json.loads(
+        (tmp_path / ".ae-state/host-runtime/work/outcomes.json").read_text()
+    )["outcomes"] == [repaired]
+
+
 def test_record_worker_outcome_replaces_failed_prior_generation_on_retry(
     tmp_path: Path,
 ) -> None:

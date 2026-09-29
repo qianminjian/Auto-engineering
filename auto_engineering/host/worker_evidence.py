@@ -12,6 +12,7 @@ from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from typing import Any
 
+from auto_engineering.host.recovery_contract import WORKER_PROTOCOL_ERROR_CODES
 from auto_engineering.host.worker_artifact_parser import (
     parse_private_worker_artifact,
 )
@@ -240,7 +241,6 @@ def can_replace_retryable_outcome(
     current: NativeWorkerOutcome,
 ) -> bool:
     """判断同一 Action 的新回写是否可以替换旧的可重试事实。"""
-
     retryable_statuses = {
         "failed",
         "cancelled",
@@ -248,10 +248,6 @@ def can_replace_retryable_outcome(
         "timed_out",
         "errored",
     }
-    # Host Driver 可能先按 ``unreported`` 回写失败事实，随后在同一
-    # Action repair 中按 Action 模板的 ``unknown`` 哨兵再次提交。两者都
-    # 表示“模型未报告”，不是新的 Worker 执行；只要 native identity、
-    # generation、fence、业务结果和隔离证据完全一致，就应保持幂等。
     same_generation_placeholder_repair = (
         previous.worker_id == current.worker_id
         and previous.native_worker_handle == current.native_worker_handle
@@ -264,8 +260,19 @@ def can_replace_retryable_outcome(
         and previous.actual_model in {"unknown", "unreported"}
         and current.actual_model in {"unknown", "unreported"}
     )
+    same_generation_protocol_repair = (
+        previous.worker_id == current.worker_id
+        and previous.native_worker_handle == current.native_worker_handle
+        and previous.execution_generation == current.execution_generation
+        and previous.fencing_token == current.fencing_token
+        and previous.status in retryable_statuses
+        and isinstance(previous.payload, Mapping)
+        and previous.payload.get("error_code") in WORKER_PROTOCOL_ERROR_CODES
+        and current.status == "completed"
+    )
     return (
         same_generation_placeholder_repair
+        or same_generation_protocol_repair
         or (
             previous.status in retryable_statuses
             and isinstance(previous.execution_generation, int)
@@ -284,7 +291,6 @@ def _outcomes_are_ready(
     allowed_statuses: set[str],
 ) -> bool:
     """按同一值对象形状校验一组 Action-scoped Worker outcomes。"""
-
     if not isinstance(outcome_items, list):
         return False
     spawn = action.get("spawn")
@@ -355,7 +361,6 @@ def native_outcomes_are_ready(
     outcome_items: object,
 ) -> bool:
     """只把完整的 completed outcomes 视为可恢复。"""
-
     return _outcomes_are_ready(
         action=action,
         outcome_items=outcome_items,

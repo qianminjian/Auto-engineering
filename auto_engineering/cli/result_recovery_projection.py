@@ -17,6 +17,7 @@ from auto_engineering.host.outcome_file import (
     OutcomeFileError,
     parse_outcomes_document,
 )
+from auto_engineering.host.recovery_contract import WORKER_PROTOCOL_ERROR_CODES
 
 if TYPE_CHECKING:
     from auto_engineering.loop.event_store import SQLiteEventStore
@@ -135,11 +136,14 @@ def project_submitted_worker_failure_recovery(
         return None
     if submitted_result.get("spawned") is not False:
         return None
-    if submitted_result.get("spawn_error_code") not in {
+    spawn_error_code = submitted_result.get("spawn_error_code")
+    if spawn_error_code not in {
         "HOST_WORKER_FAILED",
         "HOST_WORKER_FAILURE_EXHAUSTED",
+        *WORKER_PROTOCOL_ERROR_CODES,
     }:
         return None
+    protocol_recovery_requested = spawn_error_code in WORKER_PROTOCOL_ERROR_CODES
 
     from auto_engineering.host.worker_artifact_inspector import (
         classify_private_worker_artifacts,
@@ -175,9 +179,12 @@ def project_submitted_worker_failure_recovery(
     from auto_engineering.host.worker_evidence import (
         worker_failure_outcomes_are_ready,
     )
-    if worker_failure_outcomes_are_ready(
-        action=mapped_action,
-        outcome_items=outcome_items,
+    if (
+        not protocol_recovery_requested
+        and worker_failure_outcomes_are_ready(
+            action=mapped_action,
+            outcome_items=outcome_items,
+        )
     ):
         return None
     classification = classify_private_worker_artifacts(

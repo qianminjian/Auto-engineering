@@ -9,7 +9,10 @@ from typing import Any
 from uuid import NAMESPACE_URL, uuid5
 
 from auto_engineering.host.outcome_recovery import OutcomeRecoveryService
-from auto_engineering.host.recovery_contract import HOST_PROTOCOL_FAILURE
+from auto_engineering.host.recovery_contract import (
+    HOST_PROTOCOL_FAILURE,
+    WORKER_PROTOCOL_ERROR_CODES,
+)
 from auto_engineering.host.spawn_contract import SpawnContractError, SpawnPlan
 from auto_engineering.host.worker_evidence import (
     HostEvidenceValidationError,
@@ -25,13 +28,7 @@ from auto_engineering.host.worker_timeout_ownership import (
     timeout_ownership_issues,
 )
 
-_PROTOCOL_OUTCOME_CODES = frozenset({
-    HOST_PROTOCOL_FAILURE,
-    "HOST_WORKER_OUTPUT_INVALID",
-    "HOST_WORKER_OUTPUT_MISSING",
-    "HOST_WORKER_OUTPUT_STALE",
-    "HOST_WORKER_ATTESTATION_MISSING",
-})
+_PROTOCOL_OUTCOME_CODES = WORKER_PROTOCOL_ERROR_CODES
 
 
 class WorkerFailureService:

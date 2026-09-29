@@ -48,11 +48,28 @@
 
 ## 验证证据
 
-- 本轮定向回归：269 passed，覆盖 EventStore recovery、tick transaction、Worker generation/fence、recovery projection、Host assembler、Outcome Journal、process exit、failure service、release archive 和 P0 跨进程 E2E。
-- 新鲜验证：串行全量 `3039 passed, 1 skipped`；严格覆盖率 `91%`；相关源文件 mypy、Ruff、shell 语法检查和 `make check-gate` 通过。
+- 前一轮定向回归：269 passed，覆盖 EventStore recovery、tick transaction、Worker generation/fence、recovery projection、Host assembler、Outcome Journal、process exit、failure service、release archive 和 P0 跨进程 E2E。
+- 本轮相关定向回归：199 passed，新增历史协议失败占位→同代 native repair 的公开 CLI 与 Host assembler 回归。
+- 新鲜验证：串行全量 `3043 passed, 1 skipped`；严格覆盖率 `91%`；相关源文件 mypy、Ruff、shell 语法检查和 `make check-gate` 通过。
 - 新 Build `5.8.0-rc.5+sha256.c37b122ba3d9d43b` 已按官方流程卸载并重装 Codex、Claude Code；两端入口 `build-info --expect-build-id` 均通过，且均为 `source_kind=packaged`。
 - 额外回归：native wait timeout 无终止观察进入 owner lost；匹配 terminal observation 才进入 timeout；终态 `--status` 不再要求 active Action；release symlink 在构建期拒绝。
 - Ruff、相关 mypy、shell `sh -n` 已通过。
+
+## 对 2026-09-28 外部真跑报告的二次复核
+
+外部报告中的关键事实已在只读状态库中复核：native result 是 `developer-0`、`completed`、13 passed/0 failed；私有 outcome 只有 `status` 与 `payload`，缺少 Host 交接所需的外层身份/摘要；共享 outcomes 已先写入 `HOST_WORKER_OUTPUT_INVALID`。这不是“Worker 没做完”，而是一个已经落盘的协议失败占位。
+
+复核当前实现后又发现原修复仍有两处边界缺口：
+
+1. 恢复投影在看到完整的失败 outcomes 后会提前返回，未再检查绑定 native 是否可修复；因此历史上已经写入协议失败的 Action 仍可能错过 `worker_artifact_repair`。
+2. 即使投影出 repair，同一 generation/fencing 下的协议失败占位也不能被 completed native outcome 替换；原逻辑只允许更高 generation 的失败重试，导致修复在共享 outcomes 合并处再次 `OUTCOMES_CONFLICT`。
+
+本轮已补齐：
+
+- 在 `recovery_contract` 集中定义 Worker 协议错误码集合，Worker failure 与恢复投影共享同一分类事实。
+- 恢复投影对协议错误优先执行 artifact/native 分类；只有确认 native 绑定有效时才绕过“失败 outcomes 已完整”的短路，其他真实 Worker 失败仍保持原有保护。
+- 允许同一 Action、同一 Worker、同一 native handle、同一 generation/fencing 的协议失败占位，被验证过的 completed native outcome 一次性替换；不同句柄、代际或围栏仍 fail-closed。
+- 增加公开 CLI `record → finalize → tick → record` 回归，覆盖“先写协议失败、后补有效 native 结果”的真实恢复顺序，确认不重新 spawn、共享 outcomes 只保留一条 completed 事实。
 
 ## 尚未关闭的发布门禁
 
