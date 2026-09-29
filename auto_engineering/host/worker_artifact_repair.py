@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -14,6 +15,7 @@ from auto_engineering.host.path_contract import (
 )
 from auto_engineering.host.worker_evidence import (
     HostEvidenceValidationError,
+    _atomic_write_bytes,
     _atomic_write_json,
     _native_business_artifact,
 )
@@ -100,8 +102,15 @@ def quarantine_private_artifact(
     violations: Sequence[str],
     execution_generation: int | None,
     fencing_token: str | None,
+    source_path: Path | None = None,
 ) -> None:
-    """写入幂等、脱敏且绑定 Action 的私有 artifact 隔离索引。"""
+    """将原私有 artifact 移入绑定的隔离区并写入幂等索引。
+
+    ``source_path`` 由 repair 调用方传入时，原文件会被原子移动到隔离区；
+    没有 source 的调用仍只物化原始字节和索引，供独立边界测试或已完成
+    隔离后的重复记录使用。canonical outcome path 不会被 quarantine 占用，
+    后续重复 recovery 可以从绑定 native result 重新物化它。
+    """
 
     message_id = action.get("message_id")
     if not isinstance(message_id, str) or not message_id or raw_bytes is None:
@@ -129,6 +138,38 @@ def quarantine_private_artifact(
         / ".ae-state/host-runtime/worker-outcome-quarantine"
         / f"{action_key}-{safe_worker}-g{generation}-f{fence_key}-{digest[:16]}.json"
     )
+    quarantine_path.parent.mkdir(parents=True, exist_ok=True)
+    quarantined_bytes_path = quarantine_path.with_suffix(".artifact")
+    if source_path is not None:
+        root = project_root.resolve()
+        source = source_path.resolve()
+        if source == root or root not in source.parents:
+            raise HostEvidenceValidationError(
+                ("WORKER_ARTIFACT_QUARANTINE_SOURCE_INVALID",)
+            )
+        try:
+            if source.is_file():
+                if source.read_bytes() != raw_bytes:
+                    raise HostEvidenceValidationError(
+                        ("WORKER_ARTIFACT_QUARANTINE_RACE",)
+                    )
+                os.replace(source, quarantined_bytes_path)
+        except OSError as exc:
+            raise HostEvidenceValidationError(
+                ("WORKER_ARTIFACT_QUARANTINE_WRITE_FAILED",)
+            ) from exc
+    elif not quarantined_bytes_path.is_file():
+        _atomic_write_bytes(quarantined_bytes_path, raw_bytes)
+    if quarantined_bytes_path.is_file():
+        try:
+            if quarantined_bytes_path.read_bytes() != raw_bytes:
+                raise HostEvidenceValidationError(
+                    ("WORKER_ARTIFACT_QUARANTINE_CONFLICT",)
+                )
+        except OSError as exc:
+            raise HostEvidenceValidationError(
+                ("WORKER_ARTIFACT_QUARANTINE_READ_FAILED",)
+            ) from exc
     _atomic_write_json(
         quarantine_path,
         {
@@ -140,6 +181,9 @@ def quarantine_private_artifact(
             "execution_generation": execution_generation,
             "fencing_token": fencing_token,
             "source_path": outcome_ref,
+            "quarantined_artifact_ref": str(
+                quarantined_bytes_path.relative_to(project_root.resolve())
+            ),
             "artifact_sha256": digest,
             "violations": list(violations),
         },

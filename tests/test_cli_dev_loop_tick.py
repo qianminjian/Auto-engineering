@@ -477,6 +477,179 @@ def test_public_cli_repairs_previously_recorded_protocol_failure_from_native(
     assert [item["status"] for item in shared["outcomes"]] == ["completed"]
 
 
+def test_public_cli_repairs_private_artifact_through_finalize_validate_tick(
+    tmp_path: Path,
+) -> None:
+    """坏私有产物的 repair 必须真正走完 record→finalize→validate→tick。"""
+
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\nname='protocol-repair-chain-fixture'\n", encoding="utf-8"
+    )
+    (tmp_path / "src").mkdir()
+    (tmp_path / "tests").mkdir()
+    design = tmp_path / "design.md"
+    design.write_text(
+        "## B1 音色克隆\n\n### C1 上传\n明确上传契约。\n",
+        encoding="utf-8",
+    )
+    runner = CliRunner()
+
+    initialized = runner.invoke(
+        main,
+        [
+            "dev-loop", "--init", "实现 X", "--design-doc", str(design),
+            "--project-root", str(tmp_path),
+        ],
+    )
+    assert initialized.exit_code == 0, initialized.output
+    gap_action = _last_json_line(initialized.output)
+    gap_files = gap_action["host_execution"]["work_files"]
+    gap_coordinator = tmp_path / gap_files["coordinator_result"]
+    gap_result = tmp_path / gap_files["result"]
+    gap_coordinator.parent.mkdir(parents=True, exist_ok=True)
+    gap_coordinator.write_text(json.dumps({
+        "gaps": [],
+        "section_findings": [{
+            "section_ref": "§C1",
+            "verdict": "clear",
+            "evidence": ["上传契约明确且可验证。"],
+        }],
+    }, ensure_ascii=False), encoding="utf-8")
+    assert runner.invoke(main, [
+        "dev-loop", "--finalize-result", str(gap_coordinator),
+        "--output-result", str(gap_result), "--project-root", str(tmp_path),
+    ]).exit_code == 0
+    assert runner.invoke(main, [
+        "dev-loop", "--validate-result", str(gap_result),
+        "--project-root", str(tmp_path),
+    ]).exit_code == 0
+    architect_action = _last_json_line(runner.invoke(main, [
+        "dev-loop", "--tick", "--result", str(gap_result),
+        "--project-root", str(tmp_path),
+    ]).output)
+    worker = architect_action["host_execution"]["workers"][0]
+    work_files = architect_action["host_execution"]["work_files"]
+    private_path = tmp_path / worker["outcome_path"]
+    native_path = tmp_path / worker["native_result_path"]
+    private_path.parent.mkdir(parents=True, exist_ok=True)
+    native_path.parent.mkdir(parents=True, exist_ok=True)
+
+    valid_payload = {
+        "plan": (
+            "按原设计完成上传组件的实现、测试、契约验证、类型检查、"
+            "构建验收、最终交付审计，并保留完整可重放的审计证据。"
+        ),
+        "batch_plan": [{
+            "batch_id": "B1",
+            "component": "上传",
+            "design_item_refs": ["C1-1"],
+            "tasks": [{
+                "id": "B1-T1",
+                "description": "实现上传组件",
+                "kind": "implementation",
+                "module_ref": "上传",
+                "file_targets": ["src/upload.py"],
+                "depends_on": [],
+            }],
+        }],
+        "file_list": ["src/upload.py"],
+        "contracts": {},
+    }
+    private_path.write_text(json.dumps({
+        "worker_id": worker["worker_id"],
+        "status": "completed",
+        "payload": valid_payload,
+        "summary": 1,
+    }, ensure_ascii=False), encoding="utf-8")
+    native_path.write_text(json.dumps({
+        "agentId": "repair-chain-native",
+        "status": "completed",
+        "content": [{"type": "text", "text": "invalid native result"}],
+    }), encoding="utf-8")
+    first_record = runner.invoke(main, [
+        "dev-loop", "--record-worker-outcome",
+        "--worker-id", worker["worker_id"], "--worker-status", "completed",
+        "--native-worker-handle", "repair-chain-native",
+            "--actual-model", "unreported", "--isolation-evidence", "fork_turns=none",
+        "--native-result-file", str(native_path), "--project-root", str(tmp_path),
+    ])
+    assert first_record.exit_code == 0, first_record.output
+    assert _last_json_line(first_record.output)["failure_code"] == (
+        "HOST_PROTOCOL_FAILURE"
+    )
+
+    private_path.write_text(json.dumps({
+        "status": "completed", "payload": valid_payload,
+    }, ensure_ascii=False), encoding="utf-8")
+    native_path.write_text(json.dumps({
+        "worker_id": worker["worker_id"],
+        "status": "completed",
+        "payload": valid_payload,
+        "summary": "native repair chain",
+    }, ensure_ascii=False), encoding="utf-8")
+    coordinator = tmp_path / work_files["coordinator_result"]
+    result_file = tmp_path / work_files["result"]
+    coordinator.parent.mkdir(parents=True, exist_ok=True)
+    coordinator.write_text("{}", encoding="utf-8")
+    finalized = runner.invoke(main, [
+        "dev-loop", "--finalize-result", str(coordinator),
+        "--output-result", str(result_file), "--project-root", str(tmp_path),
+    ])
+    assert finalized.exit_code == 0, finalized.output
+    assert _last_json_line(finalized.output)["spawn_error_code"] == (
+        "HOST_PROTOCOL_FAILURE"
+    )
+    repair_action = _last_json_line(runner.invoke(main, [
+        "dev-loop", "--tick", "--result", str(result_file),
+        "--project-root", str(tmp_path),
+    ]).output)
+    assert repair_action["host_execution"]["recovery"]["status"] == (
+        "worker_artifact_repair"
+    )
+
+    repaired = runner.invoke(main, [
+        "dev-loop", "--record-worker-outcome",
+        "--worker-id", worker["worker_id"], "--worker-status", "completed",
+        "--native-worker-handle", "repair-chain-native",
+        "--native-result-file", str(native_path), "--actual-model", "host-model",
+        "--isolation-evidence", "fork_turns=none", "--project-root", str(tmp_path),
+    ])
+    assert repaired.exit_code == 0, repaired.output
+    assert _last_json_line(repaired.output)["outcome"]["status"] == "completed"
+    assert not private_path.exists()
+
+    repaired_coordinator = tmp_path / work_files["coordinator_result"]
+    repaired_result = tmp_path / work_files["result"]
+    repaired_coordinator.write_text(
+        json.dumps(valid_payload, ensure_ascii=False), encoding="utf-8"
+    )
+    finalized = runner.invoke(main, [
+        "dev-loop", "--finalize-result", str(repaired_coordinator),
+        "--output-result", str(repaired_result), "--project-root", str(tmp_path),
+    ])
+    assert finalized.exit_code == 0, finalized.output
+    validated = runner.invoke(main, [
+        "dev-loop", "--validate-result", str(repaired_result),
+        "--project-root", str(tmp_path),
+    ])
+    assert validated.exit_code == 0, validated.output
+    advanced = runner.invoke(main, [
+        "dev-loop", "--tick", "--result", str(repaired_result),
+        "--project-root", str(tmp_path),
+    ])
+    assert advanced.exit_code == 0, advanced.output
+    next_action = _last_json_line(advanced.output)
+    assert next_action["message_id"] != architect_action["message_id"]
+    assert next_action["action"] != "error"
+
+    quarantine = list(
+        (tmp_path / ".ae-state/host-runtime/worker-outcome-quarantine").glob(
+            "*.json"
+        )
+    )
+    assert len(quarantine) == 1
+
+
 def test_public_cli_fails_closed_with_structured_error_when_native_handle_is_missing(
     tmp_path: Path,
 ) -> None:

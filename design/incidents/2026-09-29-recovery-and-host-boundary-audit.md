@@ -50,9 +50,10 @@
 
 - 前一轮定向回归：269 passed，覆盖 EventStore recovery、tick transaction、Worker generation/fence、recovery projection、Host assembler、Outcome Journal、process exit、failure service、release archive 和 P0 跨进程 E2E。
 - 本轮相关定向回归：199 passed，新增历史协议失败占位→同代 native repair 的公开 CLI 与 Host assembler 回归。
-- 新鲜验证：串行全量 `3043 passed, 1 skipped`；严格覆盖率 `91%`；相关源文件 mypy、Ruff、shell 语法检查和 `make check-gate` 通过。
+- 新鲜验证：串行全量 `3045 passed, 1 skipped`；严格覆盖率 `91%`；相关源文件 mypy、Ruff、shell 语法检查和 `make check-gate` 通过。
 - 新 Build `5.8.0-rc.5+sha256.c37b122ba3d9d43b` 已按官方流程卸载并重装 Codex、Claude Code；两端入口 `build-info --expect-build-id` 均通过，且均为 `source_kind=packaged`。
 - 额外回归：native wait timeout 无终止观察进入 owner lost；匹配 terminal observation 才进入 timeout；终态 `--status` 不再要求 active Action；release symlink 在构建期拒绝。
+- T902 额外回归：坏 private artifact 首次被移入绑定 quarantine，重复 record 从 bound native 重建 canonical private envelope；公开 CLI 完成 `record→finalize→validate→tick`，不重新 spawn，且保留唯一 completed outcome。
 - Ruff、相关 mypy、shell `sh -n` 已通过。
 
 ## 对 2026-09-28 外部真跑报告的二次复核
@@ -72,6 +73,23 @@
 - 增加公开 CLI `record → finalize → tick → record` 回归，覆盖“先写协议失败、后补有效 native 结果”的真实恢复顺序，确认不重新 spawn、共享 outcomes 只保留一条 completed 事实。
 
 ## 尚未关闭的发布门禁
+
+## T902：`worker_artifact_repair` 的原文件隔离缺口
+
+对照 D79 和主设计 §6.11 重新检查后发现，前一轮虽然已经允许“坏 private + 有效 bound native”进入
+`worker_artifact_repair`，但 `quarantine_private_artifact()` 只写了脱敏索引，原坏文件仍留在
+canonical `outcome_path`。这与“隔离原私有文件、从 native 重建 canonical envelope”的设计不一致，
+也会让重复恢复继续读取同一坏文件，无法证明隔离已经完成。
+
+本轮将修复收口为单一语义：首次 repair 校验源文件字节未发生竞态后，把原始字节原子移动到
+Action/generation/fencing 绑定的 `.artifact` 隔离文件，同时写入 `.json` 索引；canonical
+`outcome_path` 保持空闲。重复 record 时从有效 native 结果重建 canonical private envelope，
+共享 outcomes 仍保持同一条幂等事实；不同内容、路径越界或隔离读写异常均 fail-closed。没有改变
+主 Agent 唯一 Coordinator、Python 单 Tick 或 EventStore 唯一事实源。
+
+新增证据覆盖：首次隔离、重复调用后的 canonical 重建、quarantine 原始字节摘要、公开 CLI
+`record → finalize → validate → tick` 完整链，以及原生结果无效时仍保持协议失败。该缺口属于
+恢复证据边界，不是 Worker 业务失败，也不允许通过重新 spawn 绕过。
 
 本轮修复解决的是 Loop/Core/Host 交接的确定性与 fail-closed 问题，不等于真实产品 L4 已通过。仍需单独完成：
 

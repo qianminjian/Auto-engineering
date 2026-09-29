@@ -1033,6 +1033,7 @@ def test_record_worker_outcome_repairs_invalid_private_artifact_from_bound_nativ
         actual_model="unreported",
         isolation_evidence="fork_turns=none",
     )
+    assert not private_path.exists()
 
     repeated = HostExecutionAssembler(tmp_path).record_worker_outcome(
         action=action,
@@ -1046,7 +1047,7 @@ def test_record_worker_outcome_repairs_invalid_private_artifact_from_bound_nativ
 
     assert recorded["payload"] == native_artifact["payload"]
     assert repeated == recorded
-    assert json.loads(private_path.read_text(encoding="utf-8")) == private_artifact
+    assert json.loads(private_path.read_text(encoding="utf-8")) == native_artifact
     shared = json.loads(
         (tmp_path / ".ae-state/host-runtime/work/outcomes.json").read_text()
     )
@@ -1063,6 +1064,8 @@ def test_record_worker_outcome_repairs_invalid_private_artifact_from_bound_nativ
     assert quarantine_record["artifact_sha256"] == hashlib.sha256(
         json.dumps(private_artifact).encode()
     ).hexdigest()
+    quarantined_artifact = tmp_path / quarantine_record["quarantined_artifact_ref"]
+    assert quarantined_artifact.read_bytes() == json.dumps(private_artifact).encode()
 
 
 def test_record_worker_outcome_rejects_nested_codex_result_wrapper(
@@ -1196,7 +1199,18 @@ def test_record_worker_outcome_repairs_malformed_private_file_from_native_result
         isolation_evidence="fork_turns=none",
     )
 
-    assert json.loads(private_path.read_text(encoding="utf-8")) == malformed_private
+    assert not private_path.exists()
+    quarantine_record = json.loads(
+        next(
+            (tmp_path / ".ae-state/host-runtime/worker-outcome-quarantine").glob(
+                "*.json"
+            )
+        ).read_text(encoding="utf-8")
+    )
+    assert (
+        (tmp_path / quarantine_record["quarantined_artifact_ref"]).read_bytes()
+        == json.dumps(malformed_private).encode()
+    )
     assert recorded["payload"] == {"batch_id": "native-authoritative"}
     quarantine = list(
         (tmp_path / ".ae-state/host-runtime/worker-outcome-quarantine").glob(

@@ -457,6 +457,7 @@ class HostExecutionAssembler(ResultFinalizationMixin):
                 violations=private_artifact_violations,
                 execution_generation=generation,
                 fencing_token=fence,
+                source_path=outcome_path,
             )
         outcome = NativeWorkerOutcome(
             worker_id=worker_id,
