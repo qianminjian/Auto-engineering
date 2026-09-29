@@ -480,6 +480,31 @@ def test_main_handles_output_race_and_truncation_without_exiting_watchdog(
     assert state_calls == 4
 
 
+def test_main_bounds_startup_without_active_lease(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """首个 init 前无租约也必须受宿主 idle 上限约束。"""
+
+    monkeypatch.setattr(watchdog, "_alive", lambda _pid: True)
+    monkeypatch.setattr(watchdog, "_state_signature", lambda _root: ())
+    monkeypatch.setattr(watchdog, "_native_sync_wait_active", lambda **_: False)
+    monkeypatch.setattr(watchdog.time, "sleep", lambda _: None)
+    monkeypatch.setattr(
+        watchdog.time,
+        "monotonic",
+        iter((0.0, 2.0)).__next__,
+    )
+    captured: list[Path] = []
+    monkeypatch.setattr(
+        watchdog,
+        "_terminate",
+        lambda _pid, marker_path: captured.append(marker_path),
+    )
+
+    assert watchdog.main(_main_args(tmp_path, max_idle="1")) == 0
+    assert captured and captured[0].name == "idle.marker"
+
+
 def test_main_handles_attempt_output_open_race(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

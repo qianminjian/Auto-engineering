@@ -24,6 +24,10 @@ from sqlite3 import Error as SQLiteError
 from auto_engineering.loop.event_store import SQLiteEventStore
 
 NATIVE_OBSERVATION_MAX_AGE_SECONDS = 300.0
+# 项目运行时首次 bootstrap、宿主启动和第一条 native observation 可能跨越一个
+# watchdog 调度周期；该宽限只对已存在且身份完整的 Claude CONTINUE lease 生效，
+# 无 lease 的首个 init 仍由 max_idle 直接封口。宽限必须短于宿主 idle 上限的
+# 常见测试窗口，避免把“有效 lease”误当成“宿主仍有 native 进展”。
 NATIVE_OBSERVATION_STARTUP_GRACE_SECONDS = 2.0
 
 
@@ -183,6 +187,9 @@ def _native_sync_wait_active(
     ):
         return False
     now_epoch = time.time()
+    # 首次 observation 到达前，必须同时满足“当前 watchdog 确实由 Claude
+    # 宿主边界启动”和“lease 身份完整”。仅凭持久化 lease 不能把任意沉默
+    # 宿主误判为 native wait，否则普通宿主会绕过 max_idle。
     if (
         os.environ.get("AE_HOST_PLATFORM") == "claude-code"
         and now_epoch - attempt_started_epoch
@@ -302,22 +309,29 @@ def main(argv: list[str] | None = None) -> int:
             last_activity = now
             previous_state = current_state
         if protocol_refusals >= args.max_protocol_refusals:
-            _terminate(args.host_pid, args.protocol_marker)
+            if _alive(args.host_pid):
+                _terminate(args.host_pid, args.protocol_marker)
             break
         if coordinator_polls >= args.max_coordinator_polls:
-            _terminate(args.host_pid, args.coordinator_marker)
+            if _alive(args.host_pid):
+                _terminate(args.host_pid, args.coordinator_marker)
             break
         native_active = _native_sync_wait_active(
             state_root=state_root,
             attempt_started_epoch=args.attempt_started_epoch,
             max_idle=args.max_idle,
         )
-        lease_present = (state_root / "host-runtime" / "active-lease.json").is_file()
-        if now - last_activity >= args.max_idle and lease_present and not native_active:
-            _terminate(args.host_pid, args.idle_marker)
+        # 首个 init 前尚未有 lease，但宿主已经由外层适配器启动；没有 lease
+        # 不能成为无限等待的豁免。此阶段没有 Action-scoped 事实可观察时，
+        # max_idle 仍是唯一有界启动窗口；一旦进入 native Worker 等待，
+        # _native_sync_wait_active 才能按当前 Action 合同保留观察时间。
+        if now - last_activity >= args.max_idle and not native_active:
+            if _alive(args.host_pid):
+                _terminate(args.host_pid, args.idle_marker)
             break
         if max_runtime is not None and now - started >= max_runtime:
-            _terminate(args.host_pid, args.timeout_marker)
+            if _alive(args.host_pid):
+                _terminate(args.host_pid, args.timeout_marker)
             break
     return 0
 
