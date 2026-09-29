@@ -55,6 +55,8 @@ Coordinator 不得先读取、`sed`、复制、总结或重新拼接 `prompt_ref
    action = ae-run dev-loop --init "<requirement>" [--design-doc <path>]
        --project-root invocation_project_root
    # --init 自动恢复 active thread；禁止先调 status 或扫描 .ae-state 推测 Action。
+   # requirement 必须是具体可执行范围；设计驱动请求必须显式映射 --design-doc <path>。
+   # 只有泛化口号或缺少设计文档时，先报告 HOST_ENTRY_INPUT_REQUIRED 并停止，不能 status-first。
    # 设计文档不存在、越界或 init 失败时立即停止；禁止搜索父目录、/tmp、其他项目或同名文件，
    # 禁止改写 `--project-root` 后重试，也禁止用绝对设计路径切换项目。
    # 若仅查询 status，必须原样执行 status.next_operation.argv。

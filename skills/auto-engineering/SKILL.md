@@ -108,6 +108,13 @@ prompt/message。不得先读取、`sed`、复制、总结或拼接 `prompt_ref`
 `resume_active_action` 时立即执行其 `argv`，不得自行改用无 Result 的 Tick。
 若误调 Tick，只允许执行错误返回的同一 `next_operation`。
 
+宿主入口参数必须同时包含可执行的具体 requirement；设计驱动请求还必须明确给出设计文档
+路径，并把它原样映射为 `--design-doc <path>`。如果用户输入只有“按设计执行”“执行闭环”
+等泛化口号，或没有可解析的设计文档路径，必须先报告 `HOST_ENTRY_INPUT_REQUIRED` 并停止，
+不得调用 `status`、`find`、`rg` 或其他探路命令来猜测 thread。新项目没有 EventStore thread
+时收到 `EVENT_THREAD_NOT_FOUND` 只说明错误地走了 status-first 路径，不能把它归因于 Core
+循环中断。
+
 若本次宿主验收已经取得候选 Release `build_id`，首个 `dev-loop --init` 前必须先执行
 `ae-run build-info --expect-build-id <candidate-build-id>`。命令失败时报告实际加载的
 Build Identity 并停止；不得启动 Loop、切换到旧缓存入口或手工修复后继续。日常开发若没有

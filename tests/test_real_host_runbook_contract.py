@@ -38,6 +38,24 @@ def test_real_host_runbook_uses_locked_project_runner_for_installers() -> None:
     assert "立即停止本次验收" in runbook
     assert "design_structure_preflight" in runbook
     assert "零 Worker" in runbook
+    assert "design.md" in runbook
+    assert "--design-doc" in runbook
+    assert "首个 Core 命令必须是 dev-loop --init" in runbook
+    assert "禁止先调用 status" in runbook
+    assert "EVENT_THREAD_NOT_FOUND" in runbook
+    assert "业务范围的口号" in runbook
+
+
+def test_host_entry_contract_rejects_vague_input_before_status_probe() -> None:
+    skill = (ROOT / "skills/auto-engineering/SKILL.md").read_text(encoding="utf-8")
+    command = (ROOT / "commands/dev-loop.md").read_text(encoding="utf-8")
+
+    for content in (skill, command):
+        assert "HOST_ENTRY_INPUT_REQUIRED" in content
+        assert "泛化口号" in content
+        assert "--design-doc <path>" in content
+    assert "不得调用 `status`" in skill
+    assert "不能 status-first" in command
 
 
 def test_dev_loop_command_does_not_tick_a_gate_without_a_result() -> None:
