@@ -355,7 +355,11 @@ while :; do
     WATCHDOG_PID=
     ATTEMPT_STARTED_AT=$(date +%s.%N)
 
-    "$@" > "$ATTEMPT_OUTPUT" &
+    # 外层调用者（例如 exec/CI）可能保持 stdin 管道打开。非交互宿主的 prompt
+    # 已通过 argv 传入；继承该管道会让 Codex 误以为还要读取附加 prompt，导致
+    # 宿主停在启动阶段，watchdog 随后只能看到“尚未 init”。结构化 Worker 输入
+    # 必须走 Action 合同/固定文件，不得依赖适配器 stdin。
+    "$@" </dev/null > "$ATTEMPT_OUTPUT" &
     HOST_PID=$!
     watchdog_loop &
     WATCHDOG_PID=$!

@@ -270,6 +270,36 @@ def test_host_run_wrapper_exports_fixed_invocation_root(tmp_path: Path) -> None:
     assert json.loads(host_output.read_text(encoding="utf-8"))["root"] == str(tmp_path)
 
 
+def test_host_run_wrapper_closes_inherited_stdin_for_noninteractive_host(
+    tmp_path: Path,
+) -> None:
+    """非交互宿主不能因外层打开 stdin 管道而等待附加 Prompt。"""
+
+    wrapper = Path(__file__).parents[1] / "scripts" / "ae-host-run"
+    host_output = tmp_path / "host-stream.jsonl"
+    command = (
+        "import json, sys; "
+        "print(json.dumps({'stdin': sys.stdin.read()}, ensure_ascii=False))"
+    )
+
+    result = subprocess.run(
+        [
+            str(wrapper),
+            "--project-root", str(tmp_path),
+            "--output", str(host_output),
+            "--", sys.executable, "-c", command,
+        ],
+        cwd=tmp_path,
+        input="inherited-by-parent\n",
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(host_output.read_text(encoding="utf-8"))["stdin"] == ""
+
+
 def test_host_run_wrapper_binds_claude_command_over_inherited_codex_signal(
     tmp_path: Path,
 ) -> None:

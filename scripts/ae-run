@@ -63,6 +63,38 @@ if [ -n "${AE_INVOCATION_PROJECT_ROOT:-}" ]; then
 fi
 RUNTIME_ROOT="$PROJECT_ROOT/.ae-state/.ae-runtime"
 STATE_ROOT="$PROJECT_ROOT/.ae-state"
+RUNTIME_FINGERPRINT="$RUNTIME_ROOT/.auto-engineering-runtime"
+
+current_build_fingerprint() {
+    if [ ! -f "$PLUGIN_ROOT/build-info.json" ]; then
+        return 0
+    fi
+    sed -n 's/.*"content_sha256"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+        "$PLUGIN_ROOT/build-info.json" | sed -n '1p'
+}
+
+runtime_matches_current_plugin() {
+    [ -x "$RUNTIME_ROOT/bin/python" ] || return 1
+    [ -x "$RUNTIME_ROOT/bin/ae" ] || return 1
+    [ -f "$RUNTIME_FINGERPRINT" ] || return 1
+    expected_fingerprint=$(current_build_fingerprint)
+    [ -n "$expected_fingerprint" ] || return 1
+    [ "$(sed -n '1p' "$RUNTIME_FINGERPRINT" 2>/dev/null || true)" = "$PLUGIN_ROOT" ] || return 1
+    [ "$(sed -n '2p' "$RUNTIME_FINGERPRINT" 2>/dev/null || true)" = "$expected_fingerprint" ]
+}
+
+mark_runtime_for_current_plugin() {
+    fingerprint_tmp="$RUNTIME_FINGERPRINT.$$"
+    expected_fingerprint=$(current_build_fingerprint)
+    if [ -n "$expected_fingerprint" ]; then
+        {
+            printf '%s\n' "$PLUGIN_ROOT"
+            printf '%s\n' "$expected_fingerprint"
+        } > "$fingerprint_tmp" && mv -f "$fingerprint_tmp" "$RUNTIME_FINGERPRINT"
+    else
+        rm -f "$fingerprint_tmp"
+    fi
+}
 
 RUN_MODULE=""
 if [ "${1:-}" = "--run-module" ]; then
@@ -77,6 +109,15 @@ fi
 if [ "${1:-}" = "--print-runtime-root" ]; then
     printf '%s\n' "$RUNTIME_ROOT"
     exit 0
+fi
+
+if runtime_matches_current_plugin; then
+    # 已安装且指纹匹配的 Release 运行时是宿主启动链的一等产物；此分支
+    # 不需要 uv、用户缓存或网络，确保 Loop 不会在业务 Action 前被依赖解析打断。
+    if [ -n "$RUN_MODULE" ]; then
+        exec "$RUNTIME_ROOT/bin/python" -m "$RUN_MODULE" "$@"
+    fi
+    exec "$RUNTIME_ROOT/bin/ae" "$@"
 fi
 
 if command -v uv >/dev/null 2>&1; then
@@ -152,9 +193,16 @@ if command -v uv >/dev/null 2>&1; then
         cleanup_bootstrap_lock
     fi
     if [ -n "$RUN_MODULE" ]; then
-        exec uv run --frozen --no-dev --project "$PLUGIN_ROOT" python -m "$RUN_MODULE" "$@"
+        uv run --frozen --no-dev --project "$PLUGIN_ROOT" python -m "$RUN_MODULE" "$@"
+        result=$?
+    else
+        uv run --frozen --no-dev --project "$PLUGIN_ROOT" ae "$@"
+        result=$?
     fi
-    exec uv run --frozen --no-dev --project "$PLUGIN_ROOT" ae "$@"
+    if [ "$result" -eq 0 ]; then
+        mark_runtime_for_current_plugin
+    fi
+    exit "$result"
 fi
 
 printf '%s\n' \

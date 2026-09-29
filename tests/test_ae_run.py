@@ -369,6 +369,61 @@ def test_falls_back_to_uv_run_ae(tmp_path: Path) -> None:
     )
 
 
+def test_reuses_fingerprinted_project_runtime_without_uv_or_network(
+    tmp_path: Path,
+) -> None:
+    launcher = _copy_launcher(tmp_path)
+    plugin = tmp_path / "plugin"
+    plugin.mkdir(exist_ok=True)
+    (plugin / "build-info.json").write_text(
+        '{"content_sha256":"fingerprint-1"}\n', encoding="utf-8"
+    )
+    project_runtime = tmp_path / ".ae-state" / ".ae-runtime"
+    project_runtime_bin = project_runtime / "bin"
+    project_runtime_bin.mkdir(parents=True)
+    _write_executable(project_runtime_bin / "python", "runtime-python")
+    _write_executable(project_runtime_bin / "ae", "runtime-ae")
+    (project_runtime / ".auto-engineering-runtime").write_text(
+        f"{plugin}\nfingerprint-1\n", encoding="utf-8"
+    )
+
+    result = _run(launcher, str(tmp_path / "empty-bin"), "status")
+
+    assert result.returncode == 0
+    assert result.stdout == "runtime-ae:status"
+
+
+def test_reuses_fingerprinted_project_runtime_for_host_module(
+    tmp_path: Path,
+) -> None:
+    launcher = _copy_launcher(tmp_path)
+    plugin = tmp_path / "plugin"
+    plugin.mkdir(exist_ok=True)
+    (plugin / "build-info.json").write_text(
+        '{"content_sha256":"fingerprint-1"}\n', encoding="utf-8"
+    )
+    project_runtime = tmp_path / ".ae-state" / ".ae-runtime"
+    project_runtime_bin = project_runtime / "bin"
+    project_runtime_bin.mkdir(parents=True)
+    _write_executable(project_runtime_bin / "python", "runtime-python")
+    _write_executable(project_runtime_bin / "ae", "runtime-ae")
+    (project_runtime / ".auto-engineering-runtime").write_text(
+        f"{plugin}\nfingerprint-1\n", encoding="utf-8"
+    )
+
+    result = _run(
+        launcher,
+        str(tmp_path / "empty-bin"),
+        "--run-module",
+        "auto_engineering.host.watchdog",
+    )
+
+    assert result.returncode == 0
+    assert result.stdout == (
+        "runtime-python:-m auto_engineering.host.watchdog"
+    )
+
+
 def test_rejects_untrusted_global_ae_fallback(tmp_path: Path) -> None:
     launcher = _copy_launcher(tmp_path)
     bin_dir = tmp_path / "bin"
