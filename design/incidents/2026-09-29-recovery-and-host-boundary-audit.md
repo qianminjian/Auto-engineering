@@ -148,4 +148,4 @@ artifact 声明了成本，产品验收就可能在没有原始宿主事实时�
 Action 的 canonical path 才能进入 manifest。无代际历史输入继续保留兼容边界，但当前绑定一旦存在就不得降级。
 
 证据：新增 stale path fail-closed 回归；产品 acceptance/collector 定向 `68 passed`，全量 `3048 passed/1 skipped`，
-覆盖率 `91%`，Ruff、核心 mypy、check-gate 通过。T900–T906 已完成源码级实现与测试验证，但本轮新制品安装验收仍需在提交后执行。
+覆盖率 `91%`，Ruff、核心 mypy、check-gate 通过。新 Build `5.8.0-rc.5+sha256.03cb2b78da681ae9` 已按官方流程分别卸载重装 Codex 与 Claude Code，双方 archive smoke、Build Identity、doctor、minimal tick 和 resume 通过；官方脚本仍明确 `product_install: not_run`，因此真实宿主 L4 仍是独立未完成门禁。
