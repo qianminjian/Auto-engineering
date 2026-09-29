@@ -149,3 +149,16 @@ Action 的 canonical path 才能进入 manifest。无代际历史输入继续保
 
 证据：新增 stale path fail-closed 回归；产品 acceptance/collector 定向 `68 passed`，全量 `3048 passed/1 skipped`，
 覆盖率 `91%`，Ruff、核心 mypy、check-gate 通过。新 Build `5.8.0-rc.5+sha256.03cb2b78da681ae9` 已按官方流程分别卸载重装 Codex 与 Claude Code，双方 archive smoke、Build Identity、doctor、minimal tick 和 resume 通过；官方脚本仍明确 `product_install: not_run`，因此真实宿主 L4 仍是独立未完成门禁。
+
+## T907：当前产品 artifact 的 acceptance policy 兼容旁路
+
+T905 收紧了 Claude 原始用量 attestation，但继续沿代码和测试夹具追查后发现，`schema_version=1.1`
+的产品 artifact 仍可缺失 `acceptance_policy`；验收器会把它当作 v1.1 旧证据兼容而继续，导致实际执行成本上限与
+artifact 声明脱钩。这类兼容旁路与本次 Loop 真跑的协议死锁属于同一治理问题：边界事实不完整时没有稳定失败。
+
+修复后，当前 1.1 artifact 必须声明与本次验收参数相等的 policy；缺失返回 `ACCEPTANCE_POLICY_MISSING`，不再
+使用旧兼容默认。并顺手修复验收脚本的 5 条既有 mypy 告警，避免 `Any` 解析掩盖证据字段缺失。
+
+证据：产品 acceptance/collector 定向 `70 passed`，全量 `3050 passed/1 skipped`、严格覆盖率 `91%`，脚本/核心
+mypy、Ruff、check-gate 通过；T907 不改变 Loop 唯一 Coordinator、单 Tick 或 EventStore 事实源。当前工作树
+新制品 `5.8.0-rc.5+sha256.4ed638cf97e6b872` 已通过 Codex 与 Claude Code 双宿主 archive smoke，并已按官方本地安装器分别完成两宿主卸载重装，安装器返回 `status=installed` 且 Build Identity 一致；但真实 Voice Clone L4、Recovery Canary 和最终产品 evidence 仍未执行，因此不能把安装成功冒充完整产品验收。

@@ -19,6 +19,7 @@ from scripts.product_acceptance import (
     _validate_attempt_receipts,
     _validate_build_identity_preflight,
     _validate_business_evidence,
+    _validate_declared_cost_policy,
     _validate_host_usage_attestation,
     _validate_machine_claims,
     _validate_native_result_manifest,
@@ -485,6 +486,7 @@ def test_release_requires_both_hosts_on_same_build(tmp_path) -> None:
                     "content_sha256": "a" * 64,
             },
             "plugin_discovered": True,
+            "acceptance_policy": {"max_claude_cost_usd": 2.0},
             "business_evidence": _business_evidence_payload(evidence["build_id"]),
             "runtime_root": evidence["installation"]["runtime_root"],
             "event_types": ["ActionIssued", "ResultAccepted", "LoopCompleted"],
@@ -571,6 +573,28 @@ def test_release_requires_both_hosts_on_same_build(tmp_path) -> None:
     assert verdict["policy"] == {"max_claude_cost_usd": 2.0}
     assert verdict["hosts"] == ["claude-code", "codex"]
 
+    codex_artifact = tmp_path / "codex.json"
+    codex_payload = json.loads(codex_artifact.read_text(encoding="utf-8"))
+    codex_payload.pop("acceptance_policy")
+    codex_artifact.write_text(json.dumps(codex_payload), encoding="utf-8")
+    broken_codex = dict(evidences[0])
+    broken_codex["evidence_artifact"] = {
+        "path": codex_artifact.name,
+        "sha256": hashlib.sha256(codex_artifact.read_bytes()).hexdigest(),
+    }
+    with pytest.raises(ProductAcceptanceError, match="ACCEPTANCE_POLICY_MISSING"):
+        evaluate_release_evidence(
+            [broken_codex, evidences[1]],
+            evidence_root=tmp_path,
+        )
+    codex_payload["acceptance_policy"] = {"max_claude_cost_usd": 2.0}
+    codex_artifact.write_text(json.dumps(codex_payload), encoding="utf-8")
+    restored_codex = dict(evidences[0])
+    restored_codex["evidence_artifact"] = {
+        "path": codex_artifact.name,
+        "sha256": hashlib.sha256(codex_artifact.read_bytes()).hexdigest(),
+    }
+
     claude_artifact = tmp_path / "claude-code.json"
     claude_payload = json.loads(claude_artifact.read_text(encoding="utf-8"))
     claude_payload.pop("host_usage_attestation")
@@ -582,7 +606,7 @@ def test_release_requires_both_hosts_on_same_build(tmp_path) -> None:
     }
     with pytest.raises(ProductAcceptanceError, match="HOST_USAGE_ATTESTATION_MISSING"):
         evaluate_release_evidence(
-            [evidences[0], broken_claude],
+            [restored_codex, broken_claude],
             evidence_root=tmp_path,
         )
 
@@ -591,6 +615,22 @@ def test_current_claude_artifact_requires_raw_usage_attestation(tmp_path) -> Non
     del tmp_path
     with pytest.raises(ProductAcceptanceError, match="HOST_USAGE_ATTESTATION_MISSING"):
         _validate_host_usage_attestation({}, required=True)
+
+
+def test_current_artifact_requires_acceptance_policy() -> None:
+    with pytest.raises(ProductAcceptanceError, match="ACCEPTANCE_POLICY_MISSING"):
+        _validate_declared_cost_policy(
+            {}, max_claude_cost_usd=2.0, required=True
+        )
+
+
+def test_acceptance_policy_rejects_boolean_cost_limit() -> None:
+    with pytest.raises(ProductAcceptanceError, match="ACCEPTANCE_POLICY_MISMATCH"):
+        _validate_declared_cost_policy(
+            {"acceptance_policy": {"max_claude_cost_usd": True}},
+            max_claude_cost_usd=1.0,
+            required=True,
+        )
 
 
 def test_candidate_archive_build_identity_is_read_from_package(tmp_path) -> None:
@@ -624,6 +664,7 @@ def test_release_rejects_reused_action_context(tmp_path) -> None:
         "build_id": evidence["build_id"],
         "installed_build_id": evidence["build_id"],
         "plugin_discovered": True,
+        "acceptance_policy": {"max_claude_cost_usd": 2.0},
         "business_evidence": _business_evidence_payload(evidence["build_id"]),
         "runtime_root": evidence["installation"]["runtime_root"],
         "event_types": ["ActionIssued", "ResultAccepted", "LoopCompleted"],

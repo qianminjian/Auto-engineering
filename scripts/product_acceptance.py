@@ -57,14 +57,21 @@ def _validate_declared_cost_policy(
     payload: dict[str, Any],
     *,
     max_claude_cost_usd: float,
+    required: bool = False,
 ) -> None:
     declared = payload.get("acceptance_policy")
     if declared is None:
-        return  # v1.1 旧 evidence 兼容；新 collector 始终写入。
+        if required:
+            raise ProductAcceptanceError("ACCEPTANCE_POLICY_MISSING")
+        return
+    declared_limit = declared.get("max_claude_cost_usd") if isinstance(declared, dict) else None
     if (
         not isinstance(declared, dict)
-        or declared.get("max_claude_cost_usd")
-        != max_claude_cost_usd
+        or isinstance(declared_limit, bool)
+        or not isinstance(declared_limit, (int, float))
+        or not math.isfinite(declared_limit)
+        or declared_limit < 0
+        or declared_limit != max_claude_cost_usd
     ):
         raise ProductAcceptanceError("ACCEPTANCE_POLICY_MISMATCH")
 
@@ -238,7 +245,9 @@ def _validate_canary_event_store(
     """重新读取 Canary EventStore，验证摘要没有脱离恢复事实链。"""
 
     canary = evidence.get("canary")
-    source = canary.get("event_store_source") if isinstance(canary, dict) else None
+    if not isinstance(canary, dict):
+        raise ProductAcceptanceError("CANARY_EVENT_STORE_EVIDENCE_MISSING")
+    source = canary.get("event_store_source")
     if not isinstance(source, dict):
         raise ProductAcceptanceError("CANARY_EVENT_STORE_EVIDENCE_MISSING")
     root = canary_root.resolve()
@@ -300,10 +309,14 @@ def _validate_build_identity_preflight(
         source = preflight.get("source")
         if not isinstance(source, dict):
             raise ProductAcceptanceError("PRODUCT_BUILD_IDENTITY_PREFLIGHT_MISSING")
+        relative_path = source.get("path")
+        expected_sha256 = source.get("sha256")
+        if not isinstance(relative_path, str) or not isinstance(expected_sha256, str):
+            raise ProductAcceptanceError("PRODUCT_BUILD_IDENTITY_PREFLIGHT_MISSING")
         _validate_source_file(
             source_root,
-            relative_path=source.get("path"),
-            expected_sha256=source.get("sha256"),
+            relative_path=relative_path,
+            expected_sha256=expected_sha256,
             expected_bytes=source.get("bytes"),
             missing_code="PRODUCT_BUILD_IDENTITY_PREFLIGHT_MISSING",
             mismatch_code="PRODUCT_BUILD_IDENTITY_PREFLIGHT_MISMATCH",
@@ -789,6 +802,7 @@ def evaluate_host_evidence(
     _validate_declared_cost_policy(
         artifact_payload,
         max_claude_cost_usd=max_claude_cost_usd,
+        required=artifact_payload.get("schema_version") == "1.1",
     )
     _validate_terminal_acceptance_summary(terminal_action)
     _validate_machine_claims(artifact_payload, evidence)
@@ -845,21 +859,25 @@ def evaluate_release_evidence(
         }
     if canary_roots is not None and set(canary_roots) != {"claude-code", "codex"}:
         raise ProductAcceptanceError("CANARY_ROOTS_INCOMPLETE")
-    results = [
-        evaluate_host_evidence(
-            evidence,
-            evidence_root=evidence_root,
-            source_root=source_roots.get(evidence.get("host")),
-            canary_root=(
-                canary_roots.get(evidence.get("host"))
-                if canary_roots is not None
-                else None
-            ),
-            candidate_build_info=candidate_build_info,
-            max_claude_cost_usd=max_claude_cost_usd,
+    results: list[dict[str, Any]] = []
+    for evidence in evidences:
+        host = evidence.get("host")
+        if not isinstance(host, str):
+            raise ProductAcceptanceError("HOST_INVALID")
+        results.append(
+            evaluate_host_evidence(
+                evidence,
+                evidence_root=evidence_root,
+                source_root=source_roots.get(host),
+                canary_root=(
+                    canary_roots.get(host)
+                    if canary_roots is not None
+                    else None
+                ),
+                candidate_build_info=candidate_build_info,
+                max_claude_cost_usd=max_claude_cost_usd,
+            )
         )
-        for evidence in evidences
-    ]
     return {
         "status": "pass",
         "build_id": next(iter(build_ids)),

@@ -1,6 +1,6 @@
 # design/ 资产索引
 
-> 更新：2026-09-10｜当前实现：v5.8.0-rc.5；D78 单一运行时清理已实施，最新 Build 已通过双宿主 archive smoke 和全量质量门禁，真实 L4 与发布 evidence artifact 仍待补齐
+> 更新：2026-09-29｜当前实现：v5.8.0-rc.5；D78 单一运行时清理已实施，最新工作树已通过双宿主 archive smoke 和全量质量门禁，真实 L4 与发布 evidence artifact 仍待补齐
 
 ## 当前唯一运行与实施权威
 
@@ -71,6 +71,7 @@
 | `incidents/2026-09-03-real-host-l4-closure.md` | 候选 Build 双宿主真实 L4 终态与发布 evidence artifact 待补记录 |
 | `incidents/2026-09-28-generation-reuse-boundary.md` | 跨会话 Worker generation 复用、空 native artifact 与租约清理后的恢复边界 |
 | `IMPLEMENTATION-TRACKER.md` | 当前任务状态、优先级与 EARS 验收 |
+| `2026-09-29-loop-design-implementation-audit.md` | 当前设计、代码分层、事故修复与未闭环发布证据的对照审计 |
 | `HISTORY.md` | 历史里程碑与 Git 追溯入口 |
 
 ## 解释顺序
