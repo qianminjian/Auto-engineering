@@ -18,8 +18,16 @@ def project_host_attestation_repair_action(
 ) -> dict[str, Any]:
     """把唯一 Worker 交接分类投影成禁止重复 spawn 的宿主 Action。"""
 
-    is_artifact_repair = repair_kind == "worker_artifact"
-    is_protocol_failure = repair_kind == "protocol_failure"
+    valid_kinds = {"attestation", "worker_artifact", "protocol_failure"}
+    invalid_kind = repair_kind not in valid_kinds
+    effective_kind = "protocol_failure" if invalid_kind else repair_kind
+    effective_detail = (
+        f"recovery_kind_invalid:{repair_kind}"
+        if invalid_kind
+        else detail
+    )
+    is_artifact_repair = effective_kind == "worker_artifact"
+    is_protocol_failure = effective_kind == "protocol_failure"
     projected = (
         dict(mapped_action)
         if is_protocol_failure
@@ -36,14 +44,12 @@ def project_host_attestation_repair_action(
                     if is_artifact_repair
                     else "Worker 业务产物已存在，但宿主原生事实尚未回写。"
                 ),
-                "violations": [f"{worker_id}:{detail}"],
+                "violations": [f"{worker_id}:{effective_detail}"],
             },
         )
     )
     host_execution = projected.get("host_execution")
-    if not isinstance(host_execution, Mapping):
-        return projected
-    host = dict(host_execution)
+    host = dict(host_execution) if isinstance(host_execution, Mapping) else {}
     work_files = host.get("work_files")
     spawn = mapped_action.get("spawn")
     recovery: dict[str, Any] = {
@@ -65,8 +71,8 @@ def project_host_attestation_repair_action(
             else "record_worker_outcome_then_finalize"
         ),
         "worker_id": worker_id,
-        "detail": detail,
-        "repair_kind": repair_kind,
+        "detail": effective_detail,
+        "repair_kind": effective_kind,
     }
     if is_protocol_failure:
         recovery["error_code"] = "HOST_PROTOCOL_FAILURE"

@@ -80,6 +80,7 @@ def classify_private_worker_artifacts(
                 project_root=root,
                 invocation=invocation,
                 template=template if isinstance(template, Mapping) else None,
+                action=action,
             ):
                 classifications.append((
                     1,
@@ -114,6 +115,7 @@ def classify_private_worker_artifacts(
                 project_root=root,
                 invocation=invocation,
                 template=template if isinstance(template, Mapping) else None,
+                action=action,
             ):
                 classifications.append((
                     1,

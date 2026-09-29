@@ -52,6 +52,26 @@ _EXCLUDED_PARTS = frozenset({
 })
 
 
+def _validate_release_source(root: Path) -> None:
+    """拒绝无法保持摘要/归档一致性的链接文件。"""
+
+    for required in REQUIRED_PATHS:
+        source = root / required
+        if source.is_symlink():
+            raise ValueError(f"Release 源资产不得包含符号链接: {required}")
+        if not source.is_dir():
+            continue
+        for path in source.rglob("*"):
+            if path.is_symlink():
+                raise ValueError(
+                    f"Release 源资产不得包含符号链接: {path.relative_to(root)}"
+                )
+            if path.is_file() and path.stat().st_nlink > 1:
+                raise ValueError(
+                    f"Release 源资产不得包含硬链接: {path.relative_to(root)}"
+                )
+
+
 def _archive_filter(info: tarfile.TarInfo) -> tarfile.TarInfo | None:
     """排除缓存、字节码和本地元数据。"""
     path = Path(info.name)
@@ -177,6 +197,7 @@ def build_archive(root: Path, output: Path) -> Path:
         raise FileNotFoundError(
             "Release 必需路径缺失: " + ", ".join(missing)
         )
+    _validate_release_source(resolved_root)
 
     output.parent.mkdir(parents=True, exist_ok=True)
     with tarfile.open(output, "w:gz") as package:

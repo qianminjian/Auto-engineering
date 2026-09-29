@@ -119,7 +119,10 @@ from auto_engineering.loop.escalation_handler import (
     EscalationContext,
     EscalationHandler,
 )
-from auto_engineering.loop.event_store import SQLiteEventStore
+from auto_engineering.loop.event_store import (
+    SQLiteEventStore,
+    StateProjectionMismatchError,
+)
 from auto_engineering.loop.events import EVENT_SCHEMA_VERSION, LoopEvent, LoopEventType
 from auto_engineering.loop.guardrail import GuardrailChain
 from auto_engineering.loop.kernel import TickKernel
@@ -441,15 +444,7 @@ class TickOrchestrator(TickProjectSetupMixin):
         if self._state is None:
             raise RuntimeError("LOOP_STATE_UNAVAILABLE")
         state = self._state
-        summary: dict[str, Any] = {
-            "thread_id": state.thread_id,
-            "current_stage": state.current_stage,
-            "expected_stage": state.expected_stage,
-            "tick": state.tick,
-            "verdict": state.critic_verdict,
-            "total_majors": state.total_majors,
-            "plan_refine_count": state.plan_refine_count,
-        }
+        summary = self.status_summary_from_state(state)
         if isinstance(self._active_action, Mapping):
             summary["active_action"] = deepcopy(dict(self._active_action))
         from auto_engineering.loop.status_projection import reconciliation_status
@@ -482,6 +477,20 @@ class TickOrchestrator(TickProjectSetupMixin):
                 ),
             }
         return summary
+
+    @staticmethod
+    def status_summary_from_state(state: EngineState) -> dict[str, Any]:
+        """从只读投影生成基础状态摘要，不要求存在 active Action。"""
+
+        return {
+            "thread_id": state.thread_id,
+            "current_stage": state.current_stage,
+            "expected_stage": state.expected_stage,
+            "tick": state.tick,
+            "verdict": state.critic_verdict,
+            "total_majors": state.total_majors,
+            "plan_refine_count": state.plan_refine_count,
+        }
 
     def state_snapshot(self) -> EngineState:
         """返回当前领域状态的隔离副本，供宿主编排协议使用。"""
@@ -655,15 +664,21 @@ class TickOrchestrator(TickProjectSetupMixin):
 
         if event_store is None:
             raise RuntimeError("EVENT_STORE_REQUIRED")
-        resolved_thread_id = thread_id or event_store.current_thread()
-        if resolved_thread_id is None:
+        active_thread_id = event_store.current_thread()
+        if active_thread_id is None:
             raise RuntimeError("无 active EventStore thread 可恢复")
-        state = event_store.load_projection(resolved_thread_id)
-        if state is None:
+        if thread_id is not None and thread_id != active_thread_id:
             raise RuntimeError(
-                f"EventStore 无状态投影 (thread_id={resolved_thread_id})"
+                "PROJECT_THREAD_NOT_ACTIVE: 显式 thread_id 不是唯一未终态 thread；"
+                "终态或历史 thread 仅允许只读 status"
             )
-        active_action = event_store.load_action_snapshot(resolved_thread_id)
+        resolved_thread_id = active_thread_id
+        try:
+            state, active_action = event_store.load_recovery_bundle(
+                resolved_thread_id
+            )
+        except (StateProjectionMismatchError, ValueError) as exc:
+            raise RuntimeError(f"STATE_RECOVERY_INVALID: {exc}") from exc
         return cls._restore_loaded_state(
             project_root,
             state=state,

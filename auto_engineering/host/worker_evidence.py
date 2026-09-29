@@ -12,12 +12,12 @@ from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from typing import Any
 
+from auto_engineering.host.worker_artifact_parser import (
+    parse_private_worker_artifact,
+)
 from auto_engineering.host.worker_evidence_contracts import (
     HostEvidenceValidationError,
     WorkerOutcomeCollectionError,
-)
-from auto_engineering.host.worker_artifact_parser import (
-    parse_private_worker_artifact,
 )
 from auto_engineering.host.worker_evidence_io import (
     atomic_write_bytes as _atomic_write_bytes,
@@ -300,6 +300,17 @@ def _outcomes_are_ready(
     }
     if len(outcome_items) != len(expected_workers) or not expected_workers:
         return False
+    host_execution = action.get("host_execution")
+    raw_workers = (
+        host_execution.get("workers")
+        if isinstance(host_execution, Mapping)
+        else None
+    )
+    templates = {
+        item.get("worker_id"): item
+        for item in raw_workers
+        if isinstance(item, Mapping) and isinstance(item.get("worker_id"), str)
+    } if isinstance(raw_workers, list) else {}
     parsed: dict[str, NativeWorkerOutcome] = {}
     for item in outcome_items:
         if not isinstance(item, Mapping):
@@ -319,6 +330,19 @@ def _outcomes_are_ready(
             or not outcome.actual_model
             or _native_handle_is_missing(outcome.native_worker_handle)
             or not outcome.isolation_evidence
+        ):
+            return False
+        try:
+            expected_generation, expected_fence = _resolve_worker_execution_binding(
+                action,
+                templates.get(outcome.worker_id),
+                outcome.worker_id,
+            )
+        except HostEvidenceValidationError:
+            return False
+        if (
+            outcome.execution_generation != expected_generation
+            or outcome.fencing_token != expected_fence
         ):
             return False
         parsed[outcome.worker_id] = outcome

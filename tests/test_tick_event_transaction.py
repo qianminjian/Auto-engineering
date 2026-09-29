@@ -78,6 +78,19 @@ def test_commit_tick_atomically_writes_event_projection_and_action() -> None:
         assert store.load_action_snapshot("thread-1") == _action()
 
 
+def test_restore_rejects_explicit_non_active_thread_even_when_snapshot_exists(
+    tmp_path,
+) -> None:
+    with SQLiteEventStore(tmp_path / "events.db") as store:
+        store.commit_tick(events=[_event()], state=_state(), action=_action())
+        with pytest.raises(RuntimeError, match="PROJECT_THREAD_NOT_ACTIVE"):
+            TickOrchestrator.restore_from_event_store(
+                tmp_path,
+                event_store=store,
+                thread_id="historical-thread",
+            )
+
+
 def test_done_action_emits_loop_completed_in_the_same_tick_candidate() -> None:
     state = _state()
     done_action = {

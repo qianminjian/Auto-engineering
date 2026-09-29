@@ -131,6 +131,22 @@ def test_release_build_fails_when_required_path_is_missing(
         build_archive(tmp_path, tmp_path / "broken.tar.gz")
 
 
+def test_release_build_rejects_symlink_source_before_archiving(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts import build_release
+
+    target = tmp_path / "real.txt"
+    target.write_text("release", encoding="utf-8")
+    link = tmp_path / "asset.txt"
+    link.symlink_to(target)
+    monkeypatch.setattr(build_release, "REQUIRED_PATHS", (Path("asset.txt"),))
+
+    with pytest.raises(ValueError, match="不得包含符号链接"):
+        build_release.build_archive(tmp_path, tmp_path / "broken.tar.gz")
+
+
 def test_release_workflow_uses_validated_builder_without_swallowing_errors() -> None:
     content = (ROOT / ".github" / "workflows" / "release.yml").read_text()
 

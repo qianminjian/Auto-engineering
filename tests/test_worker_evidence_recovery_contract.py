@@ -13,6 +13,7 @@ from auto_engineering.host.worker_evidence import (
     HostEvidenceValidationError,
     _canonical_worker_business_status,
     _native_business_artifact,
+    native_outcomes_are_ready,
     parse_private_worker_artifact,
 )
 
@@ -152,6 +153,40 @@ def test_business_status_normalization_is_fail_closed_for_non_string() -> None:
     assert _canonical_worker_business_status("timeout") == "timed_out"
 
 
+def test_native_ready_rejects_stale_generation_or_fence() -> None:
+    action = {
+        "message_id": "action-ready",
+        "execution_generation": 2,
+        "fencing_token": "f" * 64,
+        "spawn": {"invocations": [{"worker_id": "worker-0"}]},
+        "host_execution": {
+            "workers": [{
+                "worker_id": "worker-0",
+                "execution_generation": 2,
+                "fencing_token": "f" * 64,
+            }],
+        },
+    }
+    outcome = {
+        "worker_id": "worker-0",
+        "native_worker_handle": "native-0",
+        "status": "completed",
+        "payload": {"done": True},
+        "summary": "完成",
+        "actual_model": "test-model",
+        "isolation_evidence": "fresh_context",
+        "execution_generation": 2,
+        "fencing_token": "f" * 64,
+    }
+    assert native_outcomes_are_ready(action=action, outcome_items=[outcome])
+    stale_generation = {**outcome, "execution_generation": 1}
+    stale_fence = {**outcome, "fencing_token": "e" * 64}
+    assert not native_outcomes_are_ready(
+        action=action, outcome_items=[stale_generation]
+    )
+    assert not native_outcomes_are_ready(action=action, outcome_items=[stale_fence])
+
+
 def _action_with_worker(message_id: str = "action-private-recovery") -> dict:
     return {
         "message_id": message_id,
@@ -216,6 +251,21 @@ def test_valid_private_outcome_reuses_generation_after_host_takeover(
     assert first["execution_generation"] == 1
     assert resumed["execution_generation"] == 1
     assert resumed["fencing_token"] != first["fencing_token"]
+
+
+def test_worker_execution_binding_rewrites_core_invocation_to_current_generation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from auto_engineering.cli.dev_loop import _bind_worker_execution_identity
+
+    monkeypatch.setenv("AE_HOST_PLATFORM", "codex")
+    monkeypatch.setenv("CODEX_THREAD_ID", "session-bound-path")
+    action = _action_with_worker("action-bound-path")
+    bound = _bind_worker_execution_identity(action, tmp_path)
+    invocation = bound["spawn"]["invocations"][0]
+    assert invocation["outcome_path"] == worker_outcome_path(
+        "action-bound-path", "worker-0", bound["execution_generation"]
+    )
 
 
 def test_valid_private_outcome_reuses_latest_generation_after_lease_cleanup(

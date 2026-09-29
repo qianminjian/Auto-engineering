@@ -86,3 +86,23 @@ def test_protocol_failure_projection_forbids_respawn_without_result_repair() -> 
     assert recovery["spawn_permitted"] is False
     assert "result_rejection" not in projected
     assert "spawn" not in projected
+
+
+def test_invalid_recovery_kind_and_missing_host_execution_fail_closed() -> None:
+    action = {
+        "message_id": "action-invalid-recovery",
+        "spawn": {"invocations": [{"worker_id": "critic-0"}]},
+    }
+    projected = project_host_attestation_repair_action(
+        action,
+        worker_id="critic-0",
+        detail="untrusted",
+        repair_kind="unexpected-kind",
+        project_result_repair_action_fn=lambda value, _rejection: dict(value),
+    )
+    assert "spawn" not in projected
+    recovery = projected["host_execution"]["recovery"]
+    assert recovery["status"] == "host_protocol_failure"
+    assert recovery["error_code"] == "HOST_PROTOCOL_FAILURE"
+    assert recovery["repair_kind"] == "protocol_failure"
+    assert "recovery_kind_invalid" in recovery["detail"]

@@ -465,6 +465,62 @@ class SQLiteEventStore:
             return None
         return EngineState.from_dict(_json_loads(row["state_json"]))
 
+    def load_recovery_bundle(
+        self, thread_id: str,
+    ) -> tuple[EngineState, dict[str, Any]]:
+        """在同一读锁内重放并核对恢复所需的 Projection/Action 快照。"""
+
+        with self._lock:
+            self._ensure_open()
+            stream = self._load_stream_unlocked(thread_id)
+            if not stream:
+                raise ValueError("PROJECTION_STREAM_EMPTY")
+            if [event.sequence for event in stream] != list(range(len(stream))):
+                raise ValueError("EVENT_STREAM_SEQUENCE_INVALID")
+            projection_row = self._conn.execute(
+                "SELECT thread_id, sequence, state_json FROM engine_state_projections "
+                "WHERE thread_id = ?", (thread_id,)
+            ).fetchone()
+            action_row = self._conn.execute(
+                "SELECT thread_id, message_id, sequence, action_json FROM "
+                "action_snapshots WHERE thread_id = ?", (thread_id,)
+            ).fetchone()
+            if projection_row is None:
+                raise ValueError("STATE_PROJECTION_MISSING")
+            if action_row is None:
+                raise ValueError("ACTION_SNAPSHOT_MISSING")
+            state = EngineState.from_dict(_json_loads(projection_row["state_json"]))
+            replayed = EngineStateProjector().replay(stream)
+            if state.thread_id != thread_id or replayed.thread_id != thread_id:
+                raise ValueError("RECOVERY_THREAD_ID_MISMATCH")
+            state_dict = state.to_dict()
+            replayed_dict = replayed.to_dict()
+            if replayed_dict != state_dict:
+                raise StateProjectionMismatchError(
+                    sorted(
+                        key
+                        for key in set(replayed_dict) | set(state_dict)
+                        if replayed_dict.get(key) != state_dict.get(key)
+                    )
+                )
+            last_sequence = stream[-1].sequence
+            if projection_row["thread_id"] != thread_id or int(
+                projection_row["sequence"]
+            ) != last_sequence:
+                raise ValueError("STATE_PROJECTION_SEQUENCE_MISMATCH")
+            if action_row["thread_id"] != thread_id or int(
+                action_row["sequence"]
+            ) != last_sequence:
+                raise ValueError("ACTION_SNAPSHOT_SEQUENCE_MISMATCH")
+            action = _json_loads(action_row["action_json"])
+            if not isinstance(action, dict):
+                raise ValueError("ACTION_SNAPSHOT_INVALID")
+            if action.get("thread_id") != thread_id:
+                raise ValueError("ACTION_SNAPSHOT_THREAD_ID_MISMATCH")
+            if action.get("message_id") != action_row["message_id"]:
+                raise ValueError("ACTION_SNAPSHOT_IDENTITY_MISMATCH")
+            return state, action
+
     def rebuild_projection(self, thread_id: str) -> EngineState:
         """删除或损坏投影后，以事件日志为唯一事实源重建。"""
 

@@ -21,6 +21,9 @@ from auto_engineering.host.worker_evidence import (
 from auto_engineering.host.worker_failure_recovery import (
     read_recorded_failure_outcomes,
 )
+from auto_engineering.host.worker_timeout_ownership import (
+    timeout_ownership_issues,
+)
 
 _PROTOCOL_OUTCOME_CODES = frozenset({
     HOST_PROTOCOL_FAILURE,
@@ -33,13 +36,8 @@ _PROTOCOL_OUTCOME_CODES = frozenset({
 
 class WorkerFailureService:
     """只处理 Worker 失败证据，不拥有 Tick、Action 或 Worker 启动权。"""
-
-    def __init__(
-        self,
-        project_root: Path,
-    ) -> None:
+    def __init__(self, project_root: Path) -> None:
         self.project_root = project_root.resolve()
-
     def finalize_worker_failure(
         self,
         *,
@@ -47,7 +45,6 @@ class WorkerFailureService:
         outcomes: Sequence[NativeWorkerOutcome],
     ) -> dict[str, Any]:
         """把原生 Worker 失败事实终结为不可伪装成业务成功的 Result。"""
-
         violations: list[str] = []
         try:
             plan = SpawnPlan.for_recording(action)
@@ -70,16 +67,20 @@ class WorkerFailureService:
         if outcome_workers != expected_workers:
             violations.append("WORKER_SET_MISMATCH")
         host_execution = action.get("host_execution")
-        raw_workers = (
-            host_execution.get("workers")
-            if isinstance(host_execution, Mapping)
-            else None
-        )
-        templates = {
-            item.get("worker_id"): item
-            for item in raw_workers
-            if isinstance(item, Mapping) and isinstance(item.get("worker_id"), str)
-        } if isinstance(raw_workers, list) else {}
+        raw_workers = host_execution.get("workers") if isinstance(
+            host_execution, Mapping
+        ) else None
+        templates: dict[str, Mapping[str, Any]] = {}
+        if isinstance(raw_workers, list):
+            for item in raw_workers:
+                worker_id = item.get("worker_id") if isinstance(item, Mapping) else None
+                if isinstance(worker_id, str) and isinstance(item, Mapping):
+                    templates[worker_id] = item
+        elif isinstance(action.get("execution_generation"), int) and isinstance(
+            action.get("fencing_token"), str
+        ):
+            templates = {item.worker_id: action for item in plan.invocations}
+        bindings: dict[str, tuple[int | None, str | None]] = {}
         allowed_statuses = {"errored", "failed", "cancelled", "timeout", "timed_out"}
         for outcome in outcomes:
             violations.append(f"WORKER_NOT_COMPLETED:{outcome.worker_id}")
@@ -98,6 +99,7 @@ class WorkerFailureService:
             except HostEvidenceValidationError as exc:
                 violations.extend(exc.violations)
             else:
+                bindings[outcome.worker_id] = (expected_generation, expected_fence)
                 if (
                     expected_generation is not None
                     and (
@@ -122,15 +124,31 @@ class WorkerFailureService:
             ]
         if violations:
             raise HostEvidenceValidationError(violations)
-
         serialized_outcomes = [item.to_dict() for item in outcomes]
-        failure_text = " | ".join(
-            item.summary.strip() for item in outcomes if item.summary.strip()
-        )[:512]
-        timeout_markers = ("TIMEOUT", "TIMED_OUT", "DEADLINE")
+        failure_text = " | ".join(item.summary.strip() for item in outcomes
+                                   if item.summary.strip())[:512]
+        timeout_issues = timeout_ownership_issues(
+            project_root=self.project_root,
+            action=action,
+            templates=templates,
+            outcomes=outcomes,
+            bindings=bindings,
+        )
+        if timeout_issues:
+            failure_text = " | ".join((
+                failure_text,
+                "Worker 超时但未形成可验证的终止事实",
+                *timeout_issues,
+            )).strip(" |")[:512]
         is_timeout = any(
             item.status in {"timeout", "timed_out"}
-            or any(marker in item.summary.upper() for marker in timeout_markers)
+            or (
+                isinstance(item.payload, Mapping)
+                and item.payload.get("error_code") in {
+                    "HOST_WORKER_TIMEOUT",
+                    "HOST_WORKER_TIMED_OUT",
+                }
+            )
             for item in outcomes
         )
         protocol_failure = any(
@@ -141,14 +159,15 @@ class WorkerFailureService:
         error_code = (
             HOST_PROTOCOL_FAILURE
             if protocol_failure
+            else "HOST_WORKER_OWNER_LOST"
+            if timeout_issues
             else "HOST_WORKER_TIMEOUT" if is_timeout else "HOST_WORKER_FAILED"
         )
-        # 重试预算按失败类别隔离。Prompt/hash/能力等宿主合同错误不能消耗
-        # Worker 超时预算，否则“第一次输入错误 + 第一次真实超时”会被错误
-        # 判定为连续两次超时并提前终止当前 Action。
         failure_kind = (
             "protocol" if protocol_failure else "timeout" if is_timeout else "worker"
         )
+        if timeout_issues:
+            failure_kind = "ownership"
         fingerprint_payload = {
             "action_message_id": message_id,
             "outcomes": serialized_outcomes,
@@ -195,6 +214,8 @@ class WorkerFailureService:
                 previous_kind = (
                     "protocol"
                     if previous_code == HOST_PROTOCOL_FAILURE
+                    else "ownership"
+                    if previous_code == "HOST_WORKER_OWNER_LOST"
                     else "timeout"
                     if previous_code == "HOST_WORKER_TIMEOUT"
                     else "worker"
@@ -227,7 +248,6 @@ class WorkerFailureService:
                 and not isinstance(previous_attempt, bool)
             ):
                 failure_attempt = previous_attempt + 1
-
         result_identity = hashlib.sha256(
             _canonical_bytes({
                 "fingerprint": fingerprint,
@@ -261,7 +281,6 @@ class WorkerFailureService:
             "result": result,
         })
         return result
-
     def finalize_missing_worker_output(
         self,
         *,
@@ -271,7 +290,6 @@ class WorkerFailureService:
         result_path: Path | None = None,
     ) -> dict[str, Any]:
         """将 Worker 无输出转换为可重试的失败 Result。"""
-
         if reason_code in {
             "HOST_WORKER_OUTPUT_MISSING",
             "HOST_WORKER_OUTPUT_INVALID",
@@ -297,7 +315,6 @@ class WorkerFailureService:
                         )
                     _atomic_write_json(target, result)
                 return result
-
         try:
             plan = SpawnPlan.for_recording(action)
         except SpawnContractError as exc:
@@ -323,14 +340,10 @@ class WorkerFailureService:
         }
         outcome_error_code = HOST_PROTOCOL_FAILURE if protocol_reason else reason_code
         outcomes = []
+        host_execution = action.get("host_execution")
+        raw_workers = host_execution.get("workers") if isinstance(host_execution, Mapping) else None
         for invocation in plan.invocations:
             template = None
-            host_execution = action.get("host_execution")
-            raw_workers = (
-                host_execution.get("workers")
-                if isinstance(host_execution, Mapping)
-                else None
-            )
             if isinstance(raw_workers, list):
                 template = next(
                     (
@@ -340,6 +353,10 @@ class WorkerFailureService:
                     ),
                     None,
                 )
+            elif isinstance(action.get("execution_generation"), int) and isinstance(
+                action.get("fencing_token"), str
+            ):
+                template = action
             generation, fence = _resolve_worker_execution_binding(
                 action,
                 template,

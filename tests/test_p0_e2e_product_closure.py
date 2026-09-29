@@ -23,6 +23,8 @@ from auto_engineering.host.execution_assembler import (
     NativeWorkerOutcome,
 )
 from auto_engineering.host.outcome_journal import OutcomeJournal
+from auto_engineering.host.worker_observation import WorkerObservationRecord
+from auto_engineering.host.worker_observation_store import WorkerObservationStore
 from auto_engineering.loop.architect_plan_coverage import architect_plan_manifest
 from auto_engineering.loop.event_store import SQLiteEventStore
 from auto_engineering.loop.tick_orchestrator import TickOrchestrator
@@ -399,6 +401,18 @@ def test_public_cli_worker_failure_preserves_action_for_resource_wait(
             fencing_token=worker.get("fencing_token"),
         ).to_dict()],
     }), encoding="utf-8")
+    WorkerObservationStore(tmp_path).save(WorkerObservationRecord(
+        schema_version="1.0",
+        action_message_id=action["message_id"],
+        worker_id=worker["worker_id"],
+        execution_generation=worker["execution_generation"],
+        fencing_token=worker["fencing_token"],
+        observed_at="2026-09-29T00:00:00+00:00",
+        native_status="timed_out",
+        wait_attempt=1,
+        owner_known=True,
+        native_worker_handle="codex-native-timeout",
+    ))
     coordinator_path.write_text("{}", encoding="utf-8")
 
     finalized = runner.invoke(

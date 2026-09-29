@@ -86,6 +86,18 @@ def _stream_termination_reason(path: Path) -> str | None:
     return None
 
 
+def _stderr_termination_reason(path: Path | None) -> str | None:
+    """从独立 stderr 证据中归一化已知上游错误，不混入 JSON 主流。"""
+
+    if path is None:
+        return None
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+    return classify_host_observation(text)
+
+
 def _termination_reason(result: Mapping[str, object] | None) -> str:
     if result is not None:
         reason = _termination_reason_from_value(result)
@@ -102,6 +114,11 @@ def main(
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--project-root", type=Path, required=True)
     parser.add_argument("--host-output", type=Path, required=True)
+    parser.add_argument(
+        "--host-stderr",
+        type=Path,
+        help="宿主独立 stderr 证据文件；不会混入 stdout JSON 流",
+    )
     parser.add_argument("--exit-code", type=int, required=True)
     parser.add_argument(
         "--reason-code",
@@ -120,6 +137,8 @@ def main(
     lease = HostRunLeaseStore(args.project_root).load()
     result = _last_json_object(args.host_output)
     stream_reason = _stream_termination_reason(args.host_output)
+    stderr_reason = _stderr_termination_reason(args.host_stderr)
+    observed_reason = stream_reason or stderr_reason
     if lease is not None and result is not None:
         result_session = result.get("session_id")
         if (
@@ -138,12 +157,17 @@ def main(
         stdout.write("\n")
         return 0
 
+    effective_reason_code = (
+        observed_reason
+        if observed_reason == "HOST_PROVIDER_STREAM_IDLE_TIMEOUT"
+        else args.reason_code
+    )
     response = handle_claude_session_end(args.project_root, {
         "hook_event_name": "StopFailure" if args.exit_code else "SessionEnd",
         "cwd": str(args.project_root),
         "session_id": lease.host_session_id,
-        "reason": stream_reason or _termination_reason(result),
-    }, reason_code=args.reason_code, clear_lease=not args.preserve_lease)
+        "reason": observed_reason or _termination_reason(result),
+    }, reason_code=effective_reason_code, clear_lease=not args.preserve_lease)
     json.dump(response, stdout, ensure_ascii=False)
     stdout.write("\n")
     return 0

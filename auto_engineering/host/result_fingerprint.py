@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Mapping
+import json
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from auto_engineering.host.spawn_contract import SpawnPlan
@@ -11,6 +12,31 @@ from auto_engineering.host.worker_evidence import (
     NativeWorkerOutcome,
     _canonical_bytes,
 )
+
+
+def assembly_rejection_fingerprint(
+    action_message_id: str,
+    *,
+    coordinator_payload: Mapping[str, Any],
+    error_code: str,
+    violations: Sequence[str],
+    outcomes: Sequence[Mapping[str, Any]] | None,
+) -> str:
+    """返回组装拒绝的确定性指纹。"""
+
+    return hashlib.sha256(json.dumps(
+        {
+            "action_message_id": action_message_id,
+            "coordinator_payload": dict(coordinator_payload),
+            "error_code": error_code,
+            "violations": list(violations),
+            "outcomes": [dict(item) for item in outcomes]
+            if outcomes is not None else None,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")).hexdigest()
 
 
 def serialize_and_fingerprint_outcomes(
@@ -39,4 +65,4 @@ def serialize_and_fingerprint_outcomes(
     return serialized_outcomes, outcomes_fingerprint, fingerprint
 
 
-__all__ = ["serialize_and_fingerprint_outcomes"]
+__all__ = ["assembly_rejection_fingerprint", "serialize_and_fingerprint_outcomes"]

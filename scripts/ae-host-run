@@ -213,6 +213,7 @@ if [ "${OUTPUT#/}" = "$OUTPUT" ]; then
     fi
     OUTPUT="$OUTPUT_DIR/$OUTPUT_NAME"
 fi
+STDERR_OUTPUT="$OUTPUT.stderr"
 
 if ! CDPATH= cd -- "$PROJECT_ROOT"; then
     printf '%s\n' '项目根目录不可用' >&2
@@ -302,6 +303,7 @@ interrupt_handler() {
         "$AE_RUNNER" --run-module auto_engineering.host.process_exit \
             --project-root "$PROJECT_ROOT" \
             --host-output "$INTERRUPT_OUTPUT" \
+            --host-stderr "${ATTEMPT_STDERR:-/dev/null}" \
             --exit-code 130 \
             --reason-code HOST_PROCESS_INTERRUPTED \
             > "${OUTPUT}.stop-report.json" 2>/dev/null || true
@@ -346,8 +348,10 @@ trap interrupt_handler HUP INT TERM
 ATTEMPT=0
 RESUME_COUNT=0
 : > "$OUTPUT"
+: > "$STDERR_OUTPUT"
 while :; do
     ATTEMPT_OUTPUT="$RUN_DIR/attempt-${ATTEMPT}.jsonl"
+    ATTEMPT_STDERR="$RUN_DIR/attempt-${ATTEMPT}.stderr"
     rm -f "$TIMEOUT_MARKER"
     rm -f "$IDLE_MARKER"
     rm -f "$PROTOCOL_MARKER"
@@ -359,7 +363,7 @@ while :; do
     # 已通过 argv 传入；继承该管道会让 Codex 误以为还要读取附加 prompt，导致
     # 宿主停在启动阶段，watchdog 随后只能看到“尚未 init”。结构化 Worker 输入
     # 必须走 Action 合同/固定文件，不得依赖适配器 stdin。
-    "$@" </dev/null > "$ATTEMPT_OUTPUT" &
+    "$@" </dev/null > "$ATTEMPT_OUTPUT" 2> "$ATTEMPT_STDERR" &
     HOST_PID=$!
     watchdog_loop &
     WATCHDOG_PID=$!
@@ -373,6 +377,10 @@ while :; do
     fi
 
     cat "$ATTEMPT_OUTPUT" >> "$OUTPUT"
+    cat "$ATTEMPT_STDERR" >> "$STDERR_OUTPUT"
+    # stderr 既是独立 Stop Report 证据，也必须继续转发给适配器调用者；
+    # 否则嵌套边界、宿主协议拒绝等前台故障会被误判成静默成功。
+    cat "$ATTEMPT_STDERR" >&2
     HOST_REASON_CODE=HOST_RUNTIME_PROTOCOL_ERROR
     PROTOCOL_RETRY_EXHAUSTED=0
     COORDINATOR_POLL_LIMIT=0
@@ -399,6 +407,7 @@ while :; do
     if ! "$AE_RUNNER" --run-module auto_engineering.host.process_exit \
         --project-root "$PROJECT_ROOT" \
         --host-output "$ATTEMPT_OUTPUT" \
+        --host-stderr "$ATTEMPT_STDERR" \
         --exit-code "$HOST_EXIT" \
         --reason-code "$HOST_REASON_CODE" $PROCESS_EXIT_ARGS \
         > "${OUTPUT}.stop-report.json"; then

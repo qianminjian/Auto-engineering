@@ -1286,6 +1286,7 @@ def test_cli_recovery_finalizes_complete_native_files_before_respawn(
     monkeypatch,
 ) -> None:
     from auto_engineering.cli.dev_loop import _prepare_action_for_host
+    from auto_engineering.host.action_mapper_contracts import worker_fencing_token
 
     monkeypatch.setenv("CODEX_THREAD_ID", "native-ready-session")
     action = {
@@ -1337,6 +1338,10 @@ def test_cli_recovery_finalizes_complete_native_files_before_respawn(
         "summary": "核验完成",
         "actual_model": "unknown",
         "isolation_evidence": "fork_turns=none",
+        "execution_generation": 1,
+        "fencing_token": worker_fencing_token(
+            "native-ready-action", "component_verifier-0", 1
+        ),
     }]}), encoding="utf-8")
     (work / "coordinator-result.json").write_text(json.dumps({
         "component": "Counter",

@@ -145,6 +145,24 @@ def bind_worker_execution_identity(
     bound = dict(action)
     bound["execution_generation"] = generation
     bound["fencing_token"] = fencing_token_for(message_id, session_id, generation)
+    spawn = action.get("spawn")
+    if isinstance(spawn, Mapping) and isinstance(spawn.get("invocations"), list):
+        bound_spawn = dict(spawn)
+        bound_spawn["invocations"] = [
+            {
+                **invocation,
+                "outcome_path": worker_outcome_path(
+                    message_id,
+                    invocation["worker_id"],
+                    generation,
+                ),
+            }
+            if isinstance(invocation, Mapping)
+            and isinstance(invocation.get("worker_id"), str)
+            else invocation
+            for invocation in spawn["invocations"]
+        ]
+        bound["spawn"] = bound_spawn
     return bound
 
 

@@ -8,10 +8,17 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+from auto_engineering.host.path_contract import (
+    worker_native_result_path,
+    worker_outcome_path,
+)
 from auto_engineering.host.worker_evidence import (
     HostEvidenceValidationError,
     _atomic_write_json,
     _native_business_artifact,
+)
+from auto_engineering.host.worker_execution_binding import (
+    resolve_worker_execution_binding,
 )
 
 
@@ -20,6 +27,7 @@ def bound_native_business_is_valid(
     project_root: Path,
     invocation: Any,
     template: Mapping[str, Any] | None,
+    action: Mapping[str, Any] | None = None,
 ) -> bool:
     """只读判断绑定 native result 是否能修复私有 artifact。"""
 
@@ -30,6 +38,25 @@ def bound_native_business_is_valid(
     )
     if not isinstance(native_ref, str) or not native_ref:
         return False
+    if action is not None:
+        message_id = action.get("message_id")
+        if not isinstance(message_id, str) or not message_id:
+            return False
+        try:
+            generation, _fence = resolve_worker_execution_binding(
+                action, template, invocation.worker_id
+            )
+        except HostEvidenceValidationError:
+            return False
+        if generation is not None:
+            if native_ref != worker_native_result_path(
+                message_id, invocation.worker_id, generation
+            ):
+                return False
+            if invocation.outcome_path != worker_outcome_path(
+                message_id, invocation.worker_id, generation
+            ):
+                return False
     native_path = (project_root / native_ref).resolve()
     outcome_path = (project_root / invocation.outcome_path).resolve()
     if (
@@ -92,10 +119,15 @@ def quarantine_private_artifact(
         if isinstance(execution_generation, int)
         else "unbound"
     )
+    fence_key = (
+        hashlib.sha256(fencing_token.encode("utf-8")).hexdigest()[:16]
+        if isinstance(fencing_token, str) and fencing_token
+        else "unbound"
+    )
     quarantine_path = (
         project_root
         / ".ae-state/host-runtime/worker-outcome-quarantine"
-        / f"{action_key}-{safe_worker}-g{generation}-{digest[:16]}.json"
+        / f"{action_key}-{safe_worker}-g{generation}-f{fence_key}-{digest[:16]}.json"
     )
     _atomic_write_json(
         quarantine_path,

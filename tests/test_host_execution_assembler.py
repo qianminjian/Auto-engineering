@@ -359,6 +359,25 @@ def test_finalize_worker_timeout_builds_failure_transaction_without_success_evid
     ) is None
 
 
+def test_worker_failure_summary_cannot_upgrade_business_failure_to_timeout(
+    tmp_path: Path,
+) -> None:
+    action = _action(tmp_path)
+    result = HostExecutionAssembler(tmp_path).finalize(
+        action=action,
+        outcomes=[NativeWorkerOutcome(
+            worker_id="critic-0",
+            native_worker_handle="agent-failed",
+            status="failed",
+            payload={"error": "business failure"},
+            summary="业务结果中提到 TIMEOUT 但状态明确为 failed",
+            actual_model="gpt-5.6-sol",
+        )],
+        coordinator_payload={},
+    )
+    assert result["spawn_error_code"] == "HOST_WORKER_FAILED"
+
+
 def test_finalize_missing_worker_output_builds_deterministic_failure(
     tmp_path: Path,
 ) -> None:

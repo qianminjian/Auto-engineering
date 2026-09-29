@@ -10,6 +10,8 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+from auto_engineering.host.result_fingerprint import assembly_rejection_fingerprint
+
 
 class OutcomeJournalTransitionError(ValueError):
     """Outcome journal 出现非法状态转换。"""
@@ -203,6 +205,22 @@ class OutcomeJournal:
             "accepted", "committed"
         }:
             raise OutcomeJournalTransitionError("OUTCOME_ALREADY_ACCEPTED")
+        serialized_outcomes: list[dict[str, Any]] | None = None
+        if outcomes is not None:
+            serialized_outcomes = [dict(item) for item in outcomes]
+        rejection_fingerprint = assembly_rejection_fingerprint(
+            action_message_id,
+            coordinator_payload=coordinator_payload,
+            error_code=error_code,
+            violations=violations,
+            outcomes=serialized_outcomes,
+        )
+        if (
+            existing is not None
+            and existing.get("status") == "assembly_rejected"
+            and existing.get("rejection_fingerprint") == rejection_fingerprint
+        ):
+            return existing
         history: list[object] = []
         attempt = 1
         if existing is not None:
@@ -226,12 +244,12 @@ class OutcomeJournal:
             "repairable": attempt < MAX_ASSEMBLY_REPAIR_ATTEMPTS,
             "semantic_payload": dict(coordinator_payload),
             "rejection": rejection,
+            "rejection_fingerprint": rejection_fingerprint,
             "rejection_history": history,
         }
-        serialized_outcomes: list[dict[str, Any]] | None = None
         outcomes_fingerprint: str | None = None
         if outcomes is not None:
-            serialized_outcomes = [dict(item) for item in outcomes]
+            assert serialized_outcomes is not None
             outcomes_fingerprint = _outcomes_fingerprint(
                 action_message_id,
                 serialized_outcomes,

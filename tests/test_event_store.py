@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import json
 import sqlite3
 from pathlib import Path
 
@@ -11,7 +12,10 @@ import pytest
 from auto_engineering.engine.state import EngineState
 from auto_engineering.loop import event_store as event_store_module
 from auto_engineering.loop import event_store_codec, event_store_schema
-from auto_engineering.loop.event_store import SQLiteEventStore
+from auto_engineering.loop.event_store import (
+    SQLiteEventStore,
+    StateProjectionMismatchError,
+)
 from auto_engineering.loop.events import LoopEvent, LoopEventType
 
 
@@ -120,6 +124,64 @@ def test_current_thread_rejects_multiple_unfinished_threads() -> None:
 
         with pytest.raises(ValueError, match="PROJECT_THREAD_AMBIGUOUS"):
             store.current_thread()
+
+
+def test_recovery_bundle_rejects_projection_drift_after_event_commit() -> None:
+    state = EngineState(
+        thread_id="thread-recovery",
+        requirement="恢复一致性",
+        current_stage="architect",
+    )
+    action = {"message_id": "action-recovery", "thread_id": state.thread_id}
+    event = LoopEvent.create(
+        thread_id=state.thread_id,
+        sequence=0,
+        event_type=LoopEventType.LOOP_INITIALIZED,
+        payload={"state": state.to_dict()},
+        correlation_id=state.thread_id,
+    )
+    with SQLiteEventStore(":memory:") as store:
+        store.commit_tick(
+            events=[event],
+            state=state,
+            action=action,
+        )
+        drifted = state.to_dict()
+        drifted["requirement"] = "投影漂移"
+        store._conn.execute(
+            "UPDATE engine_state_projections SET state_json = ? WHERE thread_id = ?",
+            (json.dumps(drifted), state.thread_id),
+        )
+        with pytest.raises(StateProjectionMismatchError):
+            store.load_recovery_bundle(state.thread_id)
+
+
+def test_recovery_bundle_rejects_action_snapshot_sequence_drift() -> None:
+    state = EngineState(
+        thread_id="thread-recovery",
+        requirement="恢复一致性",
+        current_stage="architect",
+    )
+    action = {"message_id": "action-recovery", "thread_id": state.thread_id}
+    event = LoopEvent.create(
+        thread_id=state.thread_id,
+        sequence=0,
+        event_type=LoopEventType.LOOP_INITIALIZED,
+        payload={"state": state.to_dict()},
+        correlation_id=state.thread_id,
+    )
+    with SQLiteEventStore(":memory:") as store:
+        store.commit_tick(
+            events=[event],
+            state=state,
+            action=action,
+        )
+        store._conn.execute(
+            "UPDATE action_snapshots SET sequence = ? WHERE thread_id = ?",
+            (99, state.thread_id),
+        )
+        with pytest.raises(ValueError, match="ACTION_SNAPSHOT_SEQUENCE_MISMATCH"):
+            store.load_recovery_bundle(state.thread_id)
 
 
 def test_duplicate_event_id_rolls_back_entire_batch() -> None:

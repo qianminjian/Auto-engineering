@@ -106,6 +106,36 @@ def test_process_exit_classifies_provider_stream_idle_timeout(tmp_path: Path) ->
     )
 
 
+def test_process_exit_classifies_provider_stream_idle_timeout_from_stderr(
+    tmp_path: Path,
+) -> None:
+    """stderr 不能绕过与 stdout 相同的上游错误归一化。"""
+
+    from auto_engineering.host.process_exit import main
+
+    _save_lease(tmp_path)
+    host_output = tmp_path / "host-stream.jsonl"
+    host_output.write_text("", encoding="utf-8")
+    host_stderr = tmp_path / "host-stream.jsonl.stderr"
+    host_stderr.write_text(
+        "API Error: Stream idle timeout - no chunks received\n",
+        encoding="utf-8",
+    )
+
+    assert main([
+        "--project-root", str(tmp_path),
+        "--host-output", str(host_output),
+        "--host-stderr", str(host_stderr),
+        "--exit-code", "1",
+        "--reason-code", "HOST_PROCESS_IDLE_TIMEOUT",
+    ]) == 0
+
+    report = json.loads(next(
+        (tmp_path / ".ae-state/host-runtime/stop-reports").glob("*.json")
+    ).read_text(encoding="utf-8"))
+    assert report["reason_code"] == "HOST_PROVIDER_STREAM_IDLE_TIMEOUT"
+
+
 def test_process_exit_uses_bounded_fallback_when_host_output_is_not_json(
     tmp_path: Path,
 ) -> None:
@@ -571,6 +601,33 @@ def test_host_run_wrapper_bounds_host_runtime_and_records_timeout(
     assert len(reports) == 1
     report = json.loads(reports[0].read_text(encoding="utf-8"))
     assert report["reason_code"] == "HOST_PROCESS_TIMEOUT"
+
+
+def test_host_run_wrapper_preserves_stderr_as_separate_evidence(
+    tmp_path: Path,
+) -> None:
+    wrapper = Path(__file__).parents[1] / "scripts" / "ae-host-run"
+    host_output = tmp_path / "host-stream.jsonl"
+    result = subprocess.run(
+        [
+            str(wrapper),
+            "--project-root", str(tmp_path),
+            "--output", str(host_output),
+            "--", sys.executable, "-c",
+            "import sys; print('API Error: Stream idle timeout', file=sys.stderr); print('{}')",
+        ],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=8,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert host_output.read_text(encoding="utf-8").strip() == "{}"
+    assert host_output.with_name(host_output.name + ".stderr").read_text(
+        encoding="utf-8"
+    ).strip() == "API Error: Stream idle timeout"
 
 
 def test_host_run_wrapper_bounds_host_idle_time_and_records_idle_timeout(

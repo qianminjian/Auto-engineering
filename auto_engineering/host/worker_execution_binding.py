@@ -32,7 +32,9 @@ def resolve_worker_execution_binding(
                 (f"WORKER_EXECUTION_BINDING_INVALID:{worker_id}",)
             )
         if template is None:
-            return None, None
+            raise HostEvidenceValidationError(
+                (f"WORKER_EXECUTION_BINDING_MISSING:{worker_id}",)
+            )
         if template_generation != action_generation:
             raise HostEvidenceValidationError(
                 (f"WORKER_EXECUTION_BINDING_MISMATCH:{worker_id}",)

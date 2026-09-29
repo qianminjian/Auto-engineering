@@ -1603,7 +1603,8 @@ def run_tick_status(root: Path, verbose: bool = False) -> None:
                 "recovery_required": True,
             }, ensure_ascii=False))
             return
-        if active_thread is None:
+        terminal_status_only = active_thread is None
+        if terminal_status_only:
             # 最近终态 thread 仅用于只读 status；不得把它当作可继续 Action。
             active_thread = events.latest_thread()
         if active_thread is None:
@@ -1611,6 +1612,17 @@ def run_tick_status(root: Path, verbose: bool = False) -> None:
                 "EVENT_THREAD_NOT_FOUND: 没有可查看的 EventStore 活动 thread；"
                 "请通过 --init 创建新的运行线程"
             )
+        if terminal_status_only:
+            state = events.load_projection(active_thread)
+            if state is None:
+                raise click.ClickException(
+                    "STATE_PROJECTION_NOT_FOUND: 终态 thread 缺少只读状态投影"
+                )
+            summary = TickOrchestrator.status_summary_from_state(state)
+            summary["current_stage"] = "done"
+            summary["expected_stage"] = "done"
+            click.echo(json.dumps(summary, ensure_ascii=False))
+            return
         try:
             orch = TickOrchestrator.restore_from_event_store(
                 root,
@@ -1622,14 +1634,14 @@ def run_tick_status(root: Path, verbose: bool = False) -> None:
             # 但不能伪造可继续运行的投影或消费旧 Action。
             persisted_action = _load_active_action(active_thread, events)
             if isinstance(persisted_action, Mapping):
-                summary = _persisted_reconciliation_gate_status(
+                reconciliation_summary = _persisted_reconciliation_gate_status(
                     persisted_action,
                     events.load_projection(active_thread),
                     status_action=_status_action_summary(persisted_action),
                     next_operation=_resume_operation(active_thread),
                 )
-                if summary is not None:
-                    click.echo(json.dumps(summary, ensure_ascii=False))
+                if reconciliation_summary is not None:
+                    click.echo(json.dumps(reconciliation_summary, ensure_ascii=False))
                     return
             summary = {
                 "thread_id": active_thread,

@@ -149,6 +149,24 @@ def test_assembly_rejection_preserves_completed_worker_facts(
     assert rejected["completed_at"] == "2026-08-25T10:00:00+00:00"
 
 
+def test_identical_assembly_rejection_is_idempotent(tmp_path: Path) -> None:
+    journal = OutcomeJournal(tmp_path)
+    first = journal.reject_assembly(
+        "action-1",
+        coordinator_payload={"section_findings": []},
+        error_code="HOST_EVIDENCE_INVALID",
+        violations=["SECTION_FINDING_MISSING"],
+    )
+    repeated = journal.reject_assembly(
+        "action-1",
+        coordinator_payload={"section_findings": []},
+        error_code="HOST_EVIDENCE_INVALID",
+        violations=["SECTION_FINDING_MISSING"],
+    )
+    assert repeated == first
+    assert repeated["attempt"] == 1
+
+
 def test_first_assembly_rejection_preserves_current_worker_facts(
     tmp_path: Path,
 ) -> None:
@@ -221,7 +239,7 @@ def test_assembly_repair_becomes_bounded_after_three_attempts(
     for attempt in range(1, 4):
         rejected = journal.reject_assembly(
             "action-1",
-            coordinator_payload={"section_findings": []},
+            coordinator_payload={"section_findings": [], "attempt": attempt},
             error_code="HOST_EVIDENCE_INVALID",
             violations=["SECTION_FINDING_MISSING"],
         )
@@ -234,10 +252,10 @@ def test_explicit_recovery_reopens_only_exhausted_assembly_repair(
 ) -> None:
     journal = OutcomeJournal(tmp_path)
 
-    for _ in range(3):
+    for attempt in range(1, 4):
         journal.reject_assembly(
             "action-1",
-            coordinator_payload={"section_findings": []},
+            coordinator_payload={"section_findings": [], "attempt": attempt},
             error_code="HOST_EVIDENCE_INVALID",
             violations=["SECTION_FINDING_MISSING"],
         )
