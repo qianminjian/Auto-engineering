@@ -369,6 +369,82 @@ def test_falls_back_to_uv_run_ae(tmp_path: Path) -> None:
     )
 
 
+def test_reports_stable_runtime_bootstrap_failure_without_fake_loop_state(
+    tmp_path: Path,
+) -> None:
+    launcher = _copy_launcher(tmp_path)
+    bin_dir = tmp_path / "bin"
+    uv = bin_dir / "uv"
+    uv.parent.mkdir(parents=True, exist_ok=True)
+    uv.write_text(
+        "#!/bin/sh\n"
+        "if [ \"$1\" = \"venv\" ]; then\n"
+        "  mkdir -p \"$UV_PROJECT_ENVIRONMENT/bin\"\n"
+        "  touch \"$UV_PROJECT_ENVIRONMENT/bin/python\"\n"
+        "  chmod +x \"$UV_PROJECT_ENVIRONMENT/bin/python\"\n"
+        "  exit 0\n"
+        "fi\n"
+        "printf '%s\\n' 'network unavailable' >&2\n"
+        "exit 17\n",
+        encoding="utf-8",
+    )
+    uv.chmod(0o755)
+
+    result = _run(launcher, str(bin_dir), "dev-loop", "--status")
+
+    assert result.returncode == 17
+    assert result.stdout == ""
+    assert "AE_RUNTIME_BOOTSTRAP_FAILED" in result.stderr
+    assert "network unavailable" in result.stderr
+    assert "EVENT_THREAD_NOT_FOUND" not in result.stderr
+
+
+def test_host_adapter_propagates_runtime_bootstrap_failure_without_loop_state(
+    tmp_path: Path,
+) -> None:
+    """宿主边界不能把 ae-run 的启动失败改写成 watchdog/Loop 故障。"""
+
+    root = Path(__file__).parents[1]
+    host_adapter = tmp_path / "plugin" / "scripts" / "ae-host-run"
+    host_adapter.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(root / "scripts/ae-host-run", host_adapter)
+    host_adapter.chmod(0o755)
+
+    runner = tmp_path / "fake-ae-run"
+    runner.write_text(
+        "#!/bin/sh\n"
+        "printf '%s\\n' 'AE_RUNTIME_BOOTSTRAP_FAILED: network unavailable' >&2\n"
+        "exit 17\n",
+        encoding="utf-8",
+    )
+    runner.chmod(0o755)
+    project = tmp_path / "project"
+    project.mkdir()
+    output = tmp_path / "host.jsonl"
+
+    result = subprocess.run(
+        [
+            str(host_adapter),
+            "--project-root",
+            str(project),
+            "--output",
+            str(output),
+            "--",
+            "/bin/true",
+        ],
+        cwd=project,
+        env={**os.environ, "AE_HOST_RUNNER": str(runner)},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 17
+    assert "AE_RUNTIME_BOOTSTRAP_FAILED" in result.stderr
+    assert "watchdog 运行时初始化失败" not in result.stderr
+    assert not (project / ".ae-state" / "events.db").exists()
+
+
 def test_reuses_fingerprinted_project_runtime_without_uv_or_network(
     tmp_path: Path,
 ) -> None:

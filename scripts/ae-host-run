@@ -228,10 +228,13 @@ export AE_INVOCATION_PROJECT_ROOT
 # watchdog 尚未启动期间失去保护；也不能调用系统 python3。
 AE_RUNTIME_ROOT="$PROJECT_ROOT/.ae-state/.ae-runtime"
 if [ ! -x "$AE_RUNTIME_ROOT/bin/python" ]; then
-    if ! "$AE_RUNNER" --run-module auto_engineering.host.watchdog --help \
-        >/dev/null 2>&1; then
-        printf '%s\n' '宿主 watchdog 运行时初始化失败，拒绝启动宿主' >&2
-        exit 75
+    # ae-run 是运行时 bootstrap 的唯一错误边界。不能吞掉它的稳定错误码和
+    # 原始 stderr，否则宿主会把依赖/网络失败误报成 Loop/watchdog 中断。
+    "$AE_RUNNER" --run-module auto_engineering.host.watchdog --help \
+        >/dev/null
+    runtime_bootstrap_status=$?
+    if [ "$runtime_bootstrap_status" -ne 0 ]; then
+        exit "$runtime_bootstrap_status"
     fi
 fi
 

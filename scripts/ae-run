@@ -187,7 +187,14 @@ if command -v uv >/dev/null 2>&1; then
         if [ ! -x "$RUNTIME_ROOT/bin/python" ]; then
             # uv 对“已存在但不完整”的环境会直接拒绝；只清理本产品专属的
             # 目标运行时目录，避免把半初始化状态带入下一次 Loop。
-            UV_VENV_CLEAR=1 uv venv --quiet "$RUNTIME_ROOT" || exit $?
+            UV_VENV_CLEAR=1 uv venv --quiet "$RUNTIME_ROOT"
+            bootstrap_status=$?
+            if [ "$bootstrap_status" -ne 0 ]; then
+                printf '%s\n' \
+                    "AE_RUNTIME_BOOTSTRAP_FAILED: 无法创建项目独立运行时；" \
+                    "请检查 Python/uv、UV_CACHE_DIR 和依赖网络，Loop 尚未初始化" >&2
+                exit "$bootstrap_status"
+            fi
         fi
         trap - EXIT HUP INT TERM
         cleanup_bootstrap_lock
@@ -198,6 +205,11 @@ if command -v uv >/dev/null 2>&1; then
     else
         uv run --frozen --no-dev --project "$PLUGIN_ROOT" ae "$@"
         result=$?
+    fi
+    if [ "$result" -ne 0 ] && [ ! -x "$RUNTIME_ROOT/bin/ae" ]; then
+        printf '%s\n' \
+            "AE_RUNTIME_BOOTSTRAP_FAILED: 无法安装或加载插件运行时；" \
+            "请检查 Python/uv、UV_CACHE_DIR 和依赖网络，Loop 尚未初始化" >&2
     fi
     if [ "$result" -eq 0 ]; then
         mark_runtime_for_current_plugin

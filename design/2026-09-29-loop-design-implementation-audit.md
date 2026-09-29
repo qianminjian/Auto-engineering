@@ -53,15 +53,35 @@
 
 ## 四、当前验证事实
 
-- 全量回归：`3050 passed, 1 skipped`。
+- 全量回归：`3052 passed, 1 skipped`。
 - 严格覆盖率：`91%`，以 `pyproject.toml` 基线为准。
 - 架构专项：单一运行时、架构收敛、Runtime Identity、Revision 共 `51 passed`。
 - 产品验收/collector 定向：`70 passed`。
 - `Ruff`、核心源码 mypy（249 个文件）、产品脚本 mypy、`make check-gate`、规则同步检查通过。
-- 当前工作树制品 `5.8.0-rc.5+sha256.4ed638cf97e6b872` 的 Codex/Claude archive smoke 通过。
-- 当前 Build `5.8.0-rc.5+sha256.4ed638cf97e6b872` 已按官方本地安装器实际卸载重装到 Codex 与 Claude Code，两者 Build Identity 一致。
+- T909 新制品 `5.8.0-rc.5+sha256.49b19a755b6cd8e8` 的 Codex/Claude Code archive smoke 通过，且两宿主 Build Identity 一致。
+- 本次只完成隔离制品验收；`product_install: not_run` 仍表示未在真实产品内安装该新制品，不能把 archive smoke 当作真实宿主卸载重装或 L4 证据。
 
-## 五、仍未闭环的发布证据
+## 五、追加发现：首次 runtime bootstrap 失败边界
+
+本次对历史真实宿主日志的复核发现了一个与原事故不同、但同样会被用户感知为“Loop 一启动就挂”的边界：
+
+- 在 `_scratch/real-l3-codex-20260929/` 的真实启动记录中，首次 `ae-run --init` 先因默认 `uv` 缓存目录无权限失败；改用临时缓存后，又因无法联网解析 `hatchling` 失败。
+- 失败发生在 Core `dev-loop --init` 进入 EventStore 之前，不能归类为 `EVENT_THREAD_NOT_FOUND`、Action 恢复失败或 Loop 状态损坏。
+- 原 `scripts/ae-run` 直接把 `uv` 的 stderr 和退出码冒泡，宿主侧缺少稳定的“启动依赖失败”边界，容易继续盲目重试或误判为 Loop 中断。
+
+修复为启动器边界的单一归一规则：
+
+1. `uv venv` 失败时返回原退出码并输出 `AE_RUNTIME_BOOTSTRAP_FAILED`。
+2. 首次 `uv run` 失败且项目 runtime 尚未物化 `bin/ae` 时，同样输出该错误码；保留原始 stderr 供诊断。
+3. 如果 `bin/ae` 已经存在，则非零退出仍保持 Core/业务错误原语义，不被误标成 bootstrap 失败。
+4. 不创建 EventStore 事件、不创建 lease、不自动改写为 `WAIT_RESOURCE`，也不启动第二个恢复循环。
+5. `scripts/ae-host-run` 的预 bootstrap watchdog 探针不得吞掉该稳定错误；必须原样保留 stderr 和退出码，并在进入 Loop 前不创建 `.ae-state/events.db`。
+
+T909 验证证据：新增宿主适配器回归使全量达到 `3052 passed, 1 skipped`；严格覆盖率为 `91%`；Ruff、mypy（249 个源码文件）、shell 语法与 `make check-gate` 通过。新制品在 Codex 与 Claude Code 两宿主 archive smoke 均通过，Build ID 为 `5.8.0-rc.5+sha256.49b19a755b6cd8e8`；自动验收仍明确为 `product_install: not_run`。
+
+这项修复解决的是“宿主启动前置失败被伪装成 Loop 失败”的诊断和重试边界，不改变 D17 单 Tick、D53 单 Coordinator、D78 单一运行时或 D79 Worker repair 语义；它也证明了启动器与宿主适配器之间只有一条 bootstrap 错误边界，没有新增第二个 Loop。
+
+## 六、仍未闭环的发布证据
 
 以下项目不能由本地测试推断完成：
 
@@ -73,11 +93,11 @@
 
 在这些证据齐全前，发布结论必须保持 `◐`。这不是降低实现标准，而是把“代码正确”与“产品真实可运行”分层，避免再次用绿色单测掩盖真实宿主中断。
 
-## 六、后续执行顺序
+## 七、后续执行顺序
 
-1. 提交并推送 T907；候选 Build `5.8.0-rc.5+sha256.4ed638cf97e6b872` 已生成。
-2. 用官方宿主安装脚本卸载并重装该 Build，已分别记录 Build Identity 一致。
-3. 下一步运行最小真实宿主 Canary，确认首个 Action、lease、native Worker 和 `record → finalize → validate → tick` 链路。
+1. T909 源码、质量门禁与双宿主 archive smoke 已完成；新制品为 `5.8.0-rc.5+sha256.49b19a755b6cd8e8`。
+2. 用官方宿主安装脚本卸载并重装该新 Build，分别记录 Build Identity 和安装来源；这是当前剩余的真实安装动作。
+3. 安装后运行最小真实宿主 Canary，确认首个 Action、lease、native Worker 和 `record → finalize → validate → tick` 链路；若环境前置失败，应只出现 `AE_RUNTIME_BOOTSTRAP_FAILED`，不得伪造 Loop 状态。
 4. 再运行 Voice Clone L4；任何失败必须按 Core、Host、Worker、外部模型、业务项目和验收链六类归属，禁止只修最后一个错误码。
 5. 只有双宿主证据由 `product_acceptance.py` 重新读取并通过后，才允许关闭 P0-E2E。
 
