@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -31,11 +32,17 @@ def active_native_workers(
     events_path = project_root.resolve() / ".ae-state" / "events.db"
     if not events_path.is_file():
         raise NativeLaunchGuardError("NATIVE_ACTIVE_ACTION_UNAVAILABLE")
-    events = SQLiteEventStore(events_path)
+    events = None
     try:
+        events = SQLiteEventStore(events_path)
         action = events.load_action_snapshot(lease.thread_id)
+    except (OSError, sqlite3.Error, TypeError, ValueError) as exc:
+        raise NativeLaunchGuardError(
+            "NATIVE_ACTIVE_ACTION_UNAVAILABLE"
+        ) from exc
     finally:
-        events.close()
+        if events is not None:
+            events.close()
     if not isinstance(action, Mapping) or action.get("message_id") != lease.action_message_id:
         raise NativeLaunchGuardError("NATIVE_ACTIVE_ACTION_MISMATCH")
     if action.get("project_root") != str(project_root.resolve()):
@@ -78,8 +85,9 @@ def spawn_action_requires_lease(project_root: Path) -> bool:
         return False
     from auto_engineering.loop.event_store import SQLiteEventStore
 
-    events = SQLiteEventStore(events_path)
+    events = None
     try:
+        events = SQLiteEventStore(events_path)
         unfinished = [str(thread_id) for thread_id in events.unfinished_threads()]
         if len(unfinished) > 1:
             # 多个未终态 thread 时必须阻止无 lease 的新 Worker，避免把
@@ -89,19 +97,29 @@ def spawn_action_requires_lease(project_root: Path) -> bool:
             return False
         thread_id = unfinished[0]
         if not isinstance(thread_id, str) or not thread_id:
-            return False
+            return True
         action = events.load_action_snapshot(thread_id)
         if not isinstance(action, Mapping):
-            return False
+            return True
         if action.get("project_root") != str(project_root.resolve()):
-            return False
+            return True
         host_execution = action.get("host_execution")
-        workers = host_execution.get("workers") if isinstance(host_execution, Mapping) else None
-        return isinstance(workers, list) and bool(workers)
-    except (OSError, TypeError, ValueError):
-        return False
+        workers = (
+            host_execution.get("workers")
+            if isinstance(host_execution, Mapping)
+            else None
+        )
+        # 无 lease 时只要仍有未终态 Action，就禁止新的原生 Worker
+        # 调用；即使当前 Action 不是 Worker Action，也不能让宿主绕过
+        # Core 的 execution_control 私自 spawn 第二条执行路径。
+        return (isinstance(workers, list) and bool(workers)) or workers is None
+    except (OSError, sqlite3.Error, TypeError, ValueError):
+        # 状态不确定不是“没有需要恢复的 Action”。这是宿主边界的
+        # fail-closed 分支，由调用方统一映射为稳定协议错误。
+        return True
     finally:
-        events.close()
+        if events is not None:
+            events.close()
 
 
 __all__ = ["active_native_workers", "spawn_action_requires_lease"]

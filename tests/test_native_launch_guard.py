@@ -1249,10 +1249,10 @@ def test_spawn_action_requires_lease_uses_event_store_without_checkpoint(
     [
         ("ambiguous", True),
         ("empty", False),
-        ("error", False),
-        ("invalid_thread", False),
-        ("invalid_action", False),
-        ("wrong_root", False),
+        ("error", True),
+        ("invalid_thread", True),
+        ("invalid_action", True),
+        ("wrong_root", True),
     ],
 )
 def test_spawn_action_requires_lease_fails_closed_on_thread_resolution_edges(
@@ -1298,6 +1298,27 @@ def test_spawn_action_requires_lease_fails_closed_on_thread_resolution_edges(
 
     monkeypatch.setattr("auto_engineering.loop.event_store.SQLiteEventStore", Events)
     assert spawn_action_requires_lease(tmp_path) is expected
+
+
+def test_spawn_action_requires_lease_blocks_corrupt_event_store(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """EventStore 不可读时不能把状态不确定误判成可自由 spawn。"""
+
+    from auto_engineering.host.native_launch_runtime import spawn_action_requires_lease
+
+    state = tmp_path / ".ae-state"
+    state.mkdir()
+    (state / "events.db").write_bytes(b"not-a-sqlite-database")
+
+    class BrokenEvents:
+        def __init__(self, _path: Path) -> None:
+            raise ValueError("broken event store")
+
+    monkeypatch.setattr(
+        "auto_engineering.loop.event_store.SQLiteEventStore", BrokenEvents
+    )
+    assert spawn_action_requires_lease(tmp_path) is True
 
 
 def test_spawn_action_requires_lease_ignores_checkpoint_only_state(tmp_path: Path) -> None:
